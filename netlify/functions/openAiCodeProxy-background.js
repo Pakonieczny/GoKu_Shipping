@@ -25,12 +25,16 @@ const OPENAI_DEFAULT_EXECUTOR_MODEL = process.env.OPENAI_GAME_EXECUTOR_MODEL || 
 const OPENAI_DEFAULT_REASONING_EFFORT = process.env.OPENAI_REASONING_EFFORT || "xhigh";
 const OPENAI_DEFAULT_MAX_OUTPUT_TOKENS = Number(process.env.OPENAI_MAX_OUTPUT_TOKENS || 128000);
 const OPENAI_DEFAULT_PLANNER_REASONING_EFFORT = process.env.OPENAI_PLANNER_REASONING_EFFORT || "high";
-const OPENAI_DEFAULT_PLANNER_MAX_OUTPUT_TOKENS = Number(process.env.OPENAI_PLANNER_MAX_OUTPUT_TOKENS || 16000);
+const OPENAI_DEFAULT_PLANNER_MAX_OUTPUT_TOKENS = Number(process.env.OPENAI_PLANNER_MAX_OUTPUT_TOKENS || 32000);
 const OPENAI_DEFAULT_EXECUTOR_REASONING_EFFORT = process.env.OPENAI_EXECUTOR_REASONING_EFFORT || OPENAI_DEFAULT_REASONING_EFFORT;
 const OPENAI_DEFAULT_EXECUTOR_MAX_OUTPUT_TOKENS = Number(process.env.OPENAI_EXECUTOR_MAX_OUTPUT_TOKENS || OPENAI_DEFAULT_MAX_OUTPUT_TOKENS);
 const OPENAI_HTTP_TIMEOUT_MS = Number(process.env.OPENAI_HTTP_TIMEOUT_MS || 1500000);
 const OPENAI_PLANNER_HTTP_TIMEOUT_MS = Number(process.env.OPENAI_PLANNER_HTTP_TIMEOUT_MS || 1500000);
 const OPENAI_CHAIN_ACCEPT_TIMEOUT_MS = Number(process.env.OPENAI_CHAIN_ACCEPT_TIMEOUT_MS || 1500000);
+const OPENAI_PROGRESS_STREAM_FLUSH_MS = Number(process.env.OPENAI_PROGRESS_STREAM_FLUSH_MS || 1200);
+const OPENAI_PROGRESS_STREAM_MIN_CHARS = Number(process.env.OPENAI_PROGRESS_STREAM_MIN_CHARS || 120);
+const OPENAI_PROGRESS_EVENTS_LIMIT = Number(process.env.OPENAI_PROGRESS_EVENTS_LIMIT || 80);
+const OPENAI_PROGRESS_STREAM_PREVIEW_LIMIT = Number(process.env.OPENAI_PROGRESS_STREAM_PREVIEW_LIMIT || 4000);
 
 function normalizeOpenAIContentBlocks(userContent) {
   const blocks = Array.isArray(userContent) ? userContent : [{ type: "text", text: String(userContent || "") }];
@@ -111,7 +115,7 @@ async function fetchJsonWithTimeout(url, options = {}, timeoutMs = OPENAI_HTTP_T
   }
 }
 
-async function callOpenAI(apiKey, { model, maxTokens, system, userContent, effort, timeoutMs }) {
+async function callOpenAI(apiKey, { model, maxTokens, system, userContent, effort, timeoutMs, stream = true, onEvent, onTextDelta }) {
   const resolvedMaxTokens = Number(maxTokens || OPENAI_DEFAULT_MAX_OUTPUT_TOKENS);
   const body = {
     model,
@@ -129,7 +133,8 @@ async function callOpenAI(apiKey, { model, maxTokens, system, userContent, effor
       effort: effort || OPENAI_DEFAULT_REASONING_EFFORT
     },
     max_output_tokens: resolvedMaxTokens,
-    truncation: "auto"
+    truncation: "auto",
+    stream: !!stream
   };
 
   const res = await fetchJsonWithTimeout(OPENAI_RESPONSES_URL, {
@@ -141,6 +146,26 @@ async function callOpenAI(apiKey, { model, maxTokens, system, userContent, effor
     body: JSON.stringify(body)
   }, timeoutMs);
 
+  if (!res.ok) {
+    const raw = await res.text();
+    let data = null;
+    try {
+      data = raw ? JSON.parse(raw) : null;
+    } catch (_) {}
+    throw new Error(data?.error?.message || `OpenAI API error (${res.status})`);
+  }
+
+  if (stream) {
+    const streamed = await parseOpenAIStreamResponse(res, { onEvent, onTextDelta });
+    const data = streamed.data;
+    const responseText = extractOpenAIText(data) || String(streamed.text || '').trim();
+    if (!responseText) throw new Error("Empty response from OpenAI");
+    return {
+      text: responseText,
+      usage: mapOpenAIUsage(data?.usage)
+    };
+  }
+
   const raw = await res.text();
   let data = null;
   try {
@@ -149,14 +174,169 @@ async function callOpenAI(apiKey, { model, maxTokens, system, userContent, effor
     throw new Error(`OpenAI API returned non-JSON response (${res.status}): ${raw.slice(0, 500)}`);
   }
 
-  if (!res.ok) throw new Error(data?.error?.message || `OpenAI API error (${res.status})`);
-
   const responseText = extractOpenAIText(data);
   if (!responseText) throw new Error("Empty response from OpenAI");
 
   return {
     text: responseText,
     usage: mapOpenAIUsage(data.usage)
+  };
+}
+
+
+function ensureLiveProgress(progress) {
+  if (!progress || typeof progress !== "object") return null;
+  if (!progress.live || typeof progress.live !== "object") {
+    progress.live = {
+      stage: null,
+      model: null,
+      label: null,
+      detail: null,
+      streamingText: "",
+      streamBytes: 0,
+      events: [],
+      updatedAt: Date.now()
+    };
+  }
+  if (!Array.isArray(progress.live.events)) progress.live.events = [];
+  return progress.live;
+}
+
+function trimStreamingPreview(text, maxChars = OPENAI_PROGRESS_STREAM_PREVIEW_LIMIT) {
+  const value = String(text || "");
+  if (value.length <= maxChars) return value;
+  return value.slice(-maxChars);
+}
+
+function appendLiveEvent(progress, event) {
+  const live = ensureLiveProgress(progress);
+  const item = {
+    id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    time: Date.now(),
+    type: event?.type || "info",
+    label: event?.label || "Update",
+    detail: event?.detail || "",
+    stage: event?.stage || live.stage || null,
+    model: event?.model || live.model || null
+  };
+  live.events.push(item);
+  if (live.events.length > OPENAI_PROGRESS_EVENTS_LIMIT) {
+    live.events = live.events.slice(-OPENAI_PROGRESS_EVENTS_LIMIT);
+  }
+  live.updatedAt = Date.now();
+  return item;
+}
+
+function updateLiveState(progress, patch = {}) {
+  const live = ensureLiveProgress(progress);
+  Object.assign(live, patch || {});
+  live.updatedAt = Date.now();
+  return live;
+}
+
+function createProgressTelemetry(bucket, projectPath, progress) {
+  let lastPersistAt = 0;
+  let lastStreamPersistAt = 0;
+  let lastStreamPersistLen = 0;
+
+  async function persist(force = false) {
+    const now = Date.now();
+    if (!force && now - lastPersistAt < 250) return;
+    await saveProgress(bucket, projectPath, progress);
+    lastPersistAt = now;
+  }
+
+  return {
+    async event(label, detail = "", options = {}) {
+      appendLiveEvent(progress, { label, detail, ...options });
+      if (options?.patch) updateLiveState(progress, options.patch);
+      await persist(true);
+    },
+    async patch(patch = {}, force = false) {
+      updateLiveState(progress, patch);
+      await persist(force);
+    },
+    async stream(delta, aggregateText, options = {}) {
+      const live = updateLiveState(progress, {
+        stage: options.stage || progress.live?.stage || null,
+        label: options.label || progress.live?.label || null,
+        detail: options.detail || progress.live?.detail || null,
+        model: options.model || progress.live?.model || null,
+        streamingText: trimStreamingPreview(aggregateText),
+        streamBytes: Number(progress.live?.streamBytes || 0) + String(delta || "").length
+      });
+      const now = Date.now();
+      const currentLen = String(live.streamingText || "").length;
+      const shouldPersist = (now - lastStreamPersistAt >= OPENAI_PROGRESS_STREAM_FLUSH_MS) || (currentLen - lastStreamPersistLen >= OPENAI_PROGRESS_STREAM_MIN_CHARS);
+      if (shouldPersist) {
+        await persist(true);
+        lastStreamPersistAt = now;
+        lastStreamPersistLen = currentLen;
+      }
+    },
+    async clearStream(force = true) {
+      updateLiveState(progress, { streamingText: "", streamBytes: 0 });
+      await persist(force);
+    }
+  };
+}
+
+async function parseOpenAIStreamResponse(res, callbacks = {}) {
+  const bodyStream = res.body;
+  if (!bodyStream) {
+    throw new Error("OpenAI API returned no response body for stream.");
+  }
+
+  const decoder = new TextDecoder("utf-8");
+  let buffer = "";
+  let fullText = "";
+  let finalResponse = null;
+
+  async function processEventBlock(block) {
+    const lines = String(block || "").split(/\r?\n/);
+    let dataLines = [];
+    for (const line of lines) {
+      if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart());
+    }
+    if (!dataLines.length) return;
+    const dataStr = dataLines.join('\n').trim();
+    if (!dataStr || dataStr === '[DONE]') return;
+    let data;
+    try {
+      data = JSON.parse(dataStr);
+    } catch {
+      return;
+    }
+    if (callbacks.onEvent) await callbacks.onEvent(data);
+    const eventType = data?.type || '';
+    if (eventType === 'response.output_text.delta' && typeof data.delta === 'string') {
+      fullText += data.delta;
+      if (callbacks.onTextDelta) await callbacks.onTextDelta(data.delta, fullText, data);
+    } else if (eventType === 'response.output_text.done' && typeof data.text === 'string' && !fullText) {
+      fullText = data.text;
+    } else if (eventType === 'response.completed' || eventType === 'response.done') {
+      finalResponse = data.response || data;
+    } else if (eventType === 'response.failed') {
+      const err = new Error(data?.response?.error?.message || data?.error?.message || 'OpenAI streaming response failed');
+      err.phase = 'openai_stream';
+      err.details = JSON.stringify(data).slice(0, 4000);
+      throw err;
+    }
+  }
+
+  for await (const chunk of bodyStream) {
+    buffer += decoder.decode(chunk, { stream: true });
+    const parts = buffer.split(/\n\n/);
+    buffer = parts.pop() || "";
+    for (const part of parts) {
+      await processEventBlock(part);
+    }
+  }
+  if (buffer.trim()) await processEventBlock(buffer);
+
+  return {
+    data: finalResponse,
+    text: fullText
   };
 }
 
@@ -329,6 +509,10 @@ function parseDelimitedResponse(text) {
 
 /* ── helper: save progress to Firebase ───────────────────────── */
 async function saveProgress(bucket, projectPath, progress) {
+  if (progress && typeof progress === "object") {
+    progress.updatedAt = Date.now();
+    ensureLiveProgress(progress);
+  }
   await bucket.file(`${projectPath}/ai_progress.json`).save(
     JSON.stringify(progress),
     { contentType: "application/json", resumable: false }
@@ -548,9 +732,21 @@ exports.handler = async (event) => {
         },
         finalMessage: null,
         error: null,
-        completedTime: null
+        completedTime: null,
+        live: {
+          stage: "planning",
+          model: OPENAI_DEFAULT_PLANNER_MODEL,
+          label: "Planning request queued",
+          detail: "Preparing Game Intelligence + Expert Planning call...",
+          streamingText: "",
+          streamBytes: 0,
+          events: [],
+          updatedAt: Date.now()
+        }
       };
       await saveProgress(bucket, projectPath, progress);
+      const progressTelemetry = createProgressTelemetry(bucket, projectPath, progress);
+      await progressTelemetry.event("Planning job started", "Preparing GPT planning request with full project context.", { stage: "planning", model: OPENAI_DEFAULT_PLANNER_MODEL });
 
       const planningSystem = `You are an expert game development architect and AI pipeline planner.
 
@@ -572,7 +768,7 @@ CRITICAL FILE NAMING RULES (include in every tranche prompt):
 - The main HTML file is named "23" (NOT "document.html"), located in "models/" folder.
 - "assets.json" is in the "json/" folder.
 
-${REQUIRED_TRANCHE_VALIDATION_BLOCK}
+NOTE: Do NOT include validation manifest blocks in the tranche prompts you generate. Those are injected automatically server-side.
 
 You must respond ONLY with a valid JSON object. No markdown, no code fences, no preamble.
 
@@ -598,13 +794,52 @@ You must respond ONLY with a valid JSON object. No markdown, no code fences, no 
       ];
 
       console.log(`STAGE 0: Planning with OpenAI for Job ${jobId} (timeout ${Math.round(OPENAI_PLANNER_HTTP_TIMEOUT_MS / 1000)}s)...`);
+      await progressTelemetry.event("Planning request sent", `Model ${OPENAI_DEFAULT_PLANNER_MODEL} with ${OPENAI_DEFAULT_PLANNER_REASONING_EFFORT} reasoning.`, {
+        stage: "planning",
+        model: OPENAI_DEFAULT_PLANNER_MODEL,
+        patch: {
+          stage: "planning",
+          model: OPENAI_DEFAULT_PLANNER_MODEL,
+          label: "Waiting for planner response",
+          detail: `Timeout ${Math.round(OPENAI_PLANNER_HTTP_TIMEOUT_MS / 1000)}s • max output ${OPENAI_DEFAULT_PLANNER_MAX_OUTPUT_TOKENS}`
+        }
+      });
+      let plannerSawFirstToken = false;
       const planResult = await callOpenAI(apiKey, {
         model: OPENAI_DEFAULT_PLANNER_MODEL,
         maxTokens: OPENAI_DEFAULT_PLANNER_MAX_OUTPUT_TOKENS,
         effort: OPENAI_DEFAULT_PLANNER_REASONING_EFFORT,
         timeoutMs: OPENAI_PLANNER_HTTP_TIMEOUT_MS,
         system: planningSystem,
-        userContent: planningUserContent
+        userContent: planningUserContent,
+        stream: true,
+        onEvent: async (evt) => {
+          if (evt?.type === 'response.created') {
+            await progressTelemetry.patch({ stage: 'planning', model: OPENAI_DEFAULT_PLANNER_MODEL, label: 'Planner response created', detail: 'OpenAI accepted the planning request.' }, true);
+          }
+        },
+        onTextDelta: async (delta, aggregateText) => {
+          if (!plannerSawFirstToken) {
+            plannerSawFirstToken = true;
+            await progressTelemetry.event('Planner streaming live output', 'Realtime planner text is now flowing into the AI Context Window.', {
+              stage: 'planning',
+              model: OPENAI_DEFAULT_PLANNER_MODEL,
+              patch: { stage: 'planning', model: OPENAI_DEFAULT_PLANNER_MODEL, label: 'Planner is reasoning live', detail: 'Streaming planning text from OpenAI...' }
+            });
+          }
+          await progressTelemetry.stream(delta, aggregateText, {
+            stage: 'planning',
+            model: OPENAI_DEFAULT_PLANNER_MODEL,
+            label: 'Planner is reasoning live',
+            detail: 'Streaming planning text from OpenAI...'
+          });
+        }
+      });
+      await progressTelemetry.clearStream(true);
+      await progressTelemetry.event('Planning response received', 'Planner finished streaming. Validating tranche plan JSON...', {
+        stage: 'planning',
+        model: OPENAI_DEFAULT_PLANNER_MODEL,
+        patch: { stage: 'planning', model: OPENAI_DEFAULT_PLANNER_MODEL, label: 'Validating planner output', detail: 'Parsing returned JSON plan...' }
       });
 
       if (planResult.usage) {
@@ -618,7 +853,32 @@ You must respond ONLY with a valid JSON object. No markdown, no code fences, no 
       try {
         plan = JSON.parse(stripFences(planResult.text));
       } catch (e) {
-        throw new Error("Failed to parse planning output as JSON: " + e.message);
+        // Attempt recovery: if JSON was truncated mid-stream, try trimming back
+        // to the last fully-formed tranche and closing the array/object manually.
+        let recovered = null;
+        try {
+          const cleaned = stripFences(planResult.text);
+          const lastBrace = cleaned.lastIndexOf('}');
+          if (lastBrace > 0) {
+            // Walk backwards from the last '}' looking for a parseable prefix
+            for (let i = lastBrace; i > 0; i--) {
+              if (cleaned[i] !== '}') continue;
+              try {
+                const candidate = JSON.parse(cleaned.substring(0, i + 1) + ']}');
+                if (candidate?.tranches?.length > 0) {
+                  recovered = candidate;
+                  break;
+                }
+              } catch (_) { /* keep walking */ }
+            }
+          }
+        } catch (_) { /* recovery itself failed — fall through */ }
+
+        if (!recovered || !Array.isArray(recovered.tranches) || recovered.tranches.length === 0) {
+          throw new Error("Failed to parse planning output as JSON: " + e.message);
+        }
+        console.warn(`Planning JSON was truncated — recovered ${recovered.tranches.length} tranche(s) via repair.`);
+        plan = recovered;
       }
 
       if (!plan.tranches || !Array.isArray(plan.tranches) || plan.tranches.length === 0) {
@@ -626,6 +886,7 @@ You must respond ONLY with a valid JSON object. No markdown, no code fences, no 
       }
 
       plan = enforceTrancheValidationBlock(plan);
+      await progressTelemetry.event("Planning JSON validated", `Created ${plan.tranches.length} tranche(s).`, { stage: "planning", model: OPENAI_DEFAULT_PLANNER_MODEL });
 
       // Update progress with plan
       progress.status = "executing";
@@ -649,7 +910,7 @@ You must respond ONLY with a valid JSON object. No markdown, no code fences, no 
         message: null,
         filesUpdated: []
       }));
-      await saveProgress(bucket, projectPath, progress);
+      await progressTelemetry.patch({ stage: "executing", model: OPENAI_DEFAULT_EXECUTOR_MODEL, label: `Plan locked: ${plan.tranches.length} tranche(s)`, detail: "Chaining into tranche execution...", streamingText: "", streamBytes: 0 }, true);
 
       console.log(`Plan created: ${plan.tranches.length} tranches.`);
 
@@ -821,22 +1082,79 @@ Correct approach:
       ];
 
       let trancheResponseObj;
+      await progressTelemetry.event(`Tranche ${nextTranche + 1} started`, tranche.name || `Executing tranche ${nextTranche + 1}.`, {
+        stage: 'executing',
+        model: OPENAI_DEFAULT_EXECUTOR_MODEL,
+        patch: {
+          stage: 'executing',
+          model: OPENAI_DEFAULT_EXECUTOR_MODEL,
+          label: `Executing tranche ${nextTranche + 1}/${progress.totalTranches}`,
+          detail: tranche.name || tranche.description || 'Running executor...',
+          currentTranche: nextTranche
+        }
+      });
+      let executorSawFirstToken = false;
       try {
         trancheResponseObj = await callOpenAI(apiKey, {
-            model: OPENAI_DEFAULT_EXECUTOR_MODEL,
+          model: OPENAI_DEFAULT_EXECUTOR_MODEL,
           maxTokens: OPENAI_DEFAULT_EXECUTOR_MAX_OUTPUT_TOKENS,
           effort: OPENAI_DEFAULT_EXECUTOR_REASONING_EFFORT,
           timeoutMs: OPENAI_HTTP_TIMEOUT_MS,
-          contextWindow: OPENAI_MAX_CONTEXT_WINDOW,
-          autoCompactTokenLimit: OPENAI_AUTO_COMPACT_TOKEN_LIMIT,
           system: executionSystem,
-          userContent: trancheUserContent
+          userContent: trancheUserContent,
+          stream: true,
+          onEvent: async (evt) => {
+            if (evt?.type === 'response.created') {
+              await progressTelemetry.patch({
+                stage: 'executing',
+                model: OPENAI_DEFAULT_EXECUTOR_MODEL,
+                label: `Tranche ${nextTranche + 1}/${progress.totalTranches} response created`,
+                detail: tranche.name || tranche.description || 'Executor accepted by OpenAI.',
+                currentTranche: nextTranche
+              }, true);
+            }
+          },
+          onTextDelta: async (delta, aggregateText) => {
+            if (!executorSawFirstToken) {
+              executorSawFirstToken = true;
+              await progressTelemetry.event(`Tranche ${nextTranche + 1} streaming live output`, 'Realtime executor text is now flowing into the AI Context Window.', {
+                stage: 'executing',
+                model: OPENAI_DEFAULT_EXECUTOR_MODEL,
+                patch: {
+                  stage: 'executing',
+                  model: OPENAI_DEFAULT_EXECUTOR_MODEL,
+                  label: `Streaming tranche ${nextTranche + 1}/${progress.totalTranches}`,
+                  detail: tranche.name || tranche.description || 'Receiving streamed executor output...',
+                  currentTranche: nextTranche
+                }
+              });
+            }
+            await progressTelemetry.stream(delta, aggregateText, {
+              stage: 'executing',
+              model: OPENAI_DEFAULT_EXECUTOR_MODEL,
+              label: `Streaming tranche ${nextTranche + 1}/${progress.totalTranches}`,
+              detail: tranche.name || tranche.description || 'Receiving streamed executor output...',
+              currentTranche: nextTranche
+            });
+          }
+        });
+        await progressTelemetry.clearStream(true);
+        await progressTelemetry.event(`Tranche ${nextTranche + 1} response received`, 'Parsing streamed executor payload and merging files...', {
+          stage: 'executing',
+          model: OPENAI_DEFAULT_EXECUTOR_MODEL,
+          patch: {
+            stage: 'executing',
+            model: OPENAI_DEFAULT_EXECUTOR_MODEL,
+            label: `Parsing tranche ${nextTranche + 1}/${progress.totalTranches}`,
+            detail: 'Validating delimiter blocks and file payloads...',
+            currentTranche: nextTranche
+          }
         });
       } catch (err) {
         progress.tranches[nextTranche].status = "error";
         progress.tranches[nextTranche].endTime = Date.now();
         progress.tranches[nextTranche].message = `Error: ${err.message}`;
-        await saveProgress(bucket, projectPath, progress);
+        await progressTelemetry.event(`Tranche ${nextTranche + 1} failed`, err.message, { stage: "executing", model: OPENAI_DEFAULT_EXECUTOR_MODEL, type: "error", patch: { label: `Tranche ${nextTranche + 1} failed`, detail: err.message, currentTranche: nextTranche } });
         console.error(`Tranche ${nextTranche + 1} failed:`, err.message);
 
         // Save state and chain to next tranche (skip this one)
@@ -877,7 +1195,7 @@ Correct approach:
           progress.tranches[nextTranche].status = "error";
           progress.tranches[nextTranche].endTime = Date.now();
           progress.tranches[nextTranche].message = "Executor returned no recognisable file delimiters or valid JSON fallback.";
-          await saveProgress(bucket, projectPath, progress);
+          await progressTelemetry.event(`Tranche ${nextTranche + 1} parse failure`, "Executor returned no delimiter payload. Skipping to keep pipeline alive.", { stage: "executing", model: OPENAI_DEFAULT_EXECUTOR_MODEL, type: "warn", patch: { label: `Tranche ${nextTranche + 1} parse failure`, detail: "No valid delimiter output returned.", currentTranche: nextTranche } });
           console.error(`Tranche ${nextTranche + 1} produced no parseable output.`);
           console.error("Raw response (first 500 chars):", trancheResponseObj.text.slice(0, 500));
 
@@ -924,7 +1242,7 @@ Correct approach:
           progress.tranches[nextTranche].endTime = Date.now();
           progress.tranches[nextTranche].message = trancheResult.message || "Tranche completed.";
           progress.tranches[nextTranche].filesUpdated = trancheFilesUpdated;
-          await saveProgress(bucket, projectPath, progress);
+          await progressTelemetry.event(`Tranche ${nextTranche + 1} merged`, `${trancheFilesUpdated.length} file(s) updated: ${trancheFilesUpdated.join(", ") || "none"}`, { stage: "executing", model: OPENAI_DEFAULT_EXECUTOR_MODEL, type: "success", patch: { label: `Tranche ${nextTranche + 1}/${progress.totalTranches} complete`, detail: trancheResult.message || `${trancheFilesUpdated.length} file(s) updated.`, currentTranche: nextTranche } });
 
           console.log(`Tranche ${nextTranche + 1} complete: ${trancheFilesUpdated.length} files updated.`);
 
@@ -979,6 +1297,8 @@ Correct approach:
       });
 
       progress.status = "complete";
+      updateLiveState(progress, { stage: "complete", model: OPENAI_DEFAULT_EXECUTOR_MODEL, label: "Pipeline complete", detail: `Updated ${allUpdatedFiles.length} file(s) across ${progress.tranches.filter(tr => tr.status === "complete").length} tranche(s).`, streamingText: "", streamBytes: 0 });
+      appendLiveEvent(progress, { type: "success", label: "Pipeline complete", detail: `All tranche work finished. ${allUpdatedFiles.length} file(s) are ready in ai_response.json.`, stage: "complete", model: OPENAI_DEFAULT_EXECUTOR_MODEL });
       const t = progress.tokenUsage.totals;
       progress.finalMessage = `Build complete: ${allUpdatedFiles.length} file(s) updated across ${progress.tranches.filter(tr => tr.status === "complete").length} tranche(s). Tokens: ${t.input_tokens} in / ${t.output_tokens} out.`;
       progress.completedTime = Date.now();
