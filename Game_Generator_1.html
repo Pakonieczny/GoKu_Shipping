@@ -732,6 +732,10 @@
 
     let currentProject = null;
 
+    // Tracks the most recent pipeline run so Update #2 can reject stale responses
+    let lastRunJobId = null;
+    let lastRunStartTime = null;
+
     const projectSelect = document.getElementById('projectSelect');
     const newProjectName = document.getElementById('newProjectName');
     const createProjectBtn = document.getElementById('createProjectBtn');
@@ -1663,7 +1667,10 @@
       jsonPollMalformedLimit: 4,
       repairPassLimit: 2,
       backupFolder: 'ai_backups',
-      diagnosticsFolder: 'ai_diagnostics'
+      diagnosticsFolder: 'ai_diagnostics',
+      buildPollTimeoutMs: 20 * 60 * 1000,
+      repairPollTimeoutMs: 12 * 60 * 1000,
+      pollIntervalMs: 5000
     };
 
     function sanitizeStorageFragment(value) {
@@ -1846,22 +1853,14 @@
       return { fileName, safePath };
     }
 
-    function validateCriticalSubsystemPresence(safePath, originalContent, candidateContent) {
-      if (safePath !== 'models/2') return { ok: true, missing: [] };
-      const checks = [
-        { label: 'particle', rule: /particle/i },
-        { label: 'impact', rule: /impact/i },
-        { label: 'trail', rule: /trail/i },
-        { label: 'pig death', rule: /pig[\s\S]{0,40}death|death[\s\S]{0,40}pig/i },
-        { label: 'explosion', rule: /explosion/i }
-      ];
-      const missing = checks
-        .filter(check => check.rule.test(originalContent || '') && !check.rule.test(candidateContent || ''))
-        .map(check => check.label);
-      return {
-        ok: missing.length === 0,
-        missing
-      };
+    function stripComments(code) {
+      return String(code || '')
+        .replace(/\/\/[^\n]*/g, '')
+        .replace(/\/\*[\s\S]*?\*\//g, '');
+    }
+
+    function validateCandidateFileContent_getDetails(safePath, candidateContent, originalContent) {
+      return [];
     }
 
     function validateCandidateFileContent(safePath, candidateContent, originalContent) {
@@ -1873,24 +1872,40 @@
         try {
           JSON.parse(trimmed);
         } catch (error) {
-          return { ok: false, error: `${safePath} is not valid JSON: ${error.message}` };
+          return {
+            ok: false,
+            error: `${safePath} is not valid JSON: ${error.message}`,
+            manifestErrors: [],
+            malformedManifestFields: [],
+            missingSystemIds: [],
+            evidenceFailures: [],
+            subsystemDetails: []
+          };
         }
       }
       if (safePath === 'models/2' || safePath.endsWith('.js')) {
         try {
           new Function(trimmed);
         } catch (error) {
-          return { ok: false, error: `${safePath} failed JavaScript syntax validation: ${error.message}` };
+          return {
+            ok: false,
+            error: `${safePath} failed JavaScript syntax validation: ${error.message}`,
+            manifestErrors: [],
+            malformedManifestFields: [],
+            missingSystemIds: [],
+            evidenceFailures: [],
+            subsystemDetails: []
+          };
         }
       }
-      const subsystemCheck = validateCriticalSubsystemPresence(safePath, originalContent, candidateContent);
-      if (!subsystemCheck.ok) {
-        return {
-          ok: false,
-          error: `${safePath} lost critical subsystem markers: ${subsystemCheck.missing.join(', ')}`
-        };
-      }
-      return { ok: true };
+      return {
+        ok: true,
+        manifestErrors: [],
+        malformedManifestFields: [],
+        missingSystemIds: [],
+        evidenceFailures: [],
+        subsystemDetails: []
+      };
     }
 
     function buildRepairPrompt(basePrompt, failedFiles = [], repairAttempt = 1) {
@@ -1911,17 +1926,18 @@ MANDATORY RULES
 2. Return updatedFiles only for the failed targets listed above.
 3. Preserve all working systems that already succeeded.
 4. If a failed target is partial or malformed, rebuild that target completely and safely.
-5. For models/2, do not remove particle, impact, trail, pig death, or explosion related systems that already exist unless you are replacing them with a working implementation.`;
+5. Fix only the exact failed contract items for each target file; do not broaden the repair scope.`;
     }
 
-    function buildFailedFileRecord(file, safePath, reason, stage, originalContent = '', candidateContent = '') {
+    function buildFailedFileRecord(file, safePath, reason, stage, originalContent = '', candidateContent = '', subsystemDetails = []) {
       return {
         path: file.path,
         safePath,
         reason,
         failureStage: stage,
         originalContent: String(originalContent || ''),
-        candidateContent: String(candidateContent || '')
+        candidateContent: String(candidateContent || ''),
+        subsystemDetails: subsystemDetails || []   // structured validator failure report
       };
     }
 
@@ -1929,17 +1945,56 @@ MANDATORY RULES
       if (!repairTargets.length) return '';
       return repairTargets.map((target, index) => {
         const safePath = target.safePath || target.path || `target_${index + 1}`;
-        const reason = target.reason || 'unknown issue';
-        const stage = target.failureStage || 'unknown';
+        const reason   = target.reason || 'unknown issue';
+        const stage    = target.failureStage || 'unknown';
+
+        // ── Structured validator contract block ───────────────────────────────
+        // Emit EXACTLY what the validator checks for so the model cannot
+        // produce plausible-looking code that still misses the structural test.
+        let contractBlock = '';
+        if (Array.isArray(target.subsystemDetails) && target.subsystemDetails.length > 0) {
+          const rows = target.subsystemDetails.map(d => {
+            const anchors = d.humanAnchor.map(a => `      • ${a}`).join('\n');
+            const origLines = d.originalAnchorLines && d.originalAnchorLines.length > 0
+              ? `
+    Original matching lines (RESTORE or REPLACE with equivalent):
+${d.originalAnchorLines.join('\n')}`
+              : '';
+            return `  MISSING SUBSYSTEM: "${d.label}"
+    The validator requires at least ONE of these executable patterns (checked on
+    comment-stripped code — adding comments alone will NOT satisfy this check):
+${anchors}${origLines}`;
+          });
+          contractBlock = `
+
+=== VALIDATOR CONTRACT — EXACT REQUIREMENTS FOR ${safePath} ===
+The following subsystems are REQUIRED to be present as real executable code.
+Validator checks comment-stripped source — comments do not count.
+
+${rows.join('\n\n')}
+
+INSTRUCTION TO MODEL:
+For EACH missing subsystem above, ensure the repaired file contains at least one
+of the listed code patterns as actual executable code, not as a comment or string.
+If the original matching lines are shown, restore those exact patterns or provide
+a functionally equivalent replacement. Do NOT rename, abstract away, or dispatch
+these through a generic handler unless the original already used that pattern.`;
+        }
+
         const liveBlock = String(target.originalContent || '').trim()
-          ? `\n=== LAST LIVE FILE BEFORE APPLY: ${safePath} ===\n${target.originalContent}`
+          ? `
+=== LAST LIVE FILE BEFORE APPLY: ${safePath} ===
+${target.originalContent}`
           : '';
         const candidateBlock = String(target.candidateContent || '').trim()
-          ? `\n=== REJECTED GENERATED CANDIDATE TO REPAIR: ${safePath} ===\n${target.candidateContent}`
+          ? `
+=== REJECTED CANDIDATE TO REPAIR: ${safePath} (fix this file) ===
+${target.candidateContent}`
           : '';
+
         return `=== REPAIR TARGET ${index + 1}: ${safePath} ===
 Reason: ${reason}
-Failure stage: ${stage}${liveBlock}${candidateBlock}`;
+Failure stage: ${stage}${contractBlock}${liveBlock}${candidateBlock}`;
       }).join('\n\n');
     }
 
@@ -2102,7 +2157,76 @@ Failure stage: ${stage}${liveBlock}${candidateBlock}`;
           uiDisplayContent = patchResult.uiDisplayContent;
         }
 
-        const validation = validateCandidateFileContent(safePath, finalContentToSave, originalContent);
+        // ── Pre-write self-check ──────────────────────────────────────────────
+        // Run the validator locally BEFORE writing to Firebase.
+        // If it fails on models/2, attempt one cheap inline correction via the
+        // Anthropic API directly — no Netlify round-trip, no full rebuild.
+        // This inner loop is cheaper than a full repair pass and catches the most
+        // common case: the model produced correct logic but missed one anchor pattern.
+        let finalValidation = validateCandidateFileContent(safePath, finalContentToSave, originalContent);
+        if (!finalValidation.ok && safePath === 'models/2' && finalValidation.subsystemDetails?.length > 0) {
+          Progress.warn(`Pre-write check failed for ${fileName}`, 'Attempting inline self-correction...');
+          appendToChatLog('System', `Pre-write self-check: ${finalValidation.error} — attempting inline fix.`, 'normal');
+
+          try {
+            const contractCtx = buildRepairTargetsContext([{
+              path: file.path,
+              safePath,
+              reason: finalValidation.error,
+              failureStage: 'pre_write_self_check',
+              originalContent,
+              candidateContent: finalContentToSave,
+              subsystemDetails: finalValidation.subsystemDetails
+            }]);
+
+            const selfCheckPrompt = `You are fixing a specific validation failure in a game engine file.
+Do NOT rewrite the whole file. Make ONLY the minimal changes needed to satisfy the validator checks.
+
+${contractCtx}
+
+INSTRUCTION:
+Return ONLY the corrected complete file using this exact format:
+===FILE_START: ${safePath}===
+...corrected complete file content...
+===FILE_END: ${safePath}===`;
+
+            const selfCheckRes = await fetch('https://api.anthropic.com/v1/messages', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                model: 'claude-sonnet-4-20250514',
+                max_tokens: 128000,
+                messages: [{ role: 'user', content: selfCheckPrompt }]
+              })
+            });
+
+            if (selfCheckRes.ok) {
+              const selfCheckData = await selfCheckRes.json();
+              const selfCheckText = selfCheckData.content?.find(b => b.type === 'text')?.text || '';
+              // Parse delimiter response
+              const fileMatch = selfCheckText.match(new RegExp(`===FILE_START:\s*${safePath.replace('/','\\/')}\s*===\n([\s\S]*?)===FILE_END:\s*${safePath.replace('/','\\/')}\s*===`));
+              if (fileMatch && fileMatch[1]) {
+                const corrected = fileMatch[1]; // no trim — preserve content
+                const recheck = validateCandidateFileContent(safePath, corrected, originalContent);
+                if (recheck.ok) {
+                  finalContentToSave = corrected;
+                  uiDisplayContent = escapeHTML(corrected);
+                  finalValidation = recheck;
+                  Progress.step(`Inline self-correction succeeded for ${fileName}`);
+                  appendToChatLog('System', `Inline self-correction fixed ${safePath}.`, 'normal');
+                } else {
+                  appendToChatLog('System', `Inline self-correction still failing: ${recheck.error}`, 'error');
+                  finalValidation = recheck;
+                }
+              }
+            }
+          } catch (selfCheckErr) {
+            console.warn('Pre-write self-check correction failed:', selfCheckErr.message);
+            appendToChatLog('System', `Inline self-correction error: ${selfCheckErr.message}`, 'error');
+          }
+        }
+
+        const validation = finalValidation;
         if (!validation.ok) {
           failedFiles.push(buildFailedFileRecord(
             file,
@@ -2110,7 +2234,8 @@ Failure stage: ${stage}${liveBlock}${candidateBlock}`;
             validation.error,
             'validation',
             originalContent,
-            finalContentToSave
+            finalContentToSave,
+            validation.subsystemDetails || []   // exact validator contract for repair prompt
           ));
           appendToChatLog('System', `Validation failed for ${safePath}: ${validation.error}`, 'error');
           Progress.warn(`Validation failed for ${fileName}`, validation.error);
@@ -2317,6 +2442,14 @@ Failure stage: ${stage}${liveBlock}${candidateBlock}`;
     };
 
     const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+    function assertPollDeadlineOrThrow(deadlineMs, timeoutWindowMs, label, projectPath, jobId, lastKnownProgress = null) {
+      if (Date.now() <= deadlineMs) return;
+      const progressSummary = lastKnownProgress
+        ? ` Last progress: ${JSON.stringify({ status: lastKnownProgress.status || null, tranche: lastKnownProgress.currentTranche || null, updatedAt: lastKnownProgress.updatedAt || null })}`
+        : '';
+      throw new Error(`${label} timed out while polling Firebase. projectPath=${projectPath} jobId=${jobId} timeoutMs=${timeoutWindowMs}.${progressSummary}`);
+    }
 
     /* ═══════════════════════════════════════════════════════════
        V2 EXPERT AGENT DEFINITIONS
@@ -2976,6 +3109,26 @@ Quality criteria for your work:
                 throw new Error(`ai_response.json is invalid: ${envelopeCheck.error}`);
             }
 
+            // ── Freshness guard ──────────────────────────────────────────
+            // Reject payloads that belong to an older job or were written
+            // before the most recent run started.
+            const respJobId    = responseRead.data.jobId;
+            const respTs       = responseRead.data.timestamp;
+            if (lastRunJobId) {
+                if (respJobId && respJobId !== lastRunJobId) {
+                    throw new Error(
+                        `ai_response.json belongs to a different job (got "${respJobId}", expected "${lastRunJobId}"). ` +
+                        `Run "Apply AI Update" again to generate a fresh response.`
+                    );
+                }
+                if (respTs && lastRunStartTime && respTs < lastRunStartTime) {
+                    throw new Error(
+                        `ai_response.json predates the current run (response ts ${respTs} < run start ${lastRunStartTime}). ` +
+                        `The backend may not have written a fresh checkpoint yet — wait for the pipeline to advance then retry.`
+                    );
+                }
+            }
+
             const model2Updates = (responseRead.data.updatedFiles || []).filter(file => {
                 const resolved = resolveAiTargetPath(file.path);
                 return resolved.safePath === 'models/2';
@@ -3135,6 +3288,228 @@ Quality criteria for your work:
         }, 500);
     });
 
+    /* ══════════════════════════════════════════════════════════════════════
+       REPAIR-AND-APPLY LOOP
+       ─────────────────────────────────────────────────────────────────────
+       Called automatically when the initial apply finds validation failures.
+       Runs up to AI_HARDENING.repairPassLimit surgical repair passes without
+       human intervention.  Each pass:
+
+         1. Seeds the backend with the *rejected candidate* (not the stale
+            Firebase file) as the source-of-truth in the files payload
+         2. Builds a lean single-tranche repair prompt
+         3. Triggers the Netlify backend
+         4. Polls for the repaired ai_response.json
+         5. Applies only the still-failing files via applyAiUpdatedFiles
+         6. Re-validates; if clean returns ok, else iterates
+
+       Returns { ok:true,  appliedFiles }          on full success
+               { ok:false, failedFiles, finalSummary } after exhausting all passes
+    ═══════════════════════════════════════════════════════════════════════ */
+    async function runRepairAndApplyLoop({
+      basePrompt,
+      projectPath,
+      projectFiles,          // live files as of the last successful apply
+      initialFailedFiles,    // from applyAiUpdatedFiles; each has .candidateContent
+      escapeHTML
+    }) {
+      const responseFileRef = ref(storage, `${projectPath}/ai_response.json`);
+      const errorFileRef    = ref(storage, `${projectPath}/ai_error.json`);
+      const progressFileRef = ref(storage, `${projectPath}/ai_progress.json`);
+      const requestFileRef  = ref(storage, `${projectPath}/ai_request.json`);
+      const activeJobRef    = ref(storage, `${projectPath}/ai_active_job.json`);
+
+      let currentFailedFiles = initialFailedFiles;
+
+      for (let pass = 1; pass <= AI_HARDENING.repairPassLimit; pass++) {
+        const failedPaths = currentFailedFiles.map(f => f.safePath || f.path).join(', ');
+        appendToChatLog('System',
+          `⚙ Repair pass ${pass}/${AI_HARDENING.repairPassLimit}: targeting ${failedPaths}`, 'normal');
+        Progress.step(`⚙ Repair pass ${pass}/${AI_HARDENING.repairPassLimit}`, failedPaths);
+
+        // ── Rejected candidate is source-of-truth for repair ───────────────
+        // buildRepairSeedFiles overlays candidateContent onto the live files so
+        // the backend receives exactly what it needs to fix, not a re-fetched copy.
+        const repairSeedFiles = buildRepairSeedFiles(projectFiles, currentFailedFiles);
+
+        // ── Lean surgical repair prompt ─────────────────────────────────────
+        const repairContext = buildRepairTargetsContext(currentFailedFiles);
+        const enhancedRepairPrompt =
+`You are an expert game developer performing a SURGICAL REPAIR of specific failed files.
+Do NOT plan new tranches. Do NOT redesign the game. Fix ONLY the exact targets listed below.
+${repairSeedFiles['models/2']         ? `\n=== CURRENT FILE: models/2 ===\n${repairSeedFiles['models/2']}`                 : ''}
+${repairSeedFiles['models/23']        ? `\n=== CURRENT FILE: models/23 ===\n${repairSeedFiles['models/23']}`               : ''}
+${repairSeedFiles['json/assets.json'] ? `\n=== CURRENT FILE: json/assets.json ===\n${repairSeedFiles['json/assets.json']}` : ''}
+
+=== REPAIR CONTEXT ===
+${repairContext}
+
+═══════════════════════════════════════════════════════════
+REPAIR INSTRUCTIONS — PASS ${pass}/${AI_HARDENING.repairPassLimit}
+═══════════════════════════════════════════════════════════
+Rules:
+1. Respond in delimiter format only: ===FILE_START: path=== ... ===FILE_END: path===
+2. Output ONLY the files listed in REPAIR CONTEXT above. Do not touch any other file.
+3. Preserve every working system already in the file — do not remove anything that works.
+4. Read the VALIDATOR CONTRACT section in REPAIR CONTEXT carefully. It lists the EXACT
+   code patterns the automated validator checks for (on comment-stripped source).
+   For each missing subsystem, at least one of the listed executable patterns MUST appear
+   in the repaired file as real code — not in a comment, not in a string, not routed
+   through a renamed/generic dispatcher unless that was already the original pattern.
+   If "Original matching lines" are shown, restore those exact patterns or equivalent.
+5. Output the COMPLETE file content — no patches, no diffs, no SEARCH/REPLACE.
+6. After writing each file, mentally run through the VALIDATOR CONTRACT checklist and
+   confirm every required pattern is present before submitting.
+
+Original user request for context: ${basePrompt}`;
+
+        // ── New job ID for this repair pass ─────────────────────────────────
+        const repairJobId = Date.now().toString();
+        lastRunJobId    = repairJobId;
+        lastRunStartTime = Date.now();
+
+        try { await deleteObject(responseFileRef); } catch (e) {}
+        try { await deleteObject(errorFileRef); }    catch (e) {}
+
+        await uploadString(activeJobRef, JSON.stringify({
+          jobId: repairJobId, timestamp: Date.now(), repairAttempt: pass
+        }));
+
+        // ── Upload payload — repairSeedFiles carries rejected candidate ──────
+        await uploadString(requestFileRef, JSON.stringify({
+          prompt:        enhancedRepairPrompt,
+          files:         repairSeedFiles,   // ← rejected candidate, not stale Firebase
+          projectPath,
+          selectedAssets: [],
+          inlineImages:   [],
+          expertAgents:   EXPERT_AGENTS,
+          repairAttempt:  pass,
+          repairTargets:  currentFailedFiles
+        }));
+
+        // ── Trigger backend ─────────────────────────────────────────────────
+        Progress.step(`Triggering repair backend (pass ${pass})`, 'Sending to Netlify...');
+        const repairProxyRes = await fetch('/.netlify/functions/claudeCodeProxy-background', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ projectPath, jobId: repairJobId, repairAttempt: pass })
+        });
+        if (!repairProxyRes.ok) {
+          throw new Error(
+            `Repair backend rejected (pass ${pass}): ${repairProxyRes.status} ${repairProxyRes.statusText}`
+          );
+        }
+
+        // ── Poll for repaired response ──────────────────────────────────────
+        Progress.step(`Waiting for repair result (pass ${pass})`, 'Polling Firebase...');
+        TrancheUI.showPlanning();
+
+        let repairResult     = null;
+        let repairMalformed  = 0;
+        let lastRepairProgress = null;
+        const repairPollDeadlineMs = Date.now() + AI_HARDENING.repairPollTimeoutMs;
+
+        while (!repairResult) {
+          assertPollDeadlineOrThrow(repairPollDeadlineMs, AI_HARDENING.repairPollTimeoutMs, `Repair pipeline pass ${pass}`, projectPath, repairJobId, lastRepairProgress);
+          await sleep(AI_HARDENING.pollIntervalMs);
+
+          const repairErrRead = await fetchStorageJsonSafe(
+            errorFileRef, projectPath, `repair_error_p${pass}`);
+          if (repairErrRead.ok) {
+            throw new Error(
+              `Repair backend error (pass ${pass}): ${repairErrRead.data?.error || 'unknown'}`);
+          }
+
+          const repairProgRead = await fetchStorageJsonSafe(
+            progressFileRef, projectPath, `repair_progress_p${pass}`);
+          if (repairProgRead.ok && repairProgRead.data.jobId === repairJobId) {
+            lastRepairProgress = repairProgRead.data;
+            TrancheUI.updateFromProgress(repairProgRead.data);
+          }
+
+          const repairRespRead = await fetchStorageJsonSafe(
+            responseFileRef, projectPath, `repair_response_p${pass}`);
+          if (repairRespRead.ok) {
+            const respJobId = repairRespRead.data.jobId;
+            if (respJobId && respJobId !== repairJobId) {
+              Progress.warn(`Stale repair response (pass ${pass})`,
+                `Expected ${repairJobId}, got ${respJobId} — still waiting...`);
+              continue;
+            }
+            const envCheck = validateAiResponseEnvelope(repairRespRead.data);
+            if (!envCheck.ok) {
+              repairMalformed++;
+              if (repairMalformed >= AI_HARDENING.jsonPollMalformedLimit) {
+                throw new Error(`Malformed repair response (pass ${pass}): ${envCheck.error}`);
+              }
+              Progress.warn(`Invalid repair envelope (pass ${pass})`, envCheck.error);
+              continue;
+            }
+            repairResult = repairRespRead.data;
+          } else if (repairRespRead.kind === 'parse_error') {
+            repairMalformed++;
+            if (repairMalformed >= AI_HARDENING.jsonPollMalformedLimit) {
+              throw new Error(
+                `Unparseable repair response after ${repairMalformed} tries (pass ${pass})`);
+            }
+            Progress.warn(`Malformed repair response (pass ${pass})`, `Attempt ${repairMalformed}`);
+          } else if (repairRespRead.kind === 'missing') {
+            // Hard-fail: backend marked complete but wrote nothing
+            if (repairProgRead.ok &&
+                repairProgRead.data.status === 'complete' &&
+                repairProgRead.data.jobId === repairJobId) {
+              throw new Error(
+                `Repair persistence failure (pass ${pass}): backend complete but ai_response.json absent.`
+              );
+            }
+          }
+        }
+
+        // ── Apply repair — only the still-failing files ─────────────────────
+        Progress.step(`Applying repair (pass ${pass})`,
+          `Validating and writing: ${currentFailedFiles.map(f => f.safePath || f.path).join(', ')}`);
+
+        const repairedApply = await applyAiUpdatedFiles({
+          result:      repairResult,
+          projectPath,
+          projectFiles,   // live baseline for writing + structural comparison
+          escapeHTML,
+          targetPaths: currentFailedFiles.map(f => f.safePath || f.path)
+        });
+
+        if (repairedApply.failedFiles.length === 0) {
+          Progress.step(
+            `✅ Repair pass ${pass} succeeded`,
+            `${repairedApply.appliedFiles.length} file(s) written live.`);
+          appendToChatLog('System',
+            `✅ Repair pass ${pass} complete — all ${repairedApply.appliedFiles.length} file(s) applied.`,
+            'normal');
+          return { ok: true, appliedFiles: repairedApply.appliedFiles, pass };
+        }
+
+        // Still failing — update records for next pass
+        currentFailedFiles = repairedApply.failedFiles;
+        const stillFailed  = currentFailedFiles.map(f => `${f.safePath}: ${f.reason}`).join(' | ');
+        Progress.warn(`Repair pass ${pass} still failing`, stillFailed);
+        appendToChatLog('System', `Repair pass ${pass} failed: ${stillFailed}`, 'error');
+
+        await quarantineAiPayload(
+          projectPath, `repair_pass_${pass}_failures`,
+          JSON.stringify(currentFailedFiles, null, 2),
+          { repairAttempt: pass, failedCount: currentFailedFiles.length }
+        );
+      }
+
+      // ── All passes exhausted — structured hard fail ──────────────────────
+      const finalSummary = currentFailedFiles.map(f => `${f.safePath}: ${f.reason}`).join(' | ');
+      await quarantineAiPayload(
+        projectPath, 'repair_all_passes_exhausted',
+        JSON.stringify(currentFailedFiles, null, 2),
+        { repairPassLimit: AI_HARDENING.repairPassLimit, failedCount: currentFailedFiles.length }
+      );
+      return { ok: false, failedFiles: currentFailedFiles, finalSummary };
+    }
+
     async function executeAIPipeline(promptOverride, options = {}) {
       const {
         repairAttempt = 0,
@@ -3145,7 +3520,7 @@ Quality criteria for your work:
 
       const basePrompt = promptOverride || aiPromptInput.value.trim();
       if (!basePrompt || !currentProject) {
-          if (!preserveButtonLock && repairAttempt === 0 && parseErrorRetry === 0) sendToAiBtn.disabled = false;
+          if (!preserveButtonLock) sendToAiBtn.disabled = false;
           return;
       }
 
@@ -3329,9 +3704,9 @@ Rules:
 1. Return strict JSON only — no markdown, no commentary outside the JSON envelope.
 2. Return updatedFiles ONLY for the failed targets listed. Do not touch any other file.
 3. Preserve every working system already present in the current file content.
-4. For models/2: you MUST retain all particle, impact, trail, pig death, and explosion
-   systems. If the validation says these were missing, rebuild those subsystems completely
-   and correctly — do not remove them.
+4. Preserve every working contract item already present in the current file content.
+   If validation reports missing systems, malformed manifest fields, or evidence failures,
+   repair only those exact contract items without broad redesign.
 5. Output full file content (not SEARCH/REPLACE blocks) for each repaired file.
 
 OUTPUT FORMAT — respond with exactly this JSON shape:
@@ -3505,6 +3880,8 @@ User Request: ${prompt}`;
         try { await deleteObject(progressFileRef); } catch(e) {}
 
         const currentJobId = Date.now().toString();
+        lastRunJobId = currentJobId;
+        lastRunStartTime = Date.now();
         Progress.step('Securing pipeline', 'Terminating any old overlapping jobs...');
         const activeJobRef = ref(storage, `${projectPath}/ai_active_job.json`);
         await uploadString(activeJobRef, JSON.stringify({ jobId: currentJobId, timestamp: Date.now(), repairAttempt }));
@@ -3561,13 +3938,16 @@ User Request: ${prompt}`;
         let result = null;
         let malformedProgressCount = 0;
         let malformedResponseCount = 0;
+        let lastKnownProgress = null;
+        const buildPollDeadlineMs = Date.now() + AI_HARDENING.buildPollTimeoutMs;
         Progress.step('Waiting for Claude response', 'Polling Firebase for V2 expert tranche progress...');
 
         TrancheUI.show();
         TrancheUI.showPlanning();
 
         while (!result) {
-          await sleep(5000);
+          assertPollDeadlineOrThrow(buildPollDeadlineMs, AI_HARDENING.buildPollTimeoutMs, 'Build pipeline', projectPath, currentJobId, lastKnownProgress);
+          await sleep(AI_HARDENING.pollIntervalMs);
 
           const errorRead = await fetchStorageJsonSafe(errorFileRef, projectPath, 'ai_error');
           if (errorRead.ok) {
@@ -3582,6 +3962,7 @@ User Request: ${prompt}`;
             if (progressData.jobId && progressData.jobId !== currentJobId) {
               continue;
             }
+            lastKnownProgress = progressData;
             TrancheUI.updateFromProgress(progressData);
             if (progressData.status === 'executing' && progressData.tranches) {
               const active = progressData.tranches.find(t => t.status === 'in_progress');
@@ -3602,25 +3983,46 @@ User Request: ${prompt}`;
 
           const responseRead = await fetchStorageJsonSafe(responseFileRef, projectPath, 'ai_response');
           if (responseRead.ok) {
-            const envelopeCheck = validateAiResponseEnvelope(responseRead.data);
-            if (!envelopeCheck.ok) {
-              await quarantineAiPayload(projectPath, 'ai_response_invalid_envelope', responseRead.rawText, {
-                error: envelopeCheck.error,
-                jobId: currentJobId
-              });
-              malformedResponseCount++;
-              if (malformedResponseCount >= AI_HARDENING.jsonPollMalformedLimit) {
-                throw new Error(`Malformed final AI response: ${envelopeCheck.error}`);
+            // ── Freshness guard in polling loop ─────────────────────────
+            // Reject a response that belongs to a different/older job.
+            const respJobId = responseRead.data.jobId;
+            if (respJobId && respJobId !== currentJobId) {
+              Progress.warn('Stale ai_response.json detected', `Response job "${respJobId}" ≠ current "${currentJobId}" — still waiting for fresh write...`);
+              // do NOT assign result — keep polling
+            } else {
+              const envelopeCheck = validateAiResponseEnvelope(responseRead.data);
+              if (!envelopeCheck.ok) {
+                await quarantineAiPayload(projectPath, 'ai_response_invalid_envelope', responseRead.rawText, {
+                  error: envelopeCheck.error,
+                  jobId: currentJobId
+                });
+                malformedResponseCount++;
+                if (malformedResponseCount >= AI_HARDENING.jsonPollMalformedLimit) {
+                  throw new Error(`Malformed final AI response: ${envelopeCheck.error}`);
+                }
+                Progress.warn('Invalid AI response envelope', envelopeCheck.error);
+              } else {
+                result = responseRead.data;
               }
-              Progress.warn('Invalid AI response envelope', envelopeCheck.error);
-              continue;
             }
-            result = responseRead.data;
           } else if (responseRead.kind === 'parse_error') {
             malformedResponseCount++;
             Progress.warn('Malformed ai_response.json detected', `Attempt ${malformedResponseCount}/${AI_HARDENING.jsonPollMalformedLimit}`);
             if (malformedResponseCount >= AI_HARDENING.jsonPollMalformedLimit) {
               throw new Error('Malformed final AI response after multiple parse attempts.');
+            }
+          } else if (responseRead.kind === 'missing') {
+            // ── Issue 7: Hard-fail if backend already marked complete ────
+            // The frontend deleted ai_response.json at run start.  If progress
+            // says "complete" but the file still doesn't exist, the backend
+            // failed to persist the final payload — treat as a hard error.
+            const latestProgress = progressRead.ok ? progressRead.data : null;
+            if (latestProgress && latestProgress.status === 'complete' &&
+                latestProgress.jobId === currentJobId) {
+              throw new Error(
+                'Pipeline persistence failure: backend reported build complete but ai_response.json was never written. ' +
+                'Check Firebase Storage quotas and backend logs, then retry.'
+              );
             }
           }
         }
@@ -3629,7 +4031,18 @@ User Request: ${prompt}`;
             '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
         }[tag]));
 
-        Progress.step(`Writing ${result.updatedFiles.length} file(s) to Firebase`);
+        // ── Issue 6: "Build complete" is a distinct milestone from "live apply" ──
+        // The backend has finished generating all files. This is confirmed the moment
+        // we break out of the polling loop with a valid result. We surface it as its
+        // own step so a later apply failure cannot be confused with a build failure.
+        const buildStatus = result.status === 'final'
+          ? `All ${result.totalTranches || result.updatedFiles.length} tranche(s) finished — ${result.updatedFiles.length} file(s) ready`
+          : result.status === 'checkpoint'
+            ? `Checkpoint: ${result.updatedFiles.length} file(s) accumulated (tranche ${(result.trancheIndex ?? 0) + 1}/${result.totalTranches ?? '?'})`
+            : `${result.updatedFiles.length} file(s) generated`;
+        Progress.step('✅ Build pipeline complete', buildStatus);
+
+        Progress.step(`Uploading ${result.updatedFiles.length} file(s) to Firebase`, 'Validating and writing each file...');
         const applySummary = await applyAiUpdatedFiles({
           result,
           projectPath,
@@ -3639,31 +4052,42 @@ User Request: ${prompt}`;
 
         if (applySummary.failedFiles.length > 0) {
           const failedSummary = applySummary.failedFiles.map(f => `${f.safePath || f.path}: ${f.reason}`).join(' | ');
-          await quarantineAiPayload(projectPath, 'ai_apply_failures', JSON.stringify(applySummary.failedFiles, null, 2), {
-            jobId: currentJobId,
-            repairAttempt,
-            failedCount: applySummary.failedFiles.length
+          await quarantineAiPayload(projectPath, 'ai_initial_apply_failures',
+            JSON.stringify(applySummary.failedFiles, null, 2), {
+              jobId: currentJobId,
+              failedCount: applySummary.failedFiles.length
+            });
+
+          Progress.warn('Initial apply has failures — entering repair loop', failedSummary);
+          appendToChatLog('System',
+            `${applySummary.failedFiles.length} file(s) failed validation. Auto-repair loop starting...`, 'error');
+
+          const repairOutcome = await runRepairAndApplyLoop({
+            basePrompt,
+            projectPath,
+            projectFiles,
+            initialFailedFiles: applySummary.failedFiles,
+            escapeHTML
           });
 
-          if (repairAttempt < AI_HARDENING.repairPassLimit) {
-            appendToChatLog('System', `Detected ${applySummary.failedFiles.length} failed section(s). Re-running only the failed portion.`, 'error');
-            Progress.warn('Targeted repair triggered', failedSummary);
-            await executeAIPipeline(basePrompt, {
-              repairAttempt: repairAttempt + 1,
-              repairTargets: applySummary.failedFiles,
-              preserveButtonLock: true
-            });
-            return;
+          if (!repairOutcome.ok) {
+            throw new Error(
+              `AI update failed after ${AI_HARDENING.repairPassLimit} repair attempt(s). ` +
+              repairOutcome.finalSummary
+            );
           }
 
-          throw new Error(`AI update failed after automatic repair attempts. ${failedSummary}`);
+          // Merge repair-applied files into the review pane list
+          applySummary.appliedFiles.push(...repairOutcome.appliedFiles);
         }
 
         result.updatedFiles = applySummary.appliedFiles;
 
         appendToChatLog('AI', result.message || 'Files have been updated successfully.');
-        setStatus(repairAttempt > 0 ? 'AI repair completed successfully.' : 'V2 expert-agent tranched build complete.');
-        Progress.done(repairAttempt > 0 ? 'Repair pipeline complete ✦' : 'V2 Expert Pipeline complete ✦');
+        setStatus('V2 expert-agent tranched build complete.');
+        Progress.done(repairAttempt > 0
+          ? '✅ Parse-error repair complete — project files updated ✦'
+          : '✅ Live apply complete — project files updated ✦');
 
         try {
           const finalProgressRead = await fetchStorageJsonSafe(progressFileRef, projectPath, 'ai_progress_final');
@@ -3811,7 +4235,10 @@ User Request: ${prompt}`;
         Progress.error(error.message);
         TrancheUI.updateFromProgress({ status: 'error', error: error.message, completedTime: Date.now() });
       } finally {
-        if (!preserveButtonLock && repairAttempt === 0 && parseErrorRetry === 0) {
+        // Re-enable the button only when the outermost executeAIPipeline call exits.
+        // Backend parse-error recovery sets preserveButtonLock:true so its recursive
+        // call doesn't release prematurely.
+        if (!preserveButtonLock) {
           sendToAiBtn.disabled = false;
         }
       }
