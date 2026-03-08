@@ -447,6 +447,10 @@ You must respond ONLY with a valid JSON object. No markdown, no code fences, no 
     {
       "name": "Short Name",
       "description": "2-3 sentence description of what this tranche accomplishes.",
+      "expertAgents": ["agent_id_1", "agent_id_2"],
+      "phase": 1,
+      "dependencies": [],
+      "qualityCriteria": ["Criterion 1", "Criterion 2"],
       "prompt": "THE COMPLETE, SELF-CONTAINED PROMPT for the coding AI. Include all relevant technical details.",
       "expectedFiles": ["models/2", "models/23"]
     }
@@ -498,6 +502,10 @@ You must respond ONLY with a valid JSON object. No markdown, no code fences, no 
         index: i,
         name: t.name,
         description: t.description,
+        expertAgents: t.expertAgents || [],
+        phase: t.phase || 0,
+        dependencies: t.dependencies || [],
+        qualityCriteria: t.qualityCriteria || [],
         prompt: t.prompt,
         expectedFiles: t.expectedFiles || [],
         status: "pending",

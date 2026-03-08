@@ -1859,53 +1859,107 @@
         .replace(/\/\*[\s\S]*?\*\//g, '');
     }
 
-    function validateCandidateFileContent_getDetails(safePath, candidateContent, originalContent) {
+function validateCandidateFileContent_getDetails(safePath, candidateContent, originalContent) {
+      // Handled directly inside validateCandidateFileContent now
       return [];
     }
 
     function validateCandidateFileContent(safePath, candidateContent, originalContent) {
       const trimmed = String(candidateContent || '').trim();
-      if (!trimmed) {
-        return { ok: false, error: `${safePath} became empty.` };
-      }
-      if (safePath.endsWith('.json')) {
-        try {
-          JSON.parse(trimmed);
-        } catch (error) {
-          return {
-            ok: false,
-            error: `${safePath} is not valid JSON: ${error.message}`,
-            manifestErrors: [],
-            malformedManifestFields: [],
-            missingSystemIds: [],
-            evidenceFailures: [],
-            subsystemDetails: []
-          };
-        }
-      }
-      if (safePath === 'models/2' || safePath.endsWith('.js')) {
-        try {
-          new Function(trimmed);
-        } catch (error) {
-          return {
-            ok: false,
-            error: `${safePath} failed JavaScript syntax validation: ${error.message}`,
-            manifestErrors: [],
-            malformedManifestFields: [],
-            missingSystemIds: [],
-            evidenceFailures: [],
-            subsystemDetails: []
-          };
-        }
-      }
-      return {
-        ok: true,
+      const baseResult = {
         manifestErrors: [],
         malformedManifestFields: [],
         missingSystemIds: [],
         evidenceFailures: [],
         subsystemDetails: []
       };
+
+      if (!trimmed) {
+        return { ok: false, error: `${safePath} became empty.`, ...baseResult };
+      }
+
+      // 1. Basic Syntax Check
+      if (safePath.endsWith('.json')) {
+        try {
+          JSON.parse(trimmed);
+        } catch (error) {
+          return { ok: false, error: `${safePath} is not valid JSON: ${error.message}`, ...baseResult };
+        }
+      } else if (safePath === 'models/2' || safePath.endsWith('.js')) {
+        try {
+          new Function(trimmed);
+        } catch (error) {
+          return { ok: false, error: `${safePath} failed JavaScript syntax validation: ${error.message}`, ...baseResult };
+        }
+      }
+
+      // 2. Enforce the Manifest Contract
+      const manifestRegex = /VALIDATION_MANIFEST_START\s*([\s\S]*?)\s*VALIDATION_MANIFEST_END/;
+      const match = trimmed.match(manifestRegex);
+
+      if (!match) {
+        return { 
+          ok: false, 
+          error: `Missing VALIDATION_MANIFEST block. You MUST include the VALIDATION_MANIFEST_START and END markers in ${safePath}.`,
+          ...baseResult 
+        };
+      }
+
+      let manifest;
+      try {
+        manifest = JSON.parse(match[1]);
+      } catch (err) {
+        return { 
+          ok: false, 
+          error: `VALIDATION_MANIFEST in ${safePath} is not valid JSON: ${err.message}`,
+          ...baseResult 
+        };
+      }
+
+      if (manifest.file !== safePath) {
+        return { 
+          ok: false, 
+          error: `Manifest file path mismatch. Expected "${safePath}", got "${manifest.file}".`,
+          ...baseResult 
+        };
+      }
+
+      // 3. Verify Code Evidence (The "Bite")
+      // We check the comment-stripped code to ensure the AI isn't just faking it in comments
+      const codeWithoutComments = stripComments(trimmed);
+      const subsystemDetails = [];
+      const missingSystemIds = [];
+
+      if (Array.isArray(manifest.systems)) {
+        for (const sys of manifest.systems) {
+          if (!sys.keywords || !Array.isArray(sys.keywords)) continue;
+
+          // Check if AT LEAST ONE keyword exists in the live executable code
+          const hasEvidence = sys.keywords.some(kw => codeWithoutComments.includes(kw));
+
+          if (!hasEvidence) {
+            missingSystemIds.push(sys.id);
+            subsystemDetails.push({
+               label: sys.id,
+               humanAnchor: sys.keywords,
+               originalAnchorLines: [] // Could be expanded to check originalContent diffs
+            });
+          }
+        }
+      }
+
+      if (missingSystemIds.length > 0) {
+        return {
+          ok: false,
+          error: `Missing executable code evidence for declared systems: ${missingSystemIds.join(', ')}. Keywords must appear in actual code, not just comments.`,
+          ...baseResult,
+          missingSystemIds,
+          subsystemDetails
+        };
+      }
+
+      // Passed all checks
+      return { ok: true, ...baseResult };
     }
 
     function buildRepairPrompt(basePrompt, failedFiles = [], repairAttempt = 1) {
@@ -2016,75 +2070,6 @@ Failure stage: ${stage}${contractBlock}${liveBlock}${candidateBlock}`;
       return backupPath;
     }
 
-    function applySearchReplaceBlocks(aiOutputContent, originalContent, fileName, escapeHTMLFn) {
-      const blockRegex = /<<<<<<< SEARCH[\r\n]+([\s\S]*?)[\r\n]+=======[\r\n]+([\s\S]*?)[\r\n]+>>>>>>> REPLACE/g;
-      let normalizedResult = String(originalContent || '').replace(/\r\n/g, '\n');
-      let uiResult = escapeHTMLFn(normalizedResult);
-      let match;
-      let changesMade = 0;
-
-      function findWithNormalizedWhitespace(haystack, needle) {
-        const normalize = (str) => str.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\s+/g, '');
-        const needleNorm = normalize(needle);
-        if (!needleNorm) return null;
-        const haystackLines = haystack.split('\n');
-        for (let i = 0; i < haystackLines.length; i++) {
-          let currentNorm = '';
-          for (let j = i; j < haystackLines.length; j++) {
-            currentNorm += haystackLines[j].replace(/\/\/.*$/, '').replace(/\s+/g, '');
-            if (currentNorm === needleNorm) {
-              return haystackLines.slice(i, j + 1).join('\n');
-            }
-            if (currentNorm.length > needleNorm.length) break;
-          }
-        }
-        return null;
-      }
-
-      while ((match = blockRegex.exec(aiOutputContent)) !== null) {
-        const searchTarget = match[1].replace(/\r\n/g, '\n');
-        const replacement = match[2];
-
-        if (normalizedResult.includes(searchTarget)) {
-          normalizedResult = normalizedResult.split(searchTarget).join(replacement);
-          const escapedSearch = escapeHTMLFn(searchTarget);
-          const escapedReplace = escapeHTMLFn(replacement);
-          const uiPatch = `<span style="color: var(--success); font-weight: bold;">${escapedSearch}</span>
-<span style="color: var(--danger); font-weight: bold;">${escapedReplace}</span>`;
-          uiResult = uiResult.split(escapedSearch).join(uiPatch);
-          changesMade++;
-        } else {
-          const verbatimMatch = findWithNormalizedWhitespace(normalizedResult, searchTarget);
-          if (verbatimMatch !== null) {
-            normalizedResult = normalizedResult.split(verbatimMatch).join(replacement);
-            const escapedSearch = escapeHTMLFn(verbatimMatch);
-            const escapedReplace = escapeHTMLFn(replacement);
-            const uiPatch = `<span style="color: var(--success); font-weight: bold;">${escapedSearch}</span>
-<span style="color: var(--danger); font-weight: bold;">${escapedReplace}</span>`;
-            uiResult = uiResult.split(escapedSearch).join(uiPatch);
-            changesMade++;
-          } else {
-            console.warn(`Patch failed for ${fileName}. Code not found:
-`, searchTarget);
-          }
-        }
-      }
-
-      if (changesMade === 0) {
-        return {
-          ok: false,
-          error: `Failed to apply any SEARCH/REPLACE blocks for ${fileName}.`
-        };
-      }
-
-      return {
-        ok: true,
-        finalContentToSave: normalizedResult,
-        uiDisplayContent: uiResult,
-        changesMade
-      };
-    }
-
     async function applyAiUpdatedFiles(options) {
       const {
         result,
@@ -2123,39 +2108,7 @@ Failure stage: ${stage}${contractBlock}${liveBlock}${candidateBlock}`;
         let aiOutputContent = stripCodeFenceWrapper(file.content);
         let finalContentToSave = aiOutputContent;
         let uiDisplayContent = escapeHTML(aiOutputContent);
-
-        if (aiOutputContent.includes('<<<<<<< SEARCH')) {
-          if (!originalContent) {
-            failedFiles.push(buildFailedFileRecord(
-              file,
-              safePath,
-              `Original content missing for patch application (${fileName}).`,
-              'patch_original_missing',
-              originalContent,
-              aiOutputContent
-            ));
-            appendToChatLog('System', `Warning: Could not find original content for ${fileName} to apply patch.`, 'error');
-            continue;
-          }
-
-          const patchResult = applySearchReplaceBlocks(aiOutputContent, originalContent, fileName, escapeHTML);
-          if (!patchResult.ok) {
-            failedFiles.push(buildFailedFileRecord(
-              file,
-              safePath,
-              patchResult.error,
-              'patch_apply',
-              originalContent,
-              aiOutputContent
-            ));
-            appendToChatLog('System', patchResult.error, 'error');
-            Progress.warn(`Patch failed for ${fileName}`, patchResult.error);
-            continue;
-          }
-
-          finalContentToSave = patchResult.finalContentToSave;
-          uiDisplayContent = patchResult.uiDisplayContent;
-        }
+        
 
         // ── Pre-write self-check ──────────────────────────────────────────────
         // Run the validator locally BEFORE writing to Firebase.
@@ -3849,21 +3802,14 @@ Respond with a JSON object:
 }
 
 RESPONSE FORMAT FOR TRANCHE EXECUTION:
-Each tranche executor must output ONLY changed lines using SEARCH/REPLACE blocks:
+Each tranche executor must output COMPLETE file contents using strict delimiters.
+Do NOT use JSON or markdown code blocks for the file outputs.
 
-<<<<<<< SEARCH
-[exact code from original file, with context lines for unique match]
-=======
-[new replacement code]
->>>>>>> REPLACE
+===FILE_START: path/to/filename===
+...complete raw file content here, exactly as it should be saved...
+===FILE_END: path/to/filename===
 
-Rules:
-1. SEARCH must match existing code exactly, line for line, preserving whitespace.
-2. Include enough context lines for a unique match.
-3. Multiple SEARCH/REPLACE blocks per file are allowed.
-4. For completely new files, output full code without SEARCH/REPLACE tags.
-
-Do NOT include "assets.json" in your updatedFiles response.
+Do NOT include "assets.json" in your response unless explicitly modifying it.
 In your 'message', provide a detailed changelog of modifications.
 
 ═══════════════════════════════════════════════════════════
