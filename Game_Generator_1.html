@@ -2067,7 +2067,7 @@ function validateCandidateFileContent_getDetails(safePath, candidateContent, ori
         return { ok: false, error: `${safePath} became empty.`, ...baseResult };
       }
 
-      // 1. Basic Syntax Check
+      // 1. JSON validity check (for .json files only)
       if (safePath.endsWith('.json')) {
         try {
           const strippedJson = trimmed.replace(/\/\*[\s\S]*?\*\//g, '').trim();
@@ -2075,31 +2075,13 @@ function validateCandidateFileContent_getDetails(safePath, candidateContent, ori
         } catch (error) {
           return { ok: false, error: `${safePath} is not valid JSON: ${error.message}`, ...baseResult };
         }
-      } else if (safePath === 'models/2' || safePath.endsWith('.js')) {
-        try {
-          // new Function() wraps code in a function body, which breaks:
-          //   - Top-level import / export statements (ES modules)
-          //   - TypeScript-style type annotations  (param: Type)
-          // Strip those constructs before validation so valid modern JS isn't
-          // incorrectly rejected and burned through repair passes.
-          const strippedForValidation = trimmed
-            // Remove block comments (including the VALIDATION_MANIFEST block)
-            .replace(/\/\*[\s\S]*?\*\//g, '')
-            // Remove single-line comments
-            .replace(/\/\/[^\n]*/g, '')
-            // Strip top-level import statements  e.g.  import Foo from 'bar';
-            .replace(/^\s*import\s[\s\S]*?(?:from\s+['"][^'"]+['"])?[;]?\s*$/gm, '')
-            // Strip top-level export keywords   e.g.  export default class / export function
-            .replace(/^\s*export\s+(default\s+)?/gm, '')
-            // Strip TypeScript-style type annotations in function params  e.g.  (x: number)
-            // This covers simple  param: Type  and  param: Type = default  patterns
-            .replace(/(\w)\s*:\s*[A-Z][A-Za-z0-9_<>\[\]|&.,\s]*(?=[,)\s=])/g, '$1')
-            .trim();
-          new Function(strippedForValidation);
-        } catch (error) {
-          return { ok: false, error: `${safePath} failed JavaScript syntax validation: ${error.message}`, ...baseResult };
-        }
       }
+      // NOTE: JS/HTML syntax checking is intentionally NOT done here.
+      // The backend Final QA loop (Audit → Fix → Verify) is the single
+      // authoritative syntax check. Running new Function() here would
+      // contradict a QA-approved file and block valid code that uses
+      // TypeScript annotations, top-level imports, or other constructs
+      // that new Function() cannot parse correctly.
 
       // 2. Enforce the Manifest Contract
       const manifestRegex = /VALIDATION_MANIFEST_START\s*([\s\S]*?)\s*VALIDATION_MANIFEST_END/;
@@ -2164,6 +2146,35 @@ function validateCandidateFileContent_getDetails(safePath, candidateContent, ori
           missingSystemIds,
           subsystemDetails
         };
+      }
+
+      // 4. Structural integrity — models/2 only
+      // The Cherry3D engine requires a strict module wrapper. If it's missing
+      // or broken the file will silently fail to load at runtime.
+      if (safePath === 'models/2') {
+        const hasModuleExports = /module\.exports\s*=\s*\(\s*\)\s*=>/.test(trimmed);
+        const hasReturnAssign  = /return\s+Object\.assign\s*\(/.test(trimmed);
+        const REQUIRED_HANDLERS = [
+          'onInit', 'onRender', 'onDestroy', 'onKeyEvent',
+          'onTouchEvent', 'onMouseEvent', 'onScroll', 'onSurfaceChanged', 'onPause'
+        ];
+        const missingHandlers = REQUIRED_HANDLERS.filter(h => !trimmed.includes(`var ${h}`));
+
+        if (!hasModuleExports) {
+          return { ok: false,
+            error: `models/2 is missing the mandatory Cherry3D wrapper: module.exports = () => { ... }. The engine cannot load this file without it.`,
+            ...baseResult };
+        }
+        if (!hasReturnAssign) {
+          return { ok: false,
+            error: `models/2 is missing return Object.assign({...}) at the end of the module.exports wrapper. All handler functions must be returned.`,
+            ...baseResult };
+        }
+        if (missingHandlers.length > 0) {
+          return { ok: false,
+            error: `models/2 is missing required handler declarations: ${missingHandlers.map(h => 'var ' + h).join(', ')}. All must be declared with var and included in the return Object.assign({...}).`,
+            ...baseResult };
+        }
       }
 
       // Passed all checks

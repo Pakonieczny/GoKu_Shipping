@@ -1343,6 +1343,15 @@ CRITICAL RULES:
 - If the file already has functions, variables, or structures from prior tranches, KEEP THEM ALL and add your new code alongside them.
 - The delimiter lines (===FILE_START:=== etc.) must appear exactly as shown, on their own lines.
 - CRITICAL: models/2 MUST be written in plain JavaScript ONLY. Never use TypeScript syntax. No type annotations (param: Type), no interface/type declarations, no generic <T> syntax. Use standard JS: function foo(param) { }
+- CRITICAL: models/2 MUST preserve the Cherry3D module wrapper at all times. The file must:
+  1. Start with:  module.exports = () => {
+  2. Second line:  var surface = Module.getSurface();  var scene = surface.getScene();
+  3. Declare ALL of these with var (not const/let):
+       var updateInput, var onInit, var onRender, var onDestroy, var onKeyEvent,
+       var onTouchEvent, var onMouseEvent, var onScroll, var onSurfaceChanged, var onPause
+  4. End with:  return Object.assign({ onInit, onRender, onDestroy, onKeyEvent, onTouchEvent, onMouseEvent, onScroll, onSurfaceChanged, onPause });
+               };
+  If this wrapper is broken or missing, the engine cannot load the file at all.
 
 MANDATORY VALIDATION MANIFEST (your output will be REJECTED without this):
 Every file you output MUST contain a machine-readable manifest block embedded as a comment
@@ -1688,14 +1697,28 @@ Correct approach:
 
           const qaSystemAudit = `You are a Senior Code Auditor performing a final quality check on a browser game built by a multi-tranche AI pipeline. Each tranche writes the COMPLETE file, so the same identifier can appear declared multiple times.
 
-Your ONLY job: find ALL defects and report them as structured JSON.
+Your ONLY job: find ALL defects in the provided files and report them as structured JSON.
 
 DEFECTS TO FIND:
 1. Duplicate identifier declarations (const/let/var/function/class declared more than once at the same scope)
-2. JavaScript syntax errors (unexpected token, missing brace/bracket/paren, unterminated string)
-3. Block-scoped variables that shadow each other illegally
-4. HTML (models/23): duplicate <script> blocks, duplicate <style> blocks, unclosed tags
-5. Unreachable statements after return/throw that cause parse errors
+2. JavaScript syntax errors — unexpected token, missing brace/bracket/paren, unterminated string
+3. TypeScript syntax used in plain JavaScript files — this WILL cause runtime parse failures:
+   - Type annotations on function parameters: (x: number), (name: string), (val: boolean)
+   - Return type annotations: function foo(): void {}, (): number =>
+   - Type assertions: value as Type, <Type>value
+   - Interface or type declarations: interface Foo {}, type Bar = {}
+   - Access modifiers: public, private, protected on class members
+   - Generic type parameters: Array<string>, Map<string, number>
+   The file MUST be plain JavaScript (ES5/ES6+). All of the above are TypeScript and will break.
+4. Block-scoped variables that shadow each other illegally
+5. HTML (models/23): duplicate <script> blocks, duplicate <style> blocks, unclosed tags
+6. Unreachable statements after return/throw that cause parse errors
+7. models/2 structural integrity — these are required for the Cherry3D engine to load the file:
+   - File must start with: module.exports = () => {
+   - File must end with: return Object.assign({ onInit, onRender, ... }); };
+   - All of these must be declared with var: updateInput, onInit, onRender, onDestroy,
+     onKeyEvent, onTouchEvent, onMouseEvent, onScroll, onSurfaceChanged, onPause
+   Report any that are missing or corrupted as defects.
 
 RESPOND ONLY with valid JSON — no markdown, no preamble, no explanation:
 {
@@ -1712,7 +1735,18 @@ If no defects found: { "clean": true, "errors": [] }`;
 RULES:
 - Fix ONLY the listed defects. Do not change any game logic, variable values, physics constants, or rename anything.
 - For duplicate declarations: keep the LAST definition (most complete tranche), remove all earlier ones.
-- Scan the ENTIRE file — there may be multiple instances of the same duplicate.
+- For TypeScript syntax in JavaScript files: remove the TypeScript-specific parts only, preserve the logic:
+  - (x: number, y: string) → (x, y)
+  - function foo(): void {} → function foo() {}
+  - value as Type → value
+  - interface Foo {} or type Bar = {} → remove entirely
+  - public/private/protected → remove the keyword, keep the member
+- For models/2 structural defects: restore the exact Cherry3D wrapper:
+  - Ensure first line is: module.exports = () => {
+  - Ensure all handlers are declared with var (not const/let)
+  - Ensure last lines are: return Object.assign({ onInit, onRender, onDestroy, onKeyEvent, onTouchEvent, onMouseEvent, onScroll, onSurfaceChanged, onPause }); };
+  - Do NOT add stub implementations — if a handler was using const/let, just change the declaration keyword to var.
+- Scan the ENTIRE file — there may be multiple instances of the same issue.
 - Output the COMPLETE corrected file for each file that needed changes.
 - Do NOT output files that had no listed errors.
 - Use this exact delimiter format:
