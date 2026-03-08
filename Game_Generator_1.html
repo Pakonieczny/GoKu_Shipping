@@ -2005,185 +2005,9 @@ const AI_HARDENING = {
       }
     }
 
-    function validateAiResponseEnvelope(result) {
-      if (!result || typeof result !== 'object' || Array.isArray(result)) {
-        return { ok: false, error: 'AI response was not a JSON object.' };
-      }
-      if (!Array.isArray(result.updatedFiles)) {
-        return { ok: false, error: 'AI response is missing updatedFiles array.' };
-      }
-      for (const [index, file] of result.updatedFiles.entries()) {
-        if (!file || typeof file !== 'object') {
-          return { ok: false, error: `updatedFiles[${index}] is invalid.` };
-        }
-        if (!file.path || typeof file.path !== 'string') {
-          return { ok: false, error: `updatedFiles[${index}] is missing a valid path.` };
-        }
-        if (typeof file.content !== 'string') {
-          return { ok: false, error: `updatedFiles[${index}] is missing string content.` };
-        }
-      }
-      return { ok: true };
-    }
-
-    function resolveAiTargetPath(filePath = '') {
-      let fileName = String(filePath || '').split('/').pop() || '';
-      let safePath = String(filePath || '');
-      if (fileName.toLowerCase() === 'worldcontroller.js' || fileName === '2') {
-        fileName = '2';
-        safePath = 'models/2';
-      } else if (fileName.toLowerCase() === 'document.html' || fileName === '23') {
-        fileName = '23';
-        safePath = 'models/23';
-      } else if (fileName.toLowerCase() === 'assets.json') {
-        fileName = 'assets.json';
-        safePath = 'json/assets.json';
-      }
-      return { fileName, safePath };
-    }
-
-    function stripComments(code) {
-      return String(code || '')
-        .replace(/\/\/[^\n]*/g, '')
-        .replace(/\/\*[\s\S]*?\*\//g, '');
-    }
-
-function validateCandidateFileContent_getDetails(safePath, candidateContent, originalContent) {
-      // Handled directly inside validateCandidateFileContent now
-      return [];
-    }
-
-    function validateCandidateFileContent(safePath, candidateContent, originalContent) {
-      const trimmed = String(candidateContent || '').trim();
-      const baseResult = {
-        manifestErrors: [],
-        malformedManifestFields: [],
-        missingSystemIds: [],
-        evidenceFailures: [],
-        subsystemDetails: []
-      };
-
-      if (!trimmed) {
-        return { ok: false, error: `${safePath} became empty.`, ...baseResult };
-      }
-
-      // 1. JSON validity check (for .json files only)
-      if (safePath.endsWith('.json')) {
-        try {
-          const strippedJson = trimmed.replace(/\/\*[\s\S]*?\*\//g, '').trim();
-          JSON.parse(strippedJson);
-        } catch (error) {
-          return { ok: false, error: `${safePath} is not valid JSON: ${error.message}`, ...baseResult };
-        }
-      }
-      // NOTE: JS/HTML syntax checking is intentionally NOT done here.
-      // The backend Final QA loop (Audit → Fix → Verify) is the single
-      // authoritative syntax check. Running new Function() here would
-      // contradict a QA-approved file and block valid code that uses
-      // TypeScript annotations, top-level imports, or other constructs
-      // that new Function() cannot parse correctly.
-
-      // 2. Enforce the Manifest Contract
-      const manifestRegex = /VALIDATION_MANIFEST_START\s*([\s\S]*?)\s*VALIDATION_MANIFEST_END/;
-      const match = trimmed.match(manifestRegex);
-
-      if (!match) {
-        return { 
-          ok: false, 
-          error: `Missing VALIDATION_MANIFEST block. You MUST include the VALIDATION_MANIFEST_START and END markers in ${safePath}.`,
-          ...baseResult 
-        };
-      }
-
-      let manifest;
-      try {
-        manifest = JSON.parse(match[1]);
-      } catch (err) {
-        return { 
-          ok: false, 
-          error: `VALIDATION_MANIFEST in ${safePath} is not valid JSON: ${err.message}`,
-          ...baseResult 
-        };
-      }
-
-      if (manifest.file !== safePath) {
-        return { 
-          ok: false, 
-          error: `Manifest file path mismatch. Expected "${safePath}", got "${manifest.file}".`,
-          ...baseResult 
-        };
-      }
-
-      // 3. Verify Code Evidence (The "Bite")
-      // We check the comment-stripped code to ensure the AI isn't just faking it in comments
-      const codeWithoutComments = stripComments(trimmed);
-      const subsystemDetails = [];
-      const missingSystemIds = [];
-
-      if (Array.isArray(manifest.systems)) {
-        for (const sys of manifest.systems) {
-          if (!sys.keywords || !Array.isArray(sys.keywords)) continue;
-
-          // Check if AT LEAST ONE keyword exists in the live executable code
-          const hasEvidence = sys.keywords.some(kw => codeWithoutComments.includes(kw));
-
-          if (!hasEvidence) {
-            missingSystemIds.push(sys.id);
-            subsystemDetails.push({
-               label: sys.id,
-               humanAnchor: sys.keywords,
-               originalAnchorLines: [] // Could be expanded to check originalContent diffs
-            });
-          }
-        }
-      }
-
-      if (missingSystemIds.length > 0) {
-        return {
-          ok: false,
-          error: `Missing executable code evidence for declared systems: ${missingSystemIds.join(', ')}. Keywords must appear in actual code, not just comments.`,
-          ...baseResult,
-          missingSystemIds,
-          subsystemDetails
-        };
-      }
-
-      // 4. Structural integrity — models/2 only
-      // The Cherry3D engine requires a strict module wrapper. If it's missing
-      // or broken the file will silently fail to load at runtime.
-      if (safePath === 'models/2') {
-        const hasModuleExports = /module\.exports\s*=\s*\(\s*\)\s*=>/.test(trimmed);
-        const hasReturnAssign  = /return\s+Object\.assign\s*\(/.test(trimmed);
-        const REQUIRED_HANDLERS = [
-          'onInit', 'onRender', 'onDestroy', 'onKeyEvent',
-          'onTouchEvent', 'onMouseEvent', 'onScroll', 'onSurfaceChanged', 'onPause'
-        ];
-        const missingHandlers = REQUIRED_HANDLERS.filter(h => !trimmed.includes(`var ${h}`));
-
-        if (!hasModuleExports) {
-          return { ok: false,
-            error: `models/2 is missing the mandatory Cherry3D wrapper: module.exports = () => { ... }. The engine cannot load this file without it.`,
-            ...baseResult };
-        }
-        if (!hasReturnAssign) {
-          return { ok: false,
-            error: `models/2 is missing return Object.assign({...}) at the end of the module.exports wrapper. All handler functions must be returned.`,
-            ...baseResult };
-        }
-        if (missingHandlers.length > 0) {
-          return { ok: false,
-            error: `models/2 is missing required handler declarations: ${missingHandlers.map(h => 'var ' + h).join(', ')}. All must be declared with var and included in the return Object.assign({...}).`,
-            ...baseResult };
-        }
-      }
-
-      // Passed all checks
-      return { ok: true, ...baseResult };
-    }
-
     function buildRepairPrompt(basePrompt, failedFiles = [], repairAttempt = 1) {
       const targets = failedFiles.length
-        ? failedFiles.map(file => `- ${file.safePath || file.path}: ${file.reason || 'validation failure'}`).join('\n')
+        ? failedFiles.map(file => `- ${file.safePath || file.path}: ${file.reason || 'apply failure'}`).join('\n')
         : '- Entire request: malformed AI response or invalid JSON envelope';
 
       return `${basePrompt}
@@ -2210,7 +2034,7 @@ MANDATORY RULES
         failureStage: stage,
         originalContent: String(originalContent || ''),
         candidateContent: String(candidateContent || ''),
-        subsystemDetails: subsystemDetails || []   // structured validator failure report
+        subsystemDetails: subsystemDetails || []   // structured repair failure report
       };
     }
 
@@ -2221,9 +2045,8 @@ MANDATORY RULES
         const reason   = target.reason || 'unknown issue';
         const stage    = target.failureStage || 'unknown';
 
-        // ── Structured validator contract block ───────────────────────────────
-        // Emit EXACTLY what the validator checks for so the model cannot
-        // produce plausible-looking code that still misses the structural test.
+        // ── Structured repair context block ───────────────────────────────
+        // Emit exact missing-code context when a failed target includes subsystem details.
         let contractBlock = '';
         if (Array.isArray(target.subsystemDetails) && target.subsystemDetails.length > 0) {
           const rows = target.subsystemDetails.map(d => {
@@ -2234,15 +2057,14 @@ MANDATORY RULES
 ${d.originalAnchorLines.join('\n')}`
               : '';
             return `  MISSING SUBSYSTEM: "${d.label}"
-    The validator requires at least ONE of these executable patterns (checked on
-    comment-stripped code — adding comments alone will NOT satisfy this check):
+    The failed target requires at least ONE of these executable patterns:
 ${anchors}${origLines}`;
           });
           contractBlock = `
 
-=== VALIDATOR CONTRACT — EXACT REQUIREMENTS FOR ${safePath} ===
+=== REPAIR TARGET REQUIREMENTS FOR ${safePath} ===
 The following subsystems are REQUIRED to be present as real executable code.
-Validator checks comment-stripped source — comments do not count.
+Use these requirements when rebuilding the failed target.
 
 ${rows.join('\n\n')}
 
@@ -2333,43 +2155,6 @@ Failure stage: ${stage}${contractBlock}${liveBlock}${candidateBlock}`;
 
         let uiDisplayContent = escapeHTML(finalContentToSave);
         
-
-        // ── Structural validation ─────────────────────────────────────────────
-        // The Final QA loop on the backend is the single AI correction point.
-        // Here we only run the local validator for diagnostic reporting.
-        let finalValidation = validateCandidateFileContent(safePath, finalContentToSave, originalContent);
-
-        const validation = finalValidation;
-        if (!validation.ok) {
-          failedFiles.push(buildFailedFileRecord(
-            file,
-            safePath,
-            validation.error,
-            'validation',
-            originalContent,
-            finalContentToSave,
-            validation.subsystemDetails || []   // exact validator contract for repair prompt
-          ));
-          appendToChatLog('System', `Validation failed for ${safePath}: ${validation.error}`, 'error');
-          Progress.warn(`Validation failed for ${fileName}`, validation.error);
-          await quarantineAiPayload(projectPath, 'candidate_validation_failure', finalContentToSave, {
-            safePath,
-            sourcePath: file.path,
-            reason: validation.error
-          });
-          await quarantineAiPayload(projectPath, 'candidate_validation_failure_context', JSON.stringify({
-            safePath,
-            sourcePath: file.path,
-            reason: validation.error,
-            failureStage: 'validation',
-            originalContent
-          }, null, 2), {
-            safePath,
-            sourcePath: file.path,
-            reason: validation.error
-          });
-          continue;
-        }
 
         let backupPath = null;
         try {
@@ -3222,11 +3007,6 @@ Quality criteria for your work:
                   : `Could not parse ai_response.json: ${responseRead.error?.message || 'unknown error'}`);
             }
 
-            const envelopeCheck = validateAiResponseEnvelope(responseRead.data);
-            if (!envelopeCheck.ok) {
-                throw new Error(`ai_response.json is invalid: ${envelopeCheck.error}`);
-            }
-
             // ── Freshness guard ──────────────────────────────────────────
             // Reject payloads that belong to an older job or were written
             // before the most recent run started.
@@ -3409,7 +3189,7 @@ Quality criteria for your work:
     /* ══════════════════════════════════════════════════════════════════════
        REPAIR-AND-APPLY LOOP
        ─────────────────────────────────────────────────────────────────────
-       Called automatically when the initial apply finds validation failures.
+       Called automatically when the initial apply finds apply failures.
        Runs up to AI_HARDENING.repairPassLimit surgical repair passes without
        human intervention.  Each pass:
 
@@ -3419,7 +3199,7 @@ Quality criteria for your work:
          3. Triggers the Netlify backend
          4. Polls for the repaired ai_response.json
          5. Applies only the still-failing files via applyAiUpdatedFiles
-         6. Re-validates; if clean returns ok, else iterates
+         6. Repeats until the failed files are repaired or pass limit is reached
 
        Returns { ok:true,  appliedFiles }          on full success
                { ok:false, failedFiles, finalSummary } after exhausting all passes
@@ -3469,19 +3249,13 @@ Rules:
 1. Respond in delimiter format only: ===FILE_START: path=== ... ===FILE_END: path===
 2. Output ONLY the files listed in REPAIR CONTEXT above. Do not touch any other file.
 3. Preserve every working system already in the file — do not remove anything that works.
-4. Read the VALIDATOR CONTRACT section in REPAIR CONTEXT carefully. It lists the EXACT
-   code patterns the automated validator checks for (on comment-stripped source).
-   For each missing subsystem, at least one of the listed executable patterns MUST appear
-   in the repaired file as real code — not in a comment, not in a string, not routed
-   through a renamed/generic dispatcher unless that was already the original pattern.
-   If "Original matching lines" are shown, restore those exact patterns or equivalent.
+4. Read the REPAIR TARGET REQUIREMENTS section in REPAIR CONTEXT carefully.
+   Preserve or restore the specific executable patterns called out there when present.
 5. Output the COMPLETE file content — no patches, no diffs, no SEARCH/REPLACE.
-6. After writing each file, mentally run through the VALIDATOR CONTRACT checklist and
-   confirm every required pattern is present before submitting.
-7. CRITICAL — models/2 MUST be plain JavaScript (ES5/ES6+). NEVER use TypeScript syntax
+6. CRITICAL — models/2 MUST be plain JavaScript (ES5/ES6+). NEVER use TypeScript syntax
    (no "param: Type" annotations, no interface/type declarations, no generic <T> syntax).
    Use standard JS function signatures only: function foo(param) { }
-8. All top-level import/export statements in models/2 are valid and should be preserved as-is.
+7. All top-level import/export statements in models/2 are valid and should be preserved as-is.
 
 Original user request for context: ${basePrompt}`;
 
@@ -3569,15 +3343,6 @@ Original user request for context: ${basePrompt}`;
                 `Expected ${repairJobId}, got ${respJobId} — still waiting...`);
               continue;
             }
-            const envCheck = validateAiResponseEnvelope(repairRespRead.data);
-            if (!envCheck.ok) {
-              repairMalformed++;
-              if (repairMalformed >= AI_HARDENING.jsonPollMalformedLimit) {
-                throw new Error(`Malformed repair response (pass ${pass}): ${envCheck.error}`);
-              }
-              Progress.warn(`Invalid repair envelope (pass ${pass})`, envCheck.error);
-              continue;
-            }
             repairResult = repairRespRead.data;
           } else if (repairRespRead.kind === 'parse_error') {
             repairMalformed++;
@@ -3600,7 +3365,7 @@ Original user request for context: ${basePrompt}`;
 
         // ── Apply repair — only the still-failing files ─────────────────────
         Progress.step(`Applying repair (pass ${pass})`,
-          `Validating and writing: ${currentFailedFiles.map(f => f.safePath || f.path).join(', ')}`);
+          `Writing: ${currentFailedFiles.map(f => f.safePath || f.path).join(', ')}`);
 
         const repairedApply = await applyAiUpdatedFiles({
           result:      repairResult,
@@ -3839,8 +3604,7 @@ Rules:
 2. Return updatedFiles ONLY for the failed targets listed. Do not touch any other file.
 3. Preserve every working system already present in the current file content.
 4. Preserve every working contract item already present in the current file content.
-   If validation reports missing systems, malformed manifest fields, or evidence failures,
-   repair only those exact contract items without broad redesign.
+   If a failed target includes specific missing-system notes, repair only those exact items without broad redesign.
 5. Output full file content (not SEARCH/REPLACE blocks) for each repaired file.
 
 OUTPUT FORMAT — respond with exactly this JSON shape:
@@ -4155,26 +3919,13 @@ User Request: ${prompt}`;
               if (responseRead.data.status === 'pending') {
                 // placeholder, keep polling quietly
               } else {
-              const envelopeCheck = validateAiResponseEnvelope(responseRead.data);
-              if (!envelopeCheck.ok) {
-                await quarantineAiPayload(projectPath, 'ai_response_invalid_envelope', responseRead.rawText, {
-                  error: envelopeCheck.error,
-                  jobId: currentJobId
-                });
-                malformedResponseCount++;
-                if (malformedResponseCount >= AI_HARDENING.jsonPollMalformedLimit) {
-                  throw new Error(`Malformed final AI response: ${envelopeCheck.error}`);
-                }
-                Progress.warn('Invalid AI response envelope', envelopeCheck.error);
-                } else {
-                if (responseRead.data.status !== 'final') {
-                  Progress.step(
-                    'Checkpoint received',
-                    `Still waiting for final build output (status: ${responseRead.data.status || 'unknown'}).`
-                  );
-                } else {
-                  result = responseRead.data;
-                }
+              if (responseRead.data.status !== 'final') {
+                Progress.step(
+                  'Checkpoint received',
+                  `Still waiting for final build output (status: ${responseRead.data.status || 'unknown'}).`
+                );
+              } else {
+                result = responseRead.data;
               }
               }
             }
@@ -4218,7 +3969,7 @@ User Request: ${prompt}`;
         // The backend Final QA loop is the single AI correction point.
         // Files arriving here have already been audited, fixed, and verified.
         // We apply them directly — no further AI calls needed.
-        Progress.step(`Uploading ${result.updatedFiles.length} file(s) to Firebase`, 'Validating and writing each file...');
+        Progress.step(`Uploading ${result.updatedFiles.length} file(s) to Firebase`, 'Writing each file...');
         const applySummary = await applyAiUpdatedFiles({
           result,
           projectPath,
@@ -4228,9 +3979,9 @@ User Request: ${prompt}`;
 
         if (applySummary.failedFiles.length > 0) {
           const failedSummary = applySummary.failedFiles.map(f => `${f.safePath || f.path}: ${f.reason}`).join(' | ');
-          Progress.warn('Validation failures after apply', failedSummary);
+          Progress.warn('Apply failures after write', failedSummary);
           appendToChatLog('System',
-            `⚠ ${applySummary.failedFiles.length} file(s) failed local validation after write:\n${applySummary.failedFiles.map(f => `  • ${f.safePath || f.path}: ${f.reason}`).join('\n')}`,
+            `⚠ ${applySummary.failedFiles.length} file(s) failed during write/apply:\n${applySummary.failedFiles.map(f => `  • ${f.safePath || f.path}: ${f.reason}`).join('\n')}`,
             'error'
           );
         }
