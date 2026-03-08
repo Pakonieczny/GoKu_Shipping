@@ -549,10 +549,14 @@
       </select>
 
       <div class="proxy-toggle-wrap">
-        <div class="proxy-toggle-row">
-          <button class="btn" id="toggleCodeProxyBtn" type="button">Use OpenAI Code Proxy</button>
-        </div>
         <div class="proxy-toggle-label">Current code backend:</div>
+        <div class="proxy-toggle-row">
+          <select id="codeProxySelect">
+            <option value="claude">Claude</option>
+            <option value="openai">OpenAI</option>
+            <option value="gemini">Gemini</option>
+          </select>
+        </div>
         <div class="proxy-toggle-value" id="codeProxyLabel">claudeCodeProxy-background.js</div>
       </div>
 
@@ -757,15 +761,20 @@
     const generateGameBtn = document.getElementById('generateGameBtn');
     const progressContainer = document.getElementById('progressContainer');
     const progressBar = document.getElementById('progressBar');
-    const toggleCodeProxyBtn = document.getElementById('toggleCodeProxyBtn');
+    const codeProxySelect = document.getElementById('codeProxySelect');
     const codeProxyLabel = document.getElementById('codeProxyLabel');
 
     const CODE_PROXY_OPTIONS = {
       claude: 'claudeCodeProxy-background',
-      openai: 'openAiCodeProxy-background'
+      openai: 'openAiCodeProxy-background',
+      gemini: 'geminiCodeProxy-background'
     };
     const CODE_PROXY_STORAGE_KEY = 'gameGenerator.codeProxyBackend';
-    let activeCodeProxyBackend = localStorage.getItem(CODE_PROXY_STORAGE_KEY) === 'openai' ? 'openai' : 'claude';
+    const DEFAULT_CODE_PROXY_BACKEND = 'claude';
+    const storedCodeProxyBackend = localStorage.getItem(CODE_PROXY_STORAGE_KEY);
+    let activeCodeProxyBackend = CODE_PROXY_OPTIONS[storedCodeProxyBackend]
+      ? storedCodeProxyBackend
+      : DEFAULT_CODE_PROXY_BACKEND;
 
     function getCodeProxyFunctionName() {
       return CODE_PROXY_OPTIONS[activeCodeProxyBackend] || CODE_PROXY_OPTIONS.claude;
@@ -780,17 +789,25 @@
     }
 
     function getPipelinePlanningModelLabel() {
-      return activeCodeProxyBackend === 'openai' ? 'GPT-5.4 Pro' : 'Opus 4.6';
+      if (activeCodeProxyBackend === 'openai') return 'GPT-5.4 Pro';
+      if (activeCodeProxyBackend === 'gemini') return 'Gemini 3.1 Pro';
+      return 'Opus 4.6';
     }
 
     function getPipelineExecutionModelLabel() {
-      return activeCodeProxyBackend === 'openai' ? 'GPT-5.4 Pro + Experts' : 'Sonnet 4.6 + Experts';
+      if (activeCodeProxyBackend === 'openai') return 'GPT-5.4 Pro + Experts';
+      if (activeCodeProxyBackend === 'gemini') return 'Gemini 3.1 Pro + Experts';
+      return 'Sonnet 4.6 + Experts';
     }
 
     function getPipelineReadyText() {
-      return activeCodeProxyBackend === 'openai'
-        ? 'V2 Expert-Agent Pipeline ready. Enter game build instructions below — GPT-5.4 Pro will research the game, assign expert agents, and create focused micro-tranches.'
-        : 'V2 Expert-Agent Pipeline ready. Enter game build instructions below — Opus will research the game, assign expert agents, and create focused micro-tranches.';
+      if (activeCodeProxyBackend === 'openai') {
+        return 'V2 Expert-Agent Pipeline ready. Enter game build instructions below — GPT-5.4 Pro will research the game, assign expert agents, and create focused micro-tranches.';
+      }
+      if (activeCodeProxyBackend === 'gemini') {
+        return 'V2 Expert-Agent Pipeline ready. Enter game build instructions below — Gemini 3.1 Pro will research the game, assign expert agents, and create focused micro-tranches.';
+      }
+      return 'V2 Expert-Agent Pipeline ready. Enter game build instructions below — Opus will research the game, assign expert agents, and create focused micro-tranches.';
     }
 
     function refreshPipelineBackendLabels() {
@@ -808,16 +825,16 @@
 
     function updateCodeProxyUi() {
       if (codeProxyLabel) codeProxyLabel.textContent = getCodeProxyDisplayName();
-      if (toggleCodeProxyBtn) {
-        toggleCodeProxyBtn.textContent = activeCodeProxyBackend === 'claude'
-          ? 'Use OpenAI Code Proxy'
-          : 'Use Claude Code Proxy';
+      if (codeProxySelect) {
+        codeProxySelect.value = activeCodeProxyBackend;
       }
       refreshPipelineBackendLabels();
     }
 
     function setActiveCodeProxyBackend(nextBackend) {
-      activeCodeProxyBackend = nextBackend === 'openai' ? 'openai' : 'claude';
+      activeCodeProxyBackend = CODE_PROXY_OPTIONS[nextBackend]
+        ? nextBackend
+        : DEFAULT_CODE_PROXY_BACKEND;
       localStorage.setItem(CODE_PROXY_STORAGE_KEY, activeCodeProxyBackend);
       updateCodeProxyUi();
       setStatus(`Code backend set to ${getCodeProxyDisplayName()}`);
@@ -1044,8 +1061,8 @@
     });
 
     projectSelect.addEventListener('change', (e) => selectProject(e.target.value));
-    toggleCodeProxyBtn.addEventListener('click', () => {
-      setActiveCodeProxyBackend(activeCodeProxyBackend === 'claude' ? 'openai' : 'claude');
+    codeProxySelect.addEventListener('change', (e) => {
+      setActiveCodeProxyBackend(e.target.value);
     });
 
     function selectProject(name) {
