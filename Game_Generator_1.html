@@ -797,19 +797,13 @@
       const chatLogEl = document.getElementById('aiChatLog');
       const readyNode = chatLogEl ? chatLogEl.querySelector('div') : null;
       if (readyNode) readyNode.textContent = getPipelineReadyText();
-
       const planningLabelNode = document.getElementById('tranchePlanningLabel');
       if (planningLabelNode && !planningLabelNode.textContent.includes('✓ Game Intelligence + Plan:')) {
         planningLabelNode.textContent = `${getPipelinePlanningModelLabel()} is researching game design and creating expert-driven build tranches...`;
       }
-
       const footerModels = document.querySelectorAll('.tranche-footer-model');
-      if (footerModels[0]) {
-        footerModels[0].innerHTML = `<div class="tranche-footer-dot opus"></div> ${getPipelinePlanningModelLabel()} → Intelligence + Planning`;
-      }
-      if (footerModels[1]) {
-        footerModels[1].innerHTML = `<div class="tranche-footer-dot sonnet"></div> ${getPipelineExecutionModelLabel()} → Execution`;
-      }
+      if (footerModels[0]) footerModels[0].innerHTML = `<div class="tranche-footer-dot opus"></div> ${getPipelinePlanningModelLabel()} → Intelligence + Planning`;
+      if (footerModels[1]) footerModels[1].innerHTML = `<div class="tranche-footer-dot sonnet"></div> ${getPipelineExecutionModelLabel()} → Execution`;
     }
 
     function updateCodeProxyUi() {
@@ -1751,6 +1745,69 @@
       aiChatLog.scrollTop = aiChatLog.scrollHeight;
     }
 
+    let progressEventSeenIds = new Set();
+    let progressStreamingNode = null;
+    let progressStreamingCache = '';
+
+    function resetProgressTelemetryUi() {
+      progressEventSeenIds = new Set();
+      progressStreamingCache = '';
+      if (progressStreamingNode && progressStreamingNode.parentNode) {
+        progressStreamingNode.parentNode.removeChild(progressStreamingNode);
+      }
+      progressStreamingNode = null;
+    }
+
+    function upsertStreamingTelemetry(live) {
+      const text = String(live?.streamingText || '').trim();
+      if (!text) {
+        if (progressStreamingNode && progressStreamingNode.parentNode) {
+          progressStreamingNode.parentNode.removeChild(progressStreamingNode);
+        }
+        progressStreamingNode = null;
+        progressStreamingCache = '';
+        return;
+      }
+      if (text === progressStreamingCache && progressStreamingNode) return;
+      progressStreamingCache = text;
+      if (!progressStreamingNode) {
+        progressStreamingNode = document.createElement('div');
+        progressStreamingNode.style.borderLeft = '3px solid var(--accent)';
+        progressStreamingNode.style.paddingLeft = '10px';
+        progressStreamingNode.style.color = 'var(--muted)';
+        progressStreamingNode.innerHTML = `<strong style="color: var(--accent)">Live AI Stream:</strong> <span></span>`;
+        aiChatLog.appendChild(progressStreamingNode);
+      }
+      const span = progressStreamingNode.querySelector('span');
+      if (span) span.textContent = text;
+      aiChatLog.scrollTop = aiChatLog.scrollHeight;
+    }
+
+    function applyProgressTelemetry(prog) {
+      if (!prog || !prog.live) return;
+      const live = prog.live;
+      const events = Array.isArray(live.events) ? live.events : [];
+      for (const evt of events) {
+        if (!evt || !evt.id || progressEventSeenIds.has(evt.id)) continue;
+        progressEventSeenIds.add(evt.id);
+        const bits = [];
+        if (evt.stage) bits.push(`[${evt.stage}]`);
+        bits.push(evt.label || 'Update');
+        if (evt.detail) bits.push(`— ${evt.detail}`);
+        const rendered = bits.join(' ');
+        const kind = evt.type === 'error' ? 'error' : 'normal';
+        appendToChatLog('System', rendered, kind);
+        if (evt.type === 'error') {
+          Progress.error(evt.label || 'Pipeline error', evt.detail || '');
+        } else if (evt.type === 'warn') {
+          Progress.warn(evt.label || 'Warning', evt.detail || '');
+        } else if (evt.type === 'success') {
+          Progress.step(evt.label || 'Completed', evt.detail || '');
+        }
+      }
+      upsertStreamingTelemetry(live);
+    }
+
     function formatBackendErrorForChat(errorData = {}, fallbackMessage = 'Unknown backend error') {
       const parts = [];
       const primary = errorData.error || errorData.message || fallbackMessage;
@@ -1764,13 +1821,15 @@
       return parts.join(' | ');
     }
 
-    const AI_HARDENING = {
+const AI_HARDENING = {
       jsonPollMalformedLimit: 4,
       repairPassLimit: 2,
       backupFolder: 'ai_backups',
       diagnosticsFolder: 'ai_diagnostics',
-      buildPollTimeoutMs: 20 * 60 * 1000,
-      repairPollTimeoutMs: 12 * 60 * 1000,
+      // Bump this from 20 mins to 120 mins (2 hours)
+      buildPollTimeoutMs: 120 * 60 * 1000, 
+      // Bump this from 12 mins to 30 mins
+      repairPollTimeoutMs: 30 * 60 * 1000, 
       pollIntervalMs: 5000
     };
 
@@ -2836,10 +2895,10 @@ Quality criteria for your work:
 
         if (prog.status === 'planning') {
           planningSection.style.display = 'flex';
-          planningLabel.textContent = `${getPipelinePlanningModelLabel()} is researching game design and creating expert-driven build tranches...`; 
-          planningAnalysis.textContent = '';
+          planningLabel.textContent = prog.live?.label || `${getPipelinePlanningModelLabel()} is researching game design and creating expert-driven build tranches...`;
+          planningAnalysis.textContent = prog.live?.detail || '';
           overallFill.style.width = '5%';
-          footerStatus.textContent = 'Phase 0: Game Intelligence active...';
+          footerStatus.textContent = prog.live?.detail || 'Phase 0: Game Intelligence active...';
           return;
         }
 
@@ -2865,6 +2924,11 @@ Quality criteria for your work:
           const total = prog.totalTranches || 1;
           const pct = Math.round(((completed + (prog.status === 'complete' ? 0 : 0.3)) / total) * 100);
           overallFill.style.width = `${Math.min(pct, 100)}%`;
+
+          if (prog.live?.label && prog.status !== 'complete') {
+            headerSub.textContent = prog.live.detail || prog.live.label;
+            footerStatus.textContent = prog.live.label;
+          }
 
           if (prog.status === 'complete') {
             overallFill.style.width = '100%';
@@ -3478,6 +3542,7 @@ Original user request for context: ${basePrompt}`;
             progressFileRef, projectPath, `repair_progress_p${pass}`);
           if (repairProgRead.ok && repairProgRead.data.jobId === repairJobId) {
             lastRepairProgress = repairProgRead.data;
+            applyProgressTelemetry(repairProgRead.data);
             TrancheUI.updateFromProgress(repairProgRead.data);
           }
 
@@ -3589,6 +3654,7 @@ Original user request for context: ${basePrompt}`;
       if (repairAttempt === 0 && parseErrorRetry === 0) {
         aiPromptInput.value = '';
         appendToChatLog('You', basePrompt);
+        resetProgressTelemetryUi();
         Progress.start('Starting AI pipeline...');
       } else if (parseErrorRetry > 0) {
         appendToChatLog('System', `Backend parse error detected — retrying full build (attempt ${parseErrorRetry}/${AI_HARDENING.repairPassLimit}).`, 'normal');
@@ -4021,6 +4087,7 @@ User Request: ${prompt}`;
               continue;
             }
             lastKnownProgress = progressData;
+            applyProgressTelemetry(progressData);
             TrancheUI.updateFromProgress(progressData);
             if (progressData.status === 'executing' && progressData.tranches) {
               const active = progressData.tranches.find(t => t.status === 'in_progress');
@@ -4150,6 +4217,7 @@ User Request: ${prompt}`;
         try {
           const finalProgressRead = await fetchStorageJsonSafe(progressFileRef, projectPath, 'ai_progress_final');
           if (finalProgressRead.ok) {
+            applyProgressTelemetry(finalProgressRead.data);
             TrancheUI.updateFromProgress(finalProgressRead.data);
           }
         } catch (e) {}
@@ -4291,6 +4359,7 @@ User Request: ${prompt}`;
         appendToChatLog('System', `Error: ${error.message}`, 'error');
         setStatus('AI update failed.');
         Progress.error(error.message);
+        applyProgressTelemetry({ live: { events: [{ id: `frontend_${Date.now()}`, type: 'error', label: 'Frontend pipeline error', detail: error.message, stage: 'frontend' }], streamingText: '' } });
         TrancheUI.updateFromProgress({ status: 'error', error: error.message, completedTime: Date.now() });
       } finally {
         // Re-enable the button only when the outermost executeAIPipeline call exits.

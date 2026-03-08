@@ -20,14 +20,20 @@ const admin = require("./firebaseAdmin");
 
 /* ── helper: call OpenAI Responses API ───────────────────────── */
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
+// Keep Planner as Pro for deep game intelligence
 const OPENAI_DEFAULT_PLANNER_MODEL = process.env.OPENAI_GAME_PLANNER_MODEL || process.env.OPENAI_MODEL || "gpt-5.4-pro";
-const OPENAI_DEFAULT_EXECUTOR_MODEL = process.env.OPENAI_GAME_EXECUTOR_MODEL || process.env.OPENAI_MODEL || "gpt-5.4-pro";
-const OPENAI_DEFAULT_REASONING_EFFORT = process.env.OPENAI_REASONING_EFFORT || "medium";
-const OPENAI_DEFAULT_MAX_OUTPUT_TOKENS = Number(process.env.OPENAI_MAX_OUTPUT_TOKENS || 128000);
-const OPENAI_DEFAULT_PLANNER_REASONING_EFFORT = process.env.OPENAI_PLANNER_REASONING_EFFORT || "medium";
-const OPENAI_DEFAULT_PLANNER_MAX_OUTPUT_TOKENS = Number(process.env.OPENAI_PLANNER_MAX_OUTPUT_TOKENS || 64000);
-const OPENAI_DEFAULT_EXECUTOR_REASONING_EFFORT = process.env.OPENAI_EXECUTOR_REASONING_EFFORT || OPENAI_DEFAULT_REASONING_EFFORT;
+// Set Executor to Flash for speed and cost savings
+const OPENAI_DEFAULT_EXECUTOR_MODEL = process.env.OPENAI_GAME_EXECUTOR_MODEL || "gpt-5.4-flash";
+
+const OPENAI_DEFAULT_REASONING_EFFORT = process.env.OPENAI_REASONING_EFFORT || "low";
+const OPENAI_DEFAULT_MAX_OUTPUT_TOKENS = Number(process.env.OPENAI_MAX_OUTPUT_TOKENS || 24000);
+
+const OPENAI_DEFAULT_PLANNER_REASONING_EFFORT = process.env.OPENAI_PLANNER_REASONING_EFFORT || "low";
+const OPENAI_DEFAULT_PLANNER_MAX_OUTPUT_TOKENS = Number(process.env.OPENAI_PLANNER_MAX_OUTPUT_TOKENS || 32000);
+
+const OPENAI_DEFAULT_EXECUTOR_REASONING_EFFORT = process.env.OPENAI_EXECUTOR_REASONING_EFFORT || "low";
 const OPENAI_DEFAULT_EXECUTOR_MAX_OUTPUT_TOKENS = Number(process.env.OPENAI_EXECUTOR_MAX_OUTPUT_TOKENS || OPENAI_DEFAULT_MAX_OUTPUT_TOKENS);
+
 const OPENAI_HTTP_TIMEOUT_MS = Number(process.env.OPENAI_HTTP_TIMEOUT_MS || 1500000);
 const OPENAI_PLANNER_HTTP_TIMEOUT_MS = Number(process.env.OPENAI_PLANNER_HTTP_TIMEOUT_MS || 1500000);
 const OPENAI_CHAIN_ACCEPT_TIMEOUT_MS = Number(process.env.OPENAI_CHAIN_ACCEPT_TIMEOUT_MS || 1500000);
@@ -117,6 +123,7 @@ async function fetchJsonWithTimeout(url, options = {}, timeoutMs = OPENAI_HTTP_T
 
 async function callOpenAI(apiKey, { model, maxTokens, system, userContent, effort, timeoutMs, stream = true, onEvent, onTextDelta }) {
   const resolvedMaxTokens = Number(maxTokens || OPENAI_DEFAULT_MAX_OUTPUT_TOKENS);
+  
   const body = {
     model,
     input: [
@@ -129,13 +136,18 @@ async function callOpenAI(apiKey, { model, maxTokens, system, userContent, effor
         content: normalizeOpenAIContentBlocks(userContent)
       }
     ],
-    reasoning: {
-      effort: effort || OPENAI_DEFAULT_REASONING_EFFORT
-    },
     max_output_tokens: resolvedMaxTokens,
     truncation: "auto",
     stream: !!stream
   };
+
+  // ONLY attach reasoning_effort if using a reasoning-capable model (Pro variants, o1, o3, etc.)
+  const isReasoningModel = model.startsWith("o1") || model.startsWith("o3") || model.includes("pro") || model.includes("reasoning");
+  if (isReasoningModel) {
+    body.reasoning = {
+      effort: effort || OPENAI_DEFAULT_REASONING_EFFORT
+    };
+  }
 
   const res = await fetchJsonWithTimeout(OPENAI_RESPONSES_URL, {
     method: "POST",
@@ -182,7 +194,6 @@ async function callOpenAI(apiKey, { model, maxTokens, system, userContent, effor
     usage: mapOpenAIUsage(data.usage)
   };
 }
-
 
 function ensureLiveProgress(progress) {
   if (!progress || typeof progress !== "object") return null;
