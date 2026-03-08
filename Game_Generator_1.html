@@ -607,7 +607,7 @@
         <h2>AI Context Window</h2>
         <div style="display: flex; flex-direction: column; gap: 10px;">
           <div id="aiChatLog" style="height: 400px; overflow-y: auto; background: #0b0d12; border: 1px solid var(--line); border-radius: 10px; padding: 14px; font-size: 13px; font-family: monospace; display: flex; flex-direction: column; gap: 12px; white-space: pre-wrap; line-height: 1.5;">
-            <div style="color: var(--muted);">V2 Expert-Agent Pipeline ready. Enter game build instructions below — Opus will research the game, assign expert agents, and create focused micro-tranches.</div>
+            <div style="color: var(--muted);">V2 Expert-Agent Pipeline ready. Enter game build instructions below — GPT-5.4 Pro will research the game, assign expert agents, and create focused micro-tranches.</div>
           </div>
 
           <div id="aiProgressPanel" class="ai-progress-panel">
@@ -639,7 +639,7 @@
             <div id="tranchePlanningSection" class="tranche-planning" style="display:none;">
               <div class="tranche-planning-spinner"></div>
               <div class="tranche-planning-text">
-                <span id="tranchePlanningLabel">Opus 4.6 is researching game design and creating expert-driven build tranches...</span>
+                <span id="tranchePlanningLabel">GPT-5.4 Pro is researching game design and creating expert-driven build tranches...</span>
                 <span class="analysis" id="tranchePlanningAnalysis"></span>
               </div>
             </div>
@@ -654,8 +654,8 @@
             <div class="tranche-list" id="trancheList"></div>
             <div class="tranche-footer">
               <div class="tranche-footer-models">
-                <div class="tranche-footer-model"><div class="tranche-footer-dot opus"></div> Opus 4.6 → Intelligence + Planning</div>
-                <div class="tranche-footer-model"><div class="tranche-footer-dot sonnet"></div> Sonnet 4.6 + Experts → Execution</div>
+                <div class="tranche-footer-model"><div class="tranche-footer-dot opus"></div> GPT-5.4 Pro → Intelligence + Planning</div>
+                <div class="tranche-footer-model"><div class="tranche-footer-dot sonnet"></div> GPT-5.4 Pro + Experts → Execution</div>
               </div>
               <span id="trancheFooterStatus">V2 Pipeline ready</span>
             </div>
@@ -779,6 +779,32 @@
       return `${getCodeProxyFunctionName()}.js`;
     }
 
+    function getPipelinePlanningModelLabel() {
+      return activeCodeProxyBackend === 'openai' ? 'GPT-5.4 Pro' : 'Opus 4.6';
+    }
+
+    function getPipelineExecutionModelLabel() {
+      return activeCodeProxyBackend === 'openai' ? 'GPT-5.4 Pro + Experts' : 'Sonnet 4.6 + Experts';
+    }
+
+    function getPipelineReadyText() {
+      return activeCodeProxyBackend === 'openai'
+        ? 'V2 Expert-Agent Pipeline ready. Enter game build instructions below — GPT-5.4 Pro will research the game, assign expert agents, and create focused micro-tranches.'
+        : 'V2 Expert-Agent Pipeline ready. Enter game build instructions below — Opus will research the game, assign expert agents, and create focused micro-tranches.';
+    }
+
+    function refreshPipelineBackendLabels() {
+      const readyNode = aiChatLog ? aiChatLog.querySelector('div') : null;
+      if (readyNode) readyNode.textContent = getPipelineReadyText();
+      const planningLabelNode = document.getElementById('tranchePlanningLabel');
+      if (planningLabelNode && !planningLabelNode.textContent.includes('✓ Game Intelligence + Plan:')) {
+        planningLabelNode.textContent = `${getPipelinePlanningModelLabel()} is researching game design and creating expert-driven build tranches...`;
+      }
+      const footerModels = document.querySelectorAll('.tranche-footer-model');
+      if (footerModels[0]) footerModels[0].innerHTML = `<div class="tranche-footer-dot opus"></div> ${getPipelinePlanningModelLabel()} → Intelligence + Planning`;
+      if (footerModels[1]) footerModels[1].innerHTML = `<div class="tranche-footer-dot sonnet"></div> ${getPipelineExecutionModelLabel()} → Execution`;
+    }
+
     function updateCodeProxyUi() {
       if (codeProxyLabel) codeProxyLabel.textContent = getCodeProxyDisplayName();
       if (toggleCodeProxyBtn) {
@@ -786,6 +812,7 @@
           ? 'Use OpenAI Code Proxy'
           : 'Use Claude Code Proxy';
       }
+      refreshPipelineBackendLabels();
     }
 
     function setActiveCodeProxyBackend(nextBackend) {
@@ -1715,6 +1742,19 @@
       msgDiv.innerHTML = `<strong style="color: ${color}">${sender}:</strong> ${message}`;
       aiChatLog.appendChild(msgDiv);
       aiChatLog.scrollTop = aiChatLog.scrollHeight;
+    }
+
+    function formatBackendErrorForChat(errorData = {}, fallbackMessage = 'Unknown backend error') {
+      const parts = [];
+      const primary = errorData.error || errorData.message || fallbackMessage;
+      if (primary) parts.push(`Backend error: ${primary}`);
+      if (errorData.phase) parts.push(`Phase: ${errorData.phase}`);
+      const statusCode = errorData.statusCode || errorData.status;
+      if (statusCode) parts.push(`HTTP: ${statusCode}`);
+      if (errorData.details) parts.push(`Details: ${String(errorData.details).slice(0, 2000)}`);
+      else if (errorData.responseBody) parts.push(`Response: ${String(errorData.responseBody).slice(0, 2000)}`);
+      else if (errorData.rawText) parts.push(`Raw: ${String(errorData.rawText).slice(0, 2000)}`);
+      return parts.join(' | ');
     }
 
     const AI_HARDENING = {
@@ -2728,7 +2768,7 @@ Quality criteria for your work:
         document.getElementById('trancheHeaderSub').textContent = 'Phase 0: Game Intelligence + Expert Planning...';
         document.getElementById('trancheOverallFill').style.width = '0%';
         document.getElementById('trancheList').innerHTML = '';
-        document.getElementById('trancheFooterStatus').textContent = 'Opus 4.6 researching game design...';
+        document.getElementById('trancheFooterStatus').textContent = `${getPipelinePlanningModelLabel()} researching game design...`;
         // Reset intelligence panel
         const intPanel = document.getElementById('trancheIntelligence');
         intPanel.classList.remove('active');
@@ -2789,7 +2829,7 @@ Quality criteria for your work:
 
         if (prog.status === 'planning') {
           planningSection.style.display = 'flex';
-          planningLabel.textContent = 'Opus 4.6 is researching game design and creating expert-driven build tranches...';
+          planningLabel.textContent = `${getPipelinePlanningModelLabel()} is researching game design and creating expert-driven build tranches...`; 
           planningAnalysis.textContent = '';
           overallFill.style.width = '5%';
           footerStatus.textContent = 'Phase 0: Game Intelligence active...';
@@ -2842,7 +2882,7 @@ Quality criteria for your work:
               headerTitle.textContent = `T${activeTranche.index + 1}/${prog.totalTranches}: ${activeTranche.name}`;
               headerSub.textContent = agentNames
                 ? `${agentNames} executing tranche ${activeTranche.index + 1}...`
-                : `Sonnet 4.6 executing tranche ${activeTranche.index + 1} of ${prog.totalTranches}...`;
+                : `${getPipelineExecutionModelLabel()} executing tranche ${activeTranche.index + 1} of ${prog.totalTranches}...`; 
             }
             footerStatus.textContent = `Executing tranche ${(prog.currentTranche || 0) + 1} of ${prog.totalTranches}...`;
           }
@@ -3924,7 +3964,17 @@ User Request: ${prompt}`;
               signal: fetchController.signal
             });
             if (!proxyRes.ok) {
-                 throw new Error(`Netlify rejected the request: ${proxyRes.status} ${proxyRes.statusText}. Your payload may exceed the 6MB limit, or the function crashed.`);
+                 const rawText = await proxyRes.text().catch(() => '');
+                 let parsedError = null;
+                 try { parsedError = rawText ? JSON.parse(rawText) : null; } catch (e) {}
+                 const enrichedMessage = formatBackendErrorForChat({
+                   ...(parsedError || {}),
+                   status: proxyRes.status,
+                   statusCode: proxyRes.status,
+                   rawText
+                 }, `Netlify rejected the request: ${proxyRes.status} ${proxyRes.statusText}. Your payload may exceed the 6MB limit, or the function crashed.`);
+                 appendToChatLog('System', enrichedMessage, 'error');
+                 throw new Error(enrichedMessage);
             }
         } catch (fetchErr) {
             if (fetchErr.name === 'AbortError') {
@@ -3951,7 +4001,8 @@ User Request: ${prompt}`;
 
           const errorRead = await fetchStorageJsonSafe(errorFileRef, projectPath, 'ai_error');
           if (errorRead.ok) {
-            const errorMessage = errorRead.data?.error || 'AI Generation Failed';
+            const errorMessage = formatBackendErrorForChat(errorRead.data, 'AI Generation Failed');
+            appendToChatLog('System', errorMessage, 'error');
             throw new Error(errorMessage);
           }
 
@@ -3972,7 +4023,7 @@ User Request: ${prompt}`;
                   .join(' + ');
                 Progress.step(
                   `T${active.index + 1}/${progressData.totalTranches}: ${active.name}`,
-                  agentLabel ? `${agentLabel} executing...` : (active.description || 'Sonnet 4.6 executing...')
+                  agentLabel ? `${agentLabel} executing...` : (active.description || `${getPipelineExecutionModelLabel()} executing...`)
                 );
               }
             }

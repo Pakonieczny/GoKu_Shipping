@@ -1,4 +1,4 @@
-/* netlify/functions/claudeCodeProxy-background.js */
+/* netlify/functions/openAiCodeProxy-background.js */
 /* ═══════════════════════════════════════════════════════════════════
    TRANCHED AI PIPELINE — v3.0 (Self-Chaining)
    ─────────────────────────────────────────────────────────────────
@@ -24,6 +24,13 @@ const OPENAI_DEFAULT_PLANNER_MODEL = process.env.OPENAI_GAME_PLANNER_MODEL || pr
 const OPENAI_DEFAULT_EXECUTOR_MODEL = process.env.OPENAI_GAME_EXECUTOR_MODEL || process.env.OPENAI_MODEL || "gpt-5.4-pro";
 const OPENAI_DEFAULT_REASONING_EFFORT = process.env.OPENAI_REASONING_EFFORT || "xhigh";
 const OPENAI_DEFAULT_MAX_OUTPUT_TOKENS = Number(process.env.OPENAI_MAX_OUTPUT_TOKENS || 128000);
+const OPENAI_DEFAULT_PLANNER_REASONING_EFFORT = process.env.OPENAI_PLANNER_REASONING_EFFORT || "high";
+const OPENAI_DEFAULT_PLANNER_MAX_OUTPUT_TOKENS = Number(process.env.OPENAI_PLANNER_MAX_OUTPUT_TOKENS || 16000);
+const OPENAI_DEFAULT_EXECUTOR_REASONING_EFFORT = process.env.OPENAI_EXECUTOR_REASONING_EFFORT || OPENAI_DEFAULT_REASONING_EFFORT;
+const OPENAI_DEFAULT_EXECUTOR_MAX_OUTPUT_TOKENS = Number(process.env.OPENAI_EXECUTOR_MAX_OUTPUT_TOKENS || OPENAI_DEFAULT_MAX_OUTPUT_TOKENS);
+const OPENAI_HTTP_TIMEOUT_MS = Number(process.env.OPENAI_HTTP_TIMEOUT_MS || 540000);
+const OPENAI_PLANNER_HTTP_TIMEOUT_MS = Number(process.env.OPENAI_PLANNER_HTTP_TIMEOUT_MS || 240000);
+const OPENAI_CHAIN_ACCEPT_TIMEOUT_MS = Number(process.env.OPENAI_CHAIN_ACCEPT_TIMEOUT_MS || 45000);
 
 function normalizeOpenAIContentBlocks(userContent) {
   const blocks = Array.isArray(userContent) ? userContent : [{ type: "text", text: String(userContent || "") }];
@@ -89,7 +96,22 @@ function mapOpenAIUsage(usage) {
   };
 }
 
-async function callOpenAI(apiKey, { model, maxTokens, system, userContent, effort }) {
+async function fetchJsonWithTimeout(url, options = {}, timeoutMs = OPENAI_HTTP_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), Math.max(1000, Number(timeoutMs) || OPENAI_HTTP_TIMEOUT_MS));
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (error) {
+    if (error && error.name === "AbortError") {
+      throw new Error(`Request timed out after ${Math.round((Math.max(1000, Number(timeoutMs) || OPENAI_HTTP_TIMEOUT_MS)) / 1000)}s`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function callOpenAI(apiKey, { model, maxTokens, system, userContent, effort, timeoutMs }) {
   const resolvedMaxTokens = Number(maxTokens || OPENAI_DEFAULT_MAX_OUTPUT_TOKENS);
   const body = {
     model,
@@ -110,14 +132,14 @@ async function callOpenAI(apiKey, { model, maxTokens, system, userContent, effor
     truncation: "auto"
   };
 
-  const res = await fetch(OPENAI_RESPONSES_URL, {
+  const res = await fetchJsonWithTimeout(OPENAI_RESPONSES_URL, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "Authorization": `Bearer ${apiKey}`
     },
     body: JSON.stringify(body)
-  });
+  }, timeoutMs);
 
   const raw = await res.text();
   let data = null;
@@ -373,22 +395,51 @@ async function checkKillSwitch(bucket, projectPath, jobId) {
 /* ── helper: self-chain — invoke this function again ─────────── */
 async function chainToSelf(payload) {
   const siteUrl = process.env.URL || process.env.DEPLOY_URL || "";
-  const chainUrl = `${siteUrl}/.netlify/functions/claudeCodeProxy-background`;
+  const chainUrl = `${siteUrl}/.netlify/functions/openAiCodeProxy-background`;
 
   console.log(`CHAIN → next step: mode=${payload.mode}, tranche=${payload.nextTranche ?? "n/a"} → ${chainUrl}`);
 
   try {
-    const res = await fetch(chainUrl, {
+    const res = await fetchJsonWithTimeout(chainUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
-    });
-    // Background functions return 202 immediately — we don't wait.
+    }, OPENAI_CHAIN_ACCEPT_TIMEOUT_MS);
+    const responseText = await res.text().catch(() => "");
     console.log(`Chain response status: ${res.status}`);
+    if (!res.ok) {
+      const err = new Error(`Self-chain failed: HTTP ${res.status} ${res.statusText || ''}`.trim());
+      err.status = res.status;
+      err.phase = 'self_chain';
+      err.responseBody = responseText;
+      throw err;
+    }
   } catch (err) {
     console.error("Chain invocation failed:", err.message);
-    throw new Error(`Self-chain failed: ${err.message}`);
+    if (!err.phase) err.phase = 'self_chain';
+    throw err;
   }
+}
+
+function buildSerializableErrorPayload(error, context = {}) {
+  const payload = {
+    error: error?.message || String(error || 'Unknown error'),
+    name: error?.name || 'Error',
+    stack: typeof error?.stack === 'string' ? error.stack : null,
+    context: context || {},
+    timestamp: new Date().toISOString()
+  };
+
+  if (error && typeof error === 'object') {
+    if (typeof error.status === 'number') payload.status = error.status;
+    if (typeof error.statusCode === 'number') payload.statusCode = error.statusCode;
+    if (typeof error.phase === 'string') payload.phase = error.phase;
+    if (typeof error.details === 'string') payload.details = error.details;
+    if (error.responseBody != null) payload.responseBody = String(error.responseBody).slice(0, 12000);
+    if (error.raw != null) payload.raw = String(error.raw).slice(0, 12000);
+  }
+
+  return payload;
 }
 
 /* ═══════════════════════════════════════════════════════════════ */
@@ -479,7 +530,7 @@ exports.handler = async (event) => {
       }
 
       // ══════════════════════════════════════════════════════════
-      //  STAGE 0 — PLANNING (Opus 4.6, adaptive, high)
+      //  STAGE 0 — PLANNING (OpenAI planner, fast bounded pass)
       // ══════════════════════════════════════════════════════════
       const progress = {
         jobId: jobId,
@@ -546,11 +597,12 @@ You must respond ONLY with a valid JSON object. No markdown, no code fences, no 
         ...imageBlocks
       ];
 
-      console.log(`STAGE 0: Planning with OpenAI for Job ${jobId}...`);
+      console.log(`STAGE 0: Planning with OpenAI for Job ${jobId} (timeout ${Math.round(OPENAI_PLANNER_HTTP_TIMEOUT_MS / 1000)}s)...`);
       const planResult = await callOpenAI(apiKey, {
         model: OPENAI_DEFAULT_PLANNER_MODEL,
-        maxTokens: OPENAI_DEFAULT_MAX_OUTPUT_TOKENS,
-        effort: OPENAI_DEFAULT_REASONING_EFFORT,
+        maxTokens: OPENAI_DEFAULT_PLANNER_MAX_OUTPUT_TOKENS,
+        effort: OPENAI_DEFAULT_PLANNER_REASONING_EFFORT,
+        timeoutMs: OPENAI_PLANNER_HTTP_TIMEOUT_MS,
         system: planningSystem,
         userContent: planningUserContent
       });
@@ -772,8 +824,9 @@ Correct approach:
       try {
         trancheResponseObj = await callOpenAI(apiKey, {
             model: OPENAI_DEFAULT_EXECUTOR_MODEL,
-          maxTokens: OPENAI_DEFAULT_MAX_OUTPUT_TOKENS,
-          effort: OPENAI_DEFAULT_REASONING_EFFORT,
+          maxTokens: OPENAI_DEFAULT_EXECUTOR_MAX_OUTPUT_TOKENS,
+          effort: OPENAI_DEFAULT_EXECUTOR_REASONING_EFFORT,
+          timeoutMs: OPENAI_HTTP_TIMEOUT_MS,
           contextWindow: OPENAI_MAX_CONTEXT_WINDOW,
           autoCompactTokenLimit: OPENAI_AUTO_COMPACT_TOKEN_LIMIT,
           system: executionSystem,
@@ -944,17 +997,23 @@ Correct approach:
 
   } catch (error) {
     console.error("OpenAI Code Proxy Background Error:", error);
+    const errorPayload = buildSerializableErrorPayload(error, {
+      projectPath,
+      jobId: jobId || 'unknown'
+    });
     try {
       if (projectPath && bucket) {
         await bucket.file(`${projectPath}/ai_error.json`).save(
-          JSON.stringify({ error: error.message }),
+          JSON.stringify(errorPayload, null, 2),
           { contentType: "application/json", resumable: false }
         );
         try {
           await saveProgress(bucket, projectPath, {
             jobId: jobId || "unknown",
             status: "error",
-            error: error.message,
+            error: errorPayload.error,
+            errorDetails: errorPayload.details || errorPayload.responseBody || null,
+            errorPhase: errorPayload.phase || null,
             completedTime: Date.now()
           });
         } catch (e2) {}
@@ -963,6 +1022,13 @@ Correct approach:
       console.error("CRITICAL: Failed to write error to Firebase.", e);
     }
 
-    return { statusCode: 500, body: JSON.stringify({ error: error.message }) };
+    return {
+      statusCode: 500,
+      body: JSON.stringify({
+        error: errorPayload.error,
+        phase: errorPayload.phase || null,
+        details: errorPayload.details || errorPayload.responseBody || null
+      })
+    };
   }
 };
