@@ -1852,7 +1852,7 @@
 
 const AI_HARDENING = {
       jsonPollMalformedLimit: 4,
-      repairPassLimit: 2,
+      repairPassLimit: 4,
       backupFolder: 'ai_backups',
       diagnosticsFolder: 'ai_diagnostics',
       // Bump this from 20 mins to 120 mins (2 hours)
@@ -2077,7 +2077,25 @@ function validateCandidateFileContent_getDetails(safePath, candidateContent, ori
         }
       } else if (safePath === 'models/2' || safePath.endsWith('.js')) {
         try {
-          new Function(trimmed);
+          // new Function() wraps code in a function body, which breaks:
+          //   - Top-level import / export statements (ES modules)
+          //   - TypeScript-style type annotations  (param: Type)
+          // Strip those constructs before validation so valid modern JS isn't
+          // incorrectly rejected and burned through repair passes.
+          const strippedForValidation = trimmed
+            // Remove block comments (including the VALIDATION_MANIFEST block)
+            .replace(/\/\*[\s\S]*?\*\//g, '')
+            // Remove single-line comments
+            .replace(/\/\/[^\n]*/g, '')
+            // Strip top-level import statements  e.g.  import Foo from 'bar';
+            .replace(/^\s*import\s[\s\S]*?(?:from\s+['"][^'"]+['"])?[;]?\s*$/gm, '')
+            // Strip top-level export keywords   e.g.  export default class / export function
+            .replace(/^\s*export\s+(default\s+)?/gm, '')
+            // Strip TypeScript-style type annotations in function params  e.g.  (x: number)
+            // This covers simple  param: Type  and  param: Type = default  patterns
+            .replace(/(\w)\s*:\s*[A-Z][A-Za-z0-9_<>\[\]|&.,\s]*(?=[,)\s=])/g, '$1')
+            .trim();
+          new Function(strippedForValidation);
         } catch (error) {
           return { ok: false, error: `${safePath} failed JavaScript syntax validation: ${error.message}`, ...baseResult };
         }
@@ -3513,6 +3531,10 @@ Rules:
 5. Output the COMPLETE file content — no patches, no diffs, no SEARCH/REPLACE.
 6. After writing each file, mentally run through the VALIDATOR CONTRACT checklist and
    confirm every required pattern is present before submitting.
+7. CRITICAL — models/2 MUST be plain JavaScript (ES5/ES6+). NEVER use TypeScript syntax
+   (no "param: Type" annotations, no interface/type declarations, no generic <T> syntax).
+   Use standard JS function signatures only: function foo(param) { }
+8. All top-level import/export statements in models/2 are valid and should be preserved as-is.
 
 Original user request for context: ${basePrompt}`;
 

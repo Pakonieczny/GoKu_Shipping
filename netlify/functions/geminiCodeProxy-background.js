@@ -37,19 +37,19 @@ const GEMINI_DEFAULT_PLANNER_MODEL =
 // Keep executor on Flash for speed/cost, unless overridden.
 const GEMINI_DEFAULT_EXECUTOR_MODEL =
   process.env.GEMINI_GAME_EXECUTOR_MODEL ||
-  "gemini-3-flash-preview";
+  "gemini-3.1-pro-preview";
 
 const GEMINI_DEFAULT_REASONING_EFFORT = "medium"; // logical internal setting, mapped to thinkingLevel/Budget
 const GEMINI_DEFAULT_TEXT_VERBOSITY = "low";      // Gemini has no direct verbosity API knob; applied through prompt steering
-const GEMINI_DEFAULT_MAX_OUTPUT_TOKENS = 24000;
+const GEMINI_DEFAULT_MAX_OUTPUT_TOKENS = 66000;
 
-const GEMINI_DEFAULT_PLANNER_REASONING_EFFORT = "medium";
+const GEMINI_DEFAULT_PLANNER_REASONING_EFFORT = "high";
 const GEMINI_DEFAULT_PLANNER_TEXT_VERBOSITY = "medium";
-const GEMINI_DEFAULT_PLANNER_MAX_OUTPUT_TOKENS = 32000;
+const GEMINI_DEFAULT_PLANNER_MAX_OUTPUT_TOKENS = 66000;
 
-const GEMINI_DEFAULT_EXECUTOR_REASONING_EFFORT = "medium";
+const GEMINI_DEFAULT_EXECUTOR_REASONING_EFFORT = "low";
 const GEMINI_DEFAULT_EXECUTOR_TEXT_VERBOSITY = "low";
-const GEMINI_DEFAULT_EXECUTOR_MAX_OUTPUT_TOKENS = 24000;
+const GEMINI_DEFAULT_EXECUTOR_MAX_OUTPUT_TOKENS = 66000;
 
 const GEMINI_HTTP_TIMEOUT_MS = Number(process.env.GEMINI_HTTP_TIMEOUT_MS || 1500000);
 const GEMINI_PLANNER_HTTP_TIMEOUT_MS = Number(process.env.GEMINI_PLANNER_HTTP_TIMEOUT_MS || 1500000);
@@ -1342,6 +1342,7 @@ CRITICAL RULES:
 - Build upon the existing file contents provided. Do NOT discard or overwrite work from prior tranches.
 - If the file already has functions, variables, or structures from prior tranches, KEEP THEM ALL and add your new code alongside them.
 - The delimiter lines (===FILE_START:=== etc.) must appear exactly as shown, on their own lines.
+- CRITICAL: models/2 MUST be written in plain JavaScript ONLY. Never use TypeScript syntax. No type annotations (param: Type), no interface/type declarations, no generic <T> syntax. Use standard JS: function foo(param) { }
 
 MANDATORY VALIDATION MANIFEST (your output will be REJECTED without this):
 Every file you output MUST contain a machine-readable manifest block embedded as a comment
@@ -1387,6 +1388,7 @@ Correct approach:
       ];
 
       let trancheResponseObj;
+      const EXECUTOR_MAX_ATTEMPTS = 3;
 
       await progressTelemetry.event(
         `Tranche ${nextTranche + 1} started`,
@@ -1404,99 +1406,176 @@ Correct approach:
         }
       );
 
-      let executorSawFirstToken = false;
+      let trancheResult = null;
+      let lastExecutorError = null;
 
-      try {
-        trancheResponseObj = await callGemini(apiKey, {
-          model: GEMINI_DEFAULT_EXECUTOR_MODEL,
-          maxTokens: GEMINI_DEFAULT_EXECUTOR_MAX_OUTPUT_TOKENS,
-          effort: GEMINI_DEFAULT_EXECUTOR_REASONING_EFFORT,
-          verbosity: GEMINI_DEFAULT_EXECUTOR_TEXT_VERBOSITY,
-          timeoutMs: GEMINI_HTTP_TIMEOUT_MS,
-          system: executionSystem,
-          userContent: trancheUserContent,
-          stream: true,
-          jsonMode: false,
-          onEvent: async () => {
-            await progressTelemetry.patch(
-              {
-                stage: "executing",
-                model: GEMINI_DEFAULT_EXECUTOR_MODEL,
-                label: `Tranche ${nextTranche + 1}/${progress.totalTranches} response created`,
-                detail: tranche.name || tranche.description || "Executor accepted by Gemini.",
+      for (let attempt = 1; attempt <= EXECUTOR_MAX_ATTEMPTS; attempt++) {
+        const isRetry = attempt > 1;
+
+        if (isRetry) {
+          await progressTelemetry.event(
+            `Tranche ${nextTranche + 1} retry (attempt ${attempt}/${EXECUTOR_MAX_ATTEMPTS})`,
+            lastExecutorError
+              ? `Previous attempt failed: ${lastExecutorError}. Retrying with stronger delimiter enforcement.`
+              : `No delimiters found in attempt ${attempt - 1}. Retrying.`,
+            {
+              stage: "executing",
+              model: GEMINI_DEFAULT_EXECUTOR_MODEL,
+              type: "warn",
+              patch: {
+                label: `Tranche ${nextTranche + 1} retry ${attempt - 1}/${EXECUTOR_MAX_ATTEMPTS - 1}`,
+                detail: "Re-sending with escalated delimiter instructions...",
                 currentTranche: nextTranche
-              },
-              true
-            );
-          },
-          onTextDelta: async (delta, aggregateText) => {
-            if (!executorSawFirstToken) {
-              executorSawFirstToken = true;
-              await progressTelemetry.event(
-                `Tranche ${nextTranche + 1} streaming live output`,
-                "Realtime executor text is now flowing into the AI Context Window.",
+              }
+            }
+          );
+          console.warn(`Tranche ${nextTranche + 1}: attempt ${attempt}/${EXECUTOR_MAX_ATTEMPTS} (previous had no delimiters or failed).`);
+        }
+
+        // On retries, prepend an escalating reminder that forces immediate FILE_START output.
+        const retryPrefix = isRetry
+          ? `CRITICAL RETRY — Your previous response did not contain any ===FILE_START: path=== delimiters and was REJECTED.\nYou MUST begin your response with ===FILE_START: on the very first line. Do NOT write any explanation, preamble, or reasoning text before the first FILE_START delimiter.\n\n`
+          : "";
+
+        const attemptUserContent = isRetry
+          ? [{ type: "text", text: retryPrefix + trancheUserContent[0].text }, ...(trancheUserContent.slice(1))]
+          : trancheUserContent;
+
+        let executorSawFirstToken = false;
+
+        try {
+          trancheResponseObj = await callGemini(apiKey, {
+            model: GEMINI_DEFAULT_EXECUTOR_MODEL,
+            maxTokens: GEMINI_DEFAULT_EXECUTOR_MAX_OUTPUT_TOKENS,
+            effort: GEMINI_DEFAULT_EXECUTOR_REASONING_EFFORT,
+            verbosity: GEMINI_DEFAULT_EXECUTOR_TEXT_VERBOSITY,
+            timeoutMs: GEMINI_HTTP_TIMEOUT_MS,
+            system: executionSystem,
+            userContent: attemptUserContent,
+            stream: true,
+            jsonMode: false,
+            onEvent: async () => {
+              await progressTelemetry.patch(
                 {
                   stage: "executing",
                   model: GEMINI_DEFAULT_EXECUTOR_MODEL,
-                  patch: {
+                  label: `Tranche ${nextTranche + 1}/${progress.totalTranches} response created`,
+                  detail: tranche.name || tranche.description || "Executor accepted by Gemini.",
+                  currentTranche: nextTranche
+                },
+                true
+              );
+            },
+            onTextDelta: async (delta, aggregateText) => {
+              if (!executorSawFirstToken) {
+                executorSawFirstToken = true;
+                await progressTelemetry.event(
+                  `Tranche ${nextTranche + 1} streaming live output${isRetry ? ` (retry ${attempt - 1})` : ""}`,
+                  "Realtime executor text is now flowing into the AI Context Window.",
+                  {
                     stage: "executing",
                     model: GEMINI_DEFAULT_EXECUTOR_MODEL,
-                    label: `Streaming tranche ${nextTranche + 1}/${progress.totalTranches}`,
-                    detail: tranche.name || tranche.description || "Receiving streamed executor output...",
-                    currentTranche: nextTranche
+                    patch: {
+                      stage: "executing",
+                      model: GEMINI_DEFAULT_EXECUTOR_MODEL,
+                      label: `Streaming tranche ${nextTranche + 1}/${progress.totalTranches}`,
+                      detail: tranche.name || tranche.description || "Receiving streamed executor output...",
+                      currentTranche: nextTranche
+                    }
                   }
-                }
-              );
-            }
+                );
+              }
 
-            await progressTelemetry.stream(delta, aggregateText, {
+              await progressTelemetry.stream(delta, aggregateText, {
+                stage: "executing",
+                model: GEMINI_DEFAULT_EXECUTOR_MODEL,
+                label: `Streaming tranche ${nextTranche + 1}/${progress.totalTranches}`,
+                detail: tranche.name || tranche.description || "Receiving streamed executor output...",
+                currentTranche: nextTranche
+              });
+            }
+          });
+
+          await progressTelemetry.clearStream(true);
+          lastExecutorError = null;
+
+        } catch (err) {
+          lastExecutorError = err.message;
+          console.error(`Tranche ${nextTranche + 1} attempt ${attempt} threw:`, err.message);
+          trancheResponseObj = null;
+
+          if (attempt < EXECUTOR_MAX_ATTEMPTS) {
+            continue; // retry
+          }
+
+          // All attempts exhausted via exception — fall through to skip logic below
+          break;
+        }
+
+        // Try to parse the response
+        if (trancheResponseObj) {
+          if (trancheResponseObj.usage) {
+            progress.tokenUsage.tranches[nextTranche] = trancheResponseObj.usage;
+            progress.tokenUsage.totals.input_tokens += trancheResponseObj.usage.input_tokens || 0;
+            progress.tokenUsage.totals.output_tokens += trancheResponseObj.usage.output_tokens || 0;
+            progress.tokenUsage.totals.reasoning_tokens += trancheResponseObj.usage.output_budget?.reasoning_tokens || 0;
+            progress.tokenUsage.totals.rest_output_tokens += trancheResponseObj.usage.output_budget?.rest_output_tokens || 0;
+            progress.tranches[nextTranche].tokenUsage = trancheResponseObj.usage;
+          }
+
+          trancheResult = parseDelimitedResponse(trancheResponseObj.text);
+        }
+
+        if (trancheResult) {
+          // Successfully parsed — break out of retry loop
+          await progressTelemetry.event(
+            `Tranche ${nextTranche + 1} response received`,
+            `Parsing streamed executor payload and merging files...${isRetry ? ` (succeeded on attempt ${attempt})` : ""}`,
+            {
               stage: "executing",
               model: GEMINI_DEFAULT_EXECUTOR_MODEL,
-              label: `Streaming tranche ${nextTranche + 1}/${progress.totalTranches}`,
-              detail: tranche.name || tranche.description || "Receiving streamed executor output...",
-              currentTranche: nextTranche
-            });
-          }
-        });
+              patch: {
+                stage: "executing",
+                model: GEMINI_DEFAULT_EXECUTOR_MODEL,
+                label: `Parsing tranche ${nextTranche + 1}/${progress.totalTranches}`,
+                detail: "Validating delimiter blocks and file payloads...",
+                currentTranche: nextTranche
+              }
+            }
+          );
+          break;
+        }
 
-        await progressTelemetry.clearStream(true);
+        // No delimiters found — log and retry if budget remains
+        const rawSnippet = trancheResponseObj?.text ? trancheResponseObj.text.slice(0, 300) : "(empty)";
+        console.error(`Tranche ${nextTranche + 1} attempt ${attempt}: no delimiters found. Raw snippet: ${rawSnippet}`);
+        lastExecutorError = "Executor returned no recognisable file delimiters or valid JSON fallback.";
 
-        await progressTelemetry.event(
-          `Tranche ${nextTranche + 1} response received`,
-          "Parsing streamed executor payload and merging files...",
-          {
-            stage: "executing",
-            model: GEMINI_DEFAULT_EXECUTOR_MODEL,
-            patch: {
+        if (attempt === EXECUTOR_MAX_ATTEMPTS) {
+          // All attempts exhausted without getting delimiters
+          await progressTelemetry.event(
+            `Tranche ${nextTranche + 1} parse failure (all ${EXECUTOR_MAX_ATTEMPTS} attempts exhausted)`,
+            "Executor returned no delimiter payload after all retries. Skipping to keep pipeline alive.",
+            {
               stage: "executing",
               model: GEMINI_DEFAULT_EXECUTOR_MODEL,
-              label: `Parsing tranche ${nextTranche + 1}/${progress.totalTranches}`,
-              detail: "Validating delimiter blocks and file payloads...",
-              currentTranche: nextTranche
+              type: "warn",
+              patch: {
+                label: `Tranche ${nextTranche + 1} parse failure`,
+                detail: "No valid delimiter output after retries.",
+                currentTranche: nextTranche
+              }
             }
-          }
-        );
-      } catch (err) {
+          );
+        }
+      }
+      // ── end executor retry loop ──────────────────────────────────────────
+
+      // Handle complete parse failure after all retry attempts
+      if (!trancheResult) {
         progress.tranches[nextTranche].status = "error";
         progress.tranches[nextTranche].endTime = Date.now();
-        progress.tranches[nextTranche].message = `Error: ${err.message}`;
-
-        await progressTelemetry.event(
-          `Tranche ${nextTranche + 1} failed`,
-          err.message,
-          {
-            stage: "executing",
-            model: GEMINI_DEFAULT_EXECUTOR_MODEL,
-            type: "error",
-            patch: {
-              label: `Tranche ${nextTranche + 1} failed`,
-              detail: err.message,
-              currentTranche: nextTranche
-            }
-          }
-        );
-
-        console.error(`Tranche ${nextTranche + 1} failed:`, err.message);
+        progress.tranches[nextTranche].message = lastExecutorError || "Executor returned no recognisable file delimiters or valid JSON fallback after all retry attempts.";
 
         state.progress = progress;
         await savePipelineState(bucket, projectPath, state);
@@ -1507,71 +1586,17 @@ Correct approach:
             trancheIndex: nextTranche,
             totalTranches: progress.totalTranches,
             status: "checkpoint",
-            message: `Checkpoint after tranche ${nextTranche + 1} error-skip. ${allUpdatedFiles.length} file(s) so far.`
+            message: `Checkpoint after tranche ${nextTranche + 1} parse-error skip (all retries exhausted). ${allUpdatedFiles.length} file(s) so far.`
           });
         }
 
         if (nextTranche + 1 < progress.totalTranches) {
           await chainToSelf({ projectPath, jobId, mode: "tranche", nextTranche: nextTranche + 1 });
-          return { statusCode: 200, body: JSON.stringify({ success: true, chained: true, phase: `tranche_${nextTranche}_error_skipped` }) };
+          return { statusCode: 200, body: JSON.stringify({ success: true, chained: true, phase: `tranche_${nextTranche}_parse_error` }) };
         }
       }
 
-      if (trancheResponseObj) {
-        if (trancheResponseObj.usage) {
-          progress.tokenUsage.tranches[nextTranche] = trancheResponseObj.usage;
-          progress.tokenUsage.totals.input_tokens += trancheResponseObj.usage.input_tokens || 0;
-          progress.tokenUsage.totals.output_tokens += trancheResponseObj.usage.output_tokens || 0;
-          progress.tokenUsage.totals.reasoning_tokens += trancheResponseObj.usage.output_budget?.reasoning_tokens || 0;
-          progress.tokenUsage.totals.rest_output_tokens += trancheResponseObj.usage.output_budget?.rest_output_tokens || 0;
-          progress.tranches[nextTranche].tokenUsage = trancheResponseObj.usage;
-        }
-
-        const trancheResult = parseDelimitedResponse(trancheResponseObj.text);
-
-        if (!trancheResult) {
-          progress.tranches[nextTranche].status = "error";
-          progress.tranches[nextTranche].endTime = Date.now();
-          progress.tranches[nextTranche].message = "Executor returned no recognisable file delimiters or valid JSON fallback.";
-
-          await progressTelemetry.event(
-            `Tranche ${nextTranche + 1} parse failure`,
-            "Executor returned no delimiter payload. Skipping to keep pipeline alive.",
-            {
-              stage: "executing",
-              model: GEMINI_DEFAULT_EXECUTOR_MODEL,
-              type: "warn",
-              patch: {
-                label: `Tranche ${nextTranche + 1} parse failure`,
-                detail: "No valid delimiter output returned.",
-                currentTranche: nextTranche
-              }
-            }
-          );
-
-          console.error(`Tranche ${nextTranche + 1} produced no parseable output.`);
-          console.error("Raw response (first 500 chars):", trancheResponseObj.text.slice(0, 500));
-
-          state.progress = progress;
-          await savePipelineState(bucket, projectPath, state);
-
-          if (allUpdatedFiles.length > 0) {
-            await saveAiResponse(bucket, projectPath, allUpdatedFiles, {
-              jobId: jobId,
-              trancheIndex: nextTranche,
-              totalTranches: progress.totalTranches,
-              status: "checkpoint",
-              message: `Checkpoint after tranche ${nextTranche + 1} parse-error skip. ${allUpdatedFiles.length} file(s) so far.`
-            });
-          }
-
-          if (nextTranche + 1 < progress.totalTranches) {
-            await chainToSelf({ projectPath, jobId, mode: "tranche", nextTranche: nextTranche + 1 });
-            return { statusCode: 200, body: JSON.stringify({ success: true, chained: true, phase: `tranche_${nextTranche}_parse_error` }) };
-          }
-        }
-
-        if (trancheResult) {
+      if (trancheResult) {
           const trancheFilesUpdated = [];
 
           if (trancheResult.updatedFiles && Array.isArray(trancheResult.updatedFiles)) {
@@ -1620,7 +1645,6 @@ Correct approach:
             });
           }
         }
-      }
 
       state.progress = progress;
       state.accumulatedFiles = accumulatedFiles;
