@@ -1866,6 +1866,35 @@ const AI_HARDENING = {
       return String(value || 'unnamed').replace(/[^a-zA-Z0-9_.-]+/g, '_').slice(0, 180);
     }
 
+    /**
+     * resolveAiTargetPath — converts an AI-returned file path into a safe
+     * Firebase storage path and a short display filename.
+     *
+     * Examples:
+     *   "models/2"          → { safePath: "models/2",  fileName: "2" }
+     *   " models/23 "       → { safePath: "models/23", fileName: "23" }
+     *   "models\\2"         → { safePath: "models/2",  fileName: "2" }
+     *
+     * Rules:
+     *  - Trim whitespace from both ends.
+     *  - Normalise backslashes to forward-slashes.
+     *  - Strip any leading slash so the path is always relative.
+     *  - fileName is the last path segment (everything after the final "/").
+     *  - safePath is the cleaned, relative path used as the Firebase key.
+     */
+    function resolveAiTargetPath(rawPath) {
+      const cleaned = String(rawPath || '')
+        .trim()
+        .replace(/\\/g, '/')   // backslash → forward-slash
+        .replace(/^\/+/, '');  // strip leading slashes
+
+      const segments = cleaned.split('/');
+      const fileName = segments[segments.length - 1] || cleaned;
+      const safePath = cleaned;
+
+      return { fileName, safePath };
+    }
+
     function normalizeFetchedText(raw = '') {
       return String(raw || '').replace(/^﻿/, '').trim();
     }
