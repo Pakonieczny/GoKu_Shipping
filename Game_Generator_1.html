@@ -539,6 +539,12 @@
     <div class="card">
       <h1>Game Generator V2</h1>
       
+      <label>AI Service</label>
+      <select id="aiServiceSelect" style="margin-bottom: 20px;">
+        <option value="claude">Claude (Opus/Sonnet 4.6)</option>
+        <option value="gemini">Gemini (3.1 Pro)</option>
+      </select>
+      
       <label>Active Project</label>
       <select id="projectSelect">
         <option value="">Loading projects...</option>
@@ -595,7 +601,7 @@
         <h2>AI Context Window</h2>
         <div style="display: flex; flex-direction: column; gap: 10px;">
           <div id="aiChatLog" style="height: 400px; overflow-y: auto; background: #0b0d12; border: 1px solid var(--line); border-radius: 10px; padding: 14px; font-size: 13px; font-family: monospace; display: flex; flex-direction: column; gap: 12px; white-space: pre-wrap; line-height: 1.5;">
-            <div style="color: var(--muted);">V2 Expert-Agent Pipeline ready. Enter game build instructions below — Opus will research the game, assign expert agents, and create focused micro-tranches.</div>
+            <div id="aiChatIntro" style="color: var(--muted);">V2 Expert-Agent Pipeline ready. Enter game build instructions below.</div>
           </div>
 
           <div id="aiProgressPanel" class="ai-progress-panel">
@@ -627,7 +633,7 @@
             <div id="tranchePlanningSection" class="tranche-planning" style="display:none;">
               <div class="tranche-planning-spinner"></div>
               <div class="tranche-planning-text">
-                <span id="tranchePlanningLabel">Opus 4.6 is researching game design and creating expert-driven build tranches...</span>
+                <span id="tranchePlanningLabel">AI Planner is researching game design and creating expert-driven build tranches...</span>
                 <span class="analysis" id="tranchePlanningAnalysis"></span>
               </div>
             </div>
@@ -642,8 +648,8 @@
             <div class="tranche-list" id="trancheList"></div>
             <div class="tranche-footer">
               <div class="tranche-footer-models">
-                <div class="tranche-footer-model"><div class="tranche-footer-dot opus"></div> Opus 4.6 → Intelligence + Planning</div>
-                <div class="tranche-footer-model"><div class="tranche-footer-dot sonnet"></div> Sonnet 4.6 + Experts → Execution</div>
+                <div class="tranche-footer-model"><div class="tranche-footer-dot opus"></div> AI Planner → Intelligence + Planning</div>
+                <div class="tranche-footer-model"><div class="tranche-footer-dot sonnet"></div> AI Executor + Experts → Execution</div>
               </div>
               <span id="trancheFooterStatus">V2 Pipeline ready</span>
             </div>
@@ -691,6 +697,13 @@
     import * as THREE from 'three';
     import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
     import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+    // ── AI Service Configuration ──
+    const AI_SERVICES = {
+        claude: { name: 'Claude', planner: 'Opus 4.6', executor: 'Sonnet 4.6', endpoint: '/.netlify/functions/claudeCodeProxy-background' },
+        gemini: { name: 'Gemini', planner: 'Gemini 3.1 Pro', executor: 'Gemini 3.1 Pro', endpoint: '/.netlify/functions/geminiCodeProxy-background' }
+    };
+    let currentAiService = 'claude';
 
     const ROOT = "game-generator-1/projects";
     
@@ -746,6 +759,7 @@
     const progressContainer = document.getElementById('progressContainer');
     const progressBar = document.getElementById('progressBar');
 
+    const aiServiceSelect = document.getElementById('aiServiceSelect');
     const aiPromptInput = document.getElementById('aiPromptInput');
     const sendToAiBtn = document.getElementById('sendToAiBtn');
     const update2Btn = document.getElementById('update2Btn');
@@ -755,6 +769,36 @@
     const reviewPanel = document.getElementById('reviewPanel');
     const reviewFileList = document.getElementById('reviewFileList');
     const clearReviewBtn = document.getElementById('clearReviewBtn');
+
+    aiServiceSelect.addEventListener('change', (e) => {
+        currentAiService = e.target.value;
+        updateAiUI();
+    });
+
+    function updateAiUI() {
+        const svc = AI_SERVICES[currentAiService];
+        const introDiv = document.getElementById('aiChatIntro');
+        if (introDiv) {
+            introDiv.textContent = currentProject
+                ? `AI Context ready for project: ${currentProject}. Enter instructions below — ${svc.planner} will research the game, assign expert agents, and create focused micro-tranches.`
+                : `V2 Expert-Agent Pipeline ready. Enter game build instructions below — ${svc.planner} will research the game, assign expert agents, and create focused micro-tranches.`;
+        }
+        
+        aiPromptInput.placeholder = `e.g., 'Build a physics-based destruction game with 15 levels...' — V2 will research the game, assign expert agents, and decompose into 8-15 micro-tranches using ${svc.name}.`;
+
+        const planningLabel = document.getElementById('tranchePlanningLabel');
+        if (planningLabel && planningLabel.textContent.includes('researching')) {
+            planningLabel.textContent = `${svc.planner} is researching game design and creating expert-driven build tranches...`;
+        }
+
+        const footerModels = document.querySelector('.tranche-footer-models');
+        if (footerModels) {
+            footerModels.innerHTML = `
+                <div class="tranche-footer-model"><div class="tranche-footer-dot opus"></div> ${svc.planner} → Intelligence + Planning</div>
+                <div class="tranche-footer-model"><div class="tranche-footer-dot sonnet"></div> ${svc.executor} + Experts → Execution</div>
+            `;
+        }
+    }
 
     function setStatus(msg) {
         globalStatus.textContent = msg;
@@ -980,8 +1024,11 @@
       refreshReviewList();
       refreshAssetLibrary();
       syncAssetsJson();
-      aiChatLog.innerHTML = `<div style="color: var(--muted);">AI Context ready for project: ${name}. Enter instructions below.</div>`;
+      
+      aiChatLog.innerHTML = `<div id="aiChatIntro" style="color: var(--muted);">AI Context ready for project: ${name}. Enter instructions below — ${AI_SERVICES[currentAiService].planner} will research the game, assign expert agents, and create focused micro-tranches.</div>`;
       aiCodeReviewLog.innerHTML = `<div style="color: var(--muted);">Code diff updates will appear here after an AI run.</div>`;
+      
+      updateAiUI();
     }
 
     function renderDropZones() {
@@ -2462,12 +2509,13 @@ Quality criteria for your work:
       },
 
       showPlanning() {
+        const svc = AI_SERVICES[currentAiService];
         document.getElementById('tranchePlanningSection').style.display = 'flex';
         document.getElementById('trancheHeaderTitle').textContent = 'V2 Expert-Agent Pipeline';
         document.getElementById('trancheHeaderSub').textContent = 'Phase 0: Game Intelligence + Expert Planning...';
         document.getElementById('trancheOverallFill').style.width = '0%';
         document.getElementById('trancheList').innerHTML = '';
-        document.getElementById('trancheFooterStatus').textContent = 'Opus 4.6 researching game design...';
+        document.getElementById('trancheFooterStatus').textContent = `${svc.planner} researching game design...`;
         // Reset intelligence panel
         const intPanel = document.getElementById('trancheIntelligence');
         intPanel.classList.remove('active');
@@ -2488,6 +2536,7 @@ Quality criteria for your work:
       updateFromProgress(prog) {
         if (!prog) return;
 
+        const svc = AI_SERVICES[currentAiService];
         const pipeline = document.getElementById('tranchePipeline');
         const headerIcon = document.getElementById('trancheHeaderIcon');
         const headerTitle = document.getElementById('trancheHeaderTitle');
@@ -2528,7 +2577,7 @@ Quality criteria for your work:
 
         if (prog.status === 'planning') {
           planningSection.style.display = 'flex';
-          planningLabel.textContent = 'Opus 4.6 is researching game design and creating expert-driven build tranches...';
+          planningLabel.textContent = `${svc.planner} is researching game design and creating expert-driven build tranches...`;
           planningAnalysis.textContent = '';
           overallFill.style.width = '5%';
           footerStatus.textContent = 'Phase 0: Game Intelligence active...';
@@ -2581,7 +2630,7 @@ Quality criteria for your work:
               headerTitle.textContent = `T${activeTranche.index + 1}/${prog.totalTranches}: ${activeTranche.name}`;
               headerSub.textContent = agentNames
                 ? `${agentNames} executing tranche ${activeTranche.index + 1}...`
-                : `Sonnet 4.6 executing tranche ${activeTranche.index + 1} of ${prog.totalTranches}...`;
+                : `${svc.executor} executing tranche ${activeTranche.index + 1} of ${prog.totalTranches}...`;
             }
             footerStatus.textContent = `Executing tranche ${(prog.currentTranche || 0) + 1} of ${prog.totalTranches}...`;
           }
@@ -3096,7 +3145,7 @@ REPAIR INSTRUCTIONS — PASS ${pass}/${AI_HARDENING.repairPassLimit}
 Rules:
 1. Respond in delimiter format only: ===FILE_START: path=== ... ===FILE_END: path===
 2. Output ONLY the files listed in REPAIR CONTEXT above. Do not touch any other file.
-3. Preserve every working system already in the file — do not remove anything that works.
+3. Preserve all working systems that already succeeded.
 4. Output the COMPLETE file content — no patches, no diffs, no partial rewrites.
 
 Original user request for context: ${basePrompt}`;
@@ -3127,7 +3176,7 @@ Original user request for context: ${basePrompt}`;
 
         // ── Trigger backend ─────────────────────────────────────────────────
         Progress.step(`Triggering repair backend (pass ${pass})`, 'Sending to Netlify...');
-        const repairProxyRes = await fetch('/.netlify/functions/claudeCodeProxy-background', {
+        const repairProxyRes = await fetch(AI_SERVICES[currentAiService].endpoint, {
           method:  'POST',
           headers: { 'Content-Type': 'application/json' },
           body:    JSON.stringify({ projectPath, jobId: repairJobId, repairAttempt: pass })
@@ -3625,7 +3674,7 @@ User Request: ${prompt}`;
         await uploadString(activeJobRef, JSON.stringify({ jobId: currentJobId, timestamp: Date.now(), repairAttempt }));
 
         setStatus(repairAttempt > 0 ? 'AI repair pass is processing...' : 'AI is processing files (This may take a minute)...');
-        Progress.step('Sending context to Claude', repairAttempt > 0 ? 'Focused repair context + failed targets...' : 'Building V2 expert-agent pipeline prompt + files...');
+        Progress.step('Sending context to AI', repairAttempt > 0 ? 'Focused repair context + failed targets...' : 'Building V2 expert-agent pipeline prompt + files...');
         const inlineImages = await Promise.all(attachedPromptImages.map(async (file) => {
             return new Promise((resolve, reject) => {
                 const reader = new FileReader();
@@ -3655,7 +3704,7 @@ User Request: ${prompt}`;
         const fetchController = new AbortController();
         const fetchTimeout = setTimeout(() => fetchController.abort(), 180000);
         try {
-            const proxyRes = await fetch('/.netlify/functions/claudeCodeProxy-background', {
+            const proxyRes = await fetch(AI_SERVICES[currentAiService].endpoint, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ projectPath, jobId: currentJobId, repairAttempt, repairTargets }),
@@ -3676,7 +3725,7 @@ User Request: ${prompt}`;
         let result = null;
         let malformedProgressCount = 0;
         let malformedResponseCount = 0;
-        Progress.step('Waiting for Claude response', 'Polling Firebase for V2 expert tranche progress...');
+        Progress.step('Waiting for AI response', 'Polling Firebase for V2 expert tranche progress...');
 
         TrancheUI.show();
         TrancheUI.showPlanning();
@@ -3706,7 +3755,7 @@ User Request: ${prompt}`;
                   .join(' + ');
                 Progress.step(
                   `T${active.index + 1}/${progressData.totalTranches}: ${active.name}`,
-                  agentLabel ? `${agentLabel} executing...` : (active.description || 'Sonnet 4.6 executing...')
+                  agentLabel ? `${agentLabel} executing...` : (active.description || `${AI_SERVICES[currentAiService].executor} executing...`)
                 );
               }
             }
