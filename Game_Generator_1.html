@@ -662,7 +662,7 @@
           </div>
           
           <div style="position: relative; width: 100%;">
-            <textarea id="aiPromptInput" placeholder="e.g., 'Build an Angry Birds style slingshot destruction game...' — V2 will research the game, assign 8 expert agents, and decompose into 8-15 micro-tranches." style="min-height: 80px; resize: vertical; width: 100%; padding-right: 140px;"></textarea>
+            <textarea id="aiPromptInput" placeholder="e.g., 'Build a physics-based destruction game with 15 levels...' — V2 will research the game, assign expert agents, and decompose into 8-15 micro-tranches." style="min-height: 80px; resize: vertical; width: 100%; padding-right: 140px;"></textarea>
             <div id="imageTagContainer" style="position: absolute; top: 10px; right: 10px; display: flex; flex-direction: column; gap: 6px; z-index: 10; pointer-events: none;"></div>
           </div>
           
@@ -1886,11 +1886,11 @@ FAILED TARGETS
 ${targets}
 
 MANDATORY RULES
-1. Return strict JSON only — no markdown, no commentary outside the JSON envelope.
-2. Return updatedFiles only for the failed targets listed above.
+1. Respond in delimiter format only: ===FILE_START: path=== ... ===FILE_END: path===
+2. Output ONLY the files listed in FAILED TARGETS above. Do not touch any other file.
 3. Preserve all working systems that already succeeded.
 4. If a failed target is partial or malformed, rebuild that target completely and safely.
-5. For models/2, do not remove particle, impact, trail, pig death, or explosion related systems that already exist unless you are replacing them with a working implementation.`;
+5. Output the COMPLETE file content — no patches, no diffs, no partial rewrites.`;
     }
 
     function buildFailedFileRecord(file, safePath, reason, stage, originalContent = '', candidateContent = '', subsystemDetails = []) {
@@ -2213,14 +2213,14 @@ Failure stage: ${stage}${liveBlock}${candidateBlock}`;
         color: "#ff6b35",
         systemPrompt: `You are a PHYSICS ENGINE EXPERT specializing in web-based game physics.
 Your expertise: rigid body dynamics, impulse-based physics, collision detection/response,
-2.5D constraint enforcement (Z-axis locking, drift correction), shared memory communication
-between main and physics threads, edge-triggered vs level-triggered physics commands,
-physics shape selection (bounding-box vs mesh vs sphere), deferred isReady initialization patterns.
+constraint enforcement, shared memory communication between main and physics threads,
+edge-triggered vs level-triggered physics commands, physics shape selection
+(bounding-box vs mesh vs sphere), deferred isReady initialization patterns.
 
 Quality criteria for your work:
 - Physics bodies must use correct motion types (DYNAMIC vs STATIC vs KINEMATIC)
 - All physics operations must be guarded by isReady checks
-- Z-axis must be locked for 2.5D games (velocity zeroing every N frames)
+- Constraint axes must be locked as required by the game type
 - Mass ratios between objects must feel physically plausible
 - Impulse magnitudes must be normalized/clamped for consistent behavior
 - Angular velocity must be explicitly managed (not left to physics engine)
@@ -2232,21 +2232,19 @@ Quality criteria for your work:
         icon: "🎮",
         color: "#4ecdc4",
         systemPrompt: `You are a GAME MECHANICS EXPERT specializing in core gameplay loop design.
-Your expertise: turn-based game flow (shot → resolve → next shot → win/lose),
-damage systems (health, damage multipliers, threshold scoring), projectile mechanics
-(slingshot drag-aim-release, speed clamping, trajectory preview), level progression systems
-(authored levels, difficulty curves), scoring systems (per-kill, per-destruction, bonus, star ratings),
-state machine design (countdown → playing → shot-in-flight → settling → next-shot),
+Your expertise: game flow state machines, damage and health systems, player input mechanics
+(drag, aim, release, click, swipe), level progression systems (authored levels, difficulty curves),
+scoring systems (per-action, per-destruction, bonus, star/grade ratings),
+state machine design (idle → playing → action-in-flight → resolving → next-turn),
 input handling (mouse/touch/keyboard with proper guard chains).
 
 Quality criteria for your work:
 - Every state transition must be explicitly guarded (no double-triggers)
-- Input handlers must respect ALL game states (intro locked, launched, level ended)
-- Damage values must be tuned against health values for satisfying destruction
-- Scoring must reward skill while preventing frustration (threshold scoring at 85%)
+- Input handlers must respect ALL game states (locked during intros, cutscenes, level end)
+- Damage values must be tuned against health values for satisfying feedback
+- Scoring must reward skill while preventing frustration
 - Level designs must teach mechanics progressively
-- Speed clamping must decouple input power from flight range
-- All input handlers must check roundIntroLocked`
+- All input handlers must validate current game state before acting`
       },
 
       camera_cinematics: {
@@ -2257,16 +2255,16 @@ Quality criteria for your work:
 Your expertise: camera state machines (overview, cinematic, follow, return), smooth camera
 interpolation (lerp rates, easing functions), cinematic sequences (multi-phase camera moves
 with precise timing), camera probing for engine compatibility (try every known API path),
-field-of-view and distance management, camera-driven pacing (building anticipation).
+field-of-view and distance management, camera-driven pacing.
 
 Quality criteria for your work:
 - Camera update must ALWAYS run first in the render loop, before ANY guard checks
 - Cinematic sequences must have precise timing (seconds, not frames)
-- Camera lerp rates must vary by mode (slow for cinematics ~0.025, fast for follow ~3.0*dt)
+- Camera lerp rates must vary by mode (slow for cinematics, fast for active follow)
 - Camera must never clip through geometry or show behind the scene
-- Cinematic must lock ALL player input during playback via roundIntroLocked
-- Camera follow must track projectile with slight prediction
-- Distance multiplier must maintain readable framing at all zoom levels
+- Cinematic must lock ALL player input during playback
+- Camera follow must track the active subject with appropriate prediction or lag
+- Distance and framing must remain readable at all zoom levels
 - Multi-path camera probing must try position/target, setPosition, distance, viewMatrix, scene node`
       },
 
@@ -2274,21 +2272,21 @@ Quality criteria for your work:
         name: "Audio Design",
         icon: "🔊",
         color: "#f59e0b",
-        systemPrompt: `You are an AUDIO DESIGN EXPERT specializing in synthesized game audio.
+        systemPrompt: `You are an AUDIO DESIGN EXPERT specializing in synthesized game audio for Cherry3D.
 Your expertise: Web Audio API (oscillators, noise buffers, BiquadFilters, gain envelopes),
-sound design for game feedback (impacts, destruction, UI, ambience), audio synthesis without
+sound design for game feedback (actions, reactions, UI, ambience), audio synthesis without
 sample files (pure oscillator + filtered noise techniques), AudioContext lifecycle management
 (suspended state, user gesture unlocking), layered sound design (combining tones + noise for
 rich textures), frequency/duration/envelope tuning for emotional impact.
 
 Quality criteria for your work:
-- Every player action must have audio feedback (grab, stretch, launch, impact, settle)
-- Destruction sounds must vary by material (glass=highpass shatter, wood=bandpass crack, stone=lowpass crunch)
+- Every meaningful player action must have audio feedback
+- Event sounds must vary by context and material where applicable
 - AudioContext must be resumed on first user gesture via resume() call
 - All audio operations must be wrapped in try/catch for graceful degradation
 - Sound layering: each "sound" should combine 2-3 synthesis techniques (tone + noise + sub)
-- Volume levels must be balanced (impacts louder than ambience/UI)
-- Core building blocks: playTone(freq, dur, type, vol, pitchEnd) and _playNoise(dur, filterFreq, filterQ, vol, filterType)`
+- Volume levels must be balanced (key events louder than ambience/UI)
+- Core Cherry3D building blocks: playTone(freq, dur, type, vol, pitchEnd) and _playNoise(dur, filterFreq, filterQ, vol, filterType)`
       },
 
       visual_effects: {
@@ -2297,19 +2295,18 @@ Quality criteria for your work:
         color: "#ec4899",
         systemPrompt: `You are a VISUAL EFFECTS EXPERT specializing in particle systems and visual polish.
 Your expertise: particle system design (emitters, initializers, behaviors, presets), billboard
-rendering for 2.5D effects, material/PBR configuration (albedo, roughness, metalness, emissive),
-visual feedback for game events (impact sparks, smoke, debris, trails), destruction visualization
-(cracking, color changes, fade-outs), color theory for game readability.
+rendering, material/PBR configuration (albedo, roughness, metalness, emissive),
+visual feedback for game events (impacts, reactions, trails, destruction), color theory for game readability.
 
 Quality criteria for your work:
 - Each particle preset must have tuned lifetime, size, velocity, and color ranges
-- Burst emitters must be pooled at [0,-100,0] and repositioned + emit() when needed
+- Burst emitters must be pooled off-screen and repositioned + triggered when needed
 - Particle billboard must be created BEFORE any emitters
-- Materials must be visually distinct at a glance (warm brown wood, light blue glass, cool grey stone, bright green pig)
-- Crack effects must appear at 50% health threshold (not just destruction)
-- Flight trails must persist correctly across physics state changes and stop on impact
-- PBR textures must be re-applied at 500ms and 2000ms after creation (async race condition)
-- On restartLevel, only recreate burst emitters — preserve flightTrail emitter`
+- Materials must be visually distinct at a glance — use color, roughness, and emissive to differentiate
+- Damage/state effects must appear at appropriate health thresholds, not only on destruction
+- Trails and persistent effects must correctly start, update, and stop across game state changes
+- PBR textures must be re-applied after async creation to avoid race conditions
+- On level restart, recreate only transient emitters — preserve persistent/shared ones`
       },
 
       ui_hud: {
@@ -2317,62 +2314,59 @@ Quality criteria for your work:
         icon: "📊",
         color: "#22c55e",
         systemPrompt: `You are a UI/HUD EXPERT specializing in game interface design.
-Your expertise: HTML overlay UI for games (score, shots, level, modals), game state visualization
-(countdown, power bars, star ratings), responsive touch-friendly UI elements, modal systems
-(level complete, level failed, high score), CSS animation for UI transitions, information
+Your expertise: HTML overlay UI for games (score, lives, resources, level, modals), game state visualization
+(countdowns, progress bars, ratings), responsive touch-friendly UI elements, modal systems
+(level complete, level failed, high score, pause), CSS animation for UI transitions, information
 hierarchy (what the player needs to see, when).
 
 Quality criteria for your work:
-- UI must never block game input areas (especially slingshot drag zone)
+- UI must never overlap or block active game input areas
 - All text must be readable against any game background (use text shadows or backdrops)
-- Modals must have clear call-to-action buttons (Restart, Next Level)
-- Score/shot/level display must update in real-time via updateUI callback
-- Power bar must accurately reflect aim state (0 to 1 range)
-- Star rating must be visually celebratory (1-3 stars based on score ratio + unused shots)
-- UI must handle edge cases (max level 15 wraps to 1, new high score display, nextLevel shows 'PLAY AGAIN' at max)`
+- Modals must have clear call-to-action buttons appropriate to the game (Restart, Next, Continue)
+- All HUD values must update in real-time via the game's updateUI callback
+- Progress indicators (bars, counters) must accurately reflect their underlying game state (0 to 1 range)
+- Ratings and end-screens must be visually celebratory and contextually appropriate
+- UI must handle all edge cases (max level wrap, new high score, final level completion)`
       },
 
       game_loop_state: {
         name: "Game Loop & State",
         icon: "🔄",
         color: "#2b6cff",
-        systemPrompt: `You are a GAME LOOP & STATE EXPERT specializing in game architecture.
-Your expertise: game state machine design (single gameState object, no globals), render loop
+        systemPrompt: `You are a GAME LOOP & STATE EXPERT specializing in Cherry3D game architecture.
+Your expertise: game state machine design (single gameState object, no globals), Cherry3D render loop
 structure (camera → guards → game logic), guard chain patterns (physics ready → game ended → not started),
 timer management (settle detection, countdown, cinematic timing), object lifecycle (creation, pooling,
-teardown, restart), factory function patterns for game engines, module export patterns.
+teardown, restart), Cherry3D factory function patterns, module export patterns.
 
 Quality criteria for your work:
 - ALL state must live in a single gameState object — no globals anywhere
 - Guard checks in onRender must follow strict priority ordering: camera first, then physics ready, game ended, not started
-- dt must have fallback (0.016) and clamping (< 0.2)
-- Teardown must clean up ALL dynamic objects (blocks, pigs, burst emitters) but preserve flightTrail
-- Restart must fully reset state without creating memory leaks (reuse monster, don't recreate)
+- dt source is Module.ProjectManager.Physics.rawDelta — read once at top of onRender
+- Teardown must clean up ALL dynamic objects relevant to the game type
+- Restart must fully reset state without creating memory leaks
 - Object counters must be unique per session (counter++, rbCounter++)
-- requestAnimationFrame(initializeGame) for deferred heavy init
-- module.exports = () => { ... return Object.assign({ onInit, onRender, ... }); }`
+- requestAnimationFrame(initializeGame) for deferred heavy init in Cherry3D
+- module.exports = () => { ... return Object.assign({ onInit, onRender, onDestroy, onResize }); }`
       },
 
       level_design: {
         name: "Level Design",
         icon: "🏗️",
         color: "#06b6d4",
-        systemPrompt: `You are a LEVEL DESIGN EXPERT specializing in physics puzzle level construction.
-Your expertise: structural engineering for destructible buildings (load-bearing vs weak points),
-difficulty progression curves (tutorial → mastery → finale), material selection for gameplay
-variety (glass=fragile, stone=durable, wood=medium), pig placement for strategic depth
-(exposed vs protected), shot allocation balancing (enough to win, not enough to waste),
-Y-position stacking calculations (block heights + gaps).
+        systemPrompt: `You are a LEVEL DESIGN EXPERT specializing in game level construction and progression.
+Your expertise: difficulty progression curves (tutorial → mastery → finale), layout design for
+strategic depth, resource/challenge balancing (enough to win, not enough to waste), object
+placement for risk/reward decisions, spatial composition and positioning calculations.
 
 Quality criteria for your work:
-- Level 1 must be a simple tutorial (few blocks, obvious solution, 3 shots, 1 pig)
+- Level 1 must be a simple tutorial that teaches the core mechanic with an obvious solution
 - Each level must introduce or combine mechanics progressively
-- Pig placement must create risk/reward decisions (some exposed, some protected by stone)
-- Structures must be architecturally plausible (bases wider than tops, load-bearing pillars)
-- Shot counts must make levels challenging but solvable (never impossible)
-- Later levels must require multi-shot strategies (can't one-shot everything)
-- All Y positions must account for exact block heights and be documented in comments
-- Block shapes: smallSquare [0.6,0.6,0.8], tallRect [0.5,1.5,0.8], wideRect [1.8,0.4,0.8], largeSquare [1.2,1.2,0.8], thinPlank [2.5,0.2,0.8], fatPillar [0.8,2.0,0.8]`
+- Object and obstacle placement must create meaningful risk/reward decisions
+- Layouts must be achievable but not trivial — always solvable, never a pushover
+- Later levels must require multi-step or combinatory strategies
+- All positional values must be calculated precisely and documented in comments
+- Challenge scaling must feel fair, not arbitrary`
       }
     };
 
@@ -3103,15 +3097,7 @@ Rules:
 1. Respond in delimiter format only: ===FILE_START: path=== ... ===FILE_END: path===
 2. Output ONLY the files listed in REPAIR CONTEXT above. Do not touch any other file.
 3. Preserve every working system already in the file — do not remove anything that works.
-4. Read the VALIDATOR CONTRACT section in REPAIR CONTEXT carefully. It lists the EXACT
-   code patterns the automated validator checks for (on comment-stripped source).
-   For each missing subsystem, at least one of the listed executable patterns MUST appear
-   in the repaired file as real code — not in a comment, not in a string, not routed
-   through a renamed/generic dispatcher unless that was already the original pattern.
-   If "Original matching lines" are shown, restore those exact patterns or equivalent.
-5. Output the COMPLETE file content — no patches, no diffs, no SEARCH/REPLACE.
-6. After writing each file, mentally run through the VALIDATOR CONTRACT checklist and
-   confirm every required pattern is present before submitting.
+4. Output the COMPLETE file content — no patches, no diffs, no partial rewrites.
 
 Original user request for context: ${basePrompt}`;
 
@@ -3449,24 +3435,17 @@ REPAIR INSTRUCTIONS — PASS ${repairAttempt}/${AI_HARDENING.repairPassLimit}
 
 You must regenerate ONLY the files listed in AUTOMATIC REPAIR TARGETS above.
 Rules:
-1. Return strict JSON only — no markdown, no commentary outside the JSON envelope.
-2. Return updatedFiles ONLY for the failed targets listed. Do not touch any other file.
+1. Respond in delimiter format only: ===FILE_START: path=== ... ===FILE_END: path===
+2. Output ONLY the files listed in REPAIR CONTEXT above. Do not touch any other file.
 3. Preserve every working system already present in the current file content.
-4. For models/2: you MUST retain all particle, impact, trail, pig death, and explosion
-   systems. If the validation says these were missing, rebuild those subsystems completely
-   and correctly — do not remove them.
-5. Output full file content (not SEARCH/REPLACE blocks) for each repaired file.
+4. Output the COMPLETE file content — no patches, no diffs, no partial rewrites.
 
-OUTPUT FORMAT — respond with exactly this JSON shape:
-{
-  "updatedFiles": [
-    {
-      "path": "models/2",
-      "content": "...full corrected file content..."
-    }
-  ],
-  "message": "Repair summary: what was fixed and why it was missing."
-}
+OUTPUT FORMAT:
+===FILE_START: models/2===
+...full corrected file content...
+===FILE_END: models/2===
+
+Followed by a plain-text repair summary explaining what was fixed and why it was missing.
 
 Original user request for context: ${basePrompt}`
           : `
@@ -3501,11 +3480,11 @@ A) GAME IDENTITY: What existing game(s) is this based on? What genre and
 
 B) ADDICTION MECHANICS — THE "JUICE": Research and list the SPECIFIC design
    details that make this type of game feel satisfying:
-   - Physics feel (e.g., "the parabolic arc gives a sense of control")
-   - Destruction feedback (e.g., "chain reactions feel earned, not random")
-   - Camera work (e.g., "anticipation camera builds tension before each shot")
-   - Sound design (e.g., "distinct material break sounds provide visceral feedback")
-   - Pacing (e.g., "turn-based with settle detection creates tension-release rhythm")
+   - Core feel (e.g., "the movement response gives the player a sense of control")
+   - Feedback loops (e.g., "reactions feel earned, not random")
+   - Camera work (e.g., "camera timing builds anticipation before key moments")
+   - Sound design (e.g., "distinct event sounds provide visceral feedback")
+   - Pacing (e.g., "action-resolve rhythm creates tension-release cycles")
    Be SPECIFIC with concrete details, not generic ("good physics" is NOT enough).
 
 C) CRITICAL SYSTEM MAP: List every distinct system in the prompt document.
@@ -3554,9 +3533,9 @@ e) GAME-SPECIFIC CONTEXT: Each tranche's prompt must include:
    - How this system connects to the game's "juice" / addictiveness
 
 f) PHASED ORDERING (assign a phase number 1-4 to each tranche):
-   Phase 1 (Foundation): State object, physics base, materials, helper functions
-   Phase 2 (Core Mechanics): Player avatar, input, launch, projectile, destruction
-   Phase 3 (Content & Polish): Camera, audio, levels, UI, particles
+   Phase 1 (Foundation): State object, engine base, core data structures, helper functions
+   Phase 2 (Core Mechanics): Player avatar/entity, input, primary actions, core interactions
+   Phase 3 (Content & Polish): Camera, audio, levels/waves, UI, visual effects
    Phase 4 (Integration): Wiring onRender, connecting handlers, edge cases, final polish
 
 ───────────────────────────────────────────────────────────
@@ -3569,6 +3548,22 @@ For EACH tranche, write a COMPLETE self-contained execution prompt that includes
 4. Code patterns with exact values (copy from the prompt, don't paraphrase)
 5. A quality checklist the executor MUST verify before submitting
 6. What NOT to do — specific pitfalls from the original prompt for this system
+7. CHERRY3D SDK SECTIONS — copy the exact text of every SDK section relevant to
+   what this tranche builds, pasted verbatim into the tranche prompt. The executor
+   AI does NOT have access to the SDK — your copied sections are its only reference.
+   ALWAYS include Section 27 (Master Quick Reference Card) in every tranche.
+   Add whichever additional sections apply to the systems being built, for example:
+     Foundation/state:    Sections 1, 2, 3, 4, 5, 6
+     Physics/movement:    Sections 1, 3, 3A, 7, 15
+     World generation:    Sections 6, 9, 10, 11, 25
+     Obstacles/enemies:   Sections 7, 13, 23, 25
+     Collectibles/powerups: Sections 12, 14, 17, 23
+     Projectiles:         Sections 16, 23
+     Input:               Sections 3, 3A, 19
+     Camera:              Section 20
+     UI/score:            Section 21
+     Audio:               Section 22
+     Textures/materials:  Sections 6, 8, 9, 24
 
 ═══════════════════════════════════════════════════════════
 OUTPUT FORMAT
@@ -3583,13 +3578,13 @@ Respond with a JSON object:
       "expertAgents": ["agent_id_1", "agent_id_2"],
       "phase": 1,
       "dependencies": [],
-      "expectedFiles": ["models/2"],
+      "expectedFiles": ["models/2", "models/23"],
       "estimatedLines": 200,
       "qualityCriteria": [
         "All state in single gameState object",
         "No global variables",
         "dt fallback to 0.016 and clamped < 0.2",
-        "requestAnimationFrame for deferred init"
+        "Deferred heavy initialisation via requestAnimationFrame"
       ],
       "prompt": "The FULL self-contained execution prompt for this tranche..."
     }
@@ -3597,22 +3592,17 @@ Respond with a JSON object:
 }
 
 RESPONSE FORMAT FOR TRANCHE EXECUTION:
-Each tranche executor must output ONLY changed lines using SEARCH/REPLACE blocks:
+Each tranche executor must output the COMPLETE file content using delimiter format:
 
-<<<<<<< SEARCH
-[exact code from original file, with context lines for unique match]
-=======
-[new replacement code]
->>>>>>> REPLACE
+===FILE_START: path/to/file===
+...complete file content...
+===FILE_END: path/to/file===
 
 Rules:
-1. SEARCH must match existing code exactly, line for line, preserving whitespace.
-2. Include enough context lines for a unique match.
-3. Multiple SEARCH/REPLACE blocks per file are allowed.
-4. For completely new files, output full code without SEARCH/REPLACE tags.
-
-Do NOT include "assets.json" in your updatedFiles response.
-In your 'message', provide a detailed changelog of modifications.
+1. Always output the COMPLETE file — never partial diffs or patches.
+2. Multiple files can be output in the same response using separate delimiter blocks.
+3. Do NOT include "assets.json" in your output.
+4. In your message, provide a detailed changelog of what was added or changed.
 
 ═══════════════════════════════════════════════════════════
 
