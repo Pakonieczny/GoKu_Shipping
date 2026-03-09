@@ -3785,7 +3785,17 @@ User Request: ${prompt}`;
                 }
                 Progress.warn('Invalid AI response envelope', envelopeCheck.error);
               } else {
-                result = responseRead.data;
+                // ── Only exit the polling loop for a FINAL or CANCELLED build ──
+                // The backend writes ai_response.json with status:"checkpoint" after
+                // every tranche as a safety snapshot. Treating a checkpoint as the
+                // final result causes the frontend to stop polling after tranche 1,
+                // even though the backend is still executing tranches 2–N.
+                // We must keep polling until we see status:"final" or "cancelled".
+                const respStatus = responseRead.data.status;
+                if (respStatus === 'final' || respStatus === 'cancelled') {
+                  result = responseRead.data;
+                }
+                // For checkpoints — do nothing, the while-loop will keep polling.
               }
             }
           } else if (responseRead.kind === 'parse_error') {
