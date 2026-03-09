@@ -691,7 +691,7 @@
 
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
-    import { getStorage, ref, uploadBytesResumable, uploadString, getDownloadURL, listAll, deleteObject, getMetadata } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-storage.js";
+    import { getStorage, ref, uploadBytesResumable, uploadString, getDownloadURL, getBytes, listAll, deleteObject, getMetadata } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-storage.js";
     import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js";
 
     import * as THREE from 'three';
@@ -1817,16 +1817,15 @@
     }
 
     async function fetchStorageTextSafe(fileRef) {
-      const url = await getDownloadURL(fileRef);
-      const safeUrl = url.includes('?') ? `${url}&v=${Date.now()}` : `${url}?v=${Date.now()}`;
-      const response = await fetch(safeUrl, { cache: 'no-store' });
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status} while fetching ${fileRef.fullPath}`);
-      }
-      return {
-        url: safeUrl,
-        text: await response.text()
-      };
+      // Use getBytes() instead of getDownloadURL() + fetch().
+      // getDownloadURL returns a URL with an access token tied to a specific file version.
+      // When the backend overwrites a polling file (ai_progress.json, ai_response.json)
+      // between our getDownloadURL call and the fetch, Firebase invalidates the old token
+      // and we get a 403. getBytes() reads directly over the authenticated Firebase session
+      // — no public token, always the latest version, never a stale-token 403.
+      const arrayBuffer = await getBytes(fileRef);
+      const text = new TextDecoder().decode(arrayBuffer);
+      return { text };
     }
 
     async function fetchStorageJsonSafe(fileRef, projectPath, label, options = {}) {
