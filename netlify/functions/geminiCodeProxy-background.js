@@ -362,7 +362,7 @@ exports.handler = async (event) => {
       // ── 1. Download the request payload from Firebase ─────────
       const requestFile = bucket.file(`${projectPath}/ai_request.json`);
       const [content] = await requestFile.download();
-      const { prompt, files, selectedAssets, inlineImages } = JSON.parse(content.toString());
+      const { prompt, files, selectedAssets, inlineImages, gameContract } = JSON.parse(content.toString());
       if (!prompt) throw new Error("Missing instructions inside payload");
 
       // ── 2. Build file context string ──────────────────────────
@@ -548,6 +548,7 @@ You must respond ONLY with a valid JSON object. No markdown, no code fences, no 
         accumulatedFiles: files ? { ...files } : {},
         allUpdatedFiles: [],
         imageBlocks,
+        gameContract: gameContract || null,          // ← Game Essence Contract (§A-§H)
         totalTranches: plan.tranches.length
       };
       await savePipelineState(bucket, projectPath, pipelineState);
@@ -604,7 +605,7 @@ You must respond ONLY with a valid JSON object. No markdown, no code fences, no 
       const state = await loadPipelineState(bucket, projectPath);
       if (!state) throw new Error("Pipeline state not found in Firebase. Chain broken.");
 
-      const { progress, accumulatedFiles, allUpdatedFiles, imageBlocks } = state;
+      const { progress, accumulatedFiles, allUpdatedFiles, imageBlocks, gameContract } = state;
       const tranche = progress.tranches[nextTranche];
 
       if (!tranche) throw new Error(`Tranche ${nextTranche} not found in pipeline state.`);
@@ -696,9 +697,26 @@ Correct approach:
 
       assertTranchePromptHasRequiredManifestBlock(tranche, nextTranche);
 
+      // ── Game Essence Contract injection ─────────────────────
+      // If a §A–§H contract was derived before the build started, prepend it
+      // to THIS tranche's prompt so the executor AI is bound by its axioms.
+      // This fires for every single tranche, not just the first one.
+      const contractPrefix = gameContract
+        ? `\n╔═════════════ GAME CONTRACT (BINDING — DO NOT DEVIATE) ══════════════╗\n` +
+          `║ This §A–§H contract was derived from a Game Essence Interview.     ║\n` +
+          `║ Every axiom below is a HARD CONSTRAINT for this tranche.           ║\n` +
+          `║ Violating any contract section is NOT permitted under any          ║\n` +
+          `║ circumstance — not even for "simplicity" or "just for now".        ║\n` +
+          `╚══════════════════════════════════════════════════════════════════════╝\n\n` +
+          gameContract + `\n\n` +
+          `╔══════════════════════════════════════════════════════════════════════╗\n` +
+          `║ END GAME CONTRACT — tranche-specific instructions follow below      ║\n` +
+          `╚══════════════════════════════════════════════════════════════════════╝\n\n`
+        : '';
+
       const trancheUserContent = [
         {
-          text: `${trancheFileContext}\n\n=== TRANCHE ${nextTranche + 1} of ${progress.totalTranches}: "${tranche.name}" ===\n\n${tranche.prompt}\n\n=== END TRANCHE INSTRUCTIONS ===\n\nIMPORTANT: You are working on tranche ${nextTranche + 1} of ${progress.totalTranches}. The project files above contain ALL work from prior tranches. You MUST preserve all existing code and ADD your changes on top. Output the COMPLETE updated file contents.`
+          text: `${trancheFileContext}\n\n=== TRANCHE ${nextTranche + 1} of ${progress.totalTranches}: "${tranche.name}" ===\n\n${contractPrefix}${tranche.prompt}\n\n=== END TRANCHE INSTRUCTIONS ===\n\nIMPORTANT: You are working on tranche ${nextTranche + 1} of ${progress.totalTranches}. The project files above contain ALL work from prior tranches. You MUST preserve all existing code and ADD your changes on top. Output the COMPLETE updated file contents.`
         },
         ...(imageBlocks || [])
       ];

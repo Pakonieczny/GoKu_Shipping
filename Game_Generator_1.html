@@ -530,6 +530,105 @@
     .proc-progress-track { width: 100%; height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; }
     .proc-progress-fill { width: 0%; height: 100%; background: var(--success); transition: width 0.3s ease; }
     .proc-status-text { font-size: 11px; color: var(--muted); text-align: right; }
+
+    /* ════════════════════════════════════════════════
+       GAME ESSENCE CONTRACT PANEL
+    ════════════════════════════════════════════════ */
+    .essence-panel {
+      border: 1px solid var(--line); border-radius: 12px;
+      background: linear-gradient(135deg, #0c0f1a 0%, #0e1220 100%);
+      overflow: hidden; margin-top: 10px;
+    }
+    .essence-panel.contract-active {
+      border-color: #1e4a2a;
+      background: linear-gradient(135deg, #090f0b 0%, #0b140d 100%);
+    }
+    .essence-header {
+      display: flex; align-items: center; gap: 10px;
+      padding: 12px 16px; cursor: pointer; user-select: none; transition: background 0.15s;
+    }
+    .essence-header:hover { background: rgba(255,255,255,0.02); }
+    .essence-header-icon { font-size: 16px; flex-shrink: 0; }
+    .essence-header-title { font-size: 13px; font-weight: 600; color: var(--text); flex: 1; }
+    .essence-badge {
+      font-size: 10px; font-weight: 700; padding: 2px 9px; border-radius: 999px;
+      background: #1a1e2b; color: var(--muted); letter-spacing: 0.4px; transition: all 0.3s;
+    }
+    .essence-badge.running { background: rgba(43,108,255,0.18); color: var(--accent); }
+    .essence-badge.active  { background: rgba(127,219,150,0.15); color: var(--success); }
+    .essence-badge.error   { background: rgba(252,165,165,0.15); color: var(--danger); }
+    .essence-chevron { font-size: 10px; color: var(--muted); transition: transform 0.25s; }
+    .essence-chevron.open { transform: rotate(90deg); }
+
+    .essence-body { display: none; padding: 0 16px 14px; border-top: 1px solid var(--line); }
+    .essence-body.open { display: block; }
+
+    /* Phase progress bar */
+    .essence-phases {
+      display: flex; margin: 12px 0 14px; border-radius: 8px; overflow: hidden;
+      border: 1px solid var(--line);
+    }
+    .essence-phase {
+      flex: 1; padding: 5px 4px; text-align: center; font-size: 10px; font-weight: 600;
+      color: #3a4565; background: #0e1220; border-right: 1px solid var(--line);
+      transition: all 0.3s; letter-spacing: 0.2px;
+    }
+    .essence-phase:last-child { border-right: none; }
+    .essence-phase.active { background: rgba(43,108,255,0.18); color: var(--accent); }
+    .essence-phase.done   { background: rgba(127,219,150,0.1);  color: var(--success); }
+
+    /* Contract active banner */
+    .essence-active-banner {
+      display: none; align-items: center; gap: 10px;
+      background: rgba(127,219,150,0.07); border: 1px solid #1e4a2a;
+      border-radius: 8px; padding: 10px 14px; margin-bottom: 10px;
+    }
+    .essence-active-banner.show { display: flex; }
+    .essence-active-name { font-size: 12px; font-weight: 700; color: var(--success); }
+    .essence-active-subs { font-size: 10px; color: #4a8060; margin-top: 2px; }
+    .essence-inject-hint {
+      font-size: 11px; color: #4060a0;
+      padding: 6px 12px; background: rgba(43,108,255,0.06);
+      border: 1px solid rgba(43,108,255,0.14); border-radius: 6px; margin-bottom: 10px;
+    }
+
+    /* Form fields */
+    .essence-2col { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
+    .essence-lbl { font-size: 11px; color: var(--muted); display: block; margin-bottom: 5px; }
+    .essence-inp {
+      width: 100%; background: #0e1220; border: 1px solid var(--line); border-radius: 8px;
+      color: var(--text); padding: 8px 10px; font-size: 12px; font-family: inherit;
+      box-sizing: border-box; outline: none; transition: border-color 0.2s; resize: vertical;
+    }
+    .essence-inp:focus { border-color: var(--accent); }
+    .essence-inp::placeholder { color: #2a3550; }
+    .essence-err {
+      display: none; font-size: 11px; color: var(--danger); margin-bottom: 8px;
+      padding: 5px 10px; background: #140808; border-radius: 6px; border: 1px solid #3a1212;
+    }
+
+    /* Stream / output boxes */
+    .essence-stream {
+      background: #08090f; border: 1px solid var(--line); border-radius: 8px;
+      padding: 10px 12px; max-height: 200px; overflow-y: auto;
+      font-size: 11px; font-family: monospace; color: #7088b0; white-space: pre-wrap;
+      line-height: 1.65; margin-bottom: 10px; min-height: 52px;
+    }
+    .essence-contract-box {
+      background: #07100a; border: 1px solid #1a3a22; border-radius: 8px;
+      padding: 10px 12px; max-height: 240px; overflow-y: auto;
+      font-size: 11px; font-family: monospace; color: #6daa80; white-space: pre-wrap;
+      line-height: 1.65; margin-bottom: 10px;
+    }
+
+    /* Spinner reuse */
+    .essence-spin {
+      display: none; width: 10px; height: 10px; border-radius: 50%;
+      border: 1.5px solid #1e2b40; border-top-color: var(--accent);
+      animation: spin-fast 0.8s linear infinite;
+      vertical-align: middle; margin-right: 6px;
+    }
+    .essence-running .essence-spin { display: inline-block; }
   </style>
 </head>
 
@@ -667,6 +766,98 @@
             </div>
           </div>
           
+          <!-- ══════════════════════════════════════════════════
+               GAME ESSENCE CONTRACT PANEL
+               Runs before any "Apply AI Update" to derive a
+               binding §A-§H Game Contract from first principles.
+               The contract is prepended to every tranche prompt.
+          ═══════════════════════════════════════════════════ -->
+          <div class="essence-panel" id="essencePanel">
+
+            <!-- Header / toggle -->
+            <div class="essence-header" id="essenceHeader">
+              <span class="essence-header-icon">🧬</span>
+              <span class="essence-header-title">Game Essence Contract</span>
+              <span class="essence-badge" id="essenceBadge">NO CONTRACT</span>
+              <span class="essence-chevron" id="essenceChevron">▶</span>
+            </div>
+
+            <div class="essence-body" id="essenceBody">
+
+              <!-- Phase progress bar -->
+              <div class="essence-phases">
+                <div class="essence-phase active" id="eph0">① Input</div>
+                <div class="essence-phase" id="eph1">② Interview</div>
+                <div class="essence-phase" id="eph2">③ Derivation</div>
+                <div class="essence-phase" id="eph3">④ Contract</div>
+              </div>
+
+              <!-- Active contract banner (shown in phase 3) -->
+              <div class="essence-active-banner" id="essenceActiveBanner">
+                <div style="flex:1;">
+                  <div class="essence-active-name" id="essenceActiveName">✓ Game Contract Active</div>
+                  <div class="essence-active-subs">§A Coordinates · §B Camera · §C Controls · §D Enemies · §E Collectibles · §F Prohibited · §G UI · §H Acceptance Tests</div>
+                </div>
+              </div>
+
+              <!-- Inject hint (phase 3) -->
+              <div class="essence-inject-hint" id="essenceInjectHint" style="display:none;">
+                ⚡ This §A–§H contract will be prepended to every tranche in your next <strong>Apply AI Update</strong> run — the AI cannot deviate from its axioms.
+              </div>
+
+              <!-- ── PHASE 0: Input form ── -->
+              <div id="essPhase0">
+                <div class="essence-2col">
+                  <div>
+                    <span class="essence-lbl">GAME NAME *</span>
+                    <input class="essence-inp" id="essName" type="text" placeholder="e.g. PacMaze, RocketRace 3D"/>
+                  </div>
+                  <div>
+                    <span class="essence-lbl">PRIOR GAME TYPE (anti-inheritance)</span>
+                    <input class="essence-inp" id="essPrior" type="text" placeholder="e.g. Endless runner, Slingshot"/>
+                  </div>
+                </div>
+                <span class="essence-lbl">GAME DESCRIPTION * — describe mechanics, not visuals</span>
+                <textarea class="essence-inp" id="essDesc" rows="3" style="margin-bottom:8px;"
+                  placeholder="How is the game played? Player movement, objectives, enemies, camera, win/lose. The more specific, the better the contract."></textarea>
+                <div class="essence-err" id="essErr"></div>
+                <div class="row" style="gap:8px;">
+                  <button class="btn btnPrimary" id="essRunBtn" style="font-size:12px;padding:8px 16px;">Run Essence Interview →</button>
+                </div>
+              </div>
+
+              <!-- ── PHASE 1: Interview streaming ── -->
+              <div id="essPhase1" style="display:none;">
+                <div style="font-size:11px;color:var(--muted);margin-bottom:6px;" id="essIntStatus">
+                  <span class="essence-spin" id="essIntSpin"></span>Sending 12-question interview to AI...
+                </div>
+                <div class="essence-stream" id="essIntOut">Waiting for AI response...</div>
+                <div class="row" style="gap:8px;display:none;" id="essIntBtns">
+                  <button class="btn btnPrimary" id="essCompileBtn" style="font-size:12px;padding:8px 14px;">Compile §A–§H Contract →</button>
+                  <button class="btn" id="essBackBtn" style="font-size:12px;padding:8px 12px;">← Edit</button>
+                </div>
+              </div>
+
+              <!-- ── PHASE 2: Contract derivation ── -->
+              <div id="essPhase2" style="display:none;">
+                <div style="font-size:11px;color:var(--muted);margin-bottom:6px;" id="essConStatus">
+                  <span class="essence-spin" id="essConSpin"></span>Deriving §A–§H Game Contract...
+                </div>
+                <div class="essence-stream" id="essConOut">Waiting for contract derivation...</div>
+              </div>
+
+              <!-- ── PHASE 3: Contract ready ── -->
+              <div id="essPhase3" style="display:none;">
+                <div class="essence-contract-box" id="essFinalOut"></div>
+                <div class="row" style="gap:8px;justify-content:flex-end;">
+                  <button class="btn" id="essCopyBtn" style="font-size:11px;padding:6px 12px;">📋 Copy Contract</button>
+                  <button class="btn btnDanger" id="essClearBtn" style="font-size:11px;padding:6px 12px;">✕ Clear</button>
+                </div>
+              </div>
+
+            </div><!-- /essence-body -->
+          </div><!-- /essence-panel -->
+
           <div style="position: relative; width: 100%;">
             <textarea id="aiPromptInput" placeholder="e.g., 'Build a physics-based destruction game with 15 levels...' — V2 will research the game, assign expert agents, and decompose into 8-15 micro-tranches." style="min-height: 80px; resize: vertical; width: 100%; padding-right: 140px;"></textarea>
             <div id="imageTagContainer" style="position: absolute; top: 10px; right: 10px; display: flex; flex-direction: column; gap: 6px; z-index: 10; pointer-events: none;"></div>
@@ -748,6 +939,16 @@
     // Tracks the most recent pipeline run so Update #2 can reject stale responses
     let lastRunJobId = null;
     let lastRunStartTime = null;
+
+    // ── Game Essence Contract state ──────────────────────────
+    // activeGameContract: the full §A-§H text; injected into every pipeline run.
+    // When non-null it is prepended to enhancedPrompt AND written into the
+    // ai_request.json payload so the backend can inject it per-tranche.
+    let activeGameContract  = null;
+    let essenceAnswers      = '';      // raw interview answers → fed to contract step
+    let essenceGameName     = '';      // stored for display
+    let essencePollTimer    = null;    // setInterval handle
+    let essencePollJobId    = null;    // expected jobId for freshness guard
 
     const projectSelect = document.getElementById('projectSelect');
     const newProjectName = document.getElementById('newProjectName');
@@ -2981,6 +3182,251 @@ Quality criteria for your work:
 
     update2Btn.addEventListener('click', runUpdate2FromAiResponse);
 
+    /* ╔══════════════════════════════════════════════════════════╗
+       ║          GAME ESSENCE CONTRACT ENGINE                   ║
+       ║  Two-step AI pipeline (interview → contract) that       ║
+       ║  derives a binding §A-§H Game Contract from first       ║
+       ║  principles before any code generation begins.          ║
+       ║                                                          ║
+       ║  Step 1 – INTERVIEW  (essenceProxy, step:"interview")   ║
+       ║    12 canonical questions → concrete answers             ║
+       ║    Result saved to Firebase: ai_essence_interview.json  ║
+       ║                                                          ║
+       ║  Step 2 – CONTRACT   (essenceProxy, step:"contract")    ║
+       ║    Answers → §A-§H binding contract with exact values   ║
+       ║    Result saved to Firebase: ai_essence_contract.json   ║
+       ║                                                          ║
+       ║  Contract is then:                                       ║
+       ║  • Stored in activeGameContract                          ║
+       ║  • Written into every ai_request.json payload           ║
+       ║  • Injected by the backend before every tranche prompt  ║
+       ╚══════════════════════════════════════════════════════════╝ */
+
+    // ── Toggle panel open/close ──────────────────────────────
+    document.getElementById('essenceHeader').addEventListener('click', () => {
+      const body = document.getElementById('essenceBody');
+      const chev = document.getElementById('essenceChevron');
+      const open = body.classList.toggle('open');
+      chev.classList.toggle('open', open);
+    });
+
+    // ── Phase management ─────────────────────────────────────
+    function essSetPhase(n) {
+      ['eph0','eph1','eph2','eph3'].forEach((id, i) => {
+        document.getElementById(id).className =
+          'essence-phase' + (i === n ? ' active' : i < n ? ' done' : '');
+      });
+      ['essPhase0','essPhase1','essPhase2','essPhase3'].forEach((id, i) => {
+        document.getElementById(id).style.display = i === n ? '' : 'none';
+      });
+    }
+
+    function essSetBadge(txt, cls) {
+      const b = document.getElementById('essenceBadge');
+      b.textContent = txt;
+      b.className   = 'essence-badge' + (cls ? ' ' + cls : '');
+    }
+
+    function essStopPoll() {
+      if (essencePollTimer) { clearInterval(essencePollTimer); essencePollTimer = null; }
+    }
+
+    function essSetSpinner(id, on) {
+      const el = document.getElementById(id);
+      if (el) el.style.display = on ? 'inline-block' : 'none';
+    }
+
+    // ── Activate the final contract ──────────────────────────
+    function essActivateContract(contractText) {
+      activeGameContract = contractText;
+
+      document.getElementById('essFinalOut').textContent = contractText;
+      document.getElementById('essenceActiveName').textContent =
+        `✓ Contract active — ${essenceGameName}`;
+      document.getElementById('essenceActiveBanner').classList.add('show');
+      document.getElementById('essenceInjectHint').style.display = '';
+      document.getElementById('essencePanel').classList.add('contract-active');
+
+      essSetBadge('CONTRACT ACTIVE', 'active');
+      essSetPhase(3);
+      appendToChatLog('System',
+        `Game Essence Contract derived for "${essenceGameName}". ` +
+        `§A–§H will be injected into every tranche of the next build.`, 'normal');
+    }
+
+    // ── Clear / reset engine ─────────────────────────────────
+    function essClear() {
+      essStopPoll();
+      activeGameContract = null;
+      essenceAnswers     = '';
+      essenceGameName    = '';
+
+      document.getElementById('essenceActiveBanner').classList.remove('show');
+      document.getElementById('essenceInjectHint').style.display = 'none';
+      document.getElementById('essencePanel').classList.remove('contract-active');
+      document.getElementById('essIntOut').textContent  = 'Waiting for AI response...';
+      document.getElementById('essConOut').textContent  = 'Waiting for contract derivation...';
+      document.getElementById('essFinalOut').textContent = '';
+      document.getElementById('essIntBtns').style.display = 'none';
+      document.getElementById('essErr').style.display    = 'none';
+      document.getElementById('essErr').textContent      = '';
+
+      essSetBadge('NO CONTRACT', '');
+      essSetPhase(0);
+    }
+
+    document.getElementById('essClearBtn').addEventListener('click', essClear);
+    document.getElementById('essBackBtn' ).addEventListener('click', essClear);
+
+    document.getElementById('essCopyBtn').addEventListener('click', () => {
+      if (!activeGameContract) return;
+      navigator.clipboard.writeText(activeGameContract).catch(() => {});
+      const btn = document.getElementById('essCopyBtn');
+      btn.textContent = '✓ Copied!';
+      setTimeout(() => { btn.textContent = '📋 Copy Contract'; }, 2000);
+    });
+
+    // ── Firebase poll helper ─────────────────────────────────
+    // Polls `resultKey` every 3 s until data.result is present.
+    // Guards against stale jobs via jobId matching.
+    function essPollFirebase(jobId, resultKey, onSuccess, onError) {
+      essStopPoll();
+      const fileRef = ref(storage, `${ROOT}/${currentProject}/${resultKey}`);
+
+      essencePollTimer = setInterval(async () => {
+        try {
+          const url = await getDownloadURL(fileRef);
+          const res = await fetch(url + '&_nc=' + Date.now(), { cache: 'no-store' });
+          if (!res.ok) return;
+          const data = await res.json();
+
+          if (data.jobId && data.jobId !== jobId) return;   // stale – keep waiting
+          if (data.error)  { essStopPoll(); onError(data.error); return; }
+          if (data.result) { essStopPoll(); onSuccess(data.result); }
+        } catch (_) { /* file not ready yet – keep polling */ }
+      }, 3000);
+    }
+
+    // ── STEP 1: Run Essence Interview ────────────────────────
+    document.getElementById('essRunBtn').addEventListener('click', async () => {
+      const name  = document.getElementById('essName').value.trim();
+      const desc  = document.getElementById('essDesc').value.trim();
+      const prior = document.getElementById('essPrior').value.trim();
+      const errEl = document.getElementById('essErr');
+
+      if (!name || !desc) {
+        errEl.textContent = 'Game name and description are required.';
+        errEl.style.display = '';
+        return;
+      }
+      if (!currentProject) {
+        errEl.textContent = 'Select or create a project first.';
+        errEl.style.display = '';
+        return;
+      }
+      errEl.style.display = 'none';
+      essenceGameName = name;
+
+      essSetBadge('RUNNING…', 'running');
+      essSetPhase(1);
+      essSetSpinner('essIntSpin', true);
+      document.getElementById('essIntStatus').innerHTML =
+        '<span class="essence-spin" id="essIntSpin" style="display:inline-block;"></span>Conducting 12-question Essence Interview…';
+      document.getElementById('essIntBtns').style.display = 'none';
+      document.getElementById('essIntOut').textContent = 'Dispatching to essenceProxy backend…';
+
+      const jobId = 'ess_' + Date.now();
+      essencePollJobId = jobId;
+
+      try {
+        // Clean any previous results
+        try { await deleteObject(ref(storage, `${ROOT}/${currentProject}/ai_essence_interview.json`)); } catch(_) {}
+
+        // Write request payload to Firebase
+        await uploadString(
+          ref(storage, `${ROOT}/${currentProject}/ai_essence_request.json`),
+          JSON.stringify({ step: 'interview', jobId, gameName: name, gameDescription: desc, priorGameType: prior })
+        );
+
+        // Trigger the Netlify background function
+        const proxyRes = await fetch('/.netlify/functions/essenceProxy-background', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectPath: `${ROOT}/${currentProject}`, jobId, step: 'interview' })
+        });
+        if (!proxyRes.ok) throw new Error(`essenceProxy-background returned HTTP ${proxyRes.status}`);
+
+        document.getElementById('essIntOut').textContent = 'AI interview running… polling Firebase for result…';
+
+        // Poll for result
+        essPollFirebase(jobId, 'ai_essence_interview.json',
+          (result) => {
+            essenceAnswers = result;
+            document.getElementById('essIntOut').textContent = result;
+            document.getElementById('essIntStatus').innerHTML = '✓ Essence Interview complete';
+            document.getElementById('essIntBtns').style.display = 'flex';
+            essSetBadge('INTERVIEW ✓', 'running');
+          },
+          (err) => {
+            document.getElementById('essIntStatus').innerHTML = '✕ Error: ' + err;
+            essSetBadge('ERROR', 'error');
+          }
+        );
+
+      } catch (e) {
+        document.getElementById('essIntStatus').innerHTML = '✕ Failed: ' + e.message;
+        essSetBadge('ERROR', 'error');
+        console.error('Essence Interview error:', e);
+      }
+    });
+
+    // ── STEP 2: Compile Game Contract ────────────────────────
+    document.getElementById('essCompileBtn').addEventListener('click', async () => {
+      if (!essenceAnswers || !currentProject) return;
+
+      essSetPhase(2);
+      essSetBadge('RUNNING…', 'running');
+      document.getElementById('essConStatus').innerHTML =
+        '<span class="essence-spin" id="essConSpin" style="display:inline-block;"></span>Compiling §A–§H Game Contract…';
+      document.getElementById('essConOut').textContent = 'Dispatching to essenceProxy backend…';
+
+      const jobId = 'essC_' + Date.now();
+      essencePollJobId = jobId;
+
+      try {
+        try { await deleteObject(ref(storage, `${ROOT}/${currentProject}/ai_essence_contract.json`)); } catch(_) {}
+
+        await uploadString(
+          ref(storage, `${ROOT}/${currentProject}/ai_essence_request.json`),
+          JSON.stringify({ step: 'contract', jobId, gameName: essenceGameName, essenceAnswers })
+        );
+
+        const proxyRes = await fetch('/.netlify/functions/essenceProxy-background', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectPath: `${ROOT}/${currentProject}`, jobId, step: 'contract' })
+        });
+        if (!proxyRes.ok) throw new Error(`essenceProxy-background returned HTTP ${proxyRes.status}`);
+
+        document.getElementById('essConOut').textContent = 'AI compiling contract… polling Firebase…';
+
+        essPollFirebase(jobId, 'ai_essence_contract.json',
+          (result) => {
+            document.getElementById('essConStatus').innerHTML = '✓ Contract compiled';
+            essActivateContract(result);
+          },
+          (err) => {
+            document.getElementById('essConStatus').innerHTML = '✕ Error: ' + err;
+            essSetBadge('ERROR', 'error');
+          }
+        );
+
+      } catch (e) {
+        document.getElementById('essConStatus').innerHTML = '✕ Failed: ' + e.message;
+        essSetBadge('ERROR', 'error');
+        console.error('Essence Contract error:', e);
+      }
+    });
+    /* ─── END GAME ESSENCE CONTRACT ENGINE ─────────────────── */
+
     sendToAiBtn.addEventListener('click', async () => {
         pendingAiPrompt = aiPromptInput.value.trim();
         if (!pendingAiPrompt || !currentProject) return;
@@ -3458,14 +3904,27 @@ ${repairTargets.map(t => `- ${t.safePath || t.path}: ${t.reason || 'unknown issu
 ${buildRepairTargetsContext(repairTargets)}`
           : '';
 
-        // ── For repair passes, use a lean targeted prompt that skips the full
-        // V2 tranche planning pipeline. Sending the planning instructions during
-        // a repair causes Claude to spin up a brand-new full build instead of
-        // surgically fixing only the failed files.
+        // ── Game Essence Contract injection ─────────────────────
+        // If a §A-§H contract has been derived, prepend it to the
+        // enhancedPrompt so the planner sees it, AND pass it as a
+        // separate field so the backend can inject it into every
+        // individual tranche prompt at execution time.
+        const contractBlock = activeGameContract
+          ? `\n╔═══════════════ GAME CONTRACT (BINDING) ═══════════════╗\n` +
+            `║ The following §A–§H contract was derived via Essence  ║\n` +
+            `║ Interview and is BINDING for this entire build.       ║\n` +
+            `║ Every tranche executor MUST honour ALL axioms below.  ║\n` +
+            `╚═══════════════════════════════════════════════════════╝\n\n` +
+            activeGameContract + `\n\n` +
+            `╔═══════════════════════════════════════════════════════╗\n` +
+            `║ END GAME CONTRACT — normal build instructions follow  ║\n` +
+            `╚═══════════════════════════════════════════════════════╝\n`
+          : '';
+
         const enhancedPrompt = repairAttempt > 0
           ? `You are an expert game developer performing a SURGICAL REPAIR of specific failed files.
 Do NOT plan new tranches. Do NOT redesign the game. Fix ONLY the exact targets listed below.
-
+${contractBlock}
 ${repairSeedFiles['models/2'] ? `
 === CURRENT FILE: models/2 ===
 ${repairSeedFiles['models/2']}` : ''}
@@ -3496,7 +3955,7 @@ OUTPUT FORMAT:
 Followed by a plain-text repair summary explaining what was fixed and why it was missing.
 
 Original user request for context: ${basePrompt}`
-          : `
+          : `${contractBlock}
 ${projectFiles['models/2'] ? `
 === FILE: models/2 ===
 ${projectFiles['models/2']}` : ''}
@@ -3694,7 +4153,7 @@ User Request: ${prompt}`;
         renderPromptImages();
         
         Progress.step('Uploading payload to Firebase', 'Bypassing Netlify async size limits...');
-        const payloadBody = JSON.stringify({ prompt: enhancedPrompt, files: projectFiles, projectPath, selectedAssets, inlineImages, expertAgents: EXPERT_AGENTS, repairAttempt, repairTargets });
+        const payloadBody = JSON.stringify({ prompt: enhancedPrompt, files: projectFiles, projectPath, selectedAssets, inlineImages, expertAgents: EXPERT_AGENTS, repairAttempt, repairTargets, gameContract: activeGameContract || null });
         const requestFileRef = ref(storage, `${projectPath}/ai_request.json`);
         await uploadString(requestFileRef, payloadBody);
 
