@@ -42,10 +42,6 @@
     .btnDanger:hover { background: #5c2424; }
     .btnSmall{ padding:6px 10px; border-radius:8px; font-size:11px; line-height:1; }
     .btn:disabled{ opacity:0.5; cursor:not-allowed; }
-    .proxy-toggle-wrap { margin-top: 14px; display: flex; flex-direction: column; gap: 8px; }
-    .proxy-toggle-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-    .proxy-toggle-label { font-size: 11px; color: var(--muted); }
-    .proxy-toggle-value { font-size: 12px; color: var(--text); font-weight: 600; }
     
     .drop-zone {
       border: 2px dashed #3a4262; border-radius: 14px; padding: 0; background: #0e1220;
@@ -548,18 +544,6 @@
         <option value="">Loading projects...</option>
       </select>
 
-      <div class="proxy-toggle-wrap">
-        <div class="proxy-toggle-label">Current code backend:</div>
-        <div class="proxy-toggle-row">
-          <select id="codeProxySelect">
-            <option value="claude">Claude</option>
-            <option value="openai">OpenAI</option>
-            <option value="gemini">Gemini</option>
-          </select>
-        </div>
-        <div class="proxy-toggle-value" id="codeProxyLabel">claudeCodeProxy-background.js</div>
-      </div>
-
       <div style="margin-top: 20px; border-top: 1px solid var(--line); padding-top: 20px;">
         <label>Create New Project</label>
         <div class="row">
@@ -611,7 +595,7 @@
         <h2>AI Context Window</h2>
         <div style="display: flex; flex-direction: column; gap: 10px;">
           <div id="aiChatLog" style="height: 400px; overflow-y: auto; background: #0b0d12; border: 1px solid var(--line); border-radius: 10px; padding: 14px; font-size: 13px; font-family: monospace; display: flex; flex-direction: column; gap: 12px; white-space: pre-wrap; line-height: 1.5;">
-            <div style="color: var(--muted);">V2 Expert-Agent Pipeline ready. Enter game build instructions below — GPT-5.4 Pro will research the game, assign expert agents, and create focused micro-tranches.</div>
+            <div style="color: var(--muted);">V2 Expert-Agent Pipeline ready. Enter game build instructions below — Opus will research the game, assign expert agents, and create focused micro-tranches.</div>
           </div>
 
           <div id="aiProgressPanel" class="ai-progress-panel">
@@ -643,7 +627,7 @@
             <div id="tranchePlanningSection" class="tranche-planning" style="display:none;">
               <div class="tranche-planning-spinner"></div>
               <div class="tranche-planning-text">
-                <span id="tranchePlanningLabel">GPT-5.4 Pro is researching game design and creating expert-driven build tranches...</span>
+                <span id="tranchePlanningLabel">Opus 4.6 is researching game design and creating expert-driven build tranches...</span>
                 <span class="analysis" id="tranchePlanningAnalysis"></span>
               </div>
             </div>
@@ -658,8 +642,8 @@
             <div class="tranche-list" id="trancheList"></div>
             <div class="tranche-footer">
               <div class="tranche-footer-models">
-                <div class="tranche-footer-model"><div class="tranche-footer-dot opus"></div> GPT-5.4 Pro → Intelligence + Planning</div>
-                <div class="tranche-footer-model"><div class="tranche-footer-dot sonnet"></div> GPT-5.4 Pro + Experts → Execution</div>
+                <div class="tranche-footer-model"><div class="tranche-footer-dot opus"></div> Opus 4.6 → Intelligence + Planning</div>
+                <div class="tranche-footer-model"><div class="tranche-footer-dot sonnet"></div> Sonnet 4.6 + Experts → Execution</div>
               </div>
               <span id="trancheFooterStatus">V2 Pipeline ready</span>
             </div>
@@ -761,96 +745,6 @@
     const generateGameBtn = document.getElementById('generateGameBtn');
     const progressContainer = document.getElementById('progressContainer');
     const progressBar = document.getElementById('progressBar');
-    const codeProxySelect = document.getElementById('codeProxySelect');
-    const codeProxyLabel = document.getElementById('codeProxyLabel');
-
-    const CODE_PROXY_OPTIONS = {
-      claude: 'claudeCodeProxy-background',
-      openai: 'openAiCodeProxy-background',
-      gemini: 'geminiCodeProxy-background'
-    };
-    const CODE_PROXY_STORAGE_KEY = 'gameGenerator.codeProxyBackend';
-    const DEFAULT_CODE_PROXY_BACKEND = 'claude';
-    const storedCodeProxyBackend = localStorage.getItem(CODE_PROXY_STORAGE_KEY);
-    let activeCodeProxyBackend = CODE_PROXY_OPTIONS[storedCodeProxyBackend]
-      ? storedCodeProxyBackend
-      : DEFAULT_CODE_PROXY_BACKEND;
-
-    function getCodeProxyFunctionName() {
-      return CODE_PROXY_OPTIONS[activeCodeProxyBackend] || CODE_PROXY_OPTIONS.claude;
-    }
-
-    function getCodeProxyEndpoint() {
-      return `/.netlify/functions/${getCodeProxyFunctionName()}`;
-    }
-
-    function getCodeProxyDisplayName() {
-      return `${getCodeProxyFunctionName()}.js`;
-    }
-
-    function getPipelinePlanningModelLabel() {
-      if (activeCodeProxyBackend === 'openai') return 'GPT-5.4 Pro';
-      if (activeCodeProxyBackend === 'gemini') return 'Gemini 3.1 Pro';
-      return 'Opus 4.6';
-    }
-
-    function getPipelineExecutionModelLabel() {
-      if (activeCodeProxyBackend === 'openai') return 'GPT-5.4 Pro + Experts';
-      if (activeCodeProxyBackend === 'gemini') return 'Gemini 3.1 Pro + Experts';
-      return 'Sonnet 4.6 + Experts';
-    }
-
-    function getPipelineReadyText() {
-      if (activeCodeProxyBackend === 'openai') {
-        return 'V2 Expert-Agent Pipeline ready. Enter game build instructions below — GPT-5.4 Pro will research the game, assign expert agents, and create focused micro-tranches.';
-      }
-      if (activeCodeProxyBackend === 'gemini') {
-        return 'V2 Expert-Agent Pipeline ready. Enter game build instructions below — Gemini 3.1 Pro will research the game, assign expert agents, and create focused micro-tranches.';
-      }
-      return 'V2 Expert-Agent Pipeline ready. Enter game build instructions below — Opus will research the game, assign expert agents, and create focused micro-tranches.';
-    }
-
-    function getCurrentCodeBackendDisplayName() {
-      if (activeCodeProxyBackend === 'openai') return 'OpenAI';
-      if (activeCodeProxyBackend === 'gemini') return 'Gemini';
-      return 'Claude';
-    }
-
-    function getCurrentCodeBackendResponseLabel() {
-      if (activeCodeProxyBackend === 'openai') return 'OpenAI response';
-      if (activeCodeProxyBackend === 'gemini') return 'Gemini response';
-      return 'Claude response';
-    }
-
-    function refreshPipelineBackendLabels() {
-      const chatLogEl = document.getElementById('aiChatLog');
-      const readyNode = chatLogEl ? chatLogEl.querySelector('div') : null;
-      if (readyNode) readyNode.textContent = getPipelineReadyText();
-      const planningLabelNode = document.getElementById('tranchePlanningLabel');
-      if (planningLabelNode && !planningLabelNode.textContent.includes('✓ Game Intelligence + Plan:')) {
-        planningLabelNode.textContent = `${getPipelinePlanningModelLabel()} is researching game design and creating expert-driven build tranches...`;
-      }
-      const footerModels = document.querySelectorAll('.tranche-footer-model');
-      if (footerModels[0]) footerModels[0].innerHTML = `<div class="tranche-footer-dot opus"></div> ${getPipelinePlanningModelLabel()} → Intelligence + Planning`;
-      if (footerModels[1]) footerModels[1].innerHTML = `<div class="tranche-footer-dot sonnet"></div> ${getPipelineExecutionModelLabel()} → Execution`;
-    }
-
-    function updateCodeProxyUi() {
-      if (codeProxyLabel) codeProxyLabel.textContent = getCodeProxyDisplayName();
-      if (codeProxySelect) {
-        codeProxySelect.value = activeCodeProxyBackend;
-      }
-      refreshPipelineBackendLabels();
-    }
-
-    function setActiveCodeProxyBackend(nextBackend) {
-      activeCodeProxyBackend = CODE_PROXY_OPTIONS[nextBackend]
-        ? nextBackend
-        : DEFAULT_CODE_PROXY_BACKEND;
-      localStorage.setItem(CODE_PROXY_STORAGE_KEY, activeCodeProxyBackend);
-      updateCodeProxyUi();
-      setStatus(`Code backend set to ${getCodeProxyDisplayName()}`);
-    }
 
     const aiPromptInput = document.getElementById('aiPromptInput');
     const sendToAiBtn = document.getElementById('sendToAiBtn');
@@ -861,8 +755,6 @@
     const reviewPanel = document.getElementById('reviewPanel');
     const reviewFileList = document.getElementById('reviewFileList');
     const clearReviewBtn = document.getElementById('clearReviewBtn');
-
-    updateCodeProxyUi();
 
     function setStatus(msg) {
         globalStatus.textContent = msg;
@@ -1073,9 +965,6 @@
     });
 
     projectSelect.addEventListener('change', (e) => selectProject(e.target.value));
-    codeProxySelect.addEventListener('change', (e) => {
-      setActiveCodeProxyBackend(e.target.value);
-    });
 
     function selectProject(name) {
       if (!name) return;
@@ -1774,125 +1663,15 @@
       aiChatLog.scrollTop = aiChatLog.scrollHeight;
     }
 
-    let progressEventSeenIds = new Set();
-    let progressStreamingNode = null;
-    let progressStreamingCache = '';
-
-    function resetProgressTelemetryUi() {
-      progressEventSeenIds = new Set();
-      progressStreamingCache = '';
-      if (progressStreamingNode && progressStreamingNode.parentNode) {
-        progressStreamingNode.parentNode.removeChild(progressStreamingNode);
-      }
-      progressStreamingNode = null;
-    }
-
-    function upsertStreamingTelemetry(live) {
-      const text = String(live?.streamingText || '').trim();
-      if (!text) {
-        if (progressStreamingNode && progressStreamingNode.parentNode) {
-          progressStreamingNode.parentNode.removeChild(progressStreamingNode);
-        }
-        progressStreamingNode = null;
-        progressStreamingCache = '';
-        return;
-      }
-      if (text === progressStreamingCache && progressStreamingNode) return;
-      progressStreamingCache = text;
-      if (!progressStreamingNode) {
-        progressStreamingNode = document.createElement('div');
-        progressStreamingNode.style.borderLeft = '3px solid var(--accent)';
-        progressStreamingNode.style.paddingLeft = '10px';
-        progressStreamingNode.style.color = 'var(--muted)';
-        progressStreamingNode.innerHTML = `<strong style="color: var(--accent)">Live AI Stream:</strong> <span></span>`;
-        aiChatLog.appendChild(progressStreamingNode);
-      }
-      const span = progressStreamingNode.querySelector('span');
-      if (span) span.textContent = text;
-      aiChatLog.scrollTop = aiChatLog.scrollHeight;
-    }
-
-    function applyProgressTelemetry(prog) {
-      if (!prog || !prog.live) return;
-      const live = prog.live;
-      const events = Array.isArray(live.events) ? live.events : [];
-      for (const evt of events) {
-        if (!evt || !evt.id || progressEventSeenIds.has(evt.id)) continue;
-        progressEventSeenIds.add(evt.id);
-        const bits = [];
-        if (evt.stage) bits.push(`[${evt.stage}]`);
-        bits.push(evt.label || 'Update');
-        if (evt.detail) bits.push(`— ${evt.detail}`);
-        const rendered = bits.join(' ');
-        const kind = evt.type === 'error' ? 'error' : 'normal';
-        appendToChatLog('System', rendered, kind);
-        if (evt.type === 'error') {
-          Progress.error(evt.label || 'Pipeline error', evt.detail || '');
-        } else if (evt.type === 'warn') {
-          Progress.warn(evt.label || 'Warning', evt.detail || '');
-        } else if (evt.type === 'success') {
-          Progress.step(evt.label || 'Completed', evt.detail || '');
-        }
-      }
-      upsertStreamingTelemetry(live);
-    }
-
-    function formatBackendErrorForChat(errorData = {}, fallbackMessage = 'Unknown backend error') {
-      const parts = [];
-      const primary = errorData.error || errorData.message || fallbackMessage;
-      if (primary) parts.push(`Backend error: ${primary}`);
-      if (errorData.phase) parts.push(`Phase: ${errorData.phase}`);
-      const statusCode = errorData.statusCode || errorData.status;
-      if (statusCode) parts.push(`HTTP: ${statusCode}`);
-      if (errorData.details) parts.push(`Details: ${String(errorData.details).slice(0, 2000)}`);
-      else if (errorData.responseBody) parts.push(`Response: ${String(errorData.responseBody).slice(0, 2000)}`);
-      else if (errorData.rawText) parts.push(`Raw: ${String(errorData.rawText).slice(0, 2000)}`);
-      return parts.join(' | ');
-    }
-
-const AI_HARDENING = {
+    const AI_HARDENING = {
       jsonPollMalformedLimit: 4,
-      repairPassLimit: 4,
+      repairPassLimit: 2,
       backupFolder: 'ai_backups',
-      diagnosticsFolder: 'ai_diagnostics',
-      // Bump this from 20 mins to 120 mins (2 hours)
-      buildPollTimeoutMs: 120 * 60 * 1000, 
-      // Bump this from 12 mins to 30 mins
-      repairPollTimeoutMs: 30 * 60 * 1000, 
-      pollIntervalMs: 9000
+      diagnosticsFolder: 'ai_diagnostics'
     };
 
     function sanitizeStorageFragment(value) {
       return String(value || 'unnamed').replace(/[^a-zA-Z0-9_.-]+/g, '_').slice(0, 180);
-    }
-
-    /**
-     * resolveAiTargetPath — converts an AI-returned file path into a safe
-     * Firebase storage path and a short display filename.
-     *
-     * Examples:
-     *   "models/2"          → { safePath: "models/2",  fileName: "2" }
-     *   " models/23 "       → { safePath: "models/23", fileName: "23" }
-     *   "models\\2"         → { safePath: "models/2",  fileName: "2" }
-     *
-     * Rules:
-     *  - Trim whitespace from both ends.
-     *  - Normalise backslashes to forward-slashes.
-     *  - Strip any leading slash so the path is always relative.
-     *  - fileName is the last path segment (everything after the final "/").
-     *  - safePath is the cleaned, relative path used as the Firebase key.
-     */
-    function resolveAiTargetPath(rawPath) {
-      const cleaned = String(rawPath || '')
-        .trim()
-        .replace(/\\/g, '/')   // backslash → forward-slash
-        .replace(/^\/+/, '');  // strip leading slashes
-
-      const segments = cleaned.split('/');
-      const fileName = segments[segments.length - 1] || cleaned;
-      const safePath = cleaned;
-
-      return { fileName, safePath };
     }
 
     function normalizeFetchedText(raw = '') {
@@ -2034,9 +1813,68 @@ const AI_HARDENING = {
       }
     }
 
+    function validateAiResponseEnvelope(result) {
+      if (!result || typeof result !== 'object' || Array.isArray(result)) {
+        return { ok: false, error: 'AI response was not a JSON object.' };
+      }
+      if (!Array.isArray(result.updatedFiles)) {
+        return { ok: false, error: 'AI response is missing updatedFiles array.' };
+      }
+      for (const [index, file] of result.updatedFiles.entries()) {
+        if (!file || typeof file !== 'object') {
+          return { ok: false, error: `updatedFiles[${index}] is invalid.` };
+        }
+        if (!file.path || typeof file.path !== 'string') {
+          return { ok: false, error: `updatedFiles[${index}] is missing a valid path.` };
+        }
+        if (typeof file.content !== 'string') {
+          return { ok: false, error: `updatedFiles[${index}] is missing string content.` };
+        }
+      }
+      return { ok: true };
+    }
+
+    function resolveAiTargetPath(filePath = '') {
+      let fileName = String(filePath || '').split('/').pop() || '';
+      let safePath = String(filePath || '');
+      if (fileName.toLowerCase() === 'worldcontroller.js' || fileName === '2') {
+        fileName = '2';
+        safePath = 'models/2';
+      } else if (fileName.toLowerCase() === 'document.html' || fileName === '23') {
+        fileName = '23';
+        safePath = 'models/23';
+      } else if (fileName.toLowerCase() === 'assets.json') {
+        fileName = 'assets.json';
+        safePath = 'json/assets.json';
+      }
+      return { fileName, safePath };
+    }
+
+    function validateCandidateFileContent(safePath, candidateContent, originalContent) {
+      const trimmed = String(candidateContent || '').trim();
+      if (!trimmed) {
+        return { ok: false, error: `${safePath} became empty.` };
+      }
+      if (safePath.endsWith('.json')) {
+        try {
+          JSON.parse(trimmed);
+        } catch (error) {
+          return { ok: false, error: `${safePath} is not valid JSON: ${error.message}` };
+        }
+      }
+      if (safePath === 'models/2' || safePath.endsWith('.js')) {
+        try {
+          new Function(trimmed);
+        } catch (error) {
+          return { ok: false, error: `${safePath} failed JavaScript syntax validation: ${error.message}` };
+        }
+      }
+      return { ok: true };
+    }
+
     function buildRepairPrompt(basePrompt, failedFiles = [], repairAttempt = 1) {
       const targets = failedFiles.length
-        ? failedFiles.map(file => `- ${file.safePath || file.path}: ${file.reason || 'apply failure'}`).join('\n')
+        ? failedFiles.map(file => `- ${file.safePath || file.path}: ${file.reason || 'validation failure'}`).join('\n')
         : '- Entire request: malformed AI response or invalid JSON envelope';
 
       return `${basePrompt}
@@ -2052,7 +1890,7 @@ MANDATORY RULES
 2. Return updatedFiles only for the failed targets listed above.
 3. Preserve all working systems that already succeeded.
 4. If a failed target is partial or malformed, rebuild that target completely and safely.
-5. Fix only the exact failed contract items for each target file; do not broaden the repair scope.`;
+5. For models/2, do not remove particle, impact, trail, pig death, or explosion related systems that already exist unless you are replacing them with a working implementation.`;
     }
 
     function buildFailedFileRecord(file, safePath, reason, stage, originalContent = '', candidateContent = '', subsystemDetails = []) {
@@ -2063,7 +1901,7 @@ MANDATORY RULES
         failureStage: stage,
         originalContent: String(originalContent || ''),
         candidateContent: String(candidateContent || ''),
-        subsystemDetails: subsystemDetails || []   // structured repair failure report
+        subsystemDetails: subsystemDetails || []   // structured validator failure report
       };
     }
 
@@ -2073,37 +1911,6 @@ MANDATORY RULES
         const safePath = target.safePath || target.path || `target_${index + 1}`;
         const reason   = target.reason || 'unknown issue';
         const stage    = target.failureStage || 'unknown';
-
-        // ── Structured repair context block ───────────────────────────────
-        // Emit exact missing-code context when a failed target includes subsystem details.
-        let contractBlock = '';
-        if (Array.isArray(target.subsystemDetails) && target.subsystemDetails.length > 0) {
-          const rows = target.subsystemDetails.map(d => {
-            const anchors = d.humanAnchor.map(a => `      • ${a}`).join('\n');
-            const origLines = d.originalAnchorLines && d.originalAnchorLines.length > 0
-              ? `
-    Original matching lines (RESTORE or REPLACE with equivalent):
-${d.originalAnchorLines.join('\n')}`
-              : '';
-            return `  MISSING SUBSYSTEM: "${d.label}"
-    The failed target requires at least ONE of these executable patterns:
-${anchors}${origLines}`;
-          });
-          contractBlock = `
-
-=== REPAIR TARGET REQUIREMENTS FOR ${safePath} ===
-The following subsystems are REQUIRED to be present as real executable code.
-Use these requirements when rebuilding the failed target.
-
-${rows.join('\n\n')}
-
-INSTRUCTION TO MODEL:
-For EACH missing subsystem above, ensure the repaired file contains at least one
-of the listed code patterns as actual executable code, not as a comment or string.
-If the original matching lines are shown, restore those exact patterns or provide
-a functionally equivalent replacement. Do NOT rename, abstract away, or dispatch
-these through a generic handler unless the original already used that pattern.`;
-        }
 
         const liveBlock = String(target.originalContent || '').trim()
           ? `
@@ -2118,8 +1925,10 @@ ${target.candidateContent}`
 
         return `=== REPAIR TARGET ${index + 1}: ${safePath} ===
 Reason: ${reason}
-Failure stage: ${stage}${contractBlock}${liveBlock}${candidateBlock}`;
-      }).join('\n\n');
+Failure stage: ${stage}${liveBlock}${candidateBlock}`;
+      }).join('
+
+');
     }
 
     function buildRepairSeedFiles(projectFiles = {}, repairTargets = []) {
@@ -2138,6 +1947,75 @@ Failure stage: ${stage}${contractBlock}${liveBlock}${candidateBlock}`;
       const backupPath = `${projectPath}/${AI_HARDENING.backupFolder}/${stamp}_${sanitizeStorageFragment(safePath)}`;
       await uploadString(ref(storage, backupPath), String(originalContent || ''));
       return backupPath;
+    }
+
+    function applySearchReplaceBlocks(aiOutputContent, originalContent, fileName, escapeHTMLFn) {
+      const blockRegex = /<<<<<<< SEARCH[\r\n]+([\s\S]*?)[\r\n]+=======[\r\n]+([\s\S]*?)[\r\n]+>>>>>>> REPLACE/g;
+      let normalizedResult = String(originalContent || '').replace(/\r\n/g, '\n');
+      let uiResult = escapeHTMLFn(normalizedResult);
+      let match;
+      let changesMade = 0;
+
+      function findWithNormalizedWhitespace(haystack, needle) {
+        const normalize = (str) => str.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\s+/g, '');
+        const needleNorm = normalize(needle);
+        if (!needleNorm) return null;
+        const haystackLines = haystack.split('\n');
+        for (let i = 0; i < haystackLines.length; i++) {
+          let currentNorm = '';
+          for (let j = i; j < haystackLines.length; j++) {
+            currentNorm += haystackLines[j].replace(/\/\/.*$/, '').replace(/\s+/g, '');
+            if (currentNorm === needleNorm) {
+              return haystackLines.slice(i, j + 1).join('\n');
+            }
+            if (currentNorm.length > needleNorm.length) break;
+          }
+        }
+        return null;
+      }
+
+      while ((match = blockRegex.exec(aiOutputContent)) !== null) {
+        const searchTarget = match[1].replace(/\r\n/g, '\n');
+        const replacement = match[2];
+
+        if (normalizedResult.includes(searchTarget)) {
+          normalizedResult = normalizedResult.split(searchTarget).join(replacement);
+          const escapedSearch = escapeHTMLFn(searchTarget);
+          const escapedReplace = escapeHTMLFn(replacement);
+          const uiPatch = `<span style="color: var(--success); font-weight: bold;">${escapedSearch}</span>
+<span style="color: var(--danger); font-weight: bold;">${escapedReplace}</span>`;
+          uiResult = uiResult.split(escapedSearch).join(uiPatch);
+          changesMade++;
+        } else {
+          const verbatimMatch = findWithNormalizedWhitespace(normalizedResult, searchTarget);
+          if (verbatimMatch !== null) {
+            normalizedResult = normalizedResult.split(verbatimMatch).join(replacement);
+            const escapedSearch = escapeHTMLFn(verbatimMatch);
+            const escapedReplace = escapeHTMLFn(replacement);
+            const uiPatch = `<span style="color: var(--success); font-weight: bold;">${escapedSearch}</span>
+<span style="color: var(--danger); font-weight: bold;">${escapedReplace}</span>`;
+            uiResult = uiResult.split(escapedSearch).join(uiPatch);
+            changesMade++;
+          } else {
+            console.warn(`Patch failed for ${fileName}. Code not found:
+`, searchTarget);
+          }
+        }
+      }
+
+      if (changesMade === 0) {
+        return {
+          ok: false,
+          error: `Failed to apply any SEARCH/REPLACE blocks for ${fileName}.`
+        };
+      }
+
+      return {
+        ok: true,
+        finalContentToSave: normalizedResult,
+        uiDisplayContent: uiResult,
+        changesMade
+      };
     }
 
     async function applyAiUpdatedFiles(options) {
@@ -2177,13 +2055,72 @@ Failure stage: ${stage}${contractBlock}${liveBlock}${candidateBlock}`;
 
         let aiOutputContent = stripCodeFenceWrapper(file.content);
         let finalContentToSave = aiOutputContent;
+        let uiDisplayContent = escapeHTML(aiOutputContent);
 
-        if (safePath.endsWith('.json')) {
-          finalContentToSave = finalContentToSave.replace(/\/\*[\s\S]*?\*\//g, '').trim();
+        if (aiOutputContent.includes('<<<<<<< SEARCH')) {
+          if (!originalContent) {
+            failedFiles.push(buildFailedFileRecord(
+              file,
+              safePath,
+              `Original content missing for patch application (${fileName}).`,
+              'patch_original_missing',
+              originalContent,
+              aiOutputContent
+            ));
+            appendToChatLog('System', `Warning: Could not find original content for ${fileName} to apply patch.`, 'error');
+            continue;
+          }
+
+          const patchResult = applySearchReplaceBlocks(aiOutputContent, originalContent, fileName, escapeHTML);
+          if (!patchResult.ok) {
+            failedFiles.push(buildFailedFileRecord(
+              file,
+              safePath,
+              patchResult.error,
+              'patch_apply',
+              originalContent,
+              aiOutputContent
+            ));
+            appendToChatLog('System', patchResult.error, 'error');
+            Progress.warn(`Patch failed for ${fileName}`, patchResult.error);
+            continue;
+          }
+
+          finalContentToSave = patchResult.finalContentToSave;
+          uiDisplayContent = patchResult.uiDisplayContent;
         }
 
-        let uiDisplayContent = escapeHTML(finalContentToSave);
-        
+        const validation = validateCandidateFileContent(safePath, finalContentToSave, originalContent);
+        if (!validation.ok) {
+          failedFiles.push(buildFailedFileRecord(
+            file,
+            safePath,
+            validation.error,
+            'validation',
+            originalContent,
+            finalContentToSave,
+            validation.subsystemDetails || []   // exact validator contract for repair prompt
+          ));
+          appendToChatLog('System', `Validation failed for ${safePath}: ${validation.error}`, 'error');
+          Progress.warn(`Validation failed for ${fileName}`, validation.error);
+          await quarantineAiPayload(projectPath, 'candidate_validation_failure', finalContentToSave, {
+            safePath,
+            sourcePath: file.path,
+            reason: validation.error
+          });
+          await quarantineAiPayload(projectPath, 'candidate_validation_failure_context', JSON.stringify({
+            safePath,
+            sourcePath: file.path,
+            reason: validation.error,
+            failureStage: 'validation',
+            originalContent
+          }, null, 2), {
+            safePath,
+            sourcePath: file.path,
+            reason: validation.error
+          });
+          continue;
+        }
 
         let backupPath = null;
         try {
@@ -2369,14 +2306,6 @@ Failure stage: ${stage}${contractBlock}${liveBlock}${candidateBlock}`;
     };
 
     const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-
-    function assertPollDeadlineOrThrow(deadlineMs, timeoutWindowMs, label, projectPath, jobId, lastKnownProgress = null) {
-      if (Date.now() <= deadlineMs) return;
-      const progressSummary = lastKnownProgress
-        ? ` Last progress: ${JSON.stringify({ status: lastKnownProgress.status || null, tranche: lastKnownProgress.currentTranche || null, updatedAt: lastKnownProgress.updatedAt || null })}`
-        : '';
-      throw new Error(`${label} timed out while polling Firebase. projectPath=${projectPath} jobId=${jobId} timeoutMs=${timeoutWindowMs}.${progressSummary}`);
-    }
 
     /* ═══════════════════════════════════════════════════════════
        V2 EXPERT AGENT DEFINITIONS
@@ -2648,7 +2577,7 @@ Quality criteria for your work:
         document.getElementById('trancheHeaderSub').textContent = 'Phase 0: Game Intelligence + Expert Planning...';
         document.getElementById('trancheOverallFill').style.width = '0%';
         document.getElementById('trancheList').innerHTML = '';
-        document.getElementById('trancheFooterStatus').textContent = `${getPipelinePlanningModelLabel()} researching game design...`;
+        document.getElementById('trancheFooterStatus').textContent = 'Opus 4.6 researching game design...';
         // Reset intelligence panel
         const intPanel = document.getElementById('trancheIntelligence');
         intPanel.classList.remove('active');
@@ -2709,10 +2638,10 @@ Quality criteria for your work:
 
         if (prog.status === 'planning') {
           planningSection.style.display = 'flex';
-          planningLabel.textContent = prog.live?.label || `${getPipelinePlanningModelLabel()} is researching game design and creating expert-driven build tranches...`;
-          planningAnalysis.textContent = prog.live?.detail || '';
+          planningLabel.textContent = 'Opus 4.6 is researching game design and creating expert-driven build tranches...';
+          planningAnalysis.textContent = '';
           overallFill.style.width = '5%';
-          footerStatus.textContent = prog.live?.detail || 'Phase 0: Game Intelligence active...';
+          footerStatus.textContent = 'Phase 0: Game Intelligence active...';
           return;
         }
 
@@ -2739,11 +2668,6 @@ Quality criteria for your work:
           const pct = Math.round(((completed + (prog.status === 'complete' ? 0 : 0.3)) / total) * 100);
           overallFill.style.width = `${Math.min(pct, 100)}%`;
 
-          if (prog.live?.label && prog.status !== 'complete') {
-            headerSub.textContent = prog.live.detail || prog.live.label;
-            footerStatus.textContent = prog.live.label;
-          }
-
           if (prog.status === 'complete') {
             overallFill.style.width = '100%';
             overallFill.classList.add('done');
@@ -2767,7 +2691,7 @@ Quality criteria for your work:
               headerTitle.textContent = `T${activeTranche.index + 1}/${prog.totalTranches}: ${activeTranche.name}`;
               headerSub.textContent = agentNames
                 ? `${agentNames} executing tranche ${activeTranche.index + 1}...`
-                : `${getPipelineExecutionModelLabel()} executing tranche ${activeTranche.index + 1} of ${prog.totalTranches}...`; 
+                : `Sonnet 4.6 executing tranche ${activeTranche.index + 1} of ${prog.totalTranches}...`;
             }
             footerStatus.textContent = `Executing tranche ${(prog.currentTranche || 0) + 1} of ${prog.totalTranches}...`;
           }
@@ -3036,6 +2960,11 @@ Quality criteria for your work:
                   : `Could not parse ai_response.json: ${responseRead.error?.message || 'unknown error'}`);
             }
 
+            const envelopeCheck = validateAiResponseEnvelope(responseRead.data);
+            if (!envelopeCheck.ok) {
+                throw new Error(`ai_response.json is invalid: ${envelopeCheck.error}`);
+            }
+
             // ── Freshness guard ──────────────────────────────────────────
             // Reject payloads that belong to an older job or were written
             // before the most recent run started.
@@ -3218,7 +3147,7 @@ Quality criteria for your work:
     /* ══════════════════════════════════════════════════════════════════════
        REPAIR-AND-APPLY LOOP
        ─────────────────────────────────────────────────────────────────────
-       Called automatically when the initial apply finds apply failures.
+       Called automatically when the initial apply finds validation failures.
        Runs up to AI_HARDENING.repairPassLimit surgical repair passes without
        human intervention.  Each pass:
 
@@ -3228,7 +3157,7 @@ Quality criteria for your work:
          3. Triggers the Netlify backend
          4. Polls for the repaired ai_response.json
          5. Applies only the still-failing files via applyAiUpdatedFiles
-         6. Repeats until the failed files are repaired or pass limit is reached
+         6. Re-validates; if clean returns ok, else iterates
 
        Returns { ok:true,  appliedFiles }          on full success
                { ok:false, failedFiles, finalSummary } after exhausting all passes
@@ -3278,13 +3207,15 @@ Rules:
 1. Respond in delimiter format only: ===FILE_START: path=== ... ===FILE_END: path===
 2. Output ONLY the files listed in REPAIR CONTEXT above. Do not touch any other file.
 3. Preserve every working system already in the file — do not remove anything that works.
-4. Read the REPAIR TARGET REQUIREMENTS section in REPAIR CONTEXT carefully.
-   Preserve or restore the specific executable patterns called out there when present.
+4. Read the VALIDATOR CONTRACT section in REPAIR CONTEXT carefully. It lists the EXACT
+   code patterns the automated validator checks for (on comment-stripped source).
+   For each missing subsystem, at least one of the listed executable patterns MUST appear
+   in the repaired file as real code — not in a comment, not in a string, not routed
+   through a renamed/generic dispatcher unless that was already the original pattern.
+   If "Original matching lines" are shown, restore those exact patterns or equivalent.
 5. Output the COMPLETE file content — no patches, no diffs, no SEARCH/REPLACE.
-6. CRITICAL — models/2 MUST be plain JavaScript (ES5/ES6+). NEVER use TypeScript syntax
-   (no "param: Type" annotations, no interface/type declarations, no generic <T> syntax).
-   Use standard JS function signatures only: function foo(param) { }
-7. All top-level import/export statements in models/2 are valid and should be preserved as-is.
+6. After writing each file, mentally run through the VALIDATOR CONTRACT checklist and
+   confirm every required pattern is present before submitting.
 
 Original user request for context: ${basePrompt}`;
 
@@ -3293,17 +3224,7 @@ Original user request for context: ${basePrompt}`;
         lastRunJobId    = repairJobId;
         lastRunStartTime = Date.now();
 
-        try {
-          await uploadString(responseFileRef, JSON.stringify({
-            jobId: repairJobId,
-            timestamp: Date.now(),
-            status: "pending",
-            updatedFiles: [],
-            message: `Awaiting repair pass ${pass}...`
-          }));
-        } catch (e) {
-          console.warn("Could not write repair ai_response placeholder:", e);
-        }
+        try { await deleteObject(responseFileRef); } catch (e) {}
         try { await deleteObject(errorFileRef); }    catch (e) {}
 
         await uploadString(activeJobRef, JSON.stringify({
@@ -3324,7 +3245,7 @@ Original user request for context: ${basePrompt}`;
 
         // ── Trigger backend ─────────────────────────────────────────────────
         Progress.step(`Triggering repair backend (pass ${pass})`, 'Sending to Netlify...');
-        const repairProxyRes = await fetch(getCodeProxyEndpoint(), {
+        const repairProxyRes = await fetch('/.netlify/functions/claudeCodeProxy-background', {
           method:  'POST',
           headers: { 'Content-Type': 'application/json' },
           body:    JSON.stringify({ projectPath, jobId: repairJobId, repairAttempt: pass })
@@ -3341,12 +3262,9 @@ Original user request for context: ${basePrompt}`;
 
         let repairResult     = null;
         let repairMalformed  = 0;
-        let lastRepairProgress = null;
-        const repairPollDeadlineMs = Date.now() + AI_HARDENING.repairPollTimeoutMs;
 
         while (!repairResult) {
-          assertPollDeadlineOrThrow(repairPollDeadlineMs, AI_HARDENING.repairPollTimeoutMs, `Repair pipeline pass ${pass}`, projectPath, repairJobId, lastRepairProgress);
-          await sleep(AI_HARDENING.pollIntervalMs);
+          await sleep(5000);
 
           const repairErrRead = await fetchStorageJsonSafe(
             errorFileRef, projectPath, `repair_error_p${pass}`);
@@ -3358,8 +3276,6 @@ Original user request for context: ${basePrompt}`;
           const repairProgRead = await fetchStorageJsonSafe(
             progressFileRef, projectPath, `repair_progress_p${pass}`);
           if (repairProgRead.ok && repairProgRead.data.jobId === repairJobId) {
-            lastRepairProgress = repairProgRead.data;
-            applyProgressTelemetry(repairProgRead.data);
             TrancheUI.updateFromProgress(repairProgRead.data);
           }
 
@@ -3370,6 +3286,15 @@ Original user request for context: ${basePrompt}`;
             if (respJobId && respJobId !== repairJobId) {
               Progress.warn(`Stale repair response (pass ${pass})`,
                 `Expected ${repairJobId}, got ${respJobId} — still waiting...`);
+              continue;
+            }
+            const envCheck = validateAiResponseEnvelope(repairRespRead.data);
+            if (!envCheck.ok) {
+              repairMalformed++;
+              if (repairMalformed >= AI_HARDENING.jsonPollMalformedLimit) {
+                throw new Error(`Malformed repair response (pass ${pass}): ${envCheck.error}`);
+              }
+              Progress.warn(`Invalid repair envelope (pass ${pass})`, envCheck.error);
               continue;
             }
             repairResult = repairRespRead.data;
@@ -3394,7 +3319,7 @@ Original user request for context: ${basePrompt}`;
 
         // ── Apply repair — only the still-failing files ─────────────────────
         Progress.step(`Applying repair (pass ${pass})`,
-          `Writing: ${currentFailedFiles.map(f => f.safePath || f.path).join(', ')}`);
+          `Validating and writing: ${currentFailedFiles.map(f => f.safePath || f.path).join(', ')}`);
 
         const repairedApply = await applyAiUpdatedFiles({
           result:      repairResult,
@@ -3462,7 +3387,6 @@ Original user request for context: ${basePrompt}`;
       if (repairAttempt === 0 && parseErrorRetry === 0) {
         aiPromptInput.value = '';
         appendToChatLog('You', basePrompt);
-        resetProgressTelemetryUi();
         Progress.start('Starting AI pipeline...');
       } else if (parseErrorRetry > 0) {
         appendToChatLog('System', `Backend parse error detected — retrying full build (attempt ${parseErrorRetry}/${AI_HARDENING.repairPassLimit}).`, 'normal');
@@ -3632,8 +3556,9 @@ Rules:
 1. Return strict JSON only — no markdown, no commentary outside the JSON envelope.
 2. Return updatedFiles ONLY for the failed targets listed. Do not touch any other file.
 3. Preserve every working system already present in the current file content.
-4. Preserve every working contract item already present in the current file content.
-   If a failed target includes specific missing-system notes, repair only those exact items without broad redesign.
+4. For models/2: you MUST retain all particle, impact, trail, pig death, and explosion
+   systems. If the validation says these were missing, rebuild those subsystems completely
+   and correctly — do not remove them.
 5. Output full file content (not SEARCH/REPLACE blocks) for each repaired file.
 
 OUTPUT FORMAT — respond with exactly this JSON shape:
@@ -3776,14 +3701,21 @@ Respond with a JSON object:
 }
 
 RESPONSE FORMAT FOR TRANCHE EXECUTION:
-Each tranche executor must output COMPLETE file contents using strict delimiters.
-Do NOT use JSON or markdown code blocks for the file outputs.
+Each tranche executor must output ONLY changed lines using SEARCH/REPLACE blocks:
 
-===FILE_START: path/to/filename===
-...complete raw file content here, exactly as it should be saved...
-===FILE_END: path/to/filename===
+<<<<<<< SEARCH
+[exact code from original file, with context lines for unique match]
+=======
+[new replacement code]
+>>>>>>> REPLACE
 
-NEVER output or modify "assets.json". It is provided strictly as read-only context to help you map keys to files.
+Rules:
+1. SEARCH must match existing code exactly, line for line, preserving whitespace.
+2. Include enough context lines for a unique match.
+3. Multiple SEARCH/REPLACE blocks per file are allowed.
+4. For completely new files, output full code without SEARCH/REPLACE tags.
+
+Do NOT include "assets.json" in your updatedFiles response.
 In your 'message', provide a detailed changelog of modifications.
 
 ═══════════════════════════════════════════════════════════
@@ -3795,25 +3727,9 @@ User Request: ${prompt}`;
         const errorFileRef = ref(storage, `${projectPath}/ai_error.json`);
         const progressFileRef = ref(storage, `${projectPath}/ai_progress.json`);
         
-        // Overwrite ai_response.json with a job-stamped placeholder instead of deleting it.
-        // Deletion can silently fail or lag in Firebase, leaving a stale file that the
-        // poller will warn about on every single poll cycle until the backend writes real data.
-        // Writing a placeholder with the new jobId means the freshness guard passes immediately.
-        try {
-          await uploadString(responseFileRef, JSON.stringify({
-            jobId: currentJobId,
-            timestamp: Date.now(),
-            status: "pending",
-            updatedFiles: [],
-            message: "Awaiting backend pipeline..."
-          }));
-        } catch(e) {
-          // Non-fatal — poller will handle stale file gracefully
-          console.warn("Could not write ai_response placeholder:", e);
-        }
+        try { await deleteObject(responseFileRef); } catch(e) {}
         try { await deleteObject(errorFileRef); } catch(e) {}
-        // Do not delete ai_progress.json here.
-        // Job-id freshness guards already ignore stale progress snapshots.
+        try { await deleteObject(progressFileRef); } catch(e) {}
 
         const currentJobId = Date.now().toString();
         lastRunJobId = currentJobId;
@@ -3823,7 +3739,7 @@ User Request: ${prompt}`;
         await uploadString(activeJobRef, JSON.stringify({ jobId: currentJobId, timestamp: Date.now(), repairAttempt }));
 
         setStatus(repairAttempt > 0 ? 'AI repair pass is processing...' : 'AI is processing files (This may take a minute)...');
-        Progress.step(`Sending context to ${getCurrentCodeBackendDisplayName()}`, repairAttempt > 0 ? 'Focused repair context + failed targets...' : 'Building V2 expert-agent pipeline prompt + files...');
+        Progress.step('Sending context to Claude', repairAttempt > 0 ? 'Focused repair context + failed targets...' : 'Building V2 expert-agent pipeline prompt + files...');
         const inlineImages = await Promise.all(attachedPromptImages.map(async (file) => {
             return new Promise((resolve, reject) => {
                 const reader = new FileReader();
@@ -3853,24 +3769,14 @@ User Request: ${prompt}`;
         const fetchController = new AbortController();
         const fetchTimeout = setTimeout(() => fetchController.abort(), 180000);
         try {
-            const proxyRes = await fetch(getCodeProxyEndpoint(), {
+            const proxyRes = await fetch('/.netlify/functions/claudeCodeProxy-background', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ projectPath, jobId: currentJobId, repairAttempt, repairTargets }),
               signal: fetchController.signal
             });
             if (!proxyRes.ok) {
-                 const rawText = await proxyRes.text().catch(() => '');
-                 let parsedError = null;
-                 try { parsedError = rawText ? JSON.parse(rawText) : null; } catch (e) {}
-                 const enrichedMessage = formatBackendErrorForChat({
-                   ...(parsedError || {}),
-                   status: proxyRes.status,
-                   statusCode: proxyRes.status,
-                   rawText
-                 }, `Netlify rejected the request: ${proxyRes.status} ${proxyRes.statusText}. Your payload may exceed the 6MB limit, or the function crashed.`);
-                 appendToChatLog('System', enrichedMessage, 'error');
-                 throw new Error(enrichedMessage);
+                 throw new Error(`Netlify rejected the request: ${proxyRes.status} ${proxyRes.statusText}. Your payload may exceed the 6MB limit, or the function crashed.`);
             }
         } catch (fetchErr) {
             if (fetchErr.name === 'AbortError') {
@@ -3884,22 +3790,17 @@ User Request: ${prompt}`;
         let result = null;
         let malformedProgressCount = 0;
         let malformedResponseCount = 0;
-        let staleWarningEmitted = false;
-        let lastKnownProgress = null;
-        const buildPollDeadlineMs = Date.now() + AI_HARDENING.buildPollTimeoutMs;
-        Progress.step(`Waiting for ${getCurrentCodeBackendResponseLabel()}`, 'Polling Firebase for V2 expert tranche progress...');
+        Progress.step('Waiting for Claude response', 'Polling Firebase for V2 expert tranche progress...');
 
         TrancheUI.show();
         TrancheUI.showPlanning();
 
         while (!result) {
-          assertPollDeadlineOrThrow(buildPollDeadlineMs, AI_HARDENING.buildPollTimeoutMs, 'Build pipeline', projectPath, currentJobId, lastKnownProgress);
-          await sleep(AI_HARDENING.pollIntervalMs);
+          await sleep(5000);
 
           const errorRead = await fetchStorageJsonSafe(errorFileRef, projectPath, 'ai_error');
           if (errorRead.ok) {
-            const errorMessage = formatBackendErrorForChat(errorRead.data, 'AI Generation Failed');
-            appendToChatLog('System', errorMessage, 'error');
+            const errorMessage = errorRead.data?.error || 'AI Generation Failed';
             throw new Error(errorMessage);
           }
 
@@ -3910,8 +3811,6 @@ User Request: ${prompt}`;
             if (progressData.jobId && progressData.jobId !== currentJobId) {
               continue;
             }
-            lastKnownProgress = progressData;
-            applyProgressTelemetry(progressData);
             TrancheUI.updateFromProgress(progressData);
             if (progressData.status === 'executing' && progressData.tranches) {
               const active = progressData.tranches.find(t => t.status === 'in_progress');
@@ -3921,7 +3820,7 @@ User Request: ${prompt}`;
                   .join(' + ');
                 Progress.step(
                   `T${active.index + 1}/${progressData.totalTranches}: ${active.name}`,
-                  agentLabel ? `${agentLabel} executing...` : (active.description || `${getPipelineExecutionModelLabel()} executing...`)
+                  agentLabel ? `${agentLabel} executing...` : (active.description || 'Sonnet 4.6 executing...')
                 );
               }
             }
@@ -3936,26 +3835,22 @@ User Request: ${prompt}`;
             // Reject a response that belongs to a different/older job.
             const respJobId = responseRead.data.jobId;
             if (respJobId && respJobId !== currentJobId) {
-              // Only log the stale warning once — don't spam every poll cycle
-              if (!staleWarningEmitted) {
-                staleWarningEmitted = true;
-                Progress.warn('Stale ai_response.json detected', `Response job "${respJobId}" ≠ current "${currentJobId}" — waiting for backend to write fresh data...`);
-              }
+              Progress.warn('Stale ai_response.json detected', `Response job "${respJobId}" ≠ current "${currentJobId}" — still waiting for fresh write...`);
               // do NOT assign result — keep polling
             } else {
-              // Skip our own pending placeholder silently — it only exists to prevent
-              // the stale guard from triggering before the backend writes real data.
-              if (responseRead.data.status === 'pending') {
-                // placeholder, keep polling quietly
-              } else {
-              if (responseRead.data.status !== 'final') {
-                Progress.step(
-                  'Checkpoint received',
-                  `Still waiting for final build output (status: ${responseRead.data.status || 'unknown'}).`
-                );
+              const envelopeCheck = validateAiResponseEnvelope(responseRead.data);
+              if (!envelopeCheck.ok) {
+                await quarantineAiPayload(projectPath, 'ai_response_invalid_envelope', responseRead.rawText, {
+                  error: envelopeCheck.error,
+                  jobId: currentJobId
+                });
+                malformedResponseCount++;
+                if (malformedResponseCount >= AI_HARDENING.jsonPollMalformedLimit) {
+                  throw new Error(`Malformed final AI response: ${envelopeCheck.error}`);
+                }
+                Progress.warn('Invalid AI response envelope', envelopeCheck.error);
               } else {
                 result = responseRead.data;
-              }
               }
             }
           } else if (responseRead.kind === 'parse_error') {
@@ -3995,10 +3890,7 @@ User Request: ${prompt}`;
             : `${result.updatedFiles.length} file(s) generated`;
         Progress.step('✅ Build pipeline complete', buildStatus);
 
-        // The backend Final QA loop is the single AI correction point.
-        // Files arriving here have already been audited, fixed, and verified.
-        // We apply them directly — no further AI calls needed.
-        Progress.step(`Uploading ${result.updatedFiles.length} file(s) to Firebase`, 'Writing each file...');
+        Progress.step(`Uploading ${result.updatedFiles.length} file(s) to Firebase`, 'Validating and writing each file...');
         const applySummary = await applyAiUpdatedFiles({
           result,
           projectPath,
@@ -4008,11 +3900,33 @@ User Request: ${prompt}`;
 
         if (applySummary.failedFiles.length > 0) {
           const failedSummary = applySummary.failedFiles.map(f => `${f.safePath || f.path}: ${f.reason}`).join(' | ');
-          Progress.warn('Apply failures after write', failedSummary);
+          await quarantineAiPayload(projectPath, 'ai_initial_apply_failures',
+            JSON.stringify(applySummary.failedFiles, null, 2), {
+              jobId: currentJobId,
+              failedCount: applySummary.failedFiles.length
+            });
+
+          Progress.warn('Initial apply has failures — entering repair loop', failedSummary);
           appendToChatLog('System',
-            `⚠ ${applySummary.failedFiles.length} file(s) failed during write/apply:\n${applySummary.failedFiles.map(f => `  • ${f.safePath || f.path}: ${f.reason}`).join('\n')}`,
-            'error'
-          );
+            `${applySummary.failedFiles.length} file(s) failed validation. Auto-repair loop starting...`, 'error');
+
+          const repairOutcome = await runRepairAndApplyLoop({
+            basePrompt,
+            projectPath,
+            projectFiles,
+            initialFailedFiles: applySummary.failedFiles,
+            escapeHTML
+          });
+
+          if (!repairOutcome.ok) {
+            throw new Error(
+              `AI update failed after ${AI_HARDENING.repairPassLimit} repair attempt(s). ` +
+              repairOutcome.finalSummary
+            );
+          }
+
+          // Merge repair-applied files into the review pane list
+          applySummary.appliedFiles.push(...repairOutcome.appliedFiles);
         }
 
         result.updatedFiles = applySummary.appliedFiles;
@@ -4026,7 +3940,6 @@ User Request: ${prompt}`;
         try {
           const finalProgressRead = await fetchStorageJsonSafe(progressFileRef, projectPath, 'ai_progress_final');
           if (finalProgressRead.ok) {
-            applyProgressTelemetry(finalProgressRead.data);
             TrancheUI.updateFromProgress(finalProgressRead.data);
           }
         } catch (e) {}
@@ -4168,7 +4081,6 @@ User Request: ${prompt}`;
         appendToChatLog('System', `Error: ${error.message}`, 'error');
         setStatus('AI update failed.');
         Progress.error(error.message);
-        applyProgressTelemetry({ live: { events: [{ id: `frontend_${Date.now()}`, type: 'error', label: 'Frontend pipeline error', detail: error.message, stage: 'frontend' }], streamingText: '' } });
         TrancheUI.updateFromProgress({ status: 'error', error: error.message, completedTime: Date.now() });
       } finally {
         // Re-enable the button only when the outermost executeAIPipeline call exits.
