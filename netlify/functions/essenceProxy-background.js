@@ -45,7 +45,7 @@ async function callGemini(apiKey, { model, maxTokens, systemText, userText }) {
 /* ── call Claude (fallback) ─────────────────────────────────── */
 async function callClaude(apiKey, { maxTokens, systemText, userText }) {
   const body = {
-    model: "claude-sonnet-4-20250514",
+    model: "claude-sonnet-4-6",
     max_tokens: maxTokens,
     system: systemText,
     messages: [{ role: "user", content: userText }]
@@ -69,10 +69,10 @@ async function callAI(opts) {
   const claudeKey = process.env.CLAUDE_API_KEY || process.env.ANTHROPIC_API_KEY;
 
   if (geminiKey) {
-    return callGemini(geminiKey, { model: "gemini-2.0-flash-thinking-exp-01-21", maxTokens: 8192, ...opts });
+    return callGemini(geminiKey, { model: "gemini-3.1-pro-preview", maxTokens: 24000, ...opts });
   }
   if (claudeKey) {
-    return callClaude(claudeKey, { maxTokens: 8000, ...opts });
+    return callClaude(claudeKey, { maxTokens: 24000, ...opts });
   }
   throw new Error("No AI API key found. Set GEMINI_API_KEY or CLAUDE_API_KEY in Netlify environment variables.");
 }
@@ -361,7 +361,7 @@ exports.handler = async (event) => {
       console.log(`[essenceProxy] Interview for "${gameName}" (job ${jobId})`);
 
       const promptParts = buildInterviewPrompt(gameName, gameDescription, priorGameType || "");
-      const result = await callAI({ ...promptParts, maxTokens: 4096 });
+      const result = await callAI({ ...promptParts, maxTokens: 12000 });
 
       await saveResult(bucket, projectPath, "ai_essence_interview.json", jobId, result);
       console.log(`[essenceProxy] Interview saved — ${result.length} chars`);
@@ -381,7 +381,7 @@ exports.handler = async (event) => {
       console.log(`[essenceProxy] Contract derivation for "${gameName}" (job ${jobId})`);
 
       const promptParts = buildContractPrompt(gameName, essenceAnswers);
-      const result = await callAI({ ...promptParts, maxTokens: 6000 });
+      const result = await callAI({ ...promptParts, maxTokens: 12000 });
 
       await saveResult(bucket, projectPath, "ai_essence_contract.json", jobId, result);
       console.log(`[essenceProxy] Contract saved — ${result.length} chars`);
