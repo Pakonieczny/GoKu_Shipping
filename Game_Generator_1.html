@@ -1926,9 +1926,7 @@ ${target.candidateContent}`
         return `=== REPAIR TARGET ${index + 1}: ${safePath} ===
 Reason: ${reason}
 Failure stage: ${stage}${liveBlock}${candidateBlock}`;
-      }).join('
-
-');
+      }).join('\n\n');
     }
 
     function buildRepairSeedFiles(projectFiles = {}, repairTargets = []) {
