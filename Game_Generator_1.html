@@ -1605,9 +1605,12 @@
 
         // Also add all reference zip asset entries to truthMap so they survive pruning
         // (handles nested children structures from Cherry3D)
-        function flattenAssetEntries(entries) {
+      function flattenAssetEntries(entries) {
             const flat = [];
             for (const entry of entries) {
+                // Skip invalid entries like strings or nulls
+                if (!entry || typeof entry !== 'object') continue; 
+                
                 flat.push(entry);
                 if (entry.children && Array.isArray(entry.children) && entry.children.length > 0) {
                     flat.push(...flattenAssetEntries(entry.children));
@@ -1630,6 +1633,9 @@
         // Build a deep-clone of reference assets as the starting point
         function deepCloneEntries(entries) {
             return entries.map(e => {
+                // Return primitives as-is without trying to clone them
+                if (!e || typeof e !== 'object') return e;
+                
                 const clone = Object.assign({}, e);
                 if (clone.children && Array.isArray(clone.children)) {
                     clone.children = deepCloneEntries(clone.children);
