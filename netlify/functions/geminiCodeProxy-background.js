@@ -18,6 +18,48 @@
 const fetch = require("node-fetch");
 const admin = require("./firebaseAdmin");
 
+
+const HARD_ENVIRONMENT_CONSTRAINTS = `HARD ENVIRONMENT CONSTRAINTS (platform facts — never reinterpret):
+1. Output format must use delimiter blocks exactly:
+   ===FILE_START: path=== ... ===FILE_END: path===
+   followed by ===MESSAGE=== ... ===END_MESSAGE===
+2. Valid target files are models/2, models/23, and json/assets.json.
+3. The main logic file is models/2. Never rename it to WorldController.js.
+4. The main HTML file is models/23. Never rename it to document.html.
+5. Preserve accumulated code from prior tranches. Output complete file contents, never diffs.
+6. Respect the platform's staged execution model: one planning pass followed by sequential tranche execution.
+7. Heavy engine/physics setup must respect deferred readiness patterns and isReady polling when the SDK requires it.
+8. The validation manifest block is mandatory in every emitted file.`;
+
+const DYNAMIC_ARCHITECTURE_JSON_SCHEMA = `{
+  "summary": "2-4 sentence synthesis of the exact game architecture required for THIS request.",
+  "gameType": "Short label for the requested game/class of interaction.",
+  "stateModel": [
+    "Specific state domains and canonical state variables that must exist for this game."
+  ],
+  "actorModel": [
+    {
+      "actor": "actor_name",
+      "role": "what it does",
+      "representation": "entity/data structure/UI element",
+      "motion": "dynamic|kinematic|static|logical_only|n/a",
+      "rules": ["critical behavior or collision rules"]
+    }
+  ],
+  "systems": [
+    {
+      "name": "system name",
+      "purpose": "what it must do",
+      "sdkBindings": ["specific SDK APIs/patterns that must be used or avoided"],
+      "implementationRules": ["strict dynamic rules for this request only"],
+      "antiPatterns": ["what would break the design if done naively"]
+    }
+  ],
+  "invariants": ["cross-system laws that may not be violated"],
+  "failureGuards": ["checks/orderings needed to avoid known failure modes"],
+  "trancheHints": ["how the builder should sequence implementation work"]
+}`;
+
 /* ── helper: call Gemini API ─────────────────────────────────── */
 async function callGemini(apiKey, { model, maxTokens, system, userContent, effort, jsonMode }) {
   const thinkingLevel = effort === "high" ? "high" : (effort === "low" ? "low" : "medium");
@@ -93,6 +135,28 @@ function stripFences(text) {
   }
 
   return cleaned.trim();
+}
+
+function safeJsonParse(text, label) {
+  try {
+    return JSON.parse(stripFences(text));
+  } catch (error) {
+    throw new Error(`Failed to parse ${label} output as JSON: ${error.message}`);
+  }
+}
+
+function buildArchitectureSpecBlock(spec) {
+  if (!spec) return "";
+  const pretty = typeof spec === "string" ? spec : JSON.stringify(spec, null, 2);
+  return `
+╔═════════════ DYNAMIC GAME ARCHITECTURE SPEC (BINDING) ═════════════╗
+║ These rules were synthesized from the user's request, contract,   ║
+║ existing files, and SDK context. They define the game-specific    ║
+║ architecture for THIS build only. Do not replace them with        ║
+║ generic engine advice or hardcoded one-size-fits-all rules.       ║
+╚════════════════════════════════════════════════════════════════════╝
+${pretty}
+`;
 }
 
 const REQUIRED_TRANCHE_VALIDATION_BLOCK = `VALIDATION MANIFEST RULE (copy this block verbatim into EVERY tranche prompt you generate):
@@ -425,6 +489,7 @@ exports.handler = async (event) => {
         planningStartTime: Date.now(),
         planningEndTime: null,
         planningAnalysis: "",
+        architectureSpec: null,
         totalTranches: 0,
         currentTranche: -1,
         tranches: [],
@@ -439,32 +504,84 @@ exports.handler = async (event) => {
       };
       await saveProgress(bucket, projectPath, progress);
 
-      const planningSystem = `You are an expert game development architect and AI pipeline planner.
+      const architectSystem = `You are the ARCHITECT pass in a two-pass game generation pipeline.
 
-Your job: analyze the user's game build/modification request and split it into sequential, self-contained TRANCHES that can be executed one at a time by a coding AI.
+Your job is NOT to write code and NOT to split tranches yet.
+Read the user's request, existing files, optional game contract, and any SDK guidance present in the supplied context.
+Synthesize the GAME-SPECIFIC architecture laws that the later builder/planner must obey.
 
-RULES FOR SPLITTING:
-1. Each tranche should focus on 1-2 closely related concerns (e.g., "physics + movement", "UI + scoring", "pipe spawning + scrolling").
+${HARD_ENVIRONMENT_CONSTRAINTS}
+
+Separate platform facts from game rules:
+- Environment constraints stay hardcoded and are already provided above.
+- Dynamic architecture rules must be inferred fresh for THIS exact game.
+- Do NOT invent rigid one-size-fits-all requirements such as a universal actor table, fixed physics model, or generic grid math unless this request truly requires them.
+- Only specify motion types, actor categories, camera laws, grid laws, or state machines when supported by the request/contract/SDK context.
+- Resolve conflicts in favor of the user's game contract and the SDK-compatible implementation path.
+
+Return ONLY valid JSON matching this schema:
+${DYNAMIC_ARCHITECTURE_JSON_SCHEMA}`;
+
+      const architectUserContent = [
+        { text: `${fileContext}
+
+=== OPTIONAL GAME CONTRACT ===
+${gameContract || 'None provided.'}
+=== END GAME CONTRACT ===
+
+=== FULL USER REQUEST (derive game-specific architecture laws) ===
+${prompt}
+=== END USER REQUEST ===` },
+        ...imageBlocks
+      ];
+
+      console.log(`STAGE 0A: Architect pass with Gemini 3.1 Pro for Job ${jobId}...`);
+      const architectResult = await callGemini(apiKey, {
+        model: "gemini-3.1-pro-preview",
+        maxTokens: 24000,
+        effort: "medium",
+        system: architectSystem,
+        userContent: architectUserContent,
+        jsonMode: true
+      });
+
+      if (architectResult.usage) {
+        progress.tokenUsage.planning = architectResult.usage;
+        progress.tokenUsage.totals.input_tokens += architectResult.usage.input_tokens || 0;
+        progress.tokenUsage.totals.output_tokens += architectResult.usage.output_tokens || 0;
+        await saveProgress(bucket, projectPath, progress);
+      }
+
+      const architectureSpec = safeJsonParse(architectResult.text, "architect");
+      progress.architectureSpec = architectureSpec;
+      await saveProgress(bucket, projectPath, progress);
+
+      const architectureSpecBlock = buildArchitectureSpecBlock(architectureSpec);
+      const planningSystem = `You are the BUILDER-PLANNER pass in a two-pass game generation pipeline.
+
+Your job: use the hard environment constraints plus the dynamic architecture spec to split the user's request into sequential, self-contained TRANCHES that can be executed one at a time by a coding AI.
+
+${HARD_ENVIRONMENT_CONSTRAINTS}
+${architectureSpecBlock}
+
+PLANNING RULES:
+1. Each tranche should focus on 1-2 closely related concerns.
 2. Tranches MUST be ordered by dependency — later tranches build on earlier ones.
-3. Each tranche prompt must be FULLY SELF-CONTAINED: include all the context, rules, and specifics the coding AI needs without referencing other tranches by name.
-4. Preserve ALL technical details, variable names, slot layouts, exact code snippets, and architecture rules from the original prompt in the relevant tranche(s). Do NOT summarize or lose any detail.
-5. If the prompt is simple enough (minor change, single concern), use just 1 tranche.
-6. For complex game builds, use 3-7 tranches. Never exceed 8.
-7. Each tranche should describe what FILES it expects to create or modify.
-8. The FIRST tranche should always set up the foundational scaffold that later tranches build upon.
-9. The LAST tranche should handle polish, edge cases, and integration glue.
-
-CRITICAL FILE NAMING RULES (include in every tranche prompt):
-- The main logic file is named "2" (NOT "WorldController.js"), located in "models/" folder.
-- The main HTML file is named "23" (NOT "document.html"), located in "models/" folder.
-- "assets.json" is in the "json/" folder.
+3. Each tranche prompt must be FULLY SELF-CONTAINED.
+4. Preserve exact technical details, variable names, slot layouts, code snippets, and SDK usage requirements from the source material.
+5. If the request is simple enough, use 1 tranche. Otherwise use the minimum count that preserves correctness.
+6. Each tranche must declare expectedFiles, dependencies, expertAgents, phase, and qualityCriteria.
+7. The FIRST tranche should establish the exact foundations required by the architecture spec.
+8. The LAST tranche should handle integration, edge cases, and polish.
+9. Do NOT inject generic rules that contradict the architecture spec. If a rule is game-specific, ground it in the architecture spec.
+10. In every tranche prompt, clearly separate HARD ENVIRONMENT CONSTRAINTS from GAME-SPECIFIC ARCHITECTURE RULES.
 
 ${REQUIRED_TRANCHE_VALIDATION_BLOCK}
 
 You must respond ONLY with a valid JSON object. No markdown, no code fences, no preamble.
 
 {
-  "analysis": "Brief 1-2 sentence analysis of the overall request complexity and your splitting strategy.",
+  "analysis": "Brief planning analysis describing how the architecture spec shapes the tranche sequence.",
   "tranches": [
     {
       "name": "Short Name",
@@ -473,18 +590,30 @@ You must respond ONLY with a valid JSON object. No markdown, no code fences, no 
       "phase": 1,
       "dependencies": [],
       "qualityCriteria": ["Criterion 1", "Criterion 2"],
-      "prompt": "THE COMPLETE, SELF-CONTAINED PROMPT for the coding AI. Include all relevant technical details.",
+      "prompt": "THE COMPLETE, SELF-CONTAINED PROMPT for the coding AI. It must embed the relevant architecture rules for this tranche.",
       "expectedFiles": ["models/2", "models/23"]
     }
   ]
 }`;
 
       const planningUserContent = [
-        { text: `${fileContext}\n\n=== FULL USER REQUEST (analyze and split into tranches) ===\n${prompt}\n=== END USER REQUEST ===` },
+        { text: `${fileContext}
+
+=== OPTIONAL GAME CONTRACT ===
+${gameContract || 'None provided.'}
+=== END GAME CONTRACT ===
+
+=== DYNAMIC ARCHITECTURE SPEC ===
+${JSON.stringify(architectureSpec, null, 2)}
+=== END DYNAMIC ARCHITECTURE SPEC ===
+
+=== FULL USER REQUEST (plan tranche execution) ===
+${prompt}
+=== END USER REQUEST ===` },
         ...imageBlocks
       ];
 
-      console.log(`STAGE 0: Planning with Gemini 3.1 Pro for Job ${jobId}...`);
+      console.log(`STAGE 0B: Builder-plan pass with Gemini 3.1 Pro for Job ${jobId}...`);
       const planResult = await callGemini(apiKey, {
         model: "gemini-3.1-pro-preview",
         maxTokens: 66000,
@@ -495,18 +624,16 @@ You must respond ONLY with a valid JSON object. No markdown, no code fences, no 
       });
 
       if (planResult.usage) {
-        progress.tokenUsage.planning = planResult.usage;
+        progress.tokenUsage.planning = {
+          input_tokens: (progress.tokenUsage.planning?.input_tokens || 0) + (planResult.usage.input_tokens || 0),
+          output_tokens: (progress.tokenUsage.planning?.output_tokens || 0) + (planResult.usage.output_tokens || 0)
+        };
         progress.tokenUsage.totals.input_tokens += planResult.usage.input_tokens || 0;
         progress.tokenUsage.totals.output_tokens += planResult.usage.output_tokens || 0;
         await saveProgress(bucket, projectPath, progress);
       }
 
-      let plan;
-      try {
-        plan = JSON.parse(stripFences(planResult.text));
-      } catch (e) {
-        throw new Error("Failed to parse planning output as JSON: " + e.message);
-      }
+      let plan = safeJsonParse(planResult.text, "planning");
 
       if (!plan.tranches || !Array.isArray(plan.tranches) || plan.tranches.length === 0) {
         throw new Error("Planner returned zero tranches.");
@@ -517,7 +644,12 @@ You must respond ONLY with a valid JSON object. No markdown, no code fences, no 
       // Update progress with plan
       progress.status = "executing";
       progress.planningEndTime = Date.now();
-      progress.planningAnalysis = plan.analysis || "";
+      progress.planningAnalysis = [
+        architectureSpec?.summary ? `ARCHITECT SUMMARY:
+${architectureSpec.summary}` : "",
+        plan.analysis ? `BUILDER PLAN SUMMARY:
+${plan.analysis}` : ""
+      ].filter(Boolean).join("\n\n");
       progress.totalTranches = plan.tranches.length;
       progress.currentTranche = 0;
       progress.tranches = plan.tranches.map((t, i) => ({
@@ -549,6 +681,7 @@ You must respond ONLY with a valid JSON object. No markdown, no code fences, no 
         allUpdatedFiles: [],
         imageBlocks,
         gameContract: gameContract || null,          // ← Game Essence Contract (§A-§H)
+        architectureSpec,
         totalTranches: plan.tranches.length
       };
       await savePipelineState(bucket, projectPath, pipelineState);
@@ -605,7 +738,7 @@ You must respond ONLY with a valid JSON object. No markdown, no code fences, no 
       const state = await loadPipelineState(bucket, projectPath);
       if (!state) throw new Error("Pipeline state not found in Firebase. Chain broken.");
 
-      const { progress, accumulatedFiles, allUpdatedFiles, imageBlocks, gameContract } = state;
+      const { progress, accumulatedFiles, allUpdatedFiles, imageBlocks, gameContract, architectureSpec } = state;
       const tranche = progress.tranches[nextTranche];
 
       if (!tranche) throw new Error(`Tranche ${nextTranche} not found in pipeline state.`);
@@ -624,6 +757,8 @@ You must respond ONLY with a valid JSON object. No markdown, no code fences, no 
       // newlines. Delimiters require zero escaping and are completely robust.
       const executionSystem = `You are an expert game development AI.
 The user will provide project files and a focused modification request (one tranche of a larger build).
+
+${HARD_ENVIRONMENT_CONSTRAINTS}
 
 You must respond using DELIMITER FORMAT only. Do NOT use JSON. Do NOT use markdown code blocks.
 
@@ -716,7 +851,7 @@ Correct approach:
 
       const trancheUserContent = [
         {
-          text: `${trancheFileContext}\n\n=== TRANCHE ${nextTranche + 1} of ${progress.totalTranches}: "${tranche.name}" ===\n\n${contractPrefix}${tranche.prompt}\n\n=== END TRANCHE INSTRUCTIONS ===\n\nIMPORTANT: You are working on tranche ${nextTranche + 1} of ${progress.totalTranches}. The project files above contain ALL work from prior tranches. You MUST preserve all existing code and ADD your changes on top. Output the COMPLETE updated file contents.`
+          text: `${trancheFileContext}\n\n=== TRANCHE ${nextTranche + 1} of ${progress.totalTranches}: "${tranche.name}" ===\n\n${contractPrefix}${buildArchitectureSpecBlock(architectureSpec)}${tranche.prompt}\n\n=== END TRANCHE INSTRUCTIONS ===\n\nIMPORTANT: You are working on tranche ${nextTranche + 1} of ${progress.totalTranches}. The project files above contain ALL work from prior tranches. You MUST preserve all existing code and ADD your changes on top. Output the COMPLETE updated file contents.`
         },
         ...(imageBlocks || [])
       ];

@@ -989,7 +989,7 @@
 
         const planningLabel = document.getElementById('tranchePlanningLabel');
         if (planningLabel && planningLabel.textContent.includes('researching')) {
-            planningLabel.textContent = `${svc.planner} is researching game design and creating expert-driven build tranches...`;
+            planningLabel.textContent = `${svc.planner} is running Architect pass then building expert-driven tranches...`;
         }
 
         const footerModels = document.querySelector('.tranche-footer-models');
@@ -2712,10 +2712,10 @@ Quality criteria for your work:
         const svc = AI_SERVICES[currentAiService];
         document.getElementById('tranchePlanningSection').style.display = 'flex';
         document.getElementById('trancheHeaderTitle').textContent = 'V2 Expert-Agent Pipeline';
-        document.getElementById('trancheHeaderSub').textContent = 'Phase 0: Game Intelligence + Expert Planning...';
+        document.getElementById('trancheHeaderSub').textContent = 'Phase 0: Architect Pass + Builder Planning...';
         document.getElementById('trancheOverallFill').style.width = '0%';
         document.getElementById('trancheList').innerHTML = '';
-        document.getElementById('trancheFooterStatus').textContent = `${svc.planner} researching game design...`;
+        document.getElementById('trancheFooterStatus').textContent = `${svc.planner} generating architecture rules and tranche plan...`;
         // Reset intelligence panel
         const intPanel = document.getElementById('trancheIntelligence');
         intPanel.classList.remove('active');
@@ -2777,10 +2777,10 @@ Quality criteria for your work:
 
         if (prog.status === 'planning') {
           planningSection.style.display = 'flex';
-          planningLabel.textContent = `${svc.planner} is researching game design and creating expert-driven build tranches...`;
+          planningLabel.textContent = `${svc.planner} is running Architect pass then building expert-driven tranches...`;
           planningAnalysis.textContent = '';
           overallFill.style.width = '5%';
-          footerStatus.textContent = 'Phase 0: Game Intelligence active...';
+          footerStatus.textContent = 'Phase 0: Architect pass active...';
           return;
         }
 
@@ -2793,7 +2793,7 @@ Quality criteria for your work:
             const planDuration = (prog.planningEndTime && prog.planningStartTime)
               ? this._formatDuration(prog.planningEndTime - prog.planningStartTime)
               : '';
-            planningLabel.innerHTML = `✓ Game Intelligence + Plan: <strong>${prog.totalTranches} expert tranche(s)</strong>${planDuration ? ` in ${planDuration}` : ''}`;
+            planningLabel.innerHTML = `✓ Architect + Plan: <strong>${prog.totalTranches} expert tranche(s)</strong>${planDuration ? ` in ${planDuration}` : ''}`;
             planningLabel.style.color = 'var(--success)';
             planningAnalysis.textContent = '';
             planningSection.querySelector('.tranche-planning-spinner')?.remove();
@@ -3973,145 +3973,55 @@ ${extentsContext}
 V2 EXPERT-AGENT TRANCHED BUILD PIPELINE
 ═══════════════════════════════════════════════════════════
 
-You are an expert game development architect. Your job is to decompose this
-game build request into a sequence of focused, expert-driven micro-tranches.
-You must follow this EXACT multi-step protocol.
+You are preparing a build request for a TWO-PASS ARCHITECT-TO-BUILDER pipeline.
+The backend will do this in two distinct phases:
 
-───────────────────────────────────────────────────────────
-STEP 0 — GAME INTELLIGENCE (MANDATORY — DO NOT SKIP)
-───────────────────────────────────────────────────────────
-Before creating ANY tranches, deeply analyze the game being requested:
+PASS 1 — ARCHITECT
+- Reads the user request, current files, optional Game Contract, and Cherry3D SDK context.
+- Generates the dynamic game-specific architecture laws for THIS exact game.
+- This pass decides actor categories, state model, motion rules, camera rules, grid rules,
+  ordering constraints, and failure guards only when they are actually required by the request.
+- It must NOT reuse rigid one-size-fits-all assumptions from other games.
 
-A) GAME IDENTITY: What existing game(s) is this based on? What genre and
-   sub-genre? What makes the reference game legendary and satisfying to play?
+PASS 2 — BUILDER / TRANCHE PLANNER
+- Uses the Architect output plus the platform constraints below.
+- Splits the build into focused expert-driven tranches.
+- Injects only the relevant dynamic architecture rules into each tranche.
 
-B) ADDICTION MECHANICS — THE "JUICE": Research and list the SPECIFIC design
-   details that make this type of game feel satisfying:
-   - Core feel (e.g., "the movement response gives the player a sense of control")
-   - Feedback loops (e.g., "reactions feel earned, not random")
-   - Camera work (e.g., "camera timing builds anticipation before key moments")
-   - Sound design (e.g., "distinct event sounds provide visceral feedback")
-   - Pacing (e.g., "action-resolve rhythm creates tension-release cycles")
-   Be SPECIFIC with concrete details, not generic ("good physics" is NOT enough).
+HARD ENVIRONMENT CONSTRAINTS (these are platform facts and may remain fixed):
+1. Output format must use delimiter blocks exactly:
+   ===FILE_START: path=== ... ===FILE_END: path===
+   followed by ===MESSAGE=== ... ===END_MESSAGE===
+2. Valid target files are models/2 models/23 and json/assets.json.
+3. The main logic file is models/2 never WorldController.js.
+4. The main HTML file is models/23 never document.html.
+5. Output complete file contents not patches or diffs.
+6. Preserve accumulated code from prior tranches.
+7. Respect deferred engine readiness and isReady polling when SDK patterns require it.
 
-C) CRITICAL SYSTEM MAP: List every distinct system in the prompt document.
-   For EACH system: what it does, what it depends on, what depends on it,
-   which exact tuned values are interconnected and must not be changed individually.
-
-D) FAILURE MODES: Based on the prompt's pitfall warnings and your game knowledge:
-   - What will break if simplified? (cite specific systems)
-   - What naive implementations have been tried and failed? (cite pitfalls)
-   - What timing/ordering dependencies exist? (cite specific patterns)
-
-Output this analysis as your "planningAnalysis" field. This analysis will be
-injected into EVERY tranche executor's context as critical domain knowledge.
-
-───────────────────────────────────────────────────────────
-STEP 1 — EXPERT AGENT ASSIGNMENT
-───────────────────────────────────────────────────────────
-Each tranche MUST be assigned 1-2 expert agents from this roster.
-The expert agent's system prompt will be prepended to the tranche
-execution prompt, giving the executor deep domain knowledge:
-
+DYNAMIC PIPELINE REQUIREMENTS:
+- Never hardcode universal game-architecture rules in advance.
+- Do not force an actor table grid math physics model or state pattern unless the Architect pass
+  determines that the requested game actually needs them.
+- When the Game Contract and SDK imply constraints use those exact constraints.
+- When the request is non-physics based do not hallucinate physics systems.
+- When the request is grid based define exact grid laws.
+- When the request is free-movement based define the correct movement and camera laws.
+- Every tranche must be self-contained and must preserve all earlier working code.
+- Each tranche must be assigned 1-2 expert agents from this roster:
 ${EXPERT_AGENTS_JSON}
 
-───────────────────────────────────────────────────────────
-STEP 2 — MICRO-TRANCHE DECOMPOSITION
-───────────────────────────────────────────────────────────
-Create 8-15 focused micro-tranches following these strict rules:
-
-a) SINGLE RESPONSIBILITY: Each tranche handles ONE subsystem or one closely
-   coupled pair. NEVER combine unrelated systems (e.g., audio + physics).
-
-b) SIZE LIMIT: Target 150-300 lines of new/modified code per tranche.
-   If a tranche would produce 400+ lines, SPLIT it into two.
-
-c) EXPLICIT DEPENDENCIES: List which prior tranches must complete first.
-   The "dependencies" array uses tranche names (e.g., ["Scaffolding & State"]).
-   Never reference code that hasn't been created by a prior tranche.
-
-d) QUALITY CRITERIA: Each tranche includes 4-8 specific acceptance criteria
-   drawn from the assigned expert agent's quality standards.
-
-e) GAME-SPECIFIC CONTEXT: Each tranche's prompt must include:
-   - Relevant game intelligence excerpts from Step 0
-   - EXACT values from the prompt that this tranche implements
-   - Pitfall warnings specific to this subsystem (quoted from the prompt)
-   - How this system connects to the game's "juice" / addictiveness
-
-f) PHASED ORDERING (assign a phase number 1-4 to each tranche):
-   Phase 1 (Foundation): State object, engine base, core data structures, helper functions
-   Phase 2 (Core Mechanics): Player avatar/entity, input, primary actions, core interactions
-   Phase 3 (Content & Polish): Camera, audio, levels/waves, UI, visual effects
-   Phase 4 (Integration): Wiring onRender, connecting handlers, edge cases, final polish
-
-───────────────────────────────────────────────────────────
-STEP 3 — TRANCHE PROMPT CRAFTING
-───────────────────────────────────────────────────────────
-For EACH tranche, write a COMPLETE self-contained execution prompt that includes:
-1. The expert agent system prompt (from the roster above)
-2. Game intelligence context relevant to this tranche (from Step 0)
-3. The EXACT specifications from the original prompt document for this system
-4. Code patterns with exact values (copy from the prompt, don't paraphrase)
-5. A quality checklist the executor MUST verify before submitting
-6. What NOT to do — specific pitfalls from the original prompt for this system
-7. CHERRY3D SDK SECTIONS — copy the exact text of every SDK section relevant to
-   what this tranche builds, pasted verbatim into the tranche prompt. The executor
-   AI does NOT have access to the SDK — your copied sections are its only reference.
-   ALWAYS include Section 27 (Master Quick Reference Card) in every tranche.
-   Add whichever additional sections apply to the systems being built, for example:
-     Foundation/state:    Sections 1, 2, 3, 4, 5, 6
-     Physics/movement:    Sections 1, 3, 3A, 7, 15
-     World generation:    Sections 6, 9, 10, 11, 25
-     Obstacles/enemies:   Sections 7, 13, 23, 25
-     Collectibles/powerups: Sections 12, 14, 17, 23
-     Projectiles:         Sections 16, 23
-     Input:               Sections 3, 3A, 19
-     Camera:              Section 20
-     UI/score:            Section 21
-     Audio:               Section 22
-     Textures/materials:  Sections 6, 8, 9, 24
-
-═══════════════════════════════════════════════════════════
-OUTPUT FORMAT
-═══════════════════════════════════════════════════════════
-Respond with a JSON object:
-{
-  "planningAnalysis": "Your Step 0 game intelligence analysis (detailed)...",
-  "tranches": [
-    {
-      "name": "Tranche Name",
-      "description": "What this tranche builds",
-      "expertAgents": ["agent_id_1", "agent_id_2"],
-      "phase": 1,
-      "dependencies": [],
-      "expectedFiles": ["models/2", "models/23"],
-      "estimatedLines": 200,
-      "qualityCriteria": [
-        "All state in single gameState object",
-        "No global variables",
-        "dt fallback to 0.016 and clamped < 0.2",
-        "Deferred heavy initialisation via requestAnimationFrame"
-      ],
-      "prompt": "The FULL self-contained execution prompt for this tranche..."
-    }
-  ]
-}
-
-RESPONSE FORMAT FOR TRANCHE EXECUTION:
-Each tranche executor must output the COMPLETE file content using delimiter format:
-
-===FILE_START: path/to/file===
-...complete file content...
-===FILE_END: path/to/file===
-
-Rules:
-1. Always output the COMPLETE file — never partial diffs or patches.
-2. Multiple files can be output in the same response using separate delimiter blocks.
-3. Do NOT include "assets.json" in your output.
-4. In your message, provide a detailed changelog of what was added or changed.
-
-═══════════════════════════════════════════════════════════
+TRANCHE PLANNING REQUIREMENTS:
+1. Use the minimum number of tranches that preserves correctness and clarity.
+2. Order tranches by true dependency.
+3. Each tranche must focus on one subsystem or one tightly-coupled pair.
+4. Each tranche prompt must clearly separate:
+   - HARD ENVIRONMENT CONSTRAINTS
+   - GAME-SPECIFIC ARCHITECTURE RULES
+   - EXACT TASK FOR THIS TRANCHE
+5. Include exact values variable names SDK excerpts and pitfall warnings where relevant.
+6. The first tranche must establish the exact foundations required by the Architect pass.
+7. The last tranche must handle integration edge cases and polish.
 
 User Request: ${prompt}`;
 
