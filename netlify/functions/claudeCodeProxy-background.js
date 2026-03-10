@@ -594,8 +594,8 @@ ${prompt}
       console.log(`STAGE 0B: Builder-plan pass with Opus 4.6 for Job ${jobId}...`);
       const planResult = await callClaude(apiKey, {
         model: "claude-opus-4-6",
-        maxTokens: 128000,
-        budgetTokens: 25000,
+        maxTokens: 76000,
+        budgetTokens: 15000,
         effort: "high",
         system: planningSystem,
         userContent: planningUserContent
