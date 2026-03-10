@@ -596,7 +596,7 @@ ${prompt}
         model: "claude-opus-4-6",
         maxTokens: 76000,
         budgetTokens: 15000,
-        effort: "high",
+        effort: "medium",
         system: planningSystem,
         userContent: planningUserContent
       });
