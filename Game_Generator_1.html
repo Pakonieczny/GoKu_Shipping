@@ -1145,6 +1145,15 @@
       }
     }
 
+    function removeProjectOptionFromUI(projectName) {
+      if (!projectName || !projectSelect) return;
+      const option = Array.from(projectSelect.options).find(opt => opt.value === projectName);
+      if (option) option.remove();
+      if (projectSelect.options.length === 0) {
+        projectSelect.innerHTML = '<option value="">No projects found</option>';
+      }
+    }
+
     async function deleteProject(projectName) {
       if (!projectName) throw new Error('No project selected.');
       if (projectName === DEFAULT_TEMPLATE_PROJECT) {
@@ -1156,11 +1165,17 @@
       const projectRef = ref(storage, projectPath);
       const allItems = await listAllRecursive(projectRef).catch(() => []);
       const totalCount = allItems.length;
+      const wasCurrentProject = currentProject === projectName;
 
       setProjectSelectionEnabled(false);
       createProjectBtn.disabled = true;
       newProjectName.disabled = true;
       setCreateProjectProgress(0, `Deleting project: ${projectName}...`);
+
+      removeProjectOptionFromUI(projectName);
+      if (wasCurrentProject) {
+        clearProjectSelectionUI('Deleting project...');
+      }
 
       try {
         await uploadString(ref(storage, `${projectPath}/ai_active_job.json`), JSON.stringify({
@@ -1173,16 +1188,30 @@
       }
 
       await deleteStorageFolderRecursive(projectPath, { deletedCount: 0, totalCount });
-      setCreateProjectProgress(100, `Project ${projectName} deleted.`);
 
-      if (currentProject === projectName) {
-        clearProjectSelectionUI('Project deleted. Select another project to continue.');
+      try {
+        const postDeleteListing = await listAll(projectRef);
+        if ((postDeleteListing.items?.length || 0) > 0 || (postDeleteListing.prefixes?.length || 0) > 0) {
+          console.warn('Project still has remaining storage entries after recursive delete:', projectName, postDeleteListing);
+        }
+      } catch (e) {
+        // Expected once the project path is fully gone.
       }
 
+      removeProjectOptionFromUI(projectName);
+      setCreateProjectProgress(100, `Project ${projectName} deleted.`);
+
       await loadProjects();
-      if (currentProject === projectName) {
-        const firstAvailable = projectSelect.value;
+      removeProjectOptionFromUI(projectName);
+
+      if (projectSelect.value === projectName) {
+        projectSelect.value = '';
+      }
+
+      if (wasCurrentProject) {
+        const firstAvailable = projectSelect.value || Array.from(projectSelect.options).find(opt => opt.value)?.value || '';
         if (firstAvailable) {
+          projectSelect.value = firstAvailable;
           selectProject(firstAvailable);
         } else {
           clearProjectSelectionUI('No projects found. Create a new project to continue.');
@@ -2082,12 +2111,25 @@ This will permanently remove all associated files and Firebase folders for this 
     }
 
     function validateCandidateFileContent(safePath, candidateContent, originalContent) {
-      return {
-        ok: true,
-        validatorDisabled: true,
-        safePath,
-        skippedChecks: ['empty_check', 'json_parse', 'javascript_syntax']
-      };
+      const trimmed = String(candidateContent || '').trim();
+      if (!trimmed) {
+        return { ok: false, error: `${safePath} became empty.` };
+      }
+      if (safePath.endsWith('.json')) {
+        try {
+          JSON.parse(trimmed);
+        } catch (error) {
+          return { ok: false, error: `${safePath} is not valid JSON: ${error.message}` };
+        }
+      }
+      if (safePath === 'models/2' || safePath.endsWith('.js')) {
+        try {
+          new Function(trimmed);
+        } catch (error) {
+          return { ok: false, error: `${safePath} failed JavaScript syntax validation: ${error.message}` };
+        }
+      }
+      return { ok: true };
     }
 
     function buildRepairPrompt(basePrompt, failedFiles = [], repairAttempt = 1) {
@@ -3732,7 +3774,7 @@ When they overlap:
 - SDK / Engine Reference is used for engine/API facts, certainty gaps, threading rules, physics/property-path rules, and anti-pattern avoidance.
 - Never replace, delete, or work around an immutable scaffold section when repairing.
 
-Validator checks are temporarily disabled for this build flow. Focus on producing correct scaffold-aligned code on the first pass.
+Your output will be scanned by anti-pattern validators that reject code containing known fatal patterns
 (wrong property paths, unreliable readback, cross-context window globals, etc.).
 
 ${repairSeedFiles['models/2'] ? `
@@ -3796,7 +3838,7 @@ ENVIRONMENT CONSTRAINTS (platform facts handled by backend):
 5. Preserve accumulated code from prior tranches.
 6. The immutable Scaffold is injected by backend and is the required base architecture.
 7. The SDK / Engine Reference is injected by backend for engine facts and uncertainty resolution.
-8. Validator enforcement is temporarily disabled for this pipeline run.
+8. Anti-pattern validators mechanically enforce engine rules after each tranche.
 
 PLANNING REQUIREMENTS:
 - Use the minimum number of tranches that preserves correctness.
