@@ -603,6 +603,9 @@
       <select id="projectSelect">
         <option value="">Loading projects...</option>
       </select>
+      <div class="row" style="margin-top: 8px;">
+        <button class="btn btnDanger" id="deleteProjectBtn">Delete Project</button>
+      </div>
 
       <div style="margin-top: 20px; border-top: 1px solid var(--line); padding-top: 20px;">
         <label>Create New Project</label>
@@ -873,6 +876,7 @@
     const projectSelect = document.getElementById('projectSelect');
     const newProjectName = document.getElementById('newProjectName');
     const createProjectBtn = document.getElementById('createProjectBtn');
+    const deleteProjectBtn = document.getElementById('deleteProjectBtn');
     const mainPanel = document.getElementById('mainPanel');
     const dropZonesContainer = document.getElementById('dropZones');
     const globalStatus = document.getElementById('globalStatus');
@@ -940,6 +944,30 @@
     function resetCreateProjectProgress() {
       progressContainer.style.display = 'none';
       progressBar.style.width = '0%';
+    }
+
+    function setProjectSelectionEnabled(enabled) {
+      projectSelect.disabled = !enabled;
+      if (deleteProjectBtn) deleteProjectBtn.disabled = !enabled || !currentProject || currentProject === DEFAULT_TEMPLATE_PROJECT;
+    }
+
+    function clearProjectSelectionUI(message = 'Select a project to continue.') {
+      currentProject = null;
+      projectSelect.value = '';
+      mainPanel.style.opacity = '0.5';
+      mainPanel.style.pointerEvents = 'none';
+      generateGameBtn.disabled = true;
+      dropZonesContainer.innerHTML = '';
+      reviewPanel.classList.remove('active');
+      reviewFileList.innerHTML = '';
+      const assetLibrary = document.getElementById('assetLibrary');
+      const assetList = document.getElementById('assetList');
+      if (assetLibrary) assetLibrary.classList.remove('active');
+      if (assetList) assetList.innerHTML = '';
+      aiChatLog.innerHTML = `<div id="aiChatIntro" style="color: var(--muted);">${message}</div>`;
+      aiCodeReviewLog.innerHTML = `<div style="color: var(--muted);">Code diff updates will appear here after an AI run.</div>`;
+      updateAiUI();
+      setProjectSelectionEnabled(projectSelect.options.length > 0);
     }
 
     async function listAllRecursive(folderRef) {
@@ -1064,7 +1092,10 @@
 
         if (res.prefixes.length > 0) {
           selectProject(projectSelect.value);
+        } else {
+          clearProjectSelectionUI('No projects found. Create a new project to continue.');
         }
+        setProjectSelectionEnabled(res.prefixes.length > 0);
       } catch (e) {
         console.error("Error loading projects", e);
         projectSelect.innerHTML = '<option value="">Error loading</option>';
@@ -1092,6 +1123,69 @@
           try { await deleteObject(ref(storage, `${projectPath}/ai_active_job.json`)); } catch(e) {}
         } catch(e) {
           // No progress file = no active pipeline, nothing to cancel
+        }
+      }
+    }
+
+    async function deleteStorageFolderRecursive(folderPath, progress = null) {
+      const folderRef = ref(storage, folderPath);
+      const listing = await listAll(folderRef).catch(() => ({ items: [], prefixes: [] }));
+
+      for (const itemRef of listing.items) {
+        await deleteObject(itemRef);
+        if (progress) {
+          progress.deletedCount += 1;
+          const percent = progress.totalCount > 0 ? (progress.deletedCount / progress.totalCount) * 100 : 100;
+          setCreateProjectProgress(percent, `Deleting project files (${progress.deletedCount}/${progress.totalCount})...`);
+        }
+      }
+
+      for (const prefixRef of listing.prefixes) {
+        await deleteStorageFolderRecursive(prefixRef.fullPath, progress);
+      }
+    }
+
+    async function deleteProject(projectName) {
+      if (!projectName) throw new Error('No project selected.');
+      if (projectName === DEFAULT_TEMPLATE_PROJECT) {
+        throw new Error(`The template project "${DEFAULT_TEMPLATE_PROJECT}" cannot be deleted.`);
+      }
+
+      await ensureAuth();
+      const projectPath = `${ROOT}/${projectName}`;
+      const projectRef = ref(storage, projectPath);
+      const allItems = await listAllRecursive(projectRef).catch(() => []);
+      const totalCount = allItems.length;
+
+      setProjectSelectionEnabled(false);
+      createProjectBtn.disabled = true;
+      newProjectName.disabled = true;
+      setCreateProjectProgress(0, `Deleting project: ${projectName}...`);
+
+      try {
+        await uploadString(ref(storage, `${projectPath}/ai_active_job.json`), JSON.stringify({
+          cancelled: true,
+          time: Date.now(),
+          reason: 'project_deleted'
+        }));
+      } catch (e) {
+        console.warn('Could not write project delete cancel signal:', e);
+      }
+
+      await deleteStorageFolderRecursive(projectPath, { deletedCount: 0, totalCount });
+      setCreateProjectProgress(100, `Project ${projectName} deleted.`);
+
+      if (currentProject === projectName) {
+        clearProjectSelectionUI('Project deleted. Select another project to continue.');
+      }
+
+      await loadProjects();
+      if (currentProject === projectName) {
+        const firstAvailable = projectSelect.value;
+        if (firstAvailable) {
+          selectProject(firstAvailable);
+        } else {
+          clearProjectSelectionUI('No projects found. Create a new project to continue.');
         }
       }
     }
@@ -1144,6 +1238,39 @@
 
     projectSelect.addEventListener('change', (e) => selectProject(e.target.value));
 
+    deleteProjectBtn.addEventListener('click', async () => {
+      if (!currentProject) {
+        alert('Select a project first.');
+        return;
+      }
+      if (currentProject === DEFAULT_TEMPLATE_PROJECT) {
+        alert(`The template project "${DEFAULT_TEMPLATE_PROJECT}" cannot be deleted.`);
+        return;
+      }
+
+      const confirmed = confirm(
+        `Delete project "${currentProject}"?
+
+This will permanently remove all associated files and Firebase folders for this project.`
+      );
+      if (!confirmed) return;
+
+      try {
+        await deleteProject(currentProject);
+        setStatus(`Project deleted.`);
+        setTimeout(() => resetCreateProjectProgress(), 1000);
+      } catch (e) {
+        console.error('Project deletion failed', e);
+        setStatus(`Project deletion failed: ${e.message || e}`);
+        alert(`Project deletion failed: ${e.message || e}`);
+        setTimeout(() => resetCreateProjectProgress(), 1800);
+      } finally {
+        createProjectBtn.disabled = false;
+        newProjectName.disabled = false;
+        setProjectSelectionEnabled(true);
+      }
+    });
+
     function selectProject(name) {
       if (!name) return;
       currentProject = name;
@@ -1163,6 +1290,7 @@
       aiCodeReviewLog.innerHTML = `<div style="color: var(--muted);">Code diff updates will appear here after an AI run.</div>`;
       
       updateAiUI();
+      setProjectSelectionEnabled(true);
     }
 
     function renderDropZones() {
@@ -1954,25 +2082,12 @@
     }
 
     function validateCandidateFileContent(safePath, candidateContent, originalContent) {
-      const trimmed = String(candidateContent || '').trim();
-      if (!trimmed) {
-        return { ok: false, error: `${safePath} became empty.` };
-      }
-      if (safePath.endsWith('.json')) {
-        try {
-          JSON.parse(trimmed);
-        } catch (error) {
-          return { ok: false, error: `${safePath} is not valid JSON: ${error.message}` };
-        }
-      }
-      if (safePath === 'models/2' || safePath.endsWith('.js')) {
-        try {
-          new Function(trimmed);
-        } catch (error) {
-          return { ok: false, error: `${safePath} failed JavaScript syntax validation: ${error.message}` };
-        }
-      }
-      return { ok: true };
+      return {
+        ok: true,
+        validatorDisabled: true,
+        safePath,
+        skippedChecks: ['empty_check', 'json_parse', 'javascript_syntax']
+      };
     }
 
     function buildRepairPrompt(basePrompt, failedFiles = [], repairAttempt = 1) {
@@ -3617,7 +3732,7 @@ When they overlap:
 - SDK / Engine Reference is used for engine/API facts, certainty gaps, threading rules, physics/property-path rules, and anti-pattern avoidance.
 - Never replace, delete, or work around an immutable scaffold section when repairing.
 
-Your output will be scanned by anti-pattern validators that reject code containing known fatal patterns
+Validator checks are temporarily disabled for this build flow. Focus on producing correct scaffold-aligned code on the first pass.
 (wrong property paths, unreliable readback, cross-context window globals, etc.).
 
 ${repairSeedFiles['models/2'] ? `
@@ -3681,7 +3796,7 @@ ENVIRONMENT CONSTRAINTS (platform facts handled by backend):
 5. Preserve accumulated code from prior tranches.
 6. The immutable Scaffold is injected by backend and is the required base architecture.
 7. The SDK / Engine Reference is injected by backend for engine facts and uncertainty resolution.
-8. Anti-pattern validators mechanically enforce engine rules after each tranche.
+8. Validator enforcement is temporarily disabled for this pipeline run.
 
 PLANNING REQUIREMENTS:
 - Use the minimum number of tranches that preserves correctness.

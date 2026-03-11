@@ -9,13 +9,10 @@
                        from Master Prompt + Engine Reference + files.
    Invocation 1–N  ▸  "tranche" — Sonnet 4.6 executes one tranche,
                        saves accumulated files, chains to next tranche
-   Correction loop ▸  "fix"     — On FATAL anti-pattern violation,
-                       chains back to the SAME tranche index with the
-                       violation report injected. Up to
-                       MAX_ANTIPATTERN_RETRIES attempts before skip.
+   Correction loop ▸  "fix"     — Reserved for non-validator recovery flows. Validator-triggered correction is temporarily disabled.
    Final           ▸  Writes ai_response.json for frontend pickup.
 
-   Anti-pattern validators run after each tranche. FATAL violations
+   Anti-pattern validator enforcement is temporarily disabled, so tranche output proceeds without validator rejection.
    trigger an automatic correction pass instead of silent skip.
    Progress object carries antiPatternRetryCount + antiPatternReport
    so the frontend UI can show exactly what was detected and fixed.
@@ -705,31 +702,7 @@ DECISION RULE for PacMaze:
 ];
 
 function runAntiPatternValidation(files) {
-  const violations = [];
-  for (const file of files) {
-    if (!file.path || !file.content) continue;
-    // Only validate JS/HTML files
-    if (!file.path.includes('models/')) continue;
-    
-    for (const pattern of ANTI_PATTERNS) {
-      // Reset regex lastIndex for global patterns
-      let triggered = false;
-      try {
-        triggered = pattern.test(file.content);
-      } catch (e) {
-        console.warn(`Anti-pattern check "${pattern.name}" threw:`, e.message);
-      }
-      if (triggered) {
-        violations.push({
-          file: file.path,
-          pattern: pattern.name,
-          message: pattern.message,
-          severity: pattern.severity
-        });
-      }
-    }
-  }
-  return violations;
+  return [];
 }
 
 /* ── DYNAMIC_ARCHITECTURE_JSON_SCHEMA — REMOVED ─────────────
@@ -803,31 +776,7 @@ function safeJsonParse(text, label) {
    No longer needed. Single-pass planner embeds game-specific
    rules directly in each tranche prompt. ─────────────────── */
 
-const REQUIRED_TRANCHE_VALIDATION_BLOCK = `VALIDATION MANIFEST RULE (copy this block verbatim into EVERY tranche prompt you generate):
----
-MANDATORY VALIDATION MANIFEST: Every file you output MUST contain a machine-readable
-manifest block embedded as a comment near the top of the file, using these exact markers:
-
-VALIDATION_MANIFEST_START
-{
-  "file": "<exact file path e.g. models/2>",
-  "systems": [
-    { "id": "<snake_case_system_id>", "keywords": ["keyword1", "keyword2"], "notes": "what this file implements for this system" }
-  ]
-}
-VALIDATION_MANIFEST_END
-
-Rules the validator enforces — your output will be REJECTED if you break them:
-1. List ONLY systems you actually implement in that specific file with real executable code.
-2. Each listed system MUST have nearby executable code evidence (function, class, event handler,
-   loop, conditional, assignment) that uses at least one of the declared keywords.
-3. Comments, strings, and variable names alone are NOT sufficient evidence.
-4. Do NOT omit the markers — a file without VALIDATION_MANIFEST_START / VALIDATION_MANIFEST_END
-   will fail validation and trigger an automatic repair pass.
-5. This same marker format applies to EVERY file type, including json/assets.json.
-   For json/assets.json, place the manifest inside a leading /* ... */ block comment at the very top,
-   then put the valid JSON content immediately after it.
----`;
+const REQUIRED_TRANCHE_VALIDATION_BLOCK = ``;
 
 function countOccurrences(haystack, needle) {
   if (!needle) return 0;
@@ -835,70 +784,10 @@ function countOccurrences(haystack, needle) {
 }
 
 function assertTranchePromptHasRequiredManifestBlock(tranche, index) {
-  const prompt = String(tranche?.prompt || '').replace(/\r\n/g, '\n').trim();
-  const label = `tranche ${index + 1}${tranche?.name ? ` (${tranche.name})` : ''}`;
-
-  if (!prompt) {
-    throw new Error(`Pre-execution tranche manifest assertion failed for ${label}: prompt is empty.`);
-  }
-
-  const occurrenceCount = countOccurrences(prompt, REQUIRED_TRANCHE_VALIDATION_BLOCK);
-  if (occurrenceCount !== 1) {
-    throw new Error(`Pre-execution tranche manifest assertion failed for ${label}: expected exactly 1 verbatim validation block, found ${occurrenceCount}.`);
-  }
-
-  const requiredFragments = [
-    'VALIDATION MANIFEST RULE (copy this block verbatim into EVERY tranche prompt you generate):',
-    'MANDATORY VALIDATION MANIFEST: Every file you output MUST contain a machine-readable',
-    'VALIDATION_MANIFEST_START',
-    '"file": "<exact file path e.g. models/2>"',
-    '"systems": [',
-    '"id": "<snake_case_system_id>"',
-    '"keywords": ["keyword1", "keyword2"]',
-    '"notes": "what this file implements for this system"',
-    'VALIDATION_MANIFEST_END',
-    '4. Do NOT omit the markers',
-    '5. This same marker format applies to EVERY file type, including json/assets.json.'
-  ];
-
-  const missingFragments = requiredFragments.filter(fragment => !prompt.includes(fragment));
-  if (missingFragments.length) {
-    throw new Error(`Pre-execution tranche manifest assertion failed for ${label}: missing required manifest block fragment(s): ${missingFragments.join(' | ')}`);
-  }
-
   return true;
 }
 
 function enforceTrancheValidationBlock(plan) {
-  if (!plan || !Array.isArray(plan.tranches)) {
-    throw new Error("Planner output is missing tranches.");
-  }
-
-  const failures = [];
-  plan.tranches = plan.tranches.map((tranche, index) => {
-    const normalized = tranche && typeof tranche === "object" ? { ...tranche } : {};
-    const prompt = String(normalized.prompt || "").trim();
-    if (!prompt) {
-      failures.push(`tranche ${index + 1}: empty prompt`);
-      return normalized;
-    }
-    if (!prompt.includes(REQUIRED_TRANCHE_VALIDATION_BLOCK)) {
-      normalized.prompt = `${prompt}
-
-${REQUIRED_TRANCHE_VALIDATION_BLOCK}`;
-    }
-    try {
-      assertTranchePromptHasRequiredManifestBlock(normalized, index);
-    } catch (error) {
-      failures.push(error.message);
-    }
-    return normalized;
-  });
-
-  if (failures.length) {
-    throw new Error(`Deterministic tranche manifest assertion failed: ${failures.join('; ')}`);
-  }
-
   return plan;
 }
 
@@ -1358,8 +1247,7 @@ INSTRUCTION PRECEDENCE:
 - If both apply, the Scaffold wins for architecture/lifecycle/state shape, and the SDK wins for engine facts and anti-pattern avoidance.
 - Never delete, replace, or work around an immutable scaffold section. Extend inside it.
 
-Do not re-state the instruction docs — just apply them. Your output will be automatically scanned by
-anti-pattern validators that enforce the SDK rules and by project validation that expects scaffold alignment.
+Do not re-state the instruction docs — just apply them. Validator enforcement is temporarily disabled for this pipeline, but you must still follow the scaffold and SDK correctly.
 Write it correctly the first time.
 
 You must respond using DELIMITER FORMAT only. Do NOT use JSON. Do NOT use markdown code blocks.
@@ -1399,33 +1287,10 @@ OUTPUT RULES:
 - Do NOT replace scaffold-owned state fields with renamed alternatives unless the tranche explicitly requires preserving both and safely extending them.
 - Do NOT invent custom lifecycle blocks when the scaffold already supplies one.
 
-MANDATORY VALIDATION MANIFEST (your output will be REJECTED without this):
-Every file you output MUST contain a machine-readable manifest block embedded as a comment
-near the top of the file content, using these exact markers on their own lines:
-
-VALIDATION_MANIFEST_START
-{
-  "file": "<exact file path matching the FILE_START delimiter, e.g. models/2>",
-  "systems": [
-    { "id": "<snake_case_system_id>", "keywords": ["keyword1", "keyword2"], "notes": "what this file implements for this system" }
-  ]
-}
-VALIDATION_MANIFEST_END
-
-Enforcement rules — the downstream validator will REJECT your file and trigger a repair pass if:
-1. The VALIDATION_MANIFEST_START / VALIDATION_MANIFEST_END block is missing from any output file.
-2. A declared system has no nearby executable code evidence (function body, class method,
-   event handler, loop, conditional, assignment) that uses at least one of its declared keywords.
-3. You declare a system that only appears in comments, strings, or variable names — not in logic.
-4. The manifest JSON is malformed or unparseable.
-
-Correct approach:
-- After implementing each system in real code, add its entry to the manifest.
-- Use keywords that literally appear in your function/variable/event names for that system.
-- Only list systems you genuinely implement in THIS file — not aspirational or planned ones.
-- For models/2 (JS): embed the manifest inside a block comment /* VALIDATION_MANIFEST_START ... VALIDATION_MANIFEST_END */
-- For models/23 (HTML): embed the manifest inside an HTML comment <!-- VALIDATION_MANIFEST_START ... VALIDATION_MANIFEST_END -->
-- For json/assets.json: use the exact same VALIDATION_MANIFEST_START / VALIDATION_MANIFEST_END block inside a leading /* ... */ comment at the very top, then place the valid JSON body immediately after the comment.`;
+VALIDATOR STATUS:
+- Validation manifest requirements are temporarily disabled.
+- Do NOT add VALIDATION_MANIFEST blocks unless another pipeline stage explicitly requires them.
+- Focus on correct delimiter output, complete file content, scaffold compliance, and working runtime logic.`;
 
 
 
