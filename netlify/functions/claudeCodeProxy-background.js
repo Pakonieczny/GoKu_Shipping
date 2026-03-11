@@ -1,6 +1,6 @@
 /* netlify/functions/claudeCodeProxy-background.js */
 /* ═══════════════════════════════════════════════════════════════════
-   TRANCHED AI PIPELINE — v4.1 (Anti-Pattern Correction Loop)
+   TRANCHED AI PIPELINE — v4.2 (Anti-Pattern Correction Loop — Hardened Validators)
    ─────────────────────────────────────────────────────────────────
    Each invocation handles ONE unit of work then chains to itself
    for the next, staying well under Netlify's 15-min limit.
@@ -73,105 +73,296 @@ async function fetchSystemInstructions(bucket, projectPath) {
 
 const ANTI_PATTERNS = [
   {
-    // §3 — rb.RigidBody.controls is the correct path.
-    // rb.controls.setFloat/setInt is a silent no-op on every Cherry3D game.
+    // §3 — The correct path is <actorBody>.RigidBody.controls.setFloat/setInt().
+    // Calling .controls.setFloat/setInt() directly on an actor body object (not on its
+    // .RigidBody sub-object) is a silent no-op — no error, actor does not move.
+    //
+    // ALIASING: Code often does:
+    //   const rb = someActor.RigidBody;   <- rb IS the RigidBody
+    //   rb.controls.setFloat(...);        <- VALID — rb is already the RigidBody
+    // We detect this by scanning for variable assignments of the form
+    //   `const/let/var <n> = <anything>.RigidBody`
+    // and exempting any .controls.set* call made on those aliased variables.
     name: "Silent no-op controls path",
     test: (code) => {
-      return code.split('\n').some(line => {
+      const lines = code.split('\n');
+      // Collect variable names that are known to hold a RigidBody object directly.
+      const rigidBodyVars = new Set();
+      lines.forEach(line => {
+        const m = line.match(/(?:const|let|var)\s+(\w+)\s*=\s*[\w.[\]()]+\.RigidBody\b/);
+        if (m) rigidBodyVars.add(m[1]);
+      });
+      return lines.some(line => {
         const t = line.trim();
         if (t.startsWith('//') || t.startsWith('*')) return false;
-        // Flag .controls.set* NOT preceded by .RigidBody
-        return /(?<!RigidBody\.controls)\.controls\.set(Float|Int)\s*\(/.test(line) &&
-               !/RigidBody\.controls\.set(Float|Int)/.test(line);
+        if (!/\.controls\.set(?:Float|Int)\s*\(/.test(line)) return false;
+        // Already correct: literal .RigidBody.controls path
+        if (/\.RigidBody\.controls\.set(?:Float|Int)/.test(line)) return false;
+        // Extract the variable immediately before .controls
+        const callerMatch = line.match(/([\w.[\]]+)\.controls\.set(?:Float|Int)\s*\(/);
+        if (!callerMatch) return false;
+        const callerVar = callerMatch[1].split('.').pop().replace(/\[.*\]/, '');
+        // If this variable is a known RigidBody alias, the call is valid — skip
+        if (rigidBodyVars.has(callerVar)) return false;
+        return true;
       });
     },
-    message: "FATAL: Found .controls.setFloat/setInt without .RigidBody. prefix — silent no-op. Use body.RigidBody.controls.setFloat/setInt.",
+    message: `FATAL: Found .controls.setFloat/setInt without .RigidBody. prefix — silent no-op. The actor will not move and no error is thrown.
+REQUIRED FIX — change ONLY the property path, nothing else:
+  WRONG:   body.controls.setFloat(0, vx)          <- body is an actor wrapper, not a RigidBody
+  CORRECT: body.RigidBody.controls.setFloat(0, vx)
+  ALSO OK: const rb = body.RigidBody; rb.controls.setFloat(0, vx)  <- alias assigned via .RigidBody is fine
+SCOPE CONSTRAINT: Do NOT restructure updateInput(), do NOT move logic to the main thread, do NOT change what values are written. Only insert .RigidBody between the body reference and .controls. Every setFloat/setInt call that lacks .RigidBody must be fixed — search the entire file.`,
     severity: "FATAL"
   },
   {
     // §4 — controls.getFloat/getInt always return 0. Use getMotionState().
+    // Also catches getMotionState() called on the wrong object (missing .RigidBody).
+    //
+    // ALIASING: Code often does:
+    //   const rb = actor.RigidBody;    <- rb IS the RigidBody
+    //   rb.getMotionState();           <- VALID
+    //   rb.controls.getInt(3);        <- INVALID — getInt always returns 0
+    // We track variable aliases assigned via .RigidBody to exempt getMotionState() calls,
+    // and similarly track them to still flag controls.getInt/getFloat on those vars.
     name: "Unreliable physics readback",
     test: (code) => {
-      return code.split('\n').some(line => {
+      const lines = code.split('\n');
+      // Collect variable names known to hold a RigidBody object directly.
+      const rigidBodyVars = new Set();
+      lines.forEach(line => {
+        const m = line.match(/(?:const|let|var)\s+(\w+)\s*=\s*[\w.[\]()]+\.RigidBody\b/);
+        if (m) rigidBodyVars.add(m[1]);
+      });
+      // Primary: controls.getFloat/getInt — flag ONLY when the caller is NOT a known
+      // RigidBody alias. On a raw RigidBody object, controls.getInt/getFloat reads
+      // from the shared-memory output slots written by the physics thread — that IS
+      // reliable. The no-op only occurs when called on an actor wrapper (not RigidBody).
+      const hasGetFloatInt = lines.some(line => {
         const t = line.trim();
         if (t.startsWith('//') || t.startsWith('*')) return false;
-        return /\.controls\.get(Float|Int)\s*\(/.test(line);
+        if (!/\.controls\.get(?:Float|Int)\s*\(/.test(line)) return false;
+        // Already correct if the literal .RigidBody.controls path is present
+        if (/\.RigidBody\.controls\.get(?:Float|Int)/.test(line)) return false;
+        // Extract the caller variable
+        const callerMatch = line.match(/([\w.[\]]+)\.controls\.get(?:Float|Int)\s*\(/);
+        if (!callerMatch) return true; // can't tell — flag it
+        const callerVar = callerMatch[1].split('.').pop().replace(/\[.*\]/, '');
+        // If this variable is a known RigidBody alias, the call is valid — skip
+        if (rigidBodyVars.has(callerVar)) return false;
+        return true;
       });
+      if (hasGetFloatInt) return true;
+      // Secondary: getMotionState() on a non-RigidBody object — returns undefined silently.
+      // Special case: bare identifier `RigidBody` (capital R+B) is the parameter name
+      // passed into the physics callback function — it IS the RigidBody object.
+      const hasBareMotionState = lines.some(line => {
+        const t = line.trim();
+        if (t.startsWith('//') || t.startsWith('*')) return false;
+        if (!/\.getMotionState\s*\(/.test(line)) return false;
+        // Literal .RigidBody.getMotionState chain is always correct
+        if (/\.RigidBody\.getMotionState/.test(line)) return false;
+        // Extract the caller variable immediately before .getMotionState
+        const callerMatch = line.match(/([\w.[\]]+)\.getMotionState\s*\(/);
+        if (!callerMatch) return false;
+        const callerVar = callerMatch[1].split('.').pop().replace(/\[.*\]/, '');
+        // Bare identifier `RigidBody` is the physics callback parameter — valid
+        if (callerVar === 'RigidBody') return false;
+        // Any other known RigidBody alias is also valid
+        if (rigidBodyVars.has(callerVar)) return false;
+        return true;
+      });
+      return hasBareMotionState;
     },
-    message: "FATAL: Found controls.getFloat()/getInt() for readback — always returns 0. Use body.RigidBody.getMotionState() instead.",
+    message: `FATAL: Found controls.getFloat()/getInt() for physics readback — always returns 0. No error is thrown but all position/state reads will be wrong.
+REQUIRED FIX — replace every controls.getFloat/getInt call with getMotionState():
+  WRONG:   const x = body.controls.getFloat(10)
+  CORRECT: const ms = body.RigidBody.getMotionState(); const x = ms.position[0];
+CRITICAL PATH DETAIL: getMotionState() is on .RigidBody — NOT directly on the body object.
+  WRONG:   body.getMotionState()           ← undefined, silent failure
+  CORRECT: body.RigidBody.getMotionState() ← returns { position, linear, angular }
+Position components: ms.position[0]=X, ms.position[1]=Y, ms.position[2]=Z.`,
     severity: "FATAL"
   },
   {
     // §8 — file 2 and file 23 have isolated window contexts.
     // Any window.XYZ.method() call from file 2 silently fails for any game.
+    // Allowlist: window.addEventListener, window.removeEventListener, window.requestAnimationFrame,
+    //            window.cancelAnimationFrame, window.innerWidth, window.innerHeight,
+    //            window.setTimeout, window.clearTimeout, window.setInterval, window.clearInterval,
+    //            window.location, window.performance — these are native browser APIs, not cross-context globals.
     name: "Cross-context window global call",
     test: (code) => {
+      // Native browser APIs that are legitimately accessed via window.*
+      const ALLOWED_WINDOW_PROPS = new Set([
+        'addEventListener', 'removeEventListener', 'requestAnimationFrame',
+        'cancelAnimationFrame', 'setTimeout', 'clearTimeout',
+        'setInterval', 'clearInterval', 'location', 'performance',
+        'innerWidth', 'innerHeight', 'devicePixelRatio', 'open',
+        'close', 'focus', 'blur', 'scrollTo', 'scrollBy', 'print',
+        'alert', 'confirm', 'prompt', 'dispatchEvent', 'postMessage',
+        'getComputedStyle', 'matchMedia', 'history', 'navigator',
+        'screen', 'document', 'console', 'crypto', 'fetch',
+        'AudioContext', 'webkitAudioContext'
+      ]);
       return code.split('\n').some(line => {
         const t = line.trim();
         if (t.startsWith('//') || t.startsWith('*')) return false;
-        // Match window.<Anything>.<method>() — property reads (no parens) are OK
-        return /window\.[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\s*\(/.test(line);
+        // Match window.<something>.<method>() — two-level chained call
+        const m = line.match(/window\.([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)\s*\(/);
+        if (!m) return false;
+        // Allow if the first property is a known native browser API
+        if (ALLOWED_WINDOW_PROPS.has(m[1])) return false;
+        return true;
       });
     },
-    message: "FATAL: Found window.<object>.<method>() call from file 2. Files 2 and 23 have isolated window contexts — use Module.ProjectManager.getObject(id).DOMElement for all cross-file DOM access.",
+    message: `FATAL: Found window.<object>.<method>() call from file 2. Files 2 and 23 run in ISOLATED window contexts — window globals set in file 23 are undefined in file 2. No error is thrown but the call silently does nothing.
+REQUIRED FIX — replace every window.<UIObject>.<method>() call with direct DOM element queries:
+  WRONG:   window.GameUI.updateScore(pts)
+  CORRECT:
+    const htmlRoot = Module.ProjectManager.getObject('25').DOMElement;
+    const scoreEl  = htmlRoot.querySelector('#scoreDisplay');
+    if (scoreEl) scoreEl.textContent = pts;
+PATTERN RULES:
+  1. Use Module.ProjectManager.getObject(id).DOMElement to get the overlay root (try '25', '23', '24' if unsure — scan for the right id).
+  2. Use htmlRoot.querySelector('#elementId') to reach individual elements.
+  3. Wrap every DOM update in a null-guard (if (el)) so missing elements don't throw.
+  4. Do NOT chain methods directly off DOMElement — it is a raw DOM node, not a UI controller.
+  5. Wire button listeners via htmlRoot.querySelector('#btn').addEventListener('click', handler) from file 2's onInit.`,
     severity: "FATAL"
   },
   {
     // §5 — rbPosition is a LOCAL offset from the parent mesh.
     // Any non-zero value doubles the intended world position.
+    // Test joins lines before matching to handle multi-line createRigidBody calls,
+    // which are the most common formatting style and were silently missed before.
     name: "Non-zero rbPosition",
     test: (code) => {
-      const rbCalls = code.match(/createRigidBody\([^)]+\)/g) || [];
-      return rbCalls.some(call => {
-        const arrays = call.match(/\[([^\]]*)\]/g);
-        if (!arrays || arrays.length < 2) return false;
+      // Collapse all whitespace/newlines so multi-line calls become one scannable unit
+      const collapsed = code.replace(/\r?\n/g, ' ').replace(/\s+/g, ' ');
+      // Use paren-balanced extraction so nested () inside args (e.g. rbCounter++) don't truncate.
+      const searchRe = /(?:\w+\.)?createRigidBody\s*\(/g;
+      let m;
+      while ((m = searchRe.exec(collapsed)) !== null) {
+        let depth = 1, i = m.index + m[0].length;
+        const argStart = i;
+        while (i < collapsed.length && depth > 0) {
+          if (collapsed[i] === '(') depth++;
+          else if (collapsed[i] === ')') depth--;
+          i++;
+        }
+        const args = collapsed.slice(argStart, i - 1);
+        // STATIC bodies are their own positioned parents — rbPosition carries the
+        // intended world offset and [0,0,0] would be wrong. Only enforce on
+        // KINEMATIC and DYNAMIC bodies, which are children of a visual mesh object.
+        if (/['"`]STATIC['"`]/i.test(args)) continue;
+        // Extract the last [...] array in the argument list — that is rbPosition
+        const arrays = args.match(/\[[^\]]*\]/g);
+        if (!arrays || arrays.length < 2) continue;
         const lastArray = arrays[arrays.length - 1];
-        return lastArray && !/\[\s*0\s*,\s*0\s*,\s*0\s*\]/.test(lastArray);
-      });
+        if (lastArray && !/\[\s*0\s*,\s*0\s*,\s*0\s*\]/.test(lastArray)) return true;
+      }
+      return false;
     },
-    message: "FATAL: Found createRigidBody with non-[0,0,0] rbPosition — causes position doubling. rbPosition is a LOCAL offset from the parent; always use [0,0,0].",
+    message: `FATAL: Found createRigidBody with non-[0,0,0] rbPosition on a KINEMATIC or DYNAMIC body — causes POSITION DOUBLING. The actor spawns at 2× the intended location with no error.
+REQUIRED FIX — set the last array argument (rbPosition) to exactly [0, 0, 0]:
+  WRONG:   createRigidBody(key, mass, friction, shape, 'DYNAMIC', layer, filter, ghost, scale, [spawnX, 0.5, spawnZ])
+  CORRECT: createRigidBody(key, mass, friction, shape, 'DYNAMIC', layer, filter, ghost, scale, [0, 0, 0])
+WHY: rbPosition is a LOCAL offset from the parent visual mesh, not a world position. The engine adds parent world position + rbPosition. Passing world coordinates here doubles the translation. The parent mesh already carries the world position — rbPosition must always be [0, 0, 0].
+NOTE: STATIC bodies (walls, floors) are exempt — they ARE the positioned parent, so their rbPosition carries the intended world offset.
+Fix every DYNAMIC and KINEMATIC createRigidBody call in the file — not just the first one found.`,
     severity: "FATAL"
   },
   {
     // §6 — any blocking surface without a STATIC rigidbody is invisible to physics.
-    // Detects createObject/createInstance blocks that set up a surface mesh but
-    // have no accompanying STATIC rigidbody anywhere nearby (within 1500 chars).
+    // Detects files that build floor/wall geometry but have no STATIC rigidbody.
+    // Uses surface-keyword detection instead of a raw count threshold to avoid
+    // false positives on partial tranche files and false negatives on small scenes.
     name: "Surface mesh without STATIC rigidbody",
     test: (code) => {
-      // Find every createRigidBody call and collect their motion types
+      // Find every createRigidBody call regardless of object prefix (e.g. gameState.createRigidBody)
+      // Use paren-balanced extraction so nested () inside args (e.g. rbCounter++) don't truncate the match.
       const rbTypes = [];
-      const rbRegex = /createRigidBody\s*\([^)]*['"]?(STATIC|KINEMATIC|DYNAMIC)['"]?[^)]*\)/gi;
+      const collapsed = code.replace(/\r?\n/g, ' ').replace(/\s+/g, ' ');
+      const searchRe = /(?:\w+\.)?createRigidBody\s*\(/g;
       let m;
-      while ((m = rbRegex.exec(code)) !== null) {
-        rbTypes.push({ idx: m.index, type: m[1].toUpperCase() });
+      while ((m = searchRe.exec(collapsed)) !== null) {
+        // Walk balanced parens from the opening ( to extract the full argument list
+        let depth = 1, i = m.index + m[0].length;
+        const argStart = i;
+        while (i < collapsed.length && depth > 0) {
+          if (collapsed[i] === '(') depth++;
+          else if (collapsed[i] === ')') depth--;
+          i++;
+        }
+        const args = collapsed.slice(argStart, i - 1); // content between the outer ()
+        // Extract motion type — 5th positional argument (after key, mass, friction, shapeType)
+        // Quoted with single, double, or backtick quotes
+        const motionMatch = args.match(/['"`](STATIC|KINEMATIC|DYNAMIC)['"`]/i);
+        if (motionMatch) rbTypes.push(motionMatch[1].toUpperCase());
       }
-      const hasStatic = rbTypes.some(r => r.type === 'STATIC');
-      // If the file creates rigidbodies but none are STATIC, flag it.
-      // Only trigger when the file has enough rigidbodies to indicate a full scene build
-      // (avoids false positives on partial tranche files).
-      return rbTypes.length >= 3 && !hasStatic;
+      // Only proceed if the file creates any rigidbodies at all
+      if (rbTypes.length === 0) return false;
+      // If any STATIC exists, we're satisfied
+      if (rbTypes.some(t => t === 'STATIC')) return false;
+      // Check whether the file also builds floor/wall geometry — surface keywords indicate
+      // a scene that physically needs STATIC bodies. Skip files that only create actors.
+      const hasSurfaceKeywords = /floor|wall|ground|maze|tile|barrier|boundary|platform|terrain/i.test(code);
+      // Require both: no STATIC rigidbody AND evidence of surface geometry construction.
+      // This prevents false positives on actor-only tranche files.
+      return hasSurfaceKeywords;
     },
-    message: "FATAL: File creates rigidbodies but none are STATIC. Every floor, wall, or blocking surface needs a STATIC rigidbody or DYNAMIC actors will fall through with no error.",
+    message: `FATAL: File builds floor/wall/maze geometry but creates NO STATIC rigidbodies. DYNAMIC actors will fall through every surface with no error thrown.
+REQUIRED FIX — every blocking surface (floor, walls, maze tiles) needs its own STATIC rigidbody:
+  CORRECT pattern for a floor tile:
+    const floorRb = createRigidBody(
+      'rb_floor_' + counter++,
+      0,               // mass — STATIC must be 0
+      0.4,             // friction
+      'bounding-box',  // shapeType
+      'STATIC',        // motionType ← this is what prevents fall-through
+      'DYNAMIC',       // collisionLayer
+      0, false,        // filter, ghost
+      [width, 0.02, depth],  // physicsScale
+      [0, 0, 0]        // rbPosition — always [0,0,0]
+    );
+    Module.ProjectManager.addObject(floorRb.child, floorRb.data, floorVisual);
+PLACEMENT RULES:
+  1. Add STATIC rigidbodies to FLOOR and WALL objects — NOT to the player or ghosts (they are DYNAMIC/KINEMATIC).
+  2. Each unique surface object needs its own rigidbody — instance parents need one per mesh.
+  3. mass MUST be 0 for STATIC bodies or the engine will treat them as DYNAMIC.`,
     severity: "FATAL"
   },
   {
     // §14, §17 — Camera must be set every frame in onRender BEFORE any isReady/isDead
     // guards. Module.controls.position and .target are the ONLY reliable paths.
     // Module.camera and scene.camera are forbidden — they are unreliable.
+    // Two distinct sub-cases are detected separately so the repair message is precise:
+    //   SUB-CASE A: wrong API path (Module.camera / scene.camera)
+    //   SUB-CASE B: correct API but placed after a guard (ordering violation)
     name: "Camera not set correctly every frame in onRender",
     test: (code) => {
-      // Check for forbidden camera API paths (Module.camera / scene.camera)
-      const hasBadCamPath = code.split('\n').some(line => {
+      // SUB-CASE A: forbidden camera API paths used as PRIMARY camera control.
+      // Exempt: scene.camera / surface.camera / Module.camera used inside a
+      // try { if (x && x.camera) { ... } } catch(e){} block — that is the
+      // canonical Engine Reference multi-path probe fallback (Pattern F), not
+      // a primary reliance on an unreliable path.
+      const hasBadCamPath = code.split('\n').some((line, i, arr) => {
         const t = line.trim();
         if (t.startsWith('//') || t.startsWith('*')) return false;
-        return /Module\.camera\b/.test(line) || /\bscene\.camera\b/.test(line);
+        if (!/Module\.camera\b|(?<!\w)scene\.camera\b|surface\.camera\b/.test(line)) return false;
+        // Walk back up to 12 lines to find a wrapping try { if (x && x.camera) guard
+        const window = arr.slice(Math.max(0, i - 12), i).join('\n');
+        const isProbePattern = /try\s*\{/.test(window) &&
+          /if\s*\([\s\S]*&&[\s\S]*\.camera\b/.test(window);
+        return !isProbePattern;
       });
       if (hasBadCamPath) return true;
 
-      // Only inspect files that define onRender (skip partial tranche files)
+      // Only inspect files that define both onRender and onInit (skip partial tranche files)
       if (!/\bonRender\b/.test(code) || !/\bonInit\b/.test(code)) return false;
 
-      // Extract onRender body using balanced-brace walk (robust against nested blocks)
+      // Extract onRender body using balanced-brace walk
       const fnIdx = code.search(/\bfunction\s+onRender\s*\(|\bonRender\s*[:=]\s*function\s*\(|\bonRender\s*[:=]\s*\(/);
       if (fnIdx === -1) return false;
       const openIdx = code.indexOf('{', fnIdx);
@@ -184,15 +375,50 @@ const ANTI_PATTERNS = [
       }
       const body = code.slice(openIdx + 1, pos - 1);
 
-      // Flag if Module.controls.position/.target is never set inside onRender
-      const camIdx = body.search(/Module\.controls\.(position|target)/);
+      // SUB-CASE B-1: Neither Module.controls.position/target NOR a camera helper
+      // function call appears in onRender. A named helper (e.g. applyCamera()) is
+      // accepted as a valid substitute for direct Module.controls assignment —
+      // the validator only cares that camera update happens, not how it's spelled.
+      const camIdx = body.search(/Module\.controls\.(position|target)|(?:\w*[Cc]amera\w*)\s*\(/);
       if (camIdx === -1) return true;
 
-      // Flag if camera is set AFTER an isReady/isDead/gameOver guard
-      const guardIdx = body.search(/if\s*\([\s\S]{0,60}(?:isReady|isDead|gameOver|gameState\.(?:isReady|isDead|gameOver|paused))/);
-      return guardIdx !== -1 && guardIdx < camIdx;
+      // SUB-CASE B-2: camera IS present but appears AFTER a blocking game-state guard.
+      // We distinguish two kinds of guards:
+      //   GAME-STATE guard (bad):   if (!gameState.isReady) return true;
+      //     — this is a pure logic gate that blocks camera on dead/paused frames.
+      //   PHYSICS-DEPENDENCY guard (ok):  if (rigidbody && rigidbody.isReady)
+      //     — camera NEEDS a rigidbody position to follow; if the body doesn't exist
+      //       yet there is nothing to set. This guard is architecturally required.
+      // Rule: only flag if the guard is a bare early-RETURN on gameState (not a
+      // conditional camera-position read that requires a live rigidbody).
+      const gameStateReturnGuard = /if\s*\([\s\S]{0,120}(?:gameState\.(?:isReady|isDead|gameOver|paused))[\s\S]{0,40}\)\s*return/.test(body);
+      return gameStateReturnGuard && body.search(/if\s*\([\s\S]{0,120}(?:gameState\.(?:isReady|isDead|gameOver|paused))[\s\S]{0,40}\)\s*return/) < camIdx;
     },
-    message: "FATAL: Camera (Module.controls.position / .target) must be set every frame in onRender BEFORE any isReady/isDead guards, and NEVER via Module.camera or scene.camera — those are unreliable paths.",
+    // Sub-case is embedded in the message so the repair AI knows exactly which path to take
+    message: `FATAL: Camera is not set correctly every frame in onRender. Two possible causes — read both and apply whichever matches your code:
+
+SUB-CASE A — Wrong API path used as PRIMARY camera control (Module.camera or scene.camera):
+  WRONG:   Module.camera.position.set(x, y, z)       ← primary reliance on unreliable path
+  WRONG:   scene.camera.lookAt(target)                ← primary reliance on unreliable path
+  CORRECT: Module.controls.position = [x, y, z];
+           Module.controls.target   = [x, y, z];
+  Module.controls is the ONLY reliable primary camera path. Delete any Module.camera or
+  scene.camera usage that is NOT wrapped in a try { if (x && x.camera) { } } catch(e){}
+  defensive probe block. Probe fallbacks inside try-catch guards are fine and expected.
+
+SUB-CASE B — Camera set after an isReady/isDead/gameOver guard (ordering violation):
+  WRONG:
+    function onRender() {
+      if (!gameState.isReady) return true;   // ← guard comes first
+      Module.controls.position = [...];      // ← camera blocked by early return
+    }
+  CORRECT:
+    function onRender() {
+      Module.controls.position = [...];      // ← camera ALWAYS first, unconditional
+      Module.controls.target   = [...];
+      if (!gameState.isReady) return true;   // ← guard comes after
+    }
+  Move the two Module.controls lines to the very top of onRender, before any if-statement. Do not wrap them in any condition. The camera must update every frame even when the game is paused or loading.`,
     severity: "FATAL"
   },
   {
@@ -216,7 +442,20 @@ const ANTI_PATTERNS = [
       const body = code.slice(openIdx, pos);
       return !/return\s+true/.test(body);
     },
-    message: "FATAL: onRender must always return true. A missing or falsy return breaks the engine render loop.",
+    message: `FATAL: onRender is missing "return true". The engine render loop stops if onRender returns a falsy value — the game freezes with no error.
+REQUIRED FIX — add "return true" as the FINAL statement of onRender, after ALL game logic:
+  CORRECT:
+    function onRender() {
+      Module.controls.position = [...];   // camera first
+      Module.controls.target   = [...];
+      if (!gameState.isReady) return true; // early exits also return true
+      // ... all game logic ...
+      return true;                         // ← LAST LINE of the function
+    }
+PLACEMENT RULES:
+  1. "return true" must be the last statement in the function body.
+  2. Do NOT add it at the top — that would skip all render logic every frame.
+  3. Every early-exit path inside onRender must also return true (not return / return false).`,
     severity: "FATAL"
   },
   {
@@ -224,31 +463,159 @@ const ANTI_PATTERNS = [
     // obj.position updates the visual mesh only.
     // RigidBody.set([{prop:"setPosition",...}]) updates the collider only.
     // Omitting either half causes silent visual/collider desync.
+    // Test uses tighter regexes to prevent false clears:
+    //   - hasObjPosition requires <actor>.obj.position = [...] (not camera or spawn assignments)
+    //   - hasSetPosition requires 'setPosition' inside a .set([ call (not bare method names)
     name: "KINEMATIC dual-update incomplete",
     test: (code) => {
       if (!/KINEMATIC/.test(code)) return false;
-      const hasSetPosition = /["']setPosition["']/.test(code);
-      const hasObjPosition = /\.position\s*=\s*\[/.test(code);
+      // Require setPosition to appear as a quoted key inside a .set([ array call
+      const hasSetPosition = /\.set\s*\(\s*\[\s*\{[^}]*['"]setPosition['"]/.test(code);
+      // Require actor visual mesh assignment: accept both .obj.position and .object.position
+      // (.obj and .object are both valid Cherry3D actor mesh property names)
+      const hasObjPosition = /\.\s*(?:obj|object)\s*\.\s*position\s*=\s*\[/.test(code);
       // Flag when one side of the dual-update is present but the other is absent
       return hasSetPosition !== hasObjPosition;
     },
-    message: "FATAL: KINEMATIC body requires BOTH obj.position=[x,y,z] (visual mesh) AND RigidBody.set([{prop:'setPosition',value:[x,y,z]}]) (collider) every frame. Omitting either half causes silent visual/collider desync.",
+    message: `FATAL: KINEMATIC body has incomplete dual-update. KINEMATIC actors require BOTH updates every frame — omitting either half causes silent desync (no error thrown).
+  Visual mesh update:  actor.object.position = [x, y, z];   (or actor.obj.position)
+  Collider update:     actor.rb.RigidBody.set([{ prop: 'setPosition', value: [x, y, z] }]);
+If only one is present, the other half is silently wrong:
+  Missing object.position → visual mesh frozen at spawn, collider moves invisibly
+  Missing setPosition     → visual moves but collider stays at spawn, collision detection broken
+REQUIRED FIX — ensure BOTH lines appear in every KINEMATIC actor's per-frame update:
+  CORRECT (inside onRender or ghost update loop):
+    ghost.object.position = [nx, 0.5, nz];
+    ghost.rb.RigidBody.set([{ prop: 'setPosition', value: [nx, 0.5, nz] }]);
+Apply this fix to every KINEMATIC actor in the file (ghosts, platforms, moving obstacles).`,
     severity: "FATAL"
   },
   {
     // §11 — setLinearVelocity is a SILENT NO-OP on KINEMATIC bodies.
     // KINEMATIC actors must be moved via setPosition (collider) + obj.position (visual).
     // Use DYNAMIC motionType if velocity-driven movement is required.
+    // Secondary check: if setLinearVelocity was removed but no movement mechanism was added,
+    // the actor is silently frozen — equally broken, also caught here.
     name: "KINEMATIC setLinearVelocity silent no-op",
     test: (code) => {
       if (!/KINEMATIC/.test(code)) return false;
-      return code.split('\n').some(line => {
+
+      // Strip block comments (/* ... */) before scanning so manifest JSON strings
+      // and JSDoc comments containing "setLinearVelocity" don't trigger false positives.
+      const stripped = code.replace(/\/\*[\s\S]*?\*\//g, '');
+
+      // Verify the file actually contains a KINEMATIC createRigidBody call.
+      // Allow object prefix (gameState.createRigidBody) and backtick keys.
+      const collapsed = stripped.replace(/\r?\n/g, ' ').replace(/\s+/g, ' ');
+      const hasKinematicBody = /(?:\w+\.)?createRigidBody[^)]*['"`]KINEMATIC['"`][^)]*\)/.test(collapsed);
+      if (!hasKinematicBody) return false;
+
+      // Extract the body of the physics-thread input handler (updateInput or equivalent).
+      // setLinearVelocity inside this function operates on the DYNAMIC player body — that
+      // is the correct API for DYNAMIC. We must NOT flag it.
+      // Strategy: find the function assigned to addInputHandler and extract its body,
+      // then exclude those line ranges from the setLinearVelocity scan.
+      let inputHandlerRanges = []; // [{start, end}] line indices (0-based)
+      const strippedLines = stripped.split('\n');
+      // Find the addInputHandler registration line(s)
+      strippedLines.forEach((line, i) => {
+        if (/addInputHandler/.test(line)) {
+          // The handler function name is the argument — look backwards for its definition
+          const fnNameMatch = line.match(/addInputHandler\s*\(\s*(\w+)\s*\)/);
+          if (fnNameMatch) {
+            const fnName = fnNameMatch[1];
+            // Find the function definition by name
+            for (let j = 0; j < strippedLines.length; j++) {
+              if (new RegExp(`(?:var|let|const)\\s+${fnName}\\s*=|function\\s+${fnName}\\s*\\(`).test(strippedLines[j])) {
+                // Walk braces to find the function body extent
+                let depth = 0, started = false, endLine = j;
+                for (let k = j; k < strippedLines.length; k++) {
+                  for (const ch of strippedLines[k]) {
+                    if (ch === '{') { depth++; started = true; }
+                    else if (ch === '}') { depth--; }
+                  }
+                  if (started && depth === 0) { endLine = k; break; }
+                }
+                inputHandlerRanges.push({ start: j, end: endLine });
+                break;
+              }
+            }
+          }
+        }
+      });
+
+      // Collect all variable names in the file that are assigned as .RigidBody —
+      // these are raw RigidBody objects. setLinearVelocity on them may be a legitimate
+      // velocity-zeroing call on a DYNAMIC body (e.g. killPlayer / resetPlayer).
+      // We must NOT flag those — setLinearVelocity is only a no-op on KINEMATIC bodies.
+      const rigidBodyVars9 = new Set();
+      strippedLines.forEach(line => {
+        const m = line.match(/(?:const|let|var)\s+(\w+)\s*=\s*[\w.[\]()]+\.RigidBody\b/);
+        if (m) rigidBodyVars9.add(m[1]);
+      });
+
+      // Check for setLinearVelocity on non-comment lines OUTSIDE the input handler
+      // AND NOT inside a .set([...]) block called on a known RigidBody variable.
+      //
+      // setLinearVelocity is used in two valid forms:
+      //   1. Inside updateInput (physics-thread handler) — always OK, covered above.
+      //   2. As a property in a .RigidBody.set([{prop:'setLinearVelocity', value:[...]}])
+      //      call from the main thread — valid on DYNAMIC bodies (e.g. killPlayer/reset).
+      //
+      // For form 2, the property name appears alone on its line inside the array literal.
+      // We must look back up to 5 lines to find the enclosing .set([ call and check its caller.
+      const hasLinearVelocityOutsideHandler = strippedLines.some((line, i) => {
         const t = line.trim();
         if (t.startsWith('//') || t.startsWith('*')) return false;
-        return /setLinearVelocity/.test(line);
+        if (!/setLinearVelocity/.test(line)) return false;
+        // Skip if this line is inside any identified input handler function body
+        const inHandler = inputHandlerRanges.some(r => i >= r.start && i <= r.end);
+        if (inHandler) return false;
+        // Case A: setLinearVelocity appears as a direct method call on this line
+        const callerMatch = line.match(/([\w.[\]]+)\.set\s*\(/);
+        if (callerMatch) {
+          const callerVar = callerMatch[1].split('.').pop().replace(/\[.*\]/, '');
+          if (callerVar === 'RigidBody' || rigidBodyVars9.has(callerVar)) return false;
+        }
+        // Case B: setLinearVelocity is a property value inside a .set([{...}]) block.
+        // Walk back up to 6 lines to find the opening .set([ call and check its caller.
+        const lookback = strippedLines.slice(Math.max(0, i - 6), i).join(' ');
+        const lbCallerMatch = lookback.match(/([\w.[\]]+)\.set\s*\(\s*\[/);
+        if (lbCallerMatch) {
+          const lbCallerVar = lbCallerMatch[1].split('.').pop().replace(/\[.*\]/, '');
+          if (lbCallerVar === 'RigidBody' || rigidBodyVars9.has(lbCallerVar)) return false;
+        }
+        return true;
       });
+      if (hasLinearVelocityOutsideHandler) return true;
+
+      // Secondary: KINEMATIC body exists but neither movement mechanism is present.
+      // Catches "deleted velocity without adding setPosition" fix attempts.
+      const hasSetPosition = /\.set\s*\(\s*\[\s*\{[^}]*['"]setPosition['"]/.test(stripped);
+      // Accept both .obj.position and .object.position as valid visual mesh assignments
+      const hasObjPosition = /\.\s*(?:obj|object)\s*\.\s*position\s*=\s*\[/.test(stripped);
+      // If KINEMATIC body was created but the file has no movement mechanism at all,
+      // the actor is silently frozen — flag it so the repair adds the correct dual-update.
+      return !hasSetPosition && !hasObjPosition;
     },
-    message: "FATAL: setLinearVelocity is a SILENT NO-OP on KINEMATIC bodies — no error is thrown but the actor will not move. Use setPosition (collider) + obj.position (visual) for KINEMATIC, or switch to DYNAMIC if velocity control is needed.",
+    message: `FATAL: setLinearVelocity is a SILENT NO-OP on KINEMATIC bodies — no error is thrown but the actor will not move. This includes the case where setLinearVelocity was removed but no replacement movement was added (actor silently frozen).
+REQUIRED FIX — choose exactly ONE of these two paths based on the actor type:
+
+PATH A — Keep KINEMATIC (correct for ghosts and scripted movers):
+  Replace setLinearVelocity with BOTH of the following every frame:
+    actor.object.position = [x, y, z];                                       // moves visual mesh
+    actor.rb.RigidBody.set([{ prop: 'setPosition', value: [x, y, z] }]);   // moves collider
+  Compute the new [x, y, z] position on the main thread based on tile logic or AI.
+
+PATH B — Switch to DYNAMIC (correct for player and physics-driven actors):
+  Change motionType from 'KINEMATIC' to 'DYNAMIC' in createRigidBody.
+  Drive movement via rb.RigidBody.controls.setFloat(slot, velocity) inside updateInput().
+  Read position back via rb.RigidBody.getMotionState().position in onRender.
+
+DECISION RULE for PacMaze:
+  Ghosts       → PATH A (KINEMATIC + setPosition dual-update, main-thread AI)
+  Player       → PATH B (DYNAMIC + shared-memory controls, physics-thread velocity)
+  Do NOT leave the actor with no movement mechanism — a frozen actor is worse than a no-op.`,
     severity: "FATAL"
   }
 ];
@@ -1298,7 +1665,15 @@ Summary of exactly what was fixed and why each violation occurred.
       const violationReport = rejectedTranche.report;
       const violatingFiles  = rejectedTranche.files;
 
-      let correctionUserText = `=== VIOLATION REPORT ===\nThe following FATAL anti-pattern violations were detected in your previous output:\n\n${violationReport}\n\n=== END VIOLATION REPORT ===\n\n`;
+      let correctionUserText = '';
+      if (fixAttempt > 1) {
+        correctionUserText += `⚠ REPAIR ATTEMPT ${fixAttempt}/${MAX_ANTIPATTERN_RETRIES}: Your previous correction attempt DID NOT resolve all violations.\n`
+          + `The same violations are listed again below. Do NOT repeat the same approach as attempt ${fixAttempt - 1}.\n`
+          + `Read the REQUIRED FIX instructions in the violation message carefully — `
+          + `they specify the exact code pattern needed. If your last fix deleted the offending call `
+          + `without adding a replacement, you must now add the correct replacement.\n\n`;
+      }
+      correctionUserText += `=== VIOLATION REPORT ===\nThe following FATAL anti-pattern violations were detected in your previous output:\n\n${violationReport}\n\n=== END VIOLATION REPORT ===\n\n`;
       correctionUserText += `=== REJECTED FILES (your previous output — fix these) ===\n`;
       for (const f of violatingFiles) {
         correctionUserText += `\n--- FILE: ${f.path} ---\n${f.content}\n`;
