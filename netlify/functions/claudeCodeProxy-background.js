@@ -1,15 +1,24 @@
 /* netlify/functions/claudeCodeProxy-background.js */
 /* ═══════════════════════════════════════════════════════════════════
-   TRANCHED AI PIPELINE — v3.0 (Self-Chaining)
+   TRANCHED AI PIPELINE — v4.1 (Anti-Pattern Correction Loop)
    ─────────────────────────────────────────────────────────────────
    Each invocation handles ONE unit of work then chains to itself
    for the next, staying well under Netlify's 15-min limit.
 
-   Invocation 0  ▸  "plan"  — Opus 4.6 plans tranches, saves state
-   Invocation 1–N ▸ "tranche" — Sonnet 4.6 executes one tranche,
-                     saves accumulated files, chains to next tranche
-   Final          ▸ Writes ai_response.json so the frontend picks
-                     up the completed build.
+   Invocation 0    ▸  "plan"    — Opus 4.6 plans tranches directly
+                       from Master Prompt + Engine Reference + files.
+   Invocation 1–N  ▸  "tranche" — Sonnet 4.6 executes one tranche,
+                       saves accumulated files, chains to next tranche
+   Correction loop ▸  "fix"     — On FATAL anti-pattern violation,
+                       chains back to the SAME tranche index with the
+                       violation report injected. Up to
+                       MAX_ANTIPATTERN_RETRIES attempts before skip.
+   Final           ▸  Writes ai_response.json for frontend pickup.
+
+   Anti-pattern validators run after each tranche. FATAL violations
+   trigger an automatic correction pass instead of silent skip.
+   Progress object carries antiPatternRetryCount + antiPatternReport
+   so the frontend UI can show exactly what was detected and fixed.
 
    All intermediate state lives in Firebase so each invocation is
    stateless and can reconstruct context from the pipeline file.
@@ -18,63 +27,263 @@
 const fetch = require("node-fetch");
 const admin = require("./firebaseAdmin");
 
+const MAX_ANTIPATTERN_RETRIES = 2;   // correction attempts per tranche before skip
 
-const HARD_ENVIRONMENT_CONSTRAINTS = `HARD ENVIRONMENT CONSTRAINTS (platform facts — never reinterpret):
-1. Output format must use delimiter blocks exactly:
-   ===FILE_START: path=== ... ===FILE_END: path===
-   followed by ===MESSAGE=== ... ===END_MESSAGE===
-2. Valid target files are models/2, models/23, and json/assets.json.
-3. The main logic file is models/2. Never rename it to WorldController.js.
-4. The main HTML file is models/23. Never rename it to document.html.
-5. Preserve accumulated code from prior tranches. Output complete file contents, never diffs.
-6. Respect the platform's staged execution model: one planning pass followed by sequential tranche execution.
-7. Heavy engine/physics setup must respect deferred readiness patterns and isReady polling when the SDK requires it.
-8. The validation manifest block is mandatory in every emitted file.
-9. Rigidbody rbPosition is a LOCAL offset from its parent object. Use [0,0,0] unless you need intentional displacement from the visual mesh center. Passing world coordinates causes POSITION DOUBLING because the engine compounds parent transform + child offset.
-10. Every surface that must block a DYNAMIC body needs its own STATIC rigidbody — including the floor. A visual-only mesh provides zero collision resistance; DYNAMIC actors will fall through it.
-11. File 2 (models/2) and file 23 (models/23) run in SEPARATE window contexts. window.* globals set in one file do NOT exist in the other. All cross-file communication must use DOM element references obtained from Module.ProjectManager.getObject(id).DOMElement, or boolean flag polling read each frame.
-12. After any HTML button click or modal dismissal, set pointer-events:none on the overlay root so input events reach the engine canvas. Never call blur() or focus() on engine-managed elements — this breaks the engine's keyboard capture pipeline. Always add a document.addEventListener('keydown') fallback that writes directly to gameState for movement input.
-13. Use the full property path rb.RigidBody.controls.setFloat / setInt / addInputHandler / getMotionState. The shorthand rb.controls is a SILENT NO-OP in most configurations — no error is thrown, but nothing happens.
-14. Do NOT use controls.getFloat() or controls.getInt() for reading position or state back from the physics thread — these are unreliable and may always return 0. Instead use rb.RigidBody.getMotionState() for position/velocity, and compute derived state (tileCentered, wallBlocked) on the main thread from position data.
-15. After spawning any DYNAMIC rigidbody actor, verify within the first 3 render frames that the visual mesh position tracks the physics body position. If it does not auto-sync, add explicit sync every frame: obj.position = [motionState.position[0], y, motionState.position[2]].
-16. For grid-based games, actor collision bounding boxes must provide at least 15% clearance relative to tile size (e.g., half-extent 0.35 for 1.0-unit tiles). Tighter tolerances cause actors to wedge into adjacent walls at corners.
-17. Tile-centering corrections in physics updateInput must ONLY apply to the axis perpendicular to movement. Correcting the movement axis will fight the movement velocity and can produce exact cancellation, freezing the actor.`;
 
-const DYNAMIC_ARCHITECTURE_JSON_SCHEMA = `{
-  "summary": "2-4 sentence synthesis of the exact game architecture required for THIS request.",
-  "gameType": "Short label for the requested game/class of interaction.",
-  "stateModel": [
-    "Specific state domains and canonical state variables that must exist for this game."
-  ],
-  "actorModel": [
-    {
-      "actor": "actor_name",
-      "role": "what it does",
-      "representation": "entity/data structure/UI element",
-      "motion": "dynamic|kinematic|static|logical_only|n/a",
-      "rules": ["critical behavior or collision rules"]
+/* ─── ENGINE REFERENCE: fetched from Firebase at runtime ────────
+   The Engine Reference is stored as one or more files under the
+   project's  ai_system_instructions/  folder in Firebase Storage.
+   fetchSystemInstructions() loads them all, concatenates them in
+   lexicographic filename order, and returns the combined text.
+   This is injected verbatim into every planning and executor
+   system prompt. To update the Engine Reference, upload a new
+   version of the file to ai_system_instructions/ — no code change
+   needed. ── */
+
+async function fetchSystemInstructions(bucket, projectPath) {
+  try {
+    const folder = `${projectPath}/ai_system_instructions`;
+    const [files] = await bucket.getFiles({ prefix: folder + "/" });
+    if (!files || files.length === 0) {
+      console.warn(`fetchSystemInstructions: no files found at ${folder}/`);
+      return "";
     }
-  ],
-  "systems": [
-    {
-      "name": "system name",
-      "purpose": "what it must do",
-      "sdkBindings": ["specific SDK APIs/patterns that must be used or avoided"],
-      "implementationRules": ["strict dynamic rules for this request only"],
-      "antiPatterns": ["what would break the design if done naively"]
+    // Sort lexicographically so multi-file ordering is deterministic
+    files.sort((a, b) => a.name.localeCompare(b.name));
+    const parts = await Promise.all(
+      files.map(async (file) => {
+        const [fileContent] = await file.download();
+        return fileContent.toString("utf8");
+      })
+    );
+    const combined = parts.join("\n\n");
+    console.log(`fetchSystemInstructions: loaded ${files.length} file(s), ${combined.length} chars.`);
+    return combined;
+  } catch (err) {
+    console.error("fetchSystemInstructions failed:", err.message);
+    return "";
+  }
+}
+
+/* ─── ANTI-PATTERN VALIDATORS ──────────────────────────────────
+   Engine-agnostic. Tests apply to any Cherry3D game — no game-
+   specific function names, UI object names, or floor conventions.
+   FATAL patterns trigger automatic re-execution of the tranche
+   with an explicit correction prompt. ──────────────────────────── */
+
+const ANTI_PATTERNS = [
+  {
+    // §3 — rb.RigidBody.controls is the correct path.
+    // rb.controls.setFloat/setInt is a silent no-op on every Cherry3D game.
+    name: "Silent no-op controls path",
+    test: (code) => {
+      return code.split('\n').some(line => {
+        const t = line.trim();
+        if (t.startsWith('//') || t.startsWith('*')) return false;
+        // Flag .controls.set* NOT preceded by .RigidBody
+        return /(?<!RigidBody\.controls)\.controls\.set(Float|Int)\s*\(/.test(line) &&
+               !/RigidBody\.controls\.set(Float|Int)/.test(line);
+      });
+    },
+    message: "FATAL: Found .controls.setFloat/setInt without .RigidBody. prefix — silent no-op. Use body.RigidBody.controls.setFloat/setInt.",
+    severity: "FATAL"
+  },
+  {
+    // §4 — controls.getFloat/getInt always return 0. Use getMotionState().
+    name: "Unreliable physics readback",
+    test: (code) => {
+      return code.split('\n').some(line => {
+        const t = line.trim();
+        if (t.startsWith('//') || t.startsWith('*')) return false;
+        return /\.controls\.get(Float|Int)\s*\(/.test(line);
+      });
+    },
+    message: "FATAL: Found controls.getFloat()/getInt() for readback — always returns 0. Use body.RigidBody.getMotionState() instead.",
+    severity: "FATAL"
+  },
+  {
+    // §8 — file 2 and file 23 have isolated window contexts.
+    // Any window.XYZ.method() call from file 2 silently fails for any game.
+    name: "Cross-context window global call",
+    test: (code) => {
+      return code.split('\n').some(line => {
+        const t = line.trim();
+        if (t.startsWith('//') || t.startsWith('*')) return false;
+        // Match window.<Anything>.<method>() — property reads (no parens) are OK
+        return /window\.[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\s*\(/.test(line);
+      });
+    },
+    message: "FATAL: Found window.<object>.<method>() call from file 2. Files 2 and 23 have isolated window contexts — use Module.ProjectManager.getObject(id).DOMElement for all cross-file DOM access.",
+    severity: "FATAL"
+  },
+  {
+    // §5 — rbPosition is a LOCAL offset from the parent mesh.
+    // Any non-zero value doubles the intended world position.
+    name: "Non-zero rbPosition",
+    test: (code) => {
+      const rbCalls = code.match(/createRigidBody\([^)]+\)/g) || [];
+      return rbCalls.some(call => {
+        const arrays = call.match(/\[([^\]]*)\]/g);
+        if (!arrays || arrays.length < 2) return false;
+        const lastArray = arrays[arrays.length - 1];
+        return lastArray && !/\[\s*0\s*,\s*0\s*,\s*0\s*\]/.test(lastArray);
+      });
+    },
+    message: "FATAL: Found createRigidBody with non-[0,0,0] rbPosition — causes position doubling. rbPosition is a LOCAL offset from the parent; always use [0,0,0].",
+    severity: "FATAL"
+  },
+  {
+    // §6 — any blocking surface without a STATIC rigidbody is invisible to physics.
+    // Detects createObject/createInstance blocks that set up a surface mesh but
+    // have no accompanying STATIC rigidbody anywhere nearby (within 1500 chars).
+    name: "Surface mesh without STATIC rigidbody",
+    test: (code) => {
+      // Find every createRigidBody call and collect their motion types
+      const rbTypes = [];
+      const rbRegex = /createRigidBody\s*\([^)]*['"]?(STATIC|KINEMATIC|DYNAMIC)['"]?[^)]*\)/gi;
+      let m;
+      while ((m = rbRegex.exec(code)) !== null) {
+        rbTypes.push({ idx: m.index, type: m[1].toUpperCase() });
+      }
+      const hasStatic = rbTypes.some(r => r.type === 'STATIC');
+      // If the file creates rigidbodies but none are STATIC, flag it.
+      // Only trigger when the file has enough rigidbodies to indicate a full scene build
+      // (avoids false positives on partial tranche files).
+      return rbTypes.length >= 3 && !hasStatic;
+    },
+    message: "FATAL: File creates rigidbodies but none are STATIC. Every floor, wall, or blocking surface needs a STATIC rigidbody or DYNAMIC actors will fall through with no error.",
+    severity: "FATAL"
+  },
+  {
+    // §14, §17 — Camera must be set every frame in onRender BEFORE any isReady/isDead
+    // guards. Module.controls.position and .target are the ONLY reliable paths.
+    // Module.camera and scene.camera are forbidden — they are unreliable.
+    name: "Camera not set correctly every frame in onRender",
+    test: (code) => {
+      // Check for forbidden camera API paths (Module.camera / scene.camera)
+      const hasBadCamPath = code.split('\n').some(line => {
+        const t = line.trim();
+        if (t.startsWith('//') || t.startsWith('*')) return false;
+        return /Module\.camera\b/.test(line) || /\bscene\.camera\b/.test(line);
+      });
+      if (hasBadCamPath) return true;
+
+      // Only inspect files that define onRender (skip partial tranche files)
+      if (!/\bonRender\b/.test(code) || !/\bonInit\b/.test(code)) return false;
+
+      // Extract onRender body using balanced-brace walk (robust against nested blocks)
+      const fnIdx = code.search(/\bfunction\s+onRender\s*\(|\bonRender\s*[:=]\s*function\s*\(|\bonRender\s*[:=]\s*\(/);
+      if (fnIdx === -1) return false;
+      const openIdx = code.indexOf('{', fnIdx);
+      if (openIdx === -1) return false;
+      let depth = 1, pos = openIdx + 1;
+      while (pos < code.length && depth > 0) {
+        if (code[pos] === '{') depth++;
+        else if (code[pos] === '}') depth--;
+        pos++;
+      }
+      const body = code.slice(openIdx + 1, pos - 1);
+
+      // Flag if Module.controls.position/.target is never set inside onRender
+      const camIdx = body.search(/Module\.controls\.(position|target)/);
+      if (camIdx === -1) return true;
+
+      // Flag if camera is set AFTER an isReady/isDead/gameOver guard
+      const guardIdx = body.search(/if\s*\([\s\S]{0,60}(?:isReady|isDead|gameOver|gameState\.(?:isReady|isDead|gameOver|paused))/);
+      return guardIdx !== -1 && guardIdx < camIdx;
+    },
+    message: "FATAL: Camera (Module.controls.position / .target) must be set every frame in onRender BEFORE any isReady/isDead guards, and NEVER via Module.camera or scene.camera — those are unreliable paths.",
+    severity: "FATAL"
+  },
+  {
+    // §14 — onRender must return true. A falsy return breaks the engine render loop.
+    name: "onRender missing return true",
+    test: (code) => {
+      // Only test files that define onRender
+      if (!/\bonRender\b/.test(code)) return false;
+      // Locate onRender definition
+      const fnIdx = code.search(/\bfunction\s+onRender\s*\(|\bonRender\s*[:=]\s*function\s*\(|\bonRender\s*[:=]\s*\(/);
+      if (fnIdx === -1) return false;
+      const openIdx = code.indexOf('{', fnIdx);
+      if (openIdx === -1) return false;
+      // Walk balanced braces to extract full function body
+      let depth = 1, pos = openIdx + 1;
+      while (pos < code.length && depth > 0) {
+        if (code[pos] === '{') depth++;
+        else if (code[pos] === '}') depth--;
+        pos++;
+      }
+      const body = code.slice(openIdx, pos);
+      return !/return\s+true/.test(body);
+    },
+    message: "FATAL: onRender must always return true. A missing or falsy return breaks the engine render loop.",
+    severity: "FATAL"
+  },
+  {
+    // §13 — KINEMATIC bodies require BOTH a visual AND a collider update every frame.
+    // obj.position updates the visual mesh only.
+    // RigidBody.set([{prop:"setPosition",...}]) updates the collider only.
+    // Omitting either half causes silent visual/collider desync.
+    name: "KINEMATIC dual-update incomplete",
+    test: (code) => {
+      if (!/KINEMATIC/.test(code)) return false;
+      const hasSetPosition = /["']setPosition["']/.test(code);
+      const hasObjPosition = /\.position\s*=\s*\[/.test(code);
+      // Flag when one side of the dual-update is present but the other is absent
+      return hasSetPosition !== hasObjPosition;
+    },
+    message: "FATAL: KINEMATIC body requires BOTH obj.position=[x,y,z] (visual mesh) AND RigidBody.set([{prop:'setPosition',value:[x,y,z]}]) (collider) every frame. Omitting either half causes silent visual/collider desync.",
+    severity: "FATAL"
+  },
+  {
+    // §11 — setLinearVelocity is a SILENT NO-OP on KINEMATIC bodies.
+    // KINEMATIC actors must be moved via setPosition (collider) + obj.position (visual).
+    // Use DYNAMIC motionType if velocity-driven movement is required.
+    name: "KINEMATIC setLinearVelocity silent no-op",
+    test: (code) => {
+      if (!/KINEMATIC/.test(code)) return false;
+      return code.split('\n').some(line => {
+        const t = line.trim();
+        if (t.startsWith('//') || t.startsWith('*')) return false;
+        return /setLinearVelocity/.test(line);
+      });
+    },
+    message: "FATAL: setLinearVelocity is a SILENT NO-OP on KINEMATIC bodies — no error is thrown but the actor will not move. Use setPosition (collider) + obj.position (visual) for KINEMATIC, or switch to DYNAMIC if velocity control is needed.",
+    severity: "FATAL"
+  }
+];
+
+function runAntiPatternValidation(files) {
+  const violations = [];
+  for (const file of files) {
+    if (!file.path || !file.content) continue;
+    // Only validate JS/HTML files
+    if (!file.path.includes('models/')) continue;
+    
+    for (const pattern of ANTI_PATTERNS) {
+      // Reset regex lastIndex for global patterns
+      let triggered = false;
+      try {
+        triggered = pattern.test(file.content);
+      } catch (e) {
+        console.warn(`Anti-pattern check "${pattern.name}" threw:`, e.message);
+      }
+      if (triggered) {
+        violations.push({
+          file: file.path,
+          pattern: pattern.name,
+          message: pattern.message,
+          severity: pattern.severity
+        });
+      }
     }
-  ],
-  "invariants": ["cross-system laws that may not be violated"],
-  "failureGuards": ["checks/orderings needed to avoid known failure modes"],
-  "trancheHints": ["how the builder should sequence implementation work"],
-  "failureModes": [
-    {
-      "symptom": "what the developer or player would observe at runtime (e.g., actor at wrong position, input dead, UI not updating)",
-      "cause": "underlying engine/API/context issue that produces this symptom",
-      "prevention": "specific implementation pattern the generated code MUST use to avoid this failure"
-    }
-  ]
-}`;
+  }
+  return violations;
+}
+
+/* ── DYNAMIC_ARCHITECTURE_JSON_SCHEMA — REMOVED ─────────────
+   Architect pass has been merged into single-pass planner.
+   No intermediate architecture spec is generated. ────────── */
 
 /* ── helper: call Claude API ─────────────────────────────────── */
 async function callClaude(apiKey, { model, maxTokens, system, userContent, effort, budgetTokens }) {
@@ -139,19 +348,9 @@ function safeJsonParse(text, label) {
   }
 }
 
-function buildArchitectureSpecBlock(spec) {
-  if (!spec) return "";
-  const pretty = typeof spec === "string" ? spec : JSON.stringify(spec, null, 2);
-  return `
-╔═════════════ DYNAMIC GAME ARCHITECTURE SPEC (BINDING) ═════════════╗
-║ These rules were synthesized from the user's request, contract,   ║
-║ existing files, and SDK context. They define the game-specific    ║
-║ architecture for THIS build only. Do not replace them with        ║
-║ generic engine advice or hardcoded one-size-fits-all rules.       ║
-╚════════════════════════════════════════════════════════════════════╝
-${pretty}
-`;
-}
+/* ── buildArchitectureSpecBlock — REMOVED ─────────────────
+   No longer needed. Single-pass planner embeds game-specific
+   rules directly in each tranche prompt. ─────────────────── */
 
 const REQUIRED_TRANCHE_VALIDATION_BLOCK = `VALIDATION MANIFEST RULE (copy this block verbatim into EVERY tranche prompt you generate):
 ---
@@ -408,9 +607,11 @@ exports.handler = async (event) => {
 
     bucket = admin.storage().bucket(process.env.FIREBASE_STORAGE_BUCKET || "gokudatabase.firebasestorage.app");
 
-    // ── Determine mode: "plan" (initial) or "tranche" (chained) ──
+    // ── Determine mode: "plan" / "tranche" / "fix" ──────────────
+    // "fix" re-runs the same tranche index with a correction prompt
     const mode = parsedBody.mode || "plan";
     const nextTranche = parsedBody.nextTranche || 0;
+    const fixAttempt  = parsedBody.fixAttempt  || 0;  // 1-based, 0 means not a fix pass
 
     // ══════════════════════════════════════════════════════════════
     //  MODE: "plan" — First invocation, do planning then chain
@@ -420,7 +621,7 @@ exports.handler = async (event) => {
       // ── 1. Download the request payload from Firebase ─────────
       const requestFile = bucket.file(`${projectPath}/ai_request.json`);
       const [content] = await requestFile.download();
-      const { prompt, files, selectedAssets, inlineImages, gameContract } = JSON.parse(content.toString());
+      const { prompt, files, selectedAssets, inlineImages } = JSON.parse(content.toString());
       if (!prompt) throw new Error("Missing instructions inside payload");
 
       // ── 2. Build file context string ──────────────────────────
@@ -475,15 +676,24 @@ exports.handler = async (event) => {
       }
 
       // ══════════════════════════════════════════════════════════
-      //  STAGE 0 — PLANNING (Opus 4.6, adaptive, high)
+      //  SINGLE-PASS PLANNING (Opus 4.6)
+      //  Reads Master Prompt + Engine Reference + files directly.
+      //  No intermediate architecture spec. No re-synthesis.
+      //  Outputs tranche plan with rules embedded in each prompt.
       // ══════════════════════════════════════════════════════════
+
+      // ── Fetch Engine Reference from ai_system_instructions/ ──
+      const engineReference = await fetchSystemInstructions(bucket, projectPath);
+      if (!engineReference) {
+        console.warn("PLAN: Engine Reference not found in ai_system_instructions/ — proceeding without it.");
+      }
+
       const progress = {
         jobId: jobId,
         status: "planning",
         planningStartTime: Date.now(),
         planningEndTime: null,
         planningAnalysis: "",
-        architectureSpec: null,
         totalTranches: 0,
         currentTranche: -1,
         tranches: [],
@@ -498,84 +708,29 @@ exports.handler = async (event) => {
       };
       await saveProgress(bucket, projectPath, progress);
 
-      const architectSystem = `You are the ARCHITECT pass in a two-pass game generation pipeline.
+      const planningSystem = `You are an expert game development planner for the Cherry3D engine.
 
-Your job is NOT to write code and NOT to split tranches yet.
-Read the user's request, existing files, optional game contract, and any SDK guidance present in the supplied context.
-Synthesize the GAME-SPECIFIC architecture laws that the later builder/planner must obey.
+Your job: read the user's request, the existing project files, and the Engine Reference below. Then split the build into sequential, self-contained TRANCHES that can be executed one at a time by a coding AI.
 
-${HARD_ENVIRONMENT_CONSTRAINTS}
-
-Separate platform facts from game rules:
-- Environment constraints stay hardcoded and are already provided above.
-- Dynamic architecture rules must be inferred fresh for THIS exact game.
-- Do NOT invent rigid one-size-fits-all requirements such as a universal actor table, fixed physics model, or generic grid math unless this request truly requires them.
-- Only specify motion types, actor categories, camera laws, grid laws, or state machines when supported by the request/contract/SDK context.
-- Resolve conflicts in favor of the user's game contract and the SDK-compatible implementation path.
-
-Return ONLY valid JSON matching this schema:
-${DYNAMIC_ARCHITECTURE_JSON_SCHEMA}`;
-
-      const architectUserContent = [
-        { type: "text", text: `${fileContext}
-
-=== OPTIONAL GAME CONTRACT ===
-${gameContract || 'None provided.'}
-=== END GAME CONTRACT ===
-
-=== FULL USER REQUEST (derive game-specific architecture laws) ===
-${prompt}
-=== END USER REQUEST ===` },
-        ...imageBlocks
-      ];
-
-      console.log(`STAGE 0A: Architect pass with Claude Sonnet 4.6 for Job ${jobId}...`);
-      const architectResult = await callClaude(apiKey, {
-        model: "claude-sonnet-4-6",
-        maxTokens: 32000,
-        budgetTokens: 12000,
-        effort: "high",
-        system: architectSystem,
-        userContent: architectUserContent
-      });
-
-      if (architectResult.usage) {
-        progress.tokenUsage.planning = architectResult.usage;
-        progress.tokenUsage.totals.input_tokens += architectResult.usage.input_tokens || 0;
-        progress.tokenUsage.totals.output_tokens += architectResult.usage.output_tokens || 0;
-        await saveProgress(bucket, projectPath, progress);
-      }
-
-      const architectureSpec = safeJsonParse(architectResult.text, "architect");
-      progress.architectureSpec = architectureSpec;
-      await saveProgress(bucket, projectPath, progress);
-
-      const architectureSpecBlock = buildArchitectureSpecBlock(architectureSpec);
-      const planningSystem = `You are the BUILDER-PLANNER pass in a two-pass game generation pipeline.
-
-Your job: use the hard environment constraints plus the dynamic architecture spec to split the user's request into sequential, self-contained TRANCHES that can be executed one at a time by a coding AI.
-
-${HARD_ENVIRONMENT_CONSTRAINTS}
-${architectureSpecBlock}
+${engineReference}
 
 PLANNING RULES:
 1. Each tranche should focus on 1-2 closely related concerns.
 2. Tranches MUST be ordered by dependency — later tranches build on earlier ones.
-3. Each tranche prompt must be FULLY SELF-CONTAINED.
-4. Preserve exact technical details, variable names, slot layouts, code snippets, and SDK usage requirements from the source material.
-5. If the request is simple enough, use 1 tranche. Otherwise use the minimum count that preserves correctness.
-6. Each tranche must declare expectedFiles, dependencies, expertAgents, phase, and qualityCriteria.
-7. The FIRST tranche should establish the exact foundations required by the architecture spec.
-8. The LAST tranche should handle integration, edge cases, and polish.
-9. Do NOT inject generic rules that contradict the architecture spec. If a rule is game-specific, ground it in the architecture spec.
-10. In every tranche prompt, clearly separate HARD ENVIRONMENT CONSTRAINTS from GAME-SPECIFIC ARCHITECTURE RULES.
+3. Each tranche prompt must be FULLY SELF-CONTAINED — it must embed the exact game-specific rules, variable names, slot layouts, code snippets, and pitfall warnings from the user's request that are relevant to that tranche. Do NOT summarize or abstract — copy the exact technical details.
+4. If the request is simple enough, use 1 tranche. Otherwise use the minimum count that preserves correctness.
+5. Each tranche must declare expectedFiles, dependencies, expertAgents, phase, and qualityCriteria.
+6. The FIRST tranche should establish foundations: factories, materials, maze parsing, floor+walls with STATIC rigidbodies.
+7. The LAST tranche should handle integration, edge cases, and polish.
+8. Engine invariants from the ENGINE REFERENCE above are already in the executor's system prompt. Do NOT restate them in tranche prompts. Only embed game-specific rules.
+9. When the user's request contains code examples (updateInput, syncPlayerSharedMemory, ghost AI, etc.), embed those exact code examples in the relevant tranche prompts — do not paraphrase them.
 
 ${REQUIRED_TRANCHE_VALIDATION_BLOCK}
 
 You must respond ONLY with a valid JSON object. No markdown, no code fences, no preamble.
 
 {
-  "analysis": "Brief planning analysis describing how the architecture spec shapes the tranche sequence.",
+  "analysis": "Brief planning analysis describing how you decomposed the build and why.",
   "tranches": [
     {
       "name": "Short Name",
@@ -584,7 +739,7 @@ You must respond ONLY with a valid JSON object. No markdown, no code fences, no 
       "phase": 1,
       "dependencies": [],
       "qualityCriteria": ["Criterion 1", "Criterion 2"],
-      "prompt": "THE COMPLETE, SELF-CONTAINED PROMPT for the coding AI. It must embed the relevant architecture rules for this tranche.",
+      "prompt": "THE COMPLETE, SELF-CONTAINED PROMPT for the coding AI. Embed exact game-specific rules, code examples, and pitfall warnings from the user's request. Do NOT embed engine-level rules — those are in the executor's system prompt.",
       "expectedFiles": ["models/2", "models/23"]
     }
   ]
@@ -593,35 +748,24 @@ You must respond ONLY with a valid JSON object. No markdown, no code fences, no 
       const planningUserContent = [
         { type: "text", text: `${fileContext}
 
-=== OPTIONAL GAME CONTRACT ===
-${gameContract || 'None provided.'}
-=== END GAME CONTRACT ===
-
-=== DYNAMIC ARCHITECTURE SPEC ===
-${JSON.stringify(architectureSpec, null, 2)}
-=== END DYNAMIC ARCHITECTURE SPEC ===
-
-=== FULL USER REQUEST (plan tranche execution) ===
+=== FULL USER REQUEST ===
 ${prompt}
 === END USER REQUEST ===` },
         ...imageBlocks
       ];
 
-      console.log(`STAGE 0B: Builder-plan pass with Opus 4.6 for Job ${jobId}...`);
+      console.log(`PLANNING: Single-pass Opus 4.6 for Job ${jobId}...`);
       const planResult = await callClaude(apiKey, {
         model: "claude-opus-4-6",
         maxTokens: 128000,
-        budgetTokens: 25000,
+        budgetTokens: 30000,
         effort: "high",
         system: planningSystem,
         userContent: planningUserContent
       });
 
       if (planResult.usage) {
-        progress.tokenUsage.planning = {
-          input_tokens: (progress.tokenUsage.planning?.input_tokens || 0) + (planResult.usage.input_tokens || 0),
-          output_tokens: (progress.tokenUsage.planning?.output_tokens || 0) + (planResult.usage.output_tokens || 0)
-        };
+        progress.tokenUsage.planning = planResult.usage;
         progress.tokenUsage.totals.input_tokens += planResult.usage.input_tokens || 0;
         progress.tokenUsage.totals.output_tokens += planResult.usage.output_tokens || 0;
         await saveProgress(bucket, projectPath, progress);
@@ -638,10 +782,7 @@ ${prompt}
       // Update progress with plan
       progress.status = "executing";
       progress.planningEndTime = Date.now();
-      progress.planningAnalysis = [
-        architectureSpec?.summary ? `ARCHITECT SUMMARY:\n${architectureSpec.summary}` : "",
-        plan.analysis ? `BUILDER PLAN SUMMARY:\n${plan.analysis}` : ""
-      ].filter(Boolean).join("\n\n");
+      progress.planningAnalysis = plan.analysis || "";
       progress.totalTranches = plan.tranches.length;
       progress.currentTranche = 0;
       progress.tranches = plan.tranches.map((t, i) => ({
@@ -672,8 +813,6 @@ ${prompt}
         accumulatedFiles: files ? { ...files } : {},
         allUpdatedFiles: [],
         imageBlocks,
-        gameContract: gameContract || null,
-        architectureSpec,
         totalTranches: plan.tranches.length
       };
       await savePipelineState(bucket, projectPath, pipelineState);
@@ -730,8 +869,14 @@ ${prompt}
       const state = await loadPipelineState(bucket, projectPath);
       if (!state) throw new Error("Pipeline state not found in Firebase. Chain broken.");
 
-      const { progress, accumulatedFiles, allUpdatedFiles, imageBlocks, gameContract, architectureSpec } = state;
+      const { progress, accumulatedFiles, allUpdatedFiles, imageBlocks } = state;
       const tranche = progress.tranches[nextTranche];
+
+      // ── Fetch Engine Reference from ai_system_instructions/ ──
+      const engineReference = await fetchSystemInstructions(bucket, projectPath);
+      if (!engineReference) {
+        console.warn("TRANCHE: Engine Reference not found in ai_system_instructions/ — proceeding without it.");
+      }
 
       if (!tranche) throw new Error(`Tranche ${nextTranche} not found in pipeline state.`);
 
@@ -750,37 +895,12 @@ ${prompt}
       const executionSystem = `You are an expert game development AI.
 The user will provide project files and a focused modification request (one tranche of a larger build).
 
-${HARD_ENVIRONMENT_CONSTRAINTS}
+${engineReference}
 
-CHERRY3D SDK ERRATA — VERIFIED CORRECTIONS (apply these over any conflicting SDK guidance):
-
-ERRATUM 1: controls.getFloat() / getInt() are UNRELIABLE for reading data back from the physics thread.
-They may always return 0. For position readback, use rb.RigidBody.getMotionState().position.
-For derived state like tileCentered or wallBlocked, compute them on the main thread from position + walkable tile data.
-
-ERRATUM 2: The correct property path is rb.RigidBody.controls, NOT rb.controls.
-Using rb.controls.setFloat() is a SILENT NO-OP — no error thrown, but nothing happens.
-Always use: gameState.playerBody.RigidBody.controls.setFloat(slot, value)
-Always use: gameState.playerBody.RigidBody.addInputHandler(updateInput)
-Always use: gameState.playerBody.RigidBody.getMotionState()
-
-ERRATUM 3: DYNAMIC bodies do NOT always auto-sync visual mesh position to physics position.
-After spawning any DYNAMIC actor, add explicit visual sync in the render loop:
-  const ms = playerBody.RigidBody.getMotionState();
-  playerObj.position = [ms.position[0], 0.5, ms.position[2]];
-
-ERRATUM 4: The HTML overlay object ID is NOT guaranteed to be '25'.
-Always use fallback discovery: try getObject('25'), then scan IDs 20-30 probing for a known DOM element
-(e.g., querySelector('#startButton')) to find the actual overlay root.
-
-ERRATUM 5: File 2 (models/2) and file 23 (models/23) run in SEPARATE window contexts.
-window.* globals set in file 23 are NOT accessible from file 2. All UI communication must use
-DOM element references from Module.ProjectManager.getObject(id).DOMElement.
-Wire button click listeners directly on queried DOM elements in file 2.
-Add boolean flag polling (_startRequested / _restartRequested) as a cross-context fallback.
-After modal dismissal, set pointer-events:none on the overlay root.
-Never call blur()/focus() — it breaks engine keyboard input capture.
-Always add document.addEventListener('keydown') fallback for movement input.
+The ENGINE REFERENCE above is the single authoritative source for all platform invariants.
+Do not re-state them — just apply them. Your output will be automatically scanned by
+anti-pattern validators that enforce the rules in the Engine Reference. Write it correctly
+the first time.
 
 You must respond using DELIMITER FORMAT only. Do NOT use JSON. Do NOT use markdown code blocks.
 
@@ -809,11 +929,8 @@ EXAMPLE (two files updated):
 Added physics body initialization and collision handler registration.
 ===END_MESSAGE===
 
-CRITICAL RULES:
+OUTPUT RULES:
 - Only include files that actually need to be changed or created.
-- The main logic file is named "2" in the "models" folder. Never use "WorldController.js".
-- The main HTML file is named "23" in the "models" folder. Never use "document.html".
-- "assets.json" is in the "json" folder.
 - Always output the COMPLETE file content for each updated file — not patches or diffs.
 - Build upon the existing file contents provided. Do NOT discard or overwrite work from prior tranches.
 - If the file already has functions, variables, or structures from prior tranches, KEEP THEM ALL and add your new code alongside them.
@@ -845,7 +962,7 @@ Correct approach:
 - Only list systems you genuinely implement in THIS file — not aspirational or planned ones.
 - For models/2 (JS): embed the manifest inside a block comment /* VALIDATION_MANIFEST_START ... VALIDATION_MANIFEST_END */
 - For models/23 (HTML): embed the manifest inside an HTML comment <!-- VALIDATION_MANIFEST_START ... VALIDATION_MANIFEST_END -->
-- For json/assets.json: use the exact same VALIDATION_MANIFEST_START / VALIDATION_MANIFEST_END block inside a leading /* ... */ comment at the very top, then place the valid JSON body immediately after the comment.`;
+- For json/assets.json: use the exact same VALIDATION_MANIFEST_START / VALIDATION_MANIFEST_END block inside a leading /* ... */ comment at the very top, then place the valid JSON body immediately after the comment.\`;
 
 
 
@@ -860,7 +977,7 @@ Correct approach:
       const trancheUserContent = [
         {
           type: "text",
-          text: `${trancheFileContext}\n\n=== TRANCHE ${nextTranche + 1} of ${progress.totalTranches}: "${tranche.name}" ===\n\n${buildArchitectureSpecBlock(architectureSpec)}${tranche.prompt}\n\n=== END TRANCHE INSTRUCTIONS ===\n\nIMPORTANT: You are working on tranche ${nextTranche + 1} of ${progress.totalTranches}. The project files above contain ALL work from prior tranches. You MUST preserve all existing code and ADD your changes on top. Output the COMPLETE updated file contents.`
+          text: `${trancheFileContext}\n\n=== TRANCHE ${nextTranche + 1} of ${progress.totalTranches}: "${tranche.name}" ===\n\n${tranche.prompt}\n\n=== END TRANCHE INSTRUCTIONS ===\n\nIMPORTANT: You are working on tranche ${nextTranche + 1} of ${progress.totalTranches}. The project files above contain ALL work from prior tranches. You MUST preserve all existing code and ADD your changes on top. Output the COMPLETE updated file contents.`
         },
         ...(imageBlocks || [])
       ];
@@ -946,6 +1063,93 @@ Correct approach:
         }
 
         if (trancheResult) {
+          // ── Anti-pattern validation ──────────────────────────────
+          if (trancheResult.updatedFiles && Array.isArray(trancheResult.updatedFiles)) {
+            const violations    = runAntiPatternValidation(trancheResult.updatedFiles);
+            const fatalViolations = violations.filter(v => v.severity === "FATAL");
+
+            if (fatalViolations.length > 0) {
+              // ── Build human-readable violation report ─────────────
+              const violationLines = fatalViolations.map((v, i) =>
+                `VIOLATION ${i + 1} — ${v.pattern}\n  File   : ${v.file}\n  Detail : ${v.message}`
+              ).join('\n\n');
+
+              const currentRetry = (progress.tranches[nextTranche].antiPatternRetryCount || 0);
+              const violationSummary = fatalViolations.map(v => `[${v.file}] ${v.message}`).join('\n');
+
+              console.error(`Tranche ${nextTranche + 1} FAILED anti-pattern validation (attempt ${currentRetry + 1}/${MAX_ANTIPATTERN_RETRIES}):\n${violationSummary}`);
+
+              if (currentRetry < MAX_ANTIPATTERN_RETRIES) {
+                // ── Schedule a correction pass ──────────────────────
+                const nextAttempt = currentRetry + 1;
+
+                progress.tranches[nextTranche].status              = "fixing";
+                progress.tranches[nextTranche].antiPatternRetryCount = nextAttempt;
+                progress.tranches[nextTranche].antiPatternReport   = violationLines;
+                progress.tranches[nextTranche].antiPatternViolations = fatalViolations.map(v => ({
+                  file: v.file, pattern: v.pattern, message: v.message
+                }));
+                progress.tranches[nextTranche].fixAttempt          = nextAttempt;
+                // Keep startTime so the timer keeps running
+                progress.tranches[nextTranche].endTime             = null;
+                progress.tranches[nextTranche].message             = `⚠ ${fatalViolations.length} FATAL violation(s) detected — correction pass ${nextAttempt}/${MAX_ANTIPATTERN_RETRIES} queued.`;
+                await saveProgress(bucket, projectPath, progress);
+
+                // Persist state with the REJECTED files so fix mode can reference them
+                state.progress                                     = progress;
+                state.rejectedTranche                              = {
+                  index:      nextTranche,
+                  files:      trancheResult.updatedFiles,
+                  violations: fatalViolations,
+                  report:     violationLines
+                };
+                await savePipelineState(bucket, projectPath, state);
+
+                if (allUpdatedFiles.length > 0) {
+                  await saveAiResponse(bucket, projectPath, allUpdatedFiles, {
+                    jobId, trancheIndex: nextTranche, totalTranches: progress.totalTranches,
+                    status:  "checkpoint",
+                    message: `Anti-pattern violations detected in tranche ${nextTranche + 1}. Correction pass ${nextAttempt}/${MAX_ANTIPATTERN_RETRIES} starting.`
+                  });
+                }
+
+                // Chain to fix mode for the SAME tranche
+                await chainToSelf({ projectPath, jobId, mode: "fix", nextTranche, fixAttempt: nextAttempt });
+                return { statusCode: 200, body: JSON.stringify({ success: true, chained: true, phase: `tranche_${nextTranche}_fix_queued_attempt_${nextAttempt}` }) };
+
+              } else {
+                // ── Retries exhausted — skip and continue ───────────
+                console.error(`Tranche ${nextTranche + 1} exhausted ${MAX_ANTIPATTERN_RETRIES} correction attempt(s). Skipping.`);
+                progress.tranches[nextTranche].status    = "error";
+                progress.tranches[nextTranche].endTime   = Date.now();
+                progress.tranches[nextTranche].message   = `Anti-pattern correction failed after ${MAX_ANTIPATTERN_RETRIES} attempt(s).\n${violationSummary}`;
+                await saveProgress(bucket, projectPath, progress);
+
+                state.progress = progress;
+                await savePipelineState(bucket, projectPath, state);
+
+                if (allUpdatedFiles.length > 0) {
+                  await saveAiResponse(bucket, projectPath, allUpdatedFiles, {
+                    jobId, trancheIndex: nextTranche, totalTranches: progress.totalTranches,
+                    status:  "checkpoint",
+                    message: `Tranche ${nextTranche + 1} skipped after ${MAX_ANTIPATTERN_RETRIES} failed correction attempts.`
+                  });
+                }
+
+                if (nextTranche + 1 < progress.totalTranches) {
+                  await chainToSelf({ projectPath, jobId, mode: "tranche", nextTranche: nextTranche + 1 });
+                  return { statusCode: 200, body: JSON.stringify({ success: true, chained: true, phase: `tranche_${nextTranche}_antipattern_exhausted` }) };
+                }
+                trancheResult.updatedFiles = [];   // don't merge
+              }
+
+            } else if (violations.length > 0) {
+              // Warnings — log but don't reject
+              const warnSummary = violations.map(v => `[${v.file}] ${v.message}`).join('\n');
+              console.warn(`Tranche ${nextTranche + 1} anti-pattern WARNINGS:\n${warnSummary}`);
+            }
+          }
+
           // Merge tranche output into accumulated files
           const trancheFilesUpdated = [];
           if (trancheResult.updatedFiles && Array.isArray(trancheResult.updatedFiles)) {
@@ -1034,6 +1238,245 @@ Correct approach:
       try { await bucket.file(`${projectPath}/ai_request.json`).delete(); } catch (e) {}
 
       return { statusCode: 200, body: JSON.stringify({ success: true, phase: "complete" }) };
+    }
+
+
+    // ══════════════════════════════════════════════════════════════
+    //  MODE: "fix" — Re-run ONE tranche with violation report injected
+    //  Triggered automatically when anti-pattern validation fails.
+    //  Chains back to "tranche" mode on success, or skips on exhaustion.
+    // ══════════════════════════════════════════════════════════════
+    if (mode === "fix") {
+
+      // ── Kill switch check ────────────────────────────────────
+      const killCheck = await checkKillSwitch(bucket, projectPath, jobId);
+      if (killCheck.killed) {
+        return { statusCode: 200, body: JSON.stringify({ success: true, superseded: killCheck.reason === "superseded" }) };
+      }
+
+      // ── Load pipeline state ──────────────────────────────────
+      const state = await loadPipelineState(bucket, projectPath);
+      if (!state) throw new Error("Pipeline state not found in Firebase. Fix mode chain broken.");
+
+      const { progress, accumulatedFiles, allUpdatedFiles, imageBlocks, rejectedTranche } = state;
+      const tranche = progress.tranches[nextTranche];
+
+      if (!tranche) throw new Error(`Tranche ${nextTranche} not found in pipeline state (fix mode).`);
+      if (!rejectedTranche || rejectedTranche.index !== nextTranche) {
+        throw new Error(`No rejected tranche data for tranche ${nextTranche}. Fix mode cannot proceed.`);
+      }
+
+      // ── Fetch Engine Reference ───────────────────────────────
+      const engineReference = await fetchSystemInstructions(bucket, projectPath);
+
+      console.log(`FIX MODE: Tranche ${nextTranche + 1} — attempt ${fixAttempt}/${MAX_ANTIPATTERN_RETRIES} (Job ${jobId})`);
+
+      // ── Update UI: show "fixing" status with violation details ─
+      progress.tranches[nextTranche].status  = "fixing";
+      progress.tranches[nextTranche].message = `🔧 Correction pass ${fixAttempt}/${MAX_ANTIPATTERN_RETRIES} in progress — rewriting to fix ${rejectedTranche.violations.length} violation(s)...`;
+      await saveProgress(bucket, projectPath, progress);
+
+      // ── Build the violation-aware correction system prompt ────
+      const correctionSystem = `You are an expert Cherry3D game developer performing a TARGETED CORRECTION.
+A previous generation pass produced code with FATAL engine violations that will cause silent runtime failures.
+You must rewrite ONLY the offending logic to fix every listed violation. Preserve all other code exactly.
+
+${engineReference}
+
+The ENGINE REFERENCE above is the authoritative source. The violations below are EXACT matches
+against that reference. Fix them precisely — do not introduce new code unrelated to the violations.
+
+RESPONSE FORMAT: Use delimiter format only — no JSON, no markdown code blocks.
+===FILE_START: path===
+...complete corrected file...
+===FILE_END: path===
+===MESSAGE===
+Summary of exactly what was fixed and why each violation occurred.
+===END_MESSAGE===`;
+
+      // ── Build the user content: rejected files + violation report ─
+      const violationReport = rejectedTranche.report;
+      const violatingFiles  = rejectedTranche.files;
+
+      let correctionUserText = `=== VIOLATION REPORT ===\nThe following FATAL anti-pattern violations were detected in your previous output:\n\n${violationReport}\n\n=== END VIOLATION REPORT ===\n\n`;
+      correctionUserText += `=== REJECTED FILES (your previous output — fix these) ===\n`;
+      for (const f of violatingFiles) {
+        correctionUserText += `\n--- FILE: ${f.path} ---\n${f.content}\n`;
+      }
+      correctionUserText += `\n=== END REJECTED FILES ===\n\n`;
+      correctionUserText += `=== CURRENT ACCUMULATED FILES (prior tranches — do NOT touch these) ===\n`;
+      for (const [path, fileContent] of Object.entries(accumulatedFiles)) {
+        // Skip the paths that are being corrected to avoid confusion
+        if (violatingFiles.some(f => f.path === path)) continue;
+        correctionUserText += `\n--- FILE: ${path} ---\n${fileContent}\n`;
+      }
+      correctionUserText += `\n=== END ACCUMULATED FILES ===\n\n`;
+      correctionUserText += `=== ORIGINAL TRANCHE INSTRUCTIONS ===\n${tranche.prompt}\n=== END TRANCHE INSTRUCTIONS ===\n\n`;
+      correctionUserText += `Fix every violation listed in the VIOLATION REPORT above. Output the complete corrected file(s).`;
+
+      // ── Call Claude for the correction ──────────────────────
+      let fixResponseObj;
+      try {
+        fixResponseObj = await callClaude(apiKey, {
+          model:        "claude-sonnet-4-6",
+          maxTokens:    128000,
+          budgetTokens: 20000,
+          effort:       "high",
+          system:       correctionSystem,
+          userContent:  [{ type: "text", text: correctionUserText }, ...(imageBlocks || [])]
+        });
+      } catch (err) {
+        console.error(`Fix pass ${fixAttempt} failed with API error:`, err.message);
+        progress.tranches[nextTranche].status  = "error";
+        progress.tranches[nextTranche].endTime = Date.now();
+        progress.tranches[nextTranche].message = `Correction pass ${fixAttempt} API error: ${err.message}`;
+        await saveProgress(bucket, projectPath, progress);
+        state.progress = progress;
+        await savePipelineState(bucket, projectPath, state);
+        if (nextTranche + 1 < progress.totalTranches) {
+          await chainToSelf({ projectPath, jobId, mode: "tranche", nextTranche: nextTranche + 1 });
+        }
+        return { statusCode: 200, body: JSON.stringify({ success: false, phase: `fix_${nextTranche}_api_error` }) };
+      }
+
+      // Track token usage for this fix pass
+      if (fixResponseObj.usage) {
+        progress.tokenUsage.totals.input_tokens  += fixResponseObj.usage.input_tokens  || 0;
+        progress.tokenUsage.totals.output_tokens += fixResponseObj.usage.output_tokens || 0;
+        if (!progress.tranches[nextTranche].fixTokenUsage) progress.tranches[nextTranche].fixTokenUsage = [];
+        progress.tranches[nextTranche].fixTokenUsage.push(fixResponseObj.usage);
+      }
+
+      // ── Parse fix response ───────────────────────────────────
+      const fixResult = parseDelimitedResponse(fixResponseObj.text);
+      if (!fixResult || !fixResult.updatedFiles || fixResult.updatedFiles.length === 0) {
+        console.error(`Fix pass ${fixAttempt}: no parseable output from correction pass.`);
+        progress.tranches[nextTranche].status  = "error";
+        progress.tranches[nextTranche].endTime = Date.now();
+        progress.tranches[nextTranche].message = `Correction pass ${fixAttempt} produced no output.`;
+        await saveProgress(bucket, projectPath, progress);
+        state.progress = progress;
+        await savePipelineState(bucket, projectPath, state);
+        if (nextTranche + 1 < progress.totalTranches) {
+          await chainToSelf({ projectPath, jobId, mode: "tranche", nextTranche: nextTranche + 1 });
+        }
+        return { statusCode: 200, body: JSON.stringify({ success: false, phase: `fix_${nextTranche}_no_output` }) };
+      }
+
+      // ── Re-validate the corrected files ──────────────────────
+      const revalidation   = runAntiPatternValidation(fixResult.updatedFiles);
+      const remainingFatal = revalidation.filter(v => v.severity === "FATAL");
+
+      if (remainingFatal.length > 0) {
+        // Still failing after this correction pass
+        const remainingSummary = remainingFatal.map(v => `[${v.file}] ${v.message}`).join('\n');
+        console.warn(`Fix pass ${fixAttempt} — ${remainingFatal.length} violation(s) remain.`);
+
+        if (fixAttempt < MAX_ANTIPATTERN_RETRIES) {
+          // Queue another fix pass
+          const nextAttempt = fixAttempt + 1;
+          const remainingReport = remainingFatal.map((v, i) =>
+            `VIOLATION ${i + 1} — ${v.pattern}\n  File   : ${v.file}\n  Detail : ${v.message}`
+          ).join('\n\n');
+
+          progress.tranches[nextTranche].antiPatternRetryCount  = nextAttempt;
+          progress.tranches[nextTranche].antiPatternReport      = remainingReport;
+          progress.tranches[nextTranche].antiPatternViolations  = remainingFatal.map(v => ({ file: v.file, pattern: v.pattern, message: v.message }));
+          progress.tranches[nextTranche].fixAttempt             = nextAttempt;
+          progress.tranches[nextTranche].status                 = "fixing";
+          progress.tranches[nextTranche].message                = `⚠ ${remainingFatal.length} violation(s) remain after pass ${fixAttempt} — correction pass ${nextAttempt}/${MAX_ANTIPATTERN_RETRIES} queued.`;
+          await saveProgress(bucket, projectPath, progress);
+
+          state.progress       = progress;
+          state.rejectedTranche = {
+            index: nextTranche, files: fixResult.updatedFiles,
+            violations: remainingFatal, report: remainingReport
+          };
+          await savePipelineState(bucket, projectPath, state);
+
+          await chainToSelf({ projectPath, jobId, mode: "fix", nextTranche, fixAttempt: nextAttempt });
+          return { statusCode: 200, body: JSON.stringify({ success: true, chained: true, phase: `fix_${nextTranche}_retry_${nextAttempt}` }) };
+
+        } else {
+          // Exhausted all correction attempts
+          progress.tranches[nextTranche].status  = "error";
+          progress.tranches[nextTranche].endTime = Date.now();
+          progress.tranches[nextTranche].message = `Correction failed after ${MAX_ANTIPATTERN_RETRIES} attempt(s). Violations persist: ${remainingSummary}`;
+          await saveProgress(bucket, projectPath, progress);
+          state.progress = progress;
+          state.rejectedTranche = null;
+          await savePipelineState(bucket, projectPath, state);
+
+          if (allUpdatedFiles.length > 0) {
+            await saveAiResponse(bucket, projectPath, allUpdatedFiles, {
+              jobId, trancheIndex: nextTranche, totalTranches: progress.totalTranches,
+              status: "checkpoint",
+              message: `Tranche ${nextTranche + 1} skipped — corrections exhausted after ${MAX_ANTIPATTERN_RETRIES} attempt(s).`
+            });
+          }
+          if (nextTranche + 1 < progress.totalTranches) {
+            await chainToSelf({ projectPath, jobId, mode: "tranche", nextTranche: nextTranche + 1 });
+          }
+          return { statusCode: 200, body: JSON.stringify({ success: false, phase: `fix_${nextTranche}_exhausted` }) };
+        }
+      }
+
+      // ── All violations resolved — merge corrected files ───────
+      console.log(`Fix pass ${fixAttempt} SUCCEEDED for tranche ${nextTranche + 1}. All violations resolved.`);
+
+      const fixFilesUpdated = [];
+      for (const file of fixResult.updatedFiles) {
+        accumulatedFiles[file.path] = file.content;
+        fixFilesUpdated.push(file.path);
+        const existingIdx = allUpdatedFiles.findIndex(f => f.path === file.path);
+        if (existingIdx >= 0) { allUpdatedFiles[existingIdx] = file; }
+        else                  { allUpdatedFiles.push(file); }
+      }
+
+      progress.tranches[nextTranche].status       = "complete";
+      progress.tranches[nextTranche].endTime      = Date.now();
+      progress.tranches[nextTranche].filesUpdated = fixFilesUpdated;
+      progress.tranches[nextTranche].message      = `✅ Fixed in ${fixAttempt} correction pass(es). ${fixResult.message || ""}`;
+      // Clear rejected tranche from state
+      state.rejectedTranche = null;
+      await saveProgress(bucket, projectPath, progress);
+
+      state.progress        = progress;
+      state.accumulatedFiles = accumulatedFiles;
+      state.allUpdatedFiles  = allUpdatedFiles;
+      await savePipelineState(bucket, projectPath, state);
+
+      await saveAiResponse(bucket, projectPath, allUpdatedFiles, {
+        jobId, trancheIndex: nextTranche, totalTranches: progress.totalTranches,
+        status: "checkpoint",
+        message: `Tranche ${nextTranche + 1} corrected and merged after ${fixAttempt} fix pass(es).`
+      });
+
+      // ── Chain to next tranche ────────────────────────────────
+      if (nextTranche + 1 < progress.totalTranches) {
+        await chainToSelf({ projectPath, jobId, mode: "tranche", nextTranche: nextTranche + 1 });
+        return { statusCode: 200, body: JSON.stringify({ success: true, chained: true, phase: `fix_${nextTranche}_complete` }) };
+      }
+
+      // ── Last tranche was the one being fixed — finalize ──────
+      const summaryParts = progress.tranches
+        .filter(t => t.status === "complete")
+        .map(t => `Tranche ${t.index + 1} — ${t.name}: ${t.message}`);
+
+      await saveAiResponse(bucket, projectPath, allUpdatedFiles, {
+        jobId, trancheIndex: progress.totalTranches - 1, totalTranches: progress.totalTranches,
+        status: "final", message: summaryParts.join("\n\n") || "Build completed with corrections."
+      });
+
+      progress.status       = "complete";
+      progress.finalMessage = `Build complete with corrections: ${allUpdatedFiles.length} file(s). Tokens: ${progress.tokenUsage.totals.input_tokens} in / ${progress.tokenUsage.totals.output_tokens} out.`;
+      progress.completedTime = Date.now();
+      await saveProgress(bucket, projectPath, progress);
+
+      try { await bucket.file(`${projectPath}/ai_pipeline_state.json`).delete(); } catch (e) {}
+      try { await bucket.file(`${projectPath}/ai_request.json`).delete(); }        catch (e) {}
+
+      return { statusCode: 200, body: JSON.stringify({ success: true, phase: "complete_via_fix" }) };
     }
 
     throw new Error(`Unknown mode: ${mode}`);

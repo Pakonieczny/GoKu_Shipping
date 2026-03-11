@@ -359,6 +359,15 @@
     }
     .tranche-card-index.complete { background: var(--success); border: 2px solid var(--success); color: #0b0d12; }
     .tranche-card-index.error { background: var(--danger); border: 2px solid var(--danger); color: #0b0d12; }
+    .tranche-card-index.fixing {
+      background: rgba(245, 158, 11, 0.15); border: 2px solid #f59e0b; color: #f59e0b;
+      box-shadow: 0 0 12px rgba(245, 158, 11, 0.3);
+      animation: tranche-fix-pulse 1s ease-in-out infinite;
+    }
+    @keyframes tranche-fix-pulse {
+      0%, 100% { box-shadow: 0 0 6px rgba(245, 158, 11, 0.2); border-color: #f59e0b; }
+      50%       { box-shadow: 0 0 18px rgba(245, 158, 11, 0.6); border-color: #fbbf24; }
+    }
 
     .tranche-card-body { flex: 1; min-width: 0; }
     .tranche-card-name { font-size: 13px; font-weight: 600; color: #fff; margin-bottom: 3px; }
@@ -373,6 +382,7 @@
     .tranche-card-tag.in_progress { background: rgba(43, 108, 255, 0.15); color: var(--accent); }
     .tranche-card-tag.complete { background: rgba(127, 219, 150, 0.12); color: var(--success); }
     .tranche-card-tag.error { background: rgba(252, 165, 165, 0.12); color: var(--danger); }
+    .tranche-card-tag.fixing { background: rgba(245, 158, 11, 0.12); color: #f59e0b; }
     .tranche-card-time { color: var(--muted); font-family: 'SF Mono', 'Fira Code', monospace; }
     .tranche-card-files { color: #a78bfa; }
 
@@ -384,6 +394,45 @@
     }
     .tranche-card-message.error-msg {
       background: rgba(252, 165, 165, 0.06); border-left-color: var(--danger); color: #d5c4c4;
+    }
+    .tranche-card-message.fixing-msg {
+      background: rgba(245, 158, 11, 0.06); border-left-color: #f59e0b; color: #fde68a;
+    }
+
+    /* Anti-pattern violation panel */
+    .tranche-violation-panel {
+      display: none; margin-top: 8px; border-radius: 8px;
+      border: 1px solid rgba(245, 158, 11, 0.35);
+      background: rgba(245, 158, 11, 0.04); overflow: hidden;
+    }
+    .tranche-violation-panel.active { display: block; }
+    .tranche-violation-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 7px 12px; cursor: pointer; user-select: none;
+      border-bottom: 1px solid rgba(245, 158, 11, 0.2);
+      background: rgba(245, 158, 11, 0.07);
+    }
+    .tranche-violation-header-left { display: flex; align-items: center; gap: 7px; font-size: 11px; font-weight: 600; color: #f59e0b; }
+    .tranche-violation-toggle { font-size: 9px; color: #f59e0b; opacity: 0.7; transition: transform 0.2s; }
+    .tranche-violation-toggle.open { transform: rotate(90deg); }
+    .tranche-violation-body { display: none; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+    .tranche-violation-body.open { display: flex; }
+    .tranche-violation-item {
+      padding: 8px 10px; border-radius: 6px;
+      background: rgba(252, 165, 165, 0.06); border-left: 3px solid var(--danger);
+      font-size: 11px; line-height: 1.5;
+    }
+    .tranche-violation-item-title { font-weight: 700; color: var(--danger); margin-bottom: 3px; font-size: 11px; }
+    .tranche-violation-item-file  { color: #a78bfa; font-family: monospace; font-size: 10px; margin-bottom: 2px; }
+    .tranche-violation-item-msg   { color: #d5c4c4; font-size: 11px; }
+    .tranche-fix-status {
+      display: none; margin-top: 6px; padding: 6px 10px; border-radius: 6px;
+      background: rgba(245, 158, 11, 0.08); border-left: 3px solid #f59e0b;
+      font-size: 11px; color: #fbbf24; line-height: 1.4;
+    }
+    .tranche-fix-status.active { display: block; }
+    .tranche-fix-status.resolved {
+      background: rgba(127, 219, 150, 0.08); border-left-color: var(--success); color: var(--success);
     }
 
     .tranche-card-prompt-toggle {
@@ -532,103 +581,9 @@
     .proc-status-text { font-size: 11px; color: var(--muted); text-align: right; }
 
     /* ════════════════════════════════════════════════
-       GAME ESSENCE CONTRACT PANEL
+       GAME ESSENCE CONTRACT PANEL — REMOVED
+       Contract has been merged into the Master Prompt.
     ════════════════════════════════════════════════ */
-    .essence-panel {
-      border: 1px solid var(--line); border-radius: 12px;
-      background: linear-gradient(135deg, #0c0f1a 0%, #0e1220 100%);
-      overflow: hidden; margin-top: 10px;
-    }
-    .essence-panel.contract-active {
-      border-color: #1e4a2a;
-      background: linear-gradient(135deg, #090f0b 0%, #0b140d 100%);
-    }
-    .essence-header {
-      display: flex; align-items: center; gap: 10px;
-      padding: 12px 16px; cursor: pointer; user-select: none; transition: background 0.15s;
-    }
-    .essence-header:hover { background: rgba(255,255,255,0.02); }
-    .essence-header-icon { font-size: 16px; flex-shrink: 0; }
-    .essence-header-title { font-size: 13px; font-weight: 600; color: var(--text); flex: 1; }
-    .essence-badge {
-      font-size: 10px; font-weight: 700; padding: 2px 9px; border-radius: 999px;
-      background: #1a1e2b; color: var(--muted); letter-spacing: 0.4px; transition: all 0.3s;
-    }
-    .essence-badge.running { background: rgba(43,108,255,0.18); color: var(--accent); }
-    .essence-badge.active  { background: rgba(127,219,150,0.15); color: var(--success); }
-    .essence-badge.error   { background: rgba(252,165,165,0.15); color: var(--danger); }
-    .essence-chevron { font-size: 10px; color: var(--muted); transition: transform 0.25s; }
-    .essence-chevron.open { transform: rotate(90deg); }
-
-    .essence-body { display: none; padding: 0 16px 14px; border-top: 1px solid var(--line); }
-    .essence-body.open { display: block; }
-
-    /* Phase progress bar */
-    .essence-phases {
-      display: flex; margin: 12px 0 14px; border-radius: 8px; overflow: hidden;
-      border: 1px solid var(--line);
-    }
-    .essence-phase {
-      flex: 1; padding: 5px 4px; text-align: center; font-size: 10px; font-weight: 600;
-      color: #3a4565; background: #0e1220; border-right: 1px solid var(--line);
-      transition: all 0.3s; letter-spacing: 0.2px;
-    }
-    .essence-phase:last-child { border-right: none; }
-    .essence-phase.active { background: rgba(43,108,255,0.18); color: var(--accent); }
-    .essence-phase.done   { background: rgba(127,219,150,0.1);  color: var(--success); }
-
-    /* Contract active banner */
-    .essence-active-banner {
-      display: none; align-items: center; gap: 10px;
-      background: rgba(127,219,150,0.07); border: 1px solid #1e4a2a;
-      border-radius: 8px; padding: 10px 14px; margin-bottom: 10px;
-    }
-    .essence-active-banner.show { display: flex; }
-    .essence-active-name { font-size: 12px; font-weight: 700; color: var(--success); }
-    .essence-active-subs { font-size: 10px; color: #4a8060; margin-top: 2px; }
-    .essence-inject-hint {
-      font-size: 11px; color: #4060a0;
-      padding: 6px 12px; background: rgba(43,108,255,0.06);
-      border: 1px solid rgba(43,108,255,0.14); border-radius: 6px; margin-bottom: 10px;
-    }
-
-    /* Form fields */
-    .essence-2col { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
-    .essence-lbl { font-size: 11px; color: var(--muted); display: block; margin-bottom: 5px; }
-    .essence-inp {
-      width: 100%; background: #0e1220; border: 1px solid var(--line); border-radius: 8px;
-      color: var(--text); padding: 8px 10px; font-size: 12px; font-family: inherit;
-      box-sizing: border-box; outline: none; transition: border-color 0.2s; resize: vertical;
-    }
-    .essence-inp:focus { border-color: var(--accent); }
-    .essence-inp::placeholder { color: #2a3550; }
-    .essence-err {
-      display: none; font-size: 11px; color: var(--danger); margin-bottom: 8px;
-      padding: 5px 10px; background: #140808; border-radius: 6px; border: 1px solid #3a1212;
-    }
-
-    /* Stream / output boxes */
-    .essence-stream {
-      background: #08090f; border: 1px solid var(--line); border-radius: 8px;
-      padding: 10px 12px; max-height: 200px; overflow-y: auto;
-      font-size: 11px; font-family: monospace; color: #7088b0; white-space: pre-wrap;
-      line-height: 1.65; margin-bottom: 10px; min-height: 52px;
-    }
-    .essence-contract-box {
-      background: #07100a; border: 1px solid #1a3a22; border-radius: 8px;
-      padding: 10px 12px; max-height: 240px; overflow-y: auto;
-      font-size: 11px; font-family: monospace; color: #6daa80; white-space: pre-wrap;
-      line-height: 1.65; margin-bottom: 10px;
-    }
-
-    /* Spinner reuse */
-    .essence-spin {
-      display: none; width: 10px; height: 10px; border-radius: 50%;
-      border: 1.5px solid #1e2b40; border-top-color: var(--accent);
-      animation: spin-fast 0.8s linear infinite;
-      vertical-align: middle; margin-right: 6px;
-    }
-    .essence-running .essence-spin { display: inline-block; }
   </style>
 </head>
 
@@ -766,97 +721,7 @@
             </div>
           </div>
           
-          <!-- ══════════════════════════════════════════════════
-               GAME ESSENCE CONTRACT PANEL
-               Runs before any "Apply AI Update" to derive a
-               binding §A-§I Game Contract from first principles.
-               The contract is prepended to every tranche prompt.
-          ═══════════════════════════════════════════════════ -->
-          <div class="essence-panel" id="essencePanel">
-
-            <!-- Header / toggle -->
-            <div class="essence-header" id="essenceHeader">
-              <span class="essence-header-icon">🧬</span>
-              <span class="essence-header-title">Game Essence Contract</span>
-              <span class="essence-badge" id="essenceBadge">NO CONTRACT</span>
-              <span class="essence-chevron" id="essenceChevron">▶</span>
-            </div>
-
-            <div class="essence-body" id="essenceBody">
-
-              <!-- Phase progress bar -->
-              <div class="essence-phases">
-                <div class="essence-phase active" id="eph0">① Input</div>
-                <div class="essence-phase" id="eph1">② Interview</div>
-                <div class="essence-phase" id="eph2">③ Derivation</div>
-                <div class="essence-phase" id="eph3">④ Contract</div>
-              </div>
-
-              <!-- Active contract banner (shown in phase 3) -->
-              <div class="essence-active-banner" id="essenceActiveBanner">
-                <div style="flex:1;">
-                  <div class="essence-active-name" id="essenceActiveName">✓ Game Contract Active</div>
-                  <div class="essence-active-subs">§A Coordinates · §B Camera · §C Controls · §D Enemies · §E Collectibles · §F Prohibited · §G UI · §H Acceptance Tests · §I Engine Invariants</div>
-                </div>
-              </div>
-
-              <!-- Inject hint (phase 3) -->
-              <div class="essence-inject-hint" id="essenceInjectHint" style="display:none;">
-                ⚡ This §A–§I contract will be prepended to every tranche in your next <strong>Apply AI Update</strong> run — the AI cannot deviate from its axioms.
-              </div>
-
-              <!-- ── PHASE 0: Input form ── -->
-              <div id="essPhase0">
-                <div class="essence-2col">
-                  <div>
-                    <span class="essence-lbl">GAME NAME *</span>
-                    <input class="essence-inp" id="essName" type="text" placeholder="e.g. PacMaze, RocketRace 3D"/>
-                  </div>
-                  <div>
-                    <span class="essence-lbl">PRIOR GAME TYPE (anti-inheritance)</span>
-                    <input class="essence-inp" id="essPrior" type="text" placeholder="e.g. Endless runner, Slingshot"/>
-                  </div>
-                </div>
-                <span class="essence-lbl">GAME DESCRIPTION * — describe mechanics, not visuals</span>
-                <textarea class="essence-inp" id="essDesc" rows="3" style="margin-bottom:8px;"
-                  placeholder="How is the game played? Player movement, objectives, enemies, camera, win/lose. The more specific, the better the contract."></textarea>
-                <div class="essence-err" id="essErr"></div>
-                <div class="row" style="gap:8px;">
-                  <button class="btn btnPrimary" id="essRunBtn" style="font-size:12px;padding:8px 16px;">Run Essence Interview →</button>
-                </div>
-              </div>
-
-              <!-- ── PHASE 1: Interview streaming ── -->
-              <div id="essPhase1" style="display:none;">
-                <div style="font-size:11px;color:var(--muted);margin-bottom:6px;" id="essIntStatus">
-                  <span class="essence-spin" id="essIntSpin"></span>Sending 12-question interview to AI...
-                </div>
-                <div class="essence-stream" id="essIntOut">Waiting for AI response...</div>
-                <div class="row" style="gap:8px;display:none;" id="essIntBtns">
-                  <button class="btn btnPrimary" id="essCompileBtn" style="font-size:12px;padding:8px 14px;">Compile §A–§I Contract →</button>
-                  <button class="btn" id="essBackBtn" style="font-size:12px;padding:8px 12px;">← Edit</button>
-                </div>
-              </div>
-
-              <!-- ── PHASE 2: Contract derivation ── -->
-              <div id="essPhase2" style="display:none;">
-                <div style="font-size:11px;color:var(--muted);margin-bottom:6px;" id="essConStatus">
-                  <span class="essence-spin" id="essConSpin"></span>Deriving §A–§I Game Contract...
-                </div>
-                <div class="essence-stream" id="essConOut">Waiting for contract derivation...</div>
-              </div>
-
-              <!-- ── PHASE 3: Contract ready ── -->
-              <div id="essPhase3" style="display:none;">
-                <div class="essence-contract-box" id="essFinalOut"></div>
-                <div class="row" style="gap:8px;justify-content:flex-end;">
-                  <button class="btn" id="essCopyBtn" style="font-size:11px;padding:6px 12px;">📋 Copy Contract</button>
-                  <button class="btn btnDanger" id="essClearBtn" style="font-size:11px;padding:6px 12px;">✕ Clear</button>
-                </div>
-              </div>
-
-            </div><!-- /essence-body -->
-          </div><!-- /essence-panel -->
+          <!-- Game Essence Contract Panel — REMOVED (contract merged into Master Prompt) -->
 
           <div style="position: relative; width: 100%;">
             <textarea id="aiPromptInput" placeholder="e.g., 'Build a physics-based destruction game with 15 levels...' — V2 will research the game, assign expert agents, and decompose into 8-15 micro-tranches." style="min-height: 80px; resize: vertical; width: 100%; padding-right: 140px;"></textarea>
@@ -917,10 +782,10 @@
       { id: "object_zip", title: "Animated/Textured Object ZIP Package", accepts: ".zip", folder: "object_zips" },
       { id: "models", title: "Models, Logic & HTML", accepts: ".obj,.glb,.fbx,.js,.mtl,.html", folder: "models" },
       { id: "json", title: "JSON Configs", accepts: ".json", folder: "json" },
-      { id: "reference", title: "Reference Project ZIP", accepts: ".zip", folder: "reference_zip" }
+      { id: "reference", title: "Cherry3D Runtime Template (for Game Export)", accepts: ".zip", folder: "reference_zip" }
     ];
 
-    const DEFAULT_TEMPLATE_PROJECT = 'Side_Scroller';
+    const DEFAULT_TEMPLATE_PROJECT = 'BASE_Files';
     const PROJECT_BOOTSTRAP_SECTIONS = [
       ...FILE_CATEGORIES.map(cat => ({
         folder: cat.folder,
@@ -940,15 +805,9 @@
     let lastRunJobId = null;
     let lastRunStartTime = null;
 
-    // ── Game Essence Contract state ──────────────────────────
-    // activeGameContract: the full §A-§I text; injected into every pipeline run.
-    // When non-null it is prepended to enhancedPrompt AND written into the
-    // ai_request.json payload so the backend can inject it per-tranche.
-    let activeGameContract  = null;
-    let essenceAnswers      = '';      // raw interview answers → fed to contract step
-    let essenceGameName     = '';      // stored for display
-    let essencePollTimer    = null;    // setInterval handle
-    let essencePollJobId    = null;    // expected jobId for freshness guard
+    // ── Game Essence Contract — REMOVED ────────────────────────
+    // Contract has been merged into the Master Prompt.
+    // No runtime contract state is needed.
 
     const projectSelect = document.getElementById('projectSelect');
     const newProjectName = document.getElementById('newProjectName');
@@ -1123,10 +982,19 @@
         const res = await listAll(listRef);
         projectSelect.innerHTML = res.prefixes.length > 0 ? '' : '<option value="">No projects found</option>';
         
-        res.prefixes.forEach(folderRef => {
+        // Sort projects: BASE_Files always at the bottom
+        const sorted = [...res.prefixes].sort((a, b) => {
+          if (a.name === DEFAULT_TEMPLATE_PROJECT) return 1;
+          if (b.name === DEFAULT_TEMPLATE_PROJECT) return -1;
+          return a.name.localeCompare(b.name);
+        });
+
+        sorted.forEach(folderRef => {
           const opt = document.createElement('option');
           opt.value = folderRef.name;
-          opt.textContent = folderRef.name;
+          opt.textContent = folderRef.name === DEFAULT_TEMPLATE_PROJECT
+            ? `${folderRef.name} (template)`
+            : folderRef.name;
           projectSelect.appendChild(opt);
         });
 
@@ -1462,7 +1330,6 @@
     // ── Auto-Sync assets.json with actual project files ──
     // Scans models/, object_zips/, and assets/ folders and rebuilds assets.json
     // to accurately reflect what files actually exist in the project.
-    // IMPORTANT: The reference zip's assets.json defines the authoritative key assignments.
     // File "2" (WorldController.js) references assets by these keys — they must NOT change.
     // Purely numeric extensionless files in models/ are Cherry3D key-numbered runtime
     // artifacts and must be EXCLUDED from scanning (they are what assets.json maps TO).
@@ -1555,39 +1422,6 @@
             }
         }
 
-        // ── Load reference zip's internal assets.json as the base ──
-        // This ensures all pre-existing files from the template are always included.
-        let referenceAssets = [];
-        try {
-            const refFolder = ref(storage, `${ROOT}/${currentProject}/reference_zip`);
-            const refList = await listAll(refFolder);
-            if (refList.items.length > 0) {
-                const refUrl = await getDownloadURL(refList.items[0]);
-                const refRes = await fetch(refUrl);
-                const refBlob = await refRes.blob();
-                const refZip = new JSZip();
-                await refZip.loadAsync(refBlob);
-
-                // Find assets.json inside the reference zip (may be at root or in json/ subfolder)
-                let assetsEntry = null;
-                for (const path of Object.keys(refZip.files)) {
-                    if (path.endsWith('assets.json') && !path.includes('__MACOSX')) {
-                        assetsEntry = refZip.files[path];
-                        break;
-                    }
-                }
-                if (assetsEntry) {
-                    const refAssetsText = await assetsEntry.async('text');
-                    const parsed = JSON.parse(refAssetsText);
-                    if (Array.isArray(parsed)) referenceAssets = parsed;
-                    else { const arr = Object.values(parsed).find(v => Array.isArray(v)); if (arr) referenceAssets = arr; }
-                    console.info(`syncAssetsJson: Loaded ${referenceAssets.length} entries from reference zip's assets.json.`);
-                }
-            }
-        } catch(e) {
-            console.warn("syncAssetsJson: Could not parse reference zip's assets.json:", e);
-        }
-
         // Load existing project assets.json to preserve established key assignments
         let existingAssets = [];
         try {
@@ -1603,14 +1437,11 @@
             console.info("syncAssetsJson: No existing project assets.json found.");
         }
 
-        // Also add all reference zip asset entries to truthMap so they survive pruning
-        // (handles nested children structures from Cherry3D)
-      function flattenAssetEntries(entries) {
+        // Helper to flatten nested asset entries (handles Cherry3D folder structures)
+        function flattenAssetEntries(entries) {
             const flat = [];
             for (const entry of entries) {
-                // Skip invalid entries like strings or nulls
-                if (!entry || typeof entry !== 'object') continue; 
-                
+                if (!entry || typeof entry !== 'object') continue;
                 flat.push(entry);
                 if (entry.children && Array.isArray(entry.children) && entry.children.length > 0) {
                     flat.push(...flattenAssetEntries(entry.children));
@@ -1618,52 +1449,6 @@
             }
             return flat;
         }
-        const flatReference = flattenAssetEntries(referenceAssets);
-        for (const entry of flatReference) {
-            if (entry.title && !truthMap.has(entry.title)) {
-                truthMap.set(entry.title, entry.type || 'object');
-            }
-        }
-
-        // ── Hierarchical Merge ──
-        // Reference assets are AUTHORITATIVE for their own keys — they define the
-        // correct Cherry3D structure (folders, children, types, extensions).
-        // Project-level entries are only added if their key does NOT exist in the reference.
-
-        // Build a deep-clone of reference assets as the starting point
-        function deepCloneEntries(entries) {
-            return entries.map(e => {
-                // Return primitives as-is without trying to clone them
-                if (!e || typeof e !== 'object') return e;
-                
-                const clone = Object.assign({}, e);
-                if (clone.children && Array.isArray(clone.children)) {
-                    clone.children = deepCloneEntries(clone.children);
-                }
-                return clone;
-            });
-        }
-
-        let mergedAssets = deepCloneEntries(referenceAssets);
-
-        // Collect all keys already present in the reference tree
-        const flatMerged = flattenAssetEntries(mergedAssets);
-        const referenceKeySet = new Set(flatMerged.map(e => String(e.key)));
-
-        // Append project entries whose keys are NOT in the reference
-        // (these are user-added assets like custom models, textures, etc.)
-        const flatExisting = flattenAssetEntries(existingAssets);
-        for (const entry of flatExisting) {
-            const key = String(entry.key);
-            if (!referenceKeySet.has(key)) {
-                // Ensure entry has children array
-                if (!entry.children) entry.children = [];
-                mergedAssets.push(entry);
-                referenceKeySet.add(key);
-            }
-        }
-
-        existingAssets = mergedAssets;
 
         const usedKeys = new Set();
         let maxKey = 0;
@@ -2736,7 +2521,7 @@ Quality criteria for your work:
         document.getElementById('trancheHeaderSub').textContent = 'Phase 0: Architect Pass + Builder Planning...';
         document.getElementById('trancheOverallFill').style.width = '0%';
         document.getElementById('trancheList').innerHTML = '';
-        document.getElementById('trancheFooterStatus').textContent = `${svc.planner} generating architecture rules and tranche plan...`;
+        document.getElementById('trancheFooterStatus').textContent = `${svc.planner} planning tranches...`;
         // Reset intelligence panel
         const intPanel = document.getElementById('trancheIntelligence');
         intPanel.classList.remove('active');
@@ -2918,6 +2703,17 @@ Quality criteria for your work:
                 <div class="tranche-card-message" data-role="msg" style="display:none;"></div>
                 <div class="tranche-card-quality-toggle" data-role="qtoggle" onclick="var q=this.nextElementSibling;q.classList.toggle('open');this.textContent=q.classList.contains('open')?'▾ Hide quality criteria':'▸ Quality criteria';" style="display:none;">▸ Quality criteria</div>
                 <div class="tranche-card-quality" data-role="quality"></div>
+                <div class="tranche-fix-status" data-role="fix-status"></div>
+                <div class="tranche-violation-panel" data-role="violations">
+                  <div class="tranche-violation-header" onclick="var b=this.nextElementSibling,t=this.querySelector('.tranche-violation-toggle');b.classList.toggle('open');t.classList.toggle('open');">
+                    <div class="tranche-violation-header-left">
+                      <span>⚠</span>
+                      <span data-role="violations-title">FATAL Violations Detected</span>
+                    </div>
+                    <span class="tranche-violation-toggle">▶</span>
+                  </div>
+                  <div class="tranche-violation-body" data-role="violations-body"></div>
+                </div>
                 <div class="tranche-card-prompt-toggle" data-role="toggle" onclick="this.nextElementSibling.classList.toggle('open'); this.textContent = this.nextElementSibling.classList.contains('open') ? '▾ Hide tranche prompt' : '▸ Show tranche prompt';">▸ Show tranche prompt</div>
                 <div class="tranche-card-prompt-box" data-role="prompt"></div>
               </div>
@@ -2949,6 +2745,7 @@ Quality criteria for your work:
           indexEl.className = `tranche-card-index ${t.status}`;
           if (t.status === 'complete') indexEl.textContent = '✓';
           else if (t.status === 'error') indexEl.textContent = '✕';
+          else if (t.status === 'fixing') indexEl.textContent = '🔧';
           else indexEl.textContent = i + 1;
           // Tint the index based on phase when pending
           if (t.status === 'pending' && t.phase) {
@@ -2975,7 +2772,10 @@ Quality criteria for your work:
           }
 
           // Build meta tags
-          let metaHTML = `<span class="tranche-card-tag ${t.status}">${t.status === 'in_progress' ? 'BUILDING...' : t.status.toUpperCase()}</span>`;
+          const statusLabel = t.status === 'in_progress' ? 'BUILDING...'
+            : t.status === 'fixing' ? `🔧 FIXING (${t.fixAttempt || t.antiPatternRetryCount || '?'}/${2})`
+            : t.status.toUpperCase();
+          let metaHTML = `<span class="tranche-card-tag ${t.status}">${statusLabel}</span>`;
           if (t.phase) {
             metaHTML += `<span class="tranche-card-tag" style="background:${phaseMeta.color}15;color:${phaseMeta.color};border:1px solid ${phaseMeta.color}33;">${phaseMeta.icon} P${t.phase}</span>`;
           }
@@ -3010,13 +2810,66 @@ Quality criteria for your work:
             qToggleEl.style.display = 'none';
           }
 
-          // Show message if complete or error
-          if (t.message && (t.status === 'complete' || t.status === 'error')) {
+          // Show message if complete, error, or fixing
+          if (t.message && (t.status === 'complete' || t.status === 'error' || t.status === 'fixing')) {
             msgEl.style.display = 'block';
-            msgEl.className = `tranche-card-message${t.status === 'error' ? ' error-msg' : ''}`;
+            const msgClass = t.status === 'error' ? ' error-msg'
+              : t.status === 'fixing' ? ' fixing-msg'
+              : '';
+            msgEl.className = `tranche-card-message${msgClass}`;
             msgEl.textContent = t.message;
           } else {
             msgEl.style.display = 'none';
+          }
+
+          // ── Violation panel ──────────────────────────────────
+          const violationsEl    = card.querySelector('[data-role="violations"]');
+          const violationsTitleEl = card.querySelector('[data-role="violations-title"]');
+          const violationsBodyEl  = card.querySelector('[data-role="violations-body"]');
+          const fixStatusEl       = card.querySelector('[data-role="fix-status"]');
+
+          const hasViolations = t.antiPatternViolations && t.antiPatternViolations.length > 0;
+          const isFixing      = t.status === 'fixing';
+          const wasFixed      = t.status === 'complete' && t.fixAttempt > 0;
+          const fixFailed     = t.status === 'error' && t.antiPatternRetryCount > 0;
+
+          if (violationsEl) {
+            if (hasViolations) {
+              violationsEl.classList.add('active');
+              const vCount = t.antiPatternViolations.length;
+              if (violationsTitleEl) {
+                violationsTitleEl.textContent = `${vCount} FATAL Violation${vCount > 1 ? 's' : ''} Detected`;
+              }
+              if (violationsBodyEl) {
+                violationsBodyEl.innerHTML = t.antiPatternViolations.map((v, vi) => `
+                  <div class="tranche-violation-item">
+                    <div class="tranche-violation-item-title">⛔ ${this._escapeHTML(v.pattern)}</div>
+                    <div class="tranche-violation-item-file">📄 ${this._escapeHTML(v.file)}</div>
+                    <div class="tranche-violation-item-msg">${this._escapeHTML(v.message)}</div>
+                  </div>`).join('');
+              }
+            } else {
+              violationsEl.classList.remove('active');
+            }
+          }
+
+          if (fixStatusEl) {
+            if (isFixing) {
+              const attempt = t.fixAttempt || t.antiPatternRetryCount || '?';
+              fixStatusEl.className = 'tranche-fix-status active';
+              fixStatusEl.textContent = `🔧 Correction pass ${attempt}/${2} in progress — rewriting to fix ${(t.antiPatternViolations || []).length} violation(s)...`;
+            } else if (wasFixed) {
+              fixStatusEl.className = 'tranche-fix-status active resolved';
+              fixStatusEl.textContent = `✅ All violations resolved after ${t.fixAttempt} correction pass(es).`;
+            } else if (fixFailed) {
+              fixStatusEl.className = 'tranche-fix-status active';
+              fixStatusEl.style.borderLeftColor = 'var(--danger)';
+              fixStatusEl.style.color = 'var(--danger)';
+              fixStatusEl.textContent = `✕ Correction failed after ${t.antiPatternRetryCount} attempt(s) — tranche skipped.`;
+            } else {
+              fixStatusEl.className = 'tranche-fix-status';
+              fixStatusEl.textContent = '';
+            }
           }
 
           // Prompt text
@@ -3203,295 +3056,7 @@ Quality criteria for your work:
 
     update2Btn.addEventListener('click', runUpdate2FromAiResponse);
 
-    /* ╔══════════════════════════════════════════════════════════╗
-       ║          GAME ESSENCE CONTRACT ENGINE                   ║
-       ║  Two-step AI pipeline (interview → contract) that       ║
-       ║  derives a binding §A-§H Game Contract from first       ║
-       ║  principles before any code generation begins.          ║
-       ║  §I (Engine Invariants) is auto-appended by the         ║
-       ║  frontend to prevent known silent failure modes.         ║
-       ║                                                          ║
-       ║  Step 1 – INTERVIEW  (essenceProxy, step:"interview")   ║
-       ║    12 canonical questions → concrete answers             ║
-       ║    Result saved to Firebase: ai_essence_interview.json  ║
-       ║                                                          ║
-       ║  Step 2 – CONTRACT   (essenceProxy, step:"contract")    ║
-       ║    Answers → §A-§H binding contract with exact values   ║
-       ║    §I engine invariants auto-appended on activation     ║
-       ║    Result saved to Firebase: ai_essence_contract.json   ║
-       ║                                                          ║
-       ║  Contract is then:                                       ║
-       ║  • Stored in activeGameContract (with §I appended)      ║
-       ║  • Written into every ai_request.json payload           ║
-       ║  • Injected by the backend before every tranche prompt  ║
-       ╚══════════════════════════════════════════════════════════╝ */
-
-    // ── Toggle panel open/close ──────────────────────────────
-    document.getElementById('essenceHeader').addEventListener('click', () => {
-      const body = document.getElementById('essenceBody');
-      const chev = document.getElementById('essenceChevron');
-      const open = body.classList.toggle('open');
-      chev.classList.toggle('open', open);
-    });
-
-    // ── Phase management ─────────────────────────────────────
-    function essSetPhase(n) {
-      ['eph0','eph1','eph2','eph3'].forEach((id, i) => {
-        document.getElementById(id).className =
-          'essence-phase' + (i === n ? ' active' : i < n ? ' done' : '');
-      });
-      ['essPhase0','essPhase1','essPhase2','essPhase3'].forEach((id, i) => {
-        document.getElementById(id).style.display = i === n ? '' : 'none';
-      });
-    }
-
-    function essSetBadge(txt, cls) {
-      const b = document.getElementById('essenceBadge');
-      b.textContent = txt;
-      b.className   = 'essence-badge' + (cls ? ' ' + cls : '');
-    }
-
-    function essStopPoll() {
-      if (essencePollTimer) { clearInterval(essencePollTimer); essencePollTimer = null; }
-    }
-
-    function essSetSpinner(id, on) {
-      const el = document.getElementById(id);
-      if (el) el.style.display = on ? 'inline-block' : 'none';
-    }
-
-    // ── Activate the final contract ──────────────────────────
-    // ── §I Engine Implementation Invariants (auto-appended to every contract) ──
-    const ENGINE_INVARIANTS_SECTION = `
-
-### §I — ENGINE IMPLEMENTATION INVARIANTS (KNOWN FAILURE MODES)
-\`\`\`javascript
-// These are BINDING implementation rules derived from verified production failures.
-// They apply to ALL Cherry3D games regardless of genre. Violating any of these
-// produces SILENT failures — no error is thrown, but the game is broken.
-//
-// PHYSICS & SCENE GRAPH:
-// 1. rbPosition for ALL child rigidbodies MUST be [0, 0, 0] — world position comes from the parent mesh. Passing world coords causes POSITION DOUBLING.
-// 2. Floor/ground MUST have a STATIC rigidbody child — visual-only geometry provides zero collision. DYNAMIC actors will fall through.
-// 3. After spawning DYNAMIC actors, verify visual mesh follows physics body. If not, add explicit sync: obj.position = getMotionState().position every frame.
-// 4. For grid-based games, actor collision half-extents must provide ≥15% clearance vs tile size (e.g., 0.35 for 1.0 tiles). Tighter causes wedging at corners.
-// 5. Tile-centering corrections in updateInput must ONLY apply to the non-movement axis. Correcting the movement axis cancels velocity.
-//
-// API PATHS:
-// 6. Correct path: rb.RigidBody.controls.setFloat/setInt (NOT rb.controls — shorthand is SILENT NO-OP).
-// 7. controls.getFloat()/getInt() are UNRELIABLE for readback. Use rb.RigidBody.getMotionState() for position. Compute tileCentered/wallBlocked on main thread.
-//
-// CROSS-FILE COMMUNICATION:
-// 8. File 2 and file 23 run in SEPARATE window contexts. window.* globals from file 23 do NOT exist in file 2.
-// 9. All UI communication must use DOM element refs from Module.ProjectManager.getObject(id).DOMElement.
-// 10. HTML overlay object ID is not guaranteed — scan IDs 20-30 with querySelector('#startButton') fallback.
-// 11. Wire button listeners directly on queried DOM elements in file 2. Add boolean flag polling as fallback.
-//
-// INPUT PIPELINE:
-// 12. NEVER call blur()/focus() — breaks engine keyboard capture.
-// 13. After modal dismissal, set pointer-events:none on overlay root.
-// 14. ALWAYS add document.addEventListener('keydown') fallback for movement input.
-//
-// AI STATE MACHINES:
-// 15. Reset ALL tracking fields on every state transition (decided tile, exit flag, target).
-// 16. AI direction decisions should be once-per-tile, not once-per-frame.
-// 17. Add spatial filters to prevent actors from re-entering restricted zones after exiting.
-\`\`\``;
-
-    function essActivateContract(contractText) {
-      // Append §I engine invariants if not already present
-      let fullContract = contractText;
-      if (!fullContract.includes('§I')) {
-        fullContract = fullContract + ENGINE_INVARIANTS_SECTION;
-      }
-      activeGameContract = fullContract;
-
-      document.getElementById('essFinalOut').textContent = fullContract;
-      document.getElementById('essenceActiveName').textContent =
-        `✓ Contract active — ${essenceGameName}`;
-      document.getElementById('essenceActiveBanner').classList.add('show');
-      document.getElementById('essenceInjectHint').style.display = '';
-      document.getElementById('essencePanel').classList.add('contract-active');
-
-      essSetBadge('CONTRACT ACTIVE', 'active');
-      essSetPhase(3);
-      appendToChatLog('System',
-        `Game Essence Contract derived for "${essenceGameName}". ` +
-        `§A–§I will be injected into every tranche of the next build.`, 'normal');
-    }
-
-    // ── Clear / reset engine ─────────────────────────────────
-    function essClear() {
-      essStopPoll();
-      activeGameContract = null;
-      essenceAnswers     = '';
-      essenceGameName    = '';
-
-      document.getElementById('essenceActiveBanner').classList.remove('show');
-      document.getElementById('essenceInjectHint').style.display = 'none';
-      document.getElementById('essencePanel').classList.remove('contract-active');
-      document.getElementById('essIntOut').textContent  = 'Waiting for AI response...';
-      document.getElementById('essConOut').textContent  = 'Waiting for contract derivation...';
-      document.getElementById('essFinalOut').textContent = '';
-      document.getElementById('essIntBtns').style.display = 'none';
-      document.getElementById('essErr').style.display    = 'none';
-      document.getElementById('essErr').textContent      = '';
-
-      essSetBadge('NO CONTRACT', '');
-      essSetPhase(0);
-    }
-
-    document.getElementById('essClearBtn').addEventListener('click', essClear);
-    document.getElementById('essBackBtn' ).addEventListener('click', essClear);
-
-    document.getElementById('essCopyBtn').addEventListener('click', () => {
-      if (!activeGameContract) return;
-      navigator.clipboard.writeText(activeGameContract).catch(() => {});
-      const btn = document.getElementById('essCopyBtn');
-      btn.textContent = '✓ Copied!';
-      setTimeout(() => { btn.textContent = '📋 Copy Contract'; }, 2000);
-    });
-
-    // ── Firebase poll helper ─────────────────────────────────
-    // Polls `resultKey` every 3 s until data.result is present.
-    // Guards against stale jobs via jobId matching.
-    function essPollFirebase(jobId, resultKey, onSuccess, onError) {
-      essStopPoll();
-      const fileRef = ref(storage, `${ROOT}/${currentProject}/${resultKey}`);
-
-      essencePollTimer = setInterval(async () => {
-        try {
-          const url = await getDownloadURL(fileRef);
-          const res = await fetch(url + '&_nc=' + Date.now(), { cache: 'no-store' });
-          if (!res.ok) return;
-          const data = await res.json();
-
-          if (data.jobId && data.jobId !== jobId) return;   // stale – keep waiting
-          if (data.error)  { essStopPoll(); onError(data.error); return; }
-          if (data.result) { essStopPoll(); onSuccess(data.result); }
-        } catch (_) { /* file not ready yet – keep polling */ }
-      }, 3000);
-    }
-
-    // ── STEP 1: Run Essence Interview ────────────────────────
-    document.getElementById('essRunBtn').addEventListener('click', async () => {
-      const name  = document.getElementById('essName').value.trim();
-      const desc  = document.getElementById('essDesc').value.trim();
-      const prior = document.getElementById('essPrior').value.trim();
-      const errEl = document.getElementById('essErr');
-
-      if (!name || !desc) {
-        errEl.textContent = 'Game name and description are required.';
-        errEl.style.display = '';
-        return;
-      }
-      if (!currentProject) {
-        errEl.textContent = 'Select or create a project first.';
-        errEl.style.display = '';
-        return;
-      }
-      errEl.style.display = 'none';
-      essenceGameName = name;
-
-      essSetBadge('RUNNING…', 'running');
-      essSetPhase(1);
-      essSetSpinner('essIntSpin', true);
-      document.getElementById('essIntStatus').innerHTML =
-        '<span class="essence-spin" id="essIntSpin" style="display:inline-block;"></span>Conducting 12-question Essence Interview…';
-      document.getElementById('essIntBtns').style.display = 'none';
-      document.getElementById('essIntOut').textContent = 'Dispatching to essenceProxy backend…';
-
-      const jobId = 'ess_' + Date.now();
-      essencePollJobId = jobId;
-
-      try {
-        // Clean any previous results
-        try { await deleteObject(ref(storage, `${ROOT}/${currentProject}/ai_essence_interview.json`)); } catch(_) {}
-
-        // Write request payload to Firebase
-        await uploadString(
-          ref(storage, `${ROOT}/${currentProject}/ai_essence_request.json`),
-          JSON.stringify({ step: 'interview', jobId, gameName: name, gameDescription: desc, priorGameType: prior })
-        );
-
-        // Trigger the Netlify background function
-        const proxyRes = await fetch('/.netlify/functions/essenceProxy-background', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ projectPath: `${ROOT}/${currentProject}`, jobId, step: 'interview' })
-        });
-        if (!proxyRes.ok) throw new Error(`essenceProxy-background returned HTTP ${proxyRes.status}`);
-
-        document.getElementById('essIntOut').textContent = 'AI interview running… polling Firebase for result…';
-
-        // Poll for result
-        essPollFirebase(jobId, 'ai_essence_interview.json',
-          (result) => {
-            essenceAnswers = result;
-            document.getElementById('essIntOut').textContent = result;
-            document.getElementById('essIntStatus').innerHTML = '✓ Essence Interview complete';
-            document.getElementById('essIntBtns').style.display = 'flex';
-            essSetBadge('INTERVIEW ✓', 'running');
-          },
-          (err) => {
-            document.getElementById('essIntStatus').innerHTML = '✕ Error: ' + err;
-            essSetBadge('ERROR', 'error');
-          }
-        );
-
-      } catch (e) {
-        document.getElementById('essIntStatus').innerHTML = '✕ Failed: ' + e.message;
-        essSetBadge('ERROR', 'error');
-        console.error('Essence Interview error:', e);
-      }
-    });
-
-    // ── STEP 2: Compile Game Contract ────────────────────────
-    document.getElementById('essCompileBtn').addEventListener('click', async () => {
-      if (!essenceAnswers || !currentProject) return;
-
-      essSetPhase(2);
-      essSetBadge('RUNNING…', 'running');
-      document.getElementById('essConStatus').innerHTML =
-        '<span class="essence-spin" id="essConSpin" style="display:inline-block;"></span>Compiling §A–§I Game Contract…';
-      document.getElementById('essConOut').textContent = 'Dispatching to essenceProxy backend…';
-
-      const jobId = 'essC_' + Date.now();
-      essencePollJobId = jobId;
-
-      try {
-        try { await deleteObject(ref(storage, `${ROOT}/${currentProject}/ai_essence_contract.json`)); } catch(_) {}
-
-        await uploadString(
-          ref(storage, `${ROOT}/${currentProject}/ai_essence_request.json`),
-          JSON.stringify({ step: 'contract', jobId, gameName: essenceGameName, essenceAnswers })
-        );
-
-        const proxyRes = await fetch('/.netlify/functions/essenceProxy-background', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ projectPath: `${ROOT}/${currentProject}`, jobId, step: 'contract' })
-        });
-        if (!proxyRes.ok) throw new Error(`essenceProxy-background returned HTTP ${proxyRes.status}`);
-
-        document.getElementById('essConOut').textContent = 'AI compiling contract… polling Firebase…';
-
-        essPollFirebase(jobId, 'ai_essence_contract.json',
-          (result) => {
-            document.getElementById('essConStatus').innerHTML = '✓ Contract compiled';
-            essActivateContract(result);
-          },
-          (err) => {
-            document.getElementById('essConStatus').innerHTML = '✕ Error: ' + err;
-            essSetBadge('ERROR', 'error');
-          }
-        );
-
-      } catch (e) {
-        document.getElementById('essConStatus').innerHTML = '✕ Failed: ' + e.message;
-        essSetBadge('ERROR', 'error');
-        console.error('Essence Contract error:', e);
-      }
-    });
-    /* ─── END GAME ESSENCE CONTRACT ENGINE ─────────────────── */
+    /* Game Essence Contract Engine — REMOVED (contract merged into Master Prompt) */
 
     sendToAiBtn.addEventListener('click', async () => {
         pendingAiPrompt = aiPromptInput.value.trim();
@@ -3970,41 +3535,14 @@ ${repairTargets.map(t => `- ${t.safePath || t.path}: ${t.reason || 'unknown issu
 ${buildRepairTargetsContext(repairTargets)}`
           : '';
 
-        // ── Game Essence Contract injection ─────────────────────
-        // If a §A-§I contract has been derived, prepend it to the
-        // enhancedPrompt so the planner sees it, AND pass it as a
-        // separate field so the backend can inject it into every
-        // individual tranche prompt at execution time.
-        const contractBlock = activeGameContract
-          ? `\n╔═══════════════ GAME CONTRACT (BINDING) ═══════════════╗\n` +
-            `║ The following §A–§I contract was derived via Essence  ║\n` +
-            `║ Interview and is BINDING for this entire build.       ║\n` +
-            `║ Every tranche executor MUST honour ALL axioms below.  ║\n` +
-            `║ §I contains ENGINE INVARIANTS that prevent known      ║\n` +
-            `║ silent failures — violations produce broken games     ║\n` +
-            `║ with zero error messages.                             ║\n` +
-            `╚═══════════════════════════════════════════════════════╝\n\n` +
-            activeGameContract + `\n\n` +
-            `╔═══════════════════════════════════════════════════════╗\n` +
-            `║ END GAME CONTRACT — normal build instructions follow  ║\n` +
-            `╚═══════════════════════════════════════════════════════╝\n`
-          : '';
 
         const enhancedPrompt = repairAttempt > 0
           ? `You are an expert game developer performing a SURGICAL REPAIR of specific failed files.
 Do NOT plan new tranches. Do NOT redesign the game. Fix ONLY the exact targets listed below.
-${contractBlock}
 
-CHERRY3D SDK ERRATA — VERIFIED CORRECTIONS (apply these over any conflicting SDK guidance):
-1. controls.getFloat()/getInt() are UNRELIABLE for readback — use rb.RigidBody.getMotionState() instead.
-2. Correct property path is rb.RigidBody.controls (NOT rb.controls — the shorthand is a silent no-op).
-3. DYNAMIC bodies may NOT auto-sync visual mesh — add explicit obj.position = getMotionState().position in render loop.
-4. HTML overlay object ID is not guaranteed — scan IDs 20-30 with querySelector fallback.
-5. File 2 and file 23 run in SEPARATE window contexts — use DOM queries via getObject(id).DOMElement, not window.* globals.
-6. After modal dismissal set pointer-events:none, never call blur()/focus(), add document.addEventListener('keydown') fallback.
-7. rbPosition for child rigidbodies must be [0,0,0] — world position comes from the parent mesh.
-8. Floor/ground must have a STATIC rigidbody — visual-only geometry provides zero collision.
-9. Actor collision half-extents need 15%+ clearance vs tile size; centering correction only on non-movement axis.
+NOTE: The Cherry3D Engine Reference (platform invariants) is provided in the system prompt by the backend.
+Apply all engine rules from there. Your output will be scanned by anti-pattern validators that reject
+code containing known fatal patterns (wrong property paths, unreliable readback, cross-context window globals, etc.).
 
 ${repairSeedFiles['models/2'] ? `
 === CURRENT FILE: models/2 ===
@@ -4036,8 +3574,7 @@ OUTPUT FORMAT:
 Followed by a plain-text repair summary explaining what was fixed and why it was missing.
 
 Original user request for context: ${basePrompt}`
-          : `${contractBlock}
-${projectFiles['models/2'] ? `
+          : `${projectFiles['models/2'] ? `
 === FILE: models/2 ===
 ${projectFiles['models/2']}` : ''}
 ${projectFiles['models/23'] ? `
@@ -4051,58 +3588,33 @@ ${zipContextString}
 ${extentsContext}
 
 ═══════════════════════════════════════════════════════════
-V2 EXPERT-AGENT TRANCHED BUILD PIPELINE
+SINGLE-PASS TRANCHED BUILD PIPELINE
 ═══════════════════════════════════════════════════════════
 
-You are preparing a build request for a TWO-PASS ARCHITECT-TO-BUILDER pipeline.
-The backend will do this in two distinct phases:
+You are preparing a build request for a SINGLE-PASS planning pipeline.
+The backend planner (Opus 4.6) reads this request plus project files plus the Engine Reference directly and splits the build into sequential tranches. No intermediate architecture synthesis step.
 
-PASS 1 — ARCHITECT
-- Reads the user request, current files, optional Game Contract, and Cherry3D SDK context.
-- Generates the dynamic game-specific architecture laws for THIS exact game.
-- This pass decides actor categories, state model, motion rules, camera rules, grid rules,
-  ordering constraints, and failure guards only when they are actually required by the request.
-- It must NOT reuse rigid one-size-fits-all assumptions from other games.
+ENVIRONMENT CONSTRAINTS (platform facts handled by backend):
+1. Output format uses delimiter blocks: ===FILE_START: path=== ... ===FILE_END: path===
+2. Valid target files are models/2, models/23, and json/assets.json.
+3. Main logic file is models/2. HTML overlay is models/23.
+4. Output complete file contents, not patches or diffs.
+5. Preserve accumulated code from prior tranches.
+6. Engine invariants (Engine Reference) are in every executor system prompt.
+7. Anti-pattern validators mechanically enforce engine rules after each tranche.
 
-PASS 2 — BUILDER / TRANCHE PLANNER
-- Uses the Architect output plus the platform constraints below.
-- Splits the build into focused expert-driven tranches.
-- Injects only the relevant dynamic architecture rules into each tranche.
-
-HARD ENVIRONMENT CONSTRAINTS (these are platform facts and may remain fixed):
-1. Output format must use delimiter blocks exactly:
-   ===FILE_START: path=== ... ===FILE_END: path===
-   followed by ===MESSAGE=== ... ===END_MESSAGE===
-2. Valid target files are models/2 models/23 and json/assets.json.
-3. The main logic file is models/2 never WorldController.js.
-4. The main HTML file is models/23 never document.html.
-5. Output complete file contents not patches or diffs.
-6. Preserve accumulated code from prior tranches.
-7. Respect deferred engine readiness and isReady polling when SDK patterns require it.
-
-DYNAMIC PIPELINE REQUIREMENTS:
-- Never hardcode universal game-architecture rules in advance.
-- Do not force an actor table grid math physics model or state pattern unless the Architect pass
-  determines that the requested game actually needs them.
-- When the Game Contract and SDK imply constraints use those exact constraints.
-- When the request is non-physics based do not hallucinate physics systems.
-- When the request is grid based define exact grid laws.
-- When the request is free-movement based define the correct movement and camera laws.
-- Every tranche must be self-contained and must preserve all earlier working code.
+PLANNING REQUIREMENTS:
+- Use the minimum number of tranches that preserves correctness.
+- Order tranches by true dependency.
+- Each tranche prompt must embed exact game-specific rules, code examples, and pitfall warnings from this request. Do NOT summarize — copy the exact technical details.
+- Engine-level rules are already in the executor system prompt. Do NOT restate them in tranche prompts.
 - Each tranche must be assigned 1-2 expert agents from this roster:
 ${EXPERT_AGENTS_JSON}
 
-TRANCHE PLANNING REQUIREMENTS:
-1. Use the minimum number of tranches that preserves correctness and clarity.
-2. Order tranches by true dependency.
-3. Each tranche must focus on one subsystem or one tightly-coupled pair.
-4. Each tranche prompt must clearly separate:
-   - HARD ENVIRONMENT CONSTRAINTS
-   - GAME-SPECIFIC ARCHITECTURE RULES
-   - EXACT TASK FOR THIS TRANCHE
-5. Include exact values variable names SDK excerpts and pitfall warnings where relevant.
-6. The first tranche must establish the exact foundations required by the Architect pass.
-7. The last tranche must handle integration edge cases and polish.
+TRANCHE STRUCTURE:
+1. First tranche: foundations (factories, materials, maze parsing, floor+walls with STATIC rigidbodies).
+2. Middle tranches: one subsystem each, ordered by dependency.
+3. Last tranche: integration, edge cases, and polish.
 
 User Request: ${prompt}`;
 
@@ -4144,7 +3656,7 @@ User Request: ${prompt}`;
         renderPromptImages();
         
         Progress.step('Uploading payload to Firebase', 'Bypassing Netlify async size limits...');
-        const payloadBody = JSON.stringify({ prompt: enhancedPrompt, files: projectFiles, projectPath, selectedAssets, inlineImages, expertAgents: EXPERT_AGENTS, repairAttempt, repairTargets, gameContract: activeGameContract || null });
+        const payloadBody = JSON.stringify({ prompt: enhancedPrompt, files: projectFiles, projectPath, selectedAssets, inlineImages, expertAgents: EXPERT_AGENTS, repairAttempt, repairTargets });
         const requestFileRef = ref(storage, `${projectPath}/ai_request.json`);
         await uploadString(requestFileRef, payloadBody);
 
