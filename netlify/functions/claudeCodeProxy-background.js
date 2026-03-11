@@ -29,7 +29,16 @@ const HARD_ENVIRONMENT_CONSTRAINTS = `HARD ENVIRONMENT CONSTRAINTS (platform fac
 5. Preserve accumulated code from prior tranches. Output complete file contents, never diffs.
 6. Respect the platform's staged execution model: one planning pass followed by sequential tranche execution.
 7. Heavy engine/physics setup must respect deferred readiness patterns and isReady polling when the SDK requires it.
-8. The validation manifest block is mandatory in every emitted file.`;
+8. The validation manifest block is mandatory in every emitted file.
+9. Rigidbody rbPosition is a LOCAL offset from its parent object. Use [0,0,0] unless you need intentional displacement from the visual mesh center. Passing world coordinates causes POSITION DOUBLING because the engine compounds parent transform + child offset.
+10. Every surface that must block a DYNAMIC body needs its own STATIC rigidbody — including the floor. A visual-only mesh provides zero collision resistance; DYNAMIC actors will fall through it.
+11. File 2 (models/2) and file 23 (models/23) run in SEPARATE window contexts. window.* globals set in one file do NOT exist in the other. All cross-file communication must use DOM element references obtained from Module.ProjectManager.getObject(id).DOMElement, or boolean flag polling read each frame.
+12. After any HTML button click or modal dismissal, set pointer-events:none on the overlay root so input events reach the engine canvas. Never call blur() or focus() on engine-managed elements — this breaks the engine's keyboard capture pipeline. Always add a document.addEventListener('keydown') fallback that writes directly to gameState for movement input.
+13. Use the full property path rb.RigidBody.controls.setFloat / setInt / addInputHandler / getMotionState. The shorthand rb.controls is a SILENT NO-OP in most configurations — no error is thrown, but nothing happens.
+14. Do NOT use controls.getFloat() or controls.getInt() for reading position or state back from the physics thread — these are unreliable and may always return 0. Instead use rb.RigidBody.getMotionState() for position/velocity, and compute derived state (tileCentered, wallBlocked) on the main thread from position data.
+15. After spawning any DYNAMIC rigidbody actor, verify within the first 3 render frames that the visual mesh position tracks the physics body position. If it does not auto-sync, add explicit sync every frame: obj.position = [motionState.position[0], y, motionState.position[2]].
+16. For grid-based games, actor collision bounding boxes must provide at least 15% clearance relative to tile size (e.g., half-extent 0.35 for 1.0-unit tiles). Tighter tolerances cause actors to wedge into adjacent walls at corners.
+17. Tile-centering corrections in physics updateInput must ONLY apply to the axis perpendicular to movement. Correcting the movement axis will fight the movement velocity and can produce exact cancellation, freezing the actor.`;
 
 const DYNAMIC_ARCHITECTURE_JSON_SCHEMA = `{
   "summary": "2-4 sentence synthesis of the exact game architecture required for THIS request.",
@@ -57,7 +66,14 @@ const DYNAMIC_ARCHITECTURE_JSON_SCHEMA = `{
   ],
   "invariants": ["cross-system laws that may not be violated"],
   "failureGuards": ["checks/orderings needed to avoid known failure modes"],
-  "trancheHints": ["how the builder should sequence implementation work"]
+  "trancheHints": ["how the builder should sequence implementation work"],
+  "failureModes": [
+    {
+      "symptom": "what the developer or player would observe at runtime (e.g., actor at wrong position, input dead, UI not updating)",
+      "cause": "underlying engine/API/context issue that produces this symptom",
+      "prevention": "specific implementation pattern the generated code MUST use to avoid this failure"
+    }
+  ]
 }`;
 
 /* ── helper: call Claude API ─────────────────────────────────── */
@@ -594,9 +610,9 @@ ${prompt}
       console.log(`STAGE 0B: Builder-plan pass with Opus 4.6 for Job ${jobId}...`);
       const planResult = await callClaude(apiKey, {
         model: "claude-opus-4-6",
-        maxTokens: 76000,
-        budgetTokens: 15000,
-        effort: "medium",
+        maxTokens: 128000,
+        budgetTokens: 25000,
+        effort: "high",
         system: planningSystem,
         userContent: planningUserContent
       });
@@ -735,6 +751,36 @@ ${prompt}
 The user will provide project files and a focused modification request (one tranche of a larger build).
 
 ${HARD_ENVIRONMENT_CONSTRAINTS}
+
+CHERRY3D SDK ERRATA — VERIFIED CORRECTIONS (apply these over any conflicting SDK guidance):
+
+ERRATUM 1: controls.getFloat() / getInt() are UNRELIABLE for reading data back from the physics thread.
+They may always return 0. For position readback, use rb.RigidBody.getMotionState().position.
+For derived state like tileCentered or wallBlocked, compute them on the main thread from position + walkable tile data.
+
+ERRATUM 2: The correct property path is rb.RigidBody.controls, NOT rb.controls.
+Using rb.controls.setFloat() is a SILENT NO-OP — no error thrown, but nothing happens.
+Always use: gameState.playerBody.RigidBody.controls.setFloat(slot, value)
+Always use: gameState.playerBody.RigidBody.addInputHandler(updateInput)
+Always use: gameState.playerBody.RigidBody.getMotionState()
+
+ERRATUM 3: DYNAMIC bodies do NOT always auto-sync visual mesh position to physics position.
+After spawning any DYNAMIC actor, add explicit visual sync in the render loop:
+  const ms = playerBody.RigidBody.getMotionState();
+  playerObj.position = [ms.position[0], 0.5, ms.position[2]];
+
+ERRATUM 4: The HTML overlay object ID is NOT guaranteed to be '25'.
+Always use fallback discovery: try getObject('25'), then scan IDs 20-30 probing for a known DOM element
+(e.g., querySelector('#startButton')) to find the actual overlay root.
+
+ERRATUM 5: File 2 (models/2) and file 23 (models/23) run in SEPARATE window contexts.
+window.* globals set in file 23 are NOT accessible from file 2. All UI communication must use
+DOM element references from Module.ProjectManager.getObject(id).DOMElement.
+Wire button click listeners directly on queried DOM elements in file 2.
+Add boolean flag polling (_startRequested / _restartRequested) as a cross-context fallback.
+After modal dismissal, set pointer-events:none on the overlay root.
+Never call blur()/focus() — it breaks engine keyboard input capture.
+Always add document.addEventListener('keydown') fallback for movement input.
 
 You must respond using DELIMITER FORMAT only. Do NOT use JSON. Do NOT use markdown code blocks.
 

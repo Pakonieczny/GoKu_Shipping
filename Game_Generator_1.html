@@ -769,7 +769,7 @@
           <!-- ══════════════════════════════════════════════════
                GAME ESSENCE CONTRACT PANEL
                Runs before any "Apply AI Update" to derive a
-               binding §A-§H Game Contract from first principles.
+               binding §A-§I Game Contract from first principles.
                The contract is prepended to every tranche prompt.
           ═══════════════════════════════════════════════════ -->
           <div class="essence-panel" id="essencePanel">
@@ -796,13 +796,13 @@
               <div class="essence-active-banner" id="essenceActiveBanner">
                 <div style="flex:1;">
                   <div class="essence-active-name" id="essenceActiveName">✓ Game Contract Active</div>
-                  <div class="essence-active-subs">§A Coordinates · §B Camera · §C Controls · §D Enemies · §E Collectibles · §F Prohibited · §G UI · §H Acceptance Tests</div>
+                  <div class="essence-active-subs">§A Coordinates · §B Camera · §C Controls · §D Enemies · §E Collectibles · §F Prohibited · §G UI · §H Acceptance Tests · §I Engine Invariants</div>
                 </div>
               </div>
 
               <!-- Inject hint (phase 3) -->
               <div class="essence-inject-hint" id="essenceInjectHint" style="display:none;">
-                ⚡ This §A–§H contract will be prepended to every tranche in your next <strong>Apply AI Update</strong> run — the AI cannot deviate from its axioms.
+                ⚡ This §A–§I contract will be prepended to every tranche in your next <strong>Apply AI Update</strong> run — the AI cannot deviate from its axioms.
               </div>
 
               <!-- ── PHASE 0: Input form ── -->
@@ -833,7 +833,7 @@
                 </div>
                 <div class="essence-stream" id="essIntOut">Waiting for AI response...</div>
                 <div class="row" style="gap:8px;display:none;" id="essIntBtns">
-                  <button class="btn btnPrimary" id="essCompileBtn" style="font-size:12px;padding:8px 14px;">Compile §A–§H Contract →</button>
+                  <button class="btn btnPrimary" id="essCompileBtn" style="font-size:12px;padding:8px 14px;">Compile §A–§I Contract →</button>
                   <button class="btn" id="essBackBtn" style="font-size:12px;padding:8px 12px;">← Edit</button>
                 </div>
               </div>
@@ -841,7 +841,7 @@
               <!-- ── PHASE 2: Contract derivation ── -->
               <div id="essPhase2" style="display:none;">
                 <div style="font-size:11px;color:var(--muted);margin-bottom:6px;" id="essConStatus">
-                  <span class="essence-spin" id="essConSpin"></span>Deriving §A–§H Game Contract...
+                  <span class="essence-spin" id="essConSpin"></span>Deriving §A–§I Game Contract...
                 </div>
                 <div class="essence-stream" id="essConOut">Waiting for contract derivation...</div>
               </div>
@@ -941,7 +941,7 @@
     let lastRunStartTime = null;
 
     // ── Game Essence Contract state ──────────────────────────
-    // activeGameContract: the full §A-§H text; injected into every pipeline run.
+    // activeGameContract: the full §A-§I text; injected into every pipeline run.
     // When non-null it is prepended to enhancedPrompt AND written into the
     // ai_request.json payload so the backend can inject it per-tranche.
     let activeGameContract  = null;
@@ -2477,7 +2477,14 @@ Quality criteria for your work:
 - Mass ratios between objects must feel physically plausible
 - Impulse magnitudes must be normalized/clamped for consistent behavior
 - Angular velocity must be explicitly managed (not left to physics engine)
-- All collision handlers must use deferred registration pattern (requestAnimationFrame → isReady)`
+- All collision handlers must use deferred registration pattern (requestAnimationFrame → isReady)
+- rbPosition on child rigidbodies must ALWAYS be [0,0,0] — the parent visual mesh already carries the world position; passing world coords to rbPosition causes POSITION DOUBLING
+- Every surface that must block a DYNAMIC body requires a STATIC rigidbody — including floor/ground planes. Visual-only geometry provides zero collision resistance
+- Use the full property path rb.RigidBody.controls.setFloat/setInt (NOT rb.controls which is a silent no-op)
+- Position readback must use rb.RigidBody.getMotionState().position — NOT controls.getFloat() which is unreliable
+- After spawning DYNAMIC actors, verify visual mesh follows physics body within 3 frames; if not, add explicit sync: obj.position = getMotionState().position each frame
+- For grid-based movement, actor collision half-extents must leave at least 15% clearance vs tile size (e.g., 0.35 for 1.0 tiles) to prevent wedging at corners
+- Tile-centering corrections must only apply to the non-movement axis to avoid canceling movement velocity`
       },
 
       game_mechanics: {
@@ -2579,7 +2586,15 @@ Quality criteria for your work:
 - All HUD values must update in real-time via the game's updateUI callback
 - Progress indicators (bars, counters) must accurately reflect their underlying game state (0 to 1 range)
 - Ratings and end-screens must be visually celebratory and contextually appropriate
-- UI must handle all edge cases (max level wrap, new high score, final level completion)`
+- UI must handle all edge cases (max level wrap, new high score, final level completion)
+- File 2 (models/2) and file 23 (models/23) run in SEPARATE window contexts — window.* globals set in file 23 do NOT exist in file 2. Never use window bridge objects for cross-file communication
+- Query DOM elements in file 2 via Module.ProjectManager.getObject(id).DOMElement with ID fallback scanning (try IDs 20-30, probe for known elements like querySelector('#startButton'))
+- Wire button click listeners DIRECTLY on queried DOM elements inside file 2's onInit — not through window callback bridges
+- Add boolean flag polling (_startRequested / _restartRequested) in onRender as a universal cross-context fallback
+- After any modal dismissal, set pointer-events:none on the HTML overlay root so input events reach the engine canvas
+- NEVER call blur() or focus() on any element — this breaks the engine's keyboard input capture pipeline
+- Always add a document.addEventListener('keydown') fallback for critical movement input that writes directly to gameState.bufferedDirection, bypassing the engine's onKeyEvent system
+- Create a gameState.localUI object in file 2 with helper methods (updateHUD, showGameOver, hideAll, etc.) that operate on locally-queried DOM elements — these replace any window.* UI bridge`
       },
 
       game_loop_state: {
@@ -3193,6 +3208,8 @@ Quality criteria for your work:
        ║  Two-step AI pipeline (interview → contract) that       ║
        ║  derives a binding §A-§H Game Contract from first       ║
        ║  principles before any code generation begins.          ║
+       ║  §I (Engine Invariants) is auto-appended by the         ║
+       ║  frontend to prevent known silent failure modes.         ║
        ║                                                          ║
        ║  Step 1 – INTERVIEW  (essenceProxy, step:"interview")   ║
        ║    12 canonical questions → concrete answers             ║
@@ -3200,10 +3217,11 @@ Quality criteria for your work:
        ║                                                          ║
        ║  Step 2 – CONTRACT   (essenceProxy, step:"contract")    ║
        ║    Answers → §A-§H binding contract with exact values   ║
+       ║    §I engine invariants auto-appended on activation     ║
        ║    Result saved to Firebase: ai_essence_contract.json   ║
        ║                                                          ║
        ║  Contract is then:                                       ║
-       ║  • Stored in activeGameContract                          ║
+       ║  • Stored in activeGameContract (with §I appended)      ║
        ║  • Written into every ai_request.json payload           ║
        ║  • Injected by the backend before every tranche prompt  ║
        ╚══════════════════════════════════════════════════════════╝ */
@@ -3243,10 +3261,52 @@ Quality criteria for your work:
     }
 
     // ── Activate the final contract ──────────────────────────
-    function essActivateContract(contractText) {
-      activeGameContract = contractText;
+    // ── §I Engine Implementation Invariants (auto-appended to every contract) ──
+    const ENGINE_INVARIANTS_SECTION = `
 
-      document.getElementById('essFinalOut').textContent = contractText;
+### §I — ENGINE IMPLEMENTATION INVARIANTS (KNOWN FAILURE MODES)
+\`\`\`javascript
+// These are BINDING implementation rules derived from verified production failures.
+// They apply to ALL Cherry3D games regardless of genre. Violating any of these
+// produces SILENT failures — no error is thrown, but the game is broken.
+//
+// PHYSICS & SCENE GRAPH:
+// 1. rbPosition for ALL child rigidbodies MUST be [0, 0, 0] — world position comes from the parent mesh. Passing world coords causes POSITION DOUBLING.
+// 2. Floor/ground MUST have a STATIC rigidbody child — visual-only geometry provides zero collision. DYNAMIC actors will fall through.
+// 3. After spawning DYNAMIC actors, verify visual mesh follows physics body. If not, add explicit sync: obj.position = getMotionState().position every frame.
+// 4. For grid-based games, actor collision half-extents must provide ≥15% clearance vs tile size (e.g., 0.35 for 1.0 tiles). Tighter causes wedging at corners.
+// 5. Tile-centering corrections in updateInput must ONLY apply to the non-movement axis. Correcting the movement axis cancels velocity.
+//
+// API PATHS:
+// 6. Correct path: rb.RigidBody.controls.setFloat/setInt (NOT rb.controls — shorthand is SILENT NO-OP).
+// 7. controls.getFloat()/getInt() are UNRELIABLE for readback. Use rb.RigidBody.getMotionState() for position. Compute tileCentered/wallBlocked on main thread.
+//
+// CROSS-FILE COMMUNICATION:
+// 8. File 2 and file 23 run in SEPARATE window contexts. window.* globals from file 23 do NOT exist in file 2.
+// 9. All UI communication must use DOM element refs from Module.ProjectManager.getObject(id).DOMElement.
+// 10. HTML overlay object ID is not guaranteed — scan IDs 20-30 with querySelector('#startButton') fallback.
+// 11. Wire button listeners directly on queried DOM elements in file 2. Add boolean flag polling as fallback.
+//
+// INPUT PIPELINE:
+// 12. NEVER call blur()/focus() — breaks engine keyboard capture.
+// 13. After modal dismissal, set pointer-events:none on overlay root.
+// 14. ALWAYS add document.addEventListener('keydown') fallback for movement input.
+//
+// AI STATE MACHINES:
+// 15. Reset ALL tracking fields on every state transition (decided tile, exit flag, target).
+// 16. AI direction decisions should be once-per-tile, not once-per-frame.
+// 17. Add spatial filters to prevent actors from re-entering restricted zones after exiting.
+\`\`\``;
+
+    function essActivateContract(contractText) {
+      // Append §I engine invariants if not already present
+      let fullContract = contractText;
+      if (!fullContract.includes('§I')) {
+        fullContract = fullContract + ENGINE_INVARIANTS_SECTION;
+      }
+      activeGameContract = fullContract;
+
+      document.getElementById('essFinalOut').textContent = fullContract;
       document.getElementById('essenceActiveName').textContent =
         `✓ Contract active — ${essenceGameName}`;
       document.getElementById('essenceActiveBanner').classList.add('show');
@@ -3257,7 +3317,7 @@ Quality criteria for your work:
       essSetPhase(3);
       appendToChatLog('System',
         `Game Essence Contract derived for "${essenceGameName}". ` +
-        `§A–§H will be injected into every tranche of the next build.`, 'normal');
+        `§A–§I will be injected into every tranche of the next build.`, 'normal');
     }
 
     // ── Clear / reset engine ─────────────────────────────────
@@ -3392,7 +3452,7 @@ Quality criteria for your work:
       essSetPhase(2);
       essSetBadge('RUNNING…', 'running');
       document.getElementById('essConStatus').innerHTML =
-        '<span class="essence-spin" id="essConSpin" style="display:inline-block;"></span>Compiling §A–§H Game Contract…';
+        '<span class="essence-spin" id="essConSpin" style="display:inline-block;"></span>Compiling §A–§I Game Contract…';
       document.getElementById('essConOut').textContent = 'Dispatching to essenceProxy backend…';
 
       const jobId = 'essC_' + Date.now();
@@ -3911,15 +3971,18 @@ ${buildRepairTargetsContext(repairTargets)}`
           : '';
 
         // ── Game Essence Contract injection ─────────────────────
-        // If a §A-§H contract has been derived, prepend it to the
+        // If a §A-§I contract has been derived, prepend it to the
         // enhancedPrompt so the planner sees it, AND pass it as a
         // separate field so the backend can inject it into every
         // individual tranche prompt at execution time.
         const contractBlock = activeGameContract
           ? `\n╔═══════════════ GAME CONTRACT (BINDING) ═══════════════╗\n` +
-            `║ The following §A–§H contract was derived via Essence  ║\n` +
+            `║ The following §A–§I contract was derived via Essence  ║\n` +
             `║ Interview and is BINDING for this entire build.       ║\n` +
             `║ Every tranche executor MUST honour ALL axioms below.  ║\n` +
+            `║ §I contains ENGINE INVARIANTS that prevent known      ║\n` +
+            `║ silent failures — violations produce broken games     ║\n` +
+            `║ with zero error messages.                             ║\n` +
             `╚═══════════════════════════════════════════════════════╝\n\n` +
             activeGameContract + `\n\n` +
             `╔═══════════════════════════════════════════════════════╗\n` +
@@ -3931,6 +3994,18 @@ ${buildRepairTargetsContext(repairTargets)}`
           ? `You are an expert game developer performing a SURGICAL REPAIR of specific failed files.
 Do NOT plan new tranches. Do NOT redesign the game. Fix ONLY the exact targets listed below.
 ${contractBlock}
+
+CHERRY3D SDK ERRATA — VERIFIED CORRECTIONS (apply these over any conflicting SDK guidance):
+1. controls.getFloat()/getInt() are UNRELIABLE for readback — use rb.RigidBody.getMotionState() instead.
+2. Correct property path is rb.RigidBody.controls (NOT rb.controls — the shorthand is a silent no-op).
+3. DYNAMIC bodies may NOT auto-sync visual mesh — add explicit obj.position = getMotionState().position in render loop.
+4. HTML overlay object ID is not guaranteed — scan IDs 20-30 with querySelector fallback.
+5. File 2 and file 23 run in SEPARATE window contexts — use DOM queries via getObject(id).DOMElement, not window.* globals.
+6. After modal dismissal set pointer-events:none, never call blur()/focus(), add document.addEventListener('keydown') fallback.
+7. rbPosition for child rigidbodies must be [0,0,0] — world position comes from the parent mesh.
+8. Floor/ground must have a STATIC rigidbody — visual-only geometry provides zero collision.
+9. Actor collision half-extents need 15%+ clearance vs tile size; centering correction only on non-movement axis.
+
 ${repairSeedFiles['models/2'] ? `
 === CURRENT FILE: models/2 ===
 ${repairSeedFiles['models/2']}` : ''}
