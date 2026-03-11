@@ -777,7 +777,7 @@
     const auth = getAuth(app);
 
     const FILE_CATEGORIES = [
-      { id: "instructions", title: "AI System Instructions", accepts: "text/plain,.txt,.doc,.docx,.pdf", folder: "ai_system_instructions" },
+      { id: "instructions", title: "AI System Instructions (Scaffold + SDK)", accepts: "text/plain,.txt,.doc,.docx,.pdf,.js", folder: "ai_system_instructions" },
       { id: "assets", title: "Game Assets (Images/Audio)", accepts: "image/*,audio/*,.png,.jpg,.jpeg,.mp3,.wav", folder: "assets" },
       { id: "object_zip", title: "Animated/Textured Object ZIP Package", accepts: ".zip", folder: "object_zips" },
       { id: "models", title: "Models, Logic & HTML", accepts: ".obj,.glb,.fbx,.js,.mtl,.html", folder: "models" },
@@ -798,6 +798,67 @@
         virtual: true
       }
     ];
+
+    const REQUIRED_INSTRUCTION_KINDS = ['scaffold', 'sdk'];
+
+    function getInstructionKindFromName(fileName = '') {
+      const lower = String(fileName || '').toLowerCase();
+      if (lower.includes('scaffold')) return 'scaffold';
+      if (
+        lower.includes('engine_reference') ||
+        lower.includes('engine-reference') ||
+        lower.includes('engine reference') ||
+        lower.includes('sdk')
+      ) return 'sdk';
+      return 'other';
+    }
+
+    async function listInstructionFiles(projectName) {
+      const folderRef = ref(storage, `${ROOT}/${projectName}/ai_system_instructions`);
+      return await listAllRecursive(folderRef).catch(() => []);
+    }
+
+    async function ensureProjectInstructionBundle(projectName, templateProjectName = DEFAULT_TEMPLATE_PROJECT) {
+      const targetFiles = await listInstructionFiles(projectName);
+      const templateFiles = await listInstructionFiles(templateProjectName);
+
+      if (!templateFiles.length) {
+        throw new Error(`Template project "${templateProjectName}" is missing ai_system_instructions seed files.`);
+      }
+
+      const targetKinds = new Set(
+        targetFiles.map(fileRef => getInstructionKindFromName(fileRef.name.split('/').pop()))
+      );
+
+      const missingKinds = REQUIRED_INSTRUCTION_KINDS.filter(kind => !targetKinds.has(kind));
+      if (!missingKinds.length) {
+        return { copied: 0, missingKinds: [] };
+      }
+
+      const sourceBasePath = `${ROOT}/${templateProjectName}/ai_system_instructions`;
+      const targetBasePath = `${ROOT}/${projectName}/ai_system_instructions`;
+      let copied = 0;
+
+      for (const sourceRef of templateFiles) {
+        const fileName = sourceRef.name.split('/').pop();
+        const kind = getInstructionKindFromName(fileName);
+        if (!missingKinds.includes(kind)) continue;
+        await duplicateStorageItem(sourceRef, sourceBasePath, targetBasePath);
+        copied++;
+      }
+
+      const finalFiles = await listInstructionFiles(projectName);
+      const finalKinds = new Set(
+        finalFiles.map(fileRef => getInstructionKindFromName(fileRef.name.split('/').pop()))
+      );
+      const stillMissing = REQUIRED_INSTRUCTION_KINDS.filter(kind => !finalKinds.has(kind));
+
+      if (stillMissing.length) {
+        throw new Error(`Project "${projectName}" is still missing required instruction file(s): ${stillMissing.join(', ')}`);
+      }
+
+      return { copied, missingKinds };
+    }
 
     let currentProject = null;
 
@@ -1059,6 +1120,10 @@
         });
 
         await bootstrapProjectFromTemplate(name, DEFAULT_TEMPLATE_PROJECT);
+
+        setCreateProjectProgress(96, 'Verifying Scaffold + SDK instruction bundle...');
+        await ensureProjectInstructionBundle(name, DEFAULT_TEMPLATE_PROJECT);
+        setCreateProjectProgress(99, 'Scaffold + SDK ready.');
 
         newProjectName.value = '';
         await loadProjects();
@@ -3404,10 +3469,13 @@ Original user request for context: ${basePrompt}`;
       }
       
       try {
+        Progress.step('Verifying Scaffold + SDK', 'Ensuring immutable instruction bundle exists in Firebase...');
+        await ensureProjectInstructionBundle(currentProject);
+
         Progress.step('Syncing assets.json', 'Ensuring asset manifest matches project files...');
         await syncAssetsJson();
 
-        Progress.step('Loading core project files', '"2", "23", assets.json');
+        Progress.step('Loading core project files', '"2", "23", assets.json + immutable instruction context');
         const projectFiles = {};
         const targetFiles = [
           { folder: 'models', name: '2' },
@@ -3540,9 +3608,17 @@ ${buildRepairTargetsContext(repairTargets)}`
           ? `You are an expert game developer performing a SURGICAL REPAIR of specific failed files.
 Do NOT plan new tranches. Do NOT redesign the game. Fix ONLY the exact targets listed below.
 
-NOTE: The Cherry3D Engine Reference (platform invariants) is provided in the system prompt by the backend.
-Apply all engine rules from there. Your output will be scanned by anti-pattern validators that reject
-code containing known fatal patterns (wrong property paths, unreliable readback, cross-context window globals, etc.).
+NOTE: The backend injects two mandatory instruction layers from Firebase:
+1. The immutable Cherry3D Scaffold (the required foundation for all games)
+2. The complementary Cherry3D SDK / Engine Reference
+
+When they overlap:
+- Scaffold is king for architecture, immutable sections, lifecycle shape, required state fields, and build sequencing.
+- SDK / Engine Reference is used for engine/API facts, certainty gaps, threading rules, physics/property-path rules, and anti-pattern avoidance.
+- Never replace, delete, or work around an immutable scaffold section when repairing.
+
+Your output will be scanned by anti-pattern validators that reject code containing known fatal patterns
+(wrong property paths, unreliable readback, cross-context window globals, etc.).
 
 ${repairSeedFiles['models/2'] ? `
 === CURRENT FILE: models/2 ===
@@ -3592,7 +3668,10 @@ SINGLE-PASS TRANCHED BUILD PIPELINE
 ═══════════════════════════════════════════════════════════
 
 You are preparing a build request for a SINGLE-PASS planning pipeline.
-The backend planner (Opus 4.6) reads this request plus project files plus the Engine Reference directly and splits the build into sequential tranches. No intermediate architecture synthesis step.
+The backend planner reads this request plus project files plus two Firebase-hosted instruction layers:
+1. The immutable Cherry3D Scaffold
+2. The complementary Cherry3D SDK / Engine Reference
+It then splits the build into sequential tranches. No intermediate architecture synthesis step.
 
 ENVIRONMENT CONSTRAINTS (platform facts handled by backend):
 1. Output format uses delimiter blocks: ===FILE_START: path=== ... ===FILE_END: path===
@@ -3600,21 +3679,24 @@ ENVIRONMENT CONSTRAINTS (platform facts handled by backend):
 3. Main logic file is models/2. HTML overlay is models/23.
 4. Output complete file contents, not patches or diffs.
 5. Preserve accumulated code from prior tranches.
-6. Engine invariants (Engine Reference) are in every executor system prompt.
-7. Anti-pattern validators mechanically enforce engine rules after each tranche.
+6. The immutable Scaffold is injected by backend and is the required base architecture.
+7. The SDK / Engine Reference is injected by backend for engine facts and uncertainty resolution.
+8. Anti-pattern validators mechanically enforce engine rules after each tranche.
 
 PLANNING REQUIREMENTS:
 - Use the minimum number of tranches that preserves correctness.
 - Order tranches by true dependency.
 - Each tranche prompt must embed exact game-specific rules, code examples, and pitfall warnings from this request. Do NOT summarize — copy the exact technical details.
-- Engine-level rules are already in the executor system prompt. Do NOT restate them in tranche prompts.
+- The Scaffold is king. Adapt the requested game to the scaffold — never adapt the scaffold to the game.
+- The SDK / Engine Reference is complementary. Use it when certainty is low or engine details need confirmation.
+- Do NOT tell the executor to delete, replace, or bypass immutable scaffold sections.
 - Each tranche must be assigned 1-2 expert agents from this roster:
 ${EXPERT_AGENTS_JSON}
 
 TRANCHE STRUCTURE:
-1. First tranche: foundations (factories, materials, maze parsing, floor+walls with STATIC rigidbodies).
+1. First tranche: scaffold-compliant foundations (existing immutable sections, factories, materials, world build, STATIC collision surfaces).
 2. Middle tranches: one subsystem each, ordered by dependency.
-3. Last tranche: integration, edge cases, and polish.
+3. Last tranche: integration, edge cases, polish, and final scaffold alignment.
 
 User Request: ${prompt}`;
 

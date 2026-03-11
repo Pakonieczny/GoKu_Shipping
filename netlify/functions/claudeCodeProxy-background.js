@@ -30,38 +30,122 @@ const admin = require("./firebaseAdmin");
 const MAX_ANTIPATTERN_RETRIES = 2;   // correction attempts per tranche before skip
 
 
-/* ─── ENGINE REFERENCE: fetched from Firebase at runtime ────────
-   The Engine Reference is stored as one or more files under the
-   project's  ai_system_instructions/  folder in Firebase Storage.
-   fetchSystemInstructions() loads them all, concatenates them in
-   lexicographic filename order, and returns the combined text.
-   This is injected verbatim into every planning and executor
-   system prompt. To update the Engine Reference, upload a new
-   version of the file to ai_system_instructions/ — no code change
-   needed. ── */
+/* ─── SCAFFOLD + SDK INSTRUCTION BUNDLE: fetched from Firebase ───
+   All project-level instruction files live under:
+     ${projectPath}/ai_system_instructions/
 
-async function fetchSystemInstructions(bucket, projectPath) {
+   We classify them into:
+   - scaffold: immutable game foundation / structural rules
+   - sdk: engine reference / API facts / certainty fallback
+   - other: additional instruction docs (treated as sdk-side supplemental context)
+*/
+
+function classifyInstructionFile(fileName = "", content = "") {
+  const lowerName = String(fileName || "").toLowerCase();
+  const lowerContent = String(content || "").toLowerCase();
+
+  if (
+    lowerName.includes("scaffold") ||
+    (lowerContent.includes("scaffold") && lowerContent.includes("immutable"))
+  ) {
+    return "scaffold";
+  }
+
+  if (
+    lowerName.includes("engine_reference") ||
+    lowerName.includes("engine-reference") ||
+    lowerName.includes("engine reference") ||
+    lowerName.includes("sdk") ||
+    lowerContent.includes("cherry3d engine reference") ||
+    lowerContent.includes("platform invariants")
+  ) {
+    return "sdk";
+  }
+
+  return "other";
+}
+
+async function fetchInstructionBundle(bucket, projectPath) {
   try {
     const folder = `${projectPath}/ai_system_instructions`;
     const [files] = await bucket.getFiles({ prefix: folder + "/" });
     if (!files || files.length === 0) {
-      console.warn(`fetchSystemInstructions: no files found at ${folder}/`);
-      return "";
+      console.warn(`fetchInstructionBundle: no files found at ${folder}/`);
+      return {
+        scaffoldText: "",
+        sdkText: "",
+        combinedText: "",
+        scaffoldCount: 0,
+        sdkCount: 0,
+        otherCount: 0
+      };
     }
-    // Sort lexicographically so multi-file ordering is deterministic
+
     files.sort((a, b) => a.name.localeCompare(b.name));
     const parts = await Promise.all(
       files.map(async (file) => {
         const [fileContent] = await file.download();
-        return fileContent.toString("utf8");
+        const content = fileContent.toString("utf8");
+        return {
+          fileName: file.name.split("/").pop(),
+          content,
+          kind: classifyInstructionFile(file.name.split("/").pop(), content)
+        };
       })
     );
-    const combined = parts.join("\n\n");
-    console.log(`fetchSystemInstructions: loaded ${files.length} file(s), ${combined.length} chars.`);
-    return combined;
+
+    const scaffoldDocs = parts.filter(p => p.kind === "scaffold");
+    const sdkDocs = parts.filter(p => p.kind === "sdk");
+    const otherDocs = parts.filter(p => p.kind === "other");
+
+    const formatDocs = (docs) => docs.map(doc =>
+      `--- ${doc.fileName} ---\n${doc.content}`
+    ).join("\n\n");
+
+    const scaffoldText = formatDocs(scaffoldDocs);
+    const sdkText = formatDocs([...sdkDocs, ...otherDocs]);
+
+    const sections = [];
+    if (scaffoldText) {
+      sections.push(`=== IMMUTABLE CHERRY3D SCAFFOLD ===\n${scaffoldText}`);
+    }
+    if (sdkText) {
+      sections.push(`=== CHERRY3D SDK / ENGINE REFERENCE ===\n${sdkText}`);
+    }
+
+    const combinedText = sections.join("\n\n");
+    console.log(
+      `fetchInstructionBundle: loaded ${files.length} file(s) ` +
+      `(scaffold=${scaffoldDocs.length}, sdk=${sdkDocs.length}, other=${otherDocs.length})`
+    );
+
+    return {
+      scaffoldText,
+      sdkText,
+      combinedText,
+      scaffoldCount: scaffoldDocs.length,
+      sdkCount: sdkDocs.length,
+      otherCount: otherDocs.length
+    };
   } catch (err) {
-    console.error("fetchSystemInstructions failed:", err.message);
-    return "";
+    console.error("fetchInstructionBundle failed:", err.message);
+    return {
+      scaffoldText: "",
+      sdkText: "",
+      combinedText: "",
+      scaffoldCount: 0,
+      sdkCount: 0,
+      otherCount: 0
+    };
+  }
+}
+
+function assertInstructionBundle(bundle, phaseLabel = "Pipeline") {
+  if (!bundle?.scaffoldText) {
+    throw new Error(`${phaseLabel}: immutable Scaffold missing from ai_system_instructions/.`);
+  }
+  if (!bundle?.sdkText) {
+    throw new Error(`${phaseLabel}: SDK / Engine Reference missing from ai_system_instructions/.`);
   }
 }
 
@@ -1049,11 +1133,9 @@ exports.handler = async (event) => {
       //  Outputs tranche plan with rules embedded in each prompt.
       // ══════════════════════════════════════════════════════════
 
-      // ── Fetch Engine Reference from ai_system_instructions/ ──
-      const engineReference = await fetchSystemInstructions(bucket, projectPath);
-      if (!engineReference) {
-        console.warn("PLAN: Engine Reference not found in ai_system_instructions/ — proceeding without it.");
-      }
+      // ── Fetch Scaffold + SDK instruction bundle ──
+      const instructionBundle = await fetchInstructionBundle(bucket, projectPath);
+      assertInstructionBundle(instructionBundle, "PLAN");
 
       const progress = {
         jobId: jobId,
@@ -1077,9 +1159,16 @@ exports.handler = async (event) => {
 
       const planningSystem = `You are an expert game development planner for the Cherry3D engine.
 
-Your job: read the user's request, the existing project files, and the Engine Reference below. Then split the build into sequential, self-contained TRANCHES that can be executed one at a time by a coding AI.
+Your job: read the user's request, the existing project files, and the instruction bundle below. Then split the build into sequential, self-contained TRANCHES that can be executed one at a time by a coding AI.
 
-${engineReference}
+${instructionBundle.combinedText}
+
+INSTRUCTION PRECEDENCE:
+1. The Cherry3D Scaffold is the immutable foundation for all future games on this platform.
+2. The SDK / Engine Reference is complementary. Use it for engine facts, API details, certainty gaps, threading rules, property paths, and anti-pattern avoidance.
+3. If both instruction layers apply to the same topic, the Scaffold wins for architecture, lifecycle shape, immutable sections, required state fields, and build sequencing.
+4. The SDK wins for engine-level invariants and implementation facts not explicitly overridden by the Scaffold.
+5. Never plan tranches that delete, replace, bypass, or work around an immutable scaffold block. Adapt the requested game to the scaffold.
 
 PLANNING RULES:
 1. Each tranche should focus on 1-2 closely related concerns.
@@ -1087,10 +1176,11 @@ PLANNING RULES:
 3. Each tranche prompt must be FULLY SELF-CONTAINED — it must embed the exact game-specific rules, variable names, slot layouts, code snippets, and pitfall warnings from the user's request that are relevant to that tranche. Do NOT summarize or abstract — copy the exact technical details.
 4. If the request is simple enough, use 1 tranche. Otherwise use the minimum count that preserves correctness.
 5. Each tranche must declare expectedFiles, dependencies, expertAgents, phase, and qualityCriteria.
-6. The FIRST tranche should establish foundations: factories, materials, maze parsing, floor+walls with STATIC rigidbodies.
+6. The FIRST tranche should establish scaffold-compliant foundations: preserve immutable scaffold sections, extend existing factories/hooks, create materials/world build, and establish STATIC collision surfaces where required.
 7. The LAST tranche should handle integration, edge cases, and polish.
-8. Engine invariants from the ENGINE REFERENCE above are already in the executor's system prompt. Do NOT restate them in tranche prompts. Only embed game-specific rules.
-9. When the user's request contains code examples (updateInput, syncPlayerSharedMemory, ghost AI, etc.), embed those exact code examples in the relevant tranche prompts — do not paraphrase them.
+8. Do NOT instruct the executor to remove immutable scaffold fields/blocks or invent a replacement lifecycle when the scaffold already defines one.
+9. If the scaffold already provides a section (camera stage, UI hookup, particle emitter factory, instance parent pattern, input handler shape, etc.), the tranche must explicitly extend that section instead of replacing it.
+10. When the user's request contains code examples (updateInput, syncPlayerSharedMemory, ghost AI, etc.), embed those exact code examples in the relevant tranche prompts — do not paraphrase them.
 
 ${REQUIRED_TRANCHE_VALIDATION_BLOCK}
 
@@ -1106,7 +1196,7 @@ You must respond ONLY with a valid JSON object. No markdown, no code fences, no 
       "phase": 1,
       "dependencies": [],
       "qualityCriteria": ["Criterion 1", "Criterion 2"],
-      "prompt": "THE COMPLETE, SELF-CONTAINED PROMPT for the coding AI. Embed exact game-specific rules, code examples, and pitfall warnings from the user's request. Do NOT embed engine-level rules — those are in the executor's system prompt.",
+      "prompt": "THE COMPLETE, SELF-CONTAINED PROMPT for the coding AI. Embed exact game-specific rules, code examples, and pitfall warnings from the user's request. Do NOT repeat the full instruction docs, but ensure the tranche is scaffold-compliant and never violates immutable scaffold sections.",
       "expectedFiles": ["models/2", "models/23"]
     }
   ]
@@ -1239,11 +1329,9 @@ ${prompt}
       const { progress, accumulatedFiles, allUpdatedFiles, imageBlocks } = state;
       const tranche = progress.tranches[nextTranche];
 
-      // ── Fetch Engine Reference from ai_system_instructions/ ──
-      const engineReference = await fetchSystemInstructions(bucket, projectPath);
-      if (!engineReference) {
-        console.warn("TRANCHE: Engine Reference not found in ai_system_instructions/ — proceeding without it.");
-      }
+      // ── Fetch Scaffold + SDK instruction bundle ──
+      const instructionBundle = await fetchInstructionBundle(bucket, projectPath);
+      assertInstructionBundle(instructionBundle, "TRANCHE");
 
       if (!tranche) throw new Error(`Tranche ${nextTranche} not found in pipeline state.`);
 
@@ -1262,12 +1350,17 @@ ${prompt}
       const executionSystem = `You are an expert game development AI.
 The user will provide project files and a focused modification request (one tranche of a larger build).
 
-${engineReference}
+${instructionBundle.combinedText}
 
-The ENGINE REFERENCE above is the single authoritative source for all platform invariants.
-Do not re-state them — just apply them. Your output will be automatically scanned by
-anti-pattern validators that enforce the rules in the Engine Reference. Write it correctly
-the first time.
+INSTRUCTION PRECEDENCE:
+- The Cherry3D Scaffold is the immutable foundation. Treat it as the required base architecture.
+- The SDK / Engine Reference is complementary. Use it whenever engine/API certainty is needed.
+- If both apply, the Scaffold wins for architecture/lifecycle/state shape, and the SDK wins for engine facts and anti-pattern avoidance.
+- Never delete, replace, or work around an immutable scaffold section. Extend inside it.
+
+Do not re-state the instruction docs — just apply them. Your output will be automatically scanned by
+anti-pattern validators that enforce the SDK rules and by project validation that expects scaffold alignment.
+Write it correctly the first time.
 
 You must respond using DELIMITER FORMAT only. Do NOT use JSON. Do NOT use markdown code blocks.
 
@@ -1302,6 +1395,9 @@ OUTPUT RULES:
 - Build upon the existing file contents provided. Do NOT discard or overwrite work from prior tranches.
 - If the file already has functions, variables, or structures from prior tranches, KEEP THEM ALL and add your new code alongside them.
 - The delimiter lines (===FILE_START:=== etc.) must appear exactly as shown, on their own lines.
+- If the scaffold already defines the correct place for a system (camera stage, UI hookup, particle factory, instance parent pattern, input handler, lifecycle block), implement inside that existing scaffold section.
+- Do NOT replace scaffold-owned state fields with renamed alternatives unless the tranche explicitly requires preserving both and safely extending them.
+- Do NOT invent custom lifecycle blocks when the scaffold already supplies one.
 
 MANDATORY VALIDATION MANIFEST (your output will be REJECTED without this):
 Every file you output MUST contain a machine-readable manifest block embedded as a comment
@@ -1633,8 +1729,9 @@ Correct approach:
         throw new Error(`No rejected tranche data for tranche ${nextTranche}. Fix mode cannot proceed.`);
       }
 
-      // ── Fetch Engine Reference ───────────────────────────────
-      const engineReference = await fetchSystemInstructions(bucket, projectPath);
+      // ── Fetch Scaffold + SDK instruction bundle ──────────────
+      const instructionBundle = await fetchInstructionBundle(bucket, projectPath);
+      assertInstructionBundle(instructionBundle, "FIX");
 
       console.log(`FIX MODE: Tranche ${nextTranche + 1} — attempt ${fixAttempt}/${MAX_ANTIPATTERN_RETRIES} (Job ${jobId})`);
 
@@ -1648,10 +1745,15 @@ Correct approach:
 A previous generation pass produced code with FATAL engine violations that will cause silent runtime failures.
 You must rewrite ONLY the offending logic to fix every listed violation. Preserve all other code exactly.
 
-${engineReference}
+${instructionBundle.combinedText}
 
-The ENGINE REFERENCE above is the authoritative source. The violations below are EXACT matches
-against that reference. Fix them precisely — do not introduce new code unrelated to the violations.
+INSTRUCTION PRECEDENCE:
+- The Scaffold is the immutable base architecture and must remain intact.
+- The SDK / Engine Reference explains the engine-level violations you must fix.
+- Preserve scaffold structure while correcting the offending logic precisely.
+
+The violations below are EXACT matches against the SDK / Engine Reference.
+Fix them precisely — do not introduce unrelated redesigns or any workaround that mutates immutable scaffold structure.
 
 RESPONSE FORMAT: Use delimiter format only — no JSON, no markdown code blocks.
 ===FILE_START: path===
