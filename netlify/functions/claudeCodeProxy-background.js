@@ -710,6 +710,36 @@ function runAntiPatternValidation(files) {
    No intermediate architecture spec is generated. ────────── */
 
 /* ── helper: call Claude API ─────────────────────────────────── */
+const CLAUDE_OVERLOAD_MAX_RETRIES = 5;
+const CLAUDE_OVERLOAD_BASE_DELAY_MS = 1250;
+const CLAUDE_OVERLOAD_MAX_DELAY_MS = 12000;
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function computeClaudeRetryDelayMs(attempt) {
+  const exponentialDelay = Math.min(
+    CLAUDE_OVERLOAD_BASE_DELAY_MS * Math.pow(2, Math.max(0, attempt - 1)),
+    CLAUDE_OVERLOAD_MAX_DELAY_MS
+  );
+  const jitter = Math.floor(Math.random() * 700);
+  return exponentialDelay + jitter;
+}
+
+function isClaudeOverloadError(status, message = "") {
+  const normalized = String(message || "").toLowerCase();
+  if ([429, 500, 502, 503, 504, 529].includes(Number(status))) return true;
+  return (
+    normalized.includes("overloaded") ||
+    normalized.includes("overload") ||
+    normalized.includes("rate limit") ||
+    normalized.includes("too many requests") ||
+    normalized.includes("capacity") ||
+    normalized.includes("temporarily unavailable")
+  );
+}
+
 async function callClaude(apiKey, { model, maxTokens, system, userContent, effort, budgetTokens }) {
   const body = {
     model,
@@ -723,26 +753,73 @@ async function callClaude(apiKey, { model, maxTokens, system, userContent, effor
     body.output_config = { effort };
   }
 
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01"
-    },
-    body: JSON.stringify(body)
-  });
+  let lastError = null;
 
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error?.message || `Claude API error (${res.status})`);
+  for (let attempt = 1; attempt <= CLAUDE_OVERLOAD_MAX_RETRIES; attempt++) {
+    try {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01"
+        },
+        body: JSON.stringify(body)
+      });
 
-  const responseText = data.content?.find(b => b.type === "text")?.text;
-  if (!responseText) throw new Error("Empty response from Claude");
+      const rawText = await res.text();
+      let data = null;
 
-  return {
-    text: responseText,
-    usage: data.usage || null
-  };
+      if (rawText) {
+        try {
+          data = JSON.parse(rawText);
+        } catch (parseErr) {
+          if (!res.ok) {
+            throw new Error(`Claude API error (${res.status}) with non-JSON body: ${rawText.slice(0, 500)}`);
+          }
+          throw new Error(`Failed to parse Claude response JSON: ${parseErr.message}`);
+        }
+      }
+
+      if (!res.ok) {
+        const apiMessage = data?.error?.message || `Claude API error (${res.status})`;
+        const err = new Error(apiMessage);
+        err.status = res.status;
+        err.isRetryableOverload = isClaudeOverloadError(res.status, apiMessage);
+        throw err;
+      }
+
+      const responseText = data?.content?.find(b => b.type === "text")?.text;
+      if (!responseText) {
+        throw new Error("Empty response from Claude");
+      }
+
+      return {
+        text: responseText,
+        usage: data?.usage || null
+      };
+    } catch (err) {
+      const status = Number(err?.status || 0);
+      const retryable =
+        Boolean(err?.isRetryableOverload) ||
+        isClaudeOverloadError(status, err?.message);
+
+      lastError = err;
+
+      if (!retryable || attempt >= CLAUDE_OVERLOAD_MAX_RETRIES) {
+        throw err;
+      }
+
+      const delayMs = computeClaudeRetryDelayMs(attempt);
+      console.warn(
+        `[callClaude] retrying Claude request after overload/rate-limit ` +
+        `(attempt ${attempt}/${CLAUDE_OVERLOAD_MAX_RETRIES}, model=${model}, status=${status || "n/a"}, delay=${delayMs}ms): ${err.message}`
+      );
+      await sleep(delayMs);
+    }
+  }
+
+  throw lastError || new Error("Claude request failed after retries");
 }
 
 /* ── helper: strip markdown fences and prose to extract JSON ─── */
