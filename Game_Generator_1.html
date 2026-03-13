@@ -3591,6 +3591,144 @@ Original user request for context: ${basePrompt}`;
       return { ok: false, failedFiles: currentFailedFiles, finalSummary };
     }
 
+
+    function collectThreeMaterialNames(root) {
+      const names = new Set();
+      root?.traverse?.((node) => {
+        const mats = Array.isArray(node.material) ? node.material : (node.material ? [node.material] : []);
+        for (const mat of mats) {
+          const label = mat?.name || mat?.type || 'UnnamedMaterial';
+          names.add(label);
+        }
+      });
+      return Array.from(names);
+    }
+
+    function buildThreeModelAnalysis(sceneOrRoot, meta = {}) {
+      if (!sceneOrRoot) return null;
+      sceneOrRoot.updateMatrixWorld?.(true);
+      const box = new THREE.Box3().setFromObject(sceneOrRoot);
+      const size = box.getSize(new THREE.Vector3());
+      const center = box.getCenter(new THREE.Vector3());
+      let meshCount = 0;
+      let vertexCount = 0;
+      sceneOrRoot.traverse?.((node) => {
+        if (node?.isMesh) {
+          meshCount += 1;
+          const posAttr = node.geometry?.attributes?.position;
+          if (posAttr?.count) vertexCount += posAttr.count;
+        }
+      });
+      return {
+        sourceName: meta.sourceName || '',
+        sourcePath: meta.sourcePath || '',
+        sourceType: meta.sourceType || '',
+        containerType: meta.containerType || 'direct-file',
+        embeddedPath: meta.embeddedPath || '',
+        format: meta.format || '',
+        meshCount,
+        vertexCount,
+        animationCount: Number(meta.animationCount || 0),
+        materials: collectThreeMaterialNames(sceneOrRoot),
+        boundingBox: {
+          width: Number(size.x.toFixed(3)),
+          height: Number(size.y.toFixed(3)),
+          depth: Number(size.z.toFixed(3))
+        },
+        center: {
+          x: Number(center.x.toFixed(3)),
+          y: Number(center.y.toFixed(3)),
+          z: Number(center.z.toFixed(3))
+        },
+        recommendedFloorYOffset: Number((size.y / 2).toFixed(3))
+      };
+    }
+
+    async function analyzeDirectThreeAsset(asset) {
+      const lowerName = asset.name.toLowerCase();
+      const modelUrl = asset.url;
+      if (lowerName.endsWith('.obj')) {
+        const loader = new OBJLoader();
+        const model = await new Promise((resolve, reject) => loader.load(modelUrl, resolve, undefined, reject));
+        return buildThreeModelAnalysis(model, {
+          sourceName: asset.name,
+          sourcePath: asset.path,
+          sourceType: asset.type || 'model/obj',
+          containerType: 'direct-file',
+          format: 'obj'
+        });
+      }
+
+      const loader = new GLTFLoader();
+      const gltf = await new Promise((resolve, reject) => loader.load(modelUrl, resolve, undefined, reject));
+      return buildThreeModelAnalysis(gltf.scene, {
+        sourceName: asset.name,
+        sourcePath: asset.path,
+        sourceType: asset.type || 'model/gltf-binary',
+        containerType: 'direct-file',
+        format: lowerName.endsWith('.glb') ? 'glb' : 'gltf',
+        animationCount: Array.isArray(gltf.animations) ? gltf.animations.length : 0
+      });
+    }
+
+    async function analyzeZipThreeAssets(zipObj, asset) {
+      const analyses = [];
+      const recognizedEntries = [];
+      for (const relativePath of Object.keys(zipObj.files)) {
+        const entry = zipObj.files[relativePath];
+        if (entry.dir || relativePath.includes('__MACOSX')) continue;
+        const lowerPath = relativePath.toLowerCase();
+        const entryName = relativePath.split('/').pop() || relativePath;
+        if (!(lowerPath.endsWith('.obj') || lowerPath.endsWith('.glb') || lowerPath.endsWith('.gltf'))) continue;
+
+        recognizedEntries.push(relativePath);
+        try {
+          let analysis = null;
+          if (lowerPath.endsWith('.obj')) {
+            const objText = await entry.async('text');
+            const parsed = new OBJLoader().parse(objText);
+            analysis = buildThreeModelAnalysis(parsed, {
+              sourceName: asset.name,
+              sourcePath: asset.path,
+              sourceType: 'application/zip',
+              containerType: 'zip-entry',
+              embeddedPath: relativePath,
+              format: 'obj'
+            });
+          } else {
+            const blob = await entry.async('blob');
+            const objectUrl = URL.createObjectURL(blob);
+            try {
+              const gltf = await new Promise((resolve, reject) => new GLTFLoader().load(objectUrl, resolve, undefined, reject));
+              analysis = buildThreeModelAnalysis(gltf.scene, {
+                sourceName: asset.name,
+                sourcePath: asset.path,
+                sourceType: 'application/zip',
+                containerType: 'zip-entry',
+                embeddedPath: relativePath,
+                format: lowerPath.endsWith('.glb') ? 'glb' : 'gltf',
+                animationCount: Array.isArray(gltf.animations) ? gltf.animations.length : 0
+              });
+            } finally {
+              URL.revokeObjectURL(objectUrl);
+            }
+          }
+          if (analysis) analyses.push(analysis);
+        } catch (zipAnalysisErr) {
+          analyses.push({
+            sourceName: asset.name,
+            sourcePath: asset.path,
+            sourceType: 'application/zip',
+            containerType: 'zip-entry',
+            embeddedPath: relativePath,
+            format: lowerPath.split('.').pop(),
+            analysisError: String(zipAnalysisErr?.message || zipAnalysisErr)
+          });
+        }
+      }
+      return { analyses, recognizedEntries };
+    }
+
     async function executeAIPipeline(promptOverride, options = {}) {
       const {
         repairAttempt = 0,
@@ -3613,6 +3751,7 @@ Original user request for context: ${basePrompt}`;
       selectedModelNames = null;
 
       let scannedExtentsList = [];
+      let modelAnalysisList = [];
       if (repairAttempt === 0 && parseErrorRetry === 0) {
         aiPromptInput.value = '';
         appendToChatLog('You', basePrompt);
@@ -3689,27 +3828,18 @@ The user has explicitly selected these assets to focus on. Their key mappings ar
                     if (shouldProcess && (lowerName.endsWith('.obj') || lowerName.endsWith('.glb') || lowerName.endsWith('.gltf'))) {
                         Progress.step(`Scanning 3D extents`, a.name);
                         try {
-                            const modelUrl = a.url;
-                            let model;
-                            if (lowerName.endsWith('.obj')) {
-                                const loader = new OBJLoader();
-                                model = await new Promise((resolve, reject) => loader.load(modelUrl, resolve, undefined, reject));
-                            } else {
-                                const loader = new GLTFLoader();
-                                const gltf = await new Promise((resolve, reject) => loader.load(modelUrl, resolve, undefined, reject));
-                                model = gltf.scene;
+                            const analysis = await analyzeDirectThreeAsset(a);
+                            if (analysis) {
+                                modelAnalysisList.push(analysis);
+                                scannedExtentsList.push({
+                                    name: a.name,
+                                    centerX: analysis.boundingBox.width.toFixed(3),
+                                    centerY: analysis.boundingBox.height.toFixed(3),
+                                    centerZ: analysis.boundingBox.depth.toFixed(3),
+                                    offset: analysis.recommendedFloorYOffset.toFixed(3),
+                                    materials: analysis.materials || []
+                                });
                             }
-                            model.updateMatrixWorld(true);
-                            const box = new THREE.Box3().setFromObject(model);
-                            const size = box.getSize(new THREE.Vector3());
-                            scannedExtentsList.push({
-                                name: a.name,
-                                centerX: size.x.toFixed(3),
-                                centerY: size.y.toFixed(3),
-                                centerZ: size.z.toFixed(3),
-                                offset: (size.y / 2).toFixed(3),
-                                materials: []
-                            });
                         } catch (e) {
                             console.warn(`Could not scan extents for ${a.name}`, e);
                         }
@@ -3731,11 +3861,32 @@ The user has explicitly selected these assets to focus on. Their key mappings ar
                             if (entry.dir || relativePath.includes('__MACOSX')) continue;
                             entries.push(relativePath);
                         }
+                        const zipAnalysis = await analyzeZipThreeAssets(zipObj, a);
+                        if (zipAnalysis.analyses.length > 0) {
+                            modelAnalysisList.push(...zipAnalysis.analyses);
+                            zipAnalysis.analyses.forEach((analysis) => {
+                                if (analysis?.boundingBox) {
+                                    scannedExtentsList.push({
+                                        name: `${a.name} :: ${analysis.embeddedPath || analysis.sourceName}`,
+                                        centerX: analysis.boundingBox.width.toFixed(3),
+                                        centerY: analysis.boundingBox.height.toFixed(3),
+                                        centerZ: analysis.boundingBox.depth.toFixed(3),
+                                        offset: analysis.recommendedFloorYOffset.toFixed(3),
+                                        materials: analysis.materials || []
+                                    });
+                                }
+                            });
+                        }
                         if (entries.length > 0) {
                             zipContextString += `
 ZIP PACKAGE: ${a.name}
 ${entries.map(v => `- ${v}`).join('\n')}
 `;
+                            if (zipAnalysis.recognizedEntries.length > 0) {
+                                zipContextString += `Recognized 3D entries for Three.js analysis:
+${zipAnalysis.recognizedEntries.map(v => `- ${v}`).join('\n')}
+`;
+                            }
                         }
                     } catch (e) {
                         console.warn(`Could not parse ZIP ${a.name}`, e);
@@ -3749,6 +3900,10 @@ ${entries.map(v => `- ${v}`).join('\n')}
 
 === SCANNED 3D EXTENTS ===
 ${JSON.stringify(scannedExtentsList, null, 2)}` : '';
+        const modelAnalysisContext = modelAnalysisList.length ? `
+
+=== THREE.JS 3D MODEL ANALYSIS ===
+${JSON.stringify(modelAnalysisList, null, 2)}` : '';
         const repairSeedFiles = repairAttempt > 0 ? buildRepairSeedFiles(projectFiles, repairTargets) : projectFiles;
         const repairContext = repairAttempt > 0 && repairTargets.length
           ? `
@@ -3819,6 +3974,7 @@ ${projectFiles['json/assets.json']}` : ''}
 ${assetString}
 ${zipContextString}
 ${extentsContext}
+${modelAnalysisContext}
 
 ═══════════════════════════════════════════════════════════
 SINGLE-PASS TRANCHED BUILD PIPELINE
@@ -3895,7 +4051,7 @@ User Request: ${prompt}`;
         renderPromptImages();
         
         Progress.step('Uploading payload to Firebase', 'Bypassing Netlify async size limits...');
-        const payloadBody = JSON.stringify({ prompt: enhancedPrompt, files: projectFiles, projectPath, selectedAssets, inlineImages, expertAgents: EXPERT_AGENTS, repairAttempt, repairTargets });
+        const payloadBody = JSON.stringify({ prompt: enhancedPrompt, files: projectFiles, projectPath, selectedAssets, inlineImages, modelAnalysis: modelAnalysisList, expertAgents: EXPERT_AGENTS, repairAttempt, repairTargets });
         const requestFileRef = ref(storage, `${projectPath}/ai_request.json`);
         await uploadString(requestFileRef, payloadBody);
 

@@ -1038,7 +1038,7 @@ exports.handler = async (event) => {
       // ── 1. Download the request payload from Firebase ─────────
       const requestFile = bucket.file(`${projectPath}/ai_request.json`);
       const [content] = await requestFile.download();
-      const { prompt, files, selectedAssets, inlineImages } = JSON.parse(content.toString());
+      const { prompt, files, selectedAssets, inlineImages, modelAnalysis } = JSON.parse(content.toString());
       if (!prompt) throw new Error("Missing instructions inside payload");
 
       // ── 2. Build file context string ──────────────────────────
@@ -1082,6 +1082,10 @@ exports.handler = async (event) => {
           }
         }
         fileContext += assetContext;
+      }
+
+      if (modelAnalysis && Array.isArray(modelAnalysis) && modelAnalysis.length > 0) {
+        fileContext += `\n\n=== THREE.JS MODEL ANALYSIS ===\n${JSON.stringify(modelAnalysis, null, 2)}\n`;
       }
 
       if (inlineImages && Array.isArray(inlineImages) && inlineImages.length > 0) {
@@ -1236,6 +1240,7 @@ ${prompt}
         accumulatedFiles: files ? { ...files } : {},
         allUpdatedFiles: [],
         imageBlocks,
+        modelAnalysis: Array.isArray(modelAnalysis) ? modelAnalysis : [],
         totalTranches: plan.tranches.length
       };
       await savePipelineState(bucket, projectPath, pipelineState);
@@ -1292,7 +1297,7 @@ ${prompt}
       const state = await loadPipelineState(bucket, projectPath);
       if (!state) throw new Error("Pipeline state not found in Firebase. Chain broken.");
 
-      const { progress, accumulatedFiles, allUpdatedFiles, imageBlocks } = state;
+      const { progress, accumulatedFiles, allUpdatedFiles, imageBlocks, modelAnalysis } = state;
       const tranche = progress.tranches[nextTranche];
 
       // ── Fetch Scaffold + SDK instruction bundle ──
@@ -1375,6 +1380,10 @@ VALIDATOR STATUS:
       let trancheFileContext = "Here are the current project files (includes all output from prior tranches — you MUST preserve all existing code):\n\n";
       for (const [path, fileContent] of Object.entries(accumulatedFiles)) {
         trancheFileContext += `--- FILE: ${path} ---\n${fileContent}\n\n`;
+      }
+
+      if (Array.isArray(modelAnalysis) && modelAnalysis.length > 0) {
+        trancheFileContext += `=== THREE.JS MODEL ANALYSIS ===\n${JSON.stringify(modelAnalysis, null, 2)}\n\n`;
       }
 
       assertTranchePromptHasRequiredManifestBlock(tranche, nextTranche);
@@ -1663,7 +1672,7 @@ VALIDATOR STATUS:
       const state = await loadPipelineState(bucket, projectPath);
       if (!state) throw new Error("Pipeline state not found in Firebase. Fix mode chain broken.");
 
-      const { progress, accumulatedFiles, allUpdatedFiles, imageBlocks, rejectedTranche } = state;
+      const { progress, accumulatedFiles, allUpdatedFiles, imageBlocks, modelAnalysis, rejectedTranche } = state;
       const tranche = progress.tranches[nextTranche];
 
       if (!tranche) throw new Error(`Tranche ${nextTranche} not found in pipeline state (fix mode).`);
@@ -1730,6 +1739,9 @@ Summary of exactly what was fixed and why each violation occurred.
         correctionUserText += `\n--- FILE: ${path} ---\n${fileContent}\n`;
       }
       correctionUserText += `\n=== END ACCUMULATED FILES ===\n\n`;
+      if (Array.isArray(modelAnalysis) && modelAnalysis.length > 0) {
+        correctionUserText += `=== THREE.JS MODEL ANALYSIS ===\n${JSON.stringify(modelAnalysis, null, 2)}\n=== END THREE.JS MODEL ANALYSIS ===\n\n`;
+      }
       correctionUserText += `=== ORIGINAL TRANCHE INSTRUCTIONS ===\n${tranche.prompt}\n=== END TRANCHE INSTRUCTIONS ===\n\n`;
       correctionUserText += `Fix every violation listed in the VIOLATION REPORT above. Output the complete corrected file(s).`;
 
