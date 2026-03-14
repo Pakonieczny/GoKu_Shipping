@@ -1,21 +1,23 @@
 /* netlify/functions/claudeCodeProxy-background.js */
 /* ═══════════════════════════════════════════════════════════════════
-   TRANCHED AI PIPELINE — v4.2 (Anti-Pattern Correction Loop — Hardened Validators)
+   TRANCHED AI PIPELINE — v5.0 (6.3-Centered Tranches + Token-Efficient Recovery)
    ─────────────────────────────────────────────────────────────────
    Each invocation handles ONE unit of work then chains to itself
    for the next, staying well under Netlify's 15-min limit.
 
-   Invocation 0    ▸  "plan"    — Opus 4.6 plans tranches directly
-                       from Master Prompt + Engine Reference + files.
+   Invocation 0    ▸  "plan"    — Opus 4.6 creates a dependency-ordered,
+                       6.3-centered tranche plan plus a final hardening batch.
    Invocation 1–N  ▸  "tranche" — Sonnet 4.6 executes one tranche,
-                       saves accumulated files, chains to next tranche
-   Correction loop ▸  "fix"     — Reserved for non-validator recovery flows. Validator-triggered correction is temporarily disabled.
+                       saves accumulated files, chains to next tranche.
+   Correction loop ▸  "fix"     — Used only for objective retryable
+                       validation failures.
    Final           ▸  Writes ai_response.json for frontend pickup.
 
-   Anti-pattern validator enforcement is temporarily disabled, so tranche output proceeds without validator rejection.
-   trigger an automatic correction pass instead of silent skip.
-   Progress object carries antiPatternRetryCount + antiPatternReport
-   so the frontend UI can show exactly what was detected and fixed.
+   Recovery policy:
+   - 0 retries for soft/advisory findings.
+   - 1 retry max for narrow objective hard failures when the repair is surgical.
+   - 2 retries only for parser/envelope failures or truly critical scaffold/runtime issues.
+   - Everything else is deferred into a single end-stage hardening batch.
 
    All intermediate state lives in Firebase so each invocation is
    stateless and can reconstruct context from the pipeline file.
@@ -24,7 +26,15 @@
 const fetch = require("node-fetch");
 const admin = require("./firebaseAdmin");
 
-const MAX_ANTIPATTERN_RETRIES = 2;   // correction attempts per tranche before skip
+const RETRY_POLICY = Object.freeze({
+  soft: 0,
+  hard_objective: 1,
+  critical_runtime: 2,
+  parser_envelope: 2
+});
+
+const HARDENING_BATCH_NAME = "End-Stage Hardening Batch";
+const HARDENING_BATCH_KIND = "hardening_batch";
 
 
 /* ─── SCAFFOLD + SDK INSTRUCTION BUNDLE: fetched from Firebase ───
@@ -701,8 +711,156 @@ DECISION RULE for PacMaze:
   }
 ];
 
+function getViolationLane(patternName = "", severity = "FATAL") {
+  if (String(severity || "").toUpperCase() === "SOFT") return "soft";
+
+  const surgicalPatterns = new Set([
+    "Silent no-op controls path",
+    "Unreliable physics readback",
+    "Cross-context window global call",
+    "Non-zero rbPosition",
+    "onRender missing return true"
+  ]);
+
+  if (surgicalPatterns.has(patternName)) return "hard_objective";
+  return "critical_runtime";
+}
+
+function getRetryBudgetForLane(lane = "soft") {
+  return RETRY_POLICY[lane] ?? 0;
+}
+
+function buildHardeningQueueKey(item = {}) {
+  return [item.file || "", item.pattern || "", item.lane || "", item.trancheIndex ?? ""].join("::");
+}
+
+function pushHardeningQueueItems(progress, items = []) {
+  if (!progress.hardeningQueue) progress.hardeningQueue = [];
+  const seen = new Set(progress.hardeningQueue.map(buildHardeningQueueKey));
+  for (const item of items) {
+    const key = buildHardeningQueueKey(item);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    progress.hardeningQueue.push({ queuedAt: Date.now(), resolved: false, ...item });
+  }
+  return progress.hardeningQueue;
+}
+
+function formatHardeningQueue(items = []) {
+  if (!items.length) return "No queued hardening items.";
+  return items.map((item, idx) => [
+    `ITEM ${idx + 1}`,
+    `  Tranche : ${item.trancheIndex !== undefined ? item.trancheIndex + 1 : "n/a"} — ${item.trancheName || "Unknown tranche"}`,
+    `  Lane    : ${item.lane || "soft"}`,
+    `  File    : ${item.file || "unknown"}`,
+    `  Pattern : ${item.pattern || item.kind || "General hardening"}`,
+    `  Detail  : ${item.message || item.note || "No detail provided."}`
+  ].join('\n')).join('\n\n');
+}
+
+function isHardeningBatchTranche(tranche = {}) {
+  return Boolean(
+    tranche.kind === HARDENING_BATCH_KIND ||
+    tranche.isHardeningBatch ||
+    String(tranche.name || "").toLowerCase().includes("hardening")
+  );
+}
+
+function buildHardeningBatchUserText({ progress, accumulatedFiles, tranche, modelAnalysis }) {
+  const queuedItems = Array.isArray(progress?.hardeningQueue) ? progress.hardeningQueue : [];
+  let text = '';
+  text += `=== HARDENING BATCH CONTEXT ===
+`;
+  text += `You are resolving deferred tranche findings in one end-stage batch.
+`;
+  text += `This batch exists to clean up queued advisories and unresolved objective issues without redoing earlier tranches.
+
+`;
+  text += `=== QUEUED HARDENING ITEMS ===
+${formatHardeningQueue(queuedItems)}
+=== END QUEUED HARDENING ITEMS ===
+
+`;
+  text += `=== HARDENING BATCH MANIFEST ===
+`;
+  text += `Name: ${tranche.name}
+`;
+  text += `Purpose: ${tranche.purpose || tranche.description || 'Resolve queued issues in a single final pass.'}
+`;
+  text += `Visible Result: ${tranche.visibleResult || 'Project remains runnable with queued issues resolved.'}
+`;
+  text += `Safety Checks:
+${(tranche.safetyChecks || []).map((s, i) => `  ${i + 1}. ${s}`).join('\n') || '  1. Preserve all working systems and only fix queued items.'}
+`;
+  text += `=== END HARDENING BATCH MANIFEST ===
+
+`;
+  text += `=== CURRENT ACCUMULATED FILES ===
+`;
+  for (const [pathName, fileContent] of Object.entries(accumulatedFiles || {})) {
+    text += `
+--- FILE: ${pathName} ---
+${fileContent}
+`;
+  }
+  text += `
+=== END CURRENT ACCUMULATED FILES ===
+
+`;
+  if (Array.isArray(modelAnalysis) && modelAnalysis.length > 0) {
+    text += `=== THREE.JS MODEL ANALYSIS ===
+${JSON.stringify(modelAnalysis, null, 2)}
+=== END THREE.JS MODEL ANALYSIS ===
+
+`;
+  }
+  text += `Resolve the queued hardening items with the minimum safe edits required. Preserve all existing working code. Output complete updated file contents only for the files you changed.`;
+  return text;
+}
+
+function buildHardeningQueueItems(tranche, trancheIndex, violations = [], noteType = 'validation') {
+  return violations.map((violation) => ({
+    trancheIndex,
+    trancheName: tranche?.name || `Tranche ${trancheIndex + 1}`,
+    file: violation.file,
+    pattern: violation.pattern,
+    message: violation.message,
+    severity: violation.severity,
+    lane: violation.lane || getViolationLane(violation.pattern, violation.severity),
+    retryBudget: violation.retryBudget ?? getRetryBudgetForLane(violation.lane || getViolationLane(violation.pattern, violation.severity)),
+    noteType
+  }));
+}
+
 function runAntiPatternValidation(files) {
-  return [];
+  const violations = [];
+  const normalizedFiles = Array.isArray(files) ? files : [];
+
+  for (const file of normalizedFiles) {
+    const pathName = String(file?.path || "");
+    const content = String(file?.content || "");
+    if (!pathName || !content) continue;
+
+    for (const antiPattern of ANTI_PATTERNS) {
+      try {
+        if (!antiPattern?.test || !antiPattern.test(content)) continue;
+        const severity = String(antiPattern.severity || 'FATAL').toUpperCase();
+        const lane = getViolationLane(antiPattern.name, severity);
+        violations.push({
+          file: pathName,
+          pattern: antiPattern.name,
+          message: antiPattern.message,
+          severity,
+          lane,
+          retryBudget: getRetryBudgetForLane(lane)
+        });
+      } catch (err) {
+        console.warn(`Anti-pattern validator failed for ${antiPattern?.name || 'unknown'} on ${pathName}: ${err.message}`);
+      }
+    }
+  }
+
+  return violations;
 }
 
 /* ── DYNAMIC_ARCHITECTURE_JSON_SCHEMA — REMOVED ─────────────
@@ -853,7 +1011,16 @@ function safeJsonParse(text, label) {
    No longer needed. Single-pass planner embeds game-specific
    rules directly in each tranche prompt. ─────────────────── */
 
-const REQUIRED_TRANCHE_VALIDATION_BLOCK = ``;
+const REQUIRED_TRANCHE_VALIDATION_BLOCK = `
+VALIDATION + RECOVERY CONTRACT:
+- Design tranche prompts so tranche success is judged first by visibleResult + safetyChecks.
+- Do NOT plan tranches that depend on stylistic perfection or one preferred coding style to pass.
+- Objective scaffold/runtime mistakes may be retried, but only under the runtime policy:
+  • 0 retries for soft/advisory findings.
+  • 1 retry max for narrow objective hard failures when the repair is obviously surgical.
+  • 2 retries only for parser/envelope failures or truly critical scaffold/runtime issues.
+  • Everything else is deferred into one end-stage hardening batch.
+- Always make the final tranche a single end-stage hardening batch anchored to Section 8 so deferred findings are resolved in one pass.`;
 
 function countOccurrences(haystack, needle) {
   if (!needle) return 0;
@@ -861,11 +1028,78 @@ function countOccurrences(haystack, needle) {
 }
 
 function assertTranchePromptHasRequiredManifestBlock(tranche, index) {
+  if (!tranche || typeof tranche.prompt !== 'string' || !tranche.prompt.trim()) {
+    throw new Error(`Planner tranche ${index + 1} is missing a prompt.`);
+  }
   return true;
 }
 
-function enforceTrancheValidationBlock(plan) {
+function normalizeArray(value, fallback = []) {
+  if (Array.isArray(value)) return value.filter(Boolean);
+  if (value === undefined || value === null || value === '') return [...fallback];
+  return [value].filter(Boolean);
+}
+
+function appendSyntheticHardeningTranche(plan) {
+  const tranches = Array.isArray(plan?.tranches) ? plan.tranches : [];
+  if (tranches.some(isHardeningBatchTranche)) return plan;
+
+  const maxPhase = tranches.reduce((max, tranche) => Math.max(max, Number(tranche?.phase || 0)), 0);
+  tranches.push({
+    kind: HARDENING_BATCH_KIND,
+    isHardeningBatch: true,
+    name: HARDENING_BATCH_NAME,
+    description: 'Single deferred batch that resolves queued soft findings and unresolved objective issues after the functional tranches are complete.',
+    anchorSections: ['8.1', '8.3'],
+    purpose: 'Resolve the queued hardening backlog in one final pass without redoing earlier tranches.',
+    systemsTouched: ['cross-system hardening', 'final acceptance', 'deferred validation cleanup'],
+    filesTouched: ['models/2', 'models/23'],
+    visibleResult: 'The project remains runnable and any queued hardening items are resolved in one final pass.',
+    safetyChecks: [
+      'Preserve all already-working tranche output.',
+      'Fix queued hardening items with the smallest safe edits.',
+      'Do not regress gameplay, HUD, lifecycle, or restart behavior while hardening.'
+    ],
+    expertAgents: ['integration', 'qa'],
+    phase: maxPhase + 1,
+    dependencies: tranches.map((tr, idx) => tr?.name || `Tranche ${idx + 1}`),
+    qualityCriteria: [
+      'Queued hardening items are resolved without regressions.',
+      'The final code remains scaffold-compliant and runnable.'
+    ],
+    prompt: 'Synthetic hardening batch — runtime will inject the deferred hardening queue.',
+    expectedFiles: ['models/2', 'models/23']
+  });
+
+  plan.tranches = tranches;
   return plan;
+}
+
+function enforceTrancheValidationBlock(plan) {
+  const rawTranches = Array.isArray(plan?.tranches) ? plan.tranches : [];
+  plan.tranches = rawTranches.map((tranche, index) => {
+    const expectedFiles = normalizeArray(tranche.expectedFiles || tranche.filesTouched, ['models/2', 'models/23']);
+    return {
+      kind: tranche.kind || 'build',
+      name: tranche.name || `Tranche ${index + 1}`,
+      description: tranche.description || tranche.purpose || `Implement tranche ${index + 1}.`,
+      anchorSections: normalizeArray(tranche.anchorSections, ['6.3']),
+      purpose: tranche.purpose || tranche.description || `Implement tranche ${index + 1}.`,
+      systemsTouched: normalizeArray(tranche.systemsTouched, ['gameplay']),
+      filesTouched: normalizeArray(tranche.filesTouched, expectedFiles),
+      visibleResult: tranche.visibleResult || tranche.description || `Tranche ${index + 1} produces a runnable incremental result.`,
+      safetyChecks: normalizeArray(tranche.safetyChecks, tranche.qualityCriteria || ['Leave the project runnable after this tranche.']),
+      expertAgents: normalizeArray(tranche.expertAgents, []),
+      phase: Number(tranche.phase || 0),
+      dependencies: normalizeArray(tranche.dependencies, []),
+      qualityCriteria: normalizeArray(tranche.qualityCriteria, []),
+      prompt: String(tranche.prompt || '').trim(),
+      expectedFiles,
+      isHardeningBatch: Boolean(tranche.isHardeningBatch || tranche.kind === HARDENING_BATCH_KIND)
+    };
+  });
+
+  return appendSyntheticHardeningTranche(plan);
 }
 
 /* ── helper: parse tranche executor delimiter-format responses ── */
@@ -1123,7 +1357,9 @@ exports.handler = async (event) => {
         },
         finalMessage: null,
         error: null,
-        completedTime: null
+        completedTime: null,
+        hardeningQueue: [],
+        finalHardeningSummary: null
       };
       await saveProgress(bucket, projectPath, progress);
 
@@ -1141,16 +1377,18 @@ INSTRUCTION PRECEDENCE:
 5. Never plan tranches that delete, replace, bypass, or work around an immutable scaffold block. Adapt the requested game to the scaffold.
 
 PLANNING RULES:
-1. Each tranche should focus on 1-2 closely related concerns.
-2. Tranches MUST be ordered by dependency — later tranches build on earlier ones.
-3. Each tranche prompt must be FULLY SELF-CONTAINED — it must embed the exact game-specific rules, variable names, slot layouts, code snippets, and pitfall warnings from the user's request that are relevant to that tranche. Do NOT summarize or abstract — copy the exact technical details.
-4. If the request is simple enough, use 1 tranche. Otherwise use the minimum count that preserves correctness.
-5. Each tranche must declare expectedFiles, dependencies, expertAgents, phase, and qualityCriteria.
-6. The FIRST tranche should establish scaffold-compliant foundations: preserve immutable scaffold sections, extend existing factories/hooks, create materials/world build, and establish STATIC collision surfaces where required.
-7. The LAST tranche should handle integration, edge cases, and polish.
+1. Section 6.3 is the center of gravity. Every core gameplay tranche must anchor to one or more 6.3 subsection(s), and the tranche order must follow dependency reality rather than raw document order.
+2. Plan the build like a house: foundation before controls, controls before authored playfield shell, shell before gameplay loop, gameplay loop before progression/HUD, progression before feedback/polish, then final hardening.
+3. Each tranche prompt must be FULLY SELF-CONTAINED — embed the exact game-specific rules, variable names, slot layouts, code snippets, and pitfall warnings from the user's request that are relevant to that tranche. Do NOT summarize away critical implementation details.
+4. If a tranche is too dense to be completed in one shot, split it into A/B (or more) dependency-ordered tranches. There is no hard cap on tranche count.
+5. Keep tranche scope small enough that each tranche leaves the project runnable and testable on its own.
+6. Every tranche must declare: kind, anchorSections, purpose, systemsTouched, filesTouched, visibleResult, safetyChecks, expectedFiles, dependencies, expertAgents, phase, and qualityCriteria.
+7. The FIRST tranche must establish scaffold-compliant foundations: preserve immutable scaffold sections, extend existing factories/hooks, create materials/world build, wire shared state safely, and establish STATIC collision surfaces where required.
 8. Do NOT instruct the executor to remove immutable scaffold fields/blocks or invent a replacement lifecycle when the scaffold already defines one.
 9. If the scaffold already provides a section (camera stage, UI hookup, particle emitter factory, instance parent pattern, input handler shape, etc.), the tranche must explicitly extend that section instead of replacing it.
 10. When the user's request contains code examples (updateInput, syncPlayerSharedMemory, ghost AI, etc.), embed those exact code examples in the relevant tranche prompts — do not paraphrase them.
+11. The final tranche must be a single end-stage hardening batch anchored to Section 8 so deferred findings can be resolved in one pass.
+12. Prefer the minimum tranche count that preserves first-pass correctness, dependency order, and low retry cost — never force a dense tranche just to reduce the count.
 
 ${REQUIRED_TRANCHE_VALIDATION_BLOCK}
 
@@ -1160,8 +1398,15 @@ You must respond ONLY with a valid JSON object. No markdown, no code fences, no 
   "analysis": "Brief planning analysis describing how you decomposed the build and why.",
   "tranches": [
     {
+      "kind": "build",
       "name": "Short Name",
       "description": "2-3 sentence description of what this tranche accomplishes.",
+      "anchorSections": ["6.3.1"],
+      "purpose": "Why this tranche exists in the build order.",
+      "systemsTouched": ["player controller", "shared state"],
+      "filesTouched": ["models/2", "models/23"],
+      "visibleResult": "What the user can observe working after this tranche.",
+      "safetyChecks": ["Hard requirements this tranche must satisfy before moving on."],
       "expertAgents": ["agent_id_1", "agent_id_2"],
       "phase": 1,
       "dependencies": [],
@@ -1214,8 +1459,16 @@ ${prompt}
       progress.currentTranche = 0;
       progress.tranches = plan.tranches.map((t, i) => ({
         index: i,
+        kind: t.kind || 'build',
+        isHardeningBatch: Boolean(t.isHardeningBatch || t.kind === HARDENING_BATCH_KIND),
         name: t.name,
         description: t.description,
+        anchorSections: t.anchorSections || [],
+        purpose: t.purpose || t.description || '',
+        systemsTouched: t.systemsTouched || [],
+        filesTouched: t.filesTouched || t.expectedFiles || [],
+        visibleResult: t.visibleResult || '',
+        safetyChecks: t.safetyChecks || [],
         expertAgents: t.expertAgents || [],
         phase: t.phase || 0,
         dependencies: t.dependencies || [],
@@ -1226,7 +1479,10 @@ ${prompt}
         startTime: null,
         endTime: null,
         message: null,
-        filesUpdated: []
+        filesUpdated: [],
+        validationRetryCount: 0,
+        executionRetryCount: 0,
+        retryBudget: 0
       }));
       await saveProgress(bucket, projectPath, progress);
 
@@ -1306,10 +1562,56 @@ ${prompt}
 
       if (!tranche) throw new Error(`Tranche ${nextTranche} not found in pipeline state.`);
 
+      const isHardeningBatch = isHardeningBatchTranche(tranche);
+      if (isHardeningBatch && (!progress.hardeningQueue || progress.hardeningQueue.length === 0)) {
+        progress.currentTranche = nextTranche;
+        progress.tranches[nextTranche].status = "complete";
+        progress.tranches[nextTranche].startTime = progress.tranches[nextTranche].startTime || Date.now();
+        progress.tranches[nextTranche].endTime = Date.now();
+        progress.tranches[nextTranche].message = "No queued hardening items — final hardening batch skipped to save tokens.";
+        progress.finalHardeningSummary = "Hardening batch skipped because no deferred items were queued.";
+        await saveProgress(bucket, projectPath, progress);
+
+        state.progress = progress;
+        await savePipelineState(bucket, projectPath, state);
+
+        if (nextTranche + 1 < progress.totalTranches) {
+          await chainToSelf({ projectPath, jobId, mode: "tranche", nextTranche: nextTranche + 1 });
+          return { statusCode: 200, body: JSON.stringify({ success: true, chained: true, phase: `tranche_${nextTranche}_hardening_skipped` }) };
+        }
+
+        const summaryParts = progress.tranches
+          .filter(t => t.status === "complete")
+          .map((t) => `Tranche ${t.index + 1} — ${t.name}: ${t.message}`);
+        if (progress.finalHardeningSummary) {
+          summaryParts.push(`Final hardening: ${progress.finalHardeningSummary}`);
+        }
+        const finalMessage = summaryParts.join("\n\n") || "Build completed.";
+
+        await saveAiResponse(bucket, projectPath, allUpdatedFiles, {
+          jobId:         jobId,
+          trancheIndex:  progress.totalTranches - 1,
+          totalTranches: progress.totalTranches,
+          status:        "final",
+          message:       finalMessage
+        });
+
+        progress.status = "complete";
+        const t = progress.tokenUsage.totals;
+        progress.finalMessage = `Build complete: ${allUpdatedFiles.length} file(s) updated across ${progress.tranches.filter(tr => tr.status === "complete").length} tranche(s). Tokens: ${t.input_tokens} in / ${t.output_tokens} out.`;
+        progress.completedTime = Date.now();
+        await saveProgress(bucket, projectPath, progress);
+
+        try { await bucket.file(`${projectPath}/ai_pipeline_state.json`).delete(); } catch (e) {}
+        try { await bucket.file(`${projectPath}/ai_request.json`).delete(); } catch (e) {}
+
+        return { statusCode: 200, body: JSON.stringify({ success: true, phase: "complete" }) };
+      }
+
       // ── Mark tranche as in-progress ──────────────────────────
       progress.currentTranche = nextTranche;
       progress.tranches[nextTranche].status = "in_progress";
-      progress.tranches[nextTranche].startTime = Date.now();
+      progress.tranches[nextTranche].startTime = progress.tranches[nextTranche].startTime || Date.now();
       await saveProgress(bucket, projectPath, progress);
 
       console.log(`TRANCHE ${nextTranche + 1}/${progress.totalTranches}: ${tranche.name} (Job ${jobId})`);
@@ -1329,8 +1631,8 @@ INSTRUCTION PRECEDENCE:
 - If both apply, the Scaffold wins for architecture/lifecycle/state shape, and the SDK wins for engine facts and anti-pattern avoidance.
 - Never delete, replace, or work around an immutable scaffold section. Extend inside it.
 
-Do not re-state the instruction docs — just apply them. Validator enforcement is temporarily disabled for this pipeline, but you must still follow the scaffold and SDK correctly.
-Write it correctly the first time.
+Do not re-state the instruction docs — just apply them. This pipeline uses a tiered recovery policy: soft findings are deferred, surgical objective failures may get one retry, and only parser/envelope or truly critical scaffold/runtime issues can consume two retries.
+Write it correctly the first time so the tranche can move forward without rework.
 
 You must respond using DELIMITER FORMAT only. Do NOT use JSON. Do NOT use markdown code blocks.
 
@@ -1388,10 +1690,22 @@ VALIDATOR STATUS:
 
       assertTranchePromptHasRequiredManifestBlock(tranche, nextTranche);
 
+      const trancheUserText = isHardeningBatch
+        ? buildHardeningBatchUserText({ progress, accumulatedFiles, tranche, modelAnalysis })
+        : `${trancheFileContext}
+
+=== TRANCHE ${nextTranche + 1} of ${progress.totalTranches}: "${tranche.name}" ===
+
+${tranche.prompt}
+
+=== END TRANCHE INSTRUCTIONS ===
+
+IMPORTANT: You are working on tranche ${nextTranche + 1} of ${progress.totalTranches}. The project files above contain ALL work from prior tranches. You MUST preserve all existing code and ADD your changes on top. Output the COMPLETE updated file contents.`;
+
       const trancheUserContent = [
         {
           type: "text",
-          text: `${trancheFileContext}\n\n=== TRANCHE ${nextTranche + 1} of ${progress.totalTranches}: "${tranche.name}" ===\n\n${tranche.prompt}\n\n=== END TRANCHE INSTRUCTIONS ===\n\nIMPORTANT: You are working on tranche ${nextTranche + 1} of ${progress.totalTranches}. The project files above contain ALL work from prior tranches. You MUST preserve all existing code and ADD your changes on top. Output the COMPLETE updated file contents.`
+          text: trancheUserText
         },
         ...(imageBlocks || [])
       ];
@@ -1448,9 +1762,30 @@ VALIDATOR STATUS:
         // Parse using delimiter format — no JSON escaping issues possible
         const trancheResult = parseDelimitedResponse(trancheResponseObj.text);
         if (!trancheResult) {
+          const parseRetryBudget = RETRY_POLICY.parser_envelope;
+          const currentParseRetry = progress.tranches[nextTranche].executionRetryCount || 0;
+
+          console.error(`Tranche ${nextTranche + 1} produced no parseable output.`);
+          console.error("Raw response (first 500 chars):", trancheResponseObj.text.slice(0, 500));
+
+          if (currentParseRetry < parseRetryBudget) {
+            const nextReplay = currentParseRetry + 1;
+            progress.tranches[nextTranche].status = "retrying";
+            progress.tranches[nextTranche].executionRetryCount = nextReplay;
+            progress.tranches[nextTranche].retryBudget = parseRetryBudget;
+            progress.tranches[nextTranche].message = `Parser/envelope issue detected — execution replay ${nextReplay}/${parseRetryBudget} queued.`;
+            await saveProgress(bucket, projectPath, progress);
+
+            state.progress = progress;
+            await savePipelineState(bucket, projectPath, state);
+
+            await chainToSelf({ projectPath, jobId, mode: "tranche", nextTranche });
+            return { statusCode: 200, body: JSON.stringify({ success: true, chained: true, phase: `tranche_${nextTranche}_parse_retry_${nextReplay}` }) };
+          }
+
           progress.tranches[nextTranche].status = "error";
           progress.tranches[nextTranche].endTime = Date.now();
-          progress.tranches[nextTranche].message = "Executor returned no recognisable file delimiters or valid JSON fallback.";
+          progress.tranches[nextTranche].message = `Executor returned no recognisable file delimiters after ${parseRetryBudget} parser/envelope retries.`;
           await saveProgress(bucket, projectPath, progress);
           console.error(`Tranche ${nextTranche + 1} produced no parseable output.`);
           console.error("Raw response (first 500 chars):", trancheResponseObj.text.slice(0, 500));
@@ -1458,14 +1793,13 @@ VALIDATOR STATUS:
           state.progress = progress;
           await savePipelineState(bucket, projectPath, state);
 
-          // Checkpoint ai_response.json with whatever was accumulated so far
           if (allUpdatedFiles.length > 0) {
             await saveAiResponse(bucket, projectPath, allUpdatedFiles, {
               jobId:         jobId,
               trancheIndex:  nextTranche,
               totalTranches: progress.totalTranches,
               status:        "checkpoint",
-              message:       `Checkpoint after tranche ${nextTranche + 1} parse-error skip. ${allUpdatedFiles.length} file(s) so far.`
+              message:       `Checkpoint after tranche ${nextTranche + 1} parser/envelope exhaustion. ${allUpdatedFiles.length} file(s) so far.`
             });
           }
 
@@ -1477,45 +1811,59 @@ VALIDATOR STATUS:
         }
 
         if (trancheResult) {
-          // ── Anti-pattern validation ──────────────────────────────
+          // ── Anti-pattern validation with tiered recovery ──────────
           if (trancheResult.updatedFiles && Array.isArray(trancheResult.updatedFiles)) {
-            const violations    = runAntiPatternValidation(trancheResult.updatedFiles);
-            const fatalViolations = violations.filter(v => v.severity === "FATAL");
+            const violations = runAntiPatternValidation(trancheResult.updatedFiles);
+            const softViolations = violations.filter(v => (v.retryBudget || 0) === 0 || v.lane === 'soft');
+            const retryableViolations = violations.filter(v => (v.retryBudget || 0) > 0);
+            const highestRetryBudget = retryableViolations.reduce((max, v) => Math.max(max, v.retryBudget || 0), 0);
 
-            if (fatalViolations.length > 0) {
-              // ── Build human-readable violation report ─────────────
-              const violationLines = fatalViolations.map((v, i) =>
-                `VIOLATION ${i + 1} — ${v.pattern}\n  File   : ${v.file}\n  Detail : ${v.message}`
+            if (softViolations.length > 0) {
+              pushHardeningQueueItems(progress, buildHardeningQueueItems(tranche, nextTranche, softViolations, 'soft'));
+              progress.tranches[nextTranche].softFindingCount = softViolations.length;
+              const softSummary = softViolations.map(v => `[${v.file}] ${v.pattern}`).join(', ');
+              console.warn(`Tranche ${nextTranche + 1} deferred ${softViolations.length} soft finding(s) to end-stage hardening: ${softSummary}`);
+            }
+
+            if (retryableViolations.length > 0) {
+              const violationLines = retryableViolations.map((v, i) =>
+                `VIOLATION ${i + 1} — ${v.pattern}
+  Lane   : ${v.lane}
+  File   : ${v.file}
+  Detail : ${v.message}`
               ).join('\n\n');
+              const violationSummary = retryableViolations.map(v => `[${v.file}] ${v.message}`).join('\n');
+              const currentRetry = progress.tranches[nextTranche].validationRetryCount || 0;
+              progress.tranches[nextTranche].retryBudget = highestRetryBudget;
 
-              const currentRetry = (progress.tranches[nextTranche].antiPatternRetryCount || 0);
-              const violationSummary = fatalViolations.map(v => `[${v.file}] ${v.message}`).join('\n');
+              console.error(`Tranche ${nextTranche + 1} objective validation findings detected (attempt ${currentRetry + 1}/${highestRetryBudget || 1}):
+${violationSummary}`);
 
-              console.error(`Tranche ${nextTranche + 1} FAILED anti-pattern validation (attempt ${currentRetry + 1}/${MAX_ANTIPATTERN_RETRIES}):\n${violationSummary}`);
-
-              if (currentRetry < MAX_ANTIPATTERN_RETRIES) {
-                // ── Schedule a correction pass ──────────────────────
+              if (currentRetry < highestRetryBudget) {
                 const nextAttempt = currentRetry + 1;
-
-                progress.tranches[nextTranche].status              = "fixing";
+                progress.tranches[nextTranche].status = "fixing";
+                progress.tranches[nextTranche].validationRetryCount = nextAttempt;
                 progress.tranches[nextTranche].antiPatternRetryCount = nextAttempt;
-                progress.tranches[nextTranche].antiPatternReport   = violationLines;
-                progress.tranches[nextTranche].antiPatternViolations = fatalViolations.map(v => ({
-                  file: v.file, pattern: v.pattern, message: v.message
+                progress.tranches[nextTranche].antiPatternReport = violationLines;
+                progress.tranches[nextTranche].antiPatternViolations = retryableViolations.map(v => ({
+                  file: v.file,
+                  pattern: v.pattern,
+                  message: v.message,
+                  lane: v.lane,
+                  retryBudget: v.retryBudget
                 }));
-                progress.tranches[nextTranche].fixAttempt          = nextAttempt;
-                // Keep startTime so the timer keeps running
-                progress.tranches[nextTranche].endTime             = null;
-                progress.tranches[nextTranche].message             = `⚠ ${fatalViolations.length} FATAL violation(s) detected — correction pass ${nextAttempt}/${MAX_ANTIPATTERN_RETRIES} queued.`;
+                progress.tranches[nextTranche].fixAttempt = nextAttempt;
+                progress.tranches[nextTranche].endTime = null;
+                progress.tranches[nextTranche].message = `⚠ ${retryableViolations.length} objective issue(s) detected — correction pass ${nextAttempt}/${highestRetryBudget} queued.`;
                 await saveProgress(bucket, projectPath, progress);
 
-                // Persist state with the REJECTED files so fix mode can reference them
-                state.progress                                     = progress;
-                state.rejectedTranche                              = {
-                  index:      nextTranche,
-                  files:      trancheResult.updatedFiles,
-                  violations: fatalViolations,
-                  report:     violationLines
+                state.progress = progress;
+                state.rejectedTranche = {
+                  index: nextTranche,
+                  files: trancheResult.updatedFiles,
+                  violations: retryableViolations,
+                  report: violationLines,
+                  retryBudget: highestRetryBudget
                 };
                 await savePipelineState(bucket, projectPath, state);
 
@@ -1523,44 +1871,24 @@ VALIDATOR STATUS:
                   await saveAiResponse(bucket, projectPath, allUpdatedFiles, {
                     jobId, trancheIndex: nextTranche, totalTranches: progress.totalTranches,
                     status:  "checkpoint",
-                    message: `Anti-pattern violations detected in tranche ${nextTranche + 1}. Correction pass ${nextAttempt}/${MAX_ANTIPATTERN_RETRIES} starting.`
+                    message: `Objective validation findings detected in tranche ${nextTranche + 1}. Correction pass ${nextAttempt}/${highestRetryBudget} starting.`
                   });
                 }
 
-                // Chain to fix mode for the SAME tranche
                 await chainToSelf({ projectPath, jobId, mode: "fix", nextTranche, fixAttempt: nextAttempt });
                 return { statusCode: 200, body: JSON.stringify({ success: true, chained: true, phase: `tranche_${nextTranche}_fix_queued_attempt_${nextAttempt}` }) };
-
-              } else {
-                // ── Retries exhausted — skip and continue ───────────
-                console.error(`Tranche ${nextTranche + 1} exhausted ${MAX_ANTIPATTERN_RETRIES} correction attempt(s). Skipping.`);
-                progress.tranches[nextTranche].status    = "error";
-                progress.tranches[nextTranche].endTime   = Date.now();
-                progress.tranches[nextTranche].message   = `Anti-pattern correction failed after ${MAX_ANTIPATTERN_RETRIES} attempt(s).\n${violationSummary}`;
-                await saveProgress(bucket, projectPath, progress);
-
-                state.progress = progress;
-                await savePipelineState(bucket, projectPath, state);
-
-                if (allUpdatedFiles.length > 0) {
-                  await saveAiResponse(bucket, projectPath, allUpdatedFiles, {
-                    jobId, trancheIndex: nextTranche, totalTranches: progress.totalTranches,
-                    status:  "checkpoint",
-                    message: `Tranche ${nextTranche + 1} skipped after ${MAX_ANTIPATTERN_RETRIES} failed correction attempts.`
-                  });
-                }
-
-                if (nextTranche + 1 < progress.totalTranches) {
-                  await chainToSelf({ projectPath, jobId, mode: "tranche", nextTranche: nextTranche + 1 });
-                  return { statusCode: 200, body: JSON.stringify({ success: true, chained: true, phase: `tranche_${nextTranche}_antipattern_exhausted` }) };
-                }
-                trancheResult.updatedFiles = [];   // don't merge
               }
 
-            } else if (violations.length > 0) {
-              // Warnings — log but don't reject
-              const warnSummary = violations.map(v => `[${v.file}] ${v.message}`).join('\n');
-              console.warn(`Tranche ${nextTranche + 1} anti-pattern WARNINGS:\n${warnSummary}`);
+              pushHardeningQueueItems(progress, buildHardeningQueueItems(tranche, nextTranche, retryableViolations, 'deferred_objective'));
+              progress.tranches[nextTranche].antiPatternViolations = retryableViolations.map(v => ({
+                file: v.file,
+                pattern: v.pattern,
+                message: v.message,
+                lane: v.lane,
+                retryBudget: v.retryBudget
+              }));
+              progress.tranches[nextTranche].message = `Merged with ${retryableViolations.length} unresolved objective issue(s) queued for the end-stage hardening batch.`;
+              console.warn(`Tranche ${nextTranche + 1} exhausted objective retries and will defer ${retryableViolations.length} issue(s) to end-stage hardening.`);
             }
           }
 
@@ -1641,7 +1969,8 @@ VALIDATOR STATUS:
 
       progress.status = "complete";
       const t = progress.tokenUsage.totals;
-      progress.finalMessage = `Build complete: ${allUpdatedFiles.length} file(s) updated across ${progress.tranches.filter(tr => tr.status === "complete").length} tranche(s). Tokens: ${t.input_tokens} in / ${t.output_tokens} out.`;
+      const deferredCount = Array.isArray(progress.hardeningQueue) ? progress.hardeningQueue.length : 0;
+      progress.finalMessage = `Build complete: ${allUpdatedFiles.length} file(s) updated across ${progress.tranches.filter(tr => tr.status === "complete").length} tranche(s). Tokens: ${t.input_tokens} in / ${t.output_tokens} out.${deferredCount ? ` Deferred items still queued: ${deferredCount}.` : ''}`;
       progress.completedTime = Date.now();
       await saveProgress(bucket, projectPath, progress);
 
@@ -1684,11 +2013,12 @@ VALIDATOR STATUS:
       const instructionBundle = await fetchInstructionBundle(bucket, projectPath);
       assertInstructionBundle(instructionBundle, "FIX");
 
-      console.log(`FIX MODE: Tranche ${nextTranche + 1} — attempt ${fixAttempt}/${MAX_ANTIPATTERN_RETRIES} (Job ${jobId})`);
+      const retryBudget = rejectedTranche.retryBudget || progress.tranches[nextTranche].retryBudget || RETRY_POLICY.critical_runtime;
+      console.log(`FIX MODE: Tranche ${nextTranche + 1} — attempt ${fixAttempt}/${retryBudget} (Job ${jobId})`);
 
       // ── Update UI: show "fixing" status with violation details ─
       progress.tranches[nextTranche].status  = "fixing";
-      progress.tranches[nextTranche].message = `🔧 Correction pass ${fixAttempt}/${MAX_ANTIPATTERN_RETRIES} in progress — rewriting to fix ${rejectedTranche.violations.length} violation(s)...`;
+      progress.tranches[nextTranche].message = `🔧 Correction pass ${fixAttempt}/${retryBudget} in progress — rewriting to fix ${rejectedTranche.violations.length} violation(s)...`;
       await saveProgress(bucket, projectPath, progress);
 
       // ── Build the violation-aware correction system prompt ────
@@ -1720,7 +2050,7 @@ Summary of exactly what was fixed and why each violation occurred.
 
       let correctionUserText = '';
       if (fixAttempt > 1) {
-        correctionUserText += `⚠ REPAIR ATTEMPT ${fixAttempt}/${MAX_ANTIPATTERN_RETRIES}: Your previous correction attempt DID NOT resolve all violations.\n`
+        correctionUserText += `⚠ REPAIR ATTEMPT ${fixAttempt}/${retryBudget}: Your previous correction attempt DID NOT resolve all violations.\n`
           + `The same violations are listed again below. Do NOT repeat the same approach as attempt ${fixAttempt - 1}.\n`
           + `Read the REQUIRED FIX instructions in the violation message carefully — `
           + `they specify the exact code pattern needed. If your last fix deleted the offending call `
@@ -1795,33 +2125,38 @@ Summary of exactly what was fixed and why each violation occurred.
       }
 
       // ── Re-validate the corrected files ──────────────────────
-      const revalidation   = runAntiPatternValidation(fixResult.updatedFiles);
-      const remainingFatal = revalidation.filter(v => v.severity === "FATAL");
+      const revalidation = runAntiPatternValidation(fixResult.updatedFiles);
+      const remainingRetryable = revalidation.filter(v => (v.retryBudget || 0) > 0);
 
-      if (remainingFatal.length > 0) {
-        // Still failing after this correction pass
-        const remainingSummary = remainingFatal.map(v => `[${v.file}] ${v.message}`).join('\n');
-        console.warn(`Fix pass ${fixAttempt} — ${remainingFatal.length} violation(s) remain.`);
+      if (remainingRetryable.length > 0) {
+        const remainingSummary = remainingRetryable.map(v => `[${v.file}] ${v.message}`).join('\n');
+        console.warn(`Fix pass ${fixAttempt} — ${remainingRetryable.length} violation(s) remain.`);
 
-        if (fixAttempt < MAX_ANTIPATTERN_RETRIES) {
-          // Queue another fix pass
+        if (fixAttempt < retryBudget) {
           const nextAttempt = fixAttempt + 1;
-          const remainingReport = remainingFatal.map((v, i) =>
-            `VIOLATION ${i + 1} — ${v.pattern}\n  File   : ${v.file}\n  Detail : ${v.message}`
+          const remainingReport = remainingRetryable.map((v, i) =>
+            `VIOLATION ${i + 1} — ${v.pattern}
+  Lane   : ${v.lane}
+  File   : ${v.file}
+  Detail : ${v.message}`
           ).join('\n\n');
 
-          progress.tranches[nextTranche].antiPatternRetryCount  = nextAttempt;
+          progress.tranches[nextTranche].validationRetryCount  = nextAttempt;
+          progress.tranches[nextTranche].antiPatternRetryCount = nextAttempt;
           progress.tranches[nextTranche].antiPatternReport      = remainingReport;
-          progress.tranches[nextTranche].antiPatternViolations  = remainingFatal.map(v => ({ file: v.file, pattern: v.pattern, message: v.message }));
+          progress.tranches[nextTranche].antiPatternViolations  = remainingRetryable.map(v => ({ file: v.file, pattern: v.pattern, message: v.message, lane: v.lane, retryBudget: v.retryBudget }));
           progress.tranches[nextTranche].fixAttempt             = nextAttempt;
           progress.tranches[nextTranche].status                 = "fixing";
-          progress.tranches[nextTranche].message                = `⚠ ${remainingFatal.length} violation(s) remain after pass ${fixAttempt} — correction pass ${nextAttempt}/${MAX_ANTIPATTERN_RETRIES} queued.`;
+          progress.tranches[nextTranche].message                = `⚠ ${remainingRetryable.length} violation(s) remain after pass ${fixAttempt} — correction pass ${nextAttempt}/${retryBudget} queued.`;
           await saveProgress(bucket, projectPath, progress);
 
-          state.progress       = progress;
+          state.progress = progress;
           state.rejectedTranche = {
-            index: nextTranche, files: fixResult.updatedFiles,
-            violations: remainingFatal, report: remainingReport
+            index: nextTranche,
+            files: fixResult.updatedFiles,
+            violations: remainingRetryable,
+            report: remainingReport,
+            retryBudget
           };
           await savePipelineState(bucket, projectPath, state);
 
@@ -1829,26 +2164,40 @@ Summary of exactly what was fixed and why each violation occurred.
           return { statusCode: 200, body: JSON.stringify({ success: true, chained: true, phase: `fix_${nextTranche}_retry_${nextAttempt}` }) };
 
         } else {
-          // Exhausted all correction attempts
-          progress.tranches[nextTranche].status  = "error";
+          pushHardeningQueueItems(progress, buildHardeningQueueItems(tranche, nextTranche, remainingRetryable, 'deferred_after_retry_budget'));
+
+          const fixFilesUpdated = [];
+          for (const file of fixResult.updatedFiles) {
+            accumulatedFiles[file.path] = file.content;
+            fixFilesUpdated.push(file.path);
+            const existingIdx = allUpdatedFiles.findIndex(f => f.path === file.path);
+            if (existingIdx >= 0) { allUpdatedFiles[existingIdx] = file; }
+            else                  { allUpdatedFiles.push(file); }
+          }
+
+          progress.tranches[nextTranche].status = "complete";
           progress.tranches[nextTranche].endTime = Date.now();
-          progress.tranches[nextTranche].message = `Correction failed after ${MAX_ANTIPATTERN_RETRIES} attempt(s). Violations persist: ${remainingSummary}`;
+          progress.tranches[nextTranche].filesUpdated = fixFilesUpdated;
+          progress.tranches[nextTranche].message = `Merged after ${retryBudget} correction pass(es); ${remainingRetryable.length} remaining issue(s) deferred to the end-stage hardening batch.`;
+          progress.finalHardeningSummary = `Queued ${remainingRetryable.length} unresolved objective issue(s) from tranche ${nextTranche + 1} for the final hardening batch.`;
           await saveProgress(bucket, projectPath, progress);
+
           state.progress = progress;
+          state.accumulatedFiles = accumulatedFiles;
+          state.allUpdatedFiles = allUpdatedFiles;
           state.rejectedTranche = null;
           await savePipelineState(bucket, projectPath, state);
 
-          if (allUpdatedFiles.length > 0) {
-            await saveAiResponse(bucket, projectPath, allUpdatedFiles, {
-              jobId, trancheIndex: nextTranche, totalTranches: progress.totalTranches,
-              status: "checkpoint",
-              message: `Tranche ${nextTranche + 1} skipped — corrections exhausted after ${MAX_ANTIPATTERN_RETRIES} attempt(s).`
-            });
-          }
+          await saveAiResponse(bucket, projectPath, allUpdatedFiles, {
+            jobId, trancheIndex: nextTranche, totalTranches: progress.totalTranches,
+            status: "checkpoint",
+            message: `Tranche ${nextTranche + 1} merged with deferred hardening after exhausting ${retryBudget} correction pass(es).`
+          });
+
           if (nextTranche + 1 < progress.totalTranches) {
             await chainToSelf({ projectPath, jobId, mode: "tranche", nextTranche: nextTranche + 1 });
           }
-          return { statusCode: 200, body: JSON.stringify({ success: false, phase: `fix_${nextTranche}_exhausted` }) };
+          return { statusCode: 200, body: JSON.stringify({ success: true, phase: `fix_${nextTranche}_deferred_to_hardening` }) };
         }
       }
 
@@ -1868,6 +2217,10 @@ Summary of exactly what was fixed and why each violation occurred.
       progress.tranches[nextTranche].endTime      = Date.now();
       progress.tranches[nextTranche].filesUpdated = fixFilesUpdated;
       progress.tranches[nextTranche].message      = `✅ Fixed in ${fixAttempt} correction pass(es). ${fixResult.message || ""}`;
+      if (isHardeningBatchTranche(tranche)) {
+        progress.finalHardeningSummary = `Resolved ${Array.isArray(progress.hardeningQueue) ? progress.hardeningQueue.length : 0} queued hardening item(s) in one final batch.`;
+        progress.hardeningQueue = [];
+      }
       // Clear rejected tranche from state
       state.rejectedTranche = null;
       await saveProgress(bucket, projectPath, progress);

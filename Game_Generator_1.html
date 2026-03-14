@@ -359,7 +359,8 @@
     }
     .tranche-card-index.complete { background: var(--success); border: 2px solid var(--success); color: #0b0d12; }
     .tranche-card-index.error { background: var(--danger); border: 2px solid var(--danger); color: #0b0d12; }
-    .tranche-card-index.fixing {
+    .tranche-card-index.fixing,
+    .tranche-card-index.retrying {
       background: rgba(245, 158, 11, 0.15); border: 2px solid #f59e0b; color: #f59e0b;
       box-shadow: 0 0 12px rgba(245, 158, 11, 0.3);
       animation: tranche-fix-pulse 1s ease-in-out infinite;
@@ -382,7 +383,7 @@
     .tranche-card-tag.in_progress { background: rgba(43, 108, 255, 0.15); color: var(--accent); }
     .tranche-card-tag.complete { background: rgba(127, 219, 150, 0.12); color: var(--success); }
     .tranche-card-tag.error { background: rgba(252, 165, 165, 0.12); color: var(--danger); }
-    .tranche-card-tag.fixing { background: rgba(245, 158, 11, 0.12); color: #f59e0b; }
+    .tranche-card-tag.fixing, .tranche-card-tag.retrying { background: rgba(245, 158, 11, 0.12); color: #f59e0b; }
     .tranche-card-time { color: var(--muted); font-family: 'SF Mono', 'Fira Code', monospace; }
     .tranche-card-files { color: #a78bfa; }
 
@@ -679,8 +680,8 @@
             <div class="tranche-header">
               <div class="tranche-header-icon" id="trancheHeaderIcon">⚡</div>
               <div class="tranche-header-info">
-                <div class="tranche-header-title" id="trancheHeaderTitle">Tranched Build Pipeline</div>
-                <div class="tranche-header-sub" id="trancheHeaderSub">Initializing...</div>
+                <div class="tranche-header-title" id="trancheHeaderTitle">6.3-Centered Tranche Pipeline</div>
+                <div class="tranche-header-sub" id="trancheHeaderSub">Initializing dependency-ordered 6.3 tranche plan...</div>
               </div>
               <div class="tranche-header-timer" id="trancheTimer">00:00</div>
             </div>
@@ -690,7 +691,7 @@
             <div id="tranchePlanningSection" class="tranche-planning" style="display:none;">
               <div class="tranche-planning-spinner"></div>
               <div class="tranche-planning-text">
-                <span id="tranchePlanningLabel">AI Planner is researching game design and creating expert-driven build tranches...</span>
+                <span id="tranchePlanningLabel">AI Planner is building a dependency-ordered 6.3 tranche plan...</span>
                 <span class="analysis" id="tranchePlanningAnalysis"></span>
               </div>
             </div>
@@ -727,7 +728,7 @@
           <!-- Game Essence Contract Panel — REMOVED (contract merged into Master Prompt) -->
 
           <div style="position: relative; width: 100%;">
-            <textarea id="aiPromptInput" placeholder="e.g., 'Build a physics-based destruction game with 15 levels...' — V2 will research the game, assign expert agents, and decompose into 8-15 micro-tranches." style="min-height: 80px; resize: vertical; width: 100%; padding-right: 140px;"></textarea>
+            <textarea id="aiPromptInput" placeholder="e.g., 'Build a physics-based destruction game with 15 levels...' — V2 will build a dependency-ordered 6.3 tranche plan plus a final hardening batch." style="min-height: 80px; resize: vertical; width: 100%; padding-right: 140px;"></textarea>
             <div id="imageTagContainer" style="position: absolute; top: 10px; right: 10px; display: flex; flex-direction: column; gap: 6px; z-index: 10; pointer-events: none;"></div>
           </div>
           
@@ -905,15 +906,15 @@
         const introDiv = document.getElementById('aiChatIntro');
         if (introDiv) {
             introDiv.textContent = currentProject
-                ? `AI Context ready for project: ${currentProject}. Enter instructions below — ${svc.planner} will research the game, assign expert agents, and create focused micro-tranches.`
-                : `V2 Expert-Agent Pipeline ready. Enter game build instructions below — ${svc.planner} will research the game, assign expert agents, and create focused micro-tranches.`;
+                ? `AI Context ready for project: ${currentProject}. Enter instructions below — ${svc.planner} will create a dependency-ordered 6.3-centered tranche plan with a final hardening batch.`
+                : `V2 Expert-Agent Pipeline ready. Enter game build instructions below — ${svc.planner} will create a dependency-ordered 6.3-centered tranche plan with a final hardening batch.`;
         }
         
-        aiPromptInput.placeholder = `e.g., 'Build a physics-based destruction game with 15 levels...' — V2 will research the game, assign expert agents, and decompose into 8-15 micro-tranches using ${svc.name}.`;
+        aiPromptInput.placeholder = `e.g., 'Build a physics-based destruction game with 15 levels...' — V2 will build a dependency-ordered 6.3 tranche plan plus a final hardening batch using ${svc.name}.`;
 
         const planningLabel = document.getElementById('tranchePlanningLabel');
         if (planningLabel && planningLabel.textContent.includes('researching')) {
-            planningLabel.textContent = `${svc.planner} is running Architect pass then building expert-driven tranches...`;
+            planningLabel.textContent = `${svc.planner} is building a dependency-ordered 6.3 tranche plan...`;
         }
 
         const footerModels = document.querySelector('.tranche-footer-models');
@@ -1315,7 +1316,7 @@ This will permanently remove all associated files and Firebase folders for this 
       refreshAssetLibrary();
       syncAssetsJson();
       
-      aiChatLog.innerHTML = `<div id="aiChatIntro" style="color: var(--muted);">AI Context ready for project: ${name}. Enter instructions below — ${AI_SERVICES[currentAiService].planner} will research the game, assign expert agents, and create focused micro-tranches.</div>`;
+      aiChatLog.innerHTML = `<div id="aiChatIntro" style="color: var(--muted);">AI Context ready for project: ${name}. Enter instructions below — ${AI_SERVICES[currentAiService].planner} will create a dependency-ordered 6.3-centered tranche plan with a final hardening batch.</div>`;
       aiCodeReviewLog.innerHTML = `<div style="color: var(--muted);">Code diff updates will appear here after an AI run.</div>`;
       
       updateAiUI();
@@ -2729,9 +2730,10 @@ Quality criteria for your work:
       _getPhaseMeta(phaseNum) {
         const phases = {
           1: { name: 'Foundation', color: '#3b82f6', icon: '🏛️' },
-          2: { name: 'Core Mechanics', color: '#f59e0b', icon: '⚙️' },
-          3: { name: 'Content & Polish', color: '#a78bfa', icon: '💎' },
-          4: { name: 'Integration', color: '#22c55e', icon: '🔗' },
+          2: { name: 'Core Loop', color: '#f59e0b', icon: '⚙️' },
+          3: { name: 'Progression & Feedback', color: '#a78bfa', icon: '💎' },
+          4: { name: 'Restart & Integration', color: '#22c55e', icon: '🔗' },
+          5: { name: 'End-Stage Hardening', color: '#ef4444', icon: '🛠️' },
         };
         return phases[phaseNum] || { name: `Phase ${phaseNum}`, color: '#64748b', icon: '📦' };
       },
@@ -2739,8 +2741,8 @@ Quality criteria for your work:
       showPlanning() {
         const svc = AI_SERVICES[currentAiService];
         document.getElementById('tranchePlanningSection').style.display = 'flex';
-        document.getElementById('trancheHeaderTitle').textContent = 'V2 Expert-Agent Pipeline';
-        document.getElementById('trancheHeaderSub').textContent = 'Phase 0: Architect Pass + Builder Planning...';
+        document.getElementById('trancheHeaderTitle').textContent = '6.3-Centered Tranche Pipeline';
+        document.getElementById('trancheHeaderSub').textContent = 'Phase 0: Planning dependency order + hardening batch...';
         document.getElementById('trancheOverallFill').style.width = '0%';
         document.getElementById('trancheList').innerHTML = '';
         document.getElementById('trancheFooterStatus').textContent = `${svc.planner} planning tranches...`;
@@ -2805,10 +2807,10 @@ Quality criteria for your work:
 
         if (prog.status === 'planning') {
           planningSection.style.display = 'flex';
-          planningLabel.textContent = `${svc.planner} is running Architect pass then building expert-driven tranches...`;
+          planningLabel.textContent = `${svc.planner} is building a dependency-ordered 6.3 tranche plan...`;
           planningAnalysis.textContent = '';
           overallFill.style.width = '5%';
-          footerStatus.textContent = 'Phase 0: Architect pass active...';
+          footerStatus.textContent = 'Phase 0: 6.3 tranche planning active...';
           return;
         }
 
@@ -2821,7 +2823,7 @@ Quality criteria for your work:
             const planDuration = (prog.planningEndTime && prog.planningStartTime)
               ? this._formatDuration(prog.planningEndTime - prog.planningStartTime)
               : '';
-            planningLabel.innerHTML = `✓ Architect + Plan: <strong>${prog.totalTranches} expert tranche(s)</strong>${planDuration ? ` in ${planDuration}` : ''}`;
+            planningLabel.innerHTML = `✓ 6.3 Plan Ready: <strong>${prog.totalTranches} tranche(s)</strong>${planDuration ? ` in ${planDuration}` : ''}`;
             planningLabel.style.color = 'var(--success)';
             planningAnalysis.textContent = '';
             planningSection.querySelector('.tranche-planning-spinner')?.remove();
@@ -2840,14 +2842,14 @@ Quality criteria for your work:
             overallFill.classList.add('done');
             headerIcon.textContent = '✓';
             headerIcon.classList.add('done');
-            headerTitle.textContent = 'V2 Build Complete';
+            headerTitle.textContent = '6.3 Build Complete';
             headerTimer.classList.add('done');
             this._stopTimer();
             const totalTime = (prog.completedTime && prog.planningStartTime)
               ? this._formatDuration(prog.completedTime - prog.planningStartTime)
               : '';
             headerSub.textContent = `${prog.totalTranches} expert tranche(s) executed${totalTime ? ` — total time: ${totalTime}` : ''}`;
-            footerStatus.textContent = prog.finalMessage || 'V2 Pipeline complete';
+            footerStatus.textContent = prog.finalMessage || '6.3 tranche pipeline complete';
           } else {
             const activeTranche = prog.tranches.find(t => t.status === 'in_progress');
             if (activeTranche) {
@@ -2968,6 +2970,7 @@ Quality criteria for your work:
           if (t.status === 'complete') indexEl.textContent = '✓';
           else if (t.status === 'error') indexEl.textContent = '✕';
           else if (t.status === 'fixing') indexEl.textContent = '🔧';
+          else if (t.status === 'retrying') indexEl.textContent = '↻';
           else indexEl.textContent = i + 1;
           // Tint the index based on phase when pending
           if (t.status === 'pending' && t.phase) {
@@ -2983,7 +2986,7 @@ Quality criteria for your work:
           }
 
           nameEl.textContent = t.name || `Tranche ${i + 1}`;
-          descEl.textContent = t.description || '';
+          descEl.textContent = t.description || t.purpose || '';
 
           // Dependency chips (V2)
           if (t.dependencies && t.dependencies.length > 0) {
@@ -2995,9 +2998,13 @@ Quality criteria for your work:
 
           // Build meta tags
           const statusLabel = t.status === 'in_progress' ? 'BUILDING...'
-            : t.status === 'fixing' ? `🔧 FIXING (${t.fixAttempt || t.antiPatternRetryCount || '?'}/${2})`
+            : t.status === 'fixing' ? `🔧 FIXING (${t.fixAttempt || t.validationRetryCount || t.antiPatternRetryCount || '?'}/${t.retryBudget || 1})`
+            : t.status === 'retrying' ? `↻ RETRYING (${t.executionRetryCount || '?'}/${t.retryBudget || 2})`
             : t.status.toUpperCase();
           let metaHTML = `<span class="tranche-card-tag ${t.status}">${statusLabel}</span>`;
+          if (t.anchorSections && t.anchorSections.length > 0) {
+            metaHTML += `<span class="tranche-card-time" style="color:#38bdf8;">§ ${t.anchorSections.join(', ')}</span>`;
+          }
           if (t.phase) {
             metaHTML += `<span class="tranche-card-tag" style="background:${phaseMeta.color}15;color:${phaseMeta.color};border:1px solid ${phaseMeta.color}33;">${phaseMeta.icon} P${t.phase}</span>`;
           }
@@ -3023,20 +3030,28 @@ Quality criteria for your work:
           metaEl.innerHTML = metaHTML;
 
           // Quality criteria (V2)
+          const qualityLines = [];
+          if (t.visibleResult) qualityLines.push(`<div style="margin-bottom:6px;"><span style="color:#38bdf8;">Visible result:</span> ${this._escapeHTML(t.visibleResult)}</div>`);
+          if (t.safetyChecks && t.safetyChecks.length > 0) {
+            qualityLines.push(`<div style="margin-bottom:4px;"><span style="color:#38bdf8;">Safety checks:</span></div>`);
+            qualityLines.push(...t.safetyChecks.map((c, ci) => `<div style="margin-bottom:3px;"><span style="color:#475569;">${ci + 1}.</span> ${this._escapeHTML(c)}</div>`));
+          }
           if (t.qualityCriteria && t.qualityCriteria.length > 0) {
+            qualityLines.push(`<div style="margin:6px 0 4px;color:#38bdf8;">Quality criteria:</div>`);
+            qualityLines.push(...t.qualityCriteria.map((c, ci) => `<div style="margin-bottom:3px;"><span style="color:#475569;">${ci + 1}.</span> ${this._escapeHTML(c)}</div>`));
+          }
+          if (qualityLines.length > 0) {
             qToggleEl.style.display = 'block';
-            qualityEl.innerHTML = t.qualityCriteria.map((c, ci) =>
-              `<div style="margin-bottom:3px;"><span style="color:#475569;">${ci + 1}.</span> ${this._escapeHTML(c)}</div>`
-            ).join('');
+            qualityEl.innerHTML = qualityLines.join('');
           } else {
             qToggleEl.style.display = 'none';
           }
 
           // Show message if complete, error, or fixing
-          if (t.message && (t.status === 'complete' || t.status === 'error' || t.status === 'fixing')) {
+          if (t.message && (t.status === 'complete' || t.status === 'error' || t.status === 'fixing' || t.status === 'retrying')) {
             msgEl.style.display = 'block';
             const msgClass = t.status === 'error' ? ' error-msg'
-              : t.status === 'fixing' ? ' fixing-msg'
+              : (t.status === 'fixing' || t.status === 'retrying') ? ' fixing-msg'
               : '';
             msgEl.className = `tranche-card-message${msgClass}`;
             msgEl.textContent = t.message;
@@ -3052,8 +3067,9 @@ Quality criteria for your work:
 
           const hasViolations = t.antiPatternViolations && t.antiPatternViolations.length > 0;
           const isFixing      = t.status === 'fixing';
+          const isRetrying    = t.status === 'retrying';
           const wasFixed      = t.status === 'complete' && t.fixAttempt > 0;
-          const fixFailed     = t.status === 'error' && t.antiPatternRetryCount > 0;
+          const fixFailed     = t.status === 'error' && (t.validationRetryCount > 0 || t.antiPatternRetryCount > 0);
 
           if (violationsEl) {
             if (hasViolations) {
@@ -3077,9 +3093,13 @@ Quality criteria for your work:
 
           if (fixStatusEl) {
             if (isFixing) {
-              const attempt = t.fixAttempt || t.antiPatternRetryCount || '?';
+              const attempt = t.fixAttempt || t.validationRetryCount || t.antiPatternRetryCount || '?';
               fixStatusEl.className = 'tranche-fix-status active';
-              fixStatusEl.textContent = `🔧 Correction pass ${attempt}/${2} in progress — rewriting to fix ${(t.antiPatternViolations || []).length} violation(s)...`;
+              fixStatusEl.textContent = `🔧 Correction pass ${attempt}/${t.retryBudget || 1} in progress — rewriting to fix ${(t.antiPatternViolations || []).length} violation(s)...`;
+            } else if (isRetrying) {
+              const attempt = t.executionRetryCount || '?';
+              fixStatusEl.className = 'tranche-fix-status active';
+              fixStatusEl.textContent = `↻ Parser/envelope replay ${attempt}/${t.retryBudget || 2} in progress — retrying the same tranche without redoing earlier work...`;
             } else if (wasFixed) {
               fixStatusEl.className = 'tranche-fix-status active resolved';
               fixStatusEl.textContent = `✅ All violations resolved after ${t.fixAttempt} correction pass(es).`;
@@ -3087,7 +3107,7 @@ Quality criteria for your work:
               fixStatusEl.className = 'tranche-fix-status active';
               fixStatusEl.style.borderLeftColor = 'var(--danger)';
               fixStatusEl.style.color = 'var(--danger)';
-              fixStatusEl.textContent = `✕ Correction failed after ${t.antiPatternRetryCount} attempt(s) — tranche skipped.`;
+              fixStatusEl.textContent = `✕ Correction budget exhausted after ${t.validationRetryCount || t.antiPatternRetryCount} attempt(s) — remaining issues were deferred to the end-stage hardening batch.`;
             } else {
               fixStatusEl.className = 'tranche-fix-status';
               fixStatusEl.textContent = '';
