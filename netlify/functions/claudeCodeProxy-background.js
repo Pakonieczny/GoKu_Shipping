@@ -920,10 +920,13 @@ async function callClaude(apiKey, { model, maxTokens, system, userContent, effor
   const body = {
     model,
     max_tokens: maxTokens,
-    thinking: { type: "enabled", budget_tokens: budgetTokens || 10000 },
     system,
     messages: [{ role: "user", content: userContent }]
   };
+
+  if (budgetTokens) {
+    body.thinking = { type: "enabled", budget_tokens: budgetTokens };
+  }
 
   if (effort) {
     body.output_config = { effort };
