@@ -67,13 +67,8 @@ function classifyInstructionFile(fileName = "", content = "") {
   const lowerName = String(fileName || "").toLowerCase();
   const lowerContent = String(content || "").toLowerCase();
 
-  if (
-    lowerName.includes("scaffold") ||
-    (lowerContent.includes("scaffold") && lowerContent.includes("immutable"))
-  ) {
-    return "scaffold";
-  }
-
+  // SDK check runs FIRST — filename is unambiguous and must not be overridden
+  // by the content-based scaffold check (SDK docs often mention "scaffold" and "immutable")
   if (
     lowerName.includes("engine_reference") ||
     lowerName.includes("engine-reference") ||
@@ -83,6 +78,13 @@ function classifyInstructionFile(fileName = "", content = "") {
     lowerContent.includes("platform invariants")
   ) {
     return "sdk";
+  }
+
+  if (
+    lowerName.includes("scaffold") ||
+    (lowerContent.includes("scaffold") && lowerContent.includes("immutable"))
+  ) {
+    return "scaffold";
   }
 
   return "other";
