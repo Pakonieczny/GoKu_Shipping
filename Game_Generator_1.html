@@ -550,7 +550,51 @@
       font-family: 'SF Mono', 'Fira Code', monospace;
     }
 
-    /* ── CodeMirror Custom Overrides ── */
+    /* ── Validation Correction Panel ── */
+    .val-correction-panel {
+      display: none; margin-top: 10px; padding: 14px 20px;
+      background: rgba(43,108,255,0.04); border: 1px solid #1e2745;
+      border-top: 3px solid var(--accent); border-radius: 0 0 12px 12px;
+      font-size: 12px;
+    }
+    .val-correction-panel.active { display: block; }
+    .val-correction-header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 10px;
+    }
+    .val-correction-title { font-weight: 600; color: var(--text); font-size: 13px; }
+    .val-correction-hint  { font-size: 11px; color: var(--muted); }
+    .val-resubmit-bar {
+      display: none; margin-top: 12px; padding: 10px 14px;
+      background: rgba(127,219,150,0.07); border: 1px solid rgba(127,219,150,0.25);
+      border-radius: 8px; display: none; align-items: center; gap: 10px;
+    }
+    .val-resubmit-bar.active { display: flex; }
+    .val-resubmit-label { flex: 1; font-size: 12px; color: var(--success); }
+    .btn-apply-fix {
+      cursor: pointer; border-radius: 8px; border: 1px solid rgba(43,108,255,0.4);
+      padding: 5px 10px; background: rgba(43,108,255,0.12); color: var(--accent);
+      font-size: 11px; font-weight: 600; transition: all 0.2s; white-space: nowrap;
+    }
+    .btn-apply-fix:hover   { background: rgba(43,108,255,0.22); }
+    .btn-apply-fix:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn-apply-fix.applied  { background: rgba(127,219,150,0.12); color: var(--success); border-color: rgba(127,219,150,0.4); }
+    .btn-jump-section {
+      cursor: pointer; border-radius: 8px; border: 1px solid var(--line);
+      padding: 5px 10px; background: #0e1220; color: var(--muted);
+      font-size: 11px; font-weight: 600; transition: all 0.2s; white-space: nowrap;
+    }
+    .btn-jump-section:hover { background: #1a1e2b; color: var(--text); }
+
+    /* textarea highlight flash when jumping to section */
+    @keyframes textarea-flash {
+      0%   { box-shadow: 0 0 0 3px rgba(43,108,255,0); }
+      30%  { box-shadow: 0 0 0 3px rgba(43,108,255,0.6); }
+      100% { box-shadow: 0 0 0 3px rgba(43,108,255,0); }
+    }
+    .textarea-flash { animation: textarea-flash 1.2s ease-out; }
+
+
     .CodeMirror { height: auto; min-height: 300px; border-radius: 8px; font-family: monospace; font-size: 13px; margin-top: 10px; z-index: 0; }
     .CodeMirror-scroll { max-height: 600px; }
 
@@ -725,6 +769,24 @@
             </div>
           </div>
           
+          <!-- Validation Correction Panel — shown after CRITICAL/HIGH validation failure -->
+          <div id="valCorrectionPanel" class="val-correction-panel">
+            <div class="val-correction-header">
+              <span class="val-correction-title">🔧 Spec Correction</span>
+              <span class="val-correction-hint">Apply fixes below, then resubmit — or edit the prompt directly and click Resubmit.</span>
+            </div>
+            <!-- Issue fix buttons are injected here by showValidationFailure() -->
+            <div id="valFixButtons" style="display:flex;flex-direction:column;gap:8px;"></div>
+            <!-- Resubmit bar — appears after any fix is applied or jumped to -->
+            <div id="valResubmitBar" class="val-resubmit-bar">
+              <span class="val-resubmit-label" id="valResubmitLabel">Review changes above, then resubmit.</span>
+              <button class="btn btnPrimary btnSmall" id="valResubmitBtn"
+                onclick="document.getElementById('sendToAiBtn').click();">
+                Resubmit →
+              </button>
+            </div>
+          </div>
+
           <!-- Game Essence Contract Panel — REMOVED (contract merged into Master Prompt) -->
 
           <div style="position: relative; width: 100%;">
@@ -2464,6 +2526,146 @@ Failure stage: ${stage}${liveBlock}${candidateBlock}`;
 
     const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+    /* ══════════════════════════════════════════════════════════════
+       VALIDATION ISSUE CORRECTION HELPERS
+    ══════════════════════════════════════════════════════════════ */
+
+    /**
+     * applyIssueFix — calls the proxy in patch_issue mode,
+     * puts the patched prompt back into the textarea, and enables
+     * the Resubmit button. Called by the "Apply Fix" button on
+     * each CRITICAL/HIGH issue card.
+     */
+    async function applyIssueFix(btn, issue) {
+      if (!currentProject) { alert('Select a project first.'); return; }
+
+      const currentPrompt = aiPromptInput.value.trim();
+      if (!currentPrompt) {
+        alert('The prompt textarea is empty. Paste your Master Prompt first, then apply the fix.');
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = 'Applying...';
+
+      try {
+        const res = await fetch(AI_SERVICES[currentAiService].endpoint, {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({
+            projectPath: `${ROOT}/${currentProject}`,
+            jobId:       Date.now().toString(),
+            mode:        'patch_issue',
+            prompt:      currentPrompt,
+            issue
+          })
+        });
+
+        if (!res.ok) throw new Error(`Proxy error: ${res.status} ${res.statusText}`);
+
+        const data = await res.json();
+        if (!data.success) throw new Error(data.error || 'Patch call returned success:false');
+
+        // Put the patched prompt back into the textarea
+        aiPromptInput.value = data.patchedPrompt;
+
+        // Visual feedback on the button
+        btn.textContent = '✓ Applied';
+        btn.classList.add('applied');
+        btn.disabled = true;
+
+        // Flash the textarea so the user sees it changed
+        aiPromptInput.classList.remove('textarea-flash');
+        void aiPromptInput.offsetWidth; // force reflow
+        aiPromptInput.classList.add('textarea-flash');
+        setTimeout(() => aiPromptInput.classList.remove('textarea-flash'), 1400);
+
+        // Show the Resubmit bar
+        _showResubmitBar(`Fix for ${issue.id} applied. Review the change above, then resubmit.`);
+
+        appendToChatLog('System',
+          `Fix applied for ${issue.id}. The Master Prompt has been updated in the textarea. ` +
+          `Review the change and click Resubmit to re-run validation.`,
+          'normal'
+        );
+
+      } catch (e) {
+        btn.textContent = 'Apply Fix';
+        btn.disabled = false;
+        appendToChatLog('System', `Could not apply fix for ${issue.id}: ${e.message}`, 'error');
+      }
+    }
+
+    /**
+     * jumpToIssueSection — scrolls the textarea to the part of
+     * the prompt relevant to the issue and flashes it. Used for
+     * design-decision issues where no auto-fix is possible.
+     */
+    function jumpToIssueSection(issue) {
+      const prompt = aiPromptInput.value;
+      if (!prompt) {
+        alert('The prompt textarea is empty. Paste your Master Prompt first.');
+        return;
+      }
+
+      // Try to find the rule text in the prompt and scroll to it
+      const rule = (issue.rule || '').trim();
+      let charIndex = -1;
+
+      if (rule && rule.length > 10) {
+        // Search for a meaningful substring of the rule
+        const searchStr = rule.slice(0, Math.min(60, rule.length));
+        charIndex = prompt.indexOf(searchStr);
+      }
+
+      if (charIndex < 0 && issue.description) {
+        // Fallback: search for keywords from the description
+        const words = issue.description.split(/\s+/).filter(w => w.length > 5);
+        for (const word of words) {
+          const idx = prompt.toLowerCase().indexOf(word.toLowerCase());
+          if (idx >= 0) { charIndex = idx; break; }
+        }
+      }
+
+      // Scroll textarea to the found position
+      if (charIndex >= 0) {
+        aiPromptInput.focus();
+        aiPromptInput.setSelectionRange(charIndex, Math.min(charIndex + 120, prompt.length));
+        // Estimate scroll position
+        const lines = prompt.substring(0, charIndex).split('\n').length;
+        const lineHeight = 18;
+        aiPromptInput.scrollTop = Math.max(0, (lines - 4) * lineHeight);
+      } else {
+        aiPromptInput.focus();
+        aiPromptInput.scrollTop = 0;
+      }
+
+      // Flash the textarea
+      aiPromptInput.classList.remove('textarea-flash');
+      void aiPromptInput.offsetWidth;
+      aiPromptInput.classList.add('textarea-flash');
+      setTimeout(() => aiPromptInput.classList.remove('textarea-flash'), 1400);
+
+      _showResubmitBar(`Edit the highlighted section manually for ${issue.id}, then resubmit.`);
+    }
+
+    /**
+     * _showResubmitBar — shows the resubmit banner inside the
+     * correction panel with a message and a Resubmit button.
+     */
+    function _showResubmitBar(message) {
+      const bar = document.getElementById('valResubmitBar');
+      const label = document.getElementById('valResubmitLabel');
+      if (bar && label) {
+        label.textContent = message;
+        bar.classList.add('active');
+      }
+      // Also scroll the textarea into view
+      aiPromptInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
+
+
     /* ═══════════════════════════════════════════════════════════
        V2 EXPERT AGENT DEFINITIONS
     ═══════════════════════════════════════════════════════════ */
@@ -2763,6 +2965,161 @@ Quality criteria for your work:
         }
       },
 
+      showValidationFailure(errData) {
+        this.show();
+        const headerIcon   = document.getElementById('trancheHeaderIcon');
+        const headerTitle  = document.getElementById('trancheHeaderTitle');
+        const headerSub    = document.getElementById('trancheHeaderSub');
+        const overallFill  = document.getElementById('trancheOverallFill');
+        const footerStatus = document.getElementById('trancheFooterStatus');
+        const planningSection = document.getElementById('tranchePlanningSection');
+        const container    = document.getElementById('trancheList');
+
+        const issues         = errData.issues || [];
+        const patchHistory   = errData.patchHistory || [];
+        const wasPatched     = patchHistory.length > 0;
+        const hardStop       = errData.hardStop      || false;
+        const budgetExhausted = errData.budgetExhausted || false;
+
+        // Header
+        headerIcon.textContent = '✕';
+        headerIcon.classList.add('error');
+        headerTitle.textContent = hardStop
+          ? 'Spec Validation Failed — Manual Fix Required'
+          : budgetExhausted
+            ? `Spec Validation Failed — ${patchHistory.length} Auto-Patch${patchHistory.length !== 1 ? 'es' : ''} Exhausted`
+            : 'Spec Validation Failed';
+        headerSub.textContent = errData.summary || 'Issues found in spec logic';
+        overallFill.style.width = '100%';
+        overallFill.style.background = 'var(--danger)';
+        overallFill.style.animation  = 'none';
+        if (planningSection) planningSection.style.display = 'none';
+        this._stopTimer();
+
+        // Footer
+        if (hardStop) {
+          footerStatus.textContent = 'CRITICAL/HIGH issues require manual correction — use the Fix buttons below';
+        } else if (budgetExhausted) {
+          footerStatus.textContent = `Auto-patch attempted ${patchHistory.length}x — issues persist. Use Fix buttons below.`;
+        } else {
+          footerStatus.textContent = `${issues.length} issue(s) — use the Fix buttons or edit the prompt directly`;
+        }
+
+        container.innerHTML = '';
+
+        // Patch history banner
+        if (wasPatched) {
+          const banner = document.createElement('div');
+          banner.style.cssText = 'padding:12px 20px;background:rgba(245,158,11,0.07);border-bottom:1px solid rgba(245,158,11,0.2);font-size:12px;color:#f59e0b;';
+          banner.innerHTML = `⚙ Auto-patch was attempted ${patchHistory.length} time(s) but CRITICAL/HIGH issues remain — `
+            + `manual fixes are required below.`;
+          container.appendChild(banner);
+        }
+
+        // Issue cards
+        if (issues.length === 0) {
+          container.innerHTML += '<div style="padding:20px;color:var(--muted);font-size:13px;">No specific issues returned — check the Master Prompt for logical gaps.</div>';
+        } else {
+          issues.forEach((issue, i) => {
+            const severity   = String(issue.severity || 'MEDIUM').toUpperCase();
+            const cardState  = severity === 'CRITICAL' ? 'error'
+                             : severity === 'HIGH'     ? 'fixing' : 'pending';
+            const sevColor   = severity === 'CRITICAL' ? 'var(--danger)'
+                             : severity === 'HIGH'     ? '#f59e0b' : 'var(--muted)';
+            // MEDIUM issues are auto-patchable; CRITICAL/HIGH need human action
+            const needsHuman = severity === 'CRITICAL' || severity === 'HIGH';
+
+            const card = document.createElement('div');
+            card.className = 'tranche-card';
+            card.innerHTML = `
+              <div class="tranche-card-index ${cardState}">${i + 1}</div>
+              <div class="tranche-card-body">
+                <div class="tranche-card-agents">
+                  <span class="tranche-agent-badge" style="background:${sevColor}18;color:${sevColor};border:1px solid ${sevColor}33;">${severity}</span>
+                  <span class="tranche-agent-badge" style="background:#1a1e2b;color:var(--muted);border:1px solid var(--line);">${this._escapeHTML(issue.id || `SIM-${String(i+1).padStart(2,'0')}`)}</span>
+                  ${needsHuman
+                    ? '<span class="tranche-agent-badge" style="background:rgba(252,165,165,0.1);color:var(--danger);border:1px solid rgba(252,165,165,0.3);">manual fix required</span>'
+                    : '<span class="tranche-agent-badge" style="background:rgba(127,219,150,0.1);color:var(--success);border:1px solid rgba(127,219,150,0.3);">auto-patchable</span>'}
+                </div>
+                <div class="tranche-card-name">${this._escapeHTML(issue.description || 'Spec logic issue')}</div>
+                <div class="tranche-card-message error-msg" style="display:block;">
+                  <strong style="color:var(--muted);">Rule:</strong> ${this._escapeHTML(issue.rule || 'See simulation document')}<br>
+                  <strong style="color:var(--success);">Fix:</strong> ${this._escapeHTML(issue.recommendation || 'Update the Master Prompt to resolve this.')}
+                </div>
+              </div>`;
+            container.appendChild(card);
+          });
+        }
+
+        // Object accumulation warning card
+        if (errData.objectAccumulationRisk) {
+          const warn = document.createElement('div');
+          warn.className = 'tranche-card';
+          warn.innerHTML = `
+            <div class="tranche-card-index fixing">⚠</div>
+            <div class="tranche-card-body">
+              <div class="tranche-card-name">Object Accumulation Risk</div>
+              <div class="tranche-card-message fixing-msg" style="display:block;">
+                Spawn/despawn cycle detected with no pooling requirement. Without ScenePool the engine
+                accumulates WASM objects and crashes after ~2 minutes. Add an explicit pooling requirement
+                to the Master Prompt.
+              </div>
+            </div>`;
+          container.appendChild(warn);
+        }
+
+        // ── Correction Panel ──────────────────────────────────────────────
+        // Show for any failure — populate with one action row per issue
+        const correctionPanel = document.getElementById('valCorrectionPanel');
+        const fixButtonsContainer = document.getElementById('valFixButtons');
+        const resubmitBar = document.getElementById('valResubmitBar');
+
+        if (correctionPanel && fixButtonsContainer) {
+          fixButtonsContainer.innerHTML = '';
+          if (resubmitBar) resubmitBar.classList.remove('active');
+
+          issues.forEach((issue) => {
+            const severity  = String(issue.severity || 'MEDIUM').toUpperCase();
+            const needsHuman = severity === 'CRITICAL' || severity === 'HIGH';
+            const row = document.createElement('div');
+            row.style.cssText = 'display:flex;align-items:flex-start;gap:10px;padding:8px 10px;background:#0b0d12;border:1px solid var(--line);border-radius:8px;';
+
+            const issueLabel = document.createElement('div');
+            issueLabel.style.cssText = 'flex:1;font-size:11px;color:var(--muted);line-height:1.5;';
+            issueLabel.innerHTML = `<strong style="color:var(--text);">${this._escapeHTML(issue.id || '')}</strong> — ${this._escapeHTML(issue.recommendation || issue.description || '')}`;
+
+            const btnArea = document.createElement('div');
+            btnArea.style.cssText = 'display:flex;gap:6px;flex-shrink:0;';
+
+            // "Apply Fix" — calls the proxy to auto-apply the recommendation
+            const applyBtn = document.createElement('button');
+            applyBtn.className = 'btn-apply-fix';
+            applyBtn.textContent = needsHuman ? 'Apply Fix' : 'Auto-applied';
+            applyBtn.disabled = !needsHuman;
+            if (!needsHuman) applyBtn.classList.add('applied');
+            if (needsHuman) {
+              const issueCopy = { ...issue };
+              applyBtn.addEventListener('click', () => applyIssueFix(applyBtn, issueCopy));
+            }
+
+            // "Jump to Section" — scrolls the textarea to the relevant part
+            const jumpBtn = document.createElement('button');
+            jumpBtn.className = 'btn-jump-section';
+            jumpBtn.textContent = 'Jump to section';
+            const issueCopy = { ...issue };
+            jumpBtn.addEventListener('click', () => jumpToIssueSection(issueCopy));
+
+            btnArea.appendChild(applyBtn);
+            btnArea.appendChild(jumpBtn);
+            row.appendChild(issueLabel);
+            row.appendChild(btnArea);
+            fixButtonsContainer.appendChild(row);
+          });
+
+          correctionPanel.classList.add('active');
+        }
+      },
+
       updateFromProgress(prog) {
         if (!prog) return;
 
@@ -2803,6 +3160,42 @@ Quality criteria for your work:
             tokenTotal.classList.add('updating');
             setTimeout(() => { tokenOut.classList.remove('updating'); tokenTotal.classList.remove('updating'); }, 600);
           }
+        }
+
+        if (prog.status === 'validating') {
+          planningSection.style.display = 'flex';
+          const call1Done  = prog.validationCall1Done;
+          const call2Done  = prog.validationCall2Done;
+          const call3Done  = prog.validationCall3Done;
+          const patchAttempt = prog.validationPatchAttempt || 0;
+          const patchStatus  = prog.validationPatchStatus  || '';
+
+          let label = '⚡ Spec Validation: ';
+          if (patchStatus === 'patching')   label = `⚡ Spec Validation: Auto-patching (attempt ${patchAttempt}/2)...`;
+          else if (patchStatus === 'retrying' || (patchAttempt > 0 && call2Done)) label = `⚡ Spec Validation: Re-simulating after patch ${patchAttempt}...`;
+          else if (call3Done)               label += 'Reviewing findings...';
+          else if (call2Done)               label += 'Simulating scenarios...';
+          else if (call1Done)               label += 'Running simulations...';
+          else                              label += 'Extracting game mechanics...';
+
+          const scenarios = Array.isArray(prog.validationScenarios) && prog.validationScenarios.length
+            ? `${prog.validationScenarios.length} scenario(s): ${prog.validationScenarios.join(', ')}`
+            : 'Identifying scenarios...';
+
+          planningLabel.textContent = label;
+          planningAnalysis.textContent = call1Done ? scenarios : '';
+
+          // Progress bar advances through: extract → sim → review → patch → re-sim → re-review
+          const pct = patchStatus === 'patching'   ? 18
+                    : patchStatus === 'retrying'   ? 22
+                    : call3Done                    ? 12
+                    : call2Done                    ? 8
+                    : call1Done                    ? 4 : 2;
+          overallFill.style.width = `${pct}%`;
+          footerStatus.textContent = patchAttempt > 0
+            ? `Pre-flight: patch ${patchAttempt}/2 applied — re-validating...`
+            : 'Pre-flight: validating spec logic before planning...';
+          return;
         }
 
         if (prog.status === 'planning') {
@@ -3776,6 +4169,12 @@ Original user request for context: ${basePrompt}`;
         aiPromptInput.value = '';
         appendToChatLog('You', basePrompt);
         Progress.start('Starting AI pipeline...');
+        window._validationPatchNotified = false;
+        // Hide correction panel from any previous failed run
+        const cp = document.getElementById('valCorrectionPanel');
+        const rb = document.getElementById('valResubmitBar');
+        if (cp) cp.classList.remove('active');
+        if (rb) rb.classList.remove('active');
       } else if (parseErrorRetry > 0) {
         appendToChatLog('System', `Backend parse error detected — retrying full build (attempt ${parseErrorRetry}/${AI_HARDENING.repairPassLimit}).`, 'normal');
         Progress.step(`Parse error retry ${parseErrorRetry}`, 'Restarting full AI pipeline after backend JSON failure...');
@@ -4111,7 +4510,34 @@ User Request: ${prompt}`;
 
           const errorRead = await fetchStorageJsonSafe(errorFileRef, projectPath, 'ai_error');
           if (errorRead.ok) {
-            const errorMessage = errorRead.data?.error || 'AI Generation Failed';
+            const errData = errorRead.data || {};
+
+            // ── Spec Validation failure — render issues in tranche panel ──
+            if (errData.validationFailed) {
+              TrancheUI.showValidationFailure(errData);
+              Progress.warn(
+                errData.hardStop
+                  ? 'Spec validation failed — manual fix required'
+                  : errData.budgetExhausted
+                    ? 'Spec validation failed — auto-patch budget exhausted'
+                    : 'Spec validation failed — fix Master Prompt and resubmit',
+                errData.summary || 'Issues found in spec logic'
+              );
+              appendToChatLog('System',
+                `Spec validation found ${(errData.issues || []).length} issue(s). ` +
+                (errData.hardStop
+                  ? 'CRITICAL/HIGH issues require manual correction in the Master Prompt.'
+                  : errData.budgetExhausted
+                    ? `Auto-patch was attempted ${(errData.patchHistory || []).length} time(s) but issues persist. Correct the Master Prompt manually.`
+                    : 'Correct the Master Game Prompt and resubmit.'),
+                'error'
+              );
+              sendToAiBtn.disabled = false;
+              return;
+            }
+
+            // ── Generic pipeline error ────────────────────────────────────
+            const errorMessage = errData.error || 'AI Generation Failed';
             throw new Error(errorMessage);
           }
 
@@ -4123,6 +4549,21 @@ User Request: ${prompt}`;
               continue;
             }
             TrancheUI.updateFromProgress(progressData);
+
+            // ── Patch success notification (fires once when status moves to planning) ──
+            if (progressData.status === 'planning' &&
+                progressData.validationActivePromptPatched &&
+                !window._validationPatchNotified) {
+              window._validationPatchNotified = true;
+              const patchCount = (progressData.validationPatchHistory || []).length || 1;
+              appendToChatLog('System',
+                `✅ Spec validation passed after ${patchCount} auto-patch${patchCount !== 1 ? 'es' : ''}. ` +
+                `The patched Master Prompt is being used for this build. ` +
+                `Review <code>ai_validation_patched_prompt.txt</code> in Firebase to see what was added.`,
+                'normal'
+              );
+            }
+
             if (progressData.status === 'executing' && progressData.tranches) {
               const active = progressData.tranches.find(t => t.status === 'in_progress');
               if (active) {

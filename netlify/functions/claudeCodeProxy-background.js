@@ -1,17 +1,33 @@
 /* netlify/functions/claudeCodeProxy-background.js */
 /* ═══════════════════════════════════════════════════════════════════
-   TRANCHED AI PIPELINE — v5.0 (6.3-Centered Tranches + Token-Efficient Recovery)
+   TRANCHED AI PIPELINE — v5.2 (+ Spec Validation Patch Loop)
    ─────────────────────────────────────────────────────────────────
    Each invocation handles ONE unit of work then chains to itself
    for the next, staying well under Netlify's 15-min limit.
 
-   Invocation 0    ▸  "plan"    — Opus 4.6 creates a dependency-ordered,
-                       6.3-centered tranche plan plus a final hardening batch.
+   Invocation 0    ▸  "plan"    — Spec Validation Gate (3 Sonnet calls)
+                       runs first, then Opus 4.6 creates a dependency-
+                       ordered, 6.3-centered tranche plan + hardening batch.
+                       Gate FAIL writes ai_error.json with structured issues
+                       and halts before Opus fires.
    Invocation 1–N  ▸  "tranche" — Sonnet 4.6 executes one tranche,
                        saves accumulated files, chains to next tranche.
    Correction loop ▸  "fix"     — Used only for objective retryable
                        validation failures.
    Final           ▸  Writes ai_response.json for frontend pickup.
+
+   SPEC VALIDATION GATE (runs in "plan" mode before Opus):
+   ─────────────────────────────────────────────────────────
+   Call 1 — Extract  : Sonnet reads Master Prompt, produces 6-8 custom
+                       simulation scenarios specific to this game's mechanics.
+   Call 2 — Simulate : Sonnet traces each scenario through the spec rules
+                       literally, documents findings in plain text.
+   Call 3 — Review   : Sonnet classifies findings as PASS/FAIL JSON.
+   On PASS  → continues to Opus planning as normal.
+   On FAIL  → writes ai_error.json { validationFailed:true, issues:[...] }
+              and returns without invoking Opus. Frontend renders issues
+              in the tranche panel so the user can fix the Master Prompt.
+   On error → validation is skipped with a warning; Opus proceeds.
 
    Recovery policy:
    - 0 retries for soft/advisory findings.
@@ -1237,6 +1253,492 @@ async function chainToSelf(payload) {
   }
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   SPEC VALIDATION GATE — three Sonnet calls before Opus planning
+   ═══════════════════════════════════════════════════════════════
+
+   Call 1 (Extract)  : reads the Master Prompt and identifies the
+     game's actual mechanics, producing 6-8 custom simulation
+     scenarios tailored to THIS game. Generic enough to work for
+     any genre; never hard-codes Fish_Hunt fields.
+
+   Call 2 (Simulate) : traces each scenario through the spec rules
+     literally. Documents TRACE / RESULT / ISSUE for each.
+
+   Call 3 (Review)   : classifies simulation findings as PASS/FAIL
+     and emits a structured JSON issues list.
+
+   All three calls use claude-sonnet-4-20250514.
+   Extended thinking is disabled for these calls (no budgetTokens)
+   so they stay fast and cheap — under ~20 seconds total.
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── Known engine constraints injected into Call 2 ──────────────
+   These are scaffold-level facts that the Master Prompt author
+   should not have to write — they apply to every Cherry3D game. */
+const SCAFFOLD_VALIDATION_CONSTRAINTS = `
+KNOWN ENGINE CONSTRAINTS (Cherry3D scaffold v8.1):
+These apply to every game regardless of what the Master Prompt says.
+Factor them into your simulations where relevant.
+
+1. OBJECT POOLING: Any spawn/despawn cycle MUST use ScenePool.
+   A count cap alone does not prevent WASM object accumulation.
+   If the spec has no pooling mechanism, note objectAccumulationRisk.
+
+2. ROOT OBJECT ROTATION: .rotation/.rotate on a root scene object
+   is a silent no-op. Directional characters must use scale flip.
+   If the spec describes characters that face a travel direction
+   with no mechanism stated, note it as a risk.
+
+3. CHILD RIGIDBODY POSITION: A RigidBody added as a child of a
+   mesh returns local-space coords from getMotionState(). Top-down
+   games must track player position by integrating velocity on the
+   main thread — not by reading the child RB.
+
+4. TOP-DOWN CAMERA: mat4.lookAt with a vertical camera produces a
+   degenerate matrix. The scaffold handles this automatically —
+   no spec action needed, but note it if relevant to the game.
+`;
+
+/* ── Call 1: Extract game-specific simulation scenarios ─────── */
+function buildExtractionPrompt(masterPrompt) {
+  return `You are a game logic analyst. Read the Master Game Prompt below \
+and identify the game's core mechanics that could contain logical errors \
+before any code is written.
+
+Produce a JSON array of 6-8 simulation scenarios tailored specifically \
+to THIS game. Each scenario must be concrete and traceable — it must \
+have a specific setup, a specific spec rule to apply, and a question \
+that has a definite numerical or boolean answer.
+
+Cover these four areas for every game:
+
+1. START STATE VIABILITY
+   Can the player do anything meaningful in the very first seconds?
+   Is there a condition at the exact start value that might be impossible?
+
+2. FIRST INTERACTION CORRECTNESS
+   What happens when the player performs the primary action for the
+   first time? Does the formula or condition produce the correct result?
+
+3. PROGRESSION FORMULA BEHAVIOUR
+   Does the score/growth/currency formula produce smooth progression
+   or explosive/broken jumps at representative values?
+
+4. STATE TRANSITION COMPLETENESS
+   Do all UI state transitions (death → modal, shop open → close,
+   pause → resume, restart) leave the game in a clean defined state?
+
+Also check: does the spec describe a spawn/despawn cycle? If so,
+include a scenario that checks whether the spec explicitly requires
+object pooling (not just a count cap).
+
+MASTER GAME PROMPT:
+${masterPrompt}
+
+Respond with ONLY a valid JSON array. No markdown fences, no preamble.
+
+[
+  {
+    "id": "SIM-01",
+    "area": "start state viability",
+    "setup": "exact starting conditions from the spec",
+    "specRule": "the relevant rule to quote verbatim from the spec",
+    "question": "the specific concrete question to answer",
+    "expectedBehaviour": "what correct gameplay looks like here"
+  }
+]`;
+}
+
+/* ── Call 2: Simulate the scenarios against the spec ─────────── */
+function buildSimulationPrompt(masterPrompt, scenarios) {
+  const scenarioBlock = scenarios.map(s =>
+`${s.id} — ${String(s.area || '').toUpperCase()}
+  Setup:    ${s.setup}
+  Rule:     find and quote verbatim: "${s.specRule}"
+  Question: ${s.question}
+  Expected: ${s.expectedBehaviour}
+
+  TRACE:  [apply the rule literally, step by step]
+  RESULT: [the specific outcome — a number, a state, a behaviour]
+  ISSUE:  "none" OR precise description of the problem found`
+  ).join('\n\n');
+
+  return `You are a game logic validator. You have been given a Master \
+Game Prompt and a set of simulation scenarios tailored to this specific \
+game. Trace each scenario through the spec rules literally and document \
+exactly what you find.
+
+Do NOT write code. Do NOT summarise the spec. Apply every rule exactly \
+as written. If a rule says "strictly less than", apply strictly less than.
+
+${SCAFFOLD_VALIDATION_CONSTRAINTS}
+
+MASTER GAME PROMPT:
+${masterPrompt}
+
+SIMULATIONS TO RUN:
+${scenarioBlock}
+
+Do not skip any simulation. Do not add simulations not listed above.`;
+}
+
+/* ── Call 3: Classify simulation findings as PASS / FAIL ─────── */
+function buildReviewPrompt(simulationDoc, scenarios) {
+  const simIds = scenarios.map(s => s.id).join(', ');
+  return `You are a spec review classifier. Read the simulation document \
+below and classify each finding. Do NOT re-run simulations. Do NOT \
+introduce new reasoning. ONLY classify what the simulation document \
+already found.
+
+Simulation IDs that were run: ${simIds}
+
+SIMULATION DOCUMENT:
+${simulationDoc}
+
+Respond with ONLY a valid JSON object. No markdown fences, no preamble.
+
+{
+  "result": "PASS" or "FAIL",
+  "summary": "one sentence describing the overall finding",
+  "issues": [
+    {
+      "id": "SIM-XX",
+      "severity": "CRITICAL" or "HIGH" or "MEDIUM",
+      "rule": "the spec rule that is broken, quoted verbatim",
+      "description": "precise description of the problem",
+      "recommendation": "minimum spec change that fixes this"
+    }
+  ],
+  "passedSimulations": ["SIM-01", "SIM-03"],
+  "failedSimulations": ["SIM-02"],
+  "objectAccumulationRisk": true or false,
+  "startStatePlayable": true or false
+}
+
+Classification rules:
+- result is FAIL if ANY issue is CRITICAL or HIGH
+- result is FAIL if startStatePlayable is false
+- result is PASS only if all issues are MEDIUM or lower AND startStatePlayable is true
+- startStatePlayable is false if any start-state simulation found the
+  player cannot perform the primary action at the initial game state
+- objectAccumulationRisk is true if any simulation found a spawn/despawn
+  cycle with no pooling requirement stated in the spec
+- issues array is empty if all simulations passed cleanly`;
+}
+
+/* ── stripArrayFences — strips markdown fences, finds first JSON array ── */
+function stripArrayFences(text) {
+  let cleaned = text
+    .replace(/^```json\s*/i, '')
+    .replace(/^```\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+  const firstBracket = cleaned.indexOf('[');
+  const lastBracket  = cleaned.lastIndexOf(']');
+  if (firstBracket >= 0 && lastBracket > firstBracket) {
+    cleaned = cleaned.substring(firstBracket, lastBracket + 1);
+  }
+  return cleaned.trim();
+}
+
+/* ── Call 4: Patch — adds missing rules to the Master Prompt ─── */
+/* Only called for MEDIUM-severity issues. Never changes an         */
+/* existing rule — only adds what is missing.                       */
+function buildPatchPrompt(masterPrompt, mediumIssues) {
+  const issueBlock = mediumIssues.map((issue, i) =>
+`Gap ${i + 1} (${issue.id}):
+  Problem:     ${issue.description}
+  Missing from: ${issue.rule || 'spec — rule not found or underspecified'}
+  Add this:    ${issue.recommendation}`
+  ).join('\n\n');
+
+  return `You are a game spec editor. You have been given a Master Game \
+Prompt and a list of MEDIUM severity spec gaps — rules that are missing \
+or underspecified. Your job is to add the missing rules.
+
+STRICT CONSTRAINTS:
+- Add ONLY what is needed to resolve the listed gaps.
+- Do NOT change any existing rule, formula, condition, or threshold.
+- Do NOT invent new gameplay mechanics.
+- Do NOT restructure or reformat the existing prompt.
+- Append new rules in the same numbered-list style already used.
+- Output the COMPLETE updated Master Prompt — every existing line intact.
+
+ORIGINAL MASTER PROMPT:
+${masterPrompt}
+
+SPEC GAPS TO RESOLVE:
+${issueBlock}
+
+Output the complete updated Master Prompt with the missing rules added.`;
+}
+
+/* ── Run one full validation pass (Calls 1-2-3) ─────────────── */
+/* Extracted so the retry loop can call it cleanly.               */
+async function runSingleValidationPass(apiKey, masterPrompt, scenarios, bucket, projectPath, attempt) {
+  // Call 2: Simulate
+  const simResult = await callClaude(apiKey, {
+    model:       'claude-sonnet-4-20250514',
+    maxTokens:   8000,
+    system:      'You are a game logic validator. Be precise and literal.',
+    userContent: [{ type: 'text', text: buildSimulationPrompt(masterPrompt, scenarios) }]
+  });
+  const simulationDoc = simResult.text;
+
+  try {
+    await bucket.file(`${projectPath}/ai_validation_simulation${attempt > 0 ? `_patch${attempt}` : ''}.txt`)
+      .save(simulationDoc, { contentType: 'text/plain', resumable: false });
+  } catch (e) { /* non-fatal */ }
+
+  // Call 3: Review
+  const reviewResult = await callClaude(apiKey, {
+    model:       'claude-sonnet-4-20250514',
+    maxTokens:   2000,
+    system:      'You are a spec review classifier. Respond only with a valid JSON object.',
+    userContent: [{ type: 'text', text: buildReviewPrompt(simulationDoc, scenarios) }]
+  });
+  const reviewData = JSON.parse(stripFences(reviewResult.text));
+
+  try {
+    await bucket.file(`${projectPath}/ai_validation_review${attempt > 0 ? `_patch${attempt}` : ''}.json`)
+      .save(JSON.stringify(reviewData, null, 2), { contentType: 'application/json', resumable: false });
+  } catch (e) { /* non-fatal */ }
+
+  return { simulationDoc, reviewData };
+}
+
+/* ── Main validation gate orchestrator — with patch retry loop ── */
+async function runSpecValidationGate(apiKey, masterPrompt, progress, bucket, projectPath, jobId) {
+  console.log(`[VALIDATION] Starting spec validation gate for job ${jobId}`);
+
+  const MAX_PATCH_ATTEMPTS = 2;
+
+  // Update progress so the frontend shows a validating state
+  progress.status = 'validating';
+  progress.validationStartTime = Date.now();
+  await saveProgress(bucket, projectPath, progress);
+
+  // ── Call 1: Extract scenarios (runs once — same scenarios for all passes) ──
+  console.log('[VALIDATION] Call 1: extracting game-specific scenarios...');
+  let scenarios;
+  try {
+    const extractResult = await callClaude(apiKey, {
+      model:       'claude-sonnet-4-20250514',
+      maxTokens:   3000,
+      system:      'You are a game logic analyst. Respond only with a valid JSON array.',
+      userContent: [{ type: 'text', text: buildExtractionPrompt(masterPrompt) }]
+    });
+    scenarios = JSON.parse(stripArrayFences(extractResult.text));
+    if (!Array.isArray(scenarios) || scenarios.length === 0) throw new Error('Empty scenario array');
+    console.log(`[VALIDATION] Extracted ${scenarios.length} scenario(s): ${scenarios.map(s => s.id).join(', ')}`);
+  } catch (e) {
+    console.warn(`[VALIDATION] Call 1 failed (${e.message}) — skipping validation, proceeding to planning`);
+    progress.status = 'planning';
+    progress.validationSkipped = true;
+    progress.validationSkipReason = e.message;
+    await saveProgress(bucket, projectPath, progress);
+    return { passed: true, skipped: true, activePrompt: masterPrompt };
+  }
+
+  try {
+    await bucket.file(`${projectPath}/ai_validation_scenarios.json`)
+      .save(JSON.stringify(scenarios, null, 2), { contentType: 'application/json', resumable: false });
+  } catch (e) { /* non-fatal */ }
+
+  progress.validationScenarios = scenarios.map(s => s.id);
+  progress.validationCall1Done = true;
+  await saveProgress(bucket, projectPath, progress);
+
+  // ── Patch retry loop — Calls 2 + 3 (+ optional Call 4 patch) ────────────
+  let activePrompt   = masterPrompt;
+  let patchAttempt   = 0;
+  let allPatchHistory = [];  // accumulates every patch attempt for the UI
+
+  for (let pass = 0; pass <= MAX_PATCH_ATTEMPTS; pass++) {
+
+    const isRetry = pass > 0;
+    console.log(`[VALIDATION] ${isRetry ? `Patch attempt ${pass}/${MAX_PATCH_ATTEMPTS}:` : 'Initial pass:'} running Calls 2+3...`);
+
+    if (isRetry) {
+      progress.validationPatchAttempt = pass;
+      progress.validationPatchStatus  = 'simulating';
+      await saveProgress(bucket, projectPath, progress);
+    } else {
+      progress.validationCall2Done = false;
+      progress.validationCall3Done = false;
+      await saveProgress(bucket, projectPath, progress);
+    }
+
+    // ── Calls 2 + 3 ────────────────────────────────────────────────────────
+    let simulationDoc, reviewData;
+    try {
+      ({ simulationDoc, reviewData } = await runSingleValidationPass(
+        apiKey, activePrompt, scenarios, bucket, projectPath, pass
+      ));
+    } catch (e) {
+      console.warn(`[VALIDATION] Calls 2/3 failed on pass ${pass} (${e.message}) — skipping, proceeding to planning`);
+      progress.status = 'planning';
+      progress.validationSkipped = true;
+      progress.validationSkipReason = e.message;
+      await saveProgress(bucket, projectPath, progress);
+      return { passed: true, skipped: true, activePrompt };
+    }
+
+    progress.validationCall2Done  = true;
+    progress.validationCall3Done  = true;
+    progress.validationResult     = reviewData.result;
+    progress.validationSummary    = reviewData.summary;
+    progress.validationIssues     = reviewData.issues || [];
+    progress.validationEndTime    = Date.now();
+    await saveProgress(bucket, projectPath, progress);
+
+    console.log(`[VALIDATION] Pass ${pass} result: ${reviewData.result} — ${reviewData.summary}`);
+
+    // ── PASS ────────────────────────────────────────────────────────────────
+    if (reviewData.result === 'PASS') {
+      progress.status = 'planning';
+      progress.validationActivePromptPatched = activePrompt !== masterPrompt;
+      await saveProgress(bucket, projectPath, progress);
+
+      // If the prompt was patched, persist the patched version so Opus uses it
+      // and preserve the original for the user's reference
+      if (activePrompt !== masterPrompt) {
+        try {
+          await bucket.file(`${projectPath}/ai_validation_original_prompt.txt`)
+            .save(masterPrompt, { contentType: 'text/plain', resumable: false });
+          await bucket.file(`${projectPath}/ai_validation_patched_prompt.txt`)
+            .save(activePrompt, { contentType: 'text/plain', resumable: false });
+          console.log(`[VALIDATION] Patched prompt saved. Original preserved.`);
+        } catch (e) { /* non-fatal */ }
+      }
+
+      return {
+        passed:                 true,
+        result:                 'PASS',
+        summary:                reviewData.summary,
+        issues:                 [],
+        passedSimulations:      reviewData.passedSimulations || [],
+        failedSimulations:      [],
+        objectAccumulationRisk: reviewData.objectAccumulationRisk,
+        startStatePlayable:     reviewData.startStatePlayable,
+        scenarios,
+        simulationDoc,
+        activePrompt,              // ← caller uses this for Opus, not the original
+        wasPatched:             activePrompt !== masterPrompt,
+        patchCount:             pass,
+        patchHistory:           allPatchHistory
+      };
+    }
+
+    // ── FAIL — check severity split ─────────────────────────────────────────
+    const issues      = reviewData.issues || [];
+    const hardIssues  = issues.filter(i => i.severity === 'CRITICAL' || i.severity === 'HIGH');
+    const mediumIssues = issues.filter(i => i.severity === 'MEDIUM');
+
+    // Hard failures always halt immediately — never attempt to patch
+    if (hardIssues.length > 0) {
+      console.log(`[VALIDATION] Hard FAIL (${hardIssues.length} CRITICAL/HIGH) — halting, no auto-patch`);
+      progress.status = 'validating';
+      await saveProgress(bucket, projectPath, progress);
+      return {
+        passed:                 false,
+        hardStop:               true,
+        result:                 'FAIL',
+        summary:                reviewData.summary,
+        issues,
+        passedSimulations:      reviewData.passedSimulations || [],
+        failedSimulations:      reviewData.failedSimulations || [],
+        objectAccumulationRisk: reviewData.objectAccumulationRisk,
+        startStatePlayable:     reviewData.startStatePlayable,
+        scenarios,
+        simulationDoc,
+        activePrompt,
+        patchHistory:           allPatchHistory
+      };
+    }
+
+    // ── MEDIUM-only FAIL — attempt patch if budget remains ──────────────────
+    if (pass >= MAX_PATCH_ATTEMPTS) {
+      // Budget exhausted
+      console.log(`[VALIDATION] Patch budget exhausted after ${pass} attempt(s) — halting`);
+      progress.status = 'validating';
+      await saveProgress(bucket, projectPath, progress);
+      return {
+        passed:                 false,
+        budgetExhausted:        true,
+        result:                 'FAIL',
+        summary:                reviewData.summary,
+        issues,
+        passedSimulations:      reviewData.passedSimulations || [],
+        failedSimulations:      reviewData.failedSimulations || [],
+        objectAccumulationRisk: reviewData.objectAccumulationRisk,
+        startStatePlayable:     reviewData.startStatePlayable,
+        scenarios,
+        simulationDoc,
+        activePrompt,
+        patchHistory:           allPatchHistory
+      };
+    }
+
+    // ── Call 4: Patch ────────────────────────────────────────────────────────
+    patchAttempt = pass + 1;
+    console.log(`[VALIDATION] MEDIUM-only fail. Running Call 4 (patch attempt ${patchAttempt})...`);
+    progress.validationPatchAttempt = patchAttempt;
+    progress.validationPatchStatus  = 'patching';
+    await saveProgress(bucket, projectPath, progress);
+
+    let patchedPrompt;
+    try {
+      const patchResult = await callClaude(apiKey, {
+        model:       'claude-sonnet-4-20250514',
+        maxTokens:   masterPrompt.length > 20000 ? 16000 : 8000,
+        system:      'You are a game spec editor. Output only the updated Master Prompt.',
+        userContent: [{ type: 'text', text: buildPatchPrompt(activePrompt, mediumIssues) }]
+      });
+      patchedPrompt = patchResult.text.trim();
+      if (!patchedPrompt || patchedPrompt.length < activePrompt.length * 0.8) {
+        throw new Error('Patch produced a truncated or empty prompt');
+      }
+    } catch (e) {
+      console.warn(`[VALIDATION] Call 4 patch failed (${e.message}) — halting validation`);
+      progress.status = 'validating';
+      await saveProgress(bucket, projectPath, progress);
+      return {
+        passed:  false,
+        result:  'FAIL',
+        summary: reviewData.summary,
+        issues,
+        passedSimulations:      reviewData.passedSimulations || [],
+        failedSimulations:      reviewData.failedSimulations || [],
+        objectAccumulationRisk: reviewData.objectAccumulationRisk,
+        startStatePlayable:     reviewData.startStatePlayable,
+        scenarios,
+        simulationDoc,
+        activePrompt,
+        patchHistory: allPatchHistory
+      };
+    }
+
+    // Save patch artifact
+    allPatchHistory.push({ attempt: patchAttempt, issues: mediumIssues.map(i => i.id) });
+    try {
+      await bucket.file(`${projectPath}/ai_validation_patched_prompt_${patchAttempt}.txt`)
+        .save(patchedPrompt, { contentType: 'text/plain', resumable: false });
+    } catch (e) { /* non-fatal */ }
+
+    progress.validationPatchStatus  = 'retrying';
+    progress.validationPatchHistory = allPatchHistory;
+    await saveProgress(bucket, projectPath, progress);
+
+    activePrompt = patchedPrompt;
+    console.log(`[VALIDATION] Patch ${patchAttempt} applied (${patchedPrompt.length} chars). Re-running validation...`);
+  }
+
+  // Should not reach here — loop exits via return inside
+  return { passed: false, result: 'FAIL', activePrompt };
+}
+
 /* ═══════════════════════════════════════════════════════════════ */
 exports.handler = async (event) => {
   let projectPath = null;
@@ -1275,7 +1777,53 @@ exports.handler = async (event) => {
       const { prompt, files, selectedAssets, inlineImages, modelAnalysis } = JSON.parse(content.toString());
       if (!prompt) throw new Error("Missing instructions inside payload");
 
-      // ── 2. Build file context string ──────────────────────────
+      // ── 2. Spec Validation Gate ───────────────────────────────
+      // Runs three Sonnet calls against the Master Prompt before
+      // Opus planning starts. On FAIL, writes ai_error.json with
+      // structured issues and halts without invoking Opus.
+      // On any internal error the gate is skipped so a bad day
+      // at the API doesn't block every game build.
+      const earlyProgress = {
+        jobId,
+        status: 'validating',
+        validationStartTime: Date.now()
+      };
+      await saveProgress(bucket, projectPath, earlyProgress);
+
+      const validationResult = await runSpecValidationGate(
+        apiKey, prompt, earlyProgress, bucket, projectPath, jobId
+      );
+
+      if (!validationResult.passed && !validationResult.skipped) {
+        // Write structured error so the frontend polling loop picks it up
+        await bucket.file(`${projectPath}/ai_error.json`).save(
+          JSON.stringify({
+            error:            `Spec validation FAILED — ${validationResult.issues.length} issue(s) must be resolved in the Master Prompt before code generation can proceed.`,
+            jobId,
+            validationFailed:    true,
+            hardStop:            validationResult.hardStop        || false,
+            budgetExhausted:     validationResult.budgetExhausted || false,
+            summary:             validationResult.summary,
+            issues:              validationResult.issues,
+            passedSimulations:   validationResult.passedSimulations,
+            failedSimulations:   validationResult.failedSimulations,
+            objectAccumulationRisk: validationResult.objectAccumulationRisk,
+            startStatePlayable:     validationResult.startStatePlayable,
+            patchHistory:        validationResult.patchHistory || []
+          }),
+          { contentType: 'application/json', resumable: false }
+        );
+        console.log(`[VALIDATION] FAILED — halting pipeline. Issues: ${validationResult.issues.map(i => i.id).join(', ')}`);
+        return { statusCode: 200, body: JSON.stringify({ success: false, validationFailed: true }) };
+      }
+
+      console.log(`[VALIDATION] ${validationResult.skipped ? 'SKIPPED (error in gate)' : 'PASSED'} — proceeding to Opus planning`);
+
+      // Use the active prompt (patched or original) for all subsequent pipeline calls
+      // If patched, the patched version is already saved in Firebase for the user's reference
+      const effectivePrompt = (validationResult.activePrompt) || prompt;
+
+      // ── 3. Build file context string ──────────────────────────
       let fileContext = "Here are the current project files:\n\n";
       if (files) {
         for (const [path, fileContent] of Object.entries(files)) {
@@ -1421,7 +1969,7 @@ You must respond ONLY with a valid JSON object. No markdown, no code fences, no 
         { type: "text", text: `${fileContext}
 
 === FULL USER REQUEST ===
-${prompt}
+${effectivePrompt}
 === END USER REQUEST ===` },
         ...imageBlocks
       ];
@@ -2261,6 +2809,94 @@ Summary of exactly what was fixed and why each violation occurred.
       try { await bucket.file(`${projectPath}/ai_request.json`).delete(); }        catch (e) {}
 
       return { statusCode: 200, body: JSON.stringify({ success: true, phase: "complete_via_fix" }) };
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  MODE: "patch_issue" — Apply a single validation issue fix
+    //  to a Master Prompt and return the patched text synchronously.
+    //
+    //  Called directly by the frontend "Apply Fix" button.
+    //  Does NOT use Firebase for the response — returns the patched
+    //  prompt inline in the HTTP response body so the frontend can
+    //  put it straight back into the textarea without polling.
+    //
+    //  Request body: { projectPath, jobId, mode:"patch_issue",
+    //                  prompt: <current textarea text>,
+    //                  issue: { id, severity, description,
+    //                           rule, recommendation } }
+    //  Response body: { success:true, patchedPrompt: "..." }
+    //               | { success:false, error: "..." }
+    // ══════════════════════════════════════════════════════════════
+    if (mode === "patch_issue") {
+      const { prompt: rawPrompt, issue } = parsedBody;
+
+      if (!rawPrompt) {
+        return { statusCode: 400, body: JSON.stringify({ success: false, error: "Missing prompt in request body" }) };
+      }
+      if (!issue || !issue.recommendation) {
+        return { statusCode: 400, body: JSON.stringify({ success: false, error: "Missing issue or recommendation" }) };
+      }
+
+      console.log(`[PATCH_ISSUE] Applying fix for ${issue.id || 'unknown'} (${issue.severity || 'MEDIUM'})`);
+
+      const patchPrompt = `You are a game spec editor. You have been given a Master Game Prompt \
+and ONE specific issue to fix. Apply the fix described below to the prompt.
+
+STRICT CONSTRAINTS:
+- Fix ONLY the single issue listed below.
+- Do NOT change any other rule, formula, condition, or threshold.
+- Do NOT restructure or reformat the existing prompt.
+- If the fix requires adding a new rule, append it in the same numbered-list \
+style already used in the relevant section.
+- If the fix requires changing a specific value or condition, change only that \
+value — nothing else on the same line or in the same section.
+- Output the COMPLETE updated Master Prompt — every existing line intact except \
+the single change.
+
+ISSUE TO FIX:
+  ID:             ${issue.id || 'n/a'}
+  Severity:       ${issue.severity || 'n/a'}
+  Problem:        ${issue.description || 'n/a'}
+  Broken rule:    ${issue.rule || 'n/a'}
+  Required fix:   ${issue.recommendation}
+
+MASTER GAME PROMPT:
+${rawPrompt}
+
+Output only the complete updated Master Prompt. No preamble, no explanation, \
+no markdown fences — just the prompt text.`;
+
+      let patchedPrompt;
+      try {
+        const patchResult = await callClaude(apiKey, {
+          model:       'claude-sonnet-4-20250514',
+          maxTokens:   rawPrompt.length > 20000 ? 16000 : 8000,
+          system:      'You are a game spec editor. Output only the updated Master Prompt text.',
+          userContent: [{ type: 'text', text: patchPrompt }]
+        });
+        patchedPrompt = patchResult.text.trim();
+
+        // Safety: reject if result is substantially shorter than input
+        if (!patchedPrompt || patchedPrompt.length < rawPrompt.length * 0.75) {
+          throw new Error('Patch produced a suspiciously short result — likely truncated');
+        }
+      } catch (e) {
+        console.error(`[PATCH_ISSUE] Claude call failed: ${e.message}`);
+        return { statusCode: 200, body: JSON.stringify({ success: false, error: e.message }) };
+      }
+
+      // Save the patch to Firebase for audit trail (non-fatal if it fails)
+      try {
+        const stamp = Date.now();
+        await bucket.file(`${projectPath}/ai_validation_manual_patch_${stamp}.txt`)
+          .save(patchedPrompt, { contentType: 'text/plain', resumable: false });
+      } catch (e) { /* non-fatal */ }
+
+      console.log(`[PATCH_ISSUE] Patch complete for ${issue.id}. Original: ${rawPrompt.length} chars, Patched: ${patchedPrompt.length} chars`);
+      return {
+        statusCode: 200,
+        body: JSON.stringify({ success: true, patchedPrompt, issueId: issue.id })
+      };
     }
 
     throw new Error(`Unknown mode: ${mode}`);
