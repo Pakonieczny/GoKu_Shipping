@@ -1322,7 +1322,7 @@ ${effectivePrompt}
         model: "claude-opus-4-6",
         maxTokens: 100000,
         budgetTokens: 23000,
-        effort: "high",
+        effort: "medium",
         system: planningSystem,
         userContent: planningUserContent
       });
@@ -1606,7 +1606,7 @@ IMPORTANT: You are working on tranche ${nextTranche + 1} of ${progress.totalTran
         trancheResponseObj = await callClaude(apiKey, {
           model: "claude-sonnet-4-6",
           maxTokens: 128000,
-          budgetTokens: 10000,
+          budgetTokens: 8000,
           effort: "high",
           system: executionSystem,
           userContent: trancheUserContent
