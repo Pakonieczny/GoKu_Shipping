@@ -1984,7 +1984,7 @@ ${effectivePrompt}
       const planResult = await callClaude(apiKey, {
         model: "claude-opus-4-6",
         maxTokens: 100000,
-        budgetTokens: 24000,
+        budgetTokens: 23000,
         effort: "high",
         system: planningSystem,
         userContent: planningUserContent
@@ -2634,9 +2634,9 @@ Summary of exactly what was fixed and why each violation occurred.
       try {
         fixResponseObj = await callClaude(apiKey, {
           model:        "claude-sonnet-4-6",
-          maxTokens:    128000,
-          budgetTokens: 8000,
-          effort:       "high",
+          maxTokens:    64000,
+          budgetTokens: 2500,
+          effort:       "medium",
           system:       correctionSystem,
           userContent:  [{ type: "text", text: correctionUserText }, ...(imageBlocks || [])]
         });
