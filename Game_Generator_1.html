@@ -822,8 +822,8 @@
 
     // ── AI Service Configuration ──
     const AI_SERVICES = {
-        claude: { name: 'Claude', planner: 'Opus 4.6', executor: 'Sonnet 4.6', endpoint: '/.netlify/functions/claudeCodeProxy-background' },
-        gemini: { name: 'Gemini', planner: 'Gemini 3.1 Pro', executor: 'Gemini 3.1 Pro', endpoint: '/.netlify/functions/geminiCodeProxy-background' }
+        claude: { name: 'Claude', planner: 'Opus 4.6', executor: 'Sonnet 4.6', endpoint: '/.netlify/functions/claudeCodeProxy-background', patchEndpoint: '/.netlify/functions/claudeCodePatch' },
+        gemini: { name: 'Gemini', planner: 'Gemini 3.1 Pro', executor: 'Gemini 3.1 Pro', endpoint: '/.netlify/functions/geminiCodeProxy-background', patchEndpoint: '/.netlify/functions/claudeCodePatch' }
     };
     let currentAiService = 'claude';
 
@@ -957,6 +957,34 @@
     const reviewPanel = document.getElementById('reviewPanel');
     const reviewFileList = document.getElementById('reviewFileList');
     const clearReviewBtn = document.getElementById('clearReviewBtn');
+
+    // ── Textarea → Firebase sync ──────────────────────────────────
+    // Whenever the user edits the prompt textarea, overwrite the prompt
+    // field in ai_request.json so claudeCodePatch always has the latest
+    // version without needing the user to resubmit.
+    let _promptSyncTimer = null;
+    aiPromptInput.addEventListener('input', () => {
+      if (!currentProject) return;
+      clearTimeout(_promptSyncTimer);
+      _promptSyncTimer = setTimeout(async () => {
+        const promptText = aiPromptInput.value.trim();
+        if (!promptText) return;
+        try {
+          const reqRef = ref(storage, `${ROOT}/${currentProject}/ai_request.json`);
+          // Preserve existing payload fields (files, assets, etc.) — only overwrite prompt
+          let payload = { prompt: promptText };
+          try {
+            const bytes = await getBytes(reqRef);
+            const existing = JSON.parse(new TextDecoder().decode(bytes));
+            existing.prompt = promptText;
+            payload = existing;
+          } catch (e) { /* file not present yet — write minimal payload */ }
+          await uploadString(reqRef, JSON.stringify(payload));
+        } catch (e) {
+          console.warn('[PromptSync] Could not sync prompt to Firebase:', e.message);
+        }
+      }, 500);
+    });
 
     aiServiceSelect.addEventListener('change', (e) => {
         currentAiService = e.target.value;
@@ -2531,32 +2559,27 @@ Failure stage: ${stage}${liveBlock}${candidateBlock}`;
     ══════════════════════════════════════════════════════════════ */
 
     /**
-     * applyIssueFix — calls the proxy in patch_issue mode,
-     * puts the patched prompt back into the textarea, and enables
-     * the Resubmit button. Called by the "Apply Fix" button on
-     * each CRITICAL/HIGH issue card.
+     * applyIssueFix — calls claudeCodePatch (sync function) which
+     * fetches the Master Prompt from Firebase, applies the fix, writes
+     * it back to Firebase, and returns it. The patched prompt is put
+     * into the textarea. Called by the "Apply Fix" button on each
+     * CRITICAL/HIGH issue card.
      */
     async function applyIssueFix(btn, issue) {
       if (!currentProject) { alert('Select a project first.'); return; }
-
-      const currentPrompt = aiPromptInput.value.trim();
-      if (!currentPrompt) {
-        alert('The prompt textarea is empty. Paste your Master Prompt first, then apply the fix.');
-        return;
-      }
 
       btn.disabled = true;
       btn.textContent = 'Applying...';
 
       try {
-        const res = await fetch(AI_SERVICES[currentAiService].endpoint, {
+        // claudeCodePatch reads the prompt directly from Firebase —
+        // no need to send it from the frontend.
+        const res = await fetch(AI_SERVICES[currentAiService].patchEndpoint, {
           method:  'POST',
           headers: { 'Content-Type': 'application/json' },
           body:    JSON.stringify({
             projectPath: `${ROOT}/${currentProject}`,
             jobId:       Date.now().toString(),
-            mode:        'patch_issue',
-            prompt:      currentPrompt,
             issue
           })
         });
@@ -2566,7 +2589,8 @@ Failure stage: ${stage}${liveBlock}${candidateBlock}`;
         const data = await res.json();
         if (!data.success) throw new Error(data.error || 'Patch call returned success:false');
 
-        // Put the patched prompt back into the textarea
+        // Put the patched prompt back into the textarea.
+        // The backend has already written it back to Firebase — no extra sync needed.
         aiPromptInput.value = data.patchedPrompt;
 
         // Visual feedback on the button

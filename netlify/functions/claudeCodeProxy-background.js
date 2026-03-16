@@ -1499,7 +1499,7 @@ async function runSingleValidationPass(apiKey, masterPrompt, scenarios, bucket, 
   // Call 3: Review
   const reviewResult = await callClaude(apiKey, {
     model:       'claude-sonnet-4-20250514',
-    maxTokens:   2000,
+    maxTokens:   6000,
     system:      'You are a spec review classifier. Respond only with a valid JSON object.',
     userContent: [{ type: 'text', text: buildReviewPrompt(simulationDoc, scenarios) }]
   });
@@ -2817,93 +2817,9 @@ Summary of exactly what was fixed and why each violation occurred.
       return { statusCode: 200, body: JSON.stringify({ success: true, phase: "complete_via_fix" }) };
     }
 
-    // ══════════════════════════════════════════════════════════════
-    //  MODE: "patch_issue" — Apply a single validation issue fix
-    //  to a Master Prompt and return the patched text synchronously.
-    //
-    //  Called directly by the frontend "Apply Fix" button.
-    //  Does NOT use Firebase for the response — returns the patched
-    //  prompt inline in the HTTP response body so the frontend can
-    //  put it straight back into the textarea without polling.
-    //
-    //  Request body: { projectPath, jobId, mode:"patch_issue",
-    //                  prompt: <current textarea text>,
-    //                  issue: { id, severity, description,
-    //                           rule, recommendation } }
-    //  Response body: { success:true, patchedPrompt: "..." }
-    //               | { success:false, error: "..." }
-    // ══════════════════════════════════════════════════════════════
-    if (mode === "patch_issue") {
-      const { prompt: rawPrompt, issue } = parsedBody;
-
-      if (!rawPrompt) {
-        return { statusCode: 400, body: JSON.stringify({ success: false, error: "Missing prompt in request body" }) };
-      }
-      if (!issue || !issue.recommendation) {
-        return { statusCode: 400, body: JSON.stringify({ success: false, error: "Missing issue or recommendation" }) };
-      }
-
-      console.log(`[PATCH_ISSUE] Applying fix for ${issue.id || 'unknown'} (${issue.severity || 'MEDIUM'})`);
-
-      const patchPrompt = `You are a game spec editor. You have been given a Master Game Prompt \
-and ONE specific issue to fix. Apply the fix described below to the prompt.
-
-STRICT CONSTRAINTS:
-- Fix ONLY the single issue listed below.
-- Do NOT change any other rule, formula, condition, or threshold.
-- Do NOT restructure or reformat the existing prompt.
-- If the fix requires adding a new rule, append it in the same numbered-list \
-style already used in the relevant section.
-- If the fix requires changing a specific value or condition, change only that \
-value — nothing else on the same line or in the same section.
-- Output the COMPLETE updated Master Prompt — every existing line intact except \
-the single change.
-
-ISSUE TO FIX:
-  ID:             ${issue.id || 'n/a'}
-  Severity:       ${issue.severity || 'n/a'}
-  Problem:        ${issue.description || 'n/a'}
-  Broken rule:    ${issue.rule || 'n/a'}
-  Required fix:   ${issue.recommendation}
-
-MASTER GAME PROMPT:
-${rawPrompt}
-
-Output only the complete updated Master Prompt. No preamble, no explanation, \
-no markdown fences — just the prompt text.`;
-
-      let patchedPrompt;
-      try {
-        const patchResult = await callClaude(apiKey, {
-          model:       'claude-sonnet-4-20250514',
-          maxTokens:   rawPrompt.length > 20000 ? 16000 : 8000,
-          system:      'You are a game spec editor. Output only the updated Master Prompt text.',
-          userContent: [{ type: 'text', text: patchPrompt }]
-        });
-        patchedPrompt = patchResult.text.trim();
-
-        // Safety: reject if result is substantially shorter than input
-        if (!patchedPrompt || patchedPrompt.length < rawPrompt.length * 0.75) {
-          throw new Error('Patch produced a suspiciously short result — likely truncated');
-        }
-      } catch (e) {
-        console.error(`[PATCH_ISSUE] Claude call failed: ${e.message}`);
-        return { statusCode: 200, body: JSON.stringify({ success: false, error: e.message }) };
-      }
-
-      // Save the patch to Firebase for audit trail (non-fatal if it fails)
-      try {
-        const stamp = Date.now();
-        await bucket.file(`${projectPath}/ai_validation_manual_patch_${stamp}.txt`)
-          .save(patchedPrompt, { contentType: 'text/plain', resumable: false });
-      } catch (e) { /* non-fatal */ }
-
-      console.log(`[PATCH_ISSUE] Patch complete for ${issue.id}. Original: ${rawPrompt.length} chars, Patched: ${patchedPrompt.length} chars`);
-      return {
-        statusCode: 200,
-        body: JSON.stringify({ success: true, patchedPrompt, issueId: issue.id })
-      };
-    }
+    // NOTE: "patch_issue" mode has been moved to the synchronous function
+    // netlify/functions/claudeCodePatch.js — it cannot return an inline
+    // HTTP response from a background function (Netlify returns 202 immediately).
 
     throw new Error(`Unknown mode: ${mode}`);
 
