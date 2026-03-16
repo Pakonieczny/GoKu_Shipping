@@ -1933,15 +1933,16 @@ PLANNING RULES:
 1. Section 6.3 is the center of gravity. Every core gameplay tranche must anchor to one or more 6.3 subsection(s), and the tranche order must follow dependency reality rather than raw document order.
 2. Plan the build like a house: foundation before controls, controls before authored playfield shell, shell before gameplay loop, gameplay loop before progression/HUD, progression before feedback/polish, then final hardening.
 3. Each tranche prompt must be FULLY SELF-CONTAINED — embed the exact game-specific rules, variable names, slot layouts, code snippets, and pitfall warnings from the user's request that are relevant to that tranche. Do NOT summarize away critical implementation details.
-4. If a tranche is too dense to be completed in one shot, split it into A/B (or more) dependency-ordered tranches. There is no hard cap on tranche count.
-5. Keep tranche scope small enough that each tranche leaves the project runnable and testable on its own.
+4. ALWAYS split large or complex tranches into A/B/C sub-tranches. There is no hard cap on tranche count — use as many as needed. If in doubt, split.
+5. Keep tranche scope TIGHT: each tranche should implement ONE subsystem or ONE cohesive set of closely-related functions. A tranche that touches more than ~150-200 lines of new/changed code is too large and MUST be split further.
 6. Every tranche must declare: kind, anchorSections, purpose, systemsTouched, filesTouched, visibleResult, safetyChecks, expectedFiles, dependencies, expertAgents, phase, and qualityCriteria.
 7. The FIRST tranche must establish scaffold-compliant foundations: preserve immutable scaffold sections, extend existing factories/hooks, create materials/world build, wire shared state safely, and establish STATIC collision surfaces where required.
 8. Do NOT instruct the executor to remove immutable scaffold fields/blocks or invent a replacement lifecycle when the scaffold already defines one.
 9. If the scaffold already provides a section (camera stage, UI hookup, particle emitter factory, instance parent pattern, input handler shape, etc.), the tranche must explicitly extend that section instead of replacing it.
 10. When the user's request contains code examples (updateInput, syncPlayerSharedMemory, ghost AI, etc.), embed those exact code examples in the relevant tranche prompts — do not paraphrase them.
 11. The final tranche must be a single end-stage hardening batch anchored to Section 8 so deferred findings can be resolved in one pass.
-12. Prefer the minimum tranche count that preserves first-pass correctness, dependency order, and low retry cost — never force a dense tranche just to reduce the count.
+12. SPLIT AGGRESSIVELY. More tranches = smaller context per AI call = fewer timeouts and higher quality. Never merge tranches to reduce count. A game with 6 systems should produce at least 8-12 tranches (foundation + one per system + polish + hardening). If in doubt, split into an A and B sub-tranche.
+13. Target ~100-150 lines of new or changed code per tranche. Any tranche prompt that describes more than 2 distinct systems, or more than ~3 new functions, is too large and must be split.
 
 ${REQUIRED_TRANCHE_VALIDATION_BLOCK}
 

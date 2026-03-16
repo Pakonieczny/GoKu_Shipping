@@ -4416,7 +4416,8 @@ ENVIRONMENT CONSTRAINTS (platform facts handled by backend):
 8. Anti-pattern validators mechanically enforce engine rules after each tranche.
 
 PLANNING REQUIREMENTS:
-- Use the minimum number of tranches that preserves correctness.
+- SPLIT AGGRESSIVELY. More tranches = smaller AI context = fewer timeouts and higher quality. Never merge tranches to save count. A game with 6 core systems should have at least 8-12 tranches.
+- Target ~100-150 lines of new or changed code per tranche. If a tranche covers more than 2 distinct systems or ~3 new functions, split it further.
 - Order tranches by true dependency.
 - Each tranche prompt must embed exact game-specific rules, code examples, and pitfall warnings from this request. Do NOT summarize — copy the exact technical details.
 - The Scaffold is king. Adapt the requested game to the scaffold — never adapt the scaffold to the game.
@@ -4427,8 +4428,9 @@ ${EXPERT_AGENTS_JSON}
 
 TRANCHE STRUCTURE:
 1. First tranche: scaffold-compliant foundations (existing immutable sections, factories, materials, world build, STATIC collision surfaces).
-2. Middle tranches: one subsystem each, ordered by dependency.
-3. Last tranche: integration, edge cases, polish, and final scaffold alignment.
+2. Middle tranches: ONE subsystem each, strictly ordered by dependency. If a subsystem is complex (e.g. physics + controls + camera together), split it across multiple consecutive sub-tranches (A, B, C...).
+3. Never group more than ONE major system per tranche. When unsure, split.
+4. Last tranche: integration, edge cases, polish, and final scaffold alignment.
 
 User Request: ${prompt}`;
 
