@@ -1056,11 +1056,9 @@ exports.handler = async (event) => {
 
     bucket = admin.storage().bucket(process.env.FIREBASE_STORAGE_BUCKET || "gokudatabase.firebasestorage.app");
 
-    // ── Determine mode: "plan" / "tranche" / "fix" ──────────────
-    // "fix" re-runs the same tranche index with a correction prompt
+    // ── Determine mode: "plan" / "tranche" ──────────────────────
     const mode = parsedBody.mode || "plan";
     const nextTranche = parsedBody.nextTranche || 0;
-    const fixAttempt  = parsedBody.fixAttempt  || 0;  // 1-based, 0 means not a fix pass
 
     // ══════════════════════════════════════════════════════════════
     //  MODE: "plan" — First invocation, do planning then chain
