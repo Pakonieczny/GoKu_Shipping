@@ -1983,8 +1983,8 @@ ${effectivePrompt}
       console.log(`PLANNING: Single-pass Opus 4.6 for Job ${jobId}...`);
       const planResult = await callClaude(apiKey, {
         model: "claude-opus-4-6",
-        maxTokens: 128000,
-        budgetTokens: 40000,
+        maxTokens: 100000,
+        budgetTokens: 24000,
         effort: "high",
         system: planningSystem,
         userContent: planningUserContent
