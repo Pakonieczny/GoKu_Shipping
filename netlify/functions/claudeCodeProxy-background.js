@@ -176,6 +176,54 @@ function assertInstructionBundle(bundle, phaseLabel = "Pipeline") {
    Architect pass has been merged into single-pass planner.
    No intermediate architecture spec is generated. ────────── */
 
+
+/* ── Hardening batch helpers ─────────────────────────────────── */
+
+function isHardeningBatchTranche(tranche = {}) {
+  return Boolean(
+    tranche.kind === HARDENING_BATCH_KIND ||
+    tranche.isHardeningBatch ||
+    String(tranche.name || "").toLowerCase().includes("hardening")
+  );
+}
+
+function formatHardeningQueue(items = []) {
+  if (!items.length) return "No queued hardening items.";
+  return items.map((item, idx) => [
+    `ITEM ${idx + 1}`,
+    `  Tranche : ${item.trancheIndex !== undefined ? item.trancheIndex + 1 : "n/a"} — ${item.trancheName || "Unknown tranche"}`,
+    `  Lane    : ${item.lane || "soft"}`,
+    `  File    : ${item.file || "unknown"}`,
+    `  Pattern : ${item.pattern || item.kind || "General hardening"}`,
+    `  Detail  : ${item.message || item.note || "No detail provided."}`
+  ].join('\n')).join('\n\n');
+}
+
+function buildHardeningBatchUserText({ progress, accumulatedFiles, tranche, modelAnalysis }) {
+  const queuedItems = Array.isArray(progress?.hardeningQueue) ? progress.hardeningQueue : [];
+  let text = '';
+  text += `=== HARDENING BATCH CONTEXT ===\n`;
+  text += `You are resolving deferred tranche findings in one end-stage batch.\n`;
+  text += `This batch exists to clean up queued advisories and unresolved objective issues without redoing earlier tranches.\n\n`;
+  text += `=== QUEUED HARDENING ITEMS ===\n${formatHardeningQueue(queuedItems)}\n=== END QUEUED HARDENING ITEMS ===\n\n`;
+  text += `=== HARDENING BATCH MANIFEST ===\n`;
+  text += `Name: ${tranche.name}\n`;
+  text += `Purpose: ${tranche.purpose || tranche.description || 'Resolve queued issues in a single final pass.'}\n`;
+  text += `Visible Result: ${tranche.visibleResult || 'Project remains runnable with queued issues resolved.'}\n`;
+  text += `Safety Checks:\n${(tranche.safetyChecks || []).map((s, i) => `  ${i + 1}. ${s}`).join('\n') || '  1. Preserve all working systems and only fix queued items.'}\n`;
+  text += `=== END HARDENING BATCH MANIFEST ===\n\n`;
+  text += `=== CURRENT ACCUMULATED FILES ===\n`;
+  for (const [pathName, fileContent] of Object.entries(accumulatedFiles || {})) {
+    text += `\n--- FILE: ${pathName} ---\n${fileContent}\n`;
+  }
+  text += `\n=== END CURRENT ACCUMULATED FILES ===\n\n`;
+  if (Array.isArray(modelAnalysis) && modelAnalysis.length > 0) {
+    text += `=== THREE.JS MODEL ANALYSIS ===\n${JSON.stringify(modelAnalysis, null, 2)}\n=== END THREE.JS MODEL ANALYSIS ===\n\n`;
+  }
+  text += `Resolve the queued hardening items with the minimum safe edits required. Preserve all existing working code. Output complete updated file contents only for the files you changed.`;
+  return text;
+}
+
 /* ── helper: call Claude API ─────────────────────────────────── */
 const CLAUDE_OVERLOAD_MAX_RETRIES = 5;
 const CLAUDE_OVERLOAD_BASE_DELAY_MS = 1250;
