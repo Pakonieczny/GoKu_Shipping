@@ -1983,7 +1983,7 @@ ${effectivePrompt}
       const planResult = await callClaude(apiKey, {
         model: "claude-opus-4-6",
         maxTokens: 128000,
-        budgetTokens: 30000,
+        budgetTokens: 40000,
         effort: "high",
         system: planningSystem,
         userContent: planningUserContent
@@ -2268,7 +2268,7 @@ IMPORTANT: You are working on tranche ${nextTranche + 1} of ${progress.totalTran
         trancheResponseObj = await callClaude(apiKey, {
           model: "claude-sonnet-4-6",
           maxTokens: 128000,
-          budgetTokens: 30000,
+          budgetTokens: 10000,
           effort: "high",
           system: executionSystem,
           userContent: trancheUserContent
@@ -2634,7 +2634,7 @@ Summary of exactly what was fixed and why each violation occurred.
         fixResponseObj = await callClaude(apiKey, {
           model:        "claude-sonnet-4-6",
           maxTokens:    128000,
-          budgetTokens: 20000,
+          budgetTokens: 8000,
           effort:       "high",
           system:       correctionSystem,
           userContent:  [{ type: "text", text: correctionUserText }, ...(imageBlocks || [])]
