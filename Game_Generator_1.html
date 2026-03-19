@@ -4457,7 +4457,21 @@ TRANCHE STRUCTURE:
 3. Never group more than ONE major system per tranche. When unsure, split.
 4. Last tranche: integration, edge cases, polish, and final scaffold alignment.
 
-User Request: ${prompt}`;
+User Request: ${prompt}${attachedPromptImages.length > 0 ? `
+
+═══════════════════════════════════════════════════════════
+REFERENCE IMAGES — FIRST-CLASS DESIGN AUTHORITY
+═══════════════════════════════════════════════════════════
+${attachedPromptImages.length} reference image(s) are attached to this pipeline submission.
+These images carry authority equal to this Master Prompt. They define the intended visual style,
+layout, entity types, and complexity level of the game.
+
+RULES FOR ALL PIPELINE STAGES:
+1. Where an attached image and the text spec diverge, the IMAGE is the authoritative definition of what must be built.
+2. Every tranche involving rendered content (entities, layouts, environment, UI) MUST include a Visual Reconciliation step: compare the implementation plan against the attached images and flag any discrepancy before finalising tranche output.
+3. Shallow object specs in the text are NOT grounds for simplified implementation when an image shows greater complexity or detail — implement to the image standard.
+4. Validation calls must treat image evidence as the ground truth for object depth and complexity assessments.` : ''}`;
+
 
         const projectPath = `${ROOT}/${currentProject}`;
         const responseFileRef = ref(storage, `${projectPath}/ai_response.json`);
@@ -4477,7 +4491,7 @@ User Request: ${prompt}`;
         await uploadString(activeJobRef, JSON.stringify({ jobId: currentJobId, timestamp: Date.now(), repairAttempt }));
 
         setStatus(repairAttempt > 0 ? 'AI repair pass is processing...' : 'AI is processing files (This may take a minute)...');
-        Progress.step('Sending context to AI', repairAttempt > 0 ? 'Focused repair context + failed targets...' : 'Building V2 expert-agent pipeline prompt + files...');
+        Progress.step('Sending context to AI', repairAttempt > 0 ? 'Focused repair context + failed targets...' : `Building V2 expert-agent pipeline prompt${attachedPromptImages.length > 0 ? ` + ${attachedPromptImages.length} reference image(s)` : ''} + files...`);
         const inlineImages = await Promise.all(attachedPromptImages.map(async (file) => {
             return new Promise((resolve, reject) => {
                 const reader = new FileReader();

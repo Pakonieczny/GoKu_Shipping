@@ -820,13 +820,20 @@ Output the complete updated Master Prompt with the missing rules added.`;
 
 /* ── Run one full validation pass (Calls 1-2-3) ─────────────── */
 /* Extracted so the retry loop can call it cleanly.               */
-async function runSingleValidationPass(apiKey, masterPrompt, scenarios, bucket, projectPath, attempt) {
+async function runSingleValidationPass(apiKey, masterPrompt, scenarios, bucket, projectPath, attempt, imageBlocks = []) {
+  const imageValidationPreamble = imageBlocks.length > 0
+    ? `\n\nREFERENCE IMAGES: ${imageBlocks.length} game reference image(s) are attached. When evaluating object/entity depth or complexity, treat visual evidence in these images as authoritative. If an image shows more depth, detail, or object complexity than the spec text describes, classify the discrepancy as MEDIUM severity rather than HIGH — the spec may intentionally be terse while the image defines the true target.\n`
+    : '';
+
   // Call 2: Simulate
   const simResult = await callClaude(apiKey, {
     model:       'claude-sonnet-4-20250514',
     maxTokens:   8000,
     system:      'You are a game logic validator. Be precise and literal.',
-    userContent: [{ type: 'text', text: buildSimulationPrompt(masterPrompt, scenarios) }]
+    userContent: [
+      { type: 'text', text: imageValidationPreamble + buildSimulationPrompt(masterPrompt, scenarios) },
+      ...imageBlocks
+    ]
   });
   const simulationDoc = simResult.text;
 
@@ -840,7 +847,10 @@ async function runSingleValidationPass(apiKey, masterPrompt, scenarios, bucket, 
     model:       'claude-sonnet-4-20250514',
     maxTokens:   6000,
     system:      'You are a spec review classifier. Respond only with a valid JSON object.',
-    userContent: [{ type: 'text', text: buildReviewPrompt(simulationDoc, scenarios) }]
+    userContent: [
+      { type: 'text', text: buildReviewPrompt(simulationDoc, scenarios) },
+      ...imageBlocks
+    ]
   });
   const reviewData = JSON.parse(stripFences(reviewResult.text));
 
@@ -853,7 +863,7 @@ async function runSingleValidationPass(apiKey, masterPrompt, scenarios, bucket, 
 }
 
 /* ── Main validation gate orchestrator — with patch retry loop ── */
-async function runSpecValidationGate(apiKey, masterPrompt, progress, bucket, projectPath, jobId) {
+async function runSpecValidationGate(apiKey, masterPrompt, progress, bucket, projectPath, jobId, imageBlocks = []) {
   console.log(`[VALIDATION] Starting spec validation gate for job ${jobId}`);
 
   const MAX_PATCH_ATTEMPTS = 2;
@@ -871,7 +881,10 @@ async function runSpecValidationGate(apiKey, masterPrompt, progress, bucket, pro
       model:       'claude-sonnet-4-20250514',
       maxTokens:   3000,
       system:      'You are a game logic analyst. Respond only with a valid JSON array.',
-      userContent: [{ type: 'text', text: buildExtractionPrompt(masterPrompt) }]
+      userContent: [
+        { type: 'text', text: buildExtractionPrompt(masterPrompt) },
+        ...imageBlocks
+      ]
     });
     scenarios = JSON.parse(stripArrayFences(extractResult.text));
     if (!Array.isArray(scenarios) || scenarios.length === 0) throw new Error('Empty scenario array');
@@ -918,7 +931,7 @@ async function runSpecValidationGate(apiKey, masterPrompt, progress, bucket, pro
     let simulationDoc, reviewData;
     try {
       ({ simulationDoc, reviewData } = await runSingleValidationPass(
-        apiKey, activePrompt, scenarios, bucket, projectPath, pass
+        apiKey, activePrompt, scenarios, bucket, projectPath, pass, imageBlocks
       ));
     } catch (e) {
       console.warn(`[VALIDATION] Calls 2/3 failed on pass ${pass} (${e.message}) — skipping, proceeding to planning`);
@@ -1132,8 +1145,18 @@ exports.handler = async (event) => {
       };
       await saveProgress(bucket, projectPath, earlyProgress);
 
+      // Build imageBlocks early so validation gate can use them
+      const earlyImageBlocks = [];
+      if (inlineImages && Array.isArray(inlineImages)) {
+        for (const img of inlineImages) {
+          if (img.data && img.mimeType && img.mimeType.startsWith('image/')) {
+            earlyImageBlocks.push({ type: 'image', source: { type: 'base64', media_type: img.mimeType, data: img.data } });
+          }
+        }
+      }
+
       const validationResult = await runSpecValidationGate(
-        apiKey, prompt, earlyProgress, bucket, projectPath, jobId
+        apiKey, prompt, earlyProgress, bucket, projectPath, jobId, earlyImageBlocks
       );
 
       if (!validationResult.passed && !validationResult.skipped) {
@@ -1265,6 +1288,7 @@ INSTRUCTION PRECEDENCE:
 3. If both instruction layers apply to the same topic, the Scaffold wins for architecture, lifecycle shape, immutable sections, required state fields, and build sequencing.
 4. The SDK wins for engine-level invariants and implementation facts not explicitly overridden by the Scaffold.
 5. Never plan tranches that delete, replace, bypass, or work around an immutable scaffold block. Adapt the requested game to the scaffold.
+6. REFERENCE IMAGES (if attached): Any images attached to this request are first-class game design inputs with authority equal to the Master Prompt. They define the intended visual style, layout, object types, and complexity level. Where the image and the text spec diverge, treat the image as the authoritative definition of what must be built. Every tranche that involves visual elements, entities, or layouts must reconcile against the attached images.
 
 PLANNING RULES:
 1. Section 6.3 is the center of gravity. Every core gameplay tranche must anchor to one or more 6.3 subsection(s), and the tranche order must follow dependency reality rather than raw document order.
@@ -1322,7 +1346,7 @@ ${effectivePrompt}
         model: "claude-opus-4-6",
         maxTokens: 100000,
         budgetTokens: 23000,
-        effort: "medium",
+        effort: "high",
         system: planningSystem,
         userContent: planningUserContent
       });
@@ -1521,6 +1545,7 @@ INSTRUCTION PRECEDENCE:
 - The SDK / Engine Reference is complementary. Use it whenever engine/API certainty is needed.
 - If both apply, the Scaffold wins for architecture/lifecycle/state shape, and the SDK wins for engine facts and anti-pattern avoidance.
 - Never delete, replace, or work around an immutable scaffold section. Extend inside it.
+- REFERENCE IMAGES (if attached): Any images attached to this tranche are first-class game design inputs with authority equal to the Master Prompt. They define the intended visual appearance, entity types, layout geometry, and interaction model. When implementing this tranche, reconcile your output against the attached images — if your code would produce something visually inconsistent with an attached image, that is a defect. Visual Reconciliation is a required quality criterion for every tranche that touches rendered content.
 
 Do not re-state the instruction docs — just apply them. This pipeline uses a tiered recovery policy: soft findings are deferred, surgical objective failures may get one retry, and only parser/envelope or truly critical scaffold/runtime issues can consume two retries.
 Write it correctly the first time so the tranche can move forward without rework.
@@ -1606,7 +1631,7 @@ IMPORTANT: You are working on tranche ${nextTranche + 1} of ${progress.totalTran
         trancheResponseObj = await callClaude(apiKey, {
           model: "claude-sonnet-4-6",
           maxTokens: 128000,
-          budgetTokens: 8000,
+          budgetTokens: 10000,
           effort: "high",
           system: executionSystem,
           userContent: trancheUserContent

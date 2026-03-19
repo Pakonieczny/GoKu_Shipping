@@ -116,7 +116,7 @@ async function callClaude(apiKey, { model, maxTokens, system, userContent }) {
   throw lastError || new Error("Claude request failed after retries");
 }
 
-/* ─── Read prompt from Firebase — three fallbacks in priority order */
+/* ─── Read prompt + images from Firebase — three fallbacks in priority order */
 async function readPromptFromFirebase(bucket, projectPath) {
   // 1. ai_request.json — written fresh on every pipeline submission and
   //    overwritten by the textarea debounce listener. Source of truth
@@ -129,7 +129,7 @@ async function readPromptFromFirebase(bucket, projectPath) {
       const parsed = JSON.parse(content.toString());
       if (parsed.prompt) {
         console.log(`[PATCH] Prompt loaded from ai_request.json (${parsed.prompt.length} chars)`);
-        return parsed.prompt;
+        return { prompt: parsed.prompt, inlineImages: parsed.inlineImages || [] };
       }
     }
   } catch (e) {
@@ -146,7 +146,8 @@ async function readPromptFromFirebase(bucket, projectPath) {
       const text = content.toString();
       if (text.trim()) {
         console.log(`[PATCH] Prompt loaded from ai_validation_patched_prompt.txt (${text.length} chars)`);
-        return text;
+        // No images available from this fallback path — images only live in ai_request.json
+        return { prompt: text, inlineImages: [] };
       }
     }
   } catch (e) {
@@ -163,7 +164,7 @@ async function readPromptFromFirebase(bucket, projectPath) {
       const text = content.toString();
       if (text.trim()) {
         console.log(`[PATCH] Prompt loaded from ai_validation_original_prompt.txt (${text.length} chars)`);
-        return text;
+        return { prompt: text, inlineImages: [] };
       }
     }
   } catch (e) {
@@ -226,10 +227,10 @@ exports.handler = async (event) => {
 
     console.log(`[PATCH] Applying fix for ${issue.id || "unknown"} (${issue.severity || "MEDIUM"}) on project ${projectPath}`);
 
-    // ── 1. Load the Master Prompt from Firebase ──────────────────
-    const rawPrompt = await readPromptFromFirebase(bucket, projectPath);
+    // ── 1. Load the Master Prompt (+ any reference images) from Firebase ─
+    const firebaseData = await readPromptFromFirebase(bucket, projectPath);
 
-    if (!rawPrompt) {
+    if (!firebaseData) {
       return {
         statusCode: 400,
         body: JSON.stringify({
@@ -239,8 +240,27 @@ exports.handler = async (event) => {
       };
     }
 
+    const rawPrompt = firebaseData.prompt;
+    const inlineImages = firebaseData.inlineImages || [];
+
+    // Build image content blocks so the patch AI sees the same visual reference
+    // that the planner and executor received during the original pipeline run.
+    const imageBlocks = [];
+    for (const img of inlineImages) {
+      if (img.data && img.mimeType && img.mimeType.startsWith('image/')) {
+        imageBlocks.push({ type: 'image', source: { type: 'base64', media_type: img.mimeType, data: img.data } });
+      }
+    }
+    if (imageBlocks.length > 0) {
+      console.log(`[PATCH] Loaded ${imageBlocks.length} reference image(s) from ai_request.json for patch context.`);
+    }
+
     // ── 2. Build the patch prompt ─────────────────────────────────
-    const patchPrompt = `You are a game spec editor. You have been given a Master Game Prompt \
+    const imagePreamble = imageBlocks.length > 0
+      ? `\nREFERENCE IMAGES: ${imageBlocks.length} game reference image(s) are attached. They carry authority equal to the Master Prompt — the same images the original planner and executor received. When applying the fix, ensure the patched spec remains consistent with the visual evidence in these images (entity complexity, layout, interaction model). Do not simplify spec language in a way that conflicts with image content.\n\n`
+      : '';
+
+    const patchPrompt = `${imagePreamble}You are a game spec editor. You have been given a Master Game Prompt \
 and ONE specific issue to fix. Apply the fix described below to the prompt.
 
 STRICT CONSTRAINTS:
@@ -274,7 +294,10 @@ no markdown fences — just the prompt text.`;
         model:       "claude-sonnet-4-20250514",
         maxTokens:   rawPrompt.length > 20000 ? 16000 : 8000,
         system:      "You are a game spec editor. Output only the updated Master Prompt text.",
-        userContent: [{ type: "text", text: patchPrompt }]
+        userContent: [
+          { type: "text", text: patchPrompt },
+          ...imageBlocks
+        ]
       });
       patchedPrompt = patchResult.text.trim();
 
