@@ -47,12 +47,22 @@ function computeClaudeRetryDelayMs(attempt) {
 function isClaudeOverloadError(status, message = "") {
   const normalized = String(message || "").toLowerCase();
   if ([429, 500, 502, 503, 504, 529].includes(Number(status))) return true;
+  // Network-level transient failures — no HTTP status code, matched by message
+  if (
+    normalized.includes("econnreset")     ||
+    normalized.includes("econnrefused")   ||
+    normalized.includes("etimedout")      ||
+    normalized.includes("enotfound")      ||
+    normalized.includes("socket hang up") ||
+    normalized.includes("network error")  ||
+    normalized.includes("fetch failed")
+  ) return true;
   return (
-    normalized.includes("overloaded")    ||
-    normalized.includes("overload")      ||
-    normalized.includes("rate limit")    ||
-    normalized.includes("too many requests") ||
-    normalized.includes("capacity")      ||
+    normalized.includes("overloaded")            ||
+    normalized.includes("overload")              ||
+    normalized.includes("rate limit")            ||
+    normalized.includes("too many requests")     ||
+    normalized.includes("capacity")              ||
     normalized.includes("temporarily unavailable")
   );
 }

@@ -47,6 +47,15 @@ function computeRetryDelay(attempt) {
 function isOverload(status, msg = "") {
   const m = String(msg).toLowerCase();
   if ([429,500,502,503,504,529].includes(Number(status))) return true;
+  if (
+    m.includes("econnreset")     ||
+    m.includes("econnrefused")   ||
+    m.includes("etimedout")      ||
+    m.includes("enotfound")      ||
+    m.includes("socket hang up") ||
+    m.includes("network error")  ||
+    m.includes("fetch failed")
+  ) return true;
   return m.includes("overloaded") || m.includes("rate limit") ||
          m.includes("too many requests") || m.includes("capacity") ||
          m.includes("temporarily unavailable");
