@@ -160,26 +160,7 @@
     }
     .close-preview:hover { transform: scale(1.1); }
 
-    /* Game Asset Library Styles */
-    .asset-library { margin-top: 20px; border: 1px dashed var(--success); border-radius: 14px; padding: 0; background: rgba(127, 219, 150, 0.05); display: none; overflow: hidden; }
-    .asset-library.active { display: block; }
-    .asset-library-header {
-      display: flex; justify-content: space-between; align-items: center;
-      padding: 12px 16px; cursor: pointer; user-select: none;
-      transition: background 0.15s;
-    }
-    .asset-library-header:hover { background: rgba(127, 219, 150, 0.04); }
-    .asset-library-header-left { display: flex; align-items: center; gap: 8px; }
-    .asset-library-body {
-      display: none; padding: 0 16px 14px 16px;
-    }
-    .asset-library-body.open { display: block; }
-    .asset-item { display: flex; align-items: center; justify-content: space-between; padding: 10px; border-bottom: 1px solid var(--line); font-size: 12px; transition: background 0.2s; }
-    .asset-item:hover { background: var(--card); }
-    .asset-item:last-child { border-bottom: none; }
-    .asset-item label { display: flex; align-items: center; gap: 10px; cursor: pointer; margin: 0; color: var(--text); flex: 1; font-weight: 500;}
-    .asset-date { color: var(--muted); font-size: 11px; }
-    input[type="checkbox"].asset-checkbox { width: 16px; height: 16px; accent-color: var(--success); cursor: pointer; margin: 0; }
+
     
     /* ── Live AI Progress Panel ── */
     .ai-progress-panel {
@@ -544,11 +525,112 @@
     .tranche-card-deps {
       display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px;
     }
+    /* ── Game-Specific Asset Roster Review Panel ── */
+    .roster-review-panel {
+      display: none; background: #0c0f1a; border: 1px solid var(--accent);
+      border-radius: 14px; padding: 20px; margin-top: 10px;
+    }
+    .roster-review-panel.active { display: block; }
+    .roster-panel-title { font-size: 15px; font-weight: 700; color: #fff; margin: 0 0 6px 0; }
+    .roster-game-summary { font-size: 12px; color: var(--muted); margin: 0 0 18px 0; line-height: 1.5; }
+    .roster-section { margin-bottom: 20px; }
+    .roster-section-header {
+      display: flex; align-items: center; gap: 10px;
+      font-size: 13px; font-weight: 700; color: #fff;
+      margin: 0 0 10px 0; border-bottom: 1px solid var(--line); padding-bottom: 6px;
+    }
+    .roster-count-badge {
+      background: rgba(43,108,255,0.18); color: var(--accent);
+      border-radius: 999px; padding: 2px 10px; font-size: 11px; font-weight: 700;
+    }
+    .roster-asset-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px;
+    }
+    .roster-asset-card {
+      background: var(--card); border: 1px solid var(--line);
+      border-radius: 10px; padding: 10px 12px; font-size: 11px;
+    }
+    .roster-asset-name { font-weight: 700; color: #fff; margin-bottom: 3px; font-family: 'SF Mono','Fira Code',monospace; }
+    .roster-asset-source { color: #a78bfa; margin-bottom: 4px; font-size: 10px; }
+    .roster-asset-role { color: var(--text); line-height: 1.4; margin-bottom: 3px; }
+    .roster-asset-rationale { color: var(--muted); font-size: 10px; font-style: italic; line-height: 1.4; }
+    .roster-visual-notes {
+      background: #0e1220; border-radius: 10px; padding: 14px;
+      font-size: 12px; line-height: 1.6;
+    }
+    .roster-vn-row { display: flex; gap: 8px; margin-bottom: 5px; flex-wrap: wrap; }
+    .roster-vn-label { color: #a78bfa; font-weight: 600; min-width: 150px; flex-shrink: 0; }
+    .roster-vn-value { color: var(--text); flex: 1; }
+    .roster-approve-bar {
+      display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+      padding: 14px 0 0 0; border-top: 1px solid var(--line); margin-top: 16px;
+    }
+    .roster-approve-status { font-size: 12px; color: var(--muted); flex: 1; }
+    .roster-empty-note { font-size: 12px; color: var(--muted); padding: 10px 0; font-style: italic; }
+
     .tranche-dep-chip {
       padding: 1px 6px; border-radius: 3px; font-size: 9px;
       font-weight: 600; background: #1a1e2b; color: #64748b;
       font-family: 'SF Mono', 'Fira Code', monospace;
     }
+
+    /* ── Image Influence Panel ── */
+    .val-image-panel {
+      display: none; margin-top: 10px; padding: 0;
+      background: rgba(139,92,246,0.04); border: 1px solid rgba(139,92,246,0.18);
+      border-radius: 10px; overflow: hidden;
+    }
+    .val-image-panel.active { display: block; }
+    .val-image-panel-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 16px; cursor: pointer; user-select: none;
+      background: rgba(139,92,246,0.07); border-bottom: 1px solid rgba(139,92,246,0.15);
+      transition: background 0.15s;
+    }
+    .val-image-panel-header:hover { background: rgba(139,92,246,0.12); }
+    .val-image-panel-title {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 12px; font-weight: 600; color: #a78bfa;
+    }
+    .val-image-panel-chevron {
+      font-size: 10px; color: #a78bfa; transition: transform 0.2s;
+    }
+    .val-image-panel.collapsed .val-image-panel-chevron { transform: rotate(-90deg); }
+    .val-image-panel.collapsed .val-image-panel-body { display: none; }
+    .val-image-panel-body { padding: 14px 16px; display: flex; flex-direction: column; gap: 14px; }
+    .val-image-thumbs {
+      display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-start;
+    }
+    .val-image-thumb {
+      width: 72px; height: 72px; border-radius: 6px; object-fit: cover;
+      border: 1px solid rgba(139,92,246,0.3); background: #0b0d12;
+      flex-shrink: 0;
+    }
+    .val-image-thumb-label {
+      font-size: 10px; color: var(--muted); text-align: center;
+      max-width: 72px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .val-image-thumb-wrap { display: flex; flex-direction: column; gap: 4px; align-items: center; }
+    .val-inject-list { display: flex; flex-direction: column; gap: 8px; }
+    .val-inject-item {
+      background: #0b0d12; border: 1px solid var(--line);
+      border-radius: 8px; overflow: hidden;
+    }
+    .val-inject-header {
+      display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+      border-bottom: 1px solid var(--line);
+    }
+    .val-inject-stage {
+      font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 4px;
+      font-family: 'SF Mono', 'Fira Code', monospace; letter-spacing: 0.03em;
+      background: rgba(139,92,246,0.15); color: #a78bfa; border: 1px solid rgba(139,92,246,0.3);
+    }
+    .val-inject-name { font-size: 12px; font-weight: 600; color: var(--text); }
+    .val-inject-text {
+      padding: 8px 12px; font-size: 11px; color: var(--muted); line-height: 1.6;
+      font-family: 'SF Mono', 'Fira Code', monospace; white-space: pre-wrap; word-break: break-word;
+    }
+    .val-image-divider { font-size: 11px; font-weight: 600; color: #a78bfa; margin: 2px 0 4px; letter-spacing: 0.04em; }
 
     /* ── Validation Correction Panel ── */
     .val-correction-panel {
@@ -685,19 +767,7 @@
         <div id="reviewFileList" class="review-list"></div>
       </div>
 
-      <div id="assetLibrary" class="asset-library">
-        <div class="asset-library-header" id="assetLibraryHeader">
-            <div class="asset-library-header-left">
-                <span class="drop-chevron" id="assetLibraryChevron">▶</span>
-                <h2 style="color: var(--success); margin:0;">Game Assets Library</h2>
-            </div>
-            <span style="font-size: 11px; color: var(--muted);">Select files to include in your next AI prompt</span>
-        </div>
-        <div class="asset-library-body" id="assetLibraryBody">
-            <div id="assetList" style="display:flex; flex-direction:column; max-height: 250px; overflow-y:auto; border: 1px solid var(--line); border-radius: 8px; background: #0b0d12;">
-            </div>
-        </div>
-      </div>
+
 
       <div style="margin-top: 30px; border-top: 1px solid var(--line); padding-top: 20px;">
         <h2>AI Context Window</h2>
@@ -769,6 +839,53 @@
             </div>
           </div>
           
+          <!-- Game-Specific Asset Roster Review Panel -->
+          <div id="rosterReviewPanel" class="roster-review-panel">
+            <div class="roster-panel-title">🎮 Game-Specific Asset Roster</div>
+            <p id="rosterGameSummary" class="roster-game-summary"></p>
+            <div class="roster-section">
+              <div class="roster-section-header">
+                Primitive Objects
+                <span id="rosterObjCount" class="roster-count-badge">0 / 25</span>
+              </div>
+              <div id="rosterObjGrid" class="roster-asset-grid"></div>
+            </div>
+            <div class="roster-section">
+              <div class="roster-section-header">
+                Texture Assets
+                <span id="rosterTexCount" class="roster-count-badge">0 / 50</span>
+              </div>
+              <div id="rosterTexGrid" class="roster-asset-grid"></div>
+            </div>
+            <div class="roster-section">
+              <div class="roster-section-header">Visual Direction</div>
+              <div class="roster-visual-notes" id="rosterVNContent"></div>
+            </div>
+            <div class="roster-approve-bar">
+              <button class="btn btnPrimary" id="rosterApproveBtn">✅ Approve Roster &amp; Continue</button>
+              <button class="btn" id="rosterRejectBtn">🔄 Regenerate</button>
+              <span id="rosterApproveStatus" class="roster-approve-status"></span>
+            </div>
+          </div>
+
+          <!-- Image Influence Panel — shown when reference images were attached to the submission -->
+          <div id="valImagePanel" class="val-image-panel">
+            <div class="val-image-panel-header" onclick="TrancheUI.toggleImagePanel()">
+              <div class="val-image-panel-title">
+                <span>🖼</span>
+                <span id="valImagePanelTitle">Reference Images — Pipeline Influence</span>
+              </div>
+              <span class="val-image-panel-chevron">&#9660;</span>
+            </div>
+            <div class="val-image-panel-body">
+              <div id="valImageThumbs" class="val-image-thumbs"></div>
+              <div>
+                <div class="val-image-divider">HOW THESE IMAGES INFLUENCED THE PIPELINE</div>
+                <div class="val-inject-list" id="valInjectList"></div>
+              </div>
+            </div>
+          </div>
+
           <!-- Validation Correction Panel — shown after CRITICAL/HIGH validation failure -->
           <div id="valCorrectionPanel" class="val-correction-panel">
             <div class="val-correction-header">
@@ -846,6 +963,8 @@
       { id: "instructions", title: "AI System Instructions (Scaffold + SDK)", accepts: "text/plain,.txt,.doc,.docx,.pdf,.js", folder: "ai_system_instructions" },
       { id: "assets", title: "Game Assets (Images/Audio)", accepts: "image/*,audio/*,.png,.jpg,.jpeg,.mp3,.wav", folder: "assets" },
       { id: "object_zip", title: "Animated/Textured Object ZIP Package", accepts: ".zip", folder: "object_zips" },
+      { id: "asset_rosters", title: "Asset_Rosters", accepts: ".docx", folder: "asset_rosters" },
+      { id: "asset_packs", title: "Asset_Packs", accepts: ".zip", folder: "asset_packs" },
       { id: "models", title: "Models, Logic & HTML", accepts: ".obj,.glb,.fbx,.js,.mtl,.html", folder: "models" },
       { id: "json", title: "JSON Configs", accepts: ".json", folder: "json" },
       { id: "reference", title: "Cherry3D Runtime Template (for Game Export)", accepts: ".zip", folder: "reference_zip" }
@@ -857,12 +976,7 @@
         folder: cat.folder,
         title: cat.title,
         virtual: false
-      })),
-      {
-        folder: '__asset_library__',
-        title: 'Game Assets Library',
-        virtual: true
-      }
+      }))
     ];
 
     const REQUIRED_INSTRUCTION_KINDS = ['scaffold', 'sdk'];
@@ -1051,10 +1165,6 @@
       dropZonesContainer.innerHTML = '';
       reviewPanel.classList.remove('active');
       reviewFileList.innerHTML = '';
-      const assetLibrary = document.getElementById('assetLibrary');
-      const assetList = document.getElementById('assetList');
-      if (assetLibrary) assetLibrary.classList.remove('active');
-      if (assetList) assetList.innerHTML = '';
       aiChatLog.innerHTML = `<div id="aiChatIntro" style="color: var(--muted);">${message}</div>`;
       aiCodeReviewLog.innerHTML = `<div style="color: var(--muted);">Code diff updates will appear here after an AI run.</div>`;
       updateAiUI();
@@ -1112,8 +1222,6 @@
         const sectionEnd = ((sectionIndex + 1) / totalSections) * 100;
 
         if (section.virtual) {
-          setCreateProjectProgress(sectionStart, `Populating ${section.title}...`);
-          await syncAssetsJson(targetProjectName);
           setCreateProjectProgress(sectionEnd, `${section.title} ready.`);
           continue;
         }
@@ -1404,7 +1512,6 @@ This will permanently remove all associated files and Firebase folders for this 
       renderDropZones();
       refreshAllFiles();
       refreshReviewList();
-      refreshAssetLibrary();
       syncAssetsJson();
       
       aiChatLog.innerHTML = `<div id="aiChatIntro" style="color: var(--muted);">AI Context ready for project: ${name}. Enter instructions below — ${AI_SERVICES[currentAiService].planner} will create a dependency-ordered 6.3-centered tranche plan with a final hardening batch.</div>`;
@@ -1578,99 +1685,62 @@ This will permanently remove all associated files and Firebase folders for this 
           listContainer.appendChild(itemDiv);
         });
 
-        if (categoryConfig.id === 'assets' || categoryConfig.id === 'models' || categoryConfig.id === 'object_zip') refreshAssetLibrary();
-
       } catch (e) {
         console.error(`Error loading files for ${categoryConfig.id}`, e);
         listContainer.innerHTML = `<div style="font-size:11px; color:var(--danger);">Error fetching files.</div>`;
       }
     }
 
-    async function refreshAssetLibrary(projectName = currentProject) {
-        if (!projectName) return;
-        const libraryContainer = document.getElementById('assetLibrary');
-        const listContainer = document.getElementById('assetList');
-        
-        const assetsRef = ref(storage, `${ROOT}/${projectName}/assets`);
-        const modelsRef = ref(storage, `${ROOT}/${projectName}/models`);
-        const objectZipsRef = ref(storage, `${ROOT}/${projectName}/object_zips`);
-
-        try {
-            const [assetsRes, modelsRes, objectZipsRes] = await Promise.all([
-                listAll(assetsRef).catch(() => ({items:[]})),
-                listAll(modelsRef).catch(() => ({items:[]})),
-                listAll(objectZipsRef).catch(() => ({items:[]}))
-            ]);
-            
-            const allItems = [...assetsRes.items, ...modelsRes.items, ...objectZipsRes.items];
-
-            if (allItems.length === 0) {
-                libraryContainer.classList.remove('active');
-                listContainer.innerHTML = '';
-                return;
-            }
-
-            let htmlBuffer = '';
-
-            for (const itemRef of allItems) {
-                const meta = await getMetadata(itemRef);
-                const url = await getDownloadURL(itemRef);
-                const dateStr = new Date(meta.timeCreated).toLocaleString();
-                const dataPath = `${itemRef.parent.name}/${itemRef.name}`;
-
-                htmlBuffer += `
-                    <div class="asset-item">
-                        <label>
-                            <input type="checkbox" class="asset-checkbox" 
-                                data-path="${dataPath}" 
-                                data-url="${url}" 
-                                data-type="${meta.contentType || ''}" 
-                                data-name="${itemRef.name}">
-                            <span>✨ ${itemRef.name}</span>
-                        </label>
-                        <span class="asset-date">${itemRef.parent.name.toUpperCase()} • ${dateStr}</span>
-                    </div>
-                `;
-            }
-            
-            listContainer.innerHTML = htmlBuffer;
-            libraryContainer.classList.add('active');
-
-        } catch (e) { 
-            console.error("Asset library error", e); 
-        }
-    }
-
     // ── Auto-Sync assets.json with actual project files ──
     // Scans models/, object_zips/, and assets/ folders and rebuilds assets.json
     // to accurately reflect what files actually exist in the project.
-    // File "2" (WorldController.js) references assets by these keys — they must NOT change.
-    // Purely numeric extensionless files in models/ are Cherry3D key-numbered runtime
-    // artifacts and must be EXCLUDED from scanning (they are what assets.json maps TO).
+    //
+    // RULES (derived from canonical assets.json template):
+    //   1. Reserved entries (keys 0,2,3,22,23) are NEVER touched — always preserved verbatim.
+    //   2. New 3D objects (.obj/.glb/.gltf/.fbx/.c3b) go into the "Models" folder (key "15") children.
+    //   3. New images/audio go at root level (not nested).
+    //   4. Keys are stable — never renumber, never reuse gaps.
+    //   5. Prune is title-based only — truthTitlesLower is the source of truth.
+    //   6. Numeric extensionless files in models/ are Cherry3D runtime artifacts — excluded.
+    //   7. This function is the SOLE writer of assets.json. The AI never writes it.
+    //      Roster assets are copied into models/ before sync runs, so they are
+    //      picked up naturally by the existing models/ scan.
+    //   8. After sync, hardenPrimitivesInManifest() moves roster .obj entries
+    //      into the .primitives folder (key "0") in a separate targeted pass.
     async function syncAssetsJson(projectName = currentProject) {
         if (!projectName) return;
         await ensureAuth();
 
         setStatus('Syncing assets.json with project files...');
 
+        // Reserved keys that must never be removed or modified regardless of Firebase contents.
+        const RESERVED_KEYS = new Set(['0', '2', '3', '22', '23']);
+        // Key of the "Models" folder — new 3D objects are added as its children.
+        const MODELS_FOLDER_KEY = '15';
+
         const modelsRef  = ref(storage, `${ROOT}/${projectName}/models`);
         const zipsRef    = ref(storage, `${ROOT}/${projectName}/object_zips`);
         const assetsRef  = ref(storage, `${ROOT}/${projectName}/assets`);
 
         let modelItems = [], zipItems = [], imageAudioItems = [];
-        try { modelItems  = (await listAll(modelsRef).catch(() => ({items:[]}))).items;  } catch(e){}
-        try { zipItems    = (await listAll(zipsRef).catch(() => ({items:[]}))).items;    } catch(e){}
-        try { imageAudioItems = (await listAll(assetsRef).catch(() => ({items:[]}))).items; } catch(e){}
+        try { modelItems      = (await listAll(modelsRef).catch(() => ({items:[]}))).items;  } catch(e){}
+        try { zipItems        = (await listAll(zipsRef).catch(() => ({items:[]}))).items;    } catch(e){}
+        try { imageAudioItems = (await listAll(assetsRef).catch(() => ({items:[]}))).items;  } catch(e){}
 
         const assetExtensions = ['.obj','.glb','.gltf','.fbx','.c3b','.mtl'];
         const imageAudioExts  = ['.png','.jpg','.jpeg','.webp','.gif','.bmp','.mp3','.wav','.ogg','.m4a'];
 
-        // Build the ground-truth set of file names that MUST be in assets.json
+        // Build the ground-truth set: filename → type
+        // These are the files that MUST have entries in assets.json.
         const truthMap = new Map();
 
         for (const item of modelItems) {
             const lowerName = item.name.toLowerCase();
+            // Skip reserved runtime files
             if (item.name === '2' || item.name === '23') continue;
+            // Skip purely numeric extensionless files — Cherry3D key-numbered runtime artifacts
+            if (!/\./.test(item.name) && /^\d+$/.test(item.name)) continue;
+
             if (assetExtensions.some(ext => lowerName.endsWith(ext))) {
                 truthMap.set(item.name, 'object');
             } else if (lowerName.endsWith('.js')) {
@@ -1680,19 +1750,9 @@ This will permanently remove all associated files and Firebase folders for this 
             } else if (lowerName.endsWith('.css')) {
                 truthMap.set(item.name, 'stylesheet');
             } else if (imageAudioExts.some(ext => lowerName.endsWith(ext))) {
-                if (['.mp3','.wav','.ogg','.m4a'].some(ext => lowerName.endsWith(ext))) {
-                    truthMap.set(item.name, 'audio');
-                } else {
-                    truthMap.set(item.name, 'image');
-                }
-            } else if (!lowerName.includes('.')) {
-                // Extensionless file — but SKIP purely numeric names.
-                // Numeric files (e.g. "10", "17", "34") are Cherry3D key-numbered RUNTIME
-                // files (the deployed build artifacts), NOT source assets to track.
-                // Only non-numeric extensionless files are real assets.
-                if (!/^\d+$/.test(item.name)) {
-                    truthMap.set(item.name, 'object');
-                }
+                truthMap.set(item.name, ['.mp3','.wav','.ogg','.m4a'].some(ext => lowerName.endsWith(ext)) ? 'audio' : 'image');
+            } else if (!lowerName.includes('.') && !/^\d+$/.test(item.name)) {
+                truthMap.set(item.name, 'object');
             }
         }
 
@@ -1704,22 +1764,16 @@ This will permanently remove all associated files and Firebase folders for this 
                 const zipBlob = await zipRes.blob();
                 const zipObj = new JSZip();
                 await zipObj.loadAsync(zipBlob);
-
                 for (const relativePath of Object.keys(zipObj.files)) {
                     const entry = zipObj.files[relativePath];
                     if (entry.dir || relativePath.includes('__MACOSX')) continue;
                     const entryName = relativePath.split('/').pop();
                     if (!entryName) continue;
                     const lowerEntry = entryName.toLowerCase();
-
                     if (assetExtensions.some(ext => lowerEntry.endsWith(ext))) {
                         truthMap.set(entryName, 'object');
                     } else if (imageAudioExts.some(ext => lowerEntry.endsWith(ext))) {
-                        if (['.mp3','.wav','.ogg','.m4a'].some(ext => lowerEntry.endsWith(ext))) {
-                            truthMap.set(entryName, 'audio');
-                        } else {
-                            truthMap.set(entryName, 'image');
-                        }
+                        truthMap.set(entryName, ['.mp3','.wav','.ogg','.m4a'].some(ext => lowerEntry.endsWith(ext)) ? 'audio' : 'image');
                     }
                 }
             } catch(e) {
@@ -1729,14 +1783,12 @@ This will permanently remove all associated files and Firebase folders for this 
 
         for (const item of imageAudioItems) {
             const lowerName = item.name.toLowerCase();
-            if (['.mp3','.wav','.ogg','.m4a'].some(ext => lowerName.endsWith(ext))) {
-                truthMap.set(item.name, 'audio');
-            } else if (imageAudioExts.some(ext => lowerName.endsWith(ext))) {
-                truthMap.set(item.name, 'image');
+            if (imageAudioExts.some(ext => lowerName.endsWith(ext))) {
+                truthMap.set(item.name, ['.mp3','.wav','.ogg','.m4a'].some(ext => lowerName.endsWith(ext)) ? 'audio' : 'image');
             }
         }
 
-        // Load existing project assets.json to preserve established key assignments
+        // Load existing assets.json — this is the base we preserve key assignments from
         let existingAssets = [];
         try {
             const jsonRef = ref(storage, `${ROOT}/${projectName}/json/assets.json`);
@@ -1751,41 +1803,42 @@ This will permanently remove all associated files and Firebase folders for this 
             console.info("syncAssetsJson: No existing project assets.json found.");
         }
 
-        // Helper to flatten nested asset entries (handles Cherry3D folder structures)
+        // Flatten tree for key tracking (does not mutate structure)
         function flattenAssetEntries(entries) {
             const flat = [];
             for (const entry of entries) {
                 if (!entry || typeof entry !== 'object') continue;
                 flat.push(entry);
-                if (entry.children && Array.isArray(entry.children) && entry.children.length > 0) {
+                if (Array.isArray(entry.children) && entry.children.length > 0) {
                     flat.push(...flattenAssetEntries(entry.children));
                 }
             }
             return flat;
         }
 
+        // Track all used keys and find current max
         const usedKeys = new Set();
         let maxKey = 0;
-        const allFlat = flattenAssetEntries(existingAssets);
-        for (const entry of allFlat) {
+        for (const entry of flattenAssetEntries(existingAssets)) {
+            usedKeys.add(String(entry.key));
             const numKey = parseInt(entry.key, 10);
             if (!isNaN(numKey) && numKey > maxKey) maxKey = numKey;
         }
 
-        // Recursively prune entries whose files no longer exist,
-        // but preserve folder structure and children.
+        // truthTitlesLower is the ONLY source of truth for pruning.
+        // Bug fix: the old code also checked truthKeys (which held filenames, not numeric keys)
+        // against numeric entry keys — that comparison was always false and caused valid entries
+        // to be pruned. Now we only check by title.
         const truthTitlesLower = new Set([...truthMap.keys()].map(t => t.toLowerCase()));
-        const truthKeys = new Set([...truthMap.keys()]);
 
         function pruneEntries(entries) {
             const result = [];
             for (const entry of entries) {
-                const titleLower = entry.title ? entry.title.toLowerCase() : '';
                 const entryKey = String(entry.key);
 
-                // Always keep folders — prune their children recursively
-                if (entry.type === 'folder') {
-                    if (entry.children && Array.isArray(entry.children)) {
+                // Reserved entries are ALWAYS kept verbatim — never pruned
+                if (RESERVED_KEYS.has(entryKey)) {
+                    if (entry.type === 'folder' && Array.isArray(entry.children)) {
                         entry.children = pruneEntries(entry.children);
                     }
                     result.push(entry);
@@ -1793,64 +1846,91 @@ This will permanently remove all associated files and Firebase folders for this 
                     continue;
                 }
 
-                // Keep entry if its file still exists in truthMap
-                if (truthTitlesLower.has(titleLower) || truthKeys.has(entryKey)) {
+                // Folders: always keep the folder itself, prune children recursively
+                if (entry.type === 'folder') {
+                    if (Array.isArray(entry.children)) {
+                        entry.children = pruneEntries(entry.children);
+                    }
+                    result.push(entry);
+                    usedKeys.add(entryKey);
+                    continue;
+                }
+
+                // Non-folder: keep only if title matches a real file in Firebase
+                const titleLower = (entry.title || '').toLowerCase();
+                if (truthTitlesLower.has(titleLower)) {
                     result.push(entry);
                     usedKeys.add(entryKey);
                 }
+                // else: file no longer exists in Firebase — prune it
             }
             return result;
         }
         const updatedAssets = pruneEntries(existingAssets);
 
-        // Build a set of all titles already covered (including inside folders)
+        // Collect all titles already present (anywhere in the tree) — used to skip re-adding
         const allUpdatedFlat = flattenAssetEntries(updatedAssets);
         const coveredTitlesLower = new Set(allUpdatedFlat.map(e => (e.title || '').toLowerCase()));
-        const coveredKeys = new Set(allUpdatedFlat.map(e => String(e.key)));
 
-        // Helper: determine the correct Cherry3D type and extension for a file
+        // Helper: correct Cherry3D type and extension for a given filename
         function getCherryTypeInfo(title, baseType) {
             const lower = (title || '').toLowerCase();
             if (lower.endsWith('.js'))   return { type: 'javascript', extension: undefined };
-            if (lower.endsWith('.html')) return { type: 'HTML', extension: 'html' };
+            if (lower.endsWith('.html')) return { type: 'HTML',       extension: 'html' };
             if (lower.endsWith('.css'))  return { type: 'stylesheet', extension: 'css' };
-            if (lower.endsWith('.c3b'))  return { type: 'object', extension: 'c3b' };
+            if (lower.endsWith('.c3b'))  return { type: 'object',     extension: 'c3b' };
             return { type: baseType || 'object', extension: undefined };
         }
 
-        // Add new entries for files not yet in assets.json
-        for (const [title, type] of truthMap) {
-            if (!coveredTitlesLower.has(title.toLowerCase()) && !coveredKeys.has(title)) {
-                maxKey++;
-                while (usedKeys.has(String(maxKey))) maxKey++;
-                const typeInfo = getCherryTypeInfo(title, type);
-                const newEntry = { key: String(maxKey), type: typeInfo.type, title: title, children: [] };
-                if (typeInfo.extension) newEntry.extension = typeInfo.extension;
-                updatedAssets.push(newEntry);
-                usedKeys.add(String(maxKey));
-            }
+        // Helper: allocate the next available key
+        function nextKey() {
+            maxKey++;
+            while (usedKeys.has(String(maxKey))) maxKey++;
+            usedKeys.add(String(maxKey));
+            return String(maxKey);
         }
 
-        // ── Deduplication: remove top-level entries that already exist as children of folders ──
-        // Cherry3D expects each asset to appear exactly once in the tree.
+        // Add new entries for files not yet covered.
+        // 3D objects → into Models folder children.
+        // Images/audio/other → at root level.
+        const modelsFolder = updatedAssets.find(e => e.type === 'folder' && e.key === MODELS_FOLDER_KEY);
+
+        for (const [title, type] of truthMap) {
+            if (coveredTitlesLower.has(title.toLowerCase())) continue;
+
+            const typeInfo = getCherryTypeInfo(title, type);
+            const newEntry = { key: nextKey(), type: typeInfo.type, title: title, children: [] };
+            if (typeInfo.extension) newEntry.extension = typeInfo.extension;
+
+            if (typeInfo.type === 'object' && modelsFolder) {
+                // 3D assets belong inside the Models folder
+                modelsFolder.children.push(newEntry);
+            } else {
+                // Images, audio, js, html, css go at root level
+                updatedAssets.push(newEntry);
+            }
+            coveredTitlesLower.add(title.toLowerCase());
+        }
+
+        // ── Deduplication: remove root-level entries that are already inside a folder ──
+        // This catches leftovers from previous broken syncs (e.g. the duplicate keys 79-92 bug).
         const childTitlesLower = new Set();
         function collectChildTitles(entries) {
             for (const entry of entries) {
-                if (entry.type === 'folder' && entry.children) {
+                if (entry.type === 'folder' && Array.isArray(entry.children)) {
                     for (const child of entry.children) {
                         if (child.title) childTitlesLower.add(child.title.toLowerCase());
-                        if (child.children && child.children.length > 0) collectChildTitles([child]);
+                        if (Array.isArray(child.children) && child.children.length > 0) collectChildTitles([child]);
                     }
                 }
             }
         }
         collectChildTitles(updatedAssets);
 
-        // Remove top-level duplicates (entries that are already nested inside a folder)
         const deduplicatedAssets = updatedAssets.filter(entry => {
-            if (entry.type === 'folder') return true; // always keep folders
-            const titleLower = (entry.title || '').toLowerCase();
-            return !childTitlesLower.has(titleLower);
+            if (entry.type === 'folder') return true;
+            if (RESERVED_KEYS.has(String(entry.key))) return true;
+            return !childTitlesLower.has((entry.title || '').toLowerCase());
         });
 
         const newJson = JSON.stringify(deduplicatedAssets, null, 2);
@@ -1944,17 +2024,6 @@ This will permanently remove all associated files and Firebase folders for this 
                 imagePreviewModal.classList.remove('active');
                 document.getElementById('previewImageSrc').src = '';
             }
-        });
-    }
-
-    // Wire up collapsible Game Assets Library header
-    const assetLibraryHeader = document.getElementById('assetLibraryHeader');
-    if (assetLibraryHeader) {
-        assetLibraryHeader.addEventListener('click', () => {
-            const body = document.getElementById('assetLibraryBody');
-            const chevron = document.getElementById('assetLibraryChevron');
-            body.classList.toggle('open');
-            chevron.classList.toggle('open');
         });
     }
 
@@ -2316,6 +2385,15 @@ Failure stage: ${stage}${liveBlock}${candidateBlock}`;
 
       for (const file of result.updatedFiles) {
         const { fileName, safePath } = resolveAiTargetPath(file.path);
+
+        // ── assets.json is owned exclusively by syncAssetsJson() ──
+        // The AI receives it as read-only context. If it outputs it, discard silently.
+        if (safePath === 'json/assets.json') {
+          console.info('applyAiUpdatedFiles: discarded AI-generated assets.json — managed by syncAssetsJson only.');
+          appendToChatLog('System', 'assets.json output from AI was discarded — manifest is managed automatically.', 'normal');
+          continue;
+        }
+
         if (normalizedTargets && !normalizedTargets.has(String(safePath || '').toLowerCase())) {
           continue;
         }
@@ -2990,7 +3068,7 @@ Quality criteria for your work:
         }
       },
 
-      showValidationFailure(errData) {
+      showValidationFailure(errData, imageUrls = []) {
         this.show();
         const headerIcon   = document.getElementById('trancheHeaderIcon');
         const headerTitle  = document.getElementById('trancheHeaderTitle');
@@ -3143,6 +3221,85 @@ Quality criteria for your work:
 
           correctionPanel.classList.add('active');
         }
+
+        // ── Image Influence Panel ─────────────────────────────────────────────
+        this.showImageInfluencePanel(imageUrls);
+      },
+
+      // Populates and shows the image influence panel.
+      // Called on pipeline start (images present) and on validation failure.
+      showImageInfluencePanel(imageUrls) {
+        const imagePanel      = document.getElementById('valImagePanel');
+        const imageThumbs     = document.getElementById('valImageThumbs');
+        const injectList      = document.getElementById('valInjectList');
+        const imagePanelTitle = document.getElementById('valImagePanelTitle');
+
+        if (imagePanel) imagePanel.classList.remove('active');
+        if (!imagePanel || !imageThumbs || !injectList) return;
+        if (!imageUrls || imageUrls.length === 0) return;
+
+        // Title
+        imagePanelTitle.textContent =
+          imageUrls.length + ' Reference Image' + (imageUrls.length !== 1 ? 's' : '') + ' — Active in this Pipeline';
+
+        // Thumbnails
+        imageThumbs.innerHTML = '';
+        imageUrls.forEach(function(img) {
+          const wrap = document.createElement('div');
+          wrap.className = 'val-image-thumb-wrap';
+          const el = document.createElement('img');
+          el.className = 'val-image-thumb';
+          el.src = img.url;
+          el.alt = img.name;
+          el.title = img.name;
+          const lbl = document.createElement('div');
+          lbl.className = 'val-image-thumb-label';
+          lbl.textContent = img.name;
+          wrap.appendChild(el);
+          wrap.appendChild(lbl);
+          imageThumbs.appendChild(wrap);
+        });
+
+        // Static injection point descriptions — exactly mirror what the backend injects.
+        const INJECT_POINTS = [
+          {
+            stage: 'VALIDATION',
+            name:  'Spec Validation Gate — Calls 1, 2 & 3',
+            text:  'Images are attached to the extraction call (Call 1) and the simulation call (Call 2). Discrepancies where an image shows greater visual complexity than the spec text describes are classified as MEDIUM rather than HIGH — the spec may intentionally be terse while the image defines the true target.'
+          },
+          {
+            stage: 'PLANNER',
+            name:  'Opus Planner — Instruction Precedence Rule 6',
+            text:  'Images are first-class game design inputs with authority equal to the Master Prompt. They define the intended visual style, layout, object types, and complexity level. Where image and text spec diverge, the image is the authoritative definition of what must be built. Every tranche touching visual elements, entities, or layouts must reconcile against the attached images.'
+          },
+          {
+            stage: 'EXECUTOR',
+            name:  'Sonnet Executor — injected into every tranche',
+            text:  'Images are first-class game design inputs with authority equal to the Master Prompt. They define the intended visual appearance, entity types, layout geometry, and interaction model. Producing output visually inconsistent with an attached image is classified as a defect. Visual Reconciliation is a required quality criterion for every tranche that touches rendered content.'
+          }
+        ];
+
+        const self = this;
+        injectList.innerHTML = '';
+        INJECT_POINTS.forEach(function(pt) {
+          const item = document.createElement('div');
+          item.className = 'val-inject-item';
+          item.innerHTML =
+            '<div class="val-inject-header">' +
+              '<span class="val-inject-stage">' + pt.stage + '</span>' +
+              '<span class="val-inject-name">' + self._escapeHTML(pt.name) + '</span>' +
+            '</div>' +
+            '<div class="val-inject-text">' + self._escapeHTML(pt.text) + '</div>';
+          injectList.appendChild(item);
+        });
+
+        imagePanel.classList.add('active');
+        imagePanel.classList.remove('collapsed');
+      },
+
+      toggleImagePanel() {
+        const panel = document.getElementById('valImagePanel');
+        if (panel) panel.classList.toggle('collapsed');
       },
 
       updateFromProgress(prog) {
@@ -4167,6 +4324,424 @@ Original user request for context: ${basePrompt}`;
       return { analyses, recognizedEntries };
     }
 
+    /* ══════════════════════════════════════════════════════════════════════
+       GAME-SPECIFIC ASSET ROSTER STAGE
+       ─────────────────────────────────────────────────────────────────────
+       Runs between Prompt Verification upload and pipeline trigger.
+       1. Calls claudeRosterGenerate (Sonnet 4.6) to analyze Master Prompt
+          + gameplay images + available Asset_Rosters .docx files and
+          produce a game-specific asset roster (max 25 obj / 50 png).
+       2. Renders the roster in the UI for user review.
+       3. Blocks until user approves (or requests regeneration).
+       4. On approval calls claudeRosterExtract to extract approved assets
+          from matching Asset_Packs zips, stage them in Firebase, and
+          update assets.json.
+       5. Returns approved roster context for injection into the AI prompt.
+    ═══════════════════════════════════════════════════════════════════════ */
+
+    function renderRosterReviewPanel(roster) {
+      const panel = document.getElementById('rosterReviewPanel');
+      if (!panel) return;
+
+      const esc = s => String(s || '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+
+      document.getElementById('rosterGameSummary').textContent = roster.gameInterpretationSummary || '';
+
+      const objs = Array.isArray(roster.primitiveObjects) ? roster.primitiveObjects : [];
+      document.getElementById('rosterObjCount').textContent = `${objs.length} / 25`;
+      const objGrid = document.getElementById('rosterObjGrid');
+      if (objs.length === 0) {
+        objGrid.innerHTML = '<div class="roster-empty-note">No primitive objects selected.</div>';
+      } else {
+        objGrid.innerHTML = objs.map(a => `
+          <div class="roster-asset-card">
+            <div class="roster-asset-name">${esc(a.assetName)}</div>
+            <div class="roster-asset-source">📦 ${esc(a.sourceRosterDocument)}</div>
+            <div class="roster-asset-role">${esc(a.intendedRole)}</div>
+            <div class="roster-asset-rationale">${esc(a.selectionRationale)}</div>
+          </div>`).join('');
+      }
+
+      const texs = Array.isArray(roster.textureAssets) ? roster.textureAssets : [];
+      document.getElementById('rosterTexCount').textContent = `${texs.length} / 50`;
+      const texGrid = document.getElementById('rosterTexGrid');
+      if (texs.length === 0) {
+        texGrid.innerHTML = '<div class="roster-empty-note">No texture assets selected.</div>';
+      } else {
+        texGrid.innerHTML = texs.map(a => `
+          <div class="roster-asset-card">
+            <div class="roster-asset-name">${esc(a.assetName)}</div>
+            <div class="roster-asset-source">🎨 ${esc(a.sourceRosterDocument)}</div>
+            <div class="roster-asset-role">${esc(a.intendedUsage)}</div>
+            <div class="roster-asset-rationale">${esc(a.selectionRationale)}</div>
+          </div>`).join('');
+      }
+
+      const vn = roster.visualDirectionNotes || {};
+      const vnRows = [
+        ['Color Direction',   vn.colorDirection],
+        ['Material Style',    vn.materialStyle],
+        ['Realism Level',     vn.realismLevel],
+        ['Environmental Tone',vn.environmentalTone],
+        ['Surface Treatment', vn.surfaceTreatment],
+        ['FX Relevance',      vn.fxRelevance]
+      ].filter(([,v]) => v);
+      document.getElementById('rosterVNContent').innerHTML = vnRows.length
+        ? vnRows.map(([k,v]) => `<div class="roster-vn-row"><span class="roster-vn-label">${esc(k)}</span><span class="roster-vn-value">${esc(v)}</span></div>`).join('')
+        : '<span style="color:var(--muted);font-style:italic;">No visual direction notes.</span>';
+
+      document.getElementById('rosterApproveStatus').textContent = '';
+      panel.classList.add('active');
+      panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    function hideRosterReviewPanel() {
+      const panel = document.getElementById('rosterReviewPanel');
+      if (panel) panel.classList.remove('active');
+    }
+
+    // Returns a Promise that resolves with 'approved' or 'regenerate'
+    function waitForRosterApproval() {
+      return new Promise((resolve) => {
+        const approveBtn = document.getElementById('rosterApproveBtn');
+        const rejectBtn  = document.getElementById('rosterRejectBtn');
+        function onApprove() { cleanup(); resolve('approved'); }
+        function onReject()  { cleanup(); resolve('regenerate'); }
+        function cleanup() {
+          approveBtn && approveBtn.removeEventListener('click', onApprove);
+          rejectBtn  && rejectBtn.removeEventListener('click', onReject);
+        }
+        if (approveBtn) approveBtn.addEventListener('click', onApprove);
+        if (rejectBtn)  rejectBtn.addEventListener('click', onReject);
+      });
+    }
+
+    // Build the roster context block string to inject into the AI prompt
+    function buildRosterContextBlock(roster, stagedFolder, stagedAssets) {
+      const objs = (roster.primitiveObjects || []).map(a =>
+        `  - ${a.assetName} (from ${a.sourceRosterDocument}): ${a.intendedRole || ''}`
+      ).join('\n');
+      const texs = (roster.textureAssets || []).map(a =>
+        `  - ${a.assetName} (from ${a.sourceRosterDocument}): ${a.intendedUsage || ''}`
+      ).join('\n');
+      const vn = roster.visualDirectionNotes || {};
+      const stagedList = (stagedAssets || []).map(a =>
+        `  - ${a.assetName} → staged at: ${a.stagedPath}`
+      ).join('\n');
+      return `\n\n═══════════════════════════════════════════════════════════
+APPROVED GAME-SPECIFIC ASSET ROSTER — FIRST-CLASS COMPANION DOCUMENT
+Authority equal to this Master Prompt and all reference images.
+All tranche planning and execution MUST use these approved assets.
+═══════════════════════════════════════════════════════════
+
+GAME INTERPRETATION:
+${roster.gameInterpretationSummary || ''}
+
+APPROVED PRIMITIVE OBJECTS (${(roster.primitiveObjects||[]).length} of 25 max):
+${objs || '  (none)'}
+
+APPROVED TEXTURE ASSETS (${(roster.textureAssets||[]).length} of 50 max):
+${texs || '  (none)'}
+
+STAGED ASSET FOLDER: ${stagedFolder || '(none)'}
+STAGED FILES (Firebase paths for reference in models/2 and models/23):
+${stagedList || '  (none extracted)'}
+
+ASSETS.JSON: Roster primitive objects are registered in the .primitives folder (key "0").
+Roster texture assets are registered at root level or in the Models folder (key "15").
+All roster assets are in models/ and addressable by their assigned manifest keys.
+Use those manifest keys when referencing these assets in models/2 and models/23.
+
+VISUAL DIRECTION:
+  Color Direction:    ${vn.colorDirection || 'N/A'}
+  Material Style:     ${vn.materialStyle || 'N/A'}
+  Realism Level:      ${vn.realismLevel || 'N/A'}
+  Environmental Tone: ${vn.environmentalTone || 'N/A'}
+  Surface Treatment:  ${vn.surfaceTreatment || 'N/A'}
+  FX Relevance:       ${vn.fxRelevance || 'N/A'}
+
+TRANCHE DESIGN & EXECUTION REQUIREMENT:
+1. Tranche Design MUST plan around these approved assets — they are not optional.
+2. Every tranche touching rendered content, obstacles, environment, or scene objects
+   MUST use the appropriate approved assets from this roster.
+3. Textures and materials MUST follow the Visual Direction notes above.
+4. Reference staged files by their Firebase paths or assets.json manifest keys.
+5. Color direction and surface treatment must be consistent with this roster throughout.
+═══════════════════════════════════════════════════════════`;
+    }
+
+    // ── Copy approved roster assets from staged_assets/ into models/ ─────────
+    // Called immediately after claudeRosterExtract-background returns.
+    // This makes the roster assets visible to syncAssetsJson() (which scans
+    // models/) and to the Generate Game Zip path (which also reads models/).
+    // Returns a Set of lowercased primitive filenames for use by the
+    // hardening step that follows.
+    async function copyRosterAssetsToModels(projectName, stagedAssets, primitiveObjects) {
+        await ensureAuth();
+
+        const primitiveNames = new Set(
+            (primitiveObjects || []).map(a => a.assetName.toLowerCase())
+        );
+
+        const copyTasks = stagedAssets.map(async (asset) => {
+            try {
+                const srcRef  = ref(storage, asset.stagedPath);
+                const destRef = ref(storage, `${ROOT}/${projectName}/models/${asset.assetName}`);
+
+                // Download from staged_assets/ and re-upload to models/
+                const url      = await getDownloadURL(srcRef);
+                const res      = await fetch(url, { cache: 'no-store' });
+                const buffer   = await res.arrayBuffer();
+                // Convert to base64 for uploadString (data_url format)
+                const base64   = btoa(String.fromCharCode(...new Uint8Array(buffer)));
+                const ext      = asset.assetName.split('.').pop().toLowerCase();
+                const mimeType = ext === 'png'                    ? 'image/png'
+                               : ext === 'jpg' || ext === 'jpeg'  ? 'image/jpeg'
+                               : ext === 'webp'                   ? 'image/webp'
+                               : ext === 'obj'                    ? 'text/plain'
+                               : ext === 'glb' || ext === 'gltf'  ? 'model/gltf-binary'
+                               : 'application/octet-stream';
+
+                await uploadString(destRef, `data:${mimeType};base64,${base64}`, 'data_url');
+                console.log(`[ROSTER-COPY] ${asset.assetName} → models/`);
+                return asset.assetName;
+            } catch (e) {
+                console.warn(`[ROSTER-COPY] Failed to copy ${asset.assetName} to models/:`, e.message);
+                return null;
+            }
+        });
+
+        const results = await Promise.all(copyTasks);
+        const copied  = results.filter(Boolean);
+        console.log(`[ROSTER-COPY] ${copied.length}/${stagedAssets.length} asset(s) copied to models/`);
+        return primitiveNames; // returned for use by hardenPrimitivesInManifest
+    }
+
+    // ── Harden primitives section in assets.json ──────────────────────────────
+    // After syncAssetsJson() runs, roster primitive .obj files will have landed
+    // in the Models folder (key "15") children — correct for generic models but
+    // wrong for primitives, which belong in key "0" (.primitives, hidden folder).
+    // This function reads assets.json, moves any entry whose title matches a
+    // roster primitive filename from wherever it landed into key "0" children,
+    // then writes assets.json once more.
+    // primitiveNamesLower: Set of lowercased assetName strings from the roster.
+    async function hardenPrimitivesInManifest(projectName, primitiveNamesLower) {
+        if (!primitiveNamesLower || primitiveNamesLower.size === 0) return;
+        await ensureAuth();
+
+        try {
+            const jsonRef  = ref(storage, `${ROOT}/${projectName}/json/assets.json`);
+            const jsonUrl  = await getDownloadURL(jsonRef);
+            const jsonRes  = await fetch(jsonUrl + '&v=' + Date.now(), { cache: 'no-store' });
+            if (!jsonRes.ok) throw new Error(`Could not fetch assets.json: ${jsonRes.statusText}`);
+
+            let manifest = await jsonRes.json();
+            if (!Array.isArray(manifest)) throw new Error('assets.json is not an array — cannot harden primitives.');
+
+            // Find the .primitives folder (key "0")
+            const primitivesFolder = manifest.find(e => e.key === '0');
+            if (!primitivesFolder) {
+                console.warn('[ROSTER-HARDEN] .primitives folder (key "0") not found — skipping hardening.');
+                return;
+            }
+            if (!Array.isArray(primitivesFolder.children)) primitivesFolder.children = [];
+
+            const alreadyInPrimitives = new Set(
+                primitivesFolder.children.map(c => (c.title || '').toLowerCase())
+            );
+
+            // Collect entries to move: scan all folders and root level
+            const entriesToMove = [];
+
+            function extractPrimitiveEntries(entries, parentChildren) {
+                for (let i = entries.length - 1; i >= 0; i--) {
+                    const entry = entries[i];
+                    if (entry.type === 'folder' && Array.isArray(entry.children)) {
+                        extractPrimitiveEntries(entry.children, entry.children);
+                        continue;
+                    }
+                    const titleLower = (entry.title || '').toLowerCase();
+                    if (primitiveNamesLower.has(titleLower) && !alreadyInPrimitives.has(titleLower)) {
+                        entriesToMove.push(entry);
+                        entries.splice(i, 1); // remove from current location
+                        alreadyInPrimitives.add(titleLower);
+                    }
+                }
+            }
+
+            // Scan root level and all folder children (except key "0" itself)
+            const scanTargets = manifest.filter(e => e.key !== '0');
+            extractPrimitiveEntries(scanTargets, manifest);
+            // Remove from root manifest array any entries we pulled out
+            for (const moved of entriesToMove) {
+                const idx = manifest.indexOf(moved);
+                if (idx !== -1) manifest.splice(idx, 1);
+            }
+
+            // Insert into .primitives folder
+            primitivesFolder.children.push(...entriesToMove);
+
+            if (entriesToMove.length > 0) {
+                await uploadString(jsonRef, JSON.stringify(manifest, null, 2));
+                console.log(`[ROSTER-HARDEN] Moved ${entriesToMove.length} primitive(s) into key "0" (.primitives)`);
+                appendToChatLog('System',
+                    `✅ Primitives hardened: ${entriesToMove.length} roster primitive(s) registered in .primitives section.`,
+                    'normal');
+            } else {
+                console.log('[ROSTER-HARDEN] All roster primitives already in correct location.');
+            }
+        } catch (e) {
+            console.warn('[ROSTER-HARDEN] Primitives hardening failed (non-fatal):', e.message);
+        }
+    }
+
+    // ── Poll Firebase for roster generation result ────────────────────────────
+    // claudeRosterGenerate-background returns 202 immediately and writes
+    // ai_asset_roster_pending.json when done. We poll until the file appears
+    // with a generatedAt timestamp newer than our request start time, or until
+    // ai_asset_roster_error.json appears (failure sentinel), or until timeout.
+    async function pollForRosterGeneration(projectPath, requestStartTime, jobId) {
+      const POLL_INTERVAL_MS = 3000;
+      const POLL_TIMEOUT_MS  = 300000; // 5 minutes
+      const pendingRef = ref(storage, `${projectPath}/ai_asset_roster_pending.json`);
+      const errorRef   = ref(storage, `${projectPath}/ai_asset_roster_error.json`);
+      const deadline   = Date.now() + POLL_TIMEOUT_MS;
+
+      // Clear any stale error sentinel from a previous run
+      try { await deleteObject(errorRef); } catch(e) {}
+
+      while (Date.now() < deadline) {
+        await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
+
+        // Check for error sentinel first
+        try {
+          const errUrl = await getDownloadURL(errorRef);
+          const errRes = await fetch(errUrl, { cache: 'no-store' });
+          if (errRes.ok) {
+            const errData = await errRes.json();
+            throw new Error(`Roster generation failed: ${errData.error || 'unknown error'}`);
+          }
+        } catch(e) {
+          if (e.message.startsWith('Roster generation failed')) throw e;
+          // File doesn't exist yet — continue polling
+        }
+
+        // Check for completed roster
+        try {
+          const url = await getDownloadURL(pendingRef);
+          const res = await fetch(url + '&v=' + Date.now(), { cache: 'no-store' });
+          if (!res.ok) continue;
+          const roster = await res.json();
+          // Must be newer than our request start and match this jobId
+          if (
+            roster._meta?.generatedAt >= requestStartTime &&
+            roster._meta?.jobId === jobId
+          ) {
+            return roster;
+          }
+        } catch(e) {
+          // File not yet available — continue polling
+        }
+      }
+      throw new Error('Roster generation timed out after 5 minutes.');
+    }
+
+    // ── Run the full roster stage: generate → display → approve → extract ──
+    async function runRosterStage(projectPath, jobId) {
+      let roster = null;
+      let approved = false;
+
+      while (!approved) {
+        Progress.step('Generating Asset Roster', 'Claude Sonnet 4.6 is analyzing your game and selecting assets...');
+        const statusEl = document.getElementById('rosterApproveStatus');
+        if (statusEl) statusEl.textContent = 'Generating roster...';
+
+        let genData;
+        try {
+          const requestStartTime = Date.now();
+          const genRes = await fetch('/.netlify/functions/claudeRosterGenerate-background', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ projectPath, jobId })
+          });
+          // Background function returns 202 immediately — poll Firebase for result
+          if (genRes.status !== 202) {
+            throw new Error(`Unexpected response from roster generator: ${genRes.status}`);
+          }
+          Progress.step('Generating Asset Roster', 'Waiting for Claude to analyze assets — this may take a minute...');
+          roster = await pollForRosterGeneration(projectPath, requestStartTime, jobId);
+        } catch (e) {
+          throw new Error(`Roster generation failed: ${e.message}`);
+        }
+
+        const objCount = (roster.primitiveObjects || []).length;
+        const texCount = (roster.textureAssets || []).length;
+        Progress.step('Review Asset Roster', `${objCount} object(s), ${texCount} texture(s) selected — review and approve to continue.`);
+        appendToChatLog('System',
+          `Asset Roster generated: ${objCount} primitive object(s), ${texCount} texture asset(s). ` +
+          `Review the roster and approve to continue.`, 'normal');
+        renderRosterReviewPanel(roster);
+
+        const decision = await waitForRosterApproval();
+        if (decision === 'approved') {
+          approved = true;
+        } else {
+          hideRosterReviewPanel();
+          appendToChatLog('System', 'Roster regeneration requested.', 'normal');
+        }
+      }
+
+      // Post-approval: hide panel, extract assets, update assets.json
+      hideRosterReviewPanel();
+      Progress.step('Extracting Approved Assets', 'Staging approved assets from Asset_Packs into Firebase...');
+      appendToChatLog('System', 'Roster approved. Extracting assets from Asset_Packs...', 'normal');
+
+      let extractData;
+      try {
+        const extractRes = await fetch('/.netlify/functions/claudeRosterExtract-background', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectPath, jobId })
+        });
+        extractData = await extractRes.json();
+      } catch (e) {
+        throw new Error(`Asset extraction network error: ${e.message}`);
+      }
+      if (!extractData.success) throw new Error(`Asset extraction failed: ${extractData.error}`);
+
+      const stagedCount = (extractData.stagedAssets || []).length;
+      Progress.step('Assets Staged',
+        `${stagedCount} approved asset(s) extracted to staged_assets/. Copying to models/...`);
+      appendToChatLog('System',
+        `✅ Asset Roster approved and staged. ${stagedCount} asset(s) extracted. ` +
+        `Staged folder: ${extractData.stagedFolder || 'N/A'}`, 'normal');
+
+      // ── Copy staged assets into models/ ──────────────────────────────────
+      // This makes them visible to syncAssetsJson() and the zip builder.
+      Progress.step('Copying Assets to models/', 'Making roster assets available to the AI pipeline and export...');
+      const primitiveNamesLower = await copyRosterAssetsToModels(
+          currentProject,
+          extractData.stagedAssets || [],
+          roster.primitiveObjects  || []
+      );
+      appendToChatLog('System',
+          `✅ Roster assets copied to models/ folder. Running manifest sync...`, 'normal');
+
+      // ── syncAssetsJson: picks up the newly copied files in models/ ────────
+      Progress.step('Syncing assets.json', 'Registering roster assets in manifest...');
+      await syncAssetsJson();
+
+      // ── Harden primitives: move roster .obj files into key "0" ───────────
+      Progress.step('Hardening Primitives', 'Ensuring primitive objects land in .primitives section...');
+      await hardenPrimitivesInManifest(currentProject, primitiveNamesLower);
+
+      return {
+        roster,
+        stagedAssets:  extractData.stagedAssets  || [],
+        stagedFolder:  extractData.stagedFolder   || ''
+      };
+    }
+
     async function executeAIPipeline(promptOverride, options = {}) {
       const {
         repairAttempt = 0,
@@ -4198,8 +4773,11 @@ Original user request for context: ${basePrompt}`;
         // Hide correction panel from any previous failed run
         const cp = document.getElementById('valCorrectionPanel');
         const rb = document.getElementById('valResubmitBar');
+        const ip = document.getElementById('valImagePanel');
         if (cp) cp.classList.remove('active');
         if (rb) rb.classList.remove('active');
+        if (ip) ip.classList.remove('active');
+        hideRosterReviewPanel();
       } else if (parseErrorRetry > 0) {
         appendToChatLog('System', `Backend parse error detected — retrying full build (attempt ${parseErrorRetry}/${AI_HARDENING.repairPassLimit}).`, 'normal');
         Progress.step(`Parse error retry ${parseErrorRetry}`, 'Restarting full AI pipeline after backend JSON failure...');
@@ -4214,6 +4792,68 @@ Original user request for context: ${basePrompt}`;
 
         Progress.step('Syncing assets.json', 'Ensuring asset manifest matches project files...');
         await syncAssetsJson();
+
+        // ── Game-Specific Asset Roster Stage ──────────────────────────
+        // Runs only on fresh builds (not repair passes). Checks whether
+        // the project has any Asset_Rosters files; if yes, runs the full
+        // roster generation → review → approval → extraction flow before
+        // proceeding to tranche planning.
+        let approvedRosterContext = '';
+        if (repairAttempt === 0 && parseErrorRetry === 0) {
+          try {
+            const rosterListRef = ref(storage, `${ROOT}/${currentProject}/asset_rosters`);
+            const rosterListRes = await listAll(rosterListRef).catch(() => ({ items: [] }));
+            if (rosterListRes.items.length > 0) {
+              // We need a jobId before this point — generate it early
+              // (it will be reused below when setting up the pipeline)
+              if (!window._pendingRosterJobId) {
+                window._pendingRosterJobId = Date.now().toString();
+              }
+              const rosterJobId = window._pendingRosterJobId;
+              const rosterProjectPath = `${ROOT}/${currentProject}`;
+
+              // Upload the prompt to Firebase first so the roster generator
+              // can read it (it reads ai_request.json). We write a minimal
+              // payload — the full payload is written again below.
+              const earlyPayload = JSON.stringify({
+                prompt: repairAttempt > 0
+                  ? buildRepairPrompt(basePrompt, repairTargets, repairAttempt)
+                  : basePrompt,
+                inlineImages: await Promise.all(attachedPromptImages.map(f =>
+                  new Promise((res, rej) => {
+                    const r2 = new FileReader();
+                    r2.onload = () => res({ name: f.name, mimeType: f.type, data: r2.result.split(',')[1] });
+                    r2.onerror = rej;
+                    r2.readAsDataURL(f);
+                  })
+                )),
+                projectPath: rosterProjectPath
+              });
+              const earlyReqRef = ref(storage, `${rosterProjectPath}/ai_request.json`);
+              await uploadString(earlyReqRef, earlyPayload);
+
+              Progress.step('Asset Roster Stage', `Found ${rosterListRes.items.length} roster file(s) — running asset selection...`);
+              const rosterResult = await runRosterStage(rosterProjectPath, rosterJobId);
+              approvedRosterContext = buildRosterContextBlock(
+                rosterResult.roster,
+                rosterResult.stagedFolder,
+                rosterResult.stagedAssets
+              );
+
+              // Re-sync assets.json now that staged assets were registered
+              Progress.step('Re-syncing assets.json', 'Refreshing manifest after roster asset registration...');
+              await syncAssetsJson();
+            }
+          } catch (rosterErr) {
+            // Roster stage failure is non-fatal for the pipeline but must be
+            // surfaced prominently so the user knows assets were not staged.
+            console.error('[ROSTER] Stage failed:', rosterErr.message);
+            appendToChatLog('System',
+              `⚠️ Asset Roster stage failed and was skipped: ${rosterErr.message}. ` +
+              `Pipeline will continue without roster assets.`, 'error');
+            hideRosterReviewPanel();
+          }
+        }
 
         Progress.step('Loading core project files', '"2", "23", assets.json + immutable instruction context');
         const projectFiles = {};
@@ -4237,34 +4877,30 @@ Original user request for context: ${basePrompt}`;
           throw new Error("Could not find '2', '23', or 'assets.json'. Please upload them first.");
         }
 
-        const allAssetNodes = document.querySelectorAll('.asset-checkbox');
-        const allAssets = Array.from(allAssetNodes).map(cb => ({
-            name: cb.dataset.name,
-            path: cb.dataset.path,
-            url: cb.dataset.url,
-            type: cb.dataset.type,
-            isChecked: cb.checked
-        }));
-        
-        const selectedAssets = allAssets.filter(a => a.isChecked);
+        const selectedAssets = [];
 
-        let assetString = "";
         let zipContextString = "";
 
+        // Build asset list from Firebase for 3D scanning (no UI selection)
+        const modelsListRef = ref(storage, `${ROOT}/${currentProject}/models`);
+        const zipsListRef2 = ref(storage, `${ROOT}/${currentProject}/object_zips`);
+        const assetsListRef = ref(storage, `${ROOT}/${currentProject}/assets`);
+        const [modelsListRes, zipsListRes2, assetsListRes] = await Promise.all([
+          listAll(modelsListRef).catch(() => ({items:[]})),
+          listAll(zipsListRef2).catch(() => ({items:[]})),
+          listAll(assetsListRef).catch(() => ({items:[]}))
+        ]);
+        const allAssets = [];
+        for (const item of modelsListRes.items) {
+          const url = await getDownloadURL(item);
+          allAssets.push({ name: item.name, path: `models/${item.name}`, url, type: '', isChecked: false });
+        }
+        for (const item of zipsListRes2.items) {
+          const url = await getDownloadURL(item);
+          allAssets.push({ name: item.name, path: `object_zips/${item.name}`, url, type: '', isChecked: false });
+        }
+
         if (allAssets.length > 0) {
-            const selected = allAssets.filter(a => a.isChecked);
-            if (selected.length > 0) {
-                assetString = `
-
-=== USER-SELECTED ASSETS FOR THIS REQUEST ===
-The user has explicitly selected these assets to focus on. Their key mappings are in the attached assets.json file:
-`;
-                for (const a of selected) {
-                    assetString += `- ${a.name} (in ${a.path.split('/')[0]}/)
-`;
-                }
-            }
-
             for (const a of allAssets) {
                 if (a.path.includes('models/') && !a.path.includes('object_zips')) {
                     const lowerName = a.name.toLowerCase();
@@ -4415,7 +5051,6 @@ ${projectFiles['models/23']}` : ''}
 ${projectFiles['json/assets.json'] ? `
 === FILE: json/assets.json ===
 ${projectFiles['json/assets.json']}` : ''}
-${assetString}
 ${zipContextString}
 ${extentsContext}
 ${modelAnalysisContext}
@@ -4457,7 +5092,7 @@ TRANCHE STRUCTURE:
 3. Never group more than ONE major system per tranche. When unsure, split.
 4. Last tranche: integration, edge cases, polish, and final scaffold alignment.
 
-User Request: ${prompt}${attachedPromptImages.length > 0 ? `
+User Request: ${prompt}${approvedRosterContext}${attachedPromptImages.length > 0 ? `
 
 ═══════════════════════════════════════════════════════════
 REFERENCE IMAGES — FIRST-CLASS DESIGN AUTHORITY
@@ -4483,7 +5118,10 @@ RULES FOR ALL PIPELINE STAGES:
         try { await deleteObject(progressFileRef); } catch(e) {}
         try { await deleteObject(ref(storage, `${projectPath}/ai_pipeline_state.json`)); } catch(e) {}
 
-        const currentJobId = Date.now().toString();
+        const currentJobId = (window._pendingRosterJobId && repairAttempt === 0 && parseErrorRetry === 0)
+          ? window._pendingRosterJobId
+          : Date.now().toString();
+        window._pendingRosterJobId = null;
         lastRunJobId = currentJobId;
         lastRunStartTime = Date.now();
         Progress.step('Securing pipeline', 'Terminating any old overlapping jobs...');
@@ -4506,6 +5144,13 @@ RULES FOR ALL PIPELINE STAGES:
                 reader.onerror = reject;
                 reader.readAsDataURL(file);
             });
+        }));
+
+        // Capture thumbnail data URLs before attachedPromptImages is cleared below,
+        // so the validation failure panel can display them even after the array is wiped.
+        const submittedImageDataURLs = attachedPromptImages.map(file => ({
+          name: file.name,
+          url: URL.createObjectURL(file)
         }));
 
         attachedPromptImages = [];
@@ -4547,6 +5192,12 @@ RULES FOR ALL PIPELINE STAGES:
         TrancheUI.show();
         TrancheUI.showPlanning();
 
+        // Show image influence panel immediately if images were submitted,
+        // so the user knows they are active in the pipeline from the start.
+        if (submittedImageDataURLs.length > 0) {
+          TrancheUI.showImageInfluencePanel(submittedImageDataURLs);
+        }
+
         while (!result) {
           await sleep(5000);
 
@@ -4556,7 +5207,7 @@ RULES FOR ALL PIPELINE STAGES:
 
             // ── Spec Validation failure — render issues in tranche panel ──
             if (errData.validationFailed) {
-              TrancheUI.showValidationFailure(errData);
+              TrancheUI.showValidationFailure(errData, submittedImageDataURLs);
               Progress.warn(
                 errData.hardStop
                   ? 'Spec validation failed — manual fix required'
@@ -4735,6 +5386,16 @@ RULES FOR ALL PIPELINE STAGES:
 
         result.updatedFiles = applySummary.appliedFiles;
 
+        // ── Re-sync assets.json after AI apply ──
+        // The AI may have uploaded new model/asset files. syncAssetsJson is the sole
+        // writer of assets.json — run it now so the manifest reflects the new state.
+        try {
+          Progress.step('Re-syncing assets.json', 'Updating manifest to reflect newly applied files...');
+          await syncAssetsJson();
+        } catch (syncErr) {
+          console.warn('Post-apply syncAssetsJson failed (non-fatal):', syncErr);
+        }
+
         appendToChatLog('AI', result.message || 'Files have been updated successfully.');
         setStatus('V2 expert-agent tranched build complete.');
         Progress.done(repairAttempt > 0
@@ -4826,7 +5487,6 @@ RULES FOR ALL PIPELINE STAGES:
 
         refreshAllFiles();
         refreshReviewList();
-        document.querySelectorAll('.asset-checkbox').forEach(cb => cb.checked = false);
 
       } catch (error) {
         console.error('AI Update Error:', error);
@@ -4977,7 +5637,7 @@ RULES FOR ALL PIPELINE STAGES:
         const cachedCategories = {};
 
         for (const cat of FILE_CATEGORIES) {
-          if (cat.id === 'reference' || cat.id === 'instructions') continue;
+          if (cat.id === 'reference' || cat.id === 'instructions' || cat.id === 'asset_rosters' || cat.id === 'asset_packs') continue;
           const folderRef = ref(storage, `${ROOT}/${currentProject}/${cat.folder}`);
           try { 
              const res = await listAll(folderRef); 
@@ -4989,7 +5649,7 @@ RULES FOR ALL PIPELINE STAGES:
         }
 
         for (const cat of FILE_CATEGORIES) {
-          if (cat.id === 'reference' || cat.id === 'instructions') continue;
+          if (cat.id === 'reference' || cat.id === 'instructions' || cat.id === 'asset_rosters' || cat.id === 'asset_packs') continue;
           
           const items = cachedCategories[cat.id];
           

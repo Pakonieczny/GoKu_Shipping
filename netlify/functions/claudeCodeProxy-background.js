@@ -172,6 +172,74 @@ function assertInstructionBundle(bundle, phaseLabel = "Pipeline") {
   }
 }
 
+/* ── Load approved Asset Roster from Firebase (if present) ──────
+   Returns a formatted context block string, or empty string if no
+   roster was approved for this run.                               */
+async function loadApprovedRosterBlock(bucket, projectPath) {
+  try {
+    const rosterFile = bucket.file(`${projectPath}/ai_asset_roster_approved.json`);
+    const [exists] = await rosterFile.exists();
+    if (!exists) return "";
+    const [content] = await rosterFile.download();
+    const r = JSON.parse(content.toString());
+    if (!r._meta?.approved) return "";
+
+    const objs = (r.primitiveObjects || []).map(a =>
+      `  - ${a.assetName} (from ${a.sourceRosterDocument}): ${a.intendedRole || ""}`
+    ).join("\n");
+    const texs = (r.textureAssets || []).map(a =>
+      `  - ${a.assetName} (from ${a.sourceRosterDocument}): ${a.intendedUsage || ""}`
+    ).join("\n");
+    const staged = (r.stagedAssets || []).map(a =>
+      `  - ${a.assetName} → ${a.stagedPath}`
+    ).join("\n");
+    const vn = r.visualDirectionNotes || {};
+    const sf = r._meta?.stagedFolder || "";
+
+    return `\n\n═══════════════════════════════════════════════════════════
+APPROVED GAME-SPECIFIC ASSET ROSTER — FIRST-CLASS COMPANION DOCUMENT
+Authority equal to the Master Prompt and all reference images.
+All tranche planning and execution MUST use these approved assets.
+═══════════════════════════════════════════════════════════
+
+GAME INTERPRETATION:
+${r.gameInterpretationSummary || ""}
+
+APPROVED PRIMITIVE OBJECTS (${(r.primitiveObjects||[]).length}):
+${objs || "  (none)"}
+
+APPROVED TEXTURE ASSETS (${(r.textureAssets||[]).length}):
+${texs || "  (none)"}
+
+STAGED ASSET FOLDER: ${sf}
+STAGED FILES (Firebase paths — use these in models/2 and models/23):
+${staged || "  (none extracted)"}
+
+ASSETS.JSON: Staged assets are registered under the "staged_roster" key.
+Use those manifest keys for all asset references in models/2 and models/23.
+
+VISUAL DIRECTION:
+  Color Direction:    ${vn.colorDirection || "N/A"}
+  Material Style:     ${vn.materialStyle || "N/A"}
+  Realism Level:      ${vn.realismLevel || "N/A"}
+  Environmental Tone: ${vn.environmentalTone || "N/A"}
+  Surface Treatment:  ${vn.surfaceTreatment || "N/A"}
+  FX Relevance:       ${vn.fxRelevance || "N/A"}
+
+TRANCHE DESIGN & EXECUTION REQUIREMENT:
+1. Tranche Design MUST plan explicitly around these approved assets.
+2. Every tranche touching rendered content, obstacles, environment, or scene
+   objects MUST incorporate the relevant approved assets from this roster.
+3. Textures and materials MUST follow the Visual Direction notes above.
+4. Reference staged files by their Firebase staged paths or assets.json keys.
+5. Color direction and surface treatment must be consistent throughout all tranches.
+═══════════════════════════════════════════════════════════`;
+  } catch (e) {
+    console.warn("[ROSTER] Could not load approved roster:", e.message);
+    return "";
+  }
+}
+
 /* ── DYNAMIC_ARCHITECTURE_JSON_SCHEMA — REMOVED ─────────────
    Architect pass has been merged into single-pass planner.
    No intermediate architecture spec is generated. ────────── */
@@ -1254,6 +1322,12 @@ exports.handler = async (event) => {
       const instructionBundle = await fetchInstructionBundle(bucket, projectPath);
       assertInstructionBundle(instructionBundle, "PLAN");
 
+      // ── Load approved Asset Roster (if one was approved for this run) ──
+      const approvedRosterBlock = await loadApprovedRosterBlock(bucket, projectPath);
+      if (approvedRosterBlock) {
+        console.log("[PLAN] Approved Asset Roster loaded — will be injected into planning and all tranche prompts.");
+      }
+
       const progress = {
         jobId: jobId,
         status: "planning",
@@ -1333,7 +1407,7 @@ You must respond ONLY with a valid JSON object. No markdown, no code fences, no 
 }`;
 
       const planningUserContent = [
-        { type: "text", text: `${fileContext}
+        { type: "text", text: `${fileContext}${approvedRosterBlock}
 
 === FULL USER REQUEST ===
 ${effectivePrompt}
@@ -1412,7 +1486,8 @@ ${effectivePrompt}
         allUpdatedFiles: [],
         imageBlocks,
         modelAnalysis: Array.isArray(modelAnalysis) ? modelAnalysis : [],
-        totalTranches: plan.tranches.length
+        totalTranches: plan.tranches.length,
+        approvedRosterBlock   // ← propagated to every tranche execution
       };
       await savePipelineState(bucket, projectPath, pipelineState);
 
@@ -1468,7 +1543,7 @@ ${effectivePrompt}
       const state = await loadPipelineState(bucket, projectPath);
       if (!state) throw new Error("Pipeline state not found in Firebase. Chain broken.");
 
-      const { progress, accumulatedFiles, allUpdatedFiles, imageBlocks, modelAnalysis } = state;
+      const { progress, accumulatedFiles, allUpdatedFiles, imageBlocks, modelAnalysis, approvedRosterBlock = "" } = state;
       const tranche = progress.tranches[nextTranche];
 
       // ── Fetch Scaffold + SDK instruction bundle ──
@@ -1606,9 +1681,13 @@ VALIDATOR STATUS:
 
       assertTranchePromptHasRequiredManifestBlock(tranche, nextTranche);
 
+      const rosterPrefix = approvedRosterBlock
+        ? `=== APPROVED GAME-SPECIFIC ASSET ROSTER ===\n${approvedRosterBlock}\n=== END ASSET ROSTER ===\n\n`
+        : "";
+
       const trancheUserText = isHardeningBatch
         ? buildHardeningBatchUserText({ progress, accumulatedFiles, tranche, modelAnalysis })
-        : `${trancheFileContext}
+        : `${rosterPrefix}${trancheFileContext}
 
 === TRANCHE ${nextTranche + 1} of ${progress.totalTranches}: "${tranche.name}" ===
 
