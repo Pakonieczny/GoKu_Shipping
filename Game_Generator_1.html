@@ -567,6 +567,47 @@
     }
     .roster-approve-status { font-size: 12px; color: var(--muted); flex: 1; }
     .roster-empty-note { font-size: 12px; color: var(--muted); padding: 10px 0; font-style: italic; }
+    .roster-composite-list { display: flex; flex-direction: column; gap: 10px; }
+    .roster-composite-card {
+      background: #0a0e1c; border: 1px solid #2a3050;
+      border-radius: 10px; overflow: hidden;
+    }
+    .roster-composite-header {
+      display: flex; align-items: center; gap: 10px;
+      padding: 9px 12px; cursor: pointer; user-select: none;
+      background: #0d1225;
+    }
+    .roster-composite-header:hover { background: #111830; }
+    .roster-composite-toggle { color: #a78bfa; font-size: 11px; flex-shrink: 0; width: 14px; }
+    .roster-composite-name { font-weight: 700; color: #fff; font-size: 12px; flex: 1; font-family: 'SF Mono','Fira Code',monospace; }
+    .roster-composite-partcount {
+      background: rgba(167,139,250,0.15); color: #a78bfa;
+      border-radius: 999px; padding: 2px 9px; font-size: 10px; font-weight: 700;
+    }
+    .roster-composite-body { display: none; padding: 10px 12px 12px 12px; }
+    .roster-composite-body.open { display: block; }
+    .roster-composite-desc { font-size: 11px; color: var(--muted); margin-bottom: 8px; line-height: 1.5; }
+    .roster-composite-meta { font-size: 11px; color: var(--text); margin-bottom: 10px; }
+    .roster-composite-meta span { color: #a78bfa; font-weight: 600; margin-right: 4px; }
+    .roster-composite-factory {
+      font-size: 10px; color: #7fdb96; background: #081008;
+      border: 1px solid #1a3020; border-radius: 6px;
+      padding: 6px 10px; margin-bottom: 10px; font-family: 'SF Mono','Fira Code',monospace;
+    }
+    .roster-parts-table { width: 100%; border-collapse: collapse; font-size: 10px; }
+    .roster-parts-table th {
+      text-align: left; color: #a78bfa; font-weight: 600;
+      padding: 4px 6px; border-bottom: 1px solid var(--line);
+    }
+    .roster-parts-table td {
+      padding: 4px 6px; color: var(--text); border-bottom: 1px solid #151b2e;
+      vertical-align: top;
+    }
+    .roster-parts-table tr:last-child td { border-bottom: none; }
+    .roster-part-asset { font-family: 'SF Mono','Fira Code',monospace; color: #fff; }
+    .roster-part-role { color: #7fdb96; }
+    .roster-part-physics { color: #fbbf24; }
+    .roster-part-vec { color: var(--muted); font-family: 'SF Mono','Fira Code',monospace; font-size: 9px; }
 
     .tranche-dep-chip {
       padding: 1px 6px; border-radius: 3px; font-size: 9px;
@@ -860,6 +901,13 @@
             <div class="roster-section">
               <div class="roster-section-header">Visual Direction</div>
               <div class="roster-visual-notes" id="rosterVNContent"></div>
+            </div>
+            <div class="roster-section" id="rosterCompositeSection" style="display:none;">
+              <div class="roster-section-header">
+                🔧 Composite Entity Assembly Specs
+                <span id="rosterCompositeCount" class="roster-count-badge">0</span>
+              </div>
+              <div id="rosterCompositeList" class="roster-composite-list"></div>
             </div>
             <div class="roster-approve-bar">
               <button class="btn btnPrimary" id="rosterApproveBtn">✅ Approve Roster &amp; Continue</button>
@@ -4390,6 +4438,62 @@ Original user request for context: ${basePrompt}`;
         ? vnRows.map(([k,v]) => `<div class="roster-vn-row"><span class="roster-vn-label">${esc(k)}</span><span class="roster-vn-value">${esc(v)}</span></div>`).join('')
         : '<span style="color:var(--muted);font-style:italic;">No visual direction notes.</span>';
 
+      // ── Composite entities ──────────────────────────────────────
+      const compositeEntities = Array.isArray(roster.compositeEntities) ? roster.compositeEntities : [];
+      const compositeSection  = document.getElementById('rosterCompositeSection');
+      const compositeList     = document.getElementById('rosterCompositeList');
+      const compositeCount    = document.getElementById('rosterCompositeCount');
+
+      if (compositeEntities.length === 0) {
+        compositeSection.style.display = 'none';
+      } else {
+        compositeSection.style.display = '';
+        compositeCount.textContent = String(compositeEntities.length);
+        compositeList.innerHTML = compositeEntities.map((entity, idx) => {
+          const parts = Array.isArray(entity.parts) ? entity.parts : [];
+          const bodyId = `rosterCompositeBody_${idx}`;
+          const partRows = parts.map(p => {
+            const offset  = Array.isArray(p.localOffset)       ? `[${p.localOffset.join(', ')}]`       : '—';
+            const scale   = Array.isArray(p.localScale)        ? `[${p.localScale.join(', ')}]`        : '—';
+            const rot     = Array.isArray(p.localRotationDeg)  ? `[${p.localRotationDeg.join(', ')}°]` : '—';
+            return `<tr>
+              <td class="roster-part-asset">${esc(p.assetName || '')}</td>
+              <td class="roster-part-role">${esc(p.role || '')}</td>
+              <td class="roster-part-vec">${esc(offset)}</td>
+              <td class="roster-part-vec">${esc(scale)}</td>
+              <td class="roster-part-vec">${esc(rot)}</td>
+              <td class="roster-part-physics">${esc(p.physicsRole || '')}</td>
+            </tr>`;
+          }).join('');
+
+          return `<div class="roster-composite-card">
+            <div class="roster-composite-header" onclick="
+              const b = document.getElementById('${bodyId}');
+              const open = b.classList.toggle('open');
+              this.querySelector('.roster-composite-toggle').textContent = open ? '▾' : '▸';
+            ">
+              <span class="roster-composite-toggle">▸</span>
+              <span class="roster-composite-name">${esc(entity.entityName || 'Unnamed Entity')}</span>
+              <span class="roster-composite-partcount">${parts.length} part${parts.length !== 1 ? 's' : ''}</span>
+            </div>
+            <div class="roster-composite-body" id="${bodyId}">
+              ${entity.description ? `<div class="roster-composite-desc">${esc(entity.description)}</div>` : ''}
+              <div class="roster-composite-meta">
+                <span>Root pivot:</span>${esc(entity.rootPivot || '—')}
+              </div>
+              ${entity.factoryHint ? `<div class="roster-composite-factory">⚙ ${esc(entity.factoryHint)}</div>` : ''}
+              ${parts.length > 0 ? `
+              <table class="roster-parts-table">
+                <thead><tr>
+                  <th>Asset</th><th>Role</th><th>Offset</th><th>Scale</th><th>Rotation</th><th>Physics</th>
+                </tr></thead>
+                <tbody>${partRows}</tbody>
+              </table>` : '<div class="roster-empty-note">No parts defined.</div>'}
+            </div>
+          </div>`;
+        }).join('');
+      }
+
       document.getElementById('rosterApproveStatus').textContent = '';
       panel.classList.add('active');
       panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -4428,6 +4532,48 @@ Original user request for context: ${basePrompt}`;
       const stagedList = (stagedAssets || []).map(a =>
         `  - ${a.assetName} → staged at: ${a.stagedPath}`
       ).join('\n');
+
+      // Build composite entity block — mirrors loadApprovedRosterBlock() in the backend
+      const compositeEntities = Array.isArray(roster.compositeEntities) ? roster.compositeEntities : [];
+      let compositeBlock = '';
+      if (compositeEntities.length > 0) {
+        const entityLines = compositeEntities.map(entity => {
+          const partLines = (entity.parts || []).map(p =>
+            `      • ${p.assetName} | role: ${p.role || 'part'} | offset: [${(p.localOffset || [0,0,0]).join(', ')}] | scale: [${(p.localScale || [1,1,1]).join(', ')}] | rotDeg: [${(p.localRotationDeg || [0,0,0]).join(', ')}] | physics: ${p.physicsRole || 'static_part'}`
+          ).join('\n');
+          return [
+            `  ENTITY: ${entity.entityName}`,
+            `  Description: ${entity.description || ''}`,
+            `  Root pivot:  ${entity.rootPivot || 'center of bounding box'}`,
+            `  Factory:     ${entity.factoryHint || `build${(entity.entityName||'').replace(/\s+/g,'')}(scene, position) → SceneNode`}`,
+            `  Parts:\n${partLines}`
+          ].join('\n');
+        }).join('\n\n');
+
+        compositeBlock = `\nCOMPOSITE ENTITY ASSEMBLY SPECS (${compositeEntities.length} multi-part entity/entities):
+Each entity below MUST be implemented as a factory function in models/2.
+Do NOT place parts as independent, unrelated scene objects — they MUST be
+children of a single root SceneNode returned by the factory.
+
+${entityLines}
+
+COMPOSITE ENTITY RULES (MANDATORY — applies to every entity above):
+1. Each composite entity MUST have a dedicated factory function in models/2.
+2. The factory MUST create a root SceneNode at the given world position.
+3. ALL parts MUST be added as children of the root node using the
+   localOffset / localScale / localRotationDeg values above.
+4. The factory MUST return the root node — all callers position, move,
+   and destroy the entity through this root only.
+5. Physics: build a COMPOUND collider — one shape per part, all attached
+   to the root physics body. Never use a single box for the whole entity.
+6. Parts with physicsRole "wheel_collider" MUST use a hinge or wheel
+   constraint/joint, NOT a static child attachment.
+7. The planner MUST allocate a dedicated tranche for each composite entity
+   factory — do not merge multiple factories into one tranche.
+8. Every tranche that references a composite entity MUST call the factory
+   function; never inline the part-placement logic outside the factory.`;
+      }
+
       return `\n\n═══════════════════════════════════════════════════════════
 APPROVED GAME-SPECIFIC ASSET ROSTER — FIRST-CLASS COMPANION DOCUMENT
 Authority equal to this Master Prompt and all reference images.
@@ -4459,6 +4605,7 @@ VISUAL DIRECTION:
   Environmental Tone: ${vn.environmentalTone || 'N/A'}
   Surface Treatment:  ${vn.surfaceTreatment || 'N/A'}
   FX Relevance:       ${vn.fxRelevance || 'N/A'}
+${compositeBlock}
 
 TRANCHE DESIGN & EXECUTION REQUIREMENT:
 1. Tranche Design MUST plan around these approved assets — they are not optional.
@@ -4602,7 +4749,7 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
     // ai_asset_roster_error.json appears (failure sentinel), or until timeout.
     async function pollForRosterGeneration(projectPath, requestStartTime, jobId) {
       const POLL_INTERVAL_MS = 3000;
-      const POLL_TIMEOUT_MS  = 300000; // 5 minutes
+      const POLL_TIMEOUT_MS  = 900000; // 15 minutes
       const pendingRef = ref(storage, `${projectPath}/ai_asset_roster_pending.json`);
       const errorRef   = ref(storage, `${projectPath}/ai_asset_roster_error.json`);
       const deadline   = Date.now() + POLL_TIMEOUT_MS;
@@ -4643,7 +4790,7 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
           // File not yet available — continue polling
         }
       }
-      throw new Error('Roster generation timed out after 5 minutes.');
+      throw new Error('Roster generation timed out after 15 minutes.');
     }
 
     // ── Run the full roster stage: generate → display → approve → extract ──

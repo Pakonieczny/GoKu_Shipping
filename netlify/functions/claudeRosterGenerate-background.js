@@ -1,6 +1,6 @@
 /* netlify/functions/claudeRosterGenerate-background.js */
 /* ═══════════════════════════════════════════════════════════════════
-   GAME-SPECIFIC ASSET ROSTER GENERATION — v2.0
+   GAME-SPECIFIC ASSET ROSTER GENERATION — v3.0
    ─────────────────────────────────────────────────────────────────
    Background Netlify function (suffix -background = 15-min timeout).
    Returns 202 immediately. Writes result to Firebase when done.
@@ -11,9 +11,12 @@
      2. Read all .docx text content from asset_rosters/ in Firebase
         (parallel downloads)
      3. Call Claude Sonnet 4.6 with all three inputs to generate
-        a game-specific Asset Roster (max 25 obj / 50 png)
-     4. Validate hard limits
-     5. Save roster as ai_asset_roster_pending.json in Firebase
+        a game-specific Asset Roster (max 25 obj / 50 png) plus
+        compositeEntities assembly specs for any multi-part objects
+     4. Validate hard limits (enforceHardLimits)
+     5. Validate composite entity part references (validateCompositeEntities)
+        — removes parts referencing unselected assets; drops empty entities
+     6. Save roster as ai_asset_roster_pending.json in Firebase
         (frontend polls for this file to detect completion)
 
    Request body: { projectPath, jobId }
@@ -140,6 +143,39 @@ function enforceHardLimits(roster) {
   return roster;
 }
 
+/* ─── Validate composite entity part references ──────────────
+   Ensures every assetName referenced inside compositeEntities
+   was actually selected in primitiveObjects. Removes bad parts
+   and drops entities that end up with zero valid parts.
+   Called after enforceHardLimits() so the selectedNames set is
+   already trimmed to the enforced limit.                        */
+function validateCompositeEntities(roster) {
+  if (!Array.isArray(roster.compositeEntities) || roster.compositeEntities.length === 0) {
+    roster.compositeEntities = [];
+    return roster;
+  }
+
+  const selectedNames = new Set((roster.primitiveObjects || []).map(a => a.assetName));
+
+  roster.compositeEntities = roster.compositeEntities
+    .map(entity => {
+      if (!Array.isArray(entity.parts)) return null;
+      const badParts = entity.parts.filter(p => !selectedNames.has(p.assetName));
+      if (badParts.length > 0) {
+        console.warn(
+          `[ROSTER] compositeEntity "${entity.entityName}" references unselected assets: ` +
+          `${badParts.map(p => p.assetName).join(', ')} — removing bad parts`
+        );
+        entity.parts = entity.parts.filter(p => selectedNames.has(p.assetName));
+      }
+      return entity.parts.length > 0 ? entity : null;
+    })
+    .filter(Boolean);
+
+  console.log(`[ROSTER] ${roster.compositeEntities.length} composite entity spec(s) validated.`);
+  return roster;
+}
+
 /* ─── Build the Claude prompt ────────────────────────────────── */
 function buildRosterPrompt(masterPrompt, rosterDocsBlock) {
   return `You are a game asset selection specialist. Your job is to analyze the requested game and select the most appropriate available assets from the available Asset Rosters.
@@ -163,6 +199,11 @@ Infer the game's specific requirements including:
 - FX relevance
 - Gameplay readability needs
 - Environmental tone
+- COMPOSITE ENTITY DETECTION: Identify whether any game entities require MULTIPLE
+  primitives assembled together into a single logical object (e.g. a vehicle from
+  a box body + sphere wheels, a building from stacked boxes, a robot from a capsule
+  body + sphere head). For each such composite entity you will define a full assembly
+  spec in the compositeEntities array of your output (see OUTPUT REQUIREMENTS below).
 
 AVAILABLE ASSET ROSTERS:
 The following Asset Roster documents describe the available primitives and textures in each pack.
@@ -207,6 +248,32 @@ Respond ONLY with a valid JSON object. No markdown fences, no preamble.
       "selectionRationale": "Why this specific texture was chosen for this game"
     }
   ],
+  "compositeEntities": [
+    {
+      "entityName": "car",
+      "description": "Brief description of this multi-part entity and its role in gameplay",
+      "rootPivot": "Where the entity's origin/pivot point sits relative to its parts (e.g. center-bottom of body)",
+      "factoryHint": "Describe the factory function signature: e.g. buildCar(scene, position) returning root SceneNode",
+      "parts": [
+        {
+          "assetName": "box.obj",
+          "role": "body",
+          "localOffset": [0, 0.5, 0],
+          "localScale": [2.0, 1.0, 4.0],
+          "localRotationDeg": [0, 0, 0],
+          "physicsRole": "primary_collider"
+        },
+        {
+          "assetName": "sphere.obj",
+          "role": "wheel_front_left",
+          "localOffset": [-1.1, 0, 1.5],
+          "localScale": [0.5, 0.5, 0.5],
+          "localRotationDeg": [0, 0, 0],
+          "physicsRole": "wheel_collider"
+        }
+      ]
+    }
+  ],
   "coverageSummary": {
     "totalPrimitives": 0,
     "totalTextures": 0,
@@ -221,7 +288,17 @@ Respond ONLY with a valid JSON object. No markdown fences, no preamble.
     "surfaceTreatment": "How surfaces should look (worn, pristine, organic, industrial, etc.)",
     "fxRelevance": "What FX assets are relevant and why, or 'None required'"
   }
-}`;
+}
+
+COMPOSITE ENTITY RULES:
+- compositeEntities MUST be an array. If the game has NO multi-part entities, output an empty array [].
+- Only include an entity if it genuinely requires 2+ distinct primitives assembled together.
+- Every assetName in parts MUST be an asset you have already selected in primitiveObjects.
+- localOffset is [x, y, z] in engine units relative to the entity's root pivot.
+- localScale is [x, y, z] multipliers applied to the mesh.
+- localRotationDeg is [x, y, z] Euler angles in degrees.
+- physicsRole must be one of: "primary_collider", "wheel_collider", "static_part", "decorative".
+- factoryHint must name the factory function and describe its return value.`;\n}
 }
 
 /* ═══════════════════════════════════════════════════════════════ */
@@ -309,7 +386,7 @@ exports.handler = async (event) => {
     console.log("[ROSTER-GEN] Calling Claude Sonnet 4.6 for roster generation...");
     const rosterResult = await callClaude(apiKey, {
       model:      "claude-sonnet-4-20250514",
-      maxTokens:  8000,
+      maxTokens:  12000,
       system:     "You are a game asset selection specialist. Respond only with a valid JSON object. No markdown, no fences, no preamble.",
       userContent: [
         { type: "text", text: imagePreamble + buildRosterPrompt(masterPrompt, rosterDocsBlock) },
@@ -327,6 +404,7 @@ exports.handler = async (event) => {
     }
 
     roster = enforceHardLimits(roster);
+    roster = validateCompositeEntities(roster);
 
     // Attach metadata
     roster._meta = {

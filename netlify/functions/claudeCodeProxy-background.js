@@ -196,6 +196,47 @@ async function loadApprovedRosterBlock(bucket, projectPath) {
     const vn = r.visualDirectionNotes || {};
     const sf = r._meta?.stagedFolder || "";
 
+    // ── Composite entity assembly block ──────────────────────────
+    const compositeEntities = Array.isArray(r.compositeEntities) ? r.compositeEntities : [];
+    let compositeBlock = "";
+    if (compositeEntities.length > 0) {
+      const entityLines = compositeEntities.map(entity => {
+        const partLines = (entity.parts || []).map(p =>
+          `      • ${p.assetName} | role: ${p.role || "part"} | offset: [${(p.localOffset || [0,0,0]).join(", ")}] | scale: [${(p.localScale || [1,1,1]).join(", ")}] | rotDeg: [${(p.localRotationDeg || [0,0,0]).join(", ")}] | physics: ${p.physicsRole || "static_part"}`
+        ).join("\n");
+        return [
+          `  ENTITY: ${entity.entityName}`,
+          `  Description: ${entity.description || ""}`,
+          `  Root pivot:  ${entity.rootPivot || "center of bounding box"}`,
+          `  Factory:     ${entity.factoryHint || `build${entity.entityName.replace(/\s+/g,"")}(scene, position) → SceneNode`}`,
+          `  Parts:\n${partLines}`
+        ].join("\n");
+      }).join("\n\n");
+
+      compositeBlock = `\nCOMPOSITE ENTITY ASSEMBLY SPECS (${compositeEntities.length} multi-part entity/entities):
+Each entity below MUST be implemented as a factory function in models/2.
+Do NOT place parts as independent, unrelated scene objects — they MUST be
+children of a single root SceneNode returned by the factory.
+
+${entityLines}
+
+COMPOSITE ENTITY RULES (MANDATORY — applies to every entity above):
+1. Each composite entity MUST have a dedicated factory function in models/2.
+2. The factory MUST create a root SceneNode at the given world position.
+3. ALL parts MUST be added as children of the root node using the
+   localOffset / localScale / localRotationDeg values above.
+4. The factory MUST return the root node — all callers position, move,
+   and destroy the entity through this root only.
+5. Physics: build a COMPOUND collider — one shape per part, all attached
+   to the root physics body. Never use a single box for the whole entity.
+6. Parts with physicsRole "wheel_collider" MUST use a hinge or wheel
+   constraint/joint, NOT a static child attachment.
+7. The planner MUST allocate a dedicated tranche for each composite entity
+   factory — do not merge multiple factories into one tranche.
+8. Every tranche that references a composite entity MUST call the factory
+   function; never inline the part-placement logic outside the factory.`;
+    }
+
     return `\n\n═══════════════════════════════════════════════════════════
 APPROVED GAME-SPECIFIC ASSET ROSTER — FIRST-CLASS COMPANION DOCUMENT
 Authority equal to the Master Prompt and all reference images.
@@ -229,6 +270,7 @@ VISUAL DIRECTION:
   Environmental Tone: ${vn.environmentalTone || "N/A"}
   Surface Treatment:  ${vn.surfaceTreatment || "N/A"}
   FX Relevance:       ${vn.fxRelevance || "N/A"}
+${compositeBlock}
 
 TRANCHE DESIGN & EXECUTION REQUIREMENT:
 1. Tranche Design MUST plan explicitly around these approved assets.
