@@ -4134,6 +4134,9 @@ Original user request for context: ${basePrompt}`;
 
         let repairResult     = null;
         let repairMalformed  = 0;
+        let _warnedStaleRepair   = false;
+        let _warnedBadEnvRepair  = false;
+        let _warnedMalformRepair = false;
 
         while (!repairResult) {
           await sleep(5000);
@@ -4156,8 +4159,11 @@ Original user request for context: ${basePrompt}`;
           if (repairRespRead.ok) {
             const respJobId = repairRespRead.data.jobId;
             if (respJobId && respJobId !== repairJobId) {
-              Progress.warn(`Stale repair response (pass ${pass})`,
-                `Expected ${repairJobId}, got ${respJobId} — still waiting...`);
+              if (!_warnedStaleRepair) {
+                _warnedStaleRepair = true;
+                Progress.warn(`Stale repair response (pass ${pass})`,
+                  `Expected ${repairJobId}, got ${respJobId} — still waiting...`);
+              }
               continue;
             }
             const envCheck = validateAiResponseEnvelope(repairRespRead.data);
@@ -4166,7 +4172,10 @@ Original user request for context: ${basePrompt}`;
               if (repairMalformed >= AI_HARDENING.jsonPollMalformedLimit) {
                 throw new Error(`Malformed repair response (pass ${pass}): ${envCheck.error}`);
               }
-              Progress.warn(`Invalid repair envelope (pass ${pass})`, envCheck.error);
+              if (!_warnedBadEnvRepair) {
+                _warnedBadEnvRepair = true;
+                Progress.warn(`Invalid repair envelope (pass ${pass})`, envCheck.error);
+              }
               continue;
             }
             repairResult = repairRespRead.data;
@@ -4176,7 +4185,10 @@ Original user request for context: ${basePrompt}`;
               throw new Error(
                 `Unparseable repair response after ${repairMalformed} tries (pass ${pass})`);
             }
-            Progress.warn(`Malformed repair response (pass ${pass})`, `Attempt ${repairMalformed}`);
+            if (!_warnedMalformRepair) {
+              _warnedMalformRepair = true;
+              Progress.warn(`Malformed repair response (pass ${pass})`, `Attempt ${repairMalformed}`);
+            }
           } else if (repairRespRead.kind === 'missing') {
             // Hard-fail: backend marked complete but wrote nothing
             if (repairProgRead.ok &&
@@ -4793,6 +4805,56 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
       throw new Error('Roster generation timed out after 15 minutes.');
     }
 
+    // ── Poll Firebase for roster extraction result ─────────────────────────
+    // claudeRosterExtract-background returns 202 immediately and writes
+    // ai_asset_roster_extract_result.json when done. We poll until the file
+    // appears with a completedAt timestamp newer than our request start time
+    // and matching jobId, or until ai_asset_roster_extract_error.json appears,
+    // or until timeout.
+    async function pollForRosterExtraction(projectPath, requestStartTime, jobId) {
+      const POLL_INTERVAL_MS = 3000;
+      const POLL_TIMEOUT_MS  = 900000; // 15 minutes — mirrors background function limit
+      const resultRef = ref(storage, `${projectPath}/ai_asset_roster_extract_result.json`);
+      const errorRef  = ref(storage, `${projectPath}/ai_asset_roster_extract_error.json`);
+      const deadline  = Date.now() + POLL_TIMEOUT_MS;
+
+      // Clear any stale sentinels from a previous run
+      try { await deleteObject(resultRef); } catch(e) {}
+      try { await deleteObject(errorRef);  } catch(e) {}
+
+      while (Date.now() < deadline) {
+        await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
+
+        // Check error sentinel first
+        try {
+          const errUrl = await getDownloadURL(errorRef);
+          const errRes = await fetch(errUrl, { cache: 'no-store' });
+          if (errRes.ok) {
+            const errData = await errRes.json();
+            throw new Error(`Asset extraction failed: ${errData.error || 'unknown error'}`);
+          }
+        } catch(e) {
+          if (e.message.startsWith('Asset extraction failed')) throw e;
+          // File doesn't exist yet — continue polling
+        }
+
+        // Check for completed result
+        try {
+          const url = await getDownloadURL(resultRef);
+          const res = await fetch(url + '&v=' + Date.now(), { cache: 'no-store' });
+          if (!res.ok) continue;
+          const data = await res.json();
+          // Must be newer than our request start and match this jobId
+          if (data.completedAt >= requestStartTime && data.jobId === jobId) {
+            return data;
+          }
+        } catch(e) {
+          // File not yet available — continue polling
+        }
+      }
+      throw new Error('Asset extraction timed out after 15 minutes.');
+    }
+
     // ── Run the full roster stage: generate → display → approve → extract ──
     async function runRosterStage(projectPath, jobId) {
       let roster = null;
@@ -4845,12 +4907,18 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
 
       let extractData;
       try {
+        const extractStartTime = Date.now();
         const extractRes = await fetch('/.netlify/functions/claudeRosterExtract-background', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ projectPath, jobId })
         });
-        extractData = await extractRes.json();
+        // Background function returns 202 immediately with no body — poll Firebase for result
+        if (extractRes.status !== 202) {
+          throw new Error(`Unexpected response from asset extractor: ${extractRes.status}`);
+        }
+        Progress.step('Extracting Approved Assets', 'Waiting for assets to be extracted and staged — this may take a minute...');
+        extractData = await pollForRosterExtraction(projectPath, extractStartTime, jobId);
       } catch (e) {
         throw new Error(`Asset extraction network error: ${e.message}`);
       }
@@ -5335,6 +5403,10 @@ RULES FOR ALL PIPELINE STAGES:
         let result = null;
         let malformedProgressCount = 0;
         let malformedResponseCount = 0;
+        // Seen-flags: each warning fires once per poll session, not once per tick
+        let _warnedStaleResponse   = false;
+        let _warnedMalformedProg   = false;
+        let _warnedMalformedResp   = false;
         Progress.step('Waiting for AI response', 'Polling Firebase for V2 expert tranche progress...');
 
         TrancheUI.show();
@@ -5419,7 +5491,10 @@ RULES FOR ALL PIPELINE STAGES:
             }
           } else if (progressRead.kind === 'parse_error') {
             malformedProgressCount++;
-            Progress.warn('Malformed ai_progress.json detected', `Attempt ${malformedProgressCount}/${AI_HARDENING.jsonPollMalformedLimit}`);
+            if (!_warnedMalformedProg) {
+              _warnedMalformedProg = true;
+              Progress.warn('Malformed ai_progress.json detected', `Attempt ${malformedProgressCount}/${AI_HARDENING.jsonPollMalformedLimit}`);
+            }
           }
 
           const responseRead = await fetchStorageJsonSafe(responseFileRef, projectPath, 'ai_response');
@@ -5428,7 +5503,10 @@ RULES FOR ALL PIPELINE STAGES:
             // Reject a response that belongs to a different/older job.
             const respJobId = responseRead.data.jobId;
             if (respJobId && respJobId !== currentJobId) {
-              Progress.warn('Stale ai_response.json detected', `Response job "${respJobId}" ≠ current "${currentJobId}" — still waiting for fresh write...`);
+              if (!_warnedStaleResponse) {
+                _warnedStaleResponse = true;
+                Progress.warn('Stale ai_response.json detected', `Response job "${respJobId}" ≠ current "${currentJobId}" — still waiting for fresh write...`);
+              }
               // do NOT assign result — keep polling
             } else {
               const envelopeCheck = validateAiResponseEnvelope(responseRead.data);
@@ -5441,7 +5519,10 @@ RULES FOR ALL PIPELINE STAGES:
                 if (malformedResponseCount >= AI_HARDENING.jsonPollMalformedLimit) {
                   throw new Error(`Malformed final AI response: ${envelopeCheck.error}`);
                 }
-                Progress.warn('Invalid AI response envelope', envelopeCheck.error);
+                if (!_warnedMalformedResp) {
+                  _warnedMalformedResp = true;
+                  Progress.warn('Invalid AI response envelope', envelopeCheck.error);
+                }
               } else {
                 // ── Only exit the polling loop for a FINAL or CANCELLED build ──
                 // The backend writes ai_response.json with status:"checkpoint" after
@@ -5458,7 +5539,10 @@ RULES FOR ALL PIPELINE STAGES:
             }
           } else if (responseRead.kind === 'parse_error') {
             malformedResponseCount++;
-            Progress.warn('Malformed ai_response.json detected', `Attempt ${malformedResponseCount}/${AI_HARDENING.jsonPollMalformedLimit}`);
+            if (!_warnedMalformedResp) {
+              _warnedMalformedResp = true;
+              Progress.warn('Malformed ai_response.json detected', `Attempt ${malformedResponseCount}/${AI_HARDENING.jsonPollMalformedLimit}`);
+            }
             if (malformedResponseCount >= AI_HARDENING.jsonPollMalformedLimit) {
               throw new Error('Malformed final AI response after multiple parse attempts.');
             }

@@ -220,20 +220,45 @@ exports.handler = async (event) => {
     // -> key "0", textures -> key "15"), then hardenPrimitivesInManifest()
     // ensures .obj files are in the .primitives folder (key "0").
 
+    // ── 7. Write result sentinel — frontend polls for this file ──────
+    // Background functions return 202 immediately with no body. The frontend
+    // polls ai_asset_roster_extract_result.json until it appears with a
+    // completedAt timestamp matching this jobId, then reads the staged assets.
+    const resultPayload = {
+      success:      true,
+      jobId,
+      completedAt:  Date.now(),
+      stagedAssets,
+      stagedFolder: stagedFolderPath,
+      extractionLog
+    };
+    await bucket.file(`${projectPath}/ai_asset_roster_extract_result.json`)
+      .save(JSON.stringify(resultPayload, null, 2), { contentType: "application/json", resumable: false });
+
     console.log(`[ROSTER-EXTRACT] Complete. ${stagedAssets.length} asset(s) staged to ${stagedFolderPath}`);
 
-    return {
-      statusCode: 200,
-      body: JSON.stringify({
-        success: true,
-        stagedAssets,
-        stagedFolder: stagedFolderPath,
-        extractionLog
-      })
-    };
+    // Background function — response body is ignored by Netlify, but return cleanly.
+    return { statusCode: 200, body: "" };
 
   } catch (error) {
     console.error("[ROSTER-EXTRACT] Unhandled error:", error);
-    return { statusCode: 500, body: JSON.stringify({ success: false, error: error.message }) };
+
+    // Write error sentinel so the frontend poller surfaces the failure immediately
+    // instead of timing out after 15 minutes.
+    try {
+      const { projectPath, jobId } = JSON.parse(event.body || "{}");
+      if (projectPath) {
+        const bucket = admin.storage().bucket(
+          process.env.FIREBASE_STORAGE_BUCKET || "gokudatabase.firebasestorage.app"
+        );
+        await bucket.file(`${projectPath}/ai_asset_roster_extract_error.json`)
+          .save(JSON.stringify({ success: false, jobId, error: error.message, failedAt: Date.now() }),
+                { contentType: "application/json", resumable: false });
+      }
+    } catch (writeErr) {
+      console.warn("[ROSTER-EXTRACT] Could not write error sentinel:", writeErr.message);
+    }
+
+    return { statusCode: 500, body: "" };
   }
 };
