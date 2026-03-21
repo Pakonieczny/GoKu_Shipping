@@ -298,7 +298,7 @@ COMPOSITE ENTITY RULES:
 - localScale is [x, y, z] multipliers applied to the mesh.
 - localRotationDeg is [x, y, z] Euler angles in degrees.
 - physicsRole must be one of: "primary_collider", "wheel_collider", "static_part", "decorative".
-- factoryHint must name the factory function and describe its return value.`;\n}
+- factoryHint must name the factory function and describe its return value.`;
 }
 
 /* ═══════════════════════════════════════════════════════════════ */
