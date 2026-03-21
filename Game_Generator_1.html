@@ -5407,6 +5407,8 @@ RULES FOR ALL PIPELINE STAGES:
         let _warnedStaleResponse   = false;
         let _warnedMalformedProg   = false;
         let _warnedMalformedResp   = false;
+        // Tranche dedup: only call Progress.step when the active tranche changes
+        let _lastActiveTrancheIndex = -1;
         Progress.step('Waiting for AI response', 'Polling Firebase for V2 expert tranche progress...');
 
         TrancheUI.show();
@@ -5479,7 +5481,8 @@ RULES FOR ALL PIPELINE STAGES:
 
             if (progressData.status === 'executing' && progressData.tranches) {
               const active = progressData.tranches.find(t => t.status === 'in_progress');
-              if (active) {
+              if (active && active.index !== _lastActiveTrancheIndex) {
+                _lastActiveTrancheIndex = active.index;
                 const agentLabel = (active.expertAgents || [])
                   .map(id => { const a = EXPERT_AGENTS[id]; return a ? `${a.icon} ${a.name}` : id; })
                   .join(' + ');
