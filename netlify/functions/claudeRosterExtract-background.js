@@ -13,11 +13,16 @@
      4. Upload extracted files to a game-specific staged folder:
         ${projectPath}/staged_assets/${jobId}/
      5. Save ai_asset_roster_approved.json with staged file paths
-     6. assets.json registration is handled exclusively by
-        syncAssetsJson() in the frontend — this function does NOT
-        write assets.json. The frontend calls syncAssetsJson() after
-        this function returns, which scans staged_assets/ and registers
-        entries under the "staged_roster" folder in assets.json.
+     6. assets.json registration is handled by the frontend in three steps
+        after this function returns:
+          a. copyRosterAssetsToModels() — copies staged files into models/
+          b. syncAssetsJson() — scans models/ and rebuilds assets.json;
+             primitive .obj files land in key "0" (.primitives folder),
+             textures at root level or key "15" (Models folder).
+          c. hardenPrimitivesInManifest() — targeted pass that moves any
+             roster .obj entries into key "0" if not already there.
+        This function does NOT write assets.json. "staged_roster" is not
+        a real manifest key — it was a stale reference and has been removed.
      7. Return { success:true, stagedAssets, stagedFolder, extractionLog }
 
    Request body:  { projectPath, jobId }
@@ -209,9 +214,11 @@ exports.handler = async (event) => {
     );
 
     // ── 6. assets.json is NOT written here ───────────────────────────
-    // Sole writer is syncAssetsJson() in the frontend. The frontend calls
-    // it immediately after this function returns. syncAssetsJson() scans
-    // staged_assets/ and registers entries under "staged_roster" in assets.json.
+    // The frontend handles manifest registration in three steps after this
+    // function returns: copyRosterAssetsToModels() copies staged files into
+    // models/, syncAssetsJson() rebuilds assets.json from models/ (primitives
+    // -> key "0", textures -> key "15"), then hardenPrimitivesInManifest()
+    // ensures .obj files are in the .primitives folder (key "0").
 
     console.log(`[ROSTER-EXTRACT] Complete. ${stagedAssets.length} asset(s) staged to ${stagedFolderPath}`);
 

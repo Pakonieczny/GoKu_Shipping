@@ -4834,11 +4834,12 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
 
               Progress.step('Asset Roster Stage', `Found ${rosterListRes.items.length} roster file(s) — running asset selection...`);
               const rosterResult = await runRosterStage(rosterProjectPath, rosterJobId);
-              approvedRosterContext = buildRosterContextBlock(
-                rosterResult.roster,
-                rosterResult.stagedFolder,
-                rosterResult.stagedAssets
-              );
+              // NOTE: approvedRosterContext is intentionally NOT set here.
+              // The backend (claudeCodeProxy-background.js) loads ai_asset_roster_approved.json
+              // from Firebase and builds the roster context block fresh for every tranche via
+              // loadApprovedRosterBlock(). Injecting a second copy here caused the planner and
+              // executor to receive two contradictory roster blocks. The backend block is the
+              // sole authoritative source; this variable remains empty ('').
 
               // Re-sync assets.json now that staged assets were registered
               Progress.step('Re-syncing assets.json', 'Refreshing manifest after roster asset registration...');

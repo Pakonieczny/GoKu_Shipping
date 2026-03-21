@@ -215,7 +215,11 @@ STAGED ASSET FOLDER: ${sf}
 STAGED FILES (Firebase paths — use these in models/2 and models/23):
 ${staged || "  (none extracted)"}
 
-ASSETS.JSON: Staged assets are registered under the "staged_roster" key.
+ASSETS.JSON MANIFEST LOCATIONS (after frontend copy + sync + harden):
+- Primitive .obj files -> .primitives folder, key "0" (hidden folder).
+- Texture assets -> root level or Models folder, key "15".
+- All physical files live in models/ and are addressable by their assigned manifest keys.
+- FALLBACK: If key "0" is absent (hardening failed non-fatally), scan models/ directly for .obj files.
 Use those manifest keys for all asset references in models/2 and models/23.
 
 VISUAL DIRECTION:
