@@ -141,7 +141,11 @@ exports.handler = async (event) => {
       // Upload all approved assets from this zip in parallel
       const uploadTasks = assets.map(async (asset) => {
         const normalizedTarget = normalizeAssetName(asset.assetName);
-        const entryPath = zipEntries.get(normalizedTarget);
+        // Roster docx files list primitive names WITHOUT the .obj extension (e.g. "mesh_Cube").
+        // The zip entries always have the extension (e.g. "mesh_Cube.obj").
+        // Try exact match first, then append .obj as a fallback so both formats resolve correctly.
+        const entryPath = zipEntries.get(normalizedTarget)
+                       || zipEntries.get(normalizedTarget + '.obj');
 
         if (!entryPath) {
           const availableSample = [...zipEntries.keys()].slice(0, 10).join(", ");

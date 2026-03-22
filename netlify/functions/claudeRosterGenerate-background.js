@@ -186,7 +186,10 @@ function validateCompositeEntities(roster) {
 }
 
 /* ─── Build the Claude prompt ────────────────────────────────── */
-function buildRosterPrompt(masterPrompt, rosterDocsBlock) {
+function buildRosterPrompt(masterPrompt, rosterDocsBlock, zipFileIndex) {
+  // zipFileIndex is passed in but the file lists are already embedded directly into
+  // rosterDocsBlock at construction time (one AVAILABLE FILES block per pack).
+  // The parameter is retained for signature clarity and future use.
   return `You are a game asset selection specialist. Your job is to analyze the requested game and select the most appropriate available assets from the available Asset Rosters.
 
 HARD LIMITS — YOU MUST RESPECT THESE ABSOLUTELY:
@@ -219,6 +222,13 @@ The following Asset Roster documents describe the available primitives and textu
 Each document corresponds to a .zip file of the same name in the Asset_Packs folder.
 
 ${rosterDocsBlock}
+
+CRITICAL ASSET NAMING RULES:
+- The assetName field MUST be copied EXACTLY from the "AVAILABLE FILES" lists above for each pack.
+- For .obj primitives: use the name exactly as listed (without adding .obj if not shown, without inventing variants).
+- For image files: use the name exactly as listed including the file extension.
+- Do NOT invent, guess, or paraphrase any asset filename. If a file you want does not appear in the list, do not select it.
+- The sourceRosterDocument field MUST match exactly one of the roster document names listed above.
 
 SELECTION TASK:
 Based on your analysis of the requested game, select the most appropriate assets from the above rosters.
@@ -363,9 +373,55 @@ exports.handler = async (event) => {
     }));
 
     const rosterDocNames = docxResults.map(d => d.baseName);
-    let rosterDocsBlock = docxResults.map(d =>
-      `\n\n=== ROSTER DOCUMENT: ${d.baseName} ===\n${d.text}\n=== END: ${d.baseName} ===\n`
-    ).join("");
+
+    // ── 2b. Scan asset_packs/ zips to build a per-pack filename index ──
+    // This gives Claude the exact real filenames so it cannot hallucinate names.
+    // Map: docxBaseName (e.g. "Nature_Pack.docx") → { objFiles, imageFiles }
+    const zipFileIndex = new Map();
+    try {
+      const packsPrefix = `${projectPath}/asset_packs/`;
+      const [packFiles] = await bucket.getFiles({ prefix: packsPrefix });
+      const assetPackZips = (packFiles || []).filter(f => f.name.toLowerCase().endsWith('.zip'));
+
+      await Promise.all(assetPackZips.map(async (zipFile) => {
+        const zipBaseName = zipFile.name.split('/').pop(); // e.g. "Nature_Pack.zip"
+        const docxBaseName = zipBaseName.replace(/\.zip$/i, '.docx'); // e.g. "Nature_Pack.docx"
+        try {
+          const [zipBuffer] = await zipFile.download();
+          const zip = await JSZip.loadAsync(zipBuffer);
+          const objFiles   = [];
+          const imageFiles = [];
+          for (const entryPath of Object.keys(zip.files)) {
+            if (zip.files[entryPath].dir) continue;
+            const base  = entryPath.split('/').pop();
+            const lower = base.toLowerCase();
+            if (lower.endsWith('.obj'))                                        objFiles.push(base);
+            else if (['.png','.jpg','.jpeg','.webp'].some(e => lower.endsWith(e))) imageFiles.push(base);
+          }
+          objFiles.sort();
+          imageFiles.sort();
+          zipFileIndex.set(docxBaseName, { objFiles, imageFiles });
+          console.log(`[ROSTER-GEN] Indexed ${zipBaseName}: ${objFiles.length} obj, ${imageFiles.length} image file(s)`);
+        } catch (e) {
+          console.warn(`[ROSTER-GEN] Could not index zip ${zipBaseName}: ${e.message}`);
+        }
+      }));
+    } catch (e) {
+      console.warn(`[ROSTER-GEN] Could not scan asset_packs/ for zip index: ${e.message}`);
+    }
+
+    // Append the real file list for each pack directly into its roster document block
+    let rosterDocsBlock = docxResults.map(d => {
+      const fileListBlock = (() => {
+        if (!zipFileIndex.has(d.baseName)) return '';
+        const { objFiles, imageFiles } = zipFileIndex.get(d.baseName);
+        const lines = [];
+        if (objFiles.length   > 0) lines.push(`AVAILABLE .OBJ FILES (exact names only):\n${objFiles.map(f => `  - ${f.replace(/\.obj$/i, '')}`).join('\n')}`);
+        if (imageFiles.length > 0) lines.push(`AVAILABLE IMAGE FILES (exact names only):\n${imageFiles.map(f => `  - ${f}`).join('\n')}`);
+        return lines.length > 0 ? `\n\n${lines.join('\n\n')}\n` : '';
+      })();
+      return `\n\n=== ROSTER DOCUMENT: ${d.baseName} ===\n${d.text}${fileListBlock}\n=== END: ${d.baseName} ===\n`;
+    }).join("");
 
     if (rosterDocsBlock.trim() === "") {
       rosterDocsBlock = "(No Asset Roster documents found in Asset_Rosters folder. Claude should generate a generic asset roster based on the game requirements only, without referencing specific files.)";
@@ -398,7 +454,7 @@ exports.handler = async (event) => {
       maxTokens:  12000,
       system:     "You are a game asset selection specialist. Respond only with a valid JSON object. No markdown, no fences, no preamble.",
       userContent: [
-        { type: "text", text: imagePreamble + buildRosterPrompt(masterPrompt, rosterDocsBlock) },
+        { type: "text", text: imagePreamble + buildRosterPrompt(masterPrompt, rosterDocsBlock, zipFileIndex) },
         ...imageBlocks
       ]
     });

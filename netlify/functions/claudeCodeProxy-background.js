@@ -1434,6 +1434,7 @@ PLANNING RULES:
 11. The final tranche must be a single end-stage hardening batch anchored to Section 8 so deferred findings can be resolved in one pass.
 12. SPLIT AGGRESSIVELY. More tranches = smaller context per AI call = fewer timeouts and higher quality. Never merge tranches to reduce count. A game with 6 systems should produce at least 8-12 tranches (foundation + one per system + polish + hardening). If in doubt, split into an A and B sub-tranche.
 13. Target ~100-150 lines of new or changed code per tranche. Any tranche prompt that describes more than 2 distinct systems, or more than ~3 new functions, is too large and must be split.
+14. If an Approved Asset Roster is present, you MUST populate gameState.objectids with every roster asset before the three engine primitives. Roster assets are mandatory for all visual game objects. The three engine primitives (cube, sphere, planevertical) are reserved exclusively for particle system internals and invisible collision geometry — using a primitive as a visible game object when a roster asset covers that role is a planning defect. For every tranche touching rendered content, the prompt field MUST explicitly name which roster assets to use for each visual element by their objectids key.
 
 ${REQUIRED_TRANCHE_VALIDATION_BLOCK}
 
@@ -1463,7 +1464,7 @@ You must respond ONLY with a valid JSON object. No markdown, no code fences, no 
 }`;
 
       const planningUserContent = [
-        { type: "text", text: `${fileContext}${approvedRosterBlock}
+        { type: "text", text: `${approvedRosterBlock}${fileContext}
 
 === FULL USER REQUEST ===
 ${effectivePrompt}
