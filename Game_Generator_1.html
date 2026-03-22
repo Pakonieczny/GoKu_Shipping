@@ -5294,6 +5294,7 @@ ENVIRONMENT CONSTRAINTS (platform facts handled by backend):
 PLANNING REQUIREMENTS:
 - SPLIT AGGRESSIVELY. More tranches = smaller AI context = fewer timeouts and higher quality. Never merge tranches to save count. A game with 6 core systems should have at least 8-12 tranches.
 - Target ~100-150 lines of new or changed code per tranche. If a tranche covers more than 2 distinct systems or ~3 new functions, split it further.
+- LATE-PHASE TIGHTENING: For tranches at position 11 or later, reduce the budget to ~80-120 lines of new/changed code, cap scope to ONE function or ONE tightly-coupled function pair, and default to A/B sub-tranche splits. Any tranche 11+ touching more than one section of models/2 must be split.
 - Order tranches by true dependency.
 - Each tranche prompt must embed exact game-specific rules, code examples, and pitfall warnings from this request. Do NOT summarize — copy the exact technical details.
 - The Scaffold is king. Adapt the requested game to the scaffold — never adapt the scaffold to the game.
