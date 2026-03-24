@@ -1,6 +1,6 @@
 /* netlify/functions/claudeRosterGenerate-background.js */
 /* ═══════════════════════════════════════════════════════════════════
-   GAME-SPECIFIC ASSET ROSTER GENERATION — v4.0 (Two-Phase)
+   GAME-SPECIFIC ASSET ROSTER GENERATION — v5.0 (Visual-Only Pipeline)
    ─────────────────────────────────────────────────────────────────
    Background Netlify function (suffix -background = 15-min timeout).
    Returns 202 immediately. Writes result to Firebase when done.
@@ -8,43 +8,48 @@
 
    Flow:
      1. Read Master Prompt + inline images from ai_request.json
-     2. Scan asset_particle_textures/ and asset_3d_objects/ for .docx
-        and .zip files (co-located in the same folder per pack)
+     2. Scan asset_particle_textures/ and asset_3d_objects/ for .zip files.
+        For each zip:
+          - Particle packs: extract every image as
+            { assetFile, b64, mimeType, sourceZip }
+          - 3D object packs: for each .obj, find same-stem image in the zip
+            as its thumbnail. Fall back to first non-colormap image in the
+            pack if no same-stem match.
+            Store as { objFile, thumbFile, b64, mimeType, sourceZip }
+        No .docx files are read. Selection is 100% visual.
      3. PHASE 1 — Claude analyzes the game prompt + reference images
         and produces a structured list of required particle effects
-        and 3D objects (visual descriptions only, no asset names)
-     4. PHASE 2A — Claude reads all docx AI descriptions (text only)
-        and for each Phase 1 requirement shortlists 8-12 plausible
-        candidate assets. Wide net, no visual check yet.
-     5. PHASE 2B — For each requirement, the shortlisted candidate
-        thumbnails are sourced directly from the co-located .zip files
-        (particle packs: each .png is its own thumbnail; 3D object packs:
-        the second image in the zip is used as the stand-in thumbnail for
-        every .obj in that pack) and sent to Claude as vision inputs
-        alongside the reference game images.
-        Claude makes the final pick purely by visual match.
-        Runs all requirements in parallel.
-     6. Thumbnails of selected assets are embedded in the roster JSON
-        so the UI can display them in the review panel.
-     7. Validate hard limits (enforceHardLimits)
-     8. Save roster as ai_asset_roster_pending.json in Firebase
+        and 3D objects (visual descriptions only, no asset names).
+     4. STAGE A — Visual library scan (one pass, all requirements at once).
+        Batches of IMAGES_PER_BATCH images are sent to Claude with all
+        Phase 1 requirements. Claude tags each image against whichever
+        requirement(s) it is a plausible candidate for.
+        Result: per-requirement candidate lists.
+     5. STAGE B — Per-requirement final visual pick.
+        For each requirement, send its Stage A candidates to Claude and
+        get a single winner. All requirements run in parallel.
+     6. Assemble final roster. Winning thumbnails are embedded for UI display.
+     7. Validate hard limits (enforceHardLimits).
+     8. Save roster as ai_asset_roster_pending.json in Firebase.
 
    Request body: { projectPath, jobId }
    Response:     202 Accepted (background function — no body)
    ═══════════════════════════════════════════════════════════════════ */
 
-const fetch  = require("node-fetch");
-const admin  = require("./firebaseAdmin");
-const JSZip  = require("jszip");
+const fetch = require("node-fetch");
+const admin = require("./firebaseAdmin");
+const JSZip = require("jszip");
 
-/* ─── Retry helpers (mirrors claudeCodeProxy-background.js) ────── */
+/* ─── Constants ──────────────────────────────────────────────────── */
 const CLAUDE_OVERLOAD_MAX_RETRIES   = 5;
 const CLAUDE_OVERLOAD_BASE_DELAY_MS = 1250;
 const CLAUDE_OVERLOAD_MAX_DELAY_MS  = 12000;
 
-const MAX_OBJ_ASSETS = 25;
-const MAX_PNG_ASSETS = 50;
+const MAX_OBJ_ASSETS   = 25;
+const MAX_PNG_ASSETS   = 50;
+const IMAGES_PER_BATCH = 50;  // Stage A: images per Claude call
 
+/* ─── Retry helpers ──────────────────────────────────────────────── */
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 function computeRetryDelay(attempt) {
@@ -56,7 +61,7 @@ function computeRetryDelay(attempt) {
 
 function isOverload(status, msg = "") {
   const m = String(msg).toLowerCase();
-  if ([429,500,502,503,504,529].includes(Number(status))) return true;
+  if ([429, 500, 502, 503, 504, 529].includes(Number(status))) return true;
   if (
     m.includes("econnreset")     ||
     m.includes("econnrefused")   ||
@@ -66,29 +71,40 @@ function isOverload(status, msg = "") {
     m.includes("network error")  ||
     m.includes("fetch failed")
   ) return true;
-  return m.includes("overloaded") || m.includes("rate limit") ||
-         m.includes("too many requests") || m.includes("capacity") ||
+  return m.includes("overloaded")            ||
+         m.includes("rate limit")            ||
+         m.includes("too many requests")     ||
+         m.includes("capacity")              ||
          m.includes("temporarily unavailable");
 }
 
 async function callClaude(apiKey, { model, maxTokens, system, userContent }) {
-  const body = { model, max_tokens: maxTokens, system,
-                 messages: [{ role: "user", content: userContent }] };
+  const body = {
+    model,
+    max_tokens: maxTokens,
+    system,
+    messages: [{ role: "user", content: userContent }]
+  };
   let last;
   for (let i = 1; i <= CLAUDE_OVERLOAD_MAX_RETRIES; i++) {
     try {
-      const res  = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json",
-                   "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method:  "POST",
+        headers: {
+          "Content-Type":      "application/json",
+          "x-api-key":         apiKey,
+          "anthropic-version": "2023-06-01"
+        },
         body: JSON.stringify(body)
       });
       const raw  = await res.text();
       const data = raw ? JSON.parse(raw) : null;
       if (!res.ok) {
         const msg = data?.error?.message || `Claude error (${res.status})`;
-        const err = Object.assign(new Error(msg), { status: res.status,
-          isRetryableOverload: isOverload(res.status, msg) });
+        const err = Object.assign(new Error(msg), {
+          status: res.status,
+          isRetryableOverload: isOverload(res.status, msg)
+        });
         throw err;
       }
       const text = data?.content?.find(b => b.type === "text")?.text;
@@ -104,57 +120,7 @@ async function callClaude(apiKey, { model, maxTokens, system, userContent }) {
   throw last;
 }
 
-/* ─── Extract plain text from a docx buffer using JSZip ─────── */
-/* Reads word/document.xml and strips all XML tags. Crude but
-   reliable for content that's all normal paragraphs / tables.   */
-async function extractDocxText(buffer) {
-  try {
-    const zip  = await JSZip.loadAsync(buffer);
-    const xml  = zip.file("word/document.xml");
-    if (!xml) return "(empty docx)";
-    const xmlText = await xml.async("string");
-    // Replace paragraph and line-break tags with newlines, strip all other tags
-    return xmlText
-      .replace(/<w:br[^>]*\/>/gi, "\n")
-      .replace(/<\/w:p>/gi, "\n")
-      .replace(/<[^>]+>/g, " ")
-      .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
-      .replace(/&quot;/g, '"').replace(/&#x[0-9A-Fa-f]+;/g, " ")
-      .replace(/[ \t]+/g, " ")
-      .replace(/\n{3,}/g, "\n\n")
-      .trim();
-  } catch (e) {
-    return `(could not parse docx: ${e.message})`;
-  }
-}
-
-function normalizeWhitespace(text) {
-  return String(text || "")
-    .replace(/\r/g, "")
-    .replace(/[ \t]+/g, " ")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
-
-function extractAssetAnchorsFromText(text, packType) {
-  const pattern = packType === "3d_object"
-    ? /\b[^\s\\/:*?\"<>|]+\.(?:obj|fbx|glb|gltf)\b/gi
-    : /\b[^\s\\/:*?\"<>|]+\.(?:png|jpg|jpeg|webp)\b/gi;
-
-  const seen = new Set();
-  const anchors = [];
-  for (const match of String(text || "").matchAll(pattern)) {
-    const filename = match[0].trim();
-    const key = filename.toLowerCase();
-    if (!seen.has(key)) {
-      seen.add(key);
-      anchors.push(filename);
-    }
-  }
-  return anchors;
-}
-
-/* ─── Strip JSON fences ──────────────────────────────────────── */
+/* ─── Utilities ──────────────────────────────────────────────────── */
 function stripFences(text) {
   let t = text
     .replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/\s*```$/i, "").trim();
@@ -163,7 +129,13 @@ function stripFences(text) {
   return t.trim();
 }
 
-/* ─── Enforce hard selection limits ─────────────────────────── */
+function chunkArray(arr, size) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
+/* ─── Enforce hard selection limits ─────────────────────────────── */
 function enforceHardLimits(roster) {
   if (!roster) return roster;
   if (Array.isArray(roster.objects3d)) {
@@ -180,16 +152,15 @@ function enforceHardLimits(roster) {
   }
   if (roster.coverageSummary) {
     roster.coverageSummary.totalObjects3d = (roster.objects3d || []).length;
-    roster.coverageSummary.totalTextures   = (roster.textureAssets || []).length;
+    roster.coverageSummary.totalTextures  = (roster.textureAssets || []).length;
     roster.coverageSummary.limitsRespected =
       roster.coverageSummary.totalObjects3d <= MAX_OBJ_ASSETS &&
-      roster.coverageSummary.totalTextures   <= MAX_PNG_ASSETS;
+      roster.coverageSummary.totalTextures  <= MAX_PNG_ASSETS;
   }
   return roster;
 }
 
-
-/* ─── Phase 1 prompt: game visual needs analysis ─────────────── */
+/* ─── Phase 1 prompt: game visual needs analysis ─────────────────── */
 function buildPhase1Prompt(masterPrompt) {
   return `You are a game visual requirements analyst. Your ONLY job in this phase is to study the game description and produce a structured list of every particle effect and 3D object the game needs.
 
@@ -222,181 +193,90 @@ Respond ONLY with a valid JSON object. No markdown, no fences, no preamble.
 }`;
 }
 
-/* ─── Phase 2A prompt: text-only shortlist ───────────────────── */
-function buildPhase2APrompt(phase1Result, particleDocsBlock, objectDocsBlock) {
-  return `You are a game asset shortlisting specialist. For each visual requirement, identify the best 8-12 candidate assets from the catalogs using ONLY the AI text descriptions. Do not make final picks yet — cast a wide net of plausible matches.
+/* ─── Stage A prompt: visual batch scan ─────────────────────────── */
+/*
+   Sent once per batch of IMAGES_PER_BATCH images.
+   Claude sees all requirements and all images simultaneously and tags
+   each image index against whichever requirements it could satisfy.
+   Images matching nothing are tagged with an empty array.
+*/
+function buildStageAPrompt(requirements, isParticle) {
+  const type    = isParticle ? "particle effect texture" : "3D object";
+  const reqList = requirements.map((r, i) =>
+    `  ${i + 1}. ${r.name}: ${r.visualDescription}` +
+    (r.behaviorDescription ? ` — ${r.behaviorDescription}` : "") +
+    (r.gameplayRole        ? ` — ${r.gameplayRole}`        : "")
+  ).join("\n");
 
-RULES:
-- For each particle effect requirement, list 8-12 candidate filenames from the PARTICLE TEXTURE CATALOG whose descriptions are plausibly relevant.
-- For each 3D object requirement, list 8-12 candidate filenames from the 3D OBJECT CATALOG whose descriptions are plausibly relevant.
-- Use ONLY the AI-oriented description and category text to judge relevance. Do NOT use filenames as a criterion.
-- Include candidates that are similar, adjacent, or loosely relevant — err on the side of inclusion.
-- assetName and sourceRosterDocument must be copied exactly as shown in the catalog.
-- Prefer filenames that appear directly inside the descriptive doc text for the matching row/item.
-- The compact anchor manifest is only a verbatim-copy aid. Do not shortlist by filename semantics.
-- If a pack exposes more files in ZIP than are shown in the compact anchor manifest, ignore the hidden extras for Phase 2A and shortlist only from anchors explicitly shown in the catalog block.
+  return `You are a game asset visual screener. You will be shown a batch of ${type} thumbnail images.
+Your job is to identify which images are plausible visual candidates for any of the game requirements listed below.
+Cast a wide net — include anything that could plausibly match, even loosely. It is better to include a marginal candidate than to miss a good one.
 
-GAME VISUAL REQUIREMENTS:
-${JSON.stringify(phase1Result, null, 2)}
+GAME REQUIREMENTS (${type}):
+${reqList}
 
-PARTICLE TEXTURE CATALOG:
-${particleDocsBlock || "(No particle texture packs found)"}
-
-3D OBJECT CATALOG:
-${objectDocsBlock || "(No 3D object packs found)"}
+The images in this batch are numbered sequentially starting at 1.
+For each image, list which requirement numbers (1-based) it could satisfy. Use an empty array if none.
 
 Respond ONLY with a valid JSON object. No markdown, no fences, no preamble.
 
 {
-  "particleCandidates": [
-    {
-      "requirementName": "name from particleEffects in phase 1",
-      "candidates": [
-        { "assetName": "exact_filename.png", "sourceRosterDocument": "ExactDocxName.docx", "descriptionMatch": "one sentence why this description is relevant" }
-      ]
-    }
-  ],
-  "objectCandidates": [
-    {
-      "requirementName": "name from objects3d in phase 1",
-      "candidates": [
-        { "assetName": "exact_filename.obj", "sourceRosterDocument": "ExactDocxName.docx", "descriptionMatch": "one sentence why this description is relevant" }
-      ]
-    }
+  "matches": [
+    { "imageIndex": 1, "matchesRequirements": [1, 3] },
+    { "imageIndex": 2, "matchesRequirements": [] },
+    { "imageIndex": 3, "matchesRequirements": [2] }
   ]
 }`;
 }
 
-/* ─── Phase 2B prompt: visual final selection ────────────────── */
-function buildPhase2BPrompt(requirementName, requirementDesc, candidateLabels, isParticle, gameInterpretation, imagePreamble) {
-  return `${imagePreamble}You are making the final asset selection for a game. You have been given thumbnail images of candidate assets. Your job is to pick the single best match for the requirement below based on what you can see in the thumbnails.
-
-GAME CONTEXT:
+/* ─── Stage B prompt: per-requirement final visual pick ─────────── */
+function buildStageBPrompt(requirementName, requirementDesc, candidates, isParticle, gameInterpretation) {
+  const type = isParticle ? "Particle Effect Texture" : "3D Object";
+  return `GAME CONTEXT:
 ${gameInterpretation}
+
+You are making the final asset selection for a game. You have been given thumbnail images of candidate assets. Pick the single best visual match for the requirement below.
 
 REQUIREMENT:
 Name: ${requirementName}
 Description: ${requirementDesc}
-Type: ${isParticle ? 'Particle Effect Texture' : '3D Object'}
+Type: ${type}
 
-CANDIDATE THUMBNAILS:
-The images attached (in order) correspond to these candidates:
-${candidateLabels.map((c, i) => `  Image ${i + 1}: ${c.assetName} (${c.sourceRosterDocument})`).join('\n')}
+CANDIDATE THUMBNAILS (images attached in order):
+${candidates.map((c, i) => `  Image ${i + 1}: ${isParticle ? c.assetFile : c.objFile} (${c.sourceZip})`).join("\n")}
 
 SELECTION RULES:
-- Judge purely by visual appearance of the thumbnail vs the requirement description.
-- For particle textures: consider the shape silhouette, density, edge softness, and whether it matches the effect type.
-- For 3D objects: consider the overall shape, silhouette, and whether it matches the intended role.
+- Judge purely by visual appearance vs the requirement description.
+- For particle textures: consider shape silhouette, density, edge softness, color tone.
+- For 3D objects: consider overall shape, silhouette, style, and gameplay role fit.
 - Pick exactly one winner. State which image number you chose and why.
-- For 3D objects only: include a colormapFile field. Default to "colormap.jpg" unless the candidate clearly indicates a different color texture filename.
+- For 3D objects only: include a colormapFile field — default "colormap.jpg" unless you have evidence of a different filename.
 
 Respond ONLY with a valid JSON object. No markdown, no fences, no preamble.
 
 {
   "requirementName": "${requirementName}",
-  "selectedAssetName": "exact_filename_from_candidates",
-  "selectedSourceRosterDocument": "ExactDocxName.docx",
   "imageNumberChosen": 1,
   "visualSelectionRationale": "What you saw in the thumbnail that matched the requirement",
   "colormapFile": "colormap.jpg"
 }`;
 }
 
-/* ─── Build thumbnail catalog from co-located zip files ─────── */
-/*
-   Particle packs: each .png/.jpg in the zip IS an asset — used directly
-   as its own thumbnail. Keys are lowercase asset filenames.
-
-   3D object packs: use the first image in the zip whose filename does NOT
-   contain "colormap" as the shared thumbnail stand-in for every .obj in
-   the pack. If no such image exists, thumbnails are null and Phase 2B
-   falls back to description-only selection.
-
-   zip buffers are already held in zipFileIndex._zipBuffer from step 2b —
-   no extra network calls needed here.
-*/
-async function buildThumbnailCatalogFromZips(folderData) {
-  const catalog = new Map();
-
-  for (const { packType, docxResults, zipFileIndex } of folderData) {
-    for (const { baseName: docxBaseName } of docxResults) {
-      const zipEntry = zipFileIndex.get(docxBaseName);
-      if (!zipEntry || !zipEntry._zipBuffer) continue;
-
-      try {
-        const zip = await JSZip.loadAsync(zipEntry._zipBuffer);
-
-        if (packType === "particle_texture") {
-          // Each image in the zip IS an asset — use it directly as its own thumbnail
-          for (const entryPath of Object.keys(zip.files)) {
-            if (zip.files[entryPath].dir) continue;
-            const base  = entryPath.split("/").pop();
-            const lower = base.toLowerCase();
-            if (![".png",".jpg",".jpeg",".webp"].some(e => lower.endsWith(e))) continue;
-
-            const blob     = await zip.files[entryPath].async("nodebuffer");
-            const mimeType = lower.endsWith(".png") ? "image/png" : "image/jpeg";
-            catalog.set(lower, { b64: blob.toString("base64"), mimeType, sourceDoc: docxBaseName });
-          }
-
-        } else {
-          // 3D object pack — use the first image that is NOT a colormap as the
-          // shared stand-in thumbnail for every .obj in this pack.
-          const imageEntries = Object.keys(zip.files)
-            .filter(p => {
-              if (zip.files[p].dir) return false;
-              const l = p.split("/").pop().toLowerCase();
-              return [".png",".jpg",".jpeg",".webp"].some(e => l.endsWith(e));
-            })
-            .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base", numeric: true }));
-
-          const standInEntry = imageEntries.find(p => !p.split("/").pop().toLowerCase().includes("colormap")) || null;
-
-          let thumbB64  = null;
-          let thumbMime = "image/jpeg";
-          if (standInEntry) {
-            const blob = await zip.files[standInEntry].async("nodebuffer");
-            thumbB64   = blob.toString("base64");
-            thumbMime  = standInEntry.toLowerCase().endsWith(".png") ? "image/png" : "image/jpeg";
-          } else {
-            console.warn(`[ROSTER-GEN] ${docxBaseName}: no non-colormap image found in zip — no stand-in thumbnail assigned`);
-          }
-
-          // Register every .obj in this pack against the shared stand-in thumbnail
-          for (const entryPath of Object.keys(zip.files)) {
-            if (zip.files[entryPath].dir) continue;
-            const base = entryPath.split("/").pop();
-            if (!base.toLowerCase().endsWith(".obj")) continue;
-            catalog.set(base.toLowerCase(), {
-              b64:       thumbB64,
-              mimeType:  thumbMime,
-              sourceDoc: docxBaseName
-            });
-          }
-        }
-
-        console.log(`[ROSTER-GEN] Thumbnail catalog after ${docxBaseName}: ${catalog.size} entries`);
-      } catch (e) {
-        console.warn(`[ROSTER-GEN] Could not build thumbnails from zip for ${docxBaseName}: ${e.message}`);
-      }
-    }
-  }
-
-  return catalog;
-}
-
-/* ═══════════════════════════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════════════════════ */
 exports.handler = async (event) => {
   let projectPath = null;
-  let bucket = null;
+  let bucket      = null;
+
+  const err400 = msg => ({ statusCode: 400, body: msg });
+  const err500 = msg => ({ statusCode: 500, body: msg });
 
   try {
-    if (!event.body) return { statusCode: 400, body: '' };
+    if (!event.body) return { statusCode: 400, body: "" };
 
     const body = JSON.parse(event.body);
     const { jobId } = body;
     projectPath = body.projectPath;
-    if (!projectPath || !jobId) return { statusCode: 400, body: '' };
+    if (!projectPath || !jobId) return { statusCode: 400, body: "" };
 
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) throw new Error("Missing ANTHROPIC_API_KEY");
@@ -407,7 +287,7 @@ exports.handler = async (event) => {
 
     console.log(`[ROSTER-GEN] Starting for project ${projectPath}, job ${jobId}`);
 
-    // ── 1. Load Master Prompt + inline images from ai_request.json ──
+    // ── 1. Load Master Prompt + inline images from ai_request.json ──────
     const requestFile = bucket.file(`${projectPath}/ai_request.json`);
     const [reqExists] = await requestFile.exists();
     if (!reqExists) return err400("ai_request.json not found. Submit prompt first.");
@@ -415,13 +295,34 @@ exports.handler = async (event) => {
     const { prompt: masterPrompt, inlineImages = [] } = JSON.parse(reqContent.toString());
     if (!masterPrompt) return err400("No prompt found in ai_request.json");
 
-    // ── 2. Load .docx and .zip files from both asset folders ─────────
+    // ── 2. Build reference image blocks ─────────────────────────────────
+    const refImageBlocks = [];
+    for (const img of inlineImages) {
+      if (img.data && img.mimeType && img.mimeType.startsWith("image/")) {
+        refImageBlocks.push({
+          type:   "image",
+          source: { type: "base64", media_type: img.mimeType, data: img.data }
+        });
+      }
+    }
+    if (refImageBlocks.length > 0) {
+      console.log(`[ROSTER-GEN] Loaded ${refImageBlocks.length} reference image(s)`);
+    }
+
+    // ── 3. Scan zip files and build asset libraries ──────────────────────
+    /*
+       Particle packs:  every image → { assetFile, b64, mimeType, sourceZip }
+       3D object packs: for each .obj, pair with same-stem image in zip.
+                        Fall back to first non-colormap image if no stem match.
+                        → { objFile, thumbFile, b64, mimeType, sourceZip }
+    */
     const ASSET_FOLDERS = [
       { prefix: `${projectPath}/asset_particle_textures/`, packType: "particle_texture" },
       { prefix: `${projectPath}/asset_3d_objects/`,        packType: "3d_object"        }
     ];
 
-    const folderData = [];
+    const particleAssets = []; // { assetFile, b64, mimeType, sourceZip }
+    const objectAssets   = []; // { objFile, thumbFile, b64, mimeType, sourceZip }
 
     for (const { prefix, packType } of ASSET_FOLDERS) {
       let folderFiles;
@@ -429,153 +330,120 @@ exports.handler = async (event) => {
         [folderFiles] = await bucket.getFiles({ prefix });
       } catch (e) {
         console.warn(`[ROSTER-GEN] Could not list ${prefix}: ${e.message}`);
-        folderData.push({ packType, docxResults: [], zipFileIndex: new Map() });
         continue;
       }
 
-      // ── 2a. Extract text from every .docx in this folder ──
-      const docxFiles = (folderFiles || []).filter(f => f.name.toLowerCase().endsWith(".docx"));
-      console.log(`[ROSTER-GEN] ${packType}: found ${docxFiles.length} docx file(s) in ${prefix}`);
-
-      const docxResults = await Promise.all(docxFiles.map(async (docFile) => {
-        const baseName = docFile.name.split("/").pop();
-        try {
-          const [buf] = await docFile.download();
-          const text  = await extractDocxText(buf);
-          return { baseName, text };
-        } catch (e) {
-          console.warn(`[ROSTER-GEN] Could not read ${baseName}: ${e.message}`);
-          return { baseName, text: `(Could not extract text: ${e.message})` };
-        }
-      }));
-
-      // ── 2b. Index filenames from every .zip in this same folder ──
-      const zipFileIndex = new Map();
       const zipFiles = (folderFiles || []).filter(f => f.name.toLowerCase().endsWith(".zip"));
+      console.log(`[ROSTER-GEN] ${packType}: found ${zipFiles.length} zip(s) in ${prefix}`);
 
-      await Promise.all(zipFiles.map(async (zipFile) => {
-        const zipBaseName  = zipFile.name.split("/").pop();
-        const docxBaseName = zipBaseName.replace(/\.zip$/i, ".docx");
+      for (const zipFile of zipFiles) {
+        const sourceZip = zipFile.name.split("/").pop();
         try {
           const [zipBuffer] = await zipFile.download();
           const zip = await JSZip.loadAsync(zipBuffer);
-          const objFiles   = [];
-          const imageFiles = [];
-          for (const entryPath of Object.keys(zip.files)) {
-            if (zip.files[entryPath].dir) continue;
-            const base  = entryPath.split("/").pop();
-            const lower = base.toLowerCase();
-            if (lower.endsWith(".obj")) objFiles.push(base);
-            else if ([".png",".jpg",".jpeg",".webp"].some(e => lower.endsWith(e))) imageFiles.push(base);
+
+          if (packType === "particle_texture") {
+            // ── Every image file in the zip is a particle asset ──────────
+            let added = 0;
+            for (const entryPath of Object.keys(zip.files)) {
+              if (zip.files[entryPath].dir) continue;
+              const base  = entryPath.split("/").pop();
+              const lower = base.toLowerCase();
+              if (![".png", ".jpg", ".jpeg", ".webp"].some(e => lower.endsWith(e))) continue;
+
+              const blob     = await zip.files[entryPath].async("nodebuffer");
+              const mimeType = lower.endsWith(".png") ? "image/png" : "image/jpeg";
+              particleAssets.push({ assetFile: base, b64: blob.toString("base64"), mimeType, sourceZip });
+              added++;
+            }
+            console.log(`[ROSTER-GEN] Particle zip ${sourceZip}: ${added} asset(s) indexed`);
+
+          } else {
+            // ── 3D object pack: pair each .obj with its thumbnail ────────
+            // Build stem → image entry map for all images in this zip
+            const imagesByStem = new Map();
+            const allImages    = [];
+            for (const entryPath of Object.keys(zip.files)) {
+              if (zip.files[entryPath].dir) continue;
+              const base  = entryPath.split("/").pop();
+              const lower = base.toLowerCase();
+              if (![".png", ".jpg", ".jpeg", ".webp"].some(e => lower.endsWith(e))) continue;
+              const stem = lower.replace(/\.[^.]+$/, "");
+              imagesByStem.set(stem, { entryPath, base, lower });
+              allImages.push({ entryPath, base, lower });
+            }
+
+            // Pack-level fallback: first non-colormap image in the zip
+            const fallbackEntry = allImages.find(img => !img.lower.includes("colormap")) || null;
+            let fallbackB64  = null;
+            let fallbackMime = "image/jpeg";
+            if (fallbackEntry) {
+              const blob  = await zip.files[fallbackEntry.entryPath].async("nodebuffer");
+              fallbackB64 = blob.toString("base64");
+              fallbackMime = fallbackEntry.lower.endsWith(".png") ? "image/png" : "image/jpeg";
+            } else {
+              console.warn(`[ROSTER-GEN] ${sourceZip}: no non-colormap image found for fallback thumbnail`);
+            }
+
+            // Process each .obj — read its paired image at the same time
+            let added = 0;
+            for (const entryPath of Object.keys(zip.files)) {
+              if (zip.files[entryPath].dir) continue;
+              const base  = entryPath.split("/").pop();
+              const lower = base.toLowerCase();
+              if (!lower.endsWith(".obj")) continue;
+
+              const stem     = lower.replace(/\.obj$/, "");
+              const imgEntry = imagesByStem.get(stem) || null;
+
+              let b64, mimeType, thumbFile;
+              if (imgEntry && !imgEntry.lower.includes("colormap")) {
+                // Same-stem non-colormap image found — use it directly
+                const blob = await zip.files[imgEntry.entryPath].async("nodebuffer");
+                b64        = blob.toString("base64");
+                mimeType   = imgEntry.lower.endsWith(".png") ? "image/png" : "image/jpeg";
+                thumbFile  = imgEntry.base;
+              } else {
+                // Fall back to pack-level non-colormap thumbnail
+                b64       = fallbackB64;
+                mimeType  = fallbackMime;
+                thumbFile = fallbackEntry ? fallbackEntry.base : null;
+              }
+
+              if (!b64) {
+                console.warn(`[ROSTER-GEN] ${sourceZip}/${base}: no thumbnail available — skipping`);
+                continue;
+              }
+
+              objectAssets.push({ objFile: base, thumbFile, b64, mimeType, sourceZip });
+              added++;
+            }
+            console.log(`[ROSTER-GEN] Object zip ${sourceZip}: ${added} obj asset(s) indexed`);
           }
-          objFiles.sort();
-          imageFiles.sort();
-          zipFileIndex.set(docxBaseName, { objFiles, imageFiles, _zipBuffer: zipBuffer });
-          console.log(`[ROSTER-GEN] Indexed ${zipBaseName} (${packType}): ${objFiles.length} obj, ${imageFiles.length} image(s)`);
         } catch (e) {
-          console.warn(`[ROSTER-GEN] Could not index zip ${zipBaseName}: ${e.message}`);
-        }
-      }));
-
-      folderData.push({ packType, docxResults, zipFileIndex });
-    }
-
-    // ── 3. Build catalog blocks for Phase 2 ─────────────────────────
-    // Each catalog block = truncated docx text + a compact exact-filename
-    // anchor manifest. We deliberately do NOT dump raw full ZIP inventories
-    // into Phase 2A because large packs can add tens of thousands of tokens.
-    // Matching must still be driven by descriptions, not filenames.
-
-    // ~8 000 chars ≈ 2 000 tokens per doc — leaves room for the Phase 1
-    // requirements JSON, wrapper instructions, and compact anchor manifests.
-    const MAX_DOC_CHARS = 8000;
-    const MAX_ANCHORS_PER_DOC = 120;
-
-    function buildDocEntry(folderEntry, docResult, packType) {
-      const rawText = docResult.text || "";
-      const text = rawText.length > MAX_DOC_CHARS
-        ? rawText.slice(0, MAX_DOC_CHARS) + "\n...[truncated — full descriptions in the original pack]"
-        : rawText;
-
-      const docAnchors = extractAssetAnchorsFromText(text, packType);
-      const zipInfo = folderEntry.zipFileIndex.get(docResult.baseName) || { objFiles: [], imageFiles: [] };
-      const packFiles = packType === "3d_object" ? zipInfo.objFiles : zipInfo.imageFiles;
-
-      let manifestLines = [];
-      if (docAnchors.length > 0) {
-        const shownAnchors = docAnchors.slice(0, MAX_ANCHORS_PER_DOC);
-        manifestLines = [
-          `EXACT ASSET ANCHORS IN DOC TEXT (copy verbatim for assetName — do NOT use as matching criterion):`,
-          ...shownAnchors.map(f => `  - ${f}`)
-        ];
-        if (docAnchors.length > shownAnchors.length) {
-          manifestLines.push(`  - ...(doc text contains ${docAnchors.length - shownAnchors.length} additional exact filename anchor(s) not repeated here)`);
-        }
-      } else if (packFiles.length > 0) {
-        const shownAnchors = packFiles.slice(0, MAX_ANCHORS_PER_DOC);
-        manifestLines = [
-          `ZIP ASSET SUMMARY: ${packFiles.length} total file(s) in pack. Full ZIP inventory intentionally omitted from Phase 2A to control token size.`,
-          `EXACT ASSET ANCHORS AVAILABLE (copy verbatim for assetName — shortlist only from anchors shown here):`,
-          ...shownAnchors.map(f => `  - ${f}`)
-        ];
-        if (packFiles.length > shownAnchors.length) {
-          manifestLines.push(`  - ...(showing first ${shownAnchors.length} of ${packFiles.length} exact filename anchor(s))`);
+          console.warn(`[ROSTER-GEN] Could not process zip ${sourceZip}: ${e.message}`);
         }
       }
-
-      const manifest = manifestLines.length > 0
-        ? `\n\n${manifestLines.join("\n")}`
-        : "";
-
-      return `\n=== PACK: ${docResult.baseName} ===\n${normalizeWhitespace(text)}${manifest}\n=== END: ${docResult.baseName} ===\n`;
     }
 
-    // Keep batches intentionally small. The catalogs dominate token cost,
-    // so a doc-count batch size of 1-2 is materially safer than large batch
-    // groups that can collapse back into one oversized prompt.
-    const DOCS_PER_BATCH = 2;
+    console.log(`[ROSTER-GEN] Asset library ready: ${particleAssets.length} particle textures, ${objectAssets.length} 3D objects`);
 
-    function chunkArray(arr, size) {
-      const out = [];
-      for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
-      return out;
-    }
+    // ── 4. Phase 1 — Game Visual Needs Analysis ──────────────────────────
+    console.log("[ROSTER-GEN] Phase 1: analyzing game visual requirements...");
 
-    const particleFolderData = folderData.find(f => f.packType === "particle_texture") || { docxResults: [], zipFileIndex: new Map() };
-    const objectFolderData   = folderData.find(f => f.packType === "3d_object")        || { docxResults: [], zipFileIndex: new Map() };
-
-    // Pre-build per-doc entry strings so we can reuse them across batches
-    const particleEntries = particleFolderData.docxResults.map(d => buildDocEntry(particleFolderData, d, "particle_texture"));
-    const objectEntries   = objectFolderData.docxResults.map(d => buildDocEntry(objectFolderData, d, "3d_object"));
-
-    // ── 4. Build image content blocks ───────────────────────────────
-    const imageBlocks = [];
-    for (const img of inlineImages) {
-      if (img.data && img.mimeType && img.mimeType.startsWith("image/")) {
-        imageBlocks.push({
-          type: "image",
-          source: { type: "base64", media_type: img.mimeType, data: img.data }
-        });
-      }
-    }
-    if (imageBlocks.length > 0) {
-      console.log(`[ROSTER-GEN] Loaded ${imageBlocks.length} reference image(s)`);
-    }
-    const imagePreamble = imageBlocks.length > 0
-      ? `\nREFERENCE IMAGES: ${imageBlocks.length} gameplay reference image(s) are attached. ` +
+    const imagePreamble = refImageBlocks.length > 0
+      ? `\nREFERENCE IMAGES: ${refImageBlocks.length} gameplay reference image(s) are attached. ` +
         `They carry authority equal to the Master Prompt. Use them to infer visual style, ` +
         `environment type, entity types, color palette, and particle FX requirements.\n\n`
       : "";
 
-    // ── 5. Phase 1 — Game Visual Needs Analysis ──────────────────────
-    console.log("[ROSTER-GEN] Phase 1: analyzing game visual requirements...");
     const phase1Result = await callClaude(apiKey, {
-      model:      "claude-sonnet-4-20250514",
-      maxTokens:  4000,
-      system:     "You are a game visual requirements analyst. Respond only with a valid JSON object. No markdown, no fences, no preamble.",
+      model:       "claude-sonnet-4-20250514",
+      maxTokens:   4000,
+      system:      "You are a game visual requirements analyst. Respond only with a valid JSON object. No markdown, no fences, no preamble.",
       userContent: [
         { type: "text", text: imagePreamble + buildPhase1Prompt(masterPrompt) },
-        ...imageBlocks
+        ...refImageBlocks
       ]
     });
 
@@ -586,263 +454,288 @@ exports.handler = async (event) => {
       console.error("[ROSTER-GEN] Phase 1 JSON parse failed:", phase1Result.text.slice(0, 500));
       return err500(`Phase 1 returned unparseable JSON: ${e.message}`);
     }
-    console.log(`[ROSTER-GEN] Phase 1 complete: ${(phase1.particleEffects||[]).length} particle effect(s), ${(phase1.objects3d||[]).length} 3D object(s) identified`);
+    console.log(`[ROSTER-GEN] Phase 1 complete: ${(phase1.particleEffects || []).length} particle effect(s), ${(phase1.objects3d || []).length} 3D object(s) identified`);
 
-    // ── 6. Phase 2A — Text-Only Shortlist (batched) ─────────────────
-    // Run Phase 2A once per batch-pair (particle chunk × object chunk).
-    // Results are merged by requirementName — candidates accumulate across
-    // batches so every requirement gets candidates from all packs.
-    console.log("[ROSTER-GEN] Phase 2A: text-based candidate shortlisting (batched)...");
+    const particleReqs = phase1.particleEffects || [];
+    const objectReqs   = phase1.objects3d       || [];
 
-    const particleBatches = chunkArray(particleEntries, DOCS_PER_BATCH);
-    const objectBatches   = chunkArray(objectEntries,   DOCS_PER_BATCH);
+    // ── 5. Stage A — Visual Library Scan ────────────────────────────────
+    /*
+       One pass through ALL assets of each type.
+       Each batch call sends IMAGES_PER_BATCH images + all requirements.
+       Claude returns which requirement indices each image matches.
+       Batches run sequentially per asset type; both types run concurrently.
 
-    // Ensure at least one pass even if both arrays are empty
-    const numBatches = Math.max(particleBatches.length, objectBatches.length, 1);
+       Result maps:
+         particleCandidates: Map<requirementName, asset[]>
+         objectCandidates:   Map<requirementName, asset[]>
+    */
+    console.log("[ROSTER-GEN] Stage A: visual library scan...");
 
-    // Accumulate candidates keyed by requirementName
-    const mergedParticleCandidates = new Map(); // name → { requirementName, candidates[] }
-    const mergedObjectCandidates   = new Map();
+    const particleCandidates = new Map(particleReqs.map(r => [r.name, []]));
+    const objectCandidates   = new Map(objectReqs.map(r   => [r.name, []]));
 
-    function mergeCandidateGroup(targetMap, groups) {
-      for (const group of (groups || [])) {
-        if (!group || !group.requirementName) continue;
-        if (!targetMap.has(group.requirementName)) {
-          targetMap.set(group.requirementName, { requirementName: group.requirementName, candidates: [] });
+    async function runStageABatches(assets, requirements, candidateMap, isParticle) {
+      if (requirements.length === 0 || assets.length === 0) return;
+
+      const batches   = chunkArray(assets, IMAGES_PER_BATCH);
+      const assetType = isParticle ? "particle" : "object";
+      console.log(`[ROSTER-GEN] Stage A ${assetType}: ${assets.length} assets → ${batches.length} batch(es) of up to ${IMAGES_PER_BATCH}`);
+
+      for (let b = 0; b < batches.length; b++) {
+        const batch = batches[b];
+        console.log(`[ROSTER-GEN] Stage A ${assetType} batch ${b + 1}/${batches.length} (${batch.length} images)`);
+
+        const imageBlocks = batch.map(asset => ({
+          type:   "image",
+          source: { type: "base64", media_type: asset.mimeType, data: asset.b64 }
+        }));
+
+        let batchResult;
+        try {
+          batchResult = await callClaude(apiKey, {
+            model:       "claude-sonnet-4-20250514",
+            maxTokens:   2000,
+            system:      "You are a game asset visual screener. Respond only with a valid JSON object. No markdown, no fences, no preamble.",
+            userContent: [
+              { type: "text", text: buildStageAPrompt(requirements, isParticle) },
+              ...imageBlocks
+            ]
+          });
+        } catch (e) {
+          console.warn(`[ROSTER-GEN] Stage A ${assetType} batch ${b + 1} failed: ${e.message} — skipping`);
+          continue;
         }
-        const existing = targetMap.get(group.requirementName);
-        for (const c of (group.candidates || [])) {
-          // Deduplicate by assetName
-          if (!existing.candidates.some(e => e.assetName === c.assetName)) {
-            existing.candidates.push(c);
+
+        let parsed;
+        try {
+          parsed = JSON.parse(stripFences(batchResult.text));
+        } catch (e) {
+          console.warn(`[ROSTER-GEN] Stage A ${assetType} batch ${b + 1} parse failed — skipping: ${e.message}`);
+          continue;
+        }
+
+        // Map Claude's 1-based image indices back to assets in this batch
+        for (const match of (parsed.matches || [])) {
+          const imgIdx = (match.imageIndex || 1) - 1; // 0-based
+          const asset  = batch[imgIdx];
+          if (!asset) continue;
+
+          for (const reqIdx of (match.matchesRequirements || [])) {
+            const req = requirements[reqIdx - 1]; // 0-based
+            if (!req) continue;
+            const candidates = candidateMap.get(req.name);
+            if (!candidates) continue;
+
+            // Deduplicate by asset filename
+            const key = isParticle ? asset.assetFile : asset.objFile;
+            if (!candidates.some(c => (isParticle ? c.assetFile : c.objFile) === key)) {
+              candidates.push(asset);
+            }
           }
         }
       }
-    }
 
-    for (let b = 0; b < numBatches; b++) {
-      const particleBlock = (particleBatches[b] || []).join("");
-      const objectBlock   = (objectBatches[b]   || []).join("");
-
-      // Skip batch if both blocks are empty
-      if (!particleBlock && !objectBlock) continue;
-
-      console.log(`[ROSTER-GEN] Phase 2A batch ${b + 1}/${numBatches}: ${(particleBatches[b]||[]).length} particle doc(s), ${(objectBatches[b]||[]).length} object doc(s)`);
-
-      const batchResult = await callClaude(apiKey, {
-        model:     "claude-sonnet-4-20250514",
-        maxTokens: 8000,
-        system:    "You are a game asset shortlisting specialist. Respond only with a valid JSON object. No markdown, no fences, no preamble.",
-        userContent: [
-          { type: "text", text: buildPhase2APrompt(phase1, particleBlock || "(none in this batch)", objectBlock || "(none in this batch)") }
-        ]
-      });
-
-      let batchParsed;
-      try {
-        batchParsed = JSON.parse(stripFences(batchResult.text));
-      } catch (e) {
-        console.warn(`[ROSTER-GEN] Phase 2A batch ${b + 1} JSON parse failed — skipping: ${e.message}`);
-        continue;
+      // Log Stage A hit counts per requirement
+      for (const [reqName, candidates] of candidateMap) {
+        console.log(`[ROSTER-GEN] Stage A ${assetType} "${reqName}": ${candidates.length} candidate(s)`);
       }
-
-      mergeCandidateGroup(mergedParticleCandidates, batchParsed.particleCandidates);
-      mergeCandidateGroup(mergedObjectCandidates,   batchParsed.objectCandidates);
     }
 
-    const phase2A = {
-      particleCandidates: [...mergedParticleCandidates.values()],
-      objectCandidates:   [...mergedObjectCandidates.values()]
-    };
+    // Run particle and object Stage A scans concurrently
+    await Promise.all([
+      runStageABatches(particleAssets, particleReqs, particleCandidates, true),
+      runStageABatches(objectAssets,   objectReqs,   objectCandidates,   false)
+    ]);
 
-    console.log(`[ROSTER-GEN] Phase 2A complete: ${phase2A.particleCandidates.length} particle groups, ${phase2A.objectCandidates.length} object groups`);
+    console.log("[ROSTER-GEN] Stage A complete");
 
-    // ── 7. Build thumbnail catalog from zip files ─────────────────────
-    // Zip buffers are already held in folderData[*].zipFileIndex._zipBuffer
-    // from step 2b — no extra Firebase downloads needed.
-    // Particle packs: each image file in the zip is its own thumbnail.
-    // 3D object packs: the second image in the zip is the shared stand-in
-    // thumbnail for every .obj in that pack.
-    console.log("[ROSTER-GEN] Building thumbnail catalog from zip files...");
-    const thumbnailCatalog = await buildThumbnailCatalogFromZips(folderData);
-    console.log(`[ROSTER-GEN] Thumbnail catalog ready: ${thumbnailCatalog.size} entries`);
-
-    // ── 8. Phase 2B — Visual Final Selection ─────────────────────────
-    // For each requirement group, send candidate thumbnails to Claude vision
-    // and get the final pick. Run all groups in parallel.
-    console.log("[ROSTER-GEN] Phase 2B: visual final selection...");
+    // ── 6. Stage B — Per-Requirement Final Visual Pick ───────────────────
+    /*
+       For each requirement, send its Stage A candidates to Claude for a
+       single final pick. All requirements run in parallel.
+       Requirements with no Stage A candidates become unmatched.
+    */
+    console.log("[ROSTER-GEN] Stage B: per-requirement final visual selection...");
 
     const gameInterpretation = phase1.gameInterpretationSummary || "";
 
-    async function runPhase2B(requirementName, requirementDesc, candidates, isParticle) {
-      // Resolve thumbnails for each candidate
-      const resolved = candidates.map(c => ({
-        ...c,
-        thumb: thumbnailCatalog.get(c.assetName.toLowerCase()) || null
-      })).filter(c => c.thumb !== null);
-
-      if (resolved.length === 0) {
-        // No thumbnails found — fall back to first text candidate
-        const fallback = candidates[0];
-        return fallback ? {
-          requirementName,
-          selectedAssetName:            fallback.assetName,
-          selectedSourceRosterDocument: fallback.sourceRosterDocument,
-          imageNumberChosen:            1,
-          visualSelectionRationale:     `No thumbnails available — selected by description: ${fallback.descriptionMatch}`
-        } : null;
+    async function runStageB(requirementName, requirementDesc, candidates, isParticle) {
+      if (candidates.length === 0) {
+        console.warn(`[ROSTER-GEN] Stage B: no candidates for "${requirementName}" — unmatched`);
+        return null;
       }
 
-      const thumbImageBlocks = resolved.map(c => ({
-        type: "image",
-        source: { type: "base64", media_type: c.thumb.mimeType, data: c.thumb.b64 }
+      const imageBlocks = candidates.map(c => ({
+        type:   "image",
+        source: { type: "base64", media_type: c.mimeType, data: c.b64 }
       }));
 
-      // Include reference game images for context
-      const refImageBlocks = imageBlocks.slice(0, 2); // max 2 ref images to save tokens
-      const refPreamble = refImageBlocks.length > 0
-        ? `\nREFERENCE GAME IMAGES: ${refImageBlocks.length} game reference image(s) are attached first, followed by the candidate thumbnails.\n\n`
-        : "";
-
-      const result = await callClaude(apiKey, {
-        model:     "claude-sonnet-4-20250514",
-        maxTokens: 1000,
-        system:    "You are a visual asset selection specialist. Respond only with a valid JSON object. No markdown, no fences, no preamble.",
-        userContent: [
-          { type: "text", text: buildPhase2BPrompt(requirementName, requirementDesc, resolved, isParticle, gameInterpretation, refPreamble) },
-          ...refImageBlocks,
-          ...thumbImageBlocks
-        ]
-      });
-
+      let result;
       try {
-        return JSON.parse(stripFences(result.text));
+        result = await callClaude(apiKey, {
+          model:       "claude-sonnet-4-20250514",
+          maxTokens:   1000,
+          system:      "You are a visual asset selection specialist. Respond only with a valid JSON object. No markdown, no fences, no preamble.",
+          userContent: [
+            { type: "text", text: buildStageBPrompt(requirementName, requirementDesc, candidates, isParticle, gameInterpretation) },
+            ...imageBlocks
+          ]
+        });
       } catch (e) {
-        console.warn(`[ROSTER-GEN] Phase 2B parse failed for ${requirementName}: ${e.message}`);
-        // Fall back to first resolved candidate
+        console.warn(`[ROSTER-GEN] Stage B failed for "${requirementName}": ${e.message} — using first candidate`);
         return {
           requirementName,
-          selectedAssetName:            resolved[0].assetName,
-          selectedSourceRosterDocument: resolved[0].sourceRosterDocument,
-          imageNumberChosen:            1,
-          visualSelectionRationale:     "Fallback: parse error on visual selection",
-          colormapFile:                 isParticle ? null : "colormap.jpg"
+          selectedAsset:            candidates[0],
+          imageNumberChosen:        1,
+          visualSelectionRationale: `Fallback: Stage B API error — ${e.message}`,
+          colormapFile:             isParticle ? null : "colormap.jpg"
         };
       }
+
+      let parsed;
+      try {
+        parsed = JSON.parse(stripFences(result.text));
+      } catch (e) {
+        console.warn(`[ROSTER-GEN] Stage B parse failed for "${requirementName}" — using first candidate`);
+        parsed = { imageNumberChosen: 1, visualSelectionRationale: "Fallback: parse error", colormapFile: "colormap.jpg" };
+      }
+
+      const chosenIdx = Math.min((parsed.imageNumberChosen || 1) - 1, candidates.length - 1);
+      const chosen    = candidates[chosenIdx];
+
+      return {
+        requirementName,
+        selectedAsset:            chosen,
+        imageNumberChosen:        parsed.imageNumberChosen || 1,
+        visualSelectionRationale: parsed.visualSelectionRationale || "",
+        colormapFile:             parsed.colormapFile || (isParticle ? null : "colormap.jpg")
+      };
     }
 
-    // Build requirement descriptions map from Phase 1
-    const particleDescMap = new Map((phase1.particleEffects || []).map(e => [e.name, e.visualDescription + " — " + (e.behaviorDescription || "")]));
-    const objectDescMap   = new Map((phase1.objects3d       || []).map(e => [e.name, e.visualDescription + " — " + (e.gameplayRole || "")]));
+    const particleDescMap = new Map(particleReqs.map(r => [
+      r.name,
+      r.visualDescription + (r.behaviorDescription ? ` — ${r.behaviorDescription}` : "")
+    ]));
+    const objectDescMap = new Map(objectReqs.map(r => [
+      r.name,
+      r.visualDescription + (r.gameplayRole ? ` — ${r.gameplayRole}` : "")
+    ]));
 
-    // Run all Phase 2B calls in parallel
     const [particleResults, objectResults] = await Promise.all([
-      Promise.all((phase2A.particleCandidates || []).map(group =>
-        runPhase2B(group.requirementName, particleDescMap.get(group.requirementName) || "", group.candidates || [], true)
+      Promise.all(particleReqs.map(r =>
+        runStageB(r.name, particleDescMap.get(r.name) || "", particleCandidates.get(r.name) || [], true)
       )),
-      Promise.all((phase2A.objectCandidates || []).map(group =>
-        runPhase2B(group.requirementName, objectDescMap.get(group.requirementName) || "", group.candidates || [], false)
+      Promise.all(objectReqs.map(r =>
+        runStageB(r.name, objectDescMap.get(r.name) || "", objectCandidates.get(r.name) || [], false)
       ))
     ]);
 
-    console.log(`[ROSTER-GEN] Phase 2B complete: ${particleResults.filter(Boolean).length} particle selections, ${objectResults.filter(Boolean).length} object selections`);
+    console.log(
+      `[ROSTER-GEN] Stage B complete: ${particleResults.filter(Boolean).length} particle selections, ` +
+      `${objectResults.filter(Boolean).length} object selections`
+    );
 
-    // ── 9. Assemble final roster from Phase 2B results ────────────────
-    // Map Phase 2B winners back to full asset entries, embed thumbnails
-    function assembleAsset(phase2bResult, isParticle, phase1Req) {
-      if (!phase2bResult) return null;
-      const thumb = thumbnailCatalog.get(phase2bResult.selectedAssetName.toLowerCase());
-      const p1    = phase1Req || {};
-
-      if (isParticle) {
-        return {
-          assetName:              phase2bResult.selectedAssetName,
-          sourceRosterDocument:   phase2bResult.selectedSourceRosterDocument,
-          intendedUsage:          `Particle effect: ${phase2bResult.requirementName}`,
-          particleEffectTarget:   phase2bResult.requirementName,
-          matchedRequirement:     phase2bResult.requirementName,
-          selectionRationale:     phase2bResult.visualSelectionRationale,
-          thumbnailB64:           thumb ? thumb.b64 : null,
-          thumbnailMime:          thumb ? thumb.mimeType : null
-        };
-      } else {
-        return {
-          assetName:              phase2bResult.selectedAssetName,
-          sourceRosterDocument:   phase2bResult.selectedSourceRosterDocument,
-          intendedRole:           p1.gameplayRole || p1.visualDescription || phase2bResult.requirementName || "",
-          matchedRequirement:     phase2bResult.requirementName,
-          selectionRationale:     phase2bResult.visualSelectionRationale,
-          colormapFile:           phase2bResult.colormapFile || "colormap.jpg",
-          colormapConfidence:     phase2bResult.colormapFile ? "HIGH" : "MEDIUM",
-          thumbnailB64:           thumb ? thumb.b64 : null,
-          thumbnailMime:          thumb ? thumb.mimeType : null
-        };
-      }
+    // ── 7. Assemble final roster ─────────────────────────────────────────
+    function assembleParticleAsset(stageBResult, phase1Req) {
+      if (!stageBResult) return null;
+      const asset = stageBResult.selectedAsset;
+      return {
+        assetName:            asset.assetFile,
+        sourceZip:            asset.sourceZip,
+        intendedUsage:        `Particle effect: ${stageBResult.requirementName}`,
+        particleEffectTarget: stageBResult.requirementName,
+        matchedRequirement:   stageBResult.requirementName,
+        selectionRationale:   stageBResult.visualSelectionRationale,
+        thumbnailB64:         asset.b64,
+        thumbnailMime:        asset.mimeType
+      };
     }
 
-    const phase1ParticleMap = new Map((phase1.particleEffects || []).map(e => [e.name, e]));
-    const phase1ObjectMap   = new Map((phase1.objects3d       || []).map(e => [e.name, e]));
+    function assembleObjectAsset(stageBResult, phase1Req) {
+      if (!stageBResult) return null;
+      const asset = stageBResult.selectedAsset;
+      const p1    = phase1Req || {};
+      return {
+        assetName:          asset.objFile,
+        thumbFile:          asset.thumbFile,
+        sourceZip:          asset.sourceZip,
+        intendedRole:       p1.gameplayRole || p1.visualDescription || stageBResult.requirementName || "",
+        matchedRequirement: stageBResult.requirementName,
+        selectionRationale: stageBResult.visualSelectionRationale,
+        colormapFile:       stageBResult.colormapFile || "colormap.jpg",
+        colormapConfidence: stageBResult.colormapFile ? "HIGH" : "MEDIUM",
+        thumbnailB64:       asset.b64,
+        thumbnailMime:      asset.mimeType
+      };
+    }
 
-    const textureAssets    = particleResults.filter(Boolean).map(r => assembleAsset(r, true,  phase1ParticleMap.get(r.requirementName))).filter(Boolean);
-    const objects3d = objectResults.filter(Boolean).map(r  => assembleAsset(r, false, phase1ObjectMap.get(r.requirementName))).filter(Boolean);
+    const phase1ParticleMap = new Map(particleReqs.map(r => [r.name, r]));
+    const phase1ObjectMap   = new Map(objectReqs.map(r   => [r.name, r]));
 
-    // Determine unmatched requirements
+    const textureAssets = particleResults
+      .filter(Boolean)
+      .map(r => assembleParticleAsset(r, phase1ParticleMap.get(r.requirementName)))
+      .filter(Boolean);
+
+    const objects3d = objectResults
+      .filter(Boolean)
+      .map(r => assembleObjectAsset(r, phase1ObjectMap.get(r.requirementName)))
+      .filter(Boolean);
+
     const matchedParticleNames = new Set(textureAssets.map(a => a.matchedRequirement));
-    const matchedObjectNames   = new Set(objects3d.map(a => a.matchedRequirement));
+    const matchedObjectNames   = new Set(objects3d.map(a     => a.matchedRequirement));
+
     const unmatchedRequirements = [
-      ...(phase1.particleEffects || []).filter(e => !matchedParticleNames.has(e.name)).map(e => ({
-        requirementName: e.name, type: "particle_effect", reason: "No candidates found or thumbnail unavailable"
+      ...particleReqs.filter(r => !matchedParticleNames.has(r.name)).map(r => ({
+        requirementName: r.name, type: "particle_effect", reason: "No visual candidates found in Stage A"
       })),
-      ...(phase1.objects3d || []).filter(e => !matchedObjectNames.has(e.name)).map(e => ({
-        requirementName: e.name, type: "object_3d", reason: "No candidates found or thumbnail unavailable"
+      ...objectReqs.filter(r => !matchedObjectNames.has(r.name)).map(r => ({
+        requirementName: r.name, type: "object_3d", reason: "No visual candidates found in Stage A"
       }))
     ];
 
-    const vn = {};
     const roster = {
-      documentTitle:            `Game-Specific Asset Roster`,
+      documentTitle:             "Game-Specific Asset Roster",
       gameInterpretationSummary: phase1.gameInterpretationSummary || "",
       objects3d,
       textureAssets,
       unmatchedRequirements,
       coverageSummary: {
-        totalObjects3d: objects3d.length,
+        totalObjects3d:  objects3d.length,
         totalTextures:   textureAssets.length,
         totalUnmatched:  unmatchedRequirements.length,
         limitsRespected: objects3d.length <= MAX_OBJ_ASSETS && textureAssets.length <= MAX_PNG_ASSETS,
-        coverageNotes:   `${objects3d.length} objects and ${textureAssets.length} particle textures matched via visual confirmation.`
+        coverageNotes:   `${objects3d.length} objects and ${textureAssets.length} particle textures selected via visual-only pipeline.`
       },
-      visualDirectionNotes: vn
+      visualDirectionNotes: {}
     };
 
-    // Attach phase 1 analysis for UI display
     roster._phase1Analysis = phase1;
     enforceHardLimits(roster);
 
-    // Collect all docx names seen across both folders for metadata
-    const allDocxNames = folderData.flatMap(f => f.docxResults.map(d => d.baseName));
-
     roster._meta = {
       jobId,
-      generatedAt:        Date.now(),
-      availableRosterDocs: allDocxNames,
-      imageCount:         imageBlocks.length,
-      approved:           false
+      generatedAt:         Date.now(),
+      totalParticleAssets: particleAssets.length,
+      totalObjectAssets:   objectAssets.length,
+      imageCount:          refImageBlocks.length,
+      approved:            false
     };
 
-    // ── 7. Save pending roster to Firebase ───────────────────────────
+    // ── 8. Save pending roster to Firebase ──────────────────────────────
     await bucket.file(`${projectPath}/ai_asset_roster_pending.json`).save(
       JSON.stringify(roster, null, 2),
       { contentType: "application/json", resumable: false }
     );
 
     console.log(
-      `[ROSTER-GEN] Complete. Objects: ${(roster.objects3d||[]).length}, ` +
-      `Textures: ${(roster.textureAssets||[]).length}, ` +
-      `Unmatched: ${(roster.unmatchedRequirements||[]).length}`
+      `[ROSTER-GEN] Complete. Objects: ${(roster.objects3d || []).length}, ` +
+      `Textures: ${(roster.textureAssets || []).length}, ` +
+      `Unmatched: ${(roster.unmatchedRequirements || []).length}`
     );
 
-    return { statusCode: 202, body: '' };
+    return { statusCode: 202, body: "" };
 
   } catch (error) {
     console.error("[ROSTER-GEN] Unhandled error:", error);
@@ -852,10 +745,8 @@ exports.handler = async (event) => {
           JSON.stringify({ error: error.message, failedAt: Date.now() }),
           { contentType: "application/json", resumable: false }
         );
-      } catch(e) { /* non-fatal */ }
+      } catch (e) { /* non-fatal */ }
     }
-    return { statusCode: 202, body: '' };
+    return { statusCode: 202, body: "" };
   }
 };
-
-
