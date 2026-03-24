@@ -4968,7 +4968,9 @@ Original user request for context: ${basePrompt}`;
           structured list of required particle effects and 3D objects.
           Phase 2: matches each requirement to catalog assets by AI
           description (from .docx files in Asset_Particle_Textures/ and
-          Asset_3D_Objects/). Filenames are output only, not selection criteria.
+          Asset_3D_Objects/), then performs visual confirmation using
+          thumbnails built from the co-located asset zip files. Filenames
+          are output only, not selection criteria.
        2. Renders the roster in the UI for user review.
        3. Blocks until user approves (or requests regeneration).
        4. On approval calls claudeRosterExtract to extract approved assets

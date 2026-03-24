@@ -17,8 +17,8 @@
         and for each Phase 1 requirement shortlists 8-12 plausible
         candidate assets. Wide net, no visual check yet.
      5. PHASE 2B — For each requirement, the shortlisted candidate
-        thumbnails are extracted from the docx and sent to Claude
-        as vision inputs alongside the reference game images.
+        thumbnails are built from the co-located asset zip files and sent
+        to Claude as vision inputs alongside the reference game images.
         Claude makes the final pick purely by visual match.
         Runs all requirements in parallel.
      6. Thumbnails of selected assets are embedded in the roster JSON
@@ -270,64 +270,93 @@ Respond ONLY with a valid JSON object. No markdown, no fences, no preamble.
 }`;
 }
 
-/* ─── Extract thumbnail catalog from docx buffer ─────────────── */
-/* Returns Map: filename (lowercase) → { b64: string, mimeType: string, sourceDoc: string } */
-async function extractThumbnailCatalog(docxResults) {
+/* ─── Build thumbnail catalog from asset zip files ───────────── */
+/*
+   Previous approach: extracted thumbnails from inside the .docx by trying
+   to pair Word image blips with filename text cells by positional index.
+   This was unreliable — Word XML interleaves decorative/header images with
+   content images, so the index assumption breaks and the catalog came out
+   empty or mismatched, causing 0 Phase 2B hits.
+
+   New approach: the .zip co-located with each .docx already contains the
+   actual asset files (the .png textures and .obj models). For particle
+   packs, the zip contains image assets directly, so each image is used as
+   its own thumbnail. For 3D object packs, NEVER use the colormap image as
+   the visual stand-in. Instead, use the second available image in the zip
+   folder as the shared thumbnail stand-in for every .obj in that pack.
+
+   Keys are lowercase asset filenames, exactly matching what Claude is
+   instructed to output in Phase 2A — so Phase 2B lookups will actually hit.
+*/
+async function buildThumbnailCatalogFromZips(folderData) {
   const catalog = new Map();
-  for (const { baseName, buffer } of docxResults) {
-    if (!buffer) continue;
-    try {
-      const zip     = await JSZip.loadAsync(buffer);
-      const xmlFile = zip.file("word/document.xml");
-      if (!xmlFile) continue;
-      const xmlText = await xmlFile.async("string");
 
-      // Find all inline image rId references in document order
-      const blipMatches = [...xmlText.matchAll(/r:embed="(rId\d+)"/g)].map(m => m[1]);
+  for (const { packType, docxResults, zipFileIndex } of folderData) {
+    for (const { baseName: docxBaseName } of docxResults) {
+      const zipEntry = zipFileIndex.get(docxBaseName);
+      if (!zipEntry || !zipEntry._zipBuffer) continue;
 
-      // Build rId → image blob map from relationships
-      const relsFile = zip.file("word/_rels/document.xml.rels");
-      if (!relsFile) continue;
-      const relsText = await relsFile.async("string");
-      const relMap   = new Map();
-      for (const m of relsText.matchAll(/Id="(rId\d+)"[^>]+Target="([^"]+)"/g)) {
-        relMap.set(m[1], m[2]); // rId → relative path like "media/image1.jpeg"
+      try {
+        const zip = await JSZip.loadAsync(zipEntry._zipBuffer);
+
+        if (packType === "particle_texture") {
+          // Each .png in the zip IS an asset — use it directly as its own thumbnail
+          for (const entryPath of Object.keys(zip.files)) {
+            if (zip.files[entryPath].dir) continue;
+            const base  = entryPath.split("/").pop();
+            const lower = base.toLowerCase();
+            if (![".png",".jpg",".jpeg",".webp"].some(e => lower.endsWith(e))) continue;
+
+            const blob     = await zip.files[entryPath].async("nodebuffer");
+            const mimeType = lower.endsWith(".png") ? "image/png" : "image/jpeg";
+            catalog.set(lower, { b64: blob.toString("base64"), mimeType, sourceDoc: docxBaseName });
+          }
+
+        } else {
+          // 3D object pack — NEVER use the colormap image as the visual stand-in.
+          // Use the second available image in the zip as the shared thumbnail for
+          // every .obj in this pack. If fewer than two images exist, leave the
+          // thumbnail null and let downstream fuzzy / fallback handling decide.
+          const imageEntries = Object.keys(zip.files)
+            .filter(p => {
+              if (zip.files[p].dir) return false;
+              const l = p.split("/").pop().toLowerCase();
+              return [".png",".jpg",".jpeg",".webp"].some(e => l.endsWith(e));
+            })
+            .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base", numeric: true }));
+
+          const standInEntry = imageEntries.length >= 2 ? imageEntries[1] : null;
+
+          let thumbB64   = null;
+          let thumbMime  = "image/jpeg";
+          if (standInEntry) {
+            const blob = await zip.files[standInEntry].async("nodebuffer");
+            thumbB64   = blob.toString("base64");
+            thumbMime  = standInEntry.toLowerCase().endsWith(".png") ? "image/png" : "image/jpeg";
+          } else {
+            console.warn(`[ROSTER-GEN] ${docxBaseName}: 3D object zip has fewer than 2 images; no stand-in thumbnail assigned`);
+          }
+
+          // Register every .obj filename in this pack against the shared stand-in thumb
+          for (const entryPath of Object.keys(zip.files)) {
+            if (zip.files[entryPath].dir) continue;
+            const base  = entryPath.split("/").pop();
+            if (!base.toLowerCase().endsWith(".obj")) continue;
+            catalog.set(base.toLowerCase(), {
+              b64:       thumbB64,
+              mimeType:  thumbMime,
+              sourceDoc: docxBaseName
+            });
+          }
+        }
+
+        console.log(`[ROSTER-GEN] Thumbnail catalog after ${docxBaseName}: ${catalog.size} entries`);
+      } catch (e) {
+        console.warn(`[ROSTER-GEN] Could not build thumbnails from zip for ${docxBaseName}: ${e.message}`);
       }
-
-      // Extract all filename cells — document.xml has w:t elements with text
-      // We need to pair image blips (in order) with filename text (in order)
-      // Strategy: extract all text runs and find the table structure
-      // Simplified: use same-order assumption — blip N corresponds to row N+1 filename
-      const textMatches = [...xmlText.matchAll(/<w:t[^>]*>([^<]+)<\/w:t>/g)].map(m => m[1].trim()).filter(Boolean);
-
-      // Find filenames — they are the text cells containing extensions like .png/.obj
-      const filenames = textMatches.filter(t => /\.(png|jpg|jpeg|webp|obj|glb)$/i.test(t));
-
-      // Pair blips with filenames by index
-      for (let i = 0; i < Math.min(blipMatches.length, filenames.length); i++) {
-        const rId      = blipMatches[i];
-        const filename = filenames[i].toLowerCase();
-        const relPath  = relMap.get(rId);
-        if (!relPath) continue;
-
-        // relPath is like "media/image1.jpeg" — prepend "word/"
-        const imgPath  = relPath.startsWith("media/") ? `word/${relPath}` : relPath;
-        const imgFile  = zip.file(imgPath);
-        if (!imgFile) continue;
-
-        const blob     = await imgFile.async("nodebuffer");
-        const mimeType = imgPath.endsWith(".png") ? "image/png" : "image/jpeg";
-        catalog.set(filename, {
-          b64:       blob.toString("base64"),
-          mimeType,
-          sourceDoc: baseName
-        });
-      }
-      console.log(`[ROSTER-GEN] Thumbnail catalog: ${catalog.size} entries from ${baseName}`);
-    } catch (e) {
-      console.warn(`[ROSTER-GEN] Could not extract thumbnails from ${baseName}: ${e.message}`);
     }
   }
+
   return catalog;
 }
 
@@ -416,7 +445,7 @@ exports.handler = async (event) => {
           }
           objFiles.sort();
           imageFiles.sort();
-          zipFileIndex.set(docxBaseName, { objFiles, imageFiles });
+          zipFileIndex.set(docxBaseName, { objFiles, imageFiles, _zipBuffer: zipBuffer });
           console.log(`[ROSTER-GEN] Indexed ${zipBaseName} (${packType}): ${objFiles.length} obj, ${imageFiles.length} image(s)`);
         } catch (e) {
           console.warn(`[ROSTER-GEN] Could not index zip ${zipBaseName}: ${e.message}`);
@@ -427,50 +456,27 @@ exports.handler = async (event) => {
     }
 
     // ── 3. Build catalog blocks for Phase 2 ─────────────────────────
-    // Each catalog block = docx text content (truncated) + exact available
-    // filenames from the co-located zip. Text is capped per-doc to keep
-    // individual prompts well under the 200k token limit even with large
-    // asset libraries. Matching must be driven by AI descriptions, not filenames.
-
-    // ~8 000 chars ≈ 2 000 tokens per doc — leaves ample room for the
-    // Phase 1 requirements JSON and the prompt wrapper.
-    const MAX_DOC_CHARS = 8000;
-
-    function buildDocEntry(folderEntry, docResult) {
-      const text = docResult.text.length > MAX_DOC_CHARS
-        ? docResult.text.slice(0, MAX_DOC_CHARS) + "\n...[truncated — full descriptions in the original pack]"
-        : docResult.text;
-
-      const fileList = (() => {
-        if (!folderEntry.zipFileIndex.has(docResult.baseName)) return "";
-        const { objFiles, imageFiles } = folderEntry.zipFileIndex.get(docResult.baseName);
-        const lines = [];
-        if (objFiles.length   > 0) lines.push(`EXACT FILENAMES IN ZIP (use verbatim for assetName — do NOT use as matching criterion):\n${objFiles.map(f => `  - ${f}`).join("\n")}`);
-        if (imageFiles.length > 0) lines.push(`EXACT FILENAMES IN ZIP (use verbatim for assetName — do NOT use as matching criterion):\n${imageFiles.map(f => `  - ${f}`).join("\n")}`);
-        return lines.join("\n\n");
-      })();
-
-      return `\n=== PACK: ${docResult.baseName} ===\n${text}${fileList ? "\n\n" + fileList : ""}\n=== END: ${docResult.baseName} ===\n`;
-    }
-
-    // Split a folder's docx list into batches that fit safely within the
-    // token limit. We estimate ~2 500 tokens per doc (text + filenames after
-    // truncation) and keep each batch under 60 docs-worth of budget, which
-    // in practice means 1-2 batches for typical libraries.
-    const DOCS_PER_BATCH = 8; // conservative — adjust upward if desired
-
-    function chunkArray(arr, size) {
-      const out = [];
-      for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
-      return out;
+    // Each catalog block = docx text content + exact available filenames
+    // from the co-located zip. Filenames are listed for output accuracy
+    // only — matching must be driven by AI descriptions.
+    function buildCatalogBlock(folderEntry) {
+      return folderEntry.docxResults.map(d => {
+        const fileList = (() => {
+          if (!folderEntry.zipFileIndex.has(d.baseName)) return "";
+          const { objFiles, imageFiles } = folderEntry.zipFileIndex.get(d.baseName);
+          const lines = [];
+          if (objFiles.length   > 0) lines.push(`EXACT FILENAMES IN ZIP (use verbatim for assetName — do NOT use as matching criterion):\n${objFiles.map(f => `  - ${f}`).join("\n")}`);
+          if (imageFiles.length > 0) lines.push(`EXACT FILENAMES IN ZIP (use verbatim for assetName — do NOT use as matching criterion):\n${imageFiles.map(f => `  - ${f}`).join("\n")}`);
+          return lines.join("\n\n");
+        })();
+        return `\n=== PACK: ${d.baseName} ===\n${d.text}${fileList ? "\n\n" + fileList : ""}\n=== END: ${d.baseName} ===\n`;
+      }).join("");
     }
 
     const particleFolderData = folderData.find(f => f.packType === "particle_texture") || { docxResults: [], zipFileIndex: new Map() };
     const objectFolderData   = folderData.find(f => f.packType === "3d_object")        || { docxResults: [], zipFileIndex: new Map() };
-
-    // Pre-build per-doc entry strings so we can reuse them across batches
-    const particleEntries = particleFolderData.docxResults.map(d => buildDocEntry(particleFolderData, d));
-    const objectEntries   = objectFolderData.docxResults.map(d => buildDocEntry(objectFolderData, d));
+    const particleDocsBlock  = buildCatalogBlock(particleFolderData);
+    const objectDocsBlock    = buildCatalogBlock(objectFolderData);
 
     // ── 4. Build image content blocks ───────────────────────────────
     const imageBlocks = [];
@@ -512,102 +518,38 @@ exports.handler = async (event) => {
     }
     console.log(`[ROSTER-GEN] Phase 1 complete: ${(phase1.particleEffects||[]).length} particle effect(s), ${(phase1.objects3d||[]).length} 3D object(s) identified`);
 
-    // ── 6. Phase 2A — Text-Only Shortlist (batched) ─────────────────
-    // Run Phase 2A once per batch-pair (particle chunk × object chunk).
-    // Results are merged by requirementName — candidates accumulate across
-    // batches so every requirement gets candidates from all packs.
-    console.log("[ROSTER-GEN] Phase 2A: text-based candidate shortlisting (batched)...");
+    // ── 6. Phase 2A — Text-Only Shortlist ────────────────────────────
+    console.log("[ROSTER-GEN] Phase 2A: text-based candidate shortlisting...");
+    const phase2AResult = await callClaude(apiKey, {
+      model:     "claude-sonnet-4-20250514",
+      maxTokens: 8000,
+      system:    "You are a game asset shortlisting specialist. Respond only with a valid JSON object. No markdown, no fences, no preamble.",
+      userContent: [
+        { type: "text", text: buildPhase2APrompt(phase1, particleDocsBlock, objectDocsBlock) }
+      ]
+    });
 
-    const particleBatches = chunkArray(particleEntries, DOCS_PER_BATCH);
-    const objectBatches   = chunkArray(objectEntries,   DOCS_PER_BATCH);
-
-    // Ensure at least one pass even if both arrays are empty
-    const numBatches = Math.max(particleBatches.length, objectBatches.length, 1);
-
-    // Accumulate candidates keyed by requirementName
-    const mergedParticleCandidates = new Map(); // name → { requirementName, candidates[] }
-    const mergedObjectCandidates   = new Map();
-
-    function mergeCandidateGroup(targetMap, groups) {
-      for (const group of (groups || [])) {
-        if (!group || !group.requirementName) continue;
-        if (!targetMap.has(group.requirementName)) {
-          targetMap.set(group.requirementName, { requirementName: group.requirementName, candidates: [] });
-        }
-        const existing = targetMap.get(group.requirementName);
-        for (const c of (group.candidates || [])) {
-          // Deduplicate by assetName
-          if (!existing.candidates.some(e => e.assetName === c.assetName)) {
-            existing.candidates.push(c);
-          }
-        }
-      }
+    let phase2A;
+    try {
+      phase2A = JSON.parse(stripFences(phase2AResult.text));
+    } catch (e) {
+      console.error("[ROSTER-GEN] Phase 2A JSON parse failed:", phase2AResult.text.slice(0, 500));
+      return err500(`Phase 2A returned unparseable JSON: ${e.message}`);
     }
+    console.log(`[ROSTER-GEN] Phase 2A complete: ${(phase2A.particleCandidates||[]).length} particle groups, ${(phase2A.objectCandidates||[]).length} object groups`);
 
-    for (let b = 0; b < numBatches; b++) {
-      const particleBlock = (particleBatches[b] || []).join("");
-      const objectBlock   = (objectBatches[b]   || []).join("");
-
-      // Skip batch if both blocks are empty
-      if (!particleBlock && !objectBlock) continue;
-
-      console.log(`[ROSTER-GEN] Phase 2A batch ${b + 1}/${numBatches}: ${(particleBatches[b]||[]).length} particle doc(s), ${(objectBatches[b]||[]).length} object doc(s)`);
-
-      const batchResult = await callClaude(apiKey, {
-        model:     "claude-sonnet-4-20250514",
-        maxTokens: 8000,
-        system:    "You are a game asset shortlisting specialist. Respond only with a valid JSON object. No markdown, no fences, no preamble.",
-        userContent: [
-          { type: "text", text: buildPhase2APrompt(phase1, particleBlock || "(none in this batch)", objectBlock || "(none in this batch)") }
-        ]
-      });
-
-      let batchParsed;
-      try {
-        batchParsed = JSON.parse(stripFences(batchResult.text));
-      } catch (e) {
-        console.warn(`[ROSTER-GEN] Phase 2A batch ${b + 1} JSON parse failed — skipping: ${e.message}`);
-        continue;
-      }
-
-      mergeCandidateGroup(mergedParticleCandidates, batchParsed.particleCandidates);
-      mergeCandidateGroup(mergedObjectCandidates,   batchParsed.objectCandidates);
-    }
-
-    const phase2A = {
-      particleCandidates: [...mergedParticleCandidates.values()],
-      objectCandidates:   [...mergedObjectCandidates.values()]
-    };
-
-    console.log(`[ROSTER-GEN] Phase 2A complete: ${phase2A.particleCandidates.length} particle groups, ${phase2A.objectCandidates.length} object groups`);
-
-    // ── 7. Build thumbnail catalogs from docx buffers ─────────────────
-    // We need the raw docx buffers — re-download them (already in folderData
-    // as text only). Build a combined thumbnail map from both folders.
-    console.log("[ROSTER-GEN] Extracting thumbnails from docx files...");
-
-    // Collect docx buffers — we need to re-download since we only stored text
-    const allDocxWithBuffers = [];
-    for (const { prefix } of ASSET_FOLDERS) {
-      let folderFiles;
-      try { [folderFiles] = await bucket.getFiles({ prefix }); } catch (e) { continue; }
-      const docxFiles = (folderFiles || []).filter(f => f.name.toLowerCase().endsWith(".docx"));
-      for (const docFile of docxFiles) {
-        const baseName = docFile.name.split("/").pop();
-        try {
-          const [buf] = await docFile.download();
-          allDocxWithBuffers.push({ baseName, buffer: buf });
-        } catch (e) {
-          console.warn(`[ROSTER-GEN] Could not re-download ${baseName} for thumbnails: ${e.message}`);
-        }
-      }
-    }
-    const thumbnailCatalog = await extractThumbnailCatalog(allDocxWithBuffers);
+    // ── 7. Build thumbnail catalog from zip files ─────────────────────
+    // Uses the zip buffers already downloaded in step 2 — no extra network
+    // calls needed.  Keys are lowercase asset filenames that exactly match
+    // what Claude outputs in Phase 2A, so Phase 2B lookups will resolve.
+    console.log("[ROSTER-GEN] Building thumbnail catalog from zip files...");
+    const thumbnailCatalog = await buildThumbnailCatalogFromZips(folderData);
     console.log(`[ROSTER-GEN] Thumbnail catalog ready: ${thumbnailCatalog.size} entries`);
 
     // ── 8. Phase 2B — Visual Final Selection ─────────────────────────
-    // For each requirement group, send candidate thumbnails to Claude vision
-    // and get the final pick. Run all groups in parallel.
+    // For each requirement group, send candidate thumbnails derived from the
+    // co-located asset zip files to Claude vision and get the final pick.
+    // Run all groups in parallel.
     console.log("[ROSTER-GEN] Phase 2B: visual final selection...");
 
     const gameInterpretation = phase1.gameInterpretationSummary || "";
@@ -620,15 +562,51 @@ exports.handler = async (event) => {
       })).filter(c => c.thumb !== null);
 
       if (resolved.length === 0) {
-        // No thumbnails found — fall back to first text candidate
-        const fallback = candidates[0];
-        return fallback ? {
-          requirementName,
-          selectedAssetName:            fallback.assetName,
-          selectedSourceRosterDocument: fallback.sourceRosterDocument,
-          imageNumberChosen:            1,
-          visualSelectionRationale:     `No thumbnails available — selected by description: ${fallback.descriptionMatch}`
-        } : null;
+        // Phase 2A candidates didn't match any real catalog keys.
+        // This usually means Claude used slightly wrong filenames.
+        // Fallback: fuzzy-scan the thumbnail catalog for any key that shares
+        // meaningful tokens with the requirement name or any candidate name.
+        console.warn(`[ROSTER-GEN] Phase 2B: no thumbnails for "${requirementName}" — attempting fuzzy catalog fallback`);
+
+        const reqTokens = requirementName.toLowerCase().replace(/_/g, " ").split(/\s+/);
+        const candidateTokens = candidates.flatMap(c =>
+          c.assetName.toLowerCase().replace(/[_\-\.]/g, " ").split(/\s+/)
+        );
+        const allTokens = [...new Set([...reqTokens, ...candidateTokens])].filter(t => t.length > 2);
+
+        let bestKey   = null;
+        let bestScore = 0;
+        for (const [key] of thumbnailCatalog) {
+          const score = allTokens.filter(t => key.includes(t)).length;
+          if (score > bestScore) { bestScore = score; bestKey = key; }
+        }
+
+        if (bestKey) {
+          const hit = thumbnailCatalog.get(bestKey);
+          console.log(`[ROSTER-GEN] Fuzzy fallback for "${requirementName}": using "${bestKey}" (score ${bestScore})`);
+          return {
+            requirementName,
+            selectedAssetName:            bestKey,
+            selectedSourceRosterDocument: hit.sourceDoc,
+            imageNumberChosen:            1,
+            visualSelectionRationale:     `Fuzzy fallback — no exact thumbnail match for Phase 2A candidates; selected by keyword similarity to requirement`
+          };
+        }
+
+        // Absolute last resort — first entry in catalog
+        const firstKey = thumbnailCatalog.keys().next().value;
+        if (firstKey) {
+          const hit = thumbnailCatalog.get(firstKey);
+          return {
+            requirementName,
+            selectedAssetName:            firstKey,
+            selectedSourceRosterDocument: hit.sourceDoc,
+            imageNumberChosen:            1,
+            visualSelectionRationale:     `Last-resort fallback — no thumbnail or keyword match found`
+          };
+        }
+
+        return null; // catalog is completely empty
       }
 
       const thumbImageBlocks = resolved.map(c => ({
