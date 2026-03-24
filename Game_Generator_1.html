@@ -5544,7 +5544,7 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
               );
               rosterSelected3DByZip = new Map();
               rosterObjects3D.forEach((asset) => {
-                const zipName = zipNameFromRosterDocName(asset?.sourceRosterDocument || '');
+                const zipName = asset?.sourceZip || zipNameFromRosterDocName(asset?.sourceRosterDocument || '');
                 if (!zipName) return;
                 if (!rosterSelected3DByZip.has(zipName)) rosterSelected3DByZip.set(zipName, new Set());
                 rosterSelected3DByZip.get(zipName).add(asset.assetName);

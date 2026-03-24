@@ -671,6 +671,150 @@ function buildContractPromptReview(progress, approvedRosterBlock = "") {
   };
 }
 
+
+function escapeRegex(value = "") {
+  return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function buildDeterministicContractAppendixForPrompt(prompt, contracts = []) {
+  const referencedAssets = contracts.filter(contract => promptMentionsAsset(prompt, contract.assetName));
+  if (referencedAssets.length === 0) return "";
+  if (String(prompt || "").includes("=== DETERMINISTIC ROSTER CONTRACT CARRY-THROUGH (AUTO-INJECTED) ===")) {
+    return "";
+  }
+
+  const lines = referencedAssets.map((contract) => {
+    const geometryLines = contract.geometryAvailable ? [
+      `  floorY=${contract.floorY || "N/A"}`,
+      `  centerOffsetX=${contract.centerOffsetX || "N/A"}`,
+      `  centerOffsetZ=${contract.centerOffsetZ || "N/A"}`,
+      `  suggestedGameScale=${contract.suggestedGameScale || "N/A"}`,
+      `  scaleVector=${contract.scaleVector || "N/A"}`,
+      `  dominantAxis=${contract.dominantAxis || "N/A"}`,
+      `  scaleWarning=${contract.scaleWarning || "null"}`
+    ] : [
+      `  geometryContract=NOT AVAILABLE`
+    ];
+
+    const textureLines = contract.texturePath
+      ? [
+          `  colormapPath=${contract.texturePath}`,
+          `  textureAssignment=data['0'].material_file = "${contract.texturePath}"; data['0'].albedo_ratio = [255,255,255]`
+        ]
+      : [
+          `  colormapPath=NOT AVAILABLE`
+        ];
+
+    return [
+      `- ${contract.assetName}`,
+      ...geometryLines,
+      ...textureLines
+    ].join("\n");
+  }).join("\n");
+
+  return `
+
+=== DETERMINISTIC ROSTER CONTRACT CARRY-THROUGH (AUTO-INJECTED) ===
+For every asset already named in this tranche, the following roster contract values are mandatory and must be copied verbatim into the emitted code and audit-trail comments. Do not paraphrase, round, or omit them.
+${lines}
+=== END DETERMINISTIC ROSTER CONTRACT CARRY-THROUGH ===`;
+}
+
+function injectDeterministicContractsIntoPlan(plan, approvedRosterBlock = "") {
+  const contracts = parseApprovedRosterContracts(approvedRosterBlock);
+  const rawTranches = Array.isArray(plan?.tranches) ? plan.tranches : [];
+  plan.tranches = rawTranches.map((tranche) => {
+    const basePrompt = String(tranche?.prompt || "").trim();
+    const appendix = buildDeterministicContractAppendixForPrompt(basePrompt, contracts);
+    const prompt = appendix ? `${basePrompt}${appendix}` : basePrompt;
+    return {
+      ...tranche,
+      originalPrompt: tranche?.originalPrompt || basePrompt,
+      prompt,
+      contractCarryThroughInjected: Boolean(appendix),
+      contractCarryThroughAssets: contracts
+        .filter(contract => promptMentionsAsset(basePrompt, contract.assetName))
+        .map(contract => contract.assetName)
+    };
+  });
+  return plan;
+}
+
+function buildContractCodeReviewForTranche(tranche, updatedFiles, approvedRosterBlock = "") {
+  const contracts = parseApprovedRosterContracts(approvedRosterBlock);
+  const prompt = String(tranche?.prompt || "");
+  const combinedCode = Array.isArray(updatedFiles)
+    ? updatedFiles.map(file => String(file?.content || "")).join("\n\n")
+    : "";
+  const referencedAssets = contracts.filter(contract => promptMentionsAsset(prompt, contract.assetName));
+  const warnings = [];
+
+  referencedAssets.forEach((contract) => {
+    const assetPattern = escapeRegex(contract.assetName);
+    const basePattern = escapeRegex(String(contract.assetName || "").replace(/\.[a-z0-9]+$/i, ""));
+    const placementAuditPresent = new RegExp(`\\[(?:${assetPattern}|${basePattern})\\]\\s+placement contract applied`, "i").test(combinedCode);
+    const textureAuditPresent = new RegExp(`(?:${assetPattern}|${basePattern}).{0,120}applied colormap|applied colormap.{0,120}(?:${assetPattern}|${basePattern})`, "is").test(combinedCode);
+    const missing = [];
+
+    if (contract.geometryAvailable) {
+      if (!placementAuditPresent) missing.push("placementAuditTrail");
+      if (contract.floorY && !combinedCode.includes(contract.floorY)) missing.push(`floorY=${contract.floorY}`);
+      if (contract.centerOffsetX && !combinedCode.includes(contract.centerOffsetX)) missing.push(`centerOffsetX=${contract.centerOffsetX}`);
+      if (contract.centerOffsetZ && !combinedCode.includes(contract.centerOffsetZ)) missing.push(`centerOffsetZ=${contract.centerOffsetZ}`);
+      const hasScaleValue = (contract.scaleVector && combinedCode.includes(contract.scaleVector)) || (contract.suggestedGameScale && combinedCode.includes(contract.suggestedGameScale));
+      if (!hasScaleValue) missing.push(`scaleVector|suggestedGameScale=${contract.scaleVector || contract.suggestedGameScale || "N/A"}`);
+    }
+
+    if (contract.texturePath) {
+      if (!textureAuditPresent) missing.push("textureAuditTrail");
+      if (!combinedCode.includes(contract.texturePath)) missing.push(`colormapPath=${contract.texturePath}`);
+      if (!/albedo_ratio\s*[:=]\s*\[\s*255\s*,\s*255\s*,\s*255\s*\]/i.test(combinedCode)) missing.push("albedo_ratio=[255,255,255]");
+    }
+
+    if (missing.length > 0) {
+      warnings.push(`${contract.assetName}: emitted code missing contract evidence -> ${missing.join(" | ")}`);
+    }
+  });
+
+  return {
+    status: warnings.length > 0 ? "warning" : (referencedAssets.length > 0 ? "ok" : "not_applicable"),
+    assets: referencedAssets.map(contract => contract.assetName),
+    warnings
+  };
+}
+
+function summarizeContractCodeReview(progress) {
+  const tranches = Array.isArray(progress?.tranches) ? progress.tranches : [];
+  let reviewedTranches = 0;
+  let issueCount = 0;
+  const items = tranches.map((tranche, index) => {
+    const warnings = Array.isArray(tranche?.contractCodeReviewWarnings) ? tranche.contractCodeReviewWarnings : [];
+    const assets = Array.isArray(tranche?.contractCodeReviewAssets) ? tranche.contractCodeReviewAssets : [];
+    if (assets.length > 0) reviewedTranches += 1;
+    if (warnings.length > 0) issueCount += warnings.length;
+    return {
+      trancheIndex: index,
+      trancheName: tranche?.name || `Tranche ${index + 1}`,
+      status: tranche?.contractCodeReviewStatus || (assets.length > 0 ? "ok" : "not_applicable"),
+      assets,
+      warnings
+    };
+  });
+
+  const summary = issueCount > 0
+    ? `Informational tranche code contract review: ${issueCount} possible omission(s) across ${reviewedTranches} reviewed tranche(s).`
+    : `Informational tranche code contract review: no obvious missing contract evidence was detected across ${reviewedTranches} reviewed tranche(s).`;
+
+  return {
+    status: "informational",
+    generatedAt: Date.now(),
+    reviewedTranches,
+    issueCount,
+    summary,
+    items
+  };
+}
+
 function selectNextSequentialTranche(progress, preferredIndex = null) {
   const tranches = Array.isArray(progress?.tranches) ? progress.tranches : [];
   const pendingIndices = tranches
@@ -1663,6 +1807,7 @@ ${effectivePrompt}
       }
 
       plan = enforceTrancheValidationBlock(plan);
+      plan = injectDeterministicContractsIntoPlan(plan, approvedRosterBlock);
 
       // Update progress with plan
       progress.status = "executing";
@@ -1695,10 +1840,17 @@ ${effectivePrompt}
         validationRetryCount: 0,
         executionRetryCount: 0,
         retryBudget: 0,
+        originalPrompt: t.originalPrompt || t.prompt,
+        contractCarryThroughInjected: Boolean(t.contractCarryThroughInjected),
+        contractCarryThroughAssets: t.contractCarryThroughAssets || [],
         contractPromptReviewWarnings: [],
-        contractPromptReviewStatus: "not_applicable"
+        contractPromptReviewStatus: "not_applicable",
+        contractCodeReviewWarnings: [],
+        contractCodeReviewStatus: "not_applicable",
+        contractCodeReviewAssets: []
       }));
       progress.contractPromptReview = buildContractPromptReview(progress, approvedRosterBlock);
+      progress.contractCodeReview = summarizeContractCodeReview(progress);
       await saveProgress(bucket, projectPath, progress);
 
       console.log(`Plan created: ${plan.tranches.length} tranches.`);
@@ -1714,7 +1866,8 @@ ${effectivePrompt}
         modelAnalysis: Array.isArray(modelAnalysis) ? modelAnalysis : [],
         totalTranches: plan.tranches.length,
         approvedRosterBlock,   // ← propagated to every tranche execution
-        contractPromptReview: progress.contractPromptReview
+        contractPromptReview: progress.contractPromptReview,
+        contractCodeReview: progress.contractCodeReview
       };
       await savePipelineState(bucket, projectPath, pipelineState);
 
@@ -2007,6 +2160,16 @@ IMPORTANT: You are working on tranche ${nextTranche + 1} of ${progress.totalTran
             }
           }
 
+          const contractCodeReview = buildContractCodeReviewForTranche(progress.tranches[nextTranche], trancheResult.updatedFiles, approvedRosterBlock);
+          progress.tranches[nextTranche].contractCodeReviewWarnings = contractCodeReview.warnings;
+          progress.tranches[nextTranche].contractCodeReviewStatus = contractCodeReview.status;
+          progress.tranches[nextTranche].contractCodeReviewAssets = contractCodeReview.assets;
+          progress.contractCodeReview = summarizeContractCodeReview(progress);
+
+          if (contractCodeReview.warnings.length > 0) {
+            console.warn(`[CONTRACT CODE REVIEW][informational] Tranche ${nextTranche + 1}: ${contractCodeReview.warnings.join(" || ")}`);
+          }
+
           // Update progress: tranche complete
           progress.tranches[nextTranche].status = "complete";
           progress.tranches[nextTranche].endTime = Date.now();
@@ -2035,6 +2198,7 @@ IMPORTANT: You are working on tranche ${nextTranche + 1} of ${progress.totalTran
       state.progress = progress;
       state.accumulatedFiles = accumulatedFiles;
       state.allUpdatedFiles = allUpdatedFiles;
+      state.contractCodeReview = progress.contractCodeReview;
       await savePipelineState(bucket, projectPath, state);
 
       // ── Chain to next tranche OR finalize ─────────────────────
