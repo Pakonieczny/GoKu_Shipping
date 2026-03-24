@@ -4963,19 +4963,20 @@ Original user request for context: ${basePrompt}`;
        GAME-SPECIFIC ASSET ROSTER STAGE
        ─────────────────────────────────────────────────────────────────────
        Runs between Prompt Verification upload and pipeline trigger.
-       1. Calls claudeRosterGenerate (Sonnet 4.6) — two-phase process:
+       1. Calls claudeRosterGenerate (Sonnet 4.6) — visual-only process:
           Phase 1: analyzes Master Prompt + reference images to produce a
           structured list of required particle effects and 3D objects.
-          Phase 2: matches each requirement to catalog assets by AI
-          description (from .docx files in Asset_Particle_Textures/ and
-          Asset_3D_Objects/), then performs visual confirmation using
-          thumbnails built from the co-located asset zip files. Filenames
-          are output only, not selection criteria.
+          Stage A: batch-scans asset images from the zip libraries in
+          Asset_Particle_Textures/ and Asset_3D_Objects/ to shortlist
+          candidates against the full requirement set.
+          Stage B: performs final per-requirement visual selection from
+          those shortlisted candidates. Filenames are output metadata,
+          not the primary selection criteria.
        2. Renders the roster in the UI for user review.
        3. Blocks until user approves (or requests regeneration).
        4. On approval calls claudeRosterExtract to extract approved assets
           from matching .zip files in Asset_Particle_Textures / Asset_3D_Objects,
-          stage them in Firebase, and update assets.json.
+          stage them in Firebase, and prepare them for assets.json sync.
        5. Returns approved roster context for injection into the AI prompt.
     ═══════════════════════════════════════════════════════════════════════ */
 
@@ -5487,10 +5488,10 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
         await syncAssetsJson();
 
         // ── Game-Specific Asset Roster Stage ──────────────────────────
-        // Runs only on fresh builds (not repair passes). Checks whether
-        // asset_particle_textures/ or asset_3d_objects/ contains any .docx
-        // files; if yes, runs the full roster generation → review → approval
-        // → extraction flow before proceeding to tranche planning.
+        // Runs only on fresh builds (not repair passes). If the project has
+        // asset zip libraries in asset_particle_textures/ or asset_3d_objects/,
+        // run the full roster generation → review → approval → extraction
+        // flow before proceeding to tranche planning.
         let approvedRosterContext = '';
         if (repairAttempt === 0 && parseErrorRetry === 0) {
           try {
@@ -5501,9 +5502,9 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
               listAll(objectsRef).catch(()  => ({ items: [] }))
             ]);
             const allItems = [...particleRes.items, ...objectsRes.items];
-            const rosterDocItems = allItems.filter(item => item.name.toLowerCase().endsWith(".docx"));
-            const hasDocx  = rosterDocItems.length > 0;
-            if (hasDocx) {
+            const rosterZipItems = allItems.filter(item => item.name.toLowerCase().endsWith(".zip"));
+            const hasRosterZips = rosterZipItems.length > 0;
+            if (hasRosterZips) {
               // We need a jobId before this point — generate it early
               // (it will be reused below when setting up the pipeline)
               if (!window._pendingRosterJobId) {
@@ -5532,7 +5533,7 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
               const earlyReqRef = ref(storage, `${rosterProjectPath}/ai_request.json`);
               await uploadString(earlyReqRef, earlyPayload);
 
-              Progress.step('Asset Roster Stage', `Found ${rosterDocItems.length} roster file(s) — running asset selection...`);
+              Progress.step('Asset Roster Stage', `Found ${rosterZipItems.length} asset zip pack(s) — running visual asset selection...`);
               const rosterResult = await runRosterStage(rosterProjectPath, rosterJobId);
               const rosterObjects3D = Array.isArray(rosterResult?.roster?.objects3d) ? rosterResult.roster.objects3d : [];
               rosterSelected3DNames = new Set(
