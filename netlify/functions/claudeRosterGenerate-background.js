@@ -48,6 +48,7 @@ const CLAUDE_OVERLOAD_MAX_DELAY_MS  = 12000;
 const MAX_OBJ_ASSETS   = 25;
 const MAX_PNG_ASSETS   = 50;
 const IMAGES_PER_BATCH = 50;  // Stage A: images per Claude call
+const DEBUG_PARTICLE_STAGE_A = true; // Temporary debugging for particle texture Stage A
 
 /* ─── Retry helpers ──────────────────────────────────────────────── */
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
@@ -357,6 +358,13 @@ exports.handler = async (event) => {
               added++;
             }
             console.log(`[ROSTER-GEN] Particle zip ${sourceZip}: ${added} asset(s) indexed`);
+            if (DEBUG_PARTICLE_STAGE_A && added > 0) {
+              const sampleNames = particleAssets
+                .filter(a => a.sourceZip === sourceZip)
+                .slice(-Math.min(10, added))
+                .map(a => a.assetFile);
+              console.log(`[ROSTER-GEN][DEBUG] Particle zip ${sourceZip} sample indexed assets: ${sampleNames.join(", ")}`);
+            }
 
           } else {
             // ── 3D object pack: pair each .obj with its thumbnail ────────
@@ -427,6 +435,16 @@ exports.handler = async (event) => {
     }
 
     console.log(`[ROSTER-GEN] Asset library ready: ${particleAssets.length} particle textures, ${objectAssets.length} 3D objects`);
+    if (DEBUG_PARTICLE_STAGE_A && particleAssets.length > 0) {
+      const particleZipCounts = Array.from(
+        particleAssets.reduce((m, a) => {
+          m.set(a.sourceZip, (m.get(a.sourceZip) || 0) + 1);
+          return m;
+        }, new Map()).entries()
+      );
+      console.log("[ROSTER-GEN][DEBUG] Particle asset counts by zip:", particleZipCounts);
+      console.log("[ROSTER-GEN][DEBUG] First 25 particle assets:", particleAssets.slice(0, 25).map(a => ({ assetFile: a.assetFile, sourceZip: a.sourceZip, mimeType: a.mimeType, b64Length: a.b64?.length || 0 })));
+    }
 
     // ── 4. Phase 1 — Game Visual Needs Analysis ──────────────────────────
     console.log("[ROSTER-GEN] Phase 1: analyzing game visual requirements...");
@@ -458,6 +476,14 @@ exports.handler = async (event) => {
 
     const particleReqs = phase1.particleEffects || [];
     const objectReqs   = phase1.objects3d       || [];
+    if (DEBUG_PARTICLE_STAGE_A) {
+      console.log("[ROSTER-GEN][DEBUG] Particle requirements:", particleReqs.map((r, i) => ({
+        index: i + 1,
+        name: r.name,
+        visualDescription: r.visualDescription,
+        behaviorDescription: r.behaviorDescription || ""
+      })));
+    }
 
     // ── 5. Stage A — Visual Library Scan ────────────────────────────────
     /*
@@ -485,6 +511,21 @@ exports.handler = async (event) => {
       for (let b = 0; b < batches.length; b++) {
         const batch = batches[b];
         console.log(`[ROSTER-GEN] Stage A ${assetType} batch ${b + 1}/${batches.length} (${batch.length} images)`);
+        if (DEBUG_PARTICLE_STAGE_A && isParticle) {
+          console.log(`[ROSTER-GEN][DEBUG] Stage A particle batch ${b + 1} asset files:`, batch.map((asset, idx) => ({
+            imageIndex: idx + 1,
+            assetFile: asset.assetFile,
+            sourceZip: asset.sourceZip,
+            mimeType: asset.mimeType,
+            b64Length: asset.b64?.length || 0
+          })));
+          console.log(`[ROSTER-GEN][DEBUG] Stage A particle batch ${b + 1} requirements:`, requirements.map((req, idx) => ({
+            requirementIndex: idx + 1,
+            name: req.name,
+            visualDescription: req.visualDescription,
+            behaviorDescription: req.behaviorDescription || ""
+          })));
+        }
 
         const imageBlocks = batch.map(asset => ({
           type:   "image",
@@ -507,12 +548,20 @@ exports.handler = async (event) => {
           continue;
         }
 
+        if (DEBUG_PARTICLE_STAGE_A && isParticle) {
+          console.log(`[ROSTER-GEN][DEBUG] Stage A particle batch ${b + 1} raw response:`, (batchResult.text || "").slice(0, 4000));
+        }
+
         let parsed;
         try {
           parsed = JSON.parse(stripFences(batchResult.text));
         } catch (e) {
           console.warn(`[ROSTER-GEN] Stage A ${assetType} batch ${b + 1} parse failed — skipping: ${e.message}`);
           continue;
+        }
+
+        if (DEBUG_PARTICLE_STAGE_A && isParticle) {
+          console.log(`[ROSTER-GEN][DEBUG] Stage A particle batch ${b + 1} parsed matches:`, parsed.matches || []);
         }
 
         // Map Claude's 1-based image indices back to assets in this batch
@@ -539,6 +588,9 @@ exports.handler = async (event) => {
       // Log Stage A hit counts per requirement
       for (const [reqName, candidates] of candidateMap) {
         console.log(`[ROSTER-GEN] Stage A ${assetType} "${reqName}": ${candidates.length} candidate(s)`);
+        if (DEBUG_PARTICLE_STAGE_A && isParticle) {
+          console.log(`[ROSTER-GEN][DEBUG] Stage A particle "${reqName}" candidate asset files:`, candidates.map(c => c.assetFile));
+        }
       }
     }
 
@@ -549,6 +601,14 @@ exports.handler = async (event) => {
     ]);
 
     console.log("[ROSTER-GEN] Stage A complete");
+    if (DEBUG_PARTICLE_STAGE_A) {
+      const particleStageASummary = Array.from(particleCandidates.entries()).map(([reqName, candidates]) => ({
+        reqName,
+        count: candidates.length,
+        assetFiles: candidates.map(c => c.assetFile)
+      }));
+      console.log("[ROSTER-GEN][DEBUG] Particle Stage A summary:", particleStageASummary);
+    }
 
     // ── 6. Stage B — Per-Requirement Final Visual Pick ───────────────────
     /*
