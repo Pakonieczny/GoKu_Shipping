@@ -256,6 +256,7 @@ SELECTION RULES:
 - For particle textures: consider the shape silhouette, density, edge softness, and whether it matches the effect type.
 - For 3D objects: consider the overall shape, silhouette, and whether it matches the intended role.
 - Pick exactly one winner. State which image number you chose and why.
+- For 3D objects only: include a colormapFile field. Default to "colormap.jpg" unless the candidate clearly indicates a different color texture filename.
 
 Respond ONLY with a valid JSON object. No markdown, no fences, no preamble.
 
@@ -264,7 +265,8 @@ Respond ONLY with a valid JSON object. No markdown, no fences, no preamble.
   "selectedAssetName": "exact_filename_from_candidates",
   "selectedSourceRosterDocument": "ExactDocxName.docx",
   "imageNumberChosen": 1,
-  "visualSelectionRationale": "What you saw in the thumbnail that matched the requirement"
+  "visualSelectionRationale": "What you saw in the thumbnail that matched the requirement",
+  "colormapFile": "colormap.jpg"
 }`;
 }
 
@@ -589,7 +591,8 @@ exports.handler = async (event) => {
           selectedAssetName:            resolved[0].assetName,
           selectedSourceRosterDocument: resolved[0].sourceRosterDocument,
           imageNumberChosen:            1,
-          visualSelectionRationale:     "Fallback: parse error on visual selection"
+          visualSelectionRationale:     "Fallback: parse error on visual selection",
+          colormapFile:                 isParticle ? null : "colormap.jpg"
         };
       }
     }
@@ -635,6 +638,8 @@ exports.handler = async (event) => {
           intendedRole:           p1.gameplayRole || p1.visualDescription || phase2bResult.requirementName || "",
           matchedRequirement:     phase2bResult.requirementName,
           selectionRationale:     phase2bResult.visualSelectionRationale,
+          colormapFile:           phase2bResult.colormapFile || "colormap.jpg",
+          colormapConfidence:     phase2bResult.colormapFile ? "HIGH" : "MEDIUM",
           thumbnailB64:           thumb ? thumb.b64 : null,
           thumbnailMime:          thumb ? thumb.mimeType : null
         };

@@ -2125,7 +2125,8 @@ This will permanently remove all associated files and Firebase folders for this 
         return await res.json();
     }
 
-    async function annotateApprovedRosterWithManifestKeys(projectName = currentProject, manifestEntries = null) {
+
+    async function annotateApprovedRosterWithManifestKeys(projectName = currentProject, manifestEntries = null, modelAnalyses = null) {
         if (!projectName) return null;
         const rosterPath = `${ROOT}/${projectName}/ai_asset_roster_approved.json`;
         let roster;
@@ -2153,10 +2154,44 @@ This will permanently remove all associated files and Firebase folders for this 
             });
         }
 
+        const stagedIndex = new Map();
+        for (const entry of (roster.stagedAssets || [])) {
+            if (!entry?.assetName) continue;
+            stagedIndex.set(String(entry.assetName).toLowerCase(), entry);
+        }
+
+        const analysisIndex = new Map();
+        for (const analysis of (Array.isArray(modelAnalyses) ? modelAnalyses : [])) {
+            const candidates = [
+                analysis?.embeddedPath ? String(analysis.embeddedPath).split('/').pop() : '',
+                analysis?.sourceName || ''
+            ].filter(Boolean);
+
+            for (const candidate of candidates) {
+                const key = String(candidate).toLowerCase();
+                if (!analysisIndex.has(key)) {
+                    analysisIndex.set(key, analysis);
+                }
+            }
+        }
+
         let changed = false;
+        const assignIfDifferent = (target, key, value) => {
+            const current = target[key];
+            const next = value;
+            const currentJson = current && typeof current === 'object' ? JSON.stringify(current) : current;
+            const nextJson = next && typeof next === 'object' ? JSON.stringify(next) : next;
+            if (currentJson !== nextJson) {
+                target[key] = next;
+                changed = true;
+            }
+        };
+
         const annotateAsset = (asset, isParticle = false) => {
             const assetName = String(asset?.assetName || '').toLowerCase();
             const manifestMeta = manifestIndex.get(assetName);
+            const stagedMeta = stagedIndex.get(assetName);
+            const geometryAnalysis = analysisIndex.get(assetName);
             const fallbackRole = asset?.intendedRole || asset?.intendedUsage || asset?.selectionRationale || asset?.matchedRequirement || '';
             const nextAsset = { ...asset };
 
@@ -2171,14 +2206,15 @@ This will permanently remove all associated files and Firebase folders for this 
 
             const nextKey = manifestMeta?.key || '';
             const nextLocation = manifestMeta?.type === 'object' ? 'models-folder-child' : (manifestMeta?.key ? 'root-level' : '');
-            if ((nextAsset.manifestKey || '') !== nextKey) {
-                nextAsset.manifestKey = nextKey;
-                changed = true;
-            }
-            if ((nextAsset.manifestLocation || '') !== nextLocation) {
-                nextAsset.manifestLocation = nextLocation;
-                changed = true;
-            }
+            assignIfDifferent(nextAsset, 'manifestKey', nextKey);
+            assignIfDifferent(nextAsset, 'manifestLocation', nextLocation);
+
+            if (stagedMeta?.stagedPath) assignIfDifferent(nextAsset, 'stagedPath', stagedMeta.stagedPath);
+            if (stagedMeta?.colormapFile != null) assignIfDifferent(nextAsset, 'colormapFile', stagedMeta.colormapFile);
+            if (stagedMeta?.colormapStagedPath != null) assignIfDifferent(nextAsset, 'colormapStagedPath', stagedMeta.colormapStagedPath);
+            if (stagedMeta?.colormapConfidence != null) assignIfDifferent(nextAsset, 'colormapConfidence', stagedMeta.colormapConfidence);
+            if (!isParticle && geometryAnalysis) assignIfDifferent(nextAsset, 'geometryAnalysis', geometryAnalysis);
+
             return nextAsset;
         };
 
@@ -2186,17 +2222,13 @@ This will permanently remove all associated files and Firebase folders for this 
         roster.textureAssets = (roster.textureAssets || []).map(asset => annotateAsset(asset, true));
         roster.stagedAssets = (roster.stagedAssets || []).map(asset => {
             const manifestMeta = manifestIndex.get(String(asset?.assetName || '').toLowerCase());
+            const geometryAnalysis = analysisIndex.get(String(asset?.assetName || '').toLowerCase());
             const nextKey = manifestMeta?.key || '';
             const nextLocation = manifestMeta?.type === 'object' ? 'models-folder-child' : (manifestMeta?.key ? 'root-level' : '');
             const nextAsset = { ...asset };
-            if ((nextAsset.manifestKey || '') !== nextKey) {
-                nextAsset.manifestKey = nextKey;
-                changed = true;
-            }
-            if ((nextAsset.manifestLocation || '') !== nextLocation) {
-                nextAsset.manifestLocation = nextLocation;
-                changed = true;
-            }
+            assignIfDifferent(nextAsset, 'manifestKey', nextKey);
+            assignIfDifferent(nextAsset, 'manifestLocation', nextLocation);
+            if (geometryAnalysis) assignIfDifferent(nextAsset, 'geometryAnalysis', geometryAnalysis);
             return nextAsset;
         });
 
@@ -3708,7 +3740,8 @@ Quality criteria for your work:
               : '';
             planningLabel.innerHTML = `✓ 6.3 Plan Ready: <strong>${prog.totalTranches} tranche(s)</strong>${planDuration ? ` in ${planDuration}` : ''}`;
             planningLabel.style.color = 'var(--success)';
-            planningAnalysis.textContent = '';
+            planningAnalysis.textContent = prog.contractPromptReview?.summary || '';
+            planningAnalysis.style.color = (prog.contractPromptReview?.issueCount || 0) > 0 ? '#f59e0b' : 'var(--muted)';
             planningSection.querySelector('.tranche-planning-spinner')?.remove();
           } else {
             planningSection.style.display = 'none';
@@ -3910,6 +3943,9 @@ Quality criteria for your work:
             const fmt = (n) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
             metaHTML += `<span class="tranche-card-time" style="color: #a78bfa;">⚡ ${fmt(tIn + tOut)} tokens</span>`;
           }
+          if (t.contractPromptReviewWarnings && t.contractPromptReviewWarnings.length > 0) {
+            metaHTML += `<span class="tranche-card-tag" style="background:#f59e0b22;color:#f59e0b;border:1px solid #f59e0b44;">ℹ Contract review</span>`;
+          }
           metaEl.innerHTML = metaHTML;
 
           // Quality criteria (V2)
@@ -3922,6 +3958,10 @@ Quality criteria for your work:
           if (t.qualityCriteria && t.qualityCriteria.length > 0) {
             qualityLines.push(`<div style="margin:6px 0 4px;color:#38bdf8;">Quality criteria:</div>`);
             qualityLines.push(...t.qualityCriteria.map((c, ci) => `<div style="margin-bottom:3px;"><span style="color:#475569;">${ci + 1}.</span> ${this._escapeHTML(c)}</div>`));
+          }
+          if (t.contractPromptReviewWarnings && t.contractPromptReviewWarnings.length > 0) {
+            qualityLines.push(`<div style="margin:6px 0 4px;color:#f59e0b;">Informational prompt contract review:</div>`);
+            qualityLines.push(...t.contractPromptReviewWarnings.map((c, ci) => `<div style="margin-bottom:3px;color:#f8fafc;"><span style="color:#f59e0b;">${ci + 1}.</span> ${this._escapeHTML(c)}</div>`));
           }
           if (qualityLines.length > 0) {
             qToggleEl.style.display = 'block';
@@ -4014,6 +4054,7 @@ Quality criteria for your work:
       }
     };
 
+
     function showExtentsReviewModal(extentsData) {
         return new Promise((resolve) => {
             const modal = document.getElementById('extentsResultModal');
@@ -4022,37 +4063,54 @@ Quality criteria for your work:
 
             container.innerHTML = '';
             extentsData.forEach(ext => {
+                const warningHtml = ext.scaleWarning
+                  ? `<span style="color: #f59e0b; font-weight: 600;">⚠ ${ext.scaleWarning}</span>`
+                  : `<span style="color: var(--success);">No major correction flagged</span>`;
+                const textureHtml = ext.textureFound
+                  ? `<span style="color: var(--success);">${ext.textureFound}</span>`
+                  : `<span style="color: #f59e0b;">⚠ Not found</span>`;
+
                 container.innerHTML += `
                     <div style="background: #1a1e2b; padding: 10px; border-radius: 6px; border: 1px solid var(--line); font-size: 12px;">
                         <strong style="color: var(--accent);">📦 ${ext.name}</strong><br>
-                        
+
                         <div style="margin-top: 8px; color: var(--muted); border-left: 2px solid var(--success); padding-left: 8px;">
-                            <strong style="color: #fff;">Overall Object (Visuals)</strong><br>
-                            Dimensions (X, Y, Z): <span style="color: var(--text);">${ext.objWidth}</span> x <span style="color: var(--text);">${ext.objHeight}</span> x <span style="color: var(--text);">${ext.objDepth}</span>
+                            <strong style="color: #fff;">Bounding Box</strong><br>
+                            ${ext.boundingBox}
                         </div>
-                        
-                        ${ext.hasMesh ? `
-                        <div style="margin-top: 8px; color: var(--muted); border-left: 2px solid var(--danger); padding-left: 8px;">
-                            <strong style="color: #fff;">Inner Mesh (Physics)</strong><br>
-                            Dimensions (X, Y, Z): <span style="color: var(--text);">${ext.meshWidth}</span> x <span style="color: var(--text);">${ext.meshHeight}</span> x <span style="color: var(--text);">${ext.meshDepth}</span>
-                        </div>` : ''}
+
+                        <div style="margin-top: 8px; color: var(--muted); border-left: 2px solid #38bdf8; padding-left: 8px;">
+                            <strong style="color: #fff;">Origin + Placement Contract</strong><br>
+                            Authored unit: <span style="color: var(--text);">${ext.authoredUnit}</span><br>
+                            Origin class: <span style="color: var(--text);">${ext.originClass}</span><br>
+                            Floor placement: <span style="color: var(--text);">position.y = ${ext.floorY}</span><br>
+                            Vertical centering: <span style="color: var(--text);">position.y = ${ext.centerY}</span><br>
+                            X centering correction: <span style="color: var(--text);">${ext.centerOffsetX}</span><br>
+                            Z centering correction: <span style="color: var(--text);">${ext.centerOffsetZ}</span>
+                        </div>
+
+                        <div style="margin-top: 8px; color: var(--muted); border-left: 2px solid #a78bfa; padding-left: 8px;">
+                            <strong style="color: #fff;">Scale + Axis</strong><br>
+                            Dominant axis: <span style="color: var(--text);">${ext.dominantAxis}</span><br>
+                            Forward hint: <span style="color: var(--text);">${ext.forwardHint}</span><br>
+                            Suggested scale: <span style="color: var(--text);">${ext.suggestedScale}</span><br>
+                            Scale vector: <span style="color: var(--text);">${ext.scaleVector}</span><br>
+                            ${warningHtml}
+                        </div>
+
+                        <div style="margin-top: 8px; color: var(--muted); border-left: 2px solid #eab308; padding-left: 8px;">
+                            <strong style="color: #fff;">UV + Texture</strong><br>
+                            UV mapping: <span style="color: var(--text);">${ext.uvSummary}</span><br>
+                            Texture found: ${textureHtml}
+                        </div>
 
                         ${ext.materials && ext.materials.length > 0 ? `
                         <div style="margin-top: 8px; color: var(--muted); border-left: 2px solid var(--accent); padding-left: 8px;">
                             <strong style="color: #fff;">Scanned Materials</strong><br>
                             <div style="font-size: 11px; white-space: pre-wrap; margin-top: 4px;">${ext.materials.join('<br>')}</div>
                         </div>` : ''}
-
-                        <div style="margin-top: 8px; color: var(--muted); border-left: 2px solid #eab308; padding-left: 8px;">
-                            <strong style="color: #fff;">Calculated Pivot Offsets</strong><br>
-                            Dimensions (X, Y, Z): <span style="color: var(--text);">${ext.centerX}</span>, <span style="color: var(--text);">${ext.centerY}</span>, <span style="color: var(--text);">${ext.centerZ}</span>
-                        </div>
-
-                        <div style="margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line);">
-                            <span style="color: var(--success);">Calculated Floor Y-Offset:</span> ${ext.offset}
-                        </div>
                     </div>
-                `; 
+                `;
             });
 
             modal.classList.add('active');
@@ -4402,6 +4460,7 @@ Original user request for context: ${basePrompt}`;
     }
 
 
+
     function collectThreeMaterialNames(root) {
       const names = new Set();
       root?.traverse?.((node) => {
@@ -4414,12 +4473,216 @@ Original user request for context: ${basePrompt}`;
       return Array.from(names);
     }
 
+    function zipNameFromRosterDocName(name = '') {
+      return String(name || '').replace(/\.docx$/i, '.zip');
+    }
+
+    function getZipEntryBaseName(path = '') {
+      const base = String(path || '').split('/').pop() || String(path || '');
+      return base.replace(/\.[^.]+$/, '');
+    }
+
+    function normalizeAssetLookupName(name = '') {
+      return String(name || '').toLowerCase().replace(/[^a-z0-9.\-_]/g, '');
+    }
+
+    function parseObjAuthoredUnit(objText = '', format = '') {
+      if (String(format || '').toLowerCase() === 'gltf' || String(format || '').toLowerCase() === 'glb') {
+        return { authoredUnit: 'meters', unitToGameUnit: 1.0 };
+      }
+      const header = String(objText || '').split(/\r?\n/).slice(0, 20).join('\n').toLowerCase();
+      if (header.includes('file units = meters')) return { authoredUnit: 'meters', unitToGameUnit: 1.0 };
+      if (header.includes('file units = centimeters')) return { authoredUnit: 'centimeters', unitToGameUnit: 0.01 };
+      if (header.includes('file units = millimeters')) return { authoredUnit: 'millimeters', unitToGameUnit: 0.001 };
+      if (header.includes('file units = inches')) return { authoredUnit: 'inches', unitToGameUnit: 0.0254 };
+      return { authoredUnit: 'unknown', unitToGameUnit: 1.0 };
+    }
+
+    function classifyOriginPosition(min, max, size, centroid) {
+      const ySize = Math.max(Math.abs(size.y || 0), 0.000001);
+      const threshold = ySize * 0.05;
+      if (Math.abs(min.y) < threshold) return 'BOTTOM_ANCHORED';
+      if (Math.abs(max.y) < threshold) return 'TOP_ANCHORED';
+      if (Math.abs(centroid.y) < threshold) return 'CENTERED';
+      return 'OFFSET';
+    }
+
+    function detectDominantAxis(size) {
+      const entries = [
+        ['X_DOMINANT', Math.abs(size.x || 0)],
+        ['Y_DOMINANT', Math.abs(size.y || 0)],
+        ['Z_DOMINANT', Math.abs(size.z || 0)]
+      ].sort((a, b) => b[1] - a[1]);
+
+      const [dominant, dominantValue] = entries[0];
+      const secondValue = entries[1]?.[1] || 0;
+      if (dominantValue <= 0 || dominantValue < (secondValue * 1.4)) {
+        return {
+          dominantAxis: 'ROUGHLY_CUBIC',
+          forwardHint: 'no dominant axis; object is approximately cubic'
+        };
+      }
+
+      if (dominant === 'Y_DOMINANT') {
+        return { dominantAxis: dominant, forwardHint: 'object is upright; Y is height axis' };
+      }
+      if (dominant === 'Z_DOMINANT') {
+        return { dominantAxis: dominant, forwardHint: '+Z or -Z is the object\'s length axis' };
+      }
+      return { dominantAxis: dominant, forwardHint: '+X or -X is the object\'s length axis' };
+    }
+
+    function collectThreeUvAnalysis(root) {
+      let hasUVs = false;
+      let uMin = Infinity;
+      let uMax = -Infinity;
+      let vMin = Infinity;
+      let vMax = -Infinity;
+
+      root?.traverse?.((node) => {
+        const uvAttr = node?.isMesh ? node.geometry?.attributes?.uv : null;
+        if (!uvAttr?.count) return;
+        hasUVs = true;
+        for (let i = 0; i < uvAttr.count; i += 1) {
+          const u = Number(uvAttr.getX(i));
+          const v = Number(uvAttr.getY(i));
+          if (Number.isFinite(u)) {
+            if (u < uMin) uMin = u;
+            if (u > uMax) uMax = u;
+          }
+          if (Number.isFinite(v)) {
+            if (v < vMin) vMin = v;
+            if (v > vMax) vMax = v;
+          }
+        }
+      });
+
+      if (!hasUVs) {
+        return {
+          hasUVs: false,
+          uvTiled: false,
+          uvRangeU: null,
+          uvRangeV: null,
+          uvWrappingNote: 'No UV coordinates. Texture assignment will use flat material color only.'
+        };
+      }
+
+      const uvTiled = (uMin < -0.01 || uMax > 1.01 || vMin < -0.01 || vMax > 1.01);
+      return {
+        hasUVs: true,
+        uvTiled,
+        uvRangeU: { min: Number(uMin.toFixed(3)), max: Number(uMax.toFixed(3)) },
+        uvRangeV: { min: Number(vMin.toFixed(3)), max: Number(vMax.toFixed(3)) },
+        uvWrappingNote: uvTiled
+          ? 'UVs tile outside 0-1. Engine handles tiling automatically. No UV transform needed.'
+          : 'UVs are within 0-1 range. Standard single-tile mapping.'
+      };
+    }
+
+    function classifyZipContents(zipObj) {
+      const meshExtensions = new Set(['.obj', '.fbx', '.glb', '.gltf', '.c3b']);
+      const imageExtensions = new Set(['.jpg', '.jpeg', '.png', '.webp', '.tga', '.bmp']);
+      const explicitColorNames = new Set([
+        'colormap', 'color_map', 'albedo', 'albedo_map',
+        'diffuse', 'diffuse_map', 'basecolor', 'base_color',
+        'texture', 'tex', 'color'
+      ]);
+
+      const meshFiles = [];
+      const imageFiles = [];
+      let hasMtlFile = false;
+
+      for (const entryPath of Object.keys(zipObj.files || {})) {
+        const entry = zipObj.files[entryPath];
+        if (!entry || entry.dir || entryPath.includes('__MACOSX')) continue;
+        const fileName = entryPath.split('/').pop() || entryPath;
+        const lowerFileName = fileName.toLowerCase();
+        const ext = lowerFileName.includes('.') ? lowerFileName.slice(lowerFileName.lastIndexOf('.')) : '';
+        const baseName = getZipEntryBaseName(fileName).toLowerCase();
+
+        if (meshExtensions.has(ext)) {
+          meshFiles.push({ entryPath, fileName, baseName, ext });
+        } else if (imageExtensions.has(ext)) {
+          imageFiles.push({ entryPath, fileName, baseName, ext });
+        } else if (ext === '.mtl') {
+          hasMtlFile = true;
+        }
+      }
+
+      const meshBaseNames = new Set(meshFiles.map(file => file.baseName));
+      const detections = imageFiles.map((image) => {
+        const isThumbPreview = /(thumb|preview)/i.test(image.baseName);
+        if (isThumbPreview) {
+          return { ...image, role: 'THUMBNAIL', confidence: 'HIGH', detectionRule: 'name=thumb-or-preview' };
+        }
+        if (explicitColorNames.has(image.baseName)) {
+          return { ...image, role: 'COLORMAP', confidence: 'HIGH', detectionRule: `name=${image.baseName}` };
+        }
+        if (meshBaseNames.has(image.baseName)) {
+          return { ...image, role: 'THUMBNAIL', confidence: 'HIGH', detectionRule: 'mesh-basename-match' };
+        }
+        return { ...image, role: 'UNKNOWN', confidence: 'NONE', detectionRule: 'none' };
+      });
+
+      let colormapCandidates = detections.filter(item => item.role === 'COLORMAP');
+      let unidentified = detections.filter(item => item.role === 'UNKNOWN');
+
+      if (colormapCandidates.length === 0 && imageFiles.length === 1 && unidentified.length === 1) {
+        unidentified[0].role = 'COLORMAP';
+        unidentified[0].confidence = 'MEDIUM';
+        unidentified[0].detectionRule = 'only-image';
+        colormapCandidates = [unidentified[0]];
+        unidentified = [];
+      }
+
+      if (colormapCandidates.length === 0 && unidentified.length === 1) {
+        unidentified[0].role = 'COLORMAP';
+        unidentified[0].confidence = 'LOW';
+        unidentified[0].detectionRule = 'last-unidentified-image';
+        colormapCandidates = [unidentified[0]];
+        unidentified = [];
+      }
+
+      const confidenceRank = { HIGH: 3, MEDIUM: 2, LOW: 1, NONE: 0 };
+      colormapCandidates.sort((a, b) => {
+        const rankDiff = (confidenceRank[b.confidence] || 0) - (confidenceRank[a.confidence] || 0);
+        if (rankDiff) return rankDiff;
+        return a.fileName.localeCompare(b.fileName);
+      });
+
+      return {
+        meshFiles,
+        imageFiles,
+        imageDetections: detections,
+        thumbnailFiles: detections.filter(item => item.role === 'THUMBNAIL'),
+        colormapResolved: colormapCandidates[0] || null,
+        hasMtlFile
+      };
+    }
+
     function buildThreeModelAnalysis(sceneOrRoot, meta = {}) {
       if (!sceneOrRoot) return null;
       sceneOrRoot.updateMatrixWorld?.(true);
+      sceneOrRoot.traverse?.((node) => {
+        if (node?.isMesh && node.geometry?.computeBoundingBox) {
+          node.geometry.computeBoundingBox();
+        }
+      });
+
       const box = new THREE.Box3().setFromObject(sceneOrRoot);
-      const size = box.getSize(new THREE.Vector3());
-      const center = box.getCenter(new THREE.Vector3());
+      const min = { x: Number(box.min.x || 0), y: Number(box.min.y || 0), z: Number(box.min.z || 0) };
+      const max = { x: Number(box.max.x || 0), y: Number(box.max.y || 0), z: Number(box.max.z || 0) };
+      const size = {
+        x: Number((max.x - min.x).toFixed(6)),
+        y: Number((max.y - min.y).toFixed(6)),
+        z: Number((max.z - min.z).toFixed(6))
+      };
+      const centroid = {
+        x: Number(((min.x + max.x) / 2).toFixed(6)),
+        y: Number(((min.y + max.y) / 2).toFixed(6)),
+        z: Number(((min.z + max.z) / 2).toFixed(6))
+      };
+
       let meshCount = 0;
       let vertexCount = 0;
       sceneOrRoot.traverse?.((node) => {
@@ -4429,6 +4692,23 @@ Original user request for context: ${basePrompt}`;
           if (posAttr?.count) vertexCount += posAttr.count;
         }
       });
+
+      const unitInfo = parseObjAuthoredUnit(meta.objText || '', meta.format || '');
+      const maxDim = Math.max(Math.abs(size.x), Math.abs(size.y), Math.abs(size.z), 0);
+      const normalizedToOneUnit = maxDim > 0 ? Number((1 / maxDim).toFixed(6)) : 1;
+      const dominantAxisInfo = detectDominantAxis(size);
+      const originClassification = classifyOriginPosition(min, max, size, centroid);
+      const floorY = Number((-min.y).toFixed(6));
+      const ceilingY = Number((-max.y).toFixed(6));
+      const centerY = Number((-centroid.y).toFixed(6));
+      const centerOffsetX = Number((-centroid.x).toFixed(6));
+      const centerOffsetZ = Number((-centroid.z).toFixed(6));
+      const uvMapping = collectThreeUvAnalysis(sceneOrRoot);
+      const textureMeta = meta.textureInfo || {};
+      const colormapFile = textureMeta.colormapFile || null;
+      const colormapStagedPath = textureMeta.colormapStagedPath || null;
+      const textureConfidence = textureMeta.confidence || (colormapFile ? 'HIGH' : 'NONE');
+
       return {
         sourceName: meta.sourceName || '',
         sourcePath: meta.sourcePath || '',
@@ -4446,30 +4726,98 @@ Original user request for context: ${basePrompt}`;
           depth: Number(size.z.toFixed(3))
         },
         center: {
-          x: Number(center.x.toFixed(3)),
-          y: Number(center.y.toFixed(3)),
-          z: Number(center.z.toFixed(3))
+          x: Number(centroid.x.toFixed(3)),
+          y: Number(centroid.y.toFixed(3)),
+          z: Number(centroid.z.toFixed(3))
         },
-        recommendedFloorYOffset: Number((size.y / 2).toFixed(3))
+        recommendedFloorYOffset: Number(floorY.toFixed(3)),
+        geometry: {
+          min: {
+            x: Number(min.x.toFixed(6)),
+            y: Number(min.y.toFixed(6)),
+            z: Number(min.z.toFixed(6))
+          },
+          max: {
+            x: Number(max.x.toFixed(6)),
+            y: Number(max.y.toFixed(6)),
+            z: Number(max.z.toFixed(6))
+          },
+          size: {
+            x: Number(size.x.toFixed(6)),
+            y: Number(size.y.toFixed(6)),
+            z: Number(size.z.toFixed(6))
+          },
+          centroid
+        },
+        scale: {
+          authoredUnit: unitInfo.authoredUnit,
+          unitToGameUnit: unitInfo.unitToGameUnit,
+          normalizedToOneUnit,
+          suggestedGameScale: normalizedToOneUnit,
+          suggestedGameScaleVec: [normalizedToOneUnit, normalizedToOneUnit, normalizedToOneUnit],
+          scaleWarning: (normalizedToOneUnit > 5 || normalizedToOneUnit < 0.1) ? 'LARGE SCALE CORRECTION NEEDED' : null
+        },
+        origin: {
+          classification: originClassification,
+          biasY: floorY,
+          biasX: centerOffsetX,
+          biasZ: centerOffsetZ
+        },
+        placement: {
+          floorY,
+          ceilingY,
+          centerY,
+          centerOffsetX,
+          centerOffsetZ,
+          dominantAxis: dominantAxisInfo.dominantAxis,
+          forwardHint: dominantAxisInfo.forwardHint
+        },
+        uvMapping,
+        texture: {
+          colormapFile,
+          colormapStagedPath,
+          confidence: textureConfidence,
+          detectionRule: textureMeta.detectionRule || (colormapFile ? 'provided' : 'none'),
+          thumbnailFile: textureMeta.thumbnailFile || null,
+          assignmentInstruction: colormapFile
+            ? 'Set data[\'0\'].material_file to the staged colormap path and data[\'0\'].albedo_ratio = [255,255,255].'
+            : (uvMapping.hasUVs
+              ? 'No colormap resolved. Use conservative flat material fallback unless the roster later provides a staged colormap path.'
+              : 'No UV coordinates. Texture assignment will use flat material color only.')
+        },
+        mesh: {
+          materialNames: collectThreeMaterialNames(sceneOrRoot),
+          hasMtlFile: Boolean(meta.hasMtlFile)
+        }
       };
     }
 
     function buildExtentsReviewEntry(displayName, analysis) {
       if (!analysis?.boundingBox) return null;
-      const fmt = (value) => Number(value || 0).toFixed(3);
+      const fmt = (value, digits = 3) => Number(value || 0).toFixed(digits);
+      const textureLabel = analysis.texture?.colormapFile
+        ? `${analysis.texture.colormapFile} ✓ (${analysis.texture.confidence || 'HIGH'})`
+        : '';
+      const uvSummary = !analysis.uvMapping?.hasUVs
+        ? 'No UVs'
+        : (analysis.uvMapping?.uvTiled ? 'Tiled UVs' : 'Standard UVs');
+
       return {
         name: displayName,
-        objWidth: fmt(analysis.boundingBox.width),
-        objHeight: fmt(analysis.boundingBox.height),
-        objDepth: fmt(analysis.boundingBox.depth),
-        hasMesh: false,
-        meshWidth: '',
-        meshHeight: '',
-        meshDepth: '',
-        centerX: fmt(analysis.center?.x),
-        centerY: fmt(analysis.center?.y),
-        centerZ: fmt(analysis.center?.z),
-        offset: fmt(analysis.recommendedFloorYOffset),
+        boundingBox: `${fmt(analysis.boundingBox.width)} × ${fmt(analysis.boundingBox.height)} × ${fmt(analysis.boundingBox.depth)} (${analysis.scale?.authoredUnit || 'unknown'})`,
+        authoredUnit: analysis.scale?.authoredUnit || 'unknown',
+        originClass: analysis.origin?.classification || 'N/A',
+        floorY: fmt(analysis.placement?.floorY),
+        centerY: fmt(analysis.placement?.centerY),
+        centerOffsetX: fmt(analysis.placement?.centerOffsetX),
+        centerOffsetZ: fmt(analysis.placement?.centerOffsetZ),
+        dominantAxis: analysis.placement?.dominantAxis || 'N/A',
+        forwardHint: analysis.placement?.forwardHint || 'N/A',
+        suggestedScale: fmt(analysis.scale?.suggestedGameScale, 6),
+        scaleVector: `[${(analysis.scale?.suggestedGameScaleVec || []).map(v => fmt(v, 6)).join(', ')}]`,
+        scaleWarning: analysis.scale?.scaleWarning || '',
+        uvSummary,
+        textureFound: textureLabel,
         materials: analysis.materials || []
       };
     }
@@ -4478,14 +4826,18 @@ Original user request for context: ${basePrompt}`;
       const lowerName = asset.name.toLowerCase();
       const modelUrl = asset.url;
       if (lowerName.endsWith('.obj')) {
-        const loader = new OBJLoader();
-        const model = await new Promise((resolve, reject) => loader.load(modelUrl, resolve, undefined, reject));
-        return buildThreeModelAnalysis(model, {
+        const objText = await fetch(modelUrl, { cache: 'no-store' }).then(res => {
+          if (!res.ok) throw new Error(`Failed to load OBJ text: ${res.status}`);
+          return res.text();
+        });
+        const parsed = new OBJLoader().parse(objText);
+        return buildThreeModelAnalysis(parsed, {
           sourceName: asset.name,
           sourcePath: asset.path,
           sourceType: asset.type || 'model/obj',
           containerType: 'direct-file',
-          format: 'obj'
+          format: 'obj',
+          objText
         });
       }
 
@@ -4501,9 +4853,14 @@ Original user request for context: ${basePrompt}`;
       });
     }
 
-    async function analyzeZipThreeAssets(zipObj, asset) {
+    async function analyzeZipThreeAssets(zipObj, asset, allowedMeshNames = null) {
       const analyses = [];
       const recognizedEntries = [];
+      const normalizedAllowed = allowedMeshNames instanceof Set
+        ? new Set(Array.from(allowedMeshNames).map(name => normalizeAssetLookupName(name)))
+        : null;
+      const zipClassification = classifyZipContents(zipObj);
+
       for (const relativePath of Object.keys(zipObj.files)) {
         const entry = zipObj.files[relativePath];
         if (entry.dir || relativePath.includes('__MACOSX')) continue;
@@ -4511,8 +4868,31 @@ Original user request for context: ${basePrompt}`;
         const entryName = relativePath.split('/').pop() || relativePath;
         if (!(lowerPath.endsWith('.obj') || lowerPath.endsWith('.glb') || lowerPath.endsWith('.gltf'))) continue;
 
+        if (normalizedAllowed && normalizedAllowed.size > 0) {
+          const normalizedEntry = normalizeAssetLookupName(entryName);
+          if (!normalizedAllowed.has(normalizedEntry) && !normalizedAllowed.has(normalizedEntry.replace(/\.obj$/i, ''))) {
+            continue;
+          }
+        }
+
         recognizedEntries.push(relativePath);
         try {
+          const entryBaseName = getZipEntryBaseName(entryName).toLowerCase();
+          const thumbnailMatch = (zipClassification.thumbnailFiles || []).find(item => item.baseName === entryBaseName) || zipClassification.thumbnailFiles?.[0] || null;
+          const textureInfo = zipClassification.colormapResolved ? {
+            colormapFile: zipClassification.colormapResolved.fileName,
+            colormapStagedPath: null,
+            confidence: zipClassification.colormapResolved.confidence || 'HIGH',
+            detectionRule: zipClassification.colormapResolved.detectionRule || 'none',
+            thumbnailFile: thumbnailMatch?.fileName || null
+          } : {
+            colormapFile: null,
+            colormapStagedPath: null,
+            confidence: 'NONE',
+            detectionRule: 'none',
+            thumbnailFile: thumbnailMatch?.fileName || null
+          };
+
           let analysis = null;
           if (lowerPath.endsWith('.obj')) {
             const objText = await entry.async('text');
@@ -4523,7 +4903,10 @@ Original user request for context: ${basePrompt}`;
               sourceType: 'application/zip',
               containerType: 'zip-entry',
               embeddedPath: relativePath,
-              format: 'obj'
+              format: 'obj',
+              objText,
+              textureInfo,
+              hasMtlFile: zipClassification.hasMtlFile
             });
           } else {
             const blob = await entry.async('blob');
@@ -4537,7 +4920,9 @@ Original user request for context: ${basePrompt}`;
                 containerType: 'zip-entry',
                 embeddedPath: relativePath,
                 format: lowerPath.endsWith('.glb') ? 'glb' : 'gltf',
-                animationCount: Array.isArray(gltf.animations) ? gltf.animations.length : 0
+                animationCount: Array.isArray(gltf.animations) ? gltf.animations.length : 0,
+                textureInfo,
+                hasMtlFile: zipClassification.hasMtlFile
               });
             } finally {
               URL.revokeObjectURL(objectUrl);
@@ -4556,8 +4941,9 @@ Original user request for context: ${basePrompt}`;
           });
         }
       }
-      return { analyses, recognizedEntries };
+      return { analyses, recognizedEntries, zipClassification };
     }
+
 
     /* ══════════════════════════════════════════════════════════════════════
        GAME-SPECIFIC ASSET ROSTER STAGE
@@ -5005,6 +5391,30 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
       };
     }
 
+    function getCachedModelAnalysis(projectName) {
+      if (!projectName) return [];
+      const memoryCache = window._modelAnalysisCacheByProject || {};
+      if (Array.isArray(memoryCache[projectName]) && memoryCache[projectName].length > 0) {
+        return JSON.parse(JSON.stringify(memoryCache[projectName]));
+      }
+      try {
+        const raw = sessionStorage.getItem(`gg1:modelAnalysis:${projectName}`);
+        const parsed = raw ? JSON.parse(raw) : [];
+        return Array.isArray(parsed) ? parsed : [];
+      } catch (_) {
+        return [];
+      }
+    }
+
+    function cacheModelAnalysis(projectName, analyses = []) {
+      if (!projectName || !Array.isArray(analyses) || analyses.length === 0) return;
+      window._modelAnalysisCacheByProject = window._modelAnalysisCacheByProject || {};
+      window._modelAnalysisCacheByProject[projectName] = JSON.parse(JSON.stringify(analyses));
+      try {
+        sessionStorage.setItem(`gg1:modelAnalysis:${projectName}`, JSON.stringify(analyses));
+      } catch (_) {}
+    }
+
     async function executeAIPipeline(promptOverride, options = {}) {
       const {
         repairAttempt = 0,
@@ -5027,6 +5437,11 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
       let scannedExtentsList = [];
       let modelAnalysisList = [];
       let rosterSelected3DNames = null;
+      let rosterSelected3DByZip = null;
+      const cachedModelAnalysis = (repairAttempt > 0 || parseErrorRetry > 0) ? getCachedModelAnalysis(currentProject) : [];
+      if (cachedModelAnalysis.length > 0) {
+        modelAnalysisList = cachedModelAnalysis;
+      }
       if (repairAttempt === 0 && parseErrorRetry === 0) {
         aiPromptInput.value = '';
         appendToChatLog('You', basePrompt);
@@ -5103,12 +5518,20 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
 
               Progress.step('Asset Roster Stage', `Found ${rosterDocItems.length} roster file(s) — running asset selection...`);
               const rosterResult = await runRosterStage(rosterProjectPath, rosterJobId);
+              const rosterObjects3D = Array.isArray(rosterResult?.roster?.objects3d) ? rosterResult.roster.objects3d : [];
               rosterSelected3DNames = new Set(
-                (rosterResult?.stagedAssets || [])
+                rosterObjects3D
                   .map(asset => asset?.assetName || '')
                   .filter(Boolean)
-                  .filter(name => /\.(obj|glb|gltf|fbx|c3b|zip)$/i.test(name))
+                  .filter(name => /\.(obj|glb|gltf|fbx|c3b)$/i.test(name))
               );
+              rosterSelected3DByZip = new Map();
+              rosterObjects3D.forEach((asset) => {
+                const zipName = zipNameFromRosterDocName(asset?.sourceRosterDocument || '');
+                if (!zipName) return;
+                if (!rosterSelected3DByZip.has(zipName)) rosterSelected3DByZip.set(zipName, new Set());
+                rosterSelected3DByZip.get(zipName).add(asset.assetName);
+              });
               // NOTE: approvedRosterContext is intentionally NOT set here.
               // The backend (claudeCodeProxy-background.js) loads ai_asset_roster_approved.json
               // from Firebase and builds the roster context block fresh for every tranche via
@@ -5217,7 +5640,8 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
                 }
 
                 if (a.path.includes('object_zips/')) {
-                    const shouldProcessZip = rosterSelected3DNames.has(a.name);
+                    const selectedEntriesForZip = rosterSelected3DByZip?.get(a.name) || null;
+                    const shouldProcessZip = selectedEntriesForZip instanceof Set ? selectedEntriesForZip.size > 0 : rosterSelected3DNames.has(a.name);
                     if (!shouldProcessZip) continue;
                     Progress.step(`Scanning ZIP contents`, a.name);
                     try {
@@ -5231,7 +5655,7 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
                             if (entry.dir || relativePath.includes('__MACOSX')) continue;
                             entries.push(relativePath);
                         }
-                        const zipAnalysis = await analyzeZipThreeAssets(zipObj, a);
+                        const zipAnalysis = await analyzeZipThreeAssets(zipObj, a, selectedEntriesForZip);
                         if (zipAnalysis.analyses.length > 0) {
                             modelAnalysisList.push(...zipAnalysis.analyses);
                             zipAnalysis.analyses.forEach((analysis) => {
@@ -5261,9 +5685,16 @@ ${zipAnalysis.recognizedEntries.map(v => `- ${v}`).join('\n')}
             }
         }
 
+        if (modelAnalysisList.length > 0) {
+            cacheModelAnalysis(currentProject, modelAnalysisList);
+        }
+
         if (scannedExtentsList.length > 0) {
             Progress.step('Review 3D scan results', 'Confirm the roster-selected scan results before tranche planning continues...');
             await showExtentsReviewModal(scannedExtentsList);
+            await annotateApprovedRosterWithManifestKeys(currentProject, null, modelAnalysisList).catch(() => null);
+        } else if ((repairAttempt > 0 || parseErrorRetry > 0) && modelAnalysisList.length > 0) {
+            Progress.step('Reusing prior 3D scan analysis', `${modelAnalysisList.length} cached model analysis entr${modelAnalysisList.length === 1 ? 'y' : 'ies'} carried into this repair run.`);
         }
 
         const extentsContext = scannedExtentsList.length ? `
@@ -5272,7 +5703,7 @@ ${zipAnalysis.recognizedEntries.map(v => `- ${v}`).join('\n')}
 ${JSON.stringify(scannedExtentsList, null, 2)}` : '';
         const modelAnalysisContext = modelAnalysisList.length ? `
 
-=== THREE.JS 3D MODEL ANALYSIS ===
+=== THREE.JS 3D MODEL ANALYSIS (REFERENCE ONLY — approved roster contracts override this when both are present) ===
 ${JSON.stringify(modelAnalysisList, null, 2)}` : '';
         const repairSeedFiles = repairAttempt > 0 ? buildRepairSeedFiles(projectFiles, repairTargets) : projectFiles;
         const repairContext = repairAttempt > 0 && repairTargets.length
@@ -5553,6 +5984,21 @@ RULES FOR ALL PIPELINE STAGES:
                 `Review <code>ai_validation_patched_prompt.txt</code> in Firebase to see what was added.`,
                 'normal'
               );
+            }
+
+            if (
+              progressData.contractPromptReview &&
+              progressData.jobId === currentJobId &&
+              window._contractPromptReviewNotifiedForJob !== currentJobId
+            ) {
+              window._contractPromptReviewNotifiedForJob = currentJobId;
+              const review = progressData.contractPromptReview;
+              if ((review.issueCount || 0) > 0) {
+                Progress.warn('Informational tranche prompt contract review', `${review.issueCount} possible omission(s) detected — build continues.`);
+              } else {
+                Progress.step('Informational tranche prompt contract review', 'No obvious missing carried contract values detected.');
+              }
+              appendToChatLog('System', `📋 ${review.summary}`, 'normal');
             }
 
             if (progressData.status === 'executing' && progressData.tranches) {

@@ -212,6 +212,77 @@ function resolveRosterRole(asset) {
   return asset?.intendedRole || asset?.intendedUsage || asset?.selectionRationale || asset?.matchedRequirement || "";
 }
 
+function formatRosterNumber(value, digits = 3) {
+  const num = Number(value);
+  return Number.isFinite(num) ? num.toFixed(digits) : "N/A";
+}
+
+function buildRosterObjectContract(asset, stagedMeta, manifestMeta) {
+  const geometry = asset?.geometryAnalysis || stagedMeta?.geometryAnalysis || null;
+  const stagedPath = stagedMeta?.stagedPath || asset?.stagedPath || "(not staged)";
+  const colormapFile = asset?.colormapFile || stagedMeta?.colormapFile || null;
+  const colormapPath = asset?.colormapStagedPath || stagedMeta?.colormapStagedPath || null;
+  const colormapConfidence = asset?.colormapConfidence || stagedMeta?.colormapConfidence || (colormapFile ? "HIGH" : "NONE");
+  const uvNote = geometry?.uvMapping?.uvWrappingNote || "NOT AVAILABLE";
+  const manifestKey = manifestMeta?.key ? `"${manifestMeta.key}"` : "(unresolved)";
+  const sourceDoc = asset?.sourceRosterDocument || "Unknown source";
+
+  if (!geometry) {
+    return `  ┌─ [${asset.assetName}]
+  │  Source:       ${sourceDoc}
+  │  Role:         ${resolveRosterRole(asset)}
+  │  Manifest key: ${manifestKey}
+  │  Staged path:  ${stagedPath}
+  │
+  │  GEOMETRY CONTRACT: NOT AVAILABLE — scale and position conservatively;
+  │    use scale [1,1,1] and position.y = 0 as safe defaults.
+  │  TEXTURE CONTRACT:
+  │    Colormap file: ${colormapFile || "NOT AVAILABLE"}
+  │    Colormap path: ${colormapPath || "NOT AVAILABLE"}
+  └─`;
+  }
+
+  const size = geometry?.geometry?.size || {};
+  const placement = geometry?.placement || {};
+  const scale = geometry?.scale || {};
+  const origin = geometry?.origin || {};
+  const scaleVec = Array.isArray(scale.suggestedGameScaleVec)
+    ? `[${scale.suggestedGameScaleVec.map(v => formatRosterNumber(v, 6)).join(", ")}]`
+    : "[N/A]";
+  const assignmentLine = colormapPath
+    ? `data['0'].material_file = "${colormapPath}"; data['0'].albedo_ratio = [255, 255, 255]`
+    : "NOT AVAILABLE";
+
+  return `  ┌─ [${asset.assetName}]
+  │  Source:       ${sourceDoc}
+  │  Role:         ${resolveRosterRole(asset)}
+  │  Manifest key: ${manifestKey}
+  │  Staged path:  ${stagedPath}
+  │
+  │  GEOMETRY CONTRACT (measured values — use these directly in code):
+  │    Bounding box:   W=${formatRosterNumber(size.x)}  H=${formatRosterNumber(size.y)}  D=${formatRosterNumber(size.z)}  (authored unit: ${scale.authoredUnit || "unknown"})
+  │    Origin class:   ${origin.classification || "N/A"}
+  │    Dominant axis:  ${placement.dominantAxis || "N/A"}
+  │    Forward hint:   ${placement.forwardHint || "N/A"}
+  │
+  │  PLACEMENT CONTRACT (copy these values verbatim into tranche code):
+  │    position.y for floor placement:    ${formatRosterNumber(placement.floorY, 6)}
+  │    position.y for vertical centering: ${formatRosterNumber(placement.centerY, 6)}
+  │    position.x centering correction:   ${formatRosterNumber(placement.centerOffsetX, 6)}
+  │    position.z centering correction:   ${formatRosterNumber(placement.centerOffsetZ, 6)}
+  │    Suggested scale (largest dim → 1): ${formatRosterNumber(scale.suggestedGameScale, 6)}
+  │    Scale vector:                      ${scaleVec}
+  │    Scale warning:                     ${scale.scaleWarning || "null"}
+  │
+  │  TEXTURE CONTRACT:
+  │    Colormap file:    ${colormapFile || "NOT AVAILABLE"}
+  │    Colormap path:    ${colormapPath || "NOT AVAILABLE"}
+  │    Colormap conf.:   ${colormapConfidence}
+  │    UV mapping:       ${uvNote}
+  │    Assignment:       ${assignmentLine}
+  └─`;
+}
+
 /* ── Load approved Asset Roster from Firebase (if present) ──────
    Returns a formatted context block string, or empty string if no
    roster was approved for this run.                               */
@@ -225,11 +296,16 @@ async function loadApprovedRosterBlock(bucket, projectPath) {
     if (!r._meta?.approved) return "";
 
     const manifestIndex = await loadAssetsManifestIndex(bucket, projectPath);
+    const stagedIndex = new Map(
+      (r.stagedAssets || [])
+        .filter(a => a?.assetName)
+        .map(a => [String(a.assetName).toLowerCase(), a])
+    );
 
     const objs = (r.objects3d || []).map(a => {
       const manifestMeta = manifestIndex.get(String(a.assetName || "").toLowerCase());
-      const role = resolveRosterRole(a);
-      return `  - ${a.assetName} (from ${a.sourceRosterDocument}): ${role} | manifest key: ${manifestMeta?.key ? `"${manifestMeta.key}"` : "(unresolved)"}`;
+      const stagedMeta = stagedIndex.get(String(a.assetName || "").toLowerCase());
+      return buildRosterObjectContract(a, stagedMeta, manifestMeta);
     }).join("\n");
 
     const particleTextures = (r.textureAssets || []).filter(a => a.particleEffectTarget);
@@ -241,12 +317,15 @@ async function loadApprovedRosterBlock(bucket, projectPath) {
 
     const staged = (r.stagedAssets || []).map(a => {
       const manifestMeta = manifestIndex.get(String(a.assetName || "").toLowerCase());
-      return `  - ${a.assetName} → ${a.stagedPath}${manifestMeta?.key ? ` | manifest key: "${manifestMeta.key}"` : ""}`;
+      const colormapSuffix = a.colormapStagedPath ? ` | colormap: ${a.colormapStagedPath}` : "";
+      return `  - ${a.assetName} → ${a.stagedPath}${manifestMeta?.key ? ` | manifest key: "${manifestMeta.key}"` : ""}${colormapSuffix}`;
     }).join("\n");
     const vn = r.visualDirectionNotes || {};
     const sf = r._meta?.stagedFolder || "";
 
-    return `\n\n═══════════════════════════════════════════════════════════
+    return `
+
+═══════════════════════════════════════════════════════════
 APPROVED GAME-SPECIFIC ASSET ROSTER — FIRST-CLASS COMPANION DOCUMENT
 Authority equal to the Master Prompt and all reference images.
 All tranche planning and execution MUST use these approved assets.
@@ -287,6 +366,8 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
 6. PARTICLE TEXTURE REGISTRY: A Foundation-B sub-tranche MUST be planned immediately after Foundation-A. Its sole job is to populate gameState.particleTextureIds keyed by particleEffectTarget using the exact assets.json manifest keys. This tranche must complete before any particle emitter or billboard tranche.
 7. Every particle billboard or sphere object created in any tranche MUST set material_file in its data['0'] slot to gameState.particleTextureIds[effectName]. Hardcoding a texture string or omitting material_file when gameState.particleTextureIds is populated is a tranche execution defect.
 8. 3D OBJECT REGISTRY: Every tranche touching visible scene content MUST use approved roster 3D objects via gameState.objectids and the resolved assets.json manifest keys surfaced above. Using cube, sphere, or planevertical as a visible gameplay object when a roster asset covers that role is a tranche execution defect.
+9. GEOMETRY CONTRACTS surfaced above are arithmetic, not suggestions. When present, copy the exact placement and scale values into planning and execution prompts without paraphrase.
+10. TEXTURE CONTRACTS surfaced above are mandatory when a non-null colormap path is available. Use material_file plus albedo_ratio = [255,255,255] together.
 ═══════════════════════════════════════════════════════════`;
   } catch (e) {
     console.warn("[ROSTER] Could not load approved roster:", e.message);
@@ -349,6 +430,12 @@ async function callClaude(apiKey, { model, maxTokens, system, userContent, effor
     messages: [{ role: "user", content: userContent }]
   };
 
+  const headers = {
+    "Content-Type": "application/json",
+    "x-api-key": apiKey,
+    "anthropic-version": "2023-06-01"
+  };
+
   if (budgetTokens) {
     body.thinking = { type: "enabled", budget_tokens: budgetTokens };
   }
@@ -363,11 +450,7 @@ async function callClaude(apiKey, { model, maxTokens, system, userContent, effor
     try {
       const res = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": apiKey,
-          "anthropic-version": "2023-06-01"
-        },
+        headers,
         body: JSON.stringify(body)
       });
 
@@ -378,36 +461,32 @@ async function callClaude(apiKey, { model, maxTokens, system, userContent, effor
         try {
           data = JSON.parse(rawText);
         } catch (parseErr) {
-          if (!res.ok) {
-            throw new Error(`Claude API error (${res.status}) with non-JSON body: ${rawText.slice(0, 500)}`);
-          }
-          throw new Error(`Failed to parse Claude response JSON: ${parseErr.message}`);
+          const parseError = new Error(`Claude returned non-JSON response: ${parseErr.message}`);
+          parseError.status = res.status;
+          parseError.rawText = rawText;
+          parseError.isRetryableOverload = isClaudeOverloadError(res.status, rawText);
+          throw parseError;
         }
       }
 
       if (!res.ok) {
-        const apiMessage = data?.error?.message || `Claude API error (${res.status})`;
-        const err = new Error(apiMessage);
+        const errMsg = data?.error?.message || `Claude API error (${res.status})`;
+        const err = new Error(errMsg);
         err.status = res.status;
-        err.isRetryableOverload = isClaudeOverloadError(res.status, apiMessage);
+        err.data = data;
+        err.isRetryableOverload = isClaudeOverloadError(res.status, errMsg);
         throw err;
       }
 
-      const responseText = data?.content?.find(b => b.type === "text")?.text;
-      if (!responseText) {
-        throw new Error("Empty response from Claude");
+      const textBlock = data?.content?.find(block => block.type === "text")?.text;
+      if (!textBlock) {
+        throw new Error("Claude response missing text block");
       }
 
-      return {
-        text: responseText,
-        usage: data?.usage || null
-      };
+      return { text: textBlock, usage: data?.usage || null };
     } catch (err) {
-      const status = Number(err?.status || 0);
-      const retryable =
-        Boolean(err?.isRetryableOverload) ||
-        isClaudeOverloadError(status, err?.message);
-
+      const status = err?.status || null;
+      const retryable = Boolean(err?.isRetryableOverload) || isClaudeOverloadError(status, err?.message || "");
       lastError = err;
 
       if (!retryable || attempt >= CLAUDE_OVERLOAD_MAX_RETRIES) {
@@ -471,11 +550,147 @@ function countOccurrences(haystack, needle) {
   return String(haystack || '').split(needle).length - 1;
 }
 
-function assertTranchePromptHasRequiredManifestBlock(tranche, index) {
-  if (!tranche || typeof tranche.prompt !== 'string' || !tranche.prompt.trim()) {
-    throw new Error(`Planner tranche ${index + 1} is missing a prompt.`);
+function parseRosterContractValue(block, pattern) {
+  const match = String(block || "").match(pattern);
+  return match && match[1] ? String(match[1]).trim() : "";
+}
+
+function parseApprovedRosterContracts(approvedRosterBlock = "") {
+  const contracts = [];
+  const blockRegex = /┌─ \[([^\]]+)\]([\s\S]*?)└─/g;
+  let match;
+
+  while ((match = blockRegex.exec(String(approvedRosterBlock || ""))) !== null) {
+    const assetName = String(match[1] || "").trim();
+    const block = match[0];
+    const texturePath = parseRosterContractValue(block, /Colormap path:\s+([^\n]+)/i);
+    const scaleWarning = parseRosterContractValue(block, /Scale warning:\s+([^\n]+)/i);
+    const dominantAxis = parseRosterContractValue(block, /Dominant axis:\s+([^\n]+)/i);
+
+    contracts.push({
+      assetName,
+      geometryAvailable: /GEOMETRY CONTRACT \(measured values/i.test(block),
+      dominantAxis,
+      floorY: parseRosterContractValue(block, /position\.y for floor placement:\s+([^\n]+)/i),
+      centerOffsetX: parseRosterContractValue(block, /position\.x centering correction:\s+([^\n]+)/i),
+      centerOffsetZ: parseRosterContractValue(block, /position\.z centering correction:\s+([^\n]+)/i),
+      suggestedGameScale: parseRosterContractValue(block, /Suggested scale \(largest dim → 1\):\s+([^\n]+)/i),
+      scaleVector: parseRosterContractValue(block, /Scale vector:\s+([^\n]+)/i),
+      scaleWarning,
+      texturePath: /^(NOT AVAILABLE|null|\(not staged\))$/i.test(texturePath) ? "" : texturePath
+    });
   }
-  return true;
+
+  return contracts;
+}
+
+function promptMentionsAsset(prompt, assetName = "") {
+  const promptText = String(prompt || "").toLowerCase();
+  const exact = String(assetName || "").trim().toLowerCase();
+  const base = exact.replace(/\.[a-z0-9]+$/i, "");
+  if (!exact && !base) return false;
+  if (exact && promptText.includes(exact)) return true;
+  if (base && promptText.includes(base)) return true;
+  return false;
+}
+
+function buildContractPromptReview(progress, approvedRosterBlock = "") {
+  const contracts = parseApprovedRosterContracts(approvedRosterBlock);
+  const tranches = Array.isArray(progress?.tranches) ? progress.tranches : [];
+  const items = [];
+  let reviewedTranches = 0;
+  let issueCount = 0;
+
+  tranches.forEach((tranche, index) => {
+    const prompt = String(tranche?.prompt || "");
+    const referencedAssets = contracts.filter(contract => promptMentionsAsset(prompt, contract.assetName));
+    const warnings = [];
+
+    if (referencedAssets.length > 0) {
+      reviewedTranches += 1;
+    }
+
+    referencedAssets.forEach((contract) => {
+      const missing = [];
+
+      if (contract.geometryAvailable) {
+        [
+          ["floorY", contract.floorY],
+          ["centerOffsetX", contract.centerOffsetX],
+          ["centerOffsetZ", contract.centerOffsetZ],
+          ["suggestedGameScale", contract.suggestedGameScale],
+          ["scaleVector", contract.scaleVector],
+          ["dominantAxis", contract.dominantAxis]
+        ].forEach(([label, value]) => {
+          if (value && !prompt.includes(value)) {
+            missing.push(`${label}=${value}`);
+          }
+        });
+
+        if (contract.scaleWarning && contract.scaleWarning.toLowerCase() !== "null" && !prompt.includes(contract.scaleWarning)) {
+          missing.push(`scaleWarning=${contract.scaleWarning}`);
+        }
+      }
+
+      if (contract.texturePath && !prompt.includes(contract.texturePath)) {
+        missing.push(`colormapPath=${contract.texturePath}`);
+      }
+
+      if (missing.length > 0) {
+        warnings.push(`${contract.assetName}: missing prompt-carried contract values -> ${missing.join(" | ")}`);
+      }
+    });
+
+    tranche.contractPromptReviewWarnings = warnings;
+    tranche.contractPromptReviewStatus = warnings.length > 0 ? "warning" : (referencedAssets.length > 0 ? "ok" : "not_applicable");
+
+    if (warnings.length > 0) {
+      issueCount += warnings.length;
+    }
+
+    items.push({
+      trancheIndex: index,
+      trancheName: tranche?.name || `Tranche ${index + 1}`,
+      status: tranche.contractPromptReviewStatus,
+      assets: referencedAssets.map(contract => contract.assetName),
+      warnings
+    });
+  });
+
+  const summary = issueCount > 0
+    ? `Informational tranche prompt contract review: ${issueCount} possible omission(s) across ${reviewedTranches} reviewed tranche(s). Build continues; review the UI log and tranche cards later.`
+    : `Informational tranche prompt contract review: no obvious missing carried contract values were detected across ${reviewedTranches} reviewed tranche(s).`;
+
+  return {
+    status: "informational",
+    generatedAt: Date.now(),
+    reviewedTranches,
+    issueCount,
+    summary,
+    items
+  };
+}
+
+function selectNextSequentialTranche(progress, preferredIndex = null) {
+  const tranches = Array.isArray(progress?.tranches) ? progress.tranches : [];
+  const pendingIndices = tranches
+    .map((_, index) => index)
+    .filter(index => !isTrancheTerminalStatus(tranches[index]?.status));
+
+  if (pendingIndices.length === 0) {
+    return { ready: false, done: true, index: null, reason: "all tranches are complete" };
+  }
+
+  if (
+    Number.isInteger(preferredIndex) &&
+    preferredIndex >= 0 &&
+    preferredIndex < tranches.length &&
+    !isTrancheTerminalStatus(tranches[preferredIndex]?.status)
+  ) {
+    return { ready: true, done: false, index: preferredIndex };
+  }
+
+  return { ready: true, done: false, index: pendingIndices[0] };
 }
 
 function normalizeArray(value, fallback = []) {
@@ -660,8 +875,8 @@ async function chainToSelf(payload) {
    Call 3 (Review)   : classifies simulation findings as PASS/FAIL
      and emits a structured JSON issues list.
 
-   All three calls use claude-sonnet-4-20250514.
-   Extended thinking is disabled for these calls (no budgetTokens)
+   All three calls use claude-sonnet-4-6.
+   Thinking is omitted for these calls; use explicit effort only
    so they stay fast and cheap — under ~20 seconds total.
    ═══════════════════════════════════════════════════════════════ */
 
@@ -669,7 +884,7 @@ async function chainToSelf(payload) {
    These are scaffold-level facts that the Master Prompt author
    should not have to write — they apply to every Cherry3D game. */
 const SCAFFOLD_VALIDATION_CONSTRAINTS = `
-KNOWN ENGINE CONSTRAINTS (Cherry3D scaffold v8.1):
+KNOWN ENGINE CONSTRAINTS (Cherry3D scaffold v11.0):
 These apply to every game regardless of what the Master Prompt says.
 Factor them into your simulations where relevant.
 
@@ -690,6 +905,25 @@ Factor them into your simulations where relevant.
 4. TOP-DOWN CAMERA: mat4.lookAt with a vertical camera produces a
    degenerate matrix. The scaffold handles this automatically —
    no spec action needed, but note it if relevant to the game.
+
+5. COORDINATE SPACE COLLISION: Any angle or position used in a
+   collision test must be compared in the same coordinate space.
+   If the spec stores child attachment angles in local space but
+   compares them directly against world-space angles, note a
+   coordinateSpaceCollisionRisk.
+
+6. ENGINE AUTO-ROTATION FROM VELOCITY: Cherry3D can apply visual
+   rotation from positional delta. Any object that must keep a fixed
+   orientation while moving, flying, or orbiting needs an explicit
+   per-frame rotate overwrite. If the spec omits that correction,
+   note an autoRotationRisk.
+
+7. INSTANCE PARENT FRUSTUM CULLING: Instanced children inherit
+   visibility from the instance parent's bounding box. Hiding the
+   instance parent by scaling it to near-zero can make every child
+   invisible. Instance parents should be parked off-screen instead.
+   If the spec uses near-zero parent scale to hide instance roots,
+   note an instancingCullRisk.
 `;
 
 /* ── Call 1: Extract game-specific simulation scenarios ─────── */
@@ -875,8 +1109,9 @@ async function runSingleValidationPass(apiKey, masterPrompt, scenarios, bucket, 
 
   // Call 2: Simulate
   const simResult = await callClaude(apiKey, {
-    model:       'claude-sonnet-4-20250514',
+    model:       'claude-sonnet-4-6',
     maxTokens:   8000,
+    effort:      'low',
     system:      'You are a game logic validator. Be precise and literal.',
     userContent: [
       { type: 'text', text: imageValidationPreamble + buildSimulationPrompt(masterPrompt, scenarios) },
@@ -892,8 +1127,9 @@ async function runSingleValidationPass(apiKey, masterPrompt, scenarios, bucket, 
 
   // Call 3: Review
   const reviewResult = await callClaude(apiKey, {
-    model:       'claude-sonnet-4-20250514',
+    model:       'claude-sonnet-4-6',
     maxTokens:   6000,
+    effort:      'low',
     system:      'You are a spec review classifier. Respond only with a valid JSON object.',
     userContent: [
       { type: 'text', text: buildReviewPrompt(simulationDoc, scenarios) },
@@ -926,8 +1162,9 @@ async function runSpecValidationGate(apiKey, masterPrompt, progress, bucket, pro
   let scenarios;
   try {
     const extractResult = await callClaude(apiKey, {
-      model:       'claude-sonnet-4-20250514',
+      model:       'claude-sonnet-4-6',
       maxTokens:   3000,
+      effort:      'low',
       system:      'You are a game logic analyst. Respond only with a valid JSON array.',
       userContent: [
         { type: 'text', text: buildExtractionPrompt(masterPrompt) },
@@ -1096,8 +1333,9 @@ async function runSpecValidationGate(apiKey, masterPrompt, progress, bucket, pro
     let patchedPrompt;
     try {
       const patchResult = await callClaude(apiKey, {
-        model:       'claude-sonnet-4-20250514',
+        model:       'claude-sonnet-4-6',
         maxTokens:   masterPrompt.length > 20000 ? 16000 : 8000,
+        effort:      'low',
         system:      'You are a game spec editor. Output only the updated Master Prompt.',
         userContent: [{ type: 'text', text: buildPatchPrompt(activePrompt, mediumIssues) }]
       });
@@ -1324,7 +1562,8 @@ exports.handler = async (event) => {
         },
         finalMessage: null,
         error: null,
-        completedTime: null
+        completedTime: null,
+        contractPromptReview: null
       };
       await saveProgress(bucket, projectPath, progress);
 
@@ -1359,6 +1598,10 @@ PLANNING RULES:
 14. LATE-PHASE TIGHTENING (tranches 11 and beyond): As the codebase grows, complexity compounds. For any tranche planned at position 11 or later, cut the line budget to ~80-130 lines of new or changed code, limit scope to ONE function or ONE tightly-coupled pair of functions, and prefer A/B sub-tranche splits over any grouping. If the system being implemented at tranche 11+ would require touching more than one section of models/2, it must be split into sub-tranches.
 15. If an Approved Asset Roster is present, you MUST populate gameState.objectids with every roster asset before the three engine primitives. Roster assets are mandatory for all visual game objects. The three engine primitives (cube, sphere, planevertical) are reserved exclusively for particle system internals and invisible collision geometry — using a primitive as a visible game object when a roster asset covers that role is a planning defect. For every tranche touching rendered content, the prompt field MUST explicitly name which roster assets to use for each visual element by their resolved objectids manifest key from the Approved Asset Roster block.
 16. If the Approved Asset Roster contains particle texture entries (particleEffectTarget set), you MUST plan a Foundation-B sub-tranche immediately after Foundation-A. Foundation-B has one job: populate gameState.particleTextureIds keyed by particleEffectTarget using the exact assets.json manifest keys surfaced in the Approved Asset Roster block. Every tranche that creates a particle billboard or sphere MUST declare Foundation-B as a dependency and MUST name the exact gameState.particleTextureIds key in its prompt. A tranche plan that lists particle textures in the roster but never populates gameState.particleTextureIds is a planning defect.
+17. GEOMETRY CONTRACT ENFORCEMENT: For every approved roster asset that has a GEOMETRY CONTRACT in the roster block, the tranche whose job is to spawn or position that asset MUST embed the exact numerical values from that contract into its prompt field. Copy floorY, centerOffsetX, centerOffsetZ, scale vector, dominant axis, and any scale warning verbatim. Do NOT paraphrase, estimate, or omit them.
+18. TEXTURE CONTRACT ENFORCEMENT: For every approved roster asset that has a TEXTURE CONTRACT with a non-null colormap path, the tranche that creates that object MUST plan to set data['0'].material_file to that colormap path and data['0'].albedo_ratio = [255,255,255]. Using defineMaterial() color alone when a colormap path is available is a planning defect.
+19. SCALE CORRECTION AWARENESS: If an asset's GEOMETRY CONTRACT includes scaleWarning = "LARGE SCALE CORRECTION NEEDED", the tranche prompt MUST explicitly note this and include the suggestedGameScale as the baseline. The executor must apply this baseline before any game-specific size adjustment.
+20. SOURCE PRECEDENCE: When the Approved Game-Specific Asset Roster and the raw THREE.JS MODEL ANALYSIS both mention the same asset, treat the roster block as authoritative. Use the raw model analysis only as supporting reference context; never let it override a roster contract value.
 
 ${REQUIRED_TRANCHE_VALIDATION_BLOCK}
 
@@ -1451,8 +1694,11 @@ ${effectivePrompt}
         filesUpdated: [],
         validationRetryCount: 0,
         executionRetryCount: 0,
-        retryBudget: 0
+        retryBudget: 0,
+        contractPromptReviewWarnings: [],
+        contractPromptReviewStatus: "not_applicable"
       }));
+      progress.contractPromptReview = buildContractPromptReview(progress, approvedRosterBlock);
       await saveProgress(bucket, projectPath, progress);
 
       console.log(`Plan created: ${plan.tranches.length} tranches.`);
@@ -1467,7 +1713,8 @@ ${effectivePrompt}
         imageBlocks,
         modelAnalysis: Array.isArray(modelAnalysis) ? modelAnalysis : [],
         totalTranches: plan.tranches.length,
-        approvedRosterBlock   // ← propagated to every tranche execution
+        approvedRosterBlock,   // ← propagated to every tranche execution
+        contractPromptReview: progress.contractPromptReview
       };
       await savePipelineState(bucket, projectPath, pipelineState);
 
@@ -1596,6 +1843,8 @@ OUTPUT RULES:
 - Do NOT invent custom lifecycle blocks when the scaffold already supplies one.
 - 3D OBJECT ENFORCEMENT: If an Approved Asset Roster is present and contains objects3d entries, every visible gameplay object introduced or modified in this tranche MUST use a roster asset via gameState.objectids and the resolved assets.json manifest keys surfaced in the roster block. Using cube, sphere, or planevertical as a visible gameplay object when a roster asset covers that role is a defect. Those primitives may only be used for particle internals and invisible collision geometry.
 - PARTICLE TEXTURE ENFORCEMENT: If gameState.particleTextureIds is populated (established in Foundation-B), every particle billboard or sphere object created in this tranche MUST set material_file in its data['0'] slot to the appropriate gameState.particleTextureIds[effectName] key. Hardcoding a texture string or omitting material_file when gameState.particleTextureIds is available is a defect. If this tranche IS Foundation-B, your only job is to populate gameState.particleTextureIds with every approved particle texture keyed by its particleEffectTarget using the resolved manifest keys from the roster block — this must be the first code that runs before anything else in this tranche.
+- PLACEMENT MATH AUDIT TRAIL: When placing any roster asset that has a GEOMETRY CONTRACT, include a comment block immediately above the position and scale assignments in the emitted code using the contract values, e.g. // [assetName] placement contract applied: floorY=[v] origin=[class] scale=[s,s,s]. Its absence is a detectable defect.
+- TEXTURE ASSIGNMENT AUDIT TRAIL: When creating any roster asset that has a TEXTURE CONTRACT with a non-null colormap path, include a comment immediately above the data block noting the applied colormap, and set data['0'].material_file plus data['0'].albedo_ratio = [255,255,255]. Using albedo_ratio alone when a colormap path exists is a defect.
 
 VALIDATOR STATUS:
 - Validation manifest requirements are temporarily disabled.
@@ -1614,7 +1863,9 @@ VALIDATOR STATUS:
         trancheFileContext += `=== THREE.JS MODEL ANALYSIS ===\n${JSON.stringify(modelAnalysis, null, 2)}\n\n`;
       }
 
-      assertTranchePromptHasRequiredManifestBlock(tranche, nextTranche);
+      if (progress.contractPromptReview?.issueCount > 0 && Array.isArray(progress.tranches?.[nextTranche]?.contractPromptReviewWarnings) && progress.tranches[nextTranche].contractPromptReviewWarnings.length > 0) {
+        console.warn(`[CONTRACT REVIEW][informational] Tranche ${nextTranche + 1}: ${progress.tranches[nextTranche].contractPromptReviewWarnings.join(" || ")}`);
+      }
 
       const rosterPrefix = approvedRosterBlock
         ? `=== APPROVED GAME-SPECIFIC ASSET ROSTER ===\n${approvedRosterBlock}\n=== END ASSET ROSTER ===\n\n`
@@ -1642,7 +1893,7 @@ IMPORTANT: You are working on tranche ${nextTranche + 1} of ${progress.totalTran
       try {
         trancheResponseObj = await callClaude(apiKey, {
           model: "claude-sonnet-4-6",
-          maxTokens: 128000,
+          maxTokens: 100000,
           budgetTokens: 10000,
           effort: "high",
           system: executionSystem,

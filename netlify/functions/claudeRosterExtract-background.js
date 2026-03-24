@@ -51,6 +51,103 @@ function normalizeAssetName(name = "") {
   return name.toLowerCase().replace(/[^a-z0-9.\-_]/g, "");
 }
 
+/* Zip content classifier for staged 3D assets */
+function getZipEntryBaseName(name = "") {
+  const base = String(name || "").split("/").pop() || String(name || "");
+  return base.replace(/\.[^.]+$/, "");
+}
+
+function detectMimeType(filename = "") {
+  const ext = String(filename || "").split(".").pop().toLowerCase();
+  return ext === "png"                    ? "image/png"
+       : ext === "jpg" || ext === "jpeg" ? "image/jpeg"
+       : ext === "webp"                   ? "image/webp"
+       : ext === "bmp"                    ? "image/bmp"
+       : ext === "tga"                    ? "image/x-targa"
+       : ext === "obj"                    ? "text/plain"
+       : ext === "glb" || ext === "gltf" ? "model/gltf-binary"
+       : "application/octet-stream";
+}
+
+function classifyZipContents(zip) {
+  const meshExtensions = new Set([".obj", ".fbx", ".glb", ".gltf", ".c3b"]);
+  const imageExtensions = new Set([".jpg", ".jpeg", ".png", ".webp", ".tga", ".bmp"]);
+  const explicitColorNames = new Set([
+    "colormap", "color_map", "albedo", "albedo_map",
+    "diffuse", "diffuse_map", "basecolor", "base_color",
+    "texture", "tex", "color"
+  ]);
+
+  const meshFiles = [];
+  const imageFiles = [];
+  let hasMtlFile = false;
+
+  for (const entryPath of Object.keys(zip.files || {})) {
+    const entry = zip.files[entryPath];
+    if (!entry || entry.dir || entryPath.includes("__MACOSX")) continue;
+    const fileName = entryPath.split("/").pop() || entryPath;
+    const lowerFileName = fileName.toLowerCase();
+    const ext = lowerFileName.includes(".") ? lowerFileName.slice(lowerFileName.lastIndexOf(".")) : "";
+    const baseName = getZipEntryBaseName(fileName).toLowerCase();
+
+    if (meshExtensions.has(ext)) {
+      meshFiles.push({ entryPath, fileName, baseName, ext });
+    } else if (imageExtensions.has(ext)) {
+      imageFiles.push({ entryPath, fileName, baseName, ext });
+    } else if (ext === ".mtl") {
+      hasMtlFile = true;
+    }
+  }
+
+  const meshBaseNames = new Set(meshFiles.map(file => file.baseName));
+  const detections = imageFiles.map((image) => {
+    if (/(thumb|preview)/i.test(image.baseName)) {
+      return { ...image, role: "THUMBNAIL", confidence: "HIGH", detectionRule: "name=thumb-or-preview" };
+    }
+    if (explicitColorNames.has(image.baseName)) {
+      return { ...image, role: "COLORMAP", confidence: "HIGH", detectionRule: `name=${image.baseName}` };
+    }
+    if (meshBaseNames.has(image.baseName)) {
+      return { ...image, role: "THUMBNAIL", confidence: "HIGH", detectionRule: "mesh-basename-match" };
+    }
+    return { ...image, role: "UNKNOWN", confidence: "NONE", detectionRule: "none" };
+  });
+
+  let colormapCandidates = detections.filter(item => item.role === "COLORMAP");
+  let unidentified = detections.filter(item => item.role === "UNKNOWN");
+
+  if (colormapCandidates.length === 0 && imageFiles.length === 1 && unidentified.length === 1) {
+    unidentified[0].role = "COLORMAP";
+    unidentified[0].confidence = "MEDIUM";
+    unidentified[0].detectionRule = "only-image";
+    colormapCandidates = [unidentified[0]];
+    unidentified = [];
+  }
+
+  if (colormapCandidates.length === 0 && unidentified.length === 1) {
+    unidentified[0].role = "COLORMAP";
+    unidentified[0].confidence = "LOW";
+    unidentified[0].detectionRule = "last-unidentified-image";
+    colormapCandidates = [unidentified[0]];
+  }
+
+  const confidenceRank = { HIGH: 3, MEDIUM: 2, LOW: 1, NONE: 0 };
+  colormapCandidates.sort((a, b) => {
+    const rankDiff = (confidenceRank[b.confidence] || 0) - (confidenceRank[a.confidence] || 0);
+    if (rankDiff) return rankDiff;
+    return a.fileName.localeCompare(b.fileName);
+  });
+
+  return {
+    meshFiles,
+    imageFiles,
+    imageDetections: detections,
+    colormapResolved: colormapCandidates[0] || null,
+    hasMtlFile
+  };
+}
+
+
 /* ═══════════════════════════════════════════════════════════════ */
 exports.handler = async (event) => {
   try {
@@ -138,11 +235,9 @@ exports.handler = async (event) => {
       }
 
       // Upload all approved assets from this zip in parallel
+      const zipClassification = classifyZipContents(zip);
       const uploadTasks = assets.map(async (asset) => {
         const normalizedTarget = normalizeAssetName(asset.assetName);
-        // Roster docx files list primitive names WITHOUT the .obj extension (e.g. "mesh_Cube").
-        // The zip entries always have the extension (e.g. "mesh_Cube.obj").
-        // Try exact match first, then append .obj as a fallback so both formats resolve correctly.
         const entryPath = zipEntries.get(normalizedTarget)
                        || zipEntries.get(normalizedTarget + '.obj');
 
@@ -156,22 +251,79 @@ exports.handler = async (event) => {
         }
 
         try {
-          const fileData  = await zip.files[entryPath].async("nodebuffer");
-          const ext       = asset.assetName.split(".").pop().toLowerCase();
-          const mimeType  = ext === "png"                   ? "image/png"
-                          : ext === "jpg" || ext === "jpeg" ? "image/jpeg"
-                          : ext === "webp"                  ? "image/webp"
-                          : ext === "obj"                   ? "text/plain"
-                          : ext === "glb" || ext === "gltf" ? "model/gltf-binary"
-                          : "application/octet-stream";
-
+          const fileData = await zip.files[entryPath].async("nodebuffer");
           const stagedPath = `${stagedFolderPath}/${asset.assetName}`;
-          await bucket.file(stagedPath).save(fileData, { contentType: mimeType, resumable: false });
+          await bucket.file(stagedPath).save(fileData, {
+            contentType: detectMimeType(asset.assetName),
+            resumable: false
+          });
+
+          const is3dAsset = /\.(obj|fbx|glb|gltf|c3b)$/i.test(asset.assetName || "");
+          let colormapFile = asset.colormapFile || null;
+          let colormapConfidence = asset.colormapConfidence || "NONE";
+          let colormapStagedPath = null;
+          let colormapDetectionRule = asset.colormapFile ? "roster-field" : "none";
+
+          if (is3dAsset) {
+            let resolvedColormap = null;
+            if (asset.colormapFile) {
+              const explicitEntryPath = zipEntries.get(normalizeAssetName(asset.colormapFile));
+              if (explicitEntryPath) {
+                resolvedColormap = {
+                  entryPath: explicitEntryPath,
+                  fileName: explicitEntryPath.split("/").pop() || asset.colormapFile,
+                  confidence: asset.colormapConfidence || "HIGH",
+                  detectionRule: "roster-field"
+                };
+              } else {
+                console.warn(`[ROSTER-EXTRACT] Colormap "${asset.colormapFile}" not found in ${zipName}`);
+                extractionLog.push({
+                  zipName,
+                  asset: asset.assetName,
+                  status: "colormap_missing",
+                  detail: `Declared colormap "${asset.colormapFile}" not found`
+                });
+              }
+            }
+
+            if (!resolvedColormap && zipClassification.colormapResolved) {
+              resolvedColormap = {
+                entryPath: zipClassification.colormapResolved.entryPath,
+                fileName: zipClassification.colormapResolved.fileName,
+                confidence: zipClassification.colormapResolved.confidence || "LOW",
+                detectionRule: zipClassification.colormapResolved.detectionRule || "auto"
+              };
+              console.log(`[ROSTER-EXTRACT] Colormap auto-resolved from zip ${zipName}: ${resolvedColormap.fileName}`);
+            }
+
+            if (resolvedColormap) {
+              const colormapBuffer = await zip.files[resolvedColormap.entryPath].async("nodebuffer");
+              colormapFile = resolvedColormap.fileName;
+              colormapConfidence = resolvedColormap.confidence || "LOW";
+              colormapDetectionRule = resolvedColormap.detectionRule || "auto";
+              colormapStagedPath = `${stagedFolderPath}/${resolvedColormap.fileName}`;
+              await bucket.file(colormapStagedPath).save(colormapBuffer, {
+                contentType: detectMimeType(resolvedColormap.fileName),
+                resumable: false
+              });
+            } else {
+              extractionLog.push({
+                zipName,
+                asset: asset.assetName,
+                status: "colormap_not_found",
+                detail: `No colormap found in ${zipName}`
+              });
+            }
+          }
 
           return {
             assetName:            asset.assetName,
             sourceRosterDocument: asset.sourceRosterDocument,
             stagedPath,
+            colormapFile,
+            colormapStagedPath,
+            colormapConfidence,
+            colormapDetectionRule,
             intendedRole:         asset.intendedRole || asset.intendedUsage || "",
             selectionRationale:   asset.selectionRationale || ""
           };
@@ -191,8 +343,29 @@ exports.handler = async (event) => {
     }
 
     // ── 5. Save approved roster with staged paths ────────────────────
+    const stagedIndex = new Map(
+      stagedAssets
+        .filter(asset => asset?.assetName)
+        .map(asset => [normalizeAssetName(asset.assetName), asset])
+    );
+
+    const enrichApprovedAsset = (asset) => {
+      const stagedMeta = stagedIndex.get(normalizeAssetName(asset?.assetName || ""));
+      if (!stagedMeta) return asset;
+      return {
+        ...asset,
+        stagedPath: stagedMeta.stagedPath || asset.stagedPath || null,
+        colormapFile: stagedMeta.colormapFile || asset.colormapFile || null,
+        colormapStagedPath: stagedMeta.colormapStagedPath || asset.colormapStagedPath || null,
+        colormapConfidence: stagedMeta.colormapConfidence || asset.colormapConfidence || "NONE",
+        colormapDetectionRule: stagedMeta.colormapDetectionRule || asset.colormapDetectionRule || "none"
+      };
+    };
+
     const approvedRoster = {
       ...roster,
+      objects3d: (roster.objects3d || []).map(enrichApprovedAsset),
+      textureAssets: (roster.textureAssets || []).map(enrichApprovedAsset),
       _meta: {
         ...roster._meta,
         approved:         true,
