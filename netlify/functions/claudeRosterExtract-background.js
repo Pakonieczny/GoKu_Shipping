@@ -7,20 +7,18 @@
 
    Flow:
      1. Load the approved roster from ai_asset_roster_pending.json
-     2. For each selected asset, find the matching .zip in asset_packs/
+     2. For each selected asset, find the matching .zip in asset_particle_textures/ or asset_3d_objects/
         (matched by sourceRosterDocument name → same base name .zip)
      3. Extract only the approved files from each zip (parallel uploads)
      4. Upload extracted files to a game-specific staged folder:
         ${projectPath}/staged_assets/${jobId}/
      5. Save ai_asset_roster_approved.json with staged file paths
-     6. assets.json registration is handled by the frontend in three steps
+     6. assets.json registration is handled by the frontend in two steps
         after this function returns:
           a. copyRosterAssetsToModels() — copies staged files into models/
           b. syncAssetsJson() — scans models/ and rebuilds assets.json;
-             primitive .obj files land in key "0" (.primitives folder),
-             textures at root level or key "15" (Models folder).
-          c. hardenPrimitivesInManifest() — targeted pass that moves any
-             roster .obj entries into key "0" if not already there.
+             approved 3D objects register as children of the Models folder (key "15"),
+             approved particle textures register at root level with their own assigned numeric keys.
         This function does NOT write assets.json. "staged_roster" is not
         a real manifest key — it was a stale reference and has been removed.
      7. Return { success:true, stagedAssets, stagedFolder, extractionLog }
@@ -76,9 +74,9 @@ exports.handler = async (event) => {
     const [pendingContent] = await pendingFile.download();
     const roster = JSON.parse(pendingContent.toString());
 
-    const primitives  = Array.isArray(roster.primitiveObjects) ? roster.primitiveObjects : [];
+    const objects3d   = Array.isArray(roster.objects3d)       ? roster.objects3d       : [];
     const textures    = Array.isArray(roster.textureAssets)    ? roster.textureAssets    : [];
-    const allSelected = [...primitives, ...textures];
+    const allSelected = [...objects3d, ...textures];
 
     if (allSelected.length === 0) {
       return err400("No assets selected in the roster. Cannot proceed with extraction.");
@@ -96,13 +94,14 @@ exports.handler = async (event) => {
       byZip.get(zipName).push(asset);
     }
 
-    // ── 3. List available zip files in asset_packs/ ──────────────────
-    const packsPrefix = `${projectPath}/asset_packs/`;
-    const [packFiles] = await bucket.getFiles({ prefix: packsPrefix });
+    // ── 3. List available zip files in asset_particle_textures/ and asset_3d_objects/ ──
     const availableZips = new Map(); // lowercased base filename → bucket File reference
-    for (const f of packFiles || []) {
-      const base = f.name.split("/").pop();
-      if (base) availableZips.set(base.toLowerCase(), f);
+    for (const folder of [`${projectPath}/asset_particle_textures/`, `${projectPath}/asset_3d_objects/`]) {
+      const [folderFiles] = await bucket.getFiles({ prefix: folder });
+      for (const f of folderFiles || []) {
+        const base = f.name.split("/").pop();
+        if (base && base.toLowerCase().endsWith(".zip")) availableZips.set(base.toLowerCase(), f);
+      }
     }
 
     // ── 4. Extract and stage assets ──────────────────────────────────
@@ -113,7 +112,7 @@ exports.handler = async (event) => {
     for (const [zipName, assets] of byZip.entries()) {
       const zipFile = availableZips.get(zipName.toLowerCase());
       if (!zipFile) {
-        console.warn(`[ROSTER-EXTRACT] Zip not found in asset_packs/: ${zipName}`);
+        console.warn(`[ROSTER-EXTRACT] Zip not found in asset_particle_textures/ or asset_3d_objects/: ${zipName}`);
         extractionLog.push({ zipName, status: "missing", assetCount: assets.length });
         continue;
       }
@@ -218,11 +217,11 @@ exports.handler = async (event) => {
     );
 
     // ── 6. assets.json is NOT written here ───────────────────────────
-    // The frontend handles manifest registration in three steps after this
+    // The frontend handles manifest registration in two steps after this
     // function returns: copyRosterAssetsToModels() copies staged files into
-    // models/, syncAssetsJson() rebuilds assets.json from models/ (primitives
-    // -> key "0", textures -> key "15"), then hardenPrimitivesInManifest()
-    // ensures .obj files are in the .primitives folder (key "0").
+    // models/, then syncAssetsJson() rebuilds assets.json — approved 3D objects
+    // register as children of the Models folder (key "15"), while approved
+    // particle textures register at root level with their own assigned numeric keys.
 
     // ── 7. Write result sentinel — frontend polls for this file ──────
     // Background functions return 202 immediately with no body. The frontend
@@ -266,3 +265,4 @@ exports.handler = async (event) => {
     return { statusCode: 500, body: "" };
   }
 };
+

@@ -528,32 +528,67 @@
     /* ── Game-Specific Asset Roster Review Panel ── */
     .roster-review-panel {
       display: none; background: #0c0f1a; border: 1px solid var(--accent);
-      border-radius: 14px; padding: 20px; margin-top: 10px;
+      border-radius: 14px; padding: 24px; margin-top: 10px;
     }
     .roster-review-panel.active { display: block; }
-    .roster-panel-title { font-size: 15px; font-weight: 700; color: #fff; margin: 0 0 6px 0; }
-    .roster-game-summary { font-size: 12px; color: var(--muted); margin: 0 0 18px 0; line-height: 1.5; }
-    .roster-section { margin-bottom: 20px; }
+    .roster-panel-title { font-size: 16px; font-weight: 700; color: #fff; margin: 0 0 6px 0; }
+    .roster-game-summary { font-size: 12px; color: var(--muted); margin: 0 0 20px 0; line-height: 1.6; }
+    .roster-section { margin-bottom: 24px; }
     .roster-section-header {
       display: flex; align-items: center; gap: 10px;
       font-size: 13px; font-weight: 700; color: #fff;
-      margin: 0 0 10px 0; border-bottom: 1px solid var(--line); padding-bottom: 6px;
+      margin: 0 0 12px 0; border-bottom: 1px solid var(--line); padding-bottom: 8px;
     }
     .roster-count-badge {
       background: rgba(43,108,255,0.18); color: var(--accent);
       border-radius: 999px; padding: 2px 10px; font-size: 11px; font-weight: 700;
     }
-    .roster-asset-grid {
-      display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px;
+    /* Horizontal scroll strip for matched assets */
+    .roster-asset-strip {
+      display: flex; flex-direction: row; gap: 12px;
+      overflow-x: auto; padding-bottom: 10px;
+      scrollbar-width: thin; scrollbar-color: var(--accent) transparent;
     }
+    .roster-asset-strip::-webkit-scrollbar { height: 5px; }
+    .roster-asset-strip::-webkit-scrollbar-track { background: transparent; }
+    .roster-asset-strip::-webkit-scrollbar-thumb { background: var(--accent); border-radius: 99px; }
     .roster-asset-card {
       background: var(--card); border: 1px solid var(--line);
-      border-radius: 10px; padding: 10px 12px; font-size: 11px;
+      border-radius: 12px; padding: 0; font-size: 11px;
+      flex: 0 0 180px; overflow: hidden; display: flex; flex-direction: column;
     }
-    .roster-asset-name { font-weight: 700; color: #fff; margin-bottom: 3px; font-family: 'SF Mono','Fira Code',monospace; }
-    .roster-asset-source { color: #a78bfa; margin-bottom: 4px; font-size: 10px; }
-    .roster-asset-role { color: var(--text); line-height: 1.4; margin-bottom: 3px; }
+    .roster-asset-thumb {
+      width: 100%; height: 140px; object-fit: contain;
+      background: #0a0c14; display: block; border-bottom: 1px solid var(--line);
+      image-rendering: pixelated;
+    }
+    .roster-asset-thumb-placeholder {
+      width: 100%; height: 140px; background: #0a0c14;
+      display: flex; align-items: center; justify-content: center;
+      color: var(--muted); font-size: 22px; border-bottom: 1px solid var(--line);
+    }
+    .roster-asset-body { padding: 10px 12px; flex: 1; display: flex; flex-direction: column; gap: 4px; }
+    .roster-asset-name { font-weight: 700; color: #fff; font-family: 'SF Mono','Fira Code',monospace; font-size: 10px; word-break: break-all; }
+    .roster-asset-source { color: #a78bfa; font-size: 10px; }
+    .roster-asset-role { color: var(--text); line-height: 1.4; }
     .roster-asset-rationale { color: var(--muted); font-size: 10px; font-style: italic; line-height: 1.4; }
+    .roster-asset-matched { color: #34d399; font-size: 10px; font-weight: 600; }
+    /* Phase 1 grid */
+    .roster-phase1-grid {
+      display: flex; flex-direction: row; gap: 10px;
+      overflow-x: auto; padding-bottom: 8px;
+      scrollbar-width: thin; scrollbar-color: rgba(99,102,241,0.4) transparent;
+    }
+    .roster-phase1-grid::-webkit-scrollbar { height: 4px; }
+    .roster-phase1-grid::-webkit-scrollbar-thumb { background: rgba(99,102,241,0.4); border-radius: 99px; }
+    .roster-phase1-card {
+      background: #0e1525; border: 1px solid rgba(99,102,241,0.3);
+      border-radius: 10px; padding: 12px 14px; font-size: 11px;
+      flex: 0 0 220px;
+    }
+    .roster-phase1-name { font-weight: 700; color: #818cf8; margin-bottom: 5px; }
+    .roster-phase1-desc { color: var(--text); line-height: 1.5; margin-bottom: 4px; }
+    .roster-phase1-meta { color: var(--muted); font-size: 10px; font-style: italic; line-height: 1.4; }
     .roster-visual-notes {
       background: #0e1220; border-radius: 10px; padding: 14px;
       font-size: 12px; line-height: 1.6;
@@ -563,51 +598,18 @@
     .roster-vn-value { color: var(--text); flex: 1; }
     .roster-approve-bar {
       display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
-      padding: 14px 0 0 0; border-top: 1px solid var(--line); margin-top: 16px;
+      padding: 16px 0 0 0; border-top: 1px solid var(--line); margin-top: 8px;
     }
     .roster-approve-status { font-size: 12px; color: var(--muted); flex: 1; }
     .roster-empty-note { font-size: 12px; color: var(--muted); padding: 10px 0; font-style: italic; }
-    .roster-composite-list { display: flex; flex-direction: column; gap: 10px; }
-    .roster-composite-card {
-      background: #0a0e1c; border: 1px solid #2a3050;
-      border-radius: 10px; overflow: hidden;
+    /* Unmatched strip */
+    .roster-unmatched-strip {
+      display: flex; flex-direction: row; gap: 10px; flex-wrap: wrap;
     }
-    .roster-composite-header {
-      display: flex; align-items: center; gap: 10px;
-      padding: 9px 12px; cursor: pointer; user-select: none;
-      background: #0d1225;
+    .roster-unmatched-card {
+      background: rgba(249,115,22,0.08); border: 1px solid #f97316;
+      border-radius: 10px; padding: 10px 14px; font-size: 11px; flex: 0 0 200px;
     }
-    .roster-composite-header:hover { background: #111830; }
-    .roster-composite-toggle { color: #a78bfa; font-size: 11px; flex-shrink: 0; width: 14px; }
-    .roster-composite-name { font-weight: 700; color: #fff; font-size: 12px; flex: 1; font-family: 'SF Mono','Fira Code',monospace; }
-    .roster-composite-partcount {
-      background: rgba(167,139,250,0.15); color: #a78bfa;
-      border-radius: 999px; padding: 2px 9px; font-size: 10px; font-weight: 700;
-    }
-    .roster-composite-body { display: none; padding: 10px 12px 12px 12px; }
-    .roster-composite-body.open { display: block; }
-    .roster-composite-desc { font-size: 11px; color: var(--muted); margin-bottom: 8px; line-height: 1.5; }
-    .roster-composite-meta { font-size: 11px; color: var(--text); margin-bottom: 10px; }
-    .roster-composite-meta span { color: #a78bfa; font-weight: 600; margin-right: 4px; }
-    .roster-composite-factory {
-      font-size: 10px; color: #7fdb96; background: #081008;
-      border: 1px solid #1a3020; border-radius: 6px;
-      padding: 6px 10px; margin-bottom: 10px; font-family: 'SF Mono','Fira Code',monospace;
-    }
-    .roster-parts-table { width: 100%; border-collapse: collapse; font-size: 10px; }
-    .roster-parts-table th {
-      text-align: left; color: #a78bfa; font-weight: 600;
-      padding: 4px 6px; border-bottom: 1px solid var(--line);
-    }
-    .roster-parts-table td {
-      padding: 4px 6px; color: var(--text); border-bottom: 1px solid #151b2e;
-      vertical-align: top;
-    }
-    .roster-parts-table tr:last-child td { border-bottom: none; }
-    .roster-part-asset { font-family: 'SF Mono','Fira Code',monospace; color: #fff; }
-    .roster-part-role { color: #7fdb96; }
-    .roster-part-physics { color: #fbbf24; }
-    .roster-part-vec { color: var(--muted); font-family: 'SF Mono','Fira Code',monospace; font-size: 9px; }
 
     .tranche-dep-chip {
       padding: 1px 6px; border-radius: 3px; font-size: 9px;
@@ -741,12 +743,6 @@
     }
     .model-item:last-child { border-bottom: none; }
     .model-item label { margin: 0; display: flex; align-items: center; gap: 10px; cursor: pointer; color: var(--text); flex: 1;}
-    
-    .proc-progress-container { display: none; flex-direction: column; gap: 8px; margin-top: 10px; }
-    .proc-progress-container.active { display: flex; }
-    .proc-progress-track { width: 100%; height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; }
-    .proc-progress-fill { width: 0%; height: 100%; background: var(--success); transition: width 0.3s ease; }
-    .proc-status-text { font-size: 11px; color: var(--muted); text-align: right; }
 
     /* ════════════════════════════════════════════════
        GAME ESSENCE CONTRACT PANEL — REMOVED
@@ -884,31 +880,47 @@
           <div id="rosterReviewPanel" class="roster-review-panel">
             <div class="roster-panel-title">🎮 Game-Specific Asset Roster</div>
             <p id="rosterGameSummary" class="roster-game-summary"></p>
+
+            <div class="roster-section">
+              <div class="roster-section-header">🔍 Phase 1 — Identified Game Requirements</div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+                <div>
+                  <div style="font-size:11px;font-weight:700;color:#818cf8;margin-bottom:8px;">⚡ Particle Effects Needed</div>
+                  <div id="rosterPhase1Particles" class="roster-phase1-grid"></div>
+                </div>
+                <div>
+                  <div style="font-size:11px;font-weight:700;color:#818cf8;margin-bottom:8px;">📦 3D Objects Needed</div>
+                  <div id="rosterPhase1Objects" class="roster-phase1-grid"></div>
+                </div>
+              </div>
+            </div>
+
             <div class="roster-section">
               <div class="roster-section-header">
-                Primitive Objects
+                📦 3D Objects — Visually Confirmed Matches
                 <span id="rosterObjCount" class="roster-count-badge">0 / 25</span>
               </div>
-              <div id="rosterObjGrid" class="roster-asset-grid"></div>
+              <div id="rosterObjGrid" class="roster-asset-strip"></div>
             </div>
+
             <div class="roster-section">
               <div class="roster-section-header">
-                Texture Assets
+                ⚡ Particle Effect Textures — Visually Confirmed Matches
                 <span id="rosterTexCount" class="roster-count-badge">0 / 50</span>
               </div>
-              <div id="rosterTexGrid" class="roster-asset-grid"></div>
+              <div id="rosterTexGrid" class="roster-asset-strip"></div>
             </div>
+
             <div class="roster-section">
               <div class="roster-section-header">Visual Direction</div>
               <div class="roster-visual-notes" id="rosterVNContent"></div>
             </div>
-            <div class="roster-section" id="rosterCompositeSection" style="display:none;">
-              <div class="roster-section-header">
-                🔧 Composite Entity Assembly Specs
-                <span id="rosterCompositeCount" class="roster-count-badge">0</span>
-              </div>
-              <div id="rosterCompositeList" class="roster-composite-list"></div>
+
+            <div class="roster-section">
+              <div class="roster-section-header">⚠ Unmatched Requirements</div>
+              <div id="rosterUnmatchedContent" class="roster-unmatched-strip"></div>
             </div>
+
             <div class="roster-approve-bar">
               <button class="btn btnPrimary" id="rosterApproveBtn">✅ Approve Roster &amp; Continue</button>
               <button class="btn" id="rosterRejectBtn">🔄 Regenerate</button>
@@ -955,7 +967,7 @@
           <!-- Game Essence Contract Panel — REMOVED (contract merged into Master Prompt) -->
 
           <div style="position: relative; width: 100%;">
-            <textarea id="aiPromptInput" placeholder="e.g., 'Build a physics-based destruction game with 15 levels...' — V2 will build a dependency-ordered 6.3 tranche plan plus a final hardening batch." style="min-height: 80px; resize: vertical; width: 100%; padding-right: 140px;"></textarea>
+            <textarea id="aiPromptInput" placeholder="e.g., 'Build a physics-based destruction game with 15 levels...' — V2 will build a dependency-ordered 6.3 tranche plan." style="min-height: 80px; resize: vertical; width: 100%; padding-right: 140px;"></textarea>
             <div id="imageTagContainer" style="position: absolute; top: 10px; right: 10px; display: flex; flex-direction: column; gap: 6px; z-index: 10; pointer-events: none;"></div>
           </div>
           
@@ -1011,8 +1023,8 @@
       { id: "instructions", title: "AI System Instructions (Scaffold + SDK)", accepts: "text/plain,.txt,.doc,.docx,.pdf,.js", folder: "ai_system_instructions" },
       { id: "assets", title: "Game Assets (Images/Audio)", accepts: "image/*,audio/*,.png,.jpg,.jpeg,.mp3,.wav", folder: "assets" },
       { id: "object_zip", title: "Animated/Textured Object ZIP Package", accepts: ".zip", folder: "object_zips" },
-      { id: "asset_rosters", title: "Asset_Rosters", accepts: ".docx", folder: "asset_rosters" },
-      { id: "asset_packs", title: "Asset_Packs", accepts: ".zip", folder: "asset_packs" },
+      { id: "asset_particle_textures", title: "Asset_Particle_Textures (.docx + .zip)", accepts: ".docx,.zip", folder: "asset_particle_textures" },
+      { id: "asset_3d_objects",        title: "Asset_3D_Objects (.docx + .zip)",        accepts: ".docx,.zip", folder: "asset_3d_objects"        },
       { id: "models", title: "Models, Logic & HTML", accepts: ".obj,.glb,.fbx,.js,.mtl,.html", folder: "models" },
       { id: "json", title: "JSON Configs", accepts: ".json", folder: "json" },
       { id: "reference", title: "Cherry3D Runtime Template (for Game Export)", accepts: ".zip", folder: "reference_zip" }
@@ -1158,11 +1170,11 @@
         const introDiv = document.getElementById('aiChatIntro');
         if (introDiv) {
             introDiv.textContent = currentProject
-                ? `AI Context ready for project: ${currentProject}. Enter instructions below — ${svc.planner} will create a dependency-ordered 6.3-centered tranche plan with a final hardening batch.`
-                : `V2 Expert-Agent Pipeline ready. Enter game build instructions below — ${svc.planner} will create a dependency-ordered 6.3-centered tranche plan with a final hardening batch.`;
+                ? `AI Context ready for project: ${currentProject}. Enter instructions below — ${svc.planner} will create a dependency-ordered 6.3-centered tranche plan.`
+                : `V2 Expert-Agent Pipeline ready. Enter game build instructions below — ${svc.planner} will create a dependency-ordered 6.3-centered tranche plan.`;
         }
         
-        aiPromptInput.placeholder = `e.g., 'Build a physics-based destruction game with 15 levels...' — V2 will build a dependency-ordered 6.3 tranche plan plus a final hardening batch using ${svc.name}.`;
+        aiPromptInput.placeholder = `e.g., 'Build a physics-based destruction game with 15 levels...' — V2 will build a dependency-ordered 6.3 tranche plan using ${svc.name}.`;
 
         const planningLabel = document.getElementById('tranchePlanningLabel');
         if (planningLabel && planningLabel.textContent.includes('researching')) {
@@ -1295,6 +1307,54 @@
       }
     }
 
+    /* ── Ensure BASE_Files has the correct asset folder structure ────────
+       Runs once on load. Deletes legacy asset_packs/ and asset_rosters/
+       folders from BASE_Files, then creates asset_particle_textures/ and
+       asset_3d_objects/ with .keep placeholders if they don't exist yet.
+       Silent — never blocks the UI or throws to the user.               */
+    async function ensureTemplateAssetFolderStructure() {
+      try {
+        await ensureAuth();
+        const templateRoot = `${ROOT}/${DEFAULT_TEMPLATE_PROJECT}`;
+
+        // ── 1. Delete legacy folders from BASE_Files ──────────────────
+        for (const legacyFolder of ['asset_packs', 'asset_rosters']) {
+          try {
+            const legacyRef = ref(storage, `${templateRoot}/${legacyFolder}`);
+            const listing   = await listAll(legacyRef).catch(() => ({ items: [] }));
+            if (listing.items.length > 0) {
+              await Promise.all(listing.items.map(itemRef => deleteObject(itemRef).catch(() => {})));
+              console.log(`[TEMPLATE] Deleted legacy ${legacyFolder}/ (${listing.items.length} file(s))`);
+            }
+          } catch (e) {
+            console.warn(`[TEMPLATE] Could not clean ${legacyFolder}/: ${e.message}`);
+          }
+        }
+
+        // ── 2. Create new folders if they don't already have content ──
+        for (const newFolder of ['asset_particle_textures', 'asset_3d_objects']) {
+          try {
+            const folderRef = ref(storage, `${templateRoot}/${newFolder}`);
+            const listing   = await listAll(folderRef).catch(() => ({ items: [], prefixes: [] }));
+            const isEmpty   = listing.items.length === 0 && listing.prefixes.length === 0;
+            if (isEmpty) {
+              await uploadString(
+                ref(storage, `${templateRoot}/${newFolder}/.keep`),
+                `# Drop ${newFolder === 'asset_particle_textures' ? 'particle texture' : '3D object'} .docx and .zip files here`,
+                'raw'
+              );
+              console.log(`[TEMPLATE] Created ${newFolder}/ with placeholder`);
+            }
+          } catch (e) {
+            console.warn(`[TEMPLATE] Could not create ${newFolder}/: ${e.message}`);
+          }
+        }
+
+        console.log('[TEMPLATE] BASE_Files asset folder structure is up to date');
+      } catch (e) {
+        console.warn('[TEMPLATE] ensureTemplateAssetFolderStructure failed (non-fatal):', e.message);
+      }
+    }
     async function ensureProjectDoesNotExist(projectName) {
       const existingProjectRef = ref(storage, `${ROOT}/${projectName}`);
       const existing = await listAll(existingProjectRef).catch(() => ({ items: [], prefixes: [] }));
@@ -1562,7 +1622,7 @@ This will permanently remove all associated files and Firebase folders for this 
       refreshReviewList();
       syncAssetsJson();
       
-      aiChatLog.innerHTML = `<div id="aiChatIntro" style="color: var(--muted);">AI Context ready for project: ${name}. Enter instructions below — ${AI_SERVICES[currentAiService].planner} will create a dependency-ordered 6.3-centered tranche plan with a final hardening batch.</div>`;
+      aiChatLog.innerHTML = `<div id="aiChatIntro" style="color: var(--muted);">AI Context ready for project: ${name}. Enter instructions below — ${AI_SERVICES[currentAiService].planner} will create a dependency-ordered 6.3-centered tranche plan.</div>`;
       aiCodeReviewLog.innerHTML = `<div style="color: var(--muted);">Code diff updates will appear here after an AI run.</div>`;
       
       updateAiUI();
@@ -1745,16 +1805,14 @@ This will permanently remove all associated files and Firebase folders for this 
     //
     // RULES (derived from canonical assets.json template):
     //   1. Reserved entries (keys 0,2,3,22,23) are NEVER touched — always preserved verbatim.
-    //   2. New 3D objects (.obj/.glb/.gltf/.fbx/.c3b) go into the "Models" folder (key "15") children.
-    //   3. New images/audio go at root level (not nested).
+    //   2. New 3D objects (.obj/.glb/.gltf/.fbx/.c3b) register as children of the "Models" folder (key "15").
+    //   3. New images/audio/particle textures register at root level (not nested).
     //   4. Keys are stable — never renumber, never reuse gaps.
     //   5. Prune is title-based only — truthTitlesLower is the source of truth.
     //   6. Numeric extensionless files in models/ are Cherry3D runtime artifacts — excluded.
     //   7. This function is the SOLE writer of assets.json. The AI never writes it.
-    //      Roster assets are copied into models/ before sync runs, so they are
-    //      picked up naturally by the existing models/ scan.
-    //   8. After sync, hardenPrimitivesInManifest() moves roster .obj entries
-    //      into the .primitives folder (key "0") in a separate targeted pass.
+    //      Roster assets are copied into models/ before sync runs, then registered
+    //      into the correct manifest location by file type during this sync.
     async function syncAssetsJson(projectName = currentProject) {
         if (!projectName) return;
         await ensureAuth();
@@ -1940,7 +1998,7 @@ This will permanently remove all associated files and Firebase folders for this 
 
         // Add new entries for files not yet covered.
         // 3D objects → into Models folder children.
-        // Images/audio/other → at root level.
+        // Images/audio/particle textures/other → at root level.
         const modelsFolder = updatedAssets.find(e => e.type === 'folder' && e.key === MODELS_FOLDER_KEY);
 
         for (const [title, type] of truthMap) {
@@ -1981,6 +2039,53 @@ This will permanently remove all associated files and Firebase folders for this 
             return !childTitlesLower.has((entry.title || '').toLowerCase());
         });
 
+        // ── SYSTEM ENTRY HARDENING ─────────────────────────────────────────────
+        // All five reserved keys must unconditionally exist in every written
+        // assets.json. pruneEntries preserves them only when they already exist;
+        // on a fresh, empty, or corrupted manifest they will be absent and stay
+        // absent unless we re-insert them here.
+        //
+        // Canonical definitions are derived from the BASE_Files template:
+        //   "0"  — .primitives folder (hidden) with 11 engine .c3b children
+        //   "2"  — WorldController.js (javascript, runtime-only)
+        //   "3"  — Studio Skybox (image, root level)
+        //   "22" — BlankStylesheet.css (stylesheet, root level)
+        //   "23" — document.html (HTML, root level)
+        //
+        // Keys "2" and "23" are runtime-only files never picked up by the
+        // truthMap scan. Keys "0", "3", and "22" come from the template and
+        // must survive any sync that runs against a project where those files
+        // are not in the scanned folders.
+        const PRIMITIVES_CHILDREN = [
+            { key: '4',  type: 'object', title: 'icosahedron.c3b', extension: 'c3b', children: [] },
+            { key: '5',  type: 'object', title: 'plane.c3b',        extension: 'c3b', children: [] },
+            { key: '6',  type: 'object', title: 'square.c3b',       extension: 'c3b', children: [] },
+            { key: '7',  type: 'object', title: 'torusknot.c3b',    extension: 'c3b', children: [] },
+            { key: '8',  type: 'object', title: 'tetrahedron.c3b',  extension: 'c3b', children: [] },
+            { key: '9',  type: 'object', title: 'torus.c3b',        extension: 'c3b', children: [] },
+            { key: '10', type: 'object', title: 'sphere.c3b',       extension: 'c3b', children: [] },
+            { key: '11', type: 'object', title: 'cube.c3b',         extension: 'c3b', children: [] },
+            { key: '12', type: 'object', title: 'capsule.c3b',      extension: 'c3b', children: [] },
+            { key: '13', type: 'object', title: 'cone.c3b',         extension: 'c3b', children: [] },
+            { key: '14', type: 'object', title: 'cylinder.c3b',     extension: 'c3b', children: [] }
+        ];
+        const SYSTEM_ENTRIES = [
+            { key: '0',  type: 'folder',     title: '.primitives',       hidden: true, children: PRIMITIVES_CHILDREN },
+            { key: '2',  type: 'javascript', title: 'WorldController.js',              children: [] },
+            { key: '3',  type: 'image',      title: 'Studio Skybox',                   children: [] },
+            { key: '22', type: 'stylesheet', title: 'BlankStylesheet.css', extension: 'css', children: [] },
+            { key: '23', type: 'HTML',       title: 'document.html',       extension: 'html', children: [] }
+        ];
+        for (const sysEntry of SYSTEM_ENTRIES) {
+            const alreadyPresent = flattenAssetEntries(deduplicatedAssets)
+                .some(e => String(e.key) === sysEntry.key);
+            if (!alreadyPresent) {
+                deduplicatedAssets.push({ ...sysEntry });
+                console.warn(`[syncAssetsJson] System entry key "${sysEntry.key}" (${sysEntry.title}) was missing — re-inserted.`);
+            }
+        }
+        // ── END SYSTEM ENTRY HARDENING ─────────────────────────────────────────
+
         const newJson = JSON.stringify(deduplicatedAssets, null, 2);
         const targetRef = ref(storage, `${ROOT}/${projectName}/json/assets.json`);
         await uploadString(targetRef, newJson);
@@ -1998,6 +2103,161 @@ This will permanently remove all associated files and Firebase folders for this 
         }
 
         return deduplicatedAssets;
+    }
+
+    function flattenAssetManifestEntries(entries) {
+        const flat = [];
+        for (const entry of Array.isArray(entries) ? entries : []) {
+            if (!entry || typeof entry !== 'object') continue;
+            flat.push(entry);
+            if (Array.isArray(entry.children) && entry.children.length > 0) {
+                flat.push(...flattenAssetManifestEntries(entry.children));
+            }
+        }
+        return flat;
+    }
+
+    async function loadJsonFromStoragePath(storagePath) {
+        const targetRef = ref(storage, storagePath);
+        const url = await getDownloadURL(targetRef);
+        const res = await fetch(url + (url.includes('?') ? '&' : '?') + 'v=' + Date.now(), { cache: 'no-store' });
+        if (!res.ok) throw new Error(`Failed to fetch ${storagePath}: ${res.status}`);
+        return await res.json();
+    }
+
+    async function annotateApprovedRosterWithManifestKeys(projectName = currentProject, manifestEntries = null) {
+        if (!projectName) return null;
+        const rosterPath = `${ROOT}/${projectName}/ai_asset_roster_approved.json`;
+        let roster;
+        try {
+            roster = await loadJsonFromStoragePath(rosterPath);
+        } catch (e) {
+            return null;
+        }
+        if (!roster || !roster._meta?.approved) return roster || null;
+
+        let manifestRoot = manifestEntries;
+        if (!manifestRoot) {
+            const manifestJson = await loadJsonFromStoragePath(`${ROOT}/${projectName}/json/assets.json`);
+            manifestRoot = Array.isArray(manifestJson)
+                ? manifestJson
+                : Object.values(manifestJson || {}).find(v => Array.isArray(v)) || [];
+        }
+
+        const manifestIndex = new Map();
+        for (const entry of flattenAssetManifestEntries(manifestRoot)) {
+            if (!entry?.title) continue;
+            manifestIndex.set(String(entry.title).toLowerCase(), {
+                key: entry.key != null ? String(entry.key) : '',
+                type: entry.type || ''
+            });
+        }
+
+        let changed = false;
+        const annotateAsset = (asset, isParticle = false) => {
+            const assetName = String(asset?.assetName || '').toLowerCase();
+            const manifestMeta = manifestIndex.get(assetName);
+            const fallbackRole = asset?.intendedRole || asset?.intendedUsage || asset?.selectionRationale || asset?.matchedRequirement || '';
+            const nextAsset = { ...asset };
+
+            if (!nextAsset.intendedRole && !isParticle && fallbackRole) {
+                nextAsset.intendedRole = fallbackRole;
+                changed = true;
+            }
+            if (!nextAsset.intendedUsage && isParticle && fallbackRole) {
+                nextAsset.intendedUsage = fallbackRole;
+                changed = true;
+            }
+
+            const nextKey = manifestMeta?.key || '';
+            const nextLocation = manifestMeta?.type === 'object' ? 'models-folder-child' : (manifestMeta?.key ? 'root-level' : '');
+            if ((nextAsset.manifestKey || '') !== nextKey) {
+                nextAsset.manifestKey = nextKey;
+                changed = true;
+            }
+            if ((nextAsset.manifestLocation || '') !== nextLocation) {
+                nextAsset.manifestLocation = nextLocation;
+                changed = true;
+            }
+            return nextAsset;
+        };
+
+        roster.objects3d = (roster.objects3d || []).map(asset => annotateAsset(asset, false));
+        roster.textureAssets = (roster.textureAssets || []).map(asset => annotateAsset(asset, true));
+        roster.stagedAssets = (roster.stagedAssets || []).map(asset => {
+            const manifestMeta = manifestIndex.get(String(asset?.assetName || '').toLowerCase());
+            const nextKey = manifestMeta?.key || '';
+            const nextLocation = manifestMeta?.type === 'object' ? 'models-folder-child' : (manifestMeta?.key ? 'root-level' : '');
+            const nextAsset = { ...asset };
+            if ((nextAsset.manifestKey || '') !== nextKey) {
+                nextAsset.manifestKey = nextKey;
+                changed = true;
+            }
+            if ((nextAsset.manifestLocation || '') !== nextLocation) {
+                nextAsset.manifestLocation = nextLocation;
+                changed = true;
+            }
+            return nextAsset;
+        });
+
+        if (changed) {
+            const rosterRef = ref(storage, rosterPath);
+            await uploadString(rosterRef, JSON.stringify(roster, null, 2));
+        }
+        return roster;
+    }
+
+    async function runRosterComplianceAudit(projectName = currentProject, rosterOverride = null) {
+        if (!projectName) return { applicable: false, failures: [], warnings: [] };
+
+        let roster = rosterOverride;
+        if (!roster) {
+            roster = await annotateApprovedRosterWithManifestKeys(projectName).catch(() => null);
+        }
+        if (!roster || !roster._meta?.approved) return { applicable: false, failures: [], warnings: [] };
+
+        let worldControllerText = '';
+        try {
+            const worldRef = ref(storage, `${ROOT}/${projectName}/models/2`);
+            const worldUrl = await getDownloadURL(worldRef);
+            const worldRes = await fetch(worldUrl + '&v=' + Date.now(), { cache: 'no-store' });
+            if (worldRes.ok) worldControllerText = await worldRes.text();
+        } catch (e) {}
+
+        const failures = [];
+        const warnings = [];
+        const objects3d = Array.isArray(roster.objects3d) ? roster.objects3d : [];
+        const particleTextures = (Array.isArray(roster.textureAssets) ? roster.textureAssets : []).filter(a => a.particleEffectTarget);
+
+        if (objects3d.length > 0) {
+            if (!/gameState\.objectids/.test(worldControllerText)) {
+                failures.push('Approved roster contains 3D objects, but models/2 does not reference gameState.objectids.');
+            }
+            const unresolved = objects3d.filter(a => !a.manifestKey).map(a => a.assetName);
+            if (unresolved.length > 0) {
+                warnings.push(`Unresolved 3D manifest keys: ${unresolved.join(', ')}`);
+            }
+            const missingKeyRefs = objects3d.filter(a => a.manifestKey && !worldControllerText.includes(`'${a.manifestKey}'`) && !worldControllerText.includes(`"${a.manifestKey}"`)).map(a => a.assetName);
+            if (missingKeyRefs.length > 0) {
+                warnings.push(`models/2 does not visibly reference some approved 3D manifest keys: ${missingKeyRefs.join(', ')}`);
+            }
+        }
+
+        if (particleTextures.length > 0) {
+            if (!/gameState\.particleTextureIds/.test(worldControllerText)) {
+                failures.push('Approved roster contains particle textures, but models/2 does not reference gameState.particleTextureIds.');
+            }
+            const missingTargets = particleTextures.filter(a => a.particleEffectTarget && !worldControllerText.includes(a.particleEffectTarget)).map(a => a.particleEffectTarget);
+            if (missingTargets.length > 0) {
+                warnings.push(`models/2 does not visibly reference some particleEffectTarget keys: ${missingTargets.join(', ')}`);
+            }
+            const unresolved = particleTextures.filter(a => !a.manifestKey).map(a => a.assetName);
+            if (unresolved.length > 0) {
+                warnings.push(`Unresolved particle texture manifest keys: ${unresolved.join(', ')}`);
+            }
+        }
+
+        return { applicable: true, failures, warnings };
     }
 
     const imageTagContainer = document.getElementById('imageTagContainer');
@@ -3086,7 +3346,7 @@ Quality criteria for your work:
           2: { name: 'Core Loop', color: '#f59e0b', icon: '⚙️' },
           3: { name: 'Progression & Feedback', color: '#a78bfa', icon: '💎' },
           4: { name: 'Restart & Integration', color: '#22c55e', icon: '🔗' },
-          5: { name: 'End-Stage Hardening', color: '#ef4444', icon: '🛠️' },
+          5: { name: 'Final Validation', color: '#ef4444', icon: '🛠️' },
         };
         return phases[phaseNum] || { name: `Phase ${phaseNum}`, color: '#64748b', icon: '📦' };
       },
@@ -3095,7 +3355,7 @@ Quality criteria for your work:
         const svc = AI_SERVICES[currentAiService];
         document.getElementById('tranchePlanningSection').style.display = 'flex';
         document.getElementById('trancheHeaderTitle').textContent = '6.3-Centered Tranche Pipeline';
-        document.getElementById('trancheHeaderSub').textContent = 'Phase 0: Planning dependency order + hardening batch...';
+        document.getElementById('trancheHeaderSub').textContent = 'Phase 0: Planning dependency order...';
         document.getElementById('trancheOverallFill').style.width = '0%';
         document.getElementById('trancheList').innerHTML = '';
         document.getElementById('trancheFooterStatus').textContent = `${svc.planner} planning tranches...`;
@@ -3730,7 +3990,7 @@ Quality criteria for your work:
               fixStatusEl.className = 'tranche-fix-status active';
               fixStatusEl.style.borderLeftColor = 'var(--danger)';
               fixStatusEl.style.color = 'var(--danger)';
-              fixStatusEl.textContent = `✕ Correction budget exhausted after ${t.validationRetryCount || t.antiPatternRetryCount} attempt(s) — remaining issues were deferred to the end-stage hardening batch.`;
+              fixStatusEl.textContent = `✕ Correction budget exhausted after ${t.validationRetryCount || t.antiPatternRetryCount} attempt(s) — remaining issues were not auto-corrected in this run.`;
             } else {
               fixStatusEl.className = 'tranche-fix-status';
               fixStatusEl.textContent = '';
@@ -3803,20 +4063,7 @@ Quality criteria for your work:
             };
         });
     }
-
-    const modelProcessingModal = document.getElementById('modelProcessingModal');
-    const modalModelList = document.getElementById('modalModelList');
-    const skipProcessingBtn = document.getElementById('skipProcessingBtn');
-    const startProcessingBtn = document.getElementById('startProcessingBtn');
-    const procProgressContainer = document.getElementById('procProgressContainer');
-    const procProgressFill = document.getElementById('procProgressFill');
-    const procStatusText = document.getElementById('procStatusText');
-    const procCurrentFile = document.getElementById('procCurrentFile');
-    const procActionButtons = document.getElementById('procActionButtons');
-
-    let available3DModels = [];
     let pendingAiPrompt = "";
-    let selectedModelNames = null; // null = process all, Set = only process these
 
     async function runUpdate2FromAiResponse() {
         if (!currentProject) return;
@@ -3927,101 +4174,9 @@ Quality criteria for your work:
         pendingAiPrompt = aiPromptInput.value.trim();
         if (!pendingAiPrompt || !currentProject) return;
 
-        setStatus("Checking for 3D models and ZIP packages...");
+        setStatus("Starting AI pipeline...");
         sendToAiBtn.disabled = true;
-
-        available3DModels = [];
-        
-        const modelsRef = ref(storage, `${ROOT}/${currentProject}/models`);
-        const zipsRef = ref(storage, `${ROOT}/${currentProject}/object_zips`);
-
-        try {
-            const [modelsRes, zipsRes] = await Promise.all([
-                listAll(modelsRef).catch(() => ({items:[]})),
-                listAll(zipsRef).catch(() => ({items:[]}))
-            ]);
-
-            const validExtensions = ['.obj', '.glb', '.fbx', '.c3b'];
-
-            modelsRes.items.forEach(item => {
-                const lowerName = item.name.toLowerCase();
-                if (validExtensions.some(ext => lowerName.endsWith(ext))) {
-                    available3DModels.push({ item, folder: 'models' });
-                }
-            });
-
-            zipsRes.items.forEach(item => {
-                if (item.name.toLowerCase().endsWith('.zip')) {
-                    available3DModels.push({ item, folder: 'object_zips' });
-                }
-            });
-
-        } catch(e) { console.warn("Could not fetch models/zips folders", e); }
-
-        if (available3DModels.length === 0) {
-            await executeAIPipeline(pendingAiPrompt);
-            return;
-        }
-
-        modalModelList.innerHTML = '';
-        available3DModels.forEach((obj, index) => {
-            const icon = obj.folder === 'object_zips' ? '🗜️' : '📦';
-            modalModelList.innerHTML += `
-                <div class="model-item">
-                    <label>
-                        <input type="checkbox" class="modal-model-cb" data-index="${index}" checked>
-                        <span>${icon} ${obj.item.name}</span>
-                    </label>
-                </div>
-            `;
-        });
-
-        procProgressContainer.classList.remove('active');
-        procActionButtons.style.display = 'flex';
-        modelProcessingModal.classList.add('active');
-    });
-
-    skipProcessingBtn.addEventListener('click', async () => {
-        selectedModelNames = new Set(); // skip processing — no models selected
-        modelProcessingModal.classList.remove('active');
         await executeAIPipeline(pendingAiPrompt);
-    });
-
-    startProcessingBtn.addEventListener('click', async () => {
-        const checkboxes = document.querySelectorAll('.modal-model-cb:checked');
-        if (checkboxes.length === 0) {
-            selectedModelNames = new Set(); // nothing selected
-            modelProcessingModal.classList.remove('active');
-            await executeAIPipeline(pendingAiPrompt);
-            return;
-        }
-
-        // Capture selected model names BEFORE closing the modal
-        selectedModelNames = new Set();
-        checkboxes.forEach(cb => {
-            const idx = parseInt(cb.dataset.index);
-            if (available3DModels[idx]) {
-                selectedModelNames.add(available3DModels[idx].item.name);
-            }
-        });
-
-        procActionButtons.style.display = 'none';
-        procProgressContainer.classList.add('active');
-
-        procCurrentFile.textContent = "Applying local extents logic...";
-        procStatusText.textContent = `Processing...`;
-        procProgressFill.style.width = `100%`;
-
-        setTimeout(async () => {
-            procCurrentFile.textContent = "Local analysis queued successfully!";
-            procCurrentFile.style.color = "var(--success)";
-            procStatusText.textContent = `Ready`;
-
-            setTimeout(async () => {
-                modelProcessingModal.classList.remove('active');
-                await executeAIPipeline(pendingAiPrompt);
-            }, 1000);
-        }, 500);
     });
 
     /* ══════════════════════════════════════════════════════════════════════
@@ -4299,6 +4454,26 @@ Original user request for context: ${basePrompt}`;
       };
     }
 
+    function buildExtentsReviewEntry(displayName, analysis) {
+      if (!analysis?.boundingBox) return null;
+      const fmt = (value) => Number(value || 0).toFixed(3);
+      return {
+        name: displayName,
+        objWidth: fmt(analysis.boundingBox.width),
+        objHeight: fmt(analysis.boundingBox.height),
+        objDepth: fmt(analysis.boundingBox.depth),
+        hasMesh: false,
+        meshWidth: '',
+        meshHeight: '',
+        meshDepth: '',
+        centerX: fmt(analysis.center?.x),
+        centerY: fmt(analysis.center?.y),
+        centerZ: fmt(analysis.center?.z),
+        offset: fmt(analysis.recommendedFloorYOffset),
+        materials: analysis.materials || []
+      };
+    }
+
     async function analyzeDirectThreeAsset(asset) {
       const lowerName = asset.name.toLowerCase();
       const modelUrl = asset.url;
@@ -4388,14 +4563,17 @@ Original user request for context: ${basePrompt}`;
        GAME-SPECIFIC ASSET ROSTER STAGE
        ─────────────────────────────────────────────────────────────────────
        Runs between Prompt Verification upload and pipeline trigger.
-       1. Calls claudeRosterGenerate (Sonnet 4.6) to analyze Master Prompt
-          + gameplay images + available Asset_Rosters .docx files and
-          produce a game-specific asset roster (max 25 obj / 50 png).
+       1. Calls claudeRosterGenerate (Sonnet 4.6) — two-phase process:
+          Phase 1: analyzes Master Prompt + reference images to produce a
+          structured list of required particle effects and 3D objects.
+          Phase 2: matches each requirement to catalog assets by AI
+          description (from .docx files in Asset_Particle_Textures/ and
+          Asset_3D_Objects/). Filenames are output only, not selection criteria.
        2. Renders the roster in the UI for user review.
        3. Blocks until user approves (or requests regeneration).
        4. On approval calls claudeRosterExtract to extract approved assets
-          from matching Asset_Packs zips, stage them in Firebase, and
-          update assets.json.
+          from matching .zip files in Asset_Particle_Textures / Asset_3D_Objects,
+          stage them in Firebase, and update assets.json.
        5. Returns approved roster context for injection into the AI prompt.
     ═══════════════════════════════════════════════════════════════════════ */
 
@@ -4407,111 +4585,104 @@ Original user request for context: ${basePrompt}`;
 
       document.getElementById('rosterGameSummary').textContent = roster.gameInterpretationSummary || '';
 
-      const objs = Array.isArray(roster.primitiveObjects) ? roster.primitiveObjects : [];
-      document.getElementById('rosterObjCount').textContent = `${objs.length} / 25`;
-      const objGrid = document.getElementById('rosterObjGrid');
-      if (objs.length === 0) {
-        objGrid.innerHTML = '<div class="roster-empty-note">No primitive objects selected.</div>';
-      } else {
-        objGrid.innerHTML = objs.map(a => `
-          <div class="roster-asset-card">
-            <div class="roster-asset-name">${esc(a.assetName)}</div>
-            <div class="roster-asset-source">📦 ${esc(a.sourceRosterDocument)}</div>
-            <div class="roster-asset-role">${esc(a.intendedRole)}</div>
-            <div class="roster-asset-rationale">${esc(a.selectionRationale)}</div>
-          </div>`).join('');
+      // ── Phase 1 analysis ─────────────────────────────────────────────
+      const phase1 = roster._phase1Analysis || {};
+
+      const p1Particles = Array.isArray(phase1.particleEffects) ? phase1.particleEffects : [];
+      const p1ParticleEl = document.getElementById('rosterPhase1Particles');
+      if (p1ParticleEl) {
+        p1ParticleEl.innerHTML = p1Particles.length === 0
+          ? '<div class="roster-empty-note">None identified.</div>'
+          : p1Particles.map(e => `
+              <div class="roster-phase1-card">
+                <div class="roster-phase1-name">${esc(e.name)}</div>
+                <div class="roster-phase1-desc">${esc(e.visualDescription)}</div>
+                <div class="roster-phase1-meta">${esc(e.triggerMoment)}</div>
+              </div>`).join('');
       }
 
+      const p1Objects = Array.isArray(phase1.objects3d) ? phase1.objects3d : [];
+      const p1ObjectEl = document.getElementById('rosterPhase1Objects');
+      if (p1ObjectEl) {
+        p1ObjectEl.innerHTML = p1Objects.length === 0
+          ? '<div class="roster-empty-note">None identified.</div>'
+          : p1Objects.map(e => `
+              <div class="roster-phase1-card">
+                <div class="roster-phase1-name">${esc(e.name)}</div>
+                <div class="roster-phase1-desc">${esc(e.visualDescription)}</div>
+                <div class="roster-phase1-meta">${esc(e.gameplayRole)}</div>
+              </div>`).join('');
+      }
+
+      // ── Helper: render a single asset card with thumbnail ────────────
+      function renderAssetCard(a) {
+        const thumbHtml = a.thumbnailB64
+          ? `<img class="roster-asset-thumb" src="data:${a.thumbnailMime || 'image/jpeg'};base64,${a.thumbnailB64}" alt="${esc(a.assetName)}" />`
+          : `<div class="roster-asset-thumb-placeholder">🖼</div>`;
+        return `
+          <div class="roster-asset-card">
+            ${thumbHtml}
+            <div class="roster-asset-body">
+              <div class="roster-asset-name">${esc(a.assetName)}</div>
+              <div class="roster-asset-source">${esc(a.sourceRosterDocument)}</div>
+              ${a.particleEffectTarget ? `<div class="roster-asset-matched">⚡ ${esc(a.particleEffectTarget)}</div>` : ''}
+              ${a.matchedRequirement   ? `<div class="roster-asset-matched">↳ ${esc(a.matchedRequirement)}</div>` : ''}
+              <div class="roster-asset-role">${esc(a.intendedRole || a.intendedUsage || a.selectionRationale || a.matchedRequirement || '')}</div>
+              <div class="roster-asset-rationale">${esc(a.selectionRationale)}</div>
+            </div>
+          </div>`;
+      }
+
+      // ── Matched 3D objects ───────────────────────────────────────────
+      const objs = Array.isArray(roster.objects3d) ? roster.objects3d : [];
+      document.getElementById('rosterObjCount').textContent = `${objs.length} / 25`;
+      const objGrid = document.getElementById('rosterObjGrid');
+      objGrid.innerHTML = objs.length === 0
+        ? '<div class="roster-empty-note">No 3D objects selected.</div>'
+        : objs.map(renderAssetCard).join('');
+
+      // ── Matched particle textures ────────────────────────────────────
       const texs = Array.isArray(roster.textureAssets) ? roster.textureAssets : [];
       document.getElementById('rosterTexCount').textContent = `${texs.length} / 50`;
       const texGrid = document.getElementById('rosterTexGrid');
-      if (texs.length === 0) {
-        texGrid.innerHTML = '<div class="roster-empty-note">No texture assets selected.</div>';
-      } else {
-        texGrid.innerHTML = texs.map(a => `
-          <div class="roster-asset-card">
-            <div class="roster-asset-name">${esc(a.assetName)}</div>
-            <div class="roster-asset-source">🎨 ${esc(a.sourceRosterDocument)}</div>
-            <div class="roster-asset-role">${esc(a.intendedUsage)}</div>
-            <div class="roster-asset-rationale">${esc(a.selectionRationale)}</div>
-          </div>`).join('');
+      texGrid.innerHTML = texs.length === 0
+        ? '<div class="roster-empty-note">No particle textures selected.</div>'
+        : texs.map(renderAssetCard).join('');
+
+      // ── Unmatched requirements ───────────────────────────────────────
+      const unmatched = Array.isArray(roster.unmatchedRequirements) ? roster.unmatchedRequirements : [];
+      const unmatchedContainer = document.getElementById('rosterUnmatchedContent');
+      if (unmatchedContainer) {
+        unmatchedContainer.innerHTML = unmatched.length === 0
+          ? '<span style="color:var(--success);font-style:italic;">All requirements matched.</span>'
+          : unmatched.map(u => `
+              <div class="roster-unmatched-card">
+                <div class="roster-asset-name">⚠ ${esc(u.requirementName)}</div>
+                <div class="roster-asset-source">${esc(u.type)}</div>
+                <div class="roster-asset-rationale">${esc(u.reason)}</div>
+              </div>`).join('');
       }
 
+      // ── Visual direction ─────────────────────────────────────────────
       const vn = roster.visualDirectionNotes || {};
       const vnRows = [
-        ['Color Direction',   vn.colorDirection],
-        ['Material Style',    vn.materialStyle],
-        ['Realism Level',     vn.realismLevel],
-        ['Environmental Tone',vn.environmentalTone],
-        ['Surface Treatment', vn.surfaceTreatment],
-        ['FX Relevance',      vn.fxRelevance]
+        ['Color Direction',    vn.colorDirection],
+        ['Material Style',     vn.materialStyle],
+        ['Realism Level',      vn.realismLevel],
+        ['Environmental Tone', vn.environmentalTone],
+        ['Surface Treatment',  vn.surfaceTreatment],
+        ['FX Relevance',       vn.fxRelevance]
       ].filter(([,v]) => v);
       document.getElementById('rosterVNContent').innerHTML = vnRows.length
         ? vnRows.map(([k,v]) => `<div class="roster-vn-row"><span class="roster-vn-label">${esc(k)}</span><span class="roster-vn-value">${esc(v)}</span></div>`).join('')
         : '<span style="color:var(--muted);font-style:italic;">No visual direction notes.</span>';
-
-      // ── Composite entities ──────────────────────────────────────
-      const compositeEntities = Array.isArray(roster.compositeEntities) ? roster.compositeEntities : [];
-      const compositeSection  = document.getElementById('rosterCompositeSection');
-      const compositeList     = document.getElementById('rosterCompositeList');
-      const compositeCount    = document.getElementById('rosterCompositeCount');
-
-      if (compositeEntities.length === 0) {
-        compositeSection.style.display = 'none';
-      } else {
-        compositeSection.style.display = '';
-        compositeCount.textContent = String(compositeEntities.length);
-        compositeList.innerHTML = compositeEntities.map((entity, idx) => {
-          const parts = Array.isArray(entity.parts) ? entity.parts : [];
-          const bodyId = `rosterCompositeBody_${idx}`;
-          const partRows = parts.map(p => {
-            const offset  = Array.isArray(p.localOffset)       ? `[${p.localOffset.join(', ')}]`       : '—';
-            const scale   = Array.isArray(p.localScale)        ? `[${p.localScale.join(', ')}]`        : '—';
-            const rot     = Array.isArray(p.localRotationDeg)  ? `[${p.localRotationDeg.join(', ')}°]` : '—';
-            return `<tr>
-              <td class="roster-part-asset">${esc(p.assetName || '')}</td>
-              <td class="roster-part-role">${esc(p.role || '')}</td>
-              <td class="roster-part-vec">${esc(offset)}</td>
-              <td class="roster-part-vec">${esc(scale)}</td>
-              <td class="roster-part-vec">${esc(rot)}</td>
-              <td class="roster-part-physics">${esc(p.physicsRole || '')}</td>
-            </tr>`;
-          }).join('');
-
-          return `<div class="roster-composite-card">
-            <div class="roster-composite-header" onclick="
-              const b = document.getElementById('${bodyId}');
-              const open = b.classList.toggle('open');
-              this.querySelector('.roster-composite-toggle').textContent = open ? '▾' : '▸';
-            ">
-              <span class="roster-composite-toggle">▸</span>
-              <span class="roster-composite-name">${esc(entity.entityName || 'Unnamed Entity')}</span>
-              <span class="roster-composite-partcount">${parts.length} part${parts.length !== 1 ? 's' : ''}</span>
-            </div>
-            <div class="roster-composite-body" id="${bodyId}">
-              ${entity.description ? `<div class="roster-composite-desc">${esc(entity.description)}</div>` : ''}
-              <div class="roster-composite-meta">
-                <span>Root pivot:</span>${esc(entity.rootPivot || '—')}
-              </div>
-              ${entity.factoryHint ? `<div class="roster-composite-factory">⚙ ${esc(entity.factoryHint)}</div>` : ''}
-              ${parts.length > 0 ? `
-              <table class="roster-parts-table">
-                <thead><tr>
-                  <th>Asset</th><th>Role</th><th>Offset</th><th>Scale</th><th>Rotation</th><th>Physics</th>
-                </tr></thead>
-                <tbody>${partRows}</tbody>
-              </table>` : '<div class="roster-empty-note">No parts defined.</div>'}
-            </div>
-          </div>`;
-        }).join('');
-      }
 
       document.getElementById('rosterApproveStatus').textContent = '';
       panel.classList.add('active');
       panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
 
-    function hideRosterReviewPanel() {
+        function hideRosterReviewPanel() {
       const panel = document.getElementById('rosterReviewPanel');
       if (panel) panel.classList.remove('active');
     }
@@ -4532,59 +4703,18 @@ Original user request for context: ${basePrompt}`;
       });
     }
 
-    // Build the roster context block string to inject into the AI prompt
+      // Build the roster context block string to inject into the AI prompt
     function buildRosterContextBlock(roster, stagedFolder, stagedAssets) {
-      const objs = (roster.primitiveObjects || []).map(a =>
-        `  - ${a.assetName} (from ${a.sourceRosterDocument}): ${a.intendedRole || ''}`
+      const objs = (roster.objects3d || []).map(a =>
+        `  - ${a.assetName} (from ${a.sourceRosterDocument}): ${a.intendedRole || a.selectionRationale || a.matchedRequirement || ''}${a.manifestKey ? ` | manifest key: "${a.manifestKey}"` : ''}`
       ).join('\n');
-      const texs = (roster.textureAssets || []).map(a =>
-        `  - ${a.assetName} (from ${a.sourceRosterDocument}): ${a.intendedUsage || ''}`
+      const texs = (roster.textureAssets || []).filter(a => a.particleEffectTarget).map(a =>
+        `  - ${a.assetName} (from ${a.sourceRosterDocument}) → particleEffectTarget: "${a.particleEffectTarget}" | ${a.intendedUsage || a.selectionRationale || ''}${a.manifestKey ? ` | manifest key: "${a.manifestKey}"` : ''}`
       ).join('\n');
       const vn = roster.visualDirectionNotes || {};
       const stagedList = (stagedAssets || []).map(a =>
-        `  - ${a.assetName} → staged at: ${a.stagedPath}`
+        `  - ${a.assetName} → staged at: ${a.stagedPath}${a.manifestKey ? ` | manifest key: "${a.manifestKey}"` : ''}`
       ).join('\n');
-
-      // Build composite entity block — mirrors loadApprovedRosterBlock() in the backend
-      const compositeEntities = Array.isArray(roster.compositeEntities) ? roster.compositeEntities : [];
-      let compositeBlock = '';
-      if (compositeEntities.length > 0) {
-        const entityLines = compositeEntities.map(entity => {
-          const partLines = (entity.parts || []).map(p =>
-            `      • ${p.assetName} | role: ${p.role || 'part'} | offset: [${(p.localOffset || [0,0,0]).join(', ')}] | scale: [${(p.localScale || [1,1,1]).join(', ')}] | rotDeg: [${(p.localRotationDeg || [0,0,0]).join(', ')}] | physics: ${p.physicsRole || 'static_part'}`
-          ).join('\n');
-          return [
-            `  ENTITY: ${entity.entityName}`,
-            `  Description: ${entity.description || ''}`,
-            `  Root pivot:  ${entity.rootPivot || 'center of bounding box'}`,
-            `  Factory:     ${entity.factoryHint || `build${(entity.entityName||'').replace(/\s+/g,'')}(scene, position) → SceneNode`}`,
-            `  Parts:\n${partLines}`
-          ].join('\n');
-        }).join('\n\n');
-
-        compositeBlock = `\nCOMPOSITE ENTITY ASSEMBLY SPECS (${compositeEntities.length} multi-part entity/entities):
-Each entity below MUST be implemented as a factory function in models/2.
-Do NOT place parts as independent, unrelated scene objects — they MUST be
-children of a single root SceneNode returned by the factory.
-
-${entityLines}
-
-COMPOSITE ENTITY RULES (MANDATORY — applies to every entity above):
-1. Each composite entity MUST have a dedicated factory function in models/2.
-2. The factory MUST create a root SceneNode at the given world position.
-3. ALL parts MUST be added as children of the root node using the
-   localOffset / localScale / localRotationDeg values above.
-4. The factory MUST return the root node — all callers position, move,
-   and destroy the entity through this root only.
-5. Physics: build a COMPOUND collider — one shape per part, all attached
-   to the root physics body. Never use a single box for the whole entity.
-6. Parts with physicsRole "wheel_collider" MUST use a hinge or wheel
-   constraint/joint, NOT a static child attachment.
-7. The planner MUST allocate a dedicated tranche for each composite entity
-   factory — do not merge multiple factories into one tranche.
-8. Every tranche that references a composite entity MUST call the factory
-   function; never inline the part-placement logic outside the factory.`;
-      }
 
       return `\n\n═══════════════════════════════════════════════════════════
 APPROVED GAME-SPECIFIC ASSET ROSTER — FIRST-CLASS COMPANION DOCUMENT
@@ -4595,20 +4725,20 @@ All tranche planning and execution MUST use these approved assets.
 GAME INTERPRETATION:
 ${roster.gameInterpretationSummary || ''}
 
-APPROVED PRIMITIVE OBJECTS (${(roster.primitiveObjects||[]).length} of 25 max):
+APPROVED 3D OBJECTS (${(roster.objects3d||[]).length} of 25 max):
 ${objs || '  (none)'}
 
-APPROVED TEXTURE ASSETS (${(roster.textureAssets||[]).length} of 50 max):
+APPROVED PARTICLE EFFECT TEXTURES (${(roster.textureAssets||[]).filter(a => a.particleEffectTarget).length} of 50 max) — MUST populate gameState.particleTextureIds in Foundation-B:
 ${texs || '  (none)'}
 
 STAGED ASSET FOLDER: ${stagedFolder || '(none)'}
 STAGED FILES (Firebase paths for reference in models/2 and models/23):
 ${stagedList || '  (none extracted)'}
 
-ASSETS.JSON: Roster primitive objects are registered in the .primitives folder (key "0").
-Roster texture assets are registered at root level or in the Models folder (key "15").
-All roster assets are in models/ and addressable by their assigned manifest keys.
-Use those manifest keys when referencing these assets in models/2 and models/23.
+ASSETS.JSON MANIFEST LOCATIONS (after frontend copy + sync):
+- Approved 3D objects register as children of the Models folder (key "15").
+- Approved particle textures register at root level with their own assigned numeric keys.
+- Use the resolved manifest keys above when referencing these assets in models/2 and models/23.
 
 VISUAL DIRECTION:
   Color Direction:    ${vn.colorDirection || 'N/A'}
@@ -4617,15 +4747,16 @@ VISUAL DIRECTION:
   Environmental Tone: ${vn.environmentalTone || 'N/A'}
   Surface Treatment:  ${vn.surfaceTreatment || 'N/A'}
   FX Relevance:       ${vn.fxRelevance || 'N/A'}
-${compositeBlock}
 
 TRANCHE DESIGN & EXECUTION REQUIREMENT:
-1. Tranche Design MUST plan around these approved assets — they are not optional.
-2. Every tranche touching rendered content, obstacles, environment, or scene objects
-   MUST use the appropriate approved assets from this roster.
-3. Textures and materials MUST follow the Visual Direction notes above.
-4. Reference staged files by their Firebase paths or assets.json manifest keys.
-5. Color direction and surface treatment must be consistent with this roster throughout.
+1. Tranche Design MUST plan explicitly around these approved assets.
+2. Every tranche touching rendered content, obstacles, environment, or scene objects MUST incorporate the relevant approved assets from this roster.
+3. Visual Direction notes above govern color, material, and FX treatment throughout all tranches.
+4. Reference staged files by their Firebase staged paths or resolved assets.json manifest keys.
+5. Color direction and surface treatment must be consistent throughout all tranches.
+6. PARTICLE TEXTURE REGISTRY: A Foundation-B sub-tranche MUST be planned immediately after Foundation-A. Its sole job is to populate gameState.particleTextureIds keyed by particleEffectTarget using the exact assets.json manifest keys. This tranche must complete before any particle emitter or billboard tranche.
+7. Every particle billboard or sphere object created in any tranche MUST set material_file in its data['0'] slot to gameState.particleTextureIds[effectName]. Hardcoding a texture string or omitting material_file when gameState.particleTextureIds is populated is a tranche execution defect.
+8. 3D OBJECT REGISTRY: Every tranche touching visible scene content MUST use approved roster 3D objects via gameState.objectids and the resolved manifest keys surfaced above. Using cube, sphere, or planevertical as a visible gameplay object when a roster asset covers that role is a tranche execution defect.
 ═══════════════════════════════════════════════════════════`;
     }
 
@@ -4633,14 +4764,10 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
     // Called immediately after claudeRosterExtract-background returns.
     // This makes the roster assets visible to syncAssetsJson() (which scans
     // models/) and to the Generate Game Zip path (which also reads models/).
-    // Returns a Set of lowercased primitive filenames for use by the
-    // hardening step that follows.
-    async function copyRosterAssetsToModels(projectName, stagedAssets, primitiveObjects) {
+    // syncAssetsJson() then registers approved 3D objects under Models key "15"
+    // and approved particle textures at root level by their own numeric keys.
+    async function copyRosterAssetsToModels(projectName, stagedAssets) {
         await ensureAuth();
-
-        const primitiveNames = new Set(
-            (primitiveObjects || []).map(a => a.assetName.toLowerCase())
-        );
 
         const copyTasks = stagedAssets.map(async (asset) => {
             try {
@@ -4652,7 +4779,10 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
                 const res      = await fetch(url, { cache: 'no-store' });
                 const buffer   = await res.arrayBuffer();
                 // Convert to base64 for uploadString (data_url format)
-                const base64   = btoa(String.fromCharCode(...new Uint8Array(buffer)));
+                const bytes    = new Uint8Array(buffer);
+                let binary     = '';
+                for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+                const base64   = btoa(binary);
                 const ext      = asset.assetName.split('.').pop().toLowerCase();
                 const mimeType = ext === 'png'                    ? 'image/png'
                                : ext === 'jpg' || ext === 'jpeg'  ? 'image/jpeg'
@@ -4673,85 +4803,6 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
         const results = await Promise.all(copyTasks);
         const copied  = results.filter(Boolean);
         console.log(`[ROSTER-COPY] ${copied.length}/${stagedAssets.length} asset(s) copied to models/`);
-        return primitiveNames; // returned for use by hardenPrimitivesInManifest
-    }
-
-    // ── Harden primitives section in assets.json ──────────────────────────────
-    // After syncAssetsJson() runs, roster primitive .obj files will have landed
-    // in the Models folder (key "15") children — correct for generic models but
-    // wrong for primitives, which belong in key "0" (.primitives, hidden folder).
-    // This function reads assets.json, moves any entry whose title matches a
-    // roster primitive filename from wherever it landed into key "0" children,
-    // then writes assets.json once more.
-    // primitiveNamesLower: Set of lowercased assetName strings from the roster.
-    async function hardenPrimitivesInManifest(projectName, primitiveNamesLower) {
-        if (!primitiveNamesLower || primitiveNamesLower.size === 0) return;
-        await ensureAuth();
-
-        try {
-            const jsonRef  = ref(storage, `${ROOT}/${projectName}/json/assets.json`);
-            const jsonUrl  = await getDownloadURL(jsonRef);
-            const jsonRes  = await fetch(jsonUrl + '&v=' + Date.now(), { cache: 'no-store' });
-            if (!jsonRes.ok) throw new Error(`Could not fetch assets.json: ${jsonRes.statusText}`);
-
-            let manifest = await jsonRes.json();
-            if (!Array.isArray(manifest)) throw new Error('assets.json is not an array — cannot harden primitives.');
-
-            // Find the .primitives folder (key "0")
-            const primitivesFolder = manifest.find(e => e.key === '0');
-            if (!primitivesFolder) {
-                console.warn('[ROSTER-HARDEN] .primitives folder (key "0") not found — skipping hardening.');
-                return;
-            }
-            if (!Array.isArray(primitivesFolder.children)) primitivesFolder.children = [];
-
-            const alreadyInPrimitives = new Set(
-                primitivesFolder.children.map(c => (c.title || '').toLowerCase())
-            );
-
-            // Collect entries to move: scan all folders and root level
-            const entriesToMove = [];
-
-            function extractPrimitiveEntries(entries, parentChildren) {
-                for (let i = entries.length - 1; i >= 0; i--) {
-                    const entry = entries[i];
-                    if (entry.type === 'folder' && Array.isArray(entry.children)) {
-                        extractPrimitiveEntries(entry.children, entry.children);
-                        continue;
-                    }
-                    const titleLower = (entry.title || '').toLowerCase();
-                    if (primitiveNamesLower.has(titleLower) && !alreadyInPrimitives.has(titleLower)) {
-                        entriesToMove.push(entry);
-                        entries.splice(i, 1); // remove from current location
-                        alreadyInPrimitives.add(titleLower);
-                    }
-                }
-            }
-
-            // Scan root level and all folder children (except key "0" itself)
-            const scanTargets = manifest.filter(e => e.key !== '0');
-            extractPrimitiveEntries(scanTargets, manifest);
-            // Remove from root manifest array any entries we pulled out
-            for (const moved of entriesToMove) {
-                const idx = manifest.indexOf(moved);
-                if (idx !== -1) manifest.splice(idx, 1);
-            }
-
-            // Insert into .primitives folder
-            primitivesFolder.children.push(...entriesToMove);
-
-            if (entriesToMove.length > 0) {
-                await uploadString(jsonRef, JSON.stringify(manifest, null, 2));
-                console.log(`[ROSTER-HARDEN] Moved ${entriesToMove.length} primitive(s) into key "0" (.primitives)`);
-                appendToChatLog('System',
-                    `✅ Primitives hardened: ${entriesToMove.length} roster primitive(s) registered in .primitives section.`,
-                    'normal');
-            } else {
-                console.log('[ROSTER-HARDEN] All roster primitives already in correct location.');
-            }
-        } catch (e) {
-            console.warn('[ROSTER-HARDEN] Primitives hardening failed (non-fatal):', e.message);
-        }
     }
 
     // ── Poll Firebase for roster generation result ────────────────────────────
@@ -4766,8 +4817,9 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
       const errorRef   = ref(storage, `${projectPath}/ai_asset_roster_error.json`);
       const deadline   = Date.now() + POLL_TIMEOUT_MS;
 
-      // Clear any stale error sentinel from a previous run
-      try { await deleteObject(errorRef); } catch(e) {}
+      // Clear any stale sentinels from a previous run
+      try { await deleteObject(pendingRef); } catch(e) {}
+      try { await deleteObject(errorRef);   } catch(e) {}
 
       while (Date.now() < deadline) {
         await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
@@ -4883,11 +4935,11 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
           throw new Error(`Roster generation failed: ${e.message}`);
         }
 
-        const objCount = (roster.primitiveObjects || []).length;
+        const objCount = (roster.objects3d || []).length;
         const texCount = (roster.textureAssets || []).length;
         Progress.step('Review Asset Roster', `${objCount} object(s), ${texCount} texture(s) selected — review and approve to continue.`);
         appendToChatLog('System',
-          `Asset Roster generated: ${objCount} primitive object(s), ${texCount} texture asset(s). ` +
+          `Asset Roster generated: ${objCount} 3D object(s), ${texCount} texture asset(s). ` +
           `Review the roster and approve to continue.`, 'normal');
         renderRosterReviewPanel(roster);
 
@@ -4902,8 +4954,8 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
 
       // Post-approval: hide panel, extract assets, update assets.json
       hideRosterReviewPanel();
-      Progress.step('Extracting Approved Assets', 'Staging approved assets from Asset_Packs into Firebase...');
-      appendToChatLog('System', 'Roster approved. Extracting assets from Asset_Packs...', 'normal');
+      Progress.step('Extracting Approved Assets', 'Staging approved assets from Asset_Particle_Textures / Asset_3D_Objects into Firebase...');
+      appendToChatLog('System', 'Roster approved. Extracting assets from Asset_Particle_Textures / Asset_3D_Objects...', 'normal');
 
       let extractData;
       try {
@@ -4934,24 +4986,20 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
       // ── Copy staged assets into models/ ──────────────────────────────────
       // This makes them visible to syncAssetsJson() and the zip builder.
       Progress.step('Copying Assets to models/', 'Making roster assets available to the AI pipeline and export...');
-      const primitiveNamesLower = await copyRosterAssetsToModels(
+      await copyRosterAssetsToModels(
           currentProject,
-          extractData.stagedAssets || [],
-          roster.primitiveObjects  || []
+          extractData.stagedAssets || []
       );
       appendToChatLog('System',
           `✅ Roster assets copied to models/ folder. Running manifest sync...`, 'normal');
 
       // ── syncAssetsJson: picks up the newly copied files in models/ ────────
       Progress.step('Syncing assets.json', 'Registering roster assets in manifest...');
-      await syncAssetsJson();
-
-      // ── Harden primitives: move roster .obj files into key "0" ───────────
-      Progress.step('Hardening Primitives', 'Ensuring primitive objects land in .primitives section...');
-      await hardenPrimitivesInManifest(currentProject, primitiveNamesLower);
+      const rosterManifest = await syncAssetsJson();
+      const annotatedRoster = await annotateApprovedRosterWithManifestKeys(currentProject, rosterManifest).catch(() => roster);
 
       return {
-        roster,
+        roster: annotatedRoster || roster,
         stagedAssets:  extractData.stagedAssets  || [],
         stagedFolder:  extractData.stagedFolder   || ''
       };
@@ -4975,11 +5023,10 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
         ? buildRepairPrompt(basePrompt, repairTargets, repairAttempt)
         : basePrompt;
 
-      const activeSelectedModelNames = selectedModelNames;
-      selectedModelNames = null;
 
       let scannedExtentsList = [];
       let modelAnalysisList = [];
+      let rosterSelected3DNames = null;
       if (repairAttempt === 0 && parseErrorRetry === 0) {
         aiPromptInput.value = '';
         appendToChatLog('You', basePrompt);
@@ -5010,15 +5057,22 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
 
         // ── Game-Specific Asset Roster Stage ──────────────────────────
         // Runs only on fresh builds (not repair passes). Checks whether
-        // the project has any Asset_Rosters files; if yes, runs the full
-        // roster generation → review → approval → extraction flow before
-        // proceeding to tranche planning.
+        // asset_particle_textures/ or asset_3d_objects/ contains any .docx
+        // files; if yes, runs the full roster generation → review → approval
+        // → extraction flow before proceeding to tranche planning.
         let approvedRosterContext = '';
         if (repairAttempt === 0 && parseErrorRetry === 0) {
           try {
-            const rosterListRef = ref(storage, `${ROOT}/${currentProject}/asset_rosters`);
-            const rosterListRes = await listAll(rosterListRef).catch(() => ({ items: [] }));
-            if (rosterListRes.items.length > 0) {
+            const particleRef = ref(storage, `${ROOT}/${currentProject}/asset_particle_textures`);
+            const objectsRef  = ref(storage, `${ROOT}/${currentProject}/asset_3d_objects`);
+            const [particleRes, objectsRes] = await Promise.all([
+              listAll(particleRef).catch(() => ({ items: [] })),
+              listAll(objectsRef).catch(()  => ({ items: [] }))
+            ]);
+            const allItems = [...particleRes.items, ...objectsRes.items];
+            const rosterDocItems = allItems.filter(item => item.name.toLowerCase().endsWith(".docx"));
+            const hasDocx  = rosterDocItems.length > 0;
+            if (hasDocx) {
               // We need a jobId before this point — generate it early
               // (it will be reused below when setting up the pipeline)
               if (!window._pendingRosterJobId) {
@@ -5047,8 +5101,14 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
               const earlyReqRef = ref(storage, `${rosterProjectPath}/ai_request.json`);
               await uploadString(earlyReqRef, earlyPayload);
 
-              Progress.step('Asset Roster Stage', `Found ${rosterListRes.items.length} roster file(s) — running asset selection...`);
+              Progress.step('Asset Roster Stage', `Found ${rosterDocItems.length} roster file(s) — running asset selection...`);
               const rosterResult = await runRosterStage(rosterProjectPath, rosterJobId);
+              rosterSelected3DNames = new Set(
+                (rosterResult?.stagedAssets || [])
+                  .map(asset => asset?.assetName || '')
+                  .filter(Boolean)
+                  .filter(name => /\.(obj|glb|gltf|fbx|c3b|zip)$/i.test(name))
+              );
               // NOTE: approvedRosterContext is intentionally NOT set here.
               // The backend (claudeCodeProxy-background.js) loads ai_asset_roster_approved.json
               // from Firebase and builds the roster context block fresh for every tranche via
@@ -5058,16 +5118,34 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
 
               // Re-sync assets.json now that staged assets were registered
               Progress.step('Re-syncing assets.json', 'Refreshing manifest after roster asset registration...');
-              await syncAssetsJson();
+              const rosterManifest = await syncAssetsJson();
+              await annotateApprovedRosterWithManifestKeys(currentProject, rosterManifest).catch(() => null);
             }
           } catch (rosterErr) {
-            // Roster stage failure is non-fatal for the pipeline but must be
-            // surfaced prominently so the user knows assets were not staged.
+            // Roster stage failure — require explicit user confirmation before continuing
+            // without roster assets, so the user cannot accidentally build a game with no assets.
             console.error('[ROSTER] Stage failed:', rosterErr.message);
             appendToChatLog('System',
-              `⚠️ Asset Roster stage failed and was skipped: ${rosterErr.message}. ` +
-              `Pipeline will continue without roster assets.`, 'error');
+              `⚠️ Asset Roster stage failed: ${rosterErr.message}`, 'error');
             hideRosterReviewPanel();
+
+            const continueWithoutAssets = await new Promise(resolve => {
+              const confirmed = window.confirm(
+                `Asset Roster stage failed:\n\n${rosterErr.message}\n\n` +
+                `Continue building WITHOUT roster assets?\n\n` +
+                `(Click Cancel to abort the build entirely.)`
+              );
+              resolve(confirmed);
+            });
+
+            if (!continueWithoutAssets) {
+              appendToChatLog('System', 'Build aborted by user after roster failure.', 'error');
+              Progress.stop();
+              sendToAiBtn.disabled = false;
+              return;
+            }
+
+            appendToChatLog('System', 'Continuing without roster assets — no 3D objects or particle textures will be available to the AI.', 'error');
           }
         }
 
@@ -5097,7 +5175,7 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
 
         let zipContextString = "";
 
-        // Build asset list from Firebase for 3D scanning (no UI selection)
+        // Build asset list from Firebase for roster-driven 3D scanning
         const modelsListRef = ref(storage, `${ROOT}/${currentProject}/models`);
         const zipsListRef2 = ref(storage, `${ROOT}/${currentProject}/object_zips`);
         const assetsListRef = ref(storage, `${ROOT}/${currentProject}/assets`);
@@ -5116,25 +5194,21 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
           allAssets.push({ name: item.name, path: `object_zips/${item.name}`, url, type: '', isChecked: false });
         }
 
-        if (allAssets.length > 0) {
+        const shouldScanRosterSelected3D = rosterSelected3DNames instanceof Set && rosterSelected3DNames.size > 0;
+
+        if (allAssets.length > 0 && shouldScanRosterSelected3D) {
             for (const a of allAssets) {
                 if (a.path.includes('models/') && !a.path.includes('object_zips')) {
                     const lowerName = a.name.toLowerCase();
-                    const shouldProcess = (activeSelectedModelNames === null) || activeSelectedModelNames.has(a.name);
+                    const shouldProcess = rosterSelected3DNames.has(a.name);
                     if (shouldProcess && (lowerName.endsWith('.obj') || lowerName.endsWith('.glb') || lowerName.endsWith('.gltf'))) {
                         Progress.step(`Scanning 3D extents`, a.name);
                         try {
                             const analysis = await analyzeDirectThreeAsset(a);
                             if (analysis) {
                                 modelAnalysisList.push(analysis);
-                                scannedExtentsList.push({
-                                    name: a.name,
-                                    centerX: analysis.boundingBox.width.toFixed(3),
-                                    centerY: analysis.boundingBox.height.toFixed(3),
-                                    centerZ: analysis.boundingBox.depth.toFixed(3),
-                                    offset: analysis.recommendedFloorYOffset.toFixed(3),
-                                    materials: analysis.materials || []
-                                });
+                                const reviewEntry = buildExtentsReviewEntry(a.name, analysis);
+                                if (reviewEntry) scannedExtentsList.push(reviewEntry);
                             }
                         } catch (e) {
                             console.warn(`Could not scan extents for ${a.name}`, e);
@@ -5143,7 +5217,7 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
                 }
 
                 if (a.path.includes('object_zips/')) {
-                    const shouldProcessZip = (activeSelectedModelNames === null) || activeSelectedModelNames.has(a.name);
+                    const shouldProcessZip = rosterSelected3DNames.has(a.name);
                     if (!shouldProcessZip) continue;
                     Progress.step(`Scanning ZIP contents`, a.name);
                     try {
@@ -5161,16 +5235,11 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
                         if (zipAnalysis.analyses.length > 0) {
                             modelAnalysisList.push(...zipAnalysis.analyses);
                             zipAnalysis.analyses.forEach((analysis) => {
-                                if (analysis?.boundingBox) {
-                                    scannedExtentsList.push({
-                                        name: `${a.name} :: ${analysis.embeddedPath || analysis.sourceName}`,
-                                        centerX: analysis.boundingBox.width.toFixed(3),
-                                        centerY: analysis.boundingBox.height.toFixed(3),
-                                        centerZ: analysis.boundingBox.depth.toFixed(3),
-                                        offset: analysis.recommendedFloorYOffset.toFixed(3),
-                                        materials: analysis.materials || []
-                                    });
-                                }
+                                const reviewEntry = buildExtentsReviewEntry(
+                                  `${a.name} :: ${analysis.embeddedPath || analysis.sourceName}`,
+                                  analysis
+                                );
+                                if (reviewEntry) scannedExtentsList.push(reviewEntry);
                             });
                         }
                         if (entries.length > 0) {
@@ -5190,6 +5259,11 @@ ${zipAnalysis.recognizedEntries.map(v => `- ${v}`).join('\n')}
                     }
                 }
             }
+        }
+
+        if (scannedExtentsList.length > 0) {
+            Progress.step('Review 3D scan results', 'Confirm the roster-selected scan results before tranche planning continues...');
+            await showExtentsReviewModal(scannedExtentsList);
         }
 
         const extentsContext = scannedExtentsList.length ? `
@@ -5292,9 +5366,10 @@ ENVIRONMENT CONSTRAINTS (platform facts handled by backend):
 8. Anti-pattern validators mechanically enforce engine rules after each tranche.
 
 PLANNING REQUIREMENTS:
-- SPLIT AGGRESSIVELY. More tranches = smaller AI context = fewer timeouts and higher quality. Never merge tranches to save count. A game with 6 core systems should have at least 8-12 tranches.
-- Target ~100-150 lines of new or changed code per tranche. If a tranche covers more than 2 distinct systems or ~3 new functions, split it further.
-- LATE-PHASE TIGHTENING: For tranches at position 11 or later, reduce the budget to ~80-120 lines of new/changed code, cap scope to ONE function or ONE tightly-coupled function pair, and default to A/B sub-tranche splits. Any tranche 11+ touching more than one section of models/2 must be split.
+- SPLIT AGGRESSIVELY. More tranches = smaller AI context = fewer timeouts and higher quality. Never merge tranches to save count. A game with 6 core systems should have at least 10-15 tranches.
+- Tranches 1-5: target ~175-225 lines of new or changed code per tranche. If a tranche covers more than 2 distinct systems or ~3 new functions, split it further.
+- Tranches 6-10: target ~120-170 lines of new or changed code per tranche. If scope expands beyond one subsystem, split it further.
+- LATE-PHASE TIGHTENING: For tranches at position 11 or later, reduce the budget to ~80-130 lines of new/changed code, cap scope to ONE function or ONE tightly-coupled function pair, and default to A/B sub-tranche splits. Any tranche 11+ touching more than one section of models/2 must be split.
 - Order tranches by true dependency.
 - Each tranche prompt must embed exact game-specific rules, code examples, and pitfall warnings from this request. Do NOT summarize — copy the exact technical details.
 - The Scaffold is king. Adapt the requested game to the scaffold — never adapt the scaffold to the game.
@@ -5627,7 +5702,21 @@ RULES FOR ALL PIPELINE STAGES:
         // writer of assets.json — run it now so the manifest reflects the new state.
         try {
           Progress.step('Re-syncing assets.json', 'Updating manifest to reflect newly applied files...');
-          await syncAssetsJson();
+          const rosterManifest = await syncAssetsJson();
+          const annotatedRoster = await annotateApprovedRosterWithManifestKeys(currentProject, rosterManifest).catch(() => null);
+          const rosterAudit = await runRosterComplianceAudit(currentProject, annotatedRoster).catch(() => ({ applicable: false, failures: [], warnings: [] }));
+          if (rosterAudit.applicable) {
+            if (rosterAudit.failures.length > 0) {
+              Progress.warn('Roster compliance audit found hard gaps', rosterAudit.failures.join(' | '));
+              appendToChatLog('System', `⚠️ Roster compliance audit: ${rosterAudit.failures.join(' | ')}`, 'error');
+            }
+            if (rosterAudit.warnings.length > 0) {
+              appendToChatLog('System', `Roster compliance audit warnings: ${rosterAudit.warnings.join(' | ')}`, 'normal');
+            }
+            if (rosterAudit.failures.length === 0 && rosterAudit.warnings.length === 0) {
+              appendToChatLog('System', '✅ Roster compliance audit passed: object registry and particle texture registry references were detected.', 'normal');
+            }
+          }
         } catch (syncErr) {
           console.warn('Post-apply syncAssetsJson failed (non-fatal):', syncErr);
         }
@@ -5873,7 +5962,7 @@ RULES FOR ALL PIPELINE STAGES:
         const cachedCategories = {};
 
         for (const cat of FILE_CATEGORIES) {
-          if (cat.id === 'reference' || cat.id === 'instructions' || cat.id === 'asset_rosters' || cat.id === 'asset_packs') continue;
+          if (cat.id === 'reference' || cat.id === 'instructions' || cat.id === 'asset_particle_textures' || cat.id === 'asset_3d_objects') continue;
           const folderRef = ref(storage, `${ROOT}/${currentProject}/${cat.folder}`);
           try { 
              const res = await listAll(folderRef); 
@@ -5885,7 +5974,7 @@ RULES FOR ALL PIPELINE STAGES:
         }
 
         for (const cat of FILE_CATEGORIES) {
-          if (cat.id === 'reference' || cat.id === 'instructions' || cat.id === 'asset_rosters' || cat.id === 'asset_packs') continue;
+          if (cat.id === 'reference' || cat.id === 'instructions' || cat.id === 'asset_particle_textures' || cat.id === 'asset_3d_objects') continue;
           
           const items = cachedCategories[cat.id];
           
@@ -6039,6 +6128,7 @@ RULES FOR ALL PIPELINE STAGES:
 
     window.addEventListener('DOMContentLoaded', () => {
       loadProjects();
+      ensureTemplateAssetFolderStructure();
     });
   </script>
   
@@ -6046,29 +6136,6 @@ RULES FOR ALL PIPELINE STAGES:
       <div class="image-preview-content">
           <button class="close-preview" id="closePreviewBtn">✕</button>
           <img id="previewImageSrc" src="" alt="Preview">
-      </div>
-  </div>
-
-  <div id="modelProcessingModal" class="processing-modal">
-      <div class="processing-content">
-          <h2 style="color: #fff; font-size: 18px;">Pre-process 3D Models?</h2>
-          <p style="font-size: 13px; color: var(--muted); margin-top: -10px; line-height: 1.4;">
-              We detected 3D models in your project. Would you like to automatically center their pivot points (bottom-center) before sending context to the AI? This fixes scaling and floor-clipping issues.
-          </p>
-          
-          <div class="model-list-container" id="modalModelList">
-              </div>
-
-          <div class="proc-progress-container" id="procProgressContainer">
-              <div style="font-size: 12px; color: var(--success);" id="procCurrentFile">Preparing...</div>
-              <div class="proc-progress-track"><div class="proc-progress-fill" id="procProgressFill"></div></div>
-              <div class="proc-status-text" id="procStatusText">0 / 0 Completed</div>
-          </div>
-
-          <div class="row" style="justify-content: flex-end; margin-top: 10px;" id="procActionButtons">
-              <button class="btn" id="skipProcessingBtn">Skip & Continue to AI</button>
-              <button class="btn btnPrimary" id="startProcessingBtn">Process Selected</button>
-          </div>
       </div>
   </div>
 

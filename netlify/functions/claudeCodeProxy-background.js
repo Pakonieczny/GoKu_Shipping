@@ -7,7 +7,7 @@
 
    Invocation 0    ▸  "plan"    — Spec Validation Gate (3 Sonnet calls)
                        runs first, then Opus 4.6 creates a dependency-
-                       ordered, 6.3-centered tranche plan + hardening batch.
+                       ordered, 6.3-centered tranche plan.
                        Gate FAIL writes ai_error.json with structured issues
                        and halts before Opus fires.
    Invocation 1–N  ▸  "tranche" — Sonnet 4.6 executes one tranche,
@@ -33,7 +33,6 @@
    - 0 retries for soft/advisory findings.
    - 1 retry max for narrow objective hard failures when the repair is surgical.
    - 2 retries only for parser/envelope failures or truly critical scaffold/runtime issues.
-   - Everything else is deferred into a single end-stage hardening batch.
 
    All intermediate state lives in Firebase so each invocation is
    stateless and can reconstruct context from the pipeline file.
@@ -47,8 +46,6 @@ const RETRY_POLICY = Object.freeze({
   critical_runtime: 2  // retained for fix-mode retryBudget fallback
 });
 
-const HARDENING_BATCH_NAME = "End-Stage Hardening Batch";
-const HARDENING_BATCH_KIND = "hardening_batch";
 
 
 /* ─── SCAFFOLD + SDK INSTRUCTION BUNDLE: fetched from Firebase ───
@@ -172,6 +169,49 @@ function assertInstructionBundle(bundle, phaseLabel = "Pipeline") {
   }
 }
 
+function flattenAssetsManifestEntries(entries) {
+  const flat = [];
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    if (!entry || typeof entry !== "object") continue;
+    flat.push(entry);
+    if (Array.isArray(entry.children) && entry.children.length > 0) {
+      flat.push(...flattenAssetsManifestEntries(entry.children));
+    }
+  }
+  return flat;
+}
+
+async function loadAssetsManifestIndex(bucket, projectPath) {
+  try {
+    const manifestFile = bucket.file(`${projectPath}/json/assets.json`);
+    const [exists] = await manifestFile.exists();
+    if (!exists) return new Map();
+    const [content] = await manifestFile.download();
+    const parsed = JSON.parse(content.toString());
+    const manifestRoot = Array.isArray(parsed)
+      ? parsed
+      : Object.values(parsed || {}).find(v => Array.isArray(v)) || [];
+    const flat = flattenAssetsManifestEntries(manifestRoot);
+    const index = new Map();
+    for (const entry of flat) {
+      if (!entry?.title) continue;
+      index.set(String(entry.title).toLowerCase(), {
+        key: entry.key != null ? String(entry.key) : "",
+        type: entry.type || "",
+        title: entry.title
+      });
+    }
+    return index;
+  } catch (e) {
+    console.warn("[ROSTER] Could not load assets.json for manifest annotation:", e.message);
+    return new Map();
+  }
+}
+
+function resolveRosterRole(asset) {
+  return asset?.intendedRole || asset?.intendedUsage || asset?.selectionRationale || asset?.matchedRequirement || "";
+}
+
 /* ── Load approved Asset Roster from Firebase (if present) ──────
    Returns a formatted context block string, or empty string if no
    roster was approved for this run.                               */
@@ -184,58 +224,27 @@ async function loadApprovedRosterBlock(bucket, projectPath) {
     const r = JSON.parse(content.toString());
     if (!r._meta?.approved) return "";
 
-    const objs = (r.primitiveObjects || []).map(a =>
-      `  - ${a.assetName} (from ${a.sourceRosterDocument}): ${a.intendedRole || ""}`
-    ).join("\n");
-    const texs = (r.textureAssets || []).map(a =>
-      `  - ${a.assetName} (from ${a.sourceRosterDocument}): ${a.intendedUsage || ""}`
-    ).join("\n");
-    const staged = (r.stagedAssets || []).map(a =>
-      `  - ${a.assetName} → ${a.stagedPath}`
-    ).join("\n");
+    const manifestIndex = await loadAssetsManifestIndex(bucket, projectPath);
+
+    const objs = (r.objects3d || []).map(a => {
+      const manifestMeta = manifestIndex.get(String(a.assetName || "").toLowerCase());
+      const role = resolveRosterRole(a);
+      return `  - ${a.assetName} (from ${a.sourceRosterDocument}): ${role} | manifest key: ${manifestMeta?.key ? `"${manifestMeta.key}"` : "(unresolved)"}`;
+    }).join("\n");
+
+    const particleTextures = (r.textureAssets || []).filter(a => a.particleEffectTarget);
+
+    const texsParticle = particleTextures.map(a => {
+      const manifestMeta = manifestIndex.get(String(a.assetName || "").toLowerCase());
+      return `  - ${a.assetName} (from ${a.sourceRosterDocument}) → particleEffectTarget: "${a.particleEffectTarget}" | ${resolveRosterRole(a)} | manifest key: ${manifestMeta?.key ? `"${manifestMeta.key}"` : "(unresolved)"}`;
+    }).join("\n");
+
+    const staged = (r.stagedAssets || []).map(a => {
+      const manifestMeta = manifestIndex.get(String(a.assetName || "").toLowerCase());
+      return `  - ${a.assetName} → ${a.stagedPath}${manifestMeta?.key ? ` | manifest key: "${manifestMeta.key}"` : ""}`;
+    }).join("\n");
     const vn = r.visualDirectionNotes || {};
     const sf = r._meta?.stagedFolder || "";
-
-    // ── Composite entity assembly block ──────────────────────────
-    const compositeEntities = Array.isArray(r.compositeEntities) ? r.compositeEntities : [];
-    let compositeBlock = "";
-    if (compositeEntities.length > 0) {
-      const entityLines = compositeEntities.map(entity => {
-        const partLines = (entity.parts || []).map(p =>
-          `      • ${p.assetName} | role: ${p.role || "part"} | offset: [${(p.localOffset || [0,0,0]).join(", ")}] | scale: [${(p.localScale || [1,1,1]).join(", ")}] | rotDeg: [${(p.localRotationDeg || [0,0,0]).join(", ")}] | physics: ${p.physicsRole || "static_part"}`
-        ).join("\n");
-        return [
-          `  ENTITY: ${entity.entityName}`,
-          `  Description: ${entity.description || ""}`,
-          `  Root pivot:  ${entity.rootPivot || "center of bounding box"}`,
-          `  Factory:     ${entity.factoryHint || `build${entity.entityName.replace(/\s+/g,"")}(scene, position) → SceneNode`}`,
-          `  Parts:\n${partLines}`
-        ].join("\n");
-      }).join("\n\n");
-
-      compositeBlock = `\nCOMPOSITE ENTITY ASSEMBLY SPECS (${compositeEntities.length} multi-part entity/entities):
-Each entity below MUST be implemented as a factory function in models/2.
-Do NOT place parts as independent, unrelated scene objects — they MUST be
-children of a single root SceneNode returned by the factory.
-
-${entityLines}
-
-COMPOSITE ENTITY RULES (MANDATORY — applies to every entity above):
-1. Each composite entity MUST have a dedicated factory function in models/2.
-2. The factory MUST create a root SceneNode at the given world position.
-3. ALL parts MUST be added as children of the root node using the
-   localOffset / localScale / localRotationDeg values above.
-4. The factory MUST return the root node — all callers position, move,
-   and destroy the entity through this root only.
-5. Physics: build a COMPOUND collider — one shape per part, all attached
-   to the root physics body. Never use a single box for the whole entity.
-6. Parts with physicsRole "wheel_collider" MUST use a hinge or wheel
-   constraint/joint, NOT a static child attachment.
-7. The planner MUST allocate a dedicated tranche for each composite entity
-   factory — do not merge multiple factories into one tranche.
-8. Every tranche that references a composite entity MUST call the factory
-   function; never inline the part-placement logic outside the factory.`;
-    }
 
     return `\n\n═══════════════════════════════════════════════════════════
 APPROVED GAME-SPECIFIC ASSET ROSTER — FIRST-CLASS COMPANION DOCUMENT
@@ -246,22 +255,20 @@ All tranche planning and execution MUST use these approved assets.
 GAME INTERPRETATION:
 ${r.gameInterpretationSummary || ""}
 
-APPROVED PRIMITIVE OBJECTS (${(r.primitiveObjects||[]).length}):
+APPROVED 3D OBJECTS (${(r.objects3d||[]).length}):
 ${objs || "  (none)"}
 
-APPROVED TEXTURE ASSETS (${(r.textureAssets||[]).length}):
-${texs || "  (none)"}
+APPROVED PARTICLE EFFECT TEXTURES (${particleTextures.length}) — MUST populate gameState.particleTextureIds in Foundation-B:
+${texsParticle || "  (none)"}
 
 STAGED ASSET FOLDER: ${sf}
 STAGED FILES (Firebase paths — use these in models/2 and models/23):
 ${staged || "  (none extracted)"}
 
-ASSETS.JSON MANIFEST LOCATIONS (after frontend copy + sync + harden):
-- Primitive .obj files -> .primitives folder, key "0" (hidden folder).
-- Texture assets -> root level or Models folder, key "15".
-- All physical files live in models/ and are addressable by their assigned manifest keys.
-- FALLBACK: If key "0" is absent (hardening failed non-fatally), scan models/ directly for .obj files.
-Use those manifest keys for all asset references in models/2 and models/23.
+ASSETS.JSON MANIFEST LOCATIONS (after frontend copy + sync):
+- Approved 3D objects register as children of the Models folder, key "15".
+- Approved particle textures register at root level with their own assigned numeric keys.
+- The per-asset manifest keys are resolved above — use those exact keys for all asset references in models/2 and models/23.
 
 VISUAL DIRECTION:
   Color Direction:    ${vn.colorDirection || "N/A"}
@@ -270,15 +277,16 @@ VISUAL DIRECTION:
   Environmental Tone: ${vn.environmentalTone || "N/A"}
   Surface Treatment:  ${vn.surfaceTreatment || "N/A"}
   FX Relevance:       ${vn.fxRelevance || "N/A"}
-${compositeBlock}
 
 TRANCHE DESIGN & EXECUTION REQUIREMENT:
 1. Tranche Design MUST plan explicitly around these approved assets.
-2. Every tranche touching rendered content, obstacles, environment, or scene
-   objects MUST incorporate the relevant approved assets from this roster.
-3. Textures and materials MUST follow the Visual Direction notes above.
+2. Every tranche touching rendered content, obstacles, environment, or scene objects MUST incorporate the relevant approved assets from this roster.
+3. Visual Direction notes above govern color, material, and FX treatment throughout all tranches.
 4. Reference staged files by their Firebase staged paths or assets.json keys.
 5. Color direction and surface treatment must be consistent throughout all tranches.
+6. PARTICLE TEXTURE REGISTRY: A Foundation-B sub-tranche MUST be planned immediately after Foundation-A. Its sole job is to populate gameState.particleTextureIds keyed by particleEffectTarget using the exact assets.json manifest keys. This tranche must complete before any particle emitter or billboard tranche.
+7. Every particle billboard or sphere object created in any tranche MUST set material_file in its data['0'] slot to gameState.particleTextureIds[effectName]. Hardcoding a texture string or omitting material_file when gameState.particleTextureIds is populated is a tranche execution defect.
+8. 3D OBJECT REGISTRY: Every tranche touching visible scene content MUST use approved roster 3D objects via gameState.objectids and the resolved assets.json manifest keys surfaced above. Using cube, sphere, or planevertical as a visible gameplay object when a roster asset covers that role is a tranche execution defect.
 ═══════════════════════════════════════════════════════════`;
   } catch (e) {
     console.warn("[ROSTER] Could not load approved roster:", e.message);
@@ -291,52 +299,6 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
    No intermediate architecture spec is generated. ────────── */
 
 
-/* ── Hardening batch helpers ─────────────────────────────────── */
-
-function isHardeningBatchTranche(tranche = {}) {
-  return Boolean(
-    tranche.kind === HARDENING_BATCH_KIND ||
-    tranche.isHardeningBatch ||
-    String(tranche.name || "").toLowerCase().includes("hardening")
-  );
-}
-
-function formatHardeningQueue(items = []) {
-  if (!items.length) return "No queued hardening items.";
-  return items.map((item, idx) => [
-    `ITEM ${idx + 1}`,
-    `  Tranche : ${item.trancheIndex !== undefined ? item.trancheIndex + 1 : "n/a"} — ${item.trancheName || "Unknown tranche"}`,
-    `  Lane    : ${item.lane || "soft"}`,
-    `  File    : ${item.file || "unknown"}`,
-    `  Pattern : ${item.pattern || item.kind || "General hardening"}`,
-    `  Detail  : ${item.message || item.note || "No detail provided."}`
-  ].join('\n')).join('\n\n');
-}
-
-function buildHardeningBatchUserText({ progress, accumulatedFiles, tranche, modelAnalysis }) {
-  const queuedItems = Array.isArray(progress?.hardeningQueue) ? progress.hardeningQueue : [];
-  let text = '';
-  text += `=== HARDENING BATCH CONTEXT ===\n`;
-  text += `You are resolving deferred tranche findings in one end-stage batch.\n`;
-  text += `This batch exists to clean up queued advisories and unresolved objective issues without redoing earlier tranches.\n\n`;
-  text += `=== QUEUED HARDENING ITEMS ===\n${formatHardeningQueue(queuedItems)}\n=== END QUEUED HARDENING ITEMS ===\n\n`;
-  text += `=== HARDENING BATCH MANIFEST ===\n`;
-  text += `Name: ${tranche.name}\n`;
-  text += `Purpose: ${tranche.purpose || tranche.description || 'Resolve queued issues in a single final pass.'}\n`;
-  text += `Visible Result: ${tranche.visibleResult || 'Project remains runnable with queued issues resolved.'}\n`;
-  text += `Safety Checks:\n${(tranche.safetyChecks || []).map((s, i) => `  ${i + 1}. ${s}`).join('\n') || '  1. Preserve all working systems and only fix queued items.'}\n`;
-  text += `=== END HARDENING BATCH MANIFEST ===\n\n`;
-  text += `=== CURRENT ACCUMULATED FILES ===\n`;
-  for (const [pathName, fileContent] of Object.entries(accumulatedFiles || {})) {
-    text += `\n--- FILE: ${pathName} ---\n${fileContent}\n`;
-  }
-  text += `\n=== END CURRENT ACCUMULATED FILES ===\n\n`;
-  if (Array.isArray(modelAnalysis) && modelAnalysis.length > 0) {
-    text += `=== THREE.JS MODEL ANALYSIS ===\n${JSON.stringify(modelAnalysis, null, 2)}\n=== END THREE.JS MODEL ANALYSIS ===\n\n`;
-  }
-  text += `Resolve the queued hardening items with the minimum safe edits required. Preserve all existing working code. Output complete updated file contents only for the files you changed.`;
-  return text;
-}
 
 /* ── helper: call Claude API ─────────────────────────────────── */
 const CLAUDE_OVERLOAD_MAX_RETRIES = 5;
@@ -502,9 +464,7 @@ VALIDATION + RECOVERY CONTRACT:
 - Objective scaffold/runtime mistakes may be retried, but only under the runtime policy:
   • 0 retries for soft/advisory findings.
   • 1 retry max for narrow objective hard failures when the repair is obviously surgical.
-  • 2 retries only for parser/envelope failures or truly critical scaffold/runtime issues.
-  • Everything else is deferred into one end-stage hardening batch.
-- Always make the final tranche a single end-stage hardening batch anchored to Section 8 so deferred findings are resolved in one pass.`;
+  • 2 retries only for parser/envelope failures or truly critical scaffold/runtime issues.`;
 
 function countOccurrences(haystack, needle) {
   if (!needle) return 0;
@@ -522,41 +482,6 @@ function normalizeArray(value, fallback = []) {
   if (Array.isArray(value)) return value.filter(Boolean);
   if (value === undefined || value === null || value === '') return [...fallback];
   return [value].filter(Boolean);
-}
-
-function appendSyntheticHardeningTranche(plan) {
-  const tranches = Array.isArray(plan?.tranches) ? plan.tranches : [];
-  if (tranches.some(isHardeningBatchTranche)) return plan;
-
-  const maxPhase = tranches.reduce((max, tranche) => Math.max(max, Number(tranche?.phase || 0)), 0);
-  tranches.push({
-    kind: HARDENING_BATCH_KIND,
-    isHardeningBatch: true,
-    name: HARDENING_BATCH_NAME,
-    description: 'Single deferred batch that resolves queued soft findings and unresolved objective issues after the functional tranches are complete.',
-    anchorSections: ['8.1', '8.3'],
-    purpose: 'Resolve the queued hardening backlog in one final pass without redoing earlier tranches.',
-    systemsTouched: ['cross-system hardening', 'final acceptance', 'deferred validation cleanup'],
-    filesTouched: ['models/2', 'models/23'],
-    visibleResult: 'The project remains runnable and any queued hardening items are resolved in one final pass.',
-    safetyChecks: [
-      'Preserve all already-working tranche output.',
-      'Fix queued hardening items with the smallest safe edits.',
-      'Do not regress gameplay, HUD, lifecycle, or restart behavior while hardening.'
-    ],
-    expertAgents: ['integration', 'qa'],
-    phase: maxPhase + 1,
-    dependencies: tranches.map((tr, idx) => tr?.name || `Tranche ${idx + 1}`),
-    qualityCriteria: [
-      'Queued hardening items are resolved without regressions.',
-      'The final code remains scaffold-compliant and runnable.'
-    ],
-    prompt: 'Synthetic hardening batch — runtime will inject the deferred hardening queue.',
-    expectedFiles: ['models/2', 'models/23']
-  });
-
-  plan.tranches = tranches;
-  return plan;
 }
 
 function enforceTrancheValidationBlock(plan) {
@@ -578,12 +503,11 @@ function enforceTrancheValidationBlock(plan) {
       dependencies: normalizeArray(tranche.dependencies, []),
       qualityCriteria: normalizeArray(tranche.qualityCriteria, []),
       prompt: String(tranche.prompt || '').trim(),
-      expectedFiles,
-      isHardeningBatch: Boolean(tranche.isHardeningBatch || tranche.kind === HARDENING_BATCH_KIND)
+      expectedFiles
     };
   });
 
-  return appendSyntheticHardeningTranche(plan);
+  return plan;
 }
 
 /* ── helper: parse tranche executor delimiter-format responses ── */
@@ -1400,9 +1324,7 @@ exports.handler = async (event) => {
         },
         finalMessage: null,
         error: null,
-        completedTime: null,
-        hardeningQueue: [],
-        finalHardeningSummary: null
+        completedTime: null
       };
       await saveProgress(bucket, projectPath, progress);
 
@@ -1422,20 +1344,21 @@ INSTRUCTION PRECEDENCE:
 
 PLANNING RULES:
 1. Section 6.3 is the center of gravity. Every core gameplay tranche must anchor to one or more 6.3 subsection(s), and the tranche order must follow dependency reality rather than raw document order.
-2. Plan the build like a house: foundation before controls, controls before authored playfield shell, shell before gameplay loop, gameplay loop before progression/HUD, progression before feedback/polish, then final hardening.
+2. Plan the build like a house: foundation before controls, controls before authored playfield shell, shell before gameplay loop, gameplay loop before progression/HUD, progression before feedback/polish.
 3. Each tranche prompt must be FULLY SELF-CONTAINED — embed the exact game-specific rules, variable names, slot layouts, code snippets, and pitfall warnings from the user's request that are relevant to that tranche. Do NOT summarize away critical implementation details.
 4. ALWAYS split large or complex tranches into A/B/C sub-tranches. There is no hard cap on tranche count — use as many as needed. If in doubt, split.
-5. Keep tranche scope TIGHT: each tranche should implement ONE subsystem or ONE cohesive set of closely-related functions. A tranche that touches more than ~150-200 lines of new/changed code is too large and MUST be split further.
+5. Keep tranche scope TIGHT: each tranche should implement ONE subsystem or ONE cohesive set of closely-related functions. If a tranche exceeds its active tranche-budget window (1-5: ~175-225 lines, 6-10: ~120-170 lines, 11+: ~80-130 lines), it is too large and MUST be split further.
 6. Every tranche must declare: kind, anchorSections, purpose, systemsTouched, filesTouched, visibleResult, safetyChecks, expectedFiles, dependencies, expertAgents, phase, and qualityCriteria.
 7. The FIRST tranche must establish scaffold-compliant foundations: preserve immutable scaffold sections, extend existing factories/hooks, create materials/world build, wire shared state safely, and establish STATIC collision surfaces where required.
 8. Do NOT instruct the executor to remove immutable scaffold fields/blocks or invent a replacement lifecycle when the scaffold already defines one.
 9. If the scaffold already provides a section (camera stage, UI hookup, particle emitter factory, instance parent pattern, input handler shape, etc.), the tranche must explicitly extend that section instead of replacing it.
 10. When the user's request contains code examples (updateInput, syncPlayerSharedMemory, ghost AI, etc.), embed those exact code examples in the relevant tranche prompts — do not paraphrase them.
-11. The final tranche must be a single end-stage hardening batch anchored to Section 8 so deferred findings can be resolved in one pass.
-12. SPLIT AGGRESSIVELY. More tranches = smaller context per AI call = fewer timeouts and higher quality. Never merge tranches to reduce count. A game with 6 systems should produce at least 8-12 tranches (foundation + one per system + polish + hardening). If in doubt, split into an A and B sub-tranche.
-13. Target ~100-150 lines of new or changed code per tranche. Any tranche prompt that describes more than 2 distinct systems, or more than ~3 new functions, is too large and must be split.
-14. LATE-PHASE TIGHTENING (tranches 11 and beyond): As the codebase grows, complexity compounds. For any tranche planned at position 11 or later, cut the line budget to ~80-120 lines of new or changed code, limit scope to ONE function or ONE tightly-coupled pair of functions, and prefer A/B sub-tranche splits over any grouping. If the system being implemented at tranche 11+ would require touching more than one section of models/2, it must be split into sub-tranches.
-15. If an Approved Asset Roster is present, you MUST populate gameState.objectids with every roster asset before the three engine primitives. Roster assets are mandatory for all visual game objects. The three engine primitives (cube, sphere, planevertical) are reserved exclusively for particle system internals and invisible collision geometry — using a primitive as a visible game object when a roster asset covers that role is a planning defect. For every tranche touching rendered content, the prompt field MUST explicitly name which roster assets to use for each visual element by their objectids key.
+11. SPLIT AGGRESSIVELY. More tranches = smaller context per AI call = fewer timeouts and higher quality. Never merge tranches to reduce count. A game with 6 systems should produce at least 10-15 tranches (foundation + one per system + polish). If in doubt, split into an A and B sub-tranche.
+12. Tranches 1-5: target ~175-225 lines of new or changed code per tranche. Any tranche prompt that describes more than 2 distinct systems, or more than ~3 new functions, is too large and must be split.
+13. Tranches 6-10: target ~120-170 lines of new or changed code per tranche. If scope expands beyond one subsystem, split further before execution.
+14. LATE-PHASE TIGHTENING (tranches 11 and beyond): As the codebase grows, complexity compounds. For any tranche planned at position 11 or later, cut the line budget to ~80-130 lines of new or changed code, limit scope to ONE function or ONE tightly-coupled pair of functions, and prefer A/B sub-tranche splits over any grouping. If the system being implemented at tranche 11+ would require touching more than one section of models/2, it must be split into sub-tranches.
+15. If an Approved Asset Roster is present, you MUST populate gameState.objectids with every roster asset before the three engine primitives. Roster assets are mandatory for all visual game objects. The three engine primitives (cube, sphere, planevertical) are reserved exclusively for particle system internals and invisible collision geometry — using a primitive as a visible game object when a roster asset covers that role is a planning defect. For every tranche touching rendered content, the prompt field MUST explicitly name which roster assets to use for each visual element by their resolved objectids manifest key from the Approved Asset Roster block.
+16. If the Approved Asset Roster contains particle texture entries (particleEffectTarget set), you MUST plan a Foundation-B sub-tranche immediately after Foundation-A. Foundation-B has one job: populate gameState.particleTextureIds keyed by particleEffectTarget using the exact assets.json manifest keys surfaced in the Approved Asset Roster block. Every tranche that creates a particle billboard or sphere MUST declare Foundation-B as a dependency and MUST name the exact gameState.particleTextureIds key in its prompt. A tranche plan that lists particle textures in the roster but never populates gameState.particleTextureIds is a planning defect.
 
 ${REQUIRED_TRANCHE_VALIDATION_BLOCK}
 
@@ -1507,7 +1430,6 @@ ${effectivePrompt}
       progress.tranches = plan.tranches.map((t, i) => ({
         index: i,
         kind: t.kind || 'build',
-        isHardeningBatch: Boolean(t.isHardeningBatch || t.kind === HARDENING_BATCH_KIND),
         name: t.name,
         description: t.description,
         anchorSections: t.anchorSections || [],
@@ -1610,52 +1532,6 @@ ${effectivePrompt}
 
       if (!tranche) throw new Error(`Tranche ${nextTranche} not found in pipeline state.`);
 
-      const isHardeningBatch = isHardeningBatchTranche(tranche);
-      if (isHardeningBatch && (!progress.hardeningQueue || progress.hardeningQueue.length === 0)) {
-        progress.currentTranche = nextTranche;
-        progress.tranches[nextTranche].status = "complete";
-        progress.tranches[nextTranche].startTime = progress.tranches[nextTranche].startTime || Date.now();
-        progress.tranches[nextTranche].endTime = Date.now();
-        progress.tranches[nextTranche].message = "No queued hardening items — final hardening batch skipped to save tokens.";
-        progress.finalHardeningSummary = "Hardening batch skipped because no deferred items were queued.";
-        await saveProgress(bucket, projectPath, progress);
-
-        state.progress = progress;
-        await savePipelineState(bucket, projectPath, state);
-
-        if (nextTranche + 1 < progress.totalTranches) {
-          await chainToSelf({ projectPath, jobId, mode: "tranche", nextTranche: nextTranche + 1 });
-          return { statusCode: 200, body: JSON.stringify({ success: true, chained: true, phase: `tranche_${nextTranche}_hardening_skipped` }) };
-        }
-
-        const summaryParts = progress.tranches
-          .filter(t => t.status === "complete")
-          .map((t) => `Tranche ${t.index + 1} — ${t.name}: ${t.message}`);
-        if (progress.finalHardeningSummary) {
-          summaryParts.push(`Final hardening: ${progress.finalHardeningSummary}`);
-        }
-        const finalMessage = summaryParts.join("\n\n") || "Build completed.";
-
-        await saveAiResponse(bucket, projectPath, allUpdatedFiles, {
-          jobId:         jobId,
-          trancheIndex:  progress.totalTranches - 1,
-          totalTranches: progress.totalTranches,
-          status:        "final",
-          message:       finalMessage
-        });
-
-        progress.status = "complete";
-        const t = progress.tokenUsage.totals;
-        progress.finalMessage = `Build complete: ${allUpdatedFiles.length} file(s) updated across ${progress.tranches.filter(tr => tr.status === "complete").length} tranche(s). Tokens: ${t.input_tokens} in / ${t.output_tokens} out.`;
-        progress.completedTime = Date.now();
-        await saveProgress(bucket, projectPath, progress);
-
-        try { await bucket.file(`${projectPath}/ai_pipeline_state.json`).delete(); } catch (e) {}
-        try { await bucket.file(`${projectPath}/ai_request.json`).delete(); } catch (e) {}
-
-        return { statusCode: 200, body: JSON.stringify({ success: true, phase: "complete" }) };
-      }
-
       // ── Mark tranche as in-progress ──────────────────────────
       progress.currentTranche = nextTranche;
       progress.tranches[nextTranche].status = "in_progress";
@@ -1680,8 +1556,7 @@ INSTRUCTION PRECEDENCE:
 - Never delete, replace, or work around an immutable scaffold section. Extend inside it.
 - REFERENCE IMAGES (if attached): Any images attached to this tranche are first-class game design inputs with authority equal to the Master Prompt. They define the intended visual appearance, entity types, layout geometry, and interaction model. When implementing this tranche, reconcile your output against the attached images — if your code would produce something visually inconsistent with an attached image, that is a defect. Visual Reconciliation is a required quality criterion for every tranche that touches rendered content.
 
-Do not re-state the instruction docs — just apply them. This pipeline uses a tiered recovery policy: soft findings are deferred, surgical objective failures may get one retry, and only parser/envelope or truly critical scaffold/runtime issues can consume two retries.
-Write it correctly the first time so the tranche can move forward without rework.
+Do not re-state the instruction docs — just apply them. Write it correctly the first time so the tranche can move forward without rework.
 
 You must respond using DELIMITER FORMAT only. Do NOT use JSON. Do NOT use markdown code blocks.
 
@@ -1719,6 +1594,8 @@ OUTPUT RULES:
 - If the scaffold already defines the correct place for a system (camera stage, UI hookup, particle factory, instance parent pattern, input handler, lifecycle block), implement inside that existing scaffold section.
 - Do NOT replace scaffold-owned state fields with renamed alternatives unless the tranche explicitly requires preserving both and safely extending them.
 - Do NOT invent custom lifecycle blocks when the scaffold already supplies one.
+- 3D OBJECT ENFORCEMENT: If an Approved Asset Roster is present and contains objects3d entries, every visible gameplay object introduced or modified in this tranche MUST use a roster asset via gameState.objectids and the resolved assets.json manifest keys surfaced in the roster block. Using cube, sphere, or planevertical as a visible gameplay object when a roster asset covers that role is a defect. Those primitives may only be used for particle internals and invisible collision geometry.
+- PARTICLE TEXTURE ENFORCEMENT: If gameState.particleTextureIds is populated (established in Foundation-B), every particle billboard or sphere object created in this tranche MUST set material_file in its data['0'] slot to the appropriate gameState.particleTextureIds[effectName] key. Hardcoding a texture string or omitting material_file when gameState.particleTextureIds is available is a defect. If this tranche IS Foundation-B, your only job is to populate gameState.particleTextureIds with every approved particle texture keyed by its particleEffectTarget using the resolved manifest keys from the roster block — this must be the first code that runs before anything else in this tranche.
 
 VALIDATOR STATUS:
 - Validation manifest requirements are temporarily disabled.
@@ -1743,9 +1620,7 @@ VALIDATOR STATUS:
         ? `=== APPROVED GAME-SPECIFIC ASSET ROSTER ===\n${approvedRosterBlock}\n=== END ASSET ROSTER ===\n\n`
         : "";
 
-      const trancheUserText = isHardeningBatch
-        ? buildHardeningBatchUserText({ progress, accumulatedFiles, tranche, modelAnalysis })
-        : `${rosterPrefix}${trancheFileContext}
+      const trancheUserText = `${rosterPrefix}${trancheFileContext}
 
 === TRANCHE ${nextTranche + 1} of ${progress.totalTranches}: "${tranche.name}" ===
 
@@ -1942,8 +1817,7 @@ IMPORTANT: You are working on tranche ${nextTranche + 1} of ${progress.totalTran
 
       progress.status = "complete";
       const t = progress.tokenUsage.totals;
-      const deferredCount = Array.isArray(progress.hardeningQueue) ? progress.hardeningQueue.length : 0;
-      progress.finalMessage = `Build complete: ${allUpdatedFiles.length} file(s) updated across ${progress.tranches.filter(tr => tr.status === "complete").length} tranche(s). Tokens: ${t.input_tokens} in / ${t.output_tokens} out.${deferredCount ? ` Deferred items still queued: ${deferredCount}.` : ''}`;
+      progress.finalMessage = `Build complete: ${allUpdatedFiles.length} file(s) updated across ${progress.tranches.filter(tr => tr.status === "complete").length} tranche(s). Tokens: ${t.input_tokens} in / ${t.output_tokens} out.`;
       progress.completedTime = Date.now();
       await saveProgress(bucket, projectPath, progress);
 
