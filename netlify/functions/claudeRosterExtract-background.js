@@ -182,9 +182,9 @@ exports.handler = async (event) => {
     // ── 2. Group selected assets by source zip ───────────────────────
     const byZip = new Map(); // zipName → [asset objects]
     for (const asset of allSelected) {
-      const zipName = zipNameFromRoster(asset.sourceRosterDocument || "");
+      const zipName = asset.sourceZip || zipNameFromRoster(asset.sourceRosterDocument || "");
       if (!zipName || zipName === ".zip") {
-        console.warn(`[ROSTER-EXTRACT] Asset "${asset.assetName}" has no valid sourceRosterDocument — skipping.`);
+        console.warn(`[ROSTER-EXTRACT] Asset "${asset.assetName}" has no valid sourceZip or sourceRosterDocument — skipping.`);
         continue;
       }
       if (!byZip.has(zipName)) byZip.set(zipName, []);

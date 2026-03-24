@@ -350,6 +350,7 @@ exports.handler = async (event) => {
               if (zip.files[entryPath].dir) continue;
               const base  = entryPath.split("/").pop();
               const lower = base.toLowerCase();
+              if (base.startsWith("._")) continue; // macOS AppleDouble metadata — not real images
               if (![".png", ".jpg", ".jpeg", ".webp"].some(e => lower.endsWith(e))) continue;
 
               const blob     = await zip.files[entryPath].async("nodebuffer");
@@ -375,6 +376,7 @@ exports.handler = async (event) => {
               if (zip.files[entryPath].dir) continue;
               const base  = entryPath.split("/").pop();
               const lower = base.toLowerCase();
+              if (base.startsWith("._")) continue; // macOS AppleDouble metadata — not real images
               if (![".png", ".jpg", ".jpeg", ".webp"].some(e => lower.endsWith(e))) continue;
               const stem = lower.replace(/\.[^.]+$/, "");
               imagesByStem.set(stem, { entryPath, base, lower });
