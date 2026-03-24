@@ -17,8 +17,11 @@
         and for each Phase 1 requirement shortlists 8-12 plausible
         candidate assets. Wide net, no visual check yet.
      5. PHASE 2B — For each requirement, the shortlisted candidate
-        thumbnails are built from the co-located asset zip files and sent
-        to Claude as vision inputs alongside the reference game images.
+        thumbnails are sourced directly from the co-located .zip files
+        (particle packs: each .png is its own thumbnail; 3D object packs:
+        the second image in the zip is used as the stand-in thumbnail for
+        every .obj in that pack) and sent to Claude as vision inputs
+        alongside the reference game images.
         Claude makes the final pick purely by visual match.
         Runs all requirements in parallel.
      6. Thumbnails of selected assets are embedded in the roster JSON
@@ -125,6 +128,32 @@ async function extractDocxText(buffer) {
   }
 }
 
+function normalizeWhitespace(text) {
+  return String(text || "")
+    .replace(/\r/g, "")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function extractAssetAnchorsFromText(text, packType) {
+  const pattern = packType === "3d_object"
+    ? /\b[^\s\\/:*?\"<>|]+\.(?:obj|fbx|glb|gltf)\b/gi
+    : /\b[^\s\\/:*?\"<>|]+\.(?:png|jpg|jpeg|webp)\b/gi;
+
+  const seen = new Set();
+  const anchors = [];
+  for (const match of String(text || "").matchAll(pattern)) {
+    const filename = match[0].trim();
+    const key = filename.toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      anchors.push(filename);
+    }
+  }
+  return anchors;
+}
+
 /* ─── Strip JSON fences ──────────────────────────────────────── */
 function stripFences(text) {
   let t = text
@@ -203,6 +232,9 @@ RULES:
 - Use ONLY the AI-oriented description and category text to judge relevance. Do NOT use filenames as a criterion.
 - Include candidates that are similar, adjacent, or loosely relevant — err on the side of inclusion.
 - assetName and sourceRosterDocument must be copied exactly as shown in the catalog.
+- Prefer filenames that appear directly inside the descriptive doc text for the matching row/item.
+- The compact anchor manifest is only a verbatim-copy aid. Do not shortlist by filename semantics.
+- If a pack exposes more files in ZIP than are shown in the compact anchor manifest, ignore the hidden extras for Phase 2A and shortlist only from anchors explicitly shown in the catalog block.
 
 GAME VISUAL REQUIREMENTS:
 ${JSON.stringify(phase1Result, null, 2)}
@@ -270,23 +302,18 @@ Respond ONLY with a valid JSON object. No markdown, no fences, no preamble.
 }`;
 }
 
-/* ─── Build thumbnail catalog from asset zip files ───────────── */
+/* ─── Build thumbnail catalog from co-located zip files ─────── */
 /*
-   Previous approach: extracted thumbnails from inside the .docx by trying
-   to pair Word image blips with filename text cells by positional index.
-   This was unreliable — Word XML interleaves decorative/header images with
-   content images, so the index assumption breaks and the catalog came out
-   empty or mismatched, causing 0 Phase 2B hits.
+   Particle packs: each .png/.jpg in the zip IS an asset — used directly
+   as its own thumbnail. Keys are lowercase asset filenames.
 
-   New approach: the .zip co-located with each .docx already contains the
-   actual asset files (the .png textures and .obj models). For particle
-   packs, the zip contains image assets directly, so each image is used as
-   its own thumbnail. For 3D object packs, NEVER use the colormap image as
-   the visual stand-in. Instead, use the second available image in the zip
-   folder as the shared thumbnail stand-in for every .obj in that pack.
+   3D object packs: use the first image in the zip whose filename does NOT
+   contain "colormap" as the shared thumbnail stand-in for every .obj in
+   the pack. If no such image exists, thumbnails are null and Phase 2B
+   falls back to description-only selection.
 
-   Keys are lowercase asset filenames, exactly matching what Claude is
-   instructed to output in Phase 2A — so Phase 2B lookups will actually hit.
+   zip buffers are already held in zipFileIndex._zipBuffer from step 2b —
+   no extra network calls needed here.
 */
 async function buildThumbnailCatalogFromZips(folderData) {
   const catalog = new Map();
@@ -300,7 +327,7 @@ async function buildThumbnailCatalogFromZips(folderData) {
         const zip = await JSZip.loadAsync(zipEntry._zipBuffer);
 
         if (packType === "particle_texture") {
-          // Each .png in the zip IS an asset — use it directly as its own thumbnail
+          // Each image in the zip IS an asset — use it directly as its own thumbnail
           for (const entryPath of Object.keys(zip.files)) {
             if (zip.files[entryPath].dir) continue;
             const base  = entryPath.split("/").pop();
@@ -313,10 +340,8 @@ async function buildThumbnailCatalogFromZips(folderData) {
           }
 
         } else {
-          // 3D object pack — NEVER use the colormap image as the visual stand-in.
-          // Use the second available image in the zip as the shared thumbnail for
-          // every .obj in this pack. If fewer than two images exist, leave the
-          // thumbnail null and let downstream fuzzy / fallback handling decide.
+          // 3D object pack — use the first image that is NOT a colormap as the
+          // shared stand-in thumbnail for every .obj in this pack.
           const imageEntries = Object.keys(zip.files)
             .filter(p => {
               if (zip.files[p].dir) return false;
@@ -325,22 +350,22 @@ async function buildThumbnailCatalogFromZips(folderData) {
             })
             .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base", numeric: true }));
 
-          const standInEntry = imageEntries.length >= 2 ? imageEntries[1] : null;
+          const standInEntry = imageEntries.find(p => !p.split("/").pop().toLowerCase().includes("colormap")) || null;
 
-          let thumbB64   = null;
-          let thumbMime  = "image/jpeg";
+          let thumbB64  = null;
+          let thumbMime = "image/jpeg";
           if (standInEntry) {
             const blob = await zip.files[standInEntry].async("nodebuffer");
             thumbB64   = blob.toString("base64");
             thumbMime  = standInEntry.toLowerCase().endsWith(".png") ? "image/png" : "image/jpeg";
           } else {
-            console.warn(`[ROSTER-GEN] ${docxBaseName}: 3D object zip has fewer than 2 images; no stand-in thumbnail assigned`);
+            console.warn(`[ROSTER-GEN] ${docxBaseName}: no non-colormap image found in zip — no stand-in thumbnail assigned`);
           }
 
-          // Register every .obj filename in this pack against the shared stand-in thumb
+          // Register every .obj in this pack against the shared stand-in thumbnail
           for (const entryPath of Object.keys(zip.files)) {
             if (zip.files[entryPath].dir) continue;
-            const base  = entryPath.split("/").pop();
+            const base = entryPath.split("/").pop();
             if (!base.toLowerCase().endsWith(".obj")) continue;
             catalog.set(base.toLowerCase(), {
               b64:       thumbB64,
@@ -456,27 +481,72 @@ exports.handler = async (event) => {
     }
 
     // ── 3. Build catalog blocks for Phase 2 ─────────────────────────
-    // Each catalog block = docx text content + exact available filenames
-    // from the co-located zip. Filenames are listed for output accuracy
-    // only — matching must be driven by AI descriptions.
-    function buildCatalogBlock(folderEntry) {
-      return folderEntry.docxResults.map(d => {
-        const fileList = (() => {
-          if (!folderEntry.zipFileIndex.has(d.baseName)) return "";
-          const { objFiles, imageFiles } = folderEntry.zipFileIndex.get(d.baseName);
-          const lines = [];
-          if (objFiles.length   > 0) lines.push(`EXACT FILENAMES IN ZIP (use verbatim for assetName — do NOT use as matching criterion):\n${objFiles.map(f => `  - ${f}`).join("\n")}`);
-          if (imageFiles.length > 0) lines.push(`EXACT FILENAMES IN ZIP (use verbatim for assetName — do NOT use as matching criterion):\n${imageFiles.map(f => `  - ${f}`).join("\n")}`);
-          return lines.join("\n\n");
-        })();
-        return `\n=== PACK: ${d.baseName} ===\n${d.text}${fileList ? "\n\n" + fileList : ""}\n=== END: ${d.baseName} ===\n`;
-      }).join("");
+    // Each catalog block = truncated docx text + a compact exact-filename
+    // anchor manifest. We deliberately do NOT dump raw full ZIP inventories
+    // into Phase 2A because large packs can add tens of thousands of tokens.
+    // Matching must still be driven by descriptions, not filenames.
+
+    // ~8 000 chars ≈ 2 000 tokens per doc — leaves room for the Phase 1
+    // requirements JSON, wrapper instructions, and compact anchor manifests.
+    const MAX_DOC_CHARS = 8000;
+    const MAX_ANCHORS_PER_DOC = 120;
+
+    function buildDocEntry(folderEntry, docResult, packType) {
+      const rawText = docResult.text || "";
+      const text = rawText.length > MAX_DOC_CHARS
+        ? rawText.slice(0, MAX_DOC_CHARS) + "\n...[truncated — full descriptions in the original pack]"
+        : rawText;
+
+      const docAnchors = extractAssetAnchorsFromText(text, packType);
+      const zipInfo = folderEntry.zipFileIndex.get(docResult.baseName) || { objFiles: [], imageFiles: [] };
+      const packFiles = packType === "3d_object" ? zipInfo.objFiles : zipInfo.imageFiles;
+
+      let manifestLines = [];
+      if (docAnchors.length > 0) {
+        const shownAnchors = docAnchors.slice(0, MAX_ANCHORS_PER_DOC);
+        manifestLines = [
+          `EXACT ASSET ANCHORS IN DOC TEXT (copy verbatim for assetName — do NOT use as matching criterion):`,
+          ...shownAnchors.map(f => `  - ${f}`)
+        ];
+        if (docAnchors.length > shownAnchors.length) {
+          manifestLines.push(`  - ...(doc text contains ${docAnchors.length - shownAnchors.length} additional exact filename anchor(s) not repeated here)`);
+        }
+      } else if (packFiles.length > 0) {
+        const shownAnchors = packFiles.slice(0, MAX_ANCHORS_PER_DOC);
+        manifestLines = [
+          `ZIP ASSET SUMMARY: ${packFiles.length} total file(s) in pack. Full ZIP inventory intentionally omitted from Phase 2A to control token size.`,
+          `EXACT ASSET ANCHORS AVAILABLE (copy verbatim for assetName — shortlist only from anchors shown here):`,
+          ...shownAnchors.map(f => `  - ${f}`)
+        ];
+        if (packFiles.length > shownAnchors.length) {
+          manifestLines.push(`  - ...(showing first ${shownAnchors.length} of ${packFiles.length} exact filename anchor(s))`);
+        }
+      }
+
+      const manifest = manifestLines.length > 0
+        ? `\n\n${manifestLines.join("\n")}`
+        : "";
+
+      return `\n=== PACK: ${docResult.baseName} ===\n${normalizeWhitespace(text)}${manifest}\n=== END: ${docResult.baseName} ===\n`;
+    }
+
+    // Keep batches intentionally small. The catalogs dominate token cost,
+    // so a doc-count batch size of 1-2 is materially safer than large batch
+    // groups that can collapse back into one oversized prompt.
+    const DOCS_PER_BATCH = 2;
+
+    function chunkArray(arr, size) {
+      const out = [];
+      for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+      return out;
     }
 
     const particleFolderData = folderData.find(f => f.packType === "particle_texture") || { docxResults: [], zipFileIndex: new Map() };
     const objectFolderData   = folderData.find(f => f.packType === "3d_object")        || { docxResults: [], zipFileIndex: new Map() };
-    const particleDocsBlock  = buildCatalogBlock(particleFolderData);
-    const objectDocsBlock    = buildCatalogBlock(objectFolderData);
+
+    // Pre-build per-doc entry strings so we can reuse them across batches
+    const particleEntries = particleFolderData.docxResults.map(d => buildDocEntry(particleFolderData, d, "particle_texture"));
+    const objectEntries   = objectFolderData.docxResults.map(d => buildDocEntry(objectFolderData, d, "3d_object"));
 
     // ── 4. Build image content blocks ───────────────────────────────
     const imageBlocks = [];
@@ -518,38 +588,88 @@ exports.handler = async (event) => {
     }
     console.log(`[ROSTER-GEN] Phase 1 complete: ${(phase1.particleEffects||[]).length} particle effect(s), ${(phase1.objects3d||[]).length} 3D object(s) identified`);
 
-    // ── 6. Phase 2A — Text-Only Shortlist ────────────────────────────
-    console.log("[ROSTER-GEN] Phase 2A: text-based candidate shortlisting...");
-    const phase2AResult = await callClaude(apiKey, {
-      model:     "claude-sonnet-4-20250514",
-      maxTokens: 8000,
-      system:    "You are a game asset shortlisting specialist. Respond only with a valid JSON object. No markdown, no fences, no preamble.",
-      userContent: [
-        { type: "text", text: buildPhase2APrompt(phase1, particleDocsBlock, objectDocsBlock) }
-      ]
-    });
+    // ── 6. Phase 2A — Text-Only Shortlist (batched) ─────────────────
+    // Run Phase 2A once per batch-pair (particle chunk × object chunk).
+    // Results are merged by requirementName — candidates accumulate across
+    // batches so every requirement gets candidates from all packs.
+    console.log("[ROSTER-GEN] Phase 2A: text-based candidate shortlisting (batched)...");
 
-    let phase2A;
-    try {
-      phase2A = JSON.parse(stripFences(phase2AResult.text));
-    } catch (e) {
-      console.error("[ROSTER-GEN] Phase 2A JSON parse failed:", phase2AResult.text.slice(0, 500));
-      return err500(`Phase 2A returned unparseable JSON: ${e.message}`);
+    const particleBatches = chunkArray(particleEntries, DOCS_PER_BATCH);
+    const objectBatches   = chunkArray(objectEntries,   DOCS_PER_BATCH);
+
+    // Ensure at least one pass even if both arrays are empty
+    const numBatches = Math.max(particleBatches.length, objectBatches.length, 1);
+
+    // Accumulate candidates keyed by requirementName
+    const mergedParticleCandidates = new Map(); // name → { requirementName, candidates[] }
+    const mergedObjectCandidates   = new Map();
+
+    function mergeCandidateGroup(targetMap, groups) {
+      for (const group of (groups || [])) {
+        if (!group || !group.requirementName) continue;
+        if (!targetMap.has(group.requirementName)) {
+          targetMap.set(group.requirementName, { requirementName: group.requirementName, candidates: [] });
+        }
+        const existing = targetMap.get(group.requirementName);
+        for (const c of (group.candidates || [])) {
+          // Deduplicate by assetName
+          if (!existing.candidates.some(e => e.assetName === c.assetName)) {
+            existing.candidates.push(c);
+          }
+        }
+      }
     }
-    console.log(`[ROSTER-GEN] Phase 2A complete: ${(phase2A.particleCandidates||[]).length} particle groups, ${(phase2A.objectCandidates||[]).length} object groups`);
+
+    for (let b = 0; b < numBatches; b++) {
+      const particleBlock = (particleBatches[b] || []).join("");
+      const objectBlock   = (objectBatches[b]   || []).join("");
+
+      // Skip batch if both blocks are empty
+      if (!particleBlock && !objectBlock) continue;
+
+      console.log(`[ROSTER-GEN] Phase 2A batch ${b + 1}/${numBatches}: ${(particleBatches[b]||[]).length} particle doc(s), ${(objectBatches[b]||[]).length} object doc(s)`);
+
+      const batchResult = await callClaude(apiKey, {
+        model:     "claude-sonnet-4-20250514",
+        maxTokens: 8000,
+        system:    "You are a game asset shortlisting specialist. Respond only with a valid JSON object. No markdown, no fences, no preamble.",
+        userContent: [
+          { type: "text", text: buildPhase2APrompt(phase1, particleBlock || "(none in this batch)", objectBlock || "(none in this batch)") }
+        ]
+      });
+
+      let batchParsed;
+      try {
+        batchParsed = JSON.parse(stripFences(batchResult.text));
+      } catch (e) {
+        console.warn(`[ROSTER-GEN] Phase 2A batch ${b + 1} JSON parse failed — skipping: ${e.message}`);
+        continue;
+      }
+
+      mergeCandidateGroup(mergedParticleCandidates, batchParsed.particleCandidates);
+      mergeCandidateGroup(mergedObjectCandidates,   batchParsed.objectCandidates);
+    }
+
+    const phase2A = {
+      particleCandidates: [...mergedParticleCandidates.values()],
+      objectCandidates:   [...mergedObjectCandidates.values()]
+    };
+
+    console.log(`[ROSTER-GEN] Phase 2A complete: ${phase2A.particleCandidates.length} particle groups, ${phase2A.objectCandidates.length} object groups`);
 
     // ── 7. Build thumbnail catalog from zip files ─────────────────────
-    // Uses the zip buffers already downloaded in step 2 — no extra network
-    // calls needed.  Keys are lowercase asset filenames that exactly match
-    // what Claude outputs in Phase 2A, so Phase 2B lookups will resolve.
+    // Zip buffers are already held in folderData[*].zipFileIndex._zipBuffer
+    // from step 2b — no extra Firebase downloads needed.
+    // Particle packs: each image file in the zip is its own thumbnail.
+    // 3D object packs: the second image in the zip is the shared stand-in
+    // thumbnail for every .obj in that pack.
     console.log("[ROSTER-GEN] Building thumbnail catalog from zip files...");
     const thumbnailCatalog = await buildThumbnailCatalogFromZips(folderData);
     console.log(`[ROSTER-GEN] Thumbnail catalog ready: ${thumbnailCatalog.size} entries`);
 
     // ── 8. Phase 2B — Visual Final Selection ─────────────────────────
-    // For each requirement group, send candidate thumbnails derived from the
-    // co-located asset zip files to Claude vision and get the final pick.
-    // Run all groups in parallel.
+    // For each requirement group, send candidate thumbnails to Claude vision
+    // and get the final pick. Run all groups in parallel.
     console.log("[ROSTER-GEN] Phase 2B: visual final selection...");
 
     const gameInterpretation = phase1.gameInterpretationSummary || "";
@@ -562,51 +682,15 @@ exports.handler = async (event) => {
       })).filter(c => c.thumb !== null);
 
       if (resolved.length === 0) {
-        // Phase 2A candidates didn't match any real catalog keys.
-        // This usually means Claude used slightly wrong filenames.
-        // Fallback: fuzzy-scan the thumbnail catalog for any key that shares
-        // meaningful tokens with the requirement name or any candidate name.
-        console.warn(`[ROSTER-GEN] Phase 2B: no thumbnails for "${requirementName}" — attempting fuzzy catalog fallback`);
-
-        const reqTokens = requirementName.toLowerCase().replace(/_/g, " ").split(/\s+/);
-        const candidateTokens = candidates.flatMap(c =>
-          c.assetName.toLowerCase().replace(/[_\-\.]/g, " ").split(/\s+/)
-        );
-        const allTokens = [...new Set([...reqTokens, ...candidateTokens])].filter(t => t.length > 2);
-
-        let bestKey   = null;
-        let bestScore = 0;
-        for (const [key] of thumbnailCatalog) {
-          const score = allTokens.filter(t => key.includes(t)).length;
-          if (score > bestScore) { bestScore = score; bestKey = key; }
-        }
-
-        if (bestKey) {
-          const hit = thumbnailCatalog.get(bestKey);
-          console.log(`[ROSTER-GEN] Fuzzy fallback for "${requirementName}": using "${bestKey}" (score ${bestScore})`);
-          return {
-            requirementName,
-            selectedAssetName:            bestKey,
-            selectedSourceRosterDocument: hit.sourceDoc,
-            imageNumberChosen:            1,
-            visualSelectionRationale:     `Fuzzy fallback — no exact thumbnail match for Phase 2A candidates; selected by keyword similarity to requirement`
-          };
-        }
-
-        // Absolute last resort — first entry in catalog
-        const firstKey = thumbnailCatalog.keys().next().value;
-        if (firstKey) {
-          const hit = thumbnailCatalog.get(firstKey);
-          return {
-            requirementName,
-            selectedAssetName:            firstKey,
-            selectedSourceRosterDocument: hit.sourceDoc,
-            imageNumberChosen:            1,
-            visualSelectionRationale:     `Last-resort fallback — no thumbnail or keyword match found`
-          };
-        }
-
-        return null; // catalog is completely empty
+        // No thumbnails found — fall back to first text candidate
+        const fallback = candidates[0];
+        return fallback ? {
+          requirementName,
+          selectedAssetName:            fallback.assetName,
+          selectedSourceRosterDocument: fallback.sourceRosterDocument,
+          imageNumberChosen:            1,
+          visualSelectionRationale:     `No thumbnails available — selected by description: ${fallback.descriptionMatch}`
+        } : null;
       }
 
       const thumbImageBlocks = resolved.map(c => ({
