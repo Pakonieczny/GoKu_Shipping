@@ -427,27 +427,50 @@ exports.handler = async (event) => {
     }
 
     // ── 3. Build catalog blocks for Phase 2 ─────────────────────────
-    // Each catalog block = docx text content + exact available filenames
-    // from the co-located zip. Filenames are listed for output accuracy
-    // only — matching must be driven by AI descriptions.
-    function buildCatalogBlock(folderEntry) {
-      return folderEntry.docxResults.map(d => {
-        const fileList = (() => {
-          if (!folderEntry.zipFileIndex.has(d.baseName)) return "";
-          const { objFiles, imageFiles } = folderEntry.zipFileIndex.get(d.baseName);
-          const lines = [];
-          if (objFiles.length   > 0) lines.push(`EXACT FILENAMES IN ZIP (use verbatim for assetName — do NOT use as matching criterion):\n${objFiles.map(f => `  - ${f}`).join("\n")}`);
-          if (imageFiles.length > 0) lines.push(`EXACT FILENAMES IN ZIP (use verbatim for assetName — do NOT use as matching criterion):\n${imageFiles.map(f => `  - ${f}`).join("\n")}`);
-          return lines.join("\n\n");
-        })();
-        return `\n=== PACK: ${d.baseName} ===\n${d.text}${fileList ? "\n\n" + fileList : ""}\n=== END: ${d.baseName} ===\n`;
-      }).join("");
+    // Each catalog block = docx text content (truncated) + exact available
+    // filenames from the co-located zip. Text is capped per-doc to keep
+    // individual prompts well under the 200k token limit even with large
+    // asset libraries. Matching must be driven by AI descriptions, not filenames.
+
+    // ~8 000 chars ≈ 2 000 tokens per doc — leaves ample room for the
+    // Phase 1 requirements JSON and the prompt wrapper.
+    const MAX_DOC_CHARS = 8000;
+
+    function buildDocEntry(folderEntry, docResult) {
+      const text = docResult.text.length > MAX_DOC_CHARS
+        ? docResult.text.slice(0, MAX_DOC_CHARS) + "\n...[truncated — full descriptions in the original pack]"
+        : docResult.text;
+
+      const fileList = (() => {
+        if (!folderEntry.zipFileIndex.has(docResult.baseName)) return "";
+        const { objFiles, imageFiles } = folderEntry.zipFileIndex.get(docResult.baseName);
+        const lines = [];
+        if (objFiles.length   > 0) lines.push(`EXACT FILENAMES IN ZIP (use verbatim for assetName — do NOT use as matching criterion):\n${objFiles.map(f => `  - ${f}`).join("\n")}`);
+        if (imageFiles.length > 0) lines.push(`EXACT FILENAMES IN ZIP (use verbatim for assetName — do NOT use as matching criterion):\n${imageFiles.map(f => `  - ${f}`).join("\n")}`);
+        return lines.join("\n\n");
+      })();
+
+      return `\n=== PACK: ${docResult.baseName} ===\n${text}${fileList ? "\n\n" + fileList : ""}\n=== END: ${docResult.baseName} ===\n`;
+    }
+
+    // Split a folder's docx list into batches that fit safely within the
+    // token limit. We estimate ~2 500 tokens per doc (text + filenames after
+    // truncation) and keep each batch under 60 docs-worth of budget, which
+    // in practice means 1-2 batches for typical libraries.
+    const DOCS_PER_BATCH = 8; // conservative — adjust upward if desired
+
+    function chunkArray(arr, size) {
+      const out = [];
+      for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+      return out;
     }
 
     const particleFolderData = folderData.find(f => f.packType === "particle_texture") || { docxResults: [], zipFileIndex: new Map() };
     const objectFolderData   = folderData.find(f => f.packType === "3d_object")        || { docxResults: [], zipFileIndex: new Map() };
-    const particleDocsBlock  = buildCatalogBlock(particleFolderData);
-    const objectDocsBlock    = buildCatalogBlock(objectFolderData);
+
+    // Pre-build per-doc entry strings so we can reuse them across batches
+    const particleEntries = particleFolderData.docxResults.map(d => buildDocEntry(particleFolderData, d));
+    const objectEntries   = objectFolderData.docxResults.map(d => buildDocEntry(objectFolderData, d));
 
     // ── 4. Build image content blocks ───────────────────────────────
     const imageBlocks = [];
@@ -489,25 +512,74 @@ exports.handler = async (event) => {
     }
     console.log(`[ROSTER-GEN] Phase 1 complete: ${(phase1.particleEffects||[]).length} particle effect(s), ${(phase1.objects3d||[]).length} 3D object(s) identified`);
 
-    // ── 6. Phase 2A — Text-Only Shortlist ────────────────────────────
-    console.log("[ROSTER-GEN] Phase 2A: text-based candidate shortlisting...");
-    const phase2AResult = await callClaude(apiKey, {
-      model:     "claude-sonnet-4-20250514",
-      maxTokens: 8000,
-      system:    "You are a game asset shortlisting specialist. Respond only with a valid JSON object. No markdown, no fences, no preamble.",
-      userContent: [
-        { type: "text", text: buildPhase2APrompt(phase1, particleDocsBlock, objectDocsBlock) }
-      ]
-    });
+    // ── 6. Phase 2A — Text-Only Shortlist (batched) ─────────────────
+    // Run Phase 2A once per batch-pair (particle chunk × object chunk).
+    // Results are merged by requirementName — candidates accumulate across
+    // batches so every requirement gets candidates from all packs.
+    console.log("[ROSTER-GEN] Phase 2A: text-based candidate shortlisting (batched)...");
 
-    let phase2A;
-    try {
-      phase2A = JSON.parse(stripFences(phase2AResult.text));
-    } catch (e) {
-      console.error("[ROSTER-GEN] Phase 2A JSON parse failed:", phase2AResult.text.slice(0, 500));
-      return err500(`Phase 2A returned unparseable JSON: ${e.message}`);
+    const particleBatches = chunkArray(particleEntries, DOCS_PER_BATCH);
+    const objectBatches   = chunkArray(objectEntries,   DOCS_PER_BATCH);
+
+    // Ensure at least one pass even if both arrays are empty
+    const numBatches = Math.max(particleBatches.length, objectBatches.length, 1);
+
+    // Accumulate candidates keyed by requirementName
+    const mergedParticleCandidates = new Map(); // name → { requirementName, candidates[] }
+    const mergedObjectCandidates   = new Map();
+
+    function mergeCandidateGroup(targetMap, groups) {
+      for (const group of (groups || [])) {
+        if (!group || !group.requirementName) continue;
+        if (!targetMap.has(group.requirementName)) {
+          targetMap.set(group.requirementName, { requirementName: group.requirementName, candidates: [] });
+        }
+        const existing = targetMap.get(group.requirementName);
+        for (const c of (group.candidates || [])) {
+          // Deduplicate by assetName
+          if (!existing.candidates.some(e => e.assetName === c.assetName)) {
+            existing.candidates.push(c);
+          }
+        }
+      }
     }
-    console.log(`[ROSTER-GEN] Phase 2A complete: ${(phase2A.particleCandidates||[]).length} particle groups, ${(phase2A.objectCandidates||[]).length} object groups`);
+
+    for (let b = 0; b < numBatches; b++) {
+      const particleBlock = (particleBatches[b] || []).join("");
+      const objectBlock   = (objectBatches[b]   || []).join("");
+
+      // Skip batch if both blocks are empty
+      if (!particleBlock && !objectBlock) continue;
+
+      console.log(`[ROSTER-GEN] Phase 2A batch ${b + 1}/${numBatches}: ${(particleBatches[b]||[]).length} particle doc(s), ${(objectBatches[b]||[]).length} object doc(s)`);
+
+      const batchResult = await callClaude(apiKey, {
+        model:     "claude-sonnet-4-20250514",
+        maxTokens: 8000,
+        system:    "You are a game asset shortlisting specialist. Respond only with a valid JSON object. No markdown, no fences, no preamble.",
+        userContent: [
+          { type: "text", text: buildPhase2APrompt(phase1, particleBlock || "(none in this batch)", objectBlock || "(none in this batch)") }
+        ]
+      });
+
+      let batchParsed;
+      try {
+        batchParsed = JSON.parse(stripFences(batchResult.text));
+      } catch (e) {
+        console.warn(`[ROSTER-GEN] Phase 2A batch ${b + 1} JSON parse failed — skipping: ${e.message}`);
+        continue;
+      }
+
+      mergeCandidateGroup(mergedParticleCandidates, batchParsed.particleCandidates);
+      mergeCandidateGroup(mergedObjectCandidates,   batchParsed.objectCandidates);
+    }
+
+    const phase2A = {
+      particleCandidates: [...mergedParticleCandidates.values()],
+      objectCandidates:   [...mergedObjectCandidates.values()]
+    };
+
+    console.log(`[ROSTER-GEN] Phase 2A complete: ${phase2A.particleCandidates.length} particle groups, ${phase2A.objectCandidates.length} object groups`);
 
     // ── 7. Build thumbnail catalogs from docx buffers ─────────────────
     // We need the raw docx buffers — re-download them (already in folderData

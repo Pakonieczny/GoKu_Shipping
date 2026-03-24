@@ -2968,6 +2968,20 @@ Failure stage: ${stage}${liveBlock}${candidateBlock}`;
 
         hide() {
             aiProgressPanel.classList.remove('active');
+        },
+
+        stop() {
+            // Mark any in-progress step as failed, stop the spinner.
+            // Alias used when aborting mid-pipeline (e.g. after roster failure).
+            if (this._activeStepEl) {
+                const dot = this._activeStepEl.querySelector('.ai-step-dot');
+                dot.classList.remove('pending');
+                dot.classList.add('error');
+                dot.textContent = '✕';
+                this._activeStepEl = null;
+            }
+            aiSparkIcon.classList.remove('spinning');
+            aiSparkIcon.classList.add('error');
         }
     };
 
