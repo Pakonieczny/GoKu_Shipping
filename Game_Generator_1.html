@@ -748,6 +748,119 @@
        GAME ESSENCE CONTRACT PANEL — REMOVED
        Contract has been merged into the Master Prompt.
     ════════════════════════════════════════════════ */
+
+    /* ── 3D Object Reference Image Modal ─────────────────────────── */
+    .ref-img-modal-overlay {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,0.88); z-index: 10100;
+      justify-content: center; align-items: flex-start;
+      padding: 40px 20px; overflow-y: auto;
+      backdrop-filter: blur(6px);
+    }
+    .ref-img-modal-overlay.active { display: flex; }
+
+    .ref-img-modal {
+      background: #0e1220; border: 1px solid var(--accent);
+      border-radius: 16px; width: 100%; max-width: 860px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.7);
+      display: flex; flex-direction: column; gap: 0; overflow: hidden;
+      margin: auto;
+    }
+
+    .ref-img-modal-header {
+      padding: 20px 24px 16px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(43,108,255,0.06);
+    }
+    .ref-img-modal-title {
+      font-size: 16px; font-weight: 700; color: #fff; margin: 0 0 6px 0;
+    }
+    .ref-img-modal-subtitle {
+      font-size: 12px; color: var(--muted); line-height: 1.5; margin: 0;
+    }
+    .ref-img-modal-progress {
+      display: flex; align-items: center; gap: 10px; margin-top: 12px;
+      font-size: 11px; color: var(--muted);
+    }
+    .ref-img-modal-progress-bar {
+      flex: 1; height: 4px; background: #1a1e2b; border-radius: 99px; overflow: hidden;
+    }
+    .ref-img-modal-progress-fill {
+      height: 100%; background: var(--accent); border-radius: 99px;
+      transition: width 0.35s ease;
+    }
+    .ref-img-modal-progress-label { white-space: nowrap; }
+
+    .ref-img-modal-body {
+      padding: 20px 24px;
+      display: flex; flex-direction: column; gap: 14px;
+      max-height: 60vh; overflow-y: auto;
+      scrollbar-width: thin; scrollbar-color: var(--accent) transparent;
+    }
+
+    .ref-img-row {
+      display: grid; grid-template-columns: 1fr 200px; gap: 16px; align-items: start;
+      background: #0b0d12; border: 1px solid var(--line); border-radius: 12px; padding: 14px;
+      transition: border-color 0.2s;
+    }
+    .ref-img-row.has-image { border-color: var(--success); }
+    .ref-img-row.has-image .ref-img-drop-zone { border-color: var(--success); background: #111e16; }
+
+    .ref-img-desc { display: flex; flex-direction: column; gap: 6px; }
+    .ref-img-obj-name {
+      font-size: 13px; font-weight: 700; color: var(--accent);
+      font-family: 'SF Mono','Fira Code',monospace;
+    }
+    .ref-img-visual-desc { font-size: 12px; color: var(--text); line-height: 1.5; }
+    .ref-img-gameplay-role { font-size: 11px; color: var(--muted); font-style: italic; line-height: 1.4; }
+    .ref-img-status-chip {
+      display: inline-flex; align-items: center; gap: 5px;
+      font-size: 10px; font-weight: 600; padding: 3px 8px; border-radius: 999px; margin-top: 4px;
+      background: #1a1e2b; color: var(--muted); border: 1px solid var(--line);
+      transition: all 0.2s;
+    }
+    .ref-img-status-chip.ready { background: rgba(127,219,150,0.12); color: var(--success); border-color: rgba(127,219,150,0.3); }
+
+    .ref-img-drop-zone {
+      border: 2px dashed #3a4262; border-radius: 10px;
+      background: #0e1220; cursor: pointer;
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; gap: 8px; padding: 12px 8px;
+      min-height: 140px; transition: all 0.2s; position: relative;
+    }
+    .ref-img-drop-zone:hover { border-color: var(--accent); background: rgba(43,108,255,0.05); }
+    .ref-img-drop-zone.drag-over { border-color: var(--success); background: #111e16; }
+    .ref-img-drop-icon { font-size: 22px; }
+    .ref-img-drop-hint { font-size: 10px; color: var(--muted); text-align: center; }
+    .ref-img-drop-input { display: none; }
+    .ref-img-preview {
+      width: 100%; height: 130px; object-fit: contain; border-radius: 6px;
+      display: none; background: #0b0d12;
+    }
+    .ref-img-preview.visible { display: block; }
+    .ref-img-clear-btn {
+      position: absolute; top: 6px; right: 6px;
+      background: rgba(252,165,165,0.18); border: 1px solid rgba(252,165,165,0.35);
+      color: var(--danger); border-radius: 50%; width: 22px; height: 22px;
+      font-size: 12px; font-weight: 700; cursor: pointer; display: none;
+      align-items: center; justify-content: center; transition: all 0.2s;
+    }
+    .ref-img-clear-btn.visible { display: flex; }
+    .ref-img-clear-btn:hover { background: rgba(252,165,165,0.35); }
+
+    .ref-img-modal-footer {
+      padding: 16px 24px; border-top: 1px solid var(--line);
+      display: flex; align-items: center; gap: 12px;
+      background: rgba(43,108,255,0.04);
+    }
+    .ref-img-modal-footer-hint { flex: 1; font-size: 11px; color: var(--muted); }
+    .ref-img-confirm-btn {
+      cursor: pointer; border-radius: 12px; padding: 10px 20px;
+      background: var(--accent); color: #fff; border: 1px solid #1a4bbf;
+      font-weight: 700; font-size: 13px; transition: all 0.2s;
+    }
+    .ref-img-confirm-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .ref-img-confirm-btn:not(:disabled):hover { background: #1a4bbf; }
   </style>
 </head>
 
@@ -2213,6 +2326,14 @@ This will permanently remove all associated files and Firebase folders for this 
             if (stagedMeta?.colormapFile != null) assignIfDifferent(nextAsset, 'colormapFile', stagedMeta.colormapFile);
             if (stagedMeta?.colormapStagedPath != null) assignIfDifferent(nextAsset, 'colormapStagedPath', stagedMeta.colormapStagedPath);
             if (stagedMeta?.colormapConfidence != null) assignIfDifferent(nextAsset, 'colormapConfidence', stagedMeta.colormapConfidence);
+            if (stagedMeta?.colormapDetectionRule != null) assignIfDifferent(nextAsset, 'colormapDetectionRule', stagedMeta.colormapDetectionRule);
+            if (stagedMeta?.sourceObjEntryPath != null) assignIfDifferent(nextAsset, 'sourceObjEntryPath', stagedMeta.sourceObjEntryPath);
+            if (stagedMeta?.sourceThumbEntryPath != null) assignIfDifferent(nextAsset, 'sourceThumbEntryPath', stagedMeta.sourceThumbEntryPath);
+            if (stagedMeta?.sourceColormapEntryPath != null) assignIfDifferent(nextAsset, 'sourceColormapEntryPath', stagedMeta.sourceColormapEntryPath);
+            if (stagedMeta?.sourceObjectFolder != null) assignIfDifferent(nextAsset, 'sourceObjectFolder', stagedMeta.sourceObjectFolder);
+            const colormapManifestMeta = nextAsset.colormapFile ? manifestIndex.get(String(nextAsset.colormapFile).toLowerCase()) : null;
+            assignIfDifferent(nextAsset, 'colormapManifestKey', colormapManifestMeta?.key || '');
+            assignIfDifferent(nextAsset, 'colormapManifestLocation', colormapManifestMeta?.key ? 'root-level' : '');
             if (!isParticle && geometryAnalysis) assignIfDifferent(nextAsset, 'geometryAnalysis', geometryAnalysis);
 
             return nextAsset;
@@ -2228,6 +2349,9 @@ This will permanently remove all associated files and Firebase folders for this 
             const nextAsset = { ...asset };
             assignIfDifferent(nextAsset, 'manifestKey', nextKey);
             assignIfDifferent(nextAsset, 'manifestLocation', nextLocation);
+            const colormapManifestMeta = nextAsset.colormapFile ? manifestIndex.get(String(nextAsset.colormapFile).toLowerCase()) : null;
+            assignIfDifferent(nextAsset, 'colormapManifestKey', colormapManifestMeta?.key || '');
+            assignIfDifferent(nextAsset, 'colormapManifestLocation', colormapManifestMeta?.key ? 'root-level' : '');
             if (geometryAnalysis) assignIfDifferent(nextAsset, 'geometryAnalysis', geometryAnalysis);
             return nextAsset;
         });
@@ -2272,6 +2396,43 @@ This will permanently remove all associated files and Firebase folders for this 
             const missingKeyRefs = objects3d.filter(a => a.manifestKey && !worldControllerText.includes(`'${a.manifestKey}'`) && !worldControllerText.includes(`"${a.manifestKey}"`)).map(a => a.assetName);
             if (missingKeyRefs.length > 0) {
                 warnings.push(`models/2 does not visibly reference some approved 3D manifest keys: ${missingKeyRefs.join(', ')}`);
+            }
+
+            // Texture pairing audit: each asset has an exact manifestKey (obj) and colormapManifestKey
+            // (colormap), both resolved by title lookup against assets.json — no fuzzy matching.
+            // The AI is required to reference both in the same object creation block, so we check
+            // that they co-occur within a bounded window. If either is absent or only appears far
+            // from the other, the pairing is genuinely missing.
+            const COOCCURRENCE_WINDOW = 800; // chars — comfortably covers one object creation block
+            const missingTextureContracts = [];
+
+            for (const asset of objects3d) {
+                // Only audit assets with both keys fully resolved
+                if (!asset.manifestKey || !asset.colormapManifestKey) continue;
+
+                const objKey      = String(asset.manifestKey);
+                const colormapKey = String(asset.colormapManifestKey);
+
+                let paired = false;
+                let pos = 0;
+                while (pos < worldControllerText.length) {
+                    const idx = worldControllerText.indexOf(objKey, pos);
+                    if (idx === -1) break;
+                    const winStart = Math.max(0, idx - COOCCURRENCE_WINDOW);
+                    const winEnd   = Math.min(worldControllerText.length, idx + COOCCURRENCE_WINDOW);
+                    const cmapIdx  = worldControllerText.indexOf(colormapKey, winStart);
+                    if (cmapIdx !== -1 && cmapIdx < winEnd) { paired = true; break; }
+                    pos = idx + 1;
+                }
+
+                if (!paired) {
+                    missingTextureContracts.push(
+                        `${asset.assetName} (obj key "${objKey}" and colormap key "${colormapKey}" do not co-occur in models/2)`
+                    );
+                }
+            }
+            if (missingTextureContracts.length > 0) {
+                warnings.push(`models/2 does not pair some approved 3D objects with their colormap: ${missingTextureContracts.join('; ')}`);
             }
         }
 
@@ -4593,84 +4754,204 @@ Original user request for context: ${basePrompt}`;
       };
     }
 
+    function getZipEntryDir(entryPath = '') {
+      const parts = String(entryPath || '').split('/');
+      parts.pop();
+      return parts.join('/').toLowerCase();
+    }
+
+    function buildZipImageIndex(zipObj) {
+      const imageEntries = [];
+      for (const entryPath of Object.keys(zipObj.files || {})) {
+        const entry = zipObj.files[entryPath];
+        if (!entry || entry.dir || entryPath.includes('__MACOSX')) continue;
+        const fileName = entryPath.split('/').pop() || entryPath;
+        const lowerFileName = fileName.toLowerCase();
+        if (![ '.jpg', '.jpeg', '.png', '.webp', '.tga', '.bmp' ].some(ext => lowerFileName.endsWith(ext))) continue;
+        imageEntries.push({
+          entryPath,
+          fileName,
+          lowerFileName,
+          baseName: getZipEntryBaseName(fileName).toLowerCase(),
+          dir: getZipEntryDir(entryPath)
+        });
+      }
+      return imageEntries;
+    }
+
+    // resolveZipTextureInfoForEntry — uses per-object classification from classifyZipContents
+    // when available (primary path), falling back to directory-scope search for non-pack zips.
+    function resolveZipTextureInfoForEntry(zipObj, entryPath, zipClassification = null) {
+      const entryName    = entryPath.split('/').pop() || entryPath;
+      const entryBaseName = getZipEntryBaseName(entryName).toLowerCase();
+      const entryDir     = getZipEntryDir(entryPath);
+
+      // Primary: use per-object classification keyed by the mesh's own base name.
+      // This avoids cross-object contamination in pack zips.
+      if (zipClassification?.perObjectClassification?.has(entryBaseName)) {
+        const perObj        = zipClassification.perObjectClassification.get(entryBaseName);
+        const colormapMatch = perObj.colormapResolved;
+        const thumbMatch    = (perObj.imageDetections || []).find(i => i.role === 'THUMBNAIL') || null;
+        return colormapMatch ? {
+          colormapFile:       colormapMatch.fileName,
+          colormapStagedPath: null,
+          confidence:         colormapMatch.confidence || 'HIGH',
+          detectionRule:      colormapMatch.detectionRule || 'per-object-classification',
+          thumbnailFile:      thumbMatch?.fileName || null,
+          thumbnailEntryPath: thumbMatch?.entryPath || null,
+          colormapEntryPath:  colormapMatch.entryPath,
+          objectFolder:       entryDir
+        } : {
+          colormapFile: null, colormapStagedPath: null, confidence: 'NONE',
+          detectionRule: 'none', thumbnailFile: thumbMatch?.fileName || null,
+          thumbnailEntryPath: thumbMatch?.entryPath || null,
+          colormapEntryPath: null, objectFolder: entryDir
+        };
+      }
+
+      // Fallback: directory-scope search (non-pack single-object zips).
+      const imageEntries = Array.isArray(zipClassification?.imageFiles) ? zipClassification.imageFiles : buildZipImageIndex(zipObj);
+      const preferredPool = imageEntries.filter(item => item.dir === entryDir);
+      const fallbackPool  = preferredPool.length > 0 ? preferredPool : imageEntries;
+      const thumbnailMatch =
+        fallbackPool.find(item => item.baseName === entryBaseName && !/(colormap|color[_-]?map|albedo|diffuse|base[_-]?color)/i.test(item.baseName)) ||
+        fallbackPool.find(item => /(thumb|preview)/i.test(item.baseName)) ||
+        fallbackPool.find(item => !/(colormap|color[_-]?map|albedo|diffuse|base[_-]?color)/i.test(item.baseName)) ||
+        null;
+      const colormapMatch =
+        fallbackPool.find(item => /(^|[_\-])(colormap|color[_-]?map|albedo|albedo[_-]?map|diffuse|diffuse[_-]?map|basecolor|base[_-]?color)([_\-]|$)/i.test(item.baseName)) ||
+        (fallbackPool.length === 2
+          ? fallbackPool.find(item => item.entryPath !== thumbnailMatch?.entryPath) || null
+          : null);
+      return colormapMatch ? {
+        colormapFile: colormapMatch.fileName,
+        colormapStagedPath: null,
+        confidence: /colormap|color[_-]?map|albedo|diffuse|base[_-]?color/i.test(colormapMatch.baseName) ? 'HIGH' : 'MEDIUM',
+        detectionRule: /colormap|color[_-]?map|albedo|diffuse|base[_-]?color/i.test(colormapMatch.baseName)
+          ? 'same-folder-explicit-colormap' : 'same-folder-non-thumbnail-fallback',
+        thumbnailFile: thumbnailMatch?.fileName || null,
+        thumbnailEntryPath: thumbnailMatch?.entryPath || null,
+        colormapEntryPath: colormapMatch.entryPath,
+        objectFolder: entryDir
+      } : {
+        colormapFile: null, colormapStagedPath: null, confidence: 'NONE',
+        detectionRule: 'none', thumbnailFile: thumbnailMatch?.fileName || null,
+        thumbnailEntryPath: thumbnailMatch?.entryPath || null,
+        colormapEntryPath: null, objectFolder: entryDir
+      };
+    }
+
+    // classifyZipContents — groups entries by subfolder so mesh-basename matching is scoped
+    // per object folder, not across the whole pack. Prevents TreeTrunk/TreeTrunk.png from
+    // being misidentified as THUMBNAIL when TreeTrunk.obj shares the pack with other objects.
+    // Returns perObjectClassification: Map<objBaseName, { meshFile, colormapResolved, ... }>
     function classifyZipContents(zipObj) {
-      const meshExtensions = new Set(['.obj', '.fbx', '.glb', '.gltf', '.c3b']);
+      const meshExtensions  = new Set(['.obj', '.fbx', '.glb', '.gltf', '.c3b']);
       const imageExtensions = new Set(['.jpg', '.jpeg', '.png', '.webp', '.tga', '.bmp']);
       const explicitColorNames = new Set([
         'colormap', 'color_map', 'albedo', 'albedo_map',
         'diffuse', 'diffuse_map', 'basecolor', 'base_color',
         'texture', 'tex', 'color'
       ]);
+      const confidenceRank = { HIGH: 3, MEDIUM: 2, LOW: 1, NONE: 0 };
 
-      const meshFiles = [];
-      const imageFiles = [];
-      let hasMtlFile = false;
+      // Group all entries by immediate parent folder ("" = root-level files)
+      const byFolder    = new Map();
+      const allMeshFiles  = [];
+      const allImageFiles = [];
+      let globalHasMtlFile = false;
 
       for (const entryPath of Object.keys(zipObj.files || {})) {
         const entry = zipObj.files[entryPath];
         if (!entry || entry.dir || entryPath.includes('__MACOSX')) continue;
-        const fileName = entryPath.split('/').pop() || entryPath;
+        const parts    = entryPath.split('/');
+        const fileName = parts[parts.length - 1];
+        const folderKey = parts.length > 1 ? parts.slice(0, -1).join('/') : '';
         const lowerFileName = fileName.toLowerCase();
-        const ext = lowerFileName.includes('.') ? lowerFileName.slice(lowerFileName.lastIndexOf('.')) : '';
+        const ext      = lowerFileName.includes('.') ? lowerFileName.slice(lowerFileName.lastIndexOf('.')) : '';
         const baseName = getZipEntryBaseName(fileName).toLowerCase();
+        const dir      = getZipEntryDir(entryPath);
+
+        if (!byFolder.has(folderKey)) byFolder.set(folderKey, { meshFiles: [], imageFiles: [], hasMtlFile: false });
+        const bucket = byFolder.get(folderKey);
 
         if (meshExtensions.has(ext)) {
-          meshFiles.push({ entryPath, fileName, baseName, ext });
+          const rec = { entryPath, fileName, baseName, ext, dir };
+          bucket.meshFiles.push(rec); allMeshFiles.push(rec);
         } else if (imageExtensions.has(ext)) {
-          imageFiles.push({ entryPath, fileName, baseName, ext });
+          const rec = { entryPath, fileName, baseName, ext, dir };
+          bucket.imageFiles.push(rec); allImageFiles.push(rec);
         } else if (ext === '.mtl') {
-          hasMtlFile = true;
+          bucket.hasMtlFile = true; globalHasMtlFile = true;
         }
       }
 
-      const meshBaseNames = new Set(meshFiles.map(file => file.baseName));
-      const detections = imageFiles.map((image) => {
-        const isThumbPreview = /(thumb|preview)/i.test(image.baseName);
-        if (isThumbPreview) {
-          return { ...image, role: 'THUMBNAIL', confidence: 'HIGH', detectionRule: 'name=thumb-or-preview' };
+      function classifyScope(imageFiles, meshFiles) {
+        const meshBaseNamesLocal = new Set(meshFiles.map(f => f.baseName));
+        const detections = imageFiles.map((image) => {
+          if (/(thumb|preview)/i.test(image.baseName))
+            return { ...image, role: 'THUMBNAIL', confidence: 'HIGH', detectionRule: 'name=thumb-or-preview' };
+          if (explicitColorNames.has(image.baseName))
+            return { ...image, role: 'COLORMAP', confidence: 'HIGH', detectionRule: `name=${image.baseName}` };
+          if (meshBaseNamesLocal.has(image.baseName))
+            return { ...image, role: 'THUMBNAIL', confidence: 'HIGH', detectionRule: 'mesh-basename-match' };
+          return { ...image, role: 'UNKNOWN', confidence: 'NONE', detectionRule: 'none' };
+        });
+        let colormapCandidates = detections.filter(i => i.role === 'COLORMAP');
+        let unidentified       = detections.filter(i => i.role === 'UNKNOWN');
+        if (colormapCandidates.length === 0 && imageFiles.length === 1 && unidentified.length === 1) {
+          unidentified[0].role = 'COLORMAP'; unidentified[0].confidence = 'MEDIUM'; unidentified[0].detectionRule = 'only-image';
+          colormapCandidates = [unidentified[0]]; unidentified = [];
         }
-        if (explicitColorNames.has(image.baseName)) {
-          return { ...image, role: 'COLORMAP', confidence: 'HIGH', detectionRule: `name=${image.baseName}` };
+        if (colormapCandidates.length === 0 && unidentified.length === 1) {
+          unidentified[0].role = 'COLORMAP'; unidentified[0].confidence = 'LOW'; unidentified[0].detectionRule = 'last-unidentified-image';
+          colormapCandidates = [unidentified[0]];
         }
-        if (meshBaseNames.has(image.baseName)) {
-          return { ...image, role: 'THUMBNAIL', confidence: 'HIGH', detectionRule: 'mesh-basename-match' };
-        }
-        return { ...image, role: 'UNKNOWN', confidence: 'NONE', detectionRule: 'none' };
-      });
-
-      let colormapCandidates = detections.filter(item => item.role === 'COLORMAP');
-      let unidentified = detections.filter(item => item.role === 'UNKNOWN');
-
-      if (colormapCandidates.length === 0 && imageFiles.length === 1 && unidentified.length === 1) {
-        unidentified[0].role = 'COLORMAP';
-        unidentified[0].confidence = 'MEDIUM';
-        unidentified[0].detectionRule = 'only-image';
-        colormapCandidates = [unidentified[0]];
-        unidentified = [];
+        colormapCandidates.sort((a, b) => {
+          const r = (confidenceRank[b.confidence] || 0) - (confidenceRank[a.confidence] || 0);
+          return r || a.fileName.localeCompare(b.fileName);
+        });
+        return { detections, colormapResolved: colormapCandidates[0] || null };
       }
 
-      if (colormapCandidates.length === 0 && unidentified.length === 1) {
-        unidentified[0].role = 'COLORMAP';
-        unidentified[0].confidence = 'LOW';
-        unidentified[0].detectionRule = 'last-unidentified-image';
-        colormapCandidates = [unidentified[0]];
-        unidentified = [];
+      const perObjectClassification = new Map();
+      let firstColormapResolved = null;
+      const allDetections = [];
+
+      for (const [, bucket] of byFolder.entries()) {
+        if (bucket.meshFiles.length === 0) continue;
+        const result = classifyScope(bucket.imageFiles, bucket.meshFiles);
+        allDetections.push(...result.detections);
+        for (const mesh of bucket.meshFiles) {
+          perObjectClassification.set(mesh.baseName, {
+            meshFile: mesh, colormapResolved: result.colormapResolved,
+            hasMtlFile: bucket.hasMtlFile, imageDetections: result.detections
+          });
+        }
+        if (!firstColormapResolved && result.colormapResolved) firstColormapResolved = result.colormapResolved;
       }
 
-      const confidenceRank = { HIGH: 3, MEDIUM: 2, LOW: 1, NONE: 0 };
-      colormapCandidates.sort((a, b) => {
-        const rankDiff = (confidenceRank[b.confidence] || 0) - (confidenceRank[a.confidence] || 0);
-        if (rankDiff) return rankDiff;
-        return a.fileName.localeCompare(b.fileName);
-      });
+      // Fallback for flat zips with no subfolders
+      if (perObjectClassification.size === 0 && allMeshFiles.length > 0) {
+        const fallback = classifyScope(allImageFiles, allMeshFiles);
+        allDetections.push(...fallback.detections);
+        for (const mesh of allMeshFiles) {
+          perObjectClassification.set(mesh.baseName, {
+            meshFile: mesh, colormapResolved: fallback.colormapResolved,
+            hasMtlFile: globalHasMtlFile, imageDetections: fallback.detections
+          });
+        }
+        firstColormapResolved = fallback.colormapResolved;
+      }
 
       return {
-        meshFiles,
-        imageFiles,
-        imageDetections: detections,
-        thumbnailFiles: detections.filter(item => item.role === 'THUMBNAIL'),
-        colormapResolved: colormapCandidates[0] || null,
-        hasMtlFile
+        meshFiles:              allMeshFiles,
+        imageFiles:             allImageFiles,
+        imageDetections:        allDetections,
+        thumbnailFiles:         allDetections.filter(i => i.role === 'THUMBNAIL'),
+        colormapResolved:       firstColormapResolved,
+        hasMtlFile:             globalHasMtlFile,
+        perObjectClassification // Map<objBaseName, { meshFile, colormapResolved, hasMtlFile, imageDetections }>
       };
     }
 
@@ -4891,21 +5172,7 @@ Original user request for context: ${basePrompt}`;
 
         recognizedEntries.push(relativePath);
         try {
-          const entryBaseName = getZipEntryBaseName(entryName).toLowerCase();
-          const thumbnailMatch = (zipClassification.thumbnailFiles || []).find(item => item.baseName === entryBaseName) || zipClassification.thumbnailFiles?.[0] || null;
-          const textureInfo = zipClassification.colormapResolved ? {
-            colormapFile: zipClassification.colormapResolved.fileName,
-            colormapStagedPath: null,
-            confidence: zipClassification.colormapResolved.confidence || 'HIGH',
-            detectionRule: zipClassification.colormapResolved.detectionRule || 'none',
-            thumbnailFile: thumbnailMatch?.fileName || null
-          } : {
-            colormapFile: null,
-            colormapStagedPath: null,
-            confidence: 'NONE',
-            detectionRule: 'none',
-            thumbnailFile: thumbnailMatch?.fileName || null
-          };
+          const textureInfo = resolveZipTextureInfoForEntry(zipObj, relativePath, zipClassification);
 
           let analysis = null;
           if (lowerPath.endsWith('.obj')) {
@@ -4963,21 +5230,18 @@ Original user request for context: ${basePrompt}`;
        GAME-SPECIFIC ASSET ROSTER STAGE
        ─────────────────────────────────────────────────────────────────────
        Runs between Prompt Verification upload and pipeline trigger.
-       1. Calls claudeRosterGenerate (Sonnet 4.6) — visual-only process:
-          Phase 1: analyzes Master Prompt + reference images to produce a
+       1. Calls claudeRosterGenerate (Sonnet 4.6) for Phase 1 only:
+          analyze Master Prompt + gameplay reference images and produce a
           structured list of required particle effects and 3D objects.
-          Stage A: batch-scans asset images from the zip libraries in
-          Asset_Particle_Textures/ and Asset_3D_Objects/ to shortlist
-          candidates against the full requirement set.
-          Stage B: performs final per-requirement visual selection from
-          those shortlisted candidates. Filenames are output metadata,
-          not the primary selection criteria.
-       2. Renders the roster in the UI for user review.
-       3. Blocks until user approves (or requests regeneration).
-       4. On approval calls claudeRosterExtract to extract approved assets
+       2. Blocks for one user reference image per required 3D object.
+       3. Calls claudeRosterStageAB to scan the zip libraries once and run
+          image-vs-image / text-vs-image matching against the Phase 1 requirements.
+       4. Renders the roster in the UI for user review.
+       5. Blocks until user approves (or requests regeneration).
+       6. On approval calls claudeRosterExtract to extract approved assets
           from matching .zip files in Asset_Particle_Textures / Asset_3D_Objects,
           stage them in Firebase, and prepare them for assets.json sync.
-       5. Returns approved roster context for injection into the AI prompt.
+       7. Returns approved roster context for injection into the AI prompt.
     ═══════════════════════════════════════════════════════════════════════ */
 
     function renderRosterReviewPanel(roster) {
@@ -5172,21 +5436,60 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
     async function copyRosterAssetsToModels(projectName, stagedAssets) {
         await ensureAuth();
 
-        const copyTasks = stagedAssets.map(async (asset) => {
-            try {
-                const srcRef  = ref(storage, asset.stagedPath);
-                const destRef = ref(storage, `${ROOT}/${projectName}/models/${asset.assetName}`);
+        const copyJobs = [];
+        const seenDestPaths = new Set();
+        const warningDetails = [];
+        for (const asset of (stagedAssets || [])) {
+            if (asset?.stagedPath && asset?.assetName) {
+                copyJobs.push({ srcPath: asset.stagedPath, destName: asset.assetName, label: asset.assetName, jobType: 'asset' });
+            }
+            if (asset?.colormapStagedPath && asset?.colormapFile) {
+                // Prefix the colormap filename with the obj's base name to prevent collision
+                // when multiple objects share a generic colormap name (e.g. "colormap.png").
+                // e.g. Tree_Trunk.obj + colormap.png → Tree_Trunk__colormap.png in models/
+                const objBase = asset.assetName.replace(/\.[^.]+$/, '');
+                const cmapBase = asset.colormapFile.replace(/\.[^.]+$/, '');
+                // Only prefix if the colormap name is generic (doesn't already start with the obj name)
+                const needsPrefix = !cmapBase.toLowerCase().startsWith(objBase.toLowerCase());
+                const destColormap = needsPrefix ? `${objBase}__${asset.colormapFile}` : asset.colormapFile;
+                copyJobs.push({
+                    srcPath: asset.colormapStagedPath,
+                    destName: destColormap,
+                    label: `${asset.assetName}::colormap`,
+                    jobType: 'colormap',
+                    // Store the final destName back so annotateApprovedRosterWithManifestKeys can find it
+                    colormapDestName: destColormap,
+                    originalAssetName: asset.assetName
+                });
+                // Update the asset's colormapFile to reflect the renamed destination
+                asset._colormapDestName = destColormap;
+            } else if (asset?.assetName && /\.(obj|fbx|glb|gltf|c3b)$/i.test(asset.assetName)) {
+                const warningMessage = `No colormapStagedPath for 3D asset "${asset.assetName}" — colormap was not staged.`;
+                console.warn(`[ROSTER-COPY] ${warningMessage} Check extraction log.`);
+                warningDetails.push({ type: 'missing-staged-colormap', assetName: asset.assetName, message: warningMessage });
+            }
+        }
 
-                // Download from staged_assets/ and re-upload to models/
-                const url      = await getDownloadURL(srcRef);
-                const res      = await fetch(url, { cache: 'no-store' });
-                const buffer   = await res.arrayBuffer();
-                // Convert to base64 for uploadString (data_url format)
-                const bytes    = new Uint8Array(buffer);
-                let binary     = '';
+        const uniqueJobs = copyJobs.filter(job => {
+            const destPath = `${ROOT}/${projectName}/models/${job.destName}`;
+            if (seenDestPaths.has(destPath)) return false;
+            seenDestPaths.add(destPath);
+            return true;
+        });
+
+        const copyTasks = uniqueJobs.map(async (job) => {
+            try {
+                const srcRef  = ref(storage, job.srcPath);
+                const destRef = ref(storage, `${ROOT}/${projectName}/models/${job.destName}`);
+
+                const url    = await getDownloadURL(srcRef);
+                const res    = await fetch(url, { cache: 'no-store' });
+                const buffer = await res.arrayBuffer();
+                const bytes  = new Uint8Array(buffer);
+                let binary   = '';
                 for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
-                const base64   = btoa(binary);
-                const ext      = asset.assetName.split('.').pop().toLowerCase();
+                const base64 = btoa(binary);
+                const ext = job.destName.split('.').pop().toLowerCase();
                 const mimeType = ext === 'png'                    ? 'image/png'
                                : ext === 'jpg' || ext === 'jpeg'  ? 'image/jpeg'
                                : ext === 'webp'                   ? 'image/webp'
@@ -5195,24 +5498,130 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
                                : 'application/octet-stream';
 
                 await uploadString(destRef, `data:${mimeType};base64,${base64}`, 'data_url');
-                console.log(`[ROSTER-COPY] ${asset.assetName} → models/`);
-                return asset.assetName;
+                console.log(`[ROSTER-COPY] ${job.label} → models/${job.destName}`);
+                return { ok: true, job, destName: job.destName };
             } catch (e) {
-                console.warn(`[ROSTER-COPY] Failed to copy ${asset.assetName} to models/:`, e.message);
-                return null;
+                console.warn(`[ROSTER-COPY] Failed to copy ${job.label} to models/:`, e.message);
+                return { ok: false, job, error: e?.message || String(e) };
             }
         });
 
         const results = await Promise.all(copyTasks);
-        const copied  = results.filter(Boolean);
-        console.log(`[ROSTER-COPY] ${copied.length}/${stagedAssets.length} asset(s) copied to models/`);
+        const copied  = results.filter(result => result?.ok).map(result => result.destName);
+        const failedJobs = results.filter(result => result && !result.ok);
+        console.log(`[ROSTER-COPY] ${copied.length}/${uniqueJobs.length} file(s) copied to models/`);
+
+        // Update colormapFile on each staged asset to reflect the renamed destination,
+        // so that annotateApprovedRosterWithManifestKeys can look it up correctly in assets.json.
+        let anyRenamed = false;
+        for (const asset of (stagedAssets || [])) {
+            if (asset._colormapDestName) {
+                asset.colormapFile = asset._colormapDestName;
+                delete asset._colormapDestName;
+                anyRenamed = true;
+            }
+        }
+
+        // CRITICAL: re-persist ai_asset_roster_approved.json with the updated colormapFile names.
+        // annotateApprovedRosterWithManifestKeys re-fetches that file fresh from Firebase and
+        // builds stagedIndex from roster.stagedAssets — if we don't write the renamed filenames
+        // back now, colormapManifestKey will silently resolve against the old generic name
+        // (e.g. "colormap.png") which no longer exists in assets.json under that name.
+        if (anyRenamed) {
+            try {
+                const rosterRef = ref(storage, `${ROOT}/${projectName}/ai_asset_roster_approved.json`);
+                const rosterUrl = await getDownloadURL(rosterRef);
+                const rosterRes = await fetch(rosterUrl + (rosterUrl.includes('?') ? '&' : '?') + '_ts=' + Date.now(), { cache: 'no-store' });
+                if (rosterRes.ok) {
+                    const rosterJson = await rosterRes.json();
+                    const renamedIndex = new Map(
+                        (stagedAssets || [])
+                            .filter(a => a?.assetName && a?.colormapFile)
+                            .map(a => [String(a.assetName).toLowerCase(), a.colormapFile])
+                    );
+                    const patchColormap = (arr) => (arr || []).map(a => {
+                        const renamed = renamedIndex.get(String(a?.assetName || '').toLowerCase());
+                        return renamed ? { ...a, colormapFile: renamed } : a;
+                    });
+                    rosterJson.objects3d    = patchColormap(rosterJson.objects3d);
+                    rosterJson.stagedAssets = patchColormap(rosterJson.stagedAssets);
+                    await uploadString(rosterRef, JSON.stringify(rosterJson, null, 2));
+                    console.log(`[ROSTER-COPY] Re-persisted ai_asset_roster_approved.json with ${renamedIndex.size} renamed colormap filename(s).`);
+                }
+            } catch (e) {
+                console.warn('[ROSTER-COPY] Failed to re-persist roster with renamed colormapFile:', e.message);
+            }
+        }
+
+        const colormapCopyFailures = failedJobs
+            .filter(result => result?.job?.jobType === 'colormap')
+            .map(result => ({
+                assetName: result.job.originalAssetName || result.job.label,
+                destName: result.job.destName,
+                message: result.error || 'unknown copy failure'
+            }));
+
+        return {
+            copiedCount: copied.length,
+            totalJobs: uniqueJobs.length,
+            warningDetails,
+            failedJobs,
+            colormapCopyFailures
+        };
     }
 
-    // ── Poll Firebase for roster generation result ────────────────────────────
-    // claudeRosterGenerate-background returns 202 immediately and writes
-    // ai_asset_roster_pending.json when done. We poll until the file appears
-    // with a generatedAt timestamp newer than our request start time, or until
-    // ai_asset_roster_error.json appears (failure sentinel), or until timeout.
+    async function clearRosterStageSentinels(projectPath, names) {
+      for (const name of names) {
+        try {
+          await deleteObject(ref(storage, `${projectPath}/${name}`));
+        } catch (e) {
+          // Missing sentinel is fine.
+        }
+      }
+    }
+
+    // ── Poll Firebase for Phase 1 result ─────────────────────────────────
+    // claudeRosterGenerate-background now only runs Phase 1 and writes
+    // ai_asset_roster_phase1.json. We poll for that file, then show the
+    // reference image modal before calling Stage A/B.
+    async function pollForRosterPhase1(projectPath, requestStartTime, jobId) {
+      const POLL_INTERVAL_MS = 3000;
+      const POLL_TIMEOUT_MS  = 300000; // 5 minutes — Phase 1 is fast
+      const phase1Ref = ref(storage, `${projectPath}/ai_asset_roster_phase1.json`);
+      const errorRef  = ref(storage, `${projectPath}/ai_asset_roster_error.json`);
+      const deadline  = Date.now() + POLL_TIMEOUT_MS;
+
+      while (Date.now() < deadline) {
+        await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
+
+        try {
+          const errUrl = await getDownloadURL(errorRef);
+          const errRes = await fetch(errUrl + '&v=' + Date.now(), { cache: 'no-store' });
+          if (errRes.ok) {
+            const errData = await errRes.json();
+            const failedAt = Number(errData.failedAt || 0);
+            const sameJob = !errData.jobId || errData.jobId === jobId;
+            if (sameJob && failedAt >= requestStartTime) {
+              throw new Error(`Roster Phase 1 failed: ${errData.error || 'unknown error'}`);
+            }
+          }
+        } catch(e) {
+          if (e.message.startsWith('Roster Phase 1 failed')) throw e;
+        }
+
+        try {
+          const url = await getDownloadURL(phase1Ref);
+          const res = await fetch(url + '&v=' + Date.now(), { cache: 'no-store' });
+          if (!res.ok) continue;
+          const data = await res.json();
+          if (Number(data.generatedAt || 0) >= requestStartTime && data.jobId === jobId) return data;
+        } catch(e) { /* not yet */ }
+      }
+      throw new Error('Roster Phase 1 timed out after 5 minutes.');
+    }
+
+    // ── Poll Firebase for Stage A/B result ───────────────────────────────
+    // claudeRosterStageAB-background writes ai_asset_roster_pending.json.
     async function pollForRosterGeneration(projectPath, requestStartTime, jobId) {
       const POLL_INTERVAL_MS = 3000;
       const POLL_TIMEOUT_MS  = 900000; // 15 minutes
@@ -5220,52 +5629,184 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
       const errorRef   = ref(storage, `${projectPath}/ai_asset_roster_error.json`);
       const deadline   = Date.now() + POLL_TIMEOUT_MS;
 
-      // Clear any stale sentinels from a previous run
-      try { await deleteObject(pendingRef); } catch(e) {}
-      try { await deleteObject(errorRef);   } catch(e) {}
-
       while (Date.now() < deadline) {
         await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
 
-        // Check for error sentinel first
         try {
           const errUrl = await getDownloadURL(errorRef);
-          const errRes = await fetch(errUrl, { cache: 'no-store' });
+          const errRes = await fetch(errUrl + '&v=' + Date.now(), { cache: 'no-store' });
           if (errRes.ok) {
             const errData = await errRes.json();
-            throw new Error(`Roster generation failed: ${errData.error || 'unknown error'}`);
+            const failedAt = Number(errData.failedAt || 0);
+            const sameJob = !errData.jobId || errData.jobId === jobId;
+            if (sameJob && failedAt >= requestStartTime) {
+              throw new Error(`Roster generation failed: ${errData.error || 'unknown error'}`);
+            }
           }
         } catch(e) {
           if (e.message.startsWith('Roster generation failed')) throw e;
-          // File doesn't exist yet — continue polling
         }
 
-        // Check for completed roster
         try {
           const url = await getDownloadURL(pendingRef);
           const res = await fetch(url + '&v=' + Date.now(), { cache: 'no-store' });
           if (!res.ok) continue;
           const roster = await res.json();
-          // Must be newer than our request start and match this jobId
           if (
-            roster._meta?.generatedAt >= requestStartTime &&
+            Number(roster._meta?.generatedAt || 0) >= requestStartTime &&
             roster._meta?.jobId === jobId
-          ) {
-            return roster;
-          }
-        } catch(e) {
-          // File not yet available — continue polling
-        }
+          ) return roster;
+        } catch(e) { /* not yet */ }
       }
-      throw new Error('Roster generation timed out after 15 minutes.');
+      throw new Error('Roster Stage A/B timed out after 15 minutes.');
+    }
+
+    // ── Reference Image Modal ─────────────────────────────────────────────
+    // Renders the modal with one row per 3D object from Phase 1.
+    // Returns a Promise that resolves with an array of
+    //   { requirementName, mimeType, b64 }
+    // once the user has provided images for all objects and clicks confirm.
+    function showRefImageModal(objectReqs) {
+      return new Promise((resolve) => {
+        const overlay    = document.getElementById('refImgModal');
+        const body       = document.getElementById('refImgModalBody');
+        const confirmBtn = document.getElementById('refImgConfirmBtn');
+        const progressFill  = document.getElementById('refImgProgressFill');
+        const progressLabel = document.getElementById('refImgProgressLabel');
+        const footerHint    = document.getElementById('refImgFooterHint');
+
+        // State: requirementName → { mimeType, b64 } | null
+        const imageMap = new Map(objectReqs.map(r => [r.name, null]));
+
+        function updateProgress() {
+          const total = objectReqs.length;
+          const done  = [...imageMap.values()].filter(Boolean).length;
+          const pct   = total > 0 ? (done / total) * 100 : 0;
+          progressFill.style.width  = `${pct}%`;
+          progressLabel.textContent = `${done} / ${total} images provided`;
+          confirmBtn.disabled = done < total;
+          footerHint.textContent = done < total
+            ? `${total - done} object(s) still need a reference image.`
+            : 'All images provided — ready to continue.';
+
+          // Update each row's status chip
+          objectReqs.forEach(req => {
+            const chip = document.getElementById(`refImgChip_${CSS.escape(req.name)}`);
+            if (chip) {
+              if (imageMap.get(req.name)) {
+                chip.textContent = '✓ Image ready';
+                chip.classList.add('ready');
+                const row = document.getElementById(`refImgRow_${CSS.escape(req.name)}`);
+                if (row) row.classList.add('has-image');
+              } else {
+                chip.textContent = '⬆ Drop image';
+                chip.classList.remove('ready');
+                const row = document.getElementById(`refImgRow_${CSS.escape(req.name)}`);
+                if (row) row.classList.remove('has-image');
+              }
+            }
+          });
+        }
+
+        function attachDropZone(req) {
+          const dropZone   = document.getElementById(`refImgDrop_${CSS.escape(req.name)}`);
+          const fileInput  = document.getElementById(`refImgInput_${CSS.escape(req.name)}`);
+          const preview    = document.getElementById(`refImgPreview_${CSS.escape(req.name)}`);
+          const clearBtn   = document.getElementById(`refImgClear_${CSS.escape(req.name)}`);
+          const dropIcon   = dropZone.querySelector('.ref-img-drop-icon');
+          const dropHint   = dropZone.querySelector('.ref-img-drop-hint');
+
+          function loadFile(file) {
+            if (!file || !file.type.startsWith('image/')) return;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+              const dataUrl = e.target.result;
+              const b64     = dataUrl.split(',')[1];
+              imageMap.set(req.name, { mimeType: file.type, b64 });
+              preview.src = dataUrl;
+              preview.classList.add('visible');
+              if (dropIcon) dropIcon.style.display = 'none';
+              if (dropHint) dropHint.style.display = 'none';
+              clearBtn.classList.add('visible');
+              updateProgress();
+            };
+            reader.readAsDataURL(file);
+          }
+
+          dropZone.addEventListener('click', (e) => {
+            if (e.target === clearBtn) return;
+            fileInput.click();
+          });
+          fileInput.addEventListener('change', () => {
+            if (fileInput.files[0]) loadFile(fileInput.files[0]);
+            fileInput.value = '';
+          });
+          dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+          dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+          dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('drag-over');
+            const file = e.dataTransfer.files[0];
+            if (file) loadFile(file);
+          });
+          clearBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            imageMap.set(req.name, null);
+            preview.src = '';
+            preview.classList.remove('visible');
+            if (dropIcon) dropIcon.style.display = '';
+            if (dropHint) dropHint.style.display = '';
+            clearBtn.classList.remove('visible');
+            updateProgress();
+          });
+        }
+
+        // Render rows
+        const esc = s => String(s || '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+        body.innerHTML = objectReqs.map(req => `
+          <div class="ref-img-row" id="refImgRow_${esc(req.name)}">
+            <div class="ref-img-desc">
+              <div class="ref-img-obj-name">${esc(req.name)}</div>
+              <div class="ref-img-visual-desc">${esc(req.visualDescription)}</div>
+              <div class="ref-img-gameplay-role">${esc(req.gameplayRole)}</div>
+              <span class="ref-img-status-chip" id="refImgChip_${esc(req.name)}">⬆ Drop image</span>
+            </div>
+            <div class="ref-img-drop-zone" id="refImgDrop_${esc(req.name)}">
+              <input type="file" accept="image/*" class="ref-img-drop-input" id="refImgInput_${esc(req.name)}">
+              <div class="ref-img-drop-icon">🖼️</div>
+              <div class="ref-img-drop-hint">Drop image here<br>or click to browse</div>
+              <img class="ref-img-preview" id="refImgPreview_${esc(req.name)}" alt="">
+              <button class="ref-img-clear-btn" id="refImgClear_${esc(req.name)}">✕</button>
+            </div>
+          </div>`).join('');
+
+        objectReqs.forEach(req => attachDropZone(req));
+        updateProgress();
+        overlay.classList.add('active');
+
+        confirmBtn.onclick = () => {
+          overlay.classList.remove('active');
+          confirmBtn.onclick = null;
+          const result = objectReqs.map(req => ({
+            requirementName: req.name,
+            ...imageMap.get(req.name)
+          }));
+          resolve(result);
+        };
+      });
+    }
+
+    // ── Upload user reference images to Firebase ──────────────────────────
+    async function uploadRefImages(projectPath, refImages) {
+      const payload = JSON.stringify({ objects: refImages });
+      const refImagesRef = ref(storage, `${projectPath}/ai_roster_ref_images.json`);
+      await uploadString(refImagesRef, payload);
     }
 
     // ── Poll Firebase for roster extraction result ─────────────────────────
-    // claudeRosterExtract-background returns 202 immediately and writes
-    // ai_asset_roster_extract_result.json when done. We poll until the file
-    // appears with a completedAt timestamp newer than our request start time
-    // and matching jobId, or until ai_asset_roster_extract_error.json appears,
-    // or until timeout.
+    // Sentinel cleanup happens BEFORE the extract launch (in runRosterStage),
+    // never inside this loop. Error files are gated by completedAt + jobId
+    // to ignore stale errors from previous runs.
     async function pollForRosterExtraction(projectPath, requestStartTime, jobId) {
       const POLL_INTERVAL_MS = 3000;
       const POLL_TIMEOUT_MS  = 900000; // 15 minutes — mirrors background function limit
@@ -5273,24 +5814,24 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
       const errorRef  = ref(storage, `${projectPath}/ai_asset_roster_extract_error.json`);
       const deadline  = Date.now() + POLL_TIMEOUT_MS;
 
-      // Clear any stale sentinels from a previous run
-      try { await deleteObject(resultRef); } catch(e) {}
-      try { await deleteObject(errorRef);  } catch(e) {}
-
       while (Date.now() < deadline) {
         await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
 
-        // Check error sentinel first
+        // Check error sentinel — only throw if it belongs to this run
         try {
           const errUrl = await getDownloadURL(errorRef);
-          const errRes = await fetch(errUrl, { cache: 'no-store' });
+          const errRes = await fetch(errUrl + '&v=' + Date.now(), { cache: 'no-store' });
           if (errRes.ok) {
             const errData = await errRes.json();
-            throw new Error(`Asset extraction failed: ${errData.error || 'unknown error'}`);
+            const failedAt = Number(errData.completedAt || errData.failedAt || 0);
+            const sameJob  = !errData.jobId || errData.jobId === jobId;
+            if (sameJob && failedAt >= requestStartTime) {
+              throw new Error(`Asset extraction failed: ${errData.error || 'unknown error'}`);
+            }
           }
         } catch(e) {
           if (e.message.startsWith('Asset extraction failed')) throw e;
-          // File doesn't exist yet — continue polling
+          // File not present or stale — continue polling
         }
 
         // Check for completed result
@@ -5299,8 +5840,7 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
           const res = await fetch(url + '&v=' + Date.now(), { cache: 'no-store' });
           if (!res.ok) continue;
           const data = await res.json();
-          // Must be newer than our request start and match this jobId
-          if (data.completedAt >= requestStartTime && data.jobId === jobId) {
+          if (Number(data.completedAt || 0) >= requestStartTime && data.jobId === jobId) {
             return data;
           }
         } catch(e) {
@@ -5310,37 +5850,82 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
       throw new Error('Asset extraction timed out after 15 minutes.');
     }
 
-    // ── Run the full roster stage: generate → display → approve → extract ──
+    // ── Run the full roster stage: Phase1 → modal → StageAB → display → approve → extract ──
     async function runRosterStage(projectPath, jobId) {
-      let roster = null;
+      let roster   = null;
       let approved = false;
 
       while (!approved) {
-        Progress.step('Generating Asset Roster', 'Claude Sonnet 4.6 is analyzing your game and selecting assets...');
+        // ── Step 1: Phase 1 — generate 3D object & particle text descriptions ──
+        Progress.step('Analyzing Game Requirements', 'Claude Sonnet 4.6 is identifying required 3D objects and particle effects...');
         const statusEl = document.getElementById('rosterApproveStatus');
-        if (statusEl) statusEl.textContent = 'Generating roster...';
+        if (statusEl) statusEl.textContent = 'Running Phase 1 analysis...';
 
-        let genData;
+        let phase1Data;
         try {
+          await clearRosterStageSentinels(projectPath, [
+            'ai_asset_roster_phase1.json',
+            'ai_asset_roster_pending.json',
+            'ai_asset_roster_error.json'
+          ]);
           const requestStartTime = Date.now();
           const genRes = await fetch('/.netlify/functions/claudeRosterGenerate-background', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ projectPath, jobId })
           });
-          // Background function returns 202 immediately — poll Firebase for result
           if (genRes.status !== 202) {
             throw new Error(`Unexpected response from roster generator: ${genRes.status}`);
           }
-          Progress.step('Generating Asset Roster', 'Waiting for Claude to analyze assets — this may take a minute...');
-          roster = await pollForRosterGeneration(projectPath, requestStartTime, jobId);
+          Progress.step('Analyzing Game Requirements', 'Waiting for Phase 1 analysis — identifying 3D objects and particle effects...');
+          phase1Data = await pollForRosterPhase1(projectPath, requestStartTime, jobId);
         } catch (e) {
-          throw new Error(`Roster generation failed: ${e.message}`);
+          throw new Error(`Roster Phase 1 failed: ${e.message}`);
         }
 
+        const objectReqs = (phase1Data.phase1 && phase1Data.phase1.objects3d) || [];
+        appendToChatLog('System',
+          `Phase 1 complete: ${objectReqs.length} 3D object(s) identified. Waiting for reference images.`, 'normal');
+
+        // ── Step 2: Show reference image modal — blocks until user provides all images ──
+        Progress.step('Reference Images Required', `Drop reference images for ${objectReqs.length} 3D object(s) to continue...`);
+        const refImages = await showRefImageModal(objectReqs);
+
+        // ── Step 3: Upload reference images to Firebase ───────────────────
+        Progress.step('Uploading Reference Images', 'Saving your reference images to Firebase...');
+        try {
+          await uploadRefImages(projectPath, refImages);
+        } catch (e) {
+          throw new Error(`Failed to upload reference images: ${e.message}`);
+        }
+        appendToChatLog('System', `${refImages.length} reference image(s) uploaded. Starting visual asset matching...`, 'normal');
+
+        // ── Step 4: Stage A/B — image-vs-image matching ───────────────────
+        Progress.step('Visual Asset Matching', 'Comparing your reference images against the 3D object library...');
+        try {
+          await clearRosterStageSentinels(projectPath, [
+            'ai_asset_roster_pending.json',
+            'ai_asset_roster_error.json'
+          ]);
+          const stageABStartTime = Date.now();
+          const stageABRes = await fetch('/.netlify/functions/claudeRosterStageAB-background', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ projectPath, jobId })
+          });
+          if (stageABRes.status !== 202) {
+            throw new Error(`Unexpected response from Stage A/B: ${stageABRes.status}`);
+          }
+          Progress.step('Visual Asset Matching', 'Stage A/B running — matching library thumbnails against your reference images...');
+          roster = await pollForRosterGeneration(projectPath, stageABStartTime, jobId);
+        } catch (e) {
+          throw new Error(`Roster Stage A/B failed: ${e.message}`);
+        }
+
+        // ── Step 5: Show roster review panel (same as before) ─────────────
         const objCount = (roster.objects3d || []).length;
         const texCount = (roster.textureAssets || []).length;
-        Progress.step('Review Asset Roster', `${objCount} object(s), ${texCount} texture(s) selected — review and approve to continue.`);
+        Progress.step('Review Asset Roster', `${objCount} object(s), ${texCount} texture(s) matched — review and approve to continue.`);
         appendToChatLog('System',
           `Asset Roster generated: ${objCount} 3D object(s), ${texCount} texture asset(s). ` +
           `Review the roster and approve to continue.`, 'normal');
@@ -5352,23 +5937,27 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
         } else {
           hideRosterReviewPanel();
           appendToChatLog('System', 'Roster regeneration requested.', 'normal');
+          // Loop back — Phase 1 will re-run and the modal will appear again
         }
       }
 
-      // Post-approval: hide panel, extract assets, update assets.json
+      // Post-approval: extract, copy, sync (unchanged)
       hideRosterReviewPanel();
       Progress.step('Extracting Approved Assets', 'Staging approved assets from Asset_Particle_Textures / Asset_3D_Objects into Firebase...');
       appendToChatLog('System', 'Roster approved. Extracting assets from Asset_Particle_Textures / Asset_3D_Objects...', 'normal');
 
       let extractData;
       try {
+        await clearRosterStageSentinels(projectPath, [
+          'ai_asset_roster_extract_result.json',
+          'ai_asset_roster_extract_error.json'
+        ]);
         const extractStartTime = Date.now();
         const extractRes = await fetch('/.netlify/functions/claudeRosterExtract-background', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ projectPath, jobId })
         });
-        // Background function returns 202 immediately with no body — poll Firebase for result
         if (extractRes.status !== 202) {
           throw new Error(`Unexpected response from asset extractor: ${extractRes.status}`);
         }
@@ -5386,25 +5975,31 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
         `✅ Asset Roster approved and staged. ${stagedCount} asset(s) extracted. ` +
         `Staged folder: ${extractData.stagedFolder || 'N/A'}`, 'normal');
 
-      // ── Copy staged assets into models/ ──────────────────────────────────
-      // This makes them visible to syncAssetsJson() and the zip builder.
       Progress.step('Copying Assets to models/', 'Making roster assets available to the AI pipeline and export...');
-      await copyRosterAssetsToModels(
+      const rosterCopySummary = await copyRosterAssetsToModels(
           currentProject,
           extractData.stagedAssets || []
       );
-      appendToChatLog('System',
-          `✅ Roster assets copied to models/ folder. Running manifest sync...`, 'normal');
+      if (rosterCopySummary?.warningDetails?.length > 0) {
+        const warningText = rosterCopySummary.warningDetails.map(item => item.message).join(' | ');
+        Progress.warn('Roster asset copy warning', warningText);
+        appendToChatLog('System', `⚠️ Roster asset copy warning: ${warningText}`, 'normal');
+      }
+      if (rosterCopySummary?.colormapCopyFailures?.length > 0) {
+        const failureText = rosterCopySummary.colormapCopyFailures.map(item => `${item.assetName} → ${item.destName} (${item.message})`).join(' | ');
+        Progress.warn('Required 3D colormap copy warning', failureText);
+        appendToChatLog('System', `⚠️ Required 3D colormap copy warning: ${failureText}`, 'normal');
+      }
+      appendToChatLog('System', `✅ Roster assets copied to models/ folder. Running manifest sync...`, 'normal');
 
-      // ── syncAssetsJson: picks up the newly copied files in models/ ────────
       Progress.step('Syncing assets.json', 'Registering roster assets in manifest...');
       const rosterManifest = await syncAssetsJson();
       const annotatedRoster = await annotateApprovedRosterWithManifestKeys(currentProject, rosterManifest).catch(() => roster);
 
       return {
-        roster: annotatedRoster || roster,
-        stagedAssets:  extractData.stagedAssets  || [],
-        stagedFolder:  extractData.stagedFolder   || ''
+        roster:       annotatedRoster || roster,
+        stagedAssets: extractData.stagedAssets || [],
+        stagedFolder: extractData.stagedFolder  || ''
       };
     }
 
@@ -6600,6 +7195,29 @@ RULES FOR ALL PIPELINE STAGES:
           <button class="close-preview" id="closePreviewBtn">✕</button>
           <img id="previewImageSrc" src="" alt="Preview">
       </div>
+  </div>
+
+  <!-- ── 3D Object Reference Image Modal ──────────────────────────────── -->
+  <div id="refImgModal" class="ref-img-modal-overlay">
+    <div class="ref-img-modal">
+      <div class="ref-img-modal-header">
+        <div class="ref-img-modal-title">📸 Drop Reference Images for 3D Objects</div>
+        <p class="ref-img-modal-subtitle">
+          Claude identified the 3D objects below. Drop one reference image per object — these images will be compared directly against your asset library thumbnails for a more accurate visual match.
+        </p>
+        <div class="ref-img-modal-progress">
+          <div class="ref-img-modal-progress-bar">
+            <div class="ref-img-modal-progress-fill" id="refImgProgressFill" style="width:0%"></div>
+          </div>
+          <span class="ref-img-modal-progress-label" id="refImgProgressLabel">0 / 0 images provided</span>
+        </div>
+      </div>
+      <div class="ref-img-modal-body" id="refImgModalBody"></div>
+      <div class="ref-img-modal-footer">
+        <span class="ref-img-modal-footer-hint" id="refImgFooterHint">All objects require a reference image before you can continue.</span>
+        <button class="ref-img-confirm-btn" id="refImgConfirmBtn" disabled>Continue to Asset Matching →</button>
+      </div>
+    </div>
   </div>
 
   <div id="extentsResultModal" class="processing-modal">

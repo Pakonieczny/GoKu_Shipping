@@ -69,81 +69,143 @@ function detectMimeType(filename = "") {
        : "application/octet-stream";
 }
 
+/* classifyZipContents — classifies a pack zip that contains multiple object subfolders.
+   Each 3D object lives in its own subfolder: ObjectName/ObjectName.obj, ObjectName/colormap.png, ObjectName/thumb.png
+   We classify per-folder so that mesh basename matching is scoped correctly within each object's folder,
+   not across the entire pack (which would incorrectly flag same-named colormaps as thumbnails).
+   Returns a Map: normalizedObjBaseName → { meshFile, colormapResolved, hasMtlFile }
+   Also returns a legacy top-level colormapResolved (first found) for backwards-compat callers. */
 function classifyZipContents(zip) {
-  const meshExtensions = new Set([".obj", ".fbx", ".glb", ".gltf", ".c3b"]);
+  const meshExtensions  = new Set([".obj", ".fbx", ".glb", ".gltf", ".c3b"]);
   const imageExtensions = new Set([".jpg", ".jpeg", ".png", ".webp", ".tga", ".bmp"]);
   const explicitColorNames = new Set([
     "colormap", "color_map", "albedo", "albedo_map",
     "diffuse", "diffuse_map", "basecolor", "base_color",
     "texture", "tex", "color"
   ]);
+  const confidenceRank = { HIGH: 3, MEDIUM: 2, LOW: 1, NONE: 0 };
 
-  const meshFiles = [];
-  const imageFiles = [];
-  let hasMtlFile = false;
+  // Group all entries by their immediate parent folder (or "" for root-level files)
+  const byFolder = new Map(); // folderPath → { meshFiles: [], imageFiles: [], hasMtlFile: false }
+  const allMeshFiles  = [];
+  const allImageFiles = [];
+  let globalHasMtlFile = false;
 
   for (const entryPath of Object.keys(zip.files || {})) {
     const entry = zip.files[entryPath];
     if (!entry || entry.dir || entryPath.includes("__MACOSX")) continue;
-    const fileName = entryPath.split("/").pop() || entryPath;
+
+    const parts    = entryPath.split("/");
+    const fileName = parts[parts.length - 1];
+    // folder key: everything except the filename; root files use ""
+    const folderKey = parts.length > 1 ? parts.slice(0, -1).join("/") : "";
+
     const lowerFileName = fileName.toLowerCase();
-    const ext = lowerFileName.includes(".") ? lowerFileName.slice(lowerFileName.lastIndexOf(".")) : "";
+    const ext      = lowerFileName.includes(".") ? lowerFileName.slice(lowerFileName.lastIndexOf(".")) : "";
     const baseName = getZipEntryBaseName(fileName).toLowerCase();
 
+    if (!byFolder.has(folderKey)) byFolder.set(folderKey, { meshFiles: [], imageFiles: [], hasMtlFile: false });
+    const bucket = byFolder.get(folderKey);
+
     if (meshExtensions.has(ext)) {
-      meshFiles.push({ entryPath, fileName, baseName, ext });
+      const rec = { entryPath, fileName, baseName, ext };
+      bucket.meshFiles.push(rec);
+      allMeshFiles.push(rec);
     } else if (imageExtensions.has(ext)) {
-      imageFiles.push({ entryPath, fileName, baseName, ext });
+      const rec = { entryPath, fileName, baseName, ext };
+      bucket.imageFiles.push(rec);
+      allImageFiles.push(rec);
     } else if (ext === ".mtl") {
-      hasMtlFile = true;
+      bucket.hasMtlFile = true;
+      globalHasMtlFile = true;
     }
   }
 
-  const meshBaseNames = new Set(meshFiles.map(file => file.baseName));
-  const detections = imageFiles.map((image) => {
-    if (/(thumb|preview)/i.test(image.baseName)) {
-      return { ...image, role: "THUMBNAIL", confidence: "HIGH", detectionRule: "name=thumb-or-preview" };
-    }
-    if (explicitColorNames.has(image.baseName)) {
-      return { ...image, role: "COLORMAP", confidence: "HIGH", detectionRule: `name=${image.baseName}` };
-    }
-    if (meshBaseNames.has(image.baseName)) {
-      return { ...image, role: "THUMBNAIL", confidence: "HIGH", detectionRule: "mesh-basename-match" };
-    }
-    return { ...image, role: "UNKNOWN", confidence: "NONE", detectionRule: "none" };
-  });
+  /* Classify images within a single folder scope.
+     Rules (in priority order):
+       1. thumb/preview in name → THUMBNAIL (highest priority, always)
+       2. Explicit colormap name (colormap, albedo, diffuse …) → COLORMAP HIGH
+       3. basename matches a mesh basename in the SAME folder → THUMBNAIL
+          (e.g. TreeTrunk/TreeTrunk.png is a preview/thumbnail of TreeTrunk.obj)
+       4. Only one image left unidentified → COLORMAP MEDIUM
+       5. Last image standing → COLORMAP LOW                                      */
+  function classifyImagesInScope(imageFiles, meshFiles) {
+    const meshBaseNamesLocal = new Set(meshFiles.map(f => f.baseName));
+    const detections = imageFiles.map((image) => {
+      if (/(thumb|preview)/i.test(image.baseName)) {
+        return { ...image, role: "THUMBNAIL",  confidence: "HIGH",   detectionRule: "name=thumb-or-preview" };
+      }
+      if (explicitColorNames.has(image.baseName)) {
+        return { ...image, role: "COLORMAP",   confidence: "HIGH",   detectionRule: `name=${image.baseName}` };
+      }
+      if (meshBaseNamesLocal.has(image.baseName)) {
+        // Same base name as the mesh in this folder → thumbnail (preview image, not colormap)
+        return { ...image, role: "THUMBNAIL",  confidence: "HIGH",   detectionRule: "mesh-basename-match" };
+      }
+      return { ...image, role: "UNKNOWN", confidence: "NONE", detectionRule: "none" };
+    });
 
-  let colormapCandidates = detections.filter(item => item.role === "COLORMAP");
-  let unidentified = detections.filter(item => item.role === "UNKNOWN");
+    let colormapCandidates = detections.filter(i => i.role === "COLORMAP");
+    let unidentified       = detections.filter(i => i.role === "UNKNOWN");
 
-  if (colormapCandidates.length === 0 && imageFiles.length === 1 && unidentified.length === 1) {
-    unidentified[0].role = "COLORMAP";
-    unidentified[0].confidence = "MEDIUM";
-    unidentified[0].detectionRule = "only-image";
-    colormapCandidates = [unidentified[0]];
-    unidentified = [];
+    if (colormapCandidates.length === 0 && imageFiles.length === 1 && unidentified.length === 1) {
+      unidentified[0].role = "COLORMAP"; unidentified[0].confidence = "MEDIUM"; unidentified[0].detectionRule = "only-image";
+      colormapCandidates = [unidentified[0]]; unidentified = [];
+    }
+    if (colormapCandidates.length === 0 && unidentified.length === 1) {
+      unidentified[0].role = "COLORMAP"; unidentified[0].confidence = "LOW"; unidentified[0].detectionRule = "last-unidentified-image";
+      colormapCandidates = [unidentified[0]];
+    }
+
+    colormapCandidates.sort((a, b) => {
+      const rankDiff = (confidenceRank[b.confidence] || 0) - (confidenceRank[a.confidence] || 0);
+      return rankDiff || a.fileName.localeCompare(b.fileName);
+    });
+
+    return { detections, colormapResolved: colormapCandidates[0] || null };
   }
 
-  if (colormapCandidates.length === 0 && unidentified.length === 1) {
-    unidentified[0].role = "COLORMAP";
-    unidentified[0].confidence = "LOW";
-    unidentified[0].detectionRule = "last-unidentified-image";
-    colormapCandidates = [unidentified[0]];
+  // Build per-object-folder classification map: normalizedObjBaseName → classification result
+  const perObjectClassification = new Map();
+  let firstColormapResolved = null;
+
+  for (const [folderKey, bucket] of byFolder.entries()) {
+    if (bucket.meshFiles.length === 0) continue; // image-only folder (thumbnails dir, etc.) — skip
+    const result = classifyImagesInScope(bucket.imageFiles, bucket.meshFiles);
+    for (const mesh of bucket.meshFiles) {
+      perObjectClassification.set(mesh.baseName, {
+        meshFile:         mesh,
+        colormapResolved: result.colormapResolved,
+        hasMtlFile:       bucket.hasMtlFile,
+        imageDetections:  result.detections
+      });
+    }
+    if (!firstColormapResolved && result.colormapResolved) {
+      firstColormapResolved = result.colormapResolved;
+    }
   }
 
-  const confidenceRank = { HIGH: 3, MEDIUM: 2, LOW: 1, NONE: 0 };
-  colormapCandidates.sort((a, b) => {
-    const rankDiff = (confidenceRank[b.confidence] || 0) - (confidenceRank[a.confidence] || 0);
-    if (rankDiff) return rankDiff;
-    return a.fileName.localeCompare(b.fileName);
-  });
+  // Fallback: if no per-folder mesh found but there are root-level files, classify them globally
+  if (perObjectClassification.size === 0 && allMeshFiles.length > 0) {
+    const fallback = classifyImagesInScope(allImageFiles, allMeshFiles);
+    for (const mesh of allMeshFiles) {
+      perObjectClassification.set(mesh.baseName, {
+        meshFile:         mesh,
+        colormapResolved: fallback.colormapResolved,
+        hasMtlFile:       globalHasMtlFile,
+        imageDetections:  fallback.detections
+      });
+    }
+    firstColormapResolved = fallback.colormapResolved;
+  }
 
   return {
-    meshFiles,
-    imageFiles,
-    imageDetections: detections,
-    colormapResolved: colormapCandidates[0] || null,
-    hasMtlFile
+    meshFiles:               allMeshFiles,
+    imageFiles:              allImageFiles,
+    imageDetections:         [],           // legacy field — use perObjectClassification instead
+    colormapResolved:        firstColormapResolved, // legacy: first found; use perObjectClassification for accuracy
+    hasMtlFile:              globalHasMtlFile,
+    perObjectClassification  // Map<objBaseName, { meshFile, colormapResolved, hasMtlFile, imageDetections }>
   };
 }
 
@@ -286,14 +348,22 @@ exports.handler = async (event) => {
               }
             }
 
-            if (!resolvedColormap && zipClassification.colormapResolved) {
-              resolvedColormap = {
-                entryPath: zipClassification.colormapResolved.entryPath,
-                fileName: zipClassification.colormapResolved.fileName,
-                confidence: zipClassification.colormapResolved.confidence || "LOW",
-                detectionRule: zipClassification.colormapResolved.detectionRule || "auto"
-              };
-              console.log(`[ROSTER-EXTRACT] Colormap auto-resolved from zip ${zipName}: ${resolvedColormap.fileName}`);
+            // Per-object classification: look up by this asset's own base name first,
+            // then fall back to the first colormap found anywhere in the zip.
+            // This prevents cross-contamination where Object A gets Object B's colormap.
+            if (!resolvedColormap) {
+              const assetBaseName = getZipEntryBaseName(asset.assetName).toLowerCase();
+              const perObjResult = zipClassification.perObjectClassification.get(assetBaseName);
+              const candidate = perObjResult?.colormapResolved || zipClassification.colormapResolved;
+              if (candidate) {
+                resolvedColormap = {
+                  entryPath: candidate.entryPath,
+                  fileName: candidate.fileName,
+                  confidence: candidate.confidence || "LOW",
+                  detectionRule: candidate.detectionRule || "auto"
+                };
+                console.log(`[ROSTER-EXTRACT] Colormap auto-resolved for ${asset.assetName} from ${zipName}: ${resolvedColormap.fileName} (rule: ${resolvedColormap.detectionRule})`);
+              }
             }
 
             if (resolvedColormap) {
