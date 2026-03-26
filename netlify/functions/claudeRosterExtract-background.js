@@ -8,7 +8,7 @@
    Flow:
      1. Load the approved roster from ai_asset_roster_pending.json
      2. For each selected asset, find the matching .zip — searches project-local particle/3D folders
-        first, then falls back to the global BASE_Files(template)/asset_3d_objects/ mega-zips.
+        first, then falls back to the global projects/BASE_Files/asset_3d_objects/ mega-zips.
         (matched by sourceRosterDocument name → same base name .zip)
      3. Extract only the approved files from each zip (parallel uploads)
      4. Upload extracted files to a game-specific staged folder:
@@ -263,12 +263,12 @@ exports.handler = async (event) => {
     // Search order:
     //   1. ${projectPath}/asset_particle_textures/  — project-local particle zips
     //   2. ${projectPath}/asset_3d_objects/          — project-local 3D zips (legacy / future)
-    //   3. BASE_Files(template)/asset_3d_objects/    — global mega-zips (Architecture_Modular.zip etc.)
+    //   3. projects/BASE_Files/asset_3d_objects/    — global mega-zips (Architecture_Modular.zip etc.)
     //
     // Project-local paths are checked first so a project-specific override
     // can shadow a global zip of the same name if needed.
     // Later entries do NOT overwrite earlier ones in availableZips — first match wins.
-    const GLOBAL_ASSET_BASE = "BASE_Files(template)/asset_3d_objects";
+    const GLOBAL_ASSET_BASE = "projects/BASE_Files/asset_3d_objects";
     const availableZips = new Map(); // lowercased base filename → bucket File reference
     const zipSearchFolders = [
       `${projectPath}/asset_particle_textures/`,

@@ -12,7 +12,7 @@
      1. Read Phase 1 result from ai_asset_roster_phase1.json.
         Phase 1 includes suggestedCategories (up to 3) per 3D object.
      2. Read user reference images from ai_roster_ref_images.json.
-     3. Read global CSV from BASE_Files(template)/asset_3d_objects/
+     3. Read global CSV from projects/BASE_Files/asset_3d_objects/
         reorganized_assets_manifest.csv → build assetName→category map.
      4. Scan ONLY the zip files whose asset_name maps to one of the
         suggestedCategories for each requirement. If no categories were
@@ -24,8 +24,8 @@
      7. Assemble final roster, enforce limits, save pending.json.
 
    Global asset paths (shared across all projects):
-     CSV:  BASE_Files(template)/asset_3d_objects/reorganized_assets_manifest.csv
-     Zips: BASE_Files(template)/asset_3d_objects/{asset_name}.zip
+     CSV:  projects/BASE_Files/asset_3d_objects/reorganized_assets_manifest.csv
+     Zips: projects/BASE_Files/asset_3d_objects/{asset_name}.zip
 
    Request body: { projectPath, jobId }
    Response:     202 Accepted (background function — no body)
@@ -36,7 +36,7 @@ const admin  = require("./firebaseAdmin");
 const JSZip  = require("jszip");
 
 /* ─── Constants ──────────────────────────────────────────────────── */
-const GLOBAL_ASSET_BASE    = "BASE_Files(template)/asset_3d_objects";
+const GLOBAL_ASSET_BASE    = "projects/BASE_Files/asset_3d_objects";
 const GLOBAL_ASSET_CSV     = `${GLOBAL_ASSET_BASE}/reorganized_assets_manifest.csv`;
 
 const CLAUDE_MAX_RETRIES   = 5;

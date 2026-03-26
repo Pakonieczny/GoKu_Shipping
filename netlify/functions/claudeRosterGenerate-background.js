@@ -7,7 +7,7 @@
    Frontend polls ai_asset_roster_phase1.json to detect completion.
 
    Flow:
-     1. Read global CSV from BASE_Files(template)/asset_3d_objects/
+     1. Read global CSV from projects/BASE_Files/asset_3d_objects/
         reorganized_assets_manifest.csv to extract the live category list.
      2. Read Master Prompt + inline images from ai_request.json.
      3. PHASE 1 — Claude analyzes the game prompt + gameplay reference
@@ -20,8 +20,8 @@
         by suggestedCategories, then runs Stage A/B on the filtered pool.
 
    Global asset paths (shared across all projects):
-     CSV:  BASE_Files(template)/asset_3d_objects/reorganized_assets_manifest.csv
-     Zips: BASE_Files(template)/asset_3d_objects/{asset_name}.zip
+     CSV:  projects/BASE_Files/asset_3d_objects/reorganized_assets_manifest.csv
+     Zips: projects/BASE_Files/asset_3d_objects/{asset_name}.zip
 
    Request body: { projectPath, jobId }
    Response:     202 Accepted (background function — no body)
@@ -30,7 +30,7 @@
 const fetch = require("node-fetch");
 const admin = require("./firebaseAdmin");
 
-const GLOBAL_ASSET_CSV_PATH = "BASE_Files(template)/asset_3d_objects/reorganized_assets_manifest.csv";
+const GLOBAL_ASSET_CSV_PATH = "projects/BASE_Files/asset_3d_objects/reorganized_assets_manifest.csv";
 
 /* ─── Retry helpers ──────────────────────────────────────────────── */
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
