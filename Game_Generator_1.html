@@ -1136,8 +1136,8 @@
       { id: "instructions", title: "AI System Instructions (Scaffold + SDK)", accepts: "text/plain,.txt,.doc,.docx,.pdf,.js", folder: "ai_system_instructions" },
       { id: "assets", title: "Game Assets (Images/Audio)", accepts: "image/*,audio/*,.png,.jpg,.jpeg,.mp3,.wav", folder: "assets" },
       { id: "object_zip", title: "Animated/Textured Object ZIP Package", accepts: ".zip", folder: "object_zips" },
-      { id: "asset_particle_textures", title: "Asset_Particle_Textures (.docx + .zip)", accepts: ".docx,.zip", folder: "asset_particle_textures" },
-      { id: "asset_3d_objects",        title: "Asset_3D_Objects (.docx + .zip)",        accepts: ".docx,.zip", folder: "asset_3d_objects"        },
+      { id: "asset_particle_textures", title: "Asset_Particle_Textures (.zip)",          accepts: ".zip",       folder: "asset_particle_textures" },
+      { id: "asset_3d_objects",        title: "Asset_3D_Objects (.zip + .csv)",          accepts: ".zip,.csv",  folder: "asset_3d_objects"        },
       { id: "models", title: "Models, Logic & HTML", accepts: ".obj,.glb,.fbx,.js,.mtl,.html", folder: "models" },
       { id: "json", title: "JSON Configs", accepts: ".json", folder: "json" },
       { id: "reference", title: "Cherry3D Runtime Template (for Game Export)", accepts: ".zip", folder: "reference_zip" }
@@ -1453,7 +1453,7 @@
             if (isEmpty) {
               await uploadString(
                 ref(storage, `${templateRoot}/${newFolder}/.keep`),
-                `# Drop ${newFolder === 'asset_particle_textures' ? 'particle texture' : '3D object'} .docx and .zip files here`,
+                `# Drop ${newFolder === 'asset_particle_textures' ? 'particle texture .zip' : '3D object mega-zips and reorganized_assets_manifest.csv'} files here`,
                 'raw'
               );
               console.log(`[TEMPLATE] Created ${newFolder}/ with placeholder`);
