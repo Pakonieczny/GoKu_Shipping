@@ -12,7 +12,7 @@
      1. Read Phase 1 result from ai_asset_roster_phase1.json.
         Phase 1 includes suggestedCategories (up to 3) per 3D object.
      2. Read user reference images from ai_roster_ref_images.json.
-     3. Read global CSV from game-generator-1/projects/BASE_Files/asset_3d_objects/
+     3. Read global CSV from projects/BASE_Files/asset_3d_objects/
         reorganized_assets_manifest.csv → build assetName→category map.
      4. Scan ONLY the zip files whose asset_name maps to one of the
         suggestedCategories for each requirement. If no categories were
@@ -24,8 +24,8 @@
      7. Assemble final roster, enforce limits, save pending.json.
 
    Global asset paths (shared across all projects):
-     CSV:  game-generator-1/projects/BASE_Files/asset_3d_objects/reorganized_assets_manifest.csv
-     Zips: game-generator-1/projects/BASE_Files/asset_3d_objects/{asset_name}.zip
+     CSV:  projects/BASE_Files/asset_3d_objects/reorganized_assets_manifest.csv
+     Zips: projects/BASE_Files/asset_3d_objects/{asset_name}.zip
 
    Request body: { projectPath, jobId }
    Response:     202 Accepted (background function — no body)
@@ -36,7 +36,7 @@ const admin  = require("./firebaseAdmin");
 const JSZip  = require("jszip");
 
 /* ─── Constants ──────────────────────────────────────────────────── */
-const GLOBAL_ASSET_BASE    = "game-generator-1/projects/BASE_Files/asset_3d_objects";
+const GLOBAL_ASSET_BASE    = "projects/BASE_Files/asset_3d_objects";
 const GLOBAL_ASSET_CSV     = `${GLOBAL_ASSET_BASE}/reorganized_assets_manifest.csv`;
 
 const CLAUDE_MAX_RETRIES   = 5;
@@ -531,12 +531,33 @@ exports.handler = async (event) => {
         // Map< "SubCategory/asset_name" → { subCategory, assetFolder, objEntry, thumbEntry } >
         const assetFolderMap = new Map();
 
+        // Detect whether the zip has a redundant root folder matching the zip name.
+        // e.g. Architecture_Modular.zip may contain:
+        //   Architecture_Modular/Modular_Blocks_Panels/fountain-center/file  ← extra level
+        // OR the expected:
+        //   Modular_Blocks_Panels/fountain-center/file                        ← direct
+        // We detect this by checking if parts[0] matches zipName (case-insensitive).
+        // If so, we shift the index offset by 1.
+        const zipNameLower = zipName.toLowerCase();
+        let depthOffset = 0;
+        for (const entryPath of Object.keys(zip.files)) {
+          if (zip.files[entryPath].dir) continue;
+          const p = entryPath.split("/");
+          if (p.length >= 1 && p[0].toLowerCase() === zipNameLower) {
+            depthOffset = 1;
+          }
+          break; // only need to check first file
+        }
+        if (depthOffset > 0) {
+          console.log(`[ROSTER-AB] Mega-zip ${zipName}.zip has redundant root folder — adjusting depth offset`);
+        }
+
         for (const entryPath of Object.keys(zip.files)) {
           if (zip.files[entryPath].dir) continue;
           const parts = entryPath.split("/");
-          if (parts.length < 3) continue;              // need SubCategory/asset_name/file
-          const subCategory = parts[0];
-          const assetFolder = parts[1];
+          if (parts.length < 3 + depthOffset) continue; // need SubCategory/asset_name/file
+          const subCategory = parts[0 + depthOffset];
+          const assetFolder = parts[1 + depthOffset];
           const fileName    = parts[parts.length - 1];
           const fileLower   = fileName.toLowerCase();
           if (fileName.startsWith("._")) continue;
