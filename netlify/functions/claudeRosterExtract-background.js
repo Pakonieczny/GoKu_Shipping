@@ -7,7 +7,8 @@
 
    Flow:
      1. Load the approved roster from ai_asset_roster_pending.json
-     2. For each selected asset, find the matching .zip in asset_particle_textures/ or asset_3d_objects/
+     2. For each selected asset, find the matching .zip — searches project-local particle/3D folders
+        first, then falls back to the global BASE_Files(template)/asset_3d_objects/ mega-zips.
         (matched by sourceRosterDocument name → same base name .zip)
      3. Extract only the approved files from each zip (parallel uploads)
      4. Upload extracted files to a game-specific staged folder:
@@ -212,10 +213,15 @@ function classifyZipContents(zip) {
 
 /* ═══════════════════════════════════════════════════════════════ */
 exports.handler = async (event) => {
+  let projectPath = null;
+  let jobId = null;
+
   try {
     if (!event.body) return err400("Missing request body");
 
-    const { projectPath, jobId } = JSON.parse(event.body);
+    const body = JSON.parse(event.body);
+    projectPath = body.projectPath;
+    jobId = body.jobId;
     if (!projectPath) return err400("Missing projectPath");
     if (!jobId)       return err400("Missing jobId");
 
@@ -253,15 +259,41 @@ exports.handler = async (event) => {
       byZip.get(zipName).push(asset);
     }
 
-    // ── 3. List available zip files in asset_particle_textures/ and asset_3d_objects/ ──
+    // ── 3. List available zip files ─────────────────────────────────
+    // Search order:
+    //   1. ${projectPath}/asset_particle_textures/  — project-local particle zips
+    //   2. ${projectPath}/asset_3d_objects/          — project-local 3D zips (legacy / future)
+    //   3. BASE_Files(template)/asset_3d_objects/    — global mega-zips (Architecture_Modular.zip etc.)
+    //
+    // Project-local paths are checked first so a project-specific override
+    // can shadow a global zip of the same name if needed.
+    // Later entries do NOT overwrite earlier ones in availableZips — first match wins.
+    const GLOBAL_ASSET_BASE = "BASE_Files(template)/asset_3d_objects";
     const availableZips = new Map(); // lowercased base filename → bucket File reference
-    for (const folder of [`${projectPath}/asset_particle_textures/`, `${projectPath}/asset_3d_objects/`]) {
-      const [folderFiles] = await bucket.getFiles({ prefix: folder });
+    const zipSearchFolders = [
+      `${projectPath}/asset_particle_textures/`,
+      `${projectPath}/asset_3d_objects/`,
+      `${GLOBAL_ASSET_BASE}/`
+    ];
+    for (const folder of zipSearchFolders) {
+      let folderFiles;
+      try {
+        [folderFiles] = await bucket.getFiles({ prefix: folder });
+      } catch (e) {
+        console.warn(`[ROSTER-EXTRACT] Could not list folder ${folder}: ${e.message}`);
+        continue;
+      }
       for (const f of folderFiles || []) {
         const base = f.name.split("/").pop();
-        if (base && base.toLowerCase().endsWith(".zip")) availableZips.set(base.toLowerCase(), f);
+        if (!base || !base.toLowerCase().endsWith(".zip")) continue;
+        const key = base.toLowerCase();
+        if (!availableZips.has(key)) {
+          // First match wins — project-local overrides global if names collide
+          availableZips.set(key, f);
+        }
       }
     }
+    console.log(`[ROSTER-EXTRACT] Zip index built: ${availableZips.size} zip(s) found across all folders`);
 
     // ── 4. Extract and stage assets ──────────────────────────────────
     const stagedFolderPath = `${projectPath}/staged_assets/${jobId}`;
@@ -271,7 +303,7 @@ exports.handler = async (event) => {
     for (const [zipName, assets] of byZip.entries()) {
       const zipFile = availableZips.get(zipName.toLowerCase());
       if (!zipFile) {
-        console.warn(`[ROSTER-EXTRACT] Zip not found in asset_particle_textures/ or asset_3d_objects/: ${zipName}`);
+        console.warn(`[ROSTER-EXTRACT] Zip not found in any search folder (project-local or global): ${zipName}`);
         extractionLog.push({ zipName, status: "missing", assetCount: assets.length });
         continue;
       }
@@ -492,7 +524,6 @@ exports.handler = async (event) => {
     // Write error sentinel so the frontend poller surfaces the failure immediately
     // instead of timing out after 15 minutes.
     try {
-      const { projectPath, jobId } = JSON.parse(event.body || "{}");
       if (projectPath) {
         const bucket = admin.storage().bucket(
           process.env.FIREBASE_STORAGE_BUCKET || "gokudatabase.firebasestorage.app"

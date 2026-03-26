@@ -5600,7 +5600,7 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
           if (errRes.ok) {
             const errData = await errRes.json();
             const failedAt = Number(errData.failedAt || 0);
-            const sameJob = !errData.jobId || errData.jobId === jobId;
+            const sameJob = errData.jobId === jobId;
             if (sameJob && failedAt >= requestStartTime) {
               throw new Error(`Roster Phase 1 failed: ${errData.error || 'unknown error'}`);
             }
@@ -5638,7 +5638,7 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
           if (errRes.ok) {
             const errData = await errRes.json();
             const failedAt = Number(errData.failedAt || 0);
-            const sameJob = !errData.jobId || errData.jobId === jobId;
+            const sameJob = errData.jobId === jobId;
             if (sameJob && failedAt >= requestStartTime) {
               throw new Error(`Roster generation failed: ${errData.error || 'unknown error'}`);
             }
@@ -5824,7 +5824,7 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
           if (errRes.ok) {
             const errData = await errRes.json();
             const failedAt = Number(errData.completedAt || errData.failedAt || 0);
-            const sameJob  = !errData.jobId || errData.jobId === jobId;
+            const sameJob  = errData.jobId === jobId;
             if (sameJob && failedAt >= requestStartTime) {
               throw new Error(`Asset extraction failed: ${errData.error || 'unknown error'}`);
             }
