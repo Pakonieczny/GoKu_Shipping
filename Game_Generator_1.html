@@ -5106,7 +5106,7 @@ Original user request for context: ${basePrompt}`;
           detectionRule: textureMeta.detectionRule || (colormapFile ? 'provided' : 'none'),
           thumbnailFile: textureMeta.thumbnailFile || null,
           assignmentInstruction: colormapFile
-            ? 'Set data[\'0\'].material_file to the staged colormap path and data[\'0\'].albedo_ratio = [255,255,255].'
+            ? 'For non-primitive 3D objects, assign data[String(slot)].material_file to the staged colormap path and data[String(slot)].albedo_ratio = [255,255,255] for every valid slot from 0 to meshCount - 1. Cherry3D primitives skip this workflow.'
             : (uvMapping.hasUVs
               ? 'No colormap resolved. Use conservative flat material fallback unless the roster later provides a staged colormap path.'
               : 'No UV coordinates. Texture assignment will use flat material color only.')
