@@ -7,7 +7,7 @@
 
    Invocation 0    ▸  "plan"    — Spec Validation Gate (3 Sonnet calls)
                        runs first, then Opus 4.6 creates a dependency-
-                       ordered, 6.3-centered tranche plan.
+                       ordered, contract-driven tranche plan.
                        Gate FAIL writes ai_error.json with structured issues
                        and halts before Opus fires.
    Invocation 1–N  ▸  "tranche" — Sonnet 4.6 executes one tranche,
@@ -19,7 +19,7 @@
    SPEC VALIDATION GATE (runs in "plan" mode before Opus):
    ─────────────────────────────────────────────────────────
    Call 1 — Extract  : Sonnet reads Master Prompt, produces 6-8 custom
-                       simulation scenarios specific to this game's mechanics.
+                       simulation scenarios specific to this game's mechanics and current prompt layout.
    Call 2 — Simulate : Sonnet traces each scenario through the spec rules
                        literally, documents findings in plain text.
    Call 3 — Review   : Sonnet classifies findings as PASS/FAIL JSON.
@@ -239,6 +239,7 @@ function buildRosterObjectContract(asset, stagedMeta, manifestMeta) {
   │  TEXTURE CONTRACT:
   │    Colormap file: ${colormapFile || "NOT AVAILABLE"}
   │    Colormap path: ${colormapPath || "NOT AVAILABLE"}
+  │    Mesh count:    ${(asset?.meshCount != null ? asset.meshCount : (stagedMeta?.meshCount != null ? stagedMeta.meshCount : "NOT AVAILABLE"))}
   └─`;
   }
 
@@ -279,6 +280,7 @@ function buildRosterObjectContract(asset, stagedMeta, manifestMeta) {
   │    Colormap path:    ${colormapPath || "NOT AVAILABLE"}
   │    Colormap conf.:   ${colormapConfidence}
   │    UV mapping:       ${uvNote}
+  │    Mesh count:       ${(asset?.meshCount != null ? asset.meshCount : (stagedMeta?.meshCount != null ? stagedMeta.meshCount : "NOT AVAILABLE"))}
   │    Assignment:       ${assignmentLine}
   └─`;
 }
@@ -365,7 +367,7 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
 5. Color direction and surface treatment must be consistent throughout all tranches.
 6. PARTICLE TEXTURE REGISTRY: A Foundation-B sub-tranche MUST be planned immediately after Foundation-A. Its sole job is to populate gameState.particleTextureIds keyed by particleEffectTarget using the exact assets.json manifest keys. This tranche must complete before any particle emitter or billboard tranche.
 7. Every particle billboard or sphere object created in any tranche MUST set material_file in its data['0'] slot to gameState.particleTextureIds[effectName]. Hardcoding a texture string or omitting material_file when gameState.particleTextureIds is populated is a tranche execution defect.
-8. 3D OBJECT REGISTRY: Every tranche touching visible scene content MUST use approved roster 3D objects via gameState.objectids and the resolved assets.json manifest keys surfaced above. Using cube, sphere, or planevertical as a visible gameplay object when a roster asset covers that role is a tranche execution defect.
+8. 3D OBJECT REGISTRY: Every tranche touching visible scene content MUST branch cleanly between the five Cherry3D system primitives (cube, cylinder, sphere, plane, planevertical) and non-primitive approved roster 3D objects. If the object is intentionally one of those five primitives, skip external scan/roster geometry-texture-meshCount enforcement for that object and use primitive-safe logic only. For every other visible gameplay object, you MUST use an approved roster 3D object via gameState.objectids and the resolved assets.json manifest keys surfaced above. Using a Cherry3D primitive as a visible gameplay object when a roster asset covers that role is a tranche execution defect.
 9. GEOMETRY CONTRACTS surfaced above are arithmetic, not suggestions. When present, copy the exact placement and scale values into planning and execution prompts without paraphrase.
 10. TEXTURE CONTRACTS surfaced above are mandatory when a non-null colormap path is available. Use material_file plus albedo_ratio = [255,255,255] together.
 ═══════════════════════════════════════════════════════════`;
@@ -545,6 +547,43 @@ VALIDATION + RECOVERY CONTRACT:
   • 1 retry max for narrow objective hard failures when the repair is obviously surgical.
   • 2 retries only for parser/envelope failures or truly critical scaffold/runtime issues.`;
 
+
+
+function buildMasterPromptLayoutGuidance(masterPrompt = "") {
+  const prompt = String(masterPrompt || "");
+  const hasNewStructuredLayout =
+    /#\s*1\.\s*SESSION DECISIONS/i.test(prompt) &&
+    /#\s*2\.\s*GAME IDENTITY/i.test(prompt) &&
+    /#\s*3\.\s*IMPLEMENTATION CONTRACT/i.test(prompt);
+  const hasLegacy63Layout = /\b6\.3(\.\d+)?\b/.test(prompt);
+
+  if (hasNewStructuredLayout) {
+    return `MASTER PROMPT LAYOUT DETECTED:
+- Section 1 = session decisions / fixed run constraints.
+- Section 2 = game identity / fantasy / win-loss / session loop.
+- Section 3.x = implementation contract. Treat this as the highest-authority gameplay + technical contract for movement, camera, initialization, overlay, lifecycle, ownership, and exact variables.
+- Section 4.x = synopsis matrix. Use 4.1+ for mechanics/rules, world/object inventory, VFX, colours/audio, and authored game content requirements.
+- Section 5 = runtime registry / exact names / counts / materials / particle keys / pools.
+- Section 6 = author-provided tranche plan. Treat it as advisory sequencing guidance only. Preserve dependency reality, safety, and execution size even if you refine or split it.
+- Section 7 = validation contract / hard-fail conditions / non-negotiable outcome checks.
+- When this layout is present, NEVER force legacy 6.3 anchors. Use the ACTUAL section numbers from this prompt in anchorSections (for example: 3.1, 3.3, 3.4, 4.1, 4.2, 4.3, 5, 7).
+- Sections 3, 4, 5, and 7 are authoritative. Sections 1 and 2 provide context. Section 6 informs sequencing but does not override dependency reality.`;
+  }
+
+  if (hasLegacy63Layout) {
+    return `MASTER PROMPT LAYOUT DETECTED:
+- Legacy 6.3-style structure is present.
+- Use the actual 6.3 subsection numbers surfaced by the prompt in anchorSections when they exist.
+- Still preserve dependency reality over raw document order.`;
+  }
+
+  return `MASTER PROMPT LAYOUT DETECTED:
+- No canonical legacy or new layout markers were found.
+- Infer the prompt's real section hierarchy from its headings and subheadings.
+- Use the ACTUAL headings/subheadings present in the prompt for anchorSections.
+- Never invent 6.3 anchors when the prompt does not use them.`;
+}
+
 function countOccurrences(haystack, needle) {
   if (!needle) return 0;
   return String(haystack || '').split(needle).length - 1;
@@ -577,7 +616,8 @@ function parseApprovedRosterContracts(approvedRosterBlock = "") {
       suggestedGameScale: parseRosterContractValue(block, /Suggested scale \(largest dim → 1\):\s+([^\n]+)/i),
       scaleVector: parseRosterContractValue(block, /Scale vector:\s+([^\n]+)/i),
       scaleWarning,
-      texturePath: /^(NOT AVAILABLE|null|\(not staged\))$/i.test(texturePath) ? "" : texturePath
+      texturePath: /^(NOT AVAILABLE|null|\(not staged\))$/i.test(texturePath) ? "" : texturePath,
+      meshCount: Number(parseRosterContractValue(block, /Mesh count:\s+([^\n—]+)/i) || 0)
     });
   }
 
@@ -699,10 +739,13 @@ function buildDeterministicContractAppendixForPrompt(prompt, contracts = []) {
     const textureLines = contract.texturePath
       ? [
           `  colormapPath=${contract.texturePath}`,
-          `  textureAssignment=data['0'].material_file = "${contract.texturePath}"; data['0'].albedo_ratio = [255,255,255]`
+          `  meshCount=${contract.meshCount || 0}`,
+          `  assetClass=EXTERNAL_NON_PRIMITIVE_SCANNED_OBJECT`,
+          `  textureAssignment=Apply data[N].material_file = "${contract.texturePath}" and data[N].albedo_ratio = [255,255,255] for EVERY mesh slot N from 0 to ${Math.max(0, (contract.meshCount || 1) - 1)} (${contract.meshCount || 1} slot(s) total). Never apply to slot >= meshCount. Skip this workflow only for the five Cherry3D system primitives (cube, cylinder, sphere, plane, planevertical).`
         ]
       : [
-          `  colormapPath=NOT AVAILABLE`
+          `  colormapPath=NOT AVAILABLE`,
+          `  meshCount=${contract.meshCount || 0}`
         ];
 
     return [
@@ -769,6 +812,21 @@ function buildContractCodeReviewForTranche(tranche, updatedFiles, approvedRoster
       if (!textureAuditPresent) missing.push("textureAuditTrail");
       if (!combinedCode.includes(contract.texturePath)) missing.push(`colormapPath=${contract.texturePath}`);
       if (!/albedo_ratio\s*[:=]\s*\[\s*255\s*,\s*255\s*,\s*255\s*\]/i.test(combinedCode)) missing.push("albedo_ratio=[255,255,255]");
+
+      // Mesh count enforcement: if meshCount > 1, verify all slots are covered
+      const meshCount = contract.meshCount || 0;
+      if (meshCount > 1) {
+        let missedSlots = [];
+        for (let slot = 0; slot < meshCount; slot++) {
+          const slotPattern = new RegExp(`data\\[['"]${slot}['"]\\]\\.material_file`, "i");
+          if (!slotPattern.test(combinedCode)) {
+            missedSlots.push(slot);
+          }
+        }
+        if (missedSlots.length > 0) {
+          missing.push(`meshSlotsMissing=[${missedSlots.join(",")}] (expected all slots 0-${meshCount - 1} to have material_file assignment)`);
+        }
+      }
     }
 
     if (missing.length > 0) {
@@ -851,7 +909,7 @@ function enforceTrancheValidationBlock(plan) {
       kind: tranche.kind || 'build',
       name: tranche.name || `Tranche ${index + 1}`,
       description: tranche.description || tranche.purpose || `Implement tranche ${index + 1}.`,
-      anchorSections: normalizeArray(tranche.anchorSections, ['6.3']),
+      anchorSections: normalizeArray(tranche.anchorSections, ['prompt_contract']),
       purpose: tranche.purpose || tranche.description || `Implement tranche ${index + 1}.`,
       systemsTouched: normalizeArray(tranche.systemsTouched, ['gameplay']),
       filesTouched: normalizeArray(tranche.filesTouched, expectedFiles),
@@ -1103,6 +1161,8 @@ Also check: does the spec describe a spawn/despawn cycle? If so,
 include a scenario that checks whether the spec explicitly requires
 object pooling (not just a count cap).
 
+${buildMasterPromptLayoutGuidance(masterPrompt)}
+
 MASTER GAME PROMPT:
 ${masterPrompt}
 
@@ -1143,6 +1203,8 @@ Do NOT write code. Do NOT summarise the spec. Apply every rule exactly \
 as written. If a rule says "strictly less than", apply strictly less than.
 
 ${SCAFFOLD_VALIDATION_CONSTRAINTS}
+
+${buildMasterPromptLayoutGuidance(masterPrompt)}
 
 MASTER GAME PROMPT:
 ${masterPrompt}
@@ -1231,9 +1293,12 @@ STRICT CONSTRAINTS:
 - Add ONLY what is needed to resolve the listed gaps.
 - Do NOT change any existing rule, formula, condition, or threshold.
 - Do NOT invent new gameplay mechanics.
-- Do NOT restructure or reformat the existing prompt.
-- Append new rules in the same numbered-list style already used.
-- Output the COMPLETE updated Master Prompt — every existing line intact.
+- Preserve the existing prompt layout and heading hierarchy.
+- Insert each missing rule into the most relevant existing section/subsection when that section already exists (for example 3.x, 4.x, 5, or 7). Only append at the end when no relevant section exists.
+- Keep the author's section numbering / heading style intact.
+- Output the COMPLETE updated Master Prompt — every existing line intact except for the minimal inserted additions.
+
+${buildMasterPromptLayoutGuidance(masterPrompt)}
 
 ORIGINAL MASTER PROMPT:
 ${masterPrompt}
@@ -1293,6 +1358,17 @@ async function runSingleValidationPass(apiKey, masterPrompt, scenarios, bucket, 
 /* ── Main validation gate orchestrator — with patch retry loop ── */
 async function runSpecValidationGate(apiKey, masterPrompt, progress, bucket, projectPath, jobId, imageBlocks = []) {
   console.log(`[VALIDATION] Starting spec validation gate for job ${jobId}`);
+
+  // ── TEMPORARY DISABLE — set to false to re-enable sim 0–8 validation ──
+  const VALIDATION_ENABLED = false;
+  if (!VALIDATION_ENABLED) {
+    console.warn(`[VALIDATION] DISABLED — skipping all sim validations, proceeding directly to planning`);
+    progress.status = 'planning';
+    progress.validationSkipped = true;
+    progress.validationSkipReason = 'Validation temporarily disabled via VALIDATION_ENABLED flag';
+    await saveProgress(bucket, projectPath, progress);
+    return { passed: true, skipped: true, activePrompt: masterPrompt };
+  }
 
   const MAX_PATCH_ATTEMPTS = 2;
 
@@ -1726,7 +1802,7 @@ INSTRUCTION PRECEDENCE:
 6. REFERENCE IMAGES (if attached): Any images attached to this request are first-class game design inputs with authority equal to the Master Prompt. They define the intended visual style, layout, object types, and complexity level. Where the image and the text spec diverge, treat the image as the authoritative definition of what must be built. Every tranche that involves visual elements, entities, or layouts must reconcile against the attached images.
 
 PLANNING RULES:
-1. Section 6.3 is the center of gravity. Every core gameplay tranche must anchor to one or more 6.3 subsection(s), and the tranche order must follow dependency reality rather than raw document order.
+1. The Master Prompt's actual contract sections are the center of gravity. Read the real heading structure first, then anchor every core gameplay tranche to the prompt's actual authoritative sections/subsections. If the prompt uses the new layout, prioritize Sections 3.x, 4.x, 5, and 7. If it uses a legacy layout, use those real legacy section numbers. Never invent 6.3 anchors when the prompt does not contain them.
 2. Plan the build like a house: foundation before controls, controls before authored playfield shell, shell before gameplay loop, gameplay loop before progression/HUD, progression before feedback/polish.
 3. Each tranche prompt must be FULLY SELF-CONTAINED — embed the exact game-specific rules, variable names, slot layouts, code snippets, and pitfall warnings from the user's request that are relevant to that tranche. Do NOT summarize away critical implementation details.
 4. ALWAYS split large or complex tranches into A/B/C sub-tranches. There is no hard cap on tranche count — use as many as needed. If in doubt, split.
@@ -1740,12 +1816,16 @@ PLANNING RULES:
 12. Tranches 1-5: target ~175-225 lines of new or changed code per tranche. Any tranche prompt that describes more than 2 distinct systems, or more than ~3 new functions, is too large and must be split.
 13. Tranches 6-10: target ~120-170 lines of new or changed code per tranche. If scope expands beyond one subsystem, split further before execution.
 14. LATE-PHASE TIGHTENING (tranches 11 and beyond): As the codebase grows, complexity compounds. For any tranche planned at position 11 or later, cut the line budget to ~80-130 lines of new or changed code, limit scope to ONE function or ONE tightly-coupled pair of functions, and prefer A/B sub-tranche splits over any grouping. If the system being implemented at tranche 11+ would require touching more than one section of models/2, it must be split into sub-tranches.
-15. If an Approved Asset Roster is present, you MUST populate gameState.objectids with every roster asset before the three engine primitives. Roster assets are mandatory for all visual game objects. The three engine primitives (cube, sphere, planevertical) are reserved exclusively for particle system internals and invisible collision geometry — using a primitive as a visible game object when a roster asset covers that role is a planning defect. For every tranche touching rendered content, the prompt field MUST explicitly name which roster assets to use for each visual element by their resolved objectids manifest key from the Approved Asset Roster block.
+15. If an Approved Asset Roster is present, you MUST populate gameState.objectids with every roster asset before the five Cherry3D system primitives. Roster assets are mandatory for all non-primitive visual game objects. The five Cherry3D system primitives (cube, cylinder, sphere, plane, planevertical) are reserved for primitive-authored visuals, particle system internals, and invisible collision geometry. If a visual object is intentionally one of those five primitives, the tranche prompt must say so explicitly and MUST skip external scan/roster GEOMETRY CONTRACT, TEXTURE CONTRACT, and MESH COUNT enforcement for that object. For every other rendered visual element, the prompt field MUST explicitly name the approved roster asset to use by its resolved objectids manifest key from the Approved Asset Roster block. Using a Cherry3D primitive as a visible gameplay object when a roster asset covers that role is a planning defect.
 16. If the Approved Asset Roster contains particle texture entries (particleEffectTarget set), you MUST plan a Foundation-B sub-tranche immediately after Foundation-A. Foundation-B has one job: populate gameState.particleTextureIds keyed by particleEffectTarget using the exact assets.json manifest keys surfaced in the Approved Asset Roster block. Every tranche that creates a particle billboard or sphere MUST declare Foundation-B as a dependency and MUST name the exact gameState.particleTextureIds key in its prompt. A tranche plan that lists particle textures in the roster but never populates gameState.particleTextureIds is a planning defect.
 17. GEOMETRY CONTRACT ENFORCEMENT: For every approved roster asset that has a GEOMETRY CONTRACT in the roster block, the tranche whose job is to spawn or position that asset MUST embed the exact numerical values from that contract into its prompt field. Copy floorY, centerOffsetX, centerOffsetZ, scale vector, dominant axis, and any scale warning verbatim. Do NOT paraphrase, estimate, or omit them.
-18. TEXTURE CONTRACT ENFORCEMENT: For every approved roster asset that has a TEXTURE CONTRACT with a non-null colormap path, the tranche that creates that object MUST plan to set data['0'].material_file to that colormap path and data['0'].albedo_ratio = [255,255,255]. Using defineMaterial() color alone when a colormap path is available is a planning defect.
+18. TEXTURE CONTRACT ENFORCEMENT: This rule applies ONLY to non-primitive approved roster 3D objects. For every such asset that has a TEXTURE CONTRACT with a non-null colormap path, the tranche that creates that object MUST plan to set data[N].material_file to that colormap path and data[N].albedo_ratio = [255,255,255] for every valid mesh slot N from 0 to meshCount-1. For a single-mesh asset this resolves to slot 0 only. Cherry3D system primitives skip this external texture-contract workflow. Using defineMaterial() color alone when a colormap path is available is a planning defect.
 19. SCALE CORRECTION AWARENESS: If an asset's GEOMETRY CONTRACT includes scaleWarning = "LARGE SCALE CORRECTION NEEDED", the tranche prompt MUST explicitly note this and include the suggestedGameScale as the baseline. The executor must apply this baseline before any game-specific size adjustment.
 20. SOURCE PRECEDENCE: When the Approved Game-Specific Asset Roster and the raw THREE.JS MODEL ANALYSIS both mention the same asset, treat the roster block as authoritative. Use the raw model analysis only as supporting reference context; never let it override a roster contract value.
+21. MESH COUNT CONTRACT: This rule applies ONLY to non-primitive approved roster 3D objects. Every such asset has a Mesh count in its TEXTURE CONTRACT, and the tranche that applies textures MUST assign data[N].material_file and data[N].albedo_ratio for EVERY valid mesh slot N from 0 to meshCount-1. Applying to only data['0'] when meshCount > 1 is a crash-inducing defect. Applying to a slot index >= meshCount crashes the engine. Cherry3D system primitives skip this meshCount workflow entirely. The mesh count is a hard constraint, not a suggestion. Embed the exact meshCount value in the tranche prompt so the executor knows the precise loop bounds.
+22. HTML UI PLACEMENT RULE: For any tranche that creates or modifies visible HTML UI / HUD / overlay elements in models/23 or localUI, NEVER place UI in the top-left or top-right corners of the screen. Prefer top-center, bottom-center, or clearly inset side placements instead. Any UI that sits near the left or right edge MUST be pulled inward toward the center with visible padding / inset margin rather than hugging the screen edge. Corner-hugging or edge-hugging HUD placement is a planning defect.
+
+${buildMasterPromptLayoutGuidance(effectivePrompt)}
 
 ${REQUIRED_TRANCHE_VALIDATION_BLOCK}
 
@@ -1758,7 +1838,7 @@ You must respond ONLY with a valid JSON object. No markdown, no code fences, no 
       "kind": "build",
       "name": "Short Name",
       "description": "2-3 sentence description of what this tranche accomplishes.",
-      "anchorSections": ["6.3.1"],
+      "anchorSections": ["3.1", "4.1"],
       "purpose": "Why this tranche exists in the build order.",
       "systemsTouched": ["player controller", "shared state"],
       "filesTouched": ["models/2", "models/23"],
@@ -1994,10 +2074,12 @@ OUTPUT RULES:
 - If the scaffold already defines the correct place for a system (camera stage, UI hookup, particle factory, instance parent pattern, input handler, lifecycle block), implement inside that existing scaffold section.
 - Do NOT replace scaffold-owned state fields with renamed alternatives unless the tranche explicitly requires preserving both and safely extending them.
 - Do NOT invent custom lifecycle blocks when the scaffold already supplies one.
-- 3D OBJECT ENFORCEMENT: If an Approved Asset Roster is present and contains objects3d entries, every visible gameplay object introduced or modified in this tranche MUST use a roster asset via gameState.objectids and the resolved assets.json manifest keys surfaced in the roster block. Using cube, sphere, or planevertical as a visible gameplay object when a roster asset covers that role is a defect. Those primitives may only be used for particle internals and invisible collision geometry.
+- 3D OBJECT ENFORCEMENT: If an Approved Asset Roster is present and contains objects3d entries, every visible gameplay object introduced or modified in this tranche MUST branch cleanly between the five Cherry3D system primitives (cube, cylinder, sphere, plane, planevertical) and non-primitive approved roster assets. If the object is intentionally one of those five primitives, state that explicitly in code comments and skip external scan/roster geometry-texture-meshCount enforcement for that object. For every other visible gameplay object, you MUST use a roster asset via gameState.objectids and the resolved assets.json manifest keys surfaced in the roster block. Using a Cherry3D primitive as a visible gameplay object when a roster asset covers that role is a defect. Those primitives may otherwise only be used for primitive-authored visuals, particle internals, and invisible collision geometry.
 - PARTICLE TEXTURE ENFORCEMENT: If gameState.particleTextureIds is populated (established in Foundation-B), every particle billboard or sphere object created in this tranche MUST set material_file in its data['0'] slot to the appropriate gameState.particleTextureIds[effectName] key. Hardcoding a texture string or omitting material_file when gameState.particleTextureIds is available is a defect. If this tranche IS Foundation-B, your only job is to populate gameState.particleTextureIds with every approved particle texture keyed by its particleEffectTarget using the resolved manifest keys from the roster block — this must be the first code that runs before anything else in this tranche.
 - PLACEMENT MATH AUDIT TRAIL: When placing any roster asset that has a GEOMETRY CONTRACT, include a comment block immediately above the position and scale assignments in the emitted code using the contract values, e.g. // [assetName] placement contract applied: floorY=[v] origin=[class] scale=[s,s,s]. Its absence is a detectable defect.
-- TEXTURE ASSIGNMENT AUDIT TRAIL: When creating any roster asset that has a TEXTURE CONTRACT with a non-null colormap path, include a comment immediately above the data block noting the applied colormap, and set data['0'].material_file plus data['0'].albedo_ratio = [255,255,255]. Using albedo_ratio alone when a colormap path exists is a defect.
+- TEXTURE ASSIGNMENT AUDIT TRAIL: This applies ONLY to non-primitive approved roster 3D objects. When creating any such asset that has a TEXTURE CONTRACT with a non-null colormap path, include a comment immediately above the data block noting the applied colormap and meshCount, and set data[N].material_file plus data[N].albedo_ratio = [255,255,255] for every valid slot N from 0 to meshCount-1. For a single-mesh asset this resolves to slot 0 only. Cherry3D system primitives skip this external texture-contract audit trail. Using albedo_ratio alone when a colormap path exists is a defect.
+- MESH COUNT CONTRACT (CRASH PREVENTION): This applies ONLY to non-primitive approved roster 3D objects. Every such roster asset carries a meshCount in its TEXTURE CONTRACT. You MUST assign data[N].material_file and data[N].albedo_ratio = [255,255,255] for EVERY valid slot N from 0 to meshCount-1. Assigning only data['0'] when meshCount > 1 leaves un-textured mesh slots and CRASHES the engine. Assigning to a slot index >= meshCount also CRASHES the engine. Cherry3D system primitives skip this meshCount workflow entirely. Use a loop or explicit per-slot assignments — never assume a single data['0'] assignment covers a multi-mesh object. The meshCount value is provided verbatim in the DETERMINISTIC ROSTER CONTRACT CARRY-THROUGH block for this tranche; treat it as a hard loop bound.
+- HTML UI PLACEMENT RULE: When this tranche creates or updates visible HTML UI / HUD / overlay elements in models/23 or localUI, NEVER place any UI element in the top-left or top-right corner of the screen. It is always better to move UI slightly inward toward the screen center rather than hugging the left or right edges. Prefer top-center, bottom-center, or clearly inset side placements. Any element near the left or right edge must use an intentional inset margin so it reads as center-biased, not edge-anchored. Top-left / top-right corner placement and hard edge-hugging placement are defects.
 
 VALIDATOR STATUS:
 - Validation manifest requirements are temporarily disabled.

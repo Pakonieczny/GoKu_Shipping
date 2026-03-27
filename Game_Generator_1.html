@@ -944,8 +944,8 @@
             <div class="tranche-header">
               <div class="tranche-header-icon" id="trancheHeaderIcon">⚡</div>
               <div class="tranche-header-info">
-                <div class="tranche-header-title" id="trancheHeaderTitle">6.3-Centered Tranche Pipeline</div>
-                <div class="tranche-header-sub" id="trancheHeaderSub">Initializing dependency-ordered 6.3 tranche plan...</div>
+                <div class="tranche-header-title" id="trancheHeaderTitle">Contract-Driven Tranche Pipeline</div>
+                <div class="tranche-header-sub" id="trancheHeaderSub">Initializing dependency-ordered tranche plan from prompt contract...</div>
               </div>
               <div class="tranche-header-timer" id="trancheTimer">00:00</div>
             </div>
@@ -955,7 +955,7 @@
             <div id="tranchePlanningSection" class="tranche-planning" style="display:none;">
               <div class="tranche-planning-spinner"></div>
               <div class="tranche-planning-text">
-                <span id="tranchePlanningLabel">AI Planner is building a dependency-ordered 6.3 tranche plan...</span>
+                <span id="tranchePlanningLabel">AI Planner is building a dependency-ordered tranche plan from the prompt contract...</span>
                 <span class="analysis" id="tranchePlanningAnalysis"></span>
               </div>
             </div>
@@ -1080,7 +1080,7 @@
           <!-- Game Essence Contract Panel — REMOVED (contract merged into Master Prompt) -->
 
           <div style="position: relative; width: 100%;">
-            <textarea id="aiPromptInput" placeholder="e.g., 'Build a physics-based destruction game with 15 levels...' — V2 will build a dependency-ordered 6.3 tranche plan." style="min-height: 80px; resize: vertical; width: 100%; padding-right: 140px;"></textarea>
+            <textarea id="aiPromptInput" placeholder="e.g., 'Build a physics-based destruction game with 15 levels...' — V2 will build a dependency-ordered tranche plan from your prompt contract." style="min-height: 80px; resize: vertical; width: 100%; padding-right: 140px;"></textarea>
             <div id="imageTagContainer" style="position: absolute; top: 10px; right: 10px; display: flex; flex-direction: column; gap: 6px; z-index: 10; pointer-events: none;"></div>
           </div>
           
@@ -1283,15 +1283,15 @@
         const introDiv = document.getElementById('aiChatIntro');
         if (introDiv) {
             introDiv.textContent = currentProject
-                ? `AI Context ready for project: ${currentProject}. Enter instructions below — ${svc.planner} will create a dependency-ordered 6.3-centered tranche plan.`
-                : `V2 Expert-Agent Pipeline ready. Enter game build instructions below — ${svc.planner} will create a dependency-ordered 6.3-centered tranche plan.`;
+                ? `AI Context ready for project: ${currentProject}. Enter instructions below — ${svc.planner} will create a dependency-ordered contract-driven tranche plan.`
+                : `V2 Expert-Agent Pipeline ready. Enter game build instructions below — ${svc.planner} will create a dependency-ordered contract-driven tranche plan.`;
         }
         
-        aiPromptInput.placeholder = `e.g., 'Build a physics-based destruction game with 15 levels...' — V2 will build a dependency-ordered 6.3 tranche plan using ${svc.name}.`;
+        aiPromptInput.placeholder = `e.g., 'Build a physics-based destruction game with 15 levels...' — V2 will build a dependency-ordered tranche plan from your prompt contract using ${svc.name}.`;
 
         const planningLabel = document.getElementById('tranchePlanningLabel');
         if (planningLabel && planningLabel.textContent.includes('researching')) {
-            planningLabel.textContent = `${svc.planner} is building a dependency-ordered 6.3 tranche plan...`;
+            planningLabel.textContent = `${svc.planner} is building a dependency-ordered tranche plan from the prompt contract...`;
         }
 
         const footerModels = document.querySelector('.tranche-footer-models');
@@ -1735,7 +1735,7 @@ This will permanently remove all associated files and Firebase folders for this 
       refreshReviewList();
       syncAssetsJson();
       
-      aiChatLog.innerHTML = `<div id="aiChatIntro" style="color: var(--muted);">AI Context ready for project: ${name}. Enter instructions below — ${AI_SERVICES[currentAiService].planner} will create a dependency-ordered 6.3-centered tranche plan.</div>`;
+      aiChatLog.innerHTML = `<div id="aiChatIntro" style="color: var(--muted);">AI Context ready for project: ${name}. Enter instructions below — ${AI_SERVICES[currentAiService].planner} will create a dependency-ordered contract-driven tranche plan.</div>`;
       aiCodeReviewLog.innerHTML = `<div style="color: var(--muted);">Code diff updates will appear here after an AI run.</div>`;
       
       updateAiUI();
@@ -1933,7 +1933,9 @@ This will permanently remove all associated files and Firebase folders for this 
         setStatus('Syncing assets.json with project files...');
 
         // Reserved keys that must never be removed or modified regardless of Firebase contents.
-        const RESERVED_KEYS = new Set(['0', '2', '3', '22', '23']);
+        // Includes the 5 .obj system primitives (17=cube, 18=cylinder, 21=sphere, 34=plane, 35=planevertical)
+        // which live as key-numbered runtime files and are never picked up by the truthMap scan.
+        const RESERVED_KEYS = new Set(['0', '2', '3', '22', '23', '17', '18', '21', '34', '35']);
         // Key of the "Models" folder — new 3D objects are added as its children.
         const MODELS_FOLDER_KEY = '15';
 
@@ -2198,6 +2200,35 @@ This will permanently remove all associated files and Firebase folders for this 
             }
         }
         // ── END SYSTEM ENTRY HARDENING ─────────────────────────────────────────
+
+        // ── MODELS FOLDER PRIMITIVE HARDENING ─────────────────────────────────
+        // These 5 .obj system primitives must always exist as children of the
+        // Models folder (key "15"). They are NOT scanned from Firebase because
+        // they live as key-numbered runtime files (e.g. the file is literally
+        // named "17", not "cube.obj"), so truthMap never sees them by title.
+        // Without this block they silently vanish from assets.json on any sync
+        // that runs against a fresh, empty, or corrupted manifest.
+        const MODELS_PRIMITIVE_ENTRIES = [
+            { key: '17', type: 'object', title: 'cube.obj',          children: [] },
+            { key: '18', type: 'object', title: 'cylinder.obj',      children: [] },
+            { key: '21', type: 'object', title: 'sphere.obj',        children: [] },
+            { key: '34', type: 'object', title: 'plane.obj',         children: [] },
+            { key: '35', type: 'object', title: 'planevertical.obj', children: [] }
+        ];
+        const modelsFolderFinal = deduplicatedAssets.find(e => e.type === 'folder' && e.key === MODELS_FOLDER_KEY);
+        if (modelsFolderFinal) {
+            const existingChildKeys   = new Set(modelsFolderFinal.children.map(c => String(c.key)));
+            const existingChildTitles = new Set(modelsFolderFinal.children.map(c => (c.title || '').toLowerCase()));
+            for (const prim of MODELS_PRIMITIVE_ENTRIES) {
+                if (!existingChildKeys.has(prim.key) && !existingChildTitles.has(prim.title.toLowerCase())) {
+                    modelsFolderFinal.children.unshift({ ...prim });
+                    console.warn(`[syncAssetsJson] Models primitive "${prim.title}" (key ${prim.key}) was missing — re-inserted.`);
+                }
+            }
+        } else {
+            console.warn('[syncAssetsJson] Models folder (key "15") not found — cannot re-insert .obj primitives.');
+        }
+        // ── END MODELS FOLDER PRIMITIVE HARDENING ─────────────────────────────
 
         const newJson = JSON.stringify(deduplicatedAssets, null, 2);
         const targetRef = ref(storage, `${ROOT}/${projectName}/json/assets.json`);
@@ -3561,7 +3592,7 @@ Quality criteria for your work:
       showPlanning() {
         const svc = AI_SERVICES[currentAiService];
         document.getElementById('tranchePlanningSection').style.display = 'flex';
-        document.getElementById('trancheHeaderTitle').textContent = '6.3-Centered Tranche Pipeline';
+        document.getElementById('trancheHeaderTitle').textContent = 'Contract-Driven Tranche Pipeline';
         document.getElementById('trancheHeaderSub').textContent = 'Phase 0: Planning dependency order...';
         document.getElementById('trancheOverallFill').style.width = '0%';
         document.getElementById('trancheList').innerHTML = '';
@@ -3897,10 +3928,10 @@ Quality criteria for your work:
 
         if (prog.status === 'planning') {
           planningSection.style.display = 'flex';
-          planningLabel.textContent = `${svc.planner} is building a dependency-ordered 6.3 tranche plan...`;
+          planningLabel.textContent = `${svc.planner} is building a dependency-ordered tranche plan from the prompt contract...`;
           planningAnalysis.textContent = '';
           overallFill.style.width = '5%';
-          footerStatus.textContent = 'Phase 0: 6.3 tranche planning active...';
+          footerStatus.textContent = 'Phase 0: contract-driven tranche planning active...';
           return;
         }
 
@@ -3913,7 +3944,7 @@ Quality criteria for your work:
             const planDuration = (prog.planningEndTime && prog.planningStartTime)
               ? this._formatDuration(prog.planningEndTime - prog.planningStartTime)
               : '';
-            planningLabel.innerHTML = `✓ 6.3 Plan Ready: <strong>${prog.totalTranches} tranche(s)</strong>${planDuration ? ` in ${planDuration}` : ''}`;
+            planningLabel.innerHTML = `✓ Tranche Plan Ready: <strong>${prog.totalTranches} tranche(s)</strong>${planDuration ? ` in ${planDuration}` : ''}`;
             planningLabel.style.color = 'var(--success)';
             planningAnalysis.textContent = prog.contractPromptReview?.summary || '';
             planningAnalysis.style.color = (prog.contractPromptReview?.issueCount || 0) > 0 ? '#f59e0b' : 'var(--muted)';
@@ -3933,14 +3964,14 @@ Quality criteria for your work:
             overallFill.classList.add('done');
             headerIcon.textContent = '✓';
             headerIcon.classList.add('done');
-            headerTitle.textContent = '6.3 Build Complete';
+            headerTitle.textContent = 'Build Complete';
             headerTimer.classList.add('done');
             this._stopTimer();
             const totalTime = (prog.completedTime && prog.planningStartTime)
               ? this._formatDuration(prog.completedTime - prog.planningStartTime)
               : '';
             headerSub.textContent = `${prog.totalTranches} expert tranche(s) executed${totalTime ? ` — total time: ${totalTime}` : ''}`;
-            footerStatus.textContent = prog.finalMessage || '6.3 tranche pipeline complete';
+            footerStatus.textContent = prog.finalMessage || 'contract-driven tranche pipeline complete';
           } else {
             const activeTranche = prog.tranches.find(t => t.status === 'in_progress');
             if (activeTranche) {
@@ -5113,7 +5144,8 @@ Original user request for context: ${basePrompt}`;
         scaleWarning: analysis.scale?.scaleWarning || '',
         uvSummary,
         textureFound: textureLabel,
-        materials: analysis.materials || []
+        materials: analysis.materials || [],
+        meshCount: typeof analysis.meshCount === 'number' ? analysis.meshCount : 0
       };
     }
 
@@ -5423,7 +5455,7 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
 5. Color direction and surface treatment must be consistent throughout all tranches.
 6. PARTICLE TEXTURE REGISTRY: A Foundation-B sub-tranche MUST be planned immediately after Foundation-A. Its sole job is to populate gameState.particleTextureIds keyed by particleEffectTarget using the exact assets.json manifest keys. This tranche must complete before any particle emitter or billboard tranche.
 7. Every particle billboard or sphere object created in any tranche MUST set material_file in its data['0'] slot to gameState.particleTextureIds[effectName]. Hardcoding a texture string or omitting material_file when gameState.particleTextureIds is populated is a tranche execution defect.
-8. 3D OBJECT REGISTRY: Every tranche touching visible scene content MUST use approved roster 3D objects via gameState.objectids and the resolved manifest keys surfaced above. Using cube, sphere, or planevertical as a visible gameplay object when a roster asset covers that role is a tranche execution defect.
+8. 3D OBJECT REGISTRY: Every tranche touching visible scene content MUST branch cleanly between the five Cherry3D system primitives (cube, cylinder, sphere, plane, planevertical) and non-primitive approved roster 3D objects. If the object is intentionally one of those five primitives, the tranche prompt must say so explicitly and must skip external scan/roster geometry-texture-meshCount enforcement for that object. For every other visible gameplay object, you MUST use approved roster 3D objects via gameState.objectids and the resolved manifest keys surfaced above. Using a Cherry3D primitive as a visible gameplay object when a roster asset covers that role is a tranche execution defect.
 ═══════════════════════════════════════════════════════════`;
     }
 
@@ -6418,6 +6450,9 @@ PLANNING REQUIREMENTS:
 - The Scaffold is king. Adapt the requested game to the scaffold — never adapt the scaffold to the game.
 - The SDK / Engine Reference is complementary. Use it when certainty is low or engine details need confirmation.
 - Do NOT tell the executor to delete, replace, or bypass immutable scaffold sections.
+- CHERRY3D PRIMITIVE EXCEPTION: The five Cherry3D system primitives are cube, cylinder, sphere, plane, and planevertical. If a visual object is intentionally authored from one of those five primitives, the tranche prompt must say so explicitly and MUST skip scanned-asset geometry, texture, and meshCount enforcement for that object.
+- MESH COUNT CONTRACT (CRASH PREVENTION): This applies ONLY to non-primitive scanned 3D assets surfaced in the SCANNED 3D EXTENTS block. Every such asset carries a meshCount. For every such asset, the tranche that applies textures MUST assign data[N].material_file and data[N].albedo_ratio = [255,255,255] for EVERY valid mesh slot N from 0 to meshCount-1. Assigning only data['0'] when meshCount > 1 crashes the engine at runtime. Assigning to a slot index >= meshCount also crashes the engine. The tranche prompt MUST embed the exact meshCount value so the executor knows the precise loop bounds. Cherry3D system primitives skip this workflow entirely. A tranche plan that ignores meshCount for a non-primitive scanned asset and applies textures blindly to data['0'] only is a planning defect.
+- HTML UI PLACEMENT RULE: When a tranche creates or modifies visible HTML UI / HUD / overlay elements in models/23 or localUI, NEVER place UI in the top-left or top-right corners of the screen. It is always better to move UI components slightly inward toward the center instead of hugging the left or right edges. Prefer top-center, bottom-center, or clearly inset side placements. Any side-aligned UI must use a visible inset margin so it reads as center-shifted rather than edge-anchored. Corner-hugging or hard edge-hugging UI is a planning defect.
 - Each tranche must be assigned 1-2 expert agents from this roster:
 ${EXPERT_AGENTS_JSON}
 

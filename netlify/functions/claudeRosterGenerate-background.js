@@ -191,14 +191,46 @@ function stripFences(text) {
   return t.trim();
 }
 
+
+function buildMasterPromptLayoutGuidance(masterPrompt = "") {
+  const prompt = String(masterPrompt || "");
+  const hasNewStructuredLayout =
+    /#\s*1\.\s*SESSION DECISIONS/i.test(prompt) &&
+    /#\s*2\.\s*GAME IDENTITY/i.test(prompt) &&
+    /#\s*3\.\s*IMPLEMENTATION CONTRACT/i.test(prompt);
+  const hasLegacy63Layout = /\b6\.3(\.\d+)?\b/.test(prompt);
+
+  if (hasNewStructuredLayout) {
+    return `MASTER PROMPT LAYOUT DETECTED:
+- Section 3.x = implementation contract for movement, camera, init, UI, lifecycle, and exact variable constraints.
+- Section 4.x = mechanics/rules, object inventory, and VFX requirements.
+- Section 5 = runtime registry with exact object/material/particle names and counts.
+- Section 6 = author tranche plan. Useful context, but do not infer extra required assets from sequencing text alone.
+- Section 7 = validation contract. Use it to confirm must-exist visible systems.
+- For asset discovery, Sections 3, 4, 5, and 7 outweigh descriptive fluff.`;
+  }
+
+  if (hasLegacy63Layout) {
+    return `MASTER PROMPT LAYOUT DETECTED:
+- Legacy 6.3-style structure is present.
+- Read the actual gameplay, object, VFX, and validation sections directly from that layout.`;
+  }
+
+  return `MASTER PROMPT LAYOUT DETECTED:
+- No canonical layout markers were found.
+- Infer the authoritative sections from the prompt's real headings and use them for asset discovery.`;
+}
+
 function buildPhase1Prompt(masterPrompt, categoryList) {
   const catBlock = categoryList.map(c => `  - ${c}`).join("\n");
 
   return `You are a game visual requirements analyst. Your ONLY job in this phase is to study the game description and produce a structured list of every particle effect and 3D object the game needs.
 
 DO NOT reference any asset files, filenames, or packs. You have not seen them yet.
-DO NOT include surface textures, UI elements, or anything other than particle effects and 3D objects.
+DO NOT include surface textures, UI elements, or anything other than particle effects and 3D objects. When the prompt contains a structured contract layout, prefer extracting requirements from the implementation contract, mechanics/object inventory, registry, and validation sections rather than from tranche sequencing text.
 Be specific and visual in your descriptions — describe what each thing looks like, its size relative to the scene, its motion characteristics, and the gameplay moment it appears in.
+
+${buildMasterPromptLayoutGuidance(masterPrompt)}
 
 MASTER GAME PROMPT:
 ${masterPrompt}
