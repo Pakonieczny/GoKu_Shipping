@@ -228,6 +228,7 @@ function buildPhase1Prompt(masterPrompt, categoryList) {
 
 DO NOT reference any asset files, filenames, or packs. You have not seen them yet.
 DO NOT include surface textures, UI elements, or anything other than particle effects and 3D objects. When the prompt contains a structured contract layout, prefer extracting requirements from the implementation contract, mechanics/object inventory, registry, and validation sections rather than from tranche sequencing text.
+For visible gameplay objects, prefer authored non-primitive scene objects when the game calls for rich silhouettes or recognizable props; primitives should only be implied when the game truly wants primitive-authored visuals, particle internals, or invisible collision geometry.
 Be specific and visual in your descriptions — describe what each thing looks like, its size relative to the scene, its motion characteristics, and the gameplay moment it appears in.
 
 ${buildMasterPromptLayoutGuidance(masterPrompt)}
@@ -363,7 +364,7 @@ exports.handler = async (event) => {
 
       // Enforce minimum of 2
       if (obj.suggestedCategories.length === 0) {
-        console.warn(`[ROSTER-GEN] Object "${obj.name}" returned no suggestedCategories — will scan full library`);
+        console.warn(`[ROSTER-GEN] Object "${obj.name}" returned no suggestedCategories — will be skipped in StageAB unless Phase 1 is retried with valid categories`);
       } else if (obj.suggestedCategories.length === 1) {
         console.warn(`[ROSTER-GEN] Object "${obj.name}" returned only 1 suggestedCategory — minimum is 2. StageAB will scan only that category; consider retrying Phase 1 if match quality is poor.`);
       }
@@ -375,7 +376,7 @@ exports.handler = async (event) => {
       `${(phase1.objects3d || []).length} 3D object(s) identified`
     );
     for (const obj of (phase1.objects3d || [])) {
-      console.log(`[ROSTER-GEN]   "${obj.name}" → categories: ${(obj.suggestedCategories || []).join(", ") || "NONE (full scan)"}`);
+      console.log(`[ROSTER-GEN]   "${obj.name}" → categories: ${(obj.suggestedCategories || []).join(", ") || "NONE (StageAB will skip until categories are supplied)"}`);
     }
 
     // ── 5. Write Phase 1 result + category list to Firebase ─────────────

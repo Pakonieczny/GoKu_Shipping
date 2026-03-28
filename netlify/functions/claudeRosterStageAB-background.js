@@ -15,8 +15,9 @@
      3. Read global CSV from game-generator-1/projects/BASE_Files/asset_3d_objects/
         reorganized_assets_manifest.csv → build assetName→category map.
      4. Scan ONLY the zip files whose asset_name maps to one of the
-        suggestedCategories for each requirement. If no categories were
-        suggested, fall back to scanning the full library for that req.
+        suggestedCategories for each requirement. If no valid CSV-backed
+        categories are suggested, skip object search for that requirement
+        rather than falling back to the full library.
      5. STAGE A — image-vs-image batch scan on the filtered asset pool.
         Particles: text description vs thumbnails (unchanged).
         3D Objects: user reference image vs filtered thumbnails.
@@ -253,7 +254,7 @@ function buildStageAParticlePrompt(requirements) {
 
   return `You are a game asset visual screener. You will be shown a batch of particle effect texture thumbnail images.
 Your job is to identify which images are plausible visual candidates for any of the particle effect requirements listed below.
-Cast a wide net — include anything that could plausibly match, even loosely.
+Cast a wide net — include anything that could plausibly match, even loosely, but still respect whether the requirement reads more like a burst / impact / spark versus a trail / smoke / lingering streak.
 
 PARTICLE EFFECT REQUIREMENTS:
 ${reqList}
@@ -282,7 +283,7 @@ The FIRST image attached is the user's reference image for the requirement:
 
 The remaining images (numbered 1, 2, 3... in your response) are candidate thumbnails from the 3D object library.
 Your job: identify which library thumbnails are visually similar enough to the reference image to be a plausible match.
-Cast a wide net — include anything that shares the general shape, style, or object category.
+Cast a wide net — include anything that shares the general shape, style, or object category, but prefer candidates that look like final visible gameplay objects rather than generic placeholder geometry.
 
 Respond ONLY with a valid JSON object. No markdown, no fences, no preamble.
 
@@ -312,7 +313,7 @@ ${candidates.map((c, i) => `  Image ${i + 1}: ${c.assetFile} (${c.sourceZip})`).
 
 SELECTION RULES:
 - Judge purely by visual appearance vs the requirement description.
-- Consider shape silhouette, density, edge softness, color tone.
+- Consider shape silhouette, density, edge softness, color tone, and whether the texture reads more like a burst / impact / spark versus a trail / smoke / lingering streak.
 - Pick exactly one winner. State which image number you chose and why.
 
 Respond ONLY with a valid JSON object. No markdown, no fences, no preamble.
@@ -340,17 +341,17 @@ ${candidates.map((c, i) => `  Image ${i + 1}: ${c.objFile} (${c.sourceZip})`).jo
 
 SELECTION RULES:
 - The reference image (first image) is the target appearance.
-- Pick the candidate thumbnail that most closely resembles the reference in shape, silhouette, style, and object category.
+- Pick the candidate thumbnail that most closely resembles the reference in shape, silhouette, style, object category, and final in-game readability.
+- Prefer richer authored objects over obvious placeholder or low-detail geometry when both satisfy the role.
 - Pick exactly one winner. State which candidate image number (1-based, not counting the reference) you chose and why.
-- Include a colormapFile field — default "colormap.jpg" unless you have evidence of a different filename.
+- Do NOT infer or default a colormap filename here. Colormap resolution is handled later by the extract stage from the selected asset's zip contents.
 
 Respond ONLY with a valid JSON object. No markdown, no fences, no preamble.
 
 {
   "requirementName": "${requirementName}",
   "imageNumberChosen": 1,
-  "visualSelectionRationale": "What made this thumbnail most similar to the reference image",
-  "colormapFile": "colormap.jpg"
+  "visualSelectionRationale": "What made this thumbnail most similar to the reference image"
 }`;
 }
 
@@ -419,7 +420,7 @@ exports.handler = async (event) => {
     console.log(`[ROSTER-AB] CSV loaded: ${assetCategoryMap.size} asset entries`);
 
     // ── 4. Build per-requirement allowed category sets ───────────────────
-    // Map<requirementName, Set<category>> — empty Set means "scan all"
+    // Map<requirementName, Set<category>> — empty Set means "skip object search"
     const reqCategoryFilter = new Map();
     for (const req of objectReqs) {
       const cats = (req.suggestedCategories || []).slice(0, MAX_SUGGESTED_CATS);
@@ -841,19 +842,19 @@ exports.handler = async (event) => {
         });
       } catch (e) {
         console.warn(`[ROSTER-AB] Stage B object failed for "${req.name}": ${e.message} — using first candidate`);
-        return { requirementName: req.name, selectedAsset: candidates[0], visualSelectionRationale: `Fallback: ${e.message}`, colormapFile: "colormap.jpg" };
+        return { requirementName: req.name, selectedAsset: candidates[0], visualSelectionRationale: `Fallback: ${e.message}`, colormapFile: null };
       }
 
       let parsed;
       try { parsed = JSON.parse(stripFences(result.text)); }
-      catch (e) { parsed = { imageNumberChosen: 1, visualSelectionRationale: "Fallback: parse error", colormapFile: "colormap.jpg" }; }
+      catch (e) { parsed = { imageNumberChosen: 1, visualSelectionRationale: "Fallback: parse error" }; }
 
       const chosenIdx = Math.min((parsed.imageNumberChosen || 1) - 1, candidates.length - 1);
       return {
         requirementName:          req.name,
         selectedAsset:            candidates[chosenIdx],
         visualSelectionRationale: parsed.visualSelectionRationale || "",
-        colormapFile:             parsed.colormapFile || "colormap.jpg"
+        colormapFile:             null
       };
     }
 
@@ -895,8 +896,8 @@ exports.handler = async (event) => {
         intendedRole:       p1.gameplayRole || p1.visualDescription || stageBResult.requirementName || "",
         matchedRequirement: stageBResult.requirementName,
         selectionRationale: stageBResult.visualSelectionRationale,
-        colormapFile:       stageBResult.colormapFile || "colormap.jpg",
-        colormapConfidence: stageBResult.colormapFile ? "HIGH" : "MEDIUM",
+        colormapFile:       null,
+        colormapConfidence: "PENDING_EXTRACT",
         thumbnailB64:       asset.b64,
         thumbnailMime:      asset.mimeType
       };
