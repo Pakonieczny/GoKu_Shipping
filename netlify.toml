@@ -3,6 +3,12 @@
   command = "npm run build"
   functions = "netlify/functions"
 
+[[headers]]
+  for = "/cherry-viewer/*"
+  [headers.values]
+    Cross-Origin-Opener-Policy = "same-origin"
+    Cross-Origin-Embedder-Policy = "require-corp"
+
 [functions]
   node_bundler = "esbuild"
   external_node_modules = ["sharp"]
