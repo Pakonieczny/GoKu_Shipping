@@ -1,5 +1,6 @@
 [build]
   publish = "."
+  command = "cat .npmrc && npm ls @metavrse-inc/metavrse-lib || true"
   functions = "netlify/functions"
 
 [functions]
@@ -179,54 +180,3 @@
   to = "/Game_Generator_1.html"
   status = 200
   force = true
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
