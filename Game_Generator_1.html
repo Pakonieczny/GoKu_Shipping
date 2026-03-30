@@ -25,6 +25,35 @@
   
   <style>
     :root { --bg:#0b0d12; --card:#121624; --muted:#8b93a7; --text:#e9ecf5; --line:#242a3d; --accent: #2b6cff; --success: #7fdb96; --danger: #fca5a5; }
+
+    /* ── Download Zip Button ── */
+    .btnDownload {
+      background: linear-gradient(135deg, #0d2b1a 0%, #0a1f14 100%);
+      color: var(--success); border-color: #1a5c35;
+    }
+    .btnDownload:hover { background: linear-gradient(135deg, #133d26 0%, #0f2e1d 100%); border-color: #28a05a; }
+    .btnDownload:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* ── Cherry3D toast notification ── */
+    #cherryToast {
+      position: fixed; bottom: 24px; right: 24px; z-index: 9999;
+      background: #13102a; border: 1px solid #6d28d9; border-radius: 12px;
+      padding: 12px 18px; display: flex; align-items: center; gap: 12px;
+      font-size: 13px; color: #c084fc; box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+      transform: translateY(80px); opacity: 0; pointer-events: none;
+      transition: transform 0.35s cubic-bezier(0.34,1.56,0.64,1), opacity 0.3s ease;
+      max-width: 340px;
+    }
+    #cherryToast.show { transform: translateY(0); opacity: 1; pointer-events: auto; }
+    #cherryToast .ct-icon { font-size: 20px; flex-shrink: 0; }
+    #cherryToast .ct-body { display: flex; flex-direction: column; gap: 2px; }
+    #cherryToast .ct-title { font-weight: 600; color: #e9ecf5; }
+    #cherryToast .ct-sub { font-size: 11px; color: var(--muted); }
+    #cherryToast .ct-close {
+      margin-left: auto; cursor: pointer; color: var(--muted); font-size: 16px;
+      flex-shrink: 0; transition: color 0.2s; line-height: 1;
+    }
+    #cherryToast .ct-close:hover { color: var(--danger); }
     body{ margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; background:var(--bg); color:var(--text); }
     .wrap{ padding:14px; display:grid; grid-template-columns: 350px 1fr; gap:14px; max-width: 1600px; margin: 0 auto;}
     .card{ background:var(--card); border:1px solid var(--line); border-radius:14px; padding:16px; }
@@ -903,6 +932,9 @@
         <h1>Project Assets Manager</h1>
         <div class="row">
             <button class="btn btnPrimary" id="generateGameBtn" disabled>Generate Game Zip</button>
+            <button class="btn btnDownload" id="downloadZipBtn" style="display:none;" title="Download the last generated zip">
+              ⬇ Download Zip
+            </button>
         </div>
       </div>
 
@@ -7259,17 +7291,33 @@ RULES FOR ALL PIPELINE STAGES:
         const finalZipBlob = await zip.generateAsync({ type: "blob", compression: "STORE" });
         
         progressBar.style.width = '100%';
-        setStatus(`Game Zip Generated Successfully! Downloading...`);
+        setStatus(`Game Zip Ready! Opening Cherry3D Viewer...`);
 
-        const downloadUrl = URL.createObjectURL(finalZipBlob);
-        const a = document.createElement('a');
-        a.href = downloadUrl;
-        a.download = `${currentProject}_Custom_Build.zip`;
-        document.body.appendChild(a);
-        a.click();
-        
-        document.body.removeChild(a);
-        URL.revokeObjectURL(downloadUrl);
+        // ── Store blob for manual download, never auto-download ───────────
+        const zipFileName = `${currentProject}_Custom_Build.zip`;
+        window.__lastGeneratedZip = { blob: finalZipBlob, fileName: zipFileName };
+
+        // Show the Download Zip button now that a zip is ready
+        const downloadZipBtn = document.getElementById('downloadZipBtn');
+        if (downloadZipBtn) {
+          downloadZipBtn.style.display = '';
+          downloadZipBtn.onclick = () => {
+            const { blob, fileName } = window.__lastGeneratedZip;
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = fileName;
+            document.body.appendChild(a); a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+          };
+        }
+
+        // ── Cherry3D Auto-Inject → open viewer window ─────────────────────
+        if (typeof window.__cherry3dHandleZipBlob === 'function') {
+          window.__cherry3dHandleZipBlob(finalZipBlob, zipFileName)
+            .catch(err => console.warn('[Cherry3D Bridge] inject error:', err));
+        }
+        // ─────────────────────────────────────────────────────────────────
 
       } catch (error) {
         console.error("Zip generation error:", error);
@@ -7338,5 +7386,72 @@ RULES FOR ALL PIPELINE STAGES:
           </div>
       </div>
   </div>
+  <!-- ── Cherry3D Viewer Toast ──────────────────────────────────────────── -->
+  <div id="cherryToast">
+    <span class="ct-icon">📦</span>
+    <div class="ct-body">
+      <span class="ct-title" id="cherryToastTitle">Opening Cherry3D Viewer…</span>
+      <span class="ct-sub" id="cherryToastSub">Injecting zip into viewer window</span>
+    </div>
+    <span class="ct-close" id="cherryToastClose">✕</span>
+  </div>
+
+  <!-- ── Cherry3D Viewer Integration ──────────────────────────────────────
+       Flow:
+       1. zip generates  →  blob stored in window.__lastGeneratedZip
+       2. __cherry3dHandleZipBlob fires  →  opens index.html in new tab
+       3. BroadcastChannel + postMessage push the ArrayBuffer to that tab
+       4. index.html/main.js calls handleFile() → viewer loads the project
+       5. Download Zip button is revealed for optional manual save
+  ──────────────────────────────────────────────────────────────────────── -->
+  <script>
+  (() => {
+    const CHERRY_VIEWER_URL = '/cherry-viewer/index.html';
+
+    // BroadcastChannel — reaches any same-origin tab listening
+    let bc;
+    try { bc = new BroadcastChannel('cherry3d-inject'); } catch (e) { bc = null; }
+
+    // ── Toast helpers ─────────────────────────────────────────────────────
+    const toast      = document.getElementById('cherryToast');
+    const toastTitle = document.getElementById('cherryToastTitle');
+    const toastSub   = document.getElementById('cherryToastSub');
+
+    document.getElementById('cherryToastClose').addEventListener('click', () => {
+      toast.classList.remove('show');
+    });
+
+    function showToast(title, sub, durationMs = 4500) {
+      toastTitle.textContent = title;
+      toastSub.textContent   = sub;
+      toast.classList.add('show');
+      if (durationMs > 0) setTimeout(() => toast.classList.remove('show'), durationMs);
+    }
+
+    // ── Core: generate → inject → open ───────────────────────────────────
+    window.__cherry3dHandleZipBlob = async (blob, fileName) => {
+      const buffer = await blob.arrayBuffer();
+      const payload = { type: 'cherry3d-inject-zip', zipBuffer: buffer, fileName };
+
+      // 1. Broadcast immediately — the channel queues messages so the
+      //    listener in index.html will receive it as soon as it's ready
+      if (bc) { try { bc.postMessage(payload); } catch (e) {} }
+
+      // 2. Open viewer in a new named tab
+      const viewerWin = window.open(CHERRY_VIEWER_URL, 'cherry3d-viewer');
+
+      // 3. Send direct postMessage after the page has had time to load
+      //    (BroadcastChannel already fired; this is belt-and-suspenders)
+      setTimeout(() => {
+        if (viewerWin && !viewerWin.closed) {
+          try { viewerWin.postMessage(payload, window.location.origin); } catch (e) {}
+        }
+      }, 2500);
+
+      showToast('🚀 Opening Cherry3D Viewer', `Injecting ${fileName}…`, 5000);
+    };
+
+  })();
+  </script>
 </body>
 </html>
