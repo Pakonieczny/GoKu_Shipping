@@ -45,16 +45,12 @@ const createWorld = (viewer) => {
 
 // ─── File handler ─────────────────────────────────────────────────────────────
 
-const overlay  = document.getElementById('drop-overlay');
-const dropZone = document.getElementById('drop-zone');
-const fileInput = document.getElementById('file-input');
-
 let viewer = null;
 
 const handleFile = async (file) => {
   if (!file) return;
 
-  // Hide overlay, init viewer
+  const overlay = document.getElementById('drop-overlay');
   overlay.classList.add('hidden');
 
   if (!viewer) {
@@ -177,22 +173,27 @@ const handleFile = async (file) => {
 
 // ─── Drag & Drop ─────────────────────────────────────────────────────────────
 
-document.addEventListener('dragover', (e) => {
-  e.preventDefault();
-  overlay.classList.remove('hidden');
-  overlay.classList.add('drag-over');
-});
+window.addEventListener('DOMContentLoaded', () => {
+  const overlay   = document.getElementById('drop-overlay');
+  const dropZone  = document.getElementById('drop-zone');
+  const fileInput = document.getElementById('file-input');
 
-document.addEventListener('dragleave', (e) => {
-  if (!e.relatedTarget) overlay.classList.remove('drag-over');
-});
+  document.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    overlay.classList.remove('hidden');
+    overlay.classList.add('drag-over');
+  });
 
-document.addEventListener('drop', (e) => {
-  e.preventDefault();
-  overlay.classList.remove('drag-over');
-  handleFile(e.dataTransfer.files[0]);
-});
+  document.addEventListener('dragleave', (e) => {
+    if (!e.relatedTarget) overlay.classList.remove('drag-over');
+  });
 
-// Click to browse
-dropZone.addEventListener('click', () => fileInput.click());
-fileInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
+  document.addEventListener('drop', (e) => {
+    e.preventDefault();
+    overlay.classList.remove('drag-over');
+    handleFile(e.dataTransfer.files[0]);
+  });
+
+  dropZone.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
+});
