@@ -183,6 +183,6 @@
 
   [[redirects]]
   from = "https://cherry-viewer.goldenspike.app"
-  to = "/cherry-viewer/index.html"
+  to = "/index.html"
   status = 200
   force = true

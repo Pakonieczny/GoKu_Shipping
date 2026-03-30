@@ -2,9 +2,9 @@ import { defineConfig } from 'vite';
 
 export default defineConfig({
   root: 'cherry-viewer',
-  base: '/',
+  base: '/cherry-viewer/',
   build: {
-    outDir: '../cherry-viewer-dist',
+    outDir: '../cherry-viewer-dist/cherry-viewer',
     emptyOutDir: true,
   },
 });
