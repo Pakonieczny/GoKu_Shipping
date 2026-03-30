@@ -15,7 +15,8 @@
     "@google-cloud/vision": "^4.3.1",
     "@google-cloud/storage": "^7.16.0",
     "sharp": "^0.33.5",
-    "jszip": "^3.10.1"
+    "jszip": "^3.10.1",
+    "@metavrse-inc/metavrse-lib": "latest"
   },
   "devDependencies": {},
   "keywords": [],
