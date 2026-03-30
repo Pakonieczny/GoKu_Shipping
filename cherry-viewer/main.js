@@ -176,21 +176,27 @@ const overlay   = document.getElementById('drop-overlay');
 const dropZone  = document.getElementById('drop-zone');
 const fileInput = document.getElementById('file-input');
 
-document.addEventListener('dragover', (e) => {
-  e.preventDefault();
-  overlay.classList.remove('hidden');
-  overlay.classList.add('drag-over');
-});
+console.log('DOM elements:', { overlay, dropZone, fileInput });
 
-document.addEventListener('dragleave', (e) => {
-  if (!e.relatedTarget) overlay.classList.remove('drag-over');
-});
+if (!overlay || !dropZone || !fileInput) {
+  console.error('Missing DOM element — check IDs in index.html');
+} else {
+  document.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    overlay.classList.remove('hidden');
+    overlay.classList.add('drag-over');
+  });
 
-document.addEventListener('drop', (e) => {
-  e.preventDefault();
-  overlay.classList.remove('drag-over');
-  handleFile(e.dataTransfer.files[0]);
-});
+  document.addEventListener('dragleave', (e) => {
+    if (!e.relatedTarget) overlay.classList.remove('drag-over');
+  });
 
-dropZone.addEventListener('click', () => fileInput.click());
-fileInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
+  document.addEventListener('drop', (e) => {
+    e.preventDefault();
+    overlay.classList.remove('drag-over');
+    handleFile(e.dataTransfer.files[0]);
+  });
+
+  dropZone.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
+}
