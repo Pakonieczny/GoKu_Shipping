@@ -5,7 +5,7 @@ import { createViewer3DInstance as cv3, CherryGLVersion } from '@metavrse-inc/me
 const initViewer = async (canvas) => {
   const viewer = await cv3(canvas);
   window.Module = viewer;
-  viewer.ProjectManager.path = '/files/';
+  viewer.ProjectManager.path = 'files/';
   return viewer;
 };
 
