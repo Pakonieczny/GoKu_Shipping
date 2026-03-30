@@ -5,7 +5,7 @@ import { createViewer3DInstance as cv3, CherryGLVersion } from '@metavrse-inc/me
 const initViewer = async (canvas) => {
   const viewer = await cv3(canvas);
   window.Module = viewer;
-  viewer.ProjectManager.path = '/project/files/';
+  viewer.ProjectManager.path = '/files/';
   return viewer;
 };
 
@@ -56,7 +56,7 @@ const handleFile = async (file) => {
     const canvas = document.getElementById('viewer');
     viewer = await initViewer(canvas);
     viewer.getSurface().getScene().showRulerGrid(true);
-    viewer.FS.createPath('/', 'project/files/');
+    viewer.FS.createPath('/', 'files/');
   }
 
   // Read raw buffer and log it
