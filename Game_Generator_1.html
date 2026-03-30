@@ -7339,6 +7339,63 @@ RULES FOR ALL PIPELINE STAGES:
       loadProjects();
       ensureTemplateAssetFolderStructure();
     });
+
+    // ── Cherry3D Viewer Relay ─────────────────────────────────────────────
+    // Lives inside the main module so it has direct access to the already-
+    // initialised `storage`, `ref`, `uploadBytesResumable`, `getDownloadURL`,
+    // and `deleteObject` — no re-imports, no separate module scope needed.
+    {
+      const VIEWER_ORIGIN = 'https://cherry-viewer.goldenspike.app';
+      const RELAY_PREFIX  = 'cherry_relay';
+
+      const toast      = document.getElementById('cherryToast');
+      const toastTitle = document.getElementById('cherryToastTitle');
+      const toastSub   = document.getElementById('cherryToastSub');
+
+      document.getElementById('cherryToastClose').addEventListener('click', () => {
+        toast.classList.remove('show');
+      });
+
+      function showCherryToast(title, sub, durationMs = 5000) {
+        toastTitle.textContent = title;
+        toastSub.textContent   = sub;
+        toast.classList.add('show');
+        if (durationMs > 0) setTimeout(() => toast.classList.remove('show'), durationMs);
+      }
+
+      window.__cherry3dHandleZipBlob = async (blob, fileName) => {
+        showCherryToast('📡 Uploading to relay…', 'Preparing Cherry3D Viewer', 0);
+
+        try {
+          const relayKey = `${RELAY_PREFIX}/${Date.now()}_${Math.random().toString(36).slice(2)}.zip`;
+          const relayRef = ref(storage, relayKey);
+
+          // Upload using the existing `storage` instance — same Firebase app, same auth
+          await new Promise((resolve, reject) => {
+            const task = uploadBytesResumable(relayRef, blob, { contentType: 'application/zip' });
+            task.on('state_changed', null, reject, resolve);
+          });
+
+          const downloadURL = await getDownloadURL(relayRef);
+
+          // Auto-delete after 5 minutes
+          setTimeout(async () => {
+            try { await deleteObject(relayRef); } catch (e) {}
+          }, 5 * 60 * 1000);
+
+          // Open viewer with relay URL in hash — no cross-origin messaging needed
+          const viewerURL = `${VIEWER_ORIGIN}/#relay=${encodeURIComponent(downloadURL)}&file=${encodeURIComponent(fileName)}`;
+          window.open(viewerURL, 'cherry3d-viewer');
+
+          showCherryToast('🚀 Cherry3D Viewer opening', fileName, 5000);
+
+        } catch (err) {
+          console.error('[Cherry3D Relay] Upload failed:', err);
+          showCherryToast('❌ Relay failed', err.message, 6000);
+        }
+      };
+    }
+
   </script>
   
   <div id="imagePreviewModal" class="image-preview-modal">
@@ -7396,62 +7453,5 @@ RULES FOR ALL PIPELINE STAGES:
     <span class="ct-close" id="cherryToastClose">✕</span>
   </div>
 
-  <!-- ── Cherry3D Viewer Integration ──────────────────────────────────────
-       Flow:
-       1. zip generates  →  blob stored in window.__lastGeneratedZip
-       2. __cherry3dHandleZipBlob fires  →  opens index.html in new tab
-       3. BroadcastChannel + postMessage push the ArrayBuffer to that tab
-       4. index.html/main.js calls handleFile() → viewer loads the project
-       5. Download Zip button is revealed for optional manual save
-  ──────────────────────────────────────────────────────────────────────── -->
-  <script>
-  (() => {
-    const CHERRY_VIEWER_URL = '/cherry-viewer/index.html';
-
-    // BroadcastChannel — reaches any same-origin tab listening
-    let bc;
-    try { bc = new BroadcastChannel('cherry3d-inject'); } catch (e) { bc = null; }
-
-    // ── Toast helpers ─────────────────────────────────────────────────────
-    const toast      = document.getElementById('cherryToast');
-    const toastTitle = document.getElementById('cherryToastTitle');
-    const toastSub   = document.getElementById('cherryToastSub');
-
-    document.getElementById('cherryToastClose').addEventListener('click', () => {
-      toast.classList.remove('show');
-    });
-
-    function showToast(title, sub, durationMs = 4500) {
-      toastTitle.textContent = title;
-      toastSub.textContent   = sub;
-      toast.classList.add('show');
-      if (durationMs > 0) setTimeout(() => toast.classList.remove('show'), durationMs);
-    }
-
-    // ── Core: generate → inject → open ───────────────────────────────────
-    window.__cherry3dHandleZipBlob = async (blob, fileName) => {
-      const buffer = await blob.arrayBuffer();
-      const payload = { type: 'cherry3d-inject-zip', zipBuffer: buffer, fileName };
-
-      // 1. Broadcast immediately — the channel queues messages so the
-      //    listener in index.html will receive it as soon as it's ready
-      if (bc) { try { bc.postMessage(payload); } catch (e) {} }
-
-      // 2. Open viewer in a new named tab
-      const viewerWin = window.open(CHERRY_VIEWER_URL, 'cherry3d-viewer');
-
-      // 3. Send direct postMessage after the page has had time to load
-      //    (BroadcastChannel already fired; this is belt-and-suspenders)
-      setTimeout(() => {
-        if (viewerWin && !viewerWin.closed) {
-          try { viewerWin.postMessage(payload, window.location.origin); } catch (e) {}
-        }
-      }, 2500);
-
-      showToast('🚀 Opening Cherry3D Viewer', `Injecting ${fileName}…`, 5000);
-    };
-
-  })();
-  </script>
 </body>
 </html>
