@@ -1,6 +1,6 @@
 [build]
   publish = "."
-  command = "cat .npmrc && npm ls @metavrse-inc/metavrse-lib || true"
+  command = "find node_modules/@metavrse-inc/metavrse-lib -type f | head -40 && echo '---' && cat node_modules/@metavrse-inc/metavrse-lib/package.json || true"
   functions = "netlify/functions"
 
 [functions]
