@@ -16,7 +16,7 @@
     "@google-cloud/storage": "^7.16.0",
     "sharp": "^0.33.5",
     "jszip": "^3.10.1",
-    "metavrse-lib": "git+https://oauth2:${METAVRSE_NPM_TOKEN}@github.com/metavrse-inc/metavrse-lib.git"
+    "metavrse-lib": "git+https://${METAVRSE_NPM_TOKEN}:x-oauth-basic@github.com/metavrse-inc/metavrse-lib.git"
   },
   "devDependencies": {},
   "keywords": [],
