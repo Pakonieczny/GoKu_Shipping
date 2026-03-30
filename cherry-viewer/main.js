@@ -56,7 +56,7 @@ const handleFile = async (file) => {
     const canvas = document.getElementById('viewer');
     viewer = await initViewer(canvas);
     viewer.getSurface().getScene().showRulerGrid(true);
-    createWorld(viewer);
+    // Don't call createWorld here — zip has its own scene
   }
 
   // Read raw buffer and log it
