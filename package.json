@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "start": "netlify dev",
-    "build": "vite build --config cherry-viewer/vite.config.js && cp -r assets css js lib netlify .npmrc *.html *.jpg cherry-viewer-dist/ 2>/dev/null || true"
+    "build": "vite build --config cherry-viewer/vite.config.js"
   },
   "dependencies": {
     "node-fetch": "^2.6.1",
