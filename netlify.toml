@@ -1,5 +1,5 @@
 [build]
-  publish = "."
+  publish = "cherry-viewer-dist"
   command = "npm run build"
   functions = "netlify/functions"
 
@@ -183,6 +183,6 @@
 
   [[redirects]]
   from = "https://cherry-viewer.goldenspike.app"
-  to = "/cherry-viewer-dist/index.html"
+  to = "/index.html"
   status = 200
   force = true
