@@ -1,6 +1,6 @@
 [build]
   publish = "."
-  command = "find node_modules/@metavrse-inc/metavrse-lib -type f | head -40 && echo '---' && cat node_modules/@metavrse-inc/metavrse-lib/package.json || true"
+  command = "npm run build"
   functions = "netlify/functions"
 
 [functions]
@@ -178,5 +178,11 @@
   [[redirects]]
   from = "https://game-generator-1.goldenspike.app"
   to = "/Game_Generator_1.html"
+  status = 200
+  force = true
+
+  [[redirects]]
+  from = "https://cherry-viewer.goldenspike.app"
+  to = "/dist/cherry-viewer/index.html"
   status = 200
   force = true

@@ -4,7 +4,8 @@
   "description": "Etsy listing and image upload application",
   "main": "index.js",
   "scripts": {
-    "start": "netlify dev"
+    "start": "netlify dev",
+    "build": "vite build --config cherry-viewer/vite.config.js"
   },
   "dependencies": {
     "node-fetch": "^2.6.1",
@@ -18,7 +19,9 @@
     "jszip": "^3.10.1",
     "@metavrse-inc/metavrse-lib": "latest"
   },
-  "devDependencies": {},
+  "devDependencies": {
+    "vite": "^5.0.0"
+  },
   "keywords": [],
   "author": "",
   "license": "ISC"
