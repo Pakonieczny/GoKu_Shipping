@@ -199,4 +199,21 @@ if (!overlay || !dropZone || !fileInput) {
 
   dropZone.addEventListener('click', () => fileInput.click());
   fileInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
+
+  // ── Cherry3D Auto-Inject Bridge ─────────────────────────────────────────
+  // Expose handleFile to the bridge script in index.html so the Game Generator
+  // can push a zip directly without any user drag-and-drop interaction.
+  if (typeof window.__cherry3dSetInjectHook === 'function') {
+    window.__cherry3dSetInjectHook((file) => {
+      // Show a brief visual cue on the overlay before it fades out
+      if (typeof window.__cherry3dShowInjecting === 'function') {
+        window.__cherry3dShowInjecting(file.name);
+      }
+      handleFile(file);
+    });
+  } else {
+    // Bridge script not yet present (e.g. plain local dev without index.html changes).
+    // Expose directly on window so a later call can still wire it up.
+    window.__cherry3dInjectFile = handleFile;
+  }
 }

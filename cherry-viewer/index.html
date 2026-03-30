@@ -77,5 +77,82 @@
   <canvas id="viewer" tabindex="0"></canvas>
 
   <script type="module" src="./main.js"></script>
+
+  <!-- ── Cherry3D Auto-Inject Bridge ──────────────────────────────────────
+       Listens for a zip payload from the Game Generator on the same origin.
+       Two channels are supported so either approach works:
+
+       1. BroadcastChannel "cherry3d-inject"  — works when BOTH pages are
+          open in the same browser (Game Generator opened this tab itself).
+       2. window.postMessage                   — fallback / direct reference.
+
+       The payload shape is:  { type: 'cherry3d-inject-zip', zipBuffer: ArrayBuffer, fileName: string }
+  ──────────────────────────────────────────────────────────────────────── -->
+  <script>
+    // ── BroadcastChannel receiver ──────────────────────────────────────────
+    (() => {
+      let _injectZip = null; // will be populated by main.js after it loads
+
+      // Expose a hook that main.js can wire up once handleFile is ready
+      window.__cherry3dSetInjectHook = (fn) => {
+        _injectZip = fn;
+        // If a zip arrived before main.js was ready, fire it now
+        if (window.__cherry3dPendingZip) {
+          fn(window.__cherry3dPendingZip);
+          window.__cherry3dPendingZip = null;
+        }
+      };
+
+      function receiveZipPayload(data) {
+        if (!data || data.type !== 'cherry3d-inject-zip') return;
+
+        let file;
+        try {
+          const buffer = data.zipBuffer instanceof ArrayBuffer
+            ? data.zipBuffer
+            : data.zipBuffer?.buffer ?? null;
+
+          if (!buffer) { console.warn('[Cherry3D Bridge] No ArrayBuffer in payload.'); return; }
+
+          const blob = new Blob([buffer], { type: 'application/zip' });
+          file = new File([blob], data.fileName || 'game.zip', { type: 'application/zip' });
+        } catch (e) {
+          console.error('[Cherry3D Bridge] Failed to reconstruct File:', e);
+          return;
+        }
+
+        if (_injectZip) {
+          _injectZip(file);
+        } else {
+          // main.js not ready yet — queue it
+          window.__cherry3dPendingZip = file;
+        }
+      }
+
+      // BroadcastChannel — same-browser, any tab on the same origin
+      try {
+        const bc = new BroadcastChannel('cherry3d-inject');
+        bc.onmessage = (e) => receiveZipPayload(e.data);
+      } catch (e) {
+        console.warn('[Cherry3D Bridge] BroadcastChannel not available:', e);
+      }
+
+      // postMessage — direct window reference (when opener is the Game Generator)
+      window.addEventListener('message', (e) => {
+        // Only accept messages from the same origin
+        if (e.origin !== window.location.origin) return;
+        receiveZipPayload(e.data);
+      });
+
+      // Visual "injecting…" feedback — overrides the static drop overlay text
+      // when an auto-inject is in flight
+      window.__cherry3dShowInjecting = (fileName) => {
+        const title = document.querySelector('.drop-title');
+        const subtitle = document.querySelector('.drop-subtitle');
+        if (title)    title.textContent   = `Loading ${fileName}…`;
+        if (subtitle) subtitle.textContent = 'Injected from Game Generator';
+      };
+    })();
+  </script>
 </body>
 </html>
