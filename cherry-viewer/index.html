@@ -7,26 +7,75 @@
   <style>
     *, *::before, *::after { box-sizing: border-box; }
     html, body {
-      margin: 0;
-      padding: 0;
-      width: 100%;
-      height: 100%;
+      margin: 0; padding: 0;
+      width: 100%; height: 100%;
       overflow: hidden;
       background: #000;
+      font-family: ui-sans-serif, system-ui, sans-serif;
     }
+
     #viewer {
       position: absolute;
-      width: 100%;
-      height: 100%;
+      width: 100%; height: 100%;
       display: block;
       outline: none;
       touch-action: none;
       user-select: none;
     }
+
+    #drop-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #000;
+    }
+
+    #drop-overlay.drag-over { background: #080d18; }
+
+    #drop-overlay.hidden {
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.4s ease;
+    }
+
+    .drop-zone {
+      border: 2px dashed #2a2a2a;
+      border-radius: 16px;
+      padding: 60px 80px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 14px;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+    }
+
+    #drop-overlay.drag-over .drop-zone {
+      border-color: #fcea67;
+      background: rgba(252, 234, 103, 0.04);
+    }
+
+    .drop-icon { font-size: 48px; }
+    .drop-title { font-size: 18px; font-weight: 600; color: #e3e3e3; }
+    .drop-subtitle { font-size: 13px; color: #555; }
   </style>
 </head>
 <body>
+
+  <div id="drop-overlay">
+    <div class="drop-zone" id="drop-zone">
+      <div class="drop-icon">📦</div>
+      <div class="drop-title">Drop .zip here</div>
+      <div class="drop-subtitle">or click to browse</div>
+    </div>
+    <input type="file" id="file-input" accept=".zip" style="display:none" />
+  </div>
+
   <canvas id="viewer" tabindex="0"></canvas>
+
   <script type="module" src="./main.js"></script>
 </body>
 </html>
