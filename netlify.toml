@@ -1,17 +1,16 @@
 [build]
-  publish = "cherry-viewer-dist"
-  command = "npm run build"
+  publish = "."
   functions = "netlify/functions"
-
-[[headers]]
-  for = "/cherry-viewer/*"
-  [headers.values]
-    Cross-Origin-Opener-Policy = "same-origin"
-    Cross-Origin-Embedder-Policy = "require-corp"
 
 [functions]
   node_bundler = "esbuild"
   external_node_modules = ["sharp"]
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Cross-Origin-Opener-Policy = "same-origin"
+    Cross-Origin-Embedder-Policy = "require-corp"
 
 [[redirects]]
   from = "https://scanner.goldenspike.app"
@@ -19,176 +18,170 @@
   status = 200
   force = true
 
-  [[redirects]]
+[[redirects]]
   from = "https://sorting.goldenspike.app"
   to = "/sorting.html"
   status = 200
   force = true
 
-  [[redirects]]
+[[redirects]]
   from = "https://sort-scan.goldenspike.app"
   to = "/sort-scan.html"
   status = 200
   force = true
 
-  [[redirects]]
+[[redirects]]
   from = "https://design.goldenspike.app"
   to = "/design.html"
   status = 200
   force = true
 
-  [[redirects]]
+[[redirects]]
   from = "https://design-scan.goldenspike.app"
   to = "/design-scan.html"
   status = 200
   force = true
 
-  [[redirects]]
+[[redirects]]
   from = "https://weld-1.goldenspike.app"
   to = "/weld-1.html"
   status = 200
   force = true
 
-  [[redirects]]
+[[redirects]]
   from = "https://weld-scan-1.goldenspike.app"
   to = "/weld-scan-1.html"
   status = 200
   force = true
 
-  [[redirects]]
+[[redirects]]
   from = "https://shipping-1.goldenspike.app"
   to = "/shipping-1.html"
   status = 200
   force = true
 
-  [[redirects]]
+[[redirects]]
   from = "https://shipping-scan-1.goldenspike.app"
   to = "/shipping-scan-1.html"
   status = 200
   force = true
 
-  [[redirects]]
+[[redirects]]
   from = "https://shipping-2.goldenspike.app"
   to = "/shipping-2.html"
   status = 200
   force = true
 
-  [[redirects]]
+[[redirects]]
   from = "https://shipping-scan-2.goldenspike.app"
   to = "/shipping-scan-2.html"
   status = 200
   force = true
 
-  [[redirects]]
+[[redirects]]
   from = "https://shipping-3.goldenspike.app"
   to = "/shipping-3.html"
   status = 200
   force = true
 
-  [[redirects]]
+[[redirects]]
   from = "https://shipping-scan-3.goldenspike.app"
   to = "/shipping-scan-3.html"
   status = 200
   force = true
 
-  [[redirects]]
+[[redirects]]
   from = "https://assembly-1.goldenspike.app"
   to = "/assembly-1.html"
   status = 200
   force = true
 
-  [[redirects]]
+[[redirects]]
   from = "https://assembly-2.goldenspike.app"
   to = "/assembly-2.html"
   status = 200
   force = true
 
-  [[redirects]]
+[[redirects]]
   from = "https://assembly-3.goldenspike.app"
   to = "/assembly-3.html"
   status = 200
   force = true
 
-  [[redirects]]
+[[redirects]]
   from = "https://assembly-4.goldenspike.app"
   to = "/assembly-4.html"
   status = 200
   force = true
 
-  [[redirects]]
+[[redirects]]
   from = "https://assembly-scan-1.goldenspike.app"
   to = "/assembly-scan-1.html"
   status = 200
   force = true
 
-  [[redirects]]
+[[redirects]]
   from = "https://assembly-scan-2.goldenspike.app"
   to = "/assembly-scan-2.html"
   status = 200
   force = true
 
-  [[redirects]]
+[[redirects]]
   from = "https://assembly-scan-3.goldenspike.app"
   to = "/assembly-scan-3.html"
   status = 200
   force = true
 
-  [[redirects]]
+[[redirects]]
   from = "https://assembly-scan-4.goldenspike.app"
   to = "/assembly-scan-4.html"
   status = 200
   force = true
 
-  [[redirects]]
+[[redirects]]
   from = "https://design-1.goldenspike.app"
   to = "/design-1.html"
   status = 200
   force = true
 
-  [[redirects]]
+[[redirects]]
   from = "https://design-message.goldenspike.app"
   to = "/design-message.html"
   status = 200
   force = true
 
-  [[redirects]]
+[[redirects]]
   from = "https://design-message-1.goldenspike.app"
   to = "/design-message-1.html"
   status = 200
   force = true
 
-  [[redirects]]
+[[redirects]]
   from = "https://sorting-2.goldenspike.app"
   to = "/sorting-2.html"
   status = 200
   force = true
 
-  [[redirects]]
+[[redirects]]
   from = "https://sku.goldenspike.app"
   to = "/SKU_List_V1.html"
   status = 200
   force = true
 
-  [[redirects]]
+[[redirects]]
   from = "https://brites-vfx.goldenspike.app"
   to = "/brites-vfx.html"
   status = 200
   force = true
 
-  [[redirects]]
+[[redirects]]
   from = "https://listing-generator-1.goldenspike.app"
   to = "/Listing_Generator_1.html"
   status = 200
   force = true
 
-  [[redirects]]
+[[redirects]]
   from = "https://game-generator-1.goldenspike.app"
   to = "/Game_Generator_1.html"
-  status = 200
-  force = true
-
-  [[redirects]]
-  from = "https://cherry-viewer.goldenspike.app"
-  to = "/cherry-viewer/index.html"
   status = 200
   force = true
