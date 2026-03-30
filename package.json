@@ -16,7 +16,7 @@
     "@google-cloud/storage": "^7.16.0",
     "sharp": "^0.33.5",
     "jszip": "^3.10.1",
-    "@metavrse-inc/metavrse-lib": "latest"
+    "metavrse-lib": "latest"
   },
   "devDependencies": {},
   "keywords": [],
