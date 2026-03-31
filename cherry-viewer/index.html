@@ -78,80 +78,56 @@
 
   <script type="module" src="./main.js"></script>
 
-  <!-- ── Cherry3D Auto-Inject Bridge ──────────────────────────────────────
-       Listens for a zip payload from the Game Generator on the same origin.
-       Two channels are supported so either approach works:
-
-       1. BroadcastChannel "cherry3d-inject"  — works when BOTH pages are
-          open in the same browser (Game Generator opened this tab itself).
-       2. window.postMessage                   — fallback / direct reference.
-
-       The payload shape is:  { type: 'cherry3d-inject-zip', zipBuffer: ArrayBuffer, fileName: string }
+  <!-- ── Cherry3D Relay Bridge ─────────────────────────────────────────────
+       Uses a shared Promise so fetch and main.js registration can happen
+       in any order — whichever finishes last triggers the inject.
   ──────────────────────────────────────────────────────────────────────── -->
   <script>
-    // ── BroadcastChannel receiver ──────────────────────────────────────────
     (() => {
-      let _injectZip = null; // will be populated by main.js after it loads
+      // A promise that resolves to handleFile once main.js registers it
+      let _resolveHandleFile;
+      const handleFileReady = new Promise(resolve => { _resolveHandleFile = resolve; });
 
-      // Expose a hook that main.js can wire up once handleFile is ready
-      window.__cherry3dSetInjectHook = (fn) => {
-        _injectZip = fn;
-        // If a zip arrived before main.js was ready, fire it now
-        if (window.__cherry3dPendingZip) {
-          fn(window.__cherry3dPendingZip);
-          window.__cherry3dPendingZip = null;
-        }
-      };
+      // main.js calls this to hand over handleFile
+      window.__cherry3dSetInjectHook = (fn) => _resolveHandleFile(fn);
 
-      function receiveZipPayload(data) {
-        if (!data || data.type !== 'cherry3d-inject-zip') return;
-
-        let file;
-        try {
-          const buffer = data.zipBuffer instanceof ArrayBuffer
-            ? data.zipBuffer
-            : data.zipBuffer?.buffer ?? null;
-
-          if (!buffer) { console.warn('[Cherry3D Bridge] No ArrayBuffer in payload.'); return; }
-
-          const blob = new Blob([buffer], { type: 'application/zip' });
-          file = new File([blob], data.fileName || 'game.zip', { type: 'application/zip' });
-        } catch (e) {
-          console.error('[Cherry3D Bridge] Failed to reconstruct File:', e);
-          return;
-        }
-
-        if (_injectZip) {
-          _injectZip(file);
-        } else {
-          // main.js not ready yet — queue it
-          window.__cherry3dPendingZip = file;
-        }
+      // Parse hash params
+      function parseRelayHash() {
+        const hash = window.location.hash.slice(1);
+        if (!hash || !hash.includes('relay=')) return null;
+        const params = new URLSearchParams(hash);
+        const url  = params.get('relay');
+        const name = params.get('file') || 'game.zip';
+        return url ? { url, name } : null;
       }
 
-      // BroadcastChannel — same-browser, any tab on the same origin
-      try {
-        const bc = new BroadcastChannel('cherry3d-inject');
-        bc.onmessage = (e) => receiveZipPayload(e.data);
-      } catch (e) {
-        console.warn('[Cherry3D Bridge] BroadcastChannel not available:', e);
-      }
+      const relay = parseRelayHash();
+      if (!relay) return;
 
-      // postMessage — direct window reference (when opener is the Game Generator)
-      window.addEventListener('message', (e) => {
-        // Only accept messages from the same origin
-        if (e.origin !== window.location.origin) return;
-        receiveZipPayload(e.data);
+      // Show loading state immediately
+      const titleEl    = document.querySelector('.drop-title');
+      const subtitleEl = document.querySelector('.drop-subtitle');
+      if (titleEl)    titleEl.textContent    = `Fetching ${relay.name}…`;
+      if (subtitleEl) subtitleEl.textContent = 'Loading from Game Generator';
+
+      // Fetch the zip AND wait for handleFile — both run in parallel,
+      // inject fires only when both are ready
+      Promise.all([
+        fetch(relay.url).then(res => {
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          return res.blob();
+        }).then(blob => new File([blob], relay.name, { type: 'application/zip' })),
+        handleFileReady
+      ]).then(([file, handleFile]) => {
+        if (titleEl)    titleEl.textContent    = `Loading ${file.name}…`;
+        if (subtitleEl) subtitleEl.textContent = 'Injecting into viewer…';
+        history.replaceState(null, '', window.location.pathname);
+        handleFile(file);
+      }).catch(err => {
+        console.error('[Cherry3D Relay]', err);
+        if (titleEl)    titleEl.textContent    = '⚠ Relay failed';
+        if (subtitleEl) subtitleEl.textContent = err.message;
       });
-
-      // Visual "injecting…" feedback — overrides the static drop overlay text
-      // when an auto-inject is in flight
-      window.__cherry3dShowInjecting = (fileName) => {
-        const title = document.querySelector('.drop-title');
-        const subtitle = document.querySelector('.drop-subtitle');
-        if (title)    title.textContent   = `Loading ${fileName}…`;
-        if (subtitle) subtitle.textContent = 'Injected from Game Generator';
-      };
     })();
   </script>
 </body>
