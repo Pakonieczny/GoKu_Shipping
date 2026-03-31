@@ -112,8 +112,12 @@
 
       // Fetch the zip AND wait for handleFile — both run in parallel,
       // inject fires only when both are ready
+      // Fetch via the Netlify proxy on the Game Generator's origin —
+      // this avoids the Firebase Storage CORS restriction entirely.
+      const PROXY_URL = 'https://game-generator-1.goldenspike.app/.netlify/functions/cherryRelay';
+
       Promise.all([
-        fetch(relay.url).then(res => {
+        fetch(`${PROXY_URL}?path=${encodeURIComponent(relay.url)}`).then(res => {
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           return res.blob();
         }).then(blob => new File([blob], relay.name, { type: 'application/zip' })),

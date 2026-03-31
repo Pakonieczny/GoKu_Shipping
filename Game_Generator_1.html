@@ -7376,15 +7376,10 @@ RULES FOR ALL PIPELINE STAGES:
             task.on('state_changed', null, reject, resolve);
           });
 
-          const downloadURL = await getDownloadURL(relayRef);
-
-          // Auto-delete after 5 minutes
-          setTimeout(async () => {
-            try { await deleteObject(relayRef); } catch (e) {}
-          }, 5 * 60 * 1000);
-
-          // Open viewer with relay URL in hash — no cross-origin messaging needed
-          const viewerURL = `${VIEWER_ORIGIN}/#relay=${encodeURIComponent(downloadURL)}&file=${encodeURIComponent(fileName)}`;
+          // Pass the storage PATH to the viewer — it fetches via the
+          // Netlify proxy (cherryRelay.js) which avoids CORS entirely.
+          // No need to call getDownloadURL at all.
+          const viewerURL = `${VIEWER_ORIGIN}/#relay=${encodeURIComponent(relayKey)}&file=${encodeURIComponent(fileName)}`;
           window.open(viewerURL, 'cherry3d-viewer');
 
           showCherryToast('🚀 Cherry3D Viewer opening', fileName, 5000);
