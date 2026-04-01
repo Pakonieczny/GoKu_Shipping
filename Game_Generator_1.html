@@ -4879,6 +4879,44 @@ Original user request for context: ${basePrompt}`;
       return imageEntries;
     }
 
+    function buildLockedTextureInfoForEntry(entryPath, lockedTextureInfoByEntryPath = null) {
+      const entryDir = getZipEntryDir(entryPath);
+      const lockedMeta = lockedTextureInfoByEntryPath instanceof Map
+        ? (lockedTextureInfoByEntryPath.get(entryPath) || null)
+        : null;
+      if (!lockedMeta) {
+        return {
+          colormapFile: null,
+          colormapStagedPath: null,
+          confidence: 'NONE',
+          detectionRule: 'locked-roster-none',
+          thumbnailFile: null,
+          thumbnailEntryPath: null,
+          colormapEntryPath: null,
+          objectFolder: entryDir
+        };
+      }
+      return {
+        colormapFile: lockedMeta.colormapFile || null,
+        colormapStagedPath: lockedMeta.colormapStagedPath || null,
+        confidence: lockedMeta.colormapConfidence || (lockedMeta.colormapEntryPath ? 'HIGH' : 'NONE'),
+        detectionRule: lockedMeta.colormapDetectionRule || (lockedMeta.colormapEntryPath ? 'locked-at-index' : 'locked-roster-none'),
+        thumbnailFile: lockedMeta.thumbFile || null,
+        thumbnailEntryPath: lockedMeta.thumbEntryPath || null,
+        colormapEntryPath: lockedMeta.colormapEntryPath || null,
+        objectFolder: entryDir
+      };
+    }
+
+    function zipHasMtlFile(zipObj) {
+      for (const entryPath of Object.keys(zipObj.files || {})) {
+        const entry = zipObj.files[entryPath];
+        if (!entry || entry.dir || entryPath.includes('__MACOSX')) continue;
+        if (entryPath.toLowerCase().endsWith('.mtl')) return true;
+      }
+      return false;
+    }
+
     // resolveZipTextureInfoForEntry — uses per-object classification from classifyZipContents
     // when available (primary path), falling back to directory-scope search for non-pack zips.
     function resolveZipTextureInfoForEntry(zipObj, entryPath, zipClassification = null) {
@@ -5252,13 +5290,17 @@ Original user request for context: ${basePrompt}`;
       });
     }
 
-    async function analyzeZipThreeAssets(zipObj, asset, allowedMeshNames = null) {
+    async function analyzeZipThreeAssets(zipObj, asset, allowedMeshNames = null, lockedTextureInfoByEntryPath = null) {
       const analyses = [];
       const recognizedEntries = [];
       const normalizedAllowed = allowedMeshNames instanceof Set
         ? new Set(Array.from(allowedMeshNames).map(name => normalizeAssetLookupName(name)))
         : null;
-      const zipClassification = classifyZipContents(zipObj);
+      const useLockedTextureInfo = lockedTextureInfoByEntryPath instanceof Map;
+      const zipClassification = useLockedTextureInfo ? null : classifyZipContents(zipObj);
+      const hasMtlFile = useLockedTextureInfo
+        ? zipHasMtlFile(zipObj)
+        : Boolean(zipClassification?.hasMtlFile);
 
       for (const relativePath of Object.keys(zipObj.files)) {
         const entry = zipObj.files[relativePath];
@@ -5276,7 +5318,9 @@ Original user request for context: ${basePrompt}`;
 
         recognizedEntries.push(relativePath);
         try {
-          const textureInfo = resolveZipTextureInfoForEntry(zipObj, relativePath, zipClassification);
+          const textureInfo = useLockedTextureInfo
+            ? buildLockedTextureInfoForEntry(relativePath, lockedTextureInfoByEntryPath)
+            : resolveZipTextureInfoForEntry(zipObj, relativePath, zipClassification);
 
           let analysis = null;
           if (lowerPath.endsWith('.obj')) {
@@ -5291,7 +5335,7 @@ Original user request for context: ${basePrompt}`;
               format: 'obj',
               objText,
               textureInfo,
-              hasMtlFile: zipClassification.hasMtlFile
+              hasMtlFile
             });
           } else {
             const blob = await entry.async('blob');
@@ -5307,7 +5351,7 @@ Original user request for context: ${basePrompt}`;
                 format: lowerPath.endsWith('.glb') ? 'glb' : 'gltf',
                 animationCount: Array.isArray(gltf.animations) ? gltf.animations.length : 0,
                 textureInfo,
-                hasMtlFile: zipClassification.hasMtlFile
+                hasMtlFile
               });
             } finally {
               URL.revokeObjectURL(objectUrl);
@@ -6106,6 +6150,7 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
       let modelAnalysisList = [];
       let rosterSelected3DNames = null;
       let rosterSelected3DByZip = null;
+      let rosterLockedTextureByZip = null;
       const cachedModelAnalysis = (repairAttempt > 0 || parseErrorRetry > 0) ? getCachedModelAnalysis(currentProject) : [];
       if (cachedModelAnalysis.length > 0) {
         modelAnalysisList = cachedModelAnalysis;
@@ -6194,11 +6239,25 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
                   .filter(name => /\.(obj|glb|gltf|fbx|c3b)$/i.test(name))
               );
               rosterSelected3DByZip = new Map();
+              rosterLockedTextureByZip = new Map();
               rosterObjects3D.forEach((asset) => {
                 const zipName = asset?.sourceZip || zipNameFromRosterDocName(asset?.sourceRosterDocument || '');
                 if (!zipName) return;
                 if (!rosterSelected3DByZip.has(zipName)) rosterSelected3DByZip.set(zipName, new Set());
                 rosterSelected3DByZip.get(zipName).add(asset.assetName);
+
+                if (asset?.objEntryPath) {
+                  if (!rosterLockedTextureByZip.has(zipName)) rosterLockedTextureByZip.set(zipName, new Map());
+                  rosterLockedTextureByZip.get(zipName).set(asset.objEntryPath, {
+                    colormapFile: asset.colormapFile || null,
+                    colormapStagedPath: asset.colormapStagedPath || null,
+                    colormapConfidence: asset.colormapConfidence || 'NONE',
+                    colormapDetectionRule: asset.colormapDetectionRule || (asset.colormapEntryPath ? 'locked-at-index' : 'locked-roster-none'),
+                    colormapEntryPath: asset.colormapEntryPath || null,
+                    thumbFile: asset.thumbFile || null,
+                    thumbEntryPath: asset.thumbEntryPath || null
+                  });
+                }
               });
               // NOTE: approvedRosterContext is intentionally NOT set here.
               // The backend (claudeCodeProxy-background.js) loads ai_asset_roster_approved.json
@@ -6323,7 +6382,8 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
                             if (entry.dir || relativePath.includes('__MACOSX')) continue;
                             entries.push(relativePath);
                         }
-                        const zipAnalysis = await analyzeZipThreeAssets(zipObj, a, selectedEntriesForZip);
+                        const lockedTextureInfoForZip = rosterLockedTextureByZip?.get(a.name) || null;
+                        const zipAnalysis = await analyzeZipThreeAssets(zipObj, a, selectedEntriesForZip, lockedTextureInfoForZip);
                         if (zipAnalysis.analyses.length > 0) {
                             modelAnalysisList.push(...zipAnalysis.analyses);
                             zipAnalysis.analyses.forEach((analysis) => {
