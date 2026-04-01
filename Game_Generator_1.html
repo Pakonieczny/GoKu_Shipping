@@ -2023,10 +2023,13 @@ This will permanently remove all associated files and Firebase folders for this 
                     const entryName = relativePath.split('/').pop();
                     if (!entryName) continue;
                     const lowerEntry = entryName.toLowerCase();
+                    // Only register 3D mesh files from ZIPs. Bundled textures/images inside
+                    // object_zips are not standalone files in models/ — including them creates
+                    // phantom manifest entries for files that don't actually exist on their own.
+                    // Colormap textures are extracted and renamed into models/ by copyRosterAssetsToModels
+                    // and get picked up correctly by the models/ scan above.
                     if (assetExtensions.some(ext => lowerEntry.endsWith(ext))) {
                         truthMap.set(entryName, 'object');
-                    } else if (imageAudioExts.some(ext => lowerEntry.endsWith(ext))) {
-                        truthMap.set(entryName, ['.mp3','.wav','.ogg','.m4a'].some(ext => lowerEntry.endsWith(ext)) ? 'audio' : 'image');
                     }
                 }
             } catch(e) {
@@ -2395,8 +2398,11 @@ This will permanently remove all associated files and Firebase folders for this 
             if (stagedMeta?.sourceColormapEntryPath != null) assignIfDifferent(nextAsset, 'sourceColormapEntryPath', stagedMeta.sourceColormapEntryPath);
             if (stagedMeta?.sourceObjectFolder != null) assignIfDifferent(nextAsset, 'sourceObjectFolder', stagedMeta.sourceObjectFolder);
             const colormapManifestMeta = nextAsset.colormapFile ? manifestIndex.get(String(nextAsset.colormapFile).toLowerCase()) : null;
+            const colormapNextLocation = colormapManifestMeta?.type === 'object'
+                ? 'models-folder-child'
+                : (colormapManifestMeta?.key ? 'root-level' : '');
             assignIfDifferent(nextAsset, 'colormapManifestKey', colormapManifestMeta?.key || '');
-            assignIfDifferent(nextAsset, 'colormapManifestLocation', colormapManifestMeta?.key ? 'root-level' : '');
+            assignIfDifferent(nextAsset, 'colormapManifestLocation', colormapNextLocation);
             if (!isParticle && geometryAnalysis) {
                 assignIfDifferent(nextAsset, 'geometryAnalysis', geometryAnalysis);
                 if (geometryAnalysis?.meshCount != null) assignIfDifferent(nextAsset, 'meshCount', geometryAnalysis.meshCount);
@@ -2417,8 +2423,11 @@ This will permanently remove all associated files and Firebase folders for this 
             assignIfDifferent(nextAsset, 'manifestKey', nextKey);
             assignIfDifferent(nextAsset, 'manifestLocation', nextLocation);
             const colormapManifestMeta = nextAsset.colormapFile ? manifestIndex.get(String(nextAsset.colormapFile).toLowerCase()) : null;
+            const colormapNextLocation = colormapManifestMeta?.type === 'object'
+                ? 'models-folder-child'
+                : (colormapManifestMeta?.key ? 'root-level' : '');
             assignIfDifferent(nextAsset, 'colormapManifestKey', colormapManifestMeta?.key || '');
-            assignIfDifferent(nextAsset, 'colormapManifestLocation', colormapManifestMeta?.key ? 'root-level' : '');
+            assignIfDifferent(nextAsset, 'colormapManifestLocation', colormapNextLocation);
             if (geometryAnalysis) {
                 assignIfDifferent(nextAsset, 'geometryAnalysis', geometryAnalysis);
                 if (geometryAnalysis?.meshCount != null) assignIfDifferent(nextAsset, 'meshCount', geometryAnalysis.meshCount);
