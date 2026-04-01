@@ -6441,7 +6441,7 @@ ${buildRepairTargetsContext(repairTargets)}`
 Do NOT plan new tranches. Do NOT redesign the game. Fix ONLY the exact targets listed below.
 
 NOTE: The backend injects two mandatory instruction layers from Firebase:
-1. The immutable Cherry3D Scaffold v18 (the required foundation for all games)
+1. The immutable Cherry3D Scaffold v19 (the required foundation for all games)
 2. The complementary Cherry3D SDK / Engine Reference
 
 When they overlap:
@@ -6455,6 +6455,9 @@ CRITICAL SCAFFOLD NON-NEGOTIABLES IN EFFECT DURING REPAIR:
 - Non-Negotiable 15: KINEMATIC actors moved manually require dual update — visual obj.position AND collider setPosition together via setKinematicDualPose().
 - Non-Negotiable 16: DYNAMIC visuals do NOT auto-sync. Mirror via getMotionState() every frame or use syncDynamicVisualFromRigidBody() if the visual tracks a DYNAMIC body.
 - Non-Negotiable 19: Tile-centering/snap correction may ONLY adjust the perpendicular (non-movement) axis. Use computePerpendicularCorrection(). Correcting the movement axis stalls the actor.
+- Non-Negotiable 20: onDestroy MUST remove every particle template via the gameState.particleTemplates registry loop — never a hand-written key list. Every template registered through registerParticleTemplate() is automatically tracked and covered.
+- Non-Negotiable 21: Two ScenePools sharing the same asset ID and instance parent MUST be declared as one ScenePool with a single maxInstances cap, aliased to both names. In onDestroy call pool.reset() — NOT pool.purge(). purge() writes obj.position to freed WASM handles → OOB. canAllocate() MUST be checked before every new addObject call for any capped pool.
+- Non-Negotiable 22: All burst emitter creation MUST live inside a named _createBurstEmitters() function called after the registration retry flush. Never call createParticleEmitter() for burst emitters before template registration is confirmed — particlesettings.object will be null.
 - Rule 35 ENGINE AUTO-ROTATION: Any object whose position changes between frames receives automatic visual rotation from the engine. Objects requiring fixed orientation during flight (projectiles, thrown objects) MUST set obj.rotate = [0,0,0] EVERY frame — not just once at spawn.
 
 Your output will be scanned by anti-pattern validators that reject code containing known fatal patterns
@@ -6509,7 +6512,7 @@ SINGLE-PASS TRANCHED BUILD PIPELINE
 
 You are preparing a build request for a SINGLE-PASS planning pipeline.
 The backend planner reads this request plus project files plus two Firebase-hosted instruction layers:
-1. The immutable Cherry3D Scaffold v18
+1. The immutable Cherry3D Scaffold v19
 2. The complementary Cherry3D SDK / Engine Reference
 It then splits the build into sequential tranches. No intermediate architecture synthesis step.
 
@@ -6519,7 +6522,7 @@ ENVIRONMENT CONSTRAINTS (platform facts handled by backend):
 3. Main logic file is models/2. HTML overlay is models/23.
 4. Output complete file contents, not patches or diffs.
 5. Preserve accumulated code from prior tranches.
-6. The immutable Scaffold v18 is injected by backend and is the required base architecture.
+6. The immutable Scaffold v19 is injected by backend and is the required base architecture.
 7. The SDK / Engine Reference is injected by backend for engine facts and uncertainty resolution.
 8. Anti-pattern validators mechanically enforce engine rules after each tranche.
 
@@ -6538,13 +6541,10 @@ PLANNING REQUIREMENTS:
 - MATERIAL REGISTRY + SLOT CONTRACT (CRASH PREVENTION): This applies ONLY to non-primitive scanned 3D assets surfaced in the SCANNED 3D EXTENTS block. Every such asset carries a slotCount (fallback meshCount only if slotCount is unavailable). For every such asset, the tranche that applies textures MUST register the asset slotCount, define a material whose albedo_texture is the resolved numeric colormap manifest key from assets.json, and apply that material key across EVERY valid slot N from 0 to slotCount-1 using gameState._applyMat or an equivalent slot-safe scaffold path. material_file must contain the registered material key, never the staged colormap path. If the asset is textured scene geometry, default to createInstance with a registered instance parent, but if working-game law proves that per-object visual overrides do not survive instancing for that pool, use createObject consistently for that pool instead. Cherry3D system primitives skip this workflow entirely. A tranche plan that writes raw paths into material_file/albedo_texture or ignores slotCount for a non-primitive scanned asset is a planning defect.
 - PARTICLE TEXTURE APPLICATION CONTRACT: Approved particle textures follow the scaffold particle-template path, not the non-primitive scene-object material registry path. Plan a Foundation-B tranche that declares BOTH PARTICLE_TEX_PATHS[effectName] = '<staged Firebase path>' and gameState.particleTextureIds[effectName] = '<manifest key>' for every approved particleEffectTarget. Then, in the tranche that registers particle templates, require registerParticleTemplate(... extraData: { material_file: PARTICLE_TEX_PATHS[effectName] }) or an equivalent direct particle slot material_file assignment. A tranche plan that only declares gameState.particleTextureIds without wiring material_file onto the particle template is a planning defect.
 - HTML UI PLACEMENT RULE: When a tranche creates or modifies visible HTML UI / HUD / overlay elements in models/23 or localUI, NEVER place UI in the top-left or top-right corners of the screen. It is always better to move UI components slightly inward toward the center instead of hugging the left or right edges. Prefer top-center, bottom-center, or clearly inset side placements. Any side-aligned UI must use a visible inset margin so it reads as center-shifted rather than edge-anchored. Corner-hugging or hard edge-hugging UI is a planning defect.
-- CHILD RIGIDBODY LOCAL-SPACE POSITION (Scaffold Non-Negotiable 13): rbPosition on a child RigidBody is LOCAL-SPACE. It must stay [0,0,0] unless a deliberate local offset is truly intended. Passing world-space coordinates into a child rbPosition causes POSITION DOUBLING. Every tranche attaching a RigidBody as a child must carry this constraint explicitly.
-- DYNAMIC VISUAL AUTO-SYNC (Scaffold Non-Negotiable 16): DYNAMIC visuals do NOT auto-sync with their rigidbody in all cases. Any tranche creating DYNAMIC bodies whose visual must track them MUST plan explicit getMotionState() mirroring every frame in Stage 3 of onRender, or use the scaffold helper syncDynamicVisualFromRigidBody(). Assuming auto-sync is a planning defect.
-- TILE-CENTERING AXIS LAW (Scaffold Non-Negotiable 19): Snap / tile-centering correction may ONLY adjust the perpendicular (non-movement) axis. For Z-forward movement only X may be corrected; for X-forward movement only Z may be corrected. Use the scaffold helper computePerpendicularCorrection(movementAxis, currentPos, targetPos, gain). Correcting the movement axis itself is a hard defect.
 - Each tranche must be assigned 1-2 expert agents from this roster:
 ${EXPERT_AGENTS_JSON}
 
-SCAFFOLD NON-NEGOTIABLES (v18 — enforced by backend, must also be reflected in planning):
+SCAFFOLD NON-NEGOTIABLES (v19 — enforced by backend, must also be reflected in planning):
 - Non-Negotiable 6: Never pass a parent as the addObject arg for instanced objects. Engine resolves parent from ikey.
 - Non-Negotiable 10: Root scene objects ignore .rotation/.rotate. Directional characters must use scaleFlipX().
 - Non-Negotiable 11: Every movable controller must declare exactly one movementMode: 'physics_driven' or 'direct_integration'. Never mix updateInput() velocity writes with main-thread position integration for the same actor.
@@ -6554,6 +6554,9 @@ SCAFFOLD NON-NEGOTIABLES (v18 — enforced by backend, must also be reflected in
 - Non-Negotiable 16: DYNAMIC visuals do NOT auto-sync. Every tranche creating DYNAMIC bodies whose visual must track must explicitly plan getMotionState() mirroring in Stage 3, or use syncDynamicVisualFromRigidBody(). Assuming auto-sync is a planning defect.
 - Non-Negotiable 18: Pointer-event toggling belongs on the inner game-root element (gameState._gameRootEl), never on the raw overlay wrapper.
 - Non-Negotiable 19: Tile-centering/snap correction may ONLY adjust the perpendicular (non-movement) axis. For Z-forward movement correct only X; for X-forward movement correct only Z. Use computePerpendicularCorrection(movementAxis, ...). Correcting the movement axis is a hard defect.
+- Non-Negotiable 20: onDestroy MUST remove every particle template via the gameState.particleTemplates registry loop — never a hand-written key list. Every template registered through registerParticleTemplate() is automatically tracked and covered. Any tranche registering game-specific particle templates must declare teardown coverage in its safetyChecks.
+- Non-Negotiable 21: Two ScenePools sharing the same asset ID and instance parent MUST be declared as one ScenePool with a single maxInstances cap, aliased to both variable names. Declaring two separate ScenePool instances for one shared WASM asset is FORBIDDEN. In onDestroy call pool.reset() on every ScenePool — NOT pool.purge(). purge() writes obj.position to WASM handles freed after teardown → OOB. reset() is JS-only and always safe. canAllocate() MUST be checked before every new addObject call for any capped pool.
+- Non-Negotiable 22: All burst emitter creation MUST be placed inside a named _createBurstEmitters() function. Call it immediately after the registration retry flush if no particle template retries were queued, or defer via queueBuildStep if retries were needed. Never call createParticleEmitter() for burst emitters before the retry flush completes. Direct Module.ProjectManager.addObject calls for instance parents or particle templates outside of registerInstanceParent / registerParticleTemplate are FORBIDDEN.
 - Rule 35 ENGINE AUTO-ROTATION: The Cherry3D engine automatically applies visual rotation to ANY object whose position changes between frames. Objects that must hold a fixed orientation during flight (projectiles, knives, balls) must set obj.rotate = [0,0,0] EVERY frame inside their update — once at spawn is not enough.
 
 TRANCHE STRUCTURE:

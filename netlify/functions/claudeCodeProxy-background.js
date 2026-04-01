@@ -1125,7 +1125,7 @@ async function chainToSelf(payload) {
    These are scaffold-level facts that the Master Prompt author
    should not have to write — they apply to every Cherry3D game. */
 const SCAFFOLD_VALIDATION_CONSTRAINTS = `
-KNOWN ENGINE CONSTRAINTS (Cherry3D scaffold v18):
+KNOWN ENGINE CONSTRAINTS (Cherry3D scaffold v19):
 These apply to every game regardless of what the Master Prompt says.
 Factor them into your simulations where relevant.
 
@@ -1201,6 +1201,34 @@ Factor them into your simulations where relevant.
    along X, only Z may be corrected. If a spec applies centering
    correction to the same axis the player is moving along, note a
    tileSnapAxisViolationRisk.
+
+13. SHARED WASM ASSET CAP (Non-Negotiable 21): The WASM engine enforces one
+   hard instance cap per asset globally. Two ScenePools sharing the same
+   asset ID and instance parent compete against that single cap. If the spec
+   describes two separate pool types using the same geometry for the same
+   role (e.g. road tiles and rail tiles both using the same roadStraight
+   asset), their combined addObject calls can exceed the cap mid-gameplay
+   → OOB crash. Note a sharedAssetCapRisk. They must be declared as a
+   single aliased pool with one maxInstances cap.
+
+14. PARTICLE TEMPLATE CROSS-SESSION LEAK (Non-Negotiable 20): Every particle
+   template registered in onInit is a live WASM scene object. The engine's
+   info worker continues posting position/state updates to their handles
+   after session end. If a game registers custom particle templates (any
+   ptex_* or game-specific templates beyond particleBillboard/particleSphere)
+   but has no explicit teardown mechanism for ALL of them in the session-end
+   path, note a particleTemplateleakRisk. Templates must be removed via the
+   gameState.particleTemplates registry loop in onDestroy — never via a
+   hand-written key list.
+
+15. ASSET READINESS RACE (Non-Negotiable 22): onInit fires before the WASM
+   engine has necessarily finished loading every project asset. Calling
+   registerInstanceParent or registerParticleTemplate with an asset ID that
+   isn't loaded yet dereferences a null pointer → OOB. If the spec registers
+   a large number of instance parents or particle templates at startup with
+   no readiness check or retry mechanism, note an assetReadinessRaceRisk.
+   Burst emitter creation must be deferred past the retry flush via
+   _createBurstEmitters() so particlesettings.object is never null.
 `;
 
 /* ── Call 1: Extract game-specific simulation scenarios ─────── */
@@ -1908,6 +1936,12 @@ PLANNING RULES:
 28. KINEMATIC DUAL UPDATE (Non-Negotiable 15): KINEMATIC actors moved manually require a dual update — both the visual obj.position AND the collider setPosition must be updated together. The scaffold provides setKinematicDualPose(visualObj, rigidbodyObj, position) for this. Any tranche moving a KINEMATIC actor must explicitly plan the dual update.
 29. STATIC COLLISION FOR FLOORS (Non-Negotiable 14): Every floor, track, or ground surface that must block a DYNAMIC actor requires a STATIC rigidbody. A visual-only mesh provides zero collision resistance. Any tranche building ground geometry must explicitly plan a STATIC rigidbody for each blocking surface.
 
+30. PARTICLE TEMPLATE TEARDOWN (Non-Negotiable 20): onDestroy MUST remove every particle template via the gameState.particleTemplates registry loop — never via a hand-written key list. Every template registered through registerParticleTemplate() is automatically tracked and covered by that loop. Any tranche that registers game-specific particle templates (beyond the two scaffold defaults) must declare teardown coverage in its safetyChecks. A tranche that modifies onDestroy must not introduce or preserve a hand-written particle key list — that pattern is FORBIDDEN.
+
+31. SHARED ASSET POOL UNIFICATION (Non-Negotiable 21): If two pool types use the same asset ID and the same instance parent, they MUST be declared as one ScenePool with a single maxInstances cap, aliased to both variable names. Declaring two separate ScenePool instances for one shared WASM asset is FORBIDDEN. canAllocate() MUST be checked before every new addObject call for any capped pool — if canAllocate() returns false, skip allocation entirely rather than calling addObject. In onDestroy (both normal and page-unload paths), every ScenePool MUST call pool.reset() — NOT pool.purge(). purge() parks objects by writing obj.position to handles that are freed after WASM teardown → OOB. reset() is a JS-only handle drop and is always safe in onDestroy.
+
+32. ASSET READINESS AND BURST EMITTER DEFERRAL (Non-Negotiable 22): All burst emitter creation MUST be placed inside a named _createBurstEmitters() function. _createBurstEmitters() is called immediately after the registration retry flush if no particle template retries were queued, or deferred as a queueBuildStep if retries were needed — ensuring particlesettings.object is never null when a burst emitter is created. Any tranche that creates burst emitters must plan them inside _createBurstEmitters() and must not call createParticleEmitter() for burst emitters before the retry flush is confirmed complete. Direct Module.ProjectManager.addObject calls for instance parents or particle templates outside of registerInstanceParent / registerParticleTemplate are FORBIDDEN.
+
 ${buildMasterPromptLayoutGuidance(effectivePrompt)}
 
 ${REQUIRED_TRANCHE_VALIDATION_BLOCK}
@@ -2171,6 +2205,9 @@ OUTPUT RULES:
 - ENGINE AUTO-ROTATION FROM VELOCITY (Rule 35): The Cherry3D engine automatically applies visual rotation to ANY object whose position changes between frames. Any object that must hold a fixed orientation during flight (projectiles, thrown objects, balls, knives) MUST set obj.rotate = [0,0,0] EVERY frame inside its flight-update function. Setting rotation once at spawn is not sufficient — the engine overwrites it each frame. For objects orbiting a rotating parent, compute worldAngle = localAngle + parentAngle each frame and set obj.rotate accordingly.
 - STATIC COLLISION FOR FLOORS (Non-Negotiable 14): Every floor, track, or ground surface that must block a DYNAMIC actor requires a STATIC rigidbody. Visual-only geometry provides zero collision resistance. Use createStaticGroundBody() or createRigidBody() with motionType='STATIC'.
 - KINEMATIC DUAL UPDATE (Non-Negotiable 15): KINEMATIC actors moved manually require a dual update — visual obj.position AND collider setPosition must be updated together every move. Use the scaffold helper setKinematicDualPose(visualObj, rigidbodyObj, position). Updating only one side leaves the collider desynced from the visual.
+- PARTICLE TEMPLATE TEARDOWN (Non-Negotiable 20): If this tranche modifies onDestroy, it MUST tear down particle templates via the gameState.particleTemplates registry loop — never via a hand-written key list. The loop covers every key registered through registerParticleTemplate() automatically. Adding or preserving a hard-coded particle key list in onDestroy is a FORBIDDEN pattern.
+- SHARED ASSET POOL UNIFICATION (Non-Negotiable 21): Two ScenePools sharing the same asset ID and instance parent MUST be declared as one ScenePool with a single maxInstances cap, aliased to both variable names. In onDestroy (both normal and page-unload paths), call pool.reset() on every ScenePool — NOT pool.purge(). purge() writes obj.position to WASM handles that are freed after teardown → OOB. reset() is JS-only and always safe. canAllocate() MUST be checked before every new addObject call for any capped pool; if false, skip the allocation entirely.
+- BURST EMITTER DEFERRAL (Non-Negotiable 22): All burst emitter creation MUST live inside a named _createBurstEmitters() function. Call it immediately after the registration retry flush when no particle template retries were queued, or defer it via queueBuildStep when retries were needed. Never call createParticleEmitter() for burst emitters inline before the retry flush completes — particlesettings.object will be null if the template registration failed. Direct Module.ProjectManager.addObject calls for instance parents or particle templates outside of registerInstanceParent / registerParticleTemplate are FORBIDDEN.
 
 VALIDATOR STATUS:
 - Validation manifest requirements are temporarily disabled.
