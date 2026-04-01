@@ -344,7 +344,6 @@ SELECTION RULES:
 - Pick the candidate thumbnail that most closely resembles the reference in shape, silhouette, style, object category, and final in-game readability.
 - Prefer richer authored objects over obvious placeholder or low-detail geometry when both satisfy the role.
 - Pick exactly one winner. State which candidate image number (1-based, not counting the reference) you chose and why.
-- Do NOT infer or default a colormap filename here. Colormap resolution is handled later by the extract stage from the selected asset's zip contents.
 
 Respond ONLY with a valid JSON object. No markdown, no fences, no preamble.
 
@@ -481,7 +480,13 @@ exports.handler = async (event) => {
     // Zip structure (derived from CSV new_category column):
     //   {TopLevel}.zip / {SubCategory} / {asset_name} / {asset_name}.obj
     //                                                  / {asset_name}.jpg  ← thumbnail
-    //                                                  / colormap.jpg
+    //                                                  / colormap.jpg      ← texture (locked here)
+    //
+    // COLORMAP LOCK: Any file whose name contains "colormap" (case-insensitive) is
+    // unconditionally treated as that object's texture and locked into the roster as
+    // colormapEntryPath (full zip path) at index time. This is the ONE place in the
+    // entire pipeline where the obj↔texture match is established. Extract uses the
+    // locked colormapEntryPath directly — no re-discovery, no classification logic.
     //
     // CSV new_category = "Architecture_Modular/Floors_Stairs_Pillars"
     //   → zip file:      Architecture_Modular.zip
@@ -494,7 +499,8 @@ exports.handler = async (event) => {
     // with their full CSV category. Stage A filters the in-memory array
     // per-requirement — no repeat zip downloads per requirement.
     //
-    // objectAssets: { objFile, thumbFile, b64, mimeType, sourceZip, assetName, category }
+    // objectAssets: { objFile, objEntryPath, thumbFile, colormapFile, colormapEntryPath,
+    //                 colormapConfidence, b64, mimeType, sourceZip, assetName, category }
 
     console.log(`[ROSTER-AB] Scanning global 3D object mega-zips from ${GLOBAL_ASSET_BASE}/`);
     const objectAssets = [];
@@ -529,7 +535,7 @@ exports.handler = async (event) => {
 
         // Group zip entries by "SubCategory/asset_name" folder key.
         // Internal path: {SubCategory}/{asset_name}/{filename}
-        // Map< "SubCategory/asset_name" → { subCategory, assetFolder, objEntry, thumbEntry } >
+        // Map< "SubCategory/asset_name" → { subCategory, assetFolder, objEntry, thumbEntry, colormapEntry } >
         const assetFolderMap = new Map();
 
         // Detect whether the zip has a redundant root folder matching the zip name.
@@ -565,18 +571,21 @@ exports.handler = async (event) => {
 
           const folderKey = `${subCategory}/${assetFolder}`;
           if (!assetFolderMap.has(folderKey)) {
-            assetFolderMap.set(folderKey, { subCategory, assetFolder, objEntry: null, thumbEntry: null });
+            assetFolderMap.set(folderKey, { subCategory, assetFolder, objEntry: null, thumbEntry: null, colormapEntry: null });
           }
           const entry = assetFolderMap.get(folderKey);
 
           if (fileLower.endsWith(".obj") && !entry.objEntry) {
             entry.objEntry = { entryPath, fileName };
-          } else if (
-            !fileLower.includes("colormap") &&
-            [".png", ".jpg", ".jpeg", ".webp"].some(e => fileLower.endsWith(e)) &&
-            !entry.thumbEntry
-          ) {
-            entry.thumbEntry = { entryPath, fileName, fileLower };
+          } else if ([".png", ".jpg", ".jpeg", ".webp"].some(e => fileLower.endsWith(e))) {
+            if (fileLower.includes("colormap")) {
+              // "colormap" anywhere in the filename = this object's texture. Locked. No other logic applies.
+              if (!entry.colormapEntry) {
+                entry.colormapEntry = { entryPath, fileName };
+              }
+            } else if (!entry.thumbEntry) {
+              entry.thumbEntry = { entryPath, fileName, fileLower };
+            }
           }
         }
 
@@ -602,9 +611,16 @@ exports.handler = async (event) => {
             const b64  = blob.toString("base64");
             if (!b64) continue;
             const mimeType = entry.thumbEntry.fileLower.endsWith(".png") ? "image/png" : "image/jpeg";
+            if (!entry.colormapEntry) {
+              console.warn(`[ROSTER-AB] ${zipName}.zip/${folderKey}: no colormap found — asset will have no texture`);
+            }
             objectAssets.push({
-              objFile:   entry.objEntry.fileName,
-              thumbFile: entry.thumbEntry.fileName,
+              objFile:            entry.objEntry.fileName,
+              objEntryPath:       entry.objEntry.entryPath,       // full zip path — locked at index time
+              thumbFile:          entry.thumbEntry.fileName,
+              colormapFile:       entry.colormapEntry?.fileName  || null,  // locked at index time
+              colormapEntryPath:  entry.colormapEntry?.entryPath || null,  // full zip path — locked at index time
+              colormapConfidence: entry.colormapEntry            ? "HIGH" : "NONE",
               b64,
               mimeType,
               sourceZip: `${zipName}.zip`,
@@ -842,7 +858,7 @@ exports.handler = async (event) => {
         });
       } catch (e) {
         console.warn(`[ROSTER-AB] Stage B object failed for "${req.name}": ${e.message} — using first candidate`);
-        return { requirementName: req.name, selectedAsset: candidates[0], visualSelectionRationale: `Fallback: ${e.message}`, colormapFile: null };
+        return { requirementName: req.name, selectedAsset: candidates[0], visualSelectionRationale: `Fallback: ${e.message}` };
       }
 
       let parsed;
@@ -853,8 +869,7 @@ exports.handler = async (event) => {
       return {
         requirementName:          req.name,
         selectedAsset:            candidates[chosenIdx],
-        visualSelectionRationale: parsed.visualSelectionRationale || "",
-        colormapFile:             null
+        visualSelectionRationale: parsed.visualSelectionRationale || ""
       };
     }
 
@@ -889,17 +904,19 @@ exports.handler = async (event) => {
       const asset = stageBResult.selectedAsset;
       const p1    = phase1Req || {};
       return {
-        assetName:          asset.objFile,
-        thumbFile:          asset.thumbFile,
-        sourceZip:          asset.sourceZip,
-        category:           asset.category || null,
-        intendedRole:       p1.gameplayRole || p1.visualDescription || stageBResult.requirementName || "",
-        matchedRequirement: stageBResult.requirementName,
-        selectionRationale: stageBResult.visualSelectionRationale,
-        colormapFile:       null,
-        colormapConfidence: "PENDING_EXTRACT",
-        thumbnailB64:       asset.b64,
-        thumbnailMime:      asset.mimeType
+        assetName:           asset.objFile,
+        objEntryPath:        asset.objEntryPath        || null,  // locked zip path from index time
+        colormapFile:        asset.colormapFile        || null,  // locked at index time
+        colormapEntryPath:   asset.colormapEntryPath   || null,  // locked zip path from index time
+        colormapConfidence:  asset.colormapConfidence  || "NONE",
+        thumbFile:           asset.thumbFile,
+        sourceZip:           asset.sourceZip,
+        category:            asset.category            || null,
+        intendedRole:        p1.gameplayRole || p1.visualDescription || stageBResult.requirementName || "",
+        matchedRequirement:  stageBResult.requirementName,
+        selectionRationale:  stageBResult.visualSelectionRationale,
+        thumbnailB64:        asset.b64,
+        thumbnailMime:       asset.mimeType
       };
     }
 

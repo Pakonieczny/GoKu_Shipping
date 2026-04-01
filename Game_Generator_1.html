@@ -5543,6 +5543,8 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
     async function copyRosterAssetsToModels(projectName, stagedAssets) {
         await ensureAuth();
 
+        // Colormap filenames are already finalized by Extract (renamed to match the .obj basename,
+        // e.g. fountain-center.jpg). No prefix logic or post-hoc renaming needed here.
         const copyJobs = [];
         const seenDestPaths = new Set();
         const warningDetails = [];
@@ -5551,25 +5553,14 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
                 copyJobs.push({ srcPath: asset.stagedPath, destName: asset.assetName, label: asset.assetName, jobType: 'asset' });
             }
             if (asset?.colormapStagedPath && asset?.colormapFile) {
-                // Prefix the colormap filename with the obj's base name to prevent collision
-                // when multiple objects share a generic colormap name (e.g. "colormap.png").
-                // e.g. Tree_Trunk.obj + colormap.png → Tree_Trunk__colormap.png in models/
-                const objBase = asset.assetName.replace(/\.[^.]+$/, '');
-                const cmapBase = asset.colormapFile.replace(/\.[^.]+$/, '');
-                // Only prefix if the colormap name is generic (doesn't already start with the obj name)
-                const needsPrefix = !cmapBase.toLowerCase().startsWith(objBase.toLowerCase());
-                const destColormap = needsPrefix ? `${objBase}__${asset.colormapFile}` : asset.colormapFile;
+                // colormapFile is already named after the .obj (e.g. fountain-center.jpg) — copy as-is.
                 copyJobs.push({
                     srcPath: asset.colormapStagedPath,
-                    destName: destColormap,
+                    destName: asset.colormapFile,
                     label: `${asset.assetName}::colormap`,
                     jobType: 'colormap',
-                    // Store the final destName back so annotateApprovedRosterWithManifestKeys can find it
-                    colormapDestName: destColormap,
                     originalAssetName: asset.assetName
                 });
-                // Update the asset's colormapFile to reflect the renamed destination
-                asset._colormapDestName = destColormap;
             } else if (asset?.assetName && /\.(obj|fbx|glb|gltf|c3b)$/i.test(asset.assetName)) {
                 const warningMessage = `No colormapStagedPath for 3D asset "${asset.assetName}" — colormap was not staged.`;
                 console.warn(`[ROSTER-COPY] ${warningMessage} Check extraction log.`);
@@ -5617,48 +5608,6 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
         const copied  = results.filter(result => result?.ok).map(result => result.destName);
         const failedJobs = results.filter(result => result && !result.ok);
         console.log(`[ROSTER-COPY] ${copied.length}/${uniqueJobs.length} file(s) copied to models/`);
-
-        // Update colormapFile on each staged asset to reflect the renamed destination,
-        // so that annotateApprovedRosterWithManifestKeys can look it up correctly in assets.json.
-        let anyRenamed = false;
-        for (const asset of (stagedAssets || [])) {
-            if (asset._colormapDestName) {
-                asset.colormapFile = asset._colormapDestName;
-                delete asset._colormapDestName;
-                anyRenamed = true;
-            }
-        }
-
-        // CRITICAL: re-persist ai_asset_roster_approved.json with the updated colormapFile names.
-        // annotateApprovedRosterWithManifestKeys re-fetches that file fresh from Firebase and
-        // builds stagedIndex from roster.stagedAssets — if we don't write the renamed filenames
-        // back now, colormapManifestKey will silently resolve against the old generic name
-        // (e.g. "colormap.png") which no longer exists in assets.json under that name.
-        if (anyRenamed) {
-            try {
-                const rosterRef = ref(storage, `${ROOT}/${projectName}/ai_asset_roster_approved.json`);
-                const rosterUrl = await getDownloadURL(rosterRef);
-                const rosterRes = await fetch(rosterUrl + (rosterUrl.includes('?') ? '&' : '?') + '_ts=' + Date.now(), { cache: 'no-store' });
-                if (rosterRes.ok) {
-                    const rosterJson = await rosterRes.json();
-                    const renamedIndex = new Map(
-                        (stagedAssets || [])
-                            .filter(a => a?.assetName && a?.colormapFile)
-                            .map(a => [String(a.assetName).toLowerCase(), a.colormapFile])
-                    );
-                    const patchColormap = (arr) => (arr || []).map(a => {
-                        const renamed = renamedIndex.get(String(a?.assetName || '').toLowerCase());
-                        return renamed ? { ...a, colormapFile: renamed } : a;
-                    });
-                    rosterJson.objects3d    = patchColormap(rosterJson.objects3d);
-                    rosterJson.stagedAssets = patchColormap(rosterJson.stagedAssets);
-                    await uploadString(rosterRef, JSON.stringify(rosterJson, null, 2));
-                    console.log(`[ROSTER-COPY] Re-persisted ai_asset_roster_approved.json with ${renamedIndex.size} renamed colormap filename(s).`);
-                }
-            } catch (e) {
-                console.warn('[ROSTER-COPY] Failed to re-persist roster with renamed colormapFile:', e.message);
-            }
-        }
 
         const colormapCopyFailures = failedJobs
             .filter(result => result?.job?.jobType === 'colormap')

@@ -1,16 +1,21 @@
 /* netlify/functions/claudeRosterExtract-background.js */
 /* ═══════════════════════════════════════════════════════════════════
-   ASSET ROSTER EXTRACTION & FIREBASE STAGING — v2.0
+   ASSET ROSTER EXTRACTION & FIREBASE STAGING — v3.0
    ─────────────────────────────────────────────────────────────────
    Background Netlify function (suffix -background = 15-min timeout)
    called after the user approves the game-specific Asset Roster.
 
    Flow:
-     1. Load the approved roster from ai_asset_roster_pending.json
+     1. Load the approved roster from ai_asset_roster_pending.json.
+        Each 3D object carries colormapEntryPath + colormapFile locked
+        at index time in StageAB — no colormap re-discovery happens here.
      2. For each selected asset, find the matching .zip — searches project-local particle/3D folders
         first, then falls back to the global game-generator-1/projects/BASE_Files/asset_3d_objects/ mega-zips.
         (matched by sourceRosterDocument name → same base name .zip)
-     3. Extract only the approved files from each zip (parallel uploads)
+     3. Extract only the approved files from each zip (parallel uploads).
+        For 3D assets: read colormap from the locked colormapEntryPath and
+        stage it renamed to match the .obj basename (e.g. fountain-center.jpg).
+        If colormapEntryPath is missing from the zip, log a hard error — no fallback.
      4. Upload extracted files to a game-specific staged folder:
         ${projectPath}/staged_assets/${jobId}/
      5. Save ai_asset_roster_approved.json with staged file paths
@@ -20,8 +25,7 @@
           b. syncAssetsJson() — scans models/ and rebuilds assets.json;
              approved 3D objects register as children of the Models folder (key "15"),
              approved particle textures register at root level with their own assigned numeric keys.
-        This function does NOT write assets.json. "staged_roster" is not
-        a real manifest key — it was a stale reference and has been removed.
+        This function does NOT write assets.json.
      7. Return { success:true, stagedAssets, stagedFolder, extractionLog }
 
    Request body:  { projectPath, jobId }
@@ -69,147 +73,6 @@ function detectMimeType(filename = "") {
        : ext === "glb" || ext === "gltf" ? "model/gltf-binary"
        : "application/octet-stream";
 }
-
-/* classifyZipContents — classifies a pack zip that contains multiple object subfolders.
-   Each 3D object lives in its own subfolder: ObjectName/ObjectName.obj, ObjectName/colormap.png, ObjectName/thumb.png
-   We classify per-folder so that mesh basename matching is scoped correctly within each object's folder,
-   not across the entire pack (which would incorrectly flag same-named colormaps as thumbnails).
-   Returns a Map: normalizedObjBaseName → { meshFile, colormapResolved, hasMtlFile }
-   Also returns a legacy top-level colormapResolved (first found) for backwards-compat callers. */
-function classifyZipContents(zip) {
-  const meshExtensions  = new Set([".obj", ".fbx", ".glb", ".gltf", ".c3b"]);
-  const imageExtensions = new Set([".jpg", ".jpeg", ".png", ".webp", ".tga", ".bmp"]);
-  const explicitColorNames = new Set([
-    "colormap", "color_map", "albedo", "albedo_map",
-    "diffuse", "diffuse_map", "basecolor", "base_color",
-    "texture", "tex", "color"
-  ]);
-  const confidenceRank = { HIGH: 3, MEDIUM: 2, LOW: 1, NONE: 0 };
-
-  // Group all entries by their immediate parent folder (or "" for root-level files)
-  const byFolder = new Map(); // folderPath → { meshFiles: [], imageFiles: [], hasMtlFile: false }
-  const allMeshFiles  = [];
-  const allImageFiles = [];
-  let globalHasMtlFile = false;
-
-  for (const entryPath of Object.keys(zip.files || {})) {
-    const entry = zip.files[entryPath];
-    if (!entry || entry.dir || entryPath.includes("__MACOSX")) continue;
-
-    const parts    = entryPath.split("/");
-    const fileName = parts[parts.length - 1];
-    // folder key: everything except the filename; root files use ""
-    const folderKey = parts.length > 1 ? parts.slice(0, -1).join("/") : "";
-
-    const lowerFileName = fileName.toLowerCase();
-    const ext      = lowerFileName.includes(".") ? lowerFileName.slice(lowerFileName.lastIndexOf(".")) : "";
-    const baseName = getZipEntryBaseName(fileName).toLowerCase();
-
-    if (!byFolder.has(folderKey)) byFolder.set(folderKey, { meshFiles: [], imageFiles: [], hasMtlFile: false });
-    const bucket = byFolder.get(folderKey);
-
-    if (meshExtensions.has(ext)) {
-      const rec = { entryPath, fileName, baseName, ext };
-      bucket.meshFiles.push(rec);
-      allMeshFiles.push(rec);
-    } else if (imageExtensions.has(ext)) {
-      const rec = { entryPath, fileName, baseName, ext };
-      bucket.imageFiles.push(rec);
-      allImageFiles.push(rec);
-    } else if (ext === ".mtl") {
-      bucket.hasMtlFile = true;
-      globalHasMtlFile = true;
-    }
-  }
-
-  /* Classify images within a single folder scope.
-     Rules (in priority order):
-       1. thumb/preview in name → THUMBNAIL (highest priority, always)
-       2. Explicit colormap name (colormap, albedo, diffuse …) → COLORMAP HIGH
-       3. basename matches a mesh basename in the SAME folder → THUMBNAIL
-          (e.g. TreeTrunk/TreeTrunk.png is a preview/thumbnail of TreeTrunk.obj)
-       4. Only one image left unidentified → COLORMAP MEDIUM
-       5. Last image standing → COLORMAP LOW                                      */
-  function classifyImagesInScope(imageFiles, meshFiles) {
-    const meshBaseNamesLocal = new Set(meshFiles.map(f => f.baseName));
-    const detections = imageFiles.map((image) => {
-      if (/(thumb|preview)/i.test(image.baseName)) {
-        return { ...image, role: "THUMBNAIL",  confidence: "HIGH",   detectionRule: "name=thumb-or-preview" };
-      }
-      if (explicitColorNames.has(image.baseName)) {
-        return { ...image, role: "COLORMAP",   confidence: "HIGH",   detectionRule: `name=${image.baseName}` };
-      }
-      if (meshBaseNamesLocal.has(image.baseName)) {
-        // Same base name as the mesh in this folder → thumbnail (preview image, not colormap)
-        return { ...image, role: "THUMBNAIL",  confidence: "HIGH",   detectionRule: "mesh-basename-match" };
-      }
-      return { ...image, role: "UNKNOWN", confidence: "NONE", detectionRule: "none" };
-    });
-
-    let colormapCandidates = detections.filter(i => i.role === "COLORMAP");
-    let unidentified       = detections.filter(i => i.role === "UNKNOWN");
-
-    if (colormapCandidates.length === 0 && imageFiles.length === 1 && unidentified.length === 1) {
-      unidentified[0].role = "COLORMAP"; unidentified[0].confidence = "MEDIUM"; unidentified[0].detectionRule = "only-image";
-      colormapCandidates = [unidentified[0]]; unidentified = [];
-    }
-    if (colormapCandidates.length === 0 && unidentified.length === 1) {
-      unidentified[0].role = "COLORMAP"; unidentified[0].confidence = "LOW"; unidentified[0].detectionRule = "last-unidentified-image";
-      colormapCandidates = [unidentified[0]];
-    }
-
-    colormapCandidates.sort((a, b) => {
-      const rankDiff = (confidenceRank[b.confidence] || 0) - (confidenceRank[a.confidence] || 0);
-      return rankDiff || a.fileName.localeCompare(b.fileName);
-    });
-
-    return { detections, colormapResolved: colormapCandidates[0] || null };
-  }
-
-  // Build per-object-folder classification map: normalizedObjBaseName → classification result
-  const perObjectClassification = new Map();
-  let firstColormapResolved = null;
-
-  for (const [folderKey, bucket] of byFolder.entries()) {
-    if (bucket.meshFiles.length === 0) continue; // image-only folder (thumbnails dir, etc.) — skip
-    const result = classifyImagesInScope(bucket.imageFiles, bucket.meshFiles);
-    for (const mesh of bucket.meshFiles) {
-      perObjectClassification.set(mesh.baseName, {
-        meshFile:         mesh,
-        colormapResolved: result.colormapResolved,
-        hasMtlFile:       bucket.hasMtlFile,
-        imageDetections:  result.detections
-      });
-    }
-    if (!firstColormapResolved && result.colormapResolved) {
-      firstColormapResolved = result.colormapResolved;
-    }
-  }
-
-  // Fallback: if no per-folder mesh found but there are root-level files, classify them globally
-  if (perObjectClassification.size === 0 && allMeshFiles.length > 0) {
-    const fallback = classifyImagesInScope(allImageFiles, allMeshFiles);
-    for (const mesh of allMeshFiles) {
-      perObjectClassification.set(mesh.baseName, {
-        meshFile:         mesh,
-        colormapResolved: fallback.colormapResolved,
-        hasMtlFile:       globalHasMtlFile,
-        imageDetections:  fallback.detections
-      });
-    }
-    firstColormapResolved = fallback.colormapResolved;
-  }
-
-  return {
-    meshFiles:               allMeshFiles,
-    imageFiles:              allImageFiles,
-    imageDetections:         [],           // legacy field — use perObjectClassification instead
-    colormapResolved:        firstColormapResolved, // legacy: first found; use perObjectClassification for accuracy
-    hasMtlFile:              globalHasMtlFile,
-    perObjectClassification  // Map<objBaseName, { meshFile, colormapResolved, hasMtlFile, imageDetections }>
-  };
-}
-
 
 /* ═══════════════════════════════════════════════════════════════ */
 exports.handler = async (event) => {
@@ -328,8 +191,9 @@ exports.handler = async (event) => {
         zipEntries.set(normalizeAssetName(baseName), entryPath);
       }
 
-      // Upload all approved assets from this zip in parallel
-      const zipClassification = classifyZipContents(zip);
+      // Upload all approved assets from this zip in parallel.
+      // Colormap matching was locked at index time in StageAB — asset.colormapEntryPath
+      // is the authoritative full zip path. No re-discovery happens here.
       const uploadTasks = assets.map(async (asset) => {
         const normalizedTarget = normalizeAssetName(asset.assetName);
         const entryPath = zipEntries.get(normalizedTarget)
@@ -353,68 +217,46 @@ exports.handler = async (event) => {
           });
 
           const is3dAsset = /\.(obj|fbx|glb|gltf|c3b)$/i.test(asset.assetName || "");
-          let colormapFile = asset.colormapFile || null;
-          let colormapConfidence = asset.colormapConfidence || "NONE";
+          let colormapFile       = null;
           let colormapStagedPath = null;
-          let colormapDetectionRule = asset.colormapFile ? "roster-field" : "none";
+          let colormapConfidence = "NONE";
+          let colormapDetectionRule = "none";
 
           if (is3dAsset) {
-            let resolvedColormap = null;
-            if (asset.colormapFile) {
-              const explicitEntryPath = zipEntries.get(normalizeAssetName(asset.colormapFile));
-              if (explicitEntryPath) {
-                resolvedColormap = {
-                  entryPath: explicitEntryPath,
-                  fileName: explicitEntryPath.split("/").pop() || asset.colormapFile,
-                  confidence: asset.colormapConfidence || "HIGH",
-                  detectionRule: "roster-field"
-                };
+            if (asset.colormapEntryPath) {
+              // Colormap was locked at index time in StageAB. Use it directly — no re-discovery.
+              if (!zip.files[asset.colormapEntryPath]) {
+                // Locked path missing from zip — hard error, not a fallback situation.
+                console.error(`[ROSTER-EXTRACT] Locked colormapEntryPath "${asset.colormapEntryPath}" not found in ${zipName} for "${asset.assetName}". Roster may be stale.`);
+                extractionLog.push({ zipName, asset: asset.assetName, status: "colormap_locked_path_missing", detail: asset.colormapEntryPath });
               } else {
-                console.warn(`[ROSTER-EXTRACT] Colormap "${asset.colormapFile}" not found in ${zipName}`);
-                extractionLog.push({
-                  zipName,
-                  asset: asset.assetName,
-                  status: "colormap_missing",
-                  detail: `Declared colormap "${asset.colormapFile}" not found`
+                const colormapBuffer = await zip.files[asset.colormapEntryPath].async("nodebuffer");
+
+                // Rename colormap to match the .obj basename + colormap's original extension.
+                // e.g. fountain-center.obj + colormap.jpg → fountain-center.jpg
+                // Unique by construction (obj names are unique within the zip), human-readable.
+                const assetBase       = getZipEntryBaseName(asset.assetName);
+                const rawColormapName = asset.colormapEntryPath.split("/").pop();
+                const colormapExt     = rawColormapName.includes(".")
+                  ? rawColormapName.slice(rawColormapName.lastIndexOf("."))
+                  : "";
+                const stagedColormapName = `${assetBase}${colormapExt}`;
+
+                colormapFile          = stagedColormapName;
+                colormapStagedPath    = `${stagedFolderPath}/${stagedColormapName}`;
+                colormapConfidence    = asset.colormapConfidence || "HIGH";
+                colormapDetectionRule = "locked-at-index";
+
+                await bucket.file(colormapStagedPath).save(colormapBuffer, {
+                  contentType: detectMimeType(rawColormapName),
+                  resumable: false
                 });
+                console.log(`[ROSTER-EXTRACT] Colormap staged for "${asset.assetName}": ${stagedColormapName} (locked-at-index)`);
               }
-            }
-
-            // Per-object classification: look up by this asset's own base name first,
-            // then fall back to the first colormap found anywhere in the zip.
-            // This prevents cross-contamination where Object A gets Object B's colormap.
-            if (!resolvedColormap) {
-              const assetBaseName = getZipEntryBaseName(asset.assetName).toLowerCase();
-              const perObjResult = zipClassification.perObjectClassification.get(assetBaseName);
-              const candidate = perObjResult?.colormapResolved || zipClassification.colormapResolved;
-              if (candidate) {
-                resolvedColormap = {
-                  entryPath: candidate.entryPath,
-                  fileName: candidate.fileName,
-                  confidence: candidate.confidence || "LOW",
-                  detectionRule: candidate.detectionRule || "auto"
-                };
-                console.log(`[ROSTER-EXTRACT] Colormap auto-resolved for ${asset.assetName} from ${zipName}: ${resolvedColormap.fileName} (rule: ${resolvedColormap.detectionRule})`);
-              }
-            }
-
-            if (resolvedColormap) {
-              const colormapBuffer = await zip.files[resolvedColormap.entryPath].async("nodebuffer");
-              colormapFile = resolvedColormap.fileName;
-              colormapConfidence = resolvedColormap.confidence || "LOW";
-              colormapDetectionRule = resolvedColormap.detectionRule || "auto";
-              colormapStagedPath = `${stagedFolderPath}/${resolvedColormap.fileName}`;
-              await bucket.file(colormapStagedPath).save(colormapBuffer, {
-                contentType: detectMimeType(resolvedColormap.fileName),
-                resumable: false
-              });
             } else {
-              extractionLog.push({
-                zipName,
-                asset: asset.assetName,
-                status: "colormap_not_found",
-                detail: `No colormap found in ${zipName}`
-              });
+              // No colormapEntryPath — asset had no colormap file in its zip folder at index time.
+              console.warn(`[ROSTER-EXTRACT] No colormapEntryPath for "${asset.assetName}" — no colormap was found in its zip folder during StageAB indexing.`);
+              extractionLog.push({ zipName, asset: asset.assetName, status: "colormap_not_found", detail: "No colormap detected in asset folder during StageAB indexing" });
             }
           }
 
