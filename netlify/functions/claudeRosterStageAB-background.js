@@ -10,13 +10,14 @@
    ─────────────────────────────────────────────────────────────────
    Flow:
      1. Read Phase 1 result from ai_asset_roster_phase1.json.
-        Phase 1 includes suggestedCategories (up to 3) per 3D object.
+        Phase 1 includes rankedCategories (2 to 6) per 3D object,
+        sorted by likelihoodPercent from highest to lowest.
      2. Read user reference images from ai_roster_ref_images.json.
      3. Read global CSV from game-generator-1/projects/BASE_Files/asset_3d_objects/
         reorganized_assets_manifest.csv → build assetName→category map.
      4. Scan ONLY the zip files whose asset_name maps to one of the
-        suggestedCategories for each requirement. If no valid CSV-backed
-        categories are suggested, skip object search for that requirement
+        rankedCategories / suggestedCategories for each requirement.
+        If fewer than 2 valid CSV-backed categories remain, skip object search for that requirement
         rather than falling back to the full library.
      5. STAGE A — image-vs-image batch scan on the filtered asset pool.
         Particles: text description vs thumbnails (unchanged).
@@ -44,10 +45,11 @@ const CLAUDE_MAX_RETRIES   = 5;
 const CLAUDE_BASE_DELAY_MS = 1250;
 const CLAUDE_MAX_DELAY_MS  = 12000;
 
-const MAX_OBJ_ASSETS       = 25;
+const MAX_OBJ_ASSETS       = 50;
 const MAX_PNG_ASSETS       = 50;
 const IMAGES_PER_BATCH     = 50;
-const MAX_SUGGESTED_CATS   = 3;   // hard cap — Phase 1 enforces this too
+const MIN_SUGGESTED_CATS   = 2;
+const MAX_SUGGESTED_CATS   = 6;   // hard cap — Phase 1 enforces this too
 
 /* ─── Retry helpers ──────────────────────────────────────────────── */
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
@@ -207,6 +209,54 @@ function parseCsvIndex(csvText) {
   }
 
   return { map, categories };
+}
+
+function clampLikelihoodPercent(value, fallback = 50) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return Math.max(0, Math.min(100, Math.round(fallback)));
+  return Math.max(0, Math.min(100, Math.round(n)));
+}
+
+function normalizeRequirementCategoryRanking(req = {}) {
+  const normalized = [];
+  const seen = new Set();
+  const rankedSource = Array.isArray(req.rankedCategories) && req.rankedCategories.length > 0
+    ? req.rankedCategories
+    : Array.isArray(req.suggestedCategories)
+      ? req.suggestedCategories.map((category, index) => ({
+          category,
+          likelihoodPercent: Math.max(1, 100 - (index * 5))
+        }))
+      : [];
+
+  for (let index = 0; index < rankedSource.length; index++) {
+    const entry = rankedSource[index];
+    const category = String(
+      typeof entry === 'string'
+        ? entry
+        : (entry?.category || entry?.name || '')
+    ).trim();
+    if (!category) continue;
+
+    const dedupeKey = category.toLowerCase();
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
+
+    normalized.push({
+      category,
+      likelihoodPercent: clampLikelihoodPercent(
+        typeof entry === 'string' ? 100 - (index * 5) : entry?.likelihoodPercent,
+        100 - (index * 5)
+      )
+    });
+  }
+
+  normalized.sort((a, b) => {
+    if (b.likelihoodPercent !== a.likelihoodPercent) return b.likelihoodPercent - a.likelihoodPercent;
+    return a.category.localeCompare(b.category);
+  });
+
+  return normalized.slice(0, MAX_SUGGESTED_CATS);
 }
 
 /* ─── Utilities ──────────────────────────────────────────────────── */
@@ -419,21 +469,39 @@ exports.handler = async (event) => {
     console.log(`[ROSTER-AB] CSV loaded: ${assetCategoryMap.size} asset entries`);
 
     // ── 4. Build per-requirement allowed category sets ───────────────────
-    // Map<requirementName, Set<category>> — empty Set means "skip object search"
+    // Map<requirementName, { allowedCats:Set<category>, rankedCategories:Array<{category, likelihoodPercent}> }>
+    // An empty allowedCats set means "skip object search".
     const reqCategoryFilter = new Map();
     for (const req of objectReqs) {
-      const cats = (req.suggestedCategories || []).slice(0, MAX_SUGGESTED_CATS);
-      // Only keep categories that actually exist in the CSV
-      const validCats = new Set(cats.filter(c => {
-        const known = knownCategories.has(c);
-        if (!known) console.warn(`[ROSTER-AB] Req "${req.name}": unknown category "${c}" — ignoring`);
+      const ranked = normalizeRequirementCategoryRanking(req);
+      const validRanked = ranked.filter(entry => {
+        const known = knownCategories.has(entry.category);
+        if (!known) {
+          console.warn(
+            `[ROSTER-AB] Req "${req.name}": unknown category "${entry.category}" ` +
+            `(${entry.likelihoodPercent}%) — ignoring`
+          );
+        }
         return known;
-      }));
-      reqCategoryFilter.set(req.name, validCats);
-      if (validCats.size > 0) {
-        console.log(`[ROSTER-AB] Req "${req.name}": filtering to ${validCats.size} category(s): ${[...validCats].join(", ")}`);
+      }).slice(0, MAX_SUGGESTED_CATS);
+
+      if (validRanked.length >= MIN_SUGGESTED_CATS) {
+        const allowedCats = new Set(validRanked.map(entry => entry.category));
+        reqCategoryFilter.set(req.name, { allowedCats, rankedCategories: validRanked });
+        console.log(
+          `[ROSTER-AB] Req "${req.name}": filtering to ${validRanked.length} ranked category(s): ` +
+          `${validRanked.map(entry => `${entry.category} (${entry.likelihoodPercent}%)`).join(", ")}`
+        );
+      } else if (validRanked.length === 1) {
+        reqCategoryFilter.set(req.name, { allowedCats: new Set(), rankedCategories: [] });
+        console.warn(
+          `[ROSTER-AB] Req "${req.name}": only 1 valid ranked category remained after CSV filtering ` +
+          `(${validRanked[0].category} @ ${validRanked[0].likelihoodPercent}%) — minimum is ${MIN_SUGGESTED_CATS}, ` +
+          `so object search will be skipped for this requirement`
+        );
       } else {
-        console.warn(`[ROSTER-AB] Req "${req.name}": no valid categories — skipping object search for this requirement`);
+        reqCategoryFilter.set(req.name, { allowedCats: new Set(), rankedCategories: [] });
+        console.warn(`[ROSTER-AB] Req "${req.name}": no valid ranked categories — skipping object search for this requirement`);
       }
     }
 
@@ -707,9 +775,10 @@ exports.handler = async (event) => {
         }
 
         // Apply category filter — never fall back to the full library when categories fail.
-        const allowedCats = reqCategoryFilter.get(req.name) || new Set();
+        const categoryFilter = reqCategoryFilter.get(req.name) || { allowedCats: new Set(), rankedCategories: [] };
+        const allowedCats = categoryFilter.allowedCats;
         if (allowedCats.size === 0) {
-          console.warn(`[ROSTER-AB] Stage A object "${req.name}": no valid CSV-backed categories — skipping search`);
+          console.warn(`[ROSTER-AB] Stage A object "${req.name}": fewer than ${MIN_SUGGESTED_CATS} valid CSV-backed ranked categories — skipping search`);
           continue;
         }
 
@@ -718,7 +787,7 @@ exports.handler = async (event) => {
         console.log(
           `[ROSTER-AB] Stage A object "${req.name}": ` +
           `${filteredAssets.length} assets after category filter ` +
-          `(${[...allowedCats].join(", ")})`
+          `(${categoryFilter.rankedCategories.map(entry => `${entry.category} (${entry.likelihoodPercent}%)`).join(", ")})`
         );
 
         if (filteredAssets.length === 0) {
@@ -940,13 +1009,18 @@ exports.handler = async (event) => {
       ...particleReqs.filter(r => !matchedParticleNames.has(r.name)).map(r => ({
         requirementName: r.name, type: "particle_effect", reason: "No visual candidates found in Stage A"
       })),
-      ...objectReqs.filter(r => !matchedObjectNames.has(r.name)).map(r => ({
-        requirementName: r.name, type: "object_3d",
-        reason: ((reqCategoryFilter.get(r.name) || new Set()).size === 0)
-          ? "No valid CSV-backed categories were available for this requirement; Stage A object search was skipped"
-          : "No visual candidates found in the searched categories during Stage A",
-        categoriesSearched: [...(reqCategoryFilter.get(r.name) || [])]
-      }))
+      ...objectReqs.filter(r => !matchedObjectNames.has(r.name)).map(r => {
+        const filterInfo = reqCategoryFilter.get(r.name) || { allowedCats: new Set(), rankedCategories: [] };
+        return {
+          requirementName: r.name,
+          type: "object_3d",
+          reason: (filterInfo.allowedCats.size < MIN_SUGGESTED_CATS)
+            ? `Fewer than ${MIN_SUGGESTED_CATS} valid CSV-backed ranked categories were available for this requirement; Stage A object search was skipped`
+            : "No visual candidates found in the searched categories during Stage A",
+          categoriesSearched: filterInfo.rankedCategories.map(entry => entry.category),
+          rankedCategoriesSearched: filterInfo.rankedCategories
+        };
+      })
     ];
 
     const roster = {

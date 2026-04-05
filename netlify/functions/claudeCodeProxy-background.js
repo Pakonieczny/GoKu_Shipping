@@ -1904,6 +1904,8 @@ INSTRUCTION PRECEDENCE:
 5. Never plan tranches that delete, replace, bypass, or work around an immutable scaffold block. Adapt the requested game to the scaffold.
 6. Pick one lawful pattern family per subsystem and preserve it through planning, execution, validation, and repair. Do not silently switch families mid-pipeline.
 7. REFERENCE IMAGES (if attached): Any images attached to this request are first-class game design inputs with authority equal to the Master Prompt. They define the intended visual style, layout, object types, and complexity level. Where the image and the text spec diverge, treat the image as the authoritative definition of what must be built. Every tranche that involves visual elements, entities, or layouts must reconcile against the attached images.
+8. If a tranche needs to declare or modify scene hierarchy, entity placement, visibility, or rigidbody ownership, that tranche must target json/scene_intent.json. scene_intent may use groups[], objects[], and standalone rigidbodies[] when a rigidbody is not attached to a mesh object.
+9. Never plan tranches that emit json/assets.json, json/tree.json, or json/entities.json. Those files are compiler-owned and rebuilt automatically after scene_intent changes.
 
 PLANNING RULES:
 1. The Master Prompt's actual contract sections are the center of gravity. Read the real heading structure first, then anchor every core gameplay tranche to the prompt's actual authoritative sections/subsections. If the prompt uses the new layout, prioritize Sections 3.x, 4.x, 5, and 7. If it uses a legacy layout, use those real legacy section numbers. Never invent 6.3 anchors when the prompt does not contain them.
@@ -2154,6 +2156,8 @@ INSTRUCTION PRECEDENCE:
 - Never delete, replace, or work around an immutable scaffold section. Extend inside it.
 - Pick one lawful pattern family per subsystem and preserve it through the tranche. Do not silently switch families mid-implementation.
 - REFERENCE IMAGES (if attached): Any images attached to this tranche are first-class game design inputs with authority equal to the Master Prompt. They define the intended visual appearance, entity types, layout geometry, and interaction model. When implementing this tranche, reconcile your output against the attached images — if your code would produce something visually inconsistent with an attached image, that is a defect. Visual Reconciliation is a required quality criterion for every tranche that touches rendered content.
+- SCENE DECLARATION RULE: If scene structure, object placement, hierarchy, visibility, or rigidbody ownership must be declared or changed, write json/scene_intent.json. scene_intent may use groups[], objects[], and standalone rigidbodies[] when a rigidbody must exist directly under a group or at the root.
+- COMPILER-OWNED PACKAGE RULE: Never output json/assets.json, json/tree.json, or json/entities.json. They are read-only context files and will be rebuilt by the frontend compiler after json/scene_intent.json changes.
 
 Do not re-state the instruction docs — just apply them. Write it correctly the first time so the tranche can move forward without rework.
 
@@ -2180,12 +2184,18 @@ EXAMPLE (two files updated):
 <!DOCTYPE html>...full HTML here...
 ===FILE_END: models/23===
 
+===FILE_START: json/scene_intent.json===
+{ ...full scene intent JSON here... }
+===FILE_END: json/scene_intent.json===
+
 ===MESSAGE===
 Added physics body initialization and collision handler registration.
 ===END_MESSAGE===
 
 OUTPUT RULES:
 - Only include files that actually need to be changed or created.
+- The ONLY JSON file you may ever emit is json/scene_intent.json.
+- Never emit json/assets.json, json/tree.json, or json/entities.json. Those files are compiler-owned and rebuilt automatically.
 - Always output the COMPLETE file content for each updated file — not patches or diffs.
 - Build upon the existing file contents provided. Do NOT discard or overwrite work from prior tranches.
 - If the file already has functions, variables, or structures from prior tranches, KEEP THEM ALL and add your new code alongside them.
@@ -2199,6 +2209,17 @@ OUTPUT RULES:
 - TEXTURE ASSIGNMENT AUDIT TRAIL: This applies ONLY to non-primitive approved roster 3D objects. When creating any such asset that has a TEXTURE CONTRACT with a non-null colormap path / resolved colormap manifest key, include a comment immediately above the material/setup block noting the applied colormap key and meshCount, define a registered material whose albedo_texture uses that numeric manifest key, and apply that registered material key across every valid slot using gameState._applyMat or equivalent slot-safe scaffold logic. material_file must contain the registered material key, never the raw staged path. Cherry3D system primitives skip this external texture-contract audit trail.
 - MESH COUNT CONTRACT (CRASH PREVENTION): This applies ONLY to non-primitive approved roster 3D objects. Every such roster asset carries a meshCount in its TEXTURE CONTRACT. You MUST cover EVERY valid slot N from 0 to meshCount-1 via gameState._applyMat or equivalent slot-safe scaffold logic. If explicit per-slot assignment is used, material_file must carry the registered material key for every valid slot. Assigning only data['0'] when meshCount > 1 leaves untextured mesh slots and CRASHES the engine. Assigning to a slot index >= meshCount also CRASHES the engine. Cherry3D system primitives skip this meshCount workflow entirely. Use a loop or explicit per-slot assignments — never assume a single-slot assignment covers a multi-mesh object. The meshCount value is provided verbatim in the DETERMINISTIC ROSTER CONTRACT CARRY-THROUGH block for this tranche; treat it as a hard loop bound.
 - HTML UI PLACEMENT RULE: When this tranche creates or updates visible HTML UI / HUD / overlay elements in models/23 or localUI, NEVER place any UI element in the top-left or top-right corner of the screen. It is always better to move UI slightly inward toward the screen center rather than hugging the left or right edges. Prefer top-center, bottom-center, or clearly inset side placements. Any element near the left or right edge must use an intentional inset margin so it reads as center-biased, not edge-anchored. Top-left / top-right corner placement and hard edge-hugging placement are defects.
+- AUDIO FEEL IS NOT OPTIONAL: Whenever this tranche introduces or modifies avatar actions, pickups, rewards, hazards, damage, death, UI state changes, or ambience, you MUST implement the corresponding audio feedback in this tranche unless the tranche prompt explicitly marks the event as stub-only.
+- AVATAR FEEDBACK AUDIO: Avatar action sounds must feel soft, appealing, rewarding, and satisfying moment to moment.
+- FAILURE / DAMAGE / DEATH AUDIO: Failure, damage, and death sounds must be distinct, higher-detail, clearly impactful, and never harsh or abrasive.
+- AMBIENCE RULE: Environmental ambience should be subtle, immersive, and non-intrusive. It must support the setting without masking gameplay-critical cues.
+- HAZARD SOUND SIGNATURE RULE: Moving hazards and important moving gameplay objects must have their own identifiable sound signature.
+- HAZARD WARNING RULE: Fast or dangerous hazards must receive a short anticipatory warning cue roughly 350-750ms before they enter active play space or before the lethal interaction window opens.
+- LETHAL IMPACT FEEDBACK RULE: Major lethal impacts must receive a strong context-appropriate hit effect.
+- SEVERE-ONLY DRAMATIC PARTICLES: Violent or dramatic particles are reserved ONLY for severe collision events where the avatar is struck by a major hazard.
+- DEATH STAGING RULE: Death sequences must remain visually readable. The avatar must enter a believable defeated pose that matches the force and direction of impact.
+- DEATH HOLD RULE: Do NOT reset or hide the avatar immediately on death. Leave enough visible hold time for the player to read the hit reaction, pose, and fail state before restart/reset.
+- Treat missing hazard cueing, weak death staging, generic under-signaled lethal hits, abrasive audio, or 'polish later' omissions as tranche execution defects.
 - CHILD RIGIDBODY LOCAL-SPACE POSITION (Non-Negotiable 13): When attaching a RigidBody as a child of a visual object, rbPosition MUST stay [0,0,0] unless a deliberate local offset is truly intended. The engine resolves world position through the parent visual transform. Passing world-space coordinates into a child rbPosition causes POSITION DOUBLING — the object appears twice as far from the origin as expected. This is a hard defect with no runtime warning.
 - DYNAMIC VISUAL AUTO-SYNC (Non-Negotiable 16): DYNAMIC visuals do NOT always auto-sync with their rigidbody. If this tranche moves a DYNAMIC actor, the visual MUST be explicitly mirrored every frame in Stage 3 of onRender via getMotionState() position readback or the scaffold helper syncDynamicVisualFromRigidBody(visualObj, rigidbodyObj). Assuming the engine will auto-sync the visual is a defect. If the visual ever drifts or freezes while the physics body moves, add the explicit mirror.
 - TILE-CENTERING AXIS LAW (Non-Negotiable 19): Any snap / tile-centering / perpendicular correction may ONLY adjust the non-movement axis. If the player moves along Z, only X may be corrected. If the player moves along X, only Z may be corrected. Correcting the movement axis itself stalls the player. Use the scaffold helper computePerpendicularCorrection(movementAxis, currentPos, targetPos, gain) — it enforces this law internally. Never write a manual snap that touches the movement axis.

@@ -1141,6 +1141,7 @@
     import * as THREE from 'three';
     import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
     import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    import { createAssetsTreeEntitiesCompiler } from './AssetsTreeEntitiesCompiler.js';
 
     // ── AI Service Configuration ──
     const AI_SERVICES = {
@@ -2443,6 +2444,44 @@ This will permanently remove all associated files and Firebase folders for this 
         return roster;
     }
 
+
+    const AI_WRITABLE_TARGET_PATHS = new Set(['models/2', 'models/23', 'json/scene_intent.json']);
+    const COMPILER_OWNED_JSON_TARGETS = new Set(['json/assets.json', 'json/tree.json', 'json/entities.json']);
+
+    const assetsTreeEntitiesCompiler = createAssetsTreeEntitiesCompiler({
+      ROOT,
+      storage,
+      ref,
+      listAll,
+      getDownloadURL,
+      uploadString,
+      deleteObject,
+      loadJsonFromStoragePath,
+      fetchStorageTextSafe,
+      syncAssetsJson,
+      annotateApprovedRosterWithManifestKeys,
+      analyzeDirectThreeAsset,
+      getCachedModelAnalysis,
+      cacheModelAnalysis,
+      refreshJsonUi: () => {
+        const jsonCat = FILE_CATEGORIES.find(c => c.id === 'json');
+        if (jsonCat) refreshFileList(jsonCat);
+
+        const jsonZone = document.getElementById('zone_json');
+        if (jsonZone) {
+          jsonZone.classList.remove('pulse-update');
+          void jsonZone.offsetWidth;
+          jsonZone.classList.add('pulse-update');
+        }
+      },
+      getCurrentProject: () => currentProject
+    });
+
+    async function compileProjectJsonPackage(projectName = currentProject, options = {}) {
+      return assetsTreeEntitiesCompiler.compileProjectJsonPackage(projectName, options);
+    }
+
+
     async function runRosterComplianceAudit(projectName = currentProject, rosterOverride = null) {
         if (!projectName) return { applicable: false, failures: [], warnings: [] };
 
@@ -2839,16 +2878,20 @@ This will permanently remove all associated files and Firebase folders for this 
     function resolveAiTargetPath(filePath = '') {
       let fileName = String(filePath || '').split('/').pop() || '';
       let safePath = String(filePath || '');
-      if (fileName.toLowerCase() === 'worldcontroller.js' || fileName === '2') {
+      const lowerFileName = fileName.toLowerCase();
+      if (lowerFileName === 'worldcontroller.js' || fileName === '2') {
         fileName = '2';
         safePath = 'models/2';
-      } else if (fileName.toLowerCase() === 'document.html' || fileName === '23') {
+      } else if (lowerFileName === 'document.html' || fileName === '23') {
         fileName = '23';
         safePath = 'models/23';
-      } else if (fileName.toLowerCase() === 'assets.json') {
-        fileName = 'assets.json';
-        safePath = 'json/assets.json';
+      } else if (lowerFileName === 'scene_intent.json') {
+        fileName = 'scene_intent.json';
+        safePath = 'json/scene_intent.json';
       }
+      // assets.json, tree.json, entities.json are compiler-owned.
+      // They are NOT mapped here — resolveAiTargetPath only recognises AI-writable targets.
+      // COMPILER_OWNED_JSON_TARGETS in applyAiUpdatedFiles discards them if the AI emits them anyway.
       return { fileName, safePath };
     }
 
@@ -2967,11 +3010,15 @@ Failure stage: ${stage}${liveBlock}${candidateBlock}`;
       for (const file of result.updatedFiles) {
         const { fileName, safePath } = resolveAiTargetPath(file.path);
 
-        // ── assets.json is owned exclusively by syncAssetsJson() ──
-        // The AI receives it as read-only context. If it outputs it, discard silently.
-        if (safePath === 'json/assets.json') {
-          console.info('applyAiUpdatedFiles: discarded AI-generated assets.json — managed by syncAssetsJson only.');
-          appendToChatLog('System', 'assets.json output from AI was discarded — manifest is managed automatically.', 'normal');
+        if (COMPILER_OWNED_JSON_TARGETS.has(safePath)) {
+          console.info(`applyAiUpdatedFiles: discarded AI-generated ${safePath} — compiler-owned package file.`);
+          appendToChatLog('System', `${safePath} output from AI was discarded — compiled package files are rebuilt automatically.`, 'normal');
+          continue;
+        }
+
+        if (!AI_WRITABLE_TARGET_PATHS.has(safePath)) {
+          console.info(`applyAiUpdatedFiles: discarded unsupported AI target ${safePath || file.path}.`);
+          appendToChatLog('System', `${safePath || file.path} was discarded — only models/2, models/23, and json/scene_intent.json are AI-writable.`, 'normal');
           continue;
         }
 
@@ -3052,6 +3099,7 @@ Failure stage: ${stage}${liveBlock}${candidateBlock}`;
         file.rawContent = finalContentToSave;
         file.safePath = safePath;
         file.backupPath = backupPath;
+        file.originalContent = originalContent;
         projectFiles[originalFileKey] = finalContentToSave;
         appliedFiles.push(file);
 
@@ -3064,6 +3112,41 @@ Failure stage: ${stage}${liveBlock}${candidateBlock}`;
             void zone.offsetWidth;
             zone.classList.add('pulse-update');
           }
+        }
+      }
+
+      const sceneIntentUpdate = appliedFiles.find(file => file.safePath === 'json/scene_intent.json');
+      if (sceneIntentUpdate) {
+        try {
+          await compileProjectJsonPackage(currentProject, { forceRescan: false });
+          appendToChatLog('System', 'scene_intent.json applied — assets.json, tree.json, and entities.json were recompiled automatically.', 'normal');
+        } catch (error) {
+          const sceneIntentRef = ref(storage, `${ROOT}/${currentProject}/json/scene_intent.json`);
+          try {
+            if (sceneIntentUpdate.originalContent) {
+              await uploadString(sceneIntentRef, sceneIntentUpdate.originalContent);
+              projectFiles['json/scene_intent.json'] = sceneIntentUpdate.originalContent;
+            } else {
+              await deleteObject(sceneIntentRef);
+              delete projectFiles['json/scene_intent.json'];
+            }
+          } catch (rollbackError) {
+            console.error('Failed to roll back scene_intent.json after compiler error', rollbackError);
+          }
+
+          failedFiles.push(buildFailedFileRecord(
+            sceneIntentUpdate,
+            'json/scene_intent.json',
+            `Compiler refresh failed after scene_intent.json update: ${error.message}`,
+            'compile',
+            sceneIntentUpdate.originalContent || '',
+            sceneIntentUpdate.rawContent || ''
+          ));
+
+          const appliedIndex = appliedFiles.indexOf(sceneIntentUpdate);
+          if (appliedIndex >= 0) appliedFiles.splice(appliedIndex, 1);
+          appendToChatLog('System', `scene_intent.json rollback completed because JSON package compilation failed: ${error.message}`, 'error');
+          Progress.warn('scene_intent compiler refresh failed', error.message);
         }
       }
 
@@ -3449,11 +3532,17 @@ rich textures), frequency/duration/envelope tuning for emotional impact.
 
 Quality criteria for your work:
 - Every meaningful player action must have audio feedback
+- Avatar action sounds must feel soft, appealing, rewarding, and habit-forming moment to moment
+- Failure, damage, and death sounds must be distinct, higher-detail, clearly impactful, and never harsh or abrasive
 - Event sounds must vary by context and material where applicable
+- Environmental ambience should be subtle, immersive, and non-intrusive — support the setting without masking gameplay cues
+- Moving hazards and important gameplay objects must have their own identifiable sound signature
+- Fast or dangerous hazards must get a short anticipatory warning cue before they enter active play space or before the lethal interaction window opens
 - AudioContext must be resumed on first user gesture via resume() call
 - All audio operations must be wrapped in try/catch for graceful degradation
 - Sound layering: each "sound" should combine 2-3 synthesis techniques (tone + noise + sub)
-- Volume levels must be balanced (key events louder than ambience/UI)
+- Volume levels must be balanced (key events louder than ambience/UI, ambience quieter than gameplay-critical cues)
+- Death audio timing must support the visible hit reaction and hold window — do not cut the fail sequence so fast that the feedback read is lost
 - Core Cherry3D building blocks: playTone(freq, dur, type, vol, pitchEnd) and _playNoise(dur, filterFreq, filterQ, vol, filterType)`
       },
 
@@ -3468,6 +3557,10 @@ visual feedback for game events (impacts, reactions, trails, destruction), color
 
 Quality criteria for your work:
 - Each particle preset must have tuned lifetime, size, velocity, and color ranges
+- Major lethal impacts must get a strong context-appropriate hit effect rather than a weak generic burst
+- Violent or dramatic particles are reserved ONLY for severe collision events where the avatar is struck by a major hazard
+- Death sequences must remain visually readable — VFX should support hit direction, force, and the defeated pose instead of obscuring them
+- Hit reaction timing and fail-state hold duration must leave enough time for the player to read the full sequence before reset or restart
 - Confirmed working initializer / behavior types are Lifetime, SpherePosition, SphericalVelocity, StartSize, StartMeshVec3, StartMeshFloat, SizeOverLife, MeshFloatOverLife, and Drag
 - Opaque colored bursts should default to sphere particles; trails, smoke, and lingering streaks should default to billboard particles
 - Register particleBillboard and particleSphere BEFORE any emitters or per-effect templates
@@ -4546,7 +4639,10 @@ Quality criteria for your work:
 Do NOT plan new tranches. Do NOT redesign the game. Fix ONLY the exact targets listed below.
 ${repairSeedFiles['models/2']         ? `\n=== CURRENT FILE: models/2 ===\n${repairSeedFiles['models/2']}`                 : ''}
 ${repairSeedFiles['models/23']        ? `\n=== CURRENT FILE: models/23 ===\n${repairSeedFiles['models/23']}`               : ''}
+${repairSeedFiles['json/scene_intent.json'] ? `\n=== CURRENT FILE: json/scene_intent.json ===\n${repairSeedFiles['json/scene_intent.json']}` : ''}
 ${repairSeedFiles['json/assets.json'] ? `\n=== CURRENT FILE: json/assets.json ===\n${repairSeedFiles['json/assets.json']}` : ''}
+${repairSeedFiles['json/tree.json'] ? `\n=== CURRENT FILE: json/tree.json ===\n${repairSeedFiles['json/tree.json']}` : ''}
+${repairSeedFiles['json/entities.json'] ? `\n=== CURRENT FILE: json/entities.json ===\n${repairSeedFiles['json/entities.json']}` : ''}
 
 === REPAIR CONTEXT ===
 ${repairContext}
@@ -4729,6 +4825,27 @@ Original user request for context: ${basePrompt}`;
         }
       });
       return Array.from(names);
+    }
+
+    function collectThreeMaterialSlotNames(root) {
+      const slots = [];
+      root?.traverse?.((node) => {
+        if (!node?.isMesh) return;
+        const meshName = node.name || node.uuid || 'Mesh';
+        const mats = Array.isArray(node.material) ? node.material : (node.material ? [node.material] : []);
+        if (mats.length === 0) {
+          slots.push({ meshName, slotIndex: 0, materialName: 'UnnamedMaterial' });
+          return;
+        }
+        mats.forEach((mat, slotIndex) => {
+          slots.push({
+            meshName,
+            slotIndex,
+            materialName: mat?.name || mat?.type || `MaterialSlot${slotIndex}`
+          });
+        });
+      });
+      return slots;
     }
 
     function estimateMaterialSlotCount(sceneOrRoot, meta = {}) {
@@ -5231,7 +5348,25 @@ Original user request for context: ${basePrompt}`;
         },
         mesh: {
           materialNames: collectThreeMaterialNames(sceneOrRoot),
+          materialSlots: collectThreeMaterialSlotNames(sceneOrRoot),
           hasMtlFile: Boolean(meta.hasMtlFile)
+        },
+        bounds: {
+          width: Number(size.x.toFixed(3)),
+          height: Number(size.y.toFixed(3)),
+          depth: Number(size.z.toFixed(3))
+        },
+        floorOffset: Number(floorY.toFixed(3)),
+        scaleHints: {
+          normalizedToOneUnit,
+          suggestedGameScale: normalizedToOneUnit,
+          suggestedGameScaleVec: [normalizedToOneUnit, normalizedToOneUnit, normalizedToOneUnit]
+        },
+        multiMeshStructure: {
+          isMultiMesh: meshCount > 1 || slotCount > 1,
+          meshCount,
+          slotCount,
+          materialSlots: collectThreeMaterialSlotNames(sceneOrRoot)
         }
       };
     }
@@ -5435,6 +5570,13 @@ Original user request for context: ${basePrompt}`;
                 <div class="roster-phase1-name">${esc(e.name)}</div>
                 <div class="roster-phase1-desc">${esc(e.visualDescription)}</div>
                 <div class="roster-phase1-meta">${esc(e.gameplayRole)}</div>
+                <div class="roster-phase1-meta">${esc(
+                  ((Array.isArray(e.rankedCategories) ? e.rankedCategories : [])
+                    .map(rc => `${rc.category} (${rc.likelihoodPercent}%)`)
+                    .join(', ')) ||
+                  ((Array.isArray(e.suggestedCategories) ? e.suggestedCategories : []).join(', ')) ||
+                  'No ranked categories'
+                )}</div>
               </div>`).join('');
       }
 
@@ -5549,7 +5691,7 @@ All tranche planning and execution MUST use these approved assets.
 GAME INTERPRETATION:
 ${roster.gameInterpretationSummary || ''}
 
-APPROVED 3D OBJECTS (${(roster.objects3d||[]).length} of 25 max):
+APPROVED 3D OBJECTS (${(roster.objects3d||[]).length} of 50 max):
 ${objs || '  (none)'}
 
 APPROVED PARTICLE EFFECT TEXTURES (${(roster.textureAssets||[]).filter(a => a.particleEffectTarget).length} of 50 max) — Foundation-B MUST populate PARTICLE_TEX_PATHS (staged paths) and gameState.particleTextureIds (manifest keys):
@@ -6308,12 +6450,23 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
           }
         }
 
-        Progress.step('Loading core project files', '"2", "23", assets.json + immutable instruction context');
+        Progress.step('Compiling project JSON package', 'Bootstrapping manifest, refreshing scan facts, and rebuilding assets.json, tree.json, and entities.json...');
+        await compileProjectJsonPackage(currentProject, {
+          forceRescan: repairAttempt === 0 && parseErrorRetry === 0
+        });
+        if (modelAnalysisList.length === 0) {
+          modelAnalysisList = getCachedModelAnalysis(currentProject);
+        }
+
+        Progress.step('Loading core project files', '"2", "23", scene_intent.json, assets.json, tree.json, entities.json + immutable instruction context');
         const projectFiles = {};
         const targetFiles = [
           { folder: 'models', name: '2' },
           { folder: 'models', name: '23' },
-          { folder: 'json', name: 'assets.json' }
+          { folder: 'json', name: 'scene_intent.json' },
+          { folder: 'json', name: 'assets.json' },
+          { folder: 'json', name: 'tree.json' },
+          { folder: 'json', name: 'entities.json' }
         ];
 
         for (const target of targetFiles) {
@@ -6327,7 +6480,7 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
         }
 
         if (Object.keys(projectFiles).length === 0) {
-          throw new Error("Could not find '2', '23', or 'assets.json'. Please upload them first.");
+          throw new Error("Could not find the required core files. Please upload models/2 and models/23 first. The JSON package is compiled automatically.");
         }
 
         const selectedAssets = [];
@@ -6429,7 +6582,41 @@ ${zipAnalysis.recognizedEntries.map(v => `- ${v}`).join('\n')}
         if (scannedExtentsList.length > 0) {
             Progress.step('Review 3D scan results', 'Confirm the roster-selected scan results before tranche planning continues...');
             await showExtentsReviewModal(scannedExtentsList);
+            // Re-annotate roster with the confirmed scan facts so manifest keys and
+            // geometry contracts are current before the final compile below.
             await annotateApprovedRosterWithManifestKeys(currentProject, null, modelAnalysisList).catch(() => null);
+
+            // Re-compile the JSON package now that the external roster scan has
+            // populated the model-analysis cache (forceRescan: false — use the cache
+            // the external scan just wrote, don't re-scan from scratch).
+            // This is the fix for the cold-start ordering gap: compileProjectJsonPackage
+            // ran before the external 3D scan, so _scan / extent fields were empty on
+            // first run. This second compile is cheap (cache hit) and makes entities.json
+            // carry correct scan facts before the AI pipeline reads it.
+            Progress.step('Recompiling JSON package with scan facts', 'Refreshing entities.json with roster scan results...');
+            const postScanCompileOk = await compileProjectJsonPackage(currentProject, { forceRescan: false })
+                .then(() => true)
+                .catch(err => {
+                    console.warn('Post-scan recompile failed (non-fatal — prior compile remains):', err.message);
+                    return false;
+                });
+
+            // Reload the three compiler-owned files into projectFiles so the AI prompt
+            // receives the scan-enriched versions. projectFiles was loaded from Firebase
+            // before the external scan ran, so assets.json / tree.json / entities.json
+            // in memory are pre-scan. The recompile just wrote the enriched versions —
+            // pull them back so the prompt context is coherent with what is in Firebase.
+            if (postScanCompileOk) {
+                for (const compiledPath of ['json/assets.json', 'json/tree.json', 'json/entities.json']) {
+                    try {
+                        const fileRef = ref(storage, `${ROOT}/${currentProject}/${compiledPath}`);
+                        const payload = await fetchStorageTextSafe(fileRef);
+                        projectFiles[compiledPath] = payload.text;
+                    } catch (e) {
+                        console.warn(`Post-scan projectFiles reload skipped for ${compiledPath}:`, e.message);
+                    }
+                }
+            }
         } else if ((repairAttempt > 0 || parseErrorRetry > 0) && modelAnalysisList.length > 0) {
             Progress.step('Reusing prior 3D scan analysis', `${modelAnalysisList.length} cached model analysis entr${modelAnalysisList.length === 1 ? 'y' : 'ies'} carried into this repair run.`);
         }
@@ -6487,9 +6674,18 @@ ${repairSeedFiles['models/2']}` : ''}
 ${repairSeedFiles['models/23'] ? `
 === CURRENT FILE: models/23 ===
 ${repairSeedFiles['models/23']}` : ''}
+${repairSeedFiles['json/scene_intent.json'] ? `
+=== CURRENT FILE: json/scene_intent.json ===
+${repairSeedFiles['json/scene_intent.json']}` : ''}
 ${repairSeedFiles['json/assets.json'] ? `
 === CURRENT FILE: json/assets.json ===
 ${repairSeedFiles['json/assets.json']}` : ''}
+${repairSeedFiles['json/tree.json'] ? `
+=== CURRENT FILE: json/tree.json ===
+${repairSeedFiles['json/tree.json']}` : ''}
+${repairSeedFiles['json/entities.json'] ? `
+=== CURRENT FILE: json/entities.json ===
+${repairSeedFiles['json/entities.json']}` : ''}
 ${repairContext}
 
 ═══════════════════════════════════════════════════════════
@@ -6517,9 +6713,18 @@ ${projectFiles['models/2']}` : ''}
 ${projectFiles['models/23'] ? `
 === FILE: models/23 ===
 ${projectFiles['models/23']}` : ''}
+${projectFiles['json/scene_intent.json'] ? `
+=== FILE: json/scene_intent.json ===
+${projectFiles['json/scene_intent.json']}` : ''}
 ${projectFiles['json/assets.json'] ? `
 === FILE: json/assets.json ===
 ${projectFiles['json/assets.json']}` : ''}
+${projectFiles['json/tree.json'] ? `
+=== FILE: json/tree.json ===
+${projectFiles['json/tree.json']}` : ''}
+${projectFiles['json/entities.json'] ? `
+=== FILE: json/entities.json ===
+${projectFiles['json/entities.json']}` : ''}
 ${zipContextString}
 ${extentsContext}
 ${modelAnalysisContext}
@@ -6536,7 +6741,7 @@ It then splits the build into sequential tranches. No intermediate architecture 
 
 ENVIRONMENT CONSTRAINTS (platform facts handled by backend):
 1. Output format uses delimiter blocks: ===FILE_START: path=== ... ===FILE_END: path===
-2. Valid target files are models/2, models/23, and json/assets.json.
+2. Valid target files are models/2, models/23, and json/scene_intent.json. json/assets.json, json/tree.json, and json/entities.json are compiler-owned read-only context files. scene_intent.json may declare groups[], objects[], and standalone rigidbodies[] when a rigidbody must exist directly under a group or at the root.
 3. Main logic file is models/2. HTML overlay is models/23.
 4. Output complete file contents, not patches or diffs.
 5. Preserve accumulated code from prior tranches.
@@ -6559,6 +6764,11 @@ PLANNING REQUIREMENTS:
 - MATERIAL REGISTRY + SLOT CONTRACT (CRASH PREVENTION): This applies ONLY to non-primitive scanned 3D assets surfaced in the SCANNED 3D EXTENTS block. Every such asset carries a slotCount (fallback meshCount only if slotCount is unavailable). For every such asset, the tranche that applies textures MUST register the asset slotCount, define a material whose albedo_texture is the resolved numeric colormap manifest key from assets.json, and apply that material key across EVERY valid slot N from 0 to slotCount-1 using gameState._applyMat or an equivalent slot-safe scaffold path. material_file must contain the registered material key, never the staged colormap path. If the asset is textured scene geometry, default to createInstance with a registered instance parent, but if working-game law proves that per-object visual overrides do not survive instancing for that pool, use createObject consistently for that pool instead. Cherry3D system primitives skip this workflow entirely. A tranche plan that writes raw paths into material_file/albedo_texture or ignores slotCount for a non-primitive scanned asset is a planning defect.
 - PARTICLE TEXTURE APPLICATION CONTRACT: Approved particle textures follow the scaffold particle-template path, not the non-primitive scene-object material registry path. Plan a Foundation-B tranche that declares BOTH PARTICLE_TEX_PATHS[effectName] = '<staged Firebase path>' and gameState.particleTextureIds[effectName] = '<manifest key>' for every approved particleEffectTarget. Then, in the tranche that registers particle templates, require registerParticleTemplate(... extraData: { material_file: PARTICLE_TEX_PATHS[effectName] }) or an equivalent direct particle slot material_file assignment. A tranche plan that only declares gameState.particleTextureIds without wiring material_file onto the particle template is a planning defect.
 - HTML UI PLACEMENT RULE: When a tranche creates or modifies visible HTML UI / HUD / overlay elements in models/23 or localUI, NEVER place UI in the top-left or top-right corners of the screen. It is always better to move UI components slightly inward toward the center instead of hugging the left or right edges. Prefer top-center, bottom-center, or clearly inset side placements. Any side-aligned UI must use a visible inset margin so it reads as center-shifted rather than edge-anchored. Corner-hugging or hard edge-hugging UI is a planning defect.
+- AUDIO + FEEDBACK EXECUTION CONTRACT: Any tranche that introduces or modifies avatar actions, pickups, rewards, damage, death, HUD state changes, moving hazards, or ambience MUST explicitly declare the exact audio events and feedback behaviors it is responsible for. Do NOT defer core feel work to a vague “polish later” note. The tranche prompt must state the intended emotional direction: soft, rewarding, immersive, and satisfying rather than abrasive, empty, or harsh.
+- HAZARD SIGNATURE + WARNING CONTRACT: Moving hazards and important moving gameplay objects must receive an identifiable sound signature. If a hazard is fast, dangerous, or can enter the active play space suddenly, the tranche plan MUST require a short anticipatory warning cue roughly 350-750ms before entry or before the lethal interaction window opens. Omitting this for a major fast hazard is a planning defect.
+- IMPACT + DEATH FEEDBACK CONTRACT: Any tranche covering lethal collisions or fail states MUST explicitly specify the hit effect family, the death-sequence readability requirement, the defeated pose requirement, and the minimum visible hold window before reset/restart. Dramatic or violent particles are reserved ONLY for severe major-hazard impacts. Instant resets, unreadable deaths, or generic under-signaled lethal hits are planning defects.
+- FEEDBACK EXPERT ASSIGNMENT RULE: Any tranche introducing or refining avatar actions, hazards, damage, death, reward moments, or ambient sound must assign audio_design and/or visual_effects as one of its expert agents. Omitting both on a feedback-critical tranche is a planning defect.
+- EXECUTOR CARRY-THROUGH RULE: Every feedback-critical tranche prompt must carry its audio/VFX/death-feedback requirements forward as explicit executor instructions, validation checks, and completion proof items. Do not summarize them as “juice,” “polish,” or “optional enhancements.”
 - Each tranche must be assigned 1-2 expert agents from this roster:
 ${EXPERT_AGENTS_JSON}
 
@@ -6581,7 +6791,8 @@ TRANCHE STRUCTURE:
 1. First tranche: scaffold-compliant foundations (existing immutable sections, factories, materials, world build, STATIC collision surfaces).
 2. Middle tranches: ONE subsystem each, strictly ordered by dependency. If a subsystem is complex (e.g. physics + controls + camera together), split it across multiple consecutive sub-tranches (A, B, C...).
 3. Never group more than ONE major system per tranche. When unsure, split.
-4. Last tranche: integration, edge cases, polish, and final scaffold alignment.
+4. Any game with hazards, fail states, or frequent avatar interaction must reserve at least one dedicated tranche for audio feel, impact feedback, death readability, and hazard cueing once the related gameplay events already exist in code.
+5. Last tranche: integration, edge cases, audio/feedback balancing, death-sequence readability, and final scaffold alignment.
 
 User Request: ${prompt}${approvedRosterContext}${attachedPromptImages.length > 0 ? `
 
@@ -6911,13 +7122,13 @@ RULES FOR ALL PIPELINE STAGES:
 
         result.updatedFiles = applySummary.appliedFiles;
 
-        // ── Re-sync assets.json after AI apply ──
-        // The AI may have uploaded new model/asset files. syncAssetsJson is the sole
-        // writer of assets.json — run it now so the manifest reflects the new state.
+        // ── Re-run roster audit against the live compiled package after AI apply ──
         try {
-          Progress.step('Re-syncing assets.json', 'Updating manifest to reflect newly applied files...');
-          const rosterManifest = await syncAssetsJson();
-          const annotatedRoster = await annotateApprovedRosterWithManifestKeys(currentProject, rosterManifest).catch(() => null);
+          const sceneIntentTouched = applySummary.appliedFiles.some(file => file.safePath === 'json/scene_intent.json');
+          if (!sceneIntentTouched) {
+            Progress.step('Verifying compiled JSON package', 'Using the current compiler-owned assets/tree/entities package for roster compliance audit...');
+          }
+          const annotatedRoster = await annotateApprovedRosterWithManifestKeys(currentProject).catch(() => null);
           const rosterAudit = await runRosterComplianceAudit(currentProject, annotatedRoster).catch(() => ({ applicable: false, failures: [], warnings: [] }));
           if (rosterAudit.applicable) {
             if (rosterAudit.failures.length > 0) {
@@ -6932,7 +7143,7 @@ RULES FOR ALL PIPELINE STAGES:
             }
           }
         } catch (syncErr) {
-          console.warn('Post-apply syncAssetsJson failed (non-fatal):', syncErr);
+          console.warn('Post-apply roster audit failed (non-fatal):', syncErr);
         }
 
         appendToChatLog('AI', result.message || 'Files have been updated successfully.');

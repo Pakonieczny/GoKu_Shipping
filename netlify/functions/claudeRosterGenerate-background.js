@@ -12,12 +12,14 @@
      2. Read Master Prompt + inline images from ai_request.json.
      3. PHASE 1 — Claude analyzes the game prompt + gameplay reference
         images and produces a structured list of required particle effects
-        and 3D objects. Each 3D object requirement includes up to 3
-        suggestedCategories chosen from the live CSV category list.
+        and 3D objects. Each 3D object requirement includes 2 to 6
+        rankedCategories chosen from the live CSV category list, sorted
+        by likelihoodPercent from highest to lowest.
      4. Save the Phase 1 payload as ai_asset_roster_phase1.json.
      5. Frontend collects one user reference image per required 3D object.
      6. claudeRosterStageAB-background reads the CSV again, filters assets
-        by suggestedCategories, then runs Stage A/B on the filtered pool.
+        by rankedCategories / suggestedCategories, then runs Stage A/B
+        on the filtered pool using the top valid categories by score.
 
    Global asset paths (shared across all projects):
      CSV:  game-generator-1/projects/BASE_Files/asset_3d_objects/reorganized_assets_manifest.csv
@@ -31,6 +33,8 @@ const fetch = require("node-fetch");
 const admin = require("./firebaseAdmin");
 
 const GLOBAL_ASSET_CSV_PATH = "game-generator-1/projects/BASE_Files/asset_3d_objects/reorganized_assets_manifest.csv";
+const MIN_SUGGESTED_CATS  = 2;
+const MAX_SUGGESTED_CATS  = 6;
 
 /* ─── Retry helpers ──────────────────────────────────────────────── */
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
@@ -191,6 +195,60 @@ function stripFences(text) {
   return t.trim();
 }
 
+function clampLikelihoodPercent(value, fallback = 50) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return Math.max(0, Math.min(100, Math.round(fallback)));
+  return Math.max(0, Math.min(100, Math.round(n)));
+}
+
+function buildLegacyRankedCategories(rawCategories) {
+  if (!Array.isArray(rawCategories)) return [];
+  return rawCategories.map((category, index) => ({
+    category: String(category || "").trim(),
+    likelihoodPercent: Math.max(1, 100 - (index * 5))
+  }));
+}
+
+function normalizeSuggestedCategoryRanking(obj = {}) {
+  const rawRanked = Array.isArray(obj.rankedCategories) ? obj.rankedCategories : [];
+  const rankedSource = rawRanked.length > 0 ? rawRanked : buildLegacyRankedCategories(obj.suggestedCategories);
+  const normalized = [];
+  const seen = new Set();
+
+  for (let index = 0; index < rankedSource.length; index++) {
+    const entry = rankedSource[index];
+    const category = String(
+      typeof entry === "string"
+        ? entry
+        : (entry?.category || entry?.name || "")
+    ).trim();
+    if (!category) continue;
+
+    const dedupeKey = category.toLowerCase();
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
+
+    normalized.push({
+      category,
+      likelihoodPercent: clampLikelihoodPercent(
+        typeof entry === "string" ? 100 - (index * 5) : entry?.likelihoodPercent,
+        100 - (index * 5)
+      )
+    });
+  }
+
+  normalized.sort((a, b) => {
+    if (b.likelihoodPercent !== a.likelihoodPercent) return b.likelihoodPercent - a.likelihoodPercent;
+    return a.category.localeCompare(b.category);
+  });
+
+  const rankedCategories = normalized.slice(0, MAX_SUGGESTED_CATS);
+  return {
+    rankedCategories,
+    suggestedCategories: rankedCategories.map(entry => entry.category)
+  };
+}
+
 
 function buildMasterPromptLayoutGuidance(masterPrompt = "") {
   const prompt = String(masterPrompt || "");
@@ -237,7 +295,12 @@ MASTER GAME PROMPT:
 ${masterPrompt}
 
 AVAILABLE 3D ASSET CATEGORIES:
-The asset library is organised into the following categories. For each 3D object requirement you identify, you MUST assign between 2 and 3 categories from this exact list. Always provide a second category — assets are sometimes miscategorised or exist in related folders. A third category is optional but encouraged when there is a plausible alternate location.
+The asset library is organised into the following categories. For each 3D object requirement you identify, you MUST return rankedCategories as an array of 2 to 6 category guesses from this exact list, sorted from highest to lowest likelihoodPercent.
+- Always include at least the 2 most probable categories.
+- Lean on the side of caution and include additional plausible categories rather than fewer when the object could realistically appear in adjacent or overlapping folders.
+- Prefer 4 to 6 ranked categories when there are multiple credible locations.
+- likelihoodPercent must be an integer from 0 to 100 and should reflect relative likelihood for this object requirement. It is used for ranking and filtering, so the highest-confidence categories must come first.
+- Do not invent categories outside this list.
 
 ${catBlock}
 
@@ -258,7 +321,10 @@ Respond ONLY with a valid JSON object. No markdown, no fences, no preamble.
       "name": "short_snake_case_identifier",
       "visualDescription": "What this object looks like — shape, silhouette, style, approximate scale",
       "gameplayRole": "What this object does in the game — obstacle, collectible, environment piece, character, etc.",
-      "suggestedCategories": ["Primary_Category/Sub_Category", "Secondary_Category/Sub_Category"]
+      "rankedCategories": [
+        { "category": "Primary_Category/Sub_Category", "likelihoodPercent": 94 },
+        { "category": "Secondary_Category/Sub_Category", "likelihoodPercent": 83 }
+      ]
     }
   ]
 }`;
@@ -348,25 +414,30 @@ exports.handler = async (event) => {
       return err500(`Phase 1 returned unparseable JSON: ${e.message}`);
     }
 
-    // Validate suggestedCategories: enforce minimum 2, maximum 3
+    // Validate rankedCategories: enforce minimum 2, maximum 6, and derive legacy suggestedCategories
     for (const obj of (phase1.objects3d || [])) {
-      if (!Array.isArray(obj.suggestedCategories)) obj.suggestedCategories = [];
-
-      // Clamp to max 3
-      obj.suggestedCategories = obj.suggestedCategories.slice(0, 3);
+      const { rankedCategories, suggestedCategories } = normalizeSuggestedCategoryRanking(obj);
+      obj.rankedCategories = rankedCategories;
+      obj.suggestedCategories = suggestedCategories;
 
       // Warn about unknown categories (StageAB will also filter these out)
-      for (const cat of obj.suggestedCategories) {
-        if (!categoryList.includes(cat)) {
-          console.warn(`[ROSTER-GEN] Object "${obj.name}" suggested unknown category "${cat}" — will be ignored in filter`);
+      for (const entry of rankedCategories) {
+        if (!categoryList.includes(entry.category)) {
+          console.warn(
+            `[ROSTER-GEN] Object "${obj.name}" suggested unknown category "${entry.category}" ` +
+            `(${entry.likelihoodPercent}%) — will be ignored in filter`
+          );
         }
       }
 
       // Enforce minimum of 2
-      if (obj.suggestedCategories.length === 0) {
-        console.warn(`[ROSTER-GEN] Object "${obj.name}" returned no suggestedCategories — will be skipped in StageAB unless Phase 1 is retried with valid categories`);
-      } else if (obj.suggestedCategories.length === 1) {
-        console.warn(`[ROSTER-GEN] Object "${obj.name}" returned only 1 suggestedCategory — minimum is 2. StageAB will scan only that category; consider retrying Phase 1 if match quality is poor.`);
+      if (rankedCategories.length === 0) {
+        console.warn(`[ROSTER-GEN] Object "${obj.name}" returned no rankedCategories — will be skipped in StageAB unless Phase 1 is retried with valid categories`);
+      } else if (rankedCategories.length < MIN_SUGGESTED_CATS) {
+        console.warn(
+          `[ROSTER-GEN] Object "${obj.name}" returned only ${rankedCategories.length} ranked category ` +
+          `— minimum is ${MIN_SUGGESTED_CATS}. StageAB will skip this object until at least 2 valid categories are supplied.`
+        );
       }
     }
 
@@ -376,7 +447,13 @@ exports.handler = async (event) => {
       `${(phase1.objects3d || []).length} 3D object(s) identified`
     );
     for (const obj of (phase1.objects3d || [])) {
-      console.log(`[ROSTER-GEN]   "${obj.name}" → categories: ${(obj.suggestedCategories || []).join(", ") || "NONE (StageAB will skip until categories are supplied)"}`);
+      const rankingSummary = (obj.rankedCategories || [])
+        .map(entry => `${entry.category} (${entry.likelihoodPercent}%)`)
+        .join(", ");
+      console.log(
+        `[ROSTER-GEN]   "${obj.name}" → ranked categories: ` +
+        `${rankingSummary || "NONE (StageAB will skip until categories are supplied)"}`
+      );
     }
 
     // ── 5. Write Phase 1 result + category list to Firebase ─────────────
