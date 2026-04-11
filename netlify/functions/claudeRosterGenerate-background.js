@@ -35,7 +35,7 @@ const admin = require("./firebaseAdmin");
 const GLOBAL_ASSET_CSV_PATH = "game-generator-1/projects/BASE_Files/asset_3d_objects/reorganized_assets_manifest.csv";
 const MIN_SUGGESTED_CATS  = 2;
 const MAX_SUGGESTED_CATS  = 6;
-const AVATARS_ZIP_PATH_DEFAULT = "game-generator-1/projects/BASE_Files/avatar_assets/Avatars.zip";
+const AVATARS_ZIP_PATH_DEFAULT = "game-generator-1/projects/BASE_Files/asset_3d_objects/Avatars.zip";
 
 /* ─── Retry helpers ──────────────────────────────────────────────── */
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }

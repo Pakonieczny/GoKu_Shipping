@@ -51,6 +51,16 @@ const IMAGES_PER_BATCH     = 50;
 const MIN_SUGGESTED_CATS   = 2;
 const MAX_SUGGESTED_CATS   = 6;   // hard cap — Phase 1 enforces this too
 const MAX_AVATAR_ASSETS   = 20;
+const AVATARS_ZIP_PRIMARY_PATH = `${GLOBAL_ASSET_BASE}/Avatars.zip`;
+const AVATARS_ZIP_LEGACY_PATH  = "game-generator-1/projects/BASE_Files/avatar_assets/Avatars.zip";
+
+function buildAvatarZipPathCandidates(requestedPath = "") {
+  return [...new Set([
+    requestedPath,
+    AVATARS_ZIP_PRIMARY_PATH,
+    AVATARS_ZIP_LEGACY_PATH
+  ].filter(Boolean))];
+}
 
 /* ─── Retry helpers ──────────────────────────────────────────────── */
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
@@ -959,8 +969,10 @@ exports.handler = async (event) => {
     const objectReqs         = phase1.objects3d || [];
     const avatarReqs         = phase1.avatarRequirements || [];
     const gameInterpretation = phase1.gameInterpretationSummary || "";
-    const avatarZipPath      = p1Payload.avatarPipeline?.zipPath || '';
-    if (!avatarZipPath) return err400('Missing avatarPipeline.zipPath in ai_asset_roster_phase1.json');
+    const requestedAvatarZipPath = p1Payload.avatarPipeline?.zipPath || '';
+    const avatarZipPathCandidates = buildAvatarZipPathCandidates(requestedAvatarZipPath);
+    if (!avatarZipPathCandidates.length) return err400('Missing avatarPipeline.zipPath in ai_asset_roster_phase1.json');
+    let resolvedAvatarZipPath = requestedAvatarZipPath || AVATARS_ZIP_PRIMARY_PATH;
 
     console.log(`[ROSTER-AB] Phase 1 loaded: ${particleReqs.length} particle req(s), ${objectReqs.length} object req(s), ${avatarReqs.length} avatar req(s)`);
 
@@ -1230,85 +1242,92 @@ exports.handler = async (event) => {
 
     const avatarAssets = [];
     {
-      const avatarZipFile = bucket.file(avatarZipPath);
-      const [avatarZipExists] = await avatarZipFile.exists();
-      if (avatarZipExists) {
-        console.log(`[ROSTER-AB] Loading avatar library from ${avatarZipPath}`);
+      let avatarZip = null;
+      for (const candidatePath of avatarZipPathCandidates) {
+        const avatarZipFile = bucket.file(candidatePath);
+        const [avatarZipExists] = await avatarZipFile.exists();
+        if (!avatarZipExists) continue;
+        console.log(`[ROSTER-AB] Loading avatar library from ${candidatePath}`);
         try {
           const [avatarZipBuffer] = await avatarZipFile.download();
-          const avatarZip = await JSZip.loadAsync(avatarZipBuffer);
-          const folderMap = new Map();
-          for (const entryPath of Object.keys(avatarZip.files)) {
-            const entry = avatarZip.files[entryPath];
-            if (entry.dir || entryPath.includes('__MACOSX')) continue;
-            const base = entryPath.split('/').pop() || '';
-            if (base.startsWith('._')) continue;
-            const parts = entryPath.split('/').filter(Boolean);
-            if (parts.length < 2) continue;
-            const folderKey = parts.slice(0, -1).join('/');
-            if (!folderMap.has(folderKey)) {
-              folderMap.set(folderKey, { folderKey, folderName: parts[parts.length - 2], files: [] });
-            }
-            folderMap.get(folderKey).files.push(entryPath);
-          }
-
-          for (const folder of folderMap.values()) {
-            const fbxEntryPath = folder.files.find(file => /\.fbx$/i.test(file));
-            const thumbnailEntryPath = folder.files.find(file => /thumbnail\.(png|jpg|jpeg|webp)$/i.test(file));
-            if (!fbxEntryPath || !thumbnailEntryPath) continue;
-            try {
-              const thumbBuffer = await avatarZip.files[thumbnailEntryPath].async('nodebuffer');
-              const thumbLower = thumbnailEntryPath.toLowerCase();
-              const mimeType = thumbLower.endsWith('.png') ? 'image/png' : 'image/jpeg';
-              const animationManifestPath = folder.files.find(file => /animations\.txt$/i.test(file)) || null;
-              const rawAnimations = animationManifestPath
-                ? await avatarZip.files[animationManifestPath].async('text')
-                : '';
-              const animationClips = parseAnimationsTxt(rawAnimations);
-              let fbxGeometry = null;
-              let fbxMaterials = [];
-              let fbxMeshCount = 0;
-              let fbxSlotCount = 0;
-              try {
-                const fbxBuffer = await avatarZip.files[fbxEntryPath].async('nodebuffer');
-                const scanResult = await scanFbxBuffer(fbxBuffer, fbxEntryPath);
-                if (scanResult) {
-                  fbxGeometry = scanResult.geometry || null;
-                  fbxMaterials = scanResult.materials || [];
-                  fbxMeshCount = scanResult.meshCount || 0;
-                  fbxSlotCount = scanResult.slotCount || fbxMeshCount;
-                }
-              } catch (e) {
-                console.warn(`[ROSTER-AB] Avatar FBX scan failed for ${fbxEntryPath}: ${e.message}`);
-              }
-              avatarAssets.push({
-                assetName: fbxEntryPath.split('/').pop(),
-                fbxEntryPath,
-                thumbnailEntryPath,
-                thumbnailFile: thumbnailEntryPath.split('/').pop(),
-                textureFiles: listAvatarTextureFiles(avatarZip, `${folder.folderKey}/`),
-                animationManifestPath,
-                rawAnimations,
-                animationClips,
-                geometryAnalysis: fbxGeometry,
-                materials: fbxMaterials,
-                materialAssignments: fbxMaterials.map((m, i) => ({ slot: i, materialName: m.name })),
-                meshCount: fbxMeshCount,
-                slotCount: fbxSlotCount,
-                b64: thumbBuffer.toString('base64'),
-                mimeType,
-                sourceZip: avatarZipPath.split('/').pop() || 'Avatars.zip',
-                avatarFolder: folder.folderName
-              });
-            } catch (e) {
-              console.warn(`[ROSTER-AB] Avatar folder ${folder.folderKey}: thumbnail read failed — ${e.message}`);
-            }
-          }
+          avatarZip = await JSZip.loadAsync(avatarZipBuffer);
+          resolvedAvatarZipPath = candidatePath;
+          break;
         } catch (e) {
-          console.warn(`[ROSTER-AB] Could not load avatar library ${avatarZipPath}: ${e.message}`);
+          console.warn(`[ROSTER-AB] Could not load avatar library ${candidatePath}: ${e.message}`);
+        }
+      }
+
+      if (avatarZip) {
+        const folderMap = new Map();
+        for (const entryPath of Object.keys(avatarZip.files)) {
+          const entry = avatarZip.files[entryPath];
+          if (entry.dir || entryPath.includes('__MACOSX')) continue;
+          const base = entryPath.split('/').pop() || '';
+          if (base.startsWith('._')) continue;
+          const parts = entryPath.split('/').filter(Boolean);
+          if (parts.length < 2) continue;
+          const folderKey = parts.slice(0, -1).join('/');
+          if (!folderMap.has(folderKey)) {
+            folderMap.set(folderKey, { folderKey, folderName: parts[parts.length - 2], files: [] });
+          }
+          folderMap.get(folderKey).files.push(entryPath);
+        }
+
+        for (const folder of folderMap.values()) {
+          const fbxEntryPath = folder.files.find(file => /\.fbx$/i.test(file));
+          const thumbnailEntryPath = folder.files.find(file => /thumbnail\.(png|jpg|jpeg|webp)$/i.test(file));
+          if (!fbxEntryPath || !thumbnailEntryPath) continue;
+          try {
+            const thumbBuffer = await avatarZip.files[thumbnailEntryPath].async('nodebuffer');
+            const thumbLower = thumbnailEntryPath.toLowerCase();
+            const mimeType = thumbLower.endsWith('.png') ? 'image/png' : 'image/jpeg';
+            const animationManifestPath = folder.files.find(file => /animations\.txt$/i.test(file)) || null;
+            const rawAnimations = animationManifestPath
+              ? await avatarZip.files[animationManifestPath].async('text')
+              : '';
+            const animationClips = parseAnimationsTxt(rawAnimations);
+            let fbxGeometry = null;
+            let fbxMaterials = [];
+            let fbxMeshCount = 0;
+            let fbxSlotCount = 0;
+            try {
+              const fbxBuffer = await avatarZip.files[fbxEntryPath].async('nodebuffer');
+              const scanResult = await scanFbxBuffer(fbxBuffer, fbxEntryPath);
+              if (scanResult) {
+                fbxGeometry = scanResult.geometry || null;
+                fbxMaterials = scanResult.materials || [];
+                fbxMeshCount = scanResult.meshCount || 0;
+                fbxSlotCount = scanResult.slotCount || fbxMeshCount;
+              }
+            } catch (e) {
+              console.warn(`[ROSTER-AB] Avatar FBX scan failed for ${fbxEntryPath}: ${e.message}`);
+            }
+            avatarAssets.push({
+              assetName: fbxEntryPath.split('/').pop(),
+              fbxEntryPath,
+              thumbnailEntryPath,
+              thumbnailFile: thumbnailEntryPath.split('/').pop(),
+              textureFiles: listAvatarTextureFiles(avatarZip, `${folder.folderKey}/`),
+              animationManifestPath,
+              rawAnimations,
+              animationClips,
+              geometryAnalysis: fbxGeometry,
+              materials: fbxMaterials,
+              materialAssignments: fbxMaterials.map((m, i) => ({ slot: i, materialName: m.name })),
+              meshCount: fbxMeshCount,
+              slotCount: fbxSlotCount,
+              b64: thumbBuffer.toString('base64'),
+              mimeType,
+              sourceZip: resolvedAvatarZipPath.split('/').pop() || 'Avatars.zip',
+              avatarFolder: folder.folderName
+            });
+          } catch (e) {
+            console.warn(`[ROSTER-AB] Avatar folder ${folder.folderKey}: thumbnail read failed — ${e.message}`);
+          }
         }
       } else {
-        console.warn(`[ROSTER-AB] Avatar library not found at ${avatarZipPath}`);
+        console.warn(`[ROSTER-AB] Avatar library not found in any expected path: ${avatarZipPathCandidates.join(', ')}`);
       }
     }
 
@@ -1826,7 +1845,7 @@ exports.handler = async (event) => {
       totalParticleAssets: particleAssets.length,
       refImagesUsed:       refImageByName.size,
       csvEntriesLoaded:    assetCategoryMap.size,
-      avatarZipPath,
+      avatarZipPath:        resolvedAvatarZipPath,
       approved:            false
     };
 

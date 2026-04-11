@@ -220,13 +220,15 @@ exports.handler = async (event) => {
     // can shadow a global zip of the same name if needed.
     // Later entries do NOT overwrite earlier ones in availableZips — first match wins.
     const GLOBAL_ASSET_BASE = "game-generator-1/projects/BASE_Files/asset_3d_objects";
+    const LEGACY_AVATAR_ZIP_FOLDER = "game-generator-1/projects/BASE_Files/avatar_assets/";
     const AVATAR_ZIP_FOLDER = avatarZipPath.replace(/[^/]+$/, '');
     const availableZips = new Map(); // lowercased base filename → bucket File reference
     const zipSearchFolders = [
       `${projectPath}/asset_particle_textures/`,
       `${projectPath}/asset_3d_objects/`,
       `${GLOBAL_ASSET_BASE}/`,
-      AVATAR_ZIP_FOLDER
+      AVATAR_ZIP_FOLDER,
+      LEGACY_AVATAR_ZIP_FOLDER
     ];
     for (const folder of zipSearchFolders) {
       let folderFiles;
