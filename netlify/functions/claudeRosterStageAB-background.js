@@ -246,7 +246,7 @@ function normalizeRequirementCategoryRanking(req = {}) {
       typeof entry === 'string'
         ? entry
         : (entry?.category || entry?.name || '')
-    ).trim();
+    ).trim().replace(/ /g, '_');
     if (!category) continue;
 
     const dedupeKey = category.toLowerCase();
@@ -1020,19 +1020,12 @@ exports.handler = async (event) => {
         return known;
       }).slice(0, MAX_SUGGESTED_CATS);
 
-      if (validRanked.length >= MIN_SUGGESTED_CATS) {
+      if (validRanked.length >= 1) {
         const allowedCats = new Set(validRanked.map(entry => entry.category));
         reqCategoryFilter.set(req.name, { allowedCats, rankedCategories: validRanked });
         console.log(
           `[ROSTER-AB] Req "${req.name}": filtering to ${validRanked.length} ranked category(s): ` +
           `${validRanked.map(entry => `${entry.category} (${entry.likelihoodPercent}%)`).join(", ")}`
-        );
-      } else if (validRanked.length === 1) {
-        reqCategoryFilter.set(req.name, { allowedCats: new Set(), rankedCategories: [] });
-        console.warn(
-          `[ROSTER-AB] Req "${req.name}": only 1 valid ranked category remained after CSV filtering ` +
-          `(${validRanked[0].category} @ ${validRanked[0].likelihoodPercent}%) — minimum is ${MIN_SUGGESTED_CATS}, ` +
-          `so object search will be skipped for this requirement`
         );
       } else {
         reqCategoryFilter.set(req.name, { allowedCats: new Set(), rankedCategories: [] });
