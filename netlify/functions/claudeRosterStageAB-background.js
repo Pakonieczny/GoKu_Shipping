@@ -50,6 +50,7 @@ const MAX_PNG_ASSETS       = 50;
 const IMAGES_PER_BATCH     = 50;
 const MIN_SUGGESTED_CATS   = 2;
 const MAX_SUGGESTED_CATS   = 6;   // hard cap — Phase 1 enforces this too
+const MAX_AVATAR_ASSETS   = 20;
 
 /* ─── Retry helpers ──────────────────────────────────────────────── */
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
@@ -274,6 +275,464 @@ function chunkArray(arr, size) {
   return out;
 }
 
+
+function normalizeAvatarRole(value = "") {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "") || "avatar";
+}
+
+function parseAnimationsTxt(raw = "") {
+  return Array.from(new Set(
+    String(raw || "")
+      .split(/\r?\n/)
+      .map(line => line.trim())
+      .filter(Boolean)
+      .map(line => {
+        const match = line.match(/^[-*]?\s*([^:]+?)(?:\s*:\s*(.*))?$/);
+        return String(match?.[1] || line).trim();
+      })
+      .filter(Boolean)
+  ));
+}
+
+function normalizeAnimationNeedToBuckets(need = '') {
+  const lower = String(need || '').toLowerCase();
+  if (!lower) return [];
+  if (/idle|stand|breath/.test(lower)) return ['idle'];
+  if (/move|walk|step/.test(lower)) return ['walk'];
+  if (/run|sprint|jog/.test(lower)) return ['run'];
+  if (/jump|hop|leap/.test(lower)) return ['jump'];
+  if (/attack_or_action|attack|melee|strike|slash|swing|punch|kick/.test(lower)) return ['attack_melee', 'attack_ranged'];
+  if (/shoot|fire|aim|ranged/.test(lower)) return ['attack_ranged'];
+  if (/hurt|hit|damage|flinch|pain/.test(lower)) return ['hurt'];
+  if (/death|die|dead|dying/.test(lower)) return ['death'];
+  if (/reload/.test(lower)) return ['reload'];
+  if (/crouch|duck/.test(lower)) return ['crouch'];
+  if (/strafe|sidestep/.test(lower)) return ['strafe'];
+  if (/celebrate|victory|cheer|taunt/.test(lower)) return ['celebrate'];
+  if (/fall|airborne/.test(lower)) return ['fall'];
+  if (/land|touchdown/.test(lower)) return ['land'];
+  return [lower.replace(/[^a-z0-9]+/g, '_')];
+}
+
+function scoreAnimationCoverage(requirement = {}, clips = []) {
+  const needs = Array.isArray(requirement.animationNeeds) ? requirement.animationNeeds : [];
+  const BUCKET_PATTERNS = {
+    idle: /idle|stand|breathing/i,
+    walk: /walk|step/i,
+    run: /run|sprint|jog/i,
+    jump: /jump|leap|hop/i,
+    attack_melee: /attack|slash|strike|swing|melee|punch|kick/i,
+    attack_ranged: /shoot|fire|aim|ranged/i,
+    hurt: /hurt|hit|damage|flinch|pain/i,
+    death: /death|die|dying|dead/i,
+    reload: /reload/i,
+    crouch: /crouch|duck/i,
+    strafe: /strafe|sidestep/i,
+    celebrate: /celebrate|victory|cheer|taunt/i,
+    fall: /fall|falling|airborne/i,
+    land: /land|touchdown/i,
+  };
+  const normalizedBuckets = {};
+  for (const clip of clips) {
+    for (const [bucket, pattern] of Object.entries(BUCKET_PATTERNS)) {
+      if (pattern.test(String(clip || ''))) {
+        normalizedBuckets[bucket] = normalizedBuckets[bucket] || [];
+        normalizedBuckets[bucket].push(clip);
+      }
+    }
+  }
+  if (needs.length === 0) {
+    return {
+      required: [],
+      matched: [],
+      missing: [],
+      score: clips.length > 0 ? 1 : 0,
+      coveragePercent: clips.length > 0 ? 100 : 0,
+      normalizedBuckets
+    };
+  }
+  const matched = needs.filter(need => {
+    const buckets = normalizeAnimationNeedToBuckets(need);
+    return buckets.some(bucket => Array.isArray(normalizedBuckets[bucket]) && normalizedBuckets[bucket].length > 0)
+      || clips.some(clip => {
+        const lowerClip = String(clip || '').toLowerCase();
+        const lowerNeed = String(need || '').toLowerCase();
+        return lowerClip.includes(lowerNeed) || lowerNeed.includes(lowerClip);
+      });
+  });
+  return {
+    required: needs,
+    matched,
+    missing: needs.filter(need => !matched.includes(need)),
+    score: matched.length / Math.max(1, needs.length),
+    coveragePercent: Math.round((matched.length / Math.max(1, needs.length)) * 100),
+    normalizedBuckets
+  };
+}
+
+function splitMatchTokens(value = '') {
+  return String(value || '')
+    .replace(/\u0000/g, ' ')
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean)
+    .filter(token => !/^(mat|material|mesh|slot|default|obj|fbx|glb|gltf|mesh[0-9]+|[a-z]|[0-9]+)$/.test(token));
+}
+
+function scoreOrderedTokenAlignment(sharedTokens = [], leftTokens = [], rightTokens = []) {
+  let score = 0;
+  let rightCursor = -1;
+  for (const token of sharedTokens) {
+    const leftIndex = leftTokens.indexOf(token);
+    const rightIndex = rightTokens.indexOf(token, rightCursor + 1);
+    if (leftIndex >= 0 && rightIndex >= 0) {
+      score += 5;
+      rightCursor = rightIndex;
+    }
+  }
+  return score;
+}
+
+function scoreTextureCandidates(materials = [], textureFileList = []) {
+  const textureEntries = (Array.isArray(textureFileList) ? textureFileList : []).map((entryPath) => {
+    const base = String(entryPath || '').split('/').pop() || String(entryPath || '');
+    const lower = base.toLowerCase();
+    const nameNoExt = base.replace(/\.[^.]+$/, '');
+    return { entryPath, base, lower, nameNoExt, tokens: splitMatchTokens(nameNoExt) };
+  });
+
+  const contracts = (Array.isArray(materials) ? materials : []).map((material, index) => {
+    const materialName = String(material?.name || `slot_${index}`);
+    const materialLower = materialName.toLowerCase();
+    const materialNameNoExt = materialName.replace(/\.[^.]+$/, '').toLowerCase();
+    const materialTokens = splitMatchTokens(materialName);
+    const ranked = textureEntries.map((texture) => {
+      let score = 0;
+      const reasons = [];
+      const sharedTokens = materialTokens.filter(token => texture.tokens.includes(token));
+
+      if (texture.nameNoExt.toLowerCase() === materialNameNoExt) {
+        score += 100;
+        reasons.push('exact full-name match');
+      }
+      if (sharedTokens.length > 0) {
+        score += sharedTokens.length * 10;
+        reasons.push(`shared tokens: ${sharedTokens.join(', ')}`);
+      }
+      const orderedScore = scoreOrderedTokenAlignment(sharedTokens, materialTokens, texture.tokens);
+      if (orderedScore > 0) {
+        score += orderedScore;
+        reasons.push('ordered token alignment');
+      }
+      if (materialNameNoExt && (texture.nameNoExt.toLowerCase().includes(materialNameNoExt) || materialNameNoExt.includes(texture.nameNoExt.toLowerCase()))) {
+        score += 8;
+        reasons.push('substring containment');
+      }
+      if (/(diffuse|albedo|color|col|basecolor)/.test(texture.lower)) {
+        score += 15;
+        reasons.push('albedo/color suffix match');
+      }
+      if (/(thumbnail|preview|render|thumb)/.test(texture.lower)) {
+        score -= 30;
+        reasons.push('preview/thumbnail penalty');
+      }
+      if (sharedTokens.some(token => token.length <= 1 || /^[0-9]+$/.test(token))) {
+        score -= 5;
+        reasons.push('generic token penalty');
+      }
+      return {
+        entryPath: texture.entryPath,
+        base: texture.base,
+        score,
+        reason: reasons.join('; ') || 'no strong token evidence'
+      };
+    }).sort((a, b) => b.score - a.score || a.base.localeCompare(b.base));
+
+    const best = ranked[0] || null;
+    const second = ranked[1] || null;
+    const scoreGap = best ? (best.score - (second?.score || 0)) : 0;
+    let confidence = 'unresolved';
+    let boundTexture = null;
+    let ambiguous = false;
+    if (best) {
+      if (best.score >= 40) {
+        confidence = 'high';
+        boundTexture = best.entryPath;
+      } else if (best.score >= 15 && scoreGap >= 10) {
+        confidence = 'medium';
+        boundTexture = best.entryPath;
+      } else if (best.score < 15) {
+        confidence = 'low';
+      } else {
+        ambiguous = true;
+      }
+    }
+    return {
+      materialName,
+      slot: Number(material?.index ?? index),
+      boundTexture,
+      confidence,
+      score: best?.score || 0,
+      reason: best?.reason || 'no candidate textures available',
+      secondBest: second?.entryPath || null,
+      ambiguous
+    };
+  });
+
+  const confidentMatches = contracts.filter(contract => contract.boundTexture && (contract.confidence === 'high' || contract.confidence === 'medium'));
+  if (confidentMatches.length === 0 && contracts.length > 0) {
+    const globalColormap = textureEntries.find(texture => /^colormap$/i.test(texture.nameNoExt));
+    if (globalColormap) {
+      return contracts.map(contract => ({
+        ...contract,
+        boundTexture: globalColormap.entryPath,
+        confidence: 'medium',
+        score: Math.max(contract.score, 15),
+        reason: 'global colormap fallback because zero confident slot matches existed',
+        ambiguous: false
+      }));
+    }
+  }
+
+  return contracts.map(contract => {
+    if (contract.confidence === 'low' || contract.ambiguous) {
+      return { ...contract, boundTexture: null, confidence: contract.confidence === 'low' ? 'low' : 'unresolved' };
+    }
+    return contract;
+  });
+}
+
+let _threeFbxRuntimePromise = null;
+
+async function getThreeFbxRuntime() {
+  if (!_threeFbxRuntimePromise) {
+    _threeFbxRuntimePromise = (async () => {
+      const THREE = await import('three');
+      const { FBXLoader } = await import('three/examples/jsm/loaders/FBXLoader.js');
+      return { THREE, FBXLoader };
+    })();
+  }
+  return _threeFbxRuntimePromise;
+}
+
+function nodeBufferToArrayBuffer(bufferLike) {
+  if (bufferLike instanceof ArrayBuffer) return bufferLike;
+  if (!Buffer.isBuffer(bufferLike)) {
+    throw new Error('scanFbxBuffer expected a Node Buffer or ArrayBuffer');
+  }
+  return bufferLike.buffer.slice(bufferLike.byteOffset, bufferLike.byteOffset + bufferLike.byteLength);
+}
+
+function collectThreeMaterialNamesForAvatar(root) {
+  const names = [];
+  const seen = new Set();
+  root?.traverse?.((node) => {
+    const mats = Array.isArray(node?.material) ? node.material : (node?.material ? [node.material] : []);
+    for (const mat of mats) {
+      const label = String(mat?.name || mat?.type || 'UnnamedMaterial').trim() || 'UnnamedMaterial';
+      if (seen.has(label)) continue;
+      seen.add(label);
+      names.push(label);
+    }
+  });
+  return names;
+}
+
+function estimateMaterialSlotCountForAvatar(root) {
+  let slotCount = 0;
+  let sawMesh = false;
+  root?.traverse?.((node) => {
+    if (!node?.isMesh) return;
+    sawMesh = true;
+    const mats = Array.isArray(node.material) ? node.material : (node.material ? [node.material] : []);
+    slotCount += Math.max(1, mats.length);
+  });
+  if (slotCount > 0) return slotCount;
+  const uniqueMaterials = collectThreeMaterialNamesForAvatar(root).length;
+  if (uniqueMaterials > 0) return uniqueMaterials;
+  return sawMesh ? 1 : 0;
+}
+
+function detectDominantAxisForAvatar(size = {}) {
+  const dims = [
+    { axis: 'x', value: Math.abs(Number(size.x || 0)) },
+    { axis: 'y', value: Math.abs(Number(size.y || 0)) },
+    { axis: 'z', value: Math.abs(Number(size.z || 0)) }
+  ].sort((a, b) => b.value - a.value);
+  const dominantAxis = dims[0]?.axis || 'z';
+  return {
+    dominantAxis,
+    forwardHint: dominantAxis === 'x' ? 'x' : 'z'
+  };
+}
+
+function buildThreeFbxGeometryAnalysis(sceneOrRoot, sourceName = '', THREE = null) {
+  if (!sceneOrRoot) return null;
+  if (!THREE?.Box3) throw new Error('THREE.Box3 runtime unavailable for FBX analysis');
+
+  sceneOrRoot.updateMatrixWorld?.(true);
+  sceneOrRoot.traverse?.((node) => {
+    if (node?.isMesh && typeof node.geometry?.computeBoundingBox === 'function') {
+      node.geometry.computeBoundingBox();
+    }
+  });
+
+  const box = new THREE.Box3().setFromObject(sceneOrRoot);
+  const finite = [box.min?.x, box.min?.y, box.min?.z, box.max?.x, box.max?.y, box.max?.z].every(Number.isFinite);
+  const min = finite ? {
+    x: Number(box.min.x || 0),
+    y: Number(box.min.y || 0),
+    z: Number(box.min.z || 0)
+  } : { x: 0, y: 0, z: 0 };
+  const max = finite ? {
+    x: Number(box.max.x || 0),
+    y: Number(box.max.y || 0),
+    z: Number(box.max.z || 0)
+  } : { x: 0, y: 0, z: 0 };
+  const size = {
+    x: Number((max.x - min.x).toFixed(6)),
+    y: Number((max.y - min.y).toFixed(6)),
+    z: Number((max.z - min.z).toFixed(6))
+  };
+  const centroid = {
+    x: Number((((min.x + max.x) / 2) || 0).toFixed(6)),
+    y: Number((((min.y + max.y) / 2) || 0).toFixed(6)),
+    z: Number((((min.z + max.z) / 2) || 0).toFixed(6))
+  };
+
+  let meshCount = 0;
+  let vertexCount = 0;
+  sceneOrRoot.traverse?.((node) => {
+    if (!node?.isMesh) return;
+    meshCount += 1;
+    const posAttr = node.geometry?.attributes?.position;
+    if (posAttr?.count) vertexCount += posAttr.count;
+  });
+
+  const slotCount = estimateMaterialSlotCountForAvatar(sceneOrRoot);
+  const materialNames = collectThreeMaterialNamesForAvatar(sceneOrRoot);
+  const maxDim = Math.max(Math.abs(size.x), Math.abs(size.y), Math.abs(size.z), 0);
+  const normalizedToOneUnit = maxDim > 0 ? Number((1 / maxDim).toFixed(6)) : 1;
+  const dominantAxisInfo = detectDominantAxisForAvatar(size);
+  const floorY = Number((-min.y).toFixed(6));
+  const ceilingY = Number((-max.y).toFixed(6));
+  const centerY = Number((-centroid.y).toFixed(6));
+  const centerOffsetX = Number((-centroid.x).toFixed(6));
+  const centerOffsetZ = Number((-centroid.z).toFixed(6));
+
+  return {
+    sourceName,
+    format: 'fbx',
+    meshCount,
+    slotCount,
+    vertexCount,
+    animationCount: Array.isArray(sceneOrRoot.animations) ? sceneOrRoot.animations.length : 0,
+    materials: materialNames,
+    boundingBox: {
+      width: Number(size.x.toFixed(3)),
+      height: Number(size.y.toFixed(3)),
+      depth: Number(size.z.toFixed(3))
+    },
+    center: {
+      x: Number(centroid.x.toFixed(3)),
+      y: Number(centroid.y.toFixed(3)),
+      z: Number(centroid.z.toFixed(3))
+    },
+    recommendedFloorYOffset: Number(floorY.toFixed(3)),
+    geometry: {
+      min: {
+        x: Number(min.x.toFixed(6)),
+        y: Number(min.y.toFixed(6)),
+        z: Number(min.z.toFixed(6))
+      },
+      max: {
+        x: Number(max.x.toFixed(6)),
+        y: Number(max.y.toFixed(6)),
+        z: Number(max.z.toFixed(6))
+      },
+      size,
+      centroid
+    },
+    scale: {
+      authoredUnit: 'unknown',
+      unitToGameUnit: 1,
+      normalizedToOneUnit,
+      suggestedGameScale: normalizedToOneUnit,
+      suggestedGameScaleVec: [normalizedToOneUnit, normalizedToOneUnit, normalizedToOneUnit],
+      scaleWarning: (normalizedToOneUnit > 5 || normalizedToOneUnit < 0.1) ? 'LARGE SCALE CORRECTION NEEDED' : null
+    },
+    origin: {
+      classification: 'unknown',
+      biasY: floorY,
+      biasX: centerOffsetX,
+      biasZ: centerOffsetZ
+    },
+    placement: {
+      floorY,
+      ceilingY,
+      centerY,
+      centerOffsetX,
+      centerOffsetZ,
+      dominantAxis: dominantAxisInfo.dominantAxis,
+      forwardHint: dominantAxisInfo.forwardHint
+    },
+    bounds: {
+      width: Number(size.x.toFixed(3)),
+      height: Number(size.y.toFixed(3)),
+      depth: Number(size.z.toFixed(3))
+    },
+    floorOffset: Number(floorY.toFixed(3)),
+    scaleHints: {
+      normalizedToOneUnit,
+      suggestedGameScale: normalizedToOneUnit,
+      suggestedGameScaleVec: [normalizedToOneUnit, normalizedToOneUnit, normalizedToOneUnit]
+    },
+    multiMeshStructure: {
+      isMultiMesh: meshCount > 1 || slotCount > 1,
+      meshCount,
+      slotCount,
+      materialSlots: materialNames.map((materialName, index) => ({ slotIndex: index, materialName }))
+    }
+  };
+}
+
+async function scanFbxBuffer(fbxBuffer, sourceName = '') {
+  const { THREE, FBXLoader } = await getThreeFbxRuntime();
+  const loader = new FBXLoader();
+  const arrayBuffer = nodeBufferToArrayBuffer(fbxBuffer);
+  const parsed = loader.parse(arrayBuffer, '');
+  if (!parsed) throw new Error(`FBXLoader.parse returned no scene for ${sourceName || 'buffer'}`);
+
+  const geometry = buildThreeFbxGeometryAnalysis(parsed, sourceName, THREE);
+  const materials = (geometry?.materials || []).map((name, index) => ({ name, index }));
+  return {
+    geometry,
+    materials,
+    meshCount: Number(geometry?.meshCount || 0),
+    slotCount: Number(geometry?.slotCount || 0)
+  };
+}
+
+function listAvatarTextureFiles(zip, folderPrefix) {
+  const textures = [];
+  for (const entryPath of Object.keys(zip.files)) {
+    const entry = zip.files[entryPath];
+    if (entry.dir || !entryPath.startsWith(folderPrefix)) continue;
+    const base = entryPath.split('/').pop() || '';
+    const lower = base.toLowerCase();
+    if (base.startsWith('._') || entryPath.includes('__MACOSX')) continue;
+    if ([".png",".jpg",".jpeg",".webp",".bmp",".tga"].some(ext => lower.endsWith(ext)) && !/thumbnail\./i.test(base)) {
+      textures.push(entryPath);
+    }
+  }
+  return textures.sort();
+}
+
 /* ─── Enforce hard selection limits ─────────────────────────────── */
 function enforceHardLimits(roster) {
   if (!roster) return roster;
@@ -281,15 +740,21 @@ function enforceHardLimits(roster) {
     console.warn(`[ROSTER-AB] Trimming objects3d from ${roster.objects3d.length} to ${MAX_OBJ_ASSETS}`);
     roster.objects3d = roster.objects3d.slice(0, MAX_OBJ_ASSETS);
   }
+  if (Array.isArray(roster.avatars) && roster.avatars.length > MAX_AVATAR_ASSETS) {
+    console.warn(`[ROSTER-AB] Trimming avatars from ${roster.avatars.length} to ${MAX_AVATAR_ASSETS}`);
+    roster.avatars = roster.avatars.slice(0, MAX_AVATAR_ASSETS);
+  }
   if (Array.isArray(roster.textureAssets) && roster.textureAssets.length > MAX_PNG_ASSETS) {
     console.warn(`[ROSTER-AB] Trimming textureAssets from ${roster.textureAssets.length} to ${MAX_PNG_ASSETS}`);
     roster.textureAssets = roster.textureAssets.slice(0, MAX_PNG_ASSETS);
   }
   if (roster.coverageSummary) {
     roster.coverageSummary.totalObjects3d  = (roster.objects3d    || []).length;
+    roster.coverageSummary.totalAvatars    = (roster.avatars      || []).length;
     roster.coverageSummary.totalTextures   = (roster.textureAssets || []).length;
     roster.coverageSummary.limitsRespected =
       roster.coverageSummary.totalObjects3d <= MAX_OBJ_ASSETS &&
+      roster.coverageSummary.totalAvatars   <= MAX_AVATAR_ASSETS &&
       roster.coverageSummary.totalTextures  <= MAX_PNG_ASSETS;
   }
   return roster;
@@ -404,6 +869,58 @@ Respond ONLY with a valid JSON object. No markdown, no fences, no preamble.
 }`;
 }
 
+
+function buildStageAAvatarRefImagePrompt(requirementName, gameplayRole, animationNeeds = []) {
+  return `You are a game avatar visual screener matching avatar thumbnails against a user-provided reference image.
+
+The FIRST image attached is the user's reference image for the avatar requirement:
+  Name: ${requirementName}
+  Gameplay role: ${gameplayRole || "not specified"}
+  Animation needs: ${(animationNeeds || []).join(", ") || "not specified"}
+
+The remaining images (numbered 1, 2, 3... in your response) are candidate avatar thumbnails from Avatars.zip.
+Your job: identify which avatar thumbnails are visually similar enough to the reference image to be plausible matches for this character role.
+Cast a wide net, but prefer candidates that clearly read as final characters rather than props.
+
+Respond ONLY with a valid JSON object. No markdown, no fences, no preamble.
+
+{
+  "matches": [
+    { "imageIndex": 1, "matchesReference": true },
+    { "imageIndex": 2, "matchesReference": false }
+  ]
+}`;
+}
+
+function buildStageBAvatarRefImagePrompt(requirementName, gameplayRole, animationNeeds, candidates, gameInterpretation) {
+  return `GAME CONTEXT:
+${gameInterpretation}
+
+You are making the final avatar asset selection. The FIRST image is the user's reference image. The remaining images are candidate avatar thumbnails.
+
+REQUIREMENT:
+Name: ${requirementName}
+Gameplay role: ${gameplayRole || "not specified"}
+Animation needs: ${(animationNeeds || []).join(", ") || "not specified"}
+
+CANDIDATE THUMBNAILS (images 2 onwards, numbered starting at 1 in your response):
+${candidates.map((c, i) => `  Image ${i + 1}: ${c.assetName} (${c.sourceZip}) | clips: ${(c.animationClips || []).join(", ") || "none"}`).join("\n")}
+
+SELECTION RULES:
+- The reference image is the target appearance.
+- Prefer candidates that best match the role silhouette, costume/type, and likely animation usefulness.
+- Animation coverage matters. Break ties in favor of higher clip coverage for the requested role.
+- Pick exactly one winner.
+
+Respond ONLY with a valid JSON object. No markdown, no fences, no preamble.
+
+{
+  "requirementName": "${requirementName}",
+  "imageNumberChosen": 1,
+  "visualSelectionRationale": "Why this avatar is the best fit"
+}`;
+}
+
 /* ═══════════════════════════════════════════════════════════════════ */
 exports.handler = async (event) => {
   let projectPath = null;
@@ -438,18 +955,24 @@ exports.handler = async (event) => {
     const { phase1 }  = p1Payload;
     if (!phase1) return err400("No phase1 data in ai_asset_roster_phase1.json");
 
-    const particleReqs      = phase1.particleEffects || [];
-    const objectReqs        = phase1.objects3d       || [];
+    const particleReqs       = phase1.particleEffects || [];
+    const objectReqs         = phase1.objects3d || [];
+    const avatarReqs         = phase1.avatarRequirements || [];
     const gameInterpretation = phase1.gameInterpretationSummary || "";
+    const avatarZipPath      = p1Payload.avatarPipeline?.zipPath || '';
+    if (!avatarZipPath) return err400('Missing avatarPipeline.zipPath in ai_asset_roster_phase1.json');
 
-    console.log(`[ROSTER-AB] Phase 1 loaded: ${particleReqs.length} particle req(s), ${objectReqs.length} object req(s)`);
+    console.log(`[ROSTER-AB] Phase 1 loaded: ${particleReqs.length} particle req(s), ${objectReqs.length} object req(s), ${avatarReqs.length} avatar req(s)`);
 
     // ── 2. Load user reference images ───────────────────────────────────
     const refImagesFile = bucket.file(`${projectPath}/ai_roster_ref_images.json`);
     const [refExists]   = await refImagesFile.exists();
     if (!refExists) return err400("ai_roster_ref_images.json not found. Frontend must upload user reference images first.");
     const [refContent]      = await refImagesFile.download();
-    const { objects: userRefImages = [] } = JSON.parse(refContent.toString());
+    const refPayload = JSON.parse(refContent.toString());
+    const userRefImages = Array.isArray(refPayload.items)
+      ? refPayload.items
+      : (Array.isArray(refPayload.objects) ? refPayload.objects.map(item => ({ ...item, requirementType: 'object3d' })) : []);
 
     const refImageByName = new Map();
     for (const img of userRefImages) {
@@ -457,7 +980,7 @@ exports.handler = async (event) => {
         refImageByName.set(img.requirementName.toLowerCase(), img);
       }
     }
-    console.log(`[ROSTER-AB] User reference images loaded: ${refImageByName.size} object(s) have reference images`);
+    console.log(`[ROSTER-AB] User reference images loaded: ${refImageByName.size} requirement(s) have reference images`);
 
     // ── 3. Load global CSV → asset_name → category map ──────────────────
     console.log(`[ROSTER-AB] Loading global asset CSV from ${GLOBAL_ASSET_CSV}`);
@@ -704,11 +1227,97 @@ exports.handler = async (event) => {
         console.log(`[ROSTER-AB] Mega-zip ${zipName}.zip: ${added} asset(s) indexed`);
       }
     }
-    console.log(`[ROSTER-AB] Asset library ready: ${particleAssets.length} particle textures, ${objectAssets.length} 3D objects`);
+
+    const avatarAssets = [];
+    {
+      const avatarZipFile = bucket.file(avatarZipPath);
+      const [avatarZipExists] = await avatarZipFile.exists();
+      if (avatarZipExists) {
+        console.log(`[ROSTER-AB] Loading avatar library from ${avatarZipPath}`);
+        try {
+          const [avatarZipBuffer] = await avatarZipFile.download();
+          const avatarZip = await JSZip.loadAsync(avatarZipBuffer);
+          const folderMap = new Map();
+          for (const entryPath of Object.keys(avatarZip.files)) {
+            const entry = avatarZip.files[entryPath];
+            if (entry.dir || entryPath.includes('__MACOSX')) continue;
+            const base = entryPath.split('/').pop() || '';
+            if (base.startsWith('._')) continue;
+            const parts = entryPath.split('/').filter(Boolean);
+            if (parts.length < 2) continue;
+            const folderKey = parts.slice(0, -1).join('/');
+            if (!folderMap.has(folderKey)) {
+              folderMap.set(folderKey, { folderKey, folderName: parts[parts.length - 2], files: [] });
+            }
+            folderMap.get(folderKey).files.push(entryPath);
+          }
+
+          for (const folder of folderMap.values()) {
+            const fbxEntryPath = folder.files.find(file => /\.fbx$/i.test(file));
+            const thumbnailEntryPath = folder.files.find(file => /thumbnail\.(png|jpg|jpeg|webp)$/i.test(file));
+            if (!fbxEntryPath || !thumbnailEntryPath) continue;
+            try {
+              const thumbBuffer = await avatarZip.files[thumbnailEntryPath].async('nodebuffer');
+              const thumbLower = thumbnailEntryPath.toLowerCase();
+              const mimeType = thumbLower.endsWith('.png') ? 'image/png' : 'image/jpeg';
+              const animationManifestPath = folder.files.find(file => /animations\.txt$/i.test(file)) || null;
+              const rawAnimations = animationManifestPath
+                ? await avatarZip.files[animationManifestPath].async('text')
+                : '';
+              const animationClips = parseAnimationsTxt(rawAnimations);
+              let fbxGeometry = null;
+              let fbxMaterials = [];
+              let fbxMeshCount = 0;
+              let fbxSlotCount = 0;
+              try {
+                const fbxBuffer = await avatarZip.files[fbxEntryPath].async('nodebuffer');
+                const scanResult = await scanFbxBuffer(fbxBuffer, fbxEntryPath);
+                if (scanResult) {
+                  fbxGeometry = scanResult.geometry || null;
+                  fbxMaterials = scanResult.materials || [];
+                  fbxMeshCount = scanResult.meshCount || 0;
+                  fbxSlotCount = scanResult.slotCount || fbxMeshCount;
+                }
+              } catch (e) {
+                console.warn(`[ROSTER-AB] Avatar FBX scan failed for ${fbxEntryPath}: ${e.message}`);
+              }
+              avatarAssets.push({
+                assetName: fbxEntryPath.split('/').pop(),
+                fbxEntryPath,
+                thumbnailEntryPath,
+                thumbnailFile: thumbnailEntryPath.split('/').pop(),
+                textureFiles: listAvatarTextureFiles(avatarZip, `${folder.folderKey}/`),
+                animationManifestPath,
+                rawAnimations,
+                animationClips,
+                geometryAnalysis: fbxGeometry,
+                materials: fbxMaterials,
+                materialAssignments: fbxMaterials.map((m, i) => ({ slot: i, materialName: m.name })),
+                meshCount: fbxMeshCount,
+                slotCount: fbxSlotCount,
+                b64: thumbBuffer.toString('base64'),
+                mimeType,
+                sourceZip: avatarZipPath.split('/').pop() || 'Avatars.zip',
+                avatarFolder: folder.folderName
+              });
+            } catch (e) {
+              console.warn(`[ROSTER-AB] Avatar folder ${folder.folderKey}: thumbnail read failed — ${e.message}`);
+            }
+          }
+        } catch (e) {
+          console.warn(`[ROSTER-AB] Could not load avatar library ${avatarZipPath}: ${e.message}`);
+        }
+      } else {
+        console.warn(`[ROSTER-AB] Avatar library not found at ${avatarZipPath}`);
+      }
+    }
+
+    console.log(`[ROSTER-AB] Asset library ready: ${particleAssets.length} particle textures, ${objectAssets.length} 3D objects, ${avatarAssets.length} avatars`);
 
     // ── 7. Stage A — Visual Library Scan ────────────────────────────────
     const particleCandidates = new Map(particleReqs.map(r => [r.name, []]));
     const objectCandidates   = new Map(objectReqs.map(r   => [r.name, []]));
+    const avatarCandidates   = new Map(avatarReqs.map(r   => [r.name, []]));
 
     // Stage A: particles (unchanged — no category filter needed)
     async function runStageAParticleBatches() {
@@ -850,10 +1459,75 @@ exports.handler = async (event) => {
       }
     }
 
-    // Run particle and object Stage A scans concurrently
+    async function runStageAAvatarImageVsImage() {
+      if (avatarReqs.length === 0 || avatarAssets.length === 0) return;
+      for (const req of avatarReqs) {
+        const refImg = refImageByName.get(req.name.toLowerCase());
+        if (!refImg) {
+          console.warn(`[ROSTER-AB] Stage A avatar "${req.name}": no reference image — skipping search`);
+          continue;
+        }
+
+        const refBlock = {
+          type:   "image",
+          source: { type: "base64", media_type: refImg.mimeType, data: refImg.b64 }
+        };
+
+        const batches = chunkArray(avatarAssets, IMAGES_PER_BATCH);
+        const candidates = avatarCandidates.get(req.name);
+        console.log(`[ROSTER-AB] Stage A avatar "${req.name}": ${avatarAssets.length} assets → ${batches.length} batch(es)`);
+
+        for (let b = 0; b < batches.length; b++) {
+          const batch = batches[b];
+          const thumbBlocks = batch.map(asset => ({
+            type:   "image",
+            source: { type: "base64", media_type: asset.mimeType, data: asset.b64 }
+          }));
+
+          let batchResult;
+          try {
+            batchResult = await callClaude(apiKey, {
+              model:       "claude-sonnet-4-20250514",
+              maxTokens:   2000,
+              system:      "You are a game asset visual screener. Respond only with a valid JSON object. No markdown, no fences, no preamble.",
+              userContent: [
+                { type: "text", text: buildStageAAvatarRefImagePrompt(req.name, req.gameplayRole, req.animationNeeds || []) },
+                refBlock,
+                ...thumbBlocks
+              ]
+            });
+          } catch (e) {
+            console.warn(`[ROSTER-AB] Stage A avatar "${req.name}" batch ${b + 1} failed: ${e.message} — skipping`);
+            continue;
+          }
+
+          let parsed;
+          try { parsed = JSON.parse(stripFences(batchResult.text)); }
+          catch (e) {
+            console.warn(`[ROSTER-AB] Stage A avatar "${req.name}" batch ${b + 1} parse failed — skipping`);
+            continue;
+          }
+
+          for (const match of (parsed.matches || [])) {
+            if (!match.matchesReference) continue;
+            const imgIdx = (match.imageIndex || 1) - 1;
+            const asset  = batch[imgIdx];
+            if (!asset) continue;
+            if (!candidates.some(c => c.assetName === asset.assetName && c.fbxEntryPath === asset.fbxEntryPath)) {
+              candidates.push(asset);
+            }
+          }
+        }
+
+        console.log(`[ROSTER-AB] Stage A avatar "${req.name}": ${candidates.length} candidate(s) found`);
+      }
+    }
+
+    // Run particle, object, and avatar Stage A scans concurrently
     await Promise.all([
       runStageAParticleBatches(),
-      runStageAObjectsImageVsImage()
+      runStageAObjectsImageVsImage(),
+      runStageAAvatarImageVsImage()
     ]);
 
     console.log("[ROSTER-AB] Stage A complete");
@@ -942,14 +1616,61 @@ exports.handler = async (event) => {
       };
     }
 
-    const [particleResults, objectResults] = await Promise.all([
+    async function runStageBAvatar(req) {
+      const candidates = avatarCandidates.get(req.name) || [];
+      const refImg = refImageByName.get(req.name.toLowerCase());
+      if (candidates.length === 0) {
+        console.warn(`[ROSTER-AB] Stage B avatar: no candidates for "${req.name}" — unmatched`);
+        return null;
+      }
+
+      const refBlock = refImg ? {
+        type:   "image",
+        source: { type: "base64", media_type: refImg.mimeType, data: refImg.b64 }
+      } : null;
+      const thumbBlocks = candidates.map(c => ({
+        type:   "image",
+        source: { type: "base64", media_type: c.mimeType, data: c.b64 }
+      }));
+      const userContent = refBlock
+        ? [{ type: "text", text: buildStageBAvatarRefImagePrompt(req.name, req.gameplayRole, req.animationNeeds || [], candidates, gameInterpretation) }, refBlock, ...thumbBlocks]
+        : [{ type: "text", text: buildStageBAvatarRefImagePrompt(req.name, req.gameplayRole, req.animationNeeds || [], candidates, gameInterpretation) }, ...thumbBlocks];
+
+      let result;
+      try {
+        result = await callClaude(apiKey, {
+          model:       "claude-sonnet-4-20250514",
+          maxTokens:   1000,
+          system:      "You are a visual asset selection specialist. Respond only with a valid JSON object. No markdown, no fences, no preamble.",
+          userContent
+        });
+      } catch (e) {
+        console.warn(`[ROSTER-AB] Stage B avatar failed for "${req.name}": ${e.message} — using first candidate`);
+        return { requirementName: req.name, selectedAsset: candidates[0], visualSelectionRationale: `Fallback: ${e.message}` };
+      }
+
+      let parsed;
+      try { parsed = JSON.parse(stripFences(result.text)); }
+      catch (e) { parsed = { imageNumberChosen: 1, visualSelectionRationale: "Fallback: parse error" }; }
+
+      const chosenIdx = Math.min((parsed.imageNumberChosen || 1) - 1, candidates.length - 1);
+      return {
+        requirementName: req.name,
+        selectedAsset: candidates[chosenIdx],
+        visualSelectionRationale: parsed.visualSelectionRationale || ""
+      };
+    }
+
+    const [particleResults, objectResults, avatarResults] = await Promise.all([
       Promise.all(particleReqs.map(r => runStageBParticle(r))),
-      Promise.all(objectReqs.map(r   => runStageBObject(r)))
+      Promise.all(objectReqs.map(r   => runStageBObject(r))),
+      Promise.all(avatarReqs.map(r   => runStageBAvatar(r)))
     ]);
 
     console.log(
       `[ROSTER-AB] Stage B complete: ${particleResults.filter(Boolean).length} particle selections, ` +
-      `${objectResults.filter(Boolean).length} object selections`
+      `${objectResults.filter(Boolean).length} object selections, ` +
+      `${avatarResults.filter(Boolean).length} avatar selections`
     );
 
     // ── 9. Assemble final roster ─────────────────────────────────────────
@@ -989,8 +1710,50 @@ exports.handler = async (event) => {
       };
     }
 
+    function assembleAvatarAsset(stageBResult, phase1Req) {
+      if (!stageBResult) return null;
+      const asset = stageBResult.selectedAsset;
+      const p1 = phase1Req || {};
+      const coverage = scoreAnimationCoverage(p1, asset.animationClips || []);
+      const textureBindingContract = scoreTextureCandidates(
+        asset.materials || [],
+        asset.textureFiles || []
+      );
+      return {
+        assetName: asset.assetName,
+        fbxEntryPath: asset.fbxEntryPath || null,
+        thumbnailEntryPath: asset.thumbnailEntryPath || null,
+        thumbnailFile: asset.thumbnailFile || null,
+        textureFiles: asset.textureFiles || [],
+        textureBindingContract,
+        animationManifestPath: asset.animationManifestPath || null,
+        rawAnimations: asset.rawAnimations || '',
+        animationClips: asset.animationClips || [],
+        normalizedAnimations: coverage.normalizedBuckets || {},
+        animationCoverage: coverage,
+        geometryAnalysis: asset.geometryAnalysis || null,
+        materials: asset.materials || [],
+        materialAssignments: asset.materialAssignments || [],
+        meshCount: asset.meshCount || 0,
+        slotCount: asset.slotCount || 0,
+        avatarRole: normalizeAvatarRole(p1.gameplayRole || stageBResult.requirementName),
+        intendedRole: p1.gameplayRole || stageBResult.requirementName || "",
+        matchedRequirement: stageBResult.requirementName,
+        selectionRationale: stageBResult.visualSelectionRationale,
+        textureStyle: p1.textureStyle || "",
+        importance: p1.importance || '',
+        selectionPriority: p1.selectionPriority || null,
+        characterType: p1.characterType || '',
+        gameplayFunction: p1.gameplayFunction || '',
+        sourceZip: asset.sourceZip,
+        thumbnailB64: asset.b64,
+        thumbnailMime: asset.mimeType
+      };
+    }
+
     const phase1ParticleMap = new Map(particleReqs.map(r => [r.name, r]));
     const phase1ObjectMap   = new Map(objectReqs.map(r   => [r.name, r]));
+    const phase1AvatarMap   = new Map(avatarReqs.map(r   => [r.name, r]));
 
     const textureAssets = particleResults
       .filter(Boolean)
@@ -1002,8 +1765,14 @@ exports.handler = async (event) => {
       .map(r => assembleObjectAsset(r, phase1ObjectMap.get(r.requirementName)))
       .filter(Boolean);
 
+    const avatars = avatarResults
+      .filter(Boolean)
+      .map(r => assembleAvatarAsset(r, phase1AvatarMap.get(r.requirementName)))
+      .filter(Boolean);
+
     const matchedParticleNames = new Set(textureAssets.map(a => a.matchedRequirement));
-    const matchedObjectNames   = new Set(objects3d.map(a     => a.matchedRequirement));
+    const matchedObjectNames   = new Set(objects3d.map(a => a.matchedRequirement));
+    const matchedAvatarNames   = new Set(avatars.map(a => a.matchedRequirement));
 
     const unmatchedRequirements = [
       ...particleReqs.filter(r => !matchedParticleNames.has(r.name)).map(r => ({
@@ -1020,21 +1789,28 @@ exports.handler = async (event) => {
           categoriesSearched: filterInfo.rankedCategories.map(entry => entry.category),
           rankedCategoriesSearched: filterInfo.rankedCategories
         };
-      })
+      }),
+      ...avatarReqs.filter(r => !matchedAvatarNames.has(r.name)).map(r => ({
+        requirementName: r.name,
+        type: "avatar",
+        reason: "No visual candidates found in Avatars.zip during Stage A/B"
+      }))
     ];
 
     const roster = {
       documentTitle:             "Game-Specific Asset Roster",
       gameInterpretationSummary: gameInterpretation,
       objects3d,
+      avatars,
       textureAssets,
       unmatchedRequirements,
       coverageSummary: {
         totalObjects3d:  objects3d.length,
+        totalAvatars:    avatars.length,
         totalTextures:   textureAssets.length,
         totalUnmatched:  unmatchedRequirements.length,
-        limitsRespected: objects3d.length <= MAX_OBJ_ASSETS && textureAssets.length <= MAX_PNG_ASSETS,
-        coverageNotes:   `${objects3d.length} objects (category-filtered, image-matched) and ${textureAssets.length} particle textures selected.`
+        limitsRespected: objects3d.length <= MAX_OBJ_ASSETS && avatars.length <= MAX_AVATAR_ASSETS && textureAssets.length <= MAX_PNG_ASSETS,
+        coverageNotes:   `${objects3d.length} objects, ${avatars.length} avatars, and ${textureAssets.length} particle textures selected.`
       },
       visualDirectionNotes: {}
     };
@@ -1046,9 +1822,11 @@ exports.handler = async (event) => {
       jobId,
       generatedAt:         Date.now(),
       totalObjectAssets:   objectAssets.length,
+      totalAvatarAssets:   avatarAssets.length,
       totalParticleAssets: particleAssets.length,
       refImagesUsed:       refImageByName.size,
       csvEntriesLoaded:    assetCategoryMap.size,
+      avatarZipPath,
       approved:            false
     };
 
@@ -1060,6 +1838,7 @@ exports.handler = async (event) => {
 
     console.log(
       `[ROSTER-AB] Complete. Objects: ${objects3d.length}, ` +
+      `Avatars: ${avatars.length}, ` +
       `Textures: ${textureAssets.length}, ` +
       `Unmatched: ${unmatchedRequirements.length}, ` +
       `RefImages used: ${refImageByName.size}, ` +

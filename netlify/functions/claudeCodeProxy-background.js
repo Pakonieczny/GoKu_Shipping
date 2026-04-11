@@ -39,6 +39,7 @@
    ═══════════════════════════════════════════════════════════════════ */
 
 const fetch = require("node-fetch");
+const JSZip = require("jszip");
 const admin = require("./firebaseAdmin");
 
 const RETRY_POLICY = Object.freeze({
@@ -46,6 +47,1684 @@ const RETRY_POLICY = Object.freeze({
   critical_runtime: 2  // retained for fix-mode retryBudget fallback
 });
 
+const ROAD_PIPELINE_ZIP_PATH = "game-generator-1/projects/BASE_Files/asset_3d_objects/Road.zip";
+const ROAD_PIPELINE_INDEX_ENTRY_NAMES = Object.freeze(["Road_Index.json", "road_index.json"]);
+const COMPILER_OWNED_JSON_PATHS = Object.freeze(["json/assets.json", "json/tree.json", "json/entities.json"]);
+
+const FALLBACK_ROAD_INDEX = Object.freeze({
+  "roadBump": {
+    "filename": "roadBump.obj",
+    "type": "bump",
+    "tags": [
+      "bump",
+      "long"
+    ],
+    "dimensions": {
+      "length": 20,
+      "width": 10,
+      "height": 1.0
+    },
+    "entry": {
+      "face": "z-",
+      "x_left": -10,
+      "x_right": 0,
+      "y": 0
+    },
+    "exit": {
+      "face": "z",
+      "x_left": -10,
+      "x_right": 0,
+      "x_drift": 0,
+      "y_rise": 0
+    },
+    "slots": [
+      {
+        "slot": 0,
+        "material": "grass",
+        "r": 90,
+        "g": 154,
+        "b": 50
+      },
+      {
+        "slot": 1,
+        "material": "grey",
+        "r": 160,
+        "g": 160,
+        "b": 160
+      },
+      {
+        "slot": 2,
+        "material": "road",
+        "r": 68,
+        "g": 68,
+        "b": 68
+      }
+    ],
+    "slot_count": 3,
+    "colormap": null,
+    "material_file": ""
+  },
+  "roadCornerLarge": {
+    "filename": "roadCornerLarge.obj",
+    "type": "corner",
+    "tags": [
+      "corner",
+      "x_shift",
+      "corner_exit",
+      "long"
+    ],
+    "dimensions": {
+      "length": 20,
+      "width": 20,
+      "height": 0.2
+    },
+    "entry": {
+      "face": "z-",
+      "x_left": -10,
+      "x_right": 0,
+      "y": 0
+    },
+    "exit": {
+      "face": "x-",
+      "x_left": -20,
+      "x_right": -20,
+      "x_drift": -10,
+      "y_rise": 0
+    },
+    "slots": [
+      {
+        "slot": 0,
+        "material": "grey",
+        "r": 160,
+        "g": 160,
+        "b": 160
+      },
+      {
+        "slot": 1,
+        "material": "grass",
+        "r": 90,
+        "g": 154,
+        "b": 50
+      },
+      {
+        "slot": 2,
+        "material": "road",
+        "r": 68,
+        "g": 68,
+        "b": 68
+      }
+    ],
+    "slot_count": 3,
+    "colormap": null,
+    "material_file": ""
+  },
+  "roadCornerLarger": {
+    "filename": "roadCornerLarger.obj",
+    "type": "corner",
+    "tags": [
+      "corner",
+      "x_shift",
+      "corner_exit",
+      "long"
+    ],
+    "dimensions": {
+      "length": 30,
+      "width": 30,
+      "height": 0.2
+    },
+    "entry": {
+      "face": "z-",
+      "x_left": -10,
+      "x_right": 0,
+      "y": 0
+    },
+    "exit": {
+      "face": "x-",
+      "x_left": -30,
+      "x_right": -30,
+      "x_drift": -20,
+      "y_rise": 0
+    },
+    "slots": [
+      {
+        "slot": 0,
+        "material": "grey",
+        "r": 160,
+        "g": 160,
+        "b": 160
+      },
+      {
+        "slot": 1,
+        "material": "grass",
+        "r": 90,
+        "g": 154,
+        "b": 50
+      },
+      {
+        "slot": 2,
+        "material": "road",
+        "r": 68,
+        "g": 68,
+        "b": 68
+      }
+    ],
+    "slot_count": 3,
+    "colormap": null,
+    "material_file": ""
+  },
+  "roadCornerSmall": {
+    "filename": "roadCornerSmall.obj",
+    "type": "corner",
+    "tags": [
+      "corner"
+    ],
+    "dimensions": {
+      "length": 10,
+      "width": 10,
+      "height": 0.2
+    },
+    "entry": {
+      "face": "z-",
+      "x_left": -10,
+      "x_right": 0,
+      "y": 0
+    },
+    "exit": {
+      "face": "z",
+      "x_left": -10,
+      "x_right": -8.69,
+      "x_drift": 0,
+      "y_rise": 0
+    },
+    "slots": [
+      {
+        "slot": 0,
+        "material": "grey",
+        "r": 160,
+        "g": 160,
+        "b": 160
+      },
+      {
+        "slot": 1,
+        "material": "grass",
+        "r": 90,
+        "g": 154,
+        "b": 50
+      },
+      {
+        "slot": 2,
+        "material": "road",
+        "r": 68,
+        "g": 68,
+        "b": 68
+      }
+    ],
+    "slot_count": 3,
+    "colormap": null,
+    "material_file": ""
+  },
+  "roadCornerSmallSquare": {
+    "filename": "roadCornerSmallSquare.obj",
+    "type": "corner",
+    "tags": [
+      "corner"
+    ],
+    "dimensions": {
+      "length": 10,
+      "width": 10,
+      "height": 0.2
+    },
+    "entry": {
+      "face": "z-",
+      "x_left": -10,
+      "x_right": 0,
+      "y": 0
+    },
+    "exit": {
+      "face": "z",
+      "x_left": -10,
+      "x_right": -1.15,
+      "x_drift": 0,
+      "y_rise": 0
+    },
+    "slots": [
+      {
+        "slot": 0,
+        "material": "grass",
+        "r": 90,
+        "g": 154,
+        "b": 50
+      },
+      {
+        "slot": 1,
+        "material": "_defaultMat",
+        "r": 130,
+        "g": 130,
+        "b": 130
+      },
+      {
+        "slot": 2,
+        "material": "road",
+        "r": 68,
+        "g": 68,
+        "b": 68
+      }
+    ],
+    "slot_count": 3,
+    "colormap": null,
+    "material_file": ""
+  },
+  "roadCurved": {
+    "filename": "roadCurved.obj",
+    "type": "curved",
+    "tags": [
+      "curved",
+      "x_shift",
+      "long"
+    ],
+    "dimensions": {
+      "length": 20,
+      "width": 15,
+      "height": 0.2
+    },
+    "entry": {
+      "face": "z-",
+      "x_left": -10,
+      "x_right": 0,
+      "y": 0
+    },
+    "exit": {
+      "face": "z",
+      "x_left": -5,
+      "x_right": 5,
+      "x_drift": 5,
+      "y_rise": 0
+    },
+    "slots": [
+      {
+        "slot": 0,
+        "material": "road",
+        "r": 68,
+        "g": 68,
+        "b": 68
+      },
+      {
+        "slot": 1,
+        "material": "grey",
+        "r": 160,
+        "g": 160,
+        "b": 160
+      },
+      {
+        "slot": 2,
+        "material": "grass",
+        "r": 90,
+        "g": 154,
+        "b": 50
+      }
+    ],
+    "slot_count": 3,
+    "colormap": null,
+    "material_file": ""
+  },
+  "roadEnd": {
+    "filename": "roadEnd.obj",
+    "type": "end",
+    "tags": [
+      "end",
+      "x_shift",
+      "corner_exit"
+    ],
+    "dimensions": {
+      "length": 15,
+      "width": 10,
+      "height": 0.2
+    },
+    "entry": {
+      "face": "z-",
+      "x_left": -10,
+      "x_right": 0,
+      "y": 0
+    },
+    "exit": {
+      "face": "x-",
+      "x_left": -5,
+      "x_right": -5,
+      "x_drift": 5,
+      "y_rise": 0
+    },
+    "slots": [
+      {
+        "slot": 0,
+        "material": "grey",
+        "r": 160,
+        "g": 160,
+        "b": 160
+      },
+      {
+        "slot": 1,
+        "material": "grass",
+        "r": 90,
+        "g": 154,
+        "b": 50
+      },
+      {
+        "slot": 2,
+        "material": "road",
+        "r": 68,
+        "g": 68,
+        "b": 68
+      }
+    ],
+    "slot_count": 3,
+    "colormap": null,
+    "material_file": ""
+  },
+  "roadHalfCircle": {
+    "filename": "roadHalfCircle.obj",
+    "type": "hairpin",
+    "tags": [
+      "hairpin",
+      "x_shift"
+    ],
+    "dimensions": {
+      "length": 15,
+      "width": 30,
+      "height": 0.2
+    },
+    "entry": {
+      "face": "z-",
+      "x_left": -30,
+      "x_right": 0,
+      "y": 0
+    },
+    "exit": {
+      "face": "z",
+      "x_left": -15,
+      "x_right": -15,
+      "x_drift": 15,
+      "y_rise": 0
+    },
+    "slots": [
+      {
+        "slot": 0,
+        "material": "grass",
+        "r": 90,
+        "g": 154,
+        "b": 50
+      },
+      {
+        "slot": 1,
+        "material": "grey",
+        "r": 160,
+        "g": 160,
+        "b": 160
+      },
+      {
+        "slot": 2,
+        "material": "road",
+        "r": 68,
+        "g": 68,
+        "b": 68
+      }
+    ],
+    "slot_count": 3,
+    "colormap": null,
+    "material_file": ""
+  },
+  "roadPitEntry": {
+    "filename": "roadPitEntry.obj",
+    "type": "pit",
+    "tags": [
+      "pit",
+      "x_shift",
+      "long"
+    ],
+    "dimensions": {
+      "length": 20,
+      "width": 20,
+      "height": 0.2
+    },
+    "entry": {
+      "face": "z-",
+      "x_left": -10,
+      "x_right": 0,
+      "y": 0
+    },
+    "exit": {
+      "face": "z",
+      "x_left": -20,
+      "x_right": 0,
+      "x_drift": -10,
+      "y_rise": 0
+    },
+    "slots": [
+      {
+        "slot": 0,
+        "material": "grey",
+        "r": 160,
+        "g": 160,
+        "b": 160
+      },
+      {
+        "slot": 1,
+        "material": "grass",
+        "r": 90,
+        "g": 154,
+        "b": 50
+      },
+      {
+        "slot": 2,
+        "material": "road",
+        "r": 68,
+        "g": 68,
+        "b": 68
+      }
+    ],
+    "slot_count": 3,
+    "colormap": null,
+    "material_file": ""
+  },
+  "roadPitGarage": {
+    "filename": "roadPitGarage.obj",
+    "type": "pit",
+    "tags": [
+      "pit"
+    ],
+    "dimensions": {
+      "length": 10,
+      "width": 10,
+      "height": 0.2
+    },
+    "entry": {
+      "face": "z-",
+      "x_left": -10,
+      "x_right": 0,
+      "y": 0
+    },
+    "exit": {
+      "face": "z",
+      "x_left": -10,
+      "x_right": 0,
+      "x_drift": 0,
+      "y_rise": 0
+    },
+    "slots": [
+      {
+        "slot": 0,
+        "material": "grey",
+        "r": 160,
+        "g": 160,
+        "b": 160
+      },
+      {
+        "slot": 1,
+        "material": "road",
+        "r": 68,
+        "g": 68,
+        "b": 68
+      },
+      {
+        "slot": 2,
+        "material": "grass",
+        "r": 90,
+        "g": 154,
+        "b": 50
+      }
+    ],
+    "slot_count": 3,
+    "colormap": null,
+    "material_file": ""
+  },
+  "roadPitStraight": {
+    "filename": "roadPitStraight.obj",
+    "type": "pit",
+    "tags": [
+      "pit"
+    ],
+    "dimensions": {
+      "length": 10,
+      "width": 10,
+      "height": 0.2
+    },
+    "entry": {
+      "face": "z-",
+      "x_left": -10,
+      "x_right": 0,
+      "y": 0
+    },
+    "exit": {
+      "face": "z",
+      "x_left": -10,
+      "x_right": 0,
+      "x_drift": 0,
+      "y_rise": 0
+    },
+    "slots": [
+      {
+        "slot": 0,
+        "material": "grass",
+        "r": 90,
+        "g": 154,
+        "b": 50
+      },
+      {
+        "slot": 1,
+        "material": "grey",
+        "r": 160,
+        "g": 160,
+        "b": 160
+      },
+      {
+        "slot": 2,
+        "material": "road",
+        "r": 68,
+        "g": 68,
+        "b": 68
+      }
+    ],
+    "slot_count": 3,
+    "colormap": null,
+    "material_file": ""
+  },
+  "roadPitStraightLong": {
+    "filename": "roadPitStraightLong.obj",
+    "type": "pit",
+    "tags": [
+      "pit",
+      "long"
+    ],
+    "dimensions": {
+      "length": 20,
+      "width": 10,
+      "height": 0.2
+    },
+    "entry": {
+      "face": "z-",
+      "x_left": -10,
+      "x_right": 0,
+      "y": 0
+    },
+    "exit": {
+      "face": "z",
+      "x_left": -10,
+      "x_right": 0,
+      "x_drift": 0,
+      "y_rise": 0
+    },
+    "slots": [
+      {
+        "slot": 0,
+        "material": "grass",
+        "r": 90,
+        "g": 154,
+        "b": 50
+      },
+      {
+        "slot": 1,
+        "material": "grey",
+        "r": 160,
+        "g": 160,
+        "b": 160
+      },
+      {
+        "slot": 2,
+        "material": "road",
+        "r": 68,
+        "g": 68,
+        "b": 68
+      }
+    ],
+    "slot_count": 3,
+    "colormap": null,
+    "material_file": ""
+  },
+  "roadRamp": {
+    "filename": "roadRamp.obj",
+    "type": "ramp",
+    "tags": [
+      "ramp",
+      "elevation_change"
+    ],
+    "dimensions": {
+      "length": 10,
+      "width": 10,
+      "height": 2.7
+    },
+    "entry": {
+      "face": "z-",
+      "x_left": -10,
+      "x_right": 0,
+      "y": 0
+    },
+    "exit": {
+      "face": "z",
+      "x_left": -10,
+      "x_right": 0,
+      "x_drift": 0,
+      "y_rise": 2.7
+    },
+    "slots": [
+      {
+        "slot": 0,
+        "material": "grass",
+        "r": 90,
+        "g": 154,
+        "b": 50
+      },
+      {
+        "slot": 1,
+        "material": "grey",
+        "r": 160,
+        "g": 160,
+        "b": 160
+      },
+      {
+        "slot": 2,
+        "material": "road",
+        "r": 68,
+        "g": 68,
+        "b": 68
+      }
+    ],
+    "slot_count": 3,
+    "colormap": null,
+    "material_file": ""
+  },
+  "roadRampLong": {
+    "filename": "roadRampLong.obj",
+    "type": "ramp",
+    "tags": [
+      "ramp",
+      "elevation_change",
+      "long"
+    ],
+    "dimensions": {
+      "length": 20,
+      "width": 10,
+      "height": 5.2
+    },
+    "entry": {
+      "face": "z-",
+      "x_left": -10,
+      "x_right": 0,
+      "y": 0
+    },
+    "exit": {
+      "face": "z",
+      "x_left": -10,
+      "x_right": 0,
+      "x_drift": 0,
+      "y_rise": 5.2
+    },
+    "slots": [
+      {
+        "slot": 0,
+        "material": "grass",
+        "r": 90,
+        "g": 154,
+        "b": 50
+      },
+      {
+        "slot": 1,
+        "material": "grey",
+        "r": 160,
+        "g": 160,
+        "b": 160
+      },
+      {
+        "slot": 2,
+        "material": "road",
+        "r": 68,
+        "g": 68,
+        "b": 68
+      }
+    ],
+    "slot_count": 3,
+    "colormap": null,
+    "material_file": ""
+  },
+  "roadRampLongCurved": {
+    "filename": "roadRampLongCurved.obj",
+    "type": "ramp",
+    "tags": [
+      "ramp",
+      "elevation_change",
+      "long"
+    ],
+    "dimensions": {
+      "length": 20,
+      "width": 10,
+      "height": 5.2
+    },
+    "entry": {
+      "face": "z-",
+      "x_left": -10,
+      "x_right": 0,
+      "y": 0
+    },
+    "exit": {
+      "face": "z",
+      "x_left": -10,
+      "x_right": 0,
+      "x_drift": 0,
+      "y_rise": 5.2
+    },
+    "slots": [
+      {
+        "slot": 0,
+        "material": "grey",
+        "r": 160,
+        "g": 160,
+        "b": 160
+      },
+      {
+        "slot": 1,
+        "material": "grass",
+        "r": 90,
+        "g": 154,
+        "b": 50
+      },
+      {
+        "slot": 2,
+        "material": "road",
+        "r": 68,
+        "g": 68,
+        "b": 68
+      }
+    ],
+    "slot_count": 3,
+    "colormap": null,
+    "material_file": ""
+  },
+  "roadRampLongCurvedWall": {
+    "filename": "roadRampLongCurvedWall.obj",
+    "type": "ramp",
+    "tags": [
+      "ramp",
+      "elevation_change",
+      "long"
+    ],
+    "dimensions": {
+      "length": 20,
+      "width": 10,
+      "height": 5.2
+    },
+    "entry": {
+      "face": "z-",
+      "x_left": -10,
+      "x_right": 0,
+      "y": 0
+    },
+    "exit": {
+      "face": "z",
+      "x_left": -10,
+      "x_right": 0,
+      "x_drift": 0,
+      "y_rise": 5.2
+    },
+    "slots": [
+      {
+        "slot": 0,
+        "material": "wall",
+        "r": 200,
+        "g": 180,
+        "b": 140
+      },
+      {
+        "slot": 1,
+        "material": "grey",
+        "r": 160,
+        "g": 160,
+        "b": 160
+      },
+      {
+        "slot": 2,
+        "material": "road",
+        "r": 68,
+        "g": 68,
+        "b": 68
+      }
+    ],
+    "slot_count": 3,
+    "colormap": null,
+    "material_file": ""
+  },
+  "roadRampLongWall": {
+    "filename": "roadRampLongWall.obj",
+    "type": "ramp",
+    "tags": [
+      "ramp",
+      "elevation_change",
+      "long"
+    ],
+    "dimensions": {
+      "length": 20,
+      "width": 10,
+      "height": 5.2
+    },
+    "entry": {
+      "face": "z-",
+      "x_left": -10,
+      "x_right": 0,
+      "y": 0
+    },
+    "exit": {
+      "face": "z",
+      "x_left": -10,
+      "x_right": 0,
+      "x_drift": 0,
+      "y_rise": 5.2
+    },
+    "slots": [
+      {
+        "slot": 0,
+        "material": "wall",
+        "r": 200,
+        "g": 180,
+        "b": 140
+      },
+      {
+        "slot": 1,
+        "material": "grey",
+        "r": 160,
+        "g": 160,
+        "b": 160
+      },
+      {
+        "slot": 2,
+        "material": "road",
+        "r": 68,
+        "g": 68,
+        "b": 68
+      }
+    ],
+    "slot_count": 3,
+    "colormap": null,
+    "material_file": ""
+  },
+  "roadRampWall": {
+    "filename": "roadRampWall.obj",
+    "type": "ramp",
+    "tags": [
+      "ramp",
+      "elevation_change"
+    ],
+    "dimensions": {
+      "length": 10,
+      "width": 10,
+      "height": 2.7
+    },
+    "entry": {
+      "face": "z-",
+      "x_left": -10,
+      "x_right": 0,
+      "y": 0
+    },
+    "exit": {
+      "face": "z",
+      "x_left": -10,
+      "x_right": 0,
+      "x_drift": 0,
+      "y_rise": 2.7
+    },
+    "slots": [
+      {
+        "slot": 0,
+        "material": "wall",
+        "r": 200,
+        "g": 180,
+        "b": 140
+      },
+      {
+        "slot": 1,
+        "material": "grey",
+        "r": 160,
+        "g": 160,
+        "b": 160
+      },
+      {
+        "slot": 2,
+        "material": "road",
+        "r": 68,
+        "g": 68,
+        "b": 68
+      }
+    ],
+    "slot_count": 3,
+    "colormap": null,
+    "material_file": ""
+  },
+  "roadSplit": {
+    "filename": "roadSplit.obj",
+    "type": "split",
+    "tags": [
+      "split",
+      "x_shift",
+      "long"
+    ],
+    "dimensions": {
+      "length": 20,
+      "width": 30,
+      "height": 0.2
+    },
+    "entry": {
+      "face": "z-",
+      "x_left": -10,
+      "x_right": 0,
+      "y": 0
+    },
+    "exit": {
+      "face": "z",
+      "x_left": -20,
+      "x_right": 10,
+      "x_drift": -10,
+      "y_rise": 0
+    },
+    "slots": [
+      {
+        "slot": 0,
+        "material": "grey",
+        "r": 160,
+        "g": 160,
+        "b": 160
+      },
+      {
+        "slot": 1,
+        "material": "grass",
+        "r": 90,
+        "g": 154,
+        "b": 50
+      },
+      {
+        "slot": 2,
+        "material": "road",
+        "r": 68,
+        "g": 68,
+        "b": 68
+      }
+    ],
+    "slot_count": 3,
+    "colormap": null,
+    "material_file": ""
+  },
+  "roadStart": {
+    "filename": "roadStart.obj",
+    "type": "start",
+    "tags": [
+      "start",
+      "elevation_change",
+      "long"
+    ],
+    "dimensions": {
+      "length": 20,
+      "width": 12.6,
+      "height": 6.68
+    },
+    "entry": {
+      "face": "z-",
+      "x_left": -11.3,
+      "x_right": -1.3,
+      "y": 0
+    },
+    "exit": {
+      "face": "z",
+      "x_left": -11.3,
+      "x_right": -1.3,
+      "x_drift": 0,
+      "y_rise": 0
+    },
+    "slots": [
+      {
+        "slot": 0,
+        "material": "grey",
+        "r": 160,
+        "g": 160,
+        "b": 160
+      },
+      {
+        "slot": 1,
+        "material": "grass",
+        "r": 90,
+        "g": 154,
+        "b": 50
+      },
+      {
+        "slot": 2,
+        "material": "road",
+        "r": 68,
+        "g": 68,
+        "b": 68
+      }
+    ],
+    "slot_count": 3,
+    "colormap": null,
+    "material_file": ""
+  },
+  "roadStartPositions": {
+    "filename": "roadStartPositions.obj",
+    "type": "start",
+    "tags": [
+      "start",
+      "long"
+    ],
+    "dimensions": {
+      "length": 20,
+      "width": 10,
+      "height": 0.2
+    },
+    "entry": {
+      "face": "z-",
+      "x_left": -10,
+      "x_right": 0,
+      "y": 0
+    },
+    "exit": {
+      "face": "z",
+      "x_left": -10,
+      "x_right": 0,
+      "x_drift": 0,
+      "y_rise": 0
+    },
+    "slots": [
+      {
+        "slot": 0,
+        "material": "grass",
+        "r": 90,
+        "g": 154,
+        "b": 50
+      },
+      {
+        "slot": 1,
+        "material": "grey",
+        "r": 160,
+        "g": 160,
+        "b": 160
+      },
+      {
+        "slot": 2,
+        "material": "road",
+        "r": 68,
+        "g": 68,
+        "b": 68
+      }
+    ],
+    "slot_count": 3,
+    "colormap": null,
+    "material_file": "",
+    "sequence_role": "always_first"
+  },
+  "roadStraight": {
+    "filename": "roadStraight.obj",
+    "type": "straight",
+    "tags": [
+      "straight"
+    ],
+    "dimensions": {
+      "length": 10,
+      "width": 10,
+      "height": 0.2
+    },
+    "entry": {
+      "face": "z-",
+      "x_left": -10,
+      "x_right": 0,
+      "y": 0
+    },
+    "exit": {
+      "face": "z",
+      "x_left": -10,
+      "x_right": 0,
+      "x_drift": 0,
+      "y_rise": 0
+    },
+    "slots": [
+      {
+        "slot": 0,
+        "material": "grass",
+        "r": 90,
+        "g": 154,
+        "b": 50
+      },
+      {
+        "slot": 1,
+        "material": "grey",
+        "r": 160,
+        "g": 160,
+        "b": 160
+      },
+      {
+        "slot": 2,
+        "material": "road",
+        "r": 68,
+        "g": 68,
+        "b": 68
+      }
+    ],
+    "slot_count": 3,
+    "colormap": null,
+    "material_file": ""
+  },
+  "roadStraightBridge": {
+    "filename": "roadStraightBridge.obj",
+    "type": "bridge",
+    "tags": [
+      "bridge",
+      "elevation_change"
+    ],
+    "dimensions": {
+      "length": 10,
+      "width": 10,
+      "height": 5.2
+    },
+    "entry": {
+      "face": "z-",
+      "x_left": -10,
+      "x_right": 0,
+      "y": 0
+    },
+    "exit": {
+      "face": "z",
+      "x_left": -10,
+      "x_right": 0,
+      "x_drift": 0,
+      "y_rise": -5.2
+    },
+    "slots": [
+      {
+        "slot": 0,
+        "material": "wall",
+        "r": 200,
+        "g": 180,
+        "b": 140
+      },
+      {
+        "slot": 1,
+        "material": "grey",
+        "r": 160,
+        "g": 160,
+        "b": 160
+      },
+      {
+        "slot": 2,
+        "material": "road",
+        "r": 68,
+        "g": 68,
+        "b": 68
+      },
+      {
+        "slot": 3,
+        "material": "_defaultMat",
+        "r": 130,
+        "g": 130,
+        "b": 130
+      }
+    ],
+    "slot_count": 4,
+    "colormap": null,
+    "material_file": "",
+    "sequence_role": "bridge_end"
+  },
+  "roadStraightBridgeMid": {
+    "filename": "roadStraightBridgeMid.obj",
+    "type": "bridge",
+    "tags": [
+      "bridge",
+      "elevation_change"
+    ],
+    "dimensions": {
+      "length": 10,
+      "width": 10,
+      "height": 1.27
+    },
+    "entry": {
+      "face": "z-",
+      "x_left": -10,
+      "x_right": 0,
+      "y": 0
+    },
+    "exit": {
+      "face": "z",
+      "x_left": -10,
+      "x_right": 0,
+      "x_drift": 0,
+      "y_rise": 0
+    },
+    "slots": [
+      {
+        "slot": 0,
+        "material": "wall",
+        "r": 200,
+        "g": 180,
+        "b": 140
+      },
+      {
+        "slot": 1,
+        "material": "grey",
+        "r": 160,
+        "g": 160,
+        "b": 160
+      },
+      {
+        "slot": 2,
+        "material": "road",
+        "r": 68,
+        "g": 68,
+        "b": 68
+      }
+    ],
+    "slot_count": 3,
+    "colormap": null,
+    "material_file": "",
+    "sequence_role": "bridge_mid"
+  },
+  "roadStraightBridgeStart": {
+    "filename": "roadStraightBridgeStart.obj",
+    "type": "bridge",
+    "tags": [
+      "bridge",
+      "elevation_change"
+    ],
+    "dimensions": {
+      "length": 10,
+      "width": 10,
+      "height": 5.2
+    },
+    "entry": {
+      "face": "z-",
+      "x_left": -10,
+      "x_right": 0,
+      "y": 0
+    },
+    "exit": {
+      "face": "z",
+      "x_left": -10,
+      "x_right": 0,
+      "x_drift": 0,
+      "y_rise": 5.2
+    },
+    "slots": [
+      {
+        "slot": 0,
+        "material": "wall",
+        "r": 200,
+        "g": 180,
+        "b": 140
+      },
+      {
+        "slot": 1,
+        "material": "grey",
+        "r": 160,
+        "g": 160,
+        "b": 160
+      },
+      {
+        "slot": 2,
+        "material": "road",
+        "r": 68,
+        "g": 68,
+        "b": 68
+      }
+    ],
+    "slot_count": 3,
+    "colormap": null,
+    "material_file": "",
+    "sequence_role": "bridge_start"
+  },
+  "roadStraightLong": {
+    "filename": "roadStraightLong.obj",
+    "type": "straight",
+    "tags": [
+      "straight",
+      "long"
+    ],
+    "dimensions": {
+      "length": 20,
+      "width": 10,
+      "height": 0.2
+    },
+    "entry": {
+      "face": "z-",
+      "x_left": -10,
+      "x_right": 0,
+      "y": 0
+    },
+    "exit": {
+      "face": "z",
+      "x_left": -10,
+      "x_right": 0,
+      "x_drift": 0,
+      "y_rise": 0
+    },
+    "slots": [
+      {
+        "slot": 0,
+        "material": "grass",
+        "r": 90,
+        "g": 154,
+        "b": 50
+      },
+      {
+        "slot": 1,
+        "material": "grey",
+        "r": 160,
+        "g": 160,
+        "b": 160
+      },
+      {
+        "slot": 2,
+        "material": "road",
+        "r": 68,
+        "g": 68,
+        "b": 68
+      }
+    ],
+    "slot_count": 3,
+    "colormap": null,
+    "material_file": ""
+  },
+  "roadStraightSkew": {
+    "filename": "roadStraightSkew.obj",
+    "type": "skew",
+    "tags": [
+      "skew",
+      "x_shift",
+      "long"
+    ],
+    "dimensions": {
+      "length": 20,
+      "width": 20,
+      "height": 0.2
+    },
+    "entry": {
+      "face": "z-",
+      "x_left": -10,
+      "x_right": 0,
+      "y": 0
+    },
+    "exit": {
+      "face": "z",
+      "x_left": -20,
+      "x_right": -10,
+      "x_drift": -10,
+      "y_rise": 0
+    },
+    "slots": [
+      {
+        "slot": 0,
+        "material": "grass",
+        "r": 90,
+        "g": 154,
+        "b": 50
+      },
+      {
+        "slot": 1,
+        "material": "grey",
+        "r": 160,
+        "g": 160,
+        "b": 160
+      },
+      {
+        "slot": 2,
+        "material": "road",
+        "r": 68,
+        "g": 68,
+        "b": 68
+      }
+    ],
+    "slot_count": 3,
+    "colormap": null,
+    "material_file": ""
+  }
+});
+
+function detectRoadPipelineSettings(promptText = "", existing = null) {
+  const lower = String(promptText || "").toLowerCase();
+  const hasAny = (...patterns) => patterns.some(pattern => pattern.test(lower));
+  const existingValue = (existing && typeof existing === "object") ? existing : {};
+
+  let gameType = "other";
+  if (hasAny(
+    /(racing|race car|drift|time trial|lap timer|checkpoint racing)/,
+    /(track|circuit|racetrack|raceway|road course)/,
+    /(laps|finish line|starting grid|pit lane)/
+  )) {
+    gameType = "racing";
+  } else if (hasAny(
+    /(side[ -]?scroller|side[ -]?scrolling|side view|side-view|runner)/,
+    /(vehicle|truck|car|bike|buggy|motorcycle|tank)/,
+    /(terrain|ground traversal|hill climb|slope|road strip|terrain strip)/
+  )) {
+    gameType = "sidescroller_terrain";
+  } else if (hasAny(
+    /(platformer|platforming|run and jump|jump between platforms)/,
+    /(ground traversal|terrain|ground piece|platform route|ramp)/
+  )) {
+    gameType = "platformer";
+  }
+
+  const detectedRoadExclusionFlag = gameType !== "other" || hasAny(
+    /(road section|track segment|terrain strip|ground piece|pre-built ground|prebuilt ground)/,
+    /(track layout|terrain layout|road pipeline|road\.zip)/
+  );
+
+  const merged = {
+    ...existingValue,
+    gameType,
+    roadExclusionFlag: detectedRoadExclusionFlag,
+    source: "prompt_heuristic_v5"
+  };
+
+  if (existingValue.roadPipelineUserOverride === true) {
+    merged.roadExclusionFlag = existingValue.requestRoadPipeline === true;
+    merged.source = "user_override_preserved_v1";
+  }
+
+  return merged;
+}
+
+
+function normalizeRoadPieceName(value = "") {
+  return String(value || "").replace(/\\/g, "/").split("/").pop().replace(/\.obj$/i, "").trim();
+}
+
+function normalizeRoadIndex(rawIndex = null) {
+  const raw = rawIndex && typeof rawIndex === "object" ? rawIndex : {};
+  const normalized = {};
+  const allKeys = new Set([
+    ...Object.keys(FALLBACK_ROAD_INDEX || {}),
+    ...Object.keys(raw || {})
+  ]);
+
+  allKeys.forEach((key) => {
+    const fallbackEntry = FALLBACK_ROAD_INDEX[key] || FALLBACK_ROAD_INDEX[normalizeRoadPieceName(key)] || null;
+    const rawEntry = raw[key] || raw[normalizeRoadPieceName(key)] || null;
+    const merged = {
+      ...(fallbackEntry || {}),
+      ...(rawEntry || {}),
+      dimensions: { ...((fallbackEntry && fallbackEntry.dimensions) || {}), ...((rawEntry && rawEntry.dimensions) || {}) },
+      entry: { ...((fallbackEntry && fallbackEntry.entry) || {}), ...((rawEntry && rawEntry.entry) || {}) },
+      exit: { ...((fallbackEntry && fallbackEntry.exit) || {}), ...((rawEntry && rawEntry.exit) || {}) }
+    };
+    const pieceName = normalizeRoadPieceName(merged.name || merged.filename || key);
+    if (!pieceName) return;
+    normalized[pieceName] = {
+      ...merged,
+      name: pieceName,
+      filename: merged.filename || `${pieceName}.obj`,
+      tags: Array.isArray(merged.tags) ? merged.tags : [],
+      slots: Array.isArray(merged.slots) ? merged.slots : [],
+      slot_count: Number.isFinite(Number(merged.slot_count)) ? Number(merged.slot_count) : (Array.isArray(merged.slots) ? merged.slots.length : 0),
+      material_file: merged.material_file === undefined ? "" : merged.material_file
+    };
+  });
+
+  return normalized;
+}
+
+async function loadRoadIndex(bucket) {
+  try {
+    const roadZipFile = bucket.file(ROAD_PIPELINE_ZIP_PATH);
+    const [exists] = await roadZipFile.exists();
+    if (!exists) {
+      throw new Error(`Road.zip not found at ${ROAD_PIPELINE_ZIP_PATH}`);
+    }
+
+    const [zipBuffer] = await roadZipFile.download();
+    const zip = await JSZip.loadAsync(zipBuffer);
+
+    for (const entryName of ROAD_PIPELINE_INDEX_ENTRY_NAMES) {
+      const entry = zip.file(entryName);
+      if (!entry) continue;
+      const parsed = JSON.parse(await entry.async('string'));
+      return normalizeRoadIndex(parsed);
+    }
+
+    throw new Error(`Road.zip is missing ${ROAD_PIPELINE_INDEX_ENTRY_NAMES.join(' / ')} at zip root.`);
+  } catch (err) {
+    console.warn(`[ROAD] Failed to load road index from Road.zip root: ${err.message}`);
+  }
+  console.warn("[ROAD] Falling back to embedded road index.");
+  return normalizeRoadIndex(FALLBACK_ROAD_INDEX);
+}
+
+function buildRoadPlanningContext(roadPipeline = null) {
+  if (!roadPipeline?.roadExclusionFlag) return "";
+  return `
+
+ROAD PIPELINE ACTIVE:
+- gameType=${roadPipeline.gameType || "other"}
+- roadExclusionFlag=true
+- Road.zip assets are bootstrapped into models/ by the frontend before planning, and Road_Index.json is loaded from the zip root by the proxy.
+- The asset roster MUST exclude road sections, terrain strips, ground pieces, track segments, and roadside terrain filler geometry.
+- The planner MUST treat ground generation as a dedicated road-first sequencer concern, not a free-form terrain-authoring problem.
+- A deterministic Road Sequencer tranche will be injected as tranche 1 before normal execution.
+- That sequencer tranche MUST use Road.zip pieces as the primary road-building blocks and MUST also add Cherry3D primitive terrain as complimentary fill around the placed road layout.
+- Complimentary terrain fill may use ONLY hidden .primitives keys 4-14 and must NEVER use deprecated model primitive keys 17, 18, 21, 34, or 35.
+- Primitive terrain fill must be adjacent to, connected with, and elevation-matched to the assembled road sections. It must never replace a road piece that already covers that role.
+- Do NOT spend extra tranches re-authoring the drivable road shell with guessed meshes. Primitive work here is for stitched surrounding terrain, shoulders, verges, embankments, runoff, underfill, and neighboring ground continuity only.
+- All 2D UI / HUD / bars / menus / flat interface surfaces belong in models/23 only, never in models/2 or objects3d.
+`;
+}
+
+function buildRoadSequencerPrompt(roadPipeline = null, roadIndex = {}) {
+  if (!roadPipeline?.roadExclusionFlag) return "";
+  const validTypesByGame = {
+    racing: "all 27 road piece types are valid",
+    sidescroller_terrain: "valid piece types: straight, bump, ramp, start. Exclude: corners, hairpin, curved, pit, bridge, split, skew.",
+    platformer: "valid piece types: straight, bump, ramp. Exclude: corners, curved, pit, bridge, split, skew.",
+    other: "valid piece types: straight, bump, ramp, start."
+  };
+  return `ROAD SEQUENCER — MANDATORY FIRST TRANCHE
+You are implementing the deterministic road / terrain sequencer directly into models/2.
+
+ROAD PIPELINE SETTINGS:
+- gameType: ${roadPipeline.gameType || "other"}
+- roadExclusionFlag: true
+- targetLength heuristic: short=120u | medium=200u | long=350u
+- validPieces: ${validTypesByGame[roadPipeline.gameType] || validTypesByGame.other}
+
+NON-NEGOTIABLE RULES:
+1. Work ONLY in models/2.
+2. Treat Road.zip OBJ pieces as already present in models/ and already registered by assets.json.
+3. Road.zip pieces are the PRIMARY building blocks for road design and assembly. Use Cherry3D primitives only as complimentary terrain fill beyond the authored road pieces.
+4. DO NOT create or replace a road, track, lane surface, or authored path section from primitives when a Road.zip piece covers that role.
+5. Apply RGB slot colours from Road_Index.json after createObject() and before safeAddObject().
+6. material_file must be '' for every road slot without exception.
+7. The sequencer must validate joins before placement. If a candidate join is invalid, reject and rebuild the sequence rather than patching a broken join.
+8. Insert roadStartPositions first for racing / road-start games unless the prompt clearly requires a different start piece.
+9. After each road piece placement, add or extend complimentary primitive terrain so the surrounding ground remains visually connected to the road layout.
+10. Complimentary terrain fill may use ONLY hidden .primitives keys 4-14. Deprecated model primitive keys 17, 18, 21, 34, and 35 are forbidden.
+11. Primitive terrain must be adjacent to, connected with, and elevation-matched to the assembled road sections. No visible seams, floating filler blocks, or disconnected terrain islands are allowed beside the road.
+12. Primitive terrain fill should cover shoulders, verge strips, runoff, roadside pads, embankment support, underfill below elevated road segments, and any neighboring ground continuity the scene needs after the Road.zip layout is assembled.
+13. Later tranches should inherit the sequenced road + stitched terrain layout as ground truth.
+14. CURSOR TRACKING — maintain three cursors across the entire sequence:
+   - z_cursor: advances by piece.dimensions.length after each placement (world Z position).
+   - x_cursor: advances by piece.exit.x_drift after each placement (lateral offset from baseline).
+   - y_cursor: advances by piece.exit.y_rise after each placement (elevation change).
+   Port validation uses x_cursor: next.entry.x_left must equal current.exit.x_left + x_cursor (tolerance 0.15u).
+   y_cursor must return within 0.5u of 0 before the track ends — insert a compensating ramp if needed.
+   x_cursor must return to 0 at track end — insert a compensating skew or curved piece if needed.
+15. CORNER ROTATION — corner_exit pieces (tagged corner_exit in road_index) require a rotateY value
+    computed from the piece's exit.face field:
+      exit.face = 'x-'  →  rotateY = 90°
+      exit.face = 'x+'  →  rotateY = -90°
+    Apply this rotation to the placed object immediately after position assignment and before safeAddObject.
+    Non-corner-exit pieces use rotateY = 0 (default, no rotation needed).
+
+REQUIRED CODE SHAPE:
+- Add a ROAD_INDEX / roadIndex constant or helper derived from the data below.
+- Add an applyRoadSlotColours(obj, pieceName) helper that loops the exact slot data for that piece.
+- Add an emitAdjacentPrimitiveTerrain(...) helper (or equivalent) that builds primitive roadside ground using only .primitives keys 4-14.
+- Add a sequencer helper that:
+  — chooses pieces based on game type and prompt keywords
+  — maintains z_cursor, x_cursor, y_cursor across the full sequence (see Rule 14)
+  — validates adjacent port joins using x_cursor before each placement (tolerance 0.15u)
+  — rejects and rebuilds the entire sequence on any port mismatch — never patches
+  — applies rotateY from exit.face for corner_exit pieces (see Rule 15)
+  — emits connected primitive terrain immediately after or alongside each accepted road placement
+  — ensures the primitive terrain touches the road edges and inherits the correct local elevation / slope context
+  — compensates open x_cursor or y_cursor at track end before finalising
+- Primitive terrain helpers must never replace an authored road segment; they only fill the remaining neighboring terrain volume.
+- For fixed tracks, emit the validated placements immediately in the world-build path.
+- For dynamic tracks, emit a self-contained generator function that still validates ports before adding objects.
+
+CANONICAL SLOT-COLOUR APPLICATION:
+function applyRoadSlotColours(obj, pieceName) {
+  const slotMap = roadIndex[pieceName].slots;
+  for (let i = 0; i < slotMap.length; i++) {
+    const s = slotMap[i];
+    obj.data[i].r = s.r / 255;
+    obj.data[i].g = s.g / 255;
+    obj.data[i].b = s.b / 255;
+    obj.data[i].material_file = '';
+  }
+}
+
+ROAD INDEX (authoritative per-piece geometry + slot colours):
+${JSON.stringify(roadIndex, null, 2)}
+`;
+}
+
+function injectRoadSequencerTranche(plan, roadPipeline = null) {
+  if (!roadPipeline?.roadExclusionFlag) return plan;
+  const existing = Array.isArray(plan?.tranches) ? plan.tranches : [];
+  const alreadyPresent = existing.some(tranche => /road sequencer|road pipeline|road tranche/i.test(`${tranche?.name || ""} ${tranche?.description || ""} ${tranche?.prompt || ""}`));
+  if (alreadyPresent) return plan;
+
+  const roadTranche = {
+    kind: "road_sequencer",
+    name: "Road Sequencer Ground Layout",
+    description: "Deterministic road-first layout from Road.zip + Road_Index.json (zip root), plus stitched Cherry3D primitive terrain fill around the placed road shell before other gameplay systems build on top.",
+    anchorSections: ["Road Pipeline"],
+    purpose: "Create a geometrically valid road or terrain layout first so later tranches inherit a known ground truth.",
+    systemsTouched: ["world_build", "road_pipeline", "ground_layout"],
+    filesTouched: ["models/2"],
+    visibleResult: "A placed and colour-applied Road.zip layout exists first, with adjacent Cherry3D primitive terrain stitched around it before later tranches.",
+    safetyChecks: [
+      "road slots use direct RGB colouring only",
+      "material_file is empty string on every road slot",
+      "adjacent piece ports validate before placement"
+    ],
+    expectedFiles: ["models/2"],
+    dependencies: [],
+    expertAgents: ["world_authoring", "physics_simulation"],
+    phase: 0,
+    qualityCriteria: [
+      "port-validated layout",
+      "piece-specific slot colours",
+      "primitive terrain stitched adjacent to road edges",
+      "later tranches inherit stable ground truth"
+    ],
+    prompt: "__ROAD_SEQUENCER_PROMPT__"
+  };
+
+  return {
+    ...plan,
+    analysis: `${String(plan?.analysis || "").trim()}\n\nRoad pipeline active — a deterministic road sequencer tranche has been inserted ahead of the planner's normal tranche sequence.`.trim(),
+    tranches: [roadTranche, ...existing]
+  };
+}
 
 
 /* ─── SCAFFOLD + SDK INSTRUCTION BUNDLE: fetched from Firebase ───
@@ -188,6 +1867,84 @@ function flattenAssetsManifestEntries(entries) {
   }
   return flat;
 }
+const FOUNDATION_B_DUPLICATE_REGEX = /\bfoundation[\s_-]*b\b/i;
+const FOUNDATION_A_REGEX = /\bfoundation[\s_-]*a\b/i;
+const PARTICLE_TRANCHE_DETECTION_REGEX = /\b(particle(?:[\s_-]*tex[\s_-]*paths)?|particle[\s_-]*billboard|emitter(?:\s+setup)?|explosions?|smoke|sparks?|fire|debris|trails?)\b/i;
+
+function trancheTouchesParticleSystems(tranche) {
+  const name = String(tranche?.name || '');
+  const prompt = String(tranche?.prompt || '');
+  const systemsTouched = Array.isArray(tranche?.systemsTouched) ? tranche.systemsTouched.join(' ') : '';
+  const haystack = `${name}\n${prompt}\n${systemsTouched}`;
+  return PARTICLE_TRANCHE_DETECTION_REGEX.test(haystack);
+}
+
+function injectFoundationBTranche(plan, approvedRosterJson = null) {
+  if (!plan || !Array.isArray(plan.tranches)) return plan;
+  const particleTextures = Array.isArray(approvedRosterJson?.textureAssets)
+    ? approvedRosterJson.textureAssets.filter(asset => asset?.particleEffectTarget)
+    : [];
+  if (particleTextures.length === 0) return plan;
+
+  const alreadyPresent = plan.tranches.some(tranche => {
+    const name = String(tranche?.name || '');
+    const prompt = String(tranche?.prompt || '');
+    return FOUNDATION_B_DUPLICATE_REGEX.test(name) || FOUNDATION_B_DUPLICATE_REGEX.test(prompt) || /\bparticle[\s_-]*tex[\s_-]*paths\b/i.test(prompt);
+  });
+  if (alreadyPresent) return plan;
+
+  const firstParticleTrancheIndex = plan.tranches.findIndex(tranche => trancheTouchesParticleSystems(tranche));
+  if (firstParticleTrancheIndex < 0) return plan;
+
+  const lines = particleTextures.map(asset => {
+    const stagedPath = asset?.stagedPath || '(missing staged path)';
+    const manifestKey = asset?.manifestKey || asset?.resolvedManifestKey || '(resolve from roster block)';
+    return `- ${asset.particleEffectTarget}: stagedPath=${stagedPath} | manifestKey=${manifestKey}`;
+  }).join('\n');
+
+  const tranche = {
+    kind: 'foundation',
+    name: 'Foundation-B',
+    description: 'Populate particle texture staged-path and manifest-key registries before any particle template or emitter tranche.',
+    purpose: 'Register approved particle effect textures in PARTICLE_TEX_PATHS and gameState.particleTextureIds.',
+    systemsTouched: ['particles', 'asset registry'],
+    filesTouched: ['models/2'],
+    expectedFiles: ['models/2'],
+    visibleResult: 'Particle systems have deterministic approved texture bindings available before registration.',
+    safetyChecks: ['Only approved particleEffectTarget keys are used.', 'Every approved particle texture gets both staged path and manifest key registry entries.', 'PARTICLE_TEX_PATHS wiring exists before any particle tranche runs.'],
+    qualityCriteria: ['PARTICLE_TEX_PATHS is populated for every approved particleEffectTarget.', 'gameState.particleTextureIds is populated for every approved particleEffectTarget.'],
+    dependencies: ['Foundation-A'],
+    prompt: `FOUNDATION-B PARTICLE TEXTURE REGISTRY
+Create or update the registry block in models/2 so that BOTH PARTICLE_TEX_PATHS[effectName] and gameState.particleTextureIds[effectName] are populated before any particle template or emitter logic runs.
+
+Approved particle targets:
+${lines}
+
+Rules:
+1. Use the exact particleEffectTarget names shown above as object keys.
+2. Populate PARTICLE_TEX_PATHS first using the staged Firebase paths from the approved roster.
+3. Populate gameState.particleTextureIds using the matching resolved manifest keys surfaced in the approved roster block.
+4. Do not register particle templates in this tranche; this tranche only sets up the deterministic registry state.`,
+    phase: 1,
+    expertAgents: ['api_contracts']
+  };
+
+  const insertAfterIndex = typeof plan.tranches.findLastIndex === 'function'
+    ? plan.tranches.findLastIndex(tranche => FOUNDATION_A_REGEX.test(String(tranche?.name || '')))
+    : (() => {
+        for (let i = plan.tranches.length - 1; i >= 0; i -= 1) {
+          if (FOUNDATION_A_REGEX.test(String(plan.tranches[i]?.name || ''))) return i;
+        }
+        return -1;
+      })();
+  if (insertAfterIndex >= 0) {
+    plan.tranches.splice(insertAfterIndex + 1, 0, tranche);
+  } else {
+    plan.tranches.splice(firstParticleTrancheIndex, 0, tranche);
+  }
+  return plan;
+}
+
 
 async function loadAssetsManifestIndex(bucket, projectPath) {
   try {
@@ -299,17 +2056,62 @@ function buildRosterObjectContract(asset, stagedMeta, manifestMeta) {
   └─`;
 }
 
+
+function buildRosterAvatarContract(asset, stagedMeta, manifestMeta) {
+  const geometry = asset?.geometryAnalysis || stagedMeta?.geometryAnalysis || null;
+  const stagedPath = stagedMeta?.stagedPath || asset?.stagedPath || "(not staged)";
+  const manifestKey = manifestMeta?.key ? `"${manifestMeta.key}"` : "(unresolved)";
+  const clips = Array.isArray(asset?.animationClips) ? asset.animationClips : [];
+  const clipList = clips.length > 0 ? clips.join(", ") : "NOT AVAILABLE";
+  const texturePaths = Array.isArray(asset?.stagedTexturePaths) ? asset.stagedTexturePaths : [];
+  const size = geometry?.geometry?.size || {};
+  const placement = geometry?.placement || {};
+  const scale = geometry?.scale || {};
+  const scaleVec = Array.isArray(scale.suggestedGameScaleVec)
+    ? `[${scale.suggestedGameScaleVec.map(v => formatRosterNumber(v, 6)).join(", ")}]`
+    : "[N/A]";
+
+  return `  ┌─ [${asset.assetName}]
+  │  Source:       ${asset?.sourceZip || "Avatars.zip"}
+  │  Role:         ${asset?.avatarRole || asset?.intendedRole || asset?.matchedRequirement || "avatar"}
+  │  Manifest key: ${manifestKey}
+  │  Staged path:  ${stagedPath}
+  │
+  │  GEOMETRY CONTRACT ${geometry ? "(measured values — use these directly in code)" : ": NOT AVAILABLE — scale conservatively with [1,1,1]"}
+  │    Bounding box:   W=${formatRosterNumber(size.x)}  H=${formatRosterNumber(size.y)}  D=${formatRosterNumber(size.z)}
+  │    position.y for floor placement:    ${formatRosterNumber(placement.floorY, 6)}
+  │    position.x centering correction:   ${formatRosterNumber(placement.centerOffsetX, 6)}
+  │    position.z centering correction:   ${formatRosterNumber(placement.centerOffsetZ, 6)}
+  │    Suggested scale (largest dim → 1): ${formatRosterNumber(scale.suggestedGameScale, 6)}
+  │    Scale vector:                      ${scaleVec}
+  │
+  │  ANIMATION CONTRACT:
+  │    Clips:         ${clipList}
+  │    Coverage:      ${asset?.animationCoverage || "NOT AVAILABLE"}
+  │    Manifest file: ${asset?.stagedAnimationManifestPath || asset?.animationManifestPath || "NOT AVAILABLE"}
+  │
+  │  TEXTURE CONTRACT:
+  │    Staged textures: ${texturePaths.length > 0 ? texturePaths.join(", ") : "NOT AVAILABLE"}
+  └─`;
+}
+
+async function loadApprovedRosterJson(bucket, projectPath) {
+  const rosterFile = bucket.file(`${projectPath}/ai_asset_roster_approved.json`);
+  const [exists] = await rosterFile.exists();
+  if (!exists) return null;
+  const [content] = await rosterFile.download();
+  const parsed = JSON.parse(content.toString());
+  if (!parsed?._meta?.approved) return null;
+  return parsed;
+}
+
 /* ── Load approved Asset Roster from Firebase (if present) ──────
    Returns a formatted context block string, or empty string if no
    roster was approved for this run.                               */
 async function loadApprovedRosterBlock(bucket, projectPath) {
   try {
-    const rosterFile = bucket.file(`${projectPath}/ai_asset_roster_approved.json`);
-    const [exists] = await rosterFile.exists();
-    if (!exists) return "";
-    const [content] = await rosterFile.download();
-    const r = JSON.parse(content.toString());
-    if (!r._meta?.approved) return "";
+    const r = await loadApprovedRosterJson(bucket, projectPath);
+    if (!r) return "";
 
     const manifestIndex = await loadAssetsManifestIndex(bucket, projectPath);
     const stagedIndex = new Map(
@@ -319,22 +2121,29 @@ async function loadApprovedRosterBlock(bucket, projectPath) {
     );
 
     const objs = (r.objects3d || []).map(a => {
-      const manifestMeta = manifestIndex.get(String(a.assetName || "").toLowerCase());
+      const manifestMeta = manifestIndex.get(String((a.copiedModelFilename || a.assetName || "")).toLowerCase()) || manifestIndex.get(String(a.assetName || "").toLowerCase());
       const stagedMeta = stagedIndex.get(String(a.assetName || "").toLowerCase());
       return buildRosterObjectContract(a, stagedMeta, manifestMeta);
     }).join("\n");
 
-    const particleTextures = (r.textureAssets || []).filter(a => a.particleEffectTarget);
+    const avatars = (r.avatars || []).map(a => {
+      const manifestMeta = manifestIndex.get(String((a.copiedModelFilename || a.assetName || "")).toLowerCase()) || manifestIndex.get(String(a.assetName || "").toLowerCase());
+      const stagedMeta = stagedIndex.get(String(a.assetName || "").toLowerCase());
+      return buildRosterAvatarContract(a, stagedMeta, manifestMeta);
+    }).join("\n");
 
+    const particleTextures = (r.textureAssets || []).filter(a => a.particleEffectTarget);
     const texsParticle = particleTextures.map(a => {
       const manifestMeta = manifestIndex.get(String(a.assetName || "").toLowerCase());
-      return `  - ${a.assetName} (from ${a.sourceRosterDocument}) → particleEffectTarget: "${a.particleEffectTarget}" | ${resolveRosterRole(a)} | manifest key: ${manifestMeta?.key ? `"${manifestMeta.key}"` : "(unresolved)"}`;
+      return `  - ${a.assetName} (from ${a.sourceRosterDocument}) → particleEffectTarget: "${a.particleEffectTarget}" | ${resolveRosterRole(a)} | staged path: ${a.stagedPath || "(not staged)"} | manifest key: ${manifestMeta?.key ? `"${manifestMeta.key}"` : "(unresolved)"}`;
     }).join("\n");
 
     const staged = (r.stagedAssets || []).map(a => {
-      const manifestMeta = manifestIndex.get(String(a.assetName || "").toLowerCase());
+      const manifestMeta = manifestIndex.get(String((a.copiedModelFilename || a.assetName || "")).toLowerCase()) || manifestIndex.get(String(a.assetName || "").toLowerCase());
       const colormapSuffix = a.colormapStagedPath ? ` | colormap: ${a.colormapStagedPath}` : "";
-      return `  - ${a.assetName} → ${a.stagedPath}${manifestMeta?.key ? ` | manifest key: "${manifestMeta.key}"` : ""}${colormapSuffix}`;
+      const textureSuffix = Array.isArray(a.stagedTexturePaths) && a.stagedTexturePaths.length > 0 ? ` | avatar textures: ${a.stagedTexturePaths.join(", ")}` : "";
+      const animSuffix = a.stagedAnimationManifestPath ? ` | animations: ${a.stagedAnimationManifestPath}` : "";
+      return `  - ${a.copiedModelFilename || a.assetName} → ${a.stagedPath}${manifestMeta?.key ? ` | manifest key: "${manifestMeta.key}"` : ""}${colormapSuffix}${textureSuffix}${animSuffix}`;
     }).join("\n");
     const vn = r.visualDirectionNotes || {};
     const sf = r._meta?.stagedFolder || "";
@@ -353,6 +2162,9 @@ ${r.gameInterpretationSummary || ""}
 APPROVED 3D OBJECTS (${(r.objects3d||[]).length}):
 ${objs || "  (none)"}
 
+APPROVED AVATARS (${(r.avatars||[]).length}):
+${avatars || "  (none)"}
+
 APPROVED PARTICLE EFFECT TEXTURES (${particleTextures.length}) — Foundation-B MUST populate PARTICLE_TEX_PATHS (staged paths) and gameState.particleTextureIds (manifest keys):
 ${texsParticle || "  (none)"}
 
@@ -361,7 +2173,7 @@ STAGED FILES (Firebase paths — use these in models/2 and models/23):
 ${staged || "  (none extracted)"}
 
 ASSETS.JSON MANIFEST LOCATIONS (after frontend copy + sync):
-- Approved 3D objects register as children of the Models folder, key "15".
+- Approved 3D objects and approved avatars register as children of the Models folder, key "15".
 - Approved particle textures register at root level with their own assigned numeric keys.
 - The per-asset manifest keys are resolved above — use those exact keys for all asset references in models/2 and models/23.
 
@@ -375,23 +2187,25 @@ VISUAL DIRECTION:
 
 TRANCHE DESIGN & EXECUTION REQUIREMENT:
 1. Tranche Design MUST plan explicitly around these approved assets.
-2. Every tranche touching rendered content, obstacles, environment, or scene objects MUST incorporate the relevant approved assets from this roster.
+2. Every tranche touching rendered content, obstacles, environment, scene objects, playable characters, or enemies MUST incorporate the relevant approved assets from this roster.
 3. Visual Direction notes above govern color, material, and FX treatment throughout all tranches.
 4. Reference staged files by their Firebase staged paths or assets.json keys.
 5. Color direction and surface treatment must be consistent throughout all tranches.
 6. PARTICLE TEXTURE REGISTRY: A Foundation-B sub-tranche MUST be planned immediately after Foundation-A. Its job is to populate BOTH (a) PARTICLE_TEX_PATHS keyed by particleEffectTarget using the exact staged Firebase paths from the Approved Asset Roster block, and (b) gameState.particleTextureIds keyed by particleEffectTarget using the exact assets.json manifest keys. This tranche must complete before any particle template or emitter tranche.
 7. Every approved particle effect texture used by a particle billboard or sphere MUST be applied at the particle template level: registerParticleTemplate(... extraData: { material_file: PARTICLE_TEX_PATHS[effectName] }) or an equivalent direct particle slot material_file assignment. Populating gameState.particleTextureIds alone is not sufficient. Particle textures are a separate workflow from non-primitive scene-object defineMaterial/_applyMat contracts.
-8. 3D OBJECT REGISTRY: Every tranche touching visible scene content MUST branch cleanly between the five Cherry3D system primitives (cube, cylinder, sphere, plane, planevertical) and non-primitive approved roster 3D objects. If the object is intentionally one of those five primitives, skip external scan/roster geometry-texture-slotCount enforcement for that object and use primitive-safe logic only. For every other visible gameplay object, you MUST use an approved roster 3D object via gameState.objectids and the resolved assets.json manifest keys surfaced above. Using a Cherry3D primitive as a visible gameplay object when a roster asset covers that role is a tranche execution defect.
+8. 3D OBJECT / AVATAR REGISTRY: Every tranche touching visible scene content MUST branch cleanly between the eleven Cherry3D system primitives (cube, square, plane, sphere, cylinder, capsule, cone, torus, torusknot, tetrahedron, icosahedron) and non-primitive approved roster assets. If the object is intentionally one of those eleven primitives, skip external scan/roster geometry-texture-slotCount enforcement for that object and use primitive-safe logic only. For every other visible gameplay object, avatar, or enemy, you MUST use an approved roster asset via gameState.objectids and the resolved assets.json manifest keys surfaced above.
 9. GEOMETRY CONTRACTS surfaced above are arithmetic, not suggestions. When present, copy the exact placement and scale values into planning and execution prompts without paraphrase.
-10. TEXTURE CONTRACTS surfaced above are mandatory for non-primitive roster 3D objects. Use the scaffold material-registry path: define a registered material whose albedo_texture is the resolved numeric colormap manifest key from assets.json, then apply that material key across all valid slots using gameState._applyMat / registerObjectContract-safe logic. material_file must hold the registered material key, never a raw staged path.
-11. SLOT CONTRACT: slotCount is the primary hard loop bound for material application (fallback to meshCount only if slotCount is unavailable).
-12. TEXTURED INSTANCE PATH: For textured non-primitive scene objects, register an instance parent and use createInstance as the default path. If working-game law proves that per-object visual overrides do not survive instancing for that pool, use createObject consistently for that pool instead of mixing createInstance and createObject.
+10. Avatar tranches must name the exact approved avatar asset and, when available, the required animation clip names from the ANIMATION CONTRACT block.
+11. TEXTURE CONTRACTS surfaced above are mandatory for non-primitive roster 3D objects. Use the scaffold material-registry path: define a registered material whose albedo_texture is the resolved numeric colormap manifest key from assets.json, then apply that material key across all valid slots using gameState._applyMat / registerObjectContract-safe logic. material_file must hold the registered material key, never a raw staged path.
+12. SLOT CONTRACT: slotCount is the primary hard loop bound for material application (fallback to meshCount only if slotCount is unavailable).
+13. TEXTURED INSTANCE PATH: For textured non-primitive scene objects, register an instance parent and use createInstance as the default path. If working-game law proves that per-object visual overrides do not survive instancing for that pool, use createObject consistently for that pool instead of mixing createInstance and createObject.
 ═══════════════════════════════════════════════════════════`;
   } catch (e) {
     console.warn("[ROSTER] Could not load approved roster:", e.message);
     return "";
   }
 }
+
 
 /* ── DYNAMIC_ARCHITECTURE_JSON_SCHEMA — REMOVED ─────────────
    Architect pass has been merged into single-pass planner.
@@ -672,6 +2486,7 @@ function buildContractPromptReview(progress, approvedRosterBlock = "") {
     }
 
     referencedAssets.forEach((contract) => {
+    const isAvatarContract = /approved avatars/i.test(approvedRosterBlock) && /ANIMATION CONTRACT/i.test(String(approvedRosterBlock || ''));
       const missing = [];
 
       if (contract.geometryAvailable) {
@@ -768,7 +2583,7 @@ function buildDeterministicContractAppendixForPrompt(prompt, contracts = []) {
           `  slotCount=${slotCount}`,
           `  meshCount=${contract.meshCount || 0}`,
           `  assetClass=EXTERNAL_NON_PRIMITIVE_SCANNED_OBJECT`,
-          `  textureAssignment=Define a registered material whose albedo_texture uses the resolved numeric colormap manifest key ${contract.colormapManifestKey || 'REQUIRED'}, then apply that registered material key across EVERY valid slot N from 0 to ${Math.max(0, (slotCount || 1) - 1)} (${slotCount || 1} slot(s) total) via gameState._applyMat or equivalent slot-safe scaffold logic. material_file must contain the registered material key, never the staged path. Default to createInstance with a registered instance parent, but if working-game law proves per-object visual overrides do not survive instancing for that pool, use createObject consistently instead. Skip this workflow only for the five Cherry3D system primitives (cube, cylinder, sphere, plane, planevertical).`
+          `  textureAssignment=Define a registered material whose albedo_texture uses the resolved numeric colormap manifest key ${contract.colormapManifestKey || 'REQUIRED'}, then apply that registered material key across EVERY valid slot N from 0 to ${Math.max(0, (slotCount || 1) - 1)} (${slotCount || 1} slot(s) total) via gameState._applyMat or equivalent slot-safe scaffold logic. material_file must contain the registered material key, never the staged path. Default to createInstance with a registered instance parent, but if working-game law proves per-object visual overrides do not survive instancing for that pool, use createObject consistently instead. Skip this workflow only for the eleven Cherry3D system primitives (cube, square, plane, sphere, cylinder, capsule, cone, torus, torusknot, tetrahedron, icosahedron).`
         ]
       : [
           `  colormapPath=NOT AVAILABLE`,
@@ -821,6 +2636,7 @@ function buildContractCodeReviewForTranche(tranche, updatedFiles, approvedRoster
   const warnings = [];
 
   referencedAssets.forEach((contract) => {
+    const isAvatarContract = /approved avatars/i.test(approvedRosterBlock) && /ANIMATION CONTRACT/i.test(String(approvedRosterBlock || ''));
     const assetPattern = escapeRegex(contract.assetName);
     const basePattern = escapeRegex(String(contract.assetName || "").replace(/\.[a-z0-9]+$/i, ""));
     const placementAuditPresent = new RegExp(`\\[(?:${assetPattern}|${basePattern})\\]\\s+placement contract applied`, "i").test(combinedCode);
@@ -868,10 +2684,35 @@ function buildContractCodeReviewForTranche(tranche, updatedFiles, approvedRoster
       }
     }
 
+    const assetLineBlockMatch = String(approvedRosterBlock || '').match(new RegExp(`┌─ \\[${escapeRegex(contract.assetName)}\\]([\\s\\S]*?)└─`, 'i'));
+    const assetLineBlock = assetLineBlockMatch ? assetLineBlockMatch[0] : '';
+    const clipLine = parseRosterContractValue(assetLineBlock, /Clips:\s+([^\n]+)/i);
+    if (clipLine && !/NOT AVAILABLE/i.test(clipLine)) {
+      const clips = clipLine.split(',').map(v => v.trim()).filter(Boolean);
+      const avatarMentioned = promptMentionsAsset(prompt, contract.assetName);
+      if (avatarMentioned) {
+        const hasAnyClipEvidence = clips.some(clip => clip && combinedCode.includes(clip));
+        if (!hasAnyClipEvidence) missing.push(`animationClip=${clips[0]}`);
+      }
+    }
+
     if (missing.length > 0) {
       warnings.push(`${contract.assetName}: emitted code missing contract evidence -> ${missing.join(" | ")}`);
     }
   });
+
+  const approvedAvatarContracts = contracts.filter(contract => {
+    const assetLineBlockMatch = String(approvedRosterBlock || '').match(new RegExp(`┌─ \\[${escapeRegex(contract.assetName)}\\]([\\s\\S]*?)└─`, 'i'));
+    const assetLineBlock = assetLineBlockMatch ? assetLineBlockMatch[0] : '';
+    return /ANIMATION CONTRACT/i.test(assetLineBlock);
+  });
+  const promptMentionsCharacterRole = /\b(player|enemy|boss|npc|avatar|companion|crowd)\b/i.test(prompt);
+  if (promptMentionsCharacterRole && approvedAvatarContracts.length > 0) {
+    const codeMentionsApprovedAvatar = approvedAvatarContracts.some(contract => promptMentionsAsset(combinedCode, contract.assetName));
+    if (!codeMentionsApprovedAvatar) {
+      warnings.push('Tranche handles character role but no approved avatar manifest key was referenced in code.');
+    }
+  }
 
   return {
     status: warnings.length > 0 ? "warning" : (referencedAssets.length > 0 ? "ok" : "not_applicable"),
@@ -1023,6 +2864,42 @@ async function saveProgress(bucket, projectPath, progress) {
   );
 }
 
+function buildSceneIntentFreshnessNotice(sceneIntentSyncState) {
+  if (!sceneIntentSyncState || !sceneIntentSyncState.staleCompilerOwnedJson) return "";
+  const trancheLabel = Number.isInteger(sceneIntentSyncState.lastSceneIntentTrancheIndex)
+    ? `Tranche ${sceneIntentSyncState.lastSceneIntentTrancheIndex + 1}`
+    : "a prior tranche";
+  const trancheName = sceneIntentSyncState.lastSceneIntentTrancheName
+    ? ` (${sceneIntentSyncState.lastSceneIntentTrancheName})`
+    : "";
+  return [
+    "=== SCENE INTENT FRESHNESS NOTICE ===",
+    `json/scene_intent.json was updated by ${trancheLabel}${trancheName} during this pipeline run.`,
+    "json/assets.json, json/tree.json, and json/entities.json are compiler-owned snapshots and may now lag behind the fresher scene_intent.",
+    "For all remaining tranches, treat json/scene_intent.json plus models/2 / models/23 as the authoritative live world-state whenever there is any conflict.",
+    "Do not emit compiler-owned JSON package files. The frontend compile/apply path will rebuild them after execution finishes.",
+    "=== END SCENE INTENT FRESHNESS NOTICE ===",
+    ""
+  ].join("\n");
+}
+
+function buildTrancheFileContextFromAccumulatedFiles(accumulatedFiles, sceneIntentSyncState) {
+  let trancheFileContext = "Here are the current project files (includes all output from prior tranches — you MUST preserve all existing code):\n\n";
+  const compilerOwnedSet = new Set(COMPILER_OWNED_JSON_PATHS);
+  const hideCompilerOwnedJson = Boolean(sceneIntentSyncState && sceneIntentSyncState.staleCompilerOwnedJson);
+
+  for (const [path, fileContent] of Object.entries(accumulatedFiles || {})) {
+    if (hideCompilerOwnedJson && compilerOwnedSet.has(path)) continue;
+    trancheFileContext += `--- FILE: ${path} ---\n${fileContent}\n\n`;
+  }
+
+  if (hideCompilerOwnedJson) {
+    trancheFileContext += buildSceneIntentFreshnessNotice(sceneIntentSyncState);
+  }
+
+  return trancheFileContext;
+}
+
 /* ── helper: save ai_response.json with freshness metadata ───── */
 /* Called after every successful tranche merge (checkpoint), on
    cancellation, and at final completion so the frontend always has
@@ -1035,7 +2912,9 @@ async function saveAiResponse(bucket, projectPath, allUpdatedFiles, meta = {}) {
     totalTranches: meta.totalTranches || null,
     status:        meta.status       || "checkpoint", // "checkpoint" | "cancelled" | "final"
     message:       meta.message      || "",
-    updatedFiles:  allUpdatedFiles   || []
+    updatedFiles:  allUpdatedFiles   || [],
+    sceneIntentSyncRequired: Boolean(meta.sceneIntentSyncRequired),
+    sceneIntentSyncState: meta.sceneIntentSyncState || null
   };
   await bucket.file(`${projectPath}/ai_response.json`).save(
     JSON.stringify(payload),
@@ -1738,8 +3617,12 @@ exports.handler = async (event) => {
       // ── 1. Download the request payload from Firebase ─────────
       const requestFile = bucket.file(`${projectPath}/ai_request.json`);
       const [content] = await requestFile.download();
-      const { prompt, files, selectedAssets, inlineImages, modelAnalysis } = JSON.parse(content.toString());
+      const requestPayload = JSON.parse(content.toString());
+      const { prompt, files, selectedAssets, inlineImages, modelAnalysis, roadPipeline: requestRoadPipeline = null } = requestPayload;
       if (!prompt) throw new Error("Missing instructions inside payload");
+      const roadPipeline = detectRoadPipelineSettings(prompt, requestRoadPipeline);
+      requestPayload.roadPipeline = roadPipeline;
+      await requestFile.save(JSON.stringify(requestPayload, null, 2), { contentType: 'application/json', resumable: false });
 
       // ── 2. Spec Validation Gate ───────────────────────────────
       // Runs three Sonnet calls against the Master Prompt before
@@ -1864,6 +3747,7 @@ exports.handler = async (event) => {
       assertInstructionBundle(instructionBundle, "PLAN");
 
       // ── Load approved Asset Roster (if one was approved for this run) ──
+      const approvedRosterJson = await loadApprovedRosterJson(bucket, projectPath).catch(() => null);
       const approvedRosterBlock = await loadApprovedRosterBlock(bucket, projectPath);
       if (approvedRosterBlock) {
         console.log("[PLAN] Approved Asset Roster loaded — will be injected into planning and all tranche prompts.");
@@ -1905,7 +3789,8 @@ INSTRUCTION PRECEDENCE:
 6. Pick one lawful pattern family per subsystem and preserve it through planning, execution, validation, and repair. Do not silently switch families mid-pipeline.
 7. REFERENCE IMAGES (if attached): Any images attached to this request are first-class game design inputs with authority equal to the Master Prompt. They define the intended visual style, layout, object types, and complexity level. Where the image and the text spec diverge, treat the image as the authoritative definition of what must be built. Every tranche that involves visual elements, entities, or layouts must reconcile against the attached images.
 8. If a tranche needs to declare or modify scene hierarchy, entity placement, visibility, or rigidbody ownership, that tranche must target json/scene_intent.json. scene_intent may use groups[], objects[], and standalone rigidbodies[] when a rigidbody is not attached to a mesh object.
-9. Never plan tranches that emit json/assets.json, json/tree.json, or json/entities.json. Those files are compiler-owned and rebuilt automatically after scene_intent changes.
+9. Never plan tranches that emit json/assets.json, json/tree.json, or json/entities.json. Those files are compiler-owned and rebuilt in the frontend compile/apply sync path after scene_intent changes. If they conflict with a fresher json/scene_intent.json during this pipeline run, scene_intent.json is authoritative.
+10. FILE 23 UI OWNERSHIP RULE: All 2D UI, HUD, menus, bars, timers, flat display panels, and overlay-only interface elements belong in models/23, never in models/2 and never in objects3d.${buildRoadPlanningContext(roadPipeline)}
 
 PLANNING RULES:
 1. The Master Prompt's actual contract sections are the center of gravity. Read the real heading structure first, then anchor every core gameplay tranche to the prompt's actual authoritative sections/subsections. If the prompt uses the new layout, prioritize Sections 3.x, 4.x, 5, and 7. If it uses a legacy layout, use those real legacy section numbers. Never invent 6.3 anchors when the prompt does not contain them.
@@ -1922,7 +3807,9 @@ PLANNING RULES:
 12. Tranches 1-5: target ~175-225 lines of new or changed code per tranche. Any tranche prompt that describes more than 2 distinct systems, or more than ~3 new functions, is too large and must be split.
 13. Tranches 6-10: target ~120-170 lines of new or changed code per tranche. If scope expands beyond one subsystem, split further before execution.
 14. LATE-PHASE TIGHTENING (tranches 11 and beyond): As the codebase grows, complexity compounds. For any tranche planned at position 11 or later, cut the line budget to ~80-130 lines of new or changed code, limit scope to ONE function or ONE tightly-coupled pair of functions, and prefer A/B sub-tranche splits over any grouping. If the system being implemented at tranche 11+ would require touching more than one section of models/2, it must be split into sub-tranches.
-15. If an Approved Asset Roster is present, you MUST populate gameState.objectids with every roster asset before the five Cherry3D system primitives. Roster assets are mandatory for all non-primitive visual game objects. The five Cherry3D system primitives (cube, cylinder, sphere, plane, planevertical) are reserved for primitive-authored visuals, particle system internals, and invisible collision geometry. If a visual object is intentionally one of those five primitives, the tranche prompt must say so explicitly and MUST skip external scan/roster GEOMETRY CONTRACT, TEXTURE CONTRACT, and SLOT CONTRACT enforcement for that object. For every other rendered visual element, the prompt field MUST explicitly name the approved roster asset to use by its resolved objectids manifest key from the Approved Asset Roster block. Using a Cherry3D primitive as a visible gameplay object when a roster asset covers that role is a planning defect.
+15. If an Approved Asset Roster is present, you MUST populate gameState.objectids with every roster asset before the eleven Cherry3D system primitives. Roster assets are mandatory for all non-primitive visual game objects. The eleven Cherry3D system primitives (cube, square, plane, sphere, cylinder, capsule, cone, torus, torusknot, tetrahedron, icosahedron) are reserved for primitive-authored visuals, particle system internals, and invisible collision geometry. If a visual object is intentionally one of those eleven primitives, the tranche prompt must say so explicitly and MUST skip external scan/roster GEOMETRY CONTRACT, TEXTURE CONTRACT, and SLOT CONTRACT enforcement for that object. For every other rendered visual element, the prompt field MUST explicitly name the approved roster asset to use by its resolved objectids manifest key from the Approved Asset Roster block. Using a Cherry3D primitive as a visible gameplay object when a roster asset covers that role is a planning defect. Deprecated model primitive keys 17, 18, 21, 34, and 35 are forbidden everywhere; primitive-authored visuals must resolve only through .primitives keys 4-14.
+15a. PRIMITIVE TERRAIN RULE (applies when Road.zip pipeline is NOT active, i.e. roadExclusionFlag is false or absent): All terrain structure — ground floors, terrain floor tiles, mountain body geometry, cliff face geometry, hill shapes, sloped ground planes, raised platforms, and any other structural ground-volume pieces — MUST be built exclusively from Cherry3D system primitives (cube, square, plane, sphere, cylinder, capsule, cone, torus, torusknot, tetrahedron, icosahedron). These are always available in the engine; they require no roster asset. Primitive terrain construction must resolve only through .primitives keys 4-14, never through deprecated model primitive keys 17, 18, 21, 34, or 35. You MUST plan a STANDALONE terrain-shell tranche — NOT merged into Foundation-A or any other tranche — placed at tranche position 1 or 2, immediately after the scaffold foundation tranche and before any tranche that places props, spawns gameplay objects, sets camera distance, or wires gameplay systems. This tranche touches models/2 only and has no dependencies other than the scaffold foundation. Its name MUST contain "Terrain Shell" so it is identifiable in the plan. Every tranche that places props, spawns objects, or positions anything relative to the ground MUST declare the Terrain Shell tranche as an explicit dependency in its dependencies array — a plan that places props in a tranche with no terrain dependency declared is a planning defect. The Terrain Shell tranche MUST include the following in its safetyChecks: "every blocking terrain surface has a STATIC rigidbody (Non-Negotiable 14)", "no terrain geometry sourced from roster or external OBJ asset", and "terrain geometry visually covers the full gameplay area before any prop tranche runs". Its visibleResult field MUST describe the specific ground coverage this game requires (e.g. "flat ground plane covering 200x200 units with STATIC rigidbody" or "three-tier mountain with STATIC rigidbody on each level") — a generic or empty visibleResult is a planning defect. Do NOT plan any tranche that sources terrain floor meshes or mountain body OBJs from the asset roster or from external scanned objects — that is a planning defect. Props that sit ON TOP of the terrain (trees, bushes, rocks, boulders, grass tufts, buildings, ruins, walls, crates, etc.) continue to follow the normal roster-asset rules of rule 15 above.
+15b. ROAD-FIRST COMPLIMENTARY PRIMITIVE TERRAIN RULE (applies when Road.zip pipeline IS active, i.e. roadExclusionFlag is true): Road.zip pieces are the authoritative PRIMARY building blocks for road shape, drivable surface, authored track sections, ramps, turns, bumps, and terrain-path layout. However, the sequencer MUST also exploit Cherry3D .primitives keys 4-14 as complimentary terrain-building assets around that assembled Road.zip layout. This primitive work is mandatory for shoulders, roadside verges, runoff, embankments, underfill below elevated pieces, neighboring ground pads, and any remaining terrain continuity not already covered by a Road.zip section. The primitives MUST NOT replace, approximate, or stand in for any road piece that already exists in Road.zip. Every complimentary primitive terrain element must be positioned adjacent to, connected with, and elevation-matched to the placed road sections; visible seams, floating roadside blocks, disconnected filler terrain, or mismatched heights are planning defects. Deprecated model primitive keys 17, 18, 21, 34, and 35 are forbidden everywhere. When Road.zip is active, the injected Road Sequencer tranche MUST explicitly mention both responsibilities: (a) assemble the road from Road.zip first, and (b) stitch the surrounding terrain with adjacent primitives immediately after or alongside accepted road placements so later tranches inherit one connected ground truth.
 16. If the Approved Asset Roster contains particle texture entries (particleEffectTarget set), you MUST plan a Foundation-B sub-tranche immediately after Foundation-A. Foundation-B has two jobs: populate PARTICLE_TEX_PATHS keyed by particleEffectTarget using the exact staged Firebase paths surfaced in the Approved Asset Roster block, and populate gameState.particleTextureIds keyed by particleEffectTarget using the exact assets.json manifest keys. Every tranche that registers particle templates or creates particle billboards / spheres MUST declare Foundation-B as a dependency and MUST name the exact particleEffectTarget keys it uses. A tranche plan that lists particle textures in the roster but never populates PARTICLE_TEX_PATHS for template-time material_file assignment is a planning defect.
 17. PARTICLE TEMPLATE APPLICATION RULE: Particle textures are applied differently from non-primitive scene-object colormaps. The tranche that registers particle templates MUST explicitly wire each approved effect texture into registerParticleTemplate(... extraData: { material_file: PARTICLE_TEX_PATHS[effectName] }) or equivalent direct particle-slot material_file assignment. Do NOT route particle textures through defineMaterial/_applyMat unless the scaffold section being modified explicitly does so for particles.
 18. GEOMETRY CONTRACT ENFORCEMENT: For every approved roster asset that has a GEOMETRY CONTRACT in the roster block, the tranche whose job is to spawn or position that asset MUST embed the exact numerical values from that contract into its prompt field. Copy floorY, centerOffsetX, centerOffsetZ, scale vector, dominant axis, and any scale warning verbatim. Do NOT paraphrase, estimate, or omit them.
@@ -2007,6 +3894,8 @@ ${effectivePrompt}
 
       plan = enforceTrancheValidationBlock(plan);
       plan = injectDeterministicContractsIntoPlan(plan, approvedRosterBlock);
+      plan = injectFoundationBTranche(plan, approvedRosterJson);
+      plan = injectRoadSequencerTranche(plan, roadPipeline);
 
       // Update progress with plan
       progress.status = "executing";
@@ -2029,7 +3918,7 @@ ${effectivePrompt}
         phase: t.phase || 0,
         dependencies: t.dependencies || [],
         qualityCriteria: t.qualityCriteria || [],
-        prompt: t.prompt,
+        prompt: t.prompt === "__ROAD_SEQUENCER_PROMPT__" ? t.prompt : t.prompt,
         expectedFiles: t.expectedFiles || [],
         status: "pending",
         startTime: null,
@@ -2065,8 +3954,15 @@ ${effectivePrompt}
         modelAnalysis: Array.isArray(modelAnalysis) ? modelAnalysis : [],
         totalTranches: plan.tranches.length,
         approvedRosterBlock,   // ← propagated to every tranche execution
+        roadPipeline,
         contractPromptReview: progress.contractPromptReview,
-        contractCodeReview: progress.contractCodeReview
+        contractCodeReview: progress.contractCodeReview,
+        sceneIntentSyncState: {
+          staleCompilerOwnedJson: false,
+          lastSceneIntentTrancheIndex: null,
+          lastSceneIntentTrancheName: null,
+          lastSceneIntentTimestamp: null
+        }
       };
       await savePipelineState(bucket, projectPath, pipelineState);
 
@@ -2122,7 +4018,7 @@ ${effectivePrompt}
       const state = await loadPipelineState(bucket, projectPath);
       if (!state) throw new Error("Pipeline state not found in Firebase. Chain broken.");
 
-      const { progress, accumulatedFiles, allUpdatedFiles, imageBlocks, modelAnalysis, approvedRosterBlock = "" } = state;
+      const { progress, accumulatedFiles, allUpdatedFiles, imageBlocks, modelAnalysis, approvedRosterBlock = "", roadPipeline = null, sceneIntentSyncState = null } = state;
       const tranche = progress.tranches[nextTranche];
 
       // ── Fetch Scaffold + SDK instruction bundle ──
@@ -2157,7 +4053,8 @@ INSTRUCTION PRECEDENCE:
 - Pick one lawful pattern family per subsystem and preserve it through the tranche. Do not silently switch families mid-implementation.
 - REFERENCE IMAGES (if attached): Any images attached to this tranche are first-class game design inputs with authority equal to the Master Prompt. They define the intended visual appearance, entity types, layout geometry, and interaction model. When implementing this tranche, reconcile your output against the attached images — if your code would produce something visually inconsistent with an attached image, that is a defect. Visual Reconciliation is a required quality criterion for every tranche that touches rendered content.
 - SCENE DECLARATION RULE: If scene structure, object placement, hierarchy, visibility, or rigidbody ownership must be declared or changed, write json/scene_intent.json. scene_intent may use groups[], objects[], and standalone rigidbodies[] when a rigidbody must exist directly under a group or at the root.
-- COMPILER-OWNED PACKAGE RULE: Never output json/assets.json, json/tree.json, or json/entities.json. They are read-only context files and will be rebuilt by the frontend compiler after json/scene_intent.json changes.
+- COMPILER-OWNED PACKAGE RULE: Never output json/assets.json, json/tree.json, or json/entities.json. They are read-only context files and will be rebuilt by the frontend compile/apply sync path after json/scene_intent.json changes. If those files conflict with a fresher json/scene_intent.json during this pipeline run, json/scene_intent.json is authoritative.
+- FILE 23 UI OWNERSHIP RULE: All 2D UI, HUD, menus, bars, timers, flat display panels, and overlay-only interface elements belong in models/23, not models/2 and not objects3d.
 
 Do not re-state the instruction docs — just apply them. Write it correctly the first time so the tranche can move forward without rework.
 
@@ -2203,7 +4100,8 @@ OUTPUT RULES:
 - If the scaffold already defines the correct place for a system (camera stage, UI hookup, particle factory, instance parent pattern, input handler, lifecycle block), implement inside that existing scaffold section.
 - Do NOT replace scaffold-owned state fields with renamed alternatives unless the tranche explicitly requires preserving both and safely extending them.
 - Do NOT invent custom lifecycle blocks when the scaffold already supplies one.
-- 3D OBJECT ENFORCEMENT: If an Approved Asset Roster is present and contains objects3d entries, every visible gameplay object introduced or modified in this tranche MUST branch cleanly between the five Cherry3D system primitives (cube, cylinder, sphere, plane, planevertical) and non-primitive approved roster assets. If the object is intentionally one of those five primitives, state that explicitly in code comments and skip external scan/roster geometry-texture-meshCount enforcement for that object. For every other visible gameplay object, you MUST use a roster asset via gameState.objectids and the resolved assets.json manifest keys surfaced in the roster block. Using a Cherry3D primitive as a visible gameplay object when a roster asset covers that role is a defect. Those primitives may otherwise only be used for primitive-authored visuals, particle internals, and invisible collision geometry.
+- 3D OBJECT ENFORCEMENT: If an Approved Asset Roster is present and contains objects3d entries, every visible gameplay object introduced or modified in this tranche MUST branch cleanly between the eleven Cherry3D system primitives (cube, square, plane, sphere, cylinder, capsule, cone, torus, torusknot, tetrahedron, icosahedron) and non-primitive approved roster assets. If the object is intentionally one of those eleven primitives, state that explicitly in code comments and skip external scan/roster geometry-texture-meshCount enforcement for that object. For every other visible gameplay object, you MUST use a roster asset via gameState.objectids and the resolved assets.json manifest keys surfaced in the roster block. Using a Cherry3D primitive as a visible gameplay object when a roster asset covers that role is a defect. Those primitives may otherwise only be used for primitive-authored visuals, particle internals, and invisible collision geometry. Deprecated model primitive keys 17, 18, 21, 34, and 35 are forbidden; use only .primitives keys 4-14 when primitive-authored geometry is required.
+- PRIMITIVE TERRAIN ENFORCEMENT (applies when Road.zip pipeline is NOT active): All terrain structure built in this tranche — ground floors, terrain floor tiles, mountain body geometry, cliff face geometry, hill shapes, sloped ground planes, raised platforms, and any other structural ground-volume piece — MUST use only the Cherry3D system primitives (cube, square, plane, sphere, cylinder, capsule, cone, torus, torusknot, tetrahedron, icosahedron). Primitive terrain construction must resolve only through .primitives keys 4-14. Never source terrain floor or mountain body geometry from an external OBJ asset or roster entry — that is a defect. Every blocking terrain surface MUST have a STATIC rigidbody (Non-Negotiable 14). If this is the Terrain Shell tranche, you MUST emit a comment block immediately after all terrain geometry is placed that reads: // [TERRAIN SHELL COMPLETE] — lists each primitive used, its .primitives key, and confirms every blocking surface has a STATIC rigidbody. This comment is a required completion proof; its absence is a detectable defect. Props that sit ON TOP of terrain (trees, bushes, rocks, buildings, etc.) continue to use roster assets via gameState.objectids as normal. If this tranche builds terrain shell geometry without using those eleven primitives exclusively, or omits the completion proof comment, that is a defect.
 - PARTICLE TEXTURE ENFORCEMENT: Approved particle textures follow the scaffold particle-template path, not the non-primitive scene-object material-registry path. If this tranche IS Foundation-B, your first job is to populate BOTH PARTICLE_TEX_PATHS[effectName] = '<staged Firebase path>' and gameState.particleTextureIds[effectName] = '<manifest key>' for every approved particleEffectTarget from the roster block. In any later tranche that registers particle templates or creates particle billboards / spheres, you MUST assign the texture at the template/object slot itself via registerParticleTemplate(... extraData: { material_file: PARTICLE_TEX_PATHS[effectName] }) or an equivalent direct particle data['0'].material_file assignment. Declaring gameState.particleTextureIds without wiring material_file onto the particle template/object is a defect.
 - PLACEMENT MATH AUDIT TRAIL: When placing any roster asset that has a GEOMETRY CONTRACT, include a comment block immediately above the position and scale assignments in the emitted code using the contract values, e.g. // [assetName] placement contract applied: floorY=[v] origin=[class] scale=[s,s,s]. Its absence is a detectable defect.
 - TEXTURE ASSIGNMENT AUDIT TRAIL: This applies ONLY to non-primitive approved roster 3D objects. When creating any such asset that has a TEXTURE CONTRACT with a non-null colormap path / resolved colormap manifest key, include a comment immediately above the material/setup block noting the applied colormap key and meshCount, define a registered material whose albedo_texture uses that numeric manifest key, and apply that registered material key across every valid slot using gameState._applyMat or equivalent slot-safe scaffold logic. material_file must contain the registered material key, never the raw staged path. Cherry3D system primitives skip this external texture-contract audit trail.
@@ -2238,10 +4136,7 @@ VALIDATOR STATUS:
 
 
       // Build file context from accumulated state
-      let trancheFileContext = "Here are the current project files (includes all output from prior tranches — you MUST preserve all existing code):\n\n";
-      for (const [path, fileContent] of Object.entries(accumulatedFiles)) {
-        trancheFileContext += `--- FILE: ${path} ---\n${fileContent}\n\n`;
-      }
+      let trancheFileContext = buildTrancheFileContextFromAccumulatedFiles(accumulatedFiles, sceneIntentSyncState);
 
       if (Array.isArray(modelAnalysis) && modelAnalysis.length > 0) {
         trancheFileContext += `=== THREE.JS MODEL ANALYSIS ===\n${JSON.stringify(modelAnalysis, null, 2)}\n\n`;
@@ -2251,15 +4146,20 @@ VALIDATOR STATUS:
         console.warn(`[CONTRACT REVIEW][informational] Tranche ${nextTranche + 1}: ${progress.tranches[nextTranche].contractPromptReviewWarnings.join(" || ")}`);
       }
 
+      let tranchePrompt = tranche.prompt;
+      if (tranchePrompt === "__ROAD_SEQUENCER_PROMPT__") {
+        const roadIndex = await loadRoadIndex(bucket);
+        tranchePrompt = buildRoadSequencerPrompt(roadPipeline, roadIndex);
+      }
+
       const rosterPrefix = approvedRosterBlock
         ? `=== APPROVED GAME-SPECIFIC ASSET ROSTER ===\n${approvedRosterBlock}\n=== END ASSET ROSTER ===\n\n`
         : "";
 
-      const trancheUserText = `${rosterPrefix}${trancheFileContext}
-
+      const trancheUserText = `${buildRoadPlanningContext(roadPipeline)}${rosterPrefix}${trancheFileContext}
 === TRANCHE ${nextTranche + 1} of ${progress.totalTranches}: "${tranche.name}" ===
 
-${tranche.prompt}
+${tranchePrompt}
 
 === END TRANCHE INSTRUCTIONS ===
 
@@ -2362,7 +4262,9 @@ IMPORTANT: You are working on tranche ${nextTranche + 1} of ${progress.totalTran
               trancheIndex:  nextTranche,
               totalTranches: progress.totalTranches,
               status:        "checkpoint",
-              message:       `Checkpoint after tranche ${nextTranche + 1} parser/envelope exhaustion. ${allUpdatedFiles.length} file(s) so far.`
+              message:       `Checkpoint after tranche ${nextTranche + 1} parser/envelope exhaustion. ${allUpdatedFiles.length} file(s) so far.`,
+              sceneIntentSyncRequired: Boolean(state.sceneIntentSyncState?.staleCompilerOwnedJson),
+              sceneIntentSyncState: state.sceneIntentSyncState || null
             });
           }
 
@@ -2377,6 +4279,11 @@ IMPORTANT: You are working on tranche ${nextTranche + 1} of ${progress.totalTran
 
           // Merge tranche output into accumulated files
           const trancheFilesUpdated = [];
+          const sceneIntentTouchedThisTranche = Boolean(
+            trancheResult.updatedFiles &&
+            Array.isArray(trancheResult.updatedFiles) &&
+            trancheResult.updatedFiles.some(file => String(file?.path || "").trim() === "json/scene_intent.json")
+          );
           if (trancheResult.updatedFiles && Array.isArray(trancheResult.updatedFiles)) {
             for (const file of trancheResult.updatedFiles) {
               accumulatedFiles[file.path] = file.content;
@@ -2389,6 +4296,17 @@ IMPORTANT: You are working on tranche ${nextTranche + 1} of ${progress.totalTran
                 allUpdatedFiles.push(file);
               }
             }
+          }
+
+          if (sceneIntentTouchedThisTranche) {
+            state.sceneIntentSyncState = {
+              staleCompilerOwnedJson: true,
+              lastSceneIntentTrancheIndex: nextTranche,
+              lastSceneIntentTrancheName: tranche.name || null,
+              lastSceneIntentTimestamp: Date.now()
+            };
+            progress.tranches[nextTranche].sceneIntentTouched = true;
+            progress.tranches[nextTranche].sceneIntentSyncPending = true;
           }
 
           const contractCodeReview = buildContractCodeReviewForTranche(progress.tranches[nextTranche], trancheResult.updatedFiles, approvedRosterBlock);
@@ -2419,7 +4337,9 @@ IMPORTANT: You are working on tranche ${nextTranche + 1} of ${progress.totalTran
               trancheIndex:  nextTranche,
               totalTranches: progress.totalTranches,
               status:        "checkpoint",
-              message:       `Checkpoint after tranche ${nextTranche + 1}/${progress.totalTranches}: ${trancheResult.message || "completed."}`
+              message:       `Checkpoint after tranche ${nextTranche + 1}/${progress.totalTranches}: ${trancheResult.message || "completed."}`,
+              sceneIntentSyncRequired: Boolean(state.sceneIntentSyncState?.staleCompilerOwnedJson),
+              sceneIntentSyncState: state.sceneIntentSyncState || null
             });
           }
         }
@@ -2430,6 +4350,12 @@ IMPORTANT: You are working on tranche ${nextTranche + 1} of ${progress.totalTran
       state.accumulatedFiles = accumulatedFiles;
       state.allUpdatedFiles = allUpdatedFiles;
       state.contractCodeReview = progress.contractCodeReview;
+      state.sceneIntentSyncState = state.sceneIntentSyncState || sceneIntentSyncState || {
+        staleCompilerOwnedJson: false,
+        lastSceneIntentTrancheIndex: null,
+        lastSceneIntentTrancheName: null,
+        lastSceneIntentTimestamp: null
+      };
       await savePipelineState(bucket, projectPath, state);
 
       // ── Chain to next tranche OR finalize ─────────────────────
@@ -2458,7 +4384,9 @@ IMPORTANT: You are working on tranche ${nextTranche + 1} of ${progress.totalTran
         trancheIndex:  progress.totalTranches - 1,
         totalTranches: progress.totalTranches,
         status:        "final",
-        message:       finalMessage
+        message:       finalMessage,
+        sceneIntentSyncRequired: Boolean(state.sceneIntentSyncState?.staleCompilerOwnedJson),
+        sceneIntentSyncState: state.sceneIntentSyncState || null
       });
 
       progress.status = "complete";
