@@ -606,7 +606,7 @@ exports.handler = async (event) => {
     const roadPipeline = detectRoadPipelineSettings(masterPrompt, requestRoadPipeline);
     const phase1Result = await callClaude(apiKey, {
       model:       "claude-sonnet-4-20250514",
-      maxTokens:   4000,
+      maxTokens:   16000,
       system:      "You are a game visual requirements analyst. Respond only with a valid JSON object. No markdown, no fences, no preamble.",
       userContent: [
         { type: "text", text: imagePreamble + buildPhase1Prompt(masterPrompt, categoryList, roadPipeline) },
@@ -618,7 +618,16 @@ exports.handler = async (event) => {
     try {
       phase1 = JSON.parse(stripFences(phase1Result.text));
     } catch (e) {
-      console.error("[ROSTER-GEN] Phase 1 JSON parse failed:", phase1Result.text.slice(0, 500));
+      const tokenInfo = phase1Result.usage
+        ? `(used ${phase1Result.usage.output_tokens} output tokens — limit was 16000)`
+        : "(token usage unavailable)";
+      const likelyTruncated = (phase1Result.usage?.output_tokens ?? 0) >= 15900;
+      console.error(
+        `[ROSTER-GEN] Phase 1 JSON parse failed ${tokenInfo}` +
+        (likelyTruncated ? " — response appears TRUNCATED, increase maxTokens further." : " — malformed JSON from model.")
+      );
+      console.error("[ROSTER-GEN] Response head:", phase1Result.text.slice(0, 300));
+      console.error("[ROSTER-GEN] Response tail:", phase1Result.text.slice(-300));
       return err500(`Phase 1 returned unparseable JSON: ${e.message}`);
     }
 
