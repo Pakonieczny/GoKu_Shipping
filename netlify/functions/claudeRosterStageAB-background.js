@@ -47,9 +47,7 @@ const CLAUDE_MAX_DELAY_MS  = 12000;
 
 const MAX_OBJ_ASSETS       = 50;
 const MAX_PNG_ASSETS       = 50;
-const IMAGES_PER_BATCH     = 50;
-const MIN_SUGGESTED_CATS   = 2;
-const MAX_SUGGESTED_CATS   = 6;   // hard cap — Phase 1 enforces this too
+const IMAGES_PER_BATCH     = 20;
 const MAX_AVATAR_ASSETS   = 20;
 const AVATARS_ZIP_PRIMARY_PATH = `${GLOBAL_ASSET_BASE}/Avatars.zip`;
 const AVATARS_ZIP_LEGACY_PATH  = "game-generator-1/projects/BASE_Files/avatar_assets/Avatars.zip";
@@ -196,79 +194,136 @@ function parseCsvRows(csvText) {
   return rows.filter(r => r.some(cell => String(cell || '').trim() !== ''));
 }
 
-// Returns { map: Map<assetName (lowercase), category>, categories: Set<category> }
-function parseCsvIndex(csvText) {
+/* ─── CSV search engine ─────────────────────────────────────────────
+   Replaces the old category-filter approach entirely.
+   Builds a flat array of tokenised asset records from the CSV.
+   StageAB scores every record against Phase 1 searchTerms to produce
+   a ranked candidate pool for Stage A vision — no Claude guessing
+   required for the filtering step.
+
+   Scoring per asset vs searchTerms:
+     +4  exact match: searchTerm === assetName token
+     +2  exact match: searchTerm === subsection token
+     +1  substring:   searchTerm contained in (or contains) assetName token
+   Assets are ranked by total score; top MAX_CSV_CANDIDATES passed to Stage A.
+─────────────────────────────────────────────────────────────────── */
+
+function tokeniseAssetName(name) {
+  // Strip trailing variant suffixes (_1_A, _2_B, _AA) then split on _ and -
+  return String(name || '')
+    .replace(/[_\-]\d+[_\-]?[A-Za-z]*$/, '')
+    .replace(/[_\-][A-Z]{1,2}$/, '')
+    // Split camelCase before lowercasing: "FloorLight" → "Floor Light"
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+    .toLowerCase()
+    .split(/[\s_\-]+/)
+    .map(t => t.trim())
+    .filter(t => t.length > 1);
+}
+
+function tokeniseSubsection(sub) {
+  return String(sub || '').toLowerCase().split(/_+/).map(t => t.trim()).filter(t => t.length > 1);
+}
+
+function buildCsvSearchIndex(csvText) {
   const rows = parseCsvRows(csvText);
   if (rows.length === 0) throw new Error('CSV is empty');
 
-  const header = rows[0].map(h => h.trim().toLowerCase());
-  const nameIdx = header.indexOf('asset_name');
-  const catIdx  = header.indexOf('new_category');
-  if (nameIdx === -1 || catIdx === -1) {
-    throw new Error("CSV missing 'asset_name' or 'new_category' column");
+  const header   = rows[0].map(h => h.trim().toLowerCase());
+  const nameIdx  = header.indexOf('asset_name');
+  const catIdx   = header.indexOf('new_category');
+  const subIdx   = header.indexOf('subsection_title');
+  const tagsIdx  = header.indexOf('visual_tags');  // enriched column — may not exist yet
+  if (nameIdx === -1 || catIdx === -1) throw new Error("CSV missing required columns");
+
+  const hasVisualTags = tagsIdx !== -1;
+  if (!hasVisualTags) {
+    console.warn('[ROSTER-AB] CSV has no "visual_tags" column — run enrichment to improve search accuracy. Scoring will use name tokens only.');
+  } else {
+    const enrichedCount = rows.slice(1).filter(r => (r[tagsIdx] || '').trim()).length;
+    console.log(`[ROSTER-AB] visual_tags column present: ${enrichedCount}/${rows.length - 1} assets enriched`);
   }
 
-  const map = new Map();
-  const categories = new Set();
+  const records = [];
   for (let i = 1; i < rows.length; i++) {
-    const name = (rows[i][nameIdx] || '').trim().toLowerCase();
-    const cat  = (rows[i][catIdx]  || '').trim();
-    if (name && cat) {
-      map.set(name, cat);
-      categories.add(cat);
-    }
-  }
+    const assetName = (rows[i][nameIdx]  || '').trim();
+    const category  = (rows[i][catIdx]   || '').trim();
+    const sub       = subIdx  !== -1 ? (rows[i][subIdx]  || '').trim() : '';
+    const rawTags   = tagsIdx !== -1 ? (rows[i][tagsIdx] || '').trim() : '';
+    if (!assetName || !category) continue;
 
-  return { map, categories };
-}
-
-function clampLikelihoodPercent(value, fallback = 50) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return Math.max(0, Math.min(100, Math.round(fallback)));
-  return Math.max(0, Math.min(100, Math.round(n)));
-}
-
-function normalizeRequirementCategoryRanking(req = {}) {
-  const normalized = [];
-  const seen = new Set();
-  const rankedSource = Array.isArray(req.rankedCategories) && req.rankedCategories.length > 0
-    ? req.rankedCategories
-    : Array.isArray(req.suggestedCategories)
-      ? req.suggestedCategories.map((category, index) => ({
-          category,
-          likelihoodPercent: Math.max(1, 100 - (index * 5))
-        }))
+    // Parse pipe-separated visual tags into a token array
+    const visualTags = rawTags
+      ? rawTags.split('|').map(t => t.trim().toLowerCase()).filter(t => t.length > 1)
       : [];
 
-  for (let index = 0; index < rankedSource.length; index++) {
-    const entry = rankedSource[index];
-    const category = String(
-      typeof entry === 'string'
-        ? entry
-        : (entry?.category || entry?.name || '')
-    ).trim().replace(/ /g, '_');
-    if (!category) continue;
-
-    const dedupeKey = category.toLowerCase();
-    if (seen.has(dedupeKey)) continue;
-    seen.add(dedupeKey);
-
-    normalized.push({
+    records.push({
+      assetName,
       category,
-      likelihoodPercent: clampLikelihoodPercent(
-        typeof entry === 'string' ? 100 - (index * 5) : entry?.likelihoodPercent,
-        100 - (index * 5)
-      )
+      nameTokens: tokeniseAssetName(assetName),
+      subTokens:  tokeniseSubsection(sub),
+      visualTags  // empty array if not yet enriched — scoring degrades gracefully
     });
   }
-
-  normalized.sort((a, b) => {
-    if (b.likelihoodPercent !== a.likelihoodPercent) return b.likelihoodPercent - a.likelihoodPercent;
-    return a.category.localeCompare(b.category);
-  });
-
-  return normalized.slice(0, MAX_SUGGESTED_CATS);
+  console.log(`[ROSTER-AB] CSV search index built: ${records.length} asset records`);
+  return records;
 }
+
+function scoreAssetVsTerms(record, terms) {
+  // Scoring weights — highest to lowest signal quality:
+  //   +6  exact match: searchTerm === visual_tag  (semantically enriched from thumbnail image)
+  //   +4  exact match: searchTerm === asset name token
+  //   +2  exact match: searchTerm === subsection token
+  //   +1  substring:   searchTerm contained in (or contains) visual_tag or asset name token
+  let score = 0;
+  for (const term of terms) {
+    const t = String(term || '').toLowerCase().trim();
+    if (!t) continue;
+
+    // Visual tags — highest weight (derived from actual thumbnail image content)
+    for (const vt of (record.visualTags || [])) {
+      if (vt === t)                         { score += 6; break; }
+      if (vt.includes(t) || t.includes(vt)) { score += 1; break; }
+    }
+
+    // Asset name tokens
+    for (const nt of record.nameTokens) {
+      if (nt === t)                         { score += 4; break; }
+      if (nt.includes(t) || t.includes(nt)) { score += 1; break; }
+    }
+
+    // Subsection tokens
+    for (const st of record.subTokens) {
+      if (st === t) { score += 2; break; }
+    }
+  }
+  return score;
+}
+
+const MAX_CSV_CANDIDATES = 50;
+
+function findCsvCandidates(req, csvIndex) {
+  const terms = Array.isArray(req.searchTerms) ? req.searchTerms.filter(Boolean) : [];
+  if (terms.length === 0) {
+    console.warn(`[ROSTER-AB] Req "${req.name}": no searchTerms — CSV search skipped`);
+    return [];
+  }
+  const scored = csvIndex
+    .map(r => ({ record: r, score: scoreAssetVsTerms(r, terms) }))
+    .filter(s => s.score > 0)
+    .sort((a, b) => b.score - a.score);
+
+  const top = scored.slice(0, MAX_CSV_CANDIDATES);
+  console.log(
+    `[ROSTER-AB] CSV search "${req.name}" [${terms.join(', ')}]: ` +
+    `${scored.length} hits → top ${top.length}` +
+    (top[0] ? ` | best: "${top[0].record.assetName}" (score ${top[0].score})` : '')
+  );
+  return top.map(s => s.record.assetName.toLowerCase());
+}
+
+
 
 /* ─── Utilities ──────────────────────────────────────────────────── */
 function stripFences(text) {
@@ -994,43 +1049,25 @@ exports.handler = async (event) => {
     }
     console.log(`[ROSTER-AB] User reference images loaded: ${refImageByName.size} requirement(s) have reference images`);
 
-    // ── 3. Load global CSV → asset_name → category map ──────────────────
+    // ── 3. Load global CSV → build text search index ────────────────────
     console.log(`[ROSTER-AB] Loading global asset CSV from ${GLOBAL_ASSET_CSV}`);
     const csvFile = bucket.file(GLOBAL_ASSET_CSV);
     const [csvExists] = await csvFile.exists();
     if (!csvExists) throw new Error(`Global asset CSV not found at ${GLOBAL_ASSET_CSV}`);
     const [csvBuffer] = await csvFile.download();
-    const { map: assetCategoryMap, categories: knownCategories } = parseCsvIndex(csvBuffer.toString("utf8"));
-    console.log(`[ROSTER-AB] CSV loaded: ${assetCategoryMap.size} asset entries`);
+    const csvIndex = buildCsvSearchIndex(csvBuffer.toString("utf8"));
 
-    // ── 4. Build per-requirement allowed category sets ───────────────────
-    // Map<requirementName, { allowedCats:Set<category>, rankedCategories:Array<{category, likelihoodPercent}> }>
-    // An empty allowedCats set means "skip object search".
-    const reqCategoryFilter = new Map();
+    // ── 4. Run CSV text search per object requirement ─────────────────────
+    // For each requirement, findCsvCandidates() scores every asset in the
+    // CSV index against the Phase 1 searchTerms and returns the top
+    // MAX_CSV_CANDIDATES asset names — deterministic, no Claude involved.
+    // Stage A then does vision matching only on this high-recall shortlist.
+    //
+    // reqCsvCandidateNames: Map<requirementName, Set<assetName (lowercase)>>
+    const reqCsvCandidateNames = new Map();
     for (const req of objectReqs) {
-      const ranked = normalizeRequirementCategoryRanking(req);
-      const validRanked = ranked.filter(entry => {
-        const known = knownCategories.has(entry.category);
-        if (!known) {
-          console.warn(
-            `[ROSTER-AB] Req "${req.name}": unknown category "${entry.category}" ` +
-            `(${entry.likelihoodPercent}%) — ignoring`
-          );
-        }
-        return known;
-      }).slice(0, MAX_SUGGESTED_CATS);
-
-      if (validRanked.length >= 1) {
-        const allowedCats = new Set(validRanked.map(entry => entry.category));
-        reqCategoryFilter.set(req.name, { allowedCats, rankedCategories: validRanked });
-        console.log(
-          `[ROSTER-AB] Req "${req.name}": filtering to ${validRanked.length} ranked category(s): ` +
-          `${validRanked.map(entry => `${entry.category} (${entry.likelihoodPercent}%)`).join(", ")}`
-        );
-      } else {
-        reqCategoryFilter.set(req.name, { allowedCats: new Set(), rankedCategories: [] });
-        console.warn(`[ROSTER-AB] Req "${req.name}": no valid ranked categories — skipping object search for this requirement`);
-      }
+      const names = findCsvCandidates(req, csvIndex);
+      reqCsvCandidateNames.set(req.name, new Set(names));
     }
 
     // ── 5. Scan particle zip files (project-local, unchanged) ───────────
@@ -1101,11 +1138,10 @@ exports.handler = async (event) => {
     console.log(`[ROSTER-AB] Scanning global 3D object mega-zips from ${GLOBAL_ASSET_BASE}/`);
     const objectAssets = [];
     {
-      // Derive unique top-level zip names from CSV categories dynamically.
-      // "Architecture_Modular/Floors_Stairs_Pillars" → "Architecture_Modular"
+      // Derive unique top-level zip names from CSV search index
       const topLevelZipNames = new Set();
-      for (const cat of assetCategoryMap.values()) {
-        const topLevel = cat.split("/")[0];
+      for (const record of csvIndex) {
+        const topLevel = record.category.split("/")[0];
         if (topLevel) topLevelZipNames.add(topLevel);
       }
       console.log(`[ROSTER-AB] Top-level zips derived from CSV: ${[...topLevelZipNames].join(", ")}`);
@@ -1194,9 +1230,10 @@ exports.handler = async (event) => {
             continue;
           }
 
-          // Verify asset exists in CSV
+          // Look up category from CSV search index
           const assetNameLower = entry.assetFolder.toLowerCase();
-          const csvCategory    = assetCategoryMap.get(assetNameLower);
+          const csvRecord   = csvIndex.find(r => r.assetName.toLowerCase() === assetNameLower);
+          const csvCategory = csvRecord?.category || null;
           if (!csvCategory) {
             console.warn(`[ROSTER-AB] ${zipName}.zip/${folderKey}: "${entry.assetFolder}" not in CSV — skipping`);
             continue;
@@ -1395,24 +1432,22 @@ exports.handler = async (event) => {
           continue;
         }
 
-        // Apply category filter — never fall back to the full library when categories fail.
-        const categoryFilter = reqCategoryFilter.get(req.name) || { allowedCats: new Set(), rankedCategories: [] };
-        const allowedCats = categoryFilter.allowedCats;
-        if (allowedCats.size === 0) {
-          console.warn(`[ROSTER-AB] Stage A object "${req.name}": fewer than ${MIN_SUGGESTED_CATS} valid CSV-backed ranked categories — skipping search`);
+        // Filter objectAssets to only those matched by CSV text search
+        const csvNames = reqCsvCandidateNames.get(req.name) || new Set();
+        if (csvNames.size === 0) {
+          console.warn(`[ROSTER-AB] Stage A object "${req.name}": CSV search returned 0 candidates — skipping vision scan`);
           continue;
         }
 
-        const filteredAssets = objectAssets.filter(a => allowedCats.has(a.category));
+        const filteredAssets = objectAssets.filter(a => csvNames.has(a.assetName.toLowerCase()));
 
         console.log(
           `[ROSTER-AB] Stage A object "${req.name}": ` +
-          `${filteredAssets.length} assets after category filter ` +
-          `(${categoryFilter.rankedCategories.map(entry => `${entry.category} (${entry.likelihoodPercent}%)`).join(", ")})`
+          `${filteredAssets.length} asset(s) matched from CSV search (${csvNames.size} names searched)`
         );
 
         if (filteredAssets.length === 0) {
-          console.warn(`[ROSTER-AB] Stage A object "${req.name}": 0 assets in searched categories — skipping search`);
+          console.warn(`[ROSTER-AB] Stage A object "${req.name}": CSV names found but none loaded from zips — skipping`);
           continue;
         }
 
@@ -1791,15 +1826,15 @@ exports.handler = async (event) => {
         requirementName: r.name, type: "particle_effect", reason: "No visual candidates found in Stage A"
       })),
       ...objectReqs.filter(r => !matchedObjectNames.has(r.name)).map(r => {
-        const filterInfo = reqCategoryFilter.get(r.name) || { allowedCats: new Set(), rankedCategories: [] };
+        const csvNames = reqCsvCandidateNames.get(r.name) || new Set();
         return {
           requirementName: r.name,
           type: "object_3d",
-          reason: (filterInfo.allowedCats.size < MIN_SUGGESTED_CATS)
-            ? `Fewer than ${MIN_SUGGESTED_CATS} valid CSV-backed ranked categories were available for this requirement; Stage A object search was skipped`
-            : "No visual candidates found in the searched categories during Stage A",
-          categoriesSearched: filterInfo.rankedCategories.map(entry => entry.category),
-          rankedCategoriesSearched: filterInfo.rankedCategories
+          reason: csvNames.size === 0
+            ? "CSV text search returned 0 candidates — searchTerms may need to be broader or corrected"
+            : "CSV search found candidates but none passed Stage A visual screening",
+          searchTermsUsed: r.searchTerms || [],
+          csvCandidateCount: csvNames.size
         };
       }),
       ...avatarReqs.filter(r => !matchedAvatarNames.has(r.name)).map(r => ({
@@ -1837,7 +1872,7 @@ exports.handler = async (event) => {
       totalAvatarAssets:   avatarAssets.length,
       totalParticleAssets: particleAssets.length,
       refImagesUsed:       refImageByName.size,
-      csvEntriesLoaded:    assetCategoryMap.size,
+      csvEntriesLoaded:    csvIndex.length,
       avatarZipPath:        resolvedAvatarZipPath,
       approved:            false
     };
@@ -1854,7 +1889,7 @@ exports.handler = async (event) => {
       `Textures: ${textureAssets.length}, ` +
       `Unmatched: ${unmatchedRequirements.length}, ` +
       `RefImages used: ${refImageByName.size}, ` +
-      `CSV entries: ${assetCategoryMap.size}`
+      `CSV entries: ${csvIndex.length}`
     );
 
     return { statusCode: 202, body: "" };

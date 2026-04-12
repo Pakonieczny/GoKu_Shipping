@@ -1,29 +1,31 @@
 /* netlify/functions/claudeRosterGenerate-background.js */
 /* ═══════════════════════════════════════════════════════════════════
-   GAME-SPECIFIC ASSET ROSTER GENERATION — v6.0 (Phase 1 Only)
+   GAME-SPECIFIC ASSET ROSTER GENERATION — v7.0 (Phase 1 Only)
    ─────────────────────────────────────────────────────────────────
    Background Netlify function (suffix -background = 15-min timeout).
    Returns 202 immediately. Writes result to Firebase when done.
    Frontend polls ai_asset_roster_phase1.json to detect completion.
 
    Flow:
-     1. Read global CSV from game-generator-1/projects/BASE_Files/asset_3d_objects/
-        reorganized_assets_manifest.csv to extract the live category list.
+     1. Read global CSV (reorganized_assets_manifest.csv) and build a
+        vocabulary index: per-subsection asset name roots + visual_tags
+        words aggregated from the enriched visual_tags column.
      2. Read Master Prompt + inline images from ai_request.json.
      3. PHASE 1 — Claude analyzes the game prompt + gameplay reference
         images and produces a structured list of required particle effects
-        and 3D objects. Each 3D object requirement includes 2 to 6
-        rankedCategories chosen from the live CSV category list, sorted
-        by likelihoodPercent from highest to lowest.
+        and 3D objects. Each 3D object requirement includes searchTerms —
+        terse, asset-name-style tags derived from the library vocabulary —
+        instead of category guesses. No category assignment in Phase 1.
      4. Save the Phase 1 payload as ai_asset_roster_phase1.json.
      5. Frontend collects one user reference image per required 3D object.
-     6. claudeRosterStageAB-background reads the CSV again, filters assets
-        by rankedCategories / suggestedCategories, then runs Stage A/B
-        on the filtered pool using the top valid categories by score.
+     6. claudeRosterStageAB-background builds its own CSV search index,
+        scores every asset against searchTerms (weighted: visual_tags +6,
+        name tokens +4, subsection tokens +2), and passes the top matches
+        directly to Stage A/B vision comparison.
 
    Global asset paths (shared across all projects):
      CSV:  game-generator-1/projects/BASE_Files/asset_3d_objects/reorganized_assets_manifest.csv
-     Zips: game-generator-1/projects/BASE_Files/asset_3d_objects/{asset_name}.zip
+     Zips: game-generator-1/projects/BASE_Files/asset_3d_objects/{zipName}.zip
 
    Request body: { projectPath, jobId }
    Response:     202 Accepted (background function — no body)
@@ -33,8 +35,6 @@ const fetch = require("node-fetch");
 const admin = require("./firebaseAdmin");
 
 const GLOBAL_ASSET_CSV_PATH = "game-generator-1/projects/BASE_Files/asset_3d_objects/reorganized_assets_manifest.csv";
-const MIN_SUGGESTED_CATS  = 2;
-const MAX_SUGGESTED_CATS  = 6;
 const AVATARS_ZIP_PATH_DEFAULT = "game-generator-1/projects/BASE_Files/asset_3d_objects/Avatars.zip";
 
 /* ─── Retry helpers ──────────────────────────────────────────────── */
@@ -170,21 +170,76 @@ function parseCsvRows(csvText) {
   return rows.filter(r => r.some(cell => String(cell || '').trim() !== ''));
 }
 
-/* ─── Parse CSV text → unique sorted category list ──────────────── */
-function parseCategoriesFromCsv(csvText) {
+/* ─── Parse CSV → vocabulary index for Phase 1 searchTerm generation ──
+   Returns Map<subsectionTitle, { category, roots, tagWords }>
+   roots    = deduplicated asset_name root words (variant suffixes stripped)
+   tagWords = deduplicated visual_tags words aggregated across the subsection
+   Both are surfaced in the Phase 1 prompt so Claude generates searchTerms
+   that match the actual enriched library vocabulary, not just filenames.
+─────────────────────────────────────────────────────────────────── */
+function assetNameRoot(name) {
+  return String(name || '')
+    .replace(/[_\-]\d+[_\-]?[A-Za-z]*$/, '')
+    .replace(/[_\-][A-Z]{1,2}$/, '')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+    .toLowerCase()
+    .replace(/^[\s_\-]+|[\s_\-]+$/g, '');
+}
+
+function parseCsvVocabulary(csvText) {
   const rows = parseCsvRows(csvText);
   if (rows.length === 0) throw new Error('CSV is empty');
 
-  const header = rows[0].map(h => h.trim().toLowerCase());
-  const catIdx = header.indexOf('new_category');
-  if (catIdx === -1) throw new Error("CSV missing 'new_category' column");
+  const header  = rows[0].map(h => h.trim().toLowerCase());
+  const nameIdx = header.indexOf('asset_name');
+  const catIdx  = header.indexOf('new_category');
+  const subIdx  = header.indexOf('subsection_title');
+  const tagsIdx = header.indexOf('visual_tags');
+  if (nameIdx === -1 || catIdx === -1) throw new Error("CSV missing required columns");
 
-  const categories = new Set();
+  const subsections = new Map();
   for (let i = 1; i < rows.length; i++) {
-    const cat = (rows[i][catIdx] || '').trim();
-    if (cat) categories.add(cat);
+    const name    = (rows[i][nameIdx]  || '').trim();
+    const cat     = (rows[i][catIdx]   || '').trim();
+    const sub     = subIdx  !== -1 ? (rows[i][subIdx]  || '').trim() : cat.split('/').pop();
+    const rawTags = tagsIdx !== -1 ? (rows[i][tagsIdx] || '').trim() : '';
+    if (!name || !cat) continue;
+    if (!subsections.has(sub)) subsections.set(sub, { category: cat, roots: new Set(), tagWords: new Set() });
+    const entry = subsections.get(sub);
+
+    const root = assetNameRoot(name);
+    if (root.length > 1) entry.roots.add(root);
+
+    if (rawTags) {
+      for (const tag of rawTags.split('|')) {
+        const t = tag.trim().toLowerCase();
+        if (t.length > 1) entry.tagWords.add(t);
+      }
+    }
   }
-  return [...categories].sort();
+
+  for (const [k, v] of subsections) {
+    subsections.set(k, {
+      category: v.category,
+      roots:    [...v.roots].sort().slice(0, 8),
+      tagWords: [...v.tagWords].sort().slice(0, 15)
+    });
+  }
+  return subsections;
+}
+
+function buildVocabularyBlock(vocab) {
+  const lines = [];
+  for (const [sub, { category, roots, tagWords }] of [...vocab.entries()].sort()) {
+    const keywords = sub.replace(/_/g, ' ').toLowerCase();
+    lines.push(`  Folder: ${category}`);
+    lines.push(`  Keywords: ${keywords}`);
+    if (roots.length)                lines.push(`  Asset name examples: ${roots.join(', ')}`);
+    if (tagWords && tagWords.length) lines.push(`  Visual tag examples: ${tagWords.join(', ')}`);
+    lines.push('');
+  }
+  return lines.join('\n');
 }
 
 /* ─── Utilities ──────────────────────────────────────────────────── */
@@ -196,59 +251,7 @@ function stripFences(text) {
   return t.trim();
 }
 
-function clampLikelihoodPercent(value, fallback = 50) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return Math.max(0, Math.min(100, Math.round(fallback)));
-  return Math.max(0, Math.min(100, Math.round(n)));
-}
 
-function buildLegacyRankedCategories(rawCategories) {
-  if (!Array.isArray(rawCategories)) return [];
-  return rawCategories.map((category, index) => ({
-    category: String(category || "").trim(),
-    likelihoodPercent: Math.max(1, 100 - (index * 5))
-  }));
-}
-
-function normalizeSuggestedCategoryRanking(obj = {}) {
-  const rawRanked = Array.isArray(obj.rankedCategories) ? obj.rankedCategories : [];
-  const rankedSource = rawRanked.length > 0 ? rawRanked : buildLegacyRankedCategories(obj.suggestedCategories);
-  const normalized = [];
-  const seen = new Set();
-
-  for (let index = 0; index < rankedSource.length; index++) {
-    const entry = rankedSource[index];
-    const category = String(
-      typeof entry === "string"
-        ? entry
-        : (entry?.category || entry?.name || "")
-    ).trim();
-    if (!category) continue;
-
-    const dedupeKey = category.toLowerCase();
-    if (seen.has(dedupeKey)) continue;
-    seen.add(dedupeKey);
-
-    normalized.push({
-      category,
-      likelihoodPercent: clampLikelihoodPercent(
-        typeof entry === "string" ? 100 - (index * 5) : entry?.likelihoodPercent,
-        100 - (index * 5)
-      )
-    });
-  }
-
-  normalized.sort((a, b) => {
-    if (b.likelihoodPercent !== a.likelihoodPercent) return b.likelihoodPercent - a.likelihoodPercent;
-    return a.category.localeCompare(b.category);
-  });
-
-  const rankedCategories = normalized.slice(0, MAX_SUGGESTED_CATS);
-  return {
-    rankedCategories,
-    suggestedCategories: rankedCategories.map(entry => entry.category)
-  };
-}
 
 
 function buildMasterPromptLayoutGuidance(masterPrompt = "") {
@@ -343,8 +346,8 @@ function buildVariantGroupWarnings(objects3d = []) {
     .sort();
 }
 
-function buildPhase1Prompt(masterPrompt, categoryList, roadPipeline = {}) {
-  const catBlock = categoryList.map(c => `  - ${c}`).join("\n");
+function buildPhase1Prompt(masterPrompt, vocab, roadPipeline = {}) {
+  const vocabBlock = buildVocabularyBlock(vocab);
   const roadClause = roadPipeline?.roadExclusionFlag
     ? `
 ROAD-FIRST TERRAIN CLAUSE (Road.zip pipeline is active)
@@ -487,15 +490,22 @@ ${buildMasterPromptLayoutGuidance(masterPrompt)}
 MASTER GAME PROMPT:
 ${masterPrompt}
 
-AVAILABLE 3D ASSET CATEGORIES:
-The asset library is organised into the following categories. For each 3D object requirement you identify, you MUST return rankedCategories as an array of 2 to 6 category guesses from this exact list, sorted from highest to lowest likelihoodPercent.
-- Always include at least the 2 most probable categories.
-- Lean on the side of caution and include additional plausible categories rather than fewer when the object could realistically appear in adjacent or overlapping folders.
-- Prefer 4 to 6 ranked categories when there are multiple credible locations.
-- likelihoodPercent must be an integer from 0 to 100 and should reflect relative likelihood for this object requirement. It is used for ranking and filtering, so the highest-confidence categories must come first.
-- Do not invent categories outside this list.
+ASSET LIBRARY VOCABULARY:
+The sections below show every folder in the 3D asset library. Each entry has:
+  "Keywords"            — human-readable folder name words
+  "Asset name examples" — filename root words that exist in the library
+  "Visual tag examples" — semantically enriched synonyms derived from thumbnail images (most valuable signal)
 
-${catBlock}
+Use all three signals to generate searchTerms for each 3D object requirement.
+
+HOW TO GENERATE searchTerms:
+- searchTerms are short, lowercase, single-word tags matched against asset names, folder keywords, AND visual tags in the library.
+- Mirror the visual tag vocabulary as closely as possible — if a folder shows "pine|conical|evergreen" as visual tags, use those exact words when your requirement is a pine-type tree.
+- Include: core object type, material/style, subtypes, and synonyms a game designer might use.
+- Include 6–10 terms per object. More terms = better recall. Cast wide — include synonyms even if they differ from the asset name.
+- Example: for a mossy stone ruin archway → ["arch", "ruin", "stone", "wall", "gate", "pillar", "column", "ancient", "crumbled", "medieval"]
+
+${vocabBlock}
 
 Respond ONLY with a valid JSON object. No markdown, no fences, no preamble.
 
@@ -515,10 +525,7 @@ Respond ONLY with a valid JSON object. No markdown, no fences, no preamble.
       "visualDescription": "What this prop looks like — shape, silhouette, style, approximate scale",
       "gameplayRole": "What this prop does in the game — obstacle, collectible, environment piece, hazard, etc.",
       "variantGroup": "The prop class this belongs to, e.g. 'tree', 'rock', 'building', 'vehicle', 'unique'",
-      "rankedCategories": [
-        { "category": "Primary_Category/Sub_Category", "likelihoodPercent": 94 },
-        { "category": "Secondary_Category/Sub_Category", "likelihoodPercent": 83 }
-      ]
+      "searchTerms": ["core_object_word", "synonym_or_material", "subtype_word", "more_terms"]
     }
   ],
   "avatarRequirements": [
@@ -569,8 +576,8 @@ exports.handler = async (event) => {
     const [csvExists] = await csvFile.exists();
     if (!csvExists) throw new Error(`Global asset CSV not found at ${GLOBAL_ASSET_CSV_PATH}`);
     const [csvBuffer] = await csvFile.download();
-    const categoryList = parseCategoriesFromCsv(csvBuffer.toString("utf8"));
-    console.log(`[ROSTER-GEN] CSV loaded: ${categoryList.length} unique categories found`);
+    const vocab = parseCsvVocabulary(csvBuffer.toString("utf8"));
+    console.log(`[ROSTER-GEN] CSV loaded: ${vocab.size} subsection folders indexed`);
 
     // ── 2. Load Master Prompt + inline images from ai_request.json ──────
     const requestFile = bucket.file(`${projectPath}/ai_request.json`);
@@ -609,7 +616,7 @@ exports.handler = async (event) => {
       maxTokens:   16000,
       system:      "You are a game visual requirements analyst. Respond only with a valid JSON object. No markdown, no fences, no preamble.",
       userContent: [
-        { type: "text", text: imagePreamble + buildPhase1Prompt(masterPrompt, categoryList, roadPipeline) },
+        { type: "text", text: imagePreamble + buildPhase1Prompt(masterPrompt, vocab, roadPipeline) },
         ...refImageBlocks
       ]
     });
@@ -633,31 +640,18 @@ exports.handler = async (event) => {
 
     phase1.avatarRequirements = Array.isArray(phase1.avatarRequirements) ? phase1.avatarRequirements : [];
 
-    // Validate rankedCategories: enforce minimum 2, maximum 6, and derive legacy suggestedCategories
+    // Validate and normalise searchTerms for each 3D object requirement
     for (const obj of (phase1.objects3d || [])) {
       obj.variantGroup = String(obj.variantGroup || 'unique').trim() || 'unique';
-      const { rankedCategories, suggestedCategories } = normalizeSuggestedCategoryRanking(obj);
-      obj.rankedCategories = rankedCategories;
-      obj.suggestedCategories = suggestedCategories;
-
-      // Warn about unknown categories (StageAB will also filter these out)
-      for (const entry of rankedCategories) {
-        if (!categoryList.includes(entry.category)) {
-          console.warn(
-            `[ROSTER-GEN] Object "${obj.name}" suggested unknown category "${entry.category}" ` +
-            `(${entry.likelihoodPercent}%) — will be ignored in filter`
-          );
-        }
-      }
-
-      // Enforce minimum of 2
-      if (rankedCategories.length === 0) {
-        console.warn(`[ROSTER-GEN] Object "${obj.name}" returned no rankedCategories — will be skipped in StageAB unless Phase 1 is retried with valid categories`);
-      } else if (rankedCategories.length < MIN_SUGGESTED_CATS) {
-        console.warn(
-          `[ROSTER-GEN] Object "${obj.name}" returned only ${rankedCategories.length} ranked category ` +
-          `— minimum is ${MIN_SUGGESTED_CATS}. StageAB will skip this object until at least 2 valid categories are supplied.`
-        );
+      if (!Array.isArray(obj.searchTerms) || obj.searchTerms.length === 0) {
+        console.warn(`[ROSTER-GEN] Object "${obj.name}" returned no searchTerms — CSV search recall will be low`);
+        obj.searchTerms = [];
+      } else {
+        obj.searchTerms = [...new Set(
+          obj.searchTerms
+            .map(t => String(t || '').toLowerCase().trim().replace(/[^a-z0-9]/g, ''))
+            .filter(t => t.length > 1)
+        )];
       }
     }
 
@@ -667,19 +661,12 @@ exports.handler = async (event) => {
       `${(phase1.objects3d || []).length} 3D object(s), ${(phase1.avatarRequirements || []).length} avatar requirement(s) identified`
     );
     for (const obj of (phase1.objects3d || [])) {
-      const rankingSummary = (obj.rankedCategories || [])
-        .map(entry => `${entry.category} (${entry.likelihoodPercent}%)`)
-        .join(", ");
-      console.log(
-        `[ROSTER-GEN]   "${obj.name}" → ranked categories: ` +
-        `${rankingSummary || "NONE (StageAB will skip until categories are supplied)"}`
-      );
+      console.log(`[ROSTER-GEN]   "${obj.name}" → searchTerms: [${(obj.searchTerms || []).join(', ')}]`);
     }
 
     // ── 5. Write Phase 1 result + category list to Firebase ─────────────
     const phase1Payload = {
       phase1,
-      categoryList,         // pass live list to StageAB so it doesn't re-parse CSV
       roadPipeline,
       avatarPipeline: {
         zipPath: avatarPipeline?.zipPath || AVATARS_ZIP_PATH_DEFAULT

@@ -34,6 +34,9 @@ export function createAssetsTreeEntitiesCompiler(deps = {}) {
   if (typeof cacheModelAnalysis !== 'function') throw new Error('AssetsTreeEntitiesCompiler requires cacheModelAnalysis().');
 
   const DEFAULT_GROUP_MAT = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+  const FORBIDDEN_LEGACY_PRIMITIVE_MODEL_KEYS = new Set(['17', '18', '21', '34', '35']);
+  const FORBIDDEN_LEGACY_PRIMITIVE_MODEL_TITLES = new Set(['cube.obj', 'cylinder.obj', 'sphere.obj', 'plane.obj', 'planevertical.obj']);
+
 
   function createDefaultSceneIntent() {
     return {
@@ -50,6 +53,22 @@ export function createAssetsTreeEntitiesCompiler(deps = {}) {
     } catch (_) {
       return fallback;
     }
+  }
+
+  function assertNoForbiddenLegacyPrimitiveModelEntries(manifestEntries = [], label = 'manifest') {
+    const offenders = [];
+    for (const entry of flattenAssetManifestEntries(Array.isArray(manifestEntries) ? manifestEntries : [])) {
+      if (!entry || typeof entry !== 'object') continue;
+      const key = String(entry.key || '').trim();
+      const titleLower = String(entry.title || '').trim().toLowerCase();
+      if (FORBIDDEN_LEGACY_PRIMITIVE_MODEL_KEYS.has(key) || FORBIDDEN_LEGACY_PRIMITIVE_MODEL_TITLES.has(titleLower)) {
+        offenders.push(`${key || '(missing key)'}:${entry.title || '(missing title)'}`);
+      }
+    }
+    if (offenders.length > 0) {
+      throw new Error(`${label} contains forbidden legacy primitive model entries (${offenders.join(', ')}). Use only .primitives keys 4-14.`);
+    }
+    return true;
   }
 
   function normalizeNumericVector(value, fallback) {
@@ -100,6 +119,7 @@ export function createAssetsTreeEntitiesCompiler(deps = {}) {
     };
 
     (Array.isArray(roster.objects3d) ? roster.objects3d : []).forEach(addAsset);
+    (Array.isArray(roster.avatars) ? roster.avatars : []).forEach(addAsset);
     (Array.isArray(roster.textureAssets) ? roster.textureAssets : []).forEach(addAsset);
     (Array.isArray(roster.stagedAssets) ? roster.stagedAssets : []).forEach(addAsset);
 
@@ -113,8 +133,30 @@ export function createAssetsTreeEntitiesCompiler(deps = {}) {
       if (!fact || typeof fact !== 'object') continue;
       const sourceNameLower = String(fact.sourceName || fact.embeddedPath || '').split('/').pop().toLowerCase();
       if (sourceNameLower) bySourceNameLower.set(sourceNameLower, fact);
+      const sourceNameNoExt = sourceNameLower.replace(/\.[^.]+$/, '');
+      if (sourceNameNoExt && sourceNameNoExt !== sourceNameLower) {
+        bySourceNameLower.set(sourceNameNoExt, fact);
+      }
     }
     return bySourceNameLower;
+  }
+
+  function resolveScanFactForAsset(scanLookup, assetEntry = null) {
+    const assetTitleLower = String(assetEntry?.title || '').toLowerCase();
+    const assetTitleNoExt = assetTitleLower.replace(/\.[^.]+$/, '');
+    return scanLookup.get(assetTitleLower)
+      || scanLookup.get(assetTitleNoExt)
+      || null;
+  }
+
+  async function checkApprovedRosterExists(projectName = getCurrentProject()) {
+    if (!projectName) return false;
+    try {
+      await loadJsonFromStoragePath(`${ROOT}/${projectName}/ai_asset_roster_approved.json`);
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   function buildTreeIndex(nodes = []) {
@@ -400,6 +442,7 @@ export function createAssetsTreeEntitiesCompiler(deps = {}) {
   }
 
   function validateSceneIntent(sceneIntent, manifestEntries = []) {
+    assertNoForbiddenLegacyPrimitiveModelEntries(manifestEntries, 'bootstrap assets manifest');
     const manifestLookup = buildManifestLookup(manifestEntries);
     const groupKeys = collectSceneIntentGroupKeys(sceneIntent);
     const errors = [];
@@ -438,6 +481,11 @@ export function createAssetsTreeEntitiesCompiler(deps = {}) {
       if (!key) errors.push('scene_intent.objects contains an entry with a missing key.');
       if (!assetKey || !manifestLookup.byKey.has(assetKey)) {
         errors.push(`scene_intent object "${key || '(missing key)'}" references unknown assetKey "${assetKey}".`);
+      }
+      const assetEntry = manifestLookup.byKey.get(assetKey) || null;
+      const assetTitleLower = String(assetEntry?.title || '').trim().toLowerCase();
+      if (FORBIDDEN_LEGACY_PRIMITIVE_MODEL_KEYS.has(assetKey) || FORBIDDEN_LEGACY_PRIMITIVE_MODEL_TITLES.has(assetTitleLower)) {
+        errors.push(`scene_intent object "${key || '(missing key)'}" references forbidden legacy primitive model assetKey "${assetKey}" (${assetEntry?.title || 'unknown title'}). Use only .primitives keys 4-14.`);
       }
       if (parent && !groupKeys.has(parent)) {
         errors.push(`scene_intent object "${key || '(missing key)'}" references missing parent group "${parent}".`);
@@ -490,7 +538,7 @@ export function createAssetsTreeEntitiesCompiler(deps = {}) {
       const lowerName = String(item.name || '').toLowerCase();
       if (item.name === '2' || item.name === '23') continue;
       if (!/\./.test(item.name) && /^\d+$/.test(item.name)) continue;
-      if (!['.obj', '.glb', '.gltf'].some(ext => lowerName.endsWith(ext))) continue;
+      if (!['.obj', '.glb', '.gltf', '.fbx'].some(ext => lowerName.endsWith(ext))) continue;
       if (allowedNamesLower && !allowedNamesLower.has(lowerName)) continue;
 
       try {
@@ -499,7 +547,11 @@ export function createAssetsTreeEntitiesCompiler(deps = {}) {
           name: item.name,
           path: `models/${item.name}`,
           url,
-          type: lowerName.endsWith('.obj') ? 'model/obj' : 'model/gltf-binary'
+          type: lowerName.endsWith('.obj')
+            ? 'model/obj'
+            : lowerName.endsWith('.fbx')
+              ? 'model/fbx'
+              : 'model/gltf-binary'
         });
         if (analysis) analyses.push(analysis);
       } catch (error) {
@@ -571,7 +623,7 @@ export function createAssetsTreeEntitiesCompiler(deps = {}) {
         rosterLookup.byManifestKey.get(String(sceneObject.assetKey || '')) ||
         rosterLookup.byAssetNameLower.get(String(assetEntry?.title || '').toLowerCase()) ||
         null;
-      const scanFact = scanLookup.get(String(assetEntry?.title || '').toLowerCase()) || null;
+      const scanFact = resolveScanFactForAsset(scanLookup, assetEntry);
       const albedoRatio = Array.isArray(sceneObject?.style?.albedo_ratio) ? sceneObject.style.albedo_ratio : null;
       const colormapKey = rosterAsset?.colormapManifestKey || null;
       const extent = [
@@ -737,7 +789,7 @@ export function createAssetsTreeEntitiesCompiler(deps = {}) {
       const key = String(objectSpec.key);
       const sourceKey = String(objectSpec.sourceKey || objectSpec.key);
       const assetEntry = manifestLookup.byKey.get(String(objectSpec.assetKey || '')) || null;
-      const scanFact = scanLookup.get(String(assetEntry?.title || '').toLowerCase()) || null;
+      const scanFact = resolveScanFactForAsset(scanLookup, assetEntry);
       const existingEntity = existingEntities?.[key] && typeof existingEntities[key] === 'object' ? existingEntities[key] : null;
       const existingSlotKeys = existingEntity?.data && typeof existingEntity.data === 'object'
         ? Object.keys(existingEntity.data).filter(slot => /^\d+$/.test(slot)).sort((a, b) => Number(a) - Number(b))
@@ -919,6 +971,7 @@ export function createAssetsTreeEntitiesCompiler(deps = {}) {
     }
 
     const compiledAssets = buildCanonicalAssetsJson(input);
+    assertNoForbiddenLegacyPrimitiveModelEntries(compiledAssets.assets, 'compiled assets.json');
     const tree = buildCanonicalTreeJson({ sceneIntent, existingTree, rigidbodyPlan });
     const entities = buildCanonicalEntitiesJson({
       sceneIntent,
@@ -1009,12 +1062,36 @@ export function createAssetsTreeEntitiesCompiler(deps = {}) {
   }
 
   async function compileProjectJsonPackage(projectName = getCurrentProject(), options = {}) {
-    const { forceRescan = false } = options;
+    const {
+      forceRescan = false,
+      preAnnotatedRoster,
+      degradedOutputAccepted = false
+    } = options;
     if (!projectName) throw new Error('compileProjectJsonPackage requires projectName.');
 
     const bootstrapAssets = await syncAssetsJson(projectName);
     const scanFacts = await getOrBuildExtendedModelAnalysis(projectName, { forceRescan });
-    const annotatedRoster = await annotateApprovedRosterWithManifestKeys(projectName, bootstrapAssets, scanFacts).catch(() => null);
+
+    let annotatedRoster = typeof preAnnotatedRoster === 'undefined'
+      ? await annotateApprovedRosterWithManifestKeys(projectName, bootstrapAssets, scanFacts).catch(async (err) => {
+          console.error('[COMPILER] annotateApprovedRosterWithManifestKeys failed:', err?.message || err);
+          return null;
+        })
+      : preAnnotatedRoster;
+
+    if (typeof preAnnotatedRoster === 'undefined') {
+      const approvedRosterExists = await checkApprovedRosterExists(projectName);
+      if (approvedRosterExists && annotatedRoster === null && !degradedOutputAccepted) {
+        const error = new Error(
+          'Approved roster annotation failed. Asset texture and geometry contracts could not be resolved. '
+          + 'Geometry and texture contracts will show NOT AVAILABLE in tranche prompts, and colormap keys will be absent from the compiled package.'
+        );
+        error.name = 'ROSTER_ANNOTATION_FAILED';
+        error.code = 'ROSTER_ANNOTATION_FAILED';
+        throw error;
+      }
+    }
+
     const sceneIntent = await readSceneIntentJsonOrDefault(projectName);
     const existingCompiledPackage = await readExistingCompiledJsonPackage(projectName);
     const compiled = buildCanonicalJsonPackage({
@@ -1036,7 +1113,8 @@ export function createAssetsTreeEntitiesCompiler(deps = {}) {
       annotatedRoster,
       sceneIntent,
       existingCompiledPackage,
-      compiled
+      compiled,
+      degradedOutputAccepted: Boolean(degradedOutputAccepted)
     };
   }
 
