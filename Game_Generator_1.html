@@ -3338,11 +3338,19 @@ FAILED TARGETS
 ${targets}
 
 MANDATORY RULES
-1. Respond in delimiter format only: ===FILE_START: path=== ... ===FILE_END: path===
-2. Output ONLY the files listed in FAILED TARGETS above. Do not touch any other file.
+1. Use PATCH BLOCK FORMAT — do NOT output the full file (causes Netlify timeouts on large game files).
+2. Fix ONLY the files listed in FAILED TARGETS above. Do not touch any other file.
 3. Preserve all working systems that already succeeded.
-4. If a failed target is partial or malformed, rebuild that target completely and safely.
-5. Output the COMPLETE file content — no patches, no diffs, no partial rewrites.`;
+4. DECLARATION COLLISION CHECK: Before any patch, scan the current file for names you are about to declare. Use REPLACE_BLOCK to update existing declarations — never redeclare with a new const/let/var.
+5. For each failed target, emit REPLACE_BLOCK / INSERT_BLOCK patches targeting the specific function(s) or section(s) containing the error.
+
+REPAIR FORMAT:
+===REPLACE_BLOCK: models/2 | id=brokenFunctionName===
+function brokenFunctionName() { /* corrected complete body */ }
+===END_REPLACE_BLOCK: models/2 | id=brokenFunctionName===
+===MESSAGE===
+What was broken and what the patch fixes.
+===END_MESSAGE===`;
     }
 
     function buildFailedFileRecord(file, safePath, reason, stage, originalContent = '', candidateContent = '', subsystemDetails = []) {
@@ -4112,6 +4120,7 @@ Quality criteria for your work:
 
       _formatDuration(ms) {
         if (!ms || ms <= 0) return '--';
+        if (ms < 1000) return `${ms}ms`;
         const secs = Math.round(ms / 1000);
         if (secs < 60) return `${secs}s`;
         const m = Math.floor(secs / 60);
@@ -5190,11 +5199,28 @@ ${repairContext}
 ═══════════════════════════════════════════════════════════
 REPAIR INSTRUCTIONS — PASS ${pass}/${AI_HARDENING.repairPassLimit}
 ═══════════════════════════════════════════════════════════
-Rules:
-1. Respond in delimiter format only: ===FILE_START: path=== ... ===FILE_END: path===
-2. Output ONLY the files listed in REPAIR CONTEXT above. Do not touch any other file.
-3. Preserve all working systems that already succeeded.
-4. Output the COMPLETE file content — no patches, no diffs, no partial rewrites.
+Use PATCH BLOCK FORMAT to fix ONLY the specific error(s) listed in REPAIR CONTEXT.
+Do NOT output the full file — that causes Netlify timeouts on large game files.
+
+CRITICAL — DECLARATION COLLISION CHECK:
+Before outputting any patch block, scan the CURRENT FILE above for every name you
+are about to declare. If a name already exists at the same scope, use REPLACE_BLOCK
+to update it — never redeclare with a new const/let/var. Duplicate declarations are
+the most common cause of syntax errors that trigger repair loops.
+Also: if you see any // [PATCH WARNING] blocks appended outside the module closure,
+remove them via REPLACE_BLOCK on the enclosing function and integrate their content
+into the correct scope.
+
+REPAIR FORMAT:
+===REPLACE_BLOCK: models/2 | id=functionContainingError===
+function functionContainingError() {
+  // complete corrected function body
+}
+===END_REPLACE_BLOCK: models/2 | id=functionContainingError===
+
+===MESSAGE===
+What was broken, what the patch fixes, confirmation no duplicate declarations remain.
+===END_MESSAGE===
 
 Original user request for context: ${basePrompt}`;
 
@@ -7631,19 +7657,31 @@ ${repairContext}
 REPAIR INSTRUCTIONS — PASS ${repairAttempt}/${AI_HARDENING.repairPassLimit}
 ═══════════════════════════════════════════════════════════
 
-You must regenerate ONLY the files listed in AUTOMATIC REPAIR TARGETS above.
-Rules:
-1. Respond in delimiter format only: ===FILE_START: path=== ... ===FILE_END: path===
-2. Output ONLY the files listed in REPAIR CONTEXT above. Do not touch any other file.
-3. Preserve every working system already present in the current file content.
-4. Output the COMPLETE file content — no patches, no diffs, no partial rewrites.
+Use PATCH BLOCK FORMAT to fix ONLY the specific error(s) listed in AUTOMATIC REPAIR TARGETS.
+Do NOT output the full file — that causes Netlify timeouts on large game files.
 
-OUTPUT FORMAT:
-===FILE_START: models/2===
-...full corrected file content...
-===FILE_END: models/2===
+CRITICAL — DECLARATION COLLISION CHECK:
+Before outputting any patch, scan the CURRENT FILE sections above for every name you
+are about to declare. Duplicate const/let/var declarations are the primary cause of
+syntax errors requiring repair. If the name exists, use REPLACE_BLOCK — never redeclare.
+Also check for any existing // [PATCH WARNING] blocks appended outside the module closure
+— these orphaned blocks must be removed and their content integrated into the correct
+function using REPLACE_BLOCK.
 
-Followed by a plain-text repair summary explaining what was fixed and why it was missing.
+PATCH BLOCKS FOR REPAIR:
+===REPLACE_BLOCK: models/2 | id=functionContainingError===
+function functionContainingError() {
+  // complete corrected function body with the error fixed
+}
+===END_REPLACE_BLOCK: models/2 | id=functionContainingError===
+
+Use REPLACE_BLOCK for: duplicate declarations, syntax errors inside a function,
+orphaned [PATCH WARNING] blocks that need integrating into the correct scope.
+Use INSERT_BLOCK for: missing declarations that genuinely don't exist yet.
+
+===MESSAGE===
+What was broken, what the patch fixes, and confirmation no duplicate declarations remain.
+===END_MESSAGE===
 
 Original user request for context: ${basePrompt}`
           : `${projectFiles['models/2'] ? `

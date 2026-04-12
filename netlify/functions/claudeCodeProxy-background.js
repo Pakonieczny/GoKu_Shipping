@@ -3009,6 +3009,71 @@ function parseDelimitedResponse(text) {
    • append      → concatenate content at end of existing file
    • unmatched   → append with a warning comment (never fail the build)
 */
+/* ── detectDuplicateDeclarations ─────────────────────────────────────────
+   After every patch merge, scan the resulting file for duplicate const/let/var/
+   function declarations at the same scope depth. Returns array of conflict
+   descriptors. A PATCH WARNING block already in the file is a strong signal
+   that an unmatched block was appended outside a closure — also flagged.    */
+function detectDuplicateDeclarations(content, filePath) {
+  const issues = [];
+
+  // ── 1. Detect [PATCH WARNING] appended-outside-closure blocks ────────────
+  const patchWarnMatches = content.match(/\/\/ \[PATCH WARNING\][^\n]*/g);
+  if (patchWarnMatches) {
+    for (const m of patchWarnMatches) {
+      issues.push({ type: "patch_warning", detail: m.trim() });
+    }
+  }
+
+  // ── 2. Detect duplicate top-level const/let/var/function declarations ────
+  // Scan line by line tracking brace depth. Only flag depth-0 and depth-1
+  // (module closure interior) declarations that appear more than once.
+  const declCounts = new Map(); // name → count
+  let depth = 0;
+  let inString = null;
+  let inLineComment = false;
+  let inBlockComment = false;
+  const lines = content.split("\n");
+
+  for (const line of lines) {
+    // Track comments
+    if (inBlockComment) {
+      if (line.includes("*/")) inBlockComment = false;
+      continue;
+    }
+    const stripped = line.trim();
+    if (stripped.startsWith("//")) { continue; }
+    if (stripped.startsWith("/*")) { inBlockComment = !stripped.includes("*/"); continue; }
+
+    // Count braces (simplified — good enough for top-level scope detection)
+    for (const ch of line) {
+      if (inString) { if (ch === inString) inString = null; continue; }
+      if (ch === '"' || ch === "'" || ch === "`") { inString = ch; continue; }
+      if (ch === "{") depth++;
+      if (ch === "}") depth = Math.max(0, depth - 1);
+    }
+
+    // Only care about depth 0 and 1 (inside the module.exports closure)
+    if (depth > 2) continue;
+
+    // Match: const/let/var NAME or function NAME
+    const constMatch = stripped.match(/^(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=/);
+    const funcMatch  = stripped.match(/^(?:async\s+)?function\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/);
+    const name = (constMatch && constMatch[1]) || (funcMatch && funcMatch[1]) || null;
+
+    if (name) {
+      const count = (declCounts.get(name) || 0) + 1;
+      declCounts.set(name, count);
+      if (count === 2) {
+        // Only report on second occurrence — this is the duplicate
+        issues.push({ type: "duplicate_declaration", name, detail: `"${name}" declared more than once at top/module scope in ${filePath}` });
+      }
+    }
+  }
+
+  return issues;
+}
+
 function applyPatchesToAccumulatedFiles(accumulatedFiles, patches) {
   const warnings = [];
   const touchedPaths = new Set();
@@ -3132,6 +3197,20 @@ function applyPatchesToAccumulatedFiles(accumulatedFiles, patches) {
         console.warn(`[PATCH] insert fallback (append): ${path} | after=${after}`);
       }
       continue;
+    }
+  }
+
+  // ── Post-merge duplicate declaration scan ──────────────────────────────
+  for (const p of touchedPaths) {
+    if (p !== "models/2" && p !== "models/23") continue;
+    const content = accumulatedFiles[p] || "";
+    const issues = detectDuplicateDeclarations(content, p);
+    for (const issue of issues) {
+      const msg = issue.type === "duplicate_declaration"
+        ? `DUPLICATE DECLARATION: ${issue.detail}`
+        : `ORPHANED BLOCK: ${issue.detail}`;
+      warnings.push(msg);
+      console.error(`[MERGE INTEGRITY] ${p}: ${msg}`);
     }
   }
 
@@ -4430,6 +4509,21 @@ PATCH OUTPUT RULES:
 - If this is the very first tranche and models/2 / models/23 do not yet exist, use NEW_FILE blocks.
 - The legacy ===FILE_START / FILE_END=== format is retired. Never use it.
 
+DECLARATION COLLISION PREVENTION — MANDATORY PRE-OUTPUT CHECK:
+Before emitting any INSERT_BLOCK or APPEND_BLOCK, scan the READ-ONLY file above for every
+const, let, var, and function declaration you are about to add. If ANY name already exists
+at the same scope in the file, you MUST NOT redeclare it — instead reference the existing
+declaration or rename your new one with a unique suffix. Duplicate declarations cause
+JavaScript syntax errors that halt the entire build and require a full file repair.
+Specifically:
+- If you need to ADD a field to an existing object/gameState, use INSERT_BLOCK into the
+  existing initialisation block — do NOT redeclare the whole object.
+- If you need to UPDATE a constant, use REPLACE_BLOCK on the existing declaration — do NOT
+  add a second const with the same name.
+- A REPLACE_BLOCK that fails to match will be appended as a [PATCH WARNING] block outside
+  the module closure, which also causes syntax errors. Always verify your id= exactly
+  matches the function/variable name as it appears in the current file.
+
 EXAMPLE — two changes in one tranche:
 ===REPLACE_BLOCK: models/2 | id=handleCollision===
 function handleCollision(a, b) {
@@ -4674,9 +4768,29 @@ REMINDER: The files above are READ-ONLY context. Output ONLY patch blocks (REPLA
             progress.tranches[nextTranche].mergeEndTime   = mergeEndTime;
             progress.tranches[nextTranche].mergeDurationMs = mergeEndTime - mergeStartTime;
 
-            if (mergeWarnings.length > 0) {
-              progress.tranches[nextTranche].patchMergeWarnings = mergeWarnings;
-              console.warn(`[PATCH MERGE] Tranche ${nextTranche + 1} warnings: ${mergeWarnings.join(" | ")}`);
+            // ── Integrity check: log only — build always continues ──────────
+            // Duplicate declarations and orphaned PATCH WARNING blocks are
+            // recorded on the tranche for UI visibility. The executor collision
+            // guard (Fix 3a) and patch-format repair prompts (Fix 3b) are the
+            // primary defences. The final validator catches anything that slips
+            // through. Never halt here — a warning is not a build failure.
+            const integrityIssues = mergeWarnings.filter(w =>
+              w.startsWith("DUPLICATE DECLARATION") || w.startsWith("ORPHANED BLOCK")
+            );
+            const routineWarnings = mergeWarnings.filter(w =>
+              !w.startsWith("DUPLICATE DECLARATION") && !w.startsWith("ORPHANED BLOCK")
+            );
+            if (routineWarnings.length > 0) {
+              progress.tranches[nextTranche].patchMergeWarnings = routineWarnings;
+              console.warn(`[PATCH MERGE] Tranche ${nextTranche + 1} warnings: ${routineWarnings.join(" | ")}`);
+            }
+            if (integrityIssues.length > 0) {
+              progress.tranches[nextTranche].patchIntegrityIssues = integrityIssues;
+              progress.tranches[nextTranche].patchMergeWarnings = [
+                ...(progress.tranches[nextTranche].patchMergeWarnings || []),
+                ...integrityIssues
+              ];
+              console.warn(`[MERGE INTEGRITY] Tranche ${nextTranche + 1} — issues logged, build continues: ${integrityIssues.join(" | ")}`);
             }
 
             // Record patch block stats for UI display
