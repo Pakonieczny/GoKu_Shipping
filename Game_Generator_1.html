@@ -5966,7 +5966,7 @@ Original user request for context: ${basePrompt}`;
               const bindingMode = contract.length === 0 ? 'No binding data' : (boundCount === 0 ? 'Global colormap fallback' : `${boundCount}/${contract.length} slots bound`);
               return `
                 <div class="roster-asset-card">
-                  <div class="roster-asset-thumb">${thumb ? `<img src="${thumb}" alt="">` : '🧍'}</div>
+                  ${thumb ? `<img class="roster-asset-thumb" src="${thumb}" alt="${esc(a.assetName)}" />` : `<div class="roster-asset-thumb-placeholder">🧍</div>`}
                   <div class="roster-asset-name">${esc(a.assetName)}</div>
                   <div class="roster-asset-role">${esc(a.avatarRole || a.intendedRole || '')}</div>
                   <div class="roster-asset-reason">Coverage: ${esc(String(coverage.coveragePercent ?? 'N/A'))}% | Missing: ${esc(missingBuckets)}</div>
