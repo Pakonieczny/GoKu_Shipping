@@ -1049,6 +1049,46 @@ exports.handler = async (event) => {
     }
     console.log(`[ROSTER-AB] User reference images loaded: ${refImageByName.size} requirement(s) have reference images`);
 
+    // ── 2b. Extract assetSource and included overrides from ref image payload ──
+    // Each item in userRefImages may carry:
+    //   assetSource: 'props' | 'avatars'  (which library to search)
+    //   included:    true | false          (false = skip this requirement entirely)
+    const assetSourceByName = new Map();  // requirementName.lower → 'props' | 'avatars'
+    const includedByName    = new Map();  // requirementName.lower → boolean
+    for (const img of userRefImages) {
+      if (!img.requirementName) continue;
+      const key = img.requirementName.toLowerCase();
+      if (img.assetSource === 'props' || img.assetSource === 'avatars') {
+        assetSourceByName.set(key, img.assetSource);
+      }
+      if (typeof img.included === 'boolean') {
+        includedByName.set(key, img.included);
+      }
+    }
+
+    // Filter out skipped requirements (included === false)
+    const skipCount = [...includedByName.values()].filter(v => v === false).length;
+    if (skipCount > 0) {
+      console.log(`[ROSTER-AB] ${skipCount} requirement(s) marked as skipped by user — removing from search`);
+    }
+    const isIncluded = (name) => includedByName.get(name.toLowerCase()) !== false;
+    // objectReqs / avatarReqs are const — filter produces new arrays used from here on
+    const activeObjectReqs = objectReqs.filter(r => isIncluded(r.name));
+    const activeAvatarReqs = avatarReqs.filter(r => isIncluded(r.name));
+    // Cross-routed: objects the user wants from Avatars.zip, avatars from Props
+    const objectsViaAvatarZip = activeObjectReqs.filter(r => assetSourceByName.get(r.name.toLowerCase()) === 'avatars');
+    const avatarsViaProps      = activeAvatarReqs.filter(r => assetSourceByName.get(r.name.toLowerCase()) === 'props');
+    const objectsViaProps      = activeObjectReqs.filter(r => assetSourceByName.get(r.name.toLowerCase()) !== 'avatars');
+    const avatarsViaAvatarZip  = activeAvatarReqs.filter(r => assetSourceByName.get(r.name.toLowerCase()) !== 'props');
+
+    console.log(
+      `[ROSTER-AB] Routing: ` +
+      `${objectsViaProps.length} object(s) via Props, ` +
+      `${objectsViaAvatarZip.length} object(s) via Avatars.zip, ` +
+      `${avatarsViaAvatarZip.length} avatar(s) via Avatars.zip, ` +
+      `${avatarsViaProps.length} avatar(s) via Props`
+    );
+
     // ── 3. Load global CSV → build text search index ────────────────────
     console.log(`[ROSTER-AB] Loading global asset CSV from ${GLOBAL_ASSET_CSV}`);
     const csvFile = bucket.file(GLOBAL_ASSET_CSV);
@@ -1057,17 +1097,18 @@ exports.handler = async (event) => {
     const [csvBuffer] = await csvFile.download();
     const csvIndex = buildCsvSearchIndex(csvBuffer.toString("utf8"));
 
-    // ── 4. Run CSV text search per object requirement ─────────────────────
-    // For each requirement, findCsvCandidates() scores every asset in the
-    // CSV index against the Phase 1 searchTerms and returns the top
-    // MAX_CSV_CANDIDATES asset names — deterministic, no Claude involved.
-    // Stage A then does vision matching only on this high-recall shortlist.
-    //
-    // reqCsvCandidateNames: Map<requirementName, Set<assetName (lowercase)>>
+    // ── 4. Run CSV text search per object requirement (Props path only) ──
+    // objectsViaAvatarZip are routed to the avatar library — skip CSV for them.
     const reqCsvCandidateNames = new Map();
-    for (const req of objectReqs) {
+    for (const req of objectsViaProps) {
       const names = findCsvCandidates(req, csvIndex);
       reqCsvCandidateNames.set(req.name, new Set(names));
+    }
+    // avatarsViaProps also need CSV text search
+    const avatarViaPropsReqCsvCandidateNames = new Map();
+    for (const req of avatarsViaProps) {
+      const names = findCsvCandidates(req, csvIndex);
+      avatarViaPropsReqCsvCandidateNames.set(req.name, new Set(names));
     }
 
     // ── 5. Scan particle zip files (project-local, unchanged) ───────────
@@ -1364,9 +1405,9 @@ exports.handler = async (event) => {
     console.log(`[ROSTER-AB] Asset library ready: ${particleAssets.length} particle textures, ${objectAssets.length} 3D objects, ${avatarAssets.length} avatars`);
 
     // ── 7. Stage A — Visual Library Scan ────────────────────────────────
-    const particleCandidates = new Map(particleReqs.map(r => [r.name, []]));
-    const objectCandidates   = new Map(objectReqs.map(r   => [r.name, []]));
-    const avatarCandidates   = new Map(avatarReqs.map(r   => [r.name, []]));
+    const particleCandidates = new Map(particleReqs.filter(r => isIncluded(r.name)).map(r => [r.name, []]));
+    const objectCandidates   = new Map(activeObjectReqs.map(r => [r.name, []]));
+    const avatarCandidates   = new Map(activeAvatarReqs.map(r => [r.name, []]));
 
     // Stage A: particles (unchanged — no category filter needed)
     async function runStageAParticleBatches() {
@@ -1421,116 +1462,125 @@ exports.handler = async (event) => {
       }
     }
 
-    // Stage A: 3D objects — category-filtered image-vs-image
-    async function runStageAObjectsImageVsImage() {
-      if (objectReqs.length === 0 || objectAssets.length === 0) return;
-
-      for (const req of objectReqs) {
-        const refImg = refImageByName.get(req.name.toLowerCase());
-        if (!refImg) {
-          console.warn(`[ROSTER-AB] No reference image for object "${req.name}" — will be unmatched`);
+    // ── Stage A helper: run image-vs-image scan for one req against a pool of assets
+    async function runStageAImageVsImageForReq(req, assetPool, candidateMap, matchKey = 'objFile') {
+      const refImg = refImageByName.get(req.name.toLowerCase());
+      if (!refImg) {
+        console.warn(`[ROSTER-AB] Stage A: no reference image for "${req.name}" — will be unmatched`);
+        return;
+      }
+      if (assetPool.length === 0) {
+        console.warn(`[ROSTER-AB] Stage A: asset pool empty for "${req.name}" — skipping`);
+        return;
+      }
+      const refBlock = {
+        type:   "image",
+        source: { type: "base64", media_type: refImg.mimeType, data: refImg.b64 }
+      };
+      const batches    = chunkArray(assetPool, IMAGES_PER_BATCH);
+      const candidates = candidateMap.get(req.name);
+      console.log(`[ROSTER-AB] Stage A "${req.name}": ${assetPool.length} assets → ${batches.length} batch(es)`);
+      for (let b = 0; b < batches.length; b++) {
+        const batch       = batches[b];
+        const thumbBlocks = batch.map(asset => ({
+          type:   "image",
+          source: { type: "base64", media_type: asset.mimeType, data: asset.b64 }
+        }));
+        let batchResult;
+        try {
+          batchResult = await callClaude(apiKey, {
+            model:       "claude-sonnet-4-20250514",
+            maxTokens:   2000,
+            system:      "You are a game asset visual screener. Respond only with a valid JSON object. No markdown, no fences, no preamble.",
+            userContent: [
+              { type: "text", text: buildStageAObjectRefImagePrompt(req.name, req.gameplayRole) },
+              refBlock,
+              ...thumbBlocks
+            ]
+          });
+        } catch (e) {
+          console.warn(`[ROSTER-AB] Stage A "${req.name}" batch ${b + 1} failed: ${e.message} — skipping`);
           continue;
         }
+        let parsed;
+        try { parsed = JSON.parse(stripFences(batchResult.text)); }
+        catch (e) {
+          console.warn(`[ROSTER-AB] Stage A "${req.name}" batch ${b + 1} parse failed — skipping`);
+          continue;
+        }
+        for (const match of (parsed.matches || [])) {
+          if (!match.matchesReference) continue;
+          const imgIdx = (match.imageIndex || 1) - 1;
+          const asset  = batch[imgIdx];
+          if (!asset) continue;
+          if (!candidates.some(c => c[matchKey] === asset[matchKey])) {
+            candidates.push(asset);
+          }
+        }
+      }
+      console.log(`[ROSTER-AB] Stage A "${req.name}": ${candidates.length} candidate(s) found`);
+    }
 
-        // Filter objectAssets to only those matched by CSV text search
+    // Stage A: 3D objects — Props path (CSV-filtered) + Avatars.zip cross-route
+    async function runStageAObjectsImageVsImage() {
+      if (activeObjectReqs.length === 0) return;
+
+      // Props path: CSV-filtered objectAssets
+      for (const req of objectsViaProps) {
         const csvNames = reqCsvCandidateNames.get(req.name) || new Set();
         if (csvNames.size === 0) {
-          console.warn(`[ROSTER-AB] Stage A object "${req.name}": CSV search returned 0 candidates — skipping vision scan`);
+          console.warn(`[ROSTER-AB] Stage A object "${req.name}" (Props): CSV search returned 0 candidates — skipping`);
           continue;
         }
-
         const filteredAssets = objectAssets.filter(a => csvNames.has(a.assetName.toLowerCase()));
-
-        console.log(
-          `[ROSTER-AB] Stage A object "${req.name}": ` +
-          `${filteredAssets.length} asset(s) matched from CSV search (${csvNames.size} names searched)`
-        );
-
         if (filteredAssets.length === 0) {
-          console.warn(`[ROSTER-AB] Stage A object "${req.name}": CSV names found but none loaded from zips — skipping`);
+          console.warn(`[ROSTER-AB] Stage A object "${req.name}" (Props): CSV names found but none loaded from zips — skipping`);
           continue;
         }
+        console.log(`[ROSTER-AB] Stage A object "${req.name}" (Props): ${filteredAssets.length} asset(s) from CSV`);
+        await runStageAImageVsImageForReq(req, filteredAssets, objectCandidates, 'objFile');
+      }
 
-        const refBlock = {
-          type:   "image",
-          source: { type: "base64", media_type: refImg.mimeType, data: refImg.b64 }
-        };
-
-        const batches    = chunkArray(filteredAssets, IMAGES_PER_BATCH);
-        const candidates = objectCandidates.get(req.name);
-        console.log(`[ROSTER-AB] Stage A object "${req.name}": ${filteredAssets.length} assets → ${batches.length} batch(es)`);
-
-        for (let b = 0; b < batches.length; b++) {
-          const batch       = batches[b];
-          const thumbBlocks = batch.map(asset => ({
-            type:   "image",
-            source: { type: "base64", media_type: asset.mimeType, data: asset.b64 }
-          }));
-
-          let batchResult;
-          try {
-            batchResult = await callClaude(apiKey, {
-              model:       "claude-sonnet-4-20250514",
-              maxTokens:   2000,
-              system:      "You are a game asset visual screener. Respond only with a valid JSON object. No markdown, no fences, no preamble.",
-              userContent: [
-                { type: "text", text: buildStageAObjectRefImagePrompt(req.name, req.gameplayRole) },
-                refBlock,
-                ...thumbBlocks
-              ]
-            });
-          } catch (e) {
-            console.warn(`[ROSTER-AB] Stage A object "${req.name}" batch ${b + 1} failed: ${e.message} — skipping`);
-            continue;
-          }
-
-          let parsed;
-          try { parsed = JSON.parse(stripFences(batchResult.text)); }
-          catch (e) {
-            console.warn(`[ROSTER-AB] Stage A object "${req.name}" batch ${b + 1} parse failed — skipping`);
-            continue;
-          }
-
-          for (const match of (parsed.matches || [])) {
-            if (!match.matchesReference) continue;
-            const imgIdx = (match.imageIndex || 1) - 1;
-            const asset  = batch[imgIdx];
-            if (!asset) continue;
-            if (!candidates.some(c => c.objFile === asset.objFile)) {
-              candidates.push(asset);
-            }
-          }
+      // Avatars.zip cross-route: search avatarAssets pool instead of Props
+      for (const req of objectsViaAvatarZip) {
+        if (avatarAssets.length === 0) {
+          console.warn(`[ROSTER-AB] Stage A object "${req.name}" (Avatars.zip cross-route): no avatar assets loaded — skipping`);
+          continue;
         }
-
-        console.log(`[ROSTER-AB] Stage A object "${req.name}": ${candidates.length} candidate(s) found`);
+        console.log(`[ROSTER-AB] Stage A object "${req.name}" (Avatars.zip cross-route): ${avatarAssets.length} avatar asset(s)`);
+        // avatarAssets use assetName not objFile — map to objFile-compatible shape for assembleObjectAsset
+        const avatarAsAvatarPool = avatarAssets;
+        await runStageAImageVsImageForReq(req, avatarAsAvatarPool, objectCandidates, 'assetName');
       }
     }
 
     async function runStageAAvatarImageVsImage() {
-      if (avatarReqs.length === 0 || avatarAssets.length === 0) return;
-      for (const req of avatarReqs) {
+      if (activeAvatarReqs.length === 0) return;
+
+      // Standard Avatars.zip path
+      for (const req of avatarsViaAvatarZip) {
+        if (avatarAssets.length === 0) {
+          console.warn(`[ROSTER-AB] Stage A avatar "${req.name}": no avatar assets loaded — skipping`);
+          continue;
+        }
         const refImg = refImageByName.get(req.name.toLowerCase());
         if (!refImg) {
           console.warn(`[ROSTER-AB] Stage A avatar "${req.name}": no reference image — skipping search`);
           continue;
         }
-
         const refBlock = {
           type:   "image",
           source: { type: "base64", media_type: refImg.mimeType, data: refImg.b64 }
         };
-
-        const batches = chunkArray(avatarAssets, IMAGES_PER_BATCH);
+        const batches    = chunkArray(avatarAssets, IMAGES_PER_BATCH);
         const candidates = avatarCandidates.get(req.name);
-        console.log(`[ROSTER-AB] Stage A avatar "${req.name}": ${avatarAssets.length} assets → ${batches.length} batch(es)`);
-
+        console.log(`[ROSTER-AB] Stage A avatar "${req.name}" (Avatars.zip): ${avatarAssets.length} assets → ${batches.length} batch(es)`);
         for (let b = 0; b < batches.length; b++) {
           const batch = batches[b];
           const thumbBlocks = batch.map(asset => ({
             type:   "image",
             source: { type: "base64", media_type: asset.mimeType, data: asset.b64 }
           }));
-
           let batchResult;
           try {
             batchResult = await callClaude(apiKey, {
@@ -1547,14 +1597,12 @@ exports.handler = async (event) => {
             console.warn(`[ROSTER-AB] Stage A avatar "${req.name}" batch ${b + 1} failed: ${e.message} — skipping`);
             continue;
           }
-
           let parsed;
           try { parsed = JSON.parse(stripFences(batchResult.text)); }
           catch (e) {
             console.warn(`[ROSTER-AB] Stage A avatar "${req.name}" batch ${b + 1} parse failed — skipping`);
             continue;
           }
-
           for (const match of (parsed.matches || [])) {
             if (!match.matchesReference) continue;
             const imgIdx = (match.imageIndex || 1) - 1;
@@ -1565,8 +1613,23 @@ exports.handler = async (event) => {
             }
           }
         }
+        console.log(`[ROSTER-AB] Stage A avatar "${req.name}" (Avatars.zip): ${candidates.length} candidate(s) found`);
+      }
 
-        console.log(`[ROSTER-AB] Stage A avatar "${req.name}": ${candidates.length} candidate(s) found`);
+      // Props cross-route: search objectAssets pool for avatar reqs routed to Props
+      for (const req of avatarsViaProps) {
+        const csvNames = avatarViaPropsReqCsvCandidateNames.get(req.name) || new Set();
+        if (csvNames.size === 0) {
+          console.warn(`[ROSTER-AB] Stage A avatar "${req.name}" (Props cross-route): CSV search returned 0 candidates — skipping`);
+          continue;
+        }
+        const filteredAssets = objectAssets.filter(a => csvNames.has(a.assetName.toLowerCase()));
+        if (filteredAssets.length === 0) {
+          console.warn(`[ROSTER-AB] Stage A avatar "${req.name}" (Props cross-route): CSV names found but none loaded — skipping`);
+          continue;
+        }
+        console.log(`[ROSTER-AB] Stage A avatar "${req.name}" (Props cross-route): ${filteredAssets.length} props assets`);
+        await runStageAImageVsImageForReq(req, filteredAssets, avatarCandidates, 'objFile');
       }
     }
 
@@ -1709,9 +1772,9 @@ exports.handler = async (event) => {
     }
 
     const [particleResults, objectResults, avatarResults] = await Promise.all([
-      Promise.all(particleReqs.map(r => runStageBParticle(r))),
-      Promise.all(objectReqs.map(r   => runStageBObject(r))),
-      Promise.all(avatarReqs.map(r   => runStageBAvatar(r)))
+      Promise.all(particleReqs.filter(r => isIncluded(r.name)).map(r => runStageBParticle(r))),
+      Promise.all(activeObjectReqs.map(r => runStageBObject(r))),
+      Promise.all(activeAvatarReqs.map(r => runStageBAvatar(r)))
     ]);
 
     console.log(
@@ -1821,27 +1884,53 @@ exports.handler = async (event) => {
     const matchedObjectNames   = new Set(objects3d.map(a => a.matchedRequirement));
     const matchedAvatarNames   = new Set(avatars.map(a => a.matchedRequirement));
 
+    // Skipped requirements are recorded separately from unmatched
+    const skippedRequirements = [
+      ...objectReqs.filter(r => !isIncluded(r.name)).map(r => ({
+        requirementName: r.name, type: "object_3d", reason: "Skipped by user in reference image modal"
+      })),
+      ...avatarReqs.filter(r => !isIncluded(r.name)).map(r => ({
+        requirementName: r.name, type: "avatar", reason: "Skipped by user in reference image modal"
+      })),
+      ...particleReqs.filter(r => !isIncluded(r.name)).map(r => ({
+        requirementName: r.name, type: "particle_effect", reason: "Skipped by user in reference image modal"
+      }))
+    ];
+
     const unmatchedRequirements = [
-      ...particleReqs.filter(r => !matchedParticleNames.has(r.name)).map(r => ({
+      ...particleReqs.filter(r => isIncluded(r.name) && !matchedParticleNames.has(r.name)).map(r => ({
         requirementName: r.name, type: "particle_effect", reason: "No visual candidates found in Stage A"
       })),
-      ...objectReqs.filter(r => !matchedObjectNames.has(r.name)).map(r => {
+      ...activeObjectReqs.filter(r => !matchedObjectNames.has(r.name)).map(r => {
+        const routedToAvatars = assetSourceByName.get(r.name.toLowerCase()) === 'avatars';
         const csvNames = reqCsvCandidateNames.get(r.name) || new Set();
         return {
           requirementName: r.name,
           type: "object_3d",
-          reason: csvNames.size === 0
-            ? "CSV text search returned 0 candidates — searchTerms may need to be broader or corrected"
-            : "CSV search found candidates but none passed Stage A visual screening",
+          assetSource: routedToAvatars ? 'avatars' : 'props',
+          reason: routedToAvatars
+            ? "No visual candidates found in Avatars.zip during cross-route Stage A"
+            : csvNames.size === 0
+              ? "CSV text search returned 0 candidates — searchTerms may need to be broader or corrected"
+              : "CSV search found candidates but none passed Stage A visual screening",
           searchTermsUsed: r.searchTerms || [],
           csvCandidateCount: csvNames.size
         };
       }),
-      ...avatarReqs.filter(r => !matchedAvatarNames.has(r.name)).map(r => ({
-        requirementName: r.name,
-        type: "avatar",
-        reason: "No visual candidates found in Avatars.zip during Stage A/B"
-      }))
+      ...activeAvatarReqs.filter(r => !matchedAvatarNames.has(r.name)).map(r => {
+        const routedToProps = assetSourceByName.get(r.name.toLowerCase()) === 'props';
+        const csvNames = avatarViaPropsReqCsvCandidateNames.get(r.name) || new Set();
+        return {
+          requirementName: r.name,
+          type: "avatar",
+          assetSource: routedToProps ? 'props' : 'avatars',
+          reason: routedToProps
+            ? csvNames.size === 0
+              ? "Props CSV text search returned 0 candidates for avatar cross-route"
+              : "Props CSV search found candidates but none passed Stage A visual screening"
+            : "No visual candidates found in Avatars.zip during Stage A/B"
+        };
+      })
     ];
 
     const roster = {
@@ -1851,6 +1940,7 @@ exports.handler = async (event) => {
       avatars,
       textureAssets,
       unmatchedRequirements,
+      skippedRequirements,
       coverageSummary: {
         totalObjects3d:  objects3d.length,
         totalAvatars:    avatars.length,
