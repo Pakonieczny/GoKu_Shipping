@@ -1989,6 +1989,7 @@ function buildRosterObjectContract(asset, stagedMeta, manifestMeta) {
   const colormapPath = asset?.colormapStagedPath || stagedMeta?.colormapStagedPath || null;
   const colormapConfidence = asset?.colormapConfidence || stagedMeta?.colormapConfidence || (colormapFile ? "HIGH" : "NONE");
   const uvNote = geometry?.uvMapping?.uvWrappingNote || "NOT AVAILABLE";
+  // Trust roster's pre-resolved colormapManifestKey first (set by frontend annotateApprovedRosterWithManifestKeys)
   const colormapManifestKey = asset?.colormapManifestKey || stagedMeta?.colormapManifestKey || "";
   const slotCount = Number(asset?.slotCount ?? stagedMeta?.slotCount ?? asset?.meshCount ?? stagedMeta?.meshCount ?? 0);
   const manifestKey = manifestMeta?.key ? `"${manifestMeta.key}"` : "(unresolved)";
@@ -2120,30 +2121,65 @@ async function loadApprovedRosterBlock(bucket, projectPath) {
         .map(a => [String(a.assetName).toLowerCase(), a])
     );
 
+    // ── Manifest key resolution strategy ────────────────────────────────────
+    // Priority 1: asset.manifestKey already on the roster — set by the frontend's
+    //             annotateApprovedRosterWithManifestKeys() after syncAssetsJson().
+    //             This is the most reliable source: the frontend did the lookup
+    //             at the right moment (after copyRosterAssetsToModels + syncAssetsJson),
+    //             resolved the numeric key, and saved it back to ai_asset_roster_approved.json.
+    // Priority 2: Re-resolve from assets.json via manifestIndex — fallback only,
+    //             used when manifestKey is missing or empty on the roster asset.
+    // Never fall through to asset name strings — that is what causes asset names
+    // instead of numeric key #s to appear in the executor output.
+    function resolveManifestMeta(asset, manifestIndex) {
+      const preResolved = asset?.manifestKey ? String(asset.manifestKey) : "";
+      if (preResolved) return { key: preResolved, type: asset?.manifestLocation === "models-folder-child" ? "object" : "other", _source: "roster" };
+      // Fallback: re-derive from assets.json index
+      const copiedName = String(asset?.copiedModelFilename || "").toLowerCase();
+      const assetName  = String(asset?.assetName || "").toLowerCase();
+      return manifestIndex.get(copiedName) || manifestIndex.get(assetName) || null;
+    }
+
+    function resolveColormapManifestMeta(asset, manifestIndex) {
+      const preResolved = asset?.colormapManifestKey ? String(asset.colormapManifestKey) : "";
+      if (preResolved) return { key: preResolved, _source: "roster" };
+      const colormapFile = String(asset?.colormapFile || "").toLowerCase();
+      return colormapFile ? (manifestIndex.get(colormapFile) || null) : null;
+    }
+
     const objs = (r.objects3d || []).map(a => {
-      const manifestMeta = manifestIndex.get(String((a.copiedModelFilename || a.assetName || "")).toLowerCase()) || manifestIndex.get(String(a.assetName || "").toLowerCase());
-      const stagedMeta = stagedIndex.get(String(a.assetName || "").toLowerCase());
+      const manifestMeta = resolveManifestMeta(a, manifestIndex);
+      const stagedMeta   = stagedIndex.get(String(a.assetName || "").toLowerCase());
+      if (!manifestMeta?.key) {
+        console.warn(`[ROSTER] objects3d asset "${a.assetName}" has no resolved manifest key — check assets.json sync and annotateApprovedRosterWithManifestKeys timing.`);
+      }
       return buildRosterObjectContract(a, stagedMeta, manifestMeta);
     }).join("\n");
 
     const avatars = (r.avatars || []).map(a => {
-      const manifestMeta = manifestIndex.get(String((a.copiedModelFilename || a.assetName || "")).toLowerCase()) || manifestIndex.get(String(a.assetName || "").toLowerCase());
-      const stagedMeta = stagedIndex.get(String(a.assetName || "").toLowerCase());
+      const manifestMeta = resolveManifestMeta(a, manifestIndex);
+      const stagedMeta   = stagedIndex.get(String(a.assetName || "").toLowerCase());
+      if (!manifestMeta?.key) {
+        console.warn(`[ROSTER] avatars asset "${a.assetName}" has no resolved manifest key — check assets.json sync and annotateApprovedRosterWithManifestKeys timing.`);
+      }
       return buildRosterAvatarContract(a, stagedMeta, manifestMeta);
     }).join("\n");
 
     const particleTextures = (r.textureAssets || []).filter(a => a.particleEffectTarget);
     const texsParticle = particleTextures.map(a => {
-      const manifestMeta = manifestIndex.get(String(a.assetName || "").toLowerCase());
-      return `  - ${a.assetName} (from ${a.sourceRosterDocument}) → particleEffectTarget: "${a.particleEffectTarget}" | ${resolveRosterRole(a)} | staged path: ${a.stagedPath || "(not staged)"} | manifest key: ${manifestMeta?.key ? `"${manifestMeta.key}"` : "(unresolved)"}`;
+      const manifestMeta = resolveManifestMeta(a, manifestIndex);
+      if (!manifestMeta?.key) {
+        console.warn(`[ROSTER] particle texture "${a.assetName}" has no resolved manifest key.`);
+      }
+      return `  - ${a.assetName} (from ${a.sourceRosterDocument}) → particleEffectTarget: "${a.particleEffectTarget}" | ${resolveRosterRole(a)} | staged path: ${a.stagedPath || "(not staged)"} | manifest key: ${manifestMeta?.key ? `"${manifestMeta.key}"` : "(unresolved — check sync timing)"}`;
     }).join("\n");
 
     const staged = (r.stagedAssets || []).map(a => {
-      const manifestMeta = manifestIndex.get(String((a.copiedModelFilename || a.assetName || "")).toLowerCase()) || manifestIndex.get(String(a.assetName || "").toLowerCase());
+      const manifestMeta = resolveManifestMeta(a, manifestIndex);
       const colormapSuffix = a.colormapStagedPath ? ` | colormap: ${a.colormapStagedPath}` : "";
-      const textureSuffix = Array.isArray(a.stagedTexturePaths) && a.stagedTexturePaths.length > 0 ? ` | avatar textures: ${a.stagedTexturePaths.join(", ")}` : "";
-      const animSuffix = a.stagedAnimationManifestPath ? ` | animations: ${a.stagedAnimationManifestPath}` : "";
-      return `  - ${a.copiedModelFilename || a.assetName} → ${a.stagedPath}${manifestMeta?.key ? ` | manifest key: "${manifestMeta.key}"` : ""}${colormapSuffix}${textureSuffix}${animSuffix}`;
+      const textureSuffix  = Array.isArray(a.stagedTexturePaths) && a.stagedTexturePaths.length > 0 ? ` | avatar textures: ${a.stagedTexturePaths.join(", ")}` : "";
+      const animSuffix     = a.stagedAnimationManifestPath ? ` | animations: ${a.stagedAnimationManifestPath}` : "";
+      return `  - ${a.copiedModelFilename || a.assetName} → ${a.stagedPath}${manifestMeta?.key ? ` | manifest key: "${manifestMeta.key}"` : " | manifest key: (unresolved — check sync timing)"}${colormapSuffix}${textureSuffix}${animSuffix}`;
     }).join("\n");
     const vn = r.visualDirectionNotes || {};
     const sf = r._meta?.stagedFolder || "";
