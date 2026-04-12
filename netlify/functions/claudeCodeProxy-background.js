@@ -2254,18 +2254,73 @@ function isClaudeOverloadError(status, message = "") {
   );
 }
 
+/* ── buildSystemBlocks ───────────────────────────────────────────────────
+   Converts a system prompt into the structured block array that the
+   Anthropic API needs for prompt caching.
+
+   If `system` is already an array of blocks (from callers that build
+   their own structure), it is passed through unchanged.
+
+   If `system` is a plain string it is split on a sentinel comment so
+   that the large static scaffold section gets its own cacheable block:
+
+     "<scaffold text>  <!-- CACHE_BREAK -->  <dynamic text>"
+                                ↑
+              cache_control: ephemeral goes on the block that ends HERE
+
+   Everything before CACHE_BREAK is the scaffold (static per project,
+   identical across all tranche calls → Anthropic caches it).
+   Everything after is the dynamic planning rules / output format
+   instructions (changes per call → not cached).
+
+   If there is no CACHE_BREAK sentinel the whole string is sent as a
+   single text block with cache_control on it — still beneficial when
+   the system prompt is identical across calls (e.g. spec-validation
+   calls that share the same system string).
+   ─────────────────────────────────────────────────────────────────── */
+function buildSystemBlocks(system) {
+  if (Array.isArray(system)) return system;          // already structured
+  if (!system) return [];
+
+  const SENTINEL = "<!-- CACHE_BREAK -->";
+  const breakIdx = system.indexOf(SENTINEL);
+
+  if (breakIdx >= 0) {
+    const staticPart  = system.slice(0, breakIdx).trimEnd();
+    const dynamicPart = system.slice(breakIdx + SENTINEL.length).trimStart();
+    const blocks = [];
+    if (staticPart) {
+      blocks.push({
+        type: "text",
+        text: staticPart,
+        cache_control: { type: "ephemeral" }    // ← cache the scaffold here
+      });
+    }
+    if (dynamicPart) {
+      blocks.push({ type: "text", text: dynamicPart });  // dynamic — not cached
+    }
+    return blocks;
+  }
+
+  // No sentinel — cache the whole system prompt as one block
+  return [{ type: "text", text: system, cache_control: { type: "ephemeral" } }];
+}
+
 async function callClaude(apiKey, { model, maxTokens, system, userContent, effort, budgetTokens }) {
+  const systemBlocks = buildSystemBlocks(system);
+
   const body = {
     model,
     max_tokens: maxTokens,
-    system,
+    system: systemBlocks,
     messages: [{ role: "user", content: userContent }]
   };
 
   const headers = {
     "Content-Type": "application/json",
     "x-api-key": apiKey,
-    "anthropic-version": "2023-06-01"
+    "anthropic-version": "2023-06-01",
+    "anthropic-beta": "prompt-caching-2024-07-31"   // ← enable prompt caching
   };
 
   if (budgetTokens) {
@@ -2315,6 +2370,9 @@ async function callClaude(apiKey, { model, maxTokens, system, userContent, effor
         throw new Error("Claude response missing text block");
       }
 
+      // usage may include cache fields:
+      //   cache_creation_input_tokens  — tokens written to cache this call
+      //   cache_read_input_tokens      — tokens served from cache this call
       return { text: textBlock, usage: data?.usage || null };
     } catch (err) {
       const status = err?.status || null;
@@ -2807,53 +2865,267 @@ function enforceTrancheValidationBlock(plan) {
   return plan;
 }
 
-/* ── helper: parse tranche executor delimiter-format responses ── */
-/* Tranche executors output raw file content between delimiters,
-   completely bypassing JSON escaping. This eliminates the entire
-   class of "Unexpected non-whitespace character after JSON" errors
-   that occur when Claude embeds code inside a JSON string field.
+/* ── helper: parse tranche executor patch-format responses ────── */
+/*
+   NEW PRIMARY FORMAT — patch blocks (output only changes):
+   ─────────────────────────────────────────────────────────
+   ===NEW_FILE: models/2===
+   ...complete file content for first-time creation...
+   ===END_NEW_FILE: models/2===
 
-   Expected format from the executor:
-     ===FILE_START: models/2===
-     ...raw file content, zero escaping needed...
-     ===FILE_END: models/2===
+   ===REPLACE_BLOCK: models/2 | id=updatePlayerController===
+   function updatePlayerController() {
+     // complete new version of this named function/section
+   }
+   ===END_REPLACE_BLOCK: models/2 | id=updatePlayerController===
 
-     ===MESSAGE===
-     Changelog text here
-     ===END_MESSAGE===
+   ===INSERT_BLOCK: models/2 | after=gameState_init===
+   gameState.playerSpeed = 0;
+   gameState.jumpCount = 0;
+   ===END_INSERT_BLOCK: models/2 | after=gameState_init===
+
+   ===APPEND_BLOCK: models/2===
+   // new top-level code appended at end of file
+   ===END_APPEND_BLOCK: models/2===
+
+   ===MESSAGE===
+   Changelog text here
+   ===END_MESSAGE===
+
+   LEGACY FORMAT (full file) — still accepted as fallback:
+   ─────────────────────────────────────────────────────────
+   ===FILE_START: models/2===
+   ...entire file content...
+   ===FILE_END: models/2===
 */
 function parseDelimitedResponse(text) {
-  const files = [];
+  const patches = [];   // { path, type, id, after, content }
+  const fullFiles = []; // legacy full-file blocks
 
-  // Extract all FILE_START / FILE_END blocks
-  const fileRegex = /===FILE_START:\s*([^\n]+?)\s*===\n([\s\S]*?)===FILE_END:\s*\1\s*===/g;
+  // ── NEW_FILE blocks ──────────────────────────────────────────
+  const newFileRegex = /===NEW_FILE:\s*([^\n]+?)\s*===\n([\s\S]*?)===END_NEW_FILE:\s*\1\s*===/g;
   let match;
+  while ((match = newFileRegex.exec(text)) !== null) {
+    patches.push({ path: match[1].trim(), type: "new_file", content: match[2] });
+  }
+
+  // ── REPLACE_BLOCK blocks ─────────────────────────────────────
+  const replaceRegex = /===REPLACE_BLOCK:\s*([^\n|]+?)\s*\|\s*id=([^\n]+?)\s*===\n([\s\S]*?)===END_REPLACE_BLOCK:\s*[^\n]+?===/g;
+  while ((match = replaceRegex.exec(text)) !== null) {
+    patches.push({ path: match[1].trim(), type: "replace", id: match[2].trim(), content: match[3] });
+  }
+
+  // ── INSERT_BLOCK blocks ──────────────────────────────────────
+  const insertRegex = /===INSERT_BLOCK:\s*([^\n|]+?)\s*\|\s*after=([^\n]+?)\s*===\n([\s\S]*?)===END_INSERT_BLOCK:\s*[^\n]+?===/g;
+  while ((match = insertRegex.exec(text)) !== null) {
+    patches.push({ path: match[1].trim(), type: "insert", after: match[2].trim(), content: match[3] });
+  }
+
+  // ── APPEND_BLOCK blocks ──────────────────────────────────────
+  const appendRegex = /===APPEND_BLOCK:\s*([^\n]+?)\s*===\n([\s\S]*?)===END_APPEND_BLOCK:\s*\1\s*===/g;
+  while ((match = appendRegex.exec(text)) !== null) {
+    patches.push({ path: match[1].trim(), type: "append", content: match[2] });
+  }
+
+  // ── Legacy FILE_START / FILE_END blocks (full file) ──────────
+  const fileRegex = /===FILE_START:\s*([^\n]+?)\s*===\n([\s\S]*?)===FILE_END:\s*\1\s*===/g;
   while ((match = fileRegex.exec(text)) !== null) {
     const path = match[1].trim();
-    const content = match[2]; // preserve exactly — no trimming
+    const content = match[2];
     if (path && content !== undefined) {
-      files.push({ path, content });
+      fullFiles.push({ path, content });
     }
   }
 
-  // Extract message block
+  // ── MESSAGE block ─────────────────────────────────────────────
   const msgMatch = text.match(/===MESSAGE===\n([\s\S]*?)===END_MESSAGE===/);
   const message = msgMatch ? msgMatch[1].trim() : "Tranche completed.";
 
-  // If no delimiters found at all, fall back to JSON for backwards compat
-  if (files.length === 0) {
-    try {
-      const parsed = JSON.parse(stripFences(text));
-      if (parsed && Array.isArray(parsed.updatedFiles)) {
-        console.warn("Executor used JSON format instead of delimiter format — parsed as fallback.");
-        return parsed;
-      }
-    } catch (_) { /* ignore */ }
-    // Return empty-handed; caller will treat as a skippable parse error
-    return null;
+  // ── If patch blocks found, return patch result ────────────────
+  if (patches.length > 0) {
+    return { patches, updatedFiles: [], message, isPatch: true };
   }
 
-  return { updatedFiles: files, message };
+  // ── If legacy full-file blocks found, return legacy result ────
+  if (fullFiles.length > 0) {
+    console.warn("[PATCH] Executor used legacy FILE_START format — accepted as fallback.");
+    return { patches: [], updatedFiles: fullFiles, message, isPatch: false };
+  }
+
+  // ── JSON fallback for extreme backwards compat ────────────────
+  try {
+    const parsed = JSON.parse(stripFences(text));
+    if (parsed && Array.isArray(parsed.updatedFiles)) {
+      console.warn("[PATCH] Executor used JSON format — parsed as fallback.");
+      return { patches: [], updatedFiles: parsed.updatedFiles, message: parsed.message || message, isPatch: false };
+    }
+  } catch (_) { /* ignore */ }
+
+  return null;
+}
+
+/* ── helper: apply patch blocks to accumulated file content ───── */
+/*
+   Merge strategy per block type:
+   • new_file    → write content directly (file didn't exist)
+   • replace     → find function/section by id name, replace entire body
+   • insert      → find anchor comment by name, insert content below it
+   • append      → concatenate content at end of existing file
+   • unmatched   → append with a warning comment (never fail the build)
+*/
+function applyPatchesToAccumulatedFiles(accumulatedFiles, patches) {
+  const warnings = [];
+  const touchedPaths = new Set();
+
+  for (const patch of patches) {
+    const { path, type, id, after, content } = patch;
+    touchedPaths.add(path);
+
+    if (type === "new_file") {
+      accumulatedFiles[path] = content;
+      console.log(`[PATCH] new_file: ${path} (${content.split("\n").length} lines)`);
+      continue;
+    }
+
+    const existing = accumulatedFiles[path] || "";
+
+    if (type === "append") {
+      accumulatedFiles[path] = existing
+        ? existing.trimEnd() + "\n\n" + content.trimStart()
+        : content;
+      console.log(`[PATCH] append: ${path} (+${content.split("\n").length} lines)`);
+      continue;
+    }
+
+    if (type === "replace") {
+      // Try to find the function/section by scanning for its declaration.
+      // Matches: function NAME(...), const NAME =, let NAME =, var NAME =,
+      // async function NAME, NAME: function, // SECTION: NAME, /* SECTION: NAME */
+      const escapedId = id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const patterns = [
+        // Standard function declarations (including async, exported)
+        new RegExp(
+          `(^|\\n)([ \\t]*(?:export\\s+)?(?:async\\s+)?function\\s+${escapedId}\\s*\\([^)]*\\)\\s*\\{)([\\s\\S]*?\\n[ \\t]*\\})`,
+          "m"
+        ),
+        // Arrow / const function assignments
+        new RegExp(
+          `(^|\\n)([ \\t]*(?:const|let|var)\\s+${escapedId}\\s*=\\s*(?:async\\s+)?(?:function\\s*)?\\([^)]*\\)\\s*(?:=>\\s*)?\\{)([\\s\\S]*?\\n[ \\t]*\\}(?:\\s*;)?)`,
+          "m"
+        ),
+        // Section comment anchors: // SECTION: NAME or /* SECTION: NAME */
+        new RegExp(
+          `(\\n[ \\t]*(?:\\/\\/|\\/\\*)\\s*(?:SECTION:\\s*)?${escapedId}[^\\n]*)`,
+          "i"
+        ),
+      ];
+
+      let replaced = false;
+      for (const pattern of patterns) {
+        if (pattern.test(existing)) {
+          // For function patterns: replace the entire matched function block
+          // For section comment: insert the content after the comment line
+          if (pattern.source.includes("SECTION")) {
+            accumulatedFiles[path] = existing.replace(
+              pattern,
+              `\n${content.trimEnd()}`
+            );
+          } else {
+            // Replace the full function — find open brace, count to matching close
+            const declMatch = existing.match(pattern);
+            if (declMatch) {
+              const startIdx = existing.indexOf(declMatch[0], declMatch.index || 0);
+              const block = extractBalancedBlock(existing, startIdx);
+              if (block) {
+                accumulatedFiles[path] =
+                  existing.slice(0, block.start) +
+                  content.trimEnd() +
+                  existing.slice(block.end);
+                replaced = true;
+                break;
+              }
+            }
+          }
+          replaced = true;
+          break;
+        }
+      }
+
+      if (!replaced) {
+        // Fallback: append with warning so the build never silently drops work
+        const warn = `\n// [PATCH WARNING] REPLACE_BLOCK id="${id}" had no match in ${path} — appended instead\n`;
+        accumulatedFiles[path] = existing.trimEnd() + warn + content.trimStart();
+        warnings.push(`REPLACE_BLOCK id="${id}" not matched in ${path} — appended`);
+        console.warn(`[PATCH] replace fallback (append): ${path} | id=${id}`);
+      } else {
+        console.log(`[PATCH] replace: ${path} | id=${id}`);
+      }
+      continue;
+    }
+
+    if (type === "insert") {
+      // Find anchor comment: // anchor_name or /* anchor_name */ or // SECTION: anchor_name
+      const escapedAfter = after.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const anchorPatterns = [
+        new RegExp(`(\\/\\/[^\\n]*\\b${escapedAfter}\\b[^\\n]*)`, "i"),
+        new RegExp(`(\\/\\*[^*]*\\b${escapedAfter}\\b[^*]*\\*\\/)`, "i"),
+      ];
+
+      let inserted = false;
+      for (const pattern of anchorPatterns) {
+        const anchorMatch = existing.match(pattern);
+        if (anchorMatch) {
+          const anchorEnd = existing.indexOf(anchorMatch[0]) + anchorMatch[0].length;
+          // Find end of anchor line
+          const lineEnd = existing.indexOf("\n", anchorEnd);
+          const insertAt = lineEnd >= 0 ? lineEnd + 1 : existing.length;
+          accumulatedFiles[path] =
+            existing.slice(0, insertAt) +
+            content.trimEnd() + "\n" +
+            existing.slice(insertAt);
+          inserted = true;
+          console.log(`[PATCH] insert: ${path} | after=${after}`);
+          break;
+        }
+      }
+
+      if (!inserted) {
+        const warn = `\n// [PATCH WARNING] INSERT_BLOCK after="${after}" anchor not found in ${path} — appended instead\n`;
+        accumulatedFiles[path] = existing.trimEnd() + warn + content.trimStart();
+        warnings.push(`INSERT_BLOCK after="${after}" anchor not found in ${path} — appended`);
+        console.warn(`[PATCH] insert fallback (append): ${path} | after=${after}`);
+      }
+      continue;
+    }
+  }
+
+  return { touchedPaths: [...touchedPaths], warnings };
+}
+
+/* ── helper: extract a balanced { } block starting from a known position ── */
+/* Used by REPLACE_BLOCK to find the full extent of a function body.          */
+function extractBalancedBlock(text, startFromIdx) {
+  const openIdx = text.indexOf("{", startFromIdx);
+  if (openIdx < 0) return null;
+  let depth = 0;
+  let inString = null;
+  let escaped = false;
+  for (let i = openIdx; i < text.length; i++) {
+    const ch = text[i];
+    if (escaped) { escaped = false; continue; }
+    if (ch === "\\") { escaped = true; continue; }
+    if (inString) {
+      if (ch === inString) inString = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === "`") { inString = ch; continue; }
+    if (ch === "{") depth++;
+    if (ch === "}") {
+      depth--;
+      if (depth === 0) return { start: startFromIdx, end: i + 1 };
+    }
+  }
+  return null;
 }
 
 /* ── helper: save progress to Firebase ───────────────────────── */
@@ -2884,13 +3156,16 @@ function buildSceneIntentFreshnessNotice(sceneIntentSyncState) {
 }
 
 function buildTrancheFileContextFromAccumulatedFiles(accumulatedFiles, sceneIntentSyncState) {
-  let trancheFileContext = "Here are the current project files (includes all output from prior tranches — you MUST preserve all existing code):\n\n";
+  // These files are READ-ONLY context for the patch executor.
+  // The executor outputs ONLY patch blocks (REPLACE_BLOCK / INSERT_BLOCK / APPEND_BLOCK / NEW_FILE).
+  // The merge engine applies those patches to these files after the tranche completes.
+  let trancheFileContext = "CURRENT PROJECT FILES (read-only context — do NOT re-emit these; output only PATCH BLOCKS for your changes):\n\n";
   const compilerOwnedSet = new Set(COMPILER_OWNED_JSON_PATHS);
   const hideCompilerOwnedJson = Boolean(sceneIntentSyncState && sceneIntentSyncState.staleCompilerOwnedJson);
 
   for (const [path, fileContent] of Object.entries(accumulatedFiles || {})) {
     if (hideCompilerOwnedJson && compilerOwnedSet.has(path)) continue;
-    trancheFileContext += `--- FILE: ${path} ---\n${fileContent}\n\n`;
+    trancheFileContext += `--- FILE: ${path} (READ-ONLY CONTEXT) ---\n${fileContent}\n\n`;
   }
 
   if (hideCompilerOwnedJson) {
@@ -3780,6 +4055,8 @@ Your job: read the user's request, the existing project files, and the instructi
 
 ${instructionBundle.combinedText}
 
+<!-- CACHE_BREAK -->
+
 INSTRUCTION PRECEDENCE:
 1. The Cherry3D Scaffold is the binding codified law extracted from shipped working games.
 2. The SDK / Engine Notes are subordinate. Use them only for engine facts, API details, threading rules, property paths, and anti-pattern avoidance when the scaffold is silent.
@@ -3795,18 +4072,17 @@ INSTRUCTION PRECEDENCE:
 PLANNING RULES:
 1. The Master Prompt's actual contract sections are the center of gravity. Read the real heading structure first, then anchor every core gameplay tranche to the prompt's actual authoritative sections/subsections. If the prompt uses the new layout, prioritize Sections 3.x, 4.x, 5, and 7. If it uses a legacy layout, use those real legacy section numbers. Never invent 6.3 anchors when the prompt does not contain them.
 2. Plan the build like a house: foundation before controls, controls before authored playfield shell, shell before gameplay loop, gameplay loop before progression/HUD, progression before feedback/polish.
-3. Each tranche prompt must be FULLY SELF-CONTAINED — embed the exact game-specific rules, variable names, slot layouts, code snippets, and pitfall warnings from the user's request that are relevant to that tranche. Do NOT summarize away critical implementation details.
+3. Each tranche prompt must be FULLY SELF-CONTAINED — embed the exact game-specific rules, variable names, slot layouts, code snippets, and pitfall warnings from the user's request that are relevant to that tranche. Do NOT summarize away critical implementation details. Each prompt MUST name the exact functions the executor will REPLACE_BLOCK or INSERT_BLOCK — vague scope like "update the game loop" is a planning defect.
 4. ALWAYS split large or complex tranches into A/B/C sub-tranches. There is no hard cap on tranche count — use as many as needed. If in doubt, split.
-5. Keep tranche scope TIGHT: each tranche should implement ONE subsystem or ONE cohesive set of closely-related functions. If a tranche exceeds its active tranche-budget window (1-5: ~175-225 lines, 6-10: ~120-170 lines, 11+: ~80-130 lines), it is too large and MUST be split further.
+5. Keep tranche scope TIGHT: each tranche should implement ONE subsystem or ONE cohesive set of closely-related functions. Target 400-500 lines of NEW code per tranche — patch output is flat-cost regardless of accumulated file size, so use the full budget for fidelity and completeness. Only split when there is a true dependency boundary, a distinct risk boundary, or the tranche genuinely covers two independent subsystems that could fail separately. Do NOT split artificially to hit a lower line count.
 6. Every tranche must declare: kind, anchorSections, purpose, systemsTouched, filesTouched, visibleResult, safetyChecks, expectedFiles, dependencies, expertAgents, phase, and qualityCriteria.
-7. The FIRST tranche must establish scaffold-compliant foundations: preserve immutable scaffold sections, extend existing factories/hooks, create materials/world build, wire shared state safely, and establish STATIC collision surfaces where required.
+7. Foundation-A tranche (ALWAYS first): scaffold hook wiring, shared gameState field declarations, objectids registration, and factory/hook extensions. May include materials and constant definitions. Must NOT include world geometry placement, terrain, or STATIC rigidbodies — those belong in the immediately following Scene Shell or Terrain Shell tranche. Use the full budget for completeness; a thorough Foundation-A prevents patch collisions in later tranches.
 8. Do NOT instruct the executor to remove immutable scaffold fields/blocks or invent a replacement lifecycle when the scaffold already defines one.
 9. If the scaffold already provides a section (camera stage, UI hookup, particle emitter factory, instance parent pattern, input handler shape, etc.), the tranche must explicitly extend that section instead of replacing it. If a subsystem requires a lawful pattern choice (for example physics_driven vs direct_integration, createInstance default vs explicit createObject exception, or sphere-burst vs billboard-trail particles), the tranche prompt must name that family explicitly and prohibit mixing.
 10. When the user's request contains code examples (updateInput, syncPlayerSharedMemory, ghost AI, etc.), embed those exact code examples in the relevant tranche prompts — do not paraphrase them.
-11. Make tranche count DYNAMIC. The number of tranches must be an output of true dependency order, subsystem complexity, and execution safety — never a preset target. A simple game may need only 7-9 tranches; a larger game may need more. Depth, detail, and density come from the game requirements, not from inflating tranche count. Merge naturally related work when it remains safely within the active line-budget window, and split only when dependency, risk, or execution size requires it.
-12. Tranches 1-5: target ~175-225 lines of new or changed code per tranche. Any tranche prompt that describes more than 2 distinct systems, or more than ~3 new functions, is too large and must be split.
-13. Tranches 6-10: target ~120-170 lines of new or changed code per tranche. If scope expands beyond one subsystem, split further before execution.
-14. LATE-PHASE TIGHTENING (tranches 11 and beyond): As the codebase grows, complexity compounds. For any tranche planned at position 11 or later, cut the line budget to ~80-130 lines of new or changed code, limit scope to ONE function or ONE tightly-coupled pair of functions, and prefer A/B sub-tranche splits over any grouping. If the system being implemented at tranche 11+ would require touching more than one section of models/2, it must be split into sub-tranches.
+11. Make tranche count DYNAMIC. A simple game with 1-2 mechanics may use 8-10 tranches. Any game with 3+ systems, hazards, audio-feedback, roster assets with texture contracts, or authored level content MUST use 12+ tranches. When in doubt, split — more smaller tranches always beats fewer large ones.
+12. Target 400-500 lines of NEW code per tranche. Patch output is flat-cost — the merge engine applies only the changed blocks, so a 500-line patch costs the same as a 50-line patch in terms of output tokens. Use the full budget for game fidelity, complete function bodies, thorough error handling, and rich audio/visual feedback. Only split a tranche when there is a genuine dependency boundary or independent risk boundary — never split purely to reduce line count.
+13. LATE-PHASE (tranches 11 and beyond): the 400-500 line budget still applies. Late tranches are for integration, audio balancing, edge cases, and death-sequence polish — these often need substantial code to do well. Split only when a late tranche covers two genuinely independent subsystems that could be validated separately.
 15. If an Approved Asset Roster is present, you MUST populate gameState.objectids with every roster asset before the eleven Cherry3D system primitives. Roster assets are mandatory for all non-primitive visual game objects. The eleven Cherry3D system primitives (cube, square, plane, sphere, cylinder, capsule, cone, torus, torusknot, tetrahedron, icosahedron) are reserved for primitive-authored visuals, particle system internals, and invisible collision geometry. If a visual object is intentionally one of those eleven primitives, the tranche prompt must say so explicitly and MUST skip external scan/roster GEOMETRY CONTRACT, TEXTURE CONTRACT, and SLOT CONTRACT enforcement for that object. For every other rendered visual element, the prompt field MUST explicitly name the approved roster asset to use by its resolved objectids manifest key from the Approved Asset Roster block. Using a Cherry3D primitive as a visible gameplay object when a roster asset covers that role is a planning defect. Deprecated model primitive keys 17, 18, 21, 34, and 35 are forbidden everywhere; primitive-authored visuals must resolve only through .primitives keys 4-14.
 15a. PRIMITIVE TERRAIN RULE (applies when Road.zip pipeline is NOT active, i.e. roadExclusionFlag is false or absent): All terrain structure — ground floors, terrain floor tiles, mountain body geometry, cliff face geometry, hill shapes, sloped ground planes, raised platforms, and any other structural ground-volume pieces — MUST be built exclusively from Cherry3D system primitives (cube, square, plane, sphere, cylinder, capsule, cone, torus, torusknot, tetrahedron, icosahedron). These are always available in the engine; they require no roster asset. Primitive terrain construction must resolve only through .primitives keys 4-14, never through deprecated model primitive keys 17, 18, 21, 34, or 35. You MUST plan a STANDALONE terrain-shell tranche — NOT merged into Foundation-A or any other tranche — placed at tranche position 1 or 2, immediately after the scaffold foundation tranche and before any tranche that places props, spawns gameplay objects, sets camera distance, or wires gameplay systems. This tranche touches models/2 only and has no dependencies other than the scaffold foundation. Its name MUST contain "Terrain Shell" so it is identifiable in the plan. Every tranche that places props, spawns objects, or positions anything relative to the ground MUST declare the Terrain Shell tranche as an explicit dependency in its dependencies array — a plan that places props in a tranche with no terrain dependency declared is a planning defect. The Terrain Shell tranche MUST include the following in its safetyChecks: "every blocking terrain surface has a STATIC rigidbody (Non-Negotiable 14)", "no terrain geometry sourced from roster or external OBJ asset", and "terrain geometry visually covers the full gameplay area before any prop tranche runs". Its visibleResult field MUST describe the specific ground coverage this game requires (e.g. "flat ground plane covering 200x200 units with STATIC rigidbody" or "three-tier mountain with STATIC rigidbody on each level") — a generic or empty visibleResult is a planning defect. Do NOT plan any tranche that sources terrain floor meshes or mountain body OBJs from the asset roster or from external scanned objects — that is a planning defect. Props that sit ON TOP of the terrain (trees, bushes, rocks, boulders, grass tufts, buildings, ruins, walls, crates, etc.) continue to follow the normal roster-asset rules of rule 15 above.
 15b. ROAD-FIRST COMPLIMENTARY PRIMITIVE TERRAIN RULE (applies when Road.zip pipeline IS active, i.e. roadExclusionFlag is true): Road.zip pieces are the authoritative PRIMARY building blocks for road shape, drivable surface, authored track sections, ramps, turns, bumps, and terrain-path layout. However, the sequencer MUST also exploit Cherry3D .primitives keys 4-14 as complimentary terrain-building assets around that assembled Road.zip layout. This primitive work is mandatory for shoulders, roadside verges, runoff, embankments, underfill below elevated pieces, neighboring ground pads, and any remaining terrain continuity not already covered by a Road.zip section. The primitives MUST NOT replace, approximate, or stand in for any road piece that already exists in Road.zip. Every complimentary primitive terrain element must be positioned adjacent to, connected with, and elevation-matched to the placed road sections; visible seams, floating roadside blocks, disconnected filler terrain, or mismatched heights are planning defects. Deprecated model primitive keys 17, 18, 21, 34, and 35 are forbidden everywhere. When Road.zip is active, the injected Road Sequencer tranche MUST explicitly mention both responsibilities: (a) assemble the road from Road.zip first, and (b) stitch the surrounding terrain with adjacent primitives immediately after or alongside accepted road placements so later tranches inherit one connected ground truth.
@@ -3873,16 +4149,22 @@ ${effectivePrompt}
       const planResult = await callClaude(apiKey, {
         model: "claude-opus-4-6",
         maxTokens: 100000,
-        budgetTokens: 23000,
+        budgetTokens: 40000,
         effort: "high",
         system: planningSystem,
         userContent: planningUserContent
       });
 
       if (planResult.usage) {
-        progress.tokenUsage.planning = planResult.usage;
-        progress.tokenUsage.totals.input_tokens += planResult.usage.input_tokens || 0;
-        progress.tokenUsage.totals.output_tokens += planResult.usage.output_tokens || 0;
+        const pu = planResult.usage;
+        progress.tokenUsage.planning = pu;
+        progress.tokenUsage.totals.input_tokens          += pu.input_tokens             || 0;
+        progress.tokenUsage.totals.output_tokens         += pu.output_tokens            || 0;
+        progress.tokenUsage.totals.cache_creation_tokens  = (progress.tokenUsage.totals.cache_creation_tokens || 0) + (pu.cache_creation_input_tokens || 0);
+        progress.tokenUsage.totals.cache_read_tokens      = (progress.tokenUsage.totals.cache_read_tokens     || 0) + (pu.cache_read_input_tokens     || 0);
+        if (pu.cache_read_input_tokens > 0 || pu.cache_creation_input_tokens > 0) {
+          console.log(`[CACHE] Planning: created=${pu.cache_creation_input_tokens || 0} read=${pu.cache_read_input_tokens || 0}`);
+        }
         await saveProgress(bucket, projectPath, progress);
       }
 
@@ -4044,6 +4326,8 @@ The user will provide project files and a focused modification request (one tran
 
 ${instructionBundle.combinedText}
 
+<!-- CACHE_BREAK -->
+
 INSTRUCTION PRECEDENCE:
 - The Cherry3D Scaffold is the binding codified law extracted from shipped working games. Treat it as the required base architecture.
 - The SDK / Engine Notes are subordinate. Use them only when the scaffold is silent and engine/API certainty is needed.
@@ -4058,47 +4342,86 @@ INSTRUCTION PRECEDENCE:
 
 Do not re-state the instruction docs — just apply them. Write it correctly the first time so the tranche can move forward without rework.
 
-You must respond using DELIMITER FORMAT only. Do NOT use JSON. Do NOT use markdown code blocks.
+You must respond using PATCH BLOCK FORMAT only. Do NOT output full file contents. Do NOT use JSON. Do NOT use markdown code blocks.
 
-For each file you update or create, output it like this:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PATCH BLOCK FORMAT — OUTPUT ONLY YOUR CHANGES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+You are given the FULL current file(s) as context above. Do NOT re-emit the full file.
+Output ONLY the functions, variables, and sections you are adding or changing in this tranche,
+using the block types below. The backend merge engine will apply your patches to the live file.
 
-===FILE_START: path/to/filename===
-...complete raw file content here, exactly as it should be saved...
-===FILE_END: path/to/filename===
+BLOCK TYPE 1 — NEW_FILE (first tranche creating a file that does not exist yet):
+===NEW_FILE: models/2===
+// complete initial file content here
+===END_NEW_FILE: models/2===
 
-After all files, add a message block:
+BLOCK TYPE 2 — REPLACE_BLOCK (replacing an existing named function or section):
+The id must match the exact function name or section identifier as it appears in the current file.
+===REPLACE_BLOCK: models/2 | id=updatePlayerController===
+function updatePlayerController() {
+  // complete new version — include the full function body
+}
+===END_REPLACE_BLOCK: models/2 | id=updatePlayerController===
 
+BLOCK TYPE 3 — INSERT_BLOCK (inserting new code after a known anchor):
+The after= value must match a comment or identifier that already exists in the file.
+===INSERT_BLOCK: models/2 | after=gameState_init===
+gameState.playerSpeed = 0;
+gameState.jumpCount = 0;
+===END_INSERT_BLOCK: models/2 | after=gameState_init===
+
+BLOCK TYPE 4 — APPEND_BLOCK (adding new top-level code at end of file):
+===APPEND_BLOCK: models/2===
+function myNewHelper() {
+  // brand new function not yet in the file
+}
+===END_APPEND_BLOCK: models/2===
+
+After all patch blocks, add a message block:
 ===MESSAGE===
-A detailed explanation of what you implemented in this tranche, including specific functions, variables, and logic you added or changed.
+Detailed explanation: which functions were added/replaced/inserted, what logic changed, and why.
 ===END_MESSAGE===
 
-EXAMPLE (two files updated):
-===FILE_START: models/2===
-// full JS content here
-===FILE_END: models/2===
+PATCH OUTPUT RULES:
+- NEVER output a full file. Only output the blocks that actually changed.
+- Each REPLACE_BLOCK must contain the COMPLETE new version of that one function — no truncation, no ellipsis.
+- Each INSERT_BLOCK / APPEND_BLOCK must contain complete, runnable code — no stubs.
+- The id= in REPLACE_BLOCK must exactly match the function name as declared in the current file (e.g. if the file has "function spawnEnemy(", use id=spawnEnemy).
+- The after= in INSERT_BLOCK must match text that actually exists in the current file (e.g. a comment like "// gameState_init" or a variable declaration).
+- You may emit multiple blocks for multiple changes in one tranche.
+- For json/scene_intent.json, always use NEW_FILE or REPLACE_BLOCK with id=scene_intent_root (treat the whole JSON as one replaceable block).
+- If this is the very first tranche and models/2 / models/23 do not yet exist, use NEW_FILE blocks.
+- The legacy ===FILE_START / FILE_END=== format is retired. Never use it.
 
-===FILE_START: models/23===
-<!DOCTYPE html>...full HTML here...
-===FILE_END: models/23===
+EXAMPLE — two changes in one tranche:
+===REPLACE_BLOCK: models/2 | id=handleCollision===
+function handleCollision(a, b) {
+  if (a.tag === 'player' && b.tag === 'enemy') {
+    gameState.lives--;
+    playSound('hit');
+  }
+}
+===END_REPLACE_BLOCK: models/2 | id=handleCollision===
 
-===FILE_START: json/scene_intent.json===
-{ ...full scene intent JSON here... }
-===FILE_END: json/scene_intent.json===
+===INSERT_BLOCK: models/2 | after=gameState_init===
+gameState.lives = 3;
+gameState.score = 0;
+===END_INSERT_BLOCK: models/2 | after=gameState_init===
 
 ===MESSAGE===
-Added physics body initialization and collision handler registration.
+Replaced handleCollision to decrement lives and play hit sound. Inserted lives and score into gameState initialisation block.
 ===END_MESSAGE===
 
 OUTPUT RULES:
-- Only include files that actually need to be changed or created.
-- The ONLY JSON file you may ever emit is json/scene_intent.json.
-- Never emit json/assets.json, json/tree.json, or json/entities.json. Those files are compiler-owned and rebuilt automatically.
-- Always output the COMPLETE file content for each updated file — not patches or diffs.
-- Build upon the existing file contents provided. Do NOT discard or overwrite work from prior tranches.
-- If the file already has functions, variables, or structures from prior tranches, KEEP THEM ALL and add your new code alongside them.
-- The delimiter lines (===FILE_START:=== etc.) must appear exactly as shown, on their own lines.
-- If the scaffold already defines the correct place for a system (camera stage, UI hookup, particle factory, instance parent pattern, input handler, lifecycle block), implement inside that existing scaffold section.
-- Do NOT replace scaffold-owned state fields with renamed alternatives unless the tranche explicitly requires preserving both and safely extending them.
+- Use PATCH BLOCK FORMAT above. NEVER output a full file. NEVER use FILE_START/FILE_END.
+- The ONLY JSON file you may ever emit is json/scene_intent.json (use REPLACE_BLOCK with id=scene_intent_root).
+- Never emit json/assets.json, json/tree.json, or json/entities.json — compiler-owned, rebuilt automatically.
+- Each block must be complete and self-contained — no ellipsis, no "// rest unchanged", no stubs.
+- Only include blocks for code you are actually adding or changing in THIS tranche.
+- Do NOT touch code outside this tranche scope — leave it untouched in the existing file.
+- If the scaffold already defines the correct place for a system (camera stage, UI hookup, particle factory, instance parent pattern, input handler, lifecycle block), implement inside that existing scaffold section using INSERT_BLOCK with the scaffold anchor as the after= value.
+- Do NOT replace scaffold-owned state fields with renamed alternatives unless the tranche explicitly requires it.
 - Do NOT invent custom lifecycle blocks when the scaffold already supplies one.
 - 3D OBJECT ENFORCEMENT: If an Approved Asset Roster is present and contains objects3d entries, every visible gameplay object introduced or modified in this tranche MUST branch cleanly between the eleven Cherry3D system primitives (cube, square, plane, sphere, cylinder, capsule, cone, torus, torusknot, tetrahedron, icosahedron) and non-primitive approved roster assets. If the object is intentionally one of those eleven primitives, state that explicitly in code comments and skip external scan/roster geometry-texture-meshCount enforcement for that object. For every other visible gameplay object, you MUST use a roster asset via gameState.objectids and the resolved assets.json manifest keys surfaced in the roster block. Using a Cherry3D primitive as a visible gameplay object when a roster asset covers that role is a defect. Those primitives may otherwise only be used for primitive-authored visuals, particle internals, and invisible collision geometry. Deprecated model primitive keys 17, 18, 21, 34, and 35 are forbidden; use only .primitives keys 4-14 when primitive-authored geometry is required.
 - PRIMITIVE TERRAIN ENFORCEMENT (applies when Road.zip pipeline is NOT active): All terrain structure built in this tranche — ground floors, terrain floor tiles, mountain body geometry, cliff face geometry, hill shapes, sloped ground planes, raised platforms, and any other structural ground-volume piece — MUST use only the Cherry3D system primitives (cube, square, plane, sphere, cylinder, capsule, cone, torus, torusknot, tetrahedron, icosahedron). Primitive terrain construction must resolve only through .primitives keys 4-14. Never source terrain floor or mountain body geometry from an external OBJ asset or roster entry — that is a defect. Every blocking terrain surface MUST have a STATIC rigidbody (Non-Negotiable 14). If this is the Terrain Shell tranche, you MUST emit a comment block immediately after all terrain geometry is placed that reads: // [TERRAIN SHELL COMPLETE] — lists each primitive used, its .primitives key, and confirms every blocking surface has a STATIC rigidbody. This comment is a required completion proof; its absence is a detectable defect. Props that sit ON TOP of terrain (trees, bushes, rocks, buildings, etc.) continue to use roster assets via gameState.objectids as normal. If this tranche builds terrain shell geometry without using those eleven primitives exclusively, or omits the completion proof comment, that is a defect.
@@ -4163,7 +4486,7 @@ ${tranchePrompt}
 
 === END TRANCHE INSTRUCTIONS ===
 
-IMPORTANT: You are working on tranche ${nextTranche + 1} of ${progress.totalTranches}. The project files above contain ALL work from prior tranches. You MUST preserve all existing code and ADD your changes on top. Output the COMPLETE updated file contents.`;
+REMINDER: The files above are READ-ONLY context. Output ONLY patch blocks (REPLACE_BLOCK / INSERT_BLOCK / APPEND_BLOCK / NEW_FILE) for the code you are adding or changing in this tranche. Do NOT re-emit any file in full. The merge engine will apply your patches to the current file content.`;
 
       const trancheUserContent = [
         {
@@ -4173,12 +4496,25 @@ IMPORTANT: You are working on tranche ${nextTranche + 1} of ${progress.totalTran
         ...(imageBlocks || [])
       ];
 
+      // ── Thinking budget — flat 12k across all tranches ─────────
+      // Every tranche targets 400-500 lines of new code covering a full
+      // subsystem. Early tranches are not simpler than late ones at this
+      // scope — Foundation-A wiring, terrain shells, physics setup, and
+      // audio integration all require equal reasoning depth. Flat 12k
+      // ensures no tranche is short-changed on planning quality.
+      const thinkingBudget = 20000;
+
+      // ── Stamp AI call start time ─────────────────────────────
+      const aiCallStartTime = Date.now();
+      progress.tranches[nextTranche].aiCallStartTime = aiCallStartTime;
+      await saveProgress(bucket, projectPath, progress);
+
       let trancheResponseObj;
       try {
         trancheResponseObj = await callClaude(apiKey, {
           model: "claude-sonnet-4-6",
-          maxTokens: 100000,
-          budgetTokens: 10000,
+          maxTokens: 64000,   // patch output only (no full file re-emit); 64k covers 400-500 lines of dense JS comfortably
+          budgetTokens: thinkingBudget,
           effort: "high",
           system: executionSystem,
           userContent: trancheUserContent
@@ -4214,15 +4550,27 @@ IMPORTANT: You are working on tranche ${nextTranche + 1} of ${progress.totalTran
 
       // ── Process tranche response (if we got one) ─────────────
       if (trancheResponseObj) {
-        // Record token usage
+        // Stamp AI call end time
+        const aiCallEndTime = Date.now();
+        progress.tranches[nextTranche].aiCallEndTime = aiCallEndTime;
+        progress.tranches[nextTranche].aiCallDurationMs = aiCallEndTime - aiCallStartTime;
+
+        // Record token usage — including prompt-cache fields
         if (trancheResponseObj.usage) {
-          progress.tokenUsage.tranches[nextTranche] = trancheResponseObj.usage;
-          progress.tokenUsage.totals.input_tokens += trancheResponseObj.usage.input_tokens || 0;
-          progress.tokenUsage.totals.output_tokens += trancheResponseObj.usage.output_tokens || 0;
-          progress.tranches[nextTranche].tokenUsage = trancheResponseObj.usage;
+          const u = trancheResponseObj.usage;
+          progress.tokenUsage.tranches[nextTranche] = u;
+          progress.tokenUsage.totals.input_tokens            += u.input_tokens             || 0;
+          progress.tokenUsage.totals.output_tokens           += u.output_tokens            || 0;
+          progress.tokenUsage.totals.cache_creation_tokens   = (progress.tokenUsage.totals.cache_creation_tokens || 0) + (u.cache_creation_input_tokens || 0);
+          progress.tokenUsage.totals.cache_read_tokens       = (progress.tokenUsage.totals.cache_read_tokens     || 0) + (u.cache_read_input_tokens     || 0);
+          progress.tranches[nextTranche].tokenUsage = u;
+          // Log cache efficiency per tranche
+          if (u.cache_read_input_tokens > 0 || u.cache_creation_input_tokens > 0) {
+            console.log(`[CACHE] Tranche ${nextTranche + 1}: created=${u.cache_creation_input_tokens || 0} read=${u.cache_read_input_tokens || 0} (saved ~${Math.round((u.cache_read_input_tokens || 0) * 0.9)} effective tokens)`);
+          }
         }
 
-        // Parse using delimiter format — no JSON escaping issues possible
+        // Parse using patch format (or legacy full-file fallback)
         const trancheResult = parseDelimitedResponse(trancheResponseObj.text);
         if (!trancheResult) {
           const parseRetryBudget = RETRY_POLICY.parser_envelope;
@@ -4248,7 +4596,7 @@ IMPORTANT: You are working on tranche ${nextTranche + 1} of ${progress.totalTran
 
           progress.tranches[nextTranche].status = "error";
           progress.tranches[nextTranche].endTime = Date.now();
-          progress.tranches[nextTranche].message = `Executor returned no recognisable file delimiters after ${parseRetryBudget} parser/envelope retries.`;
+          progress.tranches[nextTranche].message = `Executor returned no recognisable patch blocks after ${parseRetryBudget} parser/envelope retries.`;
           await saveProgress(bucket, projectPath, progress);
           console.error(`Tranche ${nextTranche + 1} produced no parseable output.`);
           console.error("Raw response (first 500 chars):", trancheResponseObj.text.slice(0, 500));
@@ -4276,19 +4624,51 @@ IMPORTANT: You are working on tranche ${nextTranche + 1} of ${progress.totalTran
         }
 
         if (trancheResult) {
-
-          // Merge tranche output into accumulated files
           const trancheFilesUpdated = [];
-          const sceneIntentTouchedThisTranche = Boolean(
-            trancheResult.updatedFiles &&
-            Array.isArray(trancheResult.updatedFiles) &&
-            trancheResult.updatedFiles.some(file => String(file?.path || "").trim() === "json/scene_intent.json")
-          );
-          if (trancheResult.updatedFiles && Array.isArray(trancheResult.updatedFiles)) {
+
+          // ── PATCH PATH: apply named blocks into accumulated files ──
+          if (trancheResult.isPatch && Array.isArray(trancheResult.patches) && trancheResult.patches.length > 0) {
+            const mergeStartTime = Date.now();
+            const { touchedPaths, warnings: mergeWarnings } = applyPatchesToAccumulatedFiles(
+              accumulatedFiles,
+              trancheResult.patches
+            );
+            const mergeEndTime = Date.now();
+            progress.tranches[nextTranche].mergeStartTime = mergeStartTime;
+            progress.tranches[nextTranche].mergeEndTime   = mergeEndTime;
+            progress.tranches[nextTranche].mergeDurationMs = mergeEndTime - mergeStartTime;
+
+            if (mergeWarnings.length > 0) {
+              progress.tranches[nextTranche].patchMergeWarnings = mergeWarnings;
+              console.warn(`[PATCH MERGE] Tranche ${nextTranche + 1} warnings: ${mergeWarnings.join(" | ")}`);
+            }
+
+            // Record patch block stats for UI display
+            progress.tranches[nextTranche].patchBlockCount = trancheResult.patches.length;
+            progress.tranches[nextTranche].patchBlockTypes = trancheResult.patches.map(p => p.type);
+            progress.tranches[nextTranche].patchLinesAdded = trancheResult.patches.reduce(
+              (sum, p) => sum + (p.content ? p.content.split("\n").length : 0), 0
+            );
+
+            for (const path of touchedPaths) {
+              trancheFilesUpdated.push(path);
+              // Sync allUpdatedFiles with the now-merged accumulated content
+              const mergedContent = accumulatedFiles[path];
+              const existingIdx = allUpdatedFiles.findIndex(f => f.path === path);
+              if (existingIdx >= 0) {
+                allUpdatedFiles[existingIdx] = { path, content: mergedContent };
+              } else {
+                allUpdatedFiles.push({ path, content: mergedContent });
+              }
+            }
+
+            console.log(`[PATCH] Tranche ${nextTranche + 1} merged ${trancheResult.patches.length} patch block(s) into ${touchedPaths.length} file(s).`);
+
+          // ── LEGACY PATH: full-file replacement (FILE_START / JSON) ──
+          } else if (Array.isArray(trancheResult.updatedFiles) && trancheResult.updatedFiles.length > 0) {
             for (const file of trancheResult.updatedFiles) {
               accumulatedFiles[file.path] = file.content;
               trancheFilesUpdated.push(file.path);
-
               const existingIdx = allUpdatedFiles.findIndex(f => f.path === file.path);
               if (existingIdx >= 0) {
                 allUpdatedFiles[existingIdx] = file;
@@ -4296,8 +4676,13 @@ IMPORTANT: You are working on tranche ${nextTranche + 1} of ${progress.totalTran
                 allUpdatedFiles.push(file);
               }
             }
+            console.log(`[LEGACY] Tranche ${nextTranche + 1} wrote ${trancheResult.updatedFiles.length} full file(s).`);
           }
 
+          // ── scene_intent detection (works for both paths) ────────────
+          const sceneIntentTouchedThisTranche = trancheFilesUpdated.some(
+            p => String(p).trim() === "json/scene_intent.json"
+          );
           if (sceneIntentTouchedThisTranche) {
             state.sceneIntentSyncState = {
               staleCompilerOwnedJson: true,
@@ -4309,7 +4694,16 @@ IMPORTANT: You are working on tranche ${nextTranche + 1} of ${progress.totalTran
             progress.tranches[nextTranche].sceneIntentSyncPending = true;
           }
 
-          const contractCodeReview = buildContractCodeReviewForTranche(progress.tranches[nextTranche], trancheResult.updatedFiles, approvedRosterBlock);
+          // ── Contract code review (uses merged accumulated content) ───
+          const mergedFilesForReview = trancheFilesUpdated.map(p => ({
+            path: p,
+            content: accumulatedFiles[p] || ""
+          }));
+          const contractCodeReview = buildContractCodeReviewForTranche(
+            progress.tranches[nextTranche],
+            mergedFilesForReview,
+            approvedRosterBlock
+          );
           progress.tranches[nextTranche].contractCodeReviewWarnings = contractCodeReview.warnings;
           progress.tranches[nextTranche].contractCodeReviewStatus = contractCodeReview.status;
           progress.tranches[nextTranche].contractCodeReviewAssets = contractCodeReview.assets;
@@ -4324,13 +4718,12 @@ IMPORTANT: You are working on tranche ${nextTranche + 1} of ${progress.totalTran
           progress.tranches[nextTranche].endTime = Date.now();
           progress.tranches[nextTranche].message = trancheResult.message || "Tranche completed.";
           progress.tranches[nextTranche].filesUpdated = trancheFilesUpdated;
+          progress.tranches[nextTranche].patchMode = Boolean(trancheResult.isPatch);
           await saveProgress(bucket, projectPath, progress);
 
-          console.log(`Tranche ${nextTranche + 1} complete: ${trancheFilesUpdated.length} files updated.`);
+          console.log(`Tranche ${nextTranche + 1} complete: ${trancheFilesUpdated.length} file(s) touched (${trancheResult.isPatch ? "patch" : "legacy"} mode).`);
 
           // ── Checkpoint ai_response.json after every successful merge ──
-          // This ensures the frontend always has the latest snapshot even if
-          // a later tranche or finalization step fails.
           if (allUpdatedFiles.length > 0) {
             await saveAiResponse(bucket, projectPath, allUpdatedFiles, {
               jobId:         jobId,

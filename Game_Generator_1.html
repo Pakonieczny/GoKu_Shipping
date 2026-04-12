@@ -410,6 +410,64 @@
       background: rgba(245, 158, 11, 0.06); border-left-color: #f59e0b; color: #fde68a;
     }
 
+    /* ── Tranche timing breakdown bar ── */
+    .tranche-timing-bar {
+      display: none; margin-top: 8px; border-radius: 8px;
+      overflow: hidden; border: 1px solid #1a2540;
+      background: #090c16;
+    }
+    .tranche-timing-bar.active { display: block; }
+
+    .tranche-timing-row {
+      display: flex; align-items: center; gap: 0;
+      height: 28px; position: relative;
+    }
+    .tranche-timing-segment {
+      height: 100%; display: flex; align-items: center;
+      justify-content: center; font-size: 9px; font-weight: 700;
+      letter-spacing: 0.4px; text-transform: uppercase;
+      white-space: nowrap; overflow: hidden;
+      transition: width 0.6s cubic-bezier(0.4,0,0.2,1);
+      min-width: 0;
+    }
+    .tranche-timing-segment.ai {
+      background: linear-gradient(90deg, rgba(43,108,255,0.35) 0%, rgba(108,59,255,0.35) 100%);
+      color: #93c5fd; border-right: 1px solid #2b3a6b;
+    }
+    .tranche-timing-segment.merge {
+      background: linear-gradient(90deg, rgba(127,219,150,0.2) 0%, rgba(52,211,153,0.2) 100%);
+      color: #6ee7b7; flex: 0 0 auto;
+    }
+    .tranche-timing-labels {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 5px 10px 6px; font-size: 10px; font-family: 'SF Mono','Fira Code',monospace;
+      border-top: 1px solid #1a2540; flex-wrap: wrap; gap: 6px;
+    }
+    .tranche-timing-stat {
+      display: flex; align-items: center; gap: 5px; color: var(--muted);
+    }
+    .tranche-timing-stat-dot {
+      width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
+    }
+    .tranche-timing-stat-dot.ai    { background: #2b6cff; }
+    .tranche-timing-stat-dot.merge { background: var(--success); }
+    .tranche-timing-stat-dot.patch { background: #a78bfa; }
+    .tranche-timing-stat-val { color: var(--text); font-weight: 600; }
+
+    /* ── Patch block type chips ── */
+    .tranche-patch-chips {
+      display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px;
+    }
+    .tranche-patch-chip {
+      padding: 1px 7px; border-radius: 4px; font-size: 9px; font-weight: 700;
+      letter-spacing: 0.4px; text-transform: uppercase;
+    }
+    .tranche-patch-chip.new_file  { background: rgba(43,108,255,0.15); color: #60a5fa; border: 1px solid rgba(43,108,255,0.3); }
+    .tranche-patch-chip.replace   { background: rgba(245,158,11,0.12); color: #fbbf24; border: 1px solid rgba(245,158,11,0.3); }
+    .tranche-patch-chip.insert    { background: rgba(127,219,150,0.12); color: var(--success); border: 1px solid rgba(127,219,150,0.3); }
+    .tranche-patch-chip.append    { background: rgba(168,85,247,0.12); color: #c084fc; border: 1px solid rgba(168,85,247,0.3); }
+    .tranche-patch-chip.legacy    { background: rgba(100,116,139,0.12); color: #94a3b8; border: 1px solid rgba(100,116,139,0.3); }
+
     /* Anti-pattern violation panel */
     .tranche-violation-panel {
       display: none; margin-top: 8px; border-radius: 8px;
@@ -1037,6 +1095,15 @@
               <span class="tranche-token-divider"></span>
               <span class="tranche-token-label">Total:</span>
               <span class="tranche-token-val" id="trancheTokenTotal">0</span>
+              <span class="tranche-token-divider" id="trancheCacheDivider" style="display:none;"></span>
+              <span class="tranche-token-label" id="trancheCacheLabel" style="display:none;color:#34d399;">⚡ Cached:</span>
+              <span class="tranche-token-val" id="trancheCacheRead" style="display:none;color:#34d399;">0</span>
+              <span class="tranche-token-divider" id="trancheCacheDivider2" style="display:none;"></span>
+              <span class="tranche-token-label" id="trancheCacheWriteLabel" style="display:none;color:#60a5fa;">Written:</span>
+              <span class="tranche-token-val" id="trancheCacheWrite" style="display:none;color:#60a5fa;">0</span>
+              <span class="tranche-token-divider" id="trancheSavedDivider" style="display:none;"></span>
+              <span class="tranche-token-label" id="trancheSavedLabel" style="display:none;color:#a78bfa;">Saved:</span>
+              <span class="tranche-token-val" id="trancheCacheSaved" style="display:none;color:#a78bfa;">0</span>
             </div>
           </div>
           
@@ -4294,14 +4361,21 @@ Quality criteria for your work:
         // Update token usage display
         if (prog.tokenUsage && prog.tokenUsage.totals) {
           tokenBar.classList.add('active');
-          const inp = prog.tokenUsage.totals.input_tokens || 0;
-          const out = prog.tokenUsage.totals.output_tokens || 0;
+          const totals = prog.tokenUsage.totals;
+          const inp     = totals.input_tokens          || 0;
+          const out     = totals.output_tokens         || 0;
+          const cRead   = totals.cache_read_tokens     || 0;
+          const cWrite  = totals.cache_creation_tokens || 0;
+          // Tokens saved = cache reads at 90% discount (Anthropic charges 10% for cached reads)
+          const saved   = Math.round(cRead * 0.9);
           const fmt = (n) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+
           const prevIn = tokenIn.textContent;
           const prevOut = tokenOut.textContent;
-          tokenIn.textContent = fmt(inp);
-          tokenOut.textContent = fmt(out);
+          tokenIn.textContent    = fmt(inp);
+          tokenOut.textContent   = fmt(out);
           tokenTotal.textContent = fmt(inp + out);
+
           if (prevIn !== tokenIn.textContent) {
             tokenIn.classList.add('updating');
             setTimeout(() => tokenIn.classList.remove('updating'), 600);
@@ -4310,6 +4384,28 @@ Quality criteria for your work:
             tokenOut.classList.add('updating');
             tokenTotal.classList.add('updating');
             setTimeout(() => { tokenOut.classList.remove('updating'); tokenTotal.classList.remove('updating'); }, 600);
+          }
+
+          // Show cache stats when available
+          const cacheEls = ['trancheCacheDivider','trancheCacheLabel','trancheCacheRead',
+                            'trancheCacheDivider2','trancheCacheWriteLabel','trancheCacheWrite',
+                            'trancheSavedDivider','trancheSavedLabel','trancheCacheSaved'];
+          if (cRead > 0 || cWrite > 0) {
+            cacheEls.forEach(id => {
+              const el = document.getElementById(id);
+              if (el) el.style.display = '';
+            });
+            const crEl = document.getElementById('trancheCacheRead');
+            const cwEl = document.getElementById('trancheCacheWrite');
+            const csEl = document.getElementById('trancheCacheSaved');
+            if (crEl) crEl.textContent = fmt(cRead);
+            if (cwEl) cwEl.textContent = fmt(cWrite);
+            if (csEl) csEl.textContent = fmt(saved);
+          } else {
+            cacheEls.forEach(id => {
+              const el = document.getElementById(id);
+              if (el) el.style.display = 'none';
+            });
           }
         }
 
@@ -4483,6 +4579,11 @@ Quality criteria for your work:
                   </div>
                   <div class="tranche-violation-body" data-role="violations-body"></div>
                 </div>
+                <div class="tranche-timing-bar" data-role="timing-bar">
+                  <div class="tranche-timing-row" data-role="timing-row"></div>
+                  <div class="tranche-timing-labels" data-role="timing-labels"></div>
+                </div>
+                <div class="tranche-patch-chips" data-role="patch-chips"></div>
                 <div class="tranche-card-prompt-toggle" data-role="toggle" onclick="this.nextElementSibling.classList.toggle('open'); this.textContent = this.nextElementSibling.classList.contains('open') ? '▾ Hide tranche prompt' : '▸ Show tranche prompt';">▸ Show tranche prompt</div>
                 <div class="tranche-card-prompt-box" data-role="prompt"></div>
               </div>
@@ -4556,6 +4657,7 @@ Quality criteria for your work:
           if (t.estimatedLines) {
             metaHTML += `<span class="tranche-card-time" style="color:#64748b;">~${t.estimatedLines} lines</span>`;
           }
+          // ── Total wall time (still shown in meta bar) ───────────────
           if (t.startTime && t.endTime) {
             metaHTML += `<span class="tranche-card-time">⏱ ${this._formatDuration(t.endTime - t.startTime)}</span>`;
           } else if (t.startTime && t.status === 'in_progress') {
@@ -4570,7 +4672,13 @@ Quality criteria for your work:
             const tIn = t.tokenUsage.input_tokens || 0;
             const tOut = t.tokenUsage.output_tokens || 0;
             const fmt = (n) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
-            metaHTML += `<span class="tranche-card-time" style="color: #a78bfa;">⚡ ${fmt(tIn + tOut)} tokens</span>`;
+            metaHTML += `<span class="tranche-card-time" style="color:#93c5fd;">↑${fmt(tIn)}</span>`;
+            metaHTML += `<span class="tranche-card-time" style="color:#6ee7b7;">↓${fmt(tOut)}</span>`;
+          }
+          if (t.patchMode !== undefined) {
+            metaHTML += t.patchMode
+              ? `<span class="tranche-card-tag" style="background:rgba(127,219,150,0.1);color:var(--success);border:1px solid rgba(127,219,150,0.25);">PATCH</span>`
+              : `<span class="tranche-card-tag" style="background:rgba(100,116,139,0.1);color:#94a3b8;border:1px solid rgba(100,116,139,0.25);">LEGACY</span>`;
           }
           if (t.contractPromptReviewWarnings && t.contractPromptReviewWarnings.length > 0) {
             metaHTML += `<span class="tranche-card-tag" style="background:#f59e0b22;color:#f59e0b;border:1px solid #f59e0b44;">ℹ Prompt contract review</span>`;
@@ -4579,6 +4687,91 @@ Quality criteria for your work:
             metaHTML += `<span class="tranche-card-tag" style="background:#38bdf822;color:#38bdf8;border:1px solid #38bdf844;">ℹ Code contract review</span>`;
           }
           metaEl.innerHTML = metaHTML;
+
+          // ── Timing breakdown bar (shown when complete with timing data) ──
+          const timingBarEl   = card.querySelector('[data-role="timing-bar"]');
+          const timingRowEl   = card.querySelector('[data-role="timing-row"]');
+          const timingLabelsEl = card.querySelector('[data-role="timing-labels"]');
+          const patchChipsEl  = card.querySelector('[data-role="patch-chips"]');
+
+          const hasTimingData = t.aiCallDurationMs > 0;
+          if (timingBarEl && hasTimingData && t.status === 'complete') {
+            timingBarEl.classList.add('active');
+
+            const aiMs    = t.aiCallDurationMs || 0;
+            const mergeMs = t.mergeDurationMs  || 0;
+            const totalMs = aiMs + mergeMs;
+            const aiPct   = totalMs > 0 ? ((aiMs / totalMs) * 100).toFixed(1) : 100;
+            const mergePct = totalMs > 0 ? Math.max(1, 100 - parseFloat(aiPct)) : 0;
+
+            // Proportional bar — AI generation vs merge write
+            timingRowEl.innerHTML = `
+              <div class="tranche-timing-segment ai" style="width:${aiPct}%;">
+                ${aiMs > 3000 ? `AI ${this._formatDuration(aiMs)}` : ''}
+              </div>
+              <div class="tranche-timing-segment merge" style="width:${mergePct}%;">
+                ${mergeMs > 100 ? `✎ ${this._formatDuration(mergeMs)}` : '✎'}
+              </div>`;
+
+            // Stat labels below the bar
+            const tIn      = t.tokenUsage?.input_tokens               || 0;
+            const tOut     = t.tokenUsage?.output_tokens              || 0;
+            const tCacheR  = t.tokenUsage?.cache_read_input_tokens    || 0;
+            const tCacheW  = t.tokenUsage?.cache_creation_input_tokens || 0;
+            const fmt  = (n) => n >= 1000 ? `${(n/1000).toFixed(1)}k` : String(n);
+            const linesAdded = t.patchLinesAdded || 0;
+            const cacheSaved = Math.round(tCacheR * 0.9);
+            timingLabelsEl.innerHTML = `
+              <span class="tranche-timing-stat">
+                <span class="tranche-timing-stat-dot ai"></span>
+                AI gen: <span class="tranche-timing-stat-val">${this._formatDuration(aiMs)}</span>
+              </span>
+              <span class="tranche-timing-stat">
+                <span class="tranche-timing-stat-dot merge"></span>
+                Merge: <span class="tranche-timing-stat-val">${this._formatDuration(mergeMs)}</span>
+              </span>
+              <span class="tranche-timing-stat">
+                <span class="tranche-timing-stat-dot ai"></span>
+                In: <span class="tranche-timing-stat-val">${fmt(tIn)}</span>
+              </span>
+              <span class="tranche-timing-stat">
+                <span class="tranche-timing-stat-dot merge"></span>
+                Out: <span class="tranche-timing-stat-val">${fmt(tOut)}</span>
+              </span>
+              ${tCacheR > 0 ? `<span class="tranche-timing-stat">
+                <span class="tranche-timing-stat-dot" style="background:#34d399;"></span>
+                Cache hit: <span class="tranche-timing-stat-val" style="color:#34d399;">${fmt(tCacheR)}</span>
+              </span>` : ''}
+              ${tCacheW > 0 ? `<span class="tranche-timing-stat">
+                <span class="tranche-timing-stat-dot" style="background:#60a5fa;"></span>
+                Cache write: <span class="tranche-timing-stat-val" style="color:#60a5fa;">${fmt(tCacheW)}</span>
+              </span>` : ''}
+              ${cacheSaved > 0 ? `<span class="tranche-timing-stat">
+                <span class="tranche-timing-stat-dot" style="background:#a78bfa;"></span>
+                Saved: <span class="tranche-timing-stat-val" style="color:#a78bfa;">~${fmt(cacheSaved)}</span>
+              </span>` : ''}
+              ${linesAdded > 0 ? `<span class="tranche-timing-stat">
+                <span class="tranche-timing-stat-dot patch"></span>
+                Lines: <span class="tranche-timing-stat-val">+${linesAdded}</span>
+              </span>` : ''}`;
+          } else if (timingBarEl) {
+            timingBarEl.classList.remove('active');
+          }
+
+          // ── Patch block type chips ────────────────────────────────────────
+          if (patchChipsEl && Array.isArray(t.patchBlockTypes) && t.patchBlockTypes.length > 0) {
+            // Count each type
+            const typeCounts = {};
+            t.patchBlockTypes.forEach(type => { typeCounts[type] = (typeCounts[type] || 0) + 1; });
+            const typeLabels = { new_file: 'NEW FILE', replace: 'REPLACE', insert: 'INSERT', append: 'APPEND' };
+            patchChipsEl.innerHTML = Object.entries(typeCounts).map(([type, count]) =>
+              `<span class="tranche-patch-chip ${type}">${typeLabels[type] || type}${count > 1 ? ` ×${count}` : ''}</span>`
+            ).join('');
+          } else if (patchChipsEl && t.patchMode === false && t.status === 'complete') {
+            patchChipsEl.innerHTML = '<span class="tranche-patch-chip legacy">FULL FILE (legacy)</span>';
+          } else if (patchChipsEl) {
+            patchChipsEl.innerHTML = '';
+          }
 
           // Quality criteria (V2)
           const qualityLines = [];
@@ -7300,22 +7493,21 @@ The backend planner reads this request plus project files plus two Firebase-host
 It then splits the build into sequential tranches. No intermediate architecture synthesis step.
 
 ENVIRONMENT CONSTRAINTS (platform facts handled by backend):
-1. Output format uses delimiter blocks: ===FILE_START: path=== ... ===FILE_END: path===
+1. Executors use PATCH BLOCK FORMAT — they output only the functions/sections they change, not full files. The backend merge engine applies those patches to the live accumulated file after each tranche. Tranche prompts must be written so the executor knows exactly which named functions to REPLACE, INSERT, or APPEND.
 2. Valid target files are models/2, models/23, and json/scene_intent.json. json/assets.json, json/tree.json, and json/entities.json are compiler-owned read-only context files. scene_intent.json may declare groups[], objects[], and standalone rigidbodies[] when a rigidbody must exist directly under a group or at the root. If those compiler-owned files ever conflict with a fresher scene_intent.json during a run, scene_intent.json is authoritative until the compile/apply sync path rebuilds the package.
 3. Main logic file is models/2. HTML overlay is models/23.
-4. Output complete file contents, not patches or diffs.
-5. Preserve accumulated code from prior tranches.
+4. Executors output PATCH BLOCKS only — REPLACE_BLOCK to update an existing named function, INSERT_BLOCK to add code after a named anchor, APPEND_BLOCK for new top-level additions, NEW_FILE for first creation. Full file re-emission is forbidden.
+5. Because executors output only their changes, each tranche prompt MUST name the exact functions it will REPLACE or INSERT, and the exact anchor it will INSERT after. Vague scope is insufficient — name the function: "REPLACE_BLOCK id=onRender".
 6. The immutable Scaffold v19 is injected by backend and is the required base architecture.
 7. The SDK / Engine Reference is injected by backend for engine facts and uncertainty resolution.
 8. Anti-pattern validators mechanically enforce engine rules after each tranche.
 
 PLANNING REQUIREMENTS:
-- Make tranche count dynamic. The number of tranches must be determined by true dependency order, subsystem complexity, and execution safety — never by a preset target. A simple game may only need 7-9 tranches, while a larger game may need more. Game depth, detail, and density must come from the actual requirements, not from artificially increasing tranche count. Keep naturally related work together when it safely fits within the active line-budget window; split only when dependency, risk, or execution size requires it.
-- Tranches 1-5: target ~175-225 lines of new or changed code per tranche. If a tranche covers more than 2 distinct systems or ~3 new functions, split it further.
-- Tranches 6-10: target ~120-170 lines of new or changed code per tranche. If scope expands beyond one subsystem, split it further.
-- LATE-PHASE TIGHTENING: For tranches at position 11 or later, reduce the budget to ~80-130 lines of new/changed code, cap scope to ONE function or ONE tightly-coupled function pair, and default to A/B sub-tranche splits. Any tranche 11+ touching more than one section of models/2 must be split.
+- Make tranche count dynamic. A simple game with 1-2 mechanics may use 8-10 tranches. Any game with 3+ systems, hazards, audio-feedback, roster assets with texture contracts, or authored level content MUST use 12+ tranches. When in doubt, split — more smaller tranches always beats fewer large ones.
+- ALL tranches: target 400-500 lines of NEW code per tranche. Patch output is flat-cost — the merge engine applies only changed blocks, so a 500-line patch costs the same output tokens as a 50-line patch. Use the full budget for game fidelity, complete function bodies, rich audio/visual feedback, thorough error handling, and accurate physics. Only split a tranche when there is a genuine dependency boundary or independent risk boundary — never split purely to reduce line count.
+- LATE-PHASE (tranches 11 and beyond): the 400-500 line budget still applies. Late tranches handle integration, audio balancing, edge cases, and death-sequence polish — use the full budget for quality. Split only when two genuinely independent subsystems are being addressed.
 - Order tranches by true dependency.
-- Each tranche prompt must embed exact game-specific rules, code examples, and pitfall warnings from this request. Do NOT summarize — copy the exact technical details.
+- Each tranche prompt must NAME THE EXACT FUNCTIONS the executor will add or change (these become the REPLACE_BLOCK / INSERT_BLOCK ids). Embed exact game-specific rules, variable names, and pitfall warnings. Do NOT summarize — copy the exact technical details.
 - The scaffold is the codified binding law extracted from shipped working games. Adapt the requested game to the scaffold — never adapt the scaffold to the game.
 - The SDK / Engine Reference is subordinate. Use it only when the scaffold is silent and engine certainty is needed.
 - Pick one lawful pattern family per subsystem and preserve it through planning, execution, validation, and repair. Do not silently switch families mid-pipeline.
@@ -7348,11 +7540,12 @@ SCAFFOLD NON-NEGOTIABLES (v19 — enforced by backend, must also be reflected in
 - Rule 35 ENGINE AUTO-ROTATION: The Cherry3D engine automatically applies visual rotation to ANY object whose position changes between frames. Objects that must hold a fixed orientation during flight (projectiles, knives, balls) must set obj.rotate = [0,0,0] EVERY frame inside their update — once at spawn is not enough.
 
 TRANCHE STRUCTURE:
-1. First tranche: scaffold-compliant foundations (existing immutable sections, factories, materials, world build, STATIC collision surfaces).
-2. Middle tranches: ONE subsystem each, strictly ordered by dependency. If a subsystem is complex (e.g. physics + controls + camera together), split it across multiple consecutive sub-tranches (A, B, C...).
-3. Never group more than ONE major system per tranche. When unsure, split.
-4. Any game with hazards, fail states, or frequent avatar interaction must reserve at least one dedicated tranche for audio feel, impact feedback, death readability, and hazard cueing once the related gameplay events already exist in code.
-5. Last tranche: integration, edge cases, audio/feedback balancing, death-sequence readability, and final scaffold alignment.
+1. First tranche (Foundation-A): scaffold hook wiring, shared gameState field declarations, objectids registration, factory/hook extensions, and material constant definitions. Use the full budget for thoroughness. Must NOT include world geometry placement, terrain primitives, or STATIC rigidbodies — those belong in the next dedicated tranche.
+2. Terrain / Scene Shell tranche (if applicable): ground primitives, STATIC rigidbodies, full scene layout, and environmental dressing. Use the full budget — a complete terrain shell prevents placement errors in all later tranches. Placed immediately after Foundation-A and before any gameplay system tranche.
+3. Middle tranches: ONE subsystem each, strictly ordered by dependency. If a subsystem is complex (e.g. physics + controls + camera together), split it across multiple consecutive sub-tranches (A, B, C...). Each prompt must name the exact function ids the executor will REPLACE or INSERT.
+4. Never group more than ONE major system per tranche. When unsure, split.
+5. Any game with hazards, fail states, or frequent avatar interaction must reserve at least one dedicated tranche for audio feel, impact feedback, death readability, and hazard cueing once the related gameplay events already exist in code.
+6. Last tranche: integration, edge cases, audio/feedback balancing, death-sequence readability, and final scaffold alignment.
 
 User Request: ${prompt}${approvedRosterContext}${attachedPromptImages.length > 0 ? `
 
