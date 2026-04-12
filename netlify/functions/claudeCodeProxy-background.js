@@ -4496,11 +4496,11 @@ REMINDER: The files above are READ-ONLY context. Output ONLY patch blocks (REPLA
         ...(imageBlocks || [])
       ];
 
-      // ── Thinking budget — flat 12k across all tranches ─────────
+      // ── Thinking budget — flat 20k across all tranches ─────────
       // Every tranche targets 400-500 lines of new code covering a full
       // subsystem. Early tranches are not simpler than late ones at this
       // scope — Foundation-A wiring, terrain shells, physics setup, and
-      // audio integration all require equal reasoning depth. Flat 12k
+      // audio integration all require equal reasoning depth. Flat 20k
       // ensures no tranche is short-changed on planning quality.
       const thinkingBudget = 20000;
 

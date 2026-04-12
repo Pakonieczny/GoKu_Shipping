@@ -954,6 +954,68 @@
     .ref-img-clear-btn.visible { display: flex; }
     .ref-img-clear-btn:hover { background: rgba(252,165,165,0.35); }
 
+    /* ── Ref image modal — asset source toggle + skip control ── */
+    .ref-img-controls {
+      display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap;
+    }
+
+    /* Source toggle — Props / Avatars.zip */
+    .ref-img-source-toggle {
+      display: flex; border-radius: 8px; overflow: hidden;
+      border: 1px solid #2b3a6b; flex-shrink: 0;
+    }
+    .ref-img-source-btn {
+      padding: 4px 10px; font-size: 10px; font-weight: 700; cursor: pointer;
+      border: none; background: #0e1220; color: var(--muted);
+      transition: all 0.15s; letter-spacing: 0.3px; line-height: 1.4;
+    }
+    .ref-img-source-btn:first-child { border-right: 1px solid #2b3a6b; }
+    .ref-img-source-btn.active.props {
+      background: rgba(43,108,255,0.2); color: #60a5fa;
+    }
+    .ref-img-source-btn.active.avatars {
+      background: rgba(168,85,247,0.2); color: #c084fc;
+    }
+    .ref-img-source-label {
+      font-size: 9px; color: var(--muted); text-transform: uppercase;
+      letter-spacing: 0.5px; align-self: center; margin-right: 2px;
+    }
+
+    /* Include toggle — On / Off pill */
+    .ref-img-include-toggle {
+      display: flex; align-items: center; gap: 6px; margin-left: auto;
+      cursor: pointer; user-select: none; flex-shrink: 0;
+    }
+    .ref-img-include-label {
+      font-size: 10px; font-weight: 700; letter-spacing: 0.3px;
+      transition: color 0.2s;
+    }
+    .ref-img-include-track {
+      width: 34px; height: 18px; border-radius: 999px;
+      background: #1a1e2b; border: 1px solid #2b3a6b;
+      position: relative; transition: background 0.2s, border-color 0.2s;
+      flex-shrink: 0;
+    }
+    .ref-img-include-thumb {
+      position: absolute; top: 2px; left: 2px;
+      width: 12px; height: 12px; border-radius: 50%;
+      background: var(--muted); transition: transform 0.2s, background 0.2s;
+    }
+    .ref-img-include-toggle.on .ref-img-include-track {
+      background: rgba(127,219,150,0.2); border-color: rgba(127,219,150,0.5);
+    }
+    .ref-img-include-toggle.on .ref-img-include-thumb {
+      transform: translateX(16px); background: var(--success);
+    }
+    .ref-img-include-toggle.on .ref-img-include-label { color: var(--success); }
+    .ref-img-include-toggle.off .ref-img-include-label { color: var(--muted); }
+
+    /* Skipped row styling */
+    .ref-img-row.skipped {
+      opacity: 0.45; pointer-events: none;
+    }
+    .ref-img-row.skipped .ref-img-include-toggle { pointer-events: auto; }
+
     .ref-img-modal-footer {
       padding: 16px 24px; border-top: 1px solid var(--line);
       display: flex; align-items: center; gap: 12px;
@@ -6571,66 +6633,142 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
     }
 
     // ── Reference Image Modal ─────────────────────────────────────────────
-    // Renders the modal with one row per 3D object from Phase 1.
-    // Returns a Promise that resolves with an array of
-    //   { requirementName, mimeType, b64 }
-    // once the user has provided images for all objects and clicks confirm.
+    // Renders the modal with one row per 3D object/avatar from Phase 1.
+    //
+    // Each row now has:
+    //   • Asset source toggle  — Props (default for objects) | Avatars.zip (default for avatars)
+    //   • Include toggle       — On (default) | Off (skip this asset entirely)
+    //   • Reference image drop zone (required only when included=true)
+    //
+    // Resolves with an array of:
+    //   { requirementName, requirementType, assetSource, included, mimeType?, b64? }
     function showRefImageModal(requirements) {
       return new Promise((resolve) => {
-        const overlay    = document.getElementById('refImgModal');
-        const body       = document.getElementById('refImgModalBody');
-        const confirmBtn = document.getElementById('refImgConfirmBtn');
+        const overlay       = document.getElementById('refImgModal');
+        const body          = document.getElementById('refImgModalBody');
+        const confirmBtn    = document.getElementById('refImgConfirmBtn');
         const progressFill  = document.getElementById('refImgProgressFill');
         const progressLabel = document.getElementById('refImgProgressLabel');
         const footerHint    = document.getElementById('refImgFooterHint');
 
         const reqs = Array.isArray(requirements) ? requirements : [];
-        const imageMap = new Map(reqs.map(r => [r.name, null]));
 
+        // Per-item state maps
+        const imageMap     = new Map(reqs.map(r => [r.name, null]));
+        const sourceMap    = new Map(reqs.map(r => [
+          r.name,
+          r.requirementType === 'avatar' ? 'avatars' : 'props'  // defaults
+        ]));
+        const includedMap  = new Map(reqs.map(r => [r.name, true]));  // all On by default
+
+        // ── Progress ─────────────────────────────────────────────────────────
         function updateProgress() {
-          const total = reqs.length;
-          const done  = [...imageMap.values()].filter(Boolean).length;
-          const pct   = total > 0 ? (done / total) * 100 : 0;
+          const activeReqs = reqs.filter(r => includedMap.get(r.name));
+          const total      = activeReqs.length;
+          const done       = activeReqs.filter(r => imageMap.get(r.name)).length;
+          const skipped    = reqs.length - activeReqs.length;
+          const pct        = total > 0 ? (done / total) * 100 : 100;
+
           progressFill.style.width  = `${pct}%`;
-          progressLabel.textContent = `${done} / ${total} images provided`;
-          confirmBtn.disabled = done < total;
-          footerHint.textContent = done < total
-            ? `${total - done} requirement(s) still need a reference image.`
-            : 'All images provided — ready to continue.';
+          progressLabel.textContent = skipped > 0
+            ? `${done} / ${total} images provided  •  ${skipped} skipped`
+            : `${done} / ${total} images provided`;
+
+          const allDone = done >= total;
+          confirmBtn.disabled = !allDone;
+          footerHint.textContent = allDone
+            ? `All required images provided — ready to continue.`
+            : `${total - done} active requirement(s) still need a reference image.`;
 
           reqs.forEach(req => {
             const chip = document.getElementById(`refImgChip_${CSS.escape(req.name)}`);
-            if (chip) {
-              if (imageMap.get(req.name)) {
-                chip.textContent = '✓ Image ready';
-                chip.classList.add('ready');
-                const row = document.getElementById(`refImgRow_${CSS.escape(req.name)}`);
-                if (row) row.classList.add('has-image');
-              } else {
-                chip.textContent = '⬆ Drop image';
-                chip.classList.remove('ready');
-                const row = document.getElementById(`refImgRow_${CSS.escape(req.name)}`);
-                if (row) row.classList.remove('has-image');
-              }
+            const row  = document.getElementById(`refImgRow_${CSS.escape(req.name)}`);
+            if (!chip || !row) return;
+
+            const isIncluded = includedMap.get(req.name);
+            const hasImage   = Boolean(imageMap.get(req.name));
+
+            row.classList.toggle('skipped', !isIncluded);
+
+            if (!isIncluded) {
+              chip.textContent = '⊘ Skipped';
+              chip.style.background = 'rgba(100,116,139,0.12)';
+              chip.style.color = '#64748b';
+              chip.style.borderColor = 'rgba(100,116,139,0.3)';
+              chip.classList.remove('ready');
+            } else if (hasImage) {
+              chip.textContent = '✓ Image ready';
+              chip.style.background = '';
+              chip.style.color = '';
+              chip.style.borderColor = '';
+              chip.classList.add('ready');
+              row.classList.add('has-image');
+            } else {
+              chip.textContent = '⬆ Drop image';
+              chip.style.background = '';
+              chip.style.color = '';
+              chip.style.borderColor = '';
+              chip.classList.remove('ready');
+              row.classList.remove('has-image');
             }
           });
         }
 
+        // ── Source toggle wiring ──────────────────────────────────────────────
+        function attachSourceToggle(req) {
+          const propsBtn   = document.getElementById(`refImgSrcProps_${CSS.escape(req.name)}`);
+          const avatarsBtn = document.getElementById(`refImgSrcAvatars_${CSS.escape(req.name)}`);
+          if (!propsBtn || !avatarsBtn) return;
+
+          function setSource(src) {
+            sourceMap.set(req.name, src);
+            propsBtn.classList.toggle('active',   src === 'props');
+            propsBtn.classList.toggle('props',    src === 'props');
+            avatarsBtn.classList.toggle('active', src === 'avatars');
+            avatarsBtn.classList.toggle('avatars',src === 'avatars');
+          }
+          // Init
+          setSource(sourceMap.get(req.name));
+          propsBtn.addEventListener('click',   () => setSource('props'));
+          avatarsBtn.addEventListener('click', () => setSource('avatars'));
+        }
+
+        // ── Include toggle wiring ─────────────────────────────────────────────
+        function attachIncludeToggle(req) {
+          const toggle = document.getElementById(`refImgInclude_${CSS.escape(req.name)}`);
+          if (!toggle) return;
+
+          function setIncluded(val) {
+            includedMap.set(req.name, val);
+            toggle.classList.toggle('on',  val);
+            toggle.classList.toggle('off', !val);
+            const label = toggle.querySelector('.ref-img-include-label');
+            if (label) label.textContent = val ? 'ON' : 'OFF';
+            // Enable/disable the drop zone
+            const dropZone = document.getElementById(`refImgDrop_${CSS.escape(req.name)}`);
+            if (dropZone) dropZone.style.pointerEvents = val ? '' : 'none';
+            updateProgress();
+          }
+          setIncluded(includedMap.get(req.name));
+          toggle.addEventListener('click', () => setIncluded(!includedMap.get(req.name)));
+        }
+
+        // ── Drop zone wiring ──────────────────────────────────────────────────
         function attachDropZone(req) {
-          const dropZone   = document.getElementById(`refImgDrop_${CSS.escape(req.name)}`);
-          const fileInput  = document.getElementById(`refImgInput_${CSS.escape(req.name)}`);
-          const preview    = document.getElementById(`refImgPreview_${CSS.escape(req.name)}`);
-          const clearBtn   = document.getElementById(`refImgClear_${CSS.escape(req.name)}`);
-          const dropIcon   = dropZone.querySelector('.ref-img-drop-icon');
-          const dropHint   = dropZone.querySelector('.ref-img-drop-hint');
+          const dropZone  = document.getElementById(`refImgDrop_${CSS.escape(req.name)}`);
+          const fileInput = document.getElementById(`refImgInput_${CSS.escape(req.name)}`);
+          const preview   = document.getElementById(`refImgPreview_${CSS.escape(req.name)}`);
+          const clearBtn  = document.getElementById(`refImgClear_${CSS.escape(req.name)}`);
+          if (!dropZone) return;
+          const dropIcon = dropZone.querySelector('.ref-img-drop-icon');
+          const dropHint = dropZone.querySelector('.ref-img-drop-hint');
 
           function loadFile(file) {
             if (!file || !file.type.startsWith('image/')) return;
             const reader = new FileReader();
             reader.onload = (e) => {
               const dataUrl = e.target.result;
-              const b64     = dataUrl.split(',')[1];
-              imageMap.set(req.name, { mimeType: file.type, b64 });
+              imageMap.set(req.name, { mimeType: file.type, b64: dataUrl.split(',')[1] });
               preview.src = dataUrl;
               preview.classList.add('visible');
               if (dropIcon) dropIcon.style.display = 'none';
@@ -6641,12 +6779,12 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
             reader.readAsDataURL(file);
           }
 
-          dropZone.addEventListener('click', (e) => { if (e.target !== clearBtn) fileInput.click(); });
-          fileInput.addEventListener('change', () => { if (fileInput.files[0]) loadFile(fileInput.files[0]); fileInput.value = ''; });
+          dropZone.addEventListener('click',    (e) => { if (e.target !== clearBtn) fileInput.click(); });
+          fileInput.addEventListener('change',  () => { if (fileInput.files[0]) loadFile(fileInput.files[0]); fileInput.value = ''; });
           dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('drag-over'); });
-          dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
-          dropZone.addEventListener('drop', (e) => { e.preventDefault(); dropZone.classList.remove('drag-over'); const file = e.dataTransfer.files[0]; if (file) loadFile(file); });
-          clearBtn.addEventListener('click', (e) => {
+          dropZone.addEventListener('dragleave',() => dropZone.classList.remove('drag-over'));
+          dropZone.addEventListener('drop',     (e) => { e.preventDefault(); dropZone.classList.remove('drag-over'); const f = e.dataTransfer.files[0]; if (f) loadFile(f); });
+          clearBtn.addEventListener('click',    (e) => {
             e.stopPropagation();
             imageMap.set(req.name, null);
             preview.src = '';
@@ -6658,17 +6796,40 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
           });
         }
 
+        // ── Row renderer ──────────────────────────────────────────────────────
         const esc = s => String(s || '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
-        const avatarReqsList = reqs.filter(r => r.requirementType === 'avatar');
-        const propReqsList   = reqs.filter(r => r.requirementType !== 'avatar');
-        const renderGroup = (groupReqs) => groupReqs.map(req => `
+
+        const renderRow = (req) => {
+          const isAvatar     = req.requirementType === 'avatar';
+          const defaultSrc   = isAvatar ? 'avatars' : 'props';
+          const typeLabel    = isAvatar ? 'Avatar' : '3D Object';
+          const roleText     = req.gameplayRole || req.animationNeeds || req.textureStyle || '';
+
+          return `
           <div class="ref-img-row" id="refImgRow_${esc(req.name)}">
             <div class="ref-img-desc">
               <div class="ref-img-obj-name">${esc(req.name)}</div>
               <div class="ref-img-visual-desc">${esc(req.visualDescription)}</div>
-              <div class="ref-img-gameplay-role">${esc((req.requirementType === 'avatar' ? 'Avatar' : '3D Object') + ' — ' + (req.gameplayRole || req.animationNeeds || req.textureStyle || ''))}</div>
+              <div class="ref-img-gameplay-role">${esc(typeLabel + (roleText ? ' — ' + roleText : ''))}</div>
+
+              <div class="ref-img-controls">
+                <span class="ref-img-source-label">Search:</span>
+                <div class="ref-img-source-toggle">
+                  <button class="ref-img-source-btn${defaultSrc === 'props'   ? ' active props'   : ''}" id="refImgSrcProps_${esc(req.name)}">📦 Props</button>
+                  <button class="ref-img-source-btn${defaultSrc === 'avatars' ? ' active avatars' : ''}" id="refImgSrcAvatars_${esc(req.name)}">🧍 Avatars.zip</button>
+                </div>
+
+                <div class="ref-img-include-toggle on" id="refImgInclude_${esc(req.name)}" title="Toggle to skip this asset">
+                  <div class="ref-img-include-track">
+                    <div class="ref-img-include-thumb"></div>
+                  </div>
+                  <span class="ref-img-include-label">ON</span>
+                </div>
+              </div>
+
               <span class="ref-img-status-chip" id="refImgChip_${esc(req.name)}">⬆ Drop image</span>
             </div>
+
             <div class="ref-img-drop-zone" id="refImgDrop_${esc(req.name)}">
               <input type="file" accept="image/*" class="ref-img-drop-input" id="refImgInput_${esc(req.name)}">
               <div class="ref-img-drop-icon">🖼️</div>
@@ -6676,13 +6837,28 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
               <img class="ref-img-preview" id="refImgPreview_${esc(req.name)}" alt="">
               <button class="ref-img-clear-btn" id="refImgClear_${esc(req.name)}">✕</button>
             </div>
-          </div>`).join('');
+          </div>`;
+        };
+
+        const avatarReqsList = reqs.filter(r => r.requirementType === 'avatar');
+        const propReqsList   = reqs.filter(r => r.requirementType !== 'avatar');
+
         body.innerHTML = [
-          avatarReqsList.length > 0 ? `<div class="ref-img-group-header">🧍 Avatar Reference Images</div>${renderGroup(avatarReqsList)}` : '',
-          propReqsList.length > 0 ? `<div class="ref-img-group-header">📦 Prop Reference Images</div>${renderGroup(propReqsList)}` : ''
+          avatarReqsList.length > 0
+            ? `<div class="ref-img-group-header">🧍 Avatar Requirements <span style="font-size:10px;color:var(--muted);font-weight:400;">(default: Avatars.zip)</span></div>${avatarReqsList.map(renderRow).join('')}`
+            : '',
+          propReqsList.length > 0
+            ? `<div class="ref-img-group-header">📦 Prop Requirements <span style="font-size:10px;color:var(--muted);font-weight:400;">(default: Props library)</span></div>${propReqsList.map(renderRow).join('')}`
+            : ''
         ].join('');
 
-        reqs.forEach(req => attachDropZone(req));
+        // Wire all controls
+        reqs.forEach(req => {
+          attachSourceToggle(req);
+          attachIncludeToggle(req);
+          attachDropZone(req);
+        });
+
         updateProgress();
         overlay.classList.add('active');
 
@@ -6692,7 +6868,9 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
           const result = reqs.map(req => ({
             requirementName: req.name,
             requirementType: req.requirementType || 'object3d',
-            ...imageMap.get(req.name)
+            assetSource:     sourceMap.get(req.name) || 'props',   // 'props' | 'avatars'
+            included:        includedMap.get(req.name) !== false,   // true | false
+            ...(includedMap.get(req.name) ? (imageMap.get(req.name) || {}) : {})
           }));
           resolve(result);
         };
@@ -6817,7 +6995,15 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
         } catch (e) {
           throw new Error(`Failed to upload reference images: ${e.message}`);
         }
-        appendToChatLog('System', `${refImages.length} reference image(s) uploaded. Starting visual asset matching...`, 'normal');
+        const includedImages  = refImages.filter(r => r.included !== false);
+        const skippedImages   = refImages.filter(r => r.included === false);
+        const propsItems      = includedImages.filter(r => r.assetSource !== 'avatars');
+        const avatarsItems    = includedImages.filter(r => r.assetSource === 'avatars');
+        appendToChatLog('System',
+          `${includedImages.length} reference image(s) uploaded` +
+          (skippedImages.length > 0 ? ` (${skippedImages.length} skipped)` : '') +
+          (avatarsItems.length > 0  ? ` — ${avatarsItems.length} will search Avatars.zip, ${propsItems.length} will search Props library` : '') +
+          '. Starting visual asset matching...', 'normal');
 
         // ── Step 4: Stage A/B — image-vs-image matching ───────────────────
         Progress.step('Visual Asset Matching', 'Comparing your reference images against the 3D object library...');
