@@ -242,6 +242,55 @@ function buildVocabularyBlock(vocab) {
   return lines.join('\n');
 }
 
+/* ─── Global vocabulary extractor ───────────────────────────────────
+   Builds flat sorted arrays of every unique visual_tag word and every
+   unique asset-name root token across the ENTIRE CSV (uncapped).
+   Used in the Phase 1 prompt as a hard vocabulary constraint — Phase 1
+   must only use words from these lists in searchTerms and variantGroup.
+   Also used post-Phase-1 to filter out any hallucinated terms.
+─────────────────────────────────────────────────────────────────── */
+function parseCsvGlobalVocab(csvText) {
+  const rows = parseCsvRows(csvText);
+  if (rows.length === 0) return { visualTags: [], nameRoots: [], allTerms: new Set() };
+
+  const header  = rows[0].map(h => h.trim().toLowerCase());
+  const nameIdx = header.indexOf('asset_name');
+  const tagsIdx = header.indexOf('visual_tags');
+  if (nameIdx === -1) return { visualTags: [], nameRoots: [], allTerms: new Set() };
+
+  const visualTagSet = new Set();
+  const nameRootSet  = new Set();
+
+  for (let i = 1; i < rows.length; i++) {
+    const name    = (rows[i][nameIdx]  || '').trim();
+    const rawTags = tagsIdx !== -1 ? (rows[i][tagsIdx] || '').trim() : '';
+
+    // Extract individual name tokens (same logic as StageAB tokeniseAssetName)
+    if (name) {
+      assetNameRoot(name)
+        .split(/[\s_\-]+/)
+        .map(t => t.trim())
+        .filter(t => t.length > 1)
+        .forEach(t => nameRootSet.add(t));
+    }
+
+    // Extract all pipe-separated visual tags
+    if (rawTags) {
+      for (const tag of rawTags.split('|')) {
+        const t = tag.trim().toLowerCase();
+        if (t.length > 1) visualTagSet.add(t);
+      }
+    }
+  }
+
+  const visualTags = [...visualTagSet].sort();
+  const nameRoots  = [...nameRootSet].sort();
+  const allTerms   = new Set([...visualTags, ...nameRoots]);
+
+  console.log(`[ROSTER-GEN] Global vocab: ${nameRoots.length} name root tokens, ${visualTags.length} visual tags`);
+  return { visualTags, nameRoots, allTerms };
+}
+
 /* ─── Utilities ──────────────────────────────────────────────────── */
 function stripFences(text) {
   let t = text
@@ -346,8 +395,35 @@ function buildVariantGroupWarnings(objects3d = []) {
     .sort();
 }
 
-function buildPhase1Prompt(masterPrompt, vocab, roadPipeline = {}) {
+function buildPhase1Prompt(masterPrompt, vocab, roadPipeline = {}, globalVocab = null) {
   const vocabBlock = buildVocabularyBlock(vocab);
+
+  // Build the canonical vocabulary constraint block from the global tag/name-root sets.
+  // This ensures Phase 1 only generates searchTerms and variantGroup values that
+  // actually exist in the asset library — preventing hallucinated terms that match nothing.
+  const vocabConstraintBlock = globalVocab ? `
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ASSET LIBRARY VOCABULARY — variantGroup ONLY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+OBJECT NAME WORDS (for variantGroup):
+${globalVocab.nameRoots.join(', ')}
+
+VISUAL / DESCRIPTOR TAGS (for variantGroup qualifier words):
+${globalVocab.visualTags.join(', ')}
+
+STEP 1 — variantGroup (MUST use vocabulary words only — no exceptions):
+  Before writing anything else, identify 1–3 words from OBJECT NAME WORDS or VISUAL / DESCRIPTOR TAGS above that name what this object physically IS.
+  You MUST ONLY use words from the two lists above. No other words are permitted.
+  Lead with the object-type noun (e.g. "tank", "tree", "barrel"). Add 1–2 qualifier words from the same lists if needed (e.g. "military tank", "pine tree").
+  Do not use gameplay-role words ("enemy", "collectible") — only physical object descriptors from the vocabulary.
+
+STEP 2 — BUILD searchTerms (variantGroup words + free-form additional descriptors):
+  searchTerms must include all variantGroup words. Then add 4–8 additional free-form descriptors — color, material, style, subtype, appearance — in natural language. These additional words are NOT restricted to the vocabulary lists. Use whatever words best describe the specific variant needed.
+
+STEP 3 — WRITE visualDescription and gameplayRole (fully free-form):
+  Rich natural-language descriptions with no constraint.
+` : '';
+
   const roadClause = roadPipeline?.roadExclusionFlag
     ? `
 ROAD-FIRST TERRAIN CLAUSE (Road.zip pipeline is active)
@@ -496,15 +572,9 @@ The sections below show every folder in the 3D asset library. Each entry has:
   "Asset name examples" — filename root words that exist in the library
   "Visual tag examples" — semantically enriched synonyms derived from thumbnail images (most valuable signal)
 
-Use all three signals to generate searchTerms for each 3D object requirement.
+Use the asset library vocabulary above for variantGroup and searchTerms. Descriptions are free-form after those are established.
 
-HOW TO GENERATE searchTerms:
-- searchTerms are short, lowercase, single-word tags matched against asset names, folder keywords, AND visual tags in the library.
-- Mirror the visual tag vocabulary as closely as possible — if a folder shows "pine|conical|evergreen" as visual tags, use those exact words when your requirement is a pine-type tree.
-- Include: core object type, material/style, subtypes, and synonyms a game designer might use.
-- Include 6–10 terms per object. More terms = better recall. Cast wide — include synonyms even if they differ from the asset name.
-- Example: for a mossy stone ruin archway → ["arch", "ruin", "stone", "wall", "gate", "pillar", "column", "ancient", "crumbled", "medieval"]
-
+${vocabConstraintBlock}
 ${vocabBlock}
 
 Respond ONLY with a valid JSON object. No markdown, no fences, no preamble.
@@ -522,10 +592,10 @@ Respond ONLY with a valid JSON object. No markdown, no fences, no preamble.
   "objects3d": [
     {
       "name": "short_snake_case_identifier",
-      "visualDescription": "What this prop looks like — shape, silhouette, style, approximate scale",
-      "gameplayRole": "What this prop does in the game — obstacle, collectible, environment piece, hazard, etc.",
-      "variantGroup": "The prop class this belongs to, e.g. 'tree', 'rock', 'building', 'vehicle', 'unique'",
-      "searchTerms": ["core_object_word", "synonym_or_material", "subtype_word", "more_terms"]
+      "variantGroup": "VOCABULARY-CONSTRAINED: 1–3 words from the vocabulary lists naming what this object IS — e.g. 'tank', 'military tank', 'pine tree', 'stone arch'",
+      "searchTerms": ["variantGroup_word_first", "then_free-form_color", "free-form_material", "free-form_style", "free-form_subtype"],
+      "visualDescription": "Free-form: what this prop looks like — shape, silhouette, style, scale, materials, distinguishing features",
+      "gameplayRole": "Free-form: what this prop does in the game — obstacle, collectible, environment piece, hazard, etc."
     }
   ],
   "avatarRequirements": [
@@ -576,7 +646,9 @@ exports.handler = async (event) => {
     const [csvExists] = await csvFile.exists();
     if (!csvExists) throw new Error(`Global asset CSV not found at ${GLOBAL_ASSET_CSV_PATH}`);
     const [csvBuffer] = await csvFile.download();
-    const vocab = parseCsvVocabulary(csvBuffer.toString("utf8"));
+    const csvText = csvBuffer.toString('utf8');
+    const vocab       = parseCsvVocabulary(csvText);
+    const globalVocab = parseCsvGlobalVocab(csvText);
     console.log(`[ROSTER-GEN] CSV loaded: ${vocab.size} subsection folders indexed`);
 
     // ── 2. Load Master Prompt + inline images from ai_request.json ──────
@@ -616,7 +688,7 @@ exports.handler = async (event) => {
       maxTokens:   16000,
       system:      "You are a game visual requirements analyst. Respond only with a valid JSON object. No markdown, no fences, no preamble.",
       userContent: [
-        { type: "text", text: imagePreamble + buildPhase1Prompt(masterPrompt, vocab, roadPipeline) },
+        { type: "text", text: imagePreamble + buildPhase1Prompt(masterPrompt, vocab, roadPipeline, globalVocab) },
         ...refImageBlocks
       ]
     });
@@ -635,14 +707,36 @@ exports.handler = async (event) => {
       );
       console.error("[ROSTER-GEN] Response head:", phase1Result.text.slice(0, 300));
       console.error("[ROSTER-GEN] Response tail:", phase1Result.text.slice(-300));
+      // Write error sentinel so the frontend poller surfaces the failure immediately
+      // instead of spinning until its own timeout. Must happen before returning.
+      if (bucket && projectPath) {
+        try {
+          await bucket.file(`${projectPath}/ai_asset_roster_error.json`).save(
+            JSON.stringify({ error: `Phase 1 returned unparseable JSON: ${e.message}`, failedAt: Date.now(), stage: "phase1", jobId: jobId || null }),
+            { contentType: "application/json", resumable: false }
+          );
+        } catch (writeErr) { /* non-fatal — best effort */ }
+      }
       return err500(`Phase 1 returned unparseable JSON: ${e.message}`);
     }
 
     phase1.avatarRequirements = Array.isArray(phase1.avatarRequirements) ? phase1.avatarRequirements : [];
 
-    // Validate and normalise searchTerms for each 3D object requirement
+    // Normalise variantGroup and searchTerms. variantGroup vocabulary compliance is
+    // enforced by the prompt — no post-hoc correction or validation needed here.
     for (const obj of (phase1.objects3d || [])) {
-      obj.variantGroup = String(obj.variantGroup || 'unique').trim() || 'unique';
+
+      // Normalise variantGroup to lowercase, trim whitespace/punctuation
+      let vg = String(obj.variantGroup || '')
+        .toLowerCase().trim().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
+      if (!vg) {
+        const nameParts = String(obj.name || '').toLowerCase().split(/[_\s]+/).filter(t => t.length > 1);
+        vg = nameParts[0] || 'unique';
+        console.warn(`[ROSTER-GEN] Object "${obj.name}" had no variantGroup — inferred "${vg}" from name`);
+      }
+      obj.variantGroup = vg;
+
+      // Normalise searchTerms — deduplicate and strip non-alphanumeric characters only
       if (!Array.isArray(obj.searchTerms) || obj.searchTerms.length === 0) {
         console.warn(`[ROSTER-GEN] Object "${obj.name}" returned no searchTerms — CSV search recall will be low`);
         obj.searchTerms = [];

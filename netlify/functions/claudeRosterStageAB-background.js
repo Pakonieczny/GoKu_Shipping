@@ -1,29 +1,28 @@
 /* netlify/functions/claudeRosterStageAB-background.js */
 /* ═══════════════════════════════════════════════════════════════════
-   ASSET ROSTER — STAGE A/B VISUAL MATCHING — v6.0
+   ASSET ROSTER — VISUAL MATCHING — v7.0
    ─────────────────────────────────────────────────────────────────
    Background Netlify function (suffix -background = 15-min timeout).
    Returns 202 immediately. Writes result to Firebase when done.
    Frontend polls ai_asset_roster_pending.json to detect completion.
 
-   Key change from v5: CSV-driven category pre-filtering.
+   Key change from v6: collapsed two-stage (A/B) vision pass into a
+   single accurate vision call per requirement. The CSV quality gate
+   is now the only filter — no raw top-N fallback.
    ─────────────────────────────────────────────────────────────────
    Flow:
      1. Read Phase 1 result from ai_asset_roster_phase1.json.
-        Phase 1 includes rankedCategories (2 to 6) per 3D object,
-        sorted by likelihoodPercent from highest to lowest.
      2. Read user reference images from ai_roster_ref_images.json.
      3. Read global CSV from game-generator-1/projects/BASE_Files/asset_3d_objects/
         reorganized_assets_manifest.csv → build assetName→category map.
-     4. Scan ONLY the zip files whose asset_name maps to one of the
-        rankedCategories / suggestedCategories for each requirement.
-        If fewer than 2 valid CSV-backed categories remain, skip object search for that requirement
-        rather than falling back to the full library.
-     5. STAGE A — image-vs-image batch scan on the filtered asset pool.
-        Particles: text description vs thumbnails (unchanged).
-        3D Objects: user reference image vs filtered thumbnails.
-     6. STAGE B — per-requirement final visual pick (unchanged).
-     7. Assemble final roster, enforce limits, save pending.json.
+     4. CSV text search with quality gate (rawScore ≥ MIN_QUALITY_SCORE).
+        If quality gate returns 0 results the requirement is unmatched —
+        no fallback to raw top-N.
+     5. Single vision call per requirement: user reference image vs
+        all CSV-filtered thumbnails. Model picks the single best match
+        directly. No batching intermediate pass, no second selection call.
+        Particles: text description vs thumbnails (unchanged, single pass).
+     6. Assemble final roster, enforce limits, save pending.json.
 
    Global asset paths (shared across all projects):
      CSV:  game-generator-1/projects/BASE_Files/asset_3d_objects/reorganized_assets_manifest.csv
@@ -195,17 +194,27 @@ function parseCsvRows(csvText) {
 }
 
 /* ─── CSV search engine ─────────────────────────────────────────────
-   Replaces the old category-filter approach entirely.
    Builds a flat array of tokenised asset records from the CSV.
-   StageAB scores every record against Phase 1 searchTerms to produce
-   a ranked candidate pool for Stage A vision — no Claude guessing
-   required for the filtering step.
+   StageAB scores every record against Phase 1 searchTerms + variantGroup
+   to produce a ranked candidate pool for vision matching.
 
-   Scoring per asset vs searchTerms:
-     +4  exact match: searchTerm === assetName token
+   Two-stage scoring:
+     1. Raw per-term max (scoreAssetVsTerms) — gates quality threshold.
+        Each term contributes only its single highest match score to prevent
+        double-counting across tag/name/subsection categories.
+     2. IDF-weighted (scoreAssetVsTermsWeighted) — used for final ranking.
+        Secondary terms are multiplied by log(N/df): rare terms like
+        "helicopter" score higher than common terms like "yellow".
+        Primary terms (variantGroup: "tank", "helicopter") use a fixed
+        PRIMARY_BOOST multiplier instead of IDF — the object type should
+        never be penalised for being well-represented in the library.
+
+   Scoring per asset per term (raw, before multiplier):
+     +6  exact match: searchTerm === visual_tag
+     +4  exact match: searchTerm === asset name token
      +2  exact match: searchTerm === subsection token
-     +1  substring:   searchTerm contained in (or contains) assetName token
-   Assets are ranked by total score; top MAX_CSV_CANDIDATES passed to Stage A.
+     +1  substring:   searchTerm contained in (or contains) name or tag token
+   Top MAX_CSV_CANDIDATES qualifying assets are passed to vision matching.
 ─────────────────────────────────────────────────────────────────── */
 
 function tokeniseAssetName(name) {
@@ -270,55 +279,160 @@ function buildCsvSearchIndex(csvText) {
   return records;
 }
 
+/* ─── Scoring constants ──────────────────────────────────────────── */
+
+// Hard cap on candidates forwarded to vision matching.
+const MAX_CSV_CANDIDATES = 50;
+
+// Raw score threshold for quality filtering (pre-IDF).
+// +4 = at least one exact asset-name token match.
+// Using raw score keeps the quality bar predictable regardless of IDF values.
+// No fallback — if 0 assets pass this gate the requirement is unmatched.
+const MIN_QUALITY_SCORE = 4;
+
+// Fixed score multiplier applied to variantGroup (primary object-type) terms.
+// These bypass IDF discounting: "tank" is common in the library precisely because
+// there are many tank variants — that should not penalise the search.
+const PRIMARY_BOOST = 5;
+
+/* ─── Raw per-term scorer (used for quality threshold) ───────────── */
+// Each term contributes only its SINGLE highest-scoring hit across all categories
+// (per-term max, fixes Issue 5 double-counting). No IDF — raw signal strength only.
+// This is the gating function: if rawScore < MIN_QUALITY_SCORE the asset is excluded
+// regardless of how IDF weighting ranks it.
 function scoreAssetVsTerms(record, terms) {
-  // Scoring weights — highest to lowest signal quality:
-  //   +6  exact match: searchTerm === visual_tag  (semantically enriched from thumbnail image)
-  //   +4  exact match: searchTerm === asset name token
-  //   +2  exact match: searchTerm === subsection token
-  //   +1  substring:   searchTerm contained in (or contains) visual_tag or asset name token
   let score = 0;
   for (const term of terms) {
     const t = String(term || '').toLowerCase().trim();
     if (!t) continue;
-
-    // Visual tags — highest weight (derived from actual thumbnail image content)
+    let termBest = 0;
     for (const vt of (record.visualTags || [])) {
-      if (vt === t)                         { score += 6; break; }
-      if (vt.includes(t) || t.includes(vt)) { score += 1; break; }
+      if (vt === t)                         { termBest = Math.max(termBest, 6); break; }
+      if (vt.includes(t) || t.includes(vt)) { termBest = Math.max(termBest, 1); break; }
     }
-
-    // Asset name tokens
     for (const nt of record.nameTokens) {
-      if (nt === t)                         { score += 4; break; }
-      if (nt.includes(t) || t.includes(nt)) { score += 1; break; }
+      if (nt === t)                         { termBest = Math.max(termBest, 4); break; }
+      if (nt.includes(t) || t.includes(nt)) { termBest = Math.max(termBest, 1); break; }
     }
-
-    // Subsection tokens
     for (const st of record.subTokens) {
-      if (st === t) { score += 2; break; }
+      if (st === t) { termBest = Math.max(termBest, 2); break; }
     }
+    score += termBest;
   }
   return score;
 }
 
-const MAX_CSV_CANDIDATES = 50;
+/* ─── IDF computation ────────────────────────────────────────────── */
+// For each search term, compute log(N / document_frequency) across the full index.
+// Rare terms (e.g. "helicopter" — few assets) get high IDF; common terms
+// (e.g. "yellow" — hundreds of assets) get low IDF. O(T × N) — fast at N=1532.
+function computeTermIdf(terms, csvIndex) {
+  const N = csvIndex.length;
+  const result = {};
+  for (const term of terms) {
+    const t = String(term || '').toLowerCase().trim();
+    if (!t) continue;
+    let df = 0;
+    for (const rec of csvIndex) {
+      let hit = false;
+      for (const vt of (rec.visualTags || [])) {
+        if (vt === t || vt.includes(t) || t.includes(vt)) { hit = true; break; }
+      }
+      if (!hit) for (const nt of rec.nameTokens) {
+        if (nt === t || nt.includes(t) || t.includes(nt)) { hit = true; break; }
+      }
+      if (!hit) for (const st of rec.subTokens) {
+        if (st === t) { hit = true; break; }
+      }
+      if (hit) df++;
+    }
+    result[t] = df > 0 ? Math.log(N / df) : Math.log(N + 1);
+  }
+  return result;
+}
 
+/* ─── variantGroup tokeniser ─────────────────────────────────────── */
+// Splits the Phase 1 variantGroup string ("tank", "military vehicle") into
+// individual lowercase tokens used as primary boosted terms in weighted scoring.
+function tokeniseVariantGroup(variantGroup = '') {
+  return String(variantGroup || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, '')
+    .split(/\s+/)
+    .map(t => t.trim())
+    .filter(t => t.length > 1);
+}
+
+/* ─── IDF-weighted scorer (used for ranking) ─────────────────────── */
+// Same per-term max logic as scoreAssetVsTerms, but each term's contribution
+// is multiplied by its IDF weight — EXCEPT primary terms (variantGroup), which
+// use a fixed PRIMARY_BOOST multiplier instead of IDF. This prevents "tank"
+// from being discounted just because the library has many tank assets.
+function scoreAssetVsTermsWeighted(record, terms, termIdf, primaryTerms) {
+  const primarySet = new Set(primaryTerms.map(t => String(t || '').toLowerCase().trim()));
+  let score = 0;
+  for (const term of terms) {
+    const t = String(term || '').toLowerCase().trim();
+    if (!t) continue;
+    let termBest = 0;
+    for (const vt of (record.visualTags || [])) {
+      if (vt === t)                         { termBest = Math.max(termBest, 6); break; }
+      if (vt.includes(t) || t.includes(vt)) { termBest = Math.max(termBest, 1); break; }
+    }
+    for (const nt of record.nameTokens) {
+      if (nt === t)                         { termBest = Math.max(termBest, 4); break; }
+      if (nt.includes(t) || t.includes(nt)) { termBest = Math.max(termBest, 1); break; }
+    }
+    for (const st of record.subTokens) {
+      if (st === t) { termBest = Math.max(termBest, 2); break; }
+    }
+    // Primary (variantGroup) terms: fixed boost — object type must never be IDF-penalised
+    // Secondary terms: IDF-weighted — common descriptors like "yellow" are discounted
+    const multiplier = primarySet.has(t) ? PRIMARY_BOOST : (termIdf[t] ?? 1);
+    score += termBest * multiplier;
+  }
+  return score;
+}
+
+/* ─── Main candidate finder ──────────────────────────────────────── */
 function findCsvCandidates(req, csvIndex) {
-  const terms = Array.isArray(req.searchTerms) ? req.searchTerms.filter(Boolean) : [];
-  if (terms.length === 0) {
-    console.warn(`[ROSTER-AB] Req "${req.name}": no searchTerms — CSV search skipped`);
+  const secondaryTerms = Array.isArray(req.searchTerms) ? req.searchTerms.filter(Boolean) : [];
+  const primaryTerms   = tokeniseVariantGroup(req.variantGroup || '');
+
+  // Merge primary + secondary, deduplicated. Primary terms are searched too —
+  // they just receive a boosted multiplier instead of IDF discounting.
+  const allTerms = [...new Set([...primaryTerms, ...secondaryTerms])];
+
+  if (allTerms.length === 0) {
+    console.warn(`[ROSTER-AB] Req "${req.name}": no searchTerms or variantGroup — CSV search skipped`);
     return [];
   }
-  const scored = csvIndex
-    .map(r => ({ record: r, score: scoreAssetVsTerms(r, terms) }))
-    .filter(s => s.score > 0)
-    .sort((a, b) => b.score - a.score);
 
-  const top = scored.slice(0, MAX_CSV_CANDIDATES);
+  // Compute IDF weights for all terms (primary terms will use PRIMARY_BOOST instead,
+  // but we still compute IDF for logging transparency).
+  const termIdf = computeTermIdf(allTerms, csvIndex);
+
+  const scored = csvIndex.map(r => ({
+    record:   r,
+    // IDF-weighted + primary-boosted score — used for ranking
+    score:    scoreAssetVsTermsWeighted(r, allTerms, termIdf, primaryTerms),
+    // Raw per-term max score — used for quality gating only
+    rawScore: scoreAssetVsTerms(r, allTerms)
+  })).filter(s => s.score > 0).sort((a, b) => b.score - a.score);
+
+  // Quality gate: raw score ≥ MIN_QUALITY_SCORE ensures at least one exact hit
+  // before IDF amplification can surface a noisy match.
+  // No fallback — zero qualifying results means the requirement is unmatched.
+  const top = scored
+    .filter(s => s.rawScore >= MIN_QUALITY_SCORE)
+    .slice(0, MAX_CSV_CANDIDATES);
+
   console.log(
-    `[ROSTER-AB] CSV search "${req.name}" [${terms.join(', ')}]: ` +
-    `${scored.length} hits → top ${top.length}` +
-    (top[0] ? ` | best: "${top[0].record.assetName}" (score ${top[0].score})` : '')
+    `[ROSTER-AB] CSV search "${req.name}" ` +
+    `[primary(×${PRIMARY_BOOST}): ${primaryTerms.join('+') || 'none'}] ` +
+    `[secondary: ${secondaryTerms.join(', ')}]: ` +
+    `${scored.length} hits → quality gate → using ${top.length}` +
+    (top[0] ? ` | best: "${top[0].record.assetName}" (weighted ${top[0].score.toFixed(2)})` : ' | no qualifying assets')
   );
   return top.map(s => s.record.assetName.toLowerCase());
 }
@@ -338,6 +452,28 @@ function chunkArray(arr, size) {
   const out = [];
   for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
   return out;
+}
+
+/* ─── Bounded concurrency pool ───────────────────────────────────────
+   Runs async tasks with at most `limit` in-flight at a time.
+   Preserves result order (same semantics as Promise.all).
+   Prevents simultaneous Claude API calls from overwhelming rate limits
+   when there are many requirements to match.
+─────────────────────────────────────────────────────────────────── */
+async function pooledAll(tasks, limit = 5) {
+  const results = new Array(tasks.length);
+  let nextIdx = 0;
+
+  async function worker() {
+    while (nextIdx < tasks.length) {
+      const idx = nextIdx++;
+      results[idx] = await tasks[idx]();
+    }
+  }
+
+  const workers = Array.from({ length: Math.min(limit, tasks.length) }, () => worker());
+  await Promise.all(workers);
+  return results;
 }
 
 
@@ -825,8 +961,8 @@ function enforceHardLimits(roster) {
   return roster;
 }
 
-/* ─── Stage A prompt: particle text-vs-image batch scan ─────────── */
-function buildStageAParticlePrompt(requirements) {
+/* ─── Single-pass prompt: particle text-vs-image best pick ──────── */
+function buildParticlePrompt(requirements) {
   const reqList = requirements.map((r, i) =>
     `  ${i + 1}. ${r.name}: ${r.visualDescription}` +
     (r.behaviorDescription ? ` — ${r.behaviorDescription}` : "")
@@ -853,31 +989,8 @@ Respond ONLY with a valid JSON object. No markdown, no fences, no preamble.
 }`;
 }
 
-/* ─── Stage A prompt: 3D object image-vs-image batch scan ───────── */
-function buildStageAObjectRefImagePrompt(requirementName, gameplayRole) {
-  return `You are a game asset visual screener matching 3D object thumbnails against a user-provided reference image.
-
-The FIRST image attached is the user's reference image for the requirement:
-  Name: ${requirementName}
-  Gameplay role: ${gameplayRole || "not specified"}
-
-The remaining images (numbered 1, 2, 3... in your response) are candidate thumbnails from the 3D object library.
-Your job: identify which library thumbnails are visually similar enough to the reference image to be a plausible match.
-Cast a wide net — include anything that shares the general shape, style, or object category, but prefer candidates that look like final visible gameplay objects rather than generic placeholder geometry.
-
-Respond ONLY with a valid JSON object. No markdown, no fences, no preamble.
-
-{
-  "matches": [
-    { "imageIndex": 1, "matchesReference": true },
-    { "imageIndex": 2, "matchesReference": false },
-    { "imageIndex": 3, "matchesReference": true }
-  ]
-}`;
-}
-
-/* ─── Stage B prompt: particle text-based final pick ────────────── */
-function buildStageBParticlePrompt(requirementName, requirementDesc, candidates, gameInterpretation) {
+/* ─── Single-pass prompt: particle final pick ────────────────────── */
+function buildParticleFinalPrompt(requirementName, requirementDesc, candidates, gameInterpretation) {
   return `GAME CONTEXT:
 ${gameInterpretation}
 
@@ -905,84 +1018,114 @@ Respond ONLY with a valid JSON object. No markdown, no fences, no preamble.
 }`;
 }
 
-/* ─── Stage B prompt: 3D object image-vs-image final pick ───────── */
-function buildStageBObjectRefImagePrompt(requirementName, gameplayRole, candidates, gameInterpretation) {
+/* ─── Single-pass prompt: 3D object reference-image vs candidates ── */
+// The reference image is sent first, then [C1] label + thumbnail for each
+// candidate. The model performs a deliberate per-candidate analysis before
+// committing to one pick — no batching intermediate pass, no second call.
+function buildObjectSinglePassPrompt(requirementName, gameplayRole, candidates, gameInterpretation) {
   return `GAME CONTEXT:
 ${gameInterpretation}
 
-You are making the final 3D object asset selection. The FIRST image is the user's reference image showing what the object should look like. The remaining images are candidate library thumbnails.
+You are an expert 3D game asset librarian performing a precise visual match.
+
+The FIRST image is the user's reference image — the ground truth for what this object must look like.
+The remaining images are candidate 3D object thumbnails from the asset library, each preceded by its label [C1], [C2], [C3]…
 
 REQUIREMENT:
 Name: ${requirementName}
 Gameplay role: ${gameplayRole || "not specified"}
 
-CANDIDATE THUMBNAILS (images 2 onwards, numbered starting at 1 in your response):
-${candidates.map((c, i) => `  Image ${i + 1}: ${c.objFile} (${c.sourceZip})`).join("\n")}
+CANDIDATES:
+${candidates.map((c, i) => `  [C${i + 1}]: ${c.objFile} (${c.sourceZip})`).join("\n")}
 
-SELECTION RULES:
-- The reference image (first image) is the target appearance.
-- Pick the candidate thumbnail that most closely resembles the reference in shape, silhouette, style, object category, and final in-game readability.
-- Prefer richer authored objects over obvious placeholder or low-detail geometry when both satisfy the role.
-- Pick exactly one winner. State which candidate image number (1-based, not counting the reference) you chose and why.
+ANALYSIS PROCESS — follow every step before producing your answer:
+
+STEP 1 — Study the reference image carefully.
+  Identify and mentally note ALL of the following features:
+  • Overall object category (what is it?)
+  • Primary silhouette shape and proportions
+  • Dominant structural elements (e.g. legs, wings, barrel, turret, roof line)
+  • Surface style (low-poly, realistic, stylised, hard-edge, organic)
+  • Scale cues (small prop, vehicle-sized, building-sized?)
+  • Any distinctive details that would rule out close-but-wrong matches
+
+STEP 2 — Examine EVERY candidate thumbnail individually.
+  For each candidate [C1] through [C${candidates.length}], assess:
+  • Does the object category match the reference? (hard filter — wrong category = eliminated)
+  • How closely does the silhouette and proportions match?
+  • Do the structural elements align with the reference?
+  • Does the surface style match?
+  • Are distinctive reference details present or absent?
+
+STEP 3 — Rank candidates from best to worst match.
+  Eliminate any candidate whose object category clearly does not match.
+  Among remaining candidates, rank by overall visual similarity to the reference.
+
+STEP 4 — Select the single best match.
+  Choose the top-ranked candidate. If no candidate matches the object category at all,
+  still pick the closest available option and note the mismatch in your rationale.
 
 Respond ONLY with a valid JSON object. No markdown, no fences, no preamble.
 
 {
   "requirementName": "${requirementName}",
-  "imageNumberChosen": 1,
-  "visualSelectionRationale": "What made this thumbnail most similar to the reference image"
+  "chosenLabel": "C1",
+  "visualSelectionRationale": "Brief note on why this candidate best matches the reference"
 }`;
 }
 
-
-function buildStageAAvatarRefImagePrompt(requirementName, gameplayRole, animationNeeds = []) {
-  return `You are a game avatar visual screener matching avatar thumbnails against a user-provided reference image.
-
-The FIRST image attached is the user's reference image for the avatar requirement:
-  Name: ${requirementName}
-  Gameplay role: ${gameplayRole || "not specified"}
-  Animation needs: ${(animationNeeds || []).join(", ") || "not specified"}
-
-The remaining images (numbered 1, 2, 3... in your response) are candidate avatar thumbnails from Avatars.zip.
-Your job: identify which avatar thumbnails are visually similar enough to the reference image to be plausible matches for this character role.
-Cast a wide net, but prefer candidates that clearly read as final characters rather than props.
-
-Respond ONLY with a valid JSON object. No markdown, no fences, no preamble.
-
-{
-  "matches": [
-    { "imageIndex": 1, "matchesReference": true },
-    { "imageIndex": 2, "matchesReference": false }
-  ]
-}`;
-}
-
-function buildStageBAvatarRefImagePrompt(requirementName, gameplayRole, animationNeeds, candidates, gameInterpretation) {
+/* ─── Single-pass prompt: avatar reference-image vs candidates ───── */
+function buildAvatarSinglePassPrompt(requirementName, gameplayRole, animationNeeds, candidates, gameInterpretation) {
   return `GAME CONTEXT:
 ${gameInterpretation}
 
-You are making the final avatar asset selection. The FIRST image is the user's reference image. The remaining images are candidate avatar thumbnails.
+You are an expert game character artist performing a precise visual match for an avatar asset.
+
+The FIRST image is the user's reference image — the ground truth for what this character must look like.
+The remaining images are candidate avatar thumbnails from the asset library, each preceded by its label [C1], [C2], [C3]…
 
 REQUIREMENT:
 Name: ${requirementName}
 Gameplay role: ${gameplayRole || "not specified"}
 Animation needs: ${(animationNeeds || []).join(", ") || "not specified"}
 
-CANDIDATE THUMBNAILS (images 2 onwards, numbered starting at 1 in your response):
-${candidates.map((c, i) => `  Image ${i + 1}: ${c.assetName} (${c.sourceZip}) | clips: ${(c.animationClips || []).join(", ") || "none"}`).join("\n")}
+CANDIDATES:
+${candidates.map((c, i) => `  [C${i + 1}]: ${c.assetName} (${c.sourceZip}) | clips: ${(c.animationClips || []).join(", ") || "none"}`).join("\n")}
 
-SELECTION RULES:
-- The reference image is the target appearance.
-- Prefer candidates that best match the role silhouette, costume/type, and likely animation usefulness.
-- Animation coverage matters. Break ties in favor of higher clip coverage for the requested role.
-- Pick exactly one winner.
+ANALYSIS PROCESS — follow every step before producing your answer:
+
+STEP 1 — Study the reference image carefully.
+  Identify and mentally note ALL of the following features:
+  • Character type (human, creature, robot, fantasy race, etc.)
+  • Body proportions and build (slim, stocky, tall, child-sized, etc.)
+  • Costume / equipment category (armour, casual, uniform, fantasy gear, etc.)
+  • Gender presentation and any strong stylistic markers
+  • Art style (realistic, stylised, cartoon, low-poly, etc.)
+  • Any distinctive features that would definitively rule out wrong matches
+
+STEP 2 — Examine EVERY candidate thumbnail individually.
+  For each candidate [C1] through [C${candidates.length}], assess:
+  • Does the character type match the reference? (hard filter — wrong type = eliminated)
+  • How closely do body proportions and build match?
+  • How closely does the costume / equipment category match?
+  • Does the art style match?
+  • Are the reference's distinctive features present or absent?
+
+STEP 3 — Rank candidates from best to worst match.
+  Eliminate candidates whose character type clearly does not match the reference.
+  Among remaining candidates, rank by overall visual similarity.
+  Use animation clip coverage as a tiebreaker only — visual match comes first.
+
+STEP 4 — Select the single best match.
+  Choose the top-ranked candidate. If no candidate matches the character type at all,
+  still pick the closest available and note the mismatch in your rationale.
 
 Respond ONLY with a valid JSON object. No markdown, no fences, no preamble.
 
 {
   "requirementName": "${requirementName}",
-  "imageNumberChosen": 1,
-  "visualSelectionRationale": "Why this avatar is the best fit"
+  "chosenLabel": "C1",
+  "visualSelectionRationale": "Brief note on why this candidate best matches the reference"
 }`;
 }
 
@@ -1009,7 +1152,7 @@ exports.handler = async (event) => {
       process.env.FIREBASE_STORAGE_BUCKET || "gokudatabase.firebasestorage.app"
     );
 
-    console.log(`[ROSTER-AB] Starting Stage A/B for project ${projectPath}, job ${jobId}`);
+    console.log(`[ROSTER-AB] Starting visual matching for project ${projectPath}, job ${jobId}`);
 
     // ── 1. Load Phase 1 result ───────────────────────────────────────────
     const phase1File = bucket.file(`${projectPath}/ai_asset_roster_phase1.json`);
@@ -1170,7 +1313,7 @@ exports.handler = async (event) => {
     // 5th zip requires no code changes, just updating the CSV and uploading.
     //
     // Strategy: load each mega-zip ONCE, index ALL assets inside it tagged
-    // with their full CSV category. Stage A filters the in-memory array
+    // with their full CSV category. Vision matching filters the in-memory array
     // per-requirement — no repeat zip downloads per requirement.
     //
     // objectAssets: { objFile, objEntryPath, thumbFile, colormapFile, colormapEntryPath,
@@ -1404,16 +1547,21 @@ exports.handler = async (event) => {
 
     console.log(`[ROSTER-AB] Asset library ready: ${particleAssets.length} particle textures, ${objectAssets.length} 3D objects, ${avatarAssets.length} avatars`);
 
-    // ── 7. Stage A — Visual Library Scan ────────────────────────────────
-    const particleCandidates = new Map(particleReqs.filter(r => isIncluded(r.name)).map(r => [r.name, []]));
-    const objectCandidates   = new Map(activeObjectReqs.map(r => [r.name, []]));
-    const avatarCandidates   = new Map(activeAvatarReqs.map(r => [r.name, []]));
+    // ── 7. Single-pass visual matching ──────────────────────────────────
+    // For each requirement: send reference image + all CSV-filtered candidate
+    // thumbnails in ONE call. The model picks the single best match directly.
+    // No intermediate batch scan, no second selection call.
+    console.log("[ROSTER-AB] Starting single-pass visual matching...");
 
-    // Stage A: particles (unchanged — no category filter needed)
-    async function runStageAParticleBatches() {
+    // Particles retain a two-step approach because they have no reference image:
+    //   pass 1 — batch scan to find plausible candidates (text description vs images)
+    //   pass 2 — final pick among candidates (unchanged from prior design)
+    const particleCandidates = new Map(particleReqs.filter(r => isIncluded(r.name)).map(r => [r.name, []]));
+
+    async function runParticleBatchScan() {
       if (particleReqs.length === 0 || particleAssets.length === 0) return;
       const batches = chunkArray(particleAssets, IMAGES_PER_BATCH);
-      console.log(`[ROSTER-AB] Stage A particles: ${particleAssets.length} assets → ${batches.length} batch(es)`);
+      console.log(`[ROSTER-AB] Particle scan: ${particleAssets.length} assets → ${batches.length} batch(es)`);
 
       for (let b = 0; b < batches.length; b++) {
         const batch       = batches[b];
@@ -1421,7 +1569,6 @@ exports.handler = async (event) => {
           type:   "image",
           source: { type: "base64", media_type: asset.mimeType, data: asset.b64 }
         }));
-
         let batchResult;
         try {
           batchResult = await callClaude(apiKey, {
@@ -1429,22 +1576,20 @@ exports.handler = async (event) => {
             maxTokens:   2000,
             system:      "You are a game asset visual screener. Respond only with a valid JSON object. No markdown, no fences, no preamble.",
             userContent: [
-              { type: "text", text: buildStageAParticlePrompt(particleReqs) },
+              { type: "text", text: buildParticlePrompt(particleReqs) },
               ...imageBlocks
             ]
           });
         } catch (e) {
-          console.warn(`[ROSTER-AB] Stage A particle batch ${b + 1} failed: ${e.message} — skipping`);
+          console.warn(`[ROSTER-AB] Particle batch ${b + 1} failed: ${e.message} — skipping`);
           continue;
         }
-
         let parsed;
         try { parsed = JSON.parse(stripFences(batchResult.text)); }
         catch (e) {
-          console.warn(`[ROSTER-AB] Stage A particle batch ${b + 1} parse failed — skipping`);
+          console.warn(`[ROSTER-AB] Particle batch ${b + 1} parse failed — skipping`);
           continue;
         }
-
         for (const match of (parsed.matches || [])) {
           const imgIdx = (match.imageIndex || 1) - 1;
           const asset  = batch[imgIdx];
@@ -1462,193 +1607,10 @@ exports.handler = async (event) => {
       }
     }
 
-    // ── Stage A helper: run image-vs-image scan for one req against a pool of assets
-    async function runStageAImageVsImageForReq(req, assetPool, candidateMap, matchKey = 'objFile') {
-      const refImg = refImageByName.get(req.name.toLowerCase());
-      if (!refImg) {
-        console.warn(`[ROSTER-AB] Stage A: no reference image for "${req.name}" — will be unmatched`);
-        return;
-      }
-      if (assetPool.length === 0) {
-        console.warn(`[ROSTER-AB] Stage A: asset pool empty for "${req.name}" — skipping`);
-        return;
-      }
-      const refBlock = {
-        type:   "image",
-        source: { type: "base64", media_type: refImg.mimeType, data: refImg.b64 }
-      };
-      const batches    = chunkArray(assetPool, IMAGES_PER_BATCH);
-      const candidates = candidateMap.get(req.name);
-      console.log(`[ROSTER-AB] Stage A "${req.name}": ${assetPool.length} assets → ${batches.length} batch(es)`);
-      for (let b = 0; b < batches.length; b++) {
-        const batch       = batches[b];
-        const thumbBlocks = batch.map(asset => ({
-          type:   "image",
-          source: { type: "base64", media_type: asset.mimeType, data: asset.b64 }
-        }));
-        let batchResult;
-        try {
-          batchResult = await callClaude(apiKey, {
-            model:       "claude-sonnet-4-20250514",
-            maxTokens:   2000,
-            system:      "You are a game asset visual screener. Respond only with a valid JSON object. No markdown, no fences, no preamble.",
-            userContent: [
-              { type: "text", text: buildStageAObjectRefImagePrompt(req.name, req.gameplayRole) },
-              refBlock,
-              ...thumbBlocks
-            ]
-          });
-        } catch (e) {
-          console.warn(`[ROSTER-AB] Stage A "${req.name}" batch ${b + 1} failed: ${e.message} — skipping`);
-          continue;
-        }
-        let parsed;
-        try { parsed = JSON.parse(stripFences(batchResult.text)); }
-        catch (e) {
-          console.warn(`[ROSTER-AB] Stage A "${req.name}" batch ${b + 1} parse failed — skipping`);
-          continue;
-        }
-        for (const match of (parsed.matches || [])) {
-          if (!match.matchesReference) continue;
-          const imgIdx = (match.imageIndex || 1) - 1;
-          const asset  = batch[imgIdx];
-          if (!asset) continue;
-          if (!candidates.some(c => c[matchKey] === asset[matchKey])) {
-            candidates.push(asset);
-          }
-        }
-      }
-      console.log(`[ROSTER-AB] Stage A "${req.name}": ${candidates.length} candidate(s) found`);
-    }
-
-    // Stage A: 3D objects — Props path (CSV-filtered) + Avatars.zip cross-route
-    async function runStageAObjectsImageVsImage() {
-      if (activeObjectReqs.length === 0) return;
-
-      // Props path: CSV-filtered objectAssets
-      for (const req of objectsViaProps) {
-        const csvNames = reqCsvCandidateNames.get(req.name) || new Set();
-        if (csvNames.size === 0) {
-          console.warn(`[ROSTER-AB] Stage A object "${req.name}" (Props): CSV search returned 0 candidates — skipping`);
-          continue;
-        }
-        const filteredAssets = objectAssets.filter(a => csvNames.has(a.assetName.toLowerCase()));
-        if (filteredAssets.length === 0) {
-          console.warn(`[ROSTER-AB] Stage A object "${req.name}" (Props): CSV names found but none loaded from zips — skipping`);
-          continue;
-        }
-        console.log(`[ROSTER-AB] Stage A object "${req.name}" (Props): ${filteredAssets.length} asset(s) from CSV`);
-        await runStageAImageVsImageForReq(req, filteredAssets, objectCandidates, 'objFile');
-      }
-
-      // Avatars.zip cross-route: search avatarAssets pool instead of Props
-      for (const req of objectsViaAvatarZip) {
-        if (avatarAssets.length === 0) {
-          console.warn(`[ROSTER-AB] Stage A object "${req.name}" (Avatars.zip cross-route): no avatar assets loaded — skipping`);
-          continue;
-        }
-        console.log(`[ROSTER-AB] Stage A object "${req.name}" (Avatars.zip cross-route): ${avatarAssets.length} avatar asset(s)`);
-        // avatarAssets use assetName not objFile — map to objFile-compatible shape for assembleObjectAsset
-        const avatarAsAvatarPool = avatarAssets;
-        await runStageAImageVsImageForReq(req, avatarAsAvatarPool, objectCandidates, 'assetName');
-      }
-    }
-
-    async function runStageAAvatarImageVsImage() {
-      if (activeAvatarReqs.length === 0) return;
-
-      // Standard Avatars.zip path
-      for (const req of avatarsViaAvatarZip) {
-        if (avatarAssets.length === 0) {
-          console.warn(`[ROSTER-AB] Stage A avatar "${req.name}": no avatar assets loaded — skipping`);
-          continue;
-        }
-        const refImg = refImageByName.get(req.name.toLowerCase());
-        if (!refImg) {
-          console.warn(`[ROSTER-AB] Stage A avatar "${req.name}": no reference image — skipping search`);
-          continue;
-        }
-        const refBlock = {
-          type:   "image",
-          source: { type: "base64", media_type: refImg.mimeType, data: refImg.b64 }
-        };
-        const batches    = chunkArray(avatarAssets, IMAGES_PER_BATCH);
-        const candidates = avatarCandidates.get(req.name);
-        console.log(`[ROSTER-AB] Stage A avatar "${req.name}" (Avatars.zip): ${avatarAssets.length} assets → ${batches.length} batch(es)`);
-        for (let b = 0; b < batches.length; b++) {
-          const batch = batches[b];
-          const thumbBlocks = batch.map(asset => ({
-            type:   "image",
-            source: { type: "base64", media_type: asset.mimeType, data: asset.b64 }
-          }));
-          let batchResult;
-          try {
-            batchResult = await callClaude(apiKey, {
-              model:       "claude-sonnet-4-20250514",
-              maxTokens:   2000,
-              system:      "You are a game asset visual screener. Respond only with a valid JSON object. No markdown, no fences, no preamble.",
-              userContent: [
-                { type: "text", text: buildStageAAvatarRefImagePrompt(req.name, req.gameplayRole, req.animationNeeds || []) },
-                refBlock,
-                ...thumbBlocks
-              ]
-            });
-          } catch (e) {
-            console.warn(`[ROSTER-AB] Stage A avatar "${req.name}" batch ${b + 1} failed: ${e.message} — skipping`);
-            continue;
-          }
-          let parsed;
-          try { parsed = JSON.parse(stripFences(batchResult.text)); }
-          catch (e) {
-            console.warn(`[ROSTER-AB] Stage A avatar "${req.name}" batch ${b + 1} parse failed — skipping`);
-            continue;
-          }
-          for (const match of (parsed.matches || [])) {
-            if (!match.matchesReference) continue;
-            const imgIdx = (match.imageIndex || 1) - 1;
-            const asset  = batch[imgIdx];
-            if (!asset) continue;
-            if (!candidates.some(c => c.assetName === asset.assetName && c.fbxEntryPath === asset.fbxEntryPath)) {
-              candidates.push(asset);
-            }
-          }
-        }
-        console.log(`[ROSTER-AB] Stage A avatar "${req.name}" (Avatars.zip): ${candidates.length} candidate(s) found`);
-      }
-
-      // Props cross-route: search objectAssets pool for avatar reqs routed to Props
-      for (const req of avatarsViaProps) {
-        const csvNames = avatarViaPropsReqCsvCandidateNames.get(req.name) || new Set();
-        if (csvNames.size === 0) {
-          console.warn(`[ROSTER-AB] Stage A avatar "${req.name}" (Props cross-route): CSV search returned 0 candidates — skipping`);
-          continue;
-        }
-        const filteredAssets = objectAssets.filter(a => csvNames.has(a.assetName.toLowerCase()));
-        if (filteredAssets.length === 0) {
-          console.warn(`[ROSTER-AB] Stage A avatar "${req.name}" (Props cross-route): CSV names found but none loaded — skipping`);
-          continue;
-        }
-        console.log(`[ROSTER-AB] Stage A avatar "${req.name}" (Props cross-route): ${filteredAssets.length} props assets`);
-        await runStageAImageVsImageForReq(req, filteredAssets, avatarCandidates, 'objFile');
-      }
-    }
-
-    // Run particle, object, and avatar Stage A scans concurrently
-    await Promise.all([
-      runStageAParticleBatches(),
-      runStageAObjectsImageVsImage(),
-      runStageAAvatarImageVsImage()
-    ]);
-
-    console.log("[ROSTER-AB] Stage A complete");
-
-    // ── 8. Stage B — Per-Requirement Final Visual Pick ───────────────────
-    console.log("[ROSTER-AB] Stage B: per-requirement final visual selection...");
-
-    async function runStageBParticle(req) {
+    async function runParticleFinalPick(req) {
       const candidates = particleCandidates.get(req.name) || [];
       if (candidates.length === 0) {
-        console.warn(`[ROSTER-AB] Stage B particle: no candidates for "${req.name}" — unmatched`);
+        console.warn(`[ROSTER-AB] Particle: no candidates for "${req.name}" — unmatched`);
         return null;
       }
       const imageBlocks = candidates.map(c => ({
@@ -1663,12 +1625,12 @@ exports.handler = async (event) => {
           maxTokens:   1000,
           system:      "You are a visual asset selection specialist. Respond only with a valid JSON object. No markdown, no fences, no preamble.",
           userContent: [
-            { type: "text", text: buildStageBParticlePrompt(req.name, desc, candidates, gameInterpretation) },
+            { type: "text", text: buildParticleFinalPrompt(req.name, desc, candidates, gameInterpretation) },
             ...imageBlocks
           ]
         });
       } catch (e) {
-        console.warn(`[ROSTER-AB] Stage B particle failed for "${req.name}": ${e.message} — using first candidate`);
+        console.warn(`[ROSTER-AB] Particle final pick failed for "${req.name}": ${e.message} — using first candidate`);
         return { requirementName: req.name, selectedAsset: candidates[0], visualSelectionRationale: `Fallback: ${e.message}`, colormapFile: null };
       }
       let parsed;
@@ -1678,112 +1640,180 @@ exports.handler = async (event) => {
       return { requirementName: req.name, selectedAsset: candidates[chosenIdx], visualSelectionRationale: parsed.visualSelectionRationale || "", colormapFile: null };
     }
 
-    async function runStageBObject(req) {
-      const candidates = objectCandidates.get(req.name) || [];
-      const refImg     = refImageByName.get(req.name.toLowerCase());
-
-      if (candidates.length === 0) {
-        console.warn(`[ROSTER-AB] Stage B object: no candidates for "${req.name}" — unmatched`);
+    // Single-pass object matcher: reference image + labeled candidate thumbnails → one pick
+    async function runObjectSinglePass(req) {
+      const refImg = refImageByName.get(req.name.toLowerCase());
+      if (!refImg) {
+        console.warn(`[ROSTER-AB] Object "${req.name}": no reference image — unmatched`);
         return null;
       }
 
-      const refBlock = refImg ? {
+      // Determine asset pool (Props or Avatars.zip cross-route)
+      let assetPool;
+      let matchKey;
+      if (assetSourceByName.get(req.name.toLowerCase()) === 'avatars') {
+        assetPool = avatarAssets;
+        matchKey  = 'assetName';
+      } else {
+        const csvNames = reqCsvCandidateNames.get(req.name) || new Set();
+        if (csvNames.size === 0) {
+          console.warn(`[ROSTER-AB] Object "${req.name}": CSV returned 0 qualifying candidates — unmatched`);
+          return null;
+        }
+        assetPool = objectAssets.filter(a => csvNames.has(a.assetName.toLowerCase()));
+        matchKey  = 'objFile';
+      }
+
+      if (assetPool.length === 0) {
+        console.warn(`[ROSTER-AB] Object "${req.name}": CSV names found but none loaded from zips — unmatched`);
+        return null;
+      }
+
+      console.log(`[ROSTER-AB] Object "${req.name}": single-pass vision with ${assetPool.length} candidate(s)`);
+
+      const refBlock = {
         type:   "image",
         source: { type: "base64", media_type: refImg.mimeType, data: refImg.b64 }
-      } : null;
-
-      const thumbBlocks = candidates.map(c => ({
-        type:   "image",
-        source: { type: "base64", media_type: c.mimeType, data: c.b64 }
-      }));
-
-      const userContent = refBlock
-        ? [{ type: "text", text: buildStageBObjectRefImagePrompt(req.name, req.gameplayRole, candidates, gameInterpretation) }, refBlock, ...thumbBlocks]
-        : [{ type: "text", text: buildStageBObjectRefImagePrompt(req.name, req.gameplayRole, candidates, gameInterpretation) }, ...thumbBlocks];
+      };
+      // Interleave [Cx] label + thumbnail for each candidate
+      const labeledThumbBlocks = assetPool.flatMap((asset, i) => [
+        { type: "text",  text: `[C${i + 1}]` },
+        { type: "image", source: { type: "base64", media_type: asset.mimeType, data: asset.b64 } }
+      ]);
 
       let result;
       try {
         result = await callClaude(apiKey, {
           model:       "claude-sonnet-4-20250514",
-          maxTokens:   1000,
-          system:      "You are a visual asset selection specialist. Respond only with a valid JSON object. No markdown, no fences, no preamble.",
-          userContent
+          maxTokens:   2000,
+          system:      "You are an expert 3D game asset librarian. Analyse every candidate image carefully and methodically before selecting. Respond only with a valid JSON object. No markdown, no fences, no preamble.",
+          userContent: [
+            { type: "text", text: buildObjectSinglePassPrompt(req.name, req.gameplayRole, assetPool, gameInterpretation) },
+            refBlock,
+            ...labeledThumbBlocks
+          ]
         });
       } catch (e) {
-        console.warn(`[ROSTER-AB] Stage B object failed for "${req.name}": ${e.message} — using first candidate`);
-        return { requirementName: req.name, selectedAsset: candidates[0], visualSelectionRationale: `Fallback: ${e.message}` };
+        console.warn(`[ROSTER-AB] Object "${req.name}" vision call failed: ${e.message} — unmatched`);
+        return null;
       }
 
       let parsed;
       try { parsed = JSON.parse(stripFences(result.text)); }
-      catch (e) { parsed = { imageNumberChosen: 1, visualSelectionRationale: "Fallback: parse error" }; }
+      catch (e) {
+        console.warn(`[ROSTER-AB] Object "${req.name}" parse failed — unmatched`);
+        return null;
+      }
 
-      const chosenIdx = Math.min((parsed.imageNumberChosen || 1) - 1, candidates.length - 1);
+      // Resolve chosenLabel (e.g. "C3") → 0-based index
+      const labelNum = parseInt(String(parsed.chosenLabel || '').replace(/^C/i, ''), 10);
+      if (!Number.isFinite(labelNum) || labelNum < 1 || labelNum > assetPool.length) {
+        console.warn(`[ROSTER-AB] Object "${req.name}": invalid chosenLabel "${parsed.chosenLabel}" — unmatched`);
+        return null;
+      }
+      const selectedAsset = assetPool[labelNum - 1];
+      console.log(`[ROSTER-AB] Object "${req.name}": selected [C${labelNum}] ${selectedAsset[matchKey]}`);
       return {
         requirementName:          req.name,
-        selectedAsset:            candidates[chosenIdx],
+        selectedAsset,
         visualSelectionRationale: parsed.visualSelectionRationale || ""
       };
     }
 
-    async function runStageBAvatar(req) {
-      const candidates = avatarCandidates.get(req.name) || [];
+    // Single-pass avatar matcher: reference image + labeled candidate thumbnails → one pick
+    async function runAvatarSinglePass(req) {
       const refImg = refImageByName.get(req.name.toLowerCase());
-      if (candidates.length === 0) {
-        console.warn(`[ROSTER-AB] Stage B avatar: no candidates for "${req.name}" — unmatched`);
+      if (!refImg) {
+        console.warn(`[ROSTER-AB] Avatar "${req.name}": no reference image — unmatched`);
         return null;
       }
 
-      const refBlock = refImg ? {
+      // Determine asset pool (Avatars.zip or Props cross-route)
+      let assetPool;
+      if (assetSourceByName.get(req.name.toLowerCase()) === 'props') {
+        const csvNames = avatarViaPropsReqCsvCandidateNames.get(req.name) || new Set();
+        if (csvNames.size === 0) {
+          console.warn(`[ROSTER-AB] Avatar "${req.name}" (Props cross-route): CSV returned 0 qualifying candidates — unmatched`);
+          return null;
+        }
+        assetPool = objectAssets.filter(a => csvNames.has(a.assetName.toLowerCase()));
+      } else {
+        assetPool = avatarAssets;
+      }
+
+      if (assetPool.length === 0) {
+        console.warn(`[ROSTER-AB] Avatar "${req.name}": no assets in pool — unmatched`);
+        return null;
+      }
+
+      console.log(`[ROSTER-AB] Avatar "${req.name}": single-pass vision with ${assetPool.length} candidate(s)`);
+
+      const refBlock = {
         type:   "image",
         source: { type: "base64", media_type: refImg.mimeType, data: refImg.b64 }
-      } : null;
-      const thumbBlocks = candidates.map(c => ({
-        type:   "image",
-        source: { type: "base64", media_type: c.mimeType, data: c.b64 }
-      }));
-      const userContent = refBlock
-        ? [{ type: "text", text: buildStageBAvatarRefImagePrompt(req.name, req.gameplayRole, req.animationNeeds || [], candidates, gameInterpretation) }, refBlock, ...thumbBlocks]
-        : [{ type: "text", text: buildStageBAvatarRefImagePrompt(req.name, req.gameplayRole, req.animationNeeds || [], candidates, gameInterpretation) }, ...thumbBlocks];
+      };
+      const labeledThumbBlocks = assetPool.flatMap((asset, i) => [
+        { type: "text",  text: `[C${i + 1}]` },
+        { type: "image", source: { type: "base64", media_type: asset.mimeType, data: asset.b64 } }
+      ]);
 
       let result;
       try {
         result = await callClaude(apiKey, {
           model:       "claude-sonnet-4-20250514",
-          maxTokens:   1000,
-          system:      "You are a visual asset selection specialist. Respond only with a valid JSON object. No markdown, no fences, no preamble.",
-          userContent
+          maxTokens:   2000,
+          system:      "You are an expert game character artist. Analyse every candidate avatar carefully and methodically before selecting. Respond only with a valid JSON object. No markdown, no fences, no preamble.",
+          userContent: [
+            { type: "text", text: buildAvatarSinglePassPrompt(req.name, req.gameplayRole, req.animationNeeds || [], assetPool, gameInterpretation) },
+            refBlock,
+            ...labeledThumbBlocks
+          ]
         });
       } catch (e) {
-        console.warn(`[ROSTER-AB] Stage B avatar failed for "${req.name}": ${e.message} — using first candidate`);
-        return { requirementName: req.name, selectedAsset: candidates[0], visualSelectionRationale: `Fallback: ${e.message}` };
+        console.warn(`[ROSTER-AB] Avatar "${req.name}" vision call failed: ${e.message} — unmatched`);
+        return null;
       }
 
       let parsed;
       try { parsed = JSON.parse(stripFences(result.text)); }
-      catch (e) { parsed = { imageNumberChosen: 1, visualSelectionRationale: "Fallback: parse error" }; }
+      catch (e) {
+        console.warn(`[ROSTER-AB] Avatar "${req.name}" parse failed — unmatched`);
+        return null;
+      }
 
-      const chosenIdx = Math.min((parsed.imageNumberChosen || 1) - 1, candidates.length - 1);
+      const labelNum = parseInt(String(parsed.chosenLabel || '').replace(/^C/i, ''), 10);
+      if (!Number.isFinite(labelNum) || labelNum < 1 || labelNum > assetPool.length) {
+        console.warn(`[ROSTER-AB] Avatar "${req.name}": invalid chosenLabel "${parsed.chosenLabel}" — unmatched`);
+        return null;
+      }
+      const selectedAsset = assetPool[labelNum - 1];
+      console.log(`[ROSTER-AB] Avatar "${req.name}": selected [C${labelNum}] ${selectedAsset.assetName}`);
       return {
-        requirementName: req.name,
-        selectedAsset: candidates[chosenIdx],
+        requirementName:          req.name,
+        selectedAsset,
         visualSelectionRationale: parsed.visualSelectionRationale || ""
       };
     }
 
+    // Run particle scan first (batch pass), then all final picks concurrently
+    await runParticleBatchScan();
+
+    // Vision calls run with a concurrency cap of 5 to avoid rate-limit bursts.
+    // pooledAll preserves result order identically to Promise.all.
+    const VISION_CONCURRENCY = 5;
     const [particleResults, objectResults, avatarResults] = await Promise.all([
-      Promise.all(particleReqs.filter(r => isIncluded(r.name)).map(r => runStageBParticle(r))),
-      Promise.all(activeObjectReqs.map(r => runStageBObject(r))),
-      Promise.all(activeAvatarReqs.map(r => runStageBAvatar(r)))
+      pooledAll(particleReqs.filter(r => isIncluded(r.name)).map(r => () => runParticleFinalPick(r)), VISION_CONCURRENCY),
+      pooledAll(activeObjectReqs.map(r => () => runObjectSinglePass(r)), VISION_CONCURRENCY),
+      pooledAll(activeAvatarReqs.map(r => () => runAvatarSinglePass(r)), VISION_CONCURRENCY)
     ]);
 
     console.log(
-      `[ROSTER-AB] Stage B complete: ${particleResults.filter(Boolean).length} particle selections, ` +
-      `${objectResults.filter(Boolean).length} object selections, ` +
+      `[ROSTER-AB] Visual matching complete: ${particleResults.filter(Boolean).length} particle, ` +
+      `${objectResults.filter(Boolean).length} object, ` +
       `${avatarResults.filter(Boolean).length} avatar selections`
     );
 
-    // ── 9. Assemble final roster ─────────────────────────────────────────
+    // ── 8. Assemble final roster ─────────────────────────────────────────
     function assembleParticleAsset(stageBResult, phase1Req) {
       if (!stageBResult) return null;
       const asset = stageBResult.selectedAsset;
@@ -1899,7 +1929,7 @@ exports.handler = async (event) => {
 
     const unmatchedRequirements = [
       ...particleReqs.filter(r => isIncluded(r.name) && !matchedParticleNames.has(r.name)).map(r => ({
-        requirementName: r.name, type: "particle_effect", reason: "No visual candidates found in Stage A"
+        requirementName: r.name, type: "particle_effect", reason: "No visual candidates found in particle scan"
       })),
       ...activeObjectReqs.filter(r => !matchedObjectNames.has(r.name)).map(r => {
         const routedToAvatars = assetSourceByName.get(r.name.toLowerCase()) === 'avatars';
@@ -1909,10 +1939,10 @@ exports.handler = async (event) => {
           type: "object_3d",
           assetSource: routedToAvatars ? 'avatars' : 'props',
           reason: routedToAvatars
-            ? "No visual candidates found in Avatars.zip during cross-route Stage A"
+            ? "No visual candidates found in Avatars.zip during cross-route vision matching"
             : csvNames.size === 0
-              ? "CSV text search returned 0 candidates — searchTerms may need to be broader or corrected"
-              : "CSV search found candidates but none passed Stage A visual screening",
+              ? "CSV text search returned 0 qualifying candidates — searchTerms may need to be broader or corrected"
+              : "CSV search found candidates but none were loaded from zips",
           searchTermsUsed: r.searchTerms || [],
           csvCandidateCount: csvNames.size
         };
@@ -1926,9 +1956,9 @@ exports.handler = async (event) => {
           assetSource: routedToProps ? 'props' : 'avatars',
           reason: routedToProps
             ? csvNames.size === 0
-              ? "Props CSV text search returned 0 candidates for avatar cross-route"
-              : "Props CSV search found candidates but none passed Stage A visual screening"
-            : "No visual candidates found in Avatars.zip during Stage A/B"
+              ? "Props CSV text search returned 0 qualifying candidates for avatar cross-route"
+              : "Props CSV search found candidates but none were loaded from zips"
+            : "No visual candidates found in Avatars.zip during vision matching"
         };
       })
     ];
@@ -1967,7 +1997,7 @@ exports.handler = async (event) => {
       approved:            false
     };
 
-    // ── 10. Save pending roster to Firebase ──────────────────────────────
+    // ── 9. Save pending roster to Firebase ──────────────────────────────
     await bucket.file(`${projectPath}/ai_asset_roster_pending.json`).save(
       JSON.stringify(roster, null, 2),
       { contentType: "application/json", resumable: false }
@@ -1988,8 +2018,8 @@ exports.handler = async (event) => {
     console.error("[ROSTER-AB] Unhandled error:", error);
     if (bucket && projectPath) {
       try {
-        await bucket.file(`${projectPath}/ai_asset_roster_error.json`).save(
-          JSON.stringify({ error: error.message, failedAt: Date.now(), stage: "stageAB", jobId: jobId || null }),
+        await bucket.file(`${projectPath}/ai_asset_roster_stageAB_error.json`).save(
+          JSON.stringify({ error: error.message, failedAt: Date.now(), stage: "visualMatching", jobId: jobId || null }),
           { contentType: "application/json", resumable: false }
         );
       } catch (e) { /* non-fatal */ }

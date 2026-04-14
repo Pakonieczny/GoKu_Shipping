@@ -774,14 +774,18 @@ export function createAssetsTreeEntitiesCompiler(deps = {}) {
     for (const group of Array.isArray(sceneIntent?.groups) ? sceneIntent.groups : []) {
       const key = String(group?.key || '').trim();
       if (!key) continue;
+      const existingGroup = existingEntities?.[key] && typeof existingEntities[key] === 'object'
+        ? existingEntities[key] : null;
       sceneEntities[key] = {
         type: 'object-group',
-        position: [0, 0, 0],
-        rotate: [0, 0, 0],
-        scale: [1, 1, 1],
+        position: normalizeNumericVector(existingGroup?.position, [0, 0, 0]),
+        rotate:   normalizeNumericVector(existingGroup?.rotate,   [0, 0, 0]),
+        scale:    normalizeNumericVector(existingGroup?.scale,     [1, 1, 1]),
         visible: group?.visible !== false,
         key,
-        groupMat: DEFAULT_GROUP_MAT.slice()
+        groupMat: Array.isArray(existingGroup?.groupMat) && existingGroup.groupMat.length === 16
+          ? existingGroup.groupMat.slice()
+          : DEFAULT_GROUP_MAT.slice()
       };
     }
 
