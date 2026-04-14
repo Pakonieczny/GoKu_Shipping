@@ -2903,183 +2903,105 @@ function enforceTrancheValidationBlock(plan) {
 
 /* ── helper: parse tranche executor patch-format responses ────── */
 /*
-   NEW PRIMARY FORMAT — patch blocks (output only changes):
-   ─────────────────────────────────────────────────────────
-   ===NEW_FILE: models/2===
-   ...complete file content for first-time creation...
-   ===END_NEW_FILE: models/2===
-
-   ===REPLACE_BLOCK: models/2 | id=updatePlayerController===
-   function updatePlayerController() {
-     // complete new version of this named function/section
-   }
-   ===END_REPLACE_BLOCK: models/2 | id=updatePlayerController===
-
-   ===INSERT_BLOCK: models/2 | after=gameState_init===
-   gameState.playerSpeed = 0;
-   gameState.jumpCount = 0;
-   ===END_INSERT_BLOCK: models/2 | after=gameState_init===
-
-   ===APPEND_BLOCK: models/2===
-   // new top-level code appended at end of file
-   ===END_APPEND_BLOCK: models/2===
-
-   ===MESSAGE===
-   Changelog text here
-   ===END_MESSAGE===
-
-   LEGACY FORMAT (full file) — still accepted as fallback:
-   ─────────────────────────────────────────────────────────
-   ===FILE_START: models/2===
-   ...entire file content...
-   ===FILE_END: models/2===
+   Accepted block delimiters:
+   • ===REPLACE_BLOCK: target=== ... ===END_REPLACE_BLOCK: target===
+   • ===NEW_FUNCTION: models/2=== ... ===END_NEW_FUNCTION: models/2===
+   • ===NEW_FILE: path=== ... ===END_NEW_FILE: path===
+   • ===MESSAGE=== ... ===END_MESSAGE===
 */
 function parseDelimitedResponse(text) {
-  const patches = [];   // { path, type, id, after, content }
-  const fullFiles = []; // legacy full-file blocks
-
-  // ── NEW_FILE blocks ──────────────────────────────────────────
-  const newFileRegex = /===NEW_FILE:\s*([^\n]+?)\s*===\n([\s\S]*?)===END_NEW_FILE:\s*\1\s*===/g;
+  const patches = [];
   let match;
+
+  const newFileRegex = /===NEW_FILE:\s*([^\n]+?)\s*===\n([\s\S]*?)===END_NEW_FILE:\s*\1\s*===/g;
   while ((match = newFileRegex.exec(text)) !== null) {
     patches.push({ path: match[1].trim(), type: "new_file", content: match[2] });
   }
 
-  // ── REPLACE_BLOCK blocks ─────────────────────────────────────
-  const replaceRegex = /===REPLACE_BLOCK:\s*([^\n|]+?)\s*\|\s*id=([^\n]+?)\s*===\n([\s\S]*?)===END_REPLACE_BLOCK:\s*[^\n]+?===/g;
+  const replaceRegex = /===REPLACE_BLOCK:\s*([^\n]+?)\s*===\n([\s\S]*?)===END_REPLACE_BLOCK:\s*\1\s*===/g;
   while ((match = replaceRegex.exec(text)) !== null) {
-    patches.push({ path: match[1].trim(), type: "replace", id: match[2].trim(), content: match[3] });
+    patches.push({ path: "models/2", type: "replace", target: match[1].trim(), content: match[2] });
   }
 
-  // ── INSERT_BLOCK blocks ──────────────────────────────────────
-  const insertRegex = /===INSERT_BLOCK:\s*([^\n|]+?)\s*\|\s*after=([^\n]+?)\s*===\n([\s\S]*?)===END_INSERT_BLOCK:\s*[^\n]+?===/g;
-  while ((match = insertRegex.exec(text)) !== null) {
-    patches.push({ path: match[1].trim(), type: "insert", after: match[2].trim(), content: match[3] });
+  const newFunctionRegex = /===NEW_FUNCTION:\s*models\/2\s*===\n([\s\S]*?)===END_NEW_FUNCTION:\s*models\/2\s*===/g;
+  while ((match = newFunctionRegex.exec(text)) !== null) {
+    patches.push({ path: "models/2", type: "new_function", content: match[1] });
   }
 
-  // ── APPEND_BLOCK blocks ──────────────────────────────────────
-  const appendRegex = /===APPEND_BLOCK:\s*([^\n]+?)\s*===\n([\s\S]*?)===END_APPEND_BLOCK:\s*\1\s*===/g;
-  while ((match = appendRegex.exec(text)) !== null) {
-    patches.push({ path: match[1].trim(), type: "append", content: match[2] });
-  }
-
-  // ── Legacy FILE_START / FILE_END blocks (full file) ──────────
-  const fileRegex = /===FILE_START:\s*([^\n]+?)\s*===\n([\s\S]*?)===FILE_END:\s*\1\s*===/g;
-  while ((match = fileRegex.exec(text)) !== null) {
-    const path = match[1].trim();
-    const content = match[2];
-    if (path && content !== undefined) {
-      fullFiles.push({ path, content });
-    }
-  }
-
-  // ── MESSAGE block ─────────────────────────────────────────────
   const msgMatch = text.match(/===MESSAGE===\n([\s\S]*?)===END_MESSAGE===/);
   const message = msgMatch ? msgMatch[1].trim() : "Tranche completed.";
 
-  // ── If patch blocks found, return patch result ────────────────
-  if (patches.length > 0) {
-    return { patches, updatedFiles: [], message, isPatch: true };
-  }
+  if (patches.length === 0) return null;
+  return { patches, updatedFiles: [], message, isPatch: true };
+}
 
-  // ── If legacy full-file blocks found, return legacy result ────
-  if (fullFiles.length > 0) {
-    console.warn("[PATCH] Executor used legacy FILE_START format — accepted as fallback.");
-    return { patches: [], updatedFiles: fullFiles, message, isPatch: false };
-  }
+function escapeRegex(value) {
+  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
-  // ── JSON fallback for extreme backwards compat ────────────────
-  try {
-    const parsed = JSON.parse(stripFences(text));
-    if (parsed && Array.isArray(parsed.updatedFiles)) {
-      console.warn("[PATCH] Executor used JSON format — parsed as fallback.");
-      return { patches: [], updatedFiles: parsed.updatedFiles, message: parsed.message || message, isPatch: false };
-    }
-  } catch (_) { /* ignore */ }
+function stripOuterPatchMarkers(content, target) {
+  const escapedTarget = escapeRegex(target);
+  let inner = String(content || '').replace(/\r\n/g, '\n');
+  inner = inner.replace(new RegExp(`^\\s*//\\s*@patch-id:\\s*${escapedTarget}\\s*\\n?`), '');
+  inner = inner.replace(new RegExp(`\\n?\\s*//\\s*@end-patch-id:\\s*${escapedTarget}\\s*$`), '');
+  return inner.replace(/^\n+/, '').replace(/\n+$/, '');
+}
 
+function replaceMarkedBlock(existing, target, rawContent) {
+  const startMarker = `// @patch-id: ${target}`;
+  const endMarker = `// @end-patch-id: ${target}`;
+  const startIdx = existing.indexOf(startMarker);
+  if (startIdx < 0) return { matched: false, updated: existing };
+  const contentStart = existing.indexOf('\n', startIdx);
+  if (contentStart < 0) return { matched: false, updated: existing };
+  const endIdx = existing.indexOf(endMarker, contentStart + 1);
+  if (endIdx < 0) return { matched: false, updated: existing };
+
+  let innerContent = stripOuterPatchMarkers(rawContent, target);
+  if (innerContent) innerContent += '\n';
+
+  return {
+    matched: true,
+    updated: existing.slice(0, contentStart + 1) + innerContent + existing.slice(endIdx)
+  };
+}
+
+function parseNewFunctionName(content) {
+  const str = String(content || '');
+  // Standard declarations: function name(...) or async function name(...)
+  let match = str.match(/^\s*(?:async\s+)?function\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/m);
+  if (match) return match[1];
+  // const/let/var assignments: const name = function / const name = async (...) => / const name = () =>
+  match = str.match(/^\s*(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*(?:async\s+)?(?:function[\s(]|\(|[A-Za-z_$][A-Za-z0-9_$]*\s*=>)/m);
+  if (match) return match[1];
   return null;
 }
 
-/* ── helper: apply patch blocks to accumulated file content ───── */
-/*
-   Merge strategy per block type:
-   • new_file    → write content directly (file didn't exist)
-   • replace     → find function/section by id name, replace entire body
-   • insert      → find anchor comment by name, insert content below it
-   • append      → concatenate content at end of existing file
-   • unmatched   → append with a warning comment (never fail the build)
-*/
-/* ── detectDuplicateDeclarations ─────────────────────────────────────────
-   After every patch merge, scan the resulting file for duplicate const/let/var/
-   function declarations at the same scope depth. Returns array of conflict
-   descriptors. A PATCH WARNING block already in the file is a strong signal
-   that an unmatched block was appended outside a closure — also flagged.    */
-function detectDuplicateDeclarations(content, filePath) {
-  const issues = [];
-
-  // ── 1. Detect [PATCH WARNING] appended-outside-closure blocks ────────────
-  const patchWarnMatches = content.match(/\/\/ \[PATCH WARNING\][^\n]*/g);
-  if (patchWarnMatches) {
-    for (const m of patchWarnMatches) {
-      issues.push({ type: "patch_warning", detail: m.trim() });
-    }
-  }
-
-  // ── 2. Detect duplicate top-level const/let/var/function declarations ────
-  // Scan line by line tracking brace depth. Only flag depth-0 and depth-1
-  // (module closure interior) declarations that appear more than once.
-  const declCounts = new Map(); // name → count
-  let depth = 0;
-  let inString = null;
-  let inLineComment = false;
-  let inBlockComment = false;
-  const lines = content.split("\n");
-
-  for (const line of lines) {
-    // Track comments
-    if (inBlockComment) {
-      if (line.includes("*/")) inBlockComment = false;
-      continue;
-    }
-    const stripped = line.trim();
-    if (stripped.startsWith("//")) { continue; }
-    if (stripped.startsWith("/*")) { inBlockComment = !stripped.includes("*/"); continue; }
-
-    // Count braces (simplified — good enough for top-level scope detection)
-    for (const ch of line) {
-      if (inString) { if (ch === inString) inString = null; continue; }
-      if (ch === '"' || ch === "'" || ch === "`") { inString = ch; continue; }
-      if (ch === "{") depth++;
-      if (ch === "}") depth = Math.max(0, depth - 1);
-    }
-
-    // Only care about depth 0 and 1 (inside the module.exports closure)
-    if (depth > 2) continue;
-
-    // Match: const/let/var NAME or function NAME
-    const constMatch = stripped.match(/^(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=/);
-    const funcMatch  = stripped.match(/^(?:async\s+)?function\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/);
-    const name = (constMatch && constMatch[1]) || (funcMatch && funcMatch[1]) || null;
-
-    if (name) {
-      const count = (declCounts.get(name) || 0) + 1;
-      declCounts.set(name, count);
-      if (count === 2) {
-        // Only report on second occurrence — this is the duplicate
-        issues.push({ type: "duplicate_declaration", name, detail: `"${name}" declared more than once at top/module scope in ${filePath}` });
-      }
-    }
-  }
-
-  return issues;
+function indentBlock(content, indent) {
+  return String(content || '')
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map(line => line ? indent + line : line)
+    .join('\n');
 }
 
 function applyPatchesToAccumulatedFiles(accumulatedFiles, patches) {
   const warnings = [];
   const touchedPaths = new Set();
 
+  const compilerOwnedWriteGuard = new Set(COMPILER_OWNED_JSON_PATHS);
+
   for (const patch of patches) {
-    const { path, type, id, after, content } = patch;
+    const path = patch.path;
+    const type = patch.type;
+    const content = patch.content;
+
+    if (compilerOwnedWriteGuard.has(path)) {
+      warnings.push(`BLOCKED: executor attempted to write compiler-owned path "${path}" — skipped`);
+      console.warn(`[PATCH] BLOCKED write to compiler-owned path: ${path}`);
+      continue;
+    }
+
     touchedPaths.add(path);
 
     if (type === "new_file") {
@@ -3090,157 +3012,65 @@ function applyPatchesToAccumulatedFiles(accumulatedFiles, patches) {
 
     const existing = accumulatedFiles[path] || "";
 
-    if (type === "append") {
-      accumulatedFiles[path] = existing
-        ? existing.trimEnd() + "\n\n" + content.trimStart()
-        : content;
-      console.log(`[PATCH] append: ${path} (+${content.split("\n").length} lines)`);
-      continue;
-    }
-
     if (type === "replace") {
-      // Try to find the function/section by scanning for its declaration.
-      // Matches: function NAME(...), const NAME =, let NAME =, var NAME =,
-      // async function NAME, NAME: function, // SECTION: NAME, /* SECTION: NAME */
-      const escapedId = id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const patterns = [
-        // Standard function declarations (including async, exported)
-        new RegExp(
-          `(^|\\n)([ \\t]*(?:export\\s+)?(?:async\\s+)?function\\s+${escapedId}\\s*\\([^)]*\\)\\s*\\{)([\\s\\S]*?\\n[ \\t]*\\})`,
-          "m"
-        ),
-        // Arrow / const function assignments
-        new RegExp(
-          `(^|\\n)([ \\t]*(?:const|let|var)\\s+${escapedId}\\s*=\\s*(?:async\\s+)?(?:function\\s*)?\\([^)]*\\)\\s*(?:=>\\s*)?\\{)([\\s\\S]*?\\n[ \\t]*\\}(?:\\s*;)?)`,
-          "m"
-        ),
-        // Section comment anchors: // SECTION: NAME or /* SECTION: NAME */
-        new RegExp(
-          `(\\n[ \\t]*(?:\\/\\/|\\/\\*)\\s*(?:SECTION:\\s*)?${escapedId}[^\\n]*)`,
-          "i"
-        ),
-      ];
-
-      let replaced = false;
-      for (const pattern of patterns) {
-        if (pattern.test(existing)) {
-          // For function patterns: replace the entire matched function block
-          // For section comment: insert the content after the comment line
-          if (pattern.source.includes("SECTION")) {
-            accumulatedFiles[path] = existing.replace(
-              pattern,
-              `\n${content.trimEnd()}`
-            );
-          } else {
-            // Replace the full function — find open brace, count to matching close
-            const declMatch = existing.match(pattern);
-            if (declMatch) {
-              const startIdx = existing.indexOf(declMatch[0], declMatch.index || 0);
-              const block = extractBalancedBlock(existing, startIdx);
-              if (block) {
-                accumulatedFiles[path] =
-                  existing.slice(0, block.start) +
-                  content.trimEnd() +
-                  existing.slice(block.end);
-                replaced = true;
-                break;
-              }
-            }
-          }
-          replaced = true;
-          break;
-        }
+      const target = patch.target;
+      const replaced = replaceMarkedBlock(existing, target, content);
+      if (!replaced.matched) {
+        warnings.push(`REPLACE_BLOCK target="${target}" not found in ${path} — skipped`);
+        console.warn(`[PATCH] replace skipped: ${path} | target=${target}`);
+        continue;
       }
-
-      if (!replaced) {
-        // Fallback: append with warning so the build never silently drops work
-        const warn = `\n// [PATCH WARNING] REPLACE_BLOCK id="${id}" had no match in ${path} — appended instead\n`;
-        accumulatedFiles[path] = existing.trimEnd() + warn + content.trimStart();
-        warnings.push(`REPLACE_BLOCK id="${id}" not matched in ${path} — appended`);
-        console.warn(`[PATCH] replace fallback (append): ${path} | id=${id}`);
-      } else {
-        console.log(`[PATCH] replace: ${path} | id=${id}`);
-      }
+      accumulatedFiles[path] = replaced.updated;
+      console.log(`[PATCH] replace: ${path} | target=${target}`);
       continue;
     }
 
-    if (type === "insert") {
-      // Find anchor comment: // anchor_name or /* anchor_name */ or // SECTION: anchor_name
-      const escapedAfter = after.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const anchorPatterns = [
-        new RegExp(`(\\/\\/[^\\n]*\\b${escapedAfter}\\b[^\\n]*)`, "i"),
-        new RegExp(`(\\/\\*[^*]*\\b${escapedAfter}\\b[^*]*\\*\\/)`, "i"),
-      ];
+    if (type === "new_function") {
+      const functionName = parseNewFunctionName(content);
+      if (!functionName) {
+        warnings.push(`NEW_FUNCTION in ${path} could not parse a function name — skipped`);
+        console.warn(`[PATCH] new_function skipped: ${path} | name parse failed`);
+        continue;
+      }
 
-      let inserted = false;
-      for (const pattern of anchorPatterns) {
-        const anchorMatch = existing.match(pattern);
-        if (anchorMatch) {
-          const anchorEnd = existing.indexOf(anchorMatch[0]) + anchorMatch[0].length;
-          // Find end of anchor line
-          const lineEnd = existing.indexOf("\n", anchorEnd);
-          const insertAt = lineEnd >= 0 ? lineEnd + 1 : existing.length;
-          accumulatedFiles[path] =
-            existing.slice(0, insertAt) +
-            content.trimEnd() + "\n" +
-            existing.slice(insertAt);
-          inserted = true;
-          console.log(`[PATCH] insert: ${path} | after=${after}`);
-          break;
+      const existingFunctionMarker = `// @patch-id: ${functionName}`;
+      if (existing.includes(existingFunctionMarker)) {
+        const replaced = replaceMarkedBlock(existing, functionName, content);
+        if (!replaced.matched) {
+          warnings.push(`NEW_FUNCTION target="${functionName}" existed in ${path} but replacement failed — skipped`);
+          console.warn(`[PATCH] new_function reroute skipped: ${path} | target=${functionName}`);
+          continue;
         }
+        accumulatedFiles[path] = replaced.updated;
+        console.log(`[PATCH] new_function rerouted to replace: ${path} | target=${functionName}`);
+        continue;
       }
 
-      if (!inserted) {
-        const warn = `\n// [PATCH WARNING] INSERT_BLOCK after="${after}" anchor not found in ${path} — appended instead\n`;
-        accumulatedFiles[path] = existing.trimEnd() + warn + content.trimStart();
-        warnings.push(`INSERT_BLOCK after="${after}" anchor not found in ${path} — appended`);
-        console.warn(`[PATCH] insert fallback (append): ${path} | after=${after}`);
+      const helperEndMarker = `// @end-patch-id: zone_helpers`;
+      const helperEndIdx = existing.indexOf(helperEndMarker);
+      if (helperEndIdx < 0) {
+        warnings.push(`NEW_FUNCTION target="${functionName}" could not find zone_helpers in ${path} — skipped`);
+        console.warn(`[PATCH] new_function skipped: ${path} | zone_helpers missing`);
+        continue;
       }
+
+      const lineStart = existing.lastIndexOf('\n', helperEndIdx);
+      const indent = lineStart >= 0 ? (existing.slice(lineStart + 1, helperEndIdx).match(/^\s*/) || [''])[0] : '';
+      const rawFunction = String(content || '').trim().replace(/\r\n/g, '\n');
+      const markedFunction = [
+        `${indent}// @patch-id: ${functionName}`,
+        indentBlock(rawFunction, indent),
+        `${indent}// @end-patch-id: ${functionName}`,
+        ''
+      ].join('\n');
+
+      accumulatedFiles[path] = existing.slice(0, helperEndIdx) + markedFunction + existing.slice(helperEndIdx);
+      console.log(`[PATCH] new_function: ${path} | target=${functionName}`);
       continue;
-    }
-  }
-
-  // ── Post-merge duplicate declaration scan ──────────────────────────────
-  for (const p of touchedPaths) {
-    if (p !== "models/2" && p !== "models/23") continue;
-    const content = accumulatedFiles[p] || "";
-    const issues = detectDuplicateDeclarations(content, p);
-    for (const issue of issues) {
-      const msg = issue.type === "duplicate_declaration"
-        ? `DUPLICATE DECLARATION: ${issue.detail}`
-        : `ORPHANED BLOCK: ${issue.detail}`;
-      warnings.push(msg);
-      console.error(`[MERGE INTEGRITY] ${p}: ${msg}`);
     }
   }
 
   return { touchedPaths: [...touchedPaths], warnings };
-}
-
-/* ── helper: extract a balanced { } block starting from a known position ── */
-/* Used by REPLACE_BLOCK to find the full extent of a function body.          */
-function extractBalancedBlock(text, startFromIdx) {
-  const openIdx = text.indexOf("{", startFromIdx);
-  if (openIdx < 0) return null;
-  let depth = 0;
-  let inString = null;
-  let escaped = false;
-  for (let i = openIdx; i < text.length; i++) {
-    const ch = text[i];
-    if (escaped) { escaped = false; continue; }
-    if (ch === "\\") { escaped = true; continue; }
-    if (inString) {
-      if (ch === inString) inString = null;
-      continue;
-    }
-    if (ch === '"' || ch === "'" || ch === "`") { inString = ch; continue; }
-    if (ch === "{") depth++;
-    if (ch === "}") {
-      depth--;
-      if (depth === 0) return { start: startFromIdx, end: i + 1 };
-    }
-  }
-  return null;
 }
 
 /* ── helper: save progress to Firebase ───────────────────────── */
@@ -3272,7 +3102,7 @@ function buildSceneIntentFreshnessNotice(sceneIntentSyncState) {
 
 function buildTrancheFileContextFromAccumulatedFiles(accumulatedFiles, sceneIntentSyncState) {
   // These files are READ-ONLY context for the patch executor.
-  // The executor outputs ONLY patch blocks (REPLACE_BLOCK / INSERT_BLOCK / APPEND_BLOCK / NEW_FILE).
+  // The executor outputs ONLY patch blocks (REPLACE_BLOCK / NEW_FUNCTION / NEW_FILE).
   // The merge engine applies those patches to these files after the tranche completes.
   let trancheFileContext = "CURRENT PROJECT FILES (read-only context — do NOT re-emit these; output only PATCH BLOCKS for your changes):\n\n";
   const compilerOwnedSet = new Set(COMPILER_OWNED_JSON_PATHS);
@@ -4187,7 +4017,7 @@ INSTRUCTION PRECEDENCE:
 PLANNING RULES:
 1. The Master Prompt's actual contract sections are the center of gravity. Read the real heading structure first, then anchor every core gameplay tranche to the prompt's actual authoritative sections/subsections. If the prompt uses the new layout, prioritize Sections 3.x, 4.x, 5, and 7. If it uses a legacy layout, use those real legacy section numbers. Never invent 6.3 anchors when the prompt does not contain them.
 2. Plan the build like a house: foundation before controls, controls before authored playfield shell, shell before gameplay loop, gameplay loop before progression/HUD, progression before feedback/polish.
-3. Each tranche prompt must be FULLY SELF-CONTAINED — embed the exact game-specific rules, variable names, slot layouts, code snippets, and pitfall warnings from the user's request that are relevant to that tranche. Do NOT summarize away critical implementation details. Each prompt MUST name the exact functions the executor will REPLACE_BLOCK or INSERT_BLOCK — vague scope like "update the game loop" is a planning defect.
+3. Each tranche prompt must be FULLY SELF-CONTAINED — embed the exact game-specific rules, variable names, slot layouts, code snippets, and pitfall warnings from the user's request that are relevant to that tranche. Do NOT summarize away critical implementation details. Each prompt MUST name the exact zone targets or zone_helpers function names the executor will emit — vague scope like "update the game loop" is a planning defect.
 4. ALWAYS split large or complex tranches into A/B/C sub-tranches. There is no hard cap on tranche count — use as many as needed. If in doubt, split.
 5. Keep tranche scope TIGHT: each tranche should implement ONE subsystem or ONE cohesive set of closely-related functions. Target 400-500 lines of NEW code per tranche — patch output is flat-cost regardless of accumulated file size, so use the full budget for fidelity and completeness. Only split when there is a true dependency boundary, a distinct risk boundary, or the tranche genuinely covers two independent subsystems that could fail separately. Do NOT split artificially to hit a lower line count.
 6. Every tranche must declare: kind, anchorSections, purpose, systemsTouched, filesTouched, visibleResult, safetyChecks, expectedFiles, dependencies, expertAgents, phase, and qualityCriteria.
@@ -4460,99 +4290,57 @@ Do not re-state the instruction docs — just apply them. Write it correctly the
 You must respond using PATCH BLOCK FORMAT only. Do NOT output full file contents. Do NOT use JSON. Do NOT use markdown code blocks.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-PATCH BLOCK FORMAT — OUTPUT ONLY YOUR CHANGES
+OUTPUT FORMAT — THREE BLOCK TYPES ONLY
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 You are given the FULL current file(s) as context above. Do NOT re-emit the full file.
-Output ONLY the functions, variables, and sections you are adding or changing in this tranche,
-using the block types below. The backend merge engine will apply your patches to the live file.
+Output ONLY the functions, variables, and sections you are adding or changing in this tranche.
+The backend merge engine will apply your patches to the live file.
 
-BLOCK TYPE 1 — NEW_FILE (first tranche creating a file that does not exist yet):
-===NEW_FILE: models/2===
-// complete initial file content here
-===END_NEW_FILE: models/2===
+1. REPLACE_BLOCK — replace a named zone:
+===REPLACE_BLOCK: zone_oninit_materials===
+// @patch-id: zone_oninit_materials
+defineMaterial('mat_red', 255, 0, 0);
+// @end-patch-id: zone_oninit_materials
+===END_REPLACE_BLOCK: zone_oninit_materials===
 
-BLOCK TYPE 2 — REPLACE_BLOCK (replacing an existing named function or section):
-The id must match the exact function name or section identifier as it appears in the current file.
-===REPLACE_BLOCK: models/2 | id=updatePlayerController===
-function updatePlayerController() {
-  // complete new version — include the full function body
+   Or replace an existing function in zone_helpers (include the markers):
+===REPLACE_BLOCK: spawnVehicle===
+// @patch-id: spawnVehicle
+function spawnVehicle(config, x, z, direction) {
+  // complete updated implementation
 }
-===END_REPLACE_BLOCK: models/2 | id=updatePlayerController===
+// @end-patch-id: spawnVehicle
+===END_REPLACE_BLOCK: spawnVehicle===
 
-BLOCK TYPE 3 — INSERT_BLOCK (inserting new code after a known anchor):
-The after= value must match a comment or identifier that already exists in the file.
-===INSERT_BLOCK: models/2 | after=gameState_init===
-gameState.playerSpeed = 0;
-gameState.jumpCount = 0;
-===END_INSERT_BLOCK: models/2 | after=gameState_init===
-
-BLOCK TYPE 4 — APPEND_BLOCK (adding new top-level code at end of file):
-===APPEND_BLOCK: models/2===
-function myNewHelper() {
-  // brand new function not yet in the file
+2. NEW_FUNCTION — add a new function to zone_helpers (no markers — engine injects them):
+===NEW_FUNCTION: models/2===
+function spawnEnemy(type, x, z) {
+  // complete implementation
 }
-===END_APPEND_BLOCK: models/2===
+===END_NEW_FUNCTION: models/2===
 
-After all patch blocks, add a message block:
+3. NEW_FILE — create a file that does not exist yet:
+===NEW_FILE: models/23===
+// complete file content
+===END_NEW_FILE: models/23===
+
+Always end with:
 ===MESSAGE===
-Detailed explanation: which functions were added/replaced/inserted, what logic changed, and why.
+What this tranche implemented.
 ===END_MESSAGE===
 
-PATCH OUTPUT RULES:
-- NEVER output a full file. Only output the blocks that actually changed.
-- Each REPLACE_BLOCK must contain the COMPLETE new version of that one function — no truncation, no ellipsis.
-- Each INSERT_BLOCK / APPEND_BLOCK must contain complete, runnable code — no stubs.
-- The id= in REPLACE_BLOCK must exactly match the function name as declared in the current file (e.g. if the file has "function spawnEnemy(", use id=spawnEnemy).
-- The after= in INSERT_BLOCK must match text that actually exists in the current file (e.g. a comment like "// gameState_init" or a variable declaration).
-- You may emit multiple blocks for multiple changes in one tranche.
-- For json/scene_intent.json, always use NEW_FILE or REPLACE_BLOCK with id=scene_intent_root (treat the whole JSON as one replaceable block).
-- If this is the very first tranche and models/2 / models/23 do not yet exist, use NEW_FILE blocks.
-- The legacy ===FILE_START / FILE_END=== format is retired. Never use it.
+ZONE TARGETING RULES:
+1. Read the full current file before writing anything.
+2. For zone_helpers: use NEW_FUNCTION if the function does not exist in the file, REPLACE_BLOCK targeting the function name if it does.
+3. For all other models/2 changes: use REPLACE_BLOCK targeting the @patch-id zone name and deliver the complete zone content including everything already there plus your additions.
+4. A zone replacement must include ALL existing content in that zone plus the new content — never a partial zone.
+5. Never emit INSERT_BLOCK, APPEND_BLOCK, FILE_START, FILE_END, or JSON output.
+6. Never emit json/assets.json, json/tree.json, or json/entities.json — compiler-owned, rebuilt automatically.
+7. Only include blocks for code you are actually adding or changing in THIS tranche.
+8. Do NOT touch code outside this tranche scope — leave it untouched in the existing file.
+9. Do NOT replace scaffold-owned state fields with renamed alternatives unless the tranche explicitly requires it.
+10. Do NOT invent custom lifecycle blocks when the scaffold already supplies one.
 
-DECLARATION COLLISION PREVENTION — MANDATORY PRE-OUTPUT CHECK:
-Before emitting any INSERT_BLOCK or APPEND_BLOCK, scan the READ-ONLY file above for every
-const, let, var, and function declaration you are about to add. If ANY name already exists
-at the same scope in the file, you MUST NOT redeclare it — instead reference the existing
-declaration or rename your new one with a unique suffix. Duplicate declarations cause
-JavaScript syntax errors that halt the entire build and require a full file repair.
-Specifically:
-- If you need to ADD a field to an existing object/gameState, use INSERT_BLOCK into the
-  existing initialisation block — do NOT redeclare the whole object.
-- If you need to UPDATE a constant, use REPLACE_BLOCK on the existing declaration — do NOT
-  add a second const with the same name.
-- A REPLACE_BLOCK that fails to match will be appended as a [PATCH WARNING] block outside
-  the module closure, which also causes syntax errors. Always verify your id= exactly
-  matches the function/variable name as it appears in the current file.
-
-EXAMPLE — two changes in one tranche:
-===REPLACE_BLOCK: models/2 | id=handleCollision===
-function handleCollision(a, b) {
-  if (a.tag === 'player' && b.tag === 'enemy') {
-    gameState.lives--;
-    playSound('hit');
-  }
-}
-===END_REPLACE_BLOCK: models/2 | id=handleCollision===
-
-===INSERT_BLOCK: models/2 | after=gameState_init===
-gameState.lives = 3;
-gameState.score = 0;
-===END_INSERT_BLOCK: models/2 | after=gameState_init===
-
-===MESSAGE===
-Replaced handleCollision to decrement lives and play hit sound. Inserted lives and score into gameState initialisation block.
-===END_MESSAGE===
-
-OUTPUT RULES:
-- Use PATCH BLOCK FORMAT above. NEVER output a full file. NEVER use FILE_START/FILE_END.
-- The ONLY JSON file you may ever emit is json/scene_intent.json (use REPLACE_BLOCK with id=scene_intent_root).
-- Never emit json/assets.json, json/tree.json, or json/entities.json — compiler-owned, rebuilt automatically.
-- Each block must be complete and self-contained — no ellipsis, no "// rest unchanged", no stubs.
-- Only include blocks for code you are actually adding or changing in THIS tranche.
-- Do NOT touch code outside this tranche scope — leave it untouched in the existing file.
-- If the scaffold already defines the correct place for a system (camera stage, UI hookup, particle factory, instance parent pattern, input handler, lifecycle block), implement inside that existing scaffold section using INSERT_BLOCK with the scaffold anchor as the after= value.
-- Do NOT replace scaffold-owned state fields with renamed alternatives unless the tranche explicitly requires it.
-- Do NOT invent custom lifecycle blocks when the scaffold already supplies one.
 - 3D OBJECT ENFORCEMENT: If an Approved Asset Roster is present and contains objects3d entries, every visible gameplay object introduced or modified in this tranche MUST branch cleanly between the eleven Cherry3D system primitives (cube, square, plane, sphere, cylinder, capsule, cone, torus, torusknot, tetrahedron, icosahedron) and non-primitive approved roster assets. If the object is intentionally one of those eleven primitives, state that explicitly in code comments and skip external scan/roster geometry-texture-meshCount enforcement for that object. For every other visible gameplay object, you MUST use a roster asset via gameState.objectids and the resolved assets.json manifest keys surfaced in the roster block. Using a Cherry3D primitive as a visible gameplay object when a roster asset covers that role is a defect. Those primitives may otherwise only be used for primitive-authored visuals, particle internals, and invisible collision geometry. Deprecated model primitive keys 17, 18, 21, 34, and 35 are forbidden; use only .primitives keys 4-14 when primitive-authored geometry is required.
 - PRIMITIVE TERRAIN ENFORCEMENT (applies when Road.zip pipeline is NOT active): All terrain structure built in this tranche — ground floors, terrain floor tiles, mountain body geometry, cliff face geometry, hill shapes, sloped ground planes, raised platforms, and any other structural ground-volume piece — MUST use only the Cherry3D system primitives (cube, square, plane, sphere, cylinder, capsule, cone, torus, torusknot, tetrahedron, icosahedron). Primitive terrain construction must resolve only through .primitives keys 4-14. Never source terrain floor or mountain body geometry from an external OBJ asset or roster entry — that is a defect. Every blocking terrain surface MUST have a STATIC rigidbody (Non-Negotiable 14). If this is the Terrain Shell tranche, you MUST emit a comment block immediately after all terrain geometry is placed that reads: // [TERRAIN SHELL COMPLETE] — lists each primitive used, its .primitives key, and confirms every blocking surface has a STATIC rigidbody. This comment is a required completion proof; its absence is a detectable defect. Props that sit ON TOP of terrain (trees, bushes, rocks, buildings, etc.) continue to use roster assets via gameState.objectids as normal. If this tranche builds terrain shell geometry without using those eleven primitives exclusively, or omits the completion proof comment, that is a defect.
 - PARTICLE TEXTURE ENFORCEMENT: Approved particle textures follow the scaffold particle-template path, not the non-primitive scene-object material-registry path. If this tranche IS Foundation-B, your first job is to populate BOTH PARTICLE_TEX_PATHS[effectName] = '<staged Firebase path>' and gameState.particleTextureIds[effectName] = '<manifest key>' for every approved particleEffectTarget from the roster block. In any later tranche that registers particle templates or creates particle billboards / spheres, you MUST assign the texture at the template/object slot itself via registerParticleTemplate(... extraData: { material_file: PARTICLE_TEX_PATHS[effectName] }) or an equivalent direct particle data['0'].material_file assignment. Declaring gameState.particleTextureIds without wiring material_file onto the particle template/object is a defect.
@@ -4616,7 +4404,7 @@ ${tranchePrompt}
 
 === END TRANCHE INSTRUCTIONS ===
 
-REMINDER: The files above are READ-ONLY context. Output ONLY patch blocks (REPLACE_BLOCK / INSERT_BLOCK / APPEND_BLOCK / NEW_FILE) for the code you are adding or changing in this tranche. Do NOT re-emit any file in full. The merge engine will apply your patches to the current file content.`;
+REMINDER: The files above are READ-ONLY context. Output ONLY patch blocks (REPLACE_BLOCK / NEW_FUNCTION / NEW_FILE) for the code you are adding or changing in this tranche. Do NOT re-emit any file in full. The merge engine will apply your patches to the current file content.`;
 
       const trancheUserContent = [
         {
@@ -4812,21 +4600,28 @@ REMINDER: The files above are READ-ONLY context. Output ONLY patch blocks (REPLA
               }
             }
 
+            // ── Fix 3: zero-write detection ────────────────────────────────
+            // Patches were parsed but every one was skipped (bad zone names,
+            // compiler-owned blocks, or missing markers). Nothing was written.
+            // Flag it explicitly so it is visible in the UI and logs — the
+            // build continues, but a silent no-op is never treated as success.
+            if (touchedPaths.length === 0) {
+              const zeroWriteMsg = `Tranche ${nextTranche + 1}: ${trancheResult.patches.length} patch block(s) parsed but zero files written — all patches skipped (check merge warnings above).`;
+              progress.tranches[nextTranche].patchMergeWarnings = [
+                ...(progress.tranches[nextTranche].patchMergeWarnings || []),
+                `ZERO WRITE: ${zeroWriteMsg}`
+              ];
+              console.warn(`[PATCH MERGE] ${zeroWriteMsg}`);
+            }
+
             console.log(`[PATCH] Tranche ${nextTranche + 1} merged ${trancheResult.patches.length} patch block(s) into ${touchedPaths.length} file(s).`);
 
-          // ── LEGACY PATH: full-file replacement (FILE_START / JSON) ──
-          } else if (Array.isArray(trancheResult.updatedFiles) && trancheResult.updatedFiles.length > 0) {
-            for (const file of trancheResult.updatedFiles) {
-              accumulatedFiles[file.path] = file.content;
-              trancheFilesUpdated.push(file.path);
-              const existingIdx = allUpdatedFiles.findIndex(f => f.path === file.path);
-              if (existingIdx >= 0) {
-                allUpdatedFiles[existingIdx] = file;
-              } else {
-                allUpdatedFiles.push(file);
-              }
-            }
-            console.log(`[LEGACY] Tranche ${nextTranche + 1} wrote ${trancheResult.updatedFiles.length} full file(s).`);
+          } else {
+            // Fix 4: the legacy full-file-output path is unreachable under the
+            // zone-based architecture — parseDelimitedResponse always returns
+            // isPatch:true with updatedFiles:[]. If this branch ever fires,
+            // something upstream changed and must be investigated immediately.
+            console.error(`[PATCH] Tranche ${nextTranche + 1}: unexpected code path — trancheResult has no patch blocks and no updatedFiles. Response shape: isPatch=${trancheResult.isPatch}, patches=${JSON.stringify(trancheResult.patches)?.slice(0, 200)}, updatedFiles=${JSON.stringify(trancheResult.updatedFiles)?.slice(0, 200)}`);
           }
 
           // ── scene_intent detection (works for both paths) ────────────

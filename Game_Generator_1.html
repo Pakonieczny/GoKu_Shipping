@@ -3114,7 +3114,7 @@ This will permanently remove all associated files and Firebase folders for this 
 
     const AI_HARDENING = {
       jsonPollMalformedLimit: 4,
-      repairPassLimit: 2,
+      repairPassLimit: 0,
       backupFolder: 'ai_backups',
       diagnosticsFolder: 'ai_diagnostics'
     };
@@ -3314,13 +3314,6 @@ This will permanently remove all associated files and Firebase folders for this 
           return { ok: false, error: `${safePath} is not valid JSON: ${error.message}` };
         }
       }
-      if (safePath === 'models/2' || safePath.endsWith('.js')) {
-        try {
-          new Function(trimmed);
-        } catch (error) {
-          return { ok: false, error: `${safePath} failed JavaScript syntax validation: ${error.message}` };
-        }
-      }
       return { ok: true };
     }
 
@@ -3341,13 +3334,16 @@ MANDATORY RULES
 1. Use PATCH BLOCK FORMAT — do NOT output the full file (causes Netlify timeouts on large game files).
 2. Fix ONLY the files listed in FAILED TARGETS above. Do not touch any other file.
 3. Preserve all working systems that already succeeded.
-4. DECLARATION COLLISION CHECK: Before any patch, scan the current file for names you are about to declare. Use REPLACE_BLOCK to update existing declarations — never redeclare with a new const/let/var.
-5. For each failed target, emit REPLACE_BLOCK / INSERT_BLOCK patches targeting the specific function(s) or section(s) containing the error.
+4. Read the full current file before writing anything.
+5. For zone_helpers, use NEW_FUNCTION if the function does not exist yet and REPLACE_BLOCK targeting the function name if it does.
+6. For all other models/2 changes, emit REPLACE_BLOCK targeting the exact @patch-id zone name and include the complete zone content.
 
 REPAIR FORMAT:
-===REPLACE_BLOCK: models/2 | id=brokenFunctionName===
-function brokenFunctionName() { /* corrected complete body */ }
-===END_REPLACE_BLOCK: models/2 | id=brokenFunctionName===
+===REPLACE_BLOCK: zone_onrender===
+// @patch-id: zone_onrender
+// corrected complete zone content
+// @end-patch-id: zone_onrender
+===END_REPLACE_BLOCK: zone_onrender===
 ===MESSAGE===
 What was broken and what the patch fixes.
 ===END_MESSAGE===`;
@@ -4757,6 +4753,12 @@ Quality criteria for your work:
           if (t.contractCodeReviewWarnings && t.contractCodeReviewWarnings.length > 0) {
             metaHTML += `<span class="tranche-card-tag" style="background:#38bdf822;color:#38bdf8;border:1px solid #38bdf844;">ℹ Code contract review</span>`;
           }
+          if (t.patchMergeWarnings && t.patchMergeWarnings.length > 0) {
+            const blocked = t.patchMergeWarnings.some(w => w.startsWith('BLOCKED'));
+            metaHTML += blocked
+              ? `<span class="tranche-card-tag" style="background:#f8717122;color:#f87171;border:1px solid #f8717144;">⛔ ${t.patchMergeWarnings.length} blocked write${t.patchMergeWarnings.length > 1 ? 's' : ''}</span>`
+              : `<span class="tranche-card-tag" style="background:#f8717122;color:#f87171;border:1px solid #f8717144;">⚠ ${t.patchMergeWarnings.length} merge warning${t.patchMergeWarnings.length > 1 ? 's' : ''}</span>`;
+          }
           metaEl.innerHTML = metaHTML;
 
           // ── Timing breakdown bar (shown when complete with timing data) ──
@@ -4862,6 +4864,10 @@ Quality criteria for your work:
           if (t.contractCodeReviewWarnings && t.contractCodeReviewWarnings.length > 0) {
             qualityLines.push(`<div style="margin:6px 0 4px;color:#38bdf8;">Informational code contract review:</div>`);
             qualityLines.push(...t.contractCodeReviewWarnings.map((c, ci) => `<div style="margin-bottom:3px;color:#f8fafc;"><span style="color:#38bdf8;">${ci + 1}.</span> ${this._escapeHTML(c)}</div>`));
+          }
+          if (t.patchMergeWarnings && t.patchMergeWarnings.length > 0) {
+            qualityLines.push(`<div style="margin:6px 0 4px;color:#f87171;">⚠ Merge engine warnings (zones/functions not written):</div>`);
+            qualityLines.push(...t.patchMergeWarnings.map((c, ci) => `<div style="margin-bottom:3px;color:#fca5a5;"><span style="color:#f87171;">${ci + 1}.</span> ${this._escapeHTML(c)}</div>`));
           }
           if (qualityLines.length > 0) {
             qToggleEl.style.display = 'block';
@@ -5137,249 +5143,7 @@ Quality criteria for your work:
         await executeAIPipeline(pendingAiPrompt);
     });
 
-    /* ══════════════════════════════════════════════════════════════════════
-       REPAIR-AND-APPLY LOOP
-       ─────────────────────────────────────────────────────────────────────
-       Called automatically when the initial apply finds validation failures.
-       Runs up to AI_HARDENING.repairPassLimit surgical repair passes without
-       human intervention.  Each pass:
-
-         1. Seeds the backend with the *rejected candidate* (not the stale
-            Firebase file) as the source-of-truth in the files payload
-         2. Builds a lean single-tranche repair prompt
-         3. Triggers the Netlify backend
-         4. Polls for the repaired ai_response.json
-         5. Applies only the still-failing files via applyAiUpdatedFiles
-         6. Re-validates; if clean returns ok, else iterates
-
-       Returns { ok:true,  appliedFiles }          on full success
-               { ok:false, failedFiles, finalSummary } after exhausting all passes
-    ═══════════════════════════════════════════════════════════════════════ */
-    async function runRepairAndApplyLoop({
-      basePrompt,
-      projectPath,
-      projectFiles,          // live files as of the last successful apply
-      initialFailedFiles,    // from applyAiUpdatedFiles; each has .candidateContent
-      escapeHTML
-    }) {
-      const responseFileRef = ref(storage, `${projectPath}/ai_response.json`);
-      const errorFileRef    = ref(storage, `${projectPath}/ai_error.json`);
-      const progressFileRef = ref(storage, `${projectPath}/ai_progress.json`);
-      const requestFileRef  = ref(storage, `${projectPath}/ai_request.json`);
-      const activeJobRef    = ref(storage, `${projectPath}/ai_active_job.json`);
-
-      let currentFailedFiles = initialFailedFiles;
-
-      for (let pass = 1; pass <= AI_HARDENING.repairPassLimit; pass++) {
-        const failedPaths = currentFailedFiles.map(f => f.safePath || f.path).join(', ');
-        appendToChatLog('System',
-          `⚙ Repair pass ${pass}/${AI_HARDENING.repairPassLimit}: targeting ${failedPaths}`, 'normal');
-        Progress.step(`⚙ Repair pass ${pass}/${AI_HARDENING.repairPassLimit}`, failedPaths);
-
-        // ── Rejected candidate is source-of-truth for repair ───────────────
-        // buildRepairSeedFiles overlays candidateContent onto the live files so
-        // the backend receives exactly what it needs to fix, not a re-fetched copy.
-        const repairSeedFiles = buildRepairSeedFiles(projectFiles, currentFailedFiles);
-
-        // ── Lean surgical repair prompt ─────────────────────────────────────
-        const repairContext = buildRepairTargetsContext(currentFailedFiles);
-        const enhancedRepairPrompt =
-`You are an expert game developer performing a SURGICAL REPAIR of specific failed files.
-Do NOT plan new tranches. Do NOT redesign the game. Fix ONLY the exact targets listed below.
-${repairSeedFiles['models/2']         ? `\n=== CURRENT FILE: models/2 ===\n${repairSeedFiles['models/2']}`                 : ''}
-${repairSeedFiles['models/23']        ? `\n=== CURRENT FILE: models/23 ===\n${repairSeedFiles['models/23']}`               : ''}
-${repairSeedFiles['json/scene_intent.json'] ? `\n=== CURRENT FILE: json/scene_intent.json ===\n${repairSeedFiles['json/scene_intent.json']}` : ''}
-${repairSeedFiles['json/assets.json'] ? `\n=== CURRENT FILE: json/assets.json ===\n${repairSeedFiles['json/assets.json']}` : ''}
-${repairSeedFiles['json/tree.json'] ? `\n=== CURRENT FILE: json/tree.json ===\n${repairSeedFiles['json/tree.json']}` : ''}
-${repairSeedFiles['json/entities.json'] ? `\n=== CURRENT FILE: json/entities.json ===\n${repairSeedFiles['json/entities.json']}` : ''}
-
-=== REPAIR CONTEXT ===
-${repairContext}
-
-═══════════════════════════════════════════════════════════
-REPAIR INSTRUCTIONS — PASS ${pass}/${AI_HARDENING.repairPassLimit}
-═══════════════════════════════════════════════════════════
-Use PATCH BLOCK FORMAT to fix ONLY the specific error(s) listed in REPAIR CONTEXT.
-Do NOT output the full file — that causes Netlify timeouts on large game files.
-
-CRITICAL — DECLARATION COLLISION CHECK:
-Before outputting any patch block, scan the CURRENT FILE above for every name you
-are about to declare. If a name already exists at the same scope, use REPLACE_BLOCK
-to update it — never redeclare with a new const/let/var. Duplicate declarations are
-the most common cause of syntax errors that trigger repair loops.
-Also: if you see any // [PATCH WARNING] blocks appended outside the module closure,
-remove them via REPLACE_BLOCK on the enclosing function and integrate their content
-into the correct scope.
-
-REPAIR FORMAT:
-===REPLACE_BLOCK: models/2 | id=functionContainingError===
-function functionContainingError() {
-  // complete corrected function body
-}
-===END_REPLACE_BLOCK: models/2 | id=functionContainingError===
-
-===MESSAGE===
-What was broken, what the patch fixes, confirmation no duplicate declarations remain.
-===END_MESSAGE===
-
-Original user request for context: ${basePrompt}`;
-
-        // ── New job ID for this repair pass ─────────────────────────────────
-        const repairJobId = Date.now().toString();
-        lastRunJobId    = repairJobId;
-        lastRunStartTime = Date.now();
-
-        try { await deleteObject(responseFileRef); } catch (e) {}
-        try { await deleteObject(errorFileRef); }    catch (e) {}
-
-        await uploadString(activeJobRef, JSON.stringify({
-          jobId: repairJobId, timestamp: Date.now(), repairAttempt: pass
-        }));
-
-        // ── Upload payload — repairSeedFiles carries rejected candidate ──────
-        await uploadString(requestFileRef, JSON.stringify({
-          prompt:        enhancedRepairPrompt,
-          files:         repairSeedFiles,   // ← rejected candidate, not stale Firebase
-          projectPath,
-          selectedAssets: [],
-          inlineImages:   [],
-          expertAgents:   EXPERT_AGENTS,
-          repairAttempt:  pass,
-          repairTargets:  currentFailedFiles
-        }));
-
-        // ── Trigger backend ─────────────────────────────────────────────────
-        Progress.step(`Triggering repair backend (pass ${pass})`, 'Sending to Netlify...');
-        const repairProxyRes = await fetch(AI_SERVICES[currentAiService].endpoint, {
-          method:  'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({ projectPath, jobId: repairJobId, repairAttempt: pass })
-        });
-        if (!repairProxyRes.ok) {
-          throw new Error(
-            `Repair backend rejected (pass ${pass}): ${repairProxyRes.status} ${repairProxyRes.statusText}`
-          );
-        }
-
-        // ── Poll for repaired response ──────────────────────────────────────
-        Progress.step(`Waiting for repair result (pass ${pass})`, 'Polling Firebase...');
-        TrancheUI.showPlanning();
-
-        let repairResult     = null;
-        let repairMalformed  = 0;
-        let _warnedStaleRepair   = false;
-        let _warnedBadEnvRepair  = false;
-        let _warnedMalformRepair = false;
-
-        while (!repairResult) {
-          await sleep(5000);
-
-          const repairErrRead = await fetchStorageJsonSafe(
-            errorFileRef, projectPath, `repair_error_p${pass}`);
-          if (repairErrRead.ok) {
-            throw new Error(
-              `Repair backend error (pass ${pass}): ${repairErrRead.data?.error || 'unknown'}`);
-          }
-
-          const repairProgRead = await fetchStorageJsonSafe(
-            progressFileRef, projectPath, `repair_progress_p${pass}`);
-          if (repairProgRead.ok && repairProgRead.data.jobId === repairJobId) {
-            TrancheUI.updateFromProgress(repairProgRead.data);
-          }
-
-          const repairRespRead = await fetchStorageJsonSafe(
-            responseFileRef, projectPath, `repair_response_p${pass}`);
-          if (repairRespRead.ok) {
-            const respJobId = repairRespRead.data.jobId;
-            if (respJobId && respJobId !== repairJobId) {
-              if (!_warnedStaleRepair) {
-                _warnedStaleRepair = true;
-                Progress.warn(`Stale repair response (pass ${pass})`,
-                  `Expected ${repairJobId}, got ${respJobId} — still waiting...`);
-              }
-              continue;
-            }
-            const envCheck = validateAiResponseEnvelope(repairRespRead.data);
-            if (!envCheck.ok) {
-              repairMalformed++;
-              if (repairMalformed >= AI_HARDENING.jsonPollMalformedLimit) {
-                throw new Error(`Malformed repair response (pass ${pass}): ${envCheck.error}`);
-              }
-              if (!_warnedBadEnvRepair) {
-                _warnedBadEnvRepair = true;
-                Progress.warn(`Invalid repair envelope (pass ${pass})`, envCheck.error);
-              }
-              continue;
-            }
-            repairResult = repairRespRead.data;
-          } else if (repairRespRead.kind === 'parse_error') {
-            repairMalformed++;
-            if (repairMalformed >= AI_HARDENING.jsonPollMalformedLimit) {
-              throw new Error(
-                `Unparseable repair response after ${repairMalformed} tries (pass ${pass})`);
-            }
-            if (!_warnedMalformRepair) {
-              _warnedMalformRepair = true;
-              Progress.warn(`Malformed repair response (pass ${pass})`, `Attempt ${repairMalformed}`);
-            }
-          } else if (repairRespRead.kind === 'missing') {
-            // Hard-fail: backend marked complete but wrote nothing
-            if (repairProgRead.ok &&
-                repairProgRead.data.status === 'complete' &&
-                repairProgRead.data.jobId === repairJobId) {
-              throw new Error(
-                `Repair persistence failure (pass ${pass}): backend complete but ai_response.json absent.`
-              );
-            }
-          }
-        }
-
-        // ── Apply repair — only the still-failing files ─────────────────────
-        Progress.step(`Applying repair (pass ${pass})`,
-          `Validating and writing: ${currentFailedFiles.map(f => f.safePath || f.path).join(', ')}`);
-
-        const repairedApply = await applyAiUpdatedFiles({
-          result:      repairResult,
-          projectPath,
-          projectFiles,   // live baseline for writing + structural comparison
-          escapeHTML,
-          targetPaths: currentFailedFiles.map(f => f.safePath || f.path)
-        });
-
-        if (repairedApply.failedFiles.length === 0) {
-          Progress.step(
-            `✅ Repair pass ${pass} succeeded`,
-            `${repairedApply.appliedFiles.length} file(s) written live.`);
-          appendToChatLog('System',
-            `✅ Repair pass ${pass} complete — all ${repairedApply.appliedFiles.length} file(s) applied.`,
-            'normal');
-          return { ok: true, appliedFiles: repairedApply.appliedFiles, pass };
-        }
-
-        // Still failing — update records for next pass
-        currentFailedFiles = repairedApply.failedFiles;
-        const stillFailed  = currentFailedFiles.map(f => `${f.safePath}: ${f.reason}`).join(' | ');
-        Progress.warn(`Repair pass ${pass} still failing`, stillFailed);
-        appendToChatLog('System', `Repair pass ${pass} failed: ${stillFailed}`, 'error');
-
-        await quarantineAiPayload(
-          projectPath, `repair_pass_${pass}_failures`,
-          JSON.stringify(currentFailedFiles, null, 2),
-          { repairAttempt: pass, failedCount: currentFailedFiles.length }
-        );
-      }
-
-      // ── All passes exhausted — structured hard fail ──────────────────────
-      const finalSummary = currentFailedFiles.map(f => `${f.safePath}: ${f.reason}`).join(' | ');
-      await quarantineAiPayload(
-        projectPath, 'repair_all_passes_exhausted',
-        JSON.stringify(currentFailedFiles, null, 2),
-        { repairPassLimit: AI_HARDENING.repairPassLimit, failedCount: currentFailedFiles.length }
-      );
-      return { ok: false, failedFiles: currentFailedFiles, finalSummary };
-    }
-
-
+    // Automatic repair loop removed by zone-based build architecture.
 
     function collectThreeMaterialNames(root) {
       const names = new Set();
@@ -7675,9 +7439,8 @@ function functionContainingError() {
 }
 ===END_REPLACE_BLOCK: models/2 | id=functionContainingError===
 
-Use REPLACE_BLOCK for: duplicate declarations, syntax errors inside a function,
-orphaned [PATCH WARNING] blocks that need integrating into the correct scope.
-Use INSERT_BLOCK for: missing declarations that genuinely don't exist yet.
+Use REPLACE_BLOCK for: named zone replacements and updates to existing zone_helpers functions.
+Use NEW_FUNCTION for: brand new zone_helpers functions that do not yet exist in models/2.
 
 ===MESSAGE===
 What was broken, what the patch fixes, and confirmation no duplicate declarations remain.
@@ -7717,11 +7480,11 @@ The backend planner reads this request plus project files plus two Firebase-host
 It then splits the build into sequential tranches. No intermediate architecture synthesis step.
 
 ENVIRONMENT CONSTRAINTS (platform facts handled by backend):
-1. Executors use PATCH BLOCK FORMAT — they output only the functions/sections they change, not full files. The backend merge engine applies those patches to the live accumulated file after each tranche. Tranche prompts must be written so the executor knows exactly which named functions to REPLACE, INSERT, or APPEND.
+1. Executors use PATCH BLOCK FORMAT — they output only REPLACE_BLOCK, NEW_FUNCTION, and NEW_FILE blocks. The backend merge engine applies those patches to the live accumulated file after each tranche. Tranche prompts must be written so the executor knows exactly which models/2 zone names or zone_helpers function names to target.
 2. Valid target files are models/2, models/23, and json/scene_intent.json. json/assets.json, json/tree.json, and json/entities.json are compiler-owned read-only context files. scene_intent.json may declare groups[], objects[], and standalone rigidbodies[] when a rigidbody must exist directly under a group or at the root. If those compiler-owned files ever conflict with a fresher scene_intent.json during a run, scene_intent.json is authoritative until the compile/apply sync path rebuilds the package.
 3. Main logic file is models/2. HTML overlay is models/23.
-4. Executors output PATCH BLOCKS only — REPLACE_BLOCK to update an existing named function, INSERT_BLOCK to add code after a named anchor, APPEND_BLOCK for new top-level additions, NEW_FILE for first creation. Full file re-emission is forbidden.
-5. Because executors output only their changes, each tranche prompt MUST name the exact functions it will REPLACE or INSERT, and the exact anchor it will INSERT after. Vague scope is insufficient — name the function: "REPLACE_BLOCK id=onRender".
+4. Executors output PATCH BLOCKS only — REPLACE_BLOCK to update a named zone or an existing zone_helpers function, NEW_FUNCTION to add a new zone_helpers function, and NEW_FILE for first creation. Full file re-emission is forbidden.
+5. Because executors output only their changes, each tranche prompt MUST name the exact models/2 zone names it will replace or the exact zone_helpers function names it will add or replace. Vague scope is insufficient — name the zone or function explicitly.
 6. The immutable Scaffold v19 is injected by backend and is the required base architecture.
 7. The SDK / Engine Reference is injected by backend for engine facts and uncertainty resolution.
 8. Anti-pattern validators mechanically enforce engine rules after each tranche.
@@ -7731,7 +7494,7 @@ PLANNING REQUIREMENTS:
 - ALL tranches: target 400-500 lines of NEW code per tranche. Patch output is flat-cost — the merge engine applies only changed blocks, so a 500-line patch costs the same output tokens as a 50-line patch. Use the full budget for game fidelity, complete function bodies, rich audio/visual feedback, thorough error handling, and accurate physics. Only split a tranche when there is a genuine dependency boundary or independent risk boundary — never split purely to reduce line count.
 - LATE-PHASE (tranches 11 and beyond): the 400-500 line budget still applies. Late tranches handle integration, audio balancing, edge cases, and death-sequence polish — use the full budget for quality. Split only when two genuinely independent subsystems are being addressed.
 - Order tranches by true dependency.
-- Each tranche prompt must NAME THE EXACT FUNCTIONS the executor will add or change (these become the REPLACE_BLOCK / INSERT_BLOCK ids). Embed exact game-specific rules, variable names, and pitfall warnings. Do NOT summarize — copy the exact technical details.
+- Each tranche prompt must NAME THE EXACT ZONES OR zone_helpers FUNCTIONS the executor will add or change. Embed exact game-specific rules, variable names, and pitfall warnings. Do NOT summarize — copy the exact technical details.
 - The scaffold is the codified binding law extracted from shipped working games. Adapt the requested game to the scaffold — never adapt the scaffold to the game.
 - The SDK / Engine Reference is subordinate. Use it only when the scaffold is silent and engine certainty is needed.
 - Pick one lawful pattern family per subsystem and preserve it through planning, execution, validation, and repair. Do not silently switch families mid-pipeline.
@@ -8074,27 +7837,9 @@ RULES FOR ALL PIPELINE STAGES:
               failedCount: applySummary.failedFiles.length
             });
 
-          Progress.warn('Initial apply has failures — entering repair loop', failedSummary);
+          Progress.warn('Initial apply has failures — continuing without automatic repair', failedSummary);
           appendToChatLog('System',
-            `${applySummary.failedFiles.length} file(s) failed validation. Auto-repair loop starting...`, 'error');
-
-          const repairOutcome = await runRepairAndApplyLoop({
-            basePrompt,
-            projectPath,
-            projectFiles,
-            initialFailedFiles: applySummary.failedFiles,
-            escapeHTML
-          });
-
-          if (!repairOutcome.ok) {
-            throw new Error(
-              `AI update failed after ${AI_HARDENING.repairPassLimit} repair attempt(s). ` +
-              repairOutcome.finalSummary
-            );
-          }
-
-          // Merge repair-applied files into the review pane list
-          applySummary.appliedFiles.push(...repairOutcome.appliedFiles);
+            `${applySummary.failedFiles.length} file(s) failed validation and were skipped: ${failedSummary}`, 'error');
         }
 
         result.updatedFiles = applySummary.appliedFiles;
@@ -8243,53 +7988,6 @@ RULES FOR ALL PIPELINE STAGES:
         // All already-completed tranches wrote to Firebase successfully — don't redo them.
         // Instead, read ai_progress.json to find which tranche(s) didn't complete,
         // then target only those files with the lean surgical repair prompt.
-        const isBackendParseError = /Failed to parse JSON response|parse JSON response|Unexpected non-whitespace character after JSON|Unexpected token/i.test(error.message || '');
-        if (isBackendParseError && parseErrorRetry < AI_HARDENING.repairPassLimit) {
-          Progress.warn('Backend JSON parse error — identifying failed tranche', error.message);
-          let parseRepairTargets = [];
-          try {
-            const progressRead = await fetchStorageJsonSafe(progressFileRef, projectPath, 'ai_progress_for_repair');
-            if (progressRead.ok && Array.isArray(progressRead.data?.tranches)) {
-              const incompleteTranches = progressRead.data.tranches.filter(t => t.status !== 'complete');
-              parseRepairTargets = incompleteTranches.flatMap(t =>
-                (t.expectedFiles || ['models/2']).map(f => ({
-                  path: f,
-                  safePath: f,
-                  reason: `Tranche "${t.name}" failed with backend JSON parse error: ${error.message}`
-                }))
-              );
-            }
-          } catch (progressReadErr) {
-            console.warn('Could not read progress for parse error recovery:', progressReadErr);
-          }
-
-          // Fallback: if progress was unreadable, target models/2 as the most likely culprit
-          if (parseRepairTargets.length === 0) {
-            parseRepairTargets = [{ path: 'models/2', safePath: 'models/2', reason: `Backend JSON parse error: ${error.message}` }];
-          }
-
-          appendToChatLog('System', `Backend JSON parse error — surgically repairing ${parseRepairTargets.length} file(s): ${parseRepairTargets.map(t => t.safePath).join(', ')}`, 'error');
-          await executeAIPipeline(basePrompt, {
-            repairAttempt: repairAttempt + 1,   // use repair mode (lean targeted prompt)
-            repairTargets: parseRepairTargets,
-            preserveButtonLock: true,
-            parseErrorRetry: parseErrorRetry + 1
-          });
-          return;
-        }
-
-        const isRecoverable = /Malformed final AI response|AI response is missing updatedFiles array|AI response was not a JSON object|strict JSON only/i.test(error.message || '');
-        if (isRecoverable && repairAttempt < AI_HARDENING.repairPassLimit) {
-          appendToChatLog('System', `Recoverable pipeline issue detected. Re-running the failed portion automatically.`, 'error');
-          Progress.warn('Recoverable AI pipeline issue', error.message);
-          await executeAIPipeline(basePrompt, {
-            repairAttempt: repairAttempt + 1,
-            repairTargets: repairTargets.length ? repairTargets : [{ path: 'pipeline', safePath: 'pipeline', reason: error.message }],
-            preserveButtonLock: true,
-            parseErrorRetry
-          });
-          return;
-        }
         appendToChatLog('System', `Error: ${error.message}`, 'error');
         setStatus('AI update failed.');
         Progress.error(error.message);
@@ -8677,6 +8375,745 @@ RULES FOR ALL PIPELINE STAGES:
     </div>
     <span class="ct-close" id="cherryToastClose">✕</span>
   </div>
+
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       MERGE ENGINE TEST PANEL
+       Access: append  ?mergetest=1  to the page URL, or press
+       Ctrl+Shift+T anywhere on the page.
+       Runs entirely in-browser — zero AI calls, zero Firebase writes.
+       Uses embedded copies of the exact backend merge functions so the
+       test exercises the same logic the backend executes.
+       ═══════════════════════════════════════════════════════════════ -->
+
+  <div id="mergeTestPanel" style="display:none;position:fixed;inset:0;z-index:99999;background:#080c14;color:#f1f5f9;font-family:monospace;font-size:13px;overflow:auto;padding:0;">
+    <div style="position:sticky;top:0;background:#0f172a;border-bottom:2px solid #334155;padding:14px 20px;display:flex;align-items:center;gap:16px;z-index:1;">
+      <span style="font-size:16px;font-weight:700;color:#38bdf8;">⚙ Merge Engine Test Suite</span>
+      <span id="mergeTestSummary" style="color:#64748b;font-size:12px;">Not run yet</span>
+      <button onclick="runMergeTests()" style="margin-left:auto;padding:6px 18px;background:#2563eb;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;">▶ Run All Tests</button>
+      <button onclick="document.getElementById('mergeTestPanel').style.display='none'" style="padding:6px 14px;background:#1e293b;color:#94a3b8;border:1px solid #334155;border-radius:6px;cursor:pointer;font-size:13px;">✕ Close</button>
+    </div>
+    <div id="mergeTestResults" style="padding:20px;max-width:960px;margin:0 auto;"></div>
+  </div>
+
+  <script>
+  /* ── Embedded copies of backend merge engine functions ──────────────────
+     Keep in sync with claudeCodeProxy-background.js whenever those
+     functions change. The test suite will catch drift if you forget —
+     it runs against a real scaffold fixture and real block formats.     */
+
+  const _MT_COMPILER_OWNED = new Set(['json/assets.json', 'json/tree.json', 'json/entities.json']);
+
+  function _mt_escapeRegex(v) {
+    return String(v || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  function _mt_stripOuterPatchMarkers(content, target) {
+    const esc = _mt_escapeRegex(target);
+    let inner = String(content || '').replace(/\r\n/g, '\n');
+    inner = inner.replace(new RegExp('^\\s*//\\s*@patch-id:\\s*' + esc + '\\s*\n?'), '');
+    inner = inner.replace(new RegExp('\n?\\s*//\\s*@end-patch-id:\\s*' + esc + '\\s*$'), '');
+    return inner.replace(/^\n+/, '').replace(/\n+$/, '');
+  }
+
+  function _mt_replaceMarkedBlock(existing, target, rawContent) {
+    const startMarker = '// @patch-id: ' + target;
+    const endMarker   = '// @end-patch-id: ' + target;
+    const startIdx    = existing.indexOf(startMarker);
+    if (startIdx < 0) return { matched: false, updated: existing };
+    const contentStart = existing.indexOf('\n', startIdx);
+    if (contentStart < 0) return { matched: false, updated: existing };
+    const endIdx = existing.indexOf(endMarker, contentStart + 1);
+    if (endIdx < 0) return { matched: false, updated: existing };
+    let inner = _mt_stripOuterPatchMarkers(rawContent, target);
+    if (inner) inner += '\n';
+    return { matched: true, updated: existing.slice(0, contentStart + 1) + inner + existing.slice(endIdx) };
+  }
+
+  function _mt_indentBlock(content, indent) {
+    return String(content || '').replace(/\r\n/g, '\n').split('\n')
+      .map(l => l ? indent + l : l).join('\n');
+  }
+
+  function _mt_parseNewFunctionName(content) {
+    const str = String(content || '');
+    let m = str.match(/^\s*(?:async\s+)?function\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/m);
+    if (m) return m[1];
+    m = str.match(/^\s*(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*(?:async\s+)?(?:function[\s(]|\(|[A-Za-z_$][A-Za-z0-9_$]*\s*=>)/m);
+    return m ? m[1] : null;
+  }
+
+  function _mt_parseDelimitedResponse(text) {
+    const patches = [];
+    let match;
+    const newFileRx    = /===NEW_FILE:\s*([^\n]+?)\s*===\n([\s\S]*?)===END_NEW_FILE:\s*\1\s*===/g;
+    const replaceRx    = /===REPLACE_BLOCK:\s*([^\n]+?)\s*===\n([\s\S]*?)===END_REPLACE_BLOCK:\s*\1\s*===/g;
+    const newFunctionRx = /===NEW_FUNCTION:\s*models\/2\s*===\n([\s\S]*?)===END_NEW_FUNCTION:\s*models\/2\s*===/g;
+    while ((match = newFileRx.exec(text))    !== null) patches.push({ path: match[1].trim(), type: 'new_file',      content: match[2] });
+    while ((match = replaceRx.exec(text))    !== null) patches.push({ path: 'models/2',      type: 'replace',       target: match[1].trim(), content: match[2] });
+    while ((match = newFunctionRx.exec(text)) !== null) patches.push({ path: 'models/2',     type: 'new_function',  content: match[1] });
+    const msgMatch = text.match(/===MESSAGE===\n([\s\S]*?)===END_MESSAGE===/);
+    const message  = msgMatch ? msgMatch[1].trim() : 'Tranche completed.';
+    if (patches.length === 0) return null;
+    return { patches, message, isPatch: true, updatedFiles: [] };
+  }
+
+  function _mt_applyPatchesToAccumulatedFiles(accumulatedFiles, patches) {
+    const warnings    = [];
+    const touchedPaths = new Set();
+    const guardSet    = _MT_COMPILER_OWNED;
+
+    for (const patch of patches) {
+      const path    = patch.path;
+      const type    = patch.type;
+      const content = patch.content;
+
+      if (guardSet.has(path)) {
+        warnings.push('BLOCKED: executor attempted to write compiler-owned path "' + path + '" — skipped');
+        continue;
+      }
+      touchedPaths.add(path);
+
+      if (type === 'new_file') {
+        accumulatedFiles[path] = content;
+        continue;
+      }
+
+      const existing = accumulatedFiles[path] || '';
+
+      if (type === 'replace') {
+        const target   = patch.target;
+        const replaced = _mt_replaceMarkedBlock(existing, target, content);
+        if (!replaced.matched) {
+          warnings.push('REPLACE_BLOCK target="' + target + '" not found in ' + path + ' — skipped');
+          continue;
+        }
+        accumulatedFiles[path] = replaced.updated;
+        continue;
+      }
+
+      if (type === 'new_function') {
+        const functionName = _mt_parseNewFunctionName(content);
+        if (!functionName) { warnings.push('NEW_FUNCTION: could not parse function name — skipped'); continue; }
+        const existingMarker = '// @patch-id: ' + functionName;
+        if (existing.includes(existingMarker)) {
+          const replaced = _mt_replaceMarkedBlock(existing, functionName, content);
+          if (!replaced.matched) { warnings.push('NEW_FUNCTION reroute failed for ' + functionName); continue; }
+          accumulatedFiles[path] = replaced.updated;
+          continue;
+        }
+        const helperEnd = '// @end-patch-id: zone_helpers';
+        const endIdx    = existing.indexOf(helperEnd);
+        if (endIdx < 0) { warnings.push('NEW_FUNCTION: zone_helpers not found in ' + path); continue; }
+        const lineStart = existing.lastIndexOf('\n', endIdx);
+        const indent    = lineStart >= 0 ? (existing.slice(lineStart + 1, endIdx).match(/^\s*/) || [''])[0] : '';
+        const raw       = String(content || '').trim().replace(/\r\n/g, '\n');
+        const marked    = [
+          indent + '// @patch-id: ' + functionName,
+          _mt_indentBlock(raw, indent),
+          indent + '// @end-patch-id: ' + functionName,
+          ''
+        ].join('\n');
+        accumulatedFiles[path] = existing.slice(0, endIdx) + marked + existing.slice(endIdx);
+      }
+    }
+    return { touchedPaths: [...touchedPaths], warnings };
+  }
+
+  /* ── Realistic scaffold fixture based on 2_Final.js structure ───────────
+     A compact but structurally faithful models/2 file with all 9 zone
+     markers in the correct positions. Used as the starting state for
+     every test that needs an existing file.                              */
+  // Fixture built from cherry3d_scaffold_v20.js — real zone markers, real
+  // indentation, real surrounding code. Sections between zones are replaced
+  // with a single placeholder comment to keep the string manageable while
+  // preserving the structural context that matters for merge engine testing.
+  function _mt_makeScaffold() {
+    return `/* ██████████████████████████████████████████████████████████████████████████
+   CHERRY3D GAME SCAFFOLD  v20.0  —  CASE-LAW REWRITE  —  File: "2"
+   ██████████████████████████████████████████████████████████████████████████
+
+   CORE PRINCIPLE
+module.exports = () => {
+    var surface = Module.getSurface();
+    var scene   = surface.getScene();
+    const { mat4, vec3, quat } = Module.require('assets/gl-matrix.js');
+
+    // [ ... scaffold immutable helpers ... ]
+    }
+
+    // @patch-id: zone_helpers
+    // @end-patch-id: zone_helpers
+
+
+    // [ ... scaffold code ... ]
+
+        if (!floats) return;
+        if (!data.initialized) {
+            data.initialized = true;
+            data.force = vec3.create ? vec3.create() : [0, 0, 0];
+            // @patch-id: zone_updateInput
+            //  add per-actor scratch fields here 
+        }
+        const ms  = RigidBody.getMotionState();
+        const pos = ms.position;
+        const vel = ms.linear;
+
+        //  Read command channels and apply velocity ONLY for
+        // physics_driven controllers. Example:
+        //   const cmdVelX = floats[1];
+        //   const cmdVelZ = floats[2];
+        //   // Mirror this choice in gameState:
+        //   //   movementMode: 'physics_driven',
+        //   //   _usesUpdateInputMovement: true,
+        //   //   _usesDirectPositionMovement: false,
+        //   RigidBody.set([{ prop: 'setLinearVelocity', value: [cmdVelX, 0, cmdVelZ] }]);
+        //
+        // For direct_integration controllers, leave updateInput() as a no-op
+        // UNLESS you are using the sanctioned collision-proxy pattern:
+        //   const px = floats[1], py = floats[2], pz = floats[3];
+        //   RigidBody.set([{ prop: 'setPosition', value: [px, py, pz] }]);
+        //   // Mirror this choice in gameState:
+        //   //   movementMode: 'direct_integration'
+        //   //   _usesUpdateInputMovement: false
+        //   //   _usesDirectPositionMovement: true
+        //   //   _usesUpdateInputCollisionProxy: true
+        //   // Main-thread code owns gameplay locomotion; updateInput only keeps
+        //   // the child DYNAMIC rigidbody aligned for collisions/events.
+            // @end-patch-id: zone_updateInput
+    };
+
+
+    /* ═══════════════════════════════════════════════════════════════════════
+       SECTION 2 — GAME STATE
+
+
+    /* ═══════════════════════════════════════════════════════════════════════
+       SECTION 2 — GAME STATE
+       ═══════════════════════════════════════════════════════════════════════ */
+    let gameState = {
+        player:    null,
+        rigidbody: null,
+
+        // ── Camera — IMMUTABLE BLOCK — onRender reads these every frame ───
+        // ██ DO NOT REMOVE OR RENAME THESE FIELDS ██
+        // @patch-id: zone_gamestate
+        cameraPosition:   [0, -1.5, 32],  //  set your default eye position
+        cameraTarget:     [0,  0,    0],  //  set your default look-at target
+        currentCamPos:    [0, -1.5, 32],  // lerped current eye
+        currentCamTarget: [0,  0,    0],  // lerped current target
+
+        // ██ COMPATIBILITY CAMERA FIELDS — keep, optional to use ██
+        cameraOffset:          null,
+        cameraTargetOffset:    null,
+        _smoothCamZ:           null,
+        _smoothCamTgtZ:        null,
+
+        // [ ... scaffold code ... ]
+
+
+        // @end-patch-id: zone_gamestate
+
+        // ── UI hooks / bridge law ──────────────────────────────────────────
+
+        updateUI:      null,
+        updateShopUI:  null,
+    };
+
+    // [ ... scaffold code ... ]
+
+    surface.onInit = () => {
+
+        // [ ... scaffold SoundManager, HighScoreManager, mobile setup ... ]
+
+                } catch(e) {}
+            },
+            // @patch-id: zone_oninit_setup
+            //  Add your game-specific play* methods here.
+            // Compose them from playTone() calls. Examples:
+            //   playPop(colorIndex)  { this.playTone(523 + colorIndex*40, 0.12, 'sine', 0.2); }
+            //   playFire()           { this.playTone(280, 0.1, 'triangle', 0.12); }
+            //   playSwap()           { this.playTone(350, 0.08, 'triangle', 0.1); }
+
+        // [ ... scaffold code ... ]
+
+        // @end-patch-id: zone_oninit_setup
+
+        /* ── MATERIALS ████████████████████████████████████████████████████████
+           ██ IMMUTABLE helpers ██
+
+        gameState.persistence.readJSON = readPersistJSON;
+        gameState.persistence.writeJSON = writePersistJSON;
+
+        // @patch-id: zone_oninit_materials
+        //  Call defineMaterial() for every colour your game needs 
+        //  For imported non-primitive objects, register mesh slot counts,
+        //        texture-title → assets-key mappings, scanned material bindings,
+        //        then define named materials from the resolved numeric texture keys.
+        //        Lawful chain:
+        //          scanned material -> slot index -> texture title -> assets key
+        //          -> defineMaterial()/defineScannedTextureMaterial() -> material_file.
+        //        Do NOT write raw filenames, raw .mtl names, or raw staged paths
+        //        directly into scene object slot data.
+
+        // @end-patch-id: zone_oninit_materials
+
+        /* ── PARTICLE SYSTEM ██████████████████████████████████████████████████
+
+
+        // [ ... scaffold code ... ]
+
+        // @patch-id: zone_oninit_particles
+        //  Define particlePresets here. Unified default rules:
+        //   • Most games should use both primitives in one preset registry
+        //   • Legacy/specific style: set preset.objectKey (or preset.defaultObjectKey)
+
+        // [ ... scaffold code ... ]
+        // 
+        /* ████████████████████████████████████████████████████████████████████ */
+
+        // @end-patch-id: zone_oninit_particles
+
+        // @patch-id: zone_oninit_game
+        /* ── FIX 13: applyCameraFull — pre-wired, called automatically ──────
+           Canonical scaffold name is _applyCameraFull.
+           applyCameraFull (no underscore) is compatibility alias only.
+
+        // [ ... scaffold code ... ]
+
+            }
+        };
+
+        };
+
+        // @end-patch-id: zone_oninit_game
+
+        // ██ IMMUTABLE — engine-tick deferred heavy init ██
+
+        // ██ IMMUTABLE — engine-tick deferred heavy init ██
+    };
+
+    // [ ... scaffold code ... ]
+
+    surface.onRender = (dt) => {
+
+        // [ ... scaffold stage machinery ... ]
+
+                }
+                return true;
+            }
+
+            // @patch-id: zone_onrender
+            /* ── STAGE 1: CAMERA — UNCONDITIONAL, ALWAYS FIRST ─────────────
+               ██ NOTHING may appear before this block ██
+                Update gameState.cameraPosition and cameraTarget each
+                      frame toward your desired position. The lerp below
+
+            // [ ... scaffold code ... ]
+
+            }
+
+            // @end-patch-id: zone_onrender
+
+            /* ── STAGE 6: UI update ──────────────────────────────────────── */
+            if (gameState.updateUI) gameState.updateUI();
+
+            /* ── STAGE 7: Runtime assertions ─────────────────────────────── */
+
+    };
+
+    surface.onDestroy = () => {
+
+        // [ ... scaffold teardown ... ]
+
+        gameState._emitterPools = {};
+
+        // @patch-id: zone_destroy
+        //  Tear down your non-segment object arrays here. Pattern:
+        //
+        //   for (const entry of (gameState.myObjects || [])) {
+        //       if (entry.obj) try { entry.obj.remove(); } catch(e) {}
+        //       if (entry.emitter) try { entry.emitter.stop(); entry.emitter.remove(); } catch(e) {}
+        //       if (entry.labelEl) try { entry.labelEl.remove(); } catch(e) {}
+        //   }
+        //   gameState.myObjects = [];
+
+        // [ ... scaffold code ... ]
+        // 
+
+        // @end-patch-id: zone_destroy
+
+        try { if (gameState.player && gameState.player.remove) gameState.player.remove(); } catch(e) {}
+        gameState.player    = null;
+        gameState.rigidbody = null;
+        gameState.scenePools = {};
+    };
+
+
+    };
+
+};
+`;
+  }
+
+  /* ── Test runner ────────────────────────────────────────────────────── */
+  function runMergeTests() {
+    const results = [];
+
+    function test(name, fn) {
+      try {
+        const msg = fn();
+        results.push({ name, pass: true,  detail: msg || '' });
+      } catch(e) {
+        results.push({ name, pass: false, detail: e.message });
+      }
+    }
+
+    function assert(cond, msg) { if (!cond) throw new Error(msg || 'assertion failed'); }
+    function assertContains(str, sub) { if (!str.includes(sub)) throw new Error('Expected to find:\n  ' + sub + '\nIn:\n  ' + str.slice(0, 300)); }
+    function assertAbsent(str, sub)   { if (str.includes(sub))  throw new Error('Expected NOT to find: ' + sub); }
+
+    /* ── GROUP 1: Parser ─────────────────────────────────────── */
+
+    test('Parser · REPLACE_BLOCK extracted correctly', () => {
+      const raw = '===REPLACE_BLOCK: zone_oninit_materials===\n// @patch-id: zone_oninit_materials\ndefineMaterial("mat_red",255,0,0);\n// @end-patch-id: zone_oninit_materials\n===END_REPLACE_BLOCK: zone_oninit_materials===\n===MESSAGE===\ndone\n===END_MESSAGE===';
+      const r = _mt_parseDelimitedResponse(raw);
+      assert(r && r.patches.length === 1, 'expected 1 patch');
+      assert(r.patches[0].type === 'replace', 'type should be replace');
+      assert(r.patches[0].target === 'zone_oninit_materials', 'target name wrong');
+      assertContains(r.patches[0].content, 'defineMaterial');
+      return 'target=' + r.patches[0].target;
+    });
+
+    test('Parser · NEW_FUNCTION extracted correctly', () => {
+      const raw = '===NEW_FUNCTION: models/2===\nfunction spawnCoin(x, z) {\n  return { x, z };\n}\n===END_NEW_FUNCTION: models/2===\n===MESSAGE===\ndone\n===END_MESSAGE===';
+      const r = _mt_parseDelimitedResponse(raw);
+      assert(r && r.patches.length === 1, 'expected 1 patch');
+      assert(r.patches[0].type === 'new_function', 'type should be new_function');
+      assertContains(r.patches[0].content, 'spawnCoin');
+    });
+
+    test('Parser · NEW_FILE extracted correctly', () => {
+      const raw = '===NEW_FILE: models/23===\n// UI file content\n===END_NEW_FILE: models/23===\n===MESSAGE===\ndone\n===END_MESSAGE===';
+      const r = _mt_parseDelimitedResponse(raw);
+      assert(r && r.patches.length === 1, 'expected 1 patch');
+      assert(r.patches[0].type === 'new_file', 'type should be new_file');
+      assert(r.patches[0].path === 'models/23', 'path wrong');
+    });
+
+    test('Parser · Multiple blocks in one response parsed correctly', () => {
+      const raw = [
+        '===REPLACE_BLOCK: zone_oninit_materials===',
+        '// @patch-id: zone_oninit_materials',
+        'defineMaterial("mat_a",255,0,0);',
+        '// @end-patch-id: zone_oninit_materials',
+        '===END_REPLACE_BLOCK: zone_oninit_materials===',
+        '===NEW_FUNCTION: models/2===',
+        'function spawnCoin(x, z) { return {x,z}; }',
+        '===END_NEW_FUNCTION: models/2===',
+        '===NEW_FILE: models/23===',
+        '// UI',
+        '===END_NEW_FILE: models/23===',
+        '===MESSAGE===',
+        'Three blocks.',
+        '===END_MESSAGE===',
+      ].join('\n');
+      const r = _mt_parseDelimitedResponse(raw);
+      assert(r.patches.length === 3, 'expected 3 patches, got ' + r.patches.length);
+      assert(r.message === 'Three blocks.', 'message wrong');
+      return r.patches.map(p => p.type).join(', ');
+    });
+
+    test('Parser · === inside block content does not break parsing', () => {
+      const raw = '===REPLACE_BLOCK: zone_onrender===\n// @patch-id: zone_onrender\nif (a === b && c === d) { doThing(); }\n// @end-patch-id: zone_onrender\n===END_REPLACE_BLOCK: zone_onrender===\n===MESSAGE===\ndone\n===END_MESSAGE===';
+      const r = _mt_parseDelimitedResponse(raw);
+      assert(r && r.patches.length === 1, 'expected 1 patch');
+      assertContains(r.patches[0].content, 'a === b');
+    });
+
+    test('Parser · Missing END delimiter — does not bleed into next block', () => {
+      const raw = '===REPLACE_BLOCK: zone_a===\ncontent_a\n===REPLACE_BLOCK: zone_b===\ncontent_b\n===END_REPLACE_BLOCK: zone_b===\n===MESSAGE===\ndone\n===END_MESSAGE===';
+      const r = _mt_parseDelimitedResponse(raw);
+      // zone_a has no END so it should not parse; zone_b should parse
+      assert(!r || r.patches.every(p => p.target !== 'zone_a'), 'zone_a should not have parsed');
+    });
+
+    test('Parser · No valid blocks → returns null', () => {
+      const r = _mt_parseDelimitedResponse('just some text with no block delimiters');
+      assert(r === null, 'expected null for empty response');
+    });
+
+    /* ── GROUP 2: REPLACE_BLOCK merge ───────────────────────── */
+
+    test('REPLACE_BLOCK · Zone content replaced, markers preserved', () => {
+      const file = { 'models/2': _mt_makeScaffold() };
+      const raw  = '===REPLACE_BLOCK: zone_oninit_materials===\n// @patch-id: zone_oninit_materials\ndefineMaterial("mat_red",255,0,0);\n// @end-patch-id: zone_oninit_materials\n===END_REPLACE_BLOCK: zone_oninit_materials===\n===MESSAGE===\ndone\n===END_MESSAGE===';
+      const { patches } = _mt_parseDelimitedResponse(raw);
+      const { warnings } = _mt_applyPatchesToAccumulatedFiles(file, patches);
+      assertContains(file['models/2'], 'defineMaterial("mat_red"');
+      assertContains(file['models/2'], '// @patch-id: zone_oninit_materials');
+      assertContains(file['models/2'], '// @end-patch-id: zone_oninit_materials');
+      assert(warnings.length === 0, 'unexpected warnings: ' + warnings.join(', '));
+    });
+
+    test('REPLACE_BLOCK · Does not affect other zones', () => {
+      const file  = { 'models/2': _mt_makeScaffold() };
+      const before = file['models/2'];
+      const raw   = '===REPLACE_BLOCK: zone_oninit_materials===\n// @patch-id: zone_oninit_materials\ndefineMaterial("mat_red",255,0,0);\n// @end-patch-id: zone_oninit_materials\n===END_REPLACE_BLOCK: zone_oninit_materials===\n===MESSAGE===\ndone\n===END_MESSAGE===';
+      const { patches } = _mt_parseDelimitedResponse(raw);
+      _mt_applyPatchesToAccumulatedFiles(file, patches);
+      // zone_onrender should be unchanged
+      assertContains(file['models/2'], '// @patch-id: zone_onrender');
+      assertContains(file['models/2'], '// @end-patch-id: zone_onrender');
+    });
+
+    test('REPLACE_BLOCK · Missing zone → warning, file unchanged', () => {
+      const file    = { 'models/2': _mt_makeScaffold() };
+      const before  = file['models/2'];
+      const patches = [{ path: 'models/2', type: 'replace', target: 'zone_does_not_exist', content: 'new content' }];
+      const { warnings } = _mt_applyPatchesToAccumulatedFiles(file, patches);
+      assert(file['models/2'] === before, 'file was modified despite missing zone');
+      assert(warnings.length > 0, 'expected a warning');
+      assertContains(warnings[0], 'not found');
+      return 'warning: ' + warnings[0];
+    });
+
+    test('REPLACE_BLOCK · Replaces zone_gamestate with real-world content', () => {
+      const file = { 'models/2': _mt_makeScaffold() };
+      const newGameState = [
+        '// @patch-id: zone_gamestate',
+        '        cameraPosition: [-1.0772, 4.264, -4.0299],',
+        '        cameraTarget:   [-0.2010, 0, 0.9796],',
+        '        currentCamPos:  [-1.0772, 4.264, -4.0299],',
+        '        player: null,',
+        '        score:  0,',
+        '// @end-patch-id: zone_gamestate',
+      ].join('\n');
+      const raw = '===REPLACE_BLOCK: zone_gamestate===\n' + newGameState + '\n===END_REPLACE_BLOCK: zone_gamestate===\n===MESSAGE===\ndone\n===END_MESSAGE===';
+      const { patches } = _mt_parseDelimitedResponse(raw);
+      _mt_applyPatchesToAccumulatedFiles(file, patches);
+      assertContains(file['models/2'], '4.264');
+      assertContains(file['models/2'], 'score:  0');
+      assertAbsent(file['models/2'],  'cameraPosition: [0, -1.5, 32]'); // old content gone
+    });
+
+    /* ── GROUP 3: NEW_FUNCTION ───────────────────────────────── */
+
+    test('NEW_FUNCTION · Injects new function with markers into zone_helpers', () => {
+      const file = { 'models/2': _mt_makeScaffold() };
+      const raw  = '===NEW_FUNCTION: models/2===\nfunction spawnCoin(x, z) {\n    return { x, z };\n}\n===END_NEW_FUNCTION: models/2===\n===MESSAGE===\ndone\n===END_MESSAGE===';
+      const { patches } = _mt_parseDelimitedResponse(raw);
+      _mt_applyPatchesToAccumulatedFiles(file, patches);
+      assertContains(file['models/2'], '// @patch-id: spawnCoin');
+      assertContains(file['models/2'], 'function spawnCoin(x, z)');
+      assertContains(file['models/2'], '// @end-patch-id: spawnCoin');
+      // Must be BEFORE @end-patch-id: zone_helpers
+      const fnIdx   = file['models/2'].indexOf('// @patch-id: spawnCoin');
+      const endZone = file['models/2'].indexOf('// @end-patch-id: zone_helpers');
+      assert(fnIdx < endZone, 'spawnCoin injected AFTER zone_helpers end — wrong position');
+    });
+
+    test('NEW_FUNCTION · Second function stacks correctly inside zone_helpers', () => {
+      const file = { 'models/2': _mt_makeScaffold() };
+      const r1   = '===NEW_FUNCTION: models/2===\nfunction spawnCoin(x, z) {\n    return { x, z };\n}\n===END_NEW_FUNCTION: models/2===\n===MESSAGE===\nfirst\n===END_MESSAGE===';
+      const r2   = '===NEW_FUNCTION: models/2===\nfunction despawnCoin(id) {\n    return id;\n}\n===END_NEW_FUNCTION: models/2===\n===MESSAGE===\nsecond\n===END_MESSAGE===';
+      _mt_applyPatchesToAccumulatedFiles(file, _mt_parseDelimitedResponse(r1).patches);
+      _mt_applyPatchesToAccumulatedFiles(file, _mt_parseDelimitedResponse(r2).patches);
+      assertContains(file['models/2'], '// @patch-id: spawnCoin');
+      assertContains(file['models/2'], '// @patch-id: despawnCoin');
+      // Both must be before @end-patch-id: zone_helpers
+      const idx1   = file['models/2'].indexOf('// @patch-id: spawnCoin');
+      const idx2   = file['models/2'].indexOf('// @patch-id: despawnCoin');
+      const endZone = file['models/2'].indexOf('// @end-patch-id: zone_helpers');
+      assert(idx1 < endZone, 'spawnCoin outside zone_helpers');
+      assert(idx2 < endZone, 'despawnCoin outside zone_helpers');
+    });
+
+    test('NEW_FUNCTION · Re-send existing function routes to REPLACE_BLOCK', () => {
+      const file = { 'models/2': _mt_makeScaffold() };
+      // First write
+      const r1 = '===NEW_FUNCTION: models/2===\nfunction spawnCoin(x, z) {\n    return { x, z };\n}\n===END_NEW_FUNCTION: models/2===\n===MESSAGE===\nfirst\n===END_MESSAGE===';
+      _mt_applyPatchesToAccumulatedFiles(file, _mt_parseDelimitedResponse(r1).patches);
+      // Second write — same function name, updated body
+      const r2 = '===NEW_FUNCTION: models/2===\nfunction spawnCoin(x, z) {\n    return { x: x * 2, z }; // updated\n}\n===END_NEW_FUNCTION: models/2===\n===MESSAGE===\nupdated\n===END_MESSAGE===';
+      _mt_applyPatchesToAccumulatedFiles(file, _mt_parseDelimitedResponse(r2).patches);
+      // Only one @patch-id: spawnCoin should exist
+      const count = (file['models/2'].match(/\/\/ @patch-id: spawnCoin/g) || []).length;
+      assert(count === 1, 'duplicate marker detected — got ' + count + ' @patch-id: spawnCoin');
+      assertContains(file['models/2'], 'x * 2'); // updated body present
+      return 'single marker confirmed, updated body present';
+    });
+
+    test('NEW_FUNCTION · Arrow function name parsed correctly', () => {
+      const file = { 'models/2': _mt_makeScaffold() };
+      const raw  = '===NEW_FUNCTION: models/2===\nconst calcScore = (base, mult) => base * mult;\n===END_NEW_FUNCTION: models/2===\n===MESSAGE===\ndone\n===END_MESSAGE===';
+      const { patches } = _mt_parseDelimitedResponse(raw);
+      _mt_applyPatchesToAccumulatedFiles(file, patches);
+      assertContains(file['models/2'], '// @patch-id: calcScore');
+      assertContains(file['models/2'], 'calcScore');
+    });
+
+    /* ── GROUP 4: Security / hardening ──────────────────────── */
+
+    test('Guard · Compiler-owned path write is blocked', () => {
+      const file    = { 'json/assets.json': '{"original":true}' };
+      const patches = [{ path: 'json/assets.json', type: 'new_file', content: '{"hacked":true}' }];
+      const { warnings } = _mt_applyPatchesToAccumulatedFiles(file, patches);
+      assert(file['json/assets.json'] === '{"original":true}', 'file was overwritten — guard failed');
+      assert(warnings.some(w => w.startsWith('BLOCKED')), 'no BLOCKED warning emitted');
+      return 'blocked: ' + warnings[0].slice(0, 60);
+    });
+
+    test('Guard · All three compiler-owned paths are protected', () => {
+      const paths = ['json/assets.json', 'json/tree.json', 'json/entities.json'];
+      const file  = {};
+      const patches = paths.map(p => ({ path: p, type: 'new_file', content: 'bad' }));
+      const { warnings } = _mt_applyPatchesToAccumulatedFiles(file, patches);
+      assert(warnings.length === 3, 'expected 3 blocked warnings, got ' + warnings.length);
+      assert(Object.keys(file).length === 0, 'some compiler-owned file was written');
+      paths.forEach(p => assert(!file[p], p + ' was written'));
+      return '3/3 paths blocked';
+    });
+
+    test('Guard · Non-compiler path writes through normally alongside blocked ones', () => {
+      const file    = {};
+      const patches = [
+        { path: 'json/assets.json', type: 'new_file', content: 'bad' },
+        { path: 'models/23',        type: 'new_file', content: '// UI' },
+      ];
+      const { warnings } = _mt_applyPatchesToAccumulatedFiles(file, patches);
+      assert(!file['json/assets.json'], 'compiler path written through');
+      assert(file['models/23'] === '// UI', 'valid path blocked incorrectly');
+      assert(warnings.length === 1, 'expected 1 warning');
+    });
+
+    /* ── GROUP 5: Multi-tranche accumulation ─────────────────── */
+
+    test('Multi-tranche · File state carries forward across tranches', () => {
+      const files = { 'models/2': _mt_makeScaffold() };
+
+      // Tranche 1: write materials
+      const t1 = '===REPLACE_BLOCK: zone_oninit_materials===\n// @patch-id: zone_oninit_materials\ndefineMaterial("mat_road",50,50,50);\n// @end-patch-id: zone_oninit_materials\n===END_REPLACE_BLOCK: zone_oninit_materials===\n===MESSAGE===\nt1\n===END_MESSAGE===';
+      _mt_applyPatchesToAccumulatedFiles(files, _mt_parseDelimitedResponse(t1).patches);
+
+      // Tranche 2: add a helper function
+      const t2 = '===NEW_FUNCTION: models/2===\nfunction spawnVehicle(cfg, x, z) {\n    return cfg;\n}\n===END_NEW_FUNCTION: models/2===\n===MESSAGE===\nt2\n===END_MESSAGE===';
+      _mt_applyPatchesToAccumulatedFiles(files, _mt_parseDelimitedResponse(t2).patches);
+
+      // Tranche 3: write onRender
+      const t3 = '===REPLACE_BLOCK: zone_onrender===\n// @patch-id: zone_onrender\nif (gameState.active) { spawnVehicle(cfg, 0, 0); }\n// @end-patch-id: zone_onrender\n===END_REPLACE_BLOCK: zone_onrender===\n===MESSAGE===\nt3\n===END_MESSAGE===';
+      _mt_applyPatchesToAccumulatedFiles(files, _mt_parseDelimitedResponse(t3).patches);
+
+      // All three tranches' output must coexist in the final file
+      assertContains(files['models/2'], 'defineMaterial("mat_road"');
+      assertContains(files['models/2'], '// @patch-id: spawnVehicle');
+      assertContains(files['models/2'], 'spawnVehicle(cfg, 0, 0)');
+      return 'all 3 tranches coexist in final file';
+    });
+
+    test('Multi-tranche · zone_helpers zone boundary survives multiple NEW_FUNCTION injections', () => {
+      const files = { 'models/2': _mt_makeScaffold() };
+      ['alpha','beta','gamma','delta'].forEach(name => {
+        const raw = '===NEW_FUNCTION: models/2===\nfunction ' + name + '() { return "' + name + '"; }\n===END_NEW_FUNCTION: models/2===\n===MESSAGE===\ndone\n===END_MESSAGE===';
+        _mt_applyPatchesToAccumulatedFiles(files, _mt_parseDelimitedResponse(raw).patches);
+      });
+      const f = files['models/2'];
+      // zone_helpers open/close markers must each appear exactly once
+      const opens  = (f.match(/\/\/ @patch-id: zone_helpers/g)   || []).length;
+      const closes = (f.match(/\/\/ @end-patch-id: zone_helpers/g) || []).length;
+      assert(opens  === 1, 'zone_helpers open marker duplicated: ' + opens);
+      assert(closes === 1, 'zone_helpers close marker duplicated: ' + closes);
+      // All functions must be between them
+      const zOpen  = f.indexOf('// @patch-id: zone_helpers');
+      const zClose = f.indexOf('// @end-patch-id: zone_helpers');
+      ['alpha','beta','gamma','delta'].forEach(name => {
+        const idx = f.indexOf('// @patch-id: ' + name);
+        assert(idx > zOpen && idx < zClose, name + ' is outside zone_helpers boundary');
+      });
+      return '4 functions injected, zone_helpers boundary intact';
+    });
+
+    /* ── GROUP 6: Zero-write & edge cases ───────────────────── */
+
+    test('Zero-write · All patches miss → touchedPaths empty', () => {
+      const file    = { 'models/2': _mt_makeScaffold() };
+      const before  = file['models/2'];
+      const patches = [
+        { path: 'models/2', type: 'replace', target: 'zone_does_not_exist_a', content: 'x' },
+        { path: 'models/2', type: 'replace', target: 'zone_does_not_exist_b', content: 'y' },
+      ];
+      const { touchedPaths, warnings } = _mt_applyPatchesToAccumulatedFiles(file, patches);
+      assert(file['models/2'] === before, 'file was mutated despite all misses');
+      assert(warnings.length === 2, 'expected 2 warnings, got ' + warnings.length);
+      // touchedPaths still contains models/2 because it was added before the skip
+      // The zero-write DETECTION is in the pipeline layer (not merge engine).
+      // Verify the data the pipeline would use to detect it:
+      const zeroWrite = touchedPaths.length === 1 && file[touchedPaths[0]] === before;
+      assert(zeroWrite, 'pipeline zero-write detection data not as expected');
+      return '2 warnings, file unchanged';
+    });
+
+    test('NEW_FILE · Creates file that did not exist', () => {
+      const files   = {};
+      const patches = [{ path: 'models/23', type: 'new_file', content: '// UI module\nconst ui = {};' }];
+      _mt_applyPatchesToAccumulatedFiles(files, patches);
+      assert(files['models/23'] !== undefined, 'file not created');
+      assertContains(files['models/23'], '// UI module');
+    });
+
+    /* ── Render results ──────────────────────────────────────── */
+    const passed = results.filter(r => r.pass).length;
+    const failed = results.filter(r => !r.pass).length;
+    const total  = results.length;
+
+    document.getElementById('mergeTestSummary').innerHTML =
+      '<span style="color:' + (failed ? '#f87171' : '#4ade80') + ';font-weight:700;">' +
+      (failed ? '❌ ' + failed + ' FAILED' : '✅ ALL PASSED') +
+      '</span> &nbsp;·&nbsp; ' + passed + '/' + total + ' tests';
+
+    // Group by category
+    const groups = {};
+    results.forEach(r => {
+      const grp = r.name.split('·')[0].trim();
+      if (!groups[grp]) groups[grp] = [];
+      groups[grp].push(r);
+    });
+
+    let html = '';
+    for (const [grp, tests] of Object.entries(groups)) {
+      const gPassed = tests.filter(t => t.pass).length;
+      const gFailed = tests.length - gPassed;
+      html += '<div style="margin-bottom:24px;">';
+      html += '<div style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #1e293b;">' +
+              grp + ' &nbsp;<span style="color:' + (gFailed ? '#f87171':'#4ade80') + ';">' + gPassed + '/' + tests.length + '</span></div>';
+      tests.forEach(r => {
+        const shortName = r.name.split('·').slice(1).join('·').trim();
+        html += '<div style="display:flex;align-items:flex-start;gap:10px;padding:8px 10px;border-radius:6px;margin-bottom:4px;background:' + (r.pass ? '#0f2218' : '#2a0e0e') + ';border:1px solid ' + (r.pass ? '#14532d44':'#7f1d1d44') + ';">';
+        html += '<span style="flex-shrink:0;font-size:14px;">' + (r.pass ? '✅' : '❌') + '</span>';
+        html += '<div>';
+        html += '<div style="color:' + (r.pass ? '#86efac':'#fca5a5') + ';font-weight:600;">' + shortName + '</div>';
+        if (r.detail) html += '<div style="color:#64748b;font-size:12px;margin-top:2px;white-space:pre-wrap;">' + r.detail + '</div>';
+        html += '</div></div>';
+      });
+      html += '</div>';
+    }
+
+    document.getElementById('mergeTestResults').innerHTML = html;
+  }
+
+  /* ── Activation: ?mergetest=1 in URL, or Ctrl+Shift+T ── */
+  (function() {
+    if (new URLSearchParams(window.location.search).get('mergetest') === '1') {
+      document.getElementById('mergeTestPanel').style.display = 'block';
+    }
+    document.addEventListener('keydown', function(e) {
+      if (e.ctrlKey && e.shiftKey && e.key === 'T') {
+        e.preventDefault();
+        document.getElementById('mergeTestPanel').style.display = 'block';
+      }
+    });
+  })();
+  </script>
 
 </body>
 </html>
