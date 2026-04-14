@@ -1022,21 +1022,11 @@ Respond ONLY with a valid JSON object. No markdown, no fences, no preamble.
 // The reference image is sent first, then [C1] label + thumbnail for each
 // candidate. The model performs a deliberate per-candidate analysis before
 // committing to one pick — no batching intermediate pass, no second call.
-function buildObjectSinglePassPrompt(requirementName, gameplayRole, candidates, gameInterpretation) {
-  return `GAME CONTEXT:
-${gameInterpretation}
-
-You are an expert 3D game asset librarian performing a precise visual match.
+function buildObjectSinglePassPrompt(requirementName, candidates) {
+  return `You are an expert 3D game asset librarian performing a precise visual match.
 
 The FIRST image is the user's reference image — the ground truth for what this object must look like.
 The remaining images are candidate 3D object thumbnails from the asset library, each preceded by its label [C1], [C2], [C3]…
-
-REQUIREMENT:
-Name: ${requirementName}
-Gameplay role: ${gameplayRole || "not specified"}
-
-CANDIDATES:
-${candidates.map((c, i) => `  [C${i + 1}]: ${c.objFile} (${c.sourceZip})`).join("\n")}
 
 ANALYSIS PROCESS — follow every step before producing your answer:
 
@@ -1070,27 +1060,19 @@ Respond ONLY with a valid JSON object. No markdown, no fences, no preamble.
 {
   "requirementName": "${requirementName}",
   "chosenLabel": "C1",
-  "visualSelectionRationale": "Brief note on why this candidate best matches the reference"
+  "visualSelectionRationale": "Brief note on why this candidate best matches the reference",
+  "candidateScores": [
+    ${candidates.map((_, i) => `{ "label": "C${i + 1}", "confidence": 0 }`).join(',\n    ')}
+  ]
 }`;
 }
 
 /* ─── Single-pass prompt: avatar reference-image vs candidates ───── */
-function buildAvatarSinglePassPrompt(requirementName, gameplayRole, animationNeeds, candidates, gameInterpretation) {
-  return `GAME CONTEXT:
-${gameInterpretation}
-
-You are an expert game character artist performing a precise visual match for an avatar asset.
+function buildAvatarSinglePassPrompt(requirementName, candidates) {
+  return `You are an expert game character artist performing a precise visual match for an avatar asset.
 
 The FIRST image is the user's reference image — the ground truth for what this character must look like.
 The remaining images are candidate avatar thumbnails from the asset library, each preceded by its label [C1], [C2], [C3]…
-
-REQUIREMENT:
-Name: ${requirementName}
-Gameplay role: ${gameplayRole || "not specified"}
-Animation needs: ${(animationNeeds || []).join(", ") || "not specified"}
-
-CANDIDATES:
-${candidates.map((c, i) => `  [C${i + 1}]: ${c.assetName} (${c.sourceZip}) | clips: ${(c.animationClips || []).join(", ") || "none"}`).join("\n")}
 
 ANALYSIS PROCESS — follow every step before producing your answer:
 
@@ -1114,7 +1096,6 @@ STEP 2 — Examine EVERY candidate thumbnail individually.
 STEP 3 — Rank candidates from best to worst match.
   Eliminate candidates whose character type clearly does not match the reference.
   Among remaining candidates, rank by overall visual similarity.
-  Use animation clip coverage as a tiebreaker only — visual match comes first.
 
 STEP 4 — Select the single best match.
   Choose the top-ranked candidate. If no candidate matches the character type at all,
@@ -1125,7 +1106,10 @@ Respond ONLY with a valid JSON object. No markdown, no fences, no preamble.
 {
   "requirementName": "${requirementName}",
   "chosenLabel": "C1",
-  "visualSelectionRationale": "Brief note on why this candidate best matches the reference"
+  "visualSelectionRationale": "Brief note on why this candidate best matches the reference",
+  "candidateScores": [
+    ${candidates.map((_, i) => `{ "label": "C${i + 1}", "confidence": 0 }`).join(',\n    ')}
+  ]
 }`;
 }
 
@@ -1688,7 +1672,7 @@ exports.handler = async (event) => {
           maxTokens:   2000,
           system:      "You are an expert 3D game asset librarian. Analyse every candidate image carefully and methodically before selecting. Respond only with a valid JSON object. No markdown, no fences, no preamble.",
           userContent: [
-            { type: "text", text: buildObjectSinglePassPrompt(req.name, req.gameplayRole, assetPool, gameInterpretation) },
+            { type: "text", text: buildObjectSinglePassPrompt(req.name, assetPool) },
             refBlock,
             ...labeledThumbBlocks
           ]
@@ -1713,10 +1697,27 @@ exports.handler = async (event) => {
       }
       const selectedAsset = assetPool[labelNum - 1];
       console.log(`[ROSTER-AB] Object "${req.name}": selected [C${labelNum}] ${selectedAsset[matchKey]}`);
+
+      // Build debug candidate list with confidence scores
+      const candidateScores = Array.isArray(parsed.candidateScores) ? parsed.candidateScores : [];
+      const debugCandidates = assetPool.map((asset, i) => {
+        const label = `C${i + 1}`;
+        const scoreEntry = candidateScores.find(s => s.label === label);
+        return {
+          label,
+          assetName:  asset.assetName || asset.objFile || '',
+          sourceZip:  asset.sourceZip || '',
+          confidence: scoreEntry ? scoreEntry.confidence : 0,
+          b64:        asset.b64,
+          mimeType:   asset.mimeType
+        };
+      });
+
       return {
         requirementName:          req.name,
         selectedAsset,
-        visualSelectionRationale: parsed.visualSelectionRationale || ""
+        visualSelectionRationale: parsed.visualSelectionRationale || "",
+        debugCandidates
       };
     }
 
@@ -1764,7 +1765,7 @@ exports.handler = async (event) => {
           maxTokens:   2000,
           system:      "You are an expert game character artist. Analyse every candidate avatar carefully and methodically before selecting. Respond only with a valid JSON object. No markdown, no fences, no preamble.",
           userContent: [
-            { type: "text", text: buildAvatarSinglePassPrompt(req.name, req.gameplayRole, req.animationNeeds || [], assetPool, gameInterpretation) },
+            { type: "text", text: buildAvatarSinglePassPrompt(req.name, assetPool) },
             refBlock,
             ...labeledThumbBlocks
           ]
@@ -1788,10 +1789,27 @@ exports.handler = async (event) => {
       }
       const selectedAsset = assetPool[labelNum - 1];
       console.log(`[ROSTER-AB] Avatar "${req.name}": selected [C${labelNum}] ${selectedAsset.assetName}`);
+
+      // Build debug candidate list with confidence scores
+      const candidateScores = Array.isArray(parsed.candidateScores) ? parsed.candidateScores : [];
+      const debugCandidates = assetPool.map((asset, i) => {
+        const label = `C${i + 1}`;
+        const scoreEntry = candidateScores.find(s => s.label === label);
+        return {
+          label,
+          assetName:  asset.assetName || '',
+          sourceZip:  asset.sourceZip || '',
+          confidence: scoreEntry ? scoreEntry.confidence : 0,
+          b64:        asset.b64,
+          mimeType:   asset.mimeType
+        };
+      });
+
       return {
         requirementName:          req.name,
         selectedAsset,
-        visualSelectionRationale: parsed.visualSelectionRationale || ""
+        visualSelectionRationale: parsed.visualSelectionRationale || "",
+        debugCandidates
       };
     }
 
@@ -1983,6 +2001,36 @@ exports.handler = async (event) => {
     };
 
     roster._phase1Analysis = phase1;
+
+    // ── DEBUG: attach candidate pools + confidence scores per requirement ──
+    // Remove this block when debug modal is no longer needed
+    const refImgByNameDebug = refImageByName;
+    roster._debugCandidates = {};
+    for (const r of objectResults.filter(Boolean)) {
+      const p1Req = phase1ObjectMap.get(r.requirementName);
+      const refImg = refImgByNameDebug.get(r.requirementName.toLowerCase());
+      roster._debugCandidates[r.requirementName] = {
+        type:             'object3d',
+        visualDescription: p1Req ? (p1Req.visualDescription || '') : '',
+        variantGroup:      p1Req ? (p1Req.variantGroup || '') : '',
+        searchTerms:       p1Req ? (p1Req.searchTerms || []) : [],
+        refImage:          refImg ? { b64: refImg.b64, mimeType: refImg.mimeType } : null,
+        candidates:        r.debugCandidates || []
+      };
+    }
+    for (const r of avatarResults.filter(Boolean)) {
+      const p1Req = phase1AvatarMap.get(r.requirementName);
+      const refImg = refImgByNameDebug.get(r.requirementName.toLowerCase());
+      roster._debugCandidates[r.requirementName] = {
+        type:             'avatar',
+        visualDescription: p1Req ? (p1Req.visualDescription || '') : '',
+        variantGroup:      p1Req ? (p1Req.variantGroup || '') : '',
+        searchTerms:       p1Req ? (p1Req.searchTerms || []) : [],
+        refImage:          refImg ? { b64: refImg.b64, mimeType: refImg.mimeType } : null,
+        candidates:        r.debugCandidates || []
+      };
+    }
+    // ── END DEBUG ──────────────────────────────────────────────────────────
     enforceHardLimits(roster);
 
     roster._meta = {

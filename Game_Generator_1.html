@@ -6785,6 +6785,67 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
     }
 
     // ── Run the full roster stage: Phase1 → modal → StageAB → display → approve → extract ──
+    // ── DEBUG: Candidate pool inspection modal ─────────────────────────────
+    // Remove this entire function when debug modal is no longer needed
+    function showDebugCandidateModal(roster) {
+      return new Promise((resolve) => {
+        const modal   = document.getElementById('debugCandidateModal');
+        const body    = document.getElementById('debugCandidateModalBody');
+        const contBtn = document.getElementById('debugCandidateModalContinue');
+        const debug   = roster._debugCandidates || {};
+        const esc     = s => String(s || '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+
+        body.innerHTML = Object.entries(debug).map(([reqName, d]) => {
+          const refImgHtml = d.refImage
+            ? `<img src="data:${d.refImage.mimeType};base64,${d.refImage.b64}" style="width:120px;height:120px;object-fit:contain;border-radius:8px;border:1px solid #2b3a6b;background:#0b0d12;">`
+            : `<div style="width:120px;height:120px;border-radius:8px;border:1px solid #2b3a6b;display:flex;align-items:center;justify-content:center;color:#6b7280;font-size:11px;">No ref image</div>`;
+
+          const candidatesHtml = (d.candidates || [])
+            .sort((a, b) => b.confidence - a.confidence)
+            .map(c => {
+              const isWinner = c.confidence === Math.max(...(d.candidates || []).map(x => x.confidence));
+              const confColor = c.confidence >= 70 ? '#7fdb96' : c.confidence >= 40 ? '#fbbf24' : '#f87171';
+              return `
+              <div style="display:flex;flex-direction:column;align-items:center;gap:4px;background:#0b0d12;border:1px solid ${isWinner ? '#7fdb96' : '#2b3a6b'};border-radius:8px;padding:8px;min-width:90px;">
+                <img src="data:${esc(c.mimeType)};base64,${c.b64}" style="width:80px;height:80px;object-fit:contain;">
+                <div style="font-size:9px;color:#6b7280;text-align:center;word-break:break-all;">${esc(c.assetName)}</div>
+                <div style="font-size:11px;font-weight:700;color:${confColor};">${c.confidence}%</div>
+                <div style="font-size:9px;color:#6b7280;">${esc(c.label)}${isWinner ? ' ★' : ''}</div>
+              </div>`;
+            }).join('');
+
+          return `
+          <div style="background:#0b0d12;border:1px solid #2b3a6b;border-radius:12px;padding:20px;">
+            <div style="font-size:13px;font-weight:700;color:#818cf8;font-family:monospace;margin-bottom:12px;">${esc(reqName)} <span style="font-size:10px;color:#6b7280;font-weight:400;">(${esc(d.type)})</span></div>
+            <div style="display:flex;gap:16px;margin-bottom:16px;align-items:flex-start;">
+              <div style="display:flex;flex-direction:column;gap:6px;align-items:center;">
+                <div style="font-size:10px;color:#6b7280;">Reference image</div>
+                ${refImgHtml}
+              </div>
+              <div style="flex:1;">
+                <div style="font-size:10px;color:#6b7280;margin-bottom:4px;">Visual description</div>
+                <div style="font-size:12px;color:#e2e8f0;line-height:1.5;margin-bottom:8px;">${esc(d.visualDescription || 'none')}</div>
+                <div style="font-size:10px;color:#6b7280;margin-bottom:2px;">Variant group</div>
+                <div style="font-size:11px;color:#818cf8;margin-bottom:8px;">${esc(d.variantGroup || 'none')}</div>
+                <div style="font-size:10px;color:#6b7280;margin-bottom:2px;">Search terms</div>
+                <div style="font-size:11px;color:#94a3b8;">${esc((d.searchTerms || []).join(', ') || 'none')}</div>
+              </div>
+            </div>
+            <div style="font-size:10px;color:#6b7280;margin-bottom:8px;">CSV-filtered candidates (${(d.candidates||[]).length}) — sorted by confidence</div>
+            <div style="display:flex;flex-wrap:wrap;gap:8px;">${candidatesHtml || '<span style="font-size:11px;color:#6b7280;">No candidates</span>'}</div>
+          </div>`;
+        }).join('');
+
+        modal.style.display = 'block';
+        contBtn.onclick = () => {
+          modal.style.display = 'none';
+          contBtn.onclick = null;
+          resolve();
+        };
+      });
+    }
+    // ── END DEBUG ───────────────────────────────────────────────────────────
+
     async function runRosterStage(projectPath, jobId) {
       let roster   = null;
       let approved = false;
@@ -6892,6 +6953,10 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
           `Asset Roster generated: ${objCount} 3D object(s), ${avatarCount} avatar(s), ${texCount} texture asset(s). ` +
           `Review the roster and approve to continue.`, 'normal');
         renderRosterReviewPanel(roster);
+
+        // ── DEBUG: show candidate inspection modal before review ──────────
+        await showDebugCandidateModal(roster);
+        // ── END DEBUG ─────────────────────────────────────────────────────
 
         const decision = await waitForRosterApproval();
         if (decision === 'approved') {
@@ -8423,7 +8488,20 @@ RULES FOR ALL PIPELINE STAGES:
     </div>
   </div>
 
-  <div id="extentsResultModal" class="processing-modal">
+  <!-- ── DEBUG MODAL START — remove this entire block when no longer needed ── -->
+  <div id="debugCandidateModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:10200;overflow-y:auto;padding:30px 20px;">
+    <div style="max-width:1100px;margin:0 auto;background:#0e1220;border:1px solid #2b3a6b;border-radius:16px;overflow:hidden;">
+      <div style="padding:20px 24px;background:rgba(43,108,255,0.08);border-bottom:1px solid #2b3a6b;display:flex;align-items:center;justify-content:space-between;">
+        <div>
+          <div style="font-size:16px;font-weight:700;color:#fff;">🔬 DEBUG — Candidate Pool Inspection</div>
+          <div style="font-size:12px;color:#6b7280;margin-top:4px;">Text-filtered candidates + image confidence scores per requirement. Remove this modal when done debugging.</div>
+        </div>
+        <button id="debugCandidateModalContinue" style="background:#2b6cff;color:#fff;border:none;border-radius:8px;padding:10px 22px;font-size:13px;font-weight:600;cursor:pointer;">Continue to Roster Review →</button>
+      </div>
+      <div id="debugCandidateModalBody" style="padding:24px;display:flex;flex-direction:column;gap:32px;"></div>
+    </div>
+  </div>
+  <!-- ── DEBUG MODAL END ─────────────────────────────────────────────────── -->
       <div class="processing-content" style="width: 500px;">
           <h2 style="color: #fff; font-size: 18px;">Scanned Object Extents</h2>
           <p style="font-size: 13px; color: var(--muted); margin-top: -10px; line-height: 1.4;">
