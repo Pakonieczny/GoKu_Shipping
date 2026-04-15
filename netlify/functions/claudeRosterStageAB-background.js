@@ -1055,11 +1055,15 @@ STEP 4 — Select the single best match.
   Choose the top-ranked candidate. If no candidate matches the object category at all,
   still pick the closest available option and note the mismatch in your rationale.
 
+CRITICAL: You MUST replace "chosenLabel" with the label of whichever candidate YOU
+determined to be the best visual match after examining ALL candidates. Do NOT default
+to C1 — C1 is only correct if it genuinely is your best match after comparison.
+
 Respond ONLY with a valid JSON object. No markdown, no fences, no preamble.
 
 {
   "requirementName": "${requirementName}",
-  "chosenLabel": "C?",
+  "chosenLabel": "C1",
   "visualSelectionRationale": "Brief note on why this candidate best matches the reference",
   "candidateScores": [
     ${candidates.map((_, i) => `{ "label": "C${i + 1}", "confidence": 0 }`).join(',\n    ')}
@@ -1101,11 +1105,15 @@ STEP 4 — Select the single best match.
   Choose the top-ranked candidate. If no candidate matches the character type at all,
   still pick the closest available and note the mismatch in your rationale.
 
+CRITICAL: You MUST replace "chosenLabel" with the label of whichever candidate YOU
+determined to be the best visual match after examining ALL candidates. Do NOT default
+to C1 — C1 is only correct if it genuinely is your best match after comparison.
+
 Respond ONLY with a valid JSON object. No markdown, no fences, no preamble.
 
 {
   "requirementName": "${requirementName}",
-  "chosenLabel": "C?",
+  "chosenLabel": "C1",
   "visualSelectionRationale": "Brief note on why this candidate best matches the reference",
   "candidateScores": [
     ${candidates.map((_, i) => `{ "label": "C${i + 1}", "confidence": 0 }`).join(',\n    ')}
