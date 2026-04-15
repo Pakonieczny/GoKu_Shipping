@@ -47,6 +47,8 @@ const CLAUDE_MAX_DELAY_MS  = 12000;
 const MAX_OBJ_ASSETS       = 50;
 const MAX_PNG_ASSETS       = 50;
 const IMAGES_PER_BATCH     = 20;
+const BATCH_SIZE           = 10;   // candidates per Round-1 batch vision call
+const MAX_FINALISTS        = 5;    // one winner per batch → at most 5 enter Round 2
 const MAX_AVATAR_ASSETS   = 20;
 const AVATARS_ZIP_PRIMARY_PATH = `${GLOBAL_ASSET_BASE}/Avatars.zip`;
 const AVATARS_ZIP_LEGACY_PATH  = "game-generator-1/projects/BASE_Files/avatar_assets/Avatars.zip";
@@ -1018,6 +1020,50 @@ Respond ONLY with a valid JSON object. No markdown, no fences, no preamble.
 }`;
 }
 
+/* ─── Round-1 batch prompt: pick the best from one batch of 10 ───── */
+// Lightweight — no candidateScores needed, just the single best label.
+function buildObjectBatchPrompt(requirementName, batchSize, batchNum, totalBatches) {
+  return `You are an expert 3D game asset librarian performing a visual match.
+
+The FIRST image is the user's reference image — the ground truth for what this object must look like.
+The remaining ${batchSize} images are candidate 3D object thumbnails, each preceded by its label [C1]…[C${batchSize}].
+This is batch ${batchNum} of ${totalBatches} in a multi-round elimination.
+
+Study the reference image carefully, then examine each candidate thumbnail.
+Pick the single candidate whose object type and visual appearance best matches the reference.
+
+CRITICAL: Replace "chosenLabel" with the label of your chosen candidate. Do NOT default to C1 — only choose C1 if it is genuinely the best visual match.
+
+Respond ONLY with a valid JSON object. No markdown, no fences, no preamble.
+
+{
+  "requirementName": "${requirementName}",
+  "chosenLabel": "C1",
+  "visualSelectionRationale": "Brief note on why this candidate best matches the reference"
+}`;
+}
+
+function buildAvatarBatchPrompt(requirementName, batchSize, batchNum, totalBatches) {
+  return `You are an expert game character artist performing a visual match.
+
+The FIRST image is the user's reference image — the ground truth for what this character must look like.
+The remaining ${batchSize} images are candidate avatar thumbnails, each preceded by its label [C1]…[C${batchSize}].
+This is batch ${batchNum} of ${totalBatches} in a multi-round elimination.
+
+Study the reference image carefully, then examine each candidate thumbnail.
+Pick the single candidate whose character type and visual appearance best matches the reference.
+
+CRITICAL: Replace "chosenLabel" with the label of your chosen candidate. Do NOT default to C1 — only choose C1 if it is genuinely the best visual match.
+
+Respond ONLY with a valid JSON object. No markdown, no fences, no preamble.
+
+{
+  "requirementName": "${requirementName}",
+  "chosenLabel": "C1",
+  "visualSelectionRationale": "Brief note on why this candidate best matches the reference"
+}`;
+}
+
 /* ─── Single-pass prompt: 3D object reference-image vs candidates ── */
 // The reference image is sent first, then [C1] label + thumbnail for each
 // candidate. The model performs a deliberate per-candidate analysis before
@@ -1636,7 +1682,9 @@ exports.handler = async (event) => {
       return { requirementName: req.name, selectedAsset: candidates[chosenIdx], visualSelectionRationale: parsed.visualSelectionRationale || "", colormapFile: null };
     }
 
-    // Single-pass object matcher: reference image + labeled candidate thumbnails → one pick
+    // Two-round object matcher:
+    //   Round 1 — split assetPool into batches of BATCH_SIZE, pick one winner per batch
+    //   Round 2 — final pick among all batch winners (≤ MAX_FINALISTS)
     async function runObjectSinglePass(req) {
       const refImg = refImageByName.get(req.name.toLowerCase());
       if (!refImg) {
@@ -1665,56 +1713,118 @@ exports.handler = async (event) => {
         return null;
       }
 
-      console.log(`[ROSTER-AB] Object "${req.name}": single-pass vision with ${assetPool.length} candidate(s)`);
-
       const refBlock = {
         type:   "image",
         source: { type: "base64", media_type: refImg.mimeType, data: refImg.b64 }
       };
-      // Interleave [Cx] label + thumbnail for each candidate
-      const labeledThumbBlocks = assetPool.flatMap((asset, i) => [
+
+      // ── Round 1: batch elimination ────────────────────────────────────
+      // Each batch of BATCH_SIZE candidates gets its own focused vision call.
+      // The model picks the single best from each batch → one finalist per batch.
+      const batches = chunkArray(assetPool, BATCH_SIZE);
+      console.log(`[ROSTER-AB] Object "${req.name}": ${assetPool.length} candidate(s) → ${batches.length} batch(es) of ≤${BATCH_SIZE} (Round 1)`);
+
+      const finalists = [];
+      for (let b = 0; b < batches.length; b++) {
+        const batch = batches[b];
+        const labeledBlocks = batch.flatMap((asset, i) => [
+          { type: "text",  text: `[C${i + 1}]` },
+          { type: "image", source: { type: "base64", media_type: asset.mimeType, data: asset.b64 } }
+        ]);
+        let batchResult;
+        try {
+          batchResult = await callClaude(apiKey, {
+            model:       "claude-sonnet-4-20250514",
+            maxTokens:   500,
+            system:      "You are an expert 3D game asset librarian. Respond only with a valid JSON object. No markdown, no fences, no preamble.",
+            userContent: [
+              { type: "text", text: buildObjectBatchPrompt(req.name, batch.length, b + 1, batches.length) },
+              refBlock,
+              ...labeledBlocks
+            ]
+          });
+        } catch (e) {
+          console.warn(`[ROSTER-AB] Object "${req.name}" batch ${b + 1} failed: ${e.message} — skipping`);
+          continue;
+        }
+        let batchParsed;
+        try { batchParsed = JSON.parse(stripFences(batchResult.text)); }
+        catch (e) {
+          console.warn(`[ROSTER-AB] Object "${req.name}" batch ${b + 1} parse failed — skipping`);
+          continue;
+        }
+        const batchLabelNum = parseInt(String(batchParsed.chosenLabel || '').replace(/^C/i, ''), 10);
+        if (!Number.isFinite(batchLabelNum) || batchLabelNum < 1 || batchLabelNum > batch.length) {
+          console.warn(`[ROSTER-AB] Object "${req.name}" batch ${b + 1}: invalid chosenLabel "${batchParsed.chosenLabel}" — skipping`);
+          continue;
+        }
+        const winner = batch[batchLabelNum - 1];
+        finalists.push(winner);
+        console.log(`[ROSTER-AB] Object "${req.name}" batch ${b + 1} winner: [C${batchLabelNum}] ${winner[matchKey]}`);
+      }
+
+      if (finalists.length === 0) {
+        console.warn(`[ROSTER-AB] Object "${req.name}": no batch winners produced — unmatched`);
+        return null;
+      }
+
+      // ── Round 2: final selection among finalists ──────────────────────
+      // At most MAX_FINALISTS candidates (one per batch), full analysis prompt.
+      console.log(`[ROSTER-AB] Object "${req.name}": ${finalists.length} finalist(s) → Round 2 final pick`);
+
+      const finalLabeledBlocks = finalists.flatMap((asset, i) => [
         { type: "text",  text: `[C${i + 1}]` },
         { type: "image", source: { type: "base64", media_type: asset.mimeType, data: asset.b64 } }
       ]);
 
-      let result;
+      let finalResult;
       try {
-        result = await callClaude(apiKey, {
+        finalResult = await callClaude(apiKey, {
           model:       "claude-sonnet-4-20250514",
-          maxTokens:   2000,
+          maxTokens:   1000,
           system:      "You are an expert 3D game asset librarian. Analyse every candidate image carefully and methodically before selecting. Respond only with a valid JSON object. No markdown, no fences, no preamble.",
           userContent: [
-            { type: "text", text: buildObjectSinglePassPrompt(req.name, assetPool) },
+            { type: "text", text: buildObjectSinglePassPrompt(req.name, finalists) },
             refBlock,
-            ...labeledThumbBlocks
+            ...finalLabeledBlocks
           ]
         });
       } catch (e) {
-        console.warn(`[ROSTER-AB] Object "${req.name}" vision call failed: ${e.message} — unmatched`);
-        return null;
+        console.warn(`[ROSTER-AB] Object "${req.name}" Round 2 failed: ${e.message} — using first finalist`);
+        const fallback = finalists[0];
+        return {
+          requirementName:          req.name,
+          selectedAsset:            fallback,
+          visualSelectionRationale: `Round 2 failed — fallback to first finalist: ${e.message}`,
+          debugCandidates:          finalists.map((asset, i) => ({
+            label: `C${i + 1}`, assetName: asset.assetName || asset.objFile || '',
+            sourceZip: asset.sourceZip || '', confidence: i === 0 ? 100 : 0,
+            b64: asset.b64, mimeType: asset.mimeType
+          }))
+        };
       }
 
-      let parsed;
-      try { parsed = JSON.parse(stripFences(result.text)); }
+      let finalParsed;
+      try { finalParsed = JSON.parse(stripFences(finalResult.text)); }
       catch (e) {
-        console.warn(`[ROSTER-AB] Object "${req.name}" parse failed — unmatched`);
-        return null;
+        console.warn(`[ROSTER-AB] Object "${req.name}" Round 2 parse failed — using first finalist`);
+        finalParsed = { chosenLabel: "C1", visualSelectionRationale: "Fallback: parse error", candidateScores: [] };
       }
 
-      // Resolve chosenLabel (e.g. "C3") → 0-based index
-      const labelNum = parseInt(String(parsed.chosenLabel || '').replace(/^C/i, ''), 10);
-      if (!Number.isFinite(labelNum) || labelNum < 1 || labelNum > assetPool.length) {
-        console.warn(`[ROSTER-AB] Object "${req.name}": invalid chosenLabel "${parsed.chosenLabel}" — unmatched`);
-        return null;
+      const finalLabelNum = parseInt(String(finalParsed.chosenLabel || '').replace(/^C/i, ''), 10);
+      const safeIdx = (Number.isFinite(finalLabelNum) && finalLabelNum >= 1 && finalLabelNum <= finalists.length)
+        ? finalLabelNum - 1 : 0;
+      if (safeIdx === 0 && finalLabelNum !== 1) {
+        console.warn(`[ROSTER-AB] Object "${req.name}": invalid Round 2 chosenLabel "${finalParsed.chosenLabel}" — defaulting to first finalist`);
       }
-      const selectedAsset = assetPool[labelNum - 1];
-      console.log(`[ROSTER-AB] Object "${req.name}": selected [C${labelNum}] ${selectedAsset[matchKey]}`);
+      const selectedAsset = finalists[safeIdx];
+      console.log(`[ROSTER-AB] Object "${req.name}": final winner [C${safeIdx + 1}] ${selectedAsset[matchKey]}`);
 
-      // Build debug candidate list with confidence scores
-      const candidateScores = Array.isArray(parsed.candidateScores) ? parsed.candidateScores : [];
-      const debugCandidates = assetPool.map((asset, i) => {
+      // Debug candidates show the finalists that entered Round 2
+      const finalCandidateScores = Array.isArray(finalParsed.candidateScores) ? finalParsed.candidateScores : [];
+      const debugCandidates = finalists.map((asset, i) => {
         const label = `C${i + 1}`;
-        const scoreEntry = candidateScores.find(s => s.label === label);
+        const scoreEntry = finalCandidateScores.find(s => s.label === label);
         return {
           label,
           assetName:  asset.assetName || asset.objFile || '',
@@ -1733,7 +1843,7 @@ exports.handler = async (event) => {
       };
     }
 
-    // Single-pass avatar matcher: reference image + labeled candidate thumbnails → one pick
+    // Two-round avatar matcher (same structure as runObjectSinglePass)
     async function runAvatarSinglePass(req) {
       const refImg = refImageByName.get(req.name.toLowerCase());
       if (!refImg) {
@@ -1759,54 +1869,114 @@ exports.handler = async (event) => {
         return null;
       }
 
-      console.log(`[ROSTER-AB] Avatar "${req.name}": single-pass vision with ${assetPool.length} candidate(s)`);
-
       const refBlock = {
         type:   "image",
         source: { type: "base64", media_type: refImg.mimeType, data: refImg.b64 }
       };
-      const labeledThumbBlocks = assetPool.flatMap((asset, i) => [
+
+      // ── Round 1: batch elimination ────────────────────────────────────
+      const batches = chunkArray(assetPool, BATCH_SIZE);
+      console.log(`[ROSTER-AB] Avatar "${req.name}": ${assetPool.length} candidate(s) → ${batches.length} batch(es) of ≤${BATCH_SIZE} (Round 1)`);
+
+      const finalists = [];
+      for (let b = 0; b < batches.length; b++) {
+        const batch = batches[b];
+        const labeledBlocks = batch.flatMap((asset, i) => [
+          { type: "text",  text: `[C${i + 1}]` },
+          { type: "image", source: { type: "base64", media_type: asset.mimeType, data: asset.b64 } }
+        ]);
+        let batchResult;
+        try {
+          batchResult = await callClaude(apiKey, {
+            model:       "claude-sonnet-4-20250514",
+            maxTokens:   500,
+            system:      "You are an expert game character artist. Respond only with a valid JSON object. No markdown, no fences, no preamble.",
+            userContent: [
+              { type: "text", text: buildAvatarBatchPrompt(req.name, batch.length, b + 1, batches.length) },
+              refBlock,
+              ...labeledBlocks
+            ]
+          });
+        } catch (e) {
+          console.warn(`[ROSTER-AB] Avatar "${req.name}" batch ${b + 1} failed: ${e.message} — skipping`);
+          continue;
+        }
+        let batchParsed;
+        try { batchParsed = JSON.parse(stripFences(batchResult.text)); }
+        catch (e) {
+          console.warn(`[ROSTER-AB] Avatar "${req.name}" batch ${b + 1} parse failed — skipping`);
+          continue;
+        }
+        const batchLabelNum = parseInt(String(batchParsed.chosenLabel || '').replace(/^C/i, ''), 10);
+        if (!Number.isFinite(batchLabelNum) || batchLabelNum < 1 || batchLabelNum > batch.length) {
+          console.warn(`[ROSTER-AB] Avatar "${req.name}" batch ${b + 1}: invalid chosenLabel "${batchParsed.chosenLabel}" — skipping`);
+          continue;
+        }
+        const winner = batch[batchLabelNum - 1];
+        finalists.push(winner);
+        console.log(`[ROSTER-AB] Avatar "${req.name}" batch ${b + 1} winner: [C${batchLabelNum}] ${winner.assetName}`);
+      }
+
+      if (finalists.length === 0) {
+        console.warn(`[ROSTER-AB] Avatar "${req.name}": no batch winners produced — unmatched`);
+        return null;
+      }
+
+      // ── Round 2: final selection among finalists ──────────────────────
+      console.log(`[ROSTER-AB] Avatar "${req.name}": ${finalists.length} finalist(s) → Round 2 final pick`);
+
+      const finalLabeledBlocks = finalists.flatMap((asset, i) => [
         { type: "text",  text: `[C${i + 1}]` },
         { type: "image", source: { type: "base64", media_type: asset.mimeType, data: asset.b64 } }
       ]);
 
-      let result;
+      let finalResult;
       try {
-        result = await callClaude(apiKey, {
+        finalResult = await callClaude(apiKey, {
           model:       "claude-sonnet-4-20250514",
-          maxTokens:   2000,
+          maxTokens:   1000,
           system:      "You are an expert game character artist. Analyse every candidate avatar carefully and methodically before selecting. Respond only with a valid JSON object. No markdown, no fences, no preamble.",
           userContent: [
-            { type: "text", text: buildAvatarSinglePassPrompt(req.name, assetPool) },
+            { type: "text", text: buildAvatarSinglePassPrompt(req.name, finalists) },
             refBlock,
-            ...labeledThumbBlocks
+            ...finalLabeledBlocks
           ]
         });
       } catch (e) {
-        console.warn(`[ROSTER-AB] Avatar "${req.name}" vision call failed: ${e.message} — unmatched`);
-        return null;
+        console.warn(`[ROSTER-AB] Avatar "${req.name}" Round 2 failed: ${e.message} — using first finalist`);
+        const fallback = finalists[0];
+        return {
+          requirementName:          req.name,
+          selectedAsset:            fallback,
+          visualSelectionRationale: `Round 2 failed — fallback to first finalist: ${e.message}`,
+          debugCandidates:          finalists.map((asset, i) => ({
+            label: `C${i + 1}`, assetName: asset.assetName || '',
+            sourceZip: asset.sourceZip || '', confidence: i === 0 ? 100 : 0,
+            b64: asset.b64, mimeType: asset.mimeType
+          }))
+        };
       }
 
-      let parsed;
-      try { parsed = JSON.parse(stripFences(result.text)); }
+      let finalParsed;
+      try { finalParsed = JSON.parse(stripFences(finalResult.text)); }
       catch (e) {
-        console.warn(`[ROSTER-AB] Avatar "${req.name}" parse failed — unmatched`);
-        return null;
+        console.warn(`[ROSTER-AB] Avatar "${req.name}" Round 2 parse failed — using first finalist`);
+        finalParsed = { chosenLabel: "C1", visualSelectionRationale: "Fallback: parse error", candidateScores: [] };
       }
 
-      const labelNum = parseInt(String(parsed.chosenLabel || '').replace(/^C/i, ''), 10);
-      if (!Number.isFinite(labelNum) || labelNum < 1 || labelNum > assetPool.length) {
-        console.warn(`[ROSTER-AB] Avatar "${req.name}": invalid chosenLabel "${parsed.chosenLabel}" — unmatched`);
-        return null;
+      const finalLabelNum = parseInt(String(finalParsed.chosenLabel || '').replace(/^C/i, ''), 10);
+      const safeIdx = (Number.isFinite(finalLabelNum) && finalLabelNum >= 1 && finalLabelNum <= finalists.length)
+        ? finalLabelNum - 1 : 0;
+      if (safeIdx === 0 && finalLabelNum !== 1) {
+        console.warn(`[ROSTER-AB] Avatar "${req.name}": invalid Round 2 chosenLabel "${finalParsed.chosenLabel}" — defaulting to first finalist`);
       }
-      const selectedAsset = assetPool[labelNum - 1];
-      console.log(`[ROSTER-AB] Avatar "${req.name}": selected [C${labelNum}] ${selectedAsset.assetName}`);
+      const selectedAsset = finalists[safeIdx];
+      console.log(`[ROSTER-AB] Avatar "${req.name}": final winner [C${safeIdx + 1}] ${selectedAsset.assetName}`);
 
-      // Build debug candidate list with confidence scores
-      const candidateScores = Array.isArray(parsed.candidateScores) ? parsed.candidateScores : [];
-      const debugCandidates = assetPool.map((asset, i) => {
+      const finalCandidateScores = Array.isArray(finalParsed.candidateScores) ? finalParsed.candidateScores : [];
+      const debugCandidates = finalists.map((asset, i) => {
         const label = `C${i + 1}`;
-        const scoreEntry = candidateScores.find(s => s.label === label);
+        const scoreEntry = finalCandidateScores.find(s => s.label === label);
         return {
           label,
           assetName:  asset.assetName || '',
@@ -1820,7 +1990,7 @@ exports.handler = async (event) => {
       return {
         requirementName:          req.name,
         selectedAsset,
-        visualSelectionRationale: parsed.visualSelectionRationale || "",
+        visualSelectionRationale: finalParsed.visualSelectionRationale || "",
         debugCandidates
       };
     }
