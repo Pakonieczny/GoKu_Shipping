@@ -1059,7 +1059,7 @@ Respond ONLY with a valid JSON object. No markdown, no fences, no preamble.
 
 {
   "requirementName": "${requirementName}",
-  "chosenLabel": "C1",
+  "chosenLabel": "C?",
   "visualSelectionRationale": "Brief note on why this candidate best matches the reference",
   "candidateScores": [
     ${candidates.map((_, i) => `{ "label": "C${i + 1}", "confidence": 0 }`).join(',\n    ')}
@@ -1105,7 +1105,7 @@ Respond ONLY with a valid JSON object. No markdown, no fences, no preamble.
 
 {
   "requirementName": "${requirementName}",
-  "chosenLabel": "C1",
+  "chosenLabel": "C?",
   "visualSelectionRationale": "Brief note on why this candidate best matches the reference",
   "candidateScores": [
     ${candidates.map((_, i) => `{ "label": "C${i + 1}", "confidence": 0 }`).join(',\n    ')}
@@ -1375,7 +1375,11 @@ exports.handler = async (event) => {
           }
           const entry = assetFolderMap.get(folderKey);
 
-          if (fileLower.endsWith(".obj") && !entry.objEntry) {
+          if (fileLower.endsWith(".obj")) {
+            // .obj always wins — overwrite any previously seen .fbx entry for this folder
+            entry.objEntry = { entryPath, fileName };
+          } else if (fileLower.endsWith(".fbx") && !entry.objEntry) {
+            // .fbx accepted only when no .obj has been seen yet for this folder
             entry.objEntry = { entryPath, fileName };
           } else if ([".png", ".jpg", ".jpeg", ".webp"].some(e => fileLower.endsWith(e))) {
             if (fileLower.includes("colormap")) {
