@@ -47,8 +47,8 @@ const CLAUDE_MAX_DELAY_MS  = 12000;
 const MAX_OBJ_ASSETS       = 50;
 const MAX_PNG_ASSETS       = 50;
 const IMAGES_PER_BATCH     = 20;
-const BATCH_SIZE           = 10;   // candidates per Round-1 batch vision call
-const MAX_FINALISTS        = 5;    // one winner per batch → at most 5 enter Round 2
+const BATCH_SIZE           = 17;   // candidates per Round-1 batch vision call
+const MAX_FINALISTS        = 3;    // one winner per batch → at most 3 enter Round 2 (ceil(50/17))
 const MAX_AVATAR_ASSETS   = 20;
 const AVATARS_ZIP_PRIMARY_PATH = `${GLOBAL_ASSET_BASE}/Avatars.zip`;
 const AVATARS_ZIP_LEGACY_PATH  = "game-generator-1/projects/BASE_Files/avatar_assets/Avatars.zip";
@@ -1023,14 +1023,14 @@ Respond ONLY with a valid JSON object. No markdown, no fences, no preamble.
 /* ─── Round-1 batch prompt: pick the best from one batch of 10 ───── */
 // Lightweight — no candidateScores needed, just the single best label.
 function buildObjectBatchPrompt(requirementName, batchSize, batchNum, totalBatches) {
-  return `You are an expert 3D game asset librarian performing a visual match.
+  return `You are an expert 3D game asset librarian performing a pure visual match.
 
-The FIRST image is the user's reference image — the ground truth for what this object must look like.
+The image labeled [REF] is the reference — the exact visual target. Do not select it as a candidate answer.
 The remaining ${batchSize} images are candidate 3D object thumbnails, each preceded by its label [C1]…[C${batchSize}].
 This is batch ${batchNum} of ${totalBatches} in a multi-round elimination.
 
-Study the reference image carefully, then examine each candidate thumbnail.
-Pick the single candidate whose object type and visual appearance best matches the reference.
+Compare each candidate image directly against [REF]. Pick the single candidate whose visual appearance most closely matches [REF].
+Base your decision entirely on what you see in the images — shape, silhouette, style, structure. Ignore any text.
 
 CRITICAL: Replace "chosenLabel" with the label of your chosen candidate. Do NOT default to C1 — only choose C1 if it is genuinely the best visual match.
 
@@ -1039,19 +1039,19 @@ Respond ONLY with a valid JSON object. No markdown, no fences, no preamble.
 {
   "requirementName": "${requirementName}",
   "chosenLabel": "C1",
-  "visualSelectionRationale": "Brief note on why this candidate best matches the reference"
+  "visualSelectionRationale": "Brief note on what you saw in the images that drove your choice"
 }`;
 }
 
 function buildAvatarBatchPrompt(requirementName, batchSize, batchNum, totalBatches) {
-  return `You are an expert game character artist performing a visual match.
+  return `You are an expert game character artist performing a pure visual match.
 
-The FIRST image is the user's reference image — the ground truth for what this character must look like.
+The image labeled [REF] is the reference — the exact visual target. Do not select it as a candidate answer.
 The remaining ${batchSize} images are candidate avatar thumbnails, each preceded by its label [C1]…[C${batchSize}].
 This is batch ${batchNum} of ${totalBatches} in a multi-round elimination.
 
-Study the reference image carefully, then examine each candidate thumbnail.
-Pick the single candidate whose character type and visual appearance best matches the reference.
+Compare each candidate image directly against [REF]. Pick the single candidate whose visual appearance most closely matches [REF].
+Base your decision entirely on what you see in the images — character type, silhouette, costume, art style. Ignore any text.
 
 CRITICAL: Replace "chosenLabel" with the label of your chosen candidate. Do NOT default to C1 — only choose C1 if it is genuinely the best visual match.
 
@@ -1060,57 +1060,33 @@ Respond ONLY with a valid JSON object. No markdown, no fences, no preamble.
 {
   "requirementName": "${requirementName}",
   "chosenLabel": "C1",
-  "visualSelectionRationale": "Brief note on why this candidate best matches the reference"
+  "visualSelectionRationale": "Brief note on what you saw in the images that drove your choice"
 }`;
 }
 
 /* ─── Single-pass prompt: 3D object reference-image vs candidates ── */
-// The reference image is sent first, then [C1] label + thumbnail for each
-// candidate. The model performs a deliberate per-candidate analysis before
-// committing to one pick — no batching intermediate pass, no second call.
+// The [REF] labeled image comes first, then [C1]…[CN] candidates.
+// No text description is passed — the reference image is the sole ground truth.
 function buildObjectSinglePassPrompt(requirementName, candidates) {
-  return `You are an expert 3D game asset librarian performing a precise visual match.
+  return `You are an expert 3D game asset librarian performing a pure visual match.
 
-The FIRST image is the user's reference image — the ground truth for what this object must look like.
+The image labeled [REF] is the reference — the exact visual target. Do not select it as a candidate answer.
 The remaining images are candidate 3D object thumbnails from the asset library, each preceded by its label [C1], [C2], [C3]…
 
-ANALYSIS PROCESS — follow every step before producing your answer:
+Compare each candidate image directly against [REF]. Evaluate every candidate before deciding.
+Base your decision entirely on what you see in the images — shape, silhouette, structure, surface style. Ignore any text.
 
-STEP 1 — Study the reference image carefully.
-  Identify and mentally note ALL of the following features:
-  • Overall object category (what is it?)
-  • Primary silhouette shape and proportions
-  • Dominant structural elements (e.g. legs, wings, barrel, turret, roof line)
-  • Surface style (low-poly, realistic, stylised, hard-edge, organic)
-  • Scale cues (small prop, vehicle-sized, building-sized?)
-  • Any distinctive details that would rule out close-but-wrong matches
+For each candidate assess: does the object category match? How closely does the silhouette, structure, and style match [REF]?
+Eliminate candidates whose object category clearly differs from [REF]. Among the rest, pick the closest visual match.
 
-STEP 2 — Examine EVERY candidate thumbnail individually.
-  For each candidate [C1] through [C${candidates.length}], assess:
-  • Does the object category match the reference? (hard filter — wrong category = eliminated)
-  • How closely does the silhouette and proportions match?
-  • Do the structural elements align with the reference?
-  • Does the surface style match?
-  • Are distinctive reference details present or absent?
-
-STEP 3 — Rank candidates from best to worst match.
-  Eliminate any candidate whose object category clearly does not match.
-  Among remaining candidates, rank by overall visual similarity to the reference.
-
-STEP 4 — Select the single best match.
-  Choose the top-ranked candidate. If no candidate matches the object category at all,
-  still pick the closest available option and note the mismatch in your rationale.
-
-CRITICAL: You MUST replace "chosenLabel" with the label of whichever candidate YOU
-determined to be the best visual match after examining ALL candidates. Do NOT default
-to C1 — C1 is only correct if it genuinely is your best match after comparison.
+CRITICAL: You MUST replace "chosenLabel" with the label of whichever candidate YOU determined to be the best visual match after examining ALL candidates. Do NOT default to C1 — C1 is only correct if it genuinely is your best match after comparison.
 
 Respond ONLY with a valid JSON object. No markdown, no fences, no preamble.
 
 {
   "requirementName": "${requirementName}",
   "chosenLabel": "C1",
-  "visualSelectionRationale": "Brief note on why this candidate best matches the reference",
+  "visualSelectionRationale": "Brief note on what you saw in the images that drove your choice",
   "candidateScores": [
     ${candidates.map((_, i) => `{ "label": "C${i + 1}", "confidence": 0 }`).join(',\n    ')}
   ]
@@ -1118,49 +1094,28 @@ Respond ONLY with a valid JSON object. No markdown, no fences, no preamble.
 }
 
 /* ─── Single-pass prompt: avatar reference-image vs candidates ───── */
+// The [REF] labeled image comes first, then [C1]…[CN] candidates.
+// No text description is passed — the reference image is the sole ground truth.
 function buildAvatarSinglePassPrompt(requirementName, candidates) {
-  return `You are an expert game character artist performing a precise visual match for an avatar asset.
+  return `You are an expert game character artist performing a pure visual match.
 
-The FIRST image is the user's reference image — the ground truth for what this character must look like.
+The image labeled [REF] is the reference — the exact visual target. Do not select it as a candidate answer.
 The remaining images are candidate avatar thumbnails from the asset library, each preceded by its label [C1], [C2], [C3]…
 
-ANALYSIS PROCESS — follow every step before producing your answer:
+Compare each candidate image directly against [REF]. Evaluate every candidate before deciding.
+Base your decision entirely on what you see in the images — character type, silhouette, costume, art style. Ignore any text.
 
-STEP 1 — Study the reference image carefully.
-  Identify and mentally note ALL of the following features:
-  • Character type (human, creature, robot, fantasy race, etc.)
-  • Body proportions and build (slim, stocky, tall, child-sized, etc.)
-  • Costume / equipment category (armour, casual, uniform, fantasy gear, etc.)
-  • Gender presentation and any strong stylistic markers
-  • Art style (realistic, stylised, cartoon, low-poly, etc.)
-  • Any distinctive features that would definitively rule out wrong matches
+For each candidate assess: does the character type match? How closely does the silhouette, costume, and style match [REF]?
+Eliminate candidates whose character type clearly differs from [REF]. Among the rest, pick the closest visual match.
 
-STEP 2 — Examine EVERY candidate thumbnail individually.
-  For each candidate [C1] through [C${candidates.length}], assess:
-  • Does the character type match the reference? (hard filter — wrong type = eliminated)
-  • How closely do body proportions and build match?
-  • How closely does the costume / equipment category match?
-  • Does the art style match?
-  • Are the reference's distinctive features present or absent?
-
-STEP 3 — Rank candidates from best to worst match.
-  Eliminate candidates whose character type clearly does not match the reference.
-  Among remaining candidates, rank by overall visual similarity.
-
-STEP 4 — Select the single best match.
-  Choose the top-ranked candidate. If no candidate matches the character type at all,
-  still pick the closest available and note the mismatch in your rationale.
-
-CRITICAL: You MUST replace "chosenLabel" with the label of whichever candidate YOU
-determined to be the best visual match after examining ALL candidates. Do NOT default
-to C1 — C1 is only correct if it genuinely is your best match after comparison.
+CRITICAL: You MUST replace "chosenLabel" with the label of whichever candidate YOU determined to be the best visual match after examining ALL candidates. Do NOT default to C1 — C1 is only correct if it genuinely is your best match after comparison.
 
 Respond ONLY with a valid JSON object. No markdown, no fences, no preamble.
 
 {
   "requirementName": "${requirementName}",
   "chosenLabel": "C1",
-  "visualSelectionRationale": "Brief note on why this candidate best matches the reference",
+  "visualSelectionRationale": "Brief note on what you saw in the images that drove your choice",
   "candidateScores": [
     ${candidates.map((_, i) => `{ "label": "C${i + 1}", "confidence": 0 }`).join(',\n    ')}
   ]
@@ -1713,10 +1668,10 @@ exports.handler = async (event) => {
         return null;
       }
 
-      const refBlock = {
-        type:   "image",
-        source: { type: "base64", media_type: refImg.mimeType, data: refImg.b64 }
-      };
+      const refBlock = [
+        { type: "text",  text: "[REF]" },
+        { type: "image", source: { type: "base64", media_type: refImg.mimeType, data: refImg.b64 } }
+      ];
 
       // ── Round 1: batch elimination ────────────────────────────────────
       // Each batch of BATCH_SIZE candidates gets its own focused vision call.
@@ -1739,7 +1694,7 @@ exports.handler = async (event) => {
             system:      "You are an expert 3D game asset librarian. Respond only with a valid JSON object. No markdown, no fences, no preamble.",
             userContent: [
               { type: "text", text: buildObjectBatchPrompt(req.name, batch.length, b + 1, batches.length) },
-              refBlock,
+              ...refBlock,
               ...labeledBlocks
             ]
           });
@@ -1785,7 +1740,7 @@ exports.handler = async (event) => {
           system:      "You are an expert 3D game asset librarian. Analyse every candidate image carefully and methodically before selecting. Respond only with a valid JSON object. No markdown, no fences, no preamble.",
           userContent: [
             { type: "text", text: buildObjectSinglePassPrompt(req.name, finalists) },
-            refBlock,
+            ...refBlock,
             ...finalLabeledBlocks
           ]
         });
@@ -1838,7 +1793,7 @@ exports.handler = async (event) => {
       return {
         requirementName:          req.name,
         selectedAsset,
-        visualSelectionRationale: parsed.visualSelectionRationale || "",
+        visualSelectionRationale: finalParsed.visualSelectionRationale || "",
         debugCandidates
       };
     }
@@ -1869,10 +1824,10 @@ exports.handler = async (event) => {
         return null;
       }
 
-      const refBlock = {
-        type:   "image",
-        source: { type: "base64", media_type: refImg.mimeType, data: refImg.b64 }
-      };
+      const refBlock = [
+        { type: "text",  text: "[REF]" },
+        { type: "image", source: { type: "base64", media_type: refImg.mimeType, data: refImg.b64 } }
+      ];
 
       // ── Round 1: batch elimination ────────────────────────────────────
       const batches = chunkArray(assetPool, BATCH_SIZE);
@@ -1893,7 +1848,7 @@ exports.handler = async (event) => {
             system:      "You are an expert game character artist. Respond only with a valid JSON object. No markdown, no fences, no preamble.",
             userContent: [
               { type: "text", text: buildAvatarBatchPrompt(req.name, batch.length, b + 1, batches.length) },
-              refBlock,
+              ...refBlock,
               ...labeledBlocks
             ]
           });
@@ -1938,7 +1893,7 @@ exports.handler = async (event) => {
           system:      "You are an expert game character artist. Analyse every candidate avatar carefully and methodically before selecting. Respond only with a valid JSON object. No markdown, no fences, no preamble.",
           userContent: [
             { type: "text", text: buildAvatarSinglePassPrompt(req.name, finalists) },
-            refBlock,
+            ...refBlock,
             ...finalLabeledBlocks
           ]
         });
