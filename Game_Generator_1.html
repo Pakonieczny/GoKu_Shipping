@@ -5735,8 +5735,12 @@ Quality criteria for your work:
 
     async function analyzeDirectThreeAsset(asset) {
       const lowerName = asset.name.toLowerCase();
-      const modelUrl = asset.url;
-      if (lowerName.endsWith('.obj')) {
+      const mimeType  = String(asset.type || '').toLowerCase();
+      const modelUrl  = asset.url;
+      // For numeric-keyed files (no extension), fall back to asset.type for loader selection.
+      const isObj = lowerName.endsWith('.obj') || mimeType === 'model/obj';
+      const isFbx = lowerName.endsWith('.fbx') || mimeType === 'model/fbx';
+      if (isObj) {  // lowerName.endsWith('.obj') || mimeType === 'model/obj'
         const objText = await fetch(modelUrl, { cache: 'no-store' }).then(res => {
           if (!res.ok) throw new Error(`Failed to load OBJ text: ${res.status}`);
           return res.text();
@@ -5752,7 +5756,7 @@ Quality criteria for your work:
         });
       }
 
-      if (lowerName.endsWith('.fbx')) {
+      if (isFbx) {
         const loader = new FBXLoader();
         const fbx = await new Promise((resolve, reject) => loader.load(modelUrl, resolve, undefined, reject));
         return buildThreeModelAnalysis(fbx, {
@@ -5771,7 +5775,7 @@ Quality criteria for your work:
         sourcePath: asset.path,
         sourceType: asset.type || 'model/gltf-binary',
         containerType: 'direct-file',
-        format: lowerName.endsWith('.glb') ? 'glb' : 'gltf',
+        format: (lowerName.endsWith('.glb') || mimeType === 'model/gltf-binary') ? 'glb' : 'gltf',
         animationCount: Array.isArray(gltf.animations) ? gltf.animations.length : 0
       });
     }
@@ -6238,15 +6242,19 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
         };
     }
 
-    // Renames filename-based model files (e.g. models/Wooden_Wheelbarrow.obj) to their
-    // assigned numeric manifest key (e.g. models/57) so the Models folder tree displays
-    // entries by Key # as expected. Must be called AFTER syncAssetsJson() has assigned keys.
-    // Only renames 3D object entries (obj/glb/gltf/fbx/c3b) that have a purely numeric key
-    // and are stored under their filename rather than already under their key number.
+    // Renames ALL filename-based files in models/ to their assigned numeric manifest key
+    // (e.g. models/avatar__Tank.fbx → models/57, models/colormap.png → models/58) so every
+    // file is referenced by Key # as Cherry3D expects. Covers all file types: 3D models,
+    // avatar FBX, colormap textures, animation manifests, images, etc.
+    // Must be called AFTER syncAssetsJson() has assigned keys.
     async function renameModelFilesToKeys(projectName, syncedManifest) {
         if (!projectName || !Array.isArray(syncedManifest)) return { renamedCount: 0, results: [] };
 
-        // Build filename → numeric key map from the manifest
+        // Build filename → numeric key map from the manifest.
+        // Includes ALL file types that have a numeric key and a named title (any extension).
+        // Excludes reserved system entries (2, 23) and entries with no dot in the title
+        // (those are already numeric keys or runtime-only names).
+        const RESERVED_KEYS = new Set(['0', '2', '3', '22', '23']);
         const keyByFilename = new Map();
         for (const entry of flattenAssetManifestEntries(syncedManifest)) {
             const title = String(entry?.title || '').trim();
@@ -6254,7 +6262,8 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
             if (
                 title && key &&
                 /^\d+$/.test(key) &&
-                /\.(obj|glb|gltf|fbx|c3b)$/i.test(title)
+                !RESERVED_KEYS.has(key) &&
+                title.includes('.')          // has an extension — not a runtime-only name
             ) {
                 keyByFilename.set(title.toLowerCase(), key);
             }
@@ -6284,10 +6293,21 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
                 const base64 = btoa(binary);
 
                 const ext = filename.split('.').pop().toLowerCase();
-                const mimeType = ext === 'obj'                   ? 'text/plain'
-                               : ext === 'fbx'                   ? 'model/fbx'
-                               : ext === 'c3b'                   ? 'application/octet-stream'
-                               : /* glb / gltf */                  'model/gltf-binary';
+                const mimeType = ext === 'obj'                    ? 'text/plain'
+                               : ext === 'fbx'                    ? 'model/fbx'
+                               : ext === 'c3b'                    ? 'application/octet-stream'
+                               : ext === 'glb' || ext === 'gltf'  ? 'model/gltf-binary'
+                               : ext === 'png'                    ? 'image/png'
+                               : ext === 'jpg' || ext === 'jpeg'  ? 'image/jpeg'
+                               : ext === 'webp'                   ? 'image/webp'
+                               : ext === 'bmp'                    ? 'image/bmp'
+                               : ext === 'tga'                    ? 'image/x-tga'
+                               : ext === 'json'                   ? 'application/json'
+                               : ext === 'js'                     ? 'application/javascript'
+                               : ext === 'mp3'                    ? 'audio/mpeg'
+                               : ext === 'wav'                    ? 'audio/wav'
+                               : ext === 'ogg'                    ? 'audio/ogg'
+                               :                                    'application/octet-stream';
 
                 await uploadString(destRef, `data:${mimeType};base64,${base64}`, 'data_url');
                 await deleteObject(srcRef);
@@ -6302,7 +6322,7 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
         const results = await Promise.all(tasks);
         const renamedCount = results.filter(r => r?.ok && !r?.skipped).length;
         const failedCount  = results.filter(r => !r?.ok).length;
-        console.log(`[RENAME-TO-KEY] ${renamedCount} model file(s) renamed to numeric key; ${failedCount} failed.`);
+        console.log(`[RENAME-TO-KEY] ${renamedCount} file(s) renamed to numeric key; ${failedCount} failed.`);
         return { renamedCount, results };
     }
 
@@ -7232,6 +7252,27 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
               if (renameResult2.renamedCount > 0) {
                 appendToChatLog('System', `✅ ${renameResult2.renamedCount} model file(s) renamed to numeric key in models/.`, 'normal');
               }
+              // After renaming, 3D files in models/ are stored under their numeric key
+              // (e.g. "57") rather than their original filename. Add those keys to
+              // rosterSelected3DNames so the extents scan loop can find them, and build
+              // a keyToMimeType map so analyzeDirectThreeAsset gets the correct loader type.
+              if (rosterSelected3DNames && Array.isArray(renameResult2?.results)) {
+                for (const r of renameResult2.results) {
+                  if (r?.ok && r.key) rosterSelected3DNames.add(r.key);
+                }
+              }
+              if (Array.isArray(renameResult2?.results)) {
+                window._rosterKeyToMimeType = window._rosterKeyToMimeType || new Map();
+                for (const r of renameResult2.results) {
+                  if (!r?.ok || !r.key || !r.filename) continue;
+                  const ext = String(r.filename).split('.').pop().toLowerCase();
+                  const mime = ext === 'obj'                   ? 'model/obj'
+                             : ext === 'fbx'                   ? 'model/fbx'
+                             : (ext === 'glb' || ext === 'gltf') ? 'model/gltf-binary'
+                             : null;
+                  if (mime) window._rosterKeyToMimeType.set(r.key, mime);
+                }
+              }
               const cachedScan = getCachedModelAnalysis(currentProject);
               clearLatestAnnotatedRoster(currentProject);
               let refreshedRosterAnnotationError = null;
@@ -7358,10 +7399,18 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
                 if (a.path.includes('models/') && !a.path.includes('object_zips')) {
                     const lowerName = a.name.toLowerCase();
                     const shouldProcess = rosterSelected3DNames.has(a.name);
-                    if (shouldProcess && (lowerName.endsWith('.obj') || lowerName.endsWith('.fbx') || lowerName.endsWith('.glb') || lowerName.endsWith('.gltf'))) {
+                    // A file is a scannable 3D asset if it has a recognised extension OR
+                    // if it was renamed to a numeric key (no extension) and we have its
+                    // original mime type from the rename results map.
+                    const has3dExt = lowerName.endsWith('.obj') || lowerName.endsWith('.fbx') || lowerName.endsWith('.glb') || lowerName.endsWith('.gltf');
+                    const keyMime  = !has3dExt && shouldProcess ? (window._rosterKeyToMimeType?.get(a.name) || null) : null;
+                    if (shouldProcess && (has3dExt || keyMime)) {
+                        // For numeric-keyed files, inject the correct mime type so
+                        // analyzeDirectThreeAsset selects the right Three.js loader.
+                        const assetForScan = keyMime ? { ...a, type: keyMime } : a;
                         Progress.step(`Scanning 3D extents`, a.name);
                         try {
-                            const analysis = await analyzeDirectThreeAsset(a);
+                            const analysis = await analyzeDirectThreeAsset(assetForScan);
                             if (analysis) {
                                 modelAnalysisList.push(analysis);
                                 const reviewEntry = buildExtentsReviewEntry(a.name, analysis);
