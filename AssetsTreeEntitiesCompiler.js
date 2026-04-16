@@ -126,7 +126,18 @@ export function createAssetsTreeEntitiesCompiler(deps = {}) {
     return { byManifestKey, byAssetNameLower };
   }
 
-  function buildScanFactsLookup(scanFacts = []) {
+  // After renameModelFilesToKeys runs, scan facts produced by getOrBuildExtendedModelAnalysis
+  // have sourceName equal to the numeric manifest key (e.g. "129") because the file in
+  // models/ is stored under that numeric name. Manifest entries, however, retain their
+  // original title (e.g. "coin-gold.obj"). Without an alias, resolveScanFactForAsset
+  // would never find a matching scan fact for a renamed asset, leaving extent / meshCount /
+  // slotCount fields empty in the compiled package.
+  //
+  // Pass the manifest lookup so we can register, for each scan fact whose sourceName is a
+  // numeric manifest key, additional aliases under the manifest entry's title (with and
+  // without extension). This keeps lookup-by-title semantics intact for both pre-rename
+  // (filename-named) and post-rename (numeric-keyed) scan facts.
+  function buildScanFactsLookup(scanFacts = [], manifestLookup = null) {
     const bySourceNameLower = new Map();
     if (!Array.isArray(scanFacts)) return bySourceNameLower;
     for (const fact of scanFacts) {
@@ -136,6 +147,20 @@ export function createAssetsTreeEntitiesCompiler(deps = {}) {
       const sourceNameNoExt = sourceNameLower.replace(/\.[^.]+$/, '');
       if (sourceNameNoExt && sourceNameNoExt !== sourceNameLower) {
         bySourceNameLower.set(sourceNameNoExt, fact);
+      }
+
+      // Numeric-keyed scan fact (post-rename): alias by the manifest entry's title so
+      // resolveScanFactForAsset can find it via assetEntry.title lookup.
+      if (manifestLookup && manifestLookup.byKey && /^\d+$/.test(sourceNameLower)) {
+        const manifestEntry = manifestLookup.byKey.get(sourceNameLower);
+        const titleLower = String(manifestEntry?.title || '').toLowerCase();
+        if (titleLower) {
+          if (!bySourceNameLower.has(titleLower)) bySourceNameLower.set(titleLower, fact);
+          const titleNoExt = titleLower.replace(/\.[^.]+$/, '');
+          if (titleNoExt && titleNoExt !== titleLower && !bySourceNameLower.has(titleNoExt)) {
+            bySourceNameLower.set(titleNoExt, fact);
+          }
+        }
       }
     }
     return bySourceNameLower;
@@ -533,25 +558,44 @@ export function createAssetsTreeEntitiesCompiler(deps = {}) {
       ? new Set(Array.from(allowedAssetNames).map(name => String(name || '').toLowerCase()))
       : null;
 
+    // After renameModelFilesToKeys runs, 3D files in models/ are stored under their
+    // numeric manifest key (e.g. "129") rather than their original filename — they
+    // have no extension and are pure digits. The frontend rename helper records the
+    // original mime type for each renamed key in window._rosterKeyToMimeType. Use
+    // that map to recover the loader type for numeric-keyed files; without this the
+    // extension filter below silently skips every renamed roster 3D asset, leaving
+    // scanFacts empty and breaking downstream geometry/texture contracts.
+    const keyToMimeType = (typeof window !== 'undefined' && window._rosterKeyToMimeType instanceof Map)
+      ? window._rosterKeyToMimeType
+      : null;
+
     const analyses = [];
     for (const item of listing.items) {
       const lowerName = String(item.name || '').toLowerCase();
       if (item.name === '2' || item.name === '23') continue;
-      if (!/\./.test(item.name) && /^\d+$/.test(item.name)) continue;
-      if (!['.obj', '.glb', '.gltf', '.fbx'].some(ext => lowerName.endsWith(ext))) continue;
+
+      // Reserved Cherry3D runtime artifacts: numeric-extensionless files NOT registered
+      // as a renamed roster 3D asset in the mime-type map. Genuine renamed roster files
+      // (also numeric-extensionless) are handled below via keyToMimeType lookup.
+      const isNumericExtensionless = !/\./.test(item.name) && /^\d+$/.test(item.name);
+      const renamedMime = (isNumericExtensionless && keyToMimeType) ? keyToMimeType.get(item.name) : null;
+      if (isNumericExtensionless && !renamedMime) continue;
+
+      const has3dExt = ['.obj', '.glb', '.gltf', '.fbx'].some(ext => lowerName.endsWith(ext));
+      if (!has3dExt && !renamedMime) continue;
       if (allowedNamesLower && !allowedNamesLower.has(lowerName)) continue;
 
       try {
         const url = await getDownloadURL(item);
+        const resolvedType = renamedMime
+          || (lowerName.endsWith('.obj') ? 'model/obj'
+            : lowerName.endsWith('.fbx') ? 'model/fbx'
+            : 'model/gltf-binary');
         const analysis = await analyzeDirectThreeAsset({
           name: item.name,
           path: `models/${item.name}`,
           url,
-          type: lowerName.endsWith('.obj')
-            ? 'model/obj'
-            : lowerName.endsWith('.fbx')
-              ? 'model/fbx'
-              : 'model/gltf-binary'
+          type: resolvedType
         });
         if (analysis) analyses.push(analysis);
       } catch (error) {
@@ -607,7 +651,7 @@ export function createAssetsTreeEntitiesCompiler(deps = {}) {
 
     const manifestLookup = buildManifestLookup(baseEntries);
     const rosterLookup = buildApprovedRosterLookup(annotatedRoster);
-    const scanLookup = buildScanFactsLookup(scanFacts);
+    const scanLookup = buildScanFactsLookup(scanFacts, manifestLookup);
     const expandedObjects = expandSceneIntentObjects(sceneIntent);
     const materialKeyBySourceKey = new Map();
     const materialEntriesByKey = new Map();
@@ -768,8 +812,8 @@ export function createAssetsTreeEntitiesCompiler(deps = {}) {
       rigidbodyPlan = null
     } = input;
     const sceneEntities = {};
-    const scanLookup = buildScanFactsLookup(scanFacts);
     const manifestLookup = buildManifestLookup(assets);
+    const scanLookup = buildScanFactsLookup(scanFacts, manifestLookup);
 
     for (const group of Array.isArray(sceneIntent?.groups) ? sceneIntent.groups : []) {
       const key = String(group?.key || '').trim();

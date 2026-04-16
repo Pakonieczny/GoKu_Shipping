@@ -375,7 +375,13 @@ exports.handler = async (event) => {
               const textureEntryPath = typeof textureRef === 'string' ? textureRef : (textureRef?.entryPath || textureRef?.path || textureRef?.name || '');
               if (!textureEntryPath || !zip.files[textureEntryPath] || isSkippableZipEntry(textureEntryPath)) continue;
               const rawTextureName = textureEntryPath.split('/').pop();
-              const stagedTextureName = `avatar__${stripExtension(copiedModelFilename || asset.assetName || originalEntryName)}__${rawTextureName}`;
+              // buildDeterministicCopiedModelFilenamePlan already prefixes avatar mesh
+              // filenames with "avatar__". Re-prefixing here produced doubled
+              // "avatar__avatar__<base>__<texture>" names that didn't match anything in
+              // models/ after copy, causing all four `avatar__avatar__...` RENAME-TO-KEY
+              // failures in the error log. Strip the existing prefix before re-applying.
+              const textureBase = stripExtension(copiedModelFilename || asset.assetName || originalEntryName).replace(/^avatar__/i, '');
+              const stagedTextureName = `avatar__${textureBase}__${rawTextureName}`;
               const stagedTexturePath = `${stagedFolderPath}/${stagedTextureName}`;
               const textureBuffer = await zip.files[textureEntryPath].async('nodebuffer');
               await bucket.file(stagedTexturePath).save(textureBuffer, {
@@ -389,7 +395,9 @@ exports.handler = async (event) => {
             const animationManifestEntryPath = asset.animationManifestPath || null;
             if (animationManifestEntryPath && zip.files[animationManifestEntryPath] && !isSkippableZipEntry(animationManifestEntryPath)) {
               const rawManifestName = animationManifestEntryPath.split('/').pop() || 'Animations.txt';
-              stagedAnimationManifestFile = `avatar__${stripExtension(copiedModelFilename || asset.assetName || originalEntryName)}__${rawManifestName}`;
+              // Same double-prefix guard as the texture path above.
+              const manifestBase = stripExtension(copiedModelFilename || asset.assetName || originalEntryName).replace(/^avatar__/i, '');
+              stagedAnimationManifestFile = `avatar__${manifestBase}__${rawManifestName}`;
               stagedAnimationManifestPath = `${stagedFolderPath}/${stagedAnimationManifestFile}`;
               const manifestBuffer = await zip.files[animationManifestEntryPath].async('nodebuffer');
               await bucket.file(stagedAnimationManifestPath).save(manifestBuffer, {

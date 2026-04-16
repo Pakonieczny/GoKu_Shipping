@@ -2299,6 +2299,15 @@ This will permanently remove all associated files and Firebase folders for this 
             }
         }
 
+        // Build a set of filenames that ACTUALLY exist as standalone files in models/.
+        // Used to filter ZIP entries below — we only register a ZIP entry in the manifest
+        // if a file with that name was actually staged/copied into models/. Otherwise the
+        // staging step's deterministic renaming (e.g. dedup suffixes like prop__bush__01.fbx,
+        // avatar__ prefixes for avatar meshes/textures) leaves the ZIP-entry filename
+        // present in the manifest as a phantom entry, which then causes [RENAME-TO-KEY]
+        // storage/object-not-found failures because models/<entryName> never existed.
+        const modelFilenamesInStorageLower = new Set(modelItems.map(i => i.name.toLowerCase()));
+
         for (const item of zipItems) {
             if (!item.name.toLowerCase().endsWith('.zip')) continue;
             try {
@@ -2318,7 +2327,15 @@ This will permanently remove all associated files and Firebase folders for this 
                     // phantom manifest entries for files that don't actually exist on their own.
                     // Colormap textures are extracted and renamed into models/ by copyRosterAssetsToModels
                     // and get picked up correctly by the models/ scan above.
-                    if (assetExtensions.some(ext => lowerEntry.endsWith(ext))) {
+                    //
+                    // Additionally: only register the ZIP entry if a file with that exact name
+                    // exists in models/. The staging pipeline often renames ZIP entries
+                    // deterministically (dedup suffixes, avatar__ prefix), so the original
+                    // ZIP entry name may not match anything that was actually copied to models/.
+                    // Registering it under the original name produces a phantom manifest entry
+                    // that then fails [RENAME-TO-KEY] with storage/object-not-found.
+                    if (assetExtensions.some(ext => lowerEntry.endsWith(ext))
+                        && modelFilenamesInStorageLower.has(lowerEntry)) {
                         truthMap.set(entryName, 'object');
                     }
                 }
@@ -2361,6 +2378,56 @@ This will permanently remove all associated files and Firebase folders for this 
             }
             return flat;
         }
+
+        // ────────────────────────────────────────────────────────────────────────────
+        // POST-RENAME MANIFEST SURVIVAL
+        //
+        // After renameModelFilesToKeys runs, roster 3D meshes and colormap textures live
+        // in models/ under their numeric manifest key (e.g. "129", "126") with no
+        // extension. The truthMap loop above unconditionally skips numeric-extensionless
+        // files because that pattern is also used by Cherry3D for runtime artifacts.
+        // Without this rehydration step, every subsequent compileProjectJsonPackage()
+        // call would find an empty truthMap for those files, the prune logic would
+        // remove the corresponding manifest entries (which still carry the original
+        // title like "coin-gold.obj"), and the entire roster would collapse on the
+        // second compile pass — leaving texture/geometry contracts blank in tranche
+        // prompts and breaking the AI build.
+        //
+        // Strategy: build a key→{title, type} map from the existing manifest, walk
+        // models/ once more, and for each numeric-extensionless file that the existing
+        // manifest already claims as a non-reserved asset, re-register it in truthMap
+        // under its original title. This makes rename idempotent across compile passes:
+        // the manifest remembers what each numeric key used to be called, and the truth
+        // set is rehydrated from that memory on every sync.
+        const RESERVED_TRUTH_KEYS_FOR_REHYDRATION = new Set(['0', '2', '3', '22', '23']);
+        const keyToExistingTitleType = new Map();
+        for (const entry of flattenAssetEntries(existingAssets)) {
+            if (!entry || entry.type === 'folder') continue;
+            const key = entry.key != null ? String(entry.key) : '';
+            const title = String(entry.title || '').trim();
+            const type = String(entry.type || '').trim();
+            if (!key || !title || !type) continue;
+            if (RESERVED_TRUTH_KEYS_FOR_REHYDRATION.has(key)) continue;
+            // Only rehydrate entries whose title looks like a real filename (has an extension).
+            // Title-less or extension-less entries shouldn't drive truth — they'd never have
+            // been pruned anyway because the prune key is the title.
+            if (!title.includes('.')) continue;
+            keyToExistingTitleType.set(key, { title, type });
+        }
+        for (const item of modelItems) {
+            // Only consider numeric-extensionless files — the exact pattern the truthMap
+            // loop above skipped. Reserved runtime keys are excluded above.
+            if (/\./.test(item.name)) continue;
+            if (!/^\d+$/.test(item.name)) continue;
+            if (RESERVED_TRUTH_KEYS_FOR_REHYDRATION.has(item.name)) continue;
+            const remembered = keyToExistingTitleType.get(item.name);
+            if (!remembered) continue;
+            // Don't clobber a real-extension entry that may have re-appeared (defensive —
+            // shouldn't happen because the title is extension-bearing and the file is not).
+            if (truthMap.has(remembered.title)) continue;
+            truthMap.set(remembered.title, remembered.type);
+        }
+        // ────────────────────────────────────────────────────────────────────────────
 
         // Track all used keys and find current max
         const usedKeys = new Set();
@@ -5733,6 +5800,26 @@ Quality criteria for your work:
       };
     }
 
+    // Strip OBJ `usemap` directives before feeding the text to OBJLoader().parse().
+    // These analysis paths (analyzeDirectThreeAsset, analyzeZipThreeAssets) extract
+    // geometry/extents only — they do not call setMaterials() and do not load .mtl
+    // files. Without sanitization the loader emits "OBJLoader: Rendering identifier
+    // 'usemap' not supported" warnings on every roster OBJ scan. Material/texture
+    // assignment for the runtime/compiler pipeline happens through the roster +
+    // colormap + material-registry flow, not via OBJ usemap, so stripping here is
+    // architecturally correct rather than a workaround. If a true OBJ+MTL viewer
+    // pipeline is ever added, it should use MTLLoader + OBJLoader.setMaterials()
+    // and is independent of this analysis path.
+    function sanitizeObjTextForAnalysis(objText = "") {
+      const text = String(objText || "");
+      let strippedUseMapCount = 0;
+      const sanitizedText = text.replace(/^[ \t]*usemap[ \t]+.*$/gmi, () => {
+        strippedUseMapCount += 1;
+        return '# stripped usemap for analysis-only OBJ parse';
+      });
+      return { sanitizedText, strippedUseMapCount };
+    }
+
     async function analyzeDirectThreeAsset(asset) {
       const lowerName = asset.name.toLowerCase();
       const mimeType  = String(asset.type || '').toLowerCase();
@@ -5745,14 +5832,16 @@ Quality criteria for your work:
           if (!res.ok) throw new Error(`Failed to load OBJ text: ${res.status}`);
           return res.text();
         });
-        const parsed = new OBJLoader().parse(objText);
+        const { sanitizedText, strippedUseMapCount } = sanitizeObjTextForAnalysis(objText);
+        const parsed = new OBJLoader().parse(sanitizedText);
         return buildThreeModelAnalysis(parsed, {
           sourceName: asset.name,
           sourcePath: asset.path,
           sourceType: asset.type || 'model/obj',
           containerType: 'direct-file',
           format: 'obj',
-          objText
+          objText: sanitizedText,
+          objSanitization: { strippedUseMapCount }
         });
       }
 
@@ -5817,7 +5906,8 @@ Quality criteria for your work:
           let analysis = null;
           if (lowerPath.endsWith('.obj')) {
             const objText = await entry.async('text');
-            const parsed = new OBJLoader().parse(objText);
+            const { sanitizedText, strippedUseMapCount } = sanitizeObjTextForAnalysis(objText);
+            const parsed = new OBJLoader().parse(sanitizedText);
             analysis = buildThreeModelAnalysis(parsed, {
               sourceName: asset.name,
               sourcePath: asset.path,
@@ -5825,7 +5915,8 @@ Quality criteria for your work:
               containerType: 'zip-entry',
               embeddedPath: relativePath,
               format: 'obj',
-              objText,
+              objText: sanitizedText,
+              objSanitization: { strippedUseMapCount },
               textureInfo,
               hasMtlFile
             });
@@ -6194,11 +6285,8 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
 
                 const url    = await getDownloadURL(srcRef);
                 const res    = await fetch(url, { cache: 'no-store' });
-                const buffer = await res.arrayBuffer();
-                const bytes  = new Uint8Array(buffer);
-                let binary   = '';
-                for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
-                const base64 = btoa(binary);
+                if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
+                const blob   = await res.blob();
                 const ext = job.destName.split('.').pop().toLowerCase();
                 const mimeType = ext === 'png'                    ? 'image/png'
                                : ext === 'jpg' || ext === 'jpeg'  ? 'image/jpeg'
@@ -6211,7 +6299,14 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
                                : ext === 'txt'                    ? 'text/plain'
                                : 'application/octet-stream';
 
-                await uploadString(destRef, `data:${mimeType};base64,${base64}`, 'data_url');
+                // Use uploadBytesResumable with the raw Blob — preserves binary integrity
+                // for FBX/GLB/PNG/etc. The previous arrayBuffer→String.fromCharCode→btoa→
+                // uploadString(data_url) round-trip was corrupting binary FBX deformer
+                // blocks, causing FBXLoader.parseSkeleton to crash on Matrix4.fromArray.
+                await new Promise((resolve, reject) => {
+                    const task = uploadBytesResumable(destRef, blob, { contentType: mimeType });
+                    task.on('state_changed', null, reject, resolve);
+                });
                 console.log(`[ROSTER-COPY] ${job.label} → models/${job.destName}`);
                 return { ok: true, job, destName: job.destName };
             } catch (e) {
@@ -6254,6 +6349,14 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
         // Includes ALL file types that have a numeric key and a named title (any extension).
         // Excludes reserved system entries (2, 23) and entries with no dot in the title
         // (those are already numeric keys or runtime-only names).
+        //
+        // CASE-PRESERVATION CONTRACT: Firebase Storage object names are case-sensitive
+        // (per GCS spec). Storing the manifest title with its original case is required
+        // so the source storage path below resolves correctly. The map IS keyed by
+        // lowercased title (for case-insensitive de-duplication when two manifest entries
+        // collide on case alone), but the VALUE carries the original-case title that is
+        // used to construct the storage path. Lowercasing the path itself caused latent
+        // [RENAME-TO-KEY] storage/object-not-found failures on any mixed-case file.
         const RESERVED_KEYS = new Set(['0', '2', '3', '22', '23']);
         const keyByFilename = new Map();
         for (const entry of flattenAssetManifestEntries(syncedManifest)) {
@@ -6265,13 +6368,17 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
                 !RESERVED_KEYS.has(key) &&
                 title.includes('.')          // has an extension — not a runtime-only name
             ) {
-                keyByFilename.set(title.toLowerCase(), key);
+                const dedupKey = title.toLowerCase();
+                if (!keyByFilename.has(dedupKey)) {
+                    keyByFilename.set(dedupKey, { originalFilename: title, key });
+                }
             }
         }
 
         if (keyByFilename.size === 0) return { renamedCount: 0, results: [] };
 
-        const tasks = Array.from(keyByFilename.entries()).map(([filename, key]) => (async () => {
+        const tasks = Array.from(keyByFilename.values()).map(({ originalFilename, key }) => (async () => {
+            const filename = originalFilename;
             try {
                 const srcRef  = ref(storage, `${ROOT}/${projectName}/models/${filename.split('/').pop()}`);
                 const destRef = ref(storage, `${ROOT}/${projectName}/models/${key}`);
@@ -6286,11 +6393,7 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
                 const url    = await getDownloadURL(srcRef);
                 const res    = await fetch(url, { cache: 'no-store' });
                 if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
-                const buffer = await res.arrayBuffer();
-                const bytes  = new Uint8Array(buffer);
-                let binary   = '';
-                for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
-                const base64 = btoa(binary);
+                const blob   = await res.blob();
 
                 const ext = filename.split('.').pop().toLowerCase();
                 const mimeType = ext === 'obj'                    ? 'text/plain'
@@ -6309,7 +6412,15 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
                                : ext === 'ogg'                    ? 'audio/ogg'
                                :                                    'application/octet-stream';
 
-                await uploadString(destRef, `data:${mimeType};base64,${base64}`, 'data_url');
+                // Use uploadBytesResumable with the raw Blob — preserves binary integrity
+                // for FBX/GLB/C3B/etc. The previous arrayBuffer→String.fromCharCode→btoa→
+                // uploadString(data_url) round-trip was corrupting binary FBX deformer
+                // blocks, causing FBXLoader.parseSkeleton to crash on Matrix4.fromArray
+                // and breaking the downstream extents scan.
+                await new Promise((resolve, reject) => {
+                    const task = uploadBytesResumable(destRef, blob, { contentType: mimeType });
+                    task.on('state_changed', null, reject, resolve);
+                });
                 await deleteObject(srcRef);
                 console.log(`[RENAME-TO-KEY] models/${filename} → models/${key}`);
                 return { ok: true, skipped: false, filename, key };
@@ -6324,6 +6435,34 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
         const failedCount  = results.filter(r => !r?.ok).length;
         console.log(`[RENAME-TO-KEY] ${renamedCount} file(s) renamed to numeric key; ${failedCount} failed.`);
         return { renamedCount, results };
+    }
+
+    // After renaming, 3D files in models/ are stored under their numeric key (e.g. "57")
+    // rather than their original filename. Two downstream concerns must be reconciled:
+    //   1. The extents scan loop filters candidates against `rosterSelected3DNames`. If we
+    //      don't add the numeric keys to that set, renamed files are silently skipped.
+    //   2. The extents scan loop uses the file extension to pick a Three.js loader. Numeric-
+    //      keyed files have no extension, so we must record their original mime type in
+    //      `window._rosterKeyToMimeType` so analyzeDirectThreeAsset selects the right loader.
+    // This helper centralises that bookkeeping so both rename call sites stay in sync.
+    function applyRenameResultsToScanState(renameResult, rosterSelected3DNamesSet) {
+        if (!renameResult || !Array.isArray(renameResult.results)) return;
+        if (rosterSelected3DNamesSet instanceof Set) {
+            for (const r of renameResult.results) {
+                if (r?.ok && r.key) rosterSelected3DNamesSet.add(r.key);
+            }
+        }
+        window._rosterKeyToMimeType = window._rosterKeyToMimeType || new Map();
+        for (const r of renameResult.results) {
+            if (!r?.ok || !r.key || !r.filename) continue;
+            const ext = String(r.filename).split('.').pop().toLowerCase();
+            const mime = ext === 'obj'                     ? 'model/obj'
+                       : ext === 'fbx'                     ? 'model/fbx'
+                       : (ext === 'glb' || ext === 'gltf') ? 'model/gltf-binary'
+                       : ext === 'c3b'                     ? 'application/octet-stream'
+                       : null;
+            if (mime) window._rosterKeyToMimeType.set(r.key, mime);
+        }
     }
 
     async function runPostCopyGeometryScan(projectName = currentProject) {
@@ -7048,6 +7187,12 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
       if (renameResult.renamedCount > 0) {
         appendToChatLog('System', `✅ ${renameResult.renamedCount} model file(s) renamed to numeric key in models/.`, 'normal');
       }
+      // Populate window._rosterKeyToMimeType so the downstream extents scan can pick the
+      // right Three.js loader for numeric-keyed (extension-less) renamed files. The
+      // rosterSelected3DNames set isn't in scope at this point in the pipeline, so we
+      // only seed the mime map here; the second rename site (further down) will handle
+      // the rosterSelected3DNames bookkeeping for its own pass.
+      applyRenameResultsToScanState(renameResult, null);
       clearLatestAnnotatedRoster(currentProject);
       let rosterAnnotationError = null;
       const annotatedRoster = await annotateApprovedRosterWithManifestKeys(currentProject, rosterManifest, geometryScan.modelAnalyses)
@@ -7253,26 +7398,10 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
                 appendToChatLog('System', `✅ ${renameResult2.renamedCount} model file(s) renamed to numeric key in models/.`, 'normal');
               }
               // After renaming, 3D files in models/ are stored under their numeric key
-              // (e.g. "57") rather than their original filename. Add those keys to
-              // rosterSelected3DNames so the extents scan loop can find them, and build
+              // (e.g. "57") rather than their original filename. The helper adds those keys
+              // to rosterSelected3DNames so the extents scan loop can find them, and builds
               // a keyToMimeType map so analyzeDirectThreeAsset gets the correct loader type.
-              if (rosterSelected3DNames && Array.isArray(renameResult2?.results)) {
-                for (const r of renameResult2.results) {
-                  if (r?.ok && r.key) rosterSelected3DNames.add(r.key);
-                }
-              }
-              if (Array.isArray(renameResult2?.results)) {
-                window._rosterKeyToMimeType = window._rosterKeyToMimeType || new Map();
-                for (const r of renameResult2.results) {
-                  if (!r?.ok || !r.key || !r.filename) continue;
-                  const ext = String(r.filename).split('.').pop().toLowerCase();
-                  const mime = ext === 'obj'                   ? 'model/obj'
-                             : ext === 'fbx'                   ? 'model/fbx'
-                             : (ext === 'glb' || ext === 'gltf') ? 'model/gltf-binary'
-                             : null;
-                  if (mime) window._rosterKeyToMimeType.set(r.key, mime);
-                }
-              }
+              applyRenameResultsToScanState(renameResult2, rosterSelected3DNames);
               const cachedScan = getCachedModelAnalysis(currentProject);
               clearLatestAnnotatedRoster(currentProject);
               let refreshedRosterAnnotationError = null;
@@ -7355,13 +7484,26 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
           { folder: 'json', name: 'entities.json' }
         ];
 
+        // scene_intent.json is the only file in this list that is AI-written rather than
+        // user-uploaded or compiler-emitted. On a cold-start build it legitimately does not
+        // exist yet — the AI is expected to produce it as part of its first tranche output
+        // (see AI_WRITABLE_TARGET_PATHS and the planner SCENE DECLARATION RULE in
+        // claudeCodeProxy-background.js). The compiler already handles its absence by
+        // calling createDefaultSceneIntent(). For the other five files (models/2, models/23,
+        // assets.json, tree.json, entities.json), absence is a real problem and should warn.
+        const COLD_START_OPTIONAL_TARGETS = new Set(['scene_intent.json']);
+
         for (const target of targetFiles) {
           const fileRef = ref(storage, `${ROOT}/${currentProject}/${target.folder}/${target.name}`);
           try {
             const payload = await fetchStorageTextSafe(fileRef);
             projectFiles[`${target.folder}/${target.name}`] = payload.text;
           } catch (e) {
-            console.warn(`Skipped ${target.name} - not found in Firebase storage.`);
+            if (COLD_START_OPTIONAL_TARGETS.has(target.name)) {
+              console.info(`${target.name} not present yet — expected on cold-start, AI will create it.`);
+            } else {
+              console.warn(`Skipped ${target.name} - not found in Firebase storage.`);
+            }
           }
         }
 
