@@ -2805,6 +2805,16 @@ This will permanently remove all associated files and Firebase folders for this 
             assignIfDifferent(nextAsset, 'manifestKey', manifestMeta?.key || '');
             assignIfDifferent(nextAsset, 'manifestLocation', manifestMeta?.type === 'object' ? 'models-folder-child' : '');
             if (stagedMeta?.stagedPath) assignIfDifferent(nextAsset, 'stagedPath', stagedMeta.stagedPath);
+            if (stagedMeta?.colormapFile != null) assignIfDifferent(nextAsset, 'colormapFile', stagedMeta.colormapFile);
+            if (stagedMeta?.colormapStagedPath != null) assignIfDifferent(nextAsset, 'colormapStagedPath', stagedMeta.colormapStagedPath);
+            if (stagedMeta?.colormapConfidence != null) assignIfDifferent(nextAsset, 'colormapConfidence', stagedMeta.colormapConfidence);
+            if (stagedMeta?.colormapDetectionRule != null) assignIfDifferent(nextAsset, 'colormapDetectionRule', stagedMeta.colormapDetectionRule);
+            const avatarColormapManifestMeta = nextAsset.colormapFile ? manifestIndex.get(String(nextAsset.colormapFile).toLowerCase()) : null;
+            const avatarColormapNextLocation = avatarColormapManifestMeta?.type === 'object'
+                ? 'models-folder-child'
+                : (avatarColormapManifestMeta?.key ? 'root-level' : '');
+            assignIfDifferent(nextAsset, 'colormapManifestKey', avatarColormapManifestMeta?.key || '');
+            assignIfDifferent(nextAsset, 'colormapManifestLocation', avatarColormapNextLocation);
             if (Array.isArray(stagedMeta?.stagedTexturePaths)) assignIfDifferent(nextAsset, 'stagedTexturePaths', stagedMeta.stagedTexturePaths);
             if (Array.isArray(stagedMeta?.stagedTextureFiles)) assignIfDifferent(nextAsset, 'stagedTextureFiles', stagedMeta.stagedTextureFiles);
             if (stagedMeta?.stagedAnimationManifestPath != null) assignIfDifferent(nextAsset, 'stagedAnimationManifestPath', stagedMeta.stagedAnimationManifestPath);
@@ -6262,10 +6272,15 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
                     jobType: 'colormap',
                     originalAssetName: asset.assetName
                 });
-            } else if (asset?.assetName && /\.(obj|fbx|glb|gltf|c3b)$/i.test(asset.assetName) && !asset?.avatarRole && !asset?.stagedAnimationManifestPath && !asset?.fbxEntryPath) {
-                const warningMessage = `No colormapStagedPath for 3D asset "${asset.assetName}" — colormap was not staged.`;
-                console.warn(`[ROSTER-COPY] ${warningMessage} Check extraction log.`);
-                warningDetails.push({ type: 'missing-staged-colormap', assetName: asset.assetName, message: warningMessage });
+            } else {
+                const is3dAsset = Boolean(asset?.assetName && /\.(obj|fbx|glb|gltf|c3b)$/i.test(asset.assetName));
+                const hasAvatarTextureFallback = Array.isArray(asset?.stagedTexturePaths) && asset.stagedTexturePaths.length > 0;
+                const expectsLockedColormap = Boolean(asset?.colormapEntryPath || asset?.colormapFile);
+                if (is3dAsset && (expectsLockedColormap || (!asset?.avatarRole && !asset?.stagedAnimationManifestPath && !asset?.fbxEntryPath && !hasAvatarTextureFallback))) {
+                    const warningMessage = `No colormapStagedPath for 3D asset "${asset.assetName}" — colormap was not staged.`;
+                    console.warn(`[ROSTER-COPY] ${warningMessage} Check extraction log.`);
+                    warningDetails.push({ type: 'missing-staged-colormap', assetName: asset.assetName, message: warningMessage });
+                }
             }
             for (const texturePath of (asset?.stagedTexturePaths || [])) {
                 const textureName = String(texturePath).split('/').pop();

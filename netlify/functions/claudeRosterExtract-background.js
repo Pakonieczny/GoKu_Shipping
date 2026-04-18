@@ -14,7 +14,7 @@
         (matched by sourceRosterDocument name → same base name .zip)
      3. Extract only the approved files from each zip (parallel uploads).
         For 3D assets: read colormap from the locked colormapEntryPath and
-        stage it renamed to match the .obj basename (e.g. fountain-center.jpg).
+        stage it renamed to match the model basename (e.g. fountain-center.jpg or avatar__POOL_TABLE.jpg).
         If colormapEntryPath is missing from the zip, log a hard error — no fallback.
      4. Upload extracted files to a game-specific staged folder:
         ${projectPath}/staged_assets/${jobId}/
@@ -330,7 +330,7 @@ exports.handler = async (event) => {
           let stagedAnimationManifestFile = null;
           let stagedAnimationManifestPath = null;
 
-          if (is3dAsset && !isAvatarAsset) {
+          if (is3dAsset) {
             if (asset.colormapEntryPath) {
               if (!zip.files[asset.colormapEntryPath]) {
                 console.error(`[ROSTER-EXTRACT] Locked colormapEntryPath "${asset.colormapEntryPath}" not found in ${zipName} for "${asset.assetName}". Roster may be stale.`);
@@ -347,15 +347,15 @@ exports.handler = async (event) => {
                 colormapFile          = stagedColormapName;
                 colormapStagedPath    = `${stagedFolderPath}/${stagedColormapName}`;
                 colormapConfidence    = asset.colormapConfidence || "HIGH";
-                colormapDetectionRule = "locked-at-index";
+                colormapDetectionRule = asset.colormapDetectionRule || "locked-at-index";
 
                 await bucket.file(colormapStagedPath).save(colormapBuffer, {
                   contentType: detectMimeType(rawColormapName),
                   resumable: false
                 });
-                console.log(`[ROSTER-EXTRACT] Colormap staged for "${asset.assetName}": ${stagedColormapName} (locked-at-index)`);
+                console.log(`[ROSTER-EXTRACT] Colormap staged for "${asset.assetName}": ${stagedColormapName} (${colormapDetectionRule})`);
               }
-            } else {
+            } else if (!isAvatarAsset || !Array.isArray(asset.textureFiles) || asset.textureFiles.length === 0) {
               console.warn(`[ROSTER-EXTRACT] No colormapEntryPath for "${asset.assetName}" — no colormap was found in its zip folder during StageAB indexing.`);
               extractionLog.push({ zipName, asset: asset.assetName, status: "colormap_not_found", detail: "No colormap detected in asset folder during StageAB indexing" });
             }
@@ -421,9 +421,9 @@ exports.handler = async (event) => {
             stagedAnimationManifestFile,
             stagedAnimationManifestPath,
             // Carry fbxEntryPath through so the frontend copyRosterAssetsToModels
-            // warning guard (!asset?.fbxEntryPath) correctly suppresses the
-            // "colormap was not staged" warning for avatar-sourced FBX assets,
-            // which use textureBindingContract instead of a colormap.
+            // warning guard can distinguish avatar-path FBX assets from prop-library
+            // objects. Avatar-path assets may now stage BOTH a locked colormap and
+            // stagedTexturePaths when both are present.
             fbxEntryPath:         asset.fbxEntryPath || null,
             intendedRole:         asset.intendedRole || asset.intendedUsage || '',
             selectionRationale:   asset.selectionRationale || ''

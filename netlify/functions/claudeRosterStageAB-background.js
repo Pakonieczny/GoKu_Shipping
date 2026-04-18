@@ -936,6 +936,80 @@ function listAvatarTextureFiles(zip, folderPrefix) {
   return textures.sort();
 }
 
+function selectAvatarColormapTexture(textureEntryPaths = [], fbxEntryPath = '') {
+  const textures = Array.isArray(textureEntryPaths)
+    ? textureEntryPaths.filter(Boolean)
+    : [];
+  if (textures.length === 0) {
+    return {
+      colormapEntryPath: null,
+      colormapFile: null,
+      colormapConfidence: 'NONE',
+      colormapDetectionRule: 'none'
+    };
+  }
+
+  const fbxBase = String(fbxEntryPath || '').split('/').pop().replace(/\.[^.]+$/, '').toLowerCase();
+  const strongMatchers = [
+    /(^|[_\-.\s])colou?rmap([_\-.\s]|$)/i,
+    /(^|[_\-.\s])basecolor([_\-.\s]|$)/i,
+    /(^|[_\-.\s])base_color([_\-.\s]|$)/i,
+    /(^|[_\-.\s])albedo([_\-.\s]|$)/i,
+    /(^|[_\-.\s])diffuse([_\-.\s]|$)/i,
+    /(^|[_\-.\s])color([_\-.\s]|$)/i
+  ];
+
+  const scored = textures.map((entryPath, index) => {
+    const fileName = String(entryPath).split('/').pop() || '';
+    const lower = fileName.toLowerCase();
+    let score = 0;
+    let rule = 'avatar-texture';
+
+    if (strongMatchers.some(re => re.test(lower))) {
+      score += 100;
+      rule = 'avatar-colormap-keyword';
+    }
+    if (fbxBase && lower.startsWith(`${fbxBase}.`)) {
+      score += 40;
+      rule = rule === 'avatar-colormap-keyword' ? 'avatar-colormap-keyword+fbx-basename' : 'avatar-fbx-basename';
+    }
+    if (fbxBase && lower.includes(fbxBase)) {
+      score += 20;
+      if (rule === 'avatar-texture') rule = 'avatar-fbx-basename-partial';
+    }
+    if (textures.length === 1) {
+      score += 10;
+      if (rule === 'avatar-texture') rule = 'single-avatar-texture';
+    }
+
+    return { entryPath, fileName, score, rule, index };
+  }).sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    return a.index - b.index;
+  });
+
+  const best = scored[0] || null;
+  if (!best || best.score <= 0) {
+    return {
+      colormapEntryPath: null,
+      colormapFile: null,
+      colormapConfidence: 'NONE',
+      colormapDetectionRule: 'none'
+    };
+  }
+
+  const confidence = best.score >= 100 ? 'HIGH'
+    : best.score >= 40 ? 'MEDIUM'
+    : 'LOW';
+
+  return {
+    colormapEntryPath: best.entryPath,
+    colormapFile: best.fileName,
+    colormapConfidence: confidence,
+    colormapDetectionRule: best.rule
+  };
+}
+
 /* ─── Enforce hard selection limits ─────────────────────────────── */
 function enforceHardLimits(roster) {
   if (!roster) return roster;
@@ -1514,12 +1588,18 @@ exports.handler = async (event) => {
             } catch (e) {
               console.warn(`[ROSTER-AB] Avatar FBX scan failed for ${fbxEntryPath}: ${e.message}`);
             }
+            const textureFiles = listAvatarTextureFiles(avatarZip, `${folder.folderKey}/`);
+            const avatarColormap = selectAvatarColormapTexture(textureFiles, fbxEntryPath);
             avatarAssets.push({
               assetName: fbxEntryPath.split('/').pop(),
               fbxEntryPath,
               thumbnailEntryPath,
               thumbnailFile: thumbnailEntryPath.split('/').pop(),
-              textureFiles: listAvatarTextureFiles(avatarZip, `${folder.folderKey}/`),
+              textureFiles,
+              colormapFile: avatarColormap.colormapFile,
+              colormapEntryPath: avatarColormap.colormapEntryPath,
+              colormapConfidence: avatarColormap.colormapConfidence,
+              colormapDetectionRule: avatarColormap.colormapDetectionRule,
               animationManifestPath,
               rawAnimations,
               animationClips,
@@ -2012,6 +2092,10 @@ exports.handler = async (event) => {
           thumbnailEntryPath:     asset.thumbnailEntryPath      || null,
           thumbnailFile:          asset.thumbnailFile           || null,
           textureFiles:           asset.textureFiles            || [],
+          colormapFile:           asset.colormapFile            || null,
+          colormapEntryPath:      asset.colormapEntryPath       || null,
+          colormapConfidence:     asset.colormapConfidence      || 'NONE',
+          colormapDetectionRule:  asset.colormapDetectionRule   || 'none',
           textureBindingContract,
           animationManifestPath:  asset.animationManifestPath   || null,
           rawAnimations:          asset.rawAnimations            || '',
@@ -2067,6 +2151,10 @@ exports.handler = async (event) => {
         thumbnailEntryPath: asset.thumbnailEntryPath || null,
         thumbnailFile: asset.thumbnailFile || null,
         textureFiles: asset.textureFiles || [],
+        colormapFile: asset.colormapFile || null,
+        colormapEntryPath: asset.colormapEntryPath || null,
+        colormapConfidence: asset.colormapConfidence || 'NONE',
+        colormapDetectionRule: asset.colormapDetectionRule || 'none',
         textureBindingContract,
         animationManifestPath: asset.animationManifestPath || null,
         rawAnimations: asset.rawAnimations || '',
