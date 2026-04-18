@@ -420,6 +420,11 @@ exports.handler = async (event) => {
             stagedTexturePaths,
             stagedAnimationManifestFile,
             stagedAnimationManifestPath,
+            // Carry fbxEntryPath through so the frontend copyRosterAssetsToModels
+            // warning guard (!asset?.fbxEntryPath) correctly suppresses the
+            // "colormap was not staged" warning for avatar-sourced FBX assets,
+            // which use textureBindingContract instead of a colormap.
+            fbxEntryPath:         asset.fbxEntryPath || null,
             intendedRole:         asset.intendedRole || asset.intendedUsage || '',
             selectionRationale:   asset.selectionRationale || ''
           };

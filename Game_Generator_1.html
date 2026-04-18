@@ -5842,8 +5842,18 @@ Quality criteria for your work:
       }
 
       if (isFbx) {
+        // Use fetch + FBXLoader.parse(ArrayBuffer) instead of FBXLoader.load(url).
+        // Avatar FBX files contain skeleton/animation deformer data that causes
+        // FBXLoader.parseSkeleton to crash on Matrix4.fromArray in Three.js r160
+        // when loaded via XHR. Parsing directly from an ArrayBuffer bypasses that
+        // code path — consistent with how StageAB's scanFbxBuffer handles the same
+        // files server-side. The caller's try/catch surfaces any remaining errors.
+        const fbxRes = await fetch(modelUrl, { cache: 'no-store' });
+        if (!fbxRes.ok) throw new Error(`FBX fetch failed: ${fbxRes.status}`);
+        const fbxArrayBuffer = await fbxRes.arrayBuffer();
         const loader = new FBXLoader();
-        const fbx = await new Promise((resolve, reject) => loader.load(modelUrl, resolve, undefined, reject));
+        const fbx = loader.parse(fbxArrayBuffer, '');
+        if (!fbx) throw new Error(`FBXLoader.parse returned null for ${asset.name}`);
         return buildThreeModelAnalysis(fbx, {
           sourceName: asset.name,
           sourcePath: asset.path,
@@ -5917,10 +5927,12 @@ Quality criteria for your work:
               hasMtlFile
             });
           } else if (lowerPath.endsWith('.fbx')) {
-            const blob = await entry.async('blob');
-            const objectUrl = URL.createObjectURL(blob);
-            try {
-              const fbx = await new Promise((resolve, reject) => new FBXLoader().load(objectUrl, resolve, undefined, reject));
+            // Use ArrayBuffer + FBXLoader.parse() to avoid the parseSkeleton
+            // Matrix4.fromArray crash that occurs with animated avatar FBX files
+            // when loaded via objectUrl in Three.js r160.
+            const fbxArrayBuffer = await entry.async('arraybuffer');
+            const fbx = new FBXLoader().parse(fbxArrayBuffer, '');
+            if (fbx) {
               analysis = buildThreeModelAnalysis(fbx, {
                 sourceName: asset.name,
                 sourcePath: asset.path,
@@ -5931,8 +5943,6 @@ Quality criteria for your work:
                 textureInfo,
                 hasMtlFile
               });
-            } finally {
-              URL.revokeObjectURL(objectUrl);
             }
           } else {
             const blob = await entry.async('blob');
