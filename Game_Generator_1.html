@@ -2449,11 +2449,8 @@ This will permanently remove all associated files and Firebase folders for this 
             for (const entry of entries) {
                 const entryKey = String(entry.key);
 
-                // Reserved entries are ALWAYS kept verbatim — never pruned
+                // Reserved entries are ALWAYS kept verbatim — never pruned, children never touched
                 if (RESERVED_KEYS.has(entryKey)) {
-                    if (entry.type === 'folder' && Array.isArray(entry.children)) {
-                        entry.children = pruneEntries(entry.children);
-                    }
                     result.push(entry);
                     usedKeys.add(entryKey);
                     continue;
@@ -3022,15 +3019,14 @@ This will permanently remove all associated files and Firebase folders for this 
         }
 
         if (particleTextures.length > 0) {
-            const hasParticlePathRegistry = /PARTICLE_TEX_PATHS/.test(worldControllerText) || /particleTexturePaths/.test(worldControllerText);
             const hasParticleIdRegistry = /gameState\.particleTextureIds/.test(worldControllerText);
-            const hasTemplateMaterialAssignment = /registerParticleTemplate\s*\([\s\S]{0,800}?material_file/.test(worldControllerText) || /extraData\s*:\s*\{[\s\S]{0,200}?material_file/.test(worldControllerText);
+            const hasTemplateAlbedoTexture = /registerParticleTemplate\s*\([\s\S]{0,800}?albedo_texture/.test(worldControllerText);
 
-            if (!hasParticlePathRegistry && !hasParticleIdRegistry) {
-                failures.push('Approved roster contains particle textures, but models/2 does not define a particle texture registry (expected PARTICLE_TEX_PATHS / particleTexturePaths and usually gameState.particleTextureIds).');
+            if (!hasParticleIdRegistry) {
+                failures.push('Approved roster contains particle textures, but models/2 does not define gameState.particleTextureIds. Foundation-B must populate this registry with numeric manifest keys before any particle template tranche runs.');
             }
-            if (!hasTemplateMaterialAssignment) {
-                failures.push('Approved roster contains particle textures, but models/2 does not visibly assign particle textures through registerParticleTemplate extraData.material_file or equivalent particle slot material_file setup.');
+            if (!hasTemplateAlbedoTexture) {
+                failures.push('Approved roster contains particle textures, but models/2 does not visibly apply them via registerParticleTemplate albedo_texture. The correct pattern is: registerParticleTemplate({ key, assetId, albedo_texture: gameState.particleTextureIds[effectName] }).');
             }
 
             const missingTargets = particleTextures.filter(a => a.particleEffectTarget && !worldControllerText.includes(a.particleEffectTarget)).map(a => a.particleEffectTarget);
@@ -4043,7 +4039,7 @@ Quality criteria for your work:
 - Opaque colored bursts should default to sphere particles; trails, smoke, and lingering streaks should default to billboard particles
 - Register particleBillboard and particleSphere BEFORE any emitters or per-effect templates
 - Multiple simultaneous bursts need separate emitter lanes or pooled burst emitters; do not let one shared emitter truncate earlier bursts
-- Particle textures must be applied at the particle template level (for example registerParticleTemplate(... extraData: { material_file: PARTICLE_TEX_PATHS[key] })) instead of being routed through the non-primitive scene-object material registry path
+- Particle textures must be applied at the particle template level using the numeric manifest key as albedo_texture: registerParticleTemplate({ key, assetId, albedo_texture: gameState.particleTextureIds[effectName] }). PARTICLE_TEX_PATHS and extraData.material_file are NOT used for particle templates.
 - Materials must be visually distinct at a glance — use color, roughness, and emissive to differentiate
 - Damage/state effects must appear at appropriate health thresholds, not only on destruction
 - Trails and persistent effects must correctly start, update, and stop across game state changes
@@ -6196,7 +6192,7 @@ ${roster.gameInterpretationSummary || ''}
 APPROVED 3D OBJECTS (${(roster.objects3d||[]).length} of 50 max):
 ${objs || '  (none)'}
 
-APPROVED PARTICLE EFFECT TEXTURES (${(roster.textureAssets||[]).filter(a => a.particleEffectTarget).length} of 50 max) — Foundation-B MUST populate PARTICLE_TEX_PATHS (staged paths) and gameState.particleTextureIds (manifest keys):
+APPROVED PARTICLE EFFECT TEXTURES (${(roster.textureAssets||[]).filter(a => a.particleEffectTarget).length} of 50 max) — Foundation-B MUST populate gameState.particleTextureIds with the numeric manifest key for each effect. Particle template tranches pass that key as albedo_texture to registerParticleTemplate(). PARTICLE_TEX_PATHS is NOT used:
 ${texs || '  (none)'}
 
 STAGED ASSET FOLDER: ${stagedFolder || '(none)'}
@@ -6222,8 +6218,8 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
 3. Visual Direction notes above govern color, material, and FX treatment throughout all tranches.
 4. Reference staged files by their Firebase staged paths or resolved assets.json manifest keys.
 5. Color direction and surface treatment must be consistent throughout all tranches.
-6. PARTICLE TEXTURE REGISTRY: A Foundation-B sub-tranche MUST be planned immediately after Foundation-A. Its job is to populate BOTH (a) PARTICLE_TEX_PATHS keyed by particleEffectTarget using the exact staged Firebase paths from the roster block, and (b) gameState.particleTextureIds keyed by particleEffectTarget using the exact assets.json manifest keys. This tranche must complete before any particle template or emitter tranche.
-7. Every approved particle effect texture used by a particle billboard or sphere MUST be applied at the particle template level: registerParticleTemplate(... extraData: { material_file: PARTICLE_TEX_PATHS[effectName] }) or an equivalent direct particle slot material_file assignment. Populating gameState.particleTextureIds alone is not sufficient. Particle textures are a separate workflow from non-primitive scene-object defineMaterial/_applyMat contracts.
+6. PARTICLE TEXTURE REGISTRY: A Foundation-B sub-tranche MUST be planned immediately after Foundation-A. Its only job is to populate gameState.particleTextureIds keyed by particleEffectTarget using the exact numeric assets.json manifest keys from the roster block. PARTICLE_TEX_PATHS is NOT declared. Staged Firebase paths are NOT used for particle templates.
+7. Every approved particle effect texture MUST be applied at the particle template level using the numeric manifest key as albedo_texture: registerParticleTemplate({ key, assetId, albedo_texture: gameState.particleTextureIds[effectName] }). Do NOT use extraData: { material_file: PARTICLE_TEX_PATHS[...] } — that pattern is forbidden. Populating gameState.particleTextureIds is necessary but only useful if albedo_texture is also passed to registerParticleTemplate.
 8. 3D OBJECT REGISTRY: Every tranche touching visible scene content MUST branch cleanly between the eleven Cherry3D system primitives (cube, square, plane, sphere, cylinder, capsule, cone, torus, torusknot, tetrahedron, icosahedron) and non-primitive approved roster 3D objects. If the object is intentionally one of those eleven primitives, the tranche prompt must say so explicitly and must skip external scan/roster geometry-texture-slotCount enforcement for that object. For every other visible gameplay object, you MUST use approved roster 3D objects via gameState.objectids and the resolved manifest keys surfaced above. Using a Cherry3D primitive as a visible gameplay object when a roster asset covers that role is a tranche execution defect. Do NOT use deprecated model primitive keys 17, 18, 21, 34, or 35 anywhere in world logic, manifest references, or repair patches; use only .primitives keys 4-14 for primitive-authored geometry.
 9. TEXTURE CONTRACTS surfaced above are mandatory for non-primitive roster 3D objects. Use the scaffold material-registry path: define a registered material whose albedo_texture is the resolved numeric colormap manifest key from assets.json, then apply that material key across all valid slots using gameState._applyMat / registerObjectContract-safe logic. material_file must hold the registered material key, never a raw staged path.
 10. SLOT CONTRACT: For non-primitive roster 3D objects, slotCount is the primary hard loop bound for material application (fallback to meshCount only if slotCount is unavailable). Applying only slot 0 when slotCount > 1 is a defect.
@@ -7473,6 +7469,28 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
           modelAnalysisList = getCachedModelAnalysis(currentProject);
         }
 
+        // ── Reset models/2 to clean scaffold before every fresh build ──────
+        // On a fresh build (not a repair pass), models/2 must start from the
+        // clean Cherry3D scaffold from BASE_Files. If it contains a previous
+        // game's code, the scaffold zone markers will be absent and every
+        // patch from Foundation-A onward will silently skip — producing a
+        // build that inherits the wrong game's code with none of the new
+        // game's patches applied. This reset is the single most critical
+        // hardening step in the entire pipeline.
+        if (repairAttempt === 0 && parseErrorRetry === 0) {
+          try {
+            Progress.step('Resetting models/2', 'Loading clean Cherry3D scaffold from BASE_Files...');
+            const templateModel2Ref = ref(storage, `${ROOT}/${DEFAULT_TEMPLATE_PROJECT}/models/2`);
+            const templateModel2Payload = await fetchStorageTextSafe(templateModel2Ref);
+            const targetModel2Ref = ref(storage, `${ROOT}/${currentProject}/models/2`);
+            await uploadString(targetModel2Ref, templateModel2Payload.text, 'raw', { contentType: 'application/javascript' });
+            appendToChatLog('System', '✅ models/2 reset to clean Cherry3D scaffold — ready for fresh build.', 'normal');
+          } catch (e) {
+            appendToChatLog('System', `⚠️ Could not reset models/2 from BASE_Files: ${e.message}. Build continues but zone patches may fail if the existing file lacks scaffold markers.`, 'normal');
+            console.warn('[SCAFFOLD RESET] Failed to reset models/2:', e.message);
+          }
+        }
+
         Progress.step('Loading core project files', '"2", "23", scene_intent.json, assets.json, tree.json, entities.json + immutable instruction context');
         const projectFiles = {};
         const targetFiles = [
@@ -7829,7 +7847,7 @@ PLANNING REQUIREMENTS:
 - Do NOT tell the executor to delete, replace, or bypass immutable scaffold sections.
 - CHERRY3D PRIMITIVE EXCEPTION: The eleven Cherry3D system primitives are cube, square, plane, sphere, cylinder, capsule, cone, torus, torusknot, tetrahedron, and icosahedron. If a visual object is intentionally authored from one of those eleven primitives, the tranche prompt must say so explicitly and MUST skip scanned-asset geometry, texture, and slotCount enforcement for that object. Primitive-authored geometry must resolve only through .primitives keys 4-14. Deprecated model primitive keys 17, 18, 21, 34, and 35 are forbidden.
 - MATERIAL REGISTRY + SLOT CONTRACT (CRASH PREVENTION): This applies ONLY to non-primitive scanned 3D assets surfaced in the SCANNED 3D EXTENTS block. Every such asset carries a slotCount (fallback meshCount only if slotCount is unavailable). For every such asset, the tranche that applies textures MUST register the asset slotCount, define a material whose albedo_texture is the resolved numeric colormap manifest key from assets.json, and apply that material key across EVERY valid slot N from 0 to slotCount-1 using gameState._applyMat or an equivalent slot-safe scaffold path. material_file must contain the registered material key, never the staged colormap path. If the asset is textured scene geometry, default to createInstance with a registered instance parent, but if working-game law proves that per-object visual overrides do not survive instancing for that pool, use createObject consistently for that pool instead. Cherry3D system primitives skip this workflow entirely. A tranche plan that writes raw paths into material_file/albedo_texture or ignores slotCount for a non-primitive scanned asset is a planning defect.
-- PARTICLE TEXTURE APPLICATION CONTRACT: Approved particle textures follow the scaffold particle-template path, not the non-primitive scene-object material registry path. Plan a Foundation-B tranche that declares BOTH PARTICLE_TEX_PATHS[effectName] = '<staged Firebase path>' and gameState.particleTextureIds[effectName] = '<manifest key>' for every approved particleEffectTarget. Then, in the tranche that registers particle templates, require registerParticleTemplate(... extraData: { material_file: PARTICLE_TEX_PATHS[effectName] }) or an equivalent direct particle slot material_file assignment. A tranche plan that only declares gameState.particleTextureIds without wiring material_file onto the particle template is a planning defect.
+- PARTICLE TEXTURE APPLICATION CONTRACT: Approved particle textures are applied via the numeric assets.json manifest key as albedo_texture in registerParticleTemplate(). Plan a Foundation-B tranche that populates gameState.particleTextureIds[effectName] with the numeric manifest key for every approved particleEffectTarget. Then, in the tranche that registers particle templates, require registerParticleTemplate({ key, assetId, albedo_texture: gameState.particleTextureIds[effectName] }). PARTICLE_TEX_PATHS is NOT declared. extraData.material_file is NOT used for particle templates. A tranche plan that uses PARTICLE_TEX_PATHS or material_file for particle templates is a planning defect.
 - HTML UI PLACEMENT RULE: When a tranche creates or modifies visible HTML UI / HUD / overlay elements in models/23 or localUI, NEVER place UI in the top-left or top-right corners of the screen. It is always better to move UI components slightly inward toward the center instead of hugging the left or right edges. Prefer top-center, bottom-center, or clearly inset side placements. Any side-aligned UI must use a visible inset margin so it reads as center-shifted rather than edge-anchored. Corner-hugging or hard edge-hugging UI is a planning defect.
 - AUDIO + FEEDBACK EXECUTION CONTRACT: Any tranche that introduces or modifies avatar actions, pickups, rewards, damage, death, HUD state changes, moving hazards, or ambience MUST explicitly declare the exact audio events and feedback behaviors it is responsible for. Do NOT defer core feel work to a vague “polish later” note. The tranche prompt must state the intended emotional direction: soft, rewarding, immersive, and satisfying rather than abrasive, empty, or harsh.
 - HAZARD SIGNATURE + WARNING CONTRACT: Moving hazards and important moving gameplay objects must receive an identifiable sound signature. If a hazard is fast, dangerous, or can enter the active play space suddenly, the tranche plan MUST require a short anticipatory warning cue roughly 350-750ms before entry or before the lethal interaction window opens. Omitting this for a major fast hazard is a planning defect.
