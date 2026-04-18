@@ -1988,6 +1988,53 @@ exports.handler = async (event) => {
       if (!stageBResult) return null;
       const asset = stageBResult.selectedAsset;
       const p1    = phase1Req || {};
+
+      // Assets matched via the Avatars.zip cross-route carry avatar-shaped fields
+      // (fbxEntryPath, assetName, textureFiles, animationManifestPath) instead of
+      // the prop-library fields (objFile, objEntryPath, colormapFile, colormapEntryPath).
+      // Detect this case and map the fields correctly so the extract script can find
+      // and stage the file. Without this, assetName resolves to undefined and every
+      // avatar-sourced object entry silently fails with "not_in_zip".
+      const isAvatarSourced = Boolean(asset.fbxEntryPath || asset.animationManifestPath ||
+        /avatars?\.zip$/i.test(String(asset.sourceZip || '')));
+
+      if (isAvatarSourced) {
+        const coverage = scoreAnimationCoverage(p1, asset.animationClips || []);
+        const textureBindingContract = scoreTextureCandidates(
+          asset.materials || [],
+          asset.textureFiles || []
+        );
+        // Emit a full avatar-shaped roster entry so the extract script treats
+        // this object exactly like an avatar: staging FBX + textures + manifest.
+        return {
+          assetName:              asset.assetName,
+          fbxEntryPath:           asset.fbxEntryPath           || null,
+          thumbnailEntryPath:     asset.thumbnailEntryPath      || null,
+          thumbnailFile:          asset.thumbnailFile           || null,
+          textureFiles:           asset.textureFiles            || [],
+          textureBindingContract,
+          animationManifestPath:  asset.animationManifestPath   || null,
+          rawAnimations:          asset.rawAnimations            || '',
+          animationClips:         asset.animationClips           || [],
+          normalizedAnimations:   coverage.normalizedBuckets     || {},
+          animationCoverage:      coverage,
+          geometryAnalysis:       asset.geometryAnalysis         || null,
+          materials:              asset.materials                || [],
+          materialAssignments:    asset.materialAssignments      || [],
+          meshCount:              asset.meshCount                || 0,
+          slotCount:              asset.slotCount                || 0,
+          // avatarRole is intentionally omitted — this is an objects3d entry, not an avatar.
+          // The extract script detects avatar-path assets via fbxEntryPath / animationManifestPath
+          // and stages them via the avatar code path (FBX + textures + manifest).
+          intendedRole:           p1.gameplayRole || p1.visualDescription || stageBResult.requirementName || "",
+          matchedRequirement:     stageBResult.requirementName,
+          selectionRationale:     stageBResult.visualSelectionRationale,
+          sourceZip:              asset.sourceZip,
+          thumbnailB64:           asset.b64,
+          thumbnailMime:          asset.mimeType
+        };
+      }
+
       return {
         assetName:           asset.objFile,
         objEntryPath:        asset.objEntryPath        || null,  // locked zip path from index time
