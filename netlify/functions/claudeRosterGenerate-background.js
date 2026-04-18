@@ -525,6 +525,34 @@ BANNED — 2D interface elements (all handled by file 23 HTML pipeline):
 If the master prompt describes any of the above as visual elements, treat them as UI pipeline items and exclude them silently. Do not mention them in your output.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ONE OBJECT PER ENTRY — HARD RULE (overrides all other rules)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Every entry in objects3d MUST represent exactly ONE individually distinct asset. This rule is absolute and overrides the Environmental Variety Mandate below.
+
+WHEN THE GAME DEFINES A FIXED SET OF INDIVIDUALLY DISTINCT OBJECTS, emit one entry per object — no exceptions:
+
+EXAMPLES OF CORRECT BEHAVIOUR:
+  Game requires 15 billiard balls → emit 15 separate objects3d entries:
+    ball_1_solid_yellow, ball_2_solid_blue, ball_3_solid_red, ... ball_9_striped_yellow, ...
+  Game requires a full deck of playing cards → emit one entry per card face needed.
+  Game requires chess pieces → emit one entry per distinct piece type (king, queen, rook, bishop, knight, pawn — one entry each, not "chess pieces").
+  Game requires 4 coloured gems → emit 4 entries: gem_red, gem_blue, gem_green, gem_yellow.
+
+EXAMPLES OF WRONG BEHAVIOUR (FORBIDDEN):
+  ✗ Grouping "solid_balls" as one entry covering balls 1-7
+  ✗ Grouping "striped_balls" as one entry covering balls 9-15
+  ✗ Emitting "playing_cards" as a single entry when the game uses distinct card visuals
+  ✗ Any entry whose name, visualDescription, or gameplayRole implies it covers multiple distinct objects
+
+HOW TO DETECT WHEN THIS RULE APPLIES:
+  - The game prompt explicitly names or enumerates specific individual objects (e.g. "ball 1 through 15", "4 coloured gems", "red key, blue key, green key")
+  - The game requires objects that are individually tracked, scored, or interacted with as separate entities
+  - The game prompt uses numbered or colour-coded variations of a core object type where each variation is a distinct gameplay entity
+  - The game mechanic would break if two visually different objects were treated as the same asset (e.g. a billiards game cannot function with only "solid" and "striped" — it needs each ball individually)
+
+When this rule applies, each object gets its own entry with a unique name (include number, colour, or other distinguishing attribute in the name field), its own visualDescription describing that specific variant, and its own searchTerms targeting that specific variant's appearance.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ENVIRONMENTAL VARIETY MANDATE
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 A game environment built from one tree, one rock, and one bush is visually flat and unconvincing. You MUST request multiple variants of each prop class that the game environment requires.
@@ -591,11 +619,11 @@ Respond ONLY with a valid JSON object. No markdown, no fences, no preamble.
   ],
   "objects3d": [
     {
-      "name": "short_snake_case_identifier",
-      "variantGroup": "VOCABULARY-CONSTRAINED: 1–3 words from the vocabulary lists naming what this object IS — e.g. 'tank', 'military tank', 'pine tree', 'stone arch'",
+      "name": "short_snake_case_identifier — MUST be unique per individually distinct asset. For numbered/coloured sets (billiard balls, gems, keys, cards) include the number or colour in the name so each entry is unambiguous (e.g. ball_1_solid_yellow, ball_9_striped_yellow). ONE entry per distinct asset — NEVER group multiple distinct objects into one entry.",
+      "variantGroup": "VOCABULARY-CONSTRAINED: 1–3 words from the vocabulary lists naming what this object IS — e.g. 'tank', 'military tank', 'pine tree', 'stone arch'. For individually distinct sets use the shared type noun (e.g. 'ball', 'gem', 'key') so all members of the set share the same variantGroup.",
       "searchTerms": ["variantGroup_word_first", "then_free-form_color", "free-form_material", "free-form_style", "free-form_subtype"],
-      "visualDescription": "Free-form: what this prop looks like — shape, silhouette, style, scale, materials, distinguishing features",
-      "gameplayRole": "Free-form: what this prop does in the game — obstacle, collectible, environment piece, hazard, etc."
+      "visualDescription": "Free-form: what THIS SPECIFIC ASSET looks like — include its unique distinguishing attributes (colour, number, pattern, stripe vs solid, etc.). Do not describe a group.",
+      "gameplayRole": "Free-form: what this specific asset does in the game — obstacle, collectible, environment piece, hazard, etc."
     }
   ],
   "avatarRequirements": [
