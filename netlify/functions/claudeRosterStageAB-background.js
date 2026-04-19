@@ -2049,6 +2049,25 @@ exports.handler = async (event) => {
     );
 
     // ── 8. Assemble final roster ─────────────────────────────────────────
+
+    // Mirrors the avatar__/prop prefix logic in claudeRosterExtract-background.js
+    // buildCopiedModelFilename(), computed here so every roster entry carries
+    // copiedModelFilename from Stage AB onward. This lets the frontend build
+    // rosterSelected3DNames from a stable, extension-bearing filename rather than
+    // falling back to assetName — which may not match what Extract stages after
+    // applying the avatar__ prefix.
+    function computeCopiedModelFilename(assetName, sourceZip, fbxEntryPath, animationManifestPath, avatarRole) {
+      const name = String(assetName || '').trim();
+      const extMatch = name.match(/(\.[^.]+)$/);
+      const ext = extMatch ? extMatch[1] : '';
+      const baseNoExt = name.replace(/\.[^.]+$/, '');
+      const isAvatar = Boolean(
+        avatarRole || animationManifestPath || fbxEntryPath ||
+        /avatars?\.zip$/i.test(String(sourceZip || ''))
+      );
+      return isAvatar ? `avatar__${baseNoExt}${ext}` : `${baseNoExt}${ext}`;
+    }
+
     function assembleParticleAsset(stageBResult, phase1Req) {
       if (!stageBResult) return null;
       const asset = stageBResult.selectedAsset;
@@ -2088,6 +2107,10 @@ exports.handler = async (event) => {
         // this object exactly like an avatar: staging FBX + textures + manifest.
         return {
           assetName:              asset.assetName,
+          copiedModelFilename:    computeCopiedModelFilename(
+            asset.assetName, asset.sourceZip, asset.fbxEntryPath,
+            asset.animationManifestPath, null
+          ),
           fbxEntryPath:           asset.fbxEntryPath           || null,
           thumbnailEntryPath:     asset.thumbnailEntryPath      || null,
           thumbnailFile:          asset.thumbnailFile           || null,
@@ -2147,6 +2170,10 @@ exports.handler = async (event) => {
       );
       return {
         assetName: asset.assetName,
+        copiedModelFilename: computeCopiedModelFilename(
+          asset.assetName, asset.sourceZip, asset.fbxEntryPath,
+          asset.animationManifestPath, p1.gameplayRole || stageBResult.requirementName
+        ),
         fbxEntryPath: asset.fbxEntryPath || null,
         thumbnailEntryPath: asset.thumbnailEntryPath || null,
         thumbnailFile: asset.thumbnailFile || null,

@@ -4588,7 +4588,21 @@ Quality criteria for your work:
         if (prog.status === 'planning') {
           planningSection.style.display = 'flex';
           planningLabel.textContent = `${svc.planner} is building a dependency-ordered tranche plan from the prompt contract...`;
-          planningAnalysis.textContent = '';
+          // Show any available planning diagnostics (stop_reason, token counts)
+          if (prog.planningDiag) {
+            const d = prog.planningDiag;
+            const stopColor = d.stopReason === 'max_tokens' ? '#f87171' : '#94a3b8';
+            const fmt = (n) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+            planningAnalysis.innerHTML =
+              `<span style="color:${stopColor};font-weight:600;">stop_reason: ${d.stopReason || 'pending'}</span>` +
+              ` &nbsp;|&nbsp; out: ${fmt(d.outputTokens)}/${fmt(d.maxTokens)}` +
+              ` &nbsp;|&nbsp; in: ${fmt(d.inputTokens)}` +
+              ` &nbsp;|&nbsp; effort: ${d.effort}` +
+              (d.stopReason === 'max_tokens' ? ' &nbsp;<span style="color:#f87171;">⚠ TRUNCATED</span>' : '');
+            planningAnalysis.style.color = '';
+          } else {
+            planningAnalysis.textContent = '';
+          }
           overallFill.style.width = '5%';
           footerStatus.textContent = 'Phase 0: contract-driven tranche planning active...';
           return;
@@ -4603,7 +4617,17 @@ Quality criteria for your work:
             const planDuration = (prog.planningEndTime && prog.planningStartTime)
               ? this._formatDuration(prog.planningEndTime - prog.planningStartTime)
               : '';
-            planningLabel.innerHTML = `✓ Tranche Plan Ready: <strong>${prog.totalTranches} tranche(s)</strong>${planDuration ? ` in ${planDuration}` : ''}`;
+            const diagSuffix = (() => {
+              if (!prog.planningDiag) return '';
+              const d = prog.planningDiag;
+              const fmt = (n) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+              const stopColor = d.stopReason === 'max_tokens' ? '#f87171' : '#6ee7b7';
+              const stopLabel = d.stopReason === 'max_tokens'
+                ? `<span style="color:#f87171;font-weight:600;">⚠ TRUNCATED (max_tokens)</span>`
+                : `<span style="color:#6ee7b7;">✓ ${d.stopReason || 'end_turn'}</span>`;
+              return ` &nbsp;<span style="font-size:11px;color:#94a3b8;">[${stopLabel} &nbsp;out:${fmt(d.outputTokens)}/${fmt(d.maxTokens)} &nbsp;in:${fmt(d.inputTokens)} &nbsp;effort:${d.effort}]</span>`;
+            })();
+            planningLabel.innerHTML = `✓ Tranche Plan Ready: <strong>${prog.totalTranches} tranche(s)</strong>${planDuration ? ` in ${planDuration}` : ''}${diagSuffix}`;
             planningLabel.style.color = 'var(--success)';
             planningAnalysis.textContent = prog.contractPromptReview?.summary || '';
             planningAnalysis.style.color = (prog.contractPromptReview?.issueCount || 0) > 0 ? '#f59e0b' : 'var(--muted)';
@@ -4826,6 +4850,16 @@ Quality criteria for your work:
           if (t.contractCodeReviewWarnings && t.contractCodeReviewWarnings.length > 0) {
             metaHTML += `<span class="tranche-card-tag" style="background:#38bdf822;color:#38bdf8;border:1px solid #38bdf844;">ℹ Code contract review</span>`;
           }
+          if (t.stopReason === 'max_tokens') {
+            metaHTML += `<span class="tranche-card-tag" style="background:#f8717122;color:#f87171;border:1px solid #f8717144;">⚠ stop: max_tokens (truncated)</span>`;
+          } else if (t.stopReason && t.stopReason !== 'end_turn') {
+            metaHTML += `<span class="tranche-card-tag" style="background:#f59e0b22;color:#f59e0b;border:1px solid #f59e0b44;">stop: ${t.stopReason}</span>`;
+          }
+          if (t.thinkingUsed === true) {
+            metaHTML += `<span class="tranche-card-tag" style="background:#a78bfa22;color:#a78bfa;border:1px solid #a78bfa44;">🧠 thinking</span>`;
+          } else if (t.thinkingUsed === false) {
+            metaHTML += `<span class="tranche-card-tag" style="background:#33415522;color:#64748b;border:1px solid #33415544;">direct</span>`;
+          }
           if (t.patchMergeWarnings && t.patchMergeWarnings.length > 0) {
             const blocked = t.patchMergeWarnings.some(w => w.startsWith('BLOCKED'));
             metaHTML += blocked
@@ -4899,8 +4933,11 @@ Quality criteria for your work:
               ${linesAdded > 0 ? `<span class="tranche-timing-stat">
                 <span class="tranche-timing-stat-dot patch"></span>
                 Lines: <span class="tranche-timing-stat-val">+${linesAdded}</span>
-              </span>` : ''}`;
-          } else if (timingBarEl) {
+              </span>` : ''}
+              ${t.stopReason ? `<span class="tranche-timing-stat">
+                <span class="tranche-timing-stat-dot" style="background:${t.stopReason === 'max_tokens' ? '#f87171' : '#6ee7b7'};"></span>
+                stop: <span class="tranche-timing-stat-val" style="color:${t.stopReason === 'max_tokens' ? '#f87171' : '#6ee7b7'};">${t.stopReason}${t.stopReason === 'max_tokens' ? ` ⚠ (${fmt(t.maxTokens || 0)} limit)` : ''}</span>
+              </span>` : ''}`;          } else if (timingBarEl) {
             timingBarEl.classList.remove('active');
           }
 
@@ -5034,70 +5071,163 @@ Quality criteria for your work:
     };
 
 
+    let extentsReviewSessionCounter = 0;
+
     function showExtentsReviewModal(extentsData) {
-        return new Promise((resolve) => {
+        const reviewItems = Array.isArray(extentsData) ? extentsData.slice() : [];
+        if (reviewItems.length === 0) {
+            return Promise.reject(new Error('ThreeJS scan approval gate received no reviewable entries.'));
+        }
+
+        return new Promise((resolve, reject) => {
             const modal = document.getElementById('extentsResultModal');
             const container = document.getElementById('extentsListContainer');
-            const btn = document.getElementById('confirmExtentsBtn');
+            const approveBtn = document.getElementById('confirmExtentsBtn');
+            const cancelBtn = document.getElementById('cancelExtentsBtn');
+            const statusEl = document.getElementById('extentsReviewStatus');
+
+            if (!modal || !container || !approveBtn) {
+                reject(new Error('ThreeJS scan approval modal is missing required DOM nodes.'));
+                return;
+            }
+
+            const esc = (value) => String(value ?? '').replace(/[&<>"']/g, c => ({
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#39;'
+            }[c]));
+
+            const sessionId = `extents-review-${Date.now()}-${++extentsReviewSessionCounter}`;
+            let settled = false;
+
+            const cleanup = () => {
+                approveBtn.onclick = null;
+                if (cancelBtn) cancelBtn.onclick = null;
+                modal.onclick = null;
+                document.removeEventListener('keydown', onKeyDown, true);
+            };
+
+            const finish = (approved, reason = '') => {
+                if (settled) return;
+                settled = true;
+                cleanup();
+                modal.classList.remove('active');
+                modal.dataset.reviewSessionId = '';
+                if (approved) {
+                    resolve({ approved: true, sessionId, count: reviewItems.length });
+                } else {
+                    reject(new Error(reason || 'ThreeJS scan approval was not granted for the current session.'));
+                }
+            };
+
+            const onKeyDown = (evt) => {
+                if (evt.key === 'Escape') {
+                    evt.preventDefault();
+                    finish(false, 'ThreeJS scan approval was cancelled with Escape before confirmation.');
+                }
+            };
 
             container.innerHTML = '';
-            extentsData.forEach(ext => {
+            reviewItems.forEach(ext => {
+                const isError = ext.reviewStatus === 'error';
+                if (isError) {
+                    container.innerHTML += `
+                        <div style="background: #2a1518; padding: 10px; border-radius: 6px; border: 1px solid #7a3838; font-size: 12px;">
+                            <strong style="color: #fca5a5;">⚠ ${esc(ext.name || 'Unknown asset')}</strong><br>
+                            <div style="margin-top: 8px; color: #f5c2c7; border-left: 2px solid var(--danger); padding-left: 8px; line-height: 1.5;">
+                                <strong style="color: #fff;">Scan blocked / incomplete</strong><br>
+                                ${esc(ext.errorMessage || 'No reviewable bounding box was produced for this asset.')}
+                            </div>
+                        </div>
+                    `;
+                    return;
+                }
+
                 const warningHtml = ext.scaleWarning
-                  ? `<span style="color: #f59e0b; font-weight: 600;">⚠ ${ext.scaleWarning}</span>`
+                  ? `<span style="color: #f59e0b; font-weight: 600;">⚠ ${esc(ext.scaleWarning)}</span>`
                   : `<span style="color: var(--success);">No major correction flagged</span>`;
                 const textureHtml = ext.textureFound
-                  ? `<span style="color: var(--success);">${ext.textureFound}</span>`
+                  ? `<span style="color: var(--success);">${esc(ext.textureFound)}</span>`
                   : `<span style="color: #f59e0b;">⚠ Not found</span>`;
+                const materialsHtml = Array.isArray(ext.materials) && ext.materials.length > 0
+                  ? ext.materials.map(m => esc(m)).join('<br>')
+                  : '';
 
                 container.innerHTML += `
                     <div style="background: #1a1e2b; padding: 10px; border-radius: 6px; border: 1px solid var(--line); font-size: 12px;">
-                        <strong style="color: var(--accent);">📦 ${ext.name}</strong><br>
+                        <strong style="color: var(--accent);">📦 ${esc(ext.name)}</strong><br>
 
                         <div style="margin-top: 8px; color: var(--muted); border-left: 2px solid var(--success); padding-left: 8px;">
                             <strong style="color: #fff;">Bounding Box</strong><br>
-                            ${ext.boundingBox}
+                            ${esc(ext.boundingBox)}
                         </div>
 
                         <div style="margin-top: 8px; color: var(--muted); border-left: 2px solid #38bdf8; padding-left: 8px;">
                             <strong style="color: #fff;">Origin + Placement Contract</strong><br>
-                            Authored unit: <span style="color: var(--text);">${ext.authoredUnit}</span><br>
-                            Origin class: <span style="color: var(--text);">${ext.originClass}</span><br>
-                            Floor placement: <span style="color: var(--text);">position.y = ${ext.floorY}</span><br>
-                            Vertical centering: <span style="color: var(--text);">position.y = ${ext.centerY}</span><br>
-                            X centering correction: <span style="color: var(--text);">${ext.centerOffsetX}</span><br>
-                            Z centering correction: <span style="color: var(--text);">${ext.centerOffsetZ}</span>
+                            Authored unit: <span style="color: var(--text);">${esc(ext.authoredUnit)}</span><br>
+                            Origin class: <span style="color: var(--text);">${esc(ext.originClass)}</span><br>
+                            Floor placement: <span style="color: var(--text);">position.y = ${esc(ext.floorY)}</span><br>
+                            Vertical centering: <span style="color: var(--text);">position.y = ${esc(ext.centerY)}</span><br>
+                            X centering correction: <span style="color: var(--text);">${esc(ext.centerOffsetX)}</span><br>
+                            Z centering correction: <span style="color: var(--text);">${esc(ext.centerOffsetZ)}</span>
                         </div>
 
                         <div style="margin-top: 8px; color: var(--muted); border-left: 2px solid #a78bfa; padding-left: 8px;">
                             <strong style="color: #fff;">Scale + Axis</strong><br>
-                            Dominant axis: <span style="color: var(--text);">${ext.dominantAxis}</span><br>
-                            Forward hint: <span style="color: var(--text);">${ext.forwardHint}</span><br>
-                            Suggested scale: <span style="color: var(--text);">${ext.suggestedScale}</span><br>
-                            Scale vector: <span style="color: var(--text);">${ext.scaleVector}</span><br>
+                            Dominant axis: <span style="color: var(--text);">${esc(ext.dominantAxis)}</span><br>
+                            Forward hint: <span style="color: var(--text);">${esc(ext.forwardHint)}</span><br>
+                            Suggested scale: <span style="color: var(--text);">${esc(ext.suggestedScale)}</span><br>
+                            Scale vector: <span style="color: var(--text);">${esc(ext.scaleVector)}</span><br>
                             ${warningHtml}
                         </div>
 
                         <div style="margin-top: 8px; color: var(--muted); border-left: 2px solid #eab308; padding-left: 8px;">
                             <strong style="color: #fff;">UV + Texture</strong><br>
-                            UV mapping: <span style="color: var(--text);">${ext.uvSummary}</span><br>
+                            UV mapping: <span style="color: var(--text);">${esc(ext.uvSummary)}</span><br>
                             Texture found: ${textureHtml}
                         </div>
 
-                        ${ext.materials && ext.materials.length > 0 ? `
+                        ${materialsHtml ? `
                         <div style="margin-top: 8px; color: var(--muted); border-left: 2px solid var(--accent); padding-left: 8px;">
                             <strong style="color: #fff;">Scanned Materials</strong><br>
-                            <div style="font-size: 11px; white-space: pre-wrap; margin-top: 4px;">${ext.materials.join('<br>')}</div>
+                            <div style="font-size: 11px; white-space: pre-wrap; margin-top: 4px;">${materialsHtml}</div>
                         </div>` : ''}
                     </div>
                 `;
             });
 
-            modal.classList.add('active');
+            if (statusEl) {
+                const failureCount = reviewItems.filter(item => item.reviewStatus === 'error').length;
+                statusEl.textContent = failureCount > 0
+                  ? `Waiting for explicit approval — ${reviewItems.length} scan result(s), ${failureCount} flagged issue(s).`
+                  : `Waiting for explicit approval — ${reviewItems.length} scan result(s) ready for review.`;
+            }
 
-            btn.onclick = () => {
-                modal.classList.remove('active');
-                resolve();
+            modal.dataset.reviewSessionId = sessionId;
+            approveBtn.disabled = false;
+            modal.classList.add('active');
+            document.addEventListener('keydown', onKeyDown, true);
+
+            approveBtn.onclick = () => finish(true);
+            if (cancelBtn) {
+                cancelBtn.onclick = () => finish(false, 'ThreeJS scan approval was cancelled before confirmation.');
+            }
+            modal.onclick = (evt) => {
+                if (evt.target === modal) {
+                    finish(false, 'ThreeJS scan approval was dismissed before confirmation.');
+                }
             };
+
+            window.setTimeout(() => {
+                if (settled) return;
+                const computed = window.getComputedStyle(modal);
+                const isVisible = modal.classList.contains('active') && computed.display !== 'none' && computed.visibility !== 'hidden';
+                if (!isVisible) {
+                    finish(false, 'ThreeJS scan approval modal failed to become visible for the current scan session.');
+                }
+            }, 80);
         });
     }
     let pendingAiPrompt = "";
@@ -5775,8 +5905,14 @@ Quality criteria for your work:
     }
 
     function buildExtentsReviewEntry(displayName, analysis) {
-      if (!analysis?.boundingBox) return null;
       const fmt = (value, digits = 3) => Number(value || 0).toFixed(digits);
+      if (!analysis?.boundingBox) {
+        return {
+          name: displayName,
+          reviewStatus: 'error',
+          errorMessage: analysis?.analysisError || 'No reviewable bounding box was produced for this asset.'
+        };
+      }
       const textureLabel = analysis.texture?.colormapFile
         ? `${analysis.texture.colormapFile} ✓ (${analysis.texture.confidence || 'HIGH'})`
         : '';
@@ -5786,6 +5922,7 @@ Quality criteria for your work:
 
       return {
         name: displayName,
+        reviewStatus: 'ok',
         boundingBox: `${fmt(analysis.boundingBox.width)} × ${fmt(analysis.boundingBox.height)} × ${fmt(analysis.boundingBox.depth)} (${analysis.scale?.authoredUnit || 'unknown'})`,
         authoredUnit: analysis.scale?.authoredUnit || 'unknown',
         originClass: analysis.origin?.classification || 'N/A',
@@ -7288,6 +7425,7 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
 
       let scannedExtentsList = [];
       let modelAnalysisList = [];
+      let attemptedThreeScanCount = 0;
       let rosterSelected3DNames = null;
       let rosterSelected3DByZip = null;
       let rosterLockedTextureByZip = null;
@@ -7419,10 +7557,35 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
                 appendToChatLog('System', `✅ ${renameResult2.renamedCount} model file(s) renamed to numeric key in models/.`, 'normal');
               }
               // After renaming, 3D files in models/ are stored under their numeric key
-              // (e.g. "57") rather than their original filename. The helper adds those keys
-              // to rosterSelected3DNames so the extents scan loop can find them, and builds
-              // a keyToMimeType map so analyzeDirectThreeAsset gets the correct loader type.
+              // (e.g. "57") rather than their original filename. applyRenameResultsToScanState
+              // adds keys for files renamed in THIS run and seeds the mimeType map.
+              // However, if the first rename pass (inside runRosterStage) already renamed
+              // the files, renameResult2 will be empty and applyRenameResultsToScanState
+              // adds nothing — leaving rosterSelected3DNames with filenames like
+              // "avatar__HeroCharacter.fbx" while Firebase holds "57". The manifest lookup
+              // below resolves this for both props and avatars regardless of which run did
+              // the rename.
               applyRenameResultsToScanState(renameResult2, rosterSelected3DNames);
+
+              // Seed rosterSelected3DNames with numeric manifest keys by cross-referencing
+              // each roster asset's copiedModelFilename (or assetName) against the manifest
+              // title→key map. This covers assets renamed in a prior run where renameResult2
+              // is empty, including all avatar assets (which always get renamed in the first
+              // pass inside runRosterStage before rosterSelected3DNames even exists).
+              {
+                const manifestKeyIndex = new Map();
+                for (const entry of flattenAssetManifestEntries(rosterManifest)) {
+                  if (entry?.title && entry?.key) {
+                    manifestKeyIndex.set(String(entry.title).toLowerCase(), String(entry.key));
+                  }
+                }
+                for (const asset of roster3DForSelection) {
+                  const copiedName = String(asset?.copiedModelFilename || asset?.assetName || '').toLowerCase();
+                  const numericKey = copiedName ? manifestKeyIndex.get(copiedName) : null;
+                  if (numericKey) rosterSelected3DNames.add(numericKey);
+                }
+                console.log(`[SCAN-STATE] rosterSelected3DNames after manifest key seeding: ${[...rosterSelected3DNames].join(', ')}`);
+              }
               const cachedScan = getCachedModelAnalysis(currentProject);
               clearLatestAnnotatedRoster(currentProject);
               let refreshedRosterAnnotationError = null;
@@ -7593,6 +7756,7 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
                         // For numeric-keyed files, inject the correct mime type so
                         // analyzeDirectThreeAsset selects the right Three.js loader.
                         const assetForScan = keyMime ? { ...a, type: keyMime } : a;
+                        attemptedThreeScanCount += 1;
                         Progress.step(`Scanning 3D extents`, a.name);
                         try {
                             const analysis = await analyzeDirectThreeAsset(assetForScan);
@@ -7600,9 +7764,20 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
                                 modelAnalysisList.push(analysis);
                                 const reviewEntry = buildExtentsReviewEntry(a.name, analysis);
                                 if (reviewEntry) scannedExtentsList.push(reviewEntry);
+                            } else {
+                                scannedExtentsList.push({
+                                  name: a.name,
+                                  reviewStatus: 'error',
+                                  errorMessage: 'ThreeJS scan returned no analysis payload for this asset.'
+                                });
                             }
                         } catch (e) {
                             console.warn(`Could not scan extents for ${a.name}`, e);
+                            scannedExtentsList.push({
+                              name: a.name,
+                              reviewStatus: 'error',
+                              errorMessage: String(e?.message || e)
+                            });
                         }
                     }
                 }
@@ -7611,6 +7786,7 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
                     const selectedEntriesForZip = rosterSelected3DByZip?.get(a.name) || null;
                     const shouldProcessZip = selectedEntriesForZip instanceof Set ? selectedEntriesForZip.size > 0 : rosterSelected3DNames.has(a.name);
                     if (!shouldProcessZip) continue;
+                    attemptedThreeScanCount += 1;
                     Progress.step(`Scanning ZIP contents`, a.name);
                     try {
                         const zipRes = await fetch(a.url, { cache: 'no-store' });
@@ -7634,6 +7810,12 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
                                 );
                                 if (reviewEntry) scannedExtentsList.push(reviewEntry);
                             });
+                        } else {
+                            scannedExtentsList.push({
+                              name: a.name,
+                              reviewStatus: 'error',
+                              errorMessage: 'ZIP scan completed but produced no reviewable ThreeJS analysis entries.'
+                            });
                         }
                         if (entries.length > 0) {
                             zipContextString += `
@@ -7649,6 +7831,11 @@ ${zipAnalysis.recognizedEntries.map(v => `- ${v}`).join('\n')}
                     } catch (e) {
                         console.warn(`Could not parse ZIP ${a.name}`, e);
                         appendToChatLog('System', `Warning: Could not parse ${a.name}`, 'error');
+                        scannedExtentsList.push({
+                          name: a.name,
+                          reviewStatus: 'error',
+                          errorMessage: `ZIP scan failed: ${String(e?.message || e)}`
+                        });
                     }
                 }
             }
@@ -7658,9 +7845,14 @@ ${zipAnalysis.recognizedEntries.map(v => `- ${v}`).join('\n')}
             cacheModelAnalysis(currentProject, modelAnalysisList);
         }
 
+        if (attemptedThreeScanCount > 0 && scannedExtentsList.length === 0) {
+            throw new Error('ThreeJS scan approval gate failed: scan attempts completed but no reviewable results were produced. Build halted before tranche planning.');
+        }
+
         if (scannedExtentsList.length > 0) {
             Progress.step('Review 3D scan results', 'Confirm the roster-selected scan results before tranche planning continues...');
-            await showExtentsReviewModal(scannedExtentsList);
+            const extentsApproval = await showExtentsReviewModal(scannedExtentsList);
+            appendToChatLog('System', `✅ ThreeJS scan accepted for ${extentsApproval?.count || scannedExtentsList.length} result(s). Continuing to tranche planning...`, 'normal');
             // Re-annotate roster with the confirmed scan facts so manifest keys and
             // geometry contracts are current before the final compile below.
             clearLatestAnnotatedRoster(currentProject);
@@ -8747,7 +8939,12 @@ RULES FOR ALL PIPELINE STAGES:
           <div class="model-list-container" id="extentsListContainer" style="max-height: 300px; padding: 10px; display: flex; flex-direction: column; gap: 10px;">
               </div>
 
-          <div class="row" style="justify-content: flex-end; margin-top: 10px;">
+          <div id="extentsReviewStatus" style="font-size: 12px; color: var(--muted); margin-top: -4px; line-height: 1.4;">
+              Waiting for explicit approval.
+          </div>
+
+          <div class="row" style="justify-content: space-between; margin-top: 10px;">
+              <button class="btn" id="cancelExtentsBtn">Abort Build</button>
               <button class="btn btnPrimary" id="confirmExtentsBtn">Approve & Continue to AI</button>
           </div>
       </div>

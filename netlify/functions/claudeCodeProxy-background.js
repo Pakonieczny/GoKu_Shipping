@@ -2357,7 +2357,7 @@ function buildSystemBlocks(system) {
   return [{ type: "text", text: system, cache_control: { type: "ephemeral" } }];
 }
 
-async function callClaude(apiKey, { model, maxTokens, system, userContent, effort, budgetTokens }) {
+async function callClaude(apiKey, { model, maxTokens, system, userContent, effort, budgetTokens, useThinking = true }) {
   const systemBlocks = buildSystemBlocks(system);
 
   const body = {
@@ -2379,7 +2379,11 @@ async function callClaude(apiKey, { model, maxTokens, system, userContent, effor
   if (isOpus47) {
     // Opus 4.7: adaptive thinking only — budget_tokens returns 400 error
     // temperature/top_p/top_k also return 400 on 4.7, omitted entirely
-    body.thinking = { type: 'adaptive' };
+    // useThinking=false omits the thinking param entirely, disabling thinking
+    // for execution tranches that don't need deep reasoning.
+    if (useThinking) {
+      body.thinking = { type: 'adaptive' };
+    }
     if (effort) {
       body.output_config = { effort };
     }
@@ -2427,15 +2431,43 @@ async function callClaude(apiKey, { model, maxTokens, system, userContent, effor
         throw err;
       }
 
-      const textBlock = data?.content?.find(block => block.type === "text")?.text;
-      if (!textBlock) {
-        throw new Error("Claude response missing text block");
+      const stopReason   = data?.stop_reason || null;
+      const outputTokens = data?.usage?.output_tokens || 0;
+      const textBlock    = data?.content?.find(block => block.type === "text")?.text;
+      const hasThinking  = Boolean(data?.content?.find(b => b.type === "thinking" || b.type === "redacted_thinking"));
+
+      // Always log stop_reason and token counts — critical for diagnosing truncation
+      console.log(
+        `[callClaude] model=${model} effort=${effort || 'none'} stop_reason=${stopReason} ` +
+        `output_tokens=${outputTokens} max_tokens=${maxTokens} ` +
+        `has_thinking=${hasThinking} text_len=${textBlock ? textBlock.length : 0}`
+      );
+
+      if (!textBlock || !String(textBlock).trim()) {
+        const errMsg =
+          `Claude returned empty text block ` +
+          `(stop_reason=${stopReason}, output_tokens=${outputTokens}, max_tokens=${maxTokens}, ` +
+          `has_thinking=${hasThinking}, model=${model}, effort=${effort || 'none'})`;
+        console.error(`[callClaude] ${errMsg}`);
+        throw new Error(errMsg);
+      }
+
+      if (stopReason === "max_tokens") {
+        // Log clearly but do not throw — the text block may still be valid JSON
+        // if the model finished the JSON before hitting the ceiling. Let safeJsonParse
+        // determine whether the content is usable. If it is not, the parse error will
+        // surface with the stop_reason already in the console above.
+        console.warn(
+          `[callClaude] WARNING: stop_reason=max_tokens — response was truncated. ` +
+          `output_tokens=${outputTokens}/${maxTokens}. ` +
+          `text_len=${textBlock.length}. The JSON parse below will reveal if content is usable.`
+        );
       }
 
       // usage may include cache fields:
       //   cache_creation_input_tokens  — tokens written to cache this call
       //   cache_read_input_tokens      — tokens served from cache this call
-      return { text: textBlock, usage: data?.usage || null };
+      return { text: textBlock, usage: data?.usage || null, stopReason };
     } catch (err) {
       const status = err?.status || null;
       const retryable = Boolean(err?.isRetryableOverload) || isClaudeOverloadError(status, err?.message || "");
@@ -2477,10 +2509,30 @@ function stripFences(text) {
 }
 
 function safeJsonParse(text, label) {
+  const raw = String(text ?? "");
+  if (!raw.trim()) {
+    throw new Error(`Failed to parse ${label} output as JSON: empty text (len=${raw.length})`);
+  }
+  const cleaned = stripFences(raw);
+  if (!cleaned.trim()) {
+    throw new Error(
+      `Failed to parse ${label} output as JSON: no JSON body found after fence stripping ` +
+      `(raw len=${raw.length}, preview="${raw.slice(0, 200).replace(/\s+/g, ' ')}")`
+    );
+  }
   try {
-    return JSON.parse(stripFences(text));
+    return JSON.parse(cleaned);
   } catch (error) {
-    throw new Error(`Failed to parse ${label} output as JSON: ${error.message}`);
+    const preview  = cleaned.slice(0, 300).replace(/\s+/g, ' ');
+    const tail     = cleaned.length > 300 ? `...${cleaned.slice(-150).replace(/\s+/g, ' ')}` : '';
+    console.error(
+      `[safeJsonParse] Failed to parse ${label}: ${error.message} | ` +
+      `cleaned_len=${cleaned.length} | preview="${preview}${tail}"`
+    );
+    throw new Error(
+      `Failed to parse ${label} output as JSON: ${error.message} ` +
+      `(cleaned_len=${cleaned.length}, preview="${preview.slice(0, 120)}")`
+    );
   }
 }
 
@@ -4082,6 +4134,8 @@ ${buildMasterPromptLayoutGuidance(effectivePrompt)}
 
 ${REQUIRED_TRANCHE_VALIDATION_BLOCK}
 
+THINKING EFFICIENCY RULE: You have adaptive thinking enabled. Reason efficiently and directly — do not exhaustively re-read sections you have already processed, do not explore dead ends at length, and do not narrate your reasoning steps in detail. Reach your conclusions and begin your JSON output promptly. A thorough, complete JSON output is more valuable than deep internal monologue. Prioritise completeness and correctness of the output JSON over depth of internal reasoning. If you find yourself re-reading the same contract sections repeatedly, stop and commit to your best reading.
+
 You must respond ONLY with a valid JSON object. No markdown, no code fences, no preamble.
 
 {
@@ -4116,11 +4170,11 @@ ${effectivePrompt}
         ...imageBlocks
       ];
 
-      console.log(`PLANNING: Single-pass Opus 4.7 xhigh for Job ${jobId}...`);
+      console.log(`PLANNING: Single-pass Opus 4.7 high for Job ${jobId}...`);
       const planResult = await callClaude(apiKey, {
         model: "claude-opus-4-7",
-        maxTokens: 64000,
-        effort: "xhigh",
+        maxTokens: 100000,
+        effort: "high",
         system: planningSystem,
         userContent: planningUserContent
       });
@@ -4135,6 +4189,18 @@ ${effectivePrompt}
         if (pu.cache_read_input_tokens > 0 || pu.cache_creation_input_tokens > 0) {
           console.log(`[CACHE] Planning: created=${pu.cache_creation_input_tokens || 0} read=${pu.cache_read_input_tokens || 0}`);
         }
+        // Surface planning diagnostics to progress so the frontend can display them
+        progress.planningDiag = {
+          stopReason:    planResult.stopReason || null,
+          outputTokens:  pu.output_tokens      || 0,
+          inputTokens:   pu.input_tokens       || 0,
+          maxTokens:     100000,
+          effort:        'high',
+          model:         'claude-opus-4-7',
+          textLen:       planResult.text ? planResult.text.length : 0,
+          capturedAt:    Date.now()
+        };
+        console.log(`[PLANNING DIAG] stop_reason=${progress.planningDiag.stopReason} output_tokens=${progress.planningDiag.outputTokens}/100000 text_len=${progress.planningDiag.textLen}`);
         await saveProgress(bucket, projectPath, progress);
       }
 
@@ -4394,6 +4460,8 @@ ZONE TARGETING RULES:
 - SHARED ASSET POOL UNIFICATION (Non-Negotiable 21): Two ScenePools sharing the same asset ID and instance parent MUST be declared as one ScenePool with a single maxInstances cap, aliased to both variable names. In onDestroy (both normal and page-unload paths), call pool.reset() on every ScenePool — NOT pool.purge(). purge() writes obj.position to WASM handles that are freed after teardown → OOB. reset() is JS-only and always safe. canAllocate() MUST be checked before every new addObject call for any capped pool; if false, skip the allocation entirely.
 - BURST EMITTER DEFERRAL (Non-Negotiable 22): All burst emitter creation MUST live inside a named _createBurstEmitters() function. Call it immediately after the registration retry flush when no particle template retries were queued, or defer it via queueBuildStep when retries were needed. Never call createParticleEmitter() for burst emitters inline before the retry flush completes — particlesettings.object will be null if the template registration failed. Direct Module.ProjectManager.addObject calls for instance parents or particle templates outside of registerInstanceParent / registerParticleTemplate are FORBIDDEN.
 
+THINKING EFFICIENCY RULE: You have adaptive thinking enabled for this tranche. Reason efficiently and directly — identify the correct scaffold patterns for this tranche's scope, resolve any zone targeting questions, then commit to writing the code. Do not exhaustively re-read instruction sections you have already processed. Do not explore alternative approaches at length when the scaffold already prescribes the correct one. A complete, correct, scaffold-compliant code output is more valuable than deep internal deliberation. Begin writing output as soon as you have resolved the approach.
+
 VALIDATOR STATUS:
 - Validation manifest requirements are temporarily disabled.
 - Do NOT add VALIDATION_MANIFEST blocks unless another pipeline stage explicitly requires them.
@@ -4439,16 +4507,18 @@ REMINDER: The files above are READ-ONLY context. Output ONLY patch blocks (REPLA
         ...(imageBlocks || [])
       ];
 
-      // ── Model routing: Foundation-A gets Opus 4.7 xhigh; all others get Opus 4.7 medium ──
+      // ── Model routing: Foundation-A gets Opus 4.7 high with 100k tokens; all others get Opus 4.7 medium ──
       // Foundation-A wires the most zones simultaneously and is the highest-risk
-      // single tranche in the pipeline. xhigh gives it maximum reasoning depth.
+      // single tranche in the pipeline. high gives it strong reasoning depth.
       // Remaining tranches use medium — still Opus-class, but cost-efficient.
       const trancheName = String(progress.tranches[nextTranche]?.name || '');
       const isFoundationA = FOUNDATION_A_REGEX.test(trancheName);
       const trancheModel = 'claude-opus-4-7';
-      const trancheEffort = isFoundationA ? 'xhigh' : 'medium';
+      const trancheEffort = isFoundationA ? 'high' : 'medium';
+      const trancheMaxTokens = isFoundationA ? 100000 : 64000;
+      const trancheUseThinking = isFoundationA; // thinking on for Foundation-A, off for all other tranches
 
-      console.log(`[TRANCHE ${nextTranche + 1}] ${trancheName} → ${trancheModel} effort=${trancheEffort}`);
+      console.log(`[TRANCHE ${nextTranche + 1}] ${trancheName} → ${trancheModel} effort=${trancheEffort} max_tokens=${trancheMaxTokens} thinking=${trancheUseThinking}`);
 
       // ── Stamp AI call start time ─────────────────────────────
       const aiCallStartTime = Date.now();
@@ -4459,8 +4529,9 @@ REMINDER: The files above are READ-ONLY context. Output ONLY patch blocks (REPLA
       try {
         trancheResponseObj = await callClaude(apiKey, {
           model: trancheModel,
-          maxTokens: 64000,
+          maxTokens: trancheMaxTokens,
           effort: trancheEffort,
+          useThinking: trancheUseThinking,
           system: executionSystem,
           userContent: trancheUserContent
         });
@@ -4509,6 +4580,19 @@ REMINDER: The files above are READ-ONLY context. Output ONLY patch blocks (REPLA
           progress.tokenUsage.totals.cache_creation_tokens   = (progress.tokenUsage.totals.cache_creation_tokens || 0) + (u.cache_creation_input_tokens || 0);
           progress.tokenUsage.totals.cache_read_tokens       = (progress.tokenUsage.totals.cache_read_tokens     || 0) + (u.cache_read_input_tokens     || 0);
           progress.tranches[nextTranche].tokenUsage = u;
+          // Store stop_reason, maxTokens, and thinking flag on the tranche for frontend display
+          progress.tranches[nextTranche].stopReason    = trancheResponseObj.stopReason || null;
+          progress.tranches[nextTranche].maxTokens     = trancheMaxTokens;
+          progress.tranches[nextTranche].thinkingUsed  = trancheUseThinking;
+          // Log stop_reason clearly — max_tokens here means response was cut short
+          console.log(
+            `[TRANCHE ${nextTranche + 1} DIAG] stop_reason=${trancheResponseObj.stopReason || 'null'} ` +
+            `output_tokens=${u.output_tokens || 0}/${trancheMaxTokens} ` +
+            `text_len=${trancheResponseObj.text ? trancheResponseObj.text.length : 0}`
+          );
+          if (trancheResponseObj.stopReason === 'max_tokens') {
+            console.warn(`[TRANCHE ${nextTranche + 1}] WARNING: stop_reason=max_tokens — response was truncated at ${trancheMaxTokens} tokens`);
+          }
           // Log cache efficiency per tranche
           if (u.cache_read_input_tokens > 0 || u.cache_creation_input_tokens > 0) {
             console.log(`[CACHE] Tranche ${nextTranche + 1}: created=${u.cache_creation_input_tokens || 0} read=${u.cache_read_input_tokens || 0} (saved ~${Math.round((u.cache_read_input_tokens || 0) * 0.9)} effective tokens)`);
