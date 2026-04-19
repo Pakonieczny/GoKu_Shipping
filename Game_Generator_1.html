@@ -1610,11 +1610,24 @@
     }
 
     function buildAiRequestPayload(promptText = '', existingValue = null, extras = {}) {
+      // If the caller already has an authoritative roadPipeline (resolved from the
+      // live dropdown at pipeline-start time), pass it through unchanged rather than
+      // re-deriving it from the DOM and heuristics. This prevents the prompt text
+      // or a stale DOM state from overriding a deliberate user override during the
+      // build. The prompt-sync listener does NOT pass roadPipeline in extras, so it
+      // continues to re-derive naturally from the live dropdown — which is correct
+      // behaviour outside the pipeline execution window.
+      const roadPipeline = (extras.roadPipeline && typeof extras.roadPipeline === 'object')
+        ? extras.roadPipeline
+        : mergeRoadPipelinePayload(existingValue?.roadPipeline || existingValue || null, promptText);
+      // Remove roadPipeline from extras before spreading so it doesn't overwrite
+      // the resolved value above.
+      const { roadPipeline: _ignored, ...restExtras } = extras;
       return {
         ...(existingValue && typeof existingValue === 'object' ? existingValue : {}),
-        ...extras,
+        ...restExtras,
         prompt: promptText,
-        roadPipeline: mergeRoadPipelinePayload(existingValue?.roadPipeline || existingValue || null, promptText),
+        roadPipeline,
         avatarPipeline: {
           zipPath: AVATARS_ZIP_PATH
         }
@@ -7422,6 +7435,16 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
         ? buildRepairPrompt(basePrompt, repairTargets, repairAttempt)
         : basePrompt;
 
+      // Build the authoritative road pipeline object once, here, reading the
+      // dropdown override. This single object is then used for the bootstrap
+      // check AND written into the Firebase payload — ensuring the user's
+      // override selection is never overwritten by a fresh heuristic re-run
+      // on subsequent calls to mergeRoadPipelinePayload(null, ...).
+      // Passing null as existingValue is correct on first run because
+      // getRoadPipelineOverrideValue() inside mergeRoadPipelinePayload reads
+      // the live dropdown — the override is captured there, not from storage.
+      const authorizedRoadPipeline = mergeRoadPipelinePayload(null, basePrompt);
+
 
       let scannedExtentsList = [];
       let modelAnalysisList = [];
@@ -7495,6 +7518,7 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
                 ? buildRepairPrompt(basePrompt, repairTargets, repairAttempt)
                 : basePrompt;
               const earlyPayload = JSON.stringify(buildAiRequestPayload(earlyPromptText, null, {
+                roadPipeline: authorizedRoadPipeline,
                 inlineImages: await Promise.all(attachedPromptImages.map(f =>
                   new Promise((res, rej) => {
                     const r2 = new FileReader();
@@ -7639,10 +7663,9 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
           }
         }
 
-        const detectedRoadPipeline = mergeRoadPipelinePayload(null, basePrompt);
-        if (detectedRoadPipeline.roadExclusionFlag) {
+        if (authorizedRoadPipeline.roadExclusionFlag) {
           Progress.step('Road Pipeline Bootstrap', 'Copying Road.zip pieces into models/ and refreshing manifest...');
-          const roadBootstrap = await ensureRoadPipelineAssets(currentProject, detectedRoadPipeline);
+          const roadBootstrap = await ensureRoadPipelineAssets(currentProject, authorizedRoadPipeline);
           appendToChatLog('System',
             `Road pipeline active: ${roadBootstrap.copiedCount} road piece(s) copied from Road.zip into models/.`, 'normal');
           await syncAssetsJson();
@@ -8162,7 +8185,7 @@ RULES FOR ALL PIPELINE STAGES:
         renderPromptImages();
         
         Progress.step('Uploading payload to Firebase', 'Bypassing Netlify async size limits...');
-        const payloadBody = JSON.stringify(buildAiRequestPayload(enhancedPrompt, null, { files: projectFiles, projectPath, selectedAssets, inlineImages, modelAnalysis: modelAnalysisList, expertAgents: EXPERT_AGENTS, repairAttempt, repairTargets }));
+        const payloadBody = JSON.stringify(buildAiRequestPayload(enhancedPrompt, { roadPipeline: authorizedRoadPipeline }, { files: projectFiles, projectPath, selectedAssets, inlineImages, modelAnalysis: modelAnalysisList, expertAgents: EXPERT_AGENTS, repairAttempt, repairTargets }));
         const requestFileRef = ref(storage, `${projectPath}/ai_request.json`);
         await uploadString(requestFileRef, payloadBody);
 
