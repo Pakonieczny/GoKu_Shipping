@@ -1349,7 +1349,12 @@
       }))
     ];
 
-    const REQUIRED_INSTRUCTION_KINDS = ['scaffold', 'sdk', 'reference_patterns'];
+    // Aligned with proxy's assertInstructionBundle contract (claudeCodeProxy-background.js
+    // line 1976): only scaffold + sdk are required. reference_patterns is optional —
+    // the proxy's buildPlanningReferencePatternContext / buildExecutionReferencePatternContext
+    // both return "" on empty input, so the pipeline runs fine without it.
+    const REQUIRED_INSTRUCTION_KINDS = ['scaffold', 'sdk'];
+    const OPTIONAL_INSTRUCTION_KINDS = ['reference_patterns'];
 
     const SCAFFOLD_SELECTOR_VERSION = '2026-04-20-scaffold-selector-v5-opus47-overlay-chooser';
     const SCAFFOLD_CHOOSER_ENDPOINT = '/.netlify/functions/claudeCodeProxy-background';
@@ -2147,12 +2152,9 @@ ${reasonsText || '1. Generic fallback — no strong signals detected.'}`;
     function getInstructionKindFromName(fileName = '') {
       const lower = String(fileName || '').toLowerCase();
       if (lower.includes('scaffold')) return 'scaffold';
-      if (
-        lower.includes('engine_reference') ||
-        lower.includes('engine-reference') ||
-        lower.includes('engine reference') ||
-        lower.includes('sdk')
-      ) return 'sdk';
+      // reference_patterns checked BEFORE sdk: a file like
+      // "reference_patterns_sdk.md" should be classified as patterns, not sdk.
+      // 'sdk' is a short substring that matches incidentally in many names.
       if (
         lower.includes('reference_game_patterns') ||
         lower.includes('reference-game-patterns') ||
@@ -2164,6 +2166,12 @@ ${reasonsText || '1. Generic fallback — no strong signals detected.'}`;
         lower.includes('pattern-pack') ||
         lower.includes('pattern pack')
       ) return 'reference_patterns';
+      if (
+        lower.includes('engine_reference') ||
+        lower.includes('engine-reference') ||
+        lower.includes('engine reference') ||
+        lower.includes('sdk')
+      ) return 'sdk';
       return 'other';
     }
 
@@ -2227,7 +2235,26 @@ ${reasonsText || '1. Generic fallback — no strong signals detected.'}`;
       const stillMissing = REQUIRED_INSTRUCTION_KINDS.filter(kind => !finalKinds.has(kind));
 
       if (stillMissing.length) {
-        throw new Error(`Project "${projectName}" is still missing required instruction file(s): ${stillMissing.join(', ')}`);
+        const classifyList = (files) => files.map(fileRef => {
+          const name = fileRef.name.split('/').pop();
+          return { name, fullPath: fileRef.fullPath, kind: getInstructionKindFromName(name) };
+        });
+        console.error('[ensureProjectInstructionBundle] missing required kinds after copy', {
+          projectName,
+          templateProjectName,
+          requiredKinds: REQUIRED_INSTRUCTION_KINDS,
+          stillMissing,
+          templateFiles: classifyList(templateFiles),
+          targetFilesAfterCopy: classifyList(finalFiles),
+          hint: `No file in template "${templateProjectName}" classified as one of: ${stillMissing.join(', ')}. ` +
+                `Upload a file whose name contains a recognized substring (e.g. "reference_game_patterns") ` +
+                `into ${ROOT}/${templateProjectName}/ai_system_instructions/.`
+        });
+        throw new Error(
+          `Project "${projectName}" is still missing required instruction file(s): ${stillMissing.join(', ')}. ` +
+          `Template "${templateProjectName}" has ${templateFiles.length} file(s) but none classified as ${stillMissing.join('/')}. ` +
+          `See console for per-file classification.`
+        );
       }
 
       return { copied, missingKinds };
