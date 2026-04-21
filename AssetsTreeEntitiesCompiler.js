@@ -37,6 +37,145 @@ export function createAssetsTreeEntitiesCompiler(deps = {}) {
   const FORBIDDEN_LEGACY_PRIMITIVE_MODEL_KEYS = new Set(['17', '18', '21', '34', '35']);
   const FORBIDDEN_LEGACY_PRIMITIVE_MODEL_TITLES = new Set(['cube.obj', 'cylinder.obj', 'sphere.obj', 'plane.obj', 'planevertical.obj']);
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // CANONICAL .primitives FOLDER — single source of truth.
+  //
+  // Every writer of assets.json MUST pass its output through enforcePrimitivesFolder()
+  // before upload, and writeCompiledJsonPackageAtomically() asserts this shape is
+  // intact immediately before upload. Corruption of .primitives has happened three
+  // times; the previous guards only checked that the folder entry existed, not that
+  // the 11 canonical children were present, so an empty-children folder survived
+  // every guard. That flaw is fixed here.
+  //
+  // If any of these 11 keys/titles ever need to change, change them HERE and only
+  // here. syncAssetsJson() in the Game Generator HTML reads this same definition
+  // (it's exported on the compiler's public API below).
+  // ─────────────────────────────────────────────────────────────────────────
+  const CANONICAL_PRIMITIVES_CHILDREN = Object.freeze([
+    { key: '4',  type: 'object', title: 'icosahedron.c3b', extension: 'c3b', children: [] },
+    { key: '5',  type: 'object', title: 'plane.c3b',       extension: 'c3b', children: [] },
+    { key: '6',  type: 'object', title: 'square.c3b',      extension: 'c3b', children: [] },
+    { key: '7',  type: 'object', title: 'torusknot.c3b',   extension: 'c3b', children: [] },
+    { key: '8',  type: 'object', title: 'tetrahedron.c3b', extension: 'c3b', children: [] },
+    { key: '9',  type: 'object', title: 'torus.c3b',       extension: 'c3b', children: [] },
+    { key: '10', type: 'object', title: 'sphere.c3b',      extension: 'c3b', children: [] },
+    { key: '11', type: 'object', title: 'cube.c3b',        extension: 'c3b', children: [] },
+    { key: '12', type: 'object', title: 'capsule.c3b',     extension: 'c3b', children: [] },
+    { key: '13', type: 'object', title: 'cone.c3b',        extension: 'c3b', children: [] },
+    { key: '14', type: 'object', title: 'cylinder.c3b',    extension: 'c3b', children: [] }
+  ]);
+  const PRIMITIVES_FOLDER_KEY = '0';
+  const REQUIRED_PRIMITIVE_KEYS = new Set(CANONICAL_PRIMITIVES_CHILDREN.map(c => c.key));
+
+  function buildCanonicalPrimitivesFolder() {
+    // Fresh, writable clone — callers may mutate the returned object.
+    return {
+      key: PRIMITIVES_FOLDER_KEY,
+      type: 'folder',
+      title: '.primitives',
+      hidden: true,
+      children: CANONICAL_PRIMITIVES_CHILDREN.map(c => ({ ...c, children: [] }))
+    };
+  }
+
+  // Normalizes the .primitives folder in a manifest array in-place-style (returns a
+  // new array; does not mutate the input). Guarantees that on return:
+  //   - an entry with key "0" exists
+  //   - that entry is a folder, titled ".primitives", hidden: true
+  //   - its children contain ALL 11 canonical primitives by (key, title)
+  //   - any pre-existing canonical child is preserved as-is (so future optional
+  //     metadata additions on those children are not clobbered)
+  //   - non-canonical children of the .primitives folder are dropped (the folder
+  //     is reserved; only the 11 canonical entries belong there)
+  function enforcePrimitivesFolder(manifestEntries) {
+    const entries = Array.isArray(manifestEntries) ? manifestEntries.slice() : [];
+    const existingIndex = entries.findIndex(e => e && String(e.key) === PRIMITIVES_FOLDER_KEY);
+
+    const existingChildrenByKey = new Map();
+    const existingChildrenByTitleLower = new Map();
+    if (existingIndex >= 0) {
+      const existingChildren = Array.isArray(entries[existingIndex]?.children) ? entries[existingIndex].children : [];
+      for (const child of existingChildren) {
+        if (!child || typeof child !== 'object') continue;
+        const key = String(child.key || '').trim();
+        const titleLower = String(child.title || '').trim().toLowerCase();
+        if (key) existingChildrenByKey.set(key, child);
+        if (titleLower) existingChildrenByTitleLower.set(titleLower, child);
+      }
+    }
+
+    const rebuiltChildren = CANONICAL_PRIMITIVES_CHILDREN.map(canonical => {
+      const titleLower = canonical.title.toLowerCase();
+      const preserved = existingChildrenByKey.get(canonical.key) || existingChildrenByTitleLower.get(titleLower);
+      if (preserved && typeof preserved === 'object') {
+        // Preserve any extra metadata the caller may have set on the existing child,
+        // but normalize the identity fields and children array.
+        return {
+          ...preserved,
+          key: canonical.key,
+          type: 'object',
+          title: canonical.title,
+          extension: 'c3b',
+          children: []
+        };
+      }
+      return { ...canonical, children: [] };
+    });
+
+    const canonicalFolder = {
+      key: PRIMITIVES_FOLDER_KEY,
+      type: 'folder',
+      title: '.primitives',
+      hidden: true,
+      children: rebuiltChildren
+    };
+
+    if (existingIndex >= 0) {
+      // Preserve any extra metadata on the folder entry itself (defensive — there
+      // shouldn't be any, but don't clobber), but force-canonicalize the identity
+      // fields and children.
+      const existingFolder = entries[existingIndex] || {};
+      entries[existingIndex] = {
+        ...existingFolder,
+        ...canonicalFolder
+      };
+    } else {
+      // Insert at the front so the folder appears in its canonical position.
+      entries.unshift(canonicalFolder);
+    }
+
+    return entries;
+  }
+
+  // Hard assertion — called at the write boundary. Throws loudly instead of silently
+  // self-healing, so any upstream corruption fails the build visibly instead of being
+  // papered over. enforcePrimitivesFolder() does the self-heal; this asserts that
+  // heal succeeded and nothing downstream re-broke it.
+  function assertPrimitivesPresent(manifestEntries = [], label = 'manifest') {
+    const entries = Array.isArray(manifestEntries) ? manifestEntries : [];
+    const folder = entries.find(e => e && String(e.key) === PRIMITIVES_FOLDER_KEY);
+    if (!folder) {
+      throw new Error(`${label} is missing the .primitives folder (key "${PRIMITIVES_FOLDER_KEY}"). All 11 canonical primitives (keys 4-14) are required.`);
+    }
+    if (folder.type !== 'folder') {
+      throw new Error(`${label} entry key "${PRIMITIVES_FOLDER_KEY}" must be a folder, got "${folder.type}".`);
+    }
+    const children = Array.isArray(folder.children) ? folder.children : [];
+    const foundKeys = new Set(children.map(c => c && String(c.key || '').trim()).filter(Boolean));
+    const missing = [];
+    for (const requiredKey of REQUIRED_PRIMITIVE_KEYS) {
+      if (!foundKeys.has(requiredKey)) missing.push(requiredKey);
+    }
+    if (missing.length > 0) {
+      const expected = CANONICAL_PRIMITIVES_CHILDREN
+        .filter(c => missing.includes(c.key))
+        .map(c => `${c.key}:${c.title}`)
+        .join(', ');
+      throw new Error(`${label} .primitives folder is missing required primitive entries: ${expected}. All 11 canonical primitives (keys 4-14) must be present.`);
+    }
+    return true;
+  }
+
 
   function createDefaultSceneIntent() {
     return {
@@ -635,10 +774,14 @@ export function createAssetsTreeEntitiesCompiler(deps = {}) {
       existingEntities = {}
     } = input;
 
-    const baseEntries = cloneJsonSafe(
+    // Normalize .primitives BEFORE any downstream work. If bootstrapAssets came in
+    // with an empty-children .primitives folder (the recurring corruption mode),
+    // this rebuilds it so every downstream step (material resolution, key
+    // allocation, tree/entities build) sees the complete primitive manifest.
+    const baseEntries = enforcePrimitivesFolder(cloneJsonSafe(
       (Array.isArray(bootstrapAssets) ? bootstrapAssets : []).filter(entry => entry?.type !== 'material'),
       []
-    );
+    ));
     const usedKeys = new Set(
       flattenAssetManifestEntries(baseEntries)
         .map(entry => entry?.key != null ? String(entry.key) : '')
@@ -1020,6 +1163,7 @@ export function createAssetsTreeEntitiesCompiler(deps = {}) {
 
     const compiledAssets = buildCanonicalAssetsJson(input);
     assertNoForbiddenLegacyPrimitiveModelEntries(compiledAssets.assets, 'compiled assets.json');
+    assertPrimitivesPresent(compiledAssets.assets, 'compiled assets.json');
     const tree = buildCanonicalTreeJson({ sceneIntent, existingTree, rigidbodyPlan });
     const entities = buildCanonicalEntitiesJson({
       sceneIntent,
@@ -1036,6 +1180,11 @@ export function createAssetsTreeEntitiesCompiler(deps = {}) {
 
   async function writeCompiledJsonPackageAtomically(projectName, compiled = {}) {
     if (!projectName) throw new Error('writeCompiledJsonPackageAtomically requires projectName.');
+
+    // HARD WRITE-BOUNDARY GUARD: never upload an assets.json without the canonical
+    // .primitives folder intact. This is the last line of defense — if every
+    // upstream enforcement somehow fails, this throws before any Firebase write.
+    assertPrimitivesPresent(Array.isArray(compiled.assets) ? compiled.assets : [], 'assets.json (pre-upload)');
 
     const payloadMap = {
       'json/assets.json': JSON.stringify(compiled.assets || []),
@@ -1175,6 +1324,14 @@ export function createAssetsTreeEntitiesCompiler(deps = {}) {
     buildCanonicalEntitiesJson,
     buildCanonicalJsonPackage,
     writeCompiledJsonPackageAtomically,
-    compileProjectJsonPackage
+    compileProjectJsonPackage,
+    // Primitives-folder source of truth — exported so syncAssetsJson() (and any
+    // future writer of assets.json) uses the same canonical definition and the
+    // same hard guard rather than re-implementing them with drift.
+    CANONICAL_PRIMITIVES_CHILDREN,
+    PRIMITIVES_FOLDER_KEY,
+    buildCanonicalPrimitivesFolder,
+    enforcePrimitivesFolder,
+    assertPrimitivesPresent
   };
 }

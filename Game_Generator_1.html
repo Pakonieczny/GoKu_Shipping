@@ -1330,7 +1330,7 @@
     const auth = getAuth(app);
 
     const FILE_CATEGORIES = [
-      { id: "instructions", title: "AI System Instructions (Scaffold + SDK)", accepts: "text/plain,.txt,.doc,.docx,.pdf,.js", folder: "ai_system_instructions" },
+      { id: "instructions", title: "AI System Instructions (Scaffold + SDK + Reference Pack)", accepts: "text/plain,.txt,.doc,.docx,.pdf,.js,.md", folder: "ai_system_instructions" },
       { id: "assets", title: "Game Assets (Images/Audio)", accepts: "image/*,audio/*,.png,.jpg,.jpeg,.mp3,.wav", folder: "assets" },
       { id: "object_zip", title: "Animated/Textured Object ZIP Package", accepts: ".zip", folder: "object_zips" },
       { id: "asset_particle_textures", title: "Asset_Particle_Textures (.zip)",          accepts: ".zip",       folder: "asset_particle_textures" },
@@ -1349,7 +1349,800 @@
       }))
     ];
 
-    const REQUIRED_INSTRUCTION_KINDS = ['scaffold', 'sdk'];
+    const REQUIRED_INSTRUCTION_KINDS = ['scaffold', 'sdk', 'reference_patterns'];
+
+    const SCAFFOLD_SELECTOR_VERSION = '2026-04-20-scaffold-selector-v5-opus47-overlay-chooser';
+    const SCAFFOLD_CHOOSER_ENDPOINT = '/.netlify/functions/claudeCodeProxy-background';
+    const SCAFFOLD_CACHE_ROOT = '_scaffold_cache';
+    const SCAFFOLD_FAMILY_SOURCE_ROOT = 'scaffold_families';
+    const SCAFFOLD_SELECTION_STATE_FILE = 'scaffold_selection.json';
+    const SCAFFOLD_SELECTION_MANIFEST_FILE = 'manifest.json';
+
+    const SCAFFOLD_FAMILY_REGISTRY = Object.freeze([
+      {
+        id: 'generic_universal',
+        label: 'Universal Core Scaffold',
+        version: '1',
+        baseScore: 18,
+        sectorTargets: {},
+        signalWeights: {
+          ambiguousCamera: 8,
+          ambiguousController: 8,
+          ambiguousWorld: 8,
+          ambiguousInteraction: 8
+        },
+        negativeSignalWeights: {
+          explicitGenreDirective: 12
+        }
+      },
+      {
+        id: 'sideview_vehicle_combat',
+        label: 'Side-View Vehicle Combat',
+        version: '1',
+        baseScore: 14,
+        sectorTargets: {
+          cameraSector: { value: 'side_view', weight: 26 },
+          controllerSector: { value: 'vehicle', weight: 20 },
+          worldSector: { value: 'terrain_shell', weight: 12 },
+          interactionSector: { value: 'shooter', weight: 14 }
+        },
+        signalWeights: {
+          sideViewCamera: 16,
+          vehiclePlayer: 18,
+          tankVehicle: 16,
+          turretPitchControl: 12,
+          ballisticProjectileCombat: 10,
+          rollingTerrain: 12,
+          directIntegrationMode: 8,
+          upgradeMetaLoop: 6,
+          terrainPipelineActive: 4
+        },
+        negativeSignalWeights: {
+          topDownCamera: 24,
+          firstPersonCamera: 26,
+          twinStickAim: 14,
+          laneRunner: 14,
+          puzzleStructure: 18
+        }
+      },
+      {
+        id: 'sideview_vehicle_runner',
+        label: 'Side-View Vehicle Runner / Hill Climb',
+        version: '1',
+        baseScore: 12,
+        sectorTargets: {
+          cameraSector: { value: 'side_view', weight: 24 },
+          controllerSector: { value: 'vehicle', weight: 18 },
+          worldSector: { value: 'terrain_shell', weight: 16 },
+          interactionSector: { value: 'runner', weight: 16 }
+        },
+        signalWeights: {
+          sideViewCamera: 14,
+          vehiclePlayer: 16,
+          rollingTerrain: 16,
+          laneRunner: 8,
+          checkpointRace: 6,
+          directIntegrationMode: 6
+        },
+        negativeSignalWeights: {
+          tankVehicle: 10,
+          topDownCamera: 18,
+          puzzleStructure: 16,
+          twinStickAim: 14
+        }
+      },
+      {
+        id: 'sideview_platform_shooter',
+        label: 'Side-View Platform Shooter',
+        version: '1',
+        baseScore: 12,
+        sectorTargets: {
+          cameraSector: { value: 'side_view', weight: 24 },
+          controllerSector: { value: 'character', weight: 16 },
+          worldSector: { value: 'terrain_shell', weight: 14 },
+          interactionSector: { value: 'shooter', weight: 16 }
+        },
+        signalWeights: {
+          sideViewCamera: 16,
+          platformerMotion: 16,
+          jumpCentric: 10,
+          shooterCombat: 10,
+          hazardPlatforming: 8,
+          directIntegrationMode: 4
+        },
+        negativeSignalWeights: {
+          vehiclePlayer: 16,
+          tankVehicle: 18,
+          topDownCamera: 18,
+          puzzleStructure: 12
+        }
+      },
+      {
+        id: 'sideview_platform_melee',
+        label: 'Side-View Platform Melee / Brawler',
+        version: '1',
+        baseScore: 10,
+        sectorTargets: {
+          cameraSector: { value: 'side_view', weight: 24 },
+          controllerSector: { value: 'character', weight: 18 },
+          worldSector: { value: 'terrain_shell', weight: 12 },
+          interactionSector: { value: 'melee', weight: 16 }
+        },
+        signalWeights: {
+          sideViewCamera: 16,
+          platformerMotion: 12,
+          jumpCentric: 8,
+          meleeCombat: 14,
+          hazardPlatforming: 6
+        },
+        negativeSignalWeights: {
+          vehiclePlayer: 18,
+          shooterCombat: 10,
+          topDownCamera: 18,
+          twinStickAim: 12
+        }
+      },
+      {
+        id: 'topdown_vehicle_combat',
+        label: 'Top-Down Vehicle Combat',
+        version: '1',
+        baseScore: 12,
+        sectorTargets: {
+          cameraSector: { value: 'top_down', weight: 24 },
+          controllerSector: { value: 'vehicle', weight: 18 },
+          worldSector: { value: 'arena', weight: 14 },
+          interactionSector: { value: 'shooter', weight: 14 }
+        },
+        signalWeights: {
+          topDownCamera: 18,
+          vehiclePlayer: 18,
+          shooterCombat: 10,
+          arenaStructure: 8,
+          waveStructure: 6
+        },
+        negativeSignalWeights: {
+          sideViewCamera: 20,
+          tankVehicle: 8,
+          firstPersonCamera: 22,
+          laneRunner: 14,
+          puzzleStructure: 16
+        }
+      },
+      {
+        id: 'topdown_action_arena',
+        label: 'Top-Down Action Arena',
+        version: '1',
+        baseScore: 12,
+        sectorTargets: {
+          cameraSector: { value: 'top_down', weight: 24 },
+          controllerSector: { value: 'character', weight: 16 },
+          worldSector: { value: 'arena', weight: 16 },
+          interactionSector: { value: 'combat', weight: 14 }
+        },
+        signalWeights: {
+          topDownCamera: 18,
+          arenaStructure: 14,
+          shooterCombat: 8,
+          meleeCombat: 8,
+          waveStructure: 8,
+          upgradeMetaLoop: 4
+        },
+        negativeSignalWeights: {
+          vehiclePlayer: 16,
+          sideViewCamera: 18,
+          firstPersonCamera: 22,
+          laneRunner: 16
+        }
+      },
+      {
+        id: 'topdown_twin_stick_shooter',
+        label: 'Top-Down Twin-Stick Shooter',
+        version: '1',
+        baseScore: 12,
+        sectorTargets: {
+          cameraSector: { value: 'top_down', weight: 24 },
+          controllerSector: { value: 'character', weight: 14 },
+          worldSector: { value: 'arena', weight: 14 },
+          interactionSector: { value: 'shooter', weight: 18 }
+        },
+        signalWeights: {
+          topDownCamera: 18,
+          twinStickAim: 18,
+          shooterCombat: 12,
+          waveStructure: 8,
+          arenaStructure: 8
+        },
+        negativeSignalWeights: {
+          vehiclePlayer: 18,
+          sideViewCamera: 18,
+          laneRunner: 16,
+          puzzleStructure: 16
+        }
+      },
+      {
+        id: 'runner_lane_survival',
+        label: 'Lane Runner Survival',
+        version: '1',
+        baseScore: 10,
+        sectorTargets: {
+          cameraSector: { value: 'side_view', weight: 14 },
+          controllerSector: { value: 'character', weight: 10 },
+          worldSector: { value: 'lanes', weight: 22 },
+          interactionSector: { value: 'runner', weight: 18 }
+        },
+        signalWeights: {
+          laneRunner: 20,
+          survivalPressure: 12,
+          hazardPlatforming: 8,
+          checkpointRace: 6
+        },
+        negativeSignalWeights: {
+          vehiclePlayer: 16,
+          topDownCamera: 18,
+          firstPersonCamera: 22,
+          puzzleStructure: 14,
+          tankVehicle: 18
+        }
+      },
+      {
+        id: 'racing_track_builder',
+        label: 'Racing / Track Builder',
+        version: '1',
+        baseScore: 12,
+        sectorTargets: {
+          cameraSector: { value: 'third_person', weight: 12 },
+          controllerSector: { value: 'vehicle', weight: 20 },
+          worldSector: { value: 'road_track', weight: 24 },
+          interactionSector: { value: 'racing', weight: 18 }
+        },
+        signalWeights: {
+          racingLoop: 18,
+          checkpointRace: 14,
+          roadPipelineActive: 18,
+          trackStructure: 16,
+          vehiclePlayer: 16
+        },
+        negativeSignalWeights: {
+          sideViewCamera: 12,
+          topDownCamera: 14,
+          puzzleStructure: 18,
+          towerDefense: 20
+        }
+      },
+      {
+        id: 'physics_puzzle_object',
+        label: 'Physics Puzzle / Object Interaction',
+        version: '1',
+        baseScore: 12,
+        sectorTargets: {
+          controllerSector: { value: 'object', weight: 16 },
+          worldSector: { value: 'puzzle', weight: 24 },
+          interactionSector: { value: 'puzzle', weight: 22 }
+        },
+        signalWeights: {
+          puzzleStructure: 18,
+          builderStructure: 8,
+          physicsDrivenMode: 10,
+          ambiguousCamera: 4
+        },
+        negativeSignalWeights: {
+          shooterCombat: 16,
+          tankVehicle: 20,
+          laneRunner: 18,
+          racingLoop: 20
+        }
+      },
+      {
+        id: 'thirdperson_action_combat',
+        label: '3D Third-Person Action Combat',
+        version: '1',
+        baseScore: 12,
+        sectorTargets: {
+          cameraSector: { value: 'third_person', weight: 24 },
+          controllerSector: { value: 'character', weight: 16 },
+          worldSector: { value: 'arena', weight: 8 },
+          interactionSector: { value: 'combat', weight: 16 }
+        },
+        signalWeights: {
+          thirdPersonCamera: 18,
+          meleeCombat: 10,
+          shooterCombat: 8,
+          survivalPressure: 6
+        },
+        negativeSignalWeights: {
+          sideViewCamera: 18,
+          topDownCamera: 20,
+          firstPersonCamera: 22,
+          vehiclePlayer: 16,
+          puzzleStructure: 12
+        }
+      },
+      {
+        id: 'firstperson_shooter',
+        label: 'First-Person Shooter',
+        version: '1',
+        baseScore: 12,
+        sectorTargets: {
+          cameraSector: { value: 'first_person', weight: 28 },
+          controllerSector: { value: 'character', weight: 14 },
+          interactionSector: { value: 'shooter', weight: 18 }
+        },
+        signalWeights: {
+          firstPersonCamera: 22,
+          shooterCombat: 12,
+          waveStructure: 8
+        },
+        negativeSignalWeights: {
+          sideViewCamera: 22,
+          topDownCamera: 20,
+          vehiclePlayer: 14,
+          puzzleStructure: 12
+        }
+      },
+      {
+        id: 'tower_defense_builder',
+        label: 'Tower Defense / Builder',
+        version: '1',
+        baseScore: 10,
+        sectorTargets: {
+          cameraSector: { value: 'top_down', weight: 18 },
+          worldSector: { value: 'lanes', weight: 12 },
+          interactionSector: { value: 'builder', weight: 22 }
+        },
+        signalWeights: {
+          towerDefense: 22,
+          builderStructure: 14,
+          topDownCamera: 10,
+          laneRunner: 6
+        },
+        negativeSignalWeights: {
+          tankVehicle: 20,
+          firstPersonCamera: 22,
+          sideViewCamera: 14,
+          meleeCombat: 10
+        }
+      },
+      {
+        id: 'flight_arcade_combat',
+        label: 'Flight / Arcade Air Combat',
+        version: '1',
+        baseScore: 10,
+        sectorTargets: {
+          cameraSector: { value: 'third_person', weight: 14 },
+          controllerSector: { value: 'vehicle', weight: 16 },
+          interactionSector: { value: 'shooter', weight: 16 }
+        },
+        signalWeights: {
+          flightCombat: 22,
+          vehiclePlayer: 8,
+          shooterCombat: 8
+        },
+        negativeSignalWeights: {
+          sideViewCamera: 16,
+          topDownCamera: 16,
+          puzzleStructure: 18,
+          towerDefense: 18
+        }
+      }
+    ]);
+
+    function normalizeTextForSelector(text = '') {
+      return String(text || '')
+        .replace(/\r/g, '\n')
+        .replace(/[“”]/g, '"')
+        .replace(/[‘’]/g, "'")
+        .replace(/\t/g, ' ')
+        .replace(/[^\S\n]+/g, ' ')
+        .trim();
+    }
+
+    function stableStringifyForSelector(value) {
+      if (Array.isArray(value)) {
+        return `[${value.map(stableStringifyForSelector).join(',')}]`;
+      }
+      if (value && typeof value === 'object') {
+        return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${stableStringifyForSelector(value[key])}`).join(',')}}`;
+      }
+      return JSON.stringify(value);
+    }
+
+    function hashStringFNV1a(input = '') {
+      let hash = 0x811c9dc5;
+      const text = String(input || '');
+      for (let i = 0; i < text.length; i++) {
+        hash ^= text.charCodeAt(i);
+        hash = Math.imul(hash, 0x01000193);
+      }
+      return (hash >>> 0).toString(16).padStart(8, '0');
+    }
+
+    function getFamilyTemplateBasePath(familyId) {
+      return `${ROOT}/${DEFAULT_TEMPLATE_PROJECT}/${SCAFFOLD_FAMILY_SOURCE_ROOT}/${familyId}`;
+    }
+
+    function getScaffoldFamilyById(familyId) {
+      return SCAFFOLD_FAMILY_REGISTRY.find(f => f.id === familyId) || SCAFFOLD_FAMILY_REGISTRY[0];
+    }
+
+    function parsePromptLineValue(text = '', labelRegex) {
+      const match = String(text || '').match(labelRegex);
+      return match ? String(match[1] || '').trim() : '';
+    }
+
+    function inferDominantSector(signalNames = [], sectorMap = {}) {
+      let best = 'ambiguous';
+      let bestScore = 0;
+      for (const [sectorName, names] of Object.entries(sectorMap)) {
+        const score = names.reduce((sum, name) => sum + (signalNames.includes(name) ? 1 : 0), 0);
+        if (score > bestScore) {
+          best = sectorName;
+          bestScore = score;
+        }
+      }
+      return best;
+    }
+
+    function extractScaffoldSignals(promptText = '', roadPipeline = null) {
+      const text = normalizeTextForSelector(promptText);
+      const lower = text.toLowerCase();
+      const activeSignals = new Set();
+      const evidence = {};
+      const addSignal = (name, matched, why) => {
+        if (!matched) return;
+        activeSignals.add(name);
+        if (why) {
+          evidence[name] = evidence[name] || [];
+          if (!evidence[name].includes(why)) evidence[name].push(why);
+        }
+      };
+      const hasAny = (...patterns) => patterns.some(pattern => pattern.test(lower));
+      const hasTokenWithContext = (tokenPattern, ...contextPatterns) => tokenPattern.test(lower) && hasAny(...contextPatterns);
+
+      const primaryFeel = parsePromptLineValue(text, /Primary Feel Match\s*:\s*([^\n]+)/i);
+      const controlParadigm = parsePromptLineValue(text, /Control Paradigm\s*:\s*([^\n]+)/i);
+      const movementMode = parsePromptLineValue(text, /movementMode\s*:\s*([^\n]+)/i);
+      const cameraType = parsePromptLineValue(text, /Camera type\s*:\s*([^\n]+)/i);
+      const roadGate = parsePromptLineValue(text, /Road\/Terrain Pipeline Gate\s*:\s*([^\n]+)/i);
+
+      const combatContext = hasAny(
+        /\bcombat\b/, /\bbattle\b/, /\bduel\b/, /\benemy\b/, /\bboss\b/,
+        /\bweapon\b/, /\bweapons\b/, /\bprojectile\b/, /\bshoot(?:er|ing)?\b/,
+        /\bgun(?:play|fire)?\b/, /\bcannon\b/, /\bturret\b/, /\bshell\b/,
+        /\bmissile\b/, /\bdogfight\b/, /\bair combat\b/
+      );
+      const vehicleContext = hasAny(
+        /\bvehicle\b/, /\bdrive\b/, /\bdriving\b/, /\bdriver\b/, /\bwheel\b/, /\bengine\b/,
+        /\bcar\b/, /\btruck\b/, /\bbike\b/, /\bbuggy\b/, /\bhovercraft\b/, /\bship\b/, /\bboat\b/,
+        /\bplane\b/, /\bjet\b/, /\bhelicopter\b/, /\baircraft\b/, /\bchase vehicle\b/
+      );
+      const airCombatContext = hasAny(
+        /\bflight\b/, /\bdogfight\b/, /\bair combat\b/, /\baerial\b/, /\baircraft\b/,
+        /\bwarplane\b/, /\bfighter jet\b/, /\bjet fighter\b/, /\bcombat aircraft\b/, /\bhelicopter\b/
+      );
+      const racingContext = hasAny(
+        /\bcircuit\b/, /\braceway\b/, /\btrack\b/, /\bcheckpoint\b/, /\blaps?\b/, /\bfinish line\b/,
+        /\btime trial\b/, /\bstarting grid\b/, /\bpit lane\b/, /\bracing\b/, /\brace\b/
+      );
+      const tankContext = hasAny(
+        /\bturret\b/, /\bcannon\b/, /\bshell\b/, /\barmou?red\b/, /\bplayer tank\b/, /\benemy tank\b/, /\btank battler\b/
+      ) || (/\btank\b/.test(lower) && combatContext);
+
+      addSignal('explicitGenreDirective', Boolean(primaryFeel || controlParadigm || movementMode || cameraType || roadGate), 'Explicit contract headings found in prompt.');
+      addSignal('sideViewCamera',
+        hasAny(/\bside[- ]view\b/, /\bside[- ]follow\b/, /\bside[- ]scroll\b/, /\b2\.5d\b/, /\bleft third\b/, /\bside plane\b/) ||
+        /\bsection m\b/i.test(primaryFeel) ||
+        /\bside\b/i.test(cameraType),
+        primaryFeel ? `Primary Feel Match: ${primaryFeel}` : (cameraType || controlParadigm || 'Side-view keywords detected'));
+      addSignal('topDownCamera',
+        hasAny(/\btop[- ]down\b/, /\boverhead\b/, /\bisometric\b/) || /\btop\b/i.test(cameraType),
+        cameraType || 'Top-down camera keywords detected');
+      addSignal('thirdPersonCamera',
+        hasAny(/\bthird[- ]person\b/, /\bover[- ]the[- ]shoulder\b/, /\bchase camera\b/),
+        cameraType || 'Third-person camera keywords detected');
+      addSignal('firstPersonCamera',
+        hasAny(/\bfirst[- ]person\b/, /\bfps\b/, /\bgun view\b/, /\bviewmodel\b/),
+        cameraType || 'First-person camera keywords detected');
+
+      addSignal('vehiclePlayer',
+        hasAny(/\bvehicle\b/, /\bcar\b/, /\btruck\b/, /\bbike\b/, /\bbuggy\b/, /\bhovercraft\b/, /\bship\b/, /\bboat\b/) ||
+        tankContext ||
+        hasTokenWithContext(/\bjet\b/, /\bjet fighter\b/, /\bfighter jet\b/, /\bcombat aircraft\b/, /\bair combat\b/, /\bdogfight\b/) ||
+        hasTokenWithContext(/\bplane\b/, /\bwarplane\b/, /\bcombat aircraft\b/, /\bair combat\b/, /\bdogfight\b/) ||
+        hasTokenWithContext(/\bhelicopter\b/, /\bair combat\b/, /\bgunship\b/, /\bcombat\b/) ||
+        (/\bavatar\b/.test(lower) && vehicleContext),
+        controlParadigm || 'Vehicle/avatar keywords detected');
+      addSignal('tankVehicle',
+        tankContext,
+        controlParadigm || 'Tank-specific keywords detected');
+      addSignal('turretPitchControl',
+        hasAny(/\bturret pitch\b/, /\bpitch up\b/, /\bpitch down\b/, /\bbarrel\b/, /\bindependent turret\b/, /\bdiscrete pitch\b/),
+        controlParadigm || 'Turret pitch control keywords detected');
+      addSignal('platformerMotion',
+        hasAny(/\bplatformer\b/, /\bplatforming\b/, /\bjump between\b/, /\bjump arc\b/, /\b2\.5d platformer\b/),
+        primaryFeel || controlParadigm || 'Platformer keywords detected');
+      addSignal('jumpCentric',
+        hasAny(/\bjump\b/, /\bdouble jump\b/, /\bwall jump\b/, /\bair control\b/) && !hasAny(/\bno jump verb\b/, /\bdoes not jump\b/),
+        controlParadigm || 'Jump-focused motion keywords detected');
+      addSignal('noJumpVerb',
+        hasAny(/\bno jump verb\b/, /\bdoes not jump\b/, /\breplace .* jump\b/),
+        primaryFeel || controlParadigm || 'Explicit no-jump directive detected');
+
+      addSignal('topDownTwinStickFamily',
+        hasAny(/\btwin stick\b/, /\bdual stick\b/, /\bright stick\b/, /\bmouse aim\b/, /\b360 aim\b/),
+        controlParadigm || 'Twin-stick aim keywords detected');
+      addSignal('twinStickAim',
+        hasAny(/\btwin stick\b/, /\bdual stick\b/, /\bmouse aim\b/, /\bfree cursor aim\b/, /\b360 aim\b/) &&
+        !hasAny(/\bno pointer-to-world aiming\b/, /\bnever replace discrete .* with mouse-world aim\b/),
+        controlParadigm || 'Twin-stick / free aim keywords detected');
+      addSignal('shooterCombat',
+        hasAny(/\bshoot(?:er|ing)?\b/, /\bprojectile\b/, /\bgun(?:play|fire)?\b/, /\bfire shell\b/, /\bcannon fire\b/, /\bopen fire\b/, /\bgunfire\b/, /\bballistic\b/, /\bshell trading\b/),
+        controlParadigm || 'Shooter / projectile combat keywords detected');
+      addSignal('ballisticProjectileCombat',
+        hasAny(/\bballistic\b/, /\barcing shell\b/, /\bshell gravity\b/, /\bprojectile arc\b/, /\barcing projectile\b/),
+        controlParadigm || 'Ballistic projectile keywords detected');
+      addSignal('meleeCombat',
+        hasAny(/\bmelee\b/, /\bsword\b/, /\bslash\b/, /\bbrawler\b/, /\bcombo\b/, /\battack chain\b/),
+        controlParadigm || 'Melee combat keywords detected');
+      addSignal('arenaStructure',
+        hasAny(/\barena\b/, /\bwaves?\b/, /\bsurvive\b/, /\bcombat room\b/, /\bencounter arena\b/),
+        controlParadigm || 'Arena encounter keywords detected');
+      addSignal('waveStructure',
+        hasAny(/\bwaves?\b/, /\bhorde\b/, /\bsurvival\b/, /\bendless\b/, /\bencounter segment\b/),
+        controlParadigm || 'Wave / survival keywords detected');
+      addSignal('survivalPressure',
+        hasAny(/\bsurvival\b/, /\bavoid\b/, /\bdon't get hit\b/, /\bstay alive\b/, /\bpressure\b/),
+        controlParadigm || 'Survival pressure keywords detected');
+
+      addSignal('rollingTerrain',
+        hasAny(/\brolling ground\b/, /\bhilly terrain\b/, /\bterrain strip\b/, /\bhill climb\b/, /\bcrest\b/, /\bslope\b/, /\bterrain shell\b/),
+        roadGate || controlParadigm || 'Rolling terrain keywords detected');
+      addSignal('trackStructure',
+        hasAny(/\bcircuit\b/, /\braceway\b/, /\broad section\b/, /\btrack segment\b/, /\broad\.zip\b/) ||
+        (hasAny(/\btrack\b/, /\brace\b/, /\bracing\b/) && racingContext),
+        roadGate || 'Track / road keywords detected');
+      addSignal('roadPipelineActive',
+        Boolean(roadPipeline?.roadExclusionFlag) || hasAny(/\broad pipeline\b/, /\broad\.zip\b/, /\btrack segment\b/),
+        roadPipeline?.roadExclusionFlag ? `Road pipeline active (${roadPipeline.gameType || 'other'})` : (roadGate || 'Road pipeline keywords detected'));
+      addSignal('terrainPipelineActive',
+        hasAny(/\bterrain pipeline yes\b/, /\bterrain pipeline\b/, /\bterrain shell\b/, /\bprimitives keys 4-14\b/, /\brolling ground built from\b/),
+        roadGate || 'Terrain pipeline keywords detected');
+      addSignal('checkpointRace',
+        hasAny(/\bcheckpoint\b/, /\bfinish line\b/, /\btime trial\b/) ||
+        (/\blap\b/.test(lower) && racingContext) ||
+        ((/\brace\b/.test(lower) || /\bracing\b/.test(lower)) && hasAny(/\bcheckpoint\b/, /\bfinish line\b/, /\bcircuit\b/, /\braceway\b/, /\btrack\b/)),
+        controlParadigm || 'Checkpoint / race keywords detected');
+      addSignal('racingLoop',
+        hasAny(/\blaps\b/, /\bstarting grid\b/, /\bpit lane\b/, /\bcircuit\b/, /\braceway\b/, /\btime trial\b/) ||
+        ((/\brace\b/.test(lower) || /\bracing\b/.test(lower)) && hasAny(/\bvehicle\b/, /\bcar\b/, /\btruck\b/, /\bbike\b/, /\bcircuit\b/, /\btrack\b/, /\bcheckpoint\b/, /\bfinish line\b/)),
+        controlParadigm || 'Racing loop keywords detected');
+
+      addSignal('laneRunner',
+        hasAny(/\blane\b/, /\bendless runner\b/, /\brunner\b/, /\blane switch\b/, /\bthree lane\b/),
+        controlParadigm || 'Lane runner keywords detected');
+      addSignal('puzzleStructure',
+        hasAny(/\bpuzzle\b/, /\bphysics puzzle\b/, /\bsolve\b/, /\bmechanism\b/, /\blogic puzzle\b/),
+        controlParadigm || 'Puzzle keywords detected');
+      addSignal('builderStructure',
+        hasAny(/\bbuild\b/, /\bplace towers\b/, /\bconstruction\b/, /\bmanage layout\b/),
+        controlParadigm || 'Builder / construction keywords detected');
+      addSignal('towerDefense',
+        hasAny(/\btower defense\b/, /\bplace towers\b/, /\benemy path\b/, /\bcreeps\b/),
+        controlParadigm || 'Tower defense keywords detected');
+      addSignal('flightCombat',
+        hasAny(/\bflight\b/, /\bdogfight\b/, /\bair combat\b/, /\bhelicopter gunship\b/, /\bwarplane\b/, /\bjet fighter\b/, /\bfighter jet\b/, /\bcombat aircraft\b/) ||
+        hasTokenWithContext(/\bjet\b/, /\bjet fighter\b/, /\bfighter jet\b/, /\bcombat aircraft\b/, /\bdogfight\b/, /\bair combat\b/) ||
+        hasTokenWithContext(/\bplane\b/, /\bwarplane\b/, /\bcombat aircraft\b/, /\bdogfight\b/, /\bair combat\b/) ||
+        hasTokenWithContext(/\bhelicopter\b/, /\bgunship\b/, /\bair combat\b/, /\bdogfight\b/, /\bcombat\b/),
+        controlParadigm || 'Flight / air combat keywords detected');
+
+      addSignal('upgradeMetaLoop',
+        hasAny(/\bupgrade\b/, /\bcurrency\b/, /\bpersist\b/, /\bmeta\b/, /\bstage reward\b/, /\bcash out\b/),
+        'Upgrade / persistence loop keywords detected');
+      addSignal('overlayHeavy',
+        hasAny(/\boverlay\b/, /\bhud\b/, /\bmodal\b/, /\breward panel\b/, /\bfail modal\b/, /\bfile `25`\b/),
+        'Overlay / modal UI contract detected');
+      addSignal('directIntegrationMode',
+        /\bdirect_integration\b/i.test(movementMode) || hasAny(/\bdirect integration\b/),
+        movementMode || 'direct_integration detected');
+      addSignal('physicsDrivenMode',
+        /\bphysics_driven\b/i.test(movementMode) || hasAny(/\bphysics driven\b/, /\brigidbody-driven\b/),
+        movementMode || 'physics_driven detected');
+
+      const cameraSector = inferDominantSector([...activeSignals], {
+        side_view: ['sideViewCamera'],
+        top_down: ['topDownCamera'],
+        third_person: ['thirdPersonCamera'],
+        first_person: ['firstPersonCamera']
+      });
+      const controllerSector = inferDominantSector([...activeSignals], {
+        vehicle: ['vehiclePlayer', 'tankVehicle', 'flightCombat'],
+        character: ['platformerMotion', 'jumpCentric', 'meleeCombat', 'topDownTwinStickFamily'],
+        object: ['puzzleStructure', 'builderStructure']
+      });
+      const worldSector = inferDominantSector([...activeSignals], {
+        terrain_shell: ['rollingTerrain', 'terrainPipelineActive'],
+        road_track: ['roadPipelineActive', 'trackStructure', 'racingLoop'],
+        arena: ['arenaStructure', 'waveStructure'],
+        lanes: ['laneRunner', 'towerDefense'],
+        puzzle: ['puzzleStructure']
+      });
+      const interactionSector = inferDominantSector([...activeSignals], {
+        shooter: ['shooterCombat', 'ballisticProjectileCombat', 'topDownTwinStickFamily'],
+        melee: ['meleeCombat'],
+        runner: ['laneRunner', 'survivalPressure'],
+        racing: ['racingLoop', 'checkpointRace'],
+        puzzle: ['puzzleStructure'],
+        builder: ['builderStructure', 'towerDefense'],
+        combat: ['arenaStructure', 'waveStructure', 'shooterCombat', 'meleeCombat']
+      });
+
+      addSignal('ambiguousCamera', cameraSector === 'ambiguous', 'No dominant camera family detected.');
+      addSignal('ambiguousController', controllerSector === 'ambiguous', 'No dominant controller family detected.');
+      addSignal('ambiguousWorld', worldSector === 'ambiguous', 'No dominant world-shell family detected.');
+      addSignal('ambiguousInteraction', interactionSector === 'ambiguous', 'No dominant interaction family detected.');
+
+      const summary = {
+        primaryFeel,
+        controlParadigm,
+        movementMode,
+        cameraType,
+        roadGate,
+        roadPipeline: {
+          active: Boolean(roadPipeline?.roadExclusionFlag),
+          gameType: roadPipeline?.gameType || 'other'
+        },
+        sectors: {
+          cameraSector,
+          controllerSector,
+          worldSector,
+          interactionSector
+        },
+        signalCount: activeSignals.size
+      };
+
+      return {
+        text,
+        lower,
+        activeSignals: [...activeSignals],
+        evidence,
+        summary
+      };
+    }
+
+    function evaluateScaffoldFamily(family, extracted) {
+      let score = Number(family.baseScore || 0);
+      const checklist = [];
+      const matchedSignals = [];
+      const penalizedSignals = [];
+      const activeSet = new Set(extracted.activeSignals);
+      const sectorWeights = Object.values(family.sectorTargets || {}).map(config => Number(config?.weight || 0));
+      const totalSectorWeight = sectorWeights.reduce((sum, value) => sum + value, 0);
+      const maxSectorPenalty = Math.max(12, Math.round(totalSectorWeight * 0.55));
+      const maxNegativePenalty = Math.max(18, Math.round(Number(family.baseScore || 0) * 0.85));
+      let sectorPenaltyApplied = 0;
+      let negativePenaltyApplied = 0;
+
+      const pushChecklist = (kind, label, delta, evidenceText) => {
+        checklist.push({ kind, label, delta, evidence: evidenceText || '' });
+      };
+
+      const sectors = extracted.summary?.sectors || {};
+      for (const [sectorName, config] of Object.entries(family.sectorTargets || {})) {
+        const expected = config?.value;
+        const weight = Number(config?.weight || 0);
+        const actual = sectors[sectorName] || 'ambiguous';
+        if (!expected || !weight) continue;
+        if (actual === expected) {
+          score += weight;
+          pushChecklist('sector_match', `${sectorName} matched ${expected}`, weight, `Detected ${actual}.`);
+        } else if (actual !== 'ambiguous') {
+          const rawPenalty = Math.max(1, Math.round(weight * 0.45));
+          const remainingCap = Math.max(0, maxSectorPenalty - sectorPenaltyApplied);
+          const appliedPenalty = Math.min(rawPenalty, remainingCap);
+          if (appliedPenalty > 0) {
+            score -= appliedPenalty;
+            sectorPenaltyApplied += appliedPenalty;
+            pushChecklist('sector_mismatch', `${sectorName} expected ${expected} but detected ${actual}`, -appliedPenalty, `Detected ${actual}. (capped)`);
+          }
+        }
+      }
+
+      for (const [signalName, weightRaw] of Object.entries(family.signalWeights || {})) {
+        const weight = Number(weightRaw || 0);
+        if (!weight) continue;
+        if (activeSet.has(signalName)) {
+          score += weight;
+          matchedSignals.push(signalName);
+          pushChecklist('positive_signal', signalName, weight, (extracted.evidence[signalName] || []).join(' | '));
+        }
+      }
+
+      for (const [signalName, penaltyRaw] of Object.entries(family.negativeSignalWeights || {})) {
+        const penalty = Number(penaltyRaw || 0);
+        if (!penalty) continue;
+        if (activeSet.has(signalName)) {
+          const remainingCap = Math.max(0, maxNegativePenalty - negativePenaltyApplied);
+          const appliedPenalty = Math.min(penalty, remainingCap);
+          if (appliedPenalty > 0) {
+            score -= appliedPenalty;
+            negativePenaltyApplied += appliedPenalty;
+            penalizedSignals.push(signalName);
+            pushChecklist('negative_signal', signalName, -appliedPenalty, (extracted.evidence[signalName] || []).join(' | '));
+          }
+        }
+      }
+
+      score = Math.max(0, score);
+
+      return {
+        id: family.id,
+        label: family.label,
+        version: family.version,
+        rawScore: score,
+        matchedSignals,
+        penalizedSignals,
+        checklist: checklist.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
+      };
+    }
+
+    function rankScaffoldFamilies(promptText = '', roadPipeline = null) {
+      const extracted = extractScaffoldSignals(promptText, roadPipeline);
+      const scoredFamilies = SCAFFOLD_FAMILY_REGISTRY
+        .map(family => evaluateScaffoldFamily(family, extracted))
+        .sort((a, b) => b.rawScore - a.rawScore);
+
+      const winner = scoredFamilies[0];
+      const runnerUp = scoredFamilies[1] || null;
+      const margin = winner ? (winner.rawScore - (runnerUp?.rawScore || 0)) : 0;
+      const ambiguityPenalty =
+        (extracted.activeSignals.includes('ambiguousCamera') ? 9 : 0) +
+        (extracted.activeSignals.includes('ambiguousController') ? 8 : 0) +
+        (extracted.activeSignals.includes('ambiguousWorld') ? 6 : 0) +
+        (extracted.activeSignals.includes('ambiguousInteraction') ? 6 : 0);
+      const explicitnessBonus = Math.min(16, Math.round(extracted.summary.signalCount * 0.9));
+      const marginScore = Math.max(0, Math.min(34, Math.round(margin * 1.6)));
+      const winnerStrength = Math.max(0, Math.min(22, Math.round(((winner?.rawScore || 0) - 20) * 0.45)));
+      const closeCallPenalty = margin < 8 ? Math.round((8 - margin) * 2.5) : 0;
+      const weakWinnerPenalty = (winner?.rawScore || 0) < 28 ? Math.round((28 - (winner?.rawScore || 0)) * 0.8) : 0;
+      const lowEvidencePenalty = extracted.summary.signalCount <= 3 ? (4 - extracted.summary.signalCount) * 5 : 0;
+      const confidence = Math.max(8, Math.min(99,
+        Math.round(
+          18 +
+          marginScore +
+          winnerStrength +
+          explicitnessBonus -
+          ambiguityPenalty -
+          closeCallPenalty -
+          weakWinnerPenalty -
+          lowEvidencePenalty
+        )
+      ));
+
+      return {
+        extracted,
+        scoredFamilies,
+        winner: winner || null,
+        runnerUp,
+        confidence,
+        margin
+      };
+    }
+    function buildScaffoldSelectionSummary(selection) {
+      if (!selection) return '';
+      const topReasons = Array.isArray(selection.checklist) ? selection.checklist.slice(0, 8) : [];
+      const reasonsText = topReasons.map((item, idx) =>
+        `${idx + 1}. ${item.label} (${item.delta >= 0 ? '+' : ''}${item.delta})${item.evidence ? ` — ${item.evidence}` : ''}`
+      ).join('\n');
+      return `Selected scaffold family: ${selection.familyLabel} [${selection.familyId}]
+Confidence: ${selection.confidence} / 99
+Score margin vs runner-up: ${selection.margin}
+Resolved model2 source: ${selection.sourceModel2Path || '(pending)'}
+Resolved instruction folder: ${selection.resolvedInstructionFolder || '(pending)'}
+
+Top weighted reasons:
+${reasonsText || '1. Generic fallback — no strong signals detected.'}`;
+    }
+
 
     function getInstructionKindFromName(fileName = '') {
       const lower = String(fileName || '').toLowerCase();
@@ -1360,7 +2153,37 @@
         lower.includes('engine reference') ||
         lower.includes('sdk')
       ) return 'sdk';
+      if (
+        lower.includes('reference_game_patterns') ||
+        lower.includes('reference-game-patterns') ||
+        lower.includes('reference patterns') ||
+        lower.includes('reference_pack') ||
+        lower.includes('reference-pack') ||
+        lower.includes('reference pack') ||
+        lower.includes('pattern_pack') ||
+        lower.includes('pattern-pack') ||
+        lower.includes('pattern pack')
+      ) return 'reference_patterns';
       return 'other';
+    }
+
+
+    function getScaffoldArtifactRoleFromName(fileName = '') {
+      const lower = String(fileName || '').toLowerCase();
+      const mentionsScaffold = lower.includes('scaffold') || lower.includes('family');
+      if (mentionsScaffold && (
+        lower.includes('combined') ||
+        lower.includes('final_combined') ||
+        lower.includes('final-combined') ||
+        lower.includes('merged')
+      )) return 'combined';
+      if (mentionsScaffold && (
+        lower.includes('overlay') ||
+        lower.includes('game_overlay') ||
+        lower.includes('game-overlay') ||
+        lower.includes('patch')
+      )) return 'overlay';
+      return 'scaffold';
     }
 
     async function listInstructionFiles(projectName) {
@@ -1620,14 +2443,27 @@
       const roadPipeline = (extras.roadPipeline && typeof extras.roadPipeline === 'object')
         ? extras.roadPipeline
         : mergeRoadPipelinePayload(existingValue?.roadPipeline || existingValue || null, promptText);
-      // Remove roadPipeline from extras before spreading so it doesn't overwrite
-      // the resolved value above.
-      const { roadPipeline: _ignored, ...restExtras } = extras;
+
+      const scaffoldSelection = (extras.scaffoldSelection && typeof extras.scaffoldSelection === 'object')
+        ? extras.scaffoldSelection
+        : ((existingValue && typeof existingValue === 'object' && existingValue.scaffoldSelection)
+            ? existingValue.scaffoldSelection
+            : null);
+
+      // Remove controlled fields from extras before spreading so they don't overwrite
+      // the resolved values above.
+      const {
+        roadPipeline: _ignoredRoadPipeline,
+        scaffoldSelection: _ignoredScaffoldSelection,
+        ...restExtras
+      } = extras;
+
       return {
         ...(existingValue && typeof existingValue === 'object' ? existingValue : {}),
         ...restExtras,
         prompt: promptText,
         roadPipeline,
+        scaffoldSelection,
         avatarPipeline: {
           zipPath: AVATARS_ZIP_PATH
         }
@@ -1712,6 +2548,994 @@
       });
     }
 
+
+    async function safeDeleteStoragePrefix(folderPath) {
+      const items = await listAllRecursive(ref(storage, folderPath)).catch(() => []);
+      for (const itemRef of items) {
+        try { await deleteObject(itemRef); } catch (_) {}
+      }
+      return items.length;
+    }
+
+    async function fetchTextAtFullPath(fullPath) {
+      try {
+        const payload = await fetchStorageTextSafe(ref(storage, fullPath));
+        return payload.text;
+      } catch (_) {
+        return null;
+      }
+    }
+
+    async function listInstructionItemsAtFolder(folderPath) {
+      const folderRef = ref(storage, folderPath);
+      const items = await listAllRecursive(folderRef).catch(() => []);
+      return items.map(itemRef => {
+        const relativePath = itemRef.fullPath.startsWith(`${folderPath}/`)
+          ? itemRef.fullPath.slice(folderPath.length + 1)
+          : itemRef.name;
+        const fileName = relativePath.split('/').pop();
+        const kind = getInstructionKindFromName(fileName);
+        return { itemRef, relativePath, fileName, kind, fullPath: itemRef.fullPath, sourceFolder: folderPath };
+      });
+    }
+
+    async function readInstructionTextItems(items = []) {
+      const out = [];
+      for (const item of items) {
+        let text = null;
+        try {
+          text = await fetchStorageTextSafe(item.itemRef).then(payload => payload.text);
+        } catch (_) {
+          text = null;
+        }
+        out.push({ ...item, text });
+      }
+      return out;
+    }
+
+    async function duplicateStorageItemToExactTarget(sourceItemRef, targetFullPath) {
+      const [downloadUrl, metadata] = await Promise.all([
+        getDownloadURL(sourceItemRef),
+        getMetadata(sourceItemRef).catch(() => null)
+      ]);
+      const response = await fetch(downloadUrl, { cache: 'no-store' });
+      if (!response.ok) {
+        throw new Error(`Failed to fetch ${sourceItemRef.fullPath}: HTTP ${response.status}`);
+      }
+      const blob = await response.blob();
+      const targetRef = ref(storage, targetFullPath);
+      const uploadMetadata = metadata && metadata.contentType ? { contentType: metadata.contentType } : undefined;
+      await new Promise((resolve, reject) => {
+        const task = uploadBytesResumable(targetRef, blob, uploadMetadata);
+        task.on('state_changed', null, reject, resolve);
+      });
+      return targetRef;
+    }
+
+    async function resolveModel2TemplateSource(familyId) {
+      const candidates = [
+        `${getFamilyTemplateBasePath(familyId)}/models/2`,
+        `${getFamilyTemplateBasePath(familyId)}/models/2.js`,
+        `${getFamilyTemplateBasePath(familyId)}/models/2.txt`,
+        `${ROOT}/${DEFAULT_TEMPLATE_PROJECT}/models/2`
+      ];
+      for (const fullPath of candidates) {
+        const text = await fetchTextAtFullPath(fullPath);
+        if (typeof text === 'string' && text.length > 0) {
+          return { fullPath, text };
+        }
+      }
+      throw new Error(`No scaffold model2 template could be resolved for family "${familyId}".`);
+    }
+
+
+    function isZipInstructionItem(itemOrName = null) {
+      const name = typeof itemOrName === 'string'
+        ? itemOrName
+        : (itemOrName?.fileName || itemOrName?.relativePath || itemOrName?.fullPath || '');
+      return /\.zip$/i.test(String(name || ''));
+    }
+
+    function normalizeScaffoldMatchTokens(value = '') {
+      const STOPWORDS = new Set([
+        'ai','system','instructions','instruction','folder','file','files','family','families','scaffold','scaffolds','set','sets','combined','overlay','game','games','final','selected','artifact','artifacts','merge','merged','base','version','fixed','cache','bundle','instructionbundle','instructionsbundle','js','txt','zip','v23','v22','cherry3d'
+      ]);
+      return Array.from(new Set(
+        String(value || '')
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, ' ')
+          .split(/\s+/)
+          .filter(token => token && token.length > 1 && !STOPWORDS.has(token))
+      ));
+    }
+
+    function buildScaffoldMatchContext(familyDescriptor = {}, promptText = '') {
+      const familyId = familyDescriptor?.id || '';
+      const familyLabel = familyDescriptor?.label || '';
+      const prompt = String(promptText || '');
+      const promptHead = prompt.split(/\n+/).slice(0, 120).join(' ');
+      return {
+        familyId,
+        familyLabel,
+        familyVersion,
+        familyTokens: normalizeScaffoldMatchTokens(`${familyId} ${familyLabel}`),
+        promptTokens: normalizeScaffoldMatchTokens(promptHead).slice(0, 64),
+        promptBodyTokens: normalizeScaffoldMatchTokens(prompt).slice(0, 180),
+        familySlug: String(familyLabel || familyId || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+      };
+    }
+
+    function computeScaffoldTokenScore(sourceTokens = [], targetTokens = [], weight = 1) {
+      if (!Array.isArray(sourceTokens) || !Array.isArray(targetTokens) || !sourceTokens.length || !targetTokens.length) return 0;
+      const sourceSet = new Set(sourceTokens);
+      let score = 0;
+      for (const token of targetTokens) {
+        if (sourceSet.has(token)) score += weight;
+      }
+      return score;
+    }
+
+    function getScaffoldArtifactGroupKey(item = {}) {
+      if (item?.source === 'zip_archive') {
+        return `${item.archiveFullPath || item.fullPath || 'zip'}::${item.zipGroupPath || ''}`;
+      }
+      if (item?.sourceFolder) return item.sourceFolder;
+      if (item?.fullPath) {
+        const idx = item.fullPath.lastIndexOf('/');
+        return idx >= 0 ? item.fullPath.slice(0, idx) : item.fullPath;
+      }
+      return item?.relativePath || item?.fileName || 'scaffold-group';
+    }
+
+    function getScaffoldArtifactGroupLabel(item = {}) {
+      if (item?.source === 'zip_archive') {
+        return `${item.archiveFileName || 'archive.zip'} ${item.zipGroupPath || ''} ${item.relativePath || ''}`;
+      }
+      return `${item?.sourceFolder || ''} ${item?.relativePath || ''} ${item?.fileName || ''}`;
+    }
+
+    async function readScaffoldZipArchiveEntries(archiveItem) {
+      if (!archiveItem?.itemRef) return [];
+      const [downloadUrl, metadata] = await Promise.all([
+        getDownloadURL(archiveItem.itemRef),
+        getMetadata(archiveItem.itemRef).catch(() => null)
+      ]);
+      const response = await fetch(downloadUrl, { cache: 'no-store' });
+      if (!response.ok) {
+        throw new Error(`Failed to fetch ${archiveItem.fullPath}: HTTP ${response.status}`);
+      }
+      const arrayBuffer = await response.arrayBuffer();
+      const zip = await JSZip.loadAsync(arrayBuffer);
+      const entries = [];
+      for (const entryName of Object.keys(zip.files)) {
+        const entry = zip.files[entryName];
+        if (!entry || entry.dir) continue;
+        if (/^__MACOSX\//.test(entry.name) || /(^|\/)\.DS_Store$/i.test(entry.name)) continue;
+        const fileName = entry.name.split('/').pop();
+        const role = getScaffoldArtifactRoleFromName(fileName || entry.name || '');
+        const mentionsScaffold = /scaffold|family/i.test(fileName || entry.name || '');
+        if (!mentionsScaffold && role === 'scaffold') continue;
+        if (!/\.(js|txt|md)$/i.test(fileName || '')) continue;
+        const text = await entry.async('string');
+        const pathBits = entry.name.split('/').filter(Boolean);
+        const zipGroupPath = pathBits.length > 1 ? pathBits[0] : '';
+        entries.push({
+          itemRef: null,
+          relativePath: entry.name,
+          fileName,
+          kind: 'scaffold',
+          fullPath: `${archiveItem.fullPath}::${entry.name}`,
+          sourceFolder: archiveItem.sourceFolder,
+          source: 'zip_archive',
+          role,
+          text,
+          archiveFullPath: archiveItem.fullPath,
+          archiveFileName: archiveItem.fileName,
+          archiveRelativePath: archiveItem.relativePath,
+          archiveContentType: metadata?.contentType || 'application/zip',
+          zipEntryName: entry.name,
+          zipGroupPath
+        });
+      }
+      return entries;
+    }
+
+    function extractNegativeConstraintText(text = '') {
+      return String(text || '')
+        .split(/\r?\n/)
+        .map(line => String(line || '').trim())
+        .filter(line => /\b(no|not|never|forbidden|must not|do not|prohibitions?)\b/i.test(line))
+        .join('\n');
+    }
+
+    function getOverlaySectionText(text = '', headingMatchers = []) {
+      const lines = String(text || '').split(/\r?\n/);
+      const matchers = Array.isArray(headingMatchers) ? headingMatchers : [headingMatchers];
+      let start = -1;
+      const normalizeLine = (line) => String(line || '').replace(/^[\s/*#=-]+|[\s/*#=-]+$/g, '').trim();
+      for (let i = 0; i < lines.length; i++) {
+        const raw = lines[i];
+        const clean = normalizeLine(raw);
+        if (!clean) continue;
+        const lower = clean.toLowerCase();
+        const matched = matchers.some(m => {
+          if (!m) return false;
+          if (m instanceof RegExp) return m.test(clean) || m.test(lower);
+          return lower.includes(String(m).toLowerCase());
+        });
+        if (matched) {
+          start = i + 1;
+          break;
+        }
+      }
+      if (start < 0) return '';
+      const collected = [];
+      for (let i = start; i < lines.length; i++) {
+        const raw = lines[i];
+        const clean = normalizeLine(raw);
+        if (!clean) {
+          if (collected.length) collected.push('');
+          continue;
+        }
+        if (/^@patch-id:/i.test(clean) || /^patch content$/i.test(clean) || /^replace\s+zone_/i.test(clean) || /^merge-safe zones/i.test(clean)) break;
+        if (
+          /^([A-Z][A-Z0-9 /._-]{3,})$/.test(clean) ||
+          /^([A-Z][A-Za-z0-9 /._-]{2,}):$/.test(clean) ||
+          /^UNTOUCHED UNIVERSAL SECTIONS$/i.test(clean) ||
+          /^UNIVERSAL VS FAMILY LAW SPLIT$/i.test(clean) ||
+          /^FAMILY OVERLAY OWNS$/i.test(clean) ||
+          /^PATCH ZONES USED$/i.test(clean)
+        ) {
+          break;
+        }
+        collected.push(clean);
+      }
+      return collected.join('\n').trim();
+    }
+
+    const OVERLAY_TAG_DEFINITIONS = Object.freeze({
+      camera_static_board: { weight: 24, category: 'camera', patterns: [/static board/i, /locked portrait board/i, /portrait board/i, /front-facing portrait board/i, /static board \/ puzzle/i] },
+      camera_top_down: { weight: 24, category: 'camera', patterns: [/top-down/i, /overhead/i] },
+      camera_side_follow: { weight: 24, category: 'camera', patterns: [/side-follow/i, /side follow/i, /left-third/i] },
+      camera_chase: { weight: 24, category: 'camera', patterns: [/chase camera/i, /chase cam/i] },
+      camera_first_person: { weight: 24, category: 'camera', patterns: [/first-person/i, /\bfps\b/i] },
+      controller_pointer: { weight: 22, category: 'controller', patterns: [/disembodied cursor/i, /cursor \/ pointer/i, /pointer/i, /launcher aim/i, /drag\/tap aim/i, /swipe trail/i, /mouse aim/i] },
+      controller_avatar: { weight: 22, category: 'controller', patterns: [/character avatar/i, /avatar/i, /snake head/i, /player character/i] },
+      controller_vehicle: { weight: 22, category: 'controller', patterns: [/vehicle/i, /turreted vehicle/i, /tank/i, /car/i, /aircraft/i, /plane/i, /helicopter/i] },
+      controller_object: { weight: 22, category: 'controller', patterns: [/object manipulation/i, /object-manipulation/i] },
+      movement_direct_integration: { weight: 20, category: 'movement', patterns: [/direct_integration/i, /direct integration/i] },
+      movement_physics_driven: { weight: 20, category: 'movement', patterns: [/physics_driven/i, /physics driven/i, /rigidbody-driven/i] },
+      world_puzzle_board: { weight: 22, category: 'world', patterns: [/puzzle board/i, /board model/i, /hex-grid/i, /lane matcher/i, /marble-chain/i, /match-3/i, /bubble shooter/i, /suspended hex lattice/i] },
+      world_lane_runner: { weight: 22, category: 'world', patterns: [/lane runner/i, /endless runner/i, /three lane/i] },
+      world_terrain_strip: { weight: 22, category: 'world', patterns: [/terrain strip/i, /rolling terrain/i, /terrain shell/i] },
+      world_track: { weight: 22, category: 'world', patterns: [/road section/i, /track/i, /circuit/i, /raceway/i, /road\.zip/i, /pit lane/i] },
+      world_arena: { weight: 22, category: 'world', patterns: [/arena/i, /combat room/i, /waves?/i] },
+      world_platform_shell: { weight: 22, category: 'world', patterns: [/platform shell/i, /platformer/i] },
+      interaction_puzzle: { weight: 22, category: 'interaction', patterns: [/puzzle interaction/i, /match-3/i, /match 3/i, /matcher/i, /bubble/i, /marble/i, /support-drop/i, /hex-grid/i] },
+      interaction_obstacle_dodge: { weight: 22, category: 'interaction', patterns: [/obstacle dodge/i, /avoid/i, /survival pressure/i, /don't get hit/i] },
+      interaction_object_manipulation: { weight: 22, category: 'interaction', patterns: [/object manipulation/i, /swipe slicing/i, /slice/i, /slicer/i, /flip slicer/i] },
+      interaction_ballistic_projectile_combat: { weight: 22, category: 'interaction', patterns: [/ballistic projectile combat/i, /ballistic projectile/i, /turret pitch/i, /shell trading/i, /projectile combat/i] },
+      interaction_tower_defense: { weight: 22, category: 'interaction', patterns: [/tower defense/i, /place towers/i, /enemy path/i, /bloon/i] },
+      interaction_shooter: { weight: 18, category: 'interaction', patterns: [/shooter/i, /projectile/i, /gunfire/i, /fire shell/i, /cannon/i] },
+      session_stage_clear_fail: { weight: 16, category: 'session', patterns: [/stage clear \/ fail/i, /stage clear/i, /fail modal loop/i, /retry modal/i, /authored levels/i, /level-complete/i] },
+      session_endless_score_chase: { weight: 16, category: 'session', patterns: [/endless score chase/i, /\bendless\b/i, /high score/i] },
+      session_racing: { weight: 16, category: 'session', patterns: [/laps?/i, /checkpoint/i, /finish line/i, /time trial/i] },
+      ui_file23: { weight: 10, category: 'ui', patterns: [/file\s*["'`]?23["'`]?(?:\s+owns|\s+as primary)/i, /overlay file 23/i] },
+      ui_file25: { weight: 10, category: 'ui', patterns: [/file\s*["'`]?25["'`]?(?:\s+owns|\s+as primary)/i, /overlay file 25/i] },
+      physics_thread_not_authority: { weight: 14, category: 'constraint', patterns: [/no gameplay-critical physics-thread authority/i, /no gameplay-critical physics thread authority/i, /logic-driven, not physics-driven/i, /deterministic main-thread logic/i, /no rigidbody-owned/i] },
+      updateinput_gameplay_forbidden: { weight: 14, category: 'constraint', patterns: [/no updateinput ownership/i, /updateinput remains a lawful no-op/i, /do not .*updateinput/i] },
+      pointer_to_world_forbidden: { weight: 12, category: 'constraint', patterns: [/pointer-to-world .*forbidden/i, /mouse-world aim/i, /free cursor aim/i] },
+      avatar_forbidden: { weight: 12, category: 'constraint', patterns: [/no avatar embodiment/i] },
+      vehicle_forbidden: { weight: 12, category: 'constraint', patterns: [/no vehicle embodiment/i] },
+      projectile_combat_forbidden: { weight: 12, category: 'constraint', patterns: [/no projectile combat/i] },
+      chase_camera_forbidden: { weight: 12, category: 'constraint', patterns: [/no chase camera/i] },
+      platformer_forbidden: { weight: 12, category: 'constraint', patterns: [/no .*platformer/i] },
+      road_pipeline_forbidden: { weight: 12, category: 'constraint', patterns: [/no road\.zip/i, /no road zip/i, /road\.zip sections/i] },
+      scrolling_runner_forbidden: { weight: 12, category: 'constraint', patterns: [/no scrolling runner camera/i, /no side-follow runner camera/i] },
+      per_bubble_dom_forbidden: { weight: 10, category: 'constraint', patterns: [/no floating per-bubble dom labels/i] }
+    });
+
+    function deriveSemanticTagsFromText(text = '') {
+      const lower = String(text || '').toLowerCase();
+      const tags = new Set();
+      for (const [tag, meta] of Object.entries(OVERLAY_TAG_DEFINITIONS)) {
+        const patterns = Array.isArray(meta?.patterns) ? meta.patterns : [];
+        if (patterns.some(pattern => pattern.test(lower))) tags.add(tag);
+      }
+      return tags;
+    }
+
+    function getTagWeight(tag) {
+      return Number(OVERLAY_TAG_DEFINITIONS[tag]?.weight || 8);
+    }
+
+    function getTagCategory(tag) {
+      return OVERLAY_TAG_DEFINITIONS[tag]?.category || 'other';
+    }
+
+    function buildCategoryMapFromTags(tags = []) {
+      const out = new Map();
+      for (const tag of Array.from(tags || [])) {
+        const category = getTagCategory(tag);
+        if (!out.has(category)) out.set(category, new Set());
+        out.get(category).add(tag);
+      }
+      return out;
+    }
+
+    function extractOverlayScaffoldProfile(item = {}) {
+      const text = String(item?.text || '');
+      const signatureText = getOverlaySectionText(text, [/family signature/i]);
+      const anchorsText = getOverlaySectionText(text, [/decisive anchors/i, /mandatory subsystem anchors/i]);
+      const prohibitionsText = getOverlaySectionText(text, [/explicit prohibitions/i, /explicit prohibitions?:/i, /prohibitions/i]);
+      const ownershipText = `${signatureText}\n${anchorsText}\n${text.split(/\r?\n/).slice(0, 90).join('\n')}`;
+      const familyId = parsePromptLineValue(text, /Family ID\s*:\s*([^\n]+)/i) || parsePromptLineValue(text, /Family ID\s*[-:]\s*([^\n]+)/i);
+      const familyLabel = parsePromptLineValue(text, /Family\s*:\s*([^\n]+)/i) || parsePromptLineValue(text, /Family Label\s*:\s*([^\n]+)/i);
+      const familyVersion = parsePromptLineValue(text, /Family Version\s*:\s*([^\n]+)/i) || parsePromptLineValue(text, /Version\s*:\s*([^\n]+)/i);
+      const signatureTags = deriveSemanticTagsFromText(signatureText);
+      const anchorTags = deriveSemanticTagsFromText(anchorsText);
+      const positiveTags = deriveSemanticTagsFromText(`${signatureText}\n${anchorsText}\n${ownershipText}`);
+      const negativeTags = deriveSemanticTagsFromText(prohibitionsText);
+      const descriptorTokens = normalizeScaffoldMatchTokens(`${item?.fileName || ''} ${item?.relativePath || ''} ${familyId} ${familyLabel} ${signatureText} ${anchorsText}`);
+      return {
+        familyId,
+        familyLabel,
+        familyVersion,
+        signatureText,
+        anchorsText,
+        prohibitionsText,
+        positiveTags,
+        negativeTags,
+        signatureTags,
+        anchorTags,
+        descriptorTokens,
+        ownershipText
+      };
+    }
+
+    function buildPromptRequirementProfile(promptText = '', extractedSignals = null) {
+      const prompt = String(promptText || '');
+      const lower = prompt.toLowerCase();
+      const positiveTags = deriveSemanticTagsFromText(prompt);
+      const negativeTags = deriveSemanticTagsFromText(extractNegativeConstraintText(prompt));
+      const focusTokens = normalizeScaffoldMatchTokens(prompt).slice(0, 220);
+      if (extractedSignals?.summary?.sectors?.cameraSector === 'top_down') positiveTags.add('camera_top_down');
+      if (extractedSignals?.summary?.sectors?.cameraSector === 'side_view') positiveTags.add('camera_side_follow');
+      if (extractedSignals?.summary?.sectors?.controllerSector === 'vehicle') positiveTags.add('controller_vehicle');
+      if (extractedSignals?.summary?.sectors?.controllerSector === 'character') positiveTags.add('controller_avatar');
+      if (extractedSignals?.summary?.sectors?.controllerSector === 'object') positiveTags.add('controller_pointer');
+      if (extractedSignals?.summary?.sectors?.worldSector === 'puzzle') positiveTags.add('world_puzzle_board');
+      if (extractedSignals?.summary?.sectors?.worldSector === 'road_track') positiveTags.add('world_track');
+      if (extractedSignals?.summary?.sectors?.worldSector === 'terrain_shell') positiveTags.add('world_terrain_strip');
+      if (extractedSignals?.summary?.sectors?.worldSector === 'arena') positiveTags.add('world_arena');
+      if (extractedSignals?.summary?.sectors?.worldSector === 'lanes') positiveTags.add('world_lane_runner');
+      if (extractedSignals?.summary?.sectors?.interactionSector === 'puzzle') positiveTags.add('interaction_puzzle');
+      if (extractedSignals?.summary?.sectors?.interactionSector === 'racing') positiveTags.add('session_racing');
+      if (extractedSignals?.summary?.sectors?.interactionSector === 'shooter') positiveTags.add('interaction_shooter');
+      if (/\bdirect_integration\b/i.test(lower) || /direct integration/i.test(lower)) positiveTags.add('movement_direct_integration');
+      if (/\bphysics_driven\b/i.test(lower) || /physics driven/i.test(lower)) positiveTags.add('movement_physics_driven');
+      if (/\bfile\s*["'`]?23\b/i.test(lower)) positiveTags.add('ui_file23');
+      if (/\bfile\s*["'`]?25\b/i.test(lower)) positiveTags.add('ui_file25');
+      if (/\b(level|authored levels|win|fail|retry|next level|result modal)\b/i.test(lower)) positiveTags.add('session_stage_clear_fail');
+      if (/\bendless\b/i.test(lower) || /score chase/i.test(lower)) positiveTags.add('session_endless_score_chase');
+      return {
+        positiveTags,
+        negativeTags,
+        focusTokens,
+        lower,
+        extractedSignals
+      };
+    }
+
+    function scoreOverlayCompatibility(profile = {}, promptProfile = {}, matchContext = {}, options = {}) {
+      const checklist = [];
+      let score = 0;
+      const promptPositive = promptProfile?.positiveTags || new Set();
+      const promptNegative = promptProfile?.negativeTags || new Set();
+      const overlayPositive = profile?.positiveTags || new Set();
+      const overlayNegative = profile?.negativeTags || new Set();
+      const overlayByCategory = buildCategoryMapFromTags(Array.from(overlayPositive));
+      const cappedAdd = (label, delta, evidence = '') => {
+        if (!delta) return;
+        score += delta;
+        checklist.push({ label, delta, evidence });
+      };
+
+      for (const tag of Array.from(promptPositive)) {
+        const weight = getTagWeight(tag);
+        const category = getTagCategory(tag);
+        if (overlayPositive.has(tag)) {
+          cappedAdd(`Overlay matches ${tag}`, weight, 'Matched explicit overlay family trait.');
+          continue;
+        }
+        if (overlayNegative.has(tag)) {
+          cappedAdd(`Overlay prohibits ${tag}`, -Math.max(8, Math.round(weight * 1.25)), 'Prompt requires a trait the overlay explicitly forbids.');
+          continue;
+        }
+        const competing = Array.from(overlayByCategory.get(category) || []).filter(other => other !== tag);
+        if (competing.length) {
+          cappedAdd(`Overlay category mismatch for ${category}`, -Math.max(6, Math.round(weight * 0.6)), `Expected ${tag}; overlay expresses ${competing.slice(0, 3).join(', ')}.`);
+        }
+      }
+
+      for (const tag of Array.from(promptNegative)) {
+        const weight = Math.max(8, Math.round(getTagWeight(tag) * 0.75));
+        if (overlayNegative.has(tag)) {
+          cappedAdd(`Overlay respects negative constraint ${tag}`, Math.round(weight * 0.7), 'Prompt forbids this trait and overlay forbids it too.');
+        }
+        if (overlayPositive.has(tag)) {
+          cappedAdd(`Overlay violates negative constraint ${tag}`, -Math.max(8, Math.round(weight * 1.2)), 'Prompt forbids this trait but overlay requires it.');
+        }
+      }
+
+      const anchorOverlap = computeScaffoldTokenScore(profile?.descriptorTokens || [], matchContext?.promptBodyTokens || [], 2);
+      const signatureOverlap = computeScaffoldTokenScore(normalizeScaffoldMatchTokens(profile?.signatureText || ''), matchContext?.promptBodyTokens || [], 4);
+      const prohibitionOverlap = computeScaffoldTokenScore(normalizeScaffoldMatchTokens(profile?.prohibitionsText || ''), matchContext?.promptBodyTokens || [], 1);
+      cappedAdd('Overlay anchors vs prompt token overlap', Math.min(30, anchorOverlap), 'Decisive anchors and prompt requirements share concrete tokens.');
+      cappedAdd('Overlay family signature vs prompt token overlap', Math.min(36, signatureOverlap), 'Family signature lines overlap with prompt requirements.');
+      if (prohibitionOverlap > 0) {
+        cappedAdd('Overlay prohibition overlap review', -Math.min(10, Math.round(prohibitionOverlap * 0.5)), 'Prompt language overlaps with prohibited overlay terms.');
+      }
+
+      if (matchContext?.familySlug && `${profile?.familyId || ''} ${profile?.familyLabel || ''}`.toLowerCase().includes(matchContext.familySlug)) {
+        cappedAdd('Family label alignment', 12, 'Overlay family label matches the coarse selected family hint.');
+      }
+
+      return {
+        score,
+        checklist: checklist.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
+      };
+    }
+
+
+    function buildScaffoldArtifactCandidateGroups(scaffoldItems = [], preferredFolders = []) {
+      const groups = new Map();
+      for (const item of scaffoldItems) {
+        const groupKey = getScaffoldArtifactGroupKey(item);
+        if (!groups.has(groupKey)) groups.set(groupKey, []);
+        groups.get(groupKey).push(item);
+      }
+      const preferredSet = new Set((preferredFolders || []).filter(Boolean));
+      return Array.from(groups.entries()).map(([groupKey, items]) => {
+        const descriptor = items.map(getScaffoldArtifactGroupLabel).join(' ');
+        const roleCounts = items.reduce((acc, item) => {
+          const role = item?.role || getScaffoldArtifactRoleFromName(item?.fileName || item?.relativePath || '');
+          acc[role] = (acc[role] || 0) + 1;
+          return acc;
+        }, {});
+        const hasCombined = (roleCounts.combined || 0) > 0;
+        const hasOverlay = (roleCounts.overlay || 0) > 0;
+        const sourceFolder = items.find(item => item?.sourceFolder)?.sourceFolder || null;
+        const fromPreferredFolder = sourceFolder && preferredSet.has(sourceFolder);
+        const overlayItem = items.find(item => (item?.role || getScaffoldArtifactRoleFromName(item?.fileName || item?.relativePath || '')) === 'overlay' && item?.text) || null;
+        const combinedItem = items.find(item => (item?.role || getScaffoldArtifactRoleFromName(item?.fileName || item?.relativePath || '')) === 'combined' && item?.text) || null;
+        const overlayProfile = overlayItem ? extractOverlayScaffoldProfile(overlayItem) : null;
+        return {
+          groupKey,
+          items,
+          descriptor,
+          sourceFolder,
+          fromPreferredFolder,
+          hasCombined,
+          hasOverlay,
+          overlayItem,
+          combinedItem,
+          overlayProfile
+        };
+      }).filter(group => group.hasOverlay || group.hasCombined)
+        .sort((a, b) => a.groupKey.localeCompare(b.groupKey));
+    }
+
+    function buildScaffoldChooserArtifactPaths(projectPath, chooserJobId) {
+      if (!projectPath) throw new Error('Scaffold chooser artifact paths require projectPath.');
+      if (!chooserJobId) throw new Error('Scaffold chooser artifact paths require chooserJobId.');
+      const basePath = `${projectPath}/ai_scaffold_selection_jobs/${chooserJobId}`;
+      return {
+        basePath,
+        selectionJsonPath: `${basePath}/ai_scaffold_selection.json`,
+        errorJsonPath: `${basePath}/ai_scaffold_selection_error.json`
+      };
+    }
+
+    async function requestScaffoldOverlayChoiceWithOpus(projectName, projectPath, chooserJobId, promptText = '', candidateGroups = [], matchContext = {}, roadPipeline = null) {
+      const candidates = (candidateGroups || [])
+        .filter(group => group?.overlayItem?.text)
+        .map((group, index) => ({
+          candidateId: `overlay_candidate_${index + 1}`,
+          groupKey: group.groupKey,
+          descriptor: group.descriptor,
+          sourceFolder: group.sourceFolder || null,
+          fromPreferredFolder: !!group.fromPreferredFolder,
+          overlay: {
+            fileName: group.overlayItem?.fileName || '',
+            fullPath: group.overlayItem?.fullPath || group.overlayItem?.relativePath || '',
+            archiveFullPath: group.overlayItem?.archiveFullPath || null,
+            familyId: group.overlayProfile?.familyId || null,
+            familyLabel: group.overlayProfile?.familyLabel || null,
+            familyVersion: group.overlayProfile?.familyVersion || null,
+            text: group.overlayItem?.text || ''
+          },
+          combined: group.combinedItem ? {
+            fileName: group.combinedItem?.fileName || '',
+            fullPath: group.combinedItem?.fullPath || group.combinedItem?.relativePath || '',
+            archiveFullPath: group.combinedItem?.archiveFullPath || null,
+            present: true
+          } : {
+            fileName: '',
+            fullPath: '',
+            archiveFullPath: null,
+            present: false
+          }
+        }));
+
+      if (!candidates.length) {
+        throw new Error('No Overlay scaffold candidates were discovered for Opus chooser evaluation.');
+      }
+      if (!projectPath) {
+        throw new Error('Scaffold chooser requires projectPath for async Firebase transport.');
+      }
+      if (!chooserJobId) {
+        throw new Error('Scaffold chooser requires a chooserJobId for async Firebase transport.');
+      }
+
+      /* ── Async transport: the chooser endpoint is a Netlify
+         background function (returns 202 immediately, drops body).
+         Mirror the plan/tranche pattern: clear any stale result
+         files, fire the POST, then poll Firebase for the real
+         outcome written by the proxy.
+
+         IMPORTANT HARDENING:
+         chooser artifacts live under a chooser-job-scoped folder,
+         not the shared project root. This prevents overlapping
+         chooser runs in the same project from deleting or
+         overwriting each other's success/error files. */
+      const chooserArtifactPaths = buildScaffoldChooserArtifactPaths(projectPath, chooserJobId);
+      const selectionFileRef = ref(storage, chooserArtifactPaths.selectionJsonPath);
+      const selectionErrorFileRef = ref(storage, chooserArtifactPaths.errorJsonPath);
+
+      try { await deleteObject(selectionFileRef); } catch (_) { /* not present — fine */ }
+      try { await deleteObject(selectionErrorFileRef); } catch (_) { /* not present — fine */ }
+
+      const payload = {
+        mode: 'scaffold_choose',
+        projectPath,
+        jobId: chooserJobId,
+        selectorVersion: SCAFFOLD_SELECTOR_VERSION,
+        projectName,
+        prompt: String(promptText || ''),
+        roadPipeline: roadPipeline || null,
+        familyHint: {
+          id: matchContext?.familyDescriptor?.id || null,
+          label: matchContext?.familyDescriptor?.label || null,
+          version: matchContext?.familyDescriptor?.version || null
+        },
+        promptTokens: Array.isArray(matchContext?.promptTokens) ? matchContext.promptTokens.slice(0, 120) : [],
+        candidates
+      };
+
+      const fetchController = new AbortController();
+      const fetchTimeout = setTimeout(() => fetchController.abort(), 180000);
+      try {
+        const res = await fetch(SCAFFOLD_CHOOSER_ENDPOINT, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+          signal: fetchController.signal
+        });
+        if (!res.ok) {
+          // Netlify rejected before the background task was dispatched
+          // (bad size, crashed, etc). This is a dispatch-time failure,
+          // not a chooser result — no Firebase file will ever be written
+          // for this call, so surface it here.
+          throw new Error(`Netlify rejected the scaffold chooser request: ${res.status} ${res.statusText}. The payload may exceed the 6MB limit or the function crashed on cold start.`);
+        }
+        // The body is 202 Accepted with no useful content — ignore it.
+      } catch (dispatchErr) {
+        if (dispatchErr.name === 'AbortError') {
+          throw new Error('Scaffold chooser dispatch timed out after 180s while sending the request.');
+        }
+        throw dispatchErr;
+      } finally {
+        clearTimeout(fetchTimeout);
+      }
+
+      // ── Poll Firebase for the chooser result ──────────────────
+      // Matches the plan/tranche poll cadence (5 s). Hard ceiling at
+      // 10 minutes — an Opus 4.7 high-effort call on ~24 candidates
+      // takes tens of seconds but should not approach 10 minutes;
+      // anything beyond that is a stuck background worker.
+      const POLL_INTERVAL_MS = 5000;
+      const POLL_CEILING_MS  = 10 * 60 * 1000;
+      const pollStart = Date.now();
+
+      while (true) {
+        await sleep(POLL_INTERVAL_MS);
+
+        const errorRead = await fetchStorageJsonSafe(selectionErrorFileRef, projectPath, `ai_scaffold_selection_error:${chooserJobId}`);
+        if (errorRead.ok) {
+          const errData = errorRead.data || {};
+          if (errData.jobId && errData.jobId !== chooserJobId) {
+            // Stale error from a prior chooser run — ignore, keep polling.
+          } else {
+            throw new Error(errData.error || 'Scaffold chooser failed without an error message.');
+          }
+        }
+
+        const selectionRead = await fetchStorageJsonSafe(selectionFileRef, projectPath, `ai_scaffold_selection:${chooserJobId}`);
+        if (selectionRead.ok) {
+          const selData = selectionRead.data || {};
+          if (selData.jobId && selData.jobId !== chooserJobId) {
+            // Stale result from a prior chooser run — ignore, keep polling.
+          } else if (selData.success && selData.selection?.winnerGroupKey) {
+            return selData.selection;
+          } else {
+            throw new Error('Scaffold chooser result file is present but does not contain a winning Overlay scaffold.');
+          }
+        }
+
+        if (Date.now() - pollStart > POLL_CEILING_MS) {
+          throw new Error(`Scaffold chooser did not complete within ${Math.round(POLL_CEILING_MS / 60000)} minutes. The background worker may be stuck — check Netlify function logs.`);
+        }
+      }
+    }
+
+    async function resolveScaffoldInstructionArtifacts(projectName, projectPath, chooserJobId, promptText = '', roadPipeline = null, overrideFolders = []) {
+      const projectInstructionFolder = `${ROOT}/${projectName}/ai_system_instructions`;
+      const registryFolders = Array.from(new Set(
+        SCAFFOLD_FAMILY_REGISTRY
+          .map(family => {
+            try { return `${getFamilyTemplateBasePath(family.id)}/ai_system_instructions`; }
+            catch (_) { return null; }
+          })
+          .filter(Boolean)
+      ));
+
+      const instructionItemsByFolder = {};
+      const directScaffoldDocs = [];
+      const zipScaffoldDocs = [];
+      const loadedFolders = new Set();
+
+      const ingestFolders = async (folders = []) => {
+        for (const folderPath of (folders || []).filter(Boolean)) {
+          if (loadedFolders.has(folderPath)) continue;
+          loadedFolders.add(folderPath);
+
+          const instructionItems = await listInstructionItemsAtFolder(folderPath);
+          instructionItemsByFolder[folderPath] = instructionItems;
+
+          const directItems = await readInstructionTextItems(
+            instructionItems.filter(item => item.kind === 'scaffold' && !isZipInstructionItem(item))
+          );
+          directScaffoldDocs.push(...directItems.map(item => ({
+            ...item,
+            source: 'ai_system_instructions',
+            role: getScaffoldArtifactRoleFromName(item?.fileName || item?.relativePath || '')
+          })));
+
+          const zipArchives = instructionItems.filter(item => item.kind === 'scaffold' && isZipInstructionItem(item));
+          for (const zipArchive of zipArchives) {
+            try {
+              const zipEntries = await readScaffoldZipArchiveEntries(zipArchive);
+              zipScaffoldDocs.push(...zipEntries);
+            } catch (err) {
+              console.warn('[SCAFFOLD ZIP] Could not read scaffold archive:', zipArchive.fullPath, err.message);
+            }
+          }
+        }
+      };
+
+      const initialFolders = Array.from(new Set([...(overrideFolders || []).filter(Boolean), projectInstructionFolder]));
+      await ingestFolders(initialFolders);
+
+      let scaffoldItems = [...directScaffoldDocs, ...zipScaffoldDocs].filter(item => item && item.text);
+      let candidateGroups = buildScaffoldArtifactCandidateGroups(scaffoldItems, initialFolders);
+
+      if (!candidateGroups.some(group => group?.hasOverlay)) {
+        const fallbackFolders = registryFolders.filter(folder => !loadedFolders.has(folder));
+        await ingestFolders(fallbackFolders);
+        scaffoldItems = [...directScaffoldDocs, ...zipScaffoldDocs].filter(item => item && item.text);
+        candidateGroups = buildScaffoldArtifactCandidateGroups(scaffoldItems, Array.from(loadedFolders));
+      }
+
+      if (!candidateGroups.length) {
+        throw new Error('No scaffold candidates were discovered in ai_system_instructions or fallback family folders.');
+      }
+
+      const hintRanking = rankScaffoldFamilies(promptText, roadPipeline);
+      const familyDescriptor = getFamilyTemplateDescriptor(hintRanking?.winner?.id || 'generic_universal');
+      const matchContext = buildScaffoldMatchContext(familyDescriptor, promptText);
+
+      const chooserSelection = await requestScaffoldOverlayChoiceWithOpus(projectName, projectPath, chooserJobId, promptText, candidateGroups, matchContext, roadPipeline);
+
+      const selectedGroup = candidateGroups.find(group =>
+        group.groupKey === chooserSelection.winnerGroupKey ||
+        group.overlayItem?.fullPath === chooserSelection.winnerOverlayPath ||
+        group.overlayItem?.archiveFullPath === chooserSelection.winnerOverlayPath
+      ) || null;
+
+      if (!selectedGroup?.overlayItem?.text) {
+        throw new Error('Opus chooser selected an Overlay scaffold that could not be resolved locally.');
+      }
+      if (!selectedGroup?.combinedItem?.text) {
+        throw new Error(`Winning scaffold set "${selectedGroup.groupKey}" is missing its paired Combined scaffold.`);
+      }
+
+      const overlaySource = { ...selectedGroup.overlayItem, source: selectedGroup.overlayItem.source || 'ai_system_instructions', role: 'overlay' };
+      const combinedSource = { ...selectedGroup.combinedItem, source: selectedGroup.combinedItem.source || 'ai_system_instructions', role: 'combined' };
+
+      return {
+        instructionFolder: projectInstructionFolder,
+        candidateFolders: Array.from(loadedFolders),
+        instructionItemsByFolder,
+        scaffoldDocs: scaffoldItems,
+        selectedGroupItems: selectedGroup.items || [],
+        selectedGroupKey: selectedGroup.groupKey || null,
+        selectedGroupDescriptor: selectedGroup.descriptor || null,
+        selectedGroupCompatibilityScore: Number(chooserSelection.winnerScore || 0),
+        selectedGroupCompatibilityChecklist: Array.isArray(chooserSelection.checklist) ? chooserSelection.checklist : [],
+        candidateGroupScores: Array.isArray(chooserSelection.scoreboard) ? chooserSelection.scoreboard : [],
+        promptRequirementProfile: {
+          promptRequirements: Array.isArray(chooserSelection.promptRequirements) ? chooserSelection.promptRequirements : [],
+          positiveTags: Array.isArray(chooserSelection.promptPositiveTags) ? chooserSelection.promptPositiveTags : [],
+          negativeTags: Array.isArray(chooserSelection.promptNegativeTags) ? chooserSelection.promptNegativeTags : [],
+          focusTokens: Array.isArray(matchContext.promptTokens) ? matchContext.promptTokens.slice(0, 120) : [],
+          chooserSummary: chooserSelection.chooserSummary || '',
+          extractedSummary: hintRanking?.extracted?.summary || {}
+        },
+        chooserSelection,
+        selectedOverlayProfile: selectedGroup.overlayProfile || extractOverlayScaffoldProfile(overlaySource),
+        combinedSource,
+        overlaySource
+      };
+    }
+    function buildSelectedScaffoldHeader(selection, extractedSummary, supplementalFiles = [], selectedScaffoldFiles = []) {
+      const supplementalList = supplementalFiles.map(item => item.fileName).join(', ') || '(none)';
+      const selectedScaffoldList = selectedScaffoldFiles.map(item => item.fileName).join(', ') || '(no selected scaffold docs found)';
+      const topChecklist = (selection.checklist || []).slice(0, 10).map((item, index) =>
+        `${index + 1}. ${item.label} (${item.delta >= 0 ? '+' : ''}${item.delta})${item.evidence ? ` — ${item.evidence}` : ''}`
+      ).join('\n');
+      const topCandidates = (selection.candidateOverlayScores || []).slice(0, 6).map((item, index) =>
+        `${index + 1}. ${item.overlayFamilyLabel || item.overlayFamilyId || item.descriptor} | total=${item.score} | overlayCompatibility=${item.compatibilityScore}${item.hasCombined ? ' | combined=yes' : ' | combined=no'}${item.hasOverlay ? ' | overlay=yes' : ' | overlay=no'}`
+      ).join('\n');
+      const promptTags = selection.promptRequirementProfile?.positiveTags?.slice(0, 18).join(', ') || '(none)';
+      const promptNegTags = selection.promptRequirementProfile?.negativeTags?.slice(0, 12).join(', ') || '(none)';
+
+      return `/* ═══════════════════════════════════════════════════════════════════════════
+   SELECTED CHERRY3D SCAFFOLD ARTIFACT
+   Selector version: ${SCAFFOLD_SELECTOR_VERSION}
+   Family: ${selection.familyLabel} [${selection.familyId}]  v${selection.familyVersion}
+   Confidence: ${selection.confidence}/99
+   Margin over runner-up: ${selection.margin}
+   Opus overlay compatibility score: ${selection.overlayCompatibilityScore || 0}
+   Opus chooser model: ${selection.chooserModel || 'claude-opus-4-7'}
+   Source combined scaffold: ${selection.sourceCombinedScaffoldPath || selection.sourceModel2Path || '(pending)'}
+   Source overlay scaffold: ${selection.sourceOverlayScaffoldPath || '(none)'}
+   Source scaffold archive: ${selection.sourceZipArchivePath || '(none)'}
+   Selected scaffold archive group: ${selection.selectedZipGroupDescriptor || selection.selectedZipGroupKey || '(none)'}
+   Resolved model2: ${selection.resolvedModel2Path || '(pending)'}
+   Selected scaffold docs: ${selectedScaffoldList}
+   Supplemental instruction docs: ${supplementalList}
+
+   PROMPT REQUIREMENTS
+   - promptRequirements: ${(selection.promptRequirementProfile?.promptRequirements || []).slice(0, 24).join(', ') || '(none)'}
+   - positiveTags: ${promptTags}
+   - negativeTags: ${promptNegTags}
+
+   OPUS OVERLAY CANDIDATE SCOREBOARD
+   ${topCandidates || '1. No overlay candidates were discovered.'}
+
+   OPUS CHOOSER CHECKLIST (top weighted factors)
+   ${topChecklist || '1. Generic fallback — no strong signals detected.'}
+
+   DETECTED SECTORS
+   - cameraSector: ${extractedSummary?.sectors?.cameraSector || 'ambiguous'}
+   - controllerSector: ${extractedSummary?.sectors?.controllerSector || 'ambiguous'}
+   - worldSector: ${extractedSummary?.sectors?.worldSector || 'ambiguous'}
+   - interactionSector: ${extractedSummary?.sectors?.interactionSector || 'ambiguous'}
+
+   BINDING BUILD RULE
+   - The system fetches every available GAME OVERLAY scaffold candidate from the scaffold zip / instruction folders.
+   - Anthropic Opus is the ONLY system that decides and scores Overlay scaffold compatibility against the Master Game Prompt.
+   - The winning Opus-scored Overlay chooses the paired COMBINED scaffold from the same set.
+   - models/2 is materialized from that winning COMBINED scaffold file.
+   - The matching GAME OVERLAY scaffold file is injected beside the combined scaffold in the selected instruction bundle.
+   - Foundation-A extends this selected artifact. It does NOT regenerate scaffold architecture.
+   ═══════════════════════════════════════════════════════════════════════════ */`;
+    }
+
+
+    async function materializeSelectedScaffoldArtifact(projectName, promptText = '', roadPipeline = null) {
+      const rankingHint = rankScaffoldFamilies(promptText, roadPipeline);
+      const projectPath = `${ROOT}/${projectName}`;
+      const projectInstructionFolder = `${projectPath}/ai_system_instructions`;
+      const projectInstructionItems = await listInstructionItemsAtFolder(projectInstructionFolder);
+      const projectSupplementalItems = projectInstructionItems.filter(item => item.kind !== 'scaffold');
+      const projectSupplementalTexts = await readInstructionTextItems(projectSupplementalItems);
+
+      // Chooser has its own jobId distinct from the plan/tranche
+      // jobId minted later. This keeps chooser state on its own
+      // Firebase paths so a chooser failure cannot poison a
+      // subsequent plan run in the same project.
+      const chooserJobId = `scaffold_choose_${Date.now()}`;
+
+      const familyArtifacts = await resolveScaffoldInstructionArtifacts(projectName, projectPath, chooserJobId, promptText, roadPipeline, [projectInstructionFolder]);
+      const chooserSelection = familyArtifacts.chooserSelection || {};
+      const familyInstructionFolder = familyArtifacts.instructionFolder;
+      const actualSelectedFamilyId = familyArtifacts.selectedOverlayProfile?.familyId || chooserSelection.winnerFamilyId || 'generic_universal';
+      const actualSelectedFamilyLabel = familyArtifacts.selectedOverlayProfile?.familyLabel || chooserSelection.winnerFamilyLabel || 'Universal Core Scaffold';
+      const actualSelectedFamilyVersion = familyArtifacts.selectedOverlayProfile?.familyVersion || chooserSelection.winnerFamilyVersion || '1';
+      const familyInstructionItems = await listInstructionItemsAtFolder(familyInstructionFolder);
+      const familyTextItems = await readInstructionTextItems(
+        familyInstructionItems.filter(item => item.kind === 'scaffold' || item.kind === 'reference_patterns' || item.kind === 'other' || item.kind === 'sdk')
+      );
+      const familySupplementalTexts = familyTextItems.filter(item => item.kind !== 'scaffold');
+      const selectedScaffoldTexts = (familyArtifacts.selectedGroupItems && familyArtifacts.selectedGroupItems.length)
+        ? familyArtifacts.selectedGroupItems
+        : familyTextItems.filter(item => item.kind === 'scaffold' && (
+            item.fullPath === familyArtifacts.combinedSource?.fullPath ||
+            item.fullPath === familyArtifacts.overlaySource?.fullPath
+          ));
+
+      const resolvedModel2 = familyArtifacts.combinedSource;
+      const sourceFingerprint = {
+        selectorVersion: SCAFFOLD_SELECTOR_VERSION,
+        chooserModel: chooserSelection.chooserModel || 'claude-opus-4-7',
+        familyId: actualSelectedFamilyId,
+        familyVersion: actualSelectedFamilyVersion,
+        combinedScaffoldSourcePath: familyArtifacts.combinedSource?.fullPath || null,
+        combinedScaffoldHash: hashStringFNV1a(familyArtifacts.combinedSource?.text || ''),
+        overlayScaffoldSourcePath: familyArtifacts.overlaySource?.fullPath || null,
+        overlayScaffoldHash: hashStringFNV1a(familyArtifacts.overlaySource?.text || ''),
+        selectedGroupKey: familyArtifacts.selectedGroupKey || null,
+        selectedGroupDescriptor: familyArtifacts.selectedGroupDescriptor || null,
+        sourceArchivePath: familyArtifacts.combinedSource?.archiveFullPath || familyArtifacts.overlaySource?.archiveFullPath || null,
+        projectSupplementalDocs: projectSupplementalTexts.map(item => ({
+          relativePath: item.relativePath,
+          hash: hashStringFNV1a(item.text || '')
+        })),
+        familySupplementalDocs: familySupplementalTexts.map(item => ({
+          relativePath: item.relativePath,
+          hash: hashStringFNV1a(item.text || '')
+        })),
+        roadPipeline: {
+          active: Boolean(roadPipeline?.roadExclusionFlag),
+          gameType: roadPipeline?.gameType || 'other'
+        }
+      };
+      const signature = hashStringFNV1a(stableStringifyForSelector(sourceFingerprint));
+      const cacheRoot = `${ROOT}/${projectName}/${SCAFFOLD_CACHE_ROOT}/${signature}`;
+      const manifestPath = `${cacheRoot}/${SCAFFOLD_SELECTION_MANIFEST_FILE}`;
+      const manifestText = await fetchTextAtFullPath(manifestPath);
+      if (manifestText) {
+        try {
+          const parsed = JSON.parse(manifestText);
+          if (parsed?.signature === signature && parsed?.resolvedModel2Path && parsed?.resolvedInstructionFolder) {
+            return parsed;
+          }
+        } catch (_) {}
+      }
+
+      const selectedInstructionFolder = `${cacheRoot}/ai_system_instructions`;
+      const selectedModel2Path = `${cacheRoot}/models/2`;
+      await safeDeleteStoragePrefix(cacheRoot);
+
+      const extractedSummary = rankingHint?.extracted?.summary || {};
+      const runnerUp = Array.isArray(chooserSelection?.scoreboard) ? chooserSelection.scoreboard[1] : null;
+      const scaffoldSelection = {
+        familyId: actualSelectedFamilyId,
+        familyLabel: actualSelectedFamilyLabel,
+        familyVersion: actualSelectedFamilyVersion,
+        chooserModel: chooserSelection.chooserModel || 'claude-opus-4-7',
+        confidence: Number(chooserSelection.winnerScore || 0),
+        margin: Number(chooserSelection.margin || (chooserSelection.winnerScore && runnerUp?.score ? chooserSelection.winnerScore - runnerUp.score : 0) || 0),
+        score: Number(chooserSelection.winnerScore || 0),
+        runnerUpFamilyId: runnerUp?.overlayFamilyId || runnerUp?.familyId || null,
+        runnerUpScore: runnerUp?.score || null,
+        checklist: familyArtifacts.selectedGroupCompatibilityChecklist?.length
+          ? familyArtifacts.selectedGroupCompatibilityChecklist
+          : [],
+        familyRankingChecklist: rankingHint?.winner?.checklist || [],
+        overlayCompatibilityChecklist: familyArtifacts.selectedGroupCompatibilityChecklist || [],
+        overlayCompatibilityScore: familyArtifacts.selectedGroupCompatibilityScore || 0,
+        candidateOverlayScores: familyArtifacts.candidateGroupScores || [],
+        promptRequirementProfile: familyArtifacts.promptRequirementProfile || null,
+        chooserSummary: chooserSelection.chooserSummary || '',
+        signalSummary: extractedSummary,
+        signature,
+        cacheRoot,
+        sourceModel2Path: resolvedModel2.fullPath,
+        sourceCombinedScaffoldPath: familyArtifacts.combinedSource?.fullPath || null,
+        sourceOverlayScaffoldPath: familyArtifacts.overlaySource?.fullPath || null,
+        sourceZipArchivePath: familyArtifacts.combinedSource?.archiveFullPath || familyArtifacts.overlaySource?.archiveFullPath || null,
+        selectedZipGroupKey: familyArtifacts.selectedGroupKey || null,
+        selectedZipGroupDescriptor: familyArtifacts.selectedGroupDescriptor || null,
+        resolvedModel2Path: selectedModel2Path,
+        resolvedInstructionFolder: selectedInstructionFolder,
+        sourceFingerprint,
+        generatedAt: new Date().toISOString()
+      };
+
+      await uploadString(
+        ref(storage, selectedModel2Path),
+        resolvedModel2.text,
+        'raw',
+        { contentType: 'application/javascript' }
+      );
+
+      const header = buildSelectedScaffoldHeader(
+        scaffoldSelection,
+        extractedSummary,
+        [...projectSupplementalTexts, ...familySupplementalTexts],
+        selectedScaffoldTexts.length ? selectedScaffoldTexts : [familyArtifacts.combinedSource, familyArtifacts.overlaySource].filter(Boolean)
+      );
+
+      await uploadString(
+        ref(storage, `${selectedInstructionFolder}/00_scaffold_selection_manifest.txt`),
+        header,
+        'raw',
+        { contentType: 'text/plain' }
+      );
+
+      if (familyArtifacts.combinedSource?.itemRef && familyArtifacts.combinedSource?.source !== 'zip_archive') {
+        await duplicateStorageItemToExactTarget(
+          familyArtifacts.combinedSource.itemRef,
+          `${selectedInstructionFolder}/${familyArtifacts.combinedSource.fileName}`
+        );
+      } else {
+        const combinedFileName = familyArtifacts.combinedSource?.fileName || `Scaffold_Combined_${actualSelectedFamilyId}.js`;
+        await uploadString(
+          ref(storage, `${selectedInstructionFolder}/${combinedFileName}`),
+          familyArtifacts.combinedSource?.text || '',
+          'raw',
+          { contentType: 'application/javascript' }
+        );
+      }
+
+      if (familyArtifacts.overlaySource?.text) {
+        if (familyArtifacts.overlaySource?.itemRef && familyArtifacts.overlaySource?.source !== 'zip_archive') {
+          await duplicateStorageItemToExactTarget(
+            familyArtifacts.overlaySource.itemRef,
+            `${selectedInstructionFolder}/${familyArtifacts.overlaySource.fileName}`
+          );
+        } else {
+          const overlayFileName = familyArtifacts.overlaySource?.fileName || `Scaffold_Overlay_${actualSelectedFamilyId}.js`;
+          await uploadString(
+            ref(storage, `${selectedInstructionFolder}/${overlayFileName}`),
+            familyArtifacts.overlaySource?.text || '',
+            'raw',
+            { contentType: 'application/javascript' }
+          );
+        }
+      }
+
+      for (const item of projectSupplementalItems) {
+        await duplicateStorageItem(item.itemRef, projectInstructionFolder, selectedInstructionFolder);
+      }
+
+      for (const item of familyInstructionItems.filter(entry => entry.kind !== 'scaffold')) {
+        const prefixedTarget = `${selectedInstructionFolder}/family_overrides/${item.relativePath}`;
+        await duplicateStorageItemToExactTarget(item.itemRef, prefixedTarget);
+      }
+
+      await uploadString(
+        ref(storage, manifestPath),
+        JSON.stringify(scaffoldSelection, null, 2),
+        'raw',
+        { contentType: 'application/json' }
+      );
+      await uploadString(
+        ref(storage, `${ROOT}/${projectName}/${SCAFFOLD_SELECTION_STATE_FILE}`),
+        JSON.stringify(scaffoldSelection, null, 2),
+        'raw',
+        { contentType: 'application/json' }
+      );
+
+      return scaffoldSelection;
+    }
+
+    async function resolveScaffoldSelection(projectName, promptText = '', roadPipeline = null) {
+      return await materializeSelectedScaffoldArtifact(projectName, promptText, roadPipeline);
+    }
     async function bootstrapProjectFromTemplate(targetProjectName, templateProjectName = DEFAULT_TEMPLATE_PROJECT) {
       const templateRoot = `${ROOT}/${templateProjectName}`;
       const targetRoot = `${ROOT}/${targetProjectName}`;
@@ -2573,27 +4397,34 @@ This will permanently remove all associated files and Firebase folders for this 
         // truthMap scan. Keys "0", "3", and "22" come from the template and
         // must survive any sync that runs against a project where those files
         // are not in the scanned folders.
-        const PRIMITIVES_CHILDREN = [
-            { key: '4',  type: 'object', title: 'icosahedron.c3b', extension: 'c3b', children: [] },
-            { key: '5',  type: 'object', title: 'plane.c3b',        extension: 'c3b', children: [] },
-            { key: '6',  type: 'object', title: 'square.c3b',       extension: 'c3b', children: [] },
-            { key: '7',  type: 'object', title: 'torusknot.c3b',    extension: 'c3b', children: [] },
-            { key: '8',  type: 'object', title: 'tetrahedron.c3b',  extension: 'c3b', children: [] },
-            { key: '9',  type: 'object', title: 'torus.c3b',        extension: 'c3b', children: [] },
-            { key: '10', type: 'object', title: 'sphere.c3b',       extension: 'c3b', children: [] },
-            { key: '11', type: 'object', title: 'cube.c3b',         extension: 'c3b', children: [] },
-            { key: '12', type: 'object', title: 'capsule.c3b',      extension: 'c3b', children: [] },
-            { key: '13', type: 'object', title: 'cone.c3b',         extension: 'c3b', children: [] },
-            { key: '14', type: 'object', title: 'cylinder.c3b',     extension: 'c3b', children: [] }
-        ];
-        const SYSTEM_ENTRIES = [
-            { key: '0',  type: 'folder',     title: '.primitives',       hidden: true, children: PRIMITIVES_CHILDREN },
+        //
+        // ─── .primitives (key "0") — DELEGATED TO COMPILER ────────────────────
+        // This is the entry that keeps getting corrupted. The previous guard
+        // checked only that an entry with key "0" existed, so an
+        // empty-children .primitives folder (which is exactly what happens
+        // when some upstream step wipes the children) survived every sync
+        // without ever being repaired. The shared compiler helper
+        // enforcePrimitivesFolder() rewrites the folder's children against
+        // the canonical 11 primitives, so an empty or partial folder is
+        // fully restored. Single source of truth: CANONICAL_PRIMITIVES_CHILDREN
+        // in AssetsTreeEntitiesCompiler.js.
+        const hardenedAssets = assetsTreeEntitiesCompiler.enforcePrimitivesFolder(deduplicatedAssets);
+        // Replace deduplicatedAssets contents with the hardened array so the
+        // rest of the function (legacy-primitive prune, final write) operates
+        // on the repaired manifest.
+        deduplicatedAssets.length = 0;
+        deduplicatedAssets.push(...hardenedAssets);
+
+        // ─── Non-.primitives reserved entries (2, 3, 22, 23) ──────────────────
+        // These are single leaf entries, not a parent-with-children, so the
+        // "key presence" check is valid for them.
+        const LEAF_SYSTEM_ENTRIES = [
             { key: '2',  type: 'javascript', title: 'WorldController.js',              children: [] },
             { key: '3',  type: 'image',      title: 'Studio Skybox',                   children: [] },
             { key: '22', type: 'stylesheet', title: 'BlankStylesheet.css', extension: 'css', children: [] },
             { key: '23', type: 'HTML',       title: 'document.html',       extension: 'html', children: [] }
         ];
-        for (const sysEntry of SYSTEM_ENTRIES) {
+        for (const sysEntry of LEAF_SYSTEM_ENTRIES) {
             const alreadyPresent = flattenAssetEntries(deduplicatedAssets)
                 .some(e => String(e.key) === sysEntry.key);
             if (!alreadyPresent) {
@@ -2630,11 +4461,29 @@ This will permanently remove all associated files and Firebase folders for this 
         }
         // ── END LEGACY REDUNDANT MODEL-PRIMITIVE PRUNE ───────────────────────
 
-        const newJson = JSON.stringify(cleanedAssets, null, 2);
+        // ── POST-PRUNE PRIMITIVES RE-ENFORCEMENT ──────────────────────────────
+        // The legacy-primitive prune above filters by key and title against
+        // FORBIDDEN_LEGACY_PRIMITIVE_MODEL_KEYS/TITLES (17,18,21,34,35 /
+        // cube.obj etc.). That set does not overlap with the canonical
+        // .primitives children (keys 4-14, titles *.c3b), so it should never
+        // damage them — but we re-enforce here to be defensive against any
+        // future edit of the prune sets or the .primitives list accidentally
+        // overlapping.
+        const reEnforcedAssets = assetsTreeEntitiesCompiler.enforcePrimitivesFolder(cleanedAssets);
+
+        // ── HARD WRITE-BOUNDARY GUARD ─────────────────────────────────────────
+        // Last line of defense: throw LOUDLY if for any reason the .primitives
+        // folder isn't fully canonical at this point. This is intentional —
+        // corruption should fail the build visibly (so the user can see what
+        // happened and this function's logs can be inspected) instead of
+        // being silently papered over a fourth time.
+        assetsTreeEntitiesCompiler.assertPrimitivesPresent(reEnforcedAssets, 'syncAssetsJson final output');
+
+        const newJson = JSON.stringify(reEnforcedAssets, null, 2);
         const targetRef = ref(storage, `${ROOT}/${projectName}/json/assets.json`);
         await uploadString(targetRef, newJson);
 
-        setStatus(`assets.json synced — ${cleanedAssets.length} entries.`);
+        setStatus(`assets.json synced — ${reEnforcedAssets.length} entries.`);
 
         const jsonCat = FILE_CATEGORIES.find(c => c.id === 'json');
         if (jsonCat) refreshFileList(jsonCat);
@@ -2646,7 +4495,19 @@ This will permanently remove all associated files and Firebase folders for this 
             jsonZone.classList.add('pulse-update');
         }
 
-        return cleanedAssets;
+        // Return the re-enforced manifest — NOT cleanedAssets — so callers
+        // receive the exact same array that was just written to Firebase.
+        // Returning cleanedAssets would be safe today (cleanedAssets and
+        // reEnforcedAssets are identical under the current legacy-prune sets),
+        // but it reintroduces the file-vs-memory asymmetry that the second
+        // enforcement exists to prevent: if any future edit widens the
+        // legacy-prune sets to overlap with canonical primitive keys (4-14)
+        // or titles (*.c3b), cleanedAssets would be damaged while
+        // reEnforcedAssets would be healed, and the compiler would then
+        // operate on the damaged in-memory copy while Firebase holds the
+        // healed one. Returning reEnforcedAssets closes that gap
+        // unconditionally.
+        return reEnforcedAssets;
     }
 
     function flattenAssetManifestEntries(entries) {
@@ -7444,7 +9305,7 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
       // getRoadPipelineOverrideValue() inside mergeRoadPipelinePayload reads
       // the live dropdown — the override is captured there, not from storage.
       const authorizedRoadPipeline = mergeRoadPipelinePayload(null, basePrompt);
-
+      let scaffoldSelection = null;
 
       let scannedExtentsList = [];
       let modelAnalysisList = [];
@@ -7481,6 +9342,10 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
       try {
         Progress.step('Verifying Scaffold + SDK', 'Ensuring immutable instruction bundle exists in Firebase...');
         await ensureProjectInstructionBundle(currentProject);
+
+        Progress.step('Selecting scaffold set', 'Fetching every available Overlay scaffold, asking Opus 4.7 to score them against the Master Prompt, then materialising the winning Combined artifact...');
+        scaffoldSelection = await resolveScaffoldSelection(currentProject, basePrompt, authorizedRoadPipeline);
+        appendToChatLog('System', `🧠 Opus selected scaffold set: ${scaffoldSelection.familyLabel} [${scaffoldSelection.familyId}] — score ${scaffoldSelection.score}/100 via ${scaffoldSelection.chooserModel || 'claude-opus-4-7'}, signature ${scaffoldSelection.signature}.`, 'normal');
 
         Progress.step('Syncing assets.json', 'Ensuring asset manifest matches project files...');
         await syncAssetsJson();
@@ -7519,6 +9384,7 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
                 : basePrompt;
               const earlyPayload = JSON.stringify(buildAiRequestPayload(earlyPromptText, null, {
                 roadPipeline: authorizedRoadPipeline,
+                scaffoldSelection,
                 inlineImages: await Promise.all(attachedPromptImages.map(f =>
                   new Promise((res, rej) => {
                     const r2 = new FileReader();
@@ -7680,25 +9546,26 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
           modelAnalysisList = getCachedModelAnalysis(currentProject);
         }
 
-        // ── Reset models/2 to clean scaffold before every fresh build ──────
+        // ── Reset models/2 to the selected scaffold artifact before every fresh build ──────
         // On a fresh build (not a repair pass), models/2 must start from the
-        // clean Cherry3D scaffold from BASE_Files. If it contains a previous
-        // game's code, the scaffold zone markers will be absent and every
-        // patch from Foundation-A onward will silently skip — producing a
-        // build that inherits the wrong game's code with none of the new
-        // game's patches applied. This reset is the single most critical
-        // hardening step in the entire pipeline.
+        // selected combined scaffold artifact for THIS game family. If it contains
+        // a previous game's code, the scaffold zone markers will be absent and
+        // every patch from Foundation-A onward will silently skip — producing a
+        // build that inherits the wrong game's code with none of the new game's
+        // patches applied. This reset is the single most critical hardening step
+        // in the entire pipeline.
         if (repairAttempt === 0 && parseErrorRetry === 0) {
           try {
-            Progress.step('Resetting models/2', 'Loading clean Cherry3D scaffold from BASE_Files...');
-            const templateModel2Ref = ref(storage, `${ROOT}/${DEFAULT_TEMPLATE_PROJECT}/models/2`);
+            const selectedModel2Path = scaffoldSelection?.resolvedModel2Path || `${ROOT}/${DEFAULT_TEMPLATE_PROJECT}/models/2`;
+            Progress.step('Resetting models/2', `Loading selected scaffold artifact (${scaffoldSelection?.familyId || 'generic_universal'})...`);
+            const templateModel2Ref = ref(storage, selectedModel2Path);
             const templateModel2Payload = await fetchStorageTextSafe(templateModel2Ref);
             const targetModel2Ref = ref(storage, `${ROOT}/${currentProject}/models/2`);
             await uploadString(targetModel2Ref, templateModel2Payload.text, 'raw', { contentType: 'application/javascript' });
-            appendToChatLog('System', '✅ models/2 reset to clean Cherry3D scaffold — ready for fresh build.', 'normal');
+            appendToChatLog('System', `✅ models/2 reset to selected scaffold artifact — ${scaffoldSelection?.familyLabel || 'Universal Core Scaffold'} [${scaffoldSelection?.familyId || 'generic_universal'}].`, 'normal');
           } catch (e) {
-            appendToChatLog('System', `⚠️ Could not reset models/2 from BASE_Files: ${e.message}. Build continues but zone patches may fail if the existing file lacks scaffold markers.`, 'normal');
-            console.warn('[SCAFFOLD RESET] Failed to reset models/2:', e.message);
+            appendToChatLog('System', `⚠️ Could not reset models/2 from the selected scaffold artifact: ${e.message}. Build continues but zone patches may fail if the existing file lacks scaffold markers.`, 'normal');
+            console.warn('[SCAFFOLD RESET] Failed to reset models/2 from selected artifact:', e.message);
           }
         }
 
@@ -8060,10 +9927,15 @@ SINGLE-PASS TRANCHED BUILD PIPELINE
 ═══════════════════════════════════════════════════════════
 
 You are preparing a build request for a SINGLE-PASS planning pipeline.
-The backend planner reads this request plus project files plus two Firebase-hosted instruction layers:
-1. The immutable Cherry3D Scaffold v19
-2. The complementary Cherry3D SDK / Engine Reference
-It then splits the build into sequential tranches. No intermediate architecture synthesis step.
+Before planning starts, the frontend selects ONE scaffold family, materialises ONE combined scaffold artifact, writes that artifact into models/2, and points the backend at the matched instruction bundle cache. The planner/executor must treat that selected artifact as the only active scaffold family for this build.
+
+SELECTED SCAFFOLD ARTIFACT:
+${scaffoldSelection ? buildScaffoldSelectionSummary(scaffoldSelection) : 'Scaffold selection unavailable — fallback to project instruction bundle.'}
+
+The backend planner reads this request plus project files plus the selected Firebase-hosted instruction bundle:
+1. The selected combined Cherry3D Scaffold artifact for this build
+2. The complementary Cherry3D SDK / Engine Reference and supplemental docs
+It then splits the build into sequential tranches. Foundation-A extends the selected scaffold artifact; it does not regenerate scaffold architecture.
 
 ENVIRONMENT CONSTRAINTS (platform facts handled by backend):
 1. Executors use PATCH BLOCK FORMAT — they output only REPLACE_BLOCK, NEW_FUNCTION, and NEW_FILE blocks. The backend merge engine applies those patches to the live accumulated file after each tranche. Tranche prompts must be written so the executor knows exactly which models/2 zone names or zone_helpers function names to target.
@@ -8071,7 +9943,7 @@ ENVIRONMENT CONSTRAINTS (platform facts handled by backend):
 3. Main logic file is models/2. HTML overlay is models/23.
 4. Executors output PATCH BLOCKS only — REPLACE_BLOCK to update a named zone or an existing zone_helpers function, NEW_FUNCTION to add a new zone_helpers function, and NEW_FILE for first creation. Full file re-emission is forbidden.
 5. Because executors output only their changes, each tranche prompt MUST name the exact models/2 zone names it will replace or the exact zone_helpers function names it will add or replace. Vague scope is insufficient — name the zone or function explicitly.
-6. The immutable Scaffold v19 is injected by backend and is the required base architecture.
+6. The selected scaffold artifact is injected by backend and is the required base architecture for this build.
 7. The SDK / Engine Reference is injected by backend for engine facts and uncertainty resolution.
 8. Anti-pattern validators mechanically enforce engine rules after each tranche.
 
@@ -8081,7 +9953,7 @@ PLANNING REQUIREMENTS:
 - LATE-PHASE (tranches 11 and beyond): the 400-500 line budget still applies. Late tranches handle integration, audio balancing, edge cases, and death-sequence polish — use the full budget for quality. Split only when two genuinely independent subsystems are being addressed.
 - Order tranches by true dependency.
 - Each tranche prompt must NAME THE EXACT ZONES OR zone_helpers FUNCTIONS the executor will add or change. Embed exact game-specific rules, variable names, and pitfall warnings. Do NOT summarize — copy the exact technical details.
-- The scaffold is the codified binding law extracted from shipped working games. Adapt the requested game to the scaffold — never adapt the scaffold to the game.
+- The selected scaffold artifact is the codified binding law extracted from shipped working games plus the chosen family overlay for this build. Adapt the requested game to that selected artifact — do not regenerate or replace scaffold architecture inside Foundation-A.
 - The SDK / Engine Reference is subordinate. Use it only when the scaffold is silent and engine certainty is needed.
 - Pick one lawful pattern family per subsystem and preserve it through planning, execution, validation, and repair. Do not silently switch families mid-pipeline.
 - Do NOT tell the executor to delete, replace, or bypass immutable scaffold sections.
@@ -8113,7 +9985,7 @@ SCAFFOLD NON-NEGOTIABLES (v19 — enforced by backend, must also be reflected in
 - Rule 35 ENGINE AUTO-ROTATION: The Cherry3D engine automatically applies visual rotation to ANY object whose position changes between frames. Objects that must hold a fixed orientation during flight (projectiles, knives, balls) must set obj.rotate = [0,0,0] EVERY frame inside their update — once at spawn is not enough.
 
 TRANCHE STRUCTURE:
-1. First tranche (Foundation-A): scaffold hook wiring, shared gameState field declarations, objectids registration, factory/hook extensions, and material constant definitions. Use the full budget for thoroughness. Must NOT include world geometry placement, terrain primitives, or STATIC rigidbodies — those belong in the next dedicated tranche.
+1. First tranche (Foundation-A): scaffold hook wiring, shared gameState field declarations, objectids registration, factory/hook extensions, and material constant definitions that extend the already-selected scaffold artifact. Use the full budget for thoroughness. Must NOT regenerate scaffold architecture, and must NOT include world geometry placement, terrain primitives, or STATIC rigidbodies — those belong in the next dedicated tranche.
 2. Terrain / Scene Shell tranche (if applicable): ground primitives, STATIC rigidbodies, full scene layout, and environmental dressing. Use the full budget — a complete terrain shell prevents placement errors in all later tranches. Placed immediately after Foundation-A and before any gameplay system tranche.
 3. Middle tranches: ONE subsystem each, strictly ordered by dependency. If a subsystem is complex (e.g. physics + controls + camera together), split it across multiple consecutive sub-tranches (A, B, C...). Each prompt must name the exact function ids the executor will REPLACE or INSERT.
 4. Never group more than ONE major system per tranche. When unsure, split.
@@ -8185,7 +10057,7 @@ RULES FOR ALL PIPELINE STAGES:
         renderPromptImages();
         
         Progress.step('Uploading payload to Firebase', 'Bypassing Netlify async size limits...');
-        const payloadBody = JSON.stringify(buildAiRequestPayload(enhancedPrompt, { roadPipeline: authorizedRoadPipeline }, { files: projectFiles, projectPath, selectedAssets, inlineImages, modelAnalysis: modelAnalysisList, expertAgents: EXPERT_AGENTS, repairAttempt, repairTargets }));
+        const payloadBody = JSON.stringify(buildAiRequestPayload(enhancedPrompt, { roadPipeline: authorizedRoadPipeline, scaffoldSelection }, { files: projectFiles, projectPath, selectedAssets, inlineImages, modelAnalysis: modelAnalysisList, expertAgents: EXPERT_AGENTS, repairAttempt, repairTargets, scaffoldSelection }));
         const requestFileRef = ref(storage, `${projectPath}/ai_request.json`);
         await uploadString(requestFileRef, payloadBody);
 

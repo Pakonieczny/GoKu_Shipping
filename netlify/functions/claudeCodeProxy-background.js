@@ -47,6 +47,32 @@ const RETRY_POLICY = Object.freeze({
   critical_runtime: 2  // retained for fix-mode retryBudget fallback
 });
 
+const SCAFFOLD_CHOOSER_MODEL = process.env.SCAFFOLD_CHOOSER_MODEL || 'claude-opus-4-7';
+
+/* ── Scaffold chooser payload caps ────────────────────────────────
+   Hard limits that protect the Opus 4.7 chooser from two failure
+   modes: (a) unbounded candidate count silently dropping overlays,
+   (b) an individual overlay file being large enough to blow the
+   request past the 6 MB Netlify limit or eat the Opus output budget
+   on prompt echoing.
+
+   Candidate count is a HARD FAIL on overflow. Do NOT silently slice
+   — that is a deterministic fallback (it deterministically picks
+   "the first N"). If a library grows past the cap, the human must
+   explicitly curate which overlays are eligible.
+
+   Per-overlay text IS truncated with a visible marker so Opus can
+   still see and score every candidate. Truncation is lossy but the
+   remaining head of the overlay (signature, anchors, prohibitions,
+   session loop) is the decision-driving content and lives at the
+   top of a well-formed overlay. The truncation marker is explicit
+   so Opus knows it is not reading the full document.
+*/
+const SCAFFOLD_CHOOSER_MAX_CANDIDATES = 24;
+const SCAFFOLD_CHOOSER_MAX_OVERLAY_CHARS = 12000;
+const SCAFFOLD_CHOOSER_TRUNCATION_MARKER =
+  '\n\n[... OVERLAY TEXT TRUNCATED BY CHOOSER PAYLOAD CAP — SCORE FROM HEAD SECTION ABOVE ...]';
+
 const ROAD_PIPELINE_ZIP_PATH = "game-generator-1/projects/BASE_Files/asset_3d_objects/Road.zip";
 const ROAD_PIPELINE_INDEX_ENTRY_NAMES = Object.freeze(["Road_Index.json", "road_index.json"]);
 const COMPILER_OWNED_JSON_PATHS = Object.freeze(["json/assets.json", "json/tree.json", "json/entities.json"]);
@@ -1769,83 +1795,183 @@ function classifyInstructionFile(fileName = "", content = "") {
     return "scaffold";
   }
 
+  if (
+    lowerName.includes("reference_game_patterns") ||
+    lowerName.includes("reference-game-patterns") ||
+    lowerName.includes("reference pack") ||
+    lowerName.includes("reference_pack") ||
+    lowerName.includes("reference-pack") ||
+    lowerName.includes("pattern pack") ||
+    lowerName.includes("pattern_pack") ||
+    lowerName.includes("pattern-pack") ||
+    lowerContent.includes("mandatory structural patterns") ||
+    lowerContent.includes("preferred product/polish patterns")
+  ) {
+    return "reference_patterns";
+  }
+
   return "other";
 }
 
-async function fetchInstructionBundle(bucket, projectPath) {
-  try {
-    const folder = `${projectPath}/ai_system_instructions`;
-    const [files] = await bucket.getFiles({ prefix: folder + "/" });
-    if (!files || files.length === 0) {
-      console.warn(`fetchInstructionBundle: no files found at ${folder}/`);
-      return {
-        scaffoldText: "",
-        sdkText: "",
-        combinedText: "",
-        scaffoldCount: 0,
-        sdkCount: 0,
-        otherCount: 0
-      };
-    }
 
-    files.sort((a, b) => a.name.localeCompare(b.name));
-    const parts = await Promise.all(
-      files.map(async (file) => {
-        const [fileContent] = await file.download();
-        const content = fileContent.toString("utf8");
-        return {
-          fileName: file.name.split("/").pop(),
-          content,
-          kind: classifyInstructionFile(file.name.split("/").pop(), content)
-        };
-      })
-    );
 
-    const scaffoldDocs = parts.filter(p => p.kind === "scaffold");
-    const sdkDocs = parts.filter(p => p.kind === "sdk");
-    const otherDocs = parts.filter(p => p.kind === "other");
-
-    const formatDocs = (docs) => docs.map(doc =>
-      `--- ${doc.fileName} ---\n${doc.content}`
-    ).join("\n\n");
-
-    const scaffoldText = formatDocs(scaffoldDocs);
-    const sdkText = formatDocs([...sdkDocs, ...otherDocs]);
-
-    const sections = [];
-    if (scaffoldText) {
-      sections.push(`=== BINDING CHERRY3D SCAFFOLD LAW ===\n${scaffoldText}`);
-    }
-    if (sdkText) {
-      sections.push(`=== SUBORDINATE CHERRY3D SDK / ENGINE NOTES ===\n${sdkText}`);
-    }
-
-    const combinedText = sections.join("\n\n");
-    console.log(
-      `fetchInstructionBundle: loaded ${files.length} file(s) ` +
-      `(scaffold=${scaffoldDocs.length}, sdk=${sdkDocs.length}, other=${otherDocs.length})`
-    );
-
-    return {
-      scaffoldText,
-      sdkText,
-      combinedText,
-      scaffoldCount: scaffoldDocs.length,
-      sdkCount: sdkDocs.length,
-      otherCount: otherDocs.length
-    };
-  } catch (err) {
-    console.error("fetchInstructionBundle failed:", err.message);
-    return {
-      scaffoldText: "",
-      sdkText: "",
-      combinedText: "",
-      scaffoldCount: 0,
-      sdkCount: 0,
-      otherCount: 0
-    };
+function getInstructionBundleSortRank(fileName = "", kind = "other") {
+  const lowerName = String(fileName || "").toLowerCase();
+  if (kind === "scaffold") {
+    if (lowerName.includes("combined")) return 0;
+    if (lowerName.includes("overlay") || lowerName.includes("patch")) return 1;
+    return 2;
   }
+  if (kind === "sdk") return 10;
+  if (kind === "reference_patterns") return 20;
+  return 30;
 }
+
+function buildScaffoldSelectionContext(scaffoldSelection = null) {
+  if (!scaffoldSelection || typeof scaffoldSelection !== "object") return "";
+  const signalSummary = scaffoldSelection.signalSummary || {};
+  const sectors = signalSummary.sectors || {};
+  const reasons = Array.isArray(scaffoldSelection.checklist)
+    ? scaffoldSelection.checklist.slice(0, 8).map((item, index) =>
+        `${index + 1}. ${item.label} (${item.delta >= 0 ? '+' : ''}${item.delta})${item.evidence ? ` — ${item.evidence}` : ''}`
+      ).join("\n")
+    : "";
+  const candidates = Array.isArray(scaffoldSelection.candidateOverlayScores)
+    ? scaffoldSelection.candidateOverlayScores.slice(0, 5).map((item, index) =>
+        `${index + 1}. ${item.overlayFamilyLabel || item.overlayFamilyId || item.descriptor} | total=${item.score} | overlayCompatibility=${item.compatibilityScore}${item.hasCombined ? ' | combined=yes' : ' | combined=no'}${item.hasOverlay ? ' | overlay=yes' : ' | overlay=no'}`
+      ).join("\n")
+    : "";
+  const promptTags = Array.isArray(scaffoldSelection.promptRequirementProfile?.positiveTags)
+    ? scaffoldSelection.promptRequirementProfile.positiveTags.slice(0, 16).join(", ")
+    : "";
+  return `
+
+SELECTED SCAFFOLD ARTIFACT:
+- familyId: ${scaffoldSelection.familyId || "generic_universal"}
+- familyLabel: ${scaffoldSelection.familyLabel || "Universal Core Scaffold"}
+- familyVersion: ${scaffoldSelection.familyVersion || "1"}
+- confidence: ${scaffoldSelection.confidence || 35}/99
+- scoreMarginVsRunnerUp: ${scaffoldSelection.margin || 0}
+- overlayCompatibilityScore: ${scaffoldSelection.overlayCompatibilityScore || 0}
+- selectedSignature: ${scaffoldSelection.signature || "unknown"}
+- sourceCombinedScaffoldPath: ${scaffoldSelection.sourceCombinedScaffoldPath || scaffoldSelection.sourceModel2Path || "(not provided)"}
+- sourceOverlayScaffoldPath: ${scaffoldSelection.sourceOverlayScaffoldPath || "(none)"}
+- sourceZipArchivePath: ${scaffoldSelection.sourceZipArchivePath || "(none)"}
+- selectedZipGroup: ${scaffoldSelection.selectedZipGroupDescriptor || scaffoldSelection.selectedZipGroupKey || "(none)"}
+- resolvedModel2Path: ${scaffoldSelection.resolvedModel2Path || "(not provided)"}
+- resolvedInstructionFolder: ${scaffoldSelection.resolvedInstructionFolder || "(default project ai_system_instructions)"}
+- cameraSector: ${sectors.cameraSector || "ambiguous"}
+- controllerSector: ${sectors.controllerSector || "ambiguous"}
+- worldSector: ${sectors.worldSector || "ambiguous"}
+- interactionSector: ${sectors.interactionSector || "ambiguous"}
+- promptRequirementTags: ${promptTags || "(none)"}
+
+OVERLAY CANDIDATE SCOREBOARD:
+${candidates || "1. No overlay candidate scoreboard provided."}
+
+SELECTOR RULES:
+- The system must compare the Master Game Prompt requirements against every available GAME OVERLAY scaffold candidate it can fetch from the scaffold zip / instruction folders.
+- The winning overlay chooses the paired COMBINED scaffold from the same set.
+- models/2 is materialized from the selected COMBINED scaffold file stored under AI System Instructions.
+- The matching GAME OVERLAY scaffold file is injected beside the combined scaffold in the selected instruction bundle.
+- Do not drift to sibling scaffold families unless the selected scaffold text itself explicitly authorises it.
+- Foundation-A extends the selected scaffold artifact. It does NOT regenerate scaffold architecture.
+
+TOP SELECTOR REASONS:
+${reasons || "1. No detailed selector checklist provided."}
+`;
+}
+
+async function fetchInstructionBundle(bucket, projectPath, folderOverride = null) {
+  const candidateFolders = [];
+  if (folderOverride && typeof folderOverride === "string") candidateFolders.push(folderOverride);
+  candidateFolders.push(`${projectPath}/ai_system_instructions`);
+
+  let lastEmptyFolder = candidateFolders[0];
+  for (const folder of candidateFolders.filter((value, index, arr) => value && arr.indexOf(value) === index)) {
+    lastEmptyFolder = folder;
+    try {
+      const [files] = await bucket.getFiles({ prefix: folder + "/" });
+      if (!files || files.length === 0) {
+        console.warn(`fetchInstructionBundle: no files found at ${folder}/`);
+        continue;
+      }
+
+      files.sort((a, b) => a.name.localeCompare(b.name));
+      const parts = await Promise.all(
+        files.map(async (file) => {
+          const [fileContent] = await file.download();
+          const content = fileContent.toString("utf8");
+          const fileName = file.name.split("/").pop();
+          return {
+            fileName,
+            content,
+            kind: classifyInstructionFile(fileName, content)
+          };
+        })
+      );
+      parts.sort((a, b) => {
+        const rankDelta = getInstructionBundleSortRank(a.fileName, a.kind) - getInstructionBundleSortRank(b.fileName, b.kind);
+        if (rankDelta !== 0) return rankDelta;
+        return a.fileName.localeCompare(b.fileName);
+      });
+
+      const scaffoldDocs = parts.filter(p => p.kind === "scaffold");
+      const sdkDocs = parts.filter(p => p.kind === "sdk");
+      const referencePatternDocs = parts.filter(p => p.kind === "reference_patterns");
+      const otherDocs = parts.filter(p => p.kind === "other");
+
+      const formatDocs = (docs) => docs.map(doc =>
+        `--- ${doc.fileName} ---\n${doc.content}`
+      ).join("\n\n");
+
+      const scaffoldText = formatDocs(scaffoldDocs);
+      const sdkText = formatDocs([...sdkDocs, ...otherDocs]);
+      const referencePatternsText = formatDocs(referencePatternDocs);
+
+      const sections = [];
+      if (scaffoldText) {
+        sections.push(`=== BINDING CHERRY3D SCAFFOLD LAW ===\n${scaffoldText}`);
+      }
+      if (sdkText) {
+        sections.push(`=== SUBORDINATE CHERRY3D SDK / ENGINE NOTES ===\n${sdkText}`);
+      }
+
+      const combinedText = sections.join("\n\n");
+      console.log(
+        `fetchInstructionBundle: loaded ${files.length} file(s) from ${folder} ` +
+        `(scaffold=${scaffoldDocs.length}, sdk=${sdkDocs.length}, reference=${referencePatternDocs.length}, other=${otherDocs.length})`
+      );
+
+      return {
+        scaffoldText,
+        sdkText,
+        referencePatternsText,
+        combinedText,
+        scaffoldCount: scaffoldDocs.length,
+        sdkCount: sdkDocs.length,
+        referencePatternCount: referencePatternDocs.length,
+        otherCount: otherDocs.length,
+        resolvedFolder: folder
+      };
+    } catch (err) {
+      console.error(`fetchInstructionBundle failed for ${folder}:`, err.message);
+    }
+  }
+
+  return {
+    scaffoldText: "",
+    sdkText: "",
+    referencePatternsText: "",
+    combinedText: "",
+    scaffoldCount: 0,
+    sdkCount: 0,
+    referencePatternCount: 0,
+    otherCount: 0,
+    resolvedFolder: lastEmptyFolder
+  };
+}
+
 
 function assertInstructionBundle(bundle, phaseLabel = "Pipeline") {
   if (!bundle?.scaffoldText) {
@@ -1854,6 +1980,60 @@ function assertInstructionBundle(bundle, phaseLabel = "Pipeline") {
   if (!bundle?.sdkText) {
     throw new Error(`${phaseLabel}: subordinate SDK / Engine Notes missing from ai_system_instructions/.`);
   }
+}
+
+
+function splitReferencePatternSections(referencePatternsText = "") {
+  const text = String(referencePatternsText || "").trim();
+  if (!text) return { structural: "", polish: "", full: "" };
+  const structuralMatch = text.match(/=== MANDATORY STRUCTURAL PATTERNS[\s\S]*?(?=\n=== PREFERRED PRODUCT\/POLISH PATTERNS|$)/i);
+  const polishMatch = text.match(/=== PREFERRED PRODUCT\/POLISH PATTERNS[\s\S]*?(?=\n=== TRANCHE ROUTING GUIDE|$)/i);
+  return {
+    structural: structuralMatch ? structuralMatch[0].trim() : "",
+    polish: polishMatch ? polishMatch[0].trim() : "",
+    full: text
+  };
+}
+
+function buildPlanningReferencePatternContext(referencePatternsText = "") {
+  const sections = splitReferencePatternSections(referencePatternsText);
+  if (!sections.full) return "";
+  return `
+
+=== SECONDARY REFERENCE GAME PATTERNS ===
+${sections.full}
+
+REFERENCE PACK PRIORITY:
+- Scaffold law remains primary.
+- Use MANDATORY STRUCTURAL PATTERNS to shape lifecycle, pooling, overlay ownership, persistence wiring, teardown, and helper layout when the scaffold is silent or when a lawful pattern choice is needed.
+- Use PREFERRED PRODUCT/POLISH PATTERNS to shape HUD, modal flow, progression flow, authored subsystem packaging, and finished-product cohesion after structural safety is satisfied.
+- Never let polish preferences override scaffold compliance or structural safety.`;
+}
+
+function buildExecutionReferencePatternContext(referencePatternsText = "", tranche = null) {
+  const sections = splitReferencePatternSections(referencePatternsText);
+  if (!sections.full) return "";
+  const kind = String(tranche?.kind || "").toLowerCase();
+  const name = String(tranche?.name || "").toLowerCase();
+  const purpose = String(tranche?.purpose || "").toLowerCase();
+  const haystack = `${kind} ${name} ${purpose}`;
+  const includePolish = /(ui|hud|modal|progression|result|pause|fail|shop|feedback|polish|flow|presentation)/.test(haystack);
+  const includeStructural = includePolish ? /(foundation|scene|shell|controls|control|physics|build|core|hardening|rules|bot|input|persistence|overlay|ui_logic)/.test(haystack) : true;
+  const chosen = [];
+  if (includeStructural && sections.structural) chosen.push(sections.structural);
+  if (includePolish && sections.polish) chosen.push(sections.polish);
+  if (!chosen.length && sections.structural) chosen.push(sections.structural);
+  return chosen.length
+    ? `=== RELEVANT REFERENCE GAME PATTERNS ===
+${chosen.join("\n\n")}
+
+REFERENCE PACK PRIORITY:
+- Scaffold law still wins.
+- Structural patterns are mandatory when this tranche touches lifecycle, pooling, overlay ownership, persistence wiring, teardown, or helper layout.
+- Product/polish patterns are preferences for game flow and finished-product cohesion only after structural safety is preserved.
+
+`
+    : "";
 }
 
 function flattenAssetsManifestEntries(entries) {
@@ -2534,6 +2714,199 @@ function safeJsonParse(text, label) {
       `(cleaned_len=${cleaned.length}, preview="${preview.slice(0, 120)}")`
     );
   }
+}
+
+
+function sanitizeChooserChecklist(items = []) {
+  return (Array.isArray(items) ? items : []).map((item) => {
+    if (typeof item === 'string') {
+      return { label: item, delta: 0, evidence: '' };
+    }
+    return {
+      label: String(item?.label || item?.title || item?.reason || '').trim(),
+      delta: Number(item?.delta || item?.scoreDelta || 0),
+      evidence: String(item?.evidence || item?.summary || item?.reason || '').trim()
+    };
+  }).filter(item => item.label);
+}
+
+function sanitizeChooserScoreboard(items = [], candidateByGroupKey = new Map()) {
+  return (Array.isArray(items) ? items : []).map((item) => {
+    const groupKey = String(item?.groupKey || item?.candidateId || '').trim();
+    const candidate = candidateByGroupKey.get(groupKey) || null;
+    return {
+      groupKey,
+      descriptor: String(item?.descriptor || candidate?.descriptor || '').trim(),
+      score: clampChooserScore(item?.score),
+      overlayFamilyId: String(item?.overlayFamilyId || item?.familyId || candidate?.overlay?.familyId || '').trim() || null,
+      overlayFamilyLabel: String(item?.overlayFamilyLabel || item?.familyLabel || candidate?.overlay?.familyLabel || '').trim() || null,
+      hasCombined: item?.hasCombined !== undefined ? !!item.hasCombined : !!candidate?.combined?.present,
+      hasOverlay: true,
+      topReasons: (Array.isArray(item?.topReasons) ? item.topReasons : Array.isArray(item?.reasons) ? item.reasons : [])
+        .map(v => String(v || '').trim())
+        .filter(Boolean)
+        .slice(0, 8),
+      summary: String(item?.summary || '').trim()
+    };
+  }).filter(item => item.groupKey);
+}
+
+function clampChooserScore(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(100, Math.round(n)));
+}
+
+function buildScaffoldChooserSystemPrompt() {
+  return `You are the CHERRY3D SCAFFOLD OVERLAY CHOOSER.
+Your ONLY job is to compare the Master Game Prompt requirements against EVERY provided Game-Specific Overlay Scaffold candidate and score compatibility.
+
+RULES:
+- You are the ONLY authority that decides and scores overlay compatibility.
+- Evaluate EVERY candidate. Do not skip any candidate.
+- Score each candidate from 0 to 100.
+- The winner must be the candidate with the strongest overall compatibility with the Master Game Prompt.
+- Strongly penalize explicit conflicts with an overlay's stated prohibitions.
+- Strongly reward close matches on camera family, controller/embodiment family, movement authority, world shell family, combat/interaction family, session loop family, subsystem anchors, and UI ownership.
+- Prefer candidates whose paired COMBINED scaffold is present.
+- Do not choose based on filename resemblance alone.
+- Use semantic judgment from the full overlay scaffold content.
+- Some overlay_text blocks may end with the marker "[... OVERLAY TEXT TRUNCATED BY CHOOSER PAYLOAD CAP ...]". When you see that marker, score from the head section that is present (signature, anchors, prohibitions, session loop). Do NOT penalize a candidate for truncation — the truncation is a transport cap, not a quality signal.
+- Return ONLY valid JSON. No markdown. No commentary outside JSON.
+
+Return JSON with exactly this shape:
+{
+  "promptRequirements": ["..."],
+  "winnerGroupKey": "group_key_here",
+  "winnerFamilyId": "family_id_here",
+  "winnerFamilyLabel": "family_label_here",
+  "winnerFamilyVersion": "version_here",
+  "winnerScore": 0,
+  "margin": 0,
+  "chooserSummary": "one concise paragraph",
+  "checklist": [
+    { "label": "reason", "delta": 0, "evidence": "brief evidence" }
+  ],
+  "scoreboard": [
+    {
+      "groupKey": "group_key_here",
+      "descriptor": "descriptor",
+      "overlayFamilyId": "family_id",
+      "overlayFamilyLabel": "family_label",
+      "score": 0,
+      "hasCombined": true,
+      "topReasons": ["reason 1", "reason 2"],
+      "summary": "brief summary"
+    }
+  ]
+}`;
+}
+
+function buildScaffoldChooserUserPrompt(promptText = "", candidates = [], metadata = {}) {
+  const prompt = String(promptText || "");
+  const safeCandidates = Array.isArray(candidates) ? candidates : [];
+  const header = [
+    `<selector_version>${String(metadata?.selectorVersion || '').trim()}</selector_version>`,
+    `<project_name>${String(metadata?.projectName || '').trim()}</project_name>`,
+    `<family_hint>${String(metadata?.familyHint?.label || metadata?.familyHint?.id || '').trim()}</family_hint>`,
+    `<candidate_count>${safeCandidates.length}</candidate_count>`,
+    `<prompt_tokens>${Array.isArray(metadata?.promptTokens) ? metadata.promptTokens.slice(0, 120).join(', ') : ''}</prompt_tokens>`
+  ].join("\n");
+
+  const candidateBlocks = safeCandidates.map((candidate) => {
+    const overlay = candidate?.overlay || {};
+    const combined = candidate?.combined || {};
+    const rawOverlayText = String(overlay.text || '').trim();
+    const overlayTextTruncated = rawOverlayText.length > SCAFFOLD_CHOOSER_MAX_OVERLAY_CHARS;
+    const overlayTextForPrompt = overlayTextTruncated
+      ? rawOverlayText.slice(0, SCAFFOLD_CHOOSER_MAX_OVERLAY_CHARS) + SCAFFOLD_CHOOSER_TRUNCATION_MARKER
+      : rawOverlayText;
+    return `<candidate>
+<group_key>${String(candidate?.groupKey || '').trim()}</group_key>
+<descriptor>${String(candidate?.descriptor || '').trim()}</descriptor>
+<source_folder>${String(candidate?.sourceFolder || '').trim()}</source_folder>
+<paired_combined_present>${combined.present ? 'true' : 'false'}</paired_combined_present>
+<paired_combined_path>${String(combined.fullPath || combined.archiveFullPath || '').trim()}</paired_combined_path>
+<overlay_file_name>${String(overlay.fileName || '').trim()}</overlay_file_name>
+<overlay_full_path>${String(overlay.fullPath || overlay.archiveFullPath || '').trim()}</overlay_full_path>
+<overlay_family_id>${String(overlay.familyId || '').trim()}</overlay_family_id>
+<overlay_family_label>${String(overlay.familyLabel || '').trim()}</overlay_family_label>
+<overlay_family_version>${String(overlay.familyVersion || '').trim()}</overlay_family_version>
+<overlay_text_char_count>${rawOverlayText.length}</overlay_text_char_count>
+<overlay_text_truncated>${overlayTextTruncated ? 'true' : 'false'}</overlay_text_truncated>
+<overlay_text>
+${overlayTextForPrompt}
+</overlay_text>
+</candidate>`;
+  }).join("\n\n");
+
+  return `${header}
+
+<master_game_prompt>
+${prompt}
+</master_game_prompt>
+
+<overlay_candidates>
+${candidateBlocks}
+</overlay_candidates>`;
+}
+
+async function chooseScaffoldOverlayWithOpus(apiKey, promptText = "", candidates = [], metadata = {}) {
+  const system = buildScaffoldChooserSystemPrompt();
+  const userContent = buildScaffoldChooserUserPrompt(promptText, candidates, metadata);
+  const result = await callClaude(apiKey, {
+    model: SCAFFOLD_CHOOSER_MODEL,
+    maxTokens: 24000,
+    system,
+    userContent,
+    effort: 'high',
+    useThinking: true
+  });
+
+  const parsed = safeJsonParse(result.text, "scaffold chooser");
+  const candidateList = Array.isArray(candidates) ? candidates : [];
+  const candidateByGroupKey = new Map(candidateList.map(candidate => [String(candidate?.groupKey || '').trim(), candidate]).filter(([key]) => key));
+
+  const winnerGroupKey = String(parsed?.winnerGroupKey || '').trim();
+  if (!winnerGroupKey) {
+    throw new Error('Scaffold chooser returned no winnerGroupKey.');
+  }
+  if (!candidateByGroupKey.has(winnerGroupKey)) {
+    throw new Error(`Scaffold chooser selected unknown groupKey "${winnerGroupKey}".`);
+  }
+
+  const scoreboard = sanitizeChooserScoreboard(parsed?.scoreboard, candidateByGroupKey);
+  const winnerCandidate = candidateByGroupKey.get(winnerGroupKey);
+  const winnerScore = clampChooserScore(parsed?.winnerScore);
+  const sortedScoreboard = scoreboard.length
+    ? scoreboard.sort((a, b) => b.score - a.score || a.groupKey.localeCompare(b.groupKey))
+    : candidateList.map((candidate) => ({
+        groupKey: String(candidate?.groupKey || '').trim(),
+        descriptor: String(candidate?.descriptor || '').trim(),
+        score: candidate?.groupKey === winnerGroupKey ? winnerScore : 0,
+        overlayFamilyId: candidate?.overlay?.familyId || null,
+        overlayFamilyLabel: candidate?.overlay?.familyLabel || null,
+        hasCombined: !!candidate?.combined?.present,
+        hasOverlay: true,
+        topReasons: [],
+        summary: ''
+      })).sort((a, b) => b.score - a.score || a.groupKey.localeCompare(b.groupKey));
+
+  const runnerUp = sortedScoreboard.find(item => item.groupKey !== winnerGroupKey) || null;
+  return {
+    chooserModel: SCAFFOLD_CHOOSER_MODEL,
+    promptRequirements: (Array.isArray(parsed?.promptRequirements) ? parsed.promptRequirements : []).map(v => String(v || '').trim()).filter(Boolean).slice(0, 24),
+    winnerGroupKey,
+    winnerOverlayPath: winnerCandidate?.overlay?.fullPath || winnerCandidate?.overlay?.archiveFullPath || null,
+    winnerFamilyId: String(parsed?.winnerFamilyId || winnerCandidate?.overlay?.familyId || '').trim() || null,
+    winnerFamilyLabel: String(parsed?.winnerFamilyLabel || winnerCandidate?.overlay?.familyLabel || '').trim() || null,
+    winnerFamilyVersion: String(parsed?.winnerFamilyVersion || winnerCandidate?.overlay?.familyVersion || '').trim() || null,
+    winnerScore,
+    margin: clampChooserScore(parsed?.margin !== undefined ? parsed.margin : (runnerUp ? winnerScore - runnerUp.score : winnerScore)),
+    chooserSummary: String(parsed?.chooserSummary || '').trim(),
+    checklist: sanitizeChooserChecklist(parsed?.checklist).slice(0, 12),
+    scoreboard: sortedScoreboard
+  };
 }
 
 /* ── buildArchitectureSpecBlock — REMOVED ─────────────────
@@ -3892,20 +4265,142 @@ exports.handler = async (event) => {
     if (!event.body) throw new Error("Missing request body");
 
     const parsedBody = JSON.parse(event.body);
-    projectPath = parsedBody.projectPath;
-    jobId = parsedBody.jobId;
-
-    if (!projectPath) throw new Error("Missing projectPath");
-    if (!jobId) throw new Error("Missing jobId");
 
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) throw new Error("Missing ANTHROPIC_API_KEY");
 
     bucket = admin.storage().bucket(process.env.FIREBASE_STORAGE_BUCKET || "gokudatabase.firebasestorage.app");
 
-    // ── Determine mode: "plan" / "tranche" ──────────────────────
+    // ── Determine mode: "plan" / "tranche" / "scaffold_choose" ───────────
     const mode = parsedBody.mode || "plan";
     const nextTranche = parsedBody.nextTranche || 0;
+
+    if (mode === "scaffold_choose") {
+      /* ── Scaffold Overlay Chooser — async transport ──────────────
+         This endpoint is a Netlify BACKGROUND function. It returns
+         202 Accepted immediately with no usable response body. Any
+         result must therefore be communicated through Firebase.
+
+         Contract:
+           Request must include projectPath + jobId (same as plan /
+           tranche modes). The chooser writes its result to a
+           chooser-job-scoped folder:
+               {projectPath}/ai_scaffold_selection_jobs/{jobId}/ai_scaffold_selection.json
+           and any failure to:
+               {projectPath}/ai_scaffold_selection_jobs/{jobId}/ai_scaffold_selection_error.json
+           The frontend polls those job-scoped paths.
+
+         The chooser uses its OWN status/error files separate from
+         the plan/tranche pipeline (ai_progress.json, ai_error.json)
+         so a chooser failure cannot poison a subsequent plan run
+         in the same project. The frontend is responsible for
+         deleting stale chooser files before firing a new chooser
+         job.
+
+         No deterministic fallback. If the chooser fails for any
+         reason — candidate-cap overflow, missing inputs, Opus
+         error, malformed JSON — the failure is surfaced verbatim
+         via ai_scaffold_selection_error.json and the build halts.
+      */
+      const chooserProjectPath = parsedBody.projectPath;
+      const chooserJobId = parsedBody.jobId;
+      if (!chooserProjectPath) throw new Error("Missing projectPath for scaffold chooser");
+      if (!chooserJobId) throw new Error("Missing jobId for scaffold chooser");
+
+      projectPath = chooserProjectPath;
+      jobId = chooserJobId;
+
+      const chooserArtifactBasePath = `${chooserProjectPath}/ai_scaffold_selection_jobs/${chooserJobId}`;
+      const selectionFilePath = `${chooserArtifactBasePath}/ai_scaffold_selection.json`;
+      const selectionErrorPath = `${chooserArtifactBasePath}/ai_scaffold_selection_error.json`;
+
+      try {
+        const prompt = String(parsedBody.prompt || "");
+        const candidates = Array.isArray(parsedBody.candidates) ? parsedBody.candidates : [];
+        if (!prompt.trim()) throw new Error("Missing prompt for scaffold chooser");
+        if (!candidates.length) throw new Error("Missing scaffold chooser candidates");
+
+        // Hard candidate-count cap. Do not slice silently — force the
+        // caller to curate. Silent slicing is a deterministic fallback
+        // (deterministically picking the first N) and that is exactly
+        // what the new design rejects.
+        if (candidates.length > SCAFFOLD_CHOOSER_MAX_CANDIDATES) {
+          throw new Error(
+            `Scaffold chooser received ${candidates.length} candidates but the hard cap is ${SCAFFOLD_CHOOSER_MAX_CANDIDATES}. ` +
+            `Curate the Family_Scaffold_Sets library or raise SCAFFOLD_CHOOSER_MAX_CANDIDATES deliberately — ` +
+            `silently dropping candidates is not allowed.`
+          );
+        }
+
+        const selection = await chooseScaffoldOverlayWithOpus(apiKey, prompt, candidates, {
+          selectorVersion: parsedBody.selectorVersion || '',
+          projectName: parsedBody.projectName || '',
+          familyHint: parsedBody.familyHint || null,
+          promptTokens: parsedBody.promptTokens || []
+        });
+
+        await bucket.file(selectionFilePath).save(
+          JSON.stringify({
+            success: true,
+            jobId: chooserJobId,
+            selectorVersion: parsedBody.selectorVersion || '',
+            completedTime: Date.now(),
+            candidateCount: candidates.length,
+            candidateCap: SCAFFOLD_CHOOSER_MAX_CANDIDATES,
+            overlayTextCapChars: SCAFFOLD_CHOOSER_MAX_OVERLAY_CHARS,
+            selection
+          }),
+          { contentType: "application/json", resumable: false }
+        );
+
+        // Proactively clear a stale error file from a prior failed
+        // chooser run so the frontend poller doesn't trip on it.
+        try {
+          await bucket.file(selectionErrorPath).delete();
+        } catch (_) { /* not present — expected on first success */ }
+
+        console.log(`[SCAFFOLD_CHOOSE] jobId=${chooserJobId} winner=${selection?.winnerGroupKey} score=${selection?.winnerScore} candidates=${candidates.length} artifactBase=${chooserArtifactBasePath}`);
+
+        // Return value is discarded by Netlify (background function
+        // returns 202 immediately), but still provided for local
+        // `netlify dev` visibility and for non-background deploys.
+        return {
+          statusCode: 200,
+          body: JSON.stringify({ success: true, selection })
+        };
+      } catch (chooserErr) {
+        console.error(`[SCAFFOLD_CHOOSE] jobId=${chooserJobId} failed:`, chooserErr);
+        try {
+          await bucket.file(selectionErrorPath).save(
+            JSON.stringify({
+              success: false,
+              jobId: chooserJobId,
+              selectorVersion: parsedBody.selectorVersion || '',
+              completedTime: Date.now(),
+              error: chooserErr.message || String(chooserErr)
+            }),
+            { contentType: "application/json", resumable: false }
+          );
+        } catch (writeErr) {
+          console.error(`[SCAFFOLD_CHOOSE] CRITICAL: could not write chooser error file:`, writeErr);
+        }
+
+        // Return without re-throwing. The chooser error has already
+        // been surfaced on its OWN Firebase path. Re-throwing would
+        // fall into the top-level catch which writes ai_error.json
+        // and ai_progress.json (status: "error") at the project root
+        // — those files belong to the plan/tranche pipeline and a
+        // stale write would falsely poison a future plan build in
+        // the same project.
+        return { statusCode: 500, body: JSON.stringify({ error: chooserErr.message || String(chooserErr) }) };
+      }
+    }
+
+    projectPath = parsedBody.projectPath;
+    jobId = parsedBody.jobId;
+
+    if (!projectPath) throw new Error("Missing projectPath");
+    if (!jobId) throw new Error("Missing jobId");
 
     // ══════════════════════════════════════════════════════════════
     //  MODE: "plan" — First invocation, do planning then chain
@@ -3916,7 +4411,7 @@ exports.handler = async (event) => {
       const requestFile = bucket.file(`${projectPath}/ai_request.json`);
       const [content] = await requestFile.download();
       const requestPayload = JSON.parse(content.toString());
-      const { prompt, files, selectedAssets, inlineImages, modelAnalysis, roadPipeline: requestRoadPipeline = null } = requestPayload;
+      const { prompt, files, selectedAssets, inlineImages, modelAnalysis, roadPipeline: requestRoadPipeline = null, scaffoldSelection = null } = requestPayload;
       if (!prompt) throw new Error("Missing instructions inside payload");
       const roadPipeline = detectRoadPipelineSettings(prompt, requestRoadPipeline);
       requestPayload.roadPipeline = roadPipeline;
@@ -4041,7 +4536,7 @@ exports.handler = async (event) => {
       // ══════════════════════════════════════════════════════════
 
       // ── Fetch Scaffold + SDK instruction bundle ──
-      const instructionBundle = await fetchInstructionBundle(bucket, projectPath);
+      const instructionBundle = await fetchInstructionBundle(bucket, projectPath, scaffoldSelection?.resolvedInstructionFolder || null);
       assertInstructionBundle(instructionBundle, "PLAN");
 
       // ── Load approved Asset Roster (if one was approved for this run) ──
@@ -4068,7 +4563,8 @@ exports.handler = async (event) => {
         finalMessage: null,
         error: null,
         completedTime: null,
-        contractPromptReview: null
+        contractPromptReview: null,
+        scaffoldSelection: scaffoldSelection || null
       };
       await saveProgress(bucket, projectPath, progress);
 
@@ -4076,7 +4572,7 @@ exports.handler = async (event) => {
 
 Your job: read the user's request, the existing project files, and the instruction bundle below. Then split the build into sequential, self-contained TRANCHES that can be executed one at a time by a coding AI.
 
-${instructionBundle.combinedText}
+${instructionBundle.combinedText}${buildPlanningReferencePatternContext(instructionBundle.referencePatternsText)}${buildScaffoldSelectionContext(scaffoldSelection)}
 
 <!-- CACHE_BREAK -->
 
@@ -4085,7 +4581,7 @@ INSTRUCTION PRECEDENCE:
 2. The SDK / Engine Notes are subordinate. Use them only for engine facts, API details, threading rules, property paths, and anti-pattern avoidance when the scaffold is silent.
 3. If both instruction layers apply to the same topic, the Scaffold wins for architecture, lifecycle shape, immutable sections, required state fields, build sequencing, UI ownership, movement authority, materials/textures, particles, and scene mutation rails.
 4. Never elevate the SDK into a parallel lawbook. It fills certainty gaps only where the scaffold does not already settle the issue.
-5. Never plan tranches that delete, replace, bypass, or work around an immutable scaffold block. Adapt the requested game to the scaffold.
+5. Never plan tranches that delete, replace, bypass, or work around an immutable scaffold block. Adapt the requested game to the SELECTED scaffold artifact for this build.
 6. Pick one lawful pattern family per subsystem and preserve it through planning, execution, validation, and repair. Do not silently switch families mid-pipeline.
 7. REFERENCE IMAGES (if attached): Any images attached to this request are first-class game design inputs with authority equal to the Master Prompt. They define the intended visual style, layout, object types, and complexity level. Where the image and the text spec diverge, treat the image as the authoritative definition of what must be built. Every tranche that involves visual elements, entities, or layouts must reconcile against the attached images.
 8. If a tranche needs to declare or modify scene hierarchy, entity placement, visibility, or rigidbody ownership, that tranche must target json/scene_intent.json. scene_intent may use groups[], objects[], and standalone rigidbodies[] when a rigidbody is not attached to a mesh object.
@@ -4099,7 +4595,7 @@ PLANNING RULES:
 4. ALWAYS split large or complex tranches into A/B/C sub-tranches. There is no hard cap on tranche count — use as many as needed. If in doubt, split.
 5. Keep tranche scope TIGHT: each tranche should implement ONE subsystem or ONE cohesive set of closely-related functions. Target 400-500 lines of NEW code per tranche — patch output is flat-cost regardless of accumulated file size, so use the full budget for fidelity and completeness. Only split when there is a true dependency boundary, a distinct risk boundary, or the tranche genuinely covers two independent subsystems that could fail separately. Do NOT split artificially to hit a lower line count.
 6. Every tranche must declare: kind, anchorSections, purpose, systemsTouched, filesTouched, visibleResult, safetyChecks, expectedFiles, dependencies, expertAgents, phase, and qualityCriteria.
-7. Foundation-A tranche (ALWAYS first): scaffold hook wiring, shared gameState field declarations, objectids registration, and factory/hook extensions. May include materials and constant definitions. Must NOT include world geometry placement, terrain, or STATIC rigidbodies — those belong in the immediately following Scene Shell or Terrain Shell tranche. Use the full budget for completeness; a thorough Foundation-A prevents patch collisions in later tranches.
+7. Foundation-A tranche (ALWAYS first): scaffold hook wiring, shared gameState field declarations, objectids registration, and factory/hook extensions that EXTEND the already-selected scaffold artifact. May include materials and constant definitions. Must NOT regenerate scaffold architecture, and must NOT include world geometry placement, terrain, or STATIC rigidbodies — those belong in the immediately following Scene Shell or Terrain Shell tranche. Use the full budget for completeness; a thorough Foundation-A prevents patch collisions in later tranches.
 8. Do NOT instruct the executor to remove immutable scaffold fields/blocks or invent a replacement lifecycle when the scaffold already defines one.
 9. If the scaffold already provides a section (camera stage, UI hookup, particle emitter factory, instance parent pattern, input handler shape, etc.), the tranche must explicitly extend that section instead of replacing it. If a subsystem requires a lawful pattern choice (for example physics_driven vs direct_integration, createInstance default vs explicit createObject exception, or sphere-burst vs billboard-trail particles), the tranche prompt must name that family explicitly and prohibit mixing.
 10. When the user's request contains code examples (updateInput, syncPlayerSharedMemory, ghost AI, etc.), embed those exact code examples in the relevant tranche prompts — do not paraphrase them.
@@ -4273,6 +4769,7 @@ ${effectivePrompt}
         totalTranches: plan.tranches.length,
         approvedRosterBlock,   // ← propagated to every tranche execution
         roadPipeline,
+        scaffoldSelection,
         contractPromptReview: progress.contractPromptReview,
         contractCodeReview: progress.contractCodeReview,
         sceneIntentSyncState: {
@@ -4336,11 +4833,11 @@ ${effectivePrompt}
       const state = await loadPipelineState(bucket, projectPath);
       if (!state) throw new Error("Pipeline state not found in Firebase. Chain broken.");
 
-      const { progress, accumulatedFiles, allUpdatedFiles, imageBlocks, modelAnalysis, approvedRosterBlock = "", roadPipeline = null, sceneIntentSyncState = null } = state;
+      const { progress, accumulatedFiles, allUpdatedFiles, imageBlocks, modelAnalysis, approvedRosterBlock = "", roadPipeline = null, scaffoldSelection = null, sceneIntentSyncState = null } = state;
       const tranche = progress.tranches[nextTranche];
 
       // ── Fetch Scaffold + SDK instruction bundle ──
-      const instructionBundle = await fetchInstructionBundle(bucket, projectPath);
+      const instructionBundle = await fetchInstructionBundle(bucket, projectPath, scaffoldSelection?.resolvedInstructionFolder || null);
       assertInstructionBundle(instructionBundle, "TRANCHE");
 
       if (!tranche) throw new Error(`Tranche ${nextTranche} not found in pipeline state.`);
@@ -4360,12 +4857,12 @@ ${effectivePrompt}
       const executionSystem = `You are an expert game development AI.
 The user will provide project files and a focused modification request (one tranche of a larger build).
 
-${instructionBundle.combinedText}
+${instructionBundle.combinedText}${buildScaffoldSelectionContext(scaffoldSelection)}
 
 <!-- CACHE_BREAK -->
 
 INSTRUCTION PRECEDENCE:
-- The Cherry3D Scaffold is the binding codified law extracted from shipped working games. Treat it as the required base architecture.
+- The SELECTED Cherry3D Scaffold artifact is the binding codified law extracted from shipped working games plus the chosen family overlay for this build. Treat it as the required base architecture.
 - The SDK / Engine Notes are subordinate. Use them only when the scaffold is silent and engine/API certainty is needed.
 - If both apply, the Scaffold wins for architecture, lifecycle, state shape, movement authority, UI ownership, materials/textures, particles, and scene mutation rails.
 - Never elevate the SDK into a parallel authority. It fills certainty gaps only where the scaffold does not already settle the issue.
@@ -4489,8 +4986,9 @@ VALIDATOR STATUS:
       const rosterPrefix = approvedRosterBlock
         ? `=== APPROVED GAME-SPECIFIC ASSET ROSTER ===\n${approvedRosterBlock}\n=== END ASSET ROSTER ===\n\n`
         : "";
+      const referencePatternContext = buildExecutionReferencePatternContext(instructionBundle.referencePatternsText, tranche);
 
-      const trancheUserText = `${buildRoadPlanningContext(roadPipeline)}${rosterPrefix}${trancheFileContext}
+      const trancheUserText = `${buildRoadPlanningContext(roadPipeline)}${referencePatternContext}${rosterPrefix}${trancheFileContext}
 === TRANCHE ${nextTranche + 1} of ${progress.totalTranches}: "${tranche.name}" ===
 
 ${tranchePrompt}
@@ -4507,16 +5005,16 @@ REMINDER: The files above are READ-ONLY context. Output ONLY patch blocks (REPLA
         ...(imageBlocks || [])
       ];
 
-      // ── Model routing: Foundation-A gets Opus 4.7 high with 100k tokens; all others get Opus 4.7 medium ──
+      // ── Model routing: Foundation-A gets Opus 4.7 xhigh with 100k tokens; all others get Opus 4.7 xhigh ──
       // Foundation-A wires the most zones simultaneously and is the highest-risk
-      // single tranche in the pipeline. high gives it strong reasoning depth.
-      // Remaining tranches use medium — still Opus-class, but cost-efficient.
+      // single tranche in the pipeline. xhigh gives it maximum reasoning depth.
+      // All tranches use xhigh with adaptive thinking for best quality.
       const trancheName = String(progress.tranches[nextTranche]?.name || '');
       const isFoundationA = FOUNDATION_A_REGEX.test(trancheName);
       const trancheModel = 'claude-opus-4-7';
-      const trancheEffort = isFoundationA ? 'high' : 'medium';
+      const trancheEffort = 'xhigh';
       const trancheMaxTokens = isFoundationA ? 100000 : 64000;
-      const trancheUseThinking = isFoundationA; // thinking on for Foundation-A, off for all other tranches
+      const trancheUseThinking = true; // thinking on for all tranches
 
       console.log(`[TRANCHE ${nextTranche + 1}] ${trancheName} → ${trancheModel} effort=${trancheEffort} max_tokens=${trancheMaxTokens} thinking=${trancheUseThinking}`);
 
