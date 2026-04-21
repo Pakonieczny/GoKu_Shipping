@@ -2679,6 +2679,10 @@ ${reasonsText || '1. Generic fallback — no strong signals detected.'}`;
     function buildScaffoldMatchContext(familyDescriptor = {}, promptText = '') {
       const familyId = familyDescriptor?.id || '';
       const familyLabel = familyDescriptor?.label || '';
+      // Pull version from the descriptor (registry entries carry a `version` field).
+      // Was previously a bare `familyVersion` reference that would throw
+      // ReferenceError at runtime — left over from an incomplete refactor.
+      const familyVersion = familyDescriptor?.version || '1';
       const prompt = String(promptText || '');
       const promptHead = prompt.split(/\n+/).slice(0, 120).join(' ');
       return {
@@ -3269,7 +3273,9 @@ ${reasonsText || '1. Generic fallback — no strong signals detected.'}`;
       }
 
       const hintRanking = rankScaffoldFamilies(promptText, roadPipeline);
-      const familyDescriptor = getFamilyTemplateDescriptor(hintRanking?.winner?.id || 'generic_universal');
+      // Registry lookup helper is getScaffoldFamilyById (line ~1768).
+      // getFamilyTemplateDescriptor was a stale rename left from a partial refactor.
+      const familyDescriptor = getScaffoldFamilyById(hintRanking?.winner?.id || 'generic_universal');
       const matchContext = buildScaffoldMatchContext(familyDescriptor, promptText);
 
       const chooserSelection = await requestScaffoldOverlayChoiceWithOpus(projectName, projectPath, chooserJobId, promptText, candidateGroups, matchContext, roadPipeline);
