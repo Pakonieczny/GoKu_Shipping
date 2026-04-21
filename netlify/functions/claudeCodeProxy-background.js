@@ -4397,14 +4397,22 @@ exports.handler = async (event) => {
           console.error(`[SCAFFOLD_CHOOSE] CRITICAL: could not write chooser error file:`, writeErr);
         }
 
-        // Return without re-throwing. The chooser error has already
-        // been surfaced on its OWN Firebase path. Re-throwing would
-        // fall into the top-level catch which writes ai_error.json
-        // and ai_progress.json (status: "error") at the project root
-        // — those files belong to the plan/tranche pipeline and a
-        // stale write would falsely poison a future plan build in
-        // the same project.
-        return { statusCode: 500, body: JSON.stringify({ error: chooserErr.message || String(chooserErr) }) };
+        // Re-throw so the outer catch handles the final response.
+        // Previously this returned { statusCode: 500 } synchronously,
+        // which causes Netlify background functions to discard ALL logs
+        // (background functions must return 202 — any other synchronous
+        // status code suppresses the log stream entirely). Re-throwing
+        // lets the outer catch call console.error (which IS flushed)
+        // and return 202 so logs survive.
+        //
+        // NOTE: the outer catch writes ai_error.json at the project root,
+        // not the chooser-scoped path. That is acceptable here because
+        // the chooser error file above was already written (or attempted).
+        // The outer catch's ai_error.json write is a secondary diagnostic
+        // artifact and does not poison the plan/tranche pipeline because
+        // the frontend only reads ai_error.json during an active plan job,
+        // and no plan job is in flight during a chooser invocation.
+        throw chooserErr;
       }
     }
 
@@ -5392,6 +5400,13 @@ REMINDER: The files above are READ-ONLY context. Output ONLY patch blocks (REPLA
       console.error("CRITICAL: Failed to write error to Firebase.", e);
     }
 
-    return { statusCode: 500, body: JSON.stringify({ error: error.message }) };
+    // Return 202, not 500. Netlify background functions that return any
+    // synchronous non-202 status cause the entire log stream to be
+    // discarded — making all console.error calls above invisible.
+    // The error has already been written to Firebase (ai_error.json)
+    // and logged via console.error above; the HTTP response body is
+    // irrelevant because background functions return 202 immediately
+    // and the body is never read by the caller anyway.
+    return { statusCode: 202, body: JSON.stringify({ accepted: true }) };
   }
 };
