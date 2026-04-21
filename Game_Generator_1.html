@@ -3223,13 +3223,22 @@ ${reasonsText || '1. Generic fallback — no strong signals detected.'}`;
           // not a chooser result — no Firebase file will ever be written
           // for this call, so surface it here.
           //
-          // Include the measured payload size so we can distinguish:
-          //   - payload too large (bodyBytes close to 6 MB even though our cap passed)
-          //   - function crashed on cold start (bodyBytes comfortably under 6 MB)
+          // Classification rules (important — earlier wording was wrong):
+          //   - res.status 413 OR payload > ~5 MB → genuine payload rejection
+          //     at Netlify's HTTP ingress (function never ran).
+          //   - res.status 500 with small payload → the handler itself ran,
+          //     threw inside the scaffold_choose branch (chooseScaffoldOverlayWithOpus,
+          //     Claude API, Firebase write, etc.), and returned 500 by design
+          //     at proxy line ~4395. Check Netlify function logs for the line
+          //     prefixed with "[SCAFFOLD_CHOOSE] jobId=<id> failed:" — that
+          //     contains the actual server-side error message.
+          //   - Anything else → check Netlify function logs.
           const bodyMb = (bodyBytes / (1024 * 1024)).toFixed(2);
-          const likelyCause = bodyBytes > (5 * 1024 * 1024)
-            ? 'likely payload-size rejection'
-            : 'likely function crash on cold start — check Netlify function logs';
+          const likelyCause = (res.status === 413 || bodyBytes > (5 * 1024 * 1024))
+            ? 'payload-size rejection at Netlify ingress'
+            : res.status === 500
+              ? 'handler ran and returned 500 — search Netlify logs for "[SCAFFOLD_CHOOSE]" to find the real error'
+              : 'unknown dispatch failure — check Netlify function logs';
           throw new Error(
             `Netlify rejected the scaffold chooser request: ${res.status} ${res.statusText}. ` +
             `Payload was ${bodyMb} MB with ${candidates.length} candidate(s) — ${likelyCause}.`

@@ -4257,6 +4257,18 @@ async function runSpecValidationGate(apiKey, masterPrompt, progress, bucket, pro
 
 /* ═══════════════════════════════════════════════════════════════ */
 exports.handler = async (event) => {
+  // DIAGNOSTIC: unconditional entry log. If clicking the Update button produces
+  // a 500 without this line appearing in Netlify function logs, the request is
+  // being rejected at the Netlify edge BEFORE reaching this handler (and the
+  // root cause is platform-level: routing, headers, bundle load, etc.)
+  // Remove or reduce once the scaffold chooser 500 is diagnosed.
+  console.log(
+    `[HANDLER_ENTRY] method=${event.httpMethod} path=${event.path} ` +
+    `bodyBytes=${event.body ? event.body.length : 0} ` +
+    `contentType=${event.headers?.['content-type'] || event.headers?.['Content-Type'] || 'none'} ` +
+    `ts=${Date.now()}`
+  );
+
   let projectPath = null;
   let bucket = null;
   let jobId = null;
