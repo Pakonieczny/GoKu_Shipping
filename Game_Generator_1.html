@@ -1040,7 +1040,7 @@
       
       <label>AI Service</label>
       <select id="aiServiceSelect" style="margin-bottom: 20px;">
-        <option value="claude">Claude (Opus/Sonnet 4.6)</option>
+        <option value="claude">Claude (Opus 4.7)</option>
         <option value="gemini">Gemini (3.1 Pro)</option>
       </select>
       
@@ -1308,7 +1308,7 @@
 
     // ── AI Service Configuration ──
     const AI_SERVICES = {
-        claude: { name: 'Claude', planner: 'Opus 4.6', executor: 'Sonnet 4.6', endpoint: '/.netlify/functions/claudeCodeProxy-background', patchEndpoint: '/.netlify/functions/claudeCodePatch' },
+        claude: { name: 'Claude', planner: 'Opus 4.7', executor: 'Opus 4.7', endpoint: '/.netlify/functions/claudeCodeProxy-background', patchEndpoint: '/.netlify/functions/claudeCodePatch' },
         gemini: { name: 'Gemini', planner: 'Gemini 3.1 Pro', executor: 'Gemini 3.1 Pro', endpoint: '/.netlify/functions/geminiCodeProxy-background', patchEndpoint: '/.netlify/functions/claudeCodePatch' }
     };
     let currentAiService = 'claude';
@@ -6319,12 +6319,12 @@ Quality criteria for your work:
           },
           {
             stage: 'PLANNER',
-            name:  'Opus Planner — Instruction Precedence Rule 6',
+            name:  'Opus 4.7 Planner — Instruction Precedence Rule 6',
             text:  'Images are first-class game design inputs with authority equal to the Master Prompt. They define the intended visual style, layout, object types, and complexity level. Where image and text spec diverge, the image is the authoritative definition of what must be built. Every tranche touching visual elements, entities, or layouts must reconcile against the attached images.'
           },
           {
             stage: 'EXECUTOR',
-            name:  'Sonnet Executor — injected into every tranche',
+            name:  'Opus 4.7 Executor — injected into every tranche',
             text:  'Images are first-class game design inputs with authority equal to the Master Prompt. They define the intended visual appearance, entity types, layout geometry, and interaction model. Producing output visually inconsistent with an attached image is classified as a defect. Visual Reconciliation is a required quality criterion for every tranche that touches rendered content.'
           }
         ];
@@ -8007,7 +8007,7 @@ Quality criteria for your work:
        GAME-SPECIFIC ASSET ROSTER STAGE
        ─────────────────────────────────────────────────────────────────────
        Runs between Prompt Verification upload and pipeline trigger.
-       1. Calls claudeRosterGenerate (Sonnet 4.6) for Phase 1 only:
+       1. Calls claudeRosterGenerate (Opus 4.7) for Phase 1 only:
           analyze Master Prompt + gameplay reference images and produce a
           structured list of required particle effects and 3D objects.
        2. Blocks for one user reference image per required 3D object.
@@ -9043,7 +9043,7 @@ TRANCHE DESIGN & EXECUTION REQUIREMENT:
 
       while (!approved) {
         // ── Step 1: Phase 1 — generate 3D object & particle text descriptions ──
-        Progress.step('Analyzing Game Requirements', 'Claude Sonnet 4.6 is identifying required 3D objects and particle effects...');
+        Progress.step('Analyzing Game Requirements', 'Claude Opus 4.7 is identifying required 3D objects and particle effects...');
         const statusEl = document.getElementById('rosterApproveStatus');
         if (statusEl) statusEl.textContent = 'Running Phase 1 analysis...';
 

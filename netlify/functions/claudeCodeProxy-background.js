@@ -4666,11 +4666,12 @@ ${effectivePrompt}
         ...imageBlocks
       ];
 
-      console.log(`PLANNING: Single-pass Opus 4.7 high for Job ${jobId}...`);
+      console.log(`PLANNING: Single-pass Opus 4.7 high with adaptive thinking for Job ${jobId}...`);
       const planResult = await callClaude(apiKey, {
         model: "claude-opus-4-7",
         maxTokens: 100000,
         effort: "high",
+        useThinking: true,
         system: planningSystem,
         userContent: planningUserContent
       });
