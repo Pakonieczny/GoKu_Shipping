@@ -1356,6 +1356,17 @@
     const REQUIRED_INSTRUCTION_KINDS = ['scaffold', 'sdk'];
     const OPTIONAL_INSTRUCTION_KINDS = ['reference_patterns'];
 
+    // Mirror proxy constants (netlify/functions/claudeCodeProxy-background.js lines 71–72)
+    // so the frontend enforces the same contract *before* dispatch. Netlify's 6 MB
+    // payload limit is enforced at the HTTP layer — it rejects with 500 before our
+    // function code runs, so backend-side caps cannot save a bloated POST. The
+    // payload ceiling is set below 6 MB to leave room for JSON/HTTP overhead.
+    const SCAFFOLD_CHOOSER_MAX_CANDIDATES = 24;
+    const SCAFFOLD_CHOOSER_MAX_OVERLAY_CHARS = 12000;
+    const SCAFFOLD_CHOOSER_TRUNCATION_MARKER =
+      '\n\n[... OVERLAY TEXT TRUNCATED BY CLIENT PAYLOAD CAP — SCORE FROM HEAD SECTION ABOVE ...]';
+    const SCAFFOLD_CHOOSER_MAX_PAYLOAD_BYTES = 5 * 1024 * 1024 + 512 * 1024; // 5.5 MB
+
     const SCAFFOLD_SELECTOR_VERSION = '2026-04-20-scaffold-selector-v5-opus47-overlay-chooser';
     const SCAFFOLD_CHOOSER_ENDPOINT = '/.netlify/functions/claudeCodeProxy-background';
     const SCAFFOLD_CACHE_ROOT = '_scaffold_cache';
@@ -3069,9 +3080,28 @@ ${reasonsText || '1. Generic fallback — no strong signals detected.'}`;
     }
 
     async function requestScaffoldOverlayChoiceWithOpus(projectName, projectPath, chooserJobId, promptText = '', candidateGroups = [], matchContext = {}, roadPipeline = null) {
-      const candidates = (candidateGroups || [])
-        .filter(group => group?.overlayItem?.text)
-        .map((group, index) => ({
+      const eligibleGroups = (candidateGroups || []).filter(group => group?.overlayItem?.text);
+
+      // Hard-fail on candidate overflow. Mirrors the proxy's behavior at line 4327
+      // but surfaced here before the network call — the proxy would reject the
+      // same payload with the same rule, but only if it survived Netlify's 6 MB
+      // ingress first. Fail loudly so the caller curates rather than silently
+      // dropping candidates.
+      if (eligibleGroups.length > SCAFFOLD_CHOOSER_MAX_CANDIDATES) {
+        throw new Error(
+          `Scaffold chooser has ${eligibleGroups.length} overlay candidates but the hard cap is ${SCAFFOLD_CHOOSER_MAX_CANDIDATES}. ` +
+          `Curate the Family_Scaffold_Sets library or raise SCAFFOLD_CHOOSER_MAX_CANDIDATES deliberately — silent slicing is not allowed.`
+        );
+      }
+
+      const candidates = eligibleGroups.map((group, index) => {
+        const rawOverlayText = String(group.overlayItem?.text || '');
+        const overlayTextTruncated = rawOverlayText.length > SCAFFOLD_CHOOSER_MAX_OVERLAY_CHARS;
+        const overlayText = overlayTextTruncated
+          ? rawOverlayText.slice(0, SCAFFOLD_CHOOSER_MAX_OVERLAY_CHARS) + SCAFFOLD_CHOOSER_TRUNCATION_MARKER
+          : rawOverlayText;
+
+        return {
           candidateId: `overlay_candidate_${index + 1}`,
           groupKey: group.groupKey,
           descriptor: group.descriptor,
@@ -3084,7 +3114,9 @@ ${reasonsText || '1. Generic fallback — no strong signals detected.'}`;
             familyId: group.overlayProfile?.familyId || null,
             familyLabel: group.overlayProfile?.familyLabel || null,
             familyVersion: group.overlayProfile?.familyVersion || null,
-            text: group.overlayItem?.text || ''
+            text: overlayText,
+            textTruncated: overlayTextTruncated,
+            textOriginalLength: rawOverlayText.length
           },
           combined: group.combinedItem ? {
             fileName: group.combinedItem?.fileName || '',
@@ -3097,7 +3129,8 @@ ${reasonsText || '1. Generic fallback — no strong signals detected.'}`;
             archiveFullPath: null,
             present: false
           }
-        }));
+        };
+      });
 
       if (!candidates.length) {
         throw new Error('No Overlay scaffold candidates were discovered for Opus chooser evaluation.');
@@ -3147,10 +3180,41 @@ ${reasonsText || '1. Generic fallback — no strong signals detected.'}`;
       const fetchController = new AbortController();
       const fetchTimeout = setTimeout(() => fetchController.abort(), 180000);
       try {
+        // Measure payload BEFORE POST. Netlify's 6 MB limit is enforced at the
+        // HTTP ingress — if we POST a 6.5 MB body, Netlify replies 500 before
+        // our function runs, and the proxy's own caps can't save us. Build the
+        // JSON body once, size-check it, then reuse the same string for fetch.
+        const serializedBody = JSON.stringify(payload);
+        const bodyBytes = new Blob([serializedBody]).size;
+        if (bodyBytes > SCAFFOLD_CHOOSER_MAX_PAYLOAD_BYTES) {
+          const bodyMb = (bodyBytes / (1024 * 1024)).toFixed(2);
+          const capMb = (SCAFFOLD_CHOOSER_MAX_PAYLOAD_BYTES / (1024 * 1024)).toFixed(2);
+          const perCandidateSizes = candidates.map(c => ({
+            candidateId: c.candidateId,
+            groupKey: c.groupKey,
+            overlayBytes: new Blob([c.overlay?.text || '']).size,
+            truncated: !!c.overlay?.textTruncated,
+            originalLength: c.overlay?.textOriginalLength || 0
+          })).sort((a, b) => b.overlayBytes - a.overlayBytes);
+          console.error('[scaffold chooser] payload too large for Netlify', {
+            bodyBytes,
+            bodyMb,
+            capBytes: SCAFFOLD_CHOOSER_MAX_PAYLOAD_BYTES,
+            capMb,
+            candidateCount: candidates.length,
+            topCandidatesBySize: perCandidateSizes.slice(0, 6)
+          });
+          throw new Error(
+            `Scaffold chooser payload is ${bodyMb} MB (cap ${capMb} MB, Netlify hard limit 6 MB). ` +
+            `${candidates.length} candidate(s). Reduce candidate count or lower SCAFFOLD_CHOOSER_MAX_OVERLAY_CHARS. ` +
+            `See console for per-candidate size breakdown.`
+          );
+        }
+
         const res = await fetch(SCAFFOLD_CHOOSER_ENDPOINT, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
+          body: serializedBody,
           signal: fetchController.signal
         });
         if (!res.ok) {
@@ -3158,7 +3222,18 @@ ${reasonsText || '1. Generic fallback — no strong signals detected.'}`;
           // (bad size, crashed, etc). This is a dispatch-time failure,
           // not a chooser result — no Firebase file will ever be written
           // for this call, so surface it here.
-          throw new Error(`Netlify rejected the scaffold chooser request: ${res.status} ${res.statusText}. The payload may exceed the 6MB limit or the function crashed on cold start.`);
+          //
+          // Include the measured payload size so we can distinguish:
+          //   - payload too large (bodyBytes close to 6 MB even though our cap passed)
+          //   - function crashed on cold start (bodyBytes comfortably under 6 MB)
+          const bodyMb = (bodyBytes / (1024 * 1024)).toFixed(2);
+          const likelyCause = bodyBytes > (5 * 1024 * 1024)
+            ? 'likely payload-size rejection'
+            : 'likely function crash on cold start — check Netlify function logs';
+          throw new Error(
+            `Netlify rejected the scaffold chooser request: ${res.status} ${res.statusText}. ` +
+            `Payload was ${bodyMb} MB with ${candidates.length} candidate(s) — ${likelyCause}.`
+          );
         }
         // The body is 202 Accepted with no useful content — ignore it.
       } catch (dispatchErr) {
