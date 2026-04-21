@@ -4288,38 +4288,12 @@ exports.handler = async (event) => {
     const nextTranche = parsedBody.nextTranche || 0;
 
     if (mode === "scaffold_choose") {
-      /* ── Scaffold Overlay Chooser — async transport (Firebase staging transport) ──────────
-         This endpoint is a Netlify BACKGROUND function. It returns
-         202 Accepted immediately with no usable response body. Any
-         result must therefore be communicated through Firebase.
-
-         CONTRACT (updated — Firebase staging transport):
-           Netlify background functions have a hard 256 KB request body
-           limit enforced at the edge. The old design posted all candidate
-           overlay text inline (~0.24 MB), which silently triggered a 500
-           with zero function logs — the handler never ran.
-
-           Fix: the frontend now uploads the full payload to Firebase
-           BEFORE dispatching the POST:
-               {projectPath}/ai_scaffold_selection_jobs/{jobId}/ai_scaffold_chooser_request.json
-
-           The POST body carries only three routing fields:
-               { mode, projectPath, jobId }
-           (well under 1 KB).
-
-           The handler reads the staging file from Firebase here, then
-           deletes it. Results and errors continue to be written to:
-               ai_scaffold_selection.json
-               ai_scaffold_selection_error.json
-           under the same job-scoped folder.
-
-         The chooser uses its OWN status/error files separate from the
-         plan/tranche pipeline (ai_progress.json, ai_error.json) so a
-         chooser failure cannot poison a subsequent plan run.
-
-         No deterministic fallback. Any failure — missing staging file,
-         candidate-cap overflow, Opus error, malformed JSON — is surfaced
-         verbatim via ai_scaffold_selection_error.json and halts the build.
+      /* ── Scaffold Overlay Chooser — Firebase staging transport ─────────────────
+         Netlify background functions have a hard 256 KB body limit.
+         The full chooser payload (~0.24 MB) exceeds this, causing a
+         silent 500 with zero function logs. Fix: frontend uploads the
+         payload to Firebase first, then POSTs only { mode, projectPath, jobId }.
+         This handler reads the staging file and deletes it after loading.
       */
       const chooserProjectPath = parsedBody.projectPath;
       const chooserJobId = parsedBody.jobId;
@@ -4335,11 +4309,6 @@ exports.handler = async (event) => {
       const stagingFilePath    = `${chooserArtifactBasePath}/ai_scaffold_chooser_request.json`;
 
       try {
-        // ── Load the full payload from Firebase staging file ────────────────────
-        // The POST body only carries { mode, projectPath, jobId } to stay
-        // well under the 256 KB Netlify background-function body limit.
-        // The frontend uploads the full payload (prompt + candidates) to
-        // the staging file before dispatching the POST.
         let stagingPayload;
         try {
           const stagingFile = await bucket.file(stagingFilePath).download();
@@ -4347,11 +4316,10 @@ exports.handler = async (event) => {
         } catch (stagingErr) {
           throw new Error(
             `Scaffold chooser could not read staging file at ${stagingFilePath}: ${stagingErr.message}. ` +
-            `The frontend must upload ai_scaffold_chooser_request.json to Firebase before dispatching the POST.`
+            `The frontend must upload ai_scaffold_chooser_request.json before dispatching the POST.`
           );
         }
 
-        // Delete staging file immediately — it is large and no longer needed
         try { await bucket.file(stagingFilePath).delete(); } catch (_) {}
 
         const prompt = String(stagingPayload.prompt || "");
@@ -4414,7 +4382,7 @@ exports.handler = async (event) => {
             JSON.stringify({
               success: false,
               jobId: chooserJobId,
-              selectorVersion: stagingPayload?.selectorVersion || '',
+              selectorVersion: parsedBody.selectorVersion || '',
               completedTime: Date.now(),
               error: chooserErr.message || String(chooserErr)
             }),
@@ -4426,9 +4394,9 @@ exports.handler = async (event) => {
 
         // Re-throw so the outer catch handles the final response.
         // Returning { statusCode: 500 } synchronously from a background
-        // function causes Netlify to discard ALL logs — the handler
-        // appears to never run. Re-throwing reaches the outer catch which
-        // calls console.error (logs ARE flushed there) and returns 202.
+        // function causes Netlify to discard ALL logs. Re-throwing reaches
+        // the outer catch which calls console.error (logs ARE flushed there)
+        // and returns 202.
         throw chooserErr;
       }
     }
@@ -4703,11 +4671,16 @@ ${effectivePrompt}
         ...imageBlocks
       ];
 
-      console.log(`PLANNING: Single-pass Opus 4.7 high with adaptive thinking for Job ${jobId}...`);
+      // effort: "medium" keeps adaptive thinking active but caps the thinking
+      // budget at a fraction of "high", typically finishing in 3-5 minutes
+      // rather than 10-15. maxTokens: 64000 is sufficient for any plan up to
+      // ~30 tranches with full embedded prompts; 100000 was never consumed
+      // and was the primary reason the planner hit the 15-min Lambda limit.
+      console.log(`PLANNING: Single-pass Opus 4.7 medium with adaptive thinking for Job ${jobId}...`);
       const planResult = await callClaude(apiKey, {
         model: "claude-opus-4-7",
-        maxTokens: 100000,
-        effort: "high",
+        maxTokens: 64000,
+        effort: "medium",
         useThinking: true,
         system: planningSystem,
         userContent: planningUserContent
@@ -4728,8 +4701,8 @@ ${effectivePrompt}
           stopReason:    planResult.stopReason || null,
           outputTokens:  pu.output_tokens      || 0,
           inputTokens:   pu.input_tokens       || 0,
-          maxTokens:     100000,
-          effort:        'high',
+          maxTokens:     64000,
+          effort:        'medium',
           model:         'claude-opus-4-7',
           textLen:       planResult.text ? planResult.text.length : 0,
           capturedAt:    Date.now()
@@ -5043,14 +5016,14 @@ REMINDER: The files above are READ-ONLY context. Output ONLY patch blocks (REPLA
         ...(imageBlocks || [])
       ];
 
-      // ── Model routing: Foundation-A gets Opus 4.7 xhigh with 100k tokens; all others get Opus 4.7 xhigh ──
+      // ── Model routing: all tranches high effort; Foundation-A gets 100k tokens, others 64k ──
       // Foundation-A wires the most zones simultaneously and is the highest-risk
-      // single tranche in the pipeline. xhigh gives it maximum reasoning depth.
-      // All tranches use xhigh with adaptive thinking for best quality.
+      // single tranche in the pipeline. All tranches use high effort with adaptive
+      // thinking; Foundation-A gets a larger token budget (100k vs 64k).
       const trancheName = String(progress.tranches[nextTranche]?.name || '');
       const isFoundationA = FOUNDATION_A_REGEX.test(trancheName);
       const trancheModel = 'claude-opus-4-7';
-      const trancheEffort = 'xhigh';
+      const trancheEffort = 'high';
       const trancheMaxTokens = isFoundationA ? 100000 : 64000;
       const trancheUseThinking = true; // thinking on for all tranches
 
@@ -5418,9 +5391,7 @@ REMINDER: The files above are READ-ONLY context. Output ONLY patch blocks (REPLA
     }
 
     // Return 202, not 500. Netlify background functions that return any
-    // synchronous non-202 status suppress the entire log stream, making
-    // all console.error calls above invisible. The error is already in
-    // Firebase (ai_error.json) and in console.error above.
+    // synchronous non-202 status suppress the entire log stream.
     return { statusCode: 202, body: JSON.stringify({ accepted: true }) };
   }
 };
