@@ -1365,7 +1365,8 @@
     const SCAFFOLD_CHOOSER_MAX_OVERLAY_CHARS = 12000;
     const SCAFFOLD_CHOOSER_TRUNCATION_MARKER =
       '\n\n[... OVERLAY TEXT TRUNCATED BY CLIENT PAYLOAD CAP — SCORE FROM HEAD SECTION ABOVE ...]';
-    const SCAFFOLD_CHOOSER_MAX_PAYLOAD_BYTES = 5 * 1024 * 1024 + 512 * 1024; // 5.5 MB
+    // SCAFFOLD_CHOOSER_MAX_PAYLOAD_BYTES removed — payload now goes via Firebase staging,
+    // so the Netlify 256 KB background-function body limit is no longer a concern.
 
     const SCAFFOLD_SELECTOR_VERSION = '2026-04-20-scaffold-selector-v5-opus47-overlay-chooser';
     const SCAFFOLD_CHOOSER_ENDPOINT = '/.netlify/functions/claudeCodeProxy-background';
@@ -3075,7 +3076,8 @@ ${reasonsText || '1. Generic fallback — no strong signals detected.'}`;
       return {
         basePath,
         selectionJsonPath: `${basePath}/ai_scaffold_selection.json`,
-        errorJsonPath: `${basePath}/ai_scaffold_selection_error.json`
+        errorJsonPath:     `${basePath}/ai_scaffold_selection_error.json`,
+        stagingRequestPath:`${basePath}/ai_scaffold_chooser_request.json`
       };
     }
 
@@ -3154,20 +3156,29 @@ ${reasonsText || '1. Generic fallback — no strong signals detected.'}`;
          chooser runs in the same project from deleting or
          overwriting each other's success/error files. */
       const chooserArtifactPaths = buildScaffoldChooserArtifactPaths(projectPath, chooserJobId);
-      const selectionFileRef = ref(storage, chooserArtifactPaths.selectionJsonPath);
-      const selectionErrorFileRef = ref(storage, chooserArtifactPaths.errorJsonPath);
+      const selectionFileRef      = ref(storage, chooserArtifactPaths.selectionJsonPath);
+      const selectionErrorFileRef  = ref(storage, chooserArtifactPaths.errorJsonPath);
+      const stagingFileRef         = ref(storage, chooserArtifactPaths.stagingRequestPath);
 
       try { await deleteObject(selectionFileRef); } catch (_) { /* not present — fine */ }
       try { await deleteObject(selectionErrorFileRef); } catch (_) { /* not present — fine */ }
+      try { await deleteObject(stagingFileRef); } catch (_) { /* not present — fine */ }
 
-      const payload = {
-        mode: 'scaffold_choose',
-        projectPath,
-        jobId: chooserJobId,
-        selectorVersion: SCAFFOLD_SELECTOR_VERSION,
-        projectName,
+      // ── Upload full payload to Firebase staging file BEFORE posting ────────
+      // Netlify background functions have a hard 256 KB request body limit
+      // enforced at the edge — exceeding it produces a silent 500 with zero
+      // function logs. The candidate overlay text alone is ~0.24 MB, which
+      // exceeds this limit once JSON-serialized with the rest of the payload.
+      //
+      // Fix: write everything to a job-scoped Firebase staging file, then
+      // POST only the three routing fields { mode, projectPath, jobId } to
+      // Netlify (~100 bytes). The proxy reads the staging file on the other
+      // side and deletes it after loading.
+      const stagingPayload = {
         prompt: String(promptText || ''),
         roadPipeline: roadPipeline || null,
+        selectorVersion: SCAFFOLD_SELECTOR_VERSION,
+        projectName,
         familyHint: {
           id: matchContext?.familyDescriptor?.id || null,
           label: matchContext?.familyDescriptor?.label || null,
@@ -3177,77 +3188,32 @@ ${reasonsText || '1. Generic fallback — no strong signals detected.'}`;
         candidates
       };
 
-      const fetchController = new AbortController();
-      const fetchTimeout = setTimeout(() => fetchController.abort(), 180000);
       try {
-        // Measure payload BEFORE POST. Netlify's 6 MB limit is enforced at the
-        // HTTP ingress — if we POST a 6.5 MB body, Netlify replies 500 before
-        // our function runs, and the proxy's own caps can't save us. Build the
-        // JSON body once, size-check it, then reuse the same string for fetch.
-        const serializedBody = JSON.stringify(payload);
-        const bodyBytes = new Blob([serializedBody]).size;
-        if (bodyBytes > SCAFFOLD_CHOOSER_MAX_PAYLOAD_BYTES) {
-          const bodyMb = (bodyBytes / (1024 * 1024)).toFixed(2);
-          const capMb = (SCAFFOLD_CHOOSER_MAX_PAYLOAD_BYTES / (1024 * 1024)).toFixed(2);
-          const perCandidateSizes = candidates.map(c => ({
-            candidateId: c.candidateId,
-            groupKey: c.groupKey,
-            overlayBytes: new Blob([c.overlay?.text || '']).size,
-            truncated: !!c.overlay?.textTruncated,
-            originalLength: c.overlay?.textOriginalLength || 0
-          })).sort((a, b) => b.overlayBytes - a.overlayBytes);
-          console.error('[scaffold chooser] payload too large for Netlify', {
-            bodyBytes,
-            bodyMb,
-            capBytes: SCAFFOLD_CHOOSER_MAX_PAYLOAD_BYTES,
-            capMb,
-            candidateCount: candidates.length,
-            topCandidatesBySize: perCandidateSizes.slice(0, 6)
-          });
-          throw new Error(
-            `Scaffold chooser payload is ${bodyMb} MB (cap ${capMb} MB, Netlify hard limit 6 MB). ` +
-            `${candidates.length} candidate(s). Reduce candidate count or lower SCAFFOLD_CHOOSER_MAX_OVERLAY_CHARS. ` +
-            `See console for per-candidate size breakdown.`
-          );
-        }
+        await uploadString(stagingFileRef, JSON.stringify(stagingPayload), 'raw', { contentType: 'application/json' });
+      } catch (uploadErr) {
+        throw new Error(`Scaffold chooser failed to upload staging file to Firebase: ${uploadErr.message}`);
+      }
 
+      // POST only the tiny routing envelope — well under 256 KB limit
+      const fetchController = new AbortController();
+      const fetchTimeout = setTimeout(() => fetchController.abort(), 30000);
+      try {
         const res = await fetch(SCAFFOLD_CHOOSER_ENDPOINT, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: serializedBody,
+          body: JSON.stringify({ mode: 'scaffold_choose', projectPath, jobId: chooserJobId }),
           signal: fetchController.signal
         });
         if (!res.ok) {
-          // Netlify rejected before the background task was dispatched
-          // (bad size, crashed, etc). This is a dispatch-time failure,
-          // not a chooser result — no Firebase file will ever be written
-          // for this call, so surface it here.
-          //
-          // Classification rules (important — earlier wording was wrong):
-          //   - res.status 413 OR payload > ~5 MB → genuine payload rejection
-          //     at Netlify's HTTP ingress (function never ran).
-          //   - res.status 500 with small payload → the handler itself ran,
-          //     threw inside the scaffold_choose branch (chooseScaffoldOverlayWithOpus,
-          //     Claude API, Firebase write, etc.), and returned 500 by design
-          //     at proxy line ~4395. Check Netlify function logs for the line
-          //     prefixed with "[SCAFFOLD_CHOOSE] jobId=<id> failed:" — that
-          //     contains the actual server-side error message.
-          //   - Anything else → check Netlify function logs.
-          const bodyMb = (bodyBytes / (1024 * 1024)).toFixed(2);
-          const likelyCause = (res.status === 413 || bodyBytes > (5 * 1024 * 1024))
-            ? 'payload-size rejection at Netlify ingress'
-            : res.status === 500
-              ? 'handler ran and returned 500 — search Netlify logs for "[SCAFFOLD_CHOOSE]" to find the real error'
-              : 'unknown dispatch failure — check Netlify function logs';
           throw new Error(
-            `Netlify rejected the scaffold chooser request: ${res.status} ${res.statusText}. ` +
-            `Payload was ${bodyMb} MB with ${candidates.length} candidate(s) — ${likelyCause}.`
+            `Netlify rejected the scaffold chooser dispatch: ${res.status} ${res.statusText}. ` +
+            `POST body was the routing envelope only (~100 bytes) — check Netlify function logs for the real error.`
           );
         }
-        // The body is 202 Accepted with no useful content — ignore it.
+        // 202 Accepted — background worker is running, result comes via Firebase poll below
       } catch (dispatchErr) {
         if (dispatchErr.name === 'AbortError') {
-          throw new Error('Scaffold chooser dispatch timed out after 180s while sending the request.');
+          throw new Error('Scaffold chooser dispatch timed out after 30s while sending the request.');
         }
         throw dispatchErr;
       } finally {

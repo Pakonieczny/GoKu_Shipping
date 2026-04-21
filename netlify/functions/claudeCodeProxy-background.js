@@ -4288,31 +4288,38 @@ exports.handler = async (event) => {
     const nextTranche = parsedBody.nextTranche || 0;
 
     if (mode === "scaffold_choose") {
-      /* ── Scaffold Overlay Chooser — async transport ──────────────
+      /* ── Scaffold Overlay Chooser — async transport (Firebase staging transport) ──────────
          This endpoint is a Netlify BACKGROUND function. It returns
          202 Accepted immediately with no usable response body. Any
          result must therefore be communicated through Firebase.
 
-         Contract:
-           Request must include projectPath + jobId (same as plan /
-           tranche modes). The chooser writes its result to a
-           chooser-job-scoped folder:
-               {projectPath}/ai_scaffold_selection_jobs/{jobId}/ai_scaffold_selection.json
-           and any failure to:
-               {projectPath}/ai_scaffold_selection_jobs/{jobId}/ai_scaffold_selection_error.json
-           The frontend polls those job-scoped paths.
+         CONTRACT (updated — Firebase staging transport):
+           Netlify background functions have a hard 256 KB request body
+           limit enforced at the edge. The old design posted all candidate
+           overlay text inline (~0.24 MB), which silently triggered a 500
+           with zero function logs — the handler never ran.
 
-         The chooser uses its OWN status/error files separate from
-         the plan/tranche pipeline (ai_progress.json, ai_error.json)
-         so a chooser failure cannot poison a subsequent plan run
-         in the same project. The frontend is responsible for
-         deleting stale chooser files before firing a new chooser
-         job.
+           Fix: the frontend now uploads the full payload to Firebase
+           BEFORE dispatching the POST:
+               {projectPath}/ai_scaffold_selection_jobs/{jobId}/ai_scaffold_chooser_request.json
 
-         No deterministic fallback. If the chooser fails for any
-         reason — candidate-cap overflow, missing inputs, Opus
-         error, malformed JSON — the failure is surfaced verbatim
-         via ai_scaffold_selection_error.json and the build halts.
+           The POST body carries only three routing fields:
+               { mode, projectPath, jobId }
+           (well under 1 KB).
+
+           The handler reads the staging file from Firebase here, then
+           deletes it. Results and errors continue to be written to:
+               ai_scaffold_selection.json
+               ai_scaffold_selection_error.json
+           under the same job-scoped folder.
+
+         The chooser uses its OWN status/error files separate from the
+         plan/tranche pipeline (ai_progress.json, ai_error.json) so a
+         chooser failure cannot poison a subsequent plan run.
+
+         No deterministic fallback. Any failure — missing staging file,
+         candidate-cap overflow, Opus error, malformed JSON — is surfaced
+         verbatim via ai_scaffold_selection_error.json and halts the build.
       */
       const chooserProjectPath = parsedBody.projectPath;
       const chooserJobId = parsedBody.jobId;
@@ -4325,12 +4332,32 @@ exports.handler = async (event) => {
       const chooserArtifactBasePath = `${chooserProjectPath}/ai_scaffold_selection_jobs/${chooserJobId}`;
       const selectionFilePath = `${chooserArtifactBasePath}/ai_scaffold_selection.json`;
       const selectionErrorPath = `${chooserArtifactBasePath}/ai_scaffold_selection_error.json`;
+      const stagingFilePath    = `${chooserArtifactBasePath}/ai_scaffold_chooser_request.json`;
 
       try {
-        const prompt = String(parsedBody.prompt || "");
-        const candidates = Array.isArray(parsedBody.candidates) ? parsedBody.candidates : [];
-        if (!prompt.trim()) throw new Error("Missing prompt for scaffold chooser");
-        if (!candidates.length) throw new Error("Missing scaffold chooser candidates");
+        // ── Load the full payload from Firebase staging file ────────────────────
+        // The POST body only carries { mode, projectPath, jobId } to stay
+        // well under the 256 KB Netlify background-function body limit.
+        // The frontend uploads the full payload (prompt + candidates) to
+        // the staging file before dispatching the POST.
+        let stagingPayload;
+        try {
+          const stagingFile = await bucket.file(stagingFilePath).download();
+          stagingPayload = JSON.parse(stagingFile[0].toString("utf8"));
+        } catch (stagingErr) {
+          throw new Error(
+            `Scaffold chooser could not read staging file at ${stagingFilePath}: ${stagingErr.message}. ` +
+            `The frontend must upload ai_scaffold_chooser_request.json to Firebase before dispatching the POST.`
+          );
+        }
+
+        // Delete staging file immediately — it is large and no longer needed
+        try { await bucket.file(stagingFilePath).delete(); } catch (_) {}
+
+        const prompt = String(stagingPayload.prompt || "");
+        const candidates = Array.isArray(stagingPayload.candidates) ? stagingPayload.candidates : [];
+        if (!prompt.trim()) throw new Error("Missing prompt in scaffold chooser staging file");
+        if (!candidates.length) throw new Error("Missing candidates in scaffold chooser staging file");
 
         // Hard candidate-count cap. Do not slice silently — force the
         // caller to curate. Silent slicing is a deterministic fallback
@@ -4345,10 +4372,10 @@ exports.handler = async (event) => {
         }
 
         const selection = await chooseScaffoldOverlayWithOpus(apiKey, prompt, candidates, {
-          selectorVersion: parsedBody.selectorVersion || '',
-          projectName: parsedBody.projectName || '',
-          familyHint: parsedBody.familyHint || null,
-          promptTokens: parsedBody.promptTokens || []
+          selectorVersion: stagingPayload.selectorVersion || '',
+          projectName: stagingPayload.projectName || '',
+          familyHint: stagingPayload.familyHint || null,
+          promptTokens: stagingPayload.promptTokens || []
         });
 
         await bucket.file(selectionFilePath).save(
@@ -4387,7 +4414,7 @@ exports.handler = async (event) => {
             JSON.stringify({
               success: false,
               jobId: chooserJobId,
-              selectorVersion: parsedBody.selectorVersion || '',
+              selectorVersion: stagingPayload?.selectorVersion || '',
               completedTime: Date.now(),
               error: chooserErr.message || String(chooserErr)
             }),
@@ -4398,20 +4425,10 @@ exports.handler = async (event) => {
         }
 
         // Re-throw so the outer catch handles the final response.
-        // Previously this returned { statusCode: 500 } synchronously,
-        // which causes Netlify background functions to discard ALL logs
-        // (background functions must return 202 — any other synchronous
-        // status code suppresses the log stream entirely). Re-throwing
-        // lets the outer catch call console.error (which IS flushed)
-        // and return 202 so logs survive.
-        //
-        // NOTE: the outer catch writes ai_error.json at the project root,
-        // not the chooser-scoped path. That is acceptable here because
-        // the chooser error file above was already written (or attempted).
-        // The outer catch's ai_error.json write is a secondary diagnostic
-        // artifact and does not poison the plan/tranche pipeline because
-        // the frontend only reads ai_error.json during an active plan job,
-        // and no plan job is in flight during a chooser invocation.
+        // Returning { statusCode: 500 } synchronously from a background
+        // function causes Netlify to discard ALL logs — the handler
+        // appears to never run. Re-throwing reaches the outer catch which
+        // calls console.error (logs ARE flushed there) and returns 202.
         throw chooserErr;
       }
     }
@@ -5401,12 +5418,9 @@ REMINDER: The files above are READ-ONLY context. Output ONLY patch blocks (REPLA
     }
 
     // Return 202, not 500. Netlify background functions that return any
-    // synchronous non-202 status cause the entire log stream to be
-    // discarded — making all console.error calls above invisible.
-    // The error has already been written to Firebase (ai_error.json)
-    // and logged via console.error above; the HTTP response body is
-    // irrelevant because background functions return 202 immediately
-    // and the body is never read by the caller anyway.
+    // synchronous non-202 status suppress the entire log stream, making
+    // all console.error calls above invisible. The error is already in
+    // Firebase (ai_error.json) and in console.error above.
     return { statusCode: 202, body: JSON.stringify({ accepted: true }) };
   }
 };
