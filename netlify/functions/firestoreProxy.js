@@ -237,6 +237,57 @@ exports.handler = async (event) => {
         return ok({ id: String(id) });
       }
 
+      /* ─── deleteSub ─────────────────────────
+       * Nuke an ENTIRE subcollection (all docs under
+       * coll/id/sub). Used for "clean rescrape" to wipe stale messages
+       * from earlier scraper versions. Paginates in chunks of 400 to
+       * stay under Firestore's batch limits. */
+      if (op === "deleteSub") {
+        const { coll, id, sub, confirm } = body;
+        if (!coll || !id || !sub) return bad("Missing coll, id, or sub");
+        if (confirm !== true) return bad("Refusing to deleteSub without { confirm: true } flag");
+        assertColl(coll);
+        assertSub(sub);
+
+        const subRef = db.collection(coll).doc(String(id)).collection(sub);
+        let totalDeleted = 0;
+        // Loop: grab 400 docs, batch-delete them, repeat until empty
+        while (true) {
+          const snap = await subRef.limit(400).get();
+          if (snap.empty) break;
+          const batch = db.batch();
+          snap.docs.forEach(d => batch.delete(d.ref));
+          await batch.commit();
+          totalDeleted += snap.docs.length;
+          if (snap.docs.length < 400) break;  // last page
+        }
+
+        // Reset the parent doc's messageCount so the thread shows accurate state
+        try {
+          await db.collection(coll).doc(String(id)).set({
+            messageCount: 0,
+            lastInboundAt: null,
+            lastOutboundAt: null,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+          }, { merge: true });
+        } catch (e) {
+          console.warn("deleteSub: parent doc reset failed:", e.message);
+        }
+
+        return ok({ deleted: totalDeleted });
+      }
+
+      /* ─── deleteDoc ─────────────────────────
+       * Delete a single top-level doc. */
+      if (op === "deleteDoc") {
+        const { coll, id, confirm } = body;
+        if (!coll || !id) return bad("Missing coll or id");
+        if (confirm !== true) return bad("Refusing to deleteDoc without { confirm: true } flag");
+        assertColl(coll);
+        await db.collection(coll).doc(String(id)).delete();
+        return ok({ id: String(id), deleted: true });
+      }
+
       return bad(`Unknown op '${op}'`);
     }
 
