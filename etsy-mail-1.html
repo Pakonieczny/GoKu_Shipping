@@ -1,0 +1,744 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>EtsyMail — Operator Inbox</title>
+
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/icon?family=Material+Icons">
+
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; height: 100%; background: #f4f5f7; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #1f2328; }
+    body { opacity: 0; transition: opacity .2s; }
+    body.ready { opacity: 1; }
+
+    .em-app {
+      display: grid;
+      grid-template-columns: 220px 380px 1fr;
+      grid-template-rows: 48px 1fr;
+      grid-template-areas: "topbar topbar topbar" "rail list detail";
+      height: 100vh;
+    }
+    .em-topbar {
+      grid-area: topbar; display: flex; align-items: center;
+      background: #1f2328; color: #f4f5f7; padding: 0 16px; gap: 12px;
+      border-bottom: 1px solid #111;
+    }
+    .em-topbar .em-title { font-weight: 600; font-size: 15px; letter-spacing: .2px; }
+    .em-topbar .em-title .em-tag { font-weight: 400; color: #9aa3ad; font-size: 12px; margin-left: 8px; }
+    .em-topbar .em-spacer { flex: 1; }
+    .em-topbar button {
+      background: #2a2f36; color: #f4f5f7; border: 1px solid #3a424b;
+      padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 12px;
+      display: inline-flex; align-items: center; gap: 6px;
+    }
+    .em-topbar button:hover { background: #353b44; }
+    .em-topbar button .material-icons { font-size: 16px; }
+    .em-topbar .em-status-dot { width: 8px; height: 8px; border-radius: 50%; background: #e74c3c; }
+    .em-topbar .em-status-dot.ok { background: #2ecc71; }
+
+    .em-rail {
+      grid-area: rail; background: #fff; border-right: 1px solid #e1e4e8;
+      overflow-y: auto; padding: 8px 0;
+    }
+    .em-rail .em-rail-section {
+      padding: 10px 14px 4px; font-size: 10px; font-weight: 700;
+      letter-spacing: .8px; text-transform: uppercase; color: #6a737d;
+    }
+    .em-rail .em-rail-item {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 7px 14px; cursor: pointer; font-size: 13px;
+      color: #24292e; user-select: none;
+    }
+    .em-rail .em-rail-item:hover { background: #f6f8fa; }
+    .em-rail .em-rail-item.active { background: #e7f3ff; color: #0366d6; font-weight: 500; }
+    .em-rail .em-rail-item .em-count {
+      background: #eaeef2; color: #57606a; font-size: 11px;
+      padding: 1px 7px; border-radius: 10px; min-width: 20px; text-align: center;
+    }
+    .em-rail .em-rail-item.active .em-count { background: #0366d6; color: #fff; }
+    .em-rail .em-rail-item .material-icons { font-size: 15px; margin-right: 8px; opacity: .65; }
+
+    .em-list {
+      grid-area: list; background: #fff; border-right: 1px solid #e1e4e8;
+      overflow-y: auto; display: flex; flex-direction: column;
+    }
+    .em-list-header {
+      padding: 10px 14px; border-bottom: 1px solid #e1e4e8;
+      display: flex; align-items: center; gap: 8px;
+      position: sticky; top: 0; background: #fff; z-index: 2;
+    }
+    .em-list-header input {
+      flex: 1; border: 1px solid #d0d7de; border-radius: 4px;
+      padding: 5px 8px; font-size: 12px; outline: none; background: #f6f8fa;
+    }
+    .em-list-header input:focus { background: #fff; border-color: #0366d6; }
+    .em-list-header button {
+      border: 1px solid #d0d7de; background: #fff; border-radius: 4px;
+      padding: 4px 8px; cursor: pointer; font-size: 12px;
+      display: inline-flex; align-items: center; gap: 4px;
+    }
+    .em-list-header button .material-icons { font-size: 14px; }
+
+    .em-list-items { flex: 1; overflow-y: auto; }
+    .em-list-item {
+      padding: 10px 14px; border-bottom: 1px solid #f0f2f5; cursor: pointer;
+      display: grid; grid-template-columns: 1fr auto; gap: 4px 10px;
+      grid-template-areas: "name time" "snippet snippet" "badges badges";
+      position: relative;
+    }
+    .em-list-item:hover { background: #f6f8fa; }
+    .em-list-item.selected { background: #e7f3ff; }
+    .em-list-item.unread .em-name { font-weight: 700; }
+    .em-list-item.unread::before {
+      content: ""; position: absolute; left: 4px; top: 50%;
+      width: 6px; height: 6px; border-radius: 50%; background: #0366d6;
+      transform: translateY(-50%);
+    }
+    .em-name { grid-area: name; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .em-time { grid-area: time; font-size: 11px; color: #6a737d; }
+    .em-snippet { grid-area: snippet; font-size: 12px; color: #57606a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .em-badges { grid-area: badges; display: flex; flex-wrap: wrap; gap: 4px; }
+    .em-badge { font-size: 10px; padding: 1px 6px; border-radius: 3px; background: #eaeef2; color: #57606a; font-weight: 500; }
+    .em-badge.order { background: #dcffe4; color: #116329; }
+    .em-badge.category { background: #ddf4ff; color: #0969da; }
+    .em-badge.attachment { background: #fff8c5; color: #7d4e00; }
+    .em-badge.confidence { background: #f6e5ff; color: #6b21a8; }
+    .em-badge.hold { background: #ffebe9; color: #a40e26; }
+
+    .em-list-empty { padding: 40px 20px; text-align: center; color: #6a737d; font-size: 13px; }
+
+    .em-detail { grid-area: detail; background: #f4f5f7; overflow-y: auto; display: flex; flex-direction: column; }
+    .em-detail-empty {
+      flex: 1; display: flex; align-items: center; justify-content: center;
+      color: #6a737d; font-size: 13px; text-align: center; padding: 20px;
+    }
+    .em-detail-header { background: #fff; border-bottom: 1px solid #e1e4e8; padding: 12px 18px; }
+    .em-detail-header .em-h-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .em-detail-header h2 { margin: 0; font-size: 16px; font-weight: 600; }
+    .em-detail-header .em-h-meta { margin-top: 4px; font-size: 12px; color: #57606a; display: flex; gap: 14px; flex-wrap: wrap; }
+    .em-detail-header .em-h-actions { display: flex; gap: 6px; }
+    .em-detail-header .em-h-actions button {
+      border: 1px solid #d0d7de; background: #fff; border-radius: 4px;
+      padding: 4px 10px; cursor: pointer; font-size: 12px;
+      display: inline-flex; align-items: center; gap: 4px;
+    }
+    .em-detail-header .em-h-actions button:hover { background: #f6f8fa; }
+    .em-detail-header .em-h-actions button .material-icons { font-size: 14px; }
+
+    .em-detail-body {
+      padding: 14px 18px; display: grid;
+      grid-template-columns: minmax(0, 1fr) 300px; gap: 14px; align-items: start;
+    }
+    .em-card { background: #fff; border: 1px solid #e1e4e8; border-radius: 6px; padding: 12px 14px; }
+    .em-card + .em-card { margin-top: 12px; }
+    .em-card h4 {
+      margin: 0 0 8px; font-size: 11px; font-weight: 700;
+      letter-spacing: .6px; text-transform: uppercase; color: #6a737d;
+    }
+    .em-card .em-kv { display: grid; grid-template-columns: 110px 1fr; gap: 4px 10px; font-size: 12px; }
+    .em-card .em-kv dt { color: #6a737d; }
+    .em-card .em-kv dd { margin: 0; word-break: break-word; }
+
+    .em-thread { min-height: 200px; }
+    .em-thread .em-msg {
+      padding: 8px 11px; border-radius: 8px; margin-bottom: 8px;
+      max-width: 85%; font-size: 13px; line-height: 1.4; word-wrap: break-word;
+    }
+    .em-thread .em-msg.inbound  { background: #eaeef2; color: #1f2328; margin-right: auto; }
+    .em-thread .em-msg.outbound { background: #0366d6; color: #fff;    margin-left:  auto; }
+    .em-thread .em-msg.ai       { background: #f6e5ff; color: #4b0e63; margin-left:  auto; border: 1px dashed #c792e0; }
+    .em-thread .em-msg .em-meta {
+      font-size: 10px; opacity: .75; margin-bottom: 3px;
+      text-transform: uppercase; letter-spacing: .4px;
+    }
+
+    .em-compose textarea {
+      width: 100%; min-height: 100px; border: 1px solid #d0d7de;
+      border-radius: 4px; padding: 8px 10px; font-size: 13px;
+      font-family: inherit; resize: vertical; outline: none;
+    }
+    .em-compose textarea:focus { border-color: #0366d6; }
+    .em-compose .em-compose-bar { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+    .em-compose button {
+      border: 1px solid #d0d7de; background: #fff; border-radius: 4px;
+      padding: 6px 12px; cursor: pointer; font-size: 12px;
+      display: inline-flex; align-items: center; gap: 4px;
+    }
+    .em-compose button:hover { background: #f6f8fa; }
+    .em-compose button.primary { background: #1f883d; color: #fff; border-color: #1a7f37; }
+    .em-compose button.primary:hover { background: #1a7f37; }
+    .em-compose button .material-icons { font-size: 14px; }
+
+    .em-status-pill {
+      display: inline-block; font-size: 10px; font-weight: 600;
+      padding: 2px 8px; border-radius: 10px;
+      background: #eaeef2; color: #57606a;
+      text-transform: uppercase; letter-spacing: .4px;
+    }
+    .em-status-pill.draft_ready,
+    .em-status-pill.pending_human_review { background: #ddf4ff; color: #0969da; }
+    .em-status-pill.sent                 { background: #dcffe4; color: #116329; }
+    .em-status-pill.hold_uncertain,
+    .em-status-pill.hold_missing_order,
+    .em-status-pill.hold_login_required  { background: #ffebe9; color: #a40e26; }
+    .em-status-pill.archived             { background: #eaeef2; color: #57606a; }
+
+    .em-toast {
+      position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+      background: #1f2328; color: #fff; padding: 10px 16px; border-radius: 4px;
+      font-size: 13px; z-index: 9999; box-shadow: 0 4px 12px rgba(0,0,0,.2);
+      opacity: 0; transition: opacity .15s;
+    }
+    .em-toast.show { opacity: 1; }
+
+    .em-muted { color: #6a737d; }
+    .em-link  { color: #0366d6; cursor: pointer; text-decoration: none; }
+    .em-link:hover { text-decoration: underline; }
+
+    .em-polling-indicator { font-size: 11px; color: #9aa3ad; display: inline-flex; align-items: center; gap: 4px; }
+    .em-polling-indicator::before {
+      content: ""; width: 6px; height: 6px; border-radius: 50%; background: #2ecc71;
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.3; } }
+
+    @media (max-width: 1100px) { .em-detail-body { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <div class="em-app">
+    <div class="em-topbar">
+      <span class="em-title">EtsyMail <span class="em-tag">operator inbox · proxy mode</span></span>
+      <span class="em-spacer"></span>
+      <span class="em-polling-indicator" id="emPollingIndicator">polling every 5s</span>
+      <span id="emBackendStatus" title="Backend connection">
+        <span class="em-status-dot" id="emBackendDot"></span>
+        <span id="emBackendLabel" style="font-size:12px;margin-left:4px;">Backend: checking…</span>
+      </span>
+      <button id="emRefreshBtn" title="Refresh now"><i class="material-icons">refresh</i>Refresh</button>
+      <button id="emNewThreadBtn" title="Create test thread"><i class="material-icons">add</i>New (test)</button>
+      <button id="emSettingsBtn" title="Settings"><i class="material-icons">settings</i></button>
+    </div>
+
+    <div class="em-rail" id="emRail"></div>
+
+    <div class="em-list">
+      <div class="em-list-header">
+        <input type="text" id="emSearchInput" placeholder="Search customer, order…">
+        <button id="emSortBtn" title="Sort"><i class="material-icons">sort</i></button>
+      </div>
+      <div class="em-list-items" id="emListItems">
+        <div class="em-list-empty">Loading threads…</div>
+      </div>
+    </div>
+
+    <div class="em-detail" id="emDetail">
+      <div class="em-detail-empty">
+        Select a thread on the left to view its contents.<br>
+        <span class="em-muted">Use <b>New (test)</b> in the top bar to seed one for Milestone 1.</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="em-toast" id="emToast"></div>
+
+  <script>
+  (function(){
+    "use strict";
+
+    // Same-origin Netlify functions. Override if hosted elsewhere.
+    const NETLIFY_BASE = "";
+    const FN = (name) => `${NETLIFY_BASE}/.netlify/functions/${name}`;
+
+    const LIST_POLL_MS     = 5000;
+    const MESSAGES_POLL_MS = 4000;
+    const COUNTS_POLL_MS   = 15000;
+
+    const THREADS_COLL = "EtsyMail_Threads";
+
+    const RAIL_FILTERS = [
+      { id: "all",                  label: "All",             icon: "inbox",          status: null },
+      { id: "detected_from_gmail",  label: "New",             icon: "mail",           status: "detected_from_gmail" },
+      { id: "etsy_scraped",         label: "Scraped",         icon: "cloud_download", status: "etsy_scraped" },
+      { id: "draft_ready",          label: "Draft ready",     icon: "edit",           status: "draft_ready" },
+      { id: "pending_human_review", label: "Needs review",    icon: "rate_review",    status: "pending_human_review" },
+      { id: "sent",                 label: "Sent",            icon: "send",           status: "sent" },
+      { id: "hold_uncertain",       label: "Hold · uncertain",icon: "pause",          status: "hold_uncertain" },
+      { id: "hold_missing_order",   label: "Hold · no order", icon: "help",           status: "hold_missing_order" },
+      { id: "hold_login_required",  label: "Hold · login",    icon: "lock",           status: "hold_login_required" },
+      { id: "archived",             label: "Archived",        icon: "archive",        status: "archived" }
+    ];
+
+    const state = {
+      activeFilterId : "all",
+      threads        : [],
+      selectedId     : null,
+      messages       : [],
+      searchText     : "",
+      counts         : {},
+      listPollTimer  : null,
+      msgPollTimer   : null,
+      countsPollTimer: null,
+      inFlightList   : false,
+      inFlightMsgs   : false
+    };
+
+    const $  = (id) => document.getElementById(id);
+    const esc = (s="") => String(s).replace(/[&<>"']/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]));
+
+    function toast(msg, ms=2200) {
+      const t = $("emToast");
+      t.textContent = msg;
+      t.classList.add("show");
+      clearTimeout(toast._t);
+      toast._t = setTimeout(() => t.classList.remove("show"), ms);
+    }
+
+    // Proxy timestamps come back as {_ts:true, ms:<millis>}. Convert to Date.
+    function toDate(v) {
+      if (!v) return null;
+      if (v && typeof v === "object" && v._ts && typeof v.ms === "number") return new Date(v.ms);
+      if (v instanceof Date) return v;
+      if (typeof v === "number") return new Date(v);
+      if (typeof v === "string") {
+        const d = new Date(v);
+        return isNaN(d.getTime()) ? null : d;
+      }
+      return null;
+    }
+    function fmtTime(v) {
+      const d = toDate(v);
+      if (!d) return "";
+      const now = new Date();
+      if (d.toDateString() === now.toDateString()) {
+        return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+      }
+      const sameYear = d.getFullYear() === now.getFullYear();
+      return d.toLocaleDateString([], sameYear
+        ? { month: "short", day: "numeric" }
+        : { year: "numeric", month: "short", day: "numeric" });
+    }
+
+    async function api(name, { method="GET", query=null, body=null } = {}) {
+      let url = FN(name);
+      if (query) {
+        const sp = new URLSearchParams();
+        for (const [k, v] of Object.entries(query)) {
+          if (Array.isArray(v)) for (const item of v) sp.append(k, item);
+          else if (v !== null && v !== undefined) sp.append(k, v);
+        }
+        const qs = sp.toString();
+        if (qs) url += "?" + qs;
+      }
+      const opts = { method, headers: { "Content-Type": "application/json" } };
+      if (body) opts.body = JSON.stringify(body);
+      const res = await fetch(url, opts);
+      const text = await res.text();
+      let data = {};
+      try { data = JSON.parse(text); } catch { data = { raw: text }; }
+      if (!res.ok) throw new Error(data.error || `${name} ${res.status}`);
+      return data;
+    }
+
+    // ───── Rail ─────
+    function renderRail() {
+      const rail = $("emRail");
+      const sections = [
+        { title: "Inbox",   items: RAIL_FILTERS.slice(0, 6) },
+        { title: "On hold", items: RAIL_FILTERS.slice(6, 9) },
+        { title: "Archive", items: RAIL_FILTERS.slice(9) }
+      ];
+      let html = "";
+      for (const sec of sections) {
+        html += `<div class="em-rail-section">${esc(sec.title)}</div>`;
+        for (const f of sec.items) {
+          const count = f.status ? (state.counts[f.status] || 0) : Object.values(state.counts).reduce((a,b)=>a+b,0);
+          const active = state.activeFilterId === f.id ? " active" : "";
+          html += `
+            <div class="em-rail-item${active}" data-filter="${esc(f.id)}">
+              <span><i class="material-icons">${esc(f.icon)}</i>${esc(f.label)}</span>
+              <span class="em-count">${count}</span>
+            </div>`;
+        }
+      }
+      rail.innerHTML = html;
+      rail.querySelectorAll(".em-rail-item").forEach(el => {
+        el.addEventListener("click", () => {
+          state.activeFilterId = el.dataset.filter;
+          renderRail();
+          fetchThreadListNow();
+        });
+      });
+    }
+
+    // ───── Thread list ─────
+    function currentFilter() {
+      return RAIL_FILTERS.find(f => f.id === state.activeFilterId) || RAIL_FILTERS[0];
+    }
+
+    async function fetchThreadListNow() {
+      if (state.inFlightList) return;
+      state.inFlightList = true;
+      try {
+        const filter = currentFilter();
+        const query = { op: "list", coll: THREADS_COLL, orderBy: "updatedAt,desc", limit: 100 };
+        if (filter.status) query.where = `status,==,${filter.status}`;
+        const data = await api("firestoreProxy", { query });
+        state.threads = data.docs || [];
+        renderThreadList();
+        setBackendOk(true, "Backend: connected");
+      } catch (e) {
+        console.warn("thread list fetch failed:", e.message);
+        setBackendOk(false, "Backend: error");
+        $("emListItems").innerHTML = `<div class="em-list-empty">
+          Error loading threads:<br>${esc(e.message)}
+          <br><br>
+          <span class="em-muted">Ensure <code>firestoreProxy.js</code> is deployed and
+          <code>EtsyMail_Threads</code> is in its <code>CALLABLE_COLLS</code> set.
+          Firestore index errors will appear in the Netlify function logs with a one-click fix link.</span>
+        </div>`;
+      } finally {
+        state.inFlightList = false;
+      }
+    }
+
+    function startListPolling() {
+      stopListPolling();
+      fetchThreadListNow();
+      state.listPollTimer = setInterval(fetchThreadListNow, LIST_POLL_MS);
+    }
+    function stopListPolling() {
+      if (state.listPollTimer) { clearInterval(state.listPollTimer); state.listPollTimer = null; }
+    }
+
+    function renderThreadList() {
+      const host = $("emListItems");
+      const q = state.searchText.trim().toLowerCase();
+      const filtered = q ? state.threads.filter(t =>
+        (t.customerName || "").toLowerCase().includes(q) ||
+        (t.linkedOrderId || "").toLowerCase().includes(q) ||
+        (t.subject       || "").toLowerCase().includes(q) ||
+        (t.etsyUsername  || "").toLowerCase().includes(q)
+      ) : state.threads;
+
+      if (!filtered.length) {
+        host.innerHTML = `<div class="em-list-empty">No threads in this view.<br><span class="em-muted">Use <b>New (test)</b> in the top bar to seed one.</span></div>`;
+        return;
+      }
+
+      host.innerHTML = filtered.map(t => {
+        const selected = state.selectedId === t.id ? " selected" : "";
+        const unread   = t.unread ? " unread" : "";
+        const when     = fmtTime(t.lastInboundAt || t.updatedAt || t.createdAt);
+
+        const badges = [];
+        if (t.linkedOrderId)  badges.push(`<span class="em-badge order">#${esc(String(t.linkedOrderId).slice(-6))}</span>`);
+        if (t.category)       badges.push(`<span class="em-badge category">${esc(t.category)}</span>`);
+        if (t.confidence != null) badges.push(`<span class="em-badge confidence">${Math.round(t.confidence*100)}%</span>`);
+        if ((t.riskFlags || []).includes("image_attached")) badges.push(`<span class="em-badge attachment">📎 image</span>`);
+        if ((t.status || "").startsWith("hold_")) badges.push(`<span class="em-badge hold">${esc(t.status.replace("hold_","hold: "))}</span>`);
+
+        const snippet = t.subject || t.category || t.status || "";
+
+        return `
+          <div class="em-list-item${selected}${unread}" data-id="${esc(t.id)}">
+            <div class="em-name">${esc(t.customerName || "Unknown customer")}</div>
+            <div class="em-time">${esc(when)}</div>
+            <div class="em-snippet">${esc(snippet)}</div>
+            <div class="em-badges">${badges.join("")}</div>
+          </div>`;
+      }).join("");
+
+      host.querySelectorAll(".em-list-item").forEach(el => {
+        el.addEventListener("click", () => openThread(el.dataset.id));
+      });
+    }
+
+    // ───── Counts ─────
+    async function fetchCountsNow() {
+      try {
+        const data = await api("etsyMailThreads", { query: { counts: 1 } });
+        state.counts = data.counts || {};
+        renderRail();
+      } catch (e) {
+        console.warn("counts fetch failed:", e.message);
+      }
+    }
+    function startCountsPolling() {
+      stopCountsPolling();
+      fetchCountsNow();
+      state.countsPollTimer = setInterval(fetchCountsNow, COUNTS_POLL_MS);
+    }
+    function stopCountsPolling() {
+      if (state.countsPollTimer) { clearInterval(state.countsPollTimer); state.countsPollTimer = null; }
+    }
+
+    // ───── Detail pane ─────
+    async function openThread(threadId) {
+      state.selectedId = threadId;
+      renderThreadList();
+
+      api("etsyMailThreads", { method: "POST", body: { action: "markRead", threadId } }).catch(()=>{});
+
+      let thread = state.threads.find(t => t.id === threadId);
+      if (!thread) {
+        try {
+          const data = await api("etsyMailThreads", { query: { threadId } });
+          thread = data.thread;
+          state.messages = data.messages || [];
+        } catch (e) {
+          $("emDetail").innerHTML = `<div class="em-detail-empty">Could not load thread: ${esc(e.message)}</div>`;
+          return;
+        }
+      }
+
+      renderDetail(thread);
+      startMessagesPolling(threadId);
+    }
+
+    async function fetchMessagesNow(threadId) {
+      if (state.inFlightMsgs) return;
+      state.inFlightMsgs = true;
+      try {
+        const data = await api("firestoreProxy", {
+          query: {
+            op: "listSub", coll: THREADS_COLL, id: threadId, sub: "messages",
+            orderBy: "timestamp,asc", limit: 500
+          }
+        });
+        state.messages = data.docs || [];
+        renderThreadMessages();
+      } catch (e) {
+        console.warn("messages fetch failed:", e.message);
+      } finally {
+        state.inFlightMsgs = false;
+      }
+    }
+
+    function startMessagesPolling(threadId) {
+      stopMessagesPolling();
+      fetchMessagesNow(threadId);
+      state.msgPollTimer = setInterval(() => fetchMessagesNow(threadId), MESSAGES_POLL_MS);
+    }
+    function stopMessagesPolling() {
+      if (state.msgPollTimer) { clearInterval(state.msgPollTimer); state.msgPollTimer = null; }
+    }
+
+    function renderDetail(thread) {
+      if (!thread) {
+        $("emDetail").innerHTML = `<div class="em-detail-empty">No thread selected.</div>`;
+        return;
+      }
+      const t = thread;
+      const isGmailLinked = !!t.gmailMessageId;
+      const hasOrder      = !!t.linkedOrderId;
+      const etsyUrl       = t.etsyConversationUrl || "";
+
+      $("emDetail").innerHTML = `
+        <div class="em-detail-header">
+          <div class="em-h-top">
+            <div>
+              <h2>${esc(t.customerName || "Unknown customer")}</h2>
+              <div class="em-h-meta">
+                <span class="em-status-pill ${esc(t.status || "")}">${esc(t.status || "unknown")}</span>
+                ${t.etsyUsername ? `<span>@${esc(t.etsyUsername)}</span>` : ""}
+                ${t.customerEmail ? `<span>${esc(t.customerEmail)}</span>` : ""}
+                ${hasOrder ? `<span>Order #${esc(t.linkedOrderId)}</span>` : `<span class="em-muted">no linked order</span>`}
+                ${isGmailLinked ? `<span>📧 Gmail linked</span>` : ""}
+              </div>
+            </div>
+            <div class="em-h-actions">
+              ${etsyUrl ? `<a href="${esc(etsyUrl)}" target="_blank" class="em-link"><button><i class="material-icons">open_in_new</i>Open on Etsy</button></a>` : ""}
+              <button id="emHoldBtn" title="Hold this thread"><i class="material-icons">pause</i>Hold</button>
+              <button id="emArchiveBtn" title="Archive"><i class="material-icons">archive</i>Archive</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="em-detail-body">
+          <div>
+            <div class="em-card">
+              <h4>Conversation</h4>
+              <div class="em-thread" id="emThreadBox">
+                <div class="em-muted" style="font-size:12px;">Loading messages…</div>
+              </div>
+            </div>
+
+            <div class="em-card em-compose">
+              <h4>Staff reply (local draft)</h4>
+              <textarea id="emDraftText" placeholder="Type a reply. In Milestone 1 this writes a staff message into the thread; later milestones will route through the AI draft + send pipeline."></textarea>
+              <div class="em-compose-bar">
+                <button id="emSaveStaffMsgBtn" class="primary"><i class="material-icons">save</i>Save as staff message</button>
+                <button id="emClearDraftBtn"><i class="material-icons">close</i>Clear</button>
+                <span class="em-muted" style="font-size:11px;align-self:center;margin-left:auto;">Auto-send is disabled in Milestone 1.</span>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <div class="em-card">
+              <h4>Thread details</h4>
+              <dl class="em-kv">
+                <dt>Thread ID</dt><dd style="font-family:monospace;font-size:11px;">${esc(t.id)}</dd>
+                <dt>Status</dt>   <dd>${esc(t.status || "")}</dd>
+                <dt>Category</dt> <dd>${esc(t.category || "—")}</dd>
+                <dt>Confidence</dt><dd>${t.confidence != null ? Math.round(t.confidence*100) + "%" : "—"}</dd>
+                <dt>Assigned</dt> <dd>${esc(t.assignedTo || "—")}</dd>
+                <dt>Tags</dt>     <dd>${(t.tags||[]).map(esc).join(", ") || "—"}</dd>
+                <dt>Risk flags</dt><dd>${(t.riskFlags||[]).map(esc).join(", ") || "—"}</dd>
+                <dt>Last inbound</dt> <dd>${esc(fmtTime(t.lastInboundAt))}</dd>
+                <dt>Last scraped</dt> <dd>${esc(fmtTime(t.lastSyncedAt))}</dd>
+              </dl>
+            </div>
+
+            <div class="em-card">
+              <h4>Linked order <span class="em-muted" style="font-weight:400;text-transform:none;letter-spacing:0;">(enriched in Milestone 3)</span></h4>
+              ${hasOrder ? `
+                <dl class="em-kv">
+                  <dt>Order #</dt> <dd>${esc(t.linkedOrderId)}</dd>
+                  <dt>Listings</dt><dd>${(t.linkedListingIds||[]).map(esc).join(", ") || "—"}</dd>
+                </dl>
+                <div style="margin-top:6px;font-size:11px;" class="em-muted">
+                  Shipping address, tracking, and personalization populate after enrichment runs.
+                </div>
+              ` : `<div class="em-muted" style="font-size:12px;">No order linked yet.</div>`}
+            </div>
+
+            <div class="em-card">
+              <h4>AI draft <span class="em-muted" style="font-weight:400;text-transform:none;letter-spacing:0;">(Milestone 4)</span></h4>
+              <div class="em-muted" style="font-size:12px;">
+                AI drafts will appear here with confidence, reason codes, and Approve / Edit / Send controls.
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+
+      renderThreadMessages();
+
+      $("emHoldBtn")?.addEventListener("click", () => setStatus(t.id, "hold_uncertain", "operator hold"));
+      $("emArchiveBtn")?.addEventListener("click", () => setStatus(t.id, "archived", "operator archive"));
+      $("emClearDraftBtn")?.addEventListener("click", () => { $("emDraftText").value = ""; });
+      $("emSaveStaffMsgBtn")?.addEventListener("click", () => saveStaffMessage(t.id));
+    }
+
+    function renderThreadMessages() {
+      const box = $("emThreadBox");
+      if (!box) return;
+      if (!state.messages.length) {
+        box.innerHTML = `<div class="em-muted" style="font-size:12px;">No messages yet. The extension will populate this after its first scrape.</div>`;
+        return;
+      }
+      box.innerHTML = state.messages.map(m => {
+        const cls = m.source === "ai" ? "ai"
+                  : m.direction === "outbound" ? "outbound"
+                  : "inbound";
+        const who  = m.senderName || (m.senderRole || m.source || "unknown");
+        const when = fmtTime(m.timestamp || m.createdAt);
+        const body = m.imageUrls && m.imageUrls.length
+          ? `<a class="em-link" href="${esc(m.imageUrls[0])}" target="_blank">📷 Image</a> ${esc(m.text || "")}`
+          : esc(m.text || "");
+        return `
+          <div class="em-msg ${cls}">
+            <div class="em-meta">${esc(who)} · ${esc(when)}</div>
+            <div>${body}</div>
+          </div>`;
+      }).join("");
+      box.scrollTop = box.scrollHeight;
+    }
+
+    // ───── Actions ─────
+    async function setStatus(threadId, status, reason) {
+      try {
+        await api("etsyMailThreads", { method: "POST", body: { action: "setStatus", threadId, status, reason } });
+        toast(`Status → ${status}`);
+        fetchThreadListNow();
+      } catch (e) { toast("Error: " + e.message); }
+    }
+
+    async function saveStaffMessage(threadId) {
+      const text = $("emDraftText").value.trim();
+      if (!text) { toast("Nothing to save"); return; }
+      try {
+        await api("etsyMailThreads", {
+          method: "POST",
+          body: {
+            action: "appendMessage", threadId,
+            message: { source: "staff", direction: "outbound", senderName: "Staff", senderRole: "staff", text }
+          }
+        });
+        $("emDraftText").value = "";
+        toast("Staff message saved");
+        fetchMessagesNow(threadId);
+        fetchThreadListNow();
+      } catch (e) { toast("Error: " + e.message); }
+    }
+
+    async function createTestThread() {
+      const name = prompt("Test customer name?", "Test Customer");
+      if (!name) return;
+      const text = prompt("Initial inbound message?", "Hi, where is my order?");
+      try {
+        const data = await api("etsyMailThreads", {
+          method: "POST",
+          body: {
+            action: "create", customerName: name, initialText: text,
+            source: "manual", status: "detected_from_gmail",
+            subject: text ? text.slice(0, 60) : null
+          }
+        });
+        toast(`Thread created: ${data.threadId}`);
+        fetchThreadListNow();
+        openThread(data.threadId);
+      } catch (e) { toast("Error: " + e.message); }
+    }
+
+    function setBackendOk(ok, label) {
+      const dot = $("emBackendDot");
+      const lab = $("emBackendLabel");
+      if (dot) dot.classList.toggle("ok", !!ok);
+      if (lab) lab.textContent = label;
+    }
+
+    // Pause polling when tab hidden
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) {
+        stopListPolling();
+        stopMessagesPolling();
+        stopCountsPolling();
+        $("emPollingIndicator").textContent = "paused (tab hidden)";
+      } else {
+        startListPolling();
+        startCountsPolling();
+        if (state.selectedId) startMessagesPolling(state.selectedId);
+        $("emPollingIndicator").textContent = "polling every 5s";
+      }
+    });
+
+    document.addEventListener("DOMContentLoaded", () => {
+      renderRail();
+
+      $("emRefreshBtn").addEventListener("click", () => {
+        fetchThreadListNow();
+        fetchCountsNow();
+        if (state.selectedId) fetchMessagesNow(state.selectedId);
+        toast("Refreshed");
+      });
+      $("emNewThreadBtn").addEventListener("click", createTestThread);
+      $("emSettingsBtn").addEventListener("click", () => toast("Settings panel arrives in Milestone 3."));
+      $("emSearchInput").addEventListener("input", (e) => {
+        state.searchText = e.target.value || "";
+        renderThreadList();
+      });
+
+      startListPolling();
+      startCountsPolling();
+
+      document.body.classList.add("ready");
+    });
+  })();
+  </script>
+</body>
+</html>
