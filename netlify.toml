@@ -184,3 +184,9 @@
   to = "/Game_Generator_1.html"
   status = 200
   force = true
+
+  [[redirects]]
+  from = "https://etsy-mail-1.goldenspike.app"
+  to = "/etsy-mail-1.html"
+  status = 200
+  force = true
