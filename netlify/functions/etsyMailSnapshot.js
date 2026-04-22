@@ -159,23 +159,40 @@ exports.handler = async (event) => {
       await tRef.set(threadPatch, { merge: true });
     }
 
-    // ─── 2) Dedupe + write new messages ───
-    // Pull existing message contentHashes so we only write new ones.
-    const existingSnap = await tRef.collection("messages").select("contentHash").limit(2000).get();
-    const existingHashes = new Set();
+    // ─── 2) Dedupe + upsert messages ───
+    // We fetch existing hashes AND their current timestamps so we can UPDATE
+    // a stored message's timestamp if the scraper now provides a better one
+    // (e.g., scraper v0.3+ extracts real per-message Date: headers that
+    // earlier scrapes missed).
+    const existingSnap = await tRef.collection("messages").select("contentHash", "timestamp").limit(2000).get();
+    const existingByHash = new Map();   // hash → { docId, currentTsMs }
     existingSnap.forEach(d => {
-      const h = (d.data() || {}).contentHash;
-      if (h) existingHashes.add(h);
+      const data = d.data() || {};
+      if (data.contentHash) {
+        const currentTsMs = data.timestamp && typeof data.timestamp.toMillis === "function"
+          ? data.timestamp.toMillis()
+          : null;
+        existingByHash.set(data.contentHash, { docId: d.id, currentTsMs });
+      }
     });
 
-    let newest_inbound_ms = null;
+    let newest_inbound_ms  = null;
     let newest_outbound_ms = null;
-    let newestAny_ms = null;
-    const toWrite = [];
+    let newestAny_ms       = null;
+    const toInsert = [];
+    const toUpdate = [];
+
+    // Rough heuristic: a "scrape-time fallback" timestamp is one within a
+    // few seconds of scrapedAt. If the existing stored timestamp looks like
+    // a fallback AND the new one doesn't, update it.
+    const scrapeTimeMs = typeof scrapedAt === "number" ? scrapedAt : Date.now();
+    const FALLBACK_WINDOW_MS = 120 * 1000;  // 2 minutes
+    function looksLikeFallbackTs(tsMs) {
+      return tsMs != null && Math.abs(tsMs - scrapeTimeMs) < FALLBACK_WINDOW_MS;
+    }
 
     for (const m of messages) {
       if (!m || !m.contentHash) continue;
-      if (existingHashes.has(m.contentHash)) continue;
 
       const direction = m.senderRole === "staff" ? "outbound" : "inbound";
       const ts = typeof m.timestampMs === "number" ? m.timestampMs : null;
@@ -185,7 +202,29 @@ exports.handler = async (event) => {
         if (direction === "outbound") newest_outbound_ms = Math.max(newest_outbound_ms || 0, ts);
       }
 
-      toWrite.push({
+      const existing = existingByHash.get(m.contentHash);
+      if (existing) {
+        // Candidate for timestamp update: we have a new ts, it's different,
+        // and either we stored nothing or what we stored looks like a fallback.
+        if (ts != null) {
+          const stored = existing.currentTsMs;
+          const storedLooksFallback = looksLikeFallbackTs(stored);
+          const newLooksFallback    = looksLikeFallbackTs(ts);
+          const storedMissingOrBad  = stored == null || storedLooksFallback;
+          if (storedMissingOrBad && !newLooksFallback && stored !== ts) {
+            toUpdate.push({
+              docId: existing.docId,
+              patch: {
+                timestamp : admin.firestore.Timestamp.fromMillis(ts),
+                updatedAt : now
+              }
+            });
+          }
+        }
+        continue;   // already exists, don't re-insert
+      }
+
+      toInsert.push({
         source            : "etsy",
         direction,
         senderName        : m.senderName || "Unknown",
@@ -195,7 +234,7 @@ exports.handler = async (event) => {
         normalizedText    : normalize(m.text),
         contentHash       : m.contentHash,
         imageUrls         : Array.isArray(m.imageUrls) ? m.imageUrls : [],
-        storageImagePaths : [],                                    // filled later by image mirror
+        storageImagePaths : [],
         storageMirrorState: Array.isArray(m.imageUrls) && m.imageUrls.length ? "pending" : "none",
         attachmentUrls    : Array.isArray(m.attachmentUrls) ? m.attachmentUrls : [],
         etsyDomSelector   : m.domSelector || null,
@@ -203,17 +242,30 @@ exports.handler = async (event) => {
       });
     }
 
-    // Batch-write new messages (chunks of 400 to stay under Firestore batch limit)
+    // Write inserts (new messages)
     let writtenCount = 0;
-    for (let i = 0; i < toWrite.length; i += 400) {
+    for (let i = 0; i < toInsert.length; i += 400) {
       const batch = db.batch();
-      const chunk = toWrite.slice(i, i + 400);
+      const chunk = toInsert.slice(i, i + 400);
       for (const m of chunk) {
         const mRef = tRef.collection("messages").doc(`etsy_${m.contentHash}`);
         batch.set(mRef, m, { merge: false });
       }
       await batch.commit();
       writtenCount += chunk.length;
+    }
+
+    // Write timestamp updates (existing messages with better timestamps now available)
+    let updatedCount = 0;
+    for (let i = 0; i < toUpdate.length; i += 400) {
+      const batch = db.batch();
+      const chunk = toUpdate.slice(i, i + 400);
+      for (const u of chunk) {
+        const mRef = tRef.collection("messages").doc(u.docId);
+        batch.set(mRef, u.patch, { merge: true });
+      }
+      await batch.commit();
+      updatedCount += chunk.length;
     }
 
     // ─── 3) Update thread tail timestamps + message count ───
@@ -248,6 +300,7 @@ exports.handler = async (event) => {
       actor    : "system:extension",
       payload  : {
         newMessageCount      : writtenCount,
+        updatedMessageCount  : updatedCount,
         totalMessagesScraped : messages.length,
         threadDomHash        : threadDomHash || null,
         scrapedAt            : scrapedAt || null
@@ -259,7 +312,7 @@ exports.handler = async (event) => {
     // to etsyMailMirrorImage, one call per image. Keeps Storage uploads out
     // of this hot path.
     const imagesToMirror = [];
-    for (const m of toWrite) {
+    for (const m of toInsert) {
       if (!m.imageUrls || !m.imageUrls.length) continue;
       imagesToMirror.push({
         messageDocId: `etsy_${m.contentHash}`,
@@ -272,6 +325,7 @@ exports.handler = async (event) => {
       threadId,
       threadExisted,
       newMessages     : writtenCount,
+      updatedMessages : updatedCount,
       totalScanned    : messages.length,
       imagesToMirror
     });
