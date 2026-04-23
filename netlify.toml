@@ -6,13 +6,17 @@
   external_node_modules = ["sharp"]
 
 # ─── M3: Etsy receipts sync ────────────────────────────────────────────────
-# Runs the background sync function every 30 min as incremental.
-# Background functions have a 15-min timeout (vs 10s for regular functions).
-# Initial full sync must be triggered manually via:
+# Two-function architecture:
+#   - etsyMailSyncCron (30-sec scheduled function): runs every 5 min, checks
+#     state, POSTs to the background function if sync needed. Returns fast.
+#   - etsyMailSync-background (15-min background function): does actual sync.
+#     Not scheduled directly — only invoked via HTTP.
+#
+# Initial full backfill is triggered manually via:
 #   POST /.netlify/functions/etsyMailSync?action=trigger&mode=full&daysBack=730
-#   with header: X-EtsyMail-Secret: <your secret>
-[functions."etsyMailSync-background"]
-  schedule = "*/30 * * * *"
+# After that, the cron takes over for auto-resume and incremental syncs.
+[functions."etsyMailSyncCron"]
+  schedule = "*/5 * * * *"
 
 [[headers]]
   for = "/*"
