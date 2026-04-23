@@ -1,50 +1,72 @@
 /*  netlify/functions/etsyMailImage.js
  *
- *  Image redirector for mirrored Etsy message images.
+ *  Image proxy for mirrored Etsy message images.
  *
  *  The mirror function (etsyMailMirrorImage) uploads Etsy CDN images to
  *  Firebase Storage at paths like:
  *     etsymail/etsy_conv_12345/etsy_<contentHash>/<imgHash>.jpg
  *
- *  Those paths aren't directly fetchable — they need a signed URL. Rather
- *  than storing signed URLs on message docs (they expire), this endpoint
- *  signs on demand and 302-redirects the browser.
+ *  This endpoint fetches those bytes server-side and streams them back to
+ *  the browser with Cross-Origin-Resource-Policy: cross-origin so the
+ *  response is embeddable from any page (including inbox pages that have
+ *  Cross-Origin-Embedder-Policy enabled).
  *
  *  Usage (from the inbox UI):
  *     GET /.netlify/functions/etsyMailImage?path=etsymail/.../hash.jpg
  *
- *  Response: 302 Found with Location header set to a fresh signed URL
- *  valid for 10 minutes. Browser follows the redirect and loads the image.
+ *  Response: 200 OK with image/* Content-Type and the raw bytes. Browser
+ *  renders it directly into an <img> or <a> target.
+ *
+ *  Previous versions used 302 redirect to a signed GCS URL. That broke on
+ *  inbox pages with COEP set because GCS doesn't send
+ *  Cross-Origin-Resource-Policy. Proxy-streaming avoids the cross-origin
+ *  fetch entirely — browser only sees our Netlify-hosted response.
  *
  *  Security:
  *    - Path must begin with "etsymail/" — prevents arbitrary bucket access
  *    - No auth required; image paths are content-hashed and non-guessable
- *    - The signed URL itself expires quickly (10 min) to limit URL sharing
+ *    - Path traversal (../, backslash) rejected
  */
 
 const admin = require("./firebaseAdmin");
 
 const bucket = admin.storage().bucket();
 
-// Browser-level CORS; images can be embedded cross-origin
-const CORS = {
+// Browser-level CORS + CORP; images must be embeddable cross-origin,
+// including from pages that have COEP: require-corp enabled.
+const BASE_HEADERS = {
   "Access-Control-Allow-Origin" : "*",
   "Access-Control-Allow-Methods": "GET, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type",
-  "Access-Control-Max-Age"      : "86400"
+  "Access-Control-Max-Age"      : "86400",
+  "Cross-Origin-Resource-Policy": "cross-origin"
 };
 
-// Allowed path prefix — prevents requests for arbitrary bucket paths
 const PATH_PREFIX = "etsymail/";
+
+// Infer a Content-Type from a storage path's extension, used as fallback
+// if the stored GCS metadata doesn't have a contentType.
+function contentTypeFromPath(path) {
+  const ext = (path.split(".").pop() || "").toLowerCase();
+  switch (ext) {
+    case "jpg":
+    case "jpeg": return "image/jpeg";
+    case "png":  return "image/png";
+    case "gif":  return "image/gif";
+    case "webp": return "image/webp";
+    case "svg":  return "image/svg+xml";
+    default:     return "application/octet-stream";
+  }
+}
 
 exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") {
-    return { statusCode: 204, headers: CORS, body: "" };
+    return { statusCode: 204, headers: BASE_HEADERS, body: "" };
   }
   if (event.httpMethod !== "GET") {
     return {
       statusCode: 405,
-      headers: { ...CORS, "Content-Type": "application/json" },
+      headers: { ...BASE_HEADERS, "Content-Type": "application/json" },
       body: JSON.stringify({ error: "Method Not Allowed" })
     };
   }
@@ -56,59 +78,67 @@ exports.handler = async (event) => {
     if (!rawPath) {
       return {
         statusCode: 400,
-        headers: { ...CORS, "Content-Type": "application/json" },
+        headers: { ...BASE_HEADERS, "Content-Type": "application/json" },
         body: JSON.stringify({ error: "Missing 'path' query parameter" })
       };
     }
-
-    // Prevent path traversal and unauthorized prefixes
     if (!rawPath.startsWith(PATH_PREFIX)) {
       return {
         statusCode: 403,
-        headers: { ...CORS, "Content-Type": "application/json" },
+        headers: { ...BASE_HEADERS, "Content-Type": "application/json" },
         body: JSON.stringify({ error: "Path must start with 'etsymail/'" })
       };
     }
     if (rawPath.includes("..") || rawPath.includes("\\")) {
       return {
         statusCode: 400,
-        headers: { ...CORS, "Content-Type": "application/json" },
+        headers: { ...BASE_HEADERS, "Content-Type": "application/json" },
         body: JSON.stringify({ error: "Invalid path" })
       };
     }
 
     const file = bucket.file(rawPath);
 
-    // Check existence quickly — avoids signing URLs that would 404 anyway
     const [exists] = await file.exists();
     if (!exists) {
       return {
         statusCode: 404,
-        headers: { ...CORS, "Content-Type": "application/json" },
+        headers: { ...BASE_HEADERS, "Content-Type": "application/json" },
         body: JSON.stringify({ error: "Image not found", path: rawPath })
       };
     }
 
-    const [signedUrl] = await file.getSignedUrl({
-      action : "read",
-      expires: Date.now() + 10 * 60 * 1000   // 10 minutes
-    });
+    // Fetch the file contents AND its stored metadata. The stored content-type
+    // (set by the mirror function) is more reliable than extension inference.
+    const [buf] = await file.download();
+    let contentType = null;
+    try {
+      const [meta] = await file.getMetadata();
+      if (meta && meta.contentType) contentType = meta.contentType;
+    } catch { /* fall through to extension inference */ }
+    if (!contentType) contentType = contentTypeFromPath(rawPath);
 
+    // Return the bytes. Netlify functions expect base64 for binary responses.
     return {
-      statusCode: 302,
+      statusCode: 200,
       headers: {
-        ...CORS,
-        Location     : signedUrl,
-        "Cache-Control": "public, max-age=300"  // let browsers cache redirect briefly
+        ...BASE_HEADERS,
+        "Content-Type" : contentType,
+        "Content-Length": String(buf.length),
+        // Cache aggressively at the browser — image bytes are immutable
+        // (content-hashed filenames); if the content changed the URL would
+        // change too. One day of browser cache is reasonable.
+        "Cache-Control": "public, max-age=86400, immutable"
       },
-      body: ""
+      body: buf.toString("base64"),
+      isBase64Encoded: true
     };
 
   } catch (err) {
     console.error("etsyMailImage error:", err);
     return {
       statusCode: 500,
-      headers: { ...CORS, "Content-Type": "application/json" },
+      headers: { ...BASE_HEADERS, "Content-Type": "application/json" },
       body: JSON.stringify({ error: err.message || "Unknown error" })
     };
   }
