@@ -637,9 +637,35 @@
                   : "inbound";
         const who  = m.senderName || (m.senderRole || m.source || "unknown");
         const when = fmtTime(m.timestamp || m.createdAt);
-        const body = m.imageUrls && m.imageUrls.length
-          ? `<a class="em-link" href="${esc(m.imageUrls[0])}" target="_blank">📷 Image</a> ${esc(m.text || "")}`
-          : esc(m.text || "");
+
+        // Render image-type messages as inline thumbnails
+        // Image-type messages have messageType:"image" set by the scraper's
+        // processImageAttachment function.
+        const isImageMessage = m.messageType === "image";
+        let body;
+        if (isImageMessage && m.imageUrls && m.imageUrls.length) {
+          // Use thumbnail if we have one, fall back to full-res for display
+          const thumbs = (m.thumbnailUrls && m.thumbnailUrls.length) ? m.thumbnailUrls : m.imageUrls;
+          const thumbsHtml = m.imageUrls.map((fullUrl, idx) => {
+            const thumbUrl = thumbs[idx] || fullUrl;
+            // Prefer the Firebase Storage mirrored URL if we have it (survives Etsy CDN expiry)
+            const mirrored = m.storageImagePaths && m.storageImagePaths[idx];
+            const displayThumb = mirrored || thumbUrl;
+            const displayFull  = mirrored || fullUrl;
+            return `<a href="${esc(displayFull)}" target="_blank" rel="noopener" style="display:inline-block;margin:2px;">
+              <img src="${esc(displayThumb)}" alt="attached image"
+                   style="max-width:200px;max-height:200px;border-radius:6px;border:1px solid #e5e7eb;"
+                   onerror="this.style.display='none'"/>
+            </a>`;
+          }).join("");
+          body = thumbsHtml + (m.text ? `<div style="margin-top:6px;">${esc(m.text)}</div>` : "");
+        } else if (m.imageUrls && m.imageUrls.length) {
+          // Text message with attached images — show a small icon link (legacy behavior)
+          body = `<a class="em-link" href="${esc(m.imageUrls[0])}" target="_blank">📷 Image</a> ${esc(m.text || "")}`;
+        } else {
+          body = esc(m.text || "");
+        }
+
         return `
           <div class="em-msg ${cls}">
             <div class="em-meta">${esc(who)} · ${esc(when)}</div>

@@ -233,7 +233,9 @@ exports.handler = async (event) => {
         text              : m.text || "",
         normalizedText    : normalize(m.text),
         contentHash       : m.contentHash,
+        messageType       : m.messageType || "text",     // "text" | "image" | future types
         imageUrls         : Array.isArray(m.imageUrls) ? m.imageUrls : [],
+        thumbnailUrls     : Array.isArray(m.thumbnailUrls) ? m.thumbnailUrls : [],
         storageImagePaths : [],
         storageMirrorState: Array.isArray(m.imageUrls) && m.imageUrls.length ? "pending" : "none",
         attachmentUrls    : Array.isArray(m.attachmentUrls) ? m.attachmentUrls : [],
