@@ -624,6 +624,71 @@
       $("emSaveStaffMsgBtn")?.addEventListener("click", () => saveStaffMessage(t.id));
     }
 
+    // Convert plain Etsy listing URLs in escaped text into clickable <a> tags.
+    // Input must already be HTML-escaped. Matches:
+    //   https://www.etsy.com/listing/1234567/slug
+    //   http://etsy.com/listing/1234567
+    //   www.etsy.com/listing/1234567
+    //   etsy.com/listing/1234567
+    // Preserves the URL's visible text and makes it clickable.
+    function linkifyEtsyUrls(escapedText) {
+      if (!escapedText) return "";
+      // Match with optional protocol/subdomain, listing ID, optional slug
+      const re = /((?:https?:\/\/)?(?:www\.)?etsy\.com\/listing\/\d+[\w\-\/]*)/gi;
+      return escapedText.replace(re, (match) => {
+        let href = match;
+        if (!/^https?:\/\//i.test(href)) href = "https://" + href.replace(/^\/+/, "");
+        return '<a href="' + href + '" target="_blank" rel="noopener" ' +
+          'style="color:inherit;text-decoration:underline;">' + match + '</a>';
+      });
+    }
+
+    // Render a compact Etsy listing card. Shows thumbnail + title + price.
+    // Entire card clickable, opens listing in new tab.
+    function renderListingCard(card) {
+      const title = esc(card.title || "Etsy listing");
+      const priceText = esc(card.priceText || "");
+      const origPrice = esc(card.originalPriceText || "");
+      const shipping  = esc(card.shippingText || "");
+      const listingUrl = esc(card.listingUrl || "");
+      const thumbUrl   = esc(card.thumbnailUrl || "");
+
+      // Price block: show current price; strikethrough original if present
+      let priceHtml = "";
+      if (priceText) {
+        priceHtml = '<div style="font-size:13px;color:inherit;opacity:0.9;">' +
+          '<strong>' + priceText + '</strong>' +
+          (origPrice ? ' <span style="text-decoration:line-through;opacity:0.6;margin-left:4px;">' + origPrice + '</span>' : '') +
+          '</div>';
+      }
+      const shippingHtml = shipping
+        ? '<div style="font-size:11px;opacity:0.7;margin-top:2px;">' + shipping + '</div>'
+        : '';
+
+      // Fallback SVG if thumbnail fails to load
+      const placeholderSvg = 'data:image/svg+xml;utf8,' + encodeURIComponent(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 60" width="60" height="60">' +
+        '<rect width="60" height="60" fill="#f3f4f6" stroke="#d1d5db"/>' +
+        '<text x="30" y="32" text-anchor="middle" font-family="system-ui" font-size="10" fill="#6b7280">Etsy</text>' +
+        '</svg>'
+      );
+
+      return '<a href="' + listingUrl + '" target="_blank" rel="noopener" ' +
+        'style="display:flex;align-items:center;gap:10px;padding:8px;margin-top:6px;' +
+        'border:1px solid rgba(0,0,0,0.12);border-radius:8px;background:rgba(255,255,255,0.08);' +
+        'text-decoration:none;color:inherit;max-width:360px;" ' +
+        'title="Open Etsy listing">' +
+        '<img src="' + thumbUrl + '" alt="" loading="lazy" ' +
+        'style="width:60px;height:60px;object-fit:cover;border-radius:6px;background:#fff;flex-shrink:0;" ' +
+        'onerror="this.onerror=null;this.src=\'' + placeholderSvg + '\';"/>' +
+        '<div style="min-width:0;flex:1;">' +
+        '<div style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;' +
+        'display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;">' + title + '</div>' +
+        priceHtml + shippingHtml +
+        '</div>' +
+        '</a>';
+    }
+
     function renderThreadMessages() {
       const box = $("emThreadBox");
       if (!box) return;
@@ -677,16 +742,25 @@
               'onerror="this.onerror=null;this.src=\'' + placeholderSvg + '\';this.style.width=\'120px\';this.style.height=\'90px\';this.style.maxHeight=\'90px\';this.style.cursor=\'pointer\';"/>' +
               '</a>';
           }).join("");
-          const textPart = m.text ? `<div style="margin-top:6px;">${esc(m.text)}</div>` : "";
+          const linkedText = m.text ? linkifyEtsyUrls(esc(m.text)) : "";
+          const textPart = linkedText ? `<div style="margin-top:6px;">${linkedText}</div>` : "";
           body = `<div>${thumbsHtml}</div>${textPart}`;
         } else {
-          body = esc(m.text || "");
+          body = linkifyEtsyUrls(esc(m.text || ""));
+        }
+
+        // Append any Etsy listing cards associated with this message
+        let cardsHtml = "";
+        if (Array.isArray(m.listingCards) && m.listingCards.length) {
+          cardsHtml = '<div style="margin-top:6px;display:flex;flex-direction:column;gap:4px;">' +
+            m.listingCards.map(renderListingCard).join("") +
+            '</div>';
         }
 
         return `
           <div class="em-msg ${cls}">
             <div class="em-meta">${esc(who)} · ${esc(when)}</div>
-            <div>${body}</div>
+            <div>${body}${cardsHtml}</div>
           </div>`;
       }).join("");
       box.scrollTop = box.scrollHeight;

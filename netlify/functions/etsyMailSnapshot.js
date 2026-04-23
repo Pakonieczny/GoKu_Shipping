@@ -224,6 +224,19 @@ exports.handler = async (event) => {
         continue;   // already exists, don't re-insert
       }
 
+      // Sanitize listing cards — accept only expected fields, drop anything weird
+      const listingCards = Array.isArray(m.listingCards)
+        ? m.listingCards.map(c => ({
+            listingId        : String(c.listingId || ""),
+            listingUrl       : String(c.listingUrl || ""),
+            title            : String(c.title || ""),
+            thumbnailUrl     : String(c.thumbnailUrl || ""),
+            priceText        : String(c.priceText || ""),
+            originalPriceText: String(c.originalPriceText || ""),
+            shippingText    : String(c.shippingText || "")
+          })).filter(c => c.listingId && c.listingUrl)
+        : [];
+
       toInsert.push({
         source            : "etsy",
         direction,
@@ -236,6 +249,7 @@ exports.handler = async (event) => {
         messageType       : m.messageType || "text",     // "text" | "image" | future types
         imageUrls         : Array.isArray(m.imageUrls) ? m.imageUrls : [],
         thumbnailUrls     : Array.isArray(m.thumbnailUrls) ? m.thumbnailUrls : [],
+        listingCards,                                    // NEW: structured Etsy listing previews
         storageImagePaths : [],
         storageMirrorState: Array.isArray(m.imageUrls) && m.imageUrls.length ? "pending" : "none",
         attachmentUrls    : Array.isArray(m.attachmentUrls) ? m.attachmentUrls : [],
