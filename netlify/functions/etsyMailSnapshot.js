@@ -112,6 +112,12 @@ exports.handler = async (event) => {
     if (customer) {
       if (customer.name)          threadPatch.customerName = customer.name;
       if (customer.etsyUsername)  threadPatch.etsyUsername = customer.etsyUsername;
+      // NEW — buyer metadata useful for M3 customer panel
+      if (customer.peopleUrl)     threadPatch.buyerPeopleUrl = customer.peopleUrl;
+      if (customer.avatarUrl)     threadPatch.buyerAvatarUrl = customer.avatarUrl;
+      if (typeof customer.isRepeatBuyer === "boolean") {
+        threadPatch.buyerIsRepeatBuyer = customer.isRepeatBuyer;
+      }
     }
 
     // Advance status on first successful scrape

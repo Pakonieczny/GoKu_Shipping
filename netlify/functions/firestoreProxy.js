@@ -38,6 +38,7 @@ const CALLABLE_COLLS = new Set([
   "EtsyMail_Threads",
   "EtsyMail_Customers",
   "EtsyMail_Orders",
+  "EtsyMail_Receipts",   // M3: cached Etsy shop receipts
   "EtsyMail_Drafts",
   "EtsyMail_Audit",
   "EtsyMail_Jobs",

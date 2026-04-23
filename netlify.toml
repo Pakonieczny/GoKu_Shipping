@@ -5,6 +5,14 @@
   node_bundler = "esbuild"
   external_node_modules = ["sharp"]
 
+# ─── M3: Etsy receipts sync ────────────────────────────────────────────────
+# Runs every 30 min as action=run&mode=incremental (scheduled invocations
+# bypass the secret check). Initial full sync must be triggered manually via:
+#   GET /.netlify/functions/etsyMailSync?action=run&mode=full&daysBack=730
+#   with header: X-EtsyMail-Secret: <your secret>
+[functions."etsyMailSync"]
+  schedule = "*/30 * * * *"
+
 [[headers]]
   for = "/*"
   [headers.values]
