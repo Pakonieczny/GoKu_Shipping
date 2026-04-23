@@ -670,11 +670,11 @@
               '</svg>'
             );
             return '<a href="' + esc(displayFull) + '" target="_blank" rel="noopener" ' +
-              'style="display:inline-block;margin:4px 6px 4px 0;text-decoration:none;" ' +
+              'style="display:block;max-width:280px;margin:4px 0;text-decoration:none;" ' +
               'title="Click to open full-size image">' +
               '<img src="' + esc(displayThumb) + '" alt="attached image" loading="lazy" ' +
-              'style="max-width:280px;max-height:280px;border-radius:8px;border:1px solid rgba(0,0,0,0.1);background:#fff;cursor:zoom-in;display:block;" ' +
-              'onerror="this.onerror=null;this.src=\'' + placeholderSvg + '\';this.style.maxWidth=\'120px\';this.style.maxHeight=\'90px\';this.style.cursor=\'pointer\';"/>' +
+              'style="width:100%;max-width:100%;height:auto;max-height:280px;object-fit:contain;border-radius:8px;border:1px solid rgba(0,0,0,0.1);background:#fff;cursor:zoom-in;display:block;" ' +
+              'onerror="this.onerror=null;this.src=\'' + placeholderSvg + '\';this.style.width=\'120px\';this.style.height=\'90px\';this.style.maxHeight=\'90px\';this.style.cursor=\'pointer\';"/>' +
               '</a>';
           }).join("");
           const textPart = m.text ? `<div style="margin-top:6px;">${esc(m.text)}</div>` : "";
