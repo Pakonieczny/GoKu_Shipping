@@ -654,13 +654,26 @@
             const mirrored = Array.isArray(m.storageImagePaths) && m.storageImagePaths[idx];
             const displayThumb = mirrored || thumbUrl;
             const displayFull  = mirrored || fullUrl;
-            // Medium thumbnail, max 280px, click opens full-res in new tab
-            return `<a href="${esc(displayFull)}" target="_blank" rel="noopener" style="display:inline-block;margin:4px 6px 4px 0;text-decoration:none;">
-              <img src="${esc(displayThumb)}" alt="attached image"
-                   loading="lazy"
-                   style="max-width:280px;max-height:280px;border-radius:8px;border:1px solid rgba(0,0,0,0.1);background:#fff;cursor:zoom-in;display:block;"
-                   onerror="this.style.display='none';this.parentElement.textContent='📷 Image failed to load — '; this.parentElement.style.color='inherit';"/>
-            </a>`;
+            // Medium thumbnail, max 280px. If the thumbnail fails to load,
+            // swap the <img> for a small clickable "📷 View image" placeholder
+            // so the link to full-res is still accessible.
+            //
+            // The onerror replaces the img's src with an inline SVG placeholder
+            // (a camera icon) rather than destroying the anchor. The anchor's
+            // href still works when clicked.
+            const placeholderSvg = 'data:image/svg+xml;utf8,' + encodeURIComponent(
+              '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 90" width="120" height="90">' +
+              '<rect width="120" height="90" fill="#f3f4f6" stroke="#d1d5db" stroke-width="1"/>' +
+              '<text x="60" y="45" text-anchor="middle" dominant-baseline="middle" font-family="system-ui, sans-serif" font-size="11" fill="#6b7280">📷 View image</text>' +
+              '</svg>'
+            );
+            return '<a href="' + esc(displayFull) + '" target="_blank" rel="noopener" ' +
+              'style="display:inline-block;margin:4px 6px 4px 0;text-decoration:none;" ' +
+              'title="Click to open full-size image">' +
+              '<img src="' + esc(displayThumb) + '" alt="attached image" loading="lazy" ' +
+              'style="max-width:280px;max-height:280px;border-radius:8px;border:1px solid rgba(0,0,0,0.1);background:#fff;cursor:zoom-in;display:block;" ' +
+              'onerror="this.onerror=null;this.src=\'' + placeholderSvg + '\';this.style.maxWidth=\'120px\';this.style.maxHeight=\'90px\';this.style.cursor=\'pointer\';"/>' +
+              '</a>';
           }).join("");
           const textPart = m.text ? `<div style="margin-top:6px;">${esc(m.text)}</div>` : "";
           body = `<div>${thumbsHtml}</div>${textPart}`;
