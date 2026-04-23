@@ -7,7 +7,7 @@
  *    - ./_etsyMailAuth.js → requireExtensionAuth() (X-EtsyMail-Secret header)
  *
  *  Token management is inlined (same logic as your existing etsyAuth.js:
- *  reads config/etsy/oauth, refreshes if within 2 min of expiry, keeps the
+ *  reads config/etsyOauth, refreshes if within 2 min of expiry, keeps the
  *  rotated refresh_token in Firestore). Self-contained — no file-path
  *  guesses about where etsyAuth.js lives in your deploy.
  *
@@ -50,7 +50,7 @@ const SHOP_ID       = process.env.SHOP_ID;
 const CLIENT_ID     = process.env.CLIENT_ID;
 const CLIENT_SECRET = process.env.CLIENT_SECRET || process.env.ETSY_SHARED_SECRET;
 
-const OAUTH_DOC_PATH = "config/etsy/oauth";
+const OAUTH_DOC_PATH = "config/etsyOauth";  // 2 segments: collection "config", doc "etsyOauth"
 const TOKEN_REFRESH_BUFFER_MS = 2 * 60 * 1000;
 
 const PAGE_SIZE = 100;
@@ -59,7 +59,11 @@ const MAX_PAGES = 200;
 const DEFAULT_DAYS_BACK = 730;   // 2 years
 
 // ─── OAuth token management (inlined from etsyAuth.js for self-containment) ───
-// Same Firestore doc path your existing etsyAuth.js uses: config/etsy/oauth.
+// OAuth token storage. We use a fresh path (config/etsyOauth, 2 segments)
+// because the existing etsyAuth.js module has a path bug — it uses
+// "config/etsy/oauth" which is 3 segments and errors at runtime on db.doc().
+// etsyAuth.js was never actually exercised because your shipping flow uses
+// client-side tokens, so the bug went unnoticed.
 // Logic matches etsyAuth.js: refresh if within 2 min of expiry, rotate refresh
 // token when Etsy returns a new one, keep old one if Etsy doesn't rotate.
 async function readEtsyToken() {

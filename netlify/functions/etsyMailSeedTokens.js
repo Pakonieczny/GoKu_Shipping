@@ -1,7 +1,7 @@
 /*  netlify/functions/etsyMailSeedTokens.js
  *
  *  ONE-TIME SETUP endpoint. Seeds Etsy OAuth tokens into Firestore at
- *  config/etsy/oauth so the server-side sync function can use them.
+ *  config/etsyOauth so the server-side sync function can use them.
  *
  *  Why this exists:
  *    Your existing OAuth flow (exchangeToken.js + refreshEtsyToken.js)
@@ -23,7 +23,7 @@
  *      })
  *    }).then(r => r.json()).then(console.log);
  *
- *  Response: { ok: true, expires_at: <ms>, path: 'config/etsy/oauth' }
+ *  Response: { ok: true, expires_at: <ms>, path: 'config/etsyOauth' }
  *
  *  After seeding, the sync function will auto-refresh tokens when they're
  *  within 2 min of expiring. As long as refresh succeeds (Etsy rotates the
@@ -39,7 +39,7 @@ const { requireExtensionAuth, CORS } = require("./_etsyMailAuth");
 const db = admin.firestore();
 const FV = admin.firestore.FieldValue;
 
-const DOC_PATH = "config/etsy/oauth";
+const DOC_PATH = "config/etsyOauth";  // 2 segments: collection "config", doc "etsyOauth"
 
 function json(statusCode, body) {
   return {
