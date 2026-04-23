@@ -59,7 +59,7 @@ const OAUTH_DOC_PATH = "config/etsyOauth";
 const TOKEN_REFRESH_BUFFER_MS = 2 * 60 * 1000;
 
 const PAGE_SIZE = 100;
-const REQUEST_DELAY_MS = 500;
+const REQUEST_DELAY_MS = 0;     // No artificial delay — HTTP latency alone keeps us under Etsy's 10/sec cap
 const DEFAULT_DAYS_BACK = 730;
 
 // 15-day windows leave safety margin for shops with up to ~800 orders/day.
@@ -130,19 +130,39 @@ function moneyAmt(m) {
 
 /**
  * Fetch one page of getShopReceipts. Handles 429 by sleeping. Retries up to 3.
+ * Enforces a 30-second timeout on each fetch so a hung Etsy response doesn't
+ * burn the entire 15-min invocation budget.
  */
 async function getReceiptsPage(accessToken, params, attempt = 1) {
   const qs = new URLSearchParams(Object.fromEntries(
     Object.entries(params).filter(([_, v]) => v != null && v !== "")
   )).toString();
   const url = `https://api.etsy.com/v3/application/shops/${SHOP_ID}/receipts?${qs}`;
-  const res = await fetch(url, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "x-api-key": `${CLIENT_ID}:${CLIENT_SECRET}`,
-      "Content-Type": "application/json"
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30000);
+
+  let res;
+  try {
+    res = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "x-api-key": `${CLIENT_ID}:${CLIENT_SECRET}`,
+        "Content-Type": "application/json"
+      },
+      signal: controller.signal
+    });
+  } catch (err) {
+    clearTimeout(timeoutId);
+    if (err.name === "AbortError") {
+      if (attempt > 3) throw new Error("Etsy API timeout after 3 attempts (30s each)");
+      console.warn(`Etsy fetch timeout (attempt ${attempt}/3), retrying…`);
+      await sleep(2000);
+      return getReceiptsPage(accessToken, params, attempt + 1);
     }
-  });
+    throw err;
+  }
+  clearTimeout(timeoutId);
 
   if (res.status === 429) {
     if (attempt > 3) throw new Error("Etsy rate limit exceeded after 3 retries");
@@ -502,6 +522,36 @@ async function runBackfill({ daysBack, invocationStartMs }) {
   await writeSyncState(stateUpdate);
 
   console.log(`Backfill ${done ? "COMPLETE" : "PAUSED"}: completedWindows=${completedWindows} receiptsScanned=${receiptsTotal} customersThisInvocation=${customersUpdated}`);
+
+  // Self-trigger the next invocation if not done. This way a multi-hour
+  // backfill doesn't have to wait for the 30-min scheduled cron between
+  // invocations — the chain continues immediately.
+  //
+  // We fire-and-forget: don't await the fetch response because we're about
+  // to return and let Netlify tear down this invocation. The target
+  // background function will be picked up independently.
+  if (!done) {
+    try {
+      const selfUrl = process.env.URL || process.env.DEPLOY_URL || "";
+      if (selfUrl) {
+        console.log(`Self-triggering next invocation: ${selfUrl}/.netlify/functions/etsyMailSync-background`);
+        // Don't await — fire and forget. Netlify typically waits ~2s for
+        // "background" HTTP responses even if we don't await.
+        fetch(`${selfUrl}/.netlify/functions/etsyMailSync-background`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ resume: true })
+        }).catch(e => console.warn("Self-trigger request failed (background function was invoked anyway):", e.message));
+        // Give fetch a moment to dispatch before Lambda shuts down
+        await sleep(500);
+      } else {
+        console.warn("Cannot self-trigger: process.env.URL not set. Will rely on scheduled cron.");
+      }
+    } catch (e) {
+      console.warn("Self-trigger error (non-fatal):", e.message);
+    }
+  }
+
   return { done, completedWindows, receiptsTotal, receiptsInvocation, customersUpdated };
 }
 
