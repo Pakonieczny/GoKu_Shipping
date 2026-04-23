@@ -115,6 +115,7 @@ exports.handler = async (event) => {
       // NEW — buyer metadata useful for M3 customer panel
       if (customer.peopleUrl)     threadPatch.buyerPeopleUrl = customer.peopleUrl;
       if (customer.avatarUrl)     threadPatch.buyerAvatarUrl = customer.avatarUrl;
+      if (customer.buyerUserId)   threadPatch.buyerUserId = String(customer.buyerUserId);
       if (typeof customer.isRepeatBuyer === "boolean") {
         threadPatch.buyerIsRepeatBuyer = customer.isRepeatBuyer;
       }
