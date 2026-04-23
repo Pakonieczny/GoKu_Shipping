@@ -638,30 +638,32 @@
         const who  = m.senderName || (m.senderRole || m.source || "unknown");
         const when = fmtTime(m.timestamp || m.createdAt);
 
-        // Render image-type messages as inline thumbnails
-        // Image-type messages have messageType:"image" set by the scraper's
-        // processImageAttachment function.
-        const isImageMessage = m.messageType === "image";
+        // Render any message that has imageUrls as inline thumbnails —
+        // whether it's a standalone image message (messageType:"image")
+        // or a text message with attached photos.
+        const hasImages = Array.isArray(m.imageUrls) && m.imageUrls.length > 0;
+
         let body;
-        if (isImageMessage && m.imageUrls && m.imageUrls.length) {
-          // Use thumbnail if we have one, fall back to full-res for display
-          const thumbs = (m.thumbnailUrls && m.thumbnailUrls.length) ? m.thumbnailUrls : m.imageUrls;
+        if (hasImages) {
+          const thumbs = (Array.isArray(m.thumbnailUrls) && m.thumbnailUrls.length)
+            ? m.thumbnailUrls
+            : m.imageUrls;
           const thumbsHtml = m.imageUrls.map((fullUrl, idx) => {
             const thumbUrl = thumbs[idx] || fullUrl;
-            // Prefer the Firebase Storage mirrored URL if we have it (survives Etsy CDN expiry)
-            const mirrored = m.storageImagePaths && m.storageImagePaths[idx];
+            // Prefer the Firebase Storage mirrored URL if we have it
+            const mirrored = Array.isArray(m.storageImagePaths) && m.storageImagePaths[idx];
             const displayThumb = mirrored || thumbUrl;
             const displayFull  = mirrored || fullUrl;
-            return `<a href="${esc(displayFull)}" target="_blank" rel="noopener" style="display:inline-block;margin:2px;">
+            // Medium thumbnail, max 280px, click opens full-res in new tab
+            return `<a href="${esc(displayFull)}" target="_blank" rel="noopener" style="display:inline-block;margin:4px 6px 4px 0;text-decoration:none;">
               <img src="${esc(displayThumb)}" alt="attached image"
-                   style="max-width:200px;max-height:200px;border-radius:6px;border:1px solid #e5e7eb;"
-                   onerror="this.style.display='none'"/>
+                   loading="lazy"
+                   style="max-width:280px;max-height:280px;border-radius:8px;border:1px solid rgba(0,0,0,0.1);background:#fff;cursor:zoom-in;display:block;"
+                   onerror="this.style.display='none';this.parentElement.textContent='📷 Image failed to load — '; this.parentElement.style.color='inherit';"/>
             </a>`;
           }).join("");
-          body = thumbsHtml + (m.text ? `<div style="margin-top:6px;">${esc(m.text)}</div>` : "");
-        } else if (m.imageUrls && m.imageUrls.length) {
-          // Text message with attached images — show a small icon link (legacy behavior)
-          body = `<a class="em-link" href="${esc(m.imageUrls[0])}" target="_blank">📷 Image</a> ${esc(m.text || "")}`;
+          const textPart = m.text ? `<div style="margin-top:6px;">${esc(m.text)}</div>` : "";
+          body = `<div>${thumbsHtml}</div>${textPart}`;
         } else {
           body = esc(m.text || "");
         }
