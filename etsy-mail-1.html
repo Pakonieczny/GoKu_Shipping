@@ -650,17 +650,19 @@
             : m.imageUrls;
           const thumbsHtml = m.imageUrls.map((fullUrl, idx) => {
             const thumbUrl = thumbs[idx] || fullUrl;
-            // Prefer the Firebase Storage mirrored URL if we have it
-            const mirrored = Array.isArray(m.storageImagePaths) && m.storageImagePaths[idx];
-            const displayThumb = mirrored || thumbUrl;
-            const displayFull  = mirrored || fullUrl;
+            // If the image has been mirrored to Firebase Storage, use the
+            // redirector endpoint which signs a fresh URL on every request.
+            // Otherwise fall back to the Etsy CDN URL (which may fail to load
+            // due to hotlink protection, but the click-through still works).
+            const storagePath = Array.isArray(m.storageImagePaths) ? m.storageImagePaths[idx] : null;
+            const mirrorUrl = storagePath
+              ? FN("etsyMailImage") + "?path=" + encodeURIComponent(storagePath)
+              : null;
+            const displayThumb = mirrorUrl || thumbUrl;
+            const displayFull  = mirrorUrl || fullUrl;
             // Medium thumbnail, max 280px. If the thumbnail fails to load,
             // swap the <img> for a small clickable "📷 View image" placeholder
             // so the link to full-res is still accessible.
-            //
-            // The onerror replaces the img's src with an inline SVG placeholder
-            // (a camera icon) rather than destroying the anchor. The anchor's
-            // href still works when clicked.
             const placeholderSvg = 'data:image/svg+xml;utf8,' + encodeURIComponent(
               '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 90" width="120" height="90">' +
               '<rect width="120" height="90" fill="#f3f4f6" stroke="#d1d5db" stroke-width="1"/>' +
