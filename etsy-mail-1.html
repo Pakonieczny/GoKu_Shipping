@@ -127,6 +127,155 @@
     .em-detail-header .em-h-actions button:hover { background: #f6f8fa; }
     .em-detail-header .em-h-actions button .material-icons { font-size: 14px; }
 
+    /* ── M3: Customer panel (top banner above messages) ─────────────────── */
+    .em-cust-panel {
+      background: #fff; border-bottom: 1px solid #e1e4e8;
+      padding: 10px 18px; cursor: default;
+    }
+    .em-cust-panel.collapsed .em-cust-expand { display: none; }
+    .em-cust-head {
+      display: flex; align-items: center; gap: 10px; cursor: pointer;
+      user-select: none;
+    }
+    .em-cust-head:hover { background: #fafbfc; margin: -10px -18px; padding: 10px 18px; }
+    .em-cust-avatar {
+      width: 36px; height: 36px; border-radius: 50%; background: #e1e4e8;
+      overflow: hidden; flex-shrink: 0; display: flex; align-items: center;
+      justify-content: center; color: #6a737d; font-size: 14px; font-weight: 600;
+    }
+    .em-cust-avatar img { width: 100%; height: 100%; object-fit: cover; }
+    .em-cust-summary {
+      flex: 1; display: flex; gap: 10px; align-items: center;
+      font-size: 13px; flex-wrap: wrap; min-width: 0;
+    }
+    .em-cust-name { font-weight: 600; color: #24292f; }
+    .em-cust-username { color: #57606a; font-size: 12px; }
+    .em-cust-repeat {
+      display: inline-block; padding: 2px 8px; border-radius: 10px;
+      background: #dafbe1; color: #1a7f37; font-size: 11px; font-weight: 600;
+    }
+    .em-cust-stat { color: #57606a; font-size: 12px; }
+    .em-cust-stat b { color: #24292f; font-weight: 600; }
+    .em-cust-chevron {
+      color: #6a737d; font-size: 18px; margin-left: auto; flex-shrink: 0;
+      transition: transform .15s;
+    }
+    .em-cust-panel.expanded .em-cust-chevron { transform: rotate(180deg); }
+
+    .em-cust-expand {
+      margin-top: 10px; padding-top: 10px;
+      border-top: 1px solid #f0f2f5;
+      display: grid; grid-template-columns: 1fr; gap: 10px;
+    }
+    .em-cust-stats-grid {
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;
+      background: #f6f8fa; padding: 10px; border-radius: 6px; font-size: 12px;
+    }
+    .em-cust-stat-block { display: flex; flex-direction: column; gap: 2px; }
+    .em-cust-stat-block .em-label { font-size: 10px; text-transform: uppercase; letter-spacing: .5px; color: #6a737d; }
+    .em-cust-stat-block .em-value { font-weight: 600; color: #24292f; font-size: 13px; }
+
+    .em-cust-orders-title {
+      font-size: 11px; text-transform: uppercase; letter-spacing: .6px;
+      color: #6a737d; font-weight: 700; display: flex; align-items: center;
+      justify-content: space-between;
+    }
+    .em-cust-orders {
+      display: grid; grid-template-columns: 1fr; gap: 4px;
+      max-height: 280px; overflow-y: auto;
+    }
+    .em-cust-order {
+      display: grid; grid-template-columns: auto 1fr auto auto; gap: 10px;
+      align-items: center; padding: 6px 10px; font-size: 12px;
+      border: 1px solid #e1e4e8; border-radius: 6px; cursor: pointer;
+      background: #fff; transition: background .1s;
+    }
+    .em-cust-order:hover { background: #f6f8fa; }
+    .em-cust-order .em-order-id { font-family: monospace; color: #0969da; font-weight: 600; }
+    .em-cust-order .em-order-date { color: #57606a; }
+    .em-cust-order .em-order-total { font-weight: 600; color: #24292f; text-align: right; }
+    .em-cust-order .em-order-status {
+      font-size: 10px; text-transform: uppercase; letter-spacing: .5px;
+      padding: 2px 6px; border-radius: 4px; background: #f0f2f5; color: #57606a;
+    }
+    .em-cust-order .em-order-status.shipped { background: #dafbe1; color: #1a7f37; }
+    .em-cust-order .em-order-status.paid    { background: #ddf4ff; color: #0969da; }
+    .em-cust-order .em-order-status.canceled, .em-cust-order .em-order-status.cancelled { background: #ffebe9; color: #cf222e; }
+
+    .em-cust-footer {
+      display: flex; gap: 10px; align-items: center; font-size: 11px;
+      color: #6a737d; padding-top: 4px;
+    }
+    .em-cust-footer button {
+      background: #fff; border: 1px solid #d0d7de; border-radius: 4px;
+      padding: 4px 10px; font-size: 11px; cursor: pointer;
+      display: inline-flex; align-items: center; gap: 4px;
+    }
+    .em-cust-footer button:hover { background: #f6f8fa; }
+    .em-cust-footer button[disabled] { opacity: .5; cursor: wait; }
+    .em-cust-footer button .material-icons { font-size: 13px; }
+
+    .em-cust-nodata {
+      padding: 12px; background: #fff8c5; border: 1px solid #d4a72c;
+      border-radius: 6px; font-size: 12px; color: #633c01;
+    }
+
+    /* ── M3: Order detail modal ─────────────────────────────────────────── */
+    .em-modal-overlay {
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,.4); z-index: 1000;
+      display: flex; align-items: center; justify-content: center;
+      padding: 20px;
+    }
+    .em-modal {
+      background: #fff; border-radius: 8px; max-width: 720px; width: 100%;
+      max-height: 90vh; overflow: hidden;
+      display: flex; flex-direction: column;
+      box-shadow: 0 10px 40px rgba(0,0,0,.3);
+    }
+    .em-modal-header {
+      padding: 14px 18px; border-bottom: 1px solid #e1e4e8;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .em-modal-header h3 { margin: 0; font-size: 15px; }
+    .em-modal-close {
+      background: none; border: none; cursor: pointer; color: #6a737d;
+      padding: 4px;
+    }
+    .em-modal-close:hover { color: #24292f; }
+    .em-modal-body {
+      padding: 18px; overflow-y: auto; flex: 1;
+    }
+    .em-modal-loading, .em-modal-error {
+      padding: 30px; text-align: center; color: #6a737d;
+    }
+    .em-modal-error { color: #cf222e; }
+    .em-order-items {
+      display: grid; grid-template-columns: 1fr; gap: 8px;
+    }
+    .em-order-item {
+      display: grid; grid-template-columns: 60px 1fr auto; gap: 12px;
+      padding: 10px; border: 1px solid #e1e4e8; border-radius: 6px;
+      align-items: center;
+    }
+    .em-order-item img {
+      width: 60px; height: 60px; border-radius: 4px; object-fit: cover;
+      background: #f0f2f5;
+    }
+    .em-order-item .em-item-title { font-weight: 500; font-size: 13px; }
+    .em-order-item .em-item-meta { font-size: 11px; color: #57606a; margin-top: 2px; }
+    .em-order-item .em-item-price { font-weight: 600; color: #24292f; font-size: 13px; text-align: right; }
+    .em-order-section { margin-top: 16px; }
+    .em-order-section h5 {
+      margin: 0 0 6px; font-size: 10px; text-transform: uppercase;
+      letter-spacing: .6px; color: #6a737d; font-weight: 700;
+    }
+    .em-order-ship {
+      font-size: 12px; line-height: 1.5; background: #f6f8fa;
+      padding: 10px; border-radius: 6px;
+    }
+
+
     .em-detail-body {
       padding: 14px 18px; display: grid;
       grid-template-columns: minmax(0, 1fr) 300px; gap: 14px; align-items: start;
@@ -257,6 +406,7 @@
     const COUNTS_POLL_MS   = 15000;
 
     const THREADS_COLL = "EtsyMail_Threads";
+    const CUSTOMERS_COLL = "EtsyMail_Customers";
 
     const RAIL_FILTERS = [
       { id: "all",                  label: "All",             icon: "inbox",          status: null },
@@ -557,6 +707,17 @@
           </div>
         </div>
 
+        <div class="em-cust-panel collapsed" id="emCustPanel">
+          <div class="em-cust-head" id="emCustHead">
+            <div class="em-cust-avatar" id="emCustAvatar">—</div>
+            <div class="em-cust-summary" id="emCustSummary">
+              <span class="em-muted" style="font-size:12px;">Loading customer…</span>
+            </div>
+            <i class="material-icons em-cust-chevron">expand_more</i>
+          </div>
+          <div class="em-cust-expand" id="emCustExpand"></div>
+        </div>
+
         <div class="em-detail-body">
           <div>
             <div class="em-card">
@@ -622,6 +783,307 @@
       $("emArchiveBtn")?.addEventListener("click", () => setStatus(t.id, "archived", "operator archive"));
       $("emClearDraftBtn")?.addEventListener("click", () => { $("emDraftText").value = ""; });
       $("emSaveStaffMsgBtn")?.addEventListener("click", () => saveStaffMessage(t.id));
+
+      // M3: populate customer panel
+      hydrateCustomerPanel(t);
+    }
+
+    // ─── M3: Customer panel logic ───────────────────────────────────────
+    // Populates the collapsed/expanded customer card at the top of the
+    // detail pane. Reads the cached customer doc (EtsyMail_Customers)
+    // keyed by buyerUserId scraped from the thread. Falls back gracefully
+    // if buyerUserId is missing (older thread, pre-v0.8.0 scraper) or if
+    // the customer hasn't been synced yet.
+    async function hydrateCustomerPanel(thread) {
+      const panel = $("emCustPanel");
+      if (!panel) return;
+
+      const head = $("emCustHead");
+      const avatarEl = $("emCustAvatar");
+      const summaryEl = $("emCustSummary");
+      const expandEl = $("emCustExpand");
+
+      // Render avatar (from scraped buyerAvatarUrl, always available if
+      // recent scrape, even without buyerUserId)
+      if (thread.buyerAvatarUrl) {
+        avatarEl.innerHTML = '<img src="' + esc(thread.buyerAvatarUrl) +
+          '" alt="" referrerpolicy="no-referrer" onerror="this.replaceWith(document.createTextNode(\'\u00a0\'));">';
+      } else {
+        avatarEl.textContent = (thread.customerName || thread.etsyUsername || "?")
+          .slice(0, 1).toUpperCase();
+      }
+
+      // Click to toggle expand/collapse
+      head.onclick = () => {
+        const isCollapsed = panel.classList.contains("collapsed");
+        if (isCollapsed) {
+          panel.classList.remove("collapsed");
+          panel.classList.add("expanded");
+        } else {
+          panel.classList.add("collapsed");
+          panel.classList.remove("expanded");
+        }
+      };
+
+      // Fetch customer doc if buyerUserId present
+      let customer = null;
+      if (thread.buyerUserId) {
+        try {
+          const data = await api("firestoreProxy", {
+            query: { op: "get", coll: CUSTOMERS_COLL, id: String(thread.buyerUserId) }
+          });
+          customer = data.exists ? data.doc : null;
+        } catch (e) {
+          console.warn("customer fetch failed:", e.message);
+        }
+      }
+
+      // Render collapsed summary (always visible)
+      const repeatBadge = (thread.buyerIsRepeatBuyer || (customer && customer.isRepeatBuyer))
+        ? '<span class="em-cust-repeat">Repeat buyer</span>'
+        : '';
+
+      const nameHtml = '<span class="em-cust-name">' +
+        esc(thread.customerName || (customer && customer.displayName) || "Unknown") +
+        '</span>';
+      const userHtml = thread.etsyUsername
+        ? '<span class="em-cust-username">@' + esc(thread.etsyUsername) + '</span>'
+        : '';
+
+      let statsInline = '';
+      if (customer) {
+        const money = fmtMoney(customer.totalSpent, customer.currency);
+        statsInline = '<span class="em-cust-stat"><b>' + (customer.orderCount || 0) +
+          '</b> order' + (customer.orderCount === 1 ? '' : 's') + '</span>' +
+          ' · <span class="em-cust-stat"><b>' + money + '</b> total</span>';
+      } else if (thread.buyerUserId) {
+        statsInline = '<span class="em-muted" style="font-size:12px;">Not yet synced</span>';
+      } else {
+        statsInline = '<span class="em-muted" style="font-size:12px;">Customer data unavailable (rescrape for M3)</span>';
+      }
+
+      summaryEl.innerHTML = nameHtml + ' ' + userHtml + ' ' + repeatBadge + ' ' + statsInline;
+
+      // Render expanded content
+      if (customer) {
+        expandEl.innerHTML = renderCustomerExpanded(customer, thread);
+        bindOrderClicks(expandEl);
+      } else if (thread.buyerUserId) {
+        expandEl.innerHTML = '<div class="em-cust-nodata">' +
+          'This customer hasn\'t been synced yet. Run a sync to populate their order history. ' +
+          '<br><br><button onclick="triggerCustomerSync()" style="margin-top:6px;padding:4px 10px;">Sync now</button>' +
+          '</div>';
+      } else {
+        expandEl.innerHTML = '<div class="em-cust-nodata">' +
+          'Customer ID not captured — thread needs to be rescraped with extension v0.8.0+ to enable customer details.' +
+          '</div>';
+      }
+    }
+
+    function fmtMoney(amount, currency) {
+      if (typeof amount !== "number") return "—";
+      const sym = currency === "USD" || !currency ? "$" : (currency + " ");
+      return sym + amount.toFixed(2);
+    }
+
+    function fmtShortDate(ts) {
+      const d = toDate(ts);
+      if (!d) return "—";
+      return d.toLocaleDateString(undefined, { year:"numeric", month:"short", day:"numeric" });
+    }
+
+    function renderCustomerExpanded(customer, thread) {
+      const firstDate = fmtShortDate(customer.firstOrderAt);
+      const lastDate  = fmtShortDate(customer.lastOrderAt);
+      const money     = fmtMoney(customer.totalSpent, customer.currency);
+      const recent    = Array.isArray(customer.recentReceipts) ? customer.recentReceipts : [];
+
+      const statsHtml = `
+        <div class="em-cust-stats-grid">
+          <div class="em-cust-stat-block">
+            <span class="em-label">Orders</span>
+            <span class="em-value">${customer.orderCount || 0}</span>
+          </div>
+          <div class="em-cust-stat-block">
+            <span class="em-label">Total spent</span>
+            <span class="em-value">${esc(money)}</span>
+          </div>
+          <div class="em-cust-stat-block">
+            <span class="em-label">First order</span>
+            <span class="em-value">${esc(firstDate)}</span>
+          </div>
+          <div class="em-cust-stat-block">
+            <span class="em-label">Last order</span>
+            <span class="em-value">${esc(lastDate)}</span>
+          </div>
+        </div>`;
+
+      const ordersHtml = recent.length
+        ? `<div class="em-cust-orders">${recent.map(r => {
+            const orderedAt = fmtShortDate(r.orderedAt);
+            const total = fmtMoney(r.grandTotal, r.currency || customer.currency);
+            const statusClass = (r.status || "").toLowerCase().replace(/[^a-z]/g, "");
+            const statusText = r.isShipped ? "shipped" : (r.isPaid ? "paid" : (r.status || "open"));
+            return `
+              <div class="em-cust-order" data-receipt-id="${esc(r.receiptId)}">
+                <span class="em-order-id">#${esc(r.receiptId)}</span>
+                <span class="em-order-date">${esc(orderedAt)}</span>
+                <span class="em-order-total">${esc(total)}</span>
+                <span class="em-order-status ${esc(statusClass)}">${esc(statusText)}</span>
+              </div>`;
+          }).join("")}</div>`
+        : `<div class="em-muted" style="font-size:12px;padding:10px;">No recent orders recorded.</div>`;
+
+      const peopleUrl = thread.buyerPeopleUrl
+        ? `<a href="${esc(thread.buyerPeopleUrl)}" target="_blank" rel="noopener" style="color:inherit;">View Etsy profile →</a>`
+        : "";
+
+      return `
+        ${statsHtml}
+        <div>
+          <div class="em-cust-orders-title">
+            <span>Recent orders (${recent.length})</span>
+            ${peopleUrl}
+          </div>
+          ${ordersHtml}
+        </div>`;
+    }
+
+    function bindOrderClicks(container) {
+      container.querySelectorAll(".em-cust-order").forEach(el => {
+        const rid = el.dataset.receiptId;
+        if (!rid) return;
+        el.addEventListener("click", () => openOrderDetailModal(rid));
+      });
+    }
+
+    // Manual sync trigger (for "sync now" button in panel)
+    window.triggerCustomerSync = async function() {
+      toast("Triggering sync…");
+      try {
+        const resp = await fetch(FN("etsyMailSync") + "?action=trigger&mode=incremental", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: "{}"
+        });
+        const data = await resp.json();
+        if (data.invoked) {
+          toast("Sync started. Check back in ~1 min.");
+        } else {
+          toast("Sync failed to start: " + (data.error || "unknown"));
+        }
+      } catch (e) {
+        toast("Sync error: " + e.message);
+      }
+    };
+
+    // ─── M3: Order detail modal ─────────────────────────────────────────
+    async function openOrderDetailModal(receiptId) {
+      // Close any existing modal
+      document.querySelector(".em-modal-overlay")?.remove();
+
+      const overlay = document.createElement("div");
+      overlay.className = "em-modal-overlay";
+      overlay.innerHTML = `
+        <div class="em-modal">
+          <div class="em-modal-header">
+            <h3>Order #${esc(receiptId)}</h3>
+            <button class="em-modal-close" aria-label="Close">
+              <i class="material-icons">close</i>
+            </button>
+          </div>
+          <div class="em-modal-body">
+            <div class="em-modal-loading">
+              <i class="material-icons" style="font-size:28px;">hourglass_empty</i>
+              <div style="margin-top:8px;">Fetching live order details from Etsy…</div>
+            </div>
+          </div>
+        </div>`;
+      document.body.appendChild(overlay);
+
+      overlay.querySelector(".em-modal-close").onclick = () => overlay.remove();
+      overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+
+      // Fetch live order via etsyMailOrder endpoint (server-side, uses seeded token)
+      try {
+        const resp = await fetch(FN("etsyMailOrder") + "?receiptId=" + encodeURIComponent(receiptId));
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({ error: "HTTP " + resp.status }));
+          throw new Error(err.error || "Failed to fetch order");
+        }
+        const order = await resp.json();
+        renderOrderModalBody(overlay, order);
+      } catch (e) {
+        overlay.querySelector(".em-modal-body").innerHTML =
+          '<div class="em-modal-error">Could not load order details: ' + esc(e.message) + '</div>';
+      }
+    }
+
+    function renderOrderModalBody(overlay, order) {
+      const transactions = Array.isArray(order.transactions) ? order.transactions : [];
+      const moneyAmt = (m) => m && typeof m.amount === "number" && typeof m.divisor === "number"
+        ? (m.amount / m.divisor) : null;
+
+      const itemsHtml = transactions.map(t => {
+        const price = moneyAmt(t.price);
+        const priceStr = price != null ? "$" + price.toFixed(2) : "";
+        const qtyStr = t.quantity > 1 ? " × " + t.quantity : "";
+        const imgUrl = (t.product_data && t.product_data.image_url) || "";
+        const variations = Array.isArray(t.variations)
+          ? t.variations.map(v => (v.formatted_name || "") + ": " + (v.formatted_value || "")).filter(Boolean).join(" · ")
+          : "";
+        const personalization = t.personalization ? ("Note: " + t.personalization) : "";
+        const meta = [variations, personalization].filter(Boolean).join(" · ");
+        return `
+          <div class="em-order-item">
+            <img src="${esc(imgUrl)}" onerror="this.style.visibility='hidden';" alt="">
+            <div>
+              <div class="em-item-title">${esc(t.title || "Item")}${esc(qtyStr)}</div>
+              ${meta ? '<div class="em-item-meta">' + esc(meta) + '</div>' : ''}
+            </div>
+            <div class="em-item-price">${esc(priceStr)}</div>
+          </div>`;
+      }).join("") || '<div class="em-muted">No items found.</div>';
+
+      const addr = [
+        order.name,
+        order.first_line,
+        order.second_line,
+        [order.city, order.state, order.zip].filter(Boolean).join(", "),
+        order.country_iso
+      ].filter(Boolean).map(esc).join("<br>");
+
+      const grand = moneyAmt(order.grandtotal);
+      const shipping = moneyAmt(order.total_shipping_cost);
+      const tax = moneyAmt(order.total_tax_cost);
+
+      const totalsHtml = `
+        <table style="font-size:12px;border-collapse:collapse;margin-left:auto;">
+          ${order.total_price ? '<tr><td>Subtotal</td><td style="text-align:right;padding-left:20px;">$' + moneyAmt(order.total_price).toFixed(2) + '</td></tr>' : ''}
+          ${shipping != null ? '<tr><td>Shipping</td><td style="text-align:right;padding-left:20px;">$' + shipping.toFixed(2) + '</td></tr>' : ''}
+          ${tax != null ? '<tr><td>Tax</td><td style="text-align:right;padding-left:20px;">$' + tax.toFixed(2) + '</td></tr>' : ''}
+          ${grand != null ? '<tr style="font-weight:600;border-top:1px solid #e1e4e8;"><td>Total</td><td style="text-align:right;padding-left:20px;">$' + grand.toFixed(2) + '</td></tr>' : ''}
+        </table>`;
+
+      const statusBadge = order.is_shipped ? "shipped" : (order.is_paid ? "paid" : (order.status || "open"));
+
+      overlay.querySelector(".em-modal-body").innerHTML = `
+        <div style="display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap;">
+          <span class="em-order-status ${esc(statusBadge.toLowerCase().replace(/[^a-z]/g,''))}" style="font-size:11px;padding:3px 8px;border-radius:4px;">${esc(statusBadge)}</span>
+          ${order.created_timestamp ? '<span class="em-muted" style="font-size:12px;">Ordered ' + esc(fmtShortDate(order.created_timestamp * 1000)) + '</span>' : ''}
+          <a href="https://www.etsy.com/your/orders/sold/new?order_id=${esc(order.receipt_id)}" target="_blank" rel="noopener" style="margin-left:auto;font-size:12px;">View on Etsy →</a>
+        </div>
+
+        <div class="em-order-items">${itemsHtml}</div>
+
+        <div class="em-order-section">
+          <h5>Shipping to</h5>
+          <div class="em-order-ship">${addr || '<span class="em-muted">No address</span>'}</div>
+        </div>
+
+        <div class="em-order-section" style="display:flex;">
+          ${totalsHtml}
+        </div>`;
     }
 
     // Convert plain Etsy listing URLs in escaped text into clickable <a> tags.
