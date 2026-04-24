@@ -18,7 +18,7 @@
     "sharp": "^0.33.5",
     "jszip": "^3.10.1",
     "@metavrse-inc/metavrse-lib": "latest",
-    "@sparticuz/chromium": "^131.0.0",
+    "@sparticuz/chromium-min": "^131.0.0",
     "puppeteer-core": "^24.0.0"
   },
   "devDependencies": {

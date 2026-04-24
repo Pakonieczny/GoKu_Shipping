@@ -40,12 +40,28 @@
  *   USPS_DEBUG_RETURN_HTML         "1" to include HTML in result for debugging
  *
  * Dependencies (must be added to package.json and marked external in netlify.toml):
- *   @sparticuz/chromium    ^131.0.0
- *   puppeteer-core         ^24.0.0
+ *   @sparticuz/chromium-min   ^131.0.0
+ *   puppeteer-core            ^24.0.0
+ *
+ * ABOUT @sparticuz/chromium-min vs @sparticuz/chromium:
+ *   The non-`-min` package includes Chromium binaries inside node_modules,
+ *   adding ~150MB to the install. On Netlify's free/pro build tier this
+ *   consistently hits ENOSPC (out of disk) errors during `npm install` when
+ *   combined with other production deps (firebase-admin, sharp, etc).
+ *   The `-min` variant downloads Chromium from a CDN at function cold-start,
+ *   caching it to /tmp. First invocation after a deploy pays ~3-5 extra
+ *   seconds for the download; warm invocations reuse the cached binary.
  */
 
-const chromium  = require("@sparticuz/chromium");
+const chromium  = require("@sparticuz/chromium-min");
 const puppeteer = require("puppeteer-core");
+
+// Chromium pack tar URL. This is the binary Chromium-min will download at
+// first cold start. Sparticuz hosts these on GitHub releases. We pin to a
+// specific version that's known compatible with puppeteer-core 24.x.
+const DEFAULT_CHROMIUM_PACK_URL =
+  "https://github.com/Sparticuz/chromium/releases/download/v131.0.1/chromium-v131.0.1-pack.tar";
+const CHROMIUM_PACK_URL = process.env.CHROMIUM_PACK_URL || DEFAULT_CHROMIUM_PACK_URL;
 
 const DEFAULT_PAGE_TIMEOUT     = 20000;
 const DEFAULT_SELECTOR_TIMEOUT = 12000;
@@ -62,10 +78,15 @@ const USPS_URL = (code) => `https://tools.usps.com/go/TrackConfirmAction?tLabels
 async function launchBrowser() {
   console.log("[usps] launching browser");
 
-  // Important: @sparticuz/chromium 117+ made `.executablePath` a FUNCTION, not a property.
-  // Calling it as a property will hand puppeteer `undefined` and silently fail.
+  // @sparticuz/chromium-min requires us to tell it where to download the
+  // Chromium pack tar from. It'll cache to /tmp/chromium-pack after the
+  // first cold-start download, so warm invocations are fast.
+  //
+  // IMPORTANT: `executablePath()` is a FUNCTION in chromium 117+. Calling it
+  // as a property (`chromium.executablePath`) hands Puppeteer undefined and
+  // silently fails.
   const executablePath = process.env.CHROME_EXECUTABLE_PATH ||
-                         await chromium.executablePath();
+                         await chromium.executablePath(CHROMIUM_PACK_URL);
 
   console.log(`[usps] chromium path: ${executablePath}`);
 
