@@ -1,170 +1,246 @@
 /* netlify/functions/_etsyMailCarrierUsps.js
  *
- * USPS tracking driver — uses the Howlers' Multi-Carrier Package Tracking
- * actor on Apify. This actor auto-detects the carrier, handles USPS + UPS
- * + FedEx in one API, and returns a normalized response shape.
+ * USPS tracking driver — powered by 17TRACK API v2.2.
  *
- * Why this actor (vs. the previous substantial_sponge one):
- *   - substantial_sponge/usps-tracking is officially flagged
- *     "Under maintenance" on Apify and fails on real tracking codes
- *   - This one is 5.0-rated, actively maintained, 28 users
- *   - Supports multi-carrier so we can retire separate UPS/FedEx drivers
- *     if we ever add them
- *   - Has demoMode for testing without burning credits
+ * Why 17TRACK (not Apify):
+ *   - substantial_sponge/usps-tracking is flagged "Under maintenance" on Apify
+ *   - alizarin_refrigerator-owner/multi-carrier-package-tracking wraps the
+ *     dead USPS Web Tools API (shut down January 2026) and asks for
+ *     credentials we can't obtain
+ *   - 17TRACK has a real free tier (100 tracks/mo), proper uptime SLA,
+ *     handles all USPS label formats including 34-digit IMpb
  *
- * Actor details:
- *   Full ID: alizarin_refrigerator-owner/multi-carrier-package-tracking-usps-ups-fedex
- *   Short ID: nrtmiXkuzd6UGsfQp
- *   Pricing: $0.01 per result
- *   Free-tier fit: ~500 lookups/month fits within $5 Apify credit
+ * 17TRACK is a 2-step async API:
+ *   1. POST /track/v2.2/register  — subscribe a tracking number
+ *   2. POST /track/v2.2/gettrackinfo  — retrieve current scan events
  *
- * Actor output shape (from the published README):
- *   {
- *     trackingNumber : "1Z999AA10123456784",
- *     carrier        : "UPS" | "USPS" | "FedEx",
- *     status         : "Delivered" | "In Transit" | ...,
- *     statusDetail   : "DELIVERED",
- *     estimatedDelivery: ISO string | null,
- *     deliveredDate  : ISO string | null,
- *     lastUpdate     : ISO string,
- *     location       : "Austin, TX 78701 US",
- *     events: [
- *       {
- *         timestamp: ISO string,
- *         status   : "Delivered",
- *         location : "Austin, TX 78701 US",
- *         details  : "Left at front door"
- *       },
- *       ...
- *     ]
- *   }
+ * First-time registrations populate within seconds-to-minutes. We poll
+ * gettrackinfo up to 3 times over ~30 sec. The background function gives
+ * us 15 min of runway, so this is comfortable.
  *
- * Tracking-code quirks we handle:
- *   USPS's modern labels can be 12/15/20/22/26/30/34 digits. The actor's
- *   carrier-detection docs mention "starts with 94/92/93 + 20 digits" —
- *   it may not recognize 34-digit IMpb codes out of the box. When we see
- *   a label >22 digits, we try the full code first; if the actor returns
- *   an "unknown carrier" or "not found" error, we retry with the last
- *   22 digits (which is typically the USPS tracking-number subset inside
- *   the larger IMpb).
+ * Once a tracking number is registered, subsequent gettrackinfo calls
+ * return data immediately (subject to 17TRACK's background refresh cycle).
+ * This means our cache layer absorbs most of the latency — cold fetches
+ * are ~5-30 sec, warm fetches (already-registered numbers) are ~200ms.
+ *
+ * API reference:
+ *   https://asset.17track.net/api/document/v2.2_en/index.html
  *
  * Env vars required:
- *   APIFY_API_TOKEN   The API token from apify.com → Integrations → API tokens
+ *   SEVENTEEN_TRACK_API_KEY  Your API access key from the 17TRACK console
  *
- * Optional env vars:
- *   APIFY_USPS_ACTOR_ID   Override the default actor (default: alizarin_refrigerator-owner~multi-carrier-package-tracking-usps-ups-fedex)
- *   APIFY_TIMEOUT_SEC     Max Apify actor run seconds (default: 180)
- *   APIFY_HTTP_TIMEOUT_MS HTTP client timeout in ms (default: 600000 = 10 min)
- *   APIFY_DEMO_MODE       If "1" or "true", call the actor with demoMode:true
- *                         (returns sample data without consuming credits — useful
- *                         for initial smoke testing before real invocations)
+ * Env vars optional:
+ *   SEVENTEEN_TRACK_BASE_URL   Override base URL (default: https://api.17track.net/track/v2.2)
+ *   SEVENTEEN_TRACK_POLLS      Max gettrackinfo polls (default: 3)
+ *   SEVENTEEN_TRACK_POLL_DELAY_MS  Delay between polls in ms (default: 10000)
  */
 
 const fetch = require("node-fetch");
 
-const DEFAULT_ACTOR   = "alizarin_refrigerator-owner~multi-carrier-package-tracking-usps-ups-fedex";
-const APIFY_BASE      = "https://api.apify.com/v2";
-const DEFAULT_TIMEOUT = 180;
-const DEFAULT_HTTP_TIMEOUT_MS = 10 * 60 * 1000;   // 10 min; background func has 15 min budget
+const DEFAULT_BASE_URL = "https://api.17track.net/track/v2.2";
+const BASE_URL    = (process.env.SEVENTEEN_TRACK_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, "");
+const API_KEY     = process.env.SEVENTEEN_TRACK_API_KEY || "";
+const MAX_POLLS   = Number(process.env.SEVENTEEN_TRACK_POLLS) || 3;
+const POLL_DELAY  = Number(process.env.SEVENTEEN_TRACK_POLL_DELAY_MS) || 10000;
 
-const ACTOR_ID        = process.env.APIFY_USPS_ACTOR_ID || DEFAULT_ACTOR;
-const APIFY_TOKEN     = process.env.APIFY_API_TOKEN || "";
-const RUN_TIMEOUT_SEC = Number(process.env.APIFY_TIMEOUT_SEC) || DEFAULT_TIMEOUT;
-const HTTP_TIMEOUT_MS = Number(process.env.APIFY_HTTP_TIMEOUT_MS) || DEFAULT_HTTP_TIMEOUT_MS;
-const DEMO_MODE       = /^(1|true|yes)$/i.test(process.env.APIFY_DEMO_MODE || "");
+// USPS carrier code in 17TRACK's catalog. 21051 is their primary USPS code.
+// We pass auto_detection:true as a safety net so mis-routed numbers still
+// resolve (e.g. if a merchant accidentally paired a UPS label with USPS).
+const USPS_CARRIER_CODE = 21051;
 
-/**
- * Call the Apify actor with a specific tracking code.
- * Returns the first dataset item, or throws with error code.
- */
-async function callApifyActor(trackingCode) {
-  if (!APIFY_TOKEN) {
+function headers() {
+  return {
+    "Content-Type": "application/json",
+    "17token"     : API_KEY
+  };
+}
+
+/** Low-level 17TRACK API call. Returns parsed JSON or throws. */
+async function call17Track(path, payload) {
+  if (!API_KEY) {
     throw Object.assign(
-      new Error("APIFY_API_TOKEN env var is required for USPS tracking"),
-      { code: "APIFY_NO_TOKEN" }
+      new Error("SEVENTEEN_TRACK_API_KEY env var is required for USPS tracking"),
+      { code: "SEVENTEEN_NO_TOKEN" }
     );
   }
 
-  const url = `${APIFY_BASE}/acts/${ACTOR_ID}/run-sync-get-dataset-items` +
-              `?token=${encodeURIComponent(APIFY_TOKEN)}` +
-              `&timeout=${RUN_TIMEOUT_SEC}` +
-              `&format=json`;
-
-  const body = {
-    trackingNumbers: [trackingCode],
-    demoMode       : DEMO_MODE
-  };
-
-  console.log(`[usps] calling Apify actor with code=${trackingCode} demoMode=${DEMO_MODE}`);
+  const url = `${BASE_URL}${path}`;
+  console.log(`[17track] POST ${path} payload=${JSON.stringify(payload).slice(0, 200)}`);
 
   let res;
   try {
     res = await fetch(url, {
       method : "POST",
-      headers: { "Content-Type": "application/json" },
-      body   : JSON.stringify(body),
-      timeout: HTTP_TIMEOUT_MS
+      headers: headers(),
+      body   : JSON.stringify(payload),
+      timeout: 15000
     });
   } catch (e) {
-    throw Object.assign(new Error(`Apify network error: ${e.message}`),
-      { code: "APIFY_NETWORK" });
+    throw Object.assign(new Error(`17TRACK network error: ${e.message}`),
+      { code: "SEVENTEEN_NETWORK" });
   }
 
-  const rawText = await res.text();
+  const text = await res.text();
 
   if (!res.ok) {
     throw Object.assign(
-      new Error(`Apify returned ${res.status}: ${rawText.slice(0, 500)}`),
-      { code: "APIFY_ERROR", status: res.status }
+      new Error(`17TRACK HTTP ${res.status}: ${text.slice(0, 400)}`),
+      { code: "SEVENTEEN_HTTP_ERROR", status: res.status }
     );
   }
 
-  let items;
-  try { items = JSON.parse(rawText); }
+  let json;
+  try { json = JSON.parse(text); }
   catch {
     throw Object.assign(
-      new Error(`Apify response was not JSON: ${rawText.slice(0, 500)}`),
-      { code: "APIFY_BAD_JSON" }
+      new Error(`17TRACK returned non-JSON: ${text.slice(0, 400)}`),
+      { code: "SEVENTEEN_BAD_JSON" }
     );
   }
 
-  if (!Array.isArray(items) || items.length === 0) {
-    throw Object.assign(new Error("Apify returned empty dataset"),
-      { code: "APIFY_NO_RESULTS" });
+  // 17TRACK wraps everything in { code, data }. code:0 is OK; anything else
+  // may still contain per-item errors inside data.errors or data.rejected.
+  if (json.code !== 0 && json.code !== undefined) {
+    console.warn(`[17track] API returned code=${json.code}`, json);
   }
 
-  console.log(`[usps] Apify returned ${items.length} item(s), first item keys:`,
-    Object.keys(items[0] || {}).join(","));
-
-  return items[0];
+  return json;
 }
 
-/** Normalize the actor's status text into a machine-friendly key. */
-function normalizeStatusKey(status, statusDetail) {
-  const s = String(status || statusDetail || "").toLowerCase();
-  if (s.includes("delivered"))        return "delivered";
-  if (s.includes("out for delivery")) return "out_for_delivery";
-  if (s.includes("in transit") || s.includes("in_transit")) return "in_transit";
-  if (s.includes("departed") || s.includes("arrived") || s.includes("origin")) return "in_transit";
-  if (s.includes("pre-shipment") || s.includes("label")) return "pre_shipment";
-  if (s.includes("return"))           return "returned";
-  if (s.includes("exception") || s.includes("alert") || s.includes("fail")) return "exception";
-  return "in_transit";
+/** Register a tracking number with 17TRACK (subscribes it for monitoring). */
+async function registerTrackingNumber(trackingCode) {
+  const payload = [{
+    number       : trackingCode,
+    carrier      : USPS_CARRIER_CODE,
+    auto_detection: true
+  }];
+
+  const res = await call17Track("/register", payload);
+
+  const rejected = res?.data?.rejected || [];
+  const accepted = res?.data?.accepted || [];
+
+  // Already-registered is fine — 17TRACK returns a rejection like
+  //   "The registration information of ... already exists"
+  // We treat that as success (the number is subscribed, we can fetch info).
+  for (const r of rejected) {
+    const msg = r.error?.message || "";
+    if (/already exists|already registered/i.test(msg)) {
+      console.log(`[17track] ${trackingCode} already registered, proceeding`);
+      return { accepted: true, alreadyRegistered: true };
+    }
+  }
+
+  if (accepted.length === 0 && rejected.length > 0) {
+    const r = rejected[0];
+    throw Object.assign(
+      new Error(`17TRACK rejected registration: ${r.error?.message || "unknown"}`),
+      { code: r.error?.code === -18010012 ? "INVALID_TRACKING" : "SEVENTEEN_REJECTED" }
+    );
+  }
+
+  return { accepted: accepted.length > 0, alreadyRegistered: false };
 }
 
-/** Map the Multi-Carrier actor's response to our normalized tracking shape. */
-function shapeActorResult(raw, requestedCode) {
-  const rawEvents = Array.isArray(raw.events) ? raw.events : [];
+/** Fetch tracking info for a registered number. */
+async function getTrackInfo(trackingCode) {
+  const payload = [{ number: trackingCode, carrier: USPS_CARRIER_CODE }];
+  const res = await call17Track("/gettrackinfo", payload);
 
-  const events = rawEvents
-    .map(e => ({
-      at       : e.timestamp || e.date || e.dateTime || null,
-      title    : e.status || e.event || e.description || "Scan",
-      subtitle : e.details || e.detail || null,
-      location : e.location || e.place || null,
-      status   : e.statusCode || e.code || null
-    }))
-    .filter(e => e.title);
+  const accepted = res?.data?.accepted || [];
+  const rejected = res?.data?.rejected || [];
+
+  if (rejected.length > 0 && accepted.length === 0) {
+    const r = rejected[0];
+    const msg = r.error?.message || "rejected";
+    // If the number hasn't finished registering yet, 17TRACK returns a
+    // "not registered" error. Caller will retry.
+    if (/not register|not registered/i.test(msg)) {
+      return null;   // caller should retry
+    }
+    throw Object.assign(
+      new Error(`17TRACK gettrackinfo rejected: ${msg}`),
+      { code: "SEVENTEEN_REJECTED" }
+    );
+  }
+
+  return accepted[0] || null;
+}
+
+/**
+ * Register-then-poll. Returns the first non-empty track_info or null after
+ * MAX_POLLS attempts.
+ */
+async function registerAndFetch(trackingCode) {
+  await registerTrackingNumber(trackingCode);
+
+  let attempt = 0;
+  let lastResult = null;
+  while (attempt < MAX_POLLS) {
+    attempt++;
+    console.log(`[17track] gettrackinfo attempt ${attempt}/${MAX_POLLS}`);
+    const item = await getTrackInfo(trackingCode);
+    if (item && hasUsableData(item)) {
+      console.log(`[17track] got usable data on attempt ${attempt}`);
+      return item;
+    }
+    lastResult = item;
+    if (attempt < MAX_POLLS) {
+      await new Promise(r => setTimeout(r, POLL_DELAY));
+    }
+  }
+
+  console.log(`[17track] all ${MAX_POLLS} attempts returned no usable data`);
+  return lastResult;
+}
+
+/** Does this response contain scan events we can render? */
+function hasUsableData(item) {
+  if (!item) return false;
+  // 17TRACK v2.2 puts events under track_info.tracking.providers[n].events
+  // but older schemas use track.z{0,1,2}.[n].z or similar. Check both.
+  const events = extractEvents(item);
+  if (events.length > 0) return true;
+  // Also accept entries that at least have a latest_event / status even if
+  // the full event list isn't yet present
+  const ti = item.track_info || item.track || {};
+  if (ti.latest_event_info || ti.latest_event?.description) return true;
+  if (ti.latest_status || ti.latest_status?.status) return true;
+  return false;
+}
+
+/** Extract scan events from the 17TRACK response (defensive across versions). */
+function extractEvents(item) {
+  const events = [];
+
+  // v2.2 schema: data.accepted[0].track_info.tracking.providers[0].events[]
+  const providers = item?.track_info?.tracking?.providers || [];
+  for (const p of providers) {
+    for (const e of (p.events || [])) {
+      events.push({
+        at       : e.time_utc || e.time_iso || e.time_raw?.date || null,
+        title    : e.description || e.stage || "Scan",
+        subtitle : null,
+        location : formatLocation(e.address) || e.location || null,
+        status   : e.sub_status || e.stage || null
+      });
+    }
+  }
+
+  // Older v2 fallback: data.accepted[0].track.z1[] (events) / z0 origin / z2 destination
+  if (events.length === 0 && item.track) {
+    const arrays = [item.track.z0, item.track.z1, item.track.z2]
+      .filter(Array.isArray).flat();
+    for (const e of arrays) {
+      events.push({
+        at       : e.a || e.time_utc || null,   // event timestamp
+        title    : e.z || e.c || e.description || "Scan",
+        subtitle : null,
+        location : e.b || e.location || null,
+        status   : e.d || null
+      });
+    }
+  }
 
   // Sort newest first
   events.sort((a, b) => {
@@ -173,36 +249,74 @@ function shapeActorResult(raw, requestedCode) {
     return tb - ta;
   });
 
-  const carrierUpper = String(raw.carrier || "USPS").toUpperCase();
-  const statusKey = normalizeStatusKey(raw.status, raw.statusDetail);
-  const resolvedAt = raw.deliveredDate ||
-                     (statusKey === "delivered"
-                       ? events.find(e => /delivered/i.test(e.title))?.at
-                       : null);
+  return events;
+}
+
+/** Format 17TRACK address object into a location string. */
+function formatLocation(addr) {
+  if (!addr || typeof addr !== "object") return null;
+  const parts = [addr.city, addr.state, addr.postal_code, addr.country]
+    .filter(Boolean);
+  return parts.length > 0 ? parts.join(", ") : null;
+}
+
+/** Map 17TRACK's main status codes to our normalized status keys. */
+function normalizeStatusKey(latestStatus) {
+  // 17TRACK v2.2 returns latest_status.status: "Delivered", "InTransit",
+  // "Exception", "Expired", "Undelivered", "Alert", "NotFound",
+  // "Pickup", "InfoReceived"
+  const raw = String(latestStatus || "").toLowerCase();
+  if (raw.includes("deliver") && !raw.includes("un")) return "delivered";
+  if (raw.includes("undeliver")) return "exception";
+  if (raw.includes("out for delivery") || raw.includes("outfordelivery")) return "out_for_delivery";
+  if (raw.includes("transit")) return "in_transit";
+  if (raw.includes("pickup")) return "in_transit";
+  if (raw.includes("inforeceived") || raw.includes("info received") || raw.includes("pre-shipment")) return "pre_shipment";
+  if (raw.includes("exception") || raw.includes("alert")) return "exception";
+  if (raw.includes("expired")) return "exception";
+  if (raw.includes("return")) return "returned";
+  return "in_transit";
+}
+
+/** Shape the 17TRACK response into our normalized tracking result. */
+function shapeResult(item, requestedCode) {
+  const ti = item?.track_info || {};
+  const latest = ti.latest_status || ti.latestStatus || {};
+  const milestone = ti.milestone || [];
+  const timeEstimated = ti.time_metrics?.estimated_delivery_date || null;
+  const shipmentInfo = ti.shipping_info?.shipper_address || {};
+  const destInfo = ti.shipping_info?.recipient_address || {};
+  const providers = ti.tracking?.providers || [];
+  const primaryProvider = providers[0] || {};
+  const carrierName = primaryProvider.provider?.name || "USPS";
+
+  const events = extractEvents(item);
+
+  const statusText = latest.sub_status_descr || latest.status || item.track?.e || "In Transit";
+  const statusKey  = normalizeStatusKey(latest.status || item.track?.e);
+
+  // Try to find a delivery event timestamp
+  const deliveredEvent = events.find(e => /deliver/i.test(e.title));
+  const resolvedAt = statusKey === "delivered" && deliveredEvent ? deliveredEvent.at : null;
 
   return {
-    carrier          : "usps",   // feature slot name — UI shows carrierDisplay
-    carrierDisplay   : carrierUpper,
+    carrier          : "usps",
+    carrierDisplay   : carrierName.toUpperCase().includes("USPS") ? "USPS" : carrierName,
     trackingCode     : requestedCode,
-    status           : raw.status || "In Transit",
+    status           : statusText,
     statusKey,
-    estimatedDelivery: raw.estimatedDelivery || null,
-    destination      : raw.location || null,
-    origin           : raw.origin || null,
-    shipDate         : raw.shipDate || (events[events.length - 1]?.at || null),
+    estimatedDelivery: timeEstimated?.from || timeEstimated?.to || timeEstimated || null,
+    destination      : formatLocation(destInfo) || null,
+    origin           : formatLocation(shipmentInfo) || null,
+    shipDate         : events.length > 0 ? events[events.length - 1].at : null,
     resolvedAt,
     events,
-    raw
+    raw: item   // keep full response for debugging
   };
 }
 
 /**
  * Look up USPS tracking for a label.
- *
- * Strategy:
- *   1. Try the full tracking code first (typical USPS 22/26 digit format)
- *   2. If that returns empty/not-found AND the code is 23+ digits,
- *      retry with the last 22 digits (IMpb tracking-number subset)
  *
  * @param {string} trackingCode
  * @returns {Promise<object>}  Normalized tracking result
@@ -213,57 +327,20 @@ async function lookup(trackingCode) {
     throw Object.assign(new Error("Missing tracking code"), { code: "INVALID_INPUT" });
   }
 
-  // Build ordered attempt list
-  const attempts = [code];
-  if (/^\d{23,}$/.test(code) && code.slice(-22) !== code) {
-    attempts.push(code.slice(-22));
+  console.log(`[17track] looking up ${code}`);
+
+  const item = await registerAndFetch(code);
+
+  if (!item || !hasUsableData(item)) {
+    throw Object.assign(
+      new Error(`No tracking events found for ${code} after ${MAX_POLLS} polls`),
+      { code: "NOT_FOUND" }
+    );
   }
 
-  let lastError;
-  for (const attempt of attempts) {
-    try {
-      const raw = await callApifyActor(attempt);
-
-      // Actor may return { error: "..." } or { notFound: true } for bad codes
-      if (raw.error || raw.notFound) {
-        console.log(`[usps] Actor reported not-found for ${attempt}: ${raw.error || "notFound"}`);
-        lastError = Object.assign(
-          new Error(raw.error || `Tracking not found: ${attempt}`),
-          { code: "NOT_FOUND" }
-        );
-        continue;
-      }
-
-      // Ensure the result has events or a recognizable status
-      if (!raw.events && !raw.status && !raw.carrier) {
-        console.log(`[usps] Actor returned empty-ish result for ${attempt}`);
-        lastError = Object.assign(
-          new Error(`Actor returned empty result for ${attempt}`),
-          { code: "APIFY_NO_RESULTS" }
-        );
-        continue;
-      }
-
-      console.log(`[usps] success for code ${attempt} — carrier=${raw.carrier} status=${raw.status}`);
-      return shapeActorResult(raw, code);    // always echo caller's original code
-    } catch (e) {
-      lastError = e;
-      // For infrastructure errors, don't bother retrying with a different
-      // tracking-code truncation — the issue isn't the code.
-      if (e.code === "APIFY_NETWORK" || e.code === "APIFY_NO_TOKEN" ||
-          e.code === "APIFY_BAD_JSON") {
-        throw e;
-      }
-      // For APIFY_ERROR (400/5xx from actor) we DO retry with truncation,
-      // since the actor might have rejected the code format.
-      console.log(`[usps] attempt failed (${e.code}: ${e.message}), trying next`);
-    }
-  }
-
-  throw lastError || Object.assign(
-    new Error(`All tracking lookup attempts failed for ${code}`),
-    { code: "NOT_FOUND" }
-  );
+  const shaped = shapeResult(item, code);
+  console.log(`[17track] ${code} → ${shaped.carrierDisplay} ${shaped.status} (${shaped.events.length} events)`);
+  return shaped;
 }
 
 module.exports = { lookup };
