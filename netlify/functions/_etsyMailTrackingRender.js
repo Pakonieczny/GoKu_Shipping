@@ -244,11 +244,18 @@ function buildEvent(event, x, y, isFirst, isLast, availableWidth) {
   let localY = y + 8;
   const elements = [];
 
-  // Timeline dot
+  // Timeline dot. For the first (newest) event, we render it as a white
+  // dot with a colored ring (primary brand color). Other events are a
+  // solid dot in the status color.
+  const circleFill   = isFirst ? "#ffffff"     : dotColor;
+  const circleStroke = isFirst ? COLOR_PRIMARY : "none";
+  const circleStrokeWidth = isFirst ? 3 : 0;
+
   elements.push(`
     <circle cx="${dotX}" cy="${localY + 6}" r="${dotRadius}"
-            fill="${dotColor}"
-            ${isFirst ? `stroke="${COLOR_PRIMARY}" stroke-width="3" fill="#ffffff"` : ""}/>
+            fill="${circleFill}"
+            stroke="${circleStroke}"
+            stroke-width="${circleStrokeWidth}"/>
   `);
 
   // Title
