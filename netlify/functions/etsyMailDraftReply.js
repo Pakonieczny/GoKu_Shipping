@@ -307,13 +307,22 @@ function formatMessageContextSuffix(m) {
 
 /** Convert one Firestore message doc into the content array for an
  *  Anthropic message turn. budget is the remaining image budget for
- *  the conversation (decremented as images are attached). */
-async function messageToContent(m, imageBudget, includeImages) {
+ *  the conversation (decremented as images are attached).
+ *
+ *  IMPORTANT: Anthropic's API only allows `image` content blocks in
+ *  USER turns, not assistant turns. Staff messages (which become
+ *  assistant turns) must describe their images textually, not embed
+ *  them. This matches our intent anyway — the AI is role-playing as
+ *  the staff, so it doesn't need to "see" what previous staff sent,
+ *  only know that an image was sent. */
+async function messageToContent(m, imageBudget, includeImages, role) {
   const content = [];
+  const canEmbedImages = role === "user";   // Anthropic: images only in user turns
 
   // Images first — they visually anchor the message. Only mirror-stored ones
   // (we have the bytes); unmirrored imageUrls get a text note instead.
-  if (includeImages && Array.isArray(m.storageImagePaths) && m.storageImagePaths.length && imageBudget.remaining > 0) {
+  // Only for USER (customer) messages.
+  if (canEmbedImages && includeImages && Array.isArray(m.storageImagePaths) && m.storageImagePaths.length && imageBudget.remaining > 0) {
     for (const sp of m.storageImagePaths) {
       if (imageBudget.remaining <= 0) break;
       const block = await storageImageBlock(sp);
@@ -327,7 +336,18 @@ async function messageToContent(m, imageBudget, includeImages) {
 
   // Text body — always present even if empty (model needs to see the turn)
   const text = clip(m.text || "", PER_MESSAGE_CHAR_CAP);
-  const suffix = formatMessageContextSuffix(m);
+  let suffix = formatMessageContextSuffix(m);
+
+  // For assistant turns (staff messages) that HAD images: add a text note
+  // since we can't embed them. Same convention as unmirrored-but-present
+  // images in the suffix formatter, but always applied regardless of mirror state.
+  if (!canEmbedImages && Array.isArray(m.imageUrls) && m.imageUrls.length) {
+    const imgCount = m.imageUrls.length;
+    const imgNote = `\n\n[${imgCount} image attachment${imgCount > 1 ? "s" : ""} sent with this staff message — not embedded (assistant-turn restriction). Reference them textually if needed.]`;
+    // Only add if the suffix didn't already mention the unmirrored note for the same images
+    if (!suffix.includes("image attachment")) suffix += imgNote;
+  }
+
   const headerDate = tsToDateStr(m.timestamp) || tsToDateStr(m.createdAt);
   const header = headerDate ? `[${headerDate}] ` : "";
   const body = `${header}${text || "(no text)"}` + suffix;
@@ -380,7 +400,7 @@ async function buildConversationMessages(messages, elidedCount, hasMore, include
     }
     currentRole = role;
 
-    const msgContent = await messageToContent(m, imageBudget, includeImages);
+    const msgContent = await messageToContent(m, imageBudget, includeImages, role);
     // Separator between merged messages of same role
     if (currentContent.length) {
       currentContent.push({ type: "text", text: "---" });
