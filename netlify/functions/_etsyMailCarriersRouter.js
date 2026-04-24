@@ -47,7 +47,17 @@ const chitchats = require("./_etsyMailCarrierChitchats");
 
 const UPU_S10 = /^[A-Z]{2}\d{9}[A-Z]{2}$/;
 const CC_ID   = /^[A-Za-z0-9]{10}$/;
-const USPS_LABEL = /^(\d{12}|\d{15}|\d{20}|\d{22}|\d{26})$/;
+// USPS labels come in multiple lengths depending on service class:
+//   12 digits — legacy Delivery Confirmation
+//   15 digits — older Priority / Express
+//   20, 22 digits — Signature Confirmation / older IMpb
+//   26 digits — standard IMpb (most common today)
+//   30, 34 digits — longer IMpb variants (Parcel Select, ePacket, some
+//                   Chit Chats-generated labels include extra app/routing ID)
+// Accepting any purely-numeric string of 12-34 digits covers all of these
+// without false-matching UPU S10 (which has letters) or CC IDs (10 chars +
+// has letters).
+const USPS_LABEL = /^\d{12,34}$/;
 
 function detectCarrier(trackingCode) {
   const code = String(trackingCode || "").trim();
