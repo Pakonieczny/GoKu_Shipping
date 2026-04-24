@@ -455,10 +455,10 @@ async function render(tracking) {
     }
   }
 
-  // Step 2: load the font files
+  // Step 2: verify font files exist
+  const fontPath = path.join(__dirname, "fonts", "OpenSans-Regular.ttf");
+  const fontBoldPath = path.join(__dirname, "fonts", "OpenSans-Bold.ttf");
   if (!_fontBuffer) {
-    const fontPath = path.join(__dirname, "fonts", "OpenSans-Regular.ttf");
-    const fontBoldPath = path.join(__dirname, "fonts", "OpenSans-Bold.ttf");
     try {
       _fontBuffer = fs.readFileSync(fontPath);
       console.log(`[tracking-render] Loaded OpenSans-Regular.ttf (${_fontBuffer.length} bytes)`);
@@ -480,8 +480,12 @@ async function render(tracking) {
   }
 
   // Step 3: render SVG → PNG
-  const fontBuffers = [_fontBuffer];
-  if (_fontBufferBold) fontBuffers.push(_fontBufferBold);
+  // Per resvg-js GitHub README and official examples, fontFiles (paths) is
+  // the primary/most-reliable approach. fontBuffers has known issues with
+  // font-name matching. Using file paths delegates loading to resvg's
+  // internal fontdb which handles name table parsing correctly.
+  const fontFiles = [fontPath];
+  if (_fontBufferBold) fontFiles.push(fontBoldPath);
 
   // IMPORTANT — per resvg-js docs:
   //   Since resvg 0.28.0, `defaultFontFamily` option is NOT honored when
@@ -503,22 +507,24 @@ async function render(tracking) {
   //   We also strip font-weight if we only loaded one weight, since
   //   requesting weight="700" against a Regular-only font will also fail
   //   to match and render nothing.
-  let cleanedSvg = svg.replace(/\sfont-family\s*=\s*"[^"]*"/g, "");
-  const strippedFF = svg.length - cleanedSvg.length;
-  if (!_fontBufferBold) {
-    const before = cleanedSvg.length;
-    cleanedSvg = cleanedSvg.replace(/\sfont-weight\s*=\s*"[^"]*"/g, "");
-    console.log(`[tracking-render] Stripped font-family (${strippedFF} chars), font-weight (${before - cleanedSvg.length} chars)`);
-  } else {
-    console.log(`[tracking-render] Stripped font-family (${strippedFF} chars), kept font-weight (bold loaded)`);
-  }
+  // Do NOT strip font-family — per resvg docs, we match it against the
+  // loaded TTF's internal name. Google's distribution of Open Sans has
+  // "Open Sans" as the internal family name, so font-family="Open Sans"
+  // in our SVG should match directly.
+  //
+  // We just need to normalize the comma-separated fallback list our SVG
+  // uses — resvg's font-family matcher expects a single family name, not
+  // a CSS-style fallback list like "Open Sans,Helvetica,Arial,sans-serif".
+  // Replace that with just "Open Sans".
+  const cleanedSvg = svg.replace(
+    /font-family\s*=\s*"[^"]*"/g,
+    'font-family="Open Sans"'
+  );
 
-  // Sanity: log a sample of an event row to see what resvg actually sees
+  // Diagnostic
   const textSample = cleanedSvg.match(/<text[^>]*>[^<]*<\/text>/);
   if (textSample) {
-    console.log(`[tracking-render] Sample <text>: ${textSample[0].slice(0, 200)}`);
-  } else {
-    console.log(`[tracking-render] WARNING: no <text> elements found in cleanedSvg!`);
+    console.log(`[tracking-render] Sample <text>: ${textSample[0].slice(0, 250)}`);
   }
 
   let png, pngWidth, pngHeight;
@@ -526,9 +532,9 @@ async function render(tracking) {
     const resvg = new _resvgModule.Resvg(cleanedSvg, {
       fitTo: { mode: "width", value: width * 2 },   // 2× DPI for retina crispness
       font: {
-        fontBuffers,
-        loadSystemFonts: false
-        // NO defaultFontFamily — resvg auto-sets it from the loaded font
+        fontFiles,                          // Use file paths, not buffers
+        loadSystemFonts: false,
+        defaultFontFamily: "Open Sans"      // Google's TTF internal name
       },
       background: "rgba(255, 255, 255, 1)"
     });
