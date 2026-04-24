@@ -553,13 +553,20 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
 
 --- TOOL USE ---
 
-You have three tools:
+You have four tools:
   - lookup_order_tracking(receiptId) — returns tracking code, carrier,
     ship date, delivery status for a specific order. Use this whenever
     the customer asks about tracking/where their order is/has it shipped.
   - lookup_order_details(receiptId) — returns the full order: items,
     personalization, variations, totals, buyer address. Use this when
     you need to reference specific items or check personalization.
+  - generate_tracking_image(trackingCode) — generates a branded visual
+    tracking timeline image that will be attached to your reply. Use
+    this when the customer is asking where their package is and seeing
+    the scan history would help. Call AFTER lookup_order_tracking so you
+    pass the correct tracking code. The carrier (USPS vs Chit Chats) is
+    auto-detected. You will naturally reference the attached image in
+    your reply (e.g., "I've pulled up the tracking for you below").
   - compose_draft_reply(...) — THE TERMINAL TOOL. Call this exactly
     ONCE when you've completed all lookups and are ready to commit the
     reply. This ends the draft generation.
@@ -569,8 +576,18 @@ Workflow:
   2. Identify the active question (per rules above)
   3. If the question is about tracking/shipping/an order detail, call
      lookup_order_tracking and/or lookup_order_details as needed
-  4. Call compose_draft_reply with the final text + reasoning +
+  4. If a visual tracking timeline would genuinely help the customer
+     (they're anxious about a package, asking "where is it?", or the
+     tracking has unusual detail worth showing), call
+     generate_tracking_image with the tracking code from step 3
+  5. Call compose_draft_reply with the final text + reasoning +
      referenced receiptIds + any listing suggestions
+
+When you've generated a tracking image, mention it naturally in your
+reply — "I've attached the current tracking details below" — and then
+explain what the customer should understand from the timeline (the
+scan events, expected delivery, what's normal). Don't just dump the
+image; contextualize it.
 
 Do NOT emit prose replies directly — only via compose_draft_reply.
 Reasoning in plain text is fine between tool calls (Claude's adaptive
@@ -682,6 +699,20 @@ const TOOL_SPECS = [
         }
       },
       required: ["receiptId"]
+    }
+  },
+  {
+    name: "generate_tracking_image",
+    description: "Generate a branded visual tracking timeline image for a specific tracking number. Use this when the customer is asking where their package is, or when seeing the scan history would help answer their question. The carrier (USPS or Chit Chats) is auto-detected from the tracking number format. Returns an imageUrl that can be referenced in your draft reply as an attachment. Prefer calling this AFTER lookup_order_tracking has returned a tracking code, so you pass the correct code.",
+    input_schema: {
+      type: "object",
+      properties: {
+        trackingCode: {
+          type: "string",
+          description: "The tracking code to generate a timeline image for. Must be one of: a USPS label number (12/15/20/22/26 digits), a Chit Chats shipment ID (10 alphanumeric chars), or a UPU S10 international code (format: LX123456789NL)."
+        }
+      },
+      required: ["trackingCode"]
     }
   },
   {
@@ -810,6 +841,79 @@ function buildToolExecutors(ctx) {
     // looping / producing a second draft).
     compose_draft_reply: async (input) => {
       return { __terminal: true, received: true, composed: true };
+    },
+
+    // Generate a branded tracking-timeline image. Calls the shared
+    // _etsyMailTracking module directly (NOT via self-HTTP-call) so we
+    // avoid stacked timeouts + cold-start duplication. The module handles
+    // carrier auto-detect, cache check, fetch, render, upload, and cache
+    // write. We capture the result on ctx.trackingImages for the response
+    // handler to include in the final draft payload.
+    generate_tracking_image: async (input) => {
+      const trackingCode = String(input.trackingCode || "").trim();
+      if (!trackingCode) {
+        return { error: "trackingCode is required" };
+      }
+
+      const { snapshot } = require("./_etsyMailTracking");
+
+      let result;
+      try {
+        result = await snapshot(trackingCode, { forceRefresh: false });
+      } catch (e) {
+        return {
+          error: e.message || "Tracking snapshot failed",
+          code : e.code || "TRACKING_FAILED",
+          trackingCode,
+          hint : e.code === "UNKNOWN_CARRIER"
+                   ? "Tracking code format not recognized. Expected USPS (12-26 digits), UPU S10 (LX057703046NL), or Chit Chats shipment ID (10 alphanumeric chars)."
+               : e.code === "NOT_FOUND"
+                   ? "The carrier does not have a record for this tracking code. It may be too old or entered incorrectly."
+               : e.code === "APIFY_ERROR" || e.code === "APIFY_NETWORK"
+                   ? "USPS scraper (Apify) failed. APIFY_API_TOKEN may be missing, or Apify is temporarily unavailable."
+               : null
+        };
+      }
+
+      if (ctx.trackingImages) {
+        ctx.trackingImages.push({
+          trackingCode    : result.trackingCode,
+          carrier         : result.carrier,
+          carrierDisplay  : result.carrierDisplay,
+          status          : result.status,
+          statusKey       : result.statusKey,
+          estimatedDelivery: result.estimatedDelivery,
+          destination     : result.destination,
+          imageUrl        : result.imageUrl,
+          imageStoragePath: result.imageStoragePath,
+          imageWidth      : result.imageWidth,
+          imageHeight     : result.imageHeight,
+          cached          : result.cached,
+          eventCount      : (result.events || []).length,
+          latestEvent     : (result.events || [])[0] || null
+        });
+      }
+
+      // Compact result for the model — the image exists on Storage and
+      // the UI will display it. The model doesn't need to "see" the PNG;
+      // it just needs to know the call succeeded + what data was found
+      // so it can reference it naturally.
+      return {
+        success            : true,
+        trackingCode       : result.trackingCode,
+        carrier            : result.carrierDisplay,
+        status             : result.status,
+        statusKey          : result.statusKey,
+        estimatedDelivery  : result.estimatedDelivery,
+        destination        : result.destination,
+        eventCount         : (result.events || []).length,
+        latestEventTitle   : (result.events || [])[0]?.title || null,
+        latestEventLocation: (result.events || [])[0]?.location || null,
+        latestEventAt      : (result.events || [])[0]?.at || null,
+        imageGenerated     : true,
+        imageUrl           : result.imageUrl,
+        cached             : result.cached
+      };
     }
   };
 }
@@ -904,7 +1008,11 @@ exports.handler = async (event) => {
     const system = buildSystemPromptText(promptConfig, shopEnrichment, employeeName);
 
     // ─── 4. Run the tool-use loop ──────────────────────────────────
-    const toolContext = { thread, customer };
+    const toolContext = {
+      thread,
+      customer,
+      trackingImages: []   // collected by generate_tracking_image executor
+    };
     const toolExecutors = buildToolExecutors(toolContext);
 
     let loopResult;
@@ -998,6 +1106,25 @@ exports.handler = async (event) => {
     }));
 
     const usage = loopResult.usage || {};
+    const trackingImages = Array.isArray(toolContext.trackingImages) ? toolContext.trackingImages : [];
+
+    // Build attachments array: any generated tracking images become attachments
+    // the operator can include when sending the reply.
+    const attachments = trackingImages.map(img => ({
+      type          : "tracking_image",
+      trackingCode  : img.trackingCode,
+      carrier       : img.carrier,
+      carrierDisplay: img.carrierDisplay,
+      status        : img.status,
+      statusKey     : img.statusKey,
+      imageUrl      : img.imageUrl,
+      imageStoragePath: img.imageStoragePath,
+      imageWidth    : img.imageWidth,
+      imageHeight   : img.imageHeight,
+      queuedForSend : true,  // default: include when operator sends
+      addedAt       : new Date().toISOString()
+    }));
+
     const draftDoc = {
       draftId,
       threadId,
@@ -1007,7 +1134,8 @@ exports.handler = async (event) => {
       activeQuestion        : parsed.activeQuestion,
       suggestedListings     : parsed.suggestedListings,
       referencedReceiptIds  : parsed.referencedReceiptIds,
-      attachments           : [],
+      attachments,
+      trackingImages,
       generatedByAI         : true,
       aiModel               : AI_MODEL,
       aiEffort              : AI_EFFORT,
@@ -1073,6 +1201,8 @@ exports.handler = async (event) => {
       activeQuestion     : parsed.activeQuestion,
       referencedReceiptIds: parsed.referencedReceiptIds,
       suggestedListings  : parsed.suggestedListings,
+      trackingImages,
+      attachments,
       toolCalls          : toolCallLog,
       tokensUsed         : {
         input       : draftDoc.aiTokensInput,
