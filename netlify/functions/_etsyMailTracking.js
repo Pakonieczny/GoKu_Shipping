@@ -27,7 +27,7 @@
 
 const admin     = require("./firebaseAdmin");
 const crypto    = require("crypto");
-const carriers  = require("./_etsyMailCarriers");
+const carriers  = require("./_etsyMailCarriers/index");
 const renderer  = require("./_etsyMailTrackingRender");
 
 const db     = admin.firestore();
