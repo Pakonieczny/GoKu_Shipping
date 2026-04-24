@@ -483,42 +483,39 @@ async function render(tracking) {
   const fontBuffers = [_fontBuffer];
   if (_fontBufferBold) fontBuffers.push(_fontBufferBold);
 
-  // Strategy: embed the loaded font DIRECTLY into the SVG as base64 via
-  // @font-face. This completely bypasses resvg's font-name-matching logic:
-  // the font IS the SVG, and we explicitly give it a name we control.
+  // IMPORTANT — per resvg-js docs:
+  //   Since resvg 0.28.0, `defaultFontFamily` option is NOT honored when
+  //   fonts are loaded via fontBuffers. Instead, resvg reads the font's
+  //   INTERNAL name (from the TTF's name table) and uses the first one as
+  //   the default automatically.
   //
-  // Result: resvg sees a @font-face rule with family name "Embedded",
-  // and our SVG <text> elements all use font-family="Embedded" → guaranteed
-  // match regardless of the TTF's internal name table.
-  const fontBase64 = _fontBuffer.toString("base64");
-  const fontFaceCss = `
-    @font-face {
-      font-family: "Embedded";
-      src: url("data:font/ttf;base64,${fontBase64}") format("truetype");
-    }
-  `;
-
-  // Inject the @font-face into the SVG's <defs> and rewrite every
-  // font-family attribute to "Embedded"
-  let injectedSvg = svg.replace(
-    /<defs>/,
-    `<defs><style>${fontFaceCss}</style>`
-  );
-  // Replace all font-family= attributes with our embedded name
-  injectedSvg = injectedSvg.replace(/font-family\s*=\s*"[^"]*"/g, 'font-family="Embedded"');
-  // Remove font-weight since we only have one weight
+  //   This means:
+  //     1. We must NOT set defaultFontFamily — resvg sets it from the buffer
+  //     2. We must NOT have font-family attributes in the SVG that don't
+  //        match the internal name. If we specify font-family="Open Sans"
+  //        but the TTF's internal name is actually "OpenSans" or "Open Sans
+  //        Regular", resvg fails to match and renders nothing.
+  //
+  //   Safest: strip all font-family attributes from the SVG entirely.
+  //   resvg will use the auto-detected default (from the loaded TTF) for
+  //   every text element. This works regardless of the font's internal name.
+  //
+  //   We also strip font-weight if we only loaded one weight, since
+  //   requesting weight="700" against a Regular-only font will also fail
+  //   to match and render nothing.
+  let cleanedSvg = svg.replace(/\sfont-family\s*=\s*"[^"]*"/g, "");
   if (!_fontBufferBold) {
-    injectedSvg = injectedSvg.replace(/\sfont-weight\s*=\s*"[^"]*"/g, "");
+    cleanedSvg = cleanedSvg.replace(/\sfont-weight\s*=\s*"[^"]*"/g, "");
   }
 
   let png, pngWidth, pngHeight;
   try {
-    const resvg = new _resvgModule.Resvg(injectedSvg, {
+    const resvg = new _resvgModule.Resvg(cleanedSvg, {
       fitTo: { mode: "width", value: width * 2 },   // 2× DPI for retina crispness
       font: {
         fontBuffers,
-        loadSystemFonts: false,
-        defaultFontFamily: "Embedded"   // matches our @font-face name
+        loadSystemFonts: false
+        // NO defaultFontFamily — resvg auto-sets it from the loaded font
       },
       background: "rgba(255, 255, 255, 1)"
     });
