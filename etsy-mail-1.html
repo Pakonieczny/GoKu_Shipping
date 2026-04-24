@@ -258,12 +258,30 @@
       padding: 10px; border: 1px solid #e1e4e8; border-radius: 6px;
       align-items: center;
     }
+    .em-order-item-link {
+      text-decoration: none; color: inherit;
+      transition: background .15s, border-color .15s;
+    }
+    .em-order-item-link:hover {
+      background: #f6f8fa; border-color: #0969da;
+    }
     .em-order-item img {
       width: 60px; height: 60px; border-radius: 4px; object-fit: cover;
       background: #f0f2f5;
     }
+    .em-item-img-fallback {
+      width: 60px; height: 60px; border-radius: 4px;
+      background: #f0f2f5; display: flex; align-items: center;
+      justify-content: center; color: #9ba4ae;
+    }
+    .em-item-img-fallback .material-icons { font-size: 24px; }
     .em-order-item .em-item-title { font-weight: 500; font-size: 13px; }
     .em-order-item .em-item-meta { font-size: 11px; color: #57606a; margin-top: 2px; }
+    .em-order-item .em-item-link-hint {
+      font-size: 11px; color: #0969da; margin-top: 3px; opacity: 0;
+      transition: opacity .15s;
+    }
+    .em-order-item-link:hover .em-item-link-hint { opacity: 1; }
     .em-order-item .em-item-price { font-weight: 600; color: #24292f; font-size: 13px; text-align: right; }
     .em-order-section { margin-top: 16px; }
     .em-order-section h5 {
@@ -838,9 +856,12 @@
         }
       }
 
-      // Render collapsed summary (always visible)
-      const repeatBadge = (thread.buyerIsRepeatBuyer || (customer && customer.isRepeatBuyer))
-        ? '<span class="em-cust-repeat">Repeat buyer</span>'
+      // Repeat buyer badge — ONLY show when our cached order data confirms it.
+      // Etsy's scraped badge (thread.buyerIsRepeatBuyer) is unreliable and can
+      // false-positive on pre-purchase inquiries. We trust ONLY the orderCount
+      // from our own Etsy API-sourced customer doc.
+      const repeatBadge = (customer && customer.orderCount >= 2)
+        ? '<span class="em-cust-repeat" title="Verified: has ' + customer.orderCount + ' orders in last 2 years">Repeat buyer</span>'
         : '';
 
       const nameHtml = '<span class="em-cust-name">' +
@@ -857,9 +878,12 @@
           '</b> order' + (customer.orderCount === 1 ? '' : 's') + '</span>' +
           ' · <span class="em-cust-stat"><b>' + money + '</b> total</span>';
       } else if (thread.buyerUserId) {
-        statsInline = '<span class="em-muted" style="font-size:12px;">Not yet synced</span>';
+        // Honest messaging — no false "can be synced" implication.
+        // This customer has no cached order data, meaning they likely
+        // haven't purchased in the last 2 years (or ever).
+        statsInline = '<span class="em-muted" style="font-size:12px; color:#9a6700;">⚠ No recent order history</span>';
       } else {
-        statsInline = '<span class="em-muted" style="font-size:12px;">Customer data unavailable (rescrape for M3)</span>';
+        statsInline = '<span class="em-muted" style="font-size:12px;">Customer ID not captured</span>';
       }
 
       summaryEl.innerHTML = nameHtml + ' ' + userHtml + ' ' + repeatBadge + ' ' + statsInline;
@@ -869,13 +893,29 @@
         expandEl.innerHTML = renderCustomerExpanded(customer, thread);
         bindOrderClicks(expandEl);
       } else if (thread.buyerUserId) {
-        expandEl.innerHTML = '<div class="em-cust-nodata">' +
-          'This customer hasn\'t been synced yet. Run a sync to populate their order history. ' +
-          '<br><br><button onclick="triggerCustomerSync()" style="margin-top:6px;padding:4px 10px;">Sync now</button>' +
+        // Honest explanation: they're not in our 2-year cache. That means
+        // either they haven't purchased recently, or Etsy's repeat-buyer
+        // badge is wrong about them. We do NOT offer a sync button
+        // because a sync won't help — the full backfill is already done
+        // and they're genuinely not in the receipt data.
+        expandEl.innerHTML = '<div class="em-cust-nodata" style="background:#fff8c5; border:1px solid #d4a72c;">' +
+          '<b>⚠ No purchase history in the last 2 years.</b>' +
+          '<div style="margin-top:6px; font-size:12px; line-height:1.5; color:#24292f;">' +
+          'This buyer has no cached orders. They may be:' +
+          '<ul style="margin:6px 0 0 18px; padding:0;">' +
+          '<li>A <b>pre-purchase inquiry</b> (never ordered from this shop)</li>' +
+          '<li>An <b>older customer</b> whose last order was before ' + fmtShortDate(Date.now() - 730*86400*1000) + '</li>' +
+          '</ul>' +
+          '<div style="margin-top:8px; font-size:11px; color:#6a737d;">' +
+          'Note: Etsy\'s "Repeat buyer" badge can appear incorrectly for non-buyers. ' +
+          'Treat this thread as new unless the customer mentions a specific order number.' +
+          '</div>' +
+          '</div>' +
           '</div>';
       } else {
         expandEl.innerHTML = '<div class="em-cust-nodata">' +
-          'Customer ID not captured — thread needs to be rescraped with extension v0.8.0+ to enable customer details.' +
+          '<b>Customer ID not captured</b><br>' +
+          '<span style="font-size:12px;">This thread was scraped before v0.8.0. Rescrape on Etsy to enable customer history lookup.</span>' +
           '</div>';
       }
     }
@@ -898,6 +938,10 @@
       const money     = fmtMoney(customer.totalSpent, customer.currency);
       const recent    = Array.isArray(customer.recentReceipts) ? customer.recentReceipts : [];
 
+      // Compute the start of the sync window (2 years ago) for the disclaimer.
+      // This reminds operators that stats don't include older purchases.
+      const syncCutoffDate = fmtShortDate(Date.now() - 730 * 86400 * 1000);
+
       const statsHtml = `
         <div class="em-cust-stats-grid">
           <div class="em-cust-stat-block">
@@ -916,6 +960,9 @@
             <span class="em-label">Last order</span>
             <span class="em-value">${esc(lastDate)}</span>
           </div>
+        </div>
+        <div style="font-size:10px; color:#6a737d; margin-top:4px; text-align:right; font-style:italic;">
+          Includes purchases from ${esc(syncCutoffDate)} onward. Older orders not shown.
         </div>`;
 
       const ordersHtml = recent.length
@@ -957,7 +1004,10 @@
       });
     }
 
-    // Manual sync trigger (for "sync now" button in panel)
+    // Manual sync trigger — retained for potential future use (e.g. a
+    // settings panel button to force an incremental sync). No longer used
+    // by the customer panel since a sync won't help customers who are
+    // genuinely absent from the 2-year receipt history.
     window.triggerCustomerSync = async function() {
       toast("Triggering sync…");
       try {
@@ -1028,21 +1078,37 @@
         const price = moneyAmt(t.price);
         const priceStr = price != null ? "$" + price.toFixed(2) : "";
         const qtyStr = t.quantity > 1 ? " × " + t.quantity : "";
-        const imgUrl = (t.product_data && t.product_data.image_url) || "";
+        // Prefer server-enriched thumbnail_url (from getListingImages).
+        // Fall back to legacy product_data.image_url if it's ever present.
+        const imgUrl = t.thumbnail_url || (t.product_data && t.product_data.image_url) || "";
+        const listingUrl = t.listing_url || (t.listing_id ? ('https://www.etsy.com/listing/' + t.listing_id) : "");
         const variations = Array.isArray(t.variations)
           ? t.variations.map(v => (v.formatted_name || "") + ": " + (v.formatted_value || "")).filter(Boolean).join(" · ")
           : "";
         const personalization = t.personalization ? ("Note: " + t.personalization) : "";
         const meta = [variations, personalization].filter(Boolean).join(" · ");
+
+        // Render the item as a clickable card — opens the Etsy listing in a
+        // new tab. If no listing URL (deleted listing, etc.), render non-clickable.
+        const wrapOpen = listingUrl
+          ? `<a href="${esc(listingUrl)}" target="_blank" rel="noopener" class="em-order-item em-order-item-link" title="View listing on Etsy">`
+          : `<div class="em-order-item">`;
+        const wrapClose = listingUrl ? `</a>` : `</div>`;
+
+        const imgHtml = imgUrl
+          ? `<img src="${esc(imgUrl)}" referrerpolicy="no-referrer" alt="" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'em-item-img-fallback',innerHTML:'<i class=\\'material-icons\\'>image_not_supported</i>'}));">`
+          : `<div class="em-item-img-fallback"><i class="material-icons">image</i></div>`;
+
         return `
-          <div class="em-order-item">
-            <img src="${esc(imgUrl)}" onerror="this.style.visibility='hidden';" alt="">
+          ${wrapOpen}
+            ${imgHtml}
             <div>
               <div class="em-item-title">${esc(t.title || "Item")}${esc(qtyStr)}</div>
               ${meta ? '<div class="em-item-meta">' + esc(meta) + '</div>' : ''}
+              ${listingUrl ? '<div class="em-item-link-hint">View listing →</div>' : ''}
             </div>
             <div class="em-item-price">${esc(priceStr)}</div>
-          </div>`;
+          ${wrapClose}`;
       }).join("") || '<div class="em-muted">No items found.</div>';
 
       const addr = [

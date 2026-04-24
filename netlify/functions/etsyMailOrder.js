@@ -113,6 +113,7 @@ exports.handler = async (event) => {
   try {
     const accessToken = await getValidEtsyAccessToken();
 
+    // Step 1 — fetch the receipt with its transactions.
     const url =
       `https://api.etsy.com/v3/application/shops/${SHOP_ID}` +
       `/receipts/${receiptId}?includes=` +
@@ -129,6 +130,72 @@ exports.handler = async (event) => {
     const payload = await res.json();
     if (!res.ok) {
       return json(res.status, { error: (payload && payload.error) || `Etsy API ${res.status}`, details: payload });
+    }
+
+    // Step 2 — enrich each transaction with a listing thumbnail + listing URL.
+    //
+    // Etsy's getShopReceipt doesn't include listing images in the transaction
+    // payload (despite supporting various `includes`, images aren't one of the
+    // options for transactions). We fetch them in parallel from
+    // getListingImages for each unique listing_id in the receipt.
+    //
+    // Typical receipt has 1-5 line items → 1-5 parallel image fetches. At ~200ms
+    // each with parallelism, this adds ~200-400ms to the modal open.
+    //
+    // We pick the FIRST image (index 0) for each listing — the primary product
+    // photo. If getListingImages fails for a listing (e.g. listing was deleted
+    // since the purchase), we fall back to null and the UI shows a placeholder.
+    const transactions = Array.isArray(payload.transactions) ? payload.transactions : [];
+    const uniqueListingIds = Array.from(new Set(
+      transactions.map(t => t.listing_id).filter(id => id != null)
+    ));
+
+    const imageUrlByListingId = {};
+    if (uniqueListingIds.length) {
+      await Promise.all(uniqueListingIds.map(async (listingId) => {
+        try {
+          const imgRes = await fetch(
+            `https://api.etsy.com/v3/application/listings/${listingId}/images`,
+            {
+              headers: {
+                Authorization: `Bearer ${accessToken}`,
+                "x-api-key": `${CLIENT_ID}:${CLIENT_SECRET}`,
+                "Content-Type": "application/json"
+              }
+            }
+          );
+          if (!imgRes.ok) return;  // skip on failure; UI handles gracefully
+          const imgData = await imgRes.json();
+          const results = Array.isArray(imgData.results) ? imgData.results : [];
+          if (!results.length) return;
+          // Prefer a reasonably-sized thumbnail. Etsy's listing-image object has
+          // url_75x75, url_170x135, url_224xN, url_340x270, url_570xN, url_fullxfull.
+          // 170x135 is ideal for a modal row thumbnail.
+          const img = results[0];
+          imageUrlByListingId[listingId] =
+            img.url_170x135 ||
+            img.url_224xN ||
+            img.url_75x75 ||
+            img.url_340x270 ||
+            img.url_570xN ||
+            img.url_fullxfull ||
+            null;
+        } catch (err) {
+          // Don't let one failed image break the whole modal
+          console.warn(`Image fetch failed for listing ${listingId}:`, err.message);
+        }
+      }));
+    }
+
+    // Step 3 — attach thumbnail + listingUrl to each transaction.
+    for (const t of transactions) {
+      if (t.listing_id) {
+        t.thumbnail_url = imageUrlByListingId[t.listing_id] || null;
+        t.listing_url = `https://www.etsy.com/listing/${t.listing_id}`;
+      } else {
+        t.thumbnail_url = null;
+        t.listing_url = null;
+      }
     }
 
     return json(200, payload);
