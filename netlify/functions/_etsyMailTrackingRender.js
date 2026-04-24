@@ -504,8 +504,21 @@ async function render(tracking) {
   //   requesting weight="700" against a Regular-only font will also fail
   //   to match and render nothing.
   let cleanedSvg = svg.replace(/\sfont-family\s*=\s*"[^"]*"/g, "");
+  const strippedFF = svg.length - cleanedSvg.length;
   if (!_fontBufferBold) {
+    const before = cleanedSvg.length;
     cleanedSvg = cleanedSvg.replace(/\sfont-weight\s*=\s*"[^"]*"/g, "");
+    console.log(`[tracking-render] Stripped font-family (${strippedFF} chars), font-weight (${before - cleanedSvg.length} chars)`);
+  } else {
+    console.log(`[tracking-render] Stripped font-family (${strippedFF} chars), kept font-weight (bold loaded)`);
+  }
+
+  // Sanity: log a sample of an event row to see what resvg actually sees
+  const textSample = cleanedSvg.match(/<text[^>]*>[^<]*<\/text>/);
+  if (textSample) {
+    console.log(`[tracking-render] Sample <text>: ${textSample[0].slice(0, 200)}`);
+  } else {
+    console.log(`[tracking-render] WARNING: no <text> elements found in cleanedSvg!`);
   }
 
   let png, pngWidth, pngHeight;
