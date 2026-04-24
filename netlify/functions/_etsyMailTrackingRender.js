@@ -131,24 +131,26 @@ function fmtDateTime(iso) {
   return d || t || "";
 }
 
-/** Compact datetime: "Apr 23 · 8:02 pm" — for one-line event rows. */
+/** Datetime for event rows: "April 24 at 7:02 AM" */
 function fmtDateTimeCompact(iso) {
   if (!iso) return "";
   const d = new Date(iso);
   if (isNaN(d.getTime())) return String(iso);
-  const date = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  const date = d.toLocaleDateString("en-US", { month: "long", day: "numeric" });
   const time = d.toLocaleTimeString("en-US", {
     hour: "numeric", minute: "2-digit", hour12: true
-  }).toLowerCase();
-  return `${date} · ${time}`;
+  });
+  return `${date} at ${time}`;
 }
 
 // ─── Tracking code formatting ────────────────────────────────────────────
 function formatTrackingCode(code) {
-  // Insert spaces every 4 chars for readability (ignore for short codes)
-  const s = String(code || "");
+  // USPS IMpb numbers are long (~22-34 digits). Group them for readability,
+  // but use a single space between groups of 4 (not the wider kerning we
+  // had before). Keep short carrier codes unmodified.
+  const s = String(code || "").replace(/\s+/g, "");
   if (s.length <= 10) return s;
-  return s.replace(/(.{4})/g, "$1 ").trim();
+  return s.replace(/(.{4})(?=.)/g, "$1 ").trim();
 }
 
 // ─── Expected-delivery display ───────────────────────────────────────────
@@ -202,8 +204,7 @@ function buildHeader(tracking) {
   // LINE 1: tracking code (left) + status pill (right)
   elements.push(`
     <text x="${PADDING_X}" y="32" font-family="Open Sans,Helvetica,Arial,sans-serif"
-          font-size="17" font-weight="700" fill="${COLOR_TEXT_DARK}"
-          letter-spacing="0.3">
+          font-size="17" font-weight="700" fill="${COLOR_TEXT_DARK}">
       ${esc(code)}
     </text>
   `);
@@ -507,34 +508,49 @@ async function render(tracking) {
   //   We also strip font-weight if we only loaded one weight, since
   //   requesting weight="700" against a Regular-only font will also fail
   //   to match and render nothing.
-  // Do NOT strip font-family — per resvg docs, we match it against the
-  // loaded TTF's internal name. Google's distribution of Open Sans has
-  // "Open Sans" as the internal family name, so font-family="Open Sans"
-  // in our SVG should match directly.
-  //
-  // We just need to normalize the comma-separated fallback list our SVG
-  // uses — resvg's font-family matcher expects a single family name, not
-  // a CSS-style fallback list like "Open Sans,Helvetica,Arial,sans-serif".
-  // Replace that with just "Open Sans".
-  const cleanedSvg = svg.replace(
+  // Embed both fonts as base64 data URIs inside the SVG via @font-face.
+  // This bypasses resvg's font-matching entirely — the font is literally
+  // IN the SVG as bytes, so there's nothing to match against name tables
+  // or fontdb. resvg just uses the embedded font directly.
+  const regularB64 = _fontBuffer.toString("base64");
+  const boldB64    = _fontBufferBold ? _fontBufferBold.toString("base64") : null;
+
+  const fontFaceBlock = [
+    `@font-face {
+       font-family: "Embedded";
+       font-weight: 400;
+       src: url("data:font/ttf;base64,${regularB64}") format("truetype");
+     }`,
+    boldB64 ? `@font-face {
+       font-family: "Embedded";
+       font-weight: 700;
+       src: url("data:font/ttf;base64,${boldB64}") format("truetype");
+     }` : ""
+  ].filter(Boolean).join("\n");
+
+  // Inject the @font-face block into the SVG's <defs>, and rewrite every
+  // font-family attribute to use our embedded family name.
+  let injectedSvg = svg.replace(
+    /<defs>/,
+    `<defs><style type="text/css"><![CDATA[\n${fontFaceBlock}\n]]></style>`
+  );
+  injectedSvg = injectedSvg.replace(
     /font-family\s*=\s*"[^"]*"/g,
-    'font-family="Open Sans"'
+    'font-family="Embedded"'
   );
 
-  // Diagnostic
-  const textSample = cleanedSvg.match(/<text[^>]*>[^<]*<\/text>/);
-  if (textSample) {
-    console.log(`[tracking-render] Sample <text>: ${textSample[0].slice(0, 250)}`);
-  }
+  console.log(`[tracking-render] SVG length: ${injectedSvg.length} chars (with embedded fonts)`);
 
   let png, pngWidth, pngHeight;
   try {
-    const resvg = new _resvgModule.Resvg(cleanedSvg, {
-      fitTo: { mode: "width", value: width * 2 },   // 2× DPI for retina crispness
+    const resvg = new _resvgModule.Resvg(injectedSvg, {
+      fitTo: { mode: "width", value: width * 2 },
       font: {
-        fontFiles,                          // Use file paths, not buffers
+        // Still pass the fontFiles as a fallback — if resvg chokes on the
+        // @font-face CSS for any reason, it'll have the TTFs on disk too
+        fontFiles,
         loadSystemFonts: false,
-        defaultFontFamily: "Open Sans"      // Google's TTF internal name
+        defaultFontFamily: "Embedded"
       },
       background: "rgba(255, 255, 255, 1)"
     });

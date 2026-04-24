@@ -62,7 +62,7 @@ exports.handler = async (event) => {
   }
 
   // Look up the Firebase URL from the cache doc
-  let firebaseUrl;
+  let firebaseUrl, updatedAtMs;
   try {
     const snap = await db.collection("EtsyMail_TrackingCache").doc(trackingCode).get();
     if (!snap.exists) {
@@ -72,7 +72,9 @@ exports.handler = async (event) => {
         body: JSON.stringify({ error: "Tracking image not found — not cached yet" })
       };
     }
-    firebaseUrl = snap.data().imageUrl;
+    const docData = snap.data();
+    firebaseUrl = docData.imageUrl;
+    updatedAtMs = docData.updatedAt?.toMillis?.() || Date.now();
     if (!firebaseUrl) {
       return {
         statusCode: 404,
@@ -85,6 +87,26 @@ exports.handler = async (event) => {
       statusCode: 500,
       headers: { ...CORS, "Content-Type": "application/json" },
       body: JSON.stringify({ error: `Firestore lookup failed: ${e.message}` })
+    };
+  }
+
+  // ETag based on the Firestore updatedAt timestamp — this means whenever
+  // the tracking snapshot refreshes and writes a new doc, the ETag changes
+  // and both browser + CDN caches automatically refetch.
+  const etag = `"${trackingCode}-${updatedAtMs}"`;
+
+  // Respect If-None-Match for conditional requests
+  const ifNoneMatch = event.headers["if-none-match"] || event.headers["If-None-Match"];
+  if (ifNoneMatch && ifNoneMatch === etag) {
+    return {
+      statusCode: 304,
+      headers: {
+        ...CORS,
+        "ETag": etag,
+        "Cross-Origin-Resource-Policy": "cross-origin",
+        "Cache-Control": "public, max-age=60, must-revalidate"
+      },
+      body: ""
     };
   }
 
@@ -108,14 +130,18 @@ exports.handler = async (event) => {
     };
   }
 
-  // Stream the bytes back with same-origin-friendly headers
+  // Stream the bytes back with same-origin-friendly headers.
+  // Cache-Control: max-age=60 means the browser keeps it for 60s but then
+  // revalidates (our 304 ETag handler above runs fast). must-revalidate
+  // forces a fresh check when the image is requested after max-age.
   return {
     statusCode: 200,
     headers: {
       ...CORS,
       "Content-Type"                 : "image/png",
+      "ETag"                         : etag,
       "Cross-Origin-Resource-Policy" : "cross-origin",
-      "Cache-Control"                : "public, max-age=900"   // 15 min CDN cache
+      "Cache-Control"                : "public, max-age=60, must-revalidate"
     },
     body           : buffer.toString("base64"),
     isBase64Encoded: true

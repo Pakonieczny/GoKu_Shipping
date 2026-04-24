@@ -1565,8 +1565,16 @@
           // Rather than fetch-to-blob (which hits CORS), route through a
           // same-origin proxy endpoint that streams the bytes back with
           // the right headers.
+          // Cache-buster: use the job's updatedAt timestamp (or imageUrl
+          // itself) so the browser refetches when the snapshot refreshes.
+          // The server sends an ETag matching this, so on revisits without
+          // a cache change the browser gets a fast 304.
+          const v = img.updatedAt?._ts ? img.updatedAt.ms
+                  : img.updatedAt?.ms   ? img.updatedAt.ms
+                  : Date.now();
           const proxyUrl = "/.netlify/functions/etsyMailTrackingImage?trackingCode=" +
-                           encodeURIComponent(img.trackingCode);
+                           encodeURIComponent(img.trackingCode) +
+                           "&v=" + v;
           bodyHtml =
             '<img src="' + esc(proxyUrl) + '" ' +
                  'data-firebase-url="' + esc(img.imageUrl) + '" ' +

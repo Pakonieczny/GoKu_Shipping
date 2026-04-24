@@ -205,6 +205,72 @@ function normalizeEvent(e) {
   };
 }
 
+/**
+ * Sanitize an event for customer-facing display.
+ *
+ * Customers should never see references to Chit Chats' internal operations,
+ * sorting facilities, or border crossings — they're irrelevant to the
+ * customer and create confusion. We present a clean USPS-flavored narrative:
+ * the label was created, postage was purchased, and then USPS scans begin.
+ *
+ * Returns:
+ *   - null        → drop this event entirely (Chit Chats/border activity)
+ *   - { ...event} → show with optionally rewritten title/location
+ */
+function sanitizeEvent(e) {
+  const t = String(e.title || "").toLowerCase();
+  const loc = String(e.location || "").toLowerCase();
+  const combined = (t + " " + loc).toLowerCase();
+
+  // DROP: events mentioning border activity. Customers don't need to see
+  // the Canada→US handoff — from their perspective it's just "in transit."
+  if (/border/i.test(t) ||
+      /crossed.*border|border.*crossing|pending.*induction/i.test(t)) {
+    return null;
+  }
+
+  // DROP: internal Chit Chats operations (arrived at / departed from / received
+  // by Chit Chats, shipment created for Chit Chats). These are all irrelevant
+  // pre-USPS logistics.
+  if (/chit\s*chats/i.test(combined) &&
+      /(arrived|departed|received|shipping partner|awaiting|shipment created)/i.test(t)) {
+    return null;
+  }
+
+  // Clone the event so we don't mutate the original
+  const sanitized = {
+    at       : e.at,
+    title    : e.title,
+    subtitle : e.subtitle,
+    location : e.location,
+    status   : e.status
+  };
+
+  // REWRITE: keep Label Created / Postage Purchased but strip any location
+  // that names Chit Chats or reveals origin facility details. The customer
+  // doesn't need to know the label was generated in Niagara Falls.
+  if (/shipping label created|label created/i.test(t)) {
+    sanitized.title = "Label Created";
+    sanitized.location = null;
+  } else if (/postage purchased/i.test(t)) {
+    sanitized.title = "Postage Purchased";
+    sanitized.location = null;
+  } else if (/arrived shipping partner/i.test(t)) {
+    // This is the handoff to Chit Chats' partner — drop it too
+    return null;
+  }
+
+  // Final safety net: scrub any lingering "Chit Chats" strings anywhere
+  if (sanitized.title)    sanitized.title    = sanitized.title.replace(/\bChit\s*Chats\b/gi, "").replace(/\s+/g, " ").trim();
+  if (sanitized.location) sanitized.location = sanitized.location.replace(/\bChit\s*Chats\b/gi, "").replace(/\s+/g, " ").trim();
+  if (sanitized.subtitle) sanitized.subtitle = sanitized.subtitle.replace(/\bChit\s*Chats\b/gi, "").replace(/\s+/g, " ").trim();
+
+  // If scrubbing emptied the title, drop the event
+  if (!sanitized.title) return null;
+
+  return sanitized;
+}
+
 /** Turn a Chit Chats shipment object into our normalized tracking result. */
 function shapeShipment(shipment, trackingCodeRequested) {
   const rawEvents = shipment.tracking_events || shipment.tracking_details || [];
@@ -216,7 +282,11 @@ function shapeShipment(shipment, trackingCodeRequested) {
 
   const events = (Array.isArray(rawEvents) ? rawEvents : [])
     .map(normalizeEvent)
-    .filter((e) => e.title);
+    .filter((e) => e.title)
+    .map(sanitizeEvent)          // Hide Chit Chats / border events
+    .filter(Boolean);             // Drop nulls from sanitizer
+
+  console.log(`[chitchats] shapeShipment: after sanitization events.length=${events.length}`);
 
   // Sort newest first for display
   events.sort((a, b) => {
