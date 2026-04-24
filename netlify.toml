@@ -3,7 +3,9 @@
 
 [functions]
   node_bundler = "esbuild"
-  external_node_modules = ["sharp", "puppeteer-core", "@sparticuz/chromium-min"]
+  external_node_modules = ["sharp", "@resvg/resvg-js"]
+  # Font files for resvg-js — bundled with every function that needs them
+  included_files = ["netlify/functions/fonts/**"]
 
 # ─── M3: Etsy receipts sync ────────────────────────────────────────────────
 # Two-function architecture:
