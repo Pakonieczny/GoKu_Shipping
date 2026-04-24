@@ -483,14 +483,29 @@ async function render(tracking) {
   const fontBuffers = [_fontBuffer];
   if (_fontBufferBold) fontBuffers.push(_fontBufferBold);
 
+  // Strip both font-family and font-weight. font-weight can also cause
+  // invisible text if we request a weight not present in the loaded TTF
+  // (e.g. the SVG asks for 700 but we only loaded a 400-weight Regular).
+  // Without it, resvg renders at the weight the font naturally has.
+  let sanitizedSvg = svg.replace(/\sfont-family\s*=\s*"[^"]*"/g, "");
+  if (!_fontBufferBold) {
+    sanitizedSvg = sanitizedSvg.replace(/\sfont-weight\s*=\s*"[^"]*"/g, "");
+  }
+
   let png, pngWidth, pngHeight;
   try {
-    const resvg = new _resvgModule.Resvg(svg, {
+    const resvg = new _resvgModule.Resvg(sanitizedSvg, {
       fitTo: { mode: "width", value: width * 2 },   // 2× DPI for retina crispness
       font: {
         fontBuffers,
         loadSystemFonts: false,
-        defaultFontFamily: "Open Sans"
+        // No defaultFontFamily — let resvg pick the first loaded font
+        // from fontBuffers (the Regular, then Bold if present)
+        serifFamily     : "",
+        sansSerifFamily : "",
+        cursiveFamily   : "",
+        fantasyFamily   : "",
+        monospaceFamily : ""
       },
       background: "rgba(255, 255, 255, 1)"
     });
