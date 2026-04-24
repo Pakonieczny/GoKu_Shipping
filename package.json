@@ -17,9 +17,7 @@
     "@google-cloud/storage": "^7.16.0",
     "sharp": "^0.33.5",
     "jszip": "^3.10.1",
-    "@metavrse-inc/metavrse-lib": "latest",
-    "@sparticuz/chromium-min": "^131.0.0",
-    "puppeteer-core": "^24.0.0"
+    "@metavrse-inc/metavrse-lib": "latest"
   },
   "devDependencies": {
     "vite": "^5.0.0"
