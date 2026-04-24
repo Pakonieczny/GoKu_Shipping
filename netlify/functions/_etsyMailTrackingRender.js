@@ -483,29 +483,42 @@ async function render(tracking) {
   const fontBuffers = [_fontBuffer];
   if (_fontBufferBold) fontBuffers.push(_fontBufferBold);
 
-  // Strip both font-family and font-weight. font-weight can also cause
-  // invisible text if we request a weight not present in the loaded TTF
-  // (e.g. the SVG asks for 700 but we only loaded a 400-weight Regular).
-  // Without it, resvg renders at the weight the font naturally has.
-  let sanitizedSvg = svg.replace(/\sfont-family\s*=\s*"[^"]*"/g, "");
+  // Strategy: embed the loaded font DIRECTLY into the SVG as base64 via
+  // @font-face. This completely bypasses resvg's font-name-matching logic:
+  // the font IS the SVG, and we explicitly give it a name we control.
+  //
+  // Result: resvg sees a @font-face rule with family name "Embedded",
+  // and our SVG <text> elements all use font-family="Embedded" → guaranteed
+  // match regardless of the TTF's internal name table.
+  const fontBase64 = _fontBuffer.toString("base64");
+  const fontFaceCss = `
+    @font-face {
+      font-family: "Embedded";
+      src: url("data:font/ttf;base64,${fontBase64}") format("truetype");
+    }
+  `;
+
+  // Inject the @font-face into the SVG's <defs> and rewrite every
+  // font-family attribute to "Embedded"
+  let injectedSvg = svg.replace(
+    /<defs>/,
+    `<defs><style>${fontFaceCss}</style>`
+  );
+  // Replace all font-family= attributes with our embedded name
+  injectedSvg = injectedSvg.replace(/font-family\s*=\s*"[^"]*"/g, 'font-family="Embedded"');
+  // Remove font-weight since we only have one weight
   if (!_fontBufferBold) {
-    sanitizedSvg = sanitizedSvg.replace(/\sfont-weight\s*=\s*"[^"]*"/g, "");
+    injectedSvg = injectedSvg.replace(/\sfont-weight\s*=\s*"[^"]*"/g, "");
   }
 
   let png, pngWidth, pngHeight;
   try {
-    const resvg = new _resvgModule.Resvg(sanitizedSvg, {
+    const resvg = new _resvgModule.Resvg(injectedSvg, {
       fitTo: { mode: "width", value: width * 2 },   // 2× DPI for retina crispness
       font: {
         fontBuffers,
         loadSystemFonts: false,
-        // No defaultFontFamily — let resvg pick the first loaded font
-        // from fontBuffers (the Regular, then Bold if present)
-        serifFamily     : "",
-        sansSerifFamily : "",
-        cursiveFamily   : "",
-        fantasyFamily   : "",
-        monospaceFamily : ""
+        defaultFontFamily: "Embedded"   // matches our @font-face name
       },
       background: "rgba(255, 255, 255, 1)"
     });
