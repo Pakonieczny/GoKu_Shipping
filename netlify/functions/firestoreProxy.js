@@ -41,7 +41,9 @@ const CALLABLE_COLLS = new Set([
   "EtsyMail_Drafts",
   "EtsyMail_Audit",
   "EtsyMail_Jobs",
-  "EtsyMail_Config"
+  "EtsyMail_Config",
+  "EtsyMail_TrackingCache",   // M4 tracking-image cache (keyed by tracking code)
+  "EtsyMail_TrackingJobs"     // M4 tracking-image async job status (keyed by jobId)
 ]);
 const CALLABLE_SUBS = new Set([
   "messages"

@@ -472,6 +472,28 @@
       align-self: center;
     }
 
+    /* Placeholder for pending/failed tracking images */
+    .em-ti-placeholder {
+      display: flex; flex-direction: column; align-items: center;
+      padding: 40px 20px; gap: 10px;
+      color: #64748b; font-size: 13px; text-align: center;
+    }
+    .em-ti-placeholder .material-icons { font-size: 32px; }
+    .em-ti-pending .material-icons { color: #0969da; }
+    .em-ti-failed  .material-icons { color: #cf222e; }
+    .em-ti-failed  { color: #a40e26; }
+    .em-ti-muted   { font-size: 11px; color: #94a3b8; margin-top: 4px; }
+    .em-ti-error-detail {
+      font-size: 11px; color: #64748b;
+      font-family: monospace; max-width: 320px;
+      overflow-wrap: break-word;
+    }
+    @keyframes em-ti-spin {
+      from { transform: rotate(0deg); }
+      to   { transform: rotate(360deg); }
+    }
+    .em-ti-spin { animation: em-ti-spin 1.1s linear infinite; }
+
     /* ── Revise instructions popover ─────────────────────────────── */
     .em-revise-row {
       display: flex; gap: 6px; margin-top: 6px; align-items: stretch;
@@ -1412,47 +1434,156 @@
      *                         when the reply is sent (M5; off by default
      *                         for now since extension-send isn't built)
      */
+    /* Tracking-image renderer with job-polling support.
+     *
+     * Each image may be in one of two states:
+     *   1. Inline (ready immediately)   — img.imageUrl is present
+     *   2. Pending (background job)     — img.jobId is present, img.status === "pending"
+     *
+     * For pending images, we show a loading placeholder + poll Firestore
+     * every 2.5 seconds until the job hits "ready" or "failed". Max poll
+     * duration: 3 minutes (72 polls), after which we show a timeout error.
+     */
+
+    // Track active pollers so we can cancel them on re-render
+    if (!window.__emTrackingPollers) window.__emTrackingPollers = new Map();
+
+    function cancelAllTrackingPollers() {
+      window.__emTrackingPollers.forEach(p => clearInterval(p));
+      window.__emTrackingPollers.clear();
+    }
+
+    async function pollTrackingJob(jobId, imageIdx, imagesRef, rerender) {
+      const MAX_POLLS = 72;     // 72 * 2.5s = 3 min
+      const INTERVAL_MS = 2500;
+      let pollCount = 0;
+
+      const tick = async () => {
+        pollCount++;
+        if (pollCount > MAX_POLLS) {
+          clearInterval(window.__emTrackingPollers.get(jobId));
+          window.__emTrackingPollers.delete(jobId);
+          // Mark as failed for UI
+          const img = imagesRef[imageIdx];
+          if (img) {
+            img.status = "failed";
+            img.errorText = "Timed out after 3 min";
+            rerender();
+          }
+          return;
+        }
+
+        try {
+          const r = await api("firestoreProxy", {
+            method: "GET",
+            query: { op: "get", coll: "EtsyMail_TrackingJobs", id: jobId }
+          });
+          if (!r || !r.exists || !r.doc) return;
+
+          const doc = r.doc;
+          if (doc.status === "ready") {
+            clearInterval(window.__emTrackingPollers.get(jobId));
+            window.__emTrackingPollers.delete(jobId);
+            // Merge job data into the image object
+            const img = imagesRef[imageIdx];
+            if (img) {
+              img.status           = "ready";
+              img.carrier          = doc.carrier;
+              img.carrierDisplay   = doc.carrierDisplay;
+              img.statusText       = doc.statusText;
+              img.statusKey        = doc.statusKey;
+              img.estimatedDelivery= doc.estimatedDelivery;
+              img.destination      = doc.destination;
+              img.imageUrl         = doc.imageUrl;
+              img.imageStoragePath = doc.imageStoragePath;
+              img.imageWidth       = doc.imageWidth;
+              img.imageHeight      = doc.imageHeight;
+              img.events           = doc.events || [];
+              rerender();
+            }
+          } else if (doc.status === "failed") {
+            clearInterval(window.__emTrackingPollers.get(jobId));
+            window.__emTrackingPollers.delete(jobId);
+            const img = imagesRef[imageIdx];
+            if (img) {
+              img.status    = "failed";
+              img.errorText = doc.error || "Tracking lookup failed";
+              img.errorCode = doc.errorCode || null;
+              rerender();
+            }
+          }
+          // else: status still "pending" or "running" — keep polling
+        } catch (e) {
+          console.warn("Tracking poll error:", e.message);
+          // Keep polling; might be a transient proxy error
+        }
+      };
+
+      // Kick off interval + also run immediately
+      const interval = setInterval(tick, INTERVAL_MS);
+      window.__emTrackingPollers.set(jobId, interval);
+      tick();   // don't wait 2.5s for first check
+    }
+
     function renderTrackingImages(images) {
       const box = $("emTrackingImages");
       if (!box) return;
+
+      // Cancel any previous pollers on re-render (avoid duplicate polling)
+      cancelAllTrackingPollers();
+
       if (!images || !images.length) {
         box.style.display = "none";
         box.innerHTML = "";
         return;
       }
       box.style.display = "flex";
+
+      const rerender = () => renderTrackingImages(images);
+
       box.innerHTML = images.map((img, idx) => {
-        const statusCls = (img.statusKey || "in_transit").replace(/[^a-z_]/gi, "");
+        const isPending  = img.status === "pending" || (!img.imageUrl && !img.errorText);
+        const isFailed   = img.status === "failed";
+        const isReady    = img.status === "ready" || !!img.imageUrl;
+
         const codeDisplay = String(img.trackingCode || "").replace(/(.{4})/g, "$1 ").trim();
+        const statusCls = isFailed ? "exception"
+                       : (img.statusKey || "in_transit").replace(/[^a-z_]/gi, "");
+        const statusLabel = isFailed ? "Failed"
+                          : isPending ? "Generating…"
+                          : (img.statusText || img.status || "In Transit");
         const est = img.estimatedDelivery
           ? " · ETA " + new Date(img.estimatedDelivery).toLocaleDateString("en-US", { month: "short", day: "numeric" })
           : "";
         const dest = img.destination ? " · to " + esc(img.destination) : "";
-        const cachedNote = img.cached ? " · cached" : " · fresh";
 
-        return (
-          '<div class="em-tracking-image-card" data-idx="' + idx + '">' +
-            '<div class="em-tracking-image-header">' +
-              '<div class="em-tracking-image-header-left">' +
-                '<div class="em-tracking-image-icon">' +
-                  '<i class="material-icons">local_shipping</i>' +
-                '</div>' +
-                '<div class="em-tracking-image-meta">' +
-                  '<div class="em-tracking-image-title">' +
-                    esc(img.carrierDisplay || "Carrier") + esc(est) + esc(dest) +
-                  '</div>' +
-                  '<div class="em-tracking-image-subtitle">' + esc(codeDisplay) + '</div>' +
-                '</div>' +
-              '</div>' +
-              '<span class="em-tracking-image-status ' + statusCls + '">' +
-                esc(img.status || "In Transit") +
-              '</span>' +
-            '</div>' +
-            '<div class="em-tracking-image-body">' +
-              '<img src="' + esc(img.imageUrl) + '" ' +
-                   'alt="Tracking timeline for ' + esc(img.trackingCode) + '" ' +
-                   'data-idx="' + idx + '" class="em-ti-img"/>' +
-            '</div>' +
+        // Body content changes based on state
+        let bodyHtml;
+        if (isReady && img.imageUrl) {
+          bodyHtml =
+            '<img src="' + esc(img.imageUrl) + '" ' +
+                 'alt="Tracking timeline for ' + esc(img.trackingCode) + '" ' +
+                 'data-idx="' + idx + '" class="em-ti-img"/>';
+        } else if (isFailed) {
+          bodyHtml =
+            '<div class="em-ti-placeholder em-ti-failed">' +
+              '<i class="material-icons">error_outline</i>' +
+              '<div>Tracking lookup failed</div>' +
+              (img.errorText ? '<div class="em-ti-error-detail">' + esc(img.errorText) + '</div>' : '') +
+            '</div>';
+        } else {
+          bodyHtml =
+            '<div class="em-ti-placeholder em-ti-pending">' +
+              '<i class="material-icons em-ti-spin">refresh</i>' +
+              '<div>Generating tracking timeline…</div>' +
+              '<div class="em-ti-muted">This may take up to 30 seconds</div>' +
+            '</div>';
+        }
+
+        // Action buttons only shown when ready
+        let actionsHtml = "";
+        if (isReady) {
+          actionsHtml =
             '<div class="em-tracking-image-actions">' +
               '<button class="em-ti-copy"     data-idx="' + idx + '">' +
                 '<i class="material-icons">content_copy</i>Copy image</button>' +
@@ -1464,13 +1595,47 @@
                 '<i class="material-icons">' + (img.queuedForSend !== false ? "check_circle" : "radio_button_unchecked") + '</i>' +
                 (img.queuedForSend !== false ? "Queued for send" : "Not queued") +
               '</button>' +
-              '<span class="em-muted-note">' + esc(cachedNote.slice(3)) + '</span>' +
+            '</div>';
+        } else if (isFailed) {
+          actionsHtml =
+            '<div class="em-tracking-image-actions">' +
+              '<button class="em-ti-retry" data-idx="' + idx + '">' +
+                '<i class="material-icons">refresh</i>Retry</button>' +
+            '</div>';
+        }
+
+        return (
+          '<div class="em-tracking-image-card" data-idx="' + idx + '">' +
+            '<div class="em-tracking-image-header">' +
+              '<div class="em-tracking-image-header-left">' +
+                '<div class="em-tracking-image-icon">' +
+                  '<i class="material-icons">local_shipping</i>' +
+                '</div>' +
+                '<div class="em-tracking-image-meta">' +
+                  '<div class="em-tracking-image-title">' +
+                    esc(img.carrierDisplay || "Tracking") + esc(est) + esc(dest) +
+                  '</div>' +
+                  '<div class="em-tracking-image-subtitle">' + esc(codeDisplay) + '</div>' +
+                '</div>' +
+              '</div>' +
+              '<span class="em-tracking-image-status ' + statusCls + '">' +
+                esc(statusLabel) +
+              '</span>' +
             '</div>' +
+            '<div class="em-tracking-image-body">' + bodyHtml + '</div>' +
+            actionsHtml +
           '</div>'
         );
       }).join("");
 
-      // Thumbnail click → open full-size in new tab
+      // Start pollers for any pending jobs
+      images.forEach((img, idx) => {
+        if ((img.status === "pending" || (!img.imageUrl && !img.errorText)) && img.jobId) {
+          pollTrackingJob(img.jobId, idx, images, rerender);
+        }
+      });
+
+      // Attach button handlers (only for cards that have buttons)
       box.querySelectorAll(".em-ti-img").forEach(el => {
         el.addEventListener("click", () => {
           const idx = Number(el.dataset.idx);
@@ -1479,17 +1644,12 @@
         });
       });
 
-      // Copy image → fetches PNG bytes and copies to clipboard (operator
-      // pastes into Etsy compose box). ClipboardItem isn't available in
-      // all browsers — feature-detect and fall back to download + hint
-      // if unsupported.
       box.querySelectorAll(".em-ti-copy").forEach(btn => {
-        btn.addEventListener("click", async (e) => {
+        btn.addEventListener("click", async () => {
           const idx = Number(btn.dataset.idx);
           const img = images[idx];
           if (!img || !img.imageUrl) return;
 
-          // Feature detection
           const canClipboardImage = (
             typeof ClipboardItem !== "undefined" &&
             navigator.clipboard &&
@@ -1497,17 +1657,14 @@
           );
 
           if (!canClipboardImage) {
-            toast("Your browser can't copy images to clipboard — using Download instead");
-            // Simulate a download
+            toast("Your browser can't copy images — using Download instead");
             const r = await fetch(img.imageUrl);
             const blob = await r.blob();
             const url = URL.createObjectURL(blob);
             const a = document.createElement("a");
             a.href = url;
             a.download = "tracking-" + String(img.trackingCode || "unknown").replace(/[^a-z0-9]/gi, "_") + ".png";
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
+            document.body.appendChild(a); a.click(); a.remove();
             setTimeout(() => URL.revokeObjectURL(url), 5000);
             return;
           }
@@ -1520,15 +1677,10 @@
             if (!r.ok) throw new Error("Fetch failed: " + r.status);
             const blob = await r.blob();
             const pngBlob = blob.type === "image/png" ? blob : new Blob([await blob.arrayBuffer()], { type: "image/png" });
-            await navigator.clipboard.write([
-              new ClipboardItem({ "image/png": pngBlob })
-            ]);
+            await navigator.clipboard.write([ new ClipboardItem({ "image/png": pngBlob }) ]);
             btn.innerHTML = '<i class="material-icons">check</i>Copied!';
             toast("Tracking image copied — paste into Etsy reply");
-            setTimeout(() => {
-              btn.innerHTML = originalHtml;
-              btn.disabled = false;
-            }, 2000);
+            setTimeout(() => { btn.innerHTML = originalHtml; btn.disabled = false; }, 2000);
           } catch (err) {
             btn.innerHTML = originalHtml;
             btn.disabled = false;
@@ -1538,7 +1690,6 @@
         });
       });
 
-      // Download → triggers a browser download of the PNG
       box.querySelectorAll(".em-ti-download").forEach(btn => {
         btn.addEventListener("click", async () => {
           const idx = Number(btn.dataset.idx);
@@ -1551,9 +1702,7 @@
             const a = document.createElement("a");
             a.href = url;
             a.download = "tracking-" + String(img.trackingCode || "unknown").replace(/[^a-z0-9]/gi, "_") + ".png";
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
+            document.body.appendChild(a); a.click(); a.remove();
             setTimeout(() => URL.revokeObjectURL(url), 5000);
           } catch (err) {
             toast("Download failed: " + err.message);
@@ -1561,7 +1710,6 @@
         });
       });
 
-      // Full size → new tab
       box.querySelectorAll(".em-ti-open").forEach(btn => {
         btn.addEventListener("click", () => {
           const idx = Number(btn.dataset.idx);
@@ -1570,20 +1718,56 @@
         });
       });
 
-      // Queue toggle → flips the queuedForSend flag in-memory + toggles
-      // button appearance. The actual send is M5 territory; for now this
-      // just records operator intent.
       box.querySelectorAll(".em-ti-queue").forEach(btn => {
         btn.addEventListener("click", () => {
           const idx = Number(btn.dataset.idx);
           const img = images[idx];
           if (!img) return;
-          img.queuedForSend = img.queuedForSend === false;   // toggle
+          img.queuedForSend = img.queuedForSend === false;
           const isQueued = img.queuedForSend !== false;
           btn.classList.toggle("queued", isQueued);
           btn.innerHTML = '<i class="material-icons">' +
             (isQueued ? "check_circle" : "radio_button_unchecked") +
             '</i>' + (isQueued ? "Queued for send" : "Not queued");
+        });
+      });
+
+      box.querySelectorAll(".em-ti-retry").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          const idx = Number(btn.dataset.idx);
+          const img = images[idx];
+          if (!img) return;
+          // Reset UI state
+          img.status = "pending";
+          img.errorText = null;
+          img.jobId = null;
+          rerender();
+          // Re-request from the snapshot endpoint (force refresh)
+          try {
+            const res = await fetch("/.netlify/functions/etsyMailTrackingSnapshot", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ trackingCode: img.trackingCode, forceRefresh: true })
+            });
+            const data = await res.json();
+            if (data.inline && data.imageUrl) {
+              // Got cache hit (weird for forceRefresh, but handle it)
+              Object.assign(img, data, { status: "ready" });
+              rerender();
+            } else if (data.jobId) {
+              img.jobId = data.jobId;
+              rerender();
+              pollTrackingJob(data.jobId, idx, images, rerender);
+            } else {
+              img.status = "failed";
+              img.errorText = data.error || "Retry failed";
+              rerender();
+            }
+          } catch (e) {
+            img.status = "failed";
+            img.errorText = "Retry failed: " + e.message;
+            rerender();
+          }
         });
       });
     }

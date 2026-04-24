@@ -50,16 +50,24 @@ const fetch = require("node-fetch");
 
 const DEFAULT_ACTOR  = "substantial_sponge~usps-tracking";
 const APIFY_BASE     = "https://api.apify.com/v2";
-const DEFAULT_TIMEOUT = 60;
+const DEFAULT_TIMEOUT = 180;   // Apify actor max run time in seconds (generous for cold starts)
+const DEFAULT_HTTP_TIMEOUT_MS = 10 * 60 * 1000;  // 10 min HTTP-client timeout; this function
+                                                  // runs inside a background function with 15-min budget
 
 const ACTOR_ID       = process.env.APIFY_USPS_ACTOR_ID || DEFAULT_ACTOR;
 const APIFY_TOKEN    = process.env.APIFY_API_TOKEN || "";
 const RUN_TIMEOUT_SEC = Number(process.env.APIFY_TIMEOUT_SEC) || DEFAULT_TIMEOUT;
+const HTTP_TIMEOUT_MS = Number(process.env.APIFY_HTTP_TIMEOUT_MS) || DEFAULT_HTTP_TIMEOUT_MS;
 
 /**
  * Call the Apify actor synchronously and wait for results.
  * Uses run-sync-get-dataset-items which blocks until the actor finishes
- * and returns the dataset directly (simpler than run + poll + fetch dataset).
+ * and returns the dataset directly.
+ *
+ * IMPORTANT: This function is ONLY called from inside a background function
+ * (etsyMailTrackingSnapshot-background.js) which has a 15-minute execution
+ * budget. That's why we can tolerate Apify's 10-30 second cold starts.
+ * Don't call this from a sync function — it will exceed the 10-sec cap.
  */
 async function callApifyActor(trackingCode) {
   if (!APIFY_TOKEN) {
@@ -79,10 +87,8 @@ async function callApifyActor(trackingCode) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
-      // Netlify sync functions have a 10 s timeout. Cap Apify wait below that
-      // so we can return a helpful error if it times out.
-      // (Apify's own timeout is RUN_TIMEOUT_SEC; this is the HTTP client timeout.)
-      timeout: 9000
+      // Generous HTTP-client timeout — background function has 15 min total
+      timeout: HTTP_TIMEOUT_MS
     });
   } catch (e) {
     const err = new Error(`Apify call failed: ${e.message}`);

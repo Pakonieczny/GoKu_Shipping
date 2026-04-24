@@ -843,77 +843,110 @@ function buildToolExecutors(ctx) {
       return { __terminal: true, received: true, composed: true };
     },
 
-    // Generate a branded tracking-timeline image. Calls the shared
-    // _etsyMailTracking module directly (NOT via self-HTTP-call) so we
-    // avoid stacked timeouts + cold-start duplication. The module handles
-    // carrier auto-detect, cache check, fetch, render, upload, and cache
-    // write. We capture the result on ctx.trackingImages for the response
-    // handler to include in the final draft payload.
+    // Generate a branded tracking-timeline image.
+    //
+    // Architecture:
+    //   - Calls the snapshot endpoint (fast; creates a job doc, fires the
+    //     background function, returns a jobId within ~1 sec)
+    //   - On cache hit: endpoint returns inline data (no job needed)
+    //   - On cache miss: endpoint returns { jobId, status: "pending" }
+    //     and the background function does the slow work (up to 15 min)
+    //
+    // Either way, the AI's tool call completes in <2 seconds. The UI polls
+    // EtsyMail_TrackingJobs/{jobId} for the final image.
     generate_tracking_image: async (input) => {
       const trackingCode = String(input.trackingCode || "").trim();
       if (!trackingCode) {
         return { error: "trackingCode is required" };
       }
 
-      const { snapshot } = require("./_etsyMailTracking");
+      const fetch = require("node-fetch");
 
-      let result;
+      // Build the self-URL for our own snapshot endpoint. In Netlify prod,
+      // process.env.URL is the site's canonical URL.
+      const baseUrl = process.env.URL ||
+                      process.env.DEPLOY_PRIME_URL ||
+                      process.env.NETLIFY_SITE_URL ||
+                      "https://etsy-mail-1.goldenspike.app";
+      const endpoint = `${baseUrl.replace(/\/$/, "")}/.netlify/functions/etsyMailTrackingSnapshot`;
+
+      let res, body;
       try {
-        result = await snapshot(trackingCode, { forceRefresh: false });
+        res = await fetch(endpoint, {
+          method : "POST",
+          headers: { "Content-Type": "application/json" },
+          body   : JSON.stringify({ trackingCode }),
+          timeout: 9000
+        });
+        const text = await res.text();
+        try { body = JSON.parse(text); }
+        catch { body = { error: `Non-JSON response: ${text.slice(0, 300)}` }; }
       } catch (e) {
+        return { error: `Tracking snapshot call failed: ${e.message}`, trackingCode };
+      }
+
+      if (!res.ok) {
         return {
-          error: e.message || "Tracking snapshot failed",
-          code : e.code || "TRACKING_FAILED",
-          trackingCode,
-          hint : e.code === "UNKNOWN_CARRIER"
-                   ? "Tracking code format not recognized. Expected USPS (12-26 digits), UPU S10 (LX057703046NL), or Chit Chats shipment ID (10 alphanumeric chars)."
-               : e.code === "NOT_FOUND"
-                   ? "The carrier does not have a record for this tracking code. It may be too old or entered incorrectly."
-               : e.code === "APIFY_ERROR" || e.code === "APIFY_NETWORK"
-                   ? "USPS scraper (Apify) failed. APIFY_API_TOKEN may be missing, or Apify is temporarily unavailable."
-               : null
+          error       : body.error || `Tracking snapshot returned ${res.status}`,
+          code        : body.code || null,
+          trackingCode
         };
       }
 
+      // Record the job reference so the UI can render a placeholder + poll
       if (ctx.trackingImages) {
         ctx.trackingImages.push({
-          trackingCode    : result.trackingCode,
-          carrier         : result.carrier,
-          carrierDisplay  : result.carrierDisplay,
-          status          : result.status,
-          statusKey       : result.statusKey,
-          estimatedDelivery: result.estimatedDelivery,
-          destination     : result.destination,
-          imageUrl        : result.imageUrl,
-          imageStoragePath: result.imageStoragePath,
-          imageWidth      : result.imageWidth,
-          imageHeight     : result.imageHeight,
-          cached          : result.cached,
-          eventCount      : (result.events || []).length,
-          latestEvent     : (result.events || [])[0] || null
+          trackingCode     : body.trackingCode,
+          jobId            : body.jobId || null,
+          status           : body.status || "pending",    // "pending" | "ready"
+          inline           : body.inline === true,         // cache hit flag
+          carrier          : body.carrier || null,
+          carrierDisplay   : body.carrierDisplay || null,
+          statusText       : body.statusText || null,
+          statusKey        : body.statusKey || null,
+          estimatedDelivery: body.estimatedDelivery || null,
+          destination      : body.destination || null,
+          imageUrl         : body.imageUrl || null,        // null unless inline=true
+          imageStoragePath : body.imageStoragePath || null,
+          imageWidth       : body.imageWidth || null,
+          imageHeight      : body.imageHeight || null,
+          eventCount       : (body.events || []).length,
+          latestEvent      : (body.events || [])[0] || null
         });
       }
 
-      // Compact result for the model — the image exists on Storage and
-      // the UI will display it. The model doesn't need to "see" the PNG;
-      // it just needs to know the call succeeded + what data was found
-      // so it can reference it naturally.
-      return {
-        success            : true,
-        trackingCode       : result.trackingCode,
-        carrier            : result.carrierDisplay,
-        status             : result.status,
-        statusKey          : result.statusKey,
-        estimatedDelivery  : result.estimatedDelivery,
-        destination        : result.destination,
-        eventCount         : (result.events || []).length,
-        latestEventTitle   : (result.events || [])[0]?.title || null,
-        latestEventLocation: (result.events || [])[0]?.location || null,
-        latestEventAt      : (result.events || [])[0]?.at || null,
-        imageGenerated     : true,
-        imageUrl           : result.imageUrl,
-        cached             : result.cached
-      };
+      // Return a compact summary to the model so it can reference the
+      // tracking image naturally in its draft.
+      //
+      // On cache hit (inline=true): model has full tracking data to cite
+      // On cache miss: model just knows an image is being generated — it
+      //   should reference it as "the tracking details attached below"
+      //   without pretending to know specifics it hasn't seen.
+      if (body.inline) {
+        return {
+          success            : true,
+          imageGenerated     : true,
+          trackingCode       : body.trackingCode,
+          carrier            : body.carrierDisplay,
+          status             : body.statusText,
+          statusKey          : body.statusKey,
+          estimatedDelivery  : body.estimatedDelivery,
+          destination        : body.destination,
+          eventCount         : (body.events || []).length,
+          latestEventTitle   : (body.events || [])[0]?.title || null,
+          latestEventLocation: (body.events || [])[0]?.location || null,
+          latestEventAt      : (body.events || [])[0]?.at || null,
+          cached             : true
+        };
+      } else {
+        return {
+          success         : true,
+          imageGenerating : true,
+          trackingCode    : body.trackingCode,
+          jobId           : body.jobId,
+          note            : "The tracking image is being generated in the background (typically 5-30 sec). Reference it in your reply as 'the tracking details attached below' — the operator's UI will display it as soon as it's ready."
+        };
+      }
     }
   };
 }
