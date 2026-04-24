@@ -54,10 +54,10 @@ const authHeaders = () => ({
 });
 
 /** Fetch JSON from a URL with good error surfacing. */
-async function getJSON(url, headers = {}) {
+async function getJSON(url, headers = {}, timeout = 30000) {
   let res;
   try {
-    res = await fetch(url, { headers, timeout: 8000 });
+    res = await fetch(url, { headers, timeout });
   } catch (e) {
     throw new Error(`Network error calling ${url}: ${e.message}`);
   }
@@ -109,10 +109,12 @@ async function resolveByCarrierCode(carrierCode) {
     return null;
   }
 
-  const url = `${BASE}/clients/${encodeURIComponent(CLIENT_ID)}/shipments?limit=100&q=${encodeURIComponent(carrierCode)}`;
+  const url = `${BASE}/clients/${encodeURIComponent(CLIENT_ID)}/shipments?limit=20&q=${encodeURIComponent(carrierCode)}`;
   console.log(`[chitchats] resolveByCarrierCode ${url}`);
   try {
-    const result = await getJSON(url, authHeaders());
+    // Use 30s timeout — Chit Chats q= searches can be slow on large accounts.
+    // Background function has 15 min budget so we can afford to wait.
+    const result = await getJSON(url, authHeaders(), 30000);
     // v1 wraps in { shipments: [...] } on newer versions, raw array on older
     const list = Array.isArray(result) ? result : (result?.shipments || []);
     console.log(`[chitchats] resolveByCarrierCode ${carrierCode} → ${list.length} candidate(s)`);
