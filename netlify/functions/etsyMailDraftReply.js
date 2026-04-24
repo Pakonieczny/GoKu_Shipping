@@ -519,6 +519,71 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
       - Don't start with "I understand your concern" or similar
         canned empathy openers
       - Contractions are fine (we're, you're, it's)
+      - NEVER use em-dashes (—), en-dashes (–), or hyphens used as
+        sentence separators ("so -- here's the thing"). These are the
+        #1 tell for AI-generated text. Use commas, periods, or
+        parentheses instead. A normal hyphen inside a compound word
+        ("follow-up", "well-made") is fine; dashes between clauses
+        are NOT. Rewrite any sentence that would naturally want one.
+      - NEVER use bulleted lists, numbered lists, or horizontal
+        rule lines in replies. Keep everything in natural prose.
+
+      - BREVITY: be concise and to the point. A warm, specific
+        3-5 sentence reply lands better than a 150-word wall. Cover
+        exactly what the customer asked; don't pad with context they
+        didn't request. Rule of thumb: if you're explaining something
+        they already knew, delete it.
+
+      - PERSONAL TOUCH: if the customer mentions personal context
+        (a trip, a birthday, a gift for their kid, an illness, a new
+        home, a hobby), acknowledge it NATURALLY in one short phrase.
+        Not a whole paragraph. One warm line at the start or end:
+           "Hope the Hawaii trip is amazing!"
+           "Sending good vibes to your mom."
+           "Bet your daughter is going to love it."
+        Do this ONCE per reply, MAX. Never fabricate details that
+        weren't in their message. If they didn't share anything
+        personal, skip this entirely — forced friendliness reads
+        worse than none.
+
+7. HARD CONTENT BANS — NEVER mention any of the following anywhere in
+   a draft reply, under any circumstances, even if the customer asks
+   about them directly:
+      - The word "Canada" or "Canadian" in ANY form
+      - Any reference to the country of origin, border, customs clearance,
+        international shipping, or handoff between countries
+      - "Chit Chats", "ChitChats", or any variant (it's our shipping
+        partner — customers don't need to know)
+      - Any shipping-partner facility, sorting hub, or intermediary
+        logistics company
+      - Anything suggesting the package traveled internationally before
+        reaching USPS
+   If the customer specifically asks "where is it shipping from?" answer
+   honestly that it's on its way via USPS and focus on when it'll arrive.
+   If they ask about customs, say the package is domestic USPS and has
+   no customs clearance needed.
+   Our shipping narrative is simple: "we ship via USPS" — period.
+
+8. TIME AWARENESS — YOU KNOW THE CURRENT DATE/TIME.
+   The TEMPORAL CONTEXT at the top of this message tells you the real
+   current time, when the customer's latest message was sent, and how
+   long ago that was. Use this to reason intelligently:
+      - A customer who wrote 5 days ago asking "where is it" may have
+        already received their package. Check tracking BEFORE replying
+        as if their concern is live.
+      - If tracking shows scans AFTER the customer's message timestamp,
+        lead with the update: "Good news — since your message, it's now
+        in <location>" — don't pretend their old concern is current.
+      - Use relative time ("yesterday", "this morning", "3 days ago") in
+        your replies as the default. Add specific dates for key milestones
+        (e.g. "your package was accepted at USPS on April 24").
+      - When reconciling customer claims with scan reality, the scan
+        timestamps are ground truth. If they say "stuck in Niagara" but
+        latest scan shows it's already in Rochester, the situation has
+        moved on — tell them so.
+      - The tracking tool returns a 'reconciliation.summary' field that
+        tells you plainly whether the situation has changed since they
+        wrote — USE IT to shape your tone.
 
 `.trim();
 
@@ -604,8 +669,63 @@ compose_draft_reply.
 // instructions. This lives ABOVE the real conversation history so the
 // model has scene-setting before it reads the messages themselves.
 
-function buildContextPreamble({ thread, customer, mode, currentDraft, instructions, employeeName }) {
+function buildContextPreamble({ thread, customer, mode, currentDraft, instructions, employeeName, messages }) {
   const sections = [];
+
+  // ─── TEMPORAL CONTEXT — CRITICAL ─────────────────────────────────
+  // Without this, the AI has no concept of "now" — it only knows what
+  // date the most recent message was sent. For time-sensitive customer
+  // support (shipping delays, tracking updates), the AI MUST know:
+  //   - Current real-world time
+  //   - How long ago the customer's latest message was sent
+  //   - How long ago the thread was last touched
+  // so it can distinguish "I just got this, still actively discussing" from
+  // "this has been sitting for days and may have been overtaken by events"
+  const now = new Date();
+  const currentTimeStr = now.toLocaleString("en-US", {
+    weekday: "long", year: "numeric", month: "long", day: "numeric",
+    hour: "numeric", minute: "2-digit", hour12: true,
+    timeZone: "America/New_York", timeZoneName: "short"
+  });
+
+  sections.push(`--- TEMPORAL CONTEXT (REAL-WORLD TIME AT DRAFT TIME) ---`);
+  sections.push(`Current time: ${currentTimeStr}`);
+
+  // Calculate age of the latest customer message
+  const customerMessages = (messages || []).filter(m => m.sender === "customer" || m.role === "customer" || m.fromCustomer);
+  const latestCustomer = customerMessages[customerMessages.length - 1] || null;
+  if (latestCustomer) {
+    const ts = latestCustomer.timestamp?.toMillis?.() ||
+               latestCustomer.createdAt?.toMillis?.() ||
+               (typeof latestCustomer.timestamp === "number" ? latestCustomer.timestamp : null) ||
+               (typeof latestCustomer.createdAt === "number" ? latestCustomer.createdAt : null);
+    if (ts) {
+      const ageMs = now.getTime() - ts;
+      const ageHrs = ageMs / 3600000;
+      const ageDays = ageMs / 86400000;
+      const ageStr = ageHrs < 1    ? `${Math.round(ageMs/60000)} minutes ago`
+                   : ageHrs < 24   ? `${ageHrs.toFixed(1)} hours ago`
+                   : ageDays < 7   ? `${Math.floor(ageDays)} days, ${Math.round((ageDays % 1) * 24)} hours ago`
+                   : `${Math.floor(ageDays)} days ago`;
+      const sentStr = new Date(ts).toLocaleString("en-US", {
+        weekday: "long", month: "long", day: "numeric",
+        hour: "numeric", minute: "2-digit", hour12: true,
+        timeZone: "America/New_York"
+      });
+      sections.push(`Customer's latest message sent: ${sentStr} (${ageStr})`);
+
+      if (ageDays >= 2) {
+        sections.push(`** STALENESS WARNING: The customer wrote this ${Math.floor(ageDays)} days ago. **`);
+        sections.push(`   The situation may have changed significantly since then. When you pull tracking data,`);
+        sections.push(`   compare the scan timestamps to the message timestamp — if meaningful events have`);
+        sections.push(`   happened since the customer wrote, LEAD WITH THE UPDATE:`);
+        sections.push(`     "Good news — since your message, it's now arrived at <location>"`);
+        sections.push(`   Don't reply as if their concern is still the current reality if it isn't.`);
+      }
+    }
+  }
+
+  sections.push("");
 
   sections.push(`--- THREAD METADATA ---`);
   sections.push(`Thread ID: ${thread.id}`);
@@ -915,28 +1035,81 @@ function buildToolExecutors(ctx) {
         });
       }
 
-      // Return a compact summary to the model so it can reference the
-      // tracking image naturally in its draft.
+      // Return a rich tracking summary to the model so it can reason about
+      // time-sensitive context: how recent is the latest scan, what has
+      // happened since the customer wrote, and whether the customer's
+      // concern is still the current reality.
       //
-      // On cache hit (inline=true): model has full tracking data to cite
-      // On cache miss: model just knows an image is being generated — it
-      //   should reference it as "the tracking details attached below"
-      //   without pretending to know specifics it hasn't seen.
+      // On cache hit (inline=true): full analytical data
+      // On cache miss: image is generating in the background; still return
+      // what analytical data the enqueue response included.
+      const now = Date.now();
+      const events = body.events || [];
+      const latestEvent = events[0] || null;
+      const latestEventMs = latestEvent?.at ? new Date(latestEvent.at).getTime() : null;
+
+      // Compute "hours since last scan" and staleness labels
+      const hoursSinceLatestScan = latestEventMs
+        ? ((now - latestEventMs) / 3600000)
+        : null;
+
+      let scanFreshness = null;
+      if (hoursSinceLatestScan != null) {
+        if (hoursSinceLatestScan < 12)      scanFreshness = "very_fresh";   // moved in last 12h
+        else if (hoursSinceLatestScan < 48) scanFreshness = "fresh";        // normal
+        else if (hoursSinceLatestScan < 96) scanFreshness = "aging";        // 2-4 days
+        else                                scanFreshness = "stale";        // 4+ days = concerning
+      }
+
+      // Reconcile against customer's message timestamp
+      let reconciliation = null;
+      if (latestEventMs && ctx.latestCustomerMsgMs) {
+        const eventsAfterMessage = events.filter(e =>
+          e.at && new Date(e.at).getTime() > ctx.latestCustomerMsgMs
+        );
+        const scanAfterMessageHours =
+          (latestEventMs - ctx.latestCustomerMsgMs) / 3600000;
+
+        reconciliation = {
+          newScansAfterCustomerMessage : eventsAfterMessage.length,
+          latestScanAfterMessageByHours: scanAfterMessageHours > 0 ? scanAfterMessageHours : 0,
+          situationChangedSinceMessage : eventsAfterMessage.length > 0,
+          // Human-friendly summary the AI can quote verbatim
+          summary: eventsAfterMessage.length === 0
+            ? "No new scans since the customer wrote. Their concern likely still reflects current reality."
+            : `${eventsAfterMessage.length} new scan${eventsAfterMessage.length > 1 ? "s" : ""} since the customer's message. The situation has changed — lead with the update.`
+        };
+      }
+
+      // Compact event trail for the AI — limit to most recent 6 for prompt size
+      const recentEvents = events.slice(0, 6).map(e => ({
+        at        : e.at,
+        title     : e.title,
+        location  : e.location,
+        hoursAgo  : e.at ? Math.round((now - new Date(e.at).getTime()) / 3600000) : null
+      }));
+
       if (body.inline) {
         return {
-          success            : true,
-          imageGenerated     : true,
-          trackingCode       : body.trackingCode,
-          carrier            : body.carrierDisplay,
-          status             : body.statusText,
-          statusKey          : body.statusKey,
-          estimatedDelivery  : body.estimatedDelivery,
-          destination        : body.destination,
-          eventCount         : (body.events || []).length,
-          latestEventTitle   : (body.events || [])[0]?.title || null,
-          latestEventLocation: (body.events || [])[0]?.location || null,
-          latestEventAt      : (body.events || [])[0]?.at || null,
-          cached             : true
+          success               : true,
+          imageGenerated        : true,
+          trackingCode          : body.trackingCode,
+          carrier               : body.carrierDisplay,
+          status                : body.statusText,
+          statusKey             : body.statusKey,
+          estimatedDelivery     : body.estimatedDelivery,
+          destination           : body.destination,
+          eventCount            : events.length,
+          latestEvent           : latestEvent ? {
+            at      : latestEvent.at,
+            title   : latestEvent.title,
+            location: latestEvent.location
+          } : null,
+          hoursSinceLatestScan  : hoursSinceLatestScan ? Math.round(hoursSinceLatestScan * 10) / 10 : null,
+          scanFreshness,          // "very_fresh" | "fresh" | "aging" | "stale"
+          recentEvents,           // up to 6 most recent with hoursAgo
+          reconciliation,         // { newScansAfterCustomerMessage, summary, ... }
+          cached                : true
         };
       } else {
         return {
@@ -944,7 +1117,7 @@ function buildToolExecutors(ctx) {
           imageGenerating : true,
           trackingCode    : body.trackingCode,
           jobId           : body.jobId,
-          note            : "The tracking image is being generated in the background (typically 5-30 sec). Reference it in your reply as 'the tracking details attached below' — the operator's UI will display it as soon as it's ready."
+          note            : "The tracking image is being generated in the background. Reference it in your reply as 'the tracking details attached below' — the operator's UI will display it as soon as it's ready."
         };
       }
     }
@@ -1025,7 +1198,7 @@ exports.handler = async (event) => {
     // ─── 2. Build the Anthropic message array ──────────────────────
     // Context preamble first (as a user turn), then the real conversation.
     const preambleText = buildContextPreamble({
-      thread, customer, mode, currentDraft, instructions, employeeName
+      thread, customer, mode, currentDraft, instructions, employeeName, messages
     });
     const { turns: convTurns, imagesAttached } = await buildConversationMessages(
       messages, elidedCount, hasMore, includeImages
@@ -1041,10 +1214,25 @@ exports.handler = async (event) => {
     const system = buildSystemPromptText(promptConfig, shopEnrichment, employeeName);
 
     // ─── 4. Run the tool-use loop ──────────────────────────────────
+    // Grab the latest customer message timestamp so tool executors can
+    // reason about temporal reconciliation (e.g. "this scan happened
+    // AFTER the customer wrote, so the situation has changed").
+    const customerMsgs = messages.filter(m =>
+      m.sender === "customer" || m.role === "customer" || m.fromCustomer
+    );
+    const latestCustomerMsg = customerMsgs[customerMsgs.length - 1] || null;
+    const latestCustomerMsgMs = latestCustomerMsg
+      ? (latestCustomerMsg.timestamp?.toMillis?.() ||
+         latestCustomerMsg.createdAt?.toMillis?.() ||
+         (typeof latestCustomerMsg.timestamp === "number" ? latestCustomerMsg.timestamp : null) ||
+         (typeof latestCustomerMsg.createdAt  === "number" ? latestCustomerMsg.createdAt  : null))
+      : null;
+
     const toolContext = {
       thread,
       customer,
-      trackingImages: []   // collected by generate_tracking_image executor
+      latestCustomerMsgMs,       // ms timestamp of customer's most recent message
+      trackingImages: []         // collected by generate_tracking_image executor
     };
     const toolExecutors = buildToolExecutors(toolContext);
 
@@ -1082,9 +1270,57 @@ exports.handler = async (event) => {
     let parsed;
     let parsedOk = false;
 
+    /**
+     * Post-process the draft text to enforce hard content rules the prompt
+     * asked for. Even the best system prompt can slip occasionally; this
+     * catches anything that leaks through.
+     *
+     * Rules:
+     *   - No em-dashes, en-dashes, or ASCII double-hyphens used as
+     *     sentence separators (AI-tell)
+     *   - No horizontal rules ("---", "***", "___" on their own line)
+     *   - No Canada / Canadian references
+     *   - No Chit Chats references
+     */
+    function postProcessDraft(text) {
+      if (!text) return text;
+      let s = String(text);
+
+      // Replace em-dashes (—) and en-dashes (–) with commas. If the dash
+      // was surrounded by spaces (a separator use), the comma + space
+      // reads naturally. Collapse any resulting double-spaces.
+      s = s.replace(/\s*[—–]\s*/g, ", ");
+
+      // Replace ASCII double-hyphens used as separators (" -- ") with
+      // commas. Leave single hyphens alone (they may be in compound
+      // words like "follow-up").
+      s = s.replace(/\s+--\s+/g, ", ");
+
+      // Remove horizontal-rule lines (---, ***, ___ on their own)
+      s = s.replace(/^\s*[-*_]{3,}\s*$/gm, "");
+
+      // Remove forbidden shipping-origin references. If any slip through,
+      // replace with graceful alternatives rather than leaving broken text.
+      s = s.replace(/\bChit\s*Chats?\b/gi, "our shipping partner");
+      s = s.replace(/\bfrom\s+Canada\b/gi, "from our facility");
+      s = s.replace(/\bin\s+Canada\b/gi, "at our facility");
+      s = s.replace(/\bCanadian\b/gi, "");
+      s = s.replace(/\bCanada\b/gi, "");
+
+      // Cleanup: collapse runs of commas/spaces that may result from
+      // scrubbing, and tidy trailing whitespace
+      s = s.replace(/,\s*,/g, ",");
+      s = s.replace(/[ \t]+/g, " ");
+      s = s.replace(/\s+([.,;!?])/g, "$1");
+      s = s.split("\n").map(line => line.replace(/\s+$/, "")).join("\n");
+      s = s.replace(/\n{3,}/g, "\n\n");
+
+      return s.trim();
+    }
+
     if (composeCall && composeCall.input && typeof composeCall.input.text === "string") {
       parsed = {
-        text                : composeCall.input.text.trim(),
+        text                : postProcessDraft(composeCall.input.text.trim()),
         reasoning           : String(composeCall.input.reasoning || "").trim(),
         referencedReceiptIds: Array.isArray(composeCall.input.referencedReceiptIds) ? composeCall.input.referencedReceiptIds.map(String) : [],
         suggestedListings   : Array.isArray(composeCall.input.suggestedListings) ? composeCall.input.suggestedListings : [],
@@ -1099,7 +1335,7 @@ exports.handler = async (event) => {
       const finalContent = Array.isArray(loopResult.finalResponse.content) ? loopResult.finalResponse.content : [];
       const lastText = finalContent.filter(b => b.type === "text").map(b => b.text).join("\n\n").trim();
       parsed = {
-        text                : lastText || "(Model finished without producing a draft. Try again.)",
+        text                : postProcessDraft(lastText) || "(Model finished without producing a draft. Try again.)",
         reasoning           : "(Model did not call compose_draft_reply — using last text block as reply.)",
         referencedReceiptIds: loopResult.toolCalls
           .filter(tc => tc.name === "lookup_order_tracking" || tc.name === "lookup_order_details")

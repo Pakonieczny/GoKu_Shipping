@@ -260,13 +260,37 @@ function sanitizeEvent(e) {
     return null;
   }
 
-  // Final safety net: scrub any lingering "Chit Chats" strings anywhere
-  if (sanitized.title)    sanitized.title    = sanitized.title.replace(/\bChit\s*Chats\b/gi, "").replace(/\s+/g, " ").trim();
-  if (sanitized.location) sanitized.location = sanitized.location.replace(/\bChit\s*Chats\b/gi, "").replace(/\s+/g, " ").trim();
-  if (sanitized.subtitle) sanitized.subtitle = sanitized.subtitle.replace(/\bChit\s*Chats\b/gi, "").replace(/\s+/g, " ").trim();
+  // Final safety net: scrub any lingering forbidden strings anywhere.
+  // We never want the customer to see:
+  //   - "Chit Chats" (our shipping partner, customers don't need to know)
+  //   - Any reference to Canada, Canadian cities, or Canadian provinces
+  //     (hides international origin of the package)
+  const forbidden = [
+    /\bChit\s*Chats?\b/gi,
+    /\bCanada\b/gi,
+    /\bCanadian\b/gi,
+    // Canadian provinces (commonly in location strings as "CITY, ON" etc.)
+    /,\s*(ON|QC|BC|AB|MB|SK|NS|NB|NL|PE|YT|NT|NU)\b/gi,
+    // Mississauga is Chit Chats' main facility city — scrub by name too
+    /\bMISSISSAUGA\b/gi,
+    /\bNiagara\s*Falls,?\s*ON\b/gi
+  ];
+  const scrub = (s) => {
+    if (!s) return s;
+    let out = String(s);
+    for (const re of forbidden) out = out.replace(re, "");
+    return out.replace(/\s+,/g, ",").replace(/\s+/g, " ").replace(/[,·\s]+$/, "").trim();
+  };
+  sanitized.title    = scrub(sanitized.title);
+  sanitized.location = scrub(sanitized.location);
+  sanitized.subtitle = scrub(sanitized.subtitle);
 
   // If scrubbing emptied the title, drop the event
   if (!sanitized.title) return null;
+  // If scrubbing emptied the location to just whitespace/commas, null it
+  if (sanitized.location && !/[A-Za-z0-9]/.test(sanitized.location)) {
+    sanitized.location = null;
+  }
 
   return sanitized;
 }
