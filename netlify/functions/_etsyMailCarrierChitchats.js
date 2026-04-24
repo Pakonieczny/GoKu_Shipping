@@ -44,8 +44,9 @@ const CLIENT_ID    = process.env.CHIT_CHATS_CLIENT_ID || "";
 const ACCESS_TOKEN = process.env.CHIT_CHATS_ACCESS_TOKEN || "";
 const BASE         = process.env.CHIT_CHATS_BASE_URL || DEFAULT_BASE;
 
-const CC_ID   = /^[A-Za-z0-9]{10}$/;
-const UPU_S10 = /^[A-Z]{2}\d{9}[A-Z]{2}$/;
+const CC_ID     = /^[A-Za-z0-9]{10}$/;
+const UPU_S10   = /^[A-Z]{2}\d{9}[A-Z]{2}$/;
+const USPS_NUM  = /^\d{12,34}$/;  // USPS numeric tracking (12-34 digit IMpb)
 
 const authHeaders = () => ({
   "Authorization": ACCESS_TOKEN,   // raw token per Chit Chats docs (NOT "Bearer ...")
@@ -77,12 +78,21 @@ async function getJSON(url, headers = {}) {
  * Returns null if the shipment isn't in this account (404) or env missing.
  */
 async function fetchShipmentById(shipmentId) {
-  if (!CLIENT_ID || !ACCESS_TOKEN) return null;
+  if (!CLIENT_ID || !ACCESS_TOKEN) {
+    console.log(`[chitchats] fetchShipmentById skipped - no CLIENT_ID/ACCESS_TOKEN`);
+    return null;
+  }
 
   try {
     const url = `${BASE}/clients/${encodeURIComponent(CLIENT_ID)}/shipments/${encodeURIComponent(shipmentId)}`;
-    return await getJSON(url, authHeaders());
+    console.log(`[chitchats] fetchShipmentById ${url}`);
+    const result = await getJSON(url, authHeaders());
+    const eventCount = (result?.shipment?.tracking_events || result?.tracking_events || []).length;
+    console.log(`[chitchats] fetchShipmentById ${shipmentId} → events=${eventCount} status=${result?.status || result?.shipment?.status}`);
+    // Chit Chats v1 wraps single-shipment responses in { shipment: {...} }
+    return result?.shipment || result;
   } catch (e) {
+    console.log(`[chitchats] fetchShipmentById ${shipmentId} failed: ${e.message}`);
     if (e.status === 404) return null;  // not in this account
     throw e;
   }
@@ -94,18 +104,38 @@ async function fetchShipmentById(shipmentId) {
  * Returns the shipment object if found, or null.
  */
 async function resolveByCarrierCode(carrierCode) {
-  if (!CLIENT_ID || !ACCESS_TOKEN) return null;
+  if (!CLIENT_ID || !ACCESS_TOKEN) {
+    console.log(`[chitchats] resolveByCarrierCode skipped - no CLIENT_ID/ACCESS_TOKEN`);
+    return null;
+  }
 
   const url = `${BASE}/clients/${encodeURIComponent(CLIENT_ID)}/shipments?limit=100&q=${encodeURIComponent(carrierCode)}`;
+  console.log(`[chitchats] resolveByCarrierCode ${url}`);
   try {
-    const list = await getJSON(url, authHeaders());
-    if (!Array.isArray(list)) return null;
+    const result = await getJSON(url, authHeaders());
+    // v1 wraps in { shipments: [...] } on newer versions, raw array on older
+    const list = Array.isArray(result) ? result : (result?.shipments || []);
+    console.log(`[chitchats] resolveByCarrierCode ${carrierCode} → ${list.length} candidate(s)`);
+
+    if (list.length === 0) return null;
+
     const normalized = String(carrierCode).toUpperCase();
     const match = list.find((s) =>
       String(s.carrier_tracking_code || "").toUpperCase() === normalized
     );
-    return match || null;
+
+    if (match) {
+      console.log(`[chitchats] resolveByCarrierCode match → shipment_id=${match.shipment_id || match.id}`);
+    } else {
+      console.log(`[chitchats] resolveByCarrierCode NO exact match in ${list.length} candidates`);
+      // Log the first candidate's carrier_tracking_code for debugging
+      if (list[0]) {
+        console.log(`[chitchats]   first candidate carrier_tracking_code=${list[0].carrier_tracking_code}`);
+      }
+    }
+    return match || list[0] || null;   // fall back to first candidate if no exact match
   } catch (e) {
+    console.log(`[chitchats] resolveByCarrierCode ${carrierCode} failed: ${e.message}`);
     return null;
   }
 }
@@ -176,6 +206,12 @@ function normalizeEvent(e) {
 /** Turn a Chit Chats shipment object into our normalized tracking result. */
 function shapeShipment(shipment, trackingCodeRequested) {
   const rawEvents = shipment.tracking_events || shipment.tracking_details || [];
+  console.log(`[chitchats] shapeShipment: keys=${Object.keys(shipment).join(",")}`);
+  console.log(`[chitchats] shapeShipment: rawEvents.length=${Array.isArray(rawEvents) ? rawEvents.length : "not array"}, status=${shipment.status}, resolution=${shipment.resolution}`);
+  if (Array.isArray(rawEvents) && rawEvents.length > 0) {
+    console.log(`[chitchats] shapeShipment: first event keys=${Object.keys(rawEvents[0]).join(",")}`);
+  }
+
   const events = (Array.isArray(rawEvents) ? rawEvents : [])
     .map(normalizeEvent)
     .filter((e) => e.title);
@@ -234,7 +270,11 @@ async function lookup(trackingCode) {
   if (!code) throw new Error("Missing tracking code");
 
   const isShipmentId  = CC_ID.test(code);
-  const isCarrierCode = UPU_S10.test(code);
+  // A "carrier code" in Chit Chats terms is anything searchable by /shipments?q=
+  // which includes both UPU S10 codes (international) and USPS numeric codes.
+  const isCarrierCode = UPU_S10.test(code) || USPS_NUM.test(code);
+
+  console.log(`[chitchats] lookup("${code}") isShipmentId=${isShipmentId} isCarrierCode=${isCarrierCode}`);
 
   // Path A: input looks like a Chit Chats shipment_id — try direct fetch first
   if (isShipmentId) {
