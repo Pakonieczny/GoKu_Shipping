@@ -45,20 +45,26 @@ let _fontBuffer      = null;
 let _fontBufferBold  = null;
 
 // ─── Design tokens ──────────────────────────────────────────────────────
+// Compact layout: 800px wide, ~60px per event row, minimal padding.
+// Target is to fit 10-15 events on screen without scrolling, scannable
+// at a glance.
 const WIDTH          = 800;
-const HEADER_HEIGHT  = 140;
-const EVENT_HEIGHT   = 88;     // vertical space per event row
-const PADDING_X      = 40;
-const FOOTER_HEIGHT  = 50;
-const MAX_EVENTS     = 20;     // cap to keep image sane
+const PADDING_X      = 32;
+const ROW_HEIGHT     = 46;     // compact row height — title + meta on two lines
+const ROW_HEIGHT_FIRST = 54;   // newest event gets slightly more room (bolder)
+const HEADER_HEIGHT  = 78;     // tightened from 140
+const FOOTER_HEIGHT  = 34;     // tightened from 50
+const MAX_EVENTS     = 15;     // cap — 15 events at ~46px = ~690px
 
 // Palette — muted navy + soft accents, works for both USPS and Chit Chats
 const COLOR_BG         = "#ffffff";
-const COLOR_BG_ACCENT  = "#f4f7fb";
-const COLOR_TEXT_DARK  = "#1e293b";
+const COLOR_BG_ACCENT  = "#f8fafc";
+const COLOR_TEXT_DARK  = "#0f172a";
+const COLOR_TEXT       = "#1e293b";
 const COLOR_TEXT_MUTED = "#64748b";
 const COLOR_PRIMARY    = "#1e40af";
 const COLOR_TIMELINE   = "#cbd5e1";
+const COLOR_BORDER     = "#e2e8f0";
 const COLOR_SUCCESS    = "#16a34a";
 const COLOR_WARNING    = "#f59e0b";
 const COLOR_ERROR      = "#dc2626";
@@ -125,6 +131,18 @@ function fmtDateTime(iso) {
   return d || t || "";
 }
 
+/** Compact datetime: "Apr 23 · 8:02 pm" — for one-line event rows. */
+function fmtDateTimeCompact(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return String(iso);
+  const date = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  const time = d.toLocaleTimeString("en-US", {
+    hour: "numeric", minute: "2-digit", hour12: true
+  }).toLowerCase();
+  return `${date} · ${time}`;
+}
+
 // ─── Tracking code formatting ────────────────────────────────────────────
 function formatTrackingCode(code) {
   // Insert spaces every 4 chars for readability (ignore for short codes)
@@ -179,159 +197,153 @@ function buildHeader(tracking) {
   const statusCol = statusColor[tracking.statusKey] || COLOR_PRIMARY;
   const ed = formatExpectedDelivery(tracking.estimatedDelivery);
 
-  let y = 32;
   const elements = [];
 
-  // Title row — "Tracking Number"
+  // LINE 1: tracking code (left) + status pill (right)
   elements.push(`
-    <text x="${PADDING_X}" y="${y}" font-family="Open Sans,Helvetica,Arial,sans-serif"
-          font-size="12" font-weight="600" fill="${COLOR_TEXT_MUTED}"
-          letter-spacing="1.5">TRACKING NUMBER</text>
-  `);
-  y += 22;
-
-  elements.push(`
-    <text x="${PADDING_X}" y="${y}" font-family="Open Sans,Helvetica,Arial,sans-serif"
-          font-size="22" font-weight="700" fill="${COLOR_TEXT_DARK}">
+    <text x="${PADDING_X}" y="32" font-family="Open Sans,Helvetica,Arial,sans-serif"
+          font-size="17" font-weight="700" fill="${COLOR_TEXT_DARK}"
+          letter-spacing="0.3">
       ${esc(code)}
     </text>
   `);
-  y += 14;
 
-  // Status pill (right side)
-  const pillWidth = Math.min(220, estimateWidth(tracking.status, 13) + 32);
+  // Status pill — right-aligned
+  const statusLabel = tracking.status.toUpperCase();
+  const pillWidth = Math.min(200, estimateWidth(statusLabel, 11) + 24);
   const pillX = WIDTH - PADDING_X - pillWidth;
   elements.push(`
-    <rect x="${pillX}" y="24" width="${pillWidth}" height="32" rx="16" fill="${statusCol}"/>
-    <text x="${pillX + pillWidth / 2}" y="45" font-family="Open Sans,Helvetica,Arial,sans-serif"
-          font-size="13" font-weight="600" fill="#ffffff" text-anchor="middle"
-          letter-spacing="0.5">
-      ${esc(tracking.status.toUpperCase())}
+    <rect x="${pillX}" y="14" width="${pillWidth}" height="26" rx="13" fill="${statusCol}"/>
+    <text x="${pillX + pillWidth / 2}" y="31" font-family="Open Sans,Helvetica,Arial,sans-serif"
+          font-size="11" font-weight="700" fill="#ffffff" text-anchor="middle"
+          letter-spacing="0.6">
+      ${esc(statusLabel)}
     </text>
   `);
 
-  // Expected delivery row (if available)
+  // LINE 2: carrier + ETA/destination subtitle
+  const carrierBit = tracking.carrierDisplay || "";
+  let subtitleParts = [carrierBit];
   if (ed) {
-    y += 26;
-    elements.push(`
-      <text x="${PADDING_X}" y="${y}" font-family="Open Sans,Helvetica,Arial,sans-serif"
-            font-size="12" font-weight="600" fill="${COLOR_TEXT_MUTED}"
-            letter-spacing="1.2">EXPECTED DELIVERY BY</text>
-    `);
-    y += 22;
-    const timeSuffix = ed.time ? `  by  ${ed.time}` : "";
-    elements.push(`
-      <text x="${PADDING_X}" y="${y}" font-family="Open Sans,Helvetica,Arial,sans-serif"
-            font-size="18" font-weight="600" fill="${COLOR_TEXT_DARK}">
-        ${esc(ed.weekday)}, ${esc(ed.monthDay)}${esc(timeSuffix)}
-      </text>
-    `);
+    const timeSuffix = ed.time ? ` by ${ed.time}` : "";
+    subtitleParts.push(`Expected ${ed.monthDay}${timeSuffix}`);
   } else if (tracking.destination) {
-    y += 26;
-    elements.push(`
-      <text x="${PADDING_X}" y="${y}" font-family="Open Sans,Helvetica,Arial,sans-serif"
-            font-size="13" fill="${COLOR_TEXT_MUTED}">
-        Destination: ${esc(tracking.destination)}
-      </text>
-    `);
+    subtitleParts.push(`to ${tracking.destination}`);
   }
+  const subtitle = subtitleParts.filter(Boolean).join(" · ");
+
+  elements.push(`
+    <text x="${PADDING_X}" y="56" font-family="Open Sans,Helvetica,Arial,sans-serif"
+          font-size="13" fill="${COLOR_TEXT_MUTED}">
+      ${esc(subtitle)}
+    </text>
+  `);
+
+  // Thin separator below header
+  elements.push(`
+    <line x1="${PADDING_X}" y1="${HEADER_HEIGHT - 8}" x2="${WIDTH - PADDING_X}" y2="${HEADER_HEIGHT - 8}"
+          stroke="${COLOR_BORDER}" stroke-width="1"/>
+  `);
 
   return {
     svg: elements.join("\n"),
-    height: y + 20
+    height: HEADER_HEIGHT
   };
 }
 
+/**
+ * Compact event row layout:
+ *
+ *   ○ Arrived at USPS Regional Origin Facility
+ *   │  NIAGARA FALLS NY · Apr 23, 8:02 pm
+ *
+ * Two lines per event, ~46px total. The newest event (isFirst) gets bold
+ * title + larger ring. All others use a muted dot.
+ */
 function buildEvent(event, x, y, isFirst, isLast, availableWidth) {
-  const dotX = x + 16;
-  const textX = x + 44;
-  const dotColor = isFirst ? COLOR_PRIMARY : COLOR_TIMELINE;
-  const dotRadius = isFirst ? 7 : 5;
-
-  const titleLines = wrapText(event.title, availableWidth - 44, 15);
-  let localY = y + 8;
+  const dotX = x + 12;
+  const textX = x + 36;
+  const rowH = isFirst ? ROW_HEIGHT_FIRST : ROW_HEIGHT;
   const elements = [];
 
-  // Timeline dot. For the first (newest) event, we render it as a white
-  // dot with a colored ring (primary brand color). Other events are a
-  // solid dot in the status color.
-  const circleFill   = isFirst ? "#ffffff"     : dotColor;
-  const circleStroke = isFirst ? COLOR_PRIMARY : "none";
-  const circleStrokeWidth = isFirst ? 3 : 0;
-
-  elements.push(`
-    <circle cx="${dotX}" cy="${localY + 6}" r="${dotRadius}"
-            fill="${circleFill}"
-            stroke="${circleStroke}"
-            stroke-width="${circleStrokeWidth}"/>
-  `);
-
-  // Title
-  for (const line of titleLines) {
-    elements.push(`
-      <text x="${textX}" y="${localY + 12}" font-family="Open Sans,Helvetica,Arial,sans-serif"
-            font-size="15" font-weight="${isFirst ? "700" : "600"}" fill="${COLOR_TEXT_DARK}">
-        ${esc(line)}
-      </text>
-    `);
-    localY += 20;
-  }
-
-  // Location
-  if (event.location) {
-    elements.push(`
-      <text x="${textX}" y="${localY + 10}" font-family="Open Sans,Helvetica,Arial,sans-serif"
-            font-size="13" fill="${COLOR_TEXT_DARK}">
-        ${esc(event.location)}
-      </text>
-    `);
-    localY += 18;
-  }
-
-  // Date/time
-  const dateTime = fmtDateTime(event.at);
-  if (dateTime) {
-    elements.push(`
-      <text x="${textX}" y="${localY + 10}" font-family="Open Sans,Helvetica,Arial,sans-serif"
-            font-size="12" fill="${COLOR_TEXT_MUTED}">
-        ${esc(dateTime)}
-      </text>
-    `);
-    localY += 18;
-  }
-
-  // Vertical timeline connector line (except for last)
+  // Timeline connector (runs full row height for all but the last)
   if (!isLast) {
-    const lineStartY = y + 20;
-    const lineEndY = y + EVENT_HEIGHT + 4;
     elements.push(`
-      <line x1="${dotX}" y1="${lineStartY}" x2="${dotX}" y2="${lineEndY}"
+      <line x1="${dotX}" y1="${y}" x2="${dotX}" y2="${y + rowH}"
             stroke="${COLOR_TIMELINE}" stroke-width="2"/>
     `);
   }
 
-  const actualHeight = Math.max(EVENT_HEIGHT, localY - y + 12);
+  // Timeline dot
+  const dotCY = y + 16;
+  if (isFirst) {
+    // Bold ring for newest event
+    elements.push(`
+      <circle cx="${dotX}" cy="${dotCY}" r="7"
+              fill="#ffffff" stroke="${COLOR_PRIMARY}" stroke-width="3"/>
+    `);
+  } else {
+    elements.push(`
+      <circle cx="${dotX}" cy="${dotCY}" r="4" fill="${COLOR_TIMELINE}"/>
+    `);
+  }
+
+  // LINE 1: event title (truncated if too long to fit on one line)
+  const titleMaxChars = Math.floor((availableWidth - 36) / estimateWidth("a", 14) * 1.05);
+  let title = event.title || "Scan";
+  if (title.length > titleMaxChars) {
+    title = title.slice(0, titleMaxChars - 1).trim() + "…";
+  }
+
+  elements.push(`
+    <text x="${textX}" y="${y + 20}" font-family="Open Sans,Helvetica,Arial,sans-serif"
+          font-size="${isFirst ? "15" : "14"}"
+          font-weight="${isFirst ? "700" : "600"}"
+          fill="${COLOR_TEXT_DARK}">
+      ${esc(title)}
+    </text>
+  `);
+
+  // LINE 2: location · datetime (muted, smaller)
+  const dateTime = fmtDateTimeCompact(event.at);
+  const metaParts = [];
+  if (event.location) metaParts.push(event.location);
+  if (dateTime)       metaParts.push(dateTime);
+  const metaText = metaParts.join(" · ");
+
+  if (metaText) {
+    elements.push(`
+      <text x="${textX}" y="${y + 38}" font-family="Open Sans,Helvetica,Arial,sans-serif"
+            font-size="12" fill="${COLOR_TEXT_MUTED}">
+        ${esc(metaText)}
+      </text>
+    `);
+  }
+
   return {
     svg: elements.join("\n"),
-    height: actualHeight
+    height: rowH
   };
 }
 
 function buildFooter(tracking, y) {
-  const footerText = `via ${tracking.carrierDisplay} tracking`;
+  const n = (tracking.events || []).length;
+  const capped = n > MAX_EVENTS;
+  const shown = Math.min(n, MAX_EVENTS);
+  let footerText;
+  if (capped) {
+    footerText = `Showing ${shown} of ${n} events · via ${tracking.carrierDisplay}`;
+  } else {
+    footerText = `${shown} ${shown === 1 ? "event" : "events"} · via ${tracking.carrierDisplay}`;
+  }
+
   const elements = [];
 
-  // Separator line
+  // Footer text (centered, muted)
   elements.push(`
-    <line x1="${PADDING_X}" y1="${y}" x2="${WIDTH - PADDING_X}" y2="${y}"
-          stroke="${COLOR_TIMELINE}" stroke-width="1" opacity="0.5"/>
-  `);
-
-  // Footer text (centered)
-  elements.push(`
-    <text x="${WIDTH / 2}" y="${y + 24}" font-family="Open Sans,Helvetica,Arial,sans-serif"
-          font-size="12" font-weight="500" fill="${COLOR_TEXT_MUTED}"
-          text-anchor="middle" letter-spacing="0.5">
+    <text x="${WIDTH / 2}" y="${y + 18}" font-family="Open Sans,Helvetica,Arial,sans-serif"
+          font-size="11" font-weight="500" fill="${COLOR_TEXT_MUTED}"
+          text-anchor="middle" letter-spacing="0.3">
       ${esc(footerText)}
     </text>
   `);
@@ -344,15 +356,11 @@ function buildSvg(tracking) {
   const events = (tracking.events || []).slice(0, MAX_EVENTS);
 
   const header = buildHeader(tracking);
-  let currentY = header.height + 10;
+  let currentY = header.height + 6;
 
-  // Start-of-events separator
-  const eventsStartY = currentY;
-  currentY += 8;
-
-  // Build each event (newest first)
+  // Build each event (newest first) — tightly packed
   const eventSvgs = [];
-  const availableWidth = WIDTH - PADDING_X * 2 - 16;
+  const availableWidth = WIDTH - PADDING_X * 2 - 12;
   for (let i = 0; i < events.length; i++) {
     const e = buildEvent(
       events[i],
@@ -369,20 +377,20 @@ function buildSvg(tracking) {
   // Empty state if no events
   if (events.length === 0) {
     eventSvgs.push(`
-      <text x="${WIDTH / 2}" y="${currentY + 40}"
+      <text x="${WIDTH / 2}" y="${currentY + 32}"
             font-family="Open Sans,Helvetica,Arial,sans-serif" font-size="14" fill="${COLOR_TEXT_MUTED}"
             text-anchor="middle">
         No tracking events yet
       </text>
     `);
-    currentY += 80;
+    currentY += 70;
   }
 
-  currentY += 8;
+  currentY += 4;
   const footer = buildFooter(tracking, currentY);
   currentY += FOOTER_HEIGHT;
 
-  const totalHeight = Math.max(400, Math.min(currentY + 12, 2400));
+  const totalHeight = Math.max(200, Math.min(currentY + 8, 1400));
 
   const svg = `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${WIDTH} ${totalHeight}"
@@ -398,8 +406,7 @@ function buildSvg(tracking) {
   <rect x="0" y="0" width="${WIDTH}" height="${totalHeight}" fill="${COLOR_BG}"/>
 
   <!-- Header region background -->
-  <rect x="0" y="0" width="${WIDTH}" height="${header.height + 10}"
-        fill="url(#headerGrad)"/>
+  <rect x="0" y="0" width="${WIDTH}" height="${HEADER_HEIGHT}" fill="url(#headerGrad)"/>
 
   <!-- Header content -->
   ${header.svg}
@@ -434,35 +441,70 @@ function buildSvg(tracking) {
 async function render(tracking) {
   const { svg, width, height } = buildSvg(tracking);
 
-  // Lazy-load resvg + font buffer on first use. Keep references on the
-  // module scope after load so subsequent renders are fast.
+  // Step 1: load the resvg module
   if (!_resvgModule) {
-    _resvgModule = require("@resvg/resvg-js");
+    try {
+      _resvgModule = require("@resvg/resvg-js");
+      console.log("[tracking-render] @resvg/resvg-js loaded");
+    } catch (e) {
+      throw new Error(
+        `Failed to load @resvg/resvg-js — is it installed? ` +
+        `Run 'npm install' and verify package.json + netlify.toml externals. ` +
+        `Original: ${e.message}`
+      );
+    }
   }
+
+  // Step 2: load the font files
   if (!_fontBuffer) {
     const fontPath = path.join(__dirname, "fonts", "OpenSans-Regular.ttf");
     const fontBoldPath = path.join(__dirname, "fonts", "OpenSans-Bold.ttf");
-    _fontBuffer = fs.readFileSync(fontPath);
-    try { _fontBufferBold = fs.readFileSync(fontBoldPath); } catch { /* optional */ }
+    try {
+      _fontBuffer = fs.readFileSync(fontPath);
+      console.log(`[tracking-render] Loaded OpenSans-Regular.ttf (${_fontBuffer.length} bytes)`);
+    } catch (e) {
+      throw new Error(
+        `Could not load Open Sans font from ${fontPath}. ` +
+        `Download it from https://fonts.google.com/specimen/Open+Sans and place at ` +
+        `netlify/functions/fonts/OpenSans-Regular.ttf. ` +
+        `Make sure netlify.toml includes: included_files = ["netlify/functions/fonts/**"]. ` +
+        `Original: ${e.message}`
+      );
+    }
+    try {
+      _fontBufferBold = fs.readFileSync(fontBoldPath);
+      console.log(`[tracking-render] Loaded OpenSans-Bold.ttf (${_fontBufferBold.length} bytes)`);
+    } catch {
+      console.warn("[tracking-render] OpenSans-Bold.ttf not found — bold text will use Regular");
+    }
   }
 
+  // Step 3: render SVG → PNG
   const fontBuffers = [_fontBuffer];
   if (_fontBufferBold) fontBuffers.push(_fontBufferBold);
 
-  const resvg = new _resvgModule.Resvg(svg, {
-    fitTo: { mode: "width", value: width * 2 },   // 2× DPI for retina-crisp text
-    font: {
-      fontBuffers,
-      loadSystemFonts: false,   // Don't bother trying — Netlify has none
-      defaultFontFamily: "Open Sans"
-    },
-    background: "rgba(255, 255, 255, 1)"
-  });
+  let png, pngWidth, pngHeight;
+  try {
+    const resvg = new _resvgModule.Resvg(svg, {
+      fitTo: { mode: "width", value: width * 2 },   // 2× DPI for retina crispness
+      font: {
+        fontBuffers,
+        loadSystemFonts: false,
+        defaultFontFamily: "Open Sans"
+      },
+      background: "rgba(255, 255, 255, 1)"
+    });
 
-  const pngData = resvg.render();
-  const png = Buffer.from(pngData.asPng());
+    const pngData = resvg.render();
+    png = Buffer.from(pngData.asPng());
+    pngWidth = pngData.width;
+    pngHeight = pngData.height;
+    console.log(`[tracking-render] Rendered PNG ${pngWidth}×${pngHeight} (${png.length} bytes)`);
+  } catch (e) {
+    throw new Error(`resvg-js render failed: ${e.message}`);
+  }
 
-  return { svg, png, width: pngData.width, height: pngData.height };
+  return { svg, png, width: pngWidth, height: pngHeight };
 }
 
 module.exports = { render, buildSvg };
