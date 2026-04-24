@@ -72,7 +72,7 @@ const SELECTOR_TIMEOUT = Number(process.env.USPS_SELECTOR_WAIT_MS)   || DEFAULT_
 const USER_AGENT       = process.env.USPS_USER_AGENT                  || DEFAULT_UA;
 const DEBUG_RETURN_HTML = /^(1|true|yes)$/i.test(process.env.USPS_DEBUG_RETURN_HTML || "");
 
-const USPS_URL = (code) => `https://tools.usps.com/go/TrackConfirmAction?tLabels=${encodeURIComponent(code)}`;
+const USPS_URL = (code) => `https://tools.usps.com/go/TrackConfirmAction?qtc_tLabels1=${encodeURIComponent(code)}`;
 
 /** Launch a headless Chromium browser configured for Netlify. */
 async function launchBrowser() {
@@ -315,9 +315,33 @@ async function lookup(trackingCode) {
     const data = await extractData(page);
     console.log(`[usps] extracted: status="${data.statusText}" events=${data.events.length} pageTitle="${data.pageTitle}"`);
 
-    // If we got zero events AND no status, we likely hit a blocked/error page
+    // Detect USPS's "service unavailable" / "tracking number not found" pages.
+    // These render without a tracking card but USPS still returns HTTP 200, so
+    // the only signal is the page text. If we see it, fail explicitly
+    // instead of screenshotting a useless error page.
+    const pageBody = await page.evaluate(() => document.body.innerText || "");
+    const firstKB = pageBody.slice(0, 1024).toLowerCase();
+
+    if (firstKB.includes("service is currently unavailable") ||
+        firstKB.includes("service is temporarily unavailable")) {
+      throw Object.assign(
+        new Error("USPS tracking service is temporarily unavailable"),
+        { code: "USPS_UNAVAILABLE" }
+      );
+    }
+
+    if (firstKB.includes("could not locate") ||
+        firstKB.includes("tracking information") && firstKB.includes("not available") ||
+        firstKB.includes("no record of this")) {
+      throw Object.assign(
+        new Error(`USPS has no record of tracking number ${code} — it may be too new or invalid`),
+        { code: "USPS_NOT_FOUND" }
+      );
+    }
+
+    // If we got zero events AND no meaningful status, we likely hit a
+    // blocked/error page of some kind
     if (data.events.length === 0 && !data.statusText) {
-      // Dump HTML for debugging if enabled
       let pageHtml = null;
       if (DEBUG_RETURN_HTML) {
         pageHtml = await page.content();
