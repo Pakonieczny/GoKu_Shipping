@@ -34,7 +34,15 @@
  * rasterization.
  */
 
-const sharp = require("sharp");
+const fs   = require("fs");
+const path = require("path");
+
+// @resvg/resvg-js is lazy-loaded in the render() function to avoid a
+// module-load failure if the package isn't installed yet. We cache the
+// module reference + font buffers here after first use.
+let _resvgModule     = null;
+let _fontBuffer      = null;
+let _fontBufferBold  = null;
 
 // ─── Design tokens ──────────────────────────────────────────────────────
 const WIDTH          = 800;
@@ -176,14 +184,14 @@ function buildHeader(tracking) {
 
   // Title row — "Tracking Number"
   elements.push(`
-    <text x="${PADDING_X}" y="${y}" font-family="Helvetica,Arial,sans-serif"
+    <text x="${PADDING_X}" y="${y}" font-family="Open Sans,Helvetica,Arial,sans-serif"
           font-size="12" font-weight="600" fill="${COLOR_TEXT_MUTED}"
           letter-spacing="1.5">TRACKING NUMBER</text>
   `);
   y += 22;
 
   elements.push(`
-    <text x="${PADDING_X}" y="${y}" font-family="'Helvetica Neue',Helvetica,Arial,sans-serif"
+    <text x="${PADDING_X}" y="${y}" font-family="Open Sans,Helvetica,Arial,sans-serif"
           font-size="22" font-weight="700" fill="${COLOR_TEXT_DARK}">
       ${esc(code)}
     </text>
@@ -195,7 +203,7 @@ function buildHeader(tracking) {
   const pillX = WIDTH - PADDING_X - pillWidth;
   elements.push(`
     <rect x="${pillX}" y="24" width="${pillWidth}" height="32" rx="16" fill="${statusCol}"/>
-    <text x="${pillX + pillWidth / 2}" y="45" font-family="Helvetica,Arial,sans-serif"
+    <text x="${pillX + pillWidth / 2}" y="45" font-family="Open Sans,Helvetica,Arial,sans-serif"
           font-size="13" font-weight="600" fill="#ffffff" text-anchor="middle"
           letter-spacing="0.5">
       ${esc(tracking.status.toUpperCase())}
@@ -206,14 +214,14 @@ function buildHeader(tracking) {
   if (ed) {
     y += 26;
     elements.push(`
-      <text x="${PADDING_X}" y="${y}" font-family="Helvetica,Arial,sans-serif"
+      <text x="${PADDING_X}" y="${y}" font-family="Open Sans,Helvetica,Arial,sans-serif"
             font-size="12" font-weight="600" fill="${COLOR_TEXT_MUTED}"
             letter-spacing="1.2">EXPECTED DELIVERY BY</text>
     `);
     y += 22;
     const timeSuffix = ed.time ? `  by  ${ed.time}` : "";
     elements.push(`
-      <text x="${PADDING_X}" y="${y}" font-family="'Helvetica Neue',Helvetica,Arial,sans-serif"
+      <text x="${PADDING_X}" y="${y}" font-family="Open Sans,Helvetica,Arial,sans-serif"
             font-size="18" font-weight="600" fill="${COLOR_TEXT_DARK}">
         ${esc(ed.weekday)}, ${esc(ed.monthDay)}${esc(timeSuffix)}
       </text>
@@ -221,7 +229,7 @@ function buildHeader(tracking) {
   } else if (tracking.destination) {
     y += 26;
     elements.push(`
-      <text x="${PADDING_X}" y="${y}" font-family="Helvetica,Arial,sans-serif"
+      <text x="${PADDING_X}" y="${y}" font-family="Open Sans,Helvetica,Arial,sans-serif"
             font-size="13" fill="${COLOR_TEXT_MUTED}">
         Destination: ${esc(tracking.destination)}
       </text>
@@ -261,7 +269,7 @@ function buildEvent(event, x, y, isFirst, isLast, availableWidth) {
   // Title
   for (const line of titleLines) {
     elements.push(`
-      <text x="${textX}" y="${localY + 12}" font-family="'Helvetica Neue',Helvetica,Arial,sans-serif"
+      <text x="${textX}" y="${localY + 12}" font-family="Open Sans,Helvetica,Arial,sans-serif"
             font-size="15" font-weight="${isFirst ? "700" : "600"}" fill="${COLOR_TEXT_DARK}">
         ${esc(line)}
       </text>
@@ -272,7 +280,7 @@ function buildEvent(event, x, y, isFirst, isLast, availableWidth) {
   // Location
   if (event.location) {
     elements.push(`
-      <text x="${textX}" y="${localY + 10}" font-family="Helvetica,Arial,sans-serif"
+      <text x="${textX}" y="${localY + 10}" font-family="Open Sans,Helvetica,Arial,sans-serif"
             font-size="13" fill="${COLOR_TEXT_DARK}">
         ${esc(event.location)}
       </text>
@@ -284,7 +292,7 @@ function buildEvent(event, x, y, isFirst, isLast, availableWidth) {
   const dateTime = fmtDateTime(event.at);
   if (dateTime) {
     elements.push(`
-      <text x="${textX}" y="${localY + 10}" font-family="Helvetica,Arial,sans-serif"
+      <text x="${textX}" y="${localY + 10}" font-family="Open Sans,Helvetica,Arial,sans-serif"
             font-size="12" fill="${COLOR_TEXT_MUTED}">
         ${esc(dateTime)}
       </text>
@@ -321,7 +329,7 @@ function buildFooter(tracking, y) {
 
   // Footer text (centered)
   elements.push(`
-    <text x="${WIDTH / 2}" y="${y + 24}" font-family="Helvetica,Arial,sans-serif"
+    <text x="${WIDTH / 2}" y="${y + 24}" font-family="Open Sans,Helvetica,Arial,sans-serif"
           font-size="12" font-weight="500" fill="${COLOR_TEXT_MUTED}"
           text-anchor="middle" letter-spacing="0.5">
       ${esc(footerText)}
@@ -362,7 +370,7 @@ function buildSvg(tracking) {
   if (events.length === 0) {
     eventSvgs.push(`
       <text x="${WIDTH / 2}" y="${currentY + 40}"
-            font-family="Helvetica,Arial,sans-serif" font-size="14" fill="${COLOR_TEXT_MUTED}"
+            font-family="Open Sans,Helvetica,Arial,sans-serif" font-size="14" fill="${COLOR_TEXT_MUTED}"
             text-anchor="middle">
         No tracking events yet
       </text>
@@ -409,29 +417,52 @@ function buildSvg(tracking) {
 /**
  * Render a tracking result to both SVG (string) and PNG (Buffer).
  *
- * Rendering notes:
- *   Sharp rasterizes SVG at its native viewBox size by default (72 DPI).
- *   For sharp output on retina/high-DPI displays we render at 2× density
- *   via the `density` option. This tells sharp's SVG engine (librsvg) to
- *   render at higher DPI FROM THE START, rather than rasterizing at base
- *   resolution and upscaling the bitmap (which would blur text).
+ * Rendering uses @resvg/resvg-js instead of sharp because:
+ *   - sharp's SVG engine (librsvg) relies on system fonts, which aren't
+ *     available on Netlify's Amazon Linux function runtime → text renders
+ *     as missing-glyph boxes (□□□).
+ *   - resvg-js is a Rust SVG renderer (via napi-rs) with per-architecture
+ *     native binaries pre-compiled. It supports loading custom font files
+ *     from a Buffer, so we bundle an Open Sans TTF with the function and
+ *     pass it at render time. No system fonts needed.
  *
- *   density: 144 = 2× the default 72 DPI → produces a PNG at 2× the SVG
- *   viewBox dimensions (1600 × 2× height).
+ *   Performance: ~50-100ms to render a typical tracking SVG → PNG at 2×.
  *
- * @param {object} tracking  Normalized tracking result from _etsyMailCarriers
+ * @param {object} tracking  Normalized tracking result
  * @returns {Promise<{svg: string, png: Buffer, width: number, height: number}>}
  */
 async function render(tracking) {
   const { svg, width, height } = buildSvg(tracking);
 
-  const png = await sharp(Buffer.from(svg, "utf-8"), {
-    density: 144    // 2× default 72 DPI for crisp rendering at retina scale
-  })
-    .png({ compressionLevel: 9 })
-    .toBuffer();
+  // Lazy-load resvg + font buffer on first use. Keep references on the
+  // module scope after load so subsequent renders are fast.
+  if (!_resvgModule) {
+    _resvgModule = require("@resvg/resvg-js");
+  }
+  if (!_fontBuffer) {
+    const fontPath = path.join(__dirname, "fonts", "OpenSans-Regular.ttf");
+    const fontBoldPath = path.join(__dirname, "fonts", "OpenSans-Bold.ttf");
+    _fontBuffer = fs.readFileSync(fontPath);
+    try { _fontBufferBold = fs.readFileSync(fontBoldPath); } catch { /* optional */ }
+  }
 
-  return { svg, png, width, height };
+  const fontBuffers = [_fontBuffer];
+  if (_fontBufferBold) fontBuffers.push(_fontBufferBold);
+
+  const resvg = new _resvgModule.Resvg(svg, {
+    fitTo: { mode: "width", value: width * 2 },   // 2× DPI for retina-crisp text
+    font: {
+      fontBuffers,
+      loadSystemFonts: false,   // Don't bother trying — Netlify has none
+      defaultFontFamily: "Open Sans"
+    },
+    background: "rgba(255, 255, 255, 1)"
+  });
+
+  const pngData = resvg.render();
+  const png = Buffer.from(pngData.asPng());
+
+  return { svg, png, width: pngData.width, height: pngData.height };
 }
 
 module.exports = { render, buildSvg };
