@@ -180,14 +180,25 @@ async function snapshot(trackingCode, options = {}) {
   // ─── 2. Fetch fresh from carrier ──
   const tracking = await carriers.lookupTracking(code, { carrierHint });
 
-  // ─── 3. Render image ──
+  // ─── 3. Render image (or use pre-rendered screenshot from driver) ──
   let rendered;
-  try {
-    rendered = await renderer.render(tracking);
-  } catch (e) {
-    const err = new Error(`Image render failed: ${e.message}`);
-    err.code = "RENDER_FAILED";
-    throw err;
+  if (tracking.imageBuffer && Buffer.isBuffer(tracking.imageBuffer)) {
+    // Driver already produced a PNG (e.g. USPS Puppeteer screenshot).
+    // Use it directly instead of running the SVG renderer.
+    console.log(`[tracking] using pre-rendered screenshot from driver (${tracking.imageBuffer.length} bytes, ${tracking.imageSource || "unknown source"})`);
+    rendered = {
+      png   : tracking.imageBuffer,
+      width : tracking.imageWidth || 0,
+      height: tracking.imageHeight || 0
+    };
+  } else {
+    try {
+      rendered = await renderer.render(tracking);
+    } catch (e) {
+      const err = new Error(`Image render failed: ${e.message}`);
+      err.code = "RENDER_FAILED";
+      throw err;
+    }
   }
 
   // ─── 4. Upload to Storage ──
