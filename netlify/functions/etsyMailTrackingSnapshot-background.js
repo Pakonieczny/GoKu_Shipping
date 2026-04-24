@@ -32,11 +32,39 @@
  *   }
  */
 
-const admin         = require("./firebaseAdmin");
-const { snapshot }  = require("./_etsyMailTracking");
+console.log("[tracking-bg] Module loading...");
 
-const db = admin.firestore();
-const FV = admin.firestore.FieldValue;
+let admin, snapshot, db, FV;
+let moduleLoadError = null;
+
+try {
+  admin = require("./firebaseAdmin");
+  console.log("[tracking-bg] firebaseAdmin loaded");
+} catch (e) {
+  moduleLoadError = `firebaseAdmin: ${e.message}`;
+  console.error("[tracking-bg] FAILED to load firebaseAdmin:", e.message);
+  console.error(e.stack);
+}
+
+try {
+  ({ snapshot } = require("./_etsyMailTracking"));
+  console.log("[tracking-bg] _etsyMailTracking loaded");
+} catch (e) {
+  moduleLoadError = moduleLoadError || `_etsyMailTracking: ${e.message}`;
+  console.error("[tracking-bg] FAILED to load _etsyMailTracking:", e.message);
+  console.error(e.stack);
+}
+
+if (admin) {
+  try {
+    db = admin.firestore();
+    FV = admin.firestore.FieldValue;
+    console.log("[tracking-bg] Firestore initialized");
+  } catch (e) {
+    moduleLoadError = moduleLoadError || `admin.firestore: ${e.message}`;
+    console.error("[tracking-bg] FAILED to init Firestore:", e.message);
+  }
+}
 
 const JOBS_COLL = "EtsyMail_TrackingJobs";
 
@@ -52,6 +80,16 @@ async function updateJob(jobId, patch) {
 }
 
 exports.handler = async (event) => {
+  console.log("[tracking-bg] Handler invoked");
+
+  // If module loading failed, we need to still try to write the error
+  // to Firestore so the UI shows it.
+  if (moduleLoadError && !db) {
+    console.error("[tracking-bg] Cannot proceed — module load failed:", moduleLoadError);
+    // Without admin loaded, we can't even write to Firestore. Just log.
+    return { statusCode: 202 };
+  }
+
   // Background funcs always return 202 to the caller; we don't return meaningful
   // status codes. But we still need to parse the payload.
   let body;
@@ -66,13 +104,27 @@ exports.handler = async (event) => {
   const forceRefresh = Boolean(body.forceRefresh);
   const carrierHint  = String(body.carrierHint || "").trim().toLowerCase();
 
+  console.log(`[tracking-bg] jobId=${jobId} trackingCode=${trackingCode} forceRefresh=${forceRefresh}`);
+
   if (!trackingCode || !jobId) {
     console.error(`[tracking-bg] Missing trackingCode or jobId. trackingCode=${trackingCode} jobId=${jobId}`);
-    // Nothing to update since we don't have a jobId — just log and exit
     return { statusCode: 202 };
   }
 
-  console.log(`[tracking-bg] Starting job ${jobId} for ${trackingCode}`);
+  // If modules partially loaded (db available but snapshot not), surface
+  // that error to the client via the job doc
+  if (moduleLoadError) {
+    console.error(`[tracking-bg] Module load error prevents work:`, moduleLoadError);
+    await updateJob(jobId, {
+      status    : "failed",
+      error     : `Server module load failed: ${moduleLoadError}`,
+      errorCode : "MODULE_LOAD_FAILED",
+      finishedAt: FV.serverTimestamp()
+    });
+    return { statusCode: 202 };
+  }
+
+  console.log(`[tracking-bg] Starting work for ${jobId}`);
 
   await updateJob(jobId, {
     status      : "running",
@@ -111,6 +163,7 @@ exports.handler = async (event) => {
 
   } catch (e) {
     console.error(`[tracking-bg] Job ${jobId} failed:`, e.code, e.message);
+    console.error(e.stack);
     await updateJob(jobId, {
       status    : "failed",
       error     : e.message || "Unknown error",
