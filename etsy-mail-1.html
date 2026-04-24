@@ -336,7 +336,159 @@
     .em-compose button:hover { background: #f6f8fa; }
     .em-compose button.primary { background: #1f883d; color: #fff; border-color: #1a7f37; }
     .em-compose button.primary:hover { background: #1a7f37; }
+    .em-compose button.ai { background: #8250df; color: #fff; border-color: #6639ba; }
+    .em-compose button.ai:hover:not(:disabled) { background: #6639ba; }
+    .em-compose button:disabled { opacity: .55; cursor: wait; }
     .em-compose button .material-icons { font-size: 14px; }
+    .em-compose .em-compose-bar .spinner {
+      display: inline-block; width: 12px; height: 12px;
+      border: 2px solid rgba(255,255,255,.35); border-top-color: #fff;
+      border-radius: 50%; animation: em-spin .7s linear infinite;
+    }
+    @keyframes em-spin { to { transform: rotate(360deg); } }
+
+    /* ── M4 AI Draft card (right column) ─────────────────────────── */
+    .em-ai-card .em-ai-empty {
+      font-size: 12px; color: #6a737d;
+    }
+    .em-ai-card .em-ai-meta {
+      display: flex; gap: 10px; flex-wrap: wrap;
+      font-size: 11px; color: #6a737d; margin-bottom: 6px;
+    }
+    .em-ai-card .em-ai-meta .em-ai-chip {
+      background: #eaeef2; padding: 2px 8px; border-radius: 10px;
+    }
+    .em-ai-card .em-ai-reasoning {
+      background: #f6e5ff; border-left: 3px solid #8250df;
+      padding: 6px 10px; border-radius: 3px; margin: 6px 0;
+      font-size: 12px; color: #3b0764; line-height: 1.4;
+    }
+    .em-ai-card .em-ai-reasoning summary {
+      cursor: pointer; font-weight: 600; font-size: 11px;
+      text-transform: uppercase; letter-spacing: .4px; color: #6639ba;
+    }
+    .em-ai-card .em-ai-reasoning summary:hover { color: #3b0764; }
+    .em-ai-card .em-ai-warning {
+      background: #fff8c5; border-left: 3px solid #d4a72c;
+      padding: 6px 10px; border-radius: 3px; margin: 6px 0;
+      font-size: 11px; color: #633c01;
+    }
+
+    /* ── Suggested-listing chips ─────────────────────────────────── */
+    .em-suggested-listings {
+      display: flex; flex-wrap: wrap; gap: 6px;
+      margin-top: 8px;
+    }
+    .em-suggested-listing {
+      display: inline-flex; align-items: center; gap: 4px;
+      background: #ddf4ff; color: #0969da;
+      padding: 4px 8px; border-radius: 12px;
+      font-size: 11px; cursor: pointer;
+      border: 1px solid #b6e3ff;
+      max-width: 240px;
+    }
+    .em-suggested-listing:hover { background: #b6e3ff; }
+    .em-suggested-listing .material-icons { font-size: 13px; }
+    .em-suggested-listing .em-sl-title {
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+
+    /* ── Revise instructions popover ─────────────────────────────── */
+    .em-revise-row {
+      display: flex; gap: 6px; margin-top: 6px; align-items: stretch;
+    }
+    .em-revise-row input {
+      flex: 1; padding: 6px 10px; border: 1px solid #d0d7de;
+      border-radius: 4px; font-size: 12px; font-family: inherit;
+      outline: none;
+    }
+    .em-revise-row input:focus { border-color: #8250df; }
+    .em-revise-row button {
+      padding: 6px 10px; font-size: 11px;
+    }
+
+    /* ── Token counter (under the composer textarea) ─────────────── */
+    .em-token-counter {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+      padding: 6px 10px; margin-top: 6px;
+      background: #f6f8fa; border: 1px solid #d0d7de; border-radius: 4px;
+      font-size: 11px; color: #57606a;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    .em-token-counter.empty {
+      color: #8c959f; background: transparent; border-style: dashed;
+    }
+    .em-token-counter .em-tok-label {
+      color: #8c959f; text-transform: uppercase; letter-spacing: .4px;
+      font-size: 10px; margin-right: 2px;
+    }
+    .em-token-counter .em-tok-val {
+      color: #24292f; font-weight: 600;
+    }
+    .em-token-counter .em-tok-total .em-tok-val {
+      color: #8250df;
+    }
+    .em-token-counter .em-tok-cost {
+      margin-left: auto; color: #1a7f37; font-weight: 600;
+    }
+    .em-token-counter .em-tok-cache {
+      color: #0969da;
+    }
+    .em-token-counter .em-tok-sep {
+      color: #d0d7de;
+    }
+
+    /* ── Referenced-receipt pills ────────────────────────────────── */
+    .em-referenced-receipts {
+      display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px;
+    }
+    .em-receipt-pill {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 2px 8px; background: #dafbe1; color: #116329;
+      border: 1px solid #b4e5c1; border-radius: 10px;
+      font-size: 10px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      text-decoration: none; cursor: pointer;
+    }
+    .em-receipt-pill:hover { background: #b4e5c1; }
+    .em-receipt-pill .material-icons { font-size: 11px; }
+
+    /* ── AI active-question banner ───────────────────────────────── */
+    .em-ai-active-question {
+      background: #fff8c5; border-left: 3px solid #d4a72c;
+      padding: 6px 10px; border-radius: 3px; margin: 6px 0;
+      font-size: 12px; color: #633c01; line-height: 1.4;
+    }
+    .em-ai-active-question-label {
+      font-weight: 600; font-size: 10px; text-transform: uppercase;
+      letter-spacing: .4px; color: #8a6500; display: block; margin-bottom: 2px;
+    }
+
+    /* ── Tool-call log collapsible ───────────────────────────────── */
+    .em-tool-calls {
+      margin-top: 6px; font-size: 11px; color: #6a737d;
+    }
+    .em-tool-calls summary {
+      cursor: pointer; font-weight: 600;
+      text-transform: uppercase; letter-spacing: .4px;
+      color: #57606a;
+    }
+    .em-tool-call-item {
+      margin-top: 4px; padding: 4px 8px;
+      background: #f6f8fa; border-radius: 3px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 10px; color: #24292f;
+    }
+    .em-tool-call-item.error {
+      background: #ffebe9; color: #cf222e;
+    }
+
+    /* ── Follow-up button (amber; sales re-engagement) ───────────── */
+    .em-compose button.followup {
+      background: #d4a72c; color: #fff; border-color: #b58a00;
+    }
+    .em-compose button.followup:hover:not(:disabled) {
+      background: #b58a00;
+    }
 
     .em-status-pill {
       display: inline-block; font-size: 10px; font-weight: 600;
@@ -747,8 +899,16 @@
 
             <div class="em-card em-compose">
               <h4>Staff reply (local draft)</h4>
-              <textarea id="emDraftText" placeholder="Type a reply. In Milestone 1 this writes a staff message into the thread; later milestones will route through the AI draft + send pipeline."></textarea>
+              <textarea id="emDraftText" placeholder="Type a reply, or click AI Draft to generate one. In Milestone 1 Save writes a staff message into the thread; M5 will route through extension-based send."></textarea>
+              <div id="emTokenCounter" class="em-token-counter empty">
+                <span class="em-tok-label">Tokens:</span>
+                <span>No AI draft yet — click AI Draft below</span>
+              </div>
+              <div id="emReferencedReceipts" class="em-referenced-receipts" style="display:none;"></div>
+              <div id="emSuggestedListings" class="em-suggested-listings" style="display:none;"></div>
               <div class="em-compose-bar">
+                <button id="emAiDraftBtn" class="ai" title="Generate a reply with AI"><i class="material-icons">auto_awesome</i><span>AI Draft</span></button>
+                <button id="emAiFollowUpBtn" class="followup" title="Generate a warm follow-up to re-engage the customer"><i class="material-icons">history</i><span>Follow up</span></button>
                 <button id="emSaveStaffMsgBtn" class="primary"><i class="material-icons">save</i>Save as staff message</button>
                 <button id="emClearDraftBtn"><i class="material-icons">close</i>Clear</button>
                 <span class="em-muted" style="font-size:11px;align-self:center;margin-left:auto;">Auto-send is disabled in Milestone 1.</span>
@@ -785,10 +945,16 @@
               ` : `<div class="em-muted" style="font-size:12px;">No order linked yet.</div>`}
             </div>
 
-            <div class="em-card">
+            <div class="em-card em-ai-card">
               <h4>AI draft <span class="em-muted" style="font-weight:400;text-transform:none;letter-spacing:0;">(Milestone 4)</span></h4>
-              <div class="em-muted" style="font-size:12px;">
-                AI drafts will appear here with confidence, reason codes, and Approve / Edit / Send controls.
+              <div id="emAiCardBody">
+                <div class="em-ai-empty">
+                  No AI draft yet. Click <b>AI Draft</b> under the reply box to generate one.
+                </div>
+              </div>
+              <div class="em-revise-row" id="emReviseRow" style="display:none;">
+                <input id="emReviseInput" type="text" placeholder='Extra guidance (e.g. "mention shipping timeline")' />
+                <button id="emReviseBtn" class="ai"><i class="material-icons">refresh</i>Revise</button>
               </div>
             </div>
           </div>
@@ -799,11 +965,408 @@
 
       $("emHoldBtn")?.addEventListener("click", () => setStatus(t.id, "hold_uncertain", "operator hold"));
       $("emArchiveBtn")?.addEventListener("click", () => setStatus(t.id, "archived", "operator archive"));
-      $("emClearDraftBtn")?.addEventListener("click", () => { $("emDraftText").value = ""; });
+      $("emClearDraftBtn")?.addEventListener("click", () => {
+        $("emDraftText").value = "";
+        resetTokenCounter();
+        hideReferencedReceipts();
+        const sl = $("emSuggestedListings"); if (sl) { sl.style.display = "none"; sl.innerHTML = ""; }
+      });
       $("emSaveStaffMsgBtn")?.addEventListener("click", () => saveStaffMessage(t.id));
+
+      // ─── M4: AI draft wiring ──────────────────────────────────────────
+      $("emAiDraftBtn")?.addEventListener("click", () => generateAiDraft(t.id, "initial"));
+      $("emAiFollowUpBtn")?.addEventListener("click", () => generateAiDraft(t.id, "follow_up"));
+      $("emReviseBtn")?.addEventListener("click", () => {
+        const instructions = ($("emReviseInput")?.value || "").trim();
+        generateAiDraft(t.id, "revise", instructions);
+      });
+      $("emReviseInput")?.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          const instructions = ($("emReviseInput").value || "").trim();
+          generateAiDraft(t.id, "revise", instructions);
+        }
+      });
+
+      // Load the most recent draft for this thread (if any) so the operator
+      // sees it immediately on reopening the thread, without having to
+      // re-generate. If a draft exists, populate the textarea with its text
+      // and render the AI-draft card.
+      hydrateAiDraft(t);
 
       // M3: populate customer panel
       hydrateCustomerPanel(t);
+    }
+
+    // ─── M4: AI draft generation ────────────────────────────────────────
+    // Calls etsyMailDraftReply with the current thread. The new endpoint
+    // does a tool-use loop: it may call lookup_order_tracking and/or
+    // lookup_order_details before composing. Those tool calls + live
+    // tracking data are all surfaced in the UI.
+    //
+    // modes:
+    //   "initial"   — fresh draft from scratch
+    //   "revise"    — refine current textarea text; passes currentDraft
+    //   "follow_up" — warm re-engagement for stalled threads
+    async function generateAiDraft(threadId, mode = "initial", instructions = null) {
+      const allBtns = ["emAiDraftBtn", "emAiFollowUpBtn", "emReviseBtn"].map($).filter(Boolean);
+      const body   = $("emAiCardBody");
+      const primaryBtn = mode === "follow_up" ? $("emAiFollowUpBtn")
+                      : mode === "revise"     ? $("emReviseBtn")
+                                              : $("emAiDraftBtn");
+      const primaryLabel = primaryBtn?.querySelector("span");
+      const primaryOriginalLabel = primaryLabel?.textContent;
+
+      allBtns.forEach(b => { b.disabled = true; });
+      if (primaryLabel) primaryLabel.textContent = "Generating…";
+
+      // Show transient "thinking" state
+      if (body) {
+        const action = mode === "revise" ? "revising"
+                    : mode === "follow_up" ? "composing follow-up"
+                    : "generating";
+        body.innerHTML =
+          '<div class="em-ai-meta"><span class="em-ai-chip">' + esc(action) + '</span>' +
+          '<span><span class="spinner" style="border-top-color:#8250df;border-color:rgba(130,80,223,.25);"></span> ' +
+          'Reading thread, looking up orders if needed, composing…</span></div>';
+      }
+      // Also show a "thinking" state in the token counter
+      const tc = $("emTokenCounter");
+      if (tc) {
+        tc.className = "em-token-counter empty";
+        tc.innerHTML = '<span class="em-tok-label">Tokens:</span><span><span class="spinner" style="border-color:rgba(130,80,223,.3);border-top-color:#8250df;width:10px;height:10px;"></span> waiting for model…</span>';
+      }
+
+      const employeeName = getEmployeeName();
+      const reqBody = { threadId, mode, employeeName };
+      if (mode === "revise") {
+        reqBody.currentDraft = $("emDraftText").value || "";
+      }
+      if (instructions && instructions.trim()) {
+        reqBody.instructions = instructions.trim();
+      }
+
+      try {
+        const data = await api("etsyMailDraftReply", { method: "POST", body: reqBody });
+        // Populate textarea
+        $("emDraftText").value = data.text || "";
+        // Render AI card
+        renderAiDraftCard(data);
+        // Show revise row
+        const row = $("emReviseRow");
+        if (row) row.style.display = "flex";
+        // Toast
+        let msg = mode === "revise" ? "Draft revised" : mode === "follow_up" ? "Follow-up drafted" : "Draft generated";
+        if (Array.isArray(data.toolCalls) && data.toolCalls.length) {
+          const lookups = data.toolCalls.filter(tc => tc.name !== "compose_draft_reply").length;
+          if (lookups) msg += ` (${lookups} lookup${lookups === 1 ? "" : "s"})`;
+        }
+        toast(msg);
+      } catch (e) {
+        if (body) {
+          body.innerHTML = '<div class="em-ai-warning">⚠ Draft generation failed: ' + esc(e.message) + '</div>';
+        }
+        if (tc) {
+          tc.className = "em-token-counter empty";
+          tc.innerHTML = '<span class="em-tok-label">Tokens:</span><span>failed — see error above</span>';
+        }
+        toast("AI error: " + e.message, 4000);
+      } finally {
+        allBtns.forEach(b => { b.disabled = false; });
+        if (primaryLabel && primaryOriginalLabel) primaryLabel.textContent = primaryOriginalLabel;
+      }
+    }
+
+    // Render the AI draft card from a response payload (or a loaded draft doc).
+    // Handles both shapes: the endpoint response (tokensUsed, toolCalls) and
+    // the Firestore doc (aiTokensInput, aiToolCalls).
+    function renderAiDraftCard(draft) {
+      const body = $("emAiCardBody");
+      if (!body) return;
+      if (!draft || (!draft.text && !draft.reasoning)) {
+        body.innerHTML = '<div class="em-ai-empty">No AI draft yet. Click <b>AI Draft</b> under the reply box to generate one.</div>';
+        resetTokenCounter();
+        hideReferencedReceipts();
+        return;
+      }
+
+      // Normalize shape — response uses tokensUsed.*, Firestore uses aiTokens*
+      const tokens = {
+        input      : (draft.tokensUsed && draft.tokensUsed.input)       ?? draft.aiTokensInput       ?? 0,
+        output     : (draft.tokensUsed && draft.tokensUsed.output)      ?? draft.aiTokensOutput      ?? 0,
+        cacheRead  : (draft.tokensUsed && draft.tokensUsed.cacheRead)   ?? draft.aiTokensCacheRead   ?? 0,
+        cacheCreate: (draft.tokensUsed && draft.tokensUsed.cacheCreate) ?? draft.aiTokensCacheCreate ?? 0
+      };
+      const toolCalls = draft.toolCalls || draft.aiToolCalls || [];
+      const model     = draft.model || draft.aiModel || "?";
+      const effort    = draft.effort || draft.aiEffort || null;
+      const parsedOk  = (draft.parsedOk !== undefined) ? draft.parsedOk : (draft.aiParsedOk !== false);
+      const imagesAttached = draft.imagesAttached ?? draft.aiIncludedImages ?? 0;
+
+      // Build card HTML
+      const chips = [];
+      chips.push('<span class="em-ai-chip">' + esc(model) + '</span>');
+      if (effort) chips.push('<span class="em-ai-chip">effort: ' + esc(effort) + '</span>');
+      if (draft.aiMode === "revise" || draft.mode === "revise") chips.push('<span class="em-ai-chip">revised</span>');
+      if (draft.aiMode === "follow_up" || draft.mode === "follow_up") chips.push('<span class="em-ai-chip">follow-up</span>');
+      if (imagesAttached) chips.push('<span class="em-ai-chip">' + imagesAttached + ' image' + (imagesAttached === 1 ? '' : 's') + ' seen</span>');
+      const nonTerminalCalls = toolCalls.filter(tc => tc.name !== "compose_draft_reply");
+      if (nonTerminalCalls.length) chips.push('<span class="em-ai-chip">' + nonTerminalCalls.length + ' tool call' + (nonTerminalCalls.length === 1 ? '' : 's') + '</span>');
+
+      let html = '<div class="em-ai-meta">' + chips.join("") + '</div>';
+
+      if (!parsedOk) {
+        html += '<div class="em-ai-warning">⚠ Model finished without cleanly calling compose_draft_reply — the reply above is the best available fallback. Edit freely or click AI Draft again.</div>';
+      }
+
+      // Active question (critical for human-review — shows what the AI
+      // identified as the open question it answered)
+      if (draft.activeQuestion) {
+        html += '<div class="em-ai-active-question">' +
+          '<span class="em-ai-active-question-label">Active question identified</span>' +
+          esc(draft.activeQuestion) + '</div>';
+      }
+
+      if (draft.reasoning) {
+        html += '<details class="em-ai-reasoning" open>' +
+                '<summary>Why this draft?</summary>' +
+                '<div style="margin-top:4px;">' + esc(draft.reasoning) + '</div>' +
+                '</details>';
+      }
+
+      // Tool-call log (collapsed by default)
+      if (nonTerminalCalls.length) {
+        html += '<details class="em-tool-calls">' +
+          '<summary>Tool calls (' + nonTerminalCalls.length + ')</summary>' +
+          nonTerminalCalls.map(tc => {
+            const cls = tc.error ? " error" : "";
+            const params = tc.input ? Object.entries(tc.input).map(([k,v]) => k + '=' + String(v).slice(0,40)).join(', ') : "";
+            const dur = tc.durationMs ? ' — ' + tc.durationMs + 'ms' : '';
+            const err = tc.error ? ' — ERROR: ' + esc(tc.error) : '';
+            return '<div class="em-tool-call-item' + cls + '">' +
+                   '<b>' + esc(tc.name) + '</b>(' + esc(params) + ')' + esc(dur) + err +
+                   '</div>';
+          }).join("") +
+          '</details>';
+      }
+
+      body.innerHTML = html;
+
+      // Update token counter
+      updateTokenCounter(tokens, model);
+
+      // Referenced receipts pills
+      renderReferencedReceipts(draft.referencedReceiptIds || draft.aiToolCalls?.filter(tc => tc.input?.receiptId)?.map(tc => String(tc.input.receiptId)) || []);
+
+      // Suggested-listings chips below textarea
+      renderSuggestedListings(Array.isArray(draft.suggestedListings) ? draft.suggestedListings : []);
+    }
+
+    // ─── Token counter ────────────────────────────────────────────────
+    // Shows input / output / total + rough USD cost. Pricing is per model;
+    // update MODEL_PRICING if Anthropic's rates change. Values below are
+    // per-million-tokens in USD.
+    //
+    // Note Opus 4.7 uses a new tokenizer that can count up to 35% more
+    // tokens than 4.6 for the same text — so costs may look higher than
+    // you'd estimate from older Opus usage.
+    const MODEL_PRICING = {
+      // model prefix → { input $/M, output $/M, cacheRead $/M, cacheCreate $/M }
+      "claude-opus-4-7"      : { input: 15,  output: 75,  cacheRead: 1.5,  cacheCreate: 18.75 },
+      "claude-opus-4-6"      : { input: 15,  output: 75,  cacheRead: 1.5,  cacheCreate: 18.75 },
+      "claude-sonnet-4-6"    : { input: 3,   output: 15,  cacheRead: 0.3,  cacheCreate: 3.75  },
+      "claude-sonnet-4-5"    : { input: 3,   output: 15,  cacheRead: 0.3,  cacheCreate: 3.75  },
+      "claude-haiku-4-5"     : { input: 1,   output: 5,   cacheRead: 0.1,  cacheCreate: 1.25  }
+    };
+
+    function pricingForModel(model) {
+      if (!model) return null;
+      for (const key of Object.keys(MODEL_PRICING)) {
+        if (model.startsWith(key)) return MODEL_PRICING[key];
+      }
+      return null;
+    }
+
+    function computeCostUsd(tokens, model) {
+      const p = pricingForModel(model);
+      if (!p) return null;
+      const mil = 1e6;
+      return (
+        (tokens.input       || 0) * p.input       / mil +
+        (tokens.output      || 0) * p.output      / mil +
+        (tokens.cacheRead   || 0) * p.cacheRead   / mil +
+        (tokens.cacheCreate || 0) * p.cacheCreate / mil
+      );
+    }
+
+    function fmtNum(n) {
+      return (n || 0).toLocaleString("en-US");
+    }
+
+    function updateTokenCounter(tokens, model) {
+      const el = $("emTokenCounter");
+      if (!el) return;
+      const total = (tokens.input || 0) + (tokens.output || 0);
+      if (!total) {
+        el.className = "em-token-counter empty";
+        el.innerHTML = '<span class="em-tok-label">Tokens:</span><span>no usage reported</span>';
+        return;
+      }
+
+      const cost = computeCostUsd(tokens, model);
+      const cacheBits = (tokens.cacheRead || tokens.cacheCreate)
+        ? '<span class="em-tok-sep">·</span><span class="em-tok-cache" title="Cache reads save input cost">cache: ' +
+          fmtNum(tokens.cacheRead) + ' read / ' + fmtNum(tokens.cacheCreate) + ' write</span>'
+        : '';
+
+      el.className = "em-token-counter";
+      el.innerHTML =
+        '<span class="em-tok-label">Input:</span><span class="em-tok-val">' + fmtNum(tokens.input) + '</span>' +
+        '<span class="em-tok-sep">·</span>' +
+        '<span class="em-tok-label">Output:</span><span class="em-tok-val">' + fmtNum(tokens.output) + '</span>' +
+        '<span class="em-tok-sep">·</span>' +
+        '<span class="em-tok-total"><span class="em-tok-label">Total:</span><span class="em-tok-val">' + fmtNum(total) + '</span></span>' +
+        cacheBits +
+        (cost != null
+          ? '<span class="em-tok-cost" title="Estimated cost for this draft generation">~$' +
+            cost.toFixed(cost < 0.01 ? 4 : 3) + '</span>'
+          : '');
+    }
+
+    function resetTokenCounter() {
+      const el = $("emTokenCounter");
+      if (!el) return;
+      el.className = "em-token-counter empty";
+      el.innerHTML = '<span class="em-tok-label">Tokens:</span><span>No AI draft yet — click AI Draft below</span>';
+    }
+
+    // ─── Referenced-receipts pills ────────────────────────────────────
+    // Shows which receiptIds the AI actually looked up via tool calls.
+    // Click → opens the order modal (same handler as customer-panel orders).
+    function renderReferencedReceipts(ids) {
+      const box = $("emReferencedReceipts");
+      if (!box) return;
+      if (!Array.isArray(ids) || !ids.length) {
+        box.style.display = "none";
+        box.innerHTML = "";
+        return;
+      }
+      const unique = Array.from(new Set(ids.map(String).filter(Boolean)));
+      if (!unique.length) {
+        box.style.display = "none";
+        return;
+      }
+      box.style.display = "flex";
+      box.innerHTML =
+        '<span style="font-size:10px;color:#6a737d;text-transform:uppercase;letter-spacing:.4px;font-weight:600;align-self:center;">AI looked up:</span>' +
+        unique.map(id =>
+          '<span class="em-receipt-pill" data-receipt="' + esc(id) + '" title="Click to open order details">' +
+            '<i class="material-icons">receipt_long</i>#' + esc(id) +
+          '</span>'
+        ).join("");
+      box.querySelectorAll(".em-receipt-pill").forEach(el => {
+        el.addEventListener("click", () => {
+          // Reuse the M3 order modal. openOrderModal is defined elsewhere
+          // in this file; if not available, fall back to Etsy URL.
+          const id = el.dataset.receipt;
+          if (typeof openOrderModal === "function") {
+            openOrderModal(id);
+          } else {
+            window.open("https://www.etsy.com/your/orders/sold?order_id=" + encodeURIComponent(id), "_blank");
+          }
+        });
+      });
+    }
+
+    function hideReferencedReceipts() {
+      const box = $("emReferencedReceipts");
+      if (box) { box.style.display = "none"; box.innerHTML = ""; }
+    }
+
+    // Render clickable chips under the textarea. Clicking a chip inserts
+    // the listing URL at the caret position in the reply textarea. M5 will
+    // auto-convert those URLs into rendered listing cards.
+    function renderSuggestedListings(suggested) {
+      const box = $("emSuggestedListings");
+      if (!box) return;
+      if (!suggested || !suggested.length) {
+        box.style.display = "none";
+        box.innerHTML = "";
+        return;
+      }
+      box.style.display = "flex";
+      box.innerHTML = suggested.map((s, idx) =>
+        '<div class="em-suggested-listing" data-idx="' + idx + '" ' +
+             'title="' + esc(s.reason || "Click to insert listing URL") + '">' +
+          '<i class="material-icons">local_offer</i>' +
+          '<span class="em-sl-title">' + esc(s.title || ("Listing " + s.listingId)) + '</span>' +
+        '</div>'
+      ).join("");
+
+      box.querySelectorAll(".em-suggested-listing").forEach(el => {
+        el.addEventListener("click", () => {
+          const idx = Number(el.dataset.idx);
+          const s = suggested[idx];
+          if (!s || !s.listingId) return;
+          const url = "https://www.etsy.com/listing/" + s.listingId;
+          insertAtCaret($("emDraftText"), url + "\n");
+          toast("Listing URL inserted");
+        });
+      });
+    }
+
+    function insertAtCaret(textarea, text) {
+      if (!textarea) return;
+      const start = textarea.selectionStart || 0;
+      const end   = textarea.selectionEnd   || 0;
+      const value = textarea.value;
+      const before = value.slice(0, start);
+      const after  = value.slice(end);
+      // Ensure newline separation if we're in the middle of text
+      let prefix = "";
+      if (before && !/\n$/.test(before)) prefix = "\n";
+      textarea.value = before + prefix + text + after;
+      const pos = (before + prefix + text).length;
+      textarea.selectionStart = textarea.selectionEnd = pos;
+      textarea.focus();
+    }
+
+    // Load any existing draft from Firestore and render it. Called on
+    // thread open. Silent if no draft exists (card shows empty state).
+    async function hydrateAiDraft(thread) {
+      try {
+        const draftId = "draft_" + thread.id;
+        const res = await api("firestoreProxy", {
+          method: "GET",
+          query: { op: "get", coll: "EtsyMail_Drafts", id: draftId }
+        });
+        if (!res || !res.exists || !res.doc) return;
+        const d = res.doc;
+        // Only populate textarea if the operator hasn't started typing
+        // something different. (Simple heuristic: textarea is empty or
+        // matches the cached draft text — don't clobber in-progress edits.)
+        const ta = $("emDraftText");
+        if (ta && !ta.value.trim()) {
+          ta.value = d.text || "";
+        }
+        renderAiDraftCard(d);
+        // Show revise row since there's a draft present
+        const row = $("emReviseRow");
+        if (row) row.style.display = "flex";
+      } catch (e) {
+        // Non-fatal — no draft yet, or proxy error. Leave the empty state.
+        console.warn("hydrateAiDraft:", e.message);
+      }
+    }
+
+    // Read operator name from localStorage. Matches the convention the
+    // rest of the app uses (employee_name or employee_id). Falls back
+    // to null, which the backend handles with a generic signature.
+    function getEmployeeName() {
+      try {
+        return localStorage.getItem("employee_name") ||
+               localStorage.getItem("etsymail_operator") ||
+               null;
+      } catch { return null; }
     }
 
     // ─── M3: Customer panel logic ───────────────────────────────────────
