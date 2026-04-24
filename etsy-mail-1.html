@@ -1560,13 +1560,15 @@
         // Body content changes based on state
         let bodyHtml;
         if (isReady && img.imageUrl) {
-          // COEP require-corp blocks cross-origin image loads from Firebase
-          // Storage (which doesn't send Cross-Origin-Resource-Policy).
-          // We use data-firebase-url and load via fetch → blob → object URL
-          // AFTER render, which bypasses COEP because blob: URLs are
-          // same-origin by definition.
+          // Firebase Storage URLs don't send CORS or CORP headers, which
+          // means they're blocked by our site's COEP: require-corp policy.
+          // Rather than fetch-to-blob (which hits CORS), route through a
+          // same-origin proxy endpoint that streams the bytes back with
+          // the right headers.
+          const proxyUrl = "/.netlify/functions/etsyMailTrackingImage?trackingCode=" +
+                           encodeURIComponent(img.trackingCode);
           bodyHtml =
-            '<img src="" ' +
+            '<img src="' + esc(proxyUrl) + '" ' +
                  'data-firebase-url="' + esc(img.imageUrl) + '" ' +
                  'alt="Tracking timeline for ' + esc(img.trackingCode) + '" ' +
                  'data-idx="' + idx + '" class="em-ti-img"/>';
@@ -1638,45 +1640,6 @@
       images.forEach((img, idx) => {
         if ((img.status === "pending" || (!img.imageUrl && !img.errorText)) && img.jobId) {
           pollTrackingJob(img.jobId, idx, images, rerender);
-        }
-      });
-
-      // Blob-load images to bypass COEP require-corp restriction.
-      // Firebase Storage doesn't send Cross-Origin-Resource-Policy, so
-      // direct cross-origin <img src="https://firebasestorage..."> gets
-      // blocked. We fetch the bytes, convert to a blob: URL, and set that
-      // as the src. blob: URLs are same-origin so COEP lets them through.
-      if (!window.__emBlobUrlCache) window.__emBlobUrlCache = new Map();
-      box.querySelectorAll(".em-ti-img[data-firebase-url]").forEach(async (el) => {
-        const url = el.dataset.firebaseUrl;
-        if (!url) return;
-
-        // If we've already fetched this URL in this session, reuse the blob
-        const cached = window.__emBlobUrlCache.get(url);
-        if (cached) {
-          el.src = cached;
-          return;
-        }
-
-        try {
-          const r = await fetch(url);
-          if (!r.ok) throw new Error("HTTP " + r.status);
-          const blob = await r.blob();
-          const blobUrl = URL.createObjectURL(blob);
-          window.__emBlobUrlCache.set(url, blobUrl);
-          el.src = blobUrl;
-        } catch (e) {
-          console.warn("Tracking image blob-load failed:", url, e.message);
-          el.alt = "Image failed to load: " + e.message;
-          // Show a fallback "open in new tab" hint
-          el.style.display = "none";
-          const fallback = document.createElement("a");
-          fallback.href = url;
-          fallback.target = "_blank";
-          fallback.rel = "noopener";
-          fallback.textContent = "View tracking image in new tab →";
-          fallback.style.cssText = "display:block;padding:20px;color:#0969da;text-decoration:underline;text-align:center;";
-          el.parentNode.insertBefore(fallback, el);
         }
       });
 
