@@ -64,7 +64,7 @@
  */
 
 const admin = require("./firebaseAdmin");
-const { CORS } = require("./_etsyMailAuth");
+const { CORS, requireExtensionAuth } = require("./_etsyMailAuth");
 const { runToolLoop } = require("./_etsyMailAnthropic");
 const {
   getShop,
@@ -837,7 +837,7 @@ const TOOL_SPECS = [
   },
   {
     name: "compose_draft_reply",
-    description: "Emit the final reply text that will be shown to the operator. Call this EXACTLY ONCE at the end of your reasoning/tool-use process. This ends the draft generation.",
+    description: "Emit the final reply text that will be shown to the operator. Call this EXACTLY ONCE at the end of your reasoning/tool-use process. This ends the draft generation. Self-rate confidence and difficulty honestly — these scores drive the auto-reply pipeline (high confidence → auto-sent; low confidence → routed to human review). Do NOT inflate confidence to seem useful; under-confident is far less harmful than over-confident.",
     input_schema: {
       type: "object",
       properties: {
@@ -870,9 +870,25 @@ const TOOL_SPECS = [
         activeQuestion: {
           type: "string",
           description: "One-sentence statement of the customer's current open question, as you understood it."
+        },
+        confidence: {
+          type: "number",
+          minimum: 0,
+          maximum: 1,
+          description: "Your confidence the drafted reply is correct, complete, and ready to send WITHOUT human review. 0 = unsure, would harm if sent. 1 = airtight, no reasonable operator would change it. Calibrate honestly: shipping/order questions you fully resolved with tool calls deserve high scores (>=0.85). Vague inquiries, refund requests, customization back-and-forth, missing information, or anything emotionally loaded should score low (<=0.6). When in doubt, score lower — humans review the borderline ones."
+        },
+        difficulty: {
+          type: "number",
+          minimum: 0,
+          maximum: 1,
+          description: "How hard was this customer's request, independent of how well you handled it. 0 = trivial (e.g. 'thanks!'). 0.3 = simple FAQ. 0.6 = moderate (specific order lookup, multi-part question). 0.8+ = hard (refund decisions, complaint handling, custom orders, ambiguous intent, frustrated tone). Used for triage stats, not for routing — confidence drives routing."
+        },
+        confidenceReasoning: {
+          type: "string",
+          description: "1-2 sentences explaining your confidence score. What gave you confidence? What's uncertain? E.g., 'High: confirmed shipped status via tool call and provided exact tracking link.' Or: 'Low: customer mentions a refund but order status is ambiguous and I couldn't confirm policy fit.'"
         }
       },
-      required: ["text", "reasoning", "referencedReceiptIds"]
+      required: ["text", "reasoning", "referencedReceiptIds", "confidence", "difficulty"]
     }
   }
 ];
@@ -1147,12 +1163,13 @@ exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: CORS, body: "ok" };
   if (event.httpMethod !== "POST")     return json(405, { error: "Method Not Allowed" });
 
-  // NOTE: No requireExtensionAuth here by design — this endpoint is called
-  // from the operator inbox (browser, same-origin) which does NOT send the
-  // X-EtsyMail-Secret header. Matches the pattern used by etsyMailOrder.js.
-  // The inbox itself is operator-only. If you need to harden this later,
-  // either add the secret to the inbox's api() helper, or add a CORS origin
-  // allowlist check here.
+  // v1.2: AI generation is expensive (Opus 4.7 + tool loop = up to ~$0.30
+  // per call). Gate every request behind the extension secret. The inbox
+  // UI forwards it from localStorage on every api() call; the auto-pipeline
+  // forwards it from process.env.ETSYMAIL_EXTENSION_SECRET. If the secret
+  // env var is unset (local dev), requireExtensionAuth passes through.
+  const auth = requireExtensionAuth(event);
+  if (!auth.ok) return auth.response;
 
   let body = {};
   try { body = JSON.parse(event.body || "{}"); }
@@ -1319,12 +1336,23 @@ exports.handler = async (event) => {
     }
 
     if (composeCall && composeCall.input && typeof composeCall.input.text === "string") {
+      // Clamp confidence/difficulty into [0,1] in case the model emits
+      // a value outside the range. Default to null when missing so the
+      // UI can show "n/a" rather than a misleading 0.
+      const _clamp01 = (v) => {
+        const n = typeof v === "number" ? v : parseFloat(v);
+        if (!isFinite(n)) return null;
+        return Math.max(0, Math.min(1, n));
+      };
       parsed = {
         text                : postProcessDraft(composeCall.input.text.trim()),
         reasoning           : String(composeCall.input.reasoning || "").trim(),
         referencedReceiptIds: Array.isArray(composeCall.input.referencedReceiptIds) ? composeCall.input.referencedReceiptIds.map(String) : [],
         suggestedListings   : Array.isArray(composeCall.input.suggestedListings) ? composeCall.input.suggestedListings : [],
-        activeQuestion      : String(composeCall.input.activeQuestion || "").trim()
+        activeQuestion      : String(composeCall.input.activeQuestion || "").trim(),
+        confidence          : _clamp01(composeCall.input.confidence),
+        difficulty          : _clamp01(composeCall.input.difficulty),
+        confidenceReasoning : String(composeCall.input.confidenceReasoning || "").trim()
       };
       parsedOk = Boolean(parsed.text);
     }
@@ -1341,7 +1369,13 @@ exports.handler = async (event) => {
           .filter(tc => tc.name === "lookup_order_tracking" || tc.name === "lookup_order_details")
           .map(tc => String((tc.input && tc.input.receiptId) || "")).filter(Boolean),
         suggestedListings   : [],
-        activeQuestion      : ""
+        activeQuestion      : "",
+        // No tool call → no self-rating. Force this to "very low" so the
+        // pipeline routes it to human review rather than auto-sending a
+        // half-baked reply that bypassed the rating step.
+        confidence          : 0,
+        difficulty          : null,
+        confidenceReasoning : "Model never called compose_draft_reply — confidence forced to 0 to require human review."
       };
       parsedOk = false;
     }
@@ -1403,6 +1437,10 @@ exports.handler = async (event) => {
       activeQuestion        : parsed.activeQuestion,
       suggestedListings     : parsed.suggestedListings,
       referencedReceiptIds  : parsed.referencedReceiptIds,
+      // AI self-ratings (drives auto-reply pipeline routing)
+      aiConfidence          : parsed.confidence,
+      aiDifficulty          : parsed.difficulty,
+      aiConfidenceReasoning : parsed.confidenceReasoning,
       attachments,
       trackingImages,
       generatedByAI         : true,
@@ -1426,9 +1464,13 @@ exports.handler = async (event) => {
     await draftRef.set(draftDoc, { merge: false });
 
     // ─── 7. Update thread ──────────────────────────────────────────
+    // Mirror the AI rating onto the thread doc so list views and
+    // filters can render the badge without joining to drafts.
     await db.collection(THREADS_COLL).doc(threadId).set({
       latestDraftId: draftId,
       aiDraftStatus: "ready",
+      aiConfidence : parsed.confidence,
+      aiDifficulty : parsed.difficulty,
       updatedAt    : now
     }, { merge: true });
 
@@ -1445,6 +1487,10 @@ exports.handler = async (event) => {
         mode,
         parsedOk,
         activeQuestion     : parsed.activeQuestion,
+        // AI self-ratings (the Auto-Reply pipeline reads these)
+        aiConfidence       : parsed.confidence,
+        aiDifficulty       : parsed.difficulty,
+        confidenceReasoning: parsed.confidenceReasoning,
         tokensInput        : draftDoc.aiTokensInput,
         tokensOutput       : draftDoc.aiTokensOutput,
         tokensCacheRead    : draftDoc.aiTokensCacheRead,
@@ -1470,6 +1516,13 @@ exports.handler = async (event) => {
       activeQuestion     : parsed.activeQuestion,
       referencedReceiptIds: parsed.referencedReceiptIds,
       suggestedListings  : parsed.suggestedListings,
+      // AI self-ratings (mirrored into draft doc and thread doc)
+      aiConfidence       : parsed.confidence,
+      aiDifficulty       : parsed.difficulty,
+      aiConfidenceReasoning: parsed.confidenceReasoning,
+      // (legacy aliases — earlier UI used these names)
+      confidence         : parsed.confidence,
+      difficulty         : parsed.difficulty,
       trackingImages,
       attachments,
       toolCalls          : toolCallLog,

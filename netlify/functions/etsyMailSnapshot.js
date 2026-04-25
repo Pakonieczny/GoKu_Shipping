@@ -302,18 +302,151 @@ exports.handler = async (event) => {
       if (newest_outbound_ms != null) {
         tailPatch.lastOutboundAt = admin.firestore.Timestamp.fromMillis(newest_outbound_ms);
       }
+
+      // ─── v1.3: image_attached risk flag ──────────────────────────
+      // If any of the newly-inserted messages carry images, mark the
+      // thread so the inbox UI's "with image" filter can find it.
+      // arrayUnion is idempotent — re-marking an already-marked thread
+      // is a no-op. We don't bother removing the flag if all images
+      // get deleted later because that's exceedingly rare and the
+      // UX cost of a stale flag is low.
+      const anyImageMessage = toInsert.some(m =>
+        (Array.isArray(m.imageUrls) && m.imageUrls.length > 0) ||
+        m.messageType === "image"
+      );
+      if (anyImageMessage) {
+        tailPatch.riskFlags = FV.arrayUnion("image_attached");
+      }
+
+      // ─── v1.3: searchableText denormalized field ────────────────
+      // Maintains a lowercased, normalized concatenation of:
+      //   - thread metadata (customer name, etsy username, subject)
+      //   - the message bodies of recent messages (incremental: we
+      //     append newly-inserted message text to the existing field
+      //     and truncate from the front to keep the most recent ~6KB)
+      //
+      // This is what etsyMailSearch.js queries for substring matches.
+      // Keeping it on the thread doc means search is a single
+      // collection scan, no subcollection joins.
+      //
+      // The 6KB cap protects against runaway growth — a thread with
+      // hundreds of messages would otherwise grow unbounded. Recent
+      // messages are most relevant to search, so dropping oldest
+      // first is the right trade-off.
+      const newTextChunks = toInsert
+        .map(m => normalize(m.text))
+        .filter(Boolean);
+
+      if (newTextChunks.length > 0) {
+        const prevSnap = (tSnap && tSnap.data && tSnap.data()) || {};
+        const prevMessageText = prevSnap.searchableMessageText || "";
+        const combined = (prevMessageText + " " + newTextChunks.join(" ")).trim();
+        // Truncate from the FRONT — keep newest 6KB
+        const SEARCHABLE_MAX = 6000;
+        const truncated = combined.length > SEARCHABLE_MAX
+          ? combined.slice(combined.length - SEARCHABLE_MAX)
+          : combined;
+        tailPatch.searchableMessageText = truncated;
+
+        // Build the combined searchable field. Pull metadata from the
+        // patch first (in case this scrape just learned the customer
+        // name), fall back to the existing thread doc.
+        const metaParts = [
+          threadPatch.customerName  || prevSnap.customerName  || "",
+          threadPatch.etsyUsername  || prevSnap.etsyUsername  || "",
+          threadPatch.subject       || prevSnap.subject       || "",
+          prevSnap.linkedOrderId    || ""
+        ].map(s => normalize(String(s))).filter(Boolean);
+        const meta = metaParts.join(" ");
+        tailPatch.searchableText = (meta + " " + truncated).trim();
+      }
+
       await tRef.set(tailPatch, { merge: true });
     }
 
     // ─── 4) Session / login-required detection ───
-    if (session && session.etsyLoggedIn === false) {
-      await tRef.set({ status: "hold_login_required", updatedAt: now }, { merge: true });
+    // v1.2: This MUST run BEFORE the auto-pipeline trigger. If Etsy is
+    // logged out, we know the send pipeline can't deliver — pushing the
+    // thread to Needs Review and skipping the AI call avoids burning
+    // an Opus call for a draft we can't actually send.
+    //
+    // Status: route to pending_human_review (the v1.1+ visible folder).
+    // The legacy hold_login_required is no longer in the rail.
+    const etsyLoggedOut = session && session.etsyLoggedIn === false;
+    if (etsyLoggedOut) {
+      await tRef.set({
+        status   : "pending_human_review",
+        updatedAt: now
+      }, { merge: true });
       await writeAudit({
         threadId,
         eventType: "held",
         actor: "system:extension",
         payload: { reason: "etsy_login_required" }
       });
+    }
+
+    // ─── 5) Trigger auto-reply pipeline ─────────────────────────
+    // If a new inbound message landed AND the Etsy session is logged in,
+    // fire the auto-reply pipeline as a Netlify -background function.
+    // It:
+    //   - generates an AI draft via etsyMailDraftReply
+    //   - reads the AI's self-rated confidence
+    //   - applies deterministic veto rules (refund, cancel, legal, etc.)
+    //   - either auto-enqueues for send (high confidence + no vetoes)
+    //     OR routes the thread to "Needs review" (low confidence,
+    //     vetoed, or kill-switch active)
+    //
+    // Why -background: the AI draft step takes 10-60 seconds with Opus
+    // 4.7 + tool calls. Netlify's standard 10s function timeout is too
+    // tight; the -background suffix unlocks 15 minutes and decouples
+    // the response from completion (Netlify returns 202 immediately).
+    //
+    // We AWAIT the fetch (with a 5-second AbortSignal) so the snapshot
+    // function doesn't return before the trigger has been dispatched.
+    // Netlify -background returns 202 within ~50-200ms typically; the
+    // 5s timeout is generous safety. Any error is swallowed — the
+    // scrape ingest must succeed independently of auto-reply.
+    //
+    // The on/off flag and confidence threshold live in
+    // EtsyMail_Config/autoPipeline (read by the pipeline itself, cached
+    // 15s). Snapshot stays dumb — every new inbound triggers, and the
+    // pipeline decides whether to act.
+    const hasNewInbound = writtenCount > 0 && newest_inbound_ms != null;
+    if (hasNewInbound && !etsyLoggedOut) {
+      const baseUrl = process.env.URL
+                   || process.env.DEPLOY_URL
+                   || "http://localhost:8888";
+      const headers = { "Content-Type": "application/json" };
+      if (process.env.ETSYMAIL_EXTENSION_SECRET) {
+        headers["X-EtsyMail-Secret"] = process.env.ETSYMAIL_EXTENSION_SECRET;
+      }
+      // AbortSignal.timeout requires Node 18+. All Netlify Functions
+      // run on Node 18+ by default, but fall back gracefully if absent
+      // (older bundlers can be missing the static method).
+      const signal = (typeof AbortSignal !== "undefined" && AbortSignal.timeout)
+        ? AbortSignal.timeout(5000)
+        : undefined;
+      try {
+        const res = await fetch(`${baseUrl}/.netlify/functions/etsyMailAutoPipeline-background`, {
+          method : "POST",
+          headers,
+          body   : JSON.stringify({
+            threadId,
+            employeeName: "system:auto-pipeline"
+          }),
+          signal
+        });
+        // 202 = Netlify accepted the background invocation. 200 is fine
+        // too (e.g., if someone runs the function synchronously in dev).
+        // Anything else is a smoke signal.
+        if (res.status !== 202 && !res.ok) {
+          console.warn("autoPipeline trigger non-2xx:", res.status, threadId);
+        }
+      } catch (e) {
+        console.warn("autoPipeline trigger failed:", e.message, threadId);
+        // Don't propagate — scrape ingest must succeed independently.
+      }
     }
 
     // ─── 5) Audit ───

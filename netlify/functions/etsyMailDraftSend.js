@@ -175,6 +175,55 @@ function isStaleQueued(queuedAtTs) {
   return (Date.now() - ms) > (MAX_CLAIM_LOOKBACK_MIN * 60 * 1000);
 }
 
+// ───────────────────────────────────────────────────────────────────
+//  v1.4: shared queued_for_auto_send demotion helpers
+//
+//  When a draft fails terminally (the extension reported failure, the
+//  send queue reaper expired it, the peek path marked it stale, etc.),
+//  the parent thread MUST be demoted out of `queued_for_auto_send` —
+//  otherwise it's stuck in the Auto-Reply folder showing the animated
+//  "sending…" pill forever, even though no send will ever happen.
+//
+//  These helpers exist so every code path that fails a draft uses the
+//  same demotion logic. Two flavors:
+//    - demoteThreadInTxn(tx, threadId, reason) — for callers already
+//      inside a transaction (complete/fail ops); single-write, no
+//      extra read since the txn already has the thread snap available.
+//    - demoteThreadStandalone(threadId, reason) — for callers outside
+//      a txn (peek-path stale expiration); runs its own txn for
+//      consistency with concurrent pipeline runs.
+//  Both are idempotent — re-running them on a thread that's already
+//  past queued_for_auto_send is a no-op.
+// ───────────────────────────────────────────────────────────────────
+
+const THREADS_COLL_NAME = "EtsyMail_Threads";
+
+/** Inside an existing transaction, read the thread doc and demote to
+ *  pending_human_review if its status is queued_for_auto_send.
+ *  Returns the new status (or null if no change). */
+async function demoteThreadInTxn(tx, threadId, reason) {
+  if (!threadId) return null;
+  const tRef = db.collection(THREADS_COLL_NAME).doc(threadId);
+  const tSnap = await tx.get(tRef);
+  if (!tSnap.exists) return null;
+  if (tSnap.data().status !== "queued_for_auto_send") return null;
+  tx.set(tRef, {
+    status            : "pending_human_review",
+    lastAutoDecision  : reason,
+    lastAutoDecisionAt: FV.serverTimestamp(),
+    updatedAt         : FV.serverTimestamp()
+  }, { merge: true });
+  return "pending_human_review";
+}
+
+/** Standalone (no caller txn) version. Runs its own transaction for
+ *  the same atomicity guarantees. Used by peek-path stale expiration
+ *  and by the send-queue reaper. */
+async function demoteThreadStandalone(threadId, reason) {
+  if (!threadId) return null;
+  return await db.runTransaction(async (tx) => demoteThreadInTxn(tx, threadId, reason));
+}
+
 /** Normalize an attachments array for persistence. Strips sentinels,
  *  validates required fields per type, and ensures attachmentId is set. */
 function normalizeAttachments(raw) {
@@ -313,7 +362,16 @@ exports.handler = async (event) => {
         attachments  = [],
         employeeName = null,
         aiMeta       = null,
-        force        = false       // v0.9.1 #6: explicit overwrite of another operator's queued draft
+        force        = false,      // v0.9.1 #6: explicit overwrite of another operator's queued draft
+        // v1.5: optional atomic thread finalize. When the auto-pipeline
+        // calls enqueue, it passes this patch so the draft enqueue AND
+        // the thread status update happen in ONE Firestore transaction.
+        // Without this, the two writes were sequential — if the second
+        // failed, the draft would be queued (extension picks up + sends)
+        // but the thread would still be at pending_human_review, which
+        // is the wrong folder. Pre-v1.5 manual enqueue path doesn't
+        // pass this and behavior is unchanged.
+        parentThreadFinalizePatch = null
       } = body;
 
       if (!threadId || !/^etsy_conv_\d+$/.test(String(threadId))) {
@@ -348,6 +406,15 @@ exports.handler = async (event) => {
       // with clear audit trail. If currently sending, operator must wait
       // — return 409 so the UI can show a graceful message.
       const result = await db.runTransaction(async (tx) => {
+        // v1.5: if the auto-pipeline asked for an atomic thread finalize,
+        // we need to read the thread doc INSIDE this transaction to
+        // satisfy Firestore's read-before-write rule for new doc paths.
+        // Reading a non-existent doc is fine — the set() below merges.
+        if (parentThreadFinalizePatch && parentThreadFinalizePatch.threadId) {
+          const tRef = db.collection(THREADS_COLL_NAME).doc(parentThreadFinalizePatch.threadId);
+          await tx.get(tRef);    // ensures the txn knows about this read path
+        }
+
         const snap = await tx.get(ref);
         const prev = snap.exists ? snap.data() : null;
         if (prev && (prev.status === "sending")) {
@@ -402,7 +469,37 @@ exports.handler = async (event) => {
         };
         if (!snap.exists) payload.createdAt = FV.serverTimestamp();
         tx.set(ref, payload, { merge: true });
-        return { conflict: false, payload };
+
+        // v1.5: atomic thread finalize. Same shape the auto-pipeline's
+        // local finalizeThread used to write, but in the same txn as
+        // the draft. Caller passes primitive fields (JSON-safe);
+        // we reconstruct the Timestamp + serverTimestamp here.
+        let threadFinalizeApplied = false;
+        if (parentThreadFinalizePatch && parentThreadFinalizePatch.threadId) {
+          const p = parentThreadFinalizePatch;
+          const threadPatch = {
+            status                       : p.newStatus,
+            lastAutoDecision             : p.decision,
+            lastAutoDecisionAt           : FV.serverTimestamp(),
+            aiConfidence                 : p.aiConfidence != null ? p.aiConfidence : null,
+            aiDifficulty                 : p.aiDifficulty != null ? p.aiDifficulty : null,
+            aiDraftStatus                : "ready",
+            latestDraftId                : draftId,
+            updatedAt                    : FV.serverTimestamp()
+          };
+          if (typeof p.inboundMs === "number" && p.inboundMs > 0) {
+            threadPatch.lastAutoProcessedInboundAt =
+              admin.firestore.Timestamp.fromMillis(p.inboundMs);
+          }
+          tx.set(
+            db.collection(THREADS_COLL_NAME).doc(p.threadId),
+            threadPatch,
+            { merge: true }
+          );
+          threadFinalizeApplied = true;
+        }
+
+        return { conflict: false, payload, threadFinalizeApplied };
       });
 
       if (result.conflict) {
@@ -441,7 +538,12 @@ exports.handler = async (event) => {
 
     /* ── cancel (inbox → server) ──────────────────────────────────
      *  Operator clicks "Cancel send" before the extension claims it.
-     *  Only allowed while status === "queued" — if already sending, too late. */
+     *  Only allowed while status === "queued" — if already sending, too late.
+     *
+     *  v1.5: also demote the parent thread if it was queued_for_auto_send.
+     *  Without this, cancelling an auto-pipeline-enqueued send left the
+     *  thread orphaned in Auto-Reply with the "sending…" pill while the
+     *  draft itself was back at "draft". */
     if (op === "cancel") {
       const { draftId } = body;
       if (!draftId) return bad("Missing draftId");
@@ -456,12 +558,20 @@ exports.handler = async (event) => {
           queuedAt  : null,
           updatedAt : FV.serverTimestamp()
         }, { merge: true });
-        return { ok: true, threadId: prev.threadId };
+        // v1.5: demote the parent thread if it was queued for auto-send.
+        // No-op for manual operator sends (they're not in
+        // queued_for_auto_send).
+        const threadStatusUpdate = await demoteThreadInTxn(
+          tx, prev.threadId, "human_review_after_send_cancelled"
+        );
+        return { ok: true, threadId: prev.threadId, threadStatusUpdate };
       });
       if (result.notFound) return json(404, { error: "Draft not found" });
       if (result.badState) return json(409, { error: `Cannot cancel — draft is ${result.badState}` });
-      await audit(result.threadId, draftId, "draft_cancelled", "operator", {});
-      return ok({ draftId, status: "draft" });
+      await audit(result.threadId, draftId, "draft_cancelled", "operator", {
+        threadStatusUpdate: result.threadStatusUpdate
+      });
+      return ok({ draftId, status: "draft", threadStatus: result.threadStatusUpdate });
     }
 
     /* ── peek (extension → server) ────────────────────────────────
@@ -497,8 +607,16 @@ exports.handler = async (event) => {
               sendErrorCode : "QUEUED_EXPIRED",
               updatedAt     : FV.serverTimestamp()
             }, { merge: true });
+            // v1.4: also demote the parent thread if it was queued
+            // waiting for this send. Without this, the thread stays
+            // in Auto-Reply showing "sending…" forever even though
+            // the draft was just expired.
+            const threadStatusUpdate = await demoteThreadStandalone(
+              d.threadId, "human_review_after_queued_expired"
+            ).catch(e => { console.warn("demote on peek-expire failed:", e.message); return null; });
             await audit(d.threadId, draftId, "draft_queue_expired", "peek", {
-              ageMin: Math.round((Date.now() - d.queuedAt.toMillis()) / 60000)
+              ageMin: Math.round((Date.now() - d.queuedAt.toMillis()) / 60000),
+              threadStatusUpdate
             });
           } catch (e) { console.warn("expire stale queued failed:", e.message); }
           return ok({ queued: false, currentStatus: "failed" });
@@ -552,7 +670,11 @@ exports.handler = async (event) => {
             sendErrorCode : "QUEUED_EXPIRED",
             updatedAt     : FV.serverTimestamp()
           }, { merge: true });
-          return { expired: true };
+          // v1.4: also demote the thread (in the same txn for atomicity)
+          const threadStatusUpdate = await demoteThreadInTxn(
+            tx, prev.threadId, "human_review_after_queued_expired"
+          );
+          return { expired: true, threadStatusUpdate };
         }
 
         // v0.9.1 #2/#3: never re-claim a stranded post-click draft.
@@ -567,7 +689,13 @@ exports.handler = async (event) => {
             sendErrorCode : "STRANDED_POST_CLICK",
             updatedAt     : FV.serverTimestamp()
           }, { merge: true });
-          return { strandedPostClick: true };
+          // v1.4: demote so the thread doesn't sit stuck in "sending…"
+          // forever. The operator MUST verify on Etsy what happened, so
+          // Needs Review is the right destination.
+          const threadStatusUpdate = await demoteThreadInTxn(
+            tx, prev.threadId, "human_review_after_stranded_post_click"
+          );
+          return { strandedPostClick: true, threadStatusUpdate };
         }
 
         // Accept queued, or sending-but-stale-pre-click (extension died before Send)
@@ -584,7 +712,14 @@ exports.handler = async (event) => {
             sendAttempts : nextAttempts,
             updatedAt    : FV.serverTimestamp()
           }, { merge: true });
-          return { exhausted: true, attempts: nextAttempts };
+          // v1.5: also demote the parent thread. The retry budget is
+          // spent; this draft will not be sent. The thread must leave
+          // queued_for_auto_send so the operator sees it in Needs
+          // Review and can decide what to do.
+          const threadStatusUpdate = await demoteThreadInTxn(
+            tx, prev.threadId, "human_review_after_retry_exhausted"
+          );
+          return { exhausted: true, attempts: nextAttempts, threadStatusUpdate };
         }
 
         tx.set(ref, {
@@ -742,14 +877,57 @@ exports.handler = async (event) => {
           sendHeartbeatAt    : FV.serverTimestamp(),
           updatedAt          : FV.serverTimestamp()
         }, { merge: true });
-        return { ok: true, threadId: prev.threadId, status: finalStatus };
+
+        // ── v1.2 / v1.4: Auto-Reply promotion ──────────────────────
+        // If the THREAD is at `queued_for_auto_send`, the auto-pipeline
+        // enqueued this send and we've been waiting for Etsy
+        // confirmation. Decide promotion vs demotion:
+        //   - clean send         → auto_replied (Auto-Reply folder)
+        //   - partial/unverified → pending_human_review (Needs Review)
+        //
+        // Manual operator sends never have status=queued_for_auto_send
+        // so they're untouched. (Operator decides whether to archive.)
+        let threadStatusUpdate = null;
+        if (prev.threadId) {
+          if (partial || unverified) {
+            // Demote — partial/unverified send needs operator review
+            threadStatusUpdate = await demoteThreadInTxn(
+              tx, prev.threadId,
+              unverified ? "human_review_after_unverified_send"
+                         : "human_review_after_partial_send"
+            );
+          } else {
+            // Promote — clean send. Custom logic since the helper only
+            // handles the demotion direction. Same transactional read.
+            const tRef = db.collection(THREADS_COLL_NAME).doc(prev.threadId);
+            const tSnap = await tx.get(tRef);
+            if (tSnap.exists && tSnap.data().status === "queued_for_auto_send") {
+              tx.set(tRef, {
+                status                    : "auto_replied",
+                lastAutoDecision          : "auto_send_confirmed",
+                lastAutoDecisionAt        : FV.serverTimestamp(),
+                // v1.4: this is a real AI auto-reply — clear any
+                // stale "manually moved" flag from a prior move.
+                manuallyMovedToAutoReplied: FV.delete(),
+                manualMoveActor           : FV.delete(),
+                manualMoveAt              : FV.delete(),
+                manualMoveReason          : FV.delete(),
+                manualMoveFromStatus      : FV.delete(),
+                updatedAt                 : FV.serverTimestamp()
+              }, { merge: true });
+              threadStatusUpdate = "auto_replied";
+            }
+          }
+        }
+        return { ok: true, threadId: prev.threadId, status: finalStatus, threadStatusUpdate };
       });
       if (result.notFound) return json(404, { error: "Draft not found" });
       if (result.notYours) return json(403, { error: "Complete from wrong session" });
       await audit(result.threadId, draftId, "draft_sent", sessionId, {
-        partial, unverified, imagesSent, imagesTotal, listingsSent, listingsTotal, note
+        partial, unverified, imagesSent, imagesTotal, listingsSent, listingsTotal, note,
+        threadStatusUpdate: result.threadStatusUpdate
       });
-      return ok({ draftId, status: result.status });
+      return ok({ draftId, status: result.status, threadStatus: result.threadStatusUpdate });
     }
 
     /* ── fail (extension → server) ────────────────────────────────
@@ -789,18 +967,33 @@ exports.handler = async (event) => {
           patch.status        = "failed";
         }
         tx.set(ref, patch, { merge: true });
-        return { ok: true, threadId: prev.threadId, requeued: willRetry, attempts };
+
+        // ── v1.2 / v1.4: Auto-Reply demotion on terminal failure ──
+        // If the thread was queued_for_auto_send and this is a
+        // terminal failure (no retry left), demote to Needs Review so
+        // the operator gets eyes on it. If we're going to retry, leave
+        // the thread state alone — the next claim attempts the send
+        // again.
+        let threadStatusUpdate = null;
+        if (!willRetry && prev.threadId) {
+          threadStatusUpdate = await demoteThreadInTxn(
+            tx, prev.threadId, "human_review_after_send_failure"
+          );
+        }
+        return { ok: true, threadId: prev.threadId, requeued: willRetry, attempts, threadStatusUpdate };
       });
       if (result.notFound) return json(404, { error: "Draft not found" });
       if (result.notYours) return json(403, { error: "Fail from wrong session" });
       await audit(result.threadId, draftId, result.requeued ? "draft_send_requeued" : "draft_send_failed", sessionId, {
-        error, errorCode, attempts: result.attempts
+        error, errorCode, attempts: result.attempts,
+        threadStatusUpdate: result.threadStatusUpdate
       });
       return ok({
         draftId,
-        status   : result.requeued ? "queued" : "failed",
-        requeued : result.requeued,
-        attempts : result.attempts
+        status      : result.requeued ? "queued" : "failed",
+        requeued    : result.requeued,
+        attempts    : result.attempts,
+        threadStatus: result.threadStatusUpdate
       });
     }
 
@@ -834,3 +1027,12 @@ exports.handler = async (event) => {
     return json(500, { error: err.message || String(err) });
   }
 };
+
+// ─── v1.4 helpers exported for the send-queue reaper ───────────────
+// Not part of the HTTP surface — the reaper imports these directly.
+module.exports.demoteThreadInTxn      = demoteThreadInTxn;
+module.exports.demoteThreadStandalone = demoteThreadStandalone;
+module.exports.isStaleQueued          = isStaleQueued;
+module.exports.isStaleHeartbeat       = isStaleHeartbeat;
+module.exports.MAX_CLAIM_LOOKBACK_MIN = MAX_CLAIM_LOOKBACK_MIN;
+module.exports.STALE_HEARTBEAT_MS     = STALE_HEARTBEAT_MS;

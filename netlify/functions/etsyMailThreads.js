@@ -23,6 +23,7 @@
  */
 
 const admin = require("./firebaseAdmin");
+const { requireExtensionAuth } = require("./_etsyMailAuth");
 const db    = admin.firestore();
 const FV    = admin.firestore.FieldValue;
 
@@ -30,9 +31,13 @@ const THREADS_COLL  = "EtsyMail_Threads";
 const AUDIT_COLL    = "EtsyMail_Audit";
 const JOBS_COLL     = "EtsyMail_Jobs";
 
+// v1.2: include X-EtsyMail-Secret in allowed headers (CORS preflight)
+// because the handler now enforces requireExtensionAuth. The inbox UI
+// forwards the secret on every api() call; the snapshot/extension
+// forwards it from env. Calls without the header now 401.
 const CORS = {
   "Access-Control-Allow-Origin" : "*",
-  "Access-Control-Allow-Headers": "Content-Type,Authorization",
+  "Access-Control-Allow-Headers": "Content-Type,Authorization,X-EtsyMail-Secret",
   "Access-Control-Allow-Methods": "GET,POST,OPTIONS"
 };
 
@@ -46,11 +51,13 @@ const VALID_STATUSES = new Set([
   "pending_human_review",
   "approved_for_send",
   "auto_send_eligible",
+  "queued_for_auto_send",    // v1.2 — AI passed all gates, draft enqueued, awaiting Etsy send confirmation
+  "auto_replied",            // v1.0 — AI auto-sent AND Etsy confirmed delivery
   "send_in_progress",
   "sent",
-  "hold_uncertain",
-  "hold_missing_order",
-  "hold_login_required",
+  "hold_uncertain",          // legacy — retained for backward compat
+  "hold_missing_order",      // legacy
+  "hold_login_required",     // legacy
   "failed_scrape",
   "failed_send",
   "archived"
@@ -73,6 +80,13 @@ exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") {
     return { statusCode: 200, headers: CORS, body: "ok" };
   }
+
+  // v1.2: gate every op behind the shared secret. Same approach as
+  // etsyMailDraftSend. Inbox forwards the secret from localStorage on
+  // every api() call. If env is unset, requireExtensionAuth allows
+  // through (dev mode) and logs a loud warning.
+  const auth = requireExtensionAuth(event);
+  if (!auth.ok) return auth.response;
 
   try {
     const method = event.httpMethod;
@@ -325,14 +339,55 @@ exports.handler = async (event) => {
         if (!snap.exists) return json(404, { success: false, notFound: true });
 
         const prev = (snap.data() || {}).status || null;
-        await tRef.set({ status, updatedAt: FV.serverTimestamp() }, { merge: true });
+
+        // ── v1.4: Manual auto_replied attribution ──────────────────
+        // The auto_replied status is reserved for AI-completed sends
+        // (set by etsyMailDraftSend.complete after Etsy confirms
+        // delivery). When an operator manually moves a thread here
+        // via the move-to dropdown, we MUST distinguish it from a
+        // real AI auto-reply — otherwise the "AI handled rate"
+        // metric is polluted with operator decisions.
+        //
+        // Rule: any setStatus → auto_replied is automatically marked
+        // with manuallyMovedToAutoReplied=true plus actor + timestamp.
+        // The only path that creates a "real" auto_replied is
+        // etsyMailDraftSend.complete, which doesn't go through this
+        // endpoint.
+        const patch = { status, updatedAt: FV.serverTimestamp() };
+        if (status === "auto_replied") {
+          patch.manuallyMovedToAutoReplied = true;
+          patch.manualMoveActor            = actor;
+          patch.manualMoveAt               = FV.serverTimestamp();
+          patch.manualMoveReason           = reason || null;
+          patch.manualMoveFromStatus       = prev;
+          // Clear AI confidence/decision attribution so reporting
+          // doesn't incorrectly credit the AI for this thread.
+          patch.lastAutoDecision           = "manually_moved_to_auto_replied";
+          patch.lastAutoDecisionAt         = FV.serverTimestamp();
+        } else if (prev === "auto_replied" || prev === "queued_for_auto_send") {
+          // Moving OUT of an AI-handled status — clear the manual flag
+          // so a future re-entry isn't haunted by stale provenance.
+          patch.manuallyMovedToAutoReplied = FV.delete();
+          patch.manualMoveActor            = FV.delete();
+          patch.manualMoveAt               = FV.delete();
+          patch.manualMoveReason           = FV.delete();
+          patch.manualMoveFromStatus       = FV.delete();
+        }
+
+        await tRef.set(patch, { merge: true });
         await writeAudit({
           threadId,
           eventType: "status_changed",
           actor,
-          payload: { from: prev, to: status, reason }
+          payload: {
+            from: prev, to: status, reason,
+            manualMoveFlagged: status === "auto_replied"
+          }
         });
-        return ok({ threadId, from: prev, to: status });
+        return ok({
+          threadId, from: prev, to: status,
+          manuallyMovedToAutoReplied: status === "auto_replied" ? true : null
+        });
       }
 
       /* ---------- enqueueJob ---------- */

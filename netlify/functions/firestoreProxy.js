@@ -23,12 +23,16 @@
  */
 
 const admin = require("./firebaseAdmin");
+const { requireExtensionAuth } = require("./_etsyMailAuth");
 const db    = admin.firestore();
 const FV    = admin.firestore.FieldValue;
 
 const CORS = {
   "Access-Control-Allow-Origin" : "*",
-  "Access-Control-Allow-Headers": "Content-Type,Authorization",
+  // v1.5: include X-EtsyMail-Secret in allowed headers since the proxy
+  // now requires it on every op. The inbox UI forwards it from
+  // localStorage on every api() call.
+  "Access-Control-Allow-Headers": "Content-Type,Authorization,X-EtsyMail-Secret",
   "Access-Control-Allow-Methods": "GET,POST,OPTIONS"
 };
 
@@ -115,6 +119,20 @@ function parseOrderBy(raw) {
 
 exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: CORS, body: "ok" };
+
+  // ── v1.5: gate every op behind the shared secret ────────────────
+  // Pre-v1.5, the proxy was unauthenticated. A public Netlify URL with
+  // unauthenticated read AND write access to thread/draft/customer/audit
+  // collections is a security incident waiting to happen — anyone could
+  // wipe EtsyMail_Threads, rewrite searchableText fields with garbage,
+  // or read every customer's order history.
+  //
+  // Now: every GET and POST requires X-EtsyMail-Secret. The inbox UI
+  // forwards it from localStorage on every api() call (existing
+  // behavior, no UI change needed). Functions calling the proxy
+  // server-side forward it from process.env.ETSYMAIL_EXTENSION_SECRET.
+  const auth = requireExtensionAuth(event);
+  if (!auth.ok) return auth.response;
 
   try {
     const method = event.httpMethod;

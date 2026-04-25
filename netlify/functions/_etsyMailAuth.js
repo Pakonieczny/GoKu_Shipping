@@ -25,10 +25,35 @@ const CORS = {
 function requireExtensionAuth(event) {
   const expected = process.env.ETSYMAIL_EXTENSION_SECRET;
 
-  // Dev fallback: if the env var isn't set, allow through so local testing works.
-  // Log a loud warning so it's obvious in Netlify function logs.
+  // v1.5: fail-closed in production. Pre-v1.5, if the env var was unset
+  // we'd allow the request through (dev-friendly, production-dangerous).
+  // Production deploys must have the secret configured; the helper
+  // refuses if it's missing instead of silently passing through.
+  //
+  // The "production" detection uses Netlify's CONTEXT env var:
+  //   - "production"      → main branch, customer-facing
+  //   - "deploy-preview"  → PR previews
+  //   - "branch-deploy"   → other branches
+  //   - "dev" (or unset)  → local netlify dev / netlify functions:serve
+  // We only fail-closed for "production". Deploy previews and dev still
+  // pass through with a warning — useful for testing and demos.
   if (!expected) {
-    console.warn("⚠ ETSYMAIL_EXTENSION_SECRET not set — allowing request without auth. SET THIS IN PRODUCTION.");
+    if (process.env.CONTEXT === "production") {
+      console.error("✗ ETSYMAIL_EXTENSION_SECRET not set in production — refusing request.");
+      return {
+        ok: false,
+        response: {
+          statusCode: 500,
+          headers: CORS,
+          body: JSON.stringify({
+            error: "Server misconfigured: ETSYMAIL_EXTENSION_SECRET is required in production",
+            errorCode: "AUTH_NOT_CONFIGURED"
+          })
+        }
+      };
+    }
+    console.warn("⚠ ETSYMAIL_EXTENSION_SECRET not set — allowing request without auth (CONTEXT=" +
+      (process.env.CONTEXT || "unknown") + "). MUST set this before promoting to production.");
     return { ok: true };
   }
 

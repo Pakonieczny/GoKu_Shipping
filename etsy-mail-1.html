@@ -109,6 +109,23 @@
 
     .em-list-empty { padding: 40px 20px; text-align: center; color: #6a737d; font-size: 13px; }
 
+    /* ── v1.3: Search-mode banner above the list items ─────────────── */
+    .em-search-banner {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 14px; background: #ddf4ff;
+      border-bottom: 1px solid #b6e3ff;
+      font-size: 11px; color: #0969da;
+      position: sticky; top: 0; z-index: 1;
+    }
+    .em-search-banner .material-icons { font-size: 14px; }
+    .em-search-banner b { color: #033d8b; font-weight: 600; }
+
+    /* ── v1.3: Stale-claim recovered badge ─────────────────────────── */
+    .em-badge.stale-claim {
+      background: #fff8c5; color: #7d4e00;
+      cursor: help;
+    }
+
     .em-detail { grid-area: detail; background: #f4f5f7; overflow-y: auto; display: flex; flex-direction: column; }
     .em-detail-empty {
       flex: 1; display: flex; align-items: center; justify-content: center;
@@ -600,10 +617,167 @@
     .em-status-pill.draft_ready,
     .em-status-pill.pending_human_review { background: #ddf4ff; color: #0969da; }
     .em-status-pill.sent                 { background: #dcffe4; color: #116329; }
-    .em-status-pill.hold_uncertain,
-    .em-status-pill.hold_missing_order,
-    .em-status-pill.hold_login_required  { background: #ffebe9; color: #a40e26; }
+    .em-status-pill.auto_replied         { background: #f6e5ff; color: #6b21a8; }
+    .em-status-pill.queued_for_auto_send {
+      background: #fff4e5; color: #9a3f00;
+      animation: em-pill-pulse 1.6s ease-in-out infinite;
+    }
+    @keyframes em-pill-pulse {
+      0%, 100% { opacity: 1; }
+      50%      { opacity: .6; }
+    }
     .em-status-pill.archived             { background: #eaeef2; color: #57606a; }
+
+    /* ── List filter bar (search + message type + date) ─────────────── */
+    .em-list-filters {
+      display: flex; flex-direction: column; gap: 6px;
+      padding: 10px 14px; border-bottom: 1px solid #e1e4e8;
+      background: #fff;
+      position: sticky; top: 0; z-index: 2;
+    }
+    .em-list-filters .em-filters-row {
+      display: flex; gap: 6px; align-items: center;
+    }
+    .em-list-filters input.em-filter-search {
+      flex: 1; border: 1px solid #d0d7de; border-radius: 4px;
+      padding: 5px 8px; font-size: 12px; outline: none;
+      background: #f6f8fa; min-width: 0;
+    }
+    .em-list-filters input.em-filter-search:focus {
+      background: #fff; border-color: #0366d6;
+    }
+    .em-list-filters select.em-filter-select {
+      flex: 1; border: 1px solid #d0d7de; border-radius: 4px;
+      padding: 4px 6px; font-size: 11px; outline: none;
+      background: #fff; cursor: pointer; min-width: 0;
+      color: #24292f;
+    }
+    .em-list-filters select.em-filter-select:hover { background: #f6f8fa; }
+    .em-list-filters select.em-filter-select:focus { border-color: #0366d6; }
+    .em-list-filters button.em-filter-btn {
+      border: 1px solid #d0d7de; background: #fff; border-radius: 4px;
+      padding: 4px 8px; cursor: pointer; font-size: 11px;
+      display: inline-flex; align-items: center; gap: 4px;
+      flex-shrink: 0; color: #24292f;
+    }
+    .em-list-filters button.em-filter-btn:hover { background: #f6f8fa; }
+    .em-list-filters button.em-filter-btn.active {
+      background: #0366d6; color: #fff; border-color: #0366d6;
+    }
+    .em-list-filters button.em-filter-btn .material-icons { font-size: 14px; }
+    .em-list-filters .em-filter-clear {
+      font-size: 10px; color: #6a737d; cursor: pointer;
+      padding: 2px 6px; border-radius: 3px;
+    }
+    .em-list-filters .em-filter-clear:hover {
+      background: #f6f8fa; color: #24292f;
+    }
+
+    /* ── Selection-mode action bar (above thread list) ───────────────── */
+    .em-selection-bar {
+      display: none;
+      align-items: center; gap: 8px;
+      padding: 8px 14px; background: #e7f3ff;
+      border-bottom: 1px solid #b6d4f5;
+      font-size: 12px; color: #0366d6;
+      position: sticky; top: 0; z-index: 3;
+    }
+    .em-selection-bar.active { display: flex; }
+    .em-selection-bar .em-sel-count {
+      font-weight: 600;
+    }
+    .em-selection-bar .em-sel-spacer { flex: 1; }
+    .em-selection-bar select.em-move-select {
+      border: 1px solid #b6d4f5; background: #fff;
+      border-radius: 4px; padding: 4px 6px; font-size: 11px;
+      cursor: pointer; outline: none;
+    }
+    .em-selection-bar select.em-move-select:focus { border-color: #0366d6; }
+    .em-selection-bar button.em-sel-btn {
+      border: 1px solid #b6d4f5; background: #fff;
+      border-radius: 4px; padding: 4px 8px; cursor: pointer;
+      font-size: 11px; color: #0366d6;
+      display: inline-flex; align-items: center; gap: 4px;
+    }
+    .em-selection-bar button.em-sel-btn:hover { background: #f0f7ff; }
+    .em-selection-bar button.em-sel-btn .material-icons { font-size: 14px; }
+    .em-selection-bar button.em-sel-btn.danger { color: #cf222e; border-color: #f3c5c5; }
+    .em-selection-bar button.em-sel-btn.danger:hover { background: #fff5f5; }
+
+    /* ── Per-row checkbox (selection mode) ──────────────────────────── */
+    .em-list-item.selectable {
+      grid-template-columns: auto 1fr auto;
+      grid-template-areas: "check name time" "check snippet snippet" "check badges badges";
+      column-gap: 8px;
+    }
+    .em-list-item .em-list-check {
+      grid-area: check; align-self: center;
+      width: 16px; height: 16px; cursor: pointer;
+      accent-color: #0366d6;
+    }
+    .em-list-item.checked { background: #fff8d4; }
+    .em-list-item.checked.selected { background: #ffeaa0; }
+
+    /* ── Confidence + difficulty badges (AI rating) ─────────────────── */
+    .em-badge.ai-conf {
+      background: #e7f3ff; color: #0366d6;
+    }
+    .em-badge.ai-conf.low {
+      background: #ffebe9; color: #a40e26;
+    }
+    .em-badge.ai-conf.med {
+      background: #fff8c5; color: #7d4e00;
+    }
+    .em-badge.ai-conf.high {
+      background: #dcffe4; color: #116329;
+    }
+    .em-badge.ai-diff {
+      background: #f0f0f5; color: #4b4b6b;
+    }
+    .em-badge.ai-auto {
+      background: #f6e5ff; color: #6b21a8;
+    }
+    .em-badge.ai-manual {
+      background: #eef0f2; color: #57606a;
+      border: 1px dashed #afb8c1;
+    }
+    .em-badge.ai-sending {
+      background: #fff4e5; color: #9a3f00;
+      animation: em-pill-pulse 1.6s ease-in-out infinite;
+    }
+
+    .em-ai-rating-row {
+      display: flex; gap: 8px; flex-wrap: wrap; margin: 6px 0;
+      font-size: 11px;
+    }
+    .em-ai-rating-pill {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 3px 9px; border-radius: 11px;
+      font-weight: 600;
+    }
+    .em-ai-rating-pill .em-rp-label {
+      font-size: 9px; text-transform: uppercase; letter-spacing: .5px;
+      opacity: .7; font-weight: 700;
+    }
+    .em-ai-rating-pill.conf-high { background: #dcffe4; color: #116329; }
+    .em-ai-rating-pill.conf-med  { background: #fff8c5; color: #7d4e00; }
+    .em-ai-rating-pill.conf-low  { background: #ffebe9; color: #a40e26; }
+    .em-ai-rating-pill.diff      { background: #f0f0f5; color: #4b4b6b; }
+    .em-ai-rating-pill.threshold { background: #f6f8fa; color: #57606a; border: 1px dashed #d0d7de; }
+    .em-ai-rating-pill .material-icons { font-size: 12px; }
+
+    /* Threshold-config row in settings */
+    .em-modal label.em-modal-range {
+      display: flex; align-items: center; gap: 10px;
+      margin: 12px 0 4px;
+    }
+    .em-modal label.em-modal-range input[type=range] {
+      flex: 1;
+    }
+    .em-modal .em-modal-range-val {
+      font-family: monospace; font-weight: 600; color: #0366d6;
+      min-width: 36px; text-align: right;
+    }
 
     .em-toast {
       position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
@@ -792,12 +966,36 @@
   <!-- v0.9.1 #1: Secret setup modal (shown on first 401 or via Settings) -->
   <div id="emSecretModal" class="em-modal-backdrop">
     <div class="em-modal">
-      <h2>Extension secret required</h2>
-      <p>This inbox needs the same secret your browser extension uses to talk to the backend. Paste it once and it'll be saved in this browser.</p>
-      <p style="font-size:12px;">It's the value of <code>ETSYMAIL_EXTENSION_SECRET</code> from your Netlify environment variables. The extension stores it under Options → Shared secret.</p>
+      <h2>Settings</h2>
+      <p style="margin-bottom:4px;"><b>Inbox secret</b></p>
+      <p style="font-size:12px;">Same value as <code>ETSYMAIL_EXTENSION_SECRET</code> in your Netlify env. Stored locally in this browser only.</p>
       <form id="emSecretForm" autocomplete="off">
         <label for="emSecretInput">X-EtsyMail-Secret</label>
         <input type="password" id="emSecretInput" placeholder="paste your secret" autocomplete="off" />
+
+        <hr style="margin:18px 0 10px;border:none;border-top:1px solid #e1e4e8;">
+        <p style="margin-bottom:4px;"><b>Auto-pipeline</b> <span class="em-muted" style="font-weight:400;font-size:11px;">— shared with all operators (stored in Firestore)</span></p>
+
+        <label style="display:flex; align-items:center; gap:10px; margin:10px 0 6px; cursor:pointer;">
+          <input type="checkbox" id="emAutoEnabledInput" style="width:16px; height:16px; cursor:pointer;">
+          <span><b>Enable auto-pipeline</b> &mdash; new inbound messages get an AI draft and either auto-send or route to Needs Review.</span>
+        </label>
+        <p style="font-size:11px;color:#6a737d;margin:0 0 12px 26px;">
+          When OFF, AI drafts are still generated for every new inbound (so reviewers see the AI's suggestion), but nothing auto-sends — every thread routes to <b>Needs Review</b> regardless of confidence.
+        </p>
+
+        <label class="em-modal-range" for="emConfThresholdInput">
+          <span style="white-space:nowrap;">Auto-reply threshold</span>
+          <input type="range" id="emConfThresholdInput"
+                 min="0.5" max="0.99" step="0.01" />
+          <span class="em-modal-range-val" id="emConfThresholdVal">80%</span>
+        </label>
+        <p style="font-size:11px;color:#6a737d;margin:0 0 8px;">
+          When AI confidence ≥ this value, replies auto-send and the thread moves to <b>Auto-Reply</b>.
+          Below it, replies go to <b>Needs Review</b>. Higher = safer, fewer auto-sends.
+        </p>
+        <p id="emAutoCfgMeta" style="font-size:10px;color:#6a737d;margin:0 0 8px;font-style:italic;"></p>
+
         <div class="em-modal-error" id="emSecretError"></div>
         <div class="em-modal-buttons">
           <button type="button" id="emSecretCancelBtn">Cancel</button>
@@ -824,9 +1022,47 @@
     <div class="em-rail" id="emRail"></div>
 
     <div class="em-list">
-      <div class="em-list-header">
-        <input type="text" id="emSearchInput" placeholder="Search customer, order…">
-        <button id="emSortBtn" title="Sort"><i class="material-icons">sort</i></button>
+      <div class="em-selection-bar" id="emSelectionBar">
+        <i class="material-icons" style="font-size:16px;">check_box</i>
+        <span class="em-sel-count"><span id="emSelCount">0</span> selected</span>
+        <span class="em-sel-spacer"></span>
+        <select class="em-move-select" id="emMoveSelect" title="Move selected threads to a folder">
+          <option value="">Move to…</option>
+        </select>
+        <button class="em-sel-btn" id="emSelClearBtn" title="Clear selection">
+          <i class="material-icons">close</i>Cancel
+        </button>
+      </div>
+
+      <div class="em-list-filters" id="emListFilters">
+        <div class="em-filters-row">
+          <input type="text" class="em-filter-search" id="emSearchInput"
+                 placeholder="Search customer, order, message…">
+          <button class="em-filter-btn" id="emSelectModeBtn" title="Select multiple threads">
+            <i class="material-icons">check_box_outline_blank</i>Select
+          </button>
+        </div>
+        <div class="em-filters-row">
+          <select class="em-filter-select" id="emMessageTypeFilter" title="Filter by message type">
+            <option value="all">All types</option>
+            <option value="with_image">With image</option>
+            <option value="text_only">Text only</option>
+            <option value="has_order">Has linked order</option>
+            <option value="no_order">No linked order</option>
+            <option value="unread">Unread only</option>
+          </select>
+          <select class="em-filter-select" id="emDateFilter" title="Filter by date">
+            <option value="all">All time</option>
+            <option value="today">Today</option>
+            <option value="7d">Last 7 days</option>
+            <option value="30d">Last 30 days</option>
+            <option value="90d">Last 90 days</option>
+          </select>
+          <span class="em-filter-clear" id="emFilterClear" title="Reset all filters">
+            <i class="material-icons" style="font-size:13px;vertical-align:middle;">refresh</i>
+            reset
+          </span>
+        </div>
       </div>
       <div class="em-list-items" id="emListItems">
         <div class="em-list-empty">Loading threads…</div>
@@ -858,31 +1094,127 @@
     const THREADS_COLL = "EtsyMail_Threads";
     const CUSTOMERS_COLL = "EtsyMail_Customers";
 
+    // ── Folder definitions (left rail). After the v1.1 cleanup the
+    //    inbox shows only the four buckets that matter for routing:
+    //
+    //      Needs review  →  AI flagged this for human attention
+    //      Auto-Reply    →  AI handled it end-to-end
+    //
+    //    Every new inbound is routed to one of those two by the auto-
+    //    pipeline. "All" is the unfiltered firehose. "Archived" is the
+    //    explicit graveyard.
+    //
+    //    v1.2: Auto-Reply folder shows BOTH:
+    //      auto_replied         — Etsy confirmed delivery
+    //      queued_for_auto_send — AI passed all gates, draft enqueued,
+    //                             waiting for the Chrome extension to
+    //                             actually send via Etsy DOM (transient
+    //                             state, typically <60 seconds).
+    //    The thread is demoted to pending_human_review on send failure
+    //    by etsyMailDraftSend.complete/fail; the operator never sees
+    //    a thread stuck in Auto-Reply when the actual send failed.
+    //
+    //    Removed in v1.0: detected_from_gmail, etsy_scraped, hold_*.
+    //    Removed in v1.1: draft_ready, sent.
     const RAIL_FILTERS = [
-      { id: "all",                  label: "All",             icon: "inbox",          status: null },
-      { id: "detected_from_gmail",  label: "New",             icon: "mail",           status: "detected_from_gmail" },
-      { id: "etsy_scraped",         label: "Scraped",         icon: "cloud_download", status: "etsy_scraped" },
-      { id: "draft_ready",          label: "Draft ready",     icon: "edit",           status: "draft_ready" },
-      { id: "pending_human_review", label: "Needs review",    icon: "rate_review",    status: "pending_human_review" },
-      { id: "sent",                 label: "Sent",            icon: "send",           status: "sent" },
-      { id: "hold_uncertain",       label: "Hold · uncertain",icon: "pause",          status: "hold_uncertain" },
-      { id: "hold_missing_order",   label: "Hold · no order", icon: "help",           status: "hold_missing_order" },
-      { id: "hold_login_required",  label: "Hold · login",    icon: "lock",           status: "hold_login_required" },
-      { id: "archived",             label: "Archived",        icon: "archive",        status: "archived" }
+      { id: "all",                  label: "All",          icon: "inbox",         status: null },
+      { id: "pending_human_review", label: "Needs review", icon: "rate_review",   status: "pending_human_review" },
+      { id: "auto_replied",         label: "Auto-Reply",   icon: "auto_awesome",  status: ["auto_replied", "queued_for_auto_send"] },
+      { id: "archived",             label: "Archived",     icon: "archive",       status: "archived" }
     ];
 
+    // Move-to dropdown — use single-status entries only. Operators can
+    // move a thread INTO Auto-Reply manually but it goes to auto_replied
+    // (the confirmed-success status), not the in-flight one.
+    const MOVE_TARGETS = [
+      { status: "pending_human_review", label: "Needs review" },
+      { status: "auto_replied",         label: "Auto-Reply" },
+      { status: "archived",             label: "Archived" }
+    ];
+
+    // ── Auto-pipeline config (single source of truth: Firestore) ──
+    // Lives at EtsyMail_Config/autoPipeline. Read by the server-side
+    // pipeline (cached 15s) and by this UI. Operators tune it in the
+    // Settings dialog. No localStorage, no env vars: ONE place.
+    const CONFIG_COLL = "EtsyMail_Config";
+    const AUTO_CFG_DOC_ID = "autoPipeline";
+    const AUTO_CFG_DEFAULTS = { enabled: true, threshold: 0.80 };
+
+    // In-memory cache so badges/tooltips don't re-fetch on every render.
+    // Refreshed on Settings open + on Settings save + every COUNTS_POLL.
+    let _autoCfg = { ...AUTO_CFG_DEFAULTS, _loaded: false };
+
+    async function fetchAutoConfig() {
+      try {
+        const res = await api("firestoreProxy", {
+          method: "GET",
+          query : { op: "get", coll: CONFIG_COLL, id: AUTO_CFG_DOC_ID }
+        });
+        if (res && res.exists && res.doc) {
+          const d = res.doc;
+          _autoCfg = {
+            enabled  : d.enabled !== false,
+            threshold: (typeof d.threshold === "number" && d.threshold >= 0 && d.threshold <= 1)
+                       ? d.threshold : AUTO_CFG_DEFAULTS.threshold,
+            updatedBy: d.updatedBy || null,
+            updatedAt: d.updatedAt || null,
+            _loaded  : true
+          };
+        } else {
+          _autoCfg = { ...AUTO_CFG_DEFAULTS, _loaded: true };
+        }
+      } catch (e) {
+        console.warn("auto-config fetch failed:", e.message);
+        if (!_autoCfg._loaded) _autoCfg = { ...AUTO_CFG_DEFAULTS, _loaded: true };
+      }
+      return _autoCfg;
+    }
+
+    async function saveAutoConfig({ enabled, threshold, by }) {
+      const clean = {
+        enabled  : enabled !== false,
+        threshold: Math.max(0, Math.min(1, parseFloat(threshold) || AUTO_CFG_DEFAULTS.threshold)),
+        updatedBy: by || getEmployeeName() || "operator",
+        updatedAt: { __serverTimestamp: true }
+      };
+      await api("firestoreProxy", {
+        method: "POST",
+        body  : {
+          op  : "set",
+          coll: CONFIG_COLL,
+          id  : AUTO_CFG_DOC_ID,
+          merge: true,
+          data : clean
+        }
+      });
+      _autoCfg = { ...clean, _loaded: true };
+      return _autoCfg;
+    }
+
     const state = {
-      activeFilterId : "all",
-      threads        : [],
-      selectedId     : null,
-      messages       : [],
-      searchText     : "",
-      counts         : {},
-      listPollTimer  : null,
-      msgPollTimer   : null,
-      countsPollTimer: null,
-      inFlightList   : false,
-      inFlightMsgs   : false
+      activeFilterId    : "all",
+      threads           : [],
+      selectedId        : null,
+      messages          : [],
+      searchText        : "",
+      // v1.3: server-side full-text search mode. When true, fetchThreadListNow
+      // skips its work (so the 5s list-poll doesn't clobber search results)
+      // and the rail folders are visually inactive (search is global).
+      searchMode        : false,
+      searchScanned     : 0,
+      searchMaxedOut    : false,
+      messageTypeFilter : "all",
+      dateFilter        : "all",
+      counts            : {},
+      // Multi-select state for "Move to folder"
+      selectionMode     : false,
+      checkedIds        : new Set(),
+      listPollTimer     : null,
+      msgPollTimer      : null,
+      countsPollTimer   : null,
+      inFlightList      : false,
+      inFlightMsgs      : false,
+      inFlightSearch    : false
     };
 
     const $  = (id) => document.getElementById(id);
@@ -971,8 +1303,42 @@
       const input = $("emSecretInput");
       const errEl = $("emSecretError");
       if (!modal) return;
-      // Pre-fill if there's an existing one
+      // Pre-fill secret from localStorage (per-browser, intentionally)
       try { input.value = localStorage.getItem("etsymail_secret") || ""; } catch {}
+
+      // Show modal first; populate auto-pipeline fields with current
+      // cached config, then refresh from Firestore in the background
+      // (so the dialog opens fast and corrects itself if cache stale).
+      const enabledInput = $("emAutoEnabledInput");
+      const thr          = $("emConfThresholdInput");
+      const thrVal       = $("emConfThresholdVal");
+      const metaEl       = $("emAutoCfgMeta");
+
+      const populateFromCfg = () => {
+        if (enabledInput) enabledInput.checked = _autoCfg.enabled !== false;
+        if (thr && thrVal) {
+          thr.value = String(_autoCfg.threshold);
+          thrVal.textContent = Math.round(_autoCfg.threshold * 100) + "%";
+        }
+        if (metaEl) {
+          if (_autoCfg.updatedBy || _autoCfg.updatedAt) {
+            const who = _autoCfg.updatedBy ? ("by " + _autoCfg.updatedBy) : "";
+            const when = _autoCfg.updatedAt ? (" · " + fmtTime(_autoCfg.updatedAt)) : "";
+            metaEl.textContent = "Last changed " + who + when;
+          } else {
+            metaEl.textContent = "Stored in Firestore at EtsyMail_Config/autoPipeline";
+          }
+        }
+      };
+      populateFromCfg();
+      if (thr && thrVal) {
+        thr.oninput = () => {
+          thrVal.textContent = Math.round(parseFloat(thr.value) * 100) + "%";
+        };
+      }
+      // Refresh from Firestore so we always show the truth
+      fetchAutoConfig().then(populateFromCfg).catch(() => {});
+
       if (errMsg) {
         errEl.textContent = errMsg;
         errEl.classList.add("active");
@@ -986,7 +1352,7 @@
       const modal = $("emSecretModal");
       if (modal) modal.classList.remove("active");
     }
-    function saveSecretFromModal() {
+    async function saveSecretFromModal() {
       const input = $("emSecretInput");
       const v = (input.value || "").trim();
       if (!v) {
@@ -995,14 +1361,34 @@
         return;
       }
       try { localStorage.setItem("etsymail_secret", v); } catch (e) {
-        $("emSecretError").textContent = "Couldn't save: " + e.message;
+        $("emSecretError").textContent = "Couldn't save secret: " + e.message;
         $("emSecretError").classList.add("active");
         return;
       }
+      // Persist auto-pipeline config to Firestore.
+      // Single source of truth: the inbox UI is the editor; the server
+      // is the consumer. No localStorage, no env vars.
+      const enabledInput = $("emAutoEnabledInput");
+      const thr          = $("emConfThresholdInput");
+      try {
+        await saveAutoConfig({
+          enabled  : enabledInput ? enabledInput.checked : true,
+          threshold: thr ? thr.value : AUTO_CFG_DEFAULTS.threshold,
+          by       : getEmployeeName() || "operator"
+        });
+      } catch (e) {
+        $("emSecretError").textContent = "Couldn't save auto-pipeline config: " + e.message;
+        $("emSecretError").classList.add("active");
+        return;
+      }
+
       hideSecretSetupModal();
-      toast("Secret saved. Refreshing…");
-      // Refresh whatever was just refused
-      setTimeout(() => location.reload(), 500);
+      toast("Settings saved");
+      // Soft refresh — just re-render the open thread (if any) and
+      // refresh the thread list so the rating chips pick up the new
+      // threshold immediately. No need to reload the page.
+      if (state.selectedId) fetchMessagesNow(state.selectedId);
+      fetchThreadListNow();
     }
 
     /** Poll the kill-switch state every 30s. Show/hide banner accordingly. */
@@ -1113,30 +1499,49 @@
     // ───── Rail ─────
     function renderRail() {
       const rail = $("emRail");
-      const sections = [
-        { title: "Inbox",   items: RAIL_FILTERS.slice(0, 6) },
-        { title: "On hold", items: RAIL_FILTERS.slice(6, 9) },
-        { title: "Archive", items: RAIL_FILTERS.slice(9) }
-      ];
-      let html = "";
-      for (const sec of sections) {
-        html += `<div class="em-rail-section">${esc(sec.title)}</div>`;
-        for (const f of sec.items) {
-          const count = f.status ? (state.counts[f.status] || 0) : Object.values(state.counts).reduce((a,b)=>a+b,0);
-          const active = state.activeFilterId === f.id ? " active" : "";
-          html += `
-            <div class="em-rail-item${active}" data-filter="${esc(f.id)}">
-              <span><i class="material-icons">${esc(f.icon)}</i>${esc(f.label)}</span>
-              <span class="em-count">${count}</span>
-            </div>`;
+      // Single flat section now that we've cleaned up the legacy hold
+      // and inbox staging folders. Counts come from etsyMailThreads
+      // ?counts=1 keyed by status. Multi-status folders (Auto-Reply
+      // includes both auto_replied + queued_for_auto_send) sum across
+      // their status array.
+      let html = '<div class="em-rail-section">Folders</div>';
+      const allCount = Object.values(state.counts).reduce((a, b) => a + (b || 0), 0);
+      const folderCount = (f) => {
+        if (!f.status) return allCount;
+        if (Array.isArray(f.status)) {
+          return f.status.reduce((sum, s) => sum + (state.counts[s] || 0), 0);
         }
+        return state.counts[f.status] || 0;
+      };
+      for (const f of RAIL_FILTERS) {
+        const count = folderCount(f);
+        const active = state.activeFilterId === f.id ? " active" : "";
+        html += `
+          <div class="em-rail-item${active}" data-filter="${esc(f.id)}">
+            <span><i class="material-icons">${esc(f.icon)}</i>${esc(f.label)}</span>
+            <span class="em-count">${count}</span>
+          </div>`;
       }
       rail.innerHTML = html;
       rail.querySelectorAll(".em-rail-item").forEach(el => {
         el.addEventListener("click", () => {
           state.activeFilterId = el.dataset.filter;
+          // Clear selection when switching folders so the user doesn't
+          // accidentally move threads they no longer see.
+          if (state.selectionMode) exitSelectionMode();
           renderRail();
-          fetchThreadListNow();
+          // v1.4: search is folder-scoped — re-fire the search in the
+          // new folder rather than dropping search mode entirely. The
+          // user typed "refund"; switching from Needs Review to Auto-
+          // Reply should show refund mentions in Auto-Reply.
+          if (state.searchMode && state.searchText.trim().length >= 2) {
+            fetchSearchResults(state.searchText.trim());
+          } else {
+            // Either not searching, or search text is too short — go
+            // back to plain folder fetch.
+            state.searchMode = false;
+            fetchThreadListNow();
+          }
         });
       });
     }
@@ -1148,13 +1553,42 @@
 
     async function fetchThreadListNow() {
       if (state.inFlightList) return;
+      // v1.3: when the user is actively searching, do NOT clobber their
+      // results with a fresh folder fetch. The 5-second list-poll calls
+      // this function on a timer; gate it.
+      if (state.searchMode) return;
       state.inFlightList = true;
       try {
         const filter = currentFilter();
-        const query = { op: "list", coll: THREADS_COLL, orderBy: "updatedAt,desc", limit: 100 };
-        if (filter.status) query.where = `status,==,${filter.status}`;
-        const data = await api("firestoreProxy", { query });
-        state.threads = data.docs || [];
+        // v1.2: filter.status can be a string (single status), an array
+        // (multi-status — Auto-Reply folder includes both auto_replied
+        // and queued_for_auto_send), or null (All folder, no filter).
+        // For arrays we run parallel queries, merge by id, and re-sort
+        // by date so the list shows newest-first across both statuses.
+        const baseQuery = { op: "list", coll: THREADS_COLL, orderBy: "updatedAt,desc", limit: 100 };
+        let docs;
+        if (Array.isArray(filter.status)) {
+          const responses = await Promise.all(filter.status.map(s =>
+            api("firestoreProxy", { query: { ...baseQuery, where: `status,==,${s}` } })
+          ));
+          // Merge + dedupe by id (a thread can only have one status, so
+          // dedup is a safety net rather than a real concern)
+          const seen = new Set();
+          docs = [];
+          for (const r of responses) {
+            for (const d of (r.docs || [])) {
+              if (seen.has(d.id)) continue;
+              seen.add(d.id);
+              docs.push(d);
+            }
+          }
+        } else {
+          const query = { ...baseQuery };
+          if (filter.status) query.where = `status,==,${filter.status}`;
+          const data = await api("firestoreProxy", { query });
+          docs = data.docs || [];
+        }
+        state.threads = docs;
         renderThreadList();
         setBackendOk(true, "Backend: connected");
       } catch (e) {
@@ -1172,6 +1606,45 @@
       }
     }
 
+    // v1.3: Server-side full-text search. Replaces the folder-scoped
+    // thread list with results matching the query against `searchableText`.
+    // v1.4: Search is folder-scoped — typing while inside "Needs review"
+    // searches only that folder. Only "All" produces global search.
+    // Multi-status folders (Auto-Reply) pass a comma-separated status.
+    async function fetchSearchResults(q) {
+      if (state.inFlightSearch) return;
+      state.inFlightSearch = true;
+      state.searchMode = true;
+      try {
+        const filter = currentFilter();
+        const searchQuery = { q, limit: 500 };
+        // Only the "All" folder has filter.status == null. Every other
+        // folder restricts the search to its status(es).
+        if (filter.status) {
+          searchQuery.status = Array.isArray(filter.status)
+            ? filter.status.join(",")
+            : filter.status;
+        }
+        const data = await api("etsyMailSearch", { query: searchQuery });
+        state.threads = data.docs || [];
+        state.searchScanned = data.scanned || 0;
+        state.searchMaxedOut = !!data.maxedOut;
+        state.searchScopedTo = filter.status ? filter.label : null;
+        renderThreadList();
+        setBackendOk(true, "Backend: connected");
+      } catch (e) {
+        console.warn("search failed:", e.message);
+        setBackendOk(false, "Backend: error");
+        $("emListItems").innerHTML = `<div class="em-list-empty">
+          Search error: ${esc(e.message)}<br>
+          <span class="em-muted">If this is a 404, ensure <code>etsyMailSearch.js</code>
+          is deployed alongside the other functions.</span>
+        </div>`;
+      } finally {
+        state.inFlightSearch = false;
+      }
+    }
+
     function startListPolling() {
       stopListPolling();
       fetchThreadListNow();
@@ -1184,34 +1657,163 @@
     function renderThreadList() {
       const host = $("emListItems");
       const q = state.searchText.trim().toLowerCase();
-      const filtered = q ? state.threads.filter(t =>
-        (t.customerName || "").toLowerCase().includes(q) ||
-        (t.linkedOrderId || "").toLowerCase().includes(q) ||
-        (t.subject       || "").toLowerCase().includes(q) ||
-        (t.etsyUsername  || "").toLowerCase().includes(q)
-      ) : state.threads;
+
+      // ── Filter pipeline ─────────────────────────────────────────────
+      // 1. Text search across customer/order/subject/username
+      //    SKIPPED when searchMode is true — the server already filtered
+      //    by searchableText, which is broader than the client-side
+      //    metadata fields. Re-applying the client filter would
+      //    incorrectly narrow the results.
+      // 2. Message-type filter (image, text-only, has-order, etc.)
+      // 3. Date filter (today, 7/30/90 days)
+      // 4. Sort by date desc — always, regardless of which folder we're in
+      let filtered = state.threads.slice();
+
+      if (q && !state.searchMode) {
+        filtered = filtered.filter(t =>
+          (t.customerName || "").toLowerCase().includes(q) ||
+          (t.linkedOrderId || "").toLowerCase().includes(q) ||
+          (t.subject       || "").toLowerCase().includes(q) ||
+          (t.etsyUsername  || "").toLowerCase().includes(q) ||
+          (t.category      || "").toLowerCase().includes(q)
+        );
+      }
+
+      // Message-type filter
+      const mtf = state.messageTypeFilter;
+      if (mtf && mtf !== "all") {
+        filtered = filtered.filter(t => {
+          const flags = Array.isArray(t.riskFlags) ? t.riskFlags : [];
+          const hasImg = flags.includes("image_attached");
+          const hasOrder = !!t.linkedOrderId;
+          if (mtf === "with_image") return hasImg;
+          if (mtf === "text_only")  return !hasImg;
+          if (mtf === "has_order")  return hasOrder;
+          if (mtf === "no_order")   return !hasOrder;
+          if (mtf === "unread")     return !!t.unread;
+          return true;
+        });
+      }
+
+      // Date filter — based on lastInboundAt (or updatedAt fallback)
+      const df = state.dateFilter;
+      if (df && df !== "all") {
+        const dayMs = 24 * 60 * 60 * 1000;
+        const now = Date.now();
+        const cutoffs = { today: 1, "7d": 7, "30d": 30, "90d": 90 };
+        const days = cutoffs[df];
+        if (days) {
+          const minMs = df === "today"
+            ? new Date().setHours(0, 0, 0, 0)
+            : (now - days * dayMs);
+          filtered = filtered.filter(t => {
+            const d = toDate(t.lastInboundAt || t.updatedAt || t.createdAt);
+            return d && d.getTime() >= minMs;
+          });
+        }
+      }
+
+      // Sort by date desc — ALWAYS. The user wants every folder ordered
+      // by date regardless of how they got there.
+      filtered.sort((a, b) => {
+        const da = toDate(a.lastInboundAt || a.updatedAt || a.createdAt);
+        const db = toDate(b.lastInboundAt || b.updatedAt || b.createdAt);
+        return (db ? db.getTime() : 0) - (da ? da.getTime() : 0);
+      });
+
+      // ── v1.3 / v1.4: Search-mode banner ─────────────────────────
+      // When the user is searching server-side (q ≥ 2 chars), prepend
+      // a small banner explaining the search scope. v1.4: search is
+      // folder-scoped except in "All" — banner reflects that.
+      let searchBanner = "";
+      if (state.searchMode) {
+        const matchN = filtered.length;
+        const total  = state.threads.length;
+        const scanned= state.searchScanned || 0;
+        const maxed  = state.searchMaxedOut;
+        const scope  = state.searchScopedTo
+          ? 'in <b>' + esc(state.searchScopedTo) + '</b>'
+          : 'across <b>all folders</b>';
+        searchBanner =
+          '<div class="em-search-banner">' +
+            '<i class="material-icons">search</i>' +
+            '<span><b>' + matchN + '</b> match' + (matchN === 1 ? '' : 'es') +
+            (matchN !== total ? ' (after local filters from <b>' + total + '</b> hits)' : '') +
+            ' ' + scope +
+            (scanned ? ' &middot; scanned ' + scanned + ' threads' : '') +
+            (maxed ? ' <span style="color:#9a3f00;">(scan limit reached, narrow your query for deeper results)</span>' : '') +
+            '</span>' +
+          '</div>';
+      }
 
       if (!filtered.length) {
-        host.innerHTML = `<div class="em-list-empty">No threads in this view.<br><span class="em-muted">Use <b>New (test)</b> in the top bar to seed one.</span></div>`;
+        const hint = (q || mtf !== "all" || df !== "all")
+          ? (state.searchMode
+              ? `No threads match <b>"${esc(q)}"</b>.<br><span class="em-muted">Try a shorter or different query, or click <b>reset</b>.</span>`
+              : "No threads match the current filters.<br><span class=\"em-muted\">Click <b>reset</b> to clear filters.</span>")
+          : `No threads in this view.<br><span class="em-muted">Use <b>New (test)</b> in the top bar to seed one.</span>`;
+        host.innerHTML = searchBanner + `<div class="em-list-empty">${hint}</div>`;
         return;
       }
 
-      host.innerHTML = filtered.map(t => {
+      const sel = state.selectionMode;
+      host.innerHTML = searchBanner + filtered.map(t => {
         const selected = state.selectedId === t.id ? " selected" : "";
         const unread   = t.unread ? " unread" : "";
+        const checked  = state.checkedIds.has(t.id) ? " checked" : "";
+        const selectableCls = sel ? " selectable" : "";
         const when     = fmtTime(t.lastInboundAt || t.updatedAt || t.createdAt);
 
         const badges = [];
         if (t.linkedOrderId)  badges.push(`<span class="em-badge order">#${esc(String(t.linkedOrderId).slice(-6))}</span>`);
         if (t.category)       badges.push(`<span class="em-badge category">${esc(t.category)}</span>`);
-        if (t.confidence != null) badges.push(`<span class="em-badge confidence">${Math.round(t.confidence*100)}%</span>`);
-        if ((t.riskFlags || []).includes("image_attached")) badges.push(`<span class="em-badge attachment">📎 image</span>`);
-        if ((t.status || "").startsWith("hold_")) badges.push(`<span class="em-badge hold">${esc(t.status.replace("hold_","hold: "))}</span>`);
+        // AI rating: confidence is more meaningful in the new auto-pipeline
+        // world than the old generic "confidence". Renders as conf-low/med/high.
+        if (t.aiConfidence != null) {
+          const c = Number(t.aiConfidence);
+          const cls = c >= 0.80 ? "high" : c >= 0.55 ? "med" : "low";
+          badges.push(`<span class="em-badge ai-conf ${cls}" title="AI self-rated confidence in the drafted reply">AI ${Math.round(c*100)}%</span>`);
+        } else if (t.confidence != null) {
+          // Legacy "confidence" field (pre-v1.0). Keep rendering it for
+          // backward compatibility with already-classified threads.
+          badges.push(`<span class="em-badge confidence">${Math.round(t.confidence*100)}%</span>`);
+        }
+        if (t.aiDifficulty != null) {
+          const d = Number(t.aiDifficulty);
+          const lbl = d >= 0.70 ? "hard" : d >= 0.40 ? "med" : "easy";
+          badges.push(`<span class="em-badge ai-diff" title="AI self-rated difficulty">${esc(lbl)}</span>`);
+        }
+        if (t.status === "auto_replied") {
+          // v1.4: distinguish manual moves from real AI auto-sends.
+          // The manuallyMovedToAutoReplied flag is set by the threads
+          // setStatus endpoint whenever a non-auto-pipeline caller
+          // (i.e., the operator move-to dropdown) lands on this status.
+          if (t.manuallyMovedToAutoReplied) {
+            badges.push(`<span class="em-badge ai-manual" title="Operator manually moved this thread to Auto-Reply (not an AI-handled send). Excluded from AI auto-reply metrics.">moved by op</span>`);
+          } else {
+            badges.push(`<span class="em-badge ai-auto" title="Reply auto-sent and confirmed by Etsy">auto-sent</span>`);
+          }
+        } else if (t.status === "queued_for_auto_send") {
+          badges.push(`<span class="em-badge ai-sending" title="AI passed all gates; waiting for browser extension to deliver via Etsy">sending…</span>`);
+        }
+        // v1.3: stale-claim badge — surfaces threads where the auto-pipeline
+        // crashed mid-run and the reaper cron unstuck them. Operator can
+        // manually re-run AI Draft if needed.
+        if (t.lastAutoDecision === "stale_claim_recovered") {
+          badges.push(`<span class="em-badge stale-claim" title="The AI auto-pipeline started but didn't finish (likely a function timeout). The thread was unstuck by the reaper. Click AI Draft to retry.">stale claim</span>`);
+        }
+        if ((t.riskFlags || []).includes("image_attached")) {
+          badges.push(`<span class="em-badge attachment">📎 image</span>`);
+        }
 
         const snippet = t.subject || t.category || t.status || "";
+        const checkboxHtml = sel
+          ? `<input type="checkbox" class="em-list-check" data-id="${esc(t.id)}"${state.checkedIds.has(t.id) ? " checked" : ""}>`
+          : "";
 
         return `
-          <div class="em-list-item${selected}${unread}" data-id="${esc(t.id)}">
+          <div class="em-list-item${selected}${unread}${checked}${selectableCls}" data-id="${esc(t.id)}">
+            ${checkboxHtml}
             <div class="em-name">${esc(t.customerName || "Unknown customer")}</div>
             <div class="em-time">${esc(when)}</div>
             <div class="em-snippet">${esc(snippet)}</div>
@@ -1220,8 +1822,145 @@
       }).join("");
 
       host.querySelectorAll(".em-list-item").forEach(el => {
-        el.addEventListener("click", () => openThread(el.dataset.id));
+        const id = el.dataset.id;
+        // Checkbox: toggle without opening the thread
+        const checkbox = el.querySelector(".em-list-check");
+        if (checkbox) {
+          checkbox.addEventListener("click", (e) => e.stopPropagation());
+          checkbox.addEventListener("change", () => toggleChecked(id));
+        }
+        el.addEventListener("click", (e) => {
+          if (state.selectionMode) {
+            // In selection mode, clicks anywhere on the row toggle the box
+            if (e.target !== checkbox) toggleChecked(id);
+          } else {
+            openThread(id);
+          }
+        });
       });
+
+      updateSelectionBar();
+    }
+
+    /** Toggle a thread's checked state and refresh the list + action bar. */
+    function toggleChecked(threadId) {
+      if (state.checkedIds.has(threadId)) state.checkedIds.delete(threadId);
+      else state.checkedIds.add(threadId);
+      updateSelectionBar();
+      // Update only the affected row's checked-class without re-rendering
+      // the full list (jitter-free + preserves checkbox focus).
+      const row = document.querySelector(`.em-list-item[data-id="${CSS.escape(threadId)}"]`);
+      if (row) row.classList.toggle("checked", state.checkedIds.has(threadId));
+    }
+
+    /** Enter multi-select mode — adds checkboxes to the list. */
+    function enterSelectionMode() {
+      state.selectionMode = true;
+      const btn = $("emSelectModeBtn");
+      if (btn) {
+        btn.classList.add("active");
+        btn.innerHTML = '<i class="material-icons">check_box</i>Cancel';
+      }
+      buildMoveSelect();
+      renderThreadList();
+    }
+
+    function exitSelectionMode() {
+      state.selectionMode = false;
+      state.checkedIds.clear();
+      const btn = $("emSelectModeBtn");
+      if (btn) {
+        btn.classList.remove("active");
+        btn.innerHTML = '<i class="material-icons">check_box_outline_blank</i>Select';
+      }
+      updateSelectionBar();
+      renderThreadList();
+    }
+
+    /** Refresh the action bar visibility + counts. */
+    function updateSelectionBar() {
+      const bar = $("emSelectionBar");
+      if (!bar) return;
+      const n = state.checkedIds.size;
+      if (state.selectionMode) {
+        bar.classList.add("active");
+        const c = $("emSelCount");
+        if (c) c.textContent = n;
+      } else {
+        bar.classList.remove("active");
+      }
+    }
+
+    /** Populate the "Move to…" dropdown from MOVE_TARGETS. */
+    function buildMoveSelect() {
+      const sel = $("emMoveSelect");
+      if (!sel) return;
+      sel.innerHTML = '<option value="">Move to…</option>' +
+        MOVE_TARGETS.map(t =>
+          `<option value="${esc(t.status)}">${esc(t.label)}</option>`
+        ).join("");
+      sel.value = "";
+    }
+
+    /** Move all checked threads to the chosen folder. */
+    async function moveCheckedTo(targetStatus) {
+      const ids = Array.from(state.checkedIds);
+      if (!ids.length) {
+        toast("No threads selected");
+        return;
+      }
+      if (!targetStatus) return;
+      const target = MOVE_TARGETS.find(t => t.status === targetStatus);
+      const targetLabel = target ? target.label : targetStatus;
+
+      // v1.4: stronger confirm for moves to Auto-Reply. This folder is
+      // meant for AI-handled sends; operator moves are tagged
+      // (manuallyMovedToAutoReplied=true) so they don't pollute AI
+      // metrics, but the operator should know what they're doing.
+      const confirmText = targetStatus === "auto_replied"
+        ? `Move ${ids.length} thread${ids.length === 1 ? "" : "s"} to "Auto-Reply"?\n\n` +
+          `Auto-Reply is normally reserved for AI-completed sends. ` +
+          `Manually-moved threads are tagged so AI metrics aren't polluted, ` +
+          `but the move WILL appear in the audit log as an operator action.`
+        : `Move ${ids.length} thread${ids.length === 1 ? "" : "s"} to "${targetLabel}"?`;
+      if (!confirm(confirmText)) return;
+
+      // Operator name comes from settings; falls back to "operator" if unset.
+      // The server uses this to populate manualMoveActor on auto_replied moves.
+      const actor = (localStorage.getItem("etsymail_employee_name") || "operator");
+
+      // Move sequentially to keep audit clean. Could parallelize with
+      // Promise.all but that hammers the API for any moderately-sized
+      // selection. For 1-50 threads, sequential ~50ms each is fine.
+      let ok = 0, fail = 0;
+      const failed = [];
+      for (const id of ids) {
+        try {
+          await api("etsyMailThreads", {
+            method: "POST",
+            body: {
+              action  : "setStatus",
+              threadId: id,
+              status  : targetStatus,
+              reason  : "operator bulk move",
+              actor   : actor
+            }
+          });
+          ok++;
+        } catch (e) {
+          fail++;
+          failed.push({ id, err: e.message });
+          console.warn("move failed for", id, e.message);
+        }
+      }
+
+      toast(fail
+        ? `Moved ${ok}/${ids.length} — ${fail} failed`
+        : `Moved ${ok} thread${ok === 1 ? "" : "s"} to ${targetLabel}`);
+
+      exitSelectionMode();
+      await fetchThreadListNow();
+      await fetchCountsNow();
     }
 
     // ───── Counts ─────
@@ -1230,6 +1969,11 @@
         const data = await api("etsyMailThreads", { query: { counts: 1 } });
         state.counts = data.counts || {};
         renderRail();
+        // Piggyback the auto-pipeline config refresh here. It's a single
+        // Firestore-proxy doc-get, similar cost to the counts call, and
+        // happens at the same cadence (15s by default). Keeps the rating
+        // chips honest if another operator changes the threshold.
+        fetchAutoConfig().catch(() => {});
       } catch (e) {
         console.warn("counts fetch failed:", e.message);
       }
@@ -1319,7 +2063,7 @@
             </div>
             <div class="em-h-actions">
               ${etsyUrl ? `<a href="${esc(etsyUrl)}" target="_blank" class="em-link"><button><i class="material-icons">open_in_new</i>Open on Etsy</button></a>` : ""}
-              <button id="emHoldBtn" title="Hold this thread"><i class="material-icons">pause</i>Hold</button>
+              <button id="emReviewBtn" title="Move to Needs review (manual triage)"><i class="material-icons">rate_review</i>Needs review</button>
               <button id="emArchiveBtn" title="Archive"><i class="material-icons">archive</i>Archive</button>
             </div>
           </div>
@@ -1419,7 +2163,7 @@
 
       renderThreadMessages();
 
-      $("emHoldBtn")?.addEventListener("click", () => setStatus(t.id, "hold_uncertain", "operator hold"));
+      $("emReviewBtn")?.addEventListener("click", () => setStatus(t.id, "pending_human_review", "operator triage"));
       $("emArchiveBtn")?.addEventListener("click", () => setStatus(t.id, "archived", "operator archive"));
       $("emClearDraftBtn")?.addEventListener("click", () => {
         $("emDraftText").value = "";
@@ -1576,6 +2320,74 @@
       if (nonTerminalCalls.length) chips.push('<span class="em-ai-chip">' + nonTerminalCalls.length + ' tool call' + (nonTerminalCalls.length === 1 ? '' : 's') + '</span>');
 
       let html = '<div class="em-ai-meta">' + chips.join("") + '</div>';
+
+      // ── AI rating row: confidence + difficulty + threshold ────────
+      // The compose_draft_reply tool now self-rates each draft. These
+      // pills surface the rating prominently so operators understand
+      // why a thread was auto-replied (high confidence) or routed to
+      // Needs Review (low confidence).
+      const aiConf = draft.aiConfidence ?? draft.confidence ?? null;
+      const aiDiff = draft.aiDifficulty ?? draft.difficulty ?? null;
+      if (aiConf != null || aiDiff != null) {
+        const threshold = _autoCfg.threshold;
+        const enabled   = _autoCfg.enabled;
+        const ratingChips = [];
+        if (aiConf != null) {
+          const c = Number(aiConf);
+          const cls = c >= 0.80 ? "conf-high" : c >= 0.55 ? "conf-med" : "conf-low";
+          const wouldAutoSend = c >= threshold && enabled;
+          const icon = wouldAutoSend ? "verified" : "report_problem";
+          const tipPrefix = !enabled
+            ? 'Auto-pipeline is OFF — all drafts route to Needs Review regardless of score. '
+            : '';
+          ratingChips.push(
+            '<span class="em-ai-rating-pill ' + cls + '" title="' + tipPrefix +
+              'AI self-rated confidence in the draft. ' +
+              (wouldAutoSend
+                ? 'Above auto-reply threshold (' + Math.round(threshold*100) + '%).'
+                : 'Below auto-reply threshold (' + Math.round(threshold*100) + '%) — would route to Needs Review.') +
+            '">' +
+              '<i class="material-icons">' + icon + '</i>' +
+              '<span class="em-rp-label">conf</span>' +
+              Math.round(c * 100) + '%' +
+            '</span>'
+          );
+        }
+        if (aiDiff != null) {
+          const d = Number(aiDiff);
+          const lbl = d >= 0.70 ? "hard" : d >= 0.40 ? "medium" : "easy";
+          ratingChips.push(
+            '<span class="em-ai-rating-pill diff" title="AI self-rated difficulty of the customer\'s request">' +
+              '<i class="material-icons">trending_up</i>' +
+              '<span class="em-rp-label">difficulty</span>' +
+              esc(lbl) + ' (' + Math.round(d * 100) + ')' +
+            '</span>'
+          );
+        }
+        const thrLabel = enabled
+          ? ('auto ≥ ' + Math.round(threshold * 100) + '%')
+          : 'auto-pipeline OFF';
+        ratingChips.push(
+          '<span class="em-ai-rating-pill threshold" title="Auto-reply config (editable in Settings → Auto-pipeline)">' +
+            esc(thrLabel) +
+          '</span>'
+        );
+        html += '<div class="em-ai-rating-row">' + ratingChips.join("") + '</div>';
+      }
+
+      // v1.2: Show veto reason if the auto-pipeline blocked auto-send
+      // for safety (refund language, legal escalation, tool-call error,
+      // etc.). The thread doc carries lastAutoDecision; if it ends in
+      // _vetoed or the draft has aiConfidenceReasoning that mentions a
+      // veto, surface it prominently. Audit log has the exact reasons.
+      if (draft.lastAutoDecision === "human_review_vetoed" || draft.vetoReasons) {
+        const reasons = Array.isArray(draft.vetoReasons) ? draft.vetoReasons.join("; ") : "";
+        html += '<div class="em-ai-warning" style="background:#ffebe9;border-left-color:#cf222e;color:#a40e26;">' +
+          '<b>🛑 Auto-send vetoed.</b> The AI produced a draft, but a deterministic safety rule blocked auto-sending (likely refund/legal/damage/personalization wording). ' +
+          'Review the customer\'s request carefully before sending.' +
+          (reasons ? '<div style="margin-top:4px;font-size:10px;font-family:ui-monospace,Menlo,monospace;color:#7a0c1f;">' + esc(reasons) + '</div>' : '') +
+        '</div>';
+      }
 
       if (!parsedOk) {
         html += '<div class="em-ai-warning">⚠ Model finished without cleanly calling compose_draft_reply — the reply above is the best available fallback. Edit freely or click AI Draft again.</div>';
@@ -3547,7 +4359,10 @@
           method: "POST",
           body: {
             action: "create", customerName: name, initialText: text,
-            source: "manual", status: "detected_from_gmail",
+            // Land test threads in Needs Review so they're immediately
+            // visible (the New / detected_from_gmail folder was removed
+            // in v1.0; kept as a valid backend status for legacy data).
+            source: "manual", status: "pending_human_review",
             subject: text ? text.slice(0, 60) : null
           }
         });
@@ -3591,14 +4406,72 @@
       $("emNewThreadBtn").addEventListener("click", createTestThread);
       // v0.9.1 #1: Settings now opens the secret-setup modal
       $("emSettingsBtn").addEventListener("click", () => showSecretSetupModal());
+
+      // ── Filter wiring ────────────────────────────────────────────
+      // ── v1.3: Search field with server-side full-text fallback ──
+      // Two-tier search:
+      //   1. Local instant filter on every keystroke (operates on the
+      //      currently-loaded thread batch — fast, keeps the typing
+      //      experience snappy).
+      //   2. After 300ms of no typing, fire etsyMailSearch with the
+      //      query against searchableText denormalized fields. This
+      //      pulls in matching threads from anywhere in the recent
+      //      window (default 500 threads scanned), not just the loaded
+      //      folder batch.
+      // When the search input is cleared, we revert to folder-fetch
+      // mode immediately.
+      let _searchDebounce = null;
       $("emSearchInput").addEventListener("input", (e) => {
-        state.searchText = e.target.value || "";
+        const v = e.target.value || "";
+        state.searchText = v;
+        // Immediate local filter for instant typing feedback
         renderThreadList();
+        clearTimeout(_searchDebounce);
+        if (v.trim().length >= 2) {
+          _searchDebounce = setTimeout(() => fetchSearchResults(v.trim()), 300);
+        } else if (state.searchMode) {
+          // Cleared the search: drop search mode and re-fetch folder
+          state.searchMode = false;
+          fetchThreadListNow();
+        }
+      });
+      $("emMessageTypeFilter")?.addEventListener("change", (e) => {
+        state.messageTypeFilter = e.target.value || "all";
+        renderThreadList();
+      });
+      $("emDateFilter")?.addEventListener("change", (e) => {
+        state.dateFilter = e.target.value || "all";
+        renderThreadList();
+      });
+      $("emFilterClear")?.addEventListener("click", () => {
+        state.searchText = "";
+        state.messageTypeFilter = "all";
+        state.dateFilter = "all";
+        state.searchMode = false;
+        $("emSearchInput").value = "";
+        $("emMessageTypeFilter").value = "all";
+        $("emDateFilter").value = "all";
+        fetchThreadListNow();
+      });
+
+      // ── Selection-mode wiring ────────────────────────────────────
+      $("emSelectModeBtn")?.addEventListener("click", () => {
+        if (state.selectionMode) exitSelectionMode();
+        else enterSelectionMode();
+      });
+      $("emSelClearBtn")?.addEventListener("click", exitSelectionMode);
+      $("emMoveSelect")?.addEventListener("change", (e) => {
+        const v = e.target.value;
+        if (v) moveCheckedTo(v);
+        e.target.value = "";   // reset for next selection
       });
 
       // v0.9.1 #1: secret modal wiring (form submit handles Enter natively)
       $("emSecretForm").addEventListener("submit", (e) => {
         e.preventDefault();
+        // saveSecretFromModal is async (Firestore write); ignore the
+        // returned promise — we already give the operator a toast on
+        // completion and an inline error on failure.
         saveSecretFromModal();
       });
       $("emSecretCancelBtn").addEventListener("click", hideSecretSetupModal);
@@ -3611,6 +4484,12 @@
         if (!confirm("Re-enable the send pipeline globally? Operators will resume sends on their next peek (~6s).")) return;
         await setKillSwitch(false);
       });
+
+      // Prime the auto-pipeline config from Firestore so badges and
+      // rating chips render with the real threshold from first paint.
+      // Refreshed every counts-poll tick (15s) inside startCountsPolling
+      // so multi-operator threshold edits propagate without a reload.
+      fetchAutoConfig().catch(() => {});
 
       startListPolling();
       startCountsPolling();
