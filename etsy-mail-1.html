@@ -795,13 +795,15 @@
       <h2>Extension secret required</h2>
       <p>This inbox needs the same secret your browser extension uses to talk to the backend. Paste it once and it'll be saved in this browser.</p>
       <p style="font-size:12px;">It's the value of <code>ETSYMAIL_EXTENSION_SECRET</code> from your Netlify environment variables. The extension stores it under Options → Shared secret.</p>
-      <label for="emSecretInput">X-EtsyMail-Secret</label>
-      <input type="password" id="emSecretInput" placeholder="paste your secret" autocomplete="off" />
-      <div class="em-modal-error" id="emSecretError"></div>
-      <div class="em-modal-buttons">
-        <button id="emSecretCancelBtn">Cancel</button>
-        <button id="emSecretSaveBtn" class="primary">Save</button>
-      </div>
+      <form id="emSecretForm" autocomplete="off">
+        <label for="emSecretInput">X-EtsyMail-Secret</label>
+        <input type="password" id="emSecretInput" placeholder="paste your secret" autocomplete="off" />
+        <div class="em-modal-error" id="emSecretError"></div>
+        <div class="em-modal-buttons">
+          <button type="button" id="emSecretCancelBtn">Cancel</button>
+          <button type="submit" id="emSecretSaveBtn" class="primary">Save</button>
+        </div>
+      </form>
     </div>
   </div>
 
@@ -1045,6 +1047,49 @@
       if (_killSwitchPoller) return;
       _killSwitchPoller = setInterval(pollKillSwitch, 30 * 1000);
       pollKillSwitch();  // immediate
+    }
+
+    /* ══════════════════════════════════════════════════════════════
+     * v0.9.3: Optimistic outbound-message insert
+     * ══════════════════════════════════════════════════════════════
+     *
+     * Called when a draft transitions to a terminal-success status
+     * (sent / sent_text_only / sent_unverified). Writes a synthetic
+     * outbound message to Firestore so the operator sees their just-
+     * sent message in the thread immediately, instead of waiting for
+     * the next M2 scrape (which can be 10–60s away).
+     *
+     * The doc is auto-hidden by renderThreadMessages() once a real
+     * (non-optimistic) outbound message with matching text appears in
+     * the thread — typically when the next M2 scrape lands.
+     */
+    async function insertOptimisticMessage(draft) {
+      if (!draft || !draft.threadId) {
+        console.warn("insertOptimisticMessage: missing threadId on draft");
+        return;
+      }
+      const draftId = draft.id || draft.draftId;
+      if (!draftId) {
+        console.warn("insertOptimisticMessage: missing draftId");
+        return;
+      }
+      try {
+        await api("etsyMailOptimisticMessage", {
+          method: "POST",
+          body: {
+            op           : "insert",
+            threadId     : draft.threadId,
+            draftId,
+            text         : draft.text || "",
+            employeeName : draft.createdBy || getEmployeeName() || null,
+            attachments  : Array.isArray(draft.attachments) ? draft.attachments : []
+          }
+        });
+      } catch (e) {
+        // Don't toast — this is supplementary feedback, the send itself
+        // already succeeded. Just log for diagnostics.
+        console.warn("optimistic message insert failed:", e.message);
+      }
     }
 
     async function setKillSwitch(disabled, reason = null) {
@@ -2671,12 +2716,23 @@
               // unverified, because re-sending the same draft is the
               // wrong move (could duplicate). Operator types fresh if
               // they need to follow up.
-              clearComposerAttachments();
-              const ta = $("emDraftText");
-              if (ta) ta.value = "";
-              // Refresh the thread so the new outbound message shows up
-              // if the extension logged it back to Firestore (future hook).
-              fetchMessagesNow(state.selectedId);
+              if (d.status === "sent") {
+                clearComposerAttachments();
+                const ta = $("emDraftText");
+                if (ta) ta.value = "";
+              }
+              // v0.9.3: Insert optimistic message immediately so the
+              // operator sees their just-sent message in the thread
+              // without waiting for the next M2 scrape. The optimistic
+              // doc is auto-hidden by the renderer once a real outbound
+              // message with matching text appears.
+              insertOptimisticMessage(d).then(() => {
+                fetchMessagesNow(state.selectedId);
+              }).catch((e) => {
+                console.warn("optimistic insert failed:", e.message);
+                // Still refresh — old behavior wasn't worse than this.
+                fetchMessagesNow(state.selectedId);
+              });
               fetchThreadListNow();
             }
           }
@@ -3351,12 +3407,46 @@
         box.innerHTML = `<div class="em-muted" style="font-size:12px;">No messages yet. The extension will populate this after its first scrape.</div>`;
         return;
       }
-      box.innerHTML = state.messages.map(m => {
+      // ── v0.9.3: dedupe optimistic outbound messages ─────────────────
+      // An "optimistic" message is one we wrote ourselves on send-success
+      // (status flipped to sent / sent_text_only / sent_unverified) so
+      // the operator sees their reply in the thread immediately.
+      // Once M2's scraper picks up the real Etsy message, both versions
+      // exist in Firestore — we want to show only the canonical one.
+      // Match criterion: an outbound message exists with matching trimmed
+      // text and is NOT itself optimistic. If yes, hide the optimistic.
+      const renderableMessages = (() => {
+        const optimisticOnes = state.messages.filter(m => m && m.localOptimistic === true);
+        if (!optimisticOnes.length) return state.messages;
+        // Build a quick lookup of "real" outbound text keys
+        const realOutboundTextKeys = new Set();
+        for (const m of state.messages) {
+          if (m && m.direction === "outbound" && !m.localOptimistic) {
+            const key = String(m.text || "").trim().toLowerCase().slice(0, 200);
+            if (key) realOutboundTextKeys.add(key);
+          }
+        }
+        // Drop optimistic entries whose textKey already has a real counterpart
+        return state.messages.filter(m => {
+          if (!m || !m.localOptimistic) return true;
+          const key = m.optimisticTextKey
+                   || String(m.text || "").trim().toLowerCase().slice(0, 200);
+          return !realOutboundTextKeys.has(key);
+        });
+      })();
+
+      box.innerHTML = renderableMessages.map(m => {
         const cls = m.source === "ai" ? "ai"
                   : m.direction === "outbound" ? "outbound"
                   : "inbound";
         const who  = m.senderName || (m.senderRole || m.source || "unknown");
         const when = fmtTime(m.timestamp || m.createdAt);
+        // v0.9.3: subtle indicator on still-optimistic messages so the
+        // operator knows this rendering is local-pending (not yet
+        // confirmed against an Etsy scrape).
+        const syncTag = m.localOptimistic
+          ? ' <span style="font-size:10px;color:#9aa3ad;font-style:italic;">· syncing…</span>'
+          : '';
 
         // Render any message that has imageUrls as inline thumbnails —
         // whether it's a standalone image message (messageType:"image")
@@ -3414,7 +3504,7 @@
 
         return `
           <div class="em-msg ${cls}">
-            <div class="em-meta">${esc(who)} · ${esc(when)}</div>
+            <div class="em-meta">${esc(who)} · ${esc(when)}${syncTag}</div>
             <div>${body}${cardsHtml}</div>
           </div>`;
       }).join("");
@@ -3506,11 +3596,13 @@
         renderThreadList();
       });
 
-      // v0.9.1 #1: secret modal wiring
-      $("emSecretSaveBtn").addEventListener("click", saveSecretFromModal);
+      // v0.9.1 #1: secret modal wiring (form submit handles Enter natively)
+      $("emSecretForm").addEventListener("submit", (e) => {
+        e.preventDefault();
+        saveSecretFromModal();
+      });
       $("emSecretCancelBtn").addEventListener("click", hideSecretSetupModal);
       $("emSecretInput").addEventListener("keydown", (e) => {
-        if (e.key === "Enter") saveSecretFromModal();
         if (e.key === "Escape") hideSecretSetupModal();
       });
 
