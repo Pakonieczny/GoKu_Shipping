@@ -126,12 +126,40 @@
       cursor: help;
     }
 
-    .em-detail { grid-area: detail; background: #f4f5f7; overflow-y: auto; display: flex; flex-direction: column; }
+    /* v1.9: detail-pane scroll architecture
+     *
+     * Pre-v1.9: `.em-detail` had `overflow-y: auto` so the entire pane —
+     * header (name + Open on Etsy / Needs review / Archive buttons),
+     * customer panel, AND the body grid — scrolled as one block. Reading
+     * a long message thread made all that chrome scroll out of sight.
+     *
+     * Now: `.em-detail` is a flex column with no overflow. The header and
+     * customer panel `flex-shrink: 0` (stay at their natural height at
+     * the top, never scroll). `.em-detail-body` takes the remaining
+     * height (`flex: 1; min-height: 0; overflow: hidden`) and contains
+     * the two-column grid. Each grid column manages its OWN vertical
+     * scroll independently — the messages scroll on the left, the aside
+     * cards scroll on the right (only if the cards exceed the viewport,
+     * which they typically don't).
+     *
+     * Mobile (< 1100px): grid collapses to single column AND scroll
+     * behavior reverts to whole-pane scrolling so the operator doesn't
+     * juggle two stacked scroll regions on a small screen.
+     */
+    .em-detail {
+      grid-area: detail; background: #f4f5f7;
+      display: flex; flex-direction: column;
+      min-height: 0;            /* allow flex children to compute heights */
+      overflow: hidden;         /* whole-pane scroll handled by children */
+    }
     .em-detail-empty {
       flex: 1; display: flex; align-items: center; justify-content: center;
       color: #6a737d; font-size: 13px; text-align: center; padding: 20px;
     }
-    .em-detail-header { background: #fff; border-bottom: 1px solid #e1e4e8; padding: 12px 18px; }
+    .em-detail-header {
+      background: #fff; border-bottom: 1px solid #e1e4e8; padding: 12px 18px;
+      flex-shrink: 0;   /* v1.9: stay at top, never scroll */
+    }
     .em-detail-header .em-h-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
     .em-detail-header h2 { margin: 0; font-size: 16px; font-weight: 600; }
     .em-detail-header .em-h-meta { margin-top: 4px; font-size: 12px; color: #57606a; display: flex; gap: 14px; flex-wrap: wrap; }
@@ -158,6 +186,7 @@
     .em-cust-panel {
       background: #fff; border-bottom: 1px solid #e1e4e8;
       padding: 10px 18px; cursor: default;
+      flex-shrink: 0;   /* v1.9: stays static below header, never scrolls */
     }
     .em-cust-panel.collapsed .em-cust-expand { display: none; }
     .em-cust-head {
@@ -324,6 +353,26 @@
     .em-detail-body {
       padding: 14px 18px; display: grid;
       grid-template-columns: minmax(0, 1fr) 300px; gap: 14px; align-items: start;
+      /* v1.9: take remaining vertical space and let each column scroll
+       * independently. `flex: 1` claims the leftover after the static
+       * header + customer panel. `min-height: 0` is essential — without
+       * it the grid won't shrink below its content size and child
+       * scrollbars never engage. `overflow: hidden` keeps the body
+       * itself from scrolling — children handle their own. */
+      flex: 1; min-height: 0; overflow: hidden;
+    }
+    /* Each grid column scrolls independently. Both children must have
+     * `min-height: 0` to allow shrinking, and `max-height: 100%` so
+     * they don't push past the body. `align-items: start` on the body
+     * is overridden here with `align-self: stretch` per column so the
+     * scroll container is full-height. */
+    .em-detail-body > div {
+      align-self: stretch;
+      min-height: 0;
+      max-height: 100%;
+      overflow-y: auto;
+      /* small inset so the scrollbar doesn't sit on the column edge */
+      padding-right: 4px;
     }
     .em-card { background: #fff; border: 1px solid #e1e4e8; border-radius: 6px; padding: 12px 14px; }
     .em-card + .em-card { margin-top: 12px; }
@@ -808,7 +857,22 @@
     }
     @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.3; } }
 
-    @media (max-width: 1100px) { .em-detail-body { grid-template-columns: 1fr; } }
+    @media (max-width: 1100px) {
+      /* v1.9: single-column layout AND whole-pane scrolling. With one
+       * effective column, two stacked scroll regions would be a UX
+       * regression on narrow screens — easier to scroll the whole
+       * pane as one unit. The header still pins because flex-shrink:0
+       * persists; only the body becomes part of a unified scroll. */
+      .em-detail { overflow-y: auto; }
+      .em-detail-body {
+        grid-template-columns: 1fr;
+        flex: initial; min-height: initial; overflow: visible;
+      }
+      .em-detail-body > div {
+        align-self: initial; max-height: initial; overflow: visible;
+        padding-right: 0;
+      }
+    }
 
     /* ── M5 Composer enhancements ──────────────────────────────────────── */
     .em-compose.dragging {

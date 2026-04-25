@@ -337,28 +337,68 @@ exports.handler = async (event) => {
         .map(m => normalize(m.text))
         .filter(Boolean);
 
-      if (newTextChunks.length > 0) {
-        const prevSnap = (tSnap && tSnap.data && tSnap.data()) || {};
-        const prevMessageText = prevSnap.searchableMessageText || "";
-        const combined = (prevMessageText + " " + newTextChunks.join(" ")).trim();
-        // Truncate from the FRONT — keep newest 6KB
-        const SEARCHABLE_MAX = 6000;
-        const truncated = combined.length > SEARCHABLE_MAX
-          ? combined.slice(combined.length - SEARCHABLE_MAX)
-          : combined;
-        tailPatch.searchableMessageText = truncated;
+      // v1.10: searchableText must exist on every thread for the inbox
+      // to search message bodies. Pre-v1.10 it was only built/updated
+      // when new messages arrived — threads scraped once before this
+      // logic existed, OR threads that haven't received new activity
+      // since v1.3, never got the field. Search would silently miss
+      // them.
+      //
+      // Now: rebuild searchableText whenever EITHER:
+      //   (a) new messages arrived (incremental — append + truncate, fast)
+      //   (b) the field is missing on the existing thread doc
+      //       (one-time backfill from the messages subcollection)
+      //
+      // Case (b) is a single subcollection read per thread, runs at most
+      // once per thread (next scrape sees the field populated and skips).
+      const prevSnap = (tSnap && tSnap.data && tSnap.data()) || {};
+      const hasField = !!prevSnap.searchableText;
+      const SEARCHABLE_MAX = 6000;
 
-        // Build the combined searchable field. Pull metadata from the
-        // patch first (in case this scrape just learned the customer
-        // name), fall back to the existing thread doc.
+      const buildMeta = (truncatedBody) => {
         const metaParts = [
           threadPatch.customerName  || prevSnap.customerName  || "",
           threadPatch.etsyUsername  || prevSnap.etsyUsername  || "",
           threadPatch.subject       || prevSnap.subject       || "",
           prevSnap.linkedOrderId    || ""
         ].map(s => normalize(String(s))).filter(Boolean);
-        const meta = metaParts.join(" ");
-        tailPatch.searchableText = (meta + " " + truncated).trim();
+        return (metaParts.join(" ") + " " + truncatedBody).trim();
+      };
+
+      if (newTextChunks.length > 0) {
+        // Case (a): incremental update
+        const prevMessageText = prevSnap.searchableMessageText || "";
+        const combined = (prevMessageText + " " + newTextChunks.join(" ")).trim();
+        const truncated = combined.length > SEARCHABLE_MAX
+          ? combined.slice(combined.length - SEARCHABLE_MAX)
+          : combined;
+        tailPatch.searchableMessageText = truncated;
+        tailPatch.searchableText = buildMeta(truncated);
+      } else if (!hasField) {
+        // Case (b): one-time backfill. Read the existing messages
+        // subcollection (most recent 50, plenty for the 6KB cap) and
+        // build the field from scratch. After this scrape the field
+        // exists and the snapshot returns to incremental updates.
+        try {
+          const msgsSnap = await tRef.collection("messages")
+            .orderBy("timestamp", "desc")
+            .limit(50)
+            .get();
+          const allText = msgsSnap.docs
+            .map(d => normalize((d.data() || {}).text || ""))
+            .filter(Boolean)
+            .reverse()                // back to chronological order
+            .join(" ");
+          const truncated = allText.length > SEARCHABLE_MAX
+            ? allText.slice(allText.length - SEARCHABLE_MAX)
+            : allText;
+          tailPatch.searchableMessageText = truncated;
+          tailPatch.searchableText = buildMeta(truncated);
+        } catch (backfillErr) {
+          console.warn("snapshot: searchableText backfill failed for", threadId, "—", backfillErr.message);
+          // Fall back to metadata-only so at least metadata search works
+          tailPatch.searchableText = buildMeta("");
+        }
       }
 
       await tRef.set(tailPatch, { merge: true });

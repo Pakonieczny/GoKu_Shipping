@@ -60,6 +60,18 @@ const { CORS, requireExtensionAuth } = require("./_etsyMailAuth");
 const db = admin.firestore();
 const THREADS_COLL = "EtsyMail_Threads";
 
+// v1.10: cap how many threads we'll lazy-backfill per request. Each
+// backfill is one subcollection read + one write — too many in parallel
+// trips Firestore quota / function timeout. After a few searches, all
+// commonly-searched threads are indexed and no further backfills happen.
+const MAX_BACKFILLS_PER_REQUEST = 50;
+
+// Same normalizer the snapshot uses, kept in sync. Lowercase + collapse
+// runs of whitespace + trim.
+function normalize(text = "") {
+  return String(text).toLowerCase().replace(/\s+/g, " ").trim();
+}
+
 // In-memory cache. Invalidated by TTL only — operators are unlikely
 // to expect "edit a thread, immediately re-search and see the change"
 // to work; if they do, they can wait 15 seconds or hit Refresh.
@@ -162,36 +174,105 @@ exports.handler = async (event) => {
   }
 
   try {
+    // v1.10: query strategy mirrors fetchThreadListNow's composite-index
+    // avoidance. Pre-v1.10 this used `where(status, in/==).orderBy(updatedAt)`
+    // which Firestore rejects without a composite index. Now:
+    //   - status-filtered: single-field where, no orderBy (auto-index)
+    //   - unfiltered:      orderBy by updatedAt (single-field auto-index)
+    // Sort happens client-side anyway.
     let firestoreQuery = db.collection(THREADS_COLL);
     if (statusList.length === 1) {
-      firestoreQuery = firestoreQuery.where("status", "==", statusList[0]);
+      firestoreQuery = firestoreQuery.where("status", "==", statusList[0]).limit(limit);
     } else if (statusList.length > 1) {
       // Firestore `in` supports up to 10 values. We capped at 10 above.
-      firestoreQuery = firestoreQuery.where("status", "in", statusList);
+      firestoreQuery = firestoreQuery.where("status", "in", statusList).limit(limit);
+    } else {
+      firestoreQuery = firestoreQuery.orderBy("updatedAt", "desc").limit(limit);
     }
-    firestoreQuery = firestoreQuery.orderBy("updatedAt", "desc").limit(limit);
 
     const snap = await firestoreQuery.get();
 
     const matches = [];
+    let backfilled = 0;
+    const backfillPromises = [];
+
     snap.forEach(doc => {
       const data = doc.data() || {};
       const haystack = (data.searchableText || "").toLowerCase();
-      // Fallback: if a thread doesn't have searchableText yet (legacy
-      // threads from before v1.3 deployment), fall back to checking
-      // the metadata fields directly. This avoids missing matches on
-      // pre-v1.3 threads while the snapshot path catches up.
-      const hit = haystack
-        ? haystack.includes(q)
-        : [
-            data.customerName, data.etsyUsername, data.subject,
-            data.linkedOrderId
-          ].some(v => v && String(v).toLowerCase().includes(q));
 
-      if (hit) {
+      if (haystack) {
+        // Fast path: searchableText already populated
+        if (haystack.includes(q)) {
+          matches.push({ id: doc.id, ...serialize(trimResultDoc(data)) });
+        }
+        return;
+      }
+
+      // v1.10: lazy backfill. Pre-v1.10, threads scraped before the
+      // searchableText logic was deployed (or threads with no new
+      // messages since) had no field to match against — they were
+      // silently invisible to search. We catch them here: read the
+      // messages subcollection, build searchableText, write it back
+      // for future searches, AND match against the just-built field
+      // for THIS request.
+      //
+      // The first metadata-only fallback below ensures the user sees
+      // metadata matches even before the body text is read; the
+      // backfill promise then enriches the field.
+      const metaOnly = [
+        data.customerName, data.etsyUsername, data.subject, data.linkedOrderId
+      ].some(v => v && String(v).toLowerCase().includes(q));
+      if (metaOnly) {
         matches.push({ id: doc.id, ...serialize(trimResultDoc(data)) });
       }
+
+      if (backfilled >= MAX_BACKFILLS_PER_REQUEST) return;
+      backfilled++;
+
+      backfillPromises.push((async () => {
+        try {
+          const msgsSnap = await doc.ref.collection("messages")
+            .orderBy("timestamp", "desc")
+            .limit(50)
+            .get();
+          const allText = msgsSnap.docs
+            .map(d => normalize((d.data() || {}).text || ""))
+            .filter(Boolean)
+            .reverse()
+            .join(" ");
+          const SEARCHABLE_MAX = 6000;
+          const truncated = allText.length > SEARCHABLE_MAX
+            ? allText.slice(allText.length - SEARCHABLE_MAX)
+            : allText;
+          const meta = [
+            data.customerName, data.etsyUsername, data.subject, data.linkedOrderId
+          ].map(s => normalize(String(s || ""))).filter(Boolean).join(" ");
+          const searchableText = (meta + " " + truncated).trim();
+
+          // Write back so future searches are fast.
+          await doc.ref.set({
+            searchableText,
+            searchableMessageText: truncated
+          }, { merge: true });
+
+          // Now check this thread for the current query. If it matches
+          // and we didn't already add it via the metaOnly path, add it.
+          if (searchableText.includes(q) && !metaOnly) {
+            const enriched = { ...data, searchableText, searchableMessageText: truncated };
+            matches.push({ id: doc.id, ...serialize(trimResultDoc(enriched)) });
+          }
+        } catch (e) {
+          console.warn("etsyMailSearch: backfill failed for", doc.id, "—", e.message);
+        }
+      })());
     });
+
+    // Await any in-flight backfills before returning, so this request
+    // includes their matches. Capped at MAX_BACKFILLS_PER_REQUEST so
+    // the function doesn't time out.
+    if (backfillPromises.length > 0) {
+      await Promise.all(backfillPromises);
+    }
 
     _searchCache.set(cacheKey, { docs: matches, at: Date.now(), scanned: snap.size });
     gcCache();
@@ -202,6 +283,7 @@ exports.handler = async (event) => {
       q,
       count  : matches.length,
       scanned: snap.size,
+      backfilled,    // v1.10: number of threads indexed this request
       cached : false,
       // If matches.length === 0 and scanned === limit, the user might
       // be searching for something deeper than our window. Surface
