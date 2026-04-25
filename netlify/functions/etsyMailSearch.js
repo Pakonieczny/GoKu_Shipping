@@ -90,11 +90,13 @@ function serialize(value) {
   return out;
 }
 
-/** Drop the searchableText field from results before returning to the
- *  client — it's a 6KB blob per thread and the UI doesn't render it.
- *  Saves bandwidth on busy inboxes. */
+/** Trim the heaviest internal-only field from results. v1.6: keep
+ *  `searchableText` so the UI can run further per-keystroke local
+ *  filtering on the result set without an extra round trip; only drop
+ *  the larger raw `searchableMessageText` which is just intermediate
+ *  data the snapshot uses to rebuild searchableText incrementally. */
 function trimResultDoc(data) {
-  const { searchableText, searchableMessageText, ...rest } = data;
+  const { searchableMessageText, ...rest } = data;
   return rest;
 }
 

@@ -142,6 +142,16 @@
       display: inline-flex; align-items: center; gap: 4px;
     }
     .em-detail-header .em-h-actions button:hover { background: #f6f8fa; }
+
+    /* v1.7: per-thread Move-to dropdown sits in the same toolbar */
+    .em-detail-header .em-h-actions select.em-thread-move-select {
+      border: 1px solid #d0d7de; background: #fff;
+      border-radius: 4px; padding: 4px 6px;
+      font-size: 12px; color: #24292f; cursor: pointer;
+    }
+    .em-detail-header .em-h-actions select.em-thread-move-select:hover {
+      background: #f6f8fa;
+    }
     .em-detail-header .em-h-actions button .material-icons { font-size: 14px; }
 
     /* ── M3: Customer panel (top banner above messages) ─────────────────── */
@@ -994,6 +1004,15 @@
           When AI confidence ≥ this value, replies auto-send and the thread moves to <b>Auto-Reply</b>.
           Below it, replies go to <b>Needs Review</b>. Higher = safer, fewer auto-sends.
         </p>
+
+        <label style="display:flex; align-items:center; gap:10px; margin:14px 0 6px; cursor:pointer;">
+          <input type="checkbox" id="emManualAutoSendInput" style="width:16px; height:16px; cursor:pointer;">
+          <span><b>Auto-send when I click "AI Draft"</b> &mdash; if AI rates the draft above the threshold, queue it for delivery automatically.</span>
+        </label>
+        <p style="font-size:11px;color:#6a737d;margin:0 0 12px 26px;">
+          Independent of the auto-pipeline toggle above. Turn this OFF if you always want to review AI drafts before they go out, even when you initiated the AI Draft yourself. Revise and Follow-up clicks never auto-send regardless of this setting.
+        </p>
+
         <p id="emAutoCfgMeta" style="font-size:10px;color:#6a737d;margin:0 0 8px;font-style:italic;"></p>
 
         <div class="em-modal-error" id="emSecretError"></div>
@@ -1136,9 +1155,24 @@
     // Lives at EtsyMail_Config/autoPipeline. Read by the server-side
     // pipeline (cached 15s) and by this UI. Operators tune it in the
     // Settings dialog. No localStorage, no env vars: ONE place.
+    //
+    // Fields:
+    //   enabled               — auto-pipeline on/off for incoming customer
+    //                           messages (controls the snapshot-triggered path)
+    //   threshold             — confidence threshold for auto-send (0–1)
+    //   manualAiDraftAutoSend — v1.8: independent toggle for whether the
+    //                           "AI Draft" button auto-sends when the AI
+    //                           rates the draft above threshold. Operators
+    //                           may want auto-pipeline ON for new messages
+    //                           but still review their own AI Draft clicks
+    //                           before they go out (or vice versa).
     const CONFIG_COLL = "EtsyMail_Config";
     const AUTO_CFG_DOC_ID = "autoPipeline";
-    const AUTO_CFG_DEFAULTS = { enabled: true, threshold: 0.80 };
+    const AUTO_CFG_DEFAULTS = {
+      enabled              : true,
+      threshold            : 0.80,
+      manualAiDraftAutoSend: true   // v1.8: defaults to ON to preserve existing behavior
+    };
 
     // In-memory cache so badges/tooltips don't re-fetch on every render.
     // Refreshed on Settings open + on Settings save + every COUNTS_POLL.
@@ -1153,12 +1187,16 @@
         if (res && res.exists && res.doc) {
           const d = res.doc;
           _autoCfg = {
-            enabled  : d.enabled !== false,
-            threshold: (typeof d.threshold === "number" && d.threshold >= 0 && d.threshold <= 1)
-                       ? d.threshold : AUTO_CFG_DEFAULTS.threshold,
-            updatedBy: d.updatedBy || null,
-            updatedAt: d.updatedAt || null,
-            _loaded  : true
+            enabled              : d.enabled !== false,
+            threshold            : (typeof d.threshold === "number" && d.threshold >= 0 && d.threshold <= 1)
+                                   ? d.threshold : AUTO_CFG_DEFAULTS.threshold,
+            // v1.8: missing field defaults to true (preserves pre-v1.8 behavior
+            // for configs written before this toggle existed). Explicit `false`
+            // turns it off.
+            manualAiDraftAutoSend: d.manualAiDraftAutoSend !== false,
+            updatedBy            : d.updatedBy || null,
+            updatedAt            : d.updatedAt || null,
+            _loaded              : true
           };
         } else {
           _autoCfg = { ...AUTO_CFG_DEFAULTS, _loaded: true };
@@ -1170,12 +1208,13 @@
       return _autoCfg;
     }
 
-    async function saveAutoConfig({ enabled, threshold, by }) {
+    async function saveAutoConfig({ enabled, threshold, manualAiDraftAutoSend, by }) {
       const clean = {
-        enabled  : enabled !== false,
-        threshold: Math.max(0, Math.min(1, parseFloat(threshold) || AUTO_CFG_DEFAULTS.threshold)),
-        updatedBy: by || getEmployeeName() || "operator",
-        updatedAt: { __serverTimestamp: true }
+        enabled              : enabled !== false,
+        threshold            : Math.max(0, Math.min(1, parseFloat(threshold) || AUTO_CFG_DEFAULTS.threshold)),
+        manualAiDraftAutoSend: manualAiDraftAutoSend !== false,   // v1.8
+        updatedBy            : by || getEmployeeName() || "operator",
+        updatedAt            : { __serverTimestamp: true }
       };
       await api("firestoreProxy", {
         method: "POST",
@@ -1309,10 +1348,11 @@
       // Show modal first; populate auto-pipeline fields with current
       // cached config, then refresh from Firestore in the background
       // (so the dialog opens fast and corrects itself if cache stale).
-      const enabledInput = $("emAutoEnabledInput");
-      const thr          = $("emConfThresholdInput");
-      const thrVal       = $("emConfThresholdVal");
-      const metaEl       = $("emAutoCfgMeta");
+      const enabledInput  = $("emAutoEnabledInput");
+      const thr           = $("emConfThresholdInput");
+      const thrVal        = $("emConfThresholdVal");
+      const manualInput   = $("emManualAutoSendInput");   // v1.8
+      const metaEl        = $("emAutoCfgMeta");
 
       const populateFromCfg = () => {
         if (enabledInput) enabledInput.checked = _autoCfg.enabled !== false;
@@ -1320,6 +1360,8 @@
           thr.value = String(_autoCfg.threshold);
           thrVal.textContent = Math.round(_autoCfg.threshold * 100) + "%";
         }
+        // v1.8: missing field = true (preserves existing behavior)
+        if (manualInput) manualInput.checked = _autoCfg.manualAiDraftAutoSend !== false;
         if (metaEl) {
           if (_autoCfg.updatedBy || _autoCfg.updatedAt) {
             const who = _autoCfg.updatedBy ? ("by " + _autoCfg.updatedBy) : "";
@@ -1370,11 +1412,13 @@
       // is the consumer. No localStorage, no env vars.
       const enabledInput = $("emAutoEnabledInput");
       const thr          = $("emConfThresholdInput");
+      const manualInput  = $("emManualAutoSendInput");   // v1.8
       try {
         await saveAutoConfig({
-          enabled  : enabledInput ? enabledInput.checked : true,
-          threshold: thr ? thr.value : AUTO_CFG_DEFAULTS.threshold,
-          by       : getEmployeeName() || "operator"
+          enabled              : enabledInput ? enabledInput.checked : true,
+          threshold            : thr ? thr.value : AUTO_CFG_DEFAULTS.threshold,
+          manualAiDraftAutoSend: manualInput ? manualInput.checked : true,   // v1.8
+          by                   : getEmployeeName() || "operator"
         });
       } catch (e) {
         $("emSecretError").textContent = "Couldn't save auto-pipeline config: " + e.message;
@@ -1560,19 +1604,33 @@
       state.inFlightList = true;
       try {
         const filter = currentFilter();
-        // v1.2: filter.status can be a string (single status), an array
-        // (multi-status — Auto-Reply folder includes both auto_replied
-        // and queued_for_auto_send), or null (All folder, no filter).
-        // For arrays we run parallel queries, merge by id, and re-sort
-        // by date so the list shows newest-first across both statuses.
-        const baseQuery = { op: "list", coll: THREADS_COLL, orderBy: "updatedAt,desc", limit: 100 };
+        // v1.7: query strategy designed to avoid composite-index requirements.
+        //
+        //   - "All" folder (no status filter): orderBy("updatedAt","desc") only.
+        //     Uses Firestore's auto-built single-field index. Fast, sorted.
+        //
+        //   - Status-filtered folders (Needs review, Auto-Reply, Archived):
+        //     where("status","==",X) only — NO orderBy. Pre-v1.7 this combined
+        //     where + orderBy and Firestore demanded a (status, updatedAt)
+        //     composite index, throwing FAILED_PRECONDITION when missing.
+        //     Now we sort client-side in renderThreadList (which already does
+        //     a date sort regardless), keeping the query single-field.
+        //
+        // Trade-off: without server-side orderBy, the 100-doc limit returns
+        // an arbitrary slice. For typical inboxes this is fine — most folders
+        // contain <100 threads. If a folder grows beyond 100 threads the user
+        // would want a real composite index. We bump the limit to 200 in that
+        // case to delay the day; long-term: add the composite index.
         let docs;
         if (Array.isArray(filter.status)) {
+          // Multi-status folder (Auto-Reply): one query per status, merge.
           const responses = await Promise.all(filter.status.map(s =>
-            api("firestoreProxy", { query: { ...baseQuery, where: `status,==,${s}` } })
+            api("firestoreProxy", { query: {
+              op: "list", coll: THREADS_COLL,
+              where: `status,==,${s}`, limit: 200
+              // No orderBy — single-field index sufficient.
+            } })
           ));
-          // Merge + dedupe by id (a thread can only have one status, so
-          // dedup is a safety net rather than a real concern)
           const seen = new Set();
           docs = [];
           for (const r of responses) {
@@ -1582,10 +1640,20 @@
               docs.push(d);
             }
           }
+        } else if (filter.status) {
+          // Single-status folder.
+          const data = await api("firestoreProxy", { query: {
+            op: "list", coll: THREADS_COLL,
+            where: `status,==,${filter.status}`, limit: 200
+            // No orderBy.
+          } });
+          docs = data.docs || [];
         } else {
-          const query = { ...baseQuery };
-          if (filter.status) query.where = `status,==,${filter.status}`;
-          const data = await api("firestoreProxy", { query });
+          // "All" — orderBy by date is fine, no composite index needed.
+          const data = await api("firestoreProxy", { query: {
+            op: "list", coll: THREADS_COLL,
+            orderBy: "updatedAt,desc", limit: 100
+          } });
           docs = data.docs || [];
         }
         state.threads = docs;
@@ -1594,12 +1662,13 @@
       } catch (e) {
         console.warn("thread list fetch failed:", e.message);
         setBackendOk(false, "Backend: error");
+        // v1.7: clean, generic error. The composite-index path that produced
+        // the noisy "create index here: <huge URL>" message is gone (queries
+        // are restructured above), but if some other error fires, show
+        // something the operator can act on without exposing internals.
         $("emListItems").innerHTML = `<div class="em-list-empty">
-          Error loading threads:<br>${esc(e.message)}
-          <br><br>
-          <span class="em-muted">Ensure <code>firestoreProxy.js</code> is deployed and
-          <code>EtsyMail_Threads</code> is in its <code>CALLABLE_COLLS</code> set.
-          Firestore index errors will appear in the Netlify function logs with a one-click fix link.</span>
+          Couldn't load threads.<br>
+          <span class="em-muted">Try refreshing. If this persists, check your network connection.</span>
         </div>`;
       } finally {
         state.inFlightList = false;
@@ -1611,9 +1680,13 @@
     // v1.4: Search is folder-scoped — typing while inside "Needs review"
     // searches only that folder. Only "All" produces global search.
     // Multi-status folders (Auto-Reply) pass a comma-separated status.
+    // v1.6: pure candidate expander. The local filter in renderThreadList
+    // is the source of truth for what renders; this just broadens the
+    // pool of threads it has to filter against. Sequence-guarded so a
+    // slow response can't clobber a fresher query.
+    let _searchSeq = 0;
     async function fetchSearchResults(q) {
-      if (state.inFlightSearch) return;
-      state.inFlightSearch = true;
+      const mySeq = ++_searchSeq;
       state.searchMode = true;
       try {
         const filter = currentFilter();
@@ -1626,13 +1699,24 @@
             : filter.status;
         }
         const data = await api("etsyMailSearch", { query: searchQuery });
+        // v1.6: drop stale responses. If the user kept typing, _searchSeq
+        // has already advanced past mySeq. Applying this response would
+        // overwrite a more recent query's candidate pool.
+        if (mySeq !== _searchSeq) return;
+        // Drop if user has cleared the box entirely since we fired.
+        if (!state.searchText.trim()) return;
+
         state.threads = data.docs || [];
         state.searchScanned = data.scanned || 0;
         state.searchMaxedOut = !!data.maxedOut;
         state.searchScopedTo = filter.status ? filter.label : null;
+        // Re-run the local filter against the new candidate pool —
+        // ensures the rendered list matches whatever the user has
+        // typed BY NOW, not the query that was sent 200ms ago.
         renderThreadList();
         setBackendOk(true, "Backend: connected");
       } catch (e) {
+        if (mySeq !== _searchSeq) return;
         console.warn("search failed:", e.message);
         setBackendOk(false, "Backend: error");
         $("emListItems").innerHTML = `<div class="em-list-empty">
@@ -1640,8 +1724,6 @@
           <span class="em-muted">If this is a 404, ensure <code>etsyMailSearch.js</code>
           is deployed alongside the other functions.</span>
         </div>`;
-      } finally {
-        state.inFlightSearch = false;
       }
     }
 
@@ -1659,23 +1741,29 @@
       const q = state.searchText.trim().toLowerCase();
 
       // ── Filter pipeline ─────────────────────────────────────────────
-      // 1. Text search across customer/order/subject/username
-      //    SKIPPED when searchMode is true — the server already filtered
-      //    by searchableText, which is broader than the client-side
-      //    metadata fields. Re-applying the client filter would
-      //    incorrectly narrow the results.
-      // 2. Message-type filter (image, text-only, has-order, etc.)
-      // 3. Date filter (today, 7/30/90 days)
-      // 4. Sort by date desc — always, regardless of which folder we're in
+      // v1.6: text search runs LOCALLY on every keystroke against:
+      //   - searchableText  ← contains last ~6KB of message body text
+      //                       (populated by snapshot, included in folder
+      //                       fetches AND search-endpoint responses)
+      //   - customerName, etsyUsername, subject, linkedOrderId, category
+      //
+      // Runs regardless of searchMode. The server search is now purely a
+      // CANDIDATE EXPANDER — when active, it pulls in matching threads
+      // from beyond the loaded folder batch (up to 500 recent threads
+      // server-side). The local filter is the source of truth for what
+      // actually renders, so per-keystroke typing always feels instant.
+      //
+      // Then: message-type filter, date filter, date sort.
       let filtered = state.threads.slice();
 
-      if (q && !state.searchMode) {
+      if (q) {
         filtered = filtered.filter(t =>
-          (t.customerName || "").toLowerCase().includes(q) ||
-          (t.linkedOrderId || "").toLowerCase().includes(q) ||
-          (t.subject       || "").toLowerCase().includes(q) ||
-          (t.etsyUsername  || "").toLowerCase().includes(q) ||
-          (t.category      || "").toLowerCase().includes(q)
+          (t.searchableText || "").toLowerCase().includes(q) ||
+          (t.customerName   || "").toLowerCase().includes(q) ||
+          (t.linkedOrderId  || "").toLowerCase().includes(q) ||
+          (t.subject        || "").toLowerCase().includes(q) ||
+          (t.etsyUsername   || "").toLowerCase().includes(q) ||
+          (t.category       || "").toLowerCase().includes(q)
         );
       }
 
@@ -1862,6 +1950,7 @@
         btn.innerHTML = '<i class="material-icons">check_box</i>Cancel';
       }
       buildMoveSelect();
+      updateSelectionBar();   // v1.7: was missing — the toolbar (and Move dropdown) stayed hidden without this
       renderThreadList();
     }
 
@@ -2065,6 +2154,9 @@
               ${etsyUrl ? `<a href="${esc(etsyUrl)}" target="_blank" class="em-link"><button><i class="material-icons">open_in_new</i>Open on Etsy</button></a>` : ""}
               <button id="emReviewBtn" title="Move to Needs review (manual triage)"><i class="material-icons">rate_review</i>Needs review</button>
               <button id="emArchiveBtn" title="Archive"><i class="material-icons">archive</i>Archive</button>
+              <select id="emThreadMoveSelect" class="em-thread-move-select" title="Move this thread to a folder">
+                <option value="">Move to…</option>
+              </select>
             </div>
           </div>
         </div>
@@ -2165,6 +2257,77 @@
 
       $("emReviewBtn")?.addEventListener("click", () => setStatus(t.id, "pending_human_review", "operator triage"));
       $("emArchiveBtn")?.addEventListener("click", () => setStatus(t.id, "archived", "operator archive"));
+
+      // v1.7: per-thread Move-to dropdown. Same destinations as the bulk
+      // multi-select Move dropdown, but operates on this single thread.
+      // Populate from MOVE_TARGETS (mirrors buildMoveSelect for the bulk
+      // bar). The dropdown shows "Move to…" by default and resets after
+      // every selection — it's an action picker, not state.
+      const moveSel = $("emThreadMoveSelect");
+      if (moveSel) {
+        moveSel.innerHTML = '<option value="">Move to…</option>' +
+          MOVE_TARGETS.map(mt =>
+            `<option value="${esc(mt.status)}">${esc(mt.label)}</option>`
+          ).join("");
+        moveSel.addEventListener("change", async (e) => {
+          const target = e.target.value;
+          e.target.value = "";   // reset for next pick
+          if (!target) return;
+          const targetLabel = (MOVE_TARGETS.find(m => m.status === target) || {}).label || target;
+
+          // Reuse the same stronger-confirm copy as the bulk move so the
+          // operator gets the manual-move-flagged warning when sending
+          // to Auto-Reply directly.
+          const confirmText = target === "auto_replied"
+            ? `Move this thread to "Auto-Reply"?\n\n` +
+              `Auto-Reply is normally reserved for AI-completed sends. ` +
+              `Manual moves are tagged so AI metrics aren't polluted, ` +
+              `but the move WILL appear in the audit log as an operator action.`
+            : `Move this thread to "${targetLabel}"?`;
+          if (!confirm(confirmText)) return;
+
+          const actor = (localStorage.getItem("etsymail_employee_name") || "operator");
+          try {
+            await api("etsyMailThreads", {
+              method: "POST",
+              body: {
+                action  : "setStatus",
+                threadId: t.id,
+                status  : target,
+                reason  : "operator per-thread move",
+                actor
+              }
+            });
+            toast(`Moved to ${targetLabel}`);
+            await fetchThreadListNow();
+            await fetchCountsNow();
+            // v1.7+: force-fetch the latest thread doc and re-render the
+            // detail header. Don't rely on openThread's state.threads
+            // cache — in search mode fetchThreadListNow above skips, so
+            // state.threads can be stale here. A direct firestoreProxy
+            // doc-get is one Firestore read, fast and reliable.
+            try {
+              const fresh = await api("firestoreProxy", {
+                query: { op: "get", coll: THREADS_COLL, id: t.id }
+              });
+              if (fresh && fresh.doc) {
+                // Update state.threads in place if present (so the row
+                // in the list also re-renders with the new status pill
+                // on the next tick), then re-render the detail.
+                const idx = state.threads.findIndex(x => x.id === t.id);
+                if (idx >= 0) state.threads[idx] = { id: t.id, ...fresh.doc };
+                renderDetail({ id: t.id, ...fresh.doc });
+              }
+            } catch (refetchErr) {
+              console.warn("post-move detail refresh failed:", refetchErr.message);
+            }
+          } catch (err) {
+            toast(`Move failed: ${err.message}`);
+            console.warn("per-thread move failed:", err.message);
+          }
+        });
+      }
+
       $("emClearDraftBtn")?.addEventListener("click", () => {
         $("emDraftText").value = "";
         resetTokenCounter();
@@ -2268,6 +2431,99 @@
           if (lookups) msg += ` (${lookups} lookup${lookups === 1 ? "" : "s"})`;
         }
         toast(msg);
+
+        // ── v1.7 / v1.8: auto-send if confidence is high ─────────
+        // Pre-v1.7, manually clicking "AI Draft" generated the draft but
+        // never auto-sent it — high-confidence threads sat in the composer
+        // until the operator clicked Send manually.
+        //
+        // v1.7: for `initial` mode, if AI confidence ≥ threshold AND
+        // auto-pipeline is enabled, auto-send via the same atomic
+        // enqueue path the auto-pipeline uses.
+        //
+        // v1.8: gated additionally on a separate `manualAiDraftAutoSend`
+        // toggle in Settings. Operators can now decouple this from the
+        // global auto-pipeline flag — e.g., auto-pipeline ON for new
+        // customer messages, but ALWAYS review AI Draft clicks before
+        // they go out (manualAiDraftAutoSend = false). Defaults to ON
+        // to preserve v1.7 behavior.
+        //
+        // Skipped for revise/follow_up regardless: those are explicitly
+        // operator-dialogue modes; the operator wants to control the send.
+        if (mode === "initial"
+            && _autoCfg.enabled
+            && _autoCfg.manualAiDraftAutoSend !== false) {
+          const threshold = typeof _autoCfg.threshold === "number" ? _autoCfg.threshold : 0.80;
+          const aiConf = (typeof data.aiConfidence === "number" ? data.aiConfidence
+                       : typeof data.confidence   === "number" ? data.confidence : 0);
+          if (aiConf >= threshold) {
+            try {
+              const t = state.threads.find(x => x.id === threadId)
+                     || (await api("firestoreProxy", { query: { op: "get", coll: THREADS_COLL, id: threadId } })).doc;
+              const etsyConversationUrl = (t && t.etsyConversationUrl)
+                || ("https://www.etsy.com/your/conversations/" + threadId.replace("etsy_conv_", ""));
+              const inboundMs = t && t.lastInboundAt
+                ? (t.lastInboundAt._ts ? t.lastInboundAt.ms : (t.lastInboundAt.toDate ? t.lastInboundAt.toDate().getTime() : 0))
+                : Date.now();
+
+              await api("etsyMailDraftSend", {
+                method: "POST",
+                body: {
+                  op                  : "enqueue",
+                  threadId,
+                  etsyConversationUrl,
+                  text                : data.text || "",
+                  attachments         : Array.isArray(data.attachments) ? data.attachments : [],
+                  employeeName,
+                  aiMeta              : {
+                    generatedByAI : true,
+                    model         : data.model || null,
+                    reasoning     : data.reasoning || null,
+                    activeQuestion: data.activeQuestion || null,
+                    confidence    : aiConf,
+                    difficulty    : data.aiDifficulty != null ? data.aiDifficulty
+                                   : data.difficulty   != null ? data.difficulty   : null
+                  },
+                  force               : true,
+                  // Atomic thread finalize: same shape the auto-pipeline
+                  // sends. Both the draft enqueue and the thread status
+                  // promotion happen in one Firestore transaction.
+                  parentThreadFinalizePatch : {
+                    threadId,
+                    newStatus    : "queued_for_auto_send",
+                    inboundMs,
+                    decision     : "auto_send_enqueued_manual",
+                    aiConfidence : aiConf,
+                    aiDifficulty : data.aiDifficulty != null ? data.aiDifficulty
+                                  : data.difficulty   != null ? data.difficulty   : null
+                  }
+                }
+              });
+              toast(`High confidence (${Math.round(aiConf*100)}%) — queued for auto-send`);
+              await fetchThreadListNow();
+              await fetchCountsNow();
+              // Force-fetch the latest thread doc for the detail header
+              // (state.threads may be stale, especially in search mode).
+              try {
+                const fresh = await api("firestoreProxy", {
+                  query: { op: "get", coll: THREADS_COLL, id: threadId }
+                });
+                if (fresh && fresh.doc) {
+                  const idx = state.threads.findIndex(x => x.id === threadId);
+                  if (idx >= 0) state.threads[idx] = { id: threadId, ...fresh.doc };
+                  renderDetail({ id: threadId, ...fresh.doc });
+                }
+              } catch (refetchErr) {
+                console.warn("post-AI-Draft detail refresh failed:", refetchErr.message);
+              }
+            } catch (enqueueErr) {
+              // If enqueue fails, the draft still exists in the composer
+              // for the operator to send manually. Don't block.
+              console.warn("auto-send-on-AI-Draft enqueue failed:", enqueueErr.message);
+              toast("Auto-send failed: " + enqueueErr.message + " — draft is in composer");
+            }
+          }
+        }
       } catch (e) {
         if (body) {
           body.innerHTML = '<div class="em-ai-warning">⚠ Draft generation failed: ' + esc(e.message) + '</div>';
@@ -4408,29 +4664,35 @@
       $("emSettingsBtn").addEventListener("click", () => showSecretSetupModal());
 
       // ── Filter wiring ────────────────────────────────────────────
-      // ── v1.3: Search field with server-side full-text fallback ──
-      // Two-tier search:
-      //   1. Local instant filter on every keystroke (operates on the
-      //      currently-loaded thread batch — fast, keeps the typing
-      //      experience snappy).
-      //   2. After 300ms of no typing, fire etsyMailSearch with the
-      //      query against searchableText denormalized fields. This
-      //      pulls in matching threads from anywhere in the recent
-      //      window (default 500 threads scanned), not just the loaded
-      //      folder batch.
-      // When the search input is cleared, we revert to folder-fetch
-      // mode immediately.
+      // ── v1.6: Real-time per-keystroke search ────────────────────
+      // Two layers:
+      //   1. INSTANT (every keystroke, no debounce): renderThreadList
+      //      runs the local filter against searchableText + metadata
+      //      on whatever threads are currently in state.threads. This
+      //      is the per-letter UI feedback — zero network latency.
+      //   2. EXPANDER (200ms debounce): etsyMailSearch fires to broaden
+      //      the candidate pool beyond the loaded folder batch (up to
+      //      500 recent threads server-side). When results arrive, the
+      //      local filter automatically narrows them to match the
+      //      current query — no flicker.
+      //
+      // Clearing the input (or going below 2 chars) drops search mode
+      // and refetches the folder batch.
       let _searchDebounce = null;
       $("emSearchInput").addEventListener("input", (e) => {
         const v = e.target.value || "";
         state.searchText = v;
-        // Immediate local filter for instant typing feedback
+        // INSTANT: re-render with the current query against whatever
+        // threads are currently loaded. No round-trip.
         renderThreadList();
         clearTimeout(_searchDebounce);
         if (v.trim().length >= 2) {
-          _searchDebounce = setTimeout(() => fetchSearchResults(v.trim()), 300);
+          // Background candidate expansion. Sequence-guarded inside
+          // fetchSearchResults — stale responses are dropped if the
+          // user has kept typing past them.
+          _searchDebounce = setTimeout(() => fetchSearchResults(v.trim()), 200);
         } else if (state.searchMode) {
-          // Cleared the search: drop search mode and re-fetch folder
+          // Cleared / too short: drop search mode and refetch folder
           state.searchMode = false;
           fetchThreadListNow();
         }
