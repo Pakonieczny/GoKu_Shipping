@@ -20,6 +20,9 @@
 [functions."etsyMailSyncCron"]
   schedule = "*/5 * * * *"
 
+[functions."etsyMailDraftSendCleanupCron"]
+  schedule = "*/3 * * * *"
+
 [[headers]]
   for = "/*"
   [headers.values]
