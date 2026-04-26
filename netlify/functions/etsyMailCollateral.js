@@ -8,7 +8,7 @@
  *  the owner uploads files manually (e.g., to Firebase Storage or
  *  any external host) and registers the URL here.
  *
- *  ═══ FOUR CORE OPS ═══════════════════════════════════════════════════════
+ *  ═══ FOUR OPS ═══════════════════════════════════════════════════════════
  *
  *  POST { op: "search", category?, kind?, keywords?, limit? }
  *      AI tool path. Returns matches by category + kind + optional
@@ -39,7 +39,6 @@
  *      lastUsedAt  : Timestamp | null,    // updated by search() when AI uses it
  *      approvedBy  : "<employeeName>",
  *      approvedAt  : Timestamp,
- *      storagePath, storageBucket, fileName, contentType, bytes,
  *      createdBy, createdAt, updatedAt, lastUpdatedBy
  *    }
  *
@@ -58,6 +57,13 @@ const { requireOwner, logUnauthorized } = require("./_etsyMailRoles");
 const db = admin.firestore();
 const FV = admin.firestore.FieldValue;
 
+// v2.5 — Storage bucket for direct file uploads. The bucket is initialized
+// in firebaseAdmin.js via FIREBASE_STORAGE_BUCKET; admin.storage().bucket()
+// with no args returns the default. The Admin SDK bypasses Storage rules,
+// so the user's fallback `allow read, write: if false` does not block our
+// writes from this server-side path.
+const bucket = admin.storage().bucket();
+
 const COLLATERAL_COLL = "EtsyMail_Collateral";
 const AUDIT_COLL      = "EtsyMail_Audit";
 
@@ -66,11 +72,34 @@ const VALID_KINDS = new Set([
 ]);
 
 const SAFE_FIELDS = new Set([
-  "category", "kind", "name", "url", "description", "keywords", "active"
+  "category", "kind", "name", "url", "description", "keywords", "active",
+  // v2.5: storage metadata for files uploaded through op:"upload". Saved
+  // alongside the doc so deleteFile can clean up the underlying GCS object
+  // when an entry is deactivated/removed. Storing both fields together
+  // avoids ambiguity — `url` is what the AI/customer sees, `storagePath`
+  // is what we use to reach the file via the Admin SDK.
+  "storagePath", "storageBucket", "uploadedFilename", "uploadedContentType",
+  "uploadedSizeBytes"
 ]);
 
 const SEARCH_DEFAULT_LIMIT = 5;
 const SEARCH_MAX_LIMIT     = 20;
+
+// v2.5 — Upload limits + allowlist
+//
+// Netlify functions have a 6 MB request body cap. Base64 inflates payloads
+// by ~33%, so the largest raw file we can accept is ~4.5 MB. We cap at
+// 4_500_000 to leave headroom for JSON envelope overhead.
+//
+// Allowlist is intentionally narrow: collateral is line sheets, product
+// cards, lookbooks, image sets, terms PDFs. Anything else is suspicious
+// (executables, archives, office docs that customers can't open inline).
+const UPLOAD_MAX_BYTES = 4_500_000;
+const UPLOAD_ALLOWED_CONTENT_TYPES = new Set([
+  "image/jpeg", "image/png", "image/webp", "image/gif",
+  "application/pdf"
+]);
+const UPLOAD_PATH_PREFIX = "etsymail-collateral";
 
 // ─── Helpers ────────────────────────────────────────────────────────────
 
@@ -106,21 +135,8 @@ function trimForCaller(doc) {
     url         : doc.url,
     description : doc.description || "",
     keywords    : doc.keywords || [],
-    active      : doc.active !== false,
-    storagePath : doc.storagePath || null,
-    fileName    : doc.fileName || null,
-    contentType : doc.contentType || null,
-    bytes       : doc.bytes || null
+    active      : doc.active !== false
   };
-}
-
-function sanitizeDocId(raw) {
-  const id = String(raw || "").trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9_\-]+/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .slice(0, 120);
-  return id || null;
 }
 
 function sanitizePatch(rawPatch) {
@@ -258,6 +274,146 @@ async function searchCollateral({ category, kind, keywords, limit } = {}) {
   return { matches, count: matches.length, totalScored: scored.length };
 }
 
+// ─── v2.5: Direct file upload to Firebase Storage ──────────────────────
+//
+// Path layout:
+//   etsymail-collateral/<random-id>-<sanitized-filename>
+//
+// The random ID prevents filename collisions and makes the URL non-
+// guessable for casual enumeration (it's not a security boundary —
+// public ACL is set explicitly below — but it's good hygiene).
+//
+// Files are made publicly readable via file.makePublic(). That sets
+// the underlying GCS object ACL, so the resulting URL
+//   https://storage.googleapis.com/<bucket>/<path>
+// works without auth — bypassing the Firebase Storage rules layer
+// entirely. This is the right call for collateral: line sheets,
+// lookbooks, etc. are meant to be linkable from Etsy replies that
+// customers open in any browser without any login.
+//
+// If you want to lock down a specific entry later, use op:"deleteFile"
+// to remove the GCS object — the Firestore doc still records its
+// metadata for audit but the URL stops resolving.
+
+function sanitizeFilename(name) {
+  // Strip path separators, collapse spaces/odd chars to underscore, cap
+  // length. Keep the extension. Two reasons we keep the original name in
+  // the path: (a) operators recognize what they uploaded when browsing
+  // the bucket; (b) the GCS URL preserves a meaningful filename when
+  // shared.
+  const raw = String(name || "file").trim();
+  const lastDot = raw.lastIndexOf(".");
+  const stem = lastDot > 0 ? raw.slice(0, lastDot) : raw;
+  const ext  = lastDot > 0 ? raw.slice(lastDot) : "";
+  const safeStem = stem.replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 60) || "file";
+  const safeExt  = ext.replace(/[^a-zA-Z0-9.]+/g, "").slice(0, 8);
+  return safeStem + safeExt;
+}
+
+function randomId(len = 12) {
+  const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+  let s = "";
+  for (let i = 0; i < len; i++) s += chars[Math.floor(Math.random() * chars.length)];
+  return s;
+}
+
+/** Upload a file to Firebase Storage. Returns the metadata block that
+ *  the caller persists onto the collateral doc. */
+async function uploadCollateralFile({ filename, contentType, bytesBase64 }) {
+  if (!filename || typeof filename !== "string") {
+    return { ok: false, code: 400, error: "filename required" };
+  }
+  if (!contentType || typeof contentType !== "string") {
+    return { ok: false, code: 400, error: "contentType required" };
+  }
+  if (!UPLOAD_ALLOWED_CONTENT_TYPES.has(contentType)) {
+    return {
+      ok: false, code: 415,
+      error: `contentType '${contentType}' not allowed. Permitted: ${[...UPLOAD_ALLOWED_CONTENT_TYPES].join(", ")}`
+    };
+  }
+  if (!bytesBase64 || typeof bytesBase64 !== "string") {
+    return { ok: false, code: 400, error: "bytesBase64 required" };
+  }
+
+  // Decode + size-check
+  let buffer;
+  try {
+    buffer = Buffer.from(bytesBase64, "base64");
+  } catch (e) {
+    return { ok: false, code: 400, error: "bytesBase64 was not valid base64: " + e.message };
+  }
+  if (buffer.length === 0) {
+    return { ok: false, code: 400, error: "decoded file was empty" };
+  }
+  if (buffer.length > UPLOAD_MAX_BYTES) {
+    return {
+      ok: false, code: 413,
+      error: `file is ${buffer.length} bytes; max ${UPLOAD_MAX_BYTES} bytes (~4.5 MB after base64 decode)`
+    };
+  }
+
+  // Build the storage path. Random ID prefix + sanitized filename.
+  const safe = sanitizeFilename(filename);
+  const storagePath = `${UPLOAD_PATH_PREFIX}/${randomId()}-${safe}`;
+  const file = bucket.file(storagePath);
+
+  // Write + make public. We set the contentType explicitly so the GCS
+  // URL serves with the right MIME (Chrome sniffs but Safari doesn't).
+  // cacheControl is generous — collateral rarely changes; if a file is
+  // edited, you upload a new one with a new path.
+  try {
+    await file.save(buffer, {
+      contentType,
+      resumable: false,    // small files; resumable adds latency
+      metadata: {
+        cacheControl: "public, max-age=86400",
+        contentType
+      }
+    });
+    await file.makePublic();
+  } catch (e) {
+    return { ok: false, code: 500, error: "Storage write failed: " + e.message };
+  }
+
+  const url = `https://storage.googleapis.com/${bucket.name}/${storagePath}`;
+  return {
+    ok: true,
+    url,
+    storagePath,
+    storageBucket: bucket.name,
+    uploadedFilename: safe,
+    uploadedContentType: contentType,
+    uploadedSizeBytes: buffer.length
+  };
+}
+
+/** Remove a file from Firebase Storage. Idempotent — if the file is
+ *  already gone, returns success. Used when an operator removes a
+ *  collateral entry whose file was uploaded through this endpoint. */
+async function deleteCollateralFile(storagePath) {
+  if (!storagePath || typeof storagePath !== "string") {
+    return { ok: false, code: 400, error: "storagePath required" };
+  }
+  // Defense-in-depth: only delete files under our prefix. Stops a
+  // misbehaving caller from passing a path that points into another
+  // app's tree (game-generator-1, listing-generator-1, etc.).
+  if (!storagePath.startsWith(UPLOAD_PATH_PREFIX + "/")) {
+    return {
+      ok: false, code: 400,
+      error: `storagePath must start with '${UPLOAD_PATH_PREFIX}/'`
+    };
+  }
+
+  const file = bucket.file(storagePath);
+  try {
+    await file.delete({ ignoreNotFound: true });
+    return { ok: true, deleted: true, storagePath };
+  } catch (e) {
+    return { ok: false, code: 500, error: "Storage delete failed: " + e.message };
+  }
+}
+
 // ─── Handler ───────────────────────────────────────────────────────────
 
 exports.handler = async (event) => {
@@ -333,24 +489,7 @@ exports.handler = async (event) => {
         updatedAt    : FV.serverTimestamp(),
         lastUsedAt   : null
       };
-
-      // Prefer stable doc IDs when supplied by seed files / upload UI
-      // (e.g. huggie_line_sheet). This keeps customer-facing collateral
-      // entries replaceable instead of creating duplicate random docs on
-      // every import. If no ID is supplied, preserve the original add()
-      // behavior for ad-hoc collateral entries.
-      const requestedId = sanitizeDocId(body.id || item.id || "");
-      let ref;
-      if (requestedId) {
-        ref = db.collection(COLLATERAL_COLL).doc(requestedId);
-        const existing = await ref.get();
-        if (existing.exists) {
-          return json(409, { error: "Collateral ID already exists", id: requestedId });
-        }
-        await ref.set(doc, { merge: false });
-      } else {
-        ref = await db.collection(COLLATERAL_COLL).add(doc);
-      }
+      const ref = await db.collection(COLLATERAL_COLL).add(doc);
 
       await writeAudit({
         eventType: "collateral_created",
@@ -391,6 +530,102 @@ exports.handler = async (event) => {
       });
 
       return ok({ success: true, id });
+    }
+
+    /* ─── v2.5: Upload a file to Firebase Storage ───────────────
+     * Owner-only. Accepts { actor, filename, contentType, bytesBase64 }.
+     * Returns { url, storagePath, storageBucket, uploadedFilename,
+     * uploadedContentType, uploadedSizeBytes } — the caller (the
+     * collateral form in the inbox UI) auto-fills its URL field with
+     * `url` and persists the rest as part of the `create` op below.
+     *
+     * This op DOES NOT create a Firestore doc — it only stages the
+     * file. The form then calls `create` (or `update`) with the URL
+     * + storagePath alongside the user-entered metadata. Splitting
+     * the concerns lets the operator change their mind: if they
+     * upload a file then click Cancel, an orphaned object remains in
+     * Storage but no Firestore doc was created. A follow-up GC pass
+     * could sweep `etsymail-collateral/*` objects with no matching
+     * Firestore doc, but that's a future cleanup; orphans are
+     * harmless and tiny. */
+    if (op === "upload") {
+      const { actor, filename, contentType, bytesBase64 } = body;
+
+      const ownerCheck = await requireOwner(actor);
+      if (!ownerCheck.ok) {
+        await logUnauthorized({
+          actor,
+          eventType: "collateral_upload_unauthorized",
+          payload  : { reason: ownerCheck.reason, filename, contentType }
+        });
+        return json(403, { error: "Owner role required", reason: ownerCheck.reason });
+      }
+
+      const result = await uploadCollateralFile({ filename, contentType, bytesBase64 });
+      if (!result.ok) {
+        return json(result.code || 500, { error: result.error });
+      }
+
+      await writeAudit({
+        eventType: "collateral_file_uploaded",
+        actor,
+        payload  : {
+          storagePath: result.storagePath,
+          storageBucket: result.storageBucket,
+          filename: result.uploadedFilename,
+          contentType: result.uploadedContentType,
+          sizeBytes: result.uploadedSizeBytes
+        }
+      });
+
+      return ok({
+        success            : true,
+        url                : result.url,
+        storagePath        : result.storagePath,
+        storageBucket      : result.storageBucket,
+        uploadedFilename   : result.uploadedFilename,
+        uploadedContentType: result.uploadedContentType,
+        uploadedSizeBytes  : result.uploadedSizeBytes
+      });
+    }
+
+    /* ─── v2.5: Delete a previously-uploaded file from Storage ──
+     * Owner-only. Accepts { actor, storagePath }. Idempotent — if
+     * the object is already gone, returns success. Path is required
+     * to start with the collateral prefix so a malformed caller
+     * can't reach files owned by other apps in the same bucket.
+     *
+     * Typical caller: the inbox UI's collateral row "delete" button
+     * (a future enhancement) OR an audit cleanup task that wants
+     * to free Storage when a collateral entry is permanently
+     * removed. The Firestore doc itself is NOT deleted by this op
+     * — use the `update` op with `active: false` for soft-delete,
+     * or delete the doc through firestoreProxy. */
+    if (op === "deleteFile") {
+      const { actor, storagePath } = body;
+
+      const ownerCheck = await requireOwner(actor);
+      if (!ownerCheck.ok) {
+        await logUnauthorized({
+          actor,
+          eventType: "collateral_deletefile_unauthorized",
+          payload  : { reason: ownerCheck.reason, storagePath }
+        });
+        return json(403, { error: "Owner role required", reason: ownerCheck.reason });
+      }
+
+      const result = await deleteCollateralFile(storagePath);
+      if (!result.ok) {
+        return json(result.code || 500, { error: result.error });
+      }
+
+      await writeAudit({
+        eventType: "collateral_file_deleted",
+        actor,
+        payload  : { storagePath: result.storagePath }
+      });
+
+      return ok({ success: true, storagePath: result.storagePath });
     }
 
     return bad(`Unknown op '${op}'`);

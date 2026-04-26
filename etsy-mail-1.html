@@ -1642,11 +1642,12 @@
   <!-- ─── v2.1: Option Sheets browser (read-only — edits via JSON+script) ── -->
   <div class="em-mgmt-modal" id="emOptionSheetsModal">
     <div class="em-mgmt-card">
-      <h3>Option Sheets <span class="em-muted" style="font-size:12px; font-weight:400;">— read-only view of the line-sheet pricing source of truth</span></h3>
+      <h3>Option Sheets <span class="em-muted" style="font-size:12px; font-weight:400;">— pricing source of truth (browse + import JSON)</span></h3>
       <div id="emOptionSheetsError" class="em-modal-error" style="margin-bottom:8px;"></div>
       <p style="font-size:11px; color:#57606a; margin:0 0 10px;">
-        Sheets are seeded from <code>seeds/option_sheets_seed.json</code> via <code>seeds/import_seeds.js</code>.
-        To change a price, edit the JSON and re-run the import script (or use the Firestore console for one-off fixes).
+        Sheets are stored in <code>EtsyMail_OptionSheets/&lt;family&gt;</code>. You can edit
+        <code>seeds/option_sheets_seed.json</code> and run <code>seeds/import_seeds.js</code> from
+        a terminal, or upload a JSON file directly from this modal (owner-only).
         The AI's resolveQuote tool reads from these docs at runtime; cache TTL is 60 seconds.
       </p>
       <div style="display:flex; gap:6px; margin-bottom:10px;">
@@ -1654,11 +1655,52 @@
         <button type="button" data-family="necklace" class="em-os-tab">Necklace</button>
         <button type="button" data-family="stud"     class="em-os-tab">Stud</button>
         <span style="flex:1;"></span>
+        <button type="button" id="emOptionSheetsImportBtn"
+                title="Upload a JSON file (single family or multi-family seed shape)"
+                style="padding:4px 10px; font-size:11px; border:1px solid #1f883d; color:#1f883d; background:#fff; border-radius:3px; cursor:pointer;">
+          <i class="material-icons" style="font-size:12px; vertical-align:middle;">upload_file</i> Import JSON
+        </button>
         <button type="button" id="emOptionSheetsRefreshBtn"
                 style="padding:4px 10px; font-size:11px; border:1px solid #d0d7de; background:#fff; border-radius:3px; cursor:pointer;">
           <i class="material-icons" style="font-size:12px; vertical-align:middle;">refresh</i> Reload
         </button>
       </div>
+
+      <!-- v2.5: Import drop zone — hidden until the operator clicks the
+           Import button. Same shape as the collateral upload zone but
+           tailored for JSON files. The drop zone is a sibling of the
+           Body viewer, not a replacement; clicking Import expands it,
+           clicking Cancel collapses it back. -->
+      <div id="emOptionSheetsImportPanel" style="display:none; margin-bottom:10px; padding:12px; background:#f6f8fa; border:1px solid #d0d7de; border-radius:4px;">
+        <div style="font-size:12px; font-weight:600; color:#1f2328; margin-bottom:6px;">
+          Import option sheet JSON
+        </div>
+        <div style="font-size:11px; color:#57606a; margin-bottom:8px;">
+          Two accepted shapes: <b>single family</b> (one sheet object with
+          <code>family</code> + <code>sections</code> keys) — replaces just that family.
+          Or <b>multi-family</b> (top-level keys are family names, like
+          <code>option_sheets_seed.json</code>) — replaces every named family.
+          Each top-level <code>_meta</code> key is ignored. Writes are atomic per import.
+        </div>
+        <div id="emOptionSheetsDropZone"
+             style="padding:14px; border:2px dashed #d0d7de; border-radius:6px; background:#fff; text-align:center; font-size:12px; color:#57606a; cursor:pointer; transition:border-color .15s, background .15s;">
+          <i class="material-icons" style="font-size:22px; vertical-align:middle; color:#6a737d;">data_object</i>
+          <span style="vertical-align:middle; margin-left:6px;">Drag a <b>.json</b> file here, or <b>click to browse</b></span>
+          <div class="em-muted" style="font-size:11px; margin-top:4px;">JSON only · max ~4.5 MB</div>
+          <input type="file" id="emOptionSheetsFileInput" accept="application/json,.json" style="display:none;">
+        </div>
+        <!-- Validation/preview/result block — populated dynamically -->
+        <div id="emOptionSheetsPreview" style="display:none; margin-top:10px;"></div>
+        <div style="display:flex; gap:6px; margin-top:10px; justify-content:flex-end;">
+          <button type="button" id="emOptionSheetsImportCancelBtn"
+                  style="padding:5px 10px; font-size:12px; background:#fff; border:1px solid #d0d7de; border-radius:3px; cursor:pointer;">Cancel</button>
+          <button type="button" id="emOptionSheetsImportConfirmBtn" disabled
+                  style="padding:5px 10px; font-size:12px; background:#1f883d; color:#fff; border:1px solid #1a7f37; border-radius:3px; cursor:pointer; opacity:0.5;">
+            Import &amp; replace
+          </button>
+        </div>
+      </div>
+
       <div id="emOptionSheetsBody" style="max-height:60vh; overflow-y:auto; border:1px solid #eaecef; border-radius:4px; padding:10px; background:#fafbfc;">
         <div class="em-empty-msg">Loading sheet…</div>
       </div>
@@ -1692,6 +1734,34 @@
               <option value="image_set">image set</option>
               <option value="terms">terms / FAQ</option>
             </select>
+          </label>
+        </div>
+        <!-- v2.5: Direct file upload to Firebase Storage. Operator can
+             either drop/pick a file (auto-fills the URL field) OR paste
+             an external URL into the URL input below. The form remains
+             URL-driven; upload is just a convenience that produces a URL. -->
+        <div class="em-form-row" style="margin-bottom:6px;">
+          <label style="width:100%;"><span>Upload a file <span class="em-muted" style="font-weight:400;">— or paste an external URL below</span></span>
+            <div id="emCollateralDropZone"
+                 style="margin-top:4px; padding:14px; border:2px dashed #d0d7de; border-radius:6px; background:#f6f8fa; text-align:center; font-size:12px; color:#57606a; cursor:pointer; transition:border-color .15s, background .15s;">
+              <i class="material-icons" style="font-size:22px; vertical-align:middle; color:#6a737d;">cloud_upload</i>
+              <span style="vertical-align:middle; margin-left:6px;">Drag a PDF or image here, or <b>click to browse</b></span>
+              <div class="em-muted" style="font-size:11px; margin-top:4px;">PDF, JPG, PNG, WebP, GIF · max ~4.5 MB</div>
+              <input type="file" id="emCollateralFileInput"
+                     accept="image/png,image/jpeg,image/webp,image/gif,application/pdf"
+                     style="display:none;">
+            </div>
+            <!-- Preview chip + status appear here after a file is selected -->
+            <div id="emCollateralUploadStatus" style="display:none; margin-top:6px; padding:6px 8px; background:#fff; border:1px solid #d0d7de; border-radius:4px; font-size:11px; display:none; align-items:center; gap:8px;">
+              <i class="material-icons" id="emCollateralUploadIcon" style="font-size:18px; color:#6a737d;">description</i>
+              <div style="flex:1; min-width:0;">
+                <div id="emCollateralUploadName" style="font-weight:500; color:#1f2328; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
+                <div id="emCollateralUploadMeta" class="em-muted" style="font-size:10px;"></div>
+              </div>
+              <button type="button" id="emCollateralUploadClearBtn"
+                      title="Remove uploaded file (URL field will keep its value)"
+                      style="padding:2px 6px; font-size:11px; background:#fff; border:1px solid #d0d7de; border-radius:3px; cursor:pointer;">×</button>
+            </div>
           </label>
         </div>
         <div class="em-form-row">
@@ -2391,6 +2461,13 @@
       $("emCollateralModal").classList.add("active");
     }
 
+    // v2.5: Tracks the most recent upload's metadata so the Save handler
+    // can persist storagePath/storageBucket/uploadedFilename/etc. alongside
+    // the user-entered name+category+description. Cleared on form reset.
+    // Lives in module scope (not on a DOM element) because it's structured
+    // data; using element data-attrs would force string round-trips.
+    let _pendingCollateralUpload = null;
+
     function clearCollateralForm() {
       $("emCollateralNameInput").value = "";
       $("emCollateralCatInput").value = "";
@@ -2398,6 +2475,13 @@
       $("emCollateralUrlInput").value = "";
       $("emCollateralDescInput").value = "";
       $("emCollateralKeywordsInput").value = "";
+      // v2.5: also clear upload state so a previous upload chip doesn't
+      // bleed into the next form open.
+      _pendingCollateralUpload = null;
+      const fileInput = $("emCollateralFileInput");
+      if (fileInput) fileInput.value = "";
+      const status = $("emCollateralUploadStatus");
+      if (status) status.style.display = "none";
     }
 
     async function loadCollateralList() {
@@ -2443,6 +2527,40 @@
             $("emCollateralKeywordsInput").value = (it.keywords || []).join(", ");
             $("emCollateralFormSaveBtn").dataset.mode = "update";
             $("emCollateralFormSaveBtn").dataset.id = cid;
+            // v2.5: if this entry has upload metadata, restore the
+            // pending-upload state + chip so a subsequent Save without
+            // touching anything correctly re-persists those fields. If
+            // operator changes the URL field manually, the Save handler
+            // detects the mismatch and skips the metadata persist
+            // (orphaning the original Storage object — operators can
+            // GC via op:"deleteFile" if needed).
+            if (it.storagePath && it.url) {
+              _pendingCollateralUpload = {
+                url                : it.url,
+                storagePath        : it.storagePath,
+                storageBucket      : it.storageBucket || null,
+                uploadedFilename   : it.uploadedFilename || null,
+                uploadedContentType: it.uploadedContentType || null,
+                uploadedSizeBytes  : it.uploadedSizeBytes || null
+              };
+              const status = $("emCollateralUploadStatus");
+              if (status) {
+                $("emCollateralUploadName").textContent = it.uploadedFilename || "(uploaded file)";
+                const sizeStr = it.uploadedSizeBytes
+                  ? (it.uploadedSizeBytes < 1024 * 1024
+                      ? (it.uploadedSizeBytes / 1024).toFixed(1) + " KB"
+                      : (it.uploadedSizeBytes / (1024 * 1024)).toFixed(2) + " MB")
+                  : "stored";
+                $("emCollateralUploadMeta").textContent = `${sizeStr} · stored ✓`;
+                $("emCollateralUploadIcon").textContent =
+                  it.uploadedContentType === "application/pdf" ? "picture_as_pdf" : "image";
+                status.style.display = "flex";
+              }
+            } else {
+              _pendingCollateralUpload = null;
+              const status = $("emCollateralUploadStatus");
+              if (status) status.style.display = "none";
+            }
             $("emCollateralForm").style.display = "block";
           });
         });
@@ -2489,6 +2607,21 @@
       if (!url || !/^https?:\/\//.test(url)) return showCollateralError("URL must start with http:// or https://.");
 
       const data = { name, category: cat, kind, url, description: desc, keywords: kw, active: true };
+
+      // v2.5: if the operator just uploaded a file, persist the storage
+      // metadata alongside the URL so a future deleteFile op can clean
+      // up the underlying GCS object. We only do this when the URL the
+      // user is saving still matches the upload's URL — if they uploaded
+      // a file then manually overwrote the URL with something else, the
+      // upload is orphaned in Storage but the doc references the manual
+      // URL (no metadata persisted; matches original behavior).
+      if (_pendingCollateralUpload && _pendingCollateralUpload.url === url) {
+        data.storagePath         = _pendingCollateralUpload.storagePath;
+        data.storageBucket       = _pendingCollateralUpload.storageBucket;
+        data.uploadedFilename    = _pendingCollateralUpload.uploadedFilename;
+        data.uploadedContentType = _pendingCollateralUpload.uploadedContentType;
+        data.uploadedSizeBytes   = _pendingCollateralUpload.uploadedSizeBytes;
+      }
 
       try {
         if (mode === "update" && id) {
@@ -6328,6 +6461,224 @@
         });
       });
 
+      // v2.5: Option sheet JSON import — same drag-drop pattern as the
+      // collateral upload, but the file is parsed client-side, validated
+      // for shape, and previewed before commit. Owner-only on the
+      // server; the UI lets non-owners click Import too but the POST
+      // returns 403, so we surface the role as part of the preview.
+      (function wireOptionSheetsImport() {
+        const importBtn  = $("emOptionSheetsImportBtn");
+        const panel      = $("emOptionSheetsImportPanel");
+        const dz         = $("emOptionSheetsDropZone");
+        const fileIn     = $("emOptionSheetsFileInput");
+        const preview    = $("emOptionSheetsPreview");
+        const cancelBtn  = $("emOptionSheetsImportCancelBtn");
+        const confirmBtn = $("emOptionSheetsImportConfirmBtn");
+        if (!importBtn || !panel || !dz || !fileIn) return;
+
+        // Holds the parsed+validated payload until the operator clicks
+        // Confirm. If they pick a different file, this is replaced.
+        let _pendingImport = null;
+
+        const reset = () => {
+          _pendingImport   = null;
+          fileIn.value     = "";
+          preview.innerHTML = "";
+          preview.style.display = "none";
+          confirmBtn.disabled    = true;
+          confirmBtn.style.opacity = "0.5";
+        };
+        const closePanel = () => {
+          panel.style.display = "none";
+          reset();
+        };
+
+        importBtn.addEventListener("click", () => {
+          panel.style.display = "block";
+          reset();
+        });
+        cancelBtn.addEventListener("click", closePanel);
+
+        // Highlight states + click-to-browse — same pattern as collateral.
+        const highlight = (on) => {
+          dz.style.borderColor = on ? "#0969da" : "#d0d7de";
+          dz.style.background  = on ? "#ddf4ff" : "#fff";
+        };
+        dz.addEventListener("click", () => fileIn.click());
+        ["dragenter", "dragover"].forEach(ev =>
+          dz.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); highlight(true); }));
+        ["dragleave", "drop"].forEach(ev =>
+          dz.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); highlight(false); }));
+
+        dz.addEventListener("drop", (e) => {
+          const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+          if (file) handleFile(file);
+        });
+        fileIn.addEventListener("change", () => {
+          const file = fileIn.files && fileIn.files[0];
+          if (file) handleFile(file);
+        });
+
+        confirmBtn.addEventListener("click", async () => {
+          if (!_pendingImport) return;
+          confirmBtn.disabled = true;
+          confirmBtn.textContent = "Importing…";
+          try {
+            const res = await api("etsyMailOptionResolver", {
+              method: "POST",
+              body  : {
+                op    : "putSheets",
+                actor : getEmployeeName() || "operator",
+                sheets: _pendingImport.sheets
+              }
+            });
+            const written = (res && res.written) || [];
+            const skipped = (res && res.skipped) || [];
+            toast(`Imported ${written.length} ${written.length === 1 ? "family" : "families"}: ${written.join(", ")}`);
+            preview.innerHTML = `
+              <div style="padding:8px 10px; background:#dafbe1; border:1px solid #1a7f37; border-radius:3px; color:#1f2328; font-size:12px;">
+                <b>Import succeeded.</b><br>
+                Written: <code>${written.join(", ") || "(none)"}</code><br>
+                ${skipped.length ? `Skipped (non-family keys): <code>${skipped.join(", ")}</code><br>` : ""}
+                Reloading current tab…
+              </div>
+            `;
+            // Reload viewer for the active family if it was just rewritten.
+            if (written.includes(_osCurrentFamily)) {
+              loadOptionSheet(_osCurrentFamily, true);
+            }
+            // Auto-close panel after a short delay so operator sees success.
+            setTimeout(closePanel, 1800);
+          } catch (err) {
+            preview.innerHTML = `
+              <div style="padding:8px 10px; background:#ffebe9; border:1px solid #cf222e; border-radius:3px; color:#82071e; font-size:12px;">
+                <b>Import failed:</b> ${esc(err.message || String(err))}
+              </div>
+            `;
+            confirmBtn.disabled = false;
+            confirmBtn.textContent = "Import & replace";
+          }
+        });
+
+        async function handleFile(file) {
+          $("emOptionSheetsError").classList.remove("active");
+          if (!/\.json$/i.test(file.name) && file.type !== "application/json") {
+            preview.style.display = "block";
+            preview.innerHTML = `<div style="padding:8px 10px; background:#ffebe9; border:1px solid #cf222e; border-radius:3px; color:#82071e; font-size:12px;">Expected a .json file (got <code>${esc(file.name)}</code>).</div>`;
+            confirmBtn.disabled = true;
+            confirmBtn.style.opacity = "0.5";
+            return;
+          }
+          if (file.size > 4_500_000) {
+            preview.style.display = "block";
+            preview.innerHTML = `<div style="padding:8px 10px; background:#ffebe9; border:1px solid #cf222e; border-radius:3px; color:#82071e; font-size:12px;">File too large (${(file.size / 1024 / 1024).toFixed(2)} MB) — max 4.5 MB.</div>`;
+            confirmBtn.disabled = true;
+            confirmBtn.style.opacity = "0.5";
+            return;
+          }
+
+          let text, parsed;
+          try {
+            text = await file.text();
+            parsed = JSON.parse(text);
+          } catch (e) {
+            preview.style.display = "block";
+            preview.innerHTML = `<div style="padding:8px 10px; background:#ffebe9; border:1px solid #cf222e; border-radius:3px; color:#82071e; font-size:12px;">Could not parse JSON: ${esc(e.message)}</div>`;
+            confirmBtn.disabled = true;
+            confirmBtn.style.opacity = "0.5";
+            return;
+          }
+
+          // Detect shape:
+          //   single-family — has its own `family` + `sections` keys
+          //   multi-family  — top-level keys are family names, values
+          //                   are sheet objects (the seed-file shape)
+          let sheets;
+          if (parsed && Array.isArray(parsed.sections) && typeof parsed.family === "string") {
+            // Single-family shape — wrap into the multi-family envelope
+            // so the backend can handle it through the same op.
+            sheets = { [parsed.family]: parsed };
+          } else if (parsed && typeof parsed === "object") {
+            sheets = parsed;
+          } else {
+            preview.style.display = "block";
+            preview.innerHTML = `<div style="padding:8px 10px; background:#ffebe9; border:1px solid #cf222e; border-radius:3px; color:#82071e; font-size:12px;">Top-level JSON must be an object.</div>`;
+            confirmBtn.disabled = true;
+            confirmBtn.style.opacity = "0.5";
+            return;
+          }
+
+          // Build a per-family preview row showing what will be written.
+          const rows = [];
+          const skipped = [];
+          for (const [key, val] of Object.entries(sheets)) {
+            if (key.startsWith("_") || !val || typeof val !== "object" || Array.isArray(val)) {
+              skipped.push(key);
+              continue;
+            }
+            const sectionCount = Array.isArray(val.sections) ? val.sections.length : 0;
+            // Each section's per-row entries live under `options`. (The
+            // single-row prototype version used `codes` — we accept
+            // either so older test fixtures still preview correctly.)
+            const codeCount = Array.isArray(val.sections)
+              ? val.sections.reduce((acc, s) => {
+                  const arr = Array.isArray(s.options) ? s.options
+                            : Array.isArray(s.codes)   ? s.codes
+                            : [];
+                  return acc + arr.length;
+                }, 0)
+              : 0;
+            const familyMismatch = val.family && val.family !== key;
+            const noSections     = sectionCount === 0;
+            const issue          = familyMismatch ? `top-level key '${key}' but sheet.family is '${val.family}'`
+                                  : noSections    ? "sections array is empty"
+                                  : null;
+            rows.push({ family: key, sectionCount, codeCount, issue });
+          }
+
+          const hasIssue = rows.some(r => r.issue);
+          const hasValid = rows.some(r => !r.issue);
+
+          if (rows.length === 0) {
+            preview.style.display = "block";
+            preview.innerHTML = `<div style="padding:8px 10px; background:#ffebe9; border:1px solid #cf222e; border-radius:3px; color:#82071e; font-size:12px;">No families found in JSON. Every top-level key was non-object or starts with <code>_</code>.</div>`;
+            confirmBtn.disabled = true;
+            confirmBtn.style.opacity = "0.5";
+            return;
+          }
+
+          const rowsHtml = rows.map(r =>
+            r.issue
+              ? `<tr><td style="color:#cf222e;">✗ ${esc(r.family)}</td><td colspan="2" style="color:#cf222e;">${esc(r.issue)}</td></tr>`
+              : `<tr><td>${esc(r.family)}</td><td>${r.sectionCount} sections</td><td>${r.codeCount} codes</td></tr>`
+          ).join("");
+
+          preview.style.display = "block";
+          preview.innerHTML = `
+            <div style="padding:8px 10px; background:${hasIssue ? "#fff8c5" : "#ddf4ff"}; border:1px solid ${hasIssue ? "#d4a72c" : "#0969da"}; border-radius:3px; color:#1f2328; font-size:12px;">
+              <b>${hasIssue ? "Validation issues — fix before importing:" : "Ready to import — this will REPLACE these families:"}</b>
+              <table style="margin-top:6px; width:100%; font-size:11px; border-collapse:collapse;">
+                <thead><tr style="text-align:left; border-bottom:1px solid #d0d7de;">
+                  <th style="padding:3px 6px;">Family</th><th>Sections</th><th>Options</th>
+                </tr></thead>
+                <tbody>${rowsHtml}</tbody>
+              </table>
+              ${skipped.length ? `<div style="margin-top:6px; color:#57606a; font-size:11px;">Skipped: <code>${skipped.map(esc).join(", ")}</code></div>` : ""}
+            </div>
+          `;
+
+          if (hasValid && !hasIssue) {
+            _pendingImport = { sheets };
+            confirmBtn.disabled = false;
+            confirmBtn.style.opacity = "1";
+          } else {
+            _pendingImport = null;
+            confirmBtn.disabled = true;
+            confirmBtn.style.opacity = "0.5";
+          }
+        }
+      })();
+
       $("emCollateralCloseBtn")?.addEventListener("click", () => $("emCollateralModal").classList.remove("active"));
       $("emCollateralNewBtn")?.addEventListener("click", () => {
         clearCollateralForm(); $("emCollateralForm").style.display = "block";
@@ -6336,6 +6687,142 @@
       });
       $("emCollateralFormCancelBtn")?.addEventListener("click", () => $("emCollateralForm").style.display = "none");
       $("emCollateralFormSaveBtn")?.addEventListener("click", saveCollateralEntry);
+
+      // v2.5: Collateral file upload — drag-drop zone + click-to-browse.
+      // The drop zone is the visible UI; the actual <input type=file> is
+      // hidden inside it and triggered programmatically. dragover must
+      // call preventDefault() to enable drop. We highlight on dragenter
+      // and unhighlight on dragleave/drop.
+      (function wireCollateralUpload() {
+        const dz       = $("emCollateralDropZone");
+        const fileIn   = $("emCollateralFileInput");
+        const status   = $("emCollateralUploadStatus");
+        const nameEl   = $("emCollateralUploadName");
+        const metaEl   = $("emCollateralUploadMeta");
+        const iconEl   = $("emCollateralUploadIcon");
+        const clearBtn = $("emCollateralUploadClearBtn");
+        if (!dz || !fileIn) return;
+
+        const setBusy = (busy) => {
+          dz.style.pointerEvents = busy ? "none" : "";
+          dz.style.opacity       = busy ? "0.55" : "";
+        };
+        const showStatus = (filename, meta, iconName) => {
+          if (!status) return;
+          nameEl.textContent = filename;
+          metaEl.textContent = meta;
+          iconEl.textContent = iconName || "description";
+          status.style.display = "flex";
+        };
+        const clearStatus = () => {
+          if (status) status.style.display = "none";
+        };
+        const formatSize = (b) => {
+          if (b < 1024) return b + " B";
+          if (b < 1024 * 1024) return (b / 1024).toFixed(1) + " KB";
+          return (b / (1024 * 1024)).toFixed(2) + " MB";
+        };
+
+        // Click the visible zone → trigger the hidden file input.
+        dz.addEventListener("click", (e) => {
+          if (e.target.closest("button")) return;   // don't double-open
+          fileIn.click();
+        });
+
+        // Drag-and-drop highlight states.
+        const highlight = (on) => {
+          dz.style.borderColor = on ? "#0969da" : "#d0d7de";
+          dz.style.background  = on ? "#ddf4ff" : "#f6f8fa";
+        };
+        ["dragenter", "dragover"].forEach(ev =>
+          dz.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); highlight(true); }));
+        ["dragleave", "drop"].forEach(ev =>
+          dz.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); highlight(false); }));
+
+        dz.addEventListener("drop", (e) => {
+          const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+          if (file) handleFile(file);
+        });
+        fileIn.addEventListener("change", () => {
+          const file = fileIn.files && fileIn.files[0];
+          if (file) handleFile(file);
+        });
+
+        clearBtn?.addEventListener("click", () => {
+          // Clears the upload metadata + status chip but keeps whatever
+          // URL is currently in the URL field (operator may have edited it).
+          _pendingCollateralUpload = null;
+          fileIn.value = "";
+          clearStatus();
+        });
+
+        async function handleFile(file) {
+          // Client-side guards mirror the server allowlist + size cap so
+          // the operator gets immediate feedback before the request fires.
+          const ALLOWED = ["image/png", "image/jpeg", "image/webp", "image/gif", "application/pdf"];
+          const MAX_BYTES = 4_500_000;
+          if (!ALLOWED.includes(file.type)) {
+            showCollateralError(`File type '${file.type || "unknown"}' isn't allowed. PDF or image only.`);
+            fileIn.value = "";
+            return;
+          }
+          if (file.size > MAX_BYTES) {
+            showCollateralError(`File is ${formatSize(file.size)} — max 4.5 MB.`);
+            fileIn.value = "";
+            return;
+          }
+          $("emCollateralError").classList.remove("active");
+
+          showStatus(file.name, `${formatSize(file.size)} · uploading…`, "hourglass_top");
+          setBusy(true);
+
+          try {
+            // Read file → base64 (strip the data-URL prefix).
+            const bytesBase64 = await new Promise((resolve, reject) => {
+              const r = new FileReader();
+              r.onload  = () => {
+                const s = String(r.result || "");
+                const i = s.indexOf(",");
+                resolve(i >= 0 ? s.slice(i + 1) : s);
+              };
+              r.onerror = () => reject(new Error("FileReader failed"));
+              r.readAsDataURL(file);
+            });
+
+            const res = await api("etsyMailCollateral", {
+              method: "POST",
+              body  : {
+                op         : "upload",
+                actor      : getEmployeeName() || "operator",
+                filename   : file.name,
+                contentType: file.type,
+                bytesBase64
+              }
+            });
+
+            // Stash metadata for the Save handler + auto-fill the URL field.
+            _pendingCollateralUpload = {
+              url                : res.url,
+              storagePath        : res.storagePath,
+              storageBucket      : res.storageBucket,
+              uploadedFilename   : res.uploadedFilename,
+              uploadedContentType: res.uploadedContentType,
+              uploadedSizeBytes  : res.uploadedSizeBytes
+            };
+            $("emCollateralUrlInput").value = res.url;
+
+            const icon = (file.type === "application/pdf") ? "picture_as_pdf" : "image";
+            showStatus(res.uploadedFilename, `${formatSize(res.uploadedSizeBytes)} · uploaded ✓`, icon);
+          } catch (err) {
+            showCollateralError(`Upload failed: ${err.message}`);
+            clearStatus();
+            _pendingCollateralUpload = null;
+            fileIn.value = "";
+          } finally {
+            setBusy(false);
+          }
+        }
+      })();
 
       // v0.9.1 #8: kill-switch banner re-enable button
       $("emKillSwitchEnableBtn").addEventListener("click", async () => {

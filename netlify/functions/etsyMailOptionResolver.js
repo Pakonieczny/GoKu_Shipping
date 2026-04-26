@@ -644,6 +644,111 @@ exports.handler = async (event) => {
       return ok({ success: true, family });
     }
 
+    /* ─── v2.5: Multi-family upload from seed-file shape ──────────
+     * Owner-only. Accepts the same JSON the operator would have
+     * edited locally and run through `seeds/import_seeds.js` —
+     * the multi-family wrapper:
+     *   { _meta?, huggie: {...}, necklace: {...}, stud: {...} }
+     *
+     * Top-level `_meta` (and any other key whose value is not an
+     * object) is ignored. Every other top-level key is treated as a
+     * family name and its value as a sheet. Each family is validated
+     * BEFORE any write happens — partial imports would leave Firestore
+     * in a half-updated state with no way to roll back.
+     *
+     * Reply shape:
+     *   { success, written: ["huggie","necklace","stud"], skipped: ["_meta"] }
+     *
+     * If any family fails validation, the response is 422 with
+     * `{ error, family, reason }` and NOTHING is written. The seed
+     * script's import is one-shot; this UI path mirrors that
+     * atomicity so an operator never ends up with two families
+     * matching the new file and one matching the old. */
+    if (op === "putSheets") {
+      const ownerCheck = await requireOwner(body.actor);
+      if (!ownerCheck.ok) {
+        await logUnauthorized({
+          actor: body.actor,
+          eventType: "option_sheets_put_unauthorized",
+          payload: { reason: ownerCheck.reason }
+        });
+        return json(403, { error: "Owner role required", reason: ownerCheck.reason });
+      }
+      const { sheets } = body;
+      if (!sheets || typeof sheets !== "object" || Array.isArray(sheets)) {
+        return bad("sheets must be an object keyed by family name");
+      }
+
+      // Phase 1 — partition + validate every family before any write.
+      const candidates = []; // [{ family, sheet }]
+      const skipped    = []; // top-level keys we deliberately ignore
+      for (const [key, val] of Object.entries(sheets)) {
+        // Ignore _meta and any non-object top-level entry. The seed
+        // file's _meta block carries human-readable notes about the
+        // bulk-tier matrix etc.; persisting it as a sheet would create
+        // a phantom family the resolver would index against.
+        if (key.startsWith("_") || !val || typeof val !== "object" || Array.isArray(val)) {
+          skipped.push(key);
+          continue;
+        }
+        if (val.family && val.family !== key) {
+          return json(422, {
+            error: "Family mismatch",
+            family: key,
+            reason: `top-level key '${key}' but sheet.family is '${val.family}'`
+          });
+        }
+        if (!Array.isArray(val.sections) || val.sections.length === 0) {
+          return json(422, {
+            error: "Sheet missing sections",
+            family: key,
+            reason: "sheet.sections must be a non-empty array"
+          });
+        }
+        candidates.push({ family: key, sheet: val });
+      }
+      if (candidates.length === 0) {
+        return bad("No valid sheets found in payload (every top-level key was skipped)");
+      }
+
+      // Phase 2 — write each family, stamp metadata, invalidate cache.
+      // We use a batch write so all families land atomically. The
+      // seed-script path uses individual `set()` calls because the
+      // script can retry per-family; the UI path benefits more from
+      // atomicity than retry-ability.
+      const batch = db.batch();
+      for (const { family, sheet } of candidates) {
+        const toWrite = {
+          ...sheet,
+          family,
+          lastUpdatedBy: body.actor,
+          updatedAt: FV.serverTimestamp()
+        };
+        batch.set(db.collection(SHEETS_COLL).doc(family), toWrite, { merge: false });
+      }
+      await batch.commit();
+
+      // Cache invalidation must run AFTER the commit so a concurrent
+      // resolveQuote during the write can't repopulate the cache from
+      // the old doc.
+      for (const { family } of candidates) invalidateSheetCache(family);
+
+      await writeAudit({
+        eventType: "option_sheets_put_bulk",
+        actor: body.actor,
+        payload: {
+          written: candidates.map(c => c.family),
+          skipped
+        }
+      });
+
+      return ok({
+        success: true,
+        written: candidates.map(c => c.family),
+        skipped
+      });
+    }
+
     return bad(`Unknown op '${op}'`);
 
   } catch (err) {
