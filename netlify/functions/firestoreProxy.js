@@ -618,16 +618,18 @@ exports.handler = async (event) => {
         const tid = String(threadId);
         const stages = {};   // populated step-by-step for the response
 
-        // Step 1 — Confirm the thread exists + grab the latest inbound text.
-        // We avoid `where("direction") + orderBy("at")` because that would
-        // require a composite index on the messages subcollection. Instead
-        // we pull up to 50 most-recent messages by `at` and pick the
-        // newest inbound in JS — a thread very rarely exceeds 50 messages,
-        // and if one does, the latest 50 still contain the latest inbound
-        // unless the customer has been silent for the past 50 events
-        // (vanishingly unlikely in practice).
+        // Step 1 — Confirm the thread exists + assemble the recent
+        // INBOUND BURST. The classifier is designed for one message but
+        // works fine with the customer's last few inbounds concatenated:
+        // a single follow-up nudge ("Please confirm?") in isolation
+        // reads as `unclear`, but combined with the substantive earlier
+        // messages in the same conversation flow it classifies correctly.
+        // We fetch up to 50 most-recent docs (no composite index needed),
+        // pick the latest 5 inbounds, reverse to chronological, and join
+        // with newlines. 4000-char cap matches loadLatestInboundText.
         let latestText = null;
         let inboundCount = 0;
+        let burstMessageCount = 0;
         try {
           const tDoc = await db.collection("EtsyMail_Threads").doc(tid).get();
           if (!tDoc.exists) return json(404, { error: "Thread not found", threadId: tid });
@@ -638,11 +640,22 @@ exports.handler = async (event) => {
             .orderBy("timestamp", "desc")
             .limit(50)
             .get();
+          // Collect inbound texts newest-first, then reverse for the
+          // classifier so it reads chronologically (oldest → newest).
+          const recentInboundsNewestFirst = [];
           for (const d of msgs.docs) {
             const data = d.data();
             if (data.direction !== "inbound") continue;
             inboundCount++;
-            if (latestText === null) latestText = data.text || null;
+            if (recentInboundsNewestFirst.length < 5) {
+              const t = String(data.text || "").trim();
+              if (t) recentInboundsNewestFirst.push(t);
+            }
+          }
+          if (recentInboundsNewestFirst.length > 0) {
+            const chronological = recentInboundsNewestFirst.slice().reverse();
+            latestText = chronological.join("\n\n").slice(0, 4000);
+            burstMessageCount = chronological.length;
           }
         } catch (e) {
           return json(500, { error: "Could not load thread state: " + e.message });
@@ -657,7 +670,9 @@ exports.handler = async (event) => {
         }
         stages.latestInboundFound = true;
         stages.inboundCount       = inboundCount;
-        stages.inboundPreview     = latestText.slice(0, 80);
+        stages.burstMessageCount  = burstMessageCount;
+        stages.burstCharCount     = latestText.length;
+        stages.inboundPreview     = latestText.slice(0, 120);
 
         // Step 2 — Clear the idempotency lock on the thread doc.
         try {

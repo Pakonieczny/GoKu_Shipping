@@ -484,23 +484,47 @@ function runVetoPatterns(text) {
   return hits;
 }
 
-/** Fetch the most-recent inbound message text from a thread's messages
- *  subcollection. Used to run veto checks against what the customer
- *  actually said, not against thread metadata.
+/** Fetch the recent INBOUND BURST from a thread — up to the 5 most
+ *  recent inbound messages, concatenated chronologically. Used by:
+ *    - the intent classifier (so a final-message nudge like "please
+ *      confirm?" still classifies correctly when read alongside the
+ *      substantive earlier messages from the same conversation flow)
+ *    - safety vetoes that scan customer text for trigger phrases
  *
- *  Returns null if no inbound exists (shouldn't happen since the pipeline
- *  only runs when one was just written, but defensive). */
+ *  Why a burst instead of just the latest? Customers commonly send
+ *  multiple inbounds in succession — an opening question, a follow-up
+ *  detail, then a nudge — and the latest in isolation is often
+ *  ambiguous. The classifier prompt is single-message-oriented but
+ *  handles concatenated text fine: it picks up the strongest signals
+ *  in the combined input.
+ *
+ *  Returns null if no inbound exists. 4000-char cap matches the
+ *  classifier's input budget. */
 async function loadLatestInboundText(threadId) {
   try {
+    // We pull up to 50 recent messages by `timestamp desc` and filter
+    // direction in JS to avoid requiring a composite index. The latest
+    // 50 effectively always contain the latest 5 inbounds.
     const snap = await db.collection(THREADS_COLL).doc(threadId)
       .collection("messages")
-      .where("direction", "==", "inbound")
       .orderBy("timestamp", "desc")
-      .limit(1)
+      .limit(50)
       .get();
     if (snap.empty) return null;
-    const m = snap.docs[0].data();
-    return String(m.text || "").slice(0, 4000);   // cap for regex perf
+    const recentInboundsNewestFirst = [];
+    for (const d of snap.docs) {
+      const data = d.data();
+      if (data.direction !== "inbound") continue;
+      const t = String(data.text || "").trim();
+      if (!t) continue;
+      recentInboundsNewestFirst.push(t);
+      if (recentInboundsNewestFirst.length >= 5) break;
+    }
+    if (recentInboundsNewestFirst.length === 0) return null;
+    // Reverse to chronological so the classifier reads the customer's
+    // arc oldest → newest (their opening message → their latest nudge).
+    const chronological = recentInboundsNewestFirst.slice().reverse();
+    return chronological.join("\n\n").slice(0, 4000);
   } catch (e) {
     console.warn("loadLatestInboundText failed:", e.message);
     return null;
@@ -790,10 +814,13 @@ exports.handler = async (event) => {
           try {
             // Direct-import the parser + lookup. Falls back gracefully
             // if the new module isn't deployed yet.
+            // v2.4: lookup helpers were folded into etsyMailListingsCatalog
+            // (was etsyMailListingLookup). Import path updated; surface is
+            // identical (findEtsyUrlsInText, lookupListingByUrl).
             const lookupMod = (() => {
-              try { return require("./etsyMailListingLookup"); }
+              try { return require("./etsyMailListingsCatalog"); }
               catch (e) {
-                console.warn("auto-pipeline: etsyMailListingLookup not deployed, skipping URL detection");
+                console.warn("auto-pipeline: etsyMailListingsCatalog not deployed, skipping URL detection");
                 return null;
               }
             })();
