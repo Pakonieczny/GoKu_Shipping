@@ -805,6 +805,284 @@
       animation: em-pill-pulse 1.6s ease-in-out infinite;
     }
 
+    /* ── v2.0 Step 1: intent classification badges ────────────────────
+       Five categories from etsyMailIntentClassifier. Each appears as a
+       small colored pill with the prefix "intent:" so it's distinguishable
+       from other badges at a glance. The colors are picked to be visually
+       distinct from the AI rating + folder badges; some palette overlap
+       is acceptable since the prefix disambiguates. */
+    .em-badge.intent {
+      font-style: normal; letter-spacing: 0.02em;
+    }
+    .em-badge.intent.support {
+      background: #dbeafe; color: #1e40af;
+    }
+    .em-badge.intent.sales_lead {
+      background: #fde68a; color: #854d0e;
+    }
+    .em-badge.intent.post_purchase {
+      background: #ccfbf1; color: #115e59;
+    }
+    .em-badge.intent.spam {
+      background: #fee2e2; color: #991b1b;
+    }
+    .em-badge.intent.unclear {
+      background: #e5e7eb; color: #4b5563;
+    }
+    /* Faded variant when the classification confidence is below the
+       0.7 routing floor — same color family but desaturated. Makes
+       low-confidence labels easy to spot for triage. */
+    .em-badge.intent.low-conf {
+      opacity: 0.6;
+      border: 1px dashed currentColor;
+    }
+
+    /* ─────────────────────────────────────────────────────────────────────
+     * v2.0 Step 2 — Sales Mode UI
+     *
+     * Stage badges (one per state-machine stage). Each stage has a clear
+     * color so operators can scan a thread list and know at a glance
+     * where each deal is in the funnel.
+     * ───────────────────────────────────────────────────────────────────── */
+    .em-badge.sales-stage {
+      background: #f6f8fa;
+      border: 1px solid #d0d7de;
+      color: #1f2328;
+      font-weight: 500;
+    }
+    .em-badge.sales-stage.discovery              { background: #ddf4ff; border-color: #54aeff; color: #0969da; }
+    .em-badge.sales-stage.spec                   { background: #fff8c5; border-color: #d4a72c; color: #6e4c00; }
+    .em-badge.sales-stage.quote                  { background: #dafbe1; border-color: #4ac26b; color: #1a7f37; }
+    .em-badge.sales-stage.revision               { background: #fff1e5; border-color: #fd8c73; color: #b35900; }
+    .em-badge.sales-stage.pending_close_approval { background: #fbefff; border-color: #c297ff; color: #6639ba; }
+    .em-badge.sales-stage.abandoned              { background: #eaeef2; border-color: #afb8c1; color: #57606a; }
+
+    /* Operator role badge in topbar — shows current user's role.
+     * "Not registered" indicates the operator hasn't been added to
+     * EtsyMail_Operators yet, which means owner-only actions will 403. */
+    .em-role-badge {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 2px 8px; border-radius: 12px;
+      font-size: 11px; font-weight: 500;
+      margin-left: 8px;
+    }
+    .em-role-badge.owner       { background: #fbefff; color: #6639ba; border: 1px solid #c297ff; }
+    .em-role-badge.operator    { background: #ddf4ff; color: #0969da; border: 1px solid #54aeff; }
+    .em-role-badge.unknown     { background: #fff8c5; color: #6e4c00; border: 1px solid #d4a72c; }
+    .em-role-badge .material-icons { font-size: 13px; }
+
+    /* Sales context panel — shown in the detail pane when a thread has
+     * an active SalesContext. Replaces the standard AI Draft Card with
+     * a sales-funnel-aware card showing stage, accumulated spec,
+     * current quote, and stage advance/rewind controls. */
+    .em-sales-card {
+      background: #fff;
+      border: 1px solid #d0d7de;
+      border-left: 3px solid #6639ba;
+      border-radius: 6px;
+      padding: 12px 14px;
+      margin-bottom: 12px;
+    }
+    .em-sales-card-header {
+      display: flex; align-items: center; gap: 8px;
+      margin-bottom: 10px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid #eaeef2;
+    }
+    .em-sales-card-title {
+      font-weight: 600; font-size: 13px; color: #1f2328;
+      flex: 1;
+    }
+    .em-sales-spec {
+      background: #f6f8fa;
+      border-radius: 4px;
+      padding: 8px 10px;
+      margin: 8px 0;
+      font-size: 12px;
+    }
+    .em-sales-spec .em-spec-row {
+      display: flex; gap: 8px;
+      padding: 2px 0;
+    }
+    .em-sales-spec .em-spec-key {
+      color: #57606a; min-width: 110px; flex-shrink: 0;
+    }
+    .em-sales-spec .em-spec-val { color: #1f2328; word-break: break-word; }
+    .em-sales-missing {
+      margin: 6px 0;
+      font-size: 12px; color: #b35900;
+    }
+    .em-sales-missing-pill {
+      display: inline-block;
+      background: #fff1e5; border: 1px solid #fd8c73;
+      border-radius: 10px;
+      padding: 1px 7px;
+      margin: 1px 4px 1px 0;
+      font-size: 11px;
+    }
+    .em-sales-quote-block {
+      background: #f6f8fa;
+      border-radius: 4px;
+      padding: 8px 10px;
+      margin: 8px 0;
+      font-size: 12px;
+    }
+    .em-sales-quote-amount {
+      font-size: 18px; font-weight: 600; color: #1a7f37;
+    }
+    .em-sales-quote-band {
+      color: #57606a; font-size: 11px; margin-top: 2px;
+    }
+    .em-sales-quote-band code {
+      background: #eaeef2; padding: 1px 4px; border-radius: 3px;
+    }
+    .em-sales-actions {
+      display: flex; gap: 6px; flex-wrap: wrap;
+      margin-top: 10px;
+    }
+    .em-sales-actions button {
+      font-size: 11px;
+      padding: 3px 9px;
+      border: 1px solid #d0d7de;
+      background: #fff;
+      border-radius: 3px;
+      cursor: pointer;
+    }
+    .em-sales-actions button:hover { background: #f6f8fa; }
+    .em-sales-actions button.primary {
+      background: #6639ba; color: #fff; border-color: #6639ba;
+    }
+    .em-sales-actions button.primary:hover { background: #56309a; }
+    .em-sales-actions button.danger {
+      background: #fff; color: #cf222e; border-color: #ffaaa5;
+    }
+    .em-sales-actions button.danger:hover { background: #ffebe9; }
+    .em-sales-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .em-sales-block-banner {
+      background: #ffebe9; border: 1px solid #ffaaa5;
+      color: #cf222e;
+      padding: 8px 10px; border-radius: 4px;
+      font-size: 12px;
+      margin: 8px 0;
+    }
+    .em-sales-block-banner b { font-weight: 600; }
+    .em-sales-close-artifact {
+      background: #fbefff; border: 1px solid #c297ff;
+      border-radius: 4px;
+      padding: 10px 12px;
+      margin: 8px 0;
+      font-size: 12px;
+    }
+    .em-sales-close-artifact .em-close-title {
+      font-weight: 600; color: #6639ba;
+      margin-bottom: 6px; font-size: 12px;
+    }
+    .em-sales-close-artifact ul {
+      margin: 4px 0; padding-left: 20px;
+    }
+    .em-sales-close-artifact .em-close-total {
+      font-size: 14px; font-weight: 600;
+      margin-top: 6px; color: #1a7f37;
+    }
+
+    /* Pricing rules editor + collateral library modals share styling */
+    .em-mgmt-modal {
+      display: none;
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.5);
+      align-items: center; justify-content: center;
+      z-index: 1100;
+    }
+    .em-mgmt-modal.active { display: flex; }
+    .em-mgmt-modal .em-mgmt-card {
+      background: #fff; border-radius: 8px;
+      padding: 18px 20px;
+      width: 90%; max-width: 720px;
+      max-height: 85vh;
+      display: flex; flex-direction: column;
+      box-shadow: 0 12px 32px rgba(0,0,0,0.2);
+    }
+    .em-mgmt-modal h3 {
+      margin: 0 0 12px;
+      font-size: 16px; font-weight: 600;
+    }
+    .em-mgmt-modal .em-mgmt-list {
+      flex: 1;
+      overflow-y: auto;
+      border: 1px solid #d0d7de;
+      border-radius: 6px;
+      margin-bottom: 12px;
+    }
+    .em-mgmt-modal .em-mgmt-row {
+      padding: 10px 12px;
+      border-bottom: 1px solid #eaeef2;
+      display: flex; align-items: center; gap: 10px;
+    }
+    .em-mgmt-modal .em-mgmt-row:last-child { border-bottom: none; }
+    .em-mgmt-modal .em-mgmt-row.inactive { opacity: 0.5; background: #f6f8fa; }
+    .em-mgmt-modal .em-mgmt-row .em-mgmt-name {
+      flex: 1; font-weight: 500; font-size: 13px;
+    }
+    .em-mgmt-modal .em-mgmt-row .em-mgmt-meta {
+      color: #57606a; font-size: 11px;
+    }
+    .em-mgmt-modal .em-mgmt-row .em-mgmt-actions { display: flex; gap: 4px; }
+    .em-mgmt-modal .em-mgmt-row .em-mgmt-actions button {
+      font-size: 11px; padding: 3px 8px;
+      border: 1px solid #d0d7de;
+      background: #fff;
+      border-radius: 3px;
+      cursor: pointer;
+    }
+    .em-mgmt-modal .em-mgmt-buttons {
+      display: flex; gap: 8px; justify-content: flex-end;
+    }
+    .em-mgmt-modal .em-mgmt-buttons button {
+      padding: 6px 14px;
+      border: 1px solid #d0d7de;
+      background: #fff;
+      border-radius: 4px;
+      font-size: 13px; cursor: pointer;
+    }
+    .em-mgmt-modal .em-mgmt-buttons button.primary {
+      background: #2da44e; color: #fff; border-color: #2da44e;
+    }
+    .em-mgmt-modal .em-mgmt-buttons button.danger {
+      background: #cf222e; color: #fff; border-color: #cf222e;
+    }
+    .em-mgmt-modal .em-mgmt-form {
+      background: #f6f8fa;
+      border: 1px solid #d0d7de;
+      border-radius: 6px;
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+    .em-mgmt-modal .em-mgmt-form .em-form-row {
+      display: flex; gap: 10px; margin-bottom: 8px;
+    }
+    .em-mgmt-modal .em-mgmt-form .em-form-row label {
+      flex: 1;
+    }
+    .em-mgmt-modal .em-mgmt-form .em-form-row label > span {
+      display: block; font-size: 11px; color: #57606a;
+      margin-bottom: 3px;
+    }
+    .em-mgmt-modal .em-mgmt-form input,
+    .em-mgmt-modal .em-mgmt-form select,
+    .em-mgmt-modal .em-mgmt-form textarea {
+      width: 100%; box-sizing: border-box;
+      padding: 6px 8px;
+      border: 1px solid #d0d7de;
+      border-radius: 4px;
+      font-size: 13px; font-family: inherit;
+    }
+    .em-mgmt-modal .em-mgmt-form textarea { min-height: 60px; resize: vertical; }
+    .em-mgmt-modal .em-empty-msg {
+      padding: 30px 12px;
+      text-align: center;
+      color: #57606a; font-size: 13px;
+    }
+
     .em-ai-rating-row {
       display: flex; gap: 8px; flex-wrap: wrap; margin: 6px 0;
       font-size: 11px;
@@ -824,6 +1102,60 @@
     .em-ai-rating-pill.diff      { background: #f0f0f5; color: #4b4b6b; }
     .em-ai-rating-pill.threshold { background: #f6f8fa; color: #57606a; border: 1px dashed #d0d7de; }
     .em-ai-rating-pill .material-icons { font-size: 12px; }
+
+    /* v2.1 — Option Sheets browser */
+    .em-os-tab {
+      padding: 5px 11px; font-size: 12px; font-weight: 600;
+      border: 1px solid #d0d7de; background: #fff; color: #57606a;
+      border-radius: 14px; cursor: pointer;
+    }
+    .em-os-tab.active {
+      background: #0969da; color: #fff; border-color: #0969da;
+    }
+    .em-os-section {
+      margin-bottom: 14px; padding-bottom: 10px;
+      border-bottom: 1px dashed #d0d7de;
+    }
+    .em-os-section:last-child { border-bottom: none; margin-bottom: 0; }
+    .em-os-section-name {
+      font-size: 12px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .5px; color: #24292f; margin: 0 0 4px;
+    }
+    .em-os-section-instruction {
+      font-size: 11px; color: #6a737d; font-style: italic; margin: 0 0 6px;
+    }
+    .em-os-options-table {
+      width: 100%; border-collapse: collapse; font-size: 11px;
+    }
+    .em-os-options-table th,
+    .em-os-options-table td {
+      padding: 4px 8px; text-align: left; border-bottom: 1px solid #f0f0f5;
+    }
+    .em-os-options-table th {
+      font-size: 10px; text-transform: uppercase; color: #57606a;
+      font-weight: 600; letter-spacing: .3px;
+    }
+    .em-os-code {
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      font-weight: 700; color: #0969da; background: #ddf4ff;
+      padding: 1px 5px; border-radius: 2px; font-size: 11px;
+    }
+    .em-os-price-quote {
+      color: #b35900; font-weight: 600; font-style: italic;
+    }
+    .em-os-price-na {
+      color: #cf222e; font-weight: 600; text-decoration: line-through;
+    }
+    .em-os-bulk-tier {
+      display: inline-block; padding: 2px 7px; margin: 2px;
+      background: #dafbe1; color: #1a7f37; border-radius: 3px;
+      font-size: 11px; font-weight: 600;
+    }
+    .em-os-uom {
+      font-size: 11px; color: #57606a; margin: 0 0 8px;
+      padding: 6px 10px; background: #fff8c5; border-left: 3px solid #d4a72c;
+      border-radius: 2px;
+    }
 
     /* Threshold-config row in settings */
     .em-modal label.em-modal-range {
@@ -1077,6 +1409,78 @@
           Independent of the auto-pipeline toggle above. Turn this OFF if you always want to review AI drafts before they go out, even when you initiated the AI Draft yourself. Revise and Follow-up clicks never auto-send regardless of this setting.
         </p>
 
+        <!-- ─── v2.0 Step 1: Catalog mirror + intent classifier ──────────── -->
+        <hr style="margin:18px 0 10px;border:none;border-top:1px solid #e1e4e8;">
+        <p style="margin-bottom:4px;"><b>v2.0 — Sales Mode foundations</b> <span class="em-muted" style="font-weight:400;font-size:11px;">— Step 1 of a 3-step rollout</span></p>
+
+        <label style="display:flex; align-items:center; gap:10px; margin:10px 0 6px; cursor:pointer;">
+          <input type="checkbox" id="emListingsMirrorInput" style="width:16px; height:16px; cursor:pointer;">
+          <span><b>Mirror Etsy listings catalog</b> &mdash; the AI can search shop products and reference them in replies.</span>
+        </label>
+        <p style="font-size:11px;color:#6a737d;margin:0 0 6px 26px;">
+          When ON, a cron pulls active listings from the Etsy API every 30 min into Firestore. The AI's <code>search_shop_listings</code> tool returns matches with prices, images, and listing URLs. When OFF, the tool returns "disabled" and the AI replies without referencing specific products. Required for v2.0 Step 2 (sales agent).
+        </p>
+        <div id="emCatalogStatusBlock" style="margin:0 0 12px 26px; font-size:11px; color:#586069; padding:6px 8px; background:#f6f8fa; border-radius:4px; border-left:2px solid #afb8c1;">
+          <span id="emCatalogStatusText">Catalog status: not yet synced</span>
+          <button type="button" id="emCatalogSyncNowBtn"
+                  style="margin-left:10px; padding:2px 9px; font-size:11px; font-weight:500; background:#fff; border:1px solid #afb8c1; border-radius:3px; cursor:pointer;">
+            Sync now
+          </button>
+        </div>
+
+        <label style="display:flex; align-items:center; gap:10px; margin:10px 0 6px; cursor:pointer;">
+          <input type="checkbox" id="emIntentClassifierInput" style="width:16px; height:16px; cursor:pointer;">
+          <span><b>Classify message intent</b> &mdash; tag every new inbound thread as support / sales lead / post-purchase / spam / unclear.</span>
+        </label>
+        <p style="font-size:11px;color:#6a737d;margin:0 0 12px 26px;">
+          When ON, each new thread runs through Claude Haiku once (cached 24h) and gets a colored "intent" badge in the thread list. Cheap (~$0.0002/message), purely additive — does NOT change reply behavior in Step 1. Required for v2.0 Step 2 sales-lead auto-routing.
+        </p>
+
+        <!-- ─── v2.0 Step 2: Sales Mode ─────────────────────────────── -->
+        <hr style="margin:14px 0 10px;border:none;border-top:1px solid #e1e4e8;">
+        <p style="margin-bottom:4px;"><b>v2.0 — Sales Mode (Step 2)</b> <span class="em-muted" style="font-weight:400;font-size:11px;">— sales agent + pricing engine + state machine</span></p>
+
+        <label style="display:flex; align-items:center; gap:10px; margin:10px 0 6px; cursor:pointer;">
+          <input type="checkbox" id="emSalesModeInput" style="width:16px; height:16px; cursor:pointer;">
+          <span><b>Enable Sales Mode</b> &mdash; activates the sales agent for sales-lead threads. Drafts are saved as drafts (NOT auto-sent).</span>
+        </label>
+        <p style="font-size:11px;color:#6a737d;margin:0 0 8px 26px;">
+          When ON, threads classified as <code>sales_lead</code> at &ge; 0.7 confidence (or threads with an existing SalesContext) route to <code>etsyMailSalesAgent</code>, which runs the funnel state machine: discovery → spec → quote → revision → pending close approval. Pricing comes from the deterministic pricing engine — the AI cannot quote below the floor. <b>Requires intent classifier ON.</b>
+        </p>
+
+        <label style="display:flex; align-items:center; gap:10px; margin:8px 0 4px 26px; cursor:pointer;">
+          <input type="checkbox" id="emSalesAutoEngageInput" style="width:14px; height:14px; cursor:pointer;">
+          <span style="font-size:12px;"><b>Auto-engage on fresh sales leads</b> &mdash; allow first-touch agent runs without operator intervention.</span>
+        </label>
+        <p style="font-size:11px;color:#6a737d;margin:0 0 8px 44px;">
+          When OFF, only threads with an existing SalesContext (mid-funnel) route to the agent. Fresh sales leads still get an intent badge but go to the standard customer-service draft path. Recommended OFF during pilot — flip ON once stage progression is proven on a few threads.
+        </p>
+
+        <label style="display:block; margin:8px 0 4px 26px;">
+          <span style="font-size:12px; color:#1f2328;"><b>Pilot allow-list</b> &mdash; thread IDs (one per line). Empty = all threads.</span>
+          <textarea id="emSalesPilotThreadIdsInput"
+                    rows="3"
+                    placeholder="etsy_conv_12345&#10;etsy_conv_67890"
+                    style="width:100%; box-sizing:border-box; margin-top:4px; padding:6px 8px; border:1px solid #d0d7de; border-radius:4px; font-size:11px; font-family:ui-monospace,SFMono-Regular,Consolas,monospace;"></textarea>
+        </label>
+        <p style="font-size:11px;color:#6a737d;margin:0 0 12px 26px;">
+          During pilot, restrict the agent to specific threads. Even threads with active SalesContext are bypassed if not in this list. Empty the list once the pilot is solid.
+        </p>
+
+        <div style="display:flex; gap:8px; margin:10px 0 12px 26px; flex-wrap:wrap;">
+          <button type="button" id="emOptionSheetsBtn"
+                  style="padding:5px 11px; font-size:12px; background:#fff; border:1px solid #d0d7de; border-radius:4px; cursor:pointer;">
+            <i class="material-icons" style="font-size:14px; vertical-align:middle;">menu_book</i>
+            Browse option sheets
+          </button>
+          <button type="button" id="emCollateralBtn"
+                  style="padding:5px 11px; font-size:12px; background:#fff; border:1px solid #d0d7de; border-radius:4px; cursor:pointer;">
+            <i class="material-icons" style="font-size:14px; vertical-align:middle;">collections_bookmark</i>
+            Manage collateral
+          </button>
+          <span id="emOwnerOnlyHint" style="font-size:11px; color:#6a737d; align-self:center;">(option sheets are read-only here; edit via seeds/option_sheets_seed.json + import script)</span>
+        </div>
+
         <p id="emAutoCfgMeta" style="font-size:10px;color:#6a737d;margin:0 0 8px;font-style:italic;"></p>
 
         <div class="em-modal-error" id="emSecretError"></div>
@@ -1092,6 +1496,10 @@
     <div class="em-topbar">
       <span class="em-title">EtsyMail <span class="em-tag">operator inbox · proxy mode</span></span>
       <span class="em-spacer"></span>
+      <span id="emOperatorRoleBadge" class="em-role-badge unknown" style="display:none;" title="Your operator role for sales-mode permissions">
+        <i class="material-icons">person</i>
+        <span id="emOperatorRoleLabel">unknown</span>
+      </span>
       <span class="em-polling-indicator" id="emPollingIndicator">polling every 5s</span>
       <span id="emBackendStatus" title="Backend connection">
         <span class="em-status-dot" id="emBackendDot"></span>
@@ -1160,6 +1568,103 @@
     </div>
   </div>
 
+  <!-- ─── v2.0 Step 2: Pricing rules editor (owner-only) ──────────── -->
+  <!-- ─── v2.1: Option Sheets browser (read-only — edits via JSON+script) ── -->
+  <div class="em-mgmt-modal" id="emOptionSheetsModal">
+    <div class="em-mgmt-card">
+      <h3>Option Sheets <span class="em-muted" style="font-size:12px; font-weight:400;">— read-only view of the line-sheet pricing source of truth</span></h3>
+      <div id="emOptionSheetsError" class="em-modal-error" style="margin-bottom:8px;"></div>
+      <p style="font-size:11px; color:#57606a; margin:0 0 10px;">
+        Sheets are seeded from <code>seeds/option_sheets_seed.json</code> via <code>seeds/import_seeds.js</code>.
+        To change a price, edit the JSON and re-run the import script (or use the Firestore console for one-off fixes).
+        The AI's resolveQuote tool reads from these docs at runtime; cache TTL is 60 seconds.
+      </p>
+      <div style="display:flex; gap:6px; margin-bottom:10px;">
+        <button type="button" data-family="huggie"   class="em-os-tab active">Huggie</button>
+        <button type="button" data-family="necklace" class="em-os-tab">Necklace</button>
+        <button type="button" data-family="stud"     class="em-os-tab">Stud</button>
+        <span style="flex:1;"></span>
+        <button type="button" id="emOptionSheetsRefreshBtn"
+                style="padding:4px 10px; font-size:11px; border:1px solid #d0d7de; background:#fff; border-radius:3px; cursor:pointer;">
+          <i class="material-icons" style="font-size:12px; vertical-align:middle;">refresh</i> Reload
+        </button>
+      </div>
+      <div id="emOptionSheetsBody" style="max-height:60vh; overflow-y:auto; border:1px solid #eaecef; border-radius:4px; padding:10px; background:#fafbfc;">
+        <div class="em-empty-msg">Loading sheet…</div>
+      </div>
+      <div class="em-mgmt-buttons">
+        <span class="em-muted" style="flex:1; font-size:11px;">Tip: customers can be sent the line sheet PDFs via the Collateral library.</span>
+        <button type="button" id="emOptionSheetsCloseBtn">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── v2.0 Step 2.5: Collateral library (owner-only) ──────────── -->
+  <div class="em-mgmt-modal" id="emCollateralModal">
+    <div class="em-mgmt-card">
+      <h3>Collateral library <span class="em-muted" style="font-size:12px; font-weight:400;">— upload line sheets or register URLs for the sales agent</span></h3>
+      <div id="emCollateralError" class="em-modal-error" style="margin-bottom:8px;"></div>
+      <div class="em-mgmt-form" id="emCollateralForm">
+        <div class="em-form-row">
+          <label><span>Display name</span>
+            <input type="text" id="emCollateralNameInput" placeholder="Custom Huggie Charm Line Sheet">
+          </label>
+        </div>
+        <div class="em-form-row">
+          <label><span>Document ID (optional, use huggie_line_sheet / necklace_line_sheet / stud_line_sheet for replacements)</span>
+            <input type="text" id="emCollateralIdInput" placeholder="huggie_line_sheet">
+          </label>
+        </div>
+        <div class="em-form-row">
+          <label><span>Category</span>
+            <input type="text" id="emCollateralCatInput" placeholder="huggie">
+          </label>
+          <label><span>Kind</span>
+            <select id="emCollateralKindInput">
+              <option value="line_sheet">line sheet</option>
+              <option value="product_card">product card</option>
+              <option value="lookbook">lookbook</option>
+              <option value="image_set">image set</option>
+              <option value="terms">terms / FAQ</option>
+            </select>
+          </label>
+        </div>
+        <div class="em-form-row">
+          <label><span>URL (https://&hellip;)</span>
+            <input type="url" id="emCollateralUrlInput" placeholder="Optional if uploading a file below">
+          </label>
+        </div>
+        <div class="em-form-row">
+          <label><span>Upload to Firebase Storage (PDF, PNG, JPG, WebP, max 10 MB)</span>
+            <input type="file" id="emCollateralFileInput" accept="application/pdf,image/png,image/jpeg,image/webp,image/gif">
+          </label>
+        </div>
+        <div class="em-form-row">
+          <label><span>Description (shown to the AI when matched)</span>
+            <textarea id="emCollateralDescInput" placeholder="Customer-facing line sheet. The sales agent can send this when customers need visual options."></textarea>
+          </label>
+        </div>
+        <div class="em-form-row">
+          <label><span>Keywords (comma-separated)</span>
+            <input type="text" id="emCollateralKeywordsInput" placeholder="huggie, line sheet, custom charm, options">
+          </label>
+        </div>
+        <div class="em-form-row" style="justify-content:flex-end; gap:6px; margin-bottom:0;">
+          <button type="button" id="emCollateralFormCancelBtn" style="padding:5px 10px; font-size:12px; border:1px solid #d0d7de; background:#fff; border-radius:3px; cursor:pointer;">Cancel</button>
+          <button type="button" id="emCollateralFormSaveBtn"   style="padding:5px 10px; font-size:12px; border:1px solid #2da44e; background:#2da44e; color:#fff; border-radius:3px; cursor:pointer;">Save</button>
+        </div>
+      </div>
+      <div class="em-mgmt-list" id="emCollateralList">
+        <div class="em-empty-msg">Loading collateral…</div>
+      </div>
+      <div class="em-mgmt-buttons">
+        <button type="button" id="emCollateralNewBtn">+ New collateral</button>
+        <span style="flex:1;"></span>
+        <button type="button" id="emCollateralCloseBtn">Close</button>
+      </div>
+    </div>
+  </div>
+
   <div class="em-toast" id="emToast"></div>
 
   <script>
@@ -1203,6 +1708,13 @@
       { id: "all",                  label: "All",          icon: "inbox",         status: null },
       { id: "pending_human_review", label: "Needs review", icon: "rate_review",   status: "pending_human_review" },
       { id: "auto_replied",         label: "Auto-Reply",   icon: "auto_awesome",  status: ["auto_replied", "queued_for_auto_send"] },
+      // ─── v2.0 Step 2 ──
+      // Aggregates all active sales-funnel statuses. Counts work
+      // automatically since etsyMailThreads ?counts=1 groups by status.
+      { id: "sales_active",         label: "Sales — Active", icon: "trending_up",
+        status: ["sales_discovery", "sales_spec", "sales_quote", "sales_revision", "sales_pending_close_approval"] },
+      { id: "sales_abandoned",      label: "Sales — Abandoned", icon: "history_toggle_off",
+        status: "sales_abandoned" },
       { id: "archived",             label: "Archived",     icon: "archive",       status: "archived" }
     ];
 
@@ -1235,7 +1747,18 @@
     const AUTO_CFG_DEFAULTS = {
       enabled              : true,
       threshold            : 0.80,
-      manualAiDraftAutoSend: true   // v1.8: defaults to ON to preserve existing behavior
+      manualAiDraftAutoSend: true,   // v1.8: defaults to ON to preserve existing behavior
+      // ─── v2.0 Step 1 (default OFF — operator opts in after deploy verifies) ──
+      listingsMirrorEnabled  : false,
+      intentClassifierEnabled: false,
+      // ─── v2.0 Step 2 (default OFF — operator opts in once pilot is solid) ──
+      salesModeEnabled    : false,
+      salesAutoEngage     : false,
+      salesPilotThreadIds : []
+      // ─── v2.0 Step 3 will add ────────────────────────────────────────────
+      // customOrderSendEnabled          : false,
+      // customOrderHighValueThreshold   : 200,
+      // customOrderRequireDoubleApproval: true
     };
 
     // In-memory cache so badges/tooltips don't re-fetch on every render.
@@ -1258,6 +1781,16 @@
             // for configs written before this toggle existed). Explicit `false`
             // turns it off.
             manualAiDraftAutoSend: d.manualAiDraftAutoSend !== false,
+            // v2.0 Step 1: missing field => OFF. Explicit-true semantics —
+            // these features ship dormant; operator opts in.
+            listingsMirrorEnabled  : d.listingsMirrorEnabled === true,
+            intentClassifierEnabled: d.intentClassifierEnabled === true,
+            // v2.0 Step 2: same explicit-true semantics. salesPilotThreadIds
+            // defaults to [] (an empty array means "all threads engaged"
+            // server-side; the spec says: empty = pilot off, anything = restrict).
+            salesModeEnabled       : d.salesModeEnabled === true,
+            salesAutoEngage        : d.salesAutoEngage === true,
+            salesPilotThreadIds    : Array.isArray(d.salesPilotThreadIds) ? d.salesPilotThreadIds : [],
             updatedBy            : d.updatedBy || null,
             updatedAt            : d.updatedAt || null,
             _loaded              : true
@@ -1272,11 +1805,33 @@
       return _autoCfg;
     }
 
-    async function saveAutoConfig({ enabled, threshold, manualAiDraftAutoSend, by }) {
+    async function saveAutoConfig({ enabled, threshold, manualAiDraftAutoSend,
+                                    listingsMirrorEnabled, intentClassifierEnabled,
+                                    salesModeEnabled, salesAutoEngage, salesPilotThreadIds,
+                                    by }) {
+      // Sanitize pilot list: lines → trimmed strings → drop empties.
+      let pilotList = [];
+      if (Array.isArray(salesPilotThreadIds)) {
+        pilotList = salesPilotThreadIds;
+      } else if (typeof salesPilotThreadIds === "string") {
+        pilotList = salesPilotThreadIds.split(/[\n,]+/);
+      }
+      pilotList = pilotList
+        .map(s => String(s).trim())
+        .filter(s => s.length > 0)
+        .slice(0, 500);   // sanity cap
+
       const clean = {
         enabled              : enabled !== false,
         threshold            : Math.max(0, Math.min(1, parseFloat(threshold) || AUTO_CFG_DEFAULTS.threshold)),
         manualAiDraftAutoSend: manualAiDraftAutoSend !== false,   // v1.8
+        // v2.0 Step 1: explicit-true semantics.
+        listingsMirrorEnabled  : listingsMirrorEnabled === true,
+        intentClassifierEnabled: intentClassifierEnabled === true,
+        // v2.0 Step 2: explicit-true semantics; pilot list always saved as array.
+        salesModeEnabled       : salesModeEnabled === true,
+        salesAutoEngage        : salesAutoEngage === true,
+        salesPilotThreadIds    : pilotList,
         updatedBy            : by || getEmployeeName() || "operator",
         updatedAt            : { __serverTimestamp: true }
       };
@@ -1287,11 +1842,657 @@
           coll: CONFIG_COLL,
           id  : AUTO_CFG_DOC_ID,
           merge: true,
+          actor: getEmployeeName() || "operator",
           data : clean
         }
       });
       _autoCfg = { ...clean, _loaded: true };
       return _autoCfg;
+    }
+
+    // ═════════════════════════════════════════════════════════════════════
+    // v2.0 Step 2 — Sales-mode JS (role badge, sales context panel,
+    //   pricing rules editor, collateral library)
+    //
+    // Sales mode is OFF by default. Every code path here gates on
+    // _autoCfg.salesModeEnabled and on the operator's role from
+    // EtsyMail_Operators. Owner-only operations re-validate server-side.
+    // ═════════════════════════════════════════════════════════════════════
+
+    // ── Operator role lookup (cached 60s, refreshed in boot) ────────────
+    let _operatorRole = { role: null, fetchedAt: 0 };
+
+    async function fetchOperatorRole() {
+      // Read the operator's role doc directly via firestoreProxy. The
+      // server's _etsyMailRoles helper is the canonical source-of-truth
+      // for permission checks; this UI lookup is for badge display only.
+      // The actual gate happens server-side on every owner-only POST.
+      const name = getEmployeeName();
+      if (!name) {
+        _operatorRole = { role: null, reason: "no_employee_name", fetchedAt: Date.now() };
+        return _operatorRole;
+      }
+      try {
+        const res = await api("firestoreProxy", {
+          method: "GET",
+          query : { op: "get", coll: "EtsyMail_Operators", id: name }
+        });
+        if (res && res.exists && res.doc) {
+          const d = res.doc;
+          if (d.revokedAt) {
+            _operatorRole = { role: null, reason: "revoked", fetchedAt: Date.now() };
+          } else {
+            _operatorRole = { role: d.role || null, displayName: d.displayName || null,
+                              employeeName: name, fetchedAt: Date.now() };
+          }
+        } else {
+          _operatorRole = { role: null, reason: "not_registered", employeeName: name, fetchedAt: Date.now() };
+        }
+      } catch (e) {
+        console.warn("operator role fetch failed:", e.message);
+        _operatorRole = { role: null, reason: "fetch_failed", error: e.message, fetchedAt: Date.now() };
+      }
+      return _operatorRole;
+    }
+
+    function renderOperatorRoleBadge() {
+      const wrap  = $("emOperatorRoleBadge");
+      const label = $("emOperatorRoleLabel");
+      if (!wrap || !label) return;
+
+      const role = _operatorRole.role;
+      const cls  = role === "owner" ? "owner"
+                 : role === "operator" ? "operator"
+                 : "unknown";
+      wrap.classList.remove("owner", "operator", "unknown");
+      wrap.classList.add(cls);
+      wrap.style.display = "inline-flex";
+
+      if (role === "owner")    label.textContent = "Owner";
+      else if (role === "operator") label.textContent = "Operator";
+      else if (_operatorRole.reason === "not_registered") label.textContent = "Not registered";
+      else if (_operatorRole.reason === "revoked")        label.textContent = "Revoked";
+      else if (_operatorRole.reason === "no_employee_name") label.textContent = "Set your name";
+      else label.textContent = "—";
+
+      wrap.title = _operatorRole.role
+        ? `Logged in as ${_operatorRole.employeeName || "(unknown)"}. Owner-only buttons are gated server-side; this badge is informational.`
+        : `Operator role unknown. Add a doc at EtsyMail_Operators/${_operatorRole.employeeName || "<your-name>"} = { role: "owner" | "operator" } to enable owner-only actions.`;
+    }
+
+    function isOwner() { return _operatorRole.role === "owner"; }
+
+    // ── Sales context panel ─────────────────────────────────────────────
+
+    /** Fetch SalesContext for a thread. Returns the doc or null. */
+    async function fetchSalesContext(threadId) {
+      try {
+        const res = await api("firestoreProxy", {
+          method: "GET",
+          query : { op: "get", coll: "EtsyMail_SalesContext", id: threadId }
+        });
+        if (res && res.exists && res.doc) return res.doc;
+        return null;
+      } catch (e) {
+        console.warn("salesContext fetch failed:", e.message);
+        return null;
+      }
+    }
+
+    /** Render the sales context panel into emSalesCardMount. Hides it
+     *  if no SalesContext exists. */
+    async function renderSalesCardForThread(threadId) {
+      const mount = $("emSalesCardMount");
+      if (!mount) return;
+      mount.innerHTML = "";
+
+      // Quick gate: if salesModeEnabled is OFF, don't render — the
+      // SalesContext doc may exist but the system isn't active. We
+      // still want operators to SEE the context (for diagnostics), so
+      // we render with a "Sales Mode is OFF" banner instead.
+      const ctx = await fetchSalesContext(threadId);
+      if (!ctx) return;
+
+      const stage = String(ctx.stage || "discovery");
+      const stageLabels = {
+        discovery              : "Discovery",
+        spec                   : "Spec",
+        quote                  : "Quote",
+        revision               : "Revision",
+        pending_close_approval : "Ready to close",
+        abandoned              : "Abandoned"
+      };
+      const stageLabel = stageLabels[stage] || stage;
+
+      // Spec rows
+      const spec = ctx.accumulatedSpec || {};
+      const specEntries = Object.entries(spec).filter(([_, v]) => v !== null && v !== "" && v !== undefined);
+      const specHtml = specEntries.length
+        ? '<div class="em-sales-spec">' +
+          specEntries.map(([k, v]) =>
+            `<div class="em-spec-row"><span class="em-spec-key">${esc(k)}</span><span class="em-spec-val">${esc(typeof v === "object" ? JSON.stringify(v) : String(v))}</span></div>`
+          ).join("") + '</div>'
+        : '<div class="em-muted" style="font-size:12px;">No spec captured yet.</div>';
+
+      // Missing inputs
+      const missing = Array.isArray(ctx.missingInputs) ? ctx.missingInputs : [];
+      const missingHtml = missing.length
+        ? '<div class="em-sales-missing"><b>Missing:</b> ' +
+          missing.map(m => `<span class="em-sales-missing-pill">${esc(m)}</span>`).join("") + '</div>'
+        : "";
+
+      // v2.1 — Quote rendering from option-sheet resolver result.
+      // Replaces v2.0 band display.
+      const quoted = typeof ctx.totalQuotedUsd === "number" ? ctx.totalQuotedUsd : null;
+      const recentQuote = Array.isArray(ctx.quoteHistory) && ctx.quoteHistory.length
+        ? ctx.quoteHistory[ctx.quoteHistory.length - 1]
+        : null;
+      const resolverResult = recentQuote && recentQuote.resolverResult
+        ? recentQuote.resolverResult
+        : (ctx._lastResolverResult || null);
+
+      let quoteHtml = "";
+      if (quoted !== null || resolverResult) {
+        quoteHtml = '<div class="em-sales-quote-block">';
+        if (quoted !== null) {
+          quoteHtml += `<div class="em-sales-quote-amount">$${esc(quoted.toFixed(2))}</div>`;
+        }
+        if (resolverResult) {
+          if (resolverResult.family) {
+            quoteHtml += `<div class="em-sales-quote-band">family: <code>${esc(resolverResult.family)}</code>`;
+            if (resolverResult.quantity) quoteHtml += ` · qty: <code>${esc(resolverResult.quantity)}</code>`;
+            quoteHtml += `</div>`;
+          }
+          if (Array.isArray(resolverResult.lineItems) && resolverResult.lineItems.length) {
+            const codeChips = resolverResult.lineItems.map(li =>
+              `<span class="em-os-code">${esc(li.code || "?")}</span>`
+            ).join(" ");
+            quoteHtml += `<div class="em-sales-quote-band">codes: ${codeChips}</div>`;
+          }
+          if (resolverResult.bulkTier && resolverResult.bulkTier.discountPct > 0) {
+            quoteHtml += `<div class="em-sales-quote-band">${esc(resolverResult.bulkTier.label || "")} (tier ${esc(resolverResult.bulkTier.code || "")})</div>`;
+          }
+          if (Array.isArray(resolverResult.escalations) && resolverResult.escalations.length) {
+            const codes = resolverResult.escalations.map(e => e.code).filter(Boolean).join(", ");
+            quoteHtml += `<div class="em-sales-quote-band" style="color:#b35900;">⚠ Quote-row codes pending: ${esc(codes)} — Needs Review</div>`;
+          }
+        }
+        quoteHtml += '</div>';
+      }
+
+      // Block reason banner
+      const blockBanner = ctx.lastSalesAgentBlockReason
+        ? `<div class="em-sales-block-banner"><b>Agent blocked:</b> ${esc(ctx.lastSalesAgentBlockReason)}. Thread escalated for operator review.</div>`
+        : "";
+
+      // Mode-disabled banner
+      const modeBanner = !_autoCfg.salesModeEnabled
+        ? '<div class="em-sales-block-banner" style="background:#fff8c5;border-color:#d4a72c;color:#6e4c00;"><b>Sales Mode is OFF.</b> This panel is read-only diagnostic; the agent will not run on new inbounds. Re-enable in Settings.</div>'
+        : "";
+
+      // Close artifact (pending_close_approval stage only)
+      let closeHtml = "";
+      const draftCo = ctx.lastDraftCustomOrderListing;   // optional; stored by future Step 3 hand-off
+      // Actually the close artifact lives on the draft, not the SalesContext.
+      // We'll render it from the draft fetch instead — handled in renderAiDraftCard.
+
+      // Stage controls
+      const isAbandoned  = stage === "abandoned";
+      const isReadyClose = stage === "pending_close_approval";
+
+      const allowedNext = {
+        discovery              : ["spec", "human_review", "abandoned"],
+        spec                   : ["quote", "discovery", "human_review", "abandoned"],
+        quote                  : ["revision", "pending_close_approval", "human_review", "abandoned"],
+        revision               : ["quote", "pending_close_approval", "human_review", "abandoned"],
+        pending_close_approval : ["revision", "human_review"],
+        abandoned              : []
+      };
+      const next = allowedNext[stage] || [];
+      const stageButtonsHtml = next.map(n => {
+        const lbl = stageLabels[n] || (n === "human_review" ? "Escalate to review" : n);
+        const cls = (n === "human_review" || n === "abandoned") ? "danger" : "";
+        return `<button type="button" class="${cls}" data-advance="${esc(n)}">→ ${esc(lbl)}</button>`;
+      }).join("");
+
+      const reengageHtml = isAbandoned
+        ? '<button type="button" data-reengage="discovery">↻ Re-engage (back to discovery)</button>'
+        : "";
+
+      mount.innerHTML = `
+        <div class="em-sales-card">
+          <div class="em-sales-card-header">
+            <span class="em-badge sales-stage ${esc(stage)}">${esc(stageLabel)}</span>
+            <span class="em-sales-card-title">Sales conversation</span>
+            <span class="em-muted" style="font-size:11px;">${esc(stage === "abandoned" ? "abandoned" : "in funnel")}</span>
+          </div>
+          ${modeBanner}
+          ${blockBanner}
+          ${specHtml}
+          ${missingHtml}
+          ${quoteHtml}
+          <div class="em-sales-actions">
+            ${stageButtonsHtml}
+            ${reengageHtml}
+            <span style="flex:1;"></span>
+            ${ctx.lastTurnAt ? `<span class="em-muted" style="font-size:11px; align-self:center;">last turn: ${esc(fmtTime(ctx.lastTurnAt))}</span>` : ""}
+          </div>
+        </div>
+      `;
+
+      // Wire stage advance buttons
+      mount.querySelectorAll("button[data-advance]").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          const target = btn.dataset.advance;
+          const lbl = stageLabels[target] || target;
+          if (!confirm(`Advance this thread to "${lbl}"? The agent will re-run on the next inbound message.`)) return;
+          await advanceSalesStage(threadId, target);
+        });
+      });
+      mount.querySelectorAll("button[data-reengage]").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          if (!confirm("Re-engage this abandoned thread? Stage resets to discovery and the next inbound message will trigger the sales agent.")) return;
+          await advanceSalesStage(threadId, "discovery", { reEngage: true });
+        });
+      });
+    }
+
+    /** Advance / rewind the SalesContext stage manually. Server-side
+     *  the agent enforces stage transitions; the operator UI uses a
+     *  direct firestoreProxy write because operator overrides are by
+     *  design allowed to skip transitions the agent itself can't.
+     *
+     *  TARGET STAGES SPLIT INTO THREE BUCKETS:
+     *
+     *  (1) Valid SalesContext stages: discovery, spec, quote, revision,
+     *      pending_close_approval, abandoned. We write `stage: target` to
+     *      SalesContext AND set thread.status to "sales_<target>".
+     *
+     *  (2) Off-ramp "human_review": this is NOT a valid SalesContext
+     *      stage (agent's ALL_VALID_STAGES = the 5 funnel stages only).
+     *      We KEEP SalesContext.stage at its current value and only
+     *      flip thread.status to "pending_human_review". This lets the
+     *      operator un-escalate later by clicking another stage button —
+     *      SalesContext is never poisoned with an invalid stage value.
+     *
+     *  (3) Off-ramp "abandoned": the reaper writes this naturally; we
+     *      mirror that for manual abandonment.
+     */
+    async function advanceSalesStage(threadId, targetStage, { reEngage = false } = {}) {
+      const me = getEmployeeName() || "operator";
+      const isHumanReviewOffRamp = targetStage === "human_review";
+
+      // Build SalesContext patch. firestoreProxy's __arrayUnion directive
+      // requires an ARRAY of values to union (not a single object).
+      const patch = {
+        lastTurnAt    : { __serverTimestamp: true },
+        operatorOverrides: { __arrayUnion: [{
+          byOperator: me,
+          toStage   : targetStage,
+          at        : Date.now(),
+          reEngage
+        }] },
+        lastSalesAgentBlockReason: null
+      };
+
+      // Only write `stage` to SalesContext if the target is a valid
+      // SalesContext stage. "human_review" is a thread-status off-ramp,
+      // not a SalesContext stage.
+      if (!isHumanReviewOffRamp) {
+        patch.stage = targetStage;
+        patch.lastAdvancedAt = { __serverTimestamp: true };
+      }
+
+      try {
+        await api("firestoreProxy", {
+          method: "POST",
+          body  : { op: "set", coll: "EtsyMail_SalesContext", id: threadId, merge: true, actor: me, data: patch }
+        });
+      } catch (e) {
+        // Fallback: if the proxy rejected the operatorOverrides directive
+        // for some reason, retry without it (audit history is best-effort —
+        // the audit log is the canonical record anyway).
+        try {
+          delete patch.operatorOverrides;
+          await api("firestoreProxy", {
+            method: "POST",
+            body  : { op: "set", coll: "EtsyMail_SalesContext", id: threadId, merge: true, actor: me, data: patch }
+          });
+        } catch (e2) {
+          toast("Stage advance failed: " + e2.message);
+          return;
+        }
+      }
+
+      // Mirror onto the parent thread doc so the inbox folder/badges
+      // update immediately rather than waiting for the next agent turn.
+      const threadStatus = (targetStage === "abandoned")     ? "sales_abandoned"
+                         : (targetStage === "human_review") ? "pending_human_review"
+                         : "sales_" + targetStage;
+
+      // For human_review off-ramp, we DON'T set salesStage on the thread
+      // either — it stays at whatever the agent's last advance set it to.
+      // For abandoned, we mirror the SalesContext write.
+      // For valid funnel stages, we mirror normally.
+      const threadPatch = {
+        status   : threadStatus,
+        updatedAt: { __serverTimestamp: true }
+      };
+      if (!isHumanReviewOffRamp) {
+        threadPatch.salesStage = targetStage;
+      }
+
+      try {
+        await api("firestoreProxy", {
+          method: "POST",
+          body  : { op: "set", coll: "EtsyMail_Threads", id: threadId, merge: true, actor: me, data: threadPatch }
+        });
+      } catch (e) {
+        console.warn("thread status mirror after advance failed:", e.message);
+      }
+      toast(`Stage → ${targetStage}`);
+      // Re-render the sales card
+      await renderSalesCardForThread(threadId);
+      // Refresh thread list so folder/badge updates
+      fetchThreadListNow();
+    }
+
+    // ── Option Sheets browser (read-only) ────────────────────────────
+    //
+    // v2.1 — replaces the v2.0 pricing-rules editor. Edits to option
+    // sheets happen via seeds/option_sheets_seed.json + the import
+    // script; the UI is purely a read-only viewer so operators can
+    // verify what's live.
+
+    let _osCurrentFamily = "huggie";
+    const _osCache = new Map();   // family → sheet doc
+
+    function openOptionSheetsModal() {
+      $("emOptionSheetsError").classList.remove("active");
+      $("emOptionSheetsError").textContent = "";
+      $("emOptionSheetsModal").classList.add("active");
+      // Reset to huggie tab
+      _osCurrentFamily = "huggie";
+      document.querySelectorAll(".em-os-tab").forEach(b =>
+        b.classList.toggle("active", b.dataset.family === "huggie"));
+      loadOptionSheet("huggie");
+    }
+
+    async function loadOptionSheet(family, force = false) {
+      const body = $("emOptionSheetsBody");
+      body.innerHTML = '<div class="em-empty-msg">Loading…</div>';
+      try {
+        let sheet = !force && _osCache.get(family);
+        if (!sheet) {
+          const res = await api("etsyMailOptionResolver", {
+            method: "POST",
+            body  : { op: "getSheet", family }
+          });
+          sheet = res && res.sheet;
+          if (sheet) _osCache.set(family, sheet);
+        }
+        if (!sheet) {
+          body.innerHTML = `<div class="em-empty-msg" style="color:#cf222e;">No sheet found for "${esc(family)}". Run <code>node seeds/import_seeds.js</code> to seed it.</div>`;
+          return;
+        }
+        renderOptionSheet(sheet);
+      } catch (e) {
+        body.innerHTML = `<div class="em-empty-msg" style="color:#cf222e;">Failed to load sheet: ${esc(e.message)}</div>`;
+      }
+    }
+
+    function renderOptionSheet(sheet) {
+      const body = $("emOptionSheetsBody");
+      const uomHtml = sheet.unitOfMeasure
+        ? `<div class="em-os-uom"><b>Unit of measure:</b> ${esc(sheet.unitOfMeasure.label || "")}<br><span class="em-muted">${esc(sheet.unitOfMeasure.explainer || "")}</span></div>`
+        : "";
+      const sectionsHtml = (sheet.sections || []).map(s => renderOptionSection(s)).join("");
+      body.innerHTML = `
+        <h4 style="margin:0 0 8px; font-size:13px;">${esc(sheet.displayName || sheet.family)}</h4>
+        ${uomHtml}
+        ${sectionsHtml}
+      `;
+    }
+
+    function renderOptionSection(section) {
+      const headerHtml = `
+        <div class="em-os-section-name">${esc(section.sectionId)}. ${esc(section.name)}${section.required ? " <span style='color:#cf222e;'>*</span>" : ""}</div>
+        <div class="em-os-section-instruction">${esc(section.instruction || "")}</div>
+      `;
+
+      // Bulk savings render as pills
+      if (Array.isArray(section.bulkSavings)) {
+        const pillsHtml = section.bulkSavings.map(t => {
+          const range = t.maxQty ? `${t.minQty}-${t.maxQty} pieces` : `${t.minQty}+ pieces`;
+          return `<span class="em-os-bulk-tier">${esc(t.code)} · ${esc(range)} · ${t.discountPct}% off</span>`;
+        }).join(" ");
+        return `<div class="em-os-section">${headerHtml}<div>${pillsHtml}</div></div>`;
+      }
+
+      // Standard options table
+      const opts = Array.isArray(section.options) ? section.options : [];
+      if (!opts.length) return `<div class="em-os-section">${headerHtml}<div class="em-muted">(no options)</div></div>`;
+
+      // Detect column shape from the first option
+      const firstOpt = opts[0];
+      const cols = [];
+      if (firstOpt.size)        cols.push({ key: "size",       label: "Size" });
+      if (firstOpt.hoopSize)    cols.push({ key: "hoopSize",   label: "Hoop Size" });
+      if (firstOpt.chainStyle)  cols.push({ key: "chainStyle", label: "Chain Style" });
+      if (firstOpt.metal)       cols.push({ key: "metal",      label: "Metal" });
+      if (firstOpt.length)      cols.push({ key: "length",     label: "Length" });
+      if (firstOpt.label && !firstOpt.size && !firstOpt.metal && !firstOpt.length) {
+        cols.push({ key: "label", label: "Option" });
+      }
+
+      const headerCells = `<th>Code</th>${cols.map(c => `<th>${esc(c.label)}</th>`).join("")}<th>Price</th>`;
+      const rowsHtml = opts.map(o => {
+        const cellsHtml = cols.map(c => `<td>${esc(o[c.key] || "")}</td>`).join("");
+        let priceCell;
+        if (o.priceNotAvailable === true) {
+          priceCell = `<td class="em-os-price-na" title="${esc(o.notAvailableMessage || "")}">Not Available</td>`;
+        } else if (o.priceQuote === true) {
+          priceCell = `<td class="em-os-price-quote">Quote</td>`;
+        } else if (o.modifier) {
+          const m = o.modifier;
+          if (m.type === "percentOfPair") priceCell = `<td>${m.pct}% of pair</td>`;
+          else if (m.type === "addToTotal") priceCell = `<td>+$${m.amountUsd}</td>`;
+          else priceCell = `<td>included</td>`;
+        } else if (o.priceUsd === 0) {
+          priceCell = `<td>included</td>`;
+        } else {
+          priceCell = `<td>$${o.priceUsd}</td>`;
+        }
+        return `<tr><td><span class="em-os-code">${esc(o.code)}</span></td>${cellsHtml}${priceCell}</tr>`;
+      }).join("");
+
+      return `
+        <div class="em-os-section">
+          ${headerHtml}
+          <table class="em-os-options-table">
+            <thead><tr>${headerCells}</tr></thead>
+            <tbody>${rowsHtml}</tbody>
+          </table>
+        </div>
+      `;
+    }
+
+    // ── Collateral library modal ────────────────────────────────────────
+
+    function openCollateralModal() {
+      if (!isOwner()) {
+        toast("Owner role required to manage collateral. (Read-only view shown.)");
+      }
+      $("emCollateralError").classList.remove("active");
+      $("emCollateralError").textContent = "";
+      $("emCollateralForm").style.display = "none";
+      clearCollateralForm();
+      loadCollateralList();
+      $("emCollateralModal").classList.add("active");
+    }
+
+    function clearCollateralForm() {
+      $("emCollateralNameInput").value = "";
+      if ($("emCollateralIdInput")) $("emCollateralIdInput").value = "";
+      $("emCollateralCatInput").value = "";
+      $("emCollateralKindInput").value = "line_sheet";
+      $("emCollateralUrlInput").value = "";
+      $("emCollateralDescInput").value = "";
+      $("emCollateralKeywordsInput").value = "";
+      if ($("emCollateralFileInput")) $("emCollateralFileInput").value = "";
+    }
+
+    async function loadCollateralList() {
+      const list = $("emCollateralList");
+      list.innerHTML = '<div class="em-empty-msg">Loading…</div>';
+      try {
+        const res = await api("etsyMailCollateral", {
+          method: "POST",
+          body  : { op: "list", includeInactive: true }
+        });
+        const items = (res && res.items) || [];
+        if (!items.length) {
+          list.innerHTML = '<div class="em-empty-msg">No collateral yet. Click <b>+ New collateral</b> to upload a file or register a URL.</div>';
+          return;
+        }
+        list.innerHTML = items.map(it => {
+          const inactiveCls = it.active === false ? " inactive" : "";
+          const kindLbl = String(it.kind || "").replace(/_/g, " ");
+          return `
+            <div class="em-mgmt-row${inactiveCls}" data-cid="${esc(it.id)}">
+              <div>
+                <div class="em-mgmt-name">${esc(it.name || "(unnamed)")}${it.active === false ? " <span class='em-muted'>(inactive)</span>" : ""}</div>
+                <div class="em-mgmt-meta">${esc(it.category || "—")} · ${esc(kindLbl)}${it.fileName ? " · " + esc(it.fileName) : ""} · <a href="${esc(it.url || "#")}" target="_blank" rel="noopener" style="color:#0969da;">URL</a></div>
+              </div>
+              <div class="em-mgmt-actions">
+                <button type="button" data-action="edit">Edit</button>
+                ${it.active !== false ? '<button type="button" data-action="deactivate">Deactivate</button>' : '<button type="button" data-action="reactivate">Reactivate</button>'}
+              </div>
+            </div>
+          `;
+        }).join("");
+        list.querySelectorAll("button[data-action='edit']").forEach(btn => {
+          btn.addEventListener("click", (e) => {
+            const row = e.target.closest("[data-cid]");
+            const cid = row.dataset.cid;
+            const it = items.find(x => x.id === cid);
+            if (!it) return;
+            $("emCollateralNameInput").value     = it.name || "";
+            if ($("emCollateralIdInput")) $("emCollateralIdInput").value = cid;
+            $("emCollateralCatInput").value      = it.category || "";
+            $("emCollateralKindInput").value     = it.kind || "line_sheet";
+            $("emCollateralUrlInput").value      = it.url || "";
+            $("emCollateralDescInput").value     = it.description || "";
+            $("emCollateralKeywordsInput").value = (it.keywords || []).join(", ");
+            if ($("emCollateralFileInput")) $("emCollateralFileInput").value = "";
+            $("emCollateralFormSaveBtn").dataset.mode = "update";
+            $("emCollateralFormSaveBtn").dataset.id = cid;
+            $("emCollateralForm").style.display = "block";
+          });
+        });
+        list.querySelectorAll("button[data-action='deactivate'], button[data-action='reactivate']").forEach(btn => {
+          btn.addEventListener("click", async (e) => {
+            const row    = e.target.closest("[data-cid]");
+            const cid    = row.dataset.cid;
+            const action = btn.dataset.action;
+            const newActive = action === "reactivate";
+            try {
+              await api("etsyMailCollateral", {
+                method: "POST",
+                body  : { op: "update", actor: getEmployeeName() || "operator", id: cid, patch: { active: newActive } }
+              });
+              toast(newActive ? "Reactivated" : "Deactivated");
+              loadCollateralList();
+            } catch (err) {
+              showCollateralError(err.message);
+            }
+          });
+        });
+      } catch (e) {
+        list.innerHTML = `<div class="em-empty-msg" style="color:#cf222e;">Couldn't load collateral: ${esc(e.message)}</div>`;
+      }
+    }
+
+    async function saveCollateralEntry() {
+      $("emCollateralError").classList.remove("active");
+      const mode = $("emCollateralFormSaveBtn").dataset.mode || "create";
+      const id   = $("emCollateralFormSaveBtn").dataset.id || null;
+
+      const name = $("emCollateralNameInput").value.trim();
+      const explicitId = ($("emCollateralIdInput") && $("emCollateralIdInput").value.trim()) || id || null;
+      const cat  = $("emCollateralCatInput").value.trim();
+      const kind = $("emCollateralKindInput").value;
+      const url  = $("emCollateralUrlInput").value.trim();
+      const desc = $("emCollateralDescInput").value.trim();
+      const kw   = $("emCollateralKeywordsInput").value
+        .split(",")
+        .map(s => s.trim().toLowerCase())
+        .filter(s => s.length >= 2);
+      const fileInput = $("emCollateralFileInput");
+      const file = fileInput && fileInput.files && fileInput.files[0] ? fileInput.files[0] : null;
+
+      if (!name) return showCollateralError("Display name is required.");
+      if (!cat)  return showCollateralError("Category is required.");
+      if (!file && (!url || !/^https?:\/\//.test(url))) {
+        return showCollateralError("Add a URL or choose a file to upload.");
+      }
+      if (url && !/^https?:\/\//.test(url)) return showCollateralError("URL must start with http:// or https://.");
+      if (file && file.size > 10 * 1024 * 1024) return showCollateralError("File too large. Max 10 MB.");
+
+      const data = { name, category: cat, kind, url, description: desc, keywords: kw, active: true };
+      const saveBtn = $("emCollateralFormSaveBtn");
+      const oldText = saveBtn.textContent;
+      saveBtn.disabled = true;
+      saveBtn.textContent = file ? "Uploading…" : "Saving…";
+
+      try {
+        if (file) {
+          const bytesBase64 = await fileToBase64(file);
+          await api("etsyMailCollateralUpload", {
+            method: "POST",
+            body  : {
+              actor: getEmployeeName() || "operator",
+              id: explicitId,
+              name,
+              category: cat,
+              kind,
+              description: desc,
+              keywords: kw,
+              filename: file.name || name,
+              contentType: file.type || "application/octet-stream",
+              bytesBase64,
+              active: true
+            }
+          });
+          toast("Collateral uploaded");
+        } else if (mode === "update" && id) {
+          await api("etsyMailCollateral", {
+            method: "POST",
+            body  : { op: "update", actor: getEmployeeName() || "operator", id, patch: data }
+          });
+          toast("Collateral updated");
+        } else {
+          await api("etsyMailCollateral", {
+            method: "POST",
+            body  : { op: "create", actor: getEmployeeName() || "operator", id: explicitId, item: data }
+          });
+          toast("Collateral added");
+        }
+        $("emCollateralForm").style.display = "none";
+        clearCollateralForm();
+        loadCollateralList();
+      } catch (err) {
+        showCollateralError(err.message);
+      } finally {
+        saveBtn.disabled = false;
+        saveBtn.textContent = oldText;
+      }
+    }
+
+    function showCollateralError(msg) {
+      const el = $("emCollateralError");
+      el.textContent = msg;
+      el.classList.add("active");
     }
 
     const state = {
@@ -1397,6 +2598,122 @@
      * v0.9.1: Secret-setup modal + kill-switch banner
      * ══════════════════════════════════════════════════════════════ */
 
+    /* ── v2.0 Step 1: Catalog status + Sync-now plumbing ──────────────
+     * Reads EtsyMail_ListingsSync/global via the etsyMailListingsCatalog
+     * status op, formats the result for the inline status block in
+     * Settings, and wires the "Sync now" button to fire a manual sync.
+     *
+     * Step 2/3 forward-compat: the same status helpers will be reused
+     * by the future Pricing Rules and Collateral tabs (which will share
+     * a common pattern of "config status + manual refresh button"). */
+    async function loadCatalogStatusInModal() {
+      const text = $("emCatalogStatusText");
+      const btn  = $("emCatalogSyncNowBtn");
+      if (!text) return;
+
+      // First-time setup: if the operator hasn't yet pasted a secret,
+      // calling the catalog status endpoint will 401, which the api()
+      // helper would convert into a recursive showSecretSetupModal call.
+      // Skip the fetch — show a useful hint instead.
+      const haveSecret = (typeof localStorage !== "undefined") &&
+                         !!localStorage.getItem("etsymail_secret");
+      if (!haveSecret) {
+        text.innerHTML = '<span style="color:#7d4e00;">' +
+          'Set the inbox secret above and click <b>Save</b> first — ' +
+          'catalog status loads after that.</span>';
+        if (btn) btn.disabled = true;
+        return;
+      }
+      if (btn) btn.disabled = false;
+
+      text.textContent = "Loading catalog status…";
+
+      try {
+        const res = await api("etsyMailListingsCatalog", {
+          method: "POST",
+          body  : { op: "status" }
+        });
+        if (!res || !res.exists) {
+          text.innerHTML = '<span style="color:#9a3f00;">Catalog has never synced</span>'
+            + ' — turn the toggle ON above and click <b>Sync now</b>.';
+          return;
+        }
+        const total = res.totalListings || 0;
+        const lastMs = res.lastIncrementalAt;
+        const fullMs = res.lastFullSyncAt;
+        const error  = res.lastError;
+        const inFlight = res.inFlight;
+
+        const ago = (ms) => {
+          if (!ms) return "never";
+          const sec = Math.floor((Date.now() - ms) / 1000);
+          if (sec < 60)    return sec + "s ago";
+          if (sec < 3600)  return Math.floor(sec/60)  + "m ago";
+          if (sec < 86400) return Math.floor(sec/3600) + "h ago";
+          return Math.floor(sec/86400) + "d ago";
+        };
+
+        let html = `<b>${total}</b> listing${total === 1 ? "" : "s"} mirrored`;
+        html += " · last sync: <b>" + ago(lastMs) + "</b>";
+        if (fullMs) html += " · last full sync: " + ago(fullMs);
+        if (inFlight) html += ' <span style="color:#7d4e00;">· syncing now…</span>';
+        if (error) {
+          html += '<br><span style="color:#a40e26;">Last error: '
+            + esc(String(error).slice(0, 200)) + '</span>';
+        }
+        text.innerHTML = html;
+      } catch (e) {
+        text.innerHTML = '<span style="color:#a40e26;">Status unavailable: '
+          + esc(e.message || String(e)) + '</span>';
+      }
+    }
+
+    /** Manual "Sync now" — kicks off a full Etsy catalog sync, then
+     *  refreshes the status block. The button disables during the call
+     *  to prevent double-clicks (the server-side mutex would also catch
+     *  this, but client-side is faster feedback). */
+    async function runCatalogSyncNow() {
+      const btn  = $("emCatalogSyncNowBtn");
+      const text = $("emCatalogStatusText");
+      if (!btn) return;
+      // Quick guardrail: warn if listings mirror is disabled — the
+      // server will accept the request but skip the work, which can be
+      // confusing without explanation.
+      if (!_autoCfg.listingsMirrorEnabled) {
+        const proceed = confirm(
+          "The 'Mirror Etsy listings catalog' toggle is OFF.\n\n" +
+          "Sync now will be skipped server-side. Turn the toggle ON, " +
+          "save settings, and click Sync now again."
+        );
+        if (!proceed) return;
+      }
+
+      const origLabel = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = "Syncing…";
+      if (text) text.textContent = "Syncing catalog from Etsy API…";
+
+      try {
+        const res = await api("etsyMailListingsCatalog", {
+          method: "POST",
+          body  : { op: "sync", fullSync: true }
+        });
+        if (res && res.skipped) {
+          toast("Sync skipped: " + (res.reason || "unknown reason"));
+        } else {
+          const n = res && res.totalListings != null ? res.totalListings : "?";
+          const inactive = res && res.inactivatedCount ? `, ${res.inactivatedCount} marked inactive` : "";
+          toast(`Synced ${n} listing${n === 1 ? "" : "s"}${inactive}`);
+        }
+      } catch (e) {
+        toast("Sync failed: " + (e.message || String(e)));
+      } finally {
+        btn.disabled = false;
+        btn.textContent = origLabel;
+        await loadCatalogStatusInModal();
+      }
+    }
+
     /** Show the secret-setup modal. Triggered by:
      *   - First 401 from any backend call (auto)
      *   - Settings button click (manual edit)
@@ -1416,6 +2733,12 @@
       const thr           = $("emConfThresholdInput");
       const thrVal        = $("emConfThresholdVal");
       const manualInput   = $("emManualAutoSendInput");   // v1.8
+      const listingsInput = $("emListingsMirrorInput");   // v2.0 Step 1
+      const intentInput   = $("emIntentClassifierInput"); // v2.0 Step 1
+      // ─── v2.0 Step 2 inputs ─────────────────────────────────────────
+      const salesModeInput     = $("emSalesModeInput");
+      const salesAutoEngageInput = $("emSalesAutoEngageInput");
+      const salesPilotInput    = $("emSalesPilotThreadIdsInput");
       const metaEl        = $("emAutoCfgMeta");
 
       const populateFromCfg = () => {
@@ -1426,6 +2749,17 @@
         }
         // v1.8: missing field = true (preserves existing behavior)
         if (manualInput) manualInput.checked = _autoCfg.manualAiDraftAutoSend !== false;
+        // v2.0 Step 1: missing field = false (explicit-true required)
+        if (listingsInput) listingsInput.checked = _autoCfg.listingsMirrorEnabled === true;
+        if (intentInput)   intentInput.checked   = _autoCfg.intentClassifierEnabled === true;
+        // v2.0 Step 2: same explicit-true semantics. Pilot list rendered
+        // as one-thread-per-line in the textarea.
+        if (salesModeInput)       salesModeInput.checked       = _autoCfg.salesModeEnabled === true;
+        if (salesAutoEngageInput) salesAutoEngageInput.checked = _autoCfg.salesAutoEngage === true;
+        if (salesPilotInput) {
+          const list = Array.isArray(_autoCfg.salesPilotThreadIds) ? _autoCfg.salesPilotThreadIds : [];
+          salesPilotInput.value = list.join("\n");
+        }
         if (metaEl) {
           if (_autoCfg.updatedBy || _autoCfg.updatedAt) {
             const who = _autoCfg.updatedBy ? ("by " + _autoCfg.updatedBy) : "";
@@ -1444,6 +2778,11 @@
       }
       // Refresh from Firestore so we always show the truth
       fetchAutoConfig().then(populateFromCfg).catch(() => {});
+
+      // v2.0 Step 1: load catalog sync status into the inline status block.
+      // Refreshed every time the modal opens. The "Sync now" button calls
+      // etsyMailListingsCatalog op:"sync" and re-loads the status when done.
+      loadCatalogStatusInModal();
 
       if (errMsg) {
         errEl.textContent = errMsg;
@@ -1477,11 +2816,24 @@
       const enabledInput = $("emAutoEnabledInput");
       const thr          = $("emConfThresholdInput");
       const manualInput  = $("emManualAutoSendInput");   // v1.8
+      const listingsInput = $("emListingsMirrorInput");   // v2.0 Step 1
+      const intentInput   = $("emIntentClassifierInput"); // v2.0 Step 1
+      // ─── v2.0 Step 2 inputs ──
+      const salesModeInput       = $("emSalesModeInput");
+      const salesAutoEngageInput = $("emSalesAutoEngageInput");
+      const salesPilotInput      = $("emSalesPilotThreadIdsInput");
       try {
         await saveAutoConfig({
           enabled              : enabledInput ? enabledInput.checked : true,
           threshold            : thr ? thr.value : AUTO_CFG_DEFAULTS.threshold,
           manualAiDraftAutoSend: manualInput ? manualInput.checked : true,   // v1.8
+          listingsMirrorEnabled  : listingsInput ? listingsInput.checked : false,  // v2.0 Step 1
+          intentClassifierEnabled: intentInput   ? intentInput.checked   : false,  // v2.0 Step 1
+          // v2.0 Step 2: pilot list is a textarea — pass raw text and let
+          // saveAutoConfig sanitize.
+          salesModeEnabled       : salesModeInput       ? salesModeInput.checked       : false,
+          salesAutoEngage        : salesAutoEngageInput ? salesAutoEngageInput.checked : false,
+          salesPilotThreadIds    : salesPilotInput      ? salesPilotInput.value        : [],
           by                   : getEmployeeName() || "operator"
         });
       } catch (e) {
@@ -1935,6 +3287,57 @@
           const lbl = d >= 0.70 ? "hard" : d >= 0.40 ? "med" : "easy";
           badges.push(`<span class="em-badge ai-diff" title="AI self-rated difficulty">${esc(lbl)}</span>`);
         }
+        // v2.0 Step 1: intent classification badge.
+        // The classifier writes intentClassification + intentConfidence to
+        // the thread doc (denormalized from EtsyMail_IntentClassifications).
+        // Renders as one of 5 colored pills; below-floor (<0.7) confidence
+        // gets the .low-conf modifier (dashed border, faded). Step 2's
+        // sales-lead routing reads from the same fields.
+        if (t.intentClassification) {
+          const cls = String(t.intentClassification);
+          const conf = typeof t.intentConfidence === "number" ? t.intentConfidence : 0;
+          const labelMap = {
+            support       : "support",
+            sales_lead    : "sales lead",
+            post_purchase : "post-purchase",
+            spam          : "spam",
+            unclear       : "unclear"
+          };
+          const label = labelMap[cls] || cls;
+          const lowConf = conf < 0.7 ? " low-conf" : "";
+          const sigText = (Array.isArray(t.intentSignals) && t.intentSignals.length)
+            ? " · signals: " + t.intentSignals.slice(0, 3).join(", ")
+            : "";
+          badges.push(
+            `<span class="em-badge intent ${esc(cls)}${lowConf}" ` +
+            `title="Classified as ${esc(label)} at ${Math.round(conf*100)}% confidence${esc(sigText)}">` +
+            `intent: ${esc(label)} ${Math.round(conf*100)}%</span>`
+          );
+        }
+        // v2.0 Step 2: sales-stage badge. The sales agent writes
+        // t.salesStage onto the thread doc. Each stage gets its own
+        // color (CSS .em-badge.sales-stage.<stage>). Mirrors the
+        // RAIL_FILTERS Sales — Active folder.
+        if (t.salesStage) {
+          const stageLabels = {
+            discovery              : "discovery",
+            spec                   : "spec",
+            quote                  : "quote",
+            revision               : "revision",
+            pending_close_approval : "ready to close",
+            abandoned              : "abandoned"
+          };
+          const stage = String(t.salesStage);
+          const lbl = stageLabels[stage] || stage;
+          const ready = t.readyForHumanApproval
+            ? '<i class="material-icons" style="font-size:11px; vertical-align:middle;">check_circle</i> '
+            : "";
+          badges.push(
+            `<span class="em-badge sales-stage ${esc(stage)}" ` +
+            `title="Sales funnel stage: ${esc(lbl)}${t.readyForHumanApproval ? ' — awaiting operator approval' : ''}">` +
+            `${ready}sales: ${esc(lbl)}</span>`
+          );
+        }
         if (t.status === "auto_replied") {
           // v1.4: distinguish manual moves from real AI auto-sends.
           // The manuallyMovedToAutoReplied flag is set by the threads
@@ -2185,7 +3588,12 @@
     function startMessagesPolling(threadId) {
       stopMessagesPolling();
       fetchMessagesNow(threadId);
-      state.msgPollTimer = setInterval(() => fetchMessagesNow(threadId), MESSAGES_POLL_MS);
+      state.msgPollTimer = setInterval(() => {
+        fetchMessagesNow(threadId);
+        // v2.0 Step 2: keep sales card in sync. Cheap: skipped silently
+        // if no SalesContext exists for this thread.
+        renderSalesCardForThread(threadId).catch(() => {});
+      }, MESSAGES_POLL_MS);
     }
     function stopMessagesPolling() {
       if (state.msgPollTimer) { clearInterval(state.msgPollTimer); state.msgPollTimer = null; }
@@ -2301,6 +3709,11 @@
               ` : `<div class="em-muted" style="font-size:12px;">No order linked yet.</div>`}
             </div>
 
+            <!-- v2.0 Step 2 — Sales context panel. Hidden by default;
+                 shown by renderSalesCard() when fetchSalesContext finds
+                 a SalesContext doc for this thread. -->
+            <div id="emSalesCardMount"></div>
+
             <div class="em-card em-ai-card">
               <h4>AI draft <span class="em-muted" style="font-weight:400;text-transform:none;letter-spacing:0;">(Milestone 4)</span></h4>
               <div id="emAiCardBody">
@@ -2318,6 +3731,13 @@
       `;
 
       renderThreadMessages();
+
+      // v2.0 Step 2: render sales context panel if this thread has one.
+      // Fires async; mounts above the AI Draft card. Does nothing if
+      // SalesContext doesn't exist for this thread.
+      renderSalesCardForThread(t.id).catch((e) => {
+        console.warn("renderSalesCardForThread failed:", e.message);
+      });
 
       $("emReviewBtn")?.addEventListener("click", () => setStatus(t.id, "pending_human_review", "operator triage"));
       $("emArchiveBtn")?.addEventListener("click", () => setStatus(t.id, "archived", "operator archive"));
@@ -2638,6 +4058,15 @@
       if (imagesAttached) chips.push('<span class="em-ai-chip">' + imagesAttached + ' image' + (imagesAttached === 1 ? '' : 's') + ' seen</span>');
       const nonTerminalCalls = toolCalls.filter(tc => tc.name !== "compose_draft_reply");
       if (nonTerminalCalls.length) chips.push('<span class="em-ai-chip">' + nonTerminalCalls.length + ' tool call' + (nonTerminalCalls.length === 1 ? '' : 's') + '</span>');
+      // v2.0 Step 2: tag drafts produced by the sales agent so operators
+      // know this isn't a regular customer-service AI reply.
+      if (draft.generatedBySalesAgent) {
+        const stageLbl = String(draft.salesStage || "?").replace(/_/g, " ");
+        chips.push(`<span class="em-ai-chip" style="background:#fbefff; color:#6639ba;">sales agent · ${esc(stageLbl)}</span>`);
+        if (draft.readyForHumanApproval) {
+          chips.push('<span class="em-ai-chip" style="background:#dafbe1; color:#1a7f37;">✓ ready to approve</span>');
+        }
+      }
 
       let html = '<div class="em-ai-meta">' + chips.join("") + '</div>';
 
@@ -2742,6 +4171,30 @@
                    '</div>';
           }).join("") +
           '</details>';
+      }
+
+      // v2.0 Step 2: render the close-stage Custom Order Listing draft
+      // when present. Step 3 will replace this read-only view with an
+      // "Approve & generate custom order" action.
+      const dco = draft.draftCustomOrderListing;
+      if (dco && Array.isArray(dco.items) && dco.items.length) {
+        const itemsHtml = dco.items.map(it =>
+          '<li>' +
+            esc(it.description || "(unnamed)") +
+            ` &mdash; <b>$${Number(it.priceUsd || 0).toFixed(2)}</b>` +
+            ` &times; ${Number(it.quantity || 1)}` +
+          '</li>'
+        ).join("");
+        html += '<div class="em-sales-close-artifact">' +
+          '<div class="em-close-title">Draft Custom Order Listing <span class="em-muted" style="font-weight:400;">— review before sending</span></div>' +
+          '<ul>' + itemsHtml + '</ul>' +
+          (dco.deadline ? `<div><b>Deadline:</b> ${esc(String(dco.deadline))}</div>` : "") +
+          (dco.processingDays ? `<div><b>Processing days:</b> ${esc(String(dco.processingDays))}</div>` : "") +
+          (dco.materials ? `<div><b>Materials:</b> ${esc(String(dco.materials))}</div>` : "") +
+          (dco.customerNotes ? `<div><b>Customer notes:</b> ${esc(String(dco.customerNotes))}</div>` : "") +
+          (dco.internalNotes ? `<div style="color:#57606a;"><b>Internal:</b> ${esc(String(dco.internalNotes))}</div>` : "") +
+          `<div class="em-close-total">Total: $${Number(dco.totalUsd || 0).toFixed(2)}</div>` +
+        '</div>';
       }
 
       body.innerHTML = html;
@@ -3477,6 +4930,7 @@
             coll: "EtsyMail_Drafts",
             id  : draftId,
             merge: true,
+            actor: getEmployeeName() || "operator",
             data: {
               threadId,
               draftAttachments: clean,
@@ -4804,6 +6258,58 @@
       $("emSecretInput").addEventListener("keydown", (e) => {
         if (e.key === "Escape") hideSecretSetupModal();
       });
+
+      // v2.0 Step 1: catalog "Sync now" button inside the Settings modal.
+      // The button is inside the secret form, but it's type="button" so
+      // clicking it doesn't submit the form. We stop propagation as a
+      // belt-and-suspenders against any keyboard event flow oddities.
+      const syncNowBtn = $("emCatalogSyncNowBtn");
+      if (syncNowBtn) {
+        syncNowBtn.addEventListener("click", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          runCatalogSyncNow();
+        });
+      }
+
+      // ─────────────────────────────────────────────────────────────────
+      // v2.0 Step 2 — Sales-mode UI wiring
+      //
+      // Boot calls (from this point down): role-fetch on first paint,
+      // poll role every 60s, refresh sales card whenever a thread is
+      // open, wire pricing-rules + collateral modals.
+      // ─────────────────────────────────────────────────────────────────
+      fetchOperatorRole().then(renderOperatorRoleBadge).catch(() => {});
+      setInterval(() => fetchOperatorRole().then(renderOperatorRoleBadge).catch(() => {}), 60 * 1000);
+
+      $("emOptionSheetsBtn")?.addEventListener("click", openOptionSheetsModal);
+      $("emCollateralBtn")?.addEventListener("click", openCollateralModal);
+
+      $("emOptionSheetsCloseBtn")?.addEventListener("click", () => $("emOptionSheetsModal").classList.remove("active"));
+      $("emOptionSheetsRefreshBtn")?.addEventListener("click", () => {
+        // Force reload from server (bypass UI cache)
+        loadOptionSheet(_osCurrentFamily, true);
+      });
+      // Option sheets tab switching
+      document.querySelectorAll(".em-os-tab").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const fam = btn.dataset.family;
+          if (!fam) return;
+          _osCurrentFamily = fam;
+          document.querySelectorAll(".em-os-tab").forEach(b =>
+            b.classList.toggle("active", b.dataset.family === fam));
+          loadOptionSheet(fam);
+        });
+      });
+
+      $("emCollateralCloseBtn")?.addEventListener("click", () => $("emCollateralModal").classList.remove("active"));
+      $("emCollateralNewBtn")?.addEventListener("click", () => {
+        clearCollateralForm(); $("emCollateralForm").style.display = "block";
+        $("emCollateralFormSaveBtn").dataset.mode = "create";
+        delete $("emCollateralFormSaveBtn").dataset.id;
+      });
+      $("emCollateralFormCancelBtn")?.addEventListener("click", () => $("emCollateralForm").style.display = "none");
+      $("emCollateralFormSaveBtn")?.addEventListener("click", saveCollateralEntry);
 
       // v0.9.1 #8: kill-switch banner re-enable button
       $("emKillSwitchEnableBtn").addEventListener("click", async () => {

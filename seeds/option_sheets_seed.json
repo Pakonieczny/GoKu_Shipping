@@ -1,0 +1,756 @@
+{
+  "_meta": {
+    "purpose": "Seed for EtsyMail_OptionSheets collection. Import each top-level key as a document at EtsyMail_OptionSheets/<key>. The sales agent reads from this collection at runtime; this seed is the source of truth.",
+    "version": "2.3.1",
+    "schemaNotes": [
+      "Each product family (huggie, necklace, stud) is one Firestore doc.",
+      "sections[] is ordered — agent walks them in that order during spec stage.",
+      "Each option has: code, label, priceUsd OR priceQuote (true) OR priceNotAvailable (true), and flag fields.",
+      "modifiers[] inside an option override the priceUsd computation (e.g., 'percentOfPair', 'addToTotal').",
+      "bulkSavings is the discount tier table — applies to the full per-piece subtotal, then × quantity.",
+      "dependencies declare prereqs ('only when chain selected'); the agent skips dependent sections when prereq fails.",
+      "unitOfMeasure declares what '1 piece' means (e.g., huggie = pair of 2 charms; stud = pair OR single OR mismatched pair).",
+      "escalateOnQuote: true means hitting any priceQuote:true option triggers Needs Review handoff.",
+      "Not-available codes (priceNotAvailable:true) cause a hard refusal; the agent must NOT proceed with that selection.",
+      "rushProduction is a separate per-order add-on (not a section): $15 flat, regardless of qty. Set globally per family — same policy across all three.",
+      "Expedited shipping is read at runtime from EtsyMail_ShippingUpgradesCache (synced from Etsy). The resolver does not embed shipping in the per-piece total."
+    ],
+    "lastUpdated": "2026-04-26",
+    "createdBy": "system:seed",
+    "pricingSource": "Updated to match attached Custom Huggie Charm Sheet, Custom Necklace Charm Sheet, and Custom Stud Earring Sheet images exactly."
+  },
+  "huggie": {
+    "family": "huggie",
+    "displayName": "Custom Huggie Charm",
+    "active": true,
+    "unitOfMeasure": {
+      "label": "set of 2 charms",
+      "explainer": "Huggie charm prices are for a SET of 2. Quantity 1 in the order = 1 set = 2 charms. The agent must state this clearly when confirming."
+    },
+    "escalateOnQuote": true,
+    "sections": [
+      {
+        "sectionId": 1,
+        "name": "CHOOSE CHARM SIZE",
+        "instruction": "Select one size + metal combination.",
+        "required": true,
+        "options": [
+          {
+            "code": "1A",
+            "size": "5–6 mm",
+            "metal": "Sterling Silver",
+            "priceUsd": 16
+          },
+          {
+            "code": "1B",
+            "size": "5–6 mm",
+            "metal": "14k Gold Filled",
+            "priceUsd": 17
+          },
+          {
+            "code": "1C",
+            "size": "5–6 mm",
+            "metal": "14k Rose Gold Filled",
+            "priceUsd": 18
+          },
+          {
+            "code": "1D",
+            "size": "5–6 mm",
+            "metal": "14k Solid Gold",
+            "priceUsd": 94
+          },
+          {
+            "code": "1E",
+            "size": "7–8 mm",
+            "metal": "Sterling Silver",
+            "priceUsd": 20
+          },
+          {
+            "code": "1F",
+            "size": "7–8 mm",
+            "metal": "14k Gold Filled",
+            "priceUsd": 21
+          },
+          {
+            "code": "1G",
+            "size": "7–8 mm",
+            "metal": "14k Rose Gold Filled",
+            "priceUsd": 22
+          },
+          {
+            "code": "1H",
+            "size": "7–8 mm",
+            "metal": "14k Solid Gold",
+            "priceUsd": 135
+          },
+          {
+            "code": "1I",
+            "size": "9–10 mm",
+            "metal": "Sterling Silver",
+            "priceUsd": 24
+          },
+          {
+            "code": "1J",
+            "size": "9–10 mm",
+            "metal": "14k Gold Filled",
+            "priceUsd": 25
+          },
+          {
+            "code": "1K",
+            "size": "9–10 mm",
+            "metal": "14k Rose Gold Filled",
+            "priceUsd": 26
+          },
+          {
+            "code": "1L",
+            "size": "9–10 mm",
+            "metal": "14k Solid Gold",
+            "priceUsd": 185
+          },
+          {
+            "code": "1M",
+            "size": "Detailed/larger",
+            "metal": "Sterling Silver",
+            "priceQuote": true
+          },
+          {
+            "code": "1N",
+            "size": "Detailed/larger",
+            "metal": "14k Gold Filled",
+            "priceQuote": true
+          },
+          {
+            "code": "1O",
+            "size": "Detailed/larger",
+            "metal": "14k Rose Gold Filled",
+            "priceQuote": true
+          },
+          {
+            "code": "1P",
+            "size": "Detailed/larger",
+            "metal": "14k Solid Gold",
+            "priceQuote": true
+          }
+        ]
+      },
+      {
+        "sectionId": 2,
+        "name": "CHOOSE HOOP ADD-ON",
+        "instruction": "Select one. (Optional — customer can decline this section.)",
+        "required": false,
+        "options": [
+          {
+            "code": "2A",
+            "hoopSize": "8.5 mm",
+            "metal": "Sterling Silver",
+            "priceUsd": 26
+          },
+          {
+            "code": "2B",
+            "hoopSize": "8.5 mm",
+            "metal": "14k Gold Vermeil",
+            "priceUsd": 29
+          },
+          {
+            "code": "2C",
+            "hoopSize": "8.5 mm",
+            "metal": "14k Solid Gold",
+            "priceUsd": 125
+          },
+          {
+            "code": "2D",
+            "hoopSize": "11 mm",
+            "metal": "Sterling Silver",
+            "priceUsd": 26
+          },
+          {
+            "code": "2E",
+            "hoopSize": "11 mm",
+            "metal": "14k Gold Vermeil",
+            "priceUsd": 29
+          },
+          {
+            "code": "2F",
+            "hoopSize": "11 mm",
+            "metal": "14k Solid Gold",
+            "priceUsd": 150
+          }
+        ]
+      },
+      {
+        "sectionId": 3,
+        "name": "BULK ORDER SAVINGS",
+        "instruction": "Automatic savings based on quantity. Each piece = 1 set of 2 huggie charms.",
+        "required": false,
+        "isAutomatic": true,
+        "bulkSavings": [
+          {
+            "code": "4A",
+            "minQty": 1,
+            "maxQty": 4,
+            "discountPct": 0,
+            "label": "Standard price"
+          },
+          {
+            "code": "4B",
+            "minQty": 5,
+            "maxQty": 9,
+            "discountPct": 10,
+            "label": "10% off"
+          },
+          {
+            "code": "4C",
+            "minQty": 10,
+            "maxQty": 24,
+            "discountPct": 15,
+            "label": "15% off"
+          },
+          {
+            "code": "4D",
+            "minQty": 25,
+            "maxQty": 49,
+            "discountPct": 20,
+            "label": "20% off"
+          },
+          {
+            "code": "4E",
+            "minQty": 50,
+            "maxQty": null,
+            "discountPct": 25,
+            "label": "25% off"
+          }
+        ]
+      }
+    ],
+    "rushProduction": {
+      "available": true,
+      "feeUsd": 15,
+      "feeStructure": "per_order",
+      "qtyMaxForRush": 10,
+      "productionDaysStandardMin": 4,
+      "productionDaysStandardMax": 5,
+      "productionDaysRushMin": 2,
+      "productionDaysRushMax": 3,
+      "hardEscalateWithQuoteRow": true,
+      "customerFacingDescription": "Rush production: ready in 2-3 business days instead of the usual 4-5 (+$15, one-time fee per order)."
+    }
+  },
+  "necklace": {
+    "family": "necklace",
+    "displayName": "Custom Necklace Charm",
+    "active": true,
+    "unitOfMeasure": {
+      "label": "1 necklace charm (with chain if selected)",
+      "explainer": "Necklace charm prices are PER PIECE. Quantity 1 = 1 charm. Chain is an optional add-on."
+    },
+    "escalateOnQuote": true,
+    "sections": [
+      {
+        "sectionId": 1,
+        "name": "CHOOSE CHARM SIZE",
+        "instruction": "Select one size + metal combination.",
+        "required": true,
+        "options": [
+          {
+            "code": "1A",
+            "size": "9–10 mm",
+            "metal": "Sterling Silver",
+            "priceUsd": 24
+          },
+          {
+            "code": "1B",
+            "size": "9–10 mm",
+            "metal": "14k Gold Filled",
+            "priceUsd": 25
+          },
+          {
+            "code": "1C",
+            "size": "9–10 mm",
+            "metal": "14k Rose Gold Filled",
+            "priceUsd": 26
+          },
+          {
+            "code": "1D",
+            "size": "9–10 mm",
+            "metal": "14k Solid Gold",
+            "priceUsd": 115
+          },
+          {
+            "code": "1E",
+            "size": "11–12 mm",
+            "metal": "Sterling Silver",
+            "priceUsd": 28
+          },
+          {
+            "code": "1F",
+            "size": "11–12 mm",
+            "metal": "14k Gold Filled",
+            "priceUsd": 30
+          },
+          {
+            "code": "1G",
+            "size": "11–12 mm",
+            "metal": "14k Rose Gold Filled",
+            "priceUsd": 32
+          },
+          {
+            "code": "1H",
+            "size": "11–12 mm",
+            "metal": "14k Solid Gold",
+            "priceUsd": 155
+          },
+          {
+            "code": "1I",
+            "size": "14 mm",
+            "metal": "Sterling Silver",
+            "priceUsd": 35
+          },
+          {
+            "code": "1J",
+            "size": "14 mm",
+            "metal": "14k Gold Filled",
+            "priceUsd": 40
+          },
+          {
+            "code": "1K",
+            "size": "14 mm",
+            "metal": "14k Rose Gold Filled",
+            "priceUsd": 41
+          },
+          {
+            "code": "1L",
+            "size": "14 mm",
+            "metal": "14k Solid Gold",
+            "priceUsd": 250
+          },
+          {
+            "code": "1M",
+            "size": "1 inch (~25 mm)",
+            "metal": "Sterling Silver",
+            "priceUsd": 75,
+            "matchAliases": [
+              "1 inch",
+              "1\"",
+              "25mm",
+              "~25mm",
+              "around 1 inch",
+              "an inch"
+            ]
+          },
+          {
+            "code": "1N",
+            "size": "1 inch (~25 mm)",
+            "metal": "14k Gold Filled",
+            "priceUsd": 80,
+            "matchAliases": [
+              "1 inch",
+              "1\"",
+              "25mm",
+              "~25mm",
+              "around 1 inch",
+              "an inch"
+            ]
+          },
+          {
+            "code": "1O",
+            "size": "1 inch (~25 mm)",
+            "metal": "14k Rose Gold Filled",
+            "priceUsd": 85,
+            "matchAliases": [
+              "1 inch",
+              "1\"",
+              "25mm",
+              "~25mm",
+              "around 1 inch",
+              "an inch"
+            ]
+          },
+          {
+            "code": "1P",
+            "size": "1 inch (~25 mm)",
+            "metal": "14k Solid Gold",
+            "priceUsd": 550,
+            "matchAliases": [
+              "1 inch",
+              "1\"",
+              "25mm",
+              "~25mm",
+              "around 1 inch",
+              "an inch"
+            ]
+          }
+        ]
+      },
+      {
+        "sectionId": 2,
+        "name": "CHOOSE ENGRAVING",
+        "instruction": "Select one. Applies to ALL necklace charm sizes.",
+        "required": true,
+        "options": [
+          {
+            "code": "2A",
+            "label": "One side",
+            "priceUsd": 0,
+            "explainer": "Included in charm price."
+          },
+          {
+            "code": "2B",
+            "label": "Two sides",
+            "priceUsd": 10
+          }
+        ]
+      },
+      {
+        "sectionId": 3,
+        "name": "CHOOSE CHAIN OPTION",
+        "instruction": "Select one. Optional — customer can decline if they only want the charm.",
+        "required": false,
+        "options": [
+          {
+            "code": "3A",
+            "chainStyle": "Regular Chain",
+            "metal": "Sterling Silver",
+            "priceUsd": 18
+          },
+          {
+            "code": "3B",
+            "chainStyle": "Regular Chain",
+            "metal": "14k Gold Filled",
+            "priceUsd": 20
+          },
+          {
+            "code": "3C",
+            "chainStyle": "Regular Chain",
+            "metal": "14k Rose Gold Filled",
+            "priceUsd": 22
+          },
+          {
+            "code": "3D",
+            "chainStyle": "Regular Chain",
+            "metal": "14k Solid Gold",
+            "priceQuote": true
+          },
+          {
+            "code": "3E",
+            "chainStyle": "Beady Chain",
+            "metal": "Sterling Silver",
+            "priceUsd": 30
+          },
+          {
+            "code": "3F",
+            "chainStyle": "Beady Chain",
+            "metal": "14k Gold Filled",
+            "priceUsd": 35
+          },
+          {
+            "code": "3G",
+            "chainStyle": "Beady Chain",
+            "metal": "14k Rose Gold Filled",
+            "priceNotAvailable": true,
+            "notAvailableMessage": "Sorry, the Beady Chain in 14k Rose Gold Filled is not available. We do offer Beady Chain in Sterling Silver (3E) or 14k Gold Filled (3F), or a Regular Chain in 14k Rose Gold Filled (3C). Would any of those work?"
+          },
+          {
+            "code": "3H",
+            "chainStyle": "Beady Chain",
+            "metal": "14k Solid Gold",
+            "priceQuote": true
+          }
+        ]
+      },
+      {
+        "sectionId": 4,
+        "name": "CHOOSE LENGTH",
+        "instruction": "Select one. ONLY applies if a chain was selected in section 3.",
+        "required": false,
+        "dependencies": {
+          "requires": "section3:any"
+        },
+        "options": [
+          {
+            "code": "4A",
+            "length": "16–18 in",
+            "priceUsd": 0,
+            "explainer": "Included in chain price."
+          },
+          {
+            "code": "4B",
+            "length": "20 in",
+            "priceUsd": 4
+          },
+          {
+            "code": "4C",
+            "length": "22–24 in",
+            "priceUsd": 8
+          },
+          {
+            "code": "4D",
+            "length": "Custom length",
+            "priceQuote": true
+          }
+        ]
+      },
+      {
+        "sectionId": 5,
+        "name": "BULK ORDER SAVINGS",
+        "instruction": "Automatic savings based on quantity. Each piece = 1 necklace charm (with optional chain).",
+        "required": false,
+        "isAutomatic": true,
+        "bulkSavings": [
+          {
+            "code": "5A",
+            "minQty": 1,
+            "maxQty": 4,
+            "discountPct": 0,
+            "label": "Standard price"
+          },
+          {
+            "code": "5B",
+            "minQty": 5,
+            "maxQty": 9,
+            "discountPct": 10,
+            "label": "10% off"
+          },
+          {
+            "code": "5C",
+            "minQty": 10,
+            "maxQty": 24,
+            "discountPct": 15,
+            "label": "15% off"
+          },
+          {
+            "code": "5D",
+            "minQty": 25,
+            "maxQty": 49,
+            "discountPct": 20,
+            "label": "20% off"
+          },
+          {
+            "code": "5E",
+            "minQty": 50,
+            "maxQty": null,
+            "discountPct": 25,
+            "label": "25% off"
+          }
+        ]
+      }
+    ],
+    "rushProduction": {
+      "available": true,
+      "feeUsd": 15,
+      "feeStructure": "per_order",
+      "qtyMaxForRush": 10,
+      "productionDaysStandardMin": 4,
+      "productionDaysStandardMax": 5,
+      "productionDaysRushMin": 2,
+      "productionDaysRushMax": 3,
+      "hardEscalateWithQuoteRow": true,
+      "customerFacingDescription": "Rush production: ready in 2-3 business days instead of the usual 4-5 (+$15, one-time fee per order)."
+    }
+  },
+  "stud": {
+    "family": "stud",
+    "displayName": "Custom Stud Earrings",
+    "active": true,
+    "unitOfMeasure": {
+      "label": "1 set (pair, single, or mismatched pair)",
+      "explainer": "A 'piece' for stud bulk-savings = 1 set, regardless of whether the set is a pair, a single stud, or a mismatched pair. Single = 60% of pair price. Mismatched pair = pair price + $5."
+    },
+    "escalateOnQuote": true,
+    "sections": [
+      {
+        "sectionId": 1,
+        "name": "CHOOSE STUD SIZE",
+        "instruction": "Select one size + metal combination. Base price is for a PAIR.",
+        "required": true,
+        "options": [
+          {
+            "code": "1A",
+            "size": "4–6 mm (Mini)",
+            "metal": "Sterling Silver",
+            "priceUsd": 37
+          },
+          {
+            "code": "1B",
+            "size": "4–6 mm (Mini)",
+            "metal": "14k Gold Filled",
+            "priceUsd": 40
+          },
+          {
+            "code": "1C",
+            "size": "4–6 mm (Mini)",
+            "metal": "14k Rose Gold Filled",
+            "priceUsd": 40
+          },
+          {
+            "code": "1D",
+            "size": "4–6 mm (Mini)",
+            "metal": "14k Solid Gold",
+            "priceUsd": 210
+          },
+          {
+            "code": "1E",
+            "size": "7–9 mm (Standard)",
+            "metal": "Sterling Silver",
+            "priceUsd": 37
+          },
+          {
+            "code": "1F",
+            "size": "7–9 mm (Standard)",
+            "metal": "14k Gold Filled",
+            "priceUsd": 40
+          },
+          {
+            "code": "1G",
+            "size": "7–9 mm (Standard)",
+            "metal": "14k Rose Gold Filled",
+            "priceUsd": 40
+          },
+          {
+            "code": "1H",
+            "size": "7–9 mm (Standard)",
+            "metal": "14k Solid Gold",
+            "priceUsd": 255
+          },
+          {
+            "code": "1I",
+            "size": "10–12 mm (Oversize)",
+            "metal": "Sterling Silver",
+            "priceUsd": 43
+          },
+          {
+            "code": "1J",
+            "size": "10–12 mm (Oversize)",
+            "metal": "14k Gold Filled",
+            "priceUsd": 45
+          },
+          {
+            "code": "1K",
+            "size": "10–12 mm (Oversize)",
+            "metal": "14k Rose Gold Filled",
+            "priceUsd": 45
+          },
+          {
+            "code": "1L",
+            "size": "10–12 mm (Oversize)",
+            "metal": "14k Solid Gold",
+            "priceUsd": 295
+          },
+          {
+            "code": "1M",
+            "size": "Custom Size",
+            "metal": "Sterling Silver",
+            "priceQuote": true
+          },
+          {
+            "code": "1N",
+            "size": "Custom Size",
+            "metal": "14k Gold Filled",
+            "priceQuote": true
+          },
+          {
+            "code": "1O",
+            "size": "Custom Size",
+            "metal": "14k Rose Gold Filled",
+            "priceQuote": true
+          },
+          {
+            "code": "1P",
+            "size": "Custom Size",
+            "metal": "14k Solid Gold",
+            "priceQuote": true
+          }
+        ]
+      },
+      {
+        "sectionId": 2,
+        "name": "CHOOSE YOUR SET",
+        "instruction": "Select one. Default is a pair. 'Single Stud' is 60% of the pair price (one earring only). 'Mismatched Pair' is pair price + $5.",
+        "required": true,
+        "options": [
+          {
+            "code": "2A",
+            "label": "Pair",
+            "modifier": {
+              "type": "asIs"
+            },
+            "explainer": "Default — both earrings same as section 1."
+          },
+          {
+            "code": "2B",
+            "label": "Single Stud",
+            "modifier": {
+              "type": "percentOfPair",
+              "pct": 60
+            },
+            "explainer": "60% of pair price; only one earring."
+          },
+          {
+            "code": "2C",
+            "label": "Mismatched Pair",
+            "modifier": {
+              "type": "addToTotal",
+              "amountUsd": 5
+            },
+            "explainer": "Pair price + $5. Two different earrings; the second variant must be specified separately."
+          }
+        ]
+      },
+      {
+        "sectionId": 3,
+        "name": "BULK ORDER SAVINGS",
+        "instruction": "Automatic savings based on quantity. Each piece = 1 set (pair, single, or mismatched pair).",
+        "required": false,
+        "isAutomatic": true,
+        "bulkSavings": [
+          {
+            "code": "3A",
+            "minQty": 1,
+            "maxQty": 4,
+            "discountPct": 0,
+            "label": "Standard price"
+          },
+          {
+            "code": "3B",
+            "minQty": 5,
+            "maxQty": 9,
+            "discountPct": 10,
+            "label": "10% off"
+          },
+          {
+            "code": "3C",
+            "minQty": 10,
+            "maxQty": 24,
+            "discountPct": 15,
+            "label": "15% off"
+          },
+          {
+            "code": "3D",
+            "minQty": 25,
+            "maxQty": 49,
+            "discountPct": 20,
+            "label": "20% off"
+          },
+          {
+            "code": "3E",
+            "minQty": 50,
+            "maxQty": null,
+            "discountPct": 25,
+            "label": "25% off"
+          }
+        ]
+      }
+    ],
+    "rushProduction": {
+      "available": true,
+      "feeUsd": 15,
+      "feeStructure": "per_order",
+      "qtyMaxForRush": 10,
+      "productionDaysStandardMin": 4,
+      "productionDaysStandardMax": 5,
+      "productionDaysRushMin": 2,
+      "productionDaysRushMax": 3,
+      "hardEscalateWithQuoteRow": true,
+      "customerFacingDescription": "Rush production: ready in 2-3 business days instead of the usual 4-5 (+$15, one-time fee per order)."
+    }
+  }
+}

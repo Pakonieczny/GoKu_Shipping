@@ -1,19 +1,20 @@
 /*  netlify/functions/_etsyMailAuth.js
  *
- *  Tiny shared helper — every EtsyMail write-path function uses this to
- *  validate the shared secret the Chrome extension (and any other trusted
- *  client) sends in the X-EtsyMail-Secret header.
+ *  Shared request helper for every EtsyMail function. Two responsibilities:
+ *
+ *  1. requireExtensionAuth(event) — validates the X-EtsyMail-Secret header
+ *     used by the Chrome extension, the inbox UI, and inter-function calls.
+ *  2. isScheduledInvocation(event) — detects whether the current request
+ *     is a Netlify cron invocation (so cron functions can bypass the
+ *     extension-secret check; the scheduler is the authority). Folded in
+ *     from the former _etsyMailScheduled.js (v2.4 consolidation).
  *
  *  Netlify env var to set:
  *    ETSYMAIL_EXTENSION_SECRET = <a long random string you generate>
  *
- *  If the env var is unset, the helper returns { ok: true } so local dev
- *  doesn't block. In production you MUST set it.
- *
- *  Not imported by the browser inbox (etsy-mail-1.html) — the inbox uses
- *  read-only firestoreProxy + etsyMailThreads, which are open by design
- *  because they only run from the operator UI in your control. If you want
- *  to tighten that later, add this check to those functions too.
+ *  If the env var is unset, requireExtensionAuth returns { ok: true } so
+ *  local dev doesn't block — except in CONTEXT=production, where it
+ *  fails closed.
  */
 
 const CORS = {
@@ -72,4 +73,30 @@ function requireExtensionAuth(event) {
   return { ok: true };
 }
 
-module.exports = { requireExtensionAuth, CORS };
+// ─── Scheduled-invocation detection ────────────────────────────────────
+// Folded in from the former _etsyMailScheduled.js helper. Used by every
+// cron function (etsyMailReapers, etsyMailListingsCatalog, etsyMail-
+// ShippingSync) to skip the extension-secret check when Netlify's
+// scheduler is the caller. Supports the modern `x-nf-event-source`
+// header, the older `x-netlify-event` header, and a local/manual
+// `{ _scheduled: true }` JSON body marker for testing.
+function isScheduledInvocation(event = {}) {
+  const rawHeaders = event.headers || {};
+  const headers = {};
+  for (const [k, v] of Object.entries(rawHeaders)) headers[String(k).toLowerCase()] = v;
+
+  if (headers["x-nf-event-source"] === "scheduled") return true;
+  if (headers["x-netlify-event"] === "schedule") return true;
+
+  const body = typeof event.body === "string" ? event.body : "";
+  if (body.includes("scheduled-event")) return true;
+  if (body) {
+    try {
+      const parsed = JSON.parse(body);
+      if (parsed && parsed._scheduled === true) return true;
+    } catch {}
+  }
+  return false;
+}
+
+module.exports = { requireExtensionAuth, CORS, isScheduledInvocation };

@@ -1,0 +1,131 @@
+{
+  "_meta": {
+    "purpose": "Seed for EtsyMail_Collateral collection. Each top-level key under 'items' is one document at EtsyMail_Collateral/<id>. Operator imports via the inbox UI's Collateral Library modal, or directly via Firestore console.",
+    "version": "2.3.1",
+    "schemaNotes": [
+      "category — what the AI's get_collateral tool searches by; matches the family or topic",
+      "kind — 'line_sheet' | 'product_card' | 'lookbook' | 'image_set' | 'terms'",
+      "url — public CDN URL the AI can reference in customer replies",
+      "description — shown to the AI when this item matches; must accurately summarize what's at the URL",
+      "keywords — extra match terms beyond category/kind",
+      "active — false hides from agent retrieval (for retiring stale collateral)"
+    ],
+    "lastUpdated": "2026-04-26",
+    "uploadInstructions": [
+      "1. Upload Goldfield_VS_Gold_Plated.jpg and Jewellery_care_guide.jpg to your CDN of choice (Cloudinary, Firebase Storage, etc.).",
+      "2. Replace the placeholder URL fields below with the actual public URLs.",
+      "3. Either import this seed directly to Firestore (collection EtsyMail_Collateral, doc IDs from the keys), OR open the Collateral Library modal in the inbox UI and add each entry by hand."
+    ]
+  },
+  "items": {
+    "goldfield_vs_plated_card": {
+      "id": "goldfield_vs_plated_card",
+      "name": "About 14k Gold Filled — visual comparison",
+      "category": "metals_education",
+      "kind": "product_card",
+      "url": "REPLACE_WITH_PUBLIC_URL",
+      "description": "Visual comparison of Solid Gold vs Gold Filled vs Gold Plated. Use when a customer asks about gold-filled durability, the difference between gold-filled and gold-plated, whether gold-filled tarnishes, or whether 14k Gold Filled is hypoallergenic. Key facts: 14k Gold Filled is hypoallergenic, has a thick layer of gold heat-bonded to a base, does not tarnish/flake/turn green like plated gold, and can last a lifetime.",
+      "keywords": [
+        "14k gold filled",
+        "gold filled",
+        "gold plated",
+        "solid gold",
+        "tarnish",
+        "hypoallergenic",
+        "metal quality",
+        "metal difference",
+        "what is gold filled",
+        "does gold filled tarnish",
+        "vs plated"
+      ],
+      "active": true,
+      "createdBy": "system:seed"
+    },
+    "jewelry_care_guide": {
+      "id": "jewelry_care_guide",
+      "name": "Jewelry Care Guide — six-tip card",
+      "category": "aftercare",
+      "kind": "terms",
+      "url": "REPLACE_WITH_PUBLIC_URL",
+      "description": "Six-tip jewelry care card. Use when a customer asks how to care for their piece, how to keep it shiny, whether they can wear it in the shower, whether perfume/lotion will damage it, how to store it, or how to clean it. Tips: avoid spraying perfume directly on jewelry (wear after spraying), remove before bathing/showering/swimming, avoid contact with creams/lotions/makeup/hairspray, remove before bed, clean with a soft cotton cloth, store separately in the supplied baggie or box.",
+      "keywords": [
+        "care",
+        "cleaning",
+        "tarnish prevention",
+        "storage",
+        "shower",
+        "swim",
+        "perfume",
+        "lotion",
+        "makeup",
+        "how to care for",
+        "how to clean",
+        "how to store",
+        "aftercare",
+        "longevity",
+        "keep shiny"
+      ],
+      "active": true,
+      "createdBy": "system:seed"
+    },
+    "huggie_line_sheet": {
+      "id": "huggie_line_sheet",
+      "name": "Custom Huggie Charm Line Sheet",
+      "category": "huggie",
+      "kind": "line_sheet",
+      "url": "REPLACE_WITH_PUBLIC_URL",
+      "description": "The customer-facing Custom Huggie Charm line sheet. Codes 1A-1P (charm size + metal), 2A-2F (hoop add-on), and 4A-4E (bulk savings). Reference this URL when a customer wants the visual sheet to pick from. The AI's resolveQuote tool already has the full code/price database loaded; this URL is for the CUSTOMER's visual reference, not the AI's pricing source.",
+      "keywords": [
+        "huggie",
+        "huggie line sheet",
+        "huggie charm",
+        "huggie codes",
+        "charm sheet",
+        "send me the options",
+        "send me the line sheet"
+      ],
+      "active": true,
+      "createdBy": "system:seed"
+    },
+    "necklace_line_sheet": {
+      "id": "necklace_line_sheet",
+      "name": "Custom Necklace Charm Line Sheet",
+      "category": "necklace",
+      "kind": "line_sheet",
+      "url": "REPLACE_WITH_PUBLIC_URL",
+      "description": "The customer-facing Custom Necklace Charm line sheet. Codes 1A-1P (charm size + metal), 2A-2B (engraving), 3A-3H (chain option), 4A-4D (length, only when chain selected), and 5A-5E (bulk savings). Note 3G (Beady Chain 14k Rose Gold Filled) is NOT AVAILABLE. Reference this URL when a customer wants the visual sheet.",
+      "keywords": [
+        "necklace",
+        "necklace line sheet",
+        "necklace charm",
+        "necklace codes",
+        "engraving sheet",
+        "chain options",
+        "send me the line sheet"
+      ],
+      "active": true,
+      "createdBy": "system:seed"
+    },
+    "stud_line_sheet": {
+      "id": "stud_line_sheet",
+      "name": "Custom Stud Earring Line Sheet",
+      "category": "stud",
+      "kind": "line_sheet",
+      "url": "REPLACE_WITH_PUBLIC_URL",
+      "description": "The customer-facing Custom Stud Earring line sheet. Codes 1A-1P (stud size + metal), 2A pair / 2B single (60% of pair) / 2C mismatched pair (+$5), and 3A-3E (bulk savings). Pair price is the base; single is 60% of pair; mismatched is pair + $5. Reference this URL when a customer wants the visual sheet.",
+      "keywords": [
+        "stud",
+        "studs",
+        "stud line sheet",
+        "stud earrings",
+        "earring sheet",
+        "single earring",
+        "mismatched studs",
+        "pair",
+        "send me the line sheet"
+      ],
+      "active": true,
+      "createdBy": "system:seed"
+    }
+  }
+}

@@ -63,6 +63,186 @@ const VALID_STATUSES = new Set([
   "archived"
 ]);
 
+// ─── v2.4: Search support (folded in from former etsyMailSearch.js) ─────
+//
+// Each thread doc carries a denormalized `searchableText` field populated
+// by etsyMailSnapshot.js: lowercased, normalized concatenation of customer
+// name / Etsy username / subject / linked order id, plus the most recent
+// ~6KB of message body. We load the most recent N threads ordered by
+// updatedAt desc, run a substring match in memory, return same shape as
+// firestoreProxy `op:list` so the UI can drop them into existing render
+// path with no changes.
+//
+// At 500 threads × 6KB = ~3MB transferred per search. In-memory cache
+// (15s TTL, keyed by query+limit+status) absorbs rapid keystrokes from
+// the inbox UI's debounced search input. When the inbox grows beyond
+// ~5K threads, swap for Algolia / Typesense / Meilisearch.
+
+// Cap how many threads we'll lazy-backfill per request. Each backfill
+// is one subcollection read + one write — too many in parallel trips
+// Firestore quota / function timeout.
+const MAX_BACKFILLS_PER_REQUEST = 50;
+
+// Same normalizer the snapshot uses, kept in sync. Lowercase + collapse
+// runs of whitespace + trim.
+function normalizeSearchText(text = "") {
+  return String(text).toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+const _searchCache = new Map();
+const SEARCH_CACHE_TTL_MS = 15 * 1000;
+const MAX_CACHE_ENTRIES = 100;
+
+/* Convert Firestore doc data to JSON-safe form, turning Timestamps into
+ * {_ts: true, ms: <millis>} markers — same shape firestoreProxy uses, so
+ * the inbox doesn't need a separate code path for search results. */
+function serializeForSearch(value) {
+  if (value === null || typeof value !== "object") return value;
+  if (value && typeof value.toDate === "function" && typeof value.toMillis === "function") {
+    return { _ts: true, ms: value.toMillis() };
+  }
+  if (Array.isArray(value)) return value.map(serializeForSearch);
+  const out = {};
+  for (const k of Object.keys(value)) out[k] = serializeForSearch(value[k]);
+  return out;
+}
+
+/** Trim the heaviest internal-only field from search results. v1.6: keep
+ *  `searchableText` so the UI can run further per-keystroke local
+ *  filtering on the result set without an extra round trip; only drop
+ *  the larger raw `searchableMessageText`. */
+function trimSearchResultDoc(data) {
+  const { searchableMessageText, ...rest } = data;
+  return rest;
+}
+
+function gcSearchCache() {
+  if (_searchCache.size <= MAX_CACHE_ENTRIES) return;
+  const cutoff = Date.now() - SEARCH_CACHE_TTL_MS;
+  for (const [k, v] of _searchCache.entries()) {
+    if (v.at < cutoff) _searchCache.delete(k);
+  }
+  while (_searchCache.size > MAX_CACHE_ENTRIES) {
+    const oldest = _searchCache.keys().next().value;
+    _searchCache.delete(oldest);
+  }
+}
+
+/** Run the full-text search. Extracted so the GET handler can dispatch
+ *  to it on `?search=1`. Returns the same response shape as the former
+ *  etsyMailSearch endpoint. */
+async function runThreadSearch({ q, limit, statusList }) {
+  const cacheKey = q + "|" + limit + "|" + statusList.sort().join(",");
+  const cached = _searchCache.get(cacheKey);
+  if (cached && (Date.now() - cached.at) < SEARCH_CACHE_TTL_MS) {
+    return {
+      docs   : cached.docs,
+      q,
+      count  : cached.docs.length,
+      scanned: cached.scanned,
+      cached : true
+    };
+  }
+
+  // Query strategy mirrors fetchThreadListNow's composite-index avoidance:
+  //   - status-filtered: single-field where, no orderBy (auto-index)
+  //   - unfiltered:      orderBy by updatedAt (single-field auto-index)
+  // Sort happens client-side anyway.
+  let firestoreQuery = db.collection(THREADS_COLL);
+  if (statusList.length === 1) {
+    firestoreQuery = firestoreQuery.where("status", "==", statusList[0]).limit(limit);
+  } else if (statusList.length > 1) {
+    // Firestore `in` supports up to 10 values.
+    firestoreQuery = firestoreQuery.where("status", "in", statusList).limit(limit);
+  } else {
+    firestoreQuery = firestoreQuery.orderBy("updatedAt", "desc").limit(limit);
+  }
+
+  const snap = await firestoreQuery.get();
+
+  const matches = [];
+  let backfilled = 0;
+  const backfillPromises = [];
+
+  snap.forEach(doc => {
+    const data = doc.data() || {};
+    const haystack = (data.searchableText || "").toLowerCase();
+
+    if (haystack) {
+      // Fast path: searchableText already populated.
+      if (haystack.includes(q)) {
+        matches.push({ id: doc.id, ...serializeForSearch(trimSearchResultDoc(data)) });
+      }
+      return;
+    }
+
+    // Lazy backfill for threads scraped before searchableText was
+    // populated (or threads with no new messages since). Also surface
+    // metadata-only matches immediately so the user sees something
+    // even before the body text is read.
+    const metaOnly = [
+      data.customerName, data.etsyUsername, data.subject, data.linkedOrderId
+    ].some(v => v && String(v).toLowerCase().includes(q));
+    if (metaOnly) {
+      matches.push({ id: doc.id, ...serializeForSearch(trimSearchResultDoc(data)) });
+    }
+
+    if (backfilled >= MAX_BACKFILLS_PER_REQUEST) return;
+    backfilled++;
+
+    backfillPromises.push((async () => {
+      try {
+        const msgsSnap = await doc.ref.collection("messages")
+          .orderBy("timestamp", "desc")
+          .limit(50)
+          .get();
+        const allText = msgsSnap.docs
+          .map(d => normalizeSearchText((d.data() || {}).text || ""))
+          .filter(Boolean)
+          .reverse()
+          .join(" ");
+        const SEARCHABLE_MAX = 6000;
+        const truncated = allText.length > SEARCHABLE_MAX
+          ? allText.slice(allText.length - SEARCHABLE_MAX)
+          : allText;
+        const meta = [
+          data.customerName, data.etsyUsername, data.subject, data.linkedOrderId
+        ].map(s => normalizeSearchText(String(s || ""))).filter(Boolean).join(" ");
+        const searchableText = (meta + " " + truncated).trim();
+
+        await doc.ref.set({
+          searchableText,
+          searchableMessageText: truncated
+        }, { merge: true });
+
+        if (searchableText.includes(q) && !metaOnly) {
+          const enriched = { ...data, searchableText, searchableMessageText: truncated };
+          matches.push({ id: doc.id, ...serializeForSearch(trimSearchResultDoc(enriched)) });
+        }
+      } catch (e) {
+        console.warn("etsyMailThreads search: backfill failed for", doc.id, "—", e.message);
+      }
+    })());
+  });
+
+  if (backfillPromises.length > 0) {
+    await Promise.all(backfillPromises);
+  }
+
+  _searchCache.set(cacheKey, { docs: matches, at: Date.now(), scanned: snap.size });
+  gcSearchCache();
+
+  return {
+    docs    : matches,
+    q,
+    count   : matches.length,
+    scanned : snap.size,
+    backfilled,
+    cached  : false,
+    maxedOut: snap.size >= limit
+  };
+}
+
 function json(statusCode, body) {
   return { statusCode, headers: CORS, body: JSON.stringify(body) };
 }
@@ -94,6 +274,35 @@ exports.handler = async (event) => {
 
     /* ──────────────────────────── GET ──────────────────────────── */
     if (method === "GET") {
+
+      /* ?search=1&q=...&limit=...&status=...
+       * Full-text search across threads. v2.4: folded in from former
+       * etsyMailSearch.js. The standalone /etsyMailSearch endpoint is
+       * preserved as a thin shim that delegates back to this same
+       * handler — see etsyMailSearch.js. */
+      if (qs.search === "1") {
+        const q = String(qs.q || "").trim().toLowerCase();
+        const limit = Math.min(Math.max(parseInt(qs.limit || "500", 10), 1), 2000);
+        const statusRaw = qs.status ? String(qs.status).trim() : "";
+        const statusList = statusRaw
+          ? statusRaw.split(",").map(s => s.trim()).filter(Boolean).slice(0, 10)  // Firestore `in` cap
+          : [];
+
+        // Guard: queries shorter than 2 chars would scan everything for
+        // "a". The inbox UI also debounces and only fires for q.length>=2,
+        // but defense in depth.
+        if (q.length < 2) {
+          return ok({ docs: [], q, count: 0, scanned: 0 });
+        }
+
+        try {
+          const result = await runThreadSearch({ q, limit, statusList });
+          return ok(result);
+        } catch (err) {
+          console.error("threads search error:", err);
+          return json(500, { error: err.message || String(err) });
+        }
+      }
 
       /* ?counts=1 → counts by status (for left-rail badges) */
       if (qs.counts === "1") {

@@ -24,6 +24,7 @@
 
 const admin = require("./firebaseAdmin");
 const { requireExtensionAuth } = require("./_etsyMailAuth");
+const { requireOwner, requireAnyRole, logUnauthorized } = require("./_etsyMailRoles");
 const db    = admin.firestore();
 const FV    = admin.firestore.FieldValue;
 
@@ -46,11 +47,52 @@ const CALLABLE_COLLS = new Set([
   "EtsyMail_Audit",
   "EtsyMail_Jobs",
   "EtsyMail_Config",
-  "EtsyMail_TrackingCache",   // M4 tracking-image cache (keyed by tracking code)
-  "EtsyMail_TrackingJobs"     // M4 tracking-image async job status (keyed by jobId)
+  "EtsyMail_TrackingCache",          // M4 tracking-image cache (keyed by tracking code)
+  "EtsyMail_TrackingJobs",            // M4 tracking-image async job status (keyed by jobId)
+  // ─── v2.0 Step 1 ─────────────────────────────────────────────────────
+  "EtsyMail_Listings",                // Etsy listings catalog mirror
+  "EtsyMail_ListingsSync",            // catalog sync state (id: "global")
+  "EtsyMail_IntentClassifications",   // per-thread intent cache
+  // ─── v2.0 Step 2 ────────────────────────────────────────────────────
+  "EtsyMail_SalesContext",            // per-thread sales-funnel state
+  "EtsyMail_SalesPrompts",            // operator-tunable per-stage prompts
+  "EtsyMail_Operators",               // role assignments (owner | operator)
+  // ─── v2.0 Step 2.5 ──────────────────────────────────────────────────
+  "EtsyMail_Collateral",              // owner-curated reference URLs
+  // ─── v2.1 Option-sheet pricing (replaces v2.0 band model) ───────────
+  "EtsyMail_OptionSheets",            // line-sheet docs per product family
+  // ─── v2.2 Etsy shipping upgrades cache ──────────────────────────────
+  "EtsyMail_ShippingUpgradesCache"    // synced from Etsy every 6h
+  // ─── v2.0 Step 3 will add ───────────────────────────────────────────
+  // "EtsyMail_CustomOrders",
+  // "EtsyMail_CustomOrderTemplates"
 ]);
 const CALLABLE_SUBS = new Set([
   "messages"
+]);
+
+const OWNER_WRITE_COLLS = new Set([
+  "EtsyMail_Operators",
+  "EtsyMail_Config",
+  "EtsyMail_OptionSheets",
+  "EtsyMail_Collateral",
+  "EtsyMail_SalesPrompts",
+  "EtsyMail_ShippingUpgradesCache"
+]);
+
+// Operator-write collections: any registered role (owner or operator) may
+// write through the proxy, but anonymous extension-secret-only callers
+// cannot. This closes the gap where a leaked secret could freely mutate
+// thread state or draft payloads without any identity on the audit trail.
+//
+// EtsyMail_Threads — operator may mirror a sales-stage advance; all other
+//   thread-state writes come through etsyMailThreads (role-checked there).
+// EtsyMail_Drafts  — operator may persist composer attachment lists; the
+//   full draft lifecycle is managed by etsyMailDraftReply / etsyMailDraftSend.
+const OPERATOR_WRITE_COLLS = new Set([
+  "EtsyMail_SalesContext",
+  "EtsyMail_Threads",
+  "EtsyMail_Drafts"
 ]);
 
 function json(statusCode, body) {
@@ -64,6 +106,31 @@ function assertColl(coll) {
 }
 function assertSub(sub) {
   if (!CALLABLE_SUBS.has(sub)) throw new Error(`Subcollection '${sub}' not in allowlist`);
+}
+
+async function requireProxyWriteRole(coll, op, actor, payload = {}) {
+  if (OWNER_WRITE_COLLS.has(coll)) {
+    const owner = await requireOwner(actor);
+    if (!owner.ok) {
+      await logUnauthorized({
+        actor,
+        eventType: "firestore_proxy_write_unauthorized",
+        payload: { coll, op, reason: owner.reason, ...payload }
+      });
+      return { ok: false, statusCode: 403, error: "Owner role required", reason: owner.reason };
+    }
+  } else if (OPERATOR_WRITE_COLLS.has(coll)) {
+    const operator = await requireAnyRole(actor);
+    if (!operator.ok) {
+      await logUnauthorized({
+        actor,
+        eventType: "firestore_proxy_write_unauthorized",
+        payload: { coll, op, reason: operator.reason, ...payload }
+      });
+      return { ok: false, statusCode: 403, error: "Registered operator role required", reason: operator.reason };
+    }
+  }
+  return { ok: true };
 }
 
 /* Recursively substitute { __serverTimestamp:true } with server timestamps
@@ -222,37 +289,45 @@ exports.handler = async (event) => {
       /* ─── set ───────────────────────────────
        * Explicit doc id. With merge:true behaves like patch. */
       if (op === "set") {
-        const { coll, id, data, merge = false } = body;
+        const { coll, id, data, merge = false, actor = null } = body;
         if (!coll || !id || !data) return bad("Missing coll, id, or data");
         assertColl(coll);
+        const role = await requireProxyWriteRole(coll, op, actor, { id: String(id) });
+        if (!role.ok) return json(role.statusCode, { error: role.error, reason: role.reason });
         await db.collection(coll).doc(String(id)).set(hydrate(data), { merge: !!merge });
         return ok({ id: String(id) });
       }
 
       /* ─── add ─────────────────────────────── */
       if (op === "add") {
-        const { coll, data } = body;
+        const { coll, data, actor = null } = body;
         if (!coll || !data) return bad("Missing coll or data");
         assertColl(coll);
+        const role = await requireProxyWriteRole(coll, op, actor);
+        if (!role.ok) return json(role.statusCode, { error: role.error, reason: role.reason });
         const ref = await db.collection(coll).add(hydrate(data));
         return ok({ id: ref.id });
       }
 
       /* ─── addSub ──────────────────────────── */
       if (op === "addSub") {
-        const { coll, id, sub, data } = body;
+        const { coll, id, sub, data, actor = null } = body;
         if (!coll || !id || !sub || !data) return bad("Missing coll, id, sub, or data");
         assertColl(coll);
         assertSub(sub);
+        const role = await requireProxyWriteRole(coll, op, actor, { id: String(id), sub });
+        if (!role.ok) return json(role.statusCode, { error: role.error, reason: role.reason });
         const ref = await db.collection(coll).doc(String(id)).collection(sub).add(hydrate(data));
         return ok({ id: ref.id });
       }
 
       /* ─── update ──────────────────────────── */
       if (op === "update") {
-        const { coll, id, data } = body;
+        const { coll, id, data, actor = null } = body;
         if (!coll || !id || !data) return bad("Missing coll, id, or data");
         assertColl(coll);
+        const role = await requireProxyWriteRole(coll, op, actor, { id: String(id) });
+        if (!role.ok) return json(role.statusCode, { error: role.error, reason: role.reason });
         await db.collection(coll).doc(String(id)).update(hydrate(data));
         return ok({ id: String(id) });
       }
@@ -263,11 +338,13 @@ exports.handler = async (event) => {
        * from earlier scraper versions. Paginates in chunks of 400 to
        * stay under Firestore's batch limits. */
       if (op === "deleteSub") {
-        const { coll, id, sub, confirm } = body;
+        const { coll, id, sub, confirm, actor = null } = body;
         if (!coll || !id || !sub) return bad("Missing coll, id, or sub");
         if (confirm !== true) return bad("Refusing to deleteSub without { confirm: true } flag");
         assertColl(coll);
         assertSub(sub);
+        const role = await requireProxyWriteRole(coll, op, actor, { id: String(id), sub });
+        if (!role.ok) return json(role.statusCode, { error: role.error, reason: role.reason });
 
         const subRef = db.collection(coll).doc(String(id)).collection(sub);
         let totalDeleted = 0;
@@ -300,10 +377,12 @@ exports.handler = async (event) => {
       /* ─── deleteDoc ─────────────────────────
        * Delete a single top-level doc. */
       if (op === "deleteDoc") {
-        const { coll, id, confirm } = body;
+        const { coll, id, confirm, actor = null } = body;
         if (!coll || !id) return bad("Missing coll or id");
         if (confirm !== true) return bad("Refusing to deleteDoc without { confirm: true } flag");
         assertColl(coll);
+        const role = await requireProxyWriteRole(coll, op, actor, { id: String(id) });
+        if (!role.ok) return json(role.statusCode, { error: role.error, reason: role.reason });
         await db.collection(coll).doc(String(id)).delete();
         return ok({ id: String(id), deleted: true });
       }

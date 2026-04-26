@@ -73,6 +73,13 @@ const {
   getShopReceiptShipments
 } = require("./_etsyMailEtsy");
 
+let searchListings = null;
+try {
+  ({ searchListings } = require("./etsyMailListingsCatalog"));
+} catch (e) {
+  searchListings = null;
+}
+
 const db     = admin.firestore();
 const bucket = admin.storage().bucket();
 const FV     = admin.firestore.FieldValue;
@@ -618,7 +625,7 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
 
 --- TOOL USE ---
 
-You have four tools:
+You have five tools:
   - lookup_order_tracking(receiptId) — returns tracking code, carrier,
     ship date, delivery status for a specific order. Use this whenever
     the customer asks about tracking/where their order is/has it shipped.
@@ -632,6 +639,10 @@ You have four tools:
     pass the correct tracking code. The carrier (USPS vs Chit Chats) is
     auto-detected. You will naturally reference the attached image in
     your reply (e.g., "I've pulled up the tracking for you below").
+  - search_shop_listings(query) — searches the mirrored active Etsy
+    listing catalog. Use it for pre-purchase availability questions like
+    "do you sell X?", "do you have this in silver?", or "how much is Y?"
+    when the thread did not route into sales mode.
   - compose_draft_reply(...) — THE TERMINAL TOOL. Call this exactly
     ONCE when you've completed all lookups and are ready to commit the
     reply. This ends the draft generation.
@@ -645,7 +656,10 @@ Workflow:
      (they're anxious about a package, asking "where is it?", or the
      tracking has unusual detail worth showing), call
      generate_tracking_image with the tracking code from step 3
-  5. Call compose_draft_reply with the final text + reasoning +
+  5. If the active question is a product availability, variant, or price
+     question and no exact listing is already clear from the thread,
+     call search_shop_listings before suggesting products or prices
+  6. Call compose_draft_reply with the final text + reasoning +
      referenced receiptIds + any listing suggestions
 
 When you've generated a tracking image, mention it naturally in your
@@ -836,6 +850,26 @@ const TOOL_SPECS = [
     }
   },
   {
+    name: "search_shop_listings",
+    description: "Search the shop's mirrored active Etsy listings. Use this for normal customer-service/pre-purchase questions about whether the shop sells something, available variants/materials, or rough product price when the thread did not route to sales mode.",
+    input_schema: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "Product name, material, color, occasion, animal/theme, or other listing search term."
+        },
+        limit: {
+          type: "integer",
+          minimum: 1,
+          maximum: 10,
+          description: "Maximum number of listing matches to return. Defaults to 6."
+        }
+      },
+      required: ["query"]
+    }
+  },
+  {
     name: "compose_draft_reply",
     description: "Emit the final reply text that will be shown to the operator. Call this EXACTLY ONCE at the end of your reasoning/tool-use process. This ends the draft generation. Self-rate confidence and difficulty honestly — these scores drive the auto-reply pipeline (high confidence → auto-sent; low confidence → routed to human review). Do NOT inflate confidence to seem useful; under-confident is far less harmful than over-confident.",
     input_schema: {
@@ -969,6 +1003,30 @@ function buildToolExecutors(ctx) {
         // instead of tracking specifically
         isShippedStatus: !!receipt.is_shipped
       };
+    },
+
+    search_shop_listings: async (input) => {
+      if (!searchListings) {
+        return {
+          error: "Listings catalog search is not available in this deployment.",
+          matches: []
+        };
+      }
+      const query = String(input.query || "").trim();
+      if (!query) return { error: "query is required", matches: [] };
+      const limit = Math.max(1, Math.min(Number(input.limit) || 6, 10));
+      try {
+        const result = await searchListings(query, limit);
+        if (result && result.error) return result;
+        return {
+          query,
+          matches: (result.matches || []).slice(0, limit),
+          count: result.count || 0,
+          totalScored: result.totalScored || 0
+        };
+      } catch (e) {
+        return { error: `search_shop_listings failed: ${e.message}`, query, matches: [] };
+      }
     },
 
     // compose_draft_reply is the TERMINAL tool. Returning __terminal:true

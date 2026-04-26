@@ -123,7 +123,22 @@ async function getAutoPipelineConfig() {
   if (_autoCfgCache.value && (Date.now() - _autoCfgCache.fetchedAt < AUTO_CFG_CACHE_MS)) {
     return _autoCfgCache.value;
   }
-  let value = { enabled: FALLBACK_ENABLED, threshold: FALLBACK_THRESHOLD, source: "fallback" };
+  let value = {
+    enabled                 : FALLBACK_ENABLED,
+    threshold               : FALLBACK_THRESHOLD,
+    // ─── v2.0 Step 1 flags (default OFF — operator must opt in) ──
+    listingsMirrorEnabled   : false,
+    intentClassifierEnabled : false,
+    // ─── v2.0 Step 2 flags (default OFF — operator must opt in) ──
+    salesModeEnabled        : false,
+    salesAutoEngage         : false,
+    salesPilotThreadIds     : [],
+    // ─── v2.0 Step 3 will add (commented for now): ───────────────
+    // customOrderSendEnabled       : false,
+    // customOrderHighValueThreshold: 200,
+    // customOrderRequireDoubleApproval: true,
+    source                  : "fallback"
+  };
   try {
     const doc = await db.collection(CONFIG_COLL).doc("autoPipeline").get();
     if (doc.exists) {
@@ -132,6 +147,18 @@ async function getAutoPipelineConfig() {
       value = {
         enabled  : d.enabled !== false,             // default true if doc exists but unset
         threshold: Math.max(0, Math.min(1, t)),
+        // v2.0 Step 1: explicit-true semantics. Missing field => false.
+        // We do NOT default to true even if the surrounding doc exists,
+        // because flipping these on without operator review is unsafe.
+        listingsMirrorEnabled   : d.listingsMirrorEnabled === true,
+        intentClassifierEnabled : d.intentClassifierEnabled === true,
+        // ── v2.0 Step 2 forward-compat reads (harmless if absent) ──
+        // Read but do not act on these in Step 1; Step 2 will use them.
+        salesModeEnabled        : d.salesModeEnabled === true,
+        salesAutoEngage         : d.salesAutoEngage === true,
+        salesPilotThreadIds     : Array.isArray(d.salesPilotThreadIds) ? d.salesPilotThreadIds : [],
+        // ── v2.0 Step 3 forward-compat reads ──
+        customOrderSendEnabled  : d.customOrderSendEnabled === true,
         updatedBy: d.updatedBy || null,
         updatedAt: d.updatedAt && d.updatedAt.toMillis ? d.updatedAt.toMillis() : null,
         source   : "firestore"
@@ -480,6 +507,55 @@ async function loadLatestInboundText(threadId) {
   }
 }
 
+/** v2.0 Step 2: Load the latest inbound message in a single pass —
+ *  returns text + a normalized attachments array suitable for handing
+ *  to the sales agent's image content blocks. Snapshot already stores
+ *  `imageUrls[]` per message (v1.10 schema, no change needed). We just
+ *  reshape into [{url}, ...] for the agent. */
+async function loadLatestInbound(threadId) {
+  try {
+    const snap = await db.collection(THREADS_COLL).doc(threadId)
+      .collection("messages")
+      .where("direction", "==", "inbound")
+      .orderBy("timestamp", "desc")
+      .limit(1)
+      .get();
+    if (snap.empty) return { text: null, attachments: [] };
+    const m = snap.docs[0].data() || {};
+    const text = String(m.text || "").slice(0, 4000);
+    const imageUrls = Array.isArray(m.imageUrls) ? m.imageUrls : [];
+    const attachmentUrls = Array.isArray(m.attachmentUrls) ? m.attachmentUrls : [];
+    const attachments = [...imageUrls, ...attachmentUrls]
+      .filter(u => typeof u === "string" && /^https?:\/\//.test(u))
+      .map(url => ({ url }));
+    return { text, attachments };
+  } catch (e) {
+    console.warn("loadLatestInbound failed:", e.message);
+    return { text: null, attachments: [] };
+  }
+}
+
+/** v2.0 Step 2: True iff this thread has a SalesContext doc whose
+ *  stage is one of the active (non-terminal) sales stages. Used to
+ *  route stateful sales threads back to the sales agent regardless
+ *  of intent classification — protects mid-funnel threads from being
+ *  clobbered if the classifier hiccups on a one-word reply. */
+const ACTIVE_SALES_STAGES = new Set([
+  "discovery", "spec", "quote", "revision", "pending_close_approval"
+]);
+async function loadActiveSalesContextStage(threadId) {
+  try {
+    const doc = await db.collection("EtsyMail_SalesContext").doc(threadId).get();
+    if (!doc.exists) return null;
+    const data = doc.data() || {};
+    if (ACTIVE_SALES_STAGES.has(data.stage)) return data.stage;
+    return null;
+  } catch (e) {
+    console.warn("loadActiveSalesContextStage failed:", e.message);
+    return null;
+  }
+}
+
 /** Apply all deterministic safety checks. Returns { vetoed, reasons }.
  *  Combines:
  *    - inbound message regex matches
@@ -603,6 +679,263 @@ exports.handler = async (event) => {
         skipReason: `draft already ${inFlight}`,
         durationMs: Date.now() - tStart
       });
+    }
+
+    // ─── 1.5. Intent classification (v2.0 Step 1, gated) ────────────
+    // Runs before draft generation so:
+    //   (a) the operator's badge is in place by the time the thread
+    //       lights up in their list,
+    //   (b) v2.0 Step 2's sales-lead router (stubbed below) can read
+    //       the result from local scope without a second DB hit.
+    //
+    // Non-fatal: if classification fails (Haiku down, JSON parse error,
+    // anything), we log + audit and continue with the existing
+    // customer-service path. The classifier's purpose is to ENRICH the
+    // pipeline, never to gate it.
+    //
+    // latestText is hoisted to the outer try-block scope so the Step 2
+    // sales-lead router (commented block below) can reuse it without
+    // a second loadLatestInboundText() round-trip.
+    let latestText = null;
+    let intentResp = null;
+    if (autoCfg.intentClassifierEnabled) {
+      try {
+        latestText = await loadLatestInboundText(threadId);
+        if (latestText) {
+          intentResp = await callFunction("etsyMailIntentClassifier", {
+            threadId,
+            messageText: latestText,
+            actor      : employeeName || "system:auto-pipeline"
+          });
+          // The classifier already wrote both:
+          //   - canonical record  → EtsyMail_IntentClassifications/{threadId}
+          //   - thread denormalize → EtsyMail_Threads/{threadId}.intent*
+          //   - audit              → EtsyMail_Audit { eventType: "intent_classified" }
+          // Nothing more to do here; the response is held only for the
+          // Step 2 routing decision below.
+        } else {
+          console.warn(`intentClassifier: no inbound text for thread ${threadId}`);
+        }
+      } catch (e) {
+        console.warn("intent classify failed (non-fatal):", e.message);
+        await writeAudit({
+          threadId,
+          eventType: "intent_classify_failed",
+          payload  : {
+            error    : e.message,
+            errorCode: (e.data && e.data.errorCode) || null
+          }
+        });
+      }
+    }
+
+    // ─── 1.6. v2.0 Step 2 — Sales-lead routing (LIVE) ───────────────
+    //
+    // Two ways a thread reaches the sales agent:
+    //
+    //   (a) STATEFUL: this thread already has an active SalesContext
+    //       (stage is discovery/spec/quote/revision/pending_close_approval).
+    //       Once a sales conversation starts, every subsequent customer
+    //       reply MUST go back to the sales agent — even if the latest
+    //       inbound is something the intent classifier would call
+    //       "post_purchase" or "unclear". The state IS the routing
+    //       authority. This protects mid-funnel deals from being
+    //       clobbered by classifier hiccups on short replies.
+    //
+    //   (b) FRESH: classifier called this inbound a sales_lead at >= 0.7
+    //       confidence AND auto-engagement is enabled AND the thread is
+    //       in the pilot allow-list (or the allow-list is empty).
+    //
+    // Both paths require salesModeEnabled. The pilot allow-list applies
+    // to BOTH paths — if a thread isn't in pilot, even an active
+    // SalesContext gets ignored (matches the spec's "rollback by
+    // emptying the list" semantic).
+    if (autoCfg.salesModeEnabled
+        && (autoCfg.salesPilotThreadIds.length === 0
+            || autoCfg.salesPilotThreadIds.includes(threadId))) {
+
+      const activeSalesStage = await loadActiveSalesContextStage(threadId);
+
+      const freshSalesLead =
+           autoCfg.salesAutoEngage
+        && intentResp
+        && intentResp.classification === "sales_lead"
+        && typeof intentResp.confidence === "number"
+        && intentResp.confidence >= 0.7;
+
+      if (activeSalesStage || freshSalesLead) {
+        // Load latest inbound text + attachments in one pass. Even if
+        // text was already loaded for the classifier, we still need the
+        // attachment arrays so fresh sales leads with photos reach the
+        // sales agent's vision path.
+        const inb = await loadLatestInbound(threadId);
+        let inboundText = latestText;
+        if (inboundText === null) inboundText = inb.text;
+        const inboundAttachments = inb.attachments;
+
+        // v2.3 — Pre-tool URL detection. Before the agent loop runs,
+        // scan the inbound text for any Etsy listing URLs. If found,
+        // proactively fetch the listing data from Etsy's API and inject
+        // it into the agent's context summary as `referencedListings`.
+        // The AI no longer has to "decide to look it up" — it sees the
+        // structured data alongside the customer's message.
+        //
+        // Why proactive instead of letting the agent call the tool?
+        // Latency. Pre-fetching here saves one round-trip in the agent
+        // loop. Also makes the URL data available to the discovery
+        // stage's prompt, which doesn't have the lookup tool in its
+        // initial reasoning context until after the first turn.
+        let referencedListings = [];
+        if (typeof inboundText === "string" && inboundText.length > 12) {
+          try {
+            // Direct-import the parser + lookup. Falls back gracefully
+            // if the new module isn't deployed yet.
+            const lookupMod = (() => {
+              try { return require("./etsyMailListingLookup"); }
+              catch (e) {
+                console.warn("auto-pipeline: etsyMailListingLookup not deployed, skipping URL detection");
+                return null;
+              }
+            })();
+            if (lookupMod && typeof lookupMod.findEtsyUrlsInText === "function") {
+              const urls = lookupMod.findEtsyUrlsInText(inboundText);
+              if (urls.length > 0) {
+                // Cap at 3 to avoid runaway API calls if the customer
+                // pasted a list of 20 URLs. The AI can re-fetch others
+                // on demand via the tool.
+                const toFetch = urls.slice(0, 3);
+                const lookups = await Promise.all(
+                  toFetch.map(({ url }) =>
+                    lookupMod.lookupListingByUrl({ url, threadId })
+                      .catch(err => ({ found: false, reason: "LOOKUP_THREW", error: err.message }))
+                  )
+                );
+                referencedListings = lookups.map((r, i) => ({
+                  url: toFetch[i].url,
+                  ...r
+                }));
+                console.log(`auto-pipeline: pre-fetched ${referencedListings.length} listing(s) referenced in inbound`);
+              }
+            }
+          } catch (e) {
+            // Fully-isolated try/catch so a URL-lookup failure NEVER
+            // blocks the sales agent from running. Log + proceed.
+            console.warn("auto-pipeline: URL pre-detection failed:", e.message);
+          }
+        }
+
+        try {
+          const salesResp = await callFunction("etsyMailSalesAgent", {
+            threadId,
+            latestInboundText        : inboundText,
+            latestInboundAttachments : inboundAttachments,
+            referencedListings,                          // v2.3 — pre-fetched listing data
+            customerHistory          : {
+              // Step 2 leaves customer-history derivation to a future
+              // pass — the agent gracefully handles isRepeat:false /
+              // orderCount:0. Step 3 may wire this from EtsyMail_Customers.
+              isRepeat        : false,
+              orderCount      : 0,
+              lifetimeValueUsd: 0
+            },
+            intentClassification     : intentResp ? intentResp.classification : null,
+            intentConfidence         : intentResp ? intentResp.confidence : null,
+            employeeName             : employeeName || "system:auto-pipeline"
+          });
+
+          // The sales agent has already written:
+          //   - EtsyMail_Drafts/draft_<tid>     (status:"draft")
+          //   - EtsyMail_SalesContext/<tid>     (stage updates, etc.)
+          //   - EtsyMail_Threads/<tid>          (status: sales_<stage>,
+          //                                       readyForHumanApproval, ...)
+          //   - EtsyMail_Audit                  (sales_agent_turn)
+          // We DO NOT re-write the thread status here — the agent's
+          // write is authoritative. Adding our own would just race.
+
+          await writeAudit({
+            threadId, draftId: salesResp.draftId,
+            eventType: "sales_agent_engaged",
+            payload  : {
+              path       : activeSalesStage ? "stateful" : "fresh_lead",
+              fromStage  : activeSalesStage || null,
+              toStage    : salesResp.stage,
+              intent     : intentResp,
+              draftId    : salesResp.draftId,
+              confidence : salesResp.confidence,
+              quoteValid : salesResp.quoteValidation
+                ? (salesResp.quoteValidation.valid !== false)
+                : null
+            }
+          });
+
+          return ok({
+            threadId,
+            decision  : "sales_agent_handled",
+            path      : activeSalesStage ? "stateful" : "fresh_lead",
+            stage     : salesResp.stage,
+            draftId   : salesResp.draftId,
+            durationMs: Date.now() - tStart
+          });
+
+        } catch (salesErr) {
+          // Sales agent threw before completing. Two cases:
+          //
+          //  (a) The agent itself escalated cleanly (UNDER_FLOOR, unparseable
+          //      output, invalid stage, etc.). In these cases the agent has
+          //      ALREADY written:
+          //        - thread.status = "pending_human_review"
+          //        - thread.lastSalesAgentBlockReason = "<specific reason>"
+          //        - SalesContext.lastSalesAgentBlockReason mirror
+          //      We detect this via salesErr.data.escalated === true (set by
+          //      the agent on its own 422/500 returns). When that flag is set,
+          //      we MUST NOT overwrite the specific reason with a generic one
+          //      — operators rely on the specific reason for triage.
+          //
+          //  (b) Anthropic 503, network error, malformed response, etc. The
+          //      agent never got far enough to write its own block reason.
+          //      We DO write thread.status + a generic reason so the thread
+          //      doesn't sit in an in-between state.
+          console.warn("sales agent call failed (non-fatal to thread):", salesErr.message);
+
+          const agentSelfEscalated = !!(salesErr.data && salesErr.data.escalated);
+          const specificReason     = (salesErr.data && salesErr.data.reason) || null;
+
+          await writeAudit({
+            threadId,
+            eventType: "sales_agent_engagement_failed",
+            payload: {
+              path             : activeSalesStage ? "stateful" : "fresh_lead",
+              fromStage        : activeSalesStage || null,
+              error            : salesErr.message,
+              statusCode       : salesErr.status || null,
+              agentSelfEscalated,
+              specificReason
+            },
+            outcome: "failure"
+          });
+
+          // Only do the thread-status overwrite when the agent did NOT
+          // already handle the escalation. Otherwise we'd clobber the
+          // agent's specific reason with our generic one.
+          if (!agentSelfEscalated) {
+            await db.collection(THREADS_COLL).doc(threadId).set({
+              status                   : "pending_human_review",
+              lastSalesAgentBlockReason: "AGENT_CALL_FAILED",
+              updatedAt                : FV.serverTimestamp()
+            }, { merge: true });
+          }
+
+          return ok({
+            threadId,
+            decision  : "sales_agent_failed_escalated",
+            path      : activeSalesStage ? "stateful" : "fresh_lead",
+            error     : salesErr.message,
+            agentSelfEscalated,
+            specificReason,
+            durationMs: Date.now() - tStart
+          });
+        }
+      }
     }
 
     // ─── 2. Generate AI draft ────────────────────────────────────

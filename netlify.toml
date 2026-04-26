@@ -4,8 +4,18 @@
 [functions]
   node_bundler = "esbuild"
   external_node_modules = ["sharp", "@resvg/resvg-js"]
-  # Font files for resvg-js — bundled with every function that needs them
-  included_files = ["netlify/functions/fonts/**"]
+  # Asset bundling: every file matching these patterns gets copied into
+  # the bundle directory of every function, alongside the bundled .js.
+  # Functions reference these via path.join(__dirname, "...") at runtime.
+  #
+  #   fonts/    — used by _etsyMailTrackingRender via resvg-js
+  #   prompts/  — used by etsyMailIntentClassifier (v2.0 Step 1) and
+  #               will be used by etsyMailSalesAgent (v2.0 Step 2 — five
+  #               per-stage prompts under prompts/sales/)
+  included_files = [
+    "netlify/functions/fonts/**",
+    "netlify/functions/prompts/**"
+  ]
 
 # ─── M3: Etsy receipts sync ────────────────────────────────────────────────
 # Two-function architecture:
@@ -22,6 +32,42 @@
 
 [functions."etsyMailDraftSendCleanupCron"]
   schedule = "*/3 * * * *"
+
+# ─── v1.5 reapers ───────────────────────────────────────────────────────────
+# These functions exist but previously relied on inline `exports.config = {
+# schedule: ... }`. Registering them in toml is the recommended Netlify path
+# — gives a single audit point for all scheduled jobs and survives function
+# code changes that might disturb exports.config.
+[functions."etsyMailAutoPipelineReaper"]
+  schedule = "*/10 * * * *"
+
+[functions."etsyMailSendQueueReaper"]
+  schedule = "*/5 * * * *"
+
+# ─── v2.0 Sales Mode: Step 1 — Catalog sync ─────────────────────────────────
+# etsyMailListingsCatalog pulls active listings via Etsy API every 30 min,
+# writes to EtsyMail_Listings. Operator can also trigger on-demand from the
+# Catalog tab (POST op:"sync"). Gated by EtsyMail_Config/autoPipeline
+# .listingsMirrorEnabled — the cron still fires but the function early-returns
+# if the flag is off.
+[functions."etsyMailListingsCatalog"]
+  schedule = "*/30 * * * *"
+
+# ─── v2.0 Sales Mode: Step 2 — Sales reaper ─────────────────────────────────
+# etsyMailSalesReaper detects abandoned funnels (no customer reply 7+ days,
+# stage in [discovery, spec, quote, revision]). Marks them sales_abandoned.
+# Gated by EtsyMail_Config/autoPipeline.salesModeEnabled.
+[functions."etsyMailSalesReaper"]
+  schedule = "0 */6 * * *"
+
+# ─── v2.2 Sales Mode: Etsy shipping upgrades sync ───────────────────────────
+# etsyMailShippingSync pulls shipping-profiles + upgrades + destinations from
+# Etsy and caches them in EtsyMail_ShippingUpgradesCache for the sales agent
+# to surface (price range, fastest-days text) when a customer mentions
+# urgency. 6h refresh keeps API usage minimal — shipping upgrades rarely
+# change. Manual re-sync via POST { op: "syncNow" } is owner-only.
+[functions."etsyMailShippingSync"]
+  schedule = "0 */6 * * *"
 
 [[headers]]
   for = "/*"
@@ -203,8 +249,22 @@
   status = 200
   force = true
 
-  [[redirects]]
+# ─── EtsyMail inbox UI ──────────────────────────────────────────────────────
+# v1.x → v1.5: served at etsy-mail-1.goldenspike.app → /etsy-mail-1.html
+# v1.6 → v1.10 + v2.0: served at etsy-mail-2.goldenspike.app → /etsy-mail-2.html
+#
+# The legacy redirect is preserved so anyone with the old URL bookmarked
+# still lands on something working. Operators should switch to etsy-mail-2.
+# When v2.0 features stabilize, the etsy-mail-1 redirect can be repointed
+# to /etsy-mail-2.html so both URLs converge.
+[[redirects]]
   from = "https://etsy-mail-1.goldenspike.app"
   to = "/etsy-mail-1.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "https://etsy-mail-2.goldenspike.app"
+  to = "/etsy-mail-2.html"
   status = 200
   force = true
