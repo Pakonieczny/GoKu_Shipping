@@ -5681,7 +5681,7 @@
                 op   : "update",
                 coll : "EtsyMail_Drafts",
                 id   : draft.id,
-                patch: {
+                data : {
                   status        : "sent_unverified",
                   sentAt        : { __serverTimestamp: true },
                   sendError     : null,
