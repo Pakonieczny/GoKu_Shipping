@@ -619,6 +619,13 @@ exports.handler = async (event) => {
         const stages = {};   // populated step-by-step for the response
 
         // Step 1 — Confirm the thread exists + grab the latest inbound text.
+        // We avoid `where("direction") + orderBy("at")` because that would
+        // require a composite index on the messages subcollection. Instead
+        // we pull up to 50 most-recent messages by `at` and pick the
+        // newest inbound in JS — a thread very rarely exceeds 50 messages,
+        // and if one does, the latest 50 still contain the latest inbound
+        // unless the customer has been silent for the past 50 events
+        // (vanishingly unlikely in practice).
         let latestText = null;
         let inboundCount = 0;
         try {
@@ -628,12 +635,15 @@ exports.handler = async (event) => {
 
           const msgs = await db.collection("EtsyMail_Threads").doc(tid)
             .collection("messages")
-            .where("direction", "==", "inbound")
             .orderBy("at", "desc")
-            .limit(1)
+            .limit(50)
             .get();
-          inboundCount = msgs.size;
-          if (!msgs.empty) latestText = msgs.docs[0].data().text || null;
+          for (const d of msgs.docs) {
+            const data = d.data();
+            if (data.direction !== "inbound") continue;
+            inboundCount++;
+            if (latestText === null) latestText = data.text || null;
+          }
         } catch (e) {
           return json(500, { error: "Could not load thread state: " + e.message });
         }
