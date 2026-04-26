@@ -3788,6 +3788,11 @@
               <select id="emThreadMoveSelect" class="em-thread-move-select" title="Move this thread to a folder">
                 <option value="">Move to…</option>
               </select>
+              <button id="emReprocessThreadBtn"
+                      title="Re-classify and re-route this thread through the auto-pipeline using current Settings. Useful when sales-mode toggles changed after the thread was first scraped."
+                      style="background:#fff; border:1px solid #d4a72c; color:#9a6700;">
+                <i class="material-icons">refresh</i>Re-process
+              </button>
               <button id="emDeleteThreadBtn" title="Permanently delete this thread and all its data (Firestore + Storage). Owner-only."
                       style="background:#fff; border:1px solid #cf222e; color:#cf222e;">
                 <i class="material-icons">delete_forever</i>Delete
@@ -3904,6 +3909,7 @@
 
       $("emReviewBtn")?.addEventListener("click", () => setStatus(t.id, "pending_human_review", "operator triage"));
       $("emArchiveBtn")?.addEventListener("click", () => setStatus(t.id, "archived", "operator archive"));
+      $("emReprocessThreadBtn")?.addEventListener("click", () => reprocessThread(t.id));
       $("emDeleteThreadBtn")?.addEventListener("click", () => deleteThreadCompletely(t.id));
 
       // v1.7: per-thread Move-to dropdown. Same destinations as the bulk
@@ -6268,6 +6274,67 @@
         toast(`Status → ${status}`);
         fetchThreadListNow();
       } catch (e) { toast("Error: " + e.message); }
+    }
+
+    /**
+     * v2.5 — Re-process a thread through the auto-pipeline.
+     *
+     * Non-destructive alternative to delete-and-rescrape. Forces the
+     * classifier + auto-pipeline to re-evaluate a thread that's already
+     * been processed once — typical case is when a Settings toggle
+     * (sales mode, classifier on/off, threshold) changed AFTER the
+     * thread was first scraped, leaving the idempotency lock pinned.
+     *
+     * The backend returns a structured `stages` object showing what
+     * each step did. We surface the most diagnostic fields in a toast
+     * (classification, confidence, pipeline-triggered) and dump the
+     * full object to console.log for deeper inspection.
+     */
+    async function reprocessThread(threadId) {
+      const ok = confirm(
+        `Re-process this thread?\n\n` +
+        `This re-runs:\n` +
+        `  • Intent classifier (synchronous — result shown immediately)\n` +
+        `  • Auto-pipeline (background — draft + sales routing)\n\n` +
+        `Existing messages and customer record are preserved. Any old AI draft for this thread will be replaced.`
+      );
+      if (!ok) return;
+
+      const actor = getEmployeeName() || "operator";
+      try {
+        toast("Re-processing thread…");
+        const res = await api("firestoreProxy", {
+          method: "POST",
+          body  : { op: "reprocessThread", threadId, actor }
+        });
+
+        // Always log the full diagnostic for inspection.
+        console.log("[reprocessThread] full response:", res);
+
+        const s = (res && res.stages) || {};
+        if (res && res.success === false) {
+          // Classifier or trigger failed; surface the hint.
+          toast(`Re-process failed at classifier (HTTP ${s.classifierStatus || "?"}). ${res.hint || ""}`, true);
+          return;
+        }
+
+        const cls  = s.classification || "(unknown)";
+        const conf = typeof s.classifyConfidence === "number"
+          ? `${(s.classifyConfidence * 100).toFixed(0)}%` : "?";
+        const pipe = s.pipelineTriggered ? "pipeline kicked off" : "pipeline NOT triggered";
+        toast(`Classified ${cls} @ ${conf} · ${pipe}. Refresh in ~20s.`);
+
+        // Refresh the list now so the badge appears as soon as the
+        // pipeline writes it. The pipeline itself runs async — the
+        // thread row's intent badge updates on the next polling tick.
+        fetchThreadListNow();
+        // Also refresh the thread's own messages — for safety, since
+        // the pipeline may have appended a new draft message.
+        try { fetchMessagesNow(threadId); } catch {}
+      } catch (e) {
+        toast("Re-process failed: " + e.message);
+        console.error("reprocessThread:", e);
+      }
     }
 
     /**

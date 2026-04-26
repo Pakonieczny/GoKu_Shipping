@@ -575,6 +575,203 @@ exports.handler = async (event) => {
         });
       }
 
+      /* ─── reprocessThread ──────────────────
+       * Owner-only. Force the auto-pipeline to re-evaluate an existing
+       * thread that was already processed once (typical case: pipeline
+       * settings — sales-mode, classifier — got flipped ON after the
+       * thread was first scraped, and the idempotency lock prevents
+       * automatic re-evaluation).
+       *
+       * Steps, in order:
+       *   1. Validate threadId + verify thread doc exists
+       *   2. Clear the idempotency lock (`lastAutoProcessedInboundAt`)
+       *   3. Delete any cached classification doc — otherwise the next
+       *      classifier call returns the stale label
+       *   4. Call etsyMailIntentClassifier SYNCHRONOUSLY with the latest
+       *      inbound text → capture the verdict for the response
+       *   5. Trigger etsyMailAutoPipeline-background asynchronously to
+       *      run the full pipeline (draft + sales routing) using the
+       *      fresh classification
+       *   6. Return a structured diagnostic so the UI can show what
+       *      happened at each step — this is the single most useful
+       *      thing for catching pipeline problems
+       *
+       * The synchronous classifier call is the diagnostic core. If it
+       * throws, the response surfaces the exact error (e.g. "Anthropic
+       * API quota exhausted" or "messageText empty") without forcing
+       * the operator to dig through Netlify function logs. */
+      if (op === "reprocessThread") {
+        const { threadId, actor = null } = body;
+        if (!threadId || !/^etsy_conv_[a-zA-Z0-9_-]+$/.test(String(threadId))) {
+          return bad("threadId must look like 'etsy_conv_<id>'");
+        }
+        const owner = await requireOwner(actor);
+        if (!owner.ok) {
+          await logUnauthorized({
+            actor,
+            eventType: "firestore_proxy_reprocess_unauthorized",
+            payload  : { threadId, reason: owner.reason }
+          });
+          return json(403, { error: "Owner role required", reason: owner.reason });
+        }
+
+        const tid = String(threadId);
+        const stages = {};   // populated step-by-step for the response
+
+        // Step 1 — Confirm the thread exists + grab the latest inbound text.
+        let latestText = null;
+        let inboundCount = 0;
+        try {
+          const tDoc = await db.collection("EtsyMail_Threads").doc(tid).get();
+          if (!tDoc.exists) return json(404, { error: "Thread not found", threadId: tid });
+          stages.threadStatus = tDoc.data().status || null;
+
+          const msgs = await db.collection("EtsyMail_Threads").doc(tid)
+            .collection("messages")
+            .where("direction", "==", "inbound")
+            .orderBy("at", "desc")
+            .limit(1)
+            .get();
+          inboundCount = msgs.size;
+          if (!msgs.empty) latestText = msgs.docs[0].data().text || null;
+        } catch (e) {
+          return json(500, { error: "Could not load thread state: " + e.message });
+        }
+
+        if (!latestText) {
+          return json(422, {
+            error  : "No inbound message text on this thread",
+            threadId: tid,
+            stages : { ...stages, latestInboundFound: false, inboundCount }
+          });
+        }
+        stages.latestInboundFound = true;
+        stages.inboundCount       = inboundCount;
+        stages.inboundPreview     = latestText.slice(0, 80);
+
+        // Step 2 — Clear the idempotency lock on the thread doc.
+        try {
+          await db.collection("EtsyMail_Threads").doc(tid).set({
+            lastAutoProcessedInboundAt: null,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+          }, { merge: true });
+          stages.idempotencyLockCleared = true;
+        } catch (e) {
+          stages.idempotencyLockCleared = false;
+          stages.idempotencyLockError   = e.message;
+        }
+
+        // Step 3 — Delete the classification cache for this thread.
+        try {
+          const cacheRef = db.collection("EtsyMail_IntentClassifications").doc(tid);
+          const snap = await cacheRef.get();
+          if (snap.exists) {
+            await cacheRef.delete();
+            stages.classifierCacheCleared = true;
+          } else {
+            stages.classifierCacheCleared = "no cache to clear";
+          }
+        } catch (e) {
+          stages.classifierCacheCleared = false;
+          stages.classifierCacheError   = e.message;
+        }
+
+        // Step 4 — Synchronously call the classifier. Diagnostic core.
+        try {
+          const baseUrl = process.env.URL
+                       || process.env.DEPLOY_URL
+                       || "http://localhost:8888";
+          const headers = { "Content-Type": "application/json" };
+          if (process.env.ETSYMAIL_EXTENSION_SECRET) {
+            headers["X-EtsyMail-Secret"] = process.env.ETSYMAIL_EXTENSION_SECRET;
+          }
+          const res = await fetch(`${baseUrl}/.netlify/functions/etsyMailIntentClassifier`, {
+            method: "POST",
+            headers,
+            body  : JSON.stringify({
+              threadId   : tid,
+              messageText: latestText,
+              actor      : actor || "system:reprocess",
+              force      : true
+            })
+          });
+          const text = await res.text();
+          let parsed = null;
+          try { parsed = JSON.parse(text); } catch { parsed = { raw: text }; }
+          stages.classifierStatus = res.status;
+          if (res.ok && parsed) {
+            stages.classification     = parsed.classification || null;
+            stages.classifyConfidence = parsed.confidence     || null;
+            stages.classifySignals    = parsed.signals        || null;
+          } else {
+            stages.classifierError = (parsed && parsed.error) || `HTTP ${res.status}`;
+            return json(200, {
+              success : false,
+              threadId: tid,
+              stages,
+              hint    : "Classifier returned non-2xx. Check Netlify logs for etsyMailIntentClassifier — likely an Anthropic API key, quota, or model-name issue."
+            });
+          }
+        } catch (e) {
+          stages.classifierError = e.message;
+          return json(200, {
+            success : false,
+            threadId: tid,
+            stages,
+            hint    : "Could not reach the classifier function. Verify it's deployed under /.netlify/functions/etsyMailIntentClassifier."
+          });
+        }
+
+        // Step 5 — Trigger the auto-pipeline asynchronously.
+        try {
+          const baseUrl = process.env.URL
+                       || process.env.DEPLOY_URL
+                       || "http://localhost:8888";
+          const headers = { "Content-Type": "application/json" };
+          if (process.env.ETSYMAIL_EXTENSION_SECRET) {
+            headers["X-EtsyMail-Secret"] = process.env.ETSYMAIL_EXTENSION_SECRET;
+          }
+          const signal = (typeof AbortSignal !== "undefined" && AbortSignal.timeout)
+            ? AbortSignal.timeout(5000) : undefined;
+          const res = await fetch(`${baseUrl}/.netlify/functions/etsyMailAutoPipeline-background`, {
+            method : "POST",
+            headers,
+            body   : JSON.stringify({
+              threadId    : tid,
+              employeeName: actor || "system:reprocess",
+              forceRerun  : true
+            }),
+            signal
+          });
+          stages.pipelineTriggered     = res.status === 202 || res.ok;
+          stages.pipelineTriggerStatus = res.status;
+        } catch (e) {
+          stages.pipelineTriggered    = false;
+          stages.pipelineTriggerError = e.message;
+        }
+
+        // Step 6 — Audit row so the reprocess attempt is on the record.
+        try {
+          await db.collection("EtsyMail_Audit").add({
+            threadId  : tid,
+            eventType : "thread_reprocessed",
+            actor     : actor || "system",
+            payload   : { stages, op: "reprocessThread" },
+            createdAt : admin.firestore.FieldValue.serverTimestamp()
+          });
+        } catch (e) {
+          stages.auditWriteError = e.message;
+        }
+
+        return ok({
+          threadId: tid,
+          stages,
+          summary : `Classified as ${stages.classification || "(failed)"}` +
+                    (stages.classifyConfidence ? ` @ ${(stages.classifyConfidence * 100).toFixed(0)}%` : "") +
+                    (stages.pipelineTriggered ? " — pipeline running in background, refresh in ~20s" : "")
+        });
+      }
+
       return bad(`Unknown op '${op}'`);
     }
 
