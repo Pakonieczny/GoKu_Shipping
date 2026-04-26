@@ -538,17 +538,24 @@ async function loadLatestInboundText(threadId) {
  *  reshape into [{url}, ...] for the agent. */
 async function loadLatestInbound(threadId) {
   try {
+    // Same composite-index avoidance as loadLatestInboundText above:
+    // pull the latest 50 messages by timestamp (single-field index that
+    // Firestore creates automatically) and filter direction in JS.
     const snap = await db.collection(THREADS_COLL).doc(threadId)
       .collection("messages")
-      .where("direction", "==", "inbound")
       .orderBy("timestamp", "desc")
-      .limit(1)
+      .limit(50)
       .get();
     if (snap.empty) return { text: null, attachments: [] };
-    const m = snap.docs[0].data() || {};
-    const text = String(m.text || "").slice(0, 4000);
-    const imageUrls = Array.isArray(m.imageUrls) ? m.imageUrls : [];
-    const attachmentUrls = Array.isArray(m.attachmentUrls) ? m.attachmentUrls : [];
+    let latestInbound = null;
+    for (const d of snap.docs) {
+      const data = d.data();
+      if (data.direction === "inbound") { latestInbound = data; break; }
+    }
+    if (!latestInbound) return { text: null, attachments: [] };
+    const text = String(latestInbound.text || "").slice(0, 4000);
+    const imageUrls = Array.isArray(latestInbound.imageUrls) ? latestInbound.imageUrls : [];
+    const attachmentUrls = Array.isArray(latestInbound.attachmentUrls) ? latestInbound.attachmentUrls : [];
     const attachments = [...imageUrls, ...attachmentUrls]
       .filter(u => typeof u === "string" && /^https?:\/\//.test(u))
       .map(url => ({ url }));

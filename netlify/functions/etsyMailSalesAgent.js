@@ -156,14 +156,17 @@ try {
 
 // v2.3 — Direct import of the listing URL parser + lookup. Used for the
 // new lookup_listing_by_url tool exposed to the agent at every stage.
-// Etsy-API-first lookup with cache fallback; see etsyMailListingLookup
+// Etsy-API-first lookup with cache fallback; see etsyMailListingsCatalog
 // header for the resolution hierarchy.
+// v2.4 — These helpers were folded into etsyMailListingsCatalog (was a
+// separate etsyMailListingLookup.js); the import path moved but the
+// surface is identical.
 let lookupListingByUrl = null;
 let lookupListingById  = null;
 try {
-  ({ lookupListingByUrl, lookupListingById } = require("./etsyMailListingLookup"));
+  ({ lookupListingByUrl, lookupListingById } = require("./etsyMailListingsCatalog"));
 } catch (e) {
-  console.warn("salesAgent: etsyMailListingLookup not loadable — listing lookup tools will return graceful errors.", e.message);
+  console.warn("salesAgent: etsyMailListingsCatalog (lookup helpers) not loadable — listing lookup tools will return graceful errors.", e.message);
 }
 
 // Step 2.5 — collateral search. Imported directly; if Step 2.5 hasn't
@@ -190,7 +193,25 @@ const CONFIG_COLL   = "EtsyMail_Config";
 
 // ─── Model config ───────────────────────────────────────────────────────
 const AI_MODEL          = process.env.ETSYMAIL_SALES_MODEL || "claude-opus-4-7";
-const AI_EFFORT         = process.env.ETSYMAIL_SALES_EFFORT || "balanced";
+// AI_EFFORT controls how much "thinking" budget Anthropic's Opus 4.7
+// allocates to each sales-agent turn. Allowed values per Anthropic API:
+//   low | medium | high | xhigh | max
+//
+// "high" is a sensible default for sales-mode: the funnel state machine
+// rewards careful spec extraction and option-resolver use, which benefit
+// from extra reasoning over the cheaper "medium" tier. Override per-deploy
+// via the ETSYMAIL_SALES_EFFORT env var.
+//
+// IMPORTANT: only the five allowed values above will work. Any other
+// value (e.g. legacy "balanced") will cause Anthropic to 400 every call
+// with `output_config.effort: Input should be 'low'/'medium'/'high'/...`.
+// We validate at module load to fail fast rather than per-request.
+const _ALLOWED_EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
+const _RAW_EFFORT = process.env.ETSYMAIL_SALES_EFFORT || "high";
+const AI_EFFORT = _ALLOWED_EFFORTS.has(_RAW_EFFORT) ? _RAW_EFFORT : "high";
+if (_RAW_EFFORT !== AI_EFFORT) {
+  console.warn(`salesAgent: ETSYMAIL_SALES_EFFORT='${_RAW_EFFORT}' is not a valid effort — falling back to '${AI_EFFORT}'. Allowed: ${[..._ALLOWED_EFFORTS].join(", ")}`);
+}
 const AI_MAX_TOKENS     = parseInt(process.env.ETSYMAIL_SALES_MAX_TOKENS || "6000", 10);
 const MAX_TOOL_ITERATIONS = 8;
 
