@@ -1522,7 +1522,7 @@
           <span><b>Enable Sales Mode</b> &mdash; activates the sales agent for sales-lead threads. Drafts are saved as drafts (NOT auto-sent).</span>
         </label>
         <p style="font-size:11px;color:#6a737d;margin:0 0 8px 26px;">
-          When ON, threads classified as <code>sales_lead</code> at &ge; 0.7 confidence (or threads with an existing SalesContext) route to <code>etsyMailSalesAgent</code>, which runs the funnel state machine: discovery → spec → quote → revision → pending close approval. Pricing comes from the deterministic pricing engine — the AI cannot quote below the floor. <b>Requires intent classifier ON.</b>
+          When ON, threads classified as <code>sales_lead</code> at &ge; 0.7 confidence (or threads with an existing SalesContext) route to <code>etsyMailSalesAgent</code>, which runs a compressed sales funnel: discovery/spec can jump straight to quote when enough fixed-price details exist, option-sheet/collateral requests are answered directly, and pricing still comes from the deterministic pricing engine — the AI cannot quote below the floor. <b>Requires intent classifier ON.</b>
         </p>
 
         <label style="display:flex; align-items:center; gap:10px; margin:8px 0 4px 26px; cursor:pointer;">
@@ -1535,10 +1535,10 @@
 
         <label style="display:flex; align-items:center; gap:10px; margin:8px 0 4px 26px; cursor:pointer;">
           <input type="checkbox" id="emSalesAutoSendInput" style="width:14px; height:14px; cursor:pointer;">
-          <span style="font-size:12px;"><b>Auto-send sales drafts</b> &mdash; let the agent post Discovery + Spec replies to the customer without operator approval.</span>
+          <span style="font-size:12px;"><b>Auto-send sales drafts</b> &mdash; let the agent post safe non-pricing Discovery + Spec replies to the customer without operator approval.</span>
         </label>
         <p style="font-size:11px;color:#6a737d;margin:0 0 8px 44px;">
-          When ON, drafts the agent generates for the <b>Discovery</b> and <b>Spec</b> stages (asking the customer questions about what they want) auto-send via the Chrome extension. Quote / Revision / Pending Close Approval stages <i>always</i> require operator approval regardless of this toggle — money commitments never auto-send. Drafts that the agent flagged as Needs Review handoff or that hit safety vetoes (refunds, cancellations, etc.) also stay queued for review. Operator approval is still required during pilot — flip ON when comfortable with the agent's question quality.
+          When ON, only non-pricing <b>Discovery</b> and <b>Spec</b> drafts that ask a single true blocker or provide non-price options may auto-send via the Chrome extension. Any quote, revision, close artifact, Needs Review handoff, or safety-vetoed draft stays queued for operator approval — money commitments never auto-send. Operator approval is still required during pilot — flip ON when comfortable with the agent's reply quality.
         </p>
 
         <label style="display:block; margin:8px 0 4px 26px;">

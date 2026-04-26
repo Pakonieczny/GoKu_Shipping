@@ -226,8 +226,8 @@ async function runAutoPipelinePass() {
 //   sending + pre_click + heartbeat > 60s old
 //     → mark failed (CLAIM_ABANDONED), demote thread. Safe to re-send.
 //   sending + post_click + heartbeat > 60s old
-//     → mark failed (STRANDED_POST_CLICK), demote thread. Operator
-//       MUST verify on Etsy before re-sending.
+//     → mark sent_unverified (STRANDED_POST_CLICK), demote thread. Operator
+//       MUST verify on Etsy before taking any further action. Never blindly re-send.
 
 async function reapStaleDraft(draftRef, kind) {
   return await db.runTransaction(async (tx) => {

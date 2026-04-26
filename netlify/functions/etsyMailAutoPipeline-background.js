@@ -555,26 +555,42 @@ async function loadLatestInbound(threadId) {
       .orderBy("timestamp", "desc")
       .limit(50)
       .get();
-    if (snap.empty) return { text: null, attachments: [] };
+    if (snap.empty) return { text: null, attachments: [], threadAttachments: [] };
+
     let latestInbound = null;
+    const threadAttachments = [];
+    const seen = new Set();
+
     for (const d of snap.docs) {
-      const data = d.data();
-      if (data.direction === "inbound") { latestInbound = data; break; }
+      const data = d.data() || {};
+      if (data.direction !== "inbound") continue;
+      if (!latestInbound) latestInbound = data;
+
+      const imageUrls = Array.isArray(data.imageUrls) ? data.imageUrls : [];
+      const attachmentUrls = Array.isArray(data.attachmentUrls) ? data.attachmentUrls : [];
+      for (const url of [...imageUrls, ...attachmentUrls]) {
+        if (typeof url !== "string" || !/^https?:\/\//.test(url) || seen.has(url)) continue;
+        seen.add(url);
+        threadAttachments.push({ url, source: "thread_history" });
+        if (threadAttachments.length >= 12) break;
+      }
+      if (threadAttachments.length >= 12) break;
     }
-    if (!latestInbound) return { text: null, attachments: [] };
+
+    if (!latestInbound) return { text: null, attachments: [], threadAttachments };
     const text = String(latestInbound.text || "").slice(0, 4000);
-    const imageUrls = Array.isArray(latestInbound.imageUrls) ? latestInbound.imageUrls : [];
-    const attachmentUrls = Array.isArray(latestInbound.attachmentUrls) ? latestInbound.attachmentUrls : [];
-    const attachments = [...imageUrls, ...attachmentUrls]
+    const latestImageUrls = Array.isArray(latestInbound.imageUrls) ? latestInbound.imageUrls : [];
+    const latestAttachmentUrls = Array.isArray(latestInbound.attachmentUrls) ? latestInbound.attachmentUrls : [];
+    const attachments = [...latestImageUrls, ...latestAttachmentUrls]
       .filter(u => typeof u === "string" && /^https?:\/\//.test(u))
-      .map(url => ({ url }));
-    return { text, attachments };
+      .map(url => ({ url, source: "latest_inbound" }));
+
+    return { text, attachments, threadAttachments };
   } catch (e) {
     console.warn("loadLatestInbound failed:", e.message);
-    return { text: null, attachments: [] };
+    return { text: null, attachments: [], threadAttachments: [] };
   }
 }
-
 /** v2.0 Step 2: True iff this thread has a SalesContext doc whose
  *  stage is one of the active (non-terminal) sales stages. Used to
  *  route stateful sales threads back to the sales agent regardless
@@ -812,6 +828,9 @@ exports.handler = async (event) => {
         let inboundText = latestText;
         if (inboundText === null) inboundText = inb.text;
         const inboundAttachments = inb.attachments;
+        const threadReferenceAttachments = Array.isArray(inb.threadAttachments) && inb.threadAttachments.length
+          ? inb.threadAttachments
+          : inboundAttachments;
 
         // v2.3 — Pre-tool URL detection. Before the agent loop runs,
         // scan the inbound text for any Etsy listing URLs. If found,
@@ -872,6 +891,7 @@ exports.handler = async (event) => {
             threadId,
             latestInboundText        : inboundText,
             latestInboundAttachments : inboundAttachments,
+            threadReferenceAttachments,
             referencedListings,                          // v2.3 — pre-fetched listing data
             customerHistory          : {
               // Step 2 leaves customer-history derivation to a future

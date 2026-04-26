@@ -625,14 +625,14 @@ exports.handler = async (event) => {
       }
 
       if (d.status !== "queued") {
-        // v0.9.1 #2/#3: stale-sending drafts are NEVER auto-reclaimable
+        // v0.9.1 #2/#3 + v2.6: stale-sending drafts are NEVER auto-reclaimable
         // if sendStage === "post_click" — clicking Send a second time
-        // would cause a duplicate message. The cleanup cron handles
-        // this case by marking failed (STRANDED_POST_CLICK), which
-        // requires manual operator review on Etsy.
+        // would cause a duplicate message. The cleanup cron/reaper handles
+        // this by marking sent_unverified (STRANDED_POST_CLICK), which
+        // requires manual operator verification on Etsy.
         if (d.status === "sending" && isStaleHeartbeat(d.sendHeartbeatAt)) {
           if (d.sendStage === "post_click") {
-            // Don't surface; cleanup cron will fail it for manual review.
+            // Don't surface; cleanup cron/reaper will mark sent_unverified for manual review.
             return ok({ queued: false, currentStatus: "sending", stranded: true, postClick: true });
           }
           return ok({ queued: true, stale: true, draft: serializeDoc(snap) });

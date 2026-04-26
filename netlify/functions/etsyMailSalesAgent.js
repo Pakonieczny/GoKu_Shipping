@@ -106,7 +106,7 @@
  *    ANTHROPIC_API_KEY             required
  *    ETSYMAIL_EXTENSION_SECRET     gates this endpoint
  *    ETSYMAIL_SALES_MODEL          override; default claude-opus-4-7
- *    ETSYMAIL_SALES_EFFORT         override; default "balanced"
+ *    ETSYMAIL_SALES_EFFORT         override; default "high"
  *    ETSYMAIL_SALES_MAX_TOKENS     override; default 6000
  */
 
@@ -148,10 +148,11 @@ try {
 // tool returns a RESOLVER_UNAVAILABLE error and the agent must escalate
 // to human review rather than hallucinating a price.
 let resolveQuote = null;
+let loadOptionSheet = null;
 try {
-  ({ resolveQuote } = require("./etsyMailOptionResolver"));
+  ({ resolveQuote, loadSheet: loadOptionSheet } = require("./etsyMailOptionResolver"));
 } catch (e) {
-  console.error("salesAgent: etsyMailOptionResolver not loadable — resolveQuote tool will be unavailable. Sales quoting cannot proceed.", e.message);
+  console.error("salesAgent: etsyMailOptionResolver not loadable — resolveQuote / get_option_sheet tools will be unavailable. Sales quoting cannot proceed.", e.message);
 }
 
 // v2.3 — Direct import of the listing URL parser + lookup. Used for the
@@ -252,7 +253,7 @@ async function getConfig() {
 // ─── State machine ─────────────────────────────────────────────────────
 
 const STAGE_FLOW = {
-  "discovery"               : { canSkipTo: ["spec", "human_review", "abandoned"] },
+  "discovery"               : { canSkipTo: ["spec", "quote", "human_review", "abandoned"] },
   "spec"                    : { canSkipTo: ["quote", "discovery", "human_review", "abandoned"] },
   "quote"                   : { canSkipTo: ["revision", "pending_close_approval", "human_review", "abandoned"] },
   "revision"                : { canSkipTo: ["quote", "pending_close_approval", "human_review", "abandoned"] },
@@ -365,6 +366,198 @@ async function writeAudit({ threadId = null, draftId = null, eventType,
     });
   } catch (e) {
     console.warn("salesAgent audit write failed:", e.message);
+  }
+}
+
+// ─── Sales-speed / context helpers ───────────────────────────────────
+
+function isCustomerVisibleUrl(url) {
+  return typeof url === "string"
+    && /^https?:///i.test(url)
+    && !/REPLACE_WITH_PUBLIC_URL/i.test(url)
+    && !/example.com/i.test(url);
+}
+
+function normalizeAttachment(raw, source = "thread") {
+  if (!raw) return null;
+  const url = typeof raw === "string"
+    ? raw
+    : (raw.url || raw.proxyUrl || raw.imageUrl || raw.attachmentUrl || raw.href || "");
+  if (!isCustomerVisibleUrl(url)) return null;
+  return {
+    url,
+    source,
+    type: raw.type || (raw.contentType && /^image//i.test(raw.contentType) ? "image" : "file"),
+    contentType: raw.contentType || null,
+    filename: raw.filename || raw.name || null
+  };
+}
+
+function mergeAttachments(...sets) {
+  const out = [];
+  const seen = new Set();
+  for (const set of sets) {
+    if (!Array.isArray(set)) continue;
+    for (const raw of set) {
+      const att = normalizeAttachment(raw, raw && raw.source ? raw.source : "thread");
+      if (!att || seen.has(att.url)) continue;
+      seen.add(att.url);
+      out.push(att);
+      if (out.length >= 12) return out;
+    }
+  }
+  return out;
+}
+
+function compactAttachmentList(atts) {
+  return (Array.isArray(atts) ? atts : []).slice(0, 12).map(a => ({
+    url: a.url,
+    type: a.type || "file",
+    source: a.source || "thread",
+    filename: a.filename || null
+  }));
+}
+
+async function loadRecentThreadMessages(threadId, limit = 12) {
+  try {
+    const snap = await db.collection(THREADS_COLL).doc(threadId)
+      .collection("messages")
+      .orderBy("timestamp", "desc")
+      .limit(Math.max(1, Math.min(limit, 30)))
+      .get();
+    const rows = [];
+    for (const d of snap.docs) {
+      const m = d.data() || {};
+      const text = String(m.text || "").trim();
+      const imageUrls = Array.isArray(m.imageUrls) ? m.imageUrls : [];
+      const attachmentUrls = Array.isArray(m.attachmentUrls) ? m.attachmentUrls : [];
+      if (!text && imageUrls.length === 0 && attachmentUrls.length === 0) continue;
+      rows.push({
+        id: d.id,
+        direction: m.direction || null,
+        text: text.slice(0, 900),
+        hasAttachments: imageUrls.length + attachmentUrls.length > 0,
+        attachmentCount: imageUrls.length + attachmentUrls.length,
+        timestamp: m.timestamp && typeof m.timestamp.toMillis === "function" ? m.timestamp.toMillis() : null
+      });
+    }
+    return rows.reverse();
+  } catch (e) {
+    console.warn("salesAgent: recent thread message load failed:", e.message);
+    return [];
+  }
+}
+
+function recentOutboundTextsFromMessages(messages) {
+  return (Array.isArray(messages) ? messages : [])
+    .filter(m => m && m.direction === "outbound" && m.text)
+    .slice(-4)
+    .map(m => String(m.text).trim())
+    .filter(Boolean);
+}
+
+function normalizeForRepeat(s) {
+  return String(s || "")
+    .toLowerCase()
+    .replace(/https?:\/\/\S+/g, "")
+    .replace(/[^a-z0-9$]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function splitSentencesLight(s) {
+  return String(s || "")
+    .split(/(?<=[.!?])\s+/)
+    .map(x => x.trim())
+    .filter(Boolean);
+}
+
+function applySalesReplyGuard(reply, priorOutboundTexts = []) {
+  const raw = String(reply || "").trim();
+  if (!raw) return raw;
+  const priorSentenceSet = new Set();
+  for (const prior of priorOutboundTexts) {
+    for (const sent of splitSentencesLight(prior)) {
+      const n = normalizeForRepeat(sent);
+      if (n.length >= 32) priorSentenceSet.add(n);
+    }
+  }
+  if (!priorSentenceSet.size) return raw;
+
+  const kept = [];
+  const priorJoined = Array.from(priorSentenceSet).join(" | ");
+  for (const sent of splitSentencesLight(raw)) {
+    const n = normalizeForRepeat(sent);
+    const capabilityReset = /custom .*charm.*photo.*absolutely.*(do|possible|make)/i.test(sent)
+      && /custom .*charm.*photo.*absolutely.*(do|possible|make)/i.test(priorJoined);
+    if (n.length >= 32 && (priorSentenceSet.has(n) || capabilityReset)) continue;
+    kept.push(sent);
+  }
+  return kept.length ? kept.join(" ") : raw;
+}
+
+function customerAskedForOptions(text) {
+  const t = String(text || "").toLowerCase();
+  return /(what\s+(options|choices)|send\s+(the\s+)?(options|line\s*sheet|sheet)|see\s+(the\s+)?(options|choices|line\s*sheet)|line\s*sheet|available\s+options|what\s+do\s+you\s+have)/i.test(t);
+}
+
+function inferFamilyFromTextAndContext(text, salesCtx = {}) {
+  const spec = salesCtx.accumulatedSpec || {};
+  if (spec.family === "huggie" || spec.family === "necklace" || spec.family === "stud") return spec.family;
+  const t = String(text || "").toLowerCase();
+  if (/huggie|huggy|hoop/.test(t)) return "huggie";
+  if (/necklace|chain|pendant/.test(t)) return "necklace";
+  if (/stud|studs|earring/.test(t)) return "stud";
+  if (/charm/.test(t) && /chain|necklace|pendant/.test(t)) return "necklace";
+  return null;
+}
+
+function compactOption(option) {
+  if (!option || typeof option !== "object") return null;
+  return {
+    code: option.code || null,
+    label: option.label || null,
+    size: option.size || null,
+    metal: option.metal || null,
+    chainStyle: option.chainStyle || null,
+    length: option.length || null,
+    hoopSize: option.hoopSize || null,
+    priceUsd: typeof option.priceUsd === "number" ? option.priceUsd : null,
+    priceQuote: option.priceQuote === true,
+    priceNotAvailable: option.priceNotAvailable === true,
+    explainer: option.explainer || null
+  };
+}
+
+function compactOptionSheetForAi(sheet) {
+  if (!sheet || !Array.isArray(sheet.sections)) return null;
+  return {
+    family: sheet.family || null,
+    displayName: sheet.displayName || sheet.family || null,
+    unitOfMeasure: sheet.unitOfMeasure || null,
+    sections: sheet.sections.map(sec => ({
+      sectionId: sec.sectionId,
+      name: sec.name,
+      instruction: sec.instruction || null,
+      required: sec.required === true,
+      dependencies: sec.dependencies || null,
+      options: Array.isArray(sec.options) ? sec.options.map(compactOption).filter(Boolean) : [],
+      bulkSavings: Array.isArray(sec.bulkSavings) ? sec.bulkSavings : []
+    }))
+  };
+}
+
+async function prefetchLineSheetCollateral({ latestInboundText, salesCtx }) {
+  const family = inferFamilyFromTextAndContext(latestInboundText, salesCtx);
+  if (!family || !searchCollateral) return [];
+  if (!customerAskedForOptions(latestInboundText)) return [];
+  try {
+    const result = await searchCollateral({ category: family, kind: "line_sheet", limit: 3 });
+    const matches = Array.isArray(result && result.matches) ? result.matches : [];
+    return matches.filter(m => m && isCustomerVisibleUrl(m.url)).slice(0, 3);
+  } catch (e) {
+    console.warn("salesAgent: line-sheet collateral prefetch failed:", e.message);
+    return [];
   }
 }
 
@@ -513,6 +706,25 @@ function buildToolExecutors({ threadId, salesCtx, customerHistory, cfg }) {
       }
     },
 
+    get_option_sheet: async ({ family }) => {
+      const fam = String(family || "").toLowerCase().trim();
+      if (!["huggie", "necklace", "stud"].includes(fam)) {
+        return { success: false, reason: "UNKNOWN_FAMILY", family };
+      }
+      if (!loadOptionSheet) {
+        return { success: false, reason: "OPTION_SHEET_UNAVAILABLE" };
+      }
+      try {
+        const sheet = await loadOptionSheet(fam);
+        if (!sheet || sheet.active === false) {
+          return { success: false, reason: "UNKNOWN_FAMILY", family: fam };
+        }
+        return { success: true, sheet: compactOptionSheetForAi(sheet) };
+      } catch (e) {
+        return { success: false, reason: "OPTION_SHEET_ERROR", error: e.message };
+      }
+    },
+
     get_collateral: async ({ category, kind, keywords }) => {
       if (!searchCollateral) {
         return {
@@ -527,6 +739,10 @@ function buildToolExecutors({ threadId, salesCtx, customerHistory, cfg }) {
           keywords: Array.isArray(keywords) ? keywords : undefined,
           limit   : 5
         });
+        if (result && Array.isArray(result.matches)) {
+          result.matches = result.matches.filter(m => m && isCustomerVisibleUrl(m.url));
+          result.count = result.matches.length;
+        }
         return result;
       } catch (e) {
         return { matches: [], error: e.message };
@@ -604,6 +820,22 @@ const TOOL_SPEC_RESOLVE_QUOTE = {
   }
 };
 
+const TOOL_SPEC_GET_OPTION_SHEET = {
+  name: "get_option_sheet",
+  description: "Fetch the current option sheet for a product family, including sections, codes, descriptions, prices, Quote-row flags, not-available flags, dependencies, and unit-of-measure. Use this whenever the customer asks what options are available, gives natural-language specs that need code mapping, or you need to verify codes before quoting.",
+  input_schema: {
+    type: "object",
+    properties: {
+      family: {
+        type: "string",
+        enum: ["huggie", "necklace", "stud"],
+        description: "The product family whose line sheet you need."
+      }
+    },
+    required: ["family"]
+  }
+};
+
 const TOOL_SPEC_GET_COLLATERAL = {
   name: "get_collateral",
   description: "Retrieve operator-curated collateral (line sheets, product cards, lookbooks, image sets, terms/care/material guides) by category. Returns URLs you can reference in your reply. Useful categories: 'huggie', 'necklace', 'stud', 'metals_education', 'aftercare'.",
@@ -644,7 +876,7 @@ const TOOL_SPEC_LOOKUP_LISTING_BY_URL = {
 
 function buildToolSpecsForStage(stage) {
   // Every stage gets the listings search tool; other tools layer in.
-  const tools = [TOOL_SPEC_SEARCH_LISTINGS];
+  const tools = [TOOL_SPEC_SEARCH_LISTINGS, TOOL_SPEC_GET_OPTION_SHEET];
 
   // v2.3 — listing URL lookup is available at EVERY stage. Customers
   // paste links at any point (initial inquiry, mid-spec to clarify what
@@ -652,20 +884,21 @@ function buildToolSpecsForStage(stage) {
   // able to resolve them.
   tools.push(TOOL_SPEC_LOOKUP_LISTING_BY_URL);
 
-  if (stage === "spec") {
+  if (stage === "discovery" || stage === "spec") {
     tools.push(TOOL_SPEC_REQUEST_PHOTO);
     tools.push(TOOL_SPEC_REQUEST_DIMENSIONS);
   }
 
-  // v2.1 — resolveQuote is the option-sheet pricing tool. Used at quote
-  // and revision stages (where a price needs to be stated). Pending-close
-  // doesn't need it — the agent re-states the most recent resolver
-  // result without recomputing.
-  if (stage === "quote" || stage === "revision") {
+  // v2.4 — resolveQuote is the option-sheet pricing tool. Discovery/spec
+  // can now call it when the customer has already supplied enough fixed-price
+  // choices, so the funnel compresses instead of asking redundant questions.
+  // Pending-close does not need it — the agent re-states the most recent
+  // resolver result without recomputing.
+  if (stage === "discovery" || stage === "spec" || stage === "quote" || stage === "revision") {
     tools.push(TOOL_SPEC_RESOLVE_QUOTE);
   }
 
-  if (stage === "spec" || stage === "quote" || stage === "revision" || stage === "pending_close_approval") {
+  if (stage === "discovery" || stage === "spec" || stage === "quote" || stage === "revision" || stage === "pending_close_approval") {
     tools.push(TOOL_SPEC_GET_COLLATERAL);
   }
 
@@ -673,37 +906,96 @@ function buildToolSpecsForStage(stage) {
 }
 
 // ─── Defensive JSON parse (mirrors intentClassifier pattern) ───────────
+//
+// v2.6 — Hardened to recover from three additional failure modes Opus
+// occasionally emits:
+//   1. Markdown fences with leading prose ("Sure, here's the JSON: ```json{...}")
+//   2. Truncated output where the closing braces/brackets got cut off
+//      (model hit max_tokens mid-emit). We close any open structures.
+//   3. Trailing commas before } or ] (technically invalid JSON but
+//      LLMs emit them constantly).
+//
+// Order: try strict parse → strip fences → extract first {...} block
+// → repair truncation → repair trailing commas → final attempt.
 
 function tryParseJson(rawText) {
   if (!rawText || typeof rawText !== "string") return null;
   let text = rawText.trim();
 
+  // Step 1: strip markdown fences (handles ```json\n... and bare ```)
   if (text.startsWith("```")) {
-    text = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "");
+    text = text.replace(/^```(?:json|JSON)?\s*\n?/i, "").replace(/\s*```\s*$/, "");
   }
   try { return JSON.parse(text); } catch {}
 
-  // Find first balanced {...} block
+  // Step 2: find the first { and walk the structure. We need to find
+  // EITHER a balanced block that parses, OR the remaining text from { to
+  // end (so we can attempt repair on truncation).
   const start = text.indexOf("{");
   if (start === -1) return null;
 
-  let depth = 0, inStr = false, esc = false;
+  // Scan the structure once, tracking open depth + bracket depth.
+  // If we find a balanced terminus, try parsing that slice. Otherwise
+  // we'll repair the open structure below.
+  let depth = 0;     // braces
+  let arrDepth = 0;  // brackets
+  let inStr = false;
+  let esc   = false;
+  let balancedEnd = -1;
+
   for (let i = start; i < text.length; i++) {
     const c = text[i];
     if (esc) { esc = false; continue; }
     if (c === "\\") { esc = true; continue; }
     if (c === '"') { inStr = !inStr; continue; }
     if (inStr) continue;
-    if (c === "{") depth++;
-    else if (c === "}") {
-      depth--;
-      if (depth === 0) {
-        const candidate = text.slice(start, i + 1);
-        try { return JSON.parse(candidate); } catch { return null; }
-      }
-    }
+    if      (c === "{") depth++;
+    else if (c === "}") { depth--; if (depth === 0 && arrDepth === 0) { balancedEnd = i; break; } }
+    else if (c === "[") arrDepth++;
+    else if (c === "]") arrDepth--;
   }
+
+  // Step 3: if we found a clean balanced block, try parsing.
+  if (balancedEnd !== -1) {
+    const slice = text.slice(start, balancedEnd + 1);
+    try { return JSON.parse(slice); } catch {}
+    // Balanced but didn't parse — likely a trailing comma. Try repair.
+    try { return JSON.parse(repairTrailingCommas(slice)); } catch {}
+  }
+
+  // Step 4: truncated. Take everything from the first { to end of text,
+  // close any open string, then close all open arrays + braces in order.
+  let repair = text.slice(start);
+  if (inStr) repair += '"';                                  // close runaway string
+  while (arrDepth-- > 0) repair += "]";
+  while (depth--    > 0) repair += "}";
+  try { return JSON.parse(repair); } catch {}
+  try { return JSON.parse(repairTrailingCommas(repair)); } catch {}
+
   return null;
+}
+
+/** Strip trailing commas before `}` or `]` — common LLM output bug.
+ *  Has to skip commas that are inside strings, since a string value of
+ *  "foo," followed by `}` is legal. */
+function repairTrailingCommas(s) {
+  let out = "";
+  let inStr = false, esc = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (esc) { out += c; esc = false; continue; }
+    if (c === "\\") { out += c; esc = true; continue; }
+    if (c === '"') { inStr = !inStr; out += c; continue; }
+    if (inStr) { out += c; continue; }
+    if (c === ",") {
+      // Look ahead past whitespace to see if next non-ws char is } or ]
+      let j = i + 1;
+      while (j < s.length && /\s/.test(s[j])) j++;
+      if (j < s.length && (s[j] === "}" || s[j] === "]")) continue;  // drop comma
+    }
+    out += c;
+  }
+  return out;
 }
 
 // ─── Validate AI's chosen quote (post-loop server-side gate) ──────────
@@ -821,7 +1113,8 @@ async function validateQuotedPriceIfPresent({ threadId, parsed, salesCtx }) {
 
 // ─── Build initial messages for the agent ──────────────────────────────
 
-function buildInitialMessages({ contextSummary, latestInboundText, latestInboundAttachments }) {
+function buildInitialMessages({ contextSummary, latestInboundText, referenceAttachments }) {
+  const safeRefAttachments = compactAttachmentList(referenceAttachments);
   const userContent = [
     {
       type: "text",
@@ -830,28 +1123,40 @@ function buildInitialMessages({ contextSummary, latestInboundText, latestInbound
         JSON.stringify(contextSummary, null, 2),
         "",
         "═══ Latest customer message ═══",
-        String(latestInboundText || "(no text)").slice(0, 6000)
+        String(latestInboundText || "(no text)").slice(0, 6000),
+        "",
+        "═══ Current turn law ═══",
+        "Use recentThreadMessages and accumulatedSpec before asking anything.",
+        "Ask at most ONE customer-facing question, and only if it is a true blocker for quote/order setup.",
+        "If referenceAttachments has customer images, do NOT ask for the photo again; only ask if they want a different image or the exact engraving text is missing.",
+        "If customerAskedForOptions is true, provide the relevant option sheet URL when available or a concise options menu; do not answer with another discovery question.",
+        "If enough fixed-price selections are present, call resolveQuote in this SAME turn and draft the quote for operator approval."
       ].join("\n")
     }
   ];
 
-  if (Array.isArray(latestInboundAttachments)) {
-    let imgCount = 0;
-    for (const att of latestInboundAttachments) {
-      if (imgCount >= 4) break;   // cap at 4 images per turn — token + cost guardrail
-      if (att && typeof att.url === "string" && /^https?:\/\//.test(att.url)) {
-        userContent.push({
-          type  : "image",
-          source: { type: "url", url: att.url }
-        });
-        imgCount++;
-      }
+  if (safeRefAttachments.length) {
+    userContent.push({
+      type: "text",
+      text: "Customer-provided reference attachments retained from this thread (shown as image blocks where possible):\n" +
+            safeRefAttachments.map((a, i) => String(i + 1) + ". " + (a.filename || a.type || "attachment") + ": " + a.url).join("\n")
+    });
+  }
+
+  let imgCount = 0;
+  for (const att of safeRefAttachments) {
+    if (imgCount >= 4) break;
+    if (att && isCustomerVisibleUrl(att.url)) {
+      userContent.push({
+        type  : "image",
+        source: { type: "url", url: att.url }
+      });
+      imgCount++;
     }
   }
 
   return [{ role: "user", content: userContent }];
 }
-
 // ─── Main handler ──────────────────────────────────────────────────────
 
 exports.handler = async (event) => {
@@ -873,6 +1178,7 @@ exports.handler = async (event) => {
     threadId,
     latestInboundText,
     latestInboundAttachments = [],
+    threadReferenceAttachments = [],
     referencedListings       = [],     // v2.3 — pre-fetched from auto-pipeline
     customerHistory          = {},
     intentClassification     = null,
@@ -902,6 +1208,23 @@ exports.handler = async (event) => {
     // ── Load or init the sales context ──
     const salesCtx = await loadOrInitSalesContext(threadId);
     const stage = salesCtx.stage || "discovery";
+
+    // Carry customer reference photos/files across the whole sales thread.
+    // This prevents the agent from asking for a photo that was already sent
+    // earlier in the same Etsy conversation.
+    const referenceAttachments = mergeAttachments(
+      Array.isArray(latestInboundAttachments)
+        ? latestInboundAttachments.map(a => ({ ...a, source: "latest_inbound" })) : [],
+      Array.isArray(threadReferenceAttachments)
+        ? threadReferenceAttachments.map(a => ({ ...a, source: "thread_history" })) : [],
+      Array.isArray(salesCtx.referenceAttachments)
+        ? salesCtx.referenceAttachments.map(a => ({ ...a, source: a.source || "sales_context" })) : []
+    );
+
+    const recentThreadMessages = await loadRecentThreadMessages(threadId, 12);
+    const priorOutboundTexts = recentOutboundTextsFromMessages(recentThreadMessages);
+    const optionsRequest = customerAskedForOptions(latestInboundText);
+    const recommendedCollateral = await prefetchLineSheetCollateral({ latestInboundText, salesCtx });
 
     if (!ALL_VALID_STAGES.has(stage)) {
       // Defensive — shouldn't happen, but if a SalesContext doc has a
@@ -987,6 +1310,19 @@ exports.handler = async (event) => {
       // v2.3 — Etsy listing URLs the customer pasted, pre-resolved.
       // Empty array if the customer didn't paste any.
       referencedListings : compactReferencedListings,
+      recentThreadMessages,
+      previousOutboundReplies: priorOutboundTexts.slice(-3),
+      referenceAttachments: compactAttachmentList(referenceAttachments),
+      hasReferenceImage: referenceAttachments.length > 0,
+      customerAskedForOptions: optionsRequest,
+      recommendedCollateral,
+      fastSalesRules: {
+        compressFunnel: true,
+        oneHardBlockerOnly: true,
+        avoidRepeatedCapabilityConfirmation: true,
+        collateralMandatoryWhenOptionsAsked: true,
+        quoteSameTurnWhenSpecComplete: true
+      },
       customerHistory    : {
         isRepeat          : !!(customerHistory && customerHistory.isRepeat),
         orderCount        : (customerHistory && customerHistory.orderCount) || 0,
@@ -995,7 +1331,7 @@ exports.handler = async (event) => {
       intentClassification, intentConfidence
     };
     const initialMessages = buildInitialMessages({
-      contextSummary, latestInboundText, latestInboundAttachments
+      contextSummary, latestInboundText, referenceAttachments
     });
 
     // ── Run the tool loop ──
@@ -1053,6 +1389,13 @@ exports.handler = async (event) => {
                  rawPreview: finalText.slice(0, 500),
                  escalated: true
                }) };
+    }
+
+    // ── Deterministic reply cleanup before validation/persistence ──
+    // Removes repeated capability confirmations from prior outbound turns while
+    // preserving the AI's structured quote fields.
+    if (typeof parsed.reply === "string") {
+      parsed.reply = applySalesReplyGuard(parsed.reply, priorOutboundTexts);
     }
 
     // ── Validate quote if present (server-side gate) ──
@@ -1159,6 +1502,7 @@ exports.handler = async (event) => {
       threadId,
       text                  : replyText,
       attachments           : [],
+      referenceAttachments  : compactAttachmentList(referenceAttachments),
       status                : "draft",     // NEVER "queued" in Step 2
       generatedByAI         : true,
       generatedBySalesAgent : true,
@@ -1168,6 +1512,8 @@ exports.handler = async (event) => {
       aiNeedsPhoto          : !!parsed.needs_photo,
       aiMissingInputs       : Array.isArray(parsed.missing_inputs) ? parsed.missing_inputs.slice(0, 12) : [],
       aiCollateralReferenced: Array.isArray(parsed.collateral_referenced) ? parsed.collateral_referenced : [],
+      aiRecommendedCollateral: recommendedCollateral,
+      customerAskedForOptions: optionsRequest,
       readyForHumanApproval : !!parsed.ready_for_human_approval,
       draftCustomOrderListing: parsed.draft_custom_order_listing || null,
       // v2.1 — Needs Review handoff fields
@@ -1193,7 +1539,10 @@ exports.handler = async (event) => {
     // ── Persist sales context updates ──
     const ctxUpdates = {
       accumulatedSpec : { ...(salesCtx.accumulatedSpec || {}), ...(parsed.extracted_spec || {}) },
-      missingInputs   : Array.isArray(parsed.missing_inputs) ? parsed.missing_inputs : (salesCtx.missingInputs || []),
+      missingInputs   : Array.isArray(parsed.missing_inputs) ? parsed.missing_inputs.slice(0, 3) : (salesCtx.missingInputs || []),
+      referenceAttachments: compactAttachmentList(referenceAttachments),
+      lastCustomerFacingReply: customerFacingReply,
+      lastOptionsRequestAt: optionsRequest ? FV.serverTimestamp() : (salesCtx.lastOptionsRequestAt || null),
       lastTurnAt      : FV.serverTimestamp(),
       lastSalesAgentBlockReason: null   // clear any prior block reason on a successful turn
     };
@@ -1285,6 +1634,8 @@ exports.handler = async (event) => {
         transitionRejected,
         rawAdvance,
         promptSource : promptLoad.source,
+        customerAskedForOptions: optionsRequest,
+        referenceAttachmentCount: referenceAttachments.length,
         usage        : loopResult.usage || null
       }
     });
@@ -1301,6 +1652,7 @@ exports.handler = async (event) => {
         ready_for_human_approval   : !!parsed.ready_for_human_approval,
         draft_custom_order_listing : parsed.draft_custom_order_listing || null,
         quoteValidation            : quoteValidation || null,
+        toolCalls                  : (loopResult.toolCalls || []).map(t => ({ name: t.name, error: t.error || null })),
         transitionRejected,
         durationMs                 : Date.now() - tStart
       })

@@ -39,7 +39,7 @@ exports.handler = async () => {
   const cutoffMs = started - STALE_HEARTBEAT_MS;
   const cutoffTs = admin.firestore.Timestamp.fromMillis(cutoffMs);
 
-  let scanned = 0, requeued = 0, failed = 0, skipped = 0;
+  let scanned = 0, requeued = 0, failed = 0, sentUnverified = 0, skipped = 0;
   const actions = [];
 
   try {
@@ -82,19 +82,31 @@ exports.handler = async () => {
           const hbms = hb && hb.toMillis ? hb.toMillis() : 0;
           if (hbms >= cutoffMs) return;  // heartbeat landed between queries
 
-          // v0.9.1 #2/#3: stranded with sendStage=post_click is the
-          // dangerous case. The Send button was clicked; we don't know
-          // if the message went out. Re-clicking would risk a duplicate.
-          // Mark failed for manual operator verification — never requeue.
+          // v2.6 fix: STRANDED_POST_CLICK is NOT a failure. The Send
+          // button was clicked AND the message was typed — Etsy's Send
+          // button is reliable, so the message almost certainly went
+          // through. The "stranded" part is just that we lost the tab
+          // before getting a confirmation signal. Treating this as
+          // `failed` led operators to re-send and create duplicates.
+          // Now we mark it as `sent_unverified`, the same status used
+          // for manual sends that timed out without confirmation:
+          //   - status: "sent_unverified"
+          //   - sentAt: now (so the UI's optimistic-insert path fires
+          //     and the just-sent message appears in the thread view)
+          //   - operator still gets demoted-to-review for verification
+          // Mirrors the matching change in etsyMailReapers.js +
+          // etsyMailDraftSend.js claim path.
           if (d.sendStage === "post_click") {
+            const secsAgo = Math.round((Date.now() - hbms) / 1000);
             tx.set(doc.ref, {
-              status        : "failed",
-              sendError     : `Stranded after Send was clicked (${Math.round((Date.now() - hbms) / 1000)}s ago). Verify on Etsy whether the message went through before re-sending.`,
+              status        : "sent_unverified",
+              sentAt        : FV.serverTimestamp(),
+              sendError     : `Send was clicked (${secsAgo}s ago). Etsy didn't return a confirmation signal in the timeout window — verify on Etsy if you're uncertain. Most likely it went through; do NOT blindly re-send (would duplicate).`,
               sendErrorCode : "STRANDED_POST_CLICK",
               updatedAt     : FV.serverTimestamp()
             }, { merge: true });
-            actions.push({ draftId: doc.id, action: "failed_post_click", attempts: d.sendAttempts || 0 });
-            failed++;
+            actions.push({ draftId: doc.id, action: "sent_unverified_post_click", attempts: d.sendAttempts || 0 });
+            sentUnverified++;
             return;
           }
 
@@ -127,7 +139,7 @@ exports.handler = async () => {
     }
 
     // Audit summary (only if we did something)
-    if (requeued || failed) {
+    if (requeued || failed || sentUnverified) {
       try {
         await db.collection(AUDIT_COLL).add({
           threadId  : null,
@@ -135,7 +147,7 @@ exports.handler = async () => {
           eventType : "send_cleanup_cron",
           actor     : "cron",
           payload   : {
-            scanned, requeued, failed, skipped,
+            scanned, requeued, failed, sentUnverified, skipped,
             actions, elapsedMs: Date.now() - started
           },
           createdAt : FV.serverTimestamp()
@@ -148,7 +160,7 @@ exports.handler = async () => {
     return {
       statusCode: 200,
       body: JSON.stringify({
-        ok: true, scanned, requeued, failed, skipped,
+        ok: true, scanned, requeued, failed, sentUnverified, skipped,
         elapsedMs: Date.now() - started
       })
     };
@@ -157,7 +169,7 @@ exports.handler = async () => {
     console.error("etsyMailDraftSendCleanupCron error:", err);
     return {
       statusCode: 500,
-      body: JSON.stringify({ error: err.message, scanned, requeued, failed, skipped })
+      body: JSON.stringify({ error: err.message, scanned, requeued, failed, sentUnverified, skipped })
     };
   }
 };
