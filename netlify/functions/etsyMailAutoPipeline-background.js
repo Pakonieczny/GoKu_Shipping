@@ -476,11 +476,18 @@ const DETERMINISTIC_VETO_PATTERNS = [
 ];
 
 /** Run all veto patterns against given text. Returns array of triggered
- *  veto IDs + reasons. Empty array = clean. */
-function runVetoPatterns(text) {
+ *  veto IDs + reasons. Empty array = clean.
+ *
+ *  excludePatternIds: array of pattern IDs to skip. Used by the sales-
+ *  agent auto-send path to skip the "custom" pattern, since sales mode
+ *  exists specifically to handle custom-order inquiries — applying that
+ *  veto to a sales-agent draft would block 100% of sales auto-sends. */
+function runVetoPatterns(text, excludePatternIds = []) {
   if (!text || typeof text !== "string") return [];
+  const skipSet = new Set(excludePatternIds);
   const hits = [];
   for (const v of DETERMINISTIC_VETO_PATTERNS) {
+    if (skipSet.has(v.id)) continue;
     if (v.pattern.test(text)) hits.push({ id: v.id, reason: v.reason });
   }
   return hits;
@@ -597,13 +604,13 @@ async function loadActiveSalesContextStage(threadId) {
  *    - tool-call errors in the AI's draft (lookup failed → AI is
  *      working with incomplete data → don't auto-send)
  */
-function applyDeterministicVetoes({ inboundText, draftText, draftToolCalls }) {
+function applyDeterministicVetoes({ inboundText, draftText, draftToolCalls, excludePatternIds = [] }) {
   const reasons = [];
 
-  const inboundHits = runVetoPatterns(inboundText);
+  const inboundHits = runVetoPatterns(inboundText, excludePatternIds);
   for (const h of inboundHits) reasons.push("inbound_" + h.id + ": " + h.reason);
 
-  const outboundHits = runVetoPatterns(draftText);
+  const outboundHits = runVetoPatterns(draftText, excludePatternIds);
   for (const h of outboundHits) reasons.push("outbound_" + h.id + ": " + h.reason);
 
   // Tool-call errors: if the AI tried to look up an order or tracking
@@ -956,12 +963,20 @@ exports.handler = async (event) => {
                 });
               } else {
                 // Run the same deterministic safety vetoes the support
-                // path uses. If anything trips, leave as draft for review.
+                // path uses, but skip the "custom" pattern — sales mode
+                // exists specifically to handle custom-order inquiries,
+                // so flagging "custom order" / "customize" / etc. would
+                // block every legitimate sales auto-send. The other
+                // vetoes (refund, cancel, legal, damaged, address,
+                // personalize, missing, replace) still apply — even on
+                // sales threads, an agent draft that mentions refunds
+                // or address changes should never auto-send.
                 const inboundForVeto = await loadLatestInboundText(threadId);
                 const veto = applyDeterministicVetoes({
-                  inboundText   : inboundForVeto,
+                  inboundText      : inboundForVeto,
                   draftText,
-                  draftToolCalls: salesResp.toolCalls || []
+                  draftToolCalls   : salesResp.toolCalls || [],
+                  excludePatternIds: ["custom"]
                 });
                 const ks = await getKillSwitch();
 

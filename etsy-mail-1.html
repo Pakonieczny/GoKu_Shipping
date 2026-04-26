@@ -4280,22 +4280,45 @@
       if (aiConf != null || aiDiff != null) {
         const threshold = _autoCfg.threshold;
         const enabled   = _autoCfg.enabled;
+        // v2.6: sales-agent drafts use a different auto-send rule than
+        // support drafts. The confidence threshold does NOT apply to
+        // sales drafts — they auto-send (when salesAutoSendEnabled) on
+        // a stage-based rule (Discovery + Spec only) plus safety vetoes.
+        // Showing "auto ≥ 80%" on a 55%-confidence Discovery draft is
+        // misleading: the operator sees a yellow badge and assumes the
+        // threshold blocked auto-send, when actually it doesn't apply.
+        const isSalesDraft = !!draft.generatedBySalesAgent;
+        const salesStage   = String(draft.salesStage || "");
+        const salesAutoEligibleStage = (salesStage === "discovery" || salesStage === "spec");
         const ratingChips = [];
         if (aiConf != null) {
           const c = Number(aiConf);
           const cls = c >= 0.80 ? "conf-high" : c >= 0.55 ? "conf-med" : "conf-low";
-          const wouldAutoSend = c >= threshold && enabled;
-          const icon = wouldAutoSend ? "verified" : "report_problem";
-          const tipPrefix = !enabled
-            ? 'Auto-pipeline is OFF — all drafts route to Needs Review regardless of score. '
-            : '';
-          ratingChips.push(
-            '<span class="em-ai-rating-pill ' + cls + '" title="' + tipPrefix +
+          // For support drafts: would-auto-send means c >= threshold.
+          // For sales drafts: would-auto-send means stage-eligible
+          // (threshold doesn't gate sales). Each path uses its own tip.
+          let wouldAutoSend, tooltip;
+          if (isSalesDraft) {
+            wouldAutoSend = salesAutoEligibleStage && _autoCfg.salesAutoSendEnabled === true;
+            tooltip = !_autoCfg.salesAutoSendEnabled
+              ? 'Sales auto-send is OFF (Settings → Sales Mode). All sales drafts route to operator review.'
+              : (salesAutoEligibleStage
+                  ? 'Sales auto-send is ON for this stage (' + esc(salesStage) + '). Threshold does NOT apply to sales drafts; auto-send is gated on stage + safety vetoes only.'
+                  : 'Sales auto-send is ON, but stage "' + esc(salesStage) + '" requires operator approval (money commitments never auto-send).');
+          } else {
+            wouldAutoSend = c >= threshold && enabled;
+            const tipPrefix = !enabled
+              ? 'Auto-pipeline is OFF — all drafts route to Needs Review regardless of score. '
+              : '';
+            tooltip = tipPrefix +
               'AI self-rated confidence in the draft. ' +
               (wouldAutoSend
                 ? 'Above auto-reply threshold (' + Math.round(threshold*100) + '%).'
-                : 'Below auto-reply threshold (' + Math.round(threshold*100) + '%) — would route to Needs Review.') +
-            '">' +
+                : 'Below auto-reply threshold (' + Math.round(threshold*100) + '%) — would route to Needs Review.');
+          }
+          const icon = wouldAutoSend ? "verified" : "report_problem";
+          ratingChips.push(
+            '<span class="em-ai-rating-pill ' + cls + '" title="' + tooltip + '">' +
               '<i class="material-icons">' + icon + '</i>' +
               '<span class="em-rp-label">conf</span>' +
               Math.round(c * 100) + '%' +
@@ -4313,11 +4336,25 @@
             '</span>'
           );
         }
-        const thrLabel = enabled
-          ? ('auto ≥ ' + Math.round(threshold * 100) + '%')
-          : 'auto-pipeline OFF';
+        // The right-hand chip differs by draft type:
+        //   - Sales draft: shows the stage-based auto-send rule
+        //   - Support draft: shows the threshold (legacy behavior)
+        let thrLabel;
+        if (isSalesDraft) {
+          if (!_autoCfg.salesAutoSendEnabled) {
+            thrLabel = 'sales auto-send OFF';
+          } else if (salesAutoEligibleStage) {
+            thrLabel = 'auto: stage ' + esc(salesStage);
+          } else {
+            thrLabel = 'stage requires approval';
+          }
+        } else {
+          thrLabel = enabled
+            ? ('auto ≥ ' + Math.round(threshold * 100) + '%')
+            : 'auto-pipeline OFF';
+        }
         ratingChips.push(
-          '<span class="em-ai-rating-pill threshold" title="Auto-reply config (editable in Settings → Auto-pipeline)">' +
+          '<span class="em-ai-rating-pill threshold" title="Auto-reply config (editable in Settings)">' +
             esc(thrLabel) +
           '</span>'
         );
