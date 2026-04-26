@@ -677,21 +677,23 @@ exports.handler = async (event) => {
           return { expired: true, threadStatusUpdate };
         }
 
-        // v0.9.1 #2/#3: never re-claim a stranded post-click draft.
-        // The Send button was clicked; we don't know if the message went
-        // through. Re-clicking would risk a duplicate. Mark failed for
-        // manual operator review on Etsy.
+        // v0.9.1 #2/#3 + v2.6 fix: never re-claim a stranded post-click
+        // draft. The Send button was clicked; the message almost certainly
+        // went through (Etsy's Send is reliable). Re-clicking would risk
+        // a duplicate. Mark as sent_unverified (NOT failed): operator
+        // verifies on Etsy whether it went through, optimistic-insert
+        // fires in the UI so the just-sent text appears in the thread.
         const staleSending = prev.status === "sending" && isStaleHeartbeat(prev.sendHeartbeatAt);
         if (staleSending && prev.sendStage === "post_click") {
           tx.set(ref, {
-            status        : "failed",
-            sendError     : "Tab died after clicking Etsy's Send button. Verify on Etsy whether the message went through before re-sending.",
+            status        : "sent_unverified",
+            sentAt        : FV.serverTimestamp(),
+            sendError     : "Tab died after clicking Etsy's Send button. The message most likely went through — verify on Etsy if you're uncertain. Do NOT re-send blindly: that would duplicate.",
             sendErrorCode : "STRANDED_POST_CLICK",
             updatedAt     : FV.serverTimestamp()
           }, { merge: true });
-          // v1.4: demote so the thread doesn't sit stuck in "sending…"
-          // forever. The operator MUST verify on Etsy what happened, so
-          // Needs Review is the right destination.
+          // Demote so operator can verify. Same destination as
+          // unverified manual sends — Needs Review.
           const threadStatusUpdate = await demoteThreadInTxn(
             tx, prev.threadId, "human_review_after_stranded_post_click"
           );

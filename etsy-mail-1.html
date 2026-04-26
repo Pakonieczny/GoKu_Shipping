@@ -1300,6 +1300,13 @@
       color: inherit;
     }
     .em-send-status .em-send-cancel:hover { background: #f6f8fa; }
+    .em-send-status .em-send-recover {
+      margin-left: auto; background: #1f883d; border: 1px solid #1a7f37;
+      border-radius: 3px; padding: 3px 10px; cursor: pointer; font-size: 11px;
+      color: #fff; font-weight: 600;
+    }
+    .em-send-status .em-send-recover:hover { background: #1a7f37; }
+    .em-send-status .em-send-recover:disabled { opacity: 0.6; cursor: not-allowed; }
     .em-compose-hint {
       font-size: 10px; color: #6a737d; margin-top: 6px;
     }
@@ -5611,10 +5618,27 @@
                'Check the Etsy conversation to confirm the message went through. ' +
                'Don\'t re-send unless you\'ve verified it didn\'t arrive.</span>';
       } else if (status === "failed") {
-        html = '<i class="material-icons">error_outline</i>' +
-               '<span>Send failed: ' + esc(draft.sendError || "unknown error") +
-               (draft.sendErrorCode ? ' <code>' + esc(draft.sendErrorCode) + '</code>' : '') +
-               '. Review the message and try again.</span>';
+        // v2.6: STRANDED_POST_CLICK is a specific failure mode that's
+        // recoverable in one click — the message almost certainly went
+        // through (we typed it AND clicked Send), Etsy just didn't give
+        // a confirmation signal in time. Going forward the reaper marks
+        // these as sent_unverified directly, but for any pre-existing
+        // STRANDED_POST_CLICK drafts in this state we offer a Recover
+        // button that flips status to sent_unverified AND triggers the
+        // optimistic-insert path so the message appears in the thread.
+        if (draft.sendErrorCode === "STRANDED_POST_CLICK") {
+          html = '<i class="material-icons">help_outline</i>' +
+                 '<span><b>Send clicked but unverified.</b> ' +
+                 'The extension typed the message and clicked Etsy\'s Send button, then lost the tab before confirmation. ' +
+                 'The message most likely went through — verify in Etsy. ' +
+                 'If it did, click Recover to clear this state.</span>' +
+                 '<button class="em-send-recover" data-draft-id="' + esc(draft.id) + '">Mark as sent</button>';
+        } else {
+          html = '<i class="material-icons">error_outline</i>' +
+                 '<span>Send failed: ' + esc(draft.sendError || "unknown error") +
+                 (draft.sendErrorCode ? ' <code>' + esc(draft.sendErrorCode) + '</code>' : '') +
+                 '. Review the message and try again.</span>';
+        }
       }
       el.innerHTML = html;
       el.style.display = "flex";
@@ -5635,6 +5659,50 @@
           } catch (e) {
             toast("Cancel failed: " + e.message);
             cancelBtn.disabled = false;
+          }
+        });
+      }
+
+      // v2.6: Wire Recover button for STRANDED_POST_CLICK case. Flips the
+      // draft status from "failed" to "sent_unverified" via firestoreProxy
+      // (the existing draft-send function doesn't have a recover op, but
+      // a direct doc patch on EtsyMail_Drafts is fine here — owner-only).
+      // After the patch, fire the optimistic-insert path manually so the
+      // just-sent text appears in the thread view.
+      const recoverBtn = el.querySelector(".em-send-recover");
+      if (recoverBtn) {
+        recoverBtn.addEventListener("click", async () => {
+          if (!confirm("Mark this draft as sent?\n\nThis confirms you saw the message in Etsy. The draft will move to 'sent (unverified)' status and the message will appear in your thread view. If the message did NOT go through on Etsy, click Cancel and instead edit the draft + re-send.")) return;
+          recoverBtn.disabled = true;
+          try {
+            await api("firestoreProxy", {
+              method: "POST",
+              body: {
+                op   : "update",
+                coll : "EtsyMail_Drafts",
+                id   : draft.id,
+                patch: {
+                  status        : "sent_unverified",
+                  sentAt        : { __serverTimestamp: true },
+                  sendError     : null,
+                  sendRecoveredBy: getEmployeeName() || "operator",
+                  sendRecoveredAt: { __serverTimestamp: true }
+                }
+              }
+            });
+            toast("Marked as sent. Refreshing thread…");
+            // Optimistic insert + thread refresh, mirroring pollSendStatus.
+            try {
+              await insertOptimisticMessage({ ...draft, status: "sent_unverified" });
+            } catch (e) {
+              console.warn("optimistic insert after recover failed:", e.message);
+            }
+            fetchMessagesNow(state.selectedId);
+            fetchThreadListNow();
+            hideSendStatus();
+          } catch (e) {
+            toast("Recover failed: " + e.message);
+            recoverBtn.disabled = false;
           }
         });
       }

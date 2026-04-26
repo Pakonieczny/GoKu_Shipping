@@ -249,27 +249,45 @@ async function reapStaleDraft(draftRef, kind) {
     }
 
     let sendErrorCode, sendError, decisionReason;
+    let terminalStatus = "failed";   // default — failed sends
+    let setSentAt      = false;      // sent_unverified should also stamp sentAt
     if (d.status === "queued") {
       sendErrorCode  = "QUEUED_EXPIRED";
       sendError      = `Expired by reaper — queued more than ${MAX_CLAIM_LOOKBACK_MIN} minutes (extension may be offline)`;
       decisionReason = "human_review_after_queued_expired";
     } else if (d.sendStage === "post_click") {
+      // v2.6 fix: STRANDED_POST_CLICK is NOT a failure — the extension
+      // typed the message AND clicked Etsy's Send button. The "stranded"
+      // part means we just don't have a confirmation toast/signal. The
+      // message almost always WAS delivered (Etsy's Send is reliable),
+      // so we use `sent_unverified` semantics:
+      //   - status: sent_unverified  (not "failed")
+      //   - sentAt: now              (so the UI's optimistic message
+      //     insert fires, putting the just-sent text into the thread
+      //     view immediately instead of leaving the operator wondering)
+      //   - thread → human_review    (so the operator can verify)
+      // Treating this as `failed` was the prior bug: the operator saw
+      // a red error banner and re-sent, creating duplicate messages.
       sendErrorCode  = "STRANDED_POST_CLICK";
-      sendError      = "Send was clicked but never confirmed. Verify on Etsy whether the message went through before re-sending.";
+      sendError      = "Send was clicked. Etsy didn't return a confirmation signal within the timeout — verify on Etsy that the message went through. (Most likely it did; this status just means we couldn't auto-confirm.)";
       decisionReason = "human_review_after_stranded_post_click";
+      terminalStatus = "sent_unverified";
+      setSentAt      = true;
     } else {
       sendErrorCode  = "CLAIM_ABANDONED";
       sendError      = "Extension claimed the draft but never clicked Send (heartbeat stale). Safe to re-send.";
       decisionReason = "human_review_after_claim_abandoned";
     }
 
-    tx.set(draftRef, {
-      status          : "failed",
+    const draftPatch = {
+      status          : terminalStatus,
       sendError,
       sendErrorCode,
       sendHeartbeatAt : FV.serverTimestamp(),
       updatedAt       : FV.serverTimestamp()
-    }, { merge: true });
+    };
+    if (setSentAt) draftPatch.sentAt = FV.serverTimestamp();
+    tx.set(draftRef, draftPatch, { merge: true });
 
     const threadStatusUpdate = await demoteThreadInTxn(tx, d.threadId, decisionReason);
 
