@@ -1324,37 +1324,107 @@
     .em-modal-backdrop {
       display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4);
       z-index: 9999; align-items: center; justify-content: center;
+      /* Padding prevents the modal from touching the screen edges on
+         mobile, and combined with the modal's max-height calc(100vh -
+         <padding>) gives the modal enough breathing room while keeping
+         it fully on-screen. */
+      padding: 20px;
+      box-sizing: border-box;
     }
     .em-modal-backdrop.active { display: flex; }
-    .em-modal {
+    /* IMPORTANT: every .em-modal rule below is scoped via the
+       .em-modal-backdrop ancestor so it ONLY targets the Settings
+       modal. The order-detail modal at the top of this file uses
+       .em-modal-overlay > .em-modal and must keep its own definitions
+       — both modals reuse the bare `.em-modal` class and would
+       otherwise cascade-collide (a pre-existing condition). */
+    .em-modal-backdrop .em-modal {
       background: #fff; border-radius: 8px; padding: 24px; max-width: 500px;
-      width: 90%; box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+      width: 100%; box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+      /* Cap the modal height so it can't exceed the viewport, and let
+         it scroll internally when content (especially the long Settings
+         form) is taller than the available space. -webkit-overflow-
+         scrolling enables momentum scroll on iOS. */
+      max-height: calc(100vh - 40px);
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      box-sizing: border-box;
     }
-    .em-modal h2 { margin: 0 0 8px; font-size: 18px; }
-    .em-modal p { margin: 0 0 12px; font-size: 13px; color: #57606a; }
-    .em-modal label {
+    .em-modal-backdrop .em-modal h2 { margin: 0 0 8px; font-size: 18px; }
+    .em-modal-backdrop .em-modal p {
+      margin: 0 0 12px; font-size: 13px; color: #57606a;
+      line-height: 1.4;
+      /* Long URLs / inline-code tokens shouldn't blow the modal's
+         width — wrap them. word-break covers Safari, overflow-wrap
+         covers Chrome/Firefox modern. */
+      overflow-wrap: break-word;
+      word-break: break-word;
+    }
+    .em-modal-backdrop .em-modal label {
       display: block; margin: 12px 0 4px; font-size: 12px; color: #57606a;
+      line-height: 1.4;
     }
-    .em-modal input[type=password], .em-modal input[type=text] {
+    /* Checkbox-row labels (declared inline as `display: flex`). The
+       inline rule wins on `display`, but the rest of `.em-modal label`
+       still applies. We use a structural selector below to give the
+       inner <span> proper flex hygiene so wrapped text doesn't escape
+       its row and overlap into the next sibling paragraph — which was
+       the bug visible in the v2.4 modal screenshot. */
+    .em-modal-backdrop .em-modal label > input[type=checkbox] {
+      flex: 0 0 auto;        /* keep checkbox at intrinsic size */
+      align-self: flex-start; /* anchor checkbox to top of wrapped text */
+      margin-top: 2px;        /* visually align with the first text line */
+    }
+    .em-modal-backdrop .em-modal label > span {
+      flex: 1 1 auto;         /* span grows to fill remaining row width */
+      min-width: 0;           /* allow flex item to shrink below content */
+      line-height: 1.45;
+      color: #1f2328;         /* labels look heavier than body copy */
+      font-size: 13px;
+      overflow-wrap: break-word;
+      word-break: break-word;
+    }
+    .em-modal-backdrop .em-modal input[type=password],
+    .em-modal-backdrop .em-modal input[type=text] {
       width: 100%; padding: 8px 10px; border: 1px solid #d0d7de;
       border-radius: 4px; font: inherit; box-sizing: border-box;
       font-family: monospace; font-size: 12px;
     }
-    .em-modal .em-modal-buttons {
-      display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px;
+    /* Threshold-slider row — scoped duplicate of the rule defined ~200
+       lines earlier as `.em-modal label.em-modal-range`. We scope to
+       `.em-modal-backdrop` so this version's specificity beats the
+       generic `.em-modal-backdrop .em-modal label` rule above (which
+       sets display:block). Without this, the slider label collapses
+       back to block layout and the slider/value go to a new line. */
+    .em-modal-backdrop .em-modal label.em-modal-range {
+      display: flex; align-items: center; gap: 10px;
+      margin: 12px 0 4px;
     }
-    .em-modal button {
+    .em-modal-backdrop .em-modal label.em-modal-range input[type=range] {
+      flex: 1;
+    }
+    .em-modal-backdrop .em-modal .em-modal-range-val {
+      font-family: monospace; font-weight: 600; color: #0366d6;
+      min-width: 36px; text-align: right;
+    }
+    .em-modal-backdrop .em-modal .em-modal-buttons {
+      display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px;
+      /* Buttons scroll with the form naturally — when the user scrolls
+         to the bottom of the modal they see them. Avoids fragile
+         sticky-positioning math against the modal's padding. */
+    }
+    .em-modal-backdrop .em-modal button {
       padding: 8px 16px; border: 1px solid #d0d7de; background: #f6f8fa;
       border-radius: 4px; cursor: pointer; font: inherit;
     }
-    .em-modal button.primary {
+    .em-modal-backdrop .em-modal button.primary {
       background: #1f883d; color: #fff; border-color: #1a7f37;
     }
-    .em-modal button.primary:hover { background: #1a7f37; }
-    .em-modal .em-modal-error {
+    .em-modal-backdrop .em-modal button.primary:hover { background: #1a7f37; }
+    .em-modal-backdrop .em-modal .em-modal-error {
       color: #cf222e; font-size: 12px; margin-top: 8px; display: none;
     }
-    .em-modal .em-modal-error.active { display: block; }
+    .em-modal-backdrop .em-modal .em-modal-error.active { display: block; }
 
     .em-send-status.sent_unverified {
       background: #fff4e5; border: 1px solid #ffdca8; color: #9a3f00;
@@ -1602,22 +1672,17 @@
   <!-- ─── v2.0 Step 2.5: Collateral library (owner-only) ──────────── -->
   <div class="em-mgmt-modal" id="emCollateralModal">
     <div class="em-mgmt-card">
-      <h3>Collateral library <span class="em-muted" style="font-size:12px; font-weight:400;">— upload line sheets or register URLs for the sales agent</span></h3>
+      <h3>Collateral library <span class="em-muted" style="font-size:12px; font-weight:400;">— curated reference URLs the sales agent can attach</span></h3>
       <div id="emCollateralError" class="em-modal-error" style="margin-bottom:8px;"></div>
       <div class="em-mgmt-form" id="emCollateralForm">
         <div class="em-form-row">
           <label><span>Display name</span>
-            <input type="text" id="emCollateralNameInput" placeholder="Custom Huggie Charm Line Sheet">
-          </label>
-        </div>
-        <div class="em-form-row">
-          <label><span>Document ID (optional, use huggie_line_sheet / necklace_line_sheet / stud_line_sheet for replacements)</span>
-            <input type="text" id="emCollateralIdInput" placeholder="huggie_line_sheet">
+            <input type="text" id="emCollateralNameInput" placeholder="14k yellow gold lookbook (Spring '26)">
           </label>
         </div>
         <div class="em-form-row">
           <label><span>Category</span>
-            <input type="text" id="emCollateralCatInput" placeholder="huggie">
+            <input type="text" id="emCollateralCatInput" placeholder="wedding_band">
           </label>
           <label><span>Kind</span>
             <select id="emCollateralKindInput">
@@ -1631,22 +1696,17 @@
         </div>
         <div class="em-form-row">
           <label><span>URL (https://&hellip;)</span>
-            <input type="url" id="emCollateralUrlInput" placeholder="Optional if uploading a file below">
-          </label>
-        </div>
-        <div class="em-form-row">
-          <label><span>Upload to Firebase Storage (PDF, PNG, JPG, WebP, max 10 MB)</span>
-            <input type="file" id="emCollateralFileInput" accept="application/pdf,image/png,image/jpeg,image/webp,image/gif">
+            <input type="url" id="emCollateralUrlInput" placeholder="https://drive.example.com/lookbook.pdf">
           </label>
         </div>
         <div class="em-form-row">
           <label><span>Description (shown to the AI when matched)</span>
-            <textarea id="emCollateralDescInput" placeholder="Customer-facing line sheet. The sales agent can send this when customers need visual options."></textarea>
+            <textarea id="emCollateralDescInput" placeholder="Curated lookbook of 14k yellow gold rings from Spring 2026. Reference for customers asking about color tone or style range."></textarea>
           </label>
         </div>
         <div class="em-form-row">
           <label><span>Keywords (comma-separated)</span>
-            <input type="text" id="emCollateralKeywordsInput" placeholder="huggie, line sheet, custom charm, options">
+            <input type="text" id="emCollateralKeywordsInput" placeholder="yellow gold, vintage, hammered">
           </label>
         </div>
         <div class="em-form-row" style="justify-content:flex-end; gap:6px; margin-bottom:0;">
@@ -2333,13 +2393,11 @@
 
     function clearCollateralForm() {
       $("emCollateralNameInput").value = "";
-      if ($("emCollateralIdInput")) $("emCollateralIdInput").value = "";
       $("emCollateralCatInput").value = "";
       $("emCollateralKindInput").value = "line_sheet";
       $("emCollateralUrlInput").value = "";
       $("emCollateralDescInput").value = "";
       $("emCollateralKeywordsInput").value = "";
-      if ($("emCollateralFileInput")) $("emCollateralFileInput").value = "";
     }
 
     async function loadCollateralList() {
@@ -2352,7 +2410,7 @@
         });
         const items = (res && res.items) || [];
         if (!items.length) {
-          list.innerHTML = '<div class="em-empty-msg">No collateral yet. Click <b>+ New collateral</b> to upload a file or register a URL.</div>';
+          list.innerHTML = '<div class="em-empty-msg">No collateral yet. Click <b>+ New collateral</b> to register a URL.</div>';
           return;
         }
         list.innerHTML = items.map(it => {
@@ -2362,7 +2420,7 @@
             <div class="em-mgmt-row${inactiveCls}" data-cid="${esc(it.id)}">
               <div>
                 <div class="em-mgmt-name">${esc(it.name || "(unnamed)")}${it.active === false ? " <span class='em-muted'>(inactive)</span>" : ""}</div>
-                <div class="em-mgmt-meta">${esc(it.category || "—")} · ${esc(kindLbl)}${it.fileName ? " · " + esc(it.fileName) : ""} · <a href="${esc(it.url || "#")}" target="_blank" rel="noopener" style="color:#0969da;">URL</a></div>
+                <div class="em-mgmt-meta">${esc(it.category || "—")} · ${esc(kindLbl)} · <a href="${esc(it.url || "#")}" target="_blank" rel="noopener" style="color:#0969da;">URL</a></div>
               </div>
               <div class="em-mgmt-actions">
                 <button type="button" data-action="edit">Edit</button>
@@ -2378,13 +2436,11 @@
             const it = items.find(x => x.id === cid);
             if (!it) return;
             $("emCollateralNameInput").value     = it.name || "";
-            if ($("emCollateralIdInput")) $("emCollateralIdInput").value = cid;
             $("emCollateralCatInput").value      = it.category || "";
             $("emCollateralKindInput").value     = it.kind || "line_sheet";
             $("emCollateralUrlInput").value      = it.url || "";
             $("emCollateralDescInput").value     = it.description || "";
             $("emCollateralKeywordsInput").value = (it.keywords || []).join(", ");
-            if ($("emCollateralFileInput")) $("emCollateralFileInput").value = "";
             $("emCollateralFormSaveBtn").dataset.mode = "update";
             $("emCollateralFormSaveBtn").dataset.id = cid;
             $("emCollateralForm").style.display = "block";
@@ -2419,7 +2475,6 @@
       const id   = $("emCollateralFormSaveBtn").dataset.id || null;
 
       const name = $("emCollateralNameInput").value.trim();
-      const explicitId = ($("emCollateralIdInput") && $("emCollateralIdInput").value.trim()) || id || null;
       const cat  = $("emCollateralCatInput").value.trim();
       const kind = $("emCollateralKindInput").value;
       const url  = $("emCollateralUrlInput").value.trim();
@@ -2428,44 +2483,15 @@
         .split(",")
         .map(s => s.trim().toLowerCase())
         .filter(s => s.length >= 2);
-      const fileInput = $("emCollateralFileInput");
-      const file = fileInput && fileInput.files && fileInput.files[0] ? fileInput.files[0] : null;
 
       if (!name) return showCollateralError("Display name is required.");
       if (!cat)  return showCollateralError("Category is required.");
-      if (!file && (!url || !/^https?:\/\//.test(url))) {
-        return showCollateralError("Add a URL or choose a file to upload.");
-      }
-      if (url && !/^https?:\/\//.test(url)) return showCollateralError("URL must start with http:// or https://.");
-      if (file && file.size > 10 * 1024 * 1024) return showCollateralError("File too large. Max 10 MB.");
+      if (!url || !/^https?:\/\//.test(url)) return showCollateralError("URL must start with http:// or https://.");
 
       const data = { name, category: cat, kind, url, description: desc, keywords: kw, active: true };
-      const saveBtn = $("emCollateralFormSaveBtn");
-      const oldText = saveBtn.textContent;
-      saveBtn.disabled = true;
-      saveBtn.textContent = file ? "Uploading…" : "Saving…";
 
       try {
-        if (file) {
-          const bytesBase64 = await fileToBase64(file);
-          await api("etsyMailCollateralUpload", {
-            method: "POST",
-            body  : {
-              actor: getEmployeeName() || "operator",
-              id: explicitId,
-              name,
-              category: cat,
-              kind,
-              description: desc,
-              keywords: kw,
-              filename: file.name || name,
-              contentType: file.type || "application/octet-stream",
-              bytesBase64,
-              active: true
-            }
-          });
-          toast("Collateral uploaded");
-        } else if (mode === "update" && id) {
+        if (mode === "update" && id) {
           await api("etsyMailCollateral", {
             method: "POST",
             body  : { op: "update", actor: getEmployeeName() || "operator", id, patch: data }
@@ -2474,7 +2500,7 @@
         } else {
           await api("etsyMailCollateral", {
             method: "POST",
-            body  : { op: "create", actor: getEmployeeName() || "operator", id: explicitId, item: data }
+            body  : { op: "create", actor: getEmployeeName() || "operator", item: data }
           });
           toast("Collateral added");
         }
@@ -2483,9 +2509,6 @@
         loadCollateralList();
       } catch (err) {
         showCollateralError(err.message);
-      } finally {
-        saveBtn.disabled = false;
-        saveBtn.textContent = oldText;
       }
     }
 
@@ -3106,7 +3129,10 @@
       state.searchMode = true;
       try {
         const filter = currentFilter();
-        const searchQuery = { q, limit: 500 };
+        // v2.4: search now lives in etsyMailThreads at ?search=1. The
+        // former /etsyMailSearch endpoint was folded in to reduce the
+        // count of deployed Netlify functions.
+        const searchQuery = { search: 1, q, limit: 500 };
         // Only the "All" folder has filter.status == null. Every other
         // folder restricts the search to its status(es).
         if (filter.status) {
@@ -3114,7 +3140,7 @@
             ? filter.status.join(",")
             : filter.status;
         }
-        const data = await api("etsyMailSearch", { query: searchQuery });
+        const data = await api("etsyMailThreads", { query: searchQuery });
         // v1.6: drop stale responses. If the user kept typing, _searchSeq
         // has already advanced past mySeq. Applying this response would
         // overwrite a more recent query's candidate pool.
@@ -3137,7 +3163,7 @@
         setBackendOk(false, "Backend: error");
         $("emListItems").innerHTML = `<div class="em-list-empty">
           Search error: ${esc(e.message)}<br>
-          <span class="em-muted">If this is a 404, ensure <code>etsyMailSearch.js</code>
+          <span class="em-muted">If this is a 404, ensure <code>etsyMailThreads.js</code>
           is deployed alongside the other functions.</span>
         </div>`;
       }
@@ -6188,10 +6214,10 @@
       //      runs the local filter against searchableText + metadata
       //      on whatever threads are currently in state.threads. This
       //      is the per-letter UI feedback — zero network latency.
-      //   2. EXPANDER (200ms debounce): etsyMailSearch fires to broaden
-      //      the candidate pool beyond the loaded folder batch (up to
-      //      500 recent threads server-side). When results arrive, the
-      //      local filter automatically narrows them to match the
+      //   2. EXPANDER (200ms debounce): etsyMailThreads?search=1 fires to
+      //      broaden the candidate pool beyond the loaded folder batch
+      //      (up to 500 recent threads server-side). When results arrive,
+      //      the local filter automatically narrows them to match the
       //      current query — no flicker.
       //
       // Clearing the input (or going below 2 chars) drops search mode
