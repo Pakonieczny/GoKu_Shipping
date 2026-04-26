@@ -635,7 +635,7 @@ exports.handler = async (event) => {
 
           const msgs = await db.collection("EtsyMail_Threads").doc(tid)
             .collection("messages")
-            .orderBy("at", "desc")
+            .orderBy("timestamp", "desc")
             .limit(50)
             .get();
           for (const d of msgs.docs) {
