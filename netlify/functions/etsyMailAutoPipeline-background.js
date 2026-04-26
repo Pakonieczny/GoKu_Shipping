@@ -132,6 +132,7 @@ async function getAutoPipelineConfig() {
     // ─── v2.0 Step 2 flags (default OFF — operator must opt in) ──
     salesModeEnabled        : false,
     salesAutoEngage         : false,
+    salesAutoSendEnabled    : false,   // v2.6: auto-send sales drafts (off by default — opt in)
     salesPilotThreadIds     : [],
     // ─── v2.0 Step 3 will add (commented for now): ───────────────
     // customOrderSendEnabled       : false,
@@ -156,6 +157,7 @@ async function getAutoPipelineConfig() {
         // Read but do not act on these in Step 1; Step 2 will use them.
         salesModeEnabled        : d.salesModeEnabled === true,
         salesAutoEngage         : d.salesAutoEngage === true,
+        salesAutoSendEnabled    : d.salesAutoSendEnabled === true,
         salesPilotThreadIds     : Array.isArray(d.salesPilotThreadIds) ? d.salesPilotThreadIds : [],
         // ── v2.0 Step 3 forward-compat reads ──
         customOrderSendEnabled  : d.customOrderSendEnabled === true,
@@ -901,6 +903,146 @@ exports.handler = async (event) => {
                 : null
             }
           });
+
+          // ─── v2.6 — auto-send sales drafts ──────────────────────────
+          // The sales-agent path historically saved drafts only and
+          // required operator review. With salesAutoSendEnabled, the
+          // agent's draft auto-sends UNLESS:
+          //   (a) the agent self-flagged the draft as Needs Review
+          //       handoff (custom request outside catalog, complex
+          //       quote, etc.) — see isNeedsReviewHandoff on the draft
+          //   (b) the stage is one where money commitments live —
+          //       quote / revision / pending_close_approval — these
+          //       always require operator approval
+          //   (c) safety vetoes fire on the customer's recent text or
+          //       the agent's draft text (refunds, cancellations, etc.)
+          //   (d) the kill-switch is on
+          //
+          // Discovery and Spec turns just ask the customer questions, so
+          // they're safe to auto-send. Quote+ stages are gated regardless
+          // because shipping the wrong quote without a human glance is
+          // unacceptable risk.
+          //
+          // We rely on the existing etsyMailDraftSend.enqueue path used
+          // by the support auto-send branch + manual operator clicks.
+          // The Chrome extension picks the queued send up on its next
+          // poll and posts to Etsy's DOM exactly as a human would.
+          const SAFE_AUTOSEND_STAGES = new Set(["discovery", "spec"]);
+          const stageSafeForAutoSend = SAFE_AUTOSEND_STAGES.has(String(salesResp.stage || ""));
+          if (autoCfg.salesAutoSendEnabled && stageSafeForAutoSend) {
+            try {
+              // Re-load the freshly-written draft so we have its text +
+              // attachments + handoff flag for the safety checks.
+              const draftSnap = await db.collection("EtsyMail_Drafts")
+                .doc(salesResp.draftId).get();
+              const draftDoc = draftSnap.exists ? (draftSnap.data() || {}) : {};
+              const draftText = String(draftDoc.text || "").trim();
+              const draftAttachments = Array.isArray(draftDoc.attachments) ? draftDoc.attachments : [];
+              const isNeedsReviewHandoff = draftDoc.isNeedsReviewHandoff === true;
+
+              if (!draftText) {
+                // Empty body → don't send. The save itself was probably
+                // a Needs Review synopsis with no customer-facing reply.
+                await writeAudit({
+                  threadId, draftId: salesResp.draftId,
+                  eventType: "sales_auto_send_skipped",
+                  payload  : { reason: "empty_draft_text" }
+                });
+              } else if (isNeedsReviewHandoff) {
+                await writeAudit({
+                  threadId, draftId: salesResp.draftId,
+                  eventType: "sales_auto_send_skipped",
+                  payload  : { reason: "needs_review_handoff" }
+                });
+              } else {
+                // Run the same deterministic safety vetoes the support
+                // path uses. If anything trips, leave as draft for review.
+                const inboundForVeto = await loadLatestInboundText(threadId);
+                const veto = applyDeterministicVetoes({
+                  inboundText   : inboundForVeto,
+                  draftText,
+                  draftToolCalls: salesResp.toolCalls || []
+                });
+                const ks = await getKillSwitch();
+
+                if (veto.vetoed) {
+                  await writeAudit({
+                    threadId, draftId: salesResp.draftId,
+                    eventType: "sales_auto_send_vetoed",
+                    payload  : { reasons: veto.reasons }
+                  });
+                } else if (ks.disabled) {
+                  await writeAudit({
+                    threadId, draftId: salesResp.draftId,
+                    eventType: "sales_auto_send_skipped",
+                    payload  : { reason: "kill_switch_on" }
+                  });
+                } else {
+                  // All clear — enqueue the send. Same path as the
+                  // operator's manual Send-via-Etsy click.
+                  const tSnap = await threadRef.get();
+                  const thread = tSnap.exists ? tSnap.data() : {};
+                  const etsyConversationUrl = thread.etsyConversationUrl
+                    || ("https://www.etsy.com/your/conversations/"
+                       + (thread.etsyConversationId || threadId.replace("etsy_conv_", "")));
+
+                  await callFunction("etsyMailDraftSend", {
+                    op                  : "enqueue",
+                    threadId,
+                    etsyConversationUrl,
+                    text                : draftText,
+                    attachments         : draftAttachments,
+                    employeeName        : employeeName || "system:auto-pipeline",
+                    aiMeta              : {
+                      generatedByAI         : true,
+                      generatedBySalesAgent : true,
+                      stage                 : salesResp.stage,
+                      confidence            : salesResp.confidence,
+                      model                 : draftDoc.aiModel || null
+                    },
+                    force               : true,
+                    parentThreadFinalizePatch : {
+                      threadId,
+                      newStatus    : "queued_for_auto_send",
+                      inboundMs    : claim.inboundMs,
+                      decision     : "sales_auto_send_enqueued",
+                      aiConfidence : salesResp.confidence
+                    }
+                  });
+                  await writeAudit({
+                    threadId, draftId: salesResp.draftId,
+                    eventType: "sales_auto_send_enqueued",
+                    payload  : {
+                      stage      : salesResp.stage,
+                      confidence : salesResp.confidence,
+                      textLen    : draftText.length,
+                      attachCount: draftAttachments.length
+                    }
+                  });
+                }
+              }
+            } catch (autoSendErr) {
+              // Auto-send failed — non-fatal. The draft is already saved
+              // and the operator can click Send manually. Log so the
+              // failure mode is visible.
+              console.warn("salesAgent auto-send failed (non-fatal):", autoSendErr.message);
+              await writeAudit({
+                threadId, draftId: salesResp.draftId,
+                eventType: "sales_auto_send_failed",
+                payload  : { error: autoSendErr.message }
+              });
+            }
+          } else if (autoCfg.salesAutoSendEnabled && !stageSafeForAutoSend) {
+            // Auto-send is on globally but this stage requires operator
+            // approval (quote / revision / pending_close_approval).
+            // Audit so the operator can see why a particular thread
+            // didn't auto-send despite the toggle being on.
+            await writeAudit({
+              threadId, draftId: salesResp.draftId,
+              eventType: "sales_auto_send_skipped",
+              payload  : { reason: "stage_requires_operator_approval", stage: salesResp.stage }
+            });
+          }
 
           return ok({
             threadId,

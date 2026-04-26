@@ -1526,6 +1526,14 @@
           When OFF, only threads with an existing SalesContext (mid-funnel) route to the agent. Fresh sales leads still get an intent badge but go to the standard customer-service draft path. Recommended OFF during pilot — flip ON once stage progression is proven on a few threads.
         </p>
 
+        <label style="display:flex; align-items:center; gap:10px; margin:8px 0 4px 26px; cursor:pointer;">
+          <input type="checkbox" id="emSalesAutoSendInput" style="width:14px; height:14px; cursor:pointer;">
+          <span style="font-size:12px;"><b>Auto-send sales drafts</b> &mdash; let the agent post Discovery + Spec replies to the customer without operator approval.</span>
+        </label>
+        <p style="font-size:11px;color:#6a737d;margin:0 0 8px 44px;">
+          When ON, drafts the agent generates for the <b>Discovery</b> and <b>Spec</b> stages (asking the customer questions about what they want) auto-send via the Chrome extension. Quote / Revision / Pending Close Approval stages <i>always</i> require operator approval regardless of this toggle — money commitments never auto-send. Drafts that the agent flagged as Needs Review handoff or that hit safety vetoes (refunds, cancellations, etc.) also stay queued for review. Operator approval is still required during pilot — flip ON when comfortable with the agent's question quality.
+        </p>
+
         <label style="display:block; margin:8px 0 4px 26px;">
           <span style="font-size:12px; color:#1f2328;"><b>Pilot allow-list</b> &mdash; thread IDs (one per line). Empty = all threads.</span>
           <textarea id="emSalesPilotThreadIdsInput"
@@ -1884,6 +1892,7 @@
       // ─── v2.0 Step 2 (default OFF — operator opts in once pilot is solid) ──
       salesModeEnabled    : false,
       salesAutoEngage     : false,
+      salesAutoSendEnabled: false,
       salesPilotThreadIds : []
       // ─── v2.0 Step 3 will add ────────────────────────────────────────────
       // customOrderSendEnabled          : false,
@@ -1920,6 +1929,7 @@
             // server-side; the spec says: empty = pilot off, anything = restrict).
             salesModeEnabled       : d.salesModeEnabled === true,
             salesAutoEngage        : d.salesAutoEngage === true,
+            salesAutoSendEnabled   : d.salesAutoSendEnabled === true,
             salesPilotThreadIds    : Array.isArray(d.salesPilotThreadIds) ? d.salesPilotThreadIds : [],
             updatedBy            : d.updatedBy || null,
             updatedAt            : d.updatedAt || null,
@@ -1937,7 +1947,7 @@
 
     async function saveAutoConfig({ enabled, threshold, manualAiDraftAutoSend,
                                     listingsMirrorEnabled, intentClassifierEnabled,
-                                    salesModeEnabled, salesAutoEngage, salesPilotThreadIds,
+                                    salesModeEnabled, salesAutoEngage, salesAutoSendEnabled, salesPilotThreadIds,
                                     by }) {
       // Sanitize pilot list: lines → trimmed strings → drop empties.
       let pilotList = [];
@@ -1961,6 +1971,7 @@
         // v2.0 Step 2: explicit-true semantics; pilot list always saved as array.
         salesModeEnabled       : salesModeEnabled === true,
         salesAutoEngage        : salesAutoEngage === true,
+        salesAutoSendEnabled   : salesAutoSendEnabled === true,
         salesPilotThreadIds    : pilotList,
         updatedBy            : by || getEmployeeName() || "operator",
         updatedAt            : { __serverTimestamp: true }
@@ -2070,18 +2081,33 @@
     }
 
     /** Render the sales context panel into emSalesCardMount. Hides it
-     *  if no SalesContext exists. */
+     *  if no SalesContext exists.
+     *
+     *  Anti-flicker note: this used to wipe `mount.innerHTML = ""`
+     *  immediately on entry, then await a network fetch before
+     *  rebuilding. That left the panel blank for the duration of the
+     *  fetch — visible as a flicker every poll cycle (~4s). The fix is
+     *  to fetch FIRST, build the new HTML string, and only assign to
+     *  innerHTML at the end. The previous render stays on screen until
+     *  the new one is ready, so the swap is instant.
+     *
+     *  We still hide the card immediately if no SalesContext exists,
+     *  but only AFTER the fetch confirms that — not before. */
     async function renderSalesCardForThread(threadId) {
       const mount = $("emSalesCardMount");
       if (!mount) return;
-      mount.innerHTML = "";
 
       // Quick gate: if salesModeEnabled is OFF, don't render — the
       // SalesContext doc may exist but the system isn't active. We
       // still want operators to SEE the context (for diagnostics), so
       // we render with a "Sales Mode is OFF" banner instead.
       const ctx = await fetchSalesContext(threadId);
-      if (!ctx) return;
+      if (!ctx) {
+        // Only clear if we actually have nothing to render. If the
+        // user navigated away mid-fetch, ignore.
+        mount.innerHTML = "";
+        return;
+      }
 
       const stage = String(ctx.stage || "discovery");
       const stageLabels = {
@@ -2894,6 +2920,7 @@
       // ─── v2.0 Step 2 inputs ─────────────────────────────────────────
       const salesModeInput     = $("emSalesModeInput");
       const salesAutoEngageInput = $("emSalesAutoEngageInput");
+      const salesAutoSendInput   = $("emSalesAutoSendInput");
       const salesPilotInput    = $("emSalesPilotThreadIdsInput");
       const metaEl        = $("emAutoCfgMeta");
 
@@ -2912,6 +2939,7 @@
         // as one-thread-per-line in the textarea.
         if (salesModeInput)       salesModeInput.checked       = _autoCfg.salesModeEnabled === true;
         if (salesAutoEngageInput) salesAutoEngageInput.checked = _autoCfg.salesAutoEngage === true;
+        if (salesAutoSendInput)   salesAutoSendInput.checked   = _autoCfg.salesAutoSendEnabled === true;
         if (salesPilotInput) {
           const list = Array.isArray(_autoCfg.salesPilotThreadIds) ? _autoCfg.salesPilotThreadIds : [];
           salesPilotInput.value = list.join("\n");
@@ -2977,6 +3005,7 @@
       // ─── v2.0 Step 2 inputs ──
       const salesModeInput       = $("emSalesModeInput");
       const salesAutoEngageInput = $("emSalesAutoEngageInput");
+      const salesAutoSendInput   = $("emSalesAutoSendInput");
       const salesPilotInput      = $("emSalesPilotThreadIdsInput");
       try {
         await saveAutoConfig({
@@ -2989,6 +3018,7 @@
           // saveAutoConfig sanitize.
           salesModeEnabled       : salesModeInput       ? salesModeInput.checked       : false,
           salesAutoEngage        : salesAutoEngageInput ? salesAutoEngageInput.checked : false,
+          salesAutoSendEnabled   : salesAutoSendInput   ? salesAutoSendInput.checked   : false,
           salesPilotThreadIds    : salesPilotInput      ? salesPilotInput.value        : [],
           by                   : getEmployeeName() || "operator"
         });
