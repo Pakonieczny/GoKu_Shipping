@@ -3788,6 +3788,10 @@
               <select id="emThreadMoveSelect" class="em-thread-move-select" title="Move this thread to a folder">
                 <option value="">Move to…</option>
               </select>
+              <button id="emDeleteThreadBtn" title="Permanently delete this thread and all its data (Firestore + Storage). Owner-only."
+                      style="background:#fff; border:1px solid #cf222e; color:#cf222e;">
+                <i class="material-icons">delete_forever</i>Delete
+              </button>
             </div>
           </div>
         </div>
@@ -3900,6 +3904,7 @@
 
       $("emReviewBtn")?.addEventListener("click", () => setStatus(t.id, "pending_human_review", "operator triage"));
       $("emArchiveBtn")?.addEventListener("click", () => setStatus(t.id, "archived", "operator archive"));
+      $("emDeleteThreadBtn")?.addEventListener("click", () => deleteThreadCompletely(t.id));
 
       // v1.7: per-thread Move-to dropdown. Same destinations as the bulk
       // multi-select Move dropdown, but operates on this single thread.
@@ -6263,6 +6268,72 @@
         toast(`Status → ${status}`);
         fetchThreadListNow();
       } catch (e) { toast("Error: " + e.message); }
+    }
+
+    /**
+     * v2.5 — Permanently delete a thread and every piece of data tied to it.
+     *
+     * This is the nuclear option: Firestore docs across five collections
+     * + every Firebase Storage object under the thread's prefixes get
+     * wiped. Audit trail is preserved (a `thread_deleted` row is written
+     * by the backend). After this completes, re-scraping the same Etsy
+     * conversation creates a fresh thread with no carry-over state.
+     *
+     * Single-click confirm: the operator is already inside the thread
+     * they want to delete, so the page itself is the context — no need
+     * to make them re-type the name. The OK/Cancel dialog spells out
+     * exactly what gets wiped so an accidental click is still caught.
+     */
+    async function deleteThreadCompletely(threadId) {
+      const ok = confirm(
+        `PERMANENTLY DELETE this thread?\n\n` +
+        `This wipes:\n` +
+        `  • The thread record + every scraped message\n` +
+        `  • All AI drafts for this thread\n` +
+        `  • Intent classification + sales-funnel state\n` +
+        `  • Mirrored images and draft attachments in Firebase Storage\n\n` +
+        `An audit row is preserved. The customer record (shared across threads) is NOT deleted.\n\n` +
+        `Re-scraping this conversation later will create a fresh thread.`
+      );
+      if (!ok) return;
+
+      const actor = getEmployeeName() || "operator";
+      try {
+        toast("Deleting thread…");
+        const res = await api("firestoreProxy", {
+          method: "POST",
+          body  : {
+            op      : "deleteThread",
+            threadId,
+            actor,
+            confirm : true
+          }
+        });
+        const c = (res && res.counts) || {};
+        const summary =
+          `${c.thread || 0} thread, ` +
+          `${c.messages || 0} msgs, ` +
+          `${c.drafts || 0} drafts, ` +
+          `${(c.storageMirrored || 0) + (c.storageDrafts || 0)} files`;
+        if (res && res.partial) {
+          toast(`Deleted with warnings (${summary}). See response for errors.`, true);
+          console.warn("deleteThread partial:", res);
+        } else {
+          toast(`Thread permanently deleted (${summary}).`);
+        }
+        // Clear current view + refresh thread list so the deleted thread
+        // disappears. Resetting state.selectedId + re-rendering the list
+        // sends the user back to the empty-state pane (renderDetail
+        // shows the placeholder when no thread is selected).
+        try {
+          state.selectedId = null;
+          $("emDetail").innerHTML = `<div class="em-detail-empty">Thread deleted. Pick another from the list.</div>`;
+        } catch {}
+        fetchThreadListNow();
+      } catch (e) {
+        toast("Delete failed: " + e.message);
+        console.error("deleteThreadCompletely:", e);
+      }
     }
 
     async function saveStaffMessage(threadId) {

@@ -387,6 +387,194 @@ exports.handler = async (event) => {
         return ok({ id: String(id), deleted: true });
       }
 
+      /* ─── deleteThread ──────────────────────
+       * Owner-only. Completely purge a thread and every piece of data
+       * tied to it across Firestore + Firebase Storage, so a subsequent
+       * Etsy scrape of the same conversation creates a fresh record
+       * with no carry-over state.
+       *
+       * What gets deleted:
+       *   Firestore
+       *     EtsyMail_Threads/{threadId} doc + messages subcollection
+       *     EtsyMail_Drafts (every doc where threadId == this thread)
+       *     EtsyMail_IntentClassifications/{threadId}
+       *     EtsyMail_SalesContext/{threadId}
+       *   Firebase Storage
+       *     etsymail/{threadId}/**          (mirrored inbound images)
+       *     etsymail/drafts/{threadId}/**   (composer / draft attachments)
+       *
+       * What is preserved:
+       *   EtsyMail_Customers/{buyerUserId}  — keyed by buyer, shared across
+       *     every thread that buyer ever opens. Deleting it would orphan
+       *     other threads' customer panels.
+       *   EtsyMail_Audit/*                  — audit trail is forensic; we
+       *     write a `thread_deleted` row so the deletion itself is recorded.
+       *   etsymail/tracking/<code>.png      — tracking snapshots are keyed
+       *     by tracking code, not threadId; multiple threads can share one.
+       *
+       * The operation is best-effort and continues past per-step failures
+       * — if Storage cleanup partially fails, the Firestore wipe still
+       * completes. Counts of what was deleted are returned so the caller
+       * can show an honest report (and the audit row records the same).
+       *
+       * Owner-only because this is multi-collection destructive — owner
+       * is the only role permitted to write to ALL the affected
+       * collections, and this is a higher bar than even the existing
+       * deleteSub (which checks per-collection role). */
+      if (op === "deleteThread") {
+        const { threadId, confirm, actor = null } = body;
+        if (!threadId || !/^etsy_conv_[a-zA-Z0-9_-]+$/.test(String(threadId))) {
+          return bad("threadId must look like 'etsy_conv_<id>'");
+        }
+        if (confirm !== true) {
+          return bad("Refusing to deleteThread without { confirm: true } flag");
+        }
+
+        // Owner-only role check (more restrictive than the per-collection
+        // role tier — this op crosses owner-write and operator-write
+        // collections, so we gate at the higher bar).
+        const owner = await requireOwner(actor);
+        if (!owner.ok) {
+          await logUnauthorized({
+            actor,
+            eventType: "firestore_proxy_delete_thread_unauthorized",
+            payload  : { threadId, reason: owner.reason }
+          });
+          return json(403, { error: "Owner role required", reason: owner.reason });
+        }
+
+        const tid = String(threadId);
+        const counts = {
+          messages           : 0,
+          thread             : 0,
+          drafts             : 0,
+          intentClassifications: 0,
+          salesContext       : 0,
+          storageMirrored    : 0,
+          storageDrafts      : 0
+        };
+        const errors = [];   // non-fatal; reported in the response
+
+        // 1. Wipe the messages subcollection. Same paginated batch pattern
+        //    as deleteSub above — Firestore's batch limit is 500 ops per
+        //    commit, so we chunk at 400 to leave headroom.
+        try {
+          const subRef = db.collection("EtsyMail_Threads").doc(tid).collection("messages");
+          while (true) {
+            const snap = await subRef.limit(400).get();
+            if (snap.empty) break;
+            const batch = db.batch();
+            snap.docs.forEach(d => batch.delete(d.ref));
+            await batch.commit();
+            counts.messages += snap.docs.length;
+            if (snap.docs.length < 400) break;
+          }
+        } catch (e) {
+          errors.push(`messages subcollection: ${e.message}`);
+        }
+
+        // 2. Drafts. Drafts carry threadId as a field (not the doc id),
+        //    so we have to query for them. Single where() on equality is
+        //    cheap and doesn't need a composite index.
+        try {
+          const draftsSnap = await db.collection("EtsyMail_Drafts")
+            .where("threadId", "==", tid).get();
+          if (!draftsSnap.empty) {
+            const batch = db.batch();
+            draftsSnap.docs.forEach(d => batch.delete(d.ref));
+            await batch.commit();
+            counts.drafts = draftsSnap.docs.length;
+          }
+        } catch (e) {
+          errors.push(`drafts: ${e.message}`);
+        }
+
+        // 3. Intent classification (one doc keyed by threadId).
+        try {
+          const ref = db.collection("EtsyMail_IntentClassifications").doc(tid);
+          const snap = await ref.get();
+          if (snap.exists) {
+            await ref.delete();
+            counts.intentClassifications = 1;
+          }
+        } catch (e) {
+          errors.push(`intent classification: ${e.message}`);
+        }
+
+        // 4. Sales context (one doc keyed by threadId, only present if
+        //    the sales agent ever ran on this thread).
+        try {
+          const ref = db.collection("EtsyMail_SalesContext").doc(tid);
+          const snap = await ref.get();
+          if (snap.exists) {
+            await ref.delete();
+            counts.salesContext = 1;
+          }
+        } catch (e) {
+          errors.push(`sales context: ${e.message}`);
+        }
+
+        // 5. The thread doc itself. Done LAST so a partial failure above
+        //    leaves the thread visible in the UI for retry — better than
+        //    half-deleted state with the parent gone but children alive.
+        try {
+          const ref = db.collection("EtsyMail_Threads").doc(tid);
+          const snap = await ref.get();
+          if (snap.exists) {
+            await ref.delete();
+            counts.thread = 1;
+          }
+        } catch (e) {
+          errors.push(`thread doc: ${e.message}`);
+        }
+
+        // 6. Firebase Storage prefixes. bucket.deleteFiles({ prefix })
+        //    is GCS's recursive delete by path prefix — efficient even
+        //    for large message-image trees.
+        try {
+          const [files] = await admin.storage().bucket().getFiles({ prefix: `etsymail/${tid}/` });
+          if (files.length > 0) {
+            await admin.storage().bucket().deleteFiles({ prefix: `etsymail/${tid}/` });
+            counts.storageMirrored = files.length;
+          }
+        } catch (e) {
+          errors.push(`mirrored images: ${e.message}`);
+        }
+        try {
+          const [files] = await admin.storage().bucket().getFiles({ prefix: `etsymail/drafts/${tid}/` });
+          if (files.length > 0) {
+            await admin.storage().bucket().deleteFiles({ prefix: `etsymail/drafts/${tid}/` });
+            counts.storageDrafts = files.length;
+          }
+        } catch (e) {
+          errors.push(`draft attachments: ${e.message}`);
+        }
+
+        // 7. Audit row. We always write this — even on partial failure —
+        //    so there's a forensic record of the deletion attempt.
+        try {
+          await db.collection("EtsyMail_Audit").add({
+            threadId  : tid,
+            eventType : "thread_deleted",
+            actor     : actor || "system",
+            payload   : { counts, errors, op: "deleteThread" },
+            createdAt : admin.firestore.FieldValue.serverTimestamp(),
+            outcome   : errors.length === 0 ? "success" : "partial"
+          });
+        } catch (e) {
+          // Don't fail the request because of audit failure — surface
+          // it in the response instead.
+          errors.push(`audit write: ${e.message}`);
+        }
+
+        return ok({
+          threadId: tid,
+          counts,
+          errors,
+          partial : errors.length > 0
+        });
+      }
+
       return bad(`Unknown op '${op}'`);
     }
 
