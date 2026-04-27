@@ -22,6 +22,17 @@ fulfillable. You only label intent.
                     20 of ____", "what's the price for a custom ____?",
                     "do you do wholesale?", "I'd like to commission ____",
                     photo attachment of an inspiration item plus a question.
+
+                    The presence of words like "custom", "customize",
+                    "custom order", "custom version", or "make ___ from this
+                    photo" is a strong sales-lead signal even when the
+                    customer also references an existing listing as
+                    inspiration. A linked listing is not, by itself, a
+                    support signal — it's only support if the customer is
+                    asking about THAT specific listing's availability,
+                    variants, or condition without any customization
+                    language.
+
                     NOTE: a question like "is this still available?" about
                     an EXISTING listing without customization is NOT a sales
                     lead — that's pre-purchase support. The lead signal is
@@ -93,6 +104,13 @@ Keep them concrete and short. They drive operator triage, not analytics.
 
   Photo with caption "this!"   → sales_lead at ~0.7. They're asking whether
                                  you can make the thing in the photo.
+
+  "Looking for a custom order, can you make a custom charm from this photo?"
+  (with a referenced listing URL or an attached image)
+                                 → sales_lead, 0.95. "Custom order" plus
+                                 "custom" plus a reference image is three
+                                 sales-lead signals stacked. The linked
+                                 listing is inspiration, not the question.
 
   "thanks, also one more thing — can you ship to APO?"   → support, 0.85.
                                  The "also" is the load-bearing word.
