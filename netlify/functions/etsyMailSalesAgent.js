@@ -272,56 +272,48 @@ function isAllowedTransition(currentStage, requestedStage) {
 }
 
 // ─── Prompt loading ────────────────────────────────────────────────────
+//
+// All sales-stage prompts live in Firestore at EtsyMail_SalesPrompts/{stage}.
+// No file fallback — edits go through the Settings → Agent Prompts panel
+// in the dashboard. See loadPromptForStage below.
 
-const _promptFileCache = new Map();   // stage → string
-
-function loadPromptFromFile(stage) {
-  if (_promptFileCache.has(stage)) return _promptFileCache.get(stage);
-  try {
-    const p = path.join(__dirname, "prompts", "sales", `${stage}.md`);
-    const content = fs.readFileSync(p, "utf8");
-    if (!content || content.length < 100) {
-      throw new Error(`prompts/sales/${stage}.md is empty or truncated`);
-    }
-    _promptFileCache.set(stage, content);
-    return content;
-  } catch (e) {
-    console.error(`[salesAgent] could not load prompts/sales/${stage}.md: ${e.message}`);
-    _promptFileCache.set(stage, null);
-    return null;
-  }
-}
-
-/** Tier 1: EtsyMail_SalesPrompts/{stage} from Firestore (operator-editable).
- *  Tier 2: prompts/sales/{stage}.md from filesystem (bundled with deploy).
- *  Tier 3: hard-fail. No silent fallback.
+/** Loads the system prompt for a sales-agent stage from Firestore.
  *
- *  Returns { ok: true, prompt } or { ok: false, error }. */
+ *  Source: EtsyMail_SalesPrompts/{stage} doc, field `systemPrompt`.
+ *  Edited via the dashboard's Settings → Agent Prompts panel; no
+ *  caching, no file fallback — Firestore is canonical.
+ *
+ *  Returns { ok: true, prompt, source: "firestore" } or
+ *          { ok: false, error }. Hard-fails if doc is missing or too
+ *          short (< 100 chars, treated as a placeholder).
+ */
 async function loadPromptForStage(stage) {
-  // Try Firestore override first
   try {
     const doc = await db.collection(PROMPTS_COLL).doc(stage).get();
-    if (doc.exists) {
-      const d = doc.data() || {};
-      if (typeof d.systemPrompt === "string" && d.systemPrompt.length >= 100) {
-        return { ok: true, prompt: d.systemPrompt, source: "firestore" };
-      }
+    if (!doc.exists) {
+      return {
+        ok: false,
+        error: `Stage prompt missing for "${stage}". ` +
+               `Expected ${PROMPTS_COLL}/${stage} with field "systemPrompt". ` +
+               `Seed it via Settings → Agent Prompts in the dashboard.`
+      };
     }
+    const d = doc.data() || {};
+    const sp = typeof d.systemPrompt === "string" ? d.systemPrompt : "";
+    if (sp.length < 100) {
+      return {
+        ok: false,
+        error: `Stage prompt for "${stage}" is too short (${sp.length} chars). ` +
+               `Likely a placeholder — re-upload via Settings → Agent Prompts.`
+      };
+    }
+    return { ok: true, prompt: sp, source: "firestore" };
   } catch (e) {
-    console.warn(`salesAgent: Firestore prompt fetch for ${stage} failed (${e.message}); falling through to file`);
+    return {
+      ok: false,
+      error: `Stage prompt load failed for "${stage}": ${e.message}`
+    };
   }
-
-  // Fall through to file-system seed
-  const fileContent = loadPromptFromFile(stage);
-  if (fileContent) return { ok: true, prompt: fileContent, source: "file" };
-
-  return {
-    ok: false,
-    error: `Stage prompt missing for "${stage}". Verify: ` +
-           `(a) netlify.toml [functions] has included_files = [..., "netlify/functions/prompts/**"], ` +
-           `(b) prompts/sales/${stage}.md exists at deploy time. ` +
-           `Optional override: write systemPrompt field to EtsyMail_SalesPrompts/${stage}.`
-  };
 }
 
 // ─── Sales context load/init ───────────────────────────────────────────

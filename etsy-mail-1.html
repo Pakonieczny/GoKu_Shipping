@@ -1563,6 +1563,11 @@
             <i class="material-icons" style="font-size:14px; vertical-align:middle;">collections_bookmark</i>
             Manage collateral
           </button>
+          <button type="button" id="emPromptsBtn"
+                  style="padding:5px 11px; font-size:12px; background:#fff; border:1px solid #d0d7de; border-radius:4px; cursor:pointer;">
+            <i class="material-icons" style="font-size:14px; vertical-align:middle;">smart_toy</i>
+            Agent prompts
+          </button>
           <span id="emOwnerOnlyHint" style="font-size:11px; color:#6a737d; align-self:center;">(option sheets are read-only here; edit via seeds/option_sheets_seed.json + import script)</span>
         </div>
 
@@ -1806,6 +1811,31 @@
         <button type="button" id="emCollateralNewBtn">+ New collateral</button>
         <span style="flex:1;"></span>
         <button type="button" id="emCollateralCloseBtn">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── v0.9.9 Agent Prompts modal ─────────────────────────────────────
+       Lists every agent prompt stored in EtsyMail_SalesPrompts and lets
+       the operator drop a new .md file to replace any of them. Reads
+       are immediate (per-call, no caching). Edits take effect on the
+       very next agent invocation — no deploy. -->
+  <div class="em-mgmt-modal" id="emPromptsModal">
+    <div class="em-mgmt-card">
+      <h3>Agent prompts <span class="em-muted" style="font-size:12px; font-weight:400;">— stored in Firestore, edit takes effect on the next call</span></h3>
+      <div class="em-modal-error" id="emPromptsError" style="margin-bottom:8px;"></div>
+      <div style="font-size:11px; color:#57606a; margin-bottom:10px; line-height:1.4;">
+        Each prompt is a single markdown document. Drop a <code>.md</code> file
+        into a row below to replace that prompt. Minimum 100 characters.
+        No file fallback in the runtime — if you delete a prompt here, the
+        agent that uses it stops working until you re-upload.
+      </div>
+      <div id="emPromptsList" style="display:flex; flex-direction:column; gap:10px;">
+        <div class="em-empty-msg">Loading…</div>
+      </div>
+      <div class="em-mgmt-buttons">
+        <span style="flex:1;"></span>
+        <button type="button" id="emPromptsCloseBtn">Close</button>
       </div>
     </div>
   </div>
@@ -7046,6 +7076,206 @@
       })();
 
       $("emCollateralCloseBtn")?.addEventListener("click", () => $("emCollateralModal").classList.remove("active"));
+
+      // ─── v0.9.9 Agent Prompts management ──────────────────────────────
+      // Six prompts in EtsyMail_SalesPrompts. Drag a .md into any row to
+      // replace that prompt. Reads are atomic; the next agent invocation
+      // picks it up. No file fallback — if the runtime can't find a doc,
+      // the agent that needs it errors out cleanly with a 503.
+      const PROMPT_DEFS = [
+        { id: "intent_classifier",        label: "Intent classifier",        used: "Auto-pipeline → routes inbound messages to support / sales / spam / etc." },
+        { id: "discovery",                label: "Sales: discovery",         used: "First sales-mode turn. Locks in family (necklace / huggie / stud)." },
+        { id: "spec",                     label: "Sales: spec",              used: "Captures size, finish, chain, length, engraving, deadline." },
+        { id: "quote",                    label: "Sales: quote",             used: "Calls resolveQuote. Produces the actual price." },
+        { id: "revision",                 label: "Sales: revision",          used: "Customer pushes back on the quote. Recomputes." },
+        { id: "pending_close_approval",   label: "Sales: pending close",     used: "Customer accepts. Final summary before order." }
+      ];
+
+      function _fmtAgo(ms) {
+        if (!ms) return "never";
+        const diff = Date.now() - ms;
+        const m = Math.floor(diff / 60000);
+        if (m < 1)  return "just now";
+        if (m < 60) return m + "m ago";
+        const h = Math.floor(m / 60);
+        if (h < 24) return h + "h ago";
+        const d = Math.floor(h / 24);
+        return d + "d ago";
+      }
+
+      async function loadPromptsList() {
+        const list = $("emPromptsList");
+        const errBox = $("emPromptsError");
+        errBox.classList.remove("active"); errBox.textContent = "";
+        list.innerHTML = '<div class="em-empty-msg">Loading…</div>';
+        try {
+          // Fetch each doc in parallel
+          const results = await Promise.all(PROMPT_DEFS.map(def =>
+            api("firestoreProxy", { query: { op: "get", coll: "EtsyMail_SalesPrompts", id: def.id } })
+              .then(r => ({ def, r }))
+              .catch(e => ({ def, r: { exists: false, _err: e.message } }))
+          ));
+
+          list.innerHTML = "";
+          results.forEach(({ def, r }) => {
+            const exists = !!r.exists;
+            const doc = r.doc || {};
+            const sp = typeof doc.systemPrompt === "string" ? doc.systemPrompt : "";
+            const len = sp.length;
+            const updatedMs = doc.updatedAt && doc.updatedAt.ms;
+            const updatedBy = doc.updatedBy || doc._updatedBy || null;
+            const tooShort = exists && len < 100;
+            const status = !exists ? { color: "#cf222e", text: "missing" }
+                       : tooShort  ? { color: "#cf222e", text: `${len} chars · TOO SHORT` }
+                       :              { color: "#1a7f37", text: `${len.toLocaleString()} chars · ok` };
+
+            const row = document.createElement("div");
+            row.style.cssText = "border:1px solid #d0d7de; border-radius:6px; padding:10px 12px; background:#fff;";
+            row.innerHTML = `
+              <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px;">
+                <div style="flex:1; min-width:0;">
+                  <div style="font-size:13px; font-weight:600; color:#1f2328;">${esc(def.label)}</div>
+                  <div style="font-size:11px; color:#6a737d; margin-top:2px;">${esc(def.used)}</div>
+                  <div style="font-size:11px; margin-top:4px;">
+                    <span style="color:${status.color};">●</span>
+                    <span style="color:${status.color};">${esc(status.text)}</span>
+                    <span style="color:#6a737d;"> · updated ${esc(_fmtAgo(updatedMs))}${updatedBy ? " by " + esc(updatedBy) : ""}</span>
+                    <span style="color:#6a737d;"> · doc id: <code>${esc(def.id)}</code></span>
+                  </div>
+                </div>
+                <div style="display:flex; gap:6px; flex-shrink:0;">
+                  <button type="button" class="em-prompt-view-btn" data-id="${def.id}"
+                          style="padding:4px 9px; font-size:11px; background:#fff; border:1px solid #d0d7de; border-radius:3px; cursor:pointer;"
+                          ${exists ? "" : "disabled"}>View</button>
+                </div>
+              </div>
+              <div class="em-prompt-drop" data-id="${def.id}"
+                   style="margin-top:8px; padding:10px; border:2px dashed #d0d7de; border-radius:5px; background:#f6f8fa; text-align:center; font-size:11px; color:#57606a; cursor:pointer; transition:border-color .15s, background .15s;">
+                <i class="material-icons" style="font-size:16px; vertical-align:middle; color:#6a737d;">upload_file</i>
+                <span style="vertical-align:middle; margin-left:4px;">Drop a <b>.md</b> file or <b>click to browse</b></span>
+                <input type="file" class="em-prompt-file" data-id="${def.id}" accept=".md,text/markdown,text/plain" style="display:none;">
+              </div>
+              <div class="em-prompt-preview" data-id="${def.id}" style="display:none; margin-top:8px;"></div>
+            `;
+            list.appendChild(row);
+          });
+
+          // Wire each row
+          list.querySelectorAll(".em-prompt-view-btn").forEach(btn => {
+            btn.addEventListener("click", () => viewPrompt(btn.dataset.id));
+          });
+          list.querySelectorAll(".em-prompt-drop").forEach(dz => {
+            const id = dz.dataset.id;
+            const fileIn = list.querySelector(`.em-prompt-file[data-id="${id}"]`);
+            const highlight = (on) => {
+              dz.style.borderColor = on ? "#0969da" : "#d0d7de";
+              dz.style.background  = on ? "#ddf4ff" : "#f6f8fa";
+            };
+            dz.addEventListener("click", () => fileIn.click());
+            ["dragenter", "dragover"].forEach(ev =>
+              dz.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); highlight(true); }));
+            ["dragleave", "drop"].forEach(ev =>
+              dz.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); highlight(false); }));
+            dz.addEventListener("drop", e => {
+              const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+              if (f) handlePromptFile(id, f);
+            });
+            fileIn.addEventListener("change", () => {
+              const f = fileIn.files && fileIn.files[0];
+              if (f) handlePromptFile(id, f);
+            });
+          });
+        } catch (e) {
+          list.innerHTML = "";
+          errBox.textContent = "Failed to load prompts: " + (e.message || e);
+          errBox.classList.add("active");
+        }
+      }
+
+      async function viewPrompt(id) {
+        const r = await api("firestoreProxy", { query: { op: "get", coll: "EtsyMail_SalesPrompts", id } });
+        const sp = (r.doc && typeof r.doc.systemPrompt === "string") ? r.doc.systemPrompt : "";
+        // Open a simple text-area-style preview in the per-row preview slot
+        const slot = document.querySelector(`.em-prompt-preview[data-id="${id}"]`);
+        if (!slot) return;
+        if (slot.style.display === "block") { slot.style.display = "none"; return; }
+        slot.style.display = "block";
+        slot.innerHTML = `
+          <textarea readonly style="width:100%; min-height:200px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:11px; padding:8px; border:1px solid #d0d7de; border-radius:4px; background:#fafbfc; color:#1f2328; resize:vertical;">${esc(sp)}</textarea>
+          <div style="font-size:10px; color:#6a737d; margin-top:3px;">${sp.length.toLocaleString()} characters · read-only preview</div>
+        `;
+      }
+
+      async function handlePromptFile(id, file) {
+        const slot = document.querySelector(`.em-prompt-preview[data-id="${id}"]`);
+        if (!slot) return;
+        slot.style.display = "block";
+
+        // Extension/size check
+        const nameOk = /\.(md|markdown|txt)$/i.test(file.name);
+        const sizeOk = file.size <= 200 * 1024;   // 200 KB cap, generous for prompts
+        if (!nameOk) {
+          slot.innerHTML = `<div style="padding:6px 9px; background:#ffebe9; border:1px solid #cf222e; border-radius:3px; color:#82071e; font-size:11px;">Not a .md/.markdown/.txt file: <code>${esc(file.name)}</code></div>`;
+          return;
+        }
+        if (!sizeOk) {
+          slot.innerHTML = `<div style="padding:6px 9px; background:#ffebe9; border:1px solid #cf222e; border-radius:3px; color:#82071e; font-size:11px;">File too large (${(file.size/1024).toFixed(1)} KB). Cap is 200 KB.</div>`;
+          return;
+        }
+
+        const text = await file.text();
+        const len = text.length;
+        if (len < 100) {
+          slot.innerHTML = `<div style="padding:6px 9px; background:#ffebe9; border:1px solid #cf222e; border-radius:3px; color:#82071e; font-size:11px;">Only ${len} characters. Minimum is 100 — likely a placeholder or wrong file.</div>`;
+          return;
+        }
+
+        // Show preview + confirm
+        const previewSnippet = text.length > 600 ? text.slice(0, 600) + "\n…" : text;
+        slot.innerHTML = `
+          <div style="padding:8px 10px; background:#fff8c5; border:1px solid #d4a72c; border-radius:3px; font-size:11px; color:#1f2328;">
+            <b>Ready to upload:</b> <code>${esc(file.name)}</code> · ${len.toLocaleString()} chars
+          </div>
+          <pre style="margin:6px 0 0; padding:8px; background:#fafbfc; border:1px solid #d0d7de; border-radius:3px; font-size:10px; max-height:160px; overflow:auto; white-space:pre-wrap; word-break:break-word; color:#1f2328;">${esc(previewSnippet)}</pre>
+          <div style="display:flex; gap:6px; margin-top:6px; justify-content:flex-end;">
+            <button type="button" class="em-prompt-cancel" style="padding:4px 10px; font-size:11px; background:#fff; border:1px solid #d0d7de; border-radius:3px; cursor:pointer;">Cancel</button>
+            <button type="button" class="em-prompt-confirm" style="padding:4px 10px; font-size:11px; background:#1f883d; color:#fff; border:1px solid #1a7f37; border-radius:3px; cursor:pointer;">Save to Firestore</button>
+          </div>
+        `;
+        slot.querySelector(".em-prompt-cancel").addEventListener("click", () => { slot.style.display = "none"; slot.innerHTML = ""; });
+        slot.querySelector(".em-prompt-confirm").addEventListener("click", async () => {
+          slot.querySelector(".em-prompt-confirm").disabled = true;
+          slot.querySelector(".em-prompt-confirm").textContent = "Saving…";
+          try {
+            await api("firestoreProxy", {
+              method: "POST",
+              body: {
+                op: "set", coll: "EtsyMail_SalesPrompts", id, merge: false,
+                actor: getEmployeeName() || "operator",
+                data: {
+                  systemPrompt: text,
+                  updatedAt: { __serverTimestamp: true },
+                  updatedBy: getEmployeeName() || "operator",
+                  charCount: len,
+                  filename: file.name
+                }
+              }
+            });
+            toast(`Prompt "${id}" saved (${len.toLocaleString()} chars)`);
+            slot.style.display = "none"; slot.innerHTML = "";
+            loadPromptsList();   // refresh list to show new metadata
+          } catch (e) {
+            slot.innerHTML = `<div style="padding:6px 9px; background:#ffebe9; border:1px solid #cf222e; border-radius:3px; color:#82071e; font-size:11px;">Save failed: ${esc(e.message || String(e))}</div>`;
+          }
+        });
+      }
+
+      $("emPromptsBtn")?.addEventListener("click", () => {
+        $("emPromptsModal").classList.add("active");
+        loadPromptsList();
+      });
+      $("emPromptsCloseBtn")?.addEventListener("click", () => $("emPromptsModal").classList.remove("active"));
+
       $("emCollateralNewBtn")?.addEventListener("click", () => {
         clearCollateralForm(); $("emCollateralForm").style.display = "block";
         $("emCollateralFormSaveBtn").dataset.mode = "create";

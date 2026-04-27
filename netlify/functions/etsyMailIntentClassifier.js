@@ -94,47 +94,42 @@ const VALID_CATEGORIES = new Set([
   "support", "sales_lead", "post_purchase", "spam", "unclear"
 ]);
 
-// ─── System prompt — loaded from prompts/intent_classifier.md ───────────
+// ─── System prompt — loaded from Firestore EtsyMail_SalesPrompts/intent_classifier ───
 //
-// The prompt file is bundled into the Netlify function by setting
-// `included_files = ["netlify/functions/prompts/**"]` in netlify.toml.
-// Without that toml line, esbuild bundles only the .js sources and the
-// readFileSync below FAILS — fast and loud, not silently degraded.
+// Source-of-truth: EtsyMail_SalesPrompts/{intent_classifier} doc, field
+// `systemPrompt`. Edit via the Settings → Agent Prompts panel in the
+// dashboard; takes effect on the next call (no caching, no deploy).
 //
-// Why we deliberately do NOT fall back to a shorter inline prompt: the
-// fallback would silently downgrade classification accuracy without the
-// operator noticing. Every classification across the deployment lifetime
-// would be stuck on the worse prompt. Hard-failing means the
-// misconfiguration shows up as `intent_classify_failed` audit events on
-// the FIRST classify call, which is loud and obvious. Deploy → first
-// inbound → audit log shows the issue → fix the toml → redeploy.
-//
-// We try-load lazily on first use rather than at module-scope so the
-// function CAN still serve OPTIONS (CORS preflight) and the handler can
-// return a useful 503 response with a specific errorCode.
-let _SYSTEM_PROMPT = null;
-let _PROMPT_LOAD_ERROR = null;
-function loadSystemPrompt() {
-  if (_SYSTEM_PROMPT) return { ok: true, prompt: _SYSTEM_PROMPT };
-  if (_PROMPT_LOAD_ERROR) return { ok: false, error: _PROMPT_LOAD_ERROR };
+// Hard fail (no file fallback) if the doc is missing or too short. The
+// handler converts the failure into a 503 with errorCode "PROMPT_NOT_LOADED"
+// so the operator sees the misconfiguration immediately in audit.
+const PROMPTS_COLL = "EtsyMail_SalesPrompts";
+const INTENT_PROMPT_DOC_ID = "intent_classifier";
+
+async function loadSystemPrompt() {
   try {
-    const p = path.join(__dirname, "prompts", "intent_classifier.md");
-    _SYSTEM_PROMPT = fs.readFileSync(p, "utf8");
-    if (!_SYSTEM_PROMPT || _SYSTEM_PROMPT.length < 100) {
-      // File exists but is suspiciously empty/truncated — treat as missing.
-      _SYSTEM_PROMPT = null;
-      _PROMPT_LOAD_ERROR = `prompts/intent_classifier.md is empty or truncated (${_SYSTEM_PROMPT ? _SYSTEM_PROMPT.length : 0} bytes)`;
-      console.error("[intentClassifier] " + _PROMPT_LOAD_ERROR);
-      return { ok: false, error: _PROMPT_LOAD_ERROR };
+    const doc = await db.collection(PROMPTS_COLL).doc(INTENT_PROMPT_DOC_ID).get();
+    if (!doc.exists) {
+      return { ok: false, error:
+        `Intent classifier prompt missing. Expected ` +
+        `${PROMPTS_COLL}/${INTENT_PROMPT_DOC_ID} with field "systemPrompt". ` +
+        `Seed it via Settings → Agent Prompts in the dashboard.`
+      };
     }
-    return { ok: true, prompt: _SYSTEM_PROMPT };
+    const d = doc.data() || {};
+    const sp = typeof d.systemPrompt === "string" ? d.systemPrompt : "";
+    if (sp.length < 100) {
+      return { ok: false, error:
+        `Intent classifier prompt too short (${sp.length} chars) at ` +
+        `${PROMPTS_COLL}/${INTENT_PROMPT_DOC_ID}.systemPrompt. Likely a ` +
+        `placeholder. Re-upload via Settings → Agent Prompts.`
+      };
+    }
+    return { ok: true, prompt: sp };
   } catch (e) {
-    _PROMPT_LOAD_ERROR =
-      "Could not load prompts/intent_classifier.md (" + e.message + "). " +
-      "Verify netlify.toml [functions] block has " +
-      "included_files = [\"netlify/functions/prompts/**\"] then redeploy.";
-    console.error("[intentClassifier] " + _PROMPT_LOAD_ERROR);
-    return { ok: false, error: _PROMPT_LOAD_ERROR };
+    return { ok: false, error:
+      `Intent classifier prompt load failed: ${e.message}`
+    };
   }
 }
 
@@ -340,13 +335,11 @@ async function classifyMessage(messageText) {
     };
   }
 
-  const promptLoad = loadSystemPrompt();
+  const promptLoad = await loadSystemPrompt();
   if (!promptLoad.ok) {
-    // Hard fail — no silent fallback. The handler converts this into a
-    // 503 with errorCode "PROMPT_NOT_BUNDLED" so the operator sees the
-    // misconfiguration immediately in the audit log.
+    // Hard fail — Firestore doc missing or too short.
     const err = new Error(promptLoad.error);
-    err.code = "PROMPT_NOT_BUNDLED";
+    err.code = "PROMPT_NOT_LOADED";
     throw err;
   }
 
@@ -443,7 +436,7 @@ exports.handler = async (event) => {
 
   } catch (err) {
     console.error("intentClassifier error:", err);
-    const isPromptMissing = err && err.code === "PROMPT_NOT_BUNDLED";
+    const isPromptMissing = err && err.code === "PROMPT_NOT_LOADED";
     await writeAudit({
       threadId,
       eventType: "intent_classify_failed",
