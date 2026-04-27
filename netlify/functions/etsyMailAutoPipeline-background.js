@@ -756,22 +756,20 @@ exports.handler = async (event) => {
     let intentResp = null;
     if (autoCfg.intentClassifierEnabled) {
       try {
+        // v3.0: classifier reads the thread tail itself. We still load
+        // latestText separately because it's used downstream by the
+        // sales-agent path (loadLatestInbound for attachments).
         latestText = await loadLatestInboundText(threadId);
-        if (latestText) {
-          intentResp = await callFunction("etsyMailIntentClassifier", {
-            threadId,
-            messageText: latestText,
-            actor      : employeeName || "system:auto-pipeline"
-          });
-          // The classifier already wrote both:
-          //   - canonical record  → EtsyMail_IntentClassifications/{threadId}
-          //   - thread denormalize → EtsyMail_Threads/{threadId}.intent*
-          //   - audit              → EtsyMail_Audit { eventType: "intent_classified" }
-          // Nothing more to do here; the response is held only for the
-          // Step 2 routing decision below.
-        } else {
-          console.warn(`intentClassifier: no inbound text for thread ${threadId}`);
-        }
+        intentResp = await callFunction("etsyMailIntentClassifier", {
+          threadId,
+          actor: employeeName || "system:auto-pipeline"
+        });
+        // The classifier already wrote both:
+        //   - canonical record  → EtsyMail_IntentClassifications/{threadId}
+        //   - thread denormalize → EtsyMail_Threads/{threadId}.intent*
+        //   - audit              → EtsyMail_Audit { eventType: "intent_classified" }
+        // Nothing more to do here; the response is held only for the
+        // Step 2 routing decision below.
       } catch (e) {
         console.warn("intent classify failed (non-fatal):", e.message);
         await writeAudit({

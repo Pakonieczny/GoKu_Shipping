@@ -78,15 +78,20 @@ const THREADS_COLL = "EtsyMail_Threads";
 const AUDIT_COLL   = "EtsyMail_Audit";
 
 // ─── Model config ───────────────────────────────────────────────────────
-// Haiku 4.5 — cheapest current model. Classification is structured output
-// so even smaller models would work, but Haiku 4.5 is the smallest in the
-// 4.x family that supports the same API shape as the rest of the system.
-const INTENT_MODEL = process.env.ETSYMAIL_INTENT_MODEL || "claude-haiku-4-5-20251001";
-const INTENT_MAX_TOKENS = 300;     // ~5x the expected output, leaves room for
-                                    // the model to ramble if it does
-const CACHE_TTL_MS = 24 * 60 * 60 * 1000;  // 24h
-const MESSAGE_TEXT_CAP = 4000;     // hard cap on input length so a giant
-                                    // pasted email doesn't blow tokens
+// v3.0: thread-aware classifier needs strong reasoning to identify the
+// current customer arc inside a multi-arc long-running thread. Opus 4.7
+// is the right default; cost is acceptable since classification fires
+// once per inbound, not per token.
+const INTENT_MODEL = process.env.ETSYMAIL_INTENT_MODEL || "claude-opus-4-7";
+const INTENT_MAX_TOKENS = 600;     // larger than v2 to leave room for the
+                                    // model's "reasoning" field on
+                                    // arc-boundary calls. Cap on output.
+const MESSAGE_TEXT_CAP = 4000;     // legacy single-message cap; only used
+                                    // when caller passes legacy messageText
+                                    // for backward compat.
+const TAIL_WINDOW_MS   = 30 * 24 * 60 * 60 * 1000;  // last 30 days
+const TAIL_MAX_MESSAGES = 40;       // cap on messages handed to the model
+const TAIL_PER_MESSAGE_CAP = 800;   // truncate individual message bodies
 
 // Five canonical categories. The model is instructed to pick exactly one;
 // anything else falls back to "unclear".
@@ -322,44 +327,144 @@ function coerceClassification(parsed, parseError) {
 
 // ─── Core classify call ────────────────────────────────────────────────
 
-async function classifyMessage(messageText) {
-  const truncated = String(messageText || "").slice(0, MESSAGE_TEXT_CAP);
-  if (!truncated.trim()) {
-    return {
-      classification: "unclear",
-      confidence    : 0.95,
-      signals       : ["empty message"],
-      reasoning     : "Inbound message text was empty after trimming.",
-      parseError    : null,
-      model         : INTENT_MODEL
-    };
+/** Pull the recent thread tail for thread-aware classification.
+ *  - Includes both inbound and outbound messages (so the model can see
+ *    arc boundaries — replies, gaps, topic shifts).
+ *  - Filters to last 30 days.
+ *  - Caps at TAIL_MAX_MESSAGES.
+ *  - Truncates each message body to TAIL_PER_MESSAGE_CAP chars to keep
+ *    tokens bounded on outliers (long auto-replies, pasted content).
+ *  - Returns chronological order (oldest first, latest last). */
+async function loadThreadTail(threadId) {
+  if (!threadId) return [];
+  try {
+    const snap = await db.collection(THREADS_COLL).doc(threadId)
+      .collection("messages")
+      .orderBy("timestamp", "desc")
+      .limit(TAIL_MAX_MESSAGES * 2)   // overshoot since we drop blanks
+      .get();
+    if (snap.empty) return [];
+
+    const cutoff = Date.now() - TAIL_WINDOW_MS;
+    const newestFirst = [];
+    for (const doc of snap.docs) {
+      const d = doc.data() || {};
+      // Normalize timestamp to milliseconds across the shapes we store
+      // (Firestore Timestamp object, raw number, optimistic-marker shape).
+      let ms = 0;
+      const ts = d.timestamp;
+      if (ts && typeof ts.toMillis === "function") ms = ts.toMillis();
+      else if (typeof ts === "number") ms = ts;
+      else if (ts && typeof ts.ms === "number") ms = ts.ms;
+      if (ms && ms < cutoff) continue;   // older than window
+
+      const text = String(d.text || "").trim();
+      if (!text) continue;
+
+      newestFirst.push({
+        direction  : d.direction || "unknown",
+        senderName : d.senderName || (d.direction === "inbound" ? "Customer" : "Shop"),
+        timestampMs: ms || 0,
+        text       : text.slice(0, TAIL_PER_MESSAGE_CAP)
+      });
+      if (newestFirst.length >= TAIL_MAX_MESSAGES) break;
+    }
+    return newestFirst.slice().reverse();   // chronological
+  } catch (e) {
+    console.warn(`loadThreadTail failed for ${threadId}: ${e.message}`);
+    return [];
+  }
+}
+
+function _relTime(ms) {
+  if (!ms) return "unknown time";
+  const diff = Date.now() - ms;
+  if (diff < 60_000) return "just now";
+  const m = Math.floor(diff / 60_000);
+  if (m < 60) return m + " min ago";
+  const h = Math.floor(m / 60);
+  if (h < 24) return h + (h === 1 ? " hour ago" : " hours ago");
+  const d = Math.floor(h / 24);
+  return d + (d === 1 ? " day ago" : " days ago");
+}
+
+/** Render the thread tail as a single user-message string the model reads.
+ *  Format intentionally simple — newest at bottom, role tags inline. */
+function _formatTailForModel(tail) {
+  if (!tail.length) return "(no messages in window)";
+  const lines = tail.map(m => {
+    const role = m.direction === "inbound" ? "CUSTOMER" : "SHOP";
+    const when = _relTime(m.timestampMs);
+    return `[${when} · ${role}] ${m.senderName || "(unknown)"}\n${m.text}`;
+  });
+  return lines.join("\n\n");
+}
+
+/** v3.0: Thread-aware classification.
+ *  Pulls the recent thread tail, hands it to the model with the system
+ *  prompt, returns a single classification for the CURRENT customer arc.
+ *  No caching — every call is a fresh classification. */
+async function classifyThread(threadId, opts = {}) {
+  const tail = await loadThreadTail(threadId);
+
+  if (tail.length === 0) {
+    // Edge case: thread is empty or all messages are older than 30 days.
+    // If a legacy caller passed messageText, fall back to it as a single-
+    // message classification so we don't hard-fail.
+    const legacyText = String(opts.legacyMessageText || "").trim().slice(0, MESSAGE_TEXT_CAP);
+    if (!legacyText) {
+      return {
+        classification: "unclear",
+        confidence    : 0.95,
+        signals       : ["no recent messages"],
+        reasoning     : "Thread has no messages within the last 30 days and no legacy message text was provided.",
+        parseError    : null,
+        model         : INTENT_MODEL,
+        tailSize      : 0
+      };
+    }
+    // Synthesize a single-message tail
+    tail.push({
+      direction: "inbound", senderName: "Customer",
+      timestampMs: Date.now(),
+      text: legacyText
+    });
   }
 
   const promptLoad = await loadSystemPrompt();
   if (!promptLoad.ok) {
-    // Hard fail — Firestore doc missing or too short.
     const err = new Error(promptLoad.error);
     err.code = "PROMPT_NOT_LOADED";
     throw err;
   }
 
+  const userMsg =
+    "Read the recent thread between this Etsy shop and one customer, then " +
+    "classify the CURRENT customer arc. Older arcs are context, not signal.\n\n" +
+    "═══ THREAD (oldest at top, newest at bottom; last 30 days, max 40 messages) ═══\n\n" +
+    _formatTailForModel(tail) +
+    "\n\n═══ END THREAD ═══\n\n" +
+    "What is the customer asking right now? Output the JSON only.";
+
   const resp = await callClaudeRaw({
     model      : INTENT_MODEL,
     maxTokens  : INTENT_MAX_TOKENS,
     system     : promptLoad.prompt,
-    messages   : [{ role: "user", content: truncated }],
-    useThinking: false   // haiku 4.5 — no adaptive thinking, save tokens
+    messages   : [{ role: "user", content: userMsg }],
+    useThinking: false
   });
 
-  // Pull the first text block out of content[]
   const textBlocks = (resp.content || []).filter(b => b && b.type === "text");
   const rawText = textBlocks.map(b => b.text || "").join("").trim();
-
-  let parsed = tryParseJson(rawText);
-  let parseError = parsed ? null : "json_parse_failed";
-
+  const parsed = tryParseJson(rawText);
+  const parseError = parsed ? null : "json_parse_failed";
   const coerced = coerceClassification(parsed, parseError);
-  return { ...coerced, model: INTENT_MODEL, rawText: rawText.slice(0, 500) };
+  return {
+    ...coerced,
+    model    : INTENT_MODEL,
+    rawText  : rawText.slice(0, 500),
+    tailSize : tail.length
+  };
 }
 
 // ─── Handler ───────────────────────────────────────────────────────────
@@ -380,30 +485,25 @@ exports.handler = async (event) => {
   catch { return bad("Invalid JSON body"); }
 
   const { threadId, messageText, force = false, actor = "system:intentClassifier" } = body;
-  if (!threadId)    return bad("Missing threadId");
-  if (!messageText) return bad("Missing messageText");
+  if (!threadId) return bad("Missing threadId");
+  // messageText is now optional — kept for backward compatibility. v3.0
+  // pulls the thread tail directly from Firestore using threadId. If the
+  // thread has no messages in the last 30 days AND messageText is given,
+  // we fall back to single-message classification.
 
   const tStart = Date.now();
 
   try {
-    // ── Cache check ──
-    if (!force) {
-      const cached = await readCache(threadId, messageText);
-      if (cached) {
-        return ok({
-          threadId,
-          ...cached,
-          cached    : true,
-          durationMs: Date.now() - tStart
-        });
-      }
-    }
+    // v3.0: NO CACHE READ. Every call is a fresh classification.
+    // The cache collection is still WRITTEN by writeResult() so the
+    // canonical-record-per-thread pattern continues for downstream
+    // consumers, but we never read from it. `force` is now a no-op.
 
     // ── Classify ──
-    const result = await classifyMessage(messageText);
+    const result = await classifyThread(threadId, { legacyMessageText: messageText });
 
-    // ── Persist ──
-    await writeResult(threadId, result, messageText);
+    // ── Persist (canonical record + thread doc denormalize) ──
+    await writeResult(threadId, result, messageText || "");
 
     // ── Audit ──
     await writeAudit({
@@ -414,7 +514,9 @@ exports.handler = async (event) => {
         classification: result.classification,
         confidence    : result.confidence,
         signals       : result.signals,
+        reasoning     : result.reasoning,
         model         : result.model,
+        tailSize      : result.tailSize || 0,
         forced        : !!force,
         parseError    : result.parseError || null,
         durationMs    : Date.now() - tStart
@@ -427,6 +529,7 @@ exports.handler = async (event) => {
       confidence    : result.confidence,
       signals       : result.signals,
       reasoning     : result.reasoning,
+      tailSize      : result.tailSize || 0,
       cached        : false,
       classifiedAt  : Date.now(),
       model         : result.model,
