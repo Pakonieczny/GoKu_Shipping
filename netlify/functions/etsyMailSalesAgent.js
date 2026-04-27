@@ -250,52 +250,41 @@ async function getConfig() {
   return value;
 }
 
-// ─── State machine ─────────────────────────────────────────────────────
+// ─── State (no stages) ─────────────────────────────────────────────────
+//
+// v4.0: Stage decomposition has been removed. The agent runs ONE prompt
+// per inbound, decides what to do based on conversation state, and uses
+// any tool it needs (including resolveQuote at the moment it judges the
+// customer is ready). What the old stage system tracked — accumulated
+// spec, quote history, last resolver result — is still persisted on
+// SalesContext, but the agent no longer thinks in stage names.
+//
+// engageable means: this thread is in a state where the agent should
+// run on the next inbound. terminal means: the customer accepted the
+// quote / the order was placed / a human took over. The agent doesn't
+// run on terminal threads.
 
-const STAGE_FLOW = {
-  "discovery"               : { canSkipTo: ["spec", "quote", "human_review", "abandoned"] },
-  "spec"                    : { canSkipTo: ["quote", "discovery", "human_review", "abandoned"] },
-  "quote"                   : { canSkipTo: ["revision", "pending_close_approval", "human_review", "abandoned"] },
-  "revision"                : { canSkipTo: ["quote", "pending_close_approval", "human_review", "abandoned"] },
-  "pending_close_approval"  : { canSkipTo: ["revision", "human_review"] }
-                                  // Step 3 advances this further to close_sending → completed
-};
-
-const ALL_VALID_STAGES = new Set(Object.keys(STAGE_FLOW));
-
-function isAllowedTransition(currentStage, requestedStage) {
-  if (!requestedStage) return true;                  // null = no transition requested
-  if (currentStage === requestedStage) return true;  // no-op
-  const flow = STAGE_FLOW[currentStage];
-  if (!flow) return false;
-  return flow.canSkipTo.includes(requestedStage);
-}
+const TERMINAL_THREAD_STATUSES = new Set([
+  "sales_completed",
+  "sales_abandoned",
+  "pending_human_review"
+]);
 
 // ─── Prompt loading ────────────────────────────────────────────────────
 //
-// All sales-stage prompts live in Firestore at EtsyMail_SalesPrompts/{stage}.
-// No file fallback — edits go through the Settings → Agent Prompts panel
-// in the dashboard. See loadPromptForStage below.
+// v4.0: ONE prompt at EtsyMail_SalesPrompts/sales. No stage decomposition.
+// Edited via Settings → Agent Prompts in the dashboard.
 
-/** Loads the system prompt for a sales-agent stage from Firestore.
- *
- *  Source: EtsyMail_SalesPrompts/{stage} doc, field `systemPrompt`.
- *  Edited via the dashboard's Settings → Agent Prompts panel; no
- *  caching, no file fallback — Firestore is canonical.
- *
- *  Returns { ok: true, prompt, source: "firestore" } or
- *          { ok: false, error }. Hard-fails if doc is missing or too
- *          short (< 100 chars, treated as a placeholder).
- */
-async function loadPromptForStage(stage) {
+const SALES_PROMPT_DOC_ID = "sales";
+
+async function loadSalesPrompt() {
   try {
-    const doc = await db.collection(PROMPTS_COLL).doc(stage).get();
+    const doc = await db.collection(PROMPTS_COLL).doc(SALES_PROMPT_DOC_ID).get();
     if (!doc.exists) {
       return {
         ok: false,
-        error: `Stage prompt missing for "${stage}". ` +
-               `Expected ${PROMPTS_COLL}/${stage} with field "systemPrompt". ` +
-               `Seed it via Settings → Agent Prompts in the dashboard.`
+        error: `Sales prompt missing. Expected ${PROMPTS_COLL}/${SALES_PROMPT_DOC_ID} ` +
+               `with field "systemPrompt". Upload it via Settings → Agent Prompts.`
       };
     }
     const d = doc.data() || {};
@@ -303,16 +292,12 @@ async function loadPromptForStage(stage) {
     if (sp.length < 100) {
       return {
         ok: false,
-        error: `Stage prompt for "${stage}" is too short (${sp.length} chars). ` +
-               `Likely a placeholder — re-upload via Settings → Agent Prompts.`
+        error: `Sales prompt is too short (${sp.length} chars). Likely a placeholder.`
       };
     }
-    return { ok: true, prompt: sp, source: "firestore" };
+    return { ok: true, prompt: sp };
   } catch (e) {
-    return {
-      ok: false,
-      error: `Stage prompt load failed for "${stage}": ${e.message}`
-    };
+    return { ok: false, error: `Sales prompt load failed: ${e.message}` };
   }
 }
 
@@ -486,11 +471,6 @@ function applySalesReplyGuard(reply, priorOutboundTexts = []) {
     kept.push(sent);
   }
   return kept.length ? kept.join(" ") : raw;
-}
-
-function customerAskedForOptions(text) {
-  const t = String(text || "").toLowerCase();
-  return /(what\s+(options|choices)|send\s+(the\s+)?(options|line\s*sheet|sheet)|see\s+(the\s+)?(options|choices|line\s*sheet)|line\s*sheet|available\s+options|what\s+do\s+you\s+have)/i.test(t);
 }
 
 function inferFamilyFromTextAndContext(text, salesCtx = {}) {
@@ -873,35 +853,18 @@ const TOOL_SPEC_LOOKUP_LISTING_BY_URL = {
   }
 };
 
-function buildToolSpecsForStage(stage) {
-  // Every stage gets the listings search tool; other tools layer in.
-  const tools = [TOOL_SPEC_SEARCH_LISTINGS, TOOL_SPEC_GET_OPTION_SHEET];
-
-  // v2.3 — listing URL lookup is available at EVERY stage. Customers
-  // paste links at any point (initial inquiry, mid-spec to clarify what
-  // they want, during revision to compare). The agent should always be
-  // able to resolve them.
-  tools.push(TOOL_SPEC_LOOKUP_LISTING_BY_URL);
-
-  if (stage === "discovery" || stage === "spec") {
-    tools.push(TOOL_SPEC_REQUEST_PHOTO);
-    tools.push(TOOL_SPEC_REQUEST_DIMENSIONS);
-  }
-
-  // v2.4 — resolveQuote is the option-sheet pricing tool. Discovery/spec
-  // can now call it when the customer has already supplied enough fixed-price
-  // choices, so the funnel compresses instead of asking redundant questions.
-  // Pending-close does not need it — the agent re-states the most recent
-  // resolver result without recomputing.
-  if (stage === "discovery" || stage === "spec" || stage === "quote" || stage === "revision") {
-    tools.push(TOOL_SPEC_RESOLVE_QUOTE);
-  }
-
-  if (stage === "discovery" || stage === "spec" || stage === "quote" || stage === "revision" || stage === "pending_close_approval") {
-    tools.push(TOOL_SPEC_GET_COLLATERAL);
-  }
-
-  return tools;
+function buildToolSpecs() {
+  // v4.0: all tools available always. The agent decides what to call
+  // based on conversation state, not on a stage gate.
+  return [
+    TOOL_SPEC_SEARCH_LISTINGS,
+    TOOL_SPEC_GET_OPTION_SHEET,
+    TOOL_SPEC_LOOKUP_LISTING_BY_URL,
+    TOOL_SPEC_REQUEST_PHOTO,
+    TOOL_SPEC_REQUEST_DIMENSIONS,
+    TOOL_SPEC_RESOLVE_QUOTE,
+    TOOL_SPEC_GET_COLLATERAL
+  ];
 }
 
 // ─── Defensive JSON parse (mirrors intentClassifier pattern) ───────────
@@ -1122,14 +1085,7 @@ function buildInitialMessages({ contextSummary, latestInboundText, referenceAtta
         JSON.stringify(contextSummary, null, 2),
         "",
         "═══ Latest customer message ═══",
-        String(latestInboundText || "(no text)").slice(0, 6000),
-        "",
-        "═══ Current turn law ═══",
-        "Use recentThreadMessages and accumulatedSpec before asking anything.",
-        "Ask only what you actually need. Do NOT restate specs the customer just gave you.",
-        "If referenceAttachments has customer images, do NOT ask for the photo again; only ask if they want a different image or the exact engraving text is missing.",
-        "The line sheet is mandatory before any quote. The TIMING of when to send it in this conversation is your call — read the cadence and the customer's level of detail. Never send it on the very first spec-stage reply (acknowledge + lead with one question first).",
-        "If enough fixed-price selections are present, call resolveQuote in this SAME turn and draft the quote for operator approval."
+        String(latestInboundText || "(no text)").slice(0, 6000)
       ].join("\n")
     }
   ];
@@ -1206,7 +1162,9 @@ exports.handler = async (event) => {
   try {
     // ── Load or init the sales context ──
     const salesCtx = await loadOrInitSalesContext(threadId);
-    const stage = salesCtx.stage || "discovery";
+    // v4.0: stage is no longer read or referenced. Kept only in
+    // SalesContext init for backward compatibility with older sales
+    // contexts that still have it.
 
     // Carry customer reference photos/files across the whole sales thread.
     // This prevents the agent from asking for a photo that was already sent
@@ -1222,38 +1180,23 @@ exports.handler = async (event) => {
 
     const recentThreadMessages = await loadRecentThreadMessages(threadId, 12);
     const priorOutboundTexts = recentOutboundTextsFromMessages(recentThreadMessages);
-    const optionsRequest = customerAskedForOptions(latestInboundText);
     const recommendedCollateral = await prefetchLineSheetCollateral({ latestInboundText, salesCtx });
 
-    if (!ALL_VALID_STAGES.has(stage)) {
-      // Defensive — shouldn't happen, but if a SalesContext doc has a
-      // stage like "abandoned" or some unknown value, refuse rather than
-      // run the agent in an unknown state.
-      await writeAudit({
-        threadId, eventType: "sales_agent_invalid_current_stage",
-        payload: { stage }, outcome: "blocked",
-        ruleViolations: ["INVALID_CURRENT_STAGE"]
-      });
-      return { statusCode: 422, headers: CORS,
-               body: JSON.stringify({ error: "Sales context is in non-engageable stage", stage }) };
-    }
-
-    // ── Load the prompt for this stage (Firestore → file → hard-fail) ──
-    const promptLoad = await loadPromptForStage(stage);
+    // ── Load the unified sales prompt ──
+    const promptLoad = await loadSalesPrompt();
     if (!promptLoad.ok) {
       await writeAudit({
         threadId, eventType: "sales_agent_prompt_unavailable",
-        payload: { stage, error: promptLoad.error },
+        payload: { error: promptLoad.error },
         outcome: "failure"
       });
       return { statusCode: 503, headers: CORS,
                body: JSON.stringify({ error: promptLoad.error,
-                                       errorCode: "STAGE_PROMPT_NOT_AVAILABLE",
-                                       stage }) };
+                                       errorCode: "SALES_PROMPT_NOT_AVAILABLE" }) };
     }
 
     // ── Build tools + executors ──
-    const toolSpecs     = buildToolSpecsForStage(stage);
+    const toolSpecs     = buildToolSpecs();
     const toolExecutors = buildToolExecutors({ threadId, salesCtx, customerHistory, cfg });
 
     // ── Build initial messages ──
@@ -1293,9 +1236,9 @@ exports.handler = async (event) => {
       });
 
     const contextSummary = {
-      stage,
+      // v4.0: no stage. The agent reads accumulatedSpec, quoteHistory,
+      // lastResolverResult, recentThreadMessages and decides what's next.
       accumulatedSpec    : salesCtx.accumulatedSpec || {},
-      missingInputs      : salesCtx.missingInputs || [],
       quoteHistory       : (salesCtx.quoteHistory || []).slice(-3),
       lastResolverResult : (salesCtx._lastResolverResult && salesCtx._lastResolverResult.success)
                             ? {
@@ -1314,13 +1257,6 @@ exports.handler = async (event) => {
       referenceAttachments: compactAttachmentList(referenceAttachments),
       hasReferenceImage: referenceAttachments.length > 0,
       recommendedCollateral,
-      fastSalesRules: {
-        compressFunnel: true,
-        avoidRepeatedCapabilityConfirmation: true,
-        collateralMandatoryBeforeQuote: true,
-        collateralNotOnFirstSpecReply: true,
-        quoteSameTurnWhenSpecComplete: true
-      },
       customerHistory    : {
         isRepeat          : !!(customerHistory && customerHistory.isRepeat),
         orderCount        : (customerHistory && customerHistory.orderCount) || 0,
@@ -1342,7 +1278,7 @@ exports.handler = async (event) => {
         initialMessages,
         toolSpecs,
         toolExecutors,
-        toolContext   : { threadId, stage, salesCtx },
+        toolContext   : { threadId, salesCtx },
         effort        : AI_EFFORT,
         useThinking   : true,
         maxIterations : MAX_TOOL_ITERATIONS
@@ -1350,10 +1286,10 @@ exports.handler = async (event) => {
     } catch (e) {
       await writeAudit({
         threadId, eventType: "sales_agent_call_failed",
-        payload: { error: e.message, stage }, outcome: "failure"
+        payload: { error: e.message }, outcome: "failure"
       });
       return { statusCode: 502, headers: CORS,
-               body: JSON.stringify({ error: `AI call failed: ${e.message}`, stage }) };
+               body: JSON.stringify({ error: `AI call failed: ${e.message}` }) };
     }
 
     // ── Extract final text ──
@@ -1371,7 +1307,7 @@ exports.handler = async (event) => {
     if (!parsed) {
       await writeAudit({
         threadId, eventType: "sales_agent_unparseable_output",
-        payload: { stage, rawPreview: finalText.slice(0, 500),
+        payload: { rawPreview: finalText.slice(0, 500),
                    toolCalls: (loopResult.toolCalls || []).map(t => t.name) },
         outcome: "failure"
       });
@@ -1402,7 +1338,6 @@ exports.handler = async (event) => {
       await writeAudit({
         threadId, eventType: "sales_agent_quote_invalid",
         payload: {
-          stage,
           reason         : quoteValidation.reason,
           allowedMin     : quoteValidation.allowedMin,
           allowedMax     : quoteValidation.allowedMax,
@@ -1432,34 +1367,23 @@ exports.handler = async (event) => {
                }) };
     }
 
-    // ── Validate stage transition ──
-    let newStage = stage;
-    let transitionRejected = false;
-    const rawAdvance = parsed.advance_stage;
-    if (rawAdvance && rawAdvance !== stage) {
-      // Special off-ramps: human_review and abandoned bypass STAGE_FLOW
-      // because they are handled by the orchestrator (set thread status,
-      // don't keep the agent running).
-      if (rawAdvance === "human_review") {
-        // Keep current stage in SalesContext but flip thread status.
-        // The agent's reply is still saved as a draft; the operator
-        // will see it AND the escalation flag.
-      } else if (rawAdvance === "abandoned") {
-        // Same logic — mark abandoned but persist the draft.
-      } else if (isAllowedTransition(stage, rawAdvance)) {
-        newStage = rawAdvance;
-      } else {
-        transitionRejected = true;
-        await writeAudit({
-          threadId, eventType: "sales_agent_invalid_stage_transition",
-          payload: { from: stage, requested: rawAdvance },
-          outcome: "blocked",
-          ruleViolations: ["INVALID_STAGE_TRANSITION"]
-        });
-        // Don't fail the whole turn — keep current stage. The reply itself
-        // is still useful even if the AI's stage suggestion was rejected.
-      }
-    }
+    // ── Detect escalation/handoff signals ──
+    //
+    // v4.0: no stages, no transitions. The agent expresses outcome via
+    // two flags:
+    //   - ready_for_human_approval / needs_review_synopsis populated:
+    //     operator must look at this thread before customer reply ships
+    //     (Quote-row escalations, RUSH_BLOCKED_BY_QUOTE_ROW, etc.)
+    //   - advance_stage === "abandoned": customer pivoted out of sales
+    //     (e.g., asking for support on an old order). Thread routes to
+    //     the operator's normal inbox, not the sales rail.
+    //   - advance_stage === "human_review": legacy off-ramp, kept for
+    //     backward compat. Same effect as ready_for_human_approval.
+    const rawAdvance = parsed.advance_stage || null;
+    const wantsHumanReview =
+      rawAdvance === "human_review" ||
+      !!parsed.ready_for_human_approval;
+    const isAbandoned = rawAdvance === "abandoned";
 
     // ── Compose draft + persist ──
     const draftId = "draft_" + threadId;
@@ -1504,14 +1428,12 @@ exports.handler = async (event) => {
       status                : "draft",     // NEVER "queued" in Step 2
       generatedByAI         : true,
       generatedBySalesAgent : true,
-      salesStage            : newStage,
       aiConfidence,
       aiReasoning           : String(parsed.reasoning || "").slice(0, 1000),
       aiNeedsPhoto          : !!parsed.needs_photo,
       aiMissingInputs       : Array.isArray(parsed.missing_inputs) ? parsed.missing_inputs.slice(0, 12) : [],
       aiCollateralReferenced: Array.isArray(parsed.collateral_referenced) ? parsed.collateral_referenced : [],
       aiRecommendedCollateral: recommendedCollateral,
-      customerAskedForOptions: optionsRequest,
       readyForHumanApproval : !!parsed.ready_for_human_approval,
       draftCustomOrderListing: parsed.draft_custom_order_listing || null,
       // v2.1 — Needs Review handoff fields
@@ -1537,19 +1459,13 @@ exports.handler = async (event) => {
     // ── Persist sales context updates ──
     const ctxUpdates = {
       accumulatedSpec : { ...(salesCtx.accumulatedSpec || {}), ...(parsed.extracted_spec || {}) },
-      missingInputs   : Array.isArray(parsed.missing_inputs) ? parsed.missing_inputs.slice(0, 3) : (salesCtx.missingInputs || []),
       referenceAttachments: compactAttachmentList(referenceAttachments),
       lastCustomerFacingReply: customerFacingReply,
-      lastOptionsRequestAt: optionsRequest ? FV.serverTimestamp() : (salesCtx.lastOptionsRequestAt || null),
       lastTurnAt      : FV.serverTimestamp(),
       lastSalesAgentBlockReason: null   // clear any prior block reason on a successful turn
     };
     if (salesCtx._lastResolverResult) {
       ctxUpdates._lastResolverResult = salesCtx._lastResolverResult;
-    }
-    if (newStage !== stage) {
-      ctxUpdates.stage = newStage;
-      ctxUpdates.lastAdvancedAt = FV.serverTimestamp();
     }
     // Record quote in history if one was produced
     const quotedTotal = (typeof parsed.quoted_total_usd === "number") ? parsed.quoted_total_usd
@@ -1560,7 +1476,6 @@ exports.handler = async (event) => {
       ctxUpdates.quoteHistory = FV.arrayUnion({
         at         : Date.now(),
         total      : quotedTotal,
-        stage,
         validated  : true,
         // v2.1 — record the resolver result instead of the band. This is
         // what the sales card UI reads for the "selected codes / bulk tier
@@ -1592,14 +1507,16 @@ exports.handler = async (event) => {
     await salesCtx._ref.set(ctxUpdates, { merge: true });
 
     // ── Update parent thread status ──
-    // Off-ramp flags override the normal sales_<stage> mapping.
+    // v4.0: simpler thread status mapping. The agent has finished a turn;
+    // the thread sits in "sales_active" until escalation, abandonment,
+    // or completion (handled by Step 3 close-listing flow elsewhere).
     let threadStatus;
-    if (rawAdvance === "human_review") {
+    if (wantsHumanReview) {
       threadStatus = "pending_human_review";
-    } else if (rawAdvance === "abandoned") {
+    } else if (isAbandoned) {
       threadStatus = "sales_abandoned";
     } else {
-      threadStatus = "sales_" + newStage;
+      threadStatus = "sales_active";
     }
 
     await db.collection(THREADS_COLL).doc(threadId).set({
@@ -1607,8 +1524,6 @@ exports.handler = async (event) => {
       aiDraftStatus : "ready",
       latestDraftId : draftId,
       aiConfidence,
-      // Sales-mode-specific surfacing for the inbox UI:
-      salesStage    : newStage,
       readyForHumanApproval: !!parsed.ready_for_human_approval,
       updatedAt     : FV.serverTimestamp()
     }, { merge: true });
@@ -1618,8 +1533,6 @@ exports.handler = async (event) => {
       threadId, draftId,
       eventType: "sales_agent_turn",
       payload: {
-        fromStage    : stage,
-        toStage      : newStage,
         threadStatus,
         confidence   : aiConfidence,
         toolCalls    : (loopResult.toolCalls || []).map(t => ({
@@ -1629,10 +1542,7 @@ exports.handler = async (event) => {
                        })),
         quotedTotal  : quotedTotal || null,
         readyForHumanApproval: !!parsed.ready_for_human_approval,
-        transitionRejected,
         rawAdvance,
-        promptSource : promptLoad.source,
-        customerAskedForOptions: optionsRequest,
         referenceAttachmentCount: referenceAttachments.length,
         usage        : loopResult.usage || null
       }
@@ -1643,7 +1553,6 @@ exports.handler = async (event) => {
       headers: { ...CORS, "Content-Type": "application/json" },
       body: JSON.stringify({
         success                    : true,
-        stage                      : newStage,
         threadStatus,
         draftId,
         confidence                 : aiConfidence,
@@ -1651,7 +1560,6 @@ exports.handler = async (event) => {
         draft_custom_order_listing : parsed.draft_custom_order_listing || null,
         quoteValidation            : quoteValidation || null,
         toolCalls                  : (loopResult.toolCalls || []).map(t => ({ name: t.name, error: t.error || null })),
-        transitionRejected,
         durationMs                 : Date.now() - tStart
       })
     };

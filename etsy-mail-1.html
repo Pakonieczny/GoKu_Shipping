@@ -7083,12 +7083,8 @@
       // picks it up. No file fallback — if the runtime can't find a doc,
       // the agent that needs it errors out cleanly with a 503.
       const PROMPT_DEFS = [
-        { id: "intent_classifier",        label: "Intent classifier",        used: "Auto-pipeline → routes inbound messages to support / sales / spam / etc." },
-        { id: "discovery",                label: "Sales: discovery",         used: "First sales-mode turn. Locks in family (necklace / huggie / stud)." },
-        { id: "spec",                     label: "Sales: spec",              used: "Captures size, finish, chain, length, engraving, deadline." },
-        { id: "quote",                    label: "Sales: quote",             used: "Calls resolveQuote. Produces the actual price." },
-        { id: "revision",                 label: "Sales: revision",          used: "Customer pushes back on the quote. Recomputes." },
-        { id: "pending_close_approval",   label: "Sales: pending close",     used: "Customer accepts. Final summary before order." }
+        { id: "intent_classifier", label: "Intent classifier", used: "Auto-pipeline → routes inbound messages to support / sales / spam / etc." },
+        { id: "sales",             label: "Sales agent",       used: "Single prompt for all sales conversations. Reads the thread, decides next action — captures spec, sends line sheet, computes quotes via resolveQuote, escalates when needed." }
       ];
 
       function _fmtAgo(ms) {
