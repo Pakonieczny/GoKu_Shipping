@@ -4190,7 +4190,26 @@
                   }
                 }
               });
-              toast(`High confidence (${Math.round(aiConf*100)}%) — queued for auto-send`);
+              toast(`High confidence (${Math.round(aiConf*100)}%) — sent ✓`);
+              // v0.9.7: optimistic-insert the AI's reply into the thread
+              // view immediately, so the operator sees the message land
+              // without waiting for the next M2 scrape.
+              try {
+                const draftId = "draft_" + threadId;
+                await insertOptimisticMessage({
+                  id          : draftId,
+                  draftId,
+                  threadId,
+                  text        : data.text || "",
+                  attachments : Array.isArray(data.attachments) ? data.attachments : [],
+                  createdBy   : employeeName || getEmployeeName() || "AI"
+                });
+                state._optimInsertedFor = state._optimInsertedFor || new Set();
+                state._optimInsertedFor.add(draftId);
+                if (state.selectedId === threadId) fetchMessagesNow(threadId);
+              } catch (e) {
+                console.warn("optimistic insert from AI-Draft auto-send failed:", e.message);
+              }
               await fetchThreadListNow();
               await fetchCountsNow();
               // Force-fetch the latest thread doc for the detail header
@@ -5586,16 +5605,17 @@
       }
       el.className = "em-send-status " + status;
       let html = "";
-      if (status === "queued") {
-        html = '<span class="em-send-spinner"></span>' +
-               '<span>Queued — waiting for the browser extension to pick it up on Etsy. ' +
-               'Make sure an Etsy tab is open at <code>' + esc(state.currentThreadUrl || "this conversation") + '</code> ' +
-               'and the extension is enabled.</span>' +
-               '<button class="em-send-cancel" data-draft-id="' + esc(draft.id) + '">Cancel</button>';
-      } else if (status === "sending") {
-        const phase = (draft.sendProgress && draft.sendProgress.phase) || "working";
-        html = '<span class="em-send-spinner"></span>' +
-               '<span>Sending via Etsy — <b>' + esc(phase.replace(/_/g, " ")) + '</b>…</span>';
+      if (status === "queued" || status === "sending") {
+        // v0.9.7: never show a spinner. The operator clicked Send and we
+        // optimistically inserted the message into the thread already;
+        // there's nothing useful to wait for. The extension delivers in
+        // the background; failure recovery happens via the cleanup cron.
+        el.style.display = "none";
+        return;
+      }
+      if (false) {
+        // (intentional dead branch — preserves the surrounding else-if
+        // chain below without restructuring the whole function)
       } else if (status === "sent" || status === "sent_unverified") {
         // sent_unverified means we clicked Etsy's Send button but didn't
         // observe the confirmation toast within 12s. The toast is unreliable
@@ -5808,9 +5828,38 @@
             throw e;
           }
         }
-        toast("Queued for Etsy send");
-        // Start polling for status transitions
-        pollSendStatus(resp.draftId);
+        // v0.9.7: No more polling, no more spinner, no more "verifying"
+        // anything. The operator clicked Send; the extension will deliver
+        // it on Etsy in the background. We optimistically insert the
+        // outbound message into the thread view immediately so the
+        // operator sees their reply land. If Etsy ever silently rejects
+        // (rare; rate-limit / ban / etc.), the operator notices on Etsy
+        // directly — that's an explicitly accepted tradeoff.
+        try {
+          await insertOptimisticMessage({
+            id          : resp.draftId,
+            draftId     : resp.draftId,
+            threadId,
+            text,
+            attachments : usableAtts,
+            createdBy   : getEmployeeName() || "operator"
+          });
+        } catch (e) {
+          console.warn("optimistic insert from sendViaEtsy failed:", e.message);
+        }
+        // Mark this draft as already-optimistic-inserted so showSendStatus
+        // doesn't insert a second time on the next render.
+        state._optimInsertedFor = state._optimInsertedFor || new Set();
+        state._optimInsertedFor.add(resp.draftId);
+        // Clear the composer.
+        ta.value = "";
+        clearComposerAttachments();
+        renderComposerChips();
+        // Refresh thread + rail so the new message and any auto_replied
+        // status update appears.
+        if (state.selectedId) fetchMessagesNow(state.selectedId);
+        fetchThreadListNow();
+        toast("Sent ✓");
       } catch (e) {
         if (e.message && /currently sending/.test(e.message)) {
           toast("Already sending — wait for the current send to finish");
@@ -5874,9 +5923,12 @@
           renderComposerChips();
         }
         if (d.status === "queued" || d.status === "sending") {
-          // Surface the in-flight banner immediately and resume polling.
-          showSendStatus({ ...d, id: draftId });
-          pollSendStatus(draftId);
+          // v0.9.7: don't show a banner and don't start polling. The
+          // showSendStatus call below would render nothing anyway (the
+          // queued/sending branches early-return), and pollSendStatus
+          // would just generate background traffic for no UI benefit.
+          // The cleanup cron handles drafts that genuinely strand.
+          hideSendStatus();
         } else if (d.status === "sent" || d.status === "sent_text_only" || d.status === "sent_unverified" || d.status === "failed") {
           // Show the terminal state once on reopen so operator sees recent outcome.
           showSendStatus({ ...d, id: draftId });

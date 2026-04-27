@@ -78,6 +78,7 @@
 
 const admin = require("./firebaseAdmin");
 const { requireExtensionAuth, CORS } = require("./_etsyMailAuth");
+const { buildOptimisticDoc } = require("./etsyMailOptimisticMessage");
 
 const db = admin.firestore();
 const FV = admin.firestore.FieldValue;
@@ -526,6 +527,37 @@ exports.handler = async (event) => {
         attachmentCount: normalized.length,
         attachmentTypes: normalized.map(a => a.type)
       });
+
+      // v0.9.7: write the optimistic outbound message into the thread's
+      // messages subcollection NOW — at enqueue time, before the extension
+      // even claims the draft. This guarantees that the moment a send is
+      // queued (whether by the operator clicking "Send via Etsy", the AI-
+      // Draft confidence-based auto-send, or the sales-agent backend
+      // auto-pipeline), the outbound message becomes visible in the
+      // thread view for any operator viewing it — and stays visible across
+      // refreshes. The renderer dedupes by text match, so when the next
+      // M2 scrape pulls in the real Etsy outbound message, the optimistic
+      // ghost is hidden automatically.
+      //
+      // Fire-and-forget: if this write fails (Firestore hiccup, etc.) the
+      // draft is still enqueued correctly and the dashboard's frontend
+      // backstop in showSendStatus will retry the insert when the operator
+      // opens the thread. Don't let an optimistic-insert failure poison
+      // the enqueue response.
+      try {
+        const optimDocId = "optim_" + draftId;
+        const optimDoc = buildOptimisticDoc({
+          draftId,
+          text        : cleanText,
+          employeeName: employeeName || (result.payload && result.payload.createdBy) || "AI",
+          attachments : normalized
+        });
+        await db.collection(THREADS_COLL_NAME).doc(threadId)
+          .collection("messages").doc(optimDocId)
+          .set(optimDoc, { merge: false });
+      } catch (e) {
+        console.warn("optimistic insert at enqueue failed (non-fatal):", e.message);
+      }
 
       return ok({
         draftId,

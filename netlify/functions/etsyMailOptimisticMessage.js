@@ -138,3 +138,9 @@ exports.handler = async (event) => {
     return json(500, { error: err.message || String(err) });
   }
 };
+
+// v0.9.7: also export the doc-shape helper so backend callers (specifically
+// etsyMailDraftSend.enqueue) can produce identical optimistic-message docs
+// without duplicating the field list. Keeping the shape in one place means
+// future renderer changes (e.g. new dedupe key) only need updating here.
+exports.buildOptimisticDoc = buildOptimisticDoc;
