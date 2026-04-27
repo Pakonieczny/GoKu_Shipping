@@ -540,9 +540,16 @@ function compactOptionSheetForAi(sheet) {
 }
 
 async function prefetchLineSheetCollateral({ latestInboundText, salesCtx }) {
+  // v3.1: line-sheet URL is made available to the agent whenever the
+  // family is inferable, regardless of customer phrasing. The DECISION to
+  // send is the agent's, based on its read of the conversation. The
+  // previous regex-gated prefetch was a rigid pattern-match that only
+  // fired on specific phrases like "what options" — meaning the agent
+  // had nothing to send for customers who never used those magic words.
+  // The agent's prompt now teaches WHEN to send (judgment); this code
+  // just guarantees the URL is always there when the agent decides yes.
   const family = inferFamilyFromTextAndContext(latestInboundText, salesCtx);
   if (!family || !searchCollateral) return [];
-  if (!customerAskedForOptions(latestInboundText)) return [];
   try {
     const result = await searchCollateral({ category: family, kind: "line_sheet", limit: 3 });
     const matches = Array.isArray(result && result.matches) ? result.matches : [];
@@ -1119,9 +1126,9 @@ function buildInitialMessages({ contextSummary, latestInboundText, referenceAtta
         "",
         "═══ Current turn law ═══",
         "Use recentThreadMessages and accumulatedSpec before asking anything.",
-        "Ask at most ONE customer-facing question, and only if it is a true blocker for quote/order setup.",
+        "Ask only what you actually need. Do NOT restate specs the customer just gave you.",
         "If referenceAttachments has customer images, do NOT ask for the photo again; only ask if they want a different image or the exact engraving text is missing.",
-        "If customerAskedForOptions is true, provide the relevant option sheet URL when available or a concise options menu; do not answer with another discovery question.",
+        "The line sheet is mandatory before any quote. The TIMING of when to send it in this conversation is your call — read the cadence and the customer's level of detail. Never send it on the very first spec-stage reply (acknowledge + lead with one question first).",
         "If enough fixed-price selections are present, call resolveQuote in this SAME turn and draft the quote for operator approval."
       ].join("\n")
     }
@@ -1306,13 +1313,12 @@ exports.handler = async (event) => {
       previousOutboundReplies: priorOutboundTexts.slice(-3),
       referenceAttachments: compactAttachmentList(referenceAttachments),
       hasReferenceImage: referenceAttachments.length > 0,
-      customerAskedForOptions: optionsRequest,
       recommendedCollateral,
       fastSalesRules: {
         compressFunnel: true,
-        oneHardBlockerOnly: true,
         avoidRepeatedCapabilityConfirmation: true,
-        collateralMandatoryWhenOptionsAsked: true,
+        collateralMandatoryBeforeQuote: true,
+        collateralNotOnFirstSpecReply: true,
         quoteSameTurnWhenSpecComplete: true
       },
       customerHistory    : {
