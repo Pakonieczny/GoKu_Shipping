@@ -75,6 +75,7 @@ exports.handler = async () => {
       // at the same moment (unlikely but possible).
       try {
         await db.runTransaction(async (tx) => {
+          // ── ALL READS FIRST (Firestore txn rule) ──────────────────
           const fresh = await tx.get(doc.ref);
           if (!fresh.exists) return;
           const d = fresh.data();
@@ -82,6 +83,25 @@ exports.handler = async () => {
           const hb = d.sendHeartbeatAt;
           const hbms = hb && hb.toMillis ? hb.toMillis() : 0;
           if (hbms >= cutoffMs) return;  // heartbeat landed between queries
+
+          // Pre-read the parent thread doc so we can demote it in the
+          // same transaction as the draft patch. Firestore transactions
+          // require every read to happen before any write, so this read
+          // belongs up here next to the draft read — even though we
+          // only WRITE to the thread inside the post_click and
+          // exhausted-attempts branches below.
+          let threadShouldDemote = false;
+          let threadDemoteReason = null;
+          let tRef = null;
+          if (d.threadId) {
+            tRef = db.collection(THREADS_COLL).doc(d.threadId);
+            const tSnap = await tx.get(tRef);
+            if (tSnap.exists && tSnap.data().status === "queued_for_auto_send") {
+              threadShouldDemote = true;
+            }
+          }
+
+          // ── NOW WRITES ─────────────────────────────────────────────
 
           // v2.6 fix: STRANDED_POST_CLICK is NOT a failure. The Send
           // button was clicked AND the message was typed — Etsy's Send
@@ -106,23 +126,21 @@ exports.handler = async () => {
               sendErrorCode : "STRANDED_POST_CLICK",
               updatedAt     : FV.serverTimestamp()
             }, { merge: true });
-            // Mirror the reaper's demotion. Without this, a thread enqueued
-            // by the auto-pipeline (status: queued_for_auto_send) stays in
-            // that state after the cleanup cron rescues the draft, leaving
-            // the rail's "sending…" badge on forever even though the draft
-            // is already sent_unverified. Read-then-write inside the same
-            // transaction keeps it atomic with the draft patch above.
-            if (d.threadId) {
-              const tRef = db.collection(THREADS_COLL).doc(d.threadId);
-              const tSnap = await tx.get(tRef);
-              if (tSnap.exists && tSnap.data().status === "queued_for_auto_send") {
-                tx.set(tRef, {
-                  status            : "pending_human_review",
-                  lastAutoDecision  : "human_review_after_stranded_post_click",
-                  lastAutoDecisionAt: FV.serverTimestamp(),
-                  updatedAt         : FV.serverTimestamp()
-                }, { merge: true });
-              }
+            // Demote the thread out of queued_for_auto_send so the
+            // rail's "sending…" badge clears. The reaper does the
+            // analogous thing in etsyMailReapers.js#reapStaleDraft;
+            // we duplicate it here because the cleanup cron's 3-min
+            // cadence usually beats the reaper's 5-min cadence and
+            // would otherwise rescue the draft first, leaving the
+            // reaper nothing to demote.
+            if (threadShouldDemote) {
+              threadDemoteReason = "human_review_after_stranded_post_click";
+              tx.set(tRef, {
+                status            : "pending_human_review",
+                lastAutoDecision  : threadDemoteReason,
+                lastAutoDecisionAt: FV.serverTimestamp(),
+                updatedAt         : FV.serverTimestamp()
+              }, { merge: true });
             }
             actions.push({ draftId: doc.id, action: "sent_unverified_post_click", attempts: d.sendAttempts || 0 });
             sentUnverified++;
@@ -137,25 +155,22 @@ exports.handler = async () => {
               sendErrorCode : "STRANDED_EXHAUSTED",
               updatedAt     : FV.serverTimestamp()
             }, { merge: true });
-            // Same demotion concern as the post_click branch: a thread the
-            // auto-pipeline parked at queued_for_auto_send needs to leave
-            // that status when its draft fails terminally, otherwise the
-            // rail badge stays "sending…" forever.
-            if (d.threadId) {
-              const tRef = db.collection(THREADS_COLL).doc(d.threadId);
-              const tSnap = await tx.get(tRef);
-              if (tSnap.exists && tSnap.data().status === "queued_for_auto_send") {
-                tx.set(tRef, {
-                  status            : "pending_human_review",
-                  lastAutoDecision  : "human_review_after_retry_exhausted",
-                  lastAutoDecisionAt: FV.serverTimestamp(),
-                  updatedAt         : FV.serverTimestamp()
-                }, { merge: true });
-              }
+            // Same demotion concern as the post_click branch.
+            if (threadShouldDemote) {
+              threadDemoteReason = "human_review_after_retry_exhausted";
+              tx.set(tRef, {
+                status            : "pending_human_review",
+                lastAutoDecision  : threadDemoteReason,
+                lastAutoDecisionAt: FV.serverTimestamp(),
+                updatedAt         : FV.serverTimestamp()
+              }, { merge: true });
             }
             actions.push({ draftId: doc.id, action: "failed", attempts });
             failed++;
           } else {
+            // Requeue path — the draft goes back to "queued" and the
+            // thread legitimately stays at queued_for_auto_send so the
+            // next claim cycle can pick it up. No thread demotion here.
             tx.set(doc.ref, {
               status        : "queued",
               sendSessionId : null,
