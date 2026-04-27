@@ -71,7 +71,14 @@ function buildOptimisticDoc({ draftId, text, employeeName, attachments }) {
     senderName      : employeeName || "Shop owner",
     senderRole      : "shop_owner",
     text            : String(text || ""),
-    timestamp       : nowMs,
+    // v0.9.8: store timestamp as a Firestore Timestamp, not a raw number.
+    // Firestore's orderBy sorts by data type first, then by value within
+    // the type — so a number-typed timestamp sorts before every
+    // Timestamp-typed timestamp regardless of the actual time. Storing
+    // a Timestamp here ensures optimistic messages interleave correctly
+    // with M2-scraped real messages (which are also Timestamps) when
+    // the messages subcollection is listed with orderBy("timestamp").
+    timestamp       : admin.firestore.Timestamp.fromMillis(nowMs),
     createdAt       : FV.serverTimestamp(),
     imageUrls,
     storageImagePaths,

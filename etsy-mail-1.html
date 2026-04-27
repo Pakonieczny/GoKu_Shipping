@@ -6398,6 +6398,27 @@
         });
       })();
 
+      // v0.9.8: defensive client-side sort by ms, regardless of whether the
+      // doc's `timestamp` field is a Firestore Timestamp object (returned
+      // as {_ts:true, ms:N} by the proxy), a raw number, a Date, or an ISO
+      // string. The previous bug: optimistic messages were written with
+      // `timestamp` as a raw JS number, while M2-scraped messages stored
+      // it as Firestore Timestamps. Firestore's listSub orderBy sorts
+      // by type-then-value, putting all numbers before all Timestamps —
+      // which placed optim messages at the TOP of the thread regardless
+      // of their actual time. This local resort ensures chronological
+      // order from any data shape.
+      const _msToInt = (m) => {
+        const v = (m && (m.timestamp || m.createdAt)) || 0;
+        if (typeof v === "number") return v;
+        if (v && typeof v === "object" && v._ts && typeof v.ms === "number") return v.ms;
+        if (v instanceof Date) return v.getTime();
+        if (typeof v === "string") { const d = new Date(v); return isNaN(d.getTime()) ? 0 : d.getTime(); }
+        if (v && typeof v.toMillis === "function") return v.toMillis();
+        return 0;
+      };
+      renderableMessages.sort((a, b) => _msToInt(a) - _msToInt(b));
+
       box.innerHTML = renderableMessages.map(m => {
         const cls = m.source === "ai" ? "ai"
                   : m.direction === "outbound" ? "outbound"
