@@ -33,15 +33,15 @@
 [functions."etsyMailDraftSendCleanupCron"]
   schedule = "*/3 * * * *"
 
-# ─── v1.5 reapers ───────────────────────────────────────────────────────────
-# These functions exist but previously relied on inline `exports.config = {
-# schedule: ... }`. Registering them in toml is the recommended Netlify path
-# — gives a single audit point for all scheduled jobs and survives function
-# code changes that might disturb exports.config.
-[functions."etsyMailAutoPipelineReaper"]
-  schedule = "*/10 * * * *"
-
-[functions."etsyMailSendQueueReaper"]
+# ─── v2.4 consolidated reaper ───────────────────────────────────────────────
+# Replaces the two pre-v2.4 functions etsyMailAutoPipelineReaper and
+# etsyMailSendQueueReaper. Both were merged into etsyMailReapers.js, which
+# runs all reaper passes on every invocation. Netlify silently ignores
+# schedule entries pointing at nonexistent functions, so the old names left
+# the reaper effectively unscheduled — the symptom was threads stuck at
+# `queued_for_auto_send` after stranded post-click sends, because only the
+# reaper (not the cleanup cron) demotes the thread.
+[functions."etsyMailReapers"]
   schedule = "*/5 * * * *"
 
 # ─── v2.0 Sales Mode: Step 1 — Catalog sync ─────────────────────────────────

@@ -27,8 +27,9 @@ const admin = require("./firebaseAdmin");
 const db = admin.firestore();
 const FV = admin.firestore.FieldValue;
 
-const DRAFTS_COLL = "EtsyMail_Drafts";
-const AUDIT_COLL  = "EtsyMail_Audit";
+const DRAFTS_COLL  = "EtsyMail_Drafts";
+const AUDIT_COLL   = "EtsyMail_Audit";
+const THREADS_COLL = "EtsyMail_Threads";
 
 const STALE_HEARTBEAT_MS = 60 * 1000;   // must match etsyMailDraftSend.js
 const MAX_SEND_ATTEMPTS  = 3;
@@ -105,6 +106,24 @@ exports.handler = async () => {
               sendErrorCode : "STRANDED_POST_CLICK",
               updatedAt     : FV.serverTimestamp()
             }, { merge: true });
+            // Mirror the reaper's demotion. Without this, a thread enqueued
+            // by the auto-pipeline (status: queued_for_auto_send) stays in
+            // that state after the cleanup cron rescues the draft, leaving
+            // the rail's "sending…" badge on forever even though the draft
+            // is already sent_unverified. Read-then-write inside the same
+            // transaction keeps it atomic with the draft patch above.
+            if (d.threadId) {
+              const tRef = db.collection(THREADS_COLL).doc(d.threadId);
+              const tSnap = await tx.get(tRef);
+              if (tSnap.exists && tSnap.data().status === "queued_for_auto_send") {
+                tx.set(tRef, {
+                  status            : "pending_human_review",
+                  lastAutoDecision  : "human_review_after_stranded_post_click",
+                  lastAutoDecisionAt: FV.serverTimestamp(),
+                  updatedAt         : FV.serverTimestamp()
+                }, { merge: true });
+              }
+            }
             actions.push({ draftId: doc.id, action: "sent_unverified_post_click", attempts: d.sendAttempts || 0 });
             sentUnverified++;
             return;
@@ -118,6 +137,22 @@ exports.handler = async () => {
               sendErrorCode : "STRANDED_EXHAUSTED",
               updatedAt     : FV.serverTimestamp()
             }, { merge: true });
+            // Same demotion concern as the post_click branch: a thread the
+            // auto-pipeline parked at queued_for_auto_send needs to leave
+            // that status when its draft fails terminally, otherwise the
+            // rail badge stays "sending…" forever.
+            if (d.threadId) {
+              const tRef = db.collection(THREADS_COLL).doc(d.threadId);
+              const tSnap = await tx.get(tRef);
+              if (tSnap.exists && tSnap.data().status === "queued_for_auto_send") {
+                tx.set(tRef, {
+                  status            : "pending_human_review",
+                  lastAutoDecision  : "human_review_after_retry_exhausted",
+                  lastAutoDecisionAt: FV.serverTimestamp(),
+                  updatedAt         : FV.serverTimestamp()
+                }, { merge: true });
+              }
+            }
             actions.push({ draftId: doc.id, action: "failed", attempts });
             failed++;
           } else {
