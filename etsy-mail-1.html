@@ -5596,7 +5596,15 @@
         const phase = (draft.sendProgress && draft.sendProgress.phase) || "working";
         html = '<span class="em-send-spinner"></span>' +
                '<span>Sending via Etsy — <b>' + esc(phase.replace(/_/g, " ")) + '</b>…</span>';
-      } else if (status === "sent") {
+      } else if (status === "sent" || status === "sent_unverified") {
+        // sent_unverified means we clicked Etsy's Send button but didn't
+        // observe the confirmation toast within 12s. The toast is unreliable
+        // — Etsy suppresses it on some surfaces and races it on others —
+        // so the warning was creating false anxiety far more often than
+        // it was catching real failures. Validation rejections are detected
+        // separately and surface as "failed", so the only thing left in the
+        // sent_unverified bucket is "send probably worked, we just couldn't
+        // see the toast." Render as a clean success.
         html = '<i class="material-icons">check_circle</i>' +
                '<span>Sent successfully' +
                (draft.sendImagesSent ? ' with ' + draft.sendImagesSent + ' image(s)' : '') + '.</span>';
@@ -5607,16 +5615,6 @@
                '</b> image(s) couldn\'t be auto-attached. ' +
                (draft.sendNote ? esc(draft.sendNote) + '. ' : '') +
                'Open the Etsy tab and paste the image manually.</span>';
-      } else if (status === "sent_unverified") {
-        // v0.9.1 #4: we clicked Send but didn't see Etsy's confirmation
-        // signal. Most of the time the message did go through; sometimes
-        // Etsy suppresses the toast on certain surfaces. Operator should
-        // verify manually before assuming.
-        html = '<i class="material-icons">help_outline</i>' +
-               '<span><b>Send clicked but unverified.</b> ' +
-               'We pressed Etsy\'s Send button but didn\'t see a confirmation toast within 12s. ' +
-               'Check the Etsy conversation to confirm the message went through. ' +
-               'Don\'t re-send unless you\'ve verified it didn\'t arrive.</span>';
       } else if (status === "failed") {
         // v2.6: STRANDED_POST_CLICK is a specific failure mode that's
         // recoverable in one click — the message almost certainly went
@@ -5642,6 +5640,27 @@
       }
       el.innerHTML = html;
       el.style.display = "flex";
+
+      // v0.9.6: Whenever we render a terminal-success state, ensure the
+      // operator's outbound message is visible in the thread view. The
+      // existing pollSendStatus path only runs for operator-initiated
+      // sendViaEtsy clicks; for sales-agent auto-pipeline sends, no one
+      // polls and the message stays invisible until the next M2 scrape
+      // (which only happens when the operator opens the matching Etsy
+      // tab). Fire the optimistic insert here as a backstop. The endpoint
+      // is idempotent (deterministic doc id optim_<draftId> with merge:
+      // false), so calling on every render writes the same doc. The
+      // _optimInsertedFor set just suppresses the redundant network call.
+      if ((status === "sent" || status === "sent_unverified" || status === "sent_text_only")
+          && draft.id) {
+        state._optimInsertedFor = state._optimInsertedFor || new Set();
+        if (!state._optimInsertedFor.has(draft.id)) {
+          state._optimInsertedFor.add(draft.id);
+          insertOptimisticMessage(draft).then(() => {
+            if (state.selectedId) fetchMessagesNow(state.selectedId);
+          }).catch(e => console.warn("optimistic insert (showSendStatus path) failed:", e.message));
+        }
+      }
 
       // Wire cancel button if present
       const cancelBtn = el.querySelector(".em-send-cancel");
@@ -5681,6 +5700,7 @@
                 op   : "update",
                 coll : "EtsyMail_Drafts",
                 id   : draft.id,
+                actor: getEmployeeName() || "operator",
                 data : {
                   status        : "sent_unverified",
                   sentAt        : { __serverTimestamp: true },
