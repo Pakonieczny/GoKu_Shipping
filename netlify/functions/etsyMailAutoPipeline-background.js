@@ -253,6 +253,34 @@ async function callFunction(name, body) {
   return data;
 }
 
+/** Fire a background Netlify function. Background functions return 202
+ *  immediately and run for up to 15 minutes. We don't await the result —
+ *  the function writes its own state to Firestore which the caller polls
+ *  for. Returns the 202 response object so the caller can confirm the
+ *  invocation was accepted. Throws if the invoke itself failed (network
+ *  error, function not found, etc.). */
+async function invokeBackgroundFunction(name, body) {
+  const url = `${functionsBase()}/.netlify/functions/${name}`;
+  const headers = { "Content-Type": "application/json" };
+  if (process.env.ETSYMAIL_EXTENSION_SECRET) {
+    headers["X-EtsyMail-Secret"] = process.env.ETSYMAIL_EXTENSION_SECRET;
+  }
+  const res = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body || {})
+  });
+  // Netlify background functions return 202 Accepted on successful
+  // invoke. Any other status indicates the invoke itself failed.
+  if (res.status !== 202) {
+    const text = await res.text().catch(() => "");
+    const err = new Error(`${name} background invoke returned ${res.status}: ${text.slice(0, 200)}`);
+    err.status = res.status;
+    throw err;
+  }
+  return { ok: true, status: res.status };
+}
+
 /** Inspect whether the most recent message in a thread is an inbound
  *  message that we haven't yet auto-processed. Returns one of:
  *    { ok: true, inboundMs, ageMs }
@@ -885,139 +913,170 @@ exports.handler = async (event) => {
         }
 
         try {
-          const salesResp = await callFunction("etsyMailSalesAgent", {
+          // v4.0: salesAgent runs as a BACKGROUND function. We invoke it
+          // fire-and-forget (Netlify returns 202 immediately) and then
+          // poll EtsyMail_Drafts/draft_<tid> for the agent's write. This
+          // moves the function out from under Netlify's 26-second sync
+          // invocation cap, eliminating the gateway-timeout class entirely.
+          const draftId = "draft_" + threadId;
+          const startedAt = Date.now();
+          const PRIOR_UPDATED_MS = await (async () => {
+            try {
+              const dSnap = await db.collection("EtsyMail_Drafts").doc(draftId).get();
+              if (!dSnap.exists) return 0;
+              const u = dSnap.data().updatedAt;
+              return u && u.toMillis ? u.toMillis() : 0;
+            } catch { return 0; }
+          })();
+
+          // Fire-and-forget. Netlify auto-suffixes -background.js to the
+          // URL when invoking. Don't await the response; the background
+          // function returns 202 immediately.
+          invokeBackgroundFunction("etsyMailSalesAgent-background", {
             threadId,
             latestInboundText        : inboundText,
             latestInboundAttachments : inboundAttachments,
             threadReferenceAttachments,
-            referencedListings,                          // v2.3 — pre-fetched listing data
-            customerHistory          : {
-              // Step 2 leaves customer-history derivation to a future
-              // pass — the agent gracefully handles isRepeat:false /
-              // orderCount:0. Step 3 may wire this from EtsyMail_Customers.
-              isRepeat        : false,
-              orderCount      : 0,
-              lifetimeValueUsd: 0
-            },
+            referencedListings,
+            customerHistory          : { isRepeat: false, orderCount: 0, lifetimeValueUsd: 0 },
             intentClassification     : intentResp ? intentResp.classification : null,
             intentConfidence         : intentResp ? intentResp.confidence : null,
             employeeName             : employeeName || "system:auto-pipeline"
+          }).catch(e => {
+            // Even the FIRE itself can fail (network, invalid endpoint).
+            // Caught here so it doesn't reject the auto-pipeline turn.
+            // The poll below will time out and the thread escalates.
+            console.warn("salesAgent background invoke failed:", e.message);
           });
 
-          // The sales agent has already written:
-          //   - EtsyMail_Drafts/draft_<tid>     (status:"draft")
-          //   - EtsyMail_SalesContext/<tid>     (stage updates, etc.)
-          //   - EtsyMail_Threads/<tid>          (status: sales_<stage>,
-          //                                       readyForHumanApproval, ...)
-          //   - EtsyMail_Audit                  (sales_agent_turn)
-          // We DO NOT re-write the thread status here — the agent's
-          // write is authoritative. Adding our own would just race.
+          // Poll for the draft to appear/update. Wait up to 5 minutes.
+          // Most agent turns complete in 10-60s; 5min gives Opus headroom
+          // even with multiple tool iterations.
+          const POLL_INTERVAL_MS = 2000;
+          const POLL_TIMEOUT_MS  = 5 * 60 * 1000;
+          let agentCompleted = false;
+          let draftDoc = null;
+          while (Date.now() - startedAt < POLL_TIMEOUT_MS) {
+            await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
+            const dSnap = await db.collection("EtsyMail_Drafts").doc(draftId).get();
+            if (dSnap.exists) {
+              const d = dSnap.data();
+              const u = d.updatedAt && d.updatedAt.toMillis ? d.updatedAt.toMillis() : 0;
+              // The agent finished if the draft was written/updated
+              // AFTER we kicked off this turn AND it was generated by
+              // the sales agent (not a stale operator draft).
+              if (u > PRIOR_UPDATED_MS && d.generatedBySalesAgent === true) {
+                agentCompleted = true;
+                draftDoc = d;
+                break;
+              }
+            }
+          }
+
+          if (!agentCompleted) {
+            // Timed out waiting for the agent. Thread will sit until the
+            // next inbound or operator intervention. The draft might still
+            // arrive later (agent writes when it finishes), but auto-send
+            // won't happen for this turn.
+            await writeAudit({
+              threadId,
+              eventType: "sales_agent_engagement_failed",
+              payload: {
+                path: activeSalesStage ? "stateful" : "fresh_lead",
+                error: "background agent did not write draft within poll timeout",
+                timeoutMs: POLL_TIMEOUT_MS
+              },
+              outcome: "failure"
+            });
+            // Don't overwrite thread status — leave it as the claim set.
+            // Operator sees no AI draft yet; can manually retry.
+            return ok({
+              threadId,
+              decision: "sales_agent_timeout",
+              path: activeSalesStage ? "stateful" : "fresh_lead",
+              durationMs: Date.now() - tStart
+            });
+          }
+
+          // Agent finished. Re-load the now-current thread doc since the
+          // agent updated it (status: sales_active or pending_human_review).
+          const tSnap = await threadRef.get();
+          const threadAfter = tSnap.exists ? tSnap.data() : {};
 
           await writeAudit({
-            threadId, draftId: salesResp.draftId,
+            threadId, draftId,
             eventType: "sales_agent_engaged",
             payload  : {
-              path       : activeSalesStage ? "stateful" : "fresh_lead",
-              fromStage  : activeSalesStage || null,
-              toStage    : salesResp.stage,
-              intent     : intentResp,
-              draftId    : salesResp.draftId,
-              confidence : salesResp.confidence,
-              quoteValid : salesResp.quoteValidation
-                ? (salesResp.quoteValidation.valid !== false)
-                : null
+              path        : activeSalesStage ? "stateful" : "fresh_lead",
+              intent      : intentResp,
+              draftId,
+              confidence  : draftDoc.aiConfidence || null,
+              threadStatus: threadAfter.status || null,
+              durationMs  : Date.now() - startedAt
             }
           });
 
-          // ─── v2.6 — auto-send sales drafts ──────────────────────────
-          // The sales-agent path historically saved drafts only and
-          // required operator review. With salesAutoSendEnabled, the
-          // agent's draft auto-sends UNLESS:
-          //   (a) the agent self-flagged the draft as Needs Review
-          //       handoff (custom request outside catalog, complex
-          //       quote, etc.) — see isNeedsReviewHandoff on the draft
-          //   (b) the stage is one where money commitments live —
-          //       quote / revision / pending_close_approval — these
-          //       always require operator approval
-          //   (c) safety vetoes fire on the customer's recent text or
-          //       the agent's draft text (refunds, cancellations, etc.)
-          //   (d) the kill-switch is on
+          // ─── v4.0 — auto-send sales drafts ──────────────────────────
+          // Stages no longer exist. The agent decides per-turn whether
+          // its reply is auto-sendable via two flags it writes to the
+          // draft and thread:
+          //   - readyForHumanApproval: the agent wants a person to look
+          //     before this ships (Quote-row escalation, customer
+          //     accepted a quote and the operator needs to send a
+          //     custom listing, anything genuinely off).
+          //   - isNeedsReviewHandoff: the customer-facing reply was
+          //     replaced with an operator synopsis; nothing to ship.
           //
-          // Discovery and Spec turns just ask the customer questions, so
-          // they're safe to auto-send. Quote+ stages are gated regardless
-          // because shipping the wrong quote without a human glance is
-          // unacceptable risk.
-          //
-          // We rely on the existing etsyMailDraftSend.enqueue path used
-          // by the support auto-send branch + manual operator clicks.
-          // The Chrome extension picks the queued send up on its next
-          // poll and posts to Etsy's DOM exactly as a human would.
-          const SAFE_AUTOSEND_STAGES = new Set(["discovery", "spec"]);
-          const stageSafeForAutoSend = SAFE_AUTOSEND_STAGES.has(String(salesResp.stage || ""));
-          if (autoCfg.salesAutoSendEnabled && stageSafeForAutoSend) {
+          // If neither flag is set, the agent has produced a reply
+          // safe to auto-send (subject to deterministic vetoes and
+          // the kill-switch).
+          const safeToAutoSend =
+            !draftDoc.readyForHumanApproval &&
+            !draftDoc.isNeedsReviewHandoff;
+
+          if (autoCfg.salesAutoSendEnabled && safeToAutoSend) {
             try {
-              // Re-load the freshly-written draft so we have its text +
-              // attachments + handoff flag for the safety checks.
-              const draftSnap = await db.collection("EtsyMail_Drafts")
-                .doc(salesResp.draftId).get();
-              const draftDoc = draftSnap.exists ? (draftSnap.data() || {}) : {};
               const draftText = String(draftDoc.text || "").trim();
               const draftAttachments = Array.isArray(draftDoc.attachments) ? draftDoc.attachments : [];
-              const isNeedsReviewHandoff = draftDoc.isNeedsReviewHandoff === true;
 
               if (!draftText) {
-                // Empty body → don't send. The save itself was probably
-                // a Needs Review synopsis with no customer-facing reply.
                 await writeAudit({
-                  threadId, draftId: salesResp.draftId,
+                  threadId, draftId,
                   eventType: "sales_auto_send_skipped",
                   payload  : { reason: "empty_draft_text" }
                 });
-              } else if (isNeedsReviewHandoff) {
-                await writeAudit({
-                  threadId, draftId: salesResp.draftId,
-                  eventType: "sales_auto_send_skipped",
-                  payload  : { reason: "needs_review_handoff" }
-                });
               } else {
-                // Run the same deterministic safety vetoes the support
-                // path uses, but skip the "custom" pattern — sales mode
-                // exists specifically to handle custom-order inquiries,
-                // so flagging "custom order" / "customize" / etc. would
-                // block every legitimate sales auto-send. The other
-                // vetoes (refund, cancel, legal, damaged, address,
-                // personalize, missing, replace) still apply — even on
-                // sales threads, an agent draft that mentions refunds
-                // or address changes should never auto-send.
+                // Same deterministic vetoes the support path uses, but
+                // skip the "custom" pattern — sales mode exists to
+                // handle custom-order inquiries. Other vetoes (refund,
+                // cancel, legal, damaged, address, personalize,
+                // missing, replace) still apply.
                 const inboundForVeto = await loadLatestInboundText(threadId);
                 const veto = applyDeterministicVetoes({
                   inboundText      : inboundForVeto,
                   draftText,
-                  draftToolCalls   : salesResp.toolCalls || [],
+                  draftToolCalls   : [],   // no longer surfaced in v4
                   excludePatternIds: ["custom"]
                 });
                 const ks = await getKillSwitch();
 
                 if (veto.vetoed) {
                   await writeAudit({
-                    threadId, draftId: salesResp.draftId,
+                    threadId, draftId,
                     eventType: "sales_auto_send_vetoed",
                     payload  : { reasons: veto.reasons }
                   });
                 } else if (ks.disabled) {
                   await writeAudit({
-                    threadId, draftId: salesResp.draftId,
+                    threadId, draftId,
                     eventType: "sales_auto_send_skipped",
                     payload  : { reason: "kill_switch_on" }
                   });
                 } else {
-                  // All clear — enqueue the send. Same path as the
-                  // operator's manual Send-via-Etsy click.
-                  const tSnap = await threadRef.get();
-                  const thread = tSnap.exists ? tSnap.data() : {};
-                  const etsyConversationUrl = thread.etsyConversationUrl
+                  // All clear — enqueue the send.
+                  const etsyConversationUrl = threadAfter.etsyConversationUrl
                     || ("https://www.etsy.com/your/conversations/"
-                       + (thread.etsyConversationId || threadId.replace("etsy_conv_", "")));
+                       + (threadAfter.etsyConversationId || threadId.replace("etsy_conv_", "")));
 
                   await callFunction("etsyMailDraftSend", {
                     op                  : "enqueue",
@@ -1029,25 +1088,23 @@ exports.handler = async (event) => {
                     aiMeta              : {
                       generatedByAI         : true,
                       generatedBySalesAgent : true,
-                      stage                 : salesResp.stage,
-                      confidence            : salesResp.confidence,
+                      confidence            : draftDoc.aiConfidence || null,
                       model                 : draftDoc.aiModel || null
                     },
                     force               : true,
                     parentThreadFinalizePatch : {
                       threadId,
-                      newStatus    : "queued_for_auto_send",
+                      newStatus    : "auto_replied",
                       inboundMs    : claim.inboundMs,
                       decision     : "sales_auto_send_enqueued",
-                      aiConfidence : salesResp.confidence
+                      aiConfidence : draftDoc.aiConfidence || null
                     }
                   });
                   await writeAudit({
-                    threadId, draftId: salesResp.draftId,
+                    threadId, draftId,
                     eventType: "sales_auto_send_enqueued",
                     payload  : {
-                      stage      : salesResp.stage,
-                      confidence : salesResp.confidence,
+                      confidence : draftDoc.aiConfidence || null,
                       textLen    : draftText.length,
                       attachCount: draftAttachments.length
                     }
@@ -1055,25 +1112,24 @@ exports.handler = async (event) => {
                 }
               }
             } catch (autoSendErr) {
-              // Auto-send failed — non-fatal. The draft is already saved
-              // and the operator can click Send manually. Log so the
-              // failure mode is visible.
               console.warn("salesAgent auto-send failed (non-fatal):", autoSendErr.message);
               await writeAudit({
-                threadId, draftId: salesResp.draftId,
+                threadId, draftId,
                 eventType: "sales_auto_send_failed",
                 payload  : { error: autoSendErr.message }
               });
             }
-          } else if (autoCfg.salesAutoSendEnabled && !stageSafeForAutoSend) {
-            // Auto-send is on globally but this stage requires operator
-            // approval (quote / revision / pending_close_approval).
-            // Audit so the operator can see why a particular thread
-            // didn't auto-send despite the toggle being on.
+          } else if (autoCfg.salesAutoSendEnabled && !safeToAutoSend) {
+            // Auto-send is on globally but the agent flagged this
+            // turn for human review. Don't ship.
             await writeAudit({
-              threadId, draftId: salesResp.draftId,
+              threadId, draftId,
               eventType: "sales_auto_send_skipped",
-              payload  : { reason: "stage_requires_operator_approval", stage: salesResp.stage }
+              payload  : {
+                reason: draftDoc.readyForHumanApproval
+                  ? "ready_for_human_approval"
+                  : "needs_review_handoff"
+              }
             });
           }
 
@@ -1081,66 +1137,40 @@ exports.handler = async (event) => {
             threadId,
             decision  : "sales_agent_handled",
             path      : activeSalesStage ? "stateful" : "fresh_lead",
-            stage     : salesResp.stage,
-            draftId   : salesResp.draftId,
+            draftId,
             durationMs: Date.now() - tStart
           });
 
         } catch (salesErr) {
-          // Sales agent threw before completing. Two cases:
-          //
-          //  (a) The agent itself escalated cleanly (UNDER_FLOOR, unparseable
-          //      output, invalid stage, etc.). In these cases the agent has
-          //      ALREADY written:
-          //        - thread.status = "pending_human_review"
-          //        - thread.lastSalesAgentBlockReason = "<specific reason>"
-          //        - SalesContext.lastSalesAgentBlockReason mirror
-          //      We detect this via salesErr.data.escalated === true (set by
-          //      the agent on its own 422/500 returns). When that flag is set,
-          //      we MUST NOT overwrite the specific reason with a generic one
-          //      — operators rely on the specific reason for triage.
-          //
-          //  (b) Anthropic 503, network error, malformed response, etc. The
-          //      agent never got far enough to write its own block reason.
-          //      We DO write thread.status + a generic reason so the thread
-          //      doesn't sit in an in-between state.
-          console.warn("sales agent call failed (non-fatal to thread):", salesErr.message);
-
-          const agentSelfEscalated = !!(salesErr.data && salesErr.data.escalated);
-          const specificReason     = (salesErr.data && salesErr.data.reason) || null;
+          // Wrapper failure — usually a Firestore read error during the
+          // poll, since the agent itself runs in a background function
+          // we can't await. The agent's own writes (draft, thread,
+          // audit) happen independently of this orchestrator.
+          console.warn("sales agent orchestration failed:", salesErr.message);
 
           await writeAudit({
             threadId,
             eventType: "sales_agent_engagement_failed",
             payload: {
-              path             : activeSalesStage ? "stateful" : "fresh_lead",
-              fromStage        : activeSalesStage || null,
-              error            : salesErr.message,
-              statusCode       : salesErr.status || null,
-              agentSelfEscalated,
-              specificReason
+              path      : activeSalesStage ? "stateful" : "fresh_lead",
+              fromStage : activeSalesStage || null,
+              error     : salesErr.message,
+              statusCode: salesErr.status || null
             },
             outcome: "failure"
           });
 
-          // Only do the thread-status overwrite when the agent did NOT
-          // already handle the escalation. Otherwise we'd clobber the
-          // agent's specific reason with our generic one.
-          if (!agentSelfEscalated) {
-            await db.collection(THREADS_COLL).doc(threadId).set({
-              status                   : "pending_human_review",
-              lastSalesAgentBlockReason: "AGENT_CALL_FAILED",
-              updatedAt                : FV.serverTimestamp()
-            }, { merge: true });
-          }
+          await db.collection(THREADS_COLL).doc(threadId).set({
+            status                   : "pending_human_review",
+            lastSalesAgentBlockReason: "AGENT_CALL_FAILED",
+            updatedAt                : FV.serverTimestamp()
+          }, { merge: true });
 
           return ok({
             threadId,
             decision  : "sales_agent_failed_escalated",
             path      : activeSalesStage ? "stateful" : "fresh_lead",
             error     : salesErr.message,
-            agentSelfEscalated,
-            specificReason,
             durationMs: Date.now() - tStart
           });
         }
