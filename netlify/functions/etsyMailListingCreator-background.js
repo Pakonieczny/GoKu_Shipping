@@ -1139,6 +1139,14 @@ function isTerminalError(err) {
   // forces unnecessary manual intervention.
   if (msg.includes("draft_busy") || msg.includes("draft is currently sending")) return false;
   if (msg.includes(" 409") || msg.includes("409:")) return false;
+  // v4.3.13 — Etsy returned 403 "listing is not editable, must be active
+  // or expired but is removed". Means the operator deleted the orphaned
+  // draft listing in their Etsy shop manager. With v4.3.13's resume
+  // liveness check (verifyResumeListingAlive at start of run), the next
+  // attempt will detect the tombstone, clear customListingId, and start
+  // over from createDraftListing. So this error self-heals on the next
+  // cron tick — no point in parking the thread in FAILED.
+  if (msg.includes("not editable") && msg.includes("removed")) return false;
   // Terminal: validation, bad input, auth, missing config
   if (msg.includes("invalid input") || msg.includes("invalid setup") || msg.includes("invalid response")) return true;
   if (msg.includes("invalid state")) return true;
@@ -1270,9 +1278,77 @@ exports.handler = async function (event) {
     //    is no-op if already active, enqueue uses deterministic draftId
     //    with force=true). So we always run those — no resume sentinel
     //    needed for them.
-    const resumeListingId = thread.customListingId ? String(thread.customListingId) : null;
-    const resumeImagesAt  = thread.customListingImagesAt || null;
-    const isResume        = !!resumeListingId;
+    const resumeListingIdRaw = thread.customListingId ? String(thread.customListingId) : null;
+    const resumeImagesAtRaw  = thread.customListingImagesAt || null;
+    let   resumeListingId    = resumeListingIdRaw;
+    let   resumeImagesAt     = resumeImagesAtRaw;
+    let   isResume           = !!resumeListingId;
+
+    // v4.3.13 — Verify the resume target is still alive on Etsy before
+    // committing to the resume path. If the operator (or anyone) deleted
+    // the orphaned draft listing in their Etsy shop manager — say after
+    // a previous attempt left it in FAILED state — every subsequent
+    // attempt would hit "The listing is not editable, must be active or
+    // expired but is removed" 403s on inventory PUT or publish PATCH.
+    // The worker would loop forever against the tombstone.
+    //
+    // GET /listings/{id} returns:
+    //   - 200 with state ∈ {draft, active, inactive, expired} → resume safe
+    //   - 200 with state ∈ {removed, deleted, sold_out} → start over
+    //   - 404 → start over
+    //
+    // On any check failure other than the above, we proceed with the
+    // resume optimistically — better to attempt a resume that fails
+    // loudly than to redo expensive AI generation + image upload on
+    // every transient network blip.
+    if (isResume) {
+      try {
+        const live = await etsyFetch(`/listings/${resumeListingId}`);
+        const state = String(live && live.state || "").toLowerCase();
+        if (!live || state === "removed" || state === "deleted" || state === "sold_out") {
+          console.warn(
+            `[listingCreator] Resume target ${resumeListingId} for ${threadId} is in state="${state || "missing"}". ` +
+            `Clearing customListingId and starting over with a fresh listing.`
+          );
+          // Clear ALL resume sentinels — both the listing id and the
+          // images-uploaded marker. We're starting over from step 5.
+          await db.collection(THREADS_COLL).doc(threadId).update({
+            customListingId            : FV.delete(),
+            customListingImagesAt      : FV.delete(),
+            customListingImagesCount   : FV.delete(),
+            customListingUsedFallback  : FV.delete(),
+            customListingTombstonedId  : resumeListingId,   // audit trail
+            updatedAt                  : FV.serverTimestamp()
+          });
+          resumeListingId = null;
+          resumeImagesAt  = null;
+          isResume        = false;
+        }
+      } catch (e) {
+        // 404 from etsyFetch reads as a thrown error. Treat it the same
+        // as a removed listing: clear and start over.
+        const msg = String(e && e.message || e);
+        if (/\b404\b/.test(msg)) {
+          console.warn(`[listingCreator] Resume target ${resumeListingId} for ${threadId} returns 404; treating as removed and starting over.`);
+          await db.collection(THREADS_COLL).doc(threadId).update({
+            customListingId            : FV.delete(),
+            customListingImagesAt      : FV.delete(),
+            customListingImagesCount   : FV.delete(),
+            customListingUsedFallback  : FV.delete(),
+            customListingTombstonedId  : resumeListingId,
+            updatedAt                  : FV.serverTimestamp()
+          });
+          resumeListingId = null;
+          resumeImagesAt  = null;
+          isResume        = false;
+        } else {
+          // Transient — proceed with resume; if the listing IS dead,
+          // the next operation will surface that and we'll retry on
+          // the next minute-tick.
+          console.warn(`[listingCreator] Resume liveness check failed for ${threadId} (proceeding optimistically): ${msg}`);
+        }
+      }
+    }
 
     if (isResume) {
       console.warn(
