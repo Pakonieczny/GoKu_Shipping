@@ -32,9 +32,9 @@
  *
  *  Cool-down:
  *    We wait 30 seconds after acceptance (customerAcceptedAt) before
- *    acting. Gives the customer a moment to retract; the sales agent
- *    can flip customerAccepted back to false on the next inbound (and
- *    the worker's loadThreadData re-checks this at fire time).
+ *    acting. Gives the customer a moment to retract via operator action.
+ *    The durable-acceptance sales-agent fix no longer flips customerAccepted
+ *    false on normal follow-up turns.
  *
  *  Stuck-flow recovery:
  *    A thread stuck in "creating" longer than RECOVERY_TIMEOUT_MS gets
@@ -50,7 +50,7 @@
 
 const fetch = require("node-fetch");
 const admin = require("./firebaseAdmin");
-const { isScheduledInvocation } = require("./_etsyMailAuth");
+const { CORS, isScheduledInvocation, requireExtensionAuth } = require("./_etsyMailAuth");
 
 const db = admin.firestore();
 const FV = admin.firestore.FieldValue;
@@ -245,6 +245,19 @@ exports.handler = async function (event) {
   const tStart = Date.now();
   const isScheduled = isScheduledInvocation(event || {});
 
+  // Scheduled invocations are trusted because they come from Netlify's
+  // scheduler. Manual invocations must be authenticated with the same
+  // shared secret used by the dashboard, extension, and inter-function calls.
+  // This prevents a public URL hit from force-triggering queued listing work
+  // outside the scheduled cadence.
+  if (event && event.httpMethod === "OPTIONS") {
+    return { statusCode: 204, headers: CORS, body: "" };
+  }
+  if (!isScheduled) {
+    const auth = requireExtensionAuth(event || {});
+    if (!auth.ok) return auth.response;
+  }
+
   try {
     // Run both queries in parallel so a single tick can pick up new work
     // AND recover anything stuck from a prior crash.
@@ -273,6 +286,7 @@ exports.handler = async function (event) {
     if (!merged.length) {
       return {
         statusCode: 200,
+        headers: CORS,
         body: JSON.stringify({
           ok: true, queued: queuedDocs.length, stuck: stuckDocs.length,
           claimed: 0, elapsedMs: Date.now() - tStart, scheduled: isScheduled
@@ -306,6 +320,7 @@ exports.handler = async function (event) {
 
     return {
       statusCode: 200,
+      headers: CORS,
       body: JSON.stringify({
         ok: true,
         queued    : queuedDocs.length,
@@ -323,6 +338,7 @@ exports.handler = async function (event) {
     console.error("[listingCreatorCron] fatal:", err);
     return {
       statusCode: 500,
+      headers: CORS,
       body: JSON.stringify({ ok: false, error: err.message, elapsedMs: Date.now() - tStart })
     };
   }

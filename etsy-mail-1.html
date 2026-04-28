@@ -687,6 +687,25 @@
     }
     .em-status-pill.archived             { background: #eaeef2; color: #57606a; }
 
+    /* ── v4.3 — Custom-listing pipeline status pill (Thread details). ─
+       Distinct from the thread.status pill above so the two are visually
+       distinct from the AI rating + folder badges; some palette overlap
+       with the Custom Listing card in the conversation column is
+       intentional so operators learn to associate the colors with
+       pipeline state at a glance. */
+    .em-listing-pill {
+      display: inline-block; font-size: 10px; font-weight: 600;
+      padding: 2px 8px; border-radius: 10px;
+      background: #eaeef2; color: #57606a;
+      text-transform: uppercase; letter-spacing: .4px;
+    }
+    .em-listing-pill.em-listing-queued    { background: #fff8c5; color: #7d4900; }
+    .em-listing-pill.em-listing-creating  { background: #fff1e5; color: #9a3412;
+                                            animation: em-pill-pulse 1.6s ease-in-out infinite; }
+    .em-listing-pill.em-listing-created   { background: #dcffe4; color: #116329; }
+    .em-listing-pill.em-listing-failed    { background: #ffebe9; color: #82071e; }
+    .em-listing-pill.em-listing-retracted { background: #eaeef2; color: #424a53; }
+
     /* ── List filter bar (search + message type + date) ─────────────── */
     .em-list-filters {
       display: flex; flex-direction: column; gap: 6px;
@@ -1571,6 +1590,41 @@
           <span id="emOwnerOnlyHint" style="font-size:11px; color:#6a737d; align-self:center;">(option sheets are read-only here; edit via seeds/option_sheets_seed.json + import script)</span>
         </div>
 
+        <!-- ─── v4.3: Custom Listing Templates ─────────────────────────
+             Three template listing IDs (one per family) used as
+             structural sources by etsyMailListingCreator-background.
+             The worker reads taxonomy_id, shipping_profile_id,
+             return_policy_id, and readiness_state_id from these
+             templates when building each new custom listing on Etsy.
+
+             Stored at EtsyMail_Config/listingTemplates as:
+               { necklace: "<id>", huggie: "<id>", stud: "<id>" }
+
+             These are inactive listings on Etsy (state=inactive). Any
+             change here takes effect immediately on the next listing
+             creation — no redeploy needed. -->
+        <hr style="margin:14px 0 10px;border:none;border-top:1px solid #e1e4e8;">
+        <p style="margin-bottom:4px;"><b>v4.3 — Custom Listing Templates</b> <span class="em-muted" style="font-weight:400;font-size:11px;">— inactive Etsy listing IDs used as structural sources by the listing-creator pipeline</span></p>
+        <p style="font-size:11px;color:#6a737d;margin:0 0 10px;">
+          When a customer accepts a quote, the pipeline reads <code>taxonomy_id</code>, <code>shipping_profile_id</code>, <code>return_policy_id</code>, and <code>readiness_state_id</code> from the matching family's template, then creates a brand-new active listing using AI-generated title/description/tags and the customer's reference photos. Set up three inactive listings on Etsy (one per family) and paste their listing IDs below.
+        </p>
+
+        <div style="display:grid; grid-template-columns: 100px 1fr; gap:6px 10px; align-items:center; margin:0 0 8px;">
+          <label for="emTplNecklaceInput" style="font-size:12px;">Necklace</label>
+          <input type="text" id="emTplNecklaceInput" inputmode="numeric" pattern="[0-9]*"
+                 placeholder="e.g. 1234567890"
+                 style="padding:4px 8px; border:1px solid #d0d7de; border-radius:4px; font-size:12px; font-family:ui-monospace,SFMono-Regular,Consolas,monospace;">
+          <label for="emTplHuggieInput" style="font-size:12px;">Huggie</label>
+          <input type="text" id="emTplHuggieInput" inputmode="numeric" pattern="[0-9]*"
+                 placeholder="e.g. 1234567891"
+                 style="padding:4px 8px; border:1px solid #d0d7de; border-radius:4px; font-size:12px; font-family:ui-monospace,SFMono-Regular,Consolas,monospace;">
+          <label for="emTplStudInput" style="font-size:12px;">Stud</label>
+          <input type="text" id="emTplStudInput" inputmode="numeric" pattern="[0-9]*"
+                 placeholder="e.g. 1234567892"
+                 style="padding:4px 8px; border:1px solid #d0d7de; border-radius:4px; font-size:12px; font-family:ui-monospace,SFMono-Regular,Consolas,monospace;">
+        </div>
+        <p id="emTplMeta" style="font-size:10px;color:#6a737d;margin:0 0 12px;font-style:italic;"></p>
+
         <p id="emAutoCfgMeta" style="font-size:10px;color:#6a737d;margin:0 0 8px;font-style:italic;"></p>
 
         <div class="em-modal-error" id="emSecretError"></div>
@@ -1890,6 +1944,23 @@
         status: ["sales_active", "sales_discovery", "sales_spec", "sales_quote", "sales_revision", "sales_pending_close_approval"] },
       { id: "sales_abandoned",      label: "Sales — Abandoned", icon: "history_toggle_off",
         status: "sales_abandoned" },
+      // ─── v4.3 — Completed Sales ────────────────────────────────────────
+      // Folder membership is keyed off salesCompletedAt (set ONCE by the
+      // listing-creator worker on success, never overwritten by any other
+      // code path) rather than thread.status. We can't filter on status
+      // because subsequent post-purchase chatter — "thanks", "when will
+      // it ship?" — runs through etsyMailAutoPipeline.finalizeThread,
+      // which writes status="auto_replied" / "pending_human_review" /
+      // "queued_for_auto_send" on top of "sales_completed" and would
+      // remove the thread from this folder mid-conversation.
+      //
+      // The orderByField filter type queries firestoreProxy with
+      // orderBy=<field>,desc. Firestore's orderBy implicitly excludes
+      // documents where the field is missing, so this both filters and
+      // sorts in one operation. Counts come from a synthetic
+      // `_completedSales` key in the etsyMailThreads ?counts=1 response.
+      { id: "completed_sales",      label: "Completed Sales", icon: "check_circle",
+        orderByField: "salesCompletedAt", countKey: "_completedSales" },
       { id: "archived",             label: "Archived",     icon: "archive",       status: "archived" }
     ];
 
@@ -1980,6 +2051,75 @@
         if (!_autoCfg._loaded) _autoCfg = { ...AUTO_CFG_DEFAULTS, _loaded: true };
       }
       return _autoCfg;
+    }
+
+    /* ── v4.3 — Custom Listing Templates config ────────────────────────
+       Lives at EtsyMail_Config/listingTemplates as:
+         { necklace: "<id>", huggie: "<id>", stud: "<id>" }
+       Read by etsyMailListingCreator-background's resolveTemplateListingId
+       (no caching, fetched per worker invocation). The Settings dialog
+       loads + saves this doc independently of autoPipeline so changes
+       take effect immediately on the next listing creation. */
+    const LISTING_TEMPLATES_DOC_ID = "listingTemplates";
+    const LISTING_TEMPLATE_FAMILIES = ["necklace", "huggie", "stud"];
+    let _listingTemplates = { necklace: "", huggie: "", stud: "", _loaded: false };
+
+    async function fetchListingTemplates() {
+      try {
+        const res = await api("firestoreProxy", {
+          method: "GET",
+          query : { op: "get", coll: CONFIG_COLL, id: LISTING_TEMPLATES_DOC_ID }
+        });
+        if (res && res.exists && res.doc) {
+          const d = res.doc;
+          _listingTemplates = {
+            necklace: String(d.necklace || ""),
+            huggie  : String(d.huggie   || ""),
+            stud    : String(d.stud     || ""),
+            updatedBy: d.updatedBy || null,
+            updatedAt: d.updatedAt || null,
+            _loaded : true
+          };
+        } else {
+          _listingTemplates = { necklace: "", huggie: "", stud: "", _loaded: true };
+        }
+      } catch (e) {
+        console.warn("listing-templates fetch failed:", e.message);
+        if (!_listingTemplates._loaded) _listingTemplates = { necklace: "", huggie: "", stud: "", _loaded: true };
+      }
+      return _listingTemplates;
+    }
+
+    async function saveListingTemplates({ necklace, huggie, stud, by }) {
+      // Sanitize: strip whitespace, allow only digits (Etsy listing IDs
+      // are positive integers). Reject anything that isn't a valid ID;
+      // empty strings are allowed (operator clearing a family).
+      const sanitize = (v) => {
+        const s = String(v == null ? "" : v).trim();
+        if (s === "") return "";
+        if (!/^\d+$/.test(s)) throw new Error(`Invalid listing ID "${s}" — must be digits only`);
+        return s;
+      };
+      const clean = {
+        necklace : sanitize(necklace),
+        huggie   : sanitize(huggie),
+        stud     : sanitize(stud),
+        updatedBy: by || getEmployeeName() || "operator",
+        updatedAt: { __serverTimestamp: true }
+      };
+      await api("firestoreProxy", {
+        method: "POST",
+        body  : {
+          op  : "set",
+          coll: CONFIG_COLL,
+          id  : LISTING_TEMPLATES_DOC_ID,
+          merge: true,
+          actor: getEmployeeName() || "operator",
+          data : clean
+        }
+      });
+      _listingTemplates = { ...clean, _loaded: true };
+      return _listingTemplates;
     }
 
     async function saveAutoConfig({ enabled, threshold, manualAiDraftAutoSend,
@@ -3000,6 +3140,30 @@
       // Refresh from Firestore so we always show the truth
       fetchAutoConfig().then(populateFromCfg).catch(() => {});
 
+      // v4.3 — Custom Listing Templates. Populated from cache then
+      // refreshed from Firestore. The save handler below validates and
+      // writes back to EtsyMail_Config/listingTemplates.
+      const tplNeck = $("emTplNecklaceInput");
+      const tplHugg = $("emTplHuggieInput");
+      const tplStud = $("emTplStudInput");
+      const tplMeta = $("emTplMeta");
+      const populateTpl = () => {
+        if (tplNeck) tplNeck.value = _listingTemplates.necklace || "";
+        if (tplHugg) tplHugg.value = _listingTemplates.huggie   || "";
+        if (tplStud) tplStud.value = _listingTemplates.stud     || "";
+        if (tplMeta) {
+          if (_listingTemplates.updatedBy || _listingTemplates.updatedAt) {
+            const who = _listingTemplates.updatedBy ? ("by " + _listingTemplates.updatedBy) : "";
+            const when = _listingTemplates.updatedAt ? (" · " + fmtTime(_listingTemplates.updatedAt)) : "";
+            tplMeta.textContent = "Last changed " + who + when;
+          } else {
+            tplMeta.textContent = "Stored in Firestore at EtsyMail_Config/listingTemplates";
+          }
+        }
+      };
+      populateTpl();
+      fetchListingTemplates().then(populateTpl).catch(() => {});
+
       // v2.0 Step 1: load catalog sync status into the inline status block.
       // Refreshed every time the modal opens. The "Sync now" button calls
       // etsyMailListingsCatalog op:"sync" and re-loads the status when done.
@@ -3061,6 +3225,25 @@
         });
       } catch (e) {
         $("emSecretError").textContent = "Couldn't save auto-pipeline config: " + e.message;
+        $("emSecretError").classList.add("active");
+        return;
+      }
+
+      // v4.3 — save Custom Listing Templates. Separate doc from the
+      // autoPipeline config; surfaces validation errors (non-numeric IDs)
+      // back into the settings dialog.
+      const tplNeckInput = $("emTplNecklaceInput");
+      const tplHuggInput = $("emTplHuggieInput");
+      const tplStudInput = $("emTplStudInput");
+      try {
+        await saveListingTemplates({
+          necklace: tplNeckInput ? tplNeckInput.value : "",
+          huggie  : tplHuggInput ? tplHuggInput.value : "",
+          stud    : tplStudInput ? tplStudInput.value : "",
+          by      : getEmployeeName() || "operator"
+        });
+      } catch (e) {
+        $("emSecretError").textContent = "Couldn't save listing templates: " + e.message;
         $("emSecretError").classList.add("active");
         return;
       }
@@ -3190,6 +3373,10 @@
       let html = '<div class="em-rail-section">Folders</div>';
       const allCount = Object.values(state.counts).reduce((a, b) => a + (b || 0), 0);
       const folderCount = (f) => {
+        // v4.3 — orderByField folders (e.g. Completed Sales) get their
+        // count from a synthetic key in the counts payload (e.g.
+        // _completedSales) rather than summing per-status counts.
+        if (f.countKey) return state.counts[f.countKey] || 0;
         if (!f.status) return allCount;
         if (Array.isArray(f.status)) {
           return f.status.reduce((sum, s) => sum + (state.counts[s] || 0), 0);
@@ -3261,7 +3448,18 @@
         // would want a real composite index. We bump the limit to 200 in that
         // case to delay the day; long-term: add the composite index.
         let docs;
-        if (Array.isArray(filter.status)) {
+        if (filter.orderByField) {
+          // v4.3 — orderByField folder (e.g. Completed Sales). Firestore's
+          // orderBy implicitly excludes docs where the field is missing,
+          // so this is both an "exists" filter AND a sort in one op.
+          // No composite index needed (single-field). The 200-doc limit
+          // matches other rail folders.
+          const data = await api("firestoreProxy", { query: {
+            op: "list", coll: THREADS_COLL,
+            orderBy: `${filter.orderByField},desc`, limit: 200
+          } });
+          docs = data.docs || [];
+        } else if (Array.isArray(filter.status)) {
           // Multi-status folder (Auto-Reply): one query per status, merge.
           const responses = await Promise.all(filter.status.map(s =>
             api("firestoreProxy", { query: {
@@ -3825,6 +4023,94 @@
       if (state.msgPollTimer) { clearInterval(state.msgPollTimer); state.msgPollTimer = null; }
     }
 
+    // v4.3 — Custom Listing pipeline status card. Rendered in the
+    // conversation column when the listing is mid-flight, has failed,
+    // or was retracted. The "created" state has its own richer card
+    // (Sale Synopsis) so we don't render it here to avoid duplication.
+    //
+    // Status meanings (from etsyMailListingCreator pipeline):
+    //   queued    — sales agent set customerAccepted; cron will claim soon
+    //   creating  — cron has fired the worker, listing creation in flight
+    //   created   — listing live on Etsy, message sent to customer (handled
+    //               by Sale Synopsis card instead)
+    //   failed    — terminal failure; needsOperatorReview is set
+    //   retracted — operator manually retracted before listing went live
+    function renderCustomListingStatusCard(t) {
+      const s = t.customListingStatus;
+      if (!s || s === "created") return "";   // not started, or use synopsis card
+
+      const PILL_STYLE = {
+        queued    : { bg: "#fff8c5", border: "#9a6700", fg: "#7d4900",
+                      icon: "schedule",       label: "Queued for creation" },
+        creating  : { bg: "#fff1e5", border: "#bc4c00", fg: "#9a3412",
+                      icon: "autorenew",      label: "Creating listing…" },
+        failed    : { bg: "#ffebe9", border: "#cf222e", fg: "#82071e",
+                      icon: "error_outline",  label: "Listing creation failed" },
+        retracted : { bg: "#eaeef2", border: "#6e7781", fg: "#424a53",
+                      icon: "block",          label: "Retracted" }
+      }[s] || { bg: "#eaeef2", border: "#6e7781", fg: "#424a53",
+                icon: "help_outline",   label: s };
+
+      const showError = s === "failed" && (t.customListingError || t.needsOperatorReviewReason);
+      const errMsg    = t.customListingError ||
+                        (t.needsOperatorReviewReason && t.needsOperatorReviewReason.replace(/^listing_creation_failed:\s*/, "")) ||
+                        "";
+
+      // Useful diagnostics — show whatever we have without forcing the
+      // operator to crack open Firestore.
+      const meta = [];
+      if (t.customListingId)        meta.push(`ID <code style="font-family:ui-monospace,monospace;font-size:11px;">${esc(String(t.customListingId))}</code>`);
+      if (t.customListingDraftCreatedAt) meta.push(`draft saved ${esc(fmtTime(t.customListingDraftCreatedAt))}`);
+      if (t.customListingImagesAt)  meta.push(`${Number(t.customListingImagesCount || 0)} image${(t.customListingImagesCount === 1) ? "" : "s"} uploaded${t.customListingUsedFallback ? " (fallback)" : ""}`);
+      if (typeof t.customListingAttempts === "number" && t.customListingAttempts > 1) meta.push(`attempt ${esc(String(t.customListingAttempts))}`);
+      if (t.customListingErrorAt)   meta.push(`last error ${esc(fmtTime(t.customListingErrorAt))}`);
+
+      return `
+        <div class="em-card" style="background:${PILL_STYLE.bg}; border-left:4px solid ${PILL_STYLE.border};">
+          <h4 style="display:flex; align-items:center; gap:6px; color:${PILL_STYLE.fg};">
+            <i class="material-icons" style="font-size:18px;">${esc(PILL_STYLE.icon)}</i>
+            Custom Listing — ${esc(PILL_STYLE.label)}
+            ${t.customListingStartedAt ? `<span class="em-muted" style="font-size:11px; font-weight:400; margin-left:auto;">started ${esc(fmtTime(t.customListingStartedAt))}</span>` : ""}
+          </h4>
+          ${t.customListingUrl
+            ? `<div style="margin-bottom:8px; font-size:13px;"><strong>Listing:</strong> <a href="${esc(t.customListingUrl)}" target="_blank">${esc(t.customListingUrl)}</a></div>`
+            : ""}
+          ${t.acceptedQuoteUsd || t.acceptedQuoteFamily ? `
+            <div style="font-size:12px; color:#57606a; margin-bottom:6px;">
+              ${t.acceptedQuoteUsd ? `Quote: <strong>$${esc(String(t.acceptedQuoteUsd))}</strong>` : ""}
+              ${t.acceptedQuoteFamily ? ` &nbsp;·&nbsp; ${esc(t.acceptedQuoteFamily)}` : ""}
+            </div>
+          ` : ""}
+          ${meta.length ? `<div style="font-size:11px; color:#57606a; margin-top:4px;">${meta.join(" &nbsp;·&nbsp; ")}</div>` : ""}
+          ${showError ? `
+            <div style="margin-top:10px; padding:8px 10px; background:#fff; border:1px solid #cf222e; border-radius:4px; font-size:12px; color:#82071e;">
+              <strong>Error:</strong> ${esc(errMsg)}
+              ${t.needsOperatorReview ? `<div style="margin-top:4px; font-size:11px;">This thread is flagged <strong>needs operator review</strong> — investigate the failure and either retry by clearing <code>customListingStatus</code> in Firestore (back to <code>"queued"</code>) or mark the thread for manual handling.</div>` : ""}
+            </div>
+          ` : ""}
+          ${s === "queued" && t.customListingErrorCount ? `
+            <div style="margin-top:8px; font-size:11px; color:#9a6700;">
+              <i class="material-icons" style="font-size:12px; vertical-align:middle;">refresh</i>
+              Retrying — previous attempt${(t.customListingErrorCount === 1) ? "" : "s"} failed (${esc(String(t.customListingErrorCount))})
+              ${t.customListingError ? `: ${esc(clamp(t.customListingError, 120))}` : ""}
+            </div>
+          ` : ""}
+          ${s === "retracted" && t.customListingRetractedAt ? `
+            <div style="font-size:12px; color:#57606a;">retracted ${esc(fmtTime(t.customListingRetractedAt))}</div>
+          ` : ""}
+        </div>
+      `;
+    }
+
+    // Truncate helper used by the listing status card for inline error
+    // previews. Full error text is also shown in the Error block when
+    // status is failed; this is just for the "retrying after N failures"
+    // line so it doesn't blow up the layout.
+    function clamp(s, n) {
+      s = String(s == null ? "" : s);
+      return s.length > n ? s.slice(0, n - 1) + "…" : s;
+    }
+
     function renderDetail(thread) {
       if (!thread) {
         $("emDetail").innerHTML = `<div class="em-detail-empty">No thread selected.</div>`;
@@ -3881,6 +4167,17 @@
 
         <div class="em-detail-body">
           <div>
+            ${t.salesSynopsis ? `
+            <div class="em-card" style="background:#f0f9ff; border-left:4px solid #0969da;">
+              <h4 style="display:flex; align-items:center; gap:6px;">
+                <i class="material-icons" style="font-size:18px; color:#0969da;">summarize</i>
+                Sale Synopsis
+                ${t.salesCompletedAt ? `<span class="em-muted" style="font-size:11px; font-weight:400; margin-left:auto;">completed ${esc(fmtTime(t.salesCompletedAt))}</span>` : ""}
+              </h4>
+              ${t.customListingUrl ? `<div style="margin-bottom:10px; font-size:13px;"><strong>Listing:</strong> <a href="${esc(t.customListingUrl)}" target="_blank">${esc(t.customListingUrl)}</a>${t.acceptedQuoteUsd ? ` &nbsp;·&nbsp; <strong>$${esc(String(t.acceptedQuoteUsd))}</strong>` : ""}${t.acceptedQuoteFamily ? ` &nbsp;·&nbsp; ${esc(t.acceptedQuoteFamily)}` : ""}</div>` : ""}
+              <div style="white-space:pre-wrap; line-height:1.5; font-size:13px; color:#1f2328;">${esc(t.salesSynopsis)}</div>
+            </div>
+            ` : renderCustomListingStatusCard(t)}
             <div class="em-card">
               <h4>Conversation</h4>
               <div class="em-thread" id="emThreadBox">
@@ -3928,6 +4225,15 @@
                 <dt>Risk flags</dt><dd>${(t.riskFlags||[]).map(esc).join(", ") || "—"}</dd>
                 <dt>Last inbound</dt> <dd>${esc(fmtTime(t.lastInboundAt))}</dd>
                 <dt>Last scraped</dt> <dd>${esc(fmtTime(t.lastSyncedAt))}</dd>
+                ${t.customListingStatus ? `
+                <dt>Custom listing</dt>
+                <dd>
+                  <span class="em-listing-pill em-listing-${esc(t.customListingStatus)}">${esc(t.customListingStatus)}</span>
+                  ${t.customListingUrl ? `<br><a href="${esc(t.customListingUrl)}" target="_blank" style="font-size:11px;">view on Etsy ↗</a>` : ""}
+                </dd>
+                ${t.customListingId ? `<dt>Listing ID</dt><dd style="font-family:monospace;font-size:11px;">${esc(String(t.customListingId))}</dd>` : ""}
+                ${t.customListingCreatedAt ? `<dt>Listing created</dt><dd>${esc(fmtTime(t.customListingCreatedAt))}</dd>` : ""}
+                ` : ""}
               </dl>
             </div>
 
@@ -4466,9 +4772,16 @@
           '</details>';
       }
 
-      // v2.0 Step 2: render the close-stage Custom Order Listing draft
-      // when present. Step 3 will replace this read-only view with an
-      // "Approve & generate custom order" action.
+      // v4.3 — Render the structured close-stage Custom Order Listing
+      // spec when the agent emits one. This is a snapshot of what the
+      // sales agent decided the listing should be (description, items,
+      // total, deadline, etc.) and is used as ground truth by the
+      // listing-creator pipeline (etsyMailListingCreator-background) once
+      // the customer accepts. Operators don't need to act on this block
+      // anymore — it's reference material showing what the agent saw.
+      // The actual listing-creation status is rendered separately in the
+      // "Custom Listing" card on the thread (synopsis card on success,
+      // status card on in-progress / failed states).
       const dco = draft.draftCustomOrderListing;
       if (dco && Array.isArray(dco.items) && dco.items.length) {
         const itemsHtml = dco.items.map(it =>
