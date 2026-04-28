@@ -1102,17 +1102,53 @@ exports.handler = async (event) => {
             updatedAt                    : FV.serverTimestamp()
           });
 
-          // 3. Reset SalesContext.stage to discovery so the agent enters
-          //    its discovery prompt and starts a fresh funnel. Preserve
-          //    the rest of SalesContext (history field is useful for
-          //    the agent — it can reference the customer's past order
-          //    for context like "since you got the baseball charm last
-          //    time, would you also want sterling silver?").
+          // 3. Reset SalesContext to a fresh discovery state.
+          //
+          // v4.3.10 — Critical: must explicitly wipe the funnel-state
+          // fields, not just merge stage:"discovery". Earlier code did
+          // a merge:true write that left accumulatedSpec, quoteHistory,
+          // totalQuotedUsd, family, selectedCodes, _lastResolverResult,
+          // etc. ALL intact from the prior round. The agent's new turn
+          // then ran on a SalesContext that still had round-1's spec
+          // data, producing notes like "New order: banana-themed
+          // charm. Family TBD; prior order was a 10mm sterling silver
+          // necklace" while the dashboard simultaneously showed the
+          // OLD $42 / family:necklace / codes 1A-4A from round 1.
+          // From the operator's perspective, round-1 data leaked into
+          // the round-2 view.
+          //
+          // We use FieldValue.delete() (not null, not undefined) so
+          // queries that check field presence — and the dashboard's
+          // archive snapshot — see a clean state, identical to a fresh
+          // round-1 SalesContext at thread creation.
+          //
+          // What we PRESERVE on the SalesContext doc (deliberately):
+          //   - operatorOverrides : audit trail of manual stage flips
+          //   - createdAt          : when the funnel first started for this thread
+          //   - any custom telemetry fields the agent may have written
+          //     (e.g. promptVersion) — those don't pollute the active
+          //     funnel view.
           await db.collection("EtsyMail_SalesContext").doc(threadId).set({
-            stage      : "discovery",
-            roundReset : true,
-            roundResetAt: FV.serverTimestamp(),
-            updatedAt  : FV.serverTimestamp()
+            stage                 : "discovery",
+            roundReset            : true,
+            roundResetAt          : FV.serverTimestamp(),
+            updatedAt             : FV.serverTimestamp(),
+            // Wipe funnel-state fields explicitly:
+            accumulatedSpec       : FV.delete(),
+            quoteHistory          : FV.delete(),
+            totalQuotedUsd        : FV.delete(),
+            missingInputs         : FV.delete(),
+            notes                 : FV.delete(),
+            quantity              : FV.delete(),
+            wantsRush             : FV.delete(),
+            urgency_level         : FV.delete(),
+            selectedCodes         : FV.delete(),
+            family                : FV.delete(),
+            _lastResolverResult   : FV.delete(),
+            lastResolverResult    : FV.delete(),
+            lastSalesAgentBlockReason: FV.delete(),
+            lastDraftCustomOrderListing: FV.delete(),
+            lastTurnAt            : FV.delete()
           }, { merge: true });
 
           // 3b. v4.3.6 — Sweep stale optimistic-ghost messages from prior

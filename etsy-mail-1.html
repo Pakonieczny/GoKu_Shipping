@@ -2390,6 +2390,32 @@
         console.warn("salesHistory fetch failed:", e.message);
       }
 
+      // v4.3.10 — Fetch salesRound from the THREAD doc, not SalesContext.
+      // salesRound lives on EtsyMail_Threads/{tid} (incremented by
+      // autoPipeline's round-2 reset). SalesContext doesn't have this
+      // field, so the prior code's `Number(ctx.salesRound) || 1` always
+      // returned 1 — which is why both tabs ended up labeled "Round 1".
+      let threadSalesRound = 1;
+      try {
+        const threadFromState = state.threads && state.threads.find(t => t && t.id === threadId);
+        if (threadFromState && threadFromState.salesRound) {
+          threadSalesRound = Number(threadFromState.salesRound) || 1;
+        } else {
+          // Fallback if state.threads doesn't have it (e.g., direct deep-link
+          // load). Cheap single-doc read.
+          const tRes = await api("firestoreProxy", {
+            method: "GET",
+            query : { op: "get", coll: THREADS_COLL, id: threadId }
+          });
+          if (tRes && tRes.exists && tRes.doc && tRes.doc.salesRound) {
+            threadSalesRound = Number(tRes.doc.salesRound) || 1;
+          }
+        }
+      } catch (e) {
+        // Non-fatal — fall back to inferring from archived count.
+        console.warn("thread salesRound fetch failed:", e.message);
+      }
+
       if (!ctx && archivedRounds.length === 0) {
         // Nothing to render at all.
         mount.innerHTML = "";
@@ -2408,7 +2434,13 @@
       // SalesContext (rare — only happens if archive exists but the
       // current ctx was just deleted), the last archived round is
       // shown active instead.
-      const currentRound = (ctx && Number(ctx.salesRound)) || (ctx ? 1 : null);
+      //
+      // v4.3.10 — currentRound now comes from the THREAD's salesRound.
+      // Falls back to (archivedRounds.length + 1) only if the thread
+      // doc doesn't yet have salesRound set (older threads pre-v4.3.5).
+      const currentRound = threadSalesRound > 1
+        ? threadSalesRound
+        : (archivedRounds.length + 1);
       const tabs = [];
       // Archived rounds first (sorted ascending by round)
       for (const arch of archivedRounds) {
@@ -2424,18 +2456,30 @@
       if (ctx) {
         tabs.push({
           kind        : "current",
-          round       : currentRound || (archivedRounds.length + 1),
+          round       : currentRound,
           label       : archivedRounds.length > 0
-                          ? `Round ${currentRound || (archivedRounds.length + 1)} (current)`
+                          ? `Round ${currentRound} (current)`
                           : "Current",
           source      : ctx,
           completedAt : null
         });
       }
 
+      // v4.3.10 — Persist the operator's selected tab across polls.
+      // Without this, the 4-second messages-poll loop (which calls
+      // renderSalesCardForThread) re-renders with default-active=last,
+      // wiping out the operator's tab choice every few seconds.
+      // We key by threadId so switching threads doesn't carry the
+      // index over (different threads have different tab counts).
+      state._salesTabIdx = state._salesTabIdx || {};
+      const persistedIdx = state._salesTabIdx[threadId];
       // Default-active tab: the current round (last in the list).
       // If only archived rounds exist (no current ctx), the last one.
-      const defaultActiveIdx = tabs.length - 1;
+      // If the operator previously selected a tab AND it's still in
+      // range, use that instead.
+      const defaultActiveIdx = (typeof persistedIdx === "number" && persistedIdx >= 0 && persistedIdx < tabs.length)
+        ? persistedIdx
+        : tabs.length - 1;
 
       // Build tab strip + each tab's body.
       const tabStripHtml = tabs.length > 1
@@ -2466,9 +2510,15 @@
 
       // Wire tab switching. Mutually exclusive: clicking one tab hides
       // all others.
+      //
+      // v4.3.10 — Persist the chosen index in state._salesTabIdx so
+      // the next render (driven by the 4-second messages-poll loop)
+      // restores it instead of jumping back to the default.
       mount.querySelectorAll(".em-sales-tab").forEach(btn => {
         btn.addEventListener("click", () => {
           const idx = btn.dataset.tabIdx;
+          state._salesTabIdx = state._salesTabIdx || {};
+          state._salesTabIdx[threadId] = parseInt(idx, 10);
           mount.querySelectorAll(".em-sales-tab").forEach(b => {
             const active = b.dataset.tabIdx === idx;
             b.classList.toggle("active", active);
