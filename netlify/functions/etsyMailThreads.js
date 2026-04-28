@@ -60,6 +60,15 @@ const VALID_STATUSES = new Set([
   "hold_login_required",     // legacy
   "failed_scrape",
   "failed_send",
+  // v4.3 — sales-agent lifecycle. The agent already writes "sales_active"
+  // (line 1538) and treats "sales_completed" / "sales_abandoned" as
+  // terminal (TERMINAL_THREAD_STATUSES). Those statuses were missing from
+  // VALID_STATUSES, which prevented the dashboard from filtering on them
+  // (the ?list=1&status=... endpoint validates against this set). The
+  // dashboard's "Completed Sales" menu queries status=sales_completed.
+  "sales_active",
+  "sales_completed",
+  "sales_abandoned",
   "archived"
 ]);
 
@@ -328,17 +337,36 @@ exports.handler = async (event) => {
         return ok({ thread: { id: tSnap.id, ...tSnap.data() }, messages });
       }
 
-      /* ?list=1 → list threads, optionally filtered by status */
+      /* ?list=1 → list threads, optionally filtered by status.
+       * v4.3: ?list=1&completedSales=1 returns the "Completed Sales" menu
+       * (threads where the listing-creator worker called markSuccess).
+       * Filter is the existence of `salesCompletedAt` rather than
+       * `status == "sales_completed"`, because subsequent post-purchase
+       * chatter (e.g., "thanks, when will it ship?") routes through
+       * etsyMailAutoPipeline → finalizeThread, which overwrites status
+       * to "auto_replied" / "pending_human_review" / "queued_for_auto_send".
+       * `salesCompletedAt` is written ONCE by the worker and is never
+       * touched by any other code path, so it gives stable menu
+       * membership regardless of post-sale activity.
+       *
+       * Firestore's orderBy implicitly excludes docs where the field is
+       * missing, so this query also acts as an existence filter.
+       */
       if (qs.list === "1") {
-        const statusFilter = qs.status;
-        const limit        = Math.min(parseInt(qs.limit || "100", 10), 500);
+        const limit = Math.min(parseInt(qs.limit || "100", 10), 500);
 
         let q = db.collection(THREADS_COLL);
-        if (statusFilter && VALID_STATUSES.has(statusFilter)) {
-          q = q.where("status", "==", statusFilter);
+
+        if (qs.completedSales === "1") {
+          // "Completed Sales" menu — stable membership via salesCompletedAt
+          q = q.orderBy("salesCompletedAt", "desc").limit(limit);
+        } else {
+          const statusFilter = qs.status;
+          if (statusFilter && VALID_STATUSES.has(statusFilter)) {
+            q = q.where("status", "==", statusFilter);
+          }
+          q = q.orderBy("updatedAt", "desc").limit(limit);
         }
-        // order by lastInboundAt desc, falling back to updatedAt
-        q = q.orderBy("updatedAt", "desc").limit(limit);
 
         const snap = await q.get();
         const threads = snap.docs.map(d => ({ id: d.id, ...d.data() }));

@@ -1168,6 +1168,46 @@ exports.handler = async (event) => {
   }
 
   try {
+    // v4.3 — TERMINAL THREAD GUARD. Defense in depth against routing bugs
+    // and manual re-invocations. The autoPipeline's path (a) STATEFUL keys
+    // off ACTIVE_SALES_STAGES from SalesContext, but if SalesContext was
+    // never reset on completion (older threads, or a worker that crashed
+    // before resetting it), a follow-up message could still land here. Any
+    // thread already in a terminal sales status is, by definition, done —
+    // we don't want to generate fresh draft replies that pollute a
+    // completed conversation. Let the standard customer-service draft
+    // pipeline (etsyMailDraftReply) handle the follow-up instead.
+    //
+    // We also check salesCompletedAt: thread.status can be overwritten by
+    // autoPipeline's finalizeThread on subsequent generic replies (it
+    // writes "auto_replied" / "pending_human_review" / "queued_for_auto_send"),
+    // so a thread whose sale completed weeks ago might no longer have
+    // status="sales_completed". salesCompletedAt is written ONCE by the
+    // worker and never touched by other code paths — a reliable
+    // "ever completed?" signal.
+    try {
+      const tSnap = await db.collection(THREADS_COLL).doc(threadId).get();
+      if (tSnap.exists) {
+        const tData = tSnap.data() || {};
+        const ts = tData.status;
+        const everCompleted = !!tData.salesCompletedAt;
+        if (TERMINAL_THREAD_STATUSES.has(ts) || everCompleted) {
+          console.log(`[salesAgent] thread ${threadId} is terminal (status=${ts}, everCompleted=${everCompleted}), skipping`);
+          return { statusCode: 200, headers: CORS,
+                   body: JSON.stringify({
+                     ok: true, skipped: true,
+                     reason: TERMINAL_THREAD_STATUSES.has(ts) ? "terminal_thread_status" : "sale_already_completed",
+                     status: ts,
+                     everCompleted
+                   }) };
+        }
+      }
+    } catch (e) {
+      // Read failure is non-fatal — fall through to normal processing.
+      // Better to occasionally over-process than under-process.
+      console.warn(`[salesAgent] terminal-status check failed for ${threadId}:`, e.message);
+    }
+
     // ── Load or init the sales context ──
     const salesCtx = await loadOrInitSalesContext(threadId);
     // v4.0: stage is no longer read or referenced. Kept only in
@@ -1448,7 +1488,25 @@ exports.handler = async (event) => {
       // turn the customer explicitly accepts a previously-quoted price.
       // The future automation watches the draft (or a pubsub on this
       // field) and creates the Etsy custom listing.
-      customerAccepted      : !!parsed.customer_accepted,
+      // v4.2 — customerAcceptedAt mirrors the timestamp written on the
+      // thread doc (used by the listing-creator cron's cool-down). Only
+      // emitted on the turn customer_accepted flips true so we don't
+      // clobber a prior acceptance timestamp on later turns.
+      // v4.3 — DURABILITY: never auto-flip customerAccepted from true to
+      // false on a follow-up turn. The previous behavior wrote
+      // `customerAccepted: !!parsed.customer_accepted` on every turn,
+      // which meant a harmless follow-up like "btw can you ship by
+      // Friday?" (where parsed.customer_accepted is naturally false on
+      // that turn) would WIPE a valid prior acceptance, then the cron's
+      // retraction-cleanup branch would lock the thread into "retracted"
+      // and the listing would never get created. Fix: only emit the
+      // acceptance fields on actual acceptance turns. Retraction is now
+      // operator-driven (manual flip in the dashboard) — much rarer than
+      // the false-retraction failure mode this prevents.
+      ...(parsed.customer_accepted ? {
+        customerAccepted   : true,
+        customerAcceptedAt : FV.serverTimestamp()
+      } : {}),
       draftCustomOrderListing: parsed.draft_custom_order_listing || null,
       // v2.1 — Needs Review handoff fields
       isNeedsReviewHandoff       : isNeedsReviewHandoff,
@@ -1544,8 +1602,31 @@ exports.handler = async (event) => {
       // query either collection. quotedTotal mirrored for the same
       // reason — the automation needs the price without re-reading the
       // draft.
-      customerAccepted     : !!parsed.customer_accepted,
-      acceptedQuoteUsd     : (!!parsed.customer_accepted && typeof quotedTotal === "number") ? quotedTotal : null,
+      // v4.3 — DURABILITY: see the long comment on the draft write
+      // above. Acceptance fields are only written on actual acceptance
+      // turns. Once customerAccepted is true on the thread, follow-up
+      // turns leave it alone — the worker reads stable state.
+      ...(parsed.customer_accepted ? {
+        customerAccepted   : true,
+        acceptedQuoteUsd   : (typeof quotedTotal === "number") ? quotedTotal : null,
+        acceptedQuoteFamily: (salesCtx._lastResolverResult
+                                && salesCtx._lastResolverResult.success
+                                && typeof salesCtx._lastResolverResult.family === "string")
+                                  ? salesCtx._lastResolverResult.family
+                                  : null,
+        customerAcceptedAt  : FV.serverTimestamp(),
+        // customListingStatus: "queued" — explicit sentinel that the
+        // cron's primary query keys off. Only written on acceptance, so
+        // a follow-up turn doesn't overwrite a "creating" / "created"
+        // state set later by the cron / worker.
+        customListingStatus : "queued"
+      } : {}),
+      // lastResolverResult updates on every turn — it reflects the agent's
+      // current understanding of what the customer wants. The locked
+      // version of the spec at acceptance time is captured implicitly via
+      // acceptedQuoteUsd and acceptedQuoteFamily above; the worker reads
+      // both when it fires, so a customer changing one detail mid-stream
+      // doesn't change the locked price or family.
       lastResolverResult   : (salesCtx._lastResolverResult && salesCtx._lastResolverResult.success)
                               ? salesCtx._lastResolverResult : null,
       updatedAt     : FV.serverTimestamp()
