@@ -902,6 +902,85 @@
       padding: 12px 14px;
       margin-bottom: 12px;
     }
+    /* v4.3.8 — archived round cards have a muted left border to make
+       it visually obvious the operator is looking at history, not
+       the live conversation. */
+    .em-sales-card.archived {
+      border-left-color: #6e7781;
+      background: #fafbfc;
+    }
+    /* v4.3.8 — tab strip for round history. Sits above the card body
+       so the operator can switch between rounds without losing context.
+       Active tab gets the same purple accent as the live card's left
+       border; inactive tabs are muted. */
+    .em-sales-card-tabs-wrap {
+      margin-bottom: 12px;
+    }
+    .em-sales-tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 2px;
+      border-bottom: 1px solid #d0d7de;
+      margin-bottom: 0;
+      padding: 0 4px;
+    }
+    .em-sales-tab {
+      background: transparent;
+      border: 1px solid transparent;
+      border-bottom: none;
+      border-radius: 6px 6px 0 0;
+      padding: 6px 12px;
+      font-size: 12px;
+      font-weight: 500;
+      color: #57606a;
+      cursor: pointer;
+      position: relative;
+      bottom: -1px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .em-sales-tab:hover {
+      background: #f6f8fa;
+      color: #1f2328;
+    }
+    .em-sales-tab.active {
+      background: #fff;
+      border-color: #d0d7de;
+      color: #1f2328;
+      font-weight: 600;
+    }
+    .em-sales-tab.active::after {
+      content: "";
+      position: absolute;
+      left: 0; right: 0; bottom: -1px;
+      height: 2px;
+      background: #6639ba;
+    }
+    .em-sales-tab-body {
+      /* The card inside takes care of its own margin/border. */
+    }
+    /* v4.3.8 — small header band for archived rounds, showing the
+       Etsy listing URL and completion timestamp. Lives between the
+       card header and the spec rows. */
+    .em-sales-archived-header {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 6px 10px;
+      background: #f6f8fa;
+      border-radius: 4px;
+      margin-bottom: 8px;
+      font-size: 12px;
+    }
+    .em-sales-archived-header a {
+      color: #0969da;
+      text-decoration: none;
+      word-break: break-all;
+    }
+    .em-sales-archived-header a:hover {
+      text-decoration: underline;
+    }
     .em-sales-card-header {
       display: flex; align-items: center; gap: 8px;
       margin-bottom: 10px;
@@ -2260,6 +2339,21 @@
     /** Render the sales context panel into emSalesCardMount. Hides it
      *  if no SalesContext exists.
      *
+     *  v4.3.8 — TABBED ROUND HISTORY. When the thread has been through
+     *  round 2+ (salesRound > 1 OR a salesHistory subcollection
+     *  exists), the panel renders as a tab strip with one tab per
+     *  round. The active tab shows the current SalesContext; archived
+     *  tabs render frozen snapshots from EtsyMail_Threads/{tid}/
+     *  salesHistory. Each tab body is the same Sales-conversation
+     *  card structure (spec / missing / quote / actions).
+     *
+     *  Why per-round tabs and not just an "expand prior" section:
+     *  the operator needs to see what was QUOTED, ACCEPTED, and
+     *  ORDERED in each round to spot patterns ("she always wants
+     *  rush", "her last 3 orders were necklaces"). A single
+     *  active-card view loses that context the moment round 2
+     *  starts, since SalesContext gets reset to discovery.
+     *
      *  Anti-flicker note: this used to wipe `mount.innerHTML = ""`
      *  immediately on entry, then await a network fetch before
      *  rebuilding. That left the panel blank for the duration of the
@@ -2279,21 +2373,161 @@
       // still want operators to SEE the context (for diagnostics), so
       // we render with a "Sales Mode is OFF" banner instead.
       const ctx = await fetchSalesContext(threadId);
-      if (!ctx) {
-        // Only clear if we actually have nothing to render. If the
-        // user navigated away mid-fetch, ignore.
+
+      // v4.3.8 — also fetch archived rounds in parallel. Empty array
+      // is fine (round-1 threads have no salesHistory).
+      let archivedRounds = [];
+      try {
+        const histRes = await api("firestoreProxy", {
+          query: {
+            op: "listSub", coll: THREADS_COLL, id: threadId,
+            sub: "salesHistory", orderBy: "round,asc", limit: 20
+          }
+        });
+        archivedRounds = (histRes && histRes.docs) || [];
+      } catch (e) {
+        // Non-fatal — operator can still see the current round.
+        console.warn("salesHistory fetch failed:", e.message);
+      }
+
+      if (!ctx && archivedRounds.length === 0) {
+        // Nothing to render at all.
         mount.innerHTML = "";
         return;
       }
 
-      const stage = String(ctx.stage || "discovery");
+      // Mode-disabled banner (computed once, reused across tab views).
+      const modeBanner = !_autoCfg.salesModeEnabled
+        ? '<div class="em-sales-block-banner" style="background:#fff8c5;border-color:#d4a72c;color:#6e4c00;"><b>Sales Mode is OFF.</b> This panel is read-only diagnostic; the agent will not run on new inbounds. Re-enable in Settings.</div>'
+        : "";
+
+      // Build the list of tab specs. Each tab represents one sales
+      // round. Order: round 1 (oldest) → round N (newest, current).
+      // The current SalesContext becomes the LAST tab and is shown
+      // active by default. If the thread has never had a current
+      // SalesContext (rare — only happens if archive exists but the
+      // current ctx was just deleted), the last archived round is
+      // shown active instead.
+      const currentRound = (ctx && Number(ctx.salesRound)) || (ctx ? 1 : null);
+      const tabs = [];
+      // Archived rounds first (sorted ascending by round)
+      for (const arch of archivedRounds) {
+        tabs.push({
+          kind        : "archived",
+          round       : Number(arch.round || 0),
+          label       : `Round ${arch.round || "?"}`,
+          source      : arch,
+          completedAt : arch.salesCompletedAt || null
+        });
+      }
+      // Current SalesContext last
+      if (ctx) {
+        tabs.push({
+          kind        : "current",
+          round       : currentRound || (archivedRounds.length + 1),
+          label       : archivedRounds.length > 0
+                          ? `Round ${currentRound || (archivedRounds.length + 1)} (current)`
+                          : "Current",
+          source      : ctx,
+          completedAt : null
+        });
+      }
+
+      // Default-active tab: the current round (last in the list).
+      // If only archived rounds exist (no current ctx), the last one.
+      const defaultActiveIdx = tabs.length - 1;
+
+      // Build tab strip + each tab's body.
+      const tabStripHtml = tabs.length > 1
+        ? `<div class="em-sales-tabs" role="tablist">
+            ${tabs.map((t, i) => `
+              <button type="button" class="em-sales-tab ${i === defaultActiveIdx ? "active" : ""}"
+                      data-tab-idx="${i}" role="tab"
+                      aria-selected="${i === defaultActiveIdx ? "true" : "false"}">
+                ${esc(t.label)}
+                ${t.completedAt ? `<span class="em-muted" style="font-size:10px; margin-left:4px;">${esc(fmtTime(t.completedAt))}</span>` : ""}
+              </button>
+            `).join("")}
+          </div>`
+        : "";
+
+      const tabBodiesHtml = tabs.map((t, i) => {
+        const body = renderSalesCardBody({
+          source     : t.source,
+          isArchived : t.kind === "archived",
+          threadId,
+          modeBanner
+        });
+        return `<div class="em-sales-tab-body" data-tab-idx="${i}"
+                     style="${i === defaultActiveIdx ? "" : "display:none;"}">${body}</div>`;
+      }).join("");
+
+      mount.innerHTML = `<div class="em-sales-card-tabs-wrap">${tabStripHtml}${tabBodiesHtml}</div>`;
+
+      // Wire tab switching. Mutually exclusive: clicking one tab hides
+      // all others.
+      mount.querySelectorAll(".em-sales-tab").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const idx = btn.dataset.tabIdx;
+          mount.querySelectorAll(".em-sales-tab").forEach(b => {
+            const active = b.dataset.tabIdx === idx;
+            b.classList.toggle("active", active);
+            b.setAttribute("aria-selected", active ? "true" : "false");
+          });
+          mount.querySelectorAll(".em-sales-tab-body").forEach(b => {
+            b.style.display = b.dataset.tabIdx === idx ? "" : "none";
+          });
+        });
+      });
+
+      // Wire stage advance / re-engage buttons (only present in the
+      // CURRENT tab — archived tabs render their buttons disabled).
+      mount.querySelectorAll("button[data-advance]").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          const target = btn.dataset.advance;
+          const stageLabels = {
+            discovery: "Discovery", spec: "Spec", quote: "Quote",
+            revision: "Revision", pending_close_approval: "Ready to close",
+            abandoned: "Abandoned", human_review: "Escalate to review"
+          };
+          const lbl = stageLabels[target] || target;
+          if (!confirm(`Advance this thread to "${lbl}"? The agent will re-run on the next inbound message.`)) return;
+          await advanceSalesStage(threadId, target);
+        });
+      });
+      mount.querySelectorAll("button[data-reengage]").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          if (!confirm("Re-engage this abandoned thread? Stage resets to discovery and the next inbound message will trigger the sales agent.")) return;
+          await advanceSalesStage(threadId, "discovery", { reEngage: true });
+        });
+      });
+    }
+
+    /** v4.3.8 — Render the body of a single sales-conversation card.
+     *  Used for both the current SalesContext tab and archived-round
+     *  tabs. The data shape is the same: spec, quoteHistory, notes,
+     *  family/qty/codes, etc. — archived tabs read from a stored
+     *  snapshot, current tab reads from EtsyMail_SalesContext.
+     *
+     *  Stage-advance buttons are only emitted on the CURRENT tab.
+     *  Archived tabs are read-only by design — operators shouldn't
+     *  be able to "advance" a sale that already completed. */
+    function renderSalesCardBody({ source, isArchived, threadId, modeBanner }) {
+      // Archived rounds wrap the SalesContext snapshot inside `salesContext`.
+      // Current rounds ARE the SalesContext directly.
+      const ctx = isArchived
+        ? (source.salesContext || {})    // archived snapshot's nested ctx
+        : source;                          // live SalesContext
+
+      const stage = String(ctx.stage || (isArchived ? "completed" : "discovery"));
       const stageLabels = {
         discovery              : "Discovery",
         spec                   : "Spec",
         quote                  : "Quote",
         revision               : "Revision",
         pending_close_approval : "Ready to close",
-        abandoned              : "Abandoned"
+        abandoned              : "Abandoned",
+        completed              : "Completed"
       };
       const stageLabel = stageLabels[stage] || stage;
 
@@ -2314,9 +2548,18 @@
           missing.map(m => `<span class="em-sales-missing-pill">${esc(m)}</span>`).join("") + '</div>'
         : "";
 
-      // v2.1 — Quote rendering from option-sheet resolver result.
-      // Replaces v2.0 band display.
-      const quoted = typeof ctx.totalQuotedUsd === "number" ? ctx.totalQuotedUsd : null;
+      // Quote rendering — same logic as before, with one twist for
+      // archived rounds: the actual ACCEPTED quote lives on the
+      // archive doc itself (acceptedQuoteUsd), not the snapshot's
+      // SalesContext (which only has the most recent QUOTE — the
+      // customer may have negotiated to a different number before
+      // accepting). For archived rounds, prefer the accepted figure.
+      let quoted = null;
+      if (isArchived && typeof source.acceptedQuoteUsd === "number") {
+        quoted = source.acceptedQuoteUsd;
+      } else if (typeof ctx.totalQuotedUsd === "number") {
+        quoted = ctx.totalQuotedUsd;
+      }
       const recentQuote = Array.isArray(ctx.quoteHistory) && ctx.quoteHistory.length
         ? ctx.quoteHistory[ctx.quoteHistory.length - 1]
         : null;
@@ -2328,7 +2571,7 @@
       if (quoted !== null || resolverResult) {
         quoteHtml = '<div class="em-sales-quote-block">';
         if (quoted !== null) {
-          quoteHtml += `<div class="em-sales-quote-amount">$${esc(quoted.toFixed(2))}</div>`;
+          quoteHtml += `<div class="em-sales-quote-amount">$${esc(quoted.toFixed ? quoted.toFixed(2) : String(quoted))}</div>`;
         }
         if (resolverResult) {
           if (resolverResult.family) {
@@ -2353,81 +2596,74 @@
         quoteHtml += '</div>';
       }
 
-      // Block reason banner
-      const blockBanner = ctx.lastSalesAgentBlockReason
+      // Block reason banner — current round only (archived rounds no
+      // longer have an active block).
+      const blockBanner = (!isArchived && ctx.lastSalesAgentBlockReason)
         ? `<div class="em-sales-block-banner"><b>Agent blocked:</b> ${esc(ctx.lastSalesAgentBlockReason)}. Thread escalated for operator review.</div>`
         : "";
 
-      // Mode-disabled banner
-      const modeBanner = !_autoCfg.salesModeEnabled
-        ? '<div class="em-sales-block-banner" style="background:#fff8c5;border-color:#d4a72c;color:#6e4c00;"><b>Sales Mode is OFF.</b> This panel is read-only diagnostic; the agent will not run on new inbounds. Re-enable in Settings.</div>'
+      // For archived rounds, also surface the listing URL + completion
+      // date as a header band so the operator can jump back to the
+      // Etsy listing for that round.
+      const archivedHeader = isArchived
+        ? `<div class="em-sales-archived-header">
+            ${source.customListingUrl
+              ? `<div style="font-size:12px;"><a href="${esc(source.customListingUrl)}" target="_blank">${esc(source.customListingUrl)}</a></div>`
+              : ""}
+            ${source.salesCompletedAt ? `<span class="em-muted" style="font-size:11px;">completed ${esc(fmtTime(source.salesCompletedAt))}</span>` : ""}
+          </div>`
         : "";
 
-      // Close artifact (pending_close_approval stage only)
-      let closeHtml = "";
-      const draftCo = ctx.lastDraftCustomOrderListing;   // optional; stored by future Step 3 hand-off
-      // Actually the close artifact lives on the draft, not the SalesContext.
-      // We'll render it from the draft fetch instead — handled in renderAiDraftCard.
-
-      // Stage controls
-      const isAbandoned  = stage === "abandoned";
-      const isReadyClose = stage === "pending_close_approval";
-
-      const allowedNext = {
-        discovery              : ["spec", "human_review", "abandoned"],
-        spec                   : ["quote", "discovery", "human_review", "abandoned"],
-        quote                  : ["revision", "pending_close_approval", "human_review", "abandoned"],
-        revision               : ["quote", "pending_close_approval", "human_review", "abandoned"],
-        pending_close_approval : ["revision", "human_review"],
-        abandoned              : []
-      };
-      const next = allowedNext[stage] || [];
-      const stageButtonsHtml = next.map(n => {
-        const lbl = stageLabels[n] || (n === "human_review" ? "Escalate to review" : n);
-        const cls = (n === "human_review" || n === "abandoned") ? "danger" : "";
-        return `<button type="button" class="${cls}" data-advance="${esc(n)}">→ ${esc(lbl)}</button>`;
-      }).join("");
-
-      const reengageHtml = isAbandoned
-        ? '<button type="button" data-reengage="discovery">↻ Re-engage (back to discovery)</button>'
-        : "";
-
-      mount.innerHTML = `
-        <div class="em-sales-card">
-          <div class="em-sales-card-header">
-            <span class="em-badge sales-stage ${esc(stage)}">${esc(stageLabel)}</span>
-            <span class="em-sales-card-title">Sales conversation</span>
-            <span class="em-muted" style="font-size:11px;">${esc(stage === "abandoned" ? "abandoned" : "in funnel")}</span>
-          </div>
-          ${modeBanner}
-          ${blockBanner}
-          ${specHtml}
-          ${missingHtml}
-          ${quoteHtml}
+      // Stage controls — current round only.
+      let actionsHtml = "";
+      if (!isArchived) {
+        const isAbandoned = stage === "abandoned";
+        const allowedNext = {
+          discovery              : ["spec", "human_review", "abandoned"],
+          spec                   : ["quote", "discovery", "human_review", "abandoned"],
+          quote                  : ["revision", "pending_close_approval", "human_review", "abandoned"],
+          revision               : ["quote", "pending_close_approval", "human_review", "abandoned"],
+          pending_close_approval : ["revision", "human_review"],
+          abandoned              : []
+        };
+        const next = allowedNext[stage] || [];
+        const stageButtonsHtml = next.map(n => {
+          const lbl = stageLabels[n] || (n === "human_review" ? "Escalate to review" : n);
+          const cls = (n === "human_review" || n === "abandoned") ? "danger" : "";
+          return `<button type="button" class="${cls}" data-advance="${esc(n)}">→ ${esc(lbl)}</button>`;
+        }).join("");
+        const reengageHtml = isAbandoned
+          ? '<button type="button" data-reengage="discovery">↻ Re-engage (back to discovery)</button>'
+          : "";
+        actionsHtml = `
           <div class="em-sales-actions">
             ${stageButtonsHtml}
             ${reengageHtml}
             <span style="flex:1;"></span>
             ${ctx.lastTurnAt ? `<span class="em-muted" style="font-size:11px; align-self:center;">last turn: ${esc(fmtTime(ctx.lastTurnAt))}</span>` : ""}
+          </div>`;
+      }
+
+      const inFunnelLabel = isArchived
+        ? "completed"
+        : (stage === "abandoned" ? "abandoned" : "in funnel");
+
+      return `
+        <div class="em-sales-card${isArchived ? " archived" : ""}">
+          <div class="em-sales-card-header">
+            <span class="em-badge sales-stage ${esc(stage)}">${esc(stageLabel)}</span>
+            <span class="em-sales-card-title">Sales conversation</span>
+            <span class="em-muted" style="font-size:11px;">${esc(inFunnelLabel)}</span>
           </div>
+          ${archivedHeader}
+          ${modeBanner}
+          ${blockBanner}
+          ${specHtml}
+          ${missingHtml}
+          ${quoteHtml}
+          ${actionsHtml}
         </div>
       `;
-
-      // Wire stage advance buttons
-      mount.querySelectorAll("button[data-advance]").forEach(btn => {
-        btn.addEventListener("click", async () => {
-          const target = btn.dataset.advance;
-          const lbl = stageLabels[target] || target;
-          if (!confirm(`Advance this thread to "${lbl}"? The agent will re-run on the next inbound message.`)) return;
-          await advanceSalesStage(threadId, target);
-        });
-      });
-      mount.querySelectorAll("button[data-reengage]").forEach(btn => {
-        btn.addEventListener("click", async () => {
-          if (!confirm("Re-engage this abandoned thread? Stage resets to discovery and the next inbound message will trigger the sales agent.")) return;
-          await advanceSalesStage(threadId, "discovery", { reEngage: true });
-        });
-      });
     }
 
     /** Advance / rewind the SalesContext stage manually. Server-side
@@ -3987,61 +4223,7 @@
       }
 
       renderDetail(thread);
-      // v4.3.5 — When the thread is in round 2+, lazy-load the salesHistory
-      // subcollection so the operator sees archived prior-round synopses
-      // (the current-round synopsis renders inline above; archived rounds
-      // appear in the dedicated container that renderDetail emits when
-      // salesRound > 1).
-      if (Number(thread.salesRound || 1) > 1) {
-        loadAndRenderSalesHistory(threadId).catch(() => {});
-      }
       startMessagesPolling(threadId);
-    }
-
-    /** v4.3.5 — Fetch + render the salesHistory subcollection for a
-     *  thread. Called only when the thread has been through round 2+
-     *  re-engagement (i.e., t.salesRound > 1). Renders into the
-     *  emPriorSalesContainer that renderDetail injects into the DOM. */
-    async function loadAndRenderSalesHistory(threadId) {
-      const mount = $("emPriorSalesContainer");
-      if (!mount || mount.dataset.threadId !== threadId) return;
-      try {
-        const res = await api("firestoreProxy", {
-          query: {
-            op: "listSub", coll: THREADS_COLL, id: threadId,
-            sub: "salesHistory", orderBy: "round,desc", limit: 20
-          }
-        });
-        const docs = (res && res.docs) || [];
-        if (!docs.length) {
-          mount.innerHTML = "";   // nothing to show
-          return;
-        }
-        const items = docs.map(d => `
-          <div style="padding:10px 12px; border:1px solid #d0d7de; border-radius:6px; margin-bottom:6px; background:#fafbfc;">
-            <div style="display:flex; align-items:center; gap:8px; margin-bottom:4px;">
-              <span style="font-size:11px; font-weight:600; padding:2px 6px; background:#eaeef2; color:#57606a; border-radius:8px;">Round ${esc(String(d.round || 1))}</span>
-              ${d.salesCompletedAt ? `<span class="em-muted" style="font-size:11px;">${esc(fmtTime(d.salesCompletedAt))}</span>` : ""}
-              ${d.acceptedQuoteUsd ? `<span style="font-size:12px; margin-left:auto;"><strong>$${esc(String(d.acceptedQuoteUsd))}</strong>${d.acceptedQuoteFamily ? ` &nbsp;·&nbsp; ${esc(d.acceptedQuoteFamily)}` : ""}</span>` : ""}
-            </div>
-            ${d.customListingUrl ? `<div style="font-size:11px; margin-bottom:6px;"><a href="${esc(d.customListingUrl)}" target="_blank">${esc(d.customListingUrl)}</a></div>` : ""}
-            ${d.salesSynopsis ? `<div style="white-space:pre-wrap; font-size:12px; color:#57606a; line-height:1.5;">${esc(d.salesSynopsis)}</div>` : ""}
-          </div>
-        `).join("");
-        mount.innerHTML = `
-          <div class="em-card" style="background:#fafbfc; border-left:4px solid #6e7781;">
-            <h4 style="display:flex; align-items:center; gap:6px;">
-              <i class="material-icons" style="font-size:18px; color:#6e7781;">history</i>
-              Previous Sales <span class="em-muted" style="font-weight:400;font-size:11px;">${esc(String(docs.length))} archived</span>
-            </h4>
-            ${items}
-          </div>
-        `;
-      } catch (e) {
-        // Non-fatal — operator can still see the current sale.
-        console.warn("salesHistory load failed:", e.message);
-        mount.innerHTML = "";
-      }
     }
 
     async function fetchMessagesNow(threadId) {
@@ -4280,9 +4462,6 @@
               <div style="white-space:pre-wrap; line-height:1.5; font-size:13px; color:#1f2328;">${esc(t.salesSynopsis)}</div>
             </div>
             ` : renderCustomListingStatusCard(t)}
-            ${t.salesRound && Number(t.salesRound) > 1
-              ? `<div id="emPriorSalesContainer" data-thread-id="${esc(t.id)}" style="margin: 0 0 12px;"></div>`
-              : ""}
             <div class="em-card">
               <h4>Conversation</h4>
               <div class="em-thread" id="emThreadBox">

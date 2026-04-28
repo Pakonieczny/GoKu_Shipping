@@ -972,12 +972,57 @@ exports.handler = async (event) => {
         try {
           const round = Number(threadData.salesRound || 1) + 1;
 
-          // 1. Archive the prior sale's synopsis (if any) so the operator
-          //    keeps visibility into past rounds. Subcollection key by
-          //    timestamp ms — keeps insertion-time-ordered.
+          // 1. Archive the prior sale's snapshot (synopsis + SalesContext)
+          //    so the operator keeps visibility into past rounds. Subcollection
+          //    key includes the round number for stable, predictable IDs.
+          //
+          // v4.3.8 — also snapshot the SalesContext (accumulatedSpec,
+          //    quoteHistory, notes, family/qty/codes, etc.) so the dashboard's
+          //    "Previous Sales" tabs can render the same view the operator
+          //    saw at the time of completion. Without this, archived rounds
+          //    would only have the listing-pipeline data; everything in the
+          //    Sales conversation card (notes, spec, quote breakdown) would
+          //    be missing because that data lives in EtsyMail_SalesContext
+          //    and gets overwritten on round-2 reset.
           if (threadData.salesSynopsis || threadData.customListingId) {
             try {
               const archiveDocId = `round_${threadData.salesRound || 1}_${(threadData.salesCompletedAt && threadData.salesCompletedAt.toMillis ? threadData.salesCompletedAt.toMillis() : Date.now())}`;
+
+              // Read the current SalesContext (about to be reset to
+              // discovery in step 3 below). Best-effort — if read fails
+              // we still archive the listing-pipeline data so we don't
+              // lose the round entirely.
+              let salesContextSnapshot = null;
+              try {
+                const ctxSnap = await db.collection("EtsyMail_SalesContext").doc(threadId).get();
+                if (ctxSnap.exists) {
+                  // Strip server-side timestamp fields that don't serialize
+                  // cleanly into a snapshot doc; keep everything else verbatim.
+                  const ctx = ctxSnap.data() || {};
+                  salesContextSnapshot = {
+                    stage                : ctx.stage                 || null,
+                    accumulatedSpec      : ctx.accumulatedSpec       || null,
+                    quoteHistory         : ctx.quoteHistory          || null,
+                    totalQuotedUsd       : ctx.totalQuotedUsd        || null,
+                    missingInputs        : ctx.missingInputs         || null,
+                    notes                : ctx.notes                 || null,
+                    quantity             : ctx.quantity              || null,
+                    wantsRush            : ctx.wantsRush             || null,
+                    urgency_level        : ctx.urgency_level         || null,
+                    selectedCodes        : ctx.selectedCodes         || null,
+                    family               : ctx.family                || null,
+                    lastTurnAt           : ctx.lastTurnAt            || null,
+                    operatorOverrides    : ctx.operatorOverrides     || null
+                    // Anything else on SalesContext is intentionally NOT
+                    // archived — agent-internal state (lastResolverResult,
+                    // _lastResolverResult, etc.) doesn't belong in a
+                    // historical snapshot.
+                  };
+                }
+              } catch (e) {
+                console.warn(`[autoPipeline] SalesContext snapshot failed for ${threadId} (archiving listing data only):`, e.message);
+              }
+
               await db.collection(THREADS_COLL).doc(threadId)
                 .collection("salesHistory").doc(archiveDocId).set({
                   round                   : threadData.salesRound || 1,
@@ -988,6 +1033,8 @@ exports.handler = async (event) => {
                   salesSynopsis           : threadData.salesSynopsis      || null,
                   salesCompletedAt        : threadData.salesCompletedAt   || null,
                   customListingSentAt     : threadData.customListingSentAt|| null,
+                  // v4.3.8 — full SalesContext snapshot for dashboard tabs
+                  salesContext            : salesContextSnapshot,
                   archivedAt              : FV.serverTimestamp(),
                   reason                  : "post_terminal_re_engagement"
                 });
