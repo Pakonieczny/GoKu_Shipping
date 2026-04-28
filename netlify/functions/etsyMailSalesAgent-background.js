@@ -1352,36 +1352,41 @@ exports.handler = async (event) => {
 
     // ── Run the tool loop ──
     //
-    // v4.3.11 — Behavioral addendum to the operator's prompt: line-sheet
-    // eagerness. The operator's prompt at EtsyMail_SalesPrompts/sales
-    // teaches the agent how to run the funnel; this code-managed
-    // addendum codifies a SPECIFIC policy the operator asked for that
-    // would otherwise require constant prompt-tuning to keep right:
+    // v4.3.12 — Behavioral addendum to the operator's prompt, narrowly
+    // focused on line-sheet sends. The operator's prompt at
+    // EtsyMail_SalesPrompts/sales teaches the agent how to run the
+    // funnel; this addendum codifies a SPECIFIC delivery policy that
+    // the operator asked for and that prompt-only solutions kept
+    // failing on.
     //
-    //   When a customer hints they want pricing or options, the
-    //   default response is to SEND THE LINE SHEET — not to negotiate
-    //   the spec down to a single direct quote. The only blocker is
-    //   "which family (necklace / huggie / stud)?" and even that's
-    //   often inferable from context.
+    // The bug we're patching:
+    //   When the customer asked "do you have a pricing sheet?", the
+    //   agent's reply was a 200-word recitation of every option and
+    //   price ("Charm size + metal: 9-10mm, 11-12mm, 14mm, or 1 inch,
+    //   each in Sterling Silver, 14k Gold Filled..."). That is the
+    //   exact OPPOSITE of what was asked for. The customer wanted
+    //   the line-sheet IMAGE, not a wall of text.
     //
-    // The line-sheet URL is already pre-fetched into context.summary
-    // .recommendedCollateral by prefetchLineSheetCollateral() above, so
-    // the agent always has it available to share. The bug we're
-    // patching: even when the URL was sitting right there in context,
-    // the agent would compute a quote in response to "Do you have a
-    // pricing sheet?" because the operator's prompt didn't strongly
-    // bias toward sending the sheet on hint-level signals.
+    // The fix has TWO parts that must work together:
+    //   1. Prompt addendum: tell the agent NOT to recite options,
+    //      and to instead emit `attach_line_sheet: true` in its JSON
+    //      output, with a SHORT, OPTION-FREE one-line reply.
+    //   2. Code-level attachment construction (later in this file):
+    //      when parsed.attach_line_sheet is true, build an `image`
+    //      attachment record from recommendedCollateral[0] and write
+    //      it to the draft's attachments[]. The Chrome extension's
+    //      send loop will then upload the line-sheet image alongside
+    //      the message text.
     //
     // We APPEND (don't replace) the operator's prompt so any further
-    // operator edits in Settings → Agent Prompts continue to work, and
-    // this addendum stays narrow + auditable.
+    // operator edits in Settings → Agent Prompts continue to work.
     const lineSheetEagernessAddendum = `
 
 # LINE-SHEET POLICY (system addendum — overrides any conflicting prompt guidance)
 
-When the customer signals interest in pricing or options — even WEAKLY — your default action is to SEND THE LINE SHEET for that family. Do not skip the line sheet to compute a single direct quote.
+## When to send the line sheet
 
-Hint-level signals that should trigger a line-sheet send:
+When the customer signals interest in pricing or options — even WEAKLY — your default action is to send the line sheet for that family. Examples of triggering signals:
 - "do you have a pricing sheet"
 - "what are my options"
 - "what sizes / metals / chains do you offer"
@@ -1390,20 +1395,36 @@ Hint-level signals that should trigger a line-sheet send:
 - "how much for [a different config]"
 - ANY question that asks about choices, prices for variants, or what's possible
 
-The ONE thing you may need before sending the line sheet:
-- Which family (necklace, stud earring, or huggie hoop earring)? If conversation context already tells you this (a prior round, an earlier message in this round, an explicit listing reference), USE that — don't re-ask.
+The ONE thing you may need before sending the line sheet is which family (necklace, stud earring, or huggie hoop earring). If conversation context already tells you this — a prior round, an earlier message in this round, an explicit listing reference — USE that, don't re-ask.
 
-When you decide to send the line sheet:
-1. Use the line-sheet URL from context.summary.recommendedCollateral (pre-fetched for you when family is inferable).
-2. Reply text should be short and inviting: tell them which family's sheet you're sending, and invite them to pick the codes they want. Example: "Here's the necklace line sheet — pick the size, metal, chain, and length you'd like and I'll quote it: <URL>".
-3. Set collateral_referenced to include the URL you sent.
-4. DO NOT also compute a direct quote in the same turn unless the customer has clearly already specified all the codes. The line sheet IS the answer to "what are my options" and "do you have a pricing sheet".
+## How to send the line sheet — CRITICAL
 
-When NOT to send the line sheet:
-- The customer has already given you all the spec codes and is ready to lock in (no choosing happening). Then proceed to quote.
+When you decide to send the line sheet, you MUST do BOTH of the following in your JSON output:
+
+1. **Set the structured signal**: include \`"attach_line_sheet": true\` as a top-level field in your JSON. The system reads this and attaches the actual line-sheet IMAGE FILE (from operator-uploaded collateral) to your draft message. The customer sees the image inline in their Etsy conversation. This is the entire mechanism — the image attaches automatically; you do not need to embed any URL.
+
+2. **Keep reply text SHORT and OPTION-FREE**. Your \`reply\` field must be a single short sentence inviting the customer to look at the attached sheet and tell you what they want. NO PRICES. NO LISTS. NO OPTIONS RECITED IN TEXT. The image carries that information. Examples of CORRECT reply text:
+   - "Here's our necklace charm line sheet — take a look and let me know which size, metal, chain, and length you'd like."
+   - "Attached is our huggie hoop line sheet. Pick the configuration you want and I'll quote it."
+   - "Sending over the stud earring line sheet — let me know which option works for you."
+
+Examples of INCORRECT reply text (DO NOT do this — these are exactly the failure mode being patched):
+   - ❌ "Here's the rundown for necklace charms. Charm size + metal: 9-10mm, 11-12mm, 14mm..." (reciting the sheet in text)
+   - ❌ Any reply that includes prices like "$24" or "$45" before the customer has chosen options
+   - ❌ Any reply that lists chain types, metals, lengths, or bulk discounts in prose
+   - ❌ Embedding the line sheet URL in the text — the IMAGE attaches automatically, no URL needed
+
+The customer will SEE the line sheet image rendered in their Etsy conversation. Trust the attachment to convey the information; your job in the reply text is just to invite them to look at it and respond.
+
+## When NOT to send the line sheet
+
+- The customer has already given you all the spec codes and is ready to lock in (no choosing happening). Then proceed to quote with resolveQuote.
 - The customer has explicitly declined to see options ("just quote me X").
+- A line-sheet collateral image is not available for the family (you can tell by checking context.summary.recommendedCollateral — if empty, fall back to asking which family or to a brief verbal exchange).
 
-Ambiguous case → SEND THE LINE SHEET. The cost of an unwanted line sheet is near zero (one line of text + a URL); the cost of a missed line sheet is a customer who wanted to compare options being railroaded into a single config.
+## Edge case: collateral genuinely unavailable
+
+If the customer wants pricing/options but no line-sheet collateral exists for their family in context.summary.recommendedCollateral, do NOT default to reciting prices. Instead, set ready_for_human_approval: true and produce a needs_review_synopsis explaining that the operator should send the line sheet manually. This keeps the experience consistent — customer sees an image OR a human-attended message, never a wall of pricing text.
 `.trim();
 
     // Concatenate. Keep a clear separator so the addendum is visible
@@ -1563,11 +1584,77 @@ Ambiguous case → SEND THE LINE SHEET. The cost of an unwanted line sheet is ne
     const aiConfidence = (typeof parsed.confidence === "number" && parsed.confidence >= 0 && parsed.confidence <= 1)
       ? parsed.confidence : 0.5;
 
+    // ─── v4.3.12: line-sheet attachment construction ──────────────────
+    //
+    // When the agent decides to send the line sheet (parsed.attach_line_sheet
+    // === true), construct an image-attachment record from the first
+    // attachable collateral match in recommendedCollateral. "Attachable"
+    // means the collateral was uploaded through op:"upload" (so it has
+    // storagePath + contentType), not just registered as an external URL.
+    // The resulting attachment record matches the same shape that
+    // etsyMailDraftAttachment writes for operator drag-and-drop uploads,
+    // so the existing draft-send pipeline (and the Chrome extension's
+    // image-injection step) handles it without modification.
+    //
+    // If the agent set attach_line_sheet:true but no attachable collateral
+    // exists for the family, we don't blow up — the draft saves with no
+    // attachment, the prompt addendum's edge-case guidance kicks in
+    // (agent should set ready_for_human_approval in that case anyway),
+    // and the audit log records the miss for operator visibility.
+    let attachmentsToWrite = [];
+    let lineSheetAttachInfo = null;   // for audit
+    if (parsed.attach_line_sheet === true) {
+      const firstAttachable = (Array.isArray(recommendedCollateral) ? recommendedCollateral : [])
+        .find(c => c && c.storagePath && c.contentType);
+      if (firstAttachable) {
+        // Build a synthetic, draft-scoped attachmentId so the draft has a
+        // stable key; the underlying storagePath is shared with the
+        // collateral entry (we do NOT copy the file — wasteful and would
+        // create cleanup churn). The image proxy serves any path under
+        // the etsymail/ prefix, which includes etsymail/collateral/...,
+        // so the extension's fetch-and-inject works the same as it does
+        // for operator-uploaded drafts.
+        const synthId = "att_collateral_" + (firstAttachable.id || Math.random().toString(36).slice(2, 10));
+        attachmentsToWrite = [{
+          attachmentId : synthId,
+          type         : "image",
+          storagePath  : firstAttachable.storagePath,
+          proxyUrl     : "/.netlify/functions/etsyMailImage?path=" + encodeURIComponent(firstAttachable.storagePath),
+          contentType  : firstAttachable.contentType,
+          bytes        : typeof firstAttachable.bytes === "number" ? firstAttachable.bytes : null,
+          filename     : firstAttachable.fileName || (firstAttachable.name + "." + (firstAttachable.contentType.split("/")[1] || "png")),
+          // Attribution metadata — useful for operator visibility ("which
+          // collateral did the agent attach?") and for downstream auditing.
+          source       : "collateral",
+          collateralId : firstAttachable.id || null,
+          collateralName : firstAttachable.name || null,
+          collateralKind : firstAttachable.kind || null
+        }];
+        lineSheetAttachInfo = {
+          decided     : true,
+          attached    : true,
+          collateralId: firstAttachable.id || null,
+          collateralName: firstAttachable.name || null
+        };
+      } else {
+        // Agent wanted to attach but no usable collateral — log it so
+        // the operator notices and uploads a real line sheet.
+        lineSheetAttachInfo = {
+          decided     : true,
+          attached    : false,
+          reason      : (Array.isArray(recommendedCollateral) && recommendedCollateral.length > 0)
+                          ? "collateral_not_uploaded_only_url"
+                          : "no_collateral_for_family"
+        };
+        console.warn(`salesAgent: attach_line_sheet=true but no attachable collateral for thread ${threadId}: ${lineSheetAttachInfo.reason}`);
+      }
+    }
+
     await db.collection(DRAFTS_COLL).doc(draftId).set({
       draftId,
       threadId,
       text                  : replyText,
-      attachments           : [],
+      attachments           : attachmentsToWrite,
       referenceAttachments  : compactAttachmentList(referenceAttachments),
       status                : "draft",     // NEVER "queued" in Step 2
       generatedByAI         : true,
@@ -1828,6 +1915,10 @@ Ambiguous case → SEND THE LINE SHEET. The cost of an unwanted line sheet is ne
         customerAccepted: !!parsed.customer_accepted,
         rawAdvance,
         referenceAttachmentCount: referenceAttachments.length,
+        // v4.3.12 — line-sheet attach diagnostics. null when the agent
+        // didn't try to attach; populated when it did so the operator
+        // can audit the decision and see whether it actually went out.
+        lineSheetAttach: lineSheetAttachInfo,
         usage        : loopResult.usage || null
       }
     });

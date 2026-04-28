@@ -127,7 +127,14 @@ async function writeAudit({ eventType, actor = "system:collateral", payload = {}
  *  The AI gets `description` (so it can decide whether to reference it)
  *  but not internal fields like `approvedBy` (no value to the AI). */
 function trimForCaller(doc) {
-  return {
+  // v4.3.12 — Expose the storage-mirror fields that exist when the
+  // collateral was uploaded through the system (op:"upload"). The
+  // agent uses these to construct an `image` attachment on its draft
+  // for line-sheet sends — without `storagePath` + `contentType`,
+  // normalizeAttachments in etsyMailDraftSend rejects the entry.
+  // Entries created via op:"create" (external URL, no upload) will
+  // not have these fields; the agent treats those as link-only.
+  const out = {
     id          : doc.id,
     category    : doc.category,
     kind        : doc.kind,
@@ -137,6 +144,11 @@ function trimForCaller(doc) {
     keywords    : doc.keywords || [],
     active      : doc.active !== false
   };
+  if (doc.storagePath)        out.storagePath        = doc.storagePath;
+  if (doc.contentType)        out.contentType        = doc.contentType;
+  if (doc.fileName)           out.fileName           = doc.fileName;
+  if (typeof doc.bytes === "number") out.bytes        = doc.bytes;
+  return out;
 }
 
 function sanitizePatch(rawPatch) {
