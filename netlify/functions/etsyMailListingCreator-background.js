@@ -838,47 +838,77 @@ async function sendListingUrlToCustomer({ threadId, etsyConversationUrl, listing
 
   const text = buildListingDeliveryMessage(family, listingUrl);
 
-  const res = await fetch(`${functionsBase()}/.netlify/functions/etsyMailDraftSend`, {
-    method : "POST",
-    headers: {
-      "Content-Type": "application/json",
-      // Forward the shared secret if it's set. enqueue itself doesn't
-      // require it (per etsyMailDraftSend.js), but other ops do, and
-      // including it is harmless.
-      ...(process.env.ETSYMAIL_EXTENSION_SECRET
-        ? { "X-EtsyMail-Secret": process.env.ETSYMAIL_EXTENSION_SECRET }
-        : {})
-    },
-    body: JSON.stringify({
-      op                  : "enqueue",
-      threadId,
-      etsyConversationUrl,
-      text,
-      employeeName        : "system:listing-creator",
-      // The message text is a static template (built from buildListingDeliveryMessage),
-      // not LLM output, so generatedByAI:false is the correct semantic.
-      // The bg fn DOES use Claude for title/description/tags upstream, but
-      // that's listing content — separate from the customer-facing message.
-      // Recording the model anyway is useful forensics for "which deploy
-      // generated this listing's content".
-      aiMeta              : {
-        generatedByAI: false,
-        model        : AI_MODEL,
-        source       : "listing_creator",
-        listingId    : String(listingId),
-        listingUrl
+  // v4.3.13 — Retry-on-409 loop. The deterministic draftId is shared
+  // across the whole thread, so this enqueue can race with a prior
+  // in-flight send (e.g. the line-sheet send shipped just before the
+  // customer accepted). The previous draft resolves within seconds
+  // (extension reports complete) or minutes (cleanup cron sweeps).
+  // We retry with a bounded backoff before giving up — most races
+  // resolve in the first retry window.
+  const RETRY_BACKOFFS_MS = [3000, 8000, 20000];   // ~31s total wait
+  let res, responseText, lastBusy = null;
+  for (let attempt = 0; attempt <= RETRY_BACKOFFS_MS.length; attempt++) {
+    res = await fetch(`${functionsBase()}/.netlify/functions/etsyMailDraftSend`, {
+      method : "POST",
+      headers: {
+        "Content-Type": "application/json",
+        // Forward the shared secret if it's set. enqueue itself doesn't
+        // require it (per etsyMailDraftSend.js), but other ops do, and
+        // including it is harmless.
+        ...(process.env.ETSYMAIL_EXTENSION_SECRET
+          ? { "X-EtsyMail-Secret": process.env.ETSYMAIL_EXTENSION_SECRET }
+          : {})
       },
-      // v4.3.4 — Was force:true, now force:false. The at-most-once
-      // claim above is the authoritative guard against duplicate sends;
-      // we don't need (and don't want) enqueue to overwrite a prior
-      // queued/sent draft. If enqueue refuses because something is
-      // already queued, we surface that as an error — better to fail
-      // loudly than to clobber.
-      force               : false
-    })
-  });
+      body: JSON.stringify({
+        op                  : "enqueue",
+        threadId,
+        etsyConversationUrl,
+        text,
+        employeeName        : "system:listing-creator",
+        // The message text is a static template (built from buildListingDeliveryMessage),
+        // not LLM output, so generatedByAI:false is the correct semantic.
+        // The bg fn DOES use Claude for title/description/tags upstream, but
+        // that's listing content — separate from the customer-facing message.
+        // Recording the model anyway is useful forensics for "which deploy
+        // generated this listing's content".
+        aiMeta              : {
+          generatedByAI: false,
+          model        : AI_MODEL,
+          source       : "listing_creator",
+          listingId    : String(listingId),
+          listingUrl
+        },
+        // v4.3.4 — Was force:true, now force:false. The at-most-once
+        // claim above is the authoritative guard against duplicate sends;
+        // we don't need (and don't want) enqueue to overwrite a prior
+        // queued/sent draft. If enqueue refuses because something is
+        // already queued, we surface that as an error — better to fail
+        // loudly than to clobber.
+        force               : false
+      })
+    });
 
-  const responseText = await res.text();
+    responseText = await res.text();
+
+    // 409 with DRAFT_BUSY is the racy case we want to retry. Any other
+    // response (success or different error) breaks out of the retry
+    // loop immediately.
+    const looksDraftBusy = res.status === 409 && /DRAFT_BUSY|currently sending/i.test(responseText);
+    if (!looksDraftBusy) break;
+
+    lastBusy = `${res.status}: ${responseText.slice(0, 200)}`;
+    if (attempt < RETRY_BACKOFFS_MS.length) {
+      const wait = RETRY_BACKOFFS_MS[attempt];
+      console.log(`[listingCreator] enqueue 409 DRAFT_BUSY for ${threadId}; retrying in ${wait}ms (attempt ${attempt + 1}/${RETRY_BACKOFFS_MS.length})`);
+      await new Promise(r => setTimeout(r, wait));
+      continue;
+    }
+    // Exhausted retries — fall through to the throw below. The error
+    // message preserves the underlying 409 so isTerminalError sees it
+    // and routes to retryable status (cron will pick up later).
+    console.warn(`[listingCreator] enqueue 409 DRAFT_BUSY for ${threadId}; exhausted ${RETRY_BACKOFFS_MS.length} retries`);
+  }
+
   if (!res.ok) {
     // Roll back the claim so a manual retry can re-send. We've not
     // actually delivered to the customer; nothing else has read
@@ -1099,6 +1129,16 @@ function isTerminalError(err) {
   if (msg.includes("etimedout") || msg.includes("econnreset") || msg.includes("enotfound")) return false;
   if (msg.includes("rate limit") || msg.includes(" 429") || msg.includes("429:")) return false;
   if (msg.includes(" 502") || msg.includes(" 503") || msg.includes(" 504")) return false;
+  // v4.3.13 — DRAFT_BUSY (HTTP 409 from etsyMailDraftSend.enqueue when
+  // the deterministic-draftId target is in status:"sending"). This is a
+  // race between this worker's "send the listing URL" enqueue and a
+  // prior in-flight send on the same thread (e.g. the line-sheet send
+  // we shipped just before acceptance). The prior send WILL resolve
+  // within ~3 min (Etsy compose timeout + cleanup cron sweep), at
+  // which point the next retry succeeds. Marking this as terminal
+  // forces unnecessary manual intervention.
+  if (msg.includes("draft_busy") || msg.includes("draft is currently sending")) return false;
+  if (msg.includes(" 409") || msg.includes("409:")) return false;
   // Terminal: validation, bad input, auth, missing config
   if (msg.includes("invalid input") || msg.includes("invalid setup") || msg.includes("invalid response")) return true;
   if (msg.includes("invalid state")) return true;
