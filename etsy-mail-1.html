@@ -4012,11 +4012,59 @@
     function startMessagesPolling(threadId) {
       stopMessagesPolling();
       fetchMessagesNow(threadId);
-      state.msgPollTimer = setInterval(() => {
+      // v4.3.2 — Snapshot the thread's listing-pipeline state at poll
+      // start so we can detect a transition (queued → creating →
+      // created/failed) inside the poll loop and trigger an immediate
+      // counts refresh. Without this, the Completed Sales count stays
+      // stale for up to 15s (COUNTS_POLL_MS) after a listing flips to
+      // created — which is exactly the issue in the screenshot where
+      // the thread was in the folder but the count read 0.
+      let lastListingStatus = (state.threads.find(t => t.id === threadId) || {}).customListingStatus || null;
+      let lastSalesCompleted = !!(state.threads.find(t => t.id === threadId) || {}).salesCompletedAt;
+
+      state.msgPollTimer = setInterval(async () => {
         fetchMessagesNow(threadId);
         // v2.0 Step 2: keep sales card in sync. Cheap: skipped silently
         // if no SalesContext exists for this thread.
         renderSalesCardForThread(threadId).catch(() => {});
+
+        // v4.3.2 — Detect listing-pipeline state transitions on the
+        // selected thread and force a counts refresh + thread-list
+        // refresh so the operator sees the change immediately. We
+        // re-fetch the thread doc directly (cheap single-doc read)
+        // rather than relying on the slower thread-list poll.
+        try {
+          const tRes = await api("firestoreProxy", {
+            method: "GET",
+            query : { op: "get", coll: THREADS_COLL, id: threadId }
+          });
+          if (tRes && tRes.exists && tRes.doc) {
+            const cur = tRes.doc;
+            const curStatus = cur.customListingStatus || null;
+            const curCompleted = !!cur.salesCompletedAt;
+            // Transition? Refresh both the rail counts and the thread
+            // detail so the dashboard reflects the new state without
+            // waiting for the 15s counts poll. Re-rendering renderDetail
+            // also refreshes the Custom Listing card / Sale Synopsis
+            // card / Thread details panel from current data.
+            if (curStatus !== lastListingStatus || curCompleted !== lastSalesCompleted) {
+              lastListingStatus = curStatus;
+              lastSalesCompleted = curCompleted;
+              fetchCountsNow().catch(() => {});
+              // Also update state.threads so the rail thread list is
+              // consistent on next render.
+              const idx = state.threads.findIndex(t => t.id === threadId);
+              if (idx >= 0) {
+                state.threads[idx] = { ...state.threads[idx], ...cur, id: threadId };
+              }
+              // Re-render the right pane so the listing status card,
+              // synopsis, and Thread details all reflect the new state.
+              renderDetail({ ...cur, id: threadId });
+            }
+          }
+        } catch (e) {
+          // Silent — this is opportunistic UX polish, not critical.
+        }
       }, MESSAGES_POLL_MS);
     }
     function stopMessagesPolling() {
@@ -6235,6 +6283,61 @@
           return;
         }
         const d = res.doc;
+
+        // v4.3.2 — Don't populate the staff-reply composer or render
+        // the AI draft card on threads where the agent recognized
+        // customer acceptance. The listing-creator pipeline takes
+        // over from here: it creates the Etsy listing, sends the URL
+        // to the customer with its own message, and writes the sale
+        // synopsis to the thread. Anything the operator typed (or the
+        // AI generated as a "courtesy" reply on that turn) would just
+        // get thrown away.
+        //
+        // Signals that combine to identify this state:
+        //   - thread.aiDraftStatus === "skipped_acceptance" (set by
+        //     the sales agent when parsed.customer_accepted is true),
+        //   - OR thread.customerAccepted is true and there's a
+        //     customListingStatus already (queued/creating/created/
+        //     failed) — i.e. the pipeline has been triggered.
+        //
+        // If the listing eventually fails (customListingStatus="failed"),
+        // the Custom Listing status card in the conversation column
+        // surfaces the error + recovery hint. The composer stays
+        // suppressed because the operator action is to retry the
+        // pipeline (clear the failed status), not to draft a reply.
+        const isAcceptanceTurn =
+          thread.aiDraftStatus === "skipped_acceptance" ||
+          d.aiDraftStatus       === "skipped_acceptance" ||
+          (thread.customerAccepted === true &&
+           ["queued", "creating", "created"].includes(thread.customListingStatus));
+        if (isAcceptanceTurn) {
+          // Replace the AI draft card body with a "no draft needed" notice.
+          const body = $("emAiCardBody");
+          if (body) {
+            body.innerHTML = `
+              <div style="padding: 14px; background: #f0f9ff; border-left: 3px solid #0969da; border-radius: 4px;">
+                <div style="font-size: 13px; font-weight: 600; color: #0969da; margin-bottom: 4px;">
+                  <i class="material-icons" style="font-size: 16px; vertical-align: middle;">check_circle</i>
+                  Customer accepted — listing creator handled the reply
+                </div>
+                <div style="font-size: 12px; color: #57606a; line-height: 1.5;">
+                  No staff draft needed. The listing-creator pipeline sent the customer the listing URL automatically. See the Custom Listing card above for status, or the Sale Synopsis card if completed.
+                </div>
+              </div>
+            `;
+          }
+          // Hide the revise row — there's nothing to revise.
+          const row = $("emReviseRow");
+          if (row) row.style.display = "none";
+          // Don't populate the textarea or chips — keep them clean for
+          // any post-sale follow-up the operator might want to send.
+          setComposerAttachments(thread.id, []);
+          renderComposerChips();
+          hideSendStatus();
+          if (state.sendPoller) { clearInterval(state.sendPoller); state.sendPoller = null; }
+          return;
+        }
+
         // v0.9.1 #5: don't re-populate the composer for a draft that has
         // already been sent / failed. Reopening a thread after a clean
         // send used to re-fill the textarea with the just-sent text and

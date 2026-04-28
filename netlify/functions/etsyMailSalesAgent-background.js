@@ -1608,7 +1608,14 @@ exports.handler = async (event) => {
 
     await db.collection(THREADS_COLL).doc(threadId).set({
       status        : threadStatus,
-      aiDraftStatus : "ready",
+      // v4.3.2 — On an acceptance turn, the AI's customer-facing reply
+      // is going to be thrown away anyway: the listing-creator worker
+      // sends its own message with the listing URL ("Here's the custom
+      // listing for your necklace: <url>"). Marking the draft status as
+      // "skipped_acceptance" lets the dashboard distinguish a useful
+      // pending draft from a stale one, and avoids confusing the
+      // operator with a Send-via-Etsy button on text that won't be sent.
+      aiDraftStatus : parsed.customer_accepted ? "skipped_acceptance" : "ready",
       latestDraftId : draftId,
       aiConfidence,
       readyForHumanApproval: !!parsed.ready_for_human_approval,
@@ -1646,6 +1653,82 @@ exports.handler = async (event) => {
                               ? salesCtx._lastResolverResult : null,
       updatedAt     : FV.serverTimestamp()
     }, { merge: true });
+
+    // v4.3.2 — DIRECT-FIRE the listing-creator worker on acceptance turns.
+    // The cron remains a safety net (recovers stuck/dropped invocations
+    // every minute), but waiting up to 60s for the cron's next tick when
+    // we already know the thread is ready is a needless delay.
+    //
+    // RACE PROTECTION (v4.3.3): we MUST atomically claim the thread
+    // before firing the worker. The thread doc was just written above
+    // with customListingStatus="queued" but no customListingStartedAt.
+    // If we fired the worker without claiming, the next cron tick (up
+    // to 60s later) would see status="queued" + missing startedAt and
+    // claim it itself — firing a SECOND worker while the first is
+    // still running. Two workers on the same thread would create
+    // duplicate listings.
+    //
+    // The atomic claim mirrors etsyMailListingCreatorCron's tryClaim
+    // semantics: transition status from "queued" to "creating" and set
+    // customListingStartedAt. Once the cron sees a fresh startedAt
+    // (< RECOVERY_TIMEOUT_MS old) on a "creating" thread, its race-
+    // protection logic correctly skips.
+    //
+    // If the claim fails for any reason (Firestore txn conflict, the
+    // status moved unexpectedly, env vars missing), we silently let
+    // the cron handle it on its next tick — the worst-case is the
+    // 60s delay that existed before this optimization.
+    if (parsed.customer_accepted) {
+      try {
+        const siteUrl = process.env.URL || process.env.DEPLOY_URL;
+        const secret  = process.env.ETSYMAIL_EXTENSION_SECRET;
+        if (!siteUrl || !secret) {
+          console.warn(`[salesAgent] direct-fire skipped (missing URL or secret env). Cron will pick this up.`);
+        } else {
+          // Atomic claim — same shape as cron's tryClaim, scoped to the
+          // simpler "fresh acceptance, queued, no prior startedAt" case
+          // since we just wrote queued on this same code path.
+          const threadRef = db.collection(THREADS_COLL).doc(threadId);
+          const claimed = await db.runTransaction(async (tx) => {
+            const snap = await tx.get(threadRef);
+            if (!snap.exists) return false;
+            const d = snap.data();
+            // Only claim if exactly the state we just wrote: queued + accepted +
+            // no prior startedAt. Anything else means another mutator (cron,
+            // operator, prior worker) has modified the thread; let cron handle it.
+            if (d.customListingStatus !== "queued") return false;
+            if (!d.customerAccepted)                return false;
+            if (d.customListingStartedAt)           return false;
+            tx.update(threadRef, {
+              customListingStatus    : "creating",
+              customListingStartedAt : FV.serverTimestamp(),
+              customListingAttempts  : FV.increment(1),
+              updatedAt              : FV.serverTimestamp()
+            });
+            return true;
+          });
+
+          if (!claimed) {
+            console.warn(`[salesAgent] direct-fire claim lost for ${threadId} (cron will handle).`);
+          } else {
+            // Fire-and-forget. Don't await the response (background fns
+            // return 202 immediately, but we don't want to block the
+            // agent's response on even that round-trip).
+            fetch(`${siteUrl}/.netlify/functions/etsyMailListingCreator-background`, {
+              method : "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "X-EtsyMail-Secret": secret
+              },
+              body: JSON.stringify({ threadId })
+            }).catch(e => console.warn(`[salesAgent] direct-fire worker fetch failed (non-fatal, claim already set; cron's stuck-sweep will recover after RECOVERY_TIMEOUT_MS): ${e.message}`));
+            console.log(`[salesAgent] claimed and direct-fired listing worker for ${threadId}`);
+          }
+        }
+      } catch (e) {
+        console.warn(`[salesAgent] direct-fire wrapper failed (non-fatal): ${e.message}`);
+      }
+    }
 
     // ── Audit ──
     await writeAudit({

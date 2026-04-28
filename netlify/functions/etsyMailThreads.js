@@ -313,14 +313,23 @@ exports.handler = async (event) => {
         }
       }
 
-      /* ?counts=1 → counts by status (for left-rail badges) */
+      /* ?counts=1 → counts by status (for left-rail badges).
+       * v4.3 — also returns a synthetic _completedSales count: the
+       * number of threads where salesCompletedAt is set. Used by the
+       * dashboard's "Completed Sales" folder, whose membership is
+       * keyed off salesCompletedAt rather than status (status gets
+       * overwritten by post-sale chatter in finalizeThread). */
       if (qs.counts === "1") {
-        const snap   = await db.collection(THREADS_COLL).select("status").get();
+        const snap   = await db.collection(THREADS_COLL).select("status", "salesCompletedAt").get();
         const counts = {};
+        let completedSalesCount = 0;
         snap.forEach(d => {
-          const s = (d.data() || {}).status || "unknown";
+          const data = d.data() || {};
+          const s = data.status || "unknown";
           counts[s] = (counts[s] || 0) + 1;
+          if (data.salesCompletedAt) completedSalesCount++;
         });
+        counts._completedSales = completedSalesCount;
         return ok({ counts });
       }
 
@@ -337,36 +346,17 @@ exports.handler = async (event) => {
         return ok({ thread: { id: tSnap.id, ...tSnap.data() }, messages });
       }
 
-      /* ?list=1 → list threads, optionally filtered by status.
-       * v4.3: ?list=1&completedSales=1 returns the "Completed Sales" menu
-       * (threads where the listing-creator worker called markSuccess).
-       * Filter is the existence of `salesCompletedAt` rather than
-       * `status == "sales_completed"`, because subsequent post-purchase
-       * chatter (e.g., "thanks, when will it ship?") routes through
-       * etsyMailAutoPipeline → finalizeThread, which overwrites status
-       * to "auto_replied" / "pending_human_review" / "queued_for_auto_send".
-       * `salesCompletedAt` is written ONCE by the worker and is never
-       * touched by any other code path, so it gives stable menu
-       * membership regardless of post-sale activity.
-       *
-       * Firestore's orderBy implicitly excludes docs where the field is
-       * missing, so this query also acts as an existence filter.
-       */
+      /* ?list=1 → list threads, optionally filtered by status. */
       if (qs.list === "1") {
-        const limit = Math.min(parseInt(qs.limit || "100", 10), 500);
+        const statusFilter = qs.status;
+        const limit        = Math.min(parseInt(qs.limit || "100", 10), 500);
 
         let q = db.collection(THREADS_COLL);
-
-        if (qs.completedSales === "1") {
-          // "Completed Sales" menu — stable membership via salesCompletedAt
-          q = q.orderBy("salesCompletedAt", "desc").limit(limit);
-        } else {
-          const statusFilter = qs.status;
-          if (statusFilter && VALID_STATUSES.has(statusFilter)) {
-            q = q.where("status", "==", statusFilter);
-          }
-          q = q.orderBy("updatedAt", "desc").limit(limit);
+        if (statusFilter && VALID_STATUSES.has(statusFilter)) {
+          q = q.where("status", "==", statusFilter);
         }
+        // order by lastInboundAt desc, falling back to updatedAt
+        q = q.orderBy("updatedAt", "desc").limit(limit);
 
         const snap = await q.get();
         const threads = snap.docs.map(d => ({ id: d.id, ...d.data() }));

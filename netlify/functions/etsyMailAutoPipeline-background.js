@@ -436,16 +436,42 @@ async function isDraftInFlight(threadId) {
  *  at the start of the run; we re-set it here defensively in case the
  *  finalize timestamp differs (it shouldn't, but doc-merging is cheap). */
 async function finalizeThread(threadId, { newStatus, inboundMs, decision, draftId, aiConfidence, aiDifficulty }) {
+  // v4.3.2 — STICKY-COMPLETION GUARD. Once the listing-creator worker
+  // writes status="sales_completed" + salesCompletedAt, this thread's
+  // status MUST stay sales_completed. Without this guard, the next
+  // post-purchase customer message ("thanks!" / "where's my package?")
+  // routes through the auto-pipeline, lands here, and overwrites
+  // status to "auto_replied" / "pending_human_review" — making the
+  // dashboard's status pill flap and removing the thread from the
+  // operator's mental model of "this sale is closed".
+  //
+  // We still update lastAutoDecision / aiDraftStatus / latestDraftId so
+  // the operator can see the most recent customer-service draft
+  // generated on the post-sale follow-up. We just don't touch `status`
+  // or `aiConfidence` — those reflect the closed sale.
+  let isCompletedSale = false;
+  try {
+    const snap = await db.collection(THREADS_COLL).doc(threadId).get();
+    if (snap.exists && snap.data().salesCompletedAt) isCompletedSale = true;
+  } catch (e) {
+    // Read failure shouldn't block finalize; fall through to normal write.
+    console.warn("finalizeThread completion-check failed (proceeding):", e.message);
+  }
+
   const patch = {
-    status                       : newStatus,
     lastAutoProcessedInboundAt   : admin.firestore.Timestamp.fromMillis(inboundMs),
     lastAutoDecision             : decision,
     lastAutoDecisionAt           : FV.serverTimestamp(),
-    aiConfidence                 : aiConfidence,
-    aiDifficulty                 : aiDifficulty,
     aiDraftStatus                : draftId ? "ready" : "none",
     updatedAt                    : FV.serverTimestamp()
   };
+  // For completed sales, keep status + aiConfidence + aiDifficulty
+  // immutable. For everything else, write them as before.
+  if (!isCompletedSale) {
+    patch.status       = newStatus;
+    patch.aiConfidence = aiConfidence;
+    patch.aiDifficulty = aiDifficulty;
+  }
   // Only write latestDraftId when we actually have one. Avoids
   // overwriting a previous valid draftId with null when the pipeline
   // skips AI generation (e.g., when the autoPipeline is disabled).

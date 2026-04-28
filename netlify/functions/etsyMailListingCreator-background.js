@@ -11,7 +11,7 @@
  *       readiness_state_id, etc.) from Etsy
  *    4. Generate title + description + tags with Claude
  *    5. Create a brand-new draft listing on Etsy
- *       (POST /shops/{shop}/listings?legacy=false  —  price in CENTS)
+ *       (POST /shops/{shop}/listings?legacy=false  —  price in DECIMAL)
  *    6. Upload customer reference photos as listing images (multipart)
  *       Falls back to the template's image if the customer never sent one
  *    7. Set inventory: SKU, decimal price, quantity, readiness_state_id
@@ -116,11 +116,207 @@ async function loadThreadData(threadId) {
     throw new Error(`Unknown product family (invalid input): ${family}`);
   }
 
-  const referenceAttachments = Array.isArray(draft.referenceAttachments)
-    ? draft.referenceAttachments.filter(a => a && a.url && (a.type === "image" || /^image\//.test(a.type || "")))
-    : [];
+  // v4.3.3 — IMAGE COLLECTION OVERHAUL.
+  //
+  // Earlier versions trusted draft.referenceAttachments to carry the
+  // customer's reference photos through to the worker. That path was
+  // unreliable for two reasons:
+  //
+  //   1. The URLs in referenceAttachments are the original Etsy CDN
+  //      URLs (i.etsystatic.com/...). These typically can't be fetched
+  //      by a backend worker — Etsy returns 403/404 or HTML challenge
+  //      pages for unauthenticated server-side requests. We were silently
+  //      falling back to the template stock photo every time.
+  //   2. Type-filtering on referenceAttachments dropped images whose
+  //      contentType wasn't preserved through the scrape pipeline.
+  //
+  // The reliable source: when a customer sends a photo via Etsy
+  // messaging, etsyMailMirrorImage uploads the binary into Firebase
+  // Storage and writes the storage path onto the message document as
+  // `storageImagePaths`. These are bytes we own — fetchable, durable,
+  // independent of Etsy's CDN auth model.
+  //
+  // We now scan the entire thread's messages subcollection for inbound
+  // messages with storageImagePaths, generate fresh signed URLs from
+  // those storage paths (signed URLs only live 7 days; the original
+  // mirror response's URL is long gone by the time the worker runs),
+  // and feed those into the upload step.
+  //
+  // Fallback chain if no Storage-mirrored images:
+  //   1. draft.referenceAttachments (legacy path — kept for older
+  //      threads that pre-date the mirror integration; will likely fail
+  //      to fetch but at least gives the worker something to try)
+  //   2. Template listing's images (last-resort stock photo fallback —
+  //      worker logs a warning when this happens)
+  // v4.3.3 — Skip the Storage scan entirely on resume when images
+  // were already uploaded in a prior worker run (customListingImagesAt
+  // is set). The image-upload step itself short-circuits in that case
+  // (resumeImagesAt branch in the main flow), so spending Storage calls
+  // and signing URLs only to throw them away is pure waste — and adds
+  // 1-3s to every resume invocation.
+  const imagesAlreadyUploaded = !!thread.customListingImagesAt;
+  const referenceAttachments = imagesAlreadyUploaded
+    ? []
+    : await collectThreadImageAttachments(threadId, draft);
 
   return { thread, draft, referenceAttachments, family };
+}
+
+/**
+ * Scan messages collection for inbound messages with storageImagePaths,
+ * generate signed URLs for each, return as attachment list with the
+ * MOST RECENT customer reference image first (rank=1 on Etsy).
+ *
+ * Why most-recent-first: Etsy assigns rank=1 to the cover/primary photo.
+ * In a sales conversation the customer's *latest* reference image
+ * reflects their final intent (Joanna sent an initials photo first,
+ * then changed her mind to a baseball — the baseball is what we want
+ * as the primary). Earlier reference images are kept as secondary
+ * photos for context.
+ *
+ * Returns [] if no mirrored images found OR if Storage isn't configured.
+ * Caller falls back to legacy / template image in that case.
+ */
+async function collectThreadImageAttachments(threadId, draft) {
+  // v4.3.3 — Wait briefly for the Chrome-extension mirror flow to
+  // finish before scanning. Etsy's DOM scrape returns image URLs to
+  // the extension, which then calls etsyMailMirrorImage once per image.
+  // If the customer accepts within seconds of sending a photo (rare
+  // but real — Joanna's case), the mirror calls may still be in flight
+  // when this worker runs. Without the wait, we'd scan, see no
+  // storageImagePaths, fall back to the template, and produce a
+  // listing with the wrong primary photo.
+  //
+  // Strategy: scan once. If any inbound message has storageMirrorState
+  // === "pending" AND has imageUrls, the mirror flow is in progress —
+  // wait a few seconds and re-scan. Cap at three attempts (≈12s total)
+  // so we never block the worker indefinitely on a stuck or failed
+  // mirror.
+  const MIRROR_WAIT_MS    = 4000;
+  const MAX_MIRROR_WAITS  = 3;
+
+  let attempt = 0;
+  while (attempt <= MAX_MIRROR_WAITS) {
+    const result = await scanMessagesForMirroredImages(threadId);
+
+    // If we found any mirrored images, return them — don't keep waiting
+    // even if some messages are still pending (partial coverage is
+    // better than blocking).
+    if (result.attachments.length > 0) return result.attachments;
+
+    // No mirrored images found AND something is still pending? Wait.
+    // Otherwise (no pending, no mirrored) fall through to legacy.
+    if (!result.anyPending) break;
+
+    if (attempt < MAX_MIRROR_WAITS) {
+      console.log(`[listingCreator] mirror-pending detected for ${threadId}; waiting ${MIRROR_WAIT_MS}ms (attempt ${attempt + 1}/${MAX_MIRROR_WAITS})...`);
+      await new Promise(r => setTimeout(r, MIRROR_WAIT_MS));
+    }
+    attempt++;
+  }
+
+  // Legacy fallback: try draft.referenceAttachments. May still fail at
+  // upload time if URLs are unfetchable Etsy CDN, but at least we tried.
+  console.warn(`[listingCreator] no mirrored images available for ${threadId} after ${attempt} attempt(s); falling back to draft.referenceAttachments`);
+  const looksLikeImageUrl = (u) => /\.(jpe?g|png|webp|gif|bmp|tiff?|heic)(\?|$)/i.test(u || "");
+  return Array.isArray(draft.referenceAttachments)
+    ? draft.referenceAttachments.filter(a => {
+        if (!a || !a.url) return false;
+        if (a.type === "image" || /^image\//.test(a.type || "")) return true;
+        if (looksLikeImageUrl(a.url)) return true;
+        if (["latest_inbound", "thread_history", "sales_context"].includes(a.source)) return true;
+        return false;
+      })
+    : [];
+}
+
+/**
+ * Single scan over the thread's inbound messages: returns mirrored
+ * attachments AND a flag indicating whether any inbound message has
+ * pending mirror state (i.e. the extension hasn't finished yet).
+ *
+ * Used by collectThreadImageAttachments to decide whether to wait
+ * and re-scan or to fall through to the legacy path.
+ */
+async function scanMessagesForMirroredImages(threadId) {
+  try {
+    // Use the same composite-index avoidance pattern as autoPipeline:
+    // pull recent messages by timestamp DESC (single-field auto-index)
+    // and filter direction in JS. Scanning newest-first means the first
+    // mirrored image we encounter becomes rank 1 in the final list —
+    // exactly the order Etsy displays photos in (most-recent customer
+    // reference = primary photo).
+    const msgsSnap = await db
+      .collection(`${THREADS_COLL}/${threadId}/messages`)
+      .orderBy("timestamp", "desc")
+      .limit(200)   // sane cap; conversations rarely exceed this
+      .get();
+
+    if (msgsSnap.empty) {
+      return { attachments: [], anyPending: false };
+    }
+
+    const bucket = admin.storage().bucket();
+    const attachments = [];
+    const seenPaths = new Set();
+    let anyPending = false;
+
+    for (const msgDoc of msgsSnap.docs) {
+      if (attachments.length >= MAX_IMAGES_PER_LISTING) break;
+      const m = msgDoc.data() || {};
+      // Filter direction in JS — see comment above on index avoidance.
+      if (m.direction !== "inbound") continue;
+
+      // Track pending state — used by the caller to decide whether to
+      // wait and retry. Pending = the message had imageUrls (so a
+      // mirror was expected) but storageImagePaths is still empty.
+      const hasImageUrls = Array.isArray(m.imageUrls) && m.imageUrls.length > 0;
+      const paths        = Array.isArray(m.storageImagePaths) ? m.storageImagePaths : [];
+      if (hasImageUrls && paths.length === 0 && m.storageMirrorState === "pending") {
+        anyPending = true;
+      }
+
+      for (const p of paths) {
+        if (attachments.length >= MAX_IMAGES_PER_LISTING) break;
+        if (typeof p !== "string" || !p.trim() || seenPaths.has(p)) continue;
+        seenPaths.add(p);
+
+        // Generate a fresh signed URL. The URL returned by the mirror
+        // function long ago (7-day signed URL) has likely expired and
+        // wasn't persisted on the message anyway. Signing is local
+        // (the SDK uses the service account's private key from
+        // FIREBASE_PRIVATE_KEY env) — no IAM round-trip.
+        try {
+          const file = bucket.file(p);
+          const [signedUrl] = await file.getSignedUrl({
+            action : "read",
+            expires: Date.now() + 60 * 60 * 1000   // 1 hour — well past upload step's runtime
+          });
+          const basename = p.split("/").pop() || `ref_${attachments.length + 1}.jpg`;
+          attachments.push({
+            url     : signedUrl,
+            type    : "image",
+            source  : "storage_mirror",
+            filename: basename,
+            storagePath: p,
+            messageId: msgDoc.id,
+            messageTs: m.timestamp && m.timestamp.toMillis ? m.timestamp.toMillis() : null
+          });
+        } catch (e) {
+          console.warn(`[listingCreator] Signed URL failed for ${p}:`, e.message);
+          // Continue — partial success is better than total failure.
+        }
+      }
+    }
+
+    if (attachments.length > 0) {
+      console.log(`[listingCreator] gathered ${attachments.length} mirrored image(s) from thread ${threadId} messages (newest first)`);
+    }
+    return { attachments, anyPending };
+  } catch (e) {
+    console.warn(`[listingCreator] message scan failed for ${threadId}:`, e.message);
+    return { attachments: [], anyPending: false };
+  }
 }
 
 async function loadThreadContext(threadId) {
@@ -310,8 +506,8 @@ Output the JSON object now.`;
 // ─── 4. Create the draft listing ────────────────────────────────────────
 
 async function createDraftListing({ title, description, tags, priceUsd, template }) {
-  const priceCents = Math.round(Number(priceUsd) * 100);
-  if (!Number.isFinite(priceCents) || priceCents <= 0) {
+  const priceDecimal = Number(priceUsd);
+  if (!Number.isFinite(priceDecimal) || priceDecimal <= 0) {
     throw new Error(`Invalid price (invalid input): ${priceUsd}`);
   }
 
@@ -321,7 +517,12 @@ async function createDraftListing({ title, description, tags, priceUsd, template
   const body = {
     title,
     description,
-    price             : priceCents,        // INTEGER cents for createDraftListing
+    // v4.3.2 — Etsy's createDraftListing (legacy=false) takes price as
+    // a DECIMAL number (e.g. 42 for $42.00), NOT cents. Earlier code
+    // sent priceCents (4200) which Etsy interpreted as $4,200.00. This
+    // is well-documented: https://developer.etsy.com/documentation/tutorials/listings/
+    // "change the price array in offerings to be a decimal value".
+    price             : priceDecimal,
     quantity          : 1,
     who_made          : template.whoMade  || "i_did",
     when_made         : template.whenMade || "made_to_order",
@@ -1021,23 +1222,34 @@ exports.handler = async function (event) {
     const listingUrl  = published.url;
     console.log(`[listingCreator] published ${threadId}: ${listingUrl}`);
 
-    // 9. Send the URL to the customer (idempotent on draftId+force=true).
-    await sendListingUrlToCustomer({
-      threadId,
-      etsyConversationUrl: thread.etsyConversationUrl,
-      listingUrl,
-      family,
-      listingId: newListingId
-    });
+    // 9 + 9b. v4.3.2 — Send the URL to the customer AND generate the
+    // sales synopsis IN PARALLEL. They're independent operations:
+    //   - sendListingUrlToCustomer just enqueues a draft via
+    //     etsyMailDraftSend; the customer receives it via the Chrome
+    //     extension's send loop.
+    //   - generateSalesSynopsis is an LLM call that produces operator-
+    //     facing summary text.
+    // Running them serially added 5-15s for the synopsis call after the
+    // customer message was already sent. Now they're awaited together.
+    //
+    // Both must succeed (or the synopsis fall back to its structured
+    // template) before markSuccess writes the completion state.
 
-    // 9b. Generate the sales synopsis. Re-load the thread to pick up the
-    //     customListingImagesCount we just wrote, so the synopsis includes
-    //     accurate reference-photo counts even on a resume path.
     const freshThread = (await db.collection(THREADS_COLL).doc(threadId).get()).data() || thread;
     const fullThreadContext = await loadFullThreadContext(threadId);
-    const salesSynopsis = await generateSalesSynopsis({
-      thread: freshThread, family, listingId: newListingId, listingUrl, fullThreadContext
-    });
+
+    const [, salesSynopsis] = await Promise.all([
+      sendListingUrlToCustomer({
+        threadId,
+        etsyConversationUrl: thread.etsyConversationUrl,
+        listingUrl,
+        family,
+        listingId: newListingId
+      }),
+      generateSalesSynopsis({
+        thread: freshThread, family, listingId: newListingId, listingUrl, fullThreadContext
+      })
+    ]);
 
     // 10. Success markers + audit. This write also flips thread.status to
     //     "sales_completed" — a terminal status the sales agent honors,
