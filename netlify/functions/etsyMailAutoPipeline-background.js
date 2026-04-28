@@ -563,6 +563,56 @@ function runVetoPatterns(text, excludePatternIds = []) {
  *
  *  Returns null if no inbound exists. 4000-char cap matches the
  *  classifier's input budget. */
+/** v4.3.7 — Return ONLY the most recent inbound message's text (not
+ *  the 5-message concatenation that loadLatestInboundText returns).
+ *
+ *  Used by the deterministic veto path. The veto judges whether
+ *  *this turn's* customer message + draft are safe to auto-send.
+ *  Multi-turn context isn't appropriate there:
+ *
+ *    - A "missing" pattern that matched on a message from sale #1
+ *      ("I never received my tracking notification") shouldn't poison
+ *      auto-sends weeks later when the customer comes back for a fresh
+ *      sale (round 2+). The veto's 5-message lookback was a real bug
+ *      surfaced by Joanna's banana-charm round-2: the agent's clean
+ *      discovery clarifier was vetoed because of a phrase from the
+ *      original baseball-charm conversation.
+ *
+ *    - Even within a single conversation, only the latest inbound
+ *      reflects the customer's current intent. Earlier messages might
+ *      have asked about refunds/cancellations and been resolved in the
+ *      conversation flow; vetoing the next reply because of THAT old
+ *      mention would block all subsequent auto-sends.
+ *
+ *  The classifier's multi-message helper (loadLatestInboundText) is
+ *  preserved for its own use — it benefits from context (a "please
+ *  confirm?" nudge classifies correctly when read alongside the
+ *  substantive earlier messages).
+ *
+ *  Returns null if no inbound exists. 1500-char cap matches typical
+ *  Etsy message length comfortably. */
+async function loadCurrentInboundTextOnly(threadId) {
+  try {
+    const snap = await db.collection(THREADS_COLL).doc(threadId)
+      .collection("messages")
+      .orderBy("timestamp", "desc")
+      .limit(50)
+      .get();
+    if (snap.empty) return null;
+    for (const d of snap.docs) {
+      const data = d.data();
+      if (data.direction !== "inbound") continue;
+      const t = String(data.text || "").trim();
+      if (!t) continue;
+      return t.slice(0, 1500);
+    }
+    return null;
+  } catch (e) {
+    console.warn("loadCurrentInboundTextOnly failed:", e.message);
+    return null;
+  }
+}
+
 async function loadLatestInboundText(threadId) {
   try {
     // We pull up to 50 recent messages by `timestamp desc` and filter
@@ -1002,6 +1052,49 @@ exports.handler = async (event) => {
             updatedAt  : FV.serverTimestamp()
           }, { merge: true });
 
+          // 3b. v4.3.6 — Sweep stale optimistic-ghost messages from prior
+          //     rounds. Each successful send writes an `optim_<draftId>`
+          //     doc into the thread's messages subcollection so the
+          //     operator sees the just-sent message immediately while
+          //     waiting for the next M2 scrape to pull in the real Etsy
+          //     message. Once the real message arrives, the dashboard's
+          //     dedup hides the ghost. But the ghost doc lives in
+          //     Firestore forever.
+          //
+          //     On round-2 reset, the prior round's ghost doc has a
+          //     timestamp from when it was written (Date.now()). The
+          //     dashboard's chronological sort places it according to
+          //     that timestamp — typically AFTER the customer's new
+          //     inbound message, even though the corresponding real
+          //     message was sent days earlier. Result: the operator
+          //     sees the prior listing-URL message appearing as if it
+          //     were a fresh send right after the customer's new
+          //     request.
+          //
+          //     Fix: query the messages subcollection for docs where
+          //     localOptimistic == true and delete them. Real M2-scraped
+          //     outbound messages don't have this field, so they're
+          //     untouched. Single-field equality query — no composite
+          //     index needed.
+          try {
+            const msgsRef = db.collection(THREADS_COLL).doc(threadId).collection("messages");
+            const ghostsSnap = await msgsRef
+              .where("localOptimistic", "==", true)
+              .limit(100)
+              .get();
+            if (!ghostsSnap.empty) {
+              const batch = db.batch();
+              ghostsSnap.docs.forEach(d => batch.delete(d.ref));
+              await batch.commit();
+              console.log(`[autoPipeline] round-${round} reset: cleaned up ${ghostsSnap.size} stale optimistic ghost(s) in ${threadId}`);
+            }
+          } catch (e) {
+            // Non-fatal — worst case is a stale ghost stays visible
+            // until next thread delete or manual cleanup. Don't block
+            // the reset on this.
+            console.warn(`[autoPipeline] ghost sweep failed for ${threadId} (proceeding):`, e.message);
+          }
+
           // 4. Audit
           await writeAudit({
             threadId,
@@ -1230,7 +1323,15 @@ exports.handler = async (event) => {
                 // handle custom-order inquiries. Other vetoes (refund,
                 // cancel, legal, damaged, address, personalize,
                 // missing, replace) still apply.
-                const inboundForVeto = await loadLatestInboundText(threadId);
+                //
+                // v4.3.7 — Use loadCurrentInboundTextOnly (just the
+                // single most recent inbound) rather than the 5-message
+                // concatenation. Multi-turn context is wrong for vetoes
+                // because old messages from the prior round can poison
+                // auto-sends — Joanna's round-2 banana-charm draft was
+                // vetoed because a phrase from the original baseball-
+                // charm conversation hit the "missing" pattern.
+                const inboundForVeto = await loadCurrentInboundTextOnly(threadId);
                 const veto = applyDeterministicVetoes({
                   inboundText      : inboundForVeto,
                   draftText,
@@ -1245,12 +1346,31 @@ exports.handler = async (event) => {
                     eventType: "sales_auto_send_vetoed",
                     payload  : { reasons: veto.reasons }
                   });
+                  // v4.3.7 — finalize the claim. Without this the
+                  // thread sits in lastAutoDecision="in_progress"
+                  // until the stale-claim reaper kicks in 5+ minutes
+                  // later (we observed this in the audit trail). The
+                  // operator's UI shows "AI thinking..." until then.
+                  // Set a terminal decision so the rail reflects
+                  // reality immediately.
+                  await db.collection(THREADS_COLL).doc(threadId).set({
+                    lastAutoDecision  : "sales_auto_send_vetoed",
+                    lastAutoDecisionAt: FV.serverTimestamp(),
+                    updatedAt         : FV.serverTimestamp()
+                  }, { merge: true });
                 } else if (ks.disabled) {
                   await writeAudit({
                     threadId, draftId,
                     eventType: "sales_auto_send_skipped",
                     payload  : { reason: "kill_switch_on" }
                   });
+                  // v4.3.7 — finalize the claim (same reason as the
+                  // veto branch above).
+                  await db.collection(THREADS_COLL).doc(threadId).set({
+                    lastAutoDecision  : "sales_auto_send_kill_switch",
+                    lastAutoDecisionAt: FV.serverTimestamp(),
+                    updatedAt         : FV.serverTimestamp()
+                  }, { merge: true });
                 } else {
                   // All clear — enqueue the send.
                   const etsyConversationUrl = threadAfter.etsyConversationUrl
@@ -1310,6 +1430,12 @@ exports.handler = async (event) => {
                   : "needs_review_handoff"
               }
             });
+            // v4.3.7 — finalize the claim (see veto branch above).
+            await db.collection(THREADS_COLL).doc(threadId).set({
+              lastAutoDecision  : "sales_auto_send_human_review",
+              lastAutoDecisionAt: FV.serverTimestamp(),
+              updatedAt         : FV.serverTimestamp()
+            }, { merge: true });
           }
 
           return ok({
@@ -1433,10 +1559,17 @@ exports.handler = async (event) => {
     // Even with confidence ≥ threshold, certain customer requests must
     // never auto-send: refunds, cancellations, legal escalation,
     // damaged-item claims, address changes, custom orders, tool-call
-    // errors. The veto check runs against the latest INBOUND text
-    // (what the customer actually said) and the OUTBOUND draft (catches
-    // AI drafts that promise refunds even when the inbound was cagey).
-    const inboundText = await loadLatestInboundText(threadId);
+    // errors. The veto check runs against the CURRENT INBOUND text
+    // (what the customer actually said in THIS turn) and the OUTBOUND
+    // draft (catches AI drafts that promise refunds even when the
+    // inbound was cagey).
+    //
+    // v4.3.7 — Use loadCurrentInboundTextOnly (just the single most
+    // recent inbound) rather than the 5-message concatenation.
+    // Multi-turn lookback was a real bug source: a "missing" phrase
+    // in a customer's earlier (now-resolved) message would veto every
+    // subsequent auto-send for the rest of the conversation.
+    const inboundText = await loadCurrentInboundTextOnly(threadId);
     const veto = applyDeterministicVetoes({
       inboundText,
       draftText      : text,
