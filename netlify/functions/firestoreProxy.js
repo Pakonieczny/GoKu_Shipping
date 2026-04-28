@@ -68,7 +68,14 @@ const CALLABLE_COLLS = new Set([
   // "EtsyMail_CustomOrderTemplates"
 ]);
 const CALLABLE_SUBS = new Set([
-  "messages"
+  "messages",
+  // v4.3.5+ — round-history archive. Each round-2+ reset writes one
+  // doc into EtsyMail_Threads/{threadId}/salesHistory describing the
+  // prior completed sale. The dashboard's tabbed Sales conversation
+  // card reads from this subcollection to render archived rounds
+  // alongside the live SalesContext. Read-only from the dashboard
+  // side; only autoPipeline writes here, server-side.
+  "salesHistory"
 ]);
 
 const OWNER_WRITE_COLLS = new Set([

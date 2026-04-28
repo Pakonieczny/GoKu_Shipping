@@ -984,6 +984,15 @@ exports.handler = async (event) => {
           //    Sales conversation card (notes, spec, quote breakdown) would
           //    be missing because that data lives in EtsyMail_SalesContext
           //    and gets overwritten on round-2 reset.
+          //
+          // v4.3.9 — added explicit audit events for archive
+          //    success/skip/failure. Without these, an archive that
+          //    silently failed (e.g., Firestore quota, network blip,
+          //    field-size limit) was indistinguishable from "archive
+          //    not attempted" — the operator just saw an empty
+          //    salesHistory subcollection with no diagnostic trail.
+          let archiveOutcome = "skipped_no_data";
+          let archiveError = null;
           if (threadData.salesSynopsis || threadData.customListingId) {
             try {
               const archiveDocId = `round_${threadData.salesRound || 1}_${(threadData.salesCompletedAt && threadData.salesCompletedAt.toMillis ? threadData.salesCompletedAt.toMillis() : Date.now())}`;
@@ -1038,11 +1047,18 @@ exports.handler = async (event) => {
                   archivedAt              : FV.serverTimestamp(),
                   reason                  : "post_terminal_re_engagement"
                 });
+              archiveOutcome = salesContextSnapshot ? "archived_with_context" : "archived_listing_only";
+              console.log(`[autoPipeline] archived round ${threadData.salesRound || 1} for ${threadId}: ${archiveOutcome} → ${archiveDocId}`);
             } catch (e) {
               // Archive failure is non-fatal — better to lose history
-              // than to block the new round entirely.
+              // than to block the new round entirely. But surface it
+              // in the audit log so it's debuggable.
+              archiveOutcome = "archive_failed";
+              archiveError   = e.message || String(e);
               console.warn(`[autoPipeline] salesHistory archive failed for ${threadId} (proceeding):`, e.message);
             }
+          } else {
+            console.log(`[autoPipeline] archive skipped for ${threadId} — no salesSynopsis or customListingId on prior round`);
           }
 
           // 2. Reset the thread doc fields. Use FV.delete() for fields
@@ -1151,7 +1167,14 @@ exports.handler = async (event) => {
               priorRound       : threadData.salesRound || 1,
               priorListingId   : threadData.customListingId || null,
               intentConfidence : intentResp.confidence,
-              triggeredBy      : "post_terminal_fresh_sales_lead"
+              triggeredBy      : "post_terminal_fresh_sales_lead",
+              // v4.3.9 — archive diagnostics. Possible outcomes:
+              //   "archived_with_context"  — full snapshot saved
+              //   "archived_listing_only"  — SalesContext read failed but listing data saved
+              //   "archive_failed"         — Firestore write threw (see archiveError)
+              //   "skipped_no_data"        — neither salesSynopsis nor customListingId present
+              archiveOutcome,
+              archiveError
             }
           });
 
