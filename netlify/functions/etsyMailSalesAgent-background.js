@@ -571,9 +571,37 @@ async function prefetchLineSheetCollateral({ latestInboundText, salesCtx, recent
   }
   if (!family || !searchCollateral) return [];
   try {
-    const result = await searchCollateral({ category: family, kind: "line_sheet", limit: 3 });
+    // v4.3.12 — Don't pass `category` as an exact-match filter. Operator-
+    // created collateral entries have friendly display-name categories
+    // ("Custom Necklace Charm", "Custom Huggie Hoop Charm Earrings"),
+    // not the agent's family enum ("necklace", "huggie", "stud"). The
+    // searchCollateral implementation does .where("category","==",..)
+    // which means exact match; the family value never matched a display
+    // name, so prefetch returned empty for every operator-uploaded sheet.
+    //
+    // Instead: search by kind="line_sheet" with the family as a keyword.
+    // searchCollateral's keyword scoring matches on name/description/
+    // keywords fields, which essentially always contain the family word
+    // (a "Necklace Charm" sheet has "necklace" in the name).
+    const result = await searchCollateral({
+      kind     : "line_sheet",
+      keywords : [family],
+      limit    : 5
+    });
     const matches = Array.isArray(result && result.matches) ? result.matches : [];
-    return matches.filter(m => m && isCustomerVisibleUrl(m.url)).slice(0, 3);
+    // Filter to entries that actually look like a match for this family
+    // (defense in depth — keyword scoring isn't a hard filter, so an
+    // unrelated line sheet with vague text could rank high). We keep
+    // only matches whose name OR keywords mention the family.
+    const familyRx = new RegExp("\\b" + family + "\\b", "i");
+    const familyMatches = matches.filter(m => {
+      if (!m) return false;
+      if (familyRx.test(String(m.name || ""))) return true;
+      if (Array.isArray(m.keywords) && m.keywords.some(k => familyRx.test(String(k)))) return true;
+      if (familyRx.test(String(m.description || ""))) return true;
+      return false;
+    });
+    return familyMatches.filter(m => m && isCustomerVisibleUrl(m.url)).slice(0, 3);
   } catch (e) {
     console.warn("salesAgent: line-sheet collateral prefetch failed:", e.message);
     return [];
@@ -1605,24 +1633,25 @@ If the customer wants pricing/options but no line-sheet collateral exists for th
     let lineSheetAttachInfo = null;   // for audit
     if (parsed.attach_line_sheet === true) {
       const firstAttachable = (Array.isArray(recommendedCollateral) ? recommendedCollateral : [])
-        .find(c => c && c.storagePath && c.contentType);
+        .find(c => c && c.storagePath && c.uploadedContentType);
       if (firstAttachable) {
         // Build a synthetic, draft-scoped attachmentId so the draft has a
         // stable key; the underlying storagePath is shared with the
         // collateral entry (we do NOT copy the file — wasteful and would
         // create cleanup churn). The image proxy serves any path under
-        // the etsymail/ prefix, which includes etsymail/collateral/...,
-        // so the extension's fetch-and-inject works the same as it does
-        // for operator-uploaded drafts.
+        // the etsymail/ or etsymail-collateral/ prefix, so the extension's
+        // fetch-and-inject works the same as it does for operator drag-
+        // and-drop uploads.
         const synthId = "att_collateral_" + (firstAttachable.id || Math.random().toString(36).slice(2, 10));
+        const ct = firstAttachable.uploadedContentType;
         attachmentsToWrite = [{
           attachmentId : synthId,
           type         : "image",
           storagePath  : firstAttachable.storagePath,
           proxyUrl     : "/.netlify/functions/etsyMailImage?path=" + encodeURIComponent(firstAttachable.storagePath),
-          contentType  : firstAttachable.contentType,
-          bytes        : typeof firstAttachable.bytes === "number" ? firstAttachable.bytes : null,
-          filename     : firstAttachable.fileName || (firstAttachable.name + "." + (firstAttachable.contentType.split("/")[1] || "png")),
+          contentType  : ct,
+          bytes        : typeof firstAttachable.uploadedSizeBytes === "number" ? firstAttachable.uploadedSizeBytes : null,
+          filename     : firstAttachable.uploadedFilename || ((firstAttachable.name || "line_sheet") + "." + ((ct.split("/")[1] || "png"))),
           // Attribution metadata — useful for operator visibility ("which
           // collateral did the agent attach?") and for downstream auditing.
           source       : "collateral",

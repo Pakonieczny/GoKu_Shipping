@@ -42,7 +42,14 @@ const BASE_HEADERS = {
   "Cross-Origin-Resource-Policy": "cross-origin"
 };
 
-const PATH_PREFIX = "etsymail/";
+// v4.3.12 — Allow both the original drafts/messages prefix AND the
+// collateral upload prefix. Collateral images live at
+// 'etsymail-collateral/...' (note the hyphen), drafts/snapshots at
+// 'etsymail/...'. Both are first-party and need to be servable
+// through the proxy so the Chrome extension's image-injection step
+// can fetch line-sheet attachments the sales agent constructs.
+const ALLOWED_PATH_PREFIXES = ["etsymail/", "etsymail-collateral/"];
+const PATH_PREFIX = ALLOWED_PATH_PREFIXES[0];   // legacy alias for any below code that still references it
 
 // Infer a Content-Type from a storage path's extension, used as fallback
 // if the stored GCS metadata doesn't have a contentType.
@@ -82,11 +89,11 @@ exports.handler = async (event) => {
         body: JSON.stringify({ error: "Missing 'path' query parameter" })
       };
     }
-    if (!rawPath.startsWith(PATH_PREFIX)) {
+    if (!ALLOWED_PATH_PREFIXES.some(p => rawPath.startsWith(p))) {
       return {
         statusCode: 403,
         headers: { ...BASE_HEADERS, "Content-Type": "application/json" },
-        body: JSON.stringify({ error: "Path must start with 'etsymail/'" })
+        body: JSON.stringify({ error: "Path must start with 'etsymail/' or 'etsymail-collateral/'" })
       };
     }
     if (rawPath.includes("..") || rawPath.includes("\\")) {
