@@ -130,7 +130,7 @@ function trimForCaller(doc) {
   // v4.3.12 — Expose the storage-mirror fields that exist when the
   // collateral was uploaded through the system (op:"upload"). The
   // agent uses these to construct an `image` attachment on its draft
-  // for line-sheet sends — without `storagePath` + `contentType`,
+  // for line-sheet sends — without `storagePath` + `uploadedContentType`,
   // normalizeAttachments in etsyMailDraftSend rejects the entry.
   // Entries created via op:"create" (external URL, no upload) will
   // not have these fields; the agent treats those as link-only.
@@ -144,13 +144,6 @@ function trimForCaller(doc) {
     keywords    : doc.keywords || [],
     active      : doc.active !== false
   };
-  // v4.3.12 — Expose the storage-mirror fields that exist when the
-  // collateral was uploaded through the system (op:"upload"). The
-  // agent uses these to construct an `image` attachment on its draft
-  // for line-sheet sends — without `storagePath` + `uploadedContentType`,
-  // normalizeAttachments in etsyMailDraftSend rejects the entry.
-  // Entries created via op:"create" (external URL, no upload) will
-  // not have these fields; the agent treats those as link-only.
   if (doc.storagePath)               out.storagePath         = doc.storagePath;
   if (doc.uploadedContentType)       out.uploadedContentType = doc.uploadedContentType;
   if (doc.uploadedFilename)          out.uploadedFilename    = doc.uploadedFilename;
