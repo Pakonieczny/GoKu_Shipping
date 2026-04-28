@@ -542,7 +542,7 @@ function compactOptionSheetForAi(sheet) {
   };
 }
 
-async function prefetchLineSheetCollateral({ latestInboundText, salesCtx }) {
+async function prefetchLineSheetCollateral({ latestInboundText, salesCtx, recentThreadMessages = null }) {
   // v3.1: line-sheet URL is made available to the agent whenever the
   // family is inferable, regardless of customer phrasing. The DECISION to
   // send is the agent's, based on its read of the conversation. The
@@ -551,7 +551,24 @@ async function prefetchLineSheetCollateral({ latestInboundText, salesCtx }) {
   // had nothing to send for customers who never used those magic words.
   // The agent's prompt now teaches WHEN to send (judgment); this code
   // just guarantees the URL is always there when the agent decides yes.
-  const family = inferFamilyFromTextAndContext(latestInboundText, salesCtx);
+  //
+  // v4.3.11: also scan the recent thread message history (not just the
+  // current inbound + SalesContext). On round-2+ resets, SalesContext's
+  // accumulatedSpec was wiped, so family inference would fail even when
+  // family is obvious from the prior conversation. Without this widening,
+  // round-2 customers who say "do you have a pricing sheet?" get no
+  // prefetched line sheet because inferFamilyFromTextAndContext returns
+  // null on the wiped SalesContext. We try the current message first,
+  // then fall back to scanning recent messages until family is found.
+  let family = inferFamilyFromTextAndContext(latestInboundText, salesCtx);
+  if (!family && Array.isArray(recentThreadMessages)) {
+    for (let i = recentThreadMessages.length - 1; i >= 0; i--) {
+      const m = recentThreadMessages[i];
+      if (!m || !m.text) continue;
+      family = inferFamilyFromTextAndContext(m.text, {});  // empty ctx — text-only inference
+      if (family) break;
+    }
+  }
   if (!family || !searchCollateral) return [];
   try {
     const result = await searchCollateral({ category: family, kind: "line_sheet", limit: 3 });
@@ -1243,7 +1260,9 @@ exports.handler = async (event) => {
 
     const recentThreadMessages = await loadRecentThreadMessages(threadId, 12);
     const priorOutboundTexts = recentOutboundTextsFromMessages(recentThreadMessages);
-    const recommendedCollateral = await prefetchLineSheetCollateral({ latestInboundText, salesCtx });
+    const recommendedCollateral = await prefetchLineSheetCollateral({
+      latestInboundText, salesCtx, recentThreadMessages
+    });
 
     // ── Load the unified sales prompt ──
     const promptLoad = await loadSalesPrompt();
@@ -1332,12 +1351,74 @@ exports.handler = async (event) => {
     });
 
     // ── Run the tool loop ──
+    //
+    // v4.3.11 — Behavioral addendum to the operator's prompt: line-sheet
+    // eagerness. The operator's prompt at EtsyMail_SalesPrompts/sales
+    // teaches the agent how to run the funnel; this code-managed
+    // addendum codifies a SPECIFIC policy the operator asked for that
+    // would otherwise require constant prompt-tuning to keep right:
+    //
+    //   When a customer hints they want pricing or options, the
+    //   default response is to SEND THE LINE SHEET — not to negotiate
+    //   the spec down to a single direct quote. The only blocker is
+    //   "which family (necklace / huggie / stud)?" and even that's
+    //   often inferable from context.
+    //
+    // The line-sheet URL is already pre-fetched into context.summary
+    // .recommendedCollateral by prefetchLineSheetCollateral() above, so
+    // the agent always has it available to share. The bug we're
+    // patching: even when the URL was sitting right there in context,
+    // the agent would compute a quote in response to "Do you have a
+    // pricing sheet?" because the operator's prompt didn't strongly
+    // bias toward sending the sheet on hint-level signals.
+    //
+    // We APPEND (don't replace) the operator's prompt so any further
+    // operator edits in Settings → Agent Prompts continue to work, and
+    // this addendum stays narrow + auditable.
+    const lineSheetEagernessAddendum = `
+
+# LINE-SHEET POLICY (system addendum — overrides any conflicting prompt guidance)
+
+When the customer signals interest in pricing or options — even WEAKLY — your default action is to SEND THE LINE SHEET for that family. Do not skip the line sheet to compute a single direct quote.
+
+Hint-level signals that should trigger a line-sheet send:
+- "do you have a pricing sheet"
+- "what are my options"
+- "what sizes / metals / chains do you offer"
+- "what's available"
+- "can I see options"
+- "how much for [a different config]"
+- ANY question that asks about choices, prices for variants, or what's possible
+
+The ONE thing you may need before sending the line sheet:
+- Which family (necklace, stud earring, or huggie hoop earring)? If conversation context already tells you this (a prior round, an earlier message in this round, an explicit listing reference), USE that — don't re-ask.
+
+When you decide to send the line sheet:
+1. Use the line-sheet URL from context.summary.recommendedCollateral (pre-fetched for you when family is inferable).
+2. Reply text should be short and inviting: tell them which family's sheet you're sending, and invite them to pick the codes they want. Example: "Here's the necklace line sheet — pick the size, metal, chain, and length you'd like and I'll quote it: <URL>".
+3. Set collateral_referenced to include the URL you sent.
+4. DO NOT also compute a direct quote in the same turn unless the customer has clearly already specified all the codes. The line sheet IS the answer to "what are my options" and "do you have a pricing sheet".
+
+When NOT to send the line sheet:
+- The customer has already given you all the spec codes and is ready to lock in (no choosing happening). Then proceed to quote.
+- The customer has explicitly declined to see options ("just quote me X").
+
+Ambiguous case → SEND THE LINE SHEET. The cost of an unwanted line sheet is near zero (one line of text + a URL); the cost of a missed line sheet is a customer who wanted to compare options being railroaded into a single config.
+`.trim();
+
+    // Concatenate. Keep a clear separator so the addendum is visible
+    // in any prompt-debugging output without being mistaken for
+    // operator-edited content.
+    const fullSystemPrompt = String(promptLoad.prompt || "").trim()
+      + "\n\n---\n\n"
+      + lineSheetEagernessAddendum;
+
     let loopResult;
     try {
       loopResult = await runToolLoop({
         model         : AI_MODEL,
         maxTokens     : AI_MAX_TOKENS,
-        system        : promptLoad.prompt,
+        system        : fullSystemPrompt,
         initialMessages,
         toolSpecs,
         toolExecutors,
