@@ -146,10 +146,23 @@ async function resolveTemplateListingId(family) {
     throw new Error("Listing templates not configured (invalid setup): missing EtsyMail_Config/listingTemplates");
   }
   const entry = cfg.data()[family];
-  if (!entry || !entry.listingId) {
+  // Accept either schema:
+  //   1. Flat string: { necklace: "1094504461" }
+  //      — written by the dashboard Settings UI (saveListingTemplates)
+  //        and the recommended setup format from SETUP.md.
+  //   2. Map: { necklace: { listingId: "1094504461", ... } }
+  //      — older schema that supports per-family extra metadata. Kept
+  //        for forward compat; nothing currently writes it.
+  let listingId = null;
+  if (typeof entry === "string") {
+    listingId = entry.trim();
+  } else if (entry && typeof entry === "object" && entry.listingId) {
+    listingId = String(entry.listingId).trim();
+  }
+  if (!listingId) {
     throw new Error(`No template configured for family (invalid setup): ${family}`);
   }
-  return String(entry.listingId);
+  return listingId;
 }
 
 async function readTemplateListing(templateListingId) {
