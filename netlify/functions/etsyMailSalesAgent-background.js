@@ -271,11 +271,26 @@ async function getConfig() {
 // run on the next inbound. terminal means: the customer accepted the
 // quote / the order was placed / a human took over. The agent doesn't
 // run on terminal threads.
+//
+// v4.3.1 — `pending_human_review` is intentionally NOT in this set, even
+// though the agent itself can write that status when it decides a turn
+// needs help. "Needs review on this turn" ≠ "conversation is over". When
+// the customer replies later — possibly with the very information the
+// agent was missing — the agent must re-engage and produce a fresh
+// draft. Including pending_human_review here caused a regression where
+// every subsequent inbound was silently skipped, leaving threads parked
+// in pending_human_review with no draft for the operator to review.
+//
+// Truly terminal states:
+//   sales_completed — listing-creator worker ran markSuccess (the sale
+//                     closed; subsequent customer messages route to the
+//                     standard customer-service draft pipeline, not the
+//                     sales agent)
+//   sales_abandoned — reaper concluded the lead is dead
 
 const TERMINAL_THREAD_STATUSES = new Set([
   "sales_completed",
-  "sales_abandoned",
-  "pending_human_review"
+  "sales_abandoned"
 ]);
 
 // ─── Prompt loading ────────────────────────────────────────────────────
