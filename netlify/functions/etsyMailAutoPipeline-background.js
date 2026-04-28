@@ -871,6 +871,159 @@ exports.handler = async (event) => {
         && typeof intentResp.confidence === "number"
         && intentResp.confidence >= 0.7;
 
+      // v4.3.5 — Post-terminal re-engagement (returning customer for a
+      // brand-new sale).
+      //
+      // Once a sale completes (worker writes salesCompletedAt) or is
+      // abandoned (reaper writes status=sales_abandoned), the sales
+      // agent's terminal-status guard refuses to re-engage even if the
+      // customer comes back asking for a new product. That's correct
+      // for follow-up chatter ("thanks, when will it ship?") but wrong
+      // for genuine new sales leads ("I'd like to place another order").
+      //
+      // Detection: the thread is in a terminal sales state AND the
+      // intent classifier called this inbound a fresh sales_lead at
+      // high confidence. If both are true, this is round N+1 of the
+      // customer's relationship and we should run the full sales-agent
+      // funnel from scratch.
+      //
+      // What we reset:
+      //   - SalesContext.stage          → "discovery" (fresh funnel)
+      //   - All listing-pipeline fields → cleared (the new sale's worker
+      //                                   run starts from a clean slate)
+      //   - customerAccepted/At + accepted quote fields → cleared
+      //   - salesCompletedAt + salesSynopsis → archived to a sub-
+      //                                   collection, then cleared
+      //   - thread.status               → "sales_active"
+      //   - freshSalesRound             → incremented (audit trail)
+      //
+      // What we PRESERVE on the thread:
+      //   - All scraped messages and message subcollection
+      //   - SalesContext history of past quotes/specs (in subcoll if
+      //     used) — only the active stage is reset
+      //   - Audit log (immutable; appended-to)
+      //
+      // Edge cases:
+      //   - In-flight worker for the prior sale (status="creating"):
+      //     salesCompletedAt is NOT set yet, trigger doesn't fire,
+      //     mid-flight work completes safely. Once it does set
+      //     salesCompletedAt, a future inbound can trigger reset.
+      //   - First-acceptance cool-down (30s after customerAcceptedAt):
+      //     no longer relevant — we're clearing customerAcceptedAt as
+      //     part of the reset.
+      const threadDoc = await db.collection(THREADS_COLL).doc(threadId).get();
+      const threadData = threadDoc.exists ? threadDoc.data() : {};
+      const isPostTerminal =
+           !!threadData.salesCompletedAt
+        || threadData.status === "sales_abandoned";
+      const shouldResetForRound2 = isPostTerminal && freshSalesLead;
+
+      if (shouldResetForRound2) {
+        try {
+          const round = Number(threadData.salesRound || 1) + 1;
+
+          // 1. Archive the prior sale's synopsis (if any) so the operator
+          //    keeps visibility into past rounds. Subcollection key by
+          //    timestamp ms — keeps insertion-time-ordered.
+          if (threadData.salesSynopsis || threadData.customListingId) {
+            try {
+              const archiveDocId = `round_${threadData.salesRound || 1}_${(threadData.salesCompletedAt && threadData.salesCompletedAt.toMillis ? threadData.salesCompletedAt.toMillis() : Date.now())}`;
+              await db.collection(THREADS_COLL).doc(threadId)
+                .collection("salesHistory").doc(archiveDocId).set({
+                  round                   : threadData.salesRound || 1,
+                  customListingId         : threadData.customListingId    || null,
+                  customListingUrl        : threadData.customListingUrl   || null,
+                  acceptedQuoteUsd        : threadData.acceptedQuoteUsd   || null,
+                  acceptedQuoteFamily     : threadData.acceptedQuoteFamily || null,
+                  salesSynopsis           : threadData.salesSynopsis      || null,
+                  salesCompletedAt        : threadData.salesCompletedAt   || null,
+                  customListingSentAt     : threadData.customListingSentAt|| null,
+                  archivedAt              : FV.serverTimestamp(),
+                  reason                  : "post_terminal_re_engagement"
+                });
+            } catch (e) {
+              // Archive failure is non-fatal — better to lose history
+              // than to block the new round entirely.
+              console.warn(`[autoPipeline] salesHistory archive failed for ${threadId} (proceeding):`, e.message);
+            }
+          }
+
+          // 2. Reset the thread doc fields. Use FV.delete() for fields
+          //    that should not exist on a fresh thread, NOT null — the
+          //    listing-creator cron's queries depend on field-presence
+          //    semantics (e.g., customListingStartedAt missing = "no
+          //    worker ran yet"; null would be a different state).
+          await db.collection(THREADS_COLL).doc(threadId).update({
+            status                       : "sales_active",
+            salesRound                   : round,
+            // Acceptance / quote
+            customerAccepted             : FV.delete(),
+            customerAcceptedAt           : FV.delete(),
+            acceptedQuoteUsd             : FV.delete(),
+            acceptedQuoteFamily          : FV.delete(),
+            lastResolverResult           : FV.delete(),
+            // Listing pipeline
+            customListingStatus          : FV.delete(),
+            customListingId              : FV.delete(),
+            customListingUrl             : FV.delete(),
+            customListingCreatedAt       : FV.delete(),
+            customListingStartedAt       : FV.delete(),
+            customListingAttempts        : FV.delete(),
+            customListingError           : FV.delete(),
+            customListingErrorAt         : FV.delete(),
+            customListingErrorCount      : FV.delete(),
+            customListingDraftCreatedAt  : FV.delete(),
+            customListingImagesAt        : FV.delete(),
+            customListingImagesCount     : FV.delete(),
+            customListingUsedFallback    : FV.delete(),
+            customListingSentAt          : FV.delete(),
+            customListingSentListingId   : FV.delete(),
+            customListingRetractedAt     : FV.delete(),
+            // Completion markers (NOW archived)
+            salesCompletedAt             : FV.delete(),
+            salesSynopsis                : FV.delete(),
+            // Operator-review flags from prior round
+            needsOperatorReview          : FV.delete(),
+            needsOperatorReviewReason    : FV.delete(),
+            // Audit
+            updatedAt                    : FV.serverTimestamp()
+          });
+
+          // 3. Reset SalesContext.stage to discovery so the agent enters
+          //    its discovery prompt and starts a fresh funnel. Preserve
+          //    the rest of SalesContext (history field is useful for
+          //    the agent — it can reference the customer's past order
+          //    for context like "since you got the baseball charm last
+          //    time, would you also want sterling silver?").
+          await db.collection("EtsyMail_SalesContext").doc(threadId).set({
+            stage      : "discovery",
+            roundReset : true,
+            roundResetAt: FV.serverTimestamp(),
+            updatedAt  : FV.serverTimestamp()
+          }, { merge: true });
+
+          // 4. Audit
+          await writeAudit({
+            threadId,
+            eventType: "sales_round_reset",
+            payload  : {
+              round,
+              priorRound       : threadData.salesRound || 1,
+              priorListingId   : threadData.customListingId || null,
+              intentConfidence : intentResp.confidence,
+              triggeredBy      : "post_terminal_fresh_sales_lead"
+            }
+          });
+
+          console.log(`[autoPipeline] thread ${threadId} reset for sales round ${round}`);
+        } catch (e) {
+          // If any of the reset steps fail, fall through. The agent
+          // would still hit its terminal guard and skip — surfacing
+          // the message to the operator. Better than blocking.
+          console.warn(`[autoPipeline] post-terminal reset failed for ${threadId} (falling through):`, e.message);
+        }
+      }
+
       if (activeSalesStage || freshSalesLead) {
         // Load latest inbound text + attachments in one pass. Even if
         // text was already loaded for the classifier, we still need the

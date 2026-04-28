@@ -771,6 +771,71 @@ Once you check out, we'll get to work on your order. Let us know if you have any
 }
 
 async function sendListingUrlToCustomer({ threadId, etsyConversationUrl, listingUrl, family, listingId }) {
+  // v4.3.4 — AT-MOST-ONCE GUARD. Prevent duplicate sends to Etsy.
+  //
+  // The earlier worker-resume design (v4.3) made sendListingUrlToCustomer
+  // safe to re-call IF the underlying enqueue path were truly idempotent —
+  // i.e., it would refuse to re-send a draft that already went through.
+  // It isn't: etsyMailDraftSend's enqueue path with `force: true`
+  // overwrites a `sent` draft back to `queued`, and the extension's
+  // send loop happily delivers it AGAIN. From the customer's view, two
+  // identical "Here's the custom listing for your necklace..." messages
+  // arrive. The bug surfaces in three real-world scenarios:
+  //
+  //   1. The worker runs once, succeeds, marks the thread terminal.
+  //      Then the customer re-affirms ("yes, perfect!"). The agent
+  //      classifies acceptance again, sets customListingStatus="queued",
+  //      cron claims, worker re-runs, sendListingUrlToCustomer fires
+  //      again, customer gets a duplicate.
+  //   2. The operator manually retries by clearing customListingStatus
+  //      back to "queued" in Firestore (e.g. for testing, or because
+  //      the failure modes earlier in this conversation pushed them
+  //      to retry by hand).
+  //   3. The cron's stuck-sweep reclaims a "creating" thread that
+  //      appeared wedged but had actually completed — the worker's
+  //      terminal idempotency check in main() catches the customListing
+  //      Status==="created" case BEFORE this function is called, but if
+  //      that field was clobbered (re-acceptance writes "queued"), the
+  //      check passes and we land here.
+  //
+  // The atomic claim below uses customListingSentAt as the source of
+  // truth: the field is set ONCE on the first successful send and
+  // never overwritten. A second invocation reads this field inside a
+  // transaction, sees it set, and bails — no enqueue, no audit, no
+  // customer-facing duplicate.
+  const threadRef = db.collection(THREADS_COLL).doc(threadId);
+  const claim = await db.runTransaction(async (tx) => {
+    const snap = await tx.get(threadRef);
+    if (!snap.exists) return { proceed: false, reason: "thread_missing" };
+    const d = snap.data();
+    if (d.customListingSentAt) {
+      return {
+        proceed     : false,
+        reason      : "already_sent",
+        sentAt      : d.customListingSentAt && d.customListingSentAt.toMillis ? d.customListingSentAt.toMillis() : null,
+        sentListingId: d.customListingSentListingId || null
+      };
+    }
+    // Stake our claim. Writing customListingSentAt BEFORE the actual
+    // enqueue is intentional — a crash between this write and the
+    // enqueue would leave the customer un-messaged. That's a recoverable
+    // failure (operator can manually clear customListingSentAt and
+    // retry) and is strictly preferable to its inverse: a duplicate
+    // send to the customer, which is unrecoverable.
+    tx.update(threadRef, {
+      customListingSentAt        : FV.serverTimestamp(),
+      customListingSentListingId : String(listingId),
+      updatedAt                  : FV.serverTimestamp()
+    });
+    return { proceed: true };
+  });
+
+  if (!claim.proceed) {
+    console.log(`[listingCreator] sendListingUrlToCustomer skipped for ${threadId}: ${claim.reason}` +
+      (claim.sentAt ? ` (sent ${new Date(claim.sentAt).toISOString()}, listing ${claim.sentListingId})` : ""));
+    return { skipped: true, reason: claim.reason };
+  }
+
   const text = buildListingDeliveryMessage(family, listingUrl);
 
   const res = await fetch(`${functionsBase()}/.netlify/functions/etsyMailDraftSend`, {
@@ -803,14 +868,35 @@ async function sendListingUrlToCustomer({ threadId, etsyConversationUrl, listing
         listingId    : String(listingId),
         listingUrl
       },
-      force               : true   // overwrite any prior draft on this thread
+      // v4.3.4 — Was force:true, now force:false. The at-most-once
+      // claim above is the authoritative guard against duplicate sends;
+      // we don't need (and don't want) enqueue to overwrite a prior
+      // queued/sent draft. If enqueue refuses because something is
+      // already queued, we surface that as an error — better to fail
+      // loudly than to clobber.
+      force               : false
     })
   });
 
   const responseText = await res.text();
   if (!res.ok) {
+    // Roll back the claim so a manual retry can re-send. We've not
+    // actually delivered to the customer; nothing else has read
+    // customListingSentAt yet (it's been milliseconds), so clearing
+    // is safe.
+    try {
+      await threadRef.update({
+        customListingSentAt        : FV.delete(),
+        customListingSentListingId : FV.delete(),
+        updatedAt                  : FV.serverTimestamp()
+      });
+    } catch (e) {
+      console.warn(`[listingCreator] sentAt rollback failed (non-fatal): ${e.message}`);
+    }
     throw new Error(`enqueue send failed (${res.status}): ${responseText.slice(0, 300)}`);
   }
+
+  return { skipped: false };
 }
 
 // ─── 9. Idempotency markers ──────────────────────────────────────────────

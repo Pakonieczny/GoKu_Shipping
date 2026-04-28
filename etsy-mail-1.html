@@ -3987,7 +3987,61 @@
       }
 
       renderDetail(thread);
+      // v4.3.5 — When the thread is in round 2+, lazy-load the salesHistory
+      // subcollection so the operator sees archived prior-round synopses
+      // (the current-round synopsis renders inline above; archived rounds
+      // appear in the dedicated container that renderDetail emits when
+      // salesRound > 1).
+      if (Number(thread.salesRound || 1) > 1) {
+        loadAndRenderSalesHistory(threadId).catch(() => {});
+      }
       startMessagesPolling(threadId);
+    }
+
+    /** v4.3.5 — Fetch + render the salesHistory subcollection for a
+     *  thread. Called only when the thread has been through round 2+
+     *  re-engagement (i.e., t.salesRound > 1). Renders into the
+     *  emPriorSalesContainer that renderDetail injects into the DOM. */
+    async function loadAndRenderSalesHistory(threadId) {
+      const mount = $("emPriorSalesContainer");
+      if (!mount || mount.dataset.threadId !== threadId) return;
+      try {
+        const res = await api("firestoreProxy", {
+          query: {
+            op: "listSub", coll: THREADS_COLL, id: threadId,
+            sub: "salesHistory", orderBy: "round,desc", limit: 20
+          }
+        });
+        const docs = (res && res.docs) || [];
+        if (!docs.length) {
+          mount.innerHTML = "";   // nothing to show
+          return;
+        }
+        const items = docs.map(d => `
+          <div style="padding:10px 12px; border:1px solid #d0d7de; border-radius:6px; margin-bottom:6px; background:#fafbfc;">
+            <div style="display:flex; align-items:center; gap:8px; margin-bottom:4px;">
+              <span style="font-size:11px; font-weight:600; padding:2px 6px; background:#eaeef2; color:#57606a; border-radius:8px;">Round ${esc(String(d.round || 1))}</span>
+              ${d.salesCompletedAt ? `<span class="em-muted" style="font-size:11px;">${esc(fmtTime(d.salesCompletedAt))}</span>` : ""}
+              ${d.acceptedQuoteUsd ? `<span style="font-size:12px; margin-left:auto;"><strong>$${esc(String(d.acceptedQuoteUsd))}</strong>${d.acceptedQuoteFamily ? ` &nbsp;·&nbsp; ${esc(d.acceptedQuoteFamily)}` : ""}</span>` : ""}
+            </div>
+            ${d.customListingUrl ? `<div style="font-size:11px; margin-bottom:6px;"><a href="${esc(d.customListingUrl)}" target="_blank">${esc(d.customListingUrl)}</a></div>` : ""}
+            ${d.salesSynopsis ? `<div style="white-space:pre-wrap; font-size:12px; color:#57606a; line-height:1.5;">${esc(d.salesSynopsis)}</div>` : ""}
+          </div>
+        `).join("");
+        mount.innerHTML = `
+          <div class="em-card" style="background:#fafbfc; border-left:4px solid #6e7781;">
+            <h4 style="display:flex; align-items:center; gap:6px;">
+              <i class="material-icons" style="font-size:18px; color:#6e7781;">history</i>
+              Previous Sales <span class="em-muted" style="font-weight:400;font-size:11px;">${esc(String(docs.length))} archived</span>
+            </h4>
+            ${items}
+          </div>
+        `;
+      } catch (e) {
+        // Non-fatal — operator can still see the current sale.
+        console.warn("salesHistory load failed:", e.message);
+        mount.innerHTML = "";
+      }
     }
 
     async function fetchMessagesNow(threadId) {
@@ -4219,13 +4273,16 @@
             <div class="em-card" style="background:#f0f9ff; border-left:4px solid #0969da;">
               <h4 style="display:flex; align-items:center; gap:6px;">
                 <i class="material-icons" style="font-size:18px; color:#0969da;">summarize</i>
-                Sale Synopsis
+                Sale Synopsis${t.salesRound && Number(t.salesRound) > 1 ? ` <span style="font-size:11px; font-weight:600; padding:2px 6px; background:#dbeafe; color:#0969da; border-radius:8px;">Round ${esc(String(t.salesRound))}</span>` : ""}
                 ${t.salesCompletedAt ? `<span class="em-muted" style="font-size:11px; font-weight:400; margin-left:auto;">completed ${esc(fmtTime(t.salesCompletedAt))}</span>` : ""}
               </h4>
               ${t.customListingUrl ? `<div style="margin-bottom:10px; font-size:13px;"><strong>Listing:</strong> <a href="${esc(t.customListingUrl)}" target="_blank">${esc(t.customListingUrl)}</a>${t.acceptedQuoteUsd ? ` &nbsp;·&nbsp; <strong>$${esc(String(t.acceptedQuoteUsd))}</strong>` : ""}${t.acceptedQuoteFamily ? ` &nbsp;·&nbsp; ${esc(t.acceptedQuoteFamily)}` : ""}</div>` : ""}
               <div style="white-space:pre-wrap; line-height:1.5; font-size:13px; color:#1f2328;">${esc(t.salesSynopsis)}</div>
             </div>
             ` : renderCustomListingStatusCard(t)}
+            ${t.salesRound && Number(t.salesRound) > 1
+              ? `<div id="emPriorSalesContainer" data-thread-id="${esc(t.id)}" style="margin: 0 0 12px;"></div>`
+              : ""}
             <div class="em-card">
               <h4>Conversation</h4>
               <div class="em-thread" id="emThreadBox">
@@ -6824,6 +6881,30 @@
       // exist in Firestore — we want to show only the canonical one.
       // Match criterion: an outbound message exists with matching trimmed
       // text and is NOT itself optimistic. If yes, hide the optimistic.
+      //
+      // v4.3.4 — Normalize URLs before comparing. Etsy rewrites pasted
+      // URLs in its UI: a system-sent message containing
+      // "https://www.etsy.com/listing/123/foo" comes back through the
+      // scrape as "www.etsy.com/listing/123/foo" (no protocol). Without
+      // normalization, the optimistic ghost and the real scraped
+      // message look like different texts and BOTH render — making it
+      // appear that the customer received a duplicate. They didn't:
+      // confirmed by checking Etsy.com directly. The duplicate is
+      // purely a rendering artifact of the dashboard's dedup not
+      // accounting for Etsy's URL-stripping rewrite. Etsy received
+      // exactly one message; the dashboard just shows two because the
+      // text strings differ by 8 characters of URL prefix.
+      const normalizeForDedup = (s) => {
+        return String(s || "")
+          .trim()
+          .toLowerCase()
+          // Strip http(s):// and optional www. so URL renderings line up.
+          .replace(/https?:\/\/(www\.)?/g, "")
+          .replace(/(^|\s)www\./g, "$1")
+          // Collapse whitespace runs (newline-vs-space rendering jitter).
+          .replace(/\s+/g, " ")
+          .slice(0, 200);
+      };
       const renderableMessages = (() => {
         const optimisticOnes = state.messages.filter(m => m && m.localOptimistic === true);
         if (!optimisticOnes.length) return state.messages;
@@ -6831,15 +6912,14 @@
         const realOutboundTextKeys = new Set();
         for (const m of state.messages) {
           if (m && m.direction === "outbound" && !m.localOptimistic) {
-            const key = String(m.text || "").trim().toLowerCase().slice(0, 200);
+            const key = normalizeForDedup(m.text);
             if (key) realOutboundTextKeys.add(key);
           }
         }
         // Drop optimistic entries whose textKey already has a real counterpart
         return state.messages.filter(m => {
           if (!m || !m.localOptimistic) return true;
-          const key = m.optimisticTextKey
-                   || String(m.text || "").trim().toLowerCase().slice(0, 200);
+          const key = normalizeForDedup(m.optimisticTextKey || m.text);
           return !realOutboundTextKeys.has(key);
         });
       })();
