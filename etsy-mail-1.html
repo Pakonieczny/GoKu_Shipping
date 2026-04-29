@@ -6455,21 +6455,12 @@
       }
       const usableAtts = atts.filter(a => a.status !== "error" && a.status !== "uploading" && a.status !== "loading");
 
-      // Confirm with a quick summary
-      const listingCount = usableAtts.filter(a => a.type === "listing").length;
-      const imageCount   = usableAtts.filter(a => a.type === "image" || a.type === "tracking_image").length;
-      const summary = [
-        text ? "text" : null,
-        imageCount ? imageCount + " image(s)" : null,
-        listingCount ? listingCount + " listing(s)" : null
-      ].filter(Boolean).join(", ");
-
-      if (!confirm(
-        "Queue this reply for sending via Etsy?\n\n" +
-        "Payload: " + summary + "\n\n" +
-        "The browser extension must be enabled and an Etsy tab open at " +
-        "this conversation for the send to execute. You can cancel while queued."
-      )) return;
+      // v4.3.16 — Removed the confirm() dialog that asked "Queue this
+      // reply for sending via Etsy?". Clicking Send via Etsy is already
+      // a deliberate operator action; an extra confirmation adds
+      // friction without protective value. If the operator clicked it
+      // by mistake, the dashboard supports canceling while the draft
+      // is queued (before the extension claims it).
 
       if (btn) { btn.disabled = true; }
       try {
