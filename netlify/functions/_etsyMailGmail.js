@@ -1,44 +1,36 @@
-/*  netlify/functions/_etsyMailGmail.js
+/*  netlify/functions/_etsyMailGmail.js  (v1.1)
  *
- *  Shared Gmail API helpers for the EtsyMail system. Mirrors the shape of
- *  _etsyMailEtsy.js so the codebase stays consistent — same OAuth refresh
- *  pattern, same Firestore-backed token storage, same fetch wrapper style.
+ *  Shared Gmail API helpers for the EtsyMail system.
  *
- *  ═══ WHAT THIS DOES ════════════════════════════════════════════════════
+ *  ═══ v1.1 CHANGE LOG ═══════════════════════════════════════════════════
  *
- *  This module is the only place in the EtsyMail backend that knows how
- *  to talk to Gmail. Other functions consume:
+ *  Added redirect-following for Etsy's SendGrid click-tracking URLs.
+ *  Etsy notification emails (from no-reply@account.etsy.com) wrap the
+ *  "View message" link in `https://ablink.account.etsy.com/uni/ss/c/...`
+ *  trackers — the conversation URL is NOT in the email body anywhere.
+ *  We have to fetch the tracker URL with redirect:manual, read the
+ *  Location header, and extract the conversation id from there.
  *
- *    getValidGmailAccessToken()              → Bearer access token (auto-refresh)
- *    gmailFetch(path, opts)                  → authenticated fetch wrapper
- *    listMessages({ q, pageToken })          → users.messages.list
- *    getMessage(id, { format })              → users.messages.get (full by default)
- *    extractEmailBodyText(message)           → flatten payload to plain+html text
- *    extractEtsyConversationLink(message)    → → { conversationId, conversationUrl } | null
- *    extractHeaderValue(headers, name)       → small lookup helper
+ *  extractEtsyConversationLink() became async because of this.
+ *
+ *  ═══ EXPORTS ═══════════════════════════════════════════════════════════
+ *
+ *    getValidGmailAccessToken()                  → Bearer access token
+ *    gmailFetch(path, opts)                      → authenticated fetch
+ *    listMessages({ q, pageToken })              → users.messages.list
+ *    getMessage(id, { format })                  → users.messages.get
+ *    extractEmailBodyText(message)               → plain+html text blob
+ *    extractEtsyConversationLink(message) (async) → → { id, url } | null
+ *    extractHeaderValue(headers, name)
+ *    summarizeMessage(message)
  *
  *  ═══ ENV VARS ══════════════════════════════════════════════════════════
  *
- *    GMAIL_CLIENT_ID     — OAuth 2.0 client id  (Google Cloud Console)
- *    GMAIL_CLIENT_SECRET — OAuth 2.0 client secret
+ *    GMAIL_CLIENT_ID
+ *    GMAIL_CLIENT_SECRET
  *
- *  Tokens are NOT env vars — they live in Firestore at config/gmailOauth
- *  (2-segment path) and rotate on every refresh, identical pattern to the
- *  Etsy OAuth flow at config/etsyOauth.
- *
- *  ═══ INITIAL SEEDING ═══════════════════════════════════════════════════
- *
- *  Before this module works, an operator must run the OAuth dance once
- *  (e.g. via the Google OAuth Playground or a one-off script) to obtain
- *  a refresh_token, then POST it to etsyMailGmailSeedTokens. After that,
- *  this module auto-refreshes the access_token forever.
- *
- *  ═══ SCOPES ════════════════════════════════════════════════════════════
- *
- *  Read-only is sufficient. The pipeline only LISTS and READS messages —
- *  it never marks them, modifies labels, or sends. Required scope:
- *
- *    https://www.googleapis.com/auth/gmail.readonly
+ *  Tokens at config/gmailOauth (Firestore).
+ *  Required scope: https://mail.google.com/  (or .readonly minimum)
  */
 
 const fetch = require("node-fetch");
@@ -51,15 +43,11 @@ const GMAIL_CLIENT_ID     = process.env.GMAIL_CLIENT_ID;
 const GMAIL_CLIENT_SECRET = process.env.GMAIL_CLIENT_SECRET;
 
 const OAUTH_DOC_PATH         = "config/gmailOauth";
-const TOKEN_REFRESH_BUFFER_MS = 2 * 60 * 1000;          // refresh if <2min to expiry
+const TOKEN_REFRESH_BUFFER_MS = 2 * 60 * 1000;
 const GMAIL_API_BASE          = "https://gmail.googleapis.com/gmail/v1/users/me";
 const GOOGLE_TOKEN_ENDPOINT   = "https://oauth2.googleapis.com/token";
 
-// ─── OAuth token management ──────────────────────────────────────────────
-// Pattern matches _etsyMailEtsy.js exactly: read current token, refresh if
-// stale, persist the new pair (Google does NOT rotate refresh_token on
-// refresh, so the refresh_token field on the doc generally never changes
-// after seeding — but we still write it in case Google ever does rotate).
+// ─── OAuth ─────────────────────────────────────────────────────────────────
 
 async function refreshGmailToken(oldRefreshToken) {
   if (!GMAIL_CLIENT_ID)     throw new Error("GMAIL_CLIENT_ID env var missing");
@@ -78,21 +66,15 @@ async function refreshGmailToken(oldRefreshToken) {
 
   if (!res.ok) {
     const body = await res.text();
-    // 400 invalid_grant on Google's side typically means the refresh_token
-    // was revoked (user removed app access in their Google account, or
-    // password reset, or 6+ months of inactivity). Re-seed via
-    // etsyMailGmailSeedTokens to recover.
     throw new Error(`Gmail token refresh failed: ${res.status} ${body}`);
   }
 
   const data = await res.json();
-  // Google leaves a small safety buffer off expires_in so the access_token
-  // doesn't expire mid-request.
   const expires_at = Date.now() + Math.max(0, (data.expires_in - 120)) * 1000;
 
   await db.doc(OAUTH_DOC_PATH).set({
     access_token : data.access_token,
-    refresh_token: data.refresh_token || oldRefreshToken,   // Google rarely rotates this
+    refresh_token: data.refresh_token || oldRefreshToken,
     expires_at,
     scope        : data.scope || null,
     token_type   : data.token_type || "Bearer",
@@ -117,10 +99,7 @@ async function getValidGmailAccessToken() {
   return tok.access_token;
 }
 
-// ─── Generic Gmail fetch ─────────────────────────────────────────────────
-// Wraps the access-token plumbing so call sites stay clean. Pass relative
-// paths starting with "/" (e.g. "/messages?q=...") and the base URL is
-// prepended.
+// ─── Generic Gmail fetch ───────────────────────────────────────────────────
 
 async function gmailFetch(path, opts = {}) {
   const token = await getValidGmailAccessToken();
@@ -132,8 +111,6 @@ async function gmailFetch(path, opts = {}) {
     ...(opts.headers || {})
   };
 
-  // 30s budget per request — Gmail can be slow under load and we don't
-  // want a hung response to burn the whole 15-min background invocation.
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 30000);
 
@@ -147,8 +124,6 @@ async function gmailFetch(path, opts = {}) {
   }
   clearTimeout(timeoutId);
 
-  // 401 means the access token went stale between getValidGmailAccessToken()
-  // and the request landing — rare but possible. Force a refresh and retry once.
   if (res.status === 401 && !opts._retried) {
     const stale = await db.doc(OAUTH_DOC_PATH).get();
     if (stale.exists && stale.data().refresh_token) {
@@ -164,16 +139,8 @@ async function gmailFetch(path, opts = {}) {
   return await res.json();
 }
 
-// ─── Domain helpers ──────────────────────────────────────────────────────
+// ─── Gmail message ops ─────────────────────────────────────────────────────
 
-/**
- * List messages matching a Gmail search query. Same query syntax the user
- * would type in the Gmail search box: `from:notify@etsy.com newer_than:1d`.
- * Returns the raw API response: { messages, nextPageToken, resultSizeEstimate }.
- *
- * IMPORTANT: This response only contains { id, threadId } stubs per message.
- * Call getMessage(id) to fetch each one's headers and body.
- */
 async function listMessages({ q = "", pageToken = null, maxResults = 100 } = {}) {
   const params = new URLSearchParams();
   if (q) params.set("q", q);
@@ -182,19 +149,10 @@ async function listMessages({ q = "", pageToken = null, maxResults = 100 } = {})
   return await gmailFetch(`/messages?${params.toString()}`);
 }
 
-/**
- * Fetch a single message by id with full headers + payload. format=full
- * gives us the parsed MIME tree which is what we need for body extraction.
- */
 async function getMessage(id, { format = "full" } = {}) {
   return await gmailFetch(`/messages/${encodeURIComponent(id)}?format=${format}`);
 }
 
-/**
- * Headers in a Gmail message payload come as an array of {name, value}
- * objects. Lookup by name is case-insensitive (Gmail preserves casing
- * from the wire but RFC 5322 says headers are case-insensitive).
- */
 function extractHeaderValue(headers = [], name = "") {
   if (!Array.isArray(headers)) return null;
   const lower = name.toLowerCase();
@@ -204,15 +162,9 @@ function extractHeaderValue(headers = [], name = "") {
   return null;
 }
 
-/**
- * Decode Gmail's base64url body encoding. Gmail uses URL-safe base64
- * (- and _ instead of + and /) without padding. Node's Buffer accepts
- * the standard alphabet, so we have to swap chars first.
- */
 function decodeBase64Url(s) {
   if (!s) return "";
   const b64 = String(s).replace(/-/g, "+").replace(/_/g, "/");
-  // Pad to 4-char alignment
   const padded = b64 + "=".repeat((4 - (b64.length % 4)) % 4);
   try {
     return Buffer.from(padded, "base64").toString("utf-8");
@@ -221,16 +173,6 @@ function decodeBase64Url(s) {
   }
 }
 
-/**
- * Walk a message payload's MIME tree and return a single concatenated
- * text blob containing every text/plain and text/html body part. Order:
- * plain first, then html, separated by a marker — keeps regex-based link
- * extraction simple while not losing either rendering.
- *
- * Gmail's payload schema:
- *   payload = { mimeType, headers, body: { data?, attachmentId?, size }, parts? }
- *   parts is recursive (multipart/alternative, multipart/related, etc).
- */
 function extractEmailBodyText(message) {
   const out = [];
   function walk(part) {
@@ -247,22 +189,33 @@ function extractEmailBodyText(message) {
   return out.join("\n\n--BOUNDARY--\n\n");
 }
 
-// ─── Etsy conversation link extraction ───────────────────────────────────
+// ─── Etsy conversation link extraction ─────────────────────────────────────
 //
-// Etsy's notification emails contain a CTA link to the conversation. The
-// link comes in two forms in the wild:
+// Etsy emails come in two forms in the wild:
 //
-//   1. Direct:    https://www.etsy.com/your/conversations/<id>
-//                 https://www.etsy.com/messages/<id>
-//                 https://www.etsy.com/your/messages/(buyer|thread)/<id>
+//   FORM A (legacy): the conversation URL appears directly in the email
+//     body as `etsy.com/your/conversations/<id>` (or URL-encoded). Easy.
 //
-//   2. Tracked:   https://t.etsy.com/redirect?...&url=https%3A%2F%2Fwww.etsy.com%2Fyour%2Fconversations%2F<id>...
-//                 (URL-encoded inside a redirect parameter)
+//   FORM B (current, observed Apr 2026): the body contains ONLY SendGrid
+//     click-tracking URLs of shape `https://ablink.account.etsy.com/...`.
+//     Each redirects (302) to the real destination only when followed.
+//     The conversation URL is NOT in the body — we have to follow at
+//     least one tracker to find it.
 //
-// We URL-decode the entire body once, then run the SAME regex patterns
-// the Chrome extension's content-thread-scraper.js uses in its
-// extractConversationId() — keeping the match surface identical to the
-// scraper means any link the scraper can land on, we can detect.
+// Strategy:
+//   1. Fast path: scan the body for direct conversation URLs. If found
+//      (FORM A), return immediately — no network needed.
+//   2. Tracker path (FORM B): collect every distinct ablink URL in the
+//      body. Filter to ones that look like message-link candidates
+//      (the `/uni/ss/c/` flavor, which Etsy uses for in-app deep links;
+//      "/ss/c/" without "/uni/" is reserved for marketing footer/nav
+//      links — they don't redirect to conversations). Follow each one
+//      with redirect:manual until the Location header reveals a
+//      conversation URL.
+//   3. Cap follows at MAX_TRACKER_FOLLOWS so a malformed email can't
+//      burn the function budget.
+//
+// Returns: { conversationId, conversationUrl } or null
 
 const CONV_ID_PATTERNS = [
   /\/(?:your\/)?conversations\/(\d+)/,
@@ -270,44 +223,164 @@ const CONV_ID_PATTERNS = [
   /\/messages\/(\d+)/
 ];
 
-function extractEtsyConversationLink(message) {
-  const body = extractEmailBodyText(message);
-  if (!body) return null;
+const ETSY_TRACKER_HOST = "ablink.account.etsy.com";
+const MAX_TRACKER_FOLLOWS  = 4;     // most "View message" emails have 1-3 candidates
+const MAX_REDIRECT_HOPS    = 5;     // tracker → tracker → … → etsy.com
+const TRACKER_FETCH_TIMEOUT_MS = 8000;
 
-  // Decode percent-encoding once. Etsy's t.etsy.com tracker URL-encodes
-  // the destination URL inside a query param, so the conversation URL
-  // comes out as "https%3A%2F%2Fwww.etsy.com%2Fyour%2Fconversations%2F123".
-  // decodeURIComponent on the whole body fails on stray % chars; do a
-  // safe pass that decodes valid escapes and leaves invalid ones alone.
-  const decoded = body.replace(/%[0-9A-Fa-f]{2}/g, (m) => {
+function decodePercentSafe(s) {
+  // Decode %XX escapes only (not full URI). Leave invalid escapes alone.
+  return s.replace(/%[0-9A-Fa-f]{2}/g, (m) => {
     try { return decodeURIComponent(m); } catch { return m; }
   });
+}
 
+function findConversationIdInString(s) {
+  if (!s) return null;
+  const decoded = decodePercentSafe(s);
   for (const re of CONV_ID_PATTERNS) {
     const m = decoded.match(re);
     if (m && m[1]) {
       const id = m[1];
-      // Sanity check: Etsy conversation IDs are typically 8–12 digits.
-      // Reject obviously bogus matches (e.g., a message-id header that
-      // happened to look like /messages/123).
-      if (id.length < 5 || id.length > 15) continue;
-      return {
-        conversationId : id,
-        // Canonicalize on /your/conversations/<id> — that's the URL the
-        // scraper most reliably handles, and it matches the URL operators
-        // see in their browser tab when opening the conversation manually.
-        conversationUrl: `https://www.etsy.com/your/conversations/${id}`
-      };
+      if (id.length >= 5 && id.length <= 15) return id;
     }
   }
   return null;
 }
 
 /**
- * Convenience: pull a small set of header fields useful for thread linking.
- * Returns { from, to, subject, messageIdHeader, dateHeader, internalDateMs }
- * — internalDateMs is the Gmail-assigned receive time (ms epoch).
+ * Fetch a single URL with manual redirect handling; return the final
+ * resolved URL (after following all 3xx hops up to MAX_REDIRECT_HOPS),
+ * or null on failure / hop limit.
+ *
+ * IMPLEMENTATION NOTE: We use GET (not HEAD) with a real-looking
+ * User-Agent. SendGrid's click trackers (ablink.*) return 403 on HEAD
+ * requests — they only honor GET with a browser-like UA. We use
+ * redirect:"manual" so we read the Location header without following
+ * the body, keeping each hop cheap (response body never read or buffered
+ * past the headers).
  */
+async function followToFinalUrl(startUrl, hopBudget = MAX_REDIRECT_HOPS) {
+  let current = startUrl;
+  for (let hop = 0; hop < hopBudget; hop++) {
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), TRACKER_FETCH_TIMEOUT_MS);
+    let res;
+    try {
+      res = await fetch(current, {
+        method   : "GET",
+        redirect : "manual",
+        signal   : controller.signal,
+        headers  : {
+          // Browser-like UA: SendGrid's tracker rejects bot-looking UAs
+          // with 403. The conversation URL never returns sensitive data
+          // (the ID itself isn't a credential — landing on it without
+          // an Etsy session just shows a login page), so spoofing UA
+          // here doesn't expose anything.
+          "User-Agent"     : "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+          "Accept"         : "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "Accept-Language": "en-US,en;q=0.9"
+        }
+      });
+    } catch (e) {
+      clearTimeout(t);
+      // Network error or timeout — give up on this URL
+      return null;
+    }
+    clearTimeout(t);
+
+    if (res.status >= 300 && res.status < 400) {
+      const loc = res.headers.get("location");
+      if (!loc) return null;
+      // Resolve relative redirects against the current URL
+      try {
+        current = new URL(loc, current).toString();
+      } catch {
+        return null;
+      }
+      continue;
+    }
+
+    // 2xx (terminal) — current is the final URL. We never read the body;
+    // discard the response so the connection can be reused.
+    if (res.status >= 200 && res.status < 300) {
+      try { res.body && res.body.resume && res.body.resume(); } catch {}
+      return current;
+    }
+
+    // 4xx/5xx terminal — give up
+    return null;
+  }
+  // Hop budget exhausted
+  return null;
+}
+
+async function extractEtsyConversationLink(message) {
+  const body = extractEmailBodyText(message);
+  if (!body) return null;
+
+  // ── Fast path: try to find a direct conversation URL in the body ──
+  const directId = findConversationIdInString(body);
+  if (directId) {
+    return {
+      conversationId : directId,
+      conversationUrl: `https://www.etsy.com/your/conversations/${directId}`
+    };
+  }
+
+  // ── Tracker path: collect ablink URLs and follow them ──
+  // Match http/https URLs containing ablink.account.etsy.com. The URL
+  // continues until whitespace, ), >, or end-of-string. Quoted-printable
+  // encoded emails sprinkle "=\n" soft-line-breaks into URLs — strip
+  // those before extraction.
+  const flat = body.replace(/=\r?\n/g, "");
+  const trackerRegex = /https?:\/\/ablink\.account\.etsy\.com\/[^\s)<"']+/gi;
+
+  const all = flat.match(trackerRegex) || [];
+
+  // Deduplicate. Many emails repeat the message-link tracker (button +
+  // wrapping <a> around the avatar both point to the same destination).
+  const seen = new Set();
+  const candidates = [];
+  for (const u of all) {
+    // Trim trailing punctuation that often follows URLs in plain-text
+    // dumps: closing parens, periods, commas, question marks.
+    const cleaned = u.replace(/[).,!?;:'"]+$/, "");
+    if (seen.has(cleaned)) continue;
+    seen.add(cleaned);
+    candidates.push(cleaned);
+  }
+
+  if (!candidates.length) return null;
+
+  // Etsy uses TWO tracker URL flavors in these emails:
+  //   /uni/ss/c/   → in-app deep links (the message link uses this; lands
+  //                  on /your/conversations/<id> after redirects)
+  //   /ss/c/       → marketing/footer links (Home & Living, social, app
+  //                  store badges, unsubscribe, etc.) — NOT conversations
+  //
+  // Prioritize /uni/ss/c/ first to minimize wasted HTTP requests. If
+  // none of those resolve to a conversation (Etsy might shuffle this in
+  // the future), fall back to trying /ss/c/ links too.
+  const uniLinks  = candidates.filter(u => u.includes("/uni/ss/c/"));
+  const ssLinks   = candidates.filter(u => !u.includes("/uni/ss/c/"));
+  const ordered   = [...uniLinks, ...ssLinks].slice(0, MAX_TRACKER_FOLLOWS);
+
+  for (const trackerUrl of ordered) {
+    const finalUrl = await followToFinalUrl(trackerUrl);
+    if (!finalUrl) continue;
+    const id = findConversationIdInString(finalUrl);
+    if (id) {
+      return {
+        conversationId : id,
+        conversationUrl: `https://www.etsy.com/your/conversations/${id}`
+      };
+    }
+  }
+
+  return null;
+}
+
 function summarizeMessage(message) {
   const headers = (message && message.payload && message.payload.headers) || [];
   const internalDateMs = message && message.internalDate
@@ -338,10 +411,13 @@ module.exports = {
   // Parsing helpers
   extractHeaderValue,
   extractEmailBodyText,
-  extractEtsyConversationLink,
+  extractEtsyConversationLink,   // now async
   decodeBase64Url,
   summarizeMessage,
-  // Constants exposed for tests / other modules
+  // Tracker resolution (exposed for tests)
+  followToFinalUrl,
+  findConversationIdInString,
+  // Constants
   OAUTH_DOC_PATH,
   GMAIL_API_BASE
 };

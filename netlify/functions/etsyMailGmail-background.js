@@ -1,4 +1,4 @@
-/*  netlify/functions/etsyMailGmail-background.js
+/*  netlify/functions/etsyMailGmail-background.js  (v1.1)
  *
  *  M6 Gmail-watcher — polls a Gmail inbox for Etsy notification emails,
  *  extracts the embedded Etsy conversation link, and enqueues a `scrape`
@@ -6,6 +6,19 @@
  *  on its next poll, opens the Etsy tab, scrapes the conversation, and
  *  POSTs the snapshot — closing the loop with ZERO changes to the
  *  scraper, the snapshot ingest, or the extension itself.
+ *
+ *  ═══ v1.1 CHANGE LOG ══════════════════════════════════════════════════
+ *
+ *  Awaits extractEtsyConversationLink() — it became async in
+ *  _etsyMailGmail v1.1 to support following SendGrid click-tracking
+ *  redirects (ablink.account.etsy.com → www.etsy.com/your/conversations/<id>).
+ *
+ *  Etsy started wrapping their "View message" CTA in tracker URLs
+ *  exclusively (observed Apr 2026, sender now no-reply@account.etsy.com),
+ *  so the prior regex-only extractor returned null on every email.
+ *  Symptom was "scanned N · enqueued 0" with no obvious cause; v1.1
+ *  resolves it by following up to 4 tracker URLs per email until one
+ *  redirects to a conversation page.
  *
  *  ═══ THE LOOP ═════════════════════════════════════════════════════════
  *
@@ -428,8 +441,13 @@ async function runIncremental({ invocationStartMs, mode, query, windowDays }) {
         newestInternalDateMs = summary.internalDateMs;
       }
 
-      // EXTRACT — find the Etsy conversation link in the body
-      const link = extractEtsyConversationLink(full);
+      // EXTRACT — find the Etsy conversation link in the body.
+      // v1.1: extractEtsyConversationLink is now async — it follows
+      // SendGrid click-tracking redirects (ablink.account.etsy.com) up
+      // to MAX_TRACKER_FOLLOWS times to find the underlying conversation
+      // URL. Each tracker follow can take up to 8s; bound the total
+      // per-message extraction overhead at ~32s worst case (rare).
+      const link = await extractEtsyConversationLink(full);
       if (!link || !link.conversationId) {
         skippedNoLink++;
         // Audit each miss so operators can spot if Etsy changes their
