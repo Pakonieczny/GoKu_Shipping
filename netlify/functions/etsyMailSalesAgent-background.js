@@ -1245,12 +1245,19 @@ exports.handler = async (event) => {
     // status="sales_completed". salesCompletedAt is written ONCE by the
     // worker and never touched by other code paths — a reliable
     // "ever completed?" signal.
+    // v4.3.15 — Hoist thread data so it's available for contextSummary
+    // below. Without this hoist, the agent's contextSummary couldn't
+    // surface listing-pipeline fields (customListingStatus,
+    // customerAccepted, customListingId etc.) and the addendum's
+    // edge-case guidance about "where is my listing?" would reference
+    // fields the agent can't see.
+    let threadDocData = null;
     try {
       const tSnap = await db.collection(THREADS_COLL).doc(threadId).get();
       if (tSnap.exists) {
-        const tData = tSnap.data() || {};
-        const ts = tData.status;
-        const everCompleted = !!tData.salesCompletedAt;
+        threadDocData = tSnap.data() || {};
+        const ts = threadDocData.status;
+        const everCompleted = !!threadDocData.salesCompletedAt;
         if (TERMINAL_THREAD_STATUSES.has(ts) || everCompleted) {
           console.log(`[salesAgent] thread ${threadId} is terminal (status=${ts}, everCompleted=${everCompleted}), skipping`);
           return { statusCode: 200, headers: CORS,
@@ -1372,7 +1379,33 @@ exports.handler = async (event) => {
         orderCount        : (customerHistory && customerHistory.orderCount) || 0,
         lifetimeValueUsd  : (customerHistory && customerHistory.lifetimeValueUsd) || 0
       },
-      intentClassification, intentConfidence
+      intentClassification, intentConfidence,
+      // v4.3.15 — Listing-pipeline state visible to the agent. Without
+      // these, the addendum's edge-case guidance ("check
+      // thread.customListingStatus") referenced fields the agent
+      // couldn't see — the agent had no way to know whether a listing
+      // had been created, was in progress, or had never been attempted.
+      // When a customer asks "where is my listing?" the agent needs
+      // these values to decide whether to (a) fire the pipeline now
+      // because nothing is in flight, (b) reassure the customer
+      // because creation is already running, or (c) escalate because
+      // something is genuinely broken.
+      thread: (() => {
+        const t = threadDocData || {};
+        return {
+          customerAccepted        : t.customerAccepted === true,
+          customerAcceptedAt      : (t.customerAcceptedAt && t.customerAcceptedAt.toMillis)
+                                      ? t.customerAcceptedAt.toMillis() : null,
+          customListingStatus     : t.customListingStatus || null,
+          customListingId         : t.customListingId || null,
+          customListingUrl        : t.customListingUrl || null,
+          customListingSentAt     : (t.customListingSentAt && t.customListingSentAt.toMillis)
+                                      ? t.customListingSentAt.toMillis() : null,
+          salesCompletedAt        : (t.salesCompletedAt && t.salesCompletedAt.toMillis)
+                                      ? t.salesCompletedAt.toMillis() : null,
+          salesRound              : Number(t.salesRound || 1)
+        };
+      })()
     };
     const initialMessages = buildInitialMessages({
       contextSummary, latestInboundText, referenceAttachments
@@ -1455,12 +1488,69 @@ The customer will SEE the line sheet image rendered in their Etsy conversation. 
 If the customer wants pricing/options but no line-sheet collateral exists for their family in context.summary.recommendedCollateral, do NOT default to reciting prices. Instead, set ready_for_human_approval: true and produce a needs_review_synopsis explaining that the operator should send the line sheet manually. This keeps the experience consistent — customer sees an image OR a human-attended message, never a wall of pricing text.
 `.trim();
 
+    // v4.3.15 — A second addendum: structural acceptance signal must
+    // match reply text. The single most damaging failure mode in the
+    // agent is when its REPLY TEXT verbally accepts a quote ("Got it,
+    // we'll send the custom listing your way") but the JSON output's
+    // `customer_accepted` field stays false. The downstream listing-
+    // creator pipeline only fires when customer_accepted=true, so the
+    // customer reads a promise that never gets kept and asks "where
+    // is my listing?" minutes later.
+    //
+    // Joanna's banana-charm round 2 hit this: across THREE consecutive
+    // AI turns the model said "we'll send the custom listing your way"
+    // with customer_accepted=false. The thread doc has no
+    // customListingStatus, no customerAccepted, no customListingId —
+    // direct-fire never claimed because the structural flag was never
+    // flipped. Customer is stuck waiting indefinitely.
+    //
+    // The fix needs to be a hard, structural-level rule (not just
+    // "consider setting it"), because the model is reliably emitting
+    // friendly acceptance language without the structured signal. We
+    // bind the two together: if your reply commits to creating /
+    // sending a custom listing, customer_accepted MUST be true.
+    const acceptanceSyncAddendum = `
+
+# CUSTOMER_ACCEPTED STRUCTURAL RULE (system addendum)
+
+When you write reply text that commits to sending a custom listing — phrases like:
+- "we'll send the custom listing your way"
+- "sending you the listing now"
+- "I'll send the listing through"
+- "got it, we'll get the listing over to you"
+- "creating the listing for you"
+- ANY language that promises a listing is being created or sent
+
+— you MUST set \`"customer_accepted": true\` in your JSON output. These are not separate concerns. The structured \`customer_accepted\` field is what TRIGGERS the listing creation pipeline. If you say "we'll send the listing" without setting \`customer_accepted: true\`, the listing pipeline never runs and the customer waits indefinitely. They will then ask "where is my listing?" — at which point the system will be in a stuck state requiring operator intervention.
+
+When to set \`customer_accepted: true\`:
+- Customer has clearly accepted a specific quote (says "yes", "sounds good", "let's do it", "ok let's go", "great", "no rush option", "send the listing", "send the link", etc.) AFTER you've quoted them with all spec codes resolved.
+- A complete spec exists in lastResolverResult (family + line items + total).
+- You're about to commit to sending the listing in your reply text.
+
+When NOT to set \`customer_accepted: true\`:
+- Customer is still asking questions or comparing options.
+- Customer accepted but specs are incomplete (no resolved quote, codes unclear).
+- Customer asked about something else (turnaround, shipping, etc.) without confirming the order.
+- You're declining or asking for clarification.
+
+Edge case — customer asks "where is my listing?" or similar follow-up after a previous unkept promise:
+- This means a previous turn promised to send the listing but customer_accepted was not set, OR the listing pipeline failed.
+- Check thread.customListingStatus in your context. If missing or null AND the spec is locked AND the price is accepted, set \`customer_accepted: true\` NOW so the pipeline fires this turn. Reply text should reassure the customer the listing is coming through and avoid additional language about checking with the team.
+- If thread.customListingStatus exists and shows "creating" or similar in-flight state, don't set customer_accepted again — just write a brief reassurance ("the listing is generating now, you'll have it in a minute"). The pipeline is already running.
+- Only escalate to ready_for_human_approval if you genuinely cannot determine what to do — for example if there's a real payment / refund / cancellation question entangled with the listing-status question.
+
+This rule is non-negotiable. Reply text and customer_accepted must agree.
+`.trim();
+
     // Concatenate. Keep a clear separator so the addendum is visible
     // in any prompt-debugging output without being mistaken for
     // operator-edited content.
     const fullSystemPrompt = String(promptLoad.prompt || "").trim()
       + "\n\n---\n\n"
-      + lineSheetEagernessAddendum;
+      + lineSheetEagernessAddendum
+      + "\n\n---\n\n"
+      + acceptanceSyncAddendum;
 
     let loopResult;
     try {
@@ -1523,6 +1613,74 @@ If the customer wants pricing/options but no line-sheet collateral exists for th
     // preserving the AI's structured quote fields.
     if (typeof parsed.reply === "string") {
       parsed.reply = applySalesReplyGuard(parsed.reply, priorOutboundTexts);
+    }
+
+    // v4.3.15 — Acceptance-signal consistency backstop.
+    //
+    // The prompt addendum tells the agent that reply text and
+    // customer_accepted must agree, but model adherence to soft rules
+    // is imperfect. Joanna's banana-charm round 2 hit this exact case
+    // THREE turns in a row: the model wrote "we'll send the custom
+    // listing your way" while emitting customer_accepted=false. The
+    // listing pipeline never fired because direct-fire reads the
+    // structured field, not the prose.
+    //
+    // We don't auto-flip customer_accepted=true (that would risk false
+    // positives — the model might use commitment-shaped language in
+    // a hypothetical or recap context). Instead we flag the
+    // inconsistency: log the audit event, route the turn to operator
+    // review with a clear synopsis. The operator sees the conflict,
+    // can either edit the draft to fire the listing manually, or fix
+    // the conversation themselves. Better than silently shipping a
+    // broken promise.
+    //
+    // The detection is deliberately strict — looks for first-person
+    // sender-side commitments ("we'll send", "I'll send", "sending
+    // your way") in close proximity to "listing" or "link". Generic
+    // mentions of "the listing" in a question or recap context don't
+    // trigger.
+    if (typeof parsed.reply === "string" && parsed.customer_accepted !== true) {
+      const replyLower = parsed.reply.toLowerCase();
+      const commitmentPatterns = [
+        /\b(we'll|we will|i'll|i will)\s+send(?:ing)?\b[^.?!]{0,50}\b(listing|link)\b/,
+        /\b(sending|sent)\s+(?:you\s+)?(?:the\s+)?(?:custom\s+)?(?:listing|link)\b[^.?!]{0,50}\b(your way|now|through|over|across)\b/,
+        /\bget(?:ting)?\s+the\s+(?:custom\s+)?listing\s+(?:over|to)\s+you\b/,
+        /\b(creating|generating|making)\s+the\s+(?:custom\s+)?listing\s+(?:for you|now)\b/
+      ];
+      const hit = commitmentPatterns.find(rx => rx.test(replyLower));
+      if (hit) {
+        console.warn(
+          `[salesAgent] Acceptance-signal inconsistency for ${threadId}: ` +
+          `reply text commits to sending a listing but customer_accepted=false. ` +
+          `Pattern matched: ${hit}. Routing to operator review.`
+        );
+        await writeAudit({
+          threadId, eventType: "sales_agent_acceptance_inconsistency",
+          payload: {
+            replyExcerpt: parsed.reply.slice(0, 250),
+            patternMatched: String(hit),
+            originalCustomerAccepted: !!parsed.customer_accepted
+          },
+          outcome: "blocked",
+          ruleViolations: ["acceptance_signal_inconsistency"]
+        });
+        // Force human review for this turn. The operator sees the draft
+        // with a clear synopsis explaining the inconsistency and can
+        // decide whether to (a) tick customer_accepted and re-fire the
+        // pipeline, or (b) rewrite the reply to remove the commitment.
+        parsed.ready_for_human_approval = true;
+        parsed.needs_review_synopsis =
+          `ACCEPTANCE-SIGNAL INCONSISTENCY\n\n` +
+          `The AI's reply commits to sending a custom listing, but the structured ` +
+          `acceptance signal was not set, so the listing pipeline did NOT fire. ` +
+          `Without operator action the customer will wait indefinitely.\n\n` +
+          `AI's reply (excerpt): "${parsed.reply.slice(0, 200)}${parsed.reply.length > 200 ? "..." : ""}"\n\n` +
+          `Operator action: review the conversation. If the customer has indeed accepted ` +
+          `a finalized quote, manually trigger listing creation (set customerAccepted=true ` +
+          `and customListingStatus="queued" on the thread) OR send the listing through ` +
+          `the standard manual flow. If the customer has not yet accepted, edit the ` +
+          `reply to remove the commitment language before sending.`;
+      }
     }
 
     // ── Validate quote if present (server-side gate) ──
