@@ -1,8 +1,24 @@
-/*  netlify/functions/_etsyMailGmail.js  (v1.1)
+/*  netlify/functions/_etsyMailGmail.js  (v1.2)
  *
  *  Shared Gmail API helpers for the EtsyMail system.
  *
- *  ═══ v1.1 CHANGE LOG ═══════════════════════════════════════════════════
+ *  ═══ v1.2 CHANGE LOG ═══════════════════════════════════════════════════
+ *
+ *  DIAGNOSTIC: per-tracker logging added to extractEtsyConversationLink
+ *  and followToFinalUrl. Previously the extractor silently returned null
+ *  on any failure path, making it impossible to tell whether SendGrid
+ *  was 403'ing, redirects were dead-ending at non-conversation URLs,
+ *  or no candidates were found in the body. v1.2 logs:
+ *    [gmail-extract msgId=…] candidates: <n> uni=<n> ss=<n>
+ *    [gmail-extract msgId=…] try <i>/<n>: <truncated url>
+ *    [gmail-tracker hop=<n>] status=<code> location=<truncated>
+ *    [gmail-extract msgId=…] resolved → conv=<id>     (success)
+ *    [gmail-extract msgId=…] no candidate resolved    (failure)
+ *
+ *  Once the live failure mode is identified from logs, v1.3 will switch
+ *  back to silent operation (these logs are noisy at scale).
+ *
+ *  ═══ v1.1 CHANGE LOG (retained) ════════════════════════════════════════
  *
  *  Added redirect-following for Etsy's SendGrid click-tracking URLs.
  *  Etsy notification emails (from no-reply@account.etsy.com) wrap the
@@ -260,7 +276,7 @@ function findConversationIdInString(s) {
  * the body, keeping each hop cheap (response body never read or buffered
  * past the headers).
  */
-async function followToFinalUrl(startUrl, hopBudget = MAX_REDIRECT_HOPS) {
+async function followToFinalUrl(startUrl, hopBudget = MAX_REDIRECT_HOPS, logTag = "") {
   let current = startUrl;
   for (let hop = 0; hop < hopBudget; hop++) {
     const controller = new AbortController();
@@ -284,44 +300,55 @@ async function followToFinalUrl(startUrl, hopBudget = MAX_REDIRECT_HOPS) {
       });
     } catch (e) {
       clearTimeout(t);
-      // Network error or timeout — give up on this URL
+      console.log(`[gmail-tracker ${logTag} hop=${hop}] fetch error: ${e.message}`);
       return null;
     }
     clearTimeout(t);
 
     if (res.status >= 300 && res.status < 400) {
       const loc = res.headers.get("location");
+      console.log(`[gmail-tracker ${logTag} hop=${hop}] status=${res.status} → ${loc ? loc.slice(0, 120) : "(no Location)"}`);
       if (!loc) return null;
-      // Resolve relative redirects against the current URL
       try {
         current = new URL(loc, current).toString();
-      } catch {
+      } catch (urlErr) {
+        console.log(`[gmail-tracker ${logTag} hop=${hop}] bad redirect URL: ${urlErr.message}`);
         return null;
       }
       continue;
     }
 
-    // 2xx (terminal) — current is the final URL. We never read the body;
-    // discard the response so the connection can be reused.
     if (res.status >= 200 && res.status < 300) {
+      console.log(`[gmail-tracker ${logTag} hop=${hop}] terminal status=${res.status}, final=${current.slice(0, 120)}`);
       try { res.body && res.body.resume && res.body.resume(); } catch {}
       return current;
     }
 
-    // 4xx/5xx terminal — give up
+    // 4xx/5xx terminal — log status AND a peek at body so we can see
+    // SendGrid's denial reasons (e.g. cookie wall, fraud check page)
+    let bodyPeek = "";
+    try { bodyPeek = (await res.text()).slice(0, 200); } catch {}
+    console.log(`[gmail-tracker ${logTag} hop=${hop}] terminal status=${res.status} body="${bodyPeek.replace(/\s+/g, " ")}"`);
     return null;
   }
-  // Hop budget exhausted
+  console.log(`[gmail-tracker ${logTag}] hop budget exhausted`);
   return null;
 }
 
 async function extractEtsyConversationLink(message) {
+  const msgId = message && message.id ? String(message.id) : "?";
+  const logTag = `msgId=${msgId}`;
+
   const body = extractEmailBodyText(message);
-  if (!body) return null;
+  if (!body) {
+    console.log(`[gmail-extract ${logTag}] empty body`);
+    return null;
+  }
 
   // ── Fast path: try to find a direct conversation URL in the body ──
   const directId = findConversationIdInString(body);
   if (directId) {
+    console.log(`[gmail-extract ${logTag}] direct match → conv=${directId}`);
     return {
       conversationId : directId,
       conversationUrl: `https://www.etsy.com/your/conversations/${directId}`
@@ -329,55 +356,52 @@ async function extractEtsyConversationLink(message) {
   }
 
   // ── Tracker path: collect ablink URLs and follow them ──
-  // Match http/https URLs containing ablink.account.etsy.com. The URL
-  // continues until whitespace, ), >, or end-of-string. Quoted-printable
-  // encoded emails sprinkle "=\n" soft-line-breaks into URLs — strip
-  // those before extraction.
   const flat = body.replace(/=\r?\n/g, "");
   const trackerRegex = /https?:\/\/ablink\.account\.etsy\.com\/[^\s)<"']+/gi;
 
   const all = flat.match(trackerRegex) || [];
 
-  // Deduplicate. Many emails repeat the message-link tracker (button +
-  // wrapping <a> around the avatar both point to the same destination).
   const seen = new Set();
   const candidates = [];
   for (const u of all) {
-    // Trim trailing punctuation that often follows URLs in plain-text
-    // dumps: closing parens, periods, commas, question marks.
     const cleaned = u.replace(/[).,!?;:'"]+$/, "");
     if (seen.has(cleaned)) continue;
     seen.add(cleaned);
     candidates.push(cleaned);
   }
 
-  if (!candidates.length) return null;
+  if (!candidates.length) {
+    console.log(`[gmail-extract ${logTag}] no tracker URLs in body, body length=${body.length}`);
+    return null;
+  }
 
-  // Etsy uses TWO tracker URL flavors in these emails:
-  //   /uni/ss/c/   → in-app deep links (the message link uses this; lands
-  //                  on /your/conversations/<id> after redirects)
-  //   /ss/c/       → marketing/footer links (Home & Living, social, app
-  //                  store badges, unsubscribe, etc.) — NOT conversations
-  //
-  // Prioritize /uni/ss/c/ first to minimize wasted HTTP requests. If
-  // none of those resolve to a conversation (Etsy might shuffle this in
-  // the future), fall back to trying /ss/c/ links too.
   const uniLinks  = candidates.filter(u => u.includes("/uni/ss/c/"));
   const ssLinks   = candidates.filter(u => !u.includes("/uni/ss/c/"));
   const ordered   = [...uniLinks, ...ssLinks].slice(0, MAX_TRACKER_FOLLOWS);
 
-  for (const trackerUrl of ordered) {
-    const finalUrl = await followToFinalUrl(trackerUrl);
-    if (!finalUrl) continue;
+  console.log(`[gmail-extract ${logTag}] candidates: ${candidates.length} (uni=${uniLinks.length} ss=${ssLinks.length}), trying ${ordered.length}`);
+
+  for (let i = 0; i < ordered.length; i++) {
+    const trackerUrl = ordered[i];
+    console.log(`[gmail-extract ${logTag}] try ${i + 1}/${ordered.length}: ${trackerUrl.slice(0, 100)}...`);
+    const finalUrl = await followToFinalUrl(trackerUrl, MAX_REDIRECT_HOPS, `${logTag} cand=${i + 1}`);
+    if (!finalUrl) {
+      console.log(`[gmail-extract ${logTag}] try ${i + 1} → no resolution`);
+      continue;
+    }
+    console.log(`[gmail-extract ${logTag}] try ${i + 1} → final=${finalUrl.slice(0, 120)}`);
     const id = findConversationIdInString(finalUrl);
     if (id) {
+      console.log(`[gmail-extract ${logTag}] resolved → conv=${id}`);
       return {
         conversationId : id,
         conversationUrl: `https://www.etsy.com/your/conversations/${id}`
       };
     }
+    console.log(`[gmail-extract ${logTag}] try ${i + 1} → final URL had no conversation id`);
   }
 
+  console.log(`[gmail-extract ${logTag}] no candidate resolved to a conversation`);
   return null;
 }
 
