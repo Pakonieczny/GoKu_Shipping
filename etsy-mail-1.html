@@ -4524,24 +4524,20 @@
               <div id="emComposerChips" class="em-composer-chips"></div>
               <textarea id="emDraftText" placeholder="Type a reply, click AI Draft, drop an image, or paste a listing URL."></textarea>
               <input type="file" id="emAttachInput" accept="image/png,image/jpeg,image/gif,image/webp" multiple class="em-attach-hidden" />
-              <div id="emTokenCounter" class="em-token-counter empty">
-                <span class="em-tok-label">Tokens:</span>
-                <span>No AI draft yet — click AI Draft below</span>
-              </div>
+              <!-- v4.3.16 — Removed Tokens row, Follow up button, Log
+                   locally button, Clear button, and the drop-image
+                   hint. Hidden #emTokenCounter shell preserved so the
+                   token-tracking JS code paths that target it still
+                   work without throwing. -->
+              <div id="emTokenCounter" class="em-token-counter empty" style="display:none;"></div>
               <div id="emReferencedReceipts" class="em-referenced-receipts" style="display:none;"></div>
               <div id="emSuggestedListings" class="em-suggested-listings" style="display:none;"></div>
               <div id="emTrackingImages" class="em-tracking-images" style="display:none;"></div>
               <div id="emSendStatus" class="em-send-status" style="display:none;"></div>
               <div class="em-compose-bar">
                 <button id="emAiDraftBtn" class="ai" title="Generate a reply with AI"><i class="material-icons">auto_awesome</i><span>AI Draft</span></button>
-                <button id="emAiFollowUpBtn" class="followup" title="Generate a warm follow-up to re-engage the customer"><i class="material-icons">history</i><span>Follow up</span></button>
                 <button id="emAttachBtn" title="Attach image (or drag &amp; drop, or paste)"><i class="material-icons">attach_file</i>Attach</button>
-                <button id="emSaveStaffMsgBtn" title="Log this text as a staff message in the local thread (does not send via Etsy)"><i class="material-icons">save</i>Log locally</button>
                 <button id="emSendEtsyBtn" class="send-etsy" title="Queue this draft for the browser extension to send via Etsy"><i class="material-icons">send</i>Send via Etsy</button>
-                <button id="emClearDraftBtn"><i class="material-icons">close</i>Clear</button>
-              </div>
-              <div class="em-compose-hint">
-                Drop an image anywhere on this card, paste a screenshot from clipboard, or paste an Etsy listing URL like <code>https://www.etsy.com/listing/...</code> to attach it.
               </div>
             </div>
           </div>
