@@ -1408,9 +1408,49 @@ exports.handler = async (event) => {
           // If neither flag is set, the agent has produced a reply
           // safe to auto-send (subject to deterministic vetoes and
           // the kill-switch).
+          // v4.3.16 — Acceptance turns are special. When the agent
+          // detects customer_accepted, it marks aiDraftStatus as
+          // "skipped_acceptance" because the listing-creator worker
+          // will craft and send its own message ("Here's the custom
+          // listing for your necklace: <url>"). If we auto-send the
+          // agent's redundant "Got it, $79" text alongside, we get:
+          //
+          //   1. Two messages to the customer for one acceptance ("Got
+          //      it $79" then "Here's the listing"). Mildly noisy.
+          //
+          //   2. Worse: a DRAFT_BUSY race. Agent's auto-send puts the
+          //      shared draftId into status:"sending"; worker's URL
+          //      enqueue then 409s because the same draftId is in
+          //      flight. The worker retries with backoff but if the
+          //      agent's send takes >31s (Etsy compose timeout is 60-
+          //      90s), all retries fail and the worker's "send URL"
+          //      step bails. The cron retries on the next minute tick
+          //      and usually succeeds the second time, but the customer
+          //      sees a delay and the dashboard shows FAILED briefly.
+          //
+          // Solution: skip auto-send for acceptance-turn drafts. The
+          // worker handles outbound messaging from this point. The
+          // agent's text reply remains in the dashboard as a
+          // "skipped_acceptance" record but isn't shipped.
+          const isAcceptanceSkip = draftDoc.aiDraftStatus === "skipped_acceptance";
+
           const safeToAutoSend =
             !draftDoc.readyForHumanApproval &&
-            !draftDoc.isNeedsReviewHandoff;
+            !draftDoc.isNeedsReviewHandoff &&
+            !isAcceptanceSkip;
+
+          if (isAcceptanceSkip) {
+            await writeAudit({
+              threadId, draftId,
+              eventType: "sales_auto_send_skipped",
+              payload  : { reason: "acceptance_turn_handled_by_listing_creator" }
+            });
+            await db.collection(THREADS_COLL).doc(threadId).set({
+              lastAutoDecision  : "sales_acceptance_handed_to_worker",
+              lastAutoDecisionAt: FV.serverTimestamp(),
+              updatedAt         : FV.serverTimestamp()
+            }, { merge: true });
+          }
 
           if (autoCfg.salesAutoSendEnabled && safeToAutoSend) {
             try {
@@ -1524,9 +1564,11 @@ exports.handler = async (event) => {
                 payload  : { error: autoSendErr.message }
               });
             }
-          } else if (autoCfg.salesAutoSendEnabled && !safeToAutoSend) {
+          } else if (autoCfg.salesAutoSendEnabled && !safeToAutoSend && !isAcceptanceSkip) {
             // Auto-send is on globally but the agent flagged this
             // turn for human review. Don't ship.
+            // (acceptance-turn skip already audited above with its own
+            // reason; don't double-emit here.)
             await writeAudit({
               threadId, draftId,
               eventType: "sales_auto_send_skipped",
