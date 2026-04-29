@@ -159,7 +159,16 @@ exports.handler = async (event) => {
         lastReadAt          : null,
         subject             : subject || null,
         createdAt           : now,
-        updatedAt           : now
+        updatedAt           : now,
+        // v4.3.16 — Buyer metadata. Previously these fields were only
+        // written via threadPatch (the `merge: true` path for existing
+        // threads), so on a FIRST scrape — the precise moment when we
+        // most need them — they were dropped. Now mirror them into
+        // the initial doc so they're present from creation.
+        buyerUserId         : (customer && customer.buyerUserId) ? String(customer.buyerUserId) : null,
+        buyerPeopleUrl      : (customer && customer.peopleUrl) || null,
+        buyerAvatarUrl      : (customer && customer.avatarUrl) || null,
+        buyerIsRepeatBuyer  : !!(customer && customer.isRepeatBuyer)
       };
       await tRef.set(initial, { merge: false });
     } else {
