@@ -75,6 +75,14 @@
 [functions."etsyMailListingCreatorCron"]
   schedule = "* * * * *"
 
+# ─── M6 Gmail Watcher ──────────────────────────────────────────────────────
+# Polls Gmail every minute for new Etsy notification emails. The cron
+# itself reads EtsyMail_Config/gmailWatcher.enabled — operator can toggle
+# the watcher on/off from the inbox UI's topbar without redeploying.
+# Default-off until enabled, so the schedule going live here is harmless.
+[functions."etsyMailGmailCron"]
+  schedule = "* * * * *"
+
 [[headers]]
   for = "/*"
   [headers.values]

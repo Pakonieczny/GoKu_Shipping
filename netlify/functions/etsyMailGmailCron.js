@@ -1,41 +1,31 @@
-/*  netlify/functions/etsyMailGmailCron.js
+/*  netlify/functions/etsyMailGmailCron.js  (v1.1)
  *
- *  Scheduled trigger for the Gmail watcher. Mirrors etsyMailSyncCron.js
- *  exactly — small scheduled function that POSTs to the long-running
- *  background function.
+ *  Scheduled trigger for the Gmail watcher. v1.1 adds a Firestore config-flag
+ *  gate: the cron reads EtsyMail_Config/gmailWatcher.enabled before doing
+ *  anything. Operators can toggle the watcher on/off from the inbox UI (via
+ *  etsyMailGmailConfig.js) without touching netlify.toml or redeploying.
  *
- *  Why two files for one job:
- *    Netlify has two distinct function types with different runtime caps:
- *      - Scheduled functions   → 30 sec ceiling, run on cron
- *      - Background functions  → 15 min ceiling, invoked via HTTP only
- *    A schedule attached to a -background.js file would invoke it under
- *    the 30-sec scheduled budget. So we use a tiny scheduled poker that
- *    completes in <1 sec, which then POSTs to the background fn.
+ *  ═══ DECISION TABLE ═══════════════════════════════════════════════════
  *
- *  ═══ CADENCE ══════════════════════════════════════════════════════════
+ *    enabled    | lastSyncInProgress | action
+ *    -----------+--------------------+----------------------------------
+ *    false      | any                | skip (operator turned it off)
+ *    true       | true               | skip (don't double-trigger)
+ *    true       | false              | POST to etsyMailGmail-background
+ *    no doc     | any                | skip (default-off — fail closed)
  *
- *  Schedule configured in netlify.toml:
+ *  ═══ WHY DEFAULT-OFF ══════════════════════════════════════════════════
+ *
+ *  Pre-v1.1 the cron always ran when scheduled. v1.1 ships with the cron
+ *  schedule live in netlify.toml but the flag default-off, so the watcher
+ *  stays dormant until an operator explicitly clicks "enable" in the
+ *  inbox. This avoids the v1.0 footgun where any manual `mode:"full"`
+ *  trigger could create a flood of detected_from_gmail thread shells
+ *  before anyone realized what was happening.
+ *
+ *  Schedule lives in netlify.toml:
  *    [functions."etsyMailGmailCron"]
  *      schedule = "* * * * *"   # every 1 minute
- *
- *  1-min cadence is intentional. Etsy notification emails arrive within
- *  ~30s of the customer hitting Send on Etsy; a 1-min poll keeps the
- *  end-to-end Etsy → inbox latency under ~90 seconds, which is the
- *  product floor for "feels like real-time" auto-reply. The Etsy receipts
- *  sync uses 5-min cadence because it's polling for completed receipts,
- *  not new messages, where minutes-old data is fine.
- *
- *  ═══ THROTTLING ═══════════════════════════════════════════════════════
- *
- *  Reads syncState first. If a sync is already in progress, skip — never
- *  double-trigger (background-fn is idempotent on the watermark, but
- *  parallel runs would compete for the same Gmail quota and waste
- *  invocations). Otherwise runs.
- *
- *  We do NOT impose an "at least N min since last completed" gate like
- *  etsyMailSyncCron does. Gmail polling is cheap (one users.messages.list
- *  call returns nothing if no new mail) and the value of low latency
- *  here is high.
  */
 
 "use strict";
@@ -46,38 +36,41 @@ const admin = require("./firebaseAdmin");
 const db = admin.firestore();
 
 const SYNC_STATE_DOC = "EtsyMail_Config/gmailSyncState";
+const WATCHER_CFG_DOC = "EtsyMail_Config/gmailWatcher";
 
-async function readSyncState() {
-  const snap = await db.doc(SYNC_STATE_DOC).get();
+async function readDoc(path) {
+  const snap = await db.doc(path).get();
   return snap.exists ? snap.data() : null;
 }
 
 exports.handler = async (event) => {
   try {
-    const state = await readSyncState();
+    // ── Gate 1: operator-controlled enabled flag ─────────────────────
+    // Default-off. Reading the doc each tick is cheap (single Firestore
+    // read) and means the toggle takes effect within ≤1 minute of the
+    // operator clicking it — no redeploy, no env-var change.
+    const cfg = await readDoc(WATCHER_CFG_DOC);
+    const enabled = !!(cfg && cfg.enabled === true);
 
-    let shouldRun = true;
-    let reason = "";
+    if (!enabled) {
+      console.log("etsyMailGmailCron: skipped (gmailWatcher.enabled=false)");
+      return {
+        statusCode: 200,
+        body: JSON.stringify({ skipped: true, reason: "watcher disabled" })
+      };
+    }
 
+    // ── Gate 2: don't double-trigger if a sync is already running ────
+    const state = await readDoc(SYNC_STATE_DOC);
     if (state && state.lastSyncInProgress) {
-      // A previous invocation is still running. Skip — the in-flight one
-      // will catch any new messages, and forcing parallel runs causes
-      // duplicate Gmail reads + wasted Netlify invocations.
-      shouldRun = false;
-      reason = "sync already in progress";
-    } else {
-      reason = "due (1-min cadence)";
+      console.log("etsyMailGmailCron: skipped (sync already in progress)");
+      return {
+        statusCode: 200,
+        body: JSON.stringify({ skipped: true, reason: "sync already in progress" })
+      };
     }
 
-    console.log(`etsyMailGmailCron: shouldRun=${shouldRun} (${reason})`);
-
-    if (!shouldRun) {
-      return { statusCode: 200, body: JSON.stringify({ skipped: true, reason }) };
-    }
-
-    // Build the site origin. Netlify sets URL for production and
-    // DEPLOY_URL for deploy previews. Same convention as
-    // etsyMailSyncCron.js + etsyMailListingCreatorCron.js.
+    // ── Invoke the background fn ─────────────────────────────────────
     const siteOrigin = process.env.URL
                     || process.env.DEPLOY_URL
                     || process.env.NETLIFY_BASE_URL;
@@ -89,8 +82,7 @@ exports.handler = async (event) => {
     const targetUrl = `${siteOrigin}/.netlify/functions/etsyMailGmail-background`;
     console.log(`etsyMailGmailCron: invoking ${targetUrl}`);
 
-    // Fire-and-forget POST. Netlify returns 202 immediately for background
-    // functions, so awaiting the body would just block on a no-op.
+    // Fire-and-forget POST. Netlify returns 202 for background functions.
     const resp = await fetch(targetUrl, {
       method : "POST",
       headers: { "Content-Type": "application/json" },
@@ -103,7 +95,6 @@ exports.handler = async (event) => {
       statusCode: 200,
       body: JSON.stringify({
         triggered       : true,
-        reason,
         invocationStatus: resp.status
       })
     };

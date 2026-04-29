@@ -38,6 +38,41 @@
     .em-topbar .em-status-dot { width: 8px; height: 8px; border-radius: 50%; background: #e74c3c; }
     .em-topbar .em-status-dot.ok { background: #2ecc71; }
 
+    /* ─── Gmail watcher panel (topbar) ─── */
+    .em-gmail-pill {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 4px 10px; border-radius: 4px;
+      background: #2a2f36; border: 1px solid #3a424b;
+      font-size: 12px; color: #f4f5f7;
+      cursor: default; user-select: none;
+    }
+    .em-gmail-pill .em-gmail-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: #6a737d;
+    }
+    .em-gmail-pill.on  .em-gmail-dot { background: #2ecc71; }
+    .em-gmail-pill.off .em-gmail-dot { background: #e74c3c; }
+    .em-gmail-pill.err .em-gmail-dot { background: #f39c12; }
+    .em-gmail-pill .em-gmail-meta { color: #9aa3ad; font-size: 11px; }
+    .em-gmail-toggle {
+      background: #2a2f36; color: #f4f5f7; border: 1px solid #3a424b;
+      padding: 4px 10px; border-radius: 4px; cursor: pointer;
+      font-size: 12px; display: inline-flex; align-items: center; gap: 6px;
+    }
+    .em-gmail-toggle.on  { background: #1a3a24; border-color: #1f883d; color: #7ee2a8; }
+    .em-gmail-toggle.off { background: #3a1a1a; border-color: #a40e26; color: #ffb3b3; }
+    .em-gmail-toggle:hover:not(:disabled) { filter: brightness(1.15); }
+    .em-gmail-toggle:disabled { opacity: 0.5; cursor: not-allowed; }
+    .em-gmail-pull {
+      background: #2a2f36; color: #f4f5f7; border: 1px solid #3a424b;
+      padding: 4px 10px; border-radius: 4px; cursor: pointer;
+      font-size: 12px; display: inline-flex; align-items: center; gap: 6px;
+    }
+    .em-gmail-pull:hover:not(:disabled) { background: #353b44; }
+    .em-gmail-pull:disabled { opacity: 0.5; cursor: not-allowed; }
+    .em-gmail-pull.spinning .material-icons { animation: emSpin 1s linear infinite; }
+    @keyframes emSpin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
+
     .em-rail {
       grid-area: rail; background: #fff; border-right: 1px solid #e1e4e8;
       overflow-y: auto; padding: 8px 0;
@@ -1728,6 +1763,17 @@
         <span class="em-status-dot" id="emBackendDot"></span>
         <span id="emBackendLabel" style="font-size:12px;margin-left:4px;">Backend: checking…</span>
       </span>
+      <span class="em-gmail-pill off" id="emGmailPill" title="Gmail watcher status">
+        <span class="em-gmail-dot"></span>
+        <span id="emGmailLabel">Gmail: …</span>
+        <span class="em-gmail-meta" id="emGmailMeta"></span>
+      </span>
+      <button class="em-gmail-toggle off" id="emGmailToggleBtn" title="Enable/disable the Gmail watcher cron" disabled>
+        <i class="material-icons">power_settings_new</i><span id="emGmailToggleLabel">Off</span>
+      </button>
+      <button class="em-gmail-pull" id="emGmailPullBtn" title="Pull new Etsy notification emails right now" disabled>
+        <i class="material-icons">cloud_download</i>Pull now
+      </button>
       <button id="emRefreshBtn" title="Refresh now"><i class="material-icons">refresh</i>Refresh</button>
       <button id="emNewThreadBtn" title="Create test thread"><i class="material-icons">add</i>New (test)</button>
       <button id="emSettingsBtn" title="Settings"><i class="material-icons">settings</i></button>
@@ -7447,6 +7493,215 @@
       $("emNewThreadBtn").addEventListener("click", createTestThread);
       // v0.9.1 #1: Settings now opens the secret-setup modal
       $("emSettingsBtn").addEventListener("click", () => showSecretSetupModal());
+
+      // ─── Gmail Watcher panel ─────────────────────────────────────────
+      // Three controls in the topbar:
+      //   - emGmailPill: status display (on/off + last-sync stats)
+      //   - emGmailToggleBtn: owner-only enable/disable of the cron
+      //   - emGmailPullBtn: manual "pull now" trigger
+      // All routed through the existing notify infrastructure:
+      //   - GET  /etsyMailGmailConfig?op=get          (status)
+      //   - POST /etsyMailGmailConfig  body:op=set    (toggle, owner-only)
+      //   - POST /etsyMailGmail?action=trigger        (manual pull)
+      //
+      // Refreshes its own state every 30s. The cron runs every 1 min, so
+      // a 30s panel refresh means new sync results show within ≤30s of
+      // the cron completing.
+      const GMAIL_PANEL_REFRESH_MS = 30 * 1000;
+
+      // Helper: small wrapper around fetch that inherits the secret/base
+      // from the existing api() conventions used elsewhere in this file.
+      function gmailApi(path, opts = {}) {
+        const base    = (window.NETLIFY_BASE || "").replace(/\/+$/, "")
+                     || location.origin;
+        const secret  = window.ETSYMAIL_SECRET
+                     || localStorage.getItem("etsyMailSecret") || "";
+        const headers = { "Content-Type": "application/json", ...(opts.headers || {}) };
+        if (secret) headers["X-EtsyMail-Secret"] = secret;
+        return fetch(`${base}/.netlify/functions/${path}`, { ...opts, headers });
+      }
+
+      function operatorActor() {
+        // Same lookup pattern the rest of this file uses for owner-gated
+        // calls (clean rescrape, settings save, etc.).
+        return localStorage.getItem("employee_name")
+            || (window.OPERATOR_NAME || "")
+            || "";
+      }
+
+      function isOwnerRole() {
+        // The role badge in the topbar carries this — read it from there
+        // so we don't duplicate role lookup logic. Falls back to false on
+        // first paint before the badge populates, then becomes accurate.
+        const badge = document.getElementById("emOperatorRoleBadge");
+        const label = document.getElementById("emOperatorRoleLabel");
+        if (!badge || !label) return false;
+        return (label.textContent || "").trim().toLowerCase() === "owner";
+      }
+
+      function fmtAgo(iso) {
+        if (!iso) return "never";
+        const ms = Date.now() - new Date(iso).getTime();
+        if (ms < 0 || isNaN(ms)) return "—";
+        const s = Math.floor(ms / 1000);
+        if (s < 60)   return `${s}s ago`;
+        const m = Math.floor(s / 60);
+        if (m < 60)   return `${m}m ago`;
+        const h = Math.floor(m / 60);
+        if (h < 24)   return `${h}h ago`;
+        const d = Math.floor(h / 24);
+        return `${d}d ago`;
+      }
+
+      async function refreshGmailPanel() {
+        const pill   = $("emGmailPill");
+        const label  = $("emGmailLabel");
+        const meta   = $("emGmailMeta");
+        const toggle = $("emGmailToggleBtn");
+        const tlabel = $("emGmailToggleLabel");
+        const pull   = $("emGmailPullBtn");
+        if (!pill || !toggle) return;
+
+        try {
+          const res  = await gmailApi("etsyMailGmailConfig?op=get");
+          const data = await res.json();
+          if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+
+          const enabled  = !!data.enabled;
+          const sync     = data.syncState || {};
+          const oauthOk  = !!sync.oauthSeeded;
+          const inFlight = !!sync.lastSyncInProgress;
+          const lastErr  = sync.lastSyncError || null;
+
+          // Pill
+          pill.classList.remove("on", "off", "err");
+          if (lastErr)        pill.classList.add("err");
+          else if (enabled)   pill.classList.add("on");
+          else                pill.classList.add("off");
+
+          if (!oauthOk) {
+            label.textContent = "Gmail: not connected";
+            meta.textContent  = "(seed OAuth tokens first)";
+          } else if (lastErr) {
+            label.textContent = "Gmail: error";
+            meta.textContent  = String(lastErr).slice(0, 40);
+          } else {
+            label.textContent = enabled ? "Gmail: on" : "Gmail: off";
+            meta.textContent  = inFlight
+              ? "syncing now…"
+              : `last ${fmtAgo(sync.lastSyncCompletedAt)} · scanned ${sync.lastSyncMessagesScanned} · enqueued ${sync.lastSyncJobsEnqueued}`;
+          }
+
+          // Toggle button — only owners can flip it.
+          const owner = isOwnerRole();
+          toggle.disabled = !owner || !oauthOk;
+          toggle.classList.toggle("on", enabled);
+          toggle.classList.toggle("off", !enabled);
+          tlabel.textContent = enabled ? "On" : "Off";
+          toggle.title = !oauthOk
+            ? "OAuth tokens not seeded yet — seed them first"
+            : !owner
+              ? "Owner role required to toggle the watcher"
+              : enabled
+                ? "Click to disable the Gmail watcher cron"
+                : "Click to enable the Gmail watcher cron";
+
+          // Pull-now button — anyone with backend access can trigger.
+          // Disable if OAuth not seeded or a sync is already in progress.
+          pull.disabled = !oauthOk || inFlight;
+          pull.classList.toggle("spinning", inFlight);
+          pull.title = !oauthOk
+            ? "OAuth tokens not seeded yet — seed them first"
+            : inFlight
+              ? "A sync is already in progress…"
+              : "Pull new Etsy notification emails from Gmail right now";
+
+        } catch (err) {
+          console.warn("[gmail-panel] refresh failed:", err.message);
+          pill.classList.remove("on", "off");
+          pill.classList.add("err");
+          label.textContent = "Gmail: ?";
+          meta.textContent  = err.message.slice(0, 40);
+          toggle.disabled = true;
+          pull.disabled   = true;
+        }
+      }
+
+      $("emGmailToggleBtn").addEventListener("click", async () => {
+        const toggle = $("emGmailToggleBtn");
+        if (toggle.disabled) return;
+
+        const actor = operatorActor();
+        if (!actor) {
+          alert("Set your operator name first (Settings → Operator name).");
+          return;
+        }
+
+        const turningOn = !toggle.classList.contains("on");
+        const verb = turningOn ? "enable" : "disable";
+        if (!confirm(`${verb[0].toUpperCase() + verb.slice(1)} the Gmail watcher cron?\n\n` +
+          (turningOn
+            ? "The cron will start polling Gmail every minute, looking for new Etsy notification emails since the last watermark. Detected conversations will be enqueued for scrape."
+            : "The cron will stop. No new Etsy emails will be auto-detected until you re-enable it."))) {
+          return;
+        }
+
+        toggle.disabled = true;
+        try {
+          const res = await gmailApi("etsyMailGmailConfig", {
+            method: "POST",
+            body  : JSON.stringify({ op: "set", enabled: turningOn, actor })
+          });
+          const data = await res.json();
+          if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+          await refreshGmailPanel();
+        } catch (err) {
+          alert("Toggle failed: " + err.message);
+          await refreshGmailPanel();   // re-sync UI from server truth
+        }
+      });
+
+      $("emGmailPullBtn").addEventListener("click", async () => {
+        const pull = $("emGmailPullBtn");
+        if (pull.disabled) return;
+
+        pull.disabled = true;
+        pull.classList.add("spinning");
+        try {
+          // Manual pull. We use mode:"incremental" (NOT "full") so the
+          // watermark is respected — only emails newer than the cursor
+          // are processed. windowDays is irrelevant in incremental mode.
+          const res = await gmailApi("etsyMailGmail?action=trigger", {
+            method: "POST",
+            body  : JSON.stringify({ mode: "incremental" })
+          });
+          const data = await res.json();
+          if (!res.ok || data.invocationStatus >= 400) {
+            throw new Error(data.error || `HTTP ${res.status}`);
+          }
+          // Background fn was accepted (202). Poll the status panel a few
+          // times to surface the result quickly without waiting for the
+          // 30s auto-refresh.
+          for (let i = 0; i < 10; i++) {
+            await new Promise(r => setTimeout(r, 2000));
+            await refreshGmailPanel();
+            const meta = $("emGmailMeta");
+            // Stop once it's no longer "syncing now…"
+            if (meta && !/syncing now/.test(meta.textContent)) break;
+          }
+        } catch (err) {
+          alert("Manual pull failed: " + err.message);
+        } finally {
+          pull.classList.remove("spinning");
+          await refreshGmailPanel();
+        }
+      });
+
+      // Kick off the panel refresh loop. First refresh is immediate so
+      // operators see status at page load; subsequent refreshes every
+      // GMAIL_PANEL_REFRESH_MS keep it current without polling spam.
+      refreshGmailPanel();
+      setInterval(refreshGmailPanel, GMAIL_PANEL_REFRESH_MS);
 
       // ── Filter wiring ────────────────────────────────────────────
       // ── v1.6: Real-time per-keystroke search ────────────────────
