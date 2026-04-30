@@ -1,8 +1,19 @@
-/*  netlify/functions/_etsyMailGmail.js  (v1.3)
+/*  netlify/functions/_etsyMailGmail.js  (v1.4)
  *
  *  Shared Gmail API helpers for the EtsyMail system.
  *
- *  ═══ v1.3 CHANGE LOG ═══════════════════════════════════════════════════
+ *  ═══ v1.4 CHANGE LOG ═══════════════════════════════════════════════════
+ *
+ *  URL FORMAT FIX: switched from constructing `/your/conversations/<id>`
+ *  to `/messages/<id>`. Etsy's current canonical conversation URL format
+ *  is `https://www.etsy.com/messages/<id>` — the older `/your/conversations/`
+ *  path still works via redirect but produces an extra hop the scraper
+ *  has to follow. Using the canonical format avoids that hop.
+ *
+ *  Also added /messages/<id> to the regex pattern set so we recognize
+ *  the canonical form in tracker chains too.
+ *
+ *  ═══ v1.3 CHANGE LOG (retained) ════════════════════════════════════════
  *
  *  CRITICAL FIX: scan every redirect-chain Location header (not just the
  *  final URL) for a conversation id. Etsy's tracker chain looks like:
@@ -379,7 +390,7 @@ async function followToFinalUrl(startUrl, hopBudget = MAX_REDIRECT_HOPS, logTag 
         console.log(`[gmail-tracker ${logTag} hop=${hop}] short-circuit: conv id ${idAtHop} found in Location, no further follows`);
         return {
           conversationId : idAtHop,
-          conversationUrl: `https://www.etsy.com/your/conversations/${idAtHop}`,
+          conversationUrl: `https://www.etsy.com/messages/${idAtHop}`,
           foundAtHop     : hop
         };
       }
@@ -399,7 +410,7 @@ async function followToFinalUrl(startUrl, hopBudget = MAX_REDIRECT_HOPS, logTag 
       if (idAtFinal) {
         return {
           conversationId : idAtFinal,
-          conversationUrl: `https://www.etsy.com/your/conversations/${idAtFinal}`,
+          conversationUrl: `https://www.etsy.com/messages/${idAtFinal}`,
           foundAtHop     : hop
         };
       }
@@ -431,7 +442,7 @@ async function extractEtsyConversationLink(message) {
     console.log(`[gmail-extract ${logTag}] direct match → conv=${directId}`);
     return {
       conversationId : directId,
-      conversationUrl: `https://www.etsy.com/your/conversations/${directId}`
+      conversationUrl: `https://www.etsy.com/messages/${directId}`
     };
   }
 
