@@ -1,8 +1,36 @@
-/*  netlify/functions/_etsyMailGmail.js  (v1.2)
+/*  netlify/functions/_etsyMailGmail.js  (v1.3)
  *
  *  Shared Gmail API helpers for the EtsyMail system.
  *
- *  ═══ v1.2 CHANGE LOG ═══════════════════════════════════════════════════
+ *  ═══ v1.3 CHANGE LOG ═══════════════════════════════════════════════════
+ *
+ *  CRITICAL FIX: scan every redirect-chain Location header (not just the
+ *  final URL) for a conversation id. Etsy's tracker chain looks like:
+ *
+ *      ablink.account.etsy.com  (SendGrid)
+ *        → 302 → etsy.app.link/3p?$original_url=...etsy.com/conversations/<id>...  ← id here
+ *        → 307 → etsy.com/?utm_content=...   (Branch.io desktop fallback STRIPS the original URL)
+ *        → 200 → final = homepage
+ *
+ *  Branch.io's deep-link service (etsy.app.link) inspects User-Agent. On
+ *  mobile it forwards the $original_url to the app; on desktop/server it
+ *  sends users to the homepage with marketing UTM params, dropping the
+ *  conversation URL entirely. So by the time we see the terminal 200,
+ *  the conversation id is GONE from `current` — but it was sitting in
+ *  the very first 302's Location header all along (URL-encoded as
+ *  `$original_url=https%3A%2F%2Fwww%2Eetsy%2Ecom%2Fconversations%2F<id>`).
+ *
+ *  Fix: at every redirect hop, run findConversationIdInString on the
+ *  Location value. If a conversation id is found, short-circuit and
+ *  return — no point following the rest of the chain. This also makes
+ *  the extractor faster since most emails resolve at hop=0 of cand=1
+ *  (the "View message" tracker).
+ *
+ *  Per-tracker diagnostic logging from v1.2 retained — once we confirm
+ *  this fix works in production for a few days, v1.4 will quiet the
+ *  logs back down.
+ *
+ *  ═══ v1.2 CHANGE LOG (retained) ════════════════════════════════════════
  *
  *  DIAGNOSTIC: per-tracker logging added to extractEtsyConversationLink
  *  and followToFinalUrl. Previously the extractor silently returned null
@@ -276,6 +304,25 @@ function findConversationIdInString(s) {
  * the body, keeping each hop cheap (response body never read or buffered
  * past the headers).
  */
+/**
+ * Fetch a single URL with manual redirect handling.
+ *
+ * v1.3 behavior change: at every redirect hop, the Location header is
+ * scanned for a conversation id (including any URL-encoded $original_url
+ * parameter). If a conversation id is found, this function short-circuits
+ * and returns the constructed conversation URL immediately — it does not
+ * continue following the chain.
+ *
+ * This is necessary because Etsy's redirect chain goes through Branch.io
+ * (etsy.app.link), which strips the original URL on desktop user-agents
+ * and sends the request to the homepage instead. By the time we'd reach
+ * the terminal 200, the conversation id would be gone.
+ *
+ * Returns:
+ *   { conversationId, conversationUrl, foundAtHop }  on success
+ *   { finalUrl }                                     on terminal 2xx without conv id
+ *   null                                             on failure / timeout / 4xx-5xx
+ */
 async function followToFinalUrl(startUrl, hopBudget = MAX_REDIRECT_HOPS, logTag = "") {
   let current = startUrl;
   for (let hop = 0; hop < hopBudget; hop++) {
@@ -288,11 +335,6 @@ async function followToFinalUrl(startUrl, hopBudget = MAX_REDIRECT_HOPS, logTag 
         redirect : "manual",
         signal   : controller.signal,
         headers  : {
-          // Browser-like UA: SendGrid's tracker rejects bot-looking UAs
-          // with 403. The conversation URL never returns sensitive data
-          // (the ID itself isn't a credential — landing on it without
-          // an Etsy session just shows a login page), so spoofing UA
-          // here doesn't expose anything.
           "User-Agent"     : "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
           "Accept"         : "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
           "Accept-Language": "en-US,en;q=0.9"
@@ -307,25 +349,63 @@ async function followToFinalUrl(startUrl, hopBudget = MAX_REDIRECT_HOPS, logTag 
 
     if (res.status >= 300 && res.status < 400) {
       const loc = res.headers.get("location");
-      console.log(`[gmail-tracker ${logTag} hop=${hop}] status=${res.status} → ${loc ? loc.slice(0, 120) : "(no Location)"}`);
+      console.log(`[gmail-tracker ${logTag} hop=${hop}] status=${res.status} → ${loc ? loc.slice(0, 200) : "(no Location)"}`);
       if (!loc) return null;
+
+      // ━━━ v1.3 FIX ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      // Branch.io (etsy.app.link) is the second hop in Etsy's tracker
+      // chain. It encodes the actual destination as a percent-encoded
+      // URL in the `$original_url` query parameter. On desktop UAs it
+      // then redirects to homepage instead, dropping that parameter.
+      //
+      // So we MUST extract the conversation id from the Location value
+      // itself — at every hop — rather than waiting for the chain's
+      // terminal URL. findConversationIdInString already calls
+      // decodePercentSafe internally, so percent-encoded paths
+      // (%2Fconversations%2F<id>) match correctly.
+      //
+      // Also scan the absolute URL we'd next request (relative redirects
+      // resolved against current) for completeness.
+      let resolvedNext;
       try {
-        current = new URL(loc, current).toString();
+        resolvedNext = new URL(loc, current).toString();
       } catch (urlErr) {
         console.log(`[gmail-tracker ${logTag} hop=${hop}] bad redirect URL: ${urlErr.message}`);
         return null;
       }
+
+      const idAtHop = findConversationIdInString(loc) || findConversationIdInString(resolvedNext);
+      if (idAtHop) {
+        console.log(`[gmail-tracker ${logTag} hop=${hop}] short-circuit: conv id ${idAtHop} found in Location, no further follows`);
+        return {
+          conversationId : idAtHop,
+          conversationUrl: `https://www.etsy.com/your/conversations/${idAtHop}`,
+          foundAtHop     : hop
+        };
+      }
+      // ━━━ end v1.3 fix ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+      current = resolvedNext;
       continue;
     }
 
     if (res.status >= 200 && res.status < 300) {
-      console.log(`[gmail-tracker ${logTag} hop=${hop}] terminal status=${res.status}, final=${current.slice(0, 120)}`);
+      console.log(`[gmail-tracker ${logTag} hop=${hop}] terminal status=${res.status}, final=${current.slice(0, 200)}`);
       try { res.body && res.body.resume && res.body.resume(); } catch {}
-      return current;
+      // Last-chance scan of the terminal URL itself (covers the legacy
+      // form-A case where redirects deliver us straight to the
+      // /your/conversations/<id> page).
+      const idAtFinal = findConversationIdInString(current);
+      if (idAtFinal) {
+        return {
+          conversationId : idAtFinal,
+          conversationUrl: `https://www.etsy.com/your/conversations/${idAtFinal}`,
+          foundAtHop     : hop
+        };
+      }
+      return { finalUrl: current };
     }
 
-    // 4xx/5xx terminal — log status AND a peek at body so we can see
-    // SendGrid's denial reasons (e.g. cookie wall, fraud check page)
     let bodyPeek = "";
     try { bodyPeek = (await res.text()).slice(0, 200); } catch {}
     console.log(`[gmail-tracker ${logTag} hop=${hop}] terminal status=${res.status} body="${bodyPeek.replace(/\s+/g, " ")}"`);
@@ -384,20 +464,25 @@ async function extractEtsyConversationLink(message) {
   for (let i = 0; i < ordered.length; i++) {
     const trackerUrl = ordered[i];
     console.log(`[gmail-extract ${logTag}] try ${i + 1}/${ordered.length}: ${trackerUrl.slice(0, 100)}...`);
-    const finalUrl = await followToFinalUrl(trackerUrl, MAX_REDIRECT_HOPS, `${logTag} cand=${i + 1}`);
-    if (!finalUrl) {
+    const result = await followToFinalUrl(trackerUrl, MAX_REDIRECT_HOPS, `${logTag} cand=${i + 1}`);
+
+    if (!result) {
       console.log(`[gmail-extract ${logTag}] try ${i + 1} → no resolution`);
       continue;
     }
-    console.log(`[gmail-extract ${logTag}] try ${i + 1} → final=${finalUrl.slice(0, 120)}`);
-    const id = findConversationIdInString(finalUrl);
-    if (id) {
-      console.log(`[gmail-extract ${logTag}] resolved → conv=${id}`);
+
+    // v1.3 followToFinalUrl returns either:
+    //   { conversationId, conversationUrl, foundAtHop }  ← short-circuited on conv id
+    //   { finalUrl }                                     ← terminal 2xx, no conv id
+    if (result.conversationId) {
+      console.log(`[gmail-extract ${logTag}] resolved → conv=${result.conversationId} (atHop=${result.foundAtHop})`);
       return {
-        conversationId : id,
-        conversationUrl: `https://www.etsy.com/your/conversations/${id}`
+        conversationId : result.conversationId,
+        conversationUrl: result.conversationUrl
       };
     }
+
+    console.log(`[gmail-extract ${logTag}] try ${i + 1} → final=${(result.finalUrl || "").slice(0, 120)}`);
     console.log(`[gmail-extract ${logTag}] try ${i + 1} → final URL had no conversation id`);
   }
 
