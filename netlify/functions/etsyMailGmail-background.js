@@ -1,4 +1,4 @@
-/*  netlify/functions/etsyMailGmail-background.js  (v1.1)
+/*  netlify/functions/etsyMailGmail-background.js  (v1.2)
  *
  *  M6 Gmail-watcher — polls a Gmail inbox for Etsy notification emails,
  *  extracts the embedded Etsy conversation link, and enqueues a `scrape`
@@ -7,7 +7,31 @@
  *  POSTs the snapshot — closing the loop with ZERO changes to the
  *  scraper, the snapshot ingest, or the extension itself.
  *
- *  ═══ v1.1 CHANGE LOG ══════════════════════════════════════════════════
+ *  ═══ v1.2 CHANGE LOG ══════════════════════════════════════════════════
+ *
+ *  GMAIL-THREAD DEDUP: When multiple matching messages share the same
+ *  Gmail threadId (e.g. customer "Vanessa" sent multiple messages over
+ *  weeks; Gmail groups them all under one thread), keep only the NEWEST
+ *  message per thread for processing.
+ *
+ *  Symptom this fixes: Vanessa sends a new message at 11:14 PM. The
+ *  watcher correctly fetches it, but Gmail's API returns the message
+ *  with thread context that may include stale tracker URLs from older
+ *  Vanessa messages. The extractor follows one of those stale trackers,
+ *  which now resolves to a different (or expired) Etsy conversation —
+ *  producing an inbox thread with the wrong content (e.g. "Community
+ *  Forums" landing page instead of Vanessa's actual conversation).
+ *
+ *  Fix: Gmail returns list results newest-first. After fetching the
+ *  page of stubs, walk the list newest-first and keep only the first
+ *  occurrence of each threadId. This guarantees:
+ *    - Each Gmail thread is processed at most once per invocation
+ *    - The version processed is always the newest-arrived message
+ *      (the one with the freshest tracker URLs)
+ *    - The watermark still advances normally based on the newest
+ *      internalDate seen across all stubs (deduplicated or not)
+ *
+ *  ═══ v1.1 CHANGE LOG (retained) ═══════════════════════════════════════
  *
  *  Awaits extractEtsyConversationLink() — it became async in
  *  _etsyMailGmail v1.1 to support following SendGrid click-tracking
@@ -416,9 +440,42 @@ async function runIncremental({ invocationStartMs, mode, query, windowDays }) {
       break;
     }
 
+    // ━━━ v1.2 GMAIL-THREAD DEDUP ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // Gmail returns list results in newest-first order. Walk the list
+    // newest-first and keep only the FIRST occurrence of each threadId.
+    // That's the newest message in each Gmail thread.
+    //
+    // Why: Gmail groups all "Vanessa sent you a message" emails (from
+    // the same customer over time) into one Gmail thread. If multiple
+    // matching messages are returned in a single poll (rare with the
+    // watermark, but possible during catch-up after the watcher was off),
+    // processing them all means following stale tracker URLs from old
+    // emails — which can resolve to expired/wrong Etsy conversations.
+    //
+    // Only the newest tracker URL per thread is reliable, so dedup.
+    // We still track every stub's internalDate for watermark advance,
+    // so skipped duplicates don't cause re-processing on the next poll.
+    const seenThreadIds = new Set();
+    const dedupedStubs = [];
+    let droppedAsThreadDupes = 0;
+    for (const stub of stubs) {
+      // Track every stub's internalDate via summary later; for dedup,
+      // only the threadId matters here.
+      if (stub.threadId && seenThreadIds.has(stub.threadId)) {
+        droppedAsThreadDupes++;
+        continue;
+      }
+      if (stub.threadId) seenThreadIds.add(stub.threadId);
+      dedupedStubs.push(stub);
+    }
+    if (droppedAsThreadDupes > 0) {
+      console.log(`[gmail-watcher] dedup: kept ${dedupedStubs.length} newest-per-thread, dropped ${droppedAsThreadDupes} older-same-thread`);
+    }
+    // ━━━ end v1.2 fix ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
     // Process messages oldest-first WITHIN the page so the watermark
     // advances monotonically. Gmail returns newest-first, so reverse.
-    const orderedStubs = stubs.slice().reverse();
+    const orderedStubs = dedupedStubs.slice().reverse();
 
     for (const stub of orderedStubs) {
       if (Date.now() - invocationStartMs > MAX_INVOCATION_MS) break;
