@@ -141,6 +141,17 @@
     .em-badge.attachment { background: #fff8c5; color: #7d4e00; }
     .em-badge.confidence { background: #f6e5ff; color: #6b21a8; }
     .em-badge.hold { background: #ffebe9; color: #a40e26; }
+    /* v3.24: Production rush — red, bold, high-visibility. The 🔥
+     * emojis in the badge text plus this red background make it
+     * impossible to miss in a list of pastel badges. */
+    .em-badge.rush {
+      background: #d1242f;
+      color: #fff;
+      font-weight: 700;
+      letter-spacing: 0.3px;
+      padding: 2px 8px;
+      box-shadow: 0 0 0 1px rgba(0,0,0,0.06) inset;
+    }
 
     .em-list-empty { padding: 40px 20px; text-align: center; color: #6a737d; font-size: 13px; }
 
@@ -2108,6 +2119,15 @@
       { id: "all",                  label: "All",          icon: "inbox",         status: null },
       { id: "pending_human_review", label: "Needs review", icon: "rate_review",   status: "pending_human_review" },
       { id: "auto_replied",         label: "Auto-Reply",   icon: "auto_awesome",  status: ["auto_replied", "queued_for_auto_send"] },
+      // ─── v3.24 — Production Rush ──────────────────────────────────────
+      // Threads where the customer accepted the $15 rush production
+      // upgrade. Status flips to "production_rush" by etsyMailDraftReply
+      // when the AI's customerAcceptedRush flag fires. Lives above Sales
+      // — Active because it's higher operational priority — these need
+      // to ship in 2-3 business days, so the operator should see them
+      // first.
+      { id: "production_rush",      label: "Production Rush", icon: "local_fire_department",
+        status: "production_rush" },
       // ─── v2.0 Step 2 ──
       // Aggregates all active sales-funnel statuses. Counts work
       // automatically since etsyMailThreads ?counts=1 groups by status.
@@ -4096,6 +4116,15 @@
         const when     = fmtTime(t.lastInboundAt || t.updatedAt || t.createdAt);
 
         const badges = [];
+        // v3.24: Production rush badge — pin to FIRST position for max
+        // visibility. Renders whenever the thread has an active rush
+        // acceptance (acceptedAt set, removedAt not set). Red badge
+        // with flame emojis is intentionally loud — these need to
+        // ship in 2-3 days, operator should never miss them.
+        const rush = t.productionRush;
+        if (rush && rush.acceptedAt && !rush.removedAt) {
+          badges.push(`<span class="em-badge rush" title="$15 rush production accepted — production target 2-3 business days">🔥RUSH🔥</span>`);
+        }
         if (t.linkedOrderId)  badges.push(`<span class="em-badge order">#${esc(String(t.linkedOrderId).slice(-6))}</span>`);
         if (t.category)       badges.push(`<span class="em-badge category">${esc(t.category)}</span>`);
         // AI rating: confidence is more meaningful in the new auto-pipeline
@@ -4247,7 +4276,16 @@
       if (!host) return;
 
       const totalPages = Math.max(1, Math.ceil(totalThreads / THREADS_PER_PAGE));
-      if (totalPages <= 1) {
+      // v3.26: ALWAYS show the pagination strip, even on small folders.
+      // Previously we hid it for single-page results since "Page 1 of 1"
+      // is technically clutter — but the operator had no way to verify
+      // pagination was wired up until a folder crossed 100 threads, and
+      // the moment a thread set crosses that threshold the strip pops in
+      // unexpectedly. Better to always show it: arrows disable when
+      // there's only one page, and the count text confirms what's
+      // visible. Zero-result folders still hide (handled by
+      // renderThreadList passing 0).
+      if (totalThreads === 0) {
         host.style.display = "none";
         host.innerHTML = "";
         return;
@@ -4691,6 +4729,9 @@
               <h2>${esc(t.customerName || "Unknown customer")}</h2>
               <div class="em-h-meta">
                 <span class="em-status-pill ${esc(t.status || "")}">${esc(t.status || "unknown")}</span>
+                ${(t.productionRush && t.productionRush.acceptedAt && !t.productionRush.removedAt)
+                  ? `<span class="em-badge rush" title="$15 rush production accepted — production target 2-3 business days">🔥RUSH🔥</span>`
+                  : ""}
                 ${t.etsyUsername ? `<span>@${esc(t.etsyUsername)}</span>` : ""}
                 ${t.customerEmail ? `<span>${esc(t.customerEmail)}</span>` : ""}
                 ${hasOrder ? `<span>Order #${esc(t.linkedOrderId)}</span>` : `<span class="em-muted">no linked order</span>`}

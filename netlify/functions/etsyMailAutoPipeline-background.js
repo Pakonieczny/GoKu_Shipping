@@ -173,6 +173,131 @@ async function getAutoPipelineConfig() {
   return value;
 }
 
+// ━━━ v3.18: Tracking-image-readiness gate for auto-send ━━━━━━━━━━━━━━
+//
+// When the AI generates a draft, generate_tracking_image returns
+// IMMEDIATELY with status="pending" and a jobId — the actual carrier
+// lookup + image render happens in a background function and may take
+// 5-30 seconds. The draft is finalized at this point, with the
+// pending-status attachment recorded in draftResp.attachments[].
+//
+// PROBLEM (pre-v3.18): if the auto-pipeline confidence-routes the draft
+// to auto_send and immediately enqueues it, the extension picks it up
+// and tries to attach an image whose proxy URL is not yet populated —
+// the customer receives the text WITHOUT the tracking timeline. This
+// mirrored the manual-Send race we fixed in the inbox UI (v3.16/v3.17).
+//
+// FIX: before the auto-pipeline enqueues, poll the tracking job docs
+// in Firestore until all pending tracking images are ready (or failed),
+// then proceed. Cap the wait at WAIT_TRACKING_MAX_MS — past that, fall
+// through to human review so the operator can verify and re-attach.
+//
+// Why poll Firestore (instead of the snapshot endpoint):
+//   - The background function writes status updates to
+//     EtsyMail_TrackingJobs/<jobId> directly. Polling the doc is a
+//     single read per poll and doesn't multiply Netlify invocations.
+//   - The same source of truth the inbox UI uses, so behavior is
+//     consistent across manual and auto-send paths.
+
+const TRACKING_JOBS_COLL    = "EtsyMail_TrackingJobs";
+const WAIT_TRACKING_MAX_MS  = 30 * 1000;   // 30s ceiling
+const WAIT_TRACKING_INTERVAL = 1000;       // 1s between polls
+
+/**
+ * Wait until every tracking_image attachment in `attachments` is in
+ * a terminal state (ready or failed). Returns:
+ *   {
+ *     ok       : true  if every pending one became "ready"
+ *                false if any timed out or finished as "failed"
+ *     attachments: updated array with current statuses + imageUrl/etc
+ *     timedOut : boolean — whether the deadline was hit
+ *     failed   : array of trackingCodes that ended in "failed" state
+ *   }
+ */
+async function waitForTrackingJobs(attachments) {
+  const result = {
+    ok: true,
+    attachments: Array.isArray(attachments) ? attachments.map(a => ({ ...a })) : [],
+    timedOut: false,
+    failed: []
+  };
+
+  // Find tracking_image attachments still pending (no imageUrl yet).
+  const pendingIdxs = [];
+  result.attachments.forEach((a, idx) => {
+    if (a && a.type === "tracking_image" && a.status !== "ready" && a.status !== "failed" && a.jobId) {
+      pendingIdxs.push(idx);
+    }
+  });
+
+  if (pendingIdxs.length === 0) return result;
+
+  console.log(`[autoPipeline] waiting for ${pendingIdxs.length} tracking job(s) to complete`);
+
+  const deadline = Date.now() + WAIT_TRACKING_MAX_MS;
+  const stillPending = new Set(pendingIdxs);
+
+  while (stillPending.size > 0 && Date.now() < deadline) {
+    // Poll each remaining pending job
+    for (const idx of Array.from(stillPending)) {
+      const att = result.attachments[idx];
+      try {
+        const snap = await db.collection(TRACKING_JOBS_COLL).doc(att.jobId).get();
+        if (!snap.exists) continue;   // odd, but keep waiting
+        const job = snap.data();
+        if (job.status === "ready") {
+          // Hydrate the attachment with the now-known image fields so
+          // etsyMailDraftSend.normalizeAttachments doesn't reject it.
+          att.status           = "ready";
+          att.imageUrl         = job.imageUrl || att.imageUrl || null;
+          att.imageStoragePath = job.imageStoragePath || att.imageStoragePath || null;
+          att.imageWidth       = job.imageWidth   || att.imageWidth || null;
+          att.imageHeight      = job.imageHeight  || att.imageHeight || null;
+          att.statusKey        = job.statusKey    || att.statusKey || null;
+          att.statusText       = job.statusText   || att.statusText || null;
+          att.carrier          = job.carrier      || att.carrier || null;
+          att.carrierDisplay   = job.carrierDisplay || att.carrierDisplay || null;
+          // Ensure proxyUrl is set (extension reads this to fetch bytes)
+          if (!att.proxyUrl && att.trackingCode) {
+            att.proxyUrl = "/.netlify/functions/etsyMailTrackingImage?trackingCode=" +
+                           encodeURIComponent(att.trackingCode);
+          }
+          stillPending.delete(idx);
+          console.log(`[autoPipeline] tracking ready: ${att.trackingCode}`);
+        } else if (job.status === "failed") {
+          att.status     = "failed";
+          att.errorText  = job.error || "Tracking lookup failed";
+          att.errorCode  = job.errorCode || null;
+          stillPending.delete(idx);
+          result.ok = false;
+          result.failed.push(att.trackingCode || att.jobId);
+          console.warn(`[autoPipeline] tracking failed: ${att.trackingCode} — ${att.errorText}`);
+        }
+        // else: still pending or running — keep polling
+      } catch (e) {
+        console.warn(`[autoPipeline] tracking poll error for ${att.jobId}: ${e.message}`);
+        // Don't bail — try again on next tick
+      }
+    }
+    if (stillPending.size > 0) {
+      await new Promise(r => setTimeout(r, WAIT_TRACKING_INTERVAL));
+    }
+  }
+
+  if (stillPending.size > 0) {
+    result.ok = false;
+    result.timedOut = true;
+    // Keep their attachments at "pending" so the operator (downstream
+    // human review path) can see what was unfinished.
+    for (const idx of stillPending) {
+      const att = result.attachments[idx];
+      console.warn(`[autoPipeline] tracking timeout after ${WAIT_TRACKING_MAX_MS}ms: ${att.trackingCode}`);
+    }
+  }
+
+  return result;
+}
+
 function json(statusCode, body) {
   return { statusCode, headers: { ...CORS, "Content-Type": "application/json" }, body: JSON.stringify(body) };
 }
@@ -449,10 +574,27 @@ async function finalizeThread(threadId, { newStatus, inboundMs, decision, draftI
   // the operator can see the most recent customer-service draft
   // generated on the post-sale follow-up. We just don't touch `status`
   // or `aiConfidence` — those reflect the closed sale.
+  //
+  // v3.25 — STICKY-RUSH GUARD. Same pattern applied to active rush
+  // production threads. When productionRush.acceptedAt is set (and
+  // not removedAt), the thread should stay in the Production Rush
+  // folder regardless of subsequent AI auto-processing on follow-up
+  // customer messages. Without this guard, a post-acceptance "thanks!"
+  // would flip status back to auto_replied and the thread would
+  // silently leave the rush folder before the order is even shipped.
   let isCompletedSale = false;
+  let isActiveRush = false;
   try {
     const snap = await db.collection(THREADS_COLL).doc(threadId).get();
-    if (snap.exists && snap.data().salesCompletedAt) isCompletedSale = true;
+    if (snap.exists) {
+      const data = snap.data() || {};
+      if (data.salesCompletedAt) isCompletedSale = true;
+      if (data.productionRush
+          && data.productionRush.acceptedAt
+          && !data.productionRush.removedAt) {
+        isActiveRush = true;
+      }
+    }
   } catch (e) {
     // Read failure shouldn't block finalize; fall through to normal write.
     console.warn("finalizeThread completion-check failed (proceeding):", e.message);
@@ -465,10 +607,16 @@ async function finalizeThread(threadId, { newStatus, inboundMs, decision, draftI
     aiDraftStatus                : draftId ? "ready" : "none",
     updatedAt                    : FV.serverTimestamp()
   };
-  // For completed sales, keep status + aiConfidence + aiDifficulty
-  // immutable. For everything else, write them as before.
-  if (!isCompletedSale) {
+  // For completed sales OR active rush, keep status + aiConfidence
+  // + aiDifficulty immutable. For everything else, write them as before.
+  if (!isCompletedSale && !isActiveRush) {
     patch.status       = newStatus;
+    patch.aiConfidence = aiConfidence;
+    patch.aiDifficulty = aiDifficulty;
+  } else if (isActiveRush) {
+    // Still update aiConfidence/aiDifficulty so the operator sees the
+    // current AI's read on this customer message — just don't overwrite
+    // status. Active rush stays in the rush folder until removed/shipped.
     patch.aiConfidence = aiConfidence;
     patch.aiDifficulty = aiDifficulty;
   }
@@ -1523,37 +1671,66 @@ exports.handler = async (event) => {
                     || ("https://www.etsy.com/your/conversations/"
                        + (threadAfter.etsyConversationId || threadId.replace("etsy_conv_", "")));
 
-                  await callFunction("etsyMailDraftSend", {
-                    op                  : "enqueue",
-                    threadId,
-                    etsyConversationUrl,
-                    text                : draftText,
-                    attachments         : draftAttachments,
-                    employeeName        : employeeName || "system:auto-pipeline",
-                    aiMeta              : {
-                      generatedByAI         : true,
-                      generatedBySalesAgent : true,
-                      confidence            : draftDoc.aiConfidence || null,
-                      model                 : draftDoc.aiModel || null
-                    },
-                    force               : true,
-                    parentThreadFinalizePatch : {
+                  // ━━━ v3.18: Block on pending tracking jobs (sales path) ━
+                  // Same race as the main auto-send path — tracking image
+                  // generation runs in a background function. Wait for any
+                  // pending entries to finalize before enqueueing, otherwise
+                  // the extension sends text-only with no attachment.
+                  const trackingWait = await waitForTrackingJobs(draftAttachments);
+                  const sendableAttachments = trackingWait.attachments;
+                  if (!trackingWait.ok) {
+                    await writeAudit({
+                      threadId, draftId,
+                      eventType: "sales_auto_send_tracking_unready",
+                      payload  : {
+                        timedOut: trackingWait.timedOut,
+                        failed  : trackingWait.failed,
+                        note    : "Sales auto-send aborted because one or " +
+                                  "more tracking images did not finish " +
+                                  "generating in time. Demoted to human review."
+                      }
+                    });
+                    // Mirror the kill-switch pattern above — leave the
+                    // thread for human review without enqueueing.
+                    await db.collection(THREADS_COLL).doc(threadId).set({
+                      lastAutoDecision  : "sales_auto_send_tracking_unready",
+                      lastAutoDecisionAt: FV.serverTimestamp(),
+                      updatedAt         : FV.serverTimestamp()
+                    }, { merge: true });
+                  } else {
+                    await callFunction("etsyMailDraftSend", {
+                      op                  : "enqueue",
                       threadId,
-                      newStatus    : "auto_replied",
-                      inboundMs    : claim.inboundMs,
-                      decision     : "sales_auto_send_enqueued",
-                      aiConfidence : draftDoc.aiConfidence || null
-                    }
-                  });
-                  await writeAudit({
-                    threadId, draftId,
-                    eventType: "sales_auto_send_enqueued",
-                    payload  : {
-                      confidence : draftDoc.aiConfidence || null,
-                      textLen    : draftText.length,
-                      attachCount: draftAttachments.length
-                    }
-                  });
+                      etsyConversationUrl,
+                      text                : draftText,
+                      attachments         : sendableAttachments,
+                      employeeName        : employeeName || "system:auto-pipeline",
+                      aiMeta              : {
+                        generatedByAI         : true,
+                        generatedBySalesAgent : true,
+                        confidence            : draftDoc.aiConfidence || null,
+                        model                 : draftDoc.aiModel || null
+                      },
+                      force               : true,
+                      parentThreadFinalizePatch : {
+                        threadId,
+                        newStatus    : "auto_replied",
+                        inboundMs    : claim.inboundMs,
+                        decision     : "sales_auto_send_enqueued",
+                        aiConfidence : draftDoc.aiConfidence || null
+                      }
+                    });
+                    await writeAudit({
+                      threadId, draftId,
+                      eventType: "sales_auto_send_enqueued",
+                      payload  : {
+                        confidence : draftDoc.aiConfidence || null,
+                        textLen    : draftText.length,
+                        attachCount: sendableAttachments.length
+                      }
+                    });
+                  }
+                  // ━━━ end v3.18 sales gate ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
                 }
               }
             } catch (autoSendErr) {
@@ -1744,6 +1921,41 @@ exports.handler = async (event) => {
         || ("https://www.etsy.com/your/conversations/"
            + (thread.etsyConversationId || threadId.replace("etsy_conv_", "")));
 
+      // ━━━ v3.18: Block on pending tracking jobs ━━━━━━━━━━━━━━━━━━━━
+      // If the AI included tracking images, they may still be in the
+      // pending state when we arrive here (background generation
+      // hasn't finished). Auto-sending now would deliver text-only.
+      // Wait for them to complete; if any timeout or fail, demote to
+      // human review and skip the enqueue. Mirrors the manual-Send
+      // guard in etsy-mail-1.html v3.16/v3.17.
+      let attachmentsForSend = Array.isArray(draftResp.attachments) ? draftResp.attachments : [];
+      const trackingWait = await waitForTrackingJobs(attachmentsForSend);
+      attachmentsForSend = trackingWait.attachments;
+      if (!trackingWait.ok) {
+        await writeAudit({
+          threadId, draftId,
+          eventType: "auto_pipeline_tracking_unready",
+          payload: {
+            timedOut: trackingWait.timedOut,
+            failed  : trackingWait.failed,
+            note    : "Auto-send aborted because one or more tracking " +
+                      "images did not finish generating in time. " +
+                      "Demoted to human review."
+          }
+        });
+        await finalizeThread(threadId, {
+          newStatus    : "pending_human_review",
+          inboundMs    : claim.inboundMs,
+          decision     : "human_review_after_tracking_unready",
+          draftId,
+          aiConfidence,
+          aiDifficulty
+        });
+        // Skip the enqueue — operator will verify in the inbox UI.
+        return;
+      }
+      // ━━━ end v3.18 gate ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
       try {
         // v1.5: atomic enqueue + thread finalize. Pass the finalize
         // patch as primitive fields; the enqueue op writes both the
@@ -1758,7 +1970,7 @@ exports.handler = async (event) => {
           threadId,
           etsyConversationUrl,
           text,
-          attachments         : Array.isArray(draftResp.attachments) ? draftResp.attachments : [],
+          attachments         : attachmentsForSend,
           employeeName,
           aiMeta              : {
             generatedByAI : true,

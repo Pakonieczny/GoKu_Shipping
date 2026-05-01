@@ -850,6 +850,91 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
     DIDN'T address. If everything is resolved and they're closing out,
     close out with them. Don't manufacture a problem.
 
+15. RUSH PRODUCTION OFFER ($15) — STRICT ELIGIBILITY.
+    CustomBrites offers a $15 flat-fee rush production upgrade that
+    cuts production time from the standard 4-5 business days down to
+    2-3 business days. This applies ONLY at checkout, on orders that
+    have NOT yet been placed. It cannot be added to existing/paid orders.
+
+    OFFER RUSH WHEN BOTH ARE TRUE:
+      (A) The customer is asking about a piece they have NOT YET
+          ORDERED. They're considering a purchase, browsing options,
+          or in the middle of a custom-order conversation.
+      (B) The customer has expressed urgency. Examples: a named event
+          date ("for my sister's wedding May 14"), a deadline phrase
+          ("need it by Saturday", "Mother's Day", "graduation"), an
+          openness to paying extra ("willing to pay whatever it takes",
+          "is there a way to speed it up"), or simple urgency words
+          ("rush", "asap", "soon", "quickly", "fast").
+
+    HOW TO OFFER (template — adjust tone to fit, but keep the facts):
+      "We do offer a $15 rush production upgrade — it gets your piece
+      through production in 2-3 business days instead of the standard
+      4-5. If that helps, you can add it before checkout. (Shipping
+      time is separate and chosen at checkout.)"
+
+    DO NOT OFFER RUSH WHEN:
+      - The customer's order is already placed/paid (lookup_order_details
+        returned an existing receipt with the active piece). Rush is a
+        pre-checkout option only and cannot be retroactively applied.
+        For existing-order urgency, set ready_for_human_approval:true
+        with a brief "I'll check with the team about what we can do for
+        your order" reply. Do NOT mention rush production exists in
+        these cases — it would falsely suggest it's still available.
+      - The customer hasn't expressed urgency. Don't proactively offer
+        rush as an upsell on calm conversations.
+      - The customer has already declined rush earlier in the thread.
+
+    DO NOT, EVEN ONCE:
+      - Promise specific delivery dates. Always pair "2-3 business
+        days" with "production" — that's the production window, not
+        the in-hand date. Shipping is on top of that.
+      - Claim rush will guarantee arrival by a specific date.
+      - Say "I'll add it for you" — only the customer can add it at
+        checkout. Your role is to inform, not to apply.
+      - Offer rush on a Quote-row custom build (handled by the sales
+        agent, not this prompt — if you're in the regular reply path
+        and the conversation looks like a custom build, escalate to
+        human review and let the sales path engage).
+
+16. RUSH ACCEPTANCE / RETRACTION DETECTION (compose_draft_reply flags).
+    Two flags are available on compose_draft_reply: customerAcceptedRush
+    and customerRemovedRush. Both default false. Set with a HIGH BAR:
+
+    Set customerAcceptedRush:true ONLY when ALL of these hold:
+      1. An earlier turn in this thread (typically the immediately
+         previous assistant message) explicitly offered $15 rush.
+      2. The customer's MOST RECENT inbound message clearly accepts
+         it. Examples: "yes please add the rush", "yes go ahead with
+         rush", "$15 sounds good, let's do it", "ok yes to rush".
+      3. The acceptance is unambiguously about rush — not about a
+         different question you also asked in the same offer turn.
+
+      If the customer's "yes" could be answering any other question
+      (a quote, a spec confirmation, a shipping option), leave the
+      flag false. The operator will mark it manually if needed.
+
+    Set customerRemovedRush:true ONLY when ALL of these hold:
+      1. This thread previously had rush accepted (the conversation
+         history will show a prior rush offer + acceptance).
+      2. The customer's MOST RECENT inbound message clearly retracts
+         it. Examples: "actually never mind on the rush", "scratch
+         the rush, regular is fine", "I changed my mind, no rush
+         needed".
+      3. Retraction is unambiguous and about rush specifically.
+
+    DO NOT set either flag based on:
+      - Initial urgency language alone (that's a signal to OFFER, not
+        a signal of acceptance)
+      - Vague affirmatives without a prior offer ("sounds good!" with
+        no rush context)
+      - The customer asking ABOUT rush ("how does the rush option
+        work?" — that's a question, not acceptance)
+      - Operator action — these flags are AI-detected only
+
+    When uncertain, leave both false. False negatives cost an operator
+    one click; false positives mis-tag the entire thread.
+
 `.trim();
 
   // Firestore-configured shop policies
@@ -1178,6 +1263,14 @@ const TOOL_SPECS = [
         confidenceReasoning: {
           type: "string",
           description: "1-2 sentences explaining your confidence score. What gave you confidence? What's uncertain? E.g., 'High: confirmed shipped status via tool call and provided exact tracking link.' Or: 'Low: customer mentions a refund but order status is ambiguous and I couldn't confirm policy fit.'"
+        },
+        customerAcceptedRush: {
+          type: "boolean",
+          description: "Set true ONLY when (a) the immediately-prior assistant turn in this thread offered $15 rush production AND (b) the customer's most recent inbound message clearly accepts the offer (e.g. 'yes please add it', 'yes go ahead with rush', 'sounds good, $15 works'). Default false. NEVER set true on existing/already-paid orders. NEVER set true based on initial-urgency language alone — the customer must accept a previously-made offer. When in doubt, leave false; an operator can mark it manually."
+        },
+        customerRemovedRush: {
+          type: "boolean",
+          description: "Set true ONLY when (a) this thread previously had rush production accepted AND (b) the customer's most recent inbound message clearly retracts it (e.g. 'actually never mind on rush', 'regular shipping is fine after all'). Default false. When in doubt, leave false."
         }
       },
       required: ["text", "reasoning", "referencedReceiptIds", "confidence", "difficulty"]
@@ -1742,19 +1835,47 @@ exports.handler = async (event) => {
 
     // Build attachments array: any generated tracking images become attachments
     // the operator can include when sending the reply.
+    //
+    // v3.25: include `jobId` and `proxyUrl` on every attachment.
+    //   - jobId: required by etsyMailAutoPipeline's waitForTrackingJobs
+    //     to poll EtsyMail_TrackingJobs/{jobId} until ready. Without it,
+    //     the gate would skip the wait and the attachment would arrive
+    //     at etsyMailDraftSend in pending state.
+    //   - proxyUrl: required by etsyMailDraftSend.normalizeAttachments;
+    //     missing proxyUrl silently drops the attachment (line 307 of
+    //     etsyMailDraftSend.js — `if (!a.proxyUrl) continue`).
+    // The inbox UI's syncTrackingImagesToChips synthesizes both fields
+    // for manual sends (so manual flows worked); auto-send went straight
+    // from draft.attachments to etsyMailDraftSend without that
+    // synthesis step, dropping the image silently. Now both fields are
+    // populated at the AI's source-of-truth layer so EVERY downstream
+    // consumer (manual UI, auto-pipeline, reapers) sees them.
     const attachments = trackingImages.map(img => ({
-      type          : "tracking_image",
-      trackingCode  : img.trackingCode,
-      carrier       : img.carrier,
-      carrierDisplay: img.carrierDisplay,
-      status        : img.status,
-      statusKey     : img.statusKey,
-      imageUrl      : img.imageUrl,
+      type            : "tracking_image",
+      trackingCode    : img.trackingCode,
+      jobId           : img.jobId || null,
+      carrier         : img.carrier,
+      carrierDisplay  : img.carrierDisplay,
+      status          : img.status,
+      statusKey       : img.statusKey,
+      statusText      : img.statusText || null,
+      imageUrl        : img.imageUrl,
       imageStoragePath: img.imageStoragePath,
-      imageWidth    : img.imageWidth,
-      imageHeight   : img.imageHeight,
-      queuedForSend : true,  // default: include when operator sends
-      addedAt       : new Date().toISOString()
+      imageWidth      : img.imageWidth,
+      imageHeight     : img.imageHeight,
+      // Same-origin proxy URL the extension uses to fetch bytes —
+      // construct deterministically from the tracking code so this
+      // attachment can be passed directly to etsyMailDraftSend without
+      // a UI hydration step in between.
+      proxyUrl        : img.trackingCode
+        ? "/.netlify/functions/etsyMailTrackingImage?trackingCode=" + encodeURIComponent(img.trackingCode)
+        : null,
+      contentType     : "image/png",
+      filename        : img.trackingCode
+        ? "tracking-" + String(img.trackingCode).replace(/[^a-z0-9]/gi, "_") + ".png"
+        : null,
+      queuedForSend   : true,  // default: include when operator sends
+      addedAt         : new Date().toISOString()
     }));
 
     const draftDoc = {
@@ -1792,16 +1913,96 @@ exports.handler = async (event) => {
     };
     await draftRef.set(draftDoc, { merge: false });
 
+    // ─── v3.24: Rush production flag handling ─────────────────────
+    // The AI may have set customerAcceptedRush or customerRemovedRush
+    // on its compose_draft_reply call. Translate those into a thread-
+    // level state transition + audit row.
+    //
+    // ACCEPTED:
+    //   - thread.productionRush = { acceptedAt, acceptedBy: "ai" }
+    //   - thread.statusBeforeRush = current status (snapshot for restore)
+    //   - thread.status = "production_rush"
+    //
+    // REMOVED:
+    //   - thread.productionRush.removedAt = now
+    //   - thread.status = thread.statusBeforeRush || "needs_review" (fallback)
+    //   - thread.statusBeforeRush = null
+    //   - Only honored if thread.productionRushFrozen !== true (freezing
+    //     deferred per v3.24 — not yet implemented anywhere; always falsy
+    //     for now, so removal always succeeds).
+    //
+    // The AI's flag-detection rules (see prompt rules 15/16) are
+    // strict — high bar to set true, low bar to leave false. Defensive
+    // programming here: if the flag is set but the thread isn't in a
+    // state where the transition makes sense (e.g. removeRush=true but
+    // there's no prior productionRush), we ignore + audit-warn, never
+    // crash.
+    let rushDecision = null;   // for audit
+    if (parsed.customerAcceptedRush === true || parsed.customerRemovedRush === true) {
+      try {
+        const tSnap = await db.collection(THREADS_COLL).doc(threadId).get();
+        const tData = tSnap.exists ? (tSnap.data() || {}) : {};
+        if (parsed.customerAcceptedRush === true) {
+          if (tData.productionRush && tData.productionRush.acceptedAt && !tData.productionRush.removedAt) {
+            // Already accepted; idempotent — just log
+            rushDecision = "rush_accept_noop_already_accepted";
+          } else if (tData.productionRushFrozen === true) {
+            // Frozen post-payment (deferred feature; here for forward compat)
+            rushDecision = "rush_accept_blocked_frozen";
+          } else {
+            const priorStatus = tData.status || null;
+            await db.collection(THREADS_COLL).doc(threadId).set({
+              productionRush  : {
+                acceptedAt: FV.serverTimestamp(),
+                acceptedBy: "ai",
+                draftId
+              },
+              statusBeforeRush: priorStatus,
+              status          : "production_rush",
+              updatedAt       : FV.serverTimestamp()
+            }, { merge: true });
+            rushDecision = "rush_accepted";
+          }
+        } else if (parsed.customerRemovedRush === true) {
+          if (!tData.productionRush || !tData.productionRush.acceptedAt) {
+            rushDecision = "rush_remove_noop_not_accepted";
+          } else if (tData.productionRushFrozen === true) {
+            rushDecision = "rush_remove_blocked_frozen";
+          } else {
+            const restoredStatus = tData.statusBeforeRush || "pending_human_review";
+            await db.collection(THREADS_COLL).doc(threadId).set({
+              productionRush  : {
+                ...(tData.productionRush || {}),
+                removedAt    : FV.serverTimestamp(),
+                removedReason: "ai_detected_customer_retraction",
+                removedDraftId: draftId
+              },
+              statusBeforeRush: FV.delete(),
+              status          : restoredStatus,
+              updatedAt       : FV.serverTimestamp()
+            }, { merge: true });
+            rushDecision = "rush_removed";
+          }
+        }
+      } catch (rushErr) {
+        console.warn("[draftReply] rush flag handling failed:", rushErr.message);
+        rushDecision = "rush_error_" + (rushErr.message || "unknown").slice(0, 60);
+      }
+    }
+    // ─── end v3.24 rush handling ──────────────────────────────────
+
     // ─── 7. Update thread ──────────────────────────────────────────
     // Mirror the AI rating onto the thread doc so list views and
     // filters can render the badge without joining to drafts.
-    await db.collection(THREADS_COLL).doc(threadId).set({
+    // v3.24: skip status overwrite if rush handling already wrote one
+    const threadPatch = {
       latestDraftId: draftId,
       aiDraftStatus: "ready",
       aiConfidence : parsed.confidence,
       aiDifficulty : parsed.difficulty,
       updatedAt    : now
-    }, { merge: true });
+    };
+    await db.collection(THREADS_COLL).doc(threadId).set(threadPatch, { merge: true });
 
     // ─── 8. Audit ─────────────────────────────────────────────────
     await writeAudit({
@@ -1820,6 +2021,10 @@ exports.handler = async (event) => {
         aiConfidence       : parsed.confidence,
         aiDifficulty       : parsed.difficulty,
         confidenceReasoning: parsed.confidenceReasoning,
+        // v3.24: rush production transition (if any)
+        rushDecision       : rushDecision,
+        rushAccepted       : !!parsed.customerAcceptedRush,
+        rushRemoved        : !!parsed.customerRemovedRush,
         tokensInput        : draftDoc.aiTokensInput,
         tokensOutput       : draftDoc.aiTokensOutput,
         tokensCacheRead    : draftDoc.aiTokensCacheRead,
