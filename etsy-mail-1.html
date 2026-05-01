@@ -490,8 +490,19 @@
 
     .em-compose textarea {
       width: 100%; min-height: 100px; border: 1px solid #d0d7de;
-      border-radius: 4px; padding: 8px 10px; font-size: 13px;
+      border-radius: 4px; padding: 8px 10px;
+      /* v0.9.15: extra bottom padding so when the textarea auto-grows
+         to fit a long draft, the last line isn't crammed against the
+         bottom edge of the box. */
+      padding-bottom: 24px;
+      font-size: 13px;
       font-family: inherit; resize: vertical; outline: none;
+      /* v0.9.15: cap auto-grow at ~60% of viewport so a very long
+         draft doesn't push the page off-screen. The textarea itself
+         scrolls past this point; the manual resize handle still works. */
+      max-height: 60vh;
+      box-sizing: border-box;
+      overflow-y: auto;
     }
     .em-compose textarea:focus { border-color: #0366d6; }
     .em-compose .em-compose-bar { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
@@ -3296,6 +3307,32 @@
     const $  = (id) => document.getElementById(id);
     const esc = (s="") => String(s).replace(/[&<>"']/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]));
 
+    /* v0.9.15 — Auto-grow a textarea to fit its content.
+     *
+     * Used on the staff reply composer so long AI drafts and pasted
+     * messages don't force the operator to manually drag the resize
+     * handle every time. Strategy:
+     *   1. Reset to "auto" so scrollHeight reflects actual content,
+     *      not the previously-set inline height.
+     *   2. Set inline height to scrollHeight. CSS max-height (60vh)
+     *      caps the growth; CSS min-height (100px) is the floor; the
+     *      bottom-padding (24px) provides the breathing room the
+     *      operator asked for so the last line isn't cramped.
+     *   3. The user can still manually drag the resize handle —
+     *      `resize: vertical` is preserved. Manual resize sets a new
+     *      inline height which we'd overwrite on next call; that's
+     *      acceptable since auto-fit is the intended behavior.
+     *
+     * Safe to call with null/undefined — does nothing.
+     */
+    function autoSizeTextarea(ta) {
+      if (!ta) return;
+      try {
+        ta.style.height = "auto";
+        ta.style.height = ta.scrollHeight + "px";
+      } catch {}
+    }
+
     function toast(msg, ms=2200) {
       const t = $("emToast");
       t.textContent = msg;
@@ -5020,6 +5057,7 @@
 
       $("emClearDraftBtn")?.addEventListener("click", () => {
         $("emDraftText").value = "";
+        autoSizeTextarea($("emDraftText"));   // v0.9.15: shrink back to min-height after clear
         resetTokenCounter();
         hideReferencedReceipts();
         const sl = $("emSuggestedListings"); if (sl) { sl.style.display = "none"; sl.innerHTML = ""; }
@@ -5029,6 +5067,17 @@
         hideSendStatus();
       });
       $("emSaveStaffMsgBtn")?.addEventListener("click", () => saveStaffMessage(t.id));
+
+      // v0.9.15 — Auto-grow the staff reply textarea while the operator
+      // types or pastes. Also runs once now so any pre-filled value
+      // (e.g. a hydrated draft from a thread switch — see line ~6983)
+      // shows at the right height immediately rather than only after
+      // the next keystroke.
+      const draftTa = $("emDraftText");
+      if (draftTa) {
+        draftTa.addEventListener("input", () => autoSizeTextarea(draftTa));
+        autoSizeTextarea(draftTa);
+      }
 
       // ─── M4: AI draft wiring ──────────────────────────────────────────
       $("emAiDraftBtn")?.addEventListener("click", () => generateAiDraft(t.id, "initial"));
@@ -5109,6 +5158,7 @@
         const data = await api("etsyMailDraftReply", { method: "POST", body: reqBody });
         // Populate textarea
         $("emDraftText").value = data.text || "";
+        autoSizeTextarea($("emDraftText"));   // v0.9.15: grow to fit AI draft
         // Render AI card
         renderAiDraftCard(data);
         // Show revise row
@@ -6640,7 +6690,7 @@
               if (d.status === "sent") {
                 clearComposerAttachments();
                 const ta = $("emDraftText");
-                if (ta) ta.value = "";
+                if (ta) { ta.value = ""; autoSizeTextarea(ta); }   // v0.9.15: shrink back after send
               }
               // v0.9.3: Insert optimistic message immediately so the
               // operator sees their just-sent message in the thread
@@ -6939,6 +6989,7 @@
         state._optimInsertedFor.add(resp.draftId);
         // Clear the composer.
         ta.value = "";
+        autoSizeTextarea(ta);   // v0.9.15: shrink back to min-height after send
         clearComposerAttachments();
         renderComposerChips();
         // Refresh thread + rail so the new message and any auto_replied
@@ -7044,6 +7095,7 @@
         const ta = $("emDraftText");
         if (isHydratableState && ta && !ta.value.trim()) {
           ta.value = d.text || "";
+          autoSizeTextarea(ta);   // v0.9.15: grow to fit hydrated draft
         }
         renderAiDraftCard(d);
         // Show revise row since there's a draft present
@@ -7807,6 +7859,7 @@
           }
         });
         $("emDraftText").value = "";
+        autoSizeTextarea($("emDraftText"));   // v0.9.15: shrink back after save
         toast("Staff message saved");
         fetchMessagesNow(threadId);
         fetchThreadListNow();
