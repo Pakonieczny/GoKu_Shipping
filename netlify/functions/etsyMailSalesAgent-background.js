@@ -1686,6 +1686,71 @@ Avoid (these read pushy or presumptuous):
 If rush has already been offered earlier in THIS active conversation (by you or by staff), don't offer it again. The customer can come back to it.
 `.trim();
 
+    // ── (5) Product family disambiguation + dimensions questions ───
+    // The damaging failure mode this addresses:
+    //
+    // Customer asked "size of the cross charm FOR NECKLACE (not
+    // huggie), compared to a coin." The customer's wording was
+    // explicit and parenthesized — they pre-disambiguated for the
+    // agent. Despite that, the agent provided huggie-scale
+    // dimensions (7mm × 5.4mm, "about the size of the date stamped
+    // on a penny") — apparently inferring family from the listing
+    // title's word "Tiny" rather than from the customer's explicit
+    // "for necklace (not huggie)" signal.
+    //
+    // Two corrections needed:
+    //   a) Family is whatever the customer said it is. Title
+    //      adjectives ("Tiny", "Small", "Mini") don't override an
+    //      explicit family signal.
+    //   b) "How big is it / size / dimensions" is a sizes question.
+    //      The line sheet shows size references visually and is the
+    //      safest answer, plus it surfaces other size options the
+    //      customer hadn't considered. Made-up specific mm
+    //      measurements are NOT a substitute for it.
+    const familyDisambiguationAddendum = `
+
+# PRODUCT FAMILY DISAMBIGUATION
+
+Custom Brites makes three SEPARATE product families, each with its own size scale:
+
+- **Necklace charms** — the larger pendants worn on a chain
+- **Huggie charm earrings** — the much smaller charms that dangle from a huggie hoop
+- **Stud earrings** — small studs worn directly in the ear
+
+A "cross charm" exists in more than one of these families with very different sizes. A customer asking about the necklace cross charm and a customer asking about the huggie cross charm are asking about physically different products. Conflating them produces a wrong answer the customer will catch.
+
+## How to lock in family
+
+The customer's explicit statement of family is authoritative. When they write something like:
+- "the cross charm FOR NECKLACE"
+- "for the necklace (not huggie)"
+- "the necklace version"
+- "the huggie one"
+- "stud earrings, not necklaces"
+
+— that IS the family. Use it. Do NOT override it based on:
+- A word like "Tiny" / "Small" / "Mini" in a listing title (these don't determine family; a tiny necklace charm is still a necklace charm).
+- An assumption about which family the customer "probably" meant.
+- The fact that a listing card thumbnail looks small.
+
+When the customer has NOT specified family explicitly, fall back in this order:
+1. Listing reference (if a listing URL was pasted, the listing's category usually pins family — necklace listings, huggie listings, and stud listings are distinct).
+2. Earlier turns in the active conversation that established family.
+3. Ask one short clarifying question. ("Is this for a necklace charm or a huggie charm?")
+
+## Dimensions / "how big" questions
+
+When a customer asks how big a charm is, what size it is, how it compares to something, or otherwise asks for physical dimensions, the best answer is the line sheet for the relevant family. The line sheet shows the actual sizes visually with scale references — that's what these questions are really asking for, and it's the source of truth the agent shouldn't try to substitute with from-memory mm figures.
+
+So: on a sizes question, set \`attach_line_sheet: true\` for the family the customer is asking about and write a short reply inviting them to look at the sheet. If you also want to give a one-line ballpark to anchor expectations ("the smallest necklace charm is roughly X" / "they range from Y to Z"), only do so when you have a high-confidence source for the number — context-pulled listing dimensions, a prior turn that established it, or sales playbook size bands. Never fabricate specific mm dimensions to sound helpful. A sentence saying "the line sheet shows the actual sizes side by side" is more useful than a wrong measurement.
+
+This is also the moment the line sheet doubles as an upsell: a customer asking about ONE size sees the full range, and many of them upsize or add to their order after seeing it.
+
+## When the customer's family contradicts the listing they pasted
+
+If the customer pastes a listing for, say, a huggie cross charm but explicitly asks about the necklace version, the customer is right and the listing is wrong-or-misread. Acknowledge the necklace context, send the necklace line sheet, and (briefly, if it helps) point out you have a separate necklace listing for the cross charm. Don't just answer with the huggie-listing's dimensions because that's what the URL pointed at.
+`.trim();
+
     // Concatenate. Keep a clear separator so the addendum is visible
     // in any prompt-debugging output without being mistaken for
     // operator-edited content.
@@ -1701,7 +1766,9 @@ If rush has already been offered earlier in THIS active conversation (by you or 
       + "\n\n---\n\n"
       + moveForwardAddendum
       + "\n\n---\n\n"
-      + rushEagernessAddendum;
+      + rushEagernessAddendum
+      + "\n\n---\n\n"
+      + familyDisambiguationAddendum;
 
     let loopResult;
     try {
