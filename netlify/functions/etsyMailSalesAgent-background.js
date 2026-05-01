@@ -1543,6 +1543,83 @@ Edge case — customer asks "where is my listing?" or similar follow-up after a 
 This rule is non-negotiable. Reply text and customer_accepted must agree.
 `.trim();
 
+    // v0.9.18 — Three additional addendums responding to specific
+    // failure modes the operator flagged in production drafts. Each
+    // is a structural-level rule, not a soft suggestion, because
+    // prompt-only soft language has reliably failed to prevent the
+    // problem (see the existing acceptanceSyncAddendum precedent).
+
+    // ── (1) attach_line_sheet ↔ reply text sync ─────────────────────
+    // Mirror the customer_accepted sync rule for attach_line_sheet.
+    // The damaging failure mode: agent writes reply text saying
+    // "see the attached line sheet" / "take a look at the attached
+    // necklace line sheet" but emits attach_line_sheet:false. The
+    // line-sheet image is never attached, the customer sees a
+    // promise with nothing fulfilling it. The operator UI now blocks
+    // such drafts client-side, but the prompt still needs to bind
+    // the two emissions together so the agent doesn't strand drafts
+    // in a not-sendable state.
+    const attachLineSheetSyncAddendum = `
+
+# ATTACH_LINE_SHEET STRUCTURAL RULE (system addendum)
+
+If your reply text mentions "the attached line sheet", "see the attached", "I've attached", "take a look at the attached", "here's our line sheet", "attached menu", "attached options sheet", or ANY phrasing that tells the customer a line sheet / menu / options sheet is attached to this message, you MUST set \`"attach_line_sheet": true\` in your JSON output.
+
+These are not separate concerns. The structured \`attach_line_sheet\` field is what makes the line-sheet IMAGE actually attach to the draft. If you write "see the attached line sheet" in your reply but emit \`attach_line_sheet: false\`, the customer receives a message with a broken promise and the operator UI will refuse to send the draft — both auto-pipeline and manual Send via Etsy are gated on this.
+
+The reverse holds: if you emit \`attach_line_sheet: true\`, your reply text must invite the customer to look at the attachment. Don't set the flag and then write text that doesn't reference the sheet.
+
+When you genuinely have nothing to attach (e.g. no line-sheet collateral exists for the family), do NOT use phrasing that promises an attachment. Either ask one clarifying question to nail down the family first, or set ready_for_human_approval:true with a synopsis explaining the operator should send the line sheet manually.
+`.trim();
+
+    // ── (2) Don't restate what staff already said in the thread ─────
+    // The damaging failure mode: a CustomBrites operator just sent a
+    // helpful, complete reply (e.g. "There is a drop-down arrow to
+    // add notes on the listing — no worries if you missed it"), the
+    // customer responds, and the agent's draft restates almost
+    // verbatim what the operator already wrote. Two agents talking
+    // past each other; customer reads it as a bug.
+    const noRestateStaffAddendum = `
+
+# NO RESTATING STAFF MESSAGES (system addendum)
+
+Read the conversation thread before composing. The customer can see every prior message in this conversation, including ones from staff (CustomBrites). If a staff member already answered the customer's question, gave them an option, or made a commitment in this thread, do NOT repeat that answer back at them in different words. Doing so reads as if you didn't read the thread, and it confuses the customer about who they're actually talking to.
+
+Specifically:
+- If the customer's most recent message is a follow-up to a staff message ("I see it now", "got it", "thanks", "ok"), respond to the follow-up. Don't re-explain what staff already explained.
+- If the customer is asking a NEW question after a staff answer, address the new question only. Don't preface with a recap of the staff answer.
+- If the customer is asking for confirmation of something staff just confirmed ("so it'll be 15 inches?"), confirm crisply ("Yes, 15 inches confirmed.") and move forward — don't paraphrase the staff message at length.
+
+The signal that you're about to restate staff: your draft contains a sentence that closely paraphrases something a staff message in the thread already said. When you catch yourself doing this, delete it and write only what advances the conversation from where it actually is.
+`.trim();
+
+    // ── (3) Move-forward / close-the-deal bias ─────────────────────
+    // The damaging failure mode: customer is clearly ready to buy
+    // (clear specs, urgency signals, "let's do it" energy), and the
+    // agent asks ANOTHER clarifying question or restates the spec
+    // back at them when it could have computed a quote and offered
+    // to send the custom listing. The customer's enthusiasm rots
+    // while the conversation stalls.
+    const moveForwardAddendum = `
+
+# MOVE-FORWARD BIAS (system addendum)
+
+When a customer signals readiness to buy — explicit confirmations, urgency about timing, "let's do it" energy, or simply having given you every input you need — your job is to advance the conversation toward a quote and a custom listing, not to ask another reassurance question.
+
+Operating principles:
+- If you have the family + every required code + a quantity, call \`resolveQuote\` and quote. Don't ask "are you sure?" or restate the spec back. The customer told you what they want; act on it.
+- If the customer is asking for confirmation of something already in scope ("so you'll do 15 inches?"), confirm and move forward. Don't open new questions you didn't need answered.
+- If you are missing exactly ONE input that would unlock a quote, ask only for that one input. Don't bundle it with restating what you already know.
+- If the customer has accepted a previously-quoted price (see CUSTOMER ACCEPTANCE rules), set customer_accepted:true and confirm warmly in one short sentence. The downstream automation creates the listing; you don't promise a timeline.
+
+When NOT to move forward:
+- A required input is genuinely missing AND the customer hasn't given you something to work with (no implied default, no prior turn).
+- The resolver returned escalations[] and you must escalate.
+- The customer has explicitly slowed the conversation ("let me think about it", "I need to check with my partner").
+
+In every other case, the bias is forward. Don't manufacture clarifying questions to feel safe; that's the failure mode this rule exists to prevent.
+`.trim();
+
     // Concatenate. Keep a clear separator so the addendum is visible
     // in any prompt-debugging output without being mistaken for
     // operator-edited content.
@@ -1550,7 +1627,13 @@ This rule is non-negotiable. Reply text and customer_accepted must agree.
       + "\n\n---\n\n"
       + lineSheetEagernessAddendum
       + "\n\n---\n\n"
-      + acceptanceSyncAddendum;
+      + acceptanceSyncAddendum
+      + "\n\n---\n\n"
+      + attachLineSheetSyncAddendum
+      + "\n\n---\n\n"
+      + noRestateStaffAddendum
+      + "\n\n---\n\n"
+      + moveForwardAddendum;
 
     let loopResult;
     try {
@@ -1842,6 +1925,16 @@ This rule is non-negotiable. Reply text and customer_accepted must agree.
       threadId,
       text                  : replyText,
       attachments           : attachmentsToWrite,
+      // v0.9.18 — Mirror attachments into draftAttachments so the
+      // operator UI's hydrateComposerFromDraft (which historically
+      // read draftAttachments) sees the line-sheet chip and renders
+      // it above the staff reply textarea, just like a drag-dropped
+      // image. Belt-and-suspenders pairing with the UI-side merge
+      // fix in v0.9.18 of etsy-mail-1.html: either patch alone makes
+      // the chip appear; both together also self-heals older drafts
+      // and keeps the data path predictable for any future surface
+      // (e.g. a mobile UI) that reads either field.
+      draftAttachments      : attachmentsToWrite,
       referenceAttachments  : compactAttachmentList(referenceAttachments),
       status                : "draft",     // NEVER "queued" in Step 2
       generatedByAI         : true,
