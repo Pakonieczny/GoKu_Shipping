@@ -490,7 +490,13 @@
 
     .em-compose textarea {
       width: 100%; min-height: 100px; border: 1px solid #d0d7de;
-      border-radius: 4px; padding: 8px 10px; font-size: 13px;
+      border-radius: 4px; padding: 8px 10px;
+      /* v0.9.17: extra bottom padding so the last line of an
+         auto-grown textarea isn't crammed against the bottom edge.
+         The page already has `* { box-sizing: border-box }` so the
+         24px is inside the textarea's content box. */
+      padding-bottom: 24px;
+      font-size: 13px;
       font-family: inherit; resize: vertical; outline: none;
     }
     .em-compose textarea:focus { border-color: #0366d6; }
@@ -3296,6 +3302,53 @@
     const $  = (id) => document.getElementById(id);
     const esc = (s="") => String(s).replace(/[&<>"']/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]));
 
+    /* v0.9.17 — Auto-grow the staff reply textarea to fit its content.
+     *
+     * IMPORTANT design points (changed from the v0.9.15 attempt):
+     *
+     *  1. ALL resize work is deferred via requestAnimationFrame. Reading
+     *     scrollHeight inside renderDetail's synchronous flow caused a
+     *     full layout flush right after a large innerHTML rebuild,
+     *     which produced occasional multi-second navigation lag.
+     *     Deferring to RAF means the layout pass happens AFTER the
+     *     render commits, batched with the browser's normal post-frame
+     *     work — no synchronous reflow on the navigation hot path.
+     *
+     *  2. RAF-debounced. Multiple rapid calls (e.g. paste, fast typing,
+     *     several sequential value sets) coalesce into one resize per
+     *     frame. Cheap regardless of call frequency.
+     *
+     *  3. Event delegation, NOT per-render listener attachment. One
+     *     listener on document handles every keystroke for any future
+     *     #emDraftText element, even after renderDetail rebuilds the
+     *     detail pane. renderDetail does zero extra work for resizing.
+     *
+     * CSS still controls the limits: min-height 100px is the floor;
+     * padding-bottom 24px is the breathing room at the end; no
+     * max-height, so manual `resize: vertical` drag is unconstrained.
+     */
+    let _draftResizeRAF = null;
+    function autoSizeDraftTextarea(ta) {
+      if (!ta) return;
+      if (_draftResizeRAF) cancelAnimationFrame(_draftResizeRAF);
+      _draftResizeRAF = requestAnimationFrame(() => {
+        _draftResizeRAF = null;
+        try {
+          ta.style.height = "auto";
+          ta.style.height = ta.scrollHeight + "px";
+        } catch {}
+      });
+    }
+    // One-time delegated input listener — survives any number of
+    // renderDetail rebuilds because it's bound to document, not the
+    // textarea itself. Cheap: cost is one ID compare per keystroke
+    // anywhere in the document, which is negligible.
+    document.addEventListener("input", (e) => {
+      if (e && e.target && e.target.id === "emDraftText") {
+        autoSizeDraftTextarea(e.target);
+      }
+    });
+
     function toast(msg, ms=2200) {
       const t = $("emToast");
       t.textContent = msg;
@@ -5020,6 +5073,7 @@
 
       $("emClearDraftBtn")?.addEventListener("click", () => {
         $("emDraftText").value = "";
+        autoSizeDraftTextarea($("emDraftText"));   // v0.9.17: RAF-deferred shrink
         resetTokenCounter();
         hideReferencedReceipts();
         const sl = $("emSuggestedListings"); if (sl) { sl.style.display = "none"; sl.innerHTML = ""; }
@@ -5109,6 +5163,7 @@
         const data = await api("etsyMailDraftReply", { method: "POST", body: reqBody });
         // Populate textarea
         $("emDraftText").value = data.text || "";
+        autoSizeDraftTextarea($("emDraftText"));   // v0.9.17: RAF-deferred grow
         // Render AI card
         renderAiDraftCard(data);
         // Show revise row
@@ -6640,7 +6695,7 @@
               if (d.status === "sent") {
                 clearComposerAttachments();
                 const ta = $("emDraftText");
-                if (ta) ta.value = "";
+                if (ta) { ta.value = ""; autoSizeDraftTextarea(ta); }   // v0.9.17
               }
               // v0.9.3: Insert optimistic message immediately so the
               // operator sees their just-sent message in the thread
@@ -6939,6 +6994,7 @@
         state._optimInsertedFor.add(resp.draftId);
         // Clear the composer.
         ta.value = "";
+        autoSizeDraftTextarea(ta);   // v0.9.17: RAF-deferred shrink
         clearComposerAttachments();
         renderComposerChips();
         // Refresh thread + rail so the new message and any auto_replied
@@ -7044,6 +7100,7 @@
         const ta = $("emDraftText");
         if (isHydratableState && ta && !ta.value.trim()) {
           ta.value = d.text || "";
+          autoSizeDraftTextarea(ta);   // v0.9.17: RAF-deferred grow
         }
         renderAiDraftCard(d);
         // Show revise row since there's a draft present
@@ -7807,6 +7864,7 @@
           }
         });
         $("emDraftText").value = "";
+        autoSizeDraftTextarea($("emDraftText"));   // v0.9.17: RAF-deferred shrink
         toast("Staff message saved");
         fetchMessagesNow(threadId);
         fetchThreadListNow();
