@@ -5564,9 +5564,9 @@
                 '<i class="material-icons">download</i>Download</button>' +
               '<button class="em-ti-open"     data-idx="' + idx + '">' +
                 '<i class="material-icons">open_in_new</i>Full size</button>' +
-              '<button class="em-ti-queue ' + (img.queuedForSend !== false ? "queued" : "") + '" data-idx="' + idx + '" title="Include this image when the reply is sent (M5)">' +
+              '<button class="em-ti-queue ' + (img.queuedForSend !== false ? "queued" : "") + '" data-idx="' + idx + '" title="Toggle whether this tracking image is included when the reply is sent">' +
                 '<i class="material-icons">' + (img.queuedForSend !== false ? "check_circle" : "radio_button_unchecked") + '</i>' +
-                (img.queuedForSend !== false ? "Queued for send" : "Not queued") +
+                (img.queuedForSend !== false ? "Send with tracking" : "Send without tracking") +
               '</button>' +
             '</div>';
         } else if (isFailed) {
@@ -5724,7 +5724,7 @@
           btn.classList.toggle("queued", isQueued);
           btn.innerHTML = '<i class="material-icons">' +
             (isQueued ? "check_circle" : "radio_button_unchecked") +
-            '</i>' + (isQueued ? "Queued for send" : "Not queued");
+            '</i>' + (isQueued ? "Send with tracking" : "Send without tracking");
           // M5: keep composer chips in sync. We have direct access to the
           // canonical `images` array here — no DOM scraping needed.
           if (typeof syncTrackingImagesToChips === "function") {
