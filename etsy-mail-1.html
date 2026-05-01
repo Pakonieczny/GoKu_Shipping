@@ -1464,21 +1464,6 @@
     .em-compose button.send-etsy:disabled { background: #e88a75; cursor: wait; }
     .em-attach-hidden { display: none !important; }
 
-    /* v0.9.18 — Line-sheet promise warning banner. Sits between the
-       composer chips and the textarea; rendered by the input listener
-       on emDraftText whenever the reply text mentions a line sheet
-       but no image-like attachment is present. Send via Etsy is
-       blocked while this banner is visible. */
-    .em-line-sheet-warning {
-      margin: 4px 0 8px 0; padding: 8px 10px; border-radius: 4px;
-      font-size: 12px; display: flex; align-items: center; gap: 8px;
-      line-height: 1.4;
-      background: #fff1e5; border: 1px solid #fb8500; color: #9a3412;
-    }
-    .em-line-sheet-warning .material-icons {
-      font-size: 16px; color: #fb8500; flex: 0 0 auto;
-    }
-
     .em-send-status {
       margin-top: 8px; padding: 8px 10px; border-radius: 4px;
       font-size: 12px; display: flex; align-items: center; gap: 8px;
@@ -3354,41 +3339,6 @@
         } catch {}
       });
     }
-
-    /* v0.9.18 — Line-sheet promise check.
-     *
-     * Called whenever the staff reply textarea content changes or the
-     * composer attachments change. Shows or hides the warning banner
-     * (#emLineSheetWarning) based on whether the reply text promises
-     * a line sheet but no image-like attachment is present.
-     *
-     * The same detection regex is used by sendViaEtsy as the hard
-     * gate; this function is purely the visible cue. Keep them in
-     * sync — if you change one, change the other.
-     *
-     * Defensive: missing elements (e.g. detail pane not rendered yet)
-     * are silently no-ops.
-     */
-    const _LINE_SHEET_PROMISE_PATTERN = /\b(?:line[\s-]?sheet|line\s*menu|menu\s*sheet|options\s*sheet|pricing\s*sheet|reference\s*sheet)\b/i;
-    function checkLineSheetPromise() {
-      const banner = document.getElementById("emLineSheetWarning");
-      const ta     = document.getElementById("emDraftText");
-      if (!banner || !ta) return;
-      const text = ta.value || "";
-      const promises = _LINE_SHEET_PROMISE_PATTERN.test(text);
-      // Look at the live composer attachments for the selected thread.
-      let hasImg = false;
-      try {
-        const tid = state && state.selectedId;
-        const atts = (tid && typeof getComposerAttachments === "function")
-          ? getComposerAttachments(tid) : [];
-        hasImg = Array.isArray(atts) && atts.some(a =>
-          a && (a.type === "image" || a.type === "tracking_image")
-        );
-      } catch {}
-      banner.style.display = (promises && !hasImg) ? "flex" : "none";
-    }
-
     // One-time delegated input listener — survives any number of
     // renderDetail rebuilds because it's bound to document, not the
     // textarea itself. Cheap: cost is one ID compare per keystroke
@@ -3396,7 +3346,6 @@
     document.addEventListener("input", (e) => {
       if (e && e.target && e.target.id === "emDraftText") {
         autoSizeDraftTextarea(e.target);
-        checkLineSheetPromise();   // v0.9.18
       }
     });
 
@@ -4959,17 +4908,6 @@
             <div class="em-card em-compose" id="emComposerCard">
               <h4>Staff reply</h4>
               <div id="emComposerChips" class="em-composer-chips"></div>
-              <!-- v0.9.18 — Visible warning when reply text promises a
-                   line sheet but no attachment is present. Hidden by
-                   default; shown by checkLineSheetPromise() whenever
-                   the textarea changes. The Send via Etsy button is
-                   also gated server-side and client-side, but this
-                   banner makes the failure visible BEFORE the operator
-                   clicks Send. -->
-              <div id="emLineSheetWarning" class="em-line-sheet-warning" style="display:none;">
-                <i class="material-icons">warning</i>
-                <span>Reply text promises a line sheet, but no attachment is present. Send is blocked until a line sheet is attached.</span>
-              </div>
               <textarea id="emDraftText" placeholder="Type a reply, click AI Draft, drop an image, or paste a listing URL."></textarea>
               <input type="file" id="emAttachInput" accept="image/png,image/jpeg,image/gif,image/webp" multiple class="em-attach-hidden" />
               <!-- v4.3.16 — Removed Tokens row, Follow up button, Log
@@ -6341,13 +6279,6 @@
           removeComposerAttachment(el.dataset.attId);
         });
       });
-
-      // v0.9.18 — chip list changed; refresh the line-sheet warning
-      // banner. If the operator just dragged in the line sheet (or the
-      // sales-agent draft just hydrated with one), the banner clears.
-      // If the operator just removed it while the text still promises
-      // it, the banner appears.
-      try { checkLineSheetPromise(); } catch {}
     }
 
     function formatBytes(n) {
@@ -6720,38 +6651,12 @@
 
     /** Called by hydrateAiDraft — restore chips from saved draftAttachments. */
     function hydrateComposerFromDraft(threadId, draft) {
-      if (!draft) return;
-      // v0.9.18 — read attachments from BOTH possible fields:
-      //
-      //   • draft.draftAttachments — written by etsyMailDraftAttachment.js
-      //     when the operator drags/pastes/uploads an image into the composer.
-      //
-      //   • draft.attachments — written by etsyMailSalesAgent-background.js
-      //     when the agent attaches a line sheet (attach_line_sheet:true), and
-      //     by etsyMailDraftReply.js for tracking-timeline images.
-      //
-      // The previous code only read draftAttachments, which meant a
-      // sales-agent-attached line sheet was sent on auto-pipeline (which
-      // reads draft.attachments) but NEVER appeared as a chip in the
-      // operator UI. That's the bug behind "AI promises a line sheet but
-      // I don't see one above the textarea" — the data was there, the UI
-      // was reading the wrong field.
-      //
-      // We merge both lists, dedup by attachmentId so an item that lives
-      // in both fields doesn't render as two chips. attachmentId is a
-      // stable per-attachment key set by both writers.
-      const a1 = Array.isArray(draft.draftAttachments) ? draft.draftAttachments : [];
-      const a2 = Array.isArray(draft.attachments)      ? draft.attachments      : [];
-      const seen = new Set();
-      const merged = [];
-      for (const a of [...a1, ...a2]) {
-        if (!a) continue;
-        const key = a.attachmentId || (a.storagePath || "") + "|" + (a.filename || "");
-        if (seen.has(key)) continue;
-        seen.add(key);
-        merged.push({ ...a, status: a.status || "ready" });
-      }
-      setComposerAttachments(threadId, merged);
+      if (!draft || !Array.isArray(draft.draftAttachments)) return;
+      const atts = draft.draftAttachments.map(a => ({
+        ...a,
+        status: a.status || "ready"
+      }));
+      setComposerAttachments(threadId, atts);
       renderComposerChips();
     }
 
@@ -7023,35 +6928,34 @@
       }
       const usableAtts = atts.filter(a => a.status !== "error" && a.status !== "uploading" && a.status !== "loading");
 
-      // v0.9.18 — LINE-SHEET PROMISE GATE.
+      // v0.9.21 — CUSTOM LISTING PROMISE GATE.
       //
-      // Hard rule per operator policy: the Send via Etsy button MUST NOT
-      // succeed if the reply text promises an attached line sheet (or
-      // similar customer-facing reference document) but no image
-      // attachment is present in the composer. Without this gate, the
-      // customer receives the message text saying "see the attached line
-      // sheet" with nothing actually attached — the exact failure mode
-      // captured in the operator's screenshot.
+      // Operator policy: a reply that promises to send a custom Etsy
+      // listing (or that commits to creating one for the customer) MUST
+      // NOT be sent unless the listing actually exists as an attachment
+      // chip above the staff notes. The customer would otherwise
+      // receive a message saying "the custom listing is on the way" or
+      // "we'll send you a custom listing" with nothing arriving — the
+      // exact failure mode behind the operator's complaint that the
+      // AI was making fake follow-through promises.
       //
-      // Detection is intentionally broad: any phrasing that mentions
-      // "line sheet" or attaching a "menu" / "options sheet" together
-      // with "attached" / "see the" / "here's our" requires at least
-      // one image attachment in chips. Tracking-only flows are exempt
-      // because tracking images come through atts as type:"tracking_image"
-      // (still images for the gate's purpose).
+      // Detection is intentionally broad. Any phrasing in the reply
+      // text that commits to delivering a custom listing requires at
+      // least one attachment of type "listing" in the composer chips
+      // before send fires. Tracking images / line sheets do NOT
+      // satisfy this gate — they're a different artifact.
       //
-      // The gate applies whether the AI generated the draft or the
-      // operator typed it — same policy either way.
-      const lineSheetPromisePattern = /\b(?:line[\s-]?sheet|line\s*menu|menu\s*sheet|options\s*sheet|pricing\s*sheet|reference\s*sheet)\b/i;
-      const promisesLineSheet = lineSheetPromisePattern.test(text);
-      const hasImageLikeAttachment = usableAtts.some(a =>
-        a && (a.type === "image" || a.type === "tracking_image")
-      );
-      if (promisesLineSheet && !hasImageLikeAttachment) {
+      // The gate applies to manual Send via Etsy (this function) and
+      // mirrors the prompt-side rule (noFakeFollowthroughPromises +
+      // attach_line_sheet sync). On auto-pipeline sends, a parallel
+      // gate lives backend-side and is a separate concern.
+      const customListingPromisePattern = /\b(?:custom\s+(?:etsy\s+)?(?:listing|link)|custom\s+listing|create\s+(?:a\s+|the\s+)?(?:custom\s+)?listing|generate\s+(?:a\s+|the\s+)?(?:custom\s+)?listing|send(?:\s+you|\s+over)?\s+(?:a\s+|the\s+)?(?:custom\s+)?listing|listing\s+(?:will|is)\s+(?:come|coming|on\s+the\s+way))\b/i;
+      const promisesCustomListing = customListingPromisePattern.test(text);
+      const hasListingAttachment = usableAtts.some(a => a && a.type === "listing");
+      if (promisesCustomListing && !hasListingAttachment) {
         toast(
-          "Reply text promises a line sheet but no attachment is present. " +
-          "Attach the line sheet (drag/drop, or use AI Draft to regenerate) " +
-          "before sending."
+          "Reply text promises a custom listing but no listing is attached. " +
+          "Generate the custom listing first and attach it before sending."
         );
         if (btn) { btn.disabled = false; }
         return;
