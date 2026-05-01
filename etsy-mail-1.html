@@ -497,12 +497,12 @@
       padding-bottom: 24px;
       font-size: 13px;
       font-family: inherit; resize: vertical; outline: none;
-      /* v0.9.15: cap auto-grow at ~60% of viewport so a very long
-         draft doesn't push the page off-screen. The textarea itself
-         scrolls past this point; the manual resize handle still works. */
-      max-height: 60vh;
+      /* v0.9.16: NO max-height — the box always grows to fit content,
+         and the manual resize handle is unconstrained (matches the
+         pre-v0.9.15 behavior). The auto-grow JS sets inline height
+         to full scrollHeight; without a ceiling, no scrollbar appears
+         and the operator can drag the handle freely. */
       box-sizing: border-box;
-      overflow-y: auto;
     }
     .em-compose textarea:focus { border-color: #0366d6; }
     .em-compose .em-compose-bar { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
@@ -3314,14 +3314,14 @@
      * handle every time. Strategy:
      *   1. Reset to "auto" so scrollHeight reflects actual content,
      *      not the previously-set inline height.
-     *   2. Set inline height to scrollHeight. CSS max-height (60vh)
-     *      caps the growth; CSS min-height (100px) is the floor; the
-     *      bottom-padding (24px) provides the breathing room the
-     *      operator asked for so the last line isn't cramped.
-     *   3. The user can still manually drag the resize handle —
-     *      `resize: vertical` is preserved. Manual resize sets a new
-     *      inline height which we'd overwrite on next call; that's
-     *      acceptable since auto-fit is the intended behavior.
+     *   2. Set inline height to scrollHeight. CSS min-height (100px)
+     *      is the floor; padding-bottom (24px) provides breathing
+     *      room so the last line isn't cramped.
+     *
+     * v0.9.16: removed max-height cap. The textarea grows without
+     * limit to always be larger than its content (no scrollbar),
+     * and the manual `resize: vertical` handle is unconstrained —
+     * dragging it works exactly like it did pre-auto-grow.
      *
      * Safe to call with null/undefined — does nothing.
      */
