@@ -3276,6 +3276,14 @@
       inFlightList      : false,
       inFlightMsgs      : false,
       inFlightSearch    : false,
+      // v0.9.14: per-fetch sequence numbers. Each call to fetchThreadListNow /
+      // fetchMessagesNow increments these. After the network call completes,
+      // the response is only applied if its captured seq still matches the
+      // latest. Prevents a slow stale poll from overwriting fresh user data
+      // (e.g. user clicks "Needs review" while the 5s poll for "All" is still
+      // in flight — when the stale poll finally returns, its result is dropped).
+      listFetchSeq      : 0,
+      msgFetchSeq       : 0,
       // v3.22: client-side pagination of the thread list. 100 per page.
       // Reset to 1 whenever folder, search, message-type, or date-filter
       // changes. Always paginates the post-filter, post-sort `filtered`
@@ -3817,7 +3825,9 @@
             // Either not searching, or search text is too short — go
             // back to plain folder fetch.
             state.searchMode = false;
-            fetchThreadListNow();
+            // v0.9.14: source:'user' — never let a background poll's
+            // in-flight window swallow this click.
+            fetchThreadListNow({ source: "user" });
           }
         });
       });
@@ -3828,12 +3838,24 @@
       return RAIL_FILTERS.find(f => f.id === state.activeFilterId) || RAIL_FILTERS[0];
     }
 
-    async function fetchThreadListNow() {
-      if (state.inFlightList) return;
-      // v1.3: when the user is actively searching, do NOT clobber their
-      // results with a fresh folder fetch. The 5-second list-poll calls
-      // this function on a timer; gate it.
+    async function fetchThreadListNow(opts = {}) {
+      // v0.9.14: source-aware fetch.
+      //   - 'user' (default): always runs. A click MUST NOT be silently
+      //     dropped because a background poll happens to be in flight.
+      //     This was the cause of the "click folder twice to update"
+      //     bug — the poll's in-flight window was swallowing the click's
+      //     fetch.
+      //   - 'poll': respects in-flight guard so the 5s timer doesn't
+      //     pile up parallel requests. The two setInterval callers pass
+      //     source:'poll' explicitly. Everything else is treated as a
+      //     user action by default.
+      // Sequence guard below ensures whichever response is freshest wins
+      // even when multiple fetches end up running in parallel.
+      const source = opts.source || "user";
+      if (source === "poll" && state.inFlightList) return;
       if (state.searchMode) return;
+
+      const seq = ++state.listFetchSeq;
       state.inFlightList = true;
       try {
         const filter = currentFilter();
@@ -3900,6 +3922,11 @@
           } });
           docs = data.docs || [];
         }
+        // v0.9.14: latest-wins guard. If a newer fetch was started while
+        // this one was on the wire, drop our result silently — the newer
+        // fetch will overwrite it anyway, and applying our stale data
+        // would briefly flash the wrong folder's contents.
+        if (seq !== state.listFetchSeq) return;
         state.threads = docs;
         renderThreadList();
         setBackendOk(true, "Backend: connected");
@@ -3976,8 +4003,15 @@
 
     function startListPolling() {
       stopListPolling();
+      // v0.9.14: initial fetch on app start is user-initiated (default).
+      // The timer fetches pass source:'poll' so the in-flight guard
+      // prevents the 5s timer from piling up parallel requests when
+      // the network is slow.
       fetchThreadListNow();
-      state.listPollTimer = setInterval(fetchThreadListNow, LIST_POLL_MS);
+      state.listPollTimer = setInterval(
+        () => fetchThreadListNow({ source: "poll" }),
+        LIST_POLL_MS
+      );
     }
     function stopListPolling() {
       if (state.listPollTimer) { clearInterval(state.listPollTimer); state.listPollTimer = null; }
@@ -4543,8 +4577,14 @@
       startMessagesPolling(threadId);
     }
 
-    async function fetchMessagesNow(threadId) {
-      if (state.inFlightMsgs) return;
+    async function fetchMessagesNow(threadId, opts = {}) {
+      // v0.9.14: same source-aware pattern as fetchThreadListNow.
+      // Default is 'user' so card clicks and explicit refreshes always
+      // run. Only the 4s setInterval poll passes source:'poll'.
+      const source = opts.source || "user";
+      if (source === "poll" && state.inFlightMsgs) return;
+
+      const seq = ++state.msgFetchSeq;
       state.inFlightMsgs = true;
       try {
         const data = await api("firestoreProxy", {
@@ -4553,6 +4593,10 @@
             orderBy: "timestamp,asc", limit: 500
           }
         });
+        if (seq !== state.msgFetchSeq) return;  // stale, newer fetch in flight
+        // Also guard against switching threads while we were waiting:
+        // if the user navigated to a different thread, drop this result.
+        if (state.selectedId !== threadId) return;
         state.messages = data.docs || [];
         renderThreadMessages();
       } catch (e) {
@@ -4564,7 +4608,11 @@
 
     function startMessagesPolling(threadId) {
       stopMessagesPolling();
-      fetchMessagesNow(threadId);
+      // v0.9.14: initial fetch on thread open is user-initiated, so it
+      // bypasses the in-flight guard (the 4s message poll for the
+      // PREVIOUS thread may still be in flight when the user clicks
+      // a new card). Subsequent timer-driven fetches stay as 'poll'.
+      fetchMessagesNow(threadId, { source: "user" });
       // v4.3.2 — Snapshot the thread's listing-pipeline state at poll
       // start so we can detect a transition (queued → creating →
       // created/failed) inside the poll loop and trigger an immediate
@@ -4574,12 +4622,27 @@
       // the thread was in the folder but the count read 0.
       let lastListingStatus = (state.threads.find(t => t.id === threadId) || {}).customListingStatus || null;
       let lastSalesCompleted = !!(state.threads.find(t => t.id === threadId) || {}).salesCompletedAt;
+      // v0.9.14: throttle counter for the secondary thread-doc fetch
+      // below. That fetch is purely opportunistic UX polish (early
+      // detection of listing-pipeline transitions); it does NOT need
+      // to run every 4s. Running it every 3rd tick (~12s) cuts the
+      // open-thread network load roughly in half.
+      let pollTickCount = 0;
 
       state.msgPollTimer = setInterval(async () => {
-        fetchMessagesNow(threadId);
+        // v0.9.14: timer-driven fetch — apply in-flight guard so the
+        // 4s timer doesn't pile up parallel requests when the network
+        // is slow. (Card clicks call fetchMessagesNow directly with
+        // the user default and bypass the guard.)
+        fetchMessagesNow(threadId, { source: "poll" });
         // v2.0 Step 2: keep sales card in sync. Cheap: skipped silently
         // if no SalesContext exists for this thread.
         renderSalesCardForThread(threadId).catch(() => {});
+
+        pollTickCount++;
+        // Only run the listing-status check every 3rd tick (~12s).
+        // Counts poll (15s) is the backstop — this is just earlier UX.
+        if (pollTickCount % 3 !== 0) return;
 
         // v4.3.2 — Detect listing-pipeline state transitions on the
         // selected thread and force a counts refresh + thread-list
