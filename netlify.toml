@@ -83,6 +83,20 @@
 [functions."etsyMailGmailCron"]
   schedule = "* * * * *"
 
+# ─── v3.14: Tracking-job stuck sweeper ─────────────────────────────────────
+# Catches tracking jobs left in pending/running state too long and marks
+# them failed. Two failure modes covered:
+#   - pending > 2 min  → fire-and-forget background invocation never reached
+#                        Netlify (BG_TRIGGER_LOST). Most common.
+#   - running > 16 min → background function exceeded Netlify's 15-min cap
+#                        and got hard-killed before writing failure status
+#                        (BG_TIMEOUT). Rare.
+# Without this sweeper, stuck jobs pollute Firestore forever and the inbox
+# UI's 3-min poll-timeout fires but the Firestore doc stays in an incorrect
+# state, confusing later inspections and any retry logic.
+[functions."etsyMailTrackingSweepStuck"]
+  schedule = "*/5 * * * *"
+
 [[headers]]
   for = "/*"
   [headers.values]

@@ -151,30 +151,68 @@ exports.handler = async (event) => {
     return json(500, { error: `Failed to create job: ${e.message}`, trackingCode });
   }
 
-  // Fire background worker. DO NOT await — background funcs return 202
-  // immediately. Netlify's host URL is in event.headers (host) or env.
+  // Fire background worker. We CAN'T just `fetch().catch(...)` and return —
+  // Netlify Functions kill the Node process the moment the handler returns,
+  // and a fetch that hasn't been flushed yet gets terminated with it. The
+  // TCP connection might not even open. Result: the job stays at "pending"
+  // forever and the UI spinner runs until its 3-min timeout.
+  //
+  // Fix: AWAIT the fetch initiation just long enough for the request to be
+  // sent and accepted by Netlify. Background functions return 202 quickly
+  // (typically <500ms), so we cap our wait at 5s via AbortController. Past
+  // 5s we abort and fall through, marking the job failed so the UI gives
+  // up cleanly.
   const host = event.headers?.host || event.headers?.Host || process.env.URL;
   const scheme = (event.headers?.["x-forwarded-proto"] || "https").split(",")[0];
   const bgUrl = `${scheme}://${host}/.netlify/functions/etsyMailTrackingSnapshot-background`;
 
-  // Fire-and-forget: we don't await the response, just the initiation.
-  // But we do need to catch init errors so they're logged.
-  fetch(bgUrl, {
-    method : "POST",
-    headers: { "Content-Type": "application/json" },
-    body   : JSON.stringify({
-      jobId, trackingCode, carrierHint, forceRefresh
-    })
-  }).catch(e => {
-    console.error(`[trackingSnapshot] Failed to fire background worker:`, e.message);
-    // Try to mark the job as failed so the client doesn't poll forever
-    db.collection(JOBS_COLL).doc(jobId).set({
+  const controller = new AbortController();
+  const abortTimeout = setTimeout(() => controller.abort(), 5000);
+
+  try {
+    const bgResp = await fetch(bgUrl, {
+      method : "POST",
+      headers: { "Content-Type": "application/json" },
+      body   : JSON.stringify({ jobId, trackingCode, carrierHint, forceRefresh }),
+      signal : controller.signal
+    });
+    clearTimeout(abortTimeout);
+
+    // Background functions return 202 immediately — that's our success
+    // signal. Anything else means Netlify rejected the invocation.
+    if (bgResp.status !== 202) {
+      console.error(`[trackingSnapshot] Background returned ${bgResp.status} (expected 202)`);
+      const bodyText = await bgResp.text().catch(() => "");
+      await db.collection(JOBS_COLL).doc(jobId).set({
+        status   : "failed",
+        error    : `Background invocation rejected: HTTP ${bgResp.status}${bodyText ? ` — ${bodyText.slice(0, 200)}` : ""}`,
+        errorCode: "BG_INVOKE_REJECTED",
+        updatedAt: FV.serverTimestamp()
+      }, { merge: true }).catch(() => {});
+
+      return json(500, {
+        error: `Background trigger rejected: HTTP ${bgResp.status}`,
+        jobId
+      });
+    }
+    // 202 received — background worker has accepted the job. The actual
+    // processing happens asynchronously; client polls Firestore for status.
+  } catch (e) {
+    clearTimeout(abortTimeout);
+    const wasAborted = e.name === "AbortError";
+    const reason = wasAborted
+      ? "Background trigger timed out after 5s"
+      : `Background trigger network error: ${e.message}`;
+    console.error(`[trackingSnapshot] ${reason}`);
+    await db.collection(JOBS_COLL).doc(jobId).set({
       status   : "failed",
-      error    : `Background trigger failed: ${e.message}`,
-      errorCode: "BG_TRIGGER_FAILED",
+      error    : reason,
+      errorCode: wasAborted ? "BG_TRIGGER_TIMEOUT" : "BG_TRIGGER_FAILED",
       updatedAt: FV.serverTimestamp()
     }, { merge: true }).catch(() => {});
-  });
+
+    return json(500, { error: reason, jobId });
+  }
 
   return json(200, {
     ok          : true,
