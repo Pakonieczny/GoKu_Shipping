@@ -5427,6 +5427,19 @@
               img.imageHeight      = doc.imageHeight;
               img.events           = doc.events || [];
               rerender();
+              // v3.16: auto-promote the ready tracking image into the
+              // composer attachments. Without this, the chip only appears
+              // if the operator manually clicks the "Queue for send"
+              // button — and operators rarely realize they need to. Result
+              // (pre-v3.16): operator clicks Send before chip materializes,
+              // text-only goes through, attachment is dropped silently.
+              //
+              // queuedForSend defaults to truthy (only false if operator
+              // explicitly de-queued), so this auto-promotion respects an
+              // operator opt-out without overriding it.
+              if (typeof syncTrackingImagesToChips === "function" && img.queuedForSend !== false) {
+                try { syncTrackingImagesToChips(imagesRef); } catch (e) { console.warn("auto-sync chips failed:", e); }
+              }
             }
           } else if (doc.status === "failed") {
             clearInterval(window.__emTrackingPollers.get(jobId));
@@ -6489,6 +6502,29 @@
       const uploading = atts.filter(a => a.status === "uploading" || a.status === "loading");
       if (uploading.length) {
         toast(uploading.length + " attachment(s) still uploading — wait a moment");
+        return;
+      }
+      // v3.16: ALSO confirm any tracking-timeline cards are no longer
+      // pending. Tracking images are NOT in the composer attachments
+      // map until syncTrackingImagesToChips promotes them after the
+      // background job finishes — which polls every 2.5 seconds. Until
+      // then, the AI's draft references a tracking image that doesn't
+      // yet exist as a sendable chip. If the operator clicks Send
+      // before the chip materializes, only text gets sent and the
+      // attachment is silently dropped.
+      //
+      // We detect pending tracking jobs by querying the DOM for the
+      // pending-state placeholder rendered by renderTrackingImages.
+      const pendingTrackingCards = document.querySelectorAll(
+        "#emTrackingImages .em-ti-placeholder.em-ti-pending"
+      );
+      if (pendingTrackingCards.length) {
+        toast(
+          pendingTrackingCards.length +
+          " tracking timeline" +
+          (pendingTrackingCards.length === 1 ? "" : "s") +
+          " still generating — wait for the spinner to finish"
+        );
         return;
       }
       const errored = atts.filter(a => a.status === "error");
