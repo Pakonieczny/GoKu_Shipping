@@ -144,6 +144,43 @@
 
     .em-list-empty { padding: 40px 20px; text-align: center; color: #6a737d; font-size: 13px; }
 
+    /* ── v3.22: Thread-list pagination ──────────────────────────────────
+     * Lives in its own row below em-list-items. Always visible (doesn't
+     * scroll with the list). Numbered buttons follow the standard
+     * pattern: first, last, current ± neighbors, ellipsis between.
+     * Hidden entirely (display:none on the host) when only one page
+     * exists — keeps the chrome clean for small folders. */
+    .em-list-pagination {
+      display: flex; align-items: center; justify-content: center; gap: 4px;
+      padding: 10px 8px; border-top: 1px solid #e1e4e8;
+      background: #f6f8fa; flex-shrink: 0;
+      flex-wrap: wrap;
+    }
+    .em-list-pagination button {
+      min-width: 28px; height: 28px; padding: 0 8px;
+      border: 1px solid #d0d7de; background: #fff; border-radius: 4px;
+      font-size: 12px; cursor: pointer; color: #24292f;
+      display: inline-flex; align-items: center; justify-content: center;
+    }
+    .em-list-pagination button:hover:not(:disabled):not(.active) { background: #f3f4f6; }
+    .em-list-pagination button.active {
+      background: #0969da; border-color: #0969da; color: #fff;
+      font-weight: 600; cursor: default;
+    }
+    .em-list-pagination button:disabled {
+      opacity: 0.5; cursor: not-allowed;
+    }
+    .em-list-pagination .em-page-arrow .material-icons {
+      font-size: 16px;
+    }
+    .em-list-pagination .em-page-ellipsis {
+      padding: 0 4px; color: #6a737d; font-size: 12px;
+      user-select: none;
+    }
+    .em-list-pagination .em-page-info {
+      margin-left: 8px; font-size: 11px; color: #6a737d;
+    }
+
     /* ── v1.3: Search-mode banner above the list items ─────────────── */
     .em-search-banner {
       display: flex; align-items: center; gap: 8px;
@@ -1835,6 +1872,7 @@
       <div class="em-list-items" id="emListItems">
         <div class="em-list-empty">Loading threads…</div>
       </div>
+      <div class="em-list-pagination" id="emListPagination" style="display:none;"></div>
     </div>
 
     <div class="em-detail" id="emDetail">
@@ -3217,8 +3255,15 @@
       countsPollTimer   : null,
       inFlightList      : false,
       inFlightMsgs      : false,
-      inFlightSearch    : false
+      inFlightSearch    : false,
+      // v3.22: client-side pagination of the thread list. 100 per page.
+      // Reset to 1 whenever folder, search, message-type, or date-filter
+      // changes. Always paginates the post-filter, post-sort `filtered`
+      // list inside renderThreadList — so search results paginate too.
+      threadListPage    : 1
     };
+
+    const THREADS_PER_PAGE = 100;
 
     const $  = (id) => document.getElementById(id);
     const esc = (s="") => String(s).replace(/[&<>"']/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]));
@@ -3736,6 +3781,8 @@
       rail.querySelectorAll(".em-rail-item").forEach(el => {
         el.addEventListener("click", () => {
           state.activeFilterId = el.dataset.filter;
+          // v3.22: reset to page 1 on folder change
+          state.threadListPage = 1;
           // Clear selection when switching folders so the user doesn't
           // accidentally move threads they no longer see.
           if (state.selectionMode) exitSelectionMode();
@@ -3782,21 +3829,21 @@
         //     Now we sort client-side in renderThreadList (which already does
         //     a date sort regardless), keeping the query single-field.
         //
-        // Trade-off: without server-side orderBy, the 100-doc limit returns
-        // an arbitrary slice. For typical inboxes this is fine — most folders
-        // contain <100 threads. If a folder grows beyond 100 threads the user
-        // would want a real composite index. We bump the limit to 200 in that
-        // case to delay the day; long-term: add the composite index.
+        // Trade-off: without server-side orderBy, the limit returns an
+        // arbitrary slice. v3.22: bumped to 500 to give pagination
+        // (100/page) up to 5 pages of capacity. If a folder grows past
+        // 500 threads, the user sees the newest 500 (sorted client-side
+        // by date) and search still spans all 500. Beyond that, real
+        // server-side cursor pagination is the right answer.
         let docs;
         if (filter.orderByField) {
           // v4.3 — orderByField folder (e.g. Completed Sales). Firestore's
           // orderBy implicitly excludes docs where the field is missing,
           // so this is both an "exists" filter AND a sort in one op.
-          // No composite index needed (single-field). The 200-doc limit
-          // matches other rail folders.
+          // No composite index needed (single-field).
           const data = await api("firestoreProxy", { query: {
             op: "list", coll: THREADS_COLL,
-            orderBy: `${filter.orderByField},desc`, limit: 200
+            orderBy: `${filter.orderByField},desc`, limit: 500
           } });
           docs = data.docs || [];
         } else if (Array.isArray(filter.status)) {
@@ -3804,7 +3851,7 @@
           const responses = await Promise.all(filter.status.map(s =>
             api("firestoreProxy", { query: {
               op: "list", coll: THREADS_COLL,
-              where: `status,==,${s}`, limit: 200
+              where: `status,==,${s}`, limit: 500
               // No orderBy — single-field index sufficient.
             } })
           ));
@@ -3821,7 +3868,7 @@
           // Single-status folder.
           const data = await api("firestoreProxy", { query: {
             op: "list", coll: THREADS_COLL,
-            where: `status,==,${filter.status}`, limit: 200
+            where: `status,==,${filter.status}`, limit: 500
             // No orderBy.
           } });
           docs = data.docs || [];
@@ -3829,7 +3876,7 @@
           // "All" — orderBy by date is fine, no composite index needed.
           const data = await api("firestoreProxy", { query: {
             op: "list", coll: THREADS_COLL,
-            orderBy: "updatedAt,desc", limit: 100
+            orderBy: "updatedAt,desc", limit: 500
           } });
           docs = data.docs || [];
         }
@@ -4021,11 +4068,27 @@
               : "No threads match the current filters.<br><span class=\"em-muted\">Click <b>reset</b> to clear filters.</span>")
           : `No threads in this view.<br><span class="em-muted">Use <b>New (test)</b> in the top bar to seed one.</span>`;
         host.innerHTML = searchBanner + `<div class="em-list-empty">${hint}</div>`;
+        renderPagination(0);
         return;
       }
 
+      // ── v3.22: Pagination slice ─────────────────────────────────────
+      // Slice the post-filter, post-sort list to the current page.
+      // Slicing happens AFTER all filtering and sorting so search results
+      // paginate the same way folder lists do — and the page number
+      // never sticks past the end of a shrinking result set.
+      const totalThreads = filtered.length;
+      const totalPages = Math.max(1, Math.ceil(totalThreads / THREADS_PER_PAGE));
+      // Clamp page in case state was set higher than the new total
+      // (e.g., user typed in search and the result set shrank).
+      if (state.threadListPage > totalPages) state.threadListPage = totalPages;
+      if (state.threadListPage < 1) state.threadListPage = 1;
+      const startIdx = (state.threadListPage - 1) * THREADS_PER_PAGE;
+      const endIdx   = startIdx + THREADS_PER_PAGE;
+      const pageSlice = filtered.slice(startIdx, endIdx);
+
       const sel = state.selectionMode;
-      host.innerHTML = searchBanner + filtered.map(t => {
+      host.innerHTML = searchBanner + pageSlice.map(t => {
         const selected = state.selectedId === t.id ? " selected" : "";
         const unread   = t.unread ? " unread" : "";
         const checked  = state.checkedIds.has(t.id) ? " checked" : "";
@@ -4163,6 +4226,114 @@
       });
 
       updateSelectionBar();
+      // v3.22: render pagination control with the post-filter total.
+      renderPagination(totalThreads);
+    }
+
+    /** v3.22: Render the pagination control below the thread list.
+     *
+     *  Hidden entirely when there's only one page — most folders are
+     *  small and a "Page 1 of 1" label is just clutter.
+     *
+     *  Buttons: prev arrow, [1], possibly [...], current ± neighbors,
+     *  possibly [...], [last], next arrow.
+     *
+     *  The "showing X-Y of N" info text gives the operator concrete
+     *  context (especially useful when a folder has hundreds of
+     *  threads and they're trying to recall what page a thread is on).
+     */
+    function renderPagination(totalThreads) {
+      const host = $("emListPagination");
+      if (!host) return;
+
+      const totalPages = Math.max(1, Math.ceil(totalThreads / THREADS_PER_PAGE));
+      if (totalPages <= 1) {
+        host.style.display = "none";
+        host.innerHTML = "";
+        return;
+      }
+
+      const cur = state.threadListPage;
+      // Build the page-number sequence with ellipses. Pattern:
+      //   small folders:  1 2 3 4 5
+      //   large, page 1:  1 2 3 4 ... 17
+      //   large, page 8:  1 ... 7 8 9 ... 17
+      //   large, last:    1 ... 14 15 16 17
+      // Always show first + last, plus a window of ±1 around the current.
+      const pages = [];
+      const window = 1;
+      const range = new Set([1, totalPages]);
+      for (let p = Math.max(1, cur - window); p <= Math.min(totalPages, cur + window); p++) {
+        range.add(p);
+      }
+      const sorted = Array.from(range).sort((a, b) => a - b);
+      // Insert ellipses between non-contiguous numbers
+      let prev = 0;
+      for (const p of sorted) {
+        if (p - prev > 1) pages.push("...");
+        pages.push(p);
+        prev = p;
+      }
+
+      const startN = (cur - 1) * THREADS_PER_PAGE + 1;
+      const endN   = Math.min(totalThreads, cur * THREADS_PER_PAGE);
+
+      const parts = [];
+
+      // Prev arrow
+      parts.push(
+        '<button class="em-page-arrow" data-page="' + (cur - 1) + '"' +
+        (cur === 1 ? " disabled" : "") +
+        ' title="Previous page" aria-label="Previous page">' +
+          '<i class="material-icons">chevron_left</i>' +
+        '</button>'
+      );
+
+      for (const p of pages) {
+        if (p === "...") {
+          parts.push('<span class="em-page-ellipsis">…</span>');
+        } else {
+          parts.push(
+            '<button class="' + (p === cur ? "active" : "") + '" data-page="' + p + '"' +
+            (p === cur ? ' aria-current="page"' : "") + '>' +
+              p +
+            '</button>'
+          );
+        }
+      }
+
+      // Next arrow
+      parts.push(
+        '<button class="em-page-arrow" data-page="' + (cur + 1) + '"' +
+        (cur === totalPages ? " disabled" : "") +
+        ' title="Next page" aria-label="Next page">' +
+          '<i class="material-icons">chevron_right</i>' +
+        '</button>'
+      );
+
+      // "Showing X-Y of N" info
+      parts.push(
+        '<span class="em-page-info">' + startN + '–' + endN + ' of ' + totalThreads + '</span>'
+      );
+
+      host.style.display = "flex";
+      host.innerHTML = parts.join("");
+
+      // Wire up handlers — single delegated listener replaces the contents
+      // of the host on every render, so we attach fresh each time.
+      host.querySelectorAll("button[data-page]").forEach(btn => {
+        btn.addEventListener("click", () => {
+          if (btn.disabled) return;
+          const target = Number(btn.dataset.page);
+          if (!target || target === state.threadListPage) return;
+          if (target < 1 || target > totalPages) return;
+          state.threadListPage = target;
+          // Scroll the list back to top so page-2 starts visible at row 1
+          const items = $("emListItems");
+          if (items) items.scrollTop = 0;
+          renderThreadList();
+        });
+      });
     }
 
     /** Toggle a thread's checked state and refresh the list + action bar. */
@@ -7823,6 +7994,10 @@
       $("emSearchInput").addEventListener("input", (e) => {
         const v = e.target.value || "";
         state.searchText = v;
+        // v3.22: reset to page 1 on every keystroke — search results are
+        // a fundamentally different list, page-5 of folder results means
+        // nothing in page-5 of search hits.
+        state.threadListPage = 1;
         // INSTANT: re-render with the current query against whatever
         // threads are currently loaded. No round-trip.
         renderThreadList();
@@ -7840,10 +8015,12 @@
       });
       $("emMessageTypeFilter")?.addEventListener("change", (e) => {
         state.messageTypeFilter = e.target.value || "all";
+        state.threadListPage = 1;   // v3.22
         renderThreadList();
       });
       $("emDateFilter")?.addEventListener("change", (e) => {
         state.dateFilter = e.target.value || "all";
+        state.threadListPage = 1;   // v3.22
         renderThreadList();
       });
       $("emFilterClear")?.addEventListener("click", () => {
@@ -7851,6 +8028,7 @@
         state.messageTypeFilter = "all";
         state.dateFilter = "all";
         state.searchMode = false;
+        state.threadListPage = 1;   // v3.22
         $("emSearchInput").value = "";
         $("emMessageTypeFilter").value = "all";
         $("emDateFilter").value = "all";
