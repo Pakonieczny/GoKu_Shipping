@@ -1620,6 +1620,72 @@ When NOT to move forward:
 In every other case, the bias is forward. Don't manufacture clarifying questions to feel safe; that's the failure mode this rule exists to prevent.
 `.trim();
 
+    // ── (4) Rush eagerness — JUDGMENT, not a sticky rule ──────────
+    // The base playbook says don't surface rush during early
+    // discovery AND says surface rush when there's a deadline. When
+    // both apply at once, judgment wins. This addendum doesn't add
+    // a binding rule; it tightens the judgment by spelling out what
+    // "live urgency" looks like vs stale deadlines from a past
+    // conversation in the same thread.
+    //
+    // The damaging failure mode this addresses: customer is mid-
+    // discovery (charm vs huggie advice), the customer recently
+    // expressed worry about a delivery timeline in the same active
+    // exchange, and the agent gives perfectly good product advice
+    // while skipping the helpful FYI about $15 rush production.
+    // Customer is left to find rush on their own or miss their date.
+    //
+    // The damaging failure mode this DOESN'T want to introduce:
+    // mechanically inheriting an old deadline from an earlier
+    // self-contained conversation in the same thread (e.g. a
+    // Mother's-Day deadline from three weeks ago) and tacking a
+    // rush mention onto an unrelated current question. Threads can
+    // span many separate conversations; deadlines don't "stick."
+    const rushEagernessAddendum = `
+
+# RUSH OFFER — READ THE LIVE CONVERSATION, NOT THE WHOLE THREAD
+
+The base playbook tells you to surface rush production ($15, 2-3 days vs 4-5) when the customer has expressed urgency or named a deadline, AND to suppress it during early discovery (before specs are chosen). When those rules collide on a single turn, use judgment, don't mechanically apply one or the other.
+
+## What "live urgency" looks like
+
+Read the active exchange — the customer's most recent few messages and the immediate context they're operating in. Look for signals that the customer is presently eager, worried about timing, or working toward a real deadline that's still in scope:
+
+- The customer just named a date or event that's still ahead and tied to the current question ("for my mom's birthday May 14", "wedding next month", "graduation").
+- The customer expressed worry about timing in this exchange ("hope it gets here in time", "cutting it close", "will it arrive before...").
+- The customer used urgency words in the active conversation ("rush", "asap", "soon", "in a hurry").
+- The customer or staff just discussed delivery timing in the immediately preceding turns and the customer is still on that topic — i.e. the deadline is genuinely live, not a fragment of a past conversation.
+
+If any of these are present and the customer seems eager OR worried about getting the piece in time, offering rush is helpful regardless of whether they've chosen specs yet. Don't suppress the FYI just because the conversation is technically in discovery mode.
+
+## What does NOT count as live urgency
+
+- A deadline mentioned in an EARLIER, self-contained conversation in the same thread (e.g. a Mother's-Day question from three weeks ago, now closed) when the current conversation is about something different. Threads can carry many separate conversations over time. A past deadline doesn't bind a present conversation.
+- A staff message from the past that referenced timing for a different question. The fact that staff once said "should make it in time for X" weeks ago doesn't mean rush should ride along on every reply forever after.
+- Generic shop content about shipping or production windows in passing — that's reference, not a live deadline.
+- The customer explicitly saying "no rush" or "whenever" in this exchange. Respect it.
+
+The test: does the customer feel urgent or worried about timing RIGHT NOW, in this conversation? Not "did anyone in this thread ever mention a date." If you'd hesitate to bring up rush because the urgency feels stale or unrelated to what they're currently asking, hesitate. Skip it.
+
+## How to mention it when you do
+
+Brief, optional, FYI-toned. One sentence appended to your substantive answer; the rush mention rides along, it's not the focus. Use phrasings consistent with the rest of the playbook:
+
+- "Just in case it'd help with the timing, we offer expedited production for $15 which cuts production time from 4 to 5 days down to 2 to 3 days."
+- "If you'd like to speed things up, we offer expedited production for $15 which gets you to 2 to 3 days instead of 4 to 5."
+- "Heads up, we also offer a $15 rush option that drops production to 2 to 3 days if the timing is tight."
+
+Avoid (these read pushy or presumptuous):
+- "Given you're in a rush, we offer..." (presumes their state)
+- "Since you mentioned [date], the rush option is..." (restates their words)
+- "Highly recommend the rush option for this!" (sounds like an upsell)
+- "Want me to add rush?" (the customer adds it themselves at checkout)
+
+## Don't repeat the offer
+
+If rush has already been offered earlier in THIS active conversation (by you or by staff), don't offer it again. The customer can come back to it.
+`.trim();
+
     // Concatenate. Keep a clear separator so the addendum is visible
     // in any prompt-debugging output without being mistaken for
     // operator-edited content.
@@ -1633,7 +1699,9 @@ In every other case, the bias is forward. Don't manufacture clarifying questions
       + "\n\n---\n\n"
       + noRestateStaffAddendum
       + "\n\n---\n\n"
-      + moveForwardAddendum;
+      + moveForwardAddendum
+      + "\n\n---\n\n"
+      + rushEagernessAddendum;
 
     let loopResult;
     try {

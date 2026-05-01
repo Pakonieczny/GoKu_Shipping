@@ -860,18 +860,53 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
       (A) The customer is asking about a piece they have NOT YET
           ORDERED. They're considering a purchase, browsing options,
           or in the middle of a custom-order conversation.
-      (B) The customer has expressed urgency. Examples: a named event
-          date ("for my sister's wedding May 14"), a deadline phrase
-          ("need it by Saturday", "Mother's Day", "graduation"), an
-          openness to paying extra ("willing to pay whatever it takes",
-          "is there a way to speed it up"), or simple urgency words
-          ("rush", "asap", "soon", "quickly", "fast").
+      (B) The customer is presently expressing urgency about timing in
+          the LIVE conversation. This is a judgment call, not a
+          mechanical scan of the whole thread. Look at the customer's
+          most recent few messages and the active topic. The signal
+          is "the customer feels eager or worried about getting this
+          piece in time, right now, in this exchange":
+          - Customer named a date or event in this exchange that's
+            still ahead and tied to the current question ("for my
+            sister's wedding May 14", "for Mother's Day", "graduation
+            next week", "by the 15th").
+          - Customer used urgency words in the active conversation
+            ("rush", "asap", "soon", "quickly", "in a hurry").
+          - Customer expressed worry about meeting a date in this
+            exchange ("hope it gets here in time", "cutting it close",
+            "will it arrive before...").
+          - Customer expressed openness to paying extra ("willing to
+            pay whatever it takes", "is there a way to speed it up").
+          - Customer or staff just discussed delivery timing in the
+            immediately preceding turns AND the customer is still on
+            that topic — the deadline is genuinely live.
+
+      v0.9.19 — JUDGMENT, NOT STICKY: a deadline mentioned in an
+      earlier, self-contained conversation in the same thread does NOT
+      automatically apply to a present conversation about something
+      different. Threads can carry many separate conversations over
+      weeks or months. A past Mother's-Day question doesn't bind a
+      current question about a different piece. The test is "does the
+      customer feel urgent or worried about timing right now, in what
+      they're actually asking about?" If the urgency feels stale or
+      from a different conversation, skip the rush mention. If a
+      deadline IS live in the current exchange, the discovery-mode
+      suppression in the original wording shouldn't block a brief
+      rush FYI.
 
     HOW TO OFFER (template — adjust tone to fit, but keep the facts):
       "We do offer a $15 rush production upgrade — it gets your piece
       through production in 2-3 business days instead of the standard
       4-5. If that helps, you can add it before checkout. (Shipping
       time is separate and chosen at checkout.)"
+
+    Briefer FYI variants for discovery-mode replies (preferred when
+    the rush mention is riding along with other content):
+      "Just in case it'd help with the timing, we offer a $15 rush
+       production option that drops production to 2 to 3 days instead
+       of 4 to 5."
+      "Heads up, we also offer a $15 rush option for tighter timelines
+       which gets production done in 2 to 3 days."
 
     DO NOT OFFER RUSH WHEN:
       - The customer's order is already placed/paid (lookup_order_details
