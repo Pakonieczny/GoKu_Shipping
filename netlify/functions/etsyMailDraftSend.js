@@ -202,6 +202,16 @@ const THREADS_COLL_NAME = "EtsyMail_Threads";
 /** Inside an existing transaction, read the thread doc and demote to
  *  pending_human_review if its status is queued_for_auto_send.
  *  Returns the new status (or null if no change). */
+/** Inside an existing transaction, read the thread doc and demote to
+ *  pending_human_review if its status is queued_for_auto_send.
+ *  Returns the new status (or null if no change).
+ *
+ *  WARNING: This helper does a tx.get followed by a tx.set. It MUST NOT
+ *  be called after any prior tx.set in the same transaction, or Firestore
+ *  rejects with "all reads must be executed before all writes". For
+ *  callers that already issued writes, use demoteThreadWriteOnlyInTxn
+ *  with a pre-fetched snapshot instead.
+ */
 async function demoteThreadInTxn(tx, threadId, reason) {
   if (!threadId) return null;
   const tRef = db.collection(THREADS_COLL_NAME).doc(threadId);
@@ -209,6 +219,43 @@ async function demoteThreadInTxn(tx, threadId, reason) {
   if (!tSnap.exists) return null;
   if (tSnap.data().status !== "queued_for_auto_send") return null;
   tx.set(tRef, {
+    status            : "pending_human_review",
+    lastAutoDecision  : reason,
+    lastAutoDecisionAt: FV.serverTimestamp(),
+    updatedAt         : FV.serverTimestamp()
+  }, { merge: true });
+  return "pending_human_review";
+}
+
+/** v3.15: Write-only variant of demoteThreadInTxn for use AFTER prior
+ *  writes in the same transaction. Caller must pre-fetch the thread
+ *  snapshot during the read phase, then pass it here. Returns the new
+ *  status (or null if no change).
+ *
+ *  Usage:
+ *    // Read phase (top of transaction):
+ *    const prefetch = await prefetchThreadForDemoteInTxn(tx, threadId);
+ *    // ...other reads...
+ *    // Write phase:
+ *    tx.set(draftRef, ...);          // some other write
+ *    demoteThreadWriteOnlyInTxn(tx, prefetch, reason);
+ */
+async function prefetchThreadForDemoteInTxn(tx, threadId) {
+  if (!threadId) return null;
+  const tRef = db.collection(THREADS_COLL_NAME).doc(threadId);
+  const tSnap = await tx.get(tRef);
+  return {
+    threadId,
+    tRef,
+    exists       : tSnap.exists,
+    currentStatus: tSnap.exists ? (tSnap.data().status || null) : null
+  };
+}
+
+function demoteThreadWriteOnlyInTxn(tx, prefetch, reason) {
+  if (!prefetch || !prefetch.exists) return null;
+  if (prefetch.currentStatus !== "queued_for_auto_send") return null;
+  tx.set(prefetch.tRef, {
     status            : "pending_human_review",
     lastAutoDecision  : reason,
     lastAutoDecisionAt: FV.serverTimestamp(),
@@ -581,21 +628,41 @@ exports.handler = async (event) => {
       if (!draftId) return bad("Missing draftId");
       const ref = db.collection(DRAFTS_COLL).doc(String(draftId));
       const result = await db.runTransaction(async (tx) => {
+        // v3.15: hoist all reads before any writes (Firestore rule).
         const snap = await tx.get(ref);
         if (!snap.exists) return { notFound: true };
         const prev = snap.data();
         if (prev.status !== "queued") return { badState: prev.status };
+
+        // Pre-read the thread doc if we may need to demote it.
+        let tRef = null;
+        let threadCurrentStatus = null;
+        if (prev.threadId) {
+          tRef = db.collection(THREADS_COLL_NAME).doc(prev.threadId);
+          const tSnap = await tx.get(tRef);
+          if (tSnap.exists) threadCurrentStatus = tSnap.data().status || null;
+        }
+
+        // Now all writes:
         tx.set(ref, {
           status    : "draft",
           queuedAt  : null,
           updatedAt : FV.serverTimestamp()
         }, { merge: true });
+
         // v1.5: demote the parent thread if it was queued for auto-send.
         // No-op for manual operator sends (they're not in
         // queued_for_auto_send).
-        const threadStatusUpdate = await demoteThreadInTxn(
-          tx, prev.threadId, "human_review_after_send_cancelled"
-        );
+        let threadStatusUpdate = null;
+        if (tRef && threadCurrentStatus === "queued_for_auto_send") {
+          tx.set(tRef, {
+            status            : "pending_human_review",
+            lastAutoDecision  : "human_review_after_send_cancelled",
+            lastAutoDecisionAt: FV.serverTimestamp(),
+            updatedAt         : FV.serverTimestamp()
+          }, { merge: true });
+          threadStatusUpdate = "pending_human_review";
+        }
         return { ok: true, threadId: prev.threadId, threadStatusUpdate };
       });
       if (result.notFound) return json(404, { error: "Draft not found" });
@@ -689,10 +756,17 @@ exports.handler = async (event) => {
 
       const ref = db.collection(DRAFTS_COLL).doc(String(draftId));
       const result = await db.runTransaction(async (tx) => {
+        // ━━━ v3.15: Hoist all reads BEFORE any writes (Firestore rule) ━
         const snap = await tx.get(ref);
         if (!snap.exists) return { notFound: true };
         const prev = snap.data();
 
+        // Pre-fetch thread snapshot — we may need to demote it in any
+        // of the failure branches below. Doing the read up front keeps
+        // every branch's writes legal.
+        const threadPrefetch = await prefetchThreadForDemoteInTxn(tx, prev.threadId);
+
+        // ─── PHASE: Decide + Write ──
         // Reject stale queued — paired with peek's expiration logic
         // so a slow extension claim can't beat the expiration sweep.
         if (prev.status === "queued" && isStaleQueued(prev.queuedAt)) {
@@ -703,8 +777,8 @@ exports.handler = async (event) => {
             updatedAt     : FV.serverTimestamp()
           }, { merge: true });
           // v1.4: also demote the thread (in the same txn for atomicity)
-          const threadStatusUpdate = await demoteThreadInTxn(
-            tx, prev.threadId, "human_review_after_queued_expired"
+          const threadStatusUpdate = demoteThreadWriteOnlyInTxn(
+            tx, threadPrefetch, "human_review_after_queued_expired"
           );
           return { expired: true, threadStatusUpdate };
         }
@@ -726,8 +800,8 @@ exports.handler = async (event) => {
           }, { merge: true });
           // Demote so operator can verify. Same destination as
           // unverified manual sends — Needs Review.
-          const threadStatusUpdate = await demoteThreadInTxn(
-            tx, prev.threadId, "human_review_after_stranded_post_click"
+          const threadStatusUpdate = demoteThreadWriteOnlyInTxn(
+            tx, threadPrefetch, "human_review_after_stranded_post_click"
           );
           return { strandedPostClick: true, threadStatusUpdate };
         }
@@ -750,8 +824,8 @@ exports.handler = async (event) => {
           // spent; this draft will not be sent. The thread must leave
           // queued_for_auto_send so the operator sees it in Needs
           // Review and can decide what to do.
-          const threadStatusUpdate = await demoteThreadInTxn(
-            tx, prev.threadId, "human_review_after_retry_exhausted"
+          const threadStatusUpdate = demoteThreadWriteOnlyInTxn(
+            tx, threadPrefetch, "human_review_after_retry_exhausted"
           );
           return { exhausted: true, attempts: nextAttempts, threadStatusUpdate };
         }
@@ -882,11 +956,43 @@ exports.handler = async (event) => {
 
       const ref = db.collection(DRAFTS_COLL).doc(String(draftId));
       const result = await db.runTransaction(async (tx) => {
+        // ━━━ v3.15 FIX: Firestore requires ALL reads BEFORE any writes ━━
+        //
+        // The previous implementation interleaved reads and writes:
+        //   tx.get(draft) → tx.set(draft) → tx.get(thread) → tx.set(thread)
+        // which raised:
+        //   "Firestore transactions require all reads to be executed
+        //    before all writes."
+        //
+        // Symptom: the watchdog's "complete" call returned HTTP 500 for
+        // every multi-doc send. Single-doc sends (no thread promotion)
+        // happened to slip through because they only touched one ref.
+        //
+        // Fix: read BOTH the draft doc AND the thread doc upfront, make
+        // all branching decisions from those snapshots, then issue all
+        // writes at the end. Functionally identical — same final state,
+        // same audit semantics — just reordered to satisfy the rule.
+
+        // ── PHASE 1: ALL READS ──────────────────────────────────────
         const snap = await tx.get(ref);
         if (!snap.exists) return { notFound: true };
         const prev = snap.data();
         if (prev.sendSessionId !== sessionId) return { notYours: true };
 
+        // Read the thread doc up front too, IF this draft has a thread.
+        // We may need its current status to decide promotion vs demotion.
+        let tRef = null;
+        let tSnap = null;
+        let threadCurrentStatus = null;
+        if (prev.threadId) {
+          tRef = db.collection(THREADS_COLL_NAME).doc(prev.threadId);
+          tSnap = await tx.get(tRef);
+          if (tSnap.exists) {
+            threadCurrentStatus = tSnap.data().status || null;
+          }
+        }
+
+        // ── PHASE 2: DECIDE (no I/O, just logic) ────────────────────
         // v0.9.1 #4: terminal status reflects what we actually know.
         //   - partial=true   → sent_text_only (text confirmed, images failed)
         //   - unverified=true → sent_unverified (clicked Send, no positive
@@ -896,6 +1002,30 @@ exports.handler = async (event) => {
         if (partial)         finalStatus = "sent_text_only";
         else if (unverified) finalStatus = "sent_unverified";
 
+        // Decide thread status update based on the snapshot we already read.
+        // Mirrors the original logic but uses pre-read data.
+        let threadStatusUpdate = null;
+        let threadDemoteReason = null;
+        if (prev.threadId && tSnap && tSnap.exists) {
+          if (partial || unverified) {
+            // Demote — partial/unverified send needs operator review.
+            // Mirror demoteThreadInTxn's behaviour but inline (no extra read).
+            if (threadCurrentStatus === "queued_for_auto_send") {
+              threadDemoteReason = unverified
+                ? "human_review_after_unverified_send"
+                : "human_review_after_partial_send";
+              threadStatusUpdate = "pending_human_review";
+            }
+          } else {
+            // Promote — clean send.
+            if (threadCurrentStatus === "queued_for_auto_send") {
+              threadStatusUpdate = "auto_replied";
+            }
+          }
+        }
+
+        // ── PHASE 3: ALL WRITES ─────────────────────────────────────
+        // Write the draft completion record first.
         tx.set(ref, {
           status             : finalStatus,
           sentAt             : FV.serverTimestamp(),
@@ -912,47 +1042,30 @@ exports.handler = async (event) => {
           updatedAt          : FV.serverTimestamp()
         }, { merge: true });
 
-        // ── v1.2 / v1.4: Auto-Reply promotion ──────────────────────
-        // If the THREAD is at `queued_for_auto_send`, the auto-pipeline
-        // enqueued this send and we've been waiting for Etsy
-        // confirmation. Decide promotion vs demotion:
-        //   - clean send         → auto_replied (Auto-Reply folder)
-        //   - partial/unverified → pending_human_review (Needs Review)
-        //
-        // Manual operator sends never have status=queued_for_auto_send
-        // so they're untouched. (Operator decides whether to archive.)
-        let threadStatusUpdate = null;
-        if (prev.threadId) {
-          if (partial || unverified) {
-            // Demote — partial/unverified send needs operator review
-            threadStatusUpdate = await demoteThreadInTxn(
-              tx, prev.threadId,
-              unverified ? "human_review_after_unverified_send"
-                         : "human_review_after_partial_send"
-            );
-          } else {
-            // Promote — clean send. Custom logic since the helper only
-            // handles the demotion direction. Same transactional read.
-            const tRef = db.collection(THREADS_COLL_NAME).doc(prev.threadId);
-            const tSnap = await tx.get(tRef);
-            if (tSnap.exists && tSnap.data().status === "queued_for_auto_send") {
-              tx.set(tRef, {
-                status                    : "auto_replied",
-                lastAutoDecision          : "auto_send_confirmed",
-                lastAutoDecisionAt        : FV.serverTimestamp(),
-                // v1.4: this is a real AI auto-reply — clear any
-                // stale "manually moved" flag from a prior move.
-                manuallyMovedToAutoReplied: FV.delete(),
-                manualMoveActor           : FV.delete(),
-                manualMoveAt              : FV.delete(),
-                manualMoveReason          : FV.delete(),
-                manualMoveFromStatus      : FV.delete(),
-                updatedAt                 : FV.serverTimestamp()
-              }, { merge: true });
-              threadStatusUpdate = "auto_replied";
-            }
-          }
+        // Then the thread status update, if we decided one is needed.
+        if (threadStatusUpdate === "pending_human_review") {
+          tx.set(tRef, {
+            status            : "pending_human_review",
+            lastAutoDecision  : threadDemoteReason,
+            lastAutoDecisionAt: FV.serverTimestamp(),
+            updatedAt         : FV.serverTimestamp()
+          }, { merge: true });
+        } else if (threadStatusUpdate === "auto_replied") {
+          tx.set(tRef, {
+            status                    : "auto_replied",
+            lastAutoDecision          : "auto_send_confirmed",
+            lastAutoDecisionAt        : FV.serverTimestamp(),
+            // v1.4: this is a real AI auto-reply — clear any stale
+            // "manually moved" flag from a prior move.
+            manuallyMovedToAutoReplied: FV.delete(),
+            manualMoveActor           : FV.delete(),
+            manualMoveAt              : FV.delete(),
+            manualMoveReason          : FV.delete(),
+            manualMoveFromStatus      : FV.delete(),
+            updatedAt                 : FV.serverTimestamp()
+          }, { merge: true });
         }
+
         return { ok: true, threadId: prev.threadId, status: finalStatus, threadStatusUpdate };
       });
       if (result.notFound) return json(404, { error: "Draft not found" });
@@ -983,6 +1096,10 @@ exports.handler = async (event) => {
         const prev = snap.data();
         if (prev.sendSessionId !== sessionId) return { notYours: true };
 
+        // v3.15: hoist all reads BEFORE any writes (Firestore rule).
+        // Pre-fetch thread so the demote write at the end is legal.
+        const threadPrefetch = await prefetchThreadForDemoteInTxn(tx, prev.threadId);
+
         const attempts = prev.sendAttempts || 0;
         const willRetry = retry && attempts < MAX_SEND_ATTEMPTS;
 
@@ -1009,9 +1126,9 @@ exports.handler = async (event) => {
         // the thread state alone — the next claim attempts the send
         // again.
         let threadStatusUpdate = null;
-        if (!willRetry && prev.threadId) {
-          threadStatusUpdate = await demoteThreadInTxn(
-            tx, prev.threadId, "human_review_after_send_failure"
+        if (!willRetry) {
+          threadStatusUpdate = demoteThreadWriteOnlyInTxn(
+            tx, threadPrefetch, "human_review_after_send_failure"
           );
         }
         return { ok: true, threadId: prev.threadId, requeued: willRetry, attempts, threadStatusUpdate };
@@ -1064,9 +1181,14 @@ exports.handler = async (event) => {
 
 // ─── v1.4 helpers exported for the send-queue reaper ───────────────
 // Not part of the HTTP surface — the reaper imports these directly.
-module.exports.demoteThreadInTxn      = demoteThreadInTxn;
-module.exports.demoteThreadStandalone = demoteThreadStandalone;
-module.exports.isStaleQueued          = isStaleQueued;
-module.exports.isStaleHeartbeat       = isStaleHeartbeat;
-module.exports.MAX_CLAIM_LOOKBACK_MIN = MAX_CLAIM_LOOKBACK_MIN;
-module.exports.STALE_HEARTBEAT_MS     = STALE_HEARTBEAT_MS;
+module.exports.demoteThreadInTxn          = demoteThreadInTxn;
+module.exports.demoteThreadStandalone     = demoteThreadStandalone;
+// v3.15: write-only variant for callers that need to demote AFTER
+// other writes within the same transaction (Firestore disallows reads
+// after writes, so the standard variant can't be used in those cases).
+module.exports.prefetchThreadForDemoteInTxn = prefetchThreadForDemoteInTxn;
+module.exports.demoteThreadWriteOnlyInTxn   = demoteThreadWriteOnlyInTxn;
+module.exports.isStaleQueued              = isStaleQueued;
+module.exports.isStaleHeartbeat           = isStaleHeartbeat;
+module.exports.MAX_CLAIM_LOOKBACK_MIN     = MAX_CLAIM_LOOKBACK_MIN;
+module.exports.STALE_HEARTBEAT_MS         = STALE_HEARTBEAT_MS;
