@@ -408,6 +408,14 @@
       overflow-y: auto;
       /* small inset so the scrollbar doesn't sit on the column edge */
       padding-right: 4px;
+      /* v3.21: bottom breathing room. Without this, when scrolled to the
+       * bottom the composer's action buttons (AI Draft / Attach / Send)
+       * sit flush against the viewport edge — they're technically still
+       * clickable, but the click target has no margin for error and on
+       * trackpads the gesture often lands in the bottom OS dock area
+       * instead. 32px gives comfortable click safety on both columns
+       * (the right column's customer panel cards benefit too). */
+      padding-bottom: 32px;
     }
     .em-card { background: #fff; border: 1px solid #e1e4e8; border-radius: 6px; padding: 12px 14px; }
     .em-card + .em-card { margin-top: 12px; }
@@ -4107,12 +4115,16 @@
         } else if (t.status === "queued_for_auto_send") {
           badges.push(`<span class="em-badge ai-sending" title="AI passed all gates; waiting for browser extension to deliver via Etsy">sending…</span>`);
         }
-        // v1.3: stale-claim badge — surfaces threads where the auto-pipeline
-        // crashed mid-run and the reaper cron unstuck them. Operator can
-        // manually re-run AI Draft if needed.
-        if (t.lastAutoDecision === "stale_claim_recovered") {
-          badges.push(`<span class="em-badge stale-claim" title="The AI auto-pipeline started but didn't finish (likely a function timeout). The thread was unstuck by the reaper. Click AI Draft to retry.">stale claim</span>`);
-        }
+        // v3.20: removed the stale-claim badge. It was a diagnostic
+        // surface from earlier auto-pipeline development that now
+        // appears on essentially every thread that ever ran through
+        // the reaper, providing no actionable signal. Threads that
+        // actually need operator attention show up in Needs Review
+        // through other state — this badge is duplicative noise.
+        //
+        // Underlying field (t.lastAutoDecision === "stale_claim_recovered")
+        // is still set by etsyMailReapers.js — left intact for the
+        // audit trail and any future ops dashboard. Just not rendered.
         if ((t.riskFlags || []).includes("image_attached")) {
           badges.push(`<span class="em-badge attachment">📎 image</span>`);
         }
