@@ -1116,7 +1116,7 @@
     .em-sales-spec .em-spec-key {
       color: #57606a; min-width: 110px; flex-shrink: 0;
     }
-    .em-sales-spec .em-spec-val { color: #1f2328; word-break: break-word; }
+    .em-sales-spec .em-spec-val { color: #1f2328; word-break: break-word; white-space: pre-wrap; }
     .em-sales-missing {
       margin: 6px 0;
       font-size: 12px; color: #b35900;
@@ -5019,46 +5019,19 @@
           </div>
 
           <div>
-            <div class="em-card">
-              <h4>Thread details</h4>
-              <dl class="em-kv">
-                <dt>Thread ID</dt><dd style="font-family:monospace;font-size:11px;">${esc(t.id)}</dd>
-                <dt>Status</dt>   <dd>${esc(t.status || "")}</dd>
-                <dt>Category</dt> <dd>${esc(t.category || "—")}</dd>
-                <dt>Confidence</dt><dd>${t.confidence != null ? Math.round(t.confidence*100) + "%" : "—"}</dd>
-                <dt>Assigned</dt> <dd>${esc(t.assignedTo || "—")}</dd>
-                <dt>Tags</dt>     <dd>${(t.tags||[]).map(esc).join(", ") || "—"}</dd>
-                <dt>Risk flags</dt><dd>${(t.riskFlags||[]).map(esc).join(", ") || "—"}</dd>
-                <dt>Last inbound</dt> <dd>${esc(fmtTime(t.lastInboundAt))}</dd>
-                <dt>Last scraped</dt> <dd>${esc(fmtTime(t.lastSyncedAt))}</dd>
-                ${t.customListingStatus ? `
-                <dt>Custom listing</dt>
-                <dd>
-                  <span class="em-listing-pill em-listing-${esc(t.customListingStatus)}">${esc(t.customListingStatus)}</span>
-                  ${t.customListingUrl ? `<br><a href="${esc(t.customListingUrl)}" target="_blank" style="font-size:11px;">view on Etsy ↗</a>` : ""}
-                </dd>
-                ${t.customListingId ? `<dt>Listing ID</dt><dd style="font-family:monospace;font-size:11px;">${esc(String(t.customListingId))}</dd>` : ""}
-                ${t.customListingCreatedAt ? `<dt>Listing created</dt><dd>${esc(fmtTime(t.customListingCreatedAt))}</dd>` : ""}
-                ` : ""}
-              </dl>
-            </div>
+            <!-- v0.9.45 — Thread details and Linked order cards hidden
+                 per operator request. They were taking vertical space
+                 above the Sales conversation card without surfacing
+                 anything operators reported using day-to-day. The data
+                 is still on the thread doc; we can restore the cards
+                 (or fold the most useful fields into the sales card)
+                 if a need surfaces. -->
 
-            <div class="em-card">
-              <h4>Linked order <span class="em-muted" style="font-weight:400;text-transform:none;letter-spacing:0;">(enriched in Milestone 3)</span></h4>
-              ${hasOrder ? `
-                <dl class="em-kv">
-                  <dt>Order #</dt> <dd>${esc(t.linkedOrderId)}</dd>
-                  <dt>Listings</dt><dd>${(t.linkedListingIds||[]).map(esc).join(", ") || "—"}</dd>
-                </dl>
-                <div style="margin-top:6px;font-size:11px;" class="em-muted">
-                  Shipping address, tracking, and personalization populate after enrichment runs.
-                </div>
-              ` : `<div class="em-muted" style="font-size:12px;">No order linked yet.</div>`}
-            </div>
-
-            <!-- v2.0 Step 2 — Sales context panel. Hidden by default;
-                 shown by renderSalesCard() when fetchSalesContext finds
-                 a SalesContext doc for this thread. -->
+            <!-- v2.0 Step 2 — Sales context panel. Now the FIRST card
+                 in the right rail (was previously third). Hidden by
+                 default; shown by renderSalesCard() when
+                 fetchSalesContext finds a SalesContext doc for this
+                 thread. -->
             <div id="emSalesCardMount"></div>
 
             <div class="em-card em-ai-card">
