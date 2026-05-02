@@ -909,6 +909,21 @@
     .em-badge.ai-diff {
       background: #f0f0f5; color: #4b4b6b;
     }
+    /* v0.9.40 — AI's review decision. Replaces the old AI-confidence pill
+     * in the rail. Green when the AI is confident the draft can ship
+     * without human review (≥80% threshold); red when human review is
+     * needed (either AI explicitly flagged or AI's confidence is below
+     * the 80% threshold — we err on the side of caution). */
+    .em-badge.review-decision.green {
+      background: #dcffe4; color: #116329;
+      border: 1px solid #4ac26b;
+      font-weight: 600;
+    }
+    .em-badge.review-decision.red {
+      background: #ffebe9; color: #a40e26;
+      border: 1px solid #cf222e;
+      font-weight: 600;
+    }
     .em-badge.ai-auto {
       background: #f6e5ff; color: #6b21a8;
     }
@@ -4256,22 +4271,53 @@
         }
         if (t.linkedOrderId)  badges.push(`<span class="em-badge order">#${esc(String(t.linkedOrderId).slice(-6))}</span>`);
         if (t.category)       badges.push(`<span class="em-badge category">${esc(t.category)}</span>`);
-        // AI rating: confidence is more meaningful in the new auto-pipeline
-        // world than the old generic "confidence". Renders as conf-low/med/high.
-        if (t.aiConfidence != null) {
+
+        // v0.9.40 — Review decision pill (FIRST pill, leftmost).
+        // The AI emits review_decision: { needs_review, confidence } as a
+        // separate signal from answer-confidence. This pill visualizes
+        // ONLY the review decision, not the answer quality:
+        //   - Green "No review N%" when AI is confident no human review is
+        //     needed AND confidence >= 0.80 threshold
+        //   - Red "Needs review N%" when AI flagged review needed, OR
+        //     when AI said no review needed but confidence < 0.80
+        //     (we err on the side of caution below the threshold)
+        // Falls back to the legacy aiConfidence-based pill ONLY when the
+        // new field is absent (e.g., older threads pre-v5.1).
+        const REVIEW_AUTO_SEND_THRESHOLD = 0.80;
+        if (t.aiReviewDecision && typeof t.aiReviewDecision === "object") {
+          const rd = t.aiReviewDecision;
+          const conf = typeof rd.confidence === "number" ? rd.confidence : 0;
+          const aiSaysNeedsReview = !!rd.needs_review;
+          // The 80% threshold rule: even when AI says no review needed,
+          // anything below 80% confidence still routes to needs review.
+          const effectivelyNeedsReview =
+            aiSaysNeedsReview || conf < REVIEW_AUTO_SEND_THRESHOLD;
+          const cls = effectivelyNeedsReview ? "red" : "green";
+          const label = effectivelyNeedsReview ? "Needs review" : "No review";
+          const tooltip = effectivelyNeedsReview
+            ? (aiSaysNeedsReview
+                ? `AI flagged this thread as needing human review (confidence ${Math.round(conf*100)}%).`
+                : `AI said no review needed but confidence ${Math.round(conf*100)}% is below the ${Math.round(REVIEW_AUTO_SEND_THRESHOLD*100)}% auto-send threshold.`)
+            : `AI is ${Math.round(conf*100)}% confident this can ship without human review.`;
+          badges.push(
+            `<span class="em-badge review-decision ${cls}" title="${esc(tooltip)}">` +
+            `${esc(label)} ${Math.round(conf*100)}%</span>`
+          );
+        } else if (t.aiConfidence != null) {
+          // Legacy fallback for threads that haven't been processed by
+          // the v5.1 sales agent yet. Kept narrow so we can remove this
+          // branch in a follow-up once all threads have aiReviewDecision.
           const c = Number(t.aiConfidence);
           const cls = c >= 0.80 ? "high" : c >= 0.55 ? "med" : "low";
-          badges.push(`<span class="em-badge ai-conf ${cls}" title="AI self-rated confidence in the drafted reply">AI ${Math.round(c*100)}%</span>`);
+          badges.push(`<span class="em-badge ai-conf ${cls}" title="Legacy AI confidence (no review-decision signal yet)">AI ${Math.round(c*100)}%</span>`);
         } else if (t.confidence != null) {
-          // Legacy "confidence" field (pre-v1.0). Keep rendering it for
-          // backward compatibility with already-classified threads.
+          // Pre-v1.0 legacy "confidence" field
           badges.push(`<span class="em-badge confidence">${Math.round(t.confidence*100)}%</span>`);
         }
-        if (t.aiDifficulty != null) {
-          const d = Number(t.aiDifficulty);
-          const lbl = d >= 0.70 ? "hard" : d >= 0.40 ? "med" : "easy";
-          badges.push(`<span class="em-badge ai-diff" title="AI self-rated difficulty">${esc(lbl)}</span>`);
-        }
+        // v0.9.40 — easy/med/hard pill removed per operator request.
+        // The pill exposed the aiDifficulty self-rating, which wasn't
+        // operationally useful — operators care about whether to ship
+        // or review, not the AI's read on the conversation difficulty.
         // v2.0 Step 1: intent classification badge.
         // The classifier writes intentClassification + intentConfidence to
         // the thread doc (denormalized from EtsyMail_IntentClassifications).
@@ -4293,10 +4339,13 @@
           const sigText = (Array.isArray(t.intentSignals) && t.intentSignals.length)
             ? " · signals: " + t.intentSignals.slice(0, 3).join(", ")
             : "";
+          // v0.9.40 — dropped the "intent:" prefix per operator request.
+          // The pill's color identifies it as an intent classification
+          // sufficiently; the prefix was redundant chrome.
           badges.push(
             `<span class="em-badge intent ${esc(cls)}${lowConf}" ` +
             `title="Classified as ${esc(label)} at ${Math.round(conf*100)}% confidence${esc(sigText)}">` +
-            `intent: ${esc(label)} ${Math.round(conf*100)}%</span>`
+            `${esc(label)} ${Math.round(conf*100)}%</span>`
           );
         }
         // v2.0 Step 2: sales-stage badge. The sales agent writes

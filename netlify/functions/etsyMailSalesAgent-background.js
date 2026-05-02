@@ -1440,6 +1440,36 @@ function validateOptionCConsistency({ parsed, toolNamesCalled }) {
     }
   }
 
+  // Rule 8 — review_decision is required and consistent with action.
+  // The AI must emit { needs_review, confidence } on every turn.
+  // If the action is escalate_to_human, needs_review must be true.
+  if (!parsed.review_decision || typeof parsed.review_decision !== "object") {
+    violations.push("review_decision_missing");
+    messages.push(
+      "review_decision is required on every turn. Emit it as " +
+      "{ \"needs_review\": <boolean>, \"confidence\": 0.0-1.0 } describing " +
+      "whether a human operator should eyeball this reply before send. " +
+      "This is SEPARATE from the answer-confidence field — see the prompt."
+    );
+  } else {
+    const rd = parsed.review_decision;
+    if (typeof rd.needs_review !== "boolean") {
+      violations.push("review_decision_invalid_needs_review");
+      messages.push("review_decision.needs_review must be a boolean.");
+    }
+    if (typeof rd.confidence !== "number" || rd.confidence < 0 || rd.confidence > 1) {
+      violations.push("review_decision_invalid_confidence");
+      messages.push("review_decision.confidence must be a number between 0.0 and 1.0.");
+    }
+    if (na === "escalate_to_human" && rd.needs_review !== true) {
+      violations.push("review_decision_inconsistent_with_escalate");
+      messages.push(
+        "next_action: escalate_to_human REQUIRES review_decision.needs_review: true. " +
+        "Set both, or change the action."
+      );
+    }
+  }
+
   if (violations.length === 0) {
     return { valid: true, violations: [] };
   }
@@ -2688,9 +2718,36 @@ Do NOT pick next_action: ask_one_question and then write reply text that mention
     //   - advance_stage === "human_review": legacy off-ramp, kept for
     //     backward compat. Same effect as ready_for_human_approval.
     const rawAdvance = parsed.advance_stage || null;
+
+    // v0.9.40 — Apply the AI's review-decision threshold rule.
+    //
+    // The AI emits review_decision: { needs_review, confidence } as a
+    // SEPARATE signal from the existing answer-confidence. This lets
+    // a high-confidence answer ("I'm 95% sure this quote is correct")
+    // still flag itself for human review ("but I'm only 60% sure
+    // about whether to ship this without a person looking").
+    //
+    // The threshold rule per operator policy: auto-send only when
+    // BOTH (a) needs_review === false AND (b) confidence >= 0.80.
+    // Below 0.80 we err on the side of caution and route to human
+    // review even when the AI said no review was needed.
+    const REVIEW_AUTO_SEND_THRESHOLD = 0.80;
+    let reviewDecisionTriggersReview = false;
+    if (parsed.review_decision && typeof parsed.review_decision === "object") {
+      const rd = parsed.review_decision;
+      const aiNeedsReview = !!rd.needs_review;
+      const reviewConf    = (typeof rd.confidence === "number") ? rd.confidence : 0;
+      if (aiNeedsReview) {
+        reviewDecisionTriggersReview = true;
+      } else if (reviewConf < REVIEW_AUTO_SEND_THRESHOLD) {
+        reviewDecisionTriggersReview = true;
+      }
+    }
+
     const wantsHumanReview =
       rawAdvance === "human_review" ||
-      !!parsed.ready_for_human_approval;
+      !!parsed.ready_for_human_approval ||
+      reviewDecisionTriggersReview;
     const isAbandoned = rawAdvance === "abandoned";
 
     // ── Compose draft + persist ──
@@ -3086,6 +3143,27 @@ Do NOT pick next_action: ask_one_question and then write reply text that mention
       aiDraftStatus : parsed.customer_accepted ? "skipped_acceptance" : "ready",
       latestDraftId : draftId,
       aiConfidence,
+      // v0.9.40 — review-decision pill data for the rail. Persisted as
+      // a small object so the UI can read both the AI's stated decision
+      // and the confidence it's tied to, and apply the same threshold
+      // rule the routing applied. If parsed.review_decision is missing
+      // (older AI output, retry-failure paths, etc.), we synthesize a
+      // sensible value from existing signals so the rail always has
+      // something to render.
+      aiReviewDecision: (parsed.review_decision && typeof parsed.review_decision === "object")
+        ? {
+            needs_review: !!parsed.review_decision.needs_review,
+            confidence  : (typeof parsed.review_decision.confidence === "number")
+                            ? parsed.review_decision.confidence : 0
+          }
+        : {
+            // Fallback: derive from existing routing fields. If the thread
+            // is going to human review, mark needs_review:true with a
+            // moderate confidence; otherwise mark needs_review:false at
+            // the answer-confidence level.
+            needs_review: !!wantsHumanReview,
+            confidence  : aiConfidence
+          },
       readyForHumanApproval: !!parsed.ready_for_human_approval,
       // v4.1 — customer_accepted signal for downstream listing-creator
       // automation. Mirrored on both draft and thread so a worker can
