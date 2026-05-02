@@ -132,10 +132,25 @@ function trimForCaller(doc) {
   // v4.3.12 — Expose the storage-mirror fields that exist when the
   // collateral was uploaded through the system (op:"upload"). The
   // agent uses these to construct an `image` attachment on its draft
-  // for line-sheet sends — without `storagePath` + `contentType`,
+  // for line-sheet sends — without `storagePath` + `uploadedContentType`,
   // normalizeAttachments in etsyMailDraftSend rejects the entry.
   // Entries created via op:"create" (external URL, no upload) will
   // not have these fields; the agent treats those as link-only.
+  //
+  // v5.0.2 BUGFIX — field-name mismatch.
+  // The upload pipeline (uploadCollateralFile, line ~400) writes the
+  // MIME type as `uploadedContentType`. The previous version of this
+  // function read `doc.contentType` and exposed it as `out.contentType`
+  // — neither field name matches what's on disk OR what the consumer
+  // (agent's findAttachableForKind) checks for. Result: every
+  // operator-uploaded line sheet was failing the agent's attachable-
+  // entry check because uploadedContentType was undefined on the
+  // trimmed result. Heidi-thread bug confirmed via audit row showing
+  // lineSheetAttach.reason = "no_active_collateral_for_kind" while
+  // a perfectly valid line sheet existed in Firestore.
+  // Fix: read `uploadedContentType` (the actual persisted field) AND
+  // also tolerate `contentType` for legacy/future flexibility, and
+  // expose under both names so any downstream consumer works.
   const out = {
     id          : doc.id,
     category    : doc.category,
@@ -147,9 +162,25 @@ function trimForCaller(doc) {
     active      : doc.active !== false
   };
   if (doc.storagePath)        out.storagePath        = doc.storagePath;
-  if (doc.contentType)        out.contentType        = doc.contentType;
-  if (doc.fileName)           out.fileName           = doc.fileName;
-  if (typeof doc.bytes === "number") out.bytes        = doc.bytes;
+
+  // Resolve content type from either field name. uploadedContentType is
+  // what the upload pipeline writes; contentType is the older name kept
+  // for compatibility.
+  const resolvedContentType = doc.uploadedContentType || doc.contentType || null;
+  if (resolvedContentType) {
+    out.uploadedContentType = resolvedContentType;
+    out.contentType         = resolvedContentType;   // legacy alias
+  }
+
+  // Filename: same dual-name treatment.
+  const resolvedFilename = doc.uploadedFilename || doc.fileName || null;
+  if (resolvedFilename) {
+    out.uploadedFilename = resolvedFilename;
+    out.fileName         = resolvedFilename;   // legacy alias
+  }
+
+  if (typeof doc.uploadedSizeBytes === "number") out.uploadedSizeBytes = doc.uploadedSizeBytes;
+  if (typeof doc.bytes === "number")             out.bytes             = doc.bytes;
   return out;
 }
 
