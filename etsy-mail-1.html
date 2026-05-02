@@ -5027,25 +5027,21 @@
                  (or fold the most useful fields into the sales card)
                  if a need surfaces. -->
 
-            <!-- v2.0 Step 2 — Sales context panel. Now the FIRST card
-                 in the right rail (was previously third). Hidden by
-                 default; shown by renderSalesCard() when
-                 fetchSalesContext finds a SalesContext doc for this
-                 thread. -->
+            <!-- v2.0 Step 2 — Sales context panel. Now the SOLE card in
+                 the right rail. Hidden by default; shown by
+                 renderSalesCard() when fetchSalesContext finds a
+                 SalesContext doc for this thread. -->
             <div id="emSalesCardMount"></div>
 
-            <div class="em-card em-ai-card">
-              <h4>AI draft <span class="em-muted" style="font-weight:400;text-transform:none;letter-spacing:0;">(Milestone 4)</span></h4>
-              <div id="emAiCardBody">
-                <div class="em-ai-empty">
-                  No AI draft yet. Click <b>AI Draft</b> under the reply box to generate one.
-                </div>
-              </div>
-              <div class="em-revise-row" id="emReviseRow" style="display:none;">
-                <input id="emReviseInput" type="text" placeholder='Extra guidance (e.g. "mention shipping timeline")' />
-                <button id="emReviseBtn" class="ai"><i class="material-icons">refresh</i>Revise</button>
-              </div>
-            </div>
+            <!-- v0.9.46 — AI draft card removed. The card surfaced the
+                 same draft text that's already editable in the staff
+                 reply textarea on the left, plus a Revise button few
+                 operators used. Removing it gives the sales card the
+                 full height of the right column.
+                 emAiCardBody / emReviseRow / emReviseInput / emReviseBtn
+                 elements no longer render; the JS bindings that look
+                 them up (renderAiDraftCard, etc.) safely no-op via
+                 their existing null guards. -->
           </div>
         </div>
       `;
