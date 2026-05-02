@@ -1358,9 +1358,20 @@ function validateOptionCConsistency({ parsed, toolNamesCalled }) {
       messages.push("next_action: escalate_to_human REQUIRES a populated needs_review_synopsis (the operator-facing summary). Yours was missing or too short.");
     }
   }
-  if (na === "abandon" && parsed.advance_stage !== "abandoned") {
-    violations.push("abandon_action_without_field");
-    messages.push("next_action: abandon REQUIRES advance_stage: \"abandoned\". Set the field, or change the action.");
+  // v0.9.47 — abandon action removed from the system. If the AI emits
+  // it (legacy prompt cache, partial deploy), reject as a violation
+  // so retry-or-escalate kicks in. Operators manually archive stale
+  // sales threads from the Sales — Active folder; no automatic
+  // abandonment writes happen anywhere.
+  if (na === "abandon") {
+    violations.push("abandon_action_disabled");
+    messages.push(
+      "next_action: abandon is no longer supported. If the customer has " +
+      "pivoted out of a sales conversation, escalate to a human (next_action: " +
+      "escalate_to_human) with a needs_review_synopsis explaining the situation. " +
+      "If the conversation is genuinely dead, leave it in sales_active — " +
+      "operators triage stale threads manually."
+    );
   }
   // Inverse: if customer_accepted is true, next_action MUST be the acceptance action
   if (parsed.customer_accepted === true && na !== "confirm_acceptance_and_create_listing") {
@@ -3122,11 +3133,13 @@ Do NOT pick next_action: ask_one_question and then write reply text that mention
     // v4.0: simpler thread status mapping. The agent has finished a turn;
     // the thread sits in "sales_active" until escalation, abandonment,
     // or completion (handled by Step 3 close-listing flow elsewhere).
+    // v0.9.47 — abandon path removed. If isAbandoned is somehow set
+    // (legacy prompt output not yet caught by validator), fall through
+    // to sales_active rather than writing the now-deprecated
+    // sales_abandoned status. Operator manually archives stale threads.
     let threadStatus;
     if (wantsHumanReview) {
       threadStatus = "pending_human_review";
-    } else if (isAbandoned) {
-      threadStatus = "sales_abandoned";
     } else {
       threadStatus = "sales_active";
     }

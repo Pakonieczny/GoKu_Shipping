@@ -464,8 +464,24 @@ async function reapAbandonedSalesThread(threadId, thresholdMs) {
   });
 }
 
+// v0.9.47 — Sales abandonment removed from system policy. The
+// sales-funnel reaper pass returns immediately without touching
+// any threads. The auto_pipeline and send_queue passes are
+// unaffected. Operators manually archive stale sales threads from
+// the Sales — Active folder.
+const SALES_FUNNEL_PASS_DISABLED = true;
+
 async function runSalesFunnelPass({ force = false } = {}) {
   const tStart = Date.now();
+
+  if (SALES_FUNNEL_PASS_DISABLED) {
+    return {
+      pass: "sales_funnels",
+      skipped: true,
+      reason: "abandonment_removed_from_policy",
+      durationMs: Date.now() - tStart
+    };
+  }
 
   if (!(await isSalesModeEnabled())) {
     return { pass: "sales_funnels", skipped: true, reason: "sales_mode_disabled", durationMs: Date.now() - tStart };

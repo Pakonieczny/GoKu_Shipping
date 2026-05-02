@@ -923,6 +923,19 @@
     .em-badge.review-decision.red {
       background: #ffebe9; color: #a40e26;
     }
+    /* v0.9.47 — Auto-replied / Success pills.
+     * Auto-replied: purple, distinguishes AI-handled threads at a glance
+     * in the Sales — Active folder. Clears on next inbound or operator
+     * action.
+     * Success: green, terminal "sale closed" indicator. Replaces the
+     * Auto-replied pill once the listing has been created and accepted. */
+    .em-badge.auto-replied {
+      background: #f3e8ff; color: #6b21a8;
+    }
+    .em-badge.success {
+      background: #dcffe4; color: #116329;
+      font-weight: 600;
+    }
     .em-badge.ai-auto {
       background: #f6e5ff; color: #6b21a8;
     }
@@ -2163,10 +2176,14 @@
       // ─── v2.0 Step 2 ──
       // Aggregates all active sales-funnel statuses. Counts work
       // automatically since etsyMailThreads ?counts=1 groups by status.
+      // v0.9.47 — sales_abandoned removed from this list (folder
+      // deleted entirely). v0.9.47 — auto_replied also removed: when
+      // a sales thread auto-sends, etsyMailDraftSend now writes
+      // status="sales_active" instead of "auto_replied", so the same
+      // funnel folder catches AI-replied and pending-customer threads
+      // alike. The auto-replied state is communicated via a rail pill.
       { id: "sales_active",         label: "Sales — Active", icon: "trending_up",
         status: ["sales_active", "sales_discovery", "sales_spec", "sales_quote", "sales_revision", "sales_pending_close_approval"] },
-      { id: "sales_abandoned",      label: "Sales — Abandoned", icon: "history_toggle_off",
-        status: "sales_abandoned" },
       // ─── v4.3 — Completed Sales ────────────────────────────────────────
       // Folder membership is keyed off salesCompletedAt (set ONCE by the
       // listing-creator worker on success, never overwritten by any other
@@ -2812,18 +2829,24 @@
       let actionsHtml = "";
       if (!isArchived) {
         const isAbandoned = stage === "abandoned";
+        // v0.9.47 — abandoned removed from stage-advance options. If
+        // an operator wants to dispose of a stale lead, they archive
+        // the thread (top-level Archive button). The "abandoned" stage
+        // still exists historically — threads previously marked
+        // abandoned by the (now-disabled) reaper render with Re-engage
+        // available — but cannot be reached via this dropdown anymore.
         const allowedNext = {
-          discovery              : ["spec", "human_review", "abandoned"],
-          spec                   : ["quote", "discovery", "human_review", "abandoned"],
-          quote                  : ["revision", "pending_close_approval", "human_review", "abandoned"],
-          revision               : ["quote", "pending_close_approval", "human_review", "abandoned"],
+          discovery              : ["spec", "human_review"],
+          spec                   : ["quote", "discovery", "human_review"],
+          quote                  : ["revision", "pending_close_approval", "human_review"],
+          revision               : ["quote", "pending_close_approval", "human_review"],
           pending_close_approval : ["revision", "human_review"],
           abandoned              : []
         };
         const next = allowedNext[stage] || [];
         const stageButtonsHtml = next.map(n => {
           const lbl = stageLabels[n] || (n === "human_review" ? "Escalate to review" : n);
-          const cls = (n === "human_review" || n === "abandoned") ? "danger" : "";
+          const cls = (n === "human_review") ? "danger" : "";
           return `<button type="button" class="${cls}" data-advance="${esc(n)}">→ ${esc(lbl)}</button>`;
         }).join("");
         const reengageHtml = isAbandoned
@@ -4312,6 +4335,43 @@
         } else if (t.confidence != null) {
           // Pre-v1.0 legacy "confidence" field
           badges.push(`<span class="em-badge confidence">${Math.round(t.confidence*100)}%</span>`);
+        }
+
+        // v0.9.47 — Auto-replied / Success pill.
+        // Mutually exclusive with each other; positioned after the review-
+        // decision pill so the review state is dominant.
+        //
+        //   Success (green): sale closed — thread.status === "sales_completed"
+        //   OR salesCompletedAt is set. Stays sticky once shown.
+        //
+        //   Auto-replied (purple): last AI action was a clean auto-send
+        //   AND no customer reply has arrived since. Specifically:
+        //     - lastAutoDecision === "auto_send_confirmed" AND
+        //     - lastInboundAt is null OR lastInboundAt < lastAutoDecisionAt
+        //   Pill clears automatically on next inbound (lastInboundAt
+        //   moves past lastAutoDecisionAt) and on operator action
+        //   (manual move sets lastAutoDecision to something else).
+        const isSuccessClosed = (t.status === "sales_completed") || !!t.salesCompletedAt;
+        if (isSuccessClosed) {
+          badges.push(`<span class="em-badge success" title="Sale completed — listing created and customer accepted.">Success</span>`);
+        } else if (t.lastAutoDecision === "auto_send_confirmed") {
+          // Pull millisecond timestamps from either Firestore-format or
+          // already-serialized fields. fetchThreadListNow normalizes
+          // these but defensively handle both shapes.
+          const tsToMs = (v) => {
+            if (!v) return 0;
+            if (typeof v === "number") return v;
+            if (v.toMillis) return v.toMillis();
+            if (v.ms) return v.ms;
+            if (v._seconds) return v._seconds * 1000;
+            return 0;
+          };
+          const inboundMs   = tsToMs(t.lastInboundAt);
+          const autoMs      = tsToMs(t.lastAutoDecisionAt);
+          const autoIsLatest = autoMs > 0 && (inboundMs === 0 || autoMs > inboundMs);
+          if (autoIsLatest) {
+            badges.push(`<span class="em-badge auto-replied" title="AI auto-replied. Pill clears on next customer reply or your manual action.">Auto-replied</span>`);
+          }
         }
         // v0.9.40 — easy/med/hard pill removed per operator request.
         // The pill exposed the aiDifficulty self-rating, which wasn't

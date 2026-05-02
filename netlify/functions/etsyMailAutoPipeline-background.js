@@ -1714,7 +1714,12 @@ exports.handler = async (event) => {
                       force               : true,
                       parentThreadFinalizePatch : {
                         threadId,
-                        newStatus    : "auto_replied",
+                        // v0.9.47 — sales-flow threads stay in
+                        // sales_active throughout. The "AI auto-replied"
+                        // visual signal comes from the rail pill
+                        // (driven by lastAutoDecision), not from a
+                        // status flip to auto_replied.
+                        newStatus    : "sales_active",
                         inboundMs    : claim.inboundMs,
                         decision     : "sales_auto_send_enqueued",
                         aiConfidence : draftDoc.aiConfidence || null

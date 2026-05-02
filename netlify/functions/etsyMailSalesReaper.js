@@ -263,6 +263,15 @@ async function runReaperScan() {
 
 // ─── Handler ───────────────────────────────────────────────────────────
 
+// v0.9.47 — Sales abandonment removed from the system per operator
+// policy. The reaper is a no-op now; it returns immediately without
+// touching any threads. The function is left in place so cron
+// schedules and existing audit-log queries don't break, and so the
+// behavior can be re-enabled by removing this short-circuit if the
+// policy changes back. Operators manually archive stale sales threads
+// from the Sales — Active folder.
+const REAPER_DISABLED = true;
+
 exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") {
     return { statusCode: 200, headers: CORS, body: "ok" };
@@ -274,6 +283,14 @@ exports.handler = async (event) => {
   if (!scheduled) {
     const auth = requireExtensionAuth(event);
     if (!auth.ok) return auth.response;
+  }
+
+  if (REAPER_DISABLED) {
+    return json(200, {
+      ok: true,
+      disabled: true,
+      message: "salesReaper is disabled — abandonment removed from system policy."
+    });
   }
 
   try {

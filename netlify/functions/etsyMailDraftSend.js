@@ -458,9 +458,27 @@ exports.handler = async (event) => {
         // we need to read the thread doc INSIDE this transaction to
         // satisfy Firestore's read-before-write rule for new doc paths.
         // Reading a non-existent doc is fine — the set() below merges.
+        // v0.9.47: ALSO read the thread doc on operator-driven enqueues
+        // so we can immediately demote a pending_human_review thread
+        // out of the Needs Review folder. The autopipeline path passes
+        // parentThreadFinalizePatch; the operator UI's Send via Etsy
+        // does not — so absence of the patch identifies operator-driven
+        // enqueue.
+        const isOperatorDriven = !parentThreadFinalizePatch;
+        let opThreadRef = null;
+        let opThreadCurrentStatus = null;
+        let opThreadIsSales = false;
         if (parentThreadFinalizePatch && parentThreadFinalizePatch.threadId) {
           const tRef = db.collection(THREADS_COLL_NAME).doc(parentThreadFinalizePatch.threadId);
           await tx.get(tRef);    // ensures the txn knows about this read path
+        } else if (isOperatorDriven && threadId) {
+          opThreadRef = db.collection(THREADS_COLL_NAME).doc(threadId);
+          const opSnap = await tx.get(opThreadRef);
+          if (opSnap.exists) {
+            const data = opSnap.data() || {};
+            opThreadCurrentStatus = data.status || null;
+            opThreadIsSales = !!data.salesStage;
+          }
         }
 
         const snap = await tx.get(ref);
@@ -545,6 +563,31 @@ exports.handler = async (event) => {
             { merge: true }
           );
           threadFinalizeApplied = true;
+        }
+
+        // v0.9.47 — Operator-driven demote-from-review.
+        // If this enqueue came from the operator UI (no
+        // parentThreadFinalizePatch) AND the thread is currently in
+        // pending_human_review, demote it out of Needs Review
+        // immediately. Without this, the thread stays in Needs Review
+        // during the seconds-to-minutes between enqueue and the
+        // extension's actual send completion.
+        if (isOperatorDriven && opThreadRef && opThreadCurrentStatus === "pending_human_review") {
+          const demoteTo = opThreadIsSales ? "sales_active" : "auto_replied";
+          tx.set(opThreadRef, {
+            status                    : demoteTo,
+            lastAutoDecision          : "operator_send_from_review",
+            lastAutoDecisionAt        : FV.serverTimestamp(),
+            // Clear the manual-move bookkeeping so the thread reads
+            // cleanly as "operator clicked Send" rather than "operator
+            // manually moved earlier."
+            manuallyMovedToAutoReplied: FV.delete(),
+            manualMoveActor           : FV.delete(),
+            manualMoveAt              : FV.delete(),
+            manualMoveReason          : FV.delete(),
+            manualMoveFromStatus      : FV.delete(),
+            updatedAt                 : FV.serverTimestamp()
+          }, { merge: true });
         }
 
         return { conflict: false, payload, threadFinalizeApplied };
@@ -1071,7 +1114,22 @@ exports.handler = async (event) => {
         else if (unverified) finalStatus = "sent_unverified";
 
         // Decide thread status update based on the snapshot we already read.
-        // Mirrors the original logic but uses pre-read data.
+        // v0.9.47 — Two new behaviors added:
+        //   1. SALES-FLOW AUTO-SEND: if the thread has a salesStage set
+        //      (i.e., this is a sales-flow thread), the post-send status
+        //      stays in the Sales — Active funnel rather than flipping
+        //      to auto_replied. Operators view sales conversations in
+        //      one folder regardless of who sent the most recent reply.
+        //      The auto-replied state is communicated via a rail pill
+        //      derived from lastAutoDecision/lastAutoDecisionAt, not via
+        //      thread status.
+        //   2. SEND-FROM-REVIEW DEMOTION: when an operator clicks
+        //      Send via Etsy from a pending_human_review thread, the
+        //      thread should immediately leave Needs Review on a clean
+        //      send. Previously the thread stayed in pending_human_review
+        //      indefinitely (the only existing demotion paths assumed
+        //      queued_for_auto_send as the source status).
+        const threadIsSales = !!(tSnap && tSnap.exists && tSnap.data().salesStage);
         let threadStatusUpdate = null;
         let threadDemoteReason = null;
         if (prev.threadId && tSnap && tSnap.exists) {
@@ -1085,9 +1143,18 @@ exports.handler = async (event) => {
               threadStatusUpdate = "pending_human_review";
             }
           } else {
-            // Promote — clean send.
+            // Clean send.
             if (threadCurrentStatus === "queued_for_auto_send") {
-              threadStatusUpdate = "auto_replied";
+              // v0.9.47 — sales threads stay in sales_active; only support
+              // threads flip to auto_replied. Sales auto-replied state is
+              // reflected via a rail pill, not via thread status.
+              threadStatusUpdate = threadIsSales ? "sales_active" : "auto_replied";
+            } else if (threadCurrentStatus === "pending_human_review") {
+              // v0.9.47 — operator hit Send via Etsy from Needs Review.
+              // Demote out of review immediately so operator stops seeing
+              // the thread in that folder.
+              threadStatusUpdate = threadIsSales ? "sales_active" : "auto_replied";
+              threadDemoteReason = "operator_send_from_review";
             }
           }
         }
@@ -1121,10 +1188,28 @@ exports.handler = async (event) => {
         } else if (threadStatusUpdate === "auto_replied") {
           tx.set(tRef, {
             status                    : "auto_replied",
-            lastAutoDecision          : "auto_send_confirmed",
+            lastAutoDecision          : threadDemoteReason || "auto_send_confirmed",
             lastAutoDecisionAt        : FV.serverTimestamp(),
             // v1.4: this is a real AI auto-reply — clear any stale
             // "manually moved" flag from a prior move.
+            manuallyMovedToAutoReplied: FV.delete(),
+            manualMoveActor           : FV.delete(),
+            manualMoveAt              : FV.delete(),
+            manualMoveReason          : FV.delete(),
+            manualMoveFromStatus      : FV.delete(),
+            updatedAt                 : FV.serverTimestamp()
+          }, { merge: true });
+        } else if (threadStatusUpdate === "sales_active") {
+          // v0.9.47 — sales-flow clean send. Stay in Sales — Active
+          // funnel; the auto-replied state is communicated via the
+          // rail pill (derived from lastAutoDecision="auto_send_confirmed"
+          // and lastAutoDecisionAt > lastInboundAt). On operator
+          // Send-via-Etsy from review, threadDemoteReason is
+          // "operator_send_from_review" and the pill won't show.
+          tx.set(tRef, {
+            status                    : "sales_active",
+            lastAutoDecision          : threadDemoteReason || "auto_send_confirmed",
+            lastAutoDecisionAt        : FV.serverTimestamp(),
             manuallyMovedToAutoReplied: FV.delete(),
             manualMoveActor           : FV.delete(),
             manualMoveAt              : FV.delete(),
