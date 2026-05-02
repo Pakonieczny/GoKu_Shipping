@@ -913,16 +913,15 @@
      * in the rail. Green when the AI is confident the draft can ship
      * without human review (≥80% threshold); red when human review is
      * needed (either AI explicitly flagged or AI's confidence is below
-     * the 80% threshold — we err on the side of caution). */
+     * the 80% threshold — we err on the side of caution).
+     * v0.9.44 — softened the visual treatment to match the subtler
+     * style of the other rail pills. The bold/bordered version was
+     * shouting at operators; the lighter tint is sufficient signal. */
     .em-badge.review-decision.green {
       background: #dcffe4; color: #116329;
-      border: 1px solid #4ac26b;
-      font-weight: 600;
     }
     .em-badge.review-decision.red {
       background: #ffebe9; color: #a40e26;
-      border: 1px solid #cf222e;
-      font-weight: 600;
     }
     .em-badge.ai-auto {
       background: #f6e5ff; color: #6b21a8;
