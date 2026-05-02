@@ -7714,7 +7714,20 @@
         const cls = m.source === "ai" ? "ai"
                   : m.direction === "outbound" ? "outbound"
                   : "inbound";
-        const who  = m.senderName || (m.senderRole || m.source || "unknown");
+        // v0.9.34 — Outbound (staff-side) bubbles ALWAYS display
+        // "CustomBrites" as the sender label, regardless of what
+        // senderName is stored on the message. Operator personal names
+        // (e.g. "Paul K" from getEmployeeName(), populated by the
+        // optimistic-insert path) must never surface to the operator
+        // UI as a sender — the customer-facing brand is CustomBrites,
+        // and the operator UI mirrors what would appear externally.
+        // Inbound bubbles continue to show the customer's actual name.
+        let who;
+        if (m.direction === "outbound" || cls === "outbound" || cls === "ai") {
+          who = "CustomBrites";
+        } else {
+          who = m.senderName || (m.senderRole || m.source || "unknown");
+        }
         // v0.9.24 — Use fmtBubbleTimestamp (always shows date + time) so
         // every bubble is self-anchored. The operator no longer needs to
         // scan the thread for context to know what day a "11:27 AM"

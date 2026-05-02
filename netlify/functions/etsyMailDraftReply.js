@@ -428,6 +428,23 @@ async function buildConversationMessages(messages, elidedCount, hasMore, include
     });
   }
 
+  // v0.9.34 — Anthropic's newer models don't support assistant-message
+  // prefill: the conversation MUST end with a role=user turn. When the
+  // most recent Etsy message is from staff (an outbound CustomBrites
+  // reply), the last turn we built above is role=assistant, which fails
+  // with "This model does not support assistant message prefill. The
+  // conversation must end with a user message."
+  //
+  // Fix: append a synthetic user turn that instructs the model to
+  // compose the next outbound reply. This frames the request explicitly
+  // and gives the model a clear user-side prompt to respond to.
+  if (turns.length && turns[turns.length - 1].role !== "user") {
+    turns.push({
+      role: "user",
+      content: [{ type: "text", text: "[The most recent message in this thread is from CustomBrites staff. Compose the next outbound reply as the staff voice — assume there is a follow-up that would naturally come next, OR if no follow-up is needed, output a brief acknowledgment-style draft the operator can review. Either way, your output should be a fresh staff-side reply, not a continuation of the prior staff message.]" }]
+    });
+  }
+
   return { turns, imagesAttached: imageBudget.attached };
 }
 
@@ -1124,6 +1141,45 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
     because real shop staff don't write that way in a tracking inquiry.
     Skip it entirely. The customer mentioned the personal context to
     give YOU information, not to receive a wish in return.
+
+19. MANDATORY SIGN-OFF — EXACT FORMAT, NO PERSONAL NAMES.
+
+    Every reply you generate MUST end with EXACTLY this two-line sign-off,
+    with nothing after it:
+
+        Many Thanks,
+        CustomBrites
+
+    The reply structure is:
+      1. The substantive content (answer to the question)
+      2. A blank line
+      3. "Many Thanks,"
+      4. "CustomBrites"
+      [end of message — nothing follows]
+
+    NEVER use a personal name in the sign-off. The customer-facing brand is
+    CustomBrites. Operator personal names (e.g. "Paul K", "Karrie", "Sarah")
+    are internal-only and must never appear in the message body.
+
+    Forbidden sign-off variants — never write any of these:
+      ❌ "Best,\\nCustomBrites" (wrong opener — must be "Many Thanks,")
+      ❌ "Thanks,\\nCustomBrites"
+      ❌ "Best regards,\\nCustomBrites"
+      ❌ "Many Thanks,\\nCustom Brites" (it's CustomBrites, one word)
+      ❌ "Many Thanks,\\nCustomBrites Team"
+      ❌ "Many Thanks,\\nThe CustomBrites Team"
+      ❌ "Best,\\nPaul"  (any personal name is forbidden)
+      ❌ "Best,\\nPaul K"
+      ❌ "Many Thanks,\\nKarrie"
+      ❌ "Best,\\nKarrie & Paul"  (no name combinations)
+
+    This sign-off appears on every reply you generate, regardless of the
+    reply's tone, length, or topic — tracking inquiry, return request,
+    quote, line-sheet attachment, simple acknowledgment. The only path
+    where this rule does NOT apply is auto-replies that Etsy generates
+    on the customer's side; those are inbound and not your output.
+
+    This is non-negotiable.
 
 `.trim();
 

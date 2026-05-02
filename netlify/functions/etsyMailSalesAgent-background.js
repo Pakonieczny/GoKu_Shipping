@@ -1942,6 +1942,64 @@ Each artifact shows one thing well. If the line sheet doesn't show fit, don't sa
 If you set a flag but no collateral exists for that kind, the system logs the miss and the other attached kinds still go out. The reply text should not promise something that didn't attach — see the line-sheet promise rule for the same principle. If you're not sure all the collateral you want is available, write the reply to invite-without-promising ("here's our line sheet — happy to share more if helpful") so a missing chip doesn't leave a broken promise.
 `.trim();
 
+    // ── (9) Mandatory closing sign-off ──────────────────────────────
+    // Every reply MUST end with the exact two-line CustomBrites
+    // sign-off. The agent must NEVER sign messages with the operator's
+    // personal name (e.g., "Paul K", "Karrie", "Best, Sarah") — the
+    // customer-facing brand is CustomBrites, period. Operator names
+    // are internal; surfacing them on customer-facing replies breaks
+    // brand consistency and exposes operator identities.
+    const signOffAddendum = `
+
+# CLOSING SIGN-OFF — MANDATORY, EXACT FORMAT
+
+Every reply you write MUST end with EXACTLY this two-line sign-off, with nothing after it:
+
+\`\`\`
+Many Thanks,
+CustomBrites
+\`\`\`
+
+This is non-negotiable. The brand voice is "CustomBrites" — never an individual name. Below are the exact rules.
+
+## Required structure of every reply
+
+1. The substantive content of your reply (answer to the customer's question, line-sheet invitation, quote, etc.)
+2. A blank line (one line break in the rendered message)
+3. \`Many Thanks,\`
+4. \`CustomBrites\`
+
+That's the whole message. Nothing follows "CustomBrites" — no further text, no postscripts, no "P.S.", no additional emoji. The reply ends.
+
+## Forbidden sign-off variants — never write any of these
+
+- "Best,\\nCustomBrites" (wrong opener — must be "Many Thanks,")
+- "Thanks,\\nCustomBrites" (wrong opener)
+- "Best regards,\\nCustomBrites" (wrong opener)
+- "Many Thanks,\\nCustom Brites" (wrong brand spacing — it's "CustomBrites" one word)
+- "Many Thanks,\\nCustomBrites Team" (no "Team" suffix)
+- "Many Thanks,\\nThe CustomBrites Team" (no "The" prefix, no "Team" suffix)
+- ANY sign-off that includes a personal first name, initial, or full name (e.g. "Best, Paul", "Many Thanks, Sarah", "Best, Paul K", "Karrie")
+- ANY sign-off that lists multiple names (e.g. "Karrie & Paul")
+- A sign-off written in a different language unless the customer wrote in that language and the entire reply is in it
+- Anything after the "CustomBrites" line (no postscript, no emoji line, no "Sent from..." artifacts)
+
+## Why this rule exists
+
+The operator UI may automatically populate the "sender name" field with whichever staff member is logged in (e.g. "Paul K"). That field is for INTERNAL audit only. Customer-facing message TEXT must always sign off as CustomBrites — the brand the customer purchased from. Personal names from the operator side leaking into the message body are a brand-consistency bug.
+
+## Edge cases
+
+- **Reply is just a one-line confirmation** (e.g. "Got it, sterling silver noted."): still close with the sign-off. Two lines of body becomes three lines plus sign-off; that's fine, it's still concise.
+- **Reply attaches a line sheet or other collateral**: the substantive line is the invitation to view ("here's our necklace charm line sheet"); the sign-off follows. The customer sees: brief invitation → blank line → "Many Thanks," → "CustomBrites".
+- **Reply quotes a price**: the price line is part of the substantive content; the sign-off follows it.
+- **Operator manually edits a reply before sending**: the AI-generated sign-off should remain intact. If it isn't there because someone edited it out, the UI gate cannot enforce it (UI gates exist for other things), but the prompt rule means YOUR drafts always include it.
+
+## Auto-replies and customer-side messages
+
+The auto-reply that Etsy injects on the customer's side ("Hi and thanks so much for your message...") is NOT something you generate; it's customer-side automated text that Etsy renders. You don't need to sign anything off for those — they're inbound. This rule applies only to replies YOU write on the staff side.
+`.trim();
+
     // Concatenate. Keep a clear separator so the addendum is visible
     // in any prompt-debugging output without being mistaken for
     // operator-edited content.
@@ -1965,7 +2023,9 @@ If you set a flag but no collateral exists for that kind, the system logs the mi
       + "\n\n---\n\n"
       + existingOrderContextAddendum
       + "\n\n---\n\n"
-      + extendedCollateralAddendum;
+      + extendedCollateralAddendum
+      + "\n\n---\n\n"
+      + signOffAddendum;
 
     let loopResult;
     try {
