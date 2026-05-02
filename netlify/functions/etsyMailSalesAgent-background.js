@@ -1906,21 +1906,24 @@ If the conversation is genuinely ambiguous (you can't tell whether it's about an
 
 # EXTENDED COLLATERAL LIBRARY (system addendum)
 
-You can attach four distinct kinds of visual collateral to your reply. Each has its own structured flag in your JSON output. You may set ANY subset (or all four) on a single reply — each becomes a separate image attachment in the same Etsy message.
+You can attach five distinct kinds of visual collateral to your reply. Each has its own structured flag in your JSON output. You may set ANY subset (or all of them) on a single reply — each becomes a separate image attachment in the same Etsy message.
 
-## The four kinds
+## The five kinds
 
 **1. Line sheet — \`attach_line_sheet: true\`**
 A visual sheet showing the available styles, sizes, codes, and prices for a product family (necklace charms, huggie charms, stud earrings). This is what you send for: family-shopping questions, sizing questions, "what options do you have for X", catalog browsing, dimension comparisons within a family. The line sheet shows the products themselves at scale; it does NOT show how a piece is worn or how it sits on a person.
 
-**2. Fit reference — \`attach_fit_reference: true\`**
-A visual showing how a necklace sits on the body — chain length comparisons (16", 18", 20", etc.) shown on a neck model. This is what you send when the customer asks "how does it fit", "how does it sit on the chest", "how long is 18 inches really", "I'm petite, will it look right", "where does it hang", "how low does it sit." Do NOT claim the line sheet shows fit — it doesn't. Use the fit reference for fit questions.
+**2. Fit reference (necklace) — \`attach_fit_reference: true\`**
+A visual showing how a NECKLACE sits on the body — chain length comparisons (16", 18", 20", etc.) shown on a neck model. This is what you send when the customer asks "how does it fit" / "how does it sit on the chest" / "how long is 18 inches really" / "I'm petite, will it look right" / "where does it hang" / "how low does it sit" — about a NECKLACE. Do NOT claim the line sheet shows fit; it doesn't. Use the fit reference for necklace-fit questions specifically.
 
 **3. Metal comparison — \`attach_metal_comparison: true\`**
 A visual showing the side-by-side differences between Gold Filled vs Gold Plated vs 14k Solid Gold. Send this when the customer asks about metal options, gold types, "what's the difference between gold filled and solid gold", "is it real gold", "will it tarnish", "which gold is best", price-vs-quality comparisons across metals, allergy or skin-reaction concerns about metal type, or otherwise needs to choose between metals.
 
 **4. Care instructions — \`attach_care_instructions: true\`**
 A visual showing how to care for and clean fine custom jewellery. Send this proactively on most custom-order conversations — once the customer has accepted a quote or is finalizing a purchase, including care instructions in the same message helps them get the most life out of the piece. Also send when the customer asks how to clean, store, wear, or maintain jewellery; when they mention worry about tarnish or damage; or when the order is for a high-value piece (solid gold, large bulk orders).
+
+**5. Bracelet sizing — \`attach_bracelet_sizing: true\`**
+A visual showing the bracelet length range with a wrist sizing chart and instructions for how to measure a wrist. This is what you send when the customer asks "what size bracelet do I need" / "how do I measure my wrist" / "what length should I order" / "will a 7-inch fit me" / "how does the bracelet sit on the wrist" / anything about wrist measurement or bracelet length selection. NOT the same as the necklace fit reference — these are physically different artifacts answering different questions. If the customer asks about necklace length, use \`attach_fit_reference\`. If the customer asks about bracelet length, use \`attach_bracelet_sizing\`. Never substitute one for the other.
 
 ## Bias: attach MORE rather than less
 
@@ -2296,7 +2299,14 @@ The auto-reply that Etsy injects on the customer's side ("Hi and thanks so much 
       { flag: "attach_line_sheet",       kind: "line_sheet",       label: "line sheet" },
       { flag: "attach_fit_reference",    kind: "fit_reference",    label: "fit reference"  },
       { flag: "attach_metal_comparison", kind: "metal_comparison", label: "metal comparison" },
-      { flag: "attach_care_instructions",kind: "care_instructions",label: "care instructions" }
+      { flag: "attach_care_instructions",kind: "care_instructions",label: "care instructions" },
+      // v0.9.34 — bracelet sizing reference (wrist measurement chart).
+      // Distinct from fit_reference, which is specifically about necklace
+      // chain length on the body. Bracelet sizing answers a different
+      // customer question ("what size do I need?", "how do I measure my
+      // wrist?") and deserves its own flag for audit clarity and so the
+      // AI never conflates necklace fit with bracelet sizing.
+      { flag: "attach_bracelet_sizing",  kind: "bracelet_sizing",  label: "bracelet sizing" }
     ];
 
     let attachmentsToWrite = [];

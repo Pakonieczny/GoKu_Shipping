@@ -32,7 +32,7 @@
  *      kind        : "line_sheet" | "product_card" | "lookbook" |
  *                    "image_set" | "terms" |
  *                    "fit_reference" | "metal_comparison" |
- *                    "care_instructions",
+ *                    "care_instructions" | "bracelet_sizing",
  *      name        : "<short display title>",
  *      url         : "<https://...>",
  *      description : "<one-paragraph blurb shown to the AI>",
