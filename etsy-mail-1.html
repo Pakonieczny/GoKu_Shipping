@@ -3389,6 +3389,36 @@
         : { year: "numeric", month: "short", day: "numeric" });
     }
 
+    /* v0.9.24 — Bubble-row timestamp formatter.
+     *
+     * fmtTime() above is the global "compact" formatter used in many
+     * places (thread list, sidebar metadata, etc.) where space is at
+     * a premium. It collapses today's timestamps to time-only and
+     * older ones to date-only.
+     *
+     * Message bubbles need MORE detail, not less — the operator
+     * needs to see exactly when each message arrived, including the
+     * date, on EVERY bubble (not just non-today ones). A long
+     * conversation that spans multiple days reads as a confusing
+     * blur if today's bubbles say "11:27 AM" but yesterday's also
+     * say "11:27 AM" with no date. This formatter always returns
+     * date + time so each bubble is self-anchored.
+     *
+     * Format: "Apr 28 · 11:27 AM" for current-year dates, or
+     *         "Apr 28, 2024 · 11:27 AM" if the year differs from now.
+     */
+    function fmtBubbleTimestamp(v) {
+      const d = toDate(v);
+      if (!d) return "";
+      const now = new Date();
+      const sameYear = d.getFullYear() === now.getFullYear();
+      const datePart = d.toLocaleDateString([], sameYear
+        ? { month: "short", day: "numeric" }
+        : { year: "numeric", month: "short", day: "numeric" });
+      const timePart = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+      return `${datePart} · ${timePart}`;
+    }
+
     async function api(name, { method="GET", query=null, body=null } = {}) {
       let url = FN(name);
       if (query) {
@@ -7685,7 +7715,13 @@
                   : m.direction === "outbound" ? "outbound"
                   : "inbound";
         const who  = m.senderName || (m.senderRole || m.source || "unknown");
-        const when = fmtTime(m.timestamp || m.createdAt);
+        // v0.9.24 — Use fmtBubbleTimestamp (always shows date + time) so
+        // every bubble is self-anchored. The operator no longer needs to
+        // scan the thread for context to know what day a "11:27 AM"
+        // bubble actually came in. Critical for long conversations
+        // spanning multiple days where same-time-of-day collisions
+        // were previously confusing.
+        const when = fmtBubbleTimestamp(m.timestamp || m.createdAt);
         // v0.9.3: subtle indicator on still-optimistic messages so the
         // operator knows this rendering is local-pending (not yet
         // confirmed against an Etsy scrape).
