@@ -678,6 +678,74 @@ exports.handler = async (event) => {
      *  the thread this Etsy tab is on?" Read-only, no claim.
      *  Input: { op:"peek", threadId }
      *  Output: { queued: true, draft: {...} } | { queued: false } */
+    /* ── listQueued (extension → server) ──────────────────────────
+     *  v0.9.39 — auto-open-and-send support.
+     *  Returns all currently-queued drafts across ALL threads. The
+     *  extension polls this periodically to discover queued drafts it
+     *  needs to handle. For each entry the extension auto-opens the
+     *  Etsy conversation tab in the background, the content-sender
+     *  picks it up via the existing peek path, and sends.
+     *
+     *  Input:  { op:"listQueued", workerId? }
+     *  Output: { drafts: [{ draftId, threadId, etsyConversationUrl, queuedAt, queuedBy }],
+     *            killSwitch?: {...} }
+     *
+     *  Bounded to 20 entries (more than enough — operator workflow is
+     *  one-at-a-time). Stale entries (>MAX_CLAIM_LOOKBACK_MIN min) are
+     *  filtered server-side; peek expires them to "failed" individually
+     *  on subsequent peeks. */
+    if (op === "listQueued") {
+      // Honor the killswitch — same as peek
+      const ks = await getKillSwitch();
+      if (ks.disabled) {
+        return ok({ drafts: [], killSwitch: ks });
+      }
+
+      const lookbackMs = MAX_CLAIM_LOOKBACK_MIN * 60 * 1000;
+      const sinceMs    = Date.now() - lookbackMs;
+
+      // Query queued drafts within the lookback window. Index needed:
+      // (status ASC, queuedAt DESC) on EtsyMail_Drafts.
+      let snap;
+      try {
+        snap = await db.collection(DRAFTS_COLL)
+          .where("status", "==", "queued")
+          .orderBy("queuedAt", "desc")
+          .limit(20)
+          .get();
+      } catch (e) {
+        // If the index is missing, fall back to an unordered query.
+        // The extension will still get a list; just unsorted.
+        console.warn("listQueued index miss, falling back:", e.message);
+        snap = await db.collection(DRAFTS_COLL)
+          .where("status", "==", "queued")
+          .limit(20)
+          .get();
+      }
+
+      const drafts = [];
+      snap.forEach(doc => {
+        const d = doc.data() || {};
+        // Stale filter — same threshold peek uses
+        const queuedAtMs = d.queuedAt && d.queuedAt.toMillis ? d.queuedAt.toMillis() : 0;
+        if (queuedAtMs && queuedAtMs < sinceMs) return;
+
+        // Must have a conversation URL for the extension to navigate to
+        const url = d.etsyConversationUrl || null;
+        if (!url) return;
+
+        drafts.push({
+          draftId             : doc.id,
+          threadId            : d.threadId || null,
+          etsyConversationUrl : url,
+          queuedAt            : queuedAtMs || null,
+          queuedBy            : d.queuedBy || null
+        });
+      });
+
+      return ok({ drafts });
+    }
+
     if (op === "peek") {
       const { threadId } = body;
       if (!threadId) return bad("Missing threadId");
