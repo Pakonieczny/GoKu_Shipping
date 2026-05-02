@@ -1510,6 +1510,43 @@ function backfillLegacyFieldsFromV5(parsed) {
       parsed[flag] = true;
     }
   }
+
+  // v5.0.1 — TEXT-PATTERN FALLBACK FOR LINE-SHEET ATTACHMENT.
+  //
+  // Bug observed in the Heidi thread: the AI wrote "Here's our necklace
+  // charm line sheet to pick the size, metal, chain, and length" in its
+  // reply, but emitted next_action other than "attach_collateral" and
+  // attach_line_sheet was false. Result: the customer-facing reply
+  // promises an attachment that doesn't exist.
+  //
+  // Root cause: 11 prompt addendums concatenated to the system prompt
+  // include legacy guidance ("set attach_line_sheet: true") that
+  // conflicts with the new schema's primary mechanism (next_action:
+  // attach_collateral). The AI follows whichever it weighed higher and
+  // can drop one or the other.
+  //
+  // This fallback rescues the immediate UX failure: if the reply text
+  // says we're sending a line sheet but no attach_*  flag is set, infer
+  // the intent and set attach_line_sheet: true so the downstream
+  // attachment construction runs. We use a conservative regex that
+  // matches the AI's actual phrasing, not loose word-mention.
+  if (parsed.attach_line_sheet !== true && typeof parsed.reply === "string") {
+    const r = parsed.reply.toLowerCase();
+    const lineSheetPromisePatterns = [
+      /\bhere'?s\s+(?:our\s+)?(?:\w+\s+)?(?:charm\s+)?line\s+sheet\b/i,
+      /\battach(?:ed|ing)?\s+(?:is\s+)?(?:our\s+)?(?:\w+\s+)?(?:charm\s+)?line\s+sheet\b/i,
+      /\bsend(?:ing)?\s+(?:over\s+)?(?:our\s+)?(?:\w+\s+)?(?:charm\s+)?line\s+sheet\b/i,
+      /\bsee\s+the\s+(?:attached\s+)?line\s+sheet\b/i,
+      /\btake\s+a\s+look\s+at\s+(?:the\s+)?(?:attached\s+)?(?:\w+\s+)?line\s+sheet\b/i,
+      /\bcheck\s+out\s+(?:the\s+)?(?:attached\s+)?line\s+sheet\b/i
+    ];
+    if (lineSheetPromisePatterns.some(rx => rx.test(r))) {
+      parsed.attach_line_sheet = true;
+      // Mark this on the parsed object so we can log it in the audit
+      // payload — useful for tracking how often the fallback fires.
+      parsed._attachLineSheetInferredFromText = true;
+    }
+  }
 }
 
 // ─── Main handler ──────────────────────────────────────────────────────
@@ -2335,6 +2372,54 @@ The operator UI may automatically populate the "sender name" field with whicheve
 The auto-reply that Etsy injects on the customer's side ("Hi and thanks so much for your message...") is NOT something you generate; it's customer-side automated text that Etsy renders. You don't need to sign anything off for those — they're inbound. This rule applies only to replies YOU write on the staff side.
 `.trim();
 
+    // v5.0.1 — Reconciliation addendum.
+    //
+    // The legacy addendums above teach the AI to set `attach_line_sheet: true`
+    // as the primary mechanism for sending the line sheet. The new v5.0
+    // schema teaches `next_action: attach_collateral` as the primary
+    // mechanism. These conflicted in production: in some threads the AI
+    // followed the new schema (set next_action) but dropped the legacy
+    // flag, so the downstream attachment construction (which reads the
+    // legacy flag) found nothing to attach.
+    //
+    // This addendum tells the AI explicitly: BOTH must be set together
+    // when sending a line sheet (or any other collateral). It also tells
+    // the AI that the structured `next_action` is canonical and the
+    // legacy flag is mirroring it for the downstream pipeline.
+    const v5ReconciliationAddendum = `
+# v5.0 LINE-SHEET ATTACHMENT — STRUCTURAL CONSISTENCY
+
+When you send a line sheet (or any other collateral attachment) you MUST set ALL THREE of these in your JSON output. They are not alternatives — they all describe the same attachment, on different surfaces of the system:
+
+1. \`next_action: "attach_collateral"\` — the v5 structured action
+2. \`next_action_payload: { "category": "<family>", "kind": "line_sheet" }\` — the structured payload describing what to attach
+3. \`attach_line_sheet: true\` — the legacy boolean that the downstream attachment-construction code reads to actually build the image attachment
+
+Skipping any of these breaks the attachment. If you only set \`attach_line_sheet: true\` without the v5 fields, the validator may reject. If you only set the v5 fields without \`attach_line_sheet: true\`, the attachment image won't be built and the customer will receive your reply text promising a line sheet that isn't there.
+
+The same rule applies to other collateral kinds:
+- \`fit_reference\` → also set \`attach_fit_reference: true\`
+- \`metal_comparison\` → also set \`attach_metal_comparison: true\`
+- \`care_instructions\` → also set \`attach_care_instructions: true\`
+- \`bracelet_sizing\` → also set \`attach_bracelet_sizing: true\`
+
+When you decide to attach a line sheet:
+- Set \`next_action\` to "attach_collateral"
+- Set \`next_action_payload\` to { "category": "<necklace|huggie|stud>", "kind": "line_sheet" }
+- Set \`attach_line_sheet: true\`
+- Call the \`get_collateral\` tool this turn with the same category and kind
+- Populate \`collateral_referenced\` with the collateral ID
+- Write reply text inviting the customer to look at the attached sheet
+
+ALL FIVE must be true. The structured action is canonical; the legacy flag is what fires the attachment; both must agree.
+
+If you find yourself in a turn where the line sheet WOULD be useful but you also need to ask one specific question, you have two options:
+- Send the line sheet AND ask the question in one reply (next_action: attach_collateral; the reply text invites them to look at the sheet AND asks the question). This is preferred.
+- Just send the line sheet with no question (next_action: attach_collateral). The line sheet itself prompts the customer to respond with their choices.
+
+Do NOT pick next_action: ask_one_question and then write reply text that mentions a line sheet — that's the failure mode this rule patches.
+`.trim();
+
     // Concatenate. Keep a clear separator so the addendum is visible
     // in any prompt-debugging output without being mistaken for
     // operator-edited content.
@@ -2360,7 +2445,9 @@ The auto-reply that Etsy injects on the customer's side ("Hi and thanks so much 
       + "\n\n---\n\n"
       + extendedCollateralAddendum
       + "\n\n---\n\n"
-      + signOffAddendum;
+      + signOffAddendum
+      + "\n\n---\n\n"
+      + v5ReconciliationAddendum;
 
     // ════════════════════════════════════════════════════════════════════
     // ─── v5.0 OPTION C — AI CALL WITH RETRY-ONCE-THEN-ESCALATE ────────
