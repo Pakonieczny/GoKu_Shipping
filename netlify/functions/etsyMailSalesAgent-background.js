@@ -1180,6 +1180,338 @@ function buildInitialMessages({ contextSummary, latestInboundText, referenceAtta
 
   return [{ role: "user", content: userContent }];
 }
+
+// ════════════════════════════════════════════════════════════════════════
+// ─── v5.0 OPTION C — STATE-MACHINE CONSISTENCY VALIDATORS ─────────────
+// ════════════════════════════════════════════════════════════════════════
+//
+// The sales agent's JSON output schema now leads with structured
+// reasoning fields (current_state, known_facts, missing_or_blocked,
+// next_action, next_action_payload) before the customer-facing reply.
+// The reply text follows from the chosen action, not the other way
+// around.
+//
+// These helpers run inline in the parse step (no separate AI call, no
+// deferred validation pass). They check that the AI's declared action
+// is consistent with:
+//   1. The tool calls it actually made this turn
+//   2. The routing fields it set (customer_accepted, etc.)
+//   3. The current_state it declared
+//   4. The reply text it wrote (no soft-promise verbs unless allowed)
+//
+// On any consistency failure the parse step retries the AI ONCE with a
+// targeted re-prompt. If retry fails, the turn is escalated to human
+// review with the validation failure as the synopsis.
+//
+// These rules subsume the v4.3.15 acceptance-signal validator
+// (the soft-promise pattern that flagged "we'll send the listing"
+// without customer_accepted=true) — that rule is now Rule 3 below.
+
+const VALID_CURRENT_STATES = new Set([
+  "discovery", "spec", "quote", "revision",
+  "pending_close_approval", "abandoned", "completed", "non_sales"
+]);
+
+const VALID_NEXT_ACTIONS = new Set([
+  "compute_quote", "attach_collateral", "ask_one_question",
+  "confirm_acceptance_and_create_listing", "escalate_to_human",
+  "abandon", "acknowledge"
+]);
+
+// State→action compatibility map. Lists the actions that are LEGAL when
+// the AI declared a given current_state. escalate_to_human is allowed
+// from any state and is added implicitly. Not enforced strictly when
+// state is "completed" or "abandoned" since those are terminal — we let
+// acknowledge through for tail-end pleasantries.
+const STATE_ACTION_COMPAT = {
+  discovery:               ["attach_collateral", "ask_one_question", "compute_quote", "escalate_to_human", "abandon"],
+  spec:                    ["compute_quote", "attach_collateral", "ask_one_question", "escalate_to_human", "abandon"],
+  quote:                   ["confirm_acceptance_and_create_listing", "ask_one_question", "attach_collateral", "acknowledge", "escalate_to_human", "abandon"],
+  revision:                ["compute_quote", "attach_collateral", "ask_one_question", "escalate_to_human", "abandon"],
+  pending_close_approval:  ["confirm_acceptance_and_create_listing", "acknowledge", "escalate_to_human"],
+  abandoned:               ["acknowledge", "escalate_to_human", "abandon"],
+  completed:               ["acknowledge", "escalate_to_human"],
+  non_sales:               ["escalate_to_human", "acknowledge"]
+};
+
+// Soft-promise patterns that a reply text must NOT contain unless
+// next_action is one of {confirm_acceptance_and_create_listing,
+// escalate_to_human}. These are the verbatim failure modes pulled from
+// the operator screenshots that drove the v5.0 rewrite.
+//
+// The patterns are deliberately conservative — designed for high recall
+// on the failure shapes you've been seeing without false-positiving on
+// legitimate prose. We accept some false negatives; the AI's prompt
+// rules cover the long tail.
+const SOFT_PROMISE_PATTERNS = [
+  /\bwe['']?ll\s+(send|follow up|get back|check|pull up|reach out|have those)\b/i,
+  /\bI['']?ll\s+(send|follow up|get back|check|pull up|reach out|have those)\b/i,
+  /\blet\s+(us|me)\s+(check|pull up|put together|look into|see if)\b/i,
+  /\bthe\s+team\s+(will|can|should)\b/i,
+  /\bget(?:ting)?\s+(?:back|those|that)\s+(?:to|over\s+to)\s+you\b/i,
+  /\bsomeone\s+(?:from\s+)?(?:our\s+)?team\s+(?:will|can)\b/i
+];
+
+// For escalate_to_human, the AI's holding line is allowed but it can
+// NOT pin a specific timeframe. These reject "shortly", "in a few hours",
+// "by tomorrow", etc. Keep the holding line ambiguous about timing.
+const TIMEFRAME_PATTERNS = [
+  /\b(shortly|right away|in a (few |couple )?(minute|hour|day)s?|by (today|tomorrow|the end of (the )?day)|within (the |a )?(hour|day))\b/i,
+  /\b(in a (few|couple)\s+(minutes?|hours?))\b/i
+];
+
+/** Pull the names of tools called this turn from a runToolLoop result.
+ *  Robust to missing/empty fields — returns an array of strings. */
+function extractToolNamesCalled(loopResult) {
+  const calls = (loopResult && Array.isArray(loopResult.toolCalls))
+                  ? loopResult.toolCalls : [];
+  return calls.map(c => (c && c.name) ? String(c.name) : "")
+              .filter(Boolean);
+}
+
+/** Run all v5.0 consistency rules against a parsed AI output and the
+ *  set of tools called this turn. Returns:
+ *
+ *    { valid: true, violations: [] }                        // passes
+ *    { valid: false, violations: [...], message: "<retry>" } // fails
+ *
+ *  The `message` is a targeted re-prompt for the retry attempt. It
+ *  describes EXACTLY what was wrong so the AI can correct it. */
+function validateOptionCConsistency({ parsed, toolNamesCalled }) {
+  const violations = [];
+  const messages   = [];
+
+  if (!parsed || typeof parsed !== "object") {
+    return {
+      valid: false,
+      violations: ["unparseable_output"],
+      message: "Your response was not parseable as JSON. Return ONE JSON object matching the schema, with the keys in the order specified, and `reply` as the LAST field."
+    };
+  }
+
+  const cs  = parsed.current_state;
+  const na  = parsed.next_action;
+  const reply = (typeof parsed.reply === "string") ? parsed.reply : "";
+
+  // Rule 0a — current_state is required and valid
+  if (!VALID_CURRENT_STATES.has(cs)) {
+    violations.push("invalid_current_state");
+    messages.push(`Your current_state was "${cs}". It must be one of: ${Array.from(VALID_CURRENT_STATES).join(", ")}.`);
+  }
+
+  // Rule 0b — next_action is required and valid
+  if (!VALID_NEXT_ACTIONS.has(na)) {
+    violations.push("invalid_next_action");
+    messages.push(`Your next_action was "${na}". It must be one of: ${Array.from(VALID_NEXT_ACTIONS).join(", ")}.`);
+  }
+
+  // Bail early if either of the above failed — the rest of the rules
+  // assume both fields are valid.
+  if (violations.length) {
+    return { valid: false, violations, message: messages.join(" ") };
+  }
+
+  // Rule 1 — next_action requires its tool call this turn
+  if (na === "compute_quote" && !toolNamesCalled.includes("resolveQuote")) {
+    violations.push("compute_quote_missing_tool");
+    messages.push("You declared next_action: compute_quote but did not call resolveQuote this turn. Call resolveQuote with the family, selectedCodes, and quantity, then state the result.");
+  }
+  if (na === "attach_collateral" && !toolNamesCalled.includes("get_collateral")) {
+    violations.push("attach_collateral_missing_tool");
+    messages.push("You declared next_action: attach_collateral but did not call get_collateral this turn. Call get_collateral(category, kind) and include the URL in your reply.");
+  }
+
+  // Rule 1b — compute_quote requires items_quoted populated and matching
+  if (na === "compute_quote") {
+    const iq = parsed.items_quoted;
+    const qt = parsed.quoted_total_usd;
+    if (!iq || typeof iq !== "object") {
+      violations.push("compute_quote_no_items_quoted");
+      messages.push("next_action: compute_quote requires items_quoted to be the full resolver result. Yours was null.");
+    } else if (typeof qt === "number" && typeof iq.total === "number" && Math.abs(qt - iq.total) > 0.005) {
+      violations.push("quoted_total_mismatch");
+      messages.push(`quoted_total_usd (${qt}) must equal items_quoted.total (${iq.total}).`);
+    }
+  }
+
+  // Rule 1c — attach_collateral requires collateral_referenced non-empty
+  if (na === "attach_collateral") {
+    const cr = parsed.collateral_referenced;
+    if (!Array.isArray(cr) || cr.length === 0) {
+      violations.push("attach_collateral_no_referenced");
+      messages.push("next_action: attach_collateral requires collateral_referenced to be a non-empty array of collateral IDs.");
+    }
+  }
+
+  // Rule 2 — next_action and routing fields agree
+  if (na === "confirm_acceptance_and_create_listing" && parsed.customer_accepted !== true) {
+    violations.push("acceptance_action_without_field");
+    messages.push("next_action: confirm_acceptance_and_create_listing REQUIRES customer_accepted: true. The structured field triggers the listing pipeline. Set both, or change the action.");
+  }
+  if (na === "escalate_to_human") {
+    if (parsed.ready_for_human_approval !== true) {
+      violations.push("escalate_action_without_field");
+      messages.push("next_action: escalate_to_human REQUIRES ready_for_human_approval: true. Set the field, or change the action.");
+    }
+    if (typeof parsed.needs_review_synopsis !== "string" || parsed.needs_review_synopsis.trim().length < 50) {
+      violations.push("escalate_no_synopsis");
+      messages.push("next_action: escalate_to_human REQUIRES a populated needs_review_synopsis (the operator-facing summary). Yours was missing or too short.");
+    }
+  }
+  if (na === "abandon" && parsed.advance_stage !== "abandoned") {
+    violations.push("abandon_action_without_field");
+    messages.push("next_action: abandon REQUIRES advance_stage: \"abandoned\". Set the field, or change the action.");
+  }
+  // Inverse: if customer_accepted is true, next_action MUST be the acceptance action
+  if (parsed.customer_accepted === true && na !== "confirm_acceptance_and_create_listing") {
+    violations.push("acceptance_field_without_action");
+    messages.push(`You set customer_accepted: true but next_action was "${na}". Set next_action to confirm_acceptance_and_create_listing, or set customer_accepted to false.`);
+  }
+  // Inverse: ready_for_human_approval=true requires escalate_to_human
+  if (parsed.ready_for_human_approval === true && na !== "escalate_to_human") {
+    violations.push("escalate_field_without_action");
+    messages.push(`You set ready_for_human_approval: true but next_action was "${na}". Set next_action to escalate_to_human, or unset ready_for_human_approval.`);
+  }
+
+  // Rule 3 — current_state and next_action are compatible
+  const compatActions = STATE_ACTION_COMPAT[cs] || [];
+  if (compatActions.length && !compatActions.includes(na) && na !== "escalate_to_human") {
+    violations.push("state_action_incompatible");
+    messages.push(`current_state "${cs}" is not compatible with next_action "${na}". Allowed actions for this state: ${compatActions.join(", ")}, or escalate_to_human.`);
+  }
+
+  // Rule 4 — soft-promise verbs in reply text are blocked unless next_action is
+  // confirm_acceptance_and_create_listing or escalate_to_human
+  const softPromiseAllowed = (na === "confirm_acceptance_and_create_listing" || na === "escalate_to_human");
+  if (!softPromiseAllowed && reply) {
+    for (const rx of SOFT_PROMISE_PATTERNS) {
+      if (rx.test(reply)) {
+        violations.push("soft_promise_in_reply");
+        messages.push(
+          `Your reply contains a soft-promise pattern (matched: ${String(rx)}) but next_action is "${na}", which does not allow that. ` +
+          `If the customer's request is actionable now, choose compute_quote / attach_collateral / confirm_acceptance_and_create_listing as appropriate. ` +
+          `If you genuinely cannot act, change next_action to escalate_to_human and populate needs_review_synopsis. ` +
+          `If you only need ONE more piece of info from the customer, use ask_one_question and ask the question DIRECTLY without padding it with promises.`
+        );
+        break;
+      }
+    }
+  }
+
+  // Rule 5 — escalate_to_human reply text must not pin a specific timeframe
+  if (na === "escalate_to_human" && reply) {
+    for (const rx of TIMEFRAME_PATTERNS) {
+      if (rx.test(reply)) {
+        violations.push("escalate_specific_timeframe");
+        messages.push(
+          `Your escalation reply contains a specific timeframe (matched: ${String(rx)}). ` +
+          `Keep the holding line ambiguous about timing, e.g. "We'll get back to you as soon as we hear back from the team."`
+        );
+        break;
+      }
+    }
+  }
+
+  // Rule 6 — acknowledge action: reply must be ≤ 2 sentences and contain no forward-promise verbs
+  if (na === "acknowledge" && reply) {
+    // Conservative sentence count: split on terminator punctuation
+    const sentenceCount = (reply.match(/[.!?]+/g) || []).length;
+    if (sentenceCount > 3) {
+      violations.push("acknowledge_too_long");
+      messages.push("next_action: acknowledge reply must be ≤ 2 sentences. Yours was longer. Brief acknowledgment only.");
+    }
+    for (const rx of SOFT_PROMISE_PATTERNS) {
+      if (rx.test(reply)) {
+        violations.push("acknowledge_with_promise");
+        messages.push(
+          `next_action: acknowledge reply must not promise future shop actions (matched: ${String(rx)}). ` +
+          `Just acknowledge briefly with no commitment.`
+        );
+        break;
+      }
+    }
+  }
+
+  // Rule 7 — ask_one_question: reply must contain a question mark
+  if (na === "ask_one_question" && reply) {
+    if (!reply.includes("?")) {
+      violations.push("ask_one_question_no_question_mark");
+      messages.push("next_action: ask_one_question requires the reply to contain an actual question (with a question mark).");
+    }
+  }
+
+  if (violations.length === 0) {
+    return { valid: true, violations: [] };
+  }
+  return {
+    valid: false,
+    violations,
+    message: messages.join(" ")
+  };
+}
+
+/** Map a parsed v5.0 output back to the legacy fields that downstream
+ *  code (operator UI, listing creator, reapers) reads. We keep emitting
+ *  these for one deploy cycle so any consumer not yet migrated continues
+ *  to work. They mirror the new fields, never override them.
+ *
+ *  Mutates `parsed` in place. */
+function backfillLegacyFieldsFromV5(parsed) {
+  if (!parsed || typeof parsed !== "object") return;
+
+  // Legacy `extracted_spec` mirrors `known_facts`. Keep both populated.
+  if (!parsed.extracted_spec && parsed.known_facts && typeof parsed.known_facts === "object") {
+    parsed.extracted_spec = {
+      family:        parsed.known_facts.family        ?? null,
+      selectedCodes: Array.isArray(parsed.known_facts.selectedCodes) ? parsed.known_facts.selectedCodes : [],
+      quantity:      parsed.known_facts.quantity      ?? null,
+      deadline:      parsed.known_facts.deadline      ?? null,
+      urgency_level: parsed.known_facts.urgency_level ?? "none",
+      engravingText: parsed.known_facts.engravingText ?? null,
+      secondVariant: parsed.known_facts.secondVariant ?? null,
+      wantsRush:     !!parsed.known_facts.wantsRush,
+      notes:         parsed.known_facts.notes         ?? null
+    };
+  }
+
+  // Legacy `missing_inputs` mirrors `missing_or_blocked.map(m => m.what)`
+  if (!parsed.missing_inputs && Array.isArray(parsed.missing_or_blocked)) {
+    parsed.missing_inputs = parsed.missing_or_blocked
+      .map(m => (m && typeof m.what === "string") ? m.what : null)
+      .filter(Boolean)
+      .slice(0, 12);
+  }
+
+  // Legacy `needs_photo` is true when any missing_or_blocked entry mentions photo
+  if (typeof parsed.needs_photo !== "boolean") {
+    const moBlocked = Array.isArray(parsed.missing_or_blocked) ? parsed.missing_or_blocked : [];
+    parsed.needs_photo = moBlocked.some(m =>
+      m && typeof m.what === "string" && /\b(photo|image|picture|reference)\b/i.test(m.what)
+    );
+  }
+
+  // Legacy `attach_line_sheet` (and other attach_* flags) mirror
+  // next_action: attach_collateral — but ONLY when the AI explicitly
+  // referenced a line_sheet (or other kind) collateral_referenced or
+  // next_action_payload.kind. We never auto-set this from heuristics —
+  // only from explicit AI signals.
+  if (parsed.next_action === "attach_collateral") {
+    const payload = parsed.next_action_payload || {};
+    const kind    = payload.kind || null;
+    const FLAG_BY_KIND = {
+      line_sheet:        "attach_line_sheet",
+      fit_reference:     "attach_fit_reference",
+      metal_comparison:  "attach_metal_comparison",
+      care_instructions: "attach_care_instructions",
+      bracelet_sizing:   "attach_bracelet_sizing"
+    };
+    const flag = FLAG_BY_KIND[kind];
+    if (flag && parsed[flag] !== true) {
+      parsed[flag] = true;
+    }
+  }
+}
+
 // ─── Main handler ──────────────────────────────────────────────────────
 
 exports.handler = async (event) => {
@@ -2030,49 +2362,152 @@ The auto-reply that Etsy injects on the customer's side ("Hi and thanks so much 
       + "\n\n---\n\n"
       + signOffAddendum;
 
+    // ════════════════════════════════════════════════════════════════════
+    // ─── v5.0 OPTION C — AI CALL WITH RETRY-ONCE-THEN-ESCALATE ────────
+    // ════════════════════════════════════════════════════════════════════
+    //
+    // The new state-machine schema requires the AI to declare
+    // current_state, next_action, and consistency between them and the
+    // tools called this turn. If the first attempt violates a rule, we
+    // re-prompt the AI ONCE with a targeted message describing exactly
+    // what was wrong. If the retry also fails, the turn escalates to
+    // human review with the validation failures as the synopsis.
+    //
+    // This subsumes the v4.3.15 narrow acceptance-signal validator —
+    // that pattern is now Rule 4 (soft-promise) in the new validator.
     let loopResult;
-    try {
-      loopResult = await runToolLoop({
-        model         : AI_MODEL,
-        maxTokens     : AI_MAX_TOKENS,
-        system        : fullSystemPrompt,
-        initialMessages,
-        toolSpecs,
-        toolExecutors,
-        toolContext   : { threadId, salesCtx },
-        effort        : AI_EFFORT,
-        useThinking   : true,
-        maxIterations : MAX_TOOL_ITERATIONS
-      });
-    } catch (e) {
+    let parsed = null;
+    let validationResult = null;
+    let attemptCount = 0;
+    const MAX_ATTEMPTS = 2;     // first try + one retry
+    let priorAttemptOutput = null;
+    let priorAttemptViolations = null;
+
+    while (attemptCount < MAX_ATTEMPTS) {
+      attemptCount++;
+
+      // Build messages for this attempt. On retry, append a corrective
+      // user-turn explaining what went wrong with the prior output.
+      let messagesForAttempt = initialMessages;
+      if (attemptCount > 1 && priorAttemptOutput && validationResult) {
+        messagesForAttempt = [
+          ...initialMessages,
+          {
+            role: "assistant",
+            content: [{ type: "text", text: priorAttemptOutput }]
+          },
+          {
+            role: "user",
+            content: [{
+              type: "text",
+              text:
+                `Your previous response failed consistency validation. Specifically: ` +
+                validationResult.message + " " +
+                `Re-emit the JSON object with ALL keys in the specified order, with the issue corrected. ` +
+                `Do not narrate the correction; just emit the corrected JSON.`
+            }]
+          }
+        ];
+      }
+
+      try {
+        loopResult = await runToolLoop({
+          model         : AI_MODEL,
+          maxTokens     : AI_MAX_TOKENS,
+          system        : fullSystemPrompt,
+          initialMessages : messagesForAttempt,
+          toolSpecs,
+          toolExecutors,
+          toolContext   : { threadId, salesCtx },
+          effort        : AI_EFFORT,
+          useThinking   : true,
+          maxIterations : MAX_TOOL_ITERATIONS
+        });
+      } catch (e) {
+        await writeAudit({
+          threadId, eventType: "sales_agent_call_failed",
+          payload: { error: e.message, attempt: attemptCount }, outcome: "failure"
+        });
+        return { statusCode: 502, headers: CORS,
+                 body: JSON.stringify({ error: `AI call failed: ${e.message}` }) };
+      }
+
+      // Extract final text
+      const finalText = (loopResult.finalResponse && Array.isArray(loopResult.finalResponse.content)
+        ? loopResult.finalResponse.content
+        : []
+      )
+        .filter(b => b && b.type === "text")
+        .map(b => b.text || "")
+        .join("\n")
+        .trim();
+
+      // Parse JSON
+      parsed = tryParseJson(finalText);
+      priorAttemptOutput = finalText;
+
+      if (!parsed) {
+        validationResult = {
+          valid: false,
+          violations: ["unparseable_output"],
+          message: "Your response was not parseable as JSON. Return ONE JSON object with the exact key order specified, and `reply` as the LAST field. No prose around the JSON, no markdown fences."
+        };
+        priorAttemptViolations = validationResult.violations;
+        if (attemptCount < MAX_ATTEMPTS) {
+          console.warn(`[salesAgent] Attempt ${attemptCount} unparseable for ${threadId}, retrying once.`);
+          continue;
+        }
+        break;
+      }
+
+      // Apply reply guard (cleanup of repeated capability confirmations)
+      // BEFORE validation so the validator sees the cleaned reply.
+      if (typeof parsed.reply === "string") {
+        parsed.reply = applySalesReplyGuard(parsed.reply, priorOutboundTexts);
+      }
+
+      // Backfill legacy fields from new schema. This must run BEFORE
+      // validation because some downstream consumers (and the existing
+      // attach_line_sheet sync rule) read the legacy fields. The new
+      // validator works on the new fields; backfill keeps both sets
+      // populated for the deprecated cycle.
+      backfillLegacyFieldsFromV5(parsed);
+
+      // Run v5.0 consistency validation
+      const toolNamesCalled = extractToolNamesCalled(loopResult);
+      validationResult = validateOptionCConsistency({ parsed, toolNamesCalled });
+
+      if (validationResult.valid) {
+        // Passed — break out and continue with persistence
+        break;
+      }
+
+      priorAttemptViolations = validationResult.violations;
+      console.warn(
+        `[salesAgent] Attempt ${attemptCount} failed v5.0 validation for ${threadId}. ` +
+        `Violations: ${validationResult.violations.join(", ")}.` +
+        (attemptCount < MAX_ATTEMPTS ? " Retrying once." : " No more retries; escalating.")
+      );
+
       await writeAudit({
-        threadId, eventType: "sales_agent_call_failed",
-        payload: { error: e.message }, outcome: "failure"
+        threadId, eventType: "sales_agent_v5_validation_failed",
+        payload: {
+          attempt: attemptCount,
+          violations: validationResult.violations,
+          message: validationResult.message,
+          replyPreview: (parsed && typeof parsed.reply === "string") ? parsed.reply.slice(0, 250) : null,
+          currentState: parsed ? parsed.current_state : null,
+          nextAction:   parsed ? parsed.next_action   : null,
+          toolNamesCalled
+        },
+        outcome: attemptCount < MAX_ATTEMPTS ? "retry" : "blocked",
+        ruleViolations: validationResult.violations
       });
-      return { statusCode: 502, headers: CORS,
-               body: JSON.stringify({ error: `AI call failed: ${e.message}` }) };
     }
 
-    // ── Extract final text ──
-    const finalText = (loopResult.finalResponse && Array.isArray(loopResult.finalResponse.content)
-      ? loopResult.finalResponse.content
-      : []
-    )
-      .filter(b => b && b.type === "text")
-      .map(b => b.text || "")
-      .join("\n")
-      .trim();
-
-    // ── Parse JSON (defensive) ──
-    const parsed = tryParseJson(finalText);
+    // If after all attempts we still don't have a parseable response,
+    // escalate hard.
     if (!parsed) {
-      await writeAudit({
-        threadId, eventType: "sales_agent_unparseable_output",
-        payload: { rawPreview: finalText.slice(0, 500),
-                   toolCalls: (loopResult.toolCalls || []).map(t => t.name) },
-        outcome: "failure"
-      });
-      // Escalate to human review — we have a half-formed reply we can't trust.
       await db.collection(THREADS_COLL).doc(threadId).set({
         status: "pending_human_review",
         lastSalesAgentBlockReason: "unparseable_output",
@@ -2080,86 +2515,43 @@ The auto-reply that Etsy injects on the customer's side ("Hi and thanks so much 
       }, { merge: true });
       return { statusCode: 500, headers: CORS,
                body: JSON.stringify({
-                 error: "AI output not parseable JSON",
-                 rawPreview: finalText.slice(0, 500),
+                 error: "AI output not parseable JSON after retries",
                  escalated: true
                }) };
     }
 
-    // ── Deterministic reply cleanup before validation/persistence ──
-    // Removes repeated capability confirmations from prior outbound turns while
-    // preserving the AI's structured quote fields.
-    if (typeof parsed.reply === "string") {
-      parsed.reply = applySalesReplyGuard(parsed.reply, priorOutboundTexts);
+    // If after all attempts validation still fails, force-escalate the
+    // turn with the validation failures as the synopsis. The draft body
+    // is preserved (operator can read what the AI tried to say) but the
+    // structured routing is overridden so the listing/abandon pipelines
+    // do NOT fire on bad data.
+    if (validationResult && !validationResult.valid) {
+      const violationsList = (validationResult.violations || []).join(", ");
+      console.error(
+        `[salesAgent] Validation failed after ${attemptCount} attempts for ${threadId}. ` +
+        `Forcing human review. Violations: ${violationsList}.`
+      );
+      // Override routing fields to safe defaults — never let bad output
+      // accidentally fire the listing pipeline or mark abandoned.
+      parsed.customer_accepted        = false;
+      parsed.advance_stage            = null;
+      parsed.ready_for_human_approval = true;
+      parsed.needs_review_synopsis    =
+        `V5.0 VALIDATION FAILURE\n\n` +
+        `The sales agent's output failed consistency validation after ${attemptCount} attempts.\n\n` +
+        `Violations: ${violationsList}\n\n` +
+        `Validator message:\n${validationResult.message}\n\n` +
+        (typeof parsed.reply === "string"
+          ? `AI's reply (excerpt): "${parsed.reply.slice(0, 300)}${parsed.reply.length > 300 ? "..." : ""}"\n\n`
+          : "") +
+        `Operator action: review the conversation, decide the correct next step, ` +
+        `and either edit and send the draft manually OR clear the review flag and ` +
+        `let the agent re-attempt on the next inbound message.`;
     }
 
-    // v4.3.15 — Acceptance-signal consistency backstop.
-    //
-    // The prompt addendum tells the agent that reply text and
-    // customer_accepted must agree, but model adherence to soft rules
-    // is imperfect. Joanna's banana-charm round 2 hit this exact case
-    // THREE turns in a row: the model wrote "we'll send the custom
-    // listing your way" while emitting customer_accepted=false. The
-    // listing pipeline never fired because direct-fire reads the
-    // structured field, not the prose.
-    //
-    // We don't auto-flip customer_accepted=true (that would risk false
-    // positives — the model might use commitment-shaped language in
-    // a hypothetical or recap context). Instead we flag the
-    // inconsistency: log the audit event, route the turn to operator
-    // review with a clear synopsis. The operator sees the conflict,
-    // can either edit the draft to fire the listing manually, or fix
-    // the conversation themselves. Better than silently shipping a
-    // broken promise.
-    //
-    // The detection is deliberately strict — looks for first-person
-    // sender-side commitments ("we'll send", "I'll send", "sending
-    // your way") in close proximity to "listing" or "link". Generic
-    // mentions of "the listing" in a question or recap context don't
-    // trigger.
-    if (typeof parsed.reply === "string" && parsed.customer_accepted !== true) {
-      const replyLower = parsed.reply.toLowerCase();
-      const commitmentPatterns = [
-        /\b(we'll|we will|i'll|i will)\s+send(?:ing)?\b[^.?!]{0,50}\b(listing|link)\b/,
-        /\b(sending|sent)\s+(?:you\s+)?(?:the\s+)?(?:custom\s+)?(?:listing|link)\b[^.?!]{0,50}\b(your way|now|through|over|across)\b/,
-        /\bget(?:ting)?\s+the\s+(?:custom\s+)?listing\s+(?:over|to)\s+you\b/,
-        /\b(creating|generating|making)\s+the\s+(?:custom\s+)?listing\s+(?:for you|now)\b/
-      ];
-      const hit = commitmentPatterns.find(rx => rx.test(replyLower));
-      if (hit) {
-        console.warn(
-          `[salesAgent] Acceptance-signal inconsistency for ${threadId}: ` +
-          `reply text commits to sending a listing but customer_accepted=false. ` +
-          `Pattern matched: ${hit}. Routing to operator review.`
-        );
-        await writeAudit({
-          threadId, eventType: "sales_agent_acceptance_inconsistency",
-          payload: {
-            replyExcerpt: parsed.reply.slice(0, 250),
-            patternMatched: String(hit),
-            originalCustomerAccepted: !!parsed.customer_accepted
-          },
-          outcome: "blocked",
-          ruleViolations: ["acceptance_signal_inconsistency"]
-        });
-        // Force human review for this turn. The operator sees the draft
-        // with a clear synopsis explaining the inconsistency and can
-        // decide whether to (a) tick customer_accepted and re-fire the
-        // pipeline, or (b) rewrite the reply to remove the commitment.
-        parsed.ready_for_human_approval = true;
-        parsed.needs_review_synopsis =
-          `ACCEPTANCE-SIGNAL INCONSISTENCY\n\n` +
-          `The AI's reply commits to sending a custom listing, but the structured ` +
-          `acceptance signal was not set, so the listing pipeline did NOT fire. ` +
-          `Without operator action the customer will wait indefinitely.\n\n` +
-          `AI's reply (excerpt): "${parsed.reply.slice(0, 200)}${parsed.reply.length > 200 ? "..." : ""}"\n\n` +
-          `Operator action: review the conversation. If the customer has indeed accepted ` +
-          `a finalized quote, manually trigger listing creation (set customerAccepted=true ` +
-          `and customListingStatus="queued" on the thread) OR send the listing through ` +
-          `the standard manual flow. If the customer has not yet accepted, edit the ` +
-          `reply to remove the commitment language before sending.`;
-      }
-    }
+    // Mirror legacy customerAcceptedRush field if present (downstream-compat).
+    // The new schema doesn't reshape rush handling — it's still on extracted_spec
+    // (now mirrored from known_facts.wantsRush).
 
     // ── Validate quote if present (server-side gate) ──
     const quoteValidation = await validateQuotedPriceIfPresent({ threadId, parsed, salesCtx });
@@ -2445,6 +2837,18 @@ The auto-reply that Etsy injects on the customer's side ("Hi and thanks so much 
       // v2.1 — preserve resolver result on the draft for forensics + Step 3 hand-off
       resolverResult        : (salesCtx._lastResolverResult && salesCtx._lastResolverResult.success)
                               ? salesCtx._lastResolverResult : null,
+      // v5.0 OPTION C — structured-reasoning fields persisted for audit
+      // and operator-UI display. The operator UI can render currentState
+      // / nextAction in a debug expander to make AI reasoning visible
+      // without operators having to dig through audit logs.
+      v5CurrentState        : parsed.current_state || null,
+      v5KnownFacts          : parsed.known_facts || null,
+      v5MissingOrBlocked    : Array.isArray(parsed.missing_or_blocked) ? parsed.missing_or_blocked : [],
+      v5NextAction          : parsed.next_action || null,
+      v5NextActionPayload   : parsed.next_action_payload || null,
+      v5ValidationAttempts  : attemptCount,
+      v5ValidationViolations: (validationResult && Array.isArray(validationResult.violations))
+                                ? validationResult.violations : [],
       createdBy             : "sales-agent",
       createdAt             : FV.serverTimestamp(),
       updatedAt             : FV.serverTimestamp(),
@@ -2459,6 +2863,28 @@ The auto-reply that Etsy injects on the customer's side ("Hi and thanks so much 
     }, { merge: true });
 
     // ── Persist sales context updates ──
+    //
+    // v5.0 OPTION C — PATH C STAGE WRITE-THROUGH.
+    //
+    // The AI's diagnosed `current_state` writes through to the existing
+    // `stage` field that the operator UI (etsy-mail-1.html) and the
+    // reapers (etsyMailReapers.js, etsyMailSalesReaper.js) already read.
+    // The UI's stage badge, advance/rewind buttons, and reaper logic
+    // all continue to work unchanged — they just see an AI-driven stage
+    // value now instead of the manual-only stage they tracked before.
+    //
+    // We translate the v5.0 enum to the operator UI's stage vocabulary:
+    //   discovery / spec / quote / revision / pending_close_approval /
+    //   abandoned / completed
+    // Plus the v5.0 addition `non_sales`, which is an off-ramp — we do
+    // NOT write it through to `stage` because the UI's stage badge
+    // would have nothing to render. Instead the thread leaves the sales
+    // pipeline via the existing escalation path (handled by the thread
+    // status update further down).
+    //
+    // The new `missing_or_blocked` array is flattened to the legacy
+    // `missingInputs` field (operator UI reads this for the "Missing:"
+    // pill row in the sales-funnel card).
     const ctxUpdates = {
       accumulatedSpec : { ...(salesCtx.accumulatedSpec || {}), ...(parsed.extracted_spec || {}) },
       referenceAttachments: compactAttachmentList(referenceAttachments),
@@ -2466,9 +2892,49 @@ The auto-reply that Etsy injects on the customer's side ("Hi and thanks so much 
       lastTurnAt      : FV.serverTimestamp(),
       lastSalesAgentBlockReason: null   // clear any prior block reason on a successful turn
     };
+
+    // v5.0 — Path C stage write-through. Skip when current_state is
+    // non_sales (off-ramp; the thread leaves the sales pipeline) or
+    // when validation forced ready_for_human_approval (the AI's stage
+    // call may not be trustworthy on a forced-escalation turn).
+    const csForWrite = parsed.current_state;
+    const wasForcedToReview = (validationResult && !validationResult.valid);
+    if (csForWrite && csForWrite !== "non_sales" && !wasForcedToReview) {
+      // Map v5.0 states to operator UI's stage vocabulary. Most names
+      // already match; this map is here for safety + future-proofing.
+      const STAGE_MAP = {
+        discovery:               "discovery",
+        spec:                    "spec",
+        quote:                   "quote",
+        revision:                "revision",
+        pending_close_approval:  "pending_close_approval",
+        abandoned:               "abandoned",
+        completed:               "completed"
+      };
+      const stageValue = STAGE_MAP[csForWrite] || null;
+      if (stageValue) {
+        ctxUpdates.stage = stageValue;
+        ctxUpdates.lastAdvancedAt = FV.serverTimestamp();
+      }
+    }
+
+    // v5.0 — flatten missing_or_blocked into legacy missingInputs.
+    // The operator UI's missing-pill row reads this. We slice to 12
+    // (matches existing draft persistence) for safety.
+    if (Array.isArray(parsed.missing_or_blocked)) {
+      ctxUpdates.missingInputs = parsed.missing_or_blocked
+        .map(m => (m && typeof m.what === "string") ? m.what : null)
+        .filter(Boolean)
+        .slice(0, 12);
+    } else if (Array.isArray(parsed.missing_inputs)) {
+      // Legacy fallback for backward-compat
+      ctxUpdates.missingInputs = parsed.missing_inputs.slice(0, 12);
+    }
+
     if (salesCtx._lastResolverResult) {
       ctxUpdates._lastResolverResult = salesCtx._lastResolverResult;
     }
+
     // Record quote in history if one was produced
     const quotedTotal = (typeof parsed.quoted_total_usd === "number") ? parsed.quoted_total_usd
                      : (parsed.draft_custom_order_listing && typeof parsed.draft_custom_order_listing.totalUsd === "number")
@@ -2670,6 +3136,17 @@ The auto-reply that Etsy injects on the customer's side ("Hi and thanks so much 
         // per kind the agent requested. Empty array when no kinds were
         // requested.
         collateralAttach: collateralAttachInfo,
+        // v5.0 OPTION C diagnostics — what the AI declared for state /
+        // action / payload, plus how many attempts the validator
+        // accepted. Lets us measure validator hit rate over time.
+        v5: {
+          currentState:           parsed.current_state || null,
+          nextAction:             parsed.next_action   || null,
+          nextActionPayload:      parsed.next_action_payload || null,
+          validationAttempts:     attemptCount,
+          validationFinalValid:   !!(validationResult && validationResult.valid),
+          validationViolations:   (validationResult && Array.isArray(validationResult.violations)) ? validationResult.violations : []
+        },
         usage        : loopResult.usage || null
       }
     });
