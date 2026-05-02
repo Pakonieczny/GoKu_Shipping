@@ -1889,6 +1889,59 @@ Restarting discovery on an existing order looks like a bug to the customer — t
 If the conversation is genuinely ambiguous (you can't tell whether it's about an existing order or a new purchase), ask one short clarifying question instead of restarting either path. ("Quick check — is this for the order you placed last week, or a new piece?")
 `.trim();
 
+    // ── (8) Extended collateral library ─────────────────────────────
+    // The agent now has access to four distinct collateral kinds, not
+    // just line sheets. Each has its own attach flag in the JSON
+    // output, and the system attaches whatever subset the agent
+    // requests in a single Etsy reply (multiple chips). Operator bias:
+    // attach MORE rather than less when the customer would benefit
+    // from the information; people like to be informed.
+    //
+    // Damaging failure mode this addendum prevents: the agent says
+    // "the line sheet shows how it sits on the chest" — which is
+    // false. The line sheet doesn't show fit. We have a separate
+    // fit-reference collateral for that. The agent must pick the
+    // RIGHT artifact for the question, and may stack multiple.
+    const extendedCollateralAddendum = `
+
+# EXTENDED COLLATERAL LIBRARY (system addendum)
+
+You can attach four distinct kinds of visual collateral to your reply. Each has its own structured flag in your JSON output. You may set ANY subset (or all four) on a single reply — each becomes a separate image attachment in the same Etsy message.
+
+## The four kinds
+
+**1. Line sheet — \`attach_line_sheet: true\`**
+A visual sheet showing the available styles, sizes, codes, and prices for a product family (necklace charms, huggie charms, stud earrings). This is what you send for: family-shopping questions, sizing questions, "what options do you have for X", catalog browsing, dimension comparisons within a family. The line sheet shows the products themselves at scale; it does NOT show how a piece is worn or how it sits on a person.
+
+**2. Fit reference — \`attach_fit_reference: true\`**
+A visual showing how a necklace sits on the body — chain length comparisons (16", 18", 20", etc.) shown on a neck model. This is what you send when the customer asks "how does it fit", "how does it sit on the chest", "how long is 18 inches really", "I'm petite, will it look right", "where does it hang", "how low does it sit." Do NOT claim the line sheet shows fit — it doesn't. Use the fit reference for fit questions.
+
+**3. Metal comparison — \`attach_metal_comparison: true\`**
+A visual showing the side-by-side differences between Gold Filled vs Gold Plated vs 14k Solid Gold. Send this when the customer asks about metal options, gold types, "what's the difference between gold filled and solid gold", "is it real gold", "will it tarnish", "which gold is best", price-vs-quality comparisons across metals, allergy or skin-reaction concerns about metal type, or otherwise needs to choose between metals.
+
+**4. Care instructions — \`attach_care_instructions: true\`**
+A visual showing how to care for and clean fine custom jewellery. Send this proactively on most custom-order conversations — once the customer has accepted a quote or is finalizing a purchase, including care instructions in the same message helps them get the most life out of the piece. Also send when the customer asks how to clean, store, wear, or maintain jewellery; when they mention worry about tarnish or damage; or when the order is for a high-value piece (solid gold, large bulk orders).
+
+## Bias: attach MORE rather than less
+
+When more than one kind would help, attach more than one. Operator policy is that customers like to be informed and learn. Examples of stacked attachments:
+
+- Customer asks "I'm petite, would 18 inches sit too long?" with a question about gold filled vs solid gold pricing → attach **fit_reference + metal_comparison** in one reply. Two chips, one message.
+- Customer accepts a quote on a custom necklace → attach **care_instructions** in the acceptance reply. They've just bought; help them keep the piece looking good.
+- Customer asks for line sheet and also asks about gold types → attach **line_sheet + metal_comparison**.
+- Customer has a tight deadline and is choosing between two designs → attach **line_sheet + fit_reference** so they can see size AND fit at once and decide faster.
+
+Do NOT stack collateral the customer doesn't need. Sending care instructions on a tracking inquiry is noise. Use judgment.
+
+## Don't misattribute
+
+Each artifact shows one thing well. If the line sheet doesn't show fit, don't say it does — attach the fit reference instead. Never write "the line sheet shows how it sits on the chest" or "the line sheet shows the difference between metals" — those claims are false. The line sheet shows products at scale only. Fit and metal differences live in their own artifacts.
+
+## When a kind is requested but missing
+
+If you set a flag but no collateral exists for that kind, the system logs the miss and the other attached kinds still go out. The reply text should not promise something that didn't attach — see the line-sheet promise rule for the same principle. If you're not sure all the collateral you want is available, write the reply to invite-without-promising ("here's our line sheet — happy to share more if helpful") so a missing chip doesn't leave a broken promise.
+`.trim();
+
     // Concatenate. Keep a clear separator so the addendum is visible
     // in any prompt-debugging output without being mistaken for
     // operator-edited content.
@@ -1910,7 +1963,9 @@ If the conversation is genuinely ambiguous (you can't tell whether it's about an
       + "\n\n---\n\n"
       + noFakeFollowthroughPromisesAddendum
       + "\n\n---\n\n"
-      + existingOrderContextAddendum;
+      + existingOrderContextAddendum
+      + "\n\n---\n\n"
+      + extendedCollateralAddendum;
 
     let loopResult;
     try {
@@ -2100,16 +2155,24 @@ If the conversation is genuinely ambiguous (you can't tell whether it's about an
     const draftId = "draft_" + threadId;
 
     // v2.1 — Needs Review handoff. When the AI sets needs_review_synopsis,
-    // the draft body becomes the synopsis (operator-facing, NOT customer-
-    // facing). The operator at Custom Brites sees the synopsis in the
-    // Needs Review folder and can either:
-    //   (a) edit + send a customer-facing reply themselves, or
-    //   (b) provide the missing quote and let the agent resume.
+    // the draft is flagged for operator review. The synopsis is written to
+    // `needsReviewSynopsis` on the draft (operator-facing field, surfaced
+    // in the Needs Review sidebar) and into the audit log.
     //
-    // The customer-facing `reply` from the AI (e.g. "I'm checking with
-    // the team and I'll get back to you shortly") is preserved on the
-    // draft as `customerFacingReplyDraft` so the operator can use it as
-    // a starting point.
+    // v0.9.22 BUGFIX (Image A): the draft `text` field MUST be the
+    // customer-facing reply (or empty), never the operator synopsis. The
+    // earlier behavior pushed the synopsis into `text`, which meant the
+    // operator opened the thread, saw the staff-reply textarea pre-filled
+    // with raw debug content like "ACCEPTANCE-SIGNAL INCONSISTENCY ...
+    // Operator action: review the conversation. If the customer has indeed
+    // accepted ..." That's debugging output, not a draft. The operator
+    // either had to delete it before composing or could accidentally send
+    // it. Both are wrong.
+    //
+    // Correct surfaces:
+    //   - Staff reply textarea (`text`)   — customer-facing reply only
+    //   - Needs Review sidebar / panel    — `needsReviewSynopsis`
+    //   - Audit log                       — full synopsis + payload
     //
     // We detect Needs Review handoff via either:
     //   1. parsed.needs_review_synopsis is a non-empty string, OR
@@ -2120,12 +2183,11 @@ If the conversation is genuinely ambiguous (you can't tell whether it's about an
 
     const customerFacingReply = (typeof parsed.reply === "string" && parsed.reply.trim())
       ? parsed.reply.trim()
-      : "(The AI did not produce a reply for this turn — operator review needed.)";
+      : "";
 
-    // Draft body: synopsis if handoff, else customer-facing reply.
-    const replyText = isNeedsReviewHandoff && typeof parsed.needs_review_synopsis === "string" && parsed.needs_review_synopsis.trim().length > 50
-      ? parsed.needs_review_synopsis.trim()
-      : customerFacingReply;
+    // Draft body: ALWAYS the customer-facing reply (or empty). The
+    // synopsis lives only in `needsReviewSynopsis` on the draft doc.
+    const replyText = customerFacingReply;
 
     const aiConfidence = (typeof parsed.confidence === "number" && parsed.confidence >= 0 && parsed.confidence <= 1)
       ? parsed.confidence : 0.5;
@@ -2147,55 +2209,113 @@ If the conversation is genuinely ambiguous (you can't tell whether it's about an
     // attachment, the prompt addendum's edge-case guidance kicks in
     // (agent should set ready_for_human_approval in that case anyway),
     // and the audit log records the miss for operator visibility.
+    // ─── v0.9.22: multi-kind collateral attachment construction ───────
+    //
+    // The agent can now attach any subset of these collateral kinds
+    // by emitting matching boolean flags on its JSON output:
+    //
+    //    attach_line_sheet      : line sheet for the recommended family
+    //    attach_fit_reference   : how a necklace sits on the body
+    //    attach_metal_comparison: gold filled vs gold plated vs solid
+    //    attach_care_instructions: jewellery care guide
+    //
+    // Each kind looks up the FIRST attachable collateral entry of that
+    // kind (in `recommendedCollateral`, falling back to a category-wide
+    // search if absent) and produces one image attachment. Multiple
+    // kinds → multiple chips in the operator UI, all delivered to the
+    // customer in one Etsy message.
+    //
+    // The legacy `attach_line_sheet:true` path is preserved and
+    // unchanged in semantics; it's just one entry in the new table.
+    //
+    // If a kind is requested but no usable collateral exists for it,
+    // we don't blow up — the missing kind is logged in
+    // collateralAttachInfo[] for operator visibility, the other kinds
+    // still attach, and the audit log records the misses.
+    const COLLATERAL_KINDS_REQUESTED = [
+      { flag: "attach_line_sheet",       kind: "line_sheet",       label: "line sheet" },
+      { flag: "attach_fit_reference",    kind: "fit_reference",    label: "fit reference"  },
+      { flag: "attach_metal_comparison", kind: "metal_comparison", label: "metal comparison" },
+      { flag: "attach_care_instructions",kind: "care_instructions",label: "care instructions" }
+    ];
+
     let attachmentsToWrite = [];
-    let lineSheetAttachInfo = null;   // for audit
-    if (parsed.attach_line_sheet === true) {
-      const firstAttachable = (Array.isArray(recommendedCollateral) ? recommendedCollateral : [])
-        .find(c => c && c.storagePath && c.uploadedContentType);
-      if (firstAttachable) {
-        // Build a synthetic, draft-scoped attachmentId so the draft has a
-        // stable key; the underlying storagePath is shared with the
-        // collateral entry (we do NOT copy the file — wasteful and would
-        // create cleanup churn). The image proxy serves any path under
-        // the etsymail/ or etsymail-collateral/ prefix, so the extension's
-        // fetch-and-inject works the same as it does for operator drag-
-        // and-drop uploads.
-        const synthId = "att_collateral_" + (firstAttachable.id || Math.random().toString(36).slice(2, 10));
-        const ct = firstAttachable.uploadedContentType;
-        attachmentsToWrite = [{
+    let collateralAttachInfo = [];   // for audit, one entry per kind requested
+    // back-compat: legacy code/audits read `lineSheetAttachInfo`. Kept
+    // populated for the line-sheet kind specifically.
+    let lineSheetAttachInfo = null;
+
+    // Helper: find first attachable collateral matching a kind. Tries
+    // recommendedCollateral first (which is the family-relevant subset
+    // the agent was told about), then falls back to a global search by
+    // kind so a kind like "metal_comparison" or "care_instructions"
+    // — which is family-independent — still resolves even when the
+    // family-scoped recommendation list didn't include it.
+    async function findAttachableForKind(kind) {
+      const recList = Array.isArray(recommendedCollateral) ? recommendedCollateral : [];
+      const recHit = recList.find(c => c && c.kind === kind && c.storagePath && c.uploadedContentType);
+      if (recHit) return recHit;
+      // Fallback: ask the collateral search for any active entry of this
+      // kind, regardless of category. Family-independent kinds
+      // (metal_comparison, care_instructions, fit_reference) will
+      // typically be stored without a category or under a generic
+      // category like "general" / "_all".
+      try {
+        const { searchCollateral } = require("./etsyMailCollateral");
+        const result = await searchCollateral({ kind, limit: 5 });
+        const matches = (result && Array.isArray(result.matches)) ? result.matches : [];
+        // Pick the first attachable: must have storagePath (uploaded
+        // file, not just URL reference) AND its kind must match exactly.
+        // searchCollateral can return scored matches that don't match
+        // kind exactly when kind score is just a boost not a filter,
+        // so verify here.
+        const exactKindHit = matches.find(c =>
+          c && c.kind === kind && c.storagePath && c.uploadedContentType
+        );
+        if (exactKindHit) return exactKindHit;
+      } catch {}
+      return null;
+    }
+
+    for (const { flag, kind, label } of COLLATERAL_KINDS_REQUESTED) {
+      if (parsed[flag] !== true) continue;
+      const hit = await findAttachableForKind(kind);
+      if (hit) {
+        const synthId = "att_collateral_" + (hit.id || Math.random().toString(36).slice(2, 10));
+        const ct = hit.uploadedContentType;
+        attachmentsToWrite.push({
           attachmentId : synthId,
           type         : "image",
-          storagePath  : firstAttachable.storagePath,
-          proxyUrl     : "/.netlify/functions/etsyMailImage?path=" + encodeURIComponent(firstAttachable.storagePath),
+          storagePath  : hit.storagePath,
+          proxyUrl     : "/.netlify/functions/etsyMailImage?path=" + encodeURIComponent(hit.storagePath),
           contentType  : ct,
-          bytes        : typeof firstAttachable.uploadedSizeBytes === "number" ? firstAttachable.uploadedSizeBytes : null,
-          filename     : firstAttachable.uploadedFilename || ((firstAttachable.name || "line_sheet") + "." + ((ct.split("/")[1] || "png"))),
-          // Attribution metadata — useful for operator visibility ("which
-          // collateral did the agent attach?") and for downstream auditing.
+          bytes        : typeof hit.uploadedSizeBytes === "number" ? hit.uploadedSizeBytes : null,
+          filename     : hit.uploadedFilename || ((hit.name || kind) + "." + ((ct.split("/")[1] || "png"))),
           source       : "collateral",
-          collateralId : firstAttachable.id || null,
-          collateralName : firstAttachable.name || null,
-          collateralKind : firstAttachable.kind || null
-        }];
-        lineSheetAttachInfo = {
-          decided     : true,
-          attached    : true,
-          collateralId: firstAttachable.id || null,
-          collateralName: firstAttachable.name || null
+          collateralId : hit.id || null,
+          collateralName : hit.name || null,
+          collateralKind : hit.kind || kind
+        });
+        const info = {
+          kind, label,
+          decided: true, attached: true,
+          collateralId: hit.id || null,
+          collateralName: hit.name || null
         };
+        collateralAttachInfo.push(info);
+        if (kind === "line_sheet") lineSheetAttachInfo = info;
       } else {
-        // Agent wanted to attach but no usable collateral — log it so
-        // the operator notices and uploads a real line sheet.
-        lineSheetAttachInfo = {
-          decided     : true,
-          attached    : false,
-          reason      : (Array.isArray(recommendedCollateral) && recommendedCollateral.length > 0)
-                          ? "collateral_not_uploaded_only_url"
-                          : "no_collateral_for_family"
+        const info = {
+          kind, label,
+          decided: true, attached: false,
+          reason: "no_active_collateral_for_kind"
         };
-        console.warn(`salesAgent: attach_line_sheet=true but no attachable collateral for thread ${threadId}: ${lineSheetAttachInfo.reason}`);
+        collateralAttachInfo.push(info);
+        if (kind === "line_sheet") lineSheetAttachInfo = info;
+        console.warn(`salesAgent: ${flag}=true but no attachable ${label} collateral for thread ${threadId}`);
       }
     }
+    // ──────────────────────────────────────────────────────────────────
 
     await db.collection(DRAFTS_COLL).doc(draftId).set({
       draftId,
@@ -2476,6 +2596,10 @@ If the conversation is genuinely ambiguous (you can't tell whether it's about an
         // didn't try to attach; populated when it did so the operator
         // can audit the decision and see whether it actually went out.
         lineSheetAttach: lineSheetAttachInfo,
+        // v0.9.22 — multi-kind collateral attach diagnostics. One entry
+        // per kind the agent requested. Empty array when no kinds were
+        // requested.
+        collateralAttach: collateralAttachInfo,
         usage        : loopResult.usage || null
       }
     });

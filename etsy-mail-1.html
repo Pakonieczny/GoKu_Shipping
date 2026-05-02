@@ -1995,6 +1995,13 @@
               <option value="lookbook">lookbook</option>
               <option value="image_set">image set</option>
               <option value="terms">terms / FAQ</option>
+              <!-- v0.9.22 — three new kinds the sales agent can attach
+                   to replies. Adding a kind here registers it for upload;
+                   the sales agent backend reads `kind` and matches it
+                   to the corresponding attach_* flag in its JSON output. -->
+              <option value="fit_reference">fit reference (necklace on body)</option>
+              <option value="metal_comparison">metal comparison (gold filled / plated / solid)</option>
+              <option value="care_instructions">care instructions</option>
             </select>
           </label>
         </div>
