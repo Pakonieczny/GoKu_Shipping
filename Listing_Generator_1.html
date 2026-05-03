@@ -1081,6 +1081,23 @@
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
     gap: 12px;
+    /* Always-visible scrollbar (macOS hides default scrollbars) */
+    scrollbar-width: thin;
+    scrollbar-color: var(--line-2) transparent;
+  }
+  .modal-body::-webkit-scrollbar {
+    width: 10px;
+  }
+  .modal-body::-webkit-scrollbar-track {
+    background: var(--inset);
+    border-radius: 5px;
+  }
+  .modal-body::-webkit-scrollbar-thumb {
+    background: var(--line-2);
+    border-radius: 5px;
+  }
+  .modal-body::-webkit-scrollbar-thumb:hover {
+    background: var(--muted);
   }
   .modal-foot {
     display: flex;
@@ -1101,18 +1118,52 @@
   }
   .thumb:hover { border-color: var(--line-2); }
   .thumb-img {
+    /* Square via padding-bottom hack — bulletproof across browsers,
+       doesn't conflict with explicit width/height the way aspect-ratio
+       can in some layouts. */
     width: 100%;
-    height: 160px;
+    padding-bottom: 100%;
+    position: relative;
     background: #0a0c14;
     overflow: hidden;
-    position: relative;
     border-bottom: 1px solid var(--line);
   }
-  .thumb-img img {
+  /* Direct children fill the box absolutely (placeholder div + loaded img) */
+  .thumb-img > div {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .thumb-img > img {
+    position: absolute;
+    inset: 0;
     width: 100%;
     height: 100%;
     object-fit: contain;
+    transform-origin: center center;
+    transition: transform 0.3s ease;
     display: block;
+    cursor: grab;
+  }
+  .thumb-img > img:active { cursor: grabbing; }
+
+  /* Rule-of-thirds grid overlay (mirrors .slotPrev::after pattern) */
+  .thumb-img::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 700;
+    background-image:
+      linear-gradient(to right, rgba(255,255,255,.18), rgba(255,255,255,.18)),
+      linear-gradient(to right, rgba(255,255,255,.18), rgba(255,255,255,.18)),
+      linear-gradient(to bottom, rgba(255,255,255,.18), rgba(255,255,255,.18)),
+      linear-gradient(to bottom, rgba(255,255,255,.18), rgba(255,255,255,.18));
+    background-size: 1px 100%, 1px 100%, 100% 1px, 100% 1px;
+    background-position: 33.333% 0, 66.666% 0, 0 33.333%, 0 66.666%;
+    background-repeat: no-repeat;
   }
   .thumb-name {
     padding: 6px 10px;
@@ -1350,15 +1401,26 @@
   }
   .al-thumb {
     width: 100%;
-    height: 110px;
+    padding-bottom: 100%;
+    height: auto !important;
+    position: relative;
     border-radius: var(--r-sm);
     border: 1px solid var(--line);
     background: var(--inset);
     overflow: hidden;
-    position: relative;
   }
-  .al-thumb img {
-    width: 100%; height: 100%;
+  .al-thumb > div {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .al-thumb > img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
     object-fit: contain;
     display: block;
   }
@@ -5634,86 +5696,94 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       _activeBlobUrls.clear();
     }
 
-    // Hybrid thumb-image loader.
-    //   1) Try direct URL via getDownloadURL + cacheBust (fast)
-    //   2) On img.onerror (load failure), fall back to getBytes → Blob with
-    //      explicit MIME → blob URL. This works regardless of content-type
-    //      issues (e.g., octet-stream from upload), CDN quirks, or odd
-    //      browser caching. The SDK's getBytes uses authenticated download
-    //      so it's also robust against URL-token issues.
-    //   3) On final failure, show "load failed" + log the error to console.
-    // `item` must be a Firebase StorageReference. Returns a Promise that
-    // resolves once the image is loaded OR all attempts have failed.
-    async function _setThumbImage(box, item, alt) {
+    // Hybrid thumb-image loader (off-DOM version).
+    //   1) Try direct URL via getDownloadURL + cacheBust — load OFF-DOM
+    //      using a detached Image() so a failure shows nothing instead of
+    //      flashing the browser's broken-image icon.
+    //   2) On URL load failure, fall back to getBytes → Blob with explicit
+    //      MIME type → blob URL — also loaded off-DOM.
+    //   3) Only after a successful load is the IMG element attached to the
+    //      box. If `attachZoom: true` is passed, attachPreviewBoxListeners
+    //      is called so the user gets the wheel-zoom + click-drag pan
+    //      controls + rule-of-thirds grid overlay (via .thumb-img::after).
+    async function _setThumbImage(box, item, alt, opts) {
+      opts = opts || {};
+      const preferBytes = opts.preferBytes === true;
+      const attachZoom  = opts.attachZoom  === true;
       if (!box) return;
 
+      function loadOffDom(src) {
+        return new Promise((resolve) => {
+          const img = new Image();      // detached, off-DOM
+          img.onload  = () => resolve(img);
+          img.onerror = () => resolve(null);
+          img.src = src;
+        });
+      }
+
+      let loadedImg = null;
+      let blobUrl   = null;
+
       // ---- Attempt 1: direct URL ----
-      let url = null;
-      try { url = await getDownloadURL(item); }
-      catch (err) {
-        console.warn('[Listing-Generator] getDownloadURL failed:', item.fullPath, err);
-      }
-
-      if (url) {
-        const success = await new Promise((resolve) => {
-          const img = document.createElement('img');
-          img.style.cssText = 'width:100%;height:100%;object-fit:contain;display:block;';
-          if (alt) img.alt = alt;
-          img.onload = () => resolve(true);
-          img.onerror = () => resolve(false);
-          if (box.isConnected) {
-            box.innerHTML = '';
-            box.appendChild(img);
-          }
-          // Set src AFTER attach (more reliable across browsers)
-          img.src = cacheBust(url);
-        });
-        if (success) return;
-        console.warn('[Listing-Generator] direct URL load failed for', item.fullPath, '— falling back to getBytes');
-      }
-
-      // ---- Attempt 2: getBytes → blob URL ----
-      try {
-        if (!box.isConnected) return;
-        const bytes = await getBytes(item);
-        if (!box.isConnected) return;
-
-        // Pick MIME type from file extension (Firebase upload may have set
-        // wrong content-type if the original File object had no `type`)
-        let mimeType = 'image/png';
-        const ext = (item.name || '').toLowerCase().split('.').pop();
-        if (ext === 'jpg' || ext === 'jpeg') mimeType = 'image/jpeg';
-        else if (ext === 'webp') mimeType = 'image/webp';
-        else if (ext === 'gif')  mimeType = 'image/gif';
-        else if (ext === 'avif') mimeType = 'image/avif';
-
-        const blob = new Blob([bytes], { type: mimeType });
-        const blobUrl = URL.createObjectURL(blob);
-        _activeBlobUrls.add(blobUrl);
-
-        await new Promise((resolve) => {
-          const img = document.createElement('img');
-          img.style.cssText = 'width:100%;height:100%;object-fit:contain;display:block;';
-          if (alt) img.alt = alt;
-          img.onload = () => resolve(true);
-          img.onerror = () => {
-            console.warn('[Listing-Generator] blob URL also failed:', item.fullPath);
-            if (box.isConnected) {
-              box.innerHTML = '<div class="slotRefEmpty" style="font-size: 9px; color: #fca5a5;">load failed</div>';
-            }
-            resolve(false);
-          };
-          if (box.isConnected) {
-            box.innerHTML = '';
-            box.appendChild(img);
-          }
-          img.src = blobUrl;
-        });
-      } catch (err) {
-        console.warn('[Listing-Generator] getBytes fallback failed:', item.fullPath, err);
-        if (box.isConnected) {
-          box.innerHTML = '<div class="slotRefEmpty" style="font-size: 9px; color: #fca5a5;">load failed</div>';
+      if (!preferBytes) {
+        try {
+          const url = await getDownloadURL(item);
+          loadedImg = await loadOffDom(cacheBust(url));
+        } catch (err) {
+          console.warn('[Listing-Generator] getDownloadURL failed:', item.fullPath, err);
         }
+      }
+
+      // ---- Attempt 2: getBytes → blob ----
+      if (!loadedImg) {
+        try {
+          const bytes = await getBytes(item);
+          if (!box.isConnected) return;
+
+          let mimeType = 'image/png';
+          const ext = (item.name || '').toLowerCase().split('.').pop();
+          if (ext === 'jpg' || ext === 'jpeg') mimeType = 'image/jpeg';
+          else if (ext === 'webp') mimeType = 'image/webp';
+          else if (ext === 'gif')  mimeType = 'image/gif';
+          else if (ext === 'avif') mimeType = 'image/avif';
+
+          const blob = new Blob([bytes], { type: mimeType });
+          blobUrl = URL.createObjectURL(blob);
+          _activeBlobUrls.add(blobUrl);
+
+          loadedImg = await loadOffDom(blobUrl);
+          if (!loadedImg) {
+            URL.revokeObjectURL(blobUrl);
+            _activeBlobUrls.delete(blobUrl);
+            blobUrl = null;
+            console.warn('[Listing-Generator] blob also failed to decode:', item.fullPath);
+          }
+        } catch (err) {
+          console.warn('[Listing-Generator] getBytes fallback failed:', item.fullPath, err);
+        }
+      }
+
+      // Box might have been removed during the async load — abort cleanly
+      if (!box.isConnected) {
+        if (blobUrl) {
+          URL.revokeObjectURL(blobUrl);
+          _activeBlobUrls.delete(blobUrl);
+        }
+        return;
+      }
+
+      if (loadedImg) {
+        if (alt) loadedImg.alt = alt;
+        // Strip any inline style — let CSS govern presentation so the
+        // .thumb-img / .al-thumb rules (object-fit, position, etc.) apply.
+        loadedImg.removeAttribute('style');
+        box.innerHTML = '';
+        box.appendChild(loadedImg);
+        if (attachZoom && typeof attachPreviewBoxListeners === 'function') {
+          attachPreviewBoxListeners(box);
+        }
+      } else {
+        box.innerHTML = '<div class="slotRefEmpty" style="font-size: 9px; color: #fca5a5;">load failed</div>';
       }
     }
 
@@ -5799,8 +5869,8 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
           if (!thumbEl || !thumbEl.isConnected) return;
           const box = thumbEl.querySelector('.thumb-img');
           if (!box) return;
-          // _setThumbImage handles URL → blob fallback + console logging
-          await _setThumbImage(box, item, item.name);
+          // attachZoom: true → wheel-zoom + click-drag pan + grid overlay
+          await _setThumbImage(box, item, item.name, { attachZoom: true });
         });
       } catch (e) {
         _galleryBody.innerHTML = `<div class="slotRefEmpty" style="grid-column: 1/-1; padding: 36px; color: #fca5a5;">Error: ${e?.message || e}</div>`;
