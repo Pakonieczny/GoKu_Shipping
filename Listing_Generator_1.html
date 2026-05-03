@@ -5626,27 +5626,95 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     let _galleryCurrentPath = '';
     let _galleryCurrentTitle = '';
 
-    // Helper: load an image into a thumb box. Reports errors to console so
-    // we can diagnose if URLs are failing. Skips attachPreviewBoxListeners
-    // because the box is small and doesn't need zoom/pan/wheel handlers
-    // (wheel-zoom on tiny thumbs is also bad UX — it prevents modal scroll).
-    function _setThumbImage(box, url, alt) {
-      return new Promise((resolve) => {
-        const img = document.createElement('img');
-        img.style.cssText = 'width:100%;height:100%;object-fit:contain;display:block;';
-        if (alt) img.alt = alt;
-        img.onload = () => resolve(true);
-        img.onerror = (e) => {
-          console.warn('[Listing-Generator] thumb image failed to load:', url, e);
+    // Track blob URLs we create so we can revoke them on modal close /
+    // listings page change to avoid memory leaks
+    const _activeBlobUrls = new Set();
+    function _revokeAllBlobUrls() {
+      _activeBlobUrls.forEach(u => { try { URL.revokeObjectURL(u); } catch (_) {} });
+      _activeBlobUrls.clear();
+    }
+
+    // Hybrid thumb-image loader.
+    //   1) Try direct URL via getDownloadURL + cacheBust (fast)
+    //   2) On img.onerror (load failure), fall back to getBytes → Blob with
+    //      explicit MIME → blob URL. This works regardless of content-type
+    //      issues (e.g., octet-stream from upload), CDN quirks, or odd
+    //      browser caching. The SDK's getBytes uses authenticated download
+    //      so it's also robust against URL-token issues.
+    //   3) On final failure, show "load failed" + log the error to console.
+    // `item` must be a Firebase StorageReference. Returns a Promise that
+    // resolves once the image is loaded OR all attempts have failed.
+    async function _setThumbImage(box, item, alt) {
+      if (!box) return;
+
+      // ---- Attempt 1: direct URL ----
+      let url = null;
+      try { url = await getDownloadURL(item); }
+      catch (err) {
+        console.warn('[Listing-Generator] getDownloadURL failed:', item.fullPath, err);
+      }
+
+      if (url) {
+        const success = await new Promise((resolve) => {
+          const img = document.createElement('img');
+          img.style.cssText = 'width:100%;height:100%;object-fit:contain;display:block;';
+          if (alt) img.alt = alt;
+          img.onload = () => resolve(true);
+          img.onerror = () => resolve(false);
           if (box.isConnected) {
-            box.innerHTML = '<div class="slotRefEmpty" style="font-size: 9px; color: #fca5a5;">load failed</div>';
+            box.innerHTML = '';
+            box.appendChild(img);
           }
-          resolve(false);
-        };
-        img.src = url;
-        box.innerHTML = '';
-        box.appendChild(img);
-      });
+          // Set src AFTER attach (more reliable across browsers)
+          img.src = cacheBust(url);
+        });
+        if (success) return;
+        console.warn('[Listing-Generator] direct URL load failed for', item.fullPath, '— falling back to getBytes');
+      }
+
+      // ---- Attempt 2: getBytes → blob URL ----
+      try {
+        if (!box.isConnected) return;
+        const bytes = await getBytes(item);
+        if (!box.isConnected) return;
+
+        // Pick MIME type from file extension (Firebase upload may have set
+        // wrong content-type if the original File object had no `type`)
+        let mimeType = 'image/png';
+        const ext = (item.name || '').toLowerCase().split('.').pop();
+        if (ext === 'jpg' || ext === 'jpeg') mimeType = 'image/jpeg';
+        else if (ext === 'webp') mimeType = 'image/webp';
+        else if (ext === 'gif')  mimeType = 'image/gif';
+        else if (ext === 'avif') mimeType = 'image/avif';
+
+        const blob = new Blob([bytes], { type: mimeType });
+        const blobUrl = URL.createObjectURL(blob);
+        _activeBlobUrls.add(blobUrl);
+
+        await new Promise((resolve) => {
+          const img = document.createElement('img');
+          img.style.cssText = 'width:100%;height:100%;object-fit:contain;display:block;';
+          if (alt) img.alt = alt;
+          img.onload = () => resolve(true);
+          img.onerror = () => {
+            console.warn('[Listing-Generator] blob URL also failed:', item.fullPath);
+            if (box.isConnected) {
+              box.innerHTML = '<div class="slotRefEmpty" style="font-size: 9px; color: #fca5a5;">load failed</div>';
+            }
+            resolve(false);
+          };
+          if (box.isConnected) {
+            box.innerHTML = '';
+            box.appendChild(img);
+          }
+          img.src = blobUrl;
+        });
+      } catch (err) {
+        console.warn('[Listing-Generator] getBytes fallback failed:', item.fullPath, err);
+        if (box.isConnected) {
+          box.innerHTML = '<div class="slotRefEmpty" style="font-size: 9px; color: #fca5a5;">load failed</div>';
+        }
+      }
     }
 
     async function _openGallery(title, path) {
@@ -5724,25 +5792,15 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         const thumbEls = Array.from(_galleryBody.querySelectorAll('.thumb'));
         const tasks = sorted.map((item, idx) => ({ item, thumbEl: thumbEls[idx] }));
 
-        // Progressively load URLs with concurrency cap
+        // Progressively load with concurrency cap (6 parallel)
         await _asyncPool(6, tasks, async ({ item, thumbEl }) => {
           if (!_galleryModal.classList.contains('open')) return;
           if (_galleryCurrentPath !== path) return;
           if (!thumbEl || !thumbEl.isConnected) return;
           const box = thumbEl.querySelector('.thumb-img');
           if (!box) return;
-          try {
-            const url = await getDownloadURL(item);
-            if (!_galleryModal.classList.contains('open')) return;
-            if (_galleryCurrentPath !== path) return;
-            if (!thumbEl.isConnected) return;
-            await _setThumbImage(box, cacheBust(url), item.name);
-          } catch (err) {
-            console.warn('[Listing-Generator] gallery URL fetch failed:', item.fullPath, err);
-            if (thumbEl.isConnected) {
-              box.innerHTML = `<div class="slotRefEmpty" style="font-size: 9px; color: #fca5a5;">!</div>`;
-            }
-          }
+          // _setThumbImage handles URL → blob fallback + console logging
+          await _setThumbImage(box, item, item.name);
         });
       } catch (e) {
         _galleryBody.innerHTML = `<div class="slotRefEmpty" style="grid-column: 1/-1; padding: 36px; color: #fca5a5;">Error: ${e?.message || e}</div>`;
@@ -5753,6 +5811,8 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     function _closeGallery() {
       _galleryModal.classList.remove('open');
       _galleryModal.setAttribute('aria-hidden', 'true');
+      // Free blob URLs created by the bytes-fallback path
+      _revokeAllBlobUrls();
     }
 
     document.getElementById('galleryClose').addEventListener('click', _closeGallery);
@@ -6051,16 +6111,8 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
               slotBox.innerHTML = `<div class="slotRefEmpty" style="font-size:9px;">·</div>`;
               return;
             }
-            try {
-              const url = await getDownloadURL(slotItem);
-              if (!cardEl.isConnected) return;
-              await _setThumbImage(slotBox, cacheBust(url), slotItem.name);
-            } catch (urlErr) {
-              console.warn('[Listing-Generator] listing thumb URL fetch failed:', slotItem.fullPath, urlErr);
-              if (cardEl.isConnected) {
-                slotBox.innerHTML = `<div class="slotRefEmpty" style="font-size:9px; color:#fca5a5;">!</div>`;
-              }
-            }
+            // _setThumbImage handles URL → blob fallback + console logging
+            await _setThumbImage(slotBox, slotItem, slotItem.name);
           });
         } catch (e) {
           console.warn('Listing thumb load failed', item.id, e);
