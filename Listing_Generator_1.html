@@ -1076,10 +1076,13 @@
   .modal-close:hover { color: var(--text); border-color: var(--line-2); }
   .modal-body {
     flex: 1;
+    min-height: 0;             /* CRITICAL: lets flex children overflow */
     overflow-y: auto;
+    overflow-x: hidden;
     padding: 18px 20px;
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    grid-template-columns: repeat(auto-fill, 200px);
+    justify-content: center;   /* center the 200px columns in available space */
     gap: 12px;
     /* Always-visible scrollbar (macOS hides default scrollbars) */
     scrollbar-width: thin;
@@ -1099,30 +1102,22 @@
   .modal-body::-webkit-scrollbar-thumb:hover {
     background: var(--muted);
   }
-  .modal-foot {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 14px 20px;
-    border-top: 1px solid var(--line);
-    background: var(--inset);
-  }
   .thumb {
     position: relative;
     background: var(--inset);
     border: 1px solid var(--line);
     border-radius: var(--r-sm);
     overflow: hidden;
+    width: 200px;              /* match the grid column */
     transition: border-color 120ms ease;
   }
   .thumb:hover { border-color: var(--line-2); }
   .thumb-img {
-    /* Square via padding-bottom hack — bulletproof across browsers,
-       doesn't conflict with explicit width/height the way aspect-ratio
-       can in some layouts. */
-    width: 100%;
-    padding-bottom: 100%;
+    /* Fixed 200x200 square — explicit dimensions are bulletproof and
+       don't depend on aspect-ratio support or padding-bottom percentage
+       resolution which has been unreliable in this layout context. */
+    width: 200px;
+    height: 200px;
     position: relative;
     background: #0a0c14;
     overflow: hidden;
@@ -1165,6 +1160,24 @@
     background-position: 33.333% 0, 66.666% 0, 0 33.333%, 0 66.666%;
     background-repeat: no-repeat;
   }
+  .modal-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 14px 20px;
+    border-top: 1px solid var(--line);
+    background: var(--inset);
+  }
+  .thumb {
+    position: relative;
+    background: var(--inset);
+    border: 1px solid var(--line);
+    border-radius: var(--r-sm);
+    overflow: hidden;
+    transition: border-color 120ms ease;
+  }
+  .thumb:hover { border-color: var(--line-2); }
   .thumb-name {
     padding: 6px 10px;
     font-size: 10px;
@@ -5781,6 +5794,19 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         box.appendChild(loadedImg);
         if (attachZoom && typeof attachPreviewBoxListeners === 'function') {
           attachPreviewBoxListeners(box);
+          // Wheel-modifier bypass: attachPreviewBoxListeners adds a wheel
+          // listener that calls preventDefault() to enable zoom — this
+          // EATS modal scroll wheel events when the cursor is over a
+          // thumb. We add a capture-phase listener that runs FIRST and
+          // stops propagation when no modifier key is held, so the wheel
+          // event never reaches the bubble-phase zoom listener and the
+          // browser's default scroll action is preserved.
+          // Hold Shift / Ctrl / Cmd + wheel to zoom; plain wheel scrolls.
+          box.addEventListener('wheel', (ev) => {
+            if (!ev.shiftKey && !ev.ctrlKey && !ev.metaKey) {
+              ev.stopImmediatePropagation();
+            }
+          }, { capture: true, passive: true });
         }
       } else {
         box.innerHTML = '<div class="slotRefEmpty" style="font-size: 9px; color: #fca5a5;">load failed</div>';
@@ -5862,8 +5888,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         const thumbEls = Array.from(_galleryBody.querySelectorAll('.thumb'));
         const tasks = sorted.map((item, idx) => ({ item, thumbEl: thumbEls[idx] }));
 
-        // Progressively load with concurrency cap (6 parallel)
-        await _asyncPool(6, tasks, async ({ item, thumbEl }) => {
+        // Progressively load with concurrency cap (12 parallel — fast
+        // initial paint without overwhelming Firebase rate limits)
+        await _asyncPool(12, tasks, async ({ item, thumbEl }) => {
           if (!_galleryModal.classList.contains('open')) return;
           if (_galleryCurrentPath !== path) return;
           if (!thumbEl || !thumbEl.isConnected) return;
@@ -6983,7 +7010,10 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       </div>
       <div class="modal-body" id="galleryBody"></div>
       <div class="modal-foot">
-        <span class="muted mono" id="galleryFooter">0 files</span>
+        <div class="row" style="gap: 12px; align-items: center;">
+          <span class="muted mono" id="galleryFooter">0 files</span>
+          <span class="muted" style="font-size: 10px; opacity: 0.6;">⇧ + scroll to zoom · drag to pan</span>
+        </div>
         <div class="row" style="gap: 8px;">
           <input type="file" id="galleryUpload" multiple accept="image/*" style="display: none;">
           <button class="btn btnSmall" id="galleryAddBtn">+ Add files</button>
