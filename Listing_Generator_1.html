@@ -1,361 +1,1718 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta charset="UTF-8">
   <title>Listing-Generator-1</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <style>
-    :root { --bg:#0b0d12; --card:#121624; --muted:#8b93a7; --text:#e9ecf5; --line:#242a3d; }
-    body{ margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; background:var(--bg); color:var(--text); }
-    .wrap{ padding:14px; display:grid; grid-template-columns: 420px 1fr; gap:14px; }
-    .card{ background:var(--card); border:1px solid var(--line); border-radius:14px; padding:12px; }
-    h1{ font-size:16px; margin:0 0 10px 0; }
-    label{ display:block; font-size:12px; color:var(--muted); margin:10px 0 6px; }
-    textarea, select, input{ width:100%; border-radius:10px; border:1px solid var(--line); background:#0e1220; color:var(--text); padding:10px; box-sizing:border-box; }
-    textarea{ min-height:120px; resize:vertical; }
-    .row{ display:flex; gap:8px; }
-    .btn{ cursor:pointer; border-radius:12px; border:1px solid var(--line); padding:10px 12px; background:#0e1220; color:var(--text); }
-    .btnSmall{ padding:6px 10px; border-radius:10px; font-size:11px; line-height:1; }
-    .btn:disabled{ opacity:0.5; cursor:not-allowed; }
-    .muted{ color:var(--muted); font-size:12px; line-height:1.35; }
-    .drop{
-      border:1px dashed #3a4262; border-radius:14px; padding:12px; background:#0e1220;
-      display:flex; gap:10px; align-items:center; justify-content:space-between;
-    }
-    .drop strong{ font-size:13px; }
-    .preview-box{
-      width:100%; height:280px; border-radius:14px; border:1px solid var(--line);
-      background:#0b0d12; overflow:hidden; position:relative;
-    }
-    .preview-box img{ width:100%; height:100%; object-fit:contain; transform-origin:center; }
-    .traits{ display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-top:10px; }
-    .pill{ font-size:12px; border:1px solid var(--line); background:#0e1220; border-radius:999px; padding:8px 10px; color:var(--muted); }
-    .grid{
-      display:grid; grid-template-columns: repeat(4, minmax(220px, 1fr)); gap:12px;
-    }
-    .slot{ background:#0e1220; border:1px solid var(--line); border-radius:14px; padding:10px; }
-    .slotTop{ display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:8px; }
-    .slotTop b{ font-size:12px; color:var(--muted); }
-    .slotRefs{ display:flex; gap:8px; margin:8px 0; }
-    .slotRefBox{
-      flex:1;
-      height:72px;
-      border-radius:12px;
-      border:1px solid var(--line);
-      background:#0b0d12;
-      overflow:hidden;
-      position:relative;
-    }
-    .slotRefBox img{ width:100%; height:100%; object-fit:contain; }
-    .slotRefEmpty{
-      width:100%;
-      height:100%;
-      display:flex;
-      align-items:center;
-      justify-content:center;
-      font-size:11px;
-      color:var(--muted);
-      text-align:center;
-    }
-    .slotRefLabel{
-      position:absolute;
-      left:6px;
-      bottom:6px;
-      font-size:10px;
-      color:var(--muted);
-      background:rgba(0,0,0,0.35);
-      padding:2px 7px;
-      border-radius:999px;
-      max-width:calc(100% - 12px);
-      white-space:nowrap;
-      overflow:hidden;
-      text-overflow:ellipsis;
-      pointer-events:none;
-    }
-    
-    /* === UPDATED SLOT PREVIEW STYLES (Zoom/Grid support) === */
-    .slotPrev {
-      width:100%; 
-      height:190px; 
-      border-radius:12px; 
-      border:1px solid var(--line); 
-      background:#0b0d12; 
-      overflow:hidden; /* Critical for cropping zoom */
-      position: relative; /* Anchor for grid overlay */
-    }
-    
-    .slotPrev img { 
-      width:100%; 
-      height:100%; 
-      object-fit:contain; 
-      transform-origin:center center; 
-      transition: transform 0.3s ease; /* Smooth zoom transition */
-      display: block;
-      cursor: grab;
-    }
-    
-    .slotPrev img:active {
-      cursor: grabbing;
-    }
+  /* =========================================================
+     LISTING-GENERATOR-1  •  HYBRID THEME (v2 visual + v1 JS)
+     ---------------------------------------------------------
+     - Mockup visual language applied app-wide
+     - All original IDs preserved (JS untouched)
+     - Original CSS classes (.slot, .slotPrev, .charm-card,
+       .drop, .row, .muted, .btn, .btnSmall, .grid, etc.)
+       restyled to match the new aesthetic but functionally
+       identical, so dynamically-rendered content from the
+       original JS continues to render correctly.
+     ========================================================= */
 
-    /* Rule-of-thirds overlay (from Index.html) */
-    .slotPrev::after {
-      content: "";
-      position: absolute;
-      inset: 0;
-      pointer-events: none;
-      z-index: 700; 
+  /* ---------- Design tokens ---------- */
+  :root {
+    --font-ui: 'DM Sans', ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    --font-serif: 'DM Sans', ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace;
 
-      /* four thin lines at 1/3 and 2/3 */
-      background-image:
-        linear-gradient(to right, rgba(255,255,255,.25), rgba(255,255,255,.25)),
-        linear-gradient(to right, rgba(255,255,255,.25), rgba(255,255,255,.25)),
-        linear-gradient(to bottom, rgba(255,255,255,.25), rgba(255,255,255,.25)),
-        linear-gradient(to bottom, rgba(255,255,255,.25), rgba(255,255,255,.25));
-      background-size: 1px 100%, 1px 100%, 100% 1px, 100% 1px;
-      background-position: 33.333% 0, 66.666% 0, 0 33.333%, 0 66.666%;
-      background-repeat: no-repeat;
-    }
+    --bg: #0a0c14;
+    --card: #11141f;
+    --card-2: #161a26;
+    --inset: #0d1018;
+    --line: rgba(255, 255, 255, 0.08);
+    --line-2: rgba(255, 255, 255, 0.14);
+    --text: #e9ecf5;
+    --text-2: #c4cad9;
+    --muted: #8c93a6;
+    --dim: #5b637a;
 
-    /* Success border style */
-    .slotPrev.success-border {
-      border: 3px solid lightgreen !important;
-    }
+    --accent: #6fa8ff;
+    --accent-line: rgba(111, 168, 255, 0.4);
+    --accent-bg: rgba(111, 168, 255, 0.1);
 
-    /* Visual feedback for working state */
-    .working-box {
-      border: 2px solid #fdba74 !important;
-      opacity: 0.7;
-      animation: pulse 1.5s infinite;
-    }
-    .working-card {
-      border: 2px solid #fdba74 !important;
-      transition: all 0.3s ease;
-    }
-    @keyframes pulse {
-      0% { opacity: 0.7; }
-      50% { opacity: 1; }
-      100% { opacity: 0.7; }
-    }
+    --ok: #6ee895;
+    --ok-line: rgba(110, 232, 149, 0.4);
+    --ok-bg: rgba(110, 232, 149, 0.1);
 
-    /* === CHARM MAKER QUAD LAYOUT === */
-    .charm-card {
-      background: #0e1220; 
-      border: 1px solid var(--line); 
-      border-radius: 14px; 
-      padding: 14px;
-      grid-column: span 2; /* takes 2 columns out of 4 */
-      display: grid; 
-      grid-template-columns: 1fr 1fr; 
-      gap: 14px;
-    }
-    .charm-card-title { 
-      grid-column: span 2; 
-      font-size: 14px; 
-      color: #7fdb96; 
-      border-bottom: 1px solid var(--line); 
-      padding-bottom: 8px; 
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
-    .charm-col { 
-      display: flex; 
-      flex-direction: column; 
-      gap: 8px; 
-    }
-    .charm-col .muted { margin-bottom: 0; }
+    --warn: #ffd166;
+    --warn-line: rgba(255, 209, 102, 0.4);
+    --warn-bg: rgba(255, 209, 102, 0.08);
 
-    .bar{ height:8px; border-radius:999px; background:#0b0d12; border:1px solid var(--line); overflow:hidden; margin-top:10px; }
-    .bar > div{ height:100%; width:0%; background:#2b6cff; transition:width 120ms linear; }
-    .small{ font-size:11px; color:var(--muted); margin-top:6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    --danger: #ff6b81;
+    --danger-line: rgba(255, 107, 129, 0.45);
+    --danger-bg: rgba(255, 107, 129, 0.10);
 
-    /* === SPINNER & BUTTON GUARDS === */
-    .spinner {
-      width: 22px;
-      height: 22px;
-      border: 3px solid rgba(255,255,255,0.1);
-      border-radius: 50%;
-      border-top-color: #7fdb96;
-      animation: spin 1s ease-in-out infinite;
-      margin: 0 auto 6px auto;
-    }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    
-    .spinner-container {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      width: 100%;
-      height: 100%;
-      color: #fdba74;
-      font-size: 11px;
-    }
-    
-    /* We use pointer-events: none to fully kill clicks while disabled */
-    button.disabled-action {
-      background: #1a1e2b !important;
-      border-color: #2a3143 !important;
-      color: #5b637a !important;
-      cursor: not-allowed !important;
-      pointer-events: none !important;
-    }
-  </style>
+    --pink: #ffa1c0;
+
+    --r-sm: 8px;
+    --r-md: 12px;
+    --r-lg: 16px;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    font-family: var(--font-ui);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 14px;
+    line-height: 1.45;
+    letter-spacing: -0.005em;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  ::selection { background: rgba(111, 168, 255, 0.35); }
+
+  /* ---------- App header ---------- */
+  .app-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 22px;
+    border-bottom: 1px solid var(--line);
+    background: linear-gradient(180deg, var(--card), var(--bg));
+  }
+  .app-header .brand {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+  }
+  .app-header .brand-mark {
+    font-family: var(--font-ui);
+    font-size: 19px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--text);
+  }
+  .app-header .brand-mark em {
+    font-style: normal;
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .app-header .brand-tag {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    padding: 3px 8px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+  }
+  .app-header .header-meta {
+    display: flex;
+    gap: 18px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .app-header .header-meta .dot {
+    color: var(--ok);
+    font-size: 9px;
+    margin-right: 4px;
+    vertical-align: middle;
+  }
+
+  /* ---------- Tab navigation (uses original toggle button IDs) ---------- */
+  /* Original JS sets inline `style.background = "var(--line)"` on the active
+     tab and `"transparent"` on inactive. Our base styles must NOT specify a
+     background so inline styles win. We give padding, font, color, and
+     hover via specific selectors that don't fight inline overrides. */
+  .tabnav-wrap {
+    padding: 14px 22px 0;
+    background: var(--bg);
+    border-bottom: 1px solid var(--line);
+  }
+  .tabnav {
+    display: flex;
+    gap: 6px;
+    background: var(--card);
+    padding: 4px;
+    border-radius: var(--r-md);
+    border: 1px solid var(--line);
+    width: max-content;
+  }
+  .tabnav .btn {
+    flex: 0 0 auto;
+    min-width: 130px;
+    padding: 8px 18px !important;
+    border: none !important;
+    border-radius: 8px !important;
+    font-family: var(--font-ui);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: color 120ms ease;
+    /* Background and color come from inline styles set by setAppMode() —
+       we leave them alone so the JS continues to work. */
+  }
+  .tabnav .btn:hover { color: var(--text) !important; }
+
+  /* ---------- Page layout ---------- */
+  .wrap {
+    padding: 22px;
+    display: grid;
+    grid-template-columns: 480px 1fr;
+    gap: 22px;
+    align-items: start;
+    max-width: 1700px;
+    margin: 0 auto;
+  }
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--r-lg);
+    padding: 22px;
+    transition: border-color 200ms ease;
+  }
+  .card:hover { border-color: var(--line-2); }
+
+  h1 {
+    font-family: var(--font-ui);
+    font-style: normal;
+    font-weight: 600;
+    font-size: 22px;
+    line-height: 1.2;
+    margin: 0 0 6px 0;
+    letter-spacing: -0.015em;
+    color: var(--text);
+  }
+
+  /* ---------- Form elements (original tag selectors) ---------- */
+  label {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--muted);
+    margin: 14px 0 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 500;
+  }
+
+  textarea, select, input {
+    width: 100%;
+    border-radius: var(--r-sm);
+    border: 1px solid var(--line);
+    background: var(--inset);
+    color: var(--text);
+    padding: 10px 12px;
+    box-sizing: border-box;
+    font-family: var(--font-ui);
+    font-size: 13px;
+    transition: border-color 120ms ease, background 120ms ease;
+  }
+  textarea:focus, select:focus, input:focus {
+    outline: none;
+    border-color: var(--accent-line);
+    background: var(--card-2);
+  }
+  textarea { min-height: 120px; resize: vertical; }
+  select {
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M3 5l3 3 3-3' stroke='%238c93a6' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    padding-right: 32px;
+  }
+  input[type="number"] { -moz-appearance: textfield; }
+  input[type="number"]::-webkit-inner-spin-button,
+  input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+
+  /* ---------- Buttons ---------- */
+  .row { display: flex; gap: 8px; align-items: center; }
+
+  .btn {
+    cursor: pointer;
+    border-radius: var(--r-sm);
+    border: 1px solid var(--line-2);
+    padding: 10px 14px;
+    background: var(--card-2);
+    color: var(--text);
+    font-family: var(--font-ui);
+    font-size: 13px;
+    font-weight: 500;
+    transition: all 120ms ease;
+    white-space: nowrap;
+    line-height: 1.2;
+  }
+  .btn:hover {
+    background: var(--card);
+    border-color: rgba(255, 255, 255, 0.22);
+  }
+  .btn:disabled, .btn[disabled] {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+  .btn:disabled:hover { background: var(--card-2); }
+
+  .btnSmall {
+    padding: 6px 10px !important;
+    border-radius: 6px !important;
+    font-size: 11px !important;
+    line-height: 1 !important;
+  }
+
+  /* "redoBtn" — keep the JS-driven disabled/enabled UX, just restyle */
+  .redoBtn {
+    background: var(--inset) !important;
+    border: 1px solid var(--line) !important;
+    color: var(--text-2) !important;
+  }
+  .redoBtn:not(:disabled):hover {
+    background: var(--card-2) !important;
+    border-color: var(--accent-line) !important;
+    color: var(--accent) !important;
+  }
+
+  /* Disabled-action override (JS uses this class for fully-locked state) */
+  button.disabled-action {
+    background: #1a1e2b !important;
+    border-color: #2a3143 !important;
+    color: #5b637a !important;
+    cursor: not-allowed !important;
+    pointer-events: none !important;
+  }
+
+  /* ---------- Muted text ---------- */
+  .muted {
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+  .muted code {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-2);
+    background: var(--inset);
+    padding: 1px 6px;
+    border-radius: 4px;
+    border: 1px solid var(--line);
+  }
+  .small {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 6px;
+    font-family: var(--font-mono);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* ---------- Drop / upload panel (rendered by makeUploadPanel) ---------- */
+  .drop {
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    padding: 14px 16px;
+    background: var(--inset);
+    display: flex;
+    gap: 14px;
+    align-items: center;
+    justify-content: space-between;
+    transition: all 160ms ease;
+  }
+  .drop:hover {
+    border-color: var(--line-2);
+    background: var(--card-2);
+  }
+  .drop.hover {
+    border: 1px dashed var(--accent);
+    background: var(--accent-bg);
+  }
+  .drop strong {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text);
+  }
+  .drop .muted code {
+    font-family: var(--font-mono);
+    font-size: 10px;
+  }
+  .drop input[type="file"] {
+    width: auto;
+    background: transparent;
+    border: none;
+    padding: 0;
+    color: var(--muted);
+    font-size: 11px;
+    max-width: 180px;
+  }
+  .drop input[type="file"]::-webkit-file-upload-button {
+    background: var(--card-2);
+    border: 1px solid var(--line);
+    color: var(--text-2);
+    padding: 5px 10px;
+    border-radius: var(--r-sm);
+    cursor: pointer;
+    font-family: var(--font-ui);
+    font-size: 11px;
+    margin-right: 8px;
+    transition: all 120ms ease;
+  }
+  .drop input[type="file"]::-webkit-file-upload-button:hover {
+    background: var(--card);
+    border-color: var(--line-2);
+  }
+
+  /* ---------- Right card / grid ---------- */
+  .right-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding-bottom: 14px;
+    margin-bottom: 16px;
+    border-bottom: 1px solid var(--line);
+  }
+  .right-head h1 {
+    font-family: var(--font-ui);
+    font-style: normal;
+    font-weight: 600;
+    font-size: 20px;
+    margin: 0;
+    letter-spacing: -0.015em;
+  }
+  /* The original JS writes "Idle" / "Generating..." / etc into #status */
+  #status {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--muted);
+    padding: 4px 10px;
+    background: var(--inset);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(220px, 1fr));
+    gap: 14px;
+  }
+  @media (max-width: 1400px) {
+    .grid { grid-template-columns: repeat(3, minmax(220px, 1fr)); }
+  }
+  @media (max-width: 1100px) {
+    .grid { grid-template-columns: repeat(2, minmax(220px, 1fr)); }
+  }
+
+  /* ---------- Slot card (rendered by JS via .className = "slot") ---------- */
+  .slot {
+    background: var(--card-2);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    padding: 12px;
+    transition: border-color 160ms ease;
+  }
+  .slot:hover { border-color: var(--line-2); }
+
+  .slotTop {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .slotTop b {
+    font-size: 12px;
+    color: var(--text);
+    font-weight: 500;
+  }
+  .slotTop .muted { font-family: var(--font-mono); font-size: 10px; }
+
+  /* slotRefs (small reference strip rendered in some flows) */
+  .slotRefs { display: flex; gap: 6px; margin: 8px 0; }
+  .slotRefBox {
+    flex: 1;
+    height: 64px;
+    border-radius: var(--r-sm);
+    border: 1px solid var(--line);
+    background: var(--inset);
+    overflow: hidden;
+    position: relative;
+  }
+  .slotRefBox img { width: 100%; height: 100%; object-fit: contain; }
+  .slotRefLabel {
+    position: absolute;
+    left: 6px;
+    bottom: 6px;
+    font-size: 9px;
+    font-family: var(--font-mono);
+    color: var(--text-2);
+    background: rgba(0, 0, 0, 0.5);
+    padding: 2px 6px;
+    border-radius: 999px;
+    max-width: calc(100% - 12px);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    pointer-events: none;
+  }
+
+  /* slotPrev — image preview box, attaches zoom/drag listeners via JS */
+  .slotPrev {
+    width: 100%;
+    height: 200px;
+    border-radius: var(--r-md);
+    border: 1px solid var(--line);
+    background: var(--inset);
+    overflow: hidden;
+    position: relative;
+  }
+  .slotPrev img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    transform-origin: center center;
+    transition: transform 0.3s ease;
+    display: block;
+    cursor: grab;
+  }
+  .slotPrev img:active { cursor: grabbing; }
+
+  /* Rule-of-thirds overlay on every slot preview */
+  .slotPrev::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 700;
+    background-image:
+      linear-gradient(to right, rgba(255,255,255,.18), rgba(255,255,255,.18)),
+      linear-gradient(to right, rgba(255,255,255,.18), rgba(255,255,255,.18)),
+      linear-gradient(to bottom, rgba(255,255,255,.18), rgba(255,255,255,.18)),
+      linear-gradient(to bottom, rgba(255,255,255,.18), rgba(255,255,255,.18));
+    background-size: 1px 100%, 1px 100%, 100% 1px, 100% 1px;
+    background-position: 33.333% 0, 66.666% 0, 0 33.333%, 0 66.666%;
+    background-repeat: no-repeat;
+  }
+
+  .slotPrev.success-border {
+    border: 2px solid var(--ok) !important;
+    box-shadow: 0 0 0 1px rgba(110, 232, 149, 0.18);
+  }
+
+  .slotRefEmpty {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    color: var(--muted);
+    text-align: center;
+    font-family: var(--font-mono);
+  }
+
+  /* "Working" pulse */
+  .working-box {
+    border: 1px solid var(--warn) !important;
+    box-shadow: 0 0 0 1px rgba(255, 209, 102, 0.18);
+    animation: pulse 1.5s infinite;
+  }
+  .working-card {
+    border: 1px solid var(--warn) !important;
+    transition: all 0.3s ease;
+  }
+  @keyframes pulse {
+    0% { opacity: 0.78; }
+    50% { opacity: 1; }
+    100% { opacity: 0.78; }
+  }
+
+  /* ---------- Charm card (created by createCharmCardHTML) ---------- */
+  .charm-card {
+    background: var(--card-2);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    padding: 14px;
+    grid-column: span 2;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+    transition: border-color 160ms ease;
+  }
+  .charm-card:hover { border-color: var(--line-2); }
+
+  .charm-card-title {
+    grid-column: span 2;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text);
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 10px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+  }
+  .charm-card-title button { font-size: 10px !important; padding: 4px 8px !important; }
+
+  .charm-col {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .charm-col .muted {
+    margin-bottom: 0;
+    font-family: var(--font-mono);
+    font-size: 10px;
+  }
+
+  /* ---------- Spinner ---------- */
+  .spinner {
+    width: 22px;
+    height: 22px;
+    border: 2px solid rgba(255, 255, 255, 0.1);
+    border-radius: 50%;
+    border-top-color: var(--ok);
+    animation: spin 1s ease-in-out infinite;
+    margin: 0 auto 8px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .spinner-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+    color: var(--warn);
+    font-size: 11px;
+    font-family: var(--font-mono);
+  }
+
+  /* ---------- Helper / decorative classes for new shell pieces ---------- */
+  .lede {
+    color: var(--text-2);
+    font-size: 13px;
+    line-height: 1.55;
+    margin: 0 0 18px;
+  }
+  .field-label {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin: 14px 0 6px;
+    font-weight: 500;
+  }
+  .group {
+    margin-top: 22px;
+    padding-top: 18px;
+    border-top: 1px solid var(--line);
+  }
+  .group:first-child {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: none;
+  }
+  .group-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 12px;
+  }
+  .group-head h3 {
+    font-family: var(--font-ui);
+    font-style: normal;
+    font-weight: 600;
+    font-size: 14px;
+    margin: 0;
+    letter-spacing: -0.005em;
+    color: var(--text);
+  }
+  .group-head .count {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .hint {
+    padding: 10px 12px;
+    background: var(--inset);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent-line);
+    border-radius: var(--r-sm);
+    font-size: 12px;
+    line-height: 1.55;
+    color: var(--text-2);
+    margin-bottom: 12px;
+  }
+  .hint strong { color: var(--text); font-weight: 500; }
+  .hint code {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--accent);
+    background: var(--accent-bg);
+    padding: 1px 5px;
+    border-radius: 4px;
+  }
+
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--muted);
+    background: var(--inset);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 4px 10px;
+  }
+
+  /* Action bar (Approve / Delete) — wraps original buttons with new look */
+  .action-bar {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-top: 12px;
+  }
+  .action-bar .btn { width: 100%; }
+
+  /* Counter row (Completed / Permanent) */
+  .counter-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 14px;
+    background: var(--inset);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    margin-top: 10px;
+  }
+  .counter-row.permanent {
+    border-style: dashed;
+    border-color: var(--line-2);
+  }
+  .counter-row .counter-label {
+    font-size: 11px;
+    color: var(--muted);
+    font-family: var(--font-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 2px;
+  }
+  .counter-row .counter-value {
+    font-size: 14px;
+    color: var(--text);
+    font-weight: 500;
+  }
+  .counter-row .counter-value span {
+    font-family: var(--font-mono);
+    font-size: 18px;
+    color: var(--ok);
+    font-weight: 500;
+    margin-left: 6px;
+  }
+  .counter-row.permanent .counter-value span { color: var(--accent); }
+
+  /* Approved-tab header strip (top of right card) */
+  #approvedSetsHeader {
+    padding: 12px 14px;
+    background: var(--inset);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    margin-bottom: 16px !important;
+  }
+  #approvedSetsCounter {
+    background: transparent !important;
+    border: none !important;
+    padding: 0 !important;
+    color: var(--text) !important;
+    font-size: 13px !important;
+    font-weight: 500 !important;
+  }
+  #approvedSetsCounter span { color: var(--ok); font-family: var(--font-mono); }
+
+  /* Pagination row */
+  #charmPagination, #approvedCharmPagination {
+    padding: 10px 14px !important;
+    background: var(--inset) !important;
+    border: 1px solid var(--line) !important;
+    border-radius: var(--r-md) !important;
+    margin-top: 16px !important;
+  }
+  #charmPageInfo, #approvedPageInfo {
+    font-family: var(--font-mono) !important;
+    font-size: 11px !important;
+  }
+
+  /* Background queue status (small ticker) */
+  #backgroundQueueStatus {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 10px;
+    padding: 6px 10px;
+    background: var(--inset);
+    border-radius: var(--r-sm);
+    min-height: 22px;
+  }
+  #backgroundQueueStatus:empty {
+    background: transparent;
+    padding: 0;
+    min-height: 0;
+  }
+
+  /* New_Charms count badge inside the Charm Maker preview header */
+  #newCharmsTotalCount {
+    background: var(--ok-bg) !important;
+    color: var(--ok) !important;
+    border: 1px solid var(--ok-line) !important;
+    padding: 4px 10px !important;
+    font-family: var(--font-mono) !important;
+    font-size: 11px !important;
+    font-weight: 500 !important;
+    border-radius: 999px !important;
+  }
+
+  /* Charm Maker generate button (original sets explicit inline colors) */
+  /* The original JS injects spinner HTML inside the button when running.
+     We only restyle the resting state via class — inline styles still win. */
+
+  /* Approve / Delete inline-color buttons in Review:
+     The original sets explicit inline colors (#1f4026 / #3d1c1c). We respect
+     those but make them slightly polished with consistent radius/font. */
+
+  /* Generic improvement to ALL inputs/selects nested in JS-rendered drop panels */
+  .drop label { margin: 0 !important; padding: 0 !important; }
+
+  /* Hide the original muted note inside generate panel that says "Inputs come..." — we replace it with a hint block below */
+
+  /* Visualize active inline-style backgrounds for tabs nicer:
+     when JS sets inline `background: var(--line)`, our --line is a translucent
+     overlay that shows beautifully on top of the card background. */
+
+  /* Color-class helpers for the action buttons (used inside the new layout) */
+  .btn-primary {
+    background: var(--accent) !important;
+    border-color: var(--accent) !important;
+    color: #0a1426 !important;
+    font-weight: 600 !important;
+  }
+  .btn-primary:hover {
+    background: #8bbaff !important;
+    border-color: #8bbaff !important;
+  }
+
+  /* ============================================================
+     NEW MOCKUP-FEATURE STYLES
+     ============================================================ */
+
+  /* ---------- Persistent pipeline status bar ---------- */
+  .pipeline-bar {
+    display: flex;
+    align-items: center;
+    gap: 32px;
+    padding: 12px 22px;
+    background: var(--card);
+    border-bottom: 1px solid var(--line);
+    overflow-x: auto;
+    flex-wrap: wrap;
+  }
+  .pipeline-lane {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+  .pipeline-lane .lane-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-right: 4px;
+    flex-shrink: 0;
+  }
+  .lane-stage {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    padding: 4px 12px;
+    background: var(--inset);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+  }
+  .lane-stage .num {
+    font-family: var(--font-mono);
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text);
+    min-width: 16px;
+    text-align: center;
+  }
+  .lane-stage .lbl {
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .lane-arrow {
+    color: var(--dim);
+    font-size: 12px;
+    flex-shrink: 0;
+  }
+  .lane-stage.warn .num { color: var(--warn); }
+  .lane-stage.buffer .num { color: #c5a8ff; }
+  .lane-stage.ok .num { color: var(--ok); }
+
+  /* ---------- Slot legend (Charm Maker / Approved) ---------- */
+  .slot-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 18px;
+    padding: 10px 14px;
+    background: var(--inset);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    margin-bottom: 14px;
+    font-size: 11px;
+    color: var(--text-2);
+  }
+  .slot-legend .legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--font-ui);
+  }
+  .slot-legend .legend-num {
+    width: 18px; height: 18px;
+    border-radius: 50%;
+    background: var(--card-2);
+    border: 1px solid var(--line-2);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text);
+  }
+
+  /* ---------- Approved-tab filter panel ---------- */
+  #approvedFilterPanel {
+    margin-bottom: 16px;
+    padding: 16px;
+    background: var(--inset);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+  }
+  .archive-source {
+    padding: 10px 12px;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--ok-line);
+    border-radius: var(--r-sm);
+    margin-bottom: 14px;
+  }
+  .archive-source-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    font-weight: 500;
+    margin-bottom: 4px;
+    font-family: var(--font-mono);
+  }
+  .archive-source-path {
+    font-size: 12px;
+    color: var(--text);
+    font-family: var(--font-mono);
+  }
+
+  /* Filter chips */
+  .chip-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .chip {
+    padding: 6px 12px;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    font-family: var(--font-ui);
+    font-size: 12px;
+    color: var(--muted);
+    cursor: pointer;
+    transition: all 120ms ease;
+  }
+  .chip:hover { border-color: var(--line-2); color: var(--text-2); }
+  .chip.active {
+    background: var(--accent-bg);
+    border-color: var(--accent-line);
+    color: var(--accent);
+  }
+
+  /* Selection bar */
+  .selection-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-top: 14px;
+    padding: 10px 12px;
+    background: var(--card);
+    border: 1px solid var(--line-2);
+    border-radius: var(--r-sm);
+  }
+  .sel-counts {
+    font-size: 12px;
+    color: var(--text-2);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .sel-num {
+    font-family: var(--font-mono);
+    font-size: 16px;
+    font-weight: 500;
+    color: var(--accent);
+    min-width: 18px;
+    display: inline-block;
+    text-align: center;
+  }
+  .sel-divider { color: var(--dim); font-family: var(--font-mono); }
+  .mono { font-family: var(--font-mono); }
+
+  /* Selected card visual */
+  .charm-card.selected {
+    border-color: var(--accent) !important;
+    background: rgba(111, 168, 255, 0.05);
+  }
+  .charm-card.selected .charm-card-title::before {
+    content: "✓";
+    color: var(--accent);
+    font-weight: 700;
+    margin-right: 6px;
+  }
+
+  /* Click affordance on Approved tab cards */
+  #approvedCharmGrid .charm-card {
+    cursor: pointer;
+  }
+  #approvedCharmGrid .charm-card .slotPrev {
+    cursor: grab;
+  }
+
+  /* ---------- Asset gallery modal ---------- */
+  .modal-backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(5, 7, 12, 0.78);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    z-index: 1000;
+    align-items: center;
+    justify-content: center;
+    padding: 32px;
+  }
+  .modal-backdrop.open { display: flex; }
+  .modal {
+    width: 100%;
+    max-width: 1000px;
+    max-height: calc(100vh - 64px);
+    background: var(--card);
+    border: 1px solid var(--line-2);
+    border-radius: var(--r-lg);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .modal-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--line);
+  }
+  .modal-head h3 {
+    font-family: var(--font-ui);
+    font-style: normal;
+    font-weight: 600;
+    font-size: 17px;
+    margin: 0;
+    letter-spacing: -0.01em;
+  }
+  .modal-head p {
+    margin: 2px 0 0;
+    font-size: 11px;
+    color: var(--muted);
+    font-family: var(--font-mono);
+  }
+  .modal-close {
+    background: transparent;
+    border: 1px solid var(--line);
+    color: var(--muted);
+    width: 32px; height: 32px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 120ms ease;
+  }
+  .modal-close:hover { color: var(--text); border-color: var(--line-2); }
+  .modal-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 18px 20px;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 12px;
+  }
+  .modal-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 14px 20px;
+    border-top: 1px solid var(--line);
+    background: var(--inset);
+  }
+  .thumb {
+    position: relative;
+    background: var(--inset);
+    border: 1px solid var(--line);
+    border-radius: var(--r-sm);
+    overflow: hidden;
+    transition: border-color 120ms ease;
+  }
+  .thumb:hover { border-color: var(--line-2); }
+  .thumb-img {
+    aspect-ratio: 1;
+    background: #0a0c14;
+    overflow: hidden;
+    position: relative;
+  }
+  .thumb-img img {
+    width: 100%; height: 100%;
+    object-fit: contain;
+    display: block;
+  }
+  .thumb-name {
+    padding: 6px 10px;
+    font-size: 10px;
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    border-top: 1px solid var(--line);
+  }
+  .thumb-delete {
+    position: absolute;
+    top: 6px; right: 6px;
+    width: 22px; height: 22px;
+    padding: 0 !important;
+    border-radius: 6px !important;
+    background: rgba(255, 107, 129, 0.85) !important;
+    border: 1px solid rgba(255, 107, 129, 0.95) !important;
+    color: #fff !important;
+    font-size: 14px !important;
+    line-height: 1 !important;
+    opacity: 0;
+    transition: opacity 120ms ease;
+    cursor: pointer;
+  }
+  .thumb:hover .thumb-delete { opacity: 1; }
+
+  /* Hint that drop panels are clickable */
+  .drop {
+    cursor: pointer;
+  }
+  .drop:hover strong { color: var(--accent); }
+
+  /* ---------- Approved tab: sub-tabs ---------- */
+  .approved-subtabs {
+    display: flex;
+    gap: 4px;
+    padding: 4px;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    margin-bottom: 14px;
+    width: max-content;
+  }
+  .approved-subtab {
+    background: transparent;
+    border: none;
+    padding: 8px 16px;
+    border-radius: var(--r-sm);
+    color: var(--muted);
+    font-family: var(--font-ui);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 120ms ease;
+  }
+  .approved-subtab:hover { color: var(--text-2); }
+  .approved-subtab.active {
+    background: var(--line);
+    color: var(--text);
+  }
+  .approved-subtab .subtab-count {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    background: var(--inset);
+    border: 1px solid var(--line);
+    color: var(--muted);
+    padding: 1px 6px;
+    border-radius: 999px;
+    min-width: 24px;
+    text-align: center;
+  }
+  .approved-subtab.active .subtab-count {
+    background: var(--accent-bg);
+    border-color: var(--accent-line);
+    color: var(--accent);
+  }
+
+  /* Category chip count badge */
+  .cat-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .cat-chip .cat-count {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    color: var(--dim);
+    background: var(--inset);
+    padding: 1px 5px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+  }
+  .cat-chip.active .cat-count {
+    color: var(--accent);
+    border-color: var(--accent-line);
+    background: var(--accent-bg);
+  }
+  .cat-chip:not(.active) {
+    opacity: 0.55;
+  }
+  .cat-chip:not(.active):hover { opacity: 0.85; }
+
+  /* Date range inputs */
+  .date-row input[type="date"] {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color-scheme: dark;
+    padding: 8px 10px;
+  }
+  .date-row input[type="date"]::-webkit-calendar-picker-indicator {
+    filter: invert(0.7);
+    cursor: pointer;
+  }
+
+  /* ---------- Approved listings card ---------- */
+  .approved-listings-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px;
+  }
+  @media (max-width: 1400px) {
+    .approved-listings-grid { grid-template-columns: repeat(2, 1fr) !important; }
+  }
+  @media (max-width: 1100px) {
+    .approved-listings-grid { grid-template-columns: 1fr !important; }
+  }
+  .approved-listing-card {
+    position: relative;
+    background: var(--card-2);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    padding: 12px;
+    cursor: pointer;
+    transition: border-color 160ms ease, background 160ms ease;
+  }
+  .approved-listing-card:hover { border-color: var(--line-2); }
+  .approved-listing-card.selected {
+    border-color: var(--accent);
+    background: rgba(111, 168, 255, 0.05);
+  }
+  .approved-listing-card.selected::before {
+    content: "✓";
+    position: absolute;
+    top: 8px; right: 8px;
+    width: 22px; height: 22px;
+    background: var(--accent);
+    color: #0a1426;
+    font-weight: 700;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    z-index: 5;
+  }
+  .approved-listing-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 10px;
+    gap: 8px;
+  }
+  .al-name {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .al-cat-badge {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    color: var(--muted);
+    background: var(--inset);
+    border: 1px solid var(--line);
+    padding: 2px 6px;
+    border-radius: 999px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    flex-shrink: 0;
+  }
+  .approved-listing-strip {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 4px;
+    margin-bottom: 8px;
+  }
+  .al-thumb {
+    aspect-ratio: 1;
+    height: auto !important;
+    border-radius: var(--r-sm);
+    border: 1px solid var(--line);
+    background: var(--inset);
+    overflow: hidden;
+    position: relative;
+  }
+  .al-thumb img {
+    width: 100%; height: 100%;
+    object-fit: contain;
+  }
+  .al-meta {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--muted);
+  }
+</style>
 </head>
-
 <body>
+
+  <!-- ====================== APP HEADER ====================== -->
+  <header class="app-header">
+    <div class="brand">
+      <span class="brand-mark"><em>Listing</em>-Generator-1</span>
+      <span class="brand-tag">v2 hybrid</span>
+    </div>
+    <div class="header-meta">
+      <span><span class="dot">●</span> gokudatabase.firebasestorage.app</span>
+      <span>auth: anonymous</span>
+      <span>model: gemini-3.1-flash-image-preview</span>
+    </div>
+  </header>
+
+  <!-- ====================== TAB NAV (preserves original IDs) ====================== -->
+  <div class="tabnav-wrap">
+    <div class="tabnav" role="tablist">
+      <button class="btn" id="toggleGenerate" style="flex:1; background: var(--line); border:none; color: var(--text);">Generate</button>
+      <button class="btn" id="toggleReview" style="flex:1; background: transparent; border:none; color: var(--muted);">Review</button>
+      <button class="btn" id="toggleCharmMaker" style="flex:1; background: transparent; border:none; color: var(--muted);">Charm Maker</button>
+      <button class="btn" id="toggleApprovedCharms" style="flex:1; background: transparent; border:none; color: var(--muted);">Approved Sets</button>
+    </div>
+  </div>
+
+  <!-- ====================== PERSISTENT PIPELINE STATUS BAR ====================== -->
+  <div class="pipeline-bar">
+    <div class="pipeline-lane">
+      <span class="lane-label">Listings</span>
+      <div class="lane-stage warn"><span class="num" id="pipelinePending">—</span><span class="lbl">pending</span></div>
+      <span class="lane-arrow">→</span>
+      <div class="lane-stage buffer"><span class="num" id="pipelineBuffer">—</span><span class="lbl">buffer</span></div>
+      <span class="lane-arrow">→</span>
+      <div class="lane-stage ok"><span class="num" id="pipelineArchive">—</span><span class="lbl">archive</span></div>
+    </div>
+    <div class="pipeline-lane">
+      <span class="lane-label">Charms</span>
+      <div class="lane-stage warn"><span class="num" id="pipelineCharmPending">—</span><span class="lbl">awaiting</span></div>
+      <span class="lane-arrow">→</span>
+      <div class="lane-stage ok"><span class="num" id="pipelineCharmArchive">—</span><span class="lbl">archived</span></div>
+    </div>
+    <div class="pipeline-lane" style="margin-left: auto;">
+      <span class="lane-label" id="pipelineLastUpdate" style="color: var(--dim);">refreshing…</span>
+    </div>
+  </div>
+
+  <!-- ====================== MAIN TWO-PANEL LAYOUT ====================== -->
   <div class="wrap">
+
+    <!-- ============== LEFT CARD: section controls ============== -->
     <div class="card">
-      <h1>Listing-Generator-1</h1>
 
-      <div class="row" style="margin-bottom: 14px; background: #0e1220; padding: 4px; border-radius: 12px; border: 1px solid var(--line);">
-        <button class="btn" id="toggleGenerate" style="flex:1; background: var(--line); border:none; color: var(--text);">Generate</button>
-        <button class="btn" id="toggleReview" style="flex:1; background: transparent; border:none; color: var(--muted);">Review</button>
-        <button class="btn" id="toggleCharmMaker" style="flex:1; background: transparent; border:none; color: var(--muted);">Charm Maker</button>
-        <button class="btn" id="toggleApprovedCharms" style="flex:1; background: transparent; border:none; color: var(--muted);">Approved Sets</button>
-      </div>
-      
+      <!-- ===== GENERATE SECTION ===== -->
       <div id="generateSection">
-        <div class="muted">Pick a category, upload assets into the right folders, then click Generate Set.</div>
+        <h1>Generate</h1>
+        <p class="lede">Pick a category, drop assets into the matching folders, then trigger a randomized set generation.</p>
 
-        <label>Category (Storage source of truth)</label>
-        <select id="activeCategory"></select>
-        <div class="muted" style="margin-top:6px;">
-          Inputs come from Firebase Storage folders under <code>listing-generator-1/{Category}/...</code>.
-          <br>
-          <strong>Note:</strong> Stud/Hoop Earrings use <code>Charm_Maker/New_Charms_Earrings</code>. Others use <code>Charm_Maker/New_Charms</code>.
-        </div>
+        <div class="group">
+          <div class="group-head">
+            <h3>Category</h3>
+            <span class="count">storage source of truth</span>
+          </div>
 
-        <div class="row" style="margin-top:10px;">
-          <button class="btn" id="generateSet">Generate Set (Randomized Refs)</button>
-        </div>
+          <label>Category</label>
+          <select id="activeCategory"></select>
 
-        <label style="margin-top:12px;">Category Asset Manager (Drag & Drop)</label>
-        <div id="panels"></div>
+          <div class="hint" style="margin-top: 12px;">
+            <strong>Earring categories use a different shared pool.</strong><br>
+            Stud / Hoop Earrings pull charm refs from <code>Charm_Maker/New_Charms_Earrings</code>.
+            All other categories use <code>Charm_Maker/New_Charms</code>.
+          </div>
 
-        <label style="margin-top:12px;">Shared Pool (Autoselected based on category)</label>
-        <div id="panelNewCharms"></div>
-      </div>
-
-        <div id="reviewSection" style="display: none;">
-        <label style="margin-top:12px;">Category</label>
-        <select id="reviewCategory"></select>
-
-        <label style="margin-top:12px;">Select Set to Review</label>
-        <div class="row">
-          <select id="reviewSetSelect"></select>
-        </div>
-        
-        <div class="row" style="margin-top:10px;">
-           <button class="btn" id="approveSetBtn" style="width:100%; background: #1f4026; color: #7fdb96; border: 1px solid #2f5e3a;">Approve Set (Move to Completed)</button>
-        </div>
-        
-        <div class="row" style="margin-top:10px;">
-           <button class="btn" id="deleteSetBtn" style="width:100%; background: #3d1c1c; color: #fca5a5; border: 1px solid #7a3838;">Delete Set</button>
-        </div>
-        
-        <div class="row" style="margin-top: 10px; justify-content: space-between; align-items: center; background: #0e1220; padding: 10px; border-radius: 12px; border: 1px solid var(--line);">
-           <div id="completedSetsCounter" style="font-size: 13px; color: #7fdb96;">
-             Completed Sets Available: <span style="font-weight: bold; font-size: 15px;">0</span>
-           </div>
-           <button class="btn" id="downloadCompletedSetsBtn" style="background: #2b6cff; color: #fff; border: 1px solid #1a4bbf; font-weight: bold; font-size: 12px; padding: 6px 12px;">Download Sets (ZIP)</button>
-        </div>
-
-        <div class="row" style="margin-top: 8px; justify-content: space-between; align-items: center; background: #0b0d12; padding: 10px; border-radius: 12px; border: 1px dashed #3a4262;">
-           <div>
-               <div style="font-size: 12px; color: var(--muted);">Permanent Storage:</div>
-               <div id="totalAllTimeCounter" style="font-size: 13px; color: #a5b4fc; font-weight: bold;">
-                 Total Approved (All Time): <span>0</span>
-               </div>
-           </div>
-           <button class="btn" id="downloadPermanentSetsBtn" style="background: #3a4262; color: #fff; border: 1px dashed #5c6792; font-weight: bold; font-size: 12px; padding: 6px 12px;">Download All (ZIP)</button>
-        </div>
-        
-        <div style="margin-top: 8px; font-size: 11px; color: var(--muted);" id="backgroundQueueStatus"></div>
-      </div> 
-      
-      <div id="charmMakerSection" style="display: none;">
-        <div class="row" style="margin-top:12px; gap: 14px;">
-          <div style="flex:1;">
-            <label style="display: flex; justify-content: space-between; align-items: center;">
-              New_Charms (Next Available)
-              <span id="newCharmsTotalCount" style="color: #7fdb96; font-weight: bold; background: #1f4026; padding: 4px 8px; border-radius: 6px; border: 1px solid #2f5e3a;">Count: Loading...</span>
-            </label>
-            <div class="slotPrev" id="previewNewCharms" style="height: 380px;"><div class="slotRefEmpty">Loading...</div></div>
+          <div class="row" style="margin-top: 14px;">
+            <button class="btn btn-primary" id="generateSet" style="width:100%;">Generate Set (Randomized Refs)</button>
           </div>
         </div>
 
-        <div class="row" style="margin-top:14px;">
-          <button class="btn" id="executeCharmGenBtn" style="width:100%; background: #1f4026; color: #7fdb96; border: 1px solid #2f5e3a;">Generate Charms</button>
+        <div class="group">
+          <div class="group-head">
+            <h3>Category asset manager</h3>
+            <span class="count">drag &amp; drop · click to upload</span>
+          </div>
+          <p class="muted" style="margin: -4px 0 12px;">Auto-updates as the category changes.</p>
+          <div id="panels"></div>
         </div>
 
-        <div class="row" style="margin-top:14px; gap:14px;">
-           <div style="flex:1; background: #0e1220; padding: 12px; border-radius: 12px; border: 1px solid var(--line);">
-              <label style="margin-top:0;">Amount of Charm images to process simultaneously:</label>
-              <div class="row" style="margin-top:8px;">
-                 <select id="batchProcessCount" style="width: 80px;">
-                    <option value="1">1</option>
-                    <option value="2">2</option>
-                    <option value="3">3</option>
-                    <option value="4">4</option>
-                    <option value="5">5</option>
-                 </select>
-                 <input type="number" id="batchProcessCountInput" value="1" min="1" style="flex:1;" placeholder="Count...">
-              </div>
-           </div>
-           
-           <div style="flex:1; background: #0e1220; padding: 12px; border-radius: 12px; border: 1px solid var(--line);">
-              <label style="margin-top:0;">Derivatives per Charm (Times same charm is used):</label>
-              <div class="row" style="margin-top:8px;">
-                 <select id="derivativesPerCharm" style="width: 80px;">
-                    <option value="1">1</option>
-                    <option value="2">2</option>
-                    <option value="3">3</option>
-                    <option value="4">4</option>
-                    <option value="5">5</option>
-                 </select>
-                 <input type="number" id="derivativesPerCharmInput" value="1" min="1" style="flex:1;" placeholder="Count...">
-              </div>
-           </div>
+        <div class="group">
+          <div class="group-head">
+            <h3>Shared charm pool</h3>
+            <span class="count">auto-selected by category</span>
+          </div>
+          <div id="panelNewCharms"></div>
         </div>
-
-      </div> 
-    </div> 
-    
-    <div class="card">
-      <div class="row" style="justify-content:space-between; align-items:center;">
-        <h1 style="margin:0;" id="mainGridTitle">Generated set</h1>
-        <div class="muted" id="status">Idle</div>
       </div>
-      
-      <div id="approvedSetsHeader" style="display: none; justify-content: space-between; align-items: center; margin-top: 10px; margin-bottom: 10px;">
-        <div id="approvedSetsCounter" style="font-size: 13px; color: #7fdb96; background: #1f4026; padding: 8px 12px; border-radius: 8px; border: 1px solid #2f5e3a; width: max-content;">
+
+      <!-- ===== REVIEW SECTION ===== -->
+      <div id="reviewSection" style="display: none;">
+        <h1>Review</h1>
+        <p class="lede">Approve or delete pending sets. Approving moves a set into the buffer. Use Download Sets to flush the buffer to the permanent archive.</p>
+
+        <div class="group">
+          <div class="group-head">
+            <h3>Queue</h3>
+            <span class="count">listings pipeline</span>
+          </div>
+
+          <label>Category</label>
+          <select id="reviewCategory"></select>
+
+          <label style="margin-top: 12px;">Select set to review</label>
+          <div class="row">
+            <select id="reviewSetSelect"></select>
+          </div>
+
+          <div class="action-bar">
+            <button class="btn" id="approveSetBtn" style="background: #1f4026; color: #7fdb96; border: 1px solid #2f5e3a;">Approve set →</button>
+            <button class="btn" id="deleteSetBtn" style="background: #3d1c1c; color: #fca5a5; border: 1px solid #7a3838;">Delete set</button>
+          </div>
+        </div>
+
+        <div class="group">
+          <div class="group-head">
+            <h3>Downloads</h3>
+            <span class="count">two-stage flush</span>
+          </div>
+
+          <div class="counter-row">
+            <div>
+              <div class="counter-label">Approved buffer</div>
+              <div class="counter-value" id="completedSetsCounter">
+                Completed Sets Available: <span style="font-weight: bold; font-size: 15px;">0</span>
+              </div>
+              <div class="muted" style="margin-top: 4px; font-size: 11px;">→ moves files to <code>Approved_Listing_Sets</code> on download</div>
+            </div>
+            <button class="btn" id="downloadCompletedSetsBtn" style="background: #2b6cff; color: #fff; border: 1px solid #1a4bbf; font-weight: bold; font-size: 12px; padding: 8px 14px;">Download Sets (ZIP)</button>
+          </div>
+
+          <div class="counter-row permanent">
+            <div>
+              <div class="counter-label">Permanent storage</div>
+              <div class="counter-value" id="totalAllTimeCounter">
+                Total Approved (All Time): <span>0</span>
+              </div>
+              <div class="muted" style="margin-top: 4px; font-size: 11px;">read-only · <code>Approved_Listing_Sets</code></div>
+            </div>
+            <button class="btn" id="downloadPermanentSetsBtn" style="background: #3a4262; color: #fff; border: 1px dashed #5c6792; font-weight: bold; font-size: 12px; padding: 8px 14px;">Download All (ZIP)</button>
+          </div>
+
+          <div id="backgroundQueueStatus"></div>
+        </div>
+      </div>
+
+      <!-- ===== CHARM MAKER SECTION ===== -->
+      <div id="charmMakerSection" style="display: none;">
+        <h1>Charm Maker</h1>
+        <p class="lede">For each reference charm in <code style="font-family: var(--font-mono); font-size: 11px;">New_Charms</code>, Gemini produces a 4-image quad: color charm, color earring, B&amp;W charm, B&amp;W earring. Approve the base before slots 2–4 are derived.</p>
+
+        <div class="group">
+          <div class="group-head">
+            <h3>Master pool</h3>
+            <span class="count">next available preview</span>
+          </div>
+
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+            <label style="margin: 0;">New_Charms · next available</label>
+            <span id="newCharmsTotalCount">Count: Loading...</span>
+          </div>
+          <div class="slotPrev" id="previewNewCharms" style="height: 380px;"><div class="slotRefEmpty">Loading...</div></div>
+
+          <div class="row" style="margin-top: 14px;">
+            <button class="btn btn-primary" id="executeCharmGenBtn" style="width:100%;">Generate charms</button>
+          </div>
+        </div>
+
+        <div class="group">
+          <div class="group-head">
+            <h3>Generation settings</h3>
+            <span class="count">applies to both pools</span>
+          </div>
+
+          <div class="row" style="gap: 12px; align-items: flex-start;">
+            <div style="flex:1; background: var(--inset); padding: 12px; border-radius: var(--r-md); border: 1px solid var(--line);">
+              <label style="margin-top: 0;">Charms to process simultaneously</label>
+              <div class="row" style="margin-top: 8px;">
+                <select id="batchProcessCount" style="width: 80px;">
+                  <option value="1">1</option>
+                  <option value="2">2</option>
+                  <option value="3">3</option>
+                  <option value="4">4</option>
+                  <option value="5">5</option>
+                </select>
+                <input type="number" id="batchProcessCountInput" value="1" min="1" style="flex:1;" placeholder="Count...">
+              </div>
+            </div>
+
+            <div style="flex:1; background: var(--inset); padding: 12px; border-radius: var(--r-md); border: 1px solid var(--line);">
+              <label style="margin-top: 0;">Derivatives per charm</label>
+              <div class="row" style="margin-top: 8px;">
+                <select id="derivativesPerCharm" style="width: 80px;">
+                  <option value="1">1</option>
+                  <option value="2">2</option>
+                  <option value="3">3</option>
+                  <option value="4">4</option>
+                  <option value="5">5</option>
+                </select>
+                <input type="number" id="derivativesPerCharmInput" value="1" min="1" style="flex:1;" placeholder="Count...">
+              </div>
+            </div>
+          </div>
+
+          <div class="hint" style="margin-top: 14px;">
+            <strong>Two-stage flow:</strong> Slot 1 (color charm base) generates first. Workflow pauses until you click <strong>Approve Base &amp; Continue</strong> on the card on the right. Then slots 2 (color earring), 3 (B&amp;W charm), 4 (B&amp;W earring) derive from the approved base.
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+
+    <!-- ============== RIGHT CARD: grids and output ============== -->
+    <div class="card">
+      <div class="right-head">
+        <h1 id="mainGridTitle">Generated set</h1>
+        <div id="status">Idle</div>
+      </div>
+
+      <!-- Approved-tab header strip (shown only on approvedCharms mode) -->
+      <div id="approvedSetsHeader" style="display: none; justify-content: space-between; align-items: center;">
+        <div id="approvedSetsCounter">
           Total Approved Sets: <span style="font-weight: bold; font-size: 15px;">0</span>
         </div>
         <button class="btn" id="downloadApprovedSetsBtn" style="background: #2b6cff; color: #fff; border: 1px solid #1a4bbf; font-weight: bold;">Download Sets (ZIP)</button>
       </div>
 
-      <div class="grid" id="generateGrid"></div>
-      <div class="grid" id="reviewGrid" style="display: none;"></div>
-      
-      <div class="grid" id="charmGrid" style="display: none;"></div>
-      <div class="grid" id="approvedCharmGrid" style="display: none;"></div>
-      
-      <div id="charmPagination" class="row" style="display: none; justify-content: space-between; align-items: center; margin-top: 14px; padding: 10px; background: #0e1220; border-radius: 12px; border: 1px solid var(--line);">
-          <button class="btn btnSmall" id="charmPrevPage" style="width: 80px;">Previous</button>
-          <div id="charmPageInfo" class="muted">Page 1</div>
-          <button class="btn btnSmall" id="charmNextPage" style="width: 80px;">Next</button>
+      <!-- Approved-tab filter panel: sub-tabs + meaningful filters -->
+      <div id="approvedFilterPanel" style="display: none;">
+
+        <!-- Sub-tabs: Listings / Charms -->
+        <div class="approved-subtabs" id="approvedSubTabs">
+          <button class="approved-subtab active" data-subtab="listings">
+            Listings <span class="subtab-count" id="approvedSubLstCount">—</span>
+          </button>
+          <button class="approved-subtab" data-subtab="charms">
+            Charms <span class="subtab-count" id="approvedSubChCount">—</span>
+          </button>
+        </div>
+
+        <!-- ============ LISTINGS sub-pane ============ -->
+        <div id="approvedSubListings">
+          <div class="archive-source">
+            <div class="archive-source-label">Source folder · read-only · downloads do not delete</div>
+            <div class="archive-source-path">listing-generator-1 / Generated_Listing_Sets / Approved_Listing_Sets</div>
+          </div>
+
+          <label class="field-label">Filter by category</label>
+          <div class="chip-row" id="approvedListCategories">
+            <button class="chip cat-chip active" data-cat="*">All <span class="cat-count" id="catCount-all">—</span></button>
+            <button class="chip cat-chip active" data-cat="Beady_Necklace">Beady necklaces <span class="cat-count" id="catCount-Beady_Necklace">—</span></button>
+            <button class="chip cat-chip active" data-cat="Regular_Necklace">Necklaces <span class="cat-count" id="catCount-Regular_Necklace">—</span></button>
+            <button class="chip cat-chip active" data-cat="Stud_Earrings">Stud earrings <span class="cat-count" id="catCount-Stud_Earrings">—</span></button>
+            <button class="chip cat-chip active" data-cat="Hoop_Earrings">Hoop earrings <span class="cat-count" id="catCount-Hoop_Earrings">—</span></button>
+            <button class="chip cat-chip active" data-cat="Charms">Charm sets <span class="cat-count" id="catCount-Charms">—</span></button>
+            <button class="chip cat-chip active" data-cat="Bracelets">Bracelets <span class="cat-count" id="catCount-Bracelets">—</span></button>
+          </div>
+
+          <label class="field-label" style="margin-top: 14px;">Sort &amp; pagination</label>
+          <div class="row" style="gap: 8px;">
+            <select id="approvedListSort" style="flex: 1;">
+              <option value="newest">Newest sets first (highest Set_N)</option>
+              <option value="oldest">Oldest sets first (lowest Set_N)</option>
+              <option value="category">Group by category, newest within</option>
+            </select>
+            <select id="approvedListPageSize" style="width: 130px;">
+              <option value="12">12 per page</option>
+              <option value="24" selected>24 per page</option>
+              <option value="48">48 per page</option>
+              <option value="96">96 per page</option>
+            </select>
+          </div>
+
+          <div class="selection-bar">
+            <div class="sel-counts">
+              <span class="sel-num" id="approvedListSelectedCount">0</span> selected
+              <span class="sel-divider">·</span>
+              <span class="mono" id="approvedListVisibleCount">0</span> match filter
+              <span class="sel-divider">·</span>
+              click cards to toggle
+            </div>
+            <div class="row" style="gap: 6px;">
+              <button class="btn btnSmall" id="approvedListSelectVisible">Select page</button>
+              <button class="btn btnSmall" id="approvedListClearSel">Clear</button>
+              <button class="btn btnSmall btn-primary" id="approvedListDownloadBtn" style="font-weight: 500;">Download</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- ============ CHARMS sub-pane ============ -->
+        <div id="approvedSubCharms" style="display: none;">
+          <div class="archive-source">
+            <div class="archive-source-label">Source folder · read-only · downloads do not delete</div>
+            <div class="archive-source-path">listing-generator-1 / Charm_Maker / Completed_Approved_Charm_Sets</div>
+          </div>
+
+          <label class="field-label">Quick date filters</label>
+          <div class="chip-row" id="approvedCharmPresets">
+            <button class="chip active" data-preset="all">All time</button>
+            <button class="chip" data-preset="today">Today</button>
+            <button class="chip" data-preset="week">This week</button>
+            <button class="chip" data-preset="month">This month</button>
+            <button class="chip" data-preset="latest10">Latest 10</button>
+            <button class="chip" data-preset="latest25">Latest 25</button>
+          </div>
+
+          <label class="field-label" style="margin-top: 14px;">Custom date range</label>
+          <div class="row date-row" style="gap: 8px; align-items: center;">
+            <input type="date" id="approvedCharmDateFrom" style="flex: 1;">
+            <span class="muted" style="font-size: 11px;">→</span>
+            <input type="date" id="approvedCharmDateTo" style="flex: 1;">
+            <button class="btn btnSmall" id="approvedCharmDateClear" style="width: auto;">Clear</button>
+          </div>
+
+          <label class="field-label" style="margin-top: 14px;">Sort &amp; pagination</label>
+          <div class="row" style="gap: 8px;">
+            <select id="approvedCharmSort" style="flex: 1;">
+              <option value="newest">Newest first</option>
+              <option value="oldest">Oldest first</option>
+            </select>
+            <select id="approvedCharmPageSize" style="width: 130px;">
+              <option value="12" selected>12 per page</option>
+              <option value="24">24 per page</option>
+              <option value="48">48 per page</option>
+              <option value="96">96 per page</option>
+            </select>
+          </div>
+
+          <div class="selection-bar">
+            <div class="sel-counts">
+              <span class="sel-num" id="approvedSelectedCount">0</span> selected
+              <span class="sel-divider">·</span>
+              <span class="mono" id="approvedVisibleCount">0</span> match filter
+              <span class="sel-divider">·</span>
+              click cards to toggle
+            </div>
+            <div class="row" style="gap: 6px;">
+              <button class="btn btnSmall" id="approvedSelectVisible">Select page</button>
+              <button class="btn btnSmall" id="approvedClearSel">Clear</button>
+            </div>
+          </div>
+        </div>
       </div>
 
-      <div id="approvedCharmPagination" class="row" style="display: none; justify-content: space-between; align-items: center; margin-top: 14px; padding: 10px; background: #0e1220; border-radius: 12px; border: 1px solid var(--line);">
-          <button class="btn btnSmall" id="approvedPrevPage" style="width: 80px;">Previous</button>
-          <div id="approvedPageInfo" class="muted">Page 1</div>
-          <button class="btn btnSmall" id="approvedNextPage" style="width: 80px;">Next</button>
+      <!-- Slot legend for charm previews (Charm Maker + Approved Charms tabs) -->
+      <div class="slot-legend" id="slotLegend" style="display: none;">
+        <span class="legend-item"><span class="legend-num">1</span>New_Charms derivation (color charm base)</span>
+        <span class="legend-item"><span class="legend-num">2</span>New_Charms_Earrings derivation (color earring)</span>
+        <span class="legend-item"><span class="legend-num">3</span>B&amp;W line art (standard)</span>
+        <span class="legend-item"><span class="legend-num">4</span>B&amp;W line art (earring)</span>
+      </div>
+
+      <!-- The four render grids the original JS writes into -->
+      <div class="grid" id="generateGrid"></div>
+      <div class="grid" id="reviewGrid" style="display: none;"></div>
+      <div class="grid" id="charmGrid" style="display: none;"></div>
+      <div class="grid" id="approvedCharmGrid" style="display: none;"></div>
+
+      <!-- NEW: Listings approved grid -->
+      <div class="grid approved-listings-grid" id="approvedListingsGrid" style="display: none; grid-template-columns: repeat(3, 1fr);"></div>
+
+      <!-- Pagination rows -->
+      <div id="charmPagination" class="row" style="display: none; justify-content: space-between; align-items: center;">
+        <button class="btn btnSmall" id="charmPrevPage" style="width: 80px;">Previous</button>
+        <div id="charmPageInfo" class="muted">Page 1</div>
+        <button class="btn btnSmall" id="charmNextPage" style="width: 80px;">Next</button>
+      </div>
+
+      <div id="approvedCharmPagination" class="row" style="display: none; justify-content: space-between; align-items: center;">
+        <button class="btn btnSmall" id="approvedPrevPage" style="width: 80px;">Previous</button>
+        <div id="approvedPageInfo" class="muted">Page 1</div>
+        <button class="btn btnSmall" id="approvedNextPage" style="width: 80px;">Next</button>
+      </div>
+
+      <!-- NEW: Listings pagination -->
+      <div id="approvedListingsPagination" class="row" style="display: none; justify-content: space-between; align-items: center;">
+        <button class="btn btnSmall" id="approvedListPrevPage" style="width: 80px;">Previous</button>
+        <div id="approvedListPageInfo" class="muted">Page 1</div>
+        <button class="btn btnSmall" id="approvedListNextPage" style="width: 80px;">Next</button>
       </div>
     </div>
-  </div> 
+
+  </div>
 
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
@@ -4102,6 +5459,1033 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
 
 
+    // =====================================================================
+    // ============= MOCKUP-FEATURE ENHANCEMENTS (additive) ================
+    // =====================================================================
+    // Appended at the end of the original module script so it has access
+    // to all module-scoped variables (storage, ref, listAll, getDownloadURL,
+    // deleteObject, uploadBytesResumable, ROOT, ensureStorageSignedIn,
+    // appMode, JSZip, getBytes, attachPreviewBoxListeners, setBoxImage,
+    // approvedSetsHistory, renderCharmPage, etc.). Does NOT modify any
+    // existing function — only extends behavior.
+    // =====================================================================
+
+    const _LISTING_CATEGORIES = ['Beady_Necklace','Regular_Necklace','Stud_Earrings','Hoop_Earrings','Charms','Bracelets'];
+
+    // ---------------------------------------------------------------------
+    // 1) PERSISTENT PIPELINE STATUS BAR
+    // ---------------------------------------------------------------------
+    let _pipelineRunning = false;
+    async function updatePipelineBar() {
+      if (_pipelineRunning) return;
+      _pipelineRunning = true;
+      try {
+        // Buffer count and archive count: read from existing counters
+        const bufferText = document.querySelector('#completedSetsCounter span')?.textContent?.trim() || '—';
+        const archiveText = document.querySelector('#totalAllTimeCounter span')?.textContent?.trim() || '—';
+        document.getElementById('pipelineBuffer').textContent = bufferText;
+        document.getElementById('pipelineArchive').textContent = archiveText;
+
+        // Pending listings: sum Ready_To_List set folders across all categories
+        try {
+          await ensureStorageSignedIn();
+          let pending = 0;
+          await Promise.all(_LISTING_CATEGORIES.map(async cat => {
+            try {
+              const r = ref(storage, `${ROOT}/${cat}/Ready_To_List`);
+              const res = await listAll(r);
+              pending += (res.prefixes || []).length;
+            } catch (_) {}
+          }));
+          document.getElementById('pipelinePending').textContent = pending;
+        } catch (_) {}
+
+        // Charm awaiting + archived
+        try {
+          const r1 = ref(storage, `${ROOT}/Charm_Maker/Generated_Charm_Sets`);
+          const res1 = await listAll(r1);
+          document.getElementById('pipelineCharmPending').textContent = (res1.prefixes || []).length;
+        } catch (_) { document.getElementById('pipelineCharmPending').textContent = '0'; }
+        try {
+          const r2 = ref(storage, `${ROOT}/Charm_Maker/Completed_Approved_Charm_Sets`);
+          const res2 = await listAll(r2);
+          document.getElementById('pipelineCharmArchive').textContent = (res2.prefixes || []).length;
+        } catch (_) { document.getElementById('pipelineCharmArchive').textContent = '0'; }
+
+        const now = new Date();
+        const t = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+        const lu = document.getElementById('pipelineLastUpdate');
+        if (lu) lu.textContent = `updated ${t}`;
+      } finally {
+        _pipelineRunning = false;
+      }
+    }
+
+    [toggleGenerateBtn, toggleReviewBtn, toggleCharmMakerBtn, toggleApprovedCharmsBtn].forEach(btn => {
+      btn.addEventListener('click', () => setTimeout(updatePipelineBar, 250));
+    });
+    setInterval(updatePipelineBar, 60000);
+    setTimeout(updatePipelineBar, 1500);
+
+    // ---------------------------------------------------------------------
+    // 2) ASSET GALLERY MODAL
+    // ---------------------------------------------------------------------
+    const _galleryModal = document.getElementById('galleryModal');
+    const _galleryBody  = document.getElementById('galleryBody');
+    const _galleryName  = document.getElementById('galleryFolderName');
+    const _galleryPath  = document.getElementById('galleryFolderPath');
+    const _galleryFooter= document.getElementById('galleryFooter');
+    let _galleryCurrentPath = '';
+    let _galleryCurrentTitle = '';
+
+    async function _openGallery(title, path) {
+      _galleryCurrentPath = path;
+      _galleryCurrentTitle = title;
+      _galleryName.textContent = title;
+      _galleryPath.textContent = path;
+      _galleryBody.innerHTML = '<div class="slotRefEmpty" style="grid-column: 1/-1; padding: 36px;">Loading files…</div>';
+      _galleryFooter.textContent = '…';
+      _galleryModal.classList.add('open');
+      _galleryModal.setAttribute('aria-hidden', 'false');
+
+      try {
+        await ensureStorageSignedIn();
+        const folderRef = ref(storage, path);
+        const res = await listAll(folderRef);
+        if (!res.items || res.items.length === 0) {
+          _galleryBody.innerHTML = '<div class="slotRefEmpty" style="grid-column: 1/-1; padding: 36px;">Empty folder · drop files using + Add files</div>';
+          _galleryFooter.textContent = '0 files';
+          return;
+        }
+        _galleryFooter.textContent = `${res.items.length} files`;
+
+        const sorted = [...res.items].sort((a, b) => b.name.localeCompare(a.name));
+        const records = await Promise.all(sorted.map(async (item) => {
+          try { return { name: item.name, url: await getDownloadURL(item), fullPath: item.fullPath }; }
+          catch { return { name: item.name, url: null, fullPath: item.fullPath }; }
+        }));
+
+        _galleryBody.innerHTML = records.map(r => `
+          <div class="thumb" data-path="${r.fullPath}">
+            <div class="thumb-img">${r.url ? `<img src="${r.url}" alt="${r.name}">` : '<div class="slotRefEmpty">!</div>'}</div>
+            <div class="thumb-name mono" title="${r.name}">${r.name}</div>
+            <button class="btn btnSmall thumb-delete" title="Delete this file">×</button>
+          </div>
+        `).join('');
+
+        _galleryBody.querySelectorAll('.thumb-delete').forEach(btn => {
+          btn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const thumb = btn.closest('.thumb');
+            const fp = thumb.dataset.path;
+            if (!confirm(`Delete ${fp.split('/').pop()}?\n\nThis is permanent and cannot be undone.`)) return;
+            try {
+              await deleteObject(ref(storage, fp));
+              thumb.remove();
+              const newCount = _galleryBody.querySelectorAll('.thumb').length;
+              _galleryFooter.textContent = `${newCount} file${newCount === 1 ? '' : 's'}`;
+              if (newCount === 0) {
+                _galleryBody.innerHTML = '<div class="slotRefEmpty" style="grid-column: 1/-1; padding: 36px;">Empty folder · drop files using + Add files</div>';
+              }
+              const panel = [...document.querySelectorAll('#panels .drop, #panelNewCharms .drop')].find(p => {
+                const c = p.querySelector('code'); return c && c.textContent.replace(/\/$/,'') === fp.split('/').slice(0,-1).join('/');
+              });
+              if (panel) {
+                const countEl = panel.querySelector('#count');
+                if (countEl) {
+                  try {
+                    const r2 = ref(storage, fp.split('/').slice(0,-1).join('/'));
+                    const res2 = await listAll(r2);
+                    countEl.textContent = `${res2.items.length} file(s)`;
+                  } catch (_) {}
+                }
+              }
+            } catch (e) {
+              alert('Delete failed: ' + (e?.message || e));
+            }
+          });
+        });
+      } catch (e) {
+        _galleryBody.innerHTML = `<div class="slotRefEmpty" style="grid-column: 1/-1; padding: 36px; color: #fca5a5;">Error: ${e?.message || e}</div>`;
+        _galleryFooter.textContent = '!';
+      }
+    }
+
+    function _closeGallery() {
+      _galleryModal.classList.remove('open');
+      _galleryModal.setAttribute('aria-hidden', 'true');
+    }
+
+    document.getElementById('galleryClose').addEventListener('click', _closeGallery);
+    _galleryModal.addEventListener('click', (e) => { if (e.target === _galleryModal) _closeGallery(); });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && _galleryModal.classList.contains('open')) _closeGallery();
+    });
+
+    document.getElementById('galleryRefreshBtn').addEventListener('click', () => {
+      if (_galleryCurrentPath) _openGallery(_galleryCurrentTitle, _galleryCurrentPath);
+    });
+    document.getElementById('galleryAddBtn').addEventListener('click', () => {
+      document.getElementById('galleryUpload').click();
+    });
+    document.getElementById('galleryUpload').addEventListener('change', async (e) => {
+      const files = [...e.target.files];
+      if (!files.length) return;
+      const btn = document.getElementById('galleryAddBtn');
+      const orig = btn.textContent;
+      btn.disabled = true;
+      try {
+        await ensureStorageSignedIn();
+        for (let i = 0; i < files.length; i++) {
+          const f = files[i];
+          btn.textContent = `Uploading ${i + 1}/${files.length}…`;
+          const safeName = `${Date.now()}_${f.name.replace(/[^\w.\-]+/g, '_')}`;
+          const dst = ref(storage, `${_galleryCurrentPath}/${safeName}`);
+          await new Promise((resolve, reject) => {
+            const task = uploadBytesResumable(dst, f, { contentType: f.type || 'application/octet-stream' });
+            task.on('state_changed', null, reject, resolve);
+          });
+        }
+        e.target.value = '';
+        btn.textContent = orig;
+        btn.disabled = false;
+        _openGallery(_galleryCurrentTitle, _galleryCurrentPath);
+        const panel = [...document.querySelectorAll('#panels .drop, #panelNewCharms .drop')].find(p => {
+          const c = p.querySelector('code'); return c && c.textContent.replace(/\/$/,'') === _galleryCurrentPath;
+        });
+        if (panel) {
+          const countEl = panel.querySelector('#count');
+          if (countEl) {
+            try {
+              const r2 = ref(storage, _galleryCurrentPath);
+              const res2 = await listAll(r2);
+              countEl.textContent = `${res2.items.length} file(s)`;
+            } catch (_) {}
+          }
+        }
+      } catch (err) {
+        alert('Upload failed: ' + (err?.message || err));
+        btn.textContent = orig;
+        btn.disabled = false;
+      }
+    });
+
+    // Click delegation on drop panels — open gallery
+    document.addEventListener('click', (e) => {
+      if (e.target.closest('button')) return;
+      if (e.target.closest('input')) return;
+      const panel = e.target.closest('.drop');
+      if (!panel) return;
+      if (!panel.closest('#panels, #panelNewCharms')) return;
+      const code = panel.querySelector('code');
+      if (!code) return;
+      const path = code.textContent.replace(/\/$/, '').trim();
+      const title = panel.querySelector('strong')?.textContent || 'Folder';
+      _openGallery(title, path);
+    });
+
+    // ---------------------------------------------------------------------
+    // 3) APPROVED TAB: SUB-TABS, MEANINGFUL FILTERS, SCALABLE PAGINATION
+    // ---------------------------------------------------------------------
+    // Two sub-tabs: Listings (from Approved_Listing_Sets) and Charms
+    // (from Completed_Approved_Charm_Sets). Each has its own filter state,
+    // own pagination, own selection set, and its own grid container.
+    //
+    // Listings: filter by Category multi-select chips, sort by Set_N, paginate.
+    // Charms: filter by date range + quick presets, sort by timestamp,
+    //         paginate. Integrates with the original approvedSetsHistory
+    //         and renderCharmPage by re-writing the source array on filter
+    //         change and resetting page=1.
+    //
+    // Caches are populated once on tab activation, refreshed via "Refresh"
+    // (inside Add files modal) and on tab re-entry. Only the visible page's
+    // images are loaded — folder enumeration is cheap, image fetches are not.
+    // ---------------------------------------------------------------------
+
+    // === Sub-tab state ===
+    const _approvedSubState = {
+      active: 'listings',     // 'listings' | 'charms'
+      // Listings substate
+      listings: {
+        cache: null,          // [{id, category, setN, fullPath}] or null
+        loading: false,
+        sort: 'newest',       // 'newest'|'oldest'|'category'
+        pageSize: 24,
+        page: 1,
+        categories: new Set(['Beady_Necklace','Regular_Necklace','Stud_Earrings','Hoop_Earrings','Charms','Bracelets']),
+        selected: new Set(),
+        thumbsLoading: new Map(), // folderId -> Promise (de-dupe)
+      },
+      // Charms substate
+      charms: {
+        cache: null,          // [{id, dateMs}] or null
+        loading: false,
+        preset: 'all',        // 'all'|'today'|'week'|'month'|'latest10'|'latest25'
+        dateFrom: null,       // ms or null
+        dateTo: null,         // ms or null
+        sort: 'newest',
+        pageSize: 12,
+        page: 1,
+        selected: new Set(),
+      },
+    };
+
+    // === Helpers ===
+    function _derivDate(folderId) {
+      const m = (folderId || '').match(/Deriv_(\d+)/);
+      if (!m) return null;
+      const n = parseInt(m[1], 10);
+      return Number.isFinite(n) ? new Date(n * 1000) : null;
+    }
+    function _parseListingId(folderId) {
+      const m = folderId.match(/^(.+)_Set_(\d+)$/);
+      if (!m) return { id: folderId, category: 'Unknown', setN: 0 };
+      return { id: folderId, category: m[1], setN: parseInt(m[2], 10) };
+    }
+
+    // === LISTINGS: load, filter, paginate, render ===
+    async function _loadApprovedListings({ force = false } = {}) {
+      const ls = _approvedSubState.listings;
+      if (ls.cache && !force) return ls.cache;
+      if (ls.loading) return null;
+      ls.loading = true;
+      try {
+        await ensureStorageSignedIn();
+        const r = ref(storage, `${ROOT}/Generated_Listing_Sets/Approved_Listing_Sets`);
+        const res = await listAll(r);
+        const items = (res.prefixes || []).map(p => {
+          const meta = _parseListingId(p.name);
+          return { ...meta, fullPath: p.fullPath };
+        });
+        ls.cache = items;
+        return items;
+      } finally {
+        ls.loading = false;
+      }
+    }
+
+    function _filterAndSortListings() {
+      const ls = _approvedSubState.listings;
+      const all = ls.cache || [];
+      const filtered = all.filter(it => ls.categories.has(it.category));
+      const sorted = [...filtered];
+      if (ls.sort === 'newest') sorted.sort((a,b) => b.setN - a.setN);
+      else if (ls.sort === 'oldest') sorted.sort((a,b) => a.setN - b.setN);
+      else if (ls.sort === 'category') sorted.sort((a,b) => a.category.localeCompare(b.category) || b.setN - a.setN);
+      return sorted;
+    }
+
+    async function _loadListingThumbs(item, cardEl) {
+      if (!cardEl) return;
+      const ls = _approvedSubState.listings;
+      // De-dupe in-flight loads
+      if (ls.thumbsLoading.has(item.id)) return;
+      const promise = (async () => {
+        try {
+          // Bail if card got detached during pagination
+          if (!cardEl.isConnected) return;
+          const folderRef = ref(storage, item.fullPath);
+          const res = await listAll(folderRef);
+          // Filter only image files (skip manifest.json and other non-images)
+          // Natural-sort by slot number so Slot_10 sorts after Slot_2
+          const slotNum = (name) => {
+            const m = name.match(/Slot_(\d+)/);
+            return m ? parseInt(m[1], 10) : 999;
+          };
+          const slots = res.items
+            .filter(it => /\.(png|jpe?g|webp|gif|avif)$/i.test(it.name))
+            .sort((a, b) => slotNum(a.name) - slotNum(b.name) || a.name.localeCompare(b.name));
+          for (let i = 0; i < 4; i++) {
+            // Stop if card was detached mid-load (paginated away)
+            if (!cardEl.isConnected) return;
+            const slotBox = cardEl.querySelector(`.al-thumb[data-slot="${i}"]`);
+            if (!slotBox) continue;
+            if (i < slots.length) {
+              try {
+                const url = await getDownloadURL(slots[i]);
+                if (!cardEl.isConnected) return;
+                slotBox.innerHTML = `<img src="${url}" alt="${slots[i].name}">`;
+                attachPreviewBoxListeners(slotBox);
+              } catch (_) {
+                slotBox.innerHTML = `<div class="slotRefEmpty" style="font-size:9px; color:#fca5a5;">!</div>`;
+              }
+            } else {
+              slotBox.innerHTML = `<div class="slotRefEmpty" style="font-size:9px;">·</div>`;
+            }
+          }
+        } catch (e) {
+          console.warn('Listing thumb load failed', item.id, e);
+          // Show error state on thumbs
+          if (cardEl.isConnected) {
+            cardEl.querySelectorAll('.al-thumb').forEach(slotBox => {
+              if (slotBox.querySelector('img')) return;
+              slotBox.innerHTML = `<div class="slotRefEmpty" style="font-size:9px; color:#fca5a5;">load err</div>`;
+            });
+          }
+        } finally {
+          ls.thumbsLoading.delete(item.id);
+        }
+      })();
+      ls.thumbsLoading.set(item.id, promise);
+    }
+
+    function _updateListingsCounts(filteredCount) {
+      const ls = _approvedSubState.listings;
+      const all = ls.cache || [];
+      // Per-category counts
+      const counts = { '*': all.length };
+      _LISTING_CATEGORIES.forEach(c => counts[c] = 0);
+      all.forEach(it => { if (counts[it.category] != null) counts[it.category]++; });
+      Object.entries(counts).forEach(([k, v]) => {
+        const el = document.getElementById(`catCount-${k === '*' ? 'all' : k}`);
+        if (el) el.textContent = v;
+      });
+      // Sub-tab badge
+      const subBadge = document.getElementById('approvedSubLstCount');
+      if (subBadge) subBadge.textContent = all.length;
+      // Visible count
+      const visEl = document.getElementById('approvedListVisibleCount');
+      if (visEl) visEl.textContent = filteredCount;
+      // Selected count
+      const selEl = document.getElementById('approvedListSelectedCount');
+      if (selEl) selEl.textContent = ls.selected.size;
+      // Smart download label
+      const dl = document.getElementById('approvedListDownloadBtn');
+      if (dl && !dl.dataset.busy) {
+        if (ls.selected.size > 0) dl.textContent = `Download ${ls.selected.size} selected (ZIP)`;
+        else dl.textContent = `Download ${filteredCount} visible (ZIP)`;
+      }
+    }
+
+    function _renderListingsPage() {
+      const ls = _approvedSubState.listings;
+      const grid = document.getElementById('approvedListingsGrid');
+      const pagination = document.getElementById('approvedListingsPagination');
+      const filtered = _filterAndSortListings();
+
+      _updateListingsCounts(filtered.length);
+
+      if (filtered.length === 0) {
+        grid.innerHTML = `<div class="slotRefEmpty" style="grid-column: 1/-1; padding: 36px;">No approved listings match this filter.</div>`;
+        if (pagination) pagination.style.display = 'none';
+        return;
+      }
+
+      const totalPages = Math.max(1, Math.ceil(filtered.length / ls.pageSize));
+      if (ls.page > totalPages) ls.page = totalPages;
+      if (ls.page < 1) ls.page = 1;
+      const startIdx = (ls.page - 1) * ls.pageSize;
+      const pageItems = filtered.slice(startIdx, startIdx + ls.pageSize);
+
+      // Render page cards (only fetch images for these)
+      grid.innerHTML = pageItems.map(it => `
+        <div class="approved-listing-card ${ls.selected.has(it.id) ? 'selected' : ''}" data-id="${it.id}" data-category="${it.category}" data-setn="${it.setN}">
+          <div class="approved-listing-head">
+            <span class="al-name">${it.id}</span>
+            <span class="al-cat-badge">${it.category}</span>
+          </div>
+          <div class="approved-listing-strip">
+            <div class="slotPrev al-thumb" data-slot="0"><div class="slotRefEmpty">…</div></div>
+            <div class="slotPrev al-thumb" data-slot="1"><div class="slotRefEmpty">…</div></div>
+            <div class="slotPrev al-thumb" data-slot="2"><div class="slotRefEmpty">…</div></div>
+            <div class="slotPrev al-thumb" data-slot="3"><div class="slotRefEmpty">…</div></div>
+          </div>
+          <div class="al-meta">Set #${it.setN} · click to ${ls.selected.has(it.id) ? 'deselect' : 'select'}</div>
+        </div>
+      `).join('');
+
+      // Trigger thumb loads
+      pageItems.forEach(it => {
+        const cardEl = grid.querySelector(`.approved-listing-card[data-id="${it.id}"]`);
+        _loadListingThumbs(it, cardEl);
+      });
+
+      // Pagination
+      document.getElementById('approvedListPageInfo').textContent = `Page ${ls.page} of ${totalPages} · ${filtered.length} sets`;
+      document.getElementById('approvedListPrevPage').disabled = (ls.page <= 1);
+      document.getElementById('approvedListNextPage').disabled = (ls.page >= totalPages);
+      pagination.style.display = totalPages > 1 ? 'flex' : 'none';
+    }
+
+    // === CHARMS: load, filter, paginate via existing renderCharmPage ===
+    async function _loadApprovedCharms({ force = false } = {}) {
+      const cs = _approvedSubState.charms;
+      if (cs.cache && !force) return cs.cache;
+      if (cs.loading) return null;
+      cs.loading = true;
+      try {
+        await ensureStorageSignedIn();
+        const r = ref(storage, `${ROOT}/Charm_Maker/Completed_Approved_Charm_Sets`);
+        const res = await listAll(r);
+        const items = (res.prefixes || []).map(p => {
+          const d = _derivDate(p.name);
+          return { id: p.name, dateMs: d ? d.getTime() : 0 };
+        });
+        cs.cache = items;
+        return items;
+      } finally {
+        cs.loading = false;
+      }
+    }
+
+    function _filterAndSortCharms() {
+      const cs = _approvedSubState.charms;
+      const all = cs.cache || [];
+      const now = Date.now();
+      const presetCutoff = {
+        today: 24 * 3600 * 1000,
+        week:  7 * 24 * 3600 * 1000,
+        month: 30 * 24 * 3600 * 1000,
+      };
+      let out = all;
+      // Quick preset (excluding latestN which slices below)
+      const cutoff = presetCutoff[cs.preset];
+      if (cutoff) {
+        out = out.filter(rec => rec.dateMs && (now - rec.dateMs) <= cutoff);
+      }
+      // Custom date range
+      if (cs.dateFrom) out = out.filter(rec => rec.dateMs >= cs.dateFrom);
+      if (cs.dateTo)   out = out.filter(rec => rec.dateMs <= cs.dateTo);
+      // Sort
+      out = [...out].sort((a, b) => cs.sort === 'oldest' ? (a.dateMs - b.dateMs) : (b.dateMs - a.dateMs));
+      // Latest-N preset slices
+      if (cs.preset === 'latest10') out = out.slice(0, 10);
+      if (cs.preset === 'latest25') out = out.slice(0, 25);
+      return out;
+    }
+
+    function _renderCharmsPage() {
+      const cs = _approvedSubState.charms;
+      // Re-entrancy guard: prevent recursive render
+      if (cs._rendering) return;
+      cs._rendering = true;
+      try {
+        const filtered = _filterAndSortCharms();
+
+        // Sub-tab badge
+        const subBadge = document.getElementById('approvedSubChCount');
+        if (subBadge) subBadge.textContent = (cs.cache || []).length;
+
+        // Counts
+        const visEl = document.getElementById('approvedVisibleCount');
+        const selEl = document.getElementById('approvedSelectedCount');
+        if (visEl) visEl.textContent = filtered.length;
+        if (selEl) selEl.textContent = cs.selected.size;
+
+        // Smart download label
+        const dl = document.getElementById('downloadApprovedSetsBtn');
+        if (dl && !dl.dataset.busy) {
+          if (cs.selected.size > 0) dl.textContent = `Download ${cs.selected.size} selected (ZIP)`;
+          else if (filtered.length !== (cs.cache || []).length) dl.textContent = `Download ${filtered.length} visible (ZIP)`;
+          else dl.textContent = `Download Sets (ZIP)`;
+        }
+
+        const grid = document.getElementById('approvedCharmGrid');
+        const pagination = document.getElementById('approvedCharmPagination');
+        if (filtered.length === 0) {
+          grid.innerHTML = `<div class="slotRefEmpty" style="grid-column: 1/-1; padding: 36px;">No approved charm sets match this filter.</div>`;
+          pagination.style.display = 'none';
+          return;
+        }
+        const totalPages = Math.max(1, Math.ceil(filtered.length / cs.pageSize));
+        if (cs.page > totalPages) cs.page = totalPages;
+        if (cs.page < 1) cs.page = 1;
+        const startIdx = (cs.page - 1) * cs.pageSize;
+        const pageItems = filtered.slice(startIdx, startIdx + cs.pageSize);
+
+        grid.innerHTML = "";
+        pageItems.forEach(rec => {
+          const tempDiv = document.createElement('div');
+          tempDiv.innerHTML = createCharmCardHTML(rec.id, true);
+          const cardNode = tempDiv.firstElementChild;
+          if (cs.selected.has(rec.id)) cardNode.classList.add('selected');
+          grid.appendChild(cardNode);
+          loadSetImagesForCharm(rec.id, "Charm_Maker/Completed_Approved_Charm_Sets");
+        });
+
+        document.getElementById('approvedPageInfo').textContent = `Page ${cs.page} of ${totalPages} · ${filtered.length} sets`;
+        document.getElementById('approvedPrevPage').disabled = (cs.page <= 1);
+        document.getElementById('approvedNextPage').disabled = (cs.page >= totalPages);
+        pagination.style.display = totalPages > 1 ? 'flex' : 'none';
+
+        // Keep legacy approvedSetsHistory in sync defensively
+        try { approvedSetsHistory = filtered.map(r => r.id); approvedCurrentPage = cs.page; } catch (_) {}
+      } finally {
+        // Clear flag asynchronously so the MutationObserver triggered by
+        // our own innerHTML writes sees it as still-rendering and skips.
+        setTimeout(() => { cs._rendering = false; }, 50);
+      }
+    }
+
+    // === Sub-tab switcher + grid visibility ===
+    function _showSubtab(which) {
+      _approvedSubState.active = which;
+      document.querySelectorAll('#approvedSubTabs .approved-subtab').forEach(t => {
+        t.classList.toggle('active', t.dataset.subtab === which);
+      });
+      document.getElementById('approvedSubListings').style.display = which === 'listings' ? 'block' : 'none';
+      document.getElementById('approvedSubCharms').style.display = which === 'charms' ? 'block' : 'none';
+
+      // Toggle grids
+      const lstGrid = document.getElementById('approvedListingsGrid');
+      const chGrid = document.getElementById('approvedCharmGrid');
+      const lstPag = document.getElementById('approvedListingsPagination');
+      const chPag = document.getElementById('approvedCharmPagination');
+      lstGrid.style.display = which === 'listings' ? 'grid' : 'none';
+      chGrid.style.display  = which === 'charms'   ? 'grid' : 'none';
+      // Paginations are managed by render functions; hide the inactive one
+      if (which === 'listings') chPag.style.display = 'none';
+      if (which === 'charms')  lstPag.style.display = 'none';
+
+      // Slot legend only for charms sub-tab on Approved
+      const legend = document.getElementById('slotLegend');
+      if (legend && appMode === 'approvedCharms') legend.style.display = (which === 'charms') ? 'flex' : 'none';
+
+      // Header text
+      const hdr = document.getElementById('mainGridTitle');
+      if (hdr && appMode === 'approvedCharms') hdr.textContent = which === 'listings' ? 'Approved Listings' : 'Approved Charm Sets';
+
+      // Hide the original approvedSetsHeader when on listings sub-tab
+      const aHdr = document.getElementById('approvedSetsHeader');
+      if (aHdr && appMode === 'approvedCharms') {
+        aHdr.style.display = which === 'charms' ? 'flex' : 'none';
+      }
+
+      // Trigger loads + render
+      if (which === 'listings') {
+        const grid = document.getElementById('approvedListingsGrid');
+        if (!_approvedSubState.listings.cache) {
+          // Show immediate loading state — overrides any stale render below
+          grid.innerHTML = `<div class="slotRefEmpty" style="grid-column: 1/-1; padding: 36px;">Loading approved listings…</div>`;
+          if (!_approvedSubState.listings.loading) {
+            _loadApprovedListings()
+              .then(() => _renderListingsPage())
+              .catch(e => {
+                console.warn('listings load failed', e);
+                grid.innerHTML = `<div class="slotRefEmpty" style="grid-column: 1/-1; padding: 36px; color: #fca5a5;">Failed to load listings: ${e?.message || e}</div>`;
+              });
+          }
+        } else {
+          _renderListingsPage();
+        }
+      } else {
+        const grid = document.getElementById('approvedCharmGrid');
+        if (!_approvedSubState.charms.cache) {
+          // Show immediate loading state, blanking any prior render from
+          // the original loadCharmHistoryList that may still be in flight
+          grid.innerHTML = `<div class="slotRefEmpty" style="grid-column: 1/-1; padding: 36px;">Loading approved charm sets…</div>`;
+          if (!_approvedSubState.charms.loading) {
+            _loadApprovedCharms()
+              .then(() => _renderCharmsPage())
+              .catch(e => {
+                console.warn('charms load failed', e);
+                grid.innerHTML = `<div class="slotRefEmpty" style="grid-column: 1/-1; padding: 36px; color: #fca5a5;">Failed to load charm sets: ${e?.message || e}</div>`;
+              });
+          }
+        } else {
+          _renderCharmsPage();
+        }
+      }
+    }
+
+    document.querySelectorAll('#approvedSubTabs .approved-subtab').forEach(tab => {
+      tab.addEventListener('click', () => _showSubtab(tab.dataset.subtab));
+    });
+
+    // === Defensive MutationObserver on approvedCharmGrid ===
+    // The original setAppMode triggers loadCharmHistoryList which renders
+    // unfiltered cards into approvedCharmGrid asynchronously. If that
+    // completes AFTER our render, our filter would be silently overwritten.
+    // This observer detects external writes and re-renders our filtered view.
+    (() => {
+      const grid = document.getElementById('approvedCharmGrid');
+      if (!grid || typeof MutationObserver === 'undefined') return;
+      let _reRenderTimer = null;
+      const _observer = new MutationObserver(() => {
+        // Only intervene when on Approved + Charms sub-tab + cache is loaded
+        if (appMode !== 'approvedCharms') return;
+        if (_approvedSubState.active !== 'charms') return;
+        if (!_approvedSubState.charms.cache) return;
+        if (_approvedSubState.charms._rendering) return;
+        // Debounce: a single render burst (multiple appendChilds) only
+        // triggers one re-render
+        clearTimeout(_reRenderTimer);
+        _reRenderTimer = setTimeout(() => {
+          if (appMode === 'approvedCharms' && _approvedSubState.active === 'charms'
+              && _approvedSubState.charms.cache && !_approvedSubState.charms._rendering) {
+            _renderCharmsPage();
+          }
+        }, 120);
+      });
+      _observer.observe(grid, { childList: true });
+    })();
+    document.querySelectorAll('#approvedListCategories .cat-chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        const cat = chip.dataset.cat;
+        const ls = _approvedSubState.listings;
+        if (cat === '*') {
+          // "All" toggles the entire selection
+          const allActive = chip.classList.contains('active');
+          if (allActive) {
+            ls.categories.clear();
+            document.querySelectorAll('#approvedListCategories .cat-chip').forEach(c => c.classList.remove('active'));
+          } else {
+            _LISTING_CATEGORIES.forEach(c => ls.categories.add(c));
+            document.querySelectorAll('#approvedListCategories .cat-chip').forEach(c => c.classList.add('active'));
+          }
+        } else {
+          chip.classList.toggle('active');
+          if (chip.classList.contains('active')) ls.categories.add(cat);
+          else ls.categories.delete(cat);
+          // Update "All" chip state
+          const allChip = document.querySelector('#approvedListCategories .cat-chip[data-cat="*"]');
+          if (allChip) allChip.classList.toggle('active', ls.categories.size === _LISTING_CATEGORIES.length);
+        }
+        ls.page = 1;
+        _renderListingsPage();
+      });
+    });
+    document.getElementById('approvedListSort').addEventListener('change', e => {
+      _approvedSubState.listings.sort = e.target.value;
+      _approvedSubState.listings.page = 1;
+      _renderListingsPage();
+    });
+    document.getElementById('approvedListPageSize').addEventListener('change', e => {
+      _approvedSubState.listings.pageSize = parseInt(e.target.value, 10) || 24;
+      _approvedSubState.listings.page = 1;
+      _renderListingsPage();
+    });
+    document.getElementById('approvedListPrevPage').addEventListener('click', () => {
+      _approvedSubState.listings.page = Math.max(1, _approvedSubState.listings.page - 1);
+      _renderListingsPage();
+    });
+    document.getElementById('approvedListNextPage').addEventListener('click', () => {
+      _approvedSubState.listings.page += 1;
+      _renderListingsPage();
+    });
+    document.getElementById('approvedListSelectVisible').addEventListener('click', () => {
+      const grid = document.getElementById('approvedListingsGrid');
+      grid.querySelectorAll('.approved-listing-card').forEach(card => {
+        _approvedSubState.listings.selected.add(card.dataset.id);
+      });
+      _renderListingsPage();
+    });
+    document.getElementById('approvedListClearSel').addEventListener('click', () => {
+      _approvedSubState.listings.selected.clear();
+      _renderListingsPage();
+    });
+    document.getElementById('approvedListingsGrid').addEventListener('click', (e) => {
+      const card = e.target.closest('.approved-listing-card');
+      if (!card) return;
+      if (e.target.closest('.slotPrev')) return; // Don't toggle on image zoom
+      const id = card.dataset.id;
+      const ls = _approvedSubState.listings;
+      if (ls.selected.has(id)) ls.selected.delete(id);
+      else ls.selected.add(id);
+      _renderListingsPage();
+    });
+
+    // === Wire CHARMS controls ===
+    document.querySelectorAll('#approvedCharmPresets .chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        document.querySelectorAll('#approvedCharmPresets .chip').forEach(c => c.classList.remove('active'));
+        chip.classList.add('active');
+        _approvedSubState.charms.preset = chip.dataset.preset;
+        _approvedSubState.charms.page = 1;
+        _renderCharmsPage();
+      });
+    });
+    document.getElementById('approvedCharmDateFrom').addEventListener('change', e => {
+      const v = e.target.value; // YYYY-MM-DD
+      _approvedSubState.charms.dateFrom = v ? new Date(v + 'T00:00:00').getTime() : null;
+      _approvedSubState.charms.page = 1;
+      _renderCharmsPage();
+    });
+    document.getElementById('approvedCharmDateTo').addEventListener('change', e => {
+      const v = e.target.value;
+      _approvedSubState.charms.dateTo = v ? new Date(v + 'T23:59:59').getTime() : null;
+      _approvedSubState.charms.page = 1;
+      _renderCharmsPage();
+    });
+    document.getElementById('approvedCharmDateClear').addEventListener('click', () => {
+      _approvedSubState.charms.dateFrom = null;
+      _approvedSubState.charms.dateTo = null;
+      document.getElementById('approvedCharmDateFrom').value = '';
+      document.getElementById('approvedCharmDateTo').value = '';
+      _approvedSubState.charms.page = 1;
+      _renderCharmsPage();
+    });
+    document.getElementById('approvedCharmSort').addEventListener('change', e => {
+      _approvedSubState.charms.sort = e.target.value;
+      _approvedSubState.charms.page = 1;
+      _renderCharmsPage();
+    });
+    document.getElementById('approvedCharmPageSize').addEventListener('change', e => {
+      _approvedSubState.charms.pageSize = parseInt(e.target.value, 10) || 12;
+      _approvedSubState.charms.page = 1;
+      _renderCharmsPage();
+    });
+    document.getElementById('approvedSelectVisible').addEventListener('click', () => {
+      const grid = document.getElementById('approvedCharmGrid');
+      grid.querySelectorAll('.charm-card').forEach(card => {
+        const id = card.id.replace(/^card_/, '');
+        _approvedSubState.charms.selected.add(id);
+      });
+      _renderCharmsPage();
+    });
+    document.getElementById('approvedClearSel').addEventListener('click', () => {
+      _approvedSubState.charms.selected.clear();
+      _renderCharmsPage();
+    });
+    document.getElementById('approvedCharmGrid').addEventListener('click', (e) => {
+      if (appMode !== 'approvedCharms') return;
+      if (_approvedSubState.active !== 'charms') return;
+      if (e.target.closest('button')) return;
+      if (e.target.closest('.slotPrev')) return;
+      const card = e.target.closest('.charm-card');
+      if (!card) return;
+      const id = card.id.replace(/^card_/, '');
+      const cs = _approvedSubState.charms;
+      if (cs.selected.has(id)) cs.selected.delete(id);
+      else cs.selected.add(id);
+      _renderCharmsPage();
+    });
+
+    // Override Prev/Next on the existing approvedCharmPagination buttons so
+    // they paginate within OUR filtered list (not the unfiltered original).
+    // We add capture-phase handlers that intercept before the original ones.
+    document.getElementById('approvedPrevPage').addEventListener('click', (e) => {
+      if (appMode !== 'approvedCharms' || _approvedSubState.active !== 'charms') return;
+      e.stopImmediatePropagation();
+      _approvedSubState.charms.page = Math.max(1, _approvedSubState.charms.page - 1);
+      _renderCharmsPage();
+    }, true);
+    document.getElementById('approvedNextPage').addEventListener('click', (e) => {
+      if (appMode !== 'approvedCharms' || _approvedSubState.active !== 'charms') return;
+      e.stopImmediatePropagation();
+      _approvedSubState.charms.page += 1;
+      _renderCharmsPage();
+    }, true);
+
+    // === Smart downloads ===
+    // Charms (existing button)
+    document.getElementById('downloadApprovedSetsBtn').addEventListener('click', async (e) => {
+      // Only intercept on charms sub-tab
+      if (_approvedSubState.active !== 'charms') return;
+      const cs = _approvedSubState.charms;
+      let targetIds = [];
+      if (cs.selected.size > 0) {
+        targetIds = [...cs.selected];
+      } else {
+        const filtered = _filterAndSortCharms();
+        const isFiltered = cs.preset !== 'all' || cs.dateFrom || cs.dateTo;
+        if (!isFiltered) return; // let original full-archive download run
+        targetIds = filtered.map(r => r.id);
+      }
+      if (targetIds.length === 0) return;
+
+      // Safety: confirm large downloads
+      if (targetIds.length >= 50) {
+        const ok = confirm(
+          `You're about to ZIP ${targetIds.length} charm sets.\n\n` +
+          `Each set contains 4 images. This may take several minutes and produce a multi-hundred-MB ZIP. ` +
+          `Browser memory may be tight on very large downloads.\n\nProceed?`
+        );
+        if (!ok) return;
+      }
+
+      e.stopImmediatePropagation();
+      e.preventDefault();
+      if (!window.JSZip) { alert('JSZip not loaded.'); return; }
+
+      const btn = e.currentTarget;
+      const originalText = btn.textContent;
+      btn.dataset.busy = '1';
+      btn.disabled = true;
+      btn.style.opacity = '0.7';
+      try {
+        await ensureStorageSignedIn();
+        const folderPath = `${ROOT}/Charm_Maker/Completed_Approved_Charm_Sets`;
+        const zip = new JSZip();
+        let processed = 0;
+        for (const folderId of targetIds) {
+          btn.textContent = `Zipping ${++processed}/${targetIds.length}…`;
+          try {
+            const folderRef = ref(storage, `${folderPath}/${folderId}`);
+            const folderItems = await listAll(folderRef);
+            await Promise.all(folderItems.items.map(async (itemRef) => {
+              const fileData = await getBytes(itemRef);
+              zip.file(`${folderId}/${itemRef.name}`, fileData);
+            }));
+          } catch (err) {
+            console.warn(`Skipped ${folderId}:`, err?.message || err);
+          }
+        }
+        btn.textContent = 'Generating ZIP…';
+        const zipBlob = await zip.generateAsync({ type: 'blob' });
+        const url = URL.createObjectURL(zipBlob);
+        const a = document.createElement('a');
+        a.href = url;
+        const dateStr = new Date().toISOString().split('T')[0];
+        a.download = `Approved_Charm_Sets_${dateStr}.zip`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        btn.textContent = 'Download Complete!';
+        setTimeout(() => {
+          btn.disabled = false;
+          btn.style.opacity = '1';
+          delete btn.dataset.busy;
+          _renderCharmsPage();
+        }, 2500);
+      } catch (err) {
+        console.error('Filtered ZIP failed:', err);
+        alert(`Download failed: ${err?.message || err}`);
+        btn.textContent = originalText;
+        btn.disabled = false;
+        btn.style.opacity = '1';
+        delete btn.dataset.busy;
+      }
+    }, true);
+
+    // Listings download
+    document.getElementById('approvedListDownloadBtn').addEventListener('click', async (e) => {
+      const ls = _approvedSubState.listings;
+      let targetItems = [];
+      if (ls.selected.size > 0) {
+        targetItems = (ls.cache || []).filter(it => ls.selected.has(it.id));
+      } else {
+        targetItems = _filterAndSortListings();
+      }
+      if (targetItems.length === 0) {
+        alert('No listings match the current filter.');
+        return;
+      }
+
+      // Safety: confirm large downloads
+      if (targetItems.length >= 50) {
+        const ok = confirm(
+          `You're about to ZIP ${targetItems.length} listing sets.\n\n` +
+          `Each set contains 7-8 images. This may take several minutes and produce a multi-hundred-MB ZIP. ` +
+          `Browser memory may be tight on very large downloads.\n\nProceed?`
+        );
+        if (!ok) return;
+      }
+
+      if (!window.JSZip) { alert('JSZip not loaded.'); return; }
+
+      const btn = e.currentTarget;
+      const originalText = btn.textContent;
+      btn.dataset.busy = '1';
+      btn.disabled = true;
+      btn.style.opacity = '0.7';
+      try {
+        await ensureStorageSignedIn();
+        const zip = new JSZip();
+        let processed = 0;
+        for (const item of targetItems) {
+          btn.textContent = `Zipping ${++processed}/${targetItems.length}…`;
+          try {
+            const folderRef = ref(storage, item.fullPath);
+            const folderItems = await listAll(folderRef);
+            await Promise.all(folderItems.items.map(async (itemRef) => {
+              const fileData = await getBytes(itemRef);
+              zip.file(`${item.id}/${itemRef.name}`, fileData);
+            }));
+          } catch (err) {
+            console.warn(`Skipped ${item.id}:`, err?.message || err);
+          }
+        }
+        btn.textContent = 'Generating ZIP…';
+        const zipBlob = await zip.generateAsync({ type: 'blob' });
+        const url = URL.createObjectURL(zipBlob);
+        const a = document.createElement('a');
+        a.href = url;
+        const dateStr = new Date().toISOString().split('T')[0];
+        a.download = `Approved_Listings_${dateStr}.zip`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        btn.textContent = 'Download Complete!';
+        setTimeout(() => {
+          btn.disabled = false;
+          btn.style.opacity = '1';
+          delete btn.dataset.busy;
+          _renderListingsPage();
+        }, 2500);
+      } catch (err) {
+        console.error('Listings ZIP failed:', err);
+        alert(`Download failed: ${err?.message || err}`);
+        btn.textContent = originalText;
+        btn.disabled = false;
+        btn.style.opacity = '1';
+        delete btn.dataset.busy;
+      }
+    });
+
+    // ---------------------------------------------------------------------
+    // 4) CONTEXTUAL UI — show/hide filter panel & legend per active tab
+    // ---------------------------------------------------------------------
+    function _updateContextualUI() {
+      const isCharmMakerView = (appMode === 'charmMaker');
+      const isApprovedView   = (appMode === 'approvedCharms');
+      const filterPanel = document.getElementById('approvedFilterPanel');
+      const legend = document.getElementById('slotLegend');
+
+      if (filterPanel) filterPanel.style.display = isApprovedView ? 'block' : 'none';
+
+      if (legend) {
+        if (isCharmMakerView) legend.style.display = 'flex';
+        else if (isApprovedView) legend.style.display = (_approvedSubState.active === 'charms') ? 'flex' : 'none';
+        else legend.style.display = 'none';
+      }
+
+      if (isApprovedView) {
+        // Reload caches (Approved tab was just opened/re-entered)
+        _approvedSubState.listings.cache = null;
+        _approvedSubState.charms.cache = null;
+        _showSubtab(_approvedSubState.active);
+      } else {
+        // Hide both Approved-tab grids when not on Approved
+        document.getElementById('approvedListingsGrid').style.display = 'none';
+        document.getElementById('approvedListingsPagination').style.display = 'none';
+      }
+    }
+    [toggleGenerateBtn, toggleReviewBtn, toggleCharmMakerBtn, toggleApprovedCharmsBtn].forEach(btn => {
+      btn.addEventListener('click', () => setTimeout(_updateContextualUI, 80));
+    });
+    setTimeout(_updateContextualUI, 600);
+
+    // =====================================================================
+    // ============= END MOCKUP-FEATURE ENHANCEMENTS =======================
+    // =====================================================================
+
+
   </script>
+
+  <!-- ====================== ASSET GALLERY MODAL ====================== -->
+  <div class="modal-backdrop" id="galleryModal" role="dialog" aria-modal="true" aria-hidden="true">
+    <div class="modal">
+      <div class="modal-head">
+        <div>
+          <h3 id="galleryFolderName">Folder</h3>
+          <p id="galleryFolderPath">listing-generator-1/...</p>
+        </div>
+        <button class="modal-close" id="galleryClose" aria-label="Close">×</button>
+      </div>
+      <div class="modal-body" id="galleryBody"></div>
+      <div class="modal-foot">
+        <span class="muted mono" id="galleryFooter">0 files</span>
+        <div class="row" style="gap: 8px;">
+          <input type="file" id="galleryUpload" multiple accept="image/*" style="display: none;">
+          <button class="btn btnSmall" id="galleryAddBtn">+ Add files</button>
+          <button class="btn btnSmall" id="galleryRefreshBtn">Refresh</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
 </body>
 </html>
