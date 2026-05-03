@@ -1102,9 +1102,14 @@
   .thumb:hover { border-color: var(--line-2); }
   .thumb-img {
     aspect-ratio: 1;
+    width: 100%;
+    min-height: 140px;
     background: #0a0c14;
     overflow: hidden;
     position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
   .thumb-img img {
     width: 100%; height: 100%;
@@ -1142,6 +1147,48 @@
     cursor: pointer;
   }
   .drop:hover strong { color: var(--accent); }
+
+  /* ---------- Cache freshness indicator + Refresh button ---------- */
+  .refresh-btn {
+    width: auto !important;
+    padding: 5px 10px !important;
+    font-size: 11px !important;
+    background: var(--card) !important;
+    border: 1px solid var(--line) !important;
+    color: var(--text-2) !important;
+    transition: all 120ms ease;
+  }
+  .refresh-btn:hover {
+    border-color: var(--accent-line) !important;
+    color: var(--accent) !important;
+  }
+  .freshness {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    white-space: nowrap;
+  }
+  .freshness.fresh {
+    color: var(--ok);
+    border-color: var(--ok-line);
+    background: var(--ok-bg);
+  }
+  .freshness.stale {
+    color: var(--warn);
+    border-color: var(--warn-line);
+    background: var(--warn-bg);
+  }
+  .freshness.loading {
+    color: var(--accent);
+    border-color: var(--accent-line);
+    background: var(--accent-bg);
+    animation: pulse 1.5s infinite;
+  }
+  .freshness.empty {
+    color: var(--dim);
+  }
 
   /* ---------- Approved tab: sub-tabs ---------- */
   .approved-subtabs {
@@ -1305,12 +1352,17 @@
   }
   .al-thumb {
     aspect-ratio: 1;
+    width: 100%;
+    min-height: 90px;
     height: auto !important;
     border-radius: var(--r-sm);
     border: 1px solid var(--line);
     background: var(--inset);
     overflow: hidden;
     position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
   .al-thumb img {
     width: 100%; height: 100%;
@@ -1573,8 +1625,16 @@
         <!-- ============ LISTINGS sub-pane ============ -->
         <div id="approvedSubListings">
           <div class="archive-source">
-            <div class="archive-source-label">Source folder · read-only · downloads do not delete</div>
-            <div class="archive-source-path">listing-generator-1 / Generated_Listing_Sets / Approved_Listing_Sets</div>
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;">
+              <div style="flex: 1;">
+                <div class="archive-source-label">Source folder · read-only · downloads do not delete</div>
+                <div class="archive-source-path">listing-generator-1 / Generated_Listing_Sets / Approved_Listing_Sets</div>
+              </div>
+              <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 0;">
+                <button class="btn btnSmall refresh-btn" id="approvedListRefreshBtn" title="Reload from Firebase">↻ Refresh</button>
+                <span class="freshness empty" id="approvedListFreshness">not loaded</span>
+              </div>
+            </div>
           </div>
 
           <label class="field-label">Filter by category</label>
@@ -1622,8 +1682,16 @@
         <!-- ============ CHARMS sub-pane ============ -->
         <div id="approvedSubCharms" style="display: none;">
           <div class="archive-source">
-            <div class="archive-source-label">Source folder · read-only · downloads do not delete</div>
-            <div class="archive-source-path">listing-generator-1 / Charm_Maker / Completed_Approved_Charm_Sets</div>
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;">
+              <div style="flex: 1;">
+                <div class="archive-source-label">Source folder · read-only · downloads do not delete</div>
+                <div class="archive-source-path">listing-generator-1 / Charm_Maker / Completed_Approved_Charm_Sets</div>
+              </div>
+              <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 0;">
+                <button class="btn btnSmall refresh-btn" id="approvedCharmRefreshBtn" title="Reload from Firebase">↻ Refresh</button>
+                <span class="freshness empty" id="approvedCharmFreshness">not loaded</span>
+              </div>
+            </div>
           </div>
 
           <label class="field-label">Quick date filters</label>
@@ -5473,6 +5541,32 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     const _LISTING_CATEGORIES = ['Beady_Necklace','Regular_Necklace','Stud_Earrings','Hoop_Earrings','Charms','Bracelets'];
 
     // ---------------------------------------------------------------------
+    // Concurrency-limited async pool — caps parallel Firebase fetches so
+    // we don't hammer the API with 100+ simultaneous getDownloadURL calls
+    // (which can rate-limit and produce broken thumbs). Resolves when ALL
+    // tasks complete, even if some throw.
+    // ---------------------------------------------------------------------
+    async function _asyncPool(concurrency, items, fn) {
+      const results = new Array(items.length);
+      let cursor = 0;
+      async function worker() {
+        while (cursor < items.length) {
+          const i = cursor++;
+          try {
+            results[i] = await fn(items[i], i);
+          } catch (err) {
+            results[i] = err;
+          }
+        }
+      }
+      const workers = [];
+      const n = Math.min(concurrency, items.length);
+      for (let i = 0; i < n; i++) workers.push(worker());
+      await Promise.all(workers);
+      return results;
+    }
+
+    // ---------------------------------------------------------------------
     // 1) PERSISTENT PIPELINE STATUS BAR
     // ---------------------------------------------------------------------
     let _pipelineRunning = false;
@@ -5560,19 +5654,17 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         _galleryFooter.textContent = `${res.items.length} files`;
 
         const sorted = [...res.items].sort((a, b) => b.name.localeCompare(a.name));
-        const records = await Promise.all(sorted.map(async (item) => {
-          try { return { name: item.name, url: await getDownloadURL(item), fullPath: item.fullPath }; }
-          catch { return { name: item.name, url: null, fullPath: item.fullPath }; }
-        }));
 
-        _galleryBody.innerHTML = records.map(r => `
-          <div class="thumb" data-path="${r.fullPath}">
-            <div class="thumb-img">${r.url ? `<img src="${r.url}" alt="${r.name}">` : '<div class="slotRefEmpty">!</div>'}</div>
-            <div class="thumb-name mono" title="${r.name}">${r.name}</div>
+        // Render placeholders immediately — no URL fetches yet
+        _galleryBody.innerHTML = sorted.map((item, idx) => `
+          <div class="thumb" data-path="${item.fullPath}" data-idx="${idx}">
+            <div class="thumb-img preview-box"><div class="slotRefEmpty" style="font-size: 9px;">…</div></div>
+            <div class="thumb-name mono" title="${item.name}">${item.name}</div>
             <button class="btn btnSmall thumb-delete" title="Delete this file">×</button>
           </div>
         `).join('');
 
+        // Wire delete buttons (don't depend on URL availability)
         _galleryBody.querySelectorAll('.thumb-delete').forEach(btn => {
           btn.addEventListener('click', async (e) => {
             e.stopPropagation();
@@ -5604,6 +5696,31 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
               alert('Delete failed: ' + (e?.message || e));
             }
           });
+        });
+
+        // Progressively load URLs with concurrency cap (6 parallel)
+        // Uses setBoxImage + cacheBust — same pattern as original code
+        await _asyncPool(6, sorted, async (item) => {
+          // Skip if modal closed before this fetched
+          if (!_galleryModal.classList.contains('open')) return;
+          // Skip if user opened a different folder mid-flight
+          if (_galleryCurrentPath !== path) return;
+          const thumbEl = _galleryBody.querySelector(`.thumb[data-path="${CSS.escape(item.fullPath)}"]`);
+          if (!thumbEl || !thumbEl.isConnected) return;
+          const box = thumbEl.querySelector('.thumb-img');
+          if (!box) return;
+          try {
+            const url = await getDownloadURL(item);
+            if (!_galleryModal.classList.contains('open')) return;
+            if (_galleryCurrentPath !== path) return;
+            if (!thumbEl.isConnected) return;
+            setBoxImage(box, cacheBust(url));
+          } catch (err) {
+            console.warn('Gallery thumb URL failed', item.fullPath, err);
+            if (thumbEl.isConnected) {
+              box.innerHTML = `<div class="slotRefEmpty" style="font-size: 9px; color: #fca5a5;">!</div>`;
+            }
+          }
         });
       } catch (e) {
         _galleryBody.innerHTML = `<div class="slotRefEmpty" style="grid-column: 1/-1; padding: 36px; color: #fca5a5;">Error: ${e?.message || e}</div>`;
@@ -5703,32 +5820,128 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     // ---------------------------------------------------------------------
 
     // === Sub-tab state ===
+    // Cache freshness model:
+    //   - cache:      the loaded list, or null if never loaded
+    //   - cacheTime:  ms timestamp when cache was last successfully loaded
+    //   - cacheStale: explicit "this is known stale" flag (set by hooks
+    //                 wrapping mutating operations like approve / delete /
+    //                 buffer flush)
+    //   - loading:    in-flight load
+    // A cache is considered "fresh" when cache !== null, cacheStale is false,
+    // and (now - cacheTime) < CACHE_TTL_MS. When sub-tab is re-activated,
+    // a stale cache triggers reload; a fresh cache renders instantly.
+    const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
     const _approvedSubState = {
       active: 'listings',     // 'listings' | 'charms'
-      // Listings substate
       listings: {
-        cache: null,          // [{id, category, setN, fullPath}] or null
+        cache: null,
+        cacheTime: 0,
+        cacheStale: false,
         loading: false,
-        sort: 'newest',       // 'newest'|'oldest'|'category'
+        sort: 'newest',
         pageSize: 24,
         page: 1,
         categories: new Set(['Beady_Necklace','Regular_Necklace','Stud_Earrings','Hoop_Earrings','Charms','Bracelets']),
         selected: new Set(),
-        thumbsLoading: new Map(), // folderId -> Promise (de-dupe)
+        thumbsLoading: new Map(),
       },
-      // Charms substate
       charms: {
-        cache: null,          // [{id, dateMs}] or null
+        cache: null,
+        cacheTime: 0,
+        cacheStale: false,
         loading: false,
-        preset: 'all',        // 'all'|'today'|'week'|'month'|'latest10'|'latest25'
-        dateFrom: null,       // ms or null
-        dateTo: null,         // ms or null
+        preset: 'all',
+        dateFrom: null,
+        dateTo: null,
         sort: 'newest',
         pageSize: 12,
         page: 1,
         selected: new Set(),
       },
     };
+
+    // === Cache freshness helpers ===
+    function _isCacheFresh(side) {
+      const s = _approvedSubState[side];
+      if (!s || !s.cache) return false;
+      if (s.cacheStale) return false;
+      if (Date.now() - s.cacheTime > CACHE_TTL_MS) return false;
+      return true;
+    }
+
+    function _invalidateCache(side) {
+      if (side === 'listings' || side === 'all') _approvedSubState.listings.cacheStale = true;
+      if (side === 'charms' || side === 'all') _approvedSubState.charms.cacheStale = true;
+      _updateFreshnessIndicators();
+      // If user is currently looking at the invalidated sub-tab, auto-refresh
+      // (since they're watching this exact data right now)
+      if (appMode === 'approvedCharms') {
+        if (_approvedSubState.active === 'listings' && _approvedSubState.listings.cacheStale) {
+          _showSubtab('listings');
+        } else if (_approvedSubState.active === 'charms' && _approvedSubState.charms.cacheStale) {
+          _showSubtab('charms');
+        }
+      }
+    }
+
+    function _formatRelTime(ms) {
+      if (!ms) return 'never';
+      const diff = Date.now() - ms;
+      if (diff < 30000) return 'just now';
+      if (diff < 60000) return `${Math.round(diff/1000)}s ago`;
+      if (diff < 3600000) return `${Math.round(diff/60000)}m ago`;
+      const hrs = Math.round(diff/3600000);
+      if (hrs < 24) return `${hrs}h ago`;
+      return `${Math.round(hrs/24)}d ago`;
+    }
+
+    function _updateFreshnessIndicators() {
+      // Listings indicator
+      const lstFresh = document.getElementById('approvedListFreshness');
+      if (lstFresh) {
+        const ls = _approvedSubState.listings;
+        if (ls.loading) {
+          lstFresh.textContent = 'loading…';
+          lstFresh.className = 'freshness loading';
+        } else if (!ls.cache) {
+          lstFresh.textContent = 'not loaded';
+          lstFresh.className = 'freshness empty';
+        } else if (ls.cacheStale) {
+          lstFresh.textContent = 'stale · click refresh';
+          lstFresh.className = 'freshness stale';
+        } else if (Date.now() - ls.cacheTime > CACHE_TTL_MS) {
+          lstFresh.textContent = `expired · loaded ${_formatRelTime(ls.cacheTime)}`;
+          lstFresh.className = 'freshness stale';
+        } else {
+          lstFresh.textContent = `loaded ${_formatRelTime(ls.cacheTime)}`;
+          lstFresh.className = 'freshness fresh';
+        }
+      }
+      // Charms indicator
+      const chFresh = document.getElementById('approvedCharmFreshness');
+      if (chFresh) {
+        const cs = _approvedSubState.charms;
+        if (cs.loading) {
+          chFresh.textContent = 'loading…';
+          chFresh.className = 'freshness loading';
+        } else if (!cs.cache) {
+          chFresh.textContent = 'not loaded';
+          chFresh.className = 'freshness empty';
+        } else if (cs.cacheStale) {
+          chFresh.textContent = 'stale · click refresh';
+          chFresh.className = 'freshness stale';
+        } else if (Date.now() - cs.cacheTime > CACHE_TTL_MS) {
+          chFresh.textContent = `expired · loaded ${_formatRelTime(cs.cacheTime)}`;
+          chFresh.className = 'freshness stale';
+        } else {
+          chFresh.textContent = `loaded ${_formatRelTime(cs.cacheTime)}`;
+          chFresh.className = 'freshness fresh';
+        }
+      }
+    }
+
+    // Keep freshness display ticking forward (so "2m ago" becomes "3m ago")
+    setInterval(_updateFreshnessIndicators, 30000);
 
     // === Helpers ===
     function _derivDate(folderId) {
@@ -5746,9 +5959,11 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     // === LISTINGS: load, filter, paginate, render ===
     async function _loadApprovedListings({ force = false } = {}) {
       const ls = _approvedSubState.listings;
-      if (ls.cache && !force) return ls.cache;
+      // Use fresh cache when not forced
+      if (!force && _isCacheFresh('listings')) return ls.cache;
       if (ls.loading) return null;
       ls.loading = true;
+      _updateFreshnessIndicators();
       try {
         await ensureStorageSignedIn();
         const r = ref(storage, `${ROOT}/Generated_Listing_Sets/Approved_Listing_Sets`);
@@ -5758,9 +5973,12 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
           return { ...meta, fullPath: p.fullPath };
         });
         ls.cache = items;
+        ls.cacheTime = Date.now();
+        ls.cacheStale = false;
         return items;
       } finally {
         ls.loading = false;
+        _updateFreshnessIndicators();
       }
     }
 
@@ -5782,12 +6000,10 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       if (ls.thumbsLoading.has(item.id)) return;
       const promise = (async () => {
         try {
-          // Bail if card got detached during pagination
           if (!cardEl.isConnected) return;
           const folderRef = ref(storage, item.fullPath);
           const res = await listAll(folderRef);
-          // Filter only image files (skip manifest.json and other non-images)
-          // Natural-sort by slot number so Slot_10 sorts after Slot_2
+          // Filter only image files; natural-sort by slot number
           const slotNum = (name) => {
             const m = name.match(/Slot_(\d+)/);
             return m ? parseInt(m[1], 10) : 999;
@@ -5795,27 +6011,36 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
           const slots = res.items
             .filter(it => /\.(png|jpe?g|webp|gif|avif)$/i.test(it.name))
             .sort((a, b) => slotNum(a.name) - slotNum(b.name) || a.name.localeCompare(b.name));
+
+          // Use concurrency-limited URL fetches via setBoxImage (the
+          // original's battle-tested image-loading utility) plus cacheBust
+          // (the same query-param trick the original code uses everywhere)
+          const tasks = [];
           for (let i = 0; i < 4; i++) {
-            // Stop if card was detached mid-load (paginated away)
+            const slotIdx = i;
+            const slotItem = slotIdx < slots.length ? slots[slotIdx] : null;
+            tasks.push({ slotIdx, slotItem });
+          }
+          await _asyncPool(4, tasks, async ({ slotIdx, slotItem }) => {
             if (!cardEl.isConnected) return;
-            const slotBox = cardEl.querySelector(`.al-thumb[data-slot="${i}"]`);
-            if (!slotBox) continue;
-            if (i < slots.length) {
-              try {
-                const url = await getDownloadURL(slots[i]);
-                if (!cardEl.isConnected) return;
-                slotBox.innerHTML = `<img src="${url}" alt="${slots[i].name}">`;
-                attachPreviewBoxListeners(slotBox);
-              } catch (_) {
+            const slotBox = cardEl.querySelector(`.al-thumb[data-slot="${slotIdx}"]`);
+            if (!slotBox) return;
+            if (!slotItem) {
+              slotBox.innerHTML = `<div class="slotRefEmpty" style="font-size:9px;">·</div>`;
+              return;
+            }
+            try {
+              const url = await getDownloadURL(slotItem);
+              if (!cardEl.isConnected) return;
+              setBoxImage(slotBox, cacheBust(url));
+            } catch (urlErr) {
+              if (cardEl.isConnected) {
                 slotBox.innerHTML = `<div class="slotRefEmpty" style="font-size:9px; color:#fca5a5;">!</div>`;
               }
-            } else {
-              slotBox.innerHTML = `<div class="slotRefEmpty" style="font-size:9px;">·</div>`;
             }
-          }
+          });
         } catch (e) {
           console.warn('Listing thumb load failed', item.id, e);
-          // Show error state on thumbs
           if (cardEl.isConnected) {
             cardEl.querySelectorAll('.al-thumb').forEach(slotBox => {
               if (slotBox.querySelector('img')) return;
@@ -5910,9 +6135,10 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     // === CHARMS: load, filter, paginate via existing renderCharmPage ===
     async function _loadApprovedCharms({ force = false } = {}) {
       const cs = _approvedSubState.charms;
-      if (cs.cache && !force) return cs.cache;
+      if (!force && _isCacheFresh('charms')) return cs.cache;
       if (cs.loading) return null;
       cs.loading = true;
+      _updateFreshnessIndicators();
       try {
         await ensureStorageSignedIn();
         const r = ref(storage, `${ROOT}/Charm_Maker/Completed_Approved_Charm_Sets`);
@@ -5922,9 +6148,12 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
           return { id: p.name, dateMs: d ? d.getTime() : 0 };
         });
         cs.cache = items;
+        cs.cacheTime = Date.now();
+        cs.cacheStale = false;
         return items;
       } finally {
         cs.loading = false;
+        _updateFreshnessIndicators();
       }
     }
 
@@ -6054,38 +6283,38 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       // Trigger loads + render
       if (which === 'listings') {
         const grid = document.getElementById('approvedListingsGrid');
-        if (!_approvedSubState.listings.cache) {
-          // Show immediate loading state — overrides any stale render below
+        if (_isCacheFresh('listings')) {
+          // Fresh cache — render instantly, no network call
+          _renderListingsPage();
+        } else {
+          // Stale, expired, or never-loaded — show placeholder + reload
           grid.innerHTML = `<div class="slotRefEmpty" style="grid-column: 1/-1; padding: 36px;">Loading approved listings…</div>`;
           if (!_approvedSubState.listings.loading) {
-            _loadApprovedListings()
+            _loadApprovedListings({ force: true })
               .then(() => _renderListingsPage())
               .catch(e => {
                 console.warn('listings load failed', e);
                 grid.innerHTML = `<div class="slotRefEmpty" style="grid-column: 1/-1; padding: 36px; color: #fca5a5;">Failed to load listings: ${e?.message || e}</div>`;
               });
           }
-        } else {
-          _renderListingsPage();
         }
       } else {
         const grid = document.getElementById('approvedCharmGrid');
-        if (!_approvedSubState.charms.cache) {
-          // Show immediate loading state, blanking any prior render from
-          // the original loadCharmHistoryList that may still be in flight
+        if (_isCacheFresh('charms')) {
+          _renderCharmsPage();
+        } else {
           grid.innerHTML = `<div class="slotRefEmpty" style="grid-column: 1/-1; padding: 36px;">Loading approved charm sets…</div>`;
           if (!_approvedSubState.charms.loading) {
-            _loadApprovedCharms()
+            _loadApprovedCharms({ force: true })
               .then(() => _renderCharmsPage())
               .catch(e => {
                 console.warn('charms load failed', e);
                 grid.innerHTML = `<div class="slotRefEmpty" style="grid-column: 1/-1; padding: 36px; color: #fca5a5;">Failed to load charm sets: ${e?.message || e}</div>`;
               });
           }
-        } else {
-          _renderCharmsPage();
         }
       }
+      _updateFreshnessIndicators();
     }
 
     document.querySelectorAll('#approvedSubTabs .approved-subtab').forEach(tab => {
@@ -6443,9 +6672,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       }
 
       if (isApprovedView) {
-        // Reload caches (Approved tab was just opened/re-entered)
-        _approvedSubState.listings.cache = null;
-        _approvedSubState.charms.cache = null;
+        // Show the active sub-tab. _showSubtab uses _isCacheFresh internally
+        // so a fresh cache renders instantly; a stale or expired one reloads.
+        // No eager invalidation — caches survive navigation away and back.
         _showSubtab(_approvedSubState.active);
       } else {
         // Hide both Approved-tab grids when not on Approved
@@ -6457,6 +6686,105 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       btn.addEventListener('click', () => setTimeout(_updateContextualUI, 80));
     });
     setTimeout(_updateContextualUI, 600);
+
+    // ---------------------------------------------------------------------
+    // 5) SMART CACHE INVALIDATION HOOKS
+    // ---------------------------------------------------------------------
+    // Wrap the original mutating operations so the Approved-tab caches stay
+    // fresh without polling or full reloads. Each hook either:
+    //   - performs an OPTIMISTIC LOCAL UPDATE (no network round-trip), or
+    //   - flags the cache as stale (reloads on next sub-tab activation).
+    // ---------------------------------------------------------------------
+
+    // -- Hook A: approveCharmQuad — Charm Maker → Completed_Approved_Charm_Sets
+    // A new entry is added. Mark charms cache stale; user will see it on
+    // next visit to Approved tab.
+    if (typeof window.approveCharmQuad === 'function') {
+      const _origApprove = window.approveCharmQuad;
+      window.approveCharmQuad = async function(folderId) {
+        const result = await _origApprove.apply(this, arguments);
+        // Defer slightly so the move completes server-side
+        setTimeout(() => _invalidateCache('charms'), 1500);
+        return result;
+      };
+    }
+
+    // -- Hook B: deleteCharmQuad — removes from charm folders
+    // When called with isApprovedView=true, the deletion is from
+    // Completed_Approved_Charm_Sets, our charms cache. We can OPTIMISTICALLY
+    // remove the entry from the cache without a full reload — much snappier.
+    // For the non-approved case (delete from Generated_Charm_Sets), we don't
+    // care because that's not part of our cache.
+    if (typeof window.deleteCharmQuad === 'function') {
+      const _origDelete = window.deleteCharmQuad;
+      window.deleteCharmQuad = async function(folderId, isApprovedView) {
+        const result = await _origDelete.apply(this, arguments);
+        if (isApprovedView) {
+          const cs = _approvedSubState.charms;
+          if (cs.cache) {
+            // Optimistic in-memory update
+            cs.cache = cs.cache.filter(rec => rec.id !== folderId);
+            cs.selected.delete(folderId);
+            // Re-render if currently viewing the charms sub-tab
+            if (appMode === 'approvedCharms' && _approvedSubState.active === 'charms') {
+              _renderCharmsPage();
+            }
+            _updateFreshnessIndicators();
+          } else {
+            _invalidateCache('charms');
+          }
+        }
+        return result;
+      };
+    }
+
+    // -- Hook C: downloadCompletedSetsBtn (Review tab buffer flush)
+    // The original handler ZIPs Completed_Listing_Sets, then MOVES files to
+    // Approved_Listing_Sets. After that move, our listings cache is stale.
+    // We add a click listener (NOT capture-phase, NOT preventing default) so
+    // the original handler still runs; we just schedule an invalidation.
+    {
+      const btn = document.getElementById('downloadCompletedSetsBtn');
+      if (btn) {
+        btn.addEventListener('click', () => {
+          // The flush runs in the background. We poll the button text to
+          // detect completion (it shows "Download Complete!" when done) and
+          // then invalidate. Fallback timeout of 5 minutes.
+          const startedAt = Date.now();
+          const checkComplete = () => {
+            if (Date.now() - startedAt > 5 * 60 * 1000) {
+              // Hard timeout — just invalidate anyway
+              _invalidateCache('listings');
+              return;
+            }
+            const txt = btn.textContent || '';
+            if (txt.includes('Complete')) {
+              // Move done; invalidate listings cache
+              _invalidateCache('listings');
+              return;
+            }
+            setTimeout(checkComplete, 1000);
+          };
+          // Start polling after 2s grace period
+          setTimeout(checkComplete, 2000);
+        });
+      }
+    }
+
+    // -- Hook D: clicking the Refresh buttons inside the Approved tab UI
+    document.getElementById('approvedListRefreshBtn')?.addEventListener('click', () => {
+      _approvedSubState.listings.cacheStale = true;
+      _showSubtab('listings');
+    });
+    document.getElementById('approvedCharmRefreshBtn')?.addEventListener('click', () => {
+      _approvedSubState.charms.cacheStale = true;
+      _showSubtab('charms');
+    });
+
+    // ---------------------------------------------------------------------
+    // 6) FRESHNESS DISPLAY — initial paint
+    // ---------------------------------------------------------------------
+    setTimeout(_updateFreshnessIndicators, 500);
 
     // =====================================================================
     // ============= END MOCKUP-FEATURE ENHANCEMENTS =======================
