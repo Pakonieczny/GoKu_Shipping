@@ -1101,18 +1101,16 @@
   }
   .thumb:hover { border-color: var(--line-2); }
   .thumb-img {
-    aspect-ratio: 1;
     width: 100%;
-    min-height: 140px;
+    height: 160px;
     background: #0a0c14;
     overflow: hidden;
     position: relative;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    border-bottom: 1px solid var(--line);
   }
   .thumb-img img {
-    width: 100%; height: 100%;
+    width: 100%;
+    height: 100%;
     object-fit: contain;
     display: block;
   }
@@ -1351,22 +1349,18 @@
     margin-bottom: 8px;
   }
   .al-thumb {
-    aspect-ratio: 1;
     width: 100%;
-    min-height: 90px;
-    height: auto !important;
+    height: 110px;
     border-radius: var(--r-sm);
     border: 1px solid var(--line);
     background: var(--inset);
     overflow: hidden;
     position: relative;
-    display: flex;
-    align-items: center;
-    justify-content: center;
   }
   .al-thumb img {
     width: 100%; height: 100%;
     object-fit: contain;
+    display: block;
   }
   .al-meta {
     font-family: var(--font-mono);
@@ -5632,6 +5626,29 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     let _galleryCurrentPath = '';
     let _galleryCurrentTitle = '';
 
+    // Helper: load an image into a thumb box. Reports errors to console so
+    // we can diagnose if URLs are failing. Skips attachPreviewBoxListeners
+    // because the box is small and doesn't need zoom/pan/wheel handlers
+    // (wheel-zoom on tiny thumbs is also bad UX — it prevents modal scroll).
+    function _setThumbImage(box, url, alt) {
+      return new Promise((resolve) => {
+        const img = document.createElement('img');
+        img.style.cssText = 'width:100%;height:100%;object-fit:contain;display:block;';
+        if (alt) img.alt = alt;
+        img.onload = () => resolve(true);
+        img.onerror = (e) => {
+          console.warn('[Listing-Generator] thumb image failed to load:', url, e);
+          if (box.isConnected) {
+            box.innerHTML = '<div class="slotRefEmpty" style="font-size: 9px; color: #fca5a5;">load failed</div>';
+          }
+          resolve(false);
+        };
+        img.src = url;
+        box.innerHTML = '';
+        box.appendChild(img);
+      });
+    }
+
     async function _openGallery(title, path) {
       _galleryCurrentPath = path;
       _galleryCurrentTitle = title;
@@ -5655,21 +5672,24 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
         const sorted = [...res.items].sort((a, b) => b.name.localeCompare(a.name));
 
-        // Render placeholders immediately — no URL fetches yet
+        // Render placeholders immediately — no URL fetches yet.
+        // NOTE: do NOT use 'preview-box' class — its fixed height: 280px
+        // conflicts with thumb-img's intended sizing.
         _galleryBody.innerHTML = sorted.map((item, idx) => `
-          <div class="thumb" data-path="${item.fullPath}" data-idx="${idx}">
-            <div class="thumb-img preview-box"><div class="slotRefEmpty" style="font-size: 9px;">…</div></div>
-            <div class="thumb-name mono" title="${item.name}">${item.name}</div>
-            <button class="btn btnSmall thumb-delete" title="Delete this file">×</button>
+          <div class="thumb" data-idx="${idx}">
+            <div class="thumb-img"><div class="slotRefEmpty" style="font-size: 9px;">…</div></div>
+            <div class="thumb-name mono" title="${item.name.replace(/"/g, '&quot;')}">${item.name}</div>
+            <button class="btn btnSmall thumb-delete" title="Delete this file" data-fp="${item.fullPath.replace(/"/g, '&quot;')}">×</button>
           </div>
         `).join('');
 
-        // Wire delete buttons (don't depend on URL availability)
+        // Wire delete buttons (no URL dependency)
         _galleryBody.querySelectorAll('.thumb-delete').forEach(btn => {
           btn.addEventListener('click', async (e) => {
             e.stopPropagation();
             const thumb = btn.closest('.thumb');
-            const fp = thumb.dataset.path;
+            const fp = btn.dataset.fp;
+            if (!fp) return;
             if (!confirm(`Delete ${fp.split('/').pop()}?\n\nThis is permanent and cannot be undone.`)) return;
             try {
               await deleteObject(ref(storage, fp));
@@ -5698,14 +5718,16 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
           });
         });
 
-        // Progressively load URLs with concurrency cap (6 parallel)
-        // Uses setBoxImage + cacheBust — same pattern as original code
-        await _asyncPool(6, sorted, async (item) => {
-          // Skip if modal closed before this fetched
+        // Get all rendered thumb elements in document order — they
+        // correspond 1-1 to the sorted array. This avoids any querySelector
+        // attribute escaping issues with Firebase paths.
+        const thumbEls = Array.from(_galleryBody.querySelectorAll('.thumb'));
+        const tasks = sorted.map((item, idx) => ({ item, thumbEl: thumbEls[idx] }));
+
+        // Progressively load URLs with concurrency cap
+        await _asyncPool(6, tasks, async ({ item, thumbEl }) => {
           if (!_galleryModal.classList.contains('open')) return;
-          // Skip if user opened a different folder mid-flight
           if (_galleryCurrentPath !== path) return;
-          const thumbEl = _galleryBody.querySelector(`.thumb[data-path="${CSS.escape(item.fullPath)}"]`);
           if (!thumbEl || !thumbEl.isConnected) return;
           const box = thumbEl.querySelector('.thumb-img');
           if (!box) return;
@@ -5714,9 +5736,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
             if (!_galleryModal.classList.contains('open')) return;
             if (_galleryCurrentPath !== path) return;
             if (!thumbEl.isConnected) return;
-            setBoxImage(box, cacheBust(url));
+            await _setThumbImage(box, cacheBust(url), item.name);
           } catch (err) {
-            console.warn('Gallery thumb URL failed', item.fullPath, err);
+            console.warn('[Listing-Generator] gallery URL fetch failed:', item.fullPath, err);
             if (thumbEl.isConnected) {
               box.innerHTML = `<div class="slotRefEmpty" style="font-size: 9px; color: #fca5a5;">!</div>`;
             }
@@ -6032,8 +6054,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
             try {
               const url = await getDownloadURL(slotItem);
               if (!cardEl.isConnected) return;
-              setBoxImage(slotBox, cacheBust(url));
+              await _setThumbImage(slotBox, cacheBust(url), slotItem.name);
             } catch (urlErr) {
+              console.warn('[Listing-Generator] listing thumb URL fetch failed:', slotItem.fullPath, urlErr);
               if (cardEl.isConnected) {
                 slotBox.innerHTML = `<div class="slotRefEmpty" style="font-size:9px; color:#fca5a5;">!</div>`;
               }
@@ -6347,6 +6370,39 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         }, 120);
       });
       _observer.observe(grid, { childList: true });
+    })();
+
+    // === Belt-and-suspenders: suppress charm pagination/header leaks ===
+    // The original loadCharmHistoryList → renderCharmPage runs async after
+    // setAppMode("approvedCharms") and unconditionally sets the charm
+    // pagination element to display: flex when the unfiltered list has more
+    // pages. Same for approvedSetsHeader (set to "flex" by setAppMode).
+    // When the user is actually viewing the Listings sub-tab, both elements
+    // should remain hidden. These observers force them back when the
+    // original code tries to show them after our hide.
+    (() => {
+      const charmPag = document.getElementById('approvedCharmPagination');
+      if (!charmPag || typeof MutationObserver === 'undefined') return;
+      const obs = new MutationObserver(() => {
+        if (appMode === 'approvedCharms'
+            && _approvedSubState.active === 'listings'
+            && charmPag.style.display !== 'none') {
+          charmPag.style.display = 'none';
+        }
+      });
+      obs.observe(charmPag, { attributes: true, attributeFilter: ['style'] });
+    })();
+    (() => {
+      const aHdr = document.getElementById('approvedSetsHeader');
+      if (!aHdr || typeof MutationObserver === 'undefined') return;
+      const obs = new MutationObserver(() => {
+        if (appMode === 'approvedCharms'
+            && _approvedSubState.active === 'listings'
+            && aHdr.style.display !== 'none') {
+          aHdr.style.display = 'none';
+        }
+      });
+      obs.observe(aHdr, { attributes: true, attributeFilter: ['style'] });
     })();
     document.querySelectorAll('#approvedListCategories .cat-chip').forEach(chip => {
       chip.addEventListener('click', () => {
