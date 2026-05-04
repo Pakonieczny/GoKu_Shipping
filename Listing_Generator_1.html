@@ -572,6 +572,79 @@
     font-size: 10px;
   }
 
+  /* ---------- Charm reference mosaic (Charm Maker left side) ---------- */
+  .charm-mosaic {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+    gap: 6px;
+    max-height: 380px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 8px;
+    background: #0a0c14;
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    /* always-visible scrollbar */
+    scrollbar-width: thin;
+    scrollbar-color: var(--line-2) transparent;
+  }
+  .charm-mosaic::-webkit-scrollbar { width: 8px; }
+  .charm-mosaic::-webkit-scrollbar-track { background: var(--inset); border-radius: 4px; }
+  .charm-mosaic::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 4px; }
+
+  .charm-mosaic-tile {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    background: var(--inset);
+    border: 2px solid var(--line);
+    border-radius: 6px;
+    overflow: hidden;
+    cursor: pointer;
+    transition: border-color 120ms ease, transform 80ms ease;
+  }
+  .charm-mosaic-tile:hover {
+    border-color: var(--accent-line);
+    transform: translateY(-1px);
+  }
+  .charm-mosaic-tile.selected {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(110, 168, 255, 0.25);
+  }
+  .charm-mosaic-tile img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+  .charm-mosaic-tile .order-badge {
+    position: absolute;
+    top: 4px;
+    left: 4px;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #06080d;
+    font-size: 10px;
+    font-weight: bold;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2;
+    font-family: var(--font-mono);
+  }
+  .charm-mosaic-tile .placeholder {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 9px;
+    color: var(--muted);
+  }
+
   /* ---------- Spinner ---------- */
   .spinner {
     width: 22px;
@@ -1503,7 +1576,7 @@
           <div class="hint" style="margin-top: 12px;">
             <strong>Earring categories use a different shared pool.</strong><br>
             Stud / Hoop Earrings pull charm refs from <code>Charm_Maker/New_Charms_Earrings</code>.
-            All other categories use <code>Charm_Maker/New_Charms</code>.
+            All other categories use <code>Charm_Maker/Charm_Templates (Existing Etsy Charms)</code>.
           </div>
 
           <div class="row" style="margin-top: 14px;">
@@ -1589,19 +1662,44 @@
       <!-- ===== CHARM MAKER SECTION ===== -->
       <div id="charmMakerSection" style="display: none;">
         <h1>Charm Maker</h1>
-        <p class="lede">For each reference charm in <code style="font-family: var(--font-mono); font-size: 11px;">New_Charms</code>, Gemini produces a 4-image quad: color charm, color earring, B&amp;W charm, B&amp;W earring. Approve the base before slots 2–4 are derived.</p>
+        <p class="lede">For each reference charm in <code style="font-family: var(--font-mono); font-size: 11px;">Charm_Templates (Existing Etsy Charms)</code>, Gemini produces a 4-image quad: color charm, color earring, B&amp;W charm, B&amp;W earring. Approve the base before slots 2–4 are derived.</p>
+
+        <!-- Workflow guide -->
+        <div class="hint" style="margin-bottom: 14px; line-height: 1.55;">
+          <strong>Workflow:</strong>
+          <ol style="margin: 6px 0 0 18px; padding: 0;">
+            <li>Pick reference(s) from the library below (or leave empty to use the newest)</li>
+            <li>Click <strong>Generate charms</strong> — quads appear in the <em>Charm Maker Database</em> on the right</li>
+            <li>Click <strong>Approve Base &amp; Continue</strong> on a quad to derive slots 2–4</li>
+            <li>Approved quads move to the <strong>Approved Charms</strong> tab (<code>Completed_Approved_Charm_Sets</code>)</li>
+          </ol>
+        </div>
 
         <div class="group">
           <div class="group-head">
-            <h3>Master pool</h3>
-            <span class="count">next available preview</span>
+            <h3>Reference library</h3>
+            <span class="count" id="charmRefSelectionStatus">no selection · uses newest</span>
           </div>
 
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-            <label style="margin: 0;">New_Charms · next available</label>
+            <label style="margin: 0;"><code style="font-family: var(--font-mono); font-size: 11px;">Charm_Templates (Existing Etsy Charms)</code> · sources for AI generation</label>
             <span id="newCharmsTotalCount">Count: Loading...</span>
           </div>
-          <div class="slotPrev" id="previewNewCharms" style="height: 380px;"><div class="slotRefEmpty">Loading...</div></div>
+
+          <p class="muted" style="font-size: 11px; margin: 0 0 8px 0;">Click thumbs to select specific charms for the next batch (in click order). Click again to deselect. Empty selection = uses the newest by upload time.</p>
+
+          <div id="charmMosaic" class="charm-mosaic"><div class="slotRefEmpty" style="grid-column: 1/-1; padding: 36px;">Loading…</div></div>
+
+          <!-- Hidden legacy element kept so original code referencing
+               #previewNewCharms (loadCharmMakerPreviews, setPreviewNewCharmsFromRef)
+               doesn't throw. The visible UI is the mosaic above. -->
+          <div class="slotPrev" id="previewNewCharms" style="display: none;"><div class="slotRefEmpty">Loading...</div></div>
+
+          <div class="row" style="margin-top: 10px; gap: 8px;">
+            <button class="btn btnSmall" id="charmMosaicClearBtn" style="font-size: 11px;">Clear selection</button>
+            <button class="btn btnSmall" id="charmMosaicRefreshBtn" style="font-size: 11px;">↻ Refresh library</button>
+            <span class="muted" style="font-size: 11px; margin-left: auto;" id="charmMosaicHint">Selection determines order</span>
+          </div>
 
           <div class="row" style="margin-top: 14px;">
             <button class="btn btn-primary" id="executeCharmGenBtn" style="width:100%;">Generate charms</button>
@@ -1666,6 +1764,26 @@
           Total Approved Sets: <span style="font-weight: bold; font-size: 15px;">0</span>
         </div>
         <button class="btn" id="downloadApprovedSetsBtn" style="background: #2b6cff; color: #fff; border: 1px solid #1a4bbf; font-weight: bold;">Download Sets (ZIP)</button>
+      </div>
+
+      <!-- Charm Maker header strip (shown only on charmMaker mode) -->
+      <div id="charmMakerHeader" style="display: none; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; padding: 8px 12px; background: var(--inset); border: 1px solid var(--line); border-radius: var(--r-md); margin-bottom: 10px;">
+        <div style="display: flex; align-items: center; gap: 16px;">
+          <div style="font-size: 13px;">
+            <span class="muted">Charm sets in database:</span>
+            <span id="charmDbTotalCount" style="font-weight: bold; font-size: 15px; color: var(--accent); margin-left: 4px;">0</span>
+          </div>
+          <div class="muted" style="font-size: 11px;">stored in <code style="font-family: var(--font-mono); font-size: 11px;">Charm_Maker / Generated_Charm_Sets</code></div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <label style="font-size: 11px; color: var(--muted); margin: 0;">Per page:</label>
+          <select id="charmDbPerPage" style="font-size: 11px; padding: 4px 8px; min-width: 70px;">
+            <option value="12">12</option>
+            <option value="24">24</option>
+            <option value="50" selected>50</option>
+            <option value="96">96</option>
+          </select>
+        </div>
       </div>
 
       <!-- Approved-tab filter panel: sub-tabs + meaningful filters -->
@@ -2513,7 +2631,11 @@
     }
 
     function newCharmsPath() {
-      return `${ROOT}/Charm_Maker/New_Charms`; // UPDATED
+      // Source folder for Charm Maker references — switched from
+      // `New_Charms` to `Charm_Templates (Existing Etsy Charms)`
+      // (folder name includes a space and parentheses, which the
+      // Firebase Storage SDK handles directly in path strings).
+      return `${ROOT}/Charm_Maker/Charm_Templates (Existing Etsy Charms)`;
     }
 
     function newCharmsEarringsPath() {
@@ -2664,7 +2786,7 @@
       if (["Stud_Earrings", "Hoop_Earrings"].includes(category)) {
         panelNewCharmsEl.appendChild(makeUploadPanel(newCharmsEarringsPath(), "New_Charms_Earrings (Earrings Only)"));
       } else {
-        panelNewCharmsEl.appendChild(makeUploadPanel(newCharmsPath(), "New_Charms (Necklaces/Other)"));
+        panelNewCharmsEl.appendChild(makeUploadPanel(newCharmsPath(), "Charm_Templates · Existing Etsy Charms (Necklaces/Other)"));
       }
 
       const slotCount = (SLOT_MAP[category]?.length) || 0;
@@ -3524,7 +3646,7 @@ function updateApproveButtonState() {
     // --- Charm Maker Pagination State ---
     let charmSetsHistory = [];
     let charmCurrentPage = 1;
-    const CHARM_ITEMS_PER_PAGE = 50;
+    let CHARM_ITEMS_PER_PAGE = 50;
 
     // Base prompts hoisted for global access
     const promptStrCharm = `CRITICAL INITIAL ANALYSIS: Before generating, conceptually analyze the reference image to determine its exact genre and subject matter (e.g., "Genre: Animal, Subject Matter: Rabbit/Leporidae"). Use this specific analysis as the strict foundational concept for the new charm. DO NOT add additional jump rings, bails, or chains under ANY circumstances.
@@ -4626,7 +4748,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         try {
             const charmsToProcess = await listTopNFiles(newCharmsPath(), batchCount);
             if (charmsToProcess.length === 0) {
-                alert("No reference charms loaded in the New_Charms queue. Please upload to New_Charms.");
+                alert("No reference charms loaded in the queue. Please upload to Charm_Templates (Existing Etsy Charms).");
                 return;
             }
 
@@ -7115,6 +7237,279 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     // 6) FRESHNESS DISPLAY — initial paint
     // ---------------------------------------------------------------------
     setTimeout(_updateFreshnessIndicators, 500);
+
+    // ---------------------------------------------------------------------
+    // 7) CHARM MAKER ENHANCEMENTS
+    //   - Reference library mosaic (replaces single big preview)
+    //   - Click-to-select with order numbers (uses selected charms in
+    //     click order when generating; empty selection = legacy behavior)
+    //   - Charm Maker right-card header: count + per-page dropdown
+    // ---------------------------------------------------------------------
+    const _charmRefSelection = new Map(); // fullPath -> { order, name, itemRef }
+    let _charmMosaicLoading = false;
+
+    function _updateCharmRefStatus() {
+      const status = document.getElementById('charmRefSelectionStatus');
+      if (!status) return;
+      const n = _charmRefSelection.size;
+      status.textContent = n === 0 ? 'no selection · uses newest' : `${n} selected · in click order`;
+    }
+
+    function _refreshCharmOrderBadges() {
+      const mosaic = document.getElementById('charmMosaic');
+      if (!mosaic) return;
+      mosaic.querySelectorAll('.charm-mosaic-tile').forEach(tile => {
+        const fp = tile.dataset.fp;
+        const sel = _charmRefSelection.get(fp);
+        const existing = tile.querySelector('.order-badge');
+        if (sel) {
+          if (existing) existing.textContent = String(sel.order);
+          else {
+            const b = document.createElement('div');
+            b.className = 'order-badge';
+            b.textContent = String(sel.order);
+            tile.insertBefore(b, tile.firstChild);
+          }
+          tile.classList.add('selected');
+        } else {
+          if (existing) existing.remove();
+          tile.classList.remove('selected');
+        }
+      });
+    }
+
+    function _toggleCharmRefSelect(tile, item) {
+      const fp = item.fullPath;
+      if (_charmRefSelection.has(fp)) {
+        _charmRefSelection.delete(fp);
+        // Renumber remaining in current order
+        let i = 1;
+        for (const v of _charmRefSelection.values()) v.order = i++;
+      } else {
+        _charmRefSelection.set(fp, {
+          order: _charmRefSelection.size + 1,
+          name: item.name,
+          itemRef: item,
+          fullPath: fp,
+        });
+      }
+      _refreshCharmOrderBadges();
+      _updateCharmRefStatus();
+    }
+
+    async function _loadCharmMosaic() {
+      const mosaic = document.getElementById('charmMosaic');
+      if (!mosaic) return;
+      if (_charmMosaicLoading) return;
+      _charmMosaicLoading = true;
+      mosaic.innerHTML = '<div class="slotRefEmpty" style="grid-column: 1/-1; padding: 36px;">Loading library…</div>';
+
+      try {
+        await ensureStorageSignedIn();
+        const folderRef = ref(storage, newCharmsPath());
+        const res = await listAll(folderRef);
+        const items = res.items
+          .filter(it => /\.(png|jpe?g|webp|gif|avif)$/i.test(it.name || ''))
+          .slice()
+          .sort((a, b) => a.name.localeCompare(b.name));
+
+        // Update count
+        const countEl = document.getElementById('newCharmsTotalCount');
+        if (countEl) countEl.textContent = `Count: ${items.length}`;
+
+        if (items.length === 0) {
+          mosaic.innerHTML = '<div class="slotRefEmpty" style="grid-column: 1/-1; padding: 36px;">No charms in Charm_Templates (Existing Etsy Charms) folder</div>';
+          return;
+        }
+
+        mosaic.innerHTML = items.map((item, idx) => `
+          <div class="charm-mosaic-tile" data-idx="${idx}" data-fp="${item.fullPath.replace(/"/g, '&quot;')}" data-name="${item.name.replace(/"/g, '&quot;')}" title="${item.name.replace(/"/g, '&quot;')}">
+            <div class="placeholder">…</div>
+          </div>
+        `).join('');
+
+        // Wire click handlers
+        mosaic.querySelectorAll('.charm-mosaic-tile').forEach((tile, i) => {
+          tile.addEventListener('click', () => _toggleCharmRefSelect(tile, items[i]));
+        });
+
+        // Re-apply any existing selection ordering
+        _refreshCharmOrderBadges();
+
+        // Load thumbs with concurrency cap, using IndexedDB cache (same
+        // pattern that makes charm cards / gallery modal fast on revisit)
+        const tasks = items.map((item, i) => ({ item, tile: mosaic.children[i] }));
+        await _asyncPool(8, tasks, async ({ item, tile }) => {
+          if (!tile || !tile.isConnected) return;
+          const path = item.fullPath;
+
+          const renderImg = (srcUrl) => {
+            if (!tile.isConnected) return;
+            // Preserve order badge if it's there
+            const badge = tile.querySelector('.order-badge');
+            tile.innerHTML = `<img src="${srcUrl}" alt="${item.name.replace(/"/g, '&quot;')}" />`;
+            if (badge) tile.insertBefore(badge, tile.firstChild);
+          };
+
+          // 1. Cache hit
+          try {
+            const cached = await getCachedBlob(path);
+            if (cached && cached.blob) {
+              const u = URL.createObjectURL(cached.blob);
+              _activeBlobUrls.add(u);
+              renderImg(u);
+              return;
+            }
+          } catch (_) {}
+
+          // 2. URL → fetchAndCacheBlob
+          try {
+            const url = await getDownloadURL(item);
+            const blob = await fetchAndCacheBlob(url, path, Date.now());
+            if (blob) {
+              const u = URL.createObjectURL(blob);
+              _activeBlobUrls.add(u);
+              renderImg(u);
+              return;
+            }
+          } catch (_) {}
+
+          // 3. SDK getBytes
+          try {
+            const bytes = await getBytes(item);
+            const ext = (item.name || '').toLowerCase().split('.').pop();
+            let mime = 'image/png';
+            if (ext === 'jpg' || ext === 'jpeg') mime = 'image/jpeg';
+            else if (ext === 'webp') mime = 'image/webp';
+            else if (ext === 'gif')  mime = 'image/gif';
+            else if (ext === 'avif') mime = 'image/avif';
+            const blob = new Blob([bytes], { type: mime });
+            await setCachedBlob(path, blob, Date.now());
+            const u = URL.createObjectURL(blob);
+            _activeBlobUrls.add(u);
+            renderImg(u);
+          } catch (e) {
+            if (tile.isConnected) tile.innerHTML = '<div class="placeholder" style="color:#fca5a5">!</div>';
+          }
+        });
+      } catch (e) {
+        mosaic.innerHTML = `<div class="slotRefEmpty" style="grid-column: 1/-1; padding: 36px; color: #fca5a5;">Error: ${e?.message || e}</div>`;
+      } finally {
+        _charmMosaicLoading = false;
+      }
+    }
+
+    // Refresh / Clear selection buttons
+    document.getElementById('charmMosaicClearBtn')?.addEventListener('click', () => {
+      _charmRefSelection.clear();
+      _refreshCharmOrderBadges();
+      _updateCharmRefStatus();
+    });
+    document.getElementById('charmMosaicRefreshBtn')?.addEventListener('click', () => {
+      _charmRefSelection.clear();
+      _updateCharmRefStatus();
+      _loadCharmMosaic();
+    });
+
+    // Show/hide Charm Maker right-card header on tab switches; load mosaic on enter
+    function _updateCharmDbCount() {
+      const el = document.getElementById('charmDbTotalCount');
+      if (!el) return;
+      const n = (typeof charmSetsHistory !== 'undefined' && charmSetsHistory) ? charmSetsHistory.length : 0;
+      el.textContent = String(n);
+    }
+    function _showCharmMakerHeader(show) {
+      const h = document.getElementById('charmMakerHeader');
+      if (!h) return;
+      h.style.display = show ? 'flex' : 'none';
+    }
+    document.getElementById('toggleCharmMakerBtn')?.addEventListener('click', () => {
+      _showCharmMakerHeader(true);
+      // Load mosaic and update count after a brief delay so DOM is ready
+      setTimeout(() => {
+        _loadCharmMosaic();
+        _updateCharmRefStatus();
+        _updateCharmDbCount();
+      }, 80);
+    });
+    [toggleGenerateBtn, toggleReviewBtn, toggleApprovedCharmsBtn].forEach(btn => {
+      btn?.addEventListener('click', () => _showCharmMakerHeader(false));
+    });
+
+    // Live count update for Charm Maker DB while on that tab
+    setInterval(() => {
+      if (typeof appMode !== 'undefined' && appMode === 'charmMaker') {
+        _updateCharmDbCount();
+      }
+    }, 3000);
+
+    // Per-page dropdown — changes CHARM_ITEMS_PER_PAGE (which is now `let`)
+    document.getElementById('charmDbPerPage')?.addEventListener('change', (e) => {
+      const v = parseInt(e.target.value, 10);
+      if (!Number.isFinite(v) || v < 1) return;
+      CHARM_ITEMS_PER_PAGE = v;
+      // Reset to page 1 and re-render
+      charmCurrentPage = 1;
+      if (typeof renderCharmPage === 'function') renderCharmPage(false);
+    });
+
+    // Capture-phase Generate hook: if user has selected charms, use those
+    // in click order. Otherwise let the original handler run unchanged.
+    document.getElementById('executeCharmGenBtn')?.addEventListener('click', async (e) => {
+      if (_charmRefSelection.size === 0) return; // legacy path
+
+      // Override: stop the original handler from running
+      e.stopImmediatePropagation();
+      e.preventDefault();
+
+      const execBtn = e.currentTarget;
+      const ordered = [..._charmRefSelection.values()].sort((a, b) => a.order - b.order);
+
+      try {
+        if (typeof setBusy === 'function') setBusy(true);
+        if (typeof setStatus === 'function') setStatus(`Starting batch (${ordered.length} selected charm${ordered.length === 1 ? '' : 's'})…`);
+        execBtn.disabled = true;
+
+        // Reset to page 1 like original handler does
+        if (typeof charmCurrentPage !== 'undefined' && charmCurrentPage !== 1) {
+          charmCurrentPage = 1;
+          if (typeof renderCharmPage === 'function') renderCharmPage(false);
+        }
+
+        // Build charm data array in click order using getDownloadURL
+        const charmsToProcess = await Promise.all(ordered.map(async (sel) => {
+          const url = await getDownloadURL(sel.itemRef);
+          return { fullPath: sel.fullPath, name: sel.name, url };
+        }));
+
+        // Ensure earring ref is loaded
+        if (typeof currentEarringRef !== 'undefined' && !currentEarringRef && typeof listLatestFile === 'function') {
+          currentEarringRef = await listLatestFile(newCharmsEarringsPath());
+        }
+
+        const derivCount = parseInt(document.getElementById('derivativesPerCharmInput')?.value, 10) || 1;
+        const promises = [];
+        for (const charmData of charmsToProcess) {
+          for (let d = 0; d < derivCount; d++) {
+            promises.push(generateCharmQuad(charmData, currentEarringRef));
+            await sleep(300);
+          }
+        }
+        await Promise.allSettled(promises);
+        if (typeof setStatus === 'function') setStatus(`Batch complete (${ordered.length} selected charm${ordered.length === 1 ? '' : 's'}).`);
+
+        // Clear selection after generation so next click is fresh
+        _charmRefSelection.clear();
+        _refreshCharmOrderBadges();
+        _updateCharmRefStatus();
+      } catch (err) {
+        console.error('[Listing-Generator] Charm generation (selected) failed:', err);
+        if (typeof setStatus === 'function') setStatus(`Error: ${err?.message || err}`);
+      } finally {
+        if (typeof setBusy === 'function') setBusy(false);
+        execBtn.disabled = false;
+      }
+    }, { capture: true });
 
     // =====================================================================
     // ============= END MOCKUP-FEATURE ENHANCEMENTS =======================
