@@ -1805,12 +1805,16 @@
             </div>
           </div>
 
-          <!-- Active Gemini batch jobs (only visible when Batch mode is on
-               OR when there are uncollected batches in Firestore). -->
+          <!-- Batch jobs panel — visible when Batch mode is on. Each card
+               shows a Gemini batch's lifecycle: queued → running → ready
+               to collect → results downloaded into Firebase. -->
           <div id="batchJobsPanel" style="display: none; margin-top: 14px; padding: 12px; background: var(--inset); border: 1px solid var(--line); border-radius: var(--r-md);">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-              <label style="margin: 0; font-size: 12px; font-weight: 600;">In-flight batches</label>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+              <label style="margin: 0; font-size: 12px; font-weight: 600;">Your batch jobs</label>
               <button type="button" class="btn btnSmall" id="batchJobsRefreshBtn" style="font-size: 10px; padding: 2px 8px;">↻ Refresh</button>
+            </div>
+            <div class="muted" style="font-size: 10px; margin-bottom: 8px; line-height: 1.4;">
+              Submit → wait at Google (hours) → click <b style="color:#7fdb96;">Download results</b> when ready. You can close this tab; jobs persist.
             </div>
             <div id="batchJobsList" style="display: flex; flex-direction: column; gap: 8px;">
               <div class="muted" style="font-size: 11px; padding: 6px 0;">Loading…</div>
@@ -6393,7 +6397,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         const batches = Array.isArray(resp?.batches) ? resp.batches : [];
         _lastBatchList = batches;
         if (batches.length === 0) {
-          listEl.innerHTML = `<div class="muted" style="font-size: 11px; padding: 6px 0;">No in-flight batches. Submit one above.</div>`;
+          listEl.innerHTML = `<div class="muted" style="font-size: 11px; padding: 6px 0; line-height: 1.5;">No batch jobs yet. Submit one with the <b>Submit batch</b> button above. After Google finishes (typically 2–6 hours), a <b style="color:#7fdb96;">Download results</b> button will appear here.</div>`;
           return;
         }
         listEl.innerHTML = batches.map(_renderBatchCard).join("");
@@ -6412,41 +6416,46 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     }
 
     function _renderBatchCard(b) {
-      const stateColor = {
-        "JOB_STATE_PENDING":   "#fde68a",
-        "JOB_STATE_RUNNING":   "#93c5fd",
-        "JOB_STATE_SUCCEEDED": "#7fdb96",
-        "JOB_STATE_FAILED":    "#fca5a5",
-        "JOB_STATE_CANCELLED": "#a3a3a3",
-        "JOB_STATE_EXPIRED":   "#fca5a5",
-      }[b.state] || "#a3a3a3";
+      // Each state gets a human-readable explanation so users always know
+      // what's happening and what to do next.
+      const stateInfo = {
+        "JOB_STATE_PENDING":   { color: "#fde68a", label: "Queued at Google",        action: "Waiting in queue. Auto-refreshes every 60s." },
+        "JOB_STATE_RUNNING":   { color: "#93c5fd", label: "Generating at Google",    action: "Google is producing your images. Usually 2–6h." },
+        "JOB_STATE_SUCCEEDED": { color: "#7fdb96", label: "Ready to download",       action: "Click \"Download results\" to pull images into Firebase." },
+        "JOB_STATE_FAILED":    { color: "#fca5a5", label: "Failed at Google",        action: "Job failed. Check console for error details." },
+        "JOB_STATE_CANCELLED": { color: "#a3a3a3", label: "Cancelled",               action: "You cancelled this job. Already-completed work was billed." },
+        "JOB_STATE_EXPIRED":   { color: "#fca5a5", label: "Expired (>48h)",          action: "Google didn't finish in 48h. Resubmit." },
+      }[b.state] || { color: "#a3a3a3", label: b.state || "Unknown", action: "" };
+
       const succeeded = b.state === "JOB_STATE_SUCCEEDED";
       const final = ["JOB_STATE_SUCCEEDED", "JOB_STATE_FAILED", "JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED"].includes(b.state);
       const cancellable = !final;
       const collectable = succeeded && !b.collected;
       const created = b.createdAt ? new Date(b.createdAt).toLocaleString() : "(unknown)";
       const stats = b.batchStats || {};
-
-      // Sanitize batchName for display (it's already the docId-safe form on the right).
       const displayId = (b.batchName || "").replace(/^batches\//, "");
+
+      // Override the action line if already collected.
+      const actionText = b.collected
+        ? "✓ Done — images are in Firebase. View in Review tab."
+        : stateInfo.action;
 
       return `
         <div style="background: var(--card-2); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px;">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; flex-wrap: wrap; gap: 6px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; flex-wrap: wrap; gap: 6px;">
             <div style="font-size: 12px; font-weight: 600; color: var(--text);">${b.displayName || displayId}</div>
-            <div style="font-family: var(--font-mono); font-size: 10px; color: ${stateColor};">${b.state || "?"}</div>
+            <div style="font-size: 10px; font-weight: 600; color: ${stateInfo.color};">${b.collected ? "✓ Collected" : stateInfo.label}</div>
           </div>
-          <div class="muted" style="font-size: 10px; font-family: var(--font-mono); margin-bottom: 6px;">
-            ${displayId} · ${b.setsCount || 0} set${(b.setsCount || 0) === 1 ? "" : "s"} · ${b.requestCount || 0} request${(b.requestCount || 0) === 1 ? "" : "s"} · created ${created}
+          <div class="muted" style="font-size: 10px; margin-bottom: 6px; line-height: 1.4;">
+            ${actionText}
           </div>
-          ${stats.completedRequestCount != null || stats.failedRequestCount != null ? `
-            <div class="muted" style="font-size: 10px; margin-bottom: 6px;">
-              ${stats.completedRequestCount ?? 0} done · ${stats.failedRequestCount ?? 0} failed · ${stats.pendingRequestCount ?? "?"} pending
-            </div>` : ""}
-          ${b.collected ? `<div class="muted" style="font-size: 10px; color: #7fdb96; margin-bottom: 6px;">✓ Collected — results in Firebase</div>` : ""}
+          <div class="muted" style="font-size: 10px; font-family: var(--font-mono); margin-bottom: 8px;">
+            ${b.setsCount || 0} set${(b.setsCount || 0) === 1 ? "" : "s"} · ${b.requestCount || 0} image${(b.requestCount || 0) === 1 ? "" : "s"} · submitted ${created}
+            ${stats.completedRequestCount != null ? ` · ${stats.completedRequestCount}/${b.requestCount || 0} done at Google` : ""}
+          </div>
           <div class="row" style="gap: 6px; flex-wrap: wrap;">
-            <button class="btn btnSmall" id="bRefresh_${b.docId}" style="font-size: 10px;">↻ Refresh</button>
-            ${collectable ? `<button class="btn btnSmall" id="bCollect_${b.docId}" style="background: #1f4026; border: 1px solid #2f5e3a; color: #7fdb96; font-size: 10px;">⬇ Collect now</button>` : ""}
+            ${collectable ? `<button class="btn btnSmall" id="bCollect_${b.docId}" style="flex: 1; min-width: 160px; background: #1f4026; border: 1px solid #2f5e3a; color: #7fdb96; font-weight: 600; font-size: 11px;">⬇ Download results into Firebase</button>` : ""}
+            <button class="btn btnSmall" id="bRefresh_${b.docId}" style="font-size: 10px;">↻ Refresh state</button>
             ${cancellable ? `<button class="btn btnSmall" id="bCancel_${b.docId}" style="background: #3d1c1c; border: 1px solid #7a3838; color: #fca5a5; font-size: 10px;">✕ Cancel</button>` : ""}
           </div>
         </div>
