@@ -1108,16 +1108,15 @@
     border: 1px solid var(--line);
     border-radius: var(--r-sm);
     overflow: hidden;
-    width: 200px;              /* match the grid column */
+    width: 200px !important;
     transition: border-color 120ms ease;
   }
   .thumb:hover { border-color: var(--line-2); }
   .thumb-img {
-    /* Fixed 200x200 square — explicit dimensions are bulletproof and
-       don't depend on aspect-ratio support or padding-bottom percentage
-       resolution which has been unreliable in this layout context. */
-    width: 200px;
-    height: 200px;
+    /* Fixed 200x200 square — !important guards against any cascade
+       collisions with .preview-box, .slotPrev, or other generic styles. */
+    width: 200px !important;
+    height: 200px !important;
     position: relative;
     background: #0a0c14;
     overflow: hidden;
@@ -1169,15 +1168,6 @@
     border-top: 1px solid var(--line);
     background: var(--inset);
   }
-  .thumb {
-    position: relative;
-    background: var(--inset);
-    border: 1px solid var(--line);
-    border-radius: var(--r-sm);
-    overflow: hidden;
-    transition: border-color 120ms ease;
-  }
-  .thumb:hover { border-color: var(--line-2); }
   .thumb-name {
     padding: 6px 10px;
     font-size: 10px;
@@ -5709,109 +5699,107 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       _activeBlobUrls.clear();
     }
 
-    // Hybrid thumb-image loader (off-DOM version).
-    //   1) Try direct URL via getDownloadURL + cacheBust — load OFF-DOM
-    //      using a detached Image() so a failure shows nothing instead of
-    //      flashing the browser's broken-image icon.
-    //   2) On URL load failure, fall back to getBytes → Blob with explicit
-    //      MIME type → blob URL — also loaded off-DOM.
-    //   3) Only after a successful load is the IMG element attached to the
-    //      box. If `attachZoom: true` is passed, attachPreviewBoxListeners
-    //      is called so the user gets the wheel-zoom + click-drag pan
-    //      controls + rule-of-thirds grid overlay (via .thumb-img::after).
-    async function _setThumbImage(box, item, alt, opts) {
-      opts = opts || {};
-      const preferBytes = opts.preferBytes === true;
-      const attachZoom  = opts.attachZoom  === true;
-      if (!box) return;
-
-      function loadOffDom(src) {
-        return new Promise((resolve) => {
-          const img = new Image();      // detached, off-DOM
-          img.onload  = () => resolve(img);
-          img.onerror = () => resolve(null);
-          img.src = src;
-        });
+    // Render an image into a thumb box. Mirrors setBoxImage but adds the
+    // wheel-modifier bypass once per box (data-zoomAttached flag prevents
+    // duplicate listeners across re-renders).
+    function _renderThumbInBox(box, srcUrl, attachZoom) {
+      if (!box || !box.isConnected) return;
+      const oldImg = box.querySelector('img');
+      if (oldImg && oldImg.src && oldImg.src.startsWith('blob:')) {
+        try { URL.revokeObjectURL(oldImg.src); } catch (_) {}
+        _activeBlobUrls.delete(oldImg.src);
       }
-
-      let loadedImg = null;
-      let blobUrl   = null;
-
-      // ---- Attempt 1: direct URL ----
-      if (!preferBytes) {
-        try {
-          const url = await getDownloadURL(item);
-          loadedImg = await loadOffDom(cacheBust(url));
-        } catch (err) {
-          console.warn('[Listing-Generator] getDownloadURL failed:', item.fullPath, err);
+      box.innerHTML = `<img src="${srcUrl}" />`;
+      if (attachZoom && !box.dataset.zoomAttached) {
+        box.dataset.zoomAttached = '1';
+        if (typeof attachPreviewBoxListeners === 'function') {
+          attachPreviewBoxListeners(box);
         }
+        // Wheel-modifier bypass: capture-phase listener so plain wheel
+        // scrolls the modal (it stops the bubble-phase zoom listener),
+        // and Shift / Ctrl / Cmd + wheel passes through to zoom.
+        box.addEventListener('wheel', (ev) => {
+          if (!ev.shiftKey && !ev.ctrlKey && !ev.metaKey) {
+            ev.stopImmediatePropagation();
+          }
+        }, { capture: true, passive: true });
+      }
+    }
+
+    // Detect MIME type from filename
+    function _mimeFromName(name) {
+      const ext = (name || '').toLowerCase().split('.').pop();
+      if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
+      if (ext === 'webp') return 'image/webp';
+      if (ext === 'gif')  return 'image/gif';
+      if (ext === 'avif') return 'image/avif';
+      return 'image/png';
+    }
+
+    // Cache-first thumb loader. Stores results in IndexedDB so subsequent
+    // modal opens are INSTANT (same approach the charm-card loader uses
+    // — that's why charms can show 100+ images in seconds).
+    //
+    //   1) Try IndexedDB cache → blob URL → instant render
+    //   2) Cache miss: getDownloadURL + fetchAndCacheBlob (uses CORS fetch
+    //      to grab the bytes and write the blob to IndexedDB)
+    //   3) If URL path fails (bad content-type, blocked, etc): getBytes
+    //      via SDK → blob with explicit MIME → cache → render
+    //
+    // The blob URL is created from the cached blob, which always decodes
+    // correctly regardless of the source file's stored content-type.
+    async function _setThumbImageFast(box, item, attachZoom) {
+      if (!box || !item) return;
+      const path = item.fullPath;
+
+      // ---- Pass 1: IndexedDB cache hit ----
+      try {
+        const cached = await getCachedBlob(path);
+        if (cached && cached.blob) {
+          if (!box.isConnected) return;
+          const blobUrl = URL.createObjectURL(cached.blob);
+          _activeBlobUrls.add(blobUrl);
+          _renderThumbInBox(box, blobUrl, attachZoom);
+          return;
+        }
+      } catch (_) { /* fall through to network */ }
+
+      // ---- Pass 2a: getDownloadURL → fetchAndCacheBlob ----
+      let blob = null;
+      try {
+        const url = await getDownloadURL(item);
+        // fetchAndCacheBlob uses fetch() with CORS, returns the Blob,
+        // and writes it to IndexedDB in one shot.
+        blob = await fetchAndCacheBlob(url, path, Date.now());
+      } catch (err) {
+        console.warn('[Listing-Generator] URL fetch failed for', path, err);
       }
 
-      // ---- Attempt 2: getBytes → blob ----
-      if (!loadedImg) {
+      // ---- Pass 2b: SDK getBytes fallback (for bad content-type files) ----
+      if (!blob) {
         try {
           const bytes = await getBytes(item);
           if (!box.isConnected) return;
-
-          let mimeType = 'image/png';
-          const ext = (item.name || '').toLowerCase().split('.').pop();
-          if (ext === 'jpg' || ext === 'jpeg') mimeType = 'image/jpeg';
-          else if (ext === 'webp') mimeType = 'image/webp';
-          else if (ext === 'gif')  mimeType = 'image/gif';
-          else if (ext === 'avif') mimeType = 'image/avif';
-
-          const blob = new Blob([bytes], { type: mimeType });
-          blobUrl = URL.createObjectURL(blob);
-          _activeBlobUrls.add(blobUrl);
-
-          loadedImg = await loadOffDom(blobUrl);
-          if (!loadedImg) {
-            URL.revokeObjectURL(blobUrl);
-            _activeBlobUrls.delete(blobUrl);
-            blobUrl = null;
-            console.warn('[Listing-Generator] blob also failed to decode:', item.fullPath);
-          }
+          blob = new Blob([bytes], { type: _mimeFromName(item.name) });
+          await setCachedBlob(path, blob, Date.now());
         } catch (err) {
-          console.warn('[Listing-Generator] getBytes fallback failed:', item.fullPath, err);
+          console.warn('[Listing-Generator] getBytes fallback failed for', path, err);
         }
       }
 
-      // Box might have been removed during the async load — abort cleanly
-      if (!box.isConnected) {
-        if (blobUrl) {
-          URL.revokeObjectURL(blobUrl);
-          _activeBlobUrls.delete(blobUrl);
-        }
+      if (!box.isConnected) return;
+      if (!blob) {
+        box.innerHTML = '<div class="slotRefEmpty" style="font-size: 9px; color: #fca5a5;">load failed</div>';
         return;
       }
 
-      if (loadedImg) {
-        if (alt) loadedImg.alt = alt;
-        // Strip any inline style — let CSS govern presentation so the
-        // .thumb-img / .al-thumb rules (object-fit, position, etc.) apply.
-        loadedImg.removeAttribute('style');
-        box.innerHTML = '';
-        box.appendChild(loadedImg);
-        if (attachZoom && typeof attachPreviewBoxListeners === 'function') {
-          attachPreviewBoxListeners(box);
-          // Wheel-modifier bypass: attachPreviewBoxListeners adds a wheel
-          // listener that calls preventDefault() to enable zoom — this
-          // EATS modal scroll wheel events when the cursor is over a
-          // thumb. We add a capture-phase listener that runs FIRST and
-          // stops propagation when no modifier key is held, so the wheel
-          // event never reaches the bubble-phase zoom listener and the
-          // browser's default scroll action is preserved.
-          // Hold Shift / Ctrl / Cmd + wheel to zoom; plain wheel scrolls.
-          box.addEventListener('wheel', (ev) => {
-            if (!ev.shiftKey && !ev.ctrlKey && !ev.metaKey) {
-              ev.stopImmediatePropagation();
-            }
-          }, { capture: true, passive: true });
-        }
-      } else {
-        box.innerHTML = '<div class="slotRefEmpty" style="font-size: 9px; color: #fca5a5;">load failed</div>';
-      }
+      const blobUrl = URL.createObjectURL(blob);
+      _activeBlobUrls.add(blobUrl);
+      _renderThumbInBox(box, blobUrl, attachZoom);
     }
+
+    // Legacy alias kept so any other code paths keep working
+    const _setThumbImage = _setThumbImageFast;
 
     async function _openGallery(title, path) {
       _galleryCurrentPath = path;
@@ -5837,11 +5825,11 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         const sorted = [...res.items].sort((a, b) => b.name.localeCompare(a.name));
 
         // Render placeholders immediately — no URL fetches yet.
-        // NOTE: do NOT use 'preview-box' class — its fixed height: 280px
-        // conflicts with thumb-img's intended sizing.
+        // INLINE STYLES on .thumb-img: outermost guarantee that the
+        // box is exactly 200x200, immune to any CSS cascade collision.
         _galleryBody.innerHTML = sorted.map((item, idx) => `
-          <div class="thumb" data-idx="${idx}">
-            <div class="thumb-img"><div class="slotRefEmpty" style="font-size: 9px;">…</div></div>
+          <div class="thumb" data-idx="${idx}" style="width: 200px;">
+            <div class="thumb-img" style="width: 200px; height: 200px; flex: 0 0 200px;"><div class="slotRefEmpty" style="font-size: 9px;">…</div></div>
             <div class="thumb-name mono" title="${item.name.replace(/"/g, '&quot;')}">${item.name}</div>
             <button class="btn btnSmall thumb-delete" title="Delete this file" data-fp="${item.fullPath.replace(/"/g, '&quot;')}">×</button>
           </div>
@@ -5888,17 +5876,57 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         const thumbEls = Array.from(_galleryBody.querySelectorAll('.thumb'));
         const tasks = sorted.map((item, idx) => ({ item, thumbEl: thumbEls[idx] }));
 
-        // Progressively load with concurrency cap (12 parallel — fast
-        // initial paint without overwhelming Firebase rate limits)
-        await _asyncPool(12, tasks, async ({ item, thumbEl }) => {
-          if (!_galleryModal.classList.contains('open')) return;
-          if (_galleryCurrentPath !== path) return;
-          if (!thumbEl || !thumbEl.isConnected) return;
-          const box = thumbEl.querySelector('.thumb-img');
-          if (!box) return;
-          // attachZoom: true → wheel-zoom + click-drag pan + grid overlay
-          await _setThumbImage(box, item, item.name, { attachZoom: true });
-        });
+        // ============= TWO-PASS FAST LOADER =============
+        // Pass 1: Check IndexedDB cache for all items in parallel.
+        //         Cache hits get rendered IMMEDIATELY (typically <100ms
+        //         total for 60+ items — same speed as charm cards on
+        //         repeat views).
+        // Pass 2: Network-fetch only the cache misses, with high
+        //         concurrency since each is independent.
+        // -------------------------------------------------
+
+        // Pass 1: parallel cache lookups
+        const cacheChecks = await Promise.all(tasks.map(async (t) => {
+          let cached = null;
+          try { cached = await getCachedBlob(t.item.fullPath); } catch (_) {}
+          return { ...t, cached };
+        }));
+
+        // If user closed/changed during cache check, bail
+        if (!_galleryModal.classList.contains('open')) return;
+        if (_galleryCurrentPath !== path) return;
+
+        // Render cache hits immediately (synchronous loop — instant)
+        let cacheHits = 0;
+        for (const t of cacheChecks) {
+          if (t.cached && t.cached.blob && t.thumbEl && t.thumbEl.isConnected) {
+            const box = t.thumbEl.querySelector('.thumb-img');
+            if (box) {
+              const blobUrl = URL.createObjectURL(t.cached.blob);
+              _activeBlobUrls.add(blobUrl);
+              _renderThumbInBox(box, blobUrl, true);
+              cacheHits++;
+            }
+          }
+        }
+
+        // Pass 2: network fetches for cache misses, high concurrency.
+        // 24 in flight at once — Firebase handles this comfortably (the
+        // charm loader effectively fires 200+ in parallel via per-card
+        // promises). Each fetch also writes to IndexedDB so the next
+        // open is instant.
+        const misses = cacheChecks.filter(t => !(t.cached && t.cached.blob));
+        if (misses.length > 0) {
+          await _asyncPool(24, misses, async ({ item, thumbEl }) => {
+            if (!_galleryModal.classList.contains('open')) return;
+            if (_galleryCurrentPath !== path) return;
+            if (!thumbEl || !thumbEl.isConnected) return;
+            const box = thumbEl.querySelector('.thumb-img');
+            if (!box) return;
+            await _setThumbImageFast(box, item, true);
+          });
+        }
+        console.info(`[Listing-Generator] Gallery loaded ${cacheHits} from cache, ${misses.length} from network`);
       } catch (e) {
         _galleryBody.innerHTML = `<div class="slotRefEmpty" style="grid-column: 1/-1; padding: 36px; color: #fca5a5;">Error: ${e?.message || e}</div>`;
         _galleryFooter.textContent = '!';
