@@ -1566,7 +1566,7 @@
               <div class="counter-value" id="completedSetsCounter">
                 Completed Sets Available: <span style="font-weight: bold; font-size: 15px;">0</span>
               </div>
-              <div class="muted" style="margin-top: 4px; font-size: 11px;">→ moves files to <code>Approved_Listing_Sets</code> on download</div>
+              <div class="muted" style="margin-top: 4px; font-size: 11px;">downloads as ZIP · files remain in <code>Completed_Listing_Sets</code> for external pickup</div>
             </div>
             <button class="btn" id="downloadCompletedSetsBtn" style="background: #2b6cff; color: #fff; border: 1px solid #1a4bbf; font-weight: bold; font-size: 12px; padding: 8px 14px;">Download Sets (ZIP)</button>
           </div>
@@ -5386,31 +5386,17 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
                 document.body.removeChild(a);
                 URL.revokeObjectURL(url);
 
-                // --- Move Sets to Permanent Storage ---
-                downloadCompletedSetsBtn.textContent = "Moving to storage...";
-                const destBaseFolderPath = `${ROOT}/Generated_Listing_Sets/Approved_Listing_Sets`;
-                
-                let movedCount = 0;
-                for (const folderRef of prefixes) {
-                    downloadCompletedSetsBtn.textContent = `Moving folder ${movedCount + 1} of ${prefixes.length}...`;
-                    const folderName = folderRef.name;
-                    const folderItems = await listAll(folderRef);
-                    
-                    // Copy each file to the Approved folder, then delete the original
-                    for (const itemRef of folderItems.items) {
-                        const fileData = await getBytes(itemRef);
-                        const newFileRef = ref(storage, `${destBaseFolderPath}/${folderName}/${itemRef.name}`);
-                        await uploadBytesResumable(newFileRef, fileData);
-                        await deleteObject(itemRef); // Remove from Completed queue
-                    }
-                    movedCount++;
-                }
+                // --- Move to Approved_Listing_Sets DISABLED ---
+                // Per architecture: Approved_Listing_Sets is owned and
+                // populated by an EXTERNAL software, not by this app. We
+                // download the ZIP and leave files in Completed_Listing_Sets
+                // where the external app picks them up. No file movement.
 
                 // Refresh UI Counters
                 updateCompletedSetsCounter();
                 updateTotalAllTimeCounter();
 
-                downloadCompletedSetsBtn.textContent = "Download & Move Complete!";
+                downloadCompletedSetsBtn.textContent = "Download Complete!";
                 setTimeout(() => {
                     downloadCompletedSetsBtn.textContent = originalText;
                     downloadCompletedSetsBtn.disabled = false;
@@ -5679,6 +5665,31 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     });
     setInterval(updatePipelineBar, 60000);
     setTimeout(updatePipelineBar, 1500);
+
+    // ---------------------------------------------------------------------
+    // LIVE DOWNLOADS COUNTERS
+    // The "APPROVED BUFFER" and "PERMANENT STORAGE" counters in the Downloads
+    // panel were only refreshed on tab switch / approval / download completion.
+    // Poll every 8 seconds (only while the listings/generate section is
+    // visible) so the user sees changes from background jobs in real time.
+    // ---------------------------------------------------------------------
+    let _downloadsPollTimer = null;
+    function _startDownloadsLivePoll() {
+      if (_downloadsPollTimer) return;
+      const tick = () => {
+        // Skip if the Downloads section isn't actually visible
+        const counterEl = document.getElementById('completedSetsCounter');
+        if (!counterEl) return;
+        const visible = counterEl.offsetParent !== null;
+        if (!visible) return;
+        if (typeof updateCompletedSetsCounter === 'function') updateCompletedSetsCounter();
+        if (typeof updateTotalAllTimeCounter === 'function') updateTotalAllTimeCounter();
+      };
+      _downloadsPollTimer = setInterval(tick, 8000);
+      // Run an immediate tick so the counter doesn't wait 8s after page load
+      setTimeout(tick, 1500);
+    }
+    _startDownloadsLivePoll();
 
     // ---------------------------------------------------------------------
     // 2) ASSET GALLERY MODAL
@@ -6246,8 +6257,12 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       _updateFreshnessIndicators();
       try {
         await ensureStorageSignedIn();
-        const r = ref(storage, `${ROOT}/Generated_Listing_Sets/Approved_Listing_Sets`);
-        const res = await listAll(r);
+        // ONLY read from Completed_Listing_Sets — this is the source of
+        // truth for sets approved by THIS software. The Approved_Listing_Sets
+        // folder is owned/populated by an external app and is read-only
+        // from this software's perspective (and excluded from this view).
+        const r = ref(storage, `${ROOT}/Generated_Listing_Sets/Completed_Listing_Sets`);
+        const res = await listAll(r).catch(() => ({ prefixes: [] }));
         const items = (res.prefixes || []).map(p => {
           const meta = _parseListingId(p.name);
           return { ...meta, fullPath: p.fullPath };
@@ -7044,35 +7059,44 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       };
     }
 
-    // -- Hook C: downloadCompletedSetsBtn (Review tab buffer flush)
-    // The original handler ZIPs Completed_Listing_Sets, then MOVES files to
-    // Approved_Listing_Sets. After that move, our listings cache is stale.
-    // We add a click listener (NOT capture-phase, NOT preventing default) so
-    // the original handler still runs; we just schedule an invalidation.
+    // -- Hook C: downloadCompletedSetsBtn (no longer triggers a move).
+    // Previously this software moved files Completed → Approved on download,
+    // so the listings cache went stale. That move is now disabled (the
+    // Approved_Listing_Sets folder is owned by an external app), so the
+    // cache stays valid after a download. We keep this hook as a no-op
+    // refresh trigger in case the user explicitly wants to re-pull after
+    // download.
     {
       const btn = document.getElementById('downloadCompletedSetsBtn');
       if (btn) {
         btn.addEventListener('click', () => {
-          // The flush runs in the background. We poll the button text to
-          // detect completion (it shows "Download Complete!" when done) and
-          // then invalidate. Fallback timeout of 5 minutes.
-          const startedAt = Date.now();
-          const checkComplete = () => {
-            if (Date.now() - startedAt > 5 * 60 * 1000) {
-              // Hard timeout — just invalidate anyway
-              _invalidateCache('listings');
-              return;
-            }
-            const txt = btn.textContent || '';
-            if (txt.includes('Complete')) {
-              // Move done; invalidate listings cache
-              _invalidateCache('listings');
-              return;
-            }
-            setTimeout(checkComplete, 1000);
-          };
-          // Start polling after 2s grace period
-          setTimeout(checkComplete, 2000);
+          // Refresh counters once download completes (~ a few seconds)
+          setTimeout(() => {
+            if (typeof updateCompletedSetsCounter === 'function') updateCompletedSetsCounter();
+            if (typeof updateTotalAllTimeCounter === 'function') updateTotalAllTimeCounter();
+          }, 4000);
+        });
+      }
+    }
+
+    // -- Hook E: approveSetBtn — when a set is approved in Review, the
+    // background move runs (Ready_To_List → Completed_Listing_Sets buffer).
+    // Since _loadApprovedListings now reads from the buffer too, the
+    // newly-approved set should appear in the Approved tab. Invalidate
+    // the listings cache after the background move completes (~5s).
+    {
+      const btn = document.getElementById('approveSetBtn');
+      if (btn) {
+        btn.addEventListener('click', () => {
+          // Background move takes a few seconds. Stagger invalidations to
+          // catch fast and slow cases.
+          setTimeout(() => _invalidateCache('listings'), 4000);
+          setTimeout(() => _invalidateCache('listings'), 8000);
+          // Also refresh Downloads counters faster than the 8s poll
+          setTimeout(() => {
+            if (typeof updateCompletedSetsCounter === 'function') updateCompletedSetsCounter();
+            if (typeof updateTotalAllTimeCounter === 'function') updateTotalAllTimeCounter();
+          }, 4000);
         });
       }
     }
