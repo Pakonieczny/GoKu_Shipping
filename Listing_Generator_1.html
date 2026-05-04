@@ -1814,7 +1814,7 @@
               <button type="button" class="btn btnSmall" id="batchJobsRefreshBtn" style="font-size: 10px; padding: 2px 8px;">↻ Refresh</button>
             </div>
             <div class="muted" style="font-size: 10px; margin-bottom: 8px; line-height: 1.4;">
-              Submit → wait at Google (hours) → click <b style="color:#7fdb96;">Download results</b> when ready. You can close this tab; jobs persist.
+              Each batch shows three buttons: <b>Refresh</b> (check progress), <b>Download</b> (pull finished images into Firebase), <b>Cancel</b> (stop the job). You can close this tab; jobs keep running at Google.
             </div>
             <div id="batchJobsList" style="display: flex; flex-direction: column; gap: 8px;">
               <div class="muted" style="font-size: 11px; padding: 6px 0;">Loading…</div>
@@ -6397,7 +6397,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         const batches = Array.isArray(resp?.batches) ? resp.batches : [];
         _lastBatchList = batches;
         if (batches.length === 0) {
-          listEl.innerHTML = `<div class="muted" style="font-size: 11px; padding: 6px 0; line-height: 1.5;">No batch jobs yet. Submit one with the <b>Submit batch</b> button above. After Google finishes (typically 2–6 hours), a <b style="color:#7fdb96;">Download results</b> button will appear here.</div>`;
+          listEl.innerHTML = `<div class="muted" style="font-size: 11px; padding: 6px 0; line-height: 1.5;">No batch jobs yet. Click <b>Submit batch</b> above to create one.</div>`;
           return;
         }
         listEl.innerHTML = batches.map(_renderBatchCard).join("");
@@ -6405,7 +6405,8 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         for (const b of batches) {
           const safeId = b.docId;
           document.getElementById(`bRefresh_${safeId}`)?.addEventListener("click", () => pollOneBatch(b.batchName));
-          document.getElementById(`bCollect_${safeId}`)?.addEventListener("click", () => collectOneBatch(b.batchName));
+          document.getElementById(`bDownload_${safeId}`)?.addEventListener("click", () => collectOneBatch(b.batchName, false));
+          document.getElementById(`bForce_${safeId}`)?.addEventListener("click", () => collectOneBatch(b.batchName, true));
           document.getElementById(`bCancel_${safeId}`)?.addEventListener("click", () => cancelOneBatch(b.batchName));
         }
         // Auto-poll any non-final batches so state freshens without user clicking.
@@ -6416,47 +6417,80 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     }
 
     function _renderBatchCard(b) {
-      // Each state gets a human-readable explanation so users always know
-      // what's happening and what to do next.
+      // State → plain-language label and short status line.
       const stateInfo = {
-        "JOB_STATE_PENDING":   { color: "#fde68a", label: "Queued at Google",        action: "Waiting in queue. Auto-refreshes every 60s." },
-        "JOB_STATE_RUNNING":   { color: "#93c5fd", label: "Generating at Google",    action: "Google is producing your images. Usually 2–6h." },
-        "JOB_STATE_SUCCEEDED": { color: "#7fdb96", label: "Ready to download",       action: "Click \"Download results\" to pull images into Firebase." },
-        "JOB_STATE_FAILED":    { color: "#fca5a5", label: "Failed at Google",        action: "Job failed. Check console for error details." },
-        "JOB_STATE_CANCELLED": { color: "#a3a3a3", label: "Cancelled",               action: "You cancelled this job. Already-completed work was billed." },
-        "JOB_STATE_EXPIRED":   { color: "#fca5a5", label: "Expired (>48h)",          action: "Google didn't finish in 48h. Resubmit." },
-      }[b.state] || { color: "#a3a3a3", label: b.state || "Unknown", action: "" };
+        "JOB_STATE_PENDING":   { color: "#fde68a", label: "Queued at Google",    line: "Waiting in queue. Auto-checks every 60 seconds." },
+        "JOB_STATE_RUNNING":   { color: "#93c5fd", label: "Running at Google",   line: "Generating images. Usually 2–6 hours total." },
+        "JOB_STATE_SUCCEEDED": { color: "#7fdb96", label: "Finished at Google",  line: "Click Download to pull images into Firebase." },
+        "JOB_STATE_FAILED":    { color: "#fca5a5", label: "Failed",              line: "Job failed. Use Force download to recover any finished images." },
+        "JOB_STATE_CANCELLED": { color: "#a3a3a3", label: "Cancelled",           line: "You cancelled this job." },
+        "JOB_STATE_EXPIRED":   { color: "#fca5a5", label: "Expired",             line: "Google didn't finish in 48 hours. Use Force download to recover." },
+      }[b.state] || { color: "#a3a3a3", label: b.state || "Unknown", line: "" };
 
       const succeeded = b.state === "JOB_STATE_SUCCEEDED";
       const final = ["JOB_STATE_SUCCEEDED", "JOB_STATE_FAILED", "JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED"].includes(b.state);
-      const cancellable = !final;
-      const collectable = succeeded && !b.collected;
       const created = b.createdAt ? new Date(b.createdAt).toLocaleString() : "(unknown)";
       const stats = b.batchStats || {};
       const displayId = (b.batchName || "").replace(/^batches\//, "");
 
-      // Override the action line if already collected.
-      const actionText = b.collected
-        ? "✓ Done — images are in Firebase. View in Review tab."
-        : stateInfo.action;
+      // Button enable/disable logic. Every button is always rendered;
+      // we just disable it (with a reason in the title attribute) when
+      // it doesn't apply. This makes the UI predictable.
+      const downloadOk = succeeded && !b.collected;
+      const downloadDisabledReason = b.collected ? "Already downloaded — see Review tab"
+                                    : succeeded ? ""
+                                    : "Job hasn't finished yet (state: " + (b.state || "?") + ")";
+
+      // "Force download" recovers partial results when a job is in a
+      // non-success state. Useful if a job hangs, fails halfway, or
+      // expires. Server pulls whatever responsesFile Google has — even
+      // if some lines are errors, the successful ones still upload.
+      const forceOk = !final || (final && !succeeded && !b.collected);
+      const forceDisabledReason = b.collected ? "Already downloaded — see Review tab"
+                                  : succeeded ? "Use the Download button instead"
+                                  : "";
+
+      const cancelOk = !final;
+      const cancelDisabledReason = final ? "Job is already finished" : "";
+
+      const dis = (ok) => ok ? "" : "disabled";
+      const tip = (reason) => reason ? `title="${reason.replace(/"/g, '&quot;')}"` : "";
+      const dim = (ok) => ok ? "" : "opacity: 0.4; cursor: not-allowed;";
+
+      // Status line: prefer the "collected" state if it's true.
+      const statusLine = b.collected
+        ? "Done — images are in Firebase. Open Review tab to see them."
+        : stateInfo.line;
+      const stateLabel = b.collected ? "Downloaded" : stateInfo.label;
+      const stateColor = b.collected ? "#7fdb96" : stateInfo.color;
 
       return `
         <div style="background: var(--card-2); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px;">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; flex-wrap: wrap; gap: 6px;">
             <div style="font-size: 12px; font-weight: 600; color: var(--text);">${b.displayName || displayId}</div>
-            <div style="font-size: 10px; font-weight: 600; color: ${stateInfo.color};">${b.collected ? "✓ Collected" : stateInfo.label}</div>
+            <div style="font-size: 10px; font-weight: 600; color: ${stateColor};">${stateLabel}</div>
           </div>
           <div class="muted" style="font-size: 10px; margin-bottom: 6px; line-height: 1.4;">
-            ${actionText}
+            ${statusLine}
           </div>
           <div class="muted" style="font-size: 10px; font-family: var(--font-mono); margin-bottom: 8px;">
             ${b.setsCount || 0} set${(b.setsCount || 0) === 1 ? "" : "s"} · ${b.requestCount || 0} image${(b.requestCount || 0) === 1 ? "" : "s"} · submitted ${created}
             ${stats.completedRequestCount != null ? ` · ${stats.completedRequestCount}/${b.requestCount || 0} done at Google` : ""}
           </div>
           <div class="row" style="gap: 6px; flex-wrap: wrap;">
-            ${collectable ? `<button class="btn btnSmall" id="bCollect_${b.docId}" style="flex: 1; min-width: 160px; background: #1f4026; border: 1px solid #2f5e3a; color: #7fdb96; font-weight: 600; font-size: 11px;">⬇ Download results into Firebase</button>` : ""}
-            <button class="btn btnSmall" id="bRefresh_${b.docId}" style="font-size: 10px;">↻ Refresh state</button>
-            ${cancellable ? `<button class="btn btnSmall" id="bCancel_${b.docId}" style="background: #3d1c1c; border: 1px solid #7a3838; color: #fca5a5; font-size: 10px;">✕ Cancel</button>` : ""}
+            <button class="btn btnSmall" id="bDownload_${b.docId}" ${dis(downloadOk)} ${tip(downloadDisabledReason)}
+                    style="flex: 1; min-width: 140px; background: #1f4026; border: 1px solid #2f5e3a; color: #7fdb96; font-weight: 600; font-size: 11px; ${dim(downloadOk)}">
+              ⬇ Download into Firebase
+            </button>
+            <button class="btn btnSmall" id="bRefresh_${b.docId}" style="font-size: 10px;">↻ Refresh</button>
+            <button class="btn btnSmall" id="bForce_${b.docId}" ${dis(forceOk)} ${tip(forceDisabledReason)}
+                    style="background: #3d3017; border: 1px solid #7a5e2c; color: #fde68a; font-size: 10px; ${dim(forceOk)}">
+              ⚠ Force download (partial)
+            </button>
+            <button class="btn btnSmall" id="bCancel_${b.docId}" ${dis(cancelOk)} ${tip(cancelDisabledReason)}
+                    style="background: #3d1c1c; border: 1px solid #7a3838; color: #fca5a5; font-size: 10px; ${dim(cancelOk)}">
+              ✕ Cancel
+            </button>
           </div>
         </div>
       `;
@@ -6477,20 +6511,24 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       }
     }
 
-    async function collectOneBatch(batchName) {
-      const ok = confirm(`Collect results for ${batchName}?\n\nThis downloads images from Google and uploads them to Firebase Storage. The collection runs in the background — it can take up to a few minutes for very large batches. You can keep using the page.`);
+    async function collectOneBatch(batchName, force) {
+      const isForce = !!force;
+      const confirmMsg = isForce
+        ? `Force-download partial results for ${batchName}?\n\nThis pulls whatever images Google has finished, even if the job failed, expired, or is still running. Successful images land in Firebase; failed slots stay empty and can be regenerated later.`
+        : `Download results for ${batchName}?\n\nPulls all finished images from Google into Firebase Storage. The collection runs in the background — keep using the page if you want.`;
+      const ok = confirm(confirmMsg);
       if (!ok) return;
       try {
-        setStatus(`Collecting ${batchName}… (running in background)`);
+        setStatus(`${isForce ? "Force-downloading" : "Downloading"} ${batchName}…`);
 
-        // Route through the background function so we don't hit the
-        // 10s/26s sync timeout on big batches. Background functions
-        // get up to 15 minutes. The browser receives a 202 with no
-        // body — completion is detected by polling batch_list and
-        // watching for the `collected: true` flag.
-        await postJson("geminiImageProxy-background", { kind: "batch_collect", batchName });
+        // Background endpoint avoids the sync timeout on big batches.
+        await postJson("geminiImageProxy-background", {
+          kind: "batch_collect",
+          batchName,
+          force: isForce,
+        });
 
-        // Poll until we see collected=true (or timeout after 12 minutes).
+        // Poll until collected=true (or timeout after 12 min).
         const startMs = Date.now();
         const timeoutMs = 12 * 60 * 1000;
         let lastInfo = null;
@@ -6499,30 +6537,21 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
           try {
             const list = await postJson("geminiImageProxy", { kind: "batch_list", limit: 200, includeCollected: true });
             const me = (list?.batches || []).find((b) => b.batchName === batchName);
-            if (me?.collected) {
-              lastInfo = me;
-              break;
-            }
-            // Show "still working" state
-            setStatus(`Collecting ${batchName}… (background, ${Math.floor((Date.now() - startMs) / 1000)}s)`);
-          } catch (_) { /* swallow polling errors */ }
+            if (me?.collected) { lastInfo = me; break; }
+            setStatus(`${isForce ? "Force-downloading" : "Downloading"} ${batchName}… (${Math.floor((Date.now() - startMs) / 1000)}s)`);
+          } catch (_) {}
         }
 
         if (lastInfo) {
-          // Read full doc via a state check to surface counts.
-          // (batch_list returns lightweight rows; we don't have the
-          // succeeded/failed counts there.) For now show a completion
-          // message; the user can click into Review to verify.
-          setStatus(`✓ Collected — see Review tab for ${batchName}`);
+          setStatus(`Done — see Review tab for ${batchName}`);
         } else {
-          setStatus(`Collection still running. Check back later.`);
-          alert("Collection is still running in the background. Refresh the panel periodically; the row will update to ✓ Collected when done.");
+          setStatus(`Download still running. Check back in a few minutes.`);
+          alert("Download is still running in the background. The card will update to Downloaded when finished.");
         }
-
         await refreshBatchJobsPanel();
       } catch (err) {
-        setStatus(`Collection failed: ${err?.message || err}`);
-        alert(`Collection failed:\n\n${err?.message || err}`);
+        setStatus(`Download failed: ${err?.message || err}`);
+        alert(`Download failed:\n\n${err?.message || err}`);
       }
     }
 

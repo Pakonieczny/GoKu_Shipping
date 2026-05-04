@@ -1368,11 +1368,21 @@ exports.handler = async (event) => {
 
       const live = await getGeminiBatchJob(apiKey, batchName);
       const state = live?.metadata?.state || live?.state || "UNKNOWN";
-      if (state !== "JOB_STATE_SUCCEEDED") {
-        return json(400, { error: { message: `Batch not succeeded; state=${state}. Cannot collect.` } });
+      const forceMode = !!body?.force;
+
+      // Standard download requires SUCCEEDED. Force download accepts any
+      // state and pulls whatever responsesFile Google has produced —
+      // useful when a job hangs, fails partway, or expires. Only failed
+      // lines stay empty; successful ones still upload.
+      if (!forceMode && state !== "JOB_STATE_SUCCEEDED") {
+        return json(400, { error: { message: `Batch not succeeded; state=${state}. Use Force download to recover partial results.` } });
       }
+
       const respFileName = live?.response?.responsesFile || live?.dest?.fileName;
       if (!respFileName) {
+        if (forceMode) {
+          return json(400, { error: { message: `Force download: no result file available yet for state=${state}. Try again later or cancel.` } });
+        }
         return json(500, { error: { message: "Succeeded batch has no responsesFile/fileName" } });
       }
 
@@ -1543,6 +1553,8 @@ exports.handler = async (event) => {
           model: GEMINI_IMAGE_MODEL,
           batchMode: true,
           batchName,
+          batchState: state,
+          partial: forceMode && state !== "JOB_STATE_SUCCEEDED",
           imageSize: docData.imageSize || "2K",
           slots: slotsOut,
         };
