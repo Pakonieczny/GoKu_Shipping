@@ -1760,6 +1760,28 @@
           <div class="row" style="margin-top: 14px;">
             <button class="btn btn-primary" id="generateSet" style="width:100%;">Generate Set (Randomized Refs)</button>
           </div>
+
+          <!-- Batch generation: loop generateSet() N times, picking from
+               the shared charm pool each iteration. The progress strip
+               below the button updates as each set lands. -->
+          <div style="margin-top: 14px; padding: 12px; background: var(--inset); border: 1px solid var(--line); border-radius: var(--r-md);">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+              <label style="margin: 0; font-size: 12px;">Batch generate</label>
+              <span class="muted" style="font-size: 10px;">loops the action above N times</span>
+            </div>
+            <div class="row" style="gap: 8px; align-items: center;">
+              <input type="number" id="batchGenerateCount" min="2" max="100" value="5" style="flex: 0 0 80px;" />
+              <button class="btn" id="generateBatchBtn" style="flex: 1; background: #1c2a4a; border: 1px solid #2d4070; color: #93c5fd; font-weight: 500;">Generate batch</button>
+              <button class="btn btnSmall" id="cancelBatchBtn" style="display: none; background: #3d1c1c; border: 1px solid #7a3838; color: #fca5a5;">Cancel</button>
+            </div>
+            <div id="batchProgress" style="display: none; margin-top: 10px;">
+              <div class="upload-progress-bar"><div class="upload-progress-fill" id="batchProgressFill"></div></div>
+              <div class="upload-progress-meta">
+                <span class="upload-phase" id="batchProgressPhase">Working…</span>
+                <span class="upload-pct" id="batchProgressPct">0/0</span>
+              </div>
+            </div>
+          </div>
         </div>
 
         <div class="group">
@@ -3733,20 +3755,45 @@ function updateApproveButtonState() {
     });
 
     function approveSet() {
+      // Re-entrancy guard — prevent rapid double-clicks while the
+      // queue advances and background move is in flight.
+      if (approveSetBtn.dataset.busy === '1') return;
+      approveSetBtn.dataset.busy = '1';
+
       const category = activeCategoryEl.value;
       const setName = reviewSetSelect.value;
-      if (!setName) return;
+      if (!setName) {
+        approveSetBtn.dataset.busy = '0';
+        return;
+      }
 
+      // Remove the just-approved option from the dropdown.
       const optionToRemove = reviewSetSelect.querySelector(`option[value="${setName}"]`);
       if (optionToRemove) optionToRemove.remove();
 
+      // Auto-advance: select the next option in line and load its images
+      // immediately. This is the user-facing fix for "I have to click the
+      // dropdown to see the next set" — the UI now updates with zero
+      // additional input.
       if (reviewSetSelect.options.length > 0) {
-          reviewSetSelect.selectedIndex = 0; 
+          reviewSetSelect.selectedIndex = 0;
+          // Fire the change event so any other listeners react
+          // (e.g., gallery preloads), then explicitly load images.
+          reviewSetSelect.dispatchEvent(new Event('change', { bubbles: true }));
           loadSetImages(reviewSetSelect.value);
+          setStatus(`Approved ${setName} → next: ${reviewSetSelect.value}`);
       } else {
           reviewGrid.innerHTML = "<div class='slotRefEmpty'>No more sets to review!</div>";
-          setStatus("Queue clear.");
+          setStatus(`Approved ${setName} · queue clear.`);
       }
+
+      // Briefly disable the button so the user can't fire another approve
+      // before the new images render. Re-enable after a short window.
+      approveSetBtn.disabled = true;
+      setTimeout(() => {
+        approveSetBtn.disabled = false;
+        approveSetBtn.dataset.busy = '0';
+      }, 400);
 
       runBackgroundApproval(category, setName);
     }
@@ -3841,8 +3888,7 @@ function updateApproveButtonState() {
         }
     }
 
-    approveSetBtn.addEventListener("click", approveSet);
-    if (deleteSetBtn) deleteSetBtn.addEventListener("click", deleteSet); // <--- ADD THIS
+    if (deleteSetBtn) deleteSetBtn.addEventListener("click", deleteSet);
         
         // Updated postJson to accept a signal for cancellation
         async function postJson(path, body, signal) {
@@ -5884,6 +5930,121 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         setStatus(`Error: ${e?.message || e}`);
       });
     });
+
+    // ============================================================
+    // Batch generate — loops generateSet() N times sequentially.
+    // Each iteration picks fresh randomized refs from the shared
+    // charm pool (same logic as a single click), so over N runs
+    // the system naturally cycles through the available charms.
+    // Sequential (not parallel) on purpose:
+    //   - alloc_set is server-side and assigns Set_N atomically;
+    //     parallel calls would risk gaps or contention
+    //   - Gemini image generation is rate-limited; a tight serial
+    //     loop is the safest pattern that still fully utilizes the
+    //     pipeline
+    // ============================================================
+    const generateBatchBtn = document.getElementById('generateBatchBtn');
+    const cancelBatchBtn = document.getElementById('cancelBatchBtn');
+    const batchGenerateCountInput = document.getElementById('batchGenerateCount');
+    const batchProgress = document.getElementById('batchProgress');
+    const batchProgressFill = document.getElementById('batchProgressFill');
+    const batchProgressPhase = document.getElementById('batchProgressPhase');
+    const batchProgressPctEl = document.getElementById('batchProgressPct');
+    let _batchCancelRequested = false;
+    let _batchInFlight = false;
+
+    function _setBatchProgress(done, total, phase) {
+      if (!batchProgressFill) return;
+      const pct = total > 0 ? (done / total) * 100 : 0;
+      batchProgressFill.style.width = `${Math.max(0, Math.min(100, pct))}%`;
+      if (batchProgressPctEl) batchProgressPctEl.textContent = `${done}/${total}`;
+      if (batchProgressPhase && phase != null) batchProgressPhase.textContent = phase;
+    }
+
+    if (generateBatchBtn) {
+      generateBatchBtn.addEventListener('click', async () => {
+        if (_batchInFlight) return;
+        const count = parseInt(batchGenerateCountInput?.value || '0', 10);
+        if (!count || count < 1) {
+          alert('Please enter a count of 1 or more.');
+          return;
+        }
+        if (count > 100) {
+          alert('Batch capped at 100 sets per run. Adjust the count.');
+          return;
+        }
+        const ok = confirm(`Generate ${count} sets sequentially? This will run in the background — you can switch tabs but keep this page open.`);
+        if (!ok) return;
+
+        _batchInFlight = true;
+        _batchCancelRequested = false;
+        batchProgress.style.display = 'block';
+        cancelBatchBtn.style.display = 'inline-flex';
+        generateBatchBtn.disabled = true;
+        generateBatchBtn.textContent = 'Running…';
+        // The single-set Generate button shares the same backend
+        // pipeline, so disable it during a batch to avoid races.
+        if (generateSetBtn) generateSetBtn.disabled = true;
+
+        let succeeded = 0;
+        let failed = 0;
+        _setBatchProgress(0, count, `Starting batch of ${count}…`);
+
+        for (let i = 0; i < count; i++) {
+          if (_batchCancelRequested) {
+            _setBatchProgress(succeeded, count, `Cancelled at ${i}/${count}`);
+            break;
+          }
+          _setBatchProgress(i, count, `Generating ${i + 1}/${count}…`);
+          try {
+            // generateSet() handles its own setBusy / status / errors.
+            // Awaiting it serializes the loop on the natural critical
+            // path (alloc → fetch refs → call gemini → upload → manifest).
+            await generateSet();
+            succeeded++;
+          } catch (e) {
+            console.error(`[Batch] Set ${i + 1} failed:`, e);
+            failed++;
+            // Continue the batch even if one set fails — we surface
+            // the failures in the final summary.
+          }
+        }
+
+        const finalPhase = _batchCancelRequested
+          ? `Cancelled · ${succeeded} done, ${failed} failed`
+          : `Done · ${succeeded}/${count} succeeded${failed > 0 ? ` · ${failed} failed` : ''}`;
+        _setBatchProgress(succeeded, count, finalPhase);
+
+        cancelBatchBtn.style.display = 'none';
+        generateBatchBtn.disabled = false;
+        generateBatchBtn.textContent = 'Generate batch';
+        if (generateSetBtn) generateSetBtn.disabled = false;
+        _batchInFlight = false;
+        _batchCancelRequested = false;
+
+        // Auto-hide the progress strip after a beat so the section
+        // returns to its compact state once the user has acknowledged.
+        setTimeout(() => {
+          if (!_batchInFlight) batchProgress.style.display = 'none';
+        }, 6000);
+      });
+    }
+
+    if (cancelBatchBtn) {
+      cancelBatchBtn.addEventListener('click', () => {
+        if (!_batchInFlight) return;
+        _batchCancelRequested = true;
+        cancelBatchBtn.disabled = true;
+        cancelBatchBtn.textContent = 'Stopping…';
+        // The current iteration finishes (we can't yank it mid-flight
+        // without leaving partial sets in storage), then the loop
+        // exits before starting the next one.
+        setTimeout(() => {
+          cancelBatchBtn.disabled = false;
+          cancelBatchBtn.textContent = 'Cancel';
+        }, 1500);
+      });
+    }
     // --- 1. Download Completed Listing Sets Logic (Downloads & Moves to Permanent) ---
     const downloadCompletedSetsBtn = document.getElementById("downloadCompletedSetsBtn");
 
