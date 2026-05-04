@@ -1115,14 +1115,11 @@
   }
   .thumb:hover { border-color: var(--line-2); }
   .thumb-img {
-    /* Square shape via padding-bottom hack. CRITICAL: this works at the
-       CSS layout stage (unlike aspect-ratio which doesn't always resolve
-       inside CSS Grid before track sizing happens). The grid sees the
-       correct height upfront, so row tracks are sized correctly and
-       items don't overlap. */
+    /* Square shape via padding-bottom hack. Resolves at CSS layout time
+       so the grid sees correct heights upfront. NO `height: 0` — that
+       would collapse the box because we have `* { box-sizing: border-box }`. */
     width: 100%;
     padding-bottom: 100%;     /* height = 100% of containing-block WIDTH */
-    height: 0;                /* explicit so padding fully defines height */
     position: relative;
     background: #0a0c14;
     overflow: hidden;
