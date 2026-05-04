@@ -1761,13 +1761,35 @@
             <button class="btn btn-primary" id="generateSet" style="width:100%;">Generate Set (Randomized Refs)</button>
           </div>
 
-          <!-- Batch generation: loop generateSet() N times, picking from
-               the shared charm pool each iteration. The progress strip
-               below the button updates as each set lands. -->
+          <!-- Generation mode toggle. Standard = realtime, current behavior.
+               Batch = Gemini Batch API at 50% off, 2K output, up to 24h turnaround.
+               Persisted to localStorage so it survives page reloads. -->
+          <div id="genModeToggle" style="margin-top: 14px; padding: 10px 12px; background: var(--inset); border: 1px solid var(--line); border-radius: var(--r-md);">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+              <label style="margin: 0; font-size: 12px; font-weight: 600;">Generation mode</label>
+              <span class="muted" style="font-size: 10px;" id="genModeHint">Affects all Generate buttons</span>
+            </div>
+            <div class="row" style="gap: 6px;">
+              <button type="button" class="btn btnSmall" id="genModeStandardBtn"
+                      style="flex: 1; background: var(--accent-bg); border: 1px solid var(--accent-line); color: var(--accent); font-weight: 600;">
+                Standard · realtime · full price
+              </button>
+              <button type="button" class="btn btnSmall" id="genModeBatchBtn"
+                      style="flex: 1; background: var(--inset); border: 1px solid var(--line); color: var(--text-2); font-weight: 500;">
+                Batch · 50% off · 2K · up to 24h
+              </button>
+            </div>
+            <div id="genModeBatchInfo" class="muted" style="display: none; margin-top: 8px; font-size: 10px; line-height: 1.5;">
+              Batch jobs run on Google's asynchronous Gemini endpoint at 50% of standard cost. Output stays at 2K (2048×2048). The browser does not need to stay open; results land in Firebase Storage and the manifest writes automatically. Track progress in the panel below.
+            </div>
+          </div>
+
+          <!-- Batch generation: loops generateSet() N times in Standard mode,
+               or submits one Gemini batch job in Batch mode. -->
           <div style="margin-top: 14px; padding: 12px; background: var(--inset); border: 1px solid var(--line); border-radius: var(--r-md);">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
               <label style="margin: 0; font-size: 12px;">Batch generate</label>
-              <span class="muted" style="font-size: 10px;">loops the action above N times</span>
+              <span class="muted" style="font-size: 10px;" id="batchGenHint">loops the action above N times</span>
             </div>
             <div class="row" style="gap: 8px; align-items: center;">
               <input type="number" id="batchGenerateCount" min="2" max="1000" value="5" style="flex: 0 0 96px;" />
@@ -1780,6 +1802,18 @@
                 <span class="upload-phase" id="batchProgressPhase">Working…</span>
                 <span class="upload-pct" id="batchProgressPct">0/0</span>
               </div>
+            </div>
+          </div>
+
+          <!-- Active Gemini batch jobs (only visible when Batch mode is on
+               OR when there are uncollected batches in Firestore). -->
+          <div id="batchJobsPanel" style="display: none; margin-top: 14px; padding: 12px; background: var(--inset); border: 1px solid var(--line); border-radius: var(--r-md);">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+              <label style="margin: 0; font-size: 12px; font-weight: 600;">In-flight batches</label>
+              <button type="button" class="btn btnSmall" id="batchJobsRefreshBtn" style="font-size: 10px; padding: 2px 8px;">↻ Refresh</button>
+            </div>
+            <div id="batchJobsList" style="display: flex; flex-direction: column; gap: 8px;">
+              <div class="muted" style="font-size: 11px; padding: 6px 0;">Loading…</div>
             </div>
           </div>
         </div>
@@ -5925,6 +5959,19 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     }
 
     generateSetBtn.addEventListener("click", () => {
+      // Mode-aware: in Batch mode, the single Generate button submits a
+      // 1-set batch job. In Standard mode, it runs synchronously like always.
+      if (typeof _isBatchModeActive === "function" && _isBatchModeActive()) {
+        if (typeof runBatchModeSubmission === "function") {
+          // 1-set batch: temporarily set the count input to 1, run, restore.
+          const prevValue = batchGenerateCountInput?.value;
+          if (batchGenerateCountInput) batchGenerateCountInput.value = "1";
+          runBatchModeSubmission().finally(() => {
+            if (batchGenerateCountInput && prevValue != null) batchGenerateCountInput.value = prevValue;
+          });
+          return;
+        }
+      }
       generateSet().catch((e) => {
         console.error(e);
         setStatus(`Error: ${e?.message || e}`);
@@ -5964,6 +6011,16 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     if (generateBatchBtn) {
       generateBatchBtn.addEventListener('click', async () => {
         if (_batchInFlight) return;
+
+        // Mode-aware dispatch: if Batch mode is on, route to the
+        // Gemini Batch API submission flow defined later in this script.
+        // Otherwise fall through to the existing Standard-mode loop.
+        if (typeof _isBatchModeActive === "function" && _isBatchModeActive()) {
+          if (typeof runBatchModeSubmission === "function") {
+            return runBatchModeSubmission();
+          }
+        }
+
         const count = parseInt(batchGenerateCountInput?.value || '0', 10);
         if (!count || count < 1) {
           alert('Please enter a count of 1 or more.');
@@ -6045,6 +6102,467 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         }, 1500);
       });
     }
+
+    // ============================================================
+    // GEMINI BATCH API — Listing Generator integration
+    // ------------------------------------------------------------
+    // The toggle below routes Generate Set / Generate Batch through
+    // the Gemini Batch API at 50% of standard cost. Output is locked
+    // to 2K (2048×2048) via imageConfig.imageSize, identical to the
+    // resolution Standard mode produces today. Up to 24h turnaround.
+    //
+    // Architecture overview:
+    //   - Submission: client builds a list of sets (each with allocSet
+    //     reservation + resolved random refs) and POSTs to the new
+    //     `batch_submit` kind. Server handles JSONL build, Files API
+    //     upload, Gemini batch creation, and Firestore persistence.
+    //   - Polling: client polls `batch_status` every 60s while the
+    //     panel is visible. Even if user closes the tab, Firestore
+    //     keeps the record for later.
+    //   - Collection: when state=JOB_STATE_SUCCEEDED, client triggers
+    //     `batch_collect`. Server downloads result JSONL, decodes
+    //     each base64 image, and uploads to the originally-allocated
+    //     Slot_N.png paths. Manifests are written automatically.
+    // ============================================================
+
+    const GEN_MODE_KEY = "lg1_gen_mode";          // localStorage key
+    const GEN_MODE_DEFAULT = "standard";          // 'standard' or 'batch'
+    const BATCH_POLL_MS = 60_000;                 // 60s — light load, batches typically take hours
+    const BATCH_DEFAULT_IMAGE_SIZE = "2K";        // hard-locked per user requirement
+
+    function _readGenMode() {
+      try { return localStorage.getItem(GEN_MODE_KEY) || GEN_MODE_DEFAULT; }
+      catch { return GEN_MODE_DEFAULT; }
+    }
+    function _writeGenMode(m) {
+      try { localStorage.setItem(GEN_MODE_KEY, m); } catch {}
+    }
+    function _isBatchModeActive() {
+      return _readGenMode() === "batch";
+    }
+
+    function _renderGenModeButtons() {
+      const standardBtn = document.getElementById("genModeStandardBtn");
+      const batchBtn = document.getElementById("genModeBatchBtn");
+      const info = document.getElementById("genModeBatchInfo");
+      const batchHint = document.getElementById("batchGenHint");
+      const panel = document.getElementById("batchJobsPanel");
+      if (!standardBtn || !batchBtn) return;
+
+      const mode = _readGenMode();
+      const isBatch = mode === "batch";
+
+      // Visual selection (use accent for active, dim for inactive)
+      const activeStyle = {
+        background: "var(--accent-bg)",
+        borderColor: "var(--accent-line)",
+        color: "var(--accent)",
+        fontWeight: "600",
+      };
+      const inactiveStyle = {
+        background: "var(--inset)",
+        borderColor: "var(--line)",
+        color: "var(--text-2)",
+        fontWeight: "500",
+      };
+      const apply = (el, st) => {
+        for (const [k, v] of Object.entries(st)) el.style[k] = v;
+      };
+      apply(standardBtn, isBatch ? inactiveStyle : activeStyle);
+      apply(batchBtn,    isBatch ? activeStyle    : inactiveStyle);
+
+      if (info) info.style.display = isBatch ? "block" : "none";
+      if (batchHint) {
+        batchHint.textContent = isBatch
+          ? "submits one batch job (50% off, up to 24h)"
+          : "loops the action above N times";
+      }
+      // Show the in-flight batches panel when in batch mode (regardless
+      // of whether there are any current batches — the panel will
+      // render an "empty" state).
+      if (panel) panel.style.display = isBatch ? "block" : "none";
+
+      // Color-shift the Generate Batch button so users see at a glance
+      // whether they're firing a batch job.
+      if (generateBatchBtn) {
+        if (isBatch) {
+          generateBatchBtn.textContent = "Submit batch (50% off, 2K)";
+          generateBatchBtn.style.background = "#1f4026";
+          generateBatchBtn.style.borderColor = "#2f5e3a";
+          generateBatchBtn.style.color = "#7fdb96";
+        } else {
+          generateBatchBtn.textContent = "Generate batch";
+          generateBatchBtn.style.background = "#1c2a4a";
+          generateBatchBtn.style.borderColor = "#2d4070";
+          generateBatchBtn.style.color = "#93c5fd";
+        }
+      }
+    }
+
+    function _setGenMode(m) {
+      _writeGenMode(m);
+      _renderGenModeButtons();
+      // When entering batch mode, refresh the in-flight panel so the
+      // user immediately sees any prior submissions.
+      if (m === "batch") refreshBatchJobsPanel();
+    }
+
+    document.getElementById("genModeStandardBtn")?.addEventListener("click", () => _setGenMode("standard"));
+    document.getElementById("genModeBatchBtn")?.addEventListener("click", () => _setGenMode("batch"));
+
+    // Initial paint based on persisted preference.
+    _renderGenModeButtons();
+
+    // ------------------------------------------------------------
+    // Batch submission flow
+    //
+    // For each set 1..N:
+    //   1. Call alloc_set to atomically reserve Set_N folder.
+    //   2. Pick random reference for each gen slot (matches Standard).
+    //   3. Build per-set task list.
+    // Then call batch_submit ONCE with all sets. Server handles JSONL.
+    // ------------------------------------------------------------
+    async function runBatchModeSubmission() {
+      if (_batchInFlight) return;
+      const count = parseInt(batchGenerateCountInput?.value || "0", 10);
+      if (!count || count < 1) {
+        alert("Please enter a count of 1 or more.");
+        return;
+      }
+      // Per-batch sanity. Server enforces 100 max, but we warn earlier.
+      if (count > 100) {
+        alert("Batch mode supports up to 100 sets per submission. Split into multiple batches for more.");
+        return;
+      }
+
+      const category = String(activeCategoryEl.value || "").trim();
+      if (!category) { alert("Pick a category first."); return; }
+      const slotPlan = SLOT_MAP[category];
+      if (!slotPlan) { alert(`Unknown category: ${category}`); return; }
+
+      const ok = confirm(
+        `Submit ONE batch job to Gemini for ${count} set(s) of ${category}?\n\n` +
+        `· Cost: ~50% of Standard mode\n` +
+        `· Output: 2K (2048×2048)\n` +
+        `· Turnaround: usually 2–6h, up to 24h\n\n` +
+        `You can close this tab — results land in Firebase automatically.`
+      );
+      if (!ok) return;
+
+      _batchInFlight = true;
+      _batchCancelRequested = false;
+      batchProgress.style.display = "block";
+      cancelBatchBtn.style.display = "none"; // batch submit is fast, no cancel mid-flight
+      generateBatchBtn.disabled = true;
+      generateBatchBtn.textContent = "Submitting…";
+      if (generateSetBtn) generateSetBtn.disabled = true;
+
+      _setBatchProgress(0, count, "Allocating Set_N for each…");
+
+      try {
+        // Resolve charm pool reference once — same logic as Standard mode.
+        // Each set picks its own random ref per slot below; the charm
+        // reference is the latest entry in the shared pool, also like
+        // Standard mode (so the user's intuition holds).
+        const isEarring = ["Stud_Earrings", "Hoop_Earrings"].includes(category);
+        const charmFolderPath = isEarring ? newCharmsEarringsPath() : newCharmsPath();
+        const charmLatest = await listLatestFile(charmFolderPath);
+        if (!charmLatest) throw new Error(`No files in ${charmFolderPath}/`);
+
+        // Build set descriptors.
+        const sets = [];
+        for (let i = 0; i < count; i++) {
+          _setBatchProgress(i, count, `Reserving Set_${i + 1}/${count}…`);
+
+          const alloc = await postJson("geminiImageProxy", {
+            kind: "alloc_set",
+            activeCategory: category,
+          });
+          const outputBasePath = normalizeAllocOutputBasePath(alloc);
+          if (!outputBasePath) throw new Error("alloc_set did not return outputBasePath");
+          const setN = alloc?.setN ?? alloc?.set_n ??
+                       Number((outputBasePath.match(/\/Set_(\d+)\b/) || [])[1] || 0);
+
+          // Resolve a random reference for each gen slot. For copy slots,
+          // record the source path so the server can copy synchronously.
+          const tasks = [];
+          for (let s = 0; s < slotPlan.length; s++) {
+            const spec = slotPlan[s];
+            const srcFolder = `${ROOT}/${category}/${spec.folder}`;
+            const srcRandom = await listRandomFile(srcFolder);
+            if (!srcRandom) throw new Error(`No files in ${srcFolder}/`);
+            if (spec.type === "copy") {
+              tasks.push({
+                type: "copy",
+                slotIndex: s,
+                source_storage_path: srcRandom.fullPath,
+              });
+            } else {
+              tasks.push({
+                type: "edits",
+                slotIndex: s,
+                input_storage_path: srcRandom.fullPath,
+                input_charm_storage_path: charmLatest.fullPath,
+                prompt: buildSlotPrompt(category, spec.folder, s + 1),
+              });
+            }
+          }
+
+          sets.push({ category, outputBasePath, setN, tasks });
+        }
+
+        _setBatchProgress(count, count, "Submitting batch to Gemini…");
+
+        // Small batches go through the sync endpoint so we get back the
+        // batchName immediately. Larger ones go through the background
+        // endpoint to avoid Netlify's 10s/26s sync timeout (image fetches
+        // + JSONL upload can exceed that for big batches). When run in
+        // background, the batchName isn't returned synchronously — we
+        // poll the panel to discover it.
+        const useBackground = count > 10;
+        const fnName = useBackground ? "geminiImageProxy-background" : "geminiImageProxy";
+        const submitPayload = {
+          kind: "batch_submit",
+          sets,
+          imageSize: BATCH_DEFAULT_IMAGE_SIZE,
+          displayName: `lg1-${category}-${count}sets-${new Date().toISOString().slice(0,16).replace(/[:T]/g,"")}`,
+        };
+        const submitResp = await postJson(fnName, submitPayload);
+
+        if (useBackground) {
+          // Background returns 202 with no body. Wait for the new batch
+          // to appear in the Firestore-backed list.
+          _setBatchProgress(count, count, "Submitted (background) · waiting for confirmation…");
+          const startMs = Date.now();
+          const waitMs = 90 * 1000; // 90s should be enough; image fetches + JSONL upload
+          let appeared = null;
+          while (Date.now() - startMs < waitMs) {
+            await new Promise((r) => setTimeout(r, 4000));
+            try {
+              const list = await postJson("geminiImageProxy", { kind: "batch_list", limit: 5 });
+              const recent = (list?.batches || [])[0];
+              if (recent && recent.displayName === submitPayload.displayName) {
+                appeared = recent;
+                break;
+              }
+            } catch (_) {}
+          }
+          if (appeared) {
+            _setBatchProgress(count, count, `Submitted: ${appeared.batchName}`);
+            setStatus(`Batch submitted · ${count} set(s) · ${appeared.batchName}`);
+          } else {
+            _setBatchProgress(count, count, "Submitted (background); refresh panel in a few seconds");
+            setStatus(`Batch submitted · ${count} set(s) · check the panel`);
+          }
+        } else if (submitResp?.copyOnly) {
+          _setBatchProgress(count, count, "Done — all copy slots, no Gemini needed");
+          setStatus(`Done · ${count} set(s) · copy-only`);
+        } else {
+          _setBatchProgress(count, count, `Submitted: ${submitResp?.batchName || "(unknown)"}`);
+          setStatus(`Batch submitted · ${count} set(s) · ${submitResp?.batchName || "copy-only"}`);
+        }
+
+        await refreshBatchJobsPanel();
+      } catch (err) {
+        console.error("[batch_submit] failed", err);
+        _setBatchProgress(0, count, `⚠ ${err?.message || err}`);
+        setStatus(`Batch submission failed: ${err?.message || err}`);
+        alert(`Batch submission failed:\n\n${err?.message || err}`);
+      } finally {
+        _batchInFlight = false;
+        _batchCancelRequested = false;
+        generateBatchBtn.disabled = false;
+        if (generateSetBtn) generateSetBtn.disabled = false;
+        _renderGenModeButtons(); // restore label
+        setTimeout(() => { batchProgress.style.display = "none"; }, 8000);
+      }
+    }
+
+    // ------------------------------------------------------------
+    // In-flight panel: read Firestore via batch_list, render cards.
+    // Each card shows state and offers Refresh/Collect/Cancel/Delete.
+    // ------------------------------------------------------------
+    let _batchPollTimer = null;
+    let _lastBatchList = [];
+
+    async function refreshBatchJobsPanel() {
+      const listEl = document.getElementById("batchJobsList");
+      if (!listEl) return;
+      try {
+        const resp = await postJson("geminiImageProxy", { kind: "batch_list", limit: 50 });
+        const batches = Array.isArray(resp?.batches) ? resp.batches : [];
+        _lastBatchList = batches;
+        if (batches.length === 0) {
+          listEl.innerHTML = `<div class="muted" style="font-size: 11px; padding: 6px 0;">No in-flight batches. Submit one above.</div>`;
+          return;
+        }
+        listEl.innerHTML = batches.map(_renderBatchCard).join("");
+        // Hook up per-card buttons.
+        for (const b of batches) {
+          const safeId = b.docId;
+          document.getElementById(`bRefresh_${safeId}`)?.addEventListener("click", () => pollOneBatch(b.batchName));
+          document.getElementById(`bCollect_${safeId}`)?.addEventListener("click", () => collectOneBatch(b.batchName));
+          document.getElementById(`bCancel_${safeId}`)?.addEventListener("click", () => cancelOneBatch(b.batchName));
+        }
+        // Auto-poll any non-final batches so state freshens without user clicking.
+        _startBatchAutoPoll();
+      } catch (err) {
+        listEl.innerHTML = `<div class="muted" style="font-size: 11px; color: #fca5a5;">Failed to load batches: ${err?.message || err}</div>`;
+      }
+    }
+
+    function _renderBatchCard(b) {
+      const stateColor = {
+        "JOB_STATE_PENDING":   "#fde68a",
+        "JOB_STATE_RUNNING":   "#93c5fd",
+        "JOB_STATE_SUCCEEDED": "#7fdb96",
+        "JOB_STATE_FAILED":    "#fca5a5",
+        "JOB_STATE_CANCELLED": "#a3a3a3",
+        "JOB_STATE_EXPIRED":   "#fca5a5",
+      }[b.state] || "#a3a3a3";
+      const succeeded = b.state === "JOB_STATE_SUCCEEDED";
+      const final = ["JOB_STATE_SUCCEEDED", "JOB_STATE_FAILED", "JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED"].includes(b.state);
+      const cancellable = !final;
+      const collectable = succeeded && !b.collected;
+      const created = b.createdAt ? new Date(b.createdAt).toLocaleString() : "(unknown)";
+      const stats = b.batchStats || {};
+
+      // Sanitize batchName for display (it's already the docId-safe form on the right).
+      const displayId = (b.batchName || "").replace(/^batches\//, "");
+
+      return `
+        <div style="background: var(--card-2); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; flex-wrap: wrap; gap: 6px;">
+            <div style="font-size: 12px; font-weight: 600; color: var(--text);">${b.displayName || displayId}</div>
+            <div style="font-family: var(--font-mono); font-size: 10px; color: ${stateColor};">${b.state || "?"}</div>
+          </div>
+          <div class="muted" style="font-size: 10px; font-family: var(--font-mono); margin-bottom: 6px;">
+            ${displayId} · ${b.setsCount || 0} set${(b.setsCount || 0) === 1 ? "" : "s"} · ${b.requestCount || 0} request${(b.requestCount || 0) === 1 ? "" : "s"} · created ${created}
+          </div>
+          ${stats.completedRequestCount != null || stats.failedRequestCount != null ? `
+            <div class="muted" style="font-size: 10px; margin-bottom: 6px;">
+              ${stats.completedRequestCount ?? 0} done · ${stats.failedRequestCount ?? 0} failed · ${stats.pendingRequestCount ?? "?"} pending
+            </div>` : ""}
+          ${b.collected ? `<div class="muted" style="font-size: 10px; color: #7fdb96; margin-bottom: 6px;">✓ Collected — results in Firebase</div>` : ""}
+          <div class="row" style="gap: 6px; flex-wrap: wrap;">
+            <button class="btn btnSmall" id="bRefresh_${b.docId}" style="font-size: 10px;">↻ Refresh</button>
+            ${collectable ? `<button class="btn btnSmall" id="bCollect_${b.docId}" style="background: #1f4026; border: 1px solid #2f5e3a; color: #7fdb96; font-size: 10px;">⬇ Collect now</button>` : ""}
+            ${cancellable ? `<button class="btn btnSmall" id="bCancel_${b.docId}" style="background: #3d1c1c; border: 1px solid #7a3838; color: #fca5a5; font-size: 10px;">✕ Cancel</button>` : ""}
+          </div>
+        </div>
+      `;
+    }
+
+    async function pollOneBatch(batchName) {
+      try {
+        const r = await postJson("geminiImageProxy", { kind: "batch_status", batchName });
+        // Auto-collect if succeeded — most users want this. They can also
+        // press the Collect button manually if they prefer to pace it.
+        if (r?.succeeded) {
+          // Don't auto-collect; require explicit click. Less surprise.
+          // (Easy to flip if you want auto.)
+        }
+        await refreshBatchJobsPanel();
+      } catch (err) {
+        alert(`Status check failed: ${err?.message || err}`);
+      }
+    }
+
+    async function collectOneBatch(batchName) {
+      const ok = confirm(`Collect results for ${batchName}?\n\nThis downloads images from Google and uploads them to Firebase Storage. The collection runs in the background — it can take up to a few minutes for very large batches. You can keep using the page.`);
+      if (!ok) return;
+      try {
+        setStatus(`Collecting ${batchName}… (running in background)`);
+
+        // Route through the background function so we don't hit the
+        // 10s/26s sync timeout on big batches. Background functions
+        // get up to 15 minutes. The browser receives a 202 with no
+        // body — completion is detected by polling batch_list and
+        // watching for the `collected: true` flag.
+        await postJson("geminiImageProxy-background", { kind: "batch_collect", batchName });
+
+        // Poll until we see collected=true (or timeout after 12 minutes).
+        const startMs = Date.now();
+        const timeoutMs = 12 * 60 * 1000;
+        let lastInfo = null;
+        while (Date.now() - startMs < timeoutMs) {
+          await new Promise((r) => setTimeout(r, 5000));
+          try {
+            const list = await postJson("geminiImageProxy", { kind: "batch_list", limit: 200, includeCollected: true });
+            const me = (list?.batches || []).find((b) => b.batchName === batchName);
+            if (me?.collected) {
+              lastInfo = me;
+              break;
+            }
+            // Show "still working" state
+            setStatus(`Collecting ${batchName}… (background, ${Math.floor((Date.now() - startMs) / 1000)}s)`);
+          } catch (_) { /* swallow polling errors */ }
+        }
+
+        if (lastInfo) {
+          // Read full doc via a state check to surface counts.
+          // (batch_list returns lightweight rows; we don't have the
+          // succeeded/failed counts there.) For now show a completion
+          // message; the user can click into Review to verify.
+          setStatus(`✓ Collected — see Review tab for ${batchName}`);
+        } else {
+          setStatus(`Collection still running. Check back later.`);
+          alert("Collection is still running in the background. Refresh the panel periodically; the row will update to ✓ Collected when done.");
+        }
+
+        await refreshBatchJobsPanel();
+      } catch (err) {
+        setStatus(`Collection failed: ${err?.message || err}`);
+        alert(`Collection failed:\n\n${err?.message || err}`);
+      }
+    }
+
+    async function cancelOneBatch(batchName) {
+      const ok = confirm(`Cancel ${batchName}? Already-completed work is still billed.`);
+      if (!ok) return;
+      try {
+        await postJson("geminiImageProxy", { kind: "batch_cancel", batchName });
+        await refreshBatchJobsPanel();
+      } catch (err) {
+        alert(`Cancel failed: ${err?.message || err}`);
+      }
+    }
+
+    function _startBatchAutoPoll() {
+      if (_batchPollTimer) return;
+      _batchPollTimer = setInterval(async () => {
+        // Only poll if any visible batch is non-final.
+        const anyOpen = _lastBatchList.some((b) => !b.collected &&
+          b.state !== "JOB_STATE_FAILED" && b.state !== "JOB_STATE_CANCELLED" && b.state !== "JOB_STATE_EXPIRED");
+        if (!anyOpen) {
+          clearInterval(_batchPollTimer);
+          _batchPollTimer = null;
+          return;
+        }
+        // Only poll while the panel is visible to save bandwidth.
+        const panel = document.getElementById("batchJobsPanel");
+        if (!panel || panel.style.display === "none") return;
+        // Refresh state from Google for each open batch.
+        for (const b of _lastBatchList) {
+          if (b.collected) continue;
+          const isFinal = b.state === "JOB_STATE_FAILED" || b.state === "JOB_STATE_CANCELLED" ||
+                          b.state === "JOB_STATE_EXPIRED" || b.state === "JOB_STATE_SUCCEEDED";
+          if (isFinal) continue;
+          try {
+            await postJson("geminiImageProxy", { kind: "batch_status", batchName: b.batchName });
+          } catch (_) { /* swallow */ }
+        }
+        await refreshBatchJobsPanel();
+      }, BATCH_POLL_MS);
+    }
+
+    document.getElementById("batchJobsRefreshBtn")?.addEventListener("click", refreshBatchJobsPanel);
+
+    // Auto-load batches list when entering batch mode for the first time.
+    if (_isBatchModeActive()) {
+      refreshBatchJobsPanel();
+    }
+
     // --- 1. Download Completed Listing Sets Logic (Downloads & Moves to Permanent) ---
     const downloadCompletedSetsBtn = document.getElementById("downloadCompletedSetsBtn");
 
