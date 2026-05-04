@@ -632,6 +632,48 @@
   }
 
   /* ---------- Charm reference mosaic (Charm Maker left side) ---------- */
+  /* ---------- Charm Maker compact workflow flow ---------- */
+  .cm-flow {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 16px;
+    padding: 10px 14px;
+    background: var(--inset);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    flex-wrap: wrap;
+  }
+  .cm-step {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+  }
+  .cm-step-num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: var(--card-2);
+    border: 1px solid var(--accent-line);
+    color: var(--accent);
+    font-weight: 600;
+    font-size: 11px;
+    flex-shrink: 0;
+  }
+  .cm-step-lbl {
+    font-size: 12px;
+    color: var(--text);
+    font-weight: 500;
+  }
+  .cm-step-arrow {
+    color: var(--muted);
+    font-size: 14px;
+    user-select: none;
+  }
+
   .charm-mosaic {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
@@ -1720,26 +1762,25 @@
 
       <!-- ===== CHARM MAKER SECTION ===== -->
       <div id="charmMakerSection" style="display: none;">
-        <h1>Charm Maker</h1>
-        <p class="lede">For each reference charm in <code style="font-family: var(--font-mono); font-size: 11px;">Charm_Templates (Existing Etsy Charms)</code>, Gemini produces a 4-image quad: color charm, color earring, B&amp;W charm, B&amp;W earring. Approve the base before slots 2–4 are derived.</p>
+        <h1 style="margin: 0 0 4px 0;">Charm Maker</h1>
+        <p class="muted" style="font-size: 12px; margin: 0 0 14px 0;">Reference image → 4-image derivative quad</p>
 
-        <!-- Workflow guide -->
-        <div class="hint" style="margin-bottom: 14px; line-height: 1.55;">
-          <strong>Workflow:</strong>
-          <ol style="margin: 6px 0 0 18px; padding: 0;">
-            <li>Pick reference(s) from the library below (or leave empty to use the newest)</li>
-            <li>Click <strong>Generate charms</strong> — quads appear in the <em>Charm Maker Database</em> on the right</li>
-            <li>Click <strong>Approve Base &amp; Continue</strong> on a quad to derive slots 2–4</li>
-            <li>Approved quads move to the <strong>Approved Charms</strong> tab (<code>Completed_Approved_Charm_Sets</code>)</li>
-          </ol>
+        <!-- Compact horizontal workflow indicator (replaces the old paragraph + numbered list) -->
+        <div class="cm-flow">
+          <div class="cm-step"><span class="cm-step-num">1</span><span class="cm-step-lbl">Pick</span></div>
+          <span class="cm-step-arrow">→</span>
+          <div class="cm-step"><span class="cm-step-num">2</span><span class="cm-step-lbl">Generate</span></div>
+          <span class="cm-step-arrow">→</span>
+          <div class="cm-step"><span class="cm-step-num">3</span><span class="cm-step-lbl">Approve</span></div>
+          <span class="cm-step-arrow">→</span>
+          <div class="cm-step"><span class="cm-step-num">4</span><span class="cm-step-lbl">Done</span></div>
         </div>
 
         <div class="group">
           <div class="group-head">
-            <h3>Upload new charm references</h3>
+            <h3>Upload references</h3>
             <span class="count">Adds to source pool</span>
           </div>
-          <p class="muted" style="font-size: 11px; margin: 0 0 8px 0;">Drop or pick image files — they upload to the Charm Maker's reference folder. The library below refreshes automatically.</p>
           <div id="charmUploadArea"></div>
         </div>
 
@@ -1749,12 +1790,10 @@
             <span class="count" id="charmRefSelectionStatus">no selection · uses newest</span>
           </div>
 
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-            <label style="margin: 0;"><code style="font-family: var(--font-mono); font-size: 11px;">Charm_Templates (Existing Etsy Charms)</code> · sources for AI generation</label>
-            <span id="newCharmsTotalCount">Count: Loading...</span>
+          <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap;">
+            <code style="font-family: var(--font-mono); font-size: 10px; color: var(--muted);">Charm_Templates (Existing Etsy Charms)/</code>
+            <span id="newCharmsTotalCount" style="font-size: 11px;">Count: Loading...</span>
           </div>
-
-          <p class="muted" style="font-size: 11px; margin: 0 0 8px 0;">Click thumbs to select specific charms for the next batch (in click order). Click again to deselect. Empty selection = uses the newest by upload time.</p>
 
           <div id="charmMosaic" class="charm-mosaic"><div class="slotRefEmpty" style="grid-column: 1/-1; padding: 36px;">Loading…</div></div>
 
