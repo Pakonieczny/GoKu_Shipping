@@ -279,6 +279,65 @@
     color: var(--accent) !important;
   }
 
+  /* Charm-card action buttons — color-code by their onclick handler so
+     the inline-style intent (which gets steamrolled by .redoBtn's
+     !important above) actually wins. Attribute selectors give us the
+     specificity bump we need. */
+  button.redoBtn[onclick*="approveCharmQuad"] {
+    background: #1f4026 !important;
+    border-color: #2f5e3a !important;
+    color: #7fdb96 !important;
+    font-weight: 600 !important;
+  }
+  button.redoBtn[onclick*="approveCharmQuad"]:not(:disabled):hover {
+    background: #2a5532 !important;
+    border-color: #3f7a4a !important;
+    color: #9bef9c !important;
+  }
+  button.redoBtn[onclick*="deleteCharmQuad"] {
+    background: #3d1c1c !important;
+    border-color: #7a3838 !important;
+    color: #fca5a5 !important;
+    font-weight: 500 !important;
+  }
+  button.redoBtn[onclick*="deleteCharmQuad"]:not(:disabled):hover {
+    background: #4d2424 !important;
+    border-color: #9c4646 !important;
+    color: #ffb8b8 !important;
+  }
+  button.redoBtn[onclick*="continueCharmQuad"] {
+    background: #b45309 !important;
+    border-color: #d97706 !important;
+    color: #fde68a !important;
+    font-weight: 600 !important;
+  }
+  button.redoBtn[onclick*="continueCharmQuad"]:not(:disabled):hover {
+    background: #c95f0c !important;
+    border-color: #ed8a13 !important;
+    color: #fef3b8 !important;
+  }
+  button.redoBtn[onclick*="regenCharmQuad"] {
+    background: #1c2a4a !important;
+    border-color: #2d4070 !important;
+    color: #93c5fd !important;
+    font-weight: 500 !important;
+  }
+  button.redoBtn[onclick*="regenCharmQuad"]:not(:disabled):hover {
+    background: #243558 !important;
+    border-color: #3a4f88 !important;
+    color: #b6daff !important;
+  }
+  button.redoBtn[onclick*="redoCharmSlot"] {
+    background: #2a2438 !important;
+    border-color: #4a3d5c !important;
+    color: #c4b5fd !important;
+  }
+  button.redoBtn[onclick*="redoCharmSlot"]:not(:disabled):hover {
+    background: #322a44 !important;
+    border-color: #5a4a70 !important;
+    color: #d8caff !important;
+  }
+
   /* Disabled-action override (JS uses this class for fully-locked state) */
   button.disabled-action {
     background: #1a1e2b !important;
@@ -1673,6 +1732,15 @@
             <li>Click <strong>Approve Base &amp; Continue</strong> on a quad to derive slots 2–4</li>
             <li>Approved quads move to the <strong>Approved Charms</strong> tab (<code>Completed_Approved_Charm_Sets</code>)</li>
           </ol>
+        </div>
+
+        <div class="group">
+          <div class="group-head">
+            <h3>Upload new charm references</h3>
+            <span class="count">Adds to source pool</span>
+          </div>
+          <p class="muted" style="font-size: 11px; margin: 0 0 8px 0;">Drop or pick image files — they upload to the Charm Maker's reference folder. The library below refreshes automatically.</p>
+          <div id="charmUploadArea"></div>
         </div>
 
         <div class="group">
@@ -7423,9 +7491,42 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       if (!h) return;
       h.style.display = show ? 'flex' : 'none';
     }
-    document.getElementById('toggleCharmMakerBtn')?.addEventListener('click', () => {
+    // Populate the in-section upload panel for charm references.
+    // Idempotent — appends the makeUploadPanel widget exactly once,
+    // pointed at newCharmsPath() (Charm_Templates · Existing Etsy Charms).
+    function _ensureCharmUploadAreaPopulated() {
+      const container = document.getElementById('charmUploadArea');
+      if (!container) return;
+      if (container.children.length > 0) return;
+      try {
+        const panel = makeUploadPanel(newCharmsPath(), 'Charm_Templates · Existing Etsy Charms');
+        container.appendChild(panel);
+        // Reload mosaic when an upload completes — makeUploadPanel does
+        // a refreshCount internally; we listen for input change as a
+        // pragmatic upload-completion proxy and re-load the mosaic
+        // shortly after, so the new files appear.
+        const fileInput = panel.querySelector('input[type="file"]');
+        if (fileInput) {
+          fileInput.addEventListener('change', () => {
+            // makeUploadPanel handles the actual upload; give it time
+            // to finish, then refresh the mosaic + count.
+            setTimeout(() => {
+              _loadCharmMosaic();
+              _updateCharmRefStatus();
+            }, 2500);
+          });
+        }
+      } catch (e) {
+        console.warn('[Listing-Generator] Charm upload area populate failed:', e);
+      }
+    }
+    // BUG FIX: original DOM IDs are toggleCharmMaker / toggleGenerate /
+    // etc. — without the 'Btn' suffix. The variables in module scope ARE
+    // named with 'Btn' suffix, so use those directly instead of doing
+    // getElementById with the wrong string.
+    toggleCharmMakerBtn?.addEventListener('click', () => {
       _showCharmMakerHeader(true);
-      // Load mosaic and update count after a brief delay so DOM is ready
+      _ensureCharmUploadAreaPopulated();
       setTimeout(() => {
         _loadCharmMosaic();
         _updateCharmRefStatus();
@@ -7435,6 +7536,26 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     [toggleGenerateBtn, toggleReviewBtn, toggleApprovedCharmsBtn].forEach(btn => {
       btn?.addEventListener('click', () => _showCharmMakerHeader(false));
     });
+
+    // Also reactively respond to appMode changes from anywhere — poll
+    // every 1s and sync header visibility. Cheap, robust, and catches
+    // the case where the user lands on Charm Maker via initial page load.
+    setInterval(() => {
+      if (typeof appMode === 'undefined') return;
+      const h = document.getElementById('charmMakerHeader');
+      if (!h) return;
+      const shouldShow = (appMode === 'charmMaker');
+      const isShown = h.style.display !== 'none';
+      if (shouldShow !== isShown) {
+        h.style.display = shouldShow ? 'flex' : 'none';
+        if (shouldShow) {
+          _ensureCharmUploadAreaPopulated();
+          _loadCharmMosaic();
+          _updateCharmRefStatus();
+          _updateCharmDbCount();
+        }
+      }
+    }, 1000);
 
     // Live count update for Charm Maker DB while on that tab
     setInterval(() => {
