@@ -171,6 +171,18 @@
     margin: 0 auto;
   }
 
+  /* When the user is on the Approved tab, the left card has nothing
+     to show (Generate / Review / Charm Maker sections all hidden), so
+     we collapse to a single column and hide the empty left card. The
+     right-side content expands to use the full width. */
+  .wrap.wrap--full-right {
+    grid-template-columns: 1fr;
+    max-width: 1700px;
+  }
+  .wrap.wrap--full-right > .card:first-child {
+    display: none;
+  }
+
   .card {
     background: var(--card);
     border: 1px solid var(--line);
@@ -1562,6 +1574,21 @@
   }
   @media (max-width: 1100px) {
     .approved-listings-grid { grid-template-columns: 1fr !important; }
+  }
+  /* When the right card spans the full page width (Approved tab),
+     fit one more card per row so we don't end up with three giant
+     cards on a wide screen. */
+  .wrap--full-right .approved-listings-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+  @media (max-width: 1400px) {
+    .wrap--full-right .approved-listings-grid { grid-template-columns: repeat(3, 1fr) !important; }
+  }
+  @media (max-width: 1100px) {
+    .wrap--full-right .approved-listings-grid { grid-template-columns: repeat(2, 1fr) !important; }
+  }
+  @media (max-width: 800px) {
+    .wrap--full-right .approved-listings-grid { grid-template-columns: 1fr !important; }
   }
   .approved-listing-card {
     position: relative;
@@ -3322,6 +3349,13 @@
       toggleCharmMakerBtn.style.color = "var(--muted)";
       toggleApprovedCharmsBtn.style.background = "transparent";
       toggleApprovedCharmsBtn.style.color = "var(--muted)";
+
+      // Layout switch: collapse to single-column on Approved tab where
+      // the left card has nothing to show, restore two-column elsewhere.
+      const wrapEl = document.querySelector('.wrap');
+      if (wrapEl) {
+        wrapEl.classList.toggle('wrap--full-right', mode === 'approvedCharms');
+      }
       
       generateSection.style.display = "none";
       reviewSection.style.display = "none";
