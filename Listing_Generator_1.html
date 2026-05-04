@@ -1085,6 +1085,8 @@
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
     gap: 12px;
+    align-content: start;      /* CRITICAL: don't stretch rows to fill height (default stretches when content is shorter than container) */
+    align-items: start;        /* CRITICAL: don't stretch items within their row */
     /* Always-visible scrollbar (macOS hides default scrollbars) */
     scrollbar-width: thin;
     scrollbar-color: var(--line-2) transparent;
