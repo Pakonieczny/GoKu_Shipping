@@ -5695,6 +5695,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     // Track blob URLs we create so we can revoke them on modal close /
     // listings page change to avoid memory leaks
     const _activeBlobUrls = new Set();
+    let _galleryResizeObserver = null;
     function _revokeAllBlobUrls() {
       _activeBlobUrls.forEach(u => { try { URL.revokeObjectURL(u); } catch (_) {} });
       _activeBlobUrls.clear();
@@ -5865,9 +5866,22 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
           </div>
         `).join('');
 
-        // Force squares: read actual width and set height to match.
-        // This wins over any CSS cascade because inline style is highest.
-        _equalizeThumbHeights();
+        // Force squares: in TWO rAF frames (so layout has fully computed),
+        // read each thumb's actual rendered width and set matching height.
+        // Inline styles beat any CSS rule. Plus a ResizeObserver to keep
+        // them square forever (covers resize, zoom, font-load reflows).
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            _equalizeThumbHeights();
+          });
+        });
+        if (_galleryResizeObserver) {
+          try { _galleryResizeObserver.disconnect(); } catch (_) {}
+        }
+        _galleryResizeObserver = new ResizeObserver(() => {
+          _equalizeThumbHeights();
+        });
+        _galleryResizeObserver.observe(_galleryBody);
 
         // Wire delete buttons (no URL dependency)
         _galleryBody.querySelectorAll('.thumb-delete').forEach(btn => {
