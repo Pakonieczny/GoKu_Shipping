@@ -1022,7 +1022,7 @@
     backdrop-filter: blur(6px);
     -webkit-backdrop-filter: blur(6px);
     z-index: 1000;
-    align-items: center;
+    align-items: stretch;        /* stretch modal to backdrop height */
     justify-content: center;
     padding: 32px;
   }
@@ -1030,7 +1030,9 @@
   .modal {
     width: 100%;
     max-width: 1000px;
-    max-height: calc(100vh - 64px);
+    /* Use HEIGHT (not max-height) so .modal-body always has a constrained
+       parent — this is what makes overflow-y: scroll actually scroll. */
+    height: 100%;
     background: var(--card);
     border: 1px solid var(--line-2);
     border-radius: var(--r-lg);
@@ -1075,29 +1077,29 @@
   }
   .modal-close:hover { color: var(--text); border-color: var(--line-2); }
   .modal-body {
-    flex: 1;
+    flex: 1 1 auto;
     min-height: 0;             /* CRITICAL: lets flex children overflow */
-    overflow-y: auto;
+    overflow-y: scroll;        /* always-visible scrollbar so user always knows scroll is possible */
     overflow-x: hidden;
     padding: 18px 20px;
     display: grid;
-    grid-template-columns: repeat(auto-fill, 200px);
-    justify-content: center;   /* center the 200px columns in available space */
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
     gap: 12px;
     /* Always-visible scrollbar (macOS hides default scrollbars) */
     scrollbar-width: thin;
     scrollbar-color: var(--line-2) transparent;
   }
   .modal-body::-webkit-scrollbar {
-    width: 10px;
+    width: 12px;
   }
   .modal-body::-webkit-scrollbar-track {
     background: var(--inset);
-    border-radius: 5px;
+    border-radius: 6px;
   }
   .modal-body::-webkit-scrollbar-thumb {
     background: var(--line-2);
-    border-radius: 5px;
+    border-radius: 6px;
+    min-height: 40px;
   }
   .modal-body::-webkit-scrollbar-thumb:hover {
     background: var(--muted);
@@ -1108,15 +1110,14 @@
     border: 1px solid var(--line);
     border-radius: var(--r-sm);
     overflow: hidden;
-    width: 200px !important;
     transition: border-color 120ms ease;
   }
   .thumb:hover { border-color: var(--line-2); }
   .thumb-img {
-    /* Fixed 200x200 square — !important guards against any cascade
-       collisions with .preview-box, .slotPrev, or other generic styles. */
-    width: 200px !important;
-    height: 200px !important;
+    /* Square shape — height is set by JS to match clientWidth (most
+       reliable). aspect-ratio + padding-bottom serve as CSS fallbacks. */
+    width: 100%;
+    aspect-ratio: 1 / 1;
     position: relative;
     background: #0a0c14;
     overflow: hidden;
@@ -5699,6 +5700,35 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       _activeBlobUrls.clear();
     }
 
+    // Force gallery thumbs to be squares by reading actual rendered
+    // width and setting matching height inline. This is bulletproof
+    // because inline style has higher specificity than any CSS rule
+    // (and even survives !important rules from external stylesheets).
+    // Called after initial render and on window resize.
+    function _equalizeThumbHeights() {
+      if (!_galleryBody) return;
+      const boxes = _galleryBody.querySelectorAll('.thumb-img');
+      boxes.forEach(box => {
+        const w = box.clientWidth;
+        if (w > 0) {
+          box.style.height = w + 'px';
+          box.style.minHeight = w + 'px';
+        }
+      });
+    }
+
+    // Re-equalize on window resize (throttled via rAF)
+    let _equalizeRaf = null;
+    window.addEventListener('resize', () => {
+      if (_equalizeRaf) return;
+      _equalizeRaf = requestAnimationFrame(() => {
+        _equalizeRaf = null;
+        if (_galleryModal && _galleryModal.classList.contains('open')) {
+          _equalizeThumbHeights();
+        }
+      });
+    });
+
     // Render an image into a thumb box. Mirrors setBoxImage but adds the
     // wheel-modifier bypass once per box (data-zoomAttached flag prevents
     // duplicate listeners across re-renders).
@@ -5825,15 +5855,19 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         const sorted = [...res.items].sort((a, b) => b.name.localeCompare(a.name));
 
         // Render placeholders immediately — no URL fetches yet.
-        // INLINE STYLES on .thumb-img: outermost guarantee that the
-        // box is exactly 200x200, immune to any CSS cascade collision.
+        // Heights are set after render via _equalizeThumbHeights() to
+        // guarantee squares regardless of column width.
         _galleryBody.innerHTML = sorted.map((item, idx) => `
-          <div class="thumb" data-idx="${idx}" style="width: 200px;">
-            <div class="thumb-img" style="width: 200px; height: 200px; flex: 0 0 200px;"><div class="slotRefEmpty" style="font-size: 9px;">…</div></div>
+          <div class="thumb" data-idx="${idx}">
+            <div class="thumb-img"><div class="slotRefEmpty" style="font-size: 9px;">…</div></div>
             <div class="thumb-name mono" title="${item.name.replace(/"/g, '&quot;')}">${item.name}</div>
             <button class="btn btnSmall thumb-delete" title="Delete this file" data-fp="${item.fullPath.replace(/"/g, '&quot;')}">×</button>
           </div>
         `).join('');
+
+        // Force squares: read actual width and set height to match.
+        // This wins over any CSS cascade because inline style is highest.
+        _equalizeThumbHeights();
 
         // Wire delete buttons (no URL dependency)
         _galleryBody.querySelectorAll('.thumb-delete').forEach(btn => {
