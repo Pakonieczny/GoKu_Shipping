@@ -383,6 +383,7 @@
     align-items: center;
     justify-content: space-between;
     transition: all 160ms ease;
+    flex-wrap: wrap;
   }
   .drop:hover {
     border-color: var(--line-2);
@@ -396,6 +397,55 @@
     font-size: 13px;
     font-weight: 500;
     color: var(--text);
+  }
+
+  /* Upload progress bar — used inside .drop panels and the gallery modal */
+  .upload-progress {
+    display: none;
+    width: 100%;
+    margin-top: 10px;
+  }
+  .upload-progress.active { display: block; }
+  .upload-progress-bar {
+    width: 100%;
+    height: 7px;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    overflow: hidden;
+    position: relative;
+  }
+  .upload-progress-fill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, var(--accent) 0%, #6b9aff 60%, #93c5fd 100%);
+    transition: width 180ms ease;
+    box-shadow: 0 0 8px rgba(93, 156, 255, 0.4);
+  }
+  .upload-progress-fill.indeterminate {
+    width: 35% !important;
+    animation: upload-progress-slide 1.2s ease-in-out infinite;
+  }
+  @keyframes upload-progress-slide {
+    0%   { transform: translateX(-100%); }
+    100% { transform: translateX(280%); }
+  }
+  .upload-progress-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 5px;
+    font-size: 10px;
+    font-family: var(--font-mono);
+    color: var(--muted);
+    gap: 12px;
+  }
+  .upload-progress-meta .upload-phase {
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .upload-progress-meta .upload-pct {
+    color: var(--text-2);
   }
   .drop .muted code {
     font-family: var(--font-mono);
@@ -1848,10 +1898,6 @@
               </div>
             </div>
           </div>
-
-          <div class="hint" style="margin-top: 14px;">
-            <strong>Two-stage flow:</strong> Slot 1 (color charm base) generates first. Workflow pauses until you click <strong>Approve Base &amp; Continue</strong> on the card on the right. Then slots 2 (color earring), 3 (B&amp;W charm), 4 (B&amp;W earring) derive from the approved base.
-          </div>
         </div>
 
       </div>
@@ -2826,6 +2872,83 @@
       return results;
     }
 
+    // ============================================================
+    // Shared utility: expand any ZIPs in a File[] into their image
+    // contents so the rest of the upload pipeline doesn't have to
+    // care whether the user dropped 5 PNGs or one ZIP containing
+    // 500 PNGs. Used by makeUploadPanel (every drop panel in the
+    // app) and the gallery modal's "+ Add files" handler.
+    //
+    // Returns an array of {name, blob, contentType} ready for upload.
+    // Non-ZIP files pass through unchanged. Inside a ZIP we keep
+    // only image-extension files, skip macOS metadata (__MACOSX/,
+    // .DS_Store) and dotfiles, and flatten any nested folder
+    // structure to just the basename.
+    // ============================================================
+    const _ZIP_IMG_RE = /\.(png|jpe?g|webp|gif|avif|svg|bmp|tiff?)$/i;
+    function _isZipFile(f) {
+      if (!f) return false;
+      if (/\.zip$/i.test(f.name || '')) return true;
+      const t = (f.type || '').toLowerCase();
+      return t === 'application/zip' || t === 'application/x-zip-compressed' || t === 'multipart/x-zip';
+    }
+    function _mimeForExt(name) {
+      const ext = (name || '').toLowerCase().split('.').pop();
+      if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
+      if (ext === 'webp') return 'image/webp';
+      if (ext === 'gif')  return 'image/gif';
+      if (ext === 'avif') return 'image/avif';
+      if (ext === 'svg')  return 'image/svg+xml';
+      if (ext === 'bmp')  return 'image/bmp';
+      if (ext === 'tif' || ext === 'tiff') return 'image/tiff';
+      return 'image/png';
+    }
+    async function _expandFilesWithZips(files, onProgress) {
+      const out = [];
+      const list = Array.from(files || []);
+      for (const f of list) {
+        if (!_isZipFile(f)) {
+          out.push({ name: f.name, blob: f, contentType: f.type || 'application/octet-stream' });
+          continue;
+        }
+        if (!window.JSZip) {
+          throw new Error('JSZip not loaded — cannot extract ZIP. Check internet connection.');
+        }
+        try {
+          if (onProgress) onProgress({ phase: 'reading-zip', message: `Reading ${f.name}…`, indeterminate: true });
+          const zip = await JSZip.loadAsync(f);
+          const entries = [];
+          zip.forEach((relPath, entry) => {
+            if (entry.dir) return;
+            if (relPath.startsWith('__MACOSX/')) return;
+            const baseName = relPath.split('/').pop();
+            if (!baseName || baseName.startsWith('.')) return;
+            if (!_ZIP_IMG_RE.test(baseName)) return;
+            entries.push({ baseName, entry });
+          });
+          if (entries.length === 0) {
+            console.warn(`[ZIP] ${f.name} contained no image files`);
+            continue;
+          }
+          for (let i = 0; i < entries.length; i++) {
+            if (onProgress) onProgress({
+              phase: 'extracting',
+              current: i + 1,
+              total: entries.length,
+              fileName: f.name,
+              message: `Extracting ${i + 1}/${entries.length} from ${f.name}`
+            });
+            const { baseName, entry } = entries[i];
+            const blob = await entry.async('blob');
+            out.push({ name: baseName, blob, contentType: _mimeForExt(baseName) });
+          }
+        } catch (e) {
+          throw new Error(`Failed to extract ${f.name}: ${e?.message || e}`);
+        }
+      }
+      return out;
+    }
+
     function makeUploadPanel(targetFullPath, title, options = {}) {
      const showDownload = !!options.showDownload;
      const el = document.createElement("div");
@@ -2836,10 +2959,18 @@
           <strong>${title}</strong>
           <div class="muted"><code>${targetFullPath}/</code></div>
           <div class="muted" id="count">Loading…</div>
+          <div class="muted" style="font-size: 10px; opacity: 0.7; margin-top: 2px;">📦 .zip archives auto-extract</div>
         </div>
         <div class="row" style="gap: 6px; flex-wrap: wrap;">
-          <input type="file" multiple accept="image/*" />
+          <input type="file" multiple accept="image/*,.zip,application/zip,application/x-zip-compressed" />
           ${showDownload ? `<button class="btn btnSmall" data-role="download-all" style="background: #2b6cff; color: #fff; border: 1px solid #1a4bbf; font-weight: 600; font-size: 11px;">⬇ Download all</button>` : ''}
+        </div>
+        <div class="upload-progress" data-role="progress">
+          <div class="upload-progress-bar"><div class="upload-progress-fill" data-role="progress-fill"></div></div>
+          <div class="upload-progress-meta">
+            <span class="upload-phase" data-role="progress-phase">Working…</span>
+            <span class="upload-pct" data-role="progress-pct">0%</span>
+          </div>
         </div>
       `;
 
@@ -2857,21 +2988,103 @@
         }
       }
 
+      // Progress-bar accessors — references resolved once for speed
+      const progressBox     = el.querySelector('[data-role="progress"]');
+      const progressFill    = el.querySelector('[data-role="progress-fill"]');
+      const progressPhase   = el.querySelector('[data-role="progress-phase"]');
+      const progressPctEl   = el.querySelector('[data-role="progress-pct"]');
+      function _progShow(active) {
+        if (!progressBox) return;
+        progressBox.classList.toggle('active', !!active);
+      }
+      function _progSet(pct, phaseText, indeterminate) {
+        if (!progressFill) return;
+        if (indeterminate) {
+          progressFill.classList.add('indeterminate');
+          if (progressPctEl) progressPctEl.textContent = '…';
+        } else {
+          progressFill.classList.remove('indeterminate');
+          const clamped = Math.max(0, Math.min(100, pct));
+          progressFill.style.width = `${clamped}%`;
+          if (progressPctEl) progressPctEl.textContent = `${Math.round(clamped)}%`;
+        }
+        if (progressPhase && phaseText != null) progressPhase.textContent = phaseText;
+      }
+
       async function uploadFiles(files) {
         if (!files?.length) return;
         await ensureStorageSignedIn();
         setStatus(`Uploading → ${title}`);
 
-        for (const f of files) {
-          const safeName = `${Date.now()}_${f.name.replace(/[^\w.\-]+/g, "_")}`;
+        // PHASE 1: ZIP extraction (only if any input is a ZIP).
+        // Bar fills 0 → 100% across all entries of all ZIPs combined;
+        // shows the indeterminate sweep while JSZip parses the archive
+        // header (no progress info available during loadAsync).
+        const hasZip = Array.from(files).some(_isZipFile);
+        _progShow(true);
+        if (hasZip) {
+          _progSet(0, 'Reading archive', true);
+          countEl.textContent = 'Reading ZIP…';
+        } else {
+          _progSet(0, 'Preparing', true);
+        }
+
+        let expanded;
+        try {
+          expanded = await _expandFilesWithZips(files, (p) => {
+            if (p.phase === 'reading-zip') {
+              _progSet(0, 'Reading archive', true);
+              countEl.textContent = p.message;
+            } else if (p.phase === 'extracting') {
+              const pct = p.total > 0 ? (p.current / p.total) * 100 : 0;
+              _progSet(pct, `Extracting ${p.current}/${p.total}`, false);
+              countEl.textContent = p.message;
+            }
+          });
+        } catch (e) {
+          _progSet(100, '⚠ extract failed', false);
+          countEl.textContent = '⚠ extraction failed';
+          alert(e?.message || e);
+          setStatus("Idle");
+          setTimeout(() => _progShow(false), 1500);
+          return;
+        }
+        if (expanded.length === 0) {
+          _progSet(100, '⚠ no images', false);
+          countEl.textContent = '⚠ no image files found';
+          setStatus("Idle");
+          setTimeout(() => { _progShow(false); refreshCount(); }, 1500);
+          return;
+        }
+
+        // PHASE 2: Upload. Bar fills 0 → 100% across all expanded files,
+        // with byte-level granularity inside each file so the bar moves
+        // smoothly even on large single uploads.
+        const totalFiles = expanded.length;
+        for (let i = 0; i < totalFiles; i++) {
+          const item = expanded[i];
+          countEl.textContent = `Uploading ${i + 1}/${totalFiles}…`;
+          const safeName = `${Date.now()}_${i}_${item.name.replace(/[^\w.\-]+/g, "_")}`;
           const dst = ref(storage, `${targetFullPath}/${safeName}`);
           await new Promise((resolve, reject) => {
-            const task = uploadBytesResumable(dst, f, { contentType: f.type || "application/octet-stream" });
-            task.on("state_changed", null, reject, resolve);
+            const task = uploadBytesResumable(dst, item.blob, { contentType: item.contentType });
+            task.on("state_changed",
+              (snap) => {
+                const fileFrac = snap.totalBytes > 0
+                  ? (snap.bytesTransferred / snap.totalBytes)
+                  : 0;
+                const overallPct = ((i + fileFrac) / totalFiles) * 100;
+                _progSet(overallPct, `Uploading ${i + 1}/${totalFiles}`, false);
+              },
+              reject,
+              resolve
+            );
           });
         }
+        _progSet(100, '✓ Done', false);
         await refreshCount();
         setStatus("Idle");
+        setTimeout(() => _progShow(false), 1200);
       }
 
       // Download-all-as-ZIP — only attached when showDownload is true.
@@ -6347,24 +6560,97 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     document.getElementById('galleryAddBtn').addEventListener('click', () => {
       document.getElementById('galleryUpload').click();
     });
+    // Gallery progress-bar accessors
+    const _galleryProgBox    = document.getElementById('galleryProgress');
+    const _galleryProgFill   = document.getElementById('galleryProgressFill');
+    const _galleryProgPhase  = document.getElementById('galleryProgressPhase');
+    const _galleryProgPctEl  = document.getElementById('galleryProgressPct');
+    function _galleryProgShow(active) {
+      if (_galleryProgBox) _galleryProgBox.classList.toggle('active', !!active);
+    }
+    function _galleryProgSet(pct, phaseText, indeterminate) {
+      if (!_galleryProgFill) return;
+      if (indeterminate) {
+        _galleryProgFill.classList.add('indeterminate');
+        if (_galleryProgPctEl) _galleryProgPctEl.textContent = '…';
+      } else {
+        _galleryProgFill.classList.remove('indeterminate');
+        const clamped = Math.max(0, Math.min(100, pct));
+        _galleryProgFill.style.width = `${clamped}%`;
+        if (_galleryProgPctEl) _galleryProgPctEl.textContent = `${Math.round(clamped)}%`;
+      }
+      if (_galleryProgPhase && phaseText != null) _galleryProgPhase.textContent = phaseText;
+    }
+
     document.getElementById('galleryUpload').addEventListener('change', async (e) => {
       const files = [...e.target.files];
       if (!files.length) return;
       const btn = document.getElementById('galleryAddBtn');
       const orig = btn.textContent;
       btn.disabled = true;
+      _galleryProgShow(true);
+      _galleryProgSet(0, 'Preparing', true);
       try {
         await ensureStorageSignedIn();
-        for (let i = 0; i < files.length; i++) {
-          const f = files[i];
-          btn.textContent = `Uploading ${i + 1}/${files.length}…`;
-          const safeName = `${Date.now()}_${f.name.replace(/[^\w.\-]+/g, '_')}`;
+        // PHASE 1: Extract ZIPs (if any). Same protocol as drop panels —
+        // the bar fills 0→100% across all entries combined, with the
+        // indeterminate sweep while JSZip parses the archive header.
+        const hasZip = files.some(_isZipFile);
+        if (hasZip) {
+          btn.textContent = 'Reading ZIP…';
+          _galleryProgSet(0, 'Reading archive', true);
+        }
+        let expanded;
+        try {
+          expanded = await _expandFilesWithZips(files, (p) => {
+            if (p.phase === 'reading-zip') {
+              _galleryProgSet(0, 'Reading archive', true);
+              btn.textContent = p.message;
+            } else if (p.phase === 'extracting') {
+              const pct = p.total > 0 ? (p.current / p.total) * 100 : 0;
+              _galleryProgSet(pct, `Extracting ${p.current}/${p.total}`, false);
+              btn.textContent = p.message;
+            }
+          });
+        } catch (extractErr) {
+          _galleryProgSet(100, '⚠ extract failed', false);
+          alert(extractErr?.message || extractErr);
+          btn.textContent = orig;
+          btn.disabled = false;
+          setTimeout(() => _galleryProgShow(false), 1500);
+          return;
+        }
+        if (expanded.length === 0) {
+          _galleryProgSet(100, '⚠ no images', false);
+          alert('No image files found in selection.');
+          btn.textContent = orig;
+          btn.disabled = false;
+          setTimeout(() => _galleryProgShow(false), 1500);
+          return;
+        }
+        // PHASE 2: Upload with byte-level granularity per file.
+        const totalFiles = expanded.length;
+        for (let i = 0; i < totalFiles; i++) {
+          const f = expanded[i];
+          btn.textContent = `Uploading ${i + 1}/${totalFiles}…`;
+          const safeName = `${Date.now()}_${i}_${f.name.replace(/[^\w.\-]+/g, '_')}`;
           const dst = ref(storage, `${_galleryCurrentPath}/${safeName}`);
           await new Promise((resolve, reject) => {
-            const task = uploadBytesResumable(dst, f, { contentType: f.type || 'application/octet-stream' });
-            task.on('state_changed', null, reject, resolve);
+            const task = uploadBytesResumable(dst, f.blob, { contentType: f.contentType });
+            task.on('state_changed',
+              (snap) => {
+                const fileFrac = snap.totalBytes > 0
+                  ? (snap.bytesTransferred / snap.totalBytes)
+                  : 0;
+                const overallPct = ((i + fileFrac) / totalFiles) * 100;
+                _galleryProgSet(overallPct, `Uploading ${i + 1}/${totalFiles}`, false);
+              },
+              reject,
+              resolve
+            );
           });
         }
+        _galleryProgSet(100, '✓ Done', false);
         e.target.value = '';
         btn.textContent = orig;
         btn.disabled = false;
@@ -6382,10 +6668,13 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
             } catch (_) {}
           }
         }
+        setTimeout(() => _galleryProgShow(false), 1200);
       } catch (err) {
+        _galleryProgSet(100, '⚠ upload failed', false);
         alert('Upload failed: ' + (err?.message || err));
         btn.textContent = orig;
         btn.disabled = false;
+        setTimeout(() => _galleryProgShow(false), 1500);
       }
     });
 
@@ -7298,7 +7587,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       if (filterPanel) filterPanel.style.display = isApprovedView ? 'block' : 'none';
 
       if (legend) {
-        if (isCharmMakerView) legend.style.display = 'flex';
+        if (isCharmMakerView) legend.style.display = 'none';
         else if (isApprovedView) legend.style.display = (_approvedSubState.active === 'charms') ? 'flex' : 'none';
         else legend.style.display = 'none';
       }
@@ -7797,15 +8086,24 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         <button class="modal-close" id="galleryClose" aria-label="Close">×</button>
       </div>
       <div class="modal-body" id="galleryBody"></div>
-      <div class="modal-foot">
-        <div class="row" style="gap: 12px; align-items: center;">
-          <span class="muted mono" id="galleryFooter">0 files</span>
-          <span class="muted" style="font-size: 10px; opacity: 0.6;">⇧ + scroll to zoom · drag to pan</span>
+      <div class="modal-foot" style="flex-direction: column; align-items: stretch; gap: 8px;">
+        <div class="upload-progress" id="galleryProgress">
+          <div class="upload-progress-bar"><div class="upload-progress-fill" id="galleryProgressFill"></div></div>
+          <div class="upload-progress-meta">
+            <span class="upload-phase" id="galleryProgressPhase">Working…</span>
+            <span class="upload-pct" id="galleryProgressPct">0%</span>
+          </div>
         </div>
-        <div class="row" style="gap: 8px;">
-          <input type="file" id="galleryUpload" multiple accept="image/*" style="display: none;">
-          <button class="btn btnSmall" id="galleryAddBtn">+ Add files</button>
-          <button class="btn btnSmall" id="galleryRefreshBtn">Refresh</button>
+        <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px;">
+          <div class="row" style="gap: 12px; align-items: center;">
+            <span class="muted mono" id="galleryFooter">0 files</span>
+            <span class="muted" style="font-size: 10px; opacity: 0.6;">⇧ + scroll to zoom · drag to pan · 📦 .zip OK</span>
+          </div>
+          <div class="row" style="gap: 8px;">
+            <input type="file" id="galleryUpload" multiple accept="image/*,.zip,application/zip,application/x-zip-compressed" style="display: none;">
+            <button class="btn btnSmall" id="galleryAddBtn">+ Add files</button>
+            <button class="btn btnSmall" id="galleryRefreshBtn">Refresh</button>
+          </div>
         </div>
       </div>
     </div>
