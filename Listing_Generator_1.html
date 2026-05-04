@@ -1078,32 +1078,32 @@
   .modal-close:hover { color: var(--text); border-color: var(--line-2); }
   .modal-body {
     flex: 1 1 auto;
-    min-height: 0;             /* CRITICAL: lets flex children overflow */
-    overflow-y: scroll;        /* always-visible scrollbar so user always knows scroll is possible */
+    min-height: 0;
+    overflow-y: scroll;
     overflow-x: hidden;
     padding: 18px 20px;
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    display: flex;
+    flex-wrap: wrap;
     gap: 12px;
-    align-content: start;      /* rows pile at top when content is short */
-    /* Always-visible scrollbar (macOS hides default scrollbars) */
-    scrollbar-width: thin;
-    scrollbar-color: var(--line-2) transparent;
+    align-content: flex-start;
+    /* HIGH-CONTRAST scrollbar — always visible, can't miss it */
+    scrollbar-width: auto;
+    scrollbar-color: #5b637a #1a1e2b;
   }
   .modal-body::-webkit-scrollbar {
-    width: 12px;
+    width: 14px;
   }
   .modal-body::-webkit-scrollbar-track {
-    background: var(--inset);
-    border-radius: 6px;
+    background: #1a1e2b;
+    border-radius: 7px;
   }
   .modal-body::-webkit-scrollbar-thumb {
-    background: var(--line-2);
-    border-radius: 6px;
-    min-height: 40px;
+    background: #5b637a;
+    border-radius: 7px;
+    border: 2px solid #1a1e2b;
   }
   .modal-body::-webkit-scrollbar-thumb:hover {
-    background: var(--muted);
+    background: #7a8294;
   }
   .thumb {
     position: relative;
@@ -1111,15 +1111,12 @@
     border: 1px solid var(--line);
     border-radius: var(--r-sm);
     overflow: hidden;
+    flex: 0 0 auto;            /* don't stretch — JS sets explicit width */
     transition: border-color 120ms ease;
   }
   .thumb:hover { border-color: var(--line-2); }
   .thumb-img {
-    /* Square shape via padding-bottom hack. Resolves at CSS layout time
-       so the grid sees correct heights upfront. NO `height: 0` — that
-       would collapse the box because we have `* { box-sizing: border-box }`. */
-    width: 100%;
-    padding-bottom: 100%;     /* height = 100% of containing-block WIDTH */
+    /* Dimensions set inline by JS — explicit pixels, no CSS percentages */
     position: relative;
     background: #0a0c14;
     overflow: hidden;
@@ -5860,31 +5857,54 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
         const sorted = [...res.items].sort((a, b) => b.name.localeCompare(a.name));
 
-        // Render placeholders immediately — no URL fetches yet.
-        // Heights are set after render via _equalizeThumbHeights() to
-        // guarantee squares regardless of column width.
+        // ============= JS-DRIVEN EXACT PIXEL SIZING =============
+        // Computed BEFORE rendering. Inline pixels can't be defeated by
+        // any CSS rule. Approach matches what auto-fill grid would do:
+        //   - aim for ~200px+ per thumb
+        //   - calculate how many columns fit in container width
+        //   - distribute remaining space equally
+        //   - thumb HEIGHT = thumb WIDTH (square)
+        function _computeThumbDims() {
+          const cs = getComputedStyle(_galleryBody);
+          const padL = parseFloat(cs.paddingLeft) || 0;
+          const padR = parseFloat(cs.paddingRight) || 0;
+          // Subtract scrollbar width too (~14px) so we don't overflow horizontally
+          const scrollbarW = _galleryBody.offsetWidth - _galleryBody.clientWidth;
+          const inner = Math.max(0, _galleryBody.clientWidth - padL - padR);
+          const gap = 12;
+          const minW = 200;
+          const cols = Math.max(1, Math.floor((inner + gap) / (minW + gap)));
+          const w = Math.floor((inner - (cols - 1) * gap) / cols);
+          return { width: w, height: w, cols };
+        }
+
+        const dims = _computeThumbDims();
+        console.info('[Listing-Generator] Gallery sizing:', dims);
+
+        // Render with EXPLICIT inline pixels — width and height locked
         _galleryBody.innerHTML = sorted.map((item, idx) => `
-          <div class="thumb" data-idx="${idx}">
-            <div class="thumb-img"><div class="slotRefEmpty" style="font-size: 9px;">…</div></div>
+          <div class="thumb" data-idx="${idx}" style="width: ${dims.width}px;">
+            <div class="thumb-img" style="width: ${dims.width}px; height: ${dims.height}px;"><div class="slotRefEmpty" style="font-size: 9px;">…</div></div>
             <div class="thumb-name mono" title="${item.name.replace(/"/g, '&quot;')}">${item.name}</div>
             <button class="btn btnSmall thumb-delete" title="Delete this file" data-fp="${item.fullPath.replace(/"/g, '&quot;')}">×</button>
           </div>
         `).join('');
 
-        // Force squares: in TWO rAF frames (so layout has fully computed),
-        // read each thumb's actual rendered width and set matching height.
-        // Inline styles beat any CSS rule. Plus a ResizeObserver to keep
-        // them square forever (covers resize, zoom, font-load reflows).
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            _equalizeThumbHeights();
-          });
-        });
+        // ResizeObserver: if user resizes window, recompute and update
+        // every thumb's inline dimensions in place.
         if (_galleryResizeObserver) {
           try { _galleryResizeObserver.disconnect(); } catch (_) {}
         }
         _galleryResizeObserver = new ResizeObserver(() => {
-          _equalizeThumbHeights();
+          const d = _computeThumbDims();
+          _galleryBody.querySelectorAll('.thumb').forEach(t => {
+            t.style.width = d.width + 'px';
+            const img = t.querySelector('.thumb-img');
+            if (img) {
+              img.style.width = d.width + 'px';
+              img.style.height = d.height + 'px';
+            }
+          });
         });
         _galleryResizeObserver.observe(_galleryBody);
 
