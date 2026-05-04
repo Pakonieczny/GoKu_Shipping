@@ -1635,7 +1635,7 @@
           <div class="hint" style="margin-top: 12px;">
             <strong>Earring categories use a different shared pool.</strong><br>
             Stud / Hoop Earrings pull charm refs from <code>Charm_Maker/New_Charms_Earrings</code>.
-            All other categories use <code>Charm_Maker/Charm_Templates (Existing Etsy Charms)</code>.
+            All other categories use <code>Charm_Maker/New_Charms</code>.
           </div>
 
           <div class="row" style="margin-top: 14px;">
@@ -2699,10 +2699,18 @@
     }
 
     function newCharmsPath() {
-      // Source folder for Charm Maker references — switched from
-      // `New_Charms` to `Charm_Templates (Existing Etsy Charms)`
-      // (folder name includes a space and parentheses, which the
-      // Firebase Storage SDK handles directly in path strings).
+      // ORIGINAL — used by the Listing Generator tab (Shared charm pool,
+      // Generate Set, Redo slot, etc.). Do NOT change without checking
+      // every call site; the Listing Generator's flows depend on this
+      // pointing at the long-standing New_Charms folder.
+      return `${ROOT}/Charm_Maker/New_Charms`;
+    }
+
+    function charmMakerSourcePath() {
+      // Reference library for the Charm Maker tab specifically.
+      // Switched away from `New_Charms` so the two tabs can have
+      // independent reference pools. Folder name includes a space and
+      // parentheses, which the Firebase Storage SDK handles directly.
       return `${ROOT}/Charm_Maker/Charm_Templates (Existing Etsy Charms)`;
     }
 
@@ -2779,7 +2787,8 @@
       return results;
     }
 
-    function makeUploadPanel(targetFullPath, title) {
+    function makeUploadPanel(targetFullPath, title, options = {}) {
+     const showDownload = !!options.showDownload;
      const el = document.createElement("div");
       el.className = "drop";
       el.style.marginBottom = "10px";
@@ -2789,13 +2798,15 @@
           <div class="muted"><code>${targetFullPath}/</code></div>
           <div class="muted" id="count">Loading…</div>
         </div>
-        <div class="row">
+        <div class="row" style="gap: 6px; flex-wrap: wrap;">
           <input type="file" multiple accept="image/*" />
+          ${showDownload ? `<button class="btn btnSmall" data-role="download-all" style="background: #2b6cff; color: #fff; border: 1px solid #1a4bbf; font-weight: 600; font-size: 11px;">⬇ Download all</button>` : ''}
         </div>
       `;
 
       const input = el.querySelector("input");
       const countEl = el.querySelector("#count");
+      const downloadBtn = el.querySelector('[data-role="download-all"]');
 
       async function refreshCount() {
         try {
@@ -2822,6 +2833,76 @@
         }
         await refreshCount();
         setStatus("Idle");
+      }
+
+      // Download-all-as-ZIP — only attached when showDownload is true.
+      // Walks the folder, fetches each file via getBytes, zips them
+      // with JSZip, and triggers a browser download. Sequential fetch
+      // keeps memory bounded for large folders.
+      async function downloadAll() {
+        if (!window.JSZip) {
+          alert("JSZip library not loaded. Check your internet connection.");
+          return;
+        }
+        const originalText = downloadBtn.textContent;
+        downloadBtn.disabled = true;
+        downloadBtn.style.opacity = "0.7";
+        try {
+          await ensureStorageSignedIn();
+          downloadBtn.textContent = "Listing files…";
+          const res = await listAll(ref(storage, targetFullPath));
+          const items = (res.items || []).filter(it => /\.(png|jpe?g|webp|gif|avif|svg)$/i.test(it.name || ''));
+          if (items.length === 0) {
+            alert(`No images to download in ${title}.`);
+            return;
+          }
+          const zip = new JSZip();
+          for (let i = 0; i < items.length; i++) {
+            downloadBtn.textContent = `Zipping ${i + 1}/${items.length}…`;
+            const it = items[i];
+            try {
+              const bytes = await getBytes(it);
+              zip.file(it.name, bytes);
+            } catch (e) {
+              console.warn(`[Download all] skipped ${it.fullPath}:`, e?.message || e);
+            }
+          }
+          downloadBtn.textContent = "Generating ZIP…";
+          const blob = await zip.generateAsync({ type: "blob" });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          // Sanitize folder name for filename (strip parens/spaces)
+          const lastSegment = targetFullPath.split('/').pop() || 'folder';
+          const safeFolder = lastSegment.replace(/[()]/g, '').replace(/\s+/g, '_');
+          const dateStr = new Date().toISOString().split('T')[0];
+          a.download = `${safeFolder}_${dateStr}.zip`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+          downloadBtn.textContent = "Done!";
+          setTimeout(() => { downloadBtn.textContent = originalText; }, 2000);
+        } catch (e) {
+          const msg = String(e?.message || e || '');
+          if (msg.includes('storage/unauthorized') || msg.includes('permission')) {
+            alert(`Permission denied for ${title}.\n\nFirebase Storage rules don't grant access to this folder. Update your Storage Rules in the Firebase Console.`);
+          } else {
+            alert(`Download failed: ${msg}`);
+          }
+          downloadBtn.textContent = originalText;
+        } finally {
+          downloadBtn.disabled = false;
+          downloadBtn.style.opacity = "1";
+        }
+      }
+
+      if (downloadBtn) {
+        downloadBtn.addEventListener("click", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          downloadAll();
+        });
       }
 
       el.addEventListener("dragover", (e) => { e.preventDefault(); el.classList.add("hover"); });
@@ -2852,9 +2933,9 @@
 
       panelNewCharmsEl.innerHTML = "";
       if (["Stud_Earrings", "Hoop_Earrings"].includes(category)) {
-        panelNewCharmsEl.appendChild(makeUploadPanel(newCharmsEarringsPath(), "New_Charms_Earrings (Earrings Only)"));
+        panelNewCharmsEl.appendChild(makeUploadPanel(newCharmsEarringsPath(), "New_Charms_Earrings (Earrings Only)", { showDownload: true }));
       } else {
-        panelNewCharmsEl.appendChild(makeUploadPanel(newCharmsPath(), "Charm_Templates · Existing Etsy Charms (Necklaces/Other)"));
+        panelNewCharmsEl.appendChild(makeUploadPanel(newCharmsPath(), "New_Charms (Necklaces/Other)", { showDownload: true }));
       }
 
       const slotCount = (SLOT_MAP[category]?.length) || 0;
@@ -3810,12 +3891,13 @@ const promptStrBW = `CRITICAL INSTRUCTION: You are performing a 1:1 structural r
       try {
         await ensureStorageSignedIn();
         
-        // ADDED: Fetch and display New_Charms total
-        const newCharmsRef = ref(storage, newCharmsPath());
+        // Charm Maker uses its OWN source folder (separate from the
+        // Listing Generator's New_Charms pool).
+        const newCharmsRef = ref(storage, charmMakerSourcePath());
         const newCharmsRes = await listAll(newCharmsRef);
         document.getElementById("newCharmsTotalCount").textContent = `Count: ${newCharmsRes.items.length}`;
         
-        const charmsLatest = await listLatestFile(newCharmsPath());
+        const charmsLatest = await listLatestFile(charmMakerSourcePath());
         if (charmsLatest) {
           setBoxImage(previewNewCharms, cacheBust(charmsLatest.url));
         } else {
@@ -4154,7 +4236,7 @@ window.redoCharmSlot = async function(folderId, slotIndex) {
             let category = "Charms"; 
 
             if (slotIndex === 0) {
-                inputPath = manifest.sourceCharm || (await listLatestFile(newCharmsPath()))?.fullPath; 
+                inputPath = manifest.sourceCharm || (await listLatestFile(charmMakerSourcePath()))?.fullPath; 
                 if (!inputPath) throw new Error("Missing source reference for base charm.");
                 inputCharmPath = inputPath;
                 promptStr = promptStrCharm;
@@ -4271,7 +4353,7 @@ window.regenCharmQuad = async function(folderId) {
                 console.warn("No manifest found for", folderId, "falling back to runtime refs if possible");
             }
             
-            const sourceCharmPath = manifest.sourceCharm || (await listLatestFile(newCharmsPath()))?.fullPath;
+            const sourceCharmPath = manifest.sourceCharm || (await listLatestFile(charmMakerSourcePath()))?.fullPath;
             if (!sourceCharmPath) throw new Error("No source charm reference found.");
             
             let lineArtRefPath = manifest.lineArtRef;
@@ -4814,7 +4896,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         }
         
         try {
-            const charmsToProcess = await listTopNFiles(newCharmsPath(), batchCount);
+            const charmsToProcess = await listTopNFiles(charmMakerSourcePath(), batchCount);
             if (charmsToProcess.length === 0) {
                 alert("No reference charms loaded in the queue. Please upload to Charm_Templates (Existing Etsy Charms).");
                 return;
@@ -7374,7 +7456,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
       try {
         await ensureStorageSignedIn();
-        const folderRef = ref(storage, newCharmsPath());
+        const folderRef = ref(storage, charmMakerSourcePath());
         const res = await listAll(folderRef);
         const items = res.items
           .filter(it => /\.(png|jpe?g|webp|gif|avif)$/i.test(it.name || ''))
@@ -7461,7 +7543,33 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
           }
         });
       } catch (e) {
-        mosaic.innerHTML = `<div class="slotRefEmpty" style="grid-column: 1/-1; padding: 36px; color: #fca5a5;">Error: ${e?.message || e}</div>`;
+        const msg = String(e?.message || e || '');
+        const isPermDenied = msg.includes('storage/unauthorized') || msg.includes('permission');
+        // Reset count badge so it doesn't stay stuck on "Loading…"
+        const countElErr = document.getElementById('newCharmsTotalCount');
+        if (countElErr) countElErr.textContent = isPermDenied ? 'Count: ⚠ no access' : 'Count: error';
+
+        if (isPermDenied) {
+          // Build a path-aware Storage Rule snippet the user can paste
+          // into Firebase Console → Storage → Rules. Folder names with
+          // spaces/parens are valid in paths but a {wildcard} segment
+          // matches them — so a generic /Charm_Maker/{folder}/{file=**}
+          // rule covers the new folder without naming it explicitly.
+          const targetPath = charmMakerSourcePath();
+          mosaic.innerHTML = `
+            <div class="slotRefEmpty" style="grid-column: 1/-1; padding: 24px; text-align: left; color: var(--text-2);">
+              <div style="color:#fca5a5; font-weight:600; margin-bottom:8px; font-size:13px;">⚠ Firebase Storage rules deny access to this folder.</div>
+              <div style="font-size:11px; margin-bottom:6px;">Path: <code style="font-family:var(--font-mono); font-size:10px;">${targetPath}</code></div>
+              <div style="font-size:11px; margin-bottom:10px;">The folder exists in your bucket, but your Storage Rules don't grant read/list access to it. Open <strong>Firebase Console → Storage → Rules</strong> and ensure a rule covers this path. A simple match-all for the Charm_Maker subtree:</div>
+              <pre style="background: var(--inset); padding: 10px; border-radius: 6px; font-family: var(--font-mono); font-size: 10px; overflow-x: auto; border: 1px solid var(--line); margin: 0 0 8px 0; color: var(--text);">match /listing-generator-1/Charm_Maker/{folder}/{allPaths=**} {
+  allow read, write: if request.auth != null;
+}</pre>
+              <div style="font-size:10px; color: var(--muted);">After publishing the rule, click <strong>↻ Refresh library</strong>.</div>
+            </div>
+          `;
+        } else {
+          mosaic.innerHTML = `<div class="slotRefEmpty" style="grid-column: 1/-1; padding: 36px; color: #fca5a5;">Error: ${msg}</div>`;
+        }
       } finally {
         _charmMosaicLoading = false;
       }
@@ -7493,13 +7601,13 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     }
     // Populate the in-section upload panel for charm references.
     // Idempotent — appends the makeUploadPanel widget exactly once,
-    // pointed at newCharmsPath() (Charm_Templates · Existing Etsy Charms).
+    // pointed at charmMakerSourcePath() (Charm_Templates · Existing Etsy Charms).
     function _ensureCharmUploadAreaPopulated() {
       const container = document.getElementById('charmUploadArea');
       if (!container) return;
       if (container.children.length > 0) return;
       try {
-        const panel = makeUploadPanel(newCharmsPath(), 'Charm_Templates · Existing Etsy Charms');
+        const panel = makeUploadPanel(charmMakerSourcePath(), 'Charm_Templates · Existing Etsy Charms', { showDownload: true });
         container.appendChild(panel);
         // Reload mosaic when an upload completes — makeUploadPanel does
         // a refreshCount internally; we listen for input change as a
