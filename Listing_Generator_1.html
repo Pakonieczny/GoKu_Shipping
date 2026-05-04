@@ -1085,8 +1085,7 @@
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
     gap: 12px;
-    align-content: start;      /* CRITICAL: don't stretch rows to fill height (default stretches when content is shorter than container) */
-    align-items: start;        /* CRITICAL: don't stretch items within their row */
+    align-content: start;      /* rows pile at top when content is short */
     /* Always-visible scrollbar (macOS hides default scrollbars) */
     scrollbar-width: thin;
     scrollbar-color: var(--line-2) transparent;
@@ -1116,10 +1115,14 @@
   }
   .thumb:hover { border-color: var(--line-2); }
   .thumb-img {
-    /* Square shape — height is set by JS to match clientWidth (most
-       reliable). aspect-ratio + padding-bottom serve as CSS fallbacks. */
+    /* Square shape via padding-bottom hack. CRITICAL: this works at the
+       CSS layout stage (unlike aspect-ratio which doesn't always resolve
+       inside CSS Grid before track sizing happens). The grid sees the
+       correct height upfront, so row tracks are sized correctly and
+       items don't overlap. */
     width: 100%;
-    aspect-ratio: 1 / 1;
+    padding-bottom: 100%;     /* height = 100% of containing-block WIDTH */
+    height: 0;                /* explicit so padding fully defines height */
     position: relative;
     background: #0a0c14;
     overflow: hidden;
@@ -5703,19 +5706,22 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       _activeBlobUrls.clear();
     }
 
-    // Force gallery thumbs to be squares by reading actual rendered
-    // width and setting matching height inline. This is bulletproof
-    // because inline style has higher specificity than any CSS rule
-    // (and even survives !important rules from external stylesheets).
-    // Called after initial render and on window resize.
+    // Forces gallery thumbs to be squares. With the CSS padding-bottom
+    // hack now in place, this is mostly a NO-OP (CSS handles squares
+    // natively at layout time). Kept as a defensive safety in case some
+    // browser quirk leaves the height undefined — does not run unless
+    // the box appears to have zero height (which means CSS failed).
     function _equalizeThumbHeights() {
       if (!_galleryBody) return;
       const boxes = _galleryBody.querySelectorAll('.thumb-img');
       boxes.forEach(box => {
-        const w = box.clientWidth;
-        if (w > 0) {
-          box.style.height = w + 'px';
-          box.style.minHeight = w + 'px';
+        // Only intervene if CSS hack didn't take effect (height: 0)
+        if (box.clientHeight < 10) {
+          const w = box.clientWidth;
+          if (w > 0) {
+            box.style.paddingBottom = '0';
+            box.style.height = w + 'px';
+          }
         }
       });
     }
