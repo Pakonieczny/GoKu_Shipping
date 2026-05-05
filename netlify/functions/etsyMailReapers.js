@@ -32,6 +32,17 @@
  *
  *  ═══ v2.5 ADDITION — gmail_scrape pass ═══════════════════════════════
  *
+ *  v2.5.1 NOTE — INDEX-FREE QUERIES: All sub-sweep queries here use
+ *  single-field equality only. Multi-field inequality + orderBy queries
+ *  would be more efficient (Firestore could prune server-side) but they
+ *  require composite indexes that have to be provisioned out-of-band in
+ *  Firebase. Without those indexes the queries throw and the entire
+ *  pass silently fails — exactly the symptom that surfaced in the
+ *  field. We over-fetch and filter client-side instead; the volumes
+ *  involved (claimed scrape jobs, detected_from_gmail threads,
+ *  customerName="Unknown" threads) are all small enough that the
+ *  client-side filter is fine.
+ *
  *  Three sub-sweeps, run in order on every invocation:
  *
  *    Sub-sweep A — Stuck claimed scrape jobs
@@ -779,41 +790,60 @@ async function tryFillCustomerNameFromSubject(threadRef, threadData) {
  * double-requeueing.
  */
 async function reapStuckScrapeClaims() {
-  const cutoff = admin.firestore.Timestamp.fromMillis(Date.now() - SCRAPE_STUCK_CLAIM_MS);
+  const stuckCutoffMs = Date.now() - SCRAPE_STUCK_CLAIM_MS;
 
-  // Indexed query: jobType+status+claimedAt. Ordering ASC tackles the
-  // most-stuck first.
+  // Single-field equality query — no composite index required. We
+  // intentionally do NOT add the claimedAt < cutoff filter here, even
+  // though that would prune the candidate set, because combining
+  // jobType+status+claimedAt requires a composite index in Firestore.
+  // Without that index the query throws and the entire pass silently
+  // fails (caught by the outer try/catch in runGmailScrapePass, but the
+  // operator never sees that error). Filtering claimedAt client-side
+  // costs us nothing — claimed scrape jobs are always rare relative to
+  // queued/succeeded ones, so the result set is small.
+  //
+  // We over-fetch (5x the per-run cap) to ensure we have enough
+  // candidates after client-side filtering.
   const snap = await db.collection(JOBS_COLL)
-    .where("jobType",   "==", "scrape")
-    .where("status",    "==", "claimed")
-    .where("claimedAt", "<",  cutoff)
-    .orderBy("claimedAt", "asc")
-    .limit(MAX_SCRAPE_REAP_PER_RUN)
+    .where("jobType", "==", "scrape")
+    .where("status",  "==", "claimed")
+    .limit(MAX_SCRAPE_REAP_PER_RUN * 5)
     .get();
 
   if (snap.empty) return { requeued: 0, exhausted: 0 };
 
   let requeued  = 0;
   let exhausted = 0;
+  let processed = 0;
 
   for (const docSnap of snap.docs) {
+    if (processed >= MAX_SCRAPE_REAP_PER_RUN) break;
+
+    const data = docSnap.data() || {};
+    const claimedAtMs = data.claimedAt && data.claimedAt.toMillis
+      ? data.claimedAt.toMillis() : 0;
+    // Client-side staleness filter — see comment above on why this isn't
+    // in the query.
+    if (!claimedAtMs || claimedAtMs > stuckCutoffMs) continue;
+
+    processed++;
     const ref = docSnap.ref;
     try {
       const outcome = await db.runTransaction(async (tx) => {
         const fresh = await tx.get(ref);
         if (!fresh.exists) return { action: "gone" };
-        const data = fresh.data() || {};
-        if (data.status !== "claimed") return { action: "no_longer_claimed" };
+        const fdata = fresh.data() || {};
+        if (fdata.status !== "claimed") return { action: "no_longer_claimed" };
 
         // Re-check staleness inside the tx — claimedAt might have been
         // updated between the query and now (worker submitted a heartbeat).
-        const claimedAtMs = data.claimedAt && data.claimedAt.toMillis
-          ? data.claimedAt.toMillis() : 0;
-        if (Date.now() - claimedAtMs < SCRAPE_STUCK_CLAIM_MS) {
+        const fClaimedAtMs = fdata.claimedAt && fdata.claimedAt.toMillis
+          ? fdata.claimedAt.toMillis() : 0;
+        if (Date.now() - fClaimedAtMs < SCRAPE_STUCK_CLAIM_MS) {
           return { action: "no_longer_stuck" };
         }
 
-        const attempts = data.attempts || 0;
+        const attempts = fdata.attempts || 0;
         if (attempts >= MAX_SCRAPE_ATTEMPTS) {
           // Don't loop — escalate to failed and let the operator look.
           tx.update(ref, {
@@ -821,7 +851,7 @@ async function reapStuckScrapeClaims() {
             lastError: `Stuck in 'claimed' past ${SCRAPE_STUCK_CLAIM_MS}ms with no heartbeat; attempts=${attempts} reached MAX_SCRAPE_ATTEMPTS`,
             updatedAt: FV.serverTimestamp()
           });
-          return { action: "exhausted", attempts, threadId: data.threadId };
+          return { action: "exhausted", attempts, threadId: fdata.threadId };
         }
 
         tx.update(ref, {
@@ -833,7 +863,7 @@ async function reapStuckScrapeClaims() {
           lastError : `Reaped stuck claim after ${SCRAPE_STUCK_CLAIM_MS}ms (worker died?)`,
           updatedAt : FV.serverTimestamp()
         });
-        return { action: "requeued", attempts, threadId: data.threadId };
+        return { action: "requeued", attempts, threadId: fdata.threadId };
       });
 
       if (outcome.action === "requeued") {
@@ -885,13 +915,23 @@ async function reapStuckScrapeClaims() {
  * provenance so we know which value is the placeholder.
  */
 async function reapDetectedThreadsWithoutLiveJobs() {
-  const cutoff = admin.firestore.Timestamp.fromMillis(Date.now() - SCRAPE_DETECTED_GRACE_MS);
+  const graceMs = SCRAPE_DETECTED_GRACE_MS;
+  const graceCutoffMs = Date.now() - graceMs;
 
+  // Single-field equality query — no composite index required. We
+  // intentionally do NOT add `createdAt < cutoff` + `orderBy createdAt`
+  // here because that requires a composite index in Firestore. Without
+  // the index the query would throw and the entire pass would silently
+  // fail. We over-fetch and apply the grace-period cutoff client-side.
+  //
+  // Volume-wise this is fine: detected_from_gmail is a transient
+  // status (advances to etsy_scraped on first successful scrape), so
+  // the result set is bounded by however many threads are mid-pipeline
+  // at any given moment. The MAX_SCRAPE_REAP_PER_RUN * 5 over-fetch
+  // gives us plenty of headroom.
   const snap = await db.collection(THREADS_COLL)
-    .where("status",    "==", "detected_from_gmail")
-    .where("createdAt", "<",  cutoff)
-    .orderBy("createdAt", "asc")
-    .limit(MAX_SCRAPE_REAP_PER_RUN)
+    .where("status", "==", "detected_from_gmail")
+    .limit(MAX_SCRAPE_REAP_PER_RUN * 5)
     .get();
 
   if (snap.empty) return { requeued: 0, exhausted: 0, skippedAlive: 0, namesFilledFromSubject: 0 };
@@ -900,28 +940,42 @@ async function reapDetectedThreadsWithoutLiveJobs() {
   let exhausted    = 0;
   let skippedAlive = 0;
   let namesFilledFromSubject = 0;
+  let processed    = 0;
 
   for (const threadSnap of snap.docs) {
+    if (processed >= MAX_SCRAPE_REAP_PER_RUN) break;
+
     const thread          = threadSnap.data() || {};
     const threadId        = thread.threadId || threadSnap.id;
     const gmailMessageId  = thread.gmailMessageId;
     const conversationUrl = thread.etsyConversationUrl;
 
     // Step 1 — Fill customerName from subject if it's still "Unknown".
-    // Cheap (one tx, no Etsy roundtrip), independent of the job-queue
-    // recovery below. Even if the rest of this loop iteration bails
-    // out, the name is now visible in the inbox.
+    // This runs BEFORE the grace-period check so newly-detected threads
+    // get labeled instantly even within the grace window. Cheap (one tx,
+    // no Etsy roundtrip), independent of the job-queue recovery below.
+    // Even if the rest of this loop iteration bails out, the name is now
+    // visible in the inbox.
     if (!thread.customerName || thread.customerName === "Unknown" || thread.customerName === "") {
       const fillResult = await tryFillCustomerNameFromSubject(threadSnap.ref, thread);
       if (fillResult.filled) {
         namesFilledFromSubject++;
         // Update the in-memory copy so the rest of this iteration sees
-        // the new name (some downstream branches read thread.customerName
-        // for audit-payload purposes).
+        // the new name (downstream branches read thread.customerName for
+        // audit-payload purposes).
         thread.customerName = fillResult.name;
         thread.customerNameFromSubject = true;
       }
     }
+
+    // Apply the grace-period cutoff client-side (see query comment).
+    // We only consider threads created MORE than SCRAPE_DETECTED_GRACE_MS
+    // ago — gives the extension first dibs on freshly-detected threads.
+    const createdAtMs = thread.createdAt && thread.createdAt.toMillis
+      ? thread.createdAt.toMillis() : 0;
+    if (!createdAtMs || createdAtMs > graceCutoffMs) continue;
+
+    processed++;
 
     // Without a conversation URL we have nothing to scrape. Tag and
     // skip — operator must investigate.
@@ -1051,10 +1105,33 @@ async function reapUnknownAfterScrape() {
   let namesFilledFromSubject = 0;
 
   for (const threadSnap of snap.docs) {
-    if (retried >= MAX_SCRAPE_REAP_PER_RUN) break;   // hard cap
+    if (retried >= MAX_SCRAPE_REAP_PER_RUN) break;
 
     const thread   = threadSnap.data() || {};
     const threadId = thread.threadId || threadSnap.id;
+
+    // Subject-fill is the cheap, no-Etsy-roundtrip path and should run
+    // for ANY thread still showing customerName="Unknown" — including
+    // detected_from_gmail threads (sub-sweep B's primary domain). The
+    // two passes are independently safe (the tryFillCustomerNameFromSubject
+    // tx aborts if customerName is no longer "Unknown"), so running both
+    // just gives us belt-and-suspenders coverage. The status filter
+    // below only gates the rescrape branch, not the subject-fill branch.
+    const fillResult = await tryFillCustomerNameFromSubject(threadSnap.ref, thread);
+    if (fillResult.filled) {
+      namesFilledFromSubject++;
+      // Mark the one-shot guard so we don't reconsider this thread for
+      // a rescrape on a future tick — the name is now correct.
+      await threadSnap.ref.set({
+        _unknownRetryAttempted   : true,
+        _unknownRetryAttemptedAt : FV.serverTimestamp(),
+        updatedAt                : FV.serverTimestamp()
+      }, { merge: true });
+      continue;
+    }
+
+    // Below this point we're considering the rescrape path, which is
+    // the one-shot retry. Apply all the rescrape-specific guards:
 
     // One-shot guard. The transactional flip below is the authoritative
     // gate; this is just a fast-path skip for already-attempted threads
@@ -1064,7 +1141,9 @@ async function reapUnknownAfterScrape() {
       continue;
     }
 
-    // Threads still at detected_from_gmail are sub-sweep B's job.
+    // Threads still at detected_from_gmail are sub-sweep B's job — let
+    // it handle the rescrape there to keep the deterministic gmail_<id>
+    // job-id semantics consistent.
     if (!SCRAPE_POST_STATUSES.includes(thread.status)) {
       skipped++;
       continue;
@@ -1076,26 +1155,6 @@ async function reapUnknownAfterScrape() {
       ? thread.lastSyncedAt.toMillis() : 0;
     if (lastSyncedMs && lastSyncedMs > cutoffMs) {
       skipped++;
-      continue;
-    }
-
-    // Step 1 — Try to fill the name from the email subject. If this
-    // succeeds, the thread is no longer "Unknown" and we don't need to
-    // burn the one-shot rescrape slot. The subject parser handles all
-    // the variants we've seen in real Etsy notification emails (see
-    // extractCustomerNameFromSubject). For threads that arrived via
-    // the snapshot endpoint (no Gmail provenance, no subject) this is
-    // a no-op and we fall through to the rescrape path below.
-    const fillResult = await tryFillCustomerNameFromSubject(threadSnap.ref, thread);
-    if (fillResult.filled) {
-      namesFilledFromSubject++;
-      // Consume the one-shot guard too — the thread is fixed, no
-      // future reaper tick should attempt a rescrape for it.
-      await threadSnap.ref.set({
-        _unknownRetryAttempted   : true,
-        _unknownRetryAttemptedAt : FV.serverTimestamp(),
-        updatedAt                : FV.serverTimestamp()
-      }, { merge: true });
       continue;
     }
 
