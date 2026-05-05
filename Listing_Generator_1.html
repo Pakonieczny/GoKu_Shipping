@@ -6248,14 +6248,15 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
       // Auto-chunk. Submissions larger than CHUNK_SIZE sets are split
       // into multiple Gemini batch jobs server-side. This caps peak
-      // server memory at one chunk's worth of base64 image data
-      // (~80 MB at CHUNK_SIZE=8), which keeps us comfortably under
-      // Netlify's per-function memory ceiling (~700 MB practical limit
-      // before AWS Lambda OOM-kills the runtime with "signal: killed").
-      // The previous attempt at 20 sets in one call hit that ceiling.
-      // Increase only if you've verified your function tier can handle
-      // more memory.
-      const CHUNK_SIZE = 8;
+      // server memory at one chunk's worth of base64 image data.
+      //
+      // CHUNK_SIZE history: started at 8, OOM'd ("signal: killed") on
+      // an 8-set submission, dropped to 4. Even with the server-side
+      // streaming-Buffer JSONL build, we stay conservative because
+      // Netlify's effective memory ceiling on this function is lower
+      // than the documented 1024 MB once V8 overhead, Firebase Admin
+      // SDK, and active fetch operations are accounted for.
+      const CHUNK_SIZE = 4;
       const chunkCount = Math.ceil(count / CHUNK_SIZE);
 
       const confirmMsg = chunkCount === 1

@@ -901,8 +901,12 @@ function buildBatchJsonlLine(key, prompt, refMime, refBase64, charmMime, charmBa
 // Upload a JSONL file via the Files API using the resumable protocol
 // (the only protocol Google documents for the Batch flow). Returns the
 // `files/abc123` resource name.
-async function uploadJsonlToGeminiFiles(apiKey, jsonlString, displayName) {
-  const bytes = Buffer.byteLength(jsonlString, "utf8");
+async function uploadJsonlToGeminiFiles(apiKey, jsonlData, displayName) {
+  // jsonlData may be a Buffer (preferred — avoids string→bytes
+  // re-encoding inside fetch) or a string. We compute byte length
+  // accordingly so the resumable headers are accurate either way.
+  const isBuffer = Buffer.isBuffer(jsonlData);
+  const bytes = isBuffer ? jsonlData.length : Buffer.byteLength(jsonlData, "utf8");
 
   const startResp = await fetch(`${GEMINI_UPLOAD_BASE}/files`, {
     method: "POST",
@@ -930,7 +934,7 @@ async function uploadJsonlToGeminiFiles(apiKey, jsonlString, displayName) {
       "X-Goog-Upload-Offset": "0",
       "X-Goog-Upload-Command": "upload, finalize",
     },
-    body: jsonlString,
+    body: jsonlData,
   });
   if (!uploadResp.ok) {
     const t = await uploadResp.text().catch(() => "");
@@ -1241,14 +1245,22 @@ async function _handlerImpl(event) {
       // routing key encoding setIndex and slotIndex so we can place
       // the result back in the right folder.
       //
-      // Image fetches are parallelized to stay well under Netlify's
-      // sync function timeout (10s free, 26s Pro). Each fetch is an
-      // independent Firebase Storage download; doing them sequentially
-      // would scale linearly with total tasks (60+ for a 10-set batch
-      // is borderline). Promise.all keeps wall-clock fast even when
-      // total image count is high. Concurrency is bounded by Node's
-      // default fetch agent, not by us.
-      const lines = [];
+      // MEMORY-CRITICAL DESIGN NOTE
+      // ----------------------------
+      // We never accumulate full line OBJECTS in memory. Instead:
+      //   1. Worker fetches both reference images.
+      //   2. Worker base64-encodes them into a single line object.
+      //   3. Worker JSON.stringify's the line, encodes UTF-8 → Buffer.
+      //   4. Worker pushes that Buffer into jsonlChunks[] and drops
+      //      every other reference (line object, base64 strings, raw
+      //      buffers) so GC can reclaim them immediately.
+      //
+      // This prevents the OOM that happened previously when we held
+      // all 96 line objects (each ~1.6MB) alive simultaneously, then
+      // doubled memory by serializing them into one giant string.
+      // Per worker peak ≈ 5 MB; total peak ≈ jsonlChunks size + (10
+      // workers × 5 MB).
+      const jsonlChunks = []; // Buffer[] — each chunk is one JSONL line + "\n"
       const routes = []; // parallel array: routes[i] = { setIndex, slotIndex, outputBasePath }
       const fetchJobs = []; // { setIdx, slot, promptT, refPath, charmPath, outputBasePath }
       for (let setIdx = 0; setIdx < sets.length; setIdx++) {
@@ -1265,31 +1277,46 @@ async function _handlerImpl(event) {
         }
       }
 
-      // Fetch images and build JSONL lines with bounded concurrency.
-      // Concurrency is intentionally low (10) to keep peak memory under
-      // Netlify's per-function ceiling — base64 strings each ~800 KB
-      // sit in memory until the JSONL upload finishes, so fewer
-      // simultaneous fetches = lower peak RAM.
+      // Routes need a fixed slot per fetchJob. Pre-populate so workers
+      // can write into routes[index] without needing a mutex.
+      for (let i = 0; i < fetchJobs.length; i++) {
+        const j = fetchJobs[i];
+        routes.push({ setIndex: j.setIdx, slotIndex: j.slot, outputBasePath: j.outputBasePath });
+      }
+
+      // Fetch + build with low concurrency. See memory note above.
+      // Concurrency 10 means at most 10 base64 working sets exist at
+      // once. Each working set ≈ 5 MB peak (raw + base64 + stringified
+      // line + Buffer chunk). After the worker returns, only the
+      // pushed Buffer chunk in jsonlChunks survives.
       const FETCH_CONCURRENCY = 10;
-      await runBoundedConcurrent(fetchJobs, FETCH_CONCURRENCY, async (j) => {
+      await runBoundedConcurrent(fetchJobs, FETCH_CONCURRENCY, async (j, idx) => {
         const [ref, charm] = await Promise.all([
           storagePathToBuffer(j.refPath),
           storagePathToBuffer(j.charmPath),
         ]);
         const key = `s${j.setIdx}_slot${j.slot}`;
-        const line = buildBatchJsonlLine(
+
+        // Build the line, stringify, encode to Buffer, then explicitly
+        // null out big locals so V8 has a strong hint to free them
+        // before the next worker iteration starts.
+        let line = buildBatchJsonlLine(
           key, j.promptT,
           ref.mime, ref.buffer.toString("base64"),
           charm.mime, charm.buffer.toString("base64"),
           imageSize
         );
-        lines.push(line);
-        routes.push({ setIndex: j.setIdx, slotIndex: j.slot, outputBasePath: j.outputBasePath });
-        // ref.buffer and charm.buffer drop out of scope here; only the
-        // base64 strings (now embedded in `line`) remain in memory.
+        let jsonStr = JSON.stringify(line) + "\n";
+        line = null;
+        const chunkBuf = Buffer.from(jsonStr, "utf8");
+        jsonStr = null;
+
+        // jsonlChunks order doesn't matter for correctness — the JSONL
+        // routing key on each line tells Gemini which response is which.
+        jsonlChunks.push(chunkBuf);
       });
 
-      if (lines.length === 0) {
+      if (jsonlChunks.length === 0) {
         // Edge case: all-copy batch (no Gemini calls needed). Write
         // manifests immediately and short-circuit. We emit slots in the
         // same shape as the gen-collect path so the Review tab renders
@@ -1316,7 +1343,7 @@ async function _handlerImpl(event) {
                     type: "gen",
                     source: t?.input_storage_path || null,
                     newCharm: t?.input_charm_storage_path || null,
-                    output: null, // not generated (lines was empty)
+                    output: null, // not generated (no edits tasks)
                   };
             });
           const m = {
@@ -1340,8 +1367,13 @@ async function _handlerImpl(event) {
         });
       }
 
-      const jsonlStr = lines.map((l) => JSON.stringify(l)).join("\n") + "\n";
-      const jsonlBytes = Buffer.byteLength(jsonlStr, "utf8");
+      // Concat once into a single Buffer for upload. This is the only
+      // moment when we hold the full JSONL in memory — and it's a
+      // single contiguous Buffer, not a doubled UTF-16 string.
+      const jsonlBuffer = Buffer.concat(jsonlChunks);
+      const jsonlBytes = jsonlBuffer.length;
+      // Free chunk array — Buffer.concat copied them, originals can go.
+      jsonlChunks.length = 0;
 
       // Hard cap: Files API limit is 2GB. We reject early to avoid uploading.
       if (jsonlBytes > 1.9 * 1024 * 1024 * 1024) {
@@ -1351,7 +1383,7 @@ async function _handlerImpl(event) {
       }
 
       // Step C: Upload JSONL to Gemini Files API, then create the batch.
-      const fileName = await uploadJsonlToGeminiFiles(apiKey, jsonlStr, displayName);
+      const fileName = await uploadJsonlToGeminiFiles(apiKey, jsonlBuffer, displayName);
       const { batchName, raw } = await createGeminiBatchJob(apiKey, GEMINI_IMAGE_MODEL, fileName, displayName);
 
       // Step D: Persist routing data in Firestore. The doc id is a
