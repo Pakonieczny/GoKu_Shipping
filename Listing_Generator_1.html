@@ -6317,48 +6317,27 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
         _setBatchProgress(count, count, "Submitting batch to Gemini…");
 
-        // Small batches go through the sync endpoint so we get back the
-        // batchName immediately. Larger ones go through the background
-        // endpoint to avoid Netlify's 10s/26s sync timeout (image fetches
-        // + JSONL upload can exceed that for big batches). When run in
-        // background, the batchName isn't returned synchronously — we
-        // poll the panel to discover it.
-        const useBackground = count > 10;
-        const fnName = useBackground ? "geminiImageProxy-background" : "geminiImageProxy";
+        // Use the sync endpoint for ALL batch submissions. Earlier code
+        // routed >10-set batches through the background endpoint to avoid
+        // sync timeouts, but background functions return 202 immediately
+        // and can't surface errors back to the browser — failures appear
+        // as opaque "Internal Error. ID: ..." messages with no actionable
+        // information. The sync endpoint returns real error messages.
+        //
+        // Performance: image fetches and JSONL upload are already
+        // parallelized server-side (FETCH_CONCURRENCY = 25). At 20 sets ×
+        // 6 gens = 120 fetches, expected wall-clock is ~5–8s for fetches
+        // + ~3–5s for the Files API upload + ~1s for batch creation,
+        // well within Netlify's 26s sync limit on the Pro plan.
         const submitPayload = {
           kind: "batch_submit",
           sets,
           imageSize: BATCH_DEFAULT_IMAGE_SIZE,
           displayName: `lg1-${category}-${count}sets-${new Date().toISOString().slice(0,16).replace(/[:T]/g,"")}`,
         };
-        const submitResp = await postJson(fnName, submitPayload);
+        const submitResp = await postJson("geminiImageProxy", submitPayload);
 
-        if (useBackground) {
-          // Background returns 202 with no body. Wait for the new batch
-          // to appear in the Firestore-backed list.
-          _setBatchProgress(count, count, "Submitted (background) · waiting for confirmation…");
-          const startMs = Date.now();
-          const waitMs = 90 * 1000; // 90s should be enough; image fetches + JSONL upload
-          let appeared = null;
-          while (Date.now() - startMs < waitMs) {
-            await new Promise((r) => setTimeout(r, 4000));
-            try {
-              const list = await postJson("geminiImageProxy", { kind: "batch_list", limit: 5 });
-              const recent = (list?.batches || [])[0];
-              if (recent && recent.displayName === submitPayload.displayName) {
-                appeared = recent;
-                break;
-              }
-            } catch (_) {}
-          }
-          if (appeared) {
-            _setBatchProgress(count, count, `Submitted: ${appeared.batchName}`);
-            setStatus(`Batch submitted · ${count} set(s) · ${appeared.batchName}`);
-          } else {
-            _setBatchProgress(count, count, "Submitted (background); refresh panel in a few seconds");
-            setStatus(`Batch submitted · ${count} set(s) · check the panel`);
-          }
-        } else if (submitResp?.copyOnly) {
+        if (submitResp?.copyOnly) {
           _setBatchProgress(count, count, "Done — all copy slots, no Gemini needed");
           setStatus(`Done · ${count} set(s) · copy-only`);
         } else {

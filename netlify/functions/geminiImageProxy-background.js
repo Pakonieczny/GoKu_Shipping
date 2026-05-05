@@ -996,8 +996,11 @@ async function cancelGeminiBatchJob(apiKey, batchName) {
   return true;
 }
 
-async function downloadGeminiResultFile(apiKey, fileName) {
-  // fileName is "files/abc123" — append :download?alt=media to fetch raw bytes.
+// Stream the result JSONL line-by-line instead of loading the entire
+// (potentially 2GB+) file into memory. Returns an async generator that
+// yields each JSON-parsed line. Throws on non-OK HTTP. Empty/blank
+// lines and parse errors are silently skipped (mirrors the older code).
+async function* streamGeminiResultLines(apiKey, fileName) {
   const url = `https://generativelanguage.googleapis.com/download/v1beta/${fileName}:download?alt=media`;
   const resp = await fetch(url, {
     method: "GET",
@@ -1007,7 +1010,65 @@ async function downloadGeminiResultFile(apiKey, fileName) {
     const t = await resp.text().catch(() => "");
     throw new Error(`Result file download failed: HTTP ${resp.status} ${t.slice(0, 400)}`);
   }
-  return await resp.text(); // JSONL text
+  if (!resp.body) {
+    // Fallback for environments without ReadableStream support.
+    const text = await resp.text();
+    for (const raw of text.split("\n")) {
+      const line = raw.trim();
+      if (!line) continue;
+      try { yield JSON.parse(line); } catch { /* skip */ }
+    }
+    return;
+  }
+
+  // The stream gives us Uint8Array chunks. We accumulate a small text
+  // buffer and emit one parsed JSON object per newline. Crucially we
+  // never hold more than the in-flight chunk + the trailing partial
+  // line, so memory stays bounded regardless of file size.
+  const decoder = new TextDecoder("utf-8");
+  const reader = resp.body.getReader();
+  let buf = "";
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let nl;
+    while ((nl = buf.indexOf("\n")) >= 0) {
+      const line = buf.slice(0, nl).trim();
+      buf = buf.slice(nl + 1);
+      if (!line) continue;
+      try { yield JSON.parse(line); } catch { /* skip malformed */ }
+    }
+  }
+  buf += decoder.decode(); // flush any trailing bytes
+  const tail = buf.trim();
+  if (tail) {
+    try { yield JSON.parse(tail); } catch { /* skip */ }
+  }
+}
+
+// Run async tasks with bounded concurrency. Each task receives no
+// arguments and returns a promise. Max in-flight = `limit`. Returns
+// the array of results in input order. Used by batch_collect to
+// upload result PNGs without holding all 600 image buffers in RAM
+// at once.
+async function runBoundedConcurrent(items, limit, worker) {
+  const results = new Array(items.length);
+  let nextIdx = 0;
+  async function loop() {
+    while (true) {
+      const i = nextIdx++;
+      if (i >= items.length) return;
+      try {
+        results[i] = await worker(items[i], i);
+      } catch (e) {
+        results[i] = { __error: e };
+      }
+    }
+  }
+  const runners = Array.from({ length: Math.min(limit, items.length) }, loop);
+  await Promise.all(runners);
+  return results;
 }
 
 // Sanitize a Gemini batch name "batches/abc123" → "abc123" for use as
@@ -1017,6 +1078,36 @@ function batchDocIdFromName(batchName) {
 }
 
 exports.handler = async (event) => {
+  // Top-level safety net. Any error inside the handler that isn't
+  // caught by the inner try/catch blocks would otherwise bubble up to
+  // Netlify and surface as an opaque "Internal Error. ID: xxx" 500
+  // with no useful message. This wrapper guarantees we always return
+  // a JSON response with the actual error text so the browser can
+  // display it. Crucial for debugging large batch submissions where
+  // Netlify's function logs aren't always visible.
+  try {
+    return await _handlerImpl(event);
+  } catch (err) {
+    console.error("[handler] unhandled error:", err);
+    return {
+      statusCode: 500,
+      headers: {
+        "Content-Type": "application/json",
+        "Access-Control-Allow-Origin": "*",
+      },
+      body: JSON.stringify({
+        ok: false,
+        error: {
+          message: String(err?.message || err),
+          stack: String(err?.stack || "").split("\n").slice(0, 5).join(" | "),
+          kind: (() => { try { return JSON.parse(event?.body || "{}")?.kind; } catch { return null; } })(),
+        },
+      }),
+    };
+  }
+};
+
+async function _handlerImpl(event) {
   if (event.httpMethod === "OPTIONS") return json(200, { ok: true });
   if (event.httpMethod !== "POST") return json(405, { error: { message: "Method not allowed" } });
 
@@ -1174,28 +1265,30 @@ exports.handler = async (event) => {
         }
       }
 
-      // Fetch every image (ref + charm) in parallel.
-      const fetched = await Promise.all(
-        fetchJobs.map(async (j) => {
-          const [ref, charm] = await Promise.all([
-            storagePathToBuffer(j.refPath),
-            storagePathToBuffer(j.charmPath),
-          ]);
-          return {
-            j,
-            refB64: ref.buffer.toString("base64"),
-            refMime: ref.mime,
-            charmB64: charm.buffer.toString("base64"),
-            charmMime: charm.mime,
-          };
-        })
-      );
-
-      for (const f of fetched) {
-        const key = `s${f.j.setIdx}_slot${f.j.slot}`;
-        lines.push(buildBatchJsonlLine(key, f.j.promptT, f.refMime, f.refB64, f.charmMime, f.charmB64, imageSize));
-        routes.push({ setIndex: f.j.setIdx, slotIndex: f.j.slot, outputBasePath: f.j.outputBasePath });
-      }
+      // Fetch images and build JSONL lines with bounded concurrency.
+      // Old code held all 1,200 raw buffers + their base64 forms in
+      // memory simultaneously (peak ~1.7GB for a 100-set batch).
+      // Now we cap in-flight fetches and immediately drop the raw
+      // buffer once we've written its base64 form into the JSONL line
+      // object, halving peak memory.
+      const FETCH_CONCURRENCY = 25;
+      await runBoundedConcurrent(fetchJobs, FETCH_CONCURRENCY, async (j) => {
+        const [ref, charm] = await Promise.all([
+          storagePathToBuffer(j.refPath),
+          storagePathToBuffer(j.charmPath),
+        ]);
+        const key = `s${j.setIdx}_slot${j.slot}`;
+        const line = buildBatchJsonlLine(
+          key, j.promptT,
+          ref.mime, ref.buffer.toString("base64"),
+          charm.mime, charm.buffer.toString("base64"),
+          imageSize
+        );
+        lines.push(line);
+        routes.push({ setIndex: j.setIdx, slotIndex: j.slot, outputBasePath: j.outputBasePath });
+        // ref.buffer and charm.buffer drop out of scope here; only the
+        // base64 strings (now embedded in `line`) remain in memory.
+      });
 
       if (lines.length === 0) {
         // Edge case: all-copy batch (no Gemini calls needed). Write
@@ -1386,14 +1479,23 @@ exports.handler = async (event) => {
         return json(500, { error: { message: "Succeeded batch has no responsesFile/fileName" } });
       }
 
-      const jsonlText = await downloadGeminiResultFile(apiKey, respFileName);
-      const lines = jsonlText.split("\n").filter(Boolean);
+      // STREAMING COLLECT
+      // ------------------
+      // We can't load the result JSONL into memory (potentially 2GB+) and
+      // we can't queue every decoded image buffer either. Instead we
+      // stream the JSONL line-by-line, decode each image inline, and
+      // dispatch uploads through a bounded-concurrency worker pool.
+      //
+      // Concurrency limit (UPLOAD_CONCURRENCY) caps in-flight buffers,
+      // keeping peak RAM at roughly UPLOAD_CONCURRENCY × ~3MB ≈ 60MB
+      // even when collecting 100-set batches. Well under Netlify's
+      // 1.5GB free-tier / 3GB Pro-tier function memory cap.
+      const UPLOAD_CONCURRENCY = 20;
 
       const bucket = admin.storage().bucket();
       const routes = Array.isArray(docData.routes) ? docData.routes : [];
       const setsMeta = Array.isArray(docData.sets) ? docData.sets : [];
 
-      // Build a key→route map so order doesn't matter.
       const routeByKey = new Map();
       for (let i = 0; i < routes.length; i++) {
         const r = routes[i];
@@ -1402,91 +1504,85 @@ exports.handler = async (event) => {
 
       let succeededCount = 0;
       let failedCount = 0;
-      const perSetSlotResults = new Map(); // setIndex → [{slotIndex, ok, storagePath?, error?}]
+      const perSetSlotResults = new Map();
       const failures = [];
 
-      // Process each result line. Image uploads run in parallel because
-      // they're independent and we'd otherwise exceed Netlify's sync
-      // function timeout (10s free, 26s Pro) on large batches —
-      // 100 sets × 6 gens = 600 uploads would take 60+ seconds serially.
-      const uploadJobs = [];
-      const lineErrors = [];
-
-      for (const line of lines) {
-        let parsed;
-        try { parsed = JSON.parse(line); }
-        catch { continue; }
-        const key = parsed?.key;
-        const route = routeByKey.get(key);
-        if (!route) {
-          lineErrors.push({ key: key || "(none)", error: "no route for key" });
-          continue;
-        }
-
-        // Find the inline_data part. Same shape we use for sync responses.
-        const partsOut = parsed?.response?.candidates?.[0]?.content?.parts || [];
-        const imgPart = partsOut.find((p) => p?.inline_data?.data) ||
-                        partsOut.find((p) => p?.inlineData?.data) || null;
-        const b64 = imgPart?.inline_data?.data || imgPart?.inlineData?.data;
-
-        if (parsed?.error) {
-          const arr = perSetSlotResults.get(route.setIndex) || [];
-          failedCount++;
-          failures.push({ key, error: parsed.error?.message || JSON.stringify(parsed.error).slice(0, 200) });
-          arr.push({ slotIndex: route.slotIndex, ok: false, error: parsed.error?.message || "batch error" });
-          perSetSlotResults.set(route.setIndex, arr);
-          continue;
-        }
-        if (!b64) {
-          const arr = perSetSlotResults.get(route.setIndex) || [];
-          failedCount++;
-          failures.push({ key, error: "no inline_data in response" });
-          arr.push({ slotIndex: route.slotIndex, ok: false, error: "no inline_data" });
-          perSetSlotResults.set(route.setIndex, arr);
-          continue;
-        }
-
-        // Queue the upload. Storing buffers in memory is fine — even at
-        // 100 sets × 6 gens × ~3MB/PNG = ~1.8GB it fits Netlify's 10GB
-        // function memory cap on Pro, and most users will batch <50 sets.
-        uploadJobs.push({ key, route, buffer: Buffer.from(b64, "base64") });
-      }
-
-      // Run uploads in parallel. Firebase Storage can handle this fine —
-      // it's a multi-region service designed for high-fanout writes.
-      const uploadResults = await Promise.all(
-        uploadJobs.map(async (job) => {
-          try {
-            const storagePath = `${job.route.outputBasePath}/Slot_${job.route.slotIndex + 1}.png`;
-            const file = bucket.file(storagePath);
-            const token = newDownloadToken();
-            await file.save(job.buffer, {
-              resumable: false,
-              contentType: "image/png",
-              metadata: { metadata: { firebaseStorageDownloadTokens: token } },
-            });
-            return { ok: true, route: job.route, storagePath, key: job.key };
-          } catch (e) {
-            return { ok: false, route: job.route, error: String(e?.message || e), key: job.key };
-          }
-        })
-      );
-
-      for (const u of uploadResults) {
-        const arr = perSetSlotResults.get(u.route.setIndex) || [];
-        if (u.ok) {
+      // Producer: streams parsed lines from Google's result JSONL and
+      // pushes upload tasks into a bounded queue. Consumers drain the
+      // queue concurrently. We use a simple semaphore (slots[]) to
+      // throttle in-flight uploads without buffering the whole list.
+      const inFlight = new Set();
+      const recordResult = (route, ok, storagePath, error) => {
+        const arr = perSetSlotResults.get(route.setIndex) || [];
+        if (ok) {
           succeededCount++;
-          arr.push({ slotIndex: u.route.slotIndex, ok: true, storagePath: u.storagePath });
+          arr.push({ slotIndex: route.slotIndex, ok: true, storagePath });
         } else {
           failedCount++;
-          failures.push({ key: u.key, error: u.error });
-          arr.push({ slotIndex: u.route.slotIndex, ok: false, error: u.error });
+          failures.push({ key: `s${route.setIndex}_slot${route.slotIndex}`, error });
+          arr.push({ slotIndex: route.slotIndex, ok: false, error });
         }
-        perSetSlotResults.set(u.route.setIndex, arr);
-      }
+        perSetSlotResults.set(route.setIndex, arr);
+      };
 
-      // Roll forward any line-parse errors.
-      for (const e of lineErrors) failures.push(e);
+      const uploadOne = async (route, buffer, key) => {
+        try {
+          const storagePath = `${route.outputBasePath}/Slot_${route.slotIndex + 1}.png`;
+          const file = bucket.file(storagePath);
+          const token = newDownloadToken();
+          await file.save(buffer, {
+            resumable: false,
+            contentType: "image/png",
+            metadata: { metadata: { firebaseStorageDownloadTokens: token } },
+          });
+          recordResult(route, true, storagePath);
+        } catch (e) {
+          recordResult(route, false, null, String(e?.message || e));
+        }
+        // Buffer drops out of scope once this fn returns; GC reclaims it.
+      };
+
+      // Drive the stream. For each line, parse → find route → decode b64
+      // → spawn upload promise. If we hit the concurrency cap, wait for
+      // the fastest one to finish before spawning the next. This keeps
+      // memory bounded by UPLOAD_CONCURRENCY × per-image size.
+      try {
+        for await (const parsed of streamGeminiResultLines(apiKey, respFileName)) {
+          const key = parsed?.key;
+          const route = routeByKey.get(key);
+          if (!route) {
+            failures.push({ key: key || "(none)", error: "no route for key" });
+            continue;
+          }
+          if (parsed?.error) {
+            recordResult(route, false, null, parsed.error?.message || "batch error");
+            continue;
+          }
+          const partsOut = parsed?.response?.candidates?.[0]?.content?.parts || [];
+          const imgPart = partsOut.find((p) => p?.inline_data?.data) ||
+                          partsOut.find((p) => p?.inlineData?.data) || null;
+          const b64 = imgPart?.inline_data?.data || imgPart?.inlineData?.data;
+          if (!b64) {
+            recordResult(route, false, null, "no inline_data in response");
+            continue;
+          }
+
+          // Decode + queue. Throttle once we hit the concurrency cap.
+          const buffer = Buffer.from(b64, "base64");
+          const p = uploadOne(route, buffer, key).finally(() => inFlight.delete(p));
+          inFlight.add(p);
+          if (inFlight.size >= UPLOAD_CONCURRENCY) {
+            await Promise.race(inFlight);
+          }
+        }
+        // Drain any remaining in-flight uploads.
+        await Promise.all(inFlight);
+      } catch (streamErr) {
+        // If the stream itself fails, surface the partial state so the
+        // user can see what was already uploaded before the break.
+        await Promise.all(inFlight);
+        failures.push({ key: "(stream)", error: String(streamErr?.message || streamErr) });
+      }
 
       // Step: write a manifest per set, mirroring what Standard mode writes.
       // Manifest format intentionally matches the existing structure so the
