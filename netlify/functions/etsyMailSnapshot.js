@@ -64,6 +64,94 @@ function pickCustomer(participants) {
   return participants.find(p => p && p.role === "customer") || null;
 }
 
+/**
+ * v3.1 — Defensive decoder for JSON-stringified Unicode escape sequences.
+ *
+ * Some upstream code path (in the Chrome scraper, by the look of the
+ * field shape — names + subjects only) is calling JSON.stringify on
+ * scraped strings and storing the result, which turns "Caitríona" into
+ * the literal six-character string `Caitr\u00edona` (a real backslash,
+ * then "u00ed", then "ona"). Operators see the literal escape sequence
+ * in the inbox UI instead of the accented character.
+ *
+ * We can't reach into the extension to fix it at the source, so we
+ * decode defensively here at the ingest boundary. Behavior:
+ *
+ *   - Input has no backslash-u sequences → returned unchanged.
+ *   - Each `\uXXXX` matched is replaced with the actual character it
+ *     represents, BUT only when the resulting code point is >= 0x80
+ *     (non-ASCII). This avoids "decoding" sequences that are real
+ *     backslash content (`a literal \u0041` from a documentation
+ *     string, etc.) and only fixes the bug we're actually seeing,
+ *     which is non-ASCII characters that got round-tripped through
+ *     JSON.stringify.
+ *   - Surrogate pairs (`\uD83D\uDE00` = 😀) are joined and decoded as a
+ *     single code point so emoji and astral-plane characters survive.
+ *   - Idempotent: running it twice on a clean string is a no-op.
+ *
+ * Returns the input unchanged for non-string types, null, or undefined.
+ */
+function unmangleEscapedUnicode(s) {
+  if (typeof s !== "string" || s.length === 0) return s;
+  // Fast path — no `\u` sequences, nothing to do.
+  if (s.indexOf("\\u") === -1) return s;
+
+  // Two-pass approach:
+  //   Pass 1 — surrogate pairs `\uHHHH\uHHHH` where the first is a
+  //            high surrogate (D800-DBFF) and the second a low
+  //            surrogate (DC00-DFFF). These represent astral-plane
+  //            code points (e.g. emoji) and must be decoded together.
+  //   Pass 2 — single `\uHHHH` escapes for non-ASCII BMP characters.
+  let out = s.replace(
+    /\\u([dD][89aAbB][0-9a-fA-F]{2})\\u([dD][c-fC-F][0-9a-fA-F]{2})/g,
+    (_m, hi, lo) => {
+      const high = parseInt(hi, 16);
+      const low  = parseInt(lo, 16);
+      try {
+        return String.fromCodePoint(((high - 0xD800) << 10) + (low - 0xDC00) + 0x10000);
+      } catch {
+        return _m;   // leave as-is on any parse failure
+      }
+    }
+  );
+  out = out.replace(/\\u([0-9a-fA-F]{4})/g, (m, hex) => {
+    const cp = parseInt(hex, 16);
+    // Only decode non-ASCII. Below 0x80 we leave the literal alone —
+    // it might be intentional content (e.g. a docstring showing JSON
+    // syntax). Empirically the bug only produces non-ASCII escapes
+    // because ASCII characters don't get JSON-escaped in the first place.
+    if (cp < 0x80) return m;
+    try {
+      return String.fromCharCode(cp);
+    } catch {
+      return m;
+    }
+  });
+  return out;
+}
+
+/**
+ * Walk an object/array and apply unmangleEscapedUnicode to every string
+ * field. Used to clean the `participants` array before storing.
+ * Recursion-safe (won't follow circular references — uses a Set).
+ */
+function unmangleObjectStrings(obj, _seen) {
+  if (obj == null) return obj;
+  if (typeof obj === "string") return unmangleEscapedUnicode(obj);
+  if (typeof obj !== "object") return obj;
+  if (!_seen) _seen = new Set();
+  if (_seen.has(obj)) return obj;
+  _seen.add(obj);
+  if (Array.isArray(obj)) {
+    return obj.map(v => unmangleObjectStrings(v, _seen));
+  }
+  const out = {};
+  for (const k of Object.keys(obj)) {
+    out[k] = unmangleObjectStrings(obj[k], _seen);
+  }
+  return out;
+}
+
 exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: CORS, body: "ok" };
   if (event.httpMethod !== "POST")     return json(405, { error: "Method Not Allowed" });
@@ -74,6 +162,15 @@ exports.handler = async (event) => {
   let body = {};
   try { body = JSON.parse(event.body || "{}"); }
   catch { return bad("Invalid JSON"); }
+
+  // v3.1 — Defensive unmangle of every string field BEFORE we destructure.
+  // The Chrome scraper has a known bug where some non-ASCII customer
+  // names + subjects arrive as literal `\uXXXX` escape sequences (six
+  // characters) instead of the actual Unicode character (one character).
+  // unmangleObjectStrings walks the body recursively and decodes any
+  // such sequence found in any string field. Idempotent on clean data.
+  // See unmangleEscapedUnicode above for the full rationale.
+  body = unmangleObjectStrings(body);
 
   const {
     etsyConversationId,

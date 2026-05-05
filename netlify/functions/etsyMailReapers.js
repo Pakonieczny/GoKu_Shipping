@@ -30,6 +30,14 @@
  *  so it ACTUALLY runs only once per SALES_SCAN_INTERVAL_MS. The other
  *  passes run on every invocation.
  *
+ *  v3.1 — sub-sweep D: defensive Unicode unmangler. Repairs threads
+ *  where the Chrome scraper stored literal `\uXXXX` escape sequences
+ *  in customerName / subject (e.g. "Caitr\u00edona" instead of
+ *  "Caitríona") by JSON-stringifying its inputs upstream. Snapshot
+ *  ingest now decodes on the way in; this sub-sweep cleans rows that
+ *  predate that fix. Idempotent — once a row is clean, it's skipped
+ *  on every subsequent pass.
+ *
  *  ═══ v2.5 ADDITION — gmail_scrape pass ═══════════════════════════════
  *
  *  v2.5.1 NOTE — INDEX-FREE QUERIES: All sub-sweep queries here use
@@ -222,6 +230,64 @@ function extractCustomerNameFromSubject(subject) {
   if (!name) return null;
   if (name.length > 200) name = name.slice(0, 200).trim();
   return name;
+}
+
+/**
+ * v3.1 — Defensive decoder for JSON-stringified Unicode escape sequences.
+ *
+ * Source of truth: this is a copy of the same-named function in
+ * etsyMailSnapshot.js. See that file's comment for the full rationale —
+ * tl;dr the Chrome scraper is round-tripping non-ASCII customer names
+ * and subjects through JSON.stringify, producing literal `\uXXXX`
+ * escape sequences instead of the actual characters.
+ *
+ * Snapshot ingest now decodes on the way in. This copy is used by
+ * sub-sweep D below to repair existing mangled rows that landed before
+ * the snapshot fix was deployed.
+ *
+ * Edit both copies in lockstep if the rule changes.
+ */
+function unmangleEscapedUnicode(s) {
+  if (typeof s !== "string" || s.length === 0) return s;
+  if (s.indexOf("\\u") === -1) return s;
+  // Surrogate-pair pass first (astral-plane code points like emoji).
+  let out = s.replace(
+    /\\u([dD][89aAbB][0-9a-fA-F]{2})\\u([dD][c-fC-F][0-9a-fA-F]{2})/g,
+    (_m, hi, lo) => {
+      const high = parseInt(hi, 16);
+      const low  = parseInt(lo, 16);
+      try {
+        return String.fromCodePoint(((high - 0xD800) << 10) + (low - 0xDC00) + 0x10000);
+      } catch {
+        return _m;
+      }
+    }
+  );
+  // Then single-BMP escapes — but only for code points >= 0x80, so we
+  // don't accidentally "decode" a literal backslash-u-ASCII pair from
+  // an unrelated docstring or template field.
+  out = out.replace(/\\u([0-9a-fA-F]{4})/g, (m, hex) => {
+    const cp = parseInt(hex, 16);
+    if (cp < 0x80) return m;
+    try {
+      return String.fromCharCode(cp);
+    } catch {
+      return m;
+    }
+  });
+  return out;
+}
+
+/**
+ * Returns true if the input is a string that contains at least one
+ * `\uXXXX` escape sequence representing a non-ASCII code point — i.e.
+ * a string that the unmangler would actually change.
+ */
+function hasMangledEscapes(s) {
+  if (typeof s !== "string" || s.length === 0) return false;
+  if (s.indexOf("\\u") === -1) return false;
+  // Quick check: any \uHHHH where HH >= 80 (non-ASCII)?
+  return /\\u(?:00[89a-fA-F]|0[1-9a-fA-F][0-9a-fA-F]|[1-9a-fA-F][0-9a-fA-F]{2})/i.test(s);
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────
@@ -1242,8 +1308,94 @@ async function reapUnknownAfterScrape() {
 }
 
 /**
- * Top-level entry for the gmail_scrape pass. Runs the three sub-sweeps
- * in order and returns a combined summary. Each sub-sweep wraps its own
+ * Sub-sweep D — Unmangle JSON-escaped Unicode in stored thread fields.
+ *
+ * One-shot data-repair pass. The Chrome scraper had a bug where some
+ * non-ASCII customer names + subjects arrived as literal `\uXXXX`
+ * escape sequences instead of the actual character ("Caitríona" stored
+ * as the 13-character string "Caitr\u00edona"). The snapshot endpoint
+ * now decodes on ingest, but threads that were already created before
+ * that fix landed still carry the mangled values.
+ *
+ * This sweep finds those threads and fixes them in place. It's
+ * intentionally cheap: a single equality-free query is impossible
+ * (Firestore can't filter on "string contains substring") so we walk
+ * recently-active threads and only update the ones whose customerName
+ * or subject contain literal `\uXXXX` escape sequences.
+ *
+ * Bounded by SCRAPE_UNMANGLE_BATCH so it doesn't hog the 30s function
+ * budget. Repeated runs across reaper ticks gradually clean the whole
+ * collection — once it's clean, every subsequent run is a no-op.
+ */
+async function reapMangledUnicodeFields() {
+  // Walk recently-updated threads first — the operator is most likely
+  // to be looking at those, so fixing them first gives the fastest
+  // perceived improvement. We page through up to BATCH * 4 candidates
+  // per tick and only update the ones that actually need it.
+  const BATCH = MAX_SCRAPE_REAP_PER_RUN;
+  const snap = await db.collection(THREADS_COLL)
+    .orderBy("updatedAt", "desc")
+    .limit(BATCH * 4)
+    .get();
+
+  if (snap.empty) return { fixed: 0, scanned: 0 };
+
+  let fixed = 0;
+  let scanned = 0;
+
+  for (const threadSnap of snap.docs) {
+    if (fixed >= BATCH) break;
+    scanned++;
+    const data = threadSnap.data() || {};
+
+    // Check the two fields we know the scraper mangles. Skipping any
+    // field that doesn't actually have a `\uXXXX` non-ASCII escape
+    // means clean threads are skipped after a single property read —
+    // very cheap.
+    const nameMangled    = hasMangledEscapes(data.customerName);
+    const subjectMangled = hasMangledEscapes(data.subject);
+    const senderMangled  = hasMangledEscapes(data.lastSenderName);
+    if (!nameMangled && !subjectMangled && !senderMangled) continue;
+
+    const patch = {};
+    if (nameMangled) {
+      patch.customerName = unmangleEscapedUnicode(data.customerName);
+    }
+    if (subjectMangled) {
+      patch.subject = unmangleEscapedUnicode(data.subject);
+    }
+    if (senderMangled) {
+      patch.lastSenderName = unmangleEscapedUnicode(data.lastSenderName);
+    }
+    patch.updatedAt = FV.serverTimestamp();
+    patch.unicodeUnmangledAt = FV.serverTimestamp();
+
+    try {
+      await threadSnap.ref.set(patch, { merge: true });
+      fixed++;
+      await writeAudit(
+        threadSnap.id,
+        null,
+        "thread_unicode_unmangled",
+        {
+          fieldsRepaired: Object.keys(patch).filter(k => k !== "updatedAt" && k !== "unicodeUnmangledAt"),
+          // Truncate originals to 80 chars so we don't bloat audit rows.
+          originalCustomerName: nameMangled ? String(data.customerName).slice(0, 80) : null,
+          originalSubject     : subjectMangled ? String(data.subject).slice(0, 80) : null
+        },
+        "system:reapers:gmailScrape"
+      );
+    } catch (err) {
+      console.warn(`[gmail-scrape-reaper] subsweep D unmangle failed for ${threadSnap.id}:`, err.message);
+    }
+  }
+
+  return { fixed, scanned };
+}
+
+/**
+ * Top-level entry for the gmail_scrape pass. Runs four sub-sweeps in
+ * order and returns a combined summary. Each sub-sweep wraps its own
  * try/catch so a partial failure on one doesn't block the others.
  */
 async function runGmailScrapePass() {
@@ -1259,6 +1411,8 @@ async function runGmailScrapePass() {
     unknownThreadsRetried      : 0,
     unknownThreadsSkipped      : 0,
     unknownNamesFilledFromSubject : 0,
+    mangledUnicodeFixed        : 0,
+    mangledUnicodeScanned      : 0,
     reaped                     : 0,    // for the consolidated totalReaped
     subErrors                  : [],
     durationMs                 : 0
@@ -1294,11 +1448,20 @@ async function runGmailScrapePass() {
     console.error("[gmail-scrape-reaper] subsweep C failed:", e);
   }
 
+  try {
+    const d = await reapMangledUnicodeFields();
+    summary.mangledUnicodeFixed   = d.fixed;
+    summary.mangledUnicodeScanned = d.scanned;
+  } catch (e) {
+    summary.subErrors.push({ subsweep: "D_unmangle", error: e.message });
+    console.error("[gmail-scrape-reaper] subsweep D failed:", e);
+  }
+
   // Roll up "reaped" for the handler's totalReaped tally. Counts every
   // action that produced a downstream effect: job requeued, job
-  // exhausted-and-marked-failed, one-shot retry enqueued, OR a
-  // customerName backfilled from the email subject. Does NOT count
-  // skipped-alive (healthy in-flight work).
+  // exhausted-and-marked-failed, one-shot retry enqueued, customerName
+  // backfilled from the email subject, OR a row repaired by the
+  // unmangler. Does NOT count skipped-alive (healthy in-flight work).
   summary.reaped =
       summary.stuckClaimsRequeued
     + summary.stuckClaimsExhausted
@@ -1306,7 +1469,8 @@ async function runGmailScrapePass() {
     + summary.detectedThreadsExhausted
     + summary.unknownThreadsRetried
     + summary.detectedNamesFilledFromSubject
-    + summary.unknownNamesFilledFromSubject;
+    + summary.unknownNamesFilledFromSubject
+    + summary.mangledUnicodeFixed;
 
   summary.durationMs = Date.now() - tStart;
   return summary;
@@ -1401,6 +1565,9 @@ module.exports.reapDetectedThreadsWithoutLiveJobs = reapDetectedThreadsWithoutLi
 module.exports.reapUnknownAfterScrape      = reapUnknownAfterScrape;
 module.exports.tryFillCustomerNameFromSubject = tryFillCustomerNameFromSubject;
 module.exports.extractCustomerNameFromSubject = extractCustomerNameFromSubject;
+module.exports.reapMangledUnicodeFields    = reapMangledUnicodeFields;
+module.exports.unmangleEscapedUnicode      = unmangleEscapedUnicode;
+module.exports.hasMangledEscapes           = hasMangledEscapes;
 module.exports.REAPABLE_STAGES             = Array.from(REAPABLE_STAGES);
 module.exports.STALE_CLAIM_THRESHOLD_MS    = STALE_CLAIM_THRESHOLD_MS;
 module.exports.SALES_SCAN_INTERVAL_MS      = SALES_SCAN_INTERVAL_MS;
