@@ -1708,6 +1708,44 @@
           Independent of the auto-pipeline toggle above. Turn this OFF if you always want to review AI drafts before they go out, even when you initiated the AI Draft yourself. Revise and Follow-up clicks never auto-send regardless of this setting.
         </p>
 
+        <!-- ─── Gmail watcher: pull-from cursor ──────────────────────────── -->
+        <hr style="margin:18px 0 10px;border:none;border-top:1px solid #e1e4e8;">
+        <p style="margin-bottom:4px;"><b>Gmail watcher</b> <span class="em-muted" style="font-weight:400;font-size:11px;">— controls when re-enabling, owner-only · stored in Firestore at EtsyMail_Config/gmailWatcher</span></p>
+        <p style="font-size:12px;margin:0 0 10px;">
+          When the watcher transitions from <b>Off</b> to <b>On</b> (via the topbar toggle), it normally resumes scanning from the last message it processed — which after a long pause means replaying every Etsy email that arrived during the off period. Set a <b>Pull from</b> instant below to override: the next enable will start scanning forward from that moment, ignoring older emails.
+        </p>
+
+        <div id="emGmailPullFromBlock" style="margin:0 0 6px; padding:10px 12px; background:#f6f8fa; border-radius:4px; border-left:3px solid #afb8c1;">
+          <label for="emGmailPullFromInput" style="display:block; font-size:12px; font-weight:600; margin:0 0 4px;">
+            Pull from (date &amp; time, your local tz)
+          </label>
+          <div style="display:flex; flex-wrap:wrap; align-items:center; gap:8px;">
+            <input type="datetime-local" id="emGmailPullFromInput" step="60"
+                   style="padding:4px 8px; border:1px solid #d0d7de; border-radius:4px; font-size:12px; font-family:inherit;">
+            <button type="button" id="emGmailPullFromNowBtn"
+                    style="padding:3px 9px; font-size:11px; font-weight:500; background:#fff; border:1px solid #afb8c1; border-radius:3px; cursor:pointer;"
+                    title="Set to right now — useful when re-enabling and you want zero backlog">
+              Now
+            </button>
+            <button type="button" id="emGmailPullFromSaveBtn"
+                    style="padding:3px 11px; font-size:11px; font-weight:600; background:#1f883d; color:#fff; border:1px solid #1a6b30; border-radius:3px; cursor:pointer;"
+                    title="Save the cursor (does not enable the watcher — flip the topbar toggle when ready)">
+              Save cursor
+            </button>
+            <button type="button" id="emGmailPullFromClearBtn"
+                    style="padding:3px 9px; font-size:11px; background:#fff; border:1px solid #afb8c1; border-radius:3px; cursor:pointer;"
+                    title="Clear the override — next enable will use the existing watermark">
+              Clear
+            </button>
+          </div>
+          <p id="emGmailPullFromMeta" style="font-size:11px;color:#586069;margin:6px 0 0;font-style:italic;">
+            Loading current cursor…
+          </p>
+          <p style="font-size:11px;color:#6a737d;margin:6px 0 0;">
+            Saving here just stores the cursor. To actually start pulling, use the <b>Off</b> button in the topbar to flip the watcher on — the cursor is consumed at that moment and cleared, so subsequent toggles use the normal watermark again.
+          </p>
+        </div>
+
         <!-- ─── v2.0 Step 1: Catalog mirror + intent classifier ──────────── -->
         <hr style="margin:18px 0 10px;border:none;border-top:1px solid #e1e4e8;">
         <p style="margin-bottom:4px;"><b>v2.0 — Sales Mode foundations</b> <span class="em-muted" style="font-weight:400;font-size:11px;">— Step 1 of a 3-step rollout</span></p>
@@ -3618,6 +3656,199 @@
       }
     }
 
+    /* ── Gmail watcher: pull-from cursor ─────────────────────────────────
+     * Plumbing for the "Pull from" datetime picker in Settings. The picker
+     * lets the operator choose an instant from which the next Gmail sync
+     * should resume, bypassing the existing watermark. The cursor is
+     * one-shot — it's consumed and cleared the next time the watcher is
+     * toggled from Off to On in the topbar. See the side-effect note in
+     * etsyMailGmailConfig.js for the full contract.
+     *
+     * Why this lives in the settings modal (not the topbar):
+     *   The topbar Off/On button is a one-click action; injecting a
+     *   datetime picker into that flow would slow it down and clutter the
+     *   topbar. The settings modal already groups owner-only operational
+     *   config (auto-pipeline, sales mode, catalog mirror), so the cursor
+     *   fits naturally there. The two are decoupled — operator configures
+     *   the cursor here, then flips the topbar toggle when ready.
+     *
+     * Scope note:
+     *   These helpers are defined at module scope so showSecretSetupModal()
+     *   (also module-scope) can call them. The topbar Gmail-panel helpers
+     *   (gmailApi, isOwnerRole, refreshGmailPanel) live inside the
+     *   DOMContentLoaded init block lower in this file; we deliberately do
+     *   NOT depend on them here — instead, this code inlines the small
+     *   amount of fetch-wrapping it needs and reaches for the topbar
+     *   refresher via a forward-assigned hook (_emRefreshGmailPanel). */
+
+    // Forward hook — the DOMContentLoaded init block assigns this once
+    // refreshGmailPanel is defined, so saveGmailPullFromCursor below can
+    // re-render the topbar pill after a successful save without depending
+    // on scope. Null until first DOMContentLoaded; checked before calling.
+    let _emRefreshGmailPanel = null;
+
+    /** Fetch-wrapper that mirrors the topbar's gmailApi(): inherits the
+     *  inbox secret from localStorage and points at the Netlify functions
+     *  base. Duplicated (rather than imported) to keep this self-contained
+     *  at module scope. */
+    function _emGmailApi(path, opts = {}) {
+      const base = (window.NETLIFY_BASE || "").replace(/\/+$/, "")
+                || location.origin;
+      const secret = window.ETSYMAIL_SECRET
+                  || localStorage.getItem("etsymail_secret")
+                  || localStorage.getItem("etsyMailSecret") || "";
+      const headers = { "Content-Type": "application/json", ...(opts.headers || {}) };
+      if (secret) headers["X-EtsyMail-Secret"] = secret;
+      return fetch(`${base}/.netlify/functions/${path}`, { ...opts, headers });
+    }
+
+    /** Same lookup pattern the rest of the file uses for owner-gated
+     *  calls. Reads the operator name set in the initial onboarding step. */
+    function _emOperatorActor() {
+      try {
+        return localStorage.getItem("employee_name")
+            || (window.OPERATOR_NAME || "")
+            || "";
+      } catch { return ""; }
+    }
+
+    /** Reads the role badge in the topbar. Returns false on first paint
+     *  before the badge populates, then becomes accurate. */
+    function _emIsOwnerRole() {
+      const label = document.getElementById("emOperatorRoleLabel");
+      if (!label) return false;
+      return (label.textContent || "").trim().toLowerCase() === "owner";
+    }
+
+    /** Convert a Date / ms to the local-time string a <input type="datetime-local">
+     *  expects ("YYYY-MM-DDTHH:MM"). The native input does NOT accept ISO
+     *  with timezone — it works in the browser's local zone implicitly,
+     *  so we have to slice off seconds + zone ourselves. */
+    function toDatetimeLocalValue(ms) {
+      if (!ms || !isFinite(ms)) return "";
+      const d = new Date(ms);
+      const pad = (n) => String(n).padStart(2, "0");
+      return d.getFullYear() + "-"
+           + pad(d.getMonth() + 1) + "-"
+           + pad(d.getDate()) + "T"
+           + pad(d.getHours()) + ":"
+           + pad(d.getMinutes());
+    }
+
+    /** Parse a datetime-local input value back to epoch ms in the
+     *  browser's local zone. Returns null if blank or unparseable. */
+    function fromDatetimeLocalValue(s) {
+      if (!s || typeof s !== "string") return null;
+      // The native input emits e.g. "2026-05-05T14:30" — Date parses this
+      // as local time (no Z suffix), which is exactly what we want: the
+      // operator picked it in their local clock, and we want the matching
+      // UTC instant.
+      const t = new Date(s).getTime();
+      return isFinite(t) ? t : null;
+    }
+
+    function fmtPullFromMeta(pullFromMs, updatedBy, updatedAt) {
+      if (!pullFromMs) {
+        return "No cursor set — next enable will resume from the existing watermark or pull the last 7 days on a first run.";
+      }
+      const iso = new Date(pullFromMs).toLocaleString();
+      const who = updatedBy ? (" by " + updatedBy) : "";
+      const when = updatedAt ? (" · saved " + fmtTime(updatedAt)) : "";
+      return "Cursor set to " + iso + who + when
+        + ". Will be applied — and cleared — when the watcher is toggled On.";
+    }
+
+    async function loadGmailPullFromInModal() {
+      const input  = $("emGmailPullFromInput");
+      const meta   = $("emGmailPullFromMeta");
+      const saveBtn  = $("emGmailPullFromSaveBtn");
+      const clearBtn = $("emGmailPullFromClearBtn");
+      const nowBtn   = $("emGmailPullFromNowBtn");
+      if (!input || !meta) return;
+
+      // Same secret-required guard the catalog block uses — calling the
+      // backend without a secret would 401 and re-trigger the modal.
+      const haveSecret = (typeof localStorage !== "undefined") &&
+                         !!localStorage.getItem("etsymail_secret");
+      if (!haveSecret) {
+        meta.innerHTML = '<span style="color:#7d4e00;">' +
+          'Set the inbox secret above and click <b>Save</b> first — ' +
+          'the cursor loads after that.</span>';
+        if (saveBtn)  saveBtn.disabled  = true;
+        if (clearBtn) clearBtn.disabled = true;
+        if (nowBtn)   nowBtn.disabled   = true;
+        return;
+      }
+      [saveBtn, clearBtn, nowBtn].forEach(b => { if (b) b.disabled = false; });
+
+      meta.textContent = "Loading current cursor…";
+
+      try {
+        const res  = await _emGmailApi("etsyMailGmailConfig?op=get");
+        const data = await res.json();
+        if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+
+        // Populate input only if we have a cursor; otherwise leave it
+        // blank so the operator can pick fresh without first clearing.
+        input.value = toDatetimeLocalValue(data.pullFromMs);
+        meta.textContent = fmtPullFromMeta(
+          data.pullFromMs,
+          data.updatedBy,
+          data.updatedAt
+        );
+
+        // Disable controls if the operator isn't an owner — the backend
+        // will 403 anyway, but giving immediate feedback is friendlier.
+        const owner = _emIsOwnerRole();
+        if (!owner) {
+          [saveBtn, clearBtn, nowBtn].forEach(b => {
+            if (b) {
+              b.disabled = true;
+              b.title    = "Owner role required to change the Gmail watcher cursor";
+            }
+          });
+          input.disabled = true;
+          input.title    = "Owner role required";
+        } else {
+          input.disabled = false;
+          input.title    = "";
+        }
+      } catch (e) {
+        meta.innerHTML = '<span style="color:#a40e26;">Cursor unavailable: '
+          + esc(e.message || String(e)) + '</span>';
+      }
+    }
+
+    async function saveGmailPullFromCursor(pullFromMs) {
+      const actor = _emOperatorActor();
+      if (!actor) {
+        alert("Set your operator name first (Settings → Operator name).");
+        return false;
+      }
+      // pullFromMs may be null (clearing) or a number (setting). Both
+      // shapes are accepted by the backend's op=setPullFrom handler.
+      try {
+        const res  = await _emGmailApi("etsyMailGmailConfig", {
+          method: "POST",
+          body  : JSON.stringify({ op: "setPullFrom", pullFromMs, actor })
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        toast(pullFromMs
+          ? "Pull-from cursor saved — toggle Gmail On to apply"
+          : "Pull-from cursor cleared");
+        // Re-render the meta line + topbar pill from server truth.
+        await loadGmailPullFromInModal();
+        if (typeof _emRefreshGmailPanel === "function") {
+          _emRefreshGmailPanel().catch(() => {});
+        }
+        return true;
+      } catch (e) {
+        alert("Save failed: " + (e.message || String(e)));
+        return false;
+      }
+    }
+
     /** Show the secret-setup modal. Triggered by:
      *   - First 401 from any backend call (auto)
      *   - Settings button click (manual edit)
@@ -3713,6 +3944,15 @@
       // Refreshed every time the modal opens. The "Sync now" button calls
       // etsyMailListingsCatalog op:"sync" and re-loads the status when done.
       loadCatalogStatusInModal();
+
+      // ─── Gmail watcher: pull-from cursor picker ───────────────────────
+      // Populates the datetime-local input from gmailWatcher.pullFromMs (if
+      // any), wires the Now / Save / Clear buttons, and shows current state
+      // in emGmailPullFromMeta. Reads via etsyMailGmailConfig?op=get (same
+      // endpoint the topbar pill uses, so this stays in sync) and writes
+      // via op=setPullFrom. Save does NOT enable the watcher — the operator
+      // still has to click the topbar toggle to start the sync.
+      loadGmailPullFromInModal();
 
       if (errMsg) {
         errEl.textContent = errMsg;
@@ -8244,10 +8484,33 @@
 
         const turningOn = !toggle.classList.contains("on");
         const verb = turningOn ? "enable" : "disable";
+
+        // When turning on, peek at the configured pull-from cursor and
+        // include it in the confirm dialog so the operator knows whether
+        // the next sync will start from "now-ish" (cursor set) or from
+        // the existing watermark (cursor not set, which after a multi-day
+        // pause means replaying everything that arrived in the meantime).
+        // Best-effort — failure here doesn't block the toggle.
+        let pullFromMs = null;
+        if (turningOn) {
+          try {
+            const res = await gmailApi("etsyMailGmailConfig?op=get");
+            const data = await res.json();
+            if (res.ok && data.ok && data.pullFromMs) {
+              pullFromMs = data.pullFromMs;
+            }
+          } catch {}
+        }
+
+        const onMsg = pullFromMs
+          ? "The cron will start polling Gmail every minute. The next sync will resume from your configured pull-from cursor:\n\n  "
+            + new Date(pullFromMs).toLocaleString()
+            + "\n\n(Cursor is consumed and cleared after this enable — subsequent toggles use the normal watermark.)"
+          : "The cron will start polling Gmail every minute, looking for new Etsy notification emails since the last watermark. Detected conversations will be enqueued for scrape.\n\nTip: if the watcher has been off for a while and you want to skip the backlog, set a pull-from cursor in Settings → Gmail watcher first.";
+        const offMsg = "The cron will stop. No new Etsy emails will be auto-detected until you re-enable it.";
+
         if (!confirm(`${verb[0].toUpperCase() + verb.slice(1)} the Gmail watcher cron?\n\n` +
-          (turningOn
-            ? "The cron will start polling Gmail every minute, looking for new Etsy notification emails since the last watermark. Detected conversations will be enqueued for scrape."
-            : "The cron will stop. No new Etsy emails will be auto-detected until you re-enable it."))) {
+          (turningOn ? onMsg : offMsg))) {
           return;
         }
 
@@ -8259,6 +8522,13 @@
           });
           const data = await res.json();
           if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+          // If the backend seeded the watermark from a configured cursor,
+          // surface that in a toast so the operator gets explicit feedback
+          // that the start point was honored.
+          if (turningOn && data.seededWatermarkIso) {
+            toast("Watcher enabled — sync will resume from "
+                + new Date(data.seededWatermarkMs).toLocaleString());
+          }
           await refreshGmailPanel();
         } catch (err) {
           alert("Toggle failed: " + err.message);
@@ -8301,6 +8571,78 @@
           await refreshGmailPanel();
         }
       });
+
+      // Expose refreshGmailPanel to the module-scope settings-modal code
+      // so saveGmailPullFromCursor() can re-render the topbar pill after
+      // saving. See the _emRefreshGmailPanel forward declaration above.
+      _emRefreshGmailPanel = refreshGmailPanel;
+
+      // ── Pull-from cursor buttons (settings modal) ───────────────────
+      // The picker UI lives in the settings modal (emGmailPullFromInput
+      // and friends). Wiring is done here, alongside the topbar Gmail
+      // controls, so all Gmail-related event listeners are attached in
+      // one place. The functions themselves (loadGmailPullFromInModal,
+      // saveGmailPullFromCursor) are at module scope so the modal-open
+      // path can call loadGmailPullFromInModal directly.
+      const pullFromInput    = $("emGmailPullFromInput");
+      const pullFromNowBtn   = $("emGmailPullFromNowBtn");
+      const pullFromSaveBtn  = $("emGmailPullFromSaveBtn");
+      const pullFromClearBtn = $("emGmailPullFromClearBtn");
+
+      if (pullFromNowBtn) {
+        pullFromNowBtn.addEventListener("click", () => {
+          // Round to current minute (the input's step is 60s, so any
+          // sub-minute precision would be lost on save anyway).
+          const now = new Date();
+          now.setSeconds(0, 0);
+          pullFromInput.value = toDatetimeLocalValue(now.getTime());
+        });
+      }
+
+      if (pullFromSaveBtn) {
+        pullFromSaveBtn.addEventListener("click", async () => {
+          const v = pullFromInput && pullFromInput.value;
+          const ms = fromDatetimeLocalValue(v);
+          if (!ms) {
+            alert("Pick a date and time first, or click Clear to remove the cursor.");
+            return;
+          }
+          if (ms > Date.now()) {
+            alert("The pull-from cursor cannot be in the future.");
+            return;
+          }
+          // Confirm long-lookback choices (>30d) — easy to fat-finger the
+          // year on a datetime-local input and queue an enormous backfill.
+          const daysBack = (Date.now() - ms) / 86400000;
+          if (daysBack > 30) {
+            const proceed = confirm(
+              `That's ${Math.round(daysBack)} days ago. ` +
+              "On the next enable, the watcher will scan every Etsy " +
+              "notification email since then — potentially a lot of work. " +
+              "Continue?"
+            );
+            if (!proceed) return;
+          }
+          pullFromSaveBtn.disabled = true;
+          try {
+            await saveGmailPullFromCursor(ms);
+          } finally {
+            pullFromSaveBtn.disabled = false;
+          }
+        });
+      }
+
+      if (pullFromClearBtn) {
+        pullFromClearBtn.addEventListener("click", async () => {
+          pullFromClearBtn.disabled = true;
+          try {
+            await saveGmailPullFromCursor(null);
+            if (pullFromInput) pullFromInput.value = "";
+          } finally {
+            pullFromClearBtn.disabled = false;
+          }
+        });
+      }
 
       // Kick off the panel refresh loop. First refresh is immediate so
       // operators see status at page load; subsequent refreshes every
