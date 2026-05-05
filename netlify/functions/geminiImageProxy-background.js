@@ -130,33 +130,80 @@ function clampNumber(n, min, max, fallback) {
   return Math.max(min, Math.min(max, x));
 }
 
+// ============================================================
+// Set-number allocation
+// ------------------------------------------------------------
+// Atomic Set_N allocator backed by Firestore counter docs.
+//
+// PROBLEM IT SOLVES: The previous implementation scanned Firebase
+// Storage for the highest Set_N folder and returned maxN+1. That
+// works only when set folders are physically created before the next
+// alloc runs. In batch mode, a submission can reserve 4 set numbers
+// minutes before any files are written (Gemini takes hours), and
+// Storage doesn't track empty folders. So a second submission run
+// before the first collected would see no Set folders, hand out the
+// same numbers, and overwrite the first batch on collection.
+//
+// FIX: Each category has a Firestore document at
+//   listingGenerator1/setCounters/{category}
+// with field `nextSetN`. allocNextSet runs a transaction that reads
+// the current value, increments by 1, and writes back. Strictly
+// monotonic across any number of concurrent callers.
+//
+// BOOTSTRAP: On first ever call for a category, the counter doc
+// doesn't exist. We seed it from Storage by scanning for the highest
+// existing Set_N and starting from there + 1. This way, deployments
+// that already have Set_42 in Storage start the counter at 43.
+// ============================================================
+const SET_COUNTERS_COLL = "listingGenerator1_setCounters";
+
+async function _seedSetCounter(cat) {
+  const bucket = admin.storage().bucket();
+  const prefix = `listing-generator-1/${cat}/Ready_To_List/`;
+  const [_files, _next, apiResponse] = await bucket.getFiles({
+    prefix,
+    delimiter: "/",
+    autoPaginate: false,
+  });
+  const prefixes = apiResponse?.prefixes || [];
+  let maxN = 0;
+  for (const p of prefixes) {
+    const m = p.match(/\/Set_(\d+)\/$/);
+    if (m) maxN = Math.max(maxN, Number(m[1]) || 0);
+  }
+  return maxN;
+}
+
 async function allocNextSet(activeCategory) {
   const cat = normalizeCategory(activeCategory);
   if (!GENERATABLE_CATEGORIES.has(cat)) throw new Error("activeCategory not generatable");
 
-  const bucket = admin.storage().bucket();
-  const prefix = `listing-generator-1/${cat}/Ready_To_List/`;
+  const db = getDb();
+  const ref = db.collection(SET_COUNTERS_COLL).doc(cat);
 
-  // OPTIMIZED: Use delimiter to only fetch "subfolders" (prefixes)
-  const [files, nextQuery, apiResponse] = await bucket.getFiles({
-    prefix,
-    delimiter: "/",
-    autoPaginate: false, // We only need the top-level "folders"
+  const setN = await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    let current;
+    if (snap.exists) {
+      current = Number(snap.data()?.nextSetN || 0);
+    } else {
+      // First call ever for this category. Seed from Storage to avoid
+      // colliding with any existing Set folders. We do this OUTSIDE
+      // the transaction conceptually, but reading Storage from inside
+      // a Firestore transaction is allowed (it's not a Firestore op,
+      // just a network call) — the transaction will retry if the
+      // create races another caller.
+      const seed = await _seedSetCounter(cat);
+      current = seed; // counter holds "highest used"; next is +1
+    }
+    const next = current + 1;
+    tx.set(ref, {
+      nextSetN: next,
+      lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+    return next;
   });
 
-  const prefixes = apiResponse?.prefixes || [];
-  
-  let maxN = 0;
-  
-  // Prefixes look like: "listing-generator-1/Beady_Necklace/Ready_To_List/Set_1/"
-  for (const p of prefixes) {
-    const m = p.match(/\/Set_(\d+)\/$/);
-    if (m) {
-      maxN = Math.max(maxN, Number(m[1]) || 0);
-    }
-  }
-
-  const setN = maxN + 1;
   const outputBasePath = `listing-generator-1/${cat}/Ready_To_List/Set_${setN}`;
   return { setN, outputBasePath };
 }
@@ -1185,6 +1232,90 @@ async function _handlerImpl(event) {
     }
 
     // ============================================================
+    // CHARM POOL — pick & release for batch mode
+    // ------------------------------------------------------------
+    // Each generated set must use a UNIQUE charm from the shared pool,
+    // and we must avoid duplicate picks across concurrent submissions.
+    //
+    // Pick algorithm:
+    //   1. List all charms in the active pool (necklace or earring).
+    //   2. Enumerate every uncollected batch's `sets[].tasks[].input_charm_storage_path`
+    //      to find currently-reserved charms.
+    //   3. Subtract: available = pool - reserved.
+    //   4. Return the first `count` available paths.
+    //
+    // Atomicity: the pick step doesn't write anything — the
+    // reservation happens implicitly when the caller subsequently
+    // submits a batch with these paths in its tasks. There's a small
+    // race window (two clients pick same charms simultaneously then
+    // both submit), which we accept because:
+    //   - The window is sub-second in practice
+    //   - The user-visible result is just one charm getting reused
+    //     once across two concurrent submissions
+    //   - The full atomicity solution (Firestore-tracked reservations
+    //     with ttl) adds significant complexity for a problem that
+    //     basically only manifests if you submit two batches within
+    //     the same second
+    // ============================================================
+    if (kind === "charm_pool_pick") {
+      const isEarring = !!body?.isEarring;
+      const want = Math.max(1, Number(body?.count || 1));
+
+      const bucket = admin.storage().bucket();
+      const poolPrefix = isEarring
+        ? "listing-generator-1/Charm_Maker/New_Charms_Earrings/"
+        : "listing-generator-1/Charm_Maker/New_Charms/";
+
+      // Step 1: list pool. Skip pseudo-folders (paths ending with "/").
+      const [poolFiles] = await bucket.getFiles({ prefix: poolPrefix });
+      const poolPaths = poolFiles
+        .map((f) => f.name)
+        .filter((n) => !n.endsWith("/") && /\.(png|jpg|jpeg|webp)$/i.test(n));
+
+      if (poolPaths.length === 0) {
+        return json(200, { ok: true, charms: [], poolSize: 0, reservedCount: 0 });
+      }
+
+      // Step 2: enumerate reservations from uncollected batches.
+      const db = getDb();
+      const reservedSet = new Set();
+      try {
+        const snap = await db.collection(BATCHES_COLL)
+          .where("collected", "==", false).get();
+        snap.forEach((doc) => {
+          const sets = Array.isArray(doc.data()?.sets) ? doc.data().sets : [];
+          for (const s of sets) {
+            for (const t of (s.tasks || [])) {
+              const p = t?.input_charm_storage_path;
+              if (p) reservedSet.add(p);
+            }
+          }
+        });
+      } catch (e) {
+        console.warn("charm_pool_pick: failed to enumerate reservations", e?.message || e);
+      }
+
+      // Step 3: filter and return.
+      const available = poolPaths.filter((p) => !reservedSet.has(p));
+
+      // Shuffle so concurrent submissions don't all start from the
+      // same position. Fisher-Yates.
+      for (let i = available.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [available[i], available[j]] = [available[j], available[i]];
+      }
+
+      const picked = available.slice(0, want);
+      return json(200, {
+        ok: true,
+        charms: picked,
+        poolSize: poolPaths.length,
+        reservedCount: reservedSet.size,
+        availableCount: available.length,
+      });
+    }
+
+    // ============================================================
     // BATCH MODE — Listing Generator only (Charm Maker out of scope)
     //
     // Flow:
@@ -1457,6 +1588,7 @@ async function _handlerImpl(event) {
         batchName,
         docId,
         displayName,
+        sessionId: String(body?.sessionId || ""),
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         state: "JOB_STATE_PENDING",
@@ -1759,13 +1891,76 @@ async function _handlerImpl(event) {
         }
       }
 
+      // Move used charms out of the active pool.
+      // ---------------------------------------
+      // After successful collection, every unique charm path referenced
+      // in this batch's tasks is moved to the matching Used pool:
+      //   New_Charms          → Used_Necklace_Charm_Pool
+      //   New_Charms_Earrings → Used_Earring_Charm_Pool
+      //
+      // This ensures the same charm never gets picked again by a
+      // future submission. Move happens AFTER images write so a
+      // mid-collection failure doesn't strand the charm in the wrong
+      // place. We use copy+delete (not rename, which Firebase Storage
+      // doesn't support natively) and ignore per-charm errors so a
+      // single flaky charm doesn't block the batch from being marked
+      // collected.
+      const charmsUsed = new Set();
+      for (const s of setsMeta) {
+        for (const t of (s.tasks || [])) {
+          const p = t?.input_charm_storage_path;
+          if (p) charmsUsed.add(p);
+        }
+      }
+      const charmMoveErrors = [];
+      let charmsMoved = 0;
+      for (const srcPath of charmsUsed) {
+        try {
+          let destPrefix = null;
+          if (srcPath.includes("/Charm_Maker/New_Charms_Earrings/")) {
+            destPrefix = "listing-generator-1/Charm_Maker/Used_Earring_Charm_Pool/";
+          } else if (srcPath.includes("/Charm_Maker/New_Charms/")) {
+            destPrefix = "listing-generator-1/Charm_Maker/Used_Necklace_Charm_Pool/";
+          } else {
+            // Charm came from somewhere else — don't move it.
+            continue;
+          }
+          const filename = srcPath.split("/").pop();
+          if (!filename) continue;
+          const destPath = destPrefix + filename;
+
+          const srcFile = bucket.file(srcPath);
+          const [exists] = await srcFile.exists();
+          if (!exists) {
+            // Already moved by an earlier collection of an overlapping
+            // batch — not an error, just skip.
+            continue;
+          }
+          await srcFile.copy(bucket.file(destPath));
+          // Preserve a download token on the destination so it renders
+          // in any UI that expects one.
+          try {
+            await bucket.file(destPath).setMetadata({
+              metadata: { firebaseStorageDownloadTokens: newDownloadToken() },
+            });
+          } catch (_) {}
+          await srcFile.delete();
+          charmsMoved++;
+        } catch (e) {
+          charmMoveErrors.push({ charm: srcPath, error: String(e?.message || e) });
+        }
+      }
+
       // Mark Firestore record as collected.
       await firestoreRetry(
         () => db.collection(BATCHES_COLL).doc(docId).set({
           collected: true,
           collectedAt: admin.firestore.FieldValue.serverTimestamp(),
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          results: { succeededCount, failedCount, failures: failures.slice(0, 200) },
+          results: {
+            succeededCount, failedCount, failures: failures.slice(0, 200),
+            charmsMoved, charmMoveErrors: charmMoveErrors.slice(0, 50),
+          },
         }, { merge: true }),
         "batch.markCollected"
       );
@@ -1773,6 +1968,7 @@ async function _handlerImpl(event) {
       return json(200, {
         ok: true, batchName, collected: true,
         succeededCount, failedCount,
+        charmsMoved, charmMoveErrors: charmMoveErrors.slice(0, 20),
         failures: failures.slice(0, 50),
       });
     }
@@ -1791,13 +1987,16 @@ async function _handlerImpl(event) {
           docId: doc.id,
           batchName: d.batchName,
           displayName: d.displayName,
+          sessionId: d.sessionId || null,
           state: d.state,
           collected: !!d.collected,
           batchStats: d.batchStats || null,
           createdAt: d.createdAt?.toMillis ? d.createdAt.toMillis() : null,
           updatedAt: d.updatedAt?.toMillis ? d.updatedAt.toMillis() : null,
+          collectedAt: d.collectedAt?.toMillis ? d.collectedAt.toMillis() : null,
           setsCount: Array.isArray(d.sets) ? d.sets.length : 0,
           requestCount: Array.isArray(d.routes) ? d.routes.length : 0,
+          results: d.results || null,
         });
       });
       return json(200, { ok: true, batches: out });
