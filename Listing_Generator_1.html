@@ -6283,20 +6283,54 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       _setBatchProgress(0, count, "Allocating Set_N for each…");
 
       try {
-        // Resolve charm pool reference once — same logic as Standard mode.
-        // Each set picks its own random ref per slot below; the charm
-        // reference is the latest entry in the shared pool, also like
-        // Standard mode (so the user's intuition holds).
+        // Pick UNIQUE charms — one per set — from the shared pool.
+        // The server returns charms not currently reserved by any
+        // other in-flight batch, ensuring no two sets share a charm
+        // (within or across submissions). After successful collection
+        // each used charm is moved to the matching Used pool.
         const isEarring = ["Stud_Earrings", "Hoop_Earrings"].includes(category);
-        const charmFolderPath = isEarring ? newCharmsEarringsPath() : newCharmsPath();
-        const charmLatest = await listLatestFile(charmFolderPath);
-        if (!charmLatest) throw new Error(`No files in ${charmFolderPath}/`);
+        const charmPick = await postJson("geminiImageProxy", {
+          kind: "charm_pool_pick",
+          isEarring,
+          count,
+        });
+        const pickedCharms = Array.isArray(charmPick?.charms) ? charmPick.charms : [];
+
+        if (pickedCharms.length === 0) {
+          throw new Error(
+            `No charms available in the shared ${isEarring ? "Earring" : "Necklace"} pool. ` +
+            `Add more charms to ${isEarring ? "Charm_Maker/New_Charms_Earrings" : "Charm_Maker/New_Charms"} before submitting a batch.`
+          );
+        }
+
+        if (pickedCharms.length < count) {
+          const proceed = confirm(
+            `Only ${pickedCharms.length} unique charm(s) available in the shared ${isEarring ? "Earring" : "Necklace"} pool, but you asked for ${count} sets.\n\n` +
+            `Available: ${pickedCharms.length}\n` +
+            `Reserved by other in-flight batches: ${charmPick?.reservedCount || 0}\n` +
+            `Total pool: ${charmPick?.poolSize || 0}\n\n` +
+            `Click OK to submit only ${pickedCharms.length} sets (one per available charm).\n` +
+            `Click Cancel to abort and add more charms first.`
+          );
+          if (!proceed) {
+            _batchInFlight = false;
+            generateBatchBtn.disabled = false;
+            if (generateSetBtn) generateSetBtn.disabled = false;
+            _renderGenModeButtons();
+            batchProgress.style.display = "none";
+            return;
+          }
+        }
+
+        // Effective count = whichever is smaller. We still allocate
+        // exactly that many Set_N folders.
+        const effectiveCount = Math.min(count, pickedCharms.length);
 
         // Build all set descriptors. Allocation is sequential because
         // alloc_set is server-side and assigns Set_N atomically.
         const allSets = [];
-        for (let i = 0; i < count; i++) {
-          _setBatchProgress(i, count, `Reserving Set_${i + 1}/${count}…`);
+        for (let i = 0; i < effectiveCount; i++) {
+          _setBatchProgress(i, effectiveCount, `Reserving Set_${i + 1}/${effectiveCount}…`);
 
           const alloc = await postJson("geminiImageProxy", {
             kind: "alloc_set",
@@ -6306,6 +6340,11 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
           if (!outputBasePath) throw new Error("alloc_set did not return outputBasePath");
           const setN = alloc?.setN ?? alloc?.set_n ??
                        Number((outputBasePath.match(/\/Set_(\d+)\b/) || [])[1] || 0);
+
+          // Per-set unique charm. Each set gets its own picked charm
+          // path; no two sets in this submission share a charm, and
+          // none collide with other in-flight batches.
+          const charmPathForSet = pickedCharms[i];
 
           // Resolve a random reference for each gen slot. For copy slots,
           // record the source path so the server can copy synchronously.
@@ -6326,7 +6365,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
                 type: "edits",
                 slotIndex: s,
                 input_storage_path: srcRandom.fullPath,
-                input_charm_storage_path: charmLatest.fullPath,
+                input_charm_storage_path: charmPathForSet,
                 prompt: buildSlotPrompt(category, spec.folder, s + 1),
               });
             }
@@ -6341,16 +6380,23 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         // the in-flight panel. The display name carries the part index
         // so the user can tell related chunks apart visually.
         const stamp = new Date().toISOString().slice(0,16).replace(/[:T]/g,"");
+        // Compute chunks based on effectiveCount, not the user's
+        // requested count (which could be larger if pool was small).
+        const effectiveChunkCount = Math.ceil(effectiveCount / CHUNK_SIZE);
+
         const submitted = [];
         const submitErrors = [];
-        for (let c = 0; c < chunkCount; c++) {
+        const sessionStartMs = Date.now();
+        const sessionId = `sess_${sessionStartMs}_${Math.random().toString(36).slice(2, 8)}`;
+
+        for (let c = 0; c < effectiveChunkCount; c++) {
           const start = c * CHUNK_SIZE;
           const slice = allSets.slice(start, start + CHUNK_SIZE);
-          _setBatchProgress(c, chunkCount, `Submitting chunk ${c + 1}/${chunkCount} (${slice.length} sets)…`);
+          _setBatchProgress(c, effectiveChunkCount, `Submitting chunk ${c + 1}/${effectiveChunkCount} (${slice.length} sets)…`);
 
-          const dn = chunkCount === 1
-            ? `lg1-${category}-${count}sets-${stamp}`
-            : `lg1-${category}-${count}sets-${stamp}-part${c + 1}of${chunkCount}`;
+          const dn = effectiveChunkCount === 1
+            ? `lg1-${category}-${effectiveCount}sets-${stamp}`
+            : `lg1-${category}-${effectiveCount}sets-${stamp}-part${c + 1}of${effectiveChunkCount}`;
 
           try {
             const resp = await postJson("geminiImageProxy", {
@@ -6358,6 +6404,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
               sets: slice,
               imageSize: BATCH_DEFAULT_IMAGE_SIZE,
               displayName: dn,
+              sessionId,
             });
             submitted.push(resp);
           } catch (chunkErr) {
@@ -6369,14 +6416,34 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
           }
         }
 
+        // Record this submission as a session for the summary panel.
+        try {
+          const sessionRecord = {
+            sessionId,
+            category,
+            requestedCount: count,
+            effectiveCount,
+            chunksSubmitted: submitted.length,
+            chunksFailed: submitErrors.length,
+            startedAt: sessionStartMs,
+            // batchNames so the panel can group them later
+            batchNames: submitted.map((r) => r?.batchName).filter(Boolean),
+          };
+          const all = JSON.parse(localStorage.getItem("lg1_batch_sessions") || "[]");
+          all.push(sessionRecord);
+          // Keep last 50 sessions only
+          while (all.length > 50) all.shift();
+          localStorage.setItem("lg1_batch_sessions", JSON.stringify(all));
+        } catch (_) { /* localStorage quota — skip */ }
+
         const okCount = submitted.length;
         const failCount = submitErrors.length;
         if (failCount === 0) {
-          _setBatchProgress(chunkCount, chunkCount, `Submitted ${okCount}/${chunkCount} chunk(s) · ${count} set(s)`);
-          setStatus(`Batch submitted · ${count} set(s) across ${okCount} chunk(s)`);
+          _setBatchProgress(effectiveChunkCount, effectiveChunkCount, `Submitted ${okCount}/${effectiveChunkCount} chunk(s) · ${effectiveCount} set(s)`);
+          setStatus(`Batch submitted · ${effectiveCount} set(s) across ${okCount} chunk(s)`);
         } else {
-          _setBatchProgress(chunkCount, chunkCount, `${okCount}/${chunkCount} chunks OK · ${failCount} failed`);
-          setStatus(`Partial submission · ${okCount}/${chunkCount} chunks succeeded`);
+          _setBatchProgress(effectiveChunkCount, effectiveChunkCount, `${okCount}/${effectiveChunkCount} chunks OK · ${failCount} failed`);
+          setStatus(`Partial submission · ${okCount}/${effectiveChunkCount} chunks succeeded`);
           alert(
             `Partial submission:\n` +
             `  Succeeded: ${okCount} chunk(s)\n` +
@@ -6412,114 +6479,168 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       const listEl = document.getElementById("batchJobsList");
       if (!listEl) return;
       try {
-        const resp = await postJson("geminiImageProxy", { kind: "batch_list", limit: 50 });
+        const resp = await postJson("geminiImageProxy", { kind: "batch_list", limit: 100, includeCollected: true });
         const batches = Array.isArray(resp?.batches) ? resp.batches : [];
         _lastBatchList = batches;
         if (batches.length === 0) {
           listEl.innerHTML = `<div class="muted" style="font-size: 11px; padding: 6px 0; line-height: 1.5;">No batch jobs yet. Click <b>Submit batch</b> above to create one.</div>`;
           return;
         }
-        listEl.innerHTML = batches.map(_renderBatchCard).join("");
-        // Hook up per-card buttons.
+
+        // Group batches by sessionId so each user submission appears
+        // as one block. Batches without a sessionId (created by older
+        // code or by Standard mode falling back) are grouped under
+        // "(unsessioned)".
+        const sessions = new Map();
+        for (const b of batches) {
+          const key = b.sessionId || "(unsessioned)";
+          let s = sessions.get(key);
+          if (!s) { s = { sessionId: key, batches: [], earliest: Infinity, latest: 0 }; sessions.set(key, s); }
+          s.batches.push(b);
+          if (b.createdAt) s.earliest = Math.min(s.earliest, b.createdAt);
+          if (b.updatedAt) s.latest = Math.max(s.latest, b.updatedAt);
+          if (b.collectedAt) s.latest = Math.max(s.latest, b.collectedAt);
+        }
+        const sessionList = [...sessions.values()].sort((a, b) => b.earliest - a.earliest);
+        listEl.innerHTML = sessionList.map((s) => _renderSessionBlock(s)).join("");
+
+        // Per-row buttons — only Cancel and Recover (force-download
+        // for failed/expired) need handlers now. The Download button
+        // is gone because successful batches auto-collect.
         for (const b of batches) {
           const safeId = b.docId;
-          document.getElementById(`bRefresh_${safeId}`)?.addEventListener("click", () => pollOneBatch(b.batchName));
-          document.getElementById(`bDownload_${safeId}`)?.addEventListener("click", () => collectOneBatch(b.batchName, false));
-          document.getElementById(`bForce_${safeId}`)?.addEventListener("click", () => collectOneBatch(b.batchName, true));
           document.getElementById(`bCancel_${safeId}`)?.addEventListener("click", () => cancelOneBatch(b.batchName));
+          document.getElementById(`bForce_${safeId}`)?.addEventListener("click", () => collectOneBatch(b.batchName, true));
         }
-        // Auto-poll any non-final batches so state freshens without user clicking.
+
         _startBatchAutoPoll();
       } catch (err) {
         listEl.innerHTML = `<div class="muted" style="font-size: 11px; color: #fca5a5;">Failed to load batches: ${err?.message || err}</div>`;
       }
     }
 
-    function _renderBatchCard(b) {
-      // Defensively normalize state. Google's batch API returns
-      // BATCH_STATE_* but our code expects JOB_STATE_*. The backend
-      // also normalizes on read, but Firestore docs created before
-      // that fix may still have BATCH_STATE_*-prefixed values.
-      const stateRaw = String(b.state || "");
-      const state = stateRaw.startsWith("BATCH_STATE_")
-        ? "JOB_STATE_" + stateRaw.slice("BATCH_STATE_".length)
-        : stateRaw;
+    // Normalize state for both legacy BATCH_STATE_* and current JOB_STATE_*.
+    function _normBatchState(s) {
+      const x = String(s || "");
+      return x.startsWith("BATCH_STATE_") ? "JOB_STATE_" + x.slice("BATCH_STATE_".length) : x;
+    }
 
-      // State → plain-language label and short status line.
-      const stateInfo = {
-        "JOB_STATE_PENDING":   { color: "#fde68a", label: "Queued at Google",    line: "Waiting in queue. Auto-checks every 60 seconds." },
-        "JOB_STATE_RUNNING":   { color: "#93c5fd", label: "Running at Google",   line: "Generating images. Usually 2–6 hours total." },
-        "JOB_STATE_SUCCEEDED": { color: "#7fdb96", label: "Finished at Google",  line: "Click Download to pull images into Firebase." },
-        "JOB_STATE_FAILED":    { color: "#fca5a5", label: "Failed",              line: "Job failed. Use Force download to recover any finished images." },
-        "JOB_STATE_CANCELLED": { color: "#a3a3a3", label: "Cancelled",           line: "You cancelled this job." },
-        "JOB_STATE_EXPIRED":   { color: "#fca5a5", label: "Expired",             line: "Google didn't finish in 48 hours. Use Force download to recover." },
-      }[state] || { color: "#a3a3a3", label: stateRaw || "Unknown", line: "" };
+    function _formatDuration(ms) {
+      if (!ms || ms < 0) return "—";
+      const sec = Math.floor(ms / 1000);
+      const h = Math.floor(sec / 3600);
+      const m = Math.floor((sec % 3600) / 60);
+      const s = sec % 60;
+      if (h > 0) return `${h}h ${m}m`;
+      if (m > 0) return `${m}m ${s}s`;
+      return `${s}s`;
+    }
 
-      const succeeded = state === "JOB_STATE_SUCCEEDED";
-      const final = ["JOB_STATE_SUCCEEDED", "JOB_STATE_FAILED", "JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED"].includes(state);
-      const created = b.createdAt ? new Date(b.createdAt).toLocaleString() : "(unknown)";
-      const stats = b.batchStats || {};
-      const displayId = (b.batchName || "").replace(/^batches\//, "");
+    function _renderSessionBlock(session) {
+      const states = session.batches.map((b) => _normBatchState(b.state));
+      const total = session.batches.length;
+      const finished = session.batches.filter((b) => b.collected).length;
+      const succeeded = states.filter((st) => st === "JOB_STATE_SUCCEEDED").length;
+      const running = states.filter((st) => st === "JOB_STATE_RUNNING" || st === "JOB_STATE_PENDING").length;
+      const failed = states.filter((st) => st === "JOB_STATE_FAILED" || st === "JOB_STATE_EXPIRED").length;
+      const cancelled = states.filter((st) => st === "JOB_STATE_CANCELLED").length;
 
-      // Button enable/disable logic. Every button is always rendered;
-      // we just disable it (with a reason in the title attribute) when
-      // it doesn't apply. This makes the UI predictable.
-      const downloadOk = succeeded && !b.collected;
-      const downloadDisabledReason = b.collected ? "Already downloaded — see Review tab"
-                                    : succeeded ? ""
-                                    : "Job hasn't finished yet (state: " + (state || "?") + ")";
+      let totalSets = 0, totalImagesGen = 0, totalImagesFailed = 0, totalCharmsMoved = 0;
+      for (const b of session.batches) {
+        totalSets += b.setsCount || 0;
+        if (b.results) {
+          totalImagesGen += b.results.succeededCount || 0;
+          totalImagesFailed += b.results.failedCount || 0;
+          totalCharmsMoved += b.results.charmsMoved || 0;
+        }
+      }
 
-      // "Force download" recovers partial results when a job is in a
-      // non-success state. Useful if a job hangs, fails halfway, or
-      // expires. Server pulls whatever responsesFile Google has — even
-      // if some lines are errors, the successful ones still upload.
-      const forceOk = !final || (final && !succeeded && !b.collected);
-      const forceDisabledReason = b.collected ? "Already downloaded — see Review tab"
-                                  : succeeded ? "Use the Download button instead"
-                                  : "";
+      const startStr = session.earliest && isFinite(session.earliest)
+        ? new Date(session.earliest).toLocaleString() : "—";
+      const allDone = finished === total;
+      const elapsedMs = allDone && session.latest
+        ? session.latest - session.earliest
+        : (session.earliest && isFinite(session.earliest) ? Date.now() - session.earliest : 0);
+      const endStr = allDone && session.latest ? new Date(session.latest).toLocaleString() : "in progress";
 
-      const cancelOk = !final;
-      const cancelDisabledReason = final ? "Job is already finished" : "";
+      let headline, headlineColor;
+      if (failed > 0) { headline = `${failed} batch(es) failed · ${succeeded} succeeded`; headlineColor = "#fca5a5"; }
+      else if (allDone && cancelled > 0) { headline = `Session cancelled (${succeeded} succeeded · ${cancelled} cancelled)`; headlineColor = "#a3a3a3"; }
+      else if (allDone) { headline = `All ${total} batch(es) complete · ${totalImagesGen} images delivered`; headlineColor = "#7fdb96"; }
+      else if (running > 0) { headline = `${finished}/${total} batch(es) complete · ${running} running`; headlineColor = "#93c5fd"; }
+      else { headline = `${finished}/${total} batch(es) complete`; headlineColor = "#fde68a"; }
 
-      const dis = (ok) => ok ? "" : "disabled";
-      const tip = (reason) => reason ? `title="${reason.replace(/"/g, '&quot;')}"` : "";
-      const dim = (ok) => ok ? "" : "opacity: 0.4; cursor: not-allowed;";
+      const rowsHtml = session.batches
+        .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
+        .map(_renderBatchRow).join("");
 
-      // Status line: prefer the "collected" state if it's true.
-      const statusLine = b.collected
-        ? "Done — images are in Firebase. Open Review tab to see them."
-        : stateInfo.line;
-      const stateLabel = b.collected ? "Downloaded" : stateInfo.label;
-      const stateColor = b.collected ? "#7fdb96" : stateInfo.color;
+      const sessionLabel = session.sessionId === "(unsessioned)"
+        ? "Earlier batches"
+        : `Submission · ${startStr}`;
+
+      const statsLine = [
+        `<b>Sets:</b> ${totalSets}`,
+        totalImagesGen ? `<b>Images delivered:</b> ${totalImagesGen}` : null,
+        totalImagesFailed ? `<b>Failed images:</b> ${totalImagesFailed}` : null,
+        totalCharmsMoved ? `<b>Charms used:</b> ${totalCharmsMoved}` : null,
+      ].filter(Boolean).join(" · ");
 
       return `
-        <div style="background: var(--card-2); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px;">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; flex-wrap: wrap; gap: 6px;">
-            <div style="font-size: 12px; font-weight: 600; color: var(--text);">${b.displayName || displayId}</div>
-            <div style="font-size: 10px; font-weight: 600; color: ${stateColor};">${stateLabel}</div>
+        <div style="background: var(--card-2); border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-bottom: 10px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; flex-wrap: wrap; gap: 6px;">
+            <div style="font-size: 12px; font-weight: 600;">${sessionLabel}</div>
+            <div style="font-size: 11px; font-weight: 600; color: ${headlineColor};">${headline}</div>
           </div>
-          <div class="muted" style="font-size: 10px; margin-bottom: 6px; line-height: 1.4;">
-            ${statusLine}
+          <div class="muted" style="font-size: 10px; line-height: 1.5; margin-bottom: 8px;">
+            <div>${statsLine}</div>
+            <div><b>Started:</b> ${startStr} · <b>${allDone ? "Finished" : "Elapsed"}:</b> ${allDone ? endStr : _formatDuration(elapsedMs)}${allDone ? ` (${_formatDuration(elapsedMs)} total)` : ""}</div>
           </div>
-          <div class="muted" style="font-size: 10px; font-family: var(--font-mono); margin-bottom: 8px;">
-            ${b.setsCount || 0} set${(b.setsCount || 0) === 1 ? "" : "s"} · ${b.requestCount || 0} image${(b.requestCount || 0) === 1 ? "" : "s"} · submitted ${created}
-            ${stats.completedRequestCount != null ? ` · ${stats.completedRequestCount}/${b.requestCount || 0} done at Google` : ""}
-          </div>
-          <div class="row" style="gap: 6px; flex-wrap: wrap;">
-            <button class="btn btnSmall" id="bDownload_${b.docId}" ${dis(downloadOk)} ${tip(downloadDisabledReason)}
-                    style="flex: 1; min-width: 140px; background: #1f4026; border: 1px solid #2f5e3a; color: #7fdb96; font-weight: 600; font-size: 11px; ${dim(downloadOk)}">
-              ⬇ Download into Firebase
-            </button>
-            <button class="btn btnSmall" id="bRefresh_${b.docId}" style="font-size: 10px;">↻ Refresh</button>
-            <button class="btn btnSmall" id="bForce_${b.docId}" ${dis(forceOk)} ${tip(forceDisabledReason)}
-                    style="background: #3d3017; border: 1px solid #7a5e2c; color: #fde68a; font-size: 10px; ${dim(forceOk)}">
-              ⚠ Force download (partial)
-            </button>
-            <button class="btn btnSmall" id="bCancel_${b.docId}" ${dis(cancelOk)} ${tip(cancelDisabledReason)}
-                    style="background: #3d1c1c; border: 1px solid #7a3838; color: #fca5a5; font-size: 10px; ${dim(cancelOk)}">
-              ✕ Cancel
-            </button>
-          </div>
+          <div style="display: flex; flex-direction: column; gap: 4px;">${rowsHtml}</div>
+        </div>
+      `;
+    }
+
+    function _renderBatchRow(b) {
+      const state = _normBatchState(b.state);
+      const stateInfo = {
+        "JOB_STATE_PENDING":   { color: "#fde68a", label: "Queued",       icon: "⏳" },
+        "JOB_STATE_RUNNING":   { color: "#93c5fd", label: "Running",      icon: "↻"  },
+        "JOB_STATE_SUCCEEDED": { color: "#7fdb96", label: "Saving",       icon: "↓"  },
+        "JOB_STATE_FAILED":    { color: "#fca5a5", label: "Failed",       icon: "⚠"  },
+        "JOB_STATE_CANCELLED": { color: "#a3a3a3", label: "Cancelled",    icon: "✕"  },
+        "JOB_STATE_EXPIRED":   { color: "#fca5a5", label: "Expired",      icon: "⚠"  },
+      }[state] || { color: "#a3a3a3", label: state || "Unknown", icon: "?" };
+
+      const final = ["JOB_STATE_SUCCEEDED", "JOB_STATE_FAILED", "JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED"].includes(state);
+      const cancelOk = !final;
+      const showForce = (state === "JOB_STATE_FAILED" || state === "JOB_STATE_EXPIRED") && !b.collected;
+      const r = b.results || {};
+      const stats = b.batchStats || {};
+
+      let statusDetail = "";
+      if (b.collected && r.succeededCount != null) {
+        statusDetail = `${r.succeededCount} delivered${r.failedCount ? ` · ${r.failedCount} failed` : ""}`;
+      } else if (state === "JOB_STATE_SUCCEEDED" && !b.collected) {
+        statusDetail = `auto-saving to Firebase…`;
+      } else if (state === "JOB_STATE_RUNNING" && stats.completedRequestCount != null) {
+        statusDetail = `${stats.completedRequestCount}/${b.requestCount} done at Google`;
+      } else if (state === "JOB_STATE_FAILED" || state === "JOB_STATE_EXPIRED") {
+        statusDetail = "click ⚠ to recover finished images";
+      }
+
+      const collectedTag = b.collected
+        ? `<span style="color: #7fdb96; font-weight: 600;">✓ Saved</span>` : "";
+
+      return `
+        <div style="display: flex; align-items: center; gap: 8px; padding: 4px 8px; background: var(--inset); border-radius: 4px; font-size: 11px;">
+          <span style="color: ${stateInfo.color}; font-weight: 600; min-width: 80px;">${stateInfo.icon} ${stateInfo.label}</span>
+          <span style="font-family: var(--font-mono); color: var(--text-2); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+            ${b.displayName || b.batchName} · ${b.setsCount || 0} sets
+          </span>
+          ${statusDetail ? `<span style="color: var(--text-2); font-size: 10px;">${statusDetail}</span>` : ""}
+          ${collectedTag}
+          ${cancelOk ? `<button class="btn btnSmall" id="bCancel_${b.docId}" style="background: #3d1c1c; border: 1px solid #7a3838; color: #fca5a5; font-size: 10px; padding: 2px 6px;">✕</button>` : ""}
+          ${showForce ? `<button class="btn btnSmall" id="bForce_${b.docId}" style="background: #3d3017; border: 1px solid #7a5e2c; color: #fde68a; font-size: 10px; padding: 2px 6px;" title="Recover whatever images Google managed to finish">⚠ Recover</button>` : ""}
         </div>
       `;
     }
@@ -6594,10 +6715,12 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       }
     }
 
+    // Set of batchNames whose auto-collect is currently in flight.
+    // Prevents duplicate concurrent collect calls from the polling loop.
+    const _autoCollectsInFlight = new Set();
+
     function _startBatchAutoPoll() {
       if (_batchPollTimer) return;
-      // Helper: accept either JOB_STATE_* or BATCH_STATE_* and return
-      // the JOB_STATE_* form for comparison.
       const _normState = (s) => {
         const x = String(s || "");
         return x.startsWith("BATCH_STATE_")
@@ -6605,11 +6728,14 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
           : x;
       };
       _batchPollTimer = setInterval(async () => {
-        // Only poll if any visible batch is non-final.
+        // Stop polling once every visible batch is final (collected,
+        // failed, cancelled, expired). Auto-collect-pending batches
+        // remain "open" until the collect call updates their record.
         const anyOpen = _lastBatchList.some((b) => {
           const st = _normState(b.state);
-          return !b.collected &&
-            st !== "JOB_STATE_FAILED" && st !== "JOB_STATE_CANCELLED" && st !== "JOB_STATE_EXPIRED";
+          if (b.collected) return false;
+          if (st === "JOB_STATE_FAILED" || st === "JOB_STATE_CANCELLED" || st === "JOB_STATE_EXPIRED") return false;
+          return true;
         });
         if (!anyOpen) {
           clearInterval(_batchPollTimer);
@@ -6619,7 +6745,8 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         // Only poll while the panel is visible to save bandwidth.
         const panel = document.getElementById("batchJobsPanel");
         if (!panel || panel.style.display === "none") return;
-        // Refresh state from Google for each open batch.
+
+        // Step 1: refresh state from Google for any non-final batch.
         for (const b of _lastBatchList) {
           if (b.collected) continue;
           const st = _normState(b.state);
@@ -6630,6 +6757,30 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
             await postJson("geminiImageProxy", { kind: "batch_status", batchName: b.batchName });
           } catch (_) { /* swallow */ }
         }
+
+        // Step 2: AUTO-COLLECT — for every batch that has flipped to
+        // SUCCEEDED but not yet collected, kick off a background
+        // collect immediately. This removes the manual "Download into
+        // Firebase" click from the user's workflow. The collect call
+        // is fire-and-forget here; the next refresh cycle will reflect
+        // the new collected=true state.
+        for (const b of _lastBatchList) {
+          if (b.collected) continue;
+          const st = _normState(b.state);
+          if (st !== "JOB_STATE_SUCCEEDED") continue;
+          if (_autoCollectsInFlight.has(b.batchName)) continue;
+          _autoCollectsInFlight.add(b.batchName);
+          (async () => {
+            try {
+              await postJson("geminiImageProxy", { kind: "batch_collect", batchName: b.batchName });
+            } catch (e) {
+              console.warn(`[auto-collect] ${b.batchName} failed:`, e?.message || e);
+            } finally {
+              _autoCollectsInFlight.delete(b.batchName);
+            }
+          })();
+        }
+
         await refreshBatchJobsPanel();
       }, BATCH_POLL_MS);
     }
