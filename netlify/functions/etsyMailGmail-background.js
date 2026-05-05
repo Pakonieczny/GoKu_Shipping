@@ -193,6 +193,75 @@ async function writeAudit({ threadId, eventType, actor, payload }) {
 }
 
 /**
+ * Pull the customer name out of an Etsy notification email subject.
+ *
+ * Etsy's notification subjects always follow the form:
+ *   "Etsy Conversation with <NAME>"
+ *   "Re: Etsy Conversation with <NAME>"
+ *   "Re: Etsy Conversation with <NAME> about Order #..."
+ *   "Re: Etsy Conversation with <NAME>, <something>"
+ *
+ * The name is sitting in plain text and we have it the moment Gmail
+ * returns the message — there's no need to wait for the Etsy scrape to
+ * fill in customerName. Pulling it here means new threads enter the
+ * inbox already labeled with the buyer's name, so the operator sees
+ * something useful even before (or instead of) the extension scraping
+ * the conversation page.
+ *
+ * Returns the cleaned name string, or null if the subject doesn't match
+ * the expected format. Edge cases handled:
+ *   - Optional leading "Re: " / "Fwd: " (any case, repeated).
+ *   - Trailing " about Order ..." / " about <anything>" trimmed.
+ *   - Trailing comma + clause trimmed ("Caitríona, regarding...").
+ *   - Whitespace collapsed and trimmed.
+ *   - Sub-200-char clamp as defense — if a subject is malformed and the
+ *     regex captures a runaway tail, we don't store kilobyte names.
+ *   - Non-ASCII names (Cyrillic, accented Latin, etc.) preserved as-is.
+ *   - "Sign in with Apple user" and similar Etsy placeholders are
+ *     returned verbatim — they're still more useful than "Unknown" and
+ *     match exactly what the operator sees in the Etsy UI.
+ *
+ * Examples (from real subjects):
+ *   "Re: Etsy Conversation with Cristi Moore"               → "Cristi Moore"
+ *   "Re: Etsy Conversation with Sarah from RaincoastGallery" → "Sarah from RaincoastGallery"
+ *   "Re: Etsy Conversation with Jasmine Martinez about Order #123" → "Jasmine Martinez"
+ *   "Etsy Conversation with Катерина Васильева"              → "Катерина Васильева"
+ *   "Some unrelated subject"                                  → null
+ */
+function extractCustomerNameFromSubject(subject) {
+  if (!subject || typeof subject !== "string") return null;
+
+  // Strip any chain of leading "Re:" / "Fwd:" / "Fw:" prefixes (case
+  // insensitive, with optional whitespace). Mailers love stacking these.
+  let s = subject.replace(/^\s*(?:re|fwd|fw)\s*:\s*/gi, "").trim();
+
+  // Anchor on the literal "Etsy Conversation with " phrase. \u00A0 is a
+  // non-breaking space — Gmail's API has been observed to emit those in
+  // some clients' subject lines; treat them like regular spaces.
+  const m = s.match(/Etsy Conversation with[\s\u00A0]+(.+)$/i);
+  if (!m) return null;
+
+  let name = m[1];
+
+  // Trim trailing " about <anything>" — Etsy appends "about Order #..."
+  // when the conversation is order-linked. The name ends right before
+  // the " about ".
+  name = name.replace(/\s+about\s+.*$/i, "");
+
+  // Trim trailing comma-clause ("Cristi Moore, the buyer of..."). Anything
+  // after the first comma is metadata, not part of the name.
+  const comma = name.indexOf(",");
+  if (comma !== -1) name = name.slice(0, comma);
+
+  // Collapse whitespace and clamp.
+  name = name.replace(/\s+/g, " ").trim();
+  if (!name) return null;
+  if (name.length > 200) name = name.slice(0, 200).trim();
+
+  return name;
+}
+
+/**
  * Build the Gmail search query for this invocation. Combines the static
  * filter (env var or default) with the watermark — Gmail's `after:`
  * operator wants Unix seconds.
@@ -248,12 +317,28 @@ async function upsertThreadFromGmail({
 
   const snap = await ref.get();
 
+  // Pull the buyer's name straight out of the email subject
+  // ("Re: Etsy Conversation with <NAME>"). The watcher already has this
+  // string from the Gmail headers — there's no need to wait on the
+  // extension scrape to label the thread. Falls back to whatever the
+  // caller passed (or "Unknown") if the subject doesn't match.
+  const subjectParsedName = extractCustomerNameFromSubject(subject);
+  const resolvedCustomerName = customerName || subjectParsedName || "Unknown";
+
   if (!snap.exists) {
     // CREATE — mirror the field shape of etsyMailThreads.js action:create
-    // so the inbox UI sees exactly what it expects. Initial status is
-    // "detected_from_gmail" — the snapshot endpoint will advance to
-    // "etsy_scraped" on first successful scrape (logic that already
-    // exists in etsyMailSnapshot.js line 125).
+    // so the inbox UI and downstream pipeline see exactly the same thread
+    // doc whether it was created by Gmail detection or the snapshot
+    // endpoint. Initial status is "detected_from_gmail" — the snapshot
+    // endpoint will advance to "etsy_scraped" on first successful scrape
+    // (logic that already exists in etsyMailSnapshot.js line 125).
+    //
+    // customerName is set from (in priority order):
+    //   1. The caller-provided name (currently always null on the gmail
+    //      path — placeholder for a future direct-passthrough).
+    //   2. The name parsed from the email subject (covers ~all real
+    //      Etsy notification emails — see extractCustomerNameFromSubject).
+    //   3. "Unknown" as the last-resort fallback.
     const initial = {
       threadId,
       etsyConversationId  : conversationId,
@@ -261,7 +346,7 @@ async function upsertThreadFromGmail({
       gmailMessageId,
       gmailThreadId,
       gmailReceivedAt,
-      customerName        : customerName || "Unknown",
+      customerName        : resolvedCustomerName,
       customerEmail       : customerEmail || null,
       etsyUsername        : null,
       linkedOrderId       : null,
@@ -283,6 +368,11 @@ async function upsertThreadFromGmail({
       unread              : true,
       lastReadAt          : null,
       subject             : subject || null,
+      // Provenance flag: true means customerName came from the email
+      // subject parse, not a real Etsy scrape. The snapshot endpoint
+      // will overwrite customerName with the real scraped value when
+      // it commits, so this flag self-clears.
+      customerNameFromSubject: !!subjectParsedName,
       createdAt           : now,
       updatedAt           : now,
       // M3 buyer metadata fields — populated by snapshot's first scrape
@@ -296,7 +386,13 @@ async function upsertThreadFromGmail({
       threadId,
       eventType: "thread_created",
       actor    : "system:gmail",
-      payload  : { source: "gmail", gmailMessageId, gmailThreadId, hasInitialText: false }
+      payload  : {
+        source                  : "gmail",
+        gmailMessageId,
+        gmailThreadId,
+        hasInitialText          : false,
+        customerNameFromSubject : !!subjectParsedName
+      }
     });
     return { threadId, action: "created" };
   }
@@ -308,8 +404,13 @@ async function upsertThreadFromGmail({
     return { threadId, action: "skipped_already_linked" };
   }
 
-  // Patch only the gmail-related fields. Don't touch status, customerName,
-  // etc. — the snapshot endpoint and operator UI may have refined those.
+  // Patch only the gmail-related fields. Don't touch status — the
+  // snapshot endpoint and operator UI may have refined that. We DO
+  // touch customerName here, but only in the narrow case where the
+  // existing value is the placeholder "Unknown" AND we just got a
+  // parseable name from the new email's subject. Real scraped names
+  // (from the snapshot endpoint) and operator-edited names are
+  // preserved untouched.
   const patch = {
     gmailMessageId,
     gmailThreadId,
@@ -320,12 +421,31 @@ async function upsertThreadFromGmail({
   // before Gmail integration may have null URL).
   if (!existing.etsyConversationUrl) patch.etsyConversationUrl = conversationUrl;
 
+  // customerName backfill: only when the existing slot is "Unknown" or
+  // empty AND we have a parseable name from THIS message's subject.
+  // The customerNameFromSubject flag advertises the provenance so the
+  // snapshot endpoint can confidently overwrite later without losing
+  // operator edits — operator edits never set this flag.
+  const isPlaceholder =
+       !existing.customerName
+    || existing.customerName === "Unknown"
+    || existing.customerName === "";
+  if (isPlaceholder && subjectParsedName) {
+    patch.customerName            = subjectParsedName;
+    patch.customerNameFromSubject = true;
+  }
+
   await ref.set(patch, { merge: true });
   await writeAudit({
     threadId,
     eventType: "thread_gmail_linked",
     actor    : "system:gmail",
-    payload  : { gmailMessageId, gmailThreadId, previousGmailMessageId: existing.gmailMessageId || null }
+    payload  : {
+      gmailMessageId,
+      gmailThreadId,
+      previousGmailMessageId  : existing.gmailMessageId || null,
+      customerNameBackfilled  : isPlaceholder && !!subjectParsedName
+    }
   });
   return { threadId, action: "linked" };
 }
@@ -680,3 +800,9 @@ exports.handler = async (event) => {
     throw err;
   }
 };
+
+// Export the subject-parse helper so other modules (e.g. the reaper in
+// etsyMailReapers.js) can reuse it without re-implementing the regex.
+// Adds a property to the exports object that already carries `handler`;
+// Netlify ignores extra properties on background-function modules.
+module.exports.extractCustomerNameFromSubject = extractCustomerNameFromSubject;

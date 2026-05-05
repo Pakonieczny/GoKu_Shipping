@@ -42,19 +42,36 @@
  *
  *    Sub-sweep B — detected_from_gmail threads with no live job
  *      EtsyMail_Threads where status=="detected_from_gmail" AND createdAt
- *      < now - SCRAPE_DETECTED_GRACE_MS. For each, look up the
- *      deterministic gmail_<gmailMessageId> job: if missing or "failed",
- *      enqueue a fresh job; if "queued"/"claimed"/"succeeded", leave
- *      alone. After MAX_SCRAPE_ATTEMPTS the thread is tagged
- *      "scrape_exhausted" for operator follow-up.
+ *      < now - SCRAPE_DETECTED_GRACE_MS. For each:
+ *        (1) If customerName is still "Unknown", try to fill it from the
+ *            email subject (Etsy notification subjects always carry the
+ *            buyer's name — see extractCustomerNameFromSubject). This is
+ *            independent of the job recovery; it makes the inbox useful
+ *            even when the extension is permanently down.
+ *        (2) Look up the deterministic gmail_<gmailMessageId> job: if
+ *            missing or "failed", enqueue a fresh job; if "queued"/
+ *            "claimed"/"succeeded", leave alone. After MAX_SCRAPE_ATTEMPTS
+ *            the thread is tagged "scrape_exhausted" for operator follow-up.
  *
  *    Sub-sweep C — Successful scrape but customerName=="Unknown"
  *      EtsyMail_Threads where customerName=="Unknown" AND status is
  *      post-scrape (etsy_scraped, ai_drafted, etc) AND
  *      _unknownRetryAttempted!==true AND lastSyncedAt is older than
- *      SCRAPE_UNKNOWN_GRACE_MS. Set _unknownRetryAttempted=true under a
- *      transaction BEFORE enqueueing, so two reaper invocations racing
- *      can never produce duplicate retries. One retry per thread, ever.
+ *      SCRAPE_UNKNOWN_GRACE_MS. Two-step recovery:
+ *        (1) Try the subject-fill first (cheap, no extension needed).
+ *            If it succeeds, consume the one-shot guard and skip the
+ *            rescrape — the thread is now labeled correctly.
+ *        (2) Otherwise, set _unknownRetryAttempted=true under a
+ *            transaction BEFORE enqueueing the rescrape job, so two
+ *            reaper invocations racing can never produce duplicate
+ *            retries. One rescrape per thread, ever.
+ *
+ *  The subject-fill paths in (B1) and (C1) are the high-impact recovery:
+ *  Etsy notification emails always carry the customer's name in the
+ *  subject ("Re: Etsy Conversation with <NAME>"), so a thread can be
+ *  labeled correctly without any Etsy roundtrip — useful when the
+ *  Chrome extension is offline, the operator's session has expired, or
+ *  Etsy's DOM has shifted out from under the scraper.
  *
  *  Why this lives here, not in a standalone reaper file:
  *    The "consolidated reaper" pattern is the existing convention in
@@ -163,6 +180,38 @@ const SCRAPE_POST_STATUSES = [
   "replied",
   "closed"
 ];
+
+/**
+ * Extract the customer name from an Etsy notification email subject.
+ *
+ * Source of truth: this is a copy of the same-named function in
+ * etsyMailGmail-background.js. Duplicated here (rather than imported)
+ * because background-function modules aren't a stable import surface
+ * in Netlify, and the function is small + rarely changes. If you edit
+ * one copy, edit the other — they should stay in lockstep.
+ *
+ * Used by sub-sweep C to skip the rescrape entirely when the email
+ * subject already carries the buyer's name. Empirically that's true
+ * for >99% of "Unknown" threads in this system, since Etsy's
+ * notification emails always include the customer name in the subject.
+ *
+ * Returns the cleaned name, or null if the subject doesn't match the
+ * expected "Etsy Conversation with <NAME>" pattern.
+ */
+function extractCustomerNameFromSubject(subject) {
+  if (!subject || typeof subject !== "string") return null;
+  let s = subject.replace(/^\s*(?:re|fwd|fw)\s*:\s*/gi, "").trim();
+  const m = s.match(/Etsy Conversation with[\s\u00A0]+(.+)$/i);
+  if (!m) return null;
+  let name = m[1];
+  name = name.replace(/\s+about\s+.*$/i, "");
+  const comma = name.indexOf(",");
+  if (comma !== -1) name = name.slice(0, comma);
+  name = name.replace(/\s+/g, " ").trim();
+  if (!name) return null;
+  if (name.length > 200) name = name.slice(0, 200).trim();
+  return name;
+}
 
 // ─── Helpers ───────────────────────────────────────────────────────────
 
@@ -662,6 +711,67 @@ function isLiveScrapeJob(jobData) {
 }
 
 /**
+ * Try to fill customerName from the email subject already stored on
+ * the thread. Used by sub-sweeps B and C as a fast-path before falling
+ * back to a rescrape — Etsy notification subjects always carry the
+ * buyer's name in plain text, so when the watcher has stored that
+ * subject we don't need the extension to scrape anything.
+ *
+ * Transactional so two reaper invocations racing each other can never
+ * both fill the same thread (the second one sees customerName already
+ * populated and aborts).
+ *
+ * Returns:
+ *   { filled: true,  name }  — customerName patched, audit row written
+ *   { filled: false, reason: "no_subject" | "subject_unparseable"
+ *                            | "already_named" | "tx_aborted" }
+ */
+async function tryFillCustomerNameFromSubject(threadRef, threadData) {
+  const subject = threadData && threadData.subject;
+  if (!subject) return { filled: false, reason: "no_subject" };
+
+  const parsed = extractCustomerNameFromSubject(subject);
+  if (!parsed) return { filled: false, reason: "subject_unparseable" };
+
+  // Transactional check-and-fill. If another caller raced us and the
+  // thread is no longer at "Unknown", we abort without overwriting.
+  let outcome;
+  try {
+    outcome = await db.runTransaction(async (tx) => {
+      const fresh = await tx.get(threadRef);
+      if (!fresh.exists) return { filled: false, reason: "tx_aborted" };
+      const data = fresh.data() || {};
+      const isPlaceholder =
+           !data.customerName
+        || data.customerName === "Unknown"
+        || data.customerName === "";
+      if (!isPlaceholder) return { filled: false, reason: "already_named" };
+
+      tx.update(threadRef, {
+        customerName            : parsed,
+        customerNameFromSubject : true,
+        updatedAt               : FV.serverTimestamp()
+      });
+      return { filled: true, name: parsed };
+    });
+  } catch (err) {
+    console.warn(`[gmail-scrape-reaper] fill-from-subject tx failed for ${threadRef.id}:`, err.message);
+    return { filled: false, reason: "tx_aborted" };
+  }
+
+  if (outcome.filled) {
+    await writeAudit(
+      threadRef.id,
+      null,
+      "thread_customer_name_filled_from_subject",
+      { customerName: parsed, subject },
+      "system:reapers:gmailScrape"
+    );
+  }
+  return outcome;
+}
+
+/**
  * Sub-sweep A — Stuck claimed scrape jobs.
  * Reverts to "queued" so the extension picks them up next poll.
  * After MAX_SCRAPE_ATTEMPTS the job goes to "failed" instead of
@@ -749,11 +859,30 @@ async function reapStuckScrapeClaims() {
 
 /**
  * Sub-sweep B — detected_from_gmail threads with no live job.
- * Either no job ever got created (extension wasn't running and the
- * watcher's enqueue silently lost the doc somehow), or the prior job
- * is in "failed" status. Either way, enqueue a fresh scrape job using
- * the deterministic gmail_<msgId> id (matches the watcher's pattern,
- * preserves idempotency for any concurrent watcher tick).
+ *
+ * Two recoveries happen here, in order:
+ *
+ *   1. Subject-fill (cheap, no extension needed).
+ *      If the thread is still showing customerName="Unknown" but has a
+ *      parseable email subject, populate the customer name from the
+ *      subject. This is independent of whether the scrape ever runs —
+ *      it just makes the inbox useful immediately. Threads that never
+ *      get scraped (extension permanently down) still display the
+ *      buyer's name instead of "Unknown".
+ *
+ *   2. Job re-enqueue (only if no live job is in flight).
+ *      Either no job ever got created (extension wasn't running and
+ *      the watcher's enqueue silently lost the doc somehow), or the
+ *      prior job is in "failed" status. Either way, enqueue a fresh
+ *      scrape job using the deterministic gmail_<msgId> id (matches
+ *      the watcher's pattern, preserves idempotency for any concurrent
+ *      watcher tick).
+ *
+ * The two recoveries are independent — a thread can have its name
+ * filled from subject AND a fresh scrape job queued in the same tick.
+ * The eventual scrape will overwrite customerName with the real Etsy
+ * value, but the customerNameFromSubject flag advertises the
+ * provenance so we know which value is the placeholder.
  */
 async function reapDetectedThreadsWithoutLiveJobs() {
   const cutoff = admin.firestore.Timestamp.fromMillis(Date.now() - SCRAPE_DETECTED_GRACE_MS);
@@ -765,17 +894,34 @@ async function reapDetectedThreadsWithoutLiveJobs() {
     .limit(MAX_SCRAPE_REAP_PER_RUN)
     .get();
 
-  if (snap.empty) return { requeued: 0, exhausted: 0, skippedAlive: 0 };
+  if (snap.empty) return { requeued: 0, exhausted: 0, skippedAlive: 0, namesFilledFromSubject: 0 };
 
   let requeued     = 0;
   let exhausted    = 0;
   let skippedAlive = 0;
+  let namesFilledFromSubject = 0;
 
   for (const threadSnap of snap.docs) {
     const thread          = threadSnap.data() || {};
     const threadId        = thread.threadId || threadSnap.id;
     const gmailMessageId  = thread.gmailMessageId;
     const conversationUrl = thread.etsyConversationUrl;
+
+    // Step 1 — Fill customerName from subject if it's still "Unknown".
+    // Cheap (one tx, no Etsy roundtrip), independent of the job-queue
+    // recovery below. Even if the rest of this loop iteration bails
+    // out, the name is now visible in the inbox.
+    if (!thread.customerName || thread.customerName === "Unknown" || thread.customerName === "") {
+      const fillResult = await tryFillCustomerNameFromSubject(threadSnap.ref, thread);
+      if (fillResult.filled) {
+        namesFilledFromSubject++;
+        // Update the in-memory copy so the rest of this iteration sees
+        // the new name (some downstream branches read thread.customerName
+        // for audit-payload purposes).
+        thread.customerName = fillResult.name;
+        thread.customerNameFromSubject = true;
+      }
+    }
 
     // Without a conversation URL we have nothing to scrape. Tag and
     // skip — operator must investigate.
@@ -862,19 +1008,28 @@ async function reapDetectedThreadsWithoutLiveJobs() {
     );
   }
 
-  return { requeued, exhausted, skippedAlive };
+  return { requeued, exhausted, skippedAlive, namesFilledFromSubject };
 }
 
 /**
  * Sub-sweep C — Successful scrape but customerName=="Unknown".
  *
- * One-shot retry. The _unknownRetryAttempted flag is set transactionally
- * BEFORE the job is enqueued, so two reaper invocations racing each
- * other can never produce duplicate retries. After this single retry
- * the thread either gets filled in by the rescrape, or it stays
- * "Unknown" and the operator is on their own — we explicitly do NOT
- * loop further automatic retries here (the user's call when wiring
- * this up: "Yes — try once more, then leave alone").
+ * Two paths, in order:
+ *
+ *   1. Subject-fill (cheap, no extension needed).
+ *      Try to populate customerName from the email subject already on
+ *      the thread. Etsy notification subjects always carry the buyer's
+ *      name. If the fill succeeds, we're done — no rescrape is queued.
+ *
+ *   2. One-shot rescrape (only if subject-fill failed/skipped).
+ *      The _unknownRetryAttempted flag is set transactionally BEFORE
+ *      the job is enqueued, so two reaper invocations racing each
+ *      other can never produce duplicate retries. After this single
+ *      retry the thread either gets filled in by the rescrape, or it
+ *      stays "Unknown" and the operator is on their own — we
+ *      explicitly do NOT loop further automatic retries here (the
+ *      user's call when wiring this up: "Yes — try once more, then
+ *      leave alone").
  */
 async function reapUnknownAfterScrape() {
   const cutoffMs = Date.now() - SCRAPE_UNKNOWN_GRACE_MS;
@@ -889,10 +1044,11 @@ async function reapUnknownAfterScrape() {
     .limit(MAX_SCRAPE_REAP_PER_RUN * 2)   // overfetch; will filter
     .get();
 
-  if (snap.empty) return { retried: 0, skipped: 0 };
+  if (snap.empty) return { retried: 0, skipped: 0, namesFilledFromSubject: 0 };
 
   let retried = 0;
   let skipped = 0;
+  let namesFilledFromSubject = 0;
 
   for (const threadSnap of snap.docs) {
     if (retried >= MAX_SCRAPE_REAP_PER_RUN) break;   // hard cap
@@ -920,6 +1076,26 @@ async function reapUnknownAfterScrape() {
       ? thread.lastSyncedAt.toMillis() : 0;
     if (lastSyncedMs && lastSyncedMs > cutoffMs) {
       skipped++;
+      continue;
+    }
+
+    // Step 1 — Try to fill the name from the email subject. If this
+    // succeeds, the thread is no longer "Unknown" and we don't need to
+    // burn the one-shot rescrape slot. The subject parser handles all
+    // the variants we've seen in real Etsy notification emails (see
+    // extractCustomerNameFromSubject). For threads that arrived via
+    // the snapshot endpoint (no Gmail provenance, no subject) this is
+    // a no-op and we fall through to the rescrape path below.
+    const fillResult = await tryFillCustomerNameFromSubject(threadSnap.ref, thread);
+    if (fillResult.filled) {
+      namesFilledFromSubject++;
+      // Consume the one-shot guard too — the thread is fixed, no
+      // future reaper tick should attempt a rescrape for it.
+      await threadSnap.ref.set({
+        _unknownRetryAttempted   : true,
+        _unknownRetryAttemptedAt : FV.serverTimestamp(),
+        updatedAt                : FV.serverTimestamp()
+      }, { merge: true });
       continue;
     }
 
@@ -1003,7 +1179,7 @@ async function reapUnknownAfterScrape() {
     );
   }
 
-  return { retried, skipped };
+  return { retried, skipped, namesFilledFromSubject };
 }
 
 /**
@@ -1020,8 +1196,10 @@ async function runGmailScrapePass() {
     detectedThreadsRequeued    : 0,
     detectedThreadsExhausted   : 0,
     detectedThreadsSkippedAlive: 0,
+    detectedNamesFilledFromSubject: 0,
     unknownThreadsRetried      : 0,
     unknownThreadsSkipped      : 0,
+    unknownNamesFilledFromSubject : 0,
     reaped                     : 0,    // for the consolidated totalReaped
     subErrors                  : [],
     durationMs                 : 0
@@ -1038,9 +1216,10 @@ async function runGmailScrapePass() {
 
   try {
     const b = await reapDetectedThreadsWithoutLiveJobs();
-    summary.detectedThreadsRequeued     = b.requeued;
-    summary.detectedThreadsExhausted    = b.exhausted;
-    summary.detectedThreadsSkippedAlive = b.skippedAlive;
+    summary.detectedThreadsRequeued        = b.requeued;
+    summary.detectedThreadsExhausted       = b.exhausted;
+    summary.detectedThreadsSkippedAlive    = b.skippedAlive;
+    summary.detectedNamesFilledFromSubject = b.namesFilledFromSubject || 0;
   } catch (e) {
     summary.subErrors.push({ subsweep: "B_detected_orphans", error: e.message });
     console.error("[gmail-scrape-reaper] subsweep B failed:", e);
@@ -1048,23 +1227,27 @@ async function runGmailScrapePass() {
 
   try {
     const c = await reapUnknownAfterScrape();
-    summary.unknownThreadsRetried = c.retried;
-    summary.unknownThreadsSkipped = c.skipped;
+    summary.unknownThreadsRetried        = c.retried;
+    summary.unknownThreadsSkipped        = c.skipped;
+    summary.unknownNamesFilledFromSubject = c.namesFilledFromSubject || 0;
   } catch (e) {
     summary.subErrors.push({ subsweep: "C_unknown_retry", error: e.message });
     console.error("[gmail-scrape-reaper] subsweep C failed:", e);
   }
 
   // Roll up "reaped" for the handler's totalReaped tally. Counts every
-  // action that produced a downstream effect (job requeued / job
-  // exhausted-and-marked-failed / one-shot retry enqueued). Does NOT
-  // count skipped-alive, since those represent healthy in-flight work.
+  // action that produced a downstream effect: job requeued, job
+  // exhausted-and-marked-failed, one-shot retry enqueued, OR a
+  // customerName backfilled from the email subject. Does NOT count
+  // skipped-alive (healthy in-flight work).
   summary.reaped =
       summary.stuckClaimsRequeued
     + summary.stuckClaimsExhausted
     + summary.detectedThreadsRequeued
     + summary.detectedThreadsExhausted
-    + summary.unknownThreadsRetried;
+    + summary.unknownThreadsRetried
+    + summary.detectedNamesFilledFromSubject
+    + summary.unknownNamesFilledFromSubject;
 
   summary.durationMs = Date.now() - tStart;
   return summary;
@@ -1157,6 +1340,8 @@ module.exports.reapAbandonedSalesThread    = reapAbandonedSalesThread;
 module.exports.reapStuckScrapeClaims       = reapStuckScrapeClaims;
 module.exports.reapDetectedThreadsWithoutLiveJobs = reapDetectedThreadsWithoutLiveJobs;
 module.exports.reapUnknownAfterScrape      = reapUnknownAfterScrape;
+module.exports.tryFillCustomerNameFromSubject = tryFillCustomerNameFromSubject;
+module.exports.extractCustomerNameFromSubject = extractCustomerNameFromSubject;
 module.exports.REAPABLE_STAGES             = Array.from(REAPABLE_STAGES);
 module.exports.STALE_CLAIM_THRESHOLD_MS    = STALE_CLAIM_THRESHOLD_MS;
 module.exports.SALES_SCAN_INTERVAL_MS      = SALES_SCAN_INTERVAL_MS;
