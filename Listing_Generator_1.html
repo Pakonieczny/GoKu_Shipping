@@ -6233,9 +6233,11 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         alert("Please enter a count of 1 or more.");
         return;
       }
-      // Per-batch sanity. Server enforces 100 max, but we warn earlier.
+      // Per-submission sanity cap. Each submission gets sliced into
+      // CHUNK_SIZE-sized Gemini batches (see below) so this is just an
+      // upper bound on how many sets the user can prep with one click.
       if (count > 100) {
-        alert("Batch mode supports up to 100 sets per submission. Split into multiple batches for more.");
+        alert("Batch mode supports up to 100 sets per submission. Split into multiple submissions for more.");
         return;
       }
 
@@ -6244,13 +6246,32 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       const slotPlan = SLOT_MAP[category];
       if (!slotPlan) { alert(`Unknown category: ${category}`); return; }
 
-      const ok = confirm(
-        `Submit ONE batch job to Gemini for ${count} set(s) of ${category}?\n\n` +
-        `· Cost: ~50% of Standard mode\n` +
-        `· Output: 2K (2048×2048)\n` +
-        `· Turnaround: usually 2–6h, up to 24h\n\n` +
-        `You can close this tab — results land in Firebase automatically.`
-      );
+      // Auto-chunk. Submissions larger than CHUNK_SIZE sets are split
+      // into multiple Gemini batch jobs server-side. This caps peak
+      // server memory at one chunk's worth of base64 image data
+      // (~80 MB at CHUNK_SIZE=8), which keeps us comfortably under
+      // Netlify's per-function memory ceiling (~700 MB practical limit
+      // before AWS Lambda OOM-kills the runtime with "signal: killed").
+      // The previous attempt at 20 sets in one call hit that ceiling.
+      // Increase only if you've verified your function tier can handle
+      // more memory.
+      const CHUNK_SIZE = 8;
+      const chunkCount = Math.ceil(count / CHUNK_SIZE);
+
+      const confirmMsg = chunkCount === 1
+        ? `Submit ONE batch job to Gemini for ${count} set(s) of ${category}?\n\n` +
+          `· Cost: ~50% of Standard mode\n` +
+          `· Output: 2K (2048×2048)\n` +
+          `· Turnaround: usually 2–6h, up to 24h\n\n` +
+          `You can close this tab — results land in Firebase automatically.`
+        : `Submit ${count} set(s) of ${category}?\n\n` +
+          `Will be split into ${chunkCount} Gemini batch job(s) of up to ${CHUNK_SIZE} sets each ` +
+          `to stay under server memory limits.\n\n` +
+          `· Cost: ~50% of Standard mode\n` +
+          `· Output: 2K (2048×2048)\n` +
+          `· Turnaround: usually 2–6h, up to 24h per batch\n\n` +
+          `You can close this tab — results land in Firebase automatically.`;
+      const ok = confirm(confirmMsg);
       if (!ok) return;
 
       _batchInFlight = true;
@@ -6273,8 +6294,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         const charmLatest = await listLatestFile(charmFolderPath);
         if (!charmLatest) throw new Error(`No files in ${charmFolderPath}/`);
 
-        // Build set descriptors.
-        const sets = [];
+        // Build all set descriptors. Allocation is sequential because
+        // alloc_set is server-side and assigns Set_N atomically.
+        const allSets = [];
         for (let i = 0; i < count; i++) {
           _setBatchProgress(i, count, `Reserving Set_${i + 1}/${count}…`);
 
@@ -6312,37 +6334,57 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
             }
           }
 
-          sets.push({ category, outputBasePath, setN, tasks });
+          allSets.push({ category, outputBasePath, setN, tasks });
         }
 
-        _setBatchProgress(count, count, "Submitting batch to Gemini…");
+        // Slice into chunks and submit each as its own Gemini batch.
+        // Each call to batch_submit creates one Files-API upload and one
+        // batchGenerateContent job, which appears as a separate row in
+        // the in-flight panel. The display name carries the part index
+        // so the user can tell related chunks apart visually.
+        const stamp = new Date().toISOString().slice(0,16).replace(/[:T]/g,"");
+        const submitted = [];
+        const submitErrors = [];
+        for (let c = 0; c < chunkCount; c++) {
+          const start = c * CHUNK_SIZE;
+          const slice = allSets.slice(start, start + CHUNK_SIZE);
+          _setBatchProgress(c, chunkCount, `Submitting chunk ${c + 1}/${chunkCount} (${slice.length} sets)…`);
 
-        // Use the sync endpoint for ALL batch submissions. Earlier code
-        // routed >10-set batches through the background endpoint to avoid
-        // sync timeouts, but background functions return 202 immediately
-        // and can't surface errors back to the browser — failures appear
-        // as opaque "Internal Error. ID: ..." messages with no actionable
-        // information. The sync endpoint returns real error messages.
-        //
-        // Performance: image fetches and JSONL upload are already
-        // parallelized server-side (FETCH_CONCURRENCY = 25). At 20 sets ×
-        // 6 gens = 120 fetches, expected wall-clock is ~5–8s for fetches
-        // + ~3–5s for the Files API upload + ~1s for batch creation,
-        // well within Netlify's 26s sync limit on the Pro plan.
-        const submitPayload = {
-          kind: "batch_submit",
-          sets,
-          imageSize: BATCH_DEFAULT_IMAGE_SIZE,
-          displayName: `lg1-${category}-${count}sets-${new Date().toISOString().slice(0,16).replace(/[:T]/g,"")}`,
-        };
-        const submitResp = await postJson("geminiImageProxy", submitPayload);
+          const dn = chunkCount === 1
+            ? `lg1-${category}-${count}sets-${stamp}`
+            : `lg1-${category}-${count}sets-${stamp}-part${c + 1}of${chunkCount}`;
 
-        if (submitResp?.copyOnly) {
-          _setBatchProgress(count, count, "Done — all copy slots, no Gemini needed");
-          setStatus(`Done · ${count} set(s) · copy-only`);
+          try {
+            const resp = await postJson("geminiImageProxy", {
+              kind: "batch_submit",
+              sets: slice,
+              imageSize: BATCH_DEFAULT_IMAGE_SIZE,
+              displayName: dn,
+            });
+            submitted.push(resp);
+          } catch (chunkErr) {
+            console.error(`[batch_submit chunk ${c+1}] failed`, chunkErr);
+            submitErrors.push({ chunk: c + 1, error: chunkErr?.message || String(chunkErr) });
+            // Don't abort the whole submission — keep going so that
+            // remaining chunks still get submitted. Each chunk is an
+            // independent Gemini batch.
+          }
+        }
+
+        const okCount = submitted.length;
+        const failCount = submitErrors.length;
+        if (failCount === 0) {
+          _setBatchProgress(chunkCount, chunkCount, `Submitted ${okCount}/${chunkCount} chunk(s) · ${count} set(s)`);
+          setStatus(`Batch submitted · ${count} set(s) across ${okCount} chunk(s)`);
         } else {
-          _setBatchProgress(count, count, `Submitted: ${submitResp?.batchName || "(unknown)"}`);
-          setStatus(`Batch submitted · ${count} set(s) · ${submitResp?.batchName || "copy-only"}`);
+          _setBatchProgress(chunkCount, chunkCount, `${okCount}/${chunkCount} chunks OK · ${failCount} failed`);
+          setStatus(`Partial submission · ${okCount}/${chunkCount} chunks succeeded`);
+          alert(
+            `Partial submission:\n` +
+            `  Succeeded: ${okCount} chunk(s)\n` +
+            `  Failed: ${failCount} chunk(s)\n\n` +
+            `First failure: ${submitErrors[0].error.slice(0, 300)}`
+          );
         }
 
         await refreshBatchJobsPanel();

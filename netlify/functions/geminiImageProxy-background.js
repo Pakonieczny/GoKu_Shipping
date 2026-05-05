@@ -1266,12 +1266,11 @@ async function _handlerImpl(event) {
       }
 
       // Fetch images and build JSONL lines with bounded concurrency.
-      // Old code held all 1,200 raw buffers + their base64 forms in
-      // memory simultaneously (peak ~1.7GB for a 100-set batch).
-      // Now we cap in-flight fetches and immediately drop the raw
-      // buffer once we've written its base64 form into the JSONL line
-      // object, halving peak memory.
-      const FETCH_CONCURRENCY = 25;
+      // Concurrency is intentionally low (10) to keep peak memory under
+      // Netlify's per-function ceiling — base64 strings each ~800 KB
+      // sit in memory until the JSONL upload finishes, so fewer
+      // simultaneous fetches = lower peak RAM.
+      const FETCH_CONCURRENCY = 10;
       await runBoundedConcurrent(fetchJobs, FETCH_CONCURRENCY, async (j) => {
         const [ref, charm] = await Promise.all([
           storagePathToBuffer(j.refPath),
