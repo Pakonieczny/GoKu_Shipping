@@ -6436,6 +6436,15 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     }
 
     function _renderBatchCard(b) {
+      // Defensively normalize state. Google's batch API returns
+      // BATCH_STATE_* but our code expects JOB_STATE_*. The backend
+      // also normalizes on read, but Firestore docs created before
+      // that fix may still have BATCH_STATE_*-prefixed values.
+      const stateRaw = String(b.state || "");
+      const state = stateRaw.startsWith("BATCH_STATE_")
+        ? "JOB_STATE_" + stateRaw.slice("BATCH_STATE_".length)
+        : stateRaw;
+
       // State → plain-language label and short status line.
       const stateInfo = {
         "JOB_STATE_PENDING":   { color: "#fde68a", label: "Queued at Google",    line: "Waiting in queue. Auto-checks every 60 seconds." },
@@ -6444,10 +6453,10 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         "JOB_STATE_FAILED":    { color: "#fca5a5", label: "Failed",              line: "Job failed. Use Force download to recover any finished images." },
         "JOB_STATE_CANCELLED": { color: "#a3a3a3", label: "Cancelled",           line: "You cancelled this job." },
         "JOB_STATE_EXPIRED":   { color: "#fca5a5", label: "Expired",             line: "Google didn't finish in 48 hours. Use Force download to recover." },
-      }[b.state] || { color: "#a3a3a3", label: b.state || "Unknown", line: "" };
+      }[state] || { color: "#a3a3a3", label: stateRaw || "Unknown", line: "" };
 
-      const succeeded = b.state === "JOB_STATE_SUCCEEDED";
-      const final = ["JOB_STATE_SUCCEEDED", "JOB_STATE_FAILED", "JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED"].includes(b.state);
+      const succeeded = state === "JOB_STATE_SUCCEEDED";
+      const final = ["JOB_STATE_SUCCEEDED", "JOB_STATE_FAILED", "JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED"].includes(state);
       const created = b.createdAt ? new Date(b.createdAt).toLocaleString() : "(unknown)";
       const stats = b.batchStats || {};
       const displayId = (b.batchName || "").replace(/^batches\//, "");
@@ -6458,7 +6467,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       const downloadOk = succeeded && !b.collected;
       const downloadDisabledReason = b.collected ? "Already downloaded — see Review tab"
                                     : succeeded ? ""
-                                    : "Job hasn't finished yet (state: " + (b.state || "?") + ")";
+                                    : "Job hasn't finished yet (state: " + (state || "?") + ")";
 
       // "Force download" recovers partial results when a job is in a
       // non-success state. Useful if a job hangs, fails halfway, or
@@ -6587,10 +6596,21 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
     function _startBatchAutoPoll() {
       if (_batchPollTimer) return;
+      // Helper: accept either JOB_STATE_* or BATCH_STATE_* and return
+      // the JOB_STATE_* form for comparison.
+      const _normState = (s) => {
+        const x = String(s || "");
+        return x.startsWith("BATCH_STATE_")
+          ? "JOB_STATE_" + x.slice("BATCH_STATE_".length)
+          : x;
+      };
       _batchPollTimer = setInterval(async () => {
         // Only poll if any visible batch is non-final.
-        const anyOpen = _lastBatchList.some((b) => !b.collected &&
-          b.state !== "JOB_STATE_FAILED" && b.state !== "JOB_STATE_CANCELLED" && b.state !== "JOB_STATE_EXPIRED");
+        const anyOpen = _lastBatchList.some((b) => {
+          const st = _normState(b.state);
+          return !b.collected &&
+            st !== "JOB_STATE_FAILED" && st !== "JOB_STATE_CANCELLED" && st !== "JOB_STATE_EXPIRED";
+        });
         if (!anyOpen) {
           clearInterval(_batchPollTimer);
           _batchPollTimer = null;
@@ -6602,8 +6622,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         // Refresh state from Google for each open batch.
         for (const b of _lastBatchList) {
           if (b.collected) continue;
-          const isFinal = b.state === "JOB_STATE_FAILED" || b.state === "JOB_STATE_CANCELLED" ||
-                          b.state === "JOB_STATE_EXPIRED" || b.state === "JOB_STATE_SUCCEEDED";
+          const st = _normState(b.state);
+          const isFinal = st === "JOB_STATE_FAILED" || st === "JOB_STATE_CANCELLED" ||
+                          st === "JOB_STATE_EXPIRED" || st === "JOB_STATE_SUCCEEDED";
           if (isFinal) continue;
           try {
             await postJson("geminiImageProxy", { kind: "batch_status", batchName: b.batchName });

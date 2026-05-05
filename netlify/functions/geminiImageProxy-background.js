@@ -984,7 +984,20 @@ async function getGeminiBatchJob(apiKey, batchName) {
   if (!resp.ok) {
     throw new Error(`Batch get failed: HTTP ${resp.status} ${text.slice(0, 400)}`);
   }
-  return JSON.parse(text);
+  const parsed = JSON.parse(text);
+
+  // Normalize state names. Google's batch API returns BATCH_STATE_*
+  // strings; our code and Firestore documents use JOB_STATE_*. Map at
+  // the source so all downstream logic compares against JOB_STATE_*.
+  // Done in-place so state appears in both .metadata.state and .state.
+  const norm = (s) => {
+    if (!s || typeof s !== "string") return s;
+    if (s.startsWith("BATCH_STATE_")) return "JOB_STATE_" + s.slice("BATCH_STATE_".length);
+    return s;
+  };
+  if (parsed?.metadata?.state) parsed.metadata.state = norm(parsed.metadata.state);
+  if (parsed?.state) parsed.state = norm(parsed.state);
+  return parsed;
 }
 
 async function cancelGeminiBatchJob(apiKey, batchName) {
