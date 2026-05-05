@@ -1452,7 +1452,7 @@ async function _handlerImpl(event) {
         ok: true,
         batchName,
         docId,
-        requestCount: lines.length,
+        requestCount: routes.length,
         setsCount: sets.length,
         copyStats: { copied: copiedCount, errors: copyErrors },
         inputJsonlBytes: jsonlBytes,
