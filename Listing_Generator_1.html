@@ -1814,7 +1814,7 @@
               <button type="button" class="btn btnSmall" id="batchJobsRefreshBtn" style="font-size: 10px; padding: 2px 8px;">↻ Refresh</button>
             </div>
             <div class="muted" style="font-size: 10px; margin-bottom: 8px; line-height: 1.4;">
-              Each batch shows three buttons: <b>Refresh</b> (check progress), <b>Download</b> (pull finished images into Firebase), <b>Cancel</b> (stop the job). You can close this tab; jobs keep running at Google.
+              Submitted batches run at Google for hours, then images auto-save to Firebase. You can close this tab; jobs keep running. The status box below updates every 60 seconds.
             </div>
             <div id="batchJobsList" style="display: flex; flex-direction: column; gap: 8px;">
               <div class="muted" style="font-size: 11px; padding: 6px 0;">Loading…</div>
@@ -6504,14 +6504,15 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         const sessionList = [...sessions.values()].sort((a, b) => b.earliest - a.earliest);
         listEl.innerHTML = sessionList.map((s) => _renderSessionBlock(s)).join("");
 
-        // Per-row buttons — only Cancel and Recover (force-download
-        // for failed/expired) need handlers now. The Download button
-        // is gone because successful batches auto-collect.
-        for (const b of batches) {
-          const safeId = b.docId;
-          document.getElementById(`bCancel_${safeId}`)?.addEventListener("click", () => cancelOneBatch(b.batchName));
-          document.getElementById(`bForce_${safeId}`)?.addEventListener("click", () => collectOneBatch(b.batchName, true));
-        }
+        // Wire session-level buttons. We use data attributes instead
+        // of one-id-per-batch so the wiring is one query per panel
+        // rather than O(batches), which matters at thousands of sets.
+        listEl.querySelectorAll("[data-session-cancel]").forEach((btn) => {
+          btn.addEventListener("click", () => _cancelSession(btn.getAttribute("data-session-cancel")));
+        });
+        listEl.querySelectorAll("[data-session-recover]").forEach((btn) => {
+          btn.addEventListener("click", () => _recoverSession(btn.getAttribute("data-session-recover")));
+        });
 
         _startBatchAutoPoll();
       } catch (err) {
@@ -6537,6 +6538,10 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     }
 
     function _renderSessionBlock(session) {
+      // Aggregate ALL the batches into a single info box. We never
+      // render individual batch rows — at 1000+ sets that's a wall of
+      // text. The user only needs counts and a button to act on the
+      // problem cases.
       const states = session.batches.map((b) => _normBatchState(b.state));
       const total = session.batches.length;
       const finished = session.batches.filter((b) => b.collected).length;
@@ -6545,7 +6550,10 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       const failed = states.filter((st) => st === "JOB_STATE_FAILED" || st === "JOB_STATE_EXPIRED").length;
       const cancelled = states.filter((st) => st === "JOB_STATE_CANCELLED").length;
 
-      let totalSets = 0, totalImagesGen = 0, totalImagesFailed = 0, totalCharmsMoved = 0;
+      let totalSets = 0;
+      let totalImagesGen = 0;
+      let totalImagesFailed = 0;
+      let totalCharmsMoved = 0;
       for (const b of session.batches) {
         totalSets += b.setsCount || 0;
         if (b.results) {
@@ -6557,92 +6565,115 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
       const startStr = session.earliest && isFinite(session.earliest)
         ? new Date(session.earliest).toLocaleString() : "—";
-      const allDone = finished === total;
+      const allDone = (finished + cancelled) === total;
       const elapsedMs = allDone && session.latest
         ? session.latest - session.earliest
         : (session.earliest && isFinite(session.earliest) ? Date.now() - session.earliest : 0);
-      const endStr = allDone && session.latest ? new Date(session.latest).toLocaleString() : "in progress";
+      const endStr = allDone && session.latest ? new Date(session.latest).toLocaleString() : null;
 
+      // Headline.
       let headline, headlineColor;
-      if (failed > 0) { headline = `${failed} batch(es) failed · ${succeeded} succeeded`; headlineColor = "#fca5a5"; }
-      else if (allDone && cancelled > 0) { headline = `Session cancelled (${succeeded} succeeded · ${cancelled} cancelled)`; headlineColor = "#a3a3a3"; }
-      else if (allDone) { headline = `All ${total} batch(es) complete · ${totalImagesGen} images delivered`; headlineColor = "#7fdb96"; }
-      else if (running > 0) { headline = `${finished}/${total} batch(es) complete · ${running} running`; headlineColor = "#93c5fd"; }
-      else { headline = `${finished}/${total} batch(es) complete`; headlineColor = "#fde68a"; }
-
-      const rowsHtml = session.batches
-        .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
-        .map(_renderBatchRow).join("");
+      if (allDone && cancelled === total) {
+        headline = "All batches cancelled"; headlineColor = "#a3a3a3";
+      } else if (allDone && failed > 0) {
+        headline = `Done with ${failed} failure(s)`; headlineColor = "#fca5a5";
+      } else if (allDone) {
+        headline = "Complete"; headlineColor = "#7fdb96";
+      } else if (running > 0) {
+        headline = "In progress"; headlineColor = "#93c5fd";
+      } else {
+        headline = "Pending"; headlineColor = "#fde68a";
+      }
 
       const sessionLabel = session.sessionId === "(unsessioned)"
         ? "Earlier batches"
         : `Submission · ${startStr}`;
 
-      const statsLine = [
-        `<b>Sets:</b> ${totalSets}`,
-        totalImagesGen ? `<b>Images delivered:</b> ${totalImagesGen}` : null,
-        totalImagesFailed ? `<b>Failed images:</b> ${totalImagesFailed}` : null,
-        totalCharmsMoved ? `<b>Charms used:</b> ${totalCharmsMoved}` : null,
-      ].filter(Boolean).join(" · ");
+      // Build the stats grid as plain key:value pairs. Compact and scannable.
+      const rows = [];
+      rows.push(["Sets requested",   String(totalSets)]);
+      rows.push(["Batches",          `${total} total · ${running} running · ${succeeded} ready · ${finished} saved · ${failed} failed${cancelled ? ` · ${cancelled} cancelled` : ""}`]);
+      if (totalImagesGen) rows.push(["Images delivered", String(totalImagesGen)]);
+      if (totalImagesFailed) rows.push(["Images failed", String(totalImagesFailed)]);
+      if (totalCharmsMoved) rows.push(["Charms used", String(totalCharmsMoved)]);
+      rows.push(["Started",   startStr]);
+      if (allDone && endStr) rows.push(["Finished", endStr]);
+      rows.push([allDone ? "Total time" : "Elapsed", _formatDuration(elapsedMs)]);
+
+      const statsHtml = rows.map(([k, v]) =>
+        `<div style="display:flex; gap:8px;"><span style="color:var(--text-2); min-width:130px;">${k}</span><span style="color:var(--text); font-weight:500;">${v}</span></div>`
+      ).join("");
+
+      // Action buttons: only show what's actionable. Cancel-all if
+      // anything is still running. Recover-all if there are failed /
+      // expired batches the user could pull partial results from.
+      const cancellableBatches = session.batches.filter((b) => {
+        const st = _normBatchState(b.state);
+        return !["JOB_STATE_SUCCEEDED", "JOB_STATE_FAILED", "JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED"].includes(st);
+      });
+      const recoverableBatches = session.batches.filter((b) => {
+        const st = _normBatchState(b.state);
+        return (st === "JOB_STATE_FAILED" || st === "JOB_STATE_EXPIRED") && !b.collected;
+      });
+
+      const buttons = [];
+      if (cancellableBatches.length > 0) {
+        buttons.push(`<button class="btn btnSmall" data-session-cancel="${session.sessionId}" style="background: #3d1c1c; border: 1px solid #7a3838; color: #fca5a5; font-size: 11px;">✕ Cancel all running (${cancellableBatches.length})</button>`);
+      }
+      if (recoverableBatches.length > 0) {
+        buttons.push(`<button class="btn btnSmall" data-session-recover="${session.sessionId}" style="background: #3d3017; border: 1px solid #7a5e2c; color: #fde68a; font-size: 11px;">⚠ Recover failed (${recoverableBatches.length})</button>`);
+      }
+      const buttonsHtml = buttons.length
+        ? `<div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;">${buttons.join("")}</div>`
+        : "";
 
       return `
-        <div style="background: var(--card-2); border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-bottom: 10px;">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; flex-wrap: wrap; gap: 6px;">
+        <div style="background: var(--card-2); border: 1px solid var(--line); border-radius: 8px; padding: 14px; margin-bottom: 10px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-wrap: wrap; gap: 6px;">
             <div style="font-size: 12px; font-weight: 600;">${sessionLabel}</div>
-            <div style="font-size: 11px; font-weight: 600; color: ${headlineColor};">${headline}</div>
+            <div style="font-size: 12px; font-weight: 700; color: ${headlineColor};">${headline}</div>
           </div>
-          <div class="muted" style="font-size: 10px; line-height: 1.5; margin-bottom: 8px;">
-            <div>${statsLine}</div>
-            <div><b>Started:</b> ${startStr} · <b>${allDone ? "Finished" : "Elapsed"}:</b> ${allDone ? endStr : _formatDuration(elapsedMs)}${allDone ? ` (${_formatDuration(elapsedMs)} total)` : ""}</div>
+          <div style="display: flex; flex-direction: column; gap: 4px; font-size: 11px;">
+            ${statsHtml}
           </div>
-          <div style="display: flex; flex-direction: column; gap: 4px;">${rowsHtml}</div>
+          ${buttonsHtml}
         </div>
       `;
     }
 
-    function _renderBatchRow(b) {
-      const state = _normBatchState(b.state);
-      const stateInfo = {
-        "JOB_STATE_PENDING":   { color: "#fde68a", label: "Queued",       icon: "⏳" },
-        "JOB_STATE_RUNNING":   { color: "#93c5fd", label: "Running",      icon: "↻"  },
-        "JOB_STATE_SUCCEEDED": { color: "#7fdb96", label: "Saving",       icon: "↓"  },
-        "JOB_STATE_FAILED":    { color: "#fca5a5", label: "Failed",       icon: "⚠"  },
-        "JOB_STATE_CANCELLED": { color: "#a3a3a3", label: "Cancelled",    icon: "✕"  },
-        "JOB_STATE_EXPIRED":   { color: "#fca5a5", label: "Expired",      icon: "⚠"  },
-      }[state] || { color: "#a3a3a3", label: state || "Unknown", icon: "?" };
-
-      const final = ["JOB_STATE_SUCCEEDED", "JOB_STATE_FAILED", "JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED"].includes(state);
-      const cancelOk = !final;
-      const showForce = (state === "JOB_STATE_FAILED" || state === "JOB_STATE_EXPIRED") && !b.collected;
-      const r = b.results || {};
-      const stats = b.batchStats || {};
-
-      let statusDetail = "";
-      if (b.collected && r.succeededCount != null) {
-        statusDetail = `${r.succeededCount} delivered${r.failedCount ? ` · ${r.failedCount} failed` : ""}`;
-      } else if (state === "JOB_STATE_SUCCEEDED" && !b.collected) {
-        statusDetail = `auto-saving to Firebase…`;
-      } else if (state === "JOB_STATE_RUNNING" && stats.completedRequestCount != null) {
-        statusDetail = `${stats.completedRequestCount}/${b.requestCount} done at Google`;
-      } else if (state === "JOB_STATE_FAILED" || state === "JOB_STATE_EXPIRED") {
-        statusDetail = "click ⚠ to recover finished images";
+    // Cancel every still-running batch in a session.
+    async function _cancelSession(sessionId) {
+      const targets = _lastBatchList.filter((b) => {
+        if ((b.sessionId || "(unsessioned)") !== sessionId) return false;
+        const st = _normBatchState(b.state);
+        return !["JOB_STATE_SUCCEEDED", "JOB_STATE_FAILED", "JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED"].includes(st);
+      });
+      if (targets.length === 0) return;
+      const ok = confirm(`Cancel ${targets.length} running batch(es) in this submission?\n\nAlready-completed work is still billed.`);
+      if (!ok) return;
+      for (const b of targets) {
+        try { await postJson("geminiImageProxy", { kind: "batch_cancel", batchName: b.batchName }); }
+        catch (e) { console.warn(`cancel ${b.batchName} failed:`, e?.message || e); }
       }
+      await refreshBatchJobsPanel();
+    }
 
-      const collectedTag = b.collected
-        ? `<span style="color: #7fdb96; font-weight: 600;">✓ Saved</span>` : "";
-
-      return `
-        <div style="display: flex; align-items: center; gap: 8px; padding: 4px 8px; background: var(--inset); border-radius: 4px; font-size: 11px;">
-          <span style="color: ${stateInfo.color}; font-weight: 600; min-width: 80px;">${stateInfo.icon} ${stateInfo.label}</span>
-          <span style="font-family: var(--font-mono); color: var(--text-2); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-            ${b.displayName || b.batchName} · ${b.setsCount || 0} sets
-          </span>
-          ${statusDetail ? `<span style="color: var(--text-2); font-size: 10px;">${statusDetail}</span>` : ""}
-          ${collectedTag}
-          ${cancelOk ? `<button class="btn btnSmall" id="bCancel_${b.docId}" style="background: #3d1c1c; border: 1px solid #7a3838; color: #fca5a5; font-size: 10px; padding: 2px 6px;">✕</button>` : ""}
-          ${showForce ? `<button class="btn btnSmall" id="bForce_${b.docId}" style="background: #3d3017; border: 1px solid #7a5e2c; color: #fde68a; font-size: 10px; padding: 2px 6px;" title="Recover whatever images Google managed to finish">⚠ Recover</button>` : ""}
-        </div>
-      `;
+    // Recover (force-collect partial results) for every failed/expired
+    // batch in a session that hasn't been collected yet.
+    async function _recoverSession(sessionId) {
+      const targets = _lastBatchList.filter((b) => {
+        if ((b.sessionId || "(unsessioned)") !== sessionId) return false;
+        const st = _normBatchState(b.state);
+        return (st === "JOB_STATE_FAILED" || st === "JOB_STATE_EXPIRED") && !b.collected;
+      });
+      if (targets.length === 0) return;
+      const ok = confirm(`Recover partial results from ${targets.length} failed batch(es)?\n\nThis pulls whatever images Google managed to finish before the failure. Successful images land in Firebase; failed slots stay empty.`);
+      if (!ok) return;
+      for (const b of targets) {
+        try { await postJson("geminiImageProxy", { kind: "batch_collect", batchName: b.batchName, force: true }); }
+        catch (e) { console.warn(`recover ${b.batchName} failed:`, e?.message || e); }
+      }
+      await refreshBatchJobsPanel();
     }
 
     async function pollOneBatch(batchName) {
