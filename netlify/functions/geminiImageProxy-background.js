@@ -879,19 +879,39 @@ function buildBatchJsonlLine(key, prompt, refMime, refBase64, charmMime, charmBa
   const safeRefMime = (refMime && refMime.startsWith("image/")) ? refMime : "image/png";
   const safeCharmMime = (charmMime && charmMime.startsWith("image/")) ? charmMime : "image/png";
 
+  // Mirror the prompt augmentation Standard mode uses in
+  // callGeminiGenerateContentImage(). Without this suffix, Gemini
+  // may reframe or change the aspect ratio of the output, which in
+  // turn causes the charm to appear at the wrong scale relative to
+  // the reference image. Standard and Batch modes must produce the
+  // same output for the same inputs.
+  // Pixel-size hint: at 2K we tell the model 2048x2048; at 1K, 1024x1024.
+  const sizeHint = sizeKey === "1K" ? "1024x1024"
+                 : sizeKey === "2K" ? "2048x2048"
+                 : sizeKey === "4K" ? "4096x4096"
+                 : "2048x2048";
+  const augmentedPrompt =
+    `${String(prompt || "").trim()}\n\n` +
+    `OUTPUT (NON-NEGOTIABLE): Return a photorealistic 1:1 image. ` +
+    `Exact size ${sizeHint}. ` +
+    `Return an image suitable for a product photo.`;
+
   return {
     key,
     request: {
       contents: [{
         role: "user",
         parts: [
-          { text: String(prompt || "").trim() },
+          { text: augmentedPrompt },
           { inline_data: { mime_type: safeRefMime, data: refBase64 } },
           { inline_data: { mime_type: safeCharmMime, data: charmBase64 } },
         ],
       }],
       generation_config: {
-        responseModalities: ["IMAGE"],
+        // Match Standard mode's modalities exactly. The model may
+        // adjust framing/scaling decisions when text output is
+        // disallowed, which contributed to charm-size mismatches.
+        responseModalities: ["TEXT", "IMAGE"],
         imageConfig: { imageSize: sizeKey },
       },
     },
