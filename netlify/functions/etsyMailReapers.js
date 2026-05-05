@@ -1,7 +1,6 @@
 /*  netlify/functions/etsyMailReapers.js
  *
- *  v2.4 — Consolidated reaper. Replaces three separate cron functions
- *  with a single endpoint that runs all three reaper passes on each
+ *  v2.5 — Consolidated reaper. Runs four reaper passes on each
  *  invocation:
  *
  *    1. AUTO_PIPELINE_CLAIMS — clear stale `in_progress` markers from
@@ -10,6 +9,11 @@
  *       drafts (was: etsyMailSendQueueReaper).
  *    3. SALES_FUNNELS       — mark abandoned sales conversations
  *       (was: etsyMailSalesReaper).
+ *    4. GMAIL_SCRAPE        — recover stuck Gmail-watcher → scrape jobs
+ *       (v2.5; closes the loop on threads that get stranded at
+ *       customerName="Unknown" because the Chrome extension wasn't
+ *       running, crashed mid-claim, or scraped an Etsy page that no
+ *       longer rendered the customer name).
  *
  *  ═══ WHY ONE FILE ════════════════════════════════════════════════════
  *
@@ -17,20 +21,56 @@
  *  cron cadence (5 min / 5 min / 6 h). Consolidating reduces deploy
  *  surface and audit noise. Each pass is independently bounded
  *  (MAX_REAP_PER_RUN_*) and short-circuits when there's nothing to do,
- *  so running all three on the most aggressive cadence (5 min) costs
+ *  so running all passes on the most aggressive cadence (5 min) costs
  *  ~one indexed Firestore query per reaper-with-zero-work — negligible.
  *
  *  Sales-funnel scan would otherwise run 72× more often (every 5 min vs
  *  every 6 h). To keep query volume sane, the sales-funnel pass uses an
  *  internal time-gate (lastSalesScanAt in EtsyMail_Config/reaperState)
  *  so it ACTUALLY runs only once per SALES_SCAN_INTERVAL_MS. The other
- *  two reapers run on every invocation as before.
+ *  passes run on every invocation.
+ *
+ *  ═══ v2.5 ADDITION — gmail_scrape pass ═══════════════════════════════
+ *
+ *  Three sub-sweeps, run in order on every invocation:
+ *
+ *    Sub-sweep A — Stuck claimed scrape jobs
+ *      EtsyMail_Jobs where jobType=="scrape" AND status=="claimed" AND
+ *      claimedAt < now - SCRAPE_STUCK_CLAIM_MS. Revert to "queued" so the
+ *      extension picks them up next poll. After MAX_SCRAPE_ATTEMPTS the
+ *      job goes to "failed" instead, breaking any infinite-retry loop.
+ *
+ *    Sub-sweep B — detected_from_gmail threads with no live job
+ *      EtsyMail_Threads where status=="detected_from_gmail" AND createdAt
+ *      < now - SCRAPE_DETECTED_GRACE_MS. For each, look up the
+ *      deterministic gmail_<gmailMessageId> job: if missing or "failed",
+ *      enqueue a fresh job; if "queued"/"claimed"/"succeeded", leave
+ *      alone. After MAX_SCRAPE_ATTEMPTS the thread is tagged
+ *      "scrape_exhausted" for operator follow-up.
+ *
+ *    Sub-sweep C — Successful scrape but customerName=="Unknown"
+ *      EtsyMail_Threads where customerName=="Unknown" AND status is
+ *      post-scrape (etsy_scraped, ai_drafted, etc) AND
+ *      _unknownRetryAttempted!==true AND lastSyncedAt is older than
+ *      SCRAPE_UNKNOWN_GRACE_MS. Set _unknownRetryAttempted=true under a
+ *      transaction BEFORE enqueueing, so two reaper invocations racing
+ *      can never produce duplicate retries. One retry per thread, ever.
+ *
+ *  Why this lives here, not in a standalone reaper file:
+ *    The "consolidated reaper" pattern is the existing convention in
+ *    this codebase (see "WHY ONE FILE" above). A separate
+ *    etsyMailGmailScrapeReaper.js would mean another scheduled
+ *    function, another netlify.toml entry, another set of audit-row
+ *    actor strings to filter on. The gmail_scrape pass costs one
+ *    indexed query per sub-sweep when idle — same as every other pass
+ *    here — so consolidation is essentially free.
  *
  *  ═══ INVOCATION ════════════════════════════════════════════════════
  *
  *  Scheduled cron:        netlify.toml schedule (every 5 minutes)
  *  Manual full sweep:     POST /.netlify/functions/etsyMailReapers
- *  Manual single pass:    POST { op: "auto_pipeline" | "send_queue" | "sales_funnels" }
+ *  Manual single pass:    POST { op: "auto_pipeline" | "send_queue" |
+ *                                    "sales_funnels" | "gmail_scrape" }
  *  Force sales pass now:  POST { op: "sales_funnels", force: true }
  *
  *  Manual invocations require X-EtsyMail-Secret. Scheduled invocations
@@ -55,6 +95,8 @@ const DRAFTS_COLL  = "EtsyMail_Drafts";
 const SALES_COLL   = "EtsyMail_SalesContext";
 const AUDIT_COLL   = "EtsyMail_Audit";
 const CONFIG_COLL  = "EtsyMail_Config";
+// v2.5 — Jobs collection used by the gmail_scrape pass below.
+const JOBS_COLL    = "EtsyMail_Jobs";
 
 // ─── Auto-pipeline reaper config ───────────────────────────────────────
 // A claim is "stale" once this much time has passed without a finalize.
@@ -80,6 +122,47 @@ const SALES_SCAN_INTERVAL_MS = 6 * 60 * 60 * 1000;
 // is NOT in this list — those threads are deals waiting on operator
 // approval, not stalled customer conversations.
 const REAPABLE_STAGES = new Set(["discovery", "spec", "quote", "revision"]);
+
+// ─── Gmail-scrape reaper config (v2.5) ─────────────────────────────────
+// A scrape job is "stuck claimed" if the extension grabbed it but never
+// progressed. Real scrapes finish in seconds; we wait 5 min before
+// declaring the worker dead. Well past the extension's 20s claim-poll
+// cycle, so a healthy-but-slow worker won't be reaped.
+const SCRAPE_STUCK_CLAIM_MS = 5 * 60 * 1000;
+
+// Grace period after a thread is created at "detected_from_gmail"
+// before sub-sweep B starts re-enqueueing for it. Gives the extension
+// first dibs — its claim-poll runs every 20s, so 3 min is generous.
+const SCRAPE_DETECTED_GRACE_MS = 3 * 60 * 1000;
+
+// Grace period after a successful scrape that left customerName=
+// "Unknown" before sub-sweep C retries. Lets any in-flight follow-up
+// writes settle and avoids racing the snapshot endpoint's commit.
+const SCRAPE_UNKNOWN_GRACE_MS = 2 * 60 * 1000;
+
+// Mirrors MAX_ATTEMPTS in etsyMailJobs.js. If they ever diverge, jobs
+// could get stuck in a loop where the reaper keeps requeueing past the
+// extension's max-attempts threshold. Keep aligned.
+const MAX_SCRAPE_ATTEMPTS = 3;
+
+// Defense-in-depth caps per invocation. The 30s scheduled-function
+// budget is plenty for these numbers; the cap is mainly to prevent a
+// misconfig (e.g. an entire day of jobs all stuck) from blowing the
+// budget on one tick. Anything not handled this tick gets handled the
+// next.
+const MAX_SCRAPE_REAP_PER_RUN = 50;
+
+// Statuses that mean "the scrape did happen, but the result might still
+// have customerName=Unknown" — sub-sweep C only retries threads that
+// are already past the initial detection step.
+const SCRAPE_POST_STATUSES = [
+  "etsy_scraped",
+  "ai_drafted",
+  "needs_review",
+  "auto_replied",
+  "replied",
+  "closed"
+];
 
 // ─── Helpers ───────────────────────────────────────────────────────────
 
@@ -464,24 +547,8 @@ async function reapAbandonedSalesThread(threadId, thresholdMs) {
   });
 }
 
-// v0.9.47 — Sales abandonment removed from system policy. The
-// sales-funnel reaper pass returns immediately without touching
-// any threads. The auto_pipeline and send_queue passes are
-// unaffected. Operators manually archive stale sales threads from
-// the Sales — Active folder.
-const SALES_FUNNEL_PASS_DISABLED = true;
-
 async function runSalesFunnelPass({ force = false } = {}) {
   const tStart = Date.now();
-
-  if (SALES_FUNNEL_PASS_DISABLED) {
-    return {
-      pass: "sales_funnels",
-      skipped: true,
-      reason: "abandonment_removed_from_policy",
-      durationMs: Date.now() - tStart
-    };
-  }
 
   if (!(await isSalesModeEnabled())) {
     return { pass: "sales_funnels", skipped: true, reason: "sales_mode_disabled", durationMs: Date.now() - tStart };
@@ -578,6 +645,432 @@ async function runSalesFunnelPass({ force = false } = {}) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
+//  Pass 4 — Gmail-watcher → scrape-job recovery (v2.5)
+// ═══════════════════════════════════════════════════════════════════════
+//
+// Three sub-sweeps that together close the loop on threads stranded at
+// customerName="Unknown" by the Gmail-watcher → extension-scraper
+// pipeline. See file header for the full failure-mode taxonomy. Each
+// sub-sweep is independently bounded and idempotent; running this pass
+// twice in quick succession cannot produce duplicate work.
+
+// Centralized "is this job alive?" check used by sub-sweep B so any
+// future caller (manual-rescrape endpoint, etc.) shares the rule.
+function isLiveScrapeJob(jobData) {
+  if (!jobData) return false;
+  return ["queued", "claimed", "succeeded"].includes(jobData.status);
+}
+
+/**
+ * Sub-sweep A — Stuck claimed scrape jobs.
+ * Reverts to "queued" so the extension picks them up next poll.
+ * After MAX_SCRAPE_ATTEMPTS the job goes to "failed" instead of
+ * looping. Transactional check-and-flip prevents racing reapers from
+ * double-requeueing.
+ */
+async function reapStuckScrapeClaims() {
+  const cutoff = admin.firestore.Timestamp.fromMillis(Date.now() - SCRAPE_STUCK_CLAIM_MS);
+
+  // Indexed query: jobType+status+claimedAt. Ordering ASC tackles the
+  // most-stuck first.
+  const snap = await db.collection(JOBS_COLL)
+    .where("jobType",   "==", "scrape")
+    .where("status",    "==", "claimed")
+    .where("claimedAt", "<",  cutoff)
+    .orderBy("claimedAt", "asc")
+    .limit(MAX_SCRAPE_REAP_PER_RUN)
+    .get();
+
+  if (snap.empty) return { requeued: 0, exhausted: 0 };
+
+  let requeued  = 0;
+  let exhausted = 0;
+
+  for (const docSnap of snap.docs) {
+    const ref = docSnap.ref;
+    try {
+      const outcome = await db.runTransaction(async (tx) => {
+        const fresh = await tx.get(ref);
+        if (!fresh.exists) return { action: "gone" };
+        const data = fresh.data() || {};
+        if (data.status !== "claimed") return { action: "no_longer_claimed" };
+
+        // Re-check staleness inside the tx — claimedAt might have been
+        // updated between the query and now (worker submitted a heartbeat).
+        const claimedAtMs = data.claimedAt && data.claimedAt.toMillis
+          ? data.claimedAt.toMillis() : 0;
+        if (Date.now() - claimedAtMs < SCRAPE_STUCK_CLAIM_MS) {
+          return { action: "no_longer_stuck" };
+        }
+
+        const attempts = data.attempts || 0;
+        if (attempts >= MAX_SCRAPE_ATTEMPTS) {
+          // Don't loop — escalate to failed and let the operator look.
+          tx.update(ref, {
+            status   : "failed",
+            lastError: `Stuck in 'claimed' past ${SCRAPE_STUCK_CLAIM_MS}ms with no heartbeat; attempts=${attempts} reached MAX_SCRAPE_ATTEMPTS`,
+            updatedAt: FV.serverTimestamp()
+          });
+          return { action: "exhausted", attempts, threadId: data.threadId };
+        }
+
+        tx.update(ref, {
+          status    : "queued",
+          claimedBy : null,
+          claimedAt : null,
+          // attempts left as-is — claimNextJob's tx in etsyMailJobs.js
+          // will increment it on next claim.
+          lastError : `Reaped stuck claim after ${SCRAPE_STUCK_CLAIM_MS}ms (worker died?)`,
+          updatedAt : FV.serverTimestamp()
+        });
+        return { action: "requeued", attempts, threadId: data.threadId };
+      });
+
+      if (outcome.action === "requeued") {
+        requeued++;
+        await writeAudit(outcome.threadId, null, "scrape_job_reaped_stuck_claim",
+          { jobId: ref.id, attempts: outcome.attempts },
+          "system:reapers:gmailScrape"
+        );
+      } else if (outcome.action === "exhausted") {
+        exhausted++;
+        await writeAudit(outcome.threadId, null, "scrape_job_exhausted",
+          { jobId: ref.id, attempts: outcome.attempts, reason: "stuck_claim_max_attempts" },
+          "system:reapers:gmailScrape"
+        );
+      }
+    } catch (err) {
+      console.warn(`[gmail-scrape-reaper] subsweep A tx failed for ${ref.id}:`, err.message);
+    }
+  }
+
+  return { requeued, exhausted };
+}
+
+/**
+ * Sub-sweep B — detected_from_gmail threads with no live job.
+ * Either no job ever got created (extension wasn't running and the
+ * watcher's enqueue silently lost the doc somehow), or the prior job
+ * is in "failed" status. Either way, enqueue a fresh scrape job using
+ * the deterministic gmail_<msgId> id (matches the watcher's pattern,
+ * preserves idempotency for any concurrent watcher tick).
+ */
+async function reapDetectedThreadsWithoutLiveJobs() {
+  const cutoff = admin.firestore.Timestamp.fromMillis(Date.now() - SCRAPE_DETECTED_GRACE_MS);
+
+  const snap = await db.collection(THREADS_COLL)
+    .where("status",    "==", "detected_from_gmail")
+    .where("createdAt", "<",  cutoff)
+    .orderBy("createdAt", "asc")
+    .limit(MAX_SCRAPE_REAP_PER_RUN)
+    .get();
+
+  if (snap.empty) return { requeued: 0, exhausted: 0, skippedAlive: 0 };
+
+  let requeued     = 0;
+  let exhausted    = 0;
+  let skippedAlive = 0;
+
+  for (const threadSnap of snap.docs) {
+    const thread          = threadSnap.data() || {};
+    const threadId        = thread.threadId || threadSnap.id;
+    const gmailMessageId  = thread.gmailMessageId;
+    const conversationUrl = thread.etsyConversationUrl;
+
+    // Without a conversation URL we have nothing to scrape. Tag and
+    // skip — operator must investigate.
+    if (!conversationUrl) {
+      await threadSnap.ref.set({
+        riskFlags: FV.arrayUnion("scrape_no_conversation_url"),
+        updatedAt: FV.serverTimestamp()
+      }, { merge: true });
+      await writeAudit(threadId, null, "scrape_reaper_no_conversation_url", {},
+        "system:reapers:gmailScrape");
+      continue;
+    }
+
+    // Match the watcher's deterministic id so we don't create a parallel
+    // job alongside a queued/claimed one we're not seeing yet.
+    const jobId = gmailMessageId
+      ? `gmail_${gmailMessageId}`
+      : `rescrape_${threadId}_${Date.now()}`;
+    const jobRef     = db.collection(JOBS_COLL).doc(jobId);
+    const jobDocSnap = await jobRef.get();
+    const jobData    = jobDocSnap.exists ? jobDocSnap.data() : null;
+
+    if (isLiveScrapeJob(jobData)) {
+      // Healthy job in flight — let it cook. Sub-sweep A handles stuck
+      // claims separately.
+      skippedAlive++;
+      continue;
+    }
+
+    // Either no job exists or it's "failed". Decide based on attempts.
+    const priorAttempts = jobData ? (jobData.attempts || 0) : 0;
+    if (priorAttempts >= MAX_SCRAPE_ATTEMPTS) {
+      exhausted++;
+      // Tag the thread so the inbox UI can surface "scrape exhausted —
+      // manual rescrape needed". Don't change status — the thread is
+      // still legitimately at detected_from_gmail.
+      await threadSnap.ref.set({
+        riskFlags: FV.arrayUnion("scrape_exhausted"),
+        updatedAt: FV.serverTimestamp()
+      }, { merge: true });
+      await writeAudit(threadId, null, "scrape_job_exhausted",
+        { jobId, attempts: priorAttempts, reason: "detected_thread_max_attempts" },
+        "system:reapers:gmailScrape"
+      );
+      continue;
+    }
+
+    // Re-enqueue. set with merge:false on the deterministic id resets
+    // the doc cleanly — no leftover claimedBy/claimedAt from a prior
+    // failed attempt.
+    await jobRef.set({
+      jobId,
+      jobType : "scrape",
+      status  : "queued",
+      threadId,
+      payload : {
+        etsyConversationUrl: conversationUrl,
+        source             : "reapers:gmailScrape",
+        gmailMessageId     : gmailMessageId || null,
+        gmailThreadId      : thread.gmailThreadId || null,
+        rescrape           : true
+      },
+      attempts       : priorAttempts,   // preserve history; claim tx increments
+      claimedBy      : null,
+      claimedAt      : null,
+      lastError      : jobData ? (jobData.lastError || null) : null,
+      lastHeartbeatAt: null,
+      result         : null,
+      createdAt      : jobData && jobData.createdAt ? jobData.createdAt : FV.serverTimestamp(),
+      updatedAt      : FV.serverTimestamp(),
+      reapedAt       : FV.serverTimestamp()
+    }, { merge: false });
+
+    requeued++;
+    await writeAudit(threadId, null, "scrape_job_reaped_detected_orphan",
+      {
+        jobId,
+        priorJobStatus  : jobData ? jobData.status : "missing",
+        priorAttempts,
+        gmailMessageId  : gmailMessageId || null,
+        conversationUrl
+      },
+      "system:reapers:gmailScrape"
+    );
+  }
+
+  return { requeued, exhausted, skippedAlive };
+}
+
+/**
+ * Sub-sweep C — Successful scrape but customerName=="Unknown".
+ *
+ * One-shot retry. The _unknownRetryAttempted flag is set transactionally
+ * BEFORE the job is enqueued, so two reaper invocations racing each
+ * other can never produce duplicate retries. After this single retry
+ * the thread either gets filled in by the rescrape, or it stays
+ * "Unknown" and the operator is on their own — we explicitly do NOT
+ * loop further automatic retries here (the user's call when wiring
+ * this up: "Yes — try once more, then leave alone").
+ */
+async function reapUnknownAfterScrape() {
+  const cutoffMs = Date.now() - SCRAPE_UNKNOWN_GRACE_MS;
+
+  // Firestore can't combine an `==` on customerName with a `not-in` on
+  // status efficiently without a composite index. Query on the most
+  // selective single field (customerName=="Unknown") and filter status
+  // / grace / one-shot guard client-side. "Unknown" threads should be
+  // rare in steady state, so the result set stays small even at scale.
+  const snap = await db.collection(THREADS_COLL)
+    .where("customerName", "==", "Unknown")
+    .limit(MAX_SCRAPE_REAP_PER_RUN * 2)   // overfetch; will filter
+    .get();
+
+  if (snap.empty) return { retried: 0, skipped: 0 };
+
+  let retried = 0;
+  let skipped = 0;
+
+  for (const threadSnap of snap.docs) {
+    if (retried >= MAX_SCRAPE_REAP_PER_RUN) break;   // hard cap
+
+    const thread   = threadSnap.data() || {};
+    const threadId = thread.threadId || threadSnap.id;
+
+    // One-shot guard. The transactional flip below is the authoritative
+    // gate; this is just a fast-path skip for already-attempted threads
+    // so we don't burn budget on transactions that would no-op.
+    if (thread._unknownRetryAttempted === true) {
+      skipped++;
+      continue;
+    }
+
+    // Threads still at detected_from_gmail are sub-sweep B's job.
+    if (!SCRAPE_POST_STATUSES.includes(thread.status)) {
+      skipped++;
+      continue;
+    }
+
+    // Honor the post-scrape grace window so we don't race a snapshot
+    // commit that's about to fill in customerName legitimately.
+    const lastSyncedMs = thread.lastSyncedAt && thread.lastSyncedAt.toMillis
+      ? thread.lastSyncedAt.toMillis() : 0;
+    if (lastSyncedMs && lastSyncedMs > cutoffMs) {
+      skipped++;
+      continue;
+    }
+
+    const conversationUrl = thread.etsyConversationUrl;
+    if (!conversationUrl) {
+      // Can't rescrape without a URL — mark the guard so we stop
+      // re-evaluating this thread on every reaper tick.
+      await threadSnap.ref.set({
+        _unknownRetryAttempted: true,
+        riskFlags             : FV.arrayUnion("unknown_no_conversation_url"),
+        updatedAt             : FV.serverTimestamp()
+      }, { merge: true });
+      skipped++;
+      continue;
+    }
+
+    // Set the one-shot guard transactionally — if another reaper tick
+    // got here first and already flipped it, abort without enqueueing.
+    let didClaim = false;
+    try {
+      didClaim = await db.runTransaction(async (tx) => {
+        const fresh = await tx.get(threadSnap.ref);
+        if (!fresh.exists) return false;
+        const data = fresh.data() || {};
+        if (data._unknownRetryAttempted === true) return false;
+        if (data.customerName !== "Unknown") return false;   // already filled in
+        tx.update(threadSnap.ref, {
+          _unknownRetryAttempted   : true,
+          _unknownRetryAttemptedAt : FV.serverTimestamp(),
+          updatedAt                : FV.serverTimestamp()
+        });
+        return true;
+      });
+    } catch (err) {
+      console.warn(`[gmail-scrape-reaper] subsweep C guard tx failed for ${threadId}:`, err.message);
+      continue;
+    }
+
+    if (!didClaim) {
+      skipped++;
+      continue;
+    }
+
+    // Fresh job id (unique per retry) so we don't collide with the
+    // already-succeeded gmail_<msgId> doc — that doc's history stays
+    // intact for the audit trail.
+    const jobId = `rescrape_${threadId}_${Date.now()}`;
+    await db.collection(JOBS_COLL).doc(jobId).set({
+      jobId,
+      jobType : "scrape",
+      status  : "queued",
+      threadId,
+      payload : {
+        etsyConversationUrl: conversationUrl,
+        source             : "reapers:gmailScrape:unknown-retry",
+        gmailMessageId     : thread.gmailMessageId || null,
+        gmailThreadId      : thread.gmailThreadId  || null,
+        rescrape           : true,
+        reason             : "customerName=Unknown after first scrape"
+      },
+      attempts       : 0,
+      claimedBy      : null,
+      claimedAt      : null,
+      lastError      : null,
+      lastHeartbeatAt: null,
+      result         : null,
+      createdAt      : FV.serverTimestamp(),
+      updatedAt      : FV.serverTimestamp(),
+      reapedAt       : FV.serverTimestamp()
+    }, { merge: false });
+
+    retried++;
+    await writeAudit(threadId, null, "scrape_job_reaped_unknown_retry",
+      {
+        jobId,
+        priorStatus    : thread.status,
+        gmailMessageId : thread.gmailMessageId || null,
+        conversationUrl
+      },
+      "system:reapers:gmailScrape"
+    );
+  }
+
+  return { retried, skipped };
+}
+
+/**
+ * Top-level entry for the gmail_scrape pass. Runs the three sub-sweeps
+ * in order and returns a combined summary. Each sub-sweep wraps its own
+ * try/catch so a partial failure on one doesn't block the others.
+ */
+async function runGmailScrapePass() {
+  const tStart = Date.now();
+  const summary = {
+    pass                       : "gmail_scrape",
+    stuckClaimsRequeued        : 0,
+    stuckClaimsExhausted       : 0,
+    detectedThreadsRequeued    : 0,
+    detectedThreadsExhausted   : 0,
+    detectedThreadsSkippedAlive: 0,
+    unknownThreadsRetried      : 0,
+    unknownThreadsSkipped      : 0,
+    reaped                     : 0,    // for the consolidated totalReaped
+    subErrors                  : [],
+    durationMs                 : 0
+  };
+
+  try {
+    const a = await reapStuckScrapeClaims();
+    summary.stuckClaimsRequeued  = a.requeued;
+    summary.stuckClaimsExhausted = a.exhausted;
+  } catch (e) {
+    summary.subErrors.push({ subsweep: "A_stuck_claims", error: e.message });
+    console.error("[gmail-scrape-reaper] subsweep A failed:", e);
+  }
+
+  try {
+    const b = await reapDetectedThreadsWithoutLiveJobs();
+    summary.detectedThreadsRequeued     = b.requeued;
+    summary.detectedThreadsExhausted    = b.exhausted;
+    summary.detectedThreadsSkippedAlive = b.skippedAlive;
+  } catch (e) {
+    summary.subErrors.push({ subsweep: "B_detected_orphans", error: e.message });
+    console.error("[gmail-scrape-reaper] subsweep B failed:", e);
+  }
+
+  try {
+    const c = await reapUnknownAfterScrape();
+    summary.unknownThreadsRetried = c.retried;
+    summary.unknownThreadsSkipped = c.skipped;
+  } catch (e) {
+    summary.subErrors.push({ subsweep: "C_unknown_retry", error: e.message });
+    console.error("[gmail-scrape-reaper] subsweep C failed:", e);
+  }
+
+  // Roll up "reaped" for the handler's totalReaped tally. Counts every
+  // action that produced a downstream effect (job requeued / job
+  // exhausted-and-marked-failed / one-shot retry enqueued). Does NOT
+  // count skipped-alive, since those represent healthy in-flight work.
+  summary.reaped =
+      summary.stuckClaimsRequeued
+    + summary.stuckClaimsExhausted
+    + summary.detectedThreadsRequeued
+    + summary.detectedThreadsExhausted
+    + summary.unknownThreadsRetried;
+
+  summary.durationMs = Date.now() - tStart;
+  return summary;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 //  Handler
 // ═══════════════════════════════════════════════════════════════════════
 
@@ -593,8 +1086,9 @@ exports.handler = async (event) => {
     if (!auth.ok) return auth.response;
   }
 
-  // Optional body: `{ op: "auto_pipeline" | "send_queue" | "sales_funnels", force?: bool }`
-  // for targeted manual sweeps. Default is to run all three.
+  // Optional body: `{ op: "auto_pipeline" | "send_queue" | "sales_funnels" |
+  //                       "gmail_scrape", force?: bool }`
+  // for targeted manual sweeps. Default is to run all passes.
   let body = {};
   if (event.body) {
     try { body = JSON.parse(event.body); } catch { body = {}; }
@@ -619,11 +1113,16 @@ exports.handler = async (event) => {
       try { results.salesFunnels = await runSalesFunnelPass({ force }); }
       catch (e) { errors.push({ pass: "sales_funnels", error: e.message }); console.error("salesFunnels pass:", e); }
     }
+    if (!op || op === "gmail_scrape") {
+      try { results.gmailScrape = await runGmailScrapePass(); }
+      catch (e) { errors.push({ pass: "gmail_scrape", error: e.message }); console.error("gmailScrape pass:", e); }
+    }
 
     const totalReaped =
         ((results.autoPipeline && results.autoPipeline.reaped) || 0)
       + ((results.sendQueue    && results.sendQueue.reaped)    || 0)
-      + ((results.salesFunnels && results.salesFunnels.reaped) || 0);
+      + ((results.salesFunnels && results.salesFunnels.reaped) || 0)
+      + ((results.gmailScrape  && results.gmailScrape.reaped)  || 0);
 
     const summary = {
       success    : errors.length === 0,
@@ -651,9 +1150,16 @@ exports.handler = async (event) => {
 module.exports.runAutoPipelinePass         = runAutoPipelinePass;
 module.exports.runSendQueuePass            = runSendQueuePass;
 module.exports.runSalesFunnelPass          = runSalesFunnelPass;
+module.exports.runGmailScrapePass          = runGmailScrapePass;
 module.exports.reapStaleClaim              = reapStaleClaim;
 module.exports.reapStaleDraft              = reapStaleDraft;
 module.exports.reapAbandonedSalesThread    = reapAbandonedSalesThread;
+module.exports.reapStuckScrapeClaims       = reapStuckScrapeClaims;
+module.exports.reapDetectedThreadsWithoutLiveJobs = reapDetectedThreadsWithoutLiveJobs;
+module.exports.reapUnknownAfterScrape      = reapUnknownAfterScrape;
 module.exports.REAPABLE_STAGES             = Array.from(REAPABLE_STAGES);
 module.exports.STALE_CLAIM_THRESHOLD_MS    = STALE_CLAIM_THRESHOLD_MS;
 module.exports.SALES_SCAN_INTERVAL_MS      = SALES_SCAN_INTERVAL_MS;
+module.exports.SCRAPE_STUCK_CLAIM_MS       = SCRAPE_STUCK_CLAIM_MS;
+module.exports.SCRAPE_DETECTED_GRACE_MS    = SCRAPE_DETECTED_GRACE_MS;
+module.exports.SCRAPE_UNKNOWN_GRACE_MS     = SCRAPE_UNKNOWN_GRACE_MS;
