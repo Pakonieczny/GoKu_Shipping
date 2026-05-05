@@ -1175,6 +1175,23 @@ async function _handlerImpl(event) {
     // so we encode the routing tuple (setSeq, slotIndex) in the key.
     // ============================================================
     if (kind === "batch_submit") {
+      // Memory profiling — log at every stage so we can see where the
+      // OOM happens. process.memoryUsage() reports:
+      //   rss        = total resident set (everything Node uses)
+      //   heapUsed   = JS heap actively used
+      //   heapTotal  = JS heap allocated
+      //   external   = C++ buffers (file I/O, fetch bodies, etc.)
+      //   arrayBuffers = TypedArray-backed buffers (subset of external)
+      // The OOM in Netlify is "rss exceeds container limit". Watch rss.
+      const memLog = (stage) => {
+        try {
+          const m = process.memoryUsage();
+          const fmt = (n) => (n / 1024 / 1024).toFixed(1) + "MB";
+          console.log(`[batch_submit:mem] ${stage} rss=${fmt(m.rss)} heap=${fmt(m.heapUsed)}/${fmt(m.heapTotal)} ext=${fmt(m.external)}`);
+        } catch (_) {}
+      };
+      memLog("entry");
+
       const apiKey = process.env.GEMINI_API_KEY;
       if (!apiKey) return json(400, { error: { message: "Missing GEMINI_API_KEY env var" } });
 
@@ -1240,6 +1257,7 @@ async function _handlerImpl(event) {
         }
       }
       await Promise.all(copyPromises);
+      memLog("after copy step");
 
       // Step B: Build the JSONL for "edits" tasks. Each line carries a
       // routing key encoding setIndex and slotIndex so we can place
@@ -1290,6 +1308,8 @@ async function _handlerImpl(event) {
       // line + Buffer chunk). After the worker returns, only the
       // pushed Buffer chunk in jsonlChunks survives.
       const FETCH_CONCURRENCY = 10;
+      memLog(`before fetch loop (${fetchJobs.length} jobs)`);
+      let fetchCounter = 0;
       await runBoundedConcurrent(fetchJobs, FETCH_CONCURRENCY, async (j, idx) => {
         const [ref, charm] = await Promise.all([
           storagePathToBuffer(j.refPath),
@@ -1314,7 +1334,13 @@ async function _handlerImpl(event) {
         // jsonlChunks order doesn't matter for correctness — the JSONL
         // routing key on each line tells Gemini which response is which.
         jsonlChunks.push(chunkBuf);
+        // Periodic memory log so we see in-loop growth.
+        const c = ++fetchCounter;
+        if (c === 1 || c % 5 === 0 || c === fetchJobs.length) {
+          memLog(`fetch ${c}/${fetchJobs.length}`);
+        }
       });
+      memLog(`after fetch loop`);
 
       if (jsonlChunks.length === 0) {
         // Edge case: all-copy batch (no Gemini calls needed). Write
@@ -1370,10 +1396,12 @@ async function _handlerImpl(event) {
       // Concat once into a single Buffer for upload. This is the only
       // moment when we hold the full JSONL in memory — and it's a
       // single contiguous Buffer, not a doubled UTF-16 string.
+      memLog(`before Buffer.concat (${jsonlChunks.length} chunks)`);
       const jsonlBuffer = Buffer.concat(jsonlChunks);
       const jsonlBytes = jsonlBuffer.length;
       // Free chunk array — Buffer.concat copied them, originals can go.
       jsonlChunks.length = 0;
+      memLog(`after Buffer.concat (${(jsonlBytes/1e6).toFixed(1)}MB JSONL)`);
 
       // Hard cap: Files API limit is 2GB. We reject early to avoid uploading.
       if (jsonlBytes > 1.9 * 1024 * 1024 * 1024) {
@@ -1384,7 +1412,9 @@ async function _handlerImpl(event) {
 
       // Step C: Upload JSONL to Gemini Files API, then create the batch.
       const fileName = await uploadJsonlToGeminiFiles(apiKey, jsonlBuffer, displayName);
+      memLog(`after Files API upload`);
       const { batchName, raw } = await createGeminiBatchJob(apiKey, GEMINI_IMAGE_MODEL, fileName, displayName);
+      memLog(`after batch create`);
 
       // Step D: Persist routing data in Firestore. The doc id is a
       // sanitized batch name so the client can fetch it directly.

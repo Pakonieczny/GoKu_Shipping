@@ -6246,17 +6246,14 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       const slotPlan = SLOT_MAP[category];
       if (!slotPlan) { alert(`Unknown category: ${category}`); return; }
 
-      // Auto-chunk. Submissions larger than CHUNK_SIZE sets are split
-      // into multiple Gemini batch jobs server-side. This caps peak
-      // server memory at one chunk's worth of base64 image data.
-      //
-      // CHUNK_SIZE history: started at 8, OOM'd ("signal: killed") on
-      // an 8-set submission, dropped to 4. Even with the server-side
-      // streaming-Buffer JSONL build, we stay conservative because
-      // Netlify's effective memory ceiling on this function is lower
-      // than the documented 1024 MB once V8 overhead, Firebase Admin
-      // SDK, and active fetch operations are accounted for.
-      const CHUNK_SIZE = 4;
+      // Auto-chunk. Each chunk = one Gemini batch job.
+      // CHUNK_SIZE history: 8 OOM'd, 4 OOM'd. Setting to 1 as a
+      // diagnostic — if a 1-set chunk still OOMs the function, the
+      // problem isn't accumulation, it's something more fundamental
+      // (possibly firebase-admin SDK memory leak, or Files API
+      // upload buffering badly). We'll see real numbers in the function
+      // logs from the memLog() calls in the backend.
+      const CHUNK_SIZE = 1;
       const chunkCount = Math.ceil(count / CHUNK_SIZE);
 
       const confirmMsg = chunkCount === 1
