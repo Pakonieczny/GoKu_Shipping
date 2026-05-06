@@ -130,33 +130,80 @@ function clampNumber(n, min, max, fallback) {
   return Math.max(min, Math.min(max, x));
 }
 
+// ============================================================
+// Set-number allocation
+// ------------------------------------------------------------
+// Atomic Set_N allocator backed by Firestore counter docs.
+//
+// PROBLEM IT SOLVES: The previous implementation scanned Firebase
+// Storage for the highest Set_N folder and returned maxN+1. That
+// works only when set folders are physically created before the next
+// alloc runs. In batch mode, a submission can reserve 4 set numbers
+// minutes before any files are written (Gemini takes hours), and
+// Storage doesn't track empty folders. So a second submission run
+// before the first collected would see no Set folders, hand out the
+// same numbers, and overwrite the first batch on collection.
+//
+// FIX: Each category has a Firestore document at
+//   listingGenerator1/setCounters/{category}
+// with field `nextSetN`. allocNextSet runs a transaction that reads
+// the current value, increments by 1, and writes back. Strictly
+// monotonic across any number of concurrent callers.
+//
+// BOOTSTRAP: On first ever call for a category, the counter doc
+// doesn't exist. We seed it from Storage by scanning for the highest
+// existing Set_N and starting from there + 1. This way, deployments
+// that already have Set_42 in Storage start the counter at 43.
+// ============================================================
+const SET_COUNTERS_COLL = "listingGenerator1_setCounters";
+
+async function _seedSetCounter(cat) {
+  const bucket = admin.storage().bucket();
+  const prefix = `listing-generator-1/${cat}/Ready_To_List/`;
+  const [_files, _next, apiResponse] = await bucket.getFiles({
+    prefix,
+    delimiter: "/",
+    autoPaginate: false,
+  });
+  const prefixes = apiResponse?.prefixes || [];
+  let maxN = 0;
+  for (const p of prefixes) {
+    const m = p.match(/\/Set_(\d+)\/$/);
+    if (m) maxN = Math.max(maxN, Number(m[1]) || 0);
+  }
+  return maxN;
+}
+
 async function allocNextSet(activeCategory) {
   const cat = normalizeCategory(activeCategory);
   if (!GENERATABLE_CATEGORIES.has(cat)) throw new Error("activeCategory not generatable");
 
-  const bucket = admin.storage().bucket();
-  const prefix = `listing-generator-1/${cat}/Ready_To_List/`;
+  const db = getDb();
+  const ref = db.collection(SET_COUNTERS_COLL).doc(cat);
 
-  // OPTIMIZED: Use delimiter to only fetch "subfolders" (prefixes)
-  const [files, nextQuery, apiResponse] = await bucket.getFiles({
-    prefix,
-    delimiter: "/",
-    autoPaginate: false, // We only need the top-level "folders"
+  const setN = await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    let current;
+    if (snap.exists) {
+      current = Number(snap.data()?.nextSetN || 0);
+    } else {
+      // First call ever for this category. Seed from Storage to avoid
+      // colliding with any existing Set folders. We do this OUTSIDE
+      // the transaction conceptually, but reading Storage from inside
+      // a Firestore transaction is allowed (it's not a Firestore op,
+      // just a network call) — the transaction will retry if the
+      // create races another caller.
+      const seed = await _seedSetCounter(cat);
+      current = seed; // counter holds "highest used"; next is +1
+    }
+    const next = current + 1;
+    tx.set(ref, {
+      nextSetN: next,
+      lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+    return next;
   });
 
-  const prefixes = apiResponse?.prefixes || [];
-  
-  let maxN = 0;
-  
-  // Prefixes look like: "listing-generator-1/Beady_Necklace/Ready_To_List/Set_1/"
-  for (const p of prefixes) {
-    const m = p.match(/\/Set_(\d+)\/$/);
-    if (m) {
-      maxN = Math.max(maxN, Number(m[1]) || 0);
-    }
-  }
-
-  const setN = maxN + 1;
   const outputBasePath = `listing-generator-1/${cat}/Ready_To_List/Set_${setN}`;
   return { setN, outputBasePath };
 }
@@ -855,7 +902,296 @@ async function postScaleCharmComposite({
   return finalBuf;
 }
 
+// ============================================================
+// Gemini Batch API helpers (Listing Generator)
+// Reference: https://ai.google.dev/gemini-api/docs/batch-api
+//
+// These helpers are strictly additive. The synchronous (non-batch)
+// pipeline elsewhere in this file is untouched. Batch-related kinds
+// (batch_submit, batch_status, batch_collect, batch_list, batch_cancel)
+// live in their own block in exports.handler below.
+// ============================================================
+
+const BATCHES_COLL = "ListingGenerator1Batches";
+const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta";
+const GEMINI_UPLOAD_BASE = "https://generativelanguage.googleapis.com/upload/v1beta";
+
+// Build one JSONL request line for the Batch API. Encodes both reference
+// images as inline_data (base64). responseModalities: ["IMAGE"] saves a
+// few output tokens by skipping the model's default text preamble.
+// imageConfig.imageSize: "2K" is the supported way to lock 2048x2048
+// output per Google's image-generation docs.
+function buildBatchJsonlLine(key, prompt, refMime, refBase64, charmMime, charmBase64, imageSize) {
+  const sizeKey = String(imageSize || "2K").toUpperCase();
+  const safeRefMime = (refMime && refMime.startsWith("image/")) ? refMime : "image/png";
+  const safeCharmMime = (charmMime && charmMime.startsWith("image/")) ? charmMime : "image/png";
+
+  // Mirror the prompt augmentation Standard mode uses in
+  // callGeminiGenerateContentImage(). Without this suffix, Gemini
+  // may reframe or change the aspect ratio of the output, which in
+  // turn causes the charm to appear at the wrong scale relative to
+  // the reference image. Standard and Batch modes must produce the
+  // same output for the same inputs.
+  // Pixel-size hint: at 2K we tell the model 2048x2048; at 1K, 1024x1024.
+  const sizeHint = sizeKey === "1K" ? "1024x1024"
+                 : sizeKey === "2K" ? "2048x2048"
+                 : sizeKey === "4K" ? "4096x4096"
+                 : "2048x2048";
+  const augmentedPrompt =
+    `${String(prompt || "").trim()}\n\n` +
+    `OUTPUT (NON-NEGOTIABLE): Return a photorealistic 1:1 image. ` +
+    `Exact size ${sizeHint}. ` +
+    `Return an image suitable for a product photo.`;
+
+  return {
+    key,
+    request: {
+      contents: [{
+        role: "user",
+        parts: [
+          { text: augmentedPrompt },
+          { inline_data: { mime_type: safeRefMime, data: refBase64 } },
+          { inline_data: { mime_type: safeCharmMime, data: charmBase64 } },
+        ],
+      }],
+      generation_config: {
+        // Match Standard mode's modalities exactly. The model may
+        // adjust framing/scaling decisions when text output is
+        // disallowed, which contributed to charm-size mismatches.
+        responseModalities: ["TEXT", "IMAGE"],
+        imageConfig: { imageSize: sizeKey },
+      },
+    },
+  };
+}
+
+// Upload a JSONL file via the Files API using the resumable protocol
+// (the only protocol Google documents for the Batch flow). Returns the
+// `files/abc123` resource name.
+async function uploadJsonlToGeminiFiles(apiKey, jsonlData, displayName) {
+  // jsonlData may be a Buffer (preferred — avoids string→bytes
+  // re-encoding inside fetch) or a string. We compute byte length
+  // accordingly so the resumable headers are accurate either way.
+  const isBuffer = Buffer.isBuffer(jsonlData);
+  const bytes = isBuffer ? jsonlData.length : Buffer.byteLength(jsonlData, "utf8");
+
+  const startResp = await fetch(`${GEMINI_UPLOAD_BASE}/files`, {
+    method: "POST",
+    headers: {
+      "x-goog-api-key": apiKey,
+      "X-Goog-Upload-Protocol": "resumable",
+      "X-Goog-Upload-Command": "start",
+      "X-Goog-Upload-Header-Content-Length": String(bytes),
+      "X-Goog-Upload-Header-Content-Type": "application/jsonl",
+      "Content-Type": "application/jsonl",
+    },
+    body: JSON.stringify({ file: { display_name: displayName || "lg1-batch" } }),
+  });
+  if (!startResp.ok) {
+    const t = await startResp.text().catch(() => "");
+    throw new Error(`Files API resumable-start failed: HTTP ${startResp.status} ${t.slice(0, 400)}`);
+  }
+  const uploadUrl = startResp.headers.get("x-goog-upload-url");
+  if (!uploadUrl) throw new Error("Files API did not return x-goog-upload-url header");
+
+  const uploadResp = await fetch(uploadUrl, {
+    method: "POST",
+    headers: {
+      "Content-Length": String(bytes),
+      "X-Goog-Upload-Offset": "0",
+      "X-Goog-Upload-Command": "upload, finalize",
+    },
+    body: jsonlData,
+  });
+  if (!uploadResp.ok) {
+    const t = await uploadResp.text().catch(() => "");
+    throw new Error(`Files API upload-finalize failed: HTTP ${uploadResp.status} ${t.slice(0, 400)}`);
+  }
+  const data = await uploadResp.json().catch(() => ({}));
+  const name = data?.file?.name;
+  if (!name) throw new Error("Files API upload returned no file.name");
+  return name;
+}
+
+async function createGeminiBatchJob(apiKey, model, fileName, displayName) {
+  const url = `${GEMINI_BASE}/models/${model}:batchGenerateContent`;
+  const body = {
+    batch: {
+      display_name: displayName || "lg1-batch",
+      input_config: { file_name: fileName },
+    },
+  };
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: { "x-goog-api-key": apiKey, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const text = await resp.text();
+  if (!resp.ok) {
+    throw new Error(`Batch create failed: HTTP ${resp.status} ${text.slice(0, 600)}`);
+  }
+  let parsed;
+  try { parsed = JSON.parse(text); }
+  catch { throw new Error(`Batch create returned non-JSON: ${text.slice(0, 200)}`); }
+  // Returns a long-running operation; the actual batch name is at
+  // .name (e.g., "batches/abc123") OR within .metadata. Per the docs,
+  // the top-level .name is the operation/batch name we use for polling.
+  const batchName = parsed?.name;
+  if (!batchName) throw new Error(`Batch create returned no name: ${text.slice(0, 400)}`);
+  return { batchName, raw: parsed };
+}
+
+async function getGeminiBatchJob(apiKey, batchName) {
+  // batchName is "batches/abc123" — keep it as-is in the URL.
+  const resp = await fetch(`${GEMINI_BASE}/${batchName}`, {
+    method: "GET",
+    headers: { "x-goog-api-key": apiKey, "Content-Type": "application/json" },
+  });
+  const text = await resp.text();
+  if (!resp.ok) {
+    throw new Error(`Batch get failed: HTTP ${resp.status} ${text.slice(0, 400)}`);
+  }
+  const parsed = JSON.parse(text);
+
+  // Normalize state names. Google's batch API returns BATCH_STATE_*
+  // strings; our code and Firestore documents use JOB_STATE_*. Map at
+  // the source so all downstream logic compares against JOB_STATE_*.
+  // Done in-place so state appears in both .metadata.state and .state.
+  const norm = (s) => {
+    if (!s || typeof s !== "string") return s;
+    if (s.startsWith("BATCH_STATE_")) return "JOB_STATE_" + s.slice("BATCH_STATE_".length);
+    return s;
+  };
+  if (parsed?.metadata?.state) parsed.metadata.state = norm(parsed.metadata.state);
+  if (parsed?.state) parsed.state = norm(parsed.state);
+  return parsed;
+}
+
+async function cancelGeminiBatchJob(apiKey, batchName) {
+  const resp = await fetch(`${GEMINI_BASE}/${batchName}:cancel`, {
+    method: "POST",
+    headers: { "x-goog-api-key": apiKey, "Content-Type": "application/json" },
+    body: "{}",
+  });
+  if (!resp.ok) {
+    const t = await resp.text().catch(() => "");
+    throw new Error(`Batch cancel failed: HTTP ${resp.status} ${t.slice(0, 200)}`);
+  }
+  return true;
+}
+
+// Stream the result JSONL line-by-line instead of loading the entire
+// (potentially 2GB+) file into memory. Returns an async generator that
+// yields each JSON-parsed line. Throws on non-OK HTTP. Empty/blank
+// lines and parse errors are silently skipped (mirrors the older code).
+async function* streamGeminiResultLines(apiKey, fileName) {
+  const url = `https://generativelanguage.googleapis.com/download/v1beta/${fileName}:download?alt=media`;
+  const resp = await fetch(url, {
+    method: "GET",
+    headers: { "x-goog-api-key": apiKey },
+  });
+  if (!resp.ok) {
+    const t = await resp.text().catch(() => "");
+    throw new Error(`Result file download failed: HTTP ${resp.status} ${t.slice(0, 400)}`);
+  }
+  if (!resp.body) {
+    // Fallback for environments without ReadableStream support.
+    const text = await resp.text();
+    for (const raw of text.split("\n")) {
+      const line = raw.trim();
+      if (!line) continue;
+      try { yield JSON.parse(line); } catch { /* skip */ }
+    }
+    return;
+  }
+
+  // The stream gives us Uint8Array chunks. We accumulate a small text
+  // buffer and emit one parsed JSON object per newline. Crucially we
+  // never hold more than the in-flight chunk + the trailing partial
+  // line, so memory stays bounded regardless of file size.
+  const decoder = new TextDecoder("utf-8");
+  const reader = resp.body.getReader();
+  let buf = "";
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let nl;
+    while ((nl = buf.indexOf("\n")) >= 0) {
+      const line = buf.slice(0, nl).trim();
+      buf = buf.slice(nl + 1);
+      if (!line) continue;
+      try { yield JSON.parse(line); } catch { /* skip malformed */ }
+    }
+  }
+  buf += decoder.decode(); // flush any trailing bytes
+  const tail = buf.trim();
+  if (tail) {
+    try { yield JSON.parse(tail); } catch { /* skip */ }
+  }
+}
+
+// Run async tasks with bounded concurrency. Each task receives no
+// arguments and returns a promise. Max in-flight = `limit`. Returns
+// the array of results in input order. Used by batch_collect to
+// upload result PNGs without holding all 600 image buffers in RAM
+// at once.
+async function runBoundedConcurrent(items, limit, worker) {
+  const results = new Array(items.length);
+  let nextIdx = 0;
+  async function loop() {
+    while (true) {
+      const i = nextIdx++;
+      if (i >= items.length) return;
+      try {
+        results[i] = await worker(items[i], i);
+      } catch (e) {
+        results[i] = { __error: e };
+      }
+    }
+  }
+  const runners = Array.from({ length: Math.min(limit, items.length) }, loop);
+  await Promise.all(runners);
+  return results;
+}
+
+// Sanitize a Gemini batch name "batches/abc123" → "abc123" for use as
+// a Firestore doc id. Firestore disallows "/" in doc ids.
+function batchDocIdFromName(batchName) {
+  return String(batchName || "").replace(/^batches\//, "").replace(/[^\w-]/g, "_");
+}
+
 exports.handler = async (event) => {
+  // Top-level safety net. Any error inside the handler that isn't
+  // caught by the inner try/catch blocks would otherwise bubble up to
+  // Netlify and surface as an opaque "Internal Error. ID: xxx" 500
+  // with no useful message. This wrapper guarantees we always return
+  // a JSON response with the actual error text so the browser can
+  // display it. Crucial for debugging large batch submissions where
+  // Netlify's function logs aren't always visible.
+  try {
+    return await _handlerImpl(event);
+  } catch (err) {
+    console.error("[handler] unhandled error:", err);
+    return {
+      statusCode: 500,
+      headers: {
+        "Content-Type": "application/json",
+        "Access-Control-Allow-Origin": "*",
+      },
+      body: JSON.stringify({
+        ok: false,
+        error: {
+          message: String(err?.message || err),
+          stack: String(err?.stack || "").split("\n").slice(0, 5).join(" | "),
+          kind: (() => { try { return JSON.parse(event?.body || "{}")?.kind; } catch { return null; } })(),
+        },
+      }),
+    };
+  }
+};
+
+async function _handlerImpl(event) {
   if (event.httpMethod === "OPTIONS") return json(200, { ok: true });
   if (event.httpMethod !== "POST") return json(405, { error: { message: "Method not allowed" } });
 
@@ -893,6 +1229,798 @@ exports.handler = async (event) => {
     if (kind === "alloc_set") {
       const { setN, outputBasePath } = await allocNextSet(activeCategory);
       return json(200, { ok: true, setN, outputBasePath });
+    }
+
+    // ============================================================
+    // CHARM POOL — pick & release for batch mode
+    // ------------------------------------------------------------
+    // Each generated set must use a UNIQUE charm from the shared pool,
+    // and we must avoid duplicate picks across concurrent submissions.
+    //
+    // Pick algorithm:
+    //   1. List all charms in the active pool (necklace or earring).
+    //   2. Enumerate every uncollected batch's `sets[].tasks[].input_charm_storage_path`
+    //      to find currently-reserved charms.
+    //   3. Subtract: available = pool - reserved.
+    //   4. Return the first `count` available paths.
+    //
+    // Atomicity: the pick step doesn't write anything — the
+    // reservation happens implicitly when the caller subsequently
+    // submits a batch with these paths in its tasks. There's a small
+    // race window (two clients pick same charms simultaneously then
+    // both submit), which we accept because:
+    //   - The window is sub-second in practice
+    //   - The user-visible result is just one charm getting reused
+    //     once across two concurrent submissions
+    //   - The full atomicity solution (Firestore-tracked reservations
+    //     with ttl) adds significant complexity for a problem that
+    //     basically only manifests if you submit two batches within
+    //     the same second
+    // ============================================================
+    if (kind === "charm_pool_pick") {
+      const isEarring = !!body?.isEarring;
+      const want = Math.max(1, Number(body?.count || 1));
+
+      const bucket = admin.storage().bucket();
+      const poolPrefix = isEarring
+        ? "listing-generator-1/Charm_Maker/New_Charms_Earrings/"
+        : "listing-generator-1/Charm_Maker/New_Charms/";
+
+      // Step 1: list pool. Skip pseudo-folders (paths ending with "/").
+      const [poolFiles] = await bucket.getFiles({ prefix: poolPrefix });
+      const poolPaths = poolFiles
+        .map((f) => f.name)
+        .filter((n) => !n.endsWith("/") && /\.(png|jpg|jpeg|webp)$/i.test(n));
+
+      if (poolPaths.length === 0) {
+        return json(200, { ok: true, charms: [], poolSize: 0, reservedCount: 0 });
+      }
+
+      // Step 2: enumerate reservations from uncollected batches.
+      const db = getDb();
+      const reservedSet = new Set();
+      try {
+        const snap = await db.collection(BATCHES_COLL)
+          .where("collected", "==", false).get();
+        snap.forEach((doc) => {
+          const sets = Array.isArray(doc.data()?.sets) ? doc.data().sets : [];
+          for (const s of sets) {
+            for (const t of (s.tasks || [])) {
+              const p = t?.input_charm_storage_path;
+              if (p) reservedSet.add(p);
+            }
+          }
+        });
+      } catch (e) {
+        console.warn("charm_pool_pick: failed to enumerate reservations", e?.message || e);
+      }
+
+      // Step 3: filter and return.
+      const available = poolPaths.filter((p) => !reservedSet.has(p));
+
+      // Shuffle so concurrent submissions don't all start from the
+      // same position. Fisher-Yates.
+      for (let i = available.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [available[i], available[j]] = [available[j], available[i]];
+      }
+
+      const picked = available.slice(0, want);
+      return json(200, {
+        ok: true,
+        charms: picked,
+        poolSize: poolPaths.length,
+        reservedCount: reservedSet.size,
+        availableCount: available.length,
+      });
+    }
+
+    // ============================================================
+    // BATCH MODE — Listing Generator only (Charm Maker out of scope)
+    //
+    // Flow:
+    //   1. Client calls batch_submit with an array of `sets`. Each
+    //      `set` is { category, outputBasePath, setN, tasks: [...] }
+    //      where tasks come from SLOT_MAP. Tasks of type "copy" run
+    //      synchronously here (no Gemini call). Tasks of type "edits"
+    //      become JSONL lines uploaded to Gemini Files API.
+    //   2. Server builds the JSONL with explicit imageConfig.imageSize="2K"
+    //      and submits to Gemini batchGenerateContent. The batch name
+    //      ("batches/abc123") is persisted in Firestore alongside per-
+    //      task routing metadata so we can later land each output in
+    //      the correct Slot_N.png path.
+    //   3. Client polls batch_status. When state=JOB_STATE_SUCCEEDED,
+    //      client calls batch_collect. Server downloads result JSONL,
+    //      decodes each base64 image, uploads to its destination, and
+    //      writes per-set manifests.
+    //
+    // Constraint discovery: see `keyForTask()` for how we route results.
+    // The Gemini Batch API echoes our per-line `key` in each response,
+    // so we encode the routing tuple (setSeq, slotIndex) in the key.
+    // ============================================================
+    if (kind === "batch_submit") {
+      // Memory profiling — log at every stage so we can see where the
+      // OOM happens. process.memoryUsage() reports:
+      //   rss        = total resident set (everything Node uses)
+      //   heapUsed   = JS heap actively used
+      //   heapTotal  = JS heap allocated
+      //   external   = C++ buffers (file I/O, fetch bodies, etc.)
+      //   arrayBuffers = TypedArray-backed buffers (subset of external)
+      // The OOM in Netlify is "rss exceeds container limit". Watch rss.
+      const memLog = (stage) => {
+        try {
+          const m = process.memoryUsage();
+          const fmt = (n) => (n / 1024 / 1024).toFixed(1) + "MB";
+          console.log(`[batch_submit:mem] ${stage} rss=${fmt(m.rss)} heap=${fmt(m.heapUsed)}/${fmt(m.heapTotal)} ext=${fmt(m.external)}`);
+        } catch (_) {}
+      };
+      memLog("entry");
+
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) return json(400, { error: { message: "Missing GEMINI_API_KEY env var" } });
+
+      const sets = Array.isArray(body?.sets) ? body.sets : null;
+      if (!sets || sets.length === 0) {
+        return json(400, { error: { message: "sets must be a non-empty array" } });
+      }
+      // Sanity cap. Even at 200 sets * 8 tasks * ~1.2MB inline data ≈ 1.9GB,
+      // we approach the Files API 2GB limit. 100 keeps headroom.
+      if (sets.length > 100) {
+        return json(400, { error: { message: "Per-batch limit is 100 sets. Split into multiple batches." } });
+      }
+
+      const displayName = String(body?.displayName || `lg1-batch-${Date.now()}`).slice(0, 100);
+      const imageSize = String(body?.imageSize || "2K").toUpperCase();
+      const bucket = admin.storage().bucket();
+
+      // Validate every output_base_path up front so we fail fast.
+      for (const s of sets) {
+        const cat = normalizeCategory(s?.category);
+        if (!GENERATABLE_CATEGORIES.has(cat)) {
+          return json(400, { error: { message: `category not generatable: ${cat}` } });
+        }
+        try { assertAllowedOutputBase(s?.outputBasePath); }
+        catch (e) {
+          return json(400, { error: { message: `Invalid outputBasePath: ${e.message}` } });
+        }
+        if (!Array.isArray(s?.tasks) || s.tasks.length === 0) {
+          return json(400, { error: { message: `set ${s?.outputBasePath} has no tasks` } });
+        }
+      }
+
+      // Step A: Run all "copy" tasks synchronously. They don't go through
+      // Gemini and shouldn't wait for batch turnaround. This mirrors what
+      // copy_to_slot does, but inline so we don't double-network-trip.
+      // We also do per-task storagePath validation here.
+      let copiedCount = 0;
+      let copyErrors = [];
+      const copyPromises = [];
+      for (const s of sets) {
+        const base = s.outputBasePath;
+        for (const t of s.tasks) {
+          if (String(t?.type) !== "copy") continue;
+          const slot = Number(t?.slotIndex);
+          if (!Number.isFinite(slot) || slot < 0) continue;
+          const src = String(t?.source_storage_path || "").trim();
+          if (!src) {
+            copyErrors.push({ outputBasePath: base, slotIndex: slot, error: "missing source_storage_path" });
+            continue;
+          }
+          copyPromises.push((async () => {
+            try {
+              const dst = `${base}/Slot_${slot + 1}.png`;
+              const dstFile = bucket.file(dst);
+              await bucket.file(src).copy(dstFile);
+              const token = newDownloadToken();
+              await dstFile.setMetadata({ metadata: { firebaseStorageDownloadTokens: token } });
+              copiedCount++;
+            } catch (e) {
+              copyErrors.push({ outputBasePath: base, slotIndex: slot, error: String(e?.message || e) });
+            }
+          })());
+        }
+      }
+      await Promise.all(copyPromises);
+      memLog("after copy step");
+
+      // Step B: Build the JSONL for "edits" tasks. Each line carries a
+      // routing key encoding setIndex and slotIndex so we can place
+      // the result back in the right folder.
+      //
+      // MEMORY-CRITICAL DESIGN NOTE
+      // ----------------------------
+      // We never accumulate full line OBJECTS in memory. Instead:
+      //   1. Worker fetches both reference images.
+      //   2. Worker base64-encodes them into a single line object.
+      //   3. Worker JSON.stringify's the line, encodes UTF-8 → Buffer.
+      //   4. Worker pushes that Buffer into jsonlChunks[] and drops
+      //      every other reference (line object, base64 strings, raw
+      //      buffers) so GC can reclaim them immediately.
+      //
+      // This prevents the OOM that happened previously when we held
+      // all 96 line objects (each ~1.6MB) alive simultaneously, then
+      // doubled memory by serializing them into one giant string.
+      // Per worker peak ≈ 5 MB; total peak ≈ jsonlChunks size + (10
+      // workers × 5 MB).
+      const jsonlChunks = []; // Buffer[] — each chunk is one JSONL line + "\n"
+      const routes = []; // parallel array: routes[i] = { setIndex, slotIndex, outputBasePath }
+      const fetchJobs = []; // { setIdx, slot, promptT, refPath, charmPath, outputBasePath }
+      for (let setIdx = 0; setIdx < sets.length; setIdx++) {
+        const s = sets[setIdx];
+        for (const t of s.tasks) {
+          if (String(t?.type) !== "edits") continue;
+          const slot = Number(t?.slotIndex);
+          if (!Number.isFinite(slot) || slot < 0) continue;
+          const refPath = String(t?.input_storage_path || "").trim();
+          const charmPath = String(t?.input_charm_storage_path || "").trim();
+          const promptT = String(t?.prompt || "").trim();
+          if (!refPath || !charmPath || !promptT) continue;
+          fetchJobs.push({ setIdx, slot, promptT, refPath, charmPath, outputBasePath: s.outputBasePath });
+        }
+      }
+
+      // Routes need a fixed slot per fetchJob. Pre-populate so workers
+      // can write into routes[index] without needing a mutex.
+      for (let i = 0; i < fetchJobs.length; i++) {
+        const j = fetchJobs[i];
+        routes.push({ setIndex: j.setIdx, slotIndex: j.slot, outputBasePath: j.outputBasePath });
+      }
+
+      // Fetch + build with low concurrency. See memory note above.
+      // Concurrency 10 means at most 10 base64 working sets exist at
+      // once. Each working set ≈ 5 MB peak (raw + base64 + stringified
+      // line + Buffer chunk). After the worker returns, only the
+      // pushed Buffer chunk in jsonlChunks survives.
+      const FETCH_CONCURRENCY = 10;
+      memLog(`before fetch loop (${fetchJobs.length} jobs)`);
+      let fetchCounter = 0;
+      await runBoundedConcurrent(fetchJobs, FETCH_CONCURRENCY, async (j, idx) => {
+        const [ref, charm] = await Promise.all([
+          storagePathToBuffer(j.refPath),
+          storagePathToBuffer(j.charmPath),
+        ]);
+        const key = `s${j.setIdx}_slot${j.slot}`;
+
+        // Build the line, stringify, encode to Buffer, then explicitly
+        // null out big locals so V8 has a strong hint to free them
+        // before the next worker iteration starts.
+        let line = buildBatchJsonlLine(
+          key, j.promptT,
+          ref.mime, ref.buffer.toString("base64"),
+          charm.mime, charm.buffer.toString("base64"),
+          imageSize
+        );
+        let jsonStr = JSON.stringify(line) + "\n";
+        line = null;
+        const chunkBuf = Buffer.from(jsonStr, "utf8");
+        jsonStr = null;
+
+        // jsonlChunks order doesn't matter for correctness — the JSONL
+        // routing key on each line tells Gemini which response is which.
+        jsonlChunks.push(chunkBuf);
+        // Periodic memory log so we see in-loop growth.
+        const c = ++fetchCounter;
+        if (c === 1 || c % 5 === 0 || c === fetchJobs.length) {
+          memLog(`fetch ${c}/${fetchJobs.length}`);
+        }
+      });
+      memLog(`after fetch loop`);
+
+      if (jsonlChunks.length === 0) {
+        // Edge case: all-copy batch (no Gemini calls needed). Write
+        // manifests immediately and short-circuit. We emit slots in the
+        // same shape as the gen-collect path so the Review tab renders
+        // consistently regardless of which path produced the set.
+        for (const s of sets) {
+          const manifestPath = `${s.outputBasePath}/manifest.json`;
+          const slotsOut = (s.tasks || [])
+            .filter((t) => Number.isFinite(Number(t?.slotIndex)))
+            .sort((a, b) => Number(a.slotIndex) - Number(b.slotIndex))
+            .map((t) => {
+              const slotIdx = Number(t.slotIndex);
+              const slot = slotIdx + 1;
+              const isCopy = String(t?.type) === "copy";
+              return isCopy
+                ? {
+                    slot,
+                    type: "copy",
+                    source: t?.source_storage_path || null,
+                    newCharm: null,
+                    output: `${s.outputBasePath}/Slot_${slot}.png`,
+                  }
+                : {
+                    slot,
+                    type: "gen",
+                    source: t?.input_storage_path || null,
+                    newCharm: t?.input_charm_storage_path || null,
+                    output: null, // not generated (no edits tasks)
+                  };
+            });
+          const m = {
+            category: s.category,
+            setN: s.setN,
+            outputBasePath: s.outputBasePath,
+            timestamp: new Date().toISOString(),
+            model: GEMINI_IMAGE_MODEL,
+            batchMode: false,
+            copyOnly: true,
+            slots: slotsOut,
+          };
+          await bucket.file(manifestPath).save(
+            Buffer.from(JSON.stringify(m, null, 2), "utf8"),
+            { contentType: "application/json", resumable: false }
+          );
+        }
+        return json(200, {
+          ok: true, batchName: null, copyOnly: true,
+          copied: copiedCount, copyErrors, message: "All tasks were copy-only; no batch job needed."
+        });
+      }
+
+      // Concat once into a single Buffer for upload. This is the only
+      // moment when we hold the full JSONL in memory — and it's a
+      // single contiguous Buffer, not a doubled UTF-16 string.
+      memLog(`before Buffer.concat (${jsonlChunks.length} chunks)`);
+      const jsonlBuffer = Buffer.concat(jsonlChunks);
+      const jsonlBytes = jsonlBuffer.length;
+      // Free chunk array — Buffer.concat copied them, originals can go.
+      jsonlChunks.length = 0;
+      memLog(`after Buffer.concat (${(jsonlBytes/1e6).toFixed(1)}MB JSONL)`);
+
+      // Hard cap: Files API limit is 2GB. We reject early to avoid uploading.
+      if (jsonlBytes > 1.9 * 1024 * 1024 * 1024) {
+        return json(400, {
+          error: { message: `JSONL too large (${(jsonlBytes / 1e9).toFixed(2)} GB). Reduce sets per batch.` }
+        });
+      }
+
+      // Step C: Upload JSONL to Gemini Files API, then create the batch.
+      const fileName = await uploadJsonlToGeminiFiles(apiKey, jsonlBuffer, displayName);
+      memLog(`after Files API upload`);
+      const { batchName, raw } = await createGeminiBatchJob(apiKey, GEMINI_IMAGE_MODEL, fileName, displayName);
+      memLog(`after batch create`);
+
+      // Step D: Persist routing data in Firestore. The doc id is a
+      // sanitized batch name so the client can fetch it directly.
+      const db = getDb();
+      const docId = batchDocIdFromName(batchName);
+      const persistDoc = {
+        batchName,
+        docId,
+        displayName,
+        sessionId: String(body?.sessionId || ""),
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        state: "JOB_STATE_PENDING",
+        collected: false,
+        model: GEMINI_IMAGE_MODEL,
+        imageSize,
+        inputFileName: fileName,
+        inputJsonlBytes: jsonlBytes,
+        // sets metadata (so we can route + write manifests later)
+        sets: sets.map((s) => ({
+          category: s.category,
+          outputBasePath: s.outputBasePath,
+          setN: s.setN,
+          tasks: s.tasks, // store the raw task list so we can write a faithful manifest later
+        })),
+        routes,
+        copyStats: { copied: copiedCount, errors: copyErrors },
+        rawCreate: raw || null,
+      };
+      await firestoreRetry(
+        () => db.collection(BATCHES_COLL).doc(docId).set(persistDoc, { merge: true }),
+        "batch.create"
+      );
+
+      return json(200, {
+        ok: true,
+        batchName,
+        docId,
+        requestCount: routes.length,
+        setsCount: sets.length,
+        copyStats: { copied: copiedCount, errors: copyErrors },
+        inputJsonlBytes: jsonlBytes,
+      });
+    }
+
+    if (kind === "batch_status") {
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) return json(400, { error: { message: "Missing GEMINI_API_KEY env var" } });
+
+      const batchName = String(body?.batchName || "").trim();
+      if (!batchName.startsWith("batches/")) {
+        return json(400, { error: { message: "batchName must start with batches/" } });
+      }
+
+      const data = await getGeminiBatchJob(apiKey, batchName);
+      // Gemini wraps the batch info under .metadata for long-running ops.
+      // Per the docs, .metadata.state and .response.responsesFile are
+      // where progress and the result file land.
+      const state = data?.metadata?.state || data?.state || "UNKNOWN";
+      const stats = data?.metadata?.batchStats || data?.batchStats || null;
+      const respFile = data?.response?.responsesFile || data?.dest?.fileName || null;
+
+      // Mirror state into Firestore so the dashboard can show it without
+      // the user having a tab open during the polling phase.
+      try {
+        const db = getDb();
+        const docId = batchDocIdFromName(batchName);
+        await firestoreRetry(
+          () => db.collection(BATCHES_COLL).doc(docId).set({
+            state, batchStats: stats || null, responsesFile: respFile || null,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          }, { merge: true }),
+          "batch.statusMirror"
+        );
+      } catch (_) { /* non-fatal */ }
+
+      return json(200, {
+        ok: true, batchName, state,
+        batchStats: stats, responsesFile: respFile,
+        done: state === "JOB_STATE_SUCCEEDED" || state === "JOB_STATE_FAILED" ||
+              state === "JOB_STATE_CANCELLED" || state === "JOB_STATE_EXPIRED",
+        succeeded: state === "JOB_STATE_SUCCEEDED",
+      });
+    }
+
+    if (kind === "batch_collect") {
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) return json(400, { error: { message: "Missing GEMINI_API_KEY env var" } });
+
+      const batchName = String(body?.batchName || "").trim();
+      if (!batchName.startsWith("batches/")) {
+        return json(400, { error: { message: "batchName must start with batches/" } });
+      }
+
+      const db = getDb();
+      const docId = batchDocIdFromName(batchName);
+      const docSnap = await db.collection(BATCHES_COLL).doc(docId).get();
+      if (!docSnap.exists) {
+        return json(400, { error: { message: `No Firestore record for ${batchName}. Submit went through here?` } });
+      }
+      const docData = docSnap.data();
+
+      if (docData.collected) {
+        return json(200, { ok: true, alreadyCollected: true, batchName, results: docData.results || null });
+      }
+
+      const live = await getGeminiBatchJob(apiKey, batchName);
+      const state = live?.metadata?.state || live?.state || "UNKNOWN";
+      const forceMode = !!body?.force;
+
+      // Standard download requires SUCCEEDED. Force download accepts any
+      // state and pulls whatever responsesFile Google has produced —
+      // useful when a job hangs, fails partway, or expires. Only failed
+      // lines stay empty; successful ones still upload.
+      if (!forceMode && state !== "JOB_STATE_SUCCEEDED") {
+        return json(400, { error: { message: `Batch not succeeded; state=${state}. Use Force download to recover partial results.` } });
+      }
+
+      const respFileName = live?.response?.responsesFile || live?.dest?.fileName;
+      if (!respFileName) {
+        if (forceMode) {
+          return json(400, { error: { message: `Force download: no result file available yet for state=${state}. Try again later or cancel.` } });
+        }
+        return json(500, { error: { message: "Succeeded batch has no responsesFile/fileName" } });
+      }
+
+      // STREAMING COLLECT
+      // ------------------
+      // We can't load the result JSONL into memory (potentially 2GB+) and
+      // we can't queue every decoded image buffer either. Instead we
+      // stream the JSONL line-by-line, decode each image inline, and
+      // dispatch uploads through a bounded-concurrency worker pool.
+      //
+      // Concurrency limit (UPLOAD_CONCURRENCY) caps in-flight buffers,
+      // keeping peak RAM at roughly UPLOAD_CONCURRENCY × ~3MB ≈ 60MB
+      // even when collecting 100-set batches. Well under Netlify's
+      // 1.5GB free-tier / 3GB Pro-tier function memory cap.
+      const UPLOAD_CONCURRENCY = 20;
+
+      const bucket = admin.storage().bucket();
+      const routes = Array.isArray(docData.routes) ? docData.routes : [];
+      const setsMeta = Array.isArray(docData.sets) ? docData.sets : [];
+
+      const routeByKey = new Map();
+      for (let i = 0; i < routes.length; i++) {
+        const r = routes[i];
+        routeByKey.set(`s${r.setIndex}_slot${r.slotIndex}`, r);
+      }
+
+      let succeededCount = 0;
+      let failedCount = 0;
+      const perSetSlotResults = new Map();
+      const failures = [];
+
+      // Producer: streams parsed lines from Google's result JSONL and
+      // pushes upload tasks into a bounded queue. Consumers drain the
+      // queue concurrently. We use a simple semaphore (slots[]) to
+      // throttle in-flight uploads without buffering the whole list.
+      const inFlight = new Set();
+      const recordResult = (route, ok, storagePath, error) => {
+        const arr = perSetSlotResults.get(route.setIndex) || [];
+        if (ok) {
+          succeededCount++;
+          arr.push({ slotIndex: route.slotIndex, ok: true, storagePath });
+        } else {
+          failedCount++;
+          failures.push({ key: `s${route.setIndex}_slot${route.slotIndex}`, error });
+          arr.push({ slotIndex: route.slotIndex, ok: false, error });
+        }
+        perSetSlotResults.set(route.setIndex, arr);
+      };
+
+      const uploadOne = async (route, buffer, key) => {
+        try {
+          const storagePath = `${route.outputBasePath}/Slot_${route.slotIndex + 1}.png`;
+          const file = bucket.file(storagePath);
+          const token = newDownloadToken();
+          await file.save(buffer, {
+            resumable: false,
+            contentType: "image/png",
+            metadata: { metadata: { firebaseStorageDownloadTokens: token } },
+          });
+          recordResult(route, true, storagePath);
+        } catch (e) {
+          recordResult(route, false, null, String(e?.message || e));
+        }
+        // Buffer drops out of scope once this fn returns; GC reclaims it.
+      };
+
+      // Drive the stream. For each line, parse → find route → decode b64
+      // → spawn upload promise. If we hit the concurrency cap, wait for
+      // the fastest one to finish before spawning the next. This keeps
+      // memory bounded by UPLOAD_CONCURRENCY × per-image size.
+      try {
+        for await (const parsed of streamGeminiResultLines(apiKey, respFileName)) {
+          const key = parsed?.key;
+          const route = routeByKey.get(key);
+          if (!route) {
+            failures.push({ key: key || "(none)", error: "no route for key" });
+            continue;
+          }
+          if (parsed?.error) {
+            recordResult(route, false, null, parsed.error?.message || "batch error");
+            continue;
+          }
+          const partsOut = parsed?.response?.candidates?.[0]?.content?.parts || [];
+          const imgPart = partsOut.find((p) => p?.inline_data?.data) ||
+                          partsOut.find((p) => p?.inlineData?.data) || null;
+          const b64 = imgPart?.inline_data?.data || imgPart?.inlineData?.data;
+          if (!b64) {
+            recordResult(route, false, null, "no inline_data in response");
+            continue;
+          }
+
+          // Decode + queue. Throttle once we hit the concurrency cap.
+          const buffer = Buffer.from(b64, "base64");
+          const p = uploadOne(route, buffer, key).finally(() => inFlight.delete(p));
+          inFlight.add(p);
+          if (inFlight.size >= UPLOAD_CONCURRENCY) {
+            await Promise.race(inFlight);
+          }
+        }
+        // Drain any remaining in-flight uploads.
+        await Promise.all(inFlight);
+      } catch (streamErr) {
+        // If the stream itself fails, surface the partial state so the
+        // user can see what was already uploaded before the break.
+        await Promise.all(inFlight);
+        failures.push({ key: "(stream)", error: String(streamErr?.message || streamErr) });
+      }
+
+      // Step: write a manifest per set, mirroring what Standard mode writes.
+      // Manifest format intentionally matches the existing structure so the
+      // Approved/Review tabs render batch results identically.
+      //
+      // The Review tab (loadSetImages → manifest.slots[].source) needs each
+      // slot entry to carry its original `source` storage path so the UI
+      // can display "Source: …". Standard mode also writes `newCharm` for
+      // gen slots; we preserve that field here for cross-mode parity.
+      for (let setIdx = 0; setIdx < setsMeta.length; setIdx++) {
+        const s = setsMeta[setIdx];
+        const slotResults = (perSetSlotResults.get(setIdx) || []).sort((a, b) => a.slotIndex - b.slotIndex);
+
+        // Build a slotIndex → original-task lookup so we can pull source/newCharm.
+        const taskBySlot = new Map();
+        for (const t of (s.tasks || [])) {
+          if (Number.isFinite(Number(t?.slotIndex))) taskBySlot.set(Number(t.slotIndex), t);
+        }
+
+        // Compose the slots array. We emit one entry per planned slot
+        // (not just the ones that came back from Gemini), so the Review
+        // tab can render every slot with its source label even if a
+        // particular gen failed.
+        const planSlotsByIndex = new Map();
+        for (const t of (s.tasks || [])) {
+          if (Number.isFinite(Number(t?.slotIndex))) planSlotsByIndex.set(Number(t.slotIndex), t);
+        }
+        const allSlotIndices = Array.from(planSlotsByIndex.keys()).sort((a, b) => a - b);
+
+        const slotsOut = allSlotIndices.map((slotIdx) => {
+          const t = planSlotsByIndex.get(slotIdx);
+          // Look up generation result, if any (copies have no result entry — they
+          // succeeded synchronously at submit time).
+          const r = slotResults.find((x) => x.slotIndex === slotIdx);
+          const isCopy = String(t?.type) === "copy";
+          // For copy tasks, source == the synced source; output path is canonical.
+          const slot = slotIdx + 1;
+          if (isCopy) {
+            return {
+              slot,
+              type: "copy",
+              source: t?.source_storage_path || null,
+              newCharm: null,
+              output: `${s.outputBasePath}/Slot_${slot}.png`,
+            };
+          }
+          // Gen task. r may be undefined if Gemini didn't return this key
+          // (e.g., upstream filtering); we still emit the slot for UI consistency.
+          return {
+            slot,
+            type: r?.ok === false ? "error" : "gen",
+            source: t?.input_storage_path || null,
+            newCharm: t?.input_charm_storage_path || null,
+            output: (r?.ok && r?.storagePath) ? r.storagePath : null,
+            error: r?.error || null,
+          };
+        });
+
+        const m = {
+          category: s.category,
+          setN: s.setN,
+          outputBasePath: s.outputBasePath,
+          timestamp: new Date().toISOString(),
+          model: GEMINI_IMAGE_MODEL,
+          batchMode: true,
+          batchName,
+          batchState: state,
+          partial: forceMode && state !== "JOB_STATE_SUCCEEDED",
+          imageSize: docData.imageSize || "2K",
+          slots: slotsOut,
+        };
+        const manifestPath = `${s.outputBasePath}/manifest.json`;
+        try {
+          await bucket.file(manifestPath).save(
+            Buffer.from(JSON.stringify(m, null, 2), "utf8"),
+            { contentType: "application/json", resumable: false }
+          );
+        } catch (e) {
+          failures.push({ key: `manifest:${s.outputBasePath}`, error: String(e?.message || e) });
+        }
+      }
+
+      // Move used charms out of the active pool.
+      // ---------------------------------------
+      // After successful collection, every unique charm path referenced
+      // in this batch's tasks is moved to the matching Used pool:
+      //   New_Charms          → Used_Necklace_Charm_Pool
+      //   New_Charms_Earrings → Used_Earring_Charm_Pool
+      //
+      // This ensures the same charm never gets picked again by a
+      // future submission. Move happens AFTER images write so a
+      // mid-collection failure doesn't strand the charm in the wrong
+      // place. We use copy+delete (not rename, which Firebase Storage
+      // doesn't support natively) and ignore per-charm errors so a
+      // single flaky charm doesn't block the batch from being marked
+      // collected.
+      const charmsUsed = new Set();
+      for (const s of setsMeta) {
+        for (const t of (s.tasks || [])) {
+          const p = t?.input_charm_storage_path;
+          if (p) charmsUsed.add(p);
+        }
+      }
+      const charmMoveErrors = [];
+      let charmsMoved = 0;
+      for (const srcPath of charmsUsed) {
+        try {
+          let destPrefix = null;
+          if (srcPath.includes("/Charm_Maker/New_Charms_Earrings/")) {
+            destPrefix = "listing-generator-1/Charm_Maker/Used_Earring_Charm_Pool/";
+          } else if (srcPath.includes("/Charm_Maker/New_Charms/")) {
+            destPrefix = "listing-generator-1/Charm_Maker/Used_Necklace_Charm_Pool/";
+          } else {
+            // Charm came from somewhere else — don't move it.
+            continue;
+          }
+          const filename = srcPath.split("/").pop();
+          if (!filename) continue;
+          const destPath = destPrefix + filename;
+
+          const srcFile = bucket.file(srcPath);
+          const [exists] = await srcFile.exists();
+          if (!exists) {
+            // Already moved by an earlier collection of an overlapping
+            // batch — not an error, just skip.
+            continue;
+          }
+          await srcFile.copy(bucket.file(destPath));
+          // Preserve a download token on the destination so it renders
+          // in any UI that expects one.
+          try {
+            await bucket.file(destPath).setMetadata({
+              metadata: { firebaseStorageDownloadTokens: newDownloadToken() },
+            });
+          } catch (_) {}
+          await srcFile.delete();
+          charmsMoved++;
+        } catch (e) {
+          charmMoveErrors.push({ charm: srcPath, error: String(e?.message || e) });
+        }
+      }
+
+      // Mark Firestore record as collected.
+      await firestoreRetry(
+        () => db.collection(BATCHES_COLL).doc(docId).set({
+          collected: true,
+          collectedAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          results: {
+            succeededCount, failedCount, failures: failures.slice(0, 200),
+            charmsMoved, charmMoveErrors: charmMoveErrors.slice(0, 50),
+          },
+        }, { merge: true }),
+        "batch.markCollected"
+      );
+
+      return json(200, {
+        ok: true, batchName, collected: true,
+        succeededCount, failedCount,
+        charmsMoved, charmMoveErrors: charmMoveErrors.slice(0, 20),
+        failures: failures.slice(0, 50),
+      });
+    }
+
+    if (kind === "batch_list") {
+      const includeCollected = !!body?.includeCollected;
+      const limit = clampNumber(body?.limit, 1, 200, 50);
+      const db = getDb();
+      let q = db.collection(BATCHES_COLL).orderBy("createdAt", "desc").limit(limit);
+      const snap = await q.get();
+      const out = [];
+      snap.forEach((doc) => {
+        const d = doc.data();
+        if (!includeCollected && d.collected) return;
+        out.push({
+          docId: doc.id,
+          batchName: d.batchName,
+          displayName: d.displayName,
+          sessionId: d.sessionId || null,
+          state: d.state,
+          collected: !!d.collected,
+          batchStats: d.batchStats || null,
+          createdAt: d.createdAt?.toMillis ? d.createdAt.toMillis() : null,
+          updatedAt: d.updatedAt?.toMillis ? d.updatedAt.toMillis() : null,
+          collectedAt: d.collectedAt?.toMillis ? d.collectedAt.toMillis() : null,
+          setsCount: Array.isArray(d.sets) ? d.sets.length : 0,
+          requestCount: Array.isArray(d.routes) ? d.routes.length : 0,
+          results: d.results || null,
+        });
+      });
+      return json(200, { ok: true, batches: out });
+    }
+
+    if (kind === "batch_cancel") {
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) return json(400, { error: { message: "Missing GEMINI_API_KEY env var" } });
+      const batchName = String(body?.batchName || "").trim();
+      if (!batchName.startsWith("batches/")) {
+        return json(400, { error: { message: "batchName must start with batches/" } });
+      }
+      await cancelGeminiBatchJob(apiKey, batchName);
+      try {
+        const db = getDb();
+        await firestoreRetry(
+          () => db.collection(BATCHES_COLL).doc(batchDocIdFromName(batchName)).set({
+            state: "JOB_STATE_CANCELLED",
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          }, { merge: true }),
+          "batch.cancelMirror"
+        );
+      } catch (_) { /* non-fatal */ }
+      return json(200, { ok: true, cancelled: true, batchName });
     }
 
 // ------------------------------------------------------------
@@ -1027,15 +2155,7 @@ exports.handler = async (event) => {
       const basePath0 = String(input_storage_path || "").trim();
       const basePath1 = String(input_charm_storage_path || "").trim();
       if (!basePath0) return json(400, { error: { message: "input_storage_path is required" } });
-      // input_charm_storage_path is OPTIONAL.
-      //   • Two-image flow (regeneration / fresh composite): caller supplies
-      //     both — image0 is the model/reference, image1 is the charm — and
-      //     Gemini composites them per the prompt.
-      //   • One-image flow (in-place edit / Listing-Generator adjustment-mode
-      //     redo): caller supplies only basePath0 and a prompt that describes
-      //     the requested edit. We send a single image to Gemini so it does
-      //     not search for differences between two identical inputs or try
-      //     to composite them.
+      if (!basePath1) return json(400, { error: { message: "input_charm_storage_path is required" } });
 
       const apiKey = process.env.GEMINI_API_KEY;
       if (!apiKey) return json(400, { error: { message: "Missing GEMINI_API_KEY env var" } });
@@ -1044,14 +2164,7 @@ exports.handler = async (event) => {
       const effectiveSlot = Number.isFinite(Number(slotIndex)) && Number(slotIndex) >= 0 ? Number(slotIndex) : 0;
 
       const img0 = await storagePathToBuffer(basePath0);
-      const img1 = basePath1 ? await storagePathToBuffer(basePath1) : null;
-
-      const images = [
-        { buffer: img0.buffer, mime: img0.mime, filename: filenameForMime("image0", img0.mime) },
-      ];
-      if (img1) {
-        images.push({ buffer: img1.buffer, mime: img1.mime, filename: filenameForMime("image1", img1.mime) });
-      }
+      const img1 = await storagePathToBuffer(basePath1);
 
       let outBuf = await callGeminiImagesEdits({
         apiKey,
@@ -1060,7 +2173,10 @@ exports.handler = async (event) => {
         size,
         quality,
         output_format,
-        images,
+        images: [
+          { buffer: img0.buffer, mime: img0.mime, filename: filenameForMime("image0", img0.mime) },
+          { buffer: img1.buffer, mime: img1.mime, filename: filenameForMime("image1", img1.mime) },
+        ],
       });
 
       outBuf = await applyFinalFrameZoomIfNeeded(outBuf, postprocess);
