@@ -279,6 +279,44 @@
     line-height: 1 !important;
   }
 
+  /* Bulk-actions panel rows. Each row is a checkbox + set name, with
+     a dotted green status badge (or yellow for in-flight redos) when
+     the set has any redo activity. Layout uses a compact flex row so
+     50+ sets fit comfortably in the scrollable container. */
+  .bulk-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    user-select: none;
+    font-size: 12px;
+    color: var(--text);
+  }
+  .bulk-row:hover {
+    background: var(--inset);
+  }
+  .bulk-row input[type="checkbox"] {
+    cursor: pointer;
+    margin: 0;
+    flex-shrink: 0;
+  }
+  .bulk-row .bulk-row-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .bulk-row .bulk-row-status {
+    font-size: 10px;
+    color: var(--text-2);
+    flex-shrink: 0;
+  }
+  .bulk-row.has-redo .bulk-row-name {
+    color: #7fdb96;
+  }
+
   /* "redoBtn" — keep the JS-driven disabled/enabled UX, just restyle */
   .redoBtn {
     background: var(--inset) !important;
@@ -1938,6 +1976,36 @@
             <button class="btn" id="approveSetBtn" style="background: #1f4026; color: #7fdb96; border: 1px solid #2f5e3a;">Approve set →</button>
             <button class="btn" id="deleteSetBtn" style="background: #3d1c1c; color: #fca5a5; border: 1px solid #7a3838;">Delete set</button>
           </div>
+
+          <!-- Bulk-actions panel.
+               Mirrors the dropdown but with checkboxes so the user can
+               approve or delete many sets in one click instead of going
+               one-by-one. Shows the same "(Slot N: 🟢)" markers as the
+               dropdown so users know which listings they've already
+               redone. The single-set dropdown above still works for
+               navigation (clicking a row in the bulk list does NOT load
+               that set into the grid — that's still the dropdown's job).
+               Backend operations are serialized via a small queue to
+               avoid hammering Firebase Storage with parallel deletes /
+               moves when the user selects 50+ sets. -->
+          <div id="bulkActionsPanel" style="margin-top: 16px; padding: 12px; background: var(--inset); border: 1px solid var(--line); border-radius: var(--r-md);">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+              <label style="margin: 0; font-size: 12px; font-weight: 600;">Bulk select sets</label>
+              <div style="display: flex; gap: 6px; align-items: center;">
+                <button class="btn btnSmall" id="bulkSelectAllBtn" style="font-size: 10px; padding: 2px 8px;">Select all</button>
+                <button class="btn btnSmall" id="bulkClearBtn" style="font-size: 10px; padding: 2px 8px;">Clear</button>
+                <span class="muted" id="bulkSelectedCount" style="font-size: 11px; min-width: 70px; text-align: right;">0 selected</span>
+              </div>
+            </div>
+            <div id="bulkSetsList" style="max-height: 240px; overflow-y: auto; background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 4px;">
+              <div class="muted" style="padding: 12px; text-align: center; font-size: 11px;">No sets loaded yet</div>
+            </div>
+            <div style="display: flex; gap: 8px; margin-top: 8px;">
+              <button class="btn" id="bulkApproveBtn" disabled style="flex: 1; background: #1f4026; color: #7fdb96; border: 1px solid #2f5e3a; opacity: 0.5;">Approve 0 selected</button>
+              <button class="btn" id="bulkDeleteBtn" disabled style="flex: 1; background: #3d1c1c; color: #fca5a5; border: 1px solid #7a3838; opacity: 0.5;">Delete 0 selected</button>
+            </div>
+            <div class="muted" id="bulkQueueStatus" style="font-size: 10px; margin-top: 6px; text-align: center; min-height: 14px;"></div>
+          </div>
         </div>
 
         <div class="group">
@@ -2765,7 +2833,66 @@
     }
 
     let CURRENT_SET = null; 
-    const REDO_STATE = {}; 
+    const REDO_STATE = {};
+
+    // Persist green dots / completed-redo markers across page refreshes.
+    // The user uses these markers to track which listings they've fixed
+    // and need them to survive reload, tab close, and full-app restart.
+    //
+    // Strategy: write the entire REDO_STATE object to localStorage on
+    // every mutation, restore on page load. We deliberately drop any
+    // 'running' entries on restore — those reflect a redo that was in
+    // flight when the page was reloaded, and the actual upload status
+    // is uncertain so we don't want to misleadingly show a spinner that
+    // nothing's polling for.
+    const REDO_STATE_LS_KEY = "lg1_redo_state_v1";
+
+    function persistRedoState() {
+      try {
+        localStorage.setItem(REDO_STATE_LS_KEY, JSON.stringify(REDO_STATE));
+      } catch (e) {
+        console.warn("[REDO_STATE] localStorage write failed:", e);
+      }
+    }
+
+    function restoreRedoState() {
+      try {
+        const raw = localStorage.getItem(REDO_STATE_LS_KEY);
+        if (!raw) return;
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== "object") return;
+
+        // Merge into REDO_STATE in-place. Skip 'running' — those entries
+        // are stale because the page reloaded mid-redo; whatever was in
+        // flight at the server is no longer being awaited by this page.
+        Object.keys(parsed).forEach((k) => {
+          const entry = parsed[k];
+          if (entry && entry.status === "completed") {
+            REDO_STATE[k] = entry;
+          }
+        });
+      } catch (e) {
+        console.warn("[REDO_STATE] localStorage restore failed:", e);
+      }
+    }
+
+    function clearRedoStateForSet(setPath) {
+      // Called after a set is approved or deleted so its markers don't
+      // pile up indefinitely in localStorage.
+      let mutated = false;
+      Object.keys(REDO_STATE).forEach((k) => {
+        if (k.startsWith(setPath)) {
+          delete REDO_STATE[k];
+          mutated = true;
+        }
+      });
+      if (mutated) persistRedoState();
+    }
+
+    // Restore as early as possible so the first updateDropdownLabels()
+    // call (after loadReviewSets populates the dropdown) sees the
+    // persisted markers and renders them immediately.
+    restoreRedoState();
 
     function setAllRedoEnabled(enabled){
       document.querySelectorAll("button.redoBtn").forEach(b => { b.disabled = !enabled; });
@@ -2814,6 +2941,7 @@
       const redoKey = `${ctxSetPath}::${slotIndex}`;
 
       REDO_STATE[redoKey] = { status: 'running' };
+      persistRedoState();
       updateDropdownLabels(); 
       updateApproveButtonState(); 
 
@@ -2966,6 +3094,7 @@ The output must look like the input image with ONLY the user's requested change 
           
       const finalUrl = cacheBust(waitedResult.url);
           REDO_STATE[redoKey] = { status: 'completed', url: finalUrl };
+          persistRedoState();
           updateDropdownLabels(); 
           updateApproveButtonState();
 
@@ -2994,6 +3123,7 @@ The output must look like the input image with ONLY the user's requested change 
       } catch(err) {
           console.error("Redo failed", err);
           delete REDO_STATE[redoKey];
+          persistRedoState();
           updateDropdownLabels();
           updateApproveButtonState(); 
           if (CURRENT_SET?.outputBasePath === ctxSetPath) {
@@ -3978,6 +4108,49 @@ async function updateTotalAllTimeCounter() {
         }
     }
     
+    // ============================================================
+    // Auto-advance helper: after approve/delete, the user expects to
+    // land on the NEXT listing in numerical order — i.e., approving
+    // Set_255 should auto-load Set_256, not "the top of the dropdown"
+    // (which used to happen because the old code did selectedIndex=0).
+    //
+    // Returns the dropdown <option> for the smallest set number that
+    // is strictly greater than `removedSetName`'s number. If no
+    // higher-numbered set exists in the dropdown, falls back to the
+    // highest remaining set so the user still lands on something
+    // meaningful instead of nothing. Sort-order-agnostic — works the
+    // same whether the dropdown is sorted ascending or descending.
+    // ============================================================
+    function findNextHigherSet(removedSetName) {
+      const removedNum = parseInt(String(removedSetName || "").replace("Set_", "")) || 0;
+      const opts = Array.from(reviewSetSelect.options).filter((o) => o.value);
+      if (opts.length === 0) return null;
+
+      let next = null;
+      let nextNum = Infinity;
+      for (const opt of opts) {
+        const n = parseInt(opt.value.replace("Set_", "")) || 0;
+        if (n > removedNum && n < nextNum) {
+          nextNum = n;
+          next = opt;
+        }
+      }
+      if (next) return next;
+
+      // No higher-numbered set remains (the user just approved the
+      // newest one). Fall back to the highest remaining number so we
+      // wrap to the new "newest" instead of jumping to Set_1.
+      let highestNum = -1;
+      for (const opt of opts) {
+        const n = parseInt(opt.value.replace("Set_", "")) || 0;
+        if (n > highestNum) {
+          highestNum = n;
+          next = opt;
+        }
+      }
+      return next;
+    }
+
     function updateDropdownLabels() {
         if(appMode !== "review") return;
         const category = activeCategoryEl.value;
@@ -4006,7 +4179,239 @@ async function updateTotalAllTimeCounter() {
                 opt.text = setName;
             }
         });
+
+        // Mirror the dropdown's status into the bulk-actions panel so
+        // both surfaces stay in sync automatically.
+        rebuildBulkSetsList();
     }
+
+    // ============================================================
+    // Bulk actions panel — multi-select Approve / Delete
+    // ------------------------------------------------------------
+    // The single-set dropdown above stays as the navigation control
+    // (clicking it loads that set into the grid). This panel is the
+    // BATCH-action surface: tick the sets you want, click Approve or
+    // Delete, and they all run through a serialized background queue
+    // so we don't fire 50+ parallel Firebase deletes.
+    // ============================================================
+    const BULK_SELECTED = new Set();
+
+    // Background queue. Bulk approve/delete fires N items through this
+    // queue serially. Single-set approve/delete still calls
+    // runBackgroundApproval / runBackgroundDelete directly so that path
+    // is unchanged.
+    const BULK_QUEUE = [];
+    let BULK_QUEUE_RUNNING = false;
+
+    async function processBulkQueue() {
+      if (BULK_QUEUE_RUNNING) return;
+      BULK_QUEUE_RUNNING = true;
+      const statusEl = document.getElementById("bulkQueueStatus");
+      try {
+        while (BULK_QUEUE.length > 0) {
+          const item = BULK_QUEUE.shift();
+          const remaining = BULK_QUEUE.length;
+          if (statusEl) {
+            statusEl.textContent = `Queue: processing ${item.kind} of ${item.setName}` +
+              (remaining > 0 ? ` (${remaining} more)…` : "…");
+          }
+          try {
+            if (item.kind === "approve") {
+              await runBackgroundApproval(item.category, item.setName);
+            } else if (item.kind === "delete") {
+              await runBackgroundDelete(item.category, item.setName);
+            }
+          } catch (e) {
+            console.error(`[BulkQueue] Failed ${item.kind} for ${item.setName}:`, e);
+          }
+        }
+        if (statusEl) {
+          statusEl.textContent = "Queue done.";
+          setTimeout(() => {
+            if (statusEl.textContent === "Queue done.") statusEl.textContent = "";
+          }, 4000);
+        }
+      } finally {
+        BULK_QUEUE_RUNNING = false;
+      }
+    }
+
+    function bulkRowStatusFor(setName) {
+      // Returns the status badge string for a single set ("Slot 3: 🟢"
+      // joined across all slots with redo activity) or empty string.
+      const category = activeCategoryEl.value;
+      const setPath = `${ROOT}/${category}/Ready_To_List/${setName}`;
+      const items = [];
+      Object.keys(REDO_STATE).forEach((key) => {
+        if (!key.startsWith(setPath)) return;
+        const slotIdx = key.split("::")[1];
+        const slotNum = parseInt(slotIdx) + 1;
+        const state = REDO_STATE[key];
+        if (state?.status === "running") items.push(`Slot ${slotNum}: ⏳`);
+        else if (state?.status === "completed") items.push(`Slot ${slotNum}: 🟢`);
+      });
+      return items.join(", ");
+    }
+
+    function rebuildBulkSetsList() {
+      const list = document.getElementById("bulkSetsList");
+      if (!list || !reviewSetSelect) return;
+
+      const setNames = Array.from(reviewSetSelect.options)
+        .map((opt) => opt.value)
+        .filter((v) => v && v !== "");
+
+      // Drop selections that are no longer present (e.g. set was just
+      // approved or deleted).
+      for (const s of [...BULK_SELECTED]) {
+        if (!setNames.includes(s)) BULK_SELECTED.delete(s);
+      }
+
+      if (setNames.length === 0) {
+        list.innerHTML = `<div class="muted" style="padding: 12px; text-align: center; font-size: 11px;">No sets to review</div>`;
+      } else {
+        list.innerHTML = setNames
+          .map((name) => {
+            const checked = BULK_SELECTED.has(name) ? "checked" : "";
+            const status = bulkRowStatusFor(name);
+            const hasRedo = status.includes("🟢") ? "has-redo" : "";
+            return `<label class="bulk-row ${hasRedo}">
+              <input type="checkbox" data-setname="${name}" ${checked}>
+              <span class="bulk-row-name">${name}</span>
+              ${status ? `<span class="bulk-row-status">${status}</span>` : ""}
+            </label>`;
+          })
+          .join("");
+
+        list.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
+          cb.addEventListener("change", (e) => {
+            const name = e.target.dataset.setname;
+            if (e.target.checked) BULK_SELECTED.add(name);
+            else BULK_SELECTED.delete(name);
+            updateBulkButtons();
+          });
+        });
+      }
+
+      updateBulkButtons();
+    }
+
+    function updateBulkButtons() {
+      const count = BULK_SELECTED.size;
+      const countEl = document.getElementById("bulkSelectedCount");
+      const approveBtn = document.getElementById("bulkApproveBtn");
+      const deleteBtn = document.getElementById("bulkDeleteBtn");
+      if (countEl) countEl.textContent = `${count} selected`;
+      if (approveBtn) {
+        approveBtn.textContent = `Approve ${count} selected`;
+        approveBtn.disabled = count === 0;
+        approveBtn.style.opacity = count === 0 ? "0.5" : "1";
+        approveBtn.style.cursor = count === 0 ? "not-allowed" : "pointer";
+      }
+      if (deleteBtn) {
+        deleteBtn.textContent = `Delete ${count} selected`;
+        deleteBtn.disabled = count === 0;
+        deleteBtn.style.opacity = count === 0 ? "0.5" : "1";
+        deleteBtn.style.cursor = count === 0 ? "not-allowed" : "pointer";
+      }
+    }
+
+    function bulkSelectAll() {
+      Array.from(reviewSetSelect.options).forEach((opt) => {
+        if (opt.value) BULK_SELECTED.add(opt.value);
+      });
+      rebuildBulkSetsList();
+    }
+
+    function bulkClearAll() {
+      BULK_SELECTED.clear();
+      rebuildBulkSetsList();
+    }
+
+    async function bulkApprove() {
+      const sets = Array.from(BULK_SELECTED);
+      if (sets.length === 0) return;
+      if (!confirm(`Approve ${sets.length} sets?\n\nAll selected sets will be moved to Completed in the background. This cannot be undone.`)) return;
+
+      const category = activeCategoryEl.value;
+      const currentLoaded = reviewSetSelect.value;
+      const wasCurrentInSet = sets.includes(currentLoaded);
+
+      // Remove options + clean redo state up front so the UI updates
+      // immediately. Background work continues via the queue.
+      for (const setName of sets) {
+        const opt = reviewSetSelect.querySelector(`option[value="${setName}"]`);
+        if (opt) opt.remove();
+        clearRedoStateForSet(`${ROOT}/${category}/Ready_To_List/${setName}`);
+        BULK_QUEUE.push({ kind: "approve", category, setName });
+      }
+      BULK_SELECTED.clear();
+
+      // Auto-load next available set if the currently-loaded one was
+      // just approved. Pick the next listing in numerical order so the
+      // user lands on Set_256 after approving Set_255 (consistent with
+      // the single-set approve flow).
+      if (wasCurrentInSet) {
+        if (reviewSetSelect.options.length > 0) {
+          const nextOpt = findNextHigherSet(currentLoaded);
+          if (nextOpt) {
+            reviewSetSelect.value = nextOpt.value;
+            reviewSetSelect.dispatchEvent(new Event("change", { bubbles: true }));
+            loadSetImages(reviewSetSelect.value);
+          }
+        } else {
+          reviewGrid.innerHTML = "<div class='slotRefEmpty'>No more sets to review!</div>";
+        }
+      }
+
+      rebuildBulkSetsList();
+      updateDropdownLabels();
+      setStatus(`Bulk approve: ${sets.length} sets queued.`);
+      processBulkQueue();
+    }
+
+    async function bulkDelete() {
+      const sets = Array.from(BULK_SELECTED);
+      if (sets.length === 0) return;
+      if (!confirm(`Permanently delete ${sets.length} sets?\n\nAll files in each set will be removed from Firebase Storage. This cannot be undone.`)) return;
+
+      const category = activeCategoryEl.value;
+      const currentLoaded = reviewSetSelect.value;
+      const wasCurrentInSet = sets.includes(currentLoaded);
+
+      for (const setName of sets) {
+        const opt = reviewSetSelect.querySelector(`option[value="${setName}"]`);
+        if (opt) opt.remove();
+        clearRedoStateForSet(`${ROOT}/${category}/Ready_To_List/${setName}`);
+        BULK_QUEUE.push({ kind: "delete", category, setName });
+      }
+      BULK_SELECTED.clear();
+
+      if (wasCurrentInSet) {
+        if (reviewSetSelect.options.length > 0) {
+          const nextOpt = findNextHigherSet(currentLoaded);
+          if (nextOpt) {
+            reviewSetSelect.value = nextOpt.value;
+            reviewSetSelect.dispatchEvent(new Event("change", { bubbles: true }));
+            loadSetImages(reviewSetSelect.value);
+          }
+        } else {
+          reviewGrid.innerHTML = "<div class='slotRefEmpty'>No more sets to review!</div>";
+        }
+      }
+
+      rebuildBulkSetsList();
+      updateDropdownLabels();
+      setStatus(`Bulk delete: ${sets.length} sets queued.`);
+      processBulkQueue();
+    }
+
+    // Wire up the panel's buttons. Guarded so the script doesn't crash
+    // if the elements aren't in the DOM (e.g., during early bootstrap).
+    document.getElementById("bulkSelectAllBtn")?.addEventListener("click", bulkSelectAll);
+    document.getElementById("bulkClearBtn")?.addEventListener("click", bulkClearAll);
+    document.getElementById("bulkApproveBtn")?.addEventListener("click", bulkApprove);
+    document.getElementById("bulkDeleteBtn")?.addEventListener("click", bulkDelete);
 
 function updateApproveButtonState() {
       if (!approveSetBtn) return;
@@ -4266,17 +4671,23 @@ function updateApproveButtonState() {
       const optionToRemove = reviewSetSelect.querySelector(`option[value="${setName}"]`);
       if (optionToRemove) optionToRemove.remove();
 
-      // Auto-advance: select the next option in line and load its images
-      // immediately. This is the user-facing fix for "I have to click the
-      // dropdown to see the next set" — the UI now updates with zero
-      // additional input.
+      // Drop any persisted green-dot state for this set so the localStorage
+      // entry doesn't grow unboundedly across many approvals.
+      clearRedoStateForSet(`${ROOT}/${category}/Ready_To_List/${setName}`);
+
+      // Auto-advance: load the next listing in numerical order (e.g.,
+      // approving Set_255 advances to Set_256). See findNextHigherSet
+      // for the exact selection rule.
       if (reviewSetSelect.options.length > 0) {
-          reviewSetSelect.selectedIndex = 0;
-          // Fire the change event so any other listeners react
-          // (e.g., gallery preloads), then explicitly load images.
-          reviewSetSelect.dispatchEvent(new Event('change', { bubbles: true }));
-          loadSetImages(reviewSetSelect.value);
-          setStatus(`Approved ${setName} → next: ${reviewSetSelect.value}`);
+          const nextOpt = findNextHigherSet(setName);
+          if (nextOpt) {
+              reviewSetSelect.value = nextOpt.value;
+              // Fire the change event so any other listeners react
+              // (e.g., gallery preloads), then explicitly load images.
+              reviewSetSelect.dispatchEvent(new Event('change', { bubbles: true }));
+              loadSetImages(reviewSetSelect.value);
+              setStatus(`Approved ${setName} → next: ${reviewSetSelect.value}`);
+          }
       } else {
           reviewGrid.innerHTML = "<div class='slotRefEmpty'>No more sets to review!</div>";
           setStatus(`Approved ${setName} · queue clear.`);
@@ -4389,9 +4800,16 @@ function updateApproveButtonState() {
       const optionToRemove = reviewSetSelect.querySelector(`option[value="${setName}"]`);
       if (optionToRemove) optionToRemove.remove();
 
+      // Drop any persisted green-dot state for this set.
+      clearRedoStateForSet(`${ROOT}/${category}/Ready_To_List/${setName}`);
+
       if (reviewSetSelect.options.length > 0) {
-          reviewSetSelect.selectedIndex = 0; 
-          loadSetImages(reviewSetSelect.value);
+          // Auto-advance: load the next listing in numerical order.
+          const nextOpt = findNextHigherSet(setName);
+          if (nextOpt) {
+              reviewSetSelect.value = nextOpt.value;
+              loadSetImages(reviewSetSelect.value);
+          }
       } else {
           reviewGrid.innerHTML = "<div class='slotRefEmpty'>No more sets to review!</div>";
           setStatus("Queue clear.");
