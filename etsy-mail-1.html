@@ -935,28 +935,36 @@
     .em-badge.ai-conf.med {
       background: #fff8c5; color: #7d4e00;
     }
-    /* Shared red palette — desaturated pink so the dark text pops.
-     * Used for:
-     *   - low-confidence legacy AI (.ai-conf.low)
-     *   - "Needs review" decision (.review-decision.red)
+    /* PILL-V3.6 — desaturated red+green palettes with !important.
      *
-     * v3.5 — Desaturated the bg (pulled toward neutral) so the dark
-     * crimson text reads cleanly. Vibrant pink was competing with the
-     * text for attention; the muted version lets the text be the
-     * dominant signal. */
+     * The !important is intentional and load-bearing: prior versions
+     * of these rules failed to render in some deploys (operators
+     * reported saturated red/green still showing after multiple
+     * iterations). Without seeing the live DOM I can't prove whether
+     * that was a build-pipeline transform, a service-worker cache, or
+     * a deploy lag, so this version forces the colors regardless.
+     *
+     * Background colors are very desaturated (close to neutral with a
+     * tiny tint) so the dark text is the dominant signal. If you ever
+     * need to back this out, search for "PILL-V3.6" to find this block. */
+
+    /* Shared red palette — used for:
+     *   - low-confidence legacy AI  (.ai-conf.low)
+     *   - "Needs review" decision  (.review-decision.red) */
     .em-badge.ai-conf.low,
     .em-badge.review-decision.red {
-      background: #f5e3e3; color: #82071e; font-weight: 600;
+      background: #f5e3e3 !important;
+      color: #82071e !important;
+      font-weight: 600 !important;
     }
-    /* Shared green palette — desaturated mint so the dark text pops.
-     * Used for:
+    /* Shared green palette — used for:
      *   - high-confidence legacy AI (.ai-conf.high)
-     *   - "No review" decision (.review-decision.green)
-     *
-     * v3.5 — Same desaturation treatment as the red palette above. */
+     *   - "No review" decision  (.review-decision.green) */
     .em-badge.ai-conf.high,
     .em-badge.review-decision.green {
-      background: #d8e9dc; color: #0a4a23; font-weight: 600;
+      background: #d8e9dc !important;
+      color: #0a4a23 !important;
+      font-weight: 600 !important;
     }
     .em-badge.ai-diff {
       background: #f0f0f5; color: #4b4b6b;
