@@ -1857,6 +1857,20 @@
               <button class="btn" id="generateBatchBtn" style="flex: 1; background: #1c2a4a; border: 1px solid #2d4070; color: #93c5fd; font-weight: 500;">Generate batch</button>
               <button class="btn btnSmall" id="cancelBatchBtn" style="display: none; background: #3d1c1c; border: 1px solid #7a3838; color: #fca5a5;">Cancel</button>
             </div>
+            <!-- Resume empty sets — recovery path for partially-failed
+                 batches. Scans the active category for Set_N folders
+                 that were allocated but never populated with slot
+                 images (typical after a partial Gemini failure or a
+                 mid-collect crash), then re-runs charm_pool_pick +
+                 batch_submit using the EXISTING folder paths so the
+                 populated sets are left strictly untouched. Only
+                 visible in Batch mode (the Standard mode toggle hides
+                 this whole batch block via _renderGenModeButtons). -->
+            <div id="resumeEmptySetsRow" style="display: none; margin-top: 8px;">
+              <button class="btn btnSmall" id="resumeEmptySetsBtn" style="width: 100%; background: #1c2a4a; border: 1px solid #2d4070; color: #93c5fd;">
+                🔄 Resume empty sets (scan & re-fill folders left empty by partial failures)
+              </button>
+            </div>
             <div id="batchProgress" style="display: none; margin-top: 10px;">
               <div class="upload-progress-bar"><div class="upload-progress-fill" id="batchProgressFill"></div></div>
               <div class="upload-progress-meta">
@@ -2837,17 +2851,22 @@
       const srcRandom = isAdjustmentMode ? null : await listRandomFile(srcFolder);
       if (!isAdjustmentMode && !srcRandom) throw new Error(`No files in ${srcFolder}/`);
 
-      const isEarring = ["Stud_Earrings", "Hoop_Earrings"].includes(ctxCategory);
-      const charmFolderPath = isEarring ? newCharmsEarringsPath() : newCharmsPath();
-      // Resolve the charm that was originally allocated to THIS listing.
-      // Charm files may be moved out of New_Charms/ once they have been used,
-      // so we cannot just call listLatestFile() here — that would pick up
-      // whatever charm happens to be newest right now (the wolf-instead-of-
-      // dinosaur bug). The resolver reads the manifest written at alloc time
-      // and falls back through several layers before it ever resorts to
-      // "latest in folder" behavior.
-      const charmLatest = await resolveOriginalCharm(ctxSetPath, slotIndex, charmFolderPath);
-      if (!charmLatest) throw new Error(`No charm available for redo (manifest sourceCharm missing and no files in ${charmFolderPath}/)`);
+      // Resolve the charm only when we actually need one — i.e., regen mode.
+      // Adjustment mode passes the existing Slot_N.png as the only image
+      // input and never references a charm path, so this whole resolver
+      // call (which can be slow and can throw if New_Charms/ is empty
+      // because every charm has been moved to the Used pool) is pure
+      // waste and a real failure point in that mode. Charm files may be
+      // moved out of New_Charms/ once they have been used, so resolveOriginalCharm
+      // reads the manifest written at alloc time and falls back through
+      // several layers before it ever resorts to "latest in folder".
+      let charmLatest = null;
+      if (!isAdjustmentMode) {
+        const isEarring = ["Stud_Earrings", "Hoop_Earrings"].includes(ctxCategory);
+        const charmFolderPath = isEarring ? newCharmsEarringsPath() : newCharmsPath();
+        charmLatest = await resolveOriginalCharm(ctxSetPath, slotIndex, charmFolderPath);
+        if (!charmLatest) throw new Error(`No charm available for redo (manifest sourceCharm missing and no files in ${charmFolderPath}/)`);
+      }
       
       let waitedResult = null; 
 
@@ -2996,10 +3015,17 @@ The output must look like the input image with ONLY the user's requested change 
             // In adjustment mode srcRandom is null because we re-processed
             // the existing slot image; record that path as the source.
             source: isAdjustmentMode ? slotStoragePath : srcRandom.fullPath,
-            newCharm: spec.type === "copy" ? null : charmLatest.fullPath,
             output: waitedResult?.storagePath || "",
             updatedAt: new Date().toISOString()
         };
+        // Charm bookkeeping. Adjustment mode does not touch the charm
+        // (it re-edits the existing image), so we leave newCharm out of
+        // the entry entirely — the spread merge below preserves the
+        // slot's existing record. Regen mode rewrites it: copy slots get
+        // null (no charm), gen slots get the resolved charm path.
+        if (!isAdjustmentMode) {
+          newEntry.newCharm = spec.type === "copy" ? null : charmLatest.fullPath;
+        }
         // Record the adjustment text so we have a clear audit trail of
         // what the user asked for on this slot's most-recent redo.
         if (isAdjustmentMode) newEntry.adjustment = userAdjust;
@@ -3213,53 +3239,96 @@ The output must look like the input image with ONLY the user's requested change 
         catch (_) { return false; }
       };
 
-      // 1) Try the path locked in at allocation time
-      if (manifest?.sourceCharm) {
-        if (await fileExists(manifest.sourceCharm)) {
-          return await toResolved(manifest.sourceCharm);
-        }
+      // Folders we'll search by filename when a recorded path 404s.
+      // Order matters — current pools first (cheaper, more likely),
+      // then post-collection "used" pools, then Charm Maker pools.
+      // NOTE: Used_Necklace_Charm_Pool / Used_Earring_Charm_Pool are
+      // critical — batch_collect moves the charm here right after
+      // saving the slot images, so the path stored in the manifest is
+      // ALWAYS stale by the time the user clicks Redo on a batch-
+      // generated listing.
+      const candidateFolders = [
+        newCharmsPath(),
+        newCharmsEarringsPath(),
+        `${ROOT}/Charm_Maker/Used_Necklace_Charm_Pool`,
+        `${ROOT}/Charm_Maker/Used_Earring_Charm_Pool`,
+        (typeof charmMakerSourcePath === "function" ? charmMakerSourcePath() : null),
+        `${ROOT}/Charm_Maker/Generated_Charm_Sets`,
+        `${ROOT}/Charm_Maker/Completed_Approved_Charm_Sets`,
+      ].filter(Boolean);
 
-        // 2) Path is stale — file was moved. Search by filename across
-        //    candidate folders + one level of subfolders.
-        const targetName = manifest.sourceCharmName ||
-                           manifest.sourceCharm.split("/").pop();
-        if (targetName) {
-          const candidateFolders = [
-            newCharmsPath(),
-            newCharmsEarringsPath(),
-            // The Charm Maker tab now uses its own dedicated reference pool;
-            // include it here so charms moved into that pool can still be found.
-            (typeof charmMakerSourcePath === "function" ? charmMakerSourcePath() : null),
-            `${ROOT}/Charm_Maker/Generated_Charm_Sets`,
-            `${ROOT}/Charm_Maker/Completed_Approved_Charm_Sets`,
-          ].filter(Boolean);
-          for (const folder of candidateFolders) {
-            try {
-              const r = await listAll(ref(storage, folder));
-              const direct = r.items.find(it => it.name === targetName);
-              if (direct) return await toResolved(direct.fullPath);
-              // Walk one level deep (e.g., Generated_Charm_Sets/Deriv_N/)
-              for (const sub of r.prefixes) {
-                try {
-                  const sr = await listAll(sub);
-                  const hit = sr.items.find(it => it.name === targetName);
-                  if (hit) return await toResolved(hit.fullPath);
-                } catch (_) {}
-              }
-            } catch (_) {}
+      // Search all candidate folders + one level of subfolders for an
+      // exact filename match. Returns the first hit's fullPath or null.
+      const findByName = async (filename) => {
+        if (!filename) return null;
+        for (const folder of candidateFolders) {
+          try {
+            const r = await listAll(ref(storage, folder));
+            const direct = r.items.find(it => it.name === filename);
+            if (direct) return direct.fullPath;
+            // Walk one level deep (e.g., Generated_Charm_Sets/Deriv_N/)
+            for (const sub of r.prefixes) {
+              try {
+                const sr = await listAll(sub);
+                const hit = sr.items.find(it => it.name === filename);
+                if (hit) return hit.fullPath;
+              } catch (_) {}
+            }
+          } catch (_) {}
+        }
+        return null;
+      };
+
+      // Build the list of "candidate paths to try" from the manifest, in
+      // priority order. Then try each verbatim, then by filename. This
+      // structure handles both flavors of manifest:
+      //   • Standard-mode (writes top-level sourceCharm + per-slot newCharm)
+      //   • Batch-collect (writes per-slot newCharm only — sourceCharm
+      //     absent on existing batch-generated listings)
+      const candidatePaths = [];
+      if (manifest?.sourceCharm) candidatePaths.push(manifest.sourceCharm);
+      if (Array.isArray(manifest?.slots)) {
+        // This slot's recorded charm comes first.
+        const thisSlot = manifest.slots.find(s => s?.slot === slotIndex + 1);
+        if (thisSlot?.newCharm) candidatePaths.push(thisSlot.newCharm);
+        // Then every other slot's charm (in batch mode all gen slots in
+        // a set share the same charm, so any slot's record can rescue us
+        // even if THIS slot's record is incomplete).
+        for (const s of manifest.slots) {
+          if (s?.newCharm && !candidatePaths.includes(s.newCharm)) {
+            candidatePaths.push(s.newCharm);
           }
         }
-        console.warn(`[resolveOriginalCharm] sourceCharm "${manifest.sourceCharm}" not found anywhere; falling through.`);
       }
 
-      // 3) Per-slot newCharm fallback (covers slots redone before this fix shipped)
-      const slotRec = manifest?.slots?.find(s => s.slot === slotIndex + 1);
-      if (slotRec?.newCharm && await fileExists(slotRec.newCharm)) {
-        return await toResolved(slotRec.newCharm);
+      // Step 1: try each candidate path verbatim. Quick path for
+      // listings whose charms haven't been moved out of the original
+      // location yet.
+      for (const p of candidatePaths) {
+        if (await fileExists(p)) {
+          return await toResolved(p);
+        }
       }
 
-      // 4) Legacy last resort — old behavior, only reached for pre-fix listings
-      console.warn(`[resolveOriginalCharm] No manifest reference resolved; falling back to listLatestFile("${fallbackFolderPath}"). This is the old (buggy) behavior and will only happen for listings created before the sourceCharm fix.`);
+      // Step 2: search by filename across known charm folders. This is
+      // what catches batch-generated listings whose charms have been
+      // moved to Used_*_Charm_Pool/ post-collection.
+      const candidateNames = new Set();
+      if (manifest?.sourceCharmName) candidateNames.add(manifest.sourceCharmName);
+      for (const p of candidatePaths) {
+        const n = p.split("/").pop();
+        if (n) candidateNames.add(n);
+      }
+      for (const name of candidateNames) {
+        const found = await findByName(name);
+        if (found) return await toResolved(found);
+      }
+
+      // Step 3: legacy last resort. Only reached for listings with no
+      // manifest at all (extremely rare — would mean alloc_set ran but
+      // nothing else did) or with a manifest that has no charm refs of
+      // any kind.
+      console.warn(`[resolveOriginalCharm] No manifest reference resolved; falling back to listLatestFile("${fallbackFolderPath}").`);
       return await listLatestFile(fallbackFolderPath);
     }
 
@@ -6623,6 +6692,13 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       // render an "empty" state).
       if (panel) panel.style.display = isBatch ? "block" : "none";
 
+      // Resume-empty-sets recovery row is only meaningful in batch mode
+      // (Standard mode never leaves empty Set_N folders behind, since it
+      // runs synchronously and waits for each set before allocating the
+      // next).
+      const resumeRow = document.getElementById("resumeEmptySetsRow");
+      if (resumeRow) resumeRow.style.display = isBatch ? "block" : "none";
+
       // Color-shift the Generate Batch button so users see at a glance
       // whether they're firing a batch job.
       if (generateBatchBtn) {
@@ -6906,6 +6982,222 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     }
 
     // ------------------------------------------------------------
+    // Resume Empty Sets — recovery flow for partially-failed batches
+    //
+    // When a 295-set submission only fully populates ~100 of those Set_N
+    // folders (e.g., upstream Gemini errors, mid-collect crashes, or
+    // any other partial failure), the empty folders that alloc_set
+    // already reserved are still sitting in the Firestore counter.
+    // This flow:
+    //   1. Asks the backend (`scan_empty_sets`) which Set_N values in
+    //      [1, highestN] have no Slot_*.png files.
+    //   2. Shows the user the count and asks for confirmation.
+    //   3. Picks fresh charms from the pool for each empty set.
+    //   4. Builds task lists EXACTLY like runBatchModeSubmission, but
+    //      with the EXISTING setN/outputBasePath values (no alloc_set
+    //      calls — the folders are already allocated).
+    //   5. Submits chunks the same way, so resumed sets land in the
+    //      same in-flight panel as a regular submission.
+    //
+    // Populated sets are never touched.
+    // ------------------------------------------------------------
+    async function runResumeEmptySetsSubmission() {
+      if (_batchInFlight) return;
+
+      const category = String(activeCategoryEl.value || "").trim();
+      if (!category) { alert("Pick a category first."); return; }
+      const slotPlan = SLOT_MAP[category];
+      if (!slotPlan) { alert(`Unknown category: ${category}`); return; }
+
+      _batchInFlight = true;
+      batchProgress.style.display = "block";
+      cancelBatchBtn.style.display = "inline-flex";
+      generateBatchBtn.disabled = true;
+      const resumeBtn = document.getElementById("resumeEmptySetsBtn");
+      if (resumeBtn) {
+        resumeBtn.disabled = true;
+        resumeBtn.textContent = "🔄 Scanning for empty sets…";
+      }
+      if (generateSetBtn) generateSetBtn.disabled = true;
+      _setBatchProgress(0, 1, `Scanning ${category} for empty sets…`);
+
+      try {
+        // 1) Scan
+        const scan = await postJson("geminiImageProxy", {
+          kind: "scan_empty_sets",
+          activeCategory: category,
+        });
+        const empty = Array.isArray(scan?.empty) ? scan.empty : [];
+        const highestN = Number(scan?.highestN || 0);
+        const populatedCount = Number(scan?.populatedCount || 0);
+
+        if (empty.length === 0) {
+          alert(
+            `No empty sets found for ${category}.\n\n` +
+            `Highest allocated: Set_${highestN}\n` +
+            `Populated: ${populatedCount}\n` +
+            `Empty: 0`
+          );
+          return;
+        }
+
+        // 2) Confirm
+        const setNs = empty.map((e) => e.setN);
+        const minN = setNs[0];
+        const maxN = setNs[setNs.length - 1];
+        const proceed = confirm(
+          `Scan results for ${category}:\n\n` +
+          `Highest allocated: Set_${highestN}\n` +
+          `Populated (with content): ${populatedCount}\n` +
+          `Empty (to be filled): ${empty.length}\n\n` +
+          `Empty set range: Set_${minN} … Set_${maxN}\n\n` +
+          `Click OK to submit ${empty.length} batch jobs (one per empty set) using ` +
+          `fresh charms from the pool. Populated sets will NOT be touched.`
+        );
+        if (!proceed) return;
+
+        // 3) Pick charms — one per empty set.
+        _setBatchProgress(0, empty.length, `Reserving ${empty.length} charms from pool…`);
+        const isEarring = ["Stud_Earrings", "Hoop_Earrings"].includes(category);
+        const charmPick = await postJson("geminiImageProxy", {
+          kind: "charm_pool_pick",
+          count: empty.length,
+          isEarring,
+        });
+        const pickedCharms = Array.isArray(charmPick?.charms) ? charmPick.charms : [];
+
+        if (pickedCharms.length === 0) {
+          alert(
+            `No charms available in the shared ${isEarring ? "Earring" : "Necklace"} pool.\n\n` +
+            `Pool size: ${charmPick?.poolSize || 0}\n` +
+            `Reserved by other in-flight batches: ${charmPick?.reservedCount || 0}\n\n` +
+            `Add more charms to New_Charms${isEarring ? "_Earrings" : ""}/ first.`
+          );
+          return;
+        }
+        if (pickedCharms.length < empty.length) {
+          const proceed2 = confirm(
+            `Only ${pickedCharms.length} unique charm(s) available, but ${empty.length} empty sets need filling.\n\n` +
+            `Available: ${pickedCharms.length}\n` +
+            `Reserved by other in-flight batches: ${charmPick?.reservedCount || 0}\n` +
+            `Total pool: ${charmPick?.poolSize || 0}\n\n` +
+            `Click OK to fill only ${pickedCharms.length} of the empty sets in this run; the remaining ${empty.length - pickedCharms.length} will stay empty until you add more charms and run Resume again.\n` +
+            `Click Cancel to abort.`
+          );
+          if (!proceed2) return;
+        }
+
+        const effectiveCount = Math.min(empty.length, pickedCharms.length);
+        const targetEmpty = empty.slice(0, effectiveCount);
+
+        // 4) Build allSets — using the EXISTING setN/outputBasePath
+        //    values returned by scan_empty_sets. No alloc_set calls.
+        const allSets = [];
+        for (let i = 0; i < effectiveCount; i++) {
+          _setBatchProgress(i, effectiveCount, `Building tasks for Set_${targetEmpty[i].setN} (${i + 1}/${effectiveCount})…`);
+
+          const { setN, outputBasePath } = targetEmpty[i];
+          const charmPathForSet = pickedCharms[i];
+
+          const tasks = [];
+          for (let s = 0; s < slotPlan.length; s++) {
+            const spec = slotPlan[s];
+            const srcFolder = `${ROOT}/${category}/${spec.folder}`;
+            const srcRandom = await listRandomFile(srcFolder);
+            if (!srcRandom) throw new Error(`No files in ${srcFolder}/`);
+            if (spec.type === "copy") {
+              tasks.push({
+                type: "copy",
+                slotIndex: s,
+                source_storage_path: srcRandom.fullPath,
+              });
+            } else {
+              tasks.push({
+                type: "edits",
+                slotIndex: s,
+                input_storage_path: srcRandom.fullPath,
+                input_charm_storage_path: charmPathForSet,
+                prompt: buildSlotPrompt(category, spec.folder, s + 1),
+              });
+            }
+          }
+
+          allSets.push({ category, outputBasePath, setN, tasks });
+        }
+
+        // 5) Chunk + submit. Same shape as runBatchModeSubmission.
+        const stamp = new Date().toISOString().slice(0,16).replace(/[:T]/g,"");
+        const effectiveChunkCount = Math.ceil(effectiveCount / CHUNK_SIZE);
+        const submitted = [];
+        const submitErrors = [];
+        const sessionStartMs = Date.now();
+        const sessionId = `sess_resume_${sessionStartMs}_${Math.random().toString(36).slice(2, 8)}`;
+
+        for (let c = 0; c < effectiveChunkCount; c++) {
+          if (_batchCancelRequested) break;
+          const start = c * CHUNK_SIZE;
+          const slice = allSets.slice(start, start + CHUNK_SIZE);
+          _setBatchProgress(c, effectiveChunkCount, `Submitting chunk ${c + 1}/${effectiveChunkCount} (${slice.length} sets)…`);
+
+          const dn = effectiveChunkCount === 1
+            ? `lg1-${category}-resume${effectiveCount}sets-${stamp}`
+            : `lg1-${category}-resume${effectiveCount}sets-${stamp}-part${c + 1}of${effectiveChunkCount}`;
+
+          try {
+            const resp = await postJson("geminiImageProxy", {
+              kind: "batch_submit",
+              sets: slice,
+              imageSize: BATCH_DEFAULT_IMAGE_SIZE,
+              displayName: dn,
+              sessionId,
+            });
+            submitted.push(resp);
+          } catch (chunkErr) {
+            console.error(`[resume_empty_sets chunk ${c+1}] failed`, chunkErr);
+            submitErrors.push({ chunk: c + 1, error: chunkErr?.message || String(chunkErr) });
+          }
+        }
+
+        _setBatchProgress(effectiveChunkCount, effectiveChunkCount, "Done");
+
+        const submittedCount = submitted.length;
+        const errMsg = submitErrors.length
+          ? `\n\n${submitErrors.length} chunk(s) failed to submit:\n` +
+            submitErrors.slice(0, 5).map((e) => `  • Chunk ${e.chunk}: ${e.error}`).join("\n") +
+            (submitErrors.length > 5 ? `\n  ... and ${submitErrors.length - 5} more` : "")
+          : "";
+
+        alert(
+          `Resume complete:\n\n` +
+          `Empty sets found: ${empty.length}\n` +
+          `Sets submitted: ${effectiveCount}\n` +
+          `Chunks submitted: ${submittedCount} of ${effectiveChunkCount}` +
+          errMsg +
+          `\n\nProgress will appear in the in-flight batches panel below.`
+        );
+
+        await refreshBatchJobsPanel();
+      } catch (err) {
+        console.error("Resume empty sets failed:", err);
+        setStatus(`Resume failed: ${err?.message || err}`);
+        alert(`Resume failed:\n\n${err?.message || err}`);
+      } finally {
+        _batchInFlight = false;
+        _batchCancelRequested = false;
+        generateBatchBtn.disabled = false;
+        if (generateSetBtn) generateSetBtn.disabled = false;
+        if (resumeBtn) {
+          resumeBtn.disabled = false;
+          resumeBtn.textContent = "🔄 Resume empty sets (scan & re-fill folders left empty by partial failures)";
+        }
+        _renderGenModeButtons();
+        setTimeout(() => { batchProgress.style.display = "none"; }, 8000);
+      }
+    }
+
+    document.getElementById("resumeEmptySetsBtn")?.addEventListener("click", runResumeEmptySetsSubmission);
+
+    // ------------------------------------------------------------
     // In-flight panel: read Firestore via batch_list, render cards.
     // Each card shows state and offers Refresh/Collect/Cancel/Delete.
     // ------------------------------------------------------------
@@ -6916,7 +7208,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       const listEl = document.getElementById("batchJobsList");
       if (!listEl) return;
       try {
-        const resp = await postJson("geminiImageProxy", { kind: "batch_list", limit: 100, includeCollected: true });
+        const resp = await postJson("geminiImageProxy", { kind: "batch_list", limit: 1000, includeCollected: true });
         const batches = Array.isArray(resp?.batches) ? resp.batches : [];
         _lastBatchList = batches;
         if (batches.length === 0) {
@@ -7152,7 +7444,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         while (Date.now() - startMs < timeoutMs) {
           await new Promise((r) => setTimeout(r, 5000));
           try {
-            const list = await postJson("geminiImageProxy", { kind: "batch_list", limit: 200, includeCollected: true });
+            const list = await postJson("geminiImageProxy", { kind: "batch_list", limit: 1000, includeCollected: true });
             const me = (list?.batches || []).find((b) => b.batchName === batchName);
             if (me?.collected) { lastInfo = me; break; }
             setStatus(`${isForce ? "Force-downloading" : "Downloading"} ${batchName}… (${Math.floor((Date.now() - startMs) / 1000)}s)`);
