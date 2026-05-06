@@ -35,6 +35,21 @@
     }
     .em-topbar button:hover { background: #353b44; }
     .em-topbar button .material-icons { font-size: 16px; }
+    /* v3.3 — Purge-folder button. Lives in the topbar (not the rail row)
+     * to keep destructive actions away from the click target operators
+     * use to navigate folders. Subtle dark-red treatment so it reads as
+     * destructive without screaming. Disabled state hides the icon
+     * tint so it visibly differs from "ready to click". */
+    .em-topbar .em-purge-folder-btn {
+      background: #3a1f22; color: #ffb1b1; border: 1px solid #6b2a2a;
+    }
+    .em-topbar .em-purge-folder-btn:hover:not(:disabled) {
+      background: #5a2a2e; color: #ffd6d6;
+    }
+    .em-topbar .em-purge-folder-btn:disabled {
+      background: #1f242a; color: #6e7681; border-color: #30363d;
+      cursor: not-allowed;
+    }
     .em-topbar .em-status-dot { width: 8px; height: 8px; border-radius: 50%; background: #e74c3c; }
     .em-topbar .em-status-dot.ok { background: #2ecc71; }
 
@@ -94,20 +109,6 @@
     }
     .em-rail .em-rail-item.active .em-count { background: #0366d6; color: #fff; }
     .em-rail .em-rail-item .material-icons { font-size: 15px; margin-right: 8px; opacity: .65; }
-    /* v3.0 — per-folder purge button. Hidden by default, fades in on
-       row hover so the rail stays visually clean. The button itself is
-       a circular icon-only control to keep it compact. */
-    .em-rail .em-rail-item .em-rail-purge {
-      background: transparent; border: none; cursor: pointer;
-      padding: 2px 4px; margin: 0 4px 0 auto;
-      color: #cf222e; opacity: 0; transition: opacity 0.12s ease;
-      border-radius: 4px;
-    }
-    .em-rail .em-rail-item:hover .em-rail-purge { opacity: 0.7; }
-    .em-rail .em-rail-item .em-rail-purge:hover { opacity: 1; background: #ffebe9; }
-    .em-rail .em-rail-item .em-rail-purge .material-icons {
-      font-size: 14px; margin: 0; opacity: 1;
-    }
 
     .em-list {
       grid-area: list; background: #fff; border-right: 1px solid #e1e4e8;
@@ -934,19 +935,31 @@
     .em-badge.ai-conf.med {
       background: #fff8c5; color: #7d4e00;
     }
-    /* Shared red palette — soft pink. Used for:
+    /* Shared red palette — soft pink with high-contrast crimson text.
+     * Used for:
      *   - low-confidence legacy AI (.ai-conf.low)
-     *   - "Needs review" decision (.review-decision.red) */
+     *   - "Needs review" decision (.review-decision.red)
+     *
+     * v3.4 — Bumped contrast: deeper red text + slightly more saturated
+     * pink bg + 600 font-weight. The previous #ffebe9/#a40e26 combo
+     * passed WCAG AA on paper but looked washed-out at the 10px badge
+     * size, especially next to other badges in the row. The new combo
+     * (≈9:1 ratio with weight 600) is significantly more legible
+     * without going all the way to white-on-saturated. */
     .em-badge.ai-conf.low,
     .em-badge.review-decision.red {
-      background: #ffebe9; color: #a40e26;
+      background: #ffd6d3; color: #82071e; font-weight: 600;
     }
-    /* Shared green palette — soft mint. Used for:
+    /* Shared green palette — soft mint with high-contrast forest text.
+     * Used for:
      *   - high-confidence legacy AI (.ai-conf.high)
-     *   - "No review" decision (.review-decision.green) */
+     *   - "No review" decision (.review-decision.green)
+     *
+     * v3.4 — Same contrast bump as the red palette above. Deeper text
+     * + 600 weight + slightly more saturated mint bg. */
     .em-badge.ai-conf.high,
     .em-badge.review-decision.green {
-      background: #dcffe4; color: #116329;
+      background: #b8efc7; color: #0a4a23; font-weight: 600;
     }
     .em-badge.ai-diff {
       background: #f0f0f5; color: #4b4b6b;
@@ -2080,6 +2093,9 @@
         <i class="material-icons">cloud_download</i>Pull now
       </button>
       <button id="emRefreshBtn" title="Refresh now"><i class="material-icons">refresh</i>Refresh</button>
+      <button id="emPurgeFolderBtn" class="em-purge-folder-btn" title="Empty the currently active folder — moves every thread out of it back to Needs review">
+        <i class="material-icons">delete_sweep</i><span id="emPurgeFolderLabel">Empty folder</span>
+      </button>
       <button id="emNewThreadBtn" title="Create test thread"><i class="material-icons">add</i>New (test)</button>
       <button id="emSettingsBtn" title="Settings"><i class="material-icons">settings</i></button>
     </div>
@@ -4647,33 +4663,20 @@
         }
         return state.counts[f.status] || 0;
       };
-      // v3.0 — folders that DON'T support per-folder purge. "all" is
-      // not a real folder (no status to clear); "completed_sales" is
-      // intentionally never bulk-purged (audit/reporting integrity);
-      // "auto_replied" and "production_rush" are eligible. The actual
-      // backend-side block list lives in etsyMailThreads.js
-      // (PURGE_FOLDER_BLOCKED) — this front-end list just hides the
-      // button when it would 400.
-      const PURGE_BUTTON_HIDDEN_FOR = new Set(["all", "completed_sales"]);
-
+      // v3.3 — Per-folder purge buttons used to live INSIDE each rail
+      // row (a small trash icon that appeared on row hover). That hit
+      // box overlapped the row-select hit box, so operators reported
+      // accidental clicks while navigating folders. The purge entry
+      // point is now a single topbar button (#emPurgeFolderBtn) that
+      // operates on the currently-active folder. updateTopbarPurgeBtn
+      // below keeps that button's label + enabled state in sync with
+      // the active filter.
       for (const f of RAIL_FILTERS) {
         const count = folderCount(f);
         const active = state.activeFilterId === f.id ? " active" : "";
-        const showPurge = !PURGE_BUTTON_HIDDEN_FOR.has(f.id) && count > 0;
-        // The purge button is rendered INSIDE the rail item but with
-        // stopPropagation on click so it doesn't also trigger the
-        // folder-select click. The button is opacity:0 by default and
-        // appears on row hover (CSS rule .em-rail-item:hover .em-rail-purge).
-        const purgeHtml = showPurge
-          ? `<button class="em-rail-purge" data-purge-filter="${esc(f.id)}"
-                title="Empty this folder (move all threads back to Needs review)">
-              <i class="material-icons" style="font-size:14px;">delete_sweep</i>
-            </button>`
-          : "";
         html += `
           <div class="em-rail-item${active}" data-filter="${esc(f.id)}">
             <span><i class="material-icons">${esc(f.icon)}</i>${esc(f.label)}</span>
-            ${purgeHtml}
             <span class="em-count">${count}</span>
           </div>`;
       }
@@ -4704,18 +4707,66 @@
         });
       });
 
-      // v3.0 — wire the per-folder purge buttons. stopPropagation on
-      // the click prevents the parent .em-rail-item's folder-select
-      // handler from also firing.
-      rail.querySelectorAll(".em-rail-purge").forEach(btn => {
-        btn.addEventListener("click", (ev) => {
-          ev.stopPropagation();
-          const filterId = btn.getAttribute("data-purge-filter");
-          purgeFolderById(filterId).catch(e => {
-            console.warn("[purgeFolder] failed:", e.message);
-          });
-        });
-      });
+      // v3.3 — sync the topbar Empty-folder button with the new active
+      // filter. Called both at the end of renderRail (so folder-select
+      // clicks update the button) and from fetchCountsNow (so count
+      // changes update the button's "Empty Needs review (12)" label).
+      updateTopbarPurgeBtn();
+    }
+
+    /**
+     * v3.3 — Topbar "Empty folder" button state machine.
+     *
+     * The button operates on whatever folder is currently active. We
+     * update three things every time the active filter or counts
+     * change:
+     *   1. Label    — "Empty <folder name> (N)" so it's obvious what's
+     *                 about to happen.
+     *   2. Disabled — true when the active folder isn't purgeable
+     *                 (All, Completed Sales) or has count 0.
+     *   3. Title    — long-form tooltip with the same context.
+     *
+     * Centralizing here means the button can never desync from the
+     * rail. Callers that mutate state.activeFilterId or state.counts
+     * just need to call this (which renderRail does).
+     */
+    function updateTopbarPurgeBtn() {
+      const btn   = document.getElementById("emPurgeFolderBtn");
+      const label = document.getElementById("emPurgeFolderLabel");
+      if (!btn || !label) return;
+
+      const PURGE_BUTTON_HIDDEN_FOR = new Set(["all", "completed_sales"]);
+      const filter = (typeof RAIL_FILTERS !== "undefined")
+        ? RAIL_FILTERS.find(f => f.id === state.activeFilterId)
+        : null;
+
+      // No filter or filter is on the don't-purge list → disable.
+      if (!filter || PURGE_BUTTON_HIDDEN_FOR.has(filter.id)) {
+        label.textContent = "Empty folder";
+        btn.disabled = true;
+        btn.title = filter
+          ? `The "${filter.label}" folder isn't eligible for bulk purge.`
+          : "Pick a folder first.";
+        return;
+      }
+
+      // Compute the count the same way renderRail does — supports
+      // single-status, multi-status, and orderByField folders.
+      let count = 0;
+      if (filter.countKey) count = state.counts[filter.countKey] || 0;
+      else if (Array.isArray(filter.status)) {
+        count = filter.status.reduce((s, st) => s + (state.counts[st] || 0), 0);
+      } else if (filter.status) {
+        count = state.counts[filter.status] || 0;
+      }
+
+      label.textContent = count > 0
+        ? `Empty ${filter.label} (${count})`
+        : `${filter.label} is empty`;
+      btn.disabled = count === 0;
+      btn.title = count > 0
+        ? `Empty the "${filter.label}" folder — moves ${count} thread${count === 1 ? "" : "s"} back to Needs review. Threads themselves are NOT deleted.`
+        : `The "${filter.label}" folder is already empty.`;
     }
 
     /**
@@ -9082,6 +9133,20 @@
       $("emNewThreadBtn").addEventListener("click", createTestThread);
       // v0.9.1 #1: Settings now opens the secret-setup modal
       $("emSettingsBtn").addEventListener("click", () => showSecretSetupModal());
+
+      // v3.3 — Topbar Empty-folder button. Calls purgeFolderById on
+      // whatever folder is currently active. The button's disabled
+      // state (managed by updateTopbarPurgeBtn) keeps the click from
+      // ever firing on an unpurgeable filter.
+      $("emPurgeFolderBtn")?.addEventListener("click", () => {
+        const btn = $("emPurgeFolderBtn");
+        if (btn && btn.disabled) return;
+        const filterId = state.activeFilterId;
+        if (!filterId) return;
+        purgeFolderById(filterId).catch(e => {
+          console.warn("[purgeFolder] failed:", e.message);
+        });
+      });
 
       // ─── Gmail Watcher panel ─────────────────────────────────────────
       // Three controls in the topbar:
