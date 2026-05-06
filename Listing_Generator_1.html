@@ -2975,6 +2975,62 @@
     // persisted markers and renders them immediately.
     restoreRedoState();
 
+    // ============================================================
+    // Hidden-sets tracker — localStorage list of sets that should
+    // never appear in the Review queue again. Solves "approved sets
+    // reappear on refresh" definitively by being independent of any
+    // file-move success or destination-path matching.
+    //
+    // Sets get added when:
+    //   • The user clicks Approve or Delete on them (forward case;
+    //     happens BEFORE the background move runs, so even if the
+    //     move fails halfway, the set still hides).
+    //   • loadReviewSets discovers a matching folder in
+    //     Completed_Listing_Sets/{category}_Set_N/ (auto-sync of
+    //     historical approvals into localStorage on every refresh).
+    //
+    // Stored as { [categoryName]: [setName, ...] } under
+    // localStorage["lg1_hidden_sets_v1"]. To force-show everything
+    // again (e.g., for testing), open DevTools and run:
+    //   localStorage.removeItem('lg1_hidden_sets_v1'); location.reload();
+    // ============================================================
+    const HIDDEN_SETS_LS_KEY = "lg1_hidden_sets_v1";
+
+    function _readHiddenSetsAll() {
+      try {
+        const raw = localStorage.getItem(HIDDEN_SETS_LS_KEY);
+        if (!raw) return {};
+        const parsed = JSON.parse(raw);
+        return (parsed && typeof parsed === "object") ? parsed : {};
+      } catch (_) { return {}; }
+    }
+
+    function getHiddenSets(category) {
+      const all = _readHiddenSetsAll();
+      const list = all[category];
+      return new Set(Array.isArray(list) ? list : []);
+    }
+
+    function addHiddenSets(category, setNames) {
+      if (!category || !setNames || setNames.length === 0) return;
+      try {
+        const all = _readHiddenSetsAll();
+        if (!Array.isArray(all[category])) all[category] = [];
+        let mutated = false;
+        for (const name of setNames) {
+          if (name && !all[category].includes(name)) {
+            all[category].push(name);
+            mutated = true;
+          }
+        }
+        if (mutated) {
+          localStorage.setItem(HIDDEN_SETS_LS_KEY, JSON.stringify(all));
+        }
+      } catch (e) {
+        console.warn("[hidden sets] localStorage write failed:", e);
+      }
+    }
+
     function setAllRedoEnabled(enabled){
       document.querySelectorAll("button.redoBtn").forEach(b => { b.disabled = !enabled; });
     }
@@ -4127,47 +4183,63 @@ The output must look like the input image with ONLY the user's requested change 
         const res = await listAll(readyToListRef);
         let sets = res.prefixes.map(p => p.name).filter(n => n.startsWith('Set_'));
 
-        // Filter out sets that have already been approved. The approval
-        // flow moves files from Ready_To_List/Set_N/ to
-        // Completed_Listing_Sets/{category}_Set_N/. If any file in that
-        // move failed (network blip, permission glitch, etc.) the
-        // source folder is left with stragglers, which makes listAll
-        // still return the prefix and the set "reappears" on the next
-        // refresh. Same thing for sets approved long ago whose source
-        // files weren't 100% cleaned up.
+        // Filter out approved/deleted sets via two independent layers,
+        // unioned together. Both layers can fail or miss, but the union
+        // catches anything that either layer knows about.
         //
-        // Cross-checking against Completed_Listing_Sets is the
-        // canonical "this set is done" signal — if there's a matching
-        // {category}_Set_N folder over there, the user already
-        // approved it and we drop it from the review queue. Works
-        // both moving forward AND retroactively without any local
-        // state or migration step.
+        // Layer 1: localStorage hidden-sets tracker. Recorded every time
+        // the user clicks Approve or Delete (BEFORE the background move
+        // runs), so this is bulletproof for forward-going approvals
+        // regardless of what happens to the actual files in storage.
+        //
+        // Layer 2: live scan of Completed_Listing_Sets/{category}_Set_N/.
+        // Catches historical approvals (made before localStorage tracking
+        // was added) and any approvals made on a different device/browser.
+        // Anything we discover here is also written into the localStorage
+        // list, so on subsequent refreshes Layer 1 alone is sufficient.
+        const hiddenLs = getHiddenSets(category);
+        const cloudApproved = new Set();
         try {
           const completedRef = ref(storage, `${ROOT}/Generated_Listing_Sets/Completed_Listing_Sets`);
           const completedRes = await listAll(completedRef);
           const prefix = `${category}_`;
-          const approvedNames = new Set(
-            completedRes.prefixes
-              .map(p => p.name)
-              .filter(n => n.startsWith(prefix))
-              .map(n => n.slice(prefix.length))
-          );
-          if (approvedNames.size > 0) {
-            const before = sets.length;
-            sets = sets.filter(s => !approvedNames.has(s));
-            const dropped = before - sets.length;
-            if (dropped > 0) {
-              console.log(`[loadReviewSets] Filtered out ${dropped} already-approved set(s) for ${category}.`);
+          for (const p of completedRes.prefixes) {
+            if (p.name.startsWith(prefix)) {
+              cloudApproved.add(p.name.slice(prefix.length));
             }
           }
-        } catch (e) {
-          // If the Completed_Listing_Sets folder doesn't exist yet (no
-          // approvals ever), listAll throws with object-not-found.
-          // That's fine — the unfiltered sets list is correct in that
-          // case.
-          if (e?.code !== "storage/object-not-found") {
-            console.warn("[loadReviewSets] Could not list Completed_Listing_Sets, skipping approval filter:", e?.message || e);
+          // Persist cloud-found approvals so subsequent refreshes don't
+          // depend on the cloud lookup succeeding.
+          if (cloudApproved.size > 0) {
+            addHiddenSets(category, [...cloudApproved]);
           }
+        } catch (e) {
+          if (e?.code !== "storage/object-not-found") {
+            console.warn("[loadReviewSets] Could not list Completed_Listing_Sets, relying on localStorage only:", e?.message || e);
+          }
+        }
+
+        const allHidden = new Set([...hiddenLs, ...cloudApproved]);
+        const beforeFilter = sets.length;
+        sets = sets.filter(s => !allHidden.has(s));
+        const dropped = beforeFilter - sets.length;
+
+        // Diagnostic logging — visible in DevTools console. If the
+        // user reports approved sets still showing after this fix,
+        // they can paste these lines to reveal exactly what's
+        // happening (which paths exist in the cloud, what's in
+        // localStorage, what got matched, etc.).
+        console.log("[loadReviewSets]", {
+          category,
+          totalInReadyToList: beforeFilter,
+          afterHideFilter: sets.length,
+          dropped,
+          fromLocalStorage: hiddenLs.size,
+          fromCloud: cloudApproved.size,
+          merged: allHidden.size,
+        });
+        if (cloudApproved.size === 0 && hiddenLs.size === 0) {
+          console.log("[loadReviewSets] No hidden sets found — if approved sets are still showing, the Completed_Listing_Sets/ folder may use a different naming format. Check Firebase Storage for what's actually there.");
         }
 
         sets.sort((a, b) => {
@@ -4548,6 +4620,10 @@ async function updateTotalAllTimeCounter() {
       const currentLoaded = reviewSetSelect.value;
       const wasCurrentInSet = sets.includes(currentLoaded);
 
+      // Hide all immediately so they don't reappear on refresh
+      // regardless of background-move outcome.
+      addHiddenSets(category, sets);
+
       for (const setName of sets) {
         const opt = reviewSetSelect.querySelector(`option[value="${setName}"]`);
         if (opt) opt.remove();
@@ -4582,6 +4658,9 @@ async function updateTotalAllTimeCounter() {
       const category = activeCategoryEl.value;
       const currentLoaded = reviewSetSelect.value;
       const wasCurrentInSet = sets.includes(currentLoaded);
+
+      // Hide all immediately.
+      addHiddenSets(category, sets);
 
       for (const setName of sets) {
         const opt = reviewSetSelect.querySelector(`option[value="${setName}"]`);
@@ -4872,6 +4951,13 @@ function updateApproveButtonState() {
         return;
       }
 
+      // Hide immediately and unconditionally. Even if the background
+      // move fails, gets interrupted, or has been refactored to use a
+      // different destination path, the set will not reappear on the
+      // next refresh because the dropdown filters against this
+      // localStorage list.
+      addHiddenSets(category, [setName]);
+
       // Remove the just-approved option from the dropdown.
       const optionToRemove = reviewSetSelect.querySelector(`option[value="${setName}"]`);
       if (optionToRemove) optionToRemove.remove();
@@ -5004,6 +5090,10 @@ function updateApproveButtonState() {
       const category = activeCategoryEl.value;
       const setName = reviewSetSelect.value;
       if (!setName) return;
+
+      // Hide immediately and unconditionally — same reasoning as
+      // approveSet.
+      addHiddenSets(category, [setName]);
 
       const confirmDelete = confirm(`Are you sure you want to permanently delete ${setName}?`);
       if (!confirmDelete) return;
