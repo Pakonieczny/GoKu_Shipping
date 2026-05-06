@@ -626,6 +626,67 @@
     box-shadow: 0 0 0 1px rgba(110, 232, 149, 0.18);
   }
 
+  /* Skip toggle — small switch under each slot's preview that marks the
+     image as not-to-be-included when the listing is approved. */
+  .skipToggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 8px 0 0;
+    padding: 6px 8px;
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--muted);
+    user-select: none;
+    background: #0e1220;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+  }
+  .skipToggle input { position: absolute; opacity: 0; pointer-events: none; }
+  .skipToggleSwitch {
+    position: relative;
+    width: 30px;
+    height: 16px;
+    background: #242a3d;
+    border-radius: 9px;
+    transition: background 0.15s;
+    flex-shrink: 0;
+  }
+  .skipToggleSwitch::after {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 12px;
+    height: 12px;
+    background: #8b93a7;
+    border-radius: 50%;
+    transition: transform 0.15s, background 0.15s;
+  }
+  .skipToggle input:checked + .skipToggleSwitch {
+    background: #7c2d12;
+  }
+  .skipToggle input:checked + .skipToggleSwitch::after {
+    background: #fdba74;
+    transform: translateX(14px);
+  }
+  /* Skipped-state styling on the slot card. The preview is dimmed and
+     desaturated, the border tints orange, and the toggle text picks up the
+     amber accent so the state is unambiguous at a glance. */
+  .slot.skipped {
+    border: 1px solid #ea580c;
+  }
+  .slot.skipped .slotPrev {
+    opacity: 0.35;
+    filter: grayscale(0.7);
+  }
+  .slot.skipped .skipToggle {
+    border-color: #ea580c;
+  }
+  .slot.skipped .skipToggleText {
+    color: #fdba74;
+  }
+
   .slotRefEmpty {
     width: 100%;
     height: 100%;
@@ -2853,13 +2914,22 @@ The output must look like the input image with ONLY the user's requested change 
             // Build the request body. input_charm_storage_path is omitted
             // entirely in adjustment mode so the backend treats it as a
             // single-image edit (see comment above).
+            //
+            // Model selection: adjustment-mode redos go to Gemini 3 Pro
+            // Image (Nano Banana Pro) for higher fidelity on targeted edits
+            // — its stronger reasoning and detail rendering pay off when
+            // the user is asking for something specific. Regeneration mode
+            // continues to use 3.1 Flash Image (Nano Banana 2) for cost
+            // and throughput on bulk runs.
             const editsBody = {
               kind: "edits",
               activeCategory: ctxCategory,
               input_storage_path: inputPath,
               output_base_path: ctxSetPath,
               slotIndex,
-              model: "gemini-3.1-flash-image-preview",
+              model: isAdjustmentMode
+                ? "gemini-3-pro-image-preview"
+                : "gemini-3.1-flash-image-preview",
               prompt: finalPrompt,
             };
             if (charmPath) editsBody.input_charm_storage_path = charmPath;
@@ -2978,6 +3048,68 @@ The output must look like the input image with ONLY the user's requested change 
       c.textContent = `${len} / 120`;
       // Subtle visual cue when the user is close to the cap
       c.style.color = len >= 120 ? "#ef4444" : (len >= 100 ? "#f59e0b" : "");
+    };
+
+    /**
+     * Handler for the per-slot "Skip this slot" toggle in the Review tab.
+     * Updates the slot card's visual state immediately (so the user gets
+     * feedback even if the manifest write is slow), then persists the
+     * skipped flag to the set's manifest.json so it survives navigation
+     * and is read by runBackgroundApproval at approve time.
+     *
+     * The write goes through the same `kind: "write_manifest"` Netlify
+     * endpoint that redoSlot uses, so it shares its concurrency model
+     * (last-write-wins is fine here — the user can only toggle one slot
+     * at a time and writes are small).
+     */
+    window.onSkipToggle = async function(slotIndex, checked) {
+      // 1. Immediate UI update — find the slot card by data-slot-index.
+      const slotCard = reviewGrid.querySelector(`.slot[data-slot-index="${slotIndex}"]`);
+      if (slotCard) slotCard.classList.toggle("skipped", !!checked);
+
+      // 2. Persist to manifest. Bail out gracefully if there's no current
+      //    set in view — the toggle is a no-op until the manifest exists.
+      if (!CURRENT_SET?.outputBasePath || !CURRENT_SET?.category) return;
+      const setPath = CURRENT_SET.outputBasePath;
+      const category = CURRENT_SET.category;
+      const slotNum = slotIndex + 1;
+
+      try {
+        await ensureStorageSignedIn();
+        const manifestRef = ref(storage, `${setPath}/manifest.json`);
+        let manifestJson = null;
+        try {
+          const buffer = await getBytes(manifestRef);
+          manifestJson = JSON.parse(new TextDecoder().decode(buffer));
+        } catch (_) {
+          // No manifest yet — bootstrap a minimal one so the skipped flag
+          // is preserved across navigation. runBackgroundApproval handles
+          // missing manifests gracefully too.
+          manifestJson = { category, outputBasePath: setPath, slots: [] };
+        }
+
+        manifestJson.slots = Array.isArray(manifestJson.slots) ? manifestJson.slots : [];
+        const idx = manifestJson.slots.findIndex(s => s.slot === slotNum);
+        if (idx > -1) {
+          manifestJson.slots[idx] = { ...manifestJson.slots[idx], skipped: !!checked };
+        } else {
+          manifestJson.slots.push({ slot: slotNum, skipped: !!checked });
+          manifestJson.slots.sort((a, b) => a.slot - b.slot);
+        }
+
+        await postJson("geminiImageProxy", {
+          kind: "write_manifest",
+          activeCategory: category,
+          output_base_path: setPath,
+          manifest: manifestJson,
+        });
+      } catch (e) {
+        console.warn("Failed to persist skip flag:", e);
+        // Roll the UI back so it stays in sync with what's actually saved.
+        const cb = document.getElementById(`rev_skip_${slotIndex}`);
+        if (cb) cb.checked = !checked;
+        if (slotCard) slotCard.classList.toggle("skipped", !checked);
+      }
     };
 
     const categoryEl = activeCategoryEl;
@@ -3899,10 +4031,15 @@ function updateApproveButtonState() {
           slotCard.dataset.slotIndex = i;
 
           let sourceStr = "Unknown";
+          let preChecked = false;
           if (manifestData && manifestData.slots) {
               const slotMeta = manifestData.slots.find(s => s.slot === slotNum);
               if (slotMeta && slotMeta.source) sourceStr = slotMeta.source;
+              if (slotMeta && slotMeta.skipped) preChecked = true;
           }
+          // Pre-mark the card as skipped so its dim styling is applied
+          // immediately (no flash of "included" state on initial render).
+          if (preChecked) slotCard.classList.add("skipped");
 
           // Per-slot adjustment textarea — only meaningful for "gen" slots,
           // since "copy" slots are pulled verbatim from Firebase Storage and
@@ -3929,6 +4066,24 @@ function updateApproveButtonState() {
             <div class="muted" style="font-size:11px; margin-top:6px; opacity:0.6;">No adjustment input — this slot is copied from storage, not generated.</div>
           `;
 
+          // Skip-this-slot toggle. Available on every slot (gen and copy) so
+          // the user can keep one or more slots out of the Approve →
+          // Completed_Listing_Sets move. Initial checked state is read from
+          // the manifest's `skipped` field; toggling writes back through
+          // window.onSkipToggle.
+          const skipBlock = `
+            <label class="skipToggle" for="rev_skip_${i}">
+              <input
+                type="checkbox"
+                id="rev_skip_${i}"
+                ${preChecked ? "checked" : ""}
+                onchange="onSkipToggle(${i}, this.checked)"
+              />
+              <span class="skipToggleSwitch"></span>
+              <span class="skipToggleText">Skip this slot (don't include on approve)</span>
+            </label>
+          `;
+
           slotCard.innerHTML = `
             <div class="slotTop">
               <b>Slot ${slotNum}</b>
@@ -3936,6 +4091,7 @@ function updateApproveButtonState() {
             </div>
             <div class="slotPrev" id="rev_slotPrev_${i}"><div class="slotRefEmpty">Loading…</div></div>
             <div class="small" id="rev_slotMeta_${i}">Source: ${sourceStr}</div>
+            ${skipBlock}
             <button class="btn btnSmall redoBtn" id="rev_redo_${i}" style="margin-top:8px; width:100%;" onclick="redoSlot(${i}, 'rev')">Redo Slot ${slotNum}</button>
             ${adjustmentBlock}
           `;
@@ -4075,16 +4231,63 @@ function updateApproveButtonState() {
 
         try {
             await ensureStorageSignedIn();
+
+            // Read the manifest first so we know which slots the user
+            // toggled "skip" on. Skipped slots are deleted from the source
+            // folder rather than copied to the destination, and their
+            // output field in the moved manifest is set to null so any
+            // downstream consumer can tell the slot was intentionally
+            // omitted (instead of the file being mysteriously missing).
+            // If the manifest can't be read for any reason, fall back to
+            // the original "copy everything" behavior.
+            let manifestData = null;
+            try {
+                const manifestBuffer = await getBytes(ref(storage, `${srcFolder}/manifest.json`));
+                manifestData = JSON.parse(new TextDecoder().decode(manifestBuffer));
+            } catch (_) { /* manifest missing — proceed without skip handling */ }
+
+            const skippedFileNames = new Set(
+              (manifestData?.slots || [])
+                .filter(s => s && s.skipped)
+                .map(s => `Slot_${s.slot}.png`)
+            );
+            const haveSkips = skippedFileNames.size > 0;
+
             const srcRef = ref(storage, srcFolder);
             const res = await listAll(srcRef);
-            
+
             for (const itemRef of res.items) {
-               const buffer = await getBytes(itemRef);
-               const newRef = ref(storage, `${destFolder}/${itemRef.name}`);
-               await uploadBytesResumable(newRef, buffer); 
-               await deleteObject(itemRef);
+              // Skipped slot file → delete from source, do not copy.
+              if (skippedFileNames.has(itemRef.name)) {
+                await deleteObject(itemRef);
+                console.log(`[Queue] Skipped (not moved): ${itemRef.name}`);
+                continue;
+              }
+
+              // The manifest gets a tidy-pass when there are skips so the
+              // moved copy reflects the final state. We also strip 'output'
+              // from skipped slots since the file no longer exists.
+              if (haveSkips && itemRef.name === "manifest.json" && manifestData) {
+                const tidied = {
+                  ...manifestData,
+                  slots: (manifestData.slots || []).map(s =>
+                    s && s.skipped ? { ...s, output: null } : s
+                  ),
+                };
+                const newRef = ref(storage, `${destFolder}/${itemRef.name}`);
+                const buf = new TextEncoder().encode(JSON.stringify(tidied, null, 2));
+                await uploadBytesResumable(newRef, buf, { contentType: "application/json" });
+                await deleteObject(itemRef);
+                continue;
+              }
+
+              // Default: copy + delete (existing behavior).
+              const buffer = await getBytes(itemRef);
+              const newRef = ref(storage, `${destFolder}/${itemRef.name}`);
+              await uploadBytesResumable(newRef, buffer); 
+              await deleteObject(itemRef);
             }
-            console.log(`[Queue] Finished moving ${setName}`);
+            console.log(`[Queue] Finished moving ${setName}${haveSkips ? ` (${skippedFileNames.size} slot(s) skipped)` : ""}`);
             backgroundQueueStatus.textContent = `Completed: ${setName}`;
             
             setTimeout(() => {
