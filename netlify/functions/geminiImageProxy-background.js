@@ -1308,9 +1308,39 @@ async function _handlerImpl(event) {
         }
       }
 
+      // Identify already-approved sets so we don't classify them as
+      // "empty" and accidentally regenerate them when the user clicks
+      // Resume Empty Sets. The approval flow moves files from
+      // Ready_To_List/Set_N/ to Completed_Listing_Sets/{cat}_Set_N/,
+      // leaving Ready_To_List/Set_N/ empty (no slot images). Without
+      // this filter, every approved set would look like a gap and get
+      // re-filled with brand-new charms — destroying the user's
+      // approved work.
+      const approvedSetNs = new Set();
+      const completedPrefix = `listing-generator-1/Generated_Listing_Sets/Completed_Listing_Sets/${cat}_Set_`;
+      try {
+        const [completedFiles] = await bucket.getFiles({ prefix: completedPrefix });
+        for (const f of completedFiles) {
+          // Path looks like ".../Completed_Listing_Sets/{cat}_Set_42/..."
+          const idx = f.name.indexOf(`/${cat}_Set_`);
+          if (idx === -1) continue;
+          const tail = f.name.slice(idx + `/${cat}_Set_`.length);
+          const numStr = tail.split("/")[0];
+          const num = Number(numStr);
+          if (Number.isFinite(num) && num > 0) approvedSetNs.add(num);
+        }
+      } catch (e) {
+        console.warn("[scan_empty_sets] could not enumerate Completed_Listing_Sets:", e?.message || e);
+      }
+
       const empty = [];
       const populated = [];
+      const skippedApproved = [];
       for (let n = 1; n <= highestN; n++) {
+        if (approvedSetNs.has(n)) {
+          skippedApproved.push(n);
+          continue;
+        }
         const outputBasePath = `listing-generator-1/${cat}/Ready_To_List/Set_${n}`;
         if (hasSlots.has(n)) {
           populated.push({ setN: n, outputBasePath });
@@ -1324,9 +1354,10 @@ async function _handlerImpl(event) {
         highestN,
         emptyCount: empty.length,
         populatedCount: populated.length,
+        approvedCount: skippedApproved.length,
         empty,
-        // populated returned only as a count for now; full list omitted
-        // to keep the response payload small for large counters.
+        // populated and skippedApproved returned only as counts to keep
+        // the response payload small for large counters.
       });
     }
 

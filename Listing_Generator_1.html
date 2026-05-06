@@ -4125,7 +4125,51 @@ The output must look like the input image with ONLY the user's requested change 
         await ensureStorageSignedIn();
         const readyToListRef = ref(storage, `${ROOT}/${category}/Ready_To_List`);
         const res = await listAll(readyToListRef);
-        const sets = res.prefixes.map(p => p.name).filter(n => n.startsWith('Set_'));
+        let sets = res.prefixes.map(p => p.name).filter(n => n.startsWith('Set_'));
+
+        // Filter out sets that have already been approved. The approval
+        // flow moves files from Ready_To_List/Set_N/ to
+        // Completed_Listing_Sets/{category}_Set_N/. If any file in that
+        // move failed (network blip, permission glitch, etc.) the
+        // source folder is left with stragglers, which makes listAll
+        // still return the prefix and the set "reappears" on the next
+        // refresh. Same thing for sets approved long ago whose source
+        // files weren't 100% cleaned up.
+        //
+        // Cross-checking against Completed_Listing_Sets is the
+        // canonical "this set is done" signal — if there's a matching
+        // {category}_Set_N folder over there, the user already
+        // approved it and we drop it from the review queue. Works
+        // both moving forward AND retroactively without any local
+        // state or migration step.
+        try {
+          const completedRef = ref(storage, `${ROOT}/Generated_Listing_Sets/Completed_Listing_Sets`);
+          const completedRes = await listAll(completedRef);
+          const prefix = `${category}_`;
+          const approvedNames = new Set(
+            completedRes.prefixes
+              .map(p => p.name)
+              .filter(n => n.startsWith(prefix))
+              .map(n => n.slice(prefix.length))
+          );
+          if (approvedNames.size > 0) {
+            const before = sets.length;
+            sets = sets.filter(s => !approvedNames.has(s));
+            const dropped = before - sets.length;
+            if (dropped > 0) {
+              console.log(`[loadReviewSets] Filtered out ${dropped} already-approved set(s) for ${category}.`);
+            }
+          }
+        } catch (e) {
+          // If the Completed_Listing_Sets folder doesn't exist yet (no
+          // approvals ever), listAll throws with object-not-found.
+          // That's fine — the unfiltered sets list is correct in that
+          // case.
+          if (e?.code !== "storage/object-not-found") {
+            console.warn("[loadReviewSets] Could not list Completed_Listing_Sets, skipping approval filter:", e?.message || e);
+          }
+        }
+
         sets.sort((a, b) => {
           const numA = parseInt(a.replace('Set_', '')) || 0;
           const numB = parseInt(b.replace('Set_', '')) || 0;
@@ -7618,12 +7662,14 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         const empty = Array.isArray(scan?.empty) ? scan.empty : [];
         const highestN = Number(scan?.highestN || 0);
         const populatedCount = Number(scan?.populatedCount || 0);
+        const approvedCount = Number(scan?.approvedCount || 0);
 
         if (empty.length === 0) {
           alert(
             `No empty sets found for ${category}.\n\n` +
             `Highest allocated: Set_${highestN}\n` +
             `Populated: ${populatedCount}\n` +
+            `Already approved (skipped): ${approvedCount}\n` +
             `Empty: 0`
           );
           return;
@@ -7637,10 +7683,11 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
           `Scan results for ${category}:\n\n` +
           `Highest allocated: Set_${highestN}\n` +
           `Populated (with content): ${populatedCount}\n` +
+          `Already approved (skipped): ${approvedCount}\n` +
           `Empty (to be filled): ${empty.length}\n\n` +
           `Empty set range: Set_${minN} … Set_${maxN}\n\n` +
           `Click OK to submit ${empty.length} batch jobs (one per empty set) using ` +
-          `fresh charms from the pool. Populated sets will NOT be touched.`
+          `fresh charms from the pool. Populated and already-approved sets will NOT be touched.`
         );
         if (!proceed) return;
 
