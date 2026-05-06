@@ -279,42 +279,126 @@
     line-height: 1 !important;
   }
 
-  /* Bulk-actions panel rows. Each row is a checkbox + set name, with
-     a dotted green status badge (or yellow for in-flight redos) when
-     the set has any redo activity. Layout uses a compact flex row so
-     50+ sets fit comfortably in the scrollable container. */
-  .bulk-row {
+  /* Custom dropdown widget for the Review tab's "Select set to review".
+     Mirrors a native <select>'s look so it sits in place of the original
+     element without disturbing the layout. The popdown panel is absolutely
+     positioned so the surrounding form layout doesn't reflow when it
+     opens/closes. */
+  .multiset-picker {
+    position: relative;
+    width: 100%;
+  }
+  .multiset-trigger {
+    width: 100%;
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 4px 8px;
+    padding: 10px 12px;
+    background: var(--inset);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    color: var(--text);
+    font-size: 13px;
+    font-family: inherit;
+    cursor: pointer;
+    text-align: left;
+  }
+  .multiset-trigger:hover {
+    border-color: var(--line-2);
+  }
+  .multiset-trigger.is-open {
+    border-color: var(--accent-line);
+  }
+  .multiset-trigger-label {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .multiset-trigger-meta {
+    color: var(--accent);
+    font-size: 11px;
+    flex-shrink: 0;
+  }
+  .multiset-trigger-arrow {
+    color: var(--text-2);
+    flex-shrink: 0;
+    transition: transform 120ms ease;
+  }
+  .multiset-trigger.is-open .multiset-trigger-arrow {
+    transform: rotate(180deg);
+  }
+  .multiset-panel {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    z-index: 100;
+    background: var(--card);
+    border: 1px solid var(--line-2);
+    border-radius: var(--r-md);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    max-height: 360px;
+  }
+  .multiset-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px;
+    border-bottom: 1px solid var(--line);
+    background: var(--inset);
+    flex-shrink: 0;
+  }
+  .multiset-rows {
+    overflow-y: auto;
+    padding: 4px;
+    flex: 1;
+  }
+  .multiset-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
     border-radius: 4px;
     cursor: pointer;
     user-select: none;
     font-size: 12px;
     color: var(--text);
   }
-  .bulk-row:hover {
+  .multiset-row:hover {
     background: var(--inset);
   }
-  .bulk-row input[type="checkbox"] {
+  .multiset-row.is-current {
+    background: var(--accent-bg);
+    color: var(--accent);
+  }
+  .multiset-row input[type="checkbox"] {
     cursor: pointer;
     margin: 0;
     flex-shrink: 0;
+    width: 14px;
+    height: 14px;
   }
-  .bulk-row .bulk-row-name {
+  .multiset-row-name {
     flex: 1;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .bulk-row .bulk-row-status {
+  .multiset-row-status {
     font-size: 10px;
     color: var(--text-2);
     flex-shrink: 0;
+    margin-left: 4px;
   }
-  .bulk-row.has-redo .bulk-row-name {
+  .multiset-row.has-redo .multiset-row-name {
     color: #7fdb96;
+  }
+  .multiset-row.is-current.has-redo .multiset-row-name {
+    color: var(--accent);
   }
 
   /* "redoBtn" — keep the JS-driven disabled/enabled UX, just restyle */
@@ -1968,43 +2052,38 @@
           <select id="reviewCategory"></select>
 
           <label style="margin-top: 12px;">Select set to review</label>
-          <div class="row">
-            <select id="reviewSetSelect"></select>
+          <!-- Custom dropdown widget. The native <select> stays hidden
+               inside as the canonical source-of-truth for the currently-
+               loaded set (so existing code reading reviewSetSelect.value,
+               .options, .selectedIndex, etc., all keeps working without
+               modification). The visible UI is a button + popdown panel
+               with one row per set. Each row has:
+                  • a checkbox (toggles multi-select for bulk approve/delete)
+                  • the set name + status indicator (clickable; loads that
+                    set into the review grid)
+               When any checkboxes are ticked, the existing Approve/Delete
+               buttons act on the checked sets instead of the currently-
+               loaded one. -->
+          <div class="multiset-picker" id="reviewSetPicker">
+            <button type="button" class="multiset-trigger" id="reviewSetTrigger">
+              <span class="multiset-trigger-label" id="reviewSetTriggerLabel">Loading…</span>
+              <span class="multiset-trigger-meta" id="reviewSetTriggerMeta"></span>
+              <span class="multiset-trigger-arrow">▾</span>
+            </button>
+            <div class="multiset-panel" id="reviewSetPanel" hidden>
+              <div class="multiset-toolbar">
+                <button type="button" class="btn btnSmall" id="multisetSelectAllBtn">Select all</button>
+                <button type="button" class="btn btnSmall" id="multisetClearBtn">Clear</button>
+                <span class="muted" id="multisetCount" style="margin-left: auto; font-size: 11px;">0 selected</span>
+              </div>
+              <div class="multiset-rows" id="multisetRows"></div>
+            </div>
+            <select id="reviewSetSelect" style="display: none;" aria-hidden="true"></select>
           </div>
 
           <div class="action-bar">
             <button class="btn" id="approveSetBtn" style="background: #1f4026; color: #7fdb96; border: 1px solid #2f5e3a;">Approve set →</button>
             <button class="btn" id="deleteSetBtn" style="background: #3d1c1c; color: #fca5a5; border: 1px solid #7a3838;">Delete set</button>
-          </div>
-
-          <!-- Bulk-actions panel.
-               Mirrors the dropdown but with checkboxes so the user can
-               approve or delete many sets in one click instead of going
-               one-by-one. Shows the same "(Slot N: 🟢)" markers as the
-               dropdown so users know which listings they've already
-               redone. The single-set dropdown above still works for
-               navigation (clicking a row in the bulk list does NOT load
-               that set into the grid — that's still the dropdown's job).
-               Backend operations are serialized via a small queue to
-               avoid hammering Firebase Storage with parallel deletes /
-               moves when the user selects 50+ sets. -->
-          <div id="bulkActionsPanel" style="margin-top: 16px; padding: 12px; background: var(--inset); border: 1px solid var(--line); border-radius: var(--r-md);">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-              <label style="margin: 0; font-size: 12px; font-weight: 600;">Bulk select sets</label>
-              <div style="display: flex; gap: 6px; align-items: center;">
-                <button class="btn btnSmall" id="bulkSelectAllBtn" style="font-size: 10px; padding: 2px 8px;">Select all</button>
-                <button class="btn btnSmall" id="bulkClearBtn" style="font-size: 10px; padding: 2px 8px;">Clear</button>
-                <span class="muted" id="bulkSelectedCount" style="font-size: 11px; min-width: 70px; text-align: right;">0 selected</span>
-              </div>
-            </div>
-            <div id="bulkSetsList" style="max-height: 240px; overflow-y: auto; background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 4px;">
-              <div class="muted" style="padding: 12px; text-align: center; font-size: 11px;">No sets loaded yet</div>
-            </div>
-            <div style="display: flex; gap: 8px; margin-top: 8px;">
-              <button class="btn" id="bulkApproveBtn" disabled style="flex: 1; background: #1f4026; color: #7fdb96; border: 1px solid #2f5e3a; opacity: 0.5;">Approve 0 selected</button>
-              <button class="btn" id="bulkDeleteBtn" disabled style="flex: 1; background: #3d1c1c; color: #fca5a5; border: 1px solid #7a3838; opacity: 0.5;">Delete 0 selected</button>
-            </div>
-            <div class="muted" id="bulkQueueStatus" style="font-size: 10px; margin-top: 6px; text-align: center; min-height: 14px;"></div>
           </div>
         </div>
 
@@ -4180,40 +4259,43 @@ async function updateTotalAllTimeCounter() {
             }
         });
 
-        // Mirror the dropdown's status into the bulk-actions panel so
-        // both surfaces stay in sync automatically.
-        rebuildBulkSetsList();
+        // Mirror the (hidden) native select into the visible custom
+        // dropdown widget so its rows show the same green-dot status.
+        renderMultisetWidget();
     }
 
     // ============================================================
-    // Bulk actions panel — multi-select Approve / Delete
-    // ------------------------------------------------------------
-    // The single-set dropdown above stays as the navigation control
-    // (clicking it loads that set into the grid). This panel is the
-    // BATCH-action surface: tick the sets you want, click Approve or
-    // Delete, and they all run through a serialized background queue
-    // so we don't fire 50+ parallel Firebase deletes.
+    // Custom dropdown widget — the visible UI sitting on top of the
+    // hidden native <select id="reviewSetSelect">. The select is the
+    // canonical source of truth for the currently-loaded set; this
+    // widget mirrors the select's options as clickable rows and adds
+    // a checkbox per row for multi-select bulk approve/delete.
+    //
+    // Interactions:
+    //   • Click on a row's name area → loads that set into the grid
+    //     (single-set navigation, same as the old <select> change event)
+    //   • Click on a row's checkbox → toggles multi-select for bulk ops
+    //   • The existing Approve/Delete buttons act on multi-select if any
+    //     are checked, else on the currently-loaded set.
     // ============================================================
-    const BULK_SELECTED = new Set();
+    const MULTISET_SELECTED = new Set();
 
-    // Background queue. Bulk approve/delete fires N items through this
-    // queue serially. Single-set approve/delete still calls
-    // runBackgroundApproval / runBackgroundDelete directly so that path
-    // is unchanged.
+    // Background queue for serialized bulk approve/delete. Single-set
+    // approve/delete still calls runBackgroundApproval / runBackgroundDelete
+    // directly so that path is unchanged.
     const BULK_QUEUE = [];
     let BULK_QUEUE_RUNNING = false;
 
     async function processBulkQueue() {
       if (BULK_QUEUE_RUNNING) return;
       BULK_QUEUE_RUNNING = true;
-      const statusEl = document.getElementById("bulkQueueStatus");
       try {
         while (BULK_QUEUE.length > 0) {
           const item = BULK_QUEUE.shift();
           const remaining = BULK_QUEUE.length;
-          if (statusEl) {
-            statusEl.textContent = `Queue: processing ${item.kind} of ${item.setName}` +
-              (remaining > 0 ? ` (${remaining} more)…` : "…");
+          if (typeof backgroundQueueStatus !== "undefined" && backgroundQueueStatus) {
+            backgroundQueueStatus.textContent = `Bulk ${item.kind}: ${item.setName}` +
+              (remaining > 0 ? ` (${remaining} more queued)` : "");
           }
           try {
             if (item.kind === "approve") {
@@ -4225,20 +4307,13 @@ async function updateTotalAllTimeCounter() {
             console.error(`[BulkQueue] Failed ${item.kind} for ${item.setName}:`, e);
           }
         }
-        if (statusEl) {
-          statusEl.textContent = "Queue done.";
-          setTimeout(() => {
-            if (statusEl.textContent === "Queue done.") statusEl.textContent = "";
-          }, 4000);
-        }
       } finally {
         BULK_QUEUE_RUNNING = false;
       }
     }
 
-    function bulkRowStatusFor(setName) {
-      // Returns the status badge string for a single set ("Slot 3: 🟢"
-      // joined across all slots with redo activity) or empty string.
+    function multisetRowStatusFor(setName) {
+      // Returns "Slot 3: 🟢, Slot 5: ⏳" style summary or "" if no redos.
       const category = activeCategoryEl.value;
       const setPath = `${ROOT}/${category}/Ready_To_List/${setName}`;
       const items = [];
@@ -4253,83 +4328,173 @@ async function updateTotalAllTimeCounter() {
       return items.join(", ");
     }
 
-    function rebuildBulkSetsList() {
-      const list = document.getElementById("bulkSetsList");
-      if (!list || !reviewSetSelect) return;
+    function renderMultisetWidget() {
+      const trigger = document.getElementById("reviewSetTrigger");
+      const triggerLabel = document.getElementById("reviewSetTriggerLabel");
+      const triggerMeta = document.getElementById("reviewSetTriggerMeta");
+      const rowsEl = document.getElementById("multisetRows");
+      const countEl = document.getElementById("multisetCount");
+      if (!trigger || !rowsEl) return;
 
       const setNames = Array.from(reviewSetSelect.options)
         .map((opt) => opt.value)
         .filter((v) => v && v !== "");
 
-      // Drop selections that are no longer present (e.g. set was just
+      // Drop selections that are no longer present (set was just
       // approved or deleted).
-      for (const s of [...BULK_SELECTED]) {
-        if (!setNames.includes(s)) BULK_SELECTED.delete(s);
+      for (const s of [...MULTISET_SELECTED]) {
+        if (!setNames.includes(s)) MULTISET_SELECTED.delete(s);
       }
 
+      const currentValue = reviewSetSelect.value;
+
+      // Trigger label reflects currently-loaded set; meta shows count
+      // when sets are checked for bulk action.
+      if (triggerLabel) {
+        triggerLabel.textContent = currentValue || (setNames.length === 0 ? "No sets" : "Select a set");
+      }
+      if (triggerMeta) {
+        triggerMeta.textContent = MULTISET_SELECTED.size > 0
+          ? `· ${MULTISET_SELECTED.size} selected for bulk`
+          : "";
+      }
+      if (countEl) {
+        countEl.textContent = `${MULTISET_SELECTED.size} selected`;
+      }
+
+      // Update Approve/Delete button text/colors to reflect mode.
+      updateApproveDeleteButtonText();
+
+      // Render rows.
       if (setNames.length === 0) {
-        list.innerHTML = `<div class="muted" style="padding: 12px; text-align: center; font-size: 11px;">No sets to review</div>`;
-      } else {
-        list.innerHTML = setNames
-          .map((name) => {
-            const checked = BULK_SELECTED.has(name) ? "checked" : "";
-            const status = bulkRowStatusFor(name);
-            const hasRedo = status.includes("🟢") ? "has-redo" : "";
-            return `<label class="bulk-row ${hasRedo}">
-              <input type="checkbox" data-setname="${name}" ${checked}>
-              <span class="bulk-row-name">${name}</span>
-              ${status ? `<span class="bulk-row-status">${status}</span>` : ""}
-            </label>`;
-          })
-          .join("");
+        rowsEl.innerHTML = `<div class="muted" style="padding: 12px; text-align: center; font-size: 11px;">No sets to review</div>`;
+        return;
+      }
+      rowsEl.innerHTML = setNames
+        .map((name) => {
+          const checked = MULTISET_SELECTED.has(name) ? "checked" : "";
+          const status = multisetRowStatusFor(name);
+          const hasRedo = status.includes("🟢") ? "has-redo" : "";
+          const isCurrent = name === currentValue ? "is-current" : "";
+          return `<div class="multiset-row ${hasRedo} ${isCurrent}" data-setname="${name}">
+            <input type="checkbox" data-setname="${name}" ${checked}>
+            <span class="multiset-row-name">${name}</span>
+            ${status ? `<span class="multiset-row-status">${status}</span>` : ""}
+          </div>`;
+        })
+        .join("");
 
-        list.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
-          cb.addEventListener("change", (e) => {
-            const name = e.target.dataset.setname;
-            if (e.target.checked) BULK_SELECTED.add(name);
-            else BULK_SELECTED.delete(name);
-            updateBulkButtons();
-          });
+      // Wire row events. We use delegation: clicks on the checkbox
+      // toggle multi-select; clicks anywhere else on the row navigate.
+      rowsEl.querySelectorAll(".multiset-row").forEach((row) => {
+        const setName = row.dataset.setname;
+        const cb = row.querySelector('input[type="checkbox"]');
+
+        cb?.addEventListener("change", (e) => {
+          // Stop the row's click from also firing.
+          e.stopPropagation();
+          if (e.target.checked) MULTISET_SELECTED.add(setName);
+          else MULTISET_SELECTED.delete(setName);
+          renderMultisetWidget();
         });
-      }
+        cb?.addEventListener("click", (e) => {
+          // Prevent the row's click handler from firing when the user
+          // clicks directly on the checkbox.
+          e.stopPropagation();
+        });
 
-      updateBulkButtons();
-    }
-
-    function updateBulkButtons() {
-      const count = BULK_SELECTED.size;
-      const countEl = document.getElementById("bulkSelectedCount");
-      const approveBtn = document.getElementById("bulkApproveBtn");
-      const deleteBtn = document.getElementById("bulkDeleteBtn");
-      if (countEl) countEl.textContent = `${count} selected`;
-      if (approveBtn) {
-        approveBtn.textContent = `Approve ${count} selected`;
-        approveBtn.disabled = count === 0;
-        approveBtn.style.opacity = count === 0 ? "0.5" : "1";
-        approveBtn.style.cursor = count === 0 ? "not-allowed" : "pointer";
-      }
-      if (deleteBtn) {
-        deleteBtn.textContent = `Delete ${count} selected`;
-        deleteBtn.disabled = count === 0;
-        deleteBtn.style.opacity = count === 0 ? "0.5" : "1";
-        deleteBtn.style.cursor = count === 0 ? "not-allowed" : "pointer";
-      }
-    }
-
-    function bulkSelectAll() {
-      Array.from(reviewSetSelect.options).forEach((opt) => {
-        if (opt.value) BULK_SELECTED.add(opt.value);
+        row.addEventListener("click", (e) => {
+          // Click on the row body (not the checkbox) navigates to the
+          // set: update the hidden select and load images. Closes the
+          // panel afterwards so the user sees the grid.
+          if (e.target.tagName === "INPUT") return;
+          reviewSetSelect.value = setName;
+          reviewSetSelect.dispatchEvent(new Event("change", { bubbles: true }));
+          closeMultisetPanel();
+        });
       });
-      rebuildBulkSetsList();
     }
 
-    function bulkClearAll() {
-      BULK_SELECTED.clear();
-      rebuildBulkSetsList();
+    function openMultisetPanel() {
+      const panel = document.getElementById("reviewSetPanel");
+      const trigger = document.getElementById("reviewSetTrigger");
+      if (!panel || !trigger) return;
+      panel.hidden = false;
+      trigger.classList.add("is-open");
+      renderMultisetWidget();
     }
 
-    async function bulkApprove() {
-      const sets = Array.from(BULK_SELECTED);
+    function closeMultisetPanel() {
+      const panel = document.getElementById("reviewSetPanel");
+      const trigger = document.getElementById("reviewSetTrigger");
+      if (!panel || !trigger) return;
+      panel.hidden = true;
+      trigger.classList.remove("is-open");
+    }
+
+    function toggleMultisetPanel() {
+      const panel = document.getElementById("reviewSetPanel");
+      if (!panel) return;
+      if (panel.hidden) openMultisetPanel();
+      else closeMultisetPanel();
+    }
+
+    function multisetSelectAll() {
+      Array.from(reviewSetSelect.options).forEach((opt) => {
+        if (opt.value) MULTISET_SELECTED.add(opt.value);
+      });
+      renderMultisetWidget();
+    }
+
+    function multisetClearAll() {
+      MULTISET_SELECTED.clear();
+      renderMultisetWidget();
+    }
+
+    function updateApproveDeleteButtonText() {
+      // Live-update the existing Approve/Delete button labels so the
+      // user always knows whether they'll act on the bulk selection or
+      // the single currently-loaded set. Color stays driven by
+      // updateApproveButtonState's running/idle logic.
+      const aBtn = document.getElementById("approveSetBtn");
+      const dBtn = document.getElementById("deleteSetBtn");
+      const n = MULTISET_SELECTED.size;
+      if (aBtn) {
+        aBtn.textContent = n > 0
+          ? `Approve ${n} selected →`
+          : "Approve set →";
+      }
+      if (dBtn) {
+        dBtn.textContent = n > 0
+          ? `Delete ${n} selected`
+          : "Delete set";
+      }
+    }
+
+    // Wire up trigger and toolbar buttons.
+    document.getElementById("reviewSetTrigger")?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleMultisetPanel();
+    });
+    document.getElementById("multisetSelectAllBtn")?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      multisetSelectAll();
+    });
+    document.getElementById("multisetClearBtn")?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      multisetClearAll();
+    });
+    // Click outside closes the panel.
+    document.addEventListener("click", (e) => {
+      const picker = document.getElementById("reviewSetPicker");
+      if (!picker) return;
+      if (!picker.contains(e.target)) closeMultisetPanel();
+    });
+
+    // Bulk approve/delete handlers — invoked by the existing Approve/Delete
+    // buttons when MULTISET_SELECTED is non-empty.
+    async function bulkApproveSelected() {
+      const sets = Array.from(MULTISET_SELECTED);
       if (sets.length === 0) return;
       if (!confirm(`Approve ${sets.length} sets?\n\nAll selected sets will be moved to Completed in the background. This cannot be undone.`)) return;
 
@@ -4337,20 +4502,14 @@ async function updateTotalAllTimeCounter() {
       const currentLoaded = reviewSetSelect.value;
       const wasCurrentInSet = sets.includes(currentLoaded);
 
-      // Remove options + clean redo state up front so the UI updates
-      // immediately. Background work continues via the queue.
       for (const setName of sets) {
         const opt = reviewSetSelect.querySelector(`option[value="${setName}"]`);
         if (opt) opt.remove();
         clearRedoStateForSet(`${ROOT}/${category}/Ready_To_List/${setName}`);
         BULK_QUEUE.push({ kind: "approve", category, setName });
       }
-      BULK_SELECTED.clear();
+      MULTISET_SELECTED.clear();
 
-      // Auto-load next available set if the currently-loaded one was
-      // just approved. Pick the next listing in numerical order so the
-      // user lands on Set_256 after approving Set_255 (consistent with
-      // the single-set approve flow).
       if (wasCurrentInSet) {
         if (reviewSetSelect.options.length > 0) {
           const nextOpt = findNextHigherSet(currentLoaded);
@@ -4364,14 +4523,13 @@ async function updateTotalAllTimeCounter() {
         }
       }
 
-      rebuildBulkSetsList();
       updateDropdownLabels();
       setStatus(`Bulk approve: ${sets.length} sets queued.`);
       processBulkQueue();
     }
 
-    async function bulkDelete() {
-      const sets = Array.from(BULK_SELECTED);
+    async function bulkDeleteSelected() {
+      const sets = Array.from(MULTISET_SELECTED);
       if (sets.length === 0) return;
       if (!confirm(`Permanently delete ${sets.length} sets?\n\nAll files in each set will be removed from Firebase Storage. This cannot be undone.`)) return;
 
@@ -4385,7 +4543,7 @@ async function updateTotalAllTimeCounter() {
         clearRedoStateForSet(`${ROOT}/${category}/Ready_To_List/${setName}`);
         BULK_QUEUE.push({ kind: "delete", category, setName });
       }
-      BULK_SELECTED.clear();
+      MULTISET_SELECTED.clear();
 
       if (wasCurrentInSet) {
         if (reviewSetSelect.options.length > 0) {
@@ -4400,18 +4558,10 @@ async function updateTotalAllTimeCounter() {
         }
       }
 
-      rebuildBulkSetsList();
       updateDropdownLabels();
       setStatus(`Bulk delete: ${sets.length} sets queued.`);
       processBulkQueue();
     }
-
-    // Wire up the panel's buttons. Guarded so the script doesn't crash
-    // if the elements aren't in the DOM (e.g., during early bootstrap).
-    document.getElementById("bulkSelectAllBtn")?.addEventListener("click", bulkSelectAll);
-    document.getElementById("bulkClearBtn")?.addEventListener("click", bulkClearAll);
-    document.getElementById("bulkApproveBtn")?.addEventListener("click", bulkApprove);
-    document.getElementById("bulkDeleteBtn")?.addEventListener("click", bulkDelete);
 
 function updateApproveButtonState() {
       if (!approveSetBtn) return;
@@ -4660,6 +4810,15 @@ function updateApproveButtonState() {
       if (approveSetBtn.dataset.busy === '1') return;
       approveSetBtn.dataset.busy = '1';
 
+      // Multi-select branch: if any checkboxes are ticked in the custom
+      // dropdown, run the bulk path on the checked sets and skip the
+      // single-set logic entirely.
+      if (MULTISET_SELECTED.size > 0) {
+        approveSetBtn.dataset.busy = '0';
+        bulkApproveSelected();
+        return;
+      }
+
       const category = activeCategoryEl.value;
       const setName = reviewSetSelect.value;
       if (!setName) {
@@ -4790,6 +4949,12 @@ function updateApproveButtonState() {
     approveSetBtn.addEventListener("click", approveSet);
 
     function deleteSet() {
+      // Multi-select branch.
+      if (MULTISET_SELECTED.size > 0) {
+        bulkDeleteSelected();
+        return;
+      }
+
       const category = activeCategoryEl.value;
       const setName = reviewSetSelect.value;
       if (!setName) return;
