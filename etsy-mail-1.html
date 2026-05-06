@@ -935,31 +935,28 @@
     .em-badge.ai-conf.med {
       background: #fff8c5; color: #7d4e00;
     }
-    /* Shared red palette — soft pink with high-contrast crimson text.
+    /* Shared red palette — desaturated pink so the dark text pops.
      * Used for:
      *   - low-confidence legacy AI (.ai-conf.low)
      *   - "Needs review" decision (.review-decision.red)
      *
-     * v3.4 — Bumped contrast: deeper red text + slightly more saturated
-     * pink bg + 600 font-weight. The previous #ffebe9/#a40e26 combo
-     * passed WCAG AA on paper but looked washed-out at the 10px badge
-     * size, especially next to other badges in the row. The new combo
-     * (≈9:1 ratio with weight 600) is significantly more legible
-     * without going all the way to white-on-saturated. */
+     * v3.5 — Desaturated the bg (pulled toward neutral) so the dark
+     * crimson text reads cleanly. Vibrant pink was competing with the
+     * text for attention; the muted version lets the text be the
+     * dominant signal. */
     .em-badge.ai-conf.low,
     .em-badge.review-decision.red {
-      background: #ffd6d3; color: #82071e; font-weight: 600;
+      background: #f5e3e3; color: #82071e; font-weight: 600;
     }
-    /* Shared green palette — soft mint with high-contrast forest text.
+    /* Shared green palette — desaturated mint so the dark text pops.
      * Used for:
      *   - high-confidence legacy AI (.ai-conf.high)
      *   - "No review" decision (.review-decision.green)
      *
-     * v3.4 — Same contrast bump as the red palette above. Deeper text
-     * + 600 weight + slightly more saturated mint bg. */
+     * v3.5 — Same desaturation treatment as the red palette above. */
     .em-badge.ai-conf.high,
     .em-badge.review-decision.green {
-      background: #b8efc7; color: #0a4a23; font-weight: 600;
+      background: #d8e9dc; color: #0a4a23; font-weight: 600;
     }
     .em-badge.ai-diff {
       background: #f0f0f5; color: #4b4b6b;
