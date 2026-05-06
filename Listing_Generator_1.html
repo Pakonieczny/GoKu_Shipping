@@ -2910,8 +2910,8 @@ You are given an existing finalized product image. Apply the user's specific req
 USER'S REQUESTED CHANGE: "${userAdjust}"
 
 HARD RULES:
-- Modify ONLY what the user has explicitly asked to change.
-- Do NOT change the model/person, their pose, expression, skin, hair, or clothing.
+- Modify ONLY what the user has explicitly asked to change (plus the always-applied skin correction below).
+- Do NOT change the model/person, their pose, expression, hair, or clothing.
 - Do NOT change the framing, crop, camera angle, zoom level, or overall composition.
 - Do NOT change the charm's design, shape, position, or rotation.
 - Do NOT change the charm's size unless the user has explicitly asked to.
@@ -2920,7 +2920,10 @@ HARD RULES:
 - Do NOT output any text overlays.
 - Preserve the image's resolution and aspect ratio.
 
-The output must look like the input image with ONLY the user's requested change applied — as if the requested edit had been performed in-place by a careful photo retoucher.`;
+ALWAYS-APPLIED SKIN-TONE CORRECTION (required on every edit, applies even when the user's request is unrelated to skin):
+Carefully inspect the skin immediately around, beside, and beneath the charm. The input image often shows this region as duller, greyer, or paler than the skin elsewhere on the same person — a leftover from how the charm was originally composited onto the body. Recolor that region so its warmth, saturation, and brightness seamlessly match the surrounding skin (neck, chest, and shoulders) of THIS specific model. The transition must be invisible: no halo, no rectangular patch, no visible edge between corrected and uncorrected skin. Match the model's actual skin tone — do NOT shift toward any default tone.
+
+The output must look like the input image with ONLY the user's requested change and the skin-tone correction applied — as if a careful photo retoucher had performed both edits in-place.`;
             } else {
               // ---- Standard regeneration mode (existing behavior) ----
               // Random source reference + the listing's originally-allocated
