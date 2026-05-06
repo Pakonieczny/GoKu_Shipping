@@ -20,16 +20,52 @@
  *    POST body:{ action:'markRead', threadId } → sets lastReadAt, unread=false
  *    POST body:{ action:'setStatus', threadId, status, reason? } → state transition + audit
  *    POST body:{ action:'enqueueJob', threadId, jobType, payload } → write EtsyMail_Jobs doc
+ *
+ *  v3.0 additions — folder management & destructive ops:
+ *    POST body:{ action:'purgeFolder', folderStatus, actor }
+ *      Owner-only. Move every thread whose status matches `folderStatus`
+ *      (string or array — to support multi-status folders like Auto-Reply)
+ *      OUT of that folder by setting status to "pending_human_review".
+ *      Threads remain in the system; only their folder membership clears.
+ *      Use case: empty out a stale folder without deleting any data.
+ *
+ *    POST body:{ action:'masterPurgeWipe', password, actor }
+ *      Owner-only AND password-gated. Permanently deletes every doc in:
+ *        - EtsyMail_Threads (and their messages subcollections)
+ *        - EtsyMail_Drafts
+ *        - EtsyMail_Jobs
+ *      Preserves: EtsyMail_Config, OAuth, listing templates, audit log,
+ *      sales contexts. Writes a single audit row before deletion with
+ *      actor + counts so there's a forensic record after the data is gone.
+ *
+ *    POST body:{ action:'masterPurgePasswordSet', password, securityQuestion, securityAnswer, actor }
+ *      First-time setup OR password change. Owner-only. Stores PBKDF2
+ *      hashes (never plaintext) at EtsyMail_Config/masterPurgeAuth.
+ *
+ *    POST body:{ action:'masterPurgePasswordReset', securityAnswer, newPassword, actor }
+ *      Recover from a forgotten password by answering the security
+ *      question. Owner-only. Replaces the stored password hash.
+ *
+ *    POST body:{ action:'masterPurgePasswordStatus', actor }
+ *      Owner-only. Returns { isSet: bool, securityQuestion: string|null }
+ *      so the UI can decide whether to prompt for first-time setup or
+ *      enter-password.
  */
 
 const admin = require("./firebaseAdmin");
+const crypto = require("crypto");
 const { requireExtensionAuth } = require("./_etsyMailAuth");
+const { requireOwner, logUnauthorized } = require("./_etsyMailRoles");
 const db    = admin.firestore();
 const FV    = admin.firestore.FieldValue;
 
 const THREADS_COLL  = "EtsyMail_Threads";
 const AUDIT_COLL    = "EtsyMail_Audit";
 const JOBS_COLL     = "EtsyMail_Jobs";
+// v3.0 — collections involved in the master-purge wipe.
+const DRAFTS_COLL   = "EtsyMail_Drafts";
+const CONFIG_COLL   = "EtsyMail_Config";
+const MASTER_PURGE_AUTH_DOC = "EtsyMail_Config/masterPurgeAuth";
 
 // v1.2: include X-EtsyMail-Secret in allowed headers (CORS preflight)
 // because the handler now enforces requireExtensionAuth. The inbox UI
@@ -69,8 +105,122 @@ const VALID_STATUSES = new Set([
   "sales_active",
   "sales_completed",
   "sales_abandoned",
+  // v3.0 — sales-funnel intermediate statuses. Without these, the
+  // "Sales — Active" folder count works (etsyMailThreads ?counts=1
+  // groups by raw status string) but manual setStatus into any of
+  // these would 400 with "Invalid status". The sales agent already
+  // writes them; the UI just couldn't move INTO them.
+  "sales_discovery",
+  "sales_spec",
+  "sales_quote",
+  "sales_revision",
+  "sales_pending_close_approval",
+  // v3.24 — Production Rush. Same story: the AI writes this status
+  // in etsyMailDraftReply when the customer accepts a $15 rush
+  // upgrade, but until v3.0 manual moves into Production Rush were
+  // rejected because the status wasn't in this set.
+  "production_rush",
   "archived"
 ]);
+
+// ═══════════════════════════════════════════════════════════════════════
+// v3.0 — Folder-purge & master-purge plumbing
+// ═══════════════════════════════════════════════════════════════════════
+
+// When `purgeFolder` un-tags threads from a folder, they need a non-empty
+// status to land on (Firestore docs need SOME value, and the inbox
+// front-end uses status as the primary routing field). We use the
+// review queue as the safe default destination. Operators can re-route
+// from there manually.
+const PURGE_FOLDER_DEFAULT_DESTINATION = "pending_human_review";
+
+// Statuses operators are NOT allowed to bulk-purge. Trying to purge
+// these returns 400. They're either transient (the auto-pipeline owns
+// the transition timing) or irreplaceable (terminal sales states).
+const PURGE_FOLDER_BLOCKED = new Set([
+  "queued_for_auto_send",   // transient; owned by etsyMailDraftSend
+  "send_in_progress",       // transient; same
+  "sales_completed"         // terminal; preserve for reporting
+]);
+
+// PBKDF2 parameters for the master-purge password hash.
+//   Iterations: 200_000 — comfortable middle ground for Node's pbkdf2,
+//                ~50ms on modern hardware. High enough to slow brute
+//                force, low enough not to time out a Netlify function.
+//   Key length: 64 bytes — overkill for what we need but cheap.
+//   Digest    : sha512.
+//   Salt      : 32 random bytes per password (regenerated on every set).
+const PBKDF2_ITERATIONS = 200_000;
+const PBKDF2_KEY_BYTES  = 64;
+const PBKDF2_DIGEST     = "sha512";
+const SALT_BYTES        = 32;
+
+/**
+ * Hash a secret with a fresh random salt. Returns
+ *   { hash: <hex>, salt: <hex>, iterations, digest }
+ * for storage. The salt is per-secret and stored alongside the hash;
+ * this matches standard PBKDF2 practice.
+ */
+function hashSecret(plaintext) {
+  const salt = crypto.randomBytes(SALT_BYTES);
+  const hash = crypto.pbkdf2Sync(
+    String(plaintext),
+    salt,
+    PBKDF2_ITERATIONS,
+    PBKDF2_KEY_BYTES,
+    PBKDF2_DIGEST
+  );
+  return {
+    hash       : hash.toString("hex"),
+    salt       : salt.toString("hex"),
+    iterations : PBKDF2_ITERATIONS,
+    digest     : PBKDF2_DIGEST
+  };
+}
+
+/**
+ * Constant-time compare a plaintext attempt against a stored
+ * { hash, salt, iterations, digest } record. Returns boolean.
+ *
+ * Uses crypto.timingSafeEqual to prevent timing-attack discrimination
+ * even though the practical attack surface here (a master-purge
+ * password) is small.
+ */
+function verifySecret(plaintext, stored) {
+  if (!stored || !stored.hash || !stored.salt) return false;
+  const iterations = stored.iterations || PBKDF2_ITERATIONS;
+  const digest     = stored.digest     || PBKDF2_DIGEST;
+  let attempt;
+  try {
+    attempt = crypto.pbkdf2Sync(
+      String(plaintext),
+      Buffer.from(stored.salt, "hex"),
+      iterations,
+      PBKDF2_KEY_BYTES,
+      digest
+    );
+  } catch {
+    return false;
+  }
+  let stored_buf;
+  try {
+    stored_buf = Buffer.from(stored.hash, "hex");
+  } catch {
+    return false;
+  }
+  if (attempt.length !== stored_buf.length) return false;
+  return crypto.timingSafeEqual(attempt, stored_buf);
+}
+
+/**
+ * Normalize a security-question answer before hashing/comparing.
+ * Lower-cased, trimmed, internal whitespace collapsed. This makes
+ * "Spot" and " spot " match — operators shouldn't lock themselves out
+ * over capitalization or trailing spaces.
+ */
+function normalizeAnswer(s) {
+  return String(s || "").trim().toLowerCase().replace(/\s+/g, " ");
+}
 
 // ─── v2.4: Search support (folded in from former etsyMailSearch.js) ─────
 //
@@ -645,6 +795,401 @@ exports.handler = async (event) => {
           payload  : { jobType, jobId: jobRef.id }
         });
         return ok({ jobId: jobRef.id });
+      }
+
+      /* ---------- v3.0 — purgeFolder ---------- */
+      // Owner-only. Move every thread whose status matches `folderStatus`
+      // (string OR array — supports multi-status folders like Auto-Reply)
+      // out of that folder by setting status to PURGE_FOLDER_DEFAULT_DESTINATION.
+      // Uses paginated batched writes so the operation scales and stays
+      // under the Netlify 30s budget even on large folders. Each batch
+      // commits 250 threads to keep well under Firestore's 500-op limit.
+      if (action === "purgeFolder") {
+        const { folderStatus, actor = null, reason = null } = body;
+        if (!actor) return bad("Missing actor (operator name) for purgeFolder");
+        if (!folderStatus) return bad("Missing folderStatus");
+
+        // Normalize to an array of statuses (mirror RAIL_FILTERS shape).
+        const targetStatuses = Array.isArray(folderStatus) ? folderStatus : [folderStatus];
+
+        // Validate every status is real AND not on the blocked list.
+        for (const s of targetStatuses) {
+          if (!VALID_STATUSES.has(s)) return bad(`Invalid folderStatus '${s}'`);
+          if (PURGE_FOLDER_BLOCKED.has(s)) {
+            return bad(`Folder '${s}' is not eligible for bulk purge (transient or terminal status)`);
+          }
+        }
+        // Also block purging INTO the destination — it's a no-op that
+        // would burn writes for no reason and confuse the audit log.
+        if (targetStatuses.includes(PURGE_FOLDER_DEFAULT_DESTINATION)) {
+          return bad(`Cannot purge the destination folder '${PURGE_FOLDER_DEFAULT_DESTINATION}'`);
+        }
+
+        const owner = await requireOwner(actor);
+        if (!owner.ok) {
+          await logUnauthorized({
+            actor,
+            eventType: "purge_folder_unauthorized",
+            payload  : { folderStatus: targetStatuses, reason: owner.reason }
+          });
+          return json(403, { error: "Owner role required", reason: owner.reason });
+        }
+
+        // Iterate per-status to keep each query under Firestore's
+        // 'in' operator's 30-value cap and to make audit rows clean.
+        // For each status: page through 250-doc batches until exhausted.
+        let totalMoved = 0;
+        const perStatusCounts = {};
+        const auditSampleIds  = [];   // first 20 thread ids for the audit row
+        const BATCH_SIZE = 250;
+
+        for (const status of targetStatuses) {
+          let perStatusMoved = 0;
+          // Loop until the query returns fewer docs than the batch size.
+          // We don't use cursoring (startAfter) because each batch
+          // moves the docs OUT of the query's result set, so the next
+          // page-1 query naturally returns the next set.
+          for (let safetyLoop = 0; safetyLoop < 100; safetyLoop++) {
+            const snap = await db.collection(THREADS_COLL)
+              .where("status", "==", status)
+              .limit(BATCH_SIZE)
+              .get();
+            if (snap.empty) break;
+
+            const batch = db.batch();
+            for (const docSnap of snap.docs) {
+              batch.update(docSnap.ref, {
+                status                  : PURGE_FOLDER_DEFAULT_DESTINATION,
+                folderPurgedFromStatus  : status,
+                folderPurgedAt          : FV.serverTimestamp(),
+                folderPurgedBy          : actor,
+                updatedAt               : FV.serverTimestamp(),
+                // Clear any auto_replied provenance (mirrors the same
+                // hygiene the setStatus action does on equivalent moves).
+                manuallyMovedToAutoReplied: FV.delete(),
+                manualMoveActor         : FV.delete(),
+                manualMoveAt            : FV.delete(),
+                manualMoveReason        : FV.delete(),
+                manualMoveFromStatus    : FV.delete()
+              });
+              if (auditSampleIds.length < 20) auditSampleIds.push(docSnap.id);
+            }
+            await batch.commit();
+            perStatusMoved += snap.size;
+
+            // If we got fewer docs than the limit, the query is exhausted.
+            if (snap.size < BATCH_SIZE) break;
+          }
+          perStatusCounts[status] = perStatusMoved;
+          totalMoved += perStatusMoved;
+        }
+
+        await writeAudit({
+          threadId : null,
+          eventType: "folder_purged",
+          actor,
+          payload  : {
+            folderStatuses    : targetStatuses,
+            destinationStatus : PURGE_FOLDER_DEFAULT_DESTINATION,
+            totalMoved,
+            perStatusCounts,
+            sampleThreadIds   : auditSampleIds,
+            reason
+          }
+        });
+
+        return ok({
+          totalMoved,
+          perStatusCounts,
+          destinationStatus: PURGE_FOLDER_DEFAULT_DESTINATION
+        });
+      }
+
+      /* ---------- v3.0 — masterPurgePasswordStatus ---------- */
+      // Returns { isSet, securityQuestion } so the UI can decide which
+      // modal to render. Owner-gated like the other master-purge actions.
+      // The hash itself is NEVER returned (defense in depth — even though
+      // it's a one-way hash, no reason to ship it out).
+      if (action === "masterPurgePasswordStatus") {
+        const { actor = null } = body;
+        if (!actor) return bad("Missing actor");
+        const owner = await requireOwner(actor);
+        if (!owner.ok) return json(403, { error: "Owner role required", reason: owner.reason });
+
+        const snap = await db.doc(MASTER_PURGE_AUTH_DOC).get();
+        if (!snap.exists) return ok({ isSet: false, securityQuestion: null });
+
+        const d = snap.data() || {};
+        return ok({
+          isSet           : !!(d.passwordHash && d.salt),
+          securityQuestion: d.securityQuestion || null,
+          updatedAt       : d.updatedAt && d.updatedAt.toMillis ? d.updatedAt.toMillis() : null,
+          updatedBy       : d.updatedBy || null
+        });
+      }
+
+      /* ---------- v3.0 — masterPurgePasswordSet ---------- */
+      // First-time setup OR password change. Stores PBKDF2 hashes with
+      // per-secret salts. The security question is stored as plaintext
+      // (it's meant to be readable on the recovery modal); only the
+      // ANSWER is hashed.
+      if (action === "masterPurgePasswordSet") {
+        const {
+          password,
+          securityQuestion,
+          securityAnswer,
+          actor = null
+        } = body;
+
+        if (!actor) return bad("Missing actor");
+        if (!password || String(password).length < 8) {
+          return bad("Password must be at least 8 characters");
+        }
+        if (!securityQuestion || String(securityQuestion).trim().length < 4) {
+          return bad("Security question is required (min 4 chars)");
+        }
+        if (!securityAnswer || String(securityAnswer).trim().length < 1) {
+          return bad("Security answer is required");
+        }
+
+        const owner = await requireOwner(actor);
+        if (!owner.ok) {
+          await logUnauthorized({
+            actor,
+            eventType: "master_purge_password_set_unauthorized",
+            payload  : { reason: owner.reason }
+          });
+          return json(403, { error: "Owner role required", reason: owner.reason });
+        }
+
+        const pwd = hashSecret(password);
+        const ans = hashSecret(normalizeAnswer(securityAnswer));
+
+        await db.doc(MASTER_PURGE_AUTH_DOC).set({
+          passwordHash       : pwd.hash,
+          salt               : pwd.salt,
+          iterations         : pwd.iterations,
+          digest             : pwd.digest,
+          securityQuestion   : String(securityQuestion).trim(),
+          securityAnswerHash : ans.hash,
+          securityAnswerSalt : ans.salt,
+          securityAnswerIterations: ans.iterations,
+          securityAnswerDigest    : ans.digest,
+          updatedAt          : FV.serverTimestamp(),
+          updatedBy          : actor
+        }, { merge: false });
+
+        await writeAudit({
+          threadId : null,
+          eventType: "master_purge_password_set",
+          actor,
+          payload  : { hadPriorPassword: false /* one-bit info; we don't tell the audit log */ }
+        });
+
+        return ok({ ok: true });
+      }
+
+      /* ---------- v3.0 — masterPurgePasswordReset ---------- */
+      // Reset the password by answering the security question.
+      // Re-checks owner role (defense in depth — the question is the
+      // factor, the role is the gate).
+      if (action === "masterPurgePasswordReset") {
+        const { securityAnswer, newPassword, actor = null } = body;
+        if (!actor) return bad("Missing actor");
+        if (!newPassword || String(newPassword).length < 8) {
+          return bad("New password must be at least 8 characters");
+        }
+        if (!securityAnswer) return bad("Security answer is required");
+
+        const owner = await requireOwner(actor);
+        if (!owner.ok) return json(403, { error: "Owner role required", reason: owner.reason });
+
+        const snap = await db.doc(MASTER_PURGE_AUTH_DOC).get();
+        if (!snap.exists) return bad("No master-purge password is configured yet");
+
+        const d = snap.data() || {};
+        const stored = {
+          hash      : d.securityAnswerHash,
+          salt      : d.securityAnswerSalt,
+          iterations: d.securityAnswerIterations,
+          digest    : d.securityAnswerDigest
+        };
+        const matches = verifySecret(normalizeAnswer(securityAnswer), stored);
+        if (!matches) {
+          await writeAudit({
+            threadId : null,
+            eventType: "master_purge_password_reset_failed",
+            actor,
+            payload  : { reason: "security_answer_mismatch" }
+          });
+          return json(403, { error: "Security answer is incorrect" });
+        }
+
+        // Re-hash the new password with a fresh salt; preserve the
+        // existing security question + answer hash (resetting the
+        // password doesn't reset the recovery factor).
+        const pwd = hashSecret(newPassword);
+        await db.doc(MASTER_PURGE_AUTH_DOC).set({
+          passwordHash: pwd.hash,
+          salt        : pwd.salt,
+          iterations  : pwd.iterations,
+          digest      : pwd.digest,
+          updatedAt   : FV.serverTimestamp(),
+          updatedBy   : actor,
+          lastResetAt : FV.serverTimestamp()
+        }, { merge: true });
+
+        await writeAudit({
+          threadId : null,
+          eventType: "master_purge_password_reset",
+          actor,
+          payload  : {}
+        });
+
+        return ok({ ok: true });
+      }
+
+      /* ---------- v3.0 — masterPurgeWipe ---------- */
+      // Owner-only AND password-gated. Deletes every doc in
+      // EtsyMail_Threads (with their messages subcollections),
+      // EtsyMail_Drafts, and EtsyMail_Jobs. Preserves config, OAuth,
+      // listing templates, audit log, sales contexts.
+      if (action === "masterPurgeWipe") {
+        const { password, actor = null, confirmPhrase = "" } = body;
+        if (!actor) return bad("Missing actor");
+        if (!password) return bad("Password is required");
+        // UI types this exact phrase as the second factor — protects
+        // against autofilled passwords + accidental click-throughs.
+        if (confirmPhrase !== "WIPE ALL DATA") {
+          return bad("confirmPhrase must equal 'WIPE ALL DATA'");
+        }
+
+        const owner = await requireOwner(actor);
+        if (!owner.ok) {
+          await logUnauthorized({
+            actor,
+            eventType: "master_purge_wipe_unauthorized",
+            payload  : { reason: owner.reason }
+          });
+          return json(403, { error: "Owner role required", reason: owner.reason });
+        }
+
+        const authSnap = await db.doc(MASTER_PURGE_AUTH_DOC).get();
+        if (!authSnap.exists) {
+          return bad("No master-purge password is configured. Set one in Settings before attempting a purge.");
+        }
+        const authData = authSnap.data() || {};
+        const matches  = verifySecret(password, {
+          hash      : authData.passwordHash,
+          salt      : authData.salt,
+          iterations: authData.iterations,
+          digest    : authData.digest
+        });
+        if (!matches) {
+          await writeAudit({
+            threadId : null,
+            eventType: "master_purge_wipe_failed",
+            actor,
+            payload  : { reason: "password_mismatch" }
+          });
+          return json(403, { error: "Incorrect password" });
+        }
+
+        // ── Pre-flight audit row ──────────────────────────────────────
+        // Written BEFORE we delete anything, so even if the wipe is
+        // partially executed and then the function gets killed mid-way,
+        // there's a forensic record of the attempt.
+        const startedAt = Date.now();
+        await writeAudit({
+          threadId : null,
+          eventType: "master_purge_wipe_started",
+          actor,
+          payload  : { startedAt, confirmPhrase }
+        });
+
+        // ── Wipe pass ─────────────────────────────────────────────────
+        // For each collection: page through in BATCH_SIZE chunks, batch-
+        // delete. Threads also need their messages subcollections nuked,
+        // which we do inline. Stops if we get within 5 seconds of the
+        // 30-second function budget so we always have time to write the
+        // completion audit row.
+        const BATCH_SIZE = 250;
+        const SOFT_BUDGET_MS = 25_000;
+        const counts = { threads: 0, messages: 0, drafts: 0, jobs: 0 };
+        let truncated = false;
+
+        async function wipeCollection(collName, perDocCallback = null) {
+          for (let safetyLoop = 0; safetyLoop < 200; safetyLoop++) {
+            if (Date.now() - startedAt > SOFT_BUDGET_MS) {
+              truncated = true;
+              return;
+            }
+            const snap = await db.collection(collName).limit(BATCH_SIZE).get();
+            if (snap.empty) return;
+
+            // If a per-doc callback is provided (used for threads to nuke
+            // their messages subcollection), run it before the parent
+            // delete — Firestore doesn't cascade subcollection deletes.
+            if (perDocCallback) {
+              for (const docSnap of snap.docs) {
+                await perDocCallback(docSnap);
+                if (Date.now() - startedAt > SOFT_BUDGET_MS) {
+                  truncated = true;
+                  return;
+                }
+              }
+            }
+
+            const batch = db.batch();
+            for (const docSnap of snap.docs) batch.delete(docSnap.ref);
+            await batch.commit();
+
+            if (collName === THREADS_COLL) counts.threads += snap.size;
+            else if (collName === DRAFTS_COLL) counts.drafts += snap.size;
+            else if (collName === JOBS_COLL)   counts.jobs   += snap.size;
+
+            if (snap.size < BATCH_SIZE) return;
+          }
+        }
+
+        // Wipe threads (with messages subcollections) first — they're
+        // the most numerous and most user-facing.
+        await wipeCollection(THREADS_COLL, async (threadSnap) => {
+          // Wipe the messages subcollection in batches.
+          for (let inner = 0; inner < 50; inner++) {
+            const msgs = await threadSnap.ref.collection("messages").limit(BATCH_SIZE).get();
+            if (msgs.empty) return;
+            const batch = db.batch();
+            for (const m of msgs.docs) batch.delete(m.ref);
+            await batch.commit();
+            counts.messages += msgs.size;
+            if (msgs.size < BATCH_SIZE) return;
+          }
+        });
+        if (!truncated) await wipeCollection(DRAFTS_COLL);
+        if (!truncated) await wipeCollection(JOBS_COLL);
+
+        const durationMs = Date.now() - startedAt;
+        await writeAudit({
+          threadId : null,
+          eventType: truncated ? "master_purge_wipe_truncated" : "master_purge_wipe_completed",
+          actor,
+          payload  : {
+            counts,
+            durationMs,
+            truncated,
+            // If truncated, the operator should re-run to finish.
+            ...(truncated ? { hint: "Hit the per-invocation budget — re-run masterPurgeWipe to delete the remainder." } : {})
+          }
+        });
+
+        return ok({
+          ok        : true,
+          counts,
+          durationMs,
+          truncated,
+          ...(truncated ? { hint: "Hit per-invocation budget; re-run to delete the remainder." } : {})
+        });
       }
 
       return bad(`Unknown action '${action}'`);

@@ -94,6 +94,20 @@
     }
     .em-rail .em-rail-item.active .em-count { background: #0366d6; color: #fff; }
     .em-rail .em-rail-item .material-icons { font-size: 15px; margin-right: 8px; opacity: .65; }
+    /* v3.0 — per-folder purge button. Hidden by default, fades in on
+       row hover so the rail stays visually clean. The button itself is
+       a circular icon-only control to keep it compact. */
+    .em-rail .em-rail-item .em-rail-purge {
+      background: transparent; border: none; cursor: pointer;
+      padding: 2px 4px; margin: 0 4px 0 auto;
+      color: #cf222e; opacity: 0; transition: opacity 0.12s ease;
+      border-radius: 4px;
+    }
+    .em-rail .em-rail-item:hover .em-rail-purge { opacity: 0.7; }
+    .em-rail .em-rail-item .em-rail-purge:hover { opacity: 1; background: #ffebe9; }
+    .em-rail .em-rail-item .em-rail-purge .material-icons {
+      font-size: 14px; margin: 0; opacity: 1;
+    }
 
     .em-list {
       grid-area: list; background: #fff; border-right: 1px solid #e1e4e8;
@@ -1866,6 +1880,32 @@
         </div>
         <p id="emTplMeta" style="font-size:10px;color:#6a737d;margin:0 0 12px;font-style:italic;"></p>
 
+        <!-- ─── v3.0 — Danger Zone: Master Purge ──────────────────────── -->
+        <hr style="margin:18px 0 10px;border:none;border-top:1px solid #e1e4e8;">
+        <p style="margin-bottom:4px;"><b style="color:#cf222e;">Danger zone</b> <span class="em-muted" style="font-weight:400;font-size:11px;">— irreversible destructive actions, owner-only, password-gated</span></p>
+        <p style="font-size:12px;margin:0 0 10px;">
+          Master purge wipes every thread, message, draft, and pending job from the system. Config, OAuth tokens, listing templates, sales contexts, and the audit log are <b>preserved</b>. There is no undo. A password is required to perform the wipe; if you forget it, you can reset it by answering a security question.
+        </p>
+
+        <div id="emMasterPurgeBlock" style="margin:0 0 8px; padding:10px 12px; background:#fff5f5; border-radius:4px; border-left:3px solid #cf222e;">
+          <div id="emMasterPurgeStatus" style="font-size:11px; color:#586069; margin:0 0 8px; font-style:italic;">
+            Loading master-purge status…
+          </div>
+          <div style="display:flex; flex-wrap:wrap; gap:8px;">
+            <button type="button" id="emMasterPurgeSetupBtn"
+                    style="padding:4px 10px; font-size:11px; font-weight:600; background:#fff; color:#0969da; border:1px solid #0969da; border-radius:3px; cursor:pointer;"
+                    title="Set or change the master-purge password and security question">
+              Set password / security question
+            </button>
+            <button type="button" id="emMasterPurgeWipeBtn"
+                    style="padding:4px 10px; font-size:11px; font-weight:700; background:#cf222e; color:#fff; border:1px solid #a40e26; border-radius:3px; cursor:pointer;"
+                    title="Wipe ALL threads, messages, drafts, and jobs (irreversible)">
+              <i class="material-icons" style="font-size:13px; vertical-align:middle;">delete_forever</i>
+              Wipe all data…
+            </button>
+          </div>
+        </div>
+
         <p id="emAutoCfgMeta" style="font-size:10px;color:#6a737d;margin:0 0 8px;font-style:italic;"></p>
 
         <div class="em-modal-error" id="emSecretError"></div>
@@ -1874,6 +1914,115 @@
           <button type="submit" id="emSecretSaveBtn" class="primary">Save</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- ═══ v3.0 — Master purge modals ════════════════════════════════════
+       Three modals, all reusing the .em-modal-backdrop chrome from the
+       settings modal:
+         #emMpSetupModal — set or change password + security question
+         #emMpWipeModal  — confirm + enter password to wipe everything
+         #emMpResetModal — recover from a forgotten password via the
+                           security question
+       Each is hidden by default (.em-modal-backdrop without .active).
+       Show/hide is via classList.add/remove("active") in JS. -->
+
+  <div id="emMpSetupModal" class="em-modal-backdrop">
+    <div class="em-modal" style="max-width:520px;">
+      <h2>Master-purge password</h2>
+      <p style="font-size:12px;margin-bottom:10px;color:#57606a;">
+        This password is required before the system will wipe all threads/messages/drafts. Choose something memorable but distinct from your everyday passwords. The password is stored as a salted PBKDF2 hash; nobody — not even an admin reading Firestore directly — can recover the plaintext.
+      </p>
+      <p style="font-size:12px;margin-bottom:10px;color:#57606a;">
+        The security question lets you reset the password if you forget it. Pick one only you can answer; comparisons are case-insensitive and trim whitespace.
+      </p>
+
+      <label for="emMpSetupPasswordInput" style="font-size:12px; font-weight:600;">New password (min 8 chars)</label>
+      <input type="password" id="emMpSetupPasswordInput" autocomplete="new-password"
+             style="width:100%; padding:6px 10px; margin:4px 0 12px; border:1px solid #d0d7de; border-radius:4px; font-size:13px;">
+
+      <label for="emMpSetupPasswordConfirmInput" style="font-size:12px; font-weight:600;">Confirm password</label>
+      <input type="password" id="emMpSetupPasswordConfirmInput" autocomplete="new-password"
+             style="width:100%; padding:6px 10px; margin:4px 0 12px; border:1px solid #d0d7de; border-radius:4px; font-size:13px;">
+
+      <label for="emMpSetupQuestionInput" style="font-size:12px; font-weight:600;">Security question</label>
+      <input type="text" id="emMpSetupQuestionInput" placeholder="e.g. What was the name of my first pet?"
+             style="width:100%; padding:6px 10px; margin:4px 0 12px; border:1px solid #d0d7de; border-radius:4px; font-size:13px;">
+
+      <label for="emMpSetupAnswerInput" style="font-size:12px; font-weight:600;">Security answer</label>
+      <input type="text" id="emMpSetupAnswerInput" autocomplete="off"
+             style="width:100%; padding:6px 10px; margin:4px 0 12px; border:1px solid #d0d7de; border-radius:4px; font-size:13px;">
+
+      <div class="em-modal-error" id="emMpSetupError"></div>
+      <div class="em-modal-buttons">
+        <button type="button" id="emMpSetupCancelBtn">Cancel</button>
+        <button type="button" id="emMpSetupSaveBtn" class="primary">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="emMpWipeModal" class="em-modal-backdrop">
+    <div class="em-modal" style="max-width:520px;">
+      <h2 style="color:#cf222e;">Wipe all data</h2>
+      <p style="font-size:12px;margin-bottom:10px;">
+        This will permanently delete every thread, every message, every draft, and every queued job from the system. <b>There is no undo.</b>
+      </p>
+      <p style="font-size:12px;margin-bottom:10px;">
+        Preserved: settings, Gmail watcher state, OAuth tokens, listing templates, sales contexts, and the audit log (which will record this action).
+      </p>
+
+      <label for="emMpWipePasswordInput" style="font-size:12px; font-weight:600;">Master-purge password</label>
+      <input type="password" id="emMpWipePasswordInput" autocomplete="off"
+             style="width:100%; padding:6px 10px; margin:4px 0 12px; border:1px solid #d0d7de; border-radius:4px; font-size:13px;">
+
+      <label for="emMpWipeConfirmInput" style="font-size:12px; font-weight:600;">
+        Type <code>WIPE ALL DATA</code> to confirm
+      </label>
+      <input type="text" id="emMpWipeConfirmInput" autocomplete="off"
+             placeholder="WIPE ALL DATA"
+             style="width:100%; padding:6px 10px; margin:4px 0 12px; border:1px solid #d0d7de; border-radius:4px; font-size:13px; font-family:ui-monospace,SFMono-Regular,Consolas,monospace;">
+
+      <p style="font-size:11px;color:#6a737d;margin:0 0 8px;">
+        Forgot the password? <a href="#" id="emMpWipeForgotLink" style="color:#0969da;">Reset it via security question</a>
+      </p>
+
+      <div class="em-modal-error" id="emMpWipeError"></div>
+      <div class="em-modal-buttons">
+        <button type="button" id="emMpWipeCancelBtn">Cancel</button>
+        <button type="button" id="emMpWipeConfirmBtn" style="background:#cf222e; color:#fff; border:1px solid #a40e26;">Wipe everything</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="emMpResetModal" class="em-modal-backdrop">
+    <div class="em-modal" style="max-width:520px;">
+      <h2>Reset master-purge password</h2>
+      <p style="font-size:12px;margin-bottom:10px;color:#57606a;">
+        Answer your security question to set a new password. Answers are case-insensitive; whitespace is trimmed and collapsed.
+      </p>
+
+      <p style="font-size:13px; font-weight:600; margin:12px 0 4px;">
+        Your security question
+      </p>
+      <p id="emMpResetQuestionDisplay" style="margin:0 0 12px; padding:8px 10px; background:#f6f8fa; border-radius:4px; font-size:13px; color:#1f2328;"></p>
+
+      <label for="emMpResetAnswerInput" style="font-size:12px; font-weight:600;">Your answer</label>
+      <input type="text" id="emMpResetAnswerInput" autocomplete="off"
+             style="width:100%; padding:6px 10px; margin:4px 0 12px; border:1px solid #d0d7de; border-radius:4px; font-size:13px;">
+
+      <label for="emMpResetNewPasswordInput" style="font-size:12px; font-weight:600;">New password (min 8 chars)</label>
+      <input type="password" id="emMpResetNewPasswordInput" autocomplete="new-password"
+             style="width:100%; padding:6px 10px; margin:4px 0 12px; border:1px solid #d0d7de; border-radius:4px; font-size:13px;">
+
+      <label for="emMpResetNewPasswordConfirmInput" style="font-size:12px; font-weight:600;">Confirm new password</label>
+      <input type="password" id="emMpResetNewPasswordConfirmInput" autocomplete="new-password"
+             style="width:100%; padding:6px 10px; margin:4px 0 12px; border:1px solid #d0d7de; border-radius:4px; font-size:13px;">
+
+      <div class="em-modal-error" id="emMpResetError"></div>
+      <div class="em-modal-buttons">
+        <button type="button" id="emMpResetCancelBtn">Cancel</button>
+        <button type="button" id="emMpResetConfirmBtn" class="primary">Reset password</button>
+      </div>
     </div>
   </div>
 
@@ -2245,10 +2394,34 @@
     // Move-to dropdown — use single-status entries only. Operators can
     // move a thread INTO Auto-Reply manually but it goes to auto_replied
     // (the confirmed-success status), not the in-flight one.
+    //
+    // v3.0 — added Production Rush, Sales — Active, and the "All"
+    // pseudo-target. "All" is a synonym for moving the thread out of
+    // whatever folder it's currently in by sending it to the review
+    // queue (the safe default) — see PURGE_FOLDER_DEFAULT_DESTINATION
+    // on the backend. The label "All" matches the user's mental model
+    // of "remove from this folder, leave it visible in All."
     const MOVE_TARGETS = [
       { status: "pending_human_review", label: "Needs review" },
       { status: "auto_replied",         label: "Auto-Reply" },
+      { status: "production_rush",      label: "Production Rush" },
+      { status: "sales_active",         label: "Sales — Active" },
       { status: "archived",             label: "Archived" }
+    ];
+
+    // v3.0 — Quick-action buttons in the per-thread action bar map to
+    // these targets directly. The "All" button is special: it always
+    // routes to pending_human_review, regardless of source folder.
+    const QUICK_MOVE_BUTTONS = [
+      { id: "emProductionRushBtn", icon: "local_fire_department",
+        label: "Rush",       title: "Move to Production Rush",
+        targetStatus: "production_rush" },
+      { id: "emSalesActiveBtn",    icon: "trending_up",
+        label: "Sales",      title: "Move to Sales — Active",
+        targetStatus: "sales_active" },
+      { id: "emAllBtn",            icon: "inbox",
+        label: "All",        title: "Remove from this folder (move back to Needs review)",
+        targetStatus: "pending_human_review" }
     ];
 
     // ── Auto-pipeline config (single source of truth: Firestore) ──
@@ -3849,6 +4022,278 @@
       }
     }
 
+    /* ── v3.0 — Master-purge plumbing ──────────────────────────────────
+     * Three modal flows + a settings-block status loader. All of them
+     * funnel through etsyMailThreads action endpoints (see the v3.0
+     * action block in that file). The Danger Zone block in the settings
+     * modal is the entry point — a "Loading…" status line that becomes
+     * "Password set on <date>" once the loader resolves, plus two
+     * buttons (set-password / wipe).
+     *
+     * Flow:
+     *   1. Settings opens  → loadMasterPurgeStatus() populates status line
+     *   2. "Set password"  → emMpSetupModal → server: action=masterPurgePasswordSet
+     *   3. "Wipe all data" → emMpWipeModal  → server: action=masterPurgeWipe
+     *      (the modal also has a "Forgot password?" link → reset modal)
+     *   4. Reset modal     → server: action=masterPurgePasswordReset
+     */
+
+    async function loadMasterPurgeStatus() {
+      const statusEl = $("emMasterPurgeStatus");
+      const wipeBtn  = $("emMasterPurgeWipeBtn");
+      const setupBtn = $("emMasterPurgeSetupBtn");
+      if (!statusEl) return;
+
+      // Same secret-required guard the catalog block uses.
+      const haveSecret = (typeof localStorage !== "undefined") &&
+                         !!localStorage.getItem("etsymail_secret");
+      if (!haveSecret) {
+        statusEl.innerHTML = '<span style="color:#7d4e00;">' +
+          'Set the inbox secret above and click <b>Save</b> first — ' +
+          'master-purge status loads after that.</span>';
+        if (wipeBtn)  wipeBtn.disabled  = true;
+        if (setupBtn) setupBtn.disabled = true;
+        return;
+      }
+
+      const actor = getEmployeeName() || "operator";
+      try {
+        const res = await api("etsyMailThreads", {
+          method: "POST",
+          body  : { action: "masterPurgePasswordStatus", actor }
+        });
+        if (res && res.isSet) {
+          // Render with a date if the server returned one.
+          const when = res.updatedAt ? new Date(res.updatedAt).toLocaleString() : null;
+          const who  = res.updatedBy ? esc(res.updatedBy) : null;
+          statusEl.innerHTML = '<span style="color:#1a7f37;">'
+            + '<i class="material-icons" style="font-size:13px; vertical-align:middle;">check_circle</i> '
+            + 'Password is set' + (when ? ' (last changed ' + esc(when) + (who ? ' by ' + who : '') + ')' : '')
+            + '. Use the buttons below to change it or wipe data.</span>';
+          if (wipeBtn)  wipeBtn.disabled  = false;
+          if (setupBtn) setupBtn.disabled = false;
+          if (setupBtn) setupBtn.textContent = "Change password / question";
+        } else {
+          statusEl.innerHTML = '<span style="color:#9a3f00;">'
+            + '<i class="material-icons" style="font-size:13px; vertical-align:middle;">warning</i> '
+            + 'No password is set yet. Set one before you can wipe data.</span>';
+          if (wipeBtn)  wipeBtn.disabled  = true;
+          if (setupBtn) setupBtn.disabled = false;
+          if (setupBtn) setupBtn.textContent = "Set password / security question";
+        }
+      } catch (e) {
+        statusEl.innerHTML = '<span style="color:#cf222e;">Status unavailable: '
+          + esc(e.message || String(e)) + '</span>';
+        if (wipeBtn)  wipeBtn.disabled  = true;
+        if (setupBtn) setupBtn.disabled = true;
+      }
+    }
+
+    function showMasterPurgeSetupModal() {
+      const modal = $("emMpSetupModal");
+      if (!modal) return;
+      // Reset all fields and error every time we open.
+      ["emMpSetupPasswordInput", "emMpSetupPasswordConfirmInput",
+       "emMpSetupQuestionInput", "emMpSetupAnswerInput"].forEach(id => {
+        const el = $(id);
+        if (el) el.value = "";
+      });
+      const err = $("emMpSetupError");
+      if (err) { err.textContent = ""; err.classList.remove("active"); }
+      modal.classList.add("active");
+      setTimeout(() => $("emMpSetupPasswordInput")?.focus(), 50);
+    }
+    function hideMasterPurgeSetupModal() {
+      $("emMpSetupModal")?.classList.remove("active");
+    }
+
+    async function saveMasterPurgePasswordFromModal() {
+      const pw      = ($("emMpSetupPasswordInput")?.value || "").trim();
+      const pwc     = ($("emMpSetupPasswordConfirmInput")?.value || "").trim();
+      const q       = ($("emMpSetupQuestionInput")?.value || "").trim();
+      const a       = ($("emMpSetupAnswerInput")?.value || "").trim();
+      const errEl   = $("emMpSetupError");
+      const showErr = (msg) => {
+        if (!errEl) { alert(msg); return; }
+        errEl.textContent = msg;
+        errEl.classList.add("active");
+      };
+
+      if (pw.length < 8)         return showErr("Password must be at least 8 characters.");
+      if (pw !== pwc)            return showErr("Passwords don't match.");
+      if (q.length < 4)          return showErr("Security question is too short.");
+      if (!a)                    return showErr("Security answer is required.");
+
+      const actor = getEmployeeName();
+      if (!actor) return showErr("Set your operator name first (in the inbox onboarding step).");
+
+      try {
+        await api("etsyMailThreads", {
+          method: "POST",
+          body  : {
+            action          : "masterPurgePasswordSet",
+            password        : pw,
+            securityQuestion: q,
+            securityAnswer  : a,
+            actor
+          }
+        });
+        toast("Master-purge password saved.");
+        hideMasterPurgeSetupModal();
+        loadMasterPurgeStatus();
+      } catch (e) {
+        showErr(e.message || String(e));
+      }
+    }
+
+    function showMasterPurgeWipeModal() {
+      const modal = $("emMpWipeModal");
+      if (!modal) return;
+      ["emMpWipePasswordInput", "emMpWipeConfirmInput"].forEach(id => {
+        const el = $(id);
+        if (el) el.value = "";
+      });
+      const err = $("emMpWipeError");
+      if (err) { err.textContent = ""; err.classList.remove("active"); }
+      modal.classList.add("active");
+      setTimeout(() => $("emMpWipePasswordInput")?.focus(), 50);
+    }
+    function hideMasterPurgeWipeModal() {
+      $("emMpWipeModal")?.classList.remove("active");
+    }
+
+    async function confirmMasterPurgeWipe() {
+      const pw      = ($("emMpWipePasswordInput")?.value || "");
+      const phrase  = ($("emMpWipeConfirmInput")?.value || "").trim();
+      const errEl   = $("emMpWipeError");
+      const showErr = (msg) => {
+        if (!errEl) { alert(msg); return; }
+        errEl.textContent = msg;
+        errEl.classList.add("active");
+      };
+
+      if (!pw)                              return showErr("Password is required.");
+      if (phrase !== "WIPE ALL DATA")       return showErr("You must type 'WIPE ALL DATA' exactly to confirm.");
+
+      const actor = getEmployeeName();
+      if (!actor) return showErr("Set your operator name first.");
+
+      // Final native confirm — three layers of friction now (modal +
+      // typed phrase + native confirm) before we send the destructive
+      // request. Belt and suspenders.
+      if (!confirm("Last chance.\n\nThis will permanently delete every thread, message, draft, and pending job. This action cannot be undone.\n\nProceed?")) {
+        return;
+      }
+
+      const wipeBtn = $("emMpWipeConfirmBtn");
+      if (wipeBtn) { wipeBtn.disabled = true; wipeBtn.textContent = "Wiping…"; }
+
+      try {
+        const res = await api("etsyMailThreads", {
+          method: "POST",
+          body  : {
+            action       : "masterPurgeWipe",
+            password     : pw,
+            confirmPhrase: "WIPE ALL DATA",
+            actor
+          }
+        });
+        const c = (res && res.counts) || {};
+        const truncated = res && res.truncated;
+        toast(truncated
+          ? `Partial wipe: ${c.threads || 0} threads, ${c.messages || 0} messages, ${c.drafts || 0} drafts, ${c.jobs || 0} jobs. Re-run to finish.`
+          : `Wiped: ${c.threads || 0} threads, ${c.messages || 0} messages, ${c.drafts || 0} drafts, ${c.jobs || 0} jobs.`
+        );
+        hideMasterPurgeWipeModal();
+        // Force a fresh fetch of everything — the inbox should now be
+        // empty (or close to it for a truncated wipe).
+        state.threads = [];
+        state.counts  = {};
+        renderRail();
+        renderThreadList();
+        fetchCountsNow();
+        fetchThreadListNow({ source: "user" });
+      } catch (e) {
+        showErr(e.message || String(e));
+      } finally {
+        if (wipeBtn) { wipeBtn.disabled = false; wipeBtn.textContent = "Wipe everything"; }
+      }
+    }
+
+    async function showMasterPurgeResetModal() {
+      // Hide the wipe modal if it's open (the reset link sits inside it).
+      hideMasterPurgeWipeModal();
+
+      const modal     = $("emMpResetModal");
+      const questionEl = $("emMpResetQuestionDisplay");
+      if (!modal) return;
+
+      // Pull the security question from the server so we display it
+      // verbatim — operators set their own question, so we have to fetch.
+      const actor = getEmployeeName() || "operator";
+      try {
+        const res = await api("etsyMailThreads", {
+          method: "POST",
+          body  : { action: "masterPurgePasswordStatus", actor }
+        });
+        if (!res || !res.isSet) {
+          alert("No master-purge password is configured yet. Set one first.");
+          return;
+        }
+        if (questionEl) questionEl.textContent = res.securityQuestion || "(no question on file — contact support)";
+      } catch (e) {
+        alert("Couldn't load the security question: " + (e.message || String(e)));
+        return;
+      }
+
+      ["emMpResetAnswerInput", "emMpResetNewPasswordInput", "emMpResetNewPasswordConfirmInput"].forEach(id => {
+        const el = $(id);
+        if (el) el.value = "";
+      });
+      const err = $("emMpResetError");
+      if (err) { err.textContent = ""; err.classList.remove("active"); }
+      modal.classList.add("active");
+      setTimeout(() => $("emMpResetAnswerInput")?.focus(), 50);
+    }
+    function hideMasterPurgeResetModal() {
+      $("emMpResetModal")?.classList.remove("active");
+    }
+
+    async function confirmMasterPurgeReset() {
+      const ans     = ($("emMpResetAnswerInput")?.value || "").trim();
+      const npw     = ($("emMpResetNewPasswordInput")?.value || "").trim();
+      const npwc    = ($("emMpResetNewPasswordConfirmInput")?.value || "").trim();
+      const errEl   = $("emMpResetError");
+      const showErr = (msg) => {
+        if (!errEl) { alert(msg); return; }
+        errEl.textContent = msg;
+        errEl.classList.add("active");
+      };
+      if (!ans)              return showErr("Answer is required.");
+      if (npw.length < 8)    return showErr("New password must be at least 8 characters.");
+      if (npw !== npwc)      return showErr("Passwords don't match.");
+
+      const actor = getEmployeeName();
+      if (!actor) return showErr("Set your operator name first.");
+
+      try {
+        await api("etsyMailThreads", {
+          method: "POST",
+          body  : {
+            action        : "masterPurgePasswordReset",
+            securityAnswer: ans,
+            newPassword   : npw,
+            actor
+          }
+        });
+        toast("Password reset.");
+        hideMasterPurgeResetModal();
+        loadMasterPurgeStatus();
+      } catch (e) {
+        showErr(e.message || String(e));
+      }
+    }
+
     /** Show the secret-setup modal. Triggered by:
      *   - First 401 from any backend call (auto)
      *   - Settings button click (manual edit)
@@ -3953,6 +4398,11 @@
       // via op=setPullFrom. Save does NOT enable the watcher — the operator
       // still has to click the topbar toggle to start the sync.
       loadGmailPullFromInModal();
+
+      // v3.0 — populate the Danger Zone status line (password set or not).
+      // Mirrors the loadGmailPullFromInModal pattern: opens fast with a
+      // "Loading…" placeholder and corrects itself once the server replies.
+      loadMasterPurgeStatus();
 
       if (errMsg) {
         errEl.textContent = errMsg;
@@ -4168,12 +4618,33 @@
         }
         return state.counts[f.status] || 0;
       };
+      // v3.0 — folders that DON'T support per-folder purge. "all" is
+      // not a real folder (no status to clear); "completed_sales" is
+      // intentionally never bulk-purged (audit/reporting integrity);
+      // "auto_replied" and "production_rush" are eligible. The actual
+      // backend-side block list lives in etsyMailThreads.js
+      // (PURGE_FOLDER_BLOCKED) — this front-end list just hides the
+      // button when it would 400.
+      const PURGE_BUTTON_HIDDEN_FOR = new Set(["all", "completed_sales"]);
+
       for (const f of RAIL_FILTERS) {
         const count = folderCount(f);
         const active = state.activeFilterId === f.id ? " active" : "";
+        const showPurge = !PURGE_BUTTON_HIDDEN_FOR.has(f.id) && count > 0;
+        // The purge button is rendered INSIDE the rail item but with
+        // stopPropagation on click so it doesn't also trigger the
+        // folder-select click. The button is opacity:0 by default and
+        // appears on row hover (CSS rule .em-rail-item:hover .em-rail-purge).
+        const purgeHtml = showPurge
+          ? `<button class="em-rail-purge" data-purge-filter="${esc(f.id)}"
+                title="Empty this folder (move all threads back to Needs review)">
+              <i class="material-icons" style="font-size:14px;">delete_sweep</i>
+            </button>`
+          : "";
         html += `
           <div class="em-rail-item${active}" data-filter="${esc(f.id)}">
             <span><i class="material-icons">${esc(f.icon)}</i>${esc(f.label)}</span>
+            ${purgeHtml}
             <span class="em-count">${count}</span>
           </div>`;
       }
@@ -4203,6 +4674,113 @@
           }
         });
       });
+
+      // v3.0 — wire the per-folder purge buttons. stopPropagation on
+      // the click prevents the parent .em-rail-item's folder-select
+      // handler from also firing.
+      rail.querySelectorAll(".em-rail-purge").forEach(btn => {
+        btn.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          const filterId = btn.getAttribute("data-purge-filter");
+          purgeFolderById(filterId).catch(e => {
+            console.warn("[purgeFolder] failed:", e.message);
+          });
+        });
+      });
+    }
+
+    /**
+     * v3.0 — Empty an entire folder by moving every thread in it back
+     * to "Needs review". Owner-only on the backend; the click confirms
+     * with the operator first, then fires a single bulk purgeFolder
+     * call. Counts and the rail update optimistically (the entire
+     * folder's count drops to 0; Needs review goes up by the same
+     * total) and then reconcile from the server response.
+     *
+     * Special-cased for the Auto-Reply folder, which spans two statuses
+     * (auto_replied + queued_for_auto_send): we send the full status
+     * array so the server processes both in one shot. queued_for_auto_send
+     * is on the backend's PURGE_FOLDER_BLOCKED list, so the server will
+     * 400 — we strip it client-side first to avoid the dead trip.
+     */
+    async function purgeFolderById(filterId) {
+      const filter = RAIL_FILTERS.find(f => f.id === filterId);
+      if (!filter) return;
+      // Build the status set to purge. Single-status folders just use
+      // their .status; multi-status folders pass the array. Strip
+      // statuses we know the backend rejects (transient ones like
+      // queued_for_auto_send) so the server's validator accepts the
+      // whole call.
+      const BLOCKED = new Set(["queued_for_auto_send", "send_in_progress", "sales_completed"]);
+      let folderStatus;
+      if (Array.isArray(filter.status)) {
+        folderStatus = filter.status.filter(s => !BLOCKED.has(s));
+        if (folderStatus.length === 0) {
+          alert(`The "${filter.label}" folder contains only transient/protected statuses that can't be bulk-purged.`);
+          return;
+        }
+      } else if (filter.status) {
+        if (BLOCKED.has(filter.status)) {
+          alert(`The "${filter.label}" folder is a transient or protected status and can't be bulk-purged.`);
+          return;
+        }
+        folderStatus = filter.status;
+      } else {
+        // "all" / orderByField folders — already excluded by the renderRail
+        // hide-list, but defensive check.
+        return;
+      }
+
+      // Compute the snapshot count for the confirm message + optimistic
+      // update. Read straight from state.counts (whatever the rail just
+      // showed the operator).
+      const statuses = Array.isArray(folderStatus) ? folderStatus : [folderStatus];
+      const countNow = statuses.reduce((sum, s) => sum + (state.counts[s] || 0), 0);
+
+      if (countNow === 0) {
+        toast(`"${filter.label}" is already empty.`);
+        return;
+      }
+
+      const ok = confirm(
+        `Empty the "${filter.label}" folder?\n\n` +
+        `${countNow} thread${countNow === 1 ? "" : "s"} will be moved back to "Needs review". ` +
+        `Threads themselves are NOT deleted — they just leave this folder.\n\n` +
+        `This action is logged in the audit trail.`
+      );
+      if (!ok) return;
+
+      const actor = getEmployeeName() || "operator";
+
+      // Optimistic update: zero out the source folder, bump pending_human_review.
+      const priorCounts = {};
+      for (const s of statuses) {
+        priorCounts[s] = state.counts[s] || 0;
+        state.counts[s] = 0;
+      }
+      const priorReview = state.counts["pending_human_review"] || 0;
+      state.counts["pending_human_review"] = priorReview + countNow;
+      renderRail();
+
+      try {
+        const res = await api("etsyMailThreads", {
+          method: "POST",
+          body  : { action: "purgeFolder", folderStatus, actor, reason: "operator: empty folder" }
+        });
+        const moved = (res && res.totalMoved) || 0;
+        toast(`Emptied "${filter.label}" — ${moved} thread${moved === 1 ? "" : "s"} moved to Needs review.`);
+        // Reconcile from server truth.
+        fetchCountsNow();
+        // If the operator was looking at this folder, refresh the list
+        // (it should now be empty).
+        if (state.activeFilterId === filterId) fetchThreadListNow({ source: "user" });
+      } catch (e) {
+        // Revert optimistic counts and re-render.
+        for (const s of statuses) state.counts[s] = priorCounts[s];
+        state.counts["pending_human_review"] = priorReview;
+        renderRail();
+        alert(`Failed to empty "${filter.label}": ${e.message}`);
+      }
     }
 
     // ───── Thread list ─────
@@ -5248,6 +5826,9 @@
               ${etsyUrl ? `<a href="${esc(etsyUrl)}" target="_blank" class="em-link"><button><i class="material-icons">open_in_new</i>Open on Etsy</button></a>` : ""}
               <button id="emReviewBtn" title="Move to Needs review (manual triage)"><i class="material-icons">rate_review</i>Needs review</button>
               <button id="emArchiveBtn" title="Archive"><i class="material-icons">archive</i>Archive</button>
+              <button id="emProductionRushBtn" title="Move to Production Rush"><i class="material-icons">local_fire_department</i>Rush</button>
+              <button id="emSalesActiveBtn" title="Move to Sales — Active"><i class="material-icons">trending_up</i>Sales</button>
+              <button id="emAllBtn" title="Remove from this folder (returns to Needs review, stays visible in All)"><i class="material-icons">inbox</i>All</button>
               <select id="emThreadMoveSelect" class="em-thread-move-select" title="Move this thread to a folder">
                 <option value="">Move to…</option>
               </select>
@@ -5357,6 +5938,13 @@
 
       $("emReviewBtn")?.addEventListener("click", () => setStatus(t.id, "pending_human_review", "operator triage"));
       $("emArchiveBtn")?.addEventListener("click", () => setStatus(t.id, "archived", "operator archive"));
+      // v3.0 — quick-action buttons. Each just calls setStatus with a
+      // pre-determined target. The optimistic-count update inside
+      // setStatus keeps the rail counts in sync the instant the click
+      // happens — no waiting on the next 5-second poll.
+      $("emProductionRushBtn")?.addEventListener("click", () => setStatus(t.id, "production_rush", "operator quick-move: production rush"));
+      $("emSalesActiveBtn")?.addEventListener("click",    () => setStatus(t.id, "sales_active",    "operator quick-move: sales active"));
+      $("emAllBtn")?.addEventListener("click",            () => setStatus(t.id, "pending_human_review", "operator quick-move: remove from folder"));
       $("emReprocessThreadBtn")?.addEventListener("click", () => reprocessThread(t.id));
       $("emDeleteThreadBtn")?.addEventListener("click", () => deleteThreadCompletely(t.id));
 
@@ -8128,12 +8716,79 @@
     }
 
     // ───── Actions ─────
+    /**
+     * v3.0 — Optimistic-count wrapper around the etsyMailThreads
+     * setStatus action. The pre-existing implementation just called the
+     * server and waited for the next counts-poll cycle (every 5s) to
+     * surface the change in the rail, which made bulk operations feel
+     * slow and made the user wonder whether the click registered.
+     *
+     * The new flow:
+     *   1. Find the thread in state.threads to learn its CURRENT status.
+     *   2. Decrement state.counts[currentStatus], increment state.counts[newStatus].
+     *   3. Re-render the rail immediately — the user sees the update in
+     *      a single frame.
+     *   4. Fire the server request. On success, do nothing extra (the
+     *      next poll will reconcile any drift).
+     *   5. On failure, REVERT the local count changes and re-render.
+     *
+     * The thread-list refresh (fetchThreadListNow) still runs at the
+     * end so the list itself updates — only the rail is fast-pathed.
+     */
     async function setStatus(threadId, status, reason) {
+      // Snapshot the current status so we can revert on failure.
+      const t = state.threads && state.threads.find(t => t && t.id === threadId);
+      const previousStatus = t ? t.status : null;
+      const didOptimisticUpdate = applyOptimisticCountDelta(previousStatus, status);
+
+      // Mirror the change onto the in-memory thread doc so the UI
+      // (rail, list filter, detail header pill) reflects it now.
+      if (t) t.status = status;
+
       try {
         await api("etsyMailThreads", { method: "POST", body: { action: "setStatus", threadId, status, reason } });
         toast(`Status → ${status}`);
+        // Reconcile: refresh both the list and the counts from server
+        // truth. Optimistic update was for instant feedback; server is
+        // authoritative on the actual numbers (e.g. multi-status folders).
         fetchThreadListNow();
-      } catch (e) { toast("Error: " + e.message); }
+        fetchCountsNow();
+      } catch (e) {
+        // Revert optimistic delta + the in-memory status mutation.
+        if (didOptimisticUpdate) applyOptimisticCountDelta(status, previousStatus);
+        if (t && previousStatus) t.status = previousStatus;
+        toast("Error: " + e.message);
+      }
+    }
+
+    /**
+     * Apply a +1 / -1 delta pair to state.counts for a status transition,
+     * then re-render the rail. Returns true if anything was actually
+     * changed (so callers can decide whether to revert on error).
+     *
+     * Handles missing counts gracefully (treats undefined as 0). Skips
+     * the no-op case where from === to. Does NOT touch synthetic count
+     * keys like _completedSales — those are server-only.
+     */
+    function applyOptimisticCountDelta(fromStatus, toStatus) {
+      if (!state.counts) state.counts = {};
+      if (fromStatus === toStatus) return false;
+      let changed = false;
+      if (fromStatus) {
+        const cur = state.counts[fromStatus] || 0;
+        if (cur > 0) {
+          state.counts[fromStatus] = cur - 1;
+          changed = true;
+        }
+      }
+      if (toStatus) {
+        state.counts[toStatus] = (state.counts[toStatus] || 0) + 1;
+        changed = true;
+      }
+      if (changed && typeof renderRail === "function") {
+        try { renderRail(); } catch {}
+      }
+      return changed;
     }
 
     /**
@@ -8747,6 +9402,57 @@
           runCatalogSyncNow();
         });
       }
+
+      // ── v3.0 — Master-purge button wiring ─────────────────────────────
+      // Six buttons across three modals + one entry-point button in the
+      // Settings Danger Zone. All click handlers explicitly preventDefault
+      // and stopPropagation because some live inside the secret-modal
+      // form and would otherwise submit it.
+      const wireBtn = (id, fn) => {
+        const el = $(id);
+        if (!el) return;
+        el.addEventListener("click", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          fn();
+        });
+      };
+
+      // Settings → Danger Zone entry points.
+      wireBtn("emMasterPurgeSetupBtn", showMasterPurgeSetupModal);
+      wireBtn("emMasterPurgeWipeBtn",  showMasterPurgeWipeModal);
+
+      // Setup modal: cancel + save.
+      wireBtn("emMpSetupCancelBtn", hideMasterPurgeSetupModal);
+      wireBtn("emMpSetupSaveBtn",   saveMasterPurgePasswordFromModal);
+
+      // Wipe modal: cancel + confirm + "forgot password" link.
+      wireBtn("emMpWipeCancelBtn",  hideMasterPurgeWipeModal);
+      wireBtn("emMpWipeConfirmBtn", confirmMasterPurgeWipe);
+      const forgotLink = $("emMpWipeForgotLink");
+      if (forgotLink) {
+        forgotLink.addEventListener("click", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          showMasterPurgeResetModal();
+        });
+      }
+
+      // Reset modal: cancel + confirm.
+      wireBtn("emMpResetCancelBtn",  hideMasterPurgeResetModal);
+      wireBtn("emMpResetConfirmBtn", confirmMasterPurgeReset);
+
+      // Esc-to-close on every master-purge modal.
+      ["emMpSetupModal", "emMpWipeModal", "emMpResetModal"].forEach(id => {
+        const m = $(id);
+        if (!m) return;
+        m.addEventListener("keydown", (e) => {
+          if (e.key !== "Escape") return;
+          if (id === "emMpSetupModal") hideMasterPurgeSetupModal();
+          else if (id === "emMpWipeModal") hideMasterPurgeWipeModal();
+          else hideMasterPurgeResetModal();
+        });
+      });
 
       // ─────────────────────────────────────────────────────────────────
       // v2.0 Step 2 — Sales-mode UI wiring
