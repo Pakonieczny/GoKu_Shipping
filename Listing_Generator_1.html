@@ -374,8 +374,15 @@
     background: var(--inset);
   }
   .multiset-row.is-current {
-    background: var(--accent-bg);
+    /* Strong, unmistakable "this is what's loaded in the grid" treatment.
+       Uses box-shadow for the left-border accent so it doesn't shift the
+       text horizontally (a real border-left would). Slightly brighter
+       background than the default :hover tint so the current selection
+       stands out even when the user is hovering elsewhere. */
+    background: rgba(96, 165, 250, 0.18);
     color: var(--accent);
+    font-weight: 600;
+    box-shadow: inset 3px 0 0 var(--accent);
   }
   .multiset-row input[type="checkbox"] {
     cursor: pointer;
@@ -4523,12 +4530,16 @@ async function updateTotalAllTimeCounter() {
 
         row.addEventListener("click", (e) => {
           // Click on the row body (not the checkbox) navigates to the
-          // set: update the hidden select and load images. Closes the
-          // panel afterwards so the user sees the grid.
+          // set: update the hidden select and load images. Panel stays
+          // OPEN so the user gets a clear visual confirmation — the
+          // .is-current highlight moves to the row they just clicked.
+          // They close the panel manually (click trigger, or click
+          // outside) when they're ready to focus on the grid.
           if (e.target.tagName === "INPUT") return;
+          if (reviewSetSelect.value === setName) return; // already loaded; nothing to do
           reviewSetSelect.value = setName;
           reviewSetSelect.dispatchEvent(new Event("change", { bubbles: true }));
-          closeMultisetPanel();
+          renderMultisetWidget(); // refresh rows so .is-current moves to this row
         });
       });
     }
