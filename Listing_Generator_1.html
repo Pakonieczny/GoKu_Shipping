@@ -6673,8 +6673,8 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       // Per-submission sanity cap. Each submission gets sliced into
       // CHUNK_SIZE-sized Gemini batches (see below) so this is just an
       // upper bound on how many sets the user can prep with one click.
-      if (count > 100) {
-        alert("Batch mode supports up to 100 sets per submission. Split into multiple submissions for more.");
+      if (count > 1000) {
+        alert("Batch mode supports up to 1000 sets per submission. Split into multiple submissions for more.");
         return;
       }
 
