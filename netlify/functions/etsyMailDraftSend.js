@@ -411,6 +411,22 @@ exports.handler = async (event) => {
         employeeName = null,
         aiMeta       = null,
         force        = false,      // v0.9.1 #6: explicit overwrite of another operator's queued draft
+        // v3.2 — How this enqueue was initiated. Two values:
+        //   "manual" → operator clicked "Send via Etsy" in the inbox UI.
+        //              The thread badge should read "Manually Sent" so
+        //              operators can distinguish their own clicks from
+        //              the AI auto-pipeline's sends, even though both
+        //              paths land at thread.status === "auto_replied"
+        //              and use the same draft + extension delivery
+        //              machinery downstream.
+        //   "auto"   → auto-pipeline / sales-agent generated this. This
+        //              is the existing behavior — render the "auto-sent"
+        //              badge.
+        // Defaults to "auto" only when this enqueue carries an aiMeta
+        // payload that flags it as AI-generated; otherwise defaults to
+        // "manual" since the only non-AI caller is the inbox UI's Send
+        // button. Callers can also pass the value explicitly to override.
+        sendOrigin   = null,
         // v1.5: optional atomic thread finalize. When the auto-pipeline
         // calls enqueue, it passes this patch so the draft enqueue AND
         // the thread status update happen in ONE Firestore transaction.
@@ -458,27 +474,9 @@ exports.handler = async (event) => {
         // we need to read the thread doc INSIDE this transaction to
         // satisfy Firestore's read-before-write rule for new doc paths.
         // Reading a non-existent doc is fine — the set() below merges.
-        // v0.9.47: ALSO read the thread doc on operator-driven enqueues
-        // so we can immediately demote a pending_human_review thread
-        // out of the Needs Review folder. The autopipeline path passes
-        // parentThreadFinalizePatch; the operator UI's Send via Etsy
-        // does not — so absence of the patch identifies operator-driven
-        // enqueue.
-        const isOperatorDriven = !parentThreadFinalizePatch;
-        let opThreadRef = null;
-        let opThreadCurrentStatus = null;
-        let opThreadIsSales = false;
         if (parentThreadFinalizePatch && parentThreadFinalizePatch.threadId) {
           const tRef = db.collection(THREADS_COLL_NAME).doc(parentThreadFinalizePatch.threadId);
           await tx.get(tRef);    // ensures the txn knows about this read path
-        } else if (isOperatorDriven && threadId) {
-          opThreadRef = db.collection(THREADS_COLL_NAME).doc(threadId);
-          const opSnap = await tx.get(opThreadRef);
-          if (opSnap.exists) {
-            const data = opSnap.data() || {};
-            opThreadCurrentStatus = data.status || null;
-            opThreadIsSales = !!data.salesStage;
-          }
         }
 
         const snap = await tx.get(ref);
@@ -504,6 +502,19 @@ exports.handler = async (event) => {
           }
         }
 
+        // v3.2 — Resolve sendOrigin if the caller didn't explicitly pass
+        // one. The convention is:
+        //   - Explicit value wins.
+        //   - Otherwise, presence of an AI-generated aiMeta marks this
+        //     as auto-pipeline; absence marks it as a manual operator
+        //     send (the inbox UI is the only other caller and it doesn't
+        //     send aiMeta).
+        // The resolved value persists on the draft AND propagates onto
+        // the thread when the send confirms — see the auto_replied
+        // branch below for the thread-side write.
+        const resolvedSendOrigin = sendOrigin
+          || (aiMeta && aiMeta.generatedByAI ? "auto" : "manual");
+
         const payload = {
           draftId,
           threadId,
@@ -512,6 +523,9 @@ exports.handler = async (event) => {
           attachments        : normalized,
           status             : "queued",
           createdBy          : employeeName || (prev && prev.createdBy) || null,
+          // v3.2 — origin tag (manual vs auto). Stored on the draft so
+          // the send-completion handler can copy it onto the thread.
+          sendOrigin         : resolvedSendOrigin,
           // Preserve AI metadata if this was originally an AI draft
           generatedByAI      : (aiMeta && aiMeta.generatedByAI) != null
             ? !!aiMeta.generatedByAI
@@ -563,31 +577,6 @@ exports.handler = async (event) => {
             { merge: true }
           );
           threadFinalizeApplied = true;
-        }
-
-        // v0.9.47 — Operator-driven demote-from-review.
-        // If this enqueue came from the operator UI (no
-        // parentThreadFinalizePatch) AND the thread is currently in
-        // pending_human_review, demote it out of Needs Review
-        // immediately. Without this, the thread stays in Needs Review
-        // during the seconds-to-minutes between enqueue and the
-        // extension's actual send completion.
-        if (isOperatorDriven && opThreadRef && opThreadCurrentStatus === "pending_human_review") {
-          const demoteTo = opThreadIsSales ? "sales_active" : "auto_replied";
-          tx.set(opThreadRef, {
-            status                    : demoteTo,
-            lastAutoDecision          : "operator_send_from_review",
-            lastAutoDecisionAt        : FV.serverTimestamp(),
-            // Clear the manual-move bookkeeping so the thread reads
-            // cleanly as "operator clicked Send" rather than "operator
-            // manually moved earlier."
-            manuallyMovedToAutoReplied: FV.delete(),
-            manualMoveActor           : FV.delete(),
-            manualMoveAt              : FV.delete(),
-            manualMoveReason          : FV.delete(),
-            manualMoveFromStatus      : FV.delete(),
-            updatedAt                 : FV.serverTimestamp()
-          }, { merge: true });
         }
 
         return { conflict: false, payload, threadFinalizeApplied };
@@ -721,74 +710,6 @@ exports.handler = async (event) => {
      *  the thread this Etsy tab is on?" Read-only, no claim.
      *  Input: { op:"peek", threadId }
      *  Output: { queued: true, draft: {...} } | { queued: false } */
-    /* ── listQueued (extension → server) ──────────────────────────
-     *  v0.9.39 — auto-open-and-send support.
-     *  Returns all currently-queued drafts across ALL threads. The
-     *  extension polls this periodically to discover queued drafts it
-     *  needs to handle. For each entry the extension auto-opens the
-     *  Etsy conversation tab in the background, the content-sender
-     *  picks it up via the existing peek path, and sends.
-     *
-     *  Input:  { op:"listQueued", workerId? }
-     *  Output: { drafts: [{ draftId, threadId, etsyConversationUrl, queuedAt, queuedBy }],
-     *            killSwitch?: {...} }
-     *
-     *  Bounded to 20 entries (more than enough — operator workflow is
-     *  one-at-a-time). Stale entries (>MAX_CLAIM_LOOKBACK_MIN min) are
-     *  filtered server-side; peek expires them to "failed" individually
-     *  on subsequent peeks. */
-    if (op === "listQueued") {
-      // Honor the killswitch — same as peek
-      const ks = await getKillSwitch();
-      if (ks.disabled) {
-        return ok({ drafts: [], killSwitch: ks });
-      }
-
-      const lookbackMs = MAX_CLAIM_LOOKBACK_MIN * 60 * 1000;
-      const sinceMs    = Date.now() - lookbackMs;
-
-      // Query queued drafts within the lookback window. Index needed:
-      // (status ASC, queuedAt DESC) on EtsyMail_Drafts.
-      let snap;
-      try {
-        snap = await db.collection(DRAFTS_COLL)
-          .where("status", "==", "queued")
-          .orderBy("queuedAt", "desc")
-          .limit(20)
-          .get();
-      } catch (e) {
-        // If the index is missing, fall back to an unordered query.
-        // The extension will still get a list; just unsorted.
-        console.warn("listQueued index miss, falling back:", e.message);
-        snap = await db.collection(DRAFTS_COLL)
-          .where("status", "==", "queued")
-          .limit(20)
-          .get();
-      }
-
-      const drafts = [];
-      snap.forEach(doc => {
-        const d = doc.data() || {};
-        // Stale filter — same threshold peek uses
-        const queuedAtMs = d.queuedAt && d.queuedAt.toMillis ? d.queuedAt.toMillis() : 0;
-        if (queuedAtMs && queuedAtMs < sinceMs) return;
-
-        // Must have a conversation URL for the extension to navigate to
-        const url = d.etsyConversationUrl || null;
-        if (!url) return;
-
-        drafts.push({
-          draftId             : doc.id,
-          threadId            : d.threadId || null,
-          etsyConversationUrl : url,
-          queuedAt            : queuedAtMs || null,
-          queuedBy            : d.queuedBy || null
-        });
-      });
-
-      return ok({ drafts });
-    }
-
     if (op === "peek") {
       const { threadId } = body;
       if (!threadId) return bad("Missing threadId");
@@ -1114,22 +1035,7 @@ exports.handler = async (event) => {
         else if (unverified) finalStatus = "sent_unverified";
 
         // Decide thread status update based on the snapshot we already read.
-        // v0.9.47 — Two new behaviors added:
-        //   1. SALES-FLOW AUTO-SEND: if the thread has a salesStage set
-        //      (i.e., this is a sales-flow thread), the post-send status
-        //      stays in the Sales — Active funnel rather than flipping
-        //      to auto_replied. Operators view sales conversations in
-        //      one folder regardless of who sent the most recent reply.
-        //      The auto-replied state is communicated via a rail pill
-        //      derived from lastAutoDecision/lastAutoDecisionAt, not via
-        //      thread status.
-        //   2. SEND-FROM-REVIEW DEMOTION: when an operator clicks
-        //      Send via Etsy from a pending_human_review thread, the
-        //      thread should immediately leave Needs Review on a clean
-        //      send. Previously the thread stayed in pending_human_review
-        //      indefinitely (the only existing demotion paths assumed
-        //      queued_for_auto_send as the source status).
-        const threadIsSales = !!(tSnap && tSnap.exists && tSnap.data().salesStage);
+        // Mirrors the original logic but uses pre-read data.
         let threadStatusUpdate = null;
         let threadDemoteReason = null;
         if (prev.threadId && tSnap && tSnap.exists) {
@@ -1143,18 +1049,9 @@ exports.handler = async (event) => {
               threadStatusUpdate = "pending_human_review";
             }
           } else {
-            // Clean send.
+            // Promote — clean send.
             if (threadCurrentStatus === "queued_for_auto_send") {
-              // v0.9.47 — sales threads stay in sales_active; only support
-              // threads flip to auto_replied. Sales auto-replied state is
-              // reflected via a rail pill, not via thread status.
-              threadStatusUpdate = threadIsSales ? "sales_active" : "auto_replied";
-            } else if (threadCurrentStatus === "pending_human_review") {
-              // v0.9.47 — operator hit Send via Etsy from Needs Review.
-              // Demote out of review immediately so operator stops seeing
-              // the thread in that folder.
-              threadStatusUpdate = threadIsSales ? "sales_active" : "auto_replied";
-              threadDemoteReason = "operator_send_from_review";
+              threadStatusUpdate = "auto_replied";
             }
           }
         }
@@ -1188,28 +1085,16 @@ exports.handler = async (event) => {
         } else if (threadStatusUpdate === "auto_replied") {
           tx.set(tRef, {
             status                    : "auto_replied",
-            lastAutoDecision          : threadDemoteReason || "auto_send_confirmed",
+            lastAutoDecision          : "auto_send_confirmed",
             lastAutoDecisionAt        : FV.serverTimestamp(),
+            // v3.2 — Surface the send origin on the thread so the inbox
+            // can render "Manually Sent" vs "auto-sent" without having
+            // to fetch the draft. prev.sendOrigin was set at enqueue
+            // time. Defaults to "auto" for old drafts that predate this
+            // field — preserves prior behavior for in-flight legacy data.
+            sendOrigin                : prev.sendOrigin || "auto",
             // v1.4: this is a real AI auto-reply — clear any stale
             // "manually moved" flag from a prior move.
-            manuallyMovedToAutoReplied: FV.delete(),
-            manualMoveActor           : FV.delete(),
-            manualMoveAt              : FV.delete(),
-            manualMoveReason          : FV.delete(),
-            manualMoveFromStatus      : FV.delete(),
-            updatedAt                 : FV.serverTimestamp()
-          }, { merge: true });
-        } else if (threadStatusUpdate === "sales_active") {
-          // v0.9.47 — sales-flow clean send. Stay in Sales — Active
-          // funnel; the auto-replied state is communicated via the
-          // rail pill (derived from lastAutoDecision="auto_send_confirmed"
-          // and lastAutoDecisionAt > lastInboundAt). On operator
-          // Send-via-Etsy from review, threadDemoteReason is
-          // "operator_send_from_review" and the pill won't show.
-          tx.set(tRef, {
-            status                    : "sales_active",
-            lastAutoDecision          : threadDemoteReason || "auto_send_confirmed",
-            lastAutoDecisionAt        : FV.serverTimestamp(),
             manuallyMovedToAutoReplied: FV.delete(),
             manualMoveActor           : FV.delete(),
             manualMoveAt              : FV.delete(),

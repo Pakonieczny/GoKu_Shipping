@@ -797,6 +797,12 @@
       50%      { opacity: .6; }
     }
     .em-status-pill.archived             { background: #eaeef2; color: #57606a; }
+    /* v3.2 — Manually Sent chip. Yellow tint (vs auto_replied's purple)
+     * makes it instantly distinguishable. Used in the detail-header
+     * status chip when thread.status === "auto_replied" and
+     * thread.sendOrigin === "manual". The matching badge in the list
+     * view (.em-badge.manually-sent) uses the same palette. */
+    .em-status-pill.manually_sent        { background: #fff4d6; color: #7d4e00; }
 
     /* ── v4.3 — Custom-listing pipeline status pill (Thread details). ─
        Distinct from the thread.status pill above so the two are visually
@@ -907,17 +913,39 @@
     .em-list-item.checked { background: #fff8d4; }
     .em-list-item.checked.selected { background: #ffeaa0; }
 
-    /* ── Confidence + difficulty badges (AI rating) ─────────────────── */
+    /* ── Confidence + difficulty badges (AI rating) ─────────────────────
+     *
+     * v3.2 — Red and green palettes are now defined once and shared by
+     * BOTH the legacy .ai-conf pills AND the v5.1 .review-decision pills,
+     * so older threads with synthesized review-decisions visually match
+     * newer threads with native review-decisions. The single source of
+     * truth here means future tweaks to the red/green tones automatically
+     * apply across the inbox without color drift.
+     *
+     * Palette (from the operator's reference "AI 50%" pill):
+     *   red    → background #ffebe9, text #a40e26 — soft pink
+     *   green  → background #dcffe4, text #116329 — soft mint
+     *   blue   → .ai-conf default (no .high/.med/.low) — medium-conf
+     *            legacy fallback, kept for the rare unsynthesized branch
+     *   yellow → .ai-conf.med — medium-conf legacy fallback */
     .em-badge.ai-conf {
       background: #e7f3ff; color: #0366d6;
-    }
-    .em-badge.ai-conf.low {
-      background: #ffebe9; color: #a40e26;
     }
     .em-badge.ai-conf.med {
       background: #fff8c5; color: #7d4e00;
     }
-    .em-badge.ai-conf.high {
+    /* Shared red palette — soft pink. Used for:
+     *   - low-confidence legacy AI (.ai-conf.low)
+     *   - "Needs review" decision (.review-decision.red) */
+    .em-badge.ai-conf.low,
+    .em-badge.review-decision.red {
+      background: #ffebe9; color: #a40e26;
+    }
+    /* Shared green palette — soft mint. Used for:
+     *   - high-confidence legacy AI (.ai-conf.high)
+     *   - "No review" decision (.review-decision.green) */
+    .em-badge.ai-conf.high,
+    .em-badge.review-decision.green {
       background: #dcffe4; color: #116329;
     }
     .em-badge.ai-diff {
@@ -929,14 +957,9 @@
      * needed (either AI explicitly flagged or AI's confidence is below
      * the 80% threshold — we err on the side of caution).
      * v0.9.44 — softened the visual treatment to match the subtler
-     * style of the other rail pills. The bold/bordered version was
-     * shouting at operators; the lighter tint is sufficient signal. */
-    .em-badge.review-decision.green {
-      background: #dcffe4; color: #116329;
-    }
-    .em-badge.review-decision.red {
-      background: #ffebe9; color: #a40e26;
-    }
+     * style of the other rail pills.
+     * v3.2 — colors moved to the shared rules above so they cannot
+     * drift from .ai-conf.low / .ai-conf.high. */
     /* v0.9.47 — Auto-replied / Success pills.
      * Auto-replied: purple, distinguishes AI-handled threads at a glance
      * in the Sales — Active folder. Clears on next inbound or operator
@@ -956,6 +979,12 @@
     .em-badge.ai-manual {
       background: #eef0f2; color: #57606a;
       border: 1px dashed #afb8c1;
+    }
+    /* v3.2 — Manually Sent badge. Yellow tint, distinct from auto-sent
+     * purple (.ai-auto) and "moved by op" gray (.ai-manual). Renders in
+     * the list view when thread.sendOrigin === "manual". */
+    .em-badge.manually-sent {
+      background: #fff4d6; color: #7d4e00;
     }
     .em-badge.ai-sending {
       background: #fff4e5; color: #9a3f00;
@@ -5121,37 +5150,61 @@
         //   - Red "Needs review N%" when AI flagged review needed, OR
         //     when AI said no review needed but confidence < 0.80
         //     (we err on the side of caution below the threshold)
-        // Falls back to the legacy aiConfidence-based pill ONLY when the
-        // new field is absent (e.g., older threads pre-v5.1).
+        //
+        // v3.2 — Removed the "AI N%" legacy fallback path. The fallback
+        // existed for older threads that had aiConfidence but no
+        // aiReviewDecision (pre-v5.1 sales agent), but it was rendering
+        // as a different visual style than the rest of the inbox, which
+        // operators found confusing. Instead, when only aiConfidence is
+        // available, we synthesize a review-decision client-side using
+        // the exact same 80% threshold the real decision uses. The
+        // resulting pill is visually identical to the v5.1 pill, so all
+        // threads now look consistent regardless of which agent
+        // version classified them.
         const REVIEW_AUTO_SEND_THRESHOLD = 0.80;
+        let reviewSignal = null;
         if (t.aiReviewDecision && typeof t.aiReviewDecision === "object") {
-          const rd = t.aiReviewDecision;
-          const conf = typeof rd.confidence === "number" ? rd.confidence : 0;
-          const aiSaysNeedsReview = !!rd.needs_review;
-          // The 80% threshold rule: even when AI says no review needed,
-          // anything below 80% confidence still routes to needs review.
+          // Real signal from the v5.1+ agent.
+          reviewSignal = {
+            needsReview: !!t.aiReviewDecision.needs_review,
+            confidence : typeof t.aiReviewDecision.confidence === "number"
+              ? t.aiReviewDecision.confidence : 0,
+            synthetic  : false
+          };
+        } else if (t.aiConfidence != null) {
+          // Synthesize from legacy aiConfidence. The agent didn't emit
+          // a separate review-needs flag, so we treat answer-confidence
+          // as a stand-in for review-confidence. Threads at or above
+          // the 80% threshold get the green "No review" treatment;
+          // anything below gets red "Needs review".
+          const c = Number(t.aiConfidence);
+          reviewSignal = {
+            needsReview: c < REVIEW_AUTO_SEND_THRESHOLD,
+            confidence : c,
+            synthetic  : true
+          };
+        }
+
+        if (reviewSignal) {
+          const conf = reviewSignal.confidence;
+          const aiSaysNeedsReview = reviewSignal.needsReview;
           const effectivelyNeedsReview =
             aiSaysNeedsReview || conf < REVIEW_AUTO_SEND_THRESHOLD;
           const cls = effectivelyNeedsReview ? "red" : "green";
           const label = effectivelyNeedsReview ? "Needs review" : "No review";
-          const tooltip = effectivelyNeedsReview
-            ? (aiSaysNeedsReview
-                ? `AI flagged this thread as needing human review (confidence ${Math.round(conf*100)}%).`
-                : `AI said no review needed but confidence ${Math.round(conf*100)}% is below the ${Math.round(REVIEW_AUTO_SEND_THRESHOLD*100)}% auto-send threshold.`)
-            : `AI is ${Math.round(conf*100)}% confident this can ship without human review.`;
+          const tooltip = reviewSignal.synthetic
+            ? `Legacy AI confidence (no review-decision signal). Treated as ${effectivelyNeedsReview ? "needing review" : "no-review"} based on the ${Math.round(REVIEW_AUTO_SEND_THRESHOLD*100)}% threshold.`
+            : (effectivelyNeedsReview
+                ? (aiSaysNeedsReview
+                    ? `AI flagged this thread as needing human review (confidence ${Math.round(conf*100)}%).`
+                    : `AI said no review needed but confidence ${Math.round(conf*100)}% is below the ${Math.round(REVIEW_AUTO_SEND_THRESHOLD*100)}% auto-send threshold.`)
+                : `AI is ${Math.round(conf*100)}% confident this can ship without human review.`);
           badges.push(
             `<span class="em-badge review-decision ${cls}" title="${esc(tooltip)}">` +
             `${esc(label)} ${Math.round(conf*100)}%</span>`
           );
-        } else if (t.aiConfidence != null) {
-          // Legacy fallback for threads that haven't been processed by
-          // the v5.1 sales agent yet. Kept narrow so we can remove this
-          // branch in a follow-up once all threads have aiReviewDecision.
-          const c = Number(t.aiConfidence);
-          const cls = c >= 0.80 ? "high" : c >= 0.55 ? "med" : "low";
-          badges.push(`<span class="em-badge ai-conf ${cls}" title="Legacy AI confidence (no review-decision signal yet)">AI ${Math.round(c*100)}%</span>`);
         } else if (t.confidence != null) {
-          // Pre-v1.0 legacy "confidence" field
+          // Pre-v1.0 legacy "confidence" field (very old threads).
           badges.push(`<span class="em-badge confidence">${Math.round(t.confidence*100)}%</span>`);
         }
 
@@ -5254,8 +5307,18 @@
           // The manuallyMovedToAutoReplied flag is set by the threads
           // setStatus endpoint whenever a non-auto-pipeline caller
           // (i.e., the operator move-to dropdown) lands on this status.
+          //
+          // v3.2: also distinguish "manually sent via the inbox UI"
+          // from auto-pipeline sends. sendOrigin is set at draft
+          // enqueue time and copied onto the thread by etsyMailDraftSend
+          // when the send confirms. Three mutually-exclusive cases:
+          //   - manuallyMovedToAutoReplied → "moved by op" (orange)
+          //   - sendOrigin === "manual"    → "Manually Sent" (yellow)
+          //   - default                    → "auto-sent" (purple)
           if (t.manuallyMovedToAutoReplied) {
             badges.push(`<span class="em-badge ai-manual" title="Operator manually moved this thread to Auto-Reply (not an AI-handled send). Excluded from AI auto-reply metrics.">moved by op</span>`);
+          } else if (t.sendOrigin === "manual") {
+            badges.push(`<span class="em-badge manually-sent" title="Operator clicked Send via Etsy on this thread — not an AI auto-send.">Manually Sent</span>`);
           } else {
             badges.push(`<span class="em-badge ai-auto" title="Reply auto-sent and confirmed by Etsy">auto-sent</span>`);
           }
@@ -5806,13 +5869,30 @@
       const hasOrder      = !!t.linkedOrderId;
       const etsyUrl       = t.etsyConversationUrl || "";
 
+      // v3.2 — Status chip rendering. The raw status field is the
+      // primary source of truth, but for auto_replied threads we also
+      // honor sendOrigin so the chip distinguishes manual sends from
+      // AI auto-sends. Three cases:
+      //   sendOrigin === "manual" → "MANUALLY SENT" (yellow chip)
+      //   manuallyMovedToAutoReplied → falls through to the default
+      //     auto_replied chip (the badge in the list view already
+      //     surfaces "moved by op" so duplicating that here is noise)
+      //   default → original auto_replied chip
+      let chipClass = t.status || "";
+      let chipLabel = t.status || "unknown";
+      if (t.status === "auto_replied" && t.sendOrigin === "manual"
+          && !t.manuallyMovedToAutoReplied) {
+        chipClass = "manually_sent";
+        chipLabel = "manually_sent";
+      }
+
       $("emDetail").innerHTML = `
         <div class="em-detail-header">
           <div class="em-h-top">
             <div>
               <h2>${esc(t.customerName || "Unknown customer")}</h2>
               <div class="em-h-meta">
-                <span class="em-status-pill ${esc(t.status || "")}">${esc(t.status || "unknown")}</span>
+                <span class="em-status-pill ${esc(chipClass)}">${esc(chipLabel)}</span>
                 ${(t.productionRush && t.productionRush.acceptedAt && !t.productionRush.removedAt)
                   ? `<span class="em-badge rush" title="$15 rush production accepted — production target 2-3 business days">🔥RUSH🔥</span>`
                   : ""}
@@ -7926,6 +8006,15 @@
             text,
             attachments         : usableAtts,
             employeeName        : getEmployeeName(),
+            // v3.2 — Tag this enqueue as manual so the badge on the
+            // thread reads "Manually Sent" once the extension confirms
+            // delivery, not "auto-sent". This is the *only* path in the
+            // codebase that sets sendOrigin: "manual" — every other
+            // caller (auto-pipeline, sales-agent) goes through the
+            // background functions and either passes "auto" explicitly
+            // or omits the flag (which the backend resolves to "auto"
+            // because aiMeta.generatedByAI is set on those paths).
+            sendOrigin          : "manual",
             force               : !!force
           }
         });
