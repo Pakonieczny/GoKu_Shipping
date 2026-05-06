@@ -1232,6 +1232,84 @@ async function _handlerImpl(event) {
     }
 
     // ============================================================
+    // SCAN EMPTY SETS — for partial-failure recovery
+    // ------------------------------------------------------------
+    // After a batch submission, some Set_N folders may end up empty
+    // (allocated by alloc_set but never populated with slot images
+    // because the underlying batch failed or never collected). This
+    // kind enumerates them so the frontend can offer a "Resume" flow
+    // that re-submits batches for just the empty ones, leaving the
+    // populated ones untouched.
+    //
+    // Algorithm:
+    //   1. Read the Firestore set counter for the category — gives us
+    //      the highest setN that's ever been issued.
+    //   2. List every file under Ready_To_List/ in one bucket call.
+    //   3. Bucket the files by Set_N. A set with at least one
+    //      Slot_*.png file counts as "has content"; everything else
+    //      (no files at all, or only a stale manifest) counts as
+    //      "empty".
+    //   4. Return a sorted list of {setN, outputBasePath} for empty
+    //      slots in [1, highestN]. Populated slots are NOT returned.
+    // ============================================================
+    if (kind === "scan_empty_sets") {
+      const cat = normalizeCategory(activeCategory);
+      if (!GENERATABLE_CATEGORIES.has(cat)) {
+        return json(400, { error: { message: "activeCategory not generatable" } });
+      }
+
+      const db = getDb();
+      const counterSnap = await db.collection(SET_COUNTERS_COLL).doc(cat).get();
+      const highestN = counterSnap.exists ? Number(counterSnap.data()?.nextSetN || 0) : 0;
+      if (highestN <= 0) {
+        return json(200, { ok: true, highestN, empty: [], populated: [], message: "No sets allocated yet for this category." });
+      }
+
+      const bucket = admin.storage().bucket();
+      const prefix = `listing-generator-1/${cat}/Ready_To_List/`;
+      const [files] = await bucket.getFiles({ prefix });
+
+      // Bucket file names by setN. Track whether each setN has at least
+      // one Slot_*.png file (the gating signal for "has content"). A
+      // manifest.json alone does not count — alloc_set never writes
+      // files, so a folder with only a stale manifest is still "empty"
+      // by our definition (the manifest typically arrives only after
+      // batch_collect, which also writes slot images).
+      const hasSlots = new Set();
+      const re = /\/Set_(\d+)\/(Slot_\d+\.png|.+)$/;
+      for (const f of files) {
+        const m = f.name.match(re);
+        if (!m) continue;
+        const setN = Number(m[1]);
+        const filename = m[2];
+        if (/^Slot_\d+\.png$/i.test(filename)) {
+          hasSlots.add(setN);
+        }
+      }
+
+      const empty = [];
+      const populated = [];
+      for (let n = 1; n <= highestN; n++) {
+        const outputBasePath = `listing-generator-1/${cat}/Ready_To_List/Set_${n}`;
+        if (hasSlots.has(n)) {
+          populated.push({ setN: n, outputBasePath });
+        } else {
+          empty.push({ setN: n, outputBasePath });
+        }
+      }
+
+      return json(200, {
+        ok: true,
+        highestN,
+        emptyCount: empty.length,
+        populatedCount: populated.length,
+        empty,
+        // populated returned only as a count for now; full list omitted
+        // to keep the response payload small for large counters.
+      });
+    }
+
+    // ============================================================
     // CHARM POOL — pick & release for batch mode
     // ------------------------------------------------------------
     // Each generated set must use a UNIQUE charm from the shared pool,
@@ -1540,6 +1618,26 @@ async function _handlerImpl(event) {
             category: s.category,
             setN: s.setN,
             outputBasePath: s.outputBasePath,
+            // For consistency with the gen-collect path. Copy-only sets
+            // usually have no gen tasks and therefore no charm, but if
+            // there happens to be one task of type !=="copy" with a charm
+            // path, we record it.
+            sourceCharm: (() => {
+              for (const t of (s.tasks || [])) {
+                if (String(t?.type) !== "copy" && t?.input_charm_storage_path) {
+                  return t.input_charm_storage_path;
+                }
+              }
+              return null;
+            })(),
+            sourceCharmName: (() => {
+              for (const t of (s.tasks || [])) {
+                if (String(t?.type) !== "copy" && t?.input_charm_storage_path) {
+                  return String(t.input_charm_storage_path).split("/").pop() || null;
+                }
+              }
+              return null;
+            })(),
             timestamp: new Date().toISOString(),
             model: GEMINI_IMAGE_MODEL,
             batchMode: false,
@@ -1871,6 +1969,28 @@ async function _handlerImpl(event) {
           category: s.category,
           setN: s.setN,
           outputBasePath: s.outputBasePath,
+          // Lock the listing's charm into the manifest so the Review tab's
+          // Redo flow can recover it even after batch_collect moves the
+          // charm out of New_Charms/ into Used_*_Charm_Pool/. We pull
+          // from the first gen task with an input_charm_storage_path; in
+          // batch mode every gen task in a set shares the same charm
+          // (one charm per listing).
+          sourceCharm: (() => {
+            for (const t of (s.tasks || [])) {
+              if (String(t?.type) !== "copy" && t?.input_charm_storage_path) {
+                return t.input_charm_storage_path;
+              }
+            }
+            return null;
+          })(),
+          sourceCharmName: (() => {
+            for (const t of (s.tasks || [])) {
+              if (String(t?.type) !== "copy" && t?.input_charm_storage_path) {
+                return String(t.input_charm_storage_path).split("/").pop() || null;
+              }
+            }
+            return null;
+          })(),
           timestamp: new Date().toISOString(),
           model: GEMINI_IMAGE_MODEL,
           batchMode: true,
@@ -1975,7 +2095,10 @@ async function _handlerImpl(event) {
 
     if (kind === "batch_list") {
       const includeCollected = !!body?.includeCollected;
-      const limit = clampNumber(body?.limit, 1, 200, 50);
+      // Ceiling raised from 200 → 1000 so the panel and the per-batch
+      // collect-poll loop can find batches in submissions of up to 1000
+      // sets. Default stays at 50 (cheap query for the common small case).
+      const limit = clampNumber(body?.limit, 1, 1000, 50);
       const db = getDb();
       let q = db.collection(BATCHES_COLL).orderBy("createdAt", "desc").limit(limit);
       const snap = await q.get();
@@ -2155,7 +2278,15 @@ async function _handlerImpl(event) {
       const basePath0 = String(input_storage_path || "").trim();
       const basePath1 = String(input_charm_storage_path || "").trim();
       if (!basePath0) return json(400, { error: { message: "input_storage_path is required" } });
-      if (!basePath1) return json(400, { error: { message: "input_charm_storage_path is required" } });
+      // input_charm_storage_path is OPTIONAL.
+      //   • Two-image flow (regeneration / fresh composite): caller supplies
+      //     both — image0 is the model/reference, image1 is the charm — and
+      //     Gemini composites them per the prompt.
+      //   • One-image flow (in-place edit / Listing-Generator adjustment-mode
+      //     redo): caller supplies only basePath0 and a prompt that describes
+      //     the requested edit. We send a single image to Gemini so it does
+      //     not search for differences between two identical inputs or try
+      //     to composite them.
 
       const apiKey = process.env.GEMINI_API_KEY;
       if (!apiKey) return json(400, { error: { message: "Missing GEMINI_API_KEY env var" } });
@@ -2164,7 +2295,14 @@ async function _handlerImpl(event) {
       const effectiveSlot = Number.isFinite(Number(slotIndex)) && Number(slotIndex) >= 0 ? Number(slotIndex) : 0;
 
       const img0 = await storagePathToBuffer(basePath0);
-      const img1 = await storagePathToBuffer(basePath1);
+      const img1 = basePath1 ? await storagePathToBuffer(basePath1) : null;
+
+      const images = [
+        { buffer: img0.buffer, mime: img0.mime, filename: filenameForMime("image0", img0.mime) },
+      ];
+      if (img1) {
+        images.push({ buffer: img1.buffer, mime: img1.mime, filename: filenameForMime("image1", img1.mime) });
+      }
 
       let outBuf = await callGeminiImagesEdits({
         apiKey,
@@ -2173,10 +2311,7 @@ async function _handlerImpl(event) {
         size,
         quality,
         output_format,
-        images: [
-          { buffer: img0.buffer, mime: img0.mime, filename: filenameForMime("image0", img0.mime) },
-          { buffer: img1.buffer, mime: img1.mime, filename: filenameForMime("image1", img1.mime) },
-        ],
+        images,
       });
 
       outBuf = await applyFinalFrameZoomIfNeeded(outBuf, postprocess);
