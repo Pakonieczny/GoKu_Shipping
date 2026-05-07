@@ -65,7 +65,13 @@
 
 const admin = require("./firebaseAdmin");
 const { CORS, requireExtensionAuth } = require("./_etsyMailAuth");
-const { runToolLoop } = require("./_etsyMailAnthropic");
+// v3.7 — callClaudeRaw added alongside runToolLoop. The translate ops
+// (op:"detectLanguage" and op:"translate", routed at the top of the
+// handler below) need a single-shot Claude call without the tool-use
+// machinery; runToolLoop is the wrong shape for that. The two helpers
+// share the same HTTP client, retry logic, and overload handling
+// inside _etsyMailAnthropic.js, so this just exposes the simpler one.
+const { runToolLoop, callClaudeRaw } = require("./_etsyMailAnthropic");
 const {
   getShop,
   getShopSections,
@@ -1812,6 +1818,186 @@ async function writeAudit({ threadId, draftId, eventType, actor = "system:draftR
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// v3.7 — Translation ops (op:"detectLanguage", op:"translate")
+// ═══════════════════════════════════════════════════════════════════════
+//
+// Originally lived in their own etsyMailTranslate.js function. Folded
+// into etsyMailDraftReply during v3.7 cleanup since both are "AI ops on
+// customer-message text" using the same Anthropic client.
+//
+// These ops are routed at the TOP of exports.handler before any of the
+// draft-reply logic kicks in. They have their own input shape (plain
+// {text} / {text,targetLang} payloads, no threadId required) and skip
+// every code path between this comment and the draft-reply request
+// validation. The split keeps the heavy Opus 4.7 draft path completely
+// uninvolved with the cheap Haiku translate path.
+//
+// Cost profile:
+//   - Model: claude-haiku-4-5 (fast, $0.25/M input, $1.25/M output)
+//   - useThinking: false (translation is mechanical, no reasoning win)
+//   - No caching per operator preference; every call is independent.
+//
+// Security:
+//   - X-EtsyMail-Secret already validated by the parent handler.
+//   - No actor / role check — anyone with the inbox secret already sees
+//     conversation text; translating it adds no escalation.
+//
+// Edit both translate functions in lockstep with the front-end
+// (etsy-mail-1.html) since the shape contract is shared.
+
+const TRANSLATE_MODEL    = "claude-haiku-4-5-20251001";
+const TRANSLATE_MAX_TOKENS = 4096;
+const TRANSLATE_MAX_INPUT_CHARS = 32_000;
+
+/** Pull the first text block from a Claude response. callClaudeRaw
+ *  returns the parsed body; content is an array of blocks of which the
+ *  first text block is what we want for plain-text translations. */
+function _translateFirstTextBlock(claudeResp) {
+  if (!claudeResp || !Array.isArray(claudeResp.content)) return "";
+  for (const block of claudeResp.content) {
+    if (block && block.type === "text" && typeof block.text === "string") {
+      return block.text;
+    }
+  }
+  return "";
+}
+
+/** Strip markdown fencing or chatty preambles from a model response. We
+ *  instruct Haiku to emit plain text only, but defensively trim for
+ *  edge cases where it adds wrapping. */
+function _translateCleanModelText(s) {
+  if (!s) return "";
+  let t = String(s).trim();
+  t = t.replace(/^```[a-zA-Z]*\n?/, "").replace(/\n?```$/, "");
+  return t.trim();
+}
+
+async function handleDetectLanguageOp(body) {
+  const text = (body && body.text) || "";
+  if (typeof text !== "string" || !text.trim()) {
+    return bad("Field 'text' is required and must be a non-empty string");
+  }
+  if (text.length > TRANSLATE_MAX_INPUT_CHARS) {
+    return bad(`Input too long (${text.length} chars > ${TRANSLATE_MAX_INPUT_CHARS} max)`);
+  }
+
+  // JSON-only output keeps parsing deterministic and avoids "Sure,
+  // looks like Italian!" preambles from chatty models.
+  const system =
+    "You are a language detector. Identify the language of the user's input text. " +
+    "Respond ONLY with a JSON object of the form " +
+    "{\"language\":\"<bcp47-code>\",\"languageName\":\"<English name>\",\"confidence\":<0..1>} " +
+    "and nothing else. Use 'en' / 'English' for English. Use plain BCP-47 codes " +
+    "like 'it', 'de', 'pt-BR'. If the text is too short or ambiguous to be sure, " +
+    "set confidence below 0.5 and pick your best guess.";
+
+  // First 2000 chars is plenty for language ID — Etsy customer messages
+  // rarely exceed this, and we'd rather not pay for translating a
+  // novel-length sample.
+  const sample = text.slice(0, 2000);
+
+  let resp;
+  try {
+    resp = await callClaudeRaw({
+      model       : TRANSLATE_MODEL,
+      maxTokens   : 200,
+      system,
+      messages    : [{ role: "user", content: sample }],
+      useThinking : false
+    });
+  } catch (err) {
+    console.error("[etsyMailDraftReply detectLanguage] callClaude failed:", err.message);
+    return json(502, { error: "Language detection failed: " + (err.message || String(err)) });
+  }
+
+  const raw = _translateCleanModelText(_translateFirstTextBlock(resp));
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    // Defensive fallback — give the caller a low-confidence English
+    // guess so the UI flow proceeds. Re-detect on next thread open.
+    console.warn("[etsyMailDraftReply detectLanguage] non-JSON model output:", raw.slice(0, 200));
+    return json(200, { ok: true, language: "en", languageName: "English", confidence: 0 });
+  }
+
+  const language     = String(parsed.language || "en").trim();
+  const languageName = String(parsed.languageName || "English").trim();
+  const confidence   = typeof parsed.confidence === "number"
+    ? Math.max(0, Math.min(1, parsed.confidence))
+    : 0;
+
+  return json(200, { ok: true, language, languageName, confidence });
+}
+
+async function handleTranslateOp(body) {
+  const text       = (body && body.text)       || "";
+  const targetLang = (body && body.targetLang) || "";
+  const sourceLang = (body && body.sourceLang) || "";
+
+  if (typeof text !== "string" || !text.trim()) {
+    return bad("Field 'text' is required and must be a non-empty string");
+  }
+  if (typeof targetLang !== "string" || !targetLang.trim()) {
+    return bad("Field 'targetLang' is required (BCP-47 code, e.g. 'en' or 'it')");
+  }
+  if (text.length > TRANSLATE_MAX_INPUT_CHARS) {
+    return bad(`Input too long (${text.length} chars > ${TRANSLATE_MAX_INPUT_CHARS} max)`);
+  }
+
+  // No-op fast path: source === target. The UI shouldn't normally hit
+  // this but a misconfigured caller will, and the LLM round-trip is
+  // wasted on identity translations.
+  if (sourceLang && sourceLang.toLowerCase() === targetLang.toLowerCase()) {
+    return json(200, { ok: true, translated: text, sourceLangDetected: sourceLang });
+  }
+
+  // "Preserve formatting" matters: customer messages contain links,
+  // line breaks, and casual punctuation. Without that instruction the
+  // model occasionally tidies output in ways that degrade fidelity.
+  const system =
+    "You are a translator. Translate the user's text to " +
+    `${targetLang}` +
+    (sourceLang ? ` from ${sourceLang}` : "") +
+    ". Preserve formatting (line breaks, lists, URLs, emoji). Do not add " +
+    "explanations, preambles, or quote marks. Output ONLY the translated text.";
+
+  // Token budget scales with input — 1.5x covers most language pairs
+  // (German/Russian expand vs English; Chinese contracts) plus a 256
+  // floor so very short inputs still have room.
+  const estimatedInputTokens = Math.ceil(text.length / 4);
+  const maxTokens = Math.min(
+    TRANSLATE_MAX_TOKENS,
+    Math.max(256, Math.ceil(estimatedInputTokens * 1.5) + 64)
+  );
+
+  let resp;
+  try {
+    resp = await callClaudeRaw({
+      model       : TRANSLATE_MODEL,
+      maxTokens,
+      system,
+      messages    : [{ role: "user", content: text }],
+      useThinking : false
+    });
+  } catch (err) {
+    console.error("[etsyMailDraftReply translate] callClaude failed:", err.message);
+    return json(502, { error: "Translation failed: " + (err.message || String(err)) });
+  }
+
+  const translated = _translateCleanModelText(_translateFirstTextBlock(resp));
+  if (!translated) {
+    return json(502, { error: "Translation returned empty response" });
+  }
+
+  return json(200, {
+    ok: true,
+    translated,
+    sourceLangDetected: sourceLang || null
+  });
+}
+
 // ─── Main handler ───────────────────────────────────────────────────────
 
 exports.handler = async (event) => {
@@ -1829,6 +2015,14 @@ exports.handler = async (event) => {
   let body = {};
   try { body = JSON.parse(event.body || "{}"); }
   catch { return bad("Invalid JSON body"); }
+
+  // v3.7 — Translation ops are routed here BEFORE the draft-reply path.
+  // They have a distinct payload shape (no threadId, plain text/targetLang)
+  // and use a much cheaper model. Falling through to the draft-reply
+  // logic would 400 on the missing threadId.
+  const op = (body.op || "").toLowerCase();
+  if (op === "detectlanguage") return await handleDetectLanguageOp(body);
+  if (op === "translate")      return await handleTranslateOp(body);
 
   const {
     threadId,

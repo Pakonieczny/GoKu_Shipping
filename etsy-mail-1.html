@@ -533,6 +533,82 @@
       border: 2px solid rgba(255,255,255,.35); border-top-color: #fff;
       border-radius: 50%; animation: em-spin .7s linear infinite;
     }
+    /* v3.7 — Translate controls. Three pieces:
+     *   .em-translate-bar  : header strip with toggle + language picker + translate button
+     *   .em-translate-preview : side-by-side English-vs-target preview pane
+     *   .em-translate-btn  : button-style override for the small inline buttons */
+    .em-compose .em-translate-bar {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+      padding: 6px 8px; margin-bottom: 6px;
+      background: #f6f8fa; border: 1px solid #d0d7de; border-radius: 4px;
+      font-size: 11px;
+    }
+    .em-compose .em-translate-bar .em-translate-label {
+      color: #57606a; font-weight: 500;
+    }
+    .em-compose .em-translate-bar select.em-translate-lang {
+      font-size: 11px; padding: 2px 4px; border: 1px solid #d0d7de;
+      border-radius: 3px; background: #fff;
+    }
+    .em-compose .em-translate-bar button.em-translate-btn {
+      padding: 3px 8px; font-size: 11px;
+      background: #fff; color: #0969da; border: 1px solid #0969da;
+      border-radius: 3px; cursor: pointer;
+      display: inline-flex; align-items: center; gap: 3px;
+    }
+    .em-compose .em-translate-bar button.em-translate-btn:hover:not(:disabled) {
+      background: #ddf4ff;
+    }
+    .em-compose .em-translate-bar button.em-translate-btn.active {
+      background: #0969da; color: #fff;
+    }
+    .em-compose .em-translate-bar button.em-translate-btn:disabled {
+      opacity: .5; cursor: not-allowed;
+    }
+    .em-compose .em-translate-bar .em-translate-toggle {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 3px 8px; font-size: 11px; cursor: pointer;
+      border: 1px solid #d0d7de; border-radius: 3px; background: #fff;
+      color: #57606a;
+    }
+    .em-compose .em-translate-bar .em-translate-toggle.on {
+      background: #0969da; color: #fff; border-color: #0969da;
+    }
+    .em-compose .em-translate-bar .em-translate-toggle .material-icons {
+      font-size: 13px;
+    }
+    .em-compose .em-translate-preview {
+      margin-top: 8px; border: 1px solid #d0d7de; border-radius: 4px;
+      background: #fffaf0; overflow: hidden;
+    }
+    .em-compose .em-translate-preview-header {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 6px 10px; background: #fff4d6; border-bottom: 1px solid #d0d7de;
+      font-size: 11px; font-weight: 600; color: #7d4e00;
+    }
+    .em-compose .em-translate-preview-header .em-translate-preview-actions {
+      display: flex; gap: 6px;
+    }
+    .em-compose .em-translate-preview-header button {
+      padding: 2px 8px; font-size: 11px; background: #fff;
+      border: 1px solid #d4a72c; color: #7d4e00; border-radius: 3px;
+      cursor: pointer;
+    }
+    .em-compose .em-translate-preview-header button:hover {
+      background: #fff8c5;
+    }
+    .em-compose .em-translate-preview-body {
+      padding: 8px 10px; font-size: 13px; white-space: pre-wrap;
+      max-height: 240px; overflow-y: auto;
+    }
+    .em-compose .em-translate-preview-body[contenteditable="true"]:focus {
+      outline: 2px solid #d4a72c; outline-offset: -2px;
+    }
+    /* v3.7 — Translated message bubbles get a small 🌐 indicator to make
+     * it obvious the operator is reading a translation, not the original. */
+    .em-msg.em-translated::before {
+      content: "🌐"; font-size: 10px; opacity: 0.6; margin-right: 4px;
+    }
     @keyframes em-spin { to { transform: rotate(360deg); } }
 
     /* ── M4 AI Draft card (right column) ─────────────────────────── */
@@ -3604,7 +3680,27 @@
       // Reset to 1 whenever folder, search, message-type, or date-filter
       // changes. Always paginates the post-filter, post-sort `filtered`
       // list inside renderThreadList — so search results paginate too.
-      threadListPage    : 1
+      threadListPage    : 1,
+
+      // v3.7 — Translation state.
+      //   translateView       : when true, all visible message bubbles
+      //                          (in #emThreadBox) render translated-to-
+      //                          English text, falling back to original.
+      //                          Toggled by the Auto Translate chip.
+      //   translatedTexts     : Map<msgId, string>. Populated by toggle-on
+      //                          flow; cleared on toggle-off, thread switch,
+      //                          or explicit refresh.
+      //   translatingNow      : guard so concurrent toggle clicks don't
+      //                          fire overlapping batches.
+      //   composerTranslation : { source, translated, lang }. When non-null,
+      //                          the preview pane is visible AND Send via
+      //                          Etsy dispatches `translated` (not the raw
+      //                          textarea). Cleared on "Send English instead"
+      //                          or after a successful send.
+      translateView       : false,
+      translatedTexts     : new Map(),
+      translatingNow      : false,
+      composerTranslation : null
     };
 
     const THREADS_PER_PAGE = 100;
@@ -5699,6 +5795,18 @@
       state.selectedId = threadId;
       renderThreadList();
 
+      // v3.7 — Reset translation state when switching threads. Each thread
+      // has its own customer-language context and its own translated-text
+      // cache, so a clean slate per-open is the right default. The
+      // Auto Translate toggle naturally turns off; the language picker
+      // is repopulated below from the thread's customerLanguage field.
+      state.translateView = false;
+      state.translatedTexts = new Map();
+      state.translatingNow = false;
+      state.composerTranslation = null;
+      // (Visual cleanup happens during renderDetail / setupTranslateBar
+      // — they read state and re-paint the bar + preview pane.)
+
       api("etsyMailThreads", { method: "POST", body: { action: "markRead", threadId } }).catch(()=>{});
 
       let thread = state.threads.find(t => t.id === threadId);
@@ -5715,6 +5823,15 @@
 
       renderDetail(thread);
       startMessagesPolling(threadId);
+
+      // v3.7 — Auto-detect the customer's language if we don't have one
+      // on file yet. Fire and forget; the language picker is rendered
+      // synchronously with whatever value we have, and updates when the
+      // detection resolves. Only triggers when there's at least one
+      // inbound message to detect FROM (an empty thread can't be detected).
+      maybeAutoDetectCustomerLanguage(thread).catch((e) => {
+        console.warn("[translate] language auto-detect failed:", e.message);
+      });
     }
 
     async function fetchMessagesNow(threadId, opts = {}) {
@@ -6014,8 +6131,80 @@
 
             <div class="em-card em-compose" id="emComposerCard">
               <h4>Staff reply</h4>
+
+              <!-- v3.7 — Translation controls. Three things in one strip:
+                   - Auto Translate toggle: flips the entire conversation
+                     in #emThreadBox to English (and back).
+                   - Language picker: shows the detected/overridden customer
+                     language. Operator can override here.
+                   - Translate button: translates whatever is in the textarea
+                     into the customer's language and shows it in a side-by-
+                     side preview pane below. The Send button then
+                     dispatches the PREVIEW pane's text, not the textarea's. -->
+              <div class="em-translate-bar" id="emTranslateBar">
+                <span class="em-translate-toggle" id="emTranslateConvoToggle"
+                      title="Translate every message in this conversation to English. Click again to restore originals.">
+                  <i class="material-icons">translate</i>Auto Translate
+                </span>
+                <span class="em-translate-label">Customer language:</span>
+                <select id="emTranslateLangSelect" class="em-translate-lang"
+                        title="Detected language. Override here if wrong.">
+                  <option value="auto">Auto-detect</option>
+                  <option value="en">English</option>
+                  <option value="es">Spanish</option>
+                  <option value="fr">French</option>
+                  <option value="de">German</option>
+                  <option value="it">Italian</option>
+                  <option value="pt">Portuguese</option>
+                  <option value="pt-BR">Portuguese (Brazil)</option>
+                  <option value="nl">Dutch</option>
+                  <option value="pl">Polish</option>
+                  <option value="ru">Russian</option>
+                  <option value="uk">Ukrainian</option>
+                  <option value="ja">Japanese</option>
+                  <option value="zh">Chinese</option>
+                  <option value="ko">Korean</option>
+                  <option value="ar">Arabic</option>
+                  <option value="he">Hebrew</option>
+                  <option value="tr">Turkish</option>
+                  <option value="el">Greek</option>
+                  <option value="sv">Swedish</option>
+                  <option value="no">Norwegian</option>
+                  <option value="da">Danish</option>
+                  <option value="fi">Finnish</option>
+                  <option value="cs">Czech</option>
+                  <option value="hu">Hungarian</option>
+                  <option value="ro">Romanian</option>
+                </select>
+                <button type="button" id="emTranslateReplyBtn" class="em-translate-btn"
+                        title="Translate the staff reply text into the customer's language. Shows a preview; nothing is sent until you click Send via Etsy.">
+                  <i class="material-icons" style="font-size:13px;">east</i>
+                  <span id="emTranslateReplyBtnLabel">Translate to customer's language</span>
+                </button>
+              </div>
+
               <div id="emComposerChips" class="em-composer-chips"></div>
               <textarea id="emDraftText" placeholder="Type a reply, click AI Draft, drop an image, or paste a listing URL."></textarea>
+
+              <!-- v3.7 — Preview pane for the translated outbound. Hidden
+                   until the operator clicks Translate. When visible, the
+                   Send button dispatches THIS text (not the textarea).
+                   Operator can edit the translation in place (the preview
+                   body is contenteditable when the operator clicks "Edit
+                   translation"). -->
+              <div id="emTranslatePreview" class="em-translate-preview" style="display:none;">
+                <div class="em-translate-preview-header">
+                  <span id="emTranslatePreviewTitle">Translated reply (preview — this will be sent)</span>
+                  <div class="em-translate-preview-actions">
+                    <button type="button" id="emTranslatePreviewRetranslateBtn"
+                            title="Re-translate from the current English textarea contents.">Re-translate</button>
+                    <button type="button" id="emTranslatePreviewClearBtn"
+                            title="Discard this translation and send the English textarea as-is.">Send English instead</button>
+                  </div>
+                </div>
+                <div id="emTranslatePreviewBody" class="em-translate-preview-body"></div>
+              </div>
+
               <input type="file" id="emAttachInput" accept="image/png,image/jpeg,image/gif,image/webp" multiple class="em-attach-hidden" />
               <!-- v4.3.16 — Removed Tokens row, Follow up button, Log
                    locally button, Clear button, and the drop-image
@@ -6070,6 +6259,79 @@
       // SalesContext doesn't exist for this thread.
       renderSalesCardForThread(t.id).catch((e) => {
         console.warn("renderSalesCardForThread failed:", e.message);
+      });
+
+      // v3.7 — Translate-bar setup. Pulls the customer language onto the
+      // picker, sets the reply-translate button label, and reflects the
+      // current translateView on the toggle chip. Called every renderDetail
+      // because the composer is part of the detail render and the bar's
+      // controls are recreated each time.
+      setupTranslateBar();
+      // Wire translate controls (idempotent — these IDs only exist within
+      // the just-rendered detail pane).
+      $("emTranslateConvoToggle")?.addEventListener("click", () => {
+        toggleAutoTranslateConvo().catch((e) => console.warn("[translate]", e));
+      });
+      $("emTranslateReplyBtn")?.addEventListener("click", () => {
+        translateComposerToCustomerLang().catch((e) => console.warn("[translate]", e));
+      });
+      $("emTranslatePreviewRetranslateBtn")?.addEventListener("click", () => {
+        // Re-translate from the current textarea — useful after editing
+        // the English source.
+        translateComposerToCustomerLang().catch((e) => console.warn("[translate]", e));
+      });
+      $("emTranslatePreviewClearBtn")?.addEventListener("click", clearComposerTranslation);
+      $("emTranslateLangSelect")?.addEventListener("change", async (ev) => {
+        const newLang = ev.target.value;
+        const t2 = currentThread();
+        if (!t2) return;
+        // Persist the override. Source = "operator-set" so future auto-
+        // detects don't clobber it.
+        if (newLang === "auto") {
+          // "Auto-detect" → clear the stored language and re-run detection.
+          try {
+            await api("etsyMailThreads", {
+              method: "POST",
+              body  : {
+                action  : "patch",
+                threadId: t2.id || t2.threadId,
+                fields  : {
+                  customerLanguage      : null,
+                  customerLanguageName  : null,
+                  customerLanguageSource: null
+                }
+              }
+            });
+            t2.customerLanguage = null;
+            t2.customerLanguageName = null;
+            await maybeAutoDetectCustomerLanguage(t2);
+          } catch (e) {
+            console.warn("[translate] reset language failed:", e.message);
+          }
+        } else {
+          try {
+            await api("etsyMailThreads", {
+              method: "POST",
+              body  : {
+                action  : "patch",
+                threadId: t2.id || t2.threadId,
+                fields  : {
+                  customerLanguage      : newLang,
+                  customerLanguageName  : langDisplayName(newLang),
+                  customerLanguageSource: "operator-set"
+                }
+              }
+            });
+            t2.customerLanguage = newLang;
+            t2.customerLanguageName = langDisplayName(newLang);
+          } catch (e) {
+            console.warn("[translate] persist override failed:", e.message);
+          }
+        }
+        setupTranslateBar();
+        // If the operator already translated outbound text, the previous
+        // translation is now stale (different target language). Clear it.
+        if (state.composerTranslation) clearComposerTranslation();
       });
 
       $("emReviewBtn")?.addEventListener("click", () => setStatus(t.id, "pending_human_review", "operator triage"));
@@ -7968,7 +8230,20 @@
       const btn = $("emSendEtsyBtn");
       const ta  = $("emDraftText");
       if (!ta) return;
-      const text = (ta.value || "").trim();
+      // v3.7 — When the operator has activated the translation preview
+      // pane (state.composerTranslation set), the OUTBOUND text is the
+      // translation, not the textarea's English. Operator can still tweak
+      // the translation in the contenteditable preview pane; their edits
+      // are mirrored into composerTranslation.translated by an oninput
+      // listener (see renderComposerPreviewPane).
+      //
+      // Falling back to the textarea is the no-translate path — this
+      // matches the original behavior exactly when there's no preview.
+      const englishText = (ta.value || "").trim();
+      const usingTranslation = !!(state.composerTranslation && state.composerTranslation.translated && state.composerTranslation.translated.trim());
+      const text = usingTranslation
+        ? state.composerTranslation.translated.trim()
+        : englishText;
       const atts = getComposerAttachments(threadId);
 
       if (!text && !atts.length) {
@@ -8122,6 +8397,10 @@
         autoSizeDraftTextarea(ta);   // v0.9.17: RAF-deferred shrink
         clearComposerAttachments();
         renderComposerChips();
+        // v3.7 — Also clear the translation preview pane. The next reply
+        // starts fresh; reusing a translation across two different
+        // English drafts would be a recipe for sending the wrong thing.
+        if (state.composerTranslation) clearComposerTranslation();
         // Refresh thread + rail so the new message and any auto_replied
         // status update appears.
         if (state.selectedId) fetchMessagesNow(state.selectedId);
@@ -8802,6 +9081,18 @@
         // or a text message with attached photos.
         const hasImages = Array.isArray(m.imageUrls) && m.imageUrls.length > 0;
 
+        // v3.7 — When Auto Translate is on, swap m.text for the cached
+        // translation. translatedTexts is populated by toggleAutoTranslate.
+        // If we're in translateView but a particular message hasn't been
+        // translated yet (mid-batch), fall back to the original. The
+        // bubble gets the .em-translated class so the 🌐 indicator shows.
+        const rawText = m.text || "";
+        const translatedText = state.translateView
+          ? (state.translatedTexts.get(m.id) || state.translatedTexts.get(m.messageId))
+          : null;
+        const displayText = translatedText || rawText;
+        const wasTranslated = !!translatedText && translatedText !== rawText;
+
         let body;
         if (hasImages) {
           const thumbs = (Array.isArray(m.thumbnailUrls) && m.thumbnailUrls.length)
@@ -8836,11 +9127,11 @@
               'onerror="this.onerror=null;this.src=\'' + placeholderSvg + '\';this.style.width=\'120px\';this.style.height=\'90px\';this.style.maxHeight=\'90px\';this.style.cursor=\'pointer\';"/>' +
               '</a>';
           }).join("");
-          const linkedText = m.text ? linkifyEtsyUrls(esc(m.text)) : "";
+          const linkedText = displayText ? linkifyEtsyUrls(esc(displayText)) : "";
           const textPart = linkedText ? `<div style="margin-top:6px;">${linkedText}</div>` : "";
           body = `<div>${thumbsHtml}</div>${textPart}`;
         } else {
-          body = linkifyEtsyUrls(esc(m.text || ""));
+          body = linkifyEtsyUrls(esc(displayText || ""));
         }
 
         // Append any Etsy listing cards associated with this message
@@ -8851,13 +9142,388 @@
             '</div>';
         }
 
+        // v3.7 — em-translated class adds a 🌐 prefix to the meta line so
+        // the operator can tell at a glance that what they're reading is
+        // a translation, not the literal customer text.
+        const translatedClass = wasTranslated ? " em-translated" : "";
         return `
-          <div class="em-msg ${cls}">
+          <div class="em-msg ${cls}${translatedClass}">
             <div class="em-meta">${esc(who)} · ${esc(when)}${syncTag}</div>
             <div>${body}${cardsHtml}</div>
           </div>`;
       }).join("");
       box.scrollTop = box.scrollHeight;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // v3.7 — Translation plumbing
+    // ═══════════════════════════════════════════════════════════════════
+    //
+    // Endpoint: /.netlify/functions/etsyMailDraftReply (op: detectLanguage |
+    // translate). Translation ops live alongside draft-reply ops in the
+    // same file because both are "AI on customer-message text" using the
+    // same Anthropic client. The op router at the top of that file's
+    // handler dispatches to the cheap Haiku translate path before the
+    // expensive Opus draft-reply path. Returns plain JSON; no streaming,
+    // no caching, no actor gating beyond the standard X-EtsyMail-Secret.
+    // See the v3.7 block in etsyMailDraftReply.js for the full contract.
+    //
+    // Three flows live here:
+    //   1. maybeAutoDetectCustomerLanguage  — opens-thread side-effect
+    //   2. toggleAutoTranslateConvo         — Auto Translate chip click
+    //   3. translateComposerToCustomerLang  — outbound preview click
+    //
+    // Plus a few small UI helpers (setupTranslateBar, renderPreviewPane).
+    //
+    // Cost note: with no caching (per operator preference), every click
+    // is N parallel LLM calls. Haiku at $0.25/M input means a typical
+    // 10-message thread × 100 tokens each = ~$0.0003 per toggle.
+
+    /** Standard BCP-47 → display name map for languages we surface in the
+     *  picker. Values match the <option> labels exactly so a freshly
+     *  detected code can become the picker selection without lookup
+     *  contortions. */
+    const TRANSLATE_LANG_NAMES = {
+      "en":     "English",
+      "es":     "Spanish",
+      "fr":     "French",
+      "de":     "German",
+      "it":     "Italian",
+      "pt":     "Portuguese",
+      "pt-BR":  "Portuguese (Brazil)",
+      "nl":     "Dutch",
+      "pl":     "Polish",
+      "ru":     "Russian",
+      "uk":     "Ukrainian",
+      "ja":     "Japanese",
+      "zh":     "Chinese",
+      "ko":     "Korean",
+      "ar":     "Arabic",
+      "he":     "Hebrew",
+      "tr":     "Turkish",
+      "el":     "Greek",
+      "sv":     "Swedish",
+      "no":     "Norwegian",
+      "da":     "Danish",
+      "fi":     "Finnish",
+      "cs":     "Czech",
+      "hu":     "Hungarian",
+      "ro":     "Romanian"
+    };
+
+    function langDisplayName(code) {
+      if (!code) return "";
+      // Exact match first, then strip region tag if present (e.g.
+      // "pt-BR" → fallback to "pt" if "pt-BR" wasn't in the map).
+      if (TRANSLATE_LANG_NAMES[code]) return TRANSLATE_LANG_NAMES[code];
+      const base = String(code).split("-")[0];
+      return TRANSLATE_LANG_NAMES[base] || code;
+    }
+
+    /** The thread the operator is currently viewing — convenience accessor.
+     *  Returns null when nothing is selected or the thread isn't in
+     *  state.threads (rare but possible during deep-link loads). */
+    function currentThread() {
+      if (!state.selectedId) return null;
+      return state.threads.find(t => t && t.id === state.selectedId) || null;
+    }
+
+    /** What language should outbound replies be translated INTO? Returns
+     *  the picker's current value if the operator has overridden, else
+     *  the thread's stored customerLanguage, else null (= unknown, don't
+     *  translate). Null is the safe default — we never silently translate
+     *  into a language we're not confident about. */
+    function effectiveCustomerLanguage() {
+      const sel = $("emTranslateLangSelect");
+      if (sel && sel.value && sel.value !== "auto") return sel.value;
+      const t = currentThread();
+      if (t && t.customerLanguage) return t.customerLanguage;
+      return null;
+    }
+
+    /** Call the translate endpoint for one piece of text. Returns a string
+     *  (the translation) or throws on failure. Centralized so retry logic
+     *  + auth headers + error parsing can evolve in one place. */
+    async function callTranslate(text, targetLang, sourceLang = null) {
+      if (!text || !text.trim()) return "";
+      const body = { op: "translate", text, targetLang };
+      if (sourceLang) body.sourceLang = sourceLang;
+      const data = await api("etsyMailDraftReply", { method: "POST", body });
+      if (!data || !data.ok || typeof data.translated !== "string") {
+        throw new Error(data && data.error ? data.error : "Translate returned no text");
+      }
+      return data.translated;
+    }
+
+    /** Fire the language-detect endpoint over a text sample. Returns the
+     *  parsed { language, languageName, confidence } payload or throws. */
+    async function callDetectLanguage(text) {
+      if (!text || !text.trim()) throw new Error("No text to detect");
+      const data = await api("etsyMailDraftReply", {
+        method: "POST",
+        body  : { op: "detectLanguage", text }
+      });
+      if (!data || !data.ok) {
+        throw new Error(data && data.error ? data.error : "Detect returned no result");
+      }
+      return data;
+    }
+
+    /** Auto-detect the customer's language on thread open if we don't
+     *  already know it. Side-effects only — no return value the caller
+     *  needs. Persistence path:
+     *
+     *    1. Skip if the thread already has customerLanguage set.
+     *    2. Skip if there are no inbound messages (nothing to detect).
+     *    3. Concatenate up to 1500 chars of inbound text as a sample.
+     *    4. Call detectLanguage. Confidence < 0.5 → don't persist (the
+     *       operator can still set manually via the picker), but DO
+     *       update the picker visually so the operator sees what we
+     *       guessed.
+     *    5. On confidence ≥ 0.5, persist via etsyMailThreads action:patch
+     *       so the next thread-load doesn't re-detect.
+     *
+     *  The patch updates the in-memory state.threads entry too, which
+     *  keeps the picker stable across re-renders.
+     */
+    async function maybeAutoDetectCustomerLanguage(thread) {
+      if (!thread) return;
+      // Step 1 — skip if known.
+      if (thread.customerLanguage) {
+        // Sync the picker dropdown to the stored value if it isn't already.
+        const sel = $("emTranslateLangSelect");
+        if (sel) sel.value = thread.customerLanguage;
+        return;
+      }
+      // Step 2 — gather inbound sample.
+      const inboundTexts = (state.messages || [])
+        .filter(m => m && (m.direction === "inbound" || m.senderRole === "customer"))
+        .map(m => (m.text || "").trim())
+        .filter(Boolean);
+      if (!inboundTexts.length) return;
+      // Step 3 — concat with newlines, cap at 1500 chars.
+      let sample = inboundTexts.join("\n\n");
+      if (sample.length > 1500) sample = sample.slice(0, 1500);
+
+      // Step 4 — detect.
+      let result;
+      try {
+        result = await callDetectLanguage(sample);
+      } catch (e) {
+        console.warn("[translate] detectLanguage failed:", e.message);
+        return;
+      }
+      const code = result.language || "en";
+      const conf = result.confidence || 0;
+
+      // Update the picker either way so the operator sees the guess.
+      const sel = $("emTranslateLangSelect");
+      if (sel) sel.value = code;
+
+      // Step 5 — persist only if confidence is high enough that we trust
+      // the guess. Below 0.5 we leave the field unset; the picker
+      // displays our guess, but if the operator does nothing we re-detect
+      // on the next thread open.
+      if (conf < 0.5) return;
+      try {
+        await api("etsyMailThreads", {
+          method: "POST",
+          body  : {
+            action  : "patch",
+            threadId: thread.id || thread.threadId,
+            fields  : {
+              customerLanguage      : code,
+              customerLanguageName  : result.languageName || langDisplayName(code),
+              customerLanguageSource: "auto-detect"
+            }
+          }
+        });
+        // Mirror to in-memory thread doc so subsequent renders see it
+        // without waiting for the next list poll.
+        thread.customerLanguage     = code;
+        thread.customerLanguageName = result.languageName || langDisplayName(code);
+      } catch (e) {
+        console.warn("[translate] persist customerLanguage failed:", e.message);
+      }
+    }
+
+    /** Re-paint the translate bar's button labels + states based on the
+     *  current customer language. Called from renderDetail (initial paint)
+     *  and from the picker's change handler (override). */
+    function setupTranslateBar() {
+      const langSel = $("emTranslateLangSelect");
+      const replyBtn = $("emTranslateReplyBtn");
+      const replyBtnLabel = $("emTranslateReplyBtnLabel");
+      const toggleEl = $("emTranslateConvoToggle");
+      if (!langSel || !replyBtn || !replyBtnLabel || !toggleEl) return;
+
+      const t = currentThread();
+      // Picker default: stored value, or "auto" if nothing on file.
+      langSel.value = (t && t.customerLanguage) || "auto";
+
+      // Reply-translate button label updates with the chosen lang.
+      const eff = effectiveCustomerLanguage();
+      if (eff && eff !== "en") {
+        replyBtnLabel.textContent = `Translate to ${langDisplayName(eff)}`;
+        replyBtn.disabled = false;
+        replyBtn.title = `Translate the staff reply text into ${langDisplayName(eff)}. Shows a preview; nothing is sent until you click Send via Etsy.`;
+      } else if (eff === "en") {
+        replyBtnLabel.textContent = "Customer is English-speaking";
+        replyBtn.disabled = true;
+        replyBtn.title = "No translation needed — customer's language is English.";
+      } else {
+        replyBtnLabel.textContent = "Pick a customer language above";
+        replyBtn.disabled = true;
+        replyBtn.title = "Set the customer's language in the dropdown to enable outbound translation.";
+      }
+
+      // Auto Translate toggle reflects state.translateView.
+      toggleEl.classList.toggle("on", !!state.translateView);
+    }
+
+    /** Toggle the Auto Translate view on/off. When turning ON, fire a
+     *  parallel batch of translate calls for each visible message and
+     *  the AI draft, populate state.translatedTexts, then re-render.
+     *  When turning OFF, just clear the cache and re-render. */
+    async function toggleAutoTranslateConvo() {
+      if (state.translatingNow) return;   // ignore double-click
+
+      // Toggling OFF is fast — just flip and re-render.
+      if (state.translateView) {
+        state.translateView = false;
+        state.translatedTexts.clear();
+        setupTranslateBar();
+        renderThreadMessages();
+        return;
+      }
+
+      // Turning ON. Each message gets translated to English in parallel.
+      // We translate ALL messages (inbound + outbound) so the operator
+      // can read the conversation as a single English flow, even though
+      // the outbound side may already be English.
+      const msgs = state.messages || [];
+      if (!msgs.length) {
+        toast("No messages to translate yet.");
+        return;
+      }
+
+      state.translatingNow = true;
+      const toggleEl = $("emTranslateConvoToggle");
+      const prevLabel = toggleEl ? toggleEl.innerHTML : null;
+      if (toggleEl) toggleEl.innerHTML = '<i class="material-icons">hourglass_empty</i>Translating…';
+
+      try {
+        // Skip messages that are clearly empty or pure-image with no text.
+        const targets = msgs.filter(m => m && (m.text || "").trim().length > 0);
+        // Fire all translate calls in parallel. Failures fall back to
+        // original text (we don't want one timeout to abort the whole
+        // batch).
+        const results = await Promise.allSettled(
+          targets.map(m =>
+            callTranslate(m.text, "en").then(translated => ({ m, translated }))
+          )
+        );
+        for (const r of results) {
+          if (r.status === "fulfilled" && r.value && r.value.translated) {
+            const id = r.value.m.id || r.value.m.messageId;
+            if (id) state.translatedTexts.set(id, r.value.translated);
+          }
+        }
+        state.translateView = true;
+        setupTranslateBar();
+        renderThreadMessages();
+        toast(`Translated ${state.translatedTexts.size} message${state.translatedTexts.size === 1 ? "" : "s"} to English`);
+      } catch (e) {
+        toast("Translate failed: " + (e.message || String(e)));
+      } finally {
+        state.translatingNow = false;
+        if (toggleEl && prevLabel) {
+          toggleEl.innerHTML = prevLabel;
+          // Re-apply on/off styling — innerHTML overwrite cleared the class.
+          toggleEl.classList.toggle("on", !!state.translateView);
+        }
+      }
+    }
+
+    /** Translate the textarea contents into the customer's language and
+     *  show the side-by-side preview pane. The Send via Etsy handler
+     *  reads from state.composerTranslation when set, so once this
+     *  succeeds the next Send dispatches the translated text. */
+    async function translateComposerToCustomerLang() {
+      const targetLang = effectiveCustomerLanguage();
+      if (!targetLang || targetLang === "en") {
+        toast("Set a non-English customer language first.");
+        return;
+      }
+      const ta = $("emDraftText");
+      const source = ta ? ta.value.trim() : "";
+      if (!source) {
+        toast("Type a reply first, then translate.");
+        return;
+      }
+
+      const btn = $("emTranslateReplyBtn");
+      const prev = btn ? btn.innerHTML : null;
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="material-icons" style="font-size:13px;">hourglass_empty</i>Translating…';
+      }
+
+      try {
+        const translated = await callTranslate(source, targetLang, "en");
+        state.composerTranslation = { source, translated, lang: targetLang };
+        renderComposerPreviewPane();
+        toast(`Translated to ${langDisplayName(targetLang)} — review before sending.`);
+      } catch (e) {
+        toast("Translate failed: " + (e.message || String(e)));
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          if (prev) btn.innerHTML = prev;
+          // Restore correct enable/label state via the bar setup helper.
+          setupTranslateBar();
+        }
+      }
+    }
+
+    /** Render (or hide) the composer's translation preview pane based on
+     *  state.composerTranslation. The pane shows the translated text in
+     *  a contenteditable div so the operator can tweak it before sending.
+     *  Edits are mirrored back into state.composerTranslation.translated
+     *  so Send picks them up. */
+    function renderComposerPreviewPane() {
+      const wrap = $("emTranslatePreview");
+      const body = $("emTranslatePreviewBody");
+      const title = $("emTranslatePreviewTitle");
+      if (!wrap || !body || !title) return;
+
+      if (!state.composerTranslation) {
+        wrap.style.display = "none";
+        body.contentEditable = "false";
+        body.textContent = "";
+        return;
+      }
+
+      const ct = state.composerTranslation;
+      title.textContent = `Translated reply (${langDisplayName(ct.lang)}) — this will be sent`;
+      body.contentEditable = "true";
+      body.textContent = ct.translated;
+      wrap.style.display = "";
+
+      // Mirror edits back into state. Re-bind every render — body is
+      // the same DOM node but listeners stack if we don't.
+      body.oninput = () => {
+        if (state.composerTranslation) {
+          state.composerTranslation.translated = body.textContent || "";
+        }
+      };
+    }
+
+    /** Discard the current translation preview and revert to sending
+     *  whatever's in the English textarea as-is. */
+    function clearComposerTranslation() {
+      state.composerTranslation = null;
+      renderComposerPreviewPane();
     }
 
     // ───── Actions ─────
