@@ -191,21 +191,12 @@ async function listActiveOperators() {
   return out;
 }
 
-module.exports = {
-  getOperatorRole,
-  requireRole,
-  requireOwner,
-  requireAnyRole,
-  logUnauthorized,
-  invalidateRoleCache,
-  listActiveOperators,
-  // v4.1 — session-token helpers (see definitions below)
-  requireSession,
-  requireOwnerSession,
-  // Constant exposed for tests / docs
-  OPERATORS_COLL,
-  SESSIONS_COLL
-};
+// v4.1 NOTE — module.exports moved to the bottom of this file.
+// Function declarations are hoisted, but `const` declarations
+// (SESSIONS_COLL, etc.) are not. If exports run before const lines,
+// the constants come out as `undefined` and dependent functions blow
+// up at runtime with "Value for argument 'collectionPath' is not a
+// valid resource path." See the bottom of the file for the real export.
 
 // ═══════════════════════════════════════════════════════════════════════
 // v4.1 — Session-token validation helpers
@@ -354,4 +345,25 @@ function invalidateSessionCache(token) {
   if (token) _sessionCache.delete(token);
 }
 
-module.exports.invalidateSessionCache = invalidateSessionCache;
+// ═══════════════════════════════════════════════════════════════════════
+// Consolidated module.exports — at file bottom so every symbol it lists
+// is defined by the time this runs. (Function decls are hoisted but
+// `const` decls aren't, so a top-of-file exports block would have
+// shipped undefined values for OPERATORS_COLL / SESSIONS_COLL.)
+// ═══════════════════════════════════════════════════════════════════════
+module.exports = {
+  // ── existing role-check API (unchanged) ────────────────────────────
+  getOperatorRole,
+  requireRole,
+  requireOwner,
+  requireAnyRole,
+  logUnauthorized,
+  invalidateRoleCache,
+  listActiveOperators,
+  OPERATORS_COLL,
+  // ── v4.1 — session-token helpers ──────────────────────────────────
+  requireSession,
+  requireOwnerSession,
+  invalidateSessionCache,
+  SESSIONS_COLL
+};
