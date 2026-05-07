@@ -6119,11 +6119,6 @@
             <select id="emThreadMoveSelect" class="em-thread-move-select" title="Move this thread to a folder">
               <option value="">Move to…</option>
             </select>
-            <button id="emReprocessThreadBtn"
-                    title="Re-classify and re-route this thread through the auto-pipeline using current Settings. Useful when sales-mode toggles changed after the thread was first scraped."
-                    style="background:#fff; border:1px solid #d4a72c; color:#9a6700;">
-              <i class="material-icons">refresh</i>Re-process
-            </button>
             <button id="emDeleteThreadBtn" title="Permanently delete this thread and all its data (Firestore + Storage). Owner-only."
                     style="background:#fff; border:1px solid #cf222e; color:#cf222e;">
               <i class="material-icons">delete_forever</i>Delete
@@ -6377,7 +6372,6 @@
       $("emProductionRushBtn")?.addEventListener("click", () => setStatus(t.id, "production_rush", "operator quick-move: production rush"));
       $("emSalesActiveBtn")?.addEventListener("click",    () => setStatus(t.id, "sales_active",    "operator quick-move: sales active"));
       $("emAllBtn")?.addEventListener("click",            () => setStatus(t.id, "pending_human_review", "operator quick-move: remove from folder"));
-      $("emReprocessThreadBtn")?.addEventListener("click", () => reprocessThread(t.id));
       $("emDeleteThreadBtn")?.addEventListener("click", () => deleteThreadCompletely(t.id));
 
       // v1.7: per-thread Move-to dropdown. Same destinations as the bulk
