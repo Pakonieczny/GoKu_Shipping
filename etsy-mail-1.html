@@ -254,31 +254,62 @@
       flex: 1; display: flex; align-items: center; justify-content: center;
       color: #6a737d; font-size: 13px; text-align: center; padding: 20px;
     }
+    /* v3.8 — Vertically compact header.
+     * Goal: reclaim 30-40px of vertical space above the messages so
+     * thread reading isn't pinched on shorter screens. Achieved via:
+     *   - tighter padding on the header itself (12/18 → 6/14)
+     *   - heading + meta + chips render inline (was stacked)
+     *   - smaller h2 (16px → 14px) so it can sit on the same line
+     *   - smaller action-button height (4/10 → 2/8 padding, 12 → 11 font)
+     *   - removed the 4px margin-top under h2
+     * Total saved: ~40px when the customer has the typical fields
+     * (chip, username, "no linked order", "Gmail linked").
+     */
     .em-detail-header {
-      background: #fff; border-bottom: 1px solid #e1e4e8; padding: 12px 18px;
-      flex-shrink: 0;   /* v1.9: stay at top, never scroll */
+      background: #fff; border-bottom: 1px solid #e1e4e8; padding: 6px 14px;
+      flex-shrink: 0;
     }
-    .em-detail-header .em-h-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-    .em-detail-header h2 { margin: 0; font-size: 16px; font-weight: 600; }
-    .em-detail-header .em-h-meta { margin-top: 4px; font-size: 12px; color: #57606a; display: flex; gap: 14px; flex-wrap: wrap; }
-    .em-detail-header .em-h-actions { display: flex; gap: 6px; }
+    .em-detail-header .em-h-top {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 10px; flex-wrap: wrap;
+    }
+    /* v3.8 — Heading + meta on one row. .em-h-info is the new flex
+     * container that combines h2 and meta into a single horizontal
+     * strip. min-width:0 allows it to shrink so the action buttons
+     * always fit; the flex:1 1 auto lets it claim leftover space when
+     * actions are narrow. Wrapping kicks in only on very narrow viewports. */
+    .em-detail-header .em-h-info {
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+      flex: 1 1 auto; min-width: 0;
+    }
+    .em-detail-header h2 {
+      margin: 0; font-size: 14px; font-weight: 600;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      max-width: 100%;
+    }
+    .em-detail-header .em-h-meta {
+      margin: 0; font-size: 11px; color: #57606a;
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    }
+    .em-detail-header .em-h-actions { display: flex; gap: 4px; flex-wrap: wrap; }
     .em-detail-header .em-h-actions button {
       border: 1px solid #d0d7de; background: #fff; border-radius: 4px;
-      padding: 4px 10px; cursor: pointer; font-size: 12px;
-      display: inline-flex; align-items: center; gap: 4px;
+      padding: 2px 8px; cursor: pointer; font-size: 11px; line-height: 1.4;
+      display: inline-flex; align-items: center; gap: 3px;
+      white-space: nowrap;
     }
     .em-detail-header .em-h-actions button:hover { background: #f6f8fa; }
 
     /* v1.7: per-thread Move-to dropdown sits in the same toolbar */
     .em-detail-header .em-h-actions select.em-thread-move-select {
       border: 1px solid #d0d7de; background: #fff;
-      border-radius: 4px; padding: 4px 6px;
-      font-size: 12px; color: #24292f; cursor: pointer;
+      border-radius: 4px; padding: 2px 6px;
+      font-size: 11px; color: #24292f; cursor: pointer;
     }
     .em-detail-header .em-h-actions select.em-thread-move-select:hover {
       background: #f6f8fa;
     }
-    .em-detail-header .em-h-actions button .material-icons { font-size: 14px; }
+    .em-detail-header .em-h-actions button .material-icons { font-size: 13px; }
 
     /* ── M3: Customer panel (top banner above messages) ─────────────────── */
     .em-cust-panel {
@@ -536,25 +567,34 @@
     /* v3.7 — Translate controls. Three pieces:
      *   .em-translate-bar  : header strip with toggle + language picker + translate button
      *   .em-translate-preview : side-by-side English-vs-target preview pane
-     *   .em-translate-btn  : button-style override for the small inline buttons */
+     *   .em-translate-btn  : button-style override for the small inline buttons
+     *
+     * v3.8 — Compressed to a single horizontal row. Was wrapping to
+     * 3 lines (toggle, label+select, button) because flex-wrap was on
+     * AND the dropdown's intrinsic width pushed the button past the
+     * available space. Fixes:
+     *   - flex-wrap: nowrap (force single row).
+     *   - dropdown flex-shrink: 1 so it gives up width before pushing
+     *     the button off-screen.
+     *   - tighter padding (6/8 → 4/6) saves another few px.
+     *   - button + toggle white-space: nowrap so they don't break. */
     .em-compose .em-translate-bar {
-      display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
-      padding: 6px 8px; margin-bottom: 6px;
+      display: flex; flex-wrap: nowrap; align-items: center; gap: 6px;
+      padding: 4px 6px; margin-bottom: 6px;
       background: #f6f8fa; border: 1px solid #d0d7de; border-radius: 4px;
       font-size: 11px;
-    }
-    .em-compose .em-translate-bar .em-translate-label {
-      color: #57606a; font-weight: 500;
     }
     .em-compose .em-translate-bar select.em-translate-lang {
       font-size: 11px; padding: 2px 4px; border: 1px solid #d0d7de;
       border-radius: 3px; background: #fff;
+      flex: 0 1 auto; min-width: 0; max-width: 140px;
     }
     .em-compose .em-translate-bar button.em-translate-btn {
-      padding: 3px 8px; font-size: 11px;
+      padding: 2px 8px; font-size: 11px;
       background: #fff; color: #0969da; border: 1px solid #0969da;
       border-radius: 3px; cursor: pointer;
       display: inline-flex; align-items: center; gap: 3px;
+      white-space: nowrap; flex-shrink: 0;
     }
     .em-compose .em-translate-bar button.em-translate-btn:hover:not(:disabled) {
       background: #ddf4ff;
@@ -567,9 +607,10 @@
     }
     .em-compose .em-translate-bar .em-translate-toggle {
       display: inline-flex; align-items: center; gap: 4px;
-      padding: 3px 8px; font-size: 11px; cursor: pointer;
+      padding: 2px 8px; font-size: 11px; cursor: pointer;
       border: 1px solid #d0d7de; border-radius: 3px; background: #fff;
       color: #57606a;
+      white-space: nowrap; flex-shrink: 0;
     }
     .em-compose .em-translate-bar .em-translate-toggle.on {
       background: #0969da; color: #fff; border-color: #0969da;
@@ -6062,7 +6103,12 @@
       $("emDetail").innerHTML = `
         <div class="em-detail-header">
           <div class="em-h-top">
-            <div>
+            <!-- v3.8 — Customer name + status chip + meta items render
+                 inline on a single horizontal row (.em-h-info). The
+                 previous nested-div layout forced vertical stacking
+                 because the inner flex container's parent was width-
+                 constrained by the action buttons sharing its row. -->
+            <div class="em-h-info">
               <h2>${esc(t.customerName || "Unknown customer")}</h2>
               <div class="em-h-meta">
                 <span class="em-status-pill ${esc(chipClass)}">${esc(chipLabel)}</span>
@@ -6140,15 +6186,17 @@
                    - Translate button: translates whatever is in the textarea
                      into the customer's language and shows it in a side-by-
                      side preview pane below. The Send button then
-                     dispatches the PREVIEW pane's text, not the textarea's. -->
+                     dispatches the PREVIEW pane's text, not the textarea's.
+                   v3.8 — Compressed: dropped the "Customer language:"
+                   prose label and the prefix "→" icon on the translate
+                   button to keep everything on one line. -->
               <div class="em-translate-bar" id="emTranslateBar">
                 <span class="em-translate-toggle" id="emTranslateConvoToggle"
                       title="Translate every message in this conversation to English. Click again to restore originals.">
                   <i class="material-icons">translate</i>Auto Translate
                 </span>
-                <span class="em-translate-label">Customer language:</span>
                 <select id="emTranslateLangSelect" class="em-translate-lang"
-                        title="Detected language. Override here if wrong.">
+                        title="Detected customer language. Override here if wrong.">
                   <option value="auto">Auto-detect</option>
                   <option value="en">English</option>
                   <option value="es">Spanish</option>
@@ -6178,8 +6226,7 @@
                 </select>
                 <button type="button" id="emTranslateReplyBtn" class="em-translate-btn"
                         title="Translate the staff reply text into the customer's language. Shows a preview; nothing is sent until you click Send via Etsy.">
-                  <i class="material-icons" style="font-size:13px;">east</i>
-                  <span id="emTranslateReplyBtnLabel">Translate to customer's language</span>
+                  <span id="emTranslateReplyBtnLabel">Translate reply</span>
                 </button>
               </div>
 
@@ -9349,7 +9396,16 @@
 
     /** Re-paint the translate bar's button labels + states based on the
      *  current customer language. Called from renderDetail (initial paint)
-     *  and from the picker's change handler (override). */
+     *  and from the picker's change handler (override).
+     *
+     *  v3.8 — Disabled-state previously read "Pick a customer language
+     *  above" and operators couldn't click it even with text in the
+     *  composer. Confusing because the button SHOULD work — it just
+     *  needs to detect on demand. New behavior: when language is
+     *  unknown, the button stays enabled with label "Translate reply"
+     *  and clicking it triggers detection-then-translate inside
+     *  translateComposerToCustomerLang. Only English (= no translation
+     *  needed) leaves the button disabled. */
     function setupTranslateBar() {
       const langSel = $("emTranslateLangSelect");
       const replyBtn = $("emTranslateReplyBtn");
@@ -9361,20 +9417,25 @@
       // Picker default: stored value, or "auto" if nothing on file.
       langSel.value = (t && t.customerLanguage) || "auto";
 
-      // Reply-translate button label updates with the chosen lang.
+      // Reply-translate button: three states.
       const eff = effectiveCustomerLanguage();
       if (eff && eff !== "en") {
+        // Known non-English customer language → "Translate to <Lang>"
         replyBtnLabel.textContent = `Translate to ${langDisplayName(eff)}`;
         replyBtn.disabled = false;
         replyBtn.title = `Translate the staff reply text into ${langDisplayName(eff)}. Shows a preview; nothing is sent until you click Send via Etsy.`;
       } else if (eff === "en") {
-        replyBtnLabel.textContent = "Customer is English-speaking";
+        // Customer speaks English → no translation possible.
+        replyBtnLabel.textContent = "Customer speaks English";
         replyBtn.disabled = true;
         replyBtn.title = "No translation needed — customer's language is English.";
       } else {
-        replyBtnLabel.textContent = "Pick a customer language above";
-        replyBtn.disabled = true;
-        replyBtn.title = "Set the customer's language in the dropdown to enable outbound translation.";
+        // Language unknown / picker on Auto-detect. Button still works:
+        // clicking it runs detection on the customer's messages first,
+        // then translates. See translateComposerToCustomerLang.
+        replyBtnLabel.textContent = "Translate reply";
+        replyBtn.disabled = false;
+        replyBtn.title = "Detect the customer's language from their messages, then translate your reply.";
       }
 
       // Auto Translate toggle reflects state.translateView.
@@ -9448,17 +9509,44 @@
     /** Translate the textarea contents into the customer's language and
      *  show the side-by-side preview pane. The Send via Etsy handler
      *  reads from state.composerTranslation when set, so once this
-     *  succeeds the next Send dispatches the translated text. */
+     *  succeeds the next Send dispatches the translated text.
+     *
+     *  v3.8 — Now handles the "language unknown" case by running
+     *  detection on the customer's messages first. If detection still
+     *  yields nothing usable (no inbound messages, or detection itself
+     *  failed), shows a toast and bails. The previous version simply
+     *  refused to fire when target was unknown, leaving operators
+     *  staring at a button that did nothing. */
     async function translateComposerToCustomerLang() {
-      const targetLang = effectiveCustomerLanguage();
-      if (!targetLang || targetLang === "en") {
-        toast("Set a non-English customer language first.");
-        return;
-      }
       const ta = $("emDraftText");
       const source = ta ? ta.value.trim() : "";
       if (!source) {
         toast("Type a reply first, then translate.");
+        return;
+      }
+
+      // Resolve target language. If it's already known, great. If not,
+      // try to auto-detect from the customer's messages right now.
+      let targetLang = effectiveCustomerLanguage();
+
+      if (!targetLang) {
+        const t = currentThread();
+        if (!t) return;
+        toast("Detecting customer's language…");
+        try {
+          await maybeAutoDetectCustomerLanguage(t);
+        } catch (e) {
+          console.warn("[translate] on-demand detect failed:", e.message);
+        }
+        targetLang = effectiveCustomerLanguage();
+      }
+
+      if (!targetLang) {
+        toast("Couldn't detect a language — pick one from the dropdown.");
+        return;
+      }
+      if (targetLang === "en") {
+        toast("Customer speaks English — no translation needed.");
         return;
       }
 
