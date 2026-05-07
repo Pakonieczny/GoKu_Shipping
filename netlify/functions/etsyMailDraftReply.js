@@ -1852,19 +1852,19 @@ const TRANSLATE_MODEL    = "claude-haiku-4-5-20251001";
 const TRANSLATE_MAX_TOKENS = 4096;
 const TRANSLATE_MAX_INPUT_CHARS = 32_000;
 
-// v4.0 — summarize uses Sonnet 4.6 (not Haiku) per operator preference.
-// Rationale: summary quality matters more than per-call cost — operators
-// rely on the intent/urgency/ask/flags to decide how to triage threads
-// at a glance, and Sonnet's stronger context discrimination meaningfully
-// reduces "wrong urgency" false positives that erode trust in the card.
-//
-// Cost: ~12x Haiku ($3/$15 per M input/output vs $0.25/$1.25). At ~$0.012
-// per call vs ~$0.001, a heavy day of 200 thread-opens runs about $2.40
-// instead of $0.20. Still acceptable for the operator value.
+// v4.0 — summarize uses Haiku.
+// History: started on Haiku, briefly switched to Sonnet 4.6 for better
+// context discrimination, switched back to Haiku to evaluate quality at
+// 12x lower cost ($0.001/call vs $0.012). The summarize prompt is
+// strict-JSON-output with a clear shape, which Haiku handles well in
+// practice; the extra reasoning Sonnet provides mostly mattered for
+// nuanced urgency calls. If operators report "wrong urgency" trust
+// issues with Haiku, switch SUMMARIZE_MODEL to "claude-sonnet-4-6"
+// (one-line change).
 //
 // Bigger input cap because some threads are 50+ messages; output cap is
 // small because the summary card is intentionally compact.
-const SUMMARIZE_MODEL = "claude-sonnet-4-6";
+const SUMMARIZE_MODEL = "claude-haiku-4-5-20251001";
 const SUMMARIZE_MAX_TOKENS = 800;
 const SUMMARIZE_MAX_INPUT_CHARS = 60_000;
 
