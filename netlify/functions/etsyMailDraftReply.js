@@ -65,12 +65,12 @@
 
 const admin = require("./firebaseAdmin");
 const { CORS, requireExtensionAuth } = require("./_etsyMailAuth");
-// v3.7 — callClaudeRaw added alongside runToolLoop. The translate ops
-// (op:"detectLanguage" and op:"translate", routed at the top of the
-// handler below) need a single-shot Claude call without the tool-use
-// machinery; runToolLoop is the wrong shape for that. The two helpers
-// share the same HTTP client, retry logic, and overload handling
-// inside _etsyMailAnthropic.js, so this just exposes the simpler one.
+// v3.7+ — callClaudeRaw added alongside runToolLoop. The translate ops
+// (op:"detectLanguage" and op:"translate") and the v4.0 summarize op
+// (op:"summarizeThread") all use callClaudeRaw for single-shot Haiku
+// calls without the tool-use machinery; runToolLoop is the wrong shape
+// for those. Both helpers share the HTTP client, retry logic, and
+// overload handling inside _etsyMailAnthropic.js.
 const { runToolLoop, callClaudeRaw } = require("./_etsyMailAnthropic");
 const {
   getShop,
@@ -1819,40 +1819,58 @@ async function writeAudit({ threadId, draftId, eventType, actor = "system:draftR
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// v3.7 — Translation ops (op:"detectLanguage", op:"translate")
+// Lightweight ops sharing the same handler (translate, summarize)
 // ═══════════════════════════════════════════════════════════════════════
 //
-// Originally lived in their own etsyMailTranslate.js function. Folded
-// into etsyMailDraftReply during v3.7 cleanup since both are "AI ops on
-// customer-message text" using the same Anthropic client.
+// Three small ops live alongside the main draft-reply path. They all:
+//   - Use a cheap Haiku model (vs Opus 4.7 for drafts)
+//   - Don't need conversation context loading, tool loops, or images
+//   - Have their own input shapes and skip every code path between
+//     this comment and the draft-reply request validation
 //
-// These ops are routed at the TOP of exports.handler before any of the
-// draft-reply logic kicks in. They have their own input shape (plain
-// {text} / {text,targetLang} payloads, no threadId required) and skip
-// every code path between this comment and the draft-reply request
-// validation. The split keeps the heavy Opus 4.7 draft path completely
-// uninvolved with the cheap Haiku translate path.
+// Routed by the op-router at the top of exports.handler (below). All
+// three use the same shared helpers (_translateFirstTextBlock,
+// _translateCleanModelText) for response parsing.
 //
-// Cost profile:
-//   - Model: claude-haiku-4-5 (fast, $0.25/M input, $1.25/M output)
-//   - useThinking: false (translation is mechanical, no reasoning win)
-//   - No caching per operator preference; every call is independent.
+//   op:"detectLanguage" — used by inbox UI on thread open to identify
+//                          the customer's language. v3.7.
+//   op:"translate"      — used by inbox UI to translate conversation
+//                          messages and outbound replies. v3.7.
+//   op:"summarizeThread"— used by inbox UI to populate the universal
+//                          Conversation Summary card on non-sales
+//                          threads. v4.0.
 //
-// Security:
-//   - X-EtsyMail-Secret already validated by the parent handler.
-//   - No actor / role check — anyone with the inbox secret already sees
-//     conversation text; translating it adds no escalation.
+// Cost profile is uniform: $0.001-0.002 per call. Heavy day with 200
+// thread-opens = ~$0.30. Caching is in-memory client-side (Map) keyed
+// by thread + last message timestamp; reopening a thread that hasn't
+// changed reuses the prior result.
 //
-// Edit both translate functions in lockstep with the front-end
-// (etsy-mail-1.html) since the shape contract is shared.
+// Security: X-EtsyMail-Secret already validated by the parent handler.
+// No actor / role check — these are read-only summarization ops.
 
 const TRANSLATE_MODEL    = "claude-haiku-4-5-20251001";
 const TRANSLATE_MAX_TOKENS = 4096;
 const TRANSLATE_MAX_INPUT_CHARS = 32_000;
 
+// v4.0 — summarize uses Sonnet 4.6 (not Haiku) per operator preference.
+// Rationale: summary quality matters more than per-call cost — operators
+// rely on the intent/urgency/ask/flags to decide how to triage threads
+// at a glance, and Sonnet's stronger context discrimination meaningfully
+// reduces "wrong urgency" false positives that erode trust in the card.
+//
+// Cost: ~12x Haiku ($3/$15 per M input/output vs $0.25/$1.25). At ~$0.012
+// per call vs ~$0.001, a heavy day of 200 thread-opens runs about $2.40
+// instead of $0.20. Still acceptable for the operator value.
+//
+// Bigger input cap because some threads are 50+ messages; output cap is
+// small because the summary card is intentionally compact.
+const SUMMARIZE_MODEL = "claude-sonnet-4-6";
+const SUMMARIZE_MAX_TOKENS = 800;
+const SUMMARIZE_MAX_INPUT_CHARS = 60_000;
+
 /** Pull the first text block from a Claude response. callClaudeRaw
  *  returns the parsed body; content is an array of blocks of which the
- *  first text block is what we want for plain-text translations. */
+ *  first text block is what we want for plain-text outputs. */
 function _translateFirstTextBlock(claudeResp) {
   if (!claudeResp || !Array.isArray(claudeResp.content)) return "";
   for (const block of claudeResp.content) {
@@ -1863,9 +1881,7 @@ function _translateFirstTextBlock(claudeResp) {
   return "";
 }
 
-/** Strip markdown fencing or chatty preambles from a model response. We
- *  instruct Haiku to emit plain text only, but defensively trim for
- *  edge cases where it adds wrapping. */
+/** Strip markdown fencing or chatty preambles from a model response. */
 function _translateCleanModelText(s) {
   if (!s) return "";
   let t = String(s).trim();
@@ -1882,8 +1898,6 @@ async function handleDetectLanguageOp(body) {
     return bad(`Input too long (${text.length} chars > ${TRANSLATE_MAX_INPUT_CHARS} max)`);
   }
 
-  // JSON-only output keeps parsing deterministic and avoids "Sure,
-  // looks like Italian!" preambles from chatty models.
   const system =
     "You are a language detector. Identify the language of the user's input text. " +
     "Respond ONLY with a JSON object of the form " +
@@ -1892,9 +1906,6 @@ async function handleDetectLanguageOp(body) {
     "like 'it', 'de', 'pt-BR'. If the text is too short or ambiguous to be sure, " +
     "set confidence below 0.5 and pick your best guess.";
 
-  // First 2000 chars is plenty for language ID — Etsy customer messages
-  // rarely exceed this, and we'd rather not pay for translating a
-  // novel-length sample.
   const sample = text.slice(0, 2000);
 
   let resp;
@@ -1916,8 +1927,6 @@ async function handleDetectLanguageOp(body) {
   try {
     parsed = JSON.parse(raw);
   } catch {
-    // Defensive fallback — give the caller a low-confidence English
-    // guess so the UI flow proceeds. Re-detect on next thread open.
     console.warn("[etsyMailDraftReply detectLanguage] non-JSON model output:", raw.slice(0, 200));
     return json(200, { ok: true, language: "en", languageName: "English", confidence: 0 });
   }
@@ -1946,16 +1955,10 @@ async function handleTranslateOp(body) {
     return bad(`Input too long (${text.length} chars > ${TRANSLATE_MAX_INPUT_CHARS} max)`);
   }
 
-  // No-op fast path: source === target. The UI shouldn't normally hit
-  // this but a misconfigured caller will, and the LLM round-trip is
-  // wasted on identity translations.
   if (sourceLang && sourceLang.toLowerCase() === targetLang.toLowerCase()) {
     return json(200, { ok: true, translated: text, sourceLangDetected: sourceLang });
   }
 
-  // "Preserve formatting" matters: customer messages contain links,
-  // line breaks, and casual punctuation. Without that instruction the
-  // model occasionally tidies output in ways that degrade fidelity.
   const system =
     "You are a translator. Translate the user's text to " +
     `${targetLang}` +
@@ -1963,9 +1966,6 @@ async function handleTranslateOp(body) {
     ". Preserve formatting (line breaks, lists, URLs, emoji). Do not add " +
     "explanations, preambles, or quote marks. Output ONLY the translated text.";
 
-  // Token budget scales with input — 1.5x covers most language pairs
-  // (German/Russian expand vs English; Chinese contracts) plus a 256
-  // floor so very short inputs still have room.
   const estimatedInputTokens = Math.ceil(text.length / 4);
   const maxTokens = Math.min(
     TRANSLATE_MAX_TOKENS,
@@ -1998,6 +1998,135 @@ async function handleTranslateOp(body) {
   });
 }
 
+// ─── op:"summarizeThread" — Conversation Summary card data ─────────────
+//
+// Front-end calls this when a non-sales thread is opened. Returns a
+// compact JSON blob the inbox UI renders into a "Conversation Summary"
+// card in the right rail (mirroring the Sales Conversation card on
+// sales threads).
+//
+// Why no DB fetch: we accept the messages array directly in the body
+// rather than reading from Firestore. The inbox already has the
+// messages loaded (they're rendered in the conversation panel right
+// below the card), so passing them in saves a round-trip and keeps
+// this op as a pure transform.
+//
+// Output shape:
+//   {
+//     ok: true,
+//     intent: "shipping_question" | "refund_request" | "complaint" |
+//             "order_question" | "general_inquiry" | "praise" | "other",
+//     intentLabel: "Shipping question",      // human readable
+//     urgency: "high" | "medium" | "low",
+//     urgencyReason: "Customer threatening chargeback",  // 1-line why
+//     ask: "Wants to know if order is shipped yet",      // 1-sentence
+//     flags: ["mentions order #123", "emotional tone"],   // 0-N tags
+//     suggestedAction: "Pull tracking and reply with status"  // 1-line
+//   }
+//
+// Empty / error cases return ok:false with a reason; the front-end
+// renders a "Couldn't summarize" placeholder so the right rail isn't
+// blank-but-broken.
+async function handleSummarizeThreadOp(body) {
+  const messages = (body && body.messages) || [];
+  // Optional context to nudge the model — customerName lets it
+  // distinguish "the customer" from generic phrasing in the asks.
+  const customerName = (body && body.customerName) || "the customer";
+
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return bad("Field 'messages' is required and must be a non-empty array");
+  }
+
+  // Build a transcript. Use direction + senderName since they're the
+  // canonical fields produced by the scraper. Outbound messages are
+  // labeled "Staff" (not the actual operator name) since this is for
+  // operator consumption, not customer-facing text.
+  const lines = [];
+  for (const m of messages) {
+    if (!m || typeof m !== "object") continue;
+    const text = (m.text || "").trim();
+    if (!text) continue;
+    const isOutbound = m.direction === "outbound" || m.senderRole === "staff";
+    const who = isOutbound ? "Staff" : (m.senderName || customerName);
+    lines.push(`[${who}]: ${text}`);
+  }
+  if (!lines.length) {
+    return bad("No usable message text in 'messages' array");
+  }
+
+  let transcript = lines.join("\n\n");
+  if (transcript.length > SUMMARIZE_MAX_INPUT_CHARS) {
+    // Keep the most recent messages — they're the most relevant to "what
+    // is the customer currently asking." Older messages get truncated.
+    transcript = transcript.slice(-SUMMARIZE_MAX_INPUT_CHARS);
+  }
+
+  const system =
+    "You analyze customer-service conversations from an Etsy shop's inbox " +
+    "and produce a structured summary an operator can scan in 5 seconds. " +
+    "Respond ONLY with a JSON object — no preamble, no markdown fences. " +
+    "The JSON shape MUST be:\n" +
+    "{\n" +
+    '  "intent": "shipping_question"|"refund_request"|"complaint"|"order_question"|"general_inquiry"|"praise"|"other",\n' +
+    '  "intentLabel": "<3-5 word human label>",\n' +
+    '  "urgency": "high"|"medium"|"low",\n' +
+    '  "urgencyReason": "<1 short sentence why>",\n' +
+    '  "ask": "<1 sentence: what does the customer want right now>",\n' +
+    '  "flags": ["<0-5 short tags worth flagging: emotion, threats, deadlines, repeated asks, mentions order #, etc.>"],\n' +
+    '  "suggestedAction": "<1 sentence: what should staff do next>"\n' +
+    "}\n\n" +
+    "Guidelines:\n" +
+    "- Urgency 'high' is reserved for: chargeback threats, time-sensitive deadlines (event/birthday/wedding within ~1 week), explicit anger, repeated unanswered asks.\n" +
+    "- 'medium' for active questions where the customer is waiting on a response.\n" +
+    "- 'low' for already-resolved threads, praise, FYI messages, or polite waiting.\n" +
+    "- 'ask' should be in the customer's voice but paraphrased ('Wants tracking for order #123' not 'where is my order?').\n" +
+    "- 'flags' MUST be an array; empty [] is fine when nothing notable.";
+
+  let resp;
+  try {
+    resp = await callClaudeRaw({
+      model       : SUMMARIZE_MODEL,
+      maxTokens   : SUMMARIZE_MAX_TOKENS,
+      system,
+      messages    : [{ role: "user", content: transcript }],
+      useThinking : false
+    });
+  } catch (err) {
+    console.error("[etsyMailDraftReply summarizeThread] callClaude failed:", err.message);
+    return json(502, { error: "Summarization failed: " + (err.message || String(err)) });
+  }
+
+  const raw = _translateCleanModelText(_translateFirstTextBlock(resp));
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    console.warn("[etsyMailDraftReply summarizeThread] non-JSON output:", raw.slice(0, 300));
+    return json(502, { error: "Model returned non-JSON output", raw: raw.slice(0, 300) });
+  }
+
+  // Normalize / sanity-check the parsed payload. Defensive — bad model
+  // output shouldn't crash the front-end render.
+  const validIntents = new Set([
+    "shipping_question", "refund_request", "complaint",
+    "order_question", "general_inquiry", "praise", "other"
+  ]);
+  const validUrgency = new Set(["high", "medium", "low"]);
+  const out = {
+    intent          : validIntents.has(parsed.intent) ? parsed.intent : "other",
+    intentLabel     : String(parsed.intentLabel || "Conversation").slice(0, 60),
+    urgency         : validUrgency.has(parsed.urgency) ? parsed.urgency : "low",
+    urgencyReason   : String(parsed.urgencyReason || "").slice(0, 200),
+    ask             : String(parsed.ask || "").slice(0, 300),
+    flags           : Array.isArray(parsed.flags)
+      ? parsed.flags.filter(f => typeof f === "string").slice(0, 5).map(f => f.slice(0, 60))
+      : [],
+    suggestedAction : String(parsed.suggestedAction || "").slice(0, 300)
+  };
+
+  return json(200, { ok: true, ...out });
+}
+
 // ─── Main handler ───────────────────────────────────────────────────────
 
 exports.handler = async (event) => {
@@ -2016,13 +2145,14 @@ exports.handler = async (event) => {
   try { body = JSON.parse(event.body || "{}"); }
   catch { return bad("Invalid JSON body"); }
 
-  // v3.7 — Translation ops are routed here BEFORE the draft-reply path.
-  // They have a distinct payload shape (no threadId, plain text/targetLang)
-  // and use a much cheaper model. Falling through to the draft-reply
-  // logic would 400 on the missing threadId.
+  // v3.7+ — Lightweight ops routed BEFORE the draft-reply path. They
+  // have distinct payload shapes (no threadId required, plain text in)
+  // and use a much cheaper model. Falling through to draft-reply would
+  // 400 on missing threadId.
   const op = (body.op || "").toLowerCase();
-  if (op === "detectlanguage") return await handleDetectLanguageOp(body);
-  if (op === "translate")      return await handleTranslateOp(body);
+  if (op === "detectlanguage")    return await handleDetectLanguageOp(body);
+  if (op === "translate")         return await handleTranslateOp(body);
+  if (op === "summarizethread")   return await handleSummarizeThreadOp(body);
 
   const {
     threadId,
