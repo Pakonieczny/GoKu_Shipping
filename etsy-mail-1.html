@@ -2868,6 +2868,207 @@
       }
     }
 
+    /** v4.0 — Universal Conversation Summary card.
+     *
+     *  Renders into the same mount as the Sales card (#emSalesCardMount).
+     *  Used for threads that have no SalesContext / salesHistory — i.e.
+     *  support tickets, general inquiries, complaints, post-purchase
+     *  questions, anything that isn't a sales funnel.
+     *
+     *  Calls the summarizeThread op (in etsyMailDraftReply backend, Haiku)
+     *  with the in-memory state.messages payload. Caches the result on
+     *  state._summaryCache, keyed by `threadId + lastMessageMs`, so:
+     *    - Reopening the same thread without new messages = instant.
+     *    - A new inbound message bumps lastMessageMs and forces a refresh.
+     *    - Cache lives only in this session (per operator preference);
+     *      no Firestore write.
+     *
+     *  Anti-flicker: paints the loading state IMMEDIATELY on first call
+     *  for a thread, then swaps in the resolved card. On a cache hit the
+     *  resolved card paints in one frame.
+     */
+
+    // Per-session in-memory cache. Map keyed by `threadId|lastMessageMs`.
+    // Bound is implicit — operator typically opens dozens of threads per
+    // session, not millions; no LRU needed.
+    if (!state._summaryCache) state._summaryCache = new Map();
+    // v4.0.1 — Per-key in-flight promise registry. Two callers can race
+    // to summarize the same thread+messageMs key (the message poll loop
+    // calls renderSalesCardForThread, AND fetchMessagesNow now also
+    // triggers it on every poll). Without de-dupe, both miss the cache
+    // and fire concurrent Haiku calls, double-billing. With this map,
+    // the second caller awaits the first's pending promise.
+    if (!state._summaryInFlight) state._summaryInFlight = new Map();
+
+    /** Compute the cache key for a thread. Uses the most-recent message
+     *  timestamp so a new inbound invalidates the prior summary. Returns
+     *  null when there are no messages (= no summary possible). */
+    function _summaryCacheKey(threadId) {
+      const msgs = state.messages || [];
+      if (!msgs.length) return null;
+      let latestMs = 0;
+      for (const m of msgs) {
+        const v = m && (m.timestamp || m.createdAt);
+        let ms = 0;
+        if (typeof v === "number") ms = v;
+        else if (v && typeof v === "object" && v._ts && typeof v.ms === "number") ms = v.ms;
+        else if (v instanceof Date) ms = v.getTime();
+        else if (typeof v === "string") { const d = new Date(v); if (!isNaN(d.getTime())) ms = d.getTime(); }
+        else if (v && typeof v.toMillis === "function") { try { ms = v.toMillis(); } catch {} }
+        if (ms > latestMs) latestMs = ms;
+      }
+      return `${threadId}|${latestMs}`;
+    }
+
+    /** Build the card HTML from a summary payload. Pure render — no
+     *  network or state mutation. Centralizing here so the loading
+     *  state, error state, and resolved state share visual structure. */
+    function _renderSummaryCardHtml(summary, opts = {}) {
+      const isLoading = !!opts.loading;
+      const errorMsg  = opts.error || null;
+
+      // Urgency → color treatment. high = red border, medium = yellow,
+      // low = neutral. Mirrors the inbox's existing pill semantics.
+      const urgencyTint = (() => {
+        if (isLoading || errorMsg) return { border: "#d0d7de", bg: "#f6f8fa", chipBg: "#eaeef2", chipColor: "#57606a", label: "—" };
+        switch ((summary && summary.urgency) || "low") {
+          case "high":   return { border: "#cf222e", bg: "#fff8f8", chipBg: "#f5e3e3", chipColor: "#82071e", label: "HIGH" };
+          case "medium": return { border: "#d4a72c", bg: "#fffaf0", chipBg: "#fff4d6", chipColor: "#7d4e00", label: "MEDIUM" };
+          default:       return { border: "#d0d7de", bg: "#f6f8fa", chipBg: "#d8e9dc", chipColor: "#0a4a23", label: "LOW" };
+        }
+      })();
+
+      const headerInner = isLoading
+        ? '<i class="material-icons" style="font-size:18px; color:#0969da;">summarize</i> Conversation summary <span class="em-muted" style="font-size:11px; font-weight:400; margin-left:auto;">analyzing…</span>'
+        : '<i class="material-icons" style="font-size:18px; color:#0969da;">summarize</i> Conversation summary';
+
+      let bodyHtml;
+      if (isLoading) {
+        bodyHtml = '<div class="em-muted" style="font-size:12px; padding:8px 0;">Reading the conversation and identifying intent, urgency, and the customer\'s ask…</div>';
+      } else if (errorMsg) {
+        bodyHtml = '<div style="font-size:12px; color:#82071e;">Couldn\'t generate a summary: ' + esc(errorMsg) + '</div>';
+      } else {
+        const flagsHtml = (summary.flags && summary.flags.length)
+          ? '<div style="margin-top:8px; display:flex; gap:4px; flex-wrap:wrap;">' +
+            summary.flags.map(f =>
+              '<span style="font-size:10px; padding:2px 6px; background:#eaeef2; color:#57606a; border-radius:3px;">' + esc(f) + '</span>'
+            ).join("") +
+            '</div>'
+          : "";
+        bodyHtml =
+          '<div style="display:grid; grid-template-columns:auto 1fr; gap:6px 10px; font-size:12px; line-height:1.5;">' +
+            '<div style="color:#57606a; font-weight:600;">Intent</div>' +
+            '<div>' + esc(summary.intentLabel || "—") + '</div>' +
+            '<div style="color:#57606a; font-weight:600;">Urgency</div>' +
+            '<div><span style="display:inline-block; padding:1px 6px; font-size:10px; font-weight:600; background:' + urgencyTint.chipBg + '; color:' + urgencyTint.chipColor + '; border-radius:3px; margin-right:6px;">' + urgencyTint.label + '</span>' +
+            (summary.urgencyReason ? '<span style="color:#57606a;">' + esc(summary.urgencyReason) + '</span>' : '') +
+            '</div>' +
+            (summary.ask ? '<div style="color:#57606a; font-weight:600;">Customer\'s ask</div><div>' + esc(summary.ask) + '</div>' : '') +
+            (summary.suggestedAction ? '<div style="color:#57606a; font-weight:600;">Suggested next</div><div>' + esc(summary.suggestedAction) + '</div>' : '') +
+          '</div>' +
+          flagsHtml;
+      }
+
+      return (
+        '<div class="em-card" style="background:' + urgencyTint.bg + '; border-left:4px solid ' + urgencyTint.border + ';">' +
+          '<h4 style="display:flex; align-items:center; gap:6px;">' + headerInner + '</h4>' +
+          bodyHtml +
+        '</div>'
+      );
+    }
+
+    async function renderConversationSummaryCard(threadId) {
+      const mount = $("emSalesCardMount");
+      if (!mount) return;
+
+      // No messages yet → nothing to summarize. Leave the rail empty.
+      if (!state.messages || !state.messages.length) {
+        mount.innerHTML = "";
+        return;
+      }
+
+      const cacheKey = _summaryCacheKey(threadId);
+
+      // Cache hit — paint immediately, no network.
+      if (cacheKey && state._summaryCache.has(cacheKey)) {
+        mount.innerHTML = _renderSummaryCardHtml(state._summaryCache.get(cacheKey));
+        return;
+      }
+
+      // Cache miss — paint loading state, then call backend.
+      mount.innerHTML = _renderSummaryCardHtml(null, { loading: true });
+
+      // Build a sanitized message list for the backend. Pass only the
+      // fields the summarize prompt needs (text, direction, senderName).
+      // Cap at 100 messages — older context rarely changes the summary
+      // and saves tokens on long-running threads.
+      const trimmed = state.messages.slice(-100).map(m => ({
+        text       : m.text || "",
+        direction  : m.direction || "",
+        senderName : m.senderName || "",
+        senderRole : m.senderRole || ""
+      }));
+
+      // Pull the customerName from state.threads if available — gives
+      // the model a better grasp of who's asking.
+      const t = state.threads && state.threads.find(x => x && x.id === threadId);
+      const customerName = (t && t.customerName) || null;
+
+      // v4.0.1 — De-dupe concurrent calls for the same cache key. The
+      // poll loop and the messages-loaded path can both arrive here
+      // within the same render frame; we want only ONE Haiku call.
+      // Subsequent callers await the same promise.
+      let inFlightPromise = cacheKey ? state._summaryInFlight.get(cacheKey) : null;
+      if (!inFlightPromise) {
+        inFlightPromise = (async () => {
+          const res = await api("etsyMailDraftReply", {
+            method: "POST",
+            body  : {
+              op           : "summarizeThread",
+              messages     : trimmed,
+              customerName : customerName
+            }
+          });
+          if (!res || !res.ok) {
+            throw new Error((res && res.error) || "Summary returned no result");
+          }
+          return {
+            intent          : res.intent,
+            intentLabel     : res.intentLabel,
+            urgency         : res.urgency,
+            urgencyReason   : res.urgencyReason,
+            ask             : res.ask,
+            flags           : res.flags || [],
+            suggestedAction : res.suggestedAction
+          };
+        })();
+        if (cacheKey) state._summaryInFlight.set(cacheKey, inFlightPromise);
+      }
+
+      let summary;
+      try {
+        summary = await inFlightPromise;
+      } catch (e) {
+        if (cacheKey) state._summaryInFlight.delete(cacheKey);
+        // Render an inline error card. Don't toast — toasting on every
+        // thread-open if the backend is down would spam the operator.
+        if (state.selectedId === threadId) {
+          mount.innerHTML = _renderSummaryCardHtml(null, { error: e.message || String(e) });
+        }
+        return;
+      }
+      // Clear the in-flight slot once resolved. The cache still holds
+      // the result for instant subsequent reads.
+      if (cacheKey) state._summaryInFlight.delete(cacheKey);
+
+      // If the operator switched threads while the request was in flight,
+      // don't paint the stale result.
+      if (state.selectedId !== threadId) return;
+
+      if (cacheKey) state._summaryCache.set(cacheKey, summary);
+      mount.innerHTML = _renderSummaryCardHtml(summary);
+    }
+
     /** Render the sales context panel into emSalesCardMount. Hides it
      *  if no SalesContext exists.
      *
@@ -2949,8 +3150,16 @@
       }
 
       if (!ctx && archivedRounds.length === 0) {
-        // Nothing to render at all.
-        mount.innerHTML = "";
+        // v4.0 — No sales context or sales history → this is a non-sales
+        // thread (support, general inquiry, complaint, etc.). Render the
+        // universal Conversation Summary card instead of leaving the
+        // right rail empty. The summary card hits Haiku via the
+        // summarizeThread op and gives operators an at-a-glance read on
+        // intent, urgency, the customer's actual ask, and a suggested
+        // next action.
+        renderConversationSummaryCard(threadId).catch((e) => {
+          console.warn("[summary card] render failed:", e.message);
+        });
         return;
       }
 
@@ -5890,6 +6099,15 @@
         if (state.selectedId !== threadId) return;
         state.messages = data.docs || [];
         renderThreadMessages();
+        // v4.0 — re-render the right-rail card now that messages are
+        // loaded. For sales threads this is a no-op (sales card doesn't
+        // depend on messages). For non-sales threads, this is what
+        // populates the Conversation Summary card on first load —
+        // renderDetail's initial render fires before messages are
+        // available and bails early. The summary card's own cache
+        // (keyed by threadId+lastMessageMs) prevents redundant Haiku
+        // calls on the 4s message poll.
+        renderSalesCardForThread(threadId).catch(() => {});
       } catch (e) {
         console.warn("messages fetch failed:", e.message);
       } finally {
