@@ -442,8 +442,22 @@ async function handleRemoveOperator(event, body) {
   const sess = await requireOwnerSession(event);
   if (!sess.ok) return json(403, { error: "Owner role required", reason: sess.reason });
 
-  const username = String(body.username || "").trim().toLowerCase();
-  if (!isValidUsername(username)) return bad("Invalid username");
+  // v4.1.1 — Remove must be permissive about what username it accepts.
+  // The doc ID in Firestore is whatever string was used to create the
+  // record, which may include legacy entries with capitals or spaces
+  // (e.g. an operator created out-of-band before username validation
+  // existed, or via direct Firestore-console editing). The strict
+  // validator is right for ADD (we want clean data going in) but
+  // wrong for REMOVE (we need to clean out whatever's already there).
+  // We only require:
+  //   - non-empty after trim
+  //   - <= 200 chars (Firestore doc ID limit is 1500 bytes; 200 chars
+  //     is plenty and protects against absurd input)
+  // We do NOT lowercase — Firestore doc IDs are case-sensitive, and
+  // lowercasing the lookup would miss "Paul K" while finding "paul".
+  const username = String(body.username || "").trim();
+  if (!username) return bad("username required");
+  if (username.length > 200) return bad("username too long");
 
   if (username === sess.username) {
     return bad("You cannot remove your own account");
@@ -458,15 +472,31 @@ async function handleRemoveOperator(event, body) {
     // Don't let the last remaining owner be removed.
     const owners = await db.collection(OPERATORS_COLL).where("role", "==", "owner").get();
     const activeOwners = owners.docs.filter(d => !(d.data() || {}).revokedAt);
-    if (activeOwners.length <= 1) {
-      return bad("Cannot remove the last remaining owner");
+    // Count this doc as one of the active owners only if it's currently
+    // active; if it's already revoked, removing it again doesn't reduce
+    // the active-owner count.
+    const isCurrentlyActive = !data.revokedAt;
+    const activeCountAfter = activeOwners.length - (isCurrentlyActive ? 1 : 0);
+    if (activeCountAfter < 1) {
+      return bad("Cannot remove the last remaining active owner");
     }
   }
 
-  await ref.set({
-    revokedAt: FV.serverTimestamp(),
-    revokedBy: sess.username
-  }, { merge: true });
+  // For malformed legacy docs (e.g. ones lacking passwordHash / created
+  // outside the addOperator path), do a HARD delete instead of soft-
+  // revoke. Soft-revoke leaves the row in the listOperators output
+  // forever, which is what's frustrating you right now. Real operator
+  // accounts that have been used (passwordHash present + a lastLoginAt)
+  // get soft-revoked so the audit trail is preserved.
+  const isLegacyMalformed = !data.passwordHash || !data.salt;
+  if (isLegacyMalformed) {
+    await ref.delete();
+  } else {
+    await ref.set({
+      revokedAt: FV.serverTimestamp(),
+      revokedBy: sess.username
+    }, { merge: true });
+  }
 
   invalidateRoleCache(username);
   const killedSessions = await deleteSessionsForUser(username);
@@ -474,18 +504,23 @@ async function handleRemoveOperator(event, body) {
   await writeAudit({
     eventType: "operator_removed",
     actor: sess.username,
-    payload: { username, killedSessions }
+    payload: { username, killedSessions, hardDeleted: isLegacyMalformed }
   });
-  return json(200, { ok: true, killedSessions });
+  return json(200, { ok: true, killedSessions, hardDeleted: isLegacyMalformed });
 }
 
 async function handleResetOperatorPassword(event, body) {
   const sess = await requireOwnerSession(event);
   if (!sess.ok) return json(403, { error: "Owner role required", reason: sess.reason });
 
-  const username = String(body.username || "").trim().toLowerCase();
+  // v4.1.1 — Same permissive-lookup rule as handleRemoveOperator.
+  // We're operating on an existing doc by ID; that ID can be anything
+  // the original creator put there. Strict validation belongs on the
+  // add path, not on lookups against existing rows.
+  const username = String(body.username || "").trim();
+  if (!username) return bad("username required");
+  if (username.length > 200) return bad("username too long");
   const newPassword = String(body.newPassword || "");
-  if (!isValidUsername(username)) return bad("Invalid username");
   if (newPassword.length < 8) return bad("New password must be at least 8 characters");
 
   const ref = db.collection(OPERATORS_COLL).doc(username);
