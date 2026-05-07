@@ -2886,19 +2886,14 @@
      *  Anti-flicker: paints the loading state IMMEDIATELY on first call
      *  for a thread, then swaps in the resolved card. On a cache hit the
      *  resolved card paints in one frame.
+     *
+     *  Cache state lives on `state._summaryCache` (Map keyed by
+     *  `threadId|lastMessageMs`) and `state._summaryInFlight` (Map of
+     *  in-flight promises for de-duping concurrent callers). Both are
+     *  lazily initialized inside renderConversationSummaryCard rather
+     *  than at module scope, since `state` itself is declared further
+     *  down with `const` and would be in the temporal dead zone here.
      */
-
-    // Per-session in-memory cache. Map keyed by `threadId|lastMessageMs`.
-    // Bound is implicit — operator typically opens dozens of threads per
-    // session, not millions; no LRU needed.
-    if (!state._summaryCache) state._summaryCache = new Map();
-    // v4.0.1 — Per-key in-flight promise registry. Two callers can race
-    // to summarize the same thread+messageMs key (the message poll loop
-    // calls renderSalesCardForThread, AND fetchMessagesNow now also
-    // triggers it on every poll). Without de-dupe, both miss the cache
-    // and fire concurrent Haiku calls, double-billing. With this map,
-    // the second caller awaits the first's pending promise.
-    if (!state._summaryInFlight) state._summaryInFlight = new Map();
 
     /** Compute the cache key for a thread. Uses the most-recent message
      *  timestamp so a new inbound invalidates the prior summary. Returns
@@ -2980,6 +2975,16 @@
     async function renderConversationSummaryCard(threadId) {
       const mount = $("emSalesCardMount");
       if (!mount) return;
+
+      // Lazy-init the per-session caches on `state`. We do it here (not
+      // at module scope) because `state` is declared with `const` lower
+      // in the file — touching it during script parse hits the
+      // temporal dead zone and throws ReferenceError before anything
+      // can render.
+      //   _summaryCache    : Map<key, summary>           — completed results
+      //   _summaryInFlight : Map<key, Promise<summary>>  — in-flight de-dupe
+      if (!state._summaryCache)    state._summaryCache    = new Map();
+      if (!state._summaryInFlight) state._summaryInFlight = new Map();
 
       // No messages yet → nothing to summarize. Leave the rail empty.
       if (!state.messages || !state.messages.length) {
