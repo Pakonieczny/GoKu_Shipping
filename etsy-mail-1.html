@@ -1839,6 +1839,41 @@
     <button id="emKillSwitchEnableBtn" title="Re-enable sending (operator only)">Re-enable</button>
   </div>
 
+  <!-- v4.1 — Login modal. Shown when no valid session token exists in
+       localStorage. Outer gating remains the X-EtsyMail-Secret modal
+       (which appears first if the secret isn't configured); login is
+       layered on top of that, identifying which operator is using this
+       browser. Token + display name persist in localStorage. -->
+  <div id="emLoginModal" class="em-modal-backdrop">
+    <div class="em-modal" style="max-width:420px;">
+      <h2>Sign in</h2>
+      <p style="font-size:12px; color:#57606a; margin:0 0 14px;">
+        Enter your operator username and password. Sessions last 30 days
+        per browser.
+      </p>
+      <form id="emLoginForm" autocomplete="on">
+        <label for="emLoginUsername" style="font-size:12px; font-weight:600;">Username</label>
+        <input type="text" id="emLoginUsername" autocomplete="username"
+               autocapitalize="off" autocorrect="off" spellcheck="false"
+               style="width:100%; padding:6px 10px; margin:4px 0 12px; border:1px solid #d0d7de; border-radius:4px; font-size:13px;" />
+
+        <label for="emLoginPassword" style="font-size:12px; font-weight:600;">Password</label>
+        <input type="password" id="emLoginPassword" autocomplete="current-password"
+               style="width:100%; padding:6px 10px; margin:4px 0 14px; border:1px solid #d0d7de; border-radius:4px; font-size:13px;" />
+
+        <div class="em-modal-error" id="emLoginError"></div>
+        <div class="em-modal-buttons">
+          <button type="submit" id="emLoginSubmitBtn" class="primary">Sign in</button>
+        </div>
+      </form>
+      <p id="emLoginNoOwnerHint" style="font-size:11px; color:#6a737d; margin:14px 0 0; display:none;">
+        First-time setup? You'll need to seed an owner account once via the
+        <code>etsyMailAuth</code> endpoint or the Operators section after
+        the first owner logs in.
+      </p>
+    </div>
+  </div>
+
   <!-- v0.9.1 #1: Secret setup modal (shown on first 401 or via Settings) -->
   <div id="emSecretModal" class="em-modal-backdrop">
     <div class="em-modal">
@@ -1849,6 +1884,40 @@
         <label for="emSecretInput">X-EtsyMail-Secret</label>
         <input type="password" id="emSecretInput" placeholder="paste your secret" autocomplete="off" />
 
+        <!-- v4.1 — My Account section. Visible to ALL operators (owner +
+             satellite). Shows who's signed in, lets them change their
+             password, and sign out. The satellite banner below appears
+             only when role !== "owner". -->
+        <hr style="margin:18px 0 10px;border:none;border-top:1px solid #e1e4e8;">
+        <p style="margin-bottom:4px;"><b>My account</b></p>
+        <div id="emMyAccountBlock" style="margin:6px 0 10px; padding:8px 12px; background:#f6f8fa; border-radius:4px;">
+          <div id="emMyAccountInfo" style="font-size:12px; margin:0 0 6px;">
+            <span class="em-muted">Loading…</span>
+          </div>
+          <div style="display:flex; flex-wrap:wrap; gap:8px;">
+            <button type="button" id="emChangeMyPasswordBtn"
+                    style="padding:4px 10px; font-size:11px; background:#fff; color:#0969da; border:1px solid #0969da; border-radius:3px; cursor:pointer;">
+              Change my password
+            </button>
+            <button type="button" id="emSignOutBtn"
+                    style="padding:4px 10px; font-size:11px; background:#fff; color:#cf222e; border:1px solid #cf222e; border-radius:3px; cursor:pointer;">
+              Sign out
+            </button>
+          </div>
+        </div>
+
+        <!-- v4.1 — Banner shown to satellite operators explaining why
+             several Settings sections aren't visible to them. Hidden by
+             applyRoleVisibility() when role === "owner". -->
+        <div id="emSatelliteSettingsBanner" style="margin:8px 0 14px; padding:8px 12px; background:#fff8c5; border-left:3px solid #d4a72c; border-radius:3px; font-size:11px; color:#7d4e00; display:none;">
+          <b>Satellite operator view.</b> Some settings (Gmail watcher, catalog mirror, agent prompts, master purge, operator management) are owner-only and hidden from your view.
+        </div>
+
+        <!-- v4.1 — All sections below are owner-only. Hidden via
+             data-owner-only="true" by applyRoleVisibility(). The single
+             wrapper keeps the markup tidy; if a satellite-eligible
+             setting is added later, place it OUTSIDE this wrapper. -->
+        <div data-owner-only="true">
         <hr style="margin:18px 0 10px;border:none;border-top:1px solid #e1e4e8;">
         <p style="margin-bottom:4px;"><b>Auto-pipeline</b> <span class="em-muted" style="font-weight:400;font-size:11px;">— shared with all operators (stored in Firestore)</span></p>
 
@@ -2065,6 +2134,24 @@
 
         <p id="emAutoCfgMeta" style="font-size:10px;color:#6a737d;margin:0 0 8px;font-style:italic;"></p>
 
+        <!-- v4.1 — Operator management. Owner-only (the entire wrapper is
+             data-owner-only). Lets the owner add/remove operator accounts
+             and reset passwords. Satellite operators never see this block. -->
+        <hr style="margin:18px 0 10px;border:none;border-top:1px solid #e1e4e8;">
+        <p style="margin-bottom:4px;"><b>Operators</b> <span class="em-muted" style="font-weight:400;font-size:11px;">— manage who can sign in</span></p>
+        <p style="font-size:12px;margin:0 0 8px;">
+          Add satellite operators here so they can sign in from their own browsers. They get full inbox access (read/send/move/delete) but cannot open Settings sections you see in this view.
+        </p>
+        <div id="emOperatorsList" style="margin:0 0 10px; font-size:12px;">
+          <span class="em-muted">Loading…</span>
+        </div>
+        <button type="button" id="emAddOperatorBtn"
+                style="padding:4px 10px; font-size:11px; background:#fff; color:#1a7f37; border:1px solid #1a7f37; border-radius:3px; cursor:pointer;">
+          + Add operator
+        </button>
+
+        </div>  <!-- end data-owner-only wrapper -->
+
         <div class="em-modal-error" id="emSecretError"></div>
         <div class="em-modal-buttons">
           <button type="button" id="emSecretCancelBtn">Cancel</button>
@@ -2179,6 +2266,82 @@
       <div class="em-modal-buttons">
         <button type="button" id="emMpResetCancelBtn">Cancel</button>
         <button type="button" id="emMpResetConfirmBtn" class="primary">Reset password</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- v4.1 — Add Operator modal. Owner-only flow; the entry button
+       lives inside the data-owner-only wrapper, so satellites can't
+       reach it. Three required fields plus role select. Owner cannot
+       create another owner-revoking situation; the backend prevents
+       removing the last owner separately. -->
+  <div id="emAddOperatorModal" class="em-modal-backdrop">
+    <div class="em-modal" style="max-width:480px;">
+      <h2>Add operator</h2>
+      <p style="font-size:12px;color:#57606a;margin:0 0 14px;">
+        Create a new operator account. They'll sign in with the username
+        and password you set here, then can change their password from
+        their own My Account.
+      </p>
+
+      <label for="emAddOpUsername" style="font-size:12px; font-weight:600;">Username</label>
+      <input type="text" id="emAddOpUsername" autocomplete="off"
+             autocapitalize="off" autocorrect="off" spellcheck="false"
+             placeholder="e.g. sarah"
+             style="width:100%; padding:6px 10px; margin:4px 0 4px; border:1px solid #d0d7de; border-radius:4px; font-size:13px;" />
+      <p style="font-size:11px;color:#6a737d;margin:0 0 12px;">3-32 chars; lowercase letters, numbers, underscore, dash.</p>
+
+      <label for="emAddOpDisplayName" style="font-size:12px; font-weight:600;">Display name</label>
+      <input type="text" id="emAddOpDisplayName" autocomplete="off" placeholder="e.g. Sarah Smith"
+             style="width:100%; padding:6px 10px; margin:4px 0 12px; border:1px solid #d0d7de; border-radius:4px; font-size:13px;" />
+
+      <label for="emAddOpRole" style="font-size:12px; font-weight:600;">Role</label>
+      <select id="emAddOpRole"
+              style="width:100%; padding:6px 10px; margin:4px 0 12px; border:1px solid #d0d7de; border-radius:4px; font-size:13px;">
+        <option value="operator">Operator (satellite — full inbox access, no Settings)</option>
+        <option value="owner">Owner (everything you can do)</option>
+      </select>
+
+      <label for="emAddOpPassword" style="font-size:12px; font-weight:600;">Initial password (min 8 chars)</label>
+      <input type="password" id="emAddOpPassword" autocomplete="new-password"
+             style="width:100%; padding:6px 10px; margin:4px 0 12px; border:1px solid #d0d7de; border-radius:4px; font-size:13px;" />
+
+      <div class="em-modal-error" id="emAddOpError"></div>
+      <div class="em-modal-buttons">
+        <button type="button" id="emAddOpCancelBtn">Cancel</button>
+        <button type="button" id="emAddOpSubmitBtn" class="primary">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- v4.1 — Change-my-password modal. Visible to ALL operators (entry
+       button lives in My Account, outside the owner-only wrapper). The
+       operator must prove knowledge of their current password. All other
+       sessions for that user are revoked on success. -->
+  <div id="emChangePasswordModal" class="em-modal-backdrop">
+    <div class="em-modal" style="max-width:440px;">
+      <h2>Change my password</h2>
+      <p style="font-size:12px;color:#57606a;margin:0 0 14px;">
+        Enter your current password, then a new one. Other browsers
+        signed in as you will be signed out automatically.
+      </p>
+
+      <label for="emCpCurrent" style="font-size:12px; font-weight:600;">Current password</label>
+      <input type="password" id="emCpCurrent" autocomplete="current-password"
+             style="width:100%; padding:6px 10px; margin:4px 0 12px; border:1px solid #d0d7de; border-radius:4px; font-size:13px;" />
+
+      <label for="emCpNew" style="font-size:12px; font-weight:600;">New password (min 8 chars)</label>
+      <input type="password" id="emCpNew" autocomplete="new-password"
+             style="width:100%; padding:6px 10px; margin:4px 0 12px; border:1px solid #d0d7de; border-radius:4px; font-size:13px;" />
+
+      <label for="emCpConfirm" style="font-size:12px; font-weight:600;">Confirm new password</label>
+      <input type="password" id="emCpConfirm" autocomplete="new-password"
+             style="width:100%; padding:6px 10px; margin:4px 0 14px; border:1px solid #d0d7de; border-radius:4px; font-size:13px;" />
+
+      <div class="em-modal-error" id="emCpError"></div>
+      <div class="em-modal-buttons">
+        <button type="button" id="emCpCancelBtn">Cancel</button>
+        <button type="button" id="emCpSubmitBtn" class="primary">Change password</button>
       </div>
     </div>
   </div>
@@ -3948,7 +4111,14 @@
       translateView       : false,
       translatedTexts     : new Map(),
       translatingNow      : false,
-      composerTranslation : null
+      composerTranslation : null,
+
+      // v4.1 — Auth state. Populated by bootstrapSession on page load
+      // and by handleLoginSubmit. Cleared by handleLogout.
+      //   currentUser : { username, displayName, role } | null
+      //   isOwner     : convenience boolean
+      currentUser : null,
+      isOwner     : false
     };
 
     const THREADS_PER_PAGE = 100;
@@ -4085,6 +4255,13 @@
       const secret = (typeof localStorage !== "undefined") &&
                      localStorage.getItem("etsymail_secret");
       if (secret) opts.headers["X-EtsyMail-Secret"] = secret;
+      // v4.1 — Forward the session token if logged in. Backend uses it
+      // to derive the canonical actor (instead of trusting client-
+      // supplied `actor` strings) and to gate owner-only ops via
+      // requireOwnerSession.
+      const sessionToken = (typeof localStorage !== "undefined") &&
+                           localStorage.getItem("etsymail_session");
+      if (sessionToken) opts.headers["X-EtsyMail-Session"] = sessionToken;
       if (body) opts.body = JSON.stringify(body);
       const res = await fetch(url, opts);
       const text = await res.text();
@@ -4092,8 +4269,29 @@
       try { data = JSON.parse(text); } catch { data = { raw: text }; }
       if (!res.ok) {
         // v0.9.1 #1: 401 → secret missing or wrong → prompt operator
+        // v4.1 — distinguish between secret-401 and session-401. Both
+        // produce 401, but the cure is different (secret modal vs login
+        // modal). The auth endpoint returns reason codes from
+        // requireSession (NO_SESSION_TOKEN, SESSION_EXPIRED, etc.) when
+        // it's a session problem; secret problems have no reason.
         if (res.status === 401) {
-          showSecretSetupModal(data && data.error);
+          const reason = data && data.reason;
+          const isSessionProblem = reason && (
+            reason === "NO_SESSION_TOKEN" ||
+            reason === "SESSION_NOT_FOUND" ||
+            reason === "SESSION_EXPIRED" ||
+            reason === "OPERATOR_REVOKED" ||
+            reason === "OPERATOR_NOT_FOUND"
+          );
+          if (isSessionProblem) {
+            // Drop the bad token and bounce to the login modal.
+            try { localStorage.removeItem("etsymail_session"); } catch {}
+            try { localStorage.removeItem("etsymail_session_user"); } catch {}
+            if (typeof showLoginModal === "function") showLoginModal();
+          } else {
+            // Secret-side problem — the bootstrap path.
+            showSecretSetupModal(data && data.error);
+          }
         }
         const err = new Error(data.error || `${name} ${res.status}`);
         err.status = res.status;
@@ -4483,6 +4681,228 @@
       }
     }
 
+    /* ── v4.1 — My Account + Operators list helpers ──────────────────
+     * Three loaders + four modal helpers, all reachable only after
+     * bootstrapSession resolves a valid session (otherwise the operator
+     * is bounced to the login modal before they reach Settings). The
+     * loaders are best-effort: errors render an inline message without
+     * blocking the rest of the Settings modal.
+     */
+
+    function populateMyAccountInfo() {
+      const el = $("emMyAccountInfo");
+      if (!el) return;
+      const u = state.currentUser;
+      if (!u) {
+        el.innerHTML = '<span class="em-muted">Not signed in.</span>';
+        return;
+      }
+      const roleLabel = u.role === "owner"
+        ? '<span style="font-weight:600; color:#0a4a23;">Owner</span>'
+        : '<span style="color:#57606a;">Operator (satellite)</span>';
+      el.innerHTML =
+        '<div>Signed in as <b>' + esc(u.displayName || u.username) + '</b> ' +
+        '<span class="em-muted">(' + esc(u.username) + ')</span> · ' + roleLabel + '</div>';
+    }
+
+    async function loadOperatorsList() {
+      const list = $("emOperatorsList");
+      if (!list) return;
+      list.innerHTML = '<span class="em-muted">Loading…</span>';
+      try {
+        const res = await api("etsyMailAuth", {
+          method: "POST",
+          body  : { op: "listOperators" }
+        });
+        if (!res || !res.ok || !Array.isArray(res.operators)) {
+          throw new Error("Unexpected listOperators response");
+        }
+        const me = state.currentUser ? state.currentUser.username : null;
+        // Show active operators first, then any revoked entries (greyed).
+        const sorted = res.operators.slice().sort((a, b) => {
+          if (!!a.revoked !== !!b.revoked) return a.revoked ? 1 : -1;
+          return (a.username || "").localeCompare(b.username || "");
+        });
+        if (sorted.length === 0) {
+          list.innerHTML = '<span class="em-muted">No operators yet. Click "Add operator" below.</span>';
+          return;
+        }
+        let html = '<div style="display:flex; flex-direction:column; gap:4px;">';
+        for (const op of sorted) {
+          const isMe = me && op.username === me;
+          const isOwner = op.role === "owner";
+          const revoked = !!op.revoked;
+          const lastLogin = op.lastLoginAt ? new Date(op.lastLoginAt).toLocaleString() : "—";
+          const roleChip = isOwner
+            ? '<span style="font-size:10px; padding:1px 6px; background:#d8e9dc; color:#0a4a23; border-radius:3px; font-weight:600; margin-left:6px;">OWNER</span>'
+            : '<span style="font-size:10px; padding:1px 6px; background:#eaeef2; color:#57606a; border-radius:3px; font-weight:500; margin-left:6px;">OPERATOR</span>';
+          const actionsHtml = revoked
+            ? '<span style="font-size:11px; color:#cf222e; font-style:italic;">revoked</span>'
+            : (isMe
+                ? '<span class="em-muted" style="font-size:11px;">(this is you)</span>'
+                : (
+                    '<button type="button" class="em-op-action em-op-reset-btn" data-username="' + esc(op.username) + '" ' +
+                      'style="padding:2px 8px; font-size:11px; background:#fff; border:1px solid #d0d7de; border-radius:3px; cursor:pointer; margin-right:4px;">Reset password</button>' +
+                    '<button type="button" class="em-op-action em-op-remove-btn" data-username="' + esc(op.username) + '" data-role="' + esc(op.role) + '" ' +
+                      'style="padding:2px 8px; font-size:11px; background:#fff; color:#cf222e; border:1px solid #cf222e; border-radius:3px; cursor:pointer;">Remove</button>'
+                  )
+              );
+          const opacity = revoked ? 0.5 : 1;
+          html +=
+            '<div style="display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:6px 8px; background:#f6f8fa; border-radius:3px; opacity:' + opacity + ';">' +
+              '<div style="flex:1 1 auto; min-width:0;">' +
+                '<b>' + esc(op.displayName || op.username) + '</b> ' +
+                '<span class="em-muted" style="font-size:11px;">(' + esc(op.username) + ')</span>' +
+                roleChip +
+                '<div style="font-size:11px; color:#57606a; margin-top:2px;">Last login: ' + esc(lastLogin) + '</div>' +
+              '</div>' +
+              '<div style="flex:0 0 auto;">' + actionsHtml + '</div>' +
+            '</div>';
+        }
+        html += '</div>';
+        list.innerHTML = html;
+
+        // Wire row buttons.
+        list.querySelectorAll(".em-op-reset-btn").forEach(btn => {
+          btn.addEventListener("click", (ev) => {
+            ev.preventDefault();
+            ev.stopPropagation();
+            promptResetOperatorPassword(btn.getAttribute("data-username"));
+          });
+        });
+        list.querySelectorAll(".em-op-remove-btn").forEach(btn => {
+          btn.addEventListener("click", (ev) => {
+            ev.preventDefault();
+            ev.stopPropagation();
+            confirmRemoveOperator(btn.getAttribute("data-username"), btn.getAttribute("data-role"));
+          });
+        });
+      } catch (e) {
+        list.innerHTML = '<span style="color:#cf222e;">Couldn\'t load operators: ' + esc(e.message || String(e)) + '</span>';
+      }
+    }
+
+    function showAddOperatorModal() {
+      const m = $("emAddOperatorModal");
+      if (!m) return;
+      ["emAddOpUsername", "emAddOpDisplayName", "emAddOpPassword"].forEach(id => {
+        const el = $(id); if (el) el.value = "";
+      });
+      const role = $("emAddOpRole"); if (role) role.value = "operator";
+      const err = $("emAddOpError");
+      if (err) { err.textContent = ""; err.classList.remove("active"); }
+      m.classList.add("active");
+      setTimeout(() => $("emAddOpUsername")?.focus(), 50);
+    }
+    function hideAddOperatorModal() { $("emAddOperatorModal")?.classList.remove("active"); }
+
+    async function submitAddOperator() {
+      const username = ($("emAddOpUsername")?.value || "").trim().toLowerCase();
+      const displayName = ($("emAddOpDisplayName")?.value || "").trim();
+      const role = ($("emAddOpRole")?.value || "operator").toLowerCase();
+      const password = ($("emAddOpPassword")?.value || "");
+      const errEl = $("emAddOpError");
+      const showErr = (msg) => {
+        if (!errEl) { alert(msg); return; }
+        errEl.textContent = msg;
+        errEl.classList.add("active");
+      };
+      if (!username || !/^[a-z0-9_-]{3,32}$/.test(username)) {
+        return showErr("Username: 3-32 chars, lowercase letters/digits/underscore/dash.");
+      }
+      if (password.length < 8) return showErr("Password must be at least 8 characters.");
+
+      try {
+        await api("etsyMailAuth", {
+          method: "POST",
+          body  : { op: "addOperator", username, displayName, role, password }
+        });
+        toast(`Operator '${username}' created.`);
+        hideAddOperatorModal();
+        loadOperatorsList();
+      } catch (e) {
+        showErr(e.message || String(e));
+      }
+    }
+
+    async function promptResetOperatorPassword(username) {
+      if (!username) return;
+      const newPw = prompt(`Set new password for '${username}'\n(min 8 chars; their other sessions will be signed out):`);
+      if (newPw === null) return;
+      if (newPw.length < 8) {
+        alert("Password must be at least 8 characters.");
+        return;
+      }
+      try {
+        const res = await api("etsyMailAuth", {
+          method: "POST",
+          body  : { op: "resetOperatorPassword", username, newPassword: newPw }
+        });
+        toast(`Reset done. ${res && res.killedSessions ? res.killedSessions + ' session(s) revoked.' : ''}`);
+        loadOperatorsList();
+      } catch (e) {
+        alert("Reset failed: " + (e.message || String(e)));
+      }
+    }
+
+    async function confirmRemoveOperator(username, role) {
+      if (!username) return;
+      const isOwner = role === "owner";
+      const warning = isOwner
+        ? `Remove OWNER '${username}'?\n\nIf they're the last owner, the request will be rejected. They'll be signed out within ~60s. This is reversible by adding them back later.`
+        : `Remove operator '${username}'?\n\nThey'll be signed out within ~60s. This is reversible by adding them back later.`;
+      if (!confirm(warning)) return;
+      try {
+        const res = await api("etsyMailAuth", {
+          method: "POST",
+          body  : { op: "removeOperator", username }
+        });
+        toast(`Removed '${username}'. ${res && res.killedSessions ? res.killedSessions + ' session(s) revoked.' : ''}`);
+        loadOperatorsList();
+      } catch (e) {
+        alert("Remove failed: " + (e.message || String(e)));
+      }
+    }
+
+    function showChangePasswordModal() {
+      const m = $("emChangePasswordModal");
+      if (!m) return;
+      ["emCpCurrent", "emCpNew", "emCpConfirm"].forEach(id => {
+        const el = $(id); if (el) el.value = "";
+      });
+      const err = $("emCpError");
+      if (err) { err.textContent = ""; err.classList.remove("active"); }
+      m.classList.add("active");
+      setTimeout(() => $("emCpCurrent")?.focus(), 50);
+    }
+    function hideChangePasswordModal() { $("emChangePasswordModal")?.classList.remove("active"); }
+
+    async function submitChangePassword() {
+      const cur = $("emCpCurrent")?.value || "";
+      const nw  = $("emCpNew")?.value || "";
+      const cf  = $("emCpConfirm")?.value || "";
+      const errEl = $("emCpError");
+      const showErr = (msg) => {
+        if (!errEl) { alert(msg); return; }
+        errEl.textContent = msg;
+        errEl.classList.add("active");
+      };
+      if (!cur || !nw) return showErr("Both passwords required.");
+      if (nw.length < 8) return showErr("New password must be at least 8 characters.");
+      if (nw !== cf)   return showErr("New passwords don't match.");
+
+      try {
+        await api("etsyMailAuth", {
+          method: "POST",
+          body  : { op: "setMyPassword", currentPassword: cur, newPassword: nw }
+        });
+        toast("Password changed.");
+        hideChangePasswordModal();
+      } catch (e) {
+        showErr(e.message || String(e));
+      }
+    }
+
     function showMasterPurgeSetupModal() {
       const modal = $("emMpSetupModal");
       if (!modal) return;
@@ -4692,6 +5112,216 @@
      *   - First 401 from any backend call (auto)
      *   - Settings button click (manual edit)
      *   - Direct call (e.g., from a banner) */
+    /* ══════════════════════════════════════════════════════════════
+     * v4.1 — Login + session plumbing
+     * ══════════════════════════════════════════════════════════════
+     *
+     * Three things live here:
+     *   1. bootstrapSession()    — page-load flow. Validates any stored
+     *                              session token; if expired/missing/bad,
+     *                              shows the login modal.
+     *   2. handleLoginSubmit()   — form submit handler. Calls
+     *                              etsyMailAuth op:login, stores the
+     *                              token + user, refreshes app state.
+     *   3. handleLogout()        — sign-out. Calls etsyMailAuth op:logout
+     *                              best-effort, clears local state, shows
+     *                              login modal again.
+     *
+     * Plus a few small UI helpers (showLoginModal, hideLoginModal,
+     * applyRoleVisibility).
+     *
+     * The login modal is the SECOND gate — the first is the inbox-secret
+     * modal (X-EtsyMail-Secret). Both must pass before the app is usable.
+     * Without the secret, no login attempt even reaches the backend.
+     */
+
+    function showLoginModal(prefillError = null) {
+      const m = $("emLoginModal");
+      if (!m) return;
+      const errEl = $("emLoginError");
+      if (errEl) {
+        if (prefillError) {
+          errEl.textContent = prefillError;
+          errEl.classList.add("active");
+        } else {
+          errEl.textContent = "";
+          errEl.classList.remove("active");
+        }
+      }
+      m.classList.add("active");
+      // Focus username when freshly opened. Defer to next frame so the
+      // modal's CSS transition finishes first.
+      setTimeout(() => $("emLoginUsername")?.focus(), 50);
+    }
+
+    function hideLoginModal() {
+      $("emLoginModal")?.classList.remove("active");
+    }
+
+    /** Apply role-based DOM visibility. Owner sees everything; satellites
+     *  have certain Settings sections hidden. Called from
+     *  bootstrapSession AND every time the Settings modal opens (in case
+     *  the operator role changes mid-session, e.g. via owner promotion).
+     *
+     *  Owner-only sections (per spec):
+     *    - Master purge danger zone
+     *    - Operators section (add/remove)
+     *    - Gmail watcher controls
+     *    - Catalog management (Sync now)
+     *    - Agent prompt edits
+     *    - Listing catalog mirror config
+     *    - Intent-classifier config
+     *
+     *  Implementation: every owner-only block carries the
+     *  `data-owner-only="true"` attribute. Setting display:none on those
+     *  hides them from satellites without touching the markup elsewhere.
+     */
+    function applyRoleVisibility() {
+      const isOwner = !!state.isOwner;
+      const els = document.querySelectorAll('[data-owner-only="true"]');
+      for (const el of els) {
+        el.style.display = isOwner ? "" : "none";
+      }
+      // Show a small "satellite mode" banner inside Settings so non-
+      // owner operators understand why some sections are missing.
+      const banner = $("emSatelliteSettingsBanner");
+      if (banner) banner.style.display = isOwner ? "none" : "";
+    }
+
+    /** Page-load auth check. If we have a session token, validate it
+     *  via op:currentUser. On success, populate state.currentUser and
+     *  apply role visibility. On failure, drop the bad token and show
+     *  the login modal.
+     *
+     *  Skips entirely if no inbox secret is set yet — in that case the
+     *  secret modal handles bootstrap and login waits its turn. */
+    async function bootstrapSession() {
+      const haveSecret = (typeof localStorage !== "undefined") &&
+                         !!localStorage.getItem("etsymail_secret");
+      if (!haveSecret) {
+        // Secret modal will show; login will be triggered after that
+        // succeeds (via the secret-modal save flow, which calls
+        // bootstrapSession again).
+        return;
+      }
+
+      const token = localStorage.getItem("etsymail_session");
+      if (!token) {
+        showLoginModal();
+        return;
+      }
+
+      try {
+        const res = await api("etsyMailAuth", {
+          method: "POST",
+          body  : { op: "currentUser" }
+        });
+        if (!res || !res.ok) throw new Error("currentUser returned non-ok");
+        state.currentUser = {
+          username   : res.username,
+          displayName: res.displayName,
+          role       : res.role
+        };
+        state.isOwner = res.role === "owner";
+        applyRoleVisibility();
+        // Mirror the display name into the legacy operator-name slot so
+        // existing code paths that read getEmployeeName() see the
+        // session's identity.
+        try { localStorage.setItem("etsymail_session_user", res.displayName || res.username); } catch {}
+      } catch (e) {
+        // 401 path already cleaned the token + showed login. Anything
+        // else (5xx) — surface the error inline on the login modal.
+        if (e.status !== 401) {
+          console.warn("[bootstrapSession] failed:", e.message);
+          showLoginModal("Couldn't validate your session: " + (e.message || String(e)));
+        }
+      }
+    }
+
+    async function handleLoginSubmit(ev) {
+      if (ev) ev.preventDefault();
+      const errEl = $("emLoginError");
+      const showErr = (msg) => {
+        if (!errEl) { alert(msg); return; }
+        errEl.textContent = msg;
+        errEl.classList.add("active");
+      };
+      const u = ($("emLoginUsername")?.value || "").trim().toLowerCase();
+      const p = ($("emLoginPassword")?.value || "");
+      if (!u || !p) return showErr("Username and password required.");
+
+      const btn = $("emLoginSubmitBtn");
+      const prev = btn ? btn.textContent : null;
+      if (btn) { btn.disabled = true; btn.textContent = "Signing in…"; }
+
+      try {
+        const res = await api("etsyMailAuth", {
+          method: "POST",
+          body  : {
+            op       : "login",
+            username : u,
+            password : p,
+            userAgent: navigator.userAgent || null
+          }
+        });
+        if (!res || !res.ok || !res.sessionToken) {
+          throw new Error("Login response missing token");
+        }
+        try {
+          localStorage.setItem("etsymail_session", res.sessionToken);
+          localStorage.setItem("etsymail_session_user", res.displayName || res.username);
+        } catch (e) {
+          console.warn("Couldn't persist session to localStorage:", e.message);
+        }
+        state.currentUser = {
+          username   : res.username,
+          displayName: res.displayName,
+          role       : res.role
+        };
+        state.isOwner = res.role === "owner";
+        applyRoleVisibility();
+        // Clear the password field (never let it linger in the DOM).
+        const pwInput = $("emLoginPassword");
+        if (pwInput) pwInput.value = "";
+        hideLoginModal();
+        toast(`Signed in as ${res.displayName || res.username}`);
+        // Kick off a fresh app-state load now that we're authenticated.
+        if (typeof fetchThreadListNow === "function") fetchThreadListNow({ source: "user" });
+        if (typeof fetchCountsNow === "function")     fetchCountsNow();
+      } catch (e) {
+        showErr(e.message || String(e));
+      } finally {
+        if (btn) { btn.disabled = false; if (prev) btn.textContent = prev; }
+      }
+    }
+
+    async function handleLogout() {
+      // Best-effort server-side delete; swallow errors so a broken
+      // network can't trap the operator in the app.
+      try {
+        await api("etsyMailAuth", { method: "POST", body: { op: "logout" } });
+      } catch (e) {
+        console.warn("[logout] server call failed:", e.message);
+      }
+      try {
+        localStorage.removeItem("etsymail_session");
+        localStorage.removeItem("etsymail_session_user");
+      } catch {}
+      state.currentUser = null;
+      state.isOwner = false;
+      applyRoleVisibility();
+      // Wipe any thread/message state so the next operator doesn't see
+      // it before their fetch returns. Empty the inbox UI.
+      state.threads = [];
+      state.messages = [];
+      state.selectedId = null;
+      if (typeof renderThreadList === "function") renderThreadList();
+      if (typeof renderRail === "function")       renderRail();
+      const detail = $("emDetail");
+      if (detail) detail.innerHTML = '<div class="em-detail-empty">Sign in to view threads.</div>';
+      showLoginModal();
+    }
+
     function showSecretSetupModal(errMsg = null) {
       const modal = $("emSecretModal");
       const input = $("emSecretInput");
@@ -4798,6 +5428,15 @@
       // "Loading…" placeholder and corrects itself once the server replies.
       loadMasterPurgeStatus();
 
+      // v4.1 — Populate the My Account info row + (if owner) the
+      // Operators list. Both are async / read-from-server. Same fast-open
+      // + correct-on-arrival pattern as above. applyRoleVisibility() runs
+      // here so reopening Settings reflects role changes (e.g. owner
+      // promoted a satellite mid-session).
+      applyRoleVisibility();
+      populateMyAccountInfo();
+      if (state.isOwner) loadOperatorsList();
+
       if (errMsg) {
         errEl.textContent = errMsg;
         errEl.classList.add("active");
@@ -4884,6 +5523,10 @@
       // threshold immediately. No need to reload the page.
       if (state.selectedId) fetchMessagesNow(state.selectedId);
       fetchThreadListNow();
+      // v4.1 — Now that the secret is in place, kick off the session
+      // check. If the operator already has a valid session, this is a
+      // no-op; if not, the login modal opens.
+      bootstrapSession().catch((e) => console.warn("[bootstrapSession after secret save]", e));
     }
 
     /** Poll the kill-switch state every 30s. Show/hide banner accordingly. */
@@ -8798,8 +9441,19 @@
     // rest of the app uses (employee_name or employee_id). Falls back
     // to null, which the backend handles with a generic signature.
     function getEmployeeName() {
+      // v4.1 — Prefer the logged-in user's display name. The session
+      // token in localStorage is the canonical source of identity now;
+      // legacy `employee_name` / `etsymail_operator` keys remain as a
+      // fallback for any thread that hasn't been touched since the
+      // auth migration. Backend endpoints will eventually derive `actor`
+      // from the session token directly (Phase 2), at which point this
+      // helper becomes purely cosmetic.
+      if (state && state.currentUser && state.currentUser.displayName) {
+        return state.currentUser.displayName;
+      }
       try {
-        return localStorage.getItem("employee_name") ||
+        return localStorage.getItem("etsymail_session_user") ||
+               localStorage.getItem("employee_name") ||
                localStorage.getItem("etsymail_operator") ||
                null;
       } catch { return null; }
@@ -10506,6 +11160,45 @@
       $("emSecretInput").addEventListener("keydown", (e) => {
         if (e.key === "Escape") hideSecretSetupModal();
       });
+
+      // v4.1 — Wire the login modal form. Submit via Enter key OR the
+      // explicit Sign-in button. Esc on either field doesn't dismiss
+      // the modal — there's nothing to fall back to (the user MUST log
+      // in to use the app), so we'd rather make the modal sticky.
+      const loginForm = $("emLoginForm");
+      if (loginForm) {
+        loginForm.addEventListener("submit", handleLoginSubmit);
+      }
+
+      // v4.1 — Wire the My Account / Operators / Change-password buttons.
+      // All these IDs exist on initial DOM render (they're inside the
+      // Settings modal markup) so addEventListener attaches once at
+      // load and survives modal open/close cycles. Click handlers
+      // preventDefault + stopPropagation because some live inside the
+      // settings <form> and we don't want stray submits.
+      const wireBtnV41 = (id, fn) => {
+        const el = $(id);
+        if (!el) return;
+        el.addEventListener("click", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          fn();
+        });
+      };
+      wireBtnV41("emChangeMyPasswordBtn",       showChangePasswordModal);
+      wireBtnV41("emSignOutBtn",                handleLogout);
+      wireBtnV41("emAddOperatorBtn",            showAddOperatorModal);
+      wireBtnV41("emAddOpCancelBtn",            hideAddOperatorModal);
+      wireBtnV41("emAddOpSubmitBtn",            submitAddOperator);
+      wireBtnV41("emCpCancelBtn",               hideChangePasswordModal);
+      wireBtnV41("emCpSubmitBtn",               submitChangePassword);
+
+      // v4.1 — Validate stored session token (or show login modal) on
+      // initial page load. Runs after the inbox-secret modal has had a
+      // chance to populate its bootstrap value from localStorage. If
+      // the secret is missing, this no-ops; the secret modal handles
+      // its own bootstrap and re-triggers the session check on save.
+      bootstrapSession().catch((e) => console.warn("[bootstrapSession]", e));
 
       // v2.0 Step 1: catalog "Sync now" button inside the Settings modal.
       // The button is inside the secret form, but it's type="button" so
