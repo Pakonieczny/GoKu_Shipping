@@ -2494,6 +2494,233 @@
     /* Slightly heavier weight for the unread name + brighter color */
     body.em-mobile .m-thread-row.unread .m-thread-name { font-weight: 700; }
 
+    /* ════════════════════════════════════════════════════════════════
+     * v5.2 — Search bar
+     * ════════════════════════════════════════════════════════════════
+     * Hidden by default; toggled visible when the operator taps the
+     * search icon. Sits in the same band as the appbar (visually
+     * replacing it) while active. The search input expands to fill
+     * the row.
+     */
+    .m-searchbar {
+      flex: 0 0 auto;
+      height: var(--m-appbar-h);
+      background: var(--m-c-surface);
+      border-bottom: 1px solid var(--m-c-border);
+      display: none;  /* shown when body has .m-search-active */
+      align-items: center;
+      gap: 4px;
+      padding: 0 4px;
+      z-index: 11;
+      position: relative;
+    }
+    body.em-mobile.m-search-active .m-searchbar { display: flex; }
+    body.em-mobile.m-search-active #mAppbar { display: none; }
+    .m-searchbar-input {
+      flex: 1 1 auto;
+      height: 100%;
+      border: none;
+      outline: none;
+      background: transparent;
+      font-size: 17px;
+      font-family: inherit;
+      color: var(--m-c-text);
+      padding: 0 8px;
+      min-width: 0;
+    }
+    .m-searchbar-input::placeholder { color: var(--m-c-text-faint); }
+
+    /* ════════════════════════════════════════════════════════════════
+     * v5.2 — Pagination sentinel
+     * ════════════════════════════════════════════════════════════════
+     * Tiny "Loading more (N of M)..." indicator at the bottom of the
+     * thread list. The IntersectionObserver triggers a load when this
+     * scrolls into view.
+     */
+    .m-list-sentinel {
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+      padding: 24px;
+      font-size: 13px;
+      color: var(--m-c-text-muted);
+    }
+    .m-list-sentinel .material-icons { font-size: 18px; }
+
+    /* ════════════════════════════════════════════════════════════════
+     * v5.2 — Additional size bumps (~15% on top of v5.1)
+     * ════════════════════════════════════════════════════════════════
+     * Operator feedback after v5.1: still ~20% too small. Going
+     * further. Base font 16→18; key elements bumped proportionally.
+     */
+    body.em-mobile #emMobileApp { font-size: 18px; }
+    body.em-mobile {
+      --m-appbar-h: 72px;
+      --m-row-h: 108px;
+    }
+    body.em-mobile .m-appbar-icon { width: 52px; height: 52px; }
+    body.em-mobile .m-appbar-icon .material-icons { font-size: 28px; }
+    body.em-mobile .m-appbar-title    { font-size: 21px; }
+    body.em-mobile .m-appbar-subtitle { font-size: 14px; }
+
+    body.em-mobile .m-avatar { width: 54px; height: 54px; font-size: 18px; }
+    body.em-mobile .m-thread-line-1   { font-size: 18px; }
+    body.em-mobile .m-thread-time     { font-size: 14px; }
+    body.em-mobile .m-thread-subject  { font-size: 15px; }
+    body.em-mobile .m-thread-snippet  { font-size: 14px; }
+
+    body.em-mobile .m-pill { font-size: 12px; padding: 3px 8px; }
+    body.em-mobile .m-pill .material-icons { font-size: 14px; }
+
+    body.em-mobile .m-drawer-folder { font-size: 17px; padding: 14px 24px; }
+    body.em-mobile .m-drawer-folder .material-icons { font-size: 25px; }
+    body.em-mobile .m-drawer-folder .m-fcnt { font-size: 14px; }
+    body.em-mobile .m-drawer-header .m-name { font-size: 17px; }
+    body.em-mobile .m-drawer-header .m-role { font-size: 14px; }
+
+    body.em-mobile .m-customer-card-head .m-avatar { width: 42px; height: 42px; font-size: 15px; }
+    body.em-mobile .m-customer-card-head .m-name { font-size: 17px; }
+    body.em-mobile .m-customer-card-head .m-meta { font-size: 14px; }
+    body.em-mobile .m-customer-card-head .m-repeat { font-size: 12px; padding: 3px 8px; }
+    body.em-mobile .m-customer-card-head .m-chev { font-size: 28px; }
+    body.em-mobile .m-customer-card-body { font-size: 15px; }
+    body.em-mobile .m-order-row { font-size: 15px; padding: 14px 8px; }
+    body.em-mobile .m-order-row .m-oid   { font-size: 14px; }
+    body.em-mobile .m-order-row .m-ostat { font-size: 12px; padding: 3px 8px; }
+    body.em-mobile .m-order-row .m-ochev { font-size: 24px; }
+
+    body.em-mobile .m-summary-card-head .m-lead { font-size: 26px; }
+    body.em-mobile .m-summary-card-head .m-chev { font-size: 28px; }
+    body.em-mobile .m-summary-card-title    { font-size: 16px; }
+    body.em-mobile .m-summary-card-tagline  { font-size: 14px; }
+    body.em-mobile .m-summary-card-body     { font-size: 15px; }
+    body.em-mobile .m-summary-card-body .m-row .m-lab { font-size: 14px; }
+    body.em-mobile .m-summary-card-body .m-urg-chip { font-size: 12px; padding: 3px 8px; }
+    body.em-mobile .m-summary-card-body .m-flag { font-size: 13px; padding: 3px 8px; }
+
+    body.em-mobile .m-msg-meta { font-size: 13px; }
+    body.em-mobile .m-msg-bubble { font-size: 17px; padding: 13px 18px; border-radius: 22px; }
+    body.em-mobile .m-msg-img { width: 108px; height: 108px; }
+
+    body.em-mobile .m-composer-textarea { font-size: 17px; padding: 12px 18px; }
+    body.em-mobile .m-composer-send-btn { width: 48px; height: 48px; }
+    body.em-mobile .m-composer-send-btn .material-icons { font-size: 24px; }
+    body.em-mobile .m-composer-action { width: 48px; height: 48px; }
+    body.em-mobile .m-composer-action .material-icons { font-size: 28px; }
+    body.em-mobile .m-composer-attach-chip { width: 72px; height: 72px; }
+
+    body.em-mobile .m-order-detail-status { font-size: 14px; padding: 4px 11px; }
+    body.em-mobile .m-order-detail-date { font-size: 14px; }
+    body.em-mobile .m-order-detail-etsy { font-size: 14px; }
+    body.em-mobile .m-order-section h5 { font-size: 13px; }
+    body.em-mobile .m-order-item img,
+    body.em-mobile .m-order-item .m-item-img-fallback { width: 72px; height: 72px; }
+    body.em-mobile .m-order-item .m-item-title { font-size: 15px; }
+    body.em-mobile .m-order-item .m-item-meta { font-size: 13px; }
+    body.em-mobile .m-order-item .m-item-perso { font-size: 13px; padding: 6px 8px; }
+    body.em-mobile .m-order-item .m-item-link-hint { font-size: 12px; }
+    body.em-mobile .m-order-item-price { font-size: 15px; }
+    body.em-mobile .m-order-address { font-size: 15px; padding: 14px 16px; }
+    body.em-mobile .m-order-totals { font-size: 15px; }
+    body.em-mobile .m-order-totals tr.total { font-size: 16px; }
+
+    body.em-mobile .m-sheet-title { font-size: 20px; }
+    body.em-mobile .m-sheet-row .m-lab { font-size: 17px; }
+    body.em-mobile .m-sheet-row select { font-size: 17px; }
+    body.em-mobile .m-sheet-action-btn { font-size: 17px; padding: 16px; }
+
+    body.em-mobile .m-menu-item { font-size: 17px; padding: 16px 20px; }
+    body.em-mobile .m-menu-item .material-icons { font-size: 24px; }
+
+    body.em-mobile .m-settings-section summary { font-size: 17px; padding: 20px; }
+    body.em-mobile .m-settings-content { font-size: 17px; }
+    body.em-mobile .m-settings-content .m-desc { font-size: 14px; }
+    body.em-mobile .m-settings-content button { height: 46px; font-size: 15px; padding: 0 18px; }
+    body.em-mobile .m-settings-content input[type="text"],
+    body.em-mobile .m-settings-content input[type="password"] { font-size: 16px; padding: 11px 13px; }
+
+    /* ════════════════════════════════════════════════════════════════
+     * v5.3 — Mobile modal sizing + safety
+     * ════════════════════════════════════════════════════════════════
+     * The login modal, secret modal, change-password modal, etc. all
+     * live at body level (z-index 9999) — they sit ABOVE the mobile
+     * UI by stacking order, that part works. But their internal text
+     * sizes were set for desktop viewports (12-13px), which on a phone
+     * is hard to read and the input fields are awkward to tap. This
+     * block bumps everything inside .em-modal-backdrop on mobile
+     * without touching desktop styling.
+     *
+     * Also makes inputs use min font-size 16px to prevent iOS Safari
+     * from auto-zooming the viewport when the field gains focus —
+     * iOS auto-zooms any input under 16px and that breaks the layout.
+     */
+    body.em-mobile .em-modal-backdrop .em-modal {
+      padding: 28px 22px;
+      max-width: calc(100vw - 32px);
+      max-height: calc(100vh - 40px);
+      max-height: calc(100dvh - 40px);
+      width: 100%;
+      box-sizing: border-box;
+    }
+    body.em-mobile .em-modal-backdrop .em-modal h2 { font-size: 22px; margin: 0 0 12px; }
+    body.em-mobile .em-modal-backdrop .em-modal p,
+    body.em-mobile .em-modal-backdrop .em-modal label,
+    body.em-mobile .em-modal-backdrop .em-modal small { font-size: 15px !important; line-height: 1.5; }
+    body.em-mobile .em-modal-backdrop .em-modal input[type="text"],
+    body.em-mobile .em-modal-backdrop .em-modal input[type="password"],
+    body.em-mobile .em-modal-backdrop .em-modal input[type="email"],
+    body.em-mobile .em-modal-backdrop .em-modal input[type="search"],
+    body.em-mobile .em-modal-backdrop .em-modal textarea {
+      /* 16px min stops iOS Safari from auto-zooming on focus. */
+      font-size: 16px !important;
+      padding: 12px 14px !important;
+      min-height: 46px;
+      box-sizing: border-box;
+      border-radius: 6px;
+    }
+    body.em-mobile .em-modal-backdrop .em-modal button {
+      font-size: 16px;
+      padding: 12px 20px;
+      min-height: 46px;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    body.em-mobile .em-modal-backdrop .em-modal button.primary {
+      background: var(--m-c-accent);
+      color: #fff;
+      border: none;
+      font-weight: 600;
+    }
+    body.em-mobile .em-modal-backdrop .em-modal .em-modal-buttons {
+      display: flex; flex-direction: column; gap: 10px; margin-top: 16px;
+    }
+    body.em-mobile .em-modal-backdrop .em-modal .em-modal-buttons button {
+      width: 100%;
+    }
+    body.em-mobile .em-modal-backdrop .em-modal-error {
+      font-size: 14px !important;
+      padding: 8px 12px;
+      margin: 8px 0;
+      border-radius: 6px;
+    }
+    /* Reveal-toggle button for password fields — make it more tappable */
+    body.em-mobile .em-modal-backdrop .em-modal .em-secret-row {
+      display: flex; align-items: stretch; gap: 4px;
+    }
+    body.em-mobile .em-modal-backdrop .em-modal .em-secret-row input {
+      flex: 1 1 auto; min-width: 0;
+    }
+    body.em-mobile .em-modal-backdrop .em-modal .em-reveal-btn {
+      flex: 0 0 auto;
+      width: 46px; height: 46px;
+      padding: 0 !important; min-height: 46px;
+      display: inline-flex; align-items: center; justify-content: center;
+      border: 1px solid var(--m-c-border-strong);
+      background: var(--m-c-surface);
+      border-radius: 6px;
+    }
+    body.em-mobile .em-modal-backdrop .em-modal .em-reveal-btn .material-icons {
+      font-size: 22px;
+    }
+
   </style>
 </head>
 <body>
@@ -3058,7 +3285,7 @@
        a different view of the same in-memory model.
   -->
   <div id="emMobileApp">
-    <div class="m-appbar">
+    <div class="m-appbar" id="mAppbar">
       <button class="m-appbar-icon" id="mLeftIcon" aria-label="Menu">
         <i class="material-icons" id="mLeftIconGlyph">menu</i>
       </button>
@@ -3071,6 +3298,22 @@
       </button>
       <button class="m-appbar-icon" id="mMenuIcon" aria-label="More">
         <i class="material-icons">more_vert</i>
+      </button>
+    </div>
+
+    <!-- v5.2 — Search bar. Hidden by default. Shown when operator taps
+         the search icon. Slides in from the top, replaces the appbar
+         visually while open. -->
+    <div class="m-searchbar" id="mSearchbar">
+      <button class="m-appbar-icon" id="mSearchClose" aria-label="Close search">
+        <i class="material-icons">arrow_back</i>
+      </button>
+      <input type="search" id="mSearchInput"
+             class="m-searchbar-input"
+             placeholder="Search by name, username, subject…"
+             autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+      <button class="m-appbar-icon" id="mSearchClear" aria-label="Clear">
+        <i class="material-icons">close</i>
       </button>
     </div>
 
@@ -12930,6 +13173,18 @@
       // shared composerTranslation when the operator commits a translation
       // (so the desktop send path picks it up unchanged).
       mobileTranslateLang: null,
+      // v5.2 — Search query (matches against customerName, etsyUsername,
+      // subject like desktop's filterAndSortVisible). Empty string means
+      // no search. Live-updated by the search bar; debounced re-render.
+      searchQuery   : "",
+      searchActive  : false,         // is the search bar visible
+      _searchDebounce: null,         // timer handle for debounce
+      // v5.2 — Pagination via "infinite scroll". shownCount grows by
+      // pageSize each time the sentinel scrolls into view. Resets to
+      // pageSize whenever the filter changes or search updates.
+      pageSize      : 50,
+      shownCount    : 50,
+      _scrollObserver: null,         // IntersectionObserver, recreated each list render
       // Render-dirty flags — set by hooks, cleared when the RAF re-renders
       dirtyList     : true,
       dirtyConv     : false,
@@ -13164,6 +13419,12 @@
           // Mirror to desktop state — keeps state.activeFilterId in sync
           // so the next list fetch grabs the right slice.
           state.activeFilterId = mState.currentFilterId;
+          // v5.2 — Reset pagination to page 1. Otherwise switching from
+          // a long folder (Archived, 1000+ threads, scrolled past page 1)
+          // to a short one (Production Rush, 3 threads) would leave the
+          // shownCount inflated and make the "Loading more..." sentinel
+          // appear at the bottom of a fully-rendered short list.
+          mState.shownCount = mState.pageSize;
           mCloseDrawer();
           mState.dirtyList = true;
           mShowScreen("list");
@@ -13173,52 +13434,130 @@
       });
     }
 
+    // ── Timestamp coercion ──────────────────────────────────────
+    // Mobile-local clone of desktop's _msToInt. Centralized here so
+    // mFilteredThreads (sort) and mRenderConv (message sort) use the
+    // exact same logic.
+    function mTsToMs(v) {
+      if (!v) return 0;
+      if (typeof v === "number") return v;
+      if (v instanceof Date) return v.getTime();
+      if (typeof v === "object" && v._ts && typeof v.ms === "number") return v.ms;
+      if (typeof v === "object" && typeof v.toMillis === "function") {
+        try { return v.toMillis(); } catch { return 0; }
+      }
+      if (typeof v === "string") { const d = new Date(v); return isNaN(d.getTime()) ? 0 : d.getTime(); }
+      return 0;
+    }
+
     // ── Filtered threads (mirrors desktop's filter logic) ────────
+    // v5.2: now also (a) sorts chronologically newest-first and
+    // (b) applies the in-memory search filter when active. Same
+    // match fields as desktop filterAndSortVisible: customerName,
+    // etsyUsername, subject. Returns a NEW array (slice) so callers
+    // can mutate the result safely.
     function mFilteredThreads() {
       const filter = (RAIL_FILTERS || []).find(f => f.id === mState.currentFilterId);
       const all = state.threads || [];
-      if (!filter) return all;
-      if (filter.id === "all") return all;
-      if (filter.countKey === "_completedSales") {
-        // completed sales — by salesCompletedAt presence
-        return all.filter(t => t && t.salesCompletedAt);
+
+      // 1. Folder filter
+      let threads;
+      if (!filter || filter.id === "all") {
+        threads = all.slice();
+      } else if (filter.countKey === "_completedSales") {
+        threads = all.filter(t => t && t.salesCompletedAt);
+      } else if (Array.isArray(filter.status)) {
+        threads = all.filter(t => t && filter.status.includes(t.status));
+      } else if (filter.status) {
+        threads = all.filter(t => t && t.status === filter.status);
+      } else {
+        threads = all.slice();
       }
-      if (Array.isArray(filter.status)) return all.filter(t => t && filter.status.includes(t.status));
-      if (filter.status) return all.filter(t => t && t.status === filter.status);
-      return all;
+
+      // 2. Search filter (case-insensitive substring across name fields).
+      const q = (mState.searchQuery || "").trim().toLowerCase();
+      if (q) {
+        threads = threads.filter(t => {
+          if (!t) return false;
+          if ((t.customerName  || "").toLowerCase().includes(q)) return true;
+          if ((t.etsyUsername  || "").toLowerCase().includes(q)) return true;
+          if ((t.subject       || "").toLowerCase().includes(q)) return true;
+          if ((t.lastInboundPreview || "").toLowerCase().includes(q)) return true;
+          if (t.linkedOrderId && String(t.linkedOrderId).includes(q)) return true;
+          return false;
+        });
+      }
+
+      // 3. Chronological sort, newest first. Mirrors desktop renderThreadList
+      // which sorts by `lastInboundAt || updatedAt || createdAt`. Without
+      // this, state.threads is in arbitrary (Firestore-internal) order and
+      // the operator sees times jump around (15:42 then 15:01 then 15:35
+      // — the v5.1 bug).
+      threads.sort((a, b) => {
+        const ta = mTsToMs(a.lastInboundAt || a.updatedAt || a.createdAt);
+        const tb = mTsToMs(b.lastInboundAt || b.updatedAt || b.createdAt);
+        return tb - ta;  // newest first
+      });
+
+      return threads;
     }
 
     // ── Thread list rendering ────────────────────────────────────
+    // v5.2: now paginates via "infinite scroll". Renders the first
+    // mState.shownCount items; appends a sentinel sentinel below; an
+    // IntersectionObserver bumps shownCount + re-renders when the
+    // sentinel scrolls into view. Avoids rendering 261 (and growing)
+    // DOM nodes on every poll cycle.
     function mRenderList() {
       const list = document.getElementById("mList");
       if (!list) return;
       mUpdateAppbar();
 
-      const threads = mFilteredThreads();
-      if (threads.length === 0) {
+      const allThreads = mFilteredThreads();
+
+      // Empty state
+      if (allThreads.length === 0) {
         const filter = (RAIL_FILTERS || []).find(f => f.id === mState.currentFilterId);
+        const isSearching = !!(mState.searchQuery || "").trim();
         list.innerHTML = `
           <div style="padding: 60px 32px; text-align: center; color: var(--m-c-text-muted);">
-            <i class="material-icons" style="font-size:48px; color: var(--m-c-border-strong);">inbox</i>
-            <p style="margin-top: 12px; font-size: 14px;">Nothing in <b>${mEsc(filter ? filter.label : "this folder")}</b> right now.</p>
-            <p style="font-size: 12px; margin-top: 4px;">New threads will show up here automatically.</p>
+            <i class="material-icons" style="font-size:48px; color: var(--m-c-border-strong);">${isSearching ? "search_off" : "inbox"}</i>
+            <p style="margin-top: 12px; font-size: 15px;">${isSearching
+              ? `No threads matching <b>"${mEsc(mState.searchQuery)}"</b>.`
+              : `Nothing in <b>${mEsc(filter ? filter.label : "this folder")}</b> right now.`}</p>
+            ${isSearching ? "" : `<p style="font-size: 13px; margin-top: 4px;">New threads will show up here automatically.</p>`}
           </div>`;
         return;
       }
-      list.innerHTML = threads.map(t => {
+
+      // Paginate — slice up to shownCount
+      const shown = Math.min(mState.shownCount, allThreads.length);
+      const visible = allThreads.slice(0, shown);
+      const hasMore = shown < allThreads.length;
+
+      // Stop the previous observer if one exists
+      if (mState._scrollObserver) {
+        try { mState._scrollObserver.disconnect(); } catch {}
+        mState._scrollObserver = null;
+      }
+
+      list.innerHTML = visible.map(t => {
         const name      = t.customerName || t.etsyUsername || "(Unknown)";
         const initials  = mInitials(name);
         const color     = mAvatarColor(name);
         // Field-name parity with desktop renderThreadList (line ~7008):
         //   lastInboundAt → updatedAt → createdAt is the canonical chain.
         const time      = mFmtThreadTime(t.lastInboundAt || t.updatedAt || t.createdAt);
-        // Subject line and snippet — desktop uses subject || category ||
-        // status as the only single line. Mobile has room for two: we
-        // show subject as the primary, and category/status as a faint
-        // secondary IF distinct.
-        const subject   = t.subject || t.category || t.status || "";
-        const altLabel  = (t.subject && t.category && t.subject !== t.category) ? t.category : "";
-        const snippet   = altLabel || (t.linkedOrderId ? "Order #" + String(t.linkedOrderId).slice(-6) : "");
+        // v5.2 — Subject is suppressed if it's literally just the
+        // auto-generated "Conversation with {customerName}" pattern,
+        // which adds no information. Show order id snippet instead
+        // when available; otherwise hide the line entirely.
+        let subject = t.subject || t.category || t.status || "";
+        const redundantPattern = name && new RegExp(`^conversation with ${name}$`, "i");
+        if (redundantPattern && redundantPattern.test(subject)) subject = "";
+        const orderHint = t.linkedOrderId ? "Order #" + String(t.linkedOrderId).slice(-6) : "";
+        // Display: subject if useful, otherwise the order hint, otherwise nothing.
+        const subjectLine = subject || orderHint;
         const unread    = t.unread ? "unread" : "";
         const pills     = mStatusPills(t);
         const avatarImg = t.buyerAvatarUrl
@@ -13233,13 +13572,19 @@
                   <span class="m-thread-name">${mEsc(name)}</span>
                   <span class="m-thread-time">${mEsc(time)}</span>
                 </div>
-                <div class="m-thread-subject">${mEsc(subject)}</div>
-                <div class="m-thread-snippet">${mEsc(snippet)}</div>
+                ${subjectLine ? `<div class="m-thread-subject">${mEsc(subjectLine)}</div>` : ""}
                 ${pills ? `<div style="margin-top: 4px; display: flex; gap: 4px; flex-wrap: wrap;">${pills}</div>` : ""}
               </div>
             </div>
           </div>`;
-      }).join("");
+      }).join("") + (hasMore ? `
+        <div class="m-list-sentinel" id="mListSentinel">
+          <i class="material-icons" style="font-size:18px; color:var(--m-c-text-muted);">more_horiz</i>
+          <span>Loading more (${shown} of ${allThreads.length})…</span>
+        </div>` : `
+        <div style="padding: 24px; text-align: center; color: var(--m-c-text-faint); font-size: 13px;">
+          End of list · ${allThreads.length} thread${allThreads.length === 1 ? "" : "s"}
+        </div>`);
 
       // Wire row taps — no swipe gestures. Operators use the overflow
       // menu (⋮) for archive/move actions instead.
@@ -13248,6 +13593,27 @@
         const content = row.querySelector(".m-thread-row-content");
         content.addEventListener("click", () => mOpenThread(id));
       });
+
+      // Wire pagination sentinel — when it scrolls into view, bump
+      // shownCount and re-render. Coalesced via IntersectionObserver
+      // so we don't fire on every scroll event.
+      if (hasMore && typeof IntersectionObserver !== "undefined") {
+        const sentinel = document.getElementById("mListSentinel");
+        if (sentinel) {
+          mState._scrollObserver = new IntersectionObserver((entries) => {
+            for (const entry of entries) {
+              if (entry.isIntersecting) {
+                mState.shownCount += mState.pageSize;
+                mState._scrollObserver.disconnect();
+                mState._scrollObserver = null;
+                mRenderList();
+                break;
+              }
+            }
+          }, { root: list, rootMargin: "200px" });
+          mState._scrollObserver.observe(sentinel);
+        }
+      }
     }
 
     // ── Open thread (mobile) ─────────────────────────────────────
@@ -13907,6 +14273,26 @@
     function mInit() {
       console.log("[mobile] init — IS_MOBILE =", IS_MOBILE);
 
+      // v5.2 — Ensure #emSalesCardMount exists. The desktop version is
+      // created dynamically by renderDetail (which writes the thread
+      // detail HTML, including the mount div). On mobile we don't run
+      // renderDetail (we have our own mRenderConv), so the mount never
+      // exists — and renderConversationSummaryCard bails early. As a
+      // result, the summary cache is never populated and the mobile
+      // summary card stays blank forever.
+      //
+      // Fix: create a hidden mount node here once at boot. The desktop
+      // function writes its HTML there (we never display it visually),
+      // and the side-effect of populating state._summaryCache lets the
+      // mobile summary watcher pick up the payload and render it into
+      // the mobile-styled card.
+      if (!document.getElementById("emSalesCardMount")) {
+        const m = document.createElement("div");
+        m.id = "emSalesCardMount";
+        m.style.cssText = "display:none !important;position:absolute;visibility:hidden;pointer-events:none;";
+        document.body.appendChild(m);
+      }
+
       const leftIcon  = document.getElementById("mLeftIcon");
       const menuIcon  = document.getElementById("mMenuIcon");
       const searchIcon= document.getElementById("mSearchIcon");
@@ -13935,8 +14321,54 @@
         else mCloseMenu();
       });
 
-      searchIcon.addEventListener("click", () => {
-        if (typeof toast === "function") toast("Search — use the desktop dashboard for now");
+      // v5.2 — Search bar wiring. Tap search icon → show the search
+      // bar (replaces appbar visually). Type → filter threads in
+      // memory (mFilteredThreads reads mState.searchQuery). Tap × →
+      // clear text but keep bar open. Tap ← → close bar entirely.
+      const sbInput = document.getElementById("mSearchInput");
+      const sbClose = document.getElementById("mSearchClose");
+      const sbClear = document.getElementById("mSearchClear");
+      function _openSearch() {
+        document.body.classList.add("m-search-active");
+        // Reset shown count so search results start from page 1
+        mState.shownCount = mState.pageSize;
+        // Focus the input; setTimeout to let the layout settle (iOS
+        // sometimes refuses focus during a synchronous call after a
+        // touch on a different element).
+        setTimeout(() => sbInput && sbInput.focus(), 50);
+      }
+      function _closeSearch() {
+        document.body.classList.remove("m-search-active");
+        mState.searchQuery = "";
+        sbInput.value = "";
+        mState.shownCount = mState.pageSize;
+        mState.dirtyList = true;
+        mRequestRender();
+      }
+      searchIcon.addEventListener("click", _openSearch);
+      sbClose.addEventListener("click", _closeSearch);
+      sbClear.addEventListener("click", () => {
+        sbInput.value = "";
+        mState.searchQuery = "";
+        mState.shownCount = mState.pageSize;
+        mState.dirtyList = true;
+        mRequestRender();
+        sbInput.focus();
+      });
+      sbInput.addEventListener("input", () => {
+        // Debounce — re-render 200ms after the operator stops typing.
+        // Keeps the UI responsive for long typing bursts on slow phones.
+        clearTimeout(mState._searchDebounce);
+        mState._searchDebounce = setTimeout(() => {
+          mState.searchQuery = sbInput.value || "";
+          mState.shownCount = mState.pageSize;  // reset pagination on every query
+          mState.dirtyList = true;
+          mRequestRender();
+        }, 200);
+      });
+      // Close search on Esc (rare on phones but handy on tablet keyboards)
+      sbInput.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") _closeSearch();
       });
 
       drawerBd.addEventListener("click", mCloseDrawer);
@@ -14102,6 +14534,36 @@
       if (state.activeFilterId) mState.currentFilterId = state.activeFilterId;
       mRenderDrawer();
       mRenderList();
+
+      // v5.3 — Auth safety net. By the time mInit runs, bootstrapSession
+      // has already kicked off (it's earlier in the DOMContentLoaded
+      // handler). On a fresh phone with NO secret, bootstrapSession
+      // returns immediately without showing any modal — it relies on
+      // the first api() call to 401 and trigger the secret modal.
+      // The first api() that fires is fetchAutoConfig in the same
+      // handler. In nearly all cases that works, but if anything
+      // delays or breaks it, the operator could see a blank mobile
+      // shell with no way forward.
+      //
+      // Belt-and-suspenders: a few hundred ms after mInit, double-
+      // check the auth state. If neither secret nor session is set,
+      // surface the secret modal directly. If secret is set but no
+      // session, surface the login modal. Idempotent — calling
+      // these when the modals are already open or the user is
+      // already authenticated is a no-op.
+      setTimeout(() => {
+        try {
+          const secret  = localStorage.getItem("etsymail_secret");
+          const session = localStorage.getItem("etsymail_session");
+          if (!secret) {
+            if (typeof showSecretSetupModal === "function") showSecretSetupModal();
+          } else if (!session && !state.currentUser) {
+            if (typeof showLoginModal === "function") showLoginModal();
+          }
+        } catch (e) {
+          console.warn("[mobile] auth safety net failed:", e);
+        }
+      }, 600);
     }
     window.mInit = mInit;
 
