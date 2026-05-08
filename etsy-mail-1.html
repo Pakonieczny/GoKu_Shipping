@@ -2721,6 +2721,235 @@
       font-size: 22px;
     }
 
+    /* ════════════════════════════════════════════════════════════════
+     * v5.4 — Larger sizes (+30% on top of v5.2 → roughly +60% from
+     * v5.0 in total), operator strip, mobile-styled em-badge pills,
+     * AI draft card, and assorted polish.
+     * ════════════════════════════════════════════════════════════════
+     */
+
+    /* Base font bump: 18 → 21. Cascades to anything in rem/em. */
+    body.em-mobile #emMobileApp { font-size: 21px; }
+
+    /* App bar grows again */
+    body.em-mobile {
+      --m-appbar-h: 84px;
+      --m-row-h: 124px;
+    }
+    body.em-mobile .m-appbar-icon { width: 60px; height: 60px; }
+    body.em-mobile .m-appbar-icon .material-icons { font-size: 32px; }
+    body.em-mobile .m-appbar-title    { font-size: 24px; }
+    body.em-mobile .m-appbar-subtitle { font-size: 16px; }
+
+    /* Avatars */
+    body.em-mobile .m-avatar { width: 64px; height: 64px; font-size: 21px; }
+    body.em-mobile .m-customer-card-head .m-avatar { width: 50px; height: 50px; font-size: 18px; }
+
+    /* Thread row text */
+    body.em-mobile .m-thread-line-1   { font-size: 21px; }
+    body.em-mobile .m-thread-time     { font-size: 16px; }
+    body.em-mobile .m-thread-subject  { font-size: 17px; }
+    body.em-mobile .m-thread-snippet  { font-size: 16px; }
+    body.em-mobile .m-thread-row-content { padding-left: 28px; }
+    body.em-mobile .m-thread-row.unread .m-thread-row-content::before {
+      width: 11px; height: 11px;
+    }
+
+    /* Drawer */
+    body.em-mobile .m-drawer-folder { font-size: 19px; padding: 16px 26px; }
+    body.em-mobile .m-drawer-folder .material-icons { font-size: 28px; }
+    body.em-mobile .m-drawer-folder .m-fcnt { font-size: 16px; }
+    body.em-mobile .m-drawer-header .m-name { font-size: 19px; }
+    body.em-mobile .m-drawer-header .m-role { font-size: 16px; }
+
+    /* Customer + summary cards */
+    body.em-mobile .m-customer-card-head .m-name { font-size: 19px; }
+    body.em-mobile .m-customer-card-head .m-meta { font-size: 16px; }
+    body.em-mobile .m-customer-card-head .m-repeat { font-size: 13px; padding: 4px 10px; }
+    body.em-mobile .m-customer-card-head .m-chev { font-size: 32px; }
+    body.em-mobile .m-customer-card-body { font-size: 17px; }
+    body.em-mobile .m-order-row { font-size: 17px; padding: 16px 10px; }
+    body.em-mobile .m-order-row .m-oid   { font-size: 16px; }
+    body.em-mobile .m-order-row .m-ostat { font-size: 13px; padding: 4px 10px; }
+    body.em-mobile .m-order-row .m-ochev { font-size: 28px; }
+
+    body.em-mobile .m-summary-card-head .m-lead { font-size: 30px; }
+    body.em-mobile .m-summary-card-head .m-chev { font-size: 32px; }
+    body.em-mobile .m-summary-card-title    { font-size: 18px; }
+    body.em-mobile .m-summary-card-tagline  { font-size: 16px; }
+    body.em-mobile .m-summary-card-body     { font-size: 17px; }
+    body.em-mobile .m-summary-card-body .m-row .m-lab { font-size: 16px; }
+    body.em-mobile .m-summary-card-body .m-urg-chip { font-size: 13px; padding: 4px 10px; }
+    body.em-mobile .m-summary-card-body .m-flag { font-size: 14px; padding: 4px 10px; }
+
+    /* Messages */
+    body.em-mobile .m-msg-meta { font-size: 14px; }
+    body.em-mobile .m-msg-bubble { font-size: 19px; padding: 15px 20px; border-radius: 24px; }
+    body.em-mobile .m-msg-img { width: 124px; height: 124px; }
+
+    /* Composer */
+    body.em-mobile .m-composer-textarea { font-size: 19px; padding: 14px 20px; }
+    body.em-mobile .m-composer-send-btn { width: 56px; height: 56px; }
+    body.em-mobile .m-composer-send-btn .material-icons { font-size: 28px; }
+    body.em-mobile .m-composer-action { width: 56px; height: 56px; }
+    body.em-mobile .m-composer-action .material-icons { font-size: 32px; }
+    body.em-mobile .m-composer-attach-chip { width: 84px; height: 84px; }
+
+    /* Order detail */
+    body.em-mobile .m-order-detail-status { font-size: 16px; padding: 5px 13px; }
+    body.em-mobile .m-order-detail-date { font-size: 16px; }
+    body.em-mobile .m-order-detail-etsy { font-size: 16px; }
+    body.em-mobile .m-order-section h5 { font-size: 15px; }
+    body.em-mobile .m-order-item img,
+    body.em-mobile .m-order-item .m-item-img-fallback { width: 84px; height: 84px; }
+    body.em-mobile .m-order-item .m-item-title { font-size: 17px; }
+    body.em-mobile .m-order-item .m-item-meta { font-size: 15px; }
+    body.em-mobile .m-order-item .m-item-perso { font-size: 15px; padding: 7px 10px; }
+    body.em-mobile .m-order-item-price { font-size: 17px; }
+    body.em-mobile .m-order-address { font-size: 17px; padding: 16px 18px; }
+    body.em-mobile .m-order-totals { font-size: 17px; }
+    body.em-mobile .m-order-totals tr.total { font-size: 18px; }
+
+    body.em-mobile .m-sheet-title { font-size: 22px; }
+    body.em-mobile .m-sheet-row .m-lab { font-size: 19px; }
+    body.em-mobile .m-sheet-row select { font-size: 19px; }
+    body.em-mobile .m-sheet-action-btn { font-size: 19px; padding: 18px; }
+
+    body.em-mobile .m-menu-item { font-size: 19px; padding: 18px 22px; }
+    body.em-mobile .m-menu-item .material-icons { font-size: 28px; }
+
+    body.em-mobile .m-settings-section summary { font-size: 19px; padding: 22px; }
+    body.em-mobile .m-settings-content { font-size: 19px; }
+    body.em-mobile .m-settings-content .m-desc { font-size: 16px; }
+    body.em-mobile .m-settings-content button { height: 50px; font-size: 17px; padding: 0 20px; }
+    body.em-mobile .m-settings-content input[type="text"],
+    body.em-mobile .m-settings-content input[type="password"] { font-size: 18px; padding: 13px 15px; }
+
+    /* ── Operator strip (v5.4) ────────────────────────────────── */
+    .m-op-strip {
+      flex: 0 0 auto;
+      display: flex; align-items: center;
+      gap: 10px;
+      padding: 8px 16px;
+      background: linear-gradient(180deg, #eef6ff 0%, #e0eeff 100%);
+      border-bottom: 1px solid #c8d8eb;
+      color: #1e3a5f;
+      font-size: 15px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .m-op-strip:active { background: #d8e5f5; }
+    body.em-mobile .m-op-strip { font-size: 17px; padding: 10px 18px; }
+    .m-op-strip .material-icons {
+      font-size: 22px; color: #2c5aa0;
+    }
+    body.em-mobile .m-op-strip .material-icons { font-size: 26px; }
+    .m-op-name { font-weight: 600; flex: 0 0 auto; }
+    .m-op-role {
+      font-size: 12px; padding: 2px 8px;
+      background: rgba(44,90,160,0.15);
+      color: #2c5aa0;
+      border-radius: 10px;
+      margin-left: auto;
+      font-weight: 500;
+    }
+    body.em-mobile .m-op-role { font-size: 14px; padding: 3px 10px; }
+
+    /* ── Desktop em-badge pills, sized for mobile (v5.4) ─────────
+     * We use the desktop's exact .em-badge classes for thread pills
+     * (mStatusPills v5.4+ produces them). The base .em-badge rule is
+     * 10px font for desktop; bumping here for mobile readability.
+     * Specific .em-badge.X color overrides (review-decision, intent,
+     * sales-stage, auto-replied, etc.) cascade through unchanged.
+     */
+    body.em-mobile .em-badge {
+      font-size: 14px;
+      padding: 4px 10px;
+      border-radius: 5px;
+      letter-spacing: 0.01em;
+      line-height: 1.3;
+      display: inline-block;
+    }
+    /* In thread rows specifically, give pills room to wrap */
+    body.em-mobile .m-thread-text > div:has(> .em-badge) {
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    /* The conv-header pills row above messages */
+    body.em-mobile .m-conv-pills-row {
+      display: flex; gap: 6px; flex-wrap: wrap;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--m-c-border);
+    }
+    body.em-mobile .m-conv-pills-row .em-badge {
+      font-size: 15px;
+      padding: 5px 12px;
+      border-radius: 6px;
+    }
+
+    /* ── AI draft card (v5.4) ──────────────────────────────────── */
+    .m-ai-draft-card {
+      background: linear-gradient(180deg, #faf5ff 0%, #f3e8ff 100%);
+      border-radius: var(--m-radius-md);
+      margin: 12px 16px;
+      box-shadow: 0 1px 3px rgba(102,57,186,0.15);
+      border: 1px solid #d8b4fe;
+      overflow: hidden;
+    }
+    body.em-mobile .m-ai-draft-card { margin: 14px 16px; border-radius: 12px; }
+    .m-ai-draft-card-head {
+      display: flex; align-items: center;
+      gap: 10px;
+      padding: 14px 16px;
+      border-bottom: 1px solid rgba(102,57,186,0.2);
+    }
+    .m-ai-draft-card-title {
+      font-weight: 600;
+      font-size: 16px;
+      color: #6639ba;
+    }
+    body.em-mobile .m-ai-draft-card-title { font-size: 19px; }
+    .m-ai-draft-card-tagline {
+      font-size: 12px;
+      color: #7e57c2;
+    }
+    body.em-mobile .m-ai-draft-card-tagline { font-size: 14px; }
+    .m-ai-draft-card-body {
+      padding: 14px 16px;
+      font-size: 14px;
+      color: #2d1b4e;
+      line-height: 1.5;
+      max-height: 380px;
+      overflow-y: auto;
+    }
+    body.em-mobile .m-ai-draft-card-body { font-size: 16px; padding: 16px 18px; }
+    /* The desktop's renderAiDraftCard puts content with class
+     * em-ai-meta, em-ai-chip, em-ai-rating, em-ai-body. Style them
+     * for mobile readability when mirrored. */
+    body.em-mobile .m-ai-draft-card-body .em-ai-meta {
+      display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px;
+    }
+    body.em-mobile .m-ai-draft-card-body .em-ai-chip {
+      font-size: 13px;
+      padding: 3px 9px;
+      background: rgba(102,57,186,0.1);
+      color: #6639ba;
+      border-radius: 4px;
+    }
+    body.em-mobile .m-ai-draft-card-body .em-ai-body {
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      background: #fff;
+      padding: 12px 14px;
+      border-radius: 6px;
+      border: 1px solid rgba(102,57,186,0.15);
+      font-size: 16px;
+      line-height: 1.5;
+    }
+
+    /* Messages list container (v5.4) — make it scroll-friendly */
+    .m-messages-list { display: block; }
+
   </style>
 </head>
 <body>
@@ -3315,6 +3544,16 @@
       <button class="m-appbar-icon" id="mSearchClear" aria-label="Clear">
         <i class="material-icons">close</i>
       </button>
+    </div>
+
+    <!-- v5.4 — Logged-in operator strip. Sits below the appbar (above
+         the list/conv body). Mirrors the desktop's "logged in as"
+         indicator. Hidden if no current user. mUpdateOperatorStrip
+         keeps the text current via mNotifyAuthChanged. -->
+    <div class="m-op-strip" id="mOpStrip" style="display:none;">
+      <i class="material-icons">account_circle</i>
+      <span class="m-op-name" id="mOpName"></span>
+      <span class="m-op-role" id="mOpRole"></span>
     </div>
 
     <div class="m-main">
@@ -8775,6 +9014,13 @@
         body.innerHTML = '<div class="em-ai-empty">No AI draft yet. Click <b>AI Draft</b> under the reply box to generate one.</div>';
         resetTokenCounter();
         hideReferencedReceipts();
+        // v5.4 — Mobile mirror: empty state hides the mobile AI card
+        if (window.IS_MOBILE && typeof window.mMirrorAiDraftCard === "function") {
+          try {
+            const t = (state.threads || []).find(x => x && x.id === state.selectedId);
+            if (t) window.mMirrorAiDraftCard(t);
+          } catch {}
+        }
         return;
       }
 
@@ -9011,6 +9257,15 @@
         Array.isArray(draft.trackingImages) ? draft.trackingImages : [],
         { autoPromoteToChips: !isSentLike }
       );
+      // v5.4 — Mobile mirror: copy the just-rendered AI draft card body
+      // into the mobile-mounted equivalent so mobile operators see the
+      // same draft + meta + suggested actions.
+      if (window.IS_MOBILE && typeof window.mMirrorAiDraftCard === "function") {
+        try {
+          const t = (state.threads || []).find(x => x && x.id === state.selectedId);
+          if (t) window.mMirrorAiDraftCard(t);
+        } catch {}
+      }
     }
 
     // ─── Token counter ────────────────────────────────────────────────
@@ -13261,21 +13516,123 @@
     }
 
     // Inline pill builder — accepts the desktop's status string, returns HTML.
-    function mStatusPills(thread) {
-      if (!thread) return "";
-      const pills = [];
-      const st = thread.status;
-      if (st === "pending_human_review") pills.push(`<span class="m-pill review">Needs Review</span>`);
-      if (st === "production_rush")      pills.push(`<span class="m-pill rush">🔥 Rush 🔥</span>`);
-      if (st && st.startsWith("sales_")) pills.push(`<span class="m-pill sales">Sales</span>`);
-      if (st === "auto_replied" || st === "queued_for_auto_send") pills.push(`<span class="m-pill auto"><i class="material-icons">smart_toy</i>Auto-replied</span>`);
-      if (st === "archived")             pills.push(`<span class="m-pill replied">Archived</span>`);
-      if (thread.sendOrigin === "manual" && (st === "auto_replied" || st === "replied" || st === "pending_human_review")) {
-        pills.push(`<span class="m-pill manual">Manually Sent</span>`);
+    // v5.4 — Desktop-parity thread badges. Mirrors EXACTLY what the
+    // desktop's renderThreadList produces (line ~7389), so the same
+    // thread shows the same colored pills with the same labels and
+    // confidence percentages on both views. The CSS classes are the
+    // desktop's own (.em-badge.review-decision.red, .em-badge.intent.X,
+    // etc.) — see lines 1064-1145 for the colors. Mobile overrides
+    // the base .em-badge font-size in CSS so the pills are readable.
+    //
+    // Why mirror the logic instead of factoring out a shared function:
+    // the desktop's renderThreadList builds many other things in the
+    // same loop (avatars, unread state, checkbox state, click handlers).
+    // Touching it risks regressions on the desktop. Mirroring here
+    // keeps the change surgical.
+    function mStatusPills(t) {
+      if (!t) return "";
+      const badges = [];
+
+      // 1. Production rush — pinned first if active
+      const rush = t.productionRush;
+      if (rush && rush.acceptedAt && !rush.removedAt) {
+        const days = rush.shipDays || rush.targetShipDays || "?";
+        badges.push(`<span class="em-badge rush" title="Production rush — ship in ${esc(String(days))} days">🔥 RUSH ${esc(String(days))}d</span>`);
       }
-      if (thread.gmailMessageId)  pills.push(`<span class="m-pill gmail"><i class="material-icons">mail</i>Gmail</span>`);
-      if (thread.source === "extension" && !thread.gmailMessageId) pills.push(`<span class="m-pill scraped">Etsy Scraped</span>`);
-      return pills.join("");
+
+      // 2. AI review-decision pill (red "Needs review" / green "No review" + confidence)
+      const REVIEW_AUTO_SEND_THRESHOLD = 0.80;
+      let reviewSignal = null;
+      if (t.aiReviewDecision && typeof t.aiReviewDecision === "object") {
+        reviewSignal = {
+          needsReview: !!t.aiReviewDecision.needs_review,
+          confidence : typeof t.aiReviewDecision.confidence === "number" ? t.aiReviewDecision.confidence : 0
+        };
+      } else if (t.aiConfidence != null) {
+        const c = Number(t.aiConfidence);
+        reviewSignal = { needsReview: c < REVIEW_AUTO_SEND_THRESHOLD, confidence: c };
+      }
+      if (reviewSignal) {
+        const conf = reviewSignal.confidence;
+        const effectivelyNeedsReview = reviewSignal.needsReview || conf < REVIEW_AUTO_SEND_THRESHOLD;
+        const cls = effectivelyNeedsReview ? "red" : "green";
+        const label = effectivelyNeedsReview ? "Needs review" : "No review";
+        badges.push(`<span class="em-badge review-decision ${cls}">${esc(label)} ${Math.round(conf*100)}%</span>`);
+      } else if (t.confidence != null) {
+        badges.push(`<span class="em-badge confidence">${Math.round(t.confidence*100)}%</span>`);
+      }
+
+      // 3. Success / Auto-replied
+      const isSuccessClosed = (t.status === "sales_completed") || !!t.salesCompletedAt;
+      if (isSuccessClosed) {
+        badges.push(`<span class="em-badge success">Success</span>`);
+      } else if (t.lastAutoDecision === "auto_send_confirmed") {
+        const tsToMs = (v) => {
+          if (!v) return 0;
+          if (typeof v === "number") return v;
+          if (v.toMillis) return v.toMillis();
+          if (v.ms) return v.ms;
+          if (v._seconds) return v._seconds * 1000;
+          return 0;
+        };
+        const inboundMs = tsToMs(t.lastInboundAt);
+        const autoMs    = tsToMs(t.lastAutoDecisionAt);
+        if (autoMs > 0 && (inboundMs === 0 || autoMs > inboundMs)) {
+          badges.push(`<span class="em-badge auto-replied">Auto-replied</span>`);
+        }
+      }
+
+      // 4. Intent classifier
+      if (t.intentClassification) {
+        const cls = String(t.intentClassification);
+        const conf = typeof t.intentConfidence === "number" ? t.intentConfidence : 0;
+        const labelMap = {
+          support       : "support",
+          sales_lead    : "sales lead",
+          post_purchase : "post-purchase",
+          spam          : "spam",
+          unclear       : "unclear"
+        };
+        const label = labelMap[cls] || cls;
+        const lowConf = conf < 0.7 ? " low-conf" : "";
+        badges.push(`<span class="em-badge intent ${esc(cls)}${lowConf}">${esc(label)} ${Math.round(conf*100)}%</span>`);
+      }
+
+      // 5. Sales stage
+      if (t.salesStage) {
+        const stageLabels = {
+          discovery              : "discovery",
+          spec                   : "spec",
+          quote                  : "quote",
+          revision               : "revision",
+          pending_close_approval : "ready to close",
+          abandoned              : "abandoned"
+        };
+        const stage = String(t.salesStage);
+        const lbl = stageLabels[stage] || stage;
+        const ready = t.readyForHumanApproval ? '✓ ' : '';
+        badges.push(`<span class="em-badge sales-stage ${esc(stage)}">${ready}sales: ${esc(lbl)}</span>`);
+      }
+
+      // 6. Reply origin (auto-replied threads)
+      if (t.status === "auto_replied") {
+        if (t.manuallyMovedToAutoReplied) {
+          badges.push(`<span class="em-badge ai-manual">moved by op</span>`);
+        } else if (t.sendOrigin === "manual") {
+          badges.push(`<span class="em-badge manually-sent">Manually Sent</span>`);
+        } else {
+          badges.push(`<span class="em-badge ai-auto">auto-sent</span>`);
+        }
+      } else if (t.status === "queued_for_auto_send") {
+        badges.push(`<span class="em-badge ai-sending">sending…</span>`);
+      }
+
+      // 7. Image attachment indicator
+      if ((t.riskFlags || []).includes("image_attached")) {
+        badges.push(`<span class="em-badge attachment">📎 image</span>`);
+      }
+
+      return badges.join("");
     }
 
     // Render-coalescing: any number of m*Dirty mutations in one tick
@@ -13301,7 +13658,12 @@
     window.mNotifyThreadsChanged   = () => { mState.dirtyList = true; mState.dirtyDrawer = true; mRequestRender(); };
     window.mNotifyMessagesChanged  = () => { mState.dirtyConv = true; mRequestRender(); };
     window.mNotifyCountsChanged    = () => { mState.dirtyDrawer = true; mState.dirtyList = true; mRequestRender(); };
-    window.mNotifyAuthChanged      = () => { mState.dirtyDrawer = true; mState.dirtySettings = true; mRequestRender(); };
+    window.mNotifyAuthChanged      = () => {
+      mState.dirtyDrawer = true; mState.dirtySettings = true;
+      // v5.4 — Operator strip shows current user; refresh on auth change.
+      try { if (typeof mUpdateOperatorStrip === "function") mUpdateOperatorStrip(); } catch {}
+      mRequestRender();
+    };
     window.mNotifyDraftChanged     = () => {
       // AI Draft just wrote into #emDraftText; mirror that into the
       // mobile composer textarea so the operator sees the new draft.
@@ -13374,7 +13736,32 @@
         titleEl.textContent = "Settings";
         subEl.textContent = state.currentUser ? (state.isOwner ? "Owner" : "Operator") : "";
       }
+
+      // v5.4 — Refresh the operator strip whenever the appbar refreshes.
+      // Cheap; reads only state.currentUser.
+      mUpdateOperatorStrip();
     }
+
+    // ── Operator strip (logged-in indicator) ─────────────────────
+    // v5.4 — Mirrors the desktop's "logged in as" UI. Sits as a thin
+    // band below the appbar showing the current operator's display
+    // name and role. Hidden when nobody is signed in. Tap it to jump
+    // to the Settings screen (where Sign Out lives).
+    function mUpdateOperatorStrip() {
+      const strip   = document.getElementById("mOpStrip");
+      const nameEl  = document.getElementById("mOpName");
+      const roleEl  = document.getElementById("mOpRole");
+      if (!strip) return;
+      const u = state.currentUser;
+      if (!u) {
+        strip.style.display = "none";
+        return;
+      }
+      strip.style.display = "";
+      if (nameEl) nameEl.textContent = u.displayName || u.username || "Signed in";
+      if (roleEl) roleEl.textContent = state.isOwner ? "Owner" : "Operator";
+    }
+    window.mUpdateOperatorStrip = mUpdateOperatorStrip;
 
     function mOpenDrawer()  { document.getElementById("mDrawerBackdrop").classList.add("visible");    document.getElementById("mDrawer").classList.add("visible"); }
     function mCloseDrawer() { document.getElementById("mDrawerBackdrop").classList.remove("visible"); document.getElementById("mDrawer").classList.remove("visible"); }
@@ -13623,6 +14010,28 @@
       // update the (hidden) desktop UI. That's fine — it's a no-op for
       // the user since desktop UI is hidden on mobile.
       state.selectedId = threadId;
+
+      // v5.4 — Mark the thread read. Two parts:
+      //   (a) Optimistic local update: flip t.unread to false in
+      //       state.threads so the unread blue dot disappears
+      //       immediately, before any server round-trip. Without this
+      //       the dot stays blue until the next list-poll lands a
+      //       fresh thread doc with unread=false (5s cycle).
+      //   (b) Server call: fire-and-forget to etsyMailThreads with
+      //       action: "markRead". Same call desktop's openThread fires
+      //       (line 7918). Failures don't block the open flow — at
+      //       worst the dot reappears on the next poll.
+      const t = (state.threads || []).find(x => x && x.id === threadId);
+      if (t && t.unread) {
+        t.unread = false;
+        // Refresh the list so the dot disappears NOW.
+        mState.dirtyList = true;
+        mRequestRender();
+      }
+      try {
+        api("etsyMailThreads", { method: "POST", body: { action: "markRead", threadId } }).catch(() => {});
+      } catch (e) { /* swallow — mark-read is best-effort */ }
+
       mState.currentScreen = "conv";
       mState.dirtyConv = true;
       mShowScreen("conv");
@@ -13640,6 +14049,19 @@
       // load), so we re-check the cache every 750ms while the thread is
       // open and update the mobile card the moment it appears.
       mStartSummaryWatch(threadId);
+
+      // v5.4 — Trigger the desktop's AI draft load for this thread. On
+      // desktop this is part of openThread/renderDetail; on mobile we
+      // need to call it explicitly so the desktop's #emAiCardBody gets
+      // populated, which mMirrorAiDraftCard then mirrors into the
+      // mobile-mounted #mAiDraftCard. The function reads from
+      // EtsyMail_Drafts and calls renderAiDraftCard with the doc.
+      try {
+        if (typeof hydrateAiDraft === "function") {
+          // hydrateAiDraft expects a thread object, not just an id
+          if (t) hydrateAiDraft(t).catch(() => {});
+        }
+      } catch (e) { /* swallow */ }
     }
 
     // ── Summary cache watcher ────────────────────────────────────
@@ -13682,6 +14104,29 @@
     }
 
     // ── Conversation rendering ───────────────────────────────────
+    // v5.4 — Split into shell vs messages to eliminate flicker.
+    //
+    // Before v5.4, mRenderConv rebuilt the entire conv body innerHTML
+    // every 4 seconds (on each message poll). The whole tree —
+    // customer card, summary card, messages list, composer state —
+    // got blown away and rebuilt. Result: visible flicker, scroll
+    // resets, expanded cards collapsing, and the summary card
+    // dis/reappearing every poll.
+    //
+    // v5.4 architecture:
+    //   - mMountConv(t) builds the shell ONCE per thread open. It
+    //     creates the pills row, customer card, summary card mount,
+    //     AI-draft mirror, and an empty messages container. Wires
+    //     all the click/tap handlers. Idempotent: calling it again
+    //     on the same thread is a no-op (we check dataset.threadId).
+    //   - mRenderMessages(t) only rewrites the messages list inside
+    //     the existing shell. Cheap; runs every poll. Customer +
+    //     summary cards are not touched, so they don't flicker.
+    //   - mUpdateSummaryCard / mLoadCustomerCard write into specific
+    //     mount nodes; they're fired only when their data lands.
+    //
+    // mRenderConv is now a thin orchestrator that calls the two:
+    // mount-if-needed, then refresh messages.
     function mRenderConv() {
       const body = document.getElementById("mConvBody");
       if (!body) return;
@@ -13689,43 +14134,156 @@
       const t = (state.threads || []).find(x => x && x.id === tid);
       if (!t) {
         body.innerHTML = `<div style="padding:32px;text-align:center;color:var(--m-c-text-muted);">No thread selected.</div>`;
+        body.dataset.threadId = "";
         return;
       }
       mUpdateAppbar();
+      const isFreshMount = body.dataset.threadId !== tid;
+      if (isFreshMount) {
+        mMountConv(t);
+        body.dataset.threadId = tid;
+      }
+      mRenderMessages(t);
+      // Try to paint summary card from cache (no-op if cache miss; the
+      // mStartSummaryWatch interval will catch a late arrival).
+      mUpdateSummaryCard(t);
+      // Mirror the desktop AI draft card (writes into our mounted
+      // #emAiCardBody if present in the mobile shell).
+      mMirrorAiDraftCard(t);
+    }
 
-      // v5.1 — Preserve UI state across re-renders. mRenderConv runs on
-      // every messages poll (every 4s), so without this, the customer
-      // card would collapse, summary card would collapse, and scroll
-      // position would reset every 4 seconds — making the conversation
-      // unusable. We snapshot before rebuilding and restore after.
-      const wasNearBottom = (() => {
-        const el = body;
-        if (!el) return true;  // fresh open: stick to bottom (newest message)
-        return (el.scrollHeight - el.scrollTop - el.clientHeight) < 80;
-      })();
-      const custCardWasOpen = !!document.getElementById("mCustomerCard")?.classList.contains("open");
-      const sumCardWasOpen  = !!document.getElementById("mSummaryCard")?.classList.contains("open");
-
-      // Pills row
+    // ── Build the conv shell (called once per thread open) ──────
+    function mMountConv(t) {
+      const body = document.getElementById("mConvBody");
+      if (!body) return;
       const pillsHtml = mStatusPills(t);
 
-      // Customer card — collapsed by default. Body fetched lazily
-      // when the operator taps it (avoids extra Firestore reads on
-      // every conv open).
       const custInitials = mInitials(t.customerName || t.etsyUsername);
       const custColor = mAvatarColor(t.customerName || t.etsyUsername);
       const custAvatarHtml = t.buyerAvatarUrl
         ? `<img src="${mEsc(t.buyerAvatarUrl)}" referrerpolicy="no-referrer" alt="" onerror="this.replaceWith(document.createTextNode('${mEsc(custInitials)}'));">`
         : mEsc(custInitials);
 
-      // v5.1 — Sort messages chronologically before rendering. Without
-      // this, optimistic messages (timestamped as raw JS numbers) and
-      // scraped messages (timestamped as firestoreProxy Timestamp shape
-      // {_ts:true, ms:N}) sort in different "buckets" — all numbers
-      // before all Timestamps regardless of their actual time value.
-      // Result: recently-sent messages appear at the TOP of the thread,
-      // making it look like "new messages are missing" even though they
-      // are all there. Same logic as desktop's renderThreadMessages.
+      body.innerHTML = `
+        <div class="m-conv-header">
+          ${pillsHtml ? `<div class="m-conv-pills-row">${pillsHtml}</div>` : ""}
+        </div>
+
+        <div class="m-customer-card" id="mCustomerCard">
+          <div class="m-customer-card-head" id="mCustomerCardHead">
+            <div class="m-avatar ${custColor}">${custAvatarHtml}</div>
+            <div class="m-info">
+              <div class="m-name">${mEsc(t.customerName || t.etsyUsername || "Unknown")}</div>
+              <div class="m-meta" id="mCustomerMeta">
+                <span style="color: var(--m-c-text-muted);">Tap to load order history</span>
+              </div>
+            </div>
+            <i class="material-icons m-chev">expand_more</i>
+          </div>
+          <div class="m-customer-card-body" id="mCustomerCardBody">
+            <div style="font-size:13px; color: var(--m-c-text-muted);">Loading…</div>
+          </div>
+        </div>
+
+        <div class="m-summary-card urgency-low" id="mSummaryCard" style="display:none;">
+          <div class="m-summary-card-head" id="mSummaryCardHead">
+            <i class="material-icons m-lead">summarize</i>
+            <div style="flex:1 1 auto; min-width: 0;">
+              <div class="m-summary-card-title">Conversation summary</div>
+              <div class="m-summary-card-tagline" id="mSummaryTagline">Loading…</div>
+            </div>
+            <i class="material-icons m-chev">expand_more</i>
+          </div>
+          <div class="m-summary-card-body" id="mSummaryCardBody"></div>
+        </div>
+
+        <!-- v5.4 — Mobile-mounted AI draft card. Mirrors what desktop
+             writes into #emAiCardBody (the desktop's draft card). When
+             a fresh draft arrives (auto-pipeline pre-generated, or the
+             operator clicks ✨ AI Draft), the desktop's renderAiDraftCard
+             writes its HTML into the desktop element; mMirrorAiDraftCard
+             clones it here. We display it with mobile-friendly styles. -->
+        <div class="m-ai-draft-card" id="mAiDraftCard" style="display:none;">
+          <div class="m-ai-draft-card-head">
+            <i class="material-icons" style="font-size:22px; color:#6639ba;">auto_awesome</i>
+            <div style="flex:1 1 auto; min-width:0;">
+              <div class="m-ai-draft-card-title">AI draft</div>
+              <div class="m-ai-draft-card-tagline" id="mAiDraftTagline">Pre-generated reply ready to review</div>
+            </div>
+          </div>
+          <div class="m-ai-draft-card-body" id="mAiDraftBody"></div>
+        </div>
+
+        <!-- Messages list — rewritten on every poll by mRenderMessages.
+             Everything ABOVE this stays stable to avoid flicker. -->
+        <div class="m-messages-list" id="mMessagesList"></div>
+      `;
+
+      // Wire customer card head — toggles open + lazy-loads on first open
+      const custHead = document.getElementById("mCustomerCardHead");
+      if (custHead) {
+        custHead.addEventListener("click", () => {
+          const card = document.getElementById("mCustomerCard");
+          const opening = !card.classList.contains("open");
+          card.classList.toggle("open");
+          if (opening) mLoadCustomerCard(t);
+        });
+      }
+      // Wire summary card head — toggles open
+      const sumHead = document.getElementById("mSummaryCardHead");
+      if (sumHead) {
+        sumHead.addEventListener("click", () => {
+          document.getElementById("mSummaryCard").classList.toggle("open");
+        });
+      }
+
+      // Trigger summary card render — populates state._summaryCache
+      // via desktop's existing pipeline. mUpdateSummaryCard reads from
+      // there.
+      if (typeof renderSalesCardForThread === "function") {
+        renderSalesCardForThread(t.id).catch(() => {});
+      }
+
+      // Hydrate composer textarea
+      const ta = document.getElementById("mComposerTextarea");
+      if (ta) {
+        const desktopTa = document.getElementById("emDraftText");
+        ta.value = (desktopTa && desktopTa.value) ? desktopTa.value : "";
+        mAutoGrow(ta);
+      }
+      const send = document.getElementById("mComposerSend");
+      if (send) send.disabled = !((ta && ta.value.trim()) || mGetCurrentAttachments().length);
+      mRenderAttachments();
+
+      // Translate preview state
+      const tPane = document.getElementById("mTranslatePreview");
+      const tBtn  = document.getElementById("mActionTrans");
+      const tBody = document.getElementById("mTranslatePreviewBody");
+      if (state.composerTranslation && state.composerTranslation.translated) {
+        if (tBody) tBody.textContent = state.composerTranslation.translated;
+        if (tPane) tPane.classList.add("visible");
+        if (tBtn)  tBtn.classList.add("active");
+      } else {
+        if (tPane) tPane.classList.remove("visible");
+        if (tBtn)  tBtn.classList.remove("active");
+      }
+    }
+
+    // ── Render only the messages list ────────────────────────────
+    // Called every poll. Updates only the #mMessagesList container,
+    // which sits BELOW the cards in the conv body. The cards are
+    // unaffected, so they don't flicker. Scroll position is preserved
+    // when the operator was reading older messages; we stick to bottom
+    // when they were already at/near it.
+    function mRenderMessages(t) {
+      const list = document.getElementById("mMessagesList");
+      if (!list) return;
+      const body = document.getElementById("mConvBody");
+      const wasNearBottom = body
+        ? (body.scrollHeight - body.scrollTop - body.clientHeight) < 80
+        : true;
+
+      // Sort + dedup (same logic as v5.1)
       const _msToInt = (m) => {
         const v = (m && (m.timestamp || m.createdAt)) || 0;
         if (typeof v === "number") return v;
@@ -13735,8 +14293,6 @@
         if (typeof v === "string") { const d = new Date(v); return isNaN(d.getTime()) ? 0 : d.getTime(); }
         return 0;
       };
-      // Also dedupe optimistic outbound ghosts when the real scraped
-      // message arrives — desktop does this for the same reason.
       const _normalizeForDedup = (s) => String(s || "")
         .trim().toLowerCase()
         .replace(/https?:\/\/(www\.)?/g, "")
@@ -13761,17 +14317,20 @@
       }
       const _sortedMsgs = _renderable.slice().sort((a, b) => _msToInt(a) - _msToInt(b));
 
+      // v5.4 — Cheap "did anything change" check. Compute a hash of
+      // (count + last-message-id + last-message-timestamp). Skip the
+      // innerHTML write if it matches what we last rendered. Eliminates
+      // even the brief paint pulse when nothing has actually changed.
+      const lastMsg = _sortedMsgs[_sortedMsgs.length - 1] || {};
+      const sig = _sortedMsgs.length + "|" + (lastMsg.id || "") + "|" + _msToInt(lastMsg);
+      if (list.dataset.lastSig === sig) return;
+      list.dataset.lastSig = sig;
+
       const messagesHtml = _sortedMsgs.map(m => {
         const dir = m.direction === "outbound" ? "outbound" : "inbound";
         const fromName = dir === "outbound" ? (m.employeeName || "You") : (t.customerName || t.etsyUsername || "Customer");
         const time = mFmtThreadTime(m.timestamp || m.createdAt);
         const text = m.text || m.body || "";
-        // Inbound images (customer-attached photos). Schema mirrors the
-        // desktop's renderThreadMessages: images live on m.imageUrls (full)
-        // with optional m.thumbnailUrls and m.storageImagePaths for the
-        // mirrored-to-Storage version. We pick the storage-mirrored URL
-        // when available (it sidesteps Etsy's hotlink protection) and
-        // otherwise fall back to the raw Etsy CDN URL.
         let imgsHtml = "";
         if (Array.isArray(m.imageUrls) && m.imageUrls.length) {
           const thumbs = (Array.isArray(m.thumbnailUrls) && m.thumbnailUrls.length) ? m.thumbnailUrls : m.imageUrls;
@@ -13791,113 +14350,61 @@
           </div>`;
       }).join("");
 
-      body.innerHTML = `
-        <div class="m-conv-header">
-          ${pillsHtml ? `<div class="m-conv-pills-row">${pillsHtml}</div>` : ""}
-        </div>
+      list.innerHTML = messagesHtml || `<div style="padding: 40px 16px; text-align: center; color: var(--m-c-text-muted);">No messages yet.</div>`;
 
-        <div class="m-customer-card" id="mCustomerCard">
-          <div class="m-customer-card-head" id="mCustomerCardHead">
-            <div class="m-avatar ${custColor}">${custAvatarHtml}</div>
-            <div class="m-info">
-              <div class="m-name">${mEsc(t.customerName || t.etsyUsername || "Unknown")}</div>
-              <div class="m-meta" id="mCustomerMeta">
-                <span style="color: var(--m-c-text-muted);">Tap to load order history</span>
-              </div>
-            </div>
-            <i class="material-icons m-chev">expand_more</i>
-          </div>
-          <div class="m-customer-card-body" id="mCustomerCardBody">
-            <div style="font-size:11px; color: var(--m-c-text-muted);">Loading…</div>
-          </div>
-        </div>
-
-        <div class="m-summary-card urgency-low" id="mSummaryCard" style="display:none;">
-          <div class="m-summary-card-head" id="mSummaryCardHead">
-            <i class="material-icons m-lead">summarize</i>
-            <div style="flex:1 1 auto; min-width: 0;">
-              <div class="m-summary-card-title">Conversation summary</div>
-              <div class="m-summary-card-tagline" id="mSummaryTagline">Loading…</div>
-            </div>
-            <i class="material-icons m-chev">expand_more</i>
-          </div>
-          <div class="m-summary-card-body" id="mSummaryCardBody"></div>
-        </div>
-
-        ${messagesHtml || `<div style="padding: 40px 16px; text-align: center; color: var(--m-c-text-muted);">No messages yet.</div>`}
-      `;
-
-      // Wire customer card
-      document.getElementById("mCustomerCardHead").addEventListener("click", () => {
-        const card = document.getElementById("mCustomerCard");
-        const opening = !card.classList.contains("open");
-        card.classList.toggle("open");
-        if (opening) mLoadCustomerCard(t);
-      });
-
-      // Wire summary card head if visible
-      const sumHead = document.getElementById("mSummaryCardHead");
-      if (sumHead) sumHead.addEventListener("click", () => {
-        document.getElementById("mSummaryCard").classList.toggle("open");
-      });
-
-      // Trigger summary card render — uses desktop's existing pipeline.
-      // renderSalesCardForThread populates state._summaryCache; we read
-      // from there + the rendered desktop card content.
-      if (typeof renderSalesCardForThread === "function") {
-        renderSalesCardForThread(tid).catch(() => {});
-      }
-      // Also try to re-read summary from cache after a short delay,
-      // which catches the case where it was already cached.
-      setTimeout(() => mUpdateSummaryCard(t), 50);
-      setTimeout(() => mUpdateSummaryCard(t), 1500);
-
-      // Reset composer state
-      const ta = document.getElementById("mComposerTextarea");
-      if (ta) {
-        // Hydrate from desktop's #emDraftText if it has content for this thread
-        const desktopTa = document.getElementById("emDraftText");
-        ta.value = (desktopTa && desktopTa.value) ? desktopTa.value : "";
-        mAutoGrow(ta);
-      }
-      const send = document.getElementById("mComposerSend");
-      if (send) send.disabled = !((ta && ta.value.trim()) || mGetCurrentAttachments().length);
-      mRenderAttachments();
-      // v5.1 — Only hide the translate preview if there's no active
-      // translation in state. If the operator just activated translate,
-      // state.composerTranslation has the translation; we should KEEP
-      // the preview visible across re-renders.
-      const tPane = document.getElementById("mTranslatePreview");
-      const tBtn  = document.getElementById("mActionTrans");
-      const tBody = document.getElementById("mTranslatePreviewBody");
-      if (state.composerTranslation && state.composerTranslation.translated) {
-        if (tBody) tBody.textContent = state.composerTranslation.translated;
-        if (tPane) tPane.classList.add("visible");
-        if (tBtn)  tBtn.classList.add("active");
-      } else {
-        if (tPane) tPane.classList.remove("visible");
-        if (tBtn)  tBtn.classList.remove("active");
-      }
-
-      // v5.1 — Restore the preserved scroll + open-state. Without this,
-      // the 4-second poll would yank the operator back to the top of
-      // the thread and collapse any cards they had open.
-      if (custCardWasOpen) {
-        const c = document.getElementById("mCustomerCard");
-        if (c) { c.classList.add("open"); mLoadCustomerCard(t); }
-      }
-      if (sumCardWasOpen) {
-        const c = document.getElementById("mSummaryCard");
-        if (c) c.classList.add("open");
-      }
-      // Stick to bottom on first open OR if user was already at the
-      // bottom (the typical "I'm reading the latest" state). If they
-      // had scrolled up to read older messages, leave them where they
-      // are. requestAnimationFrame so the layout has finalized first.
-      if (wasNearBottom) {
+      if (wasNearBottom && body) {
         requestAnimationFrame(() => { body.scrollTop = body.scrollHeight; });
       }
     }
+
+    // ── Mirror desktop's AI draft card into mobile ──────────────
+    // v5.4 — Operators on desktop see a rich AI draft card with
+    // confidence pills, model info, tool-call summary, suggested
+    // actions. The desktop populates #emAiCardBody (inside the
+    // hidden desktop UI on mobile) via renderAiDraftCard. We mirror
+    // that HTML into our #mAiDraftBody so mobile sees the same card.
+    //
+    // Hidden-state passthrough: when there's no draft yet, the
+    // desktop card body says "No AI draft yet…" — we hide our card
+    // entirely in that case (no point taking up screen real estate
+    // with a placeholder). When a real draft lands, we show ours.
+    function mMirrorAiDraftCard(t) {
+      const desktopBody = document.getElementById("emAiCardBody");
+      const mobileCard  = document.getElementById("mAiDraftCard");
+      const mobileBody  = document.getElementById("mAiDraftBody");
+      const mobileTagln = document.getElementById("mAiDraftTagline");
+      if (!mobileCard || !mobileBody) return;
+      // If desktop has no body or only the empty placeholder, hide.
+      const desktopHtml = desktopBody ? desktopBody.innerHTML : "";
+      const isEmptyPlaceholder = !desktopHtml || /em-ai-empty/.test(desktopHtml) || !desktopHtml.trim();
+      if (isEmptyPlaceholder) {
+        mobileCard.style.display = "none";
+        return;
+      }
+      // Otherwise mirror.
+      mobileCard.style.display = "";
+      // Avoid wholesale re-clone if we already mirrored this exact HTML.
+      if (mobileBody.dataset.lastHtml === desktopHtml) return;
+      mobileBody.innerHTML = desktopHtml;
+      mobileBody.dataset.lastHtml = desktopHtml;
+      // Re-link any in-card buttons to the desktop's existing handlers.
+      // The desktop wires action buttons on render; cloning innerHTML
+      // copies the markup but not the listeners. Easier than re-wiring:
+      // delegate clicks to the desktop element. We attach a single
+      // delegated handler that proxies clicks to the matching desktop
+      // node.
+      mobileBody.onclick = (e) => {
+        const target = e.target.closest("button, a");
+        if (!target || !target.id) return;
+        const desktopEquivalent = document.getElementById(target.id);
+        if (desktopEquivalent && desktopEquivalent !== target) {
+          // Synthesize a click on the desktop's actual element, where
+          // its listener lives.
+          desktopEquivalent.click();
+        }
+      };
+    }
+    window.mMirrorAiDraftCard = mMirrorAiDraftCard;
 
     // ── Customer card lazy load ──────────────────────────────────
     async function mLoadCustomerCard(thread) {
@@ -14380,6 +14887,18 @@
         mShowScreen("settings");
         mRenderSettings();
       });
+
+      // v5.4 — Tap the operator strip to open Settings (where Sign Out
+      // and Change Password live). Mirrors the desktop pattern where
+      // clicking the user name opens the profile menu.
+      const opStrip = document.getElementById("mOpStrip");
+      if (opStrip) {
+        opStrip.addEventListener("click", () => {
+          mState.dirtySettings = true;
+          mShowScreen("settings");
+          mRenderSettings();
+        });
+      }
 
       // Composer
       const ta = document.getElementById("mComposerTextarea");
