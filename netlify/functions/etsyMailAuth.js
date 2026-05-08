@@ -415,6 +415,13 @@ async function handleAddOperator(event, body) {
   }
 
   const fresh = hashSecret(password);
+  // v4.1.1 — Use a full-overwrite set() (merge:false) to drop ANY
+  // prior fields on this doc. The previous version mixed merge:false
+  // with FV.delete(), which Firestore rejects ("FieldValue.delete()
+  // can only be used in update() or set() with {merge:true}"). The
+  // full-overwrite approach is cleaner anyway: a re-added operator
+  // gets a fresh, well-formed record with no leftover fields from
+  // any prior soft-revoked state.
   await ref.set({
     username,
     displayName,
@@ -424,8 +431,8 @@ async function handleAddOperator(event, body) {
     iterations  : fresh.iterations,
     digest      : fresh.digest,
     createdAt   : FV.serverTimestamp(),
-    createdBy   : sess.username,
-    revokedAt   : FV.delete()  // clear any prior revocation
+    createdBy   : sess.username
+    // (no revokedAt — by omission, the field is absent on the new doc)
   }, { merge: false });
 
   invalidateRoleCache(username);

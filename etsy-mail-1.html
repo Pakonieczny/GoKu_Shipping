@@ -2955,34 +2955,30 @@
     let _operatorRole = { role: null, fetchedAt: 0 };
 
     async function fetchOperatorRole() {
-      // Read the operator's role doc directly via firestoreProxy. The
-      // server's _etsyMailRoles helper is the canonical source-of-truth
-      // for permission checks; this UI lookup is for badge display only.
-      // The actual gate happens server-side on every owner-only POST.
-      const name = getEmployeeName();
-      if (!name) {
-        _operatorRole = { role: null, reason: "no_employee_name", fetchedAt: Date.now() };
-        return _operatorRole;
-      }
-      try {
-        const res = await api("firestoreProxy", {
-          method: "GET",
-          query : { op: "get", coll: "EtsyMail_Operators", id: name }
-        });
-        if (res && res.exists && res.doc) {
-          const d = res.doc;
-          if (d.revokedAt) {
-            _operatorRole = { role: null, reason: "revoked", fetchedAt: Date.now() };
-          } else {
-            _operatorRole = { role: d.role || null, displayName: d.displayName || null,
-                              employeeName: name, fetchedAt: Date.now() };
-          }
-        } else {
-          _operatorRole = { role: null, reason: "not_registered", employeeName: name, fetchedAt: Date.now() };
-        }
-      } catch (e) {
-        console.warn("operator role fetch failed:", e.message);
-        _operatorRole = { role: null, reason: "fetch_failed", error: e.message, fetchedAt: Date.now() };
+      // v4.1.1 — Read from the session, not a separate Firestore lookup.
+      //
+      // Old behavior: looked up EtsyMail_Operators/{getEmployeeName()}.
+      // After v4.1, getEmployeeName() returns the *display name*
+      // (e.g. "Paul K") whereas operator docs are keyed by *username*
+      // (e.g. "paul"). The lookup always missed → badge showed
+      // "Not registered" even for valid logged-in operators.
+      //
+      // The session payload from currentUser already gives us the
+      // authoritative role + username + displayName. No Firestore call
+      // needed; the badge is purely informational and the real role
+      // gate lives server-side on every owner-only request.
+      if (state.currentUser) {
+        _operatorRole = {
+          role        : state.currentUser.role || null,
+          displayName : state.currentUser.displayName || null,
+          employeeName: state.currentUser.username || null,
+          fetchedAt   : Date.now()
+        };
+      } else {
+        // Not signed in. The login modal handles the actual remediation;
+        // we just label the badge so the operator knows what state
+        // they're in.
+        _operatorRole = { role: null, reason: "not_signed_in", fetchedAt: Date.now() };
       }
       return _operatorRole;
     }
@@ -3002,14 +2998,18 @@
 
       if (role === "owner")    label.textContent = "Owner";
       else if (role === "operator") label.textContent = "Operator";
+      else if (_operatorRole.reason === "not_signed_in") label.textContent = "Sign in";
+      // Legacy reasons retained for any pre-v4.1 callers; new code
+      // shouldn't surface these.
       else if (_operatorRole.reason === "not_registered") label.textContent = "Not registered";
       else if (_operatorRole.reason === "revoked")        label.textContent = "Revoked";
       else if (_operatorRole.reason === "no_employee_name") label.textContent = "Set your name";
       else label.textContent = "—";
 
+      const who = _operatorRole.displayName || _operatorRole.employeeName || "(unknown)";
       wrap.title = _operatorRole.role
-        ? `Logged in as ${_operatorRole.employeeName || "(unknown)"}. Owner-only buttons are gated server-side; this badge is informational.`
-        : `Operator role unknown. Add a doc at EtsyMail_Operators/${_operatorRole.employeeName || "<your-name>"} = { role: "owner" | "operator" } to enable owner-only actions.`;
+        ? `Signed in as ${who} (${_operatorRole.role}). Owner-only buttons are gated server-side; this badge is informational.`
+        : `Not signed in. The login modal will open on your next API call.`;
     }
 
     function isOwner() { return _operatorRole.role === "owner"; }
@@ -5214,6 +5214,16 @@
       // owner operators understand why some sections are missing.
       const banner = $("emSatelliteSettingsBanner");
       if (banner) banner.style.display = isOwner ? "none" : "";
+
+      // v4.1.1 — Refresh the topbar role badge to match the new state.
+      // applyRoleVisibility() runs at every login/logout/bootstrap
+      // transition, so this is the right place to keep the badge in
+      // sync without scattering refresh calls across each handler.
+      // fetchOperatorRole now reads from state.currentUser (no network),
+      // so this is a synchronous-ish update.
+      if (typeof fetchOperatorRole === "function" && typeof renderOperatorRoleBadge === "function") {
+        fetchOperatorRole().then(renderOperatorRoleBadge).catch(() => {});
+      }
     }
 
     /** Page-load auth check. If we have a session token, validate it
