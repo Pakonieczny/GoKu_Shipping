@@ -804,8 +804,24 @@ exports.handler = async (event) => {
       // Uses paginated batched writes so the operation scales and stays
       // under the Netlify 30s budget even on large folders. Each batch
       // commits 250 threads to keep well under Firestore's 500-op limit.
+      //
+      // v4.1.3 — Added optional `destinationStatus` parameter so the
+      // caller can override the default destination. Necessary for
+      // emptying the Needs Review folder itself: the default destination
+      // IS pending_human_review, so without an override the action would
+      // try to move threads from pending_human_review → pending_human_review
+      // and 400 with "Cannot purge the destination folder." Now the
+      // frontend sends destinationStatus:"replied" when emptying Needs
+      // Review, which moves the threads to the neutral "handled" status
+      // — they vanish from Needs Review but stay visible in All, and a
+      // new inbound message can re-classify them back into Needs Review.
       if (action === "purgeFolder") {
-        const { folderStatus, actor = null, reason = null } = body;
+        const {
+          folderStatus,
+          destinationStatus = PURGE_FOLDER_DEFAULT_DESTINATION,
+          actor = null,
+          reason = null
+        } = body;
         if (!actor) return bad("Missing actor (operator name) for purgeFolder");
         if (!folderStatus) return bad("Missing folderStatus");
 
@@ -819,10 +835,18 @@ exports.handler = async (event) => {
             return bad(`Folder '${s}' is not eligible for bulk purge (transient or terminal status)`);
           }
         }
-        // Also block purging INTO the destination — it's a no-op that
-        // would burn writes for no reason and confuse the audit log.
-        if (targetStatuses.includes(PURGE_FOLDER_DEFAULT_DESTINATION)) {
-          return bad(`Cannot purge the destination folder '${PURGE_FOLDER_DEFAULT_DESTINATION}'`);
+        // Validate the destination too. It must be a real status, not
+        // blocked (we don't want to dump threads into transient or
+        // terminal buckets), and not equal to any of the source statuses
+        // (would be a no-op that burns writes and clutters the audit log).
+        if (!VALID_STATUSES.has(destinationStatus)) {
+          return bad(`Invalid destinationStatus '${destinationStatus}'`);
+        }
+        if (PURGE_FOLDER_BLOCKED.has(destinationStatus)) {
+          return bad(`Destination folder '${destinationStatus}' is not eligible as a purge target`);
+        }
+        if (targetStatuses.includes(destinationStatus)) {
+          return bad(`Cannot purge folder '${destinationStatus}' into itself`);
         }
 
         const owner = await requireOwner(actor);
@@ -830,7 +854,7 @@ exports.handler = async (event) => {
           await logUnauthorized({
             actor,
             eventType: "purge_folder_unauthorized",
-            payload  : { folderStatus: targetStatuses, reason: owner.reason }
+            payload  : { folderStatus: targetStatuses, destinationStatus, reason: owner.reason }
           });
           return json(403, { error: "Owner role required", reason: owner.reason });
         }
@@ -859,7 +883,7 @@ exports.handler = async (event) => {
             const batch = db.batch();
             for (const docSnap of snap.docs) {
               batch.update(docSnap.ref, {
-                status                  : PURGE_FOLDER_DEFAULT_DESTINATION,
+                status                  : destinationStatus,
                 folderPurgedFromStatus  : status,
                 folderPurgedAt          : FV.serverTimestamp(),
                 folderPurgedBy          : actor,

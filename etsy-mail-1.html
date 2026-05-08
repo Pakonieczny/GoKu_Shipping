@@ -1764,6 +1764,38 @@
       display: block; margin: 12px 0 4px; font-size: 12px; color: #57606a;
       line-height: 1.4;
     }
+    /* v4.1.2 — Reveal-toggle for password-style fields. The wrapper
+     * .em-secret-row puts the input and a little eye-icon button on the
+     * same row; the button flips input.type between "password" and
+     * "text" on click so the operator can read/copy the field's value
+     * (e.g. to share the X-EtsyMail-Secret with a satellite operator).
+     *
+     * The input gets flex:1 so it fills the row regardless of what
+     * the parent layout wants. The button is fixed-width with a
+     * hover state and a small color shift when the value is actively
+     * exposed (data-shown="true").
+     */
+    .em-secret-row {
+      display: flex; align-items: stretch; gap: 6px; width: 100%;
+    }
+    .em-secret-row > input {
+      flex: 1 1 auto; min-width: 0; box-sizing: border-box;
+    }
+    .em-secret-row > .em-reveal-btn {
+      flex: 0 0 auto; padding: 0 10px; cursor: pointer;
+      background: #fff; border: 1px solid #d0d7de; border-radius: 4px;
+      color: #57606a; display: inline-flex; align-items: center;
+      justify-content: center;
+    }
+    .em-secret-row > .em-reveal-btn:hover {
+      background: #f6f8fa;
+    }
+    .em-secret-row > .em-reveal-btn[data-shown="true"] {
+      background: #ddf4ff; border-color: #0969da; color: #0969da;
+    }
+    .em-secret-row > .em-reveal-btn .material-icons {
+      font-size: 18px;
+    }
     /* Checkbox-row labels (declared inline as `display: flex`). The
        inline rule wins on `display`, but the rest of `.em-modal label`
        still applies. We use a structural selector below to give the
@@ -1858,8 +1890,13 @@
                style="width:100%; padding:6px 10px; margin:4px 0 12px; border:1px solid #d0d7de; border-radius:4px; font-size:13px;" />
 
         <label for="emLoginPassword" style="font-size:12px; font-weight:600;">Password</label>
-        <input type="password" id="emLoginPassword" autocomplete="current-password"
-               style="width:100%; padding:6px 10px; margin:4px 0 14px; border:1px solid #d0d7de; border-radius:4px; font-size:13px;" />
+        <div class="em-secret-row" style="margin:4px 0 14px;">
+          <input type="password" id="emLoginPassword" autocomplete="current-password"
+                 style="padding:6px 10px; border:1px solid #d0d7de; border-radius:4px; font-size:13px;" />
+          <button type="button" class="em-reveal-btn" data-target="emLoginPassword" title="Show or hide the password">
+            <i class="material-icons">visibility</i>
+          </button>
+        </div>
 
         <div class="em-modal-error" id="emLoginError"></div>
         <div class="em-modal-buttons">
@@ -1882,7 +1919,20 @@
       <p style="font-size:12px;">Same value as <code>ETSYMAIL_EXTENSION_SECRET</code> in your Netlify env. Stored locally in this browser only.</p>
       <form id="emSecretForm" autocomplete="off">
         <label for="emSecretInput">X-EtsyMail-Secret</label>
-        <input type="password" id="emSecretInput" placeholder="paste your secret" autocomplete="off" />
+        <!-- v4.1.2 — Wrapper lets a small "Show/Hide" button sit inline
+             with the password input. Inputs of type=password mask their
+             content with bullets; the toggle flips type to text on
+             demand so operators can read/copy the secret to share with
+             satellite operators (same UX everywhere there's a secret-
+             style field — see Add Operator and Change Password modals). -->
+        <div class="em-secret-row">
+          <input type="password" id="emSecretInput" placeholder="paste your secret" autocomplete="off" />
+          <button type="button" class="em-reveal-btn"
+                  data-target="emSecretInput"
+                  title="Show or hide the value">
+            <i class="material-icons">visibility</i>
+          </button>
+        </div>
 
         <!-- v4.1 — My Account section. Visible to ALL operators (owner +
              satellite). Shows who's signed in, lets them change their
@@ -2303,8 +2353,13 @@
       </select>
 
       <label for="emAddOpPassword" style="font-size:12px; font-weight:600;">Initial password (min 8 chars)</label>
-      <input type="password" id="emAddOpPassword" autocomplete="new-password"
-             style="width:100%; padding:6px 10px; margin:4px 0 12px; border:1px solid #d0d7de; border-radius:4px; font-size:13px;" />
+      <div class="em-secret-row" style="margin:4px 0 12px;">
+        <input type="password" id="emAddOpPassword" autocomplete="new-password"
+               style="padding:6px 10px; border:1px solid #d0d7de; border-radius:4px; font-size:13px;" />
+        <button type="button" class="em-reveal-btn" data-target="emAddOpPassword" title="Show or hide the password">
+          <i class="material-icons">visibility</i>
+        </button>
+      </div>
 
       <div class="em-modal-error" id="emAddOpError"></div>
       <div class="em-modal-buttons">
@@ -2327,16 +2382,31 @@
       </p>
 
       <label for="emCpCurrent" style="font-size:12px; font-weight:600;">Current password</label>
-      <input type="password" id="emCpCurrent" autocomplete="current-password"
-             style="width:100%; padding:6px 10px; margin:4px 0 12px; border:1px solid #d0d7de; border-radius:4px; font-size:13px;" />
+      <div class="em-secret-row" style="margin:4px 0 12px;">
+        <input type="password" id="emCpCurrent" autocomplete="current-password"
+               style="padding:6px 10px; border:1px solid #d0d7de; border-radius:4px; font-size:13px;" />
+        <button type="button" class="em-reveal-btn" data-target="emCpCurrent" title="Show or hide the password">
+          <i class="material-icons">visibility</i>
+        </button>
+      </div>
 
       <label for="emCpNew" style="font-size:12px; font-weight:600;">New password (min 8 chars)</label>
-      <input type="password" id="emCpNew" autocomplete="new-password"
-             style="width:100%; padding:6px 10px; margin:4px 0 12px; border:1px solid #d0d7de; border-radius:4px; font-size:13px;" />
+      <div class="em-secret-row" style="margin:4px 0 12px;">
+        <input type="password" id="emCpNew" autocomplete="new-password"
+               style="padding:6px 10px; border:1px solid #d0d7de; border-radius:4px; font-size:13px;" />
+        <button type="button" class="em-reveal-btn" data-target="emCpNew" title="Show or hide the password">
+          <i class="material-icons">visibility</i>
+        </button>
+      </div>
 
       <label for="emCpConfirm" style="font-size:12px; font-weight:600;">Confirm new password</label>
-      <input type="password" id="emCpConfirm" autocomplete="new-password"
-             style="width:100%; padding:6px 10px; margin:4px 0 14px; border:1px solid #d0d7de; border-radius:4px; font-size:13px;" />
+      <div class="em-secret-row" style="margin:4px 0 14px;">
+        <input type="password" id="emCpConfirm" autocomplete="new-password"
+               style="padding:6px 10px; border:1px solid #d0d7de; border-radius:4px; font-size:13px;" />
+        <button type="button" class="em-reveal-btn" data-target="emCpConfirm" title="Show or hide the password">
+          <i class="material-icons">visibility</i>
+        </button>
+      </div>
 
       <div class="em-modal-error" id="emCpError"></div>
       <div class="em-modal-buttons">
@@ -5852,9 +5922,34 @@
         return;
       }
 
+      // v4.1.3 — Destination selection.
+      //
+      // The backend's default destination for purgeFolder is
+      // "pending_human_review" (the Needs Review folder). When the
+      // operator empties any OTHER folder (Auto-Reply, Archive, etc.),
+      // that's the right destination — the threads land back where a
+      // human can re-triage them.
+      //
+      // But when emptying Needs Review itself, sending them to Needs
+      // Review is a no-op the backend rejects. The operator's intent
+      // there is "I've seen these, get them out of my queue, but keep
+      // them visible in All in case I want to find them later." That
+      // means the destination should be a neutral "handled" status —
+      // we use "replied", which:
+      //   - removes the thread from every active triage folder
+      //   - keeps it visible in All (which shows everything regardless of status)
+      //   - lets a future inbound message re-classify the thread back
+      //     into Needs Review naturally (the auto-pipeline still runs)
+      const isEmptyingNeedsReview =
+        statuses.length === 1 && statuses[0] === "pending_human_review";
+      const destinationStatus = isEmptyingNeedsReview ? "replied" : "pending_human_review";
+      const destinationLabel  = isEmptyingNeedsReview
+        ? "marked as handled (still visible in All)"
+        : 'moved back to "Needs review"';
+
       const ok = confirm(
         `Empty the "${filter.label}" folder?\n\n` +
-        `${countNow} thread${countNow === 1 ? "" : "s"} will be moved back to "Needs review". ` +
+        `${countNow} thread${countNow === 1 ? "" : "s"} will be ${destinationLabel}. ` +
         `Threads themselves are NOT deleted — they just leave this folder.\n\n` +
         `This action is logged in the audit trail.`
       );
@@ -5862,23 +5957,32 @@
 
       const actor = getEmployeeName() || "operator";
 
-      // Optimistic update: zero out the source folder, bump pending_human_review.
+      // Optimistic update: zero out the source folder, bump destination.
       const priorCounts = {};
       for (const s of statuses) {
         priorCounts[s] = state.counts[s] || 0;
         state.counts[s] = 0;
       }
-      const priorReview = state.counts["pending_human_review"] || 0;
-      state.counts["pending_human_review"] = priorReview + countNow;
+      const priorDest = state.counts[destinationStatus] || 0;
+      state.counts[destinationStatus] = priorDest + countNow;
       renderRail();
 
       try {
         const res = await api("etsyMailThreads", {
           method: "POST",
-          body  : { action: "purgeFolder", folderStatus, actor, reason: "operator: empty folder" }
+          body  : {
+            action: "purgeFolder",
+            folderStatus,
+            destinationStatus,
+            actor,
+            reason: "operator: empty folder"
+          }
         });
         const moved = (res && res.totalMoved) || 0;
-        toast(`Emptied "${filter.label}" — ${moved} thread${moved === 1 ? "" : "s"} moved to Needs review.`);
+        const movedDestText = isEmptyingNeedsReview
+          ? "marked as handled"
+          : "moved to Needs review";
+        toast(`Emptied "${filter.label}" — ${moved} thread${moved === 1 ? "" : "s"} ${movedDestText}.`);
         // Reconcile from server truth.
         fetchCountsNow();
         // If the operator was looking at this folder, refresh the list
@@ -5887,7 +5991,7 @@
       } catch (e) {
         // Revert optimistic counts and re-render.
         for (const s of statuses) state.counts[s] = priorCounts[s];
-        state.counts["pending_human_review"] = priorReview;
+        state.counts[destinationStatus] = priorDest;
         renderRail();
         alert(`Failed to empty "${filter.label}": ${e.message}`);
       }
@@ -11230,6 +11334,32 @@
       wireBtnV41("emAddOpSubmitBtn",            submitAddOperator);
       wireBtnV41("emCpCancelBtn",               hideChangePasswordModal);
       wireBtnV41("emCpSubmitBtn",               submitChangePassword);
+
+      // v4.1.2 — Global click handler for any password-style "reveal"
+      // toggle. Delegated from <body> so we don't need per-button
+      // registration; any element matching .em-reveal-btn[data-target]
+      // toggles the named input's type between "password" and "text"
+      // and swaps the eye icon to match. Closures aren't required —
+      // we look up the target input fresh each click in case the DOM
+      // re-renders. Auto-resets to hidden whenever the host modal closes
+      // (a defensive cleanup hooked off the .em-modal-backdrop classList
+      // change is overkill for a one-shot reveal; we just rely on the
+      // operator closing the modal when done).
+      document.body.addEventListener("click", (ev) => {
+        const btn = ev.target.closest && ev.target.closest(".em-reveal-btn");
+        if (!btn) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        const targetId = btn.getAttribute("data-target");
+        if (!targetId) return;
+        const input = document.getElementById(targetId);
+        if (!input) return;
+        const showing = input.type === "text";
+        input.type = showing ? "password" : "text";
+        btn.setAttribute("data-shown", showing ? "false" : "true");
+        const icon = btn.querySelector(".material-icons");
+        if (icon) icon.textContent = showing ? "visibility" : "visibility_off";
+      });
 
       // v4.1 — Validate stored session token (or show login modal) on
       // initial page load. Runs after the inbox-secret modal has had a
