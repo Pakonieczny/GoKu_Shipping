@@ -4791,6 +4791,22 @@
       const role = $("emAddOpRole"); if (role) role.value = "operator";
       const err = $("emAddOpError");
       if (err) { err.textContent = ""; err.classList.remove("active"); }
+
+      // v4.1.1 — Live-lowercase the username field as the operator types.
+      // Backend validates against [a-z0-9_-]{3,32}, and previously the
+      // input would show "Shell" while the submit silently sent "shell"
+      // — fine but confusing. Now what they see is what they submit.
+      // Re-bound on every modal open since the listener could otherwise
+      // stack across opens; the cheapest way is to use oninput= which
+      // overwrites any prior handler.
+      const usernameInput = $("emAddOpUsername");
+      if (usernameInput) {
+        usernameInput.oninput = () => {
+          const lowered = usernameInput.value.toLowerCase();
+          if (lowered !== usernameInput.value) usernameInput.value = lowered;
+        };
+      }
+
       m.classList.add("active");
       setTimeout(() => $("emAddOpUsername")?.focus(), 50);
     }
@@ -5149,6 +5165,18 @@
         }
       }
       m.classList.add("active");
+
+      // v4.1.1 — Live-lowercase login username (same rationale as the
+      // Add Operator modal: backend stores lowercase, so don't let the
+      // operator type "Shell" and silently submit "shell").
+      const userInput = $("emLoginUsername");
+      if (userInput) {
+        userInput.oninput = () => {
+          const lowered = userInput.value.toLowerCase();
+          if (lowered !== userInput.value) userInput.value = lowered;
+        };
+      }
+
       // Focus username when freshly opened. Defer to next frame so the
       // modal's CSS transition finishes first.
       setTimeout(() => $("emLoginUsername")?.focus(), 50);
