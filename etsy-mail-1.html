@@ -1899,14 +1899,17 @@
       --m-shadow-1        : 0 1px 2px rgba(0,0,0,.04), 0 1px 3px rgba(0,0,0,.05);
       --m-shadow-2        : 0 4px 12px rgba(0,0,0,.08);
       --m-shadow-drawer   : 0 0 24px rgba(0,0,0,.18);
-      --m-appbar-h        : 56px;
-      --m-row-h           : 84px;
-      --m-composer-min-h  : 36px;
-      --m-composer-max-h  : 140px;
-      --m-radius-sm       : 4px;
-      --m-radius-md       : 8px;
-      --m-radius-lg       : 16px;
-      --m-radius-xl       : 24px;
+      /* v5.1 — bumped sizes ~20% based on operator feedback that the
+       * v5.0 sizes felt too small on real phone screens. All visual
+       * dimensions scale together so proportions stay correct. */
+      --m-appbar-h        : 64px;
+      --m-row-h           : 96px;
+      --m-composer-min-h  : 44px;
+      --m-composer-max-h  : 168px;
+      --m-radius-sm       : 5px;
+      --m-radius-md       : 10px;
+      --m-radius-lg       : 18px;
+      --m-radius-xl       : 28px;
       --m-duration        : 200ms;
       --m-duration-slow   : 300ms;
       --m-ease            : cubic-bezier(.4, 0, .2, 1);
@@ -1921,8 +1924,12 @@
       background: var(--m-c-bg);
       color: var(--m-c-text);
       font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-      font-size: 14px;
-      line-height: 1.4;
+      /* v5.1 — bumped from 14px → 16px on operator feedback that v5.0
+       * felt too small on phones. Down-stream sizes that were set in
+       * absolute px have been bumped proportionally (see other v5.1
+       * comments) so the whole UI scales together. */
+      font-size: 16px;
+      line-height: 1.45;
       -webkit-font-smoothing: antialiased;
       -webkit-tap-highlight-color: transparent;
       overscroll-behavior: none;
@@ -2357,6 +2364,135 @@
 
     /* Hidden file input — invisible, clicked programmatically. */
     .m-photo-input { position: absolute; width: 0; height: 0; opacity: 0; pointer-events: none; }
+
+    /* ════════════════════════════════════════════════════════════════
+     * v5.1 — Size bump (~20%) overrides
+     * ════════════════════════════════════════════════════════════════
+     * Operator feedback: v5.0 sizes felt too small on real phones.
+     * Rather than re-edit every rule, we add overrides at the end of
+     * the cascade. Base font is bumped 14→16 in #emMobileApp; below
+     * we scale up specific elements that had hard-coded px sizes.
+     */
+    body.em-mobile .m-appbar-icon { width: 48px; height: 48px; }
+    body.em-mobile .m-appbar-icon .material-icons { font-size: 26px; }
+    body.em-mobile .m-appbar-title    { font-size: 19px; }
+    body.em-mobile .m-appbar-subtitle { font-size: 13px; }
+
+    /* Thread row */
+    body.em-mobile .m-avatar { width: 46px; height: 46px; font-size: 16px; }
+    body.em-mobile .m-thread-line-1   { font-size: 16px; }
+    body.em-mobile .m-thread-time     { font-size: 13px; }
+    body.em-mobile .m-thread-subject  { font-size: 14px; }
+    body.em-mobile .m-thread-snippet  { font-size: 13px; }
+
+    /* Pills */
+    body.em-mobile .m-pill { font-size: 11px; padding: 2px 7px; }
+    body.em-mobile .m-pill .material-icons { font-size: 13px; }
+
+    /* Drawer */
+    body.em-mobile .m-drawer-header .m-name { font-size: 16px; }
+    body.em-mobile .m-drawer-header .m-role { font-size: 13px; }
+    body.em-mobile .m-drawer-folder { font-size: 16px; padding: 12px 22px; }
+    body.em-mobile .m-drawer-folder .material-icons { font-size: 23px; }
+    body.em-mobile .m-drawer-folder .m-fcnt { font-size: 13px; }
+
+    /* Customer card */
+    body.em-mobile .m-customer-card-head .m-avatar { width: 38px; height: 38px; font-size: 14px; }
+    body.em-mobile .m-customer-card-head .m-name { font-size: 16px; }
+    body.em-mobile .m-customer-card-head .m-meta { font-size: 13px; }
+    body.em-mobile .m-customer-card-head .m-repeat { font-size: 11px; padding: 2px 7px; }
+    body.em-mobile .m-customer-card-head .m-chev { font-size: 26px; }
+    body.em-mobile .m-customer-card-body { font-size: 14px; }
+    body.em-mobile .m-order-row { font-size: 14px; padding: 12px 8px; }
+    body.em-mobile .m-order-row .m-oid   { font-size: 13px; }
+    body.em-mobile .m-order-row .m-ostat { font-size: 11px; padding: 2px 7px; }
+    body.em-mobile .m-order-row .m-ochev { font-size: 22px; }
+
+    /* Summary card */
+    body.em-mobile .m-summary-card-head .m-lead { font-size: 24px; }
+    body.em-mobile .m-summary-card-head .m-chev { font-size: 26px; }
+    body.em-mobile .m-summary-card-title    { font-size: 15px; }
+    body.em-mobile .m-summary-card-tagline  { font-size: 13px; }
+    body.em-mobile .m-summary-card-body     { font-size: 14px; }
+    body.em-mobile .m-summary-card-body .m-row { grid-template-columns: 105px 1fr; }
+    body.em-mobile .m-summary-card-body .m-row .m-lab { font-size: 13px; }
+    body.em-mobile .m-summary-card-body .m-urg-chip { font-size: 11px; padding: 2px 7px; }
+    body.em-mobile .m-summary-card-body .m-flag { font-size: 12px; padding: 2px 7px; }
+
+    /* Messages */
+    body.em-mobile .m-msg-meta { font-size: 12px; }
+    body.em-mobile .m-msg-bubble { font-size: 16px; padding: 12px 16px; border-radius: 20px; }
+    body.em-mobile .m-msg-img { width: 96px; height: 96px; }
+
+    /* Composer */
+    body.em-mobile .m-composer-textarea { font-size: 16px; padding: 10px 16px; border-radius: 22px; }
+    body.em-mobile .m-composer-send-btn { width: 44px; height: 44px; }
+    body.em-mobile .m-composer-send-btn .material-icons { font-size: 22px; }
+    body.em-mobile .m-composer-action { width: 44px; height: 44px; }
+    body.em-mobile .m-composer-action .material-icons { font-size: 26px; }
+    body.em-mobile .m-composer-attach-chip { width: 64px; height: 64px; }
+    body.em-mobile .m-composer-attach-chip .m-attach-rm { width: 22px; height: 22px; font-size: 13px; }
+    body.em-mobile .m-translate-preview-head { font-size: 13px; }
+    body.em-mobile .m-translate-preview-body { font-size: 14px; }
+
+    /* Order detail */
+    body.em-mobile .m-order-detail-status { font-size: 13px; padding: 4px 10px; }
+    body.em-mobile .m-order-detail-date { font-size: 13px; }
+    body.em-mobile .m-order-detail-etsy { font-size: 13px; }
+    body.em-mobile .m-order-detail-etsy .material-icons { font-size: 16px; }
+    body.em-mobile .m-order-section h5 { font-size: 12px; }
+    body.em-mobile .m-order-item img,
+    body.em-mobile .m-order-item .m-item-img-fallback { width: 64px; height: 64px; }
+    body.em-mobile .m-order-item .m-item-title { font-size: 14px; }
+    body.em-mobile .m-order-item .m-item-meta { font-size: 12px; }
+    body.em-mobile .m-order-item .m-item-perso { font-size: 12px; padding: 5px 7px; }
+    body.em-mobile .m-order-item .m-item-link-hint { font-size: 11px; }
+    body.em-mobile .m-order-item-price { font-size: 14px; }
+    body.em-mobile .m-order-address { font-size: 14px; padding: 12px 14px; }
+    body.em-mobile .m-order-totals { font-size: 14px; }
+    body.em-mobile .m-order-totals tr.total { font-size: 15px; }
+
+    /* Bottom sheet */
+    body.em-mobile .m-sheet-title { font-size: 18px; }
+    body.em-mobile .m-sheet-row .m-lab { font-size: 16px; }
+    body.em-mobile .m-sheet-row select { font-size: 16px; }
+    body.em-mobile .m-sheet-row .m-toggle { width: 46px; height: 26px; border-radius: 13px; }
+    body.em-mobile .m-sheet-row .m-toggle::after { width: 22px; height: 22px; }
+    body.em-mobile .m-sheet-row .m-toggle.on::after { left: 22px; }
+    body.em-mobile .m-sheet-action-btn { font-size: 16px; padding: 14px; }
+
+    /* Overflow menu */
+    body.em-mobile .m-menu { min-width: 230px; }
+    body.em-mobile .m-menu-item { font-size: 16px; padding: 14px 18px; }
+    body.em-mobile .m-menu-item .material-icons { font-size: 22px; }
+
+    /* Settings */
+    body.em-mobile .m-settings-section summary { font-size: 16px; padding: 18px 18px; }
+    body.em-mobile .m-settings-section summary::after { font-size: 25px; }
+    body.em-mobile .m-settings-content { font-size: 16px; }
+    body.em-mobile .m-settings-content .m-desc { font-size: 13px; }
+    body.em-mobile .m-settings-content button { height: 42px; font-size: 14px; padding: 0 16px; }
+    body.em-mobile .m-settings-content input[type="text"],
+    body.em-mobile .m-settings-content input[type="password"] { font-size: 15px; padding: 10px 12px; }
+
+    /* ════════════════════════════════════════════════════════════════
+     * v5.1 — Unread blue dot indicator
+     * ════════════════════════════════════════════════════════════════
+     * Mirrors desktop's ::before dot pattern (line ~144). Sits at the
+     * left edge of an unread thread row and signals "you haven't
+     * opened this thread yet."
+     */
+    body.em-mobile .m-thread-row-content { padding-left: 24px; }
+    body.em-mobile .m-thread-row.unread .m-thread-row-content::before {
+      content: ""; position: absolute;
+      left: 8px; top: 50%;
+      width: 9px; height: 9px;
+      border-radius: 50%;
+      background: var(--m-c-accent);
+      transform: translateY(-50%);
+    }
+    /* Slightly heavier weight for the unread name + brighter color */
+    body.em-mobile .m-thread-row.unread .m-thread-name { font-weight: 700; }
 
   </style>
 </head>
@@ -13083,15 +13219,13 @@
         const subject   = t.subject || t.category || t.status || "";
         const altLabel  = (t.subject && t.category && t.subject !== t.category) ? t.category : "";
         const snippet   = altLabel || (t.linkedOrderId ? "Order #" + String(t.linkedOrderId).slice(-6) : "");
-        const unread    = (t.unread || t.status === "pending_human_review") ? "unread" : "";
+        const unread    = t.unread ? "unread" : "";
         const pills     = mStatusPills(t);
         const avatarImg = t.buyerAvatarUrl
           ? `<img src="${mEsc(t.buyerAvatarUrl)}" referrerpolicy="no-referrer" alt="" onerror="this.replaceWith(document.createTextNode('${mEsc(initials)}'));">`
           : mEsc(initials);
         return `
           <div class="m-thread-row ${unread}" data-id="${mEsc(t.id)}">
-            <div class="m-swipe-action left">inbox</div>
-            <div class="m-swipe-action right">archive</div>
             <div class="m-thread-row-content">
               <div class="m-avatar ${color}">${avatarImg}</div>
               <div class="m-thread-text">
@@ -13107,58 +13241,12 @@
           </div>`;
       }).join("");
 
-      // Wire row taps + swipes
+      // Wire row taps — no swipe gestures. Operators use the overflow
+      // menu (⋮) for archive/move actions instead.
       list.querySelectorAll(".m-thread-row").forEach(row => {
         const id = row.getAttribute("data-id");
         const content = row.querySelector(".m-thread-row-content");
-        const leftBg  = row.querySelector(".m-swipe-action.left");
-        const rightBg = row.querySelector(".m-swipe-action.right");
-        let startX = 0, currentX = 0, dragging = false, didMove = false;
-
-        content.addEventListener("click", () => { if (!didMove) mOpenThread(id); });
-        content.addEventListener("touchstart", (e) => {
-          startX = e.touches[0].clientX; currentX = startX;
-          dragging = true; didMove = false;
-          content.classList.add("dragging");
-        }, { passive: true });
-        content.addEventListener("touchmove", (e) => {
-          if (!dragging) return;
-          currentX = e.touches[0].clientX;
-          const dx = currentX - startX;
-          if (Math.abs(dx) > 8) didMove = true;
-          content.style.transform = `translateX(${dx}px)`;
-          if (dx > 0) { leftBg.style.width = dx + "px"; rightBg.style.width = "0"; }
-          else        { rightBg.style.width = (-dx) + "px"; leftBg.style.width = "0"; }
-        }, { passive: true });
-        content.addEventListener("touchend", () => {
-          if (!dragging) return;
-          dragging = false;
-          content.classList.remove("dragging");
-          const dx = currentX - startX;
-          const w = row.getBoundingClientRect().width;
-          if (Math.abs(dx) > w * 0.4) {
-            content.style.transform = `translateX(${dx < 0 ? -w : w}px)`;
-            if (dx < 0) {
-              rightBg.style.width = w + "px";
-              // Archive
-              if (typeof setStatus === "function") setStatus(id, "archived", "swipe-archive (mobile)");
-            } else {
-              leftBg.style.width = w + "px";
-              // Move to Needs review
-              if (typeof setStatus === "function") setStatus(id, "pending_human_review", "swipe-needs-review (mobile)");
-            }
-            // The setStatus call will trigger fetchThreadListNow which
-            // re-renders the list. Animate the row collapse for snappy
-            // feedback in the meantime.
-            setTimeout(() => {
-              row.style.transition = "height 200ms ease, opacity 200ms ease, border-width 200ms ease";
-              row.style.height = "0"; row.style.opacity = "0"; row.style.borderWidth = "0";
-            }, 200);
-          } else {
-            content.style.transform = "";
-            leftBg.style.width = "0"; rightBg.style.width = "0";
-          }
-        });
+        content.addEventListener("click", () => mOpenThread(id));
       });
     }
 
@@ -13175,10 +13263,56 @@
       mRenderConv(); // first paint with whatever's in state.messages already
       // Trigger a fresh fetch
       if (typeof fetchMessagesNow === "function") fetchMessagesNow(threadId);
-      // Also trigger customer panel hydration so the customer card
-      // gets populated. hydrateCustomerPanel writes to a desktop DOM
-      // node; we read the customer doc directly via firestoreProxy
-      // for the mobile rendering path inside mRenderConv.
+      // v5.1 — Start the 4s message poller so newer messages arriving
+      // while the operator has the thread open actually appear. Without
+      // this, mobile only sees whatever was in state.messages at open
+      // time. (Desktop's openThread() does this on the desktop path; we
+      // do the equivalent here for the mobile path.)
+      if (typeof startMessagesPolling === "function") startMessagesPolling(threadId);
+      // v5.1 — Begin polling the summary cache. The summary card is
+      // populated asynchronously by Haiku (~2-5 seconds after messages
+      // load), so we re-check the cache every 750ms while the thread is
+      // open and update the mobile card the moment it appears.
+      mStartSummaryWatch(threadId);
+    }
+
+    // ── Summary cache watcher ────────────────────────────────────
+    // The summary card is rendered into a desktop DOM mount node by
+    // renderConversationSummaryCard, which fires Haiku when messages
+    // arrive. The Haiku call takes 2-5 seconds; we don't want to block
+    // the conversation render on it. Instead, we poll the cache for
+    // up to ~30 seconds after thread open. As soon as a payload lands,
+    // mUpdateSummaryCard paints it and we stop watching.
+    let _mSummaryWatcher = null;
+    function mStartSummaryWatch(threadId) {
+      if (_mSummaryWatcher) clearInterval(_mSummaryWatcher);
+      let elapsed = 0;
+      _mSummaryWatcher = setInterval(() => {
+        elapsed += 750;
+        // Stop if user navigated away
+        if (state.selectedId !== threadId || mState.currentScreen !== "conv") {
+          clearInterval(_mSummaryWatcher); _mSummaryWatcher = null;
+          return;
+        }
+        // Stop if we hit the 30s ceiling (Haiku failed or thread has no
+        // summarizable content)
+        if (elapsed > 30000) {
+          clearInterval(_mSummaryWatcher); _mSummaryWatcher = null;
+          return;
+        }
+        // Try to paint
+        const t = (state.threads || []).find(x => x && x.id === threadId);
+        if (t && state._summaryCache) {
+          const tid = t.id;
+          for (const [key] of state._summaryCache) {
+            if (typeof key === "string" && key.startsWith(tid + "|")) {
+              mUpdateSummaryCard(t);
+              clearInterval(_mSummaryWatcher); _mSummaryWatcher = null;
+              return;
+            }
+          }
+        }
+      }, 750);
     }
 
     // ── Conversation rendering ───────────────────────────────────
@@ -13193,6 +13327,19 @@
       }
       mUpdateAppbar();
 
+      // v5.1 — Preserve UI state across re-renders. mRenderConv runs on
+      // every messages poll (every 4s), so without this, the customer
+      // card would collapse, summary card would collapse, and scroll
+      // position would reset every 4 seconds — making the conversation
+      // unusable. We snapshot before rebuilding and restore after.
+      const wasNearBottom = (() => {
+        const el = body;
+        if (!el) return true;  // fresh open: stick to bottom (newest message)
+        return (el.scrollHeight - el.scrollTop - el.clientHeight) < 80;
+      })();
+      const custCardWasOpen = !!document.getElementById("mCustomerCard")?.classList.contains("open");
+      const sumCardWasOpen  = !!document.getElementById("mSummaryCard")?.classList.contains("open");
+
       // Pills row
       const pillsHtml = mStatusPills(t);
 
@@ -13205,7 +13352,50 @@
         ? `<img src="${mEsc(t.buyerAvatarUrl)}" referrerpolicy="no-referrer" alt="" onerror="this.replaceWith(document.createTextNode('${mEsc(custInitials)}'));">`
         : mEsc(custInitials);
 
-      const messagesHtml = (state.messages || []).map(m => {
+      // v5.1 — Sort messages chronologically before rendering. Without
+      // this, optimistic messages (timestamped as raw JS numbers) and
+      // scraped messages (timestamped as firestoreProxy Timestamp shape
+      // {_ts:true, ms:N}) sort in different "buckets" — all numbers
+      // before all Timestamps regardless of their actual time value.
+      // Result: recently-sent messages appear at the TOP of the thread,
+      // making it look like "new messages are missing" even though they
+      // are all there. Same logic as desktop's renderThreadMessages.
+      const _msToInt = (m) => {
+        const v = (m && (m.timestamp || m.createdAt)) || 0;
+        if (typeof v === "number") return v;
+        if (v instanceof Date) return v.getTime();
+        if (v && typeof v === "object" && v._ts && typeof v.ms === "number") return v.ms;
+        if (v && typeof v.toMillis === "function") { try { return v.toMillis(); } catch { return 0; } }
+        if (typeof v === "string") { const d = new Date(v); return isNaN(d.getTime()) ? 0 : d.getTime(); }
+        return 0;
+      };
+      // Also dedupe optimistic outbound ghosts when the real scraped
+      // message arrives — desktop does this for the same reason.
+      const _normalizeForDedup = (s) => String(s || "")
+        .trim().toLowerCase()
+        .replace(/https?:\/\/(www\.)?/g, "")
+        .replace(/(^|\s)www\./g, "$1")
+        .replace(/\s+/g, " ").slice(0, 200);
+      const _allMsgs = state.messages || [];
+      const _optimistic = _allMsgs.filter(m => m && m.localOptimistic === true);
+      let _renderable = _allMsgs;
+      if (_optimistic.length) {
+        const realKeys = new Set();
+        for (const m of _allMsgs) {
+          if (m && m.direction === "outbound" && !m.localOptimistic) {
+            const k = _normalizeForDedup(m.text);
+            if (k) realKeys.add(k);
+          }
+        }
+        _renderable = _allMsgs.filter(m => {
+          if (!m || !m.localOptimistic) return true;
+          const k = _normalizeForDedup(m.optimisticTextKey || m.text);
+          return !realKeys.has(k);
+        });
+      }
+      const _sortedMsgs = _renderable.slice().sort((a, b) => _msToInt(a) - _msToInt(b));
+
+      const messagesHtml = _sortedMsgs.map(m => {
         const dir = m.direction === "outbound" ? "outbound" : "inbound";
         const fromName = dir === "outbound" ? (m.employeeName || "You") : (t.customerName || t.etsyUsername || "Customer");
         const time = mFmtThreadTime(m.timestamp || m.createdAt);
@@ -13307,9 +13497,40 @@
       const send = document.getElementById("mComposerSend");
       if (send) send.disabled = !((ta && ta.value.trim()) || mGetCurrentAttachments().length);
       mRenderAttachments();
-      // Translate preview hide on switch
-      document.getElementById("mTranslatePreview").classList.remove("visible");
-      document.getElementById("mActionTrans").classList.remove("active");
+      // v5.1 — Only hide the translate preview if there's no active
+      // translation in state. If the operator just activated translate,
+      // state.composerTranslation has the translation; we should KEEP
+      // the preview visible across re-renders.
+      const tPane = document.getElementById("mTranslatePreview");
+      const tBtn  = document.getElementById("mActionTrans");
+      const tBody = document.getElementById("mTranslatePreviewBody");
+      if (state.composerTranslation && state.composerTranslation.translated) {
+        if (tBody) tBody.textContent = state.composerTranslation.translated;
+        if (tPane) tPane.classList.add("visible");
+        if (tBtn)  tBtn.classList.add("active");
+      } else {
+        if (tPane) tPane.classList.remove("visible");
+        if (tBtn)  tBtn.classList.remove("active");
+      }
+
+      // v5.1 — Restore the preserved scroll + open-state. Without this,
+      // the 4-second poll would yank the operator back to the top of
+      // the thread and collapse any cards they had open.
+      if (custCardWasOpen) {
+        const c = document.getElementById("mCustomerCard");
+        if (c) { c.classList.add("open"); mLoadCustomerCard(t); }
+      }
+      if (sumCardWasOpen) {
+        const c = document.getElementById("mSummaryCard");
+        if (c) c.classList.add("open");
+      }
+      // Stick to bottom on first open OR if user was already at the
+      // bottom (the typical "I'm reading the latest" state). If they
+      // had scrolled up to read older messages, leave them where they
+      // are. requestAnimationFrame so the layout has finalized first.
+      if (wasNearBottom) {
+        requestAnimationFrame(() => { body.scrollTop = body.scrollHeight; });
+      }
     }
 
     // ── Customer card lazy load ──────────────────────────────────
@@ -13696,6 +13917,10 @@
         if (mState.currentScreen === "list") mOpenDrawer();
         else if (mState.currentScreen === "conv") {
           state.selectedId = null;
+          // v5.1 — Stop the 4s message poller. We started it on thread
+          // open; if we don't stop it here, every back-and-forth from
+          // a thread leaves a stale poller in flight chewing requests.
+          if (typeof stopMessagesPolling === "function") stopMessagesPolling();
           mShowScreen("list");
         }
         else if (mState.currentScreen === "order") {
