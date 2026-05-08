@@ -2950,6 +2950,261 @@
     /* Messages list container (v5.4) — make it scroll-friendly */
     .m-messages-list { display: block; }
 
+    /* ════════════════════════════════════════════════════════════════
+     * v5.5 — Another +40% size bump on top of v5.4 + mobile-native
+     * AI draft card styling.
+     * ════════════════════════════════════════════════════════════════
+     * Operator feedback after v5.4: still ~40% too small. Bumping
+     * everything proportionally. Cumulatively this is roughly +110%
+     * from the v5.0 starting point — a deliberately oversized mobile
+     * UI that's comfortable for one-handed use and reading without
+     * squinting.
+     */
+
+    /* Base font: 21 → 30 */
+    body.em-mobile #emMobileApp { font-size: 30px; }
+
+    /* App bar grows again */
+    body.em-mobile {
+      --m-appbar-h: 116px;
+      --m-row-h: 168px;
+    }
+    body.em-mobile .m-appbar-icon { width: 80px; height: 80px; }
+    body.em-mobile .m-appbar-icon .material-icons { font-size: 44px; }
+    body.em-mobile .m-appbar-title    { font-size: 32px; }
+    body.em-mobile .m-appbar-subtitle { font-size: 21px; }
+
+    /* Avatars */
+    body.em-mobile .m-avatar { width: 86px; height: 86px; font-size: 28px; }
+    body.em-mobile .m-customer-card-head .m-avatar { width: 68px; height: 68px; font-size: 24px; }
+
+    /* Thread row text */
+    body.em-mobile .m-thread-line-1   { font-size: 28px; }
+    body.em-mobile .m-thread-time     { font-size: 21px; }
+    body.em-mobile .m-thread-subject  { font-size: 23px; }
+    body.em-mobile .m-thread-snippet  { font-size: 21px; }
+    body.em-mobile .m-thread-row-content { padding-left: 38px; }
+    body.em-mobile .m-thread-row.unread .m-thread-row-content::before {
+      width: 15px; height: 15px;
+    }
+
+    /* Drawer */
+    body.em-mobile .m-drawer-folder { font-size: 26px; padding: 22px 36px; }
+    body.em-mobile .m-drawer-folder .material-icons { font-size: 38px; }
+    body.em-mobile .m-drawer-folder .m-fcnt { font-size: 21px; }
+    body.em-mobile .m-drawer-header .m-name { font-size: 26px; }
+    body.em-mobile .m-drawer-header .m-role { font-size: 21px; }
+
+    /* Customer + summary cards */
+    body.em-mobile .m-customer-card-head .m-name { font-size: 26px; }
+    body.em-mobile .m-customer-card-head .m-meta { font-size: 21px; }
+    body.em-mobile .m-customer-card-head .m-repeat { font-size: 18px; padding: 5px 13px; }
+    body.em-mobile .m-customer-card-head .m-chev { font-size: 44px; }
+    body.em-mobile .m-customer-card-body { font-size: 23px; }
+    body.em-mobile .m-order-row { font-size: 23px; padding: 22px 14px; }
+    body.em-mobile .m-order-row .m-oid   { font-size: 21px; }
+    body.em-mobile .m-order-row .m-ostat { font-size: 18px; padding: 5px 13px; }
+    body.em-mobile .m-order-row .m-ochev { font-size: 38px; }
+
+    body.em-mobile .m-summary-card-head .m-lead { font-size: 42px; }
+    body.em-mobile .m-summary-card-head .m-chev { font-size: 44px; }
+    body.em-mobile .m-summary-card-title    { font-size: 25px; }
+    body.em-mobile .m-summary-card-tagline  { font-size: 21px; }
+    body.em-mobile .m-summary-card-body     { font-size: 23px; }
+    body.em-mobile .m-summary-card-body .m-row .m-lab { font-size: 21px; }
+    body.em-mobile .m-summary-card-body .m-urg-chip { font-size: 18px; padding: 5px 13px; }
+    body.em-mobile .m-summary-card-body .m-flag { font-size: 19px; padding: 5px 13px; }
+
+    /* Messages */
+    body.em-mobile .m-msg-meta { font-size: 19px; }
+    body.em-mobile .m-msg-bubble { font-size: 26px; padding: 20px 26px; border-radius: 30px; }
+    body.em-mobile .m-msg-img { width: 168px; height: 168px; }
+
+    /* Composer */
+    body.em-mobile .m-composer-textarea { font-size: 26px; padding: 18px 26px; }
+    body.em-mobile .m-composer-send-btn { width: 76px; height: 76px; }
+    body.em-mobile .m-composer-send-btn .material-icons { font-size: 38px; }
+    body.em-mobile .m-composer-action { width: 76px; height: 76px; }
+    body.em-mobile .m-composer-action .material-icons { font-size: 44px; }
+    body.em-mobile .m-composer-attach-chip { width: 116px; height: 116px; }
+
+    /* Order detail */
+    body.em-mobile .m-order-detail-status { font-size: 21px; padding: 7px 18px; }
+    body.em-mobile .m-order-detail-date { font-size: 21px; }
+    body.em-mobile .m-order-detail-etsy { font-size: 21px; }
+    body.em-mobile .m-order-section h5 { font-size: 21px; }
+    body.em-mobile .m-order-item img,
+    body.em-mobile .m-order-item .m-item-img-fallback { width: 116px; height: 116px; }
+    body.em-mobile .m-order-item .m-item-title { font-size: 23px; }
+    body.em-mobile .m-order-item .m-item-meta { font-size: 21px; }
+    body.em-mobile .m-order-item .m-item-perso { font-size: 21px; padding: 10px 14px; }
+    body.em-mobile .m-order-item-price { font-size: 23px; }
+    body.em-mobile .m-order-address { font-size: 23px; padding: 22px 25px; }
+    body.em-mobile .m-order-totals { font-size: 23px; }
+    body.em-mobile .m-order-totals tr.total { font-size: 25px; }
+
+    body.em-mobile .m-sheet-title { font-size: 30px; }
+    body.em-mobile .m-sheet-row .m-lab { font-size: 26px; }
+    body.em-mobile .m-sheet-row select { font-size: 26px; }
+    body.em-mobile .m-sheet-action-btn { font-size: 26px; padding: 25px; }
+
+    body.em-mobile .m-menu-item { font-size: 26px; padding: 25px 30px; }
+    body.em-mobile .m-menu-item .material-icons { font-size: 38px; }
+
+    body.em-mobile .m-settings-section summary { font-size: 26px; padding: 30px; }
+    body.em-mobile .m-settings-content { font-size: 26px; }
+    body.em-mobile .m-settings-content .m-desc { font-size: 21px; }
+    body.em-mobile .m-settings-content button { height: 70px; font-size: 23px; padding: 0 28px; }
+    body.em-mobile .m-settings-content input[type="text"],
+    body.em-mobile .m-settings-content input[type="password"] { font-size: 25px; padding: 18px 21px; }
+
+    /* Operator strip (v5.4 → v5.5 sized up) */
+    body.em-mobile .m-op-strip { font-size: 24px; padding: 14px 25px; }
+    body.em-mobile .m-op-strip .material-icons { font-size: 36px; }
+    body.em-mobile .m-op-role { font-size: 19px; padding: 4px 14px; }
+
+    /* Pills (v5.4 → v5.5 sized up) */
+    body.em-mobile .em-badge {
+      font-size: 19px;
+      padding: 6px 14px;
+      border-radius: 7px;
+    }
+    body.em-mobile .m-conv-pills-row .em-badge {
+      font-size: 21px;
+      padding: 7px 17px;
+      border-radius: 8px;
+    }
+
+    /* Modal sizing (v5.3 → v5.5 sized up) */
+    body.em-mobile .em-modal-backdrop .em-modal h2 { font-size: 31px; }
+    body.em-mobile .em-modal-backdrop .em-modal p,
+    body.em-mobile .em-modal-backdrop .em-modal label,
+    body.em-mobile .em-modal-backdrop .em-modal small { font-size: 21px !important; }
+    body.em-mobile .em-modal-backdrop .em-modal input[type="text"],
+    body.em-mobile .em-modal-backdrop .em-modal input[type="password"],
+    body.em-mobile .em-modal-backdrop .em-modal input[type="email"],
+    body.em-mobile .em-modal-backdrop .em-modal input[type="search"],
+    body.em-mobile .em-modal-backdrop .em-modal textarea {
+      font-size: 22px !important;
+      padding: 16px 20px !important;
+      min-height: 64px;
+    }
+    body.em-mobile .em-modal-backdrop .em-modal button {
+      font-size: 22px;
+      padding: 16px 28px;
+      min-height: 64px;
+    }
+    body.em-mobile .em-modal-backdrop .em-modal-error {
+      font-size: 19px !important;
+    }
+    body.em-mobile .em-modal-backdrop .em-modal .em-reveal-btn {
+      width: 64px; height: 64px;
+    }
+    body.em-mobile .em-modal-backdrop .em-modal .em-reveal-btn .material-icons {
+      font-size: 30px;
+    }
+
+    /* Search bar (v5.2 → v5.5 sized up) */
+    body.em-mobile .m-searchbar-input { font-size: 24px; }
+
+    /* ── AI draft card (v5.5 mobile-native) ─────────────────────── */
+    body.em-mobile .m-ai-draft-card {
+      margin: 18px 18px;
+      border-radius: 14px;
+    }
+    body.em-mobile .m-ai-draft-card-head {
+      padding: 18px 22px;
+      gap: 14px;
+    }
+    body.em-mobile .m-ai-draft-card-head .material-icons { font-size: 32px !important; }
+    body.em-mobile .m-ai-draft-card-title { font-size: 25px; }
+    body.em-mobile .m-ai-draft-card-tagline { font-size: 19px; }
+    body.em-mobile .m-ai-draft-card-body { padding: 20px 22px; font-size: 23px; }
+
+    /* AI chips row (model, confidence, etc.) */
+    .m-ai-chips-row {
+      display: flex; gap: 8px; flex-wrap: wrap;
+      margin-bottom: 14px;
+    }
+    body.em-mobile .m-ai-chips-row { gap: 10px; margin-bottom: 18px; }
+    .m-ai-chip {
+      font-size: 12px;
+      padding: 3px 10px;
+      background: rgba(102,57,186,0.12);
+      color: #6639ba;
+      border-radius: 5px;
+      font-weight: 500;
+    }
+    body.em-mobile .m-ai-chip {
+      font-size: 19px;
+      padding: 5px 14px;
+      border-radius: 7px;
+    }
+    .m-ai-chip.conf-high { background: #d8e9dc; color: #0a4a23; }
+    .m-ai-chip.conf-med  { background: #fff4d6; color: #7d4e00; }
+    .m-ai-chip.conf-low  { background: #f5e3e3; color: #82071e; }
+
+    /* AI draft text (the actual reply preview) */
+    .m-ai-draft-text {
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      background: #fff;
+      padding: 14px 16px;
+      border-radius: 8px;
+      border: 1px solid rgba(102,57,186,0.18);
+      font-size: 16px;
+      line-height: 1.5;
+      color: #1a1a2e;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+    body.em-mobile .m-ai-draft-text {
+      font-size: 23px;
+      padding: 20px 22px;
+      line-height: 1.55;
+      max-height: 480px;
+      border-radius: 12px;
+    }
+
+    /* AI draft card actions (Use / Dismiss buttons) */
+    .m-ai-draft-actions {
+      display: flex; gap: 10px;
+      margin-top: 14px;
+    }
+    body.em-mobile .m-ai-draft-actions { gap: 14px; margin-top: 20px; }
+    .m-ai-use-btn, .m-ai-dismiss-btn {
+      flex: 1 1 auto;
+      min-height: 44px;
+      padding: 10px 16px;
+      border-radius: 8px;
+      font-size: 15px;
+      font-weight: 600;
+      border: none;
+      cursor: pointer;
+      display: inline-flex; align-items: center; justify-content: center;
+      gap: 8px;
+    }
+    .m-ai-use-btn {
+      background: #6639ba;
+      color: #fff;
+    }
+    .m-ai-use-btn:active { background: #5728a8; }
+    .m-ai-use-btn .material-icons { font-size: 20px; }
+    .m-ai-dismiss-btn {
+      background: transparent;
+      color: #6639ba;
+      border: 1px solid #d8b4fe;
+    }
+    .m-ai-dismiss-btn:active { background: rgba(102,57,186,0.08); }
+    body.em-mobile .m-ai-use-btn,
+    body.em-mobile .m-ai-dismiss-btn {
+      min-height: 64px;
+      padding: 16px 24px;
+      font-size: 22px;
+      border-radius: 12px;
+    }
+    body.em-mobile .m-ai-use-btn .material-icons { font-size: 28px; }
+
   </style>
 </head>
 <body>
@@ -8867,6 +9122,12 @@
         if (window.IS_MOBILE && typeof window.mNotifyDraftChanged === "function") window.mNotifyDraftChanged();
         // Render AI card
         renderAiDraftCard(data);
+        // v5.5 — Mobile AI draft card: build from the response payload.
+        // Same data shape as the Firestore draft doc that hydrateAiDraft
+        // loads, so mShowAiDraftCard handles both transparently.
+        if (window.IS_MOBILE && typeof window.mShowAiDraftCard === "function") {
+          try { window.mShowAiDraftCard(data); } catch (e) { console.warn("[mobile] AI draft card failed:", e); }
+        }
         // Show revise row
         const row = $("emReviseRow");
         if (row) row.style.display = "flex";
@@ -10890,8 +11151,22 @@
         if (isHydratableState && ta && !ta.value.trim()) {
           ta.value = d.text || "";
           autoSizeDraftTextarea(ta);   // v0.9.17: RAF-deferred grow
+          // v5.5 — Mobile composer mirror. Without this, the mobile
+          // textarea stays empty even though desktop's textarea was
+          // just hydrated with the AI draft. mNotifyDraftChanged
+          // copies from #emDraftText into #mComposerTextarea.
+          if (window.IS_MOBILE && typeof window.mNotifyDraftChanged === "function") window.mNotifyDraftChanged();
         }
         renderAiDraftCard(d);
+        // v5.5 — Mobile AI draft card: build directly from the Firestore
+        // draft doc. The desktop's #emAiCardBody was removed in v0.9.46,
+        // so the v5.4 "mirror" approach was reading an empty element.
+        // mShowAiDraftCard hides itself if status !== "draft" (so threads
+        // where the AI auto-sent a reply don't get a phantom card), so
+        // it's safe to call unconditionally.
+        if (window.IS_MOBILE && typeof window.mShowAiDraftCard === "function") {
+          try { window.mShowAiDraftCard(d); } catch (e) { console.warn("[mobile] AI draft card failed:", e); }
+        }
         // Show revise row since there's a draft present
         const row = $("emReviseRow");
         if (row) row.style.display = "flex";
@@ -14147,9 +14422,11 @@
       // Try to paint summary card from cache (no-op if cache miss; the
       // mStartSummaryWatch interval will catch a late arrival).
       mUpdateSummaryCard(t);
-      // Mirror the desktop AI draft card (writes into our mounted
-      // #emAiCardBody if present in the mobile shell).
-      mMirrorAiDraftCard(t);
+      // v5.5 — AI draft card no longer needed here; it's now driven by
+      // hydrateAiDraft (called from mOpenThread) and generateAiDraft
+      // (called when operator taps ✨). The card persists across re-
+      // renders because it lives in the stable shell mounted by
+      // mMountConv, and mShowAiDraftCard updates only its body.
     }
 
     // ── Build the conv shell (called once per thread open) ──────
@@ -14357,54 +14634,102 @@
       }
     }
 
-    // ── Mirror desktop's AI draft card into mobile ──────────────
-    // v5.4 — Operators on desktop see a rich AI draft card with
-    // confidence pills, model info, tool-call summary, suggested
-    // actions. The desktop populates #emAiCardBody (inside the
-    // hidden desktop UI on mobile) via renderAiDraftCard. We mirror
-    // that HTML into our #mAiDraftBody so mobile sees the same card.
+    // ── Mobile-native AI draft card (v5.5) ──────────────────────
+    // Earlier versions (v5.4) tried to mirror the desktop's
+    // #emAiCardBody. That approach failed because the desktop's AI
+    // card was removed in v0.9.46 — only the textarea hydration
+    // remains. So mobile had nothing to copy.
     //
-    // Hidden-state passthrough: when there's no draft yet, the
-    // desktop card body says "No AI draft yet…" — we hide our card
-    // entirely in that case (no point taking up screen real estate
-    // with a placeholder). When a real draft lands, we show ours.
-    function mMirrorAiDraftCard(t) {
-      const desktopBody = document.getElementById("emAiCardBody");
-      const mobileCard  = document.getElementById("mAiDraftCard");
-      const mobileBody  = document.getElementById("mAiDraftBody");
-      const mobileTagln = document.getElementById("mAiDraftTagline");
-      if (!mobileCard || !mobileBody) return;
-      // If desktop has no body or only the empty placeholder, hide.
-      const desktopHtml = desktopBody ? desktopBody.innerHTML : "";
-      const isEmptyPlaceholder = !desktopHtml || /em-ai-empty/.test(desktopHtml) || !desktopHtml.trim();
-      if (isEmptyPlaceholder) {
-        mobileCard.style.display = "none";
+    // v5.5 builds the card directly from the Firestore draft doc
+    // that hydrateAiDraft loads (or the response from
+    // etsyMailDraftReply that generateAiDraft receives). The card
+    // shows the AI's pre-generated reply with confidence +
+    // model chips, and updates the composer textarea so the
+    // operator can edit/send. Hidden when no draft, when the
+    // draft has already been sent, or when the operator clicks
+    // "Dismiss".
+    function mShowAiDraftCard(d) {
+      if (!window.IS_MOBILE) return;
+      const card = document.getElementById("mAiDraftCard");
+      const body = document.getElementById("mAiDraftBody");
+      const tagline = document.getElementById("mAiDraftTagline");
+      if (!card || !body) return;
+      // No draft, terminal state, or empty text → hide.
+      if (!d || !d.text || (d.status && d.status !== "draft")) {
+        card.style.display = "none";
         return;
       }
-      // Otherwise mirror.
-      mobileCard.style.display = "";
-      // Avoid wholesale re-clone if we already mirrored this exact HTML.
-      if (mobileBody.dataset.lastHtml === desktopHtml) return;
-      mobileBody.innerHTML = desktopHtml;
-      mobileBody.dataset.lastHtml = desktopHtml;
-      // Re-link any in-card buttons to the desktop's existing handlers.
-      // The desktop wires action buttons on render; cloning innerHTML
-      // copies the markup but not the listeners. Easier than re-wiring:
-      // delegate clicks to the desktop element. We attach a single
-      // delegated handler that proxies clicks to the matching desktop
-      // node.
-      mobileBody.onclick = (e) => {
-        const target = e.target.closest("button, a");
-        if (!target || !target.id) return;
-        const desktopEquivalent = document.getElementById(target.id);
-        if (desktopEquivalent && desktopEquivalent !== target) {
-          // Synthesize a click on the desktop's actual element, where
-          // its listener lives.
-          desktopEquivalent.click();
-        }
-      };
+      const text = d.text;
+      const conf = d.aiConfidence ?? d.confidence ?? null;
+      const model = d.aiModel || d.model || null;
+      const isSalesAgent = !!d.generatedBySalesAgent;
+
+      // Header tagline summarizes
+      const confPct = (typeof conf === "number") ? Math.round(conf * 100) + "%" : null;
+      const taglineParts = [];
+      if (confPct) taglineParts.push(confPct + " confidence");
+      if (model) taglineParts.push(String(model).split(/[-_ ]/)[1] || model);
+      if (isSalesAgent) taglineParts.push("sales agent");
+      if (tagline) tagline.textContent = taglineParts.length
+        ? taglineParts.join(" · ")
+        : "Pre-generated reply ready to review";
+
+      // Build chips row + draft body
+      const chips = [];
+      if (confPct) {
+        const confClass = (conf >= 0.80) ? "high" : (conf >= 0.60) ? "med" : "low";
+        chips.push(`<span class="m-ai-chip conf-${confClass}">${mEsc(confPct)} confident</span>`);
+      }
+      if (model) chips.push(`<span class="m-ai-chip">${mEsc(model)}</span>`);
+      if (isSalesAgent) {
+        const stage = d.salesStage ? String(d.salesStage).replace(/_/g, " ") : "";
+        chips.push(`<span class="m-ai-chip" style="background:#fbefff; color:#6639ba;">sales: ${mEsc(stage || "?")}</span>`);
+      }
+      if (Array.isArray(d.toolCalls) && d.toolCalls.length) {
+        const lookups = d.toolCalls.filter(tc => tc.name !== "compose_draft_reply").length;
+        if (lookups) chips.push(`<span class="m-ai-chip">${lookups} lookup${lookups === 1 ? "" : "s"}</span>`);
+      }
+
+      const draftPreview = text.length > 600 ? text.slice(0, 600) + "…" : text;
+      body.innerHTML = `
+        ${chips.length ? `<div class="m-ai-chips-row">${chips.join("")}</div>` : ""}
+        <div class="m-ai-draft-text">${mEsc(draftPreview)}</div>
+        <div class="m-ai-draft-actions">
+          <button type="button" class="m-ai-use-btn" id="mAiUseBtn">
+            <i class="material-icons">arrow_downward</i>
+            Use this draft
+          </button>
+          <button type="button" class="m-ai-dismiss-btn" id="mAiDismissBtn">Dismiss</button>
+        </div>
+      `;
+
+      // Wire actions. "Use this draft" copies the AI text into the
+      // mobile + desktop composer textareas. The desktop one is what
+      // sendViaEtsy reads, so this is the source of truth — without
+      // syncing both, sending would send blank or stale.
+      const useBtn = document.getElementById("mAiUseBtn");
+      const dismissBtn = document.getElementById("mAiDismissBtn");
+      if (useBtn) {
+        useBtn.addEventListener("click", () => {
+          const mobileTa = document.getElementById("mComposerTextarea");
+          const desktopTa = document.getElementById("emDraftText");
+          if (mobileTa) { mobileTa.value = text; mAutoGrow(mobileTa); }
+          if (desktopTa) { desktopTa.value = text; }
+          const send = document.getElementById("mComposerSend");
+          if (send) send.disabled = !text.trim();
+          // Hide the card after use — operator now has the text in
+          // their composer to edit/send.
+          card.style.display = "none";
+          if (typeof toast === "function") toast("AI draft moved to composer");
+        });
+      }
+      if (dismissBtn) {
+        dismissBtn.addEventListener("click", () => { card.style.display = "none"; });
+      }
+
+      card.style.display = "";
     }
-    window.mMirrorAiDraftCard = mMirrorAiDraftCard;
+    window.mShowAiDraftCard = mShowAiDraftCard;
 
     // ── Customer card lazy load ──────────────────────────────────
     async function mLoadCustomerCard(thread) {
