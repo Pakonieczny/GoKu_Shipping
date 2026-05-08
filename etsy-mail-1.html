@@ -1861,6 +1861,503 @@
     .em-send-status.sent_unverified {
       background: #fff4e5; border: 1px solid #ffdca8; color: #9a3f00;
     }
+    /* ════════════════════════════════════════════════════════════════
+     * v5.0 — Mobile UI styles
+     * ════════════════════════════════════════════════════════════════
+     *
+     * Everything below is gated on `body.em-mobile`. Desktop styles
+     * above are untouched. Mobile uses a separate DOM tree (#emMobileApp)
+     * which is hidden when not on mobile.
+     *
+     * Token additions for mobile only — added under :root so they're
+     * available to both stylesheets, but no existing tokens are changed.
+     */
+    :root {
+      --m-c-bg            : #ffffff;
+      --m-c-surface       : #ffffff;
+      --m-c-surface-2     : #f6f8fa;
+      --m-c-surface-3     : #eef1f4;
+      --m-c-border        : #e1e4e8;
+      --m-c-border-strong : #d0d7de;
+      --m-c-text          : #1f2328;
+      --m-c-text-muted    : #6a737d;
+      --m-c-text-faint    : #9aa3ad;
+      --m-c-accent        : #1a73e8;
+      --m-c-accent-hover  : #185abc;
+      --m-c-accent-tint   : #e8f0fe;
+      --m-c-success       : #1a7f37;
+      --m-c-success-tint  : #d8e9dc;
+      --m-c-warning       : #9a6700;
+      --m-c-warning-tint  : #fff8c5;
+      --m-c-danger        : #cf222e;
+      --m-c-danger-tint   : #ffebe9;
+      --m-c-purple        : #8250df;
+      --m-c-purple-tint   : #fbefff;
+      --m-c-urgency-high  : #cf222e;
+      --m-c-urgency-med   : #d4a72c;
+      --m-c-urgency-low   : #57606a;
+      --m-shadow-1        : 0 1px 2px rgba(0,0,0,.04), 0 1px 3px rgba(0,0,0,.05);
+      --m-shadow-2        : 0 4px 12px rgba(0,0,0,.08);
+      --m-shadow-drawer   : 0 0 24px rgba(0,0,0,.18);
+      --m-appbar-h        : 56px;
+      --m-row-h           : 84px;
+      --m-composer-min-h  : 36px;
+      --m-composer-max-h  : 140px;
+      --m-radius-sm       : 4px;
+      --m-radius-md       : 8px;
+      --m-radius-lg       : 16px;
+      --m-radius-xl       : 24px;
+      --m-duration        : 200ms;
+      --m-duration-slow   : 300ms;
+      --m-ease            : cubic-bezier(.4, 0, .2, 1);
+    }
+
+    /* Hide mobile DOM by default; reveal only when body.em-mobile. */
+    #emMobileApp { display: none; }
+    body.em-mobile #emMobileApp {
+      display: flex;
+      position: fixed; inset: 0;
+      flex-direction: column;
+      background: var(--m-c-bg);
+      color: var(--m-c-text);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      font-size: 14px;
+      line-height: 1.4;
+      -webkit-font-smoothing: antialiased;
+      -webkit-tap-highlight-color: transparent;
+      overscroll-behavior: none;
+      z-index: 1;   /* below modals (z-index 9999+) but above nothing else */
+    }
+    /* Hide the desktop app shell entirely on mobile. The kill-switch
+     * banner stays (it can show above the mobile UI). Modals stay too
+     * (they are rendered at body level and float on top regardless). */
+    body.em-mobile > .em-app { display: none !important; }
+    body.em-mobile { overflow: hidden; }
+
+    /* ─── App bar ─────────────────────────────────────────────────── */
+    .m-appbar {
+      flex: 0 0 auto;
+      height: var(--m-appbar-h);
+      background: var(--m-c-surface);
+      border-bottom: 1px solid var(--m-c-border);
+      display: flex; align-items: center; gap: 4px;
+      padding: 0 4px;
+      z-index: 10; position: relative;
+    }
+    .m-appbar-icon {
+      width: 44px; height: 44px;
+      border: none; background: transparent; cursor: pointer;
+      border-radius: 50%;
+      display: inline-flex; align-items: center; justify-content: center;
+      color: var(--m-c-text); flex: 0 0 auto;
+    }
+    .m-appbar-icon:active { background: var(--m-c-surface-3); }
+    .m-appbar-icon .material-icons { font-size: 24px; }
+    .m-appbar-titlewrap {
+      flex: 1 1 auto; min-width: 0;
+      display: flex; flex-direction: column; justify-content: center;
+    }
+    .m-appbar-title {
+      font-size: 18px; font-weight: 600;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      padding: 0 4px;
+    }
+    .m-appbar-subtitle {
+      font-size: 12px; color: var(--m-c-text-muted); font-weight: 400;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      padding: 0 4px;
+    }
+
+    /* ─── Main + screens ──────────────────────────────────────────── */
+    .m-main { flex: 1 1 auto; overflow: hidden; position: relative; }
+    .m-screen {
+      position: absolute; inset: 0;
+      background: var(--m-c-bg);
+      display: flex; flex-direction: column;
+      transform: translateX(100%);
+      transition: transform var(--m-duration) var(--m-ease);
+      overflow: hidden;
+    }
+    .m-screen.visible { transform: translateX(0); }
+    .m-screen.list { transform: translateX(0); }
+    .m-screen.list.hidden { transform: translateX(-100%); }
+    .m-list { flex: 1 1 auto; overflow-y: auto; background: var(--m-c-bg); -webkit-overflow-scrolling: touch; }
+
+    /* ─── Thread row + swipe ──────────────────────────────────────── */
+    .m-thread-row {
+      position: relative; height: var(--m-row-h);
+      background: var(--m-c-bg); overflow: hidden;
+      border-bottom: 1px solid var(--m-c-border);
+    }
+    .m-swipe-action {
+      position: absolute; top: 0; bottom: 0; width: 0;
+      display: flex; align-items: center;
+      font-family: 'Material Icons'; font-size: 24px;
+      color: #fff; overflow: hidden; pointer-events: none; z-index: 0;
+    }
+    .m-swipe-action.left  { left: 0;  background: var(--m-c-success); padding-left: 24px; justify-content: flex-start; }
+    .m-swipe-action.right { right: 0; background: var(--m-c-danger);  padding-right: 24px; justify-content: flex-end; }
+    .m-thread-row-content {
+      position: absolute; inset: 0;
+      background: var(--m-c-bg);
+      display: flex; align-items: center; gap: 12px;
+      padding: 0 16px;
+      transform: translateX(0);
+      z-index: 1; cursor: pointer;
+      transition: transform var(--m-duration) var(--m-ease);
+    }
+    .m-thread-row-content.dragging { transition: none; }
+    .m-thread-row-content:active { background: var(--m-c-surface-3); }
+    .m-thread-row.unread .m-thread-name,
+    .m-thread-row.unread .m-thread-snippet { font-weight: 600; color: var(--m-c-text); }
+
+    .m-avatar {
+      flex: 0 0 auto;
+      width: 40px; height: 40px;
+      border-radius: 50%;
+      background: var(--m-c-accent-tint); color: var(--m-c-accent);
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 600; font-size: 14px;
+      overflow: hidden;
+    }
+    .m-avatar img { width: 100%; height: 100%; object-fit: cover; }
+
+    .m-thread-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+    .m-thread-line-1 { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+    .m-thread-name { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 500; }
+    .m-thread-time { flex: 0 0 auto; font-size: 12px; color: var(--m-c-text-muted); }
+    .m-thread-subject { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--m-c-text); }
+    .m-thread-snippet { font-size: 12px; color: var(--m-c-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    /* Pills */
+    .m-pill {
+      display: inline-flex; align-items: center; gap: 3px;
+      font-size: 9.5px; font-weight: 700;
+      padding: 1px 6px; border-radius: 3px;
+      white-space: nowrap; letter-spacing: .03em; text-transform: uppercase;
+    }
+    .m-pill .material-icons { font-size: 11px; }
+    .m-pill.review     { background: var(--m-c-warning-tint); color: var(--m-c-warning); }
+    .m-pill.rush       { background: var(--m-c-danger-tint);  color: var(--m-c-danger); }
+    .m-pill.sales      { background: var(--m-c-success-tint); color: var(--m-c-success); }
+    .m-pill.replied    { background: var(--m-c-surface-3);    color: var(--m-c-text-muted); }
+    .m-pill.auto       { background: var(--m-c-success-tint); color: var(--m-c-success); }
+    .m-pill.manual     { background: var(--m-c-danger-tint);  color: var(--m-c-danger); }
+    .m-pill.scraped    { background: var(--m-c-surface-3);    color: var(--m-c-text-muted); }
+    .m-pill.gmail      { background: var(--m-c-accent-tint);  color: var(--m-c-accent); }
+
+    /* ─── Drawer ──────────────────────────────────────────────────── */
+    .m-drawer-backdrop {
+      position: absolute; inset: 0; background: rgba(0,0,0,0); z-index: 50;
+      pointer-events: none;
+      transition: background var(--m-duration) var(--m-ease);
+    }
+    .m-drawer-backdrop.visible { background: rgba(0,0,0,.35); pointer-events: auto; }
+    .m-drawer {
+      position: absolute; top: 0; bottom: 0; left: 0;
+      width: 280px; max-width: 80%;
+      background: var(--m-c-surface); z-index: 51;
+      transform: translateX(-100%);
+      transition: transform var(--m-duration-slow) var(--m-ease);
+      display: flex; flex-direction: column;
+      box-shadow: var(--m-shadow-drawer);
+      overflow-y: auto;
+    }
+    .m-drawer.visible { transform: translateX(0); }
+    .m-drawer-header {
+      padding: 18px 20px 14px;
+      border-bottom: 1px solid var(--m-c-border);
+    }
+    .m-drawer-header .m-name { font-size: 14px; font-weight: 600; }
+    .m-drawer-header .m-role { font-size: 12px; color: var(--m-c-accent); margin-top: 2px; }
+    .m-drawer-folder {
+      display: flex; align-items: center; gap: 14px;
+      padding: 10px 20px;
+      border-radius: 0 24px 24px 0;
+      margin-right: 12px; margin-top: 2px; cursor: pointer;
+      font-size: 14px; color: var(--m-c-text);
+    }
+    .m-drawer-folder.active { background: var(--m-c-accent-tint); color: var(--m-c-accent); font-weight: 600; }
+    .m-drawer-folder:active { background: var(--m-c-surface-3); }
+    .m-drawer-folder.active:active { background: var(--m-c-accent-tint); }
+    .m-drawer-folder .material-icons { font-size: 20px; }
+    .m-drawer-folder .m-flbl { flex: 1 1 auto; }
+    .m-drawer-folder .m-fcnt { font-size: 12px; color: var(--m-c-text-muted); }
+    .m-drawer-folder.active .m-fcnt { color: var(--m-c-accent); }
+    .m-drawer hr { border: none; border-top: 1px solid var(--m-c-border); margin: 8px 16px; }
+
+    /* ─── Conversation ────────────────────────────────────────────── */
+    .m-conv-body {
+      flex: 1 1 auto; overflow-y: auto;
+      background: var(--m-c-bg); padding-bottom: 8px;
+      -webkit-overflow-scrolling: touch;
+    }
+    .m-conv-header { background: var(--m-c-bg); padding: 12px 16px 6px; }
+    .m-conv-pills-row { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
+
+    .m-customer-card { margin: 4px 16px 8px; background: var(--m-c-surface-2); border-radius: var(--m-radius-md); overflow: hidden; }
+    .m-customer-card-head { display: flex; align-items: center; gap: 10px; padding: 10px 12px; cursor: pointer; user-select: none; }
+    .m-customer-card-head .m-avatar { width: 32px; height: 32px; font-size: 12px; }
+    .m-customer-card-head .m-info { flex: 1 1 auto; min-width: 0; }
+    .m-customer-card-head .m-name { font-size: 14px; font-weight: 600; }
+    .m-customer-card-head .m-meta { font-size: 11px; color: var(--m-c-text-muted); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 2px; }
+    .m-customer-card-head .m-repeat { display: inline-block; padding: 1px 6px; font-size: 10px; font-weight: 600; background: var(--m-c-success-tint); color: var(--m-c-success); border-radius: 3px; }
+    .m-customer-card-head .m-chev { font-family: 'Material Icons'; font-size: 22px; color: var(--m-c-text-muted); transition: transform var(--m-duration) var(--m-ease); }
+    .m-customer-card.open .m-customer-card-head .m-chev { transform: rotate(180deg); }
+    .m-customer-card-body { display: none; padding: 0 12px 12px; font-size: 13px; }
+    .m-customer-card.open .m-customer-card-body { display: block; }
+
+    .m-order-row {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 8px;
+      border-top: 1px solid var(--m-c-border);
+      font-size: 13px; cursor: pointer;
+      border-radius: var(--m-radius-sm);
+    }
+    .m-order-row:first-child { border-top: none; padding-top: 8px; }
+    .m-order-row:active { background: var(--m-c-surface-3); }
+    .m-order-row .m-oid   { font-weight: 600; color: var(--m-c-accent); flex: 0 0 auto; font-size: 12px; }
+    .m-order-row .m-oname { flex: 1 1 auto; min-width: 0; color: var(--m-c-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .m-order-row .m-oamt  { flex: 0 0 auto; color: var(--m-c-text); font-weight: 500; }
+    .m-order-row .m-ostat { flex: 0 0 auto; font-size: 10px; padding: 1px 6px; border-radius: 3px; font-weight: 600; background: var(--m-c-success-tint); color: var(--m-c-success); text-transform: uppercase; letter-spacing: .03em; }
+    .m-order-row .m-ostat.shipped   { background: var(--m-c-accent-tint); color: var(--m-c-accent); }
+    .m-order-row .m-ostat.delivered { background: var(--m-c-success-tint); color: var(--m-c-success); }
+    .m-order-row .m-ostat.cancelled { background: var(--m-c-danger-tint);  color: var(--m-c-danger); }
+    .m-order-row .m-ochev { color: var(--m-c-text-muted); font-size: 18px; flex: 0 0 auto; }
+
+    /* Order detail screen */
+    .m-order-detail { padding: 0 0 24px; }
+    .m-order-detail-header {
+      padding: 16px;
+      display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+      border-bottom: 1px solid var(--m-c-border);
+    }
+    .m-order-detail-status {
+      font-size: 11px; padding: 3px 8px; border-radius: 4px; font-weight: 600;
+      text-transform: uppercase; letter-spacing: .03em;
+      background: var(--m-c-success-tint); color: var(--m-c-success);
+    }
+    .m-order-detail-status.shipped   { background: var(--m-c-accent-tint); color: var(--m-c-accent); }
+    .m-order-detail-status.delivered { background: var(--m-c-success-tint); color: var(--m-c-success); }
+    .m-order-detail-status.cancelled { background: var(--m-c-danger-tint);  color: var(--m-c-danger); }
+    .m-order-detail-status.paid      { background: var(--m-c-accent-tint); color: var(--m-c-accent); }
+    .m-order-detail-date { font-size: 12px; color: var(--m-c-text-muted); }
+    .m-order-detail-etsy {
+      margin-left: auto; font-size: 12px; color: var(--m-c-accent);
+      text-decoration: none; display: inline-flex; align-items: center; gap: 4px;
+    }
+    .m-order-detail-etsy .material-icons { font-size: 14px; }
+    .m-order-section { padding: 16px; border-bottom: 1px solid var(--m-c-border); }
+    .m-order-section:last-child { border-bottom: none; }
+    .m-order-section h5 { margin: 0 0 10px; font-size: 11px; color: var(--m-c-text-muted); text-transform: uppercase; letter-spacing: .04em; font-weight: 600; }
+
+    .m-order-item {
+      display: flex; align-items: flex-start; gap: 12px;
+      padding: 10px 0; border-top: 1px solid var(--m-c-border);
+      text-decoration: none; color: inherit;
+    }
+    .m-order-item:first-of-type { border-top: none; padding-top: 0; }
+    .m-order-item img,
+    .m-order-item .m-item-img-fallback {
+      flex: 0 0 auto; width: 56px; height: 56px;
+      border-radius: var(--m-radius-sm);
+      background: var(--m-c-surface-2); object-fit: cover;
+      display: flex; align-items: center; justify-content: center;
+      color: var(--m-c-text-faint);
+    }
+    .m-order-item-mid { flex: 1 1 auto; min-width: 0; }
+    .m-order-item .m-item-title { font-weight: 500; font-size: 13px; line-height: 1.35; }
+    .m-order-item .m-item-meta { font-size: 11px; color: var(--m-c-text-muted); margin-top: 3px; line-height: 1.4; }
+    .m-order-item .m-item-perso { font-size: 11px; color: var(--m-c-text); margin-top: 3px; background: var(--m-c-purple-tint); padding: 4px 6px; border-radius: var(--m-radius-sm); border-left: 2px solid var(--m-c-purple); }
+    .m-order-item .m-item-link-hint { font-size: 10px; color: var(--m-c-accent); margin-top: 4px; }
+    .m-order-item-price { flex: 0 0 auto; font-weight: 600; font-size: 13px; }
+
+    .m-order-address {
+      font-size: 13px; line-height: 1.5;
+      background: var(--m-c-surface-2);
+      padding: 10px 12px;
+      border-radius: var(--m-radius-sm);
+    }
+    .m-order-totals { width: 100%; font-size: 13px; border-collapse: collapse; }
+    .m-order-totals td { padding: 4px 0; }
+    .m-order-totals td:last-child { text-align: right; font-weight: 500; }
+    .m-order-totals tr.total { font-weight: 700; font-size: 14px; border-top: 1px solid var(--m-c-border); }
+    .m-order-totals tr.total td { padding-top: 8px; }
+
+    /* Summary card */
+    .m-summary-card { margin: 4px 16px 12px; background: var(--m-c-surface-2); border-left: 4px solid var(--m-c-urgency-low); border-radius: 0 var(--m-radius-md) var(--m-radius-md) 0; overflow: hidden; }
+    .m-summary-card.urgency-high { border-left-color: var(--m-c-urgency-high); background: #fff8f8; }
+    .m-summary-card.urgency-med  { border-left-color: var(--m-c-urgency-med);  background: #fffaf0; }
+    .m-summary-card-head { display: flex; align-items: center; gap: 10px; padding: 10px 12px; cursor: pointer; user-select: none; }
+    .m-summary-card-head .m-lead { color: var(--m-c-accent); font-size: 20px; }
+    .m-summary-card-head .m-chev { color: var(--m-c-text-muted); font-size: 22px; transition: transform var(--m-duration) var(--m-ease); }
+    .m-summary-card.open .m-summary-card-head .m-chev { transform: rotate(180deg); }
+    .m-summary-card-title { flex: 1 1 auto; min-width: 0; font-size: 13px; font-weight: 600; color: var(--m-c-text); }
+    .m-summary-card-tagline { font-size: 11px; color: var(--m-c-text-muted); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .m-summary-card-body { padding: 0 12px 12px; font-size: 13px; line-height: 1.55; display: none; }
+    .m-summary-card.open .m-summary-card-body { display: block; }
+    .m-summary-card-body .m-row { display: grid; grid-template-columns: 90px 1fr; gap: 6px 10px; margin-bottom: 4px; }
+    .m-summary-card-body .m-row .m-lab { color: var(--m-c-text-muted); font-weight: 600; font-size: 12px; }
+    .m-summary-card-body .m-urg-chip { display: inline-block; padding: 1px 6px; font-size: 10px; font-weight: 600; border-radius: 3px; margin-right: 6px; }
+    .m-summary-card.urgency-high .m-urg-chip { background: var(--m-c-danger-tint); color: var(--m-c-danger); }
+    .m-summary-card.urgency-med  .m-urg-chip { background: var(--m-c-warning-tint); color: var(--m-c-warning); }
+    .m-summary-card.urgency-low  .m-urg-chip { background: var(--m-c-success-tint); color: var(--m-c-success); }
+    .m-summary-card-body .m-flags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+    .m-summary-card-body .m-flag { font-size: 10px; padding: 2px 6px; border-radius: 3px; background: var(--m-c-surface-3); color: var(--m-c-text-muted); }
+
+    /* Message bubbles */
+    .m-msg-wrap { padding: 0 16px; margin-bottom: 14px; }
+    .m-msg-meta { font-size: 11px; color: var(--m-c-text-muted); margin-bottom: 4px; letter-spacing: .03em; }
+    .m-msg-meta.outbound { text-align: right; }
+    .m-msg-bubble { display: inline-block; max-width: 85%; padding: 10px 14px; border-radius: 18px; font-size: 14px; line-height: 1.45; word-wrap: break-word; white-space: pre-wrap; }
+    .m-msg-bubble.inbound { background: var(--m-c-surface-2); border-bottom-left-radius: 4px; color: var(--m-c-text); }
+    .m-msg-wrap.outbound { text-align: right; }
+    .m-msg-bubble.outbound { background: var(--m-c-accent); color: #fff; border-bottom-right-radius: 4px; }
+    .m-msg-img-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+    .m-msg-img { width: 80px; height: 80px; background-size: cover; background-position: center; border-radius: 8px; background-color: var(--m-c-surface-3); }
+
+    /* Composer */
+    .m-composer-inline { flex: 0 0 auto; background: var(--m-c-surface); border-top: 1px solid var(--m-c-border); padding: 6px 8px 8px; }
+    .m-composer-attachments { display: none; flex-wrap: wrap; gap: 6px; margin: 0 0 6px; }
+    .m-composer-attachments.visible { display: flex; }
+    .m-composer-attach-chip {
+      position: relative; width: 56px; height: 56px;
+      border-radius: var(--m-radius-sm);
+      background-size: cover; background-position: center;
+      background-color: var(--m-c-surface-2);
+      flex: 0 0 auto;
+    }
+    .m-composer-attach-chip .m-attach-rm {
+      position: absolute; top: -4px; right: -4px;
+      width: 18px; height: 18px;
+      border-radius: 50%;
+      background: #1f2328; color: #fff;
+      border: 2px solid #fff;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 11px; line-height: 1; padding: 0;
+    }
+    .m-translate-preview { margin: 0 0 8px; border: 1px solid var(--m-c-border-strong); border-radius: var(--m-radius-md); background: #fffaf0; overflow: hidden; display: none; }
+    .m-translate-preview.visible { display: block; }
+    .m-translate-preview-head { display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; background: var(--m-c-warning-tint); border-bottom: 1px solid var(--m-c-border-strong); font-size: 11px; font-weight: 600; color: var(--m-c-warning); }
+    .m-translate-preview-head button { border: none; background: transparent; font-size: 14px; line-height: 1; color: var(--m-c-warning); cursor: pointer; padding: 2px 6px; }
+    .m-translate-preview-body { padding: 8px 10px; font-size: 13px; line-height: 1.5; max-height: 100px; overflow-y: auto; white-space: pre-wrap; }
+    .m-composer-textarea-wrap { display: flex; align-items: flex-end; gap: 6px; }
+    .m-composer-textarea {
+      flex: 1 1 auto;
+      min-height: var(--m-composer-min-h);
+      max-height: var(--m-composer-max-h);
+      background: var(--m-c-surface-2);
+      border: 1px solid var(--m-c-border);
+      border-radius: 18px;
+      padding: 8px 14px;
+      font-size: 14px; line-height: 1.4;
+      color: var(--m-c-text);
+      resize: none; overflow-y: auto; outline: none;
+      font-family: inherit;
+    }
+    .m-composer-textarea:focus { border-color: var(--m-c-accent); background: var(--m-c-bg); }
+    .m-composer-textarea::placeholder { color: var(--m-c-text-faint); }
+    .m-composer-send-btn {
+      flex: 0 0 auto; width: 36px; height: 36px;
+      border: none; background: var(--m-c-accent); color: #fff;
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer; align-self: flex-end;
+    }
+    .m-composer-send-btn:disabled { background: var(--m-c-border-strong); cursor: default; }
+    .m-composer-send-btn .material-icons { font-size: 18px; }
+    .m-composer-actions { display: flex; align-items: center; gap: 4px; padding: 4px 0 0; }
+    .m-composer-action {
+      width: 38px; height: 38px;
+      border: none; background: transparent; border-radius: 50%;
+      display: inline-flex; align-items: center; justify-content: center;
+      color: var(--m-c-text-muted); cursor: pointer; flex: 0 0 auto;
+      position: relative;
+    }
+    .m-composer-action:active { background: var(--m-c-surface-3); }
+    .m-composer-action .material-icons { font-size: 22px; }
+    .m-composer-action.ai { color: var(--m-c-purple); }
+    .m-composer-action.translate { color: var(--m-c-accent); }
+    .m-composer-action.translate.active { background: var(--m-c-accent); color: #fff; }
+    .m-composer-action.attach.has-files { color: var(--m-c-accent); }
+    .m-composer-action.attach.has-files::after {
+      content: attr(data-count);
+      position: absolute; top: 2px; right: 2px;
+      background: var(--m-c-accent); color: #fff;
+      border-radius: 9px; padding: 1px 5px;
+      font-size: 9px; font-weight: 700;
+      border: 2px solid #fff;
+      min-width: 16px; text-align: center;
+      font-family: inherit;
+    }
+
+    /* Bottom sheet */
+    .m-sheet-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0); z-index: 60; pointer-events: none; transition: background var(--m-duration) var(--m-ease); }
+    .m-sheet-backdrop.visible { background: rgba(0,0,0,.35); pointer-events: auto; }
+    .m-sheet {
+      position: absolute; left: 0; right: 0; bottom: 0;
+      background: var(--m-c-surface); z-index: 61;
+      border-radius: var(--m-radius-xl) var(--m-radius-xl) 0 0;
+      transform: translateY(100%);
+      transition: transform var(--m-duration-slow) var(--m-ease);
+      max-height: 70%;
+      display: flex; flex-direction: column;
+      overflow: hidden;
+      box-shadow: var(--m-shadow-2);
+    }
+    .m-sheet.visible { transform: translateY(0); }
+    .m-sheet-handle { flex: 0 0 auto; width: 40px; height: 4px; background: var(--m-c-border-strong); border-radius: 2px; margin: 10px auto 0; }
+    .m-sheet-title { flex: 0 0 auto; font-size: 16px; font-weight: 600; padding: 14px 20px 10px; }
+    .m-sheet-body { flex: 1 1 auto; overflow-y: auto; padding: 0 20px 24px; -webkit-overflow-scrolling: touch; }
+    .m-sheet-row { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--m-c-border); }
+    .m-sheet-row:last-child { border-bottom: none; }
+    .m-sheet-row .m-lab { flex: 1 1 auto; font-size: 14px; color: var(--m-c-text); }
+    .m-sheet-row .m-toggle { flex: 0 0 auto; width: 40px; height: 22px; background: var(--m-c-border-strong); border-radius: 11px; position: relative; cursor: pointer; transition: background var(--m-duration) var(--m-ease); }
+    .m-sheet-row .m-toggle::after { content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; background: #fff; border-radius: 50%; box-shadow: var(--m-shadow-1); transition: left var(--m-duration) var(--m-ease); }
+    .m-sheet-row .m-toggle.on { background: var(--m-c-accent); }
+    .m-sheet-row .m-toggle.on::after { left: 20px; }
+    .m-sheet-row select { font-size: 14px; padding: 4px 8px; border: 1px solid var(--m-c-border-strong); border-radius: 4px; background: var(--m-c-surface); }
+    .m-sheet-action-btn { width: 100%; margin-top: 16px; padding: 12px; border: none; background: var(--m-c-accent); color: #fff; border-radius: 24px; font-weight: 600; font-size: 14px; cursor: pointer; }
+
+    /* Overflow menu */
+    .m-menu { position: absolute; top: calc(var(--m-appbar-h) + 4px); right: 8px; background: var(--m-c-surface); border-radius: var(--m-radius-md); box-shadow: var(--m-shadow-2); min-width: 200px; z-index: 70; display: none; overflow: hidden; }
+    .m-menu.visible { display: block; }
+    .m-menu-item { display: flex; align-items: center; gap: 12px; padding: 12px 16px; font-size: 14px; color: var(--m-c-text); cursor: pointer; }
+    .m-menu-item:active { background: var(--m-c-surface-3); }
+    .m-menu-item .material-icons { font-size: 20px; color: var(--m-c-text-muted); }
+    .m-menu-item.danger { color: var(--m-c-danger); }
+    .m-menu-item.danger .material-icons { color: var(--m-c-danger); }
+    .m-menu-divider { border-top: 1px solid var(--m-c-border); margin: 4px 0; }
+
+    /* Settings */
+    .m-settings-section { border-bottom: 1px solid var(--m-c-border); }
+    .m-settings-section summary { padding: 16px; font-weight: 600; font-size: 14px; cursor: pointer; display: flex; align-items: center; gap: 10px; list-style: none; }
+    .m-settings-section summary::-webkit-details-marker { display: none; }
+    .m-settings-section summary::after { content: "expand_more"; font-family: 'Material Icons'; font-size: 22px; color: var(--m-c-text-muted); margin-left: auto; transition: transform var(--m-duration) var(--m-ease); }
+    .m-settings-section[open] summary::after { transform: rotate(180deg); }
+    .m-settings-content { padding: 0 16px 16px; font-size: 14px; color: var(--m-c-text); line-height: 1.6; }
+    .m-settings-content .m-desc { font-size: 12px; color: var(--m-c-text-muted); margin-bottom: 10px; }
+    .m-settings-content input[type="text"],
+    .m-settings-content input[type="password"] { width: 100%; padding: 8px 10px; border: 1px solid var(--m-c-border-strong); border-radius: 4px; font-size: 13px; font-family: inherit; margin-bottom: 4px; }
+    .m-settings-content button { height: 36px; padding: 0 14px; border: 1px solid var(--m-c-border-strong); background: var(--m-c-surface); color: var(--m-c-text); border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 500; display: inline-flex; align-items: center; gap: 6px; }
+    .m-settings-content button.danger { border-color: var(--m-c-danger); color: var(--m-c-danger); }
+    .m-settings-content button.primary { background: var(--m-c-accent); color: #fff; border-color: var(--m-c-accent); }
+    .m-settings-content .m-account-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: var(--m-c-surface-2); border-radius: var(--m-radius-sm); margin-bottom: 12px; }
+    .m-settings-content .m-account-row .m-avatar { width: 32px; height: 32px; font-size: 12px; }
+    .m-settings-content .m-account-row .m-aname { font-size: 14px; font-weight: 600; }
+    .m-settings-content .m-account-row .m-arole { font-size: 11px; color: var(--m-c-accent); font-weight: 600; }
+
+    /* Mobile toast (uses the same id as desktop's toast — we'll
+     * reposition it so it sits above the composer on mobile). */
+    body.em-mobile .em-toast {
+      bottom: 80px !important;
+      max-width: 80%;
+    }
+
+    /* Hidden file input — invisible, clicked programmatically. */
+    .m-photo-input { position: absolute; width: 0; height: 0; opacity: 0; pointer-events: none; }
+
   </style>
 </head>
 <body>
@@ -2416,6 +2913,142 @@
     </div>
   </div>
 
+  <!-- ════════════════════════════════════════════════════════════════
+       v5.0 — Mobile UI DOM
+       ════════════════════════════════════════════════════════════════
+       Hidden when body lacks .em-mobile (CSS gate). On mobile devices,
+       this DOM tree replaces the desktop .em-app. All data flows through
+       the same `state.threads`, `state.messages`, etc. — mobile is just
+       a different view of the same in-memory model.
+  -->
+  <div id="emMobileApp">
+    <div class="m-appbar">
+      <button class="m-appbar-icon" id="mLeftIcon" aria-label="Menu">
+        <i class="material-icons" id="mLeftIconGlyph">menu</i>
+      </button>
+      <div class="m-appbar-titlewrap">
+        <div class="m-appbar-title" id="mTitle">Inbox</div>
+        <div class="m-appbar-subtitle" id="mSubtitle"></div>
+      </div>
+      <button class="m-appbar-icon" id="mSearchIcon" aria-label="Search">
+        <i class="material-icons">search</i>
+      </button>
+      <button class="m-appbar-icon" id="mMenuIcon" aria-label="More">
+        <i class="material-icons">more_vert</i>
+      </button>
+    </div>
+
+    <div class="m-main">
+      <!-- Screen 1: thread list -->
+      <div class="m-screen list visible" id="mScreenList">
+        <div class="m-list" id="mList"></div>
+      </div>
+
+      <!-- Screen 2: conversation -->
+      <div class="m-screen" id="mScreenConv">
+        <div class="m-conv-body" id="mConvBody"></div>
+        <div class="m-composer-inline" id="mComposer">
+          <div class="m-composer-attachments" id="mAttachments"></div>
+          <div class="m-translate-preview" id="mTranslatePreview">
+            <div class="m-translate-preview-head">
+              <span>Translated reply (preview — this will be sent)</span>
+              <button id="mTranslatePreviewClose" aria-label="Close translation">×</button>
+            </div>
+            <div class="m-translate-preview-body" id="mTranslatePreviewBody"></div>
+          </div>
+          <div class="m-composer-textarea-wrap">
+            <textarea class="m-composer-textarea" id="mComposerTextarea"
+                      placeholder="Type a reply…" rows="1"></textarea>
+            <button class="m-composer-send-btn" id="mComposerSend" disabled aria-label="Send">
+              <i class="material-icons">send</i>
+            </button>
+          </div>
+          <div class="m-composer-actions">
+            <button class="m-composer-action ai" id="mActionAi" title="AI Draft">
+              <i class="material-icons">auto_awesome</i>
+            </button>
+            <button class="m-composer-action attach" id="mActionAttach" title="Attach photo">
+              <i class="material-icons">attach_file</i>
+            </button>
+            <button class="m-composer-action translate" id="mActionTrans" title="Translate">
+              <i class="material-icons">translate</i>
+            </button>
+          </div>
+          <input type="file" id="mPhotoInput" class="m-photo-input"
+                 accept="image/png,image/jpeg,image/gif,image/webp" multiple aria-hidden="true" />
+        </div>
+      </div>
+
+      <!-- Screen 3: order detail -->
+      <div class="m-screen" id="mScreenOrder">
+        <div class="m-list" id="mOrderBody"></div>
+      </div>
+
+      <!-- Screen 4: settings -->
+      <div class="m-screen" id="mScreenSettings">
+        <div class="m-list" id="mSettingsBody"></div>
+      </div>
+    </div>
+
+    <!-- Drawer -->
+    <div class="m-drawer-backdrop" id="mDrawerBackdrop"></div>
+    <div class="m-drawer" id="mDrawer">
+      <div class="m-drawer-header" id="mDrawerHeader">
+        <div class="m-name" id="mDrawerName">Signed out</div>
+        <div class="m-role" id="mDrawerRole"></div>
+      </div>
+      <div id="mDrawerFolders" style="padding: 8px 0;"></div>
+      <hr>
+      <div class="m-drawer-folder" id="mDrawerSettings">
+        <i class="material-icons">settings</i>
+        <span class="m-flbl">Settings</span>
+      </div>
+    </div>
+
+    <!-- Translate sheet -->
+    <div class="m-sheet-backdrop" id="mSheetBackdrop"></div>
+    <div class="m-sheet" id="mSheet">
+      <div class="m-sheet-handle"></div>
+      <div class="m-sheet-title">Translate</div>
+      <div class="m-sheet-body">
+        <div class="m-sheet-row">
+          <span class="m-lab">Auto-translate conversation</span>
+          <div class="m-toggle" id="mToggleAuto"></div>
+        </div>
+        <div class="m-sheet-row">
+          <span class="m-lab">Customer language</span>
+          <select id="mLangSelect">
+            <option value="auto">Auto-detect</option>
+            <option value="en">English</option>
+            <option value="es">Spanish</option>
+            <option value="fr">French</option>
+            <option value="de">German</option>
+            <option value="it">Italian</option>
+            <option value="pt">Portuguese</option>
+            <option value="ja">Japanese</option>
+            <option value="zh">Chinese</option>
+          </select>
+        </div>
+        <button class="m-sheet-action-btn" id="mSheetTranslateBtn">Translate reply</button>
+        <p style="font-size: 11px; color: var(--m-c-text-muted); margin: 12px 0 0;">
+          Translation preview will appear above the composer; nothing sends until you tap the Send button.
+        </p>
+      </div>
+    </div>
+
+    <!-- Overflow menu -->
+    <div class="m-menu" id="mMenu">
+      <div class="m-menu-item" data-action="archive"><i class="material-icons">archive</i>Archive thread</div>
+      <div class="m-menu-item" data-action="rush"><i class="material-icons">local_fire_department</i>Mark as rush</div>
+      <div class="m-menu-item" data-action="sales"><i class="material-icons">trending_up</i>Move to sales</div>
+      <div class="m-menu-item" data-action="reply"><i class="material-icons">rate_review</i>Mark needs review</div>
+      <div class="m-menu-divider"></div>
+      <div class="m-menu-item" data-action="open-etsy"><i class="material-icons">open_in_new</i>Open on Etsy</div>
+      <div class="m-menu-divider"></div>
+      <div class="m-menu-item danger" data-action="delete"><i class="material-icons">delete_forever</i>Delete thread</div>
+    </div>
+  </div>
+
   <div class="em-app">
     <div class="em-topbar">
       <span class="em-title">EtsyMail <span class="em-tag">operator inbox · proxy mode</span></span>
@@ -2706,6 +3339,53 @@
   <script>
   (function(){
     "use strict";
+
+    // ════════════════════════════════════════════════════════════════
+    // v5.0 — Mobile detection
+    // ════════════════════════════════════════════════════════════════
+    //
+    // User-agent based per the spec: real phones (iPhone, Android phone)
+    // and narrow iPads in mobile-Safari mode get the mobile UI; desktops
+    // and laptops get the existing desktop UI. The two co-exist in this
+    // same file — body class flips which DOM tree + stylesheet renders.
+    //
+    // Rationale for UA over media query: phones with desktop-size screen
+    // settings (Plus models, foldables in landscape) still want mobile;
+    // narrow desktop windows or split-view tablets do NOT want mobile
+    // (operators expect the dense desktop dashboard at their workstation).
+    // UA gets this right where pure media queries don't.
+    //
+    // Override knob: localStorage "etsymail_force_view" = "mobile" |
+    // "desktop" | unset. Lets a satellite operator force one mode for
+    // testing. Set via DevTools — no UI yet.
+    const IS_MOBILE = (function detectMobile() {
+      try {
+        const force = localStorage.getItem("etsymail_force_view");
+        if (force === "mobile")  return true;
+        if (force === "desktop") return false;
+      } catch (_) {}
+      const ua = (navigator.userAgent || "");
+      const phoneUA = /iPhone|iPod|Android.+Mobile|BlackBerry|webOS|IEMobile|Opera Mini|Mobile.+Firefox/i.test(ua);
+      // iPad UA quirks: modern iPadOS lies about being macOS; detect via
+      // touch + Safari + Macintosh combo. Then gate on viewport width
+      // because we want full-screen iPads to keep getting desktop.
+      const isIPad = /iPad/.test(ua) ||
+                     (/Macintosh/.test(ua) && (navigator.maxTouchPoints || 0) > 1);
+      const narrowViewport = (window.innerWidth || 0) <= 820;
+      return phoneUA || (isIPad && narrowViewport);
+    })();
+    // Expose on window so the mobile JS module (defined later in this
+    // same script block) can read the same value without re-detecting.
+    window.IS_MOBILE = IS_MOBILE;
+    // Apply early — before DOMContentLoaded — so any inline CSS that
+    // depends on this class can resolve without a flash of unstyled.
+    document.documentElement.classList.toggle("em-mobile-root", IS_MOBILE);
+    // Also flip body class on DOMContentLoaded so existing CSS that
+    // gates on body.em-mobile / body.em-desktop works.
+    document.addEventListener("DOMContentLoaded", () => {
+      document.body.classList.toggle("em-mobile",  IS_MOBILE);
+      document.body.classList.toggle("em-desktop", !IS_MOBILE);
+    });
 
     // Same-origin Netlify functions. Override if hosted elsewhere.
     const NETLIFY_BASE = "";
@@ -5336,6 +6016,8 @@
         // existing code paths that read getEmployeeName() see the
         // session's identity.
         try { localStorage.setItem("etsymail_session_user", res.displayName || res.username); } catch {}
+        // v5.0 — Mobile auth hook
+        if (window.IS_MOBILE && typeof window.mNotifyAuthChanged === "function") window.mNotifyAuthChanged();
       } catch (e) {
         // 401 path already cleaned the token + showed login. Anything
         // else (5xx) — surface the error inline on the login modal.
@@ -5393,6 +6075,8 @@
         if (pwInput) pwInput.value = "";
         hideLoginModal();
         toast(`Signed in as ${res.displayName || res.username}`);
+        // v5.0 — Mobile auth hook
+        if (window.IS_MOBILE && typeof window.mNotifyAuthChanged === "function") window.mNotifyAuthChanged();
         // Kick off a fresh app-state load now that we're authenticated.
         if (typeof fetchThreadListNow === "function") fetchThreadListNow({ source: "user" });
         if (typeof fetchCountsNow === "function")     fetchCountsNow();
@@ -5427,6 +6111,12 @@
       if (typeof renderRail === "function")       renderRail();
       const detail = $("emDetail");
       if (detail) detail.innerHTML = '<div class="em-detail-empty">Sign in to view threads.</div>';
+      // v5.0 — Mobile auth + state hooks
+      if (window.IS_MOBILE) {
+        if (typeof window.mNotifyAuthChanged    === "function") window.mNotifyAuthChanged();
+        if (typeof window.mNotifyThreadsChanged === "function") window.mNotifyThreadsChanged();
+        if (typeof window.mNotifyMessagesChanged === "function") window.mNotifyMessagesChanged();
+      }
       showLoginModal();
     }
 
@@ -6093,6 +6783,8 @@
         if (seq !== state.listFetchSeq) return;
         state.threads = docs;
         renderThreadList();
+        // v5.0 — Mobile re-render hook
+        if (window.IS_MOBILE && typeof window.mNotifyThreadsChanged === "function") window.mNotifyThreadsChanged();
         setBackendOk(true, "Backend: connected");
       } catch (e) {
         console.warn("thread list fetch failed:", e.message);
@@ -6152,6 +6844,8 @@
         // ensures the rendered list matches whatever the user has
         // typed BY NOW, not the query that was sent 200ms ago.
         renderThreadList();
+        // v5.0 — Mobile re-render hook
+        if (window.IS_MOBILE && typeof window.mNotifyThreadsChanged === "function") window.mNotifyThreadsChanged();
         setBackendOk(true, "Backend: connected");
       } catch (e) {
         if (mySeq !== _searchSeq) return;
@@ -6805,6 +7499,8 @@
         const data = await api("etsyMailThreads", { query: { counts: 1 } });
         state.counts = data.counts || {};
         renderRail();
+        // v5.0 — Mobile drawer counts hook
+        if (window.IS_MOBILE && typeof window.mNotifyCountsChanged === "function") window.mNotifyCountsChanged();
         // Piggyback the auto-pipeline config refresh here. It's a single
         // Firestore-proxy doc-get, similar cost to the counts call, and
         // happens at the same cadence (15s by default). Keeps the rating
@@ -6848,6 +7544,8 @@
           const data = await api("etsyMailThreads", { query: { threadId } });
           thread = data.thread;
           state.messages = data.messages || [];
+          // v5.0 — Mobile re-render hook
+          if (window.IS_MOBILE && typeof window.mNotifyMessagesChanged === "function") window.mNotifyMessagesChanged();
         } catch (e) {
           $("emDetail").innerHTML = `<div class="em-detail-empty">Could not load thread: ${esc(e.message)}</div>`;
           return;
@@ -6889,6 +7587,8 @@
         if (state.selectedId !== threadId) return;
         state.messages = data.docs || [];
         renderThreadMessages();
+        // v5.0 — Mobile conversation re-render hook
+        if (window.IS_MOBILE && typeof window.mNotifyMessagesChanged === "function") window.mNotifyMessagesChanged();
         // v4.0 — re-render the right-rail card now that messages are
         // loaded. For sales threads this is a no-op (sales card doesn't
         // depend on messages). For non-sales threads, this is what
@@ -7545,6 +8245,8 @@
         // Populate textarea
         $("emDraftText").value = data.text || "";
         autoSizeDraftTextarea($("emDraftText"));   // v0.9.17: RAF-deferred grow
+        // v5.0 — Mobile composer mirror hook
+        if (window.IS_MOBILE && typeof window.mNotifyDraftChanged === "function") window.mNotifyDraftChanged();
         // Render AI card
         renderAiDraftCard(data);
         // Show revise row
@@ -8587,6 +9289,19 @@
 
     /** Render all chips for the currently selected thread. */
     function renderComposerChips() {
+      // v5.0 — Mirror chip changes to the mobile composer's attachment
+      // strip. Deferred via queueMicrotask so this runs after the desktop
+      // pass completes (avoids reentrant render loops).
+      if (window.IS_MOBILE) {
+        queueMicrotask(() => {
+          try {
+            // mRenderAttachments is defined later in this file; guard
+            // against early-call timing.
+            const fn = (typeof window.mRenderAttachments === "function") ? window.mRenderAttachments : null;
+            if (fn) fn();
+          } catch (e) { console.warn("[mobile] chip mirror failed:", e); }
+        });
+      }
       const box = $("emComposerChips");
       if (!box) return;
       const threadId = state.selectedId;
@@ -12038,8 +12753,1133 @@
       // v0.9.1 #8: start kill-switch banner polling (every 30s)
       startKillSwitchPolling();
 
+      // v5.0 — Mobile init. Only runs on detected mobile devices.
+      if (IS_MOBILE) {
+        try { mInit(); }
+        catch (e) { console.error("[mobile] init failed:", e); }
+      }
+
       document.body.classList.add("ready");
     });
+
+    /* ════════════════════════════════════════════════════════════════
+     * v5.0 — MOBILE UI MODULE
+     * ════════════════════════════════════════════════════════════════
+     *
+     * Lives inside the same IIFE as the desktop code so it can call
+     * existing helpers (api, toast, setStatus, sendViaEtsy, etc.)
+     * directly. Only the entry point `mInit()` runs at boot, and only
+     * when IS_MOBILE is true.
+     *
+     * The mobile UI is a thin presentation layer over the same in-
+     * memory state (state.threads, state.messages, state.currentUser,
+     * etc.). It shares the desktop's polling, fetching, sending, and
+     * auth — only the rendering and gestures are mobile-specific.
+     *
+     * Render strategy: requestAnimationFrame-deduped. Whenever a state
+     * mutation point fires, we set a dirty flag; on the next animation
+     * frame we re-render whichever views are dirty. This avoids both
+     * (a) constantly re-rendering on every tiny mutation and (b) the
+     * latency of a 1-second polling re-render.
+     * ──────────────────────────────────────────────────────────────── */
+
+    // ── Mobile state ──────────────────────────────────────────────
+    const mState = {
+      currentScreen   : "list",      // "list" | "conv" | "order" | "settings"
+      currentFilterId : "pending_human_review",
+      openOrderReceiptId: null,
+      prevScreen      : "list",      // for back-arrow navigation from order detail
+      // Translate UI state — separate from desktop's state.composerTranslation
+      // because the mobile sheet has its own picker; we DO write into the
+      // shared composerTranslation when the operator commits a translation
+      // (so the desktop send path picks it up unchanged).
+      mobileTranslateLang: null,
+      // Render-dirty flags — set by hooks, cleared when the RAF re-renders
+      dirtyList     : true,
+      dirtyConv     : false,
+      dirtyDrawer   : true,
+      dirtySettings : false,
+      _rafScheduled : false,
+      // Composer attachments URL bag — uses the desktop's composer
+      // attachment system (state.composerAttachments) for actual data.
+      // This is only for managing the mobile-side preview chips on the
+      // current thread.
+      composerObjectUrls: new Map() // attachmentId → object URL (for preview)
+    };
+    window.mState = mState;   // for debugging via DevTools
+
+    // ── DOM helpers ──────────────────────────────────────────────
+    const mEsc = (typeof esc === "function") ? esc : (s) => String(s == null ? "" : s).replace(/[&<>"']/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
+    const mFmtMoney = (typeof fmtMoney === "function") ? fmtMoney : function(amount, currency) {
+      if (typeof amount !== "number") return "—";
+      const sym = currency === "USD" || !currency ? "$" : (currency + " ");
+      return sym + amount.toFixed(2);
+    };
+    const mFmtShortDate = (typeof fmtShortDate === "function") ? fmtShortDate : function(ts) {
+      if (!ts) return "—";
+      const d = new Date(typeof ts === "number" ? ts : (ts.toMillis ? ts.toMillis() : ts));
+      return isNaN(d) ? "—" : d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+    };
+
+    // Fmt the relative time for thread rows: "2:34 PM" if today, "Yesterday"
+    // if yesterday, "May 5" if this year, "May 5 2024" otherwise.
+    //
+    // Accepts every timestamp shape that flows through firestoreProxy:
+    //   - raw JS number (ms since epoch)
+    //   - JS Date instance
+    //   - Firestore Timestamp object with .toMillis() (rare on the wire)
+    //   - the proxy's serialized Timestamp shape: {_ts:true, ms:N}
+    //   - ISO date string
+    // Mirrors the parser in desktop's _msToInt (line ~10798) so mobile
+    // and desktop agree on the same time for the same thread.
+    function mFmtThreadTime(ts) {
+      if (!ts) return "";
+      let ms = 0;
+      if (typeof ts === "number") ms = ts;
+      else if (ts instanceof Date) ms = ts.getTime();
+      else if (typeof ts === "object" && ts._ts && typeof ts.ms === "number") ms = ts.ms;
+      else if (typeof ts === "object" && typeof ts.toMillis === "function") { try { ms = ts.toMillis(); } catch {} }
+      else if (typeof ts === "string") { const d = new Date(ts); if (!isNaN(d.getTime())) ms = d.getTime(); }
+      if (!ms) return "";
+      const d = new Date(ms);
+      if (isNaN(d.getTime())) return "";
+      const now = new Date();
+      const isToday = d.toDateString() === now.toDateString();
+      if (isToday) return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+      const y = new Date(now); y.setDate(y.getDate() - 1);
+      if (d.toDateString() === y.toDateString()) return "Yesterday";
+      const sameYear = d.getFullYear() === now.getFullYear();
+      return d.toLocaleDateString(undefined, sameYear ? { month: "short", day: "numeric" } : { month: "short", day: "numeric", year: "numeric" });
+    }
+
+    function mInitials(name) {
+      if (!name) return "?";
+      const parts = String(name).trim().split(/\s+/);
+      if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+      return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+    }
+
+    // Pick an avatar tint based on the customer name. Stable hash so the
+    // same name always gets the same color.
+    function mAvatarColor(name) {
+      const hues = ["warm", "cool", "green", "neutral", "purple"];
+      const s = String(name || "");
+      let h = 0;
+      for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+      return hues[h % hues.length];
+    }
+
+    // Inline pill builder — accepts the desktop's status string, returns HTML.
+    function mStatusPills(thread) {
+      if (!thread) return "";
+      const pills = [];
+      const st = thread.status;
+      if (st === "pending_human_review") pills.push(`<span class="m-pill review">Needs Review</span>`);
+      if (st === "production_rush")      pills.push(`<span class="m-pill rush">🔥 Rush 🔥</span>`);
+      if (st && st.startsWith("sales_")) pills.push(`<span class="m-pill sales">Sales</span>`);
+      if (st === "auto_replied" || st === "queued_for_auto_send") pills.push(`<span class="m-pill auto"><i class="material-icons">smart_toy</i>Auto-replied</span>`);
+      if (st === "archived")             pills.push(`<span class="m-pill replied">Archived</span>`);
+      if (thread.sendOrigin === "manual" && (st === "auto_replied" || st === "replied" || st === "pending_human_review")) {
+        pills.push(`<span class="m-pill manual">Manually Sent</span>`);
+      }
+      if (thread.gmailMessageId)  pills.push(`<span class="m-pill gmail"><i class="material-icons">mail</i>Gmail</span>`);
+      if (thread.source === "extension" && !thread.gmailMessageId) pills.push(`<span class="m-pill scraped">Etsy Scraped</span>`);
+      return pills.join("");
+    }
+
+    // Render-coalescing: any number of m*Dirty mutations in one tick
+    // result in a single re-render on the next animation frame.
+    function mRequestRender() {
+      if (mState._rafScheduled) return;
+      mState._rafScheduled = true;
+      requestAnimationFrame(() => {
+        mState._rafScheduled = false;
+        try {
+          if (mState.dirtyList || mState.dirtyDrawer) { mRenderList(); mRenderDrawer(); mState.dirtyList = false; mState.dirtyDrawer = false; }
+          if (mState.dirtyConv)     { mRenderConv();     mState.dirtyConv     = false; }
+          if (mState.dirtySettings) { mRenderSettings(); mState.dirtySettings = false; }
+        } catch (e) {
+          console.error("[mobile] render failed:", e);
+        }
+      });
+    }
+    window.mRequestRender = mRequestRender;
+
+    // Public hooks — called from desktop fetchers / handlers. See the
+    // surgical patches in fetchThreadListNow / fetchMessagesNow / etc.
+    window.mNotifyThreadsChanged   = () => { mState.dirtyList = true; mState.dirtyDrawer = true; mRequestRender(); };
+    window.mNotifyMessagesChanged  = () => { mState.dirtyConv = true; mRequestRender(); };
+    window.mNotifyCountsChanged    = () => { mState.dirtyDrawer = true; mState.dirtyList = true; mRequestRender(); };
+    window.mNotifyAuthChanged      = () => { mState.dirtyDrawer = true; mState.dirtySettings = true; mRequestRender(); };
+    window.mNotifyDraftChanged     = () => {
+      // AI Draft just wrote into #emDraftText; mirror that into the
+      // mobile composer textarea so the operator sees the new draft.
+      const desktopTa = document.getElementById("emDraftText");
+      const mobileTa  = document.getElementById("mComposerTextarea");
+      if (desktopTa && mobileTa) {
+        mobileTa.value = desktopTa.value || "";
+        mAutoGrow(mobileTa);
+        const send = document.getElementById("mComposerSend");
+        if (send) send.disabled = !((mobileTa.value || "").trim() || mGetCurrentAttachments().length > 0);
+      }
+    };
+    window.mNotifyTranslationChanged = () => {
+      // state.composerTranslation was set by callTranslate; render the
+      // mobile preview pane.
+      const pane = document.getElementById("mTranslatePreview");
+      const body = document.getElementById("mTranslatePreviewBody");
+      const btn  = document.getElementById("mActionTrans");
+      if (!pane || !body) return;
+      const t = state.composerTranslation;
+      if (t && t.translated) {
+        body.textContent = t.translated;
+        pane.classList.add("visible");
+        if (btn) btn.classList.add("active");
+      } else {
+        pane.classList.remove("visible");
+        if (btn) btn.classList.remove("active");
+      }
+    };
+
+    // ── Drawer + screens ──────────────────────────────────────────
+    function mShowScreen(name) {
+      ["list", "conv", "order", "settings"].forEach(s => {
+        const el = document.getElementById("mScreen" + s.charAt(0).toUpperCase() + s.slice(1));
+        if (el) el.classList.toggle("visible", s === name);
+      });
+      mState.currentScreen = name;
+      mUpdateAppbar();
+    }
+
+    function mUpdateAppbar() {
+      const titleEl    = document.getElementById("mTitle");
+      const subEl      = document.getElementById("mSubtitle");
+      const leftIcon   = document.getElementById("mLeftIconGlyph");
+      const screen     = mState.currentScreen;
+
+      if (screen === "list") {
+        leftIcon.textContent = "menu";
+        const filter = (RAIL_FILTERS || []).find(f => f.id === mState.currentFilterId) || (RAIL_FILTERS || [])[0];
+        titleEl.textContent = filter ? filter.label : "Inbox";
+        const total = mFilteredThreads().length;
+        subEl.textContent = `${total} thread${total === 1 ? "" : "s"}`;
+      } else if (screen === "conv") {
+        leftIcon.textContent = "arrow_back";
+        const t = state.threads && state.threads.find(x => x && x.id === state.selectedId);
+        if (t) {
+          titleEl.textContent = t.customerName || t.etsyUsername || "(Unknown)";
+          const username = t.etsyUsername ? "@" + t.etsyUsername : "";
+          subEl.textContent = username;
+        } else {
+          titleEl.textContent = "Conversation";
+          subEl.textContent = "";
+        }
+      } else if (screen === "order") {
+        leftIcon.textContent = "arrow_back";
+        titleEl.textContent = mState.openOrderReceiptId ? "Order #" + mState.openOrderReceiptId : "Order";
+        subEl.textContent = "";
+      } else if (screen === "settings") {
+        leftIcon.textContent = "arrow_back";
+        titleEl.textContent = "Settings";
+        subEl.textContent = state.currentUser ? (state.isOwner ? "Owner" : "Operator") : "";
+      }
+    }
+
+    function mOpenDrawer()  { document.getElementById("mDrawerBackdrop").classList.add("visible");    document.getElementById("mDrawer").classList.add("visible"); }
+    function mCloseDrawer() { document.getElementById("mDrawerBackdrop").classList.remove("visible"); document.getElementById("mDrawer").classList.remove("visible"); }
+    function mOpenSheet()   { document.getElementById("mSheetBackdrop").classList.add("visible");     document.getElementById("mSheet").classList.add("visible"); }
+    function mCloseSheet()  { document.getElementById("mSheetBackdrop").classList.remove("visible");  document.getElementById("mSheet").classList.remove("visible"); }
+    function mToggleMenu()  { document.getElementById("mMenu").classList.toggle("visible"); }
+    function mCloseMenu()   { document.getElementById("mMenu").classList.remove("visible"); }
+
+    // ── Drawer rendering ─────────────────────────────────────────
+    function mRenderDrawer() {
+      const folders = document.getElementById("mDrawerFolders");
+      const nameEl  = document.getElementById("mDrawerName");
+      const roleEl  = document.getElementById("mDrawerRole");
+      if (!folders) return;
+      // Header
+      if (state.currentUser) {
+        nameEl.textContent = state.currentUser.displayName || state.currentUser.username;
+        roleEl.textContent = (state.isOwner ? "Owner" : "Operator");
+      } else {
+        nameEl.textContent = "Signed out";
+        roleEl.textContent = "";
+      }
+      // Folders — same RAIL_FILTERS the desktop uses.
+      folders.innerHTML = (RAIL_FILTERS || []).map(f => {
+        let count = 0;
+        if (f.countKey) count = (state.counts || {})[f.countKey] || 0;
+        else if (Array.isArray(f.status)) count = f.status.reduce((s, st) => s + ((state.counts || {})[st] || 0), 0);
+        else if (f.status) count = (state.counts || {})[f.status] || 0;
+        else count = Object.values(state.counts || {}).reduce((a, b) => a + (b || 0), 0); // "all"
+        const active = mState.currentFilterId === f.id ? " active" : "";
+        return `
+          <div class="m-drawer-folder${active}" data-filter="${mEsc(f.id)}">
+            <i class="material-icons">${mEsc(f.icon)}</i>
+            <span class="m-flbl">${mEsc(f.label)}</span>
+            <span class="m-fcnt">${count}</span>
+          </div>`;
+      }).join("");
+      // Wire taps
+      folders.querySelectorAll(".m-drawer-folder[data-filter]").forEach(el => {
+        el.addEventListener("click", () => {
+          mState.currentFilterId = el.getAttribute("data-filter");
+          // Mirror to desktop state — keeps state.activeFilterId in sync
+          // so the next list fetch grabs the right slice.
+          state.activeFilterId = mState.currentFilterId;
+          mCloseDrawer();
+          mState.dirtyList = true;
+          mShowScreen("list");
+          if (typeof fetchThreadListNow === "function") fetchThreadListNow({ source: "user" });
+          mRenderDrawer();
+        });
+      });
+    }
+
+    // ── Filtered threads (mirrors desktop's filter logic) ────────
+    function mFilteredThreads() {
+      const filter = (RAIL_FILTERS || []).find(f => f.id === mState.currentFilterId);
+      const all = state.threads || [];
+      if (!filter) return all;
+      if (filter.id === "all") return all;
+      if (filter.countKey === "_completedSales") {
+        // completed sales — by salesCompletedAt presence
+        return all.filter(t => t && t.salesCompletedAt);
+      }
+      if (Array.isArray(filter.status)) return all.filter(t => t && filter.status.includes(t.status));
+      if (filter.status) return all.filter(t => t && t.status === filter.status);
+      return all;
+    }
+
+    // ── Thread list rendering ────────────────────────────────────
+    function mRenderList() {
+      const list = document.getElementById("mList");
+      if (!list) return;
+      mUpdateAppbar();
+
+      const threads = mFilteredThreads();
+      if (threads.length === 0) {
+        const filter = (RAIL_FILTERS || []).find(f => f.id === mState.currentFilterId);
+        list.innerHTML = `
+          <div style="padding: 60px 32px; text-align: center; color: var(--m-c-text-muted);">
+            <i class="material-icons" style="font-size:48px; color: var(--m-c-border-strong);">inbox</i>
+            <p style="margin-top: 12px; font-size: 14px;">Nothing in <b>${mEsc(filter ? filter.label : "this folder")}</b> right now.</p>
+            <p style="font-size: 12px; margin-top: 4px;">New threads will show up here automatically.</p>
+          </div>`;
+        return;
+      }
+      list.innerHTML = threads.map(t => {
+        const name      = t.customerName || t.etsyUsername || "(Unknown)";
+        const initials  = mInitials(name);
+        const color     = mAvatarColor(name);
+        // Field-name parity with desktop renderThreadList (line ~7008):
+        //   lastInboundAt → updatedAt → createdAt is the canonical chain.
+        const time      = mFmtThreadTime(t.lastInboundAt || t.updatedAt || t.createdAt);
+        // Subject line and snippet — desktop uses subject || category ||
+        // status as the only single line. Mobile has room for two: we
+        // show subject as the primary, and category/status as a faint
+        // secondary IF distinct.
+        const subject   = t.subject || t.category || t.status || "";
+        const altLabel  = (t.subject && t.category && t.subject !== t.category) ? t.category : "";
+        const snippet   = altLabel || (t.linkedOrderId ? "Order #" + String(t.linkedOrderId).slice(-6) : "");
+        const unread    = (t.unread || t.status === "pending_human_review") ? "unread" : "";
+        const pills     = mStatusPills(t);
+        const avatarImg = t.buyerAvatarUrl
+          ? `<img src="${mEsc(t.buyerAvatarUrl)}" referrerpolicy="no-referrer" alt="" onerror="this.replaceWith(document.createTextNode('${mEsc(initials)}'));">`
+          : mEsc(initials);
+        return `
+          <div class="m-thread-row ${unread}" data-id="${mEsc(t.id)}">
+            <div class="m-swipe-action left">inbox</div>
+            <div class="m-swipe-action right">archive</div>
+            <div class="m-thread-row-content">
+              <div class="m-avatar ${color}">${avatarImg}</div>
+              <div class="m-thread-text">
+                <div class="m-thread-line-1">
+                  <span class="m-thread-name">${mEsc(name)}</span>
+                  <span class="m-thread-time">${mEsc(time)}</span>
+                </div>
+                <div class="m-thread-subject">${mEsc(subject)}</div>
+                <div class="m-thread-snippet">${mEsc(snippet)}</div>
+                ${pills ? `<div style="margin-top: 4px; display: flex; gap: 4px; flex-wrap: wrap;">${pills}</div>` : ""}
+              </div>
+            </div>
+          </div>`;
+      }).join("");
+
+      // Wire row taps + swipes
+      list.querySelectorAll(".m-thread-row").forEach(row => {
+        const id = row.getAttribute("data-id");
+        const content = row.querySelector(".m-thread-row-content");
+        const leftBg  = row.querySelector(".m-swipe-action.left");
+        const rightBg = row.querySelector(".m-swipe-action.right");
+        let startX = 0, currentX = 0, dragging = false, didMove = false;
+
+        content.addEventListener("click", () => { if (!didMove) mOpenThread(id); });
+        content.addEventListener("touchstart", (e) => {
+          startX = e.touches[0].clientX; currentX = startX;
+          dragging = true; didMove = false;
+          content.classList.add("dragging");
+        }, { passive: true });
+        content.addEventListener("touchmove", (e) => {
+          if (!dragging) return;
+          currentX = e.touches[0].clientX;
+          const dx = currentX - startX;
+          if (Math.abs(dx) > 8) didMove = true;
+          content.style.transform = `translateX(${dx}px)`;
+          if (dx > 0) { leftBg.style.width = dx + "px"; rightBg.style.width = "0"; }
+          else        { rightBg.style.width = (-dx) + "px"; leftBg.style.width = "0"; }
+        }, { passive: true });
+        content.addEventListener("touchend", () => {
+          if (!dragging) return;
+          dragging = false;
+          content.classList.remove("dragging");
+          const dx = currentX - startX;
+          const w = row.getBoundingClientRect().width;
+          if (Math.abs(dx) > w * 0.4) {
+            content.style.transform = `translateX(${dx < 0 ? -w : w}px)`;
+            if (dx < 0) {
+              rightBg.style.width = w + "px";
+              // Archive
+              if (typeof setStatus === "function") setStatus(id, "archived", "swipe-archive (mobile)");
+            } else {
+              leftBg.style.width = w + "px";
+              // Move to Needs review
+              if (typeof setStatus === "function") setStatus(id, "pending_human_review", "swipe-needs-review (mobile)");
+            }
+            // The setStatus call will trigger fetchThreadListNow which
+            // re-renders the list. Animate the row collapse for snappy
+            // feedback in the meantime.
+            setTimeout(() => {
+              row.style.transition = "height 200ms ease, opacity 200ms ease, border-width 200ms ease";
+              row.style.height = "0"; row.style.opacity = "0"; row.style.borderWidth = "0";
+            }, 200);
+          } else {
+            content.style.transform = "";
+            leftBg.style.width = "0"; rightBg.style.width = "0";
+          }
+        });
+      });
+    }
+
+    // ── Open thread (mobile) ─────────────────────────────────────
+    function mOpenThread(threadId) {
+      // Mirror to desktop state. fetchMessagesNow uses state.selectedId
+      // internally; the desktop's renderDetail() will also fire and
+      // update the (hidden) desktop UI. That's fine — it's a no-op for
+      // the user since desktop UI is hidden on mobile.
+      state.selectedId = threadId;
+      mState.currentScreen = "conv";
+      mState.dirtyConv = true;
+      mShowScreen("conv");
+      mRenderConv(); // first paint with whatever's in state.messages already
+      // Trigger a fresh fetch
+      if (typeof fetchMessagesNow === "function") fetchMessagesNow(threadId);
+      // Also trigger customer panel hydration so the customer card
+      // gets populated. hydrateCustomerPanel writes to a desktop DOM
+      // node; we read the customer doc directly via firestoreProxy
+      // for the mobile rendering path inside mRenderConv.
+    }
+
+    // ── Conversation rendering ───────────────────────────────────
+    function mRenderConv() {
+      const body = document.getElementById("mConvBody");
+      if (!body) return;
+      const tid = state.selectedId;
+      const t = (state.threads || []).find(x => x && x.id === tid);
+      if (!t) {
+        body.innerHTML = `<div style="padding:32px;text-align:center;color:var(--m-c-text-muted);">No thread selected.</div>`;
+        return;
+      }
+      mUpdateAppbar();
+
+      // Pills row
+      const pillsHtml = mStatusPills(t);
+
+      // Customer card — collapsed by default. Body fetched lazily
+      // when the operator taps it (avoids extra Firestore reads on
+      // every conv open).
+      const custInitials = mInitials(t.customerName || t.etsyUsername);
+      const custColor = mAvatarColor(t.customerName || t.etsyUsername);
+      const custAvatarHtml = t.buyerAvatarUrl
+        ? `<img src="${mEsc(t.buyerAvatarUrl)}" referrerpolicy="no-referrer" alt="" onerror="this.replaceWith(document.createTextNode('${mEsc(custInitials)}'));">`
+        : mEsc(custInitials);
+
+      const messagesHtml = (state.messages || []).map(m => {
+        const dir = m.direction === "outbound" ? "outbound" : "inbound";
+        const fromName = dir === "outbound" ? (m.employeeName || "You") : (t.customerName || t.etsyUsername || "Customer");
+        const time = mFmtThreadTime(m.timestamp || m.createdAt);
+        const text = m.text || m.body || "";
+        // Inbound images (customer-attached photos). Schema mirrors the
+        // desktop's renderThreadMessages: images live on m.imageUrls (full)
+        // with optional m.thumbnailUrls and m.storageImagePaths for the
+        // mirrored-to-Storage version. We pick the storage-mirrored URL
+        // when available (it sidesteps Etsy's hotlink protection) and
+        // otherwise fall back to the raw Etsy CDN URL.
+        let imgsHtml = "";
+        if (Array.isArray(m.imageUrls) && m.imageUrls.length) {
+          const thumbs = (Array.isArray(m.thumbnailUrls) && m.thumbnailUrls.length) ? m.thumbnailUrls : m.imageUrls;
+          imgsHtml = m.imageUrls.map((fullUrl, idx) => {
+            const thumbUrl = thumbs[idx] || fullUrl;
+            const storagePath = Array.isArray(m.storageImagePaths) ? m.storageImagePaths[idx] : null;
+            const mirrorUrl = storagePath ? FN("etsyMailImage") + "?path=" + encodeURIComponent(storagePath) : null;
+            const displayThumb = mirrorUrl || thumbUrl;
+            return `<div class="m-msg-img" style="background-image:url('${mEsc(displayThumb)}')"></div>`;
+          }).join("");
+        }
+        const imgRow = imgsHtml ? `<div class="m-msg-img-row">${imgsHtml}</div>` : "";
+        return `
+          <div class="m-msg-wrap ${dir}">
+            <div class="m-msg-meta ${dir}">${mEsc(fromName)} · ${mEsc(time)}</div>
+            <div class="m-msg-bubble ${dir}">${mEsc(text)}${imgRow}</div>
+          </div>`;
+      }).join("");
+
+      body.innerHTML = `
+        <div class="m-conv-header">
+          ${pillsHtml ? `<div class="m-conv-pills-row">${pillsHtml}</div>` : ""}
+        </div>
+
+        <div class="m-customer-card" id="mCustomerCard">
+          <div class="m-customer-card-head" id="mCustomerCardHead">
+            <div class="m-avatar ${custColor}">${custAvatarHtml}</div>
+            <div class="m-info">
+              <div class="m-name">${mEsc(t.customerName || t.etsyUsername || "Unknown")}</div>
+              <div class="m-meta" id="mCustomerMeta">
+                <span style="color: var(--m-c-text-muted);">Tap to load order history</span>
+              </div>
+            </div>
+            <i class="material-icons m-chev">expand_more</i>
+          </div>
+          <div class="m-customer-card-body" id="mCustomerCardBody">
+            <div style="font-size:11px; color: var(--m-c-text-muted);">Loading…</div>
+          </div>
+        </div>
+
+        <div class="m-summary-card urgency-low" id="mSummaryCard" style="display:none;">
+          <div class="m-summary-card-head" id="mSummaryCardHead">
+            <i class="material-icons m-lead">summarize</i>
+            <div style="flex:1 1 auto; min-width: 0;">
+              <div class="m-summary-card-title">Conversation summary</div>
+              <div class="m-summary-card-tagline" id="mSummaryTagline">Loading…</div>
+            </div>
+            <i class="material-icons m-chev">expand_more</i>
+          </div>
+          <div class="m-summary-card-body" id="mSummaryCardBody"></div>
+        </div>
+
+        ${messagesHtml || `<div style="padding: 40px 16px; text-align: center; color: var(--m-c-text-muted);">No messages yet.</div>`}
+      `;
+
+      // Wire customer card
+      document.getElementById("mCustomerCardHead").addEventListener("click", () => {
+        const card = document.getElementById("mCustomerCard");
+        const opening = !card.classList.contains("open");
+        card.classList.toggle("open");
+        if (opening) mLoadCustomerCard(t);
+      });
+
+      // Wire summary card head if visible
+      const sumHead = document.getElementById("mSummaryCardHead");
+      if (sumHead) sumHead.addEventListener("click", () => {
+        document.getElementById("mSummaryCard").classList.toggle("open");
+      });
+
+      // Trigger summary card render — uses desktop's existing pipeline.
+      // renderSalesCardForThread populates state._summaryCache; we read
+      // from there + the rendered desktop card content.
+      if (typeof renderSalesCardForThread === "function") {
+        renderSalesCardForThread(tid).catch(() => {});
+      }
+      // Also try to re-read summary from cache after a short delay,
+      // which catches the case where it was already cached.
+      setTimeout(() => mUpdateSummaryCard(t), 50);
+      setTimeout(() => mUpdateSummaryCard(t), 1500);
+
+      // Reset composer state
+      const ta = document.getElementById("mComposerTextarea");
+      if (ta) {
+        // Hydrate from desktop's #emDraftText if it has content for this thread
+        const desktopTa = document.getElementById("emDraftText");
+        ta.value = (desktopTa && desktopTa.value) ? desktopTa.value : "";
+        mAutoGrow(ta);
+      }
+      const send = document.getElementById("mComposerSend");
+      if (send) send.disabled = !((ta && ta.value.trim()) || mGetCurrentAttachments().length);
+      mRenderAttachments();
+      // Translate preview hide on switch
+      document.getElementById("mTranslatePreview").classList.remove("visible");
+      document.getElementById("mActionTrans").classList.remove("active");
+    }
+
+    // ── Customer card lazy load ──────────────────────────────────
+    async function mLoadCustomerCard(thread) {
+      const meta = document.getElementById("mCustomerMeta");
+      const bodyEl = document.getElementById("mCustomerCardBody");
+      if (!meta || !bodyEl) return;
+      let customer = null;
+      if (thread.buyerUserId) {
+        try {
+          const data = await api("firestoreProxy", {
+            query: { op: "get", coll: CUSTOMERS_COLL, id: String(thread.buyerUserId) }
+          });
+          customer = data && data.exists ? data.doc : null;
+        } catch (e) {
+          console.warn("[mobile] customer fetch:", e.message);
+        }
+      }
+      // Update meta line
+      const repeatBadge = (customer && customer.orderCount >= 2)
+        ? `<span class="m-repeat">Repeat buyer</span>`
+        : "";
+      const orderCount = customer && customer.orderCount ? customer.orderCount : 0;
+      const total = customer && typeof customer.totalSpent === "number"
+        ? mFmtMoney(customer.totalSpent, customer.currency)
+        : null;
+      const username = thread.etsyUsername ? "@" + thread.etsyUsername : "";
+      meta.innerHTML = [
+        repeatBadge,
+        orderCount ? `<span>${orderCount} order${orderCount === 1 ? "" : "s"}</span>` : "",
+        total ? `<span>·</span><span>${mEsc(total)} total</span>` : "",
+        username ? `<span style="color: var(--m-c-text-muted);">${mEsc(username)}</span>` : ""
+      ].filter(Boolean).join(" ");
+
+      // Render body
+      const recent = (customer && Array.isArray(customer.recentReceipts)) ? customer.recentReceipts : [];
+      if (recent.length === 0) {
+        bodyEl.innerHTML = customer
+          ? `<div style="color: var(--m-c-text-muted); font-size: 12px;">No recent orders recorded.</div>`
+          : `<div style="color: var(--m-c-text-muted); font-size: 12px;">Customer ID not captured for this thread.</div>`;
+        return;
+      }
+      const ordersHtml = recent.map(r => {
+        const total = mFmtMoney(typeof r.grandTotal === "number" ? r.grandTotal : null, r.currency || (customer && customer.currency));
+        const date = mFmtShortDate(r.orderedAt);
+        const statusText = r.isShipped ? "shipped" : (r.isPaid ? "paid" : (r.status || "open"));
+        const statusClass = (statusText || "").toLowerCase().replace(/[^a-z]/g, "");
+        return `
+          <div class="m-order-row" data-receipt-id="${mEsc(r.receiptId)}">
+            <span class="m-oid">#${mEsc(r.receiptId)}</span>
+            <span class="m-oname">${mEsc(date)}</span>
+            <span class="m-oamt">${mEsc(total || "—")}</span>
+            <span class="m-ostat ${mEsc(statusClass)}">${mEsc(statusText)}</span>
+            <i class="material-icons m-ochev">chevron_right</i>
+          </div>`;
+      }).join("");
+      bodyEl.innerHTML = `
+        <div style="font-size:11px; color: var(--m-c-text-muted); margin-bottom: 6px; text-transform: uppercase; letter-spacing: .03em;">
+          Order history — tap any row for full details
+        </div>
+        ${ordersHtml}
+      `;
+      bodyEl.querySelectorAll(".m-order-row").forEach(row => {
+        row.addEventListener("click", () => mOpenOrderDetail(row.getAttribute("data-receipt-id")));
+      });
+    }
+
+    // ── Summary card update ──────────────────────────────────────
+    function mUpdateSummaryCard(thread) {
+      // Read from desktop's summary cache; if absent, leave hidden.
+      // Payload shape (from etsyMailDraftReply op:summarizeThread):
+      //   {
+      //     intentLabel     : string,    // e.g. "Order question"
+      //     urgency         : "high" | "medium" | "low",
+      //     urgencyReason   : string,
+      //     ask             : string,
+      //     suggestedAction : string,
+      //     flags           : string[]
+      //   }
+      // Field names match the desktop's _renderSummaryCardHtml exactly —
+      // we read the same payload, render mobile-styled.
+      const cache = state._summaryCache;
+      if (!cache) return;
+      const tid = thread.id;
+      // Cache key shape from desktop: `${threadId}|${lastMessageMs}`
+      // Find any matching entry.
+      let payload = null;
+      for (const [key, val] of cache) {
+        if (typeof key === "string" && key.startsWith(tid + "|")) { payload = val; break; }
+      }
+      if (!payload) return;
+      const card = document.getElementById("mSummaryCard");
+      const tagline = document.getElementById("mSummaryTagline");
+      const bodyEl = document.getElementById("mSummaryCardBody");
+      if (!card || !bodyEl) return;
+      // Map desktop's urgency vocab ("high" / "medium" / "low") to our
+      // CSS class suffix (high / med / low).
+      const rawUrg = String(payload.urgency || "low").toLowerCase();
+      const urgClass = rawUrg === "high" ? "high" : (rawUrg === "medium" ? "med" : "low");
+      const urgLabel = rawUrg === "high" ? "HIGH" : (rawUrg === "medium" ? "MEDIUM" : "LOW");
+      card.classList.remove("urgency-high", "urgency-med", "urgency-low");
+      card.classList.add("urgency-" + urgClass);
+      card.style.display = "";
+      const intent = payload.intentLabel || "Conversation summary";
+      tagline.textContent = intent + " · " + urgLabel + " urgency";
+      const flagsHtml = (Array.isArray(payload.flags) && payload.flags.length)
+        ? `<div class="m-flags">${payload.flags.map(f => `<span class="m-flag">${mEsc(f)}</span>`).join("")}</div>`
+        : "";
+      bodyEl.innerHTML = `
+        <div class="m-row"><div class="m-lab">Urgency</div><div><span class="m-urg-chip">${mEsc(urgLabel)}</span><span style="color: var(--m-c-text-muted);">${mEsc(payload.urgencyReason || "")}</span></div></div>
+        <div class="m-row"><div class="m-lab">Customer's ask</div><div>${mEsc(payload.ask || "—")}</div></div>
+        <div class="m-row"><div class="m-lab">Suggested next</div><div>${mEsc(payload.suggestedAction || "—")}</div></div>
+        ${flagsHtml}
+      `;
+    }
+
+    // ── Order detail (full-screen) ───────────────────────────────
+    async function mOpenOrderDetail(receiptId) {
+      mState.prevScreen = mState.currentScreen;
+      mState.openOrderReceiptId = receiptId;
+      const body = document.getElementById("mOrderBody");
+      body.innerHTML = `
+        <div style="padding: 60px 32px; text-align: center; color: var(--m-c-text-muted);">
+          <i class="material-icons" style="font-size:32px;">hourglass_empty</i>
+          <p style="margin-top: 8px; font-size: 13px;">Fetching live order details from Etsy…</p>
+        </div>`;
+      mShowScreen("order");
+      try {
+        const resp = await fetch(FN("etsyMailOrder") + "?receiptId=" + encodeURIComponent(receiptId), {
+          headers: {
+            "X-EtsyMail-Secret"  : localStorage.getItem("etsymail_secret") || "",
+            "X-EtsyMail-Session" : localStorage.getItem("etsymail_session") || ""
+          }
+        });
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({ error: "HTTP " + resp.status }));
+          throw new Error(err.error || "Failed to fetch order");
+        }
+        const order = await resp.json();
+        mRenderOrderDetail(order);
+      } catch (e) {
+        body.innerHTML = `<div style="padding:32px;text-align:center;color:var(--m-c-danger);">Could not load order details: ${mEsc(e.message)}</div>`;
+      }
+    }
+
+    function mRenderOrderDetail(order) {
+      const body = document.getElementById("mOrderBody");
+      if (!order) return;
+      const transactions = Array.isArray(order.transactions) ? order.transactions : [];
+      const moneyAmt = (m) => m && typeof m.amount === "number" && typeof m.divisor === "number"
+        ? "$" + (m.amount / m.divisor).toFixed(2) : null;
+
+      const itemsHtml = transactions.map(tt => {
+        const price = moneyAmt(tt.price);
+        const qty = tt.quantity > 1 ? " × " + tt.quantity : "";
+        const variations = Array.isArray(tt.variations)
+          ? tt.variations.map(v => (v.formatted_name || "") + ": " + (v.formatted_value || "")).filter(Boolean).join(" · ")
+          : "";
+        const perso = tt.personalization || "";
+        const imgUrl = tt.thumbnail_url || (tt.product_data && tt.product_data.image_url) || "";
+        const listingUrl = tt.listing_url || (tt.listing_id ? ('https://www.etsy.com/listing/' + tt.listing_id) : "");
+        const wrapOpen = listingUrl ? `<a class="m-order-item" href="${mEsc(listingUrl)}" target="_blank" rel="noopener">` : `<div class="m-order-item">`;
+        const wrapClose = listingUrl ? `</a>` : `</div>`;
+        const imgHtml = imgUrl
+          ? `<img src="${mEsc(imgUrl)}" referrerpolicy="no-referrer" alt="" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'m-item-img-fallback',innerHTML:'<i class=&quot;material-icons&quot;>image_not_supported</i>'}));">`
+          : `<div class="m-item-img-fallback"><i class="material-icons">image</i></div>`;
+        return `
+          ${wrapOpen}
+            ${imgHtml}
+            <div class="m-order-item-mid">
+              <div class="m-item-title">${mEsc(tt.title || "Item")}${mEsc(qty)}</div>
+              ${variations ? `<div class="m-item-meta">${mEsc(variations)}</div>` : ""}
+              ${perso ? `<div class="m-item-perso">${mEsc(perso)}</div>` : ""}
+              ${listingUrl ? `<div class="m-item-link-hint">View listing →</div>` : ""}
+            </div>
+            <div class="m-order-item-price">${mEsc(price || "")}</div>
+          ${wrapClose}`;
+      }).join("") || `<div style="color:var(--m-c-text-muted);font-size:12px;">No items found.</div>`;
+
+      const addr = [order.name, order.first_line, order.second_line,
+        [order.city, order.state, order.zip].filter(Boolean).join(", "),
+        order.country_iso].filter(Boolean).map(mEsc).join("<br>");
+
+      const subtotal = moneyAmt(order.total_price);
+      const shipping = moneyAmt(order.total_shipping_cost);
+      const tax      = moneyAmt(order.total_tax_cost);
+      const grand    = moneyAmt(order.grandtotal);
+      const totalsHtml = `
+        <table class="m-order-totals">
+          ${subtotal ? `<tr><td>Subtotal</td><td>${mEsc(subtotal)}</td></tr>` : ""}
+          ${shipping ? `<tr><td>Shipping</td><td>${mEsc(shipping)}</td></tr>` : ""}
+          ${tax ?      `<tr><td>Tax</td><td>${mEsc(tax)}</td></tr>` : ""}
+          ${grand ?    `<tr class="total"><td>Total</td><td>${mEsc(grand)}</td></tr>` : ""}
+        </table>`;
+
+      const statusLabel = order.is_shipped ? "Shipped" : (order.is_paid ? "Paid" : (order.status || "Open"));
+      const statusClass = (statusLabel || "").toLowerCase().replace(/[^a-z]/g, "");
+      const dateStr = order.created_timestamp ? mFmtShortDate(order.created_timestamp * 1000) : "";
+
+      body.innerHTML = `
+        <div class="m-order-detail">
+          <div class="m-order-detail-header">
+            <span class="m-order-detail-status ${mEsc(statusClass)}">${mEsc(statusLabel)}</span>
+            <span class="m-order-detail-date">${mEsc(dateStr)}</span>
+            <a class="m-order-detail-etsy"
+               href="https://www.etsy.com/your/orders/sold/new?order_id=${mEsc(order.receipt_id || "")}"
+               target="_blank" rel="noopener">
+              View on Etsy <i class="material-icons">open_in_new</i>
+            </a>
+          </div>
+          <div class="m-order-section">
+            <h5>Items</h5>
+            ${itemsHtml}
+          </div>
+          <div class="m-order-section">
+            <h5>Shipping address</h5>
+            <div class="m-order-address">${addr || '<span style="color:var(--m-c-text-muted);">No address</span>'}</div>
+          </div>
+          <div class="m-order-section">
+            <h5>Total</h5>
+            ${totalsHtml}
+          </div>
+        </div>`;
+    }
+
+    // ── Settings rendering ───────────────────────────────────────
+    function mRenderSettings() {
+      const body = document.getElementById("mSettingsBody");
+      if (!body) return;
+      const me = state.currentUser || { displayName: "(not signed in)", username: "—", role: "—" };
+      body.innerHTML = `
+        <details class="m-settings-section" open>
+          <summary>My account</summary>
+          <div class="m-settings-content">
+            <div class="m-account-row">
+              <div class="m-avatar ${mAvatarColor(me.displayName)}">${mEsc(mInitials(me.displayName))}</div>
+              <div style="flex:1 1 auto;">
+                <div class="m-aname">${mEsc(me.displayName || me.username || "—")}</div>
+                <div style="font-size:11px;color:var(--m-c-text-muted);">${mEsc(me.username || "")} · <span class="m-arole">${mEsc((me.role || "").toUpperCase())}</span></div>
+              </div>
+            </div>
+            <button id="mChangePasswordBtn">Change my password</button>
+            <button class="danger" id="mSignOutBtn" style="margin-left:8px;">
+              <i class="material-icons" style="font-size:16px;">logout</i>Sign out
+            </button>
+          </div>
+        </details>
+        <details class="m-settings-section">
+          <summary>Inbox secret</summary>
+          <div class="m-settings-content">
+            <div class="m-desc">Same value as <code>ETSYMAIL_EXTENSION_SECRET</code> in your Netlify env. Stored locally in this browser only.</div>
+            <button class="primary" id="mEditSecretBtn">Edit secret…</button>
+          </div>
+        </details>
+        <details class="m-settings-section" data-owner-only="true">
+          <summary>Auto-pipeline</summary>
+          <div class="m-settings-content">
+            <div class="m-desc">Configure on desktop. This view is read-only on mobile.</div>
+            <p>Open the desktop dashboard to change auto-pipeline settings.</p>
+          </div>
+        </details>
+        <details class="m-settings-section" data-owner-only="true">
+          <summary>Operators</summary>
+          <div class="m-settings-content">
+            <div class="m-desc">Configure on desktop. This view is read-only on mobile.</div>
+            <p>Open the desktop dashboard to add or remove operators.</p>
+          </div>
+        </details>
+        <details class="m-settings-section" data-owner-only="true">
+          <summary>Danger zone</summary>
+          <div class="m-settings-content">
+            <div class="m-desc">Configure on desktop. This view is read-only on mobile.</div>
+            <p>Open the desktop dashboard for destructive actions.</p>
+          </div>
+        </details>`;
+      // Apply role visibility — hide owner-only sections from satellites.
+      if (typeof applyRoleVisibility === "function") applyRoleVisibility();
+      // Wire buttons
+      document.getElementById("mSignOutBtn")?.addEventListener("click", async () => {
+        if (!confirm("Sign out? You'll need to enter your password again on next visit.")) return;
+        if (typeof handleLogout === "function") await handleLogout();
+        // handleLogout shows the login modal — user is back to a clean state.
+      });
+      document.getElementById("mChangePasswordBtn")?.addEventListener("click", () => {
+        // Reuse the desktop's change-password modal; it lives at body level
+        // so it'll appear on top of the mobile UI.
+        document.getElementById("emChangePasswordModal")?.classList.add("active");
+      });
+      document.getElementById("mEditSecretBtn")?.addEventListener("click", () => {
+        if (typeof showSecretSetupModal === "function") showSecretSetupModal();
+      });
+    }
+
+    // ── Composer auto-grow ───────────────────────────────────────
+    function mAutoGrow(ta) {
+      if (!ta) return;
+      ta.style.height = "auto";
+      const max = parseFloat(getComputedStyle(ta).maxHeight) || 9999;
+      const next = Math.min(ta.scrollHeight, max);
+      ta.style.height = next + "px";
+    }
+
+    // ── Attachments management ───────────────────────────────────
+    function mGetCurrentAttachments() {
+      const tid = state.selectedId;
+      if (!tid) return [];
+      try {
+        return (typeof getComposerAttachments === "function") ? getComposerAttachments(tid) : [];
+      } catch { return []; }
+    }
+
+    function mRenderAttachments() {
+      const wrap = document.getElementById("mAttachments");
+      const btn = document.getElementById("mActionAttach");
+      if (!wrap) return;
+      const atts = mGetCurrentAttachments();
+      // Only show image-type chips here; desktop also handles listing/tracking
+      // chips elsewhere — those don't need mobile preview thumbs.
+      const imgs = atts.filter(a => a && (a.type === "image" || a.type === "tracking_image"));
+      if (imgs.length === 0) {
+        wrap.classList.remove("visible");
+        wrap.innerHTML = "";
+      } else {
+        wrap.classList.add("visible");
+        wrap.innerHTML = imgs.map(a => {
+          const url = a.proxyUrl || a.thumbDataUrl || "";
+          return `<div class="m-composer-attach-chip" style="background-image:url('${mEsc(url)}')" data-att-id="${mEsc(a.attachmentId)}">
+            <button class="m-attach-rm" data-att-id="${mEsc(a.attachmentId)}" aria-label="Remove">×</button>
+          </div>`;
+        }).join("");
+        wrap.querySelectorAll(".m-attach-rm").forEach(btn => {
+          btn.addEventListener("click", (e) => {
+            e.preventDefault(); e.stopPropagation();
+            const attId = btn.getAttribute("data-att-id");
+            mRemoveAttachment(attId);
+          });
+        });
+      }
+      if (btn) {
+        if (atts.length > 0) {
+          btn.classList.add("has-files");
+          btn.setAttribute("data-count", String(atts.length));
+        } else {
+          btn.classList.remove("has-files");
+          btn.removeAttribute("data-count");
+        }
+      }
+      // Update send-disabled
+      const ta = document.getElementById("mComposerTextarea");
+      const send = document.getElementById("mComposerSend");
+      if (send && ta) send.disabled = !((ta.value || "").trim() || atts.length > 0);
+    }
+    // v5.0 — Expose for the desktop's renderComposerChips hook (called
+    // every time the chip strip is re-rendered, which is also when the
+    // mobile attachment strip needs a refresh).
+    window.mRenderAttachments = mRenderAttachments;
+
+    function mRemoveAttachment(attachmentId) {
+      const tid = state.selectedId;
+      if (!tid || !attachmentId) return;
+      const atts = mGetCurrentAttachments();
+      const idx = atts.findIndex(a => a && a.attachmentId === attachmentId);
+      if (idx < 0) return;
+      atts.splice(idx, 1);
+      // Persist via desktop helper
+      if (typeof setComposerAttachments === "function") setComposerAttachments(tid, atts);
+      if (typeof persistComposerAttachments === "function") persistComposerAttachments(tid).catch(() => {});
+      // Re-render desktop chips too (no-op visually since hidden, but keeps state consistent)
+      if (typeof renderComposerChips === "function") renderComposerChips();
+      mRenderAttachments();
+    }
+
+    // ── Init: wire all event listeners ───────────────────────────
+    function mInit() {
+      console.log("[mobile] init — IS_MOBILE =", IS_MOBILE);
+
+      const leftIcon  = document.getElementById("mLeftIcon");
+      const menuIcon  = document.getElementById("mMenuIcon");
+      const searchIcon= document.getElementById("mSearchIcon");
+      const drawerBd  = document.getElementById("mDrawerBackdrop");
+      const sheetBd   = document.getElementById("mSheetBackdrop");
+
+      leftIcon.addEventListener("click", () => {
+        if (mState.currentScreen === "list") mOpenDrawer();
+        else if (mState.currentScreen === "conv") {
+          state.selectedId = null;
+          mShowScreen("list");
+        }
+        else if (mState.currentScreen === "order") {
+          // Return to whatever screen we came from (usually conv).
+          mShowScreen(mState.prevScreen === "order" ? "conv" : mState.prevScreen);
+        }
+        else if (mState.currentScreen === "settings") mShowScreen("list");
+      });
+
+      menuIcon.addEventListener("click", () => {
+        if (mState.currentScreen === "conv") mToggleMenu();
+        else mCloseMenu();
+      });
+
+      searchIcon.addEventListener("click", () => {
+        if (typeof toast === "function") toast("Search — use the desktop dashboard for now");
+      });
+
+      drawerBd.addEventListener("click", mCloseDrawer);
+      sheetBd.addEventListener("click", mCloseSheet);
+
+      document.getElementById("mDrawerSettings").addEventListener("click", () => {
+        mCloseDrawer();
+        mState.dirtySettings = true;
+        mShowScreen("settings");
+        mRenderSettings();
+      });
+
+      // Composer
+      const ta = document.getElementById("mComposerTextarea");
+      const send = document.getElementById("mComposerSend");
+      ta.addEventListener("input", () => {
+        mAutoGrow(ta);
+        // Mirror to desktop textarea — sendViaEtsy reads from there.
+        const desktopTa = document.getElementById("emDraftText");
+        if (desktopTa) desktopTa.value = ta.value;
+        send.disabled = !((ta.value || "").trim() || mGetCurrentAttachments().length > 0);
+      });
+      send.addEventListener("click", async () => {
+        const tid = state.selectedId;
+        if (!tid) return;
+        // Mirror text into desktop textarea (in case the operator typed
+        // and never lost focus — input listener should have done this,
+        // but doing it here is defensive).
+        const desktopTa = document.getElementById("emDraftText");
+        if (desktopTa) desktopTa.value = ta.value || "";
+        if (typeof sendViaEtsy === "function") {
+          try { await sendViaEtsy(tid); } catch (e) { console.error("[mobile] send failed:", e); }
+        }
+        // Clear mobile composer optimistically — sendViaEtsy clears the
+        // desktop textarea on success, but mobile reads its own field.
+        ta.value = "";
+        mAutoGrow(ta);
+        send.disabled = true;
+        document.getElementById("mTranslatePreview").classList.remove("visible");
+        document.getElementById("mActionTrans").classList.remove("active");
+      });
+
+      // AI Draft
+      document.getElementById("mActionAi").addEventListener("click", async () => {
+        const tid = state.selectedId;
+        if (!tid) return;
+        if (typeof generateAiDraft === "function") {
+          try { await generateAiDraft(tid, "initial"); }
+          catch (e) { console.error("[mobile] AI draft failed:", e); }
+        }
+        // After it finishes, mNotifyDraftChanged hook (called from inside
+        // generateAiDraft via the desktop path) will mirror the text in.
+        // As a fallback, do it explicitly here.
+        const desktopTa = document.getElementById("emDraftText");
+        if (desktopTa) {
+          ta.value = desktopTa.value || "";
+          mAutoGrow(ta);
+          send.disabled = !((ta.value || "").trim() || mGetCurrentAttachments().length > 0);
+        }
+      });
+
+      // Photo attach — open native picker
+      document.getElementById("mActionAttach").addEventListener("click", () => {
+        document.getElementById("mPhotoInput").click();
+      });
+      document.getElementById("mPhotoInput").addEventListener("change", async (ev) => {
+        const files = Array.from(ev.target.files || []);
+        for (const f of files) {
+          if (!f.type.startsWith("image/")) continue;
+          if (typeof addImageAttachment === "function") {
+            try { await addImageAttachment(f, { fromPaste: false }); }
+            catch (e) { console.error("[mobile] add image attachment failed:", e); }
+          }
+        }
+        ev.target.value = "";
+        mRenderAttachments();
+      });
+
+      // Translate sheet
+      document.getElementById("mActionTrans").addEventListener("click", () => mOpenSheet());
+      document.getElementById("mToggleAuto").addEventListener("click", () => {
+        document.getElementById("mToggleAuto").classList.toggle("on");
+        // Mirror to desktop's auto-translate toggle if present
+        const desktopAuto = document.getElementById("emAutoTranslateToggle");
+        if (desktopAuto) desktopAuto.checked = document.getElementById("mToggleAuto").classList.contains("on");
+      });
+      document.getElementById("mSheetTranslateBtn").addEventListener("click", async () => {
+        mCloseSheet();
+        const ta = document.getElementById("mComposerTextarea");
+        const text = (ta.value || "").trim();
+        if (!text) {
+          if (typeof toast === "function") toast("Type a reply first.");
+          return;
+        }
+        const langSel = document.getElementById("mLangSelect");
+        const lang = langSel ? langSel.value : "auto";
+        if (lang === "auto") {
+          if (typeof toast === "function") toast("Pick a language first.");
+          return;
+        }
+        try {
+          if (typeof callTranslate === "function") {
+            const translated = await callTranslate(text, lang, null);
+            // Write into desktop's composerTranslation slot — sendViaEtsy
+            // checks this and uses translated text if present.
+            // Match the desktop's composerTranslation shape exactly:
+            // { source, translated, lang } — sendViaEtsy reads .translated
+            // and the desktop preview pane reads .source.
+            state.composerTranslation = { source: text, translated, lang };
+            // Trigger our own UI update via the hook
+            window.mNotifyTranslationChanged();
+          }
+        } catch (e) {
+          if (typeof toast === "function") toast("Translate failed: " + e.message);
+        }
+      });
+      document.getElementById("mTranslatePreviewClose").addEventListener("click", () => {
+        document.getElementById("mTranslatePreview").classList.remove("visible");
+        document.getElementById("mActionTrans").classList.remove("active");
+        state.composerTranslation = null;
+      });
+
+      // Overflow menu
+      document.querySelectorAll("#mMenu .m-menu-item").forEach(el => {
+        el.addEventListener("click", async () => {
+          const action = el.getAttribute("data-action");
+          mCloseMenu();
+          const tid = state.selectedId;
+          if (!tid) return;
+          if (action === "archive")  { if (typeof setStatus === "function") await setStatus(tid, "archived", "mobile menu archive"); }
+          else if (action === "rush")    { if (typeof setStatus === "function") await setStatus(tid, "production_rush", "mobile menu rush"); }
+          else if (action === "sales")   { if (typeof setStatus === "function") await setStatus(tid, "sales_active", "mobile menu sales"); }
+          else if (action === "reply")   { if (typeof setStatus === "function") await setStatus(tid, "pending_human_review", "mobile menu reply"); }
+          else if (action === "open-etsy") {
+            const t = (state.threads || []).find(x => x && x.id === tid);
+            if (t && t.etsyConversationUrl) window.open(t.etsyConversationUrl, "_blank");
+            else if (t && t.etsyConversationId) window.open("https://www.etsy.com/your/conversations/" + t.etsyConversationId, "_blank");
+          }
+          else if (action === "delete") {
+            if (!confirm("Delete this thread permanently? This cannot be undone.")) return;
+            try {
+              await api("etsyMailThreads", { method: "POST", body: { action: "delete", threadId: tid, actor: getEmployeeName() || "operator" } });
+              if (typeof toast === "function") toast("Thread deleted");
+              state.selectedId = null;
+              mShowScreen("list");
+              if (typeof fetchThreadListNow === "function") fetchThreadListNow();
+            } catch (e) {
+              if (typeof toast === "function") toast("Delete failed: " + e.message);
+            }
+          }
+        });
+      });
+      document.addEventListener("click", (e) => {
+        const menu = document.getElementById("mMenu");
+        if (!menu.contains(e.target) && e.target !== document.getElementById("mMenuIcon") && !document.getElementById("mMenuIcon").contains(e.target)) {
+          mCloseMenu();
+        }
+      });
+
+      // First render
+      // Set the default filter from desktop state so it matches what's
+      // already loaded.
+      if (state.activeFilterId) mState.currentFilterId = state.activeFilterId;
+      mRenderDrawer();
+      mRenderList();
+    }
+    window.mInit = mInit;
+
   })();
   </script>
 </body>
