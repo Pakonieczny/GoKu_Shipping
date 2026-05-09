@@ -11422,8 +11422,31 @@
     /** Operator clicked "Send via Etsy". Enqueue the draft for the extension. */
     async function sendViaEtsy(threadId) {
       const btn = $("emSendEtsyBtn");
-      const ta  = $("emDraftText");
-      if (!ta) return;
+      let ta = $("emDraftText");
+      // v5.13 — Mobile fallback. The desktop textarea #emDraftText is
+      // created dynamically by renderDetail. If renderDetail somehow
+      // failed (or hasn't fully run yet) on mobile, fall back to
+      // reading directly from the mobile composer. Without this
+      // fallback, the function used to bail silently at the original
+      // `if (!ta) return;` and the operator had no idea why their
+      // send wasn't going through.
+      let tValue = "";
+      if (ta) {
+        tValue = ta.value || "";
+      } else if (window.IS_MOBILE) {
+        const mobileTa = document.getElementById("mComposerTextarea");
+        if (mobileTa) {
+          tValue = mobileTa.value || "";
+          // Synthesize a stand-in for ta so downstream code that does
+          // ta.value = "" / autoSizeDraftTextarea(ta) still works.
+          ta = mobileTa;
+        }
+      }
+      if (!ta) {
+        console.warn("[sendViaEtsy] No composer textarea found — neither #emDraftText nor #mComposerTextarea.");
+        if (typeof toast === "function") toast("Send failed: composer not ready. Reopen the thread and try again.");
+        return;
+      }
       // v3.7 — When the operator has activated the translation preview
       // pane (state.composerTranslation set), the OUTBOUND text is the
       // translation, not the textarea's English. Operator can still tweak
@@ -11433,12 +11456,26 @@
       //
       // Falling back to the textarea is the no-translate path — this
       // matches the original behavior exactly when there's no preview.
-      const englishText = (ta.value || "").trim();
+      const englishText = (tValue || "").trim();
       const usingTranslation = !!(state.composerTranslation && state.composerTranslation.translated && state.composerTranslation.translated.trim());
       const text = usingTranslation
         ? state.composerTranslation.translated.trim()
         : englishText;
       const atts = getComposerAttachments(threadId);
+
+      // v5.13 — Defensive currentThreadUrl: the desktop's renderDetail
+      // → setupComposerInteractions sets state.currentThreadUrl from
+      // the thread's etsyConversationUrl. If that path didn't fully
+      // execute (mobile, race, error), the URL would be stale or null
+      // and the backend would reject the enqueue. Re-derive from the
+      // current thread doc if missing.
+      if (!state.currentThreadUrl && state.threads) {
+        const t = state.threads.find(x => x && x.id === threadId);
+        if (t) {
+          state.currentThreadUrl = t.etsyConversationUrl ||
+            ("https://www.etsy.com/your/conversations/" + (t.etsyConversationId || String(threadId).replace("etsy_conv_", "")));
+        }
+      }
 
       if (!text && !atts.length) {
         toast("Nothing to send — add some text or attachments first");
@@ -15196,7 +15233,19 @@
       // renderSalesCardForThread — so we no longer need our standalone
       // hydrateAiDraft call here either.
       if (t && typeof renderDetail === "function") {
-        try { renderDetail(t); } catch (e) { console.warn("[mobile] renderDetail failed:", e); }
+        try {
+          renderDetail(t);
+        } catch (e) {
+          // v5.13 — Make this VISIBLE on mobile. If renderDetail throws,
+          // the desktop textarea (#emDraftText) and #emComposerChips
+          // never get created, so subsequent send / AI Draft actions
+          // silently fail. Mobile operators can't open DevTools — a
+          // toast is the only signal they'll see.
+          console.error("[mobile] renderDetail failed:", e);
+          if (typeof toast === "function") {
+            toast("Setup error: " + (e.message || "unknown") + " — some features may not work");
+          }
+        }
       }
     }
 
@@ -16074,20 +16123,59 @@
       });
       send.addEventListener("click", async () => {
         const tid = state.selectedId;
-        if (!tid) return;
-        // Mirror text into desktop textarea (in case the operator typed
-        // and never lost focus — input listener should have done this,
-        // but doing it here is defensive).
+        if (!tid) {
+          if (typeof toast === "function") toast("No thread selected");
+          return;
+        }
+        const textForSend = (ta.value || "").trim();
+        const hasAttachments = mGetCurrentAttachments().length > 0;
+        if (!textForSend && !hasAttachments) {
+          if (typeof toast === "function") toast("Nothing to send");
+          return;
+        }
+        // v5.13 — Defensive setup before calling sendViaEtsy.
+        // sendViaEtsy reads from #emDraftText (which only exists if
+        // renderDetail has run and created it) and from
+        // state.currentThreadUrl (set by setupComposerInteractions
+        // from inside renderDetail). On mobile we can't trust either.
+        //
+        // (a) Pre-set currentThreadUrl from the thread doc directly.
+        // (b) Mirror the mobile textarea text into #emDraftText if
+        //     it exists; sendViaEtsy now also has its own mobile
+        //     fallback (v5.13) that reads #mComposerTextarea if the
+        //     desktop textarea is missing.
+        const t = (state.threads || []).find(x => x && x.id === tid);
+        if (t) {
+          state.currentThreadUrl = t.etsyConversationUrl ||
+            ("https://www.etsy.com/your/conversations/" + (t.etsyConversationId || String(tid).replace("etsy_conv_", "")));
+        }
         const desktopTa = document.getElementById("emDraftText");
         if (desktopTa) desktopTa.value = ta.value || "";
+
+        // Disable the send button immediately so a fast double-tap
+        // can't queue twice. Re-enabled by sendViaEtsy on failure
+        // and stays disabled on success (textarea cleared anyway).
+        send.disabled = true;
         if (typeof sendViaEtsy === "function") {
-          try { await sendViaEtsy(tid); } catch (e) { console.error("[mobile] send failed:", e); }
+          try {
+            await sendViaEtsy(tid);
+          } catch (e) {
+            console.error("[mobile] send failed:", e);
+            // v5.13 — Visible error so the operator knows what
+            // happened. Mobile users can't open DevTools.
+            if (typeof toast === "function") toast("Send failed: " + (e.message || "unknown error"));
+            send.disabled = false;
+            return;
+          }
+        } else {
+          if (typeof toast === "function") toast("Send unavailable — try refreshing");
+          send.disabled = false;
+          return;
         }
         // Clear mobile composer optimistically — sendViaEtsy clears the
         // desktop textarea on success, but mobile reads its own field.
         ta.value = "";
         mAutoGrow(ta);
-        send.disabled = true;
         document.getElementById("mTranslatePreview").classList.remove("visible");
         document.getElementById("mActionTrans").classList.remove("active");
         // v5.6 — Hide the AI indicator chip after a send. The chip was
