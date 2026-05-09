@@ -15603,6 +15603,71 @@
     }
     window.mHideAiIndicator = mHideAiIndicator;
 
+    // ── Post-send status verification (v5.14) ────────────────────
+    //
+    // After a successful mobile send, the operator sees "Sent ✓" and
+    // an optimistic message lands in the conv. But that just means
+    // the BACKEND queued the draft in Firestore — it does NOT mean
+    // the Chrome extension on a desktop has actually claimed it and
+    // delivered to Etsy. If the extension isn't running (or some
+    // filter excludes mobile-queued drafts), the message stays
+    // queued forever and never appears on Etsy. The operator has no
+    // visibility into this from mobile.
+    //
+    // mVerifySendStatus polls the draft doc once, ~8 seconds after
+    // send, and toasts the actual status. Possible outcomes:
+    //   - "queued" / "draft" → extension hasn't claimed; either it's
+    //     not running or there's a backend filter. Operator should
+    //     check that the desktop extension is alive.
+    //   - "claimed" / "sending" → extension picked it up; delivery
+    //     in progress.
+    //   - "sent" / "sent_unverified" / "delivered" → success.
+    //   - "failed" → the extension errored; show the reason.
+    //
+    // 8 seconds is the sweet spot: extensions typically poll every
+    // 2-5 seconds and need a moment to claim. Less than 8s often
+    // shows "still queued" prematurely.
+    async function mVerifySendStatus(threadId) {
+      if (!window.IS_MOBILE) return;
+      const draftId = "draft_" + threadId;
+      try {
+        await new Promise(r => setTimeout(r, 8000));
+        // Bail if the operator has navigated away to a different thread —
+        // a stale verification toast for a prior thread would be confusing.
+        if (state.selectedId !== threadId) return;
+        const res = await api("firestoreProxy", {
+          method: "GET",
+          query: { op: "get", coll: "EtsyMail_Drafts", id: draftId }
+        });
+        if (!res || !res.exists || !res.doc) {
+          // Draft removed entirely — likely delivered + cleaned up
+          if (typeof toast === "function") toast("✓ Delivered (draft removed from queue)");
+          return;
+        }
+        const status = String(res.doc.status || "unknown");
+        const claimedBy = res.doc.claimedBy || res.doc.claimingClientId || null;
+        const failReason = res.doc.failReason || res.doc.lastError || res.doc.error || null;
+        if (typeof toast !== "function") return;
+        if (status === "queued" || status === "draft") {
+          toast("⚠ Still queued — extension hasn't picked it up. Verify the desktop extension is running.");
+        } else if (status === "claimed" || status === "sending" || status === "sending_in_progress") {
+          toast("✓ Extension claimed it" + (claimedBy ? " (" + claimedBy + ")" : "") + " — delivering to Etsy");
+        } else if (status === "sent" || status === "sent_unverified" || status === "delivered" || status === "sent_text_only") {
+          toast("✓ Delivered to Etsy");
+        } else if (status === "failed") {
+          toast("✗ Send failed: " + (failReason || "see desktop UI for details"));
+        } else {
+          toast("Status: " + status);
+        }
+      } catch (e) {
+        // Don't toast — the send itself succeeded; this is just a
+        // diagnostic. Failures here usually mean the firestoreProxy
+        // GET failed (auth issue, network).
+        console.warn("[mobile] verify send status failed:", e);
+      }
+    }
+    window.mVerifySendStatus = mVerifySendStatus;
+
     // ── Customer card lazy load ──────────────────────────────────
     async function mLoadCustomerCard(thread) {
       const meta = document.getElementById("mCustomerMeta");
@@ -16172,6 +16237,12 @@
           send.disabled = false;
           return;
         }
+        // v5.14 — Post-send status verification. After ~8 seconds,
+        // poll the draft doc and toast its status — this tells the
+        // operator whether the extension on their desktop has
+        // actually claimed and delivered the draft, or whether it's
+        // sitting in the queue forever (extension down).
+        mVerifySendStatus(tid);
         // Clear mobile composer optimistically — sendViaEtsy clears the
         // desktop textarea on success, but mobile reads its own field.
         ta.value = "";
