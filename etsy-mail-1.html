@@ -3205,6 +3205,370 @@
     }
     body.em-mobile .m-ai-use-btn .material-icons { font-size: 28px; }
 
+    /* ════════════════════════════════════════════════════════════════
+     * v5.6 — Responsive sizing + bigger composer buttons + AI indicator
+     * ════════════════════════════════════════════════════════════════
+     *
+     * Changes from v5.5:
+     *
+     *  1. NARROW MOBILE (≤599px viewport): regular phones, fold closed.
+     *     Bump everything ~33% on top of v5.5. Operators told us the
+     *     v5.5 sizes still felt small on a real phone screen.
+     *
+     *  2. WIDE MOBILE (≥600px viewport): fold open, small tablets.
+     *     Operators with folding phones reported the v5.5 sizes are
+     *     too LARGE on the unfolded inner screen — the bigger viewport
+     *     makes the same 30px font feel oversized. We scale down to
+     *     a more comfortable 18-22px range. The browser auto-applies
+     *     this when the viewport width crosses 600px (folding the
+     *     phone open or rotating into landscape on iPad-mini-class
+     *     hardware). No JS, no resize listener — pure media query.
+     *
+     *  3. COMPOSER BUTTONS specifically larger. Operators reported the
+     *     AI Draft / Attach / Translate / Send buttons too small for
+     *     comfortable thumb-tapping. Bumped to 110×110 with 60-66px
+     *     icons.
+     *
+     *  4. AI INDICATOR CHIP (replaces v5.5 big AI draft card). Tiny
+     *     pill above the composer that says "AI draft loaded · 90%".
+     *     The actual AI text lives in the textarea; this chip is
+     *     just the "where did this text come from" badge.
+     */
+
+    /* ────────────────────────────────────────────────────────────────
+     * NARROW MOBILE — regular phones, fold closed (≤599px)
+     * Default sizes; v5.5 + 33%. Cumulative ~+150% from v5.0 baseline.
+     * ──────────────────────────────────────────────────────────────── */
+    @media (max-width: 599px) {
+      body.em-mobile #emMobileApp { font-size: 40px; }
+      body.em-mobile {
+        --m-appbar-h: 154px;
+        --m-row-h: 224px;
+      }
+      body.em-mobile .m-appbar-icon { width: 106px; height: 106px; }
+      body.em-mobile .m-appbar-icon .material-icons { font-size: 58px; }
+      body.em-mobile .m-appbar-title    { font-size: 42px; }
+      body.em-mobile .m-appbar-subtitle { font-size: 28px; }
+
+      body.em-mobile .m-avatar { width: 114px; height: 114px; font-size: 37px; }
+      body.em-mobile .m-customer-card-head .m-avatar { width: 90px; height: 90px; font-size: 32px; }
+
+      body.em-mobile .m-thread-line-1   { font-size: 37px; }
+      body.em-mobile .m-thread-time     { font-size: 28px; }
+      body.em-mobile .m-thread-subject  { font-size: 31px; }
+      body.em-mobile .m-thread-snippet  { font-size: 28px; }
+      body.em-mobile .m-thread-row-content { padding-left: 50px; }
+      body.em-mobile .m-thread-row.unread .m-thread-row-content::before {
+        width: 20px; height: 20px;
+      }
+
+      body.em-mobile .m-drawer-folder { font-size: 35px; padding: 30px 48px; }
+      body.em-mobile .m-drawer-folder .material-icons { font-size: 50px; }
+      body.em-mobile .m-drawer-folder .m-fcnt { font-size: 28px; }
+      body.em-mobile .m-drawer-header .m-name { font-size: 35px; }
+      body.em-mobile .m-drawer-header .m-role { font-size: 28px; }
+
+      body.em-mobile .m-customer-card-head .m-name { font-size: 35px; }
+      body.em-mobile .m-customer-card-head .m-meta { font-size: 28px; }
+      body.em-mobile .m-customer-card-head .m-repeat { font-size: 24px; padding: 6px 17px; }
+      body.em-mobile .m-customer-card-head .m-chev { font-size: 58px; }
+      body.em-mobile .m-customer-card-body { font-size: 31px; }
+      body.em-mobile .m-order-row { font-size: 31px; padding: 30px 18px; }
+      body.em-mobile .m-order-row .m-oid   { font-size: 28px; }
+      body.em-mobile .m-order-row .m-ostat { font-size: 24px; padding: 6px 17px; }
+      body.em-mobile .m-order-row .m-ochev { font-size: 50px; }
+
+      body.em-mobile .m-summary-card-head .m-lead { font-size: 56px; }
+      body.em-mobile .m-summary-card-head .m-chev { font-size: 58px; }
+      body.em-mobile .m-summary-card-title    { font-size: 33px; }
+      body.em-mobile .m-summary-card-tagline  { font-size: 28px; }
+      body.em-mobile .m-summary-card-body     { font-size: 31px; }
+      body.em-mobile .m-summary-card-body .m-row .m-lab { font-size: 28px; }
+      body.em-mobile .m-summary-card-body .m-urg-chip { font-size: 24px; padding: 6px 17px; }
+      body.em-mobile .m-summary-card-body .m-flag { font-size: 25px; padding: 6px 17px; }
+
+      body.em-mobile .m-msg-meta { font-size: 25px; }
+      body.em-mobile .m-msg-bubble { font-size: 35px; padding: 26px 34px; border-radius: 38px; }
+      body.em-mobile .m-msg-img { width: 224px; height: 224px; }
+
+      /* COMPOSER (extra-large for thumb-tapping per v5.6 feedback) */
+      body.em-mobile .m-composer-textarea { font-size: 35px; padding: 24px 34px; }
+      body.em-mobile .m-composer-send-btn { width: 110px; height: 110px; }
+      body.em-mobile .m-composer-send-btn .material-icons { font-size: 56px; }
+      body.em-mobile .m-composer-action { width: 110px; height: 110px; }
+      body.em-mobile .m-composer-action .material-icons { font-size: 60px; }
+      body.em-mobile .m-composer-attach-chip { width: 154px; height: 154px; }
+
+      body.em-mobile .m-order-detail-status { font-size: 28px; padding: 9px 24px; }
+      body.em-mobile .m-order-detail-date { font-size: 28px; }
+      body.em-mobile .m-order-detail-etsy { font-size: 28px; }
+      body.em-mobile .m-order-section h5 { font-size: 28px; }
+      body.em-mobile .m-order-item img,
+      body.em-mobile .m-order-item .m-item-img-fallback { width: 154px; height: 154px; }
+      body.em-mobile .m-order-item .m-item-title { font-size: 31px; }
+      body.em-mobile .m-order-item .m-item-meta { font-size: 28px; }
+      body.em-mobile .m-order-item .m-item-perso { font-size: 28px; padding: 13px 18px; }
+      body.em-mobile .m-order-item-price { font-size: 31px; }
+      body.em-mobile .m-order-address { font-size: 31px; padding: 30px 33px; }
+      body.em-mobile .m-order-totals { font-size: 31px; }
+      body.em-mobile .m-order-totals tr.total { font-size: 33px; }
+
+      body.em-mobile .m-sheet-title { font-size: 40px; }
+      body.em-mobile .m-sheet-row .m-lab { font-size: 35px; }
+      body.em-mobile .m-sheet-row select { font-size: 35px; }
+      body.em-mobile .m-sheet-action-btn { font-size: 35px; padding: 33px; }
+
+      body.em-mobile .m-menu-item { font-size: 35px; padding: 33px 40px; }
+      body.em-mobile .m-menu-item .material-icons { font-size: 50px; }
+
+      body.em-mobile .m-settings-section summary { font-size: 35px; padding: 40px; }
+      body.em-mobile .m-settings-content { font-size: 35px; }
+      body.em-mobile .m-settings-content .m-desc { font-size: 28px; }
+      body.em-mobile .m-settings-content button { height: 93px; font-size: 31px; padding: 0 37px; }
+      body.em-mobile .m-settings-content input[type="text"],
+      body.em-mobile .m-settings-content input[type="password"] { font-size: 33px; padding: 24px 28px; }
+
+      body.em-mobile .m-op-strip { font-size: 32px; padding: 19px 33px; }
+      body.em-mobile .m-op-strip .material-icons { font-size: 48px; }
+      body.em-mobile .m-op-role { font-size: 25px; padding: 5px 19px; }
+
+      body.em-mobile .em-badge {
+        font-size: 25px;
+        padding: 8px 19px;
+        border-radius: 9px;
+      }
+      body.em-mobile .m-conv-pills-row .em-badge {
+        font-size: 28px;
+        padding: 9px 22px;
+        border-radius: 11px;
+      }
+
+      /* Modal sizes — narrow mobile bumped */
+      body.em-mobile .em-modal-backdrop .em-modal h2 { font-size: 41px; }
+      body.em-mobile .em-modal-backdrop .em-modal p,
+      body.em-mobile .em-modal-backdrop .em-modal label,
+      body.em-mobile .em-modal-backdrop .em-modal small { font-size: 28px !important; }
+      body.em-mobile .em-modal-backdrop .em-modal input[type="text"],
+      body.em-mobile .em-modal-backdrop .em-modal input[type="password"],
+      body.em-mobile .em-modal-backdrop .em-modal input[type="email"],
+      body.em-mobile .em-modal-backdrop .em-modal input[type="search"],
+      body.em-mobile .em-modal-backdrop .em-modal textarea {
+        font-size: 29px !important;
+        padding: 21px 27px !important;
+        min-height: 85px;
+      }
+      body.em-mobile .em-modal-backdrop .em-modal button {
+        font-size: 29px;
+        padding: 21px 37px;
+        min-height: 85px;
+      }
+      body.em-mobile .em-modal-backdrop .em-modal-error {
+        font-size: 25px !important;
+      }
+      body.em-mobile .em-modal-backdrop .em-modal .em-reveal-btn {
+        width: 85px; height: 85px;
+      }
+      body.em-mobile .em-modal-backdrop .em-modal .em-reveal-btn .material-icons {
+        font-size: 40px;
+      }
+
+      /* Search bar — narrow */
+      body.em-mobile .m-searchbar-input { font-size: 32px; }
+    }
+
+    /* ────────────────────────────────────────────────────────────────
+     * WIDE MOBILE — fold open, small tablets, large landscape (≥600px)
+     * Drastically smaller than narrow mobile. The unfolded inner
+     * screen of a Galaxy Z Fold is ~884px CSS wide; iPad Mini portrait
+     * is 768px. Both feel awkward with 40px fonts. Drop to 18-22px
+     * range — comfortable mobile-app sizing for tablet-class hardware.
+     * ──────────────────────────────────────────────────────────────── */
+    @media (min-width: 600px) {
+      body.em-mobile #emMobileApp { font-size: 18px; }
+      body.em-mobile {
+        --m-appbar-h: 64px;
+        --m-row-h: 84px;
+      }
+      body.em-mobile .m-appbar-icon { width: 48px; height: 48px; }
+      body.em-mobile .m-appbar-icon .material-icons { font-size: 26px; }
+      body.em-mobile .m-appbar-title    { font-size: 19px; }
+      body.em-mobile .m-appbar-subtitle { font-size: 13px; }
+
+      body.em-mobile .m-avatar { width: 46px; height: 46px; font-size: 16px; }
+      body.em-mobile .m-customer-card-head .m-avatar { width: 38px; height: 38px; font-size: 14px; }
+
+      body.em-mobile .m-thread-line-1   { font-size: 16px; }
+      body.em-mobile .m-thread-time     { font-size: 13px; }
+      body.em-mobile .m-thread-subject  { font-size: 14px; }
+      body.em-mobile .m-thread-snippet  { font-size: 13px; }
+      body.em-mobile .m-thread-row-content { padding-left: 22px; }
+      body.em-mobile .m-thread-row.unread .m-thread-row-content::before {
+        width: 9px; height: 9px;
+      }
+
+      body.em-mobile .m-drawer-folder { font-size: 16px; padding: 12px 22px; }
+      body.em-mobile .m-drawer-folder .material-icons { font-size: 22px; }
+      body.em-mobile .m-drawer-folder .m-fcnt { font-size: 13px; }
+      body.em-mobile .m-drawer-header .m-name { font-size: 16px; }
+      body.em-mobile .m-drawer-header .m-role { font-size: 13px; }
+
+      body.em-mobile .m-customer-card-head .m-name { font-size: 16px; }
+      body.em-mobile .m-customer-card-head .m-meta { font-size: 13px; }
+      body.em-mobile .m-customer-card-head .m-repeat { font-size: 11px; padding: 2px 7px; }
+      body.em-mobile .m-customer-card-head .m-chev { font-size: 26px; }
+      body.em-mobile .m-customer-card-body { font-size: 14px; }
+      body.em-mobile .m-order-row { font-size: 14px; padding: 12px 8px; }
+      body.em-mobile .m-order-row .m-oid   { font-size: 13px; }
+      body.em-mobile .m-order-row .m-ostat { font-size: 11px; padding: 2px 7px; }
+      body.em-mobile .m-order-row .m-ochev { font-size: 22px; }
+
+      body.em-mobile .m-summary-card-head .m-lead { font-size: 24px; }
+      body.em-mobile .m-summary-card-head .m-chev { font-size: 26px; }
+      body.em-mobile .m-summary-card-title    { font-size: 15px; }
+      body.em-mobile .m-summary-card-tagline  { font-size: 13px; }
+      body.em-mobile .m-summary-card-body     { font-size: 14px; }
+      body.em-mobile .m-summary-card-body .m-row .m-lab { font-size: 13px; }
+      body.em-mobile .m-summary-card-body .m-urg-chip { font-size: 11px; padding: 2px 7px; }
+      body.em-mobile .m-summary-card-body .m-flag { font-size: 12px; padding: 2px 7px; }
+
+      body.em-mobile .m-msg-meta { font-size: 12px; }
+      body.em-mobile .m-msg-bubble { font-size: 16px; padding: 12px 16px; border-radius: 20px; }
+      body.em-mobile .m-msg-img { width: 96px; height: 96px; }
+
+      /* Composer — still oversized vs textarea, but in line with overall scale */
+      body.em-mobile .m-composer-textarea { font-size: 16px; padding: 10px 16px; }
+      body.em-mobile .m-composer-send-btn { width: 56px; height: 56px; }
+      body.em-mobile .m-composer-send-btn .material-icons { font-size: 28px; }
+      body.em-mobile .m-composer-action { width: 56px; height: 56px; }
+      body.em-mobile .m-composer-action .material-icons { font-size: 30px; }
+      body.em-mobile .m-composer-attach-chip { width: 64px; height: 64px; }
+
+      body.em-mobile .m-order-detail-status { font-size: 13px; padding: 4px 10px; }
+      body.em-mobile .m-order-detail-date { font-size: 13px; }
+      body.em-mobile .m-order-detail-etsy { font-size: 13px; }
+      body.em-mobile .m-order-section h5 { font-size: 12px; }
+      body.em-mobile .m-order-item img,
+      body.em-mobile .m-order-item .m-item-img-fallback { width: 64px; height: 64px; }
+      body.em-mobile .m-order-item .m-item-title { font-size: 14px; }
+      body.em-mobile .m-order-item .m-item-meta { font-size: 12px; }
+      body.em-mobile .m-order-item .m-item-perso { font-size: 12px; padding: 5px 7px; }
+      body.em-mobile .m-order-item-price { font-size: 14px; }
+      body.em-mobile .m-order-address { font-size: 14px; padding: 12px 14px; }
+      body.em-mobile .m-order-totals { font-size: 14px; }
+      body.em-mobile .m-order-totals tr.total { font-size: 15px; }
+
+      body.em-mobile .m-sheet-title { font-size: 18px; }
+      body.em-mobile .m-sheet-row .m-lab { font-size: 16px; }
+      body.em-mobile .m-sheet-row select { font-size: 16px; }
+      body.em-mobile .m-sheet-action-btn { font-size: 16px; padding: 14px; }
+
+      body.em-mobile .m-menu-item { font-size: 16px; padding: 14px 18px; }
+      body.em-mobile .m-menu-item .material-icons { font-size: 22px; }
+
+      body.em-mobile .m-settings-section summary { font-size: 16px; padding: 18px 18px; }
+      body.em-mobile .m-settings-content { font-size: 16px; }
+      body.em-mobile .m-settings-content .m-desc { font-size: 13px; }
+      body.em-mobile .m-settings-content button { height: 42px; font-size: 14px; padding: 0 16px; }
+      body.em-mobile .m-settings-content input[type="text"],
+      body.em-mobile .m-settings-content input[type="password"] { font-size: 15px; padding: 10px 12px; }
+
+      body.em-mobile .m-op-strip { font-size: 15px; padding: 8px 16px; }
+      body.em-mobile .m-op-strip .material-icons { font-size: 22px; }
+      body.em-mobile .m-op-role { font-size: 12px; padding: 2px 8px; }
+
+      body.em-mobile .em-badge {
+        font-size: 12px;
+        padding: 3px 9px;
+        border-radius: 4px;
+      }
+      body.em-mobile .m-conv-pills-row .em-badge {
+        font-size: 13px;
+        padding: 4px 10px;
+        border-radius: 5px;
+      }
+
+      /* Modal sizes — wide mobile (more like desktop) */
+      body.em-mobile .em-modal-backdrop .em-modal h2 { font-size: 19px; }
+      body.em-mobile .em-modal-backdrop .em-modal p,
+      body.em-mobile .em-modal-backdrop .em-modal label,
+      body.em-mobile .em-modal-backdrop .em-modal small { font-size: 13px !important; }
+      body.em-mobile .em-modal-backdrop .em-modal input[type="text"],
+      body.em-mobile .em-modal-backdrop .em-modal input[type="password"],
+      body.em-mobile .em-modal-backdrop .em-modal input[type="email"],
+      body.em-mobile .em-modal-backdrop .em-modal input[type="search"],
+      body.em-mobile .em-modal-backdrop .em-modal textarea {
+        font-size: 15px !important;
+        padding: 8px 12px !important;
+        min-height: 38px;
+      }
+      body.em-mobile .em-modal-backdrop .em-modal button {
+        font-size: 14px;
+        padding: 10px 18px;
+        min-height: 38px;
+      }
+      body.em-mobile .em-modal-backdrop .em-modal-error {
+        font-size: 13px !important;
+      }
+      body.em-mobile .em-modal-backdrop .em-modal .em-reveal-btn {
+        width: 38px; height: 38px;
+      }
+      body.em-mobile .em-modal-backdrop .em-modal .em-reveal-btn .material-icons {
+        font-size: 18px;
+      }
+
+      body.em-mobile .m-searchbar-input { font-size: 15px; }
+    }
+
+    /* ────────────────────────────────────────────────────────────────
+     * AI INDICATOR CHIP (v5.6) — replaces the v5.5 big card
+     * Sits inside the composer area, above the textarea. Confidence-
+     * tinted. Tap × to dismiss; auto-hides on send.
+     * ──────────────────────────────────────────────────────────────── */
+    .m-ai-indicator {
+      display: flex; align-items: center;
+      gap: 8px;
+      padding: 6px 12px;
+      background: #f3e8ff;
+      border-bottom: 1px solid rgba(102,57,186,0.2);
+      color: #6639ba;
+      font-size: 13px;
+      font-weight: 500;
+    }
+    .m-ai-indicator.conf-high {
+      background: #d8e9dc; color: #0a4a23;
+      border-bottom-color: rgba(10,74,35,0.2);
+    }
+    .m-ai-indicator.conf-med {
+      background: #fff4d6; color: #7d4e00;
+      border-bottom-color: rgba(125,78,0,0.2);
+    }
+    .m-ai-indicator.conf-low {
+      background: #f5e3e3; color: #82071e;
+      border-bottom-color: rgba(130,7,30,0.2);
+    }
+    .m-ai-indicator .material-icons { font-size: 16px; }
+    .m-ai-indicator-text { flex: 1 1 auto; }
+    .m-ai-indicator-close {
+      flex: 0 0 auto;
+      width: 22px; height: 22px;
+      padding: 0; border: none; background: transparent;
+      color: inherit; opacity: 0.7;
+      font-size: 18px; line-height: 1;
+      cursor: pointer; border-radius: 50%;
+    }
+    .m-ai-indicator-close:active { opacity: 1; background: rgba(0,0,0,0.08); }
+
+    @media (max-width: 599px) {
+      body.em-mobile .m-ai-indicator { font-size: 26px; padding: 14px 22px; gap: 14px; }
+      body.em-mobile .m-ai-indicator .material-icons { font-size: 32px; }
+      body.em-mobile .m-ai-indicator-close { width: 44px; height: 44px; font-size: 32px; }
+    }
+    @media (min-width: 600px) {
+      body.em-mobile .m-ai-indicator { font-size: 14px; padding: 7px 14px; }
+      body.em-mobile .m-ai-indicator .material-icons { font-size: 18px; }
+      body.em-mobile .m-ai-indicator-close { width: 24px; height: 24px; font-size: 18px; }
+    }
+
   </style>
 </head>
 <body>
@@ -3821,6 +4185,16 @@
       <div class="m-screen" id="mScreenConv">
         <div class="m-conv-body" id="mConvBody"></div>
         <div class="m-composer-inline" id="mComposer">
+          <!-- v5.6 — Small AI indicator pill. Shows when AI has hydrated
+               the textarea so the operator knows "this text was drafted
+               by Claude." Non-intrusive — sits as a thin badge above
+               the composer. Tap × to dismiss. Auto-hides when the
+               operator sends. -->
+          <div class="m-ai-indicator" id="mAiIndicator" style="display:none;">
+            <i class="material-icons">auto_awesome</i>
+            <span class="m-ai-indicator-text" id="mAiIndicatorText">AI draft loaded</span>
+            <button class="m-ai-indicator-close" id="mAiIndicatorClose" aria-label="Dismiss AI indicator">×</button>
+          </div>
           <div class="m-composer-attachments" id="mAttachments"></div>
           <div class="m-translate-preview" id="mTranslatePreview">
             <div class="m-translate-preview-head">
@@ -14474,22 +14848,15 @@
           <div class="m-summary-card-body" id="mSummaryCardBody"></div>
         </div>
 
-        <!-- v5.4 — Mobile-mounted AI draft card. Mirrors what desktop
-             writes into #emAiCardBody (the desktop's draft card). When
-             a fresh draft arrives (auto-pipeline pre-generated, or the
-             operator clicks ✨ AI Draft), the desktop's renderAiDraftCard
-             writes its HTML into the desktop element; mMirrorAiDraftCard
-             clones it here. We display it with mobile-friendly styles. -->
-        <div class="m-ai-draft-card" id="mAiDraftCard" style="display:none;">
-          <div class="m-ai-draft-card-head">
-            <i class="material-icons" style="font-size:22px; color:#6639ba;">auto_awesome</i>
-            <div style="flex:1 1 auto; min-width:0;">
-              <div class="m-ai-draft-card-title">AI draft</div>
-              <div class="m-ai-draft-card-tagline" id="mAiDraftTagline">Pre-generated reply ready to review</div>
-            </div>
-          </div>
-          <div class="m-ai-draft-card-body" id="mAiDraftBody"></div>
-        </div>
+        <!-- v5.6 — AI draft card removed from the conversation top.
+             Per operator feedback: the AI's reply belongs in the
+             composer at the BOTTOM where they actually type, not as
+             a separate card on top of the messages thread. The text
+             flows into #mComposerTextarea via mNotifyDraftChanged
+             (fired from both hydrateAiDraft on thread open and
+             generateAiDraft on operator-triggered draft). The
+             m-ai-draft-card / mShowAiDraftCard machinery is now
+             a no-op — it tries to find #mAiDraftCard, doesn't, bails. -->
 
         <!-- Messages list — rewritten on every poll by mRenderMessages.
              Everything ABOVE this stays stable to avoid flicker. -->
@@ -14648,88 +15015,52 @@
     // operator can edit/send. Hidden when no draft, when the
     // draft has already been sent, or when the operator clicks
     // "Dismiss".
+    // v5.6 — Repurposed: instead of a big card on top, this now
+    // populates a small "AI draft loaded · 90% confident" chip that
+    // sits above the composer. The actual draft text is in the
+    // textarea (hydrated separately by mNotifyDraftChanged firing
+    // from hydrateAiDraft / generateAiDraft). The chip is just an
+    // informational badge so the operator knows where the text came
+    // from. Tap × to dismiss the chip; the textarea text stays.
     function mShowAiDraftCard(d) {
       if (!window.IS_MOBILE) return;
-      const card = document.getElementById("mAiDraftCard");
-      const body = document.getElementById("mAiDraftBody");
-      const tagline = document.getElementById("mAiDraftTagline");
-      if (!card || !body) return;
-      // No draft, terminal state, or empty text → hide.
+      const ind     = document.getElementById("mAiIndicator");
+      const indText = document.getElementById("mAiIndicatorText");
+      if (!ind) return;
+      // Hide if no draft, no text, or terminal state (already sent).
       if (!d || !d.text || (d.status && d.status !== "draft")) {
-        card.style.display = "none";
+        ind.style.display = "none";
         return;
       }
-      const text = d.text;
-      const conf = d.aiConfidence ?? d.confidence ?? null;
-      const model = d.aiModel || d.model || null;
+      const conf  = d.aiConfidence ?? d.confidence ?? null;
       const isSalesAgent = !!d.generatedBySalesAgent;
-
-      // Header tagline summarizes
       const confPct = (typeof conf === "number") ? Math.round(conf * 100) + "%" : null;
-      const taglineParts = [];
-      if (confPct) taglineParts.push(confPct + " confidence");
-      if (model) taglineParts.push(String(model).split(/[-_ ]/)[1] || model);
-      if (isSalesAgent) taglineParts.push("sales agent");
-      if (tagline) tagline.textContent = taglineParts.length
-        ? taglineParts.join(" · ")
-        : "Pre-generated reply ready to review";
 
-      // Build chips row + draft body
-      const chips = [];
-      if (confPct) {
-        const confClass = (conf >= 0.80) ? "high" : (conf >= 0.60) ? "med" : "low";
-        chips.push(`<span class="m-ai-chip conf-${confClass}">${mEsc(confPct)} confident</span>`);
-      }
-      if (model) chips.push(`<span class="m-ai-chip">${mEsc(model)}</span>`);
-      if (isSalesAgent) {
-        const stage = d.salesStage ? String(d.salesStage).replace(/_/g, " ") : "";
-        chips.push(`<span class="m-ai-chip" style="background:#fbefff; color:#6639ba;">sales: ${mEsc(stage || "?")}</span>`);
-      }
-      if (Array.isArray(d.toolCalls) && d.toolCalls.length) {
-        const lookups = d.toolCalls.filter(tc => tc.name !== "compose_draft_reply").length;
-        if (lookups) chips.push(`<span class="m-ai-chip">${lookups} lookup${lookups === 1 ? "" : "s"}</span>`);
-      }
+      // Tagline parts: confidence, sales-agent flag.
+      const parts = ["AI draft loaded"];
+      if (confPct) parts.push(confPct);
+      if (isSalesAgent) parts.push("sales agent");
+      if (indText) indText.textContent = parts.join(" · ");
 
-      const draftPreview = text.length > 600 ? text.slice(0, 600) + "…" : text;
-      body.innerHTML = `
-        ${chips.length ? `<div class="m-ai-chips-row">${chips.join("")}</div>` : ""}
-        <div class="m-ai-draft-text">${mEsc(draftPreview)}</div>
-        <div class="m-ai-draft-actions">
-          <button type="button" class="m-ai-use-btn" id="mAiUseBtn">
-            <i class="material-icons">arrow_downward</i>
-            Use this draft
-          </button>
-          <button type="button" class="m-ai-dismiss-btn" id="mAiDismissBtn">Dismiss</button>
-        </div>
-      `;
-
-      // Wire actions. "Use this draft" copies the AI text into the
-      // mobile + desktop composer textareas. The desktop one is what
-      // sendViaEtsy reads, so this is the source of truth — without
-      // syncing both, sending would send blank or stale.
-      const useBtn = document.getElementById("mAiUseBtn");
-      const dismissBtn = document.getElementById("mAiDismissBtn");
-      if (useBtn) {
-        useBtn.addEventListener("click", () => {
-          const mobileTa = document.getElementById("mComposerTextarea");
-          const desktopTa = document.getElementById("emDraftText");
-          if (mobileTa) { mobileTa.value = text; mAutoGrow(mobileTa); }
-          if (desktopTa) { desktopTa.value = text; }
-          const send = document.getElementById("mComposerSend");
-          if (send) send.disabled = !text.trim();
-          // Hide the card after use — operator now has the text in
-          // their composer to edit/send.
-          card.style.display = "none";
-          if (typeof toast === "function") toast("AI draft moved to composer");
-        });
+      // Color tint based on confidence — green ≥80%, yellow 60-79%,
+      // red <60%. Mirrors the desktop's review-decision pill colors.
+      ind.classList.remove("conf-high", "conf-med", "conf-low");
+      if (typeof conf === "number") {
+        const cls = conf >= 0.80 ? "conf-high" : conf >= 0.60 ? "conf-med" : "conf-low";
+        ind.classList.add(cls);
       }
-      if (dismissBtn) {
-        dismissBtn.addEventListener("click", () => { card.style.display = "none"; });
-      }
-
-      card.style.display = "";
+      ind.style.display = "";
     }
     window.mShowAiDraftCard = mShowAiDraftCard;
+
+    // Hide the indicator chip when the operator dismisses it or
+    // sends a message (it's about a "fresh" draft; once they've
+    // sent or actively dismissed, the chip stops being useful).
+    function mHideAiIndicator() {
+      const ind = document.getElementById("mAiIndicator");
+      if (ind) ind.style.display = "none";
+    }
+    window.mHideAiIndicator = mHideAiIndicator;
 
     // ── Customer card lazy load ──────────────────────────────────
     async function mLoadCustomerCard(thread) {
@@ -15253,7 +15584,16 @@
         send.disabled = true;
         document.getElementById("mTranslatePreview").classList.remove("visible");
         document.getElementById("mActionTrans").classList.remove("active");
+        // v5.6 — Hide the AI indicator chip after a send. The chip was
+        // about a draft that no longer applies (we just sent something).
+        if (typeof mHideAiIndicator === "function") mHideAiIndicator();
       });
+
+      // v5.6 — Wire the AI indicator's × dismiss button. Hides the chip
+      // but doesn't clear the textarea — operator might still want to
+      // edit and send the AI text, they just don't need the chip.
+      const aiIndClose = document.getElementById("mAiIndicatorClose");
+      if (aiIndClose) aiIndClose.addEventListener("click", () => mHideAiIndicator());
 
       // AI Draft
       document.getElementById("mActionAi").addEventListener("click", async () => {
