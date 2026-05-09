@@ -2225,6 +2225,45 @@
     .m-summary-card-body .m-flags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
     .m-summary-card-body .m-flag { font-size: 10px; padding: 2px 6px; border-radius: 3px; background: var(--m-c-surface-3); color: var(--m-c-text-muted); }
 
+    /* v5.16 — Sales conversation card. Mirrors the summary card chrome
+       (collapsible, same gutter, same head/body structure) but tinted
+       by sales stage instead of urgency. Mutually exclusive with the
+       summary card: when sales context exists for a thread, we hide
+       #mSummaryCard and show this; otherwise the summary card shows.
+       Same rule the desktop's #emSalesCardMount enforces. */
+    .m-sales-card { margin: 4px 16px 12px; background: var(--m-c-surface-2); border-left: 4px solid #6e40c9; border-radius: 0 var(--m-radius-md) var(--m-radius-md) 0; overflow: hidden; }
+    .m-sales-card.stage-discovery              { border-left-color: #6e40c9; background: #fbf7ff; }
+    .m-sales-card.stage-spec                   { border-left-color: #218bff; background: #f1f8ff; }
+    .m-sales-card.stage-quote                  { border-left-color: #1f883d; background: #f6fff8; }
+    .m-sales-card.stage-revision               { border-left-color: #d4a72c; background: #fffaf0; }
+    .m-sales-card.stage-pending_close_approval { border-left-color: #1a7f37; background: #f6fff8; }
+    .m-sales-card.stage-completed              { border-left-color: #1a7f37; background: #f6fff8; }
+    .m-sales-card.stage-abandoned              { border-left-color: #cf222e; background: #fff8f8; }
+    .m-sales-card-head { display: flex; align-items: center; gap: 10px; padding: 10px 12px; cursor: pointer; user-select: none; }
+    .m-sales-card-head .m-lead { color: #6e40c9; font-size: 20px; }
+    .m-sales-card-head .m-chev { color: var(--m-c-text-muted); font-size: 22px; transition: transform var(--m-duration) var(--m-ease); }
+    .m-sales-card.open .m-sales-card-head .m-chev { transform: rotate(180deg); }
+    .m-sales-card-title { flex: 1 1 auto; min-width: 0; font-size: 13px; font-weight: 600; color: var(--m-c-text); }
+    .m-sales-card-tagline { font-size: 11px; color: var(--m-c-text-muted); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .m-sales-card-body { padding: 0 12px 12px; font-size: 13px; line-height: 1.55; display: none; }
+    .m-sales-card.open .m-sales-card-body { display: block; }
+    .m-sales-card-body .m-row { display: grid; grid-template-columns: 90px 1fr; gap: 6px 10px; margin-bottom: 4px; }
+    .m-sales-card-body .m-row .m-lab { color: var(--m-c-text-muted); font-weight: 600; font-size: 12px; }
+    .m-sales-card-body .m-stage-chip { display: inline-block; padding: 2px 8px; font-size: 11px; font-weight: 600; border-radius: 999px; background: rgba(110,64,201,0.12); color: #6e40c9; }
+    .m-sales-card.stage-spec     .m-sales-card-body .m-stage-chip { background: rgba(33,139,255,0.12); color: #218bff; }
+    .m-sales-card.stage-quote    .m-sales-card-body .m-stage-chip { background: rgba(31,136,61,0.12); color: #1f883d; }
+    .m-sales-card.stage-revision .m-sales-card-body .m-stage-chip { background: rgba(212,167,44,0.16); color: #9a6700; }
+    .m-sales-card.stage-pending_close_approval .m-sales-card-body .m-stage-chip,
+    .m-sales-card.stage-completed              .m-sales-card-body .m-stage-chip { background: rgba(26,127,55,0.12); color: #1a7f37; }
+    .m-sales-card.stage-abandoned .m-sales-card-body .m-stage-chip { background: rgba(207,34,46,0.12); color: #cf222e; }
+    .m-sales-card-body .m-quote { font-size: 22px; font-weight: 700; color: var(--m-c-text); margin: 6px 0 8px; }
+    .m-sales-card-body .m-spec-row { display: grid; grid-template-columns: 110px 1fr; gap: 6px 10px; margin: 2px 0; padding: 4px 0; border-bottom: 1px dashed var(--m-c-border); font-size: 12px; }
+    .m-sales-card-body .m-spec-row:last-child { border-bottom: none; }
+    .m-sales-card-body .m-spec-key { font-weight: 600; color: var(--m-c-text-muted); word-break: break-word; }
+    .m-sales-card-body .m-spec-val { color: var(--m-c-text); word-break: break-word; }
+    .m-sales-card-body .m-missing-pill { display: inline-block; font-size: 10px; padding: 2px 7px; margin: 0 4px 4px 0; border-radius: 999px; background: var(--m-c-warning-tint); color: var(--m-c-warning); }
+    .m-sales-card-body .m-block-banner { background: #fff8c5; border: 1px solid #d4a72c; color: #6e4c00; padding: 8px 10px; border-radius: 6px; font-size: 12px; margin-bottom: 8px; }
+
     /* Message bubbles */
     .m-msg-wrap { padding: 0 16px; margin-bottom: 14px; }
     .m-msg-meta { font-size: 11px; color: var(--m-c-text-muted); margin-bottom: 4px; letter-spacing: .03em; }
@@ -2235,6 +2274,27 @@
     .m-msg-bubble.outbound { background: var(--m-c-accent); color: #fff; border-bottom-right-radius: 4px; }
     .m-msg-img-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
     .m-msg-img { width: 80px; height: 80px; background-size: cover; background-position: center; border-radius: 8px; background-color: var(--m-c-surface-3); }
+
+    /* v5.17 — Listing cards in messages. Reuses desktop's
+       renderListingCard() but wraps it in an inline-block container
+       so the wrap's text-align (left for inbound, right for outbound)
+       naturally aligns the cards with the bubble above them. The card
+       itself is rendered by renderListingCard with rgba backgrounds
+       designed to layer over message-bubble colors; on mobile we
+       force a solid white background + darker border because the
+       cards sit OUTSIDE the bubble against the page background. */
+    .m-msg-listings {
+      display: inline-block;
+      text-align: left;
+      margin-top: 6px;
+      max-width: 85%;
+    }
+    .m-msg-listings a {
+      background: #fff !important;
+      border-color: rgba(0,0,0,0.18) !important;
+      color: var(--m-c-text) !important;
+    }
+    .m-msg-listings a:hover { background: #f6f8fa !important; }
 
     /* Composer */
     .m-composer-inline { flex: 0 0 auto; background: var(--m-c-surface); border-top: 1px solid var(--m-c-border); padding: 6px 8px 8px; }
@@ -5412,10 +5472,20 @@
       // the result for instant subsequent reads.
       if (cacheKey) state._summaryInFlight.delete(cacheKey);
 
-      // If the operator switched threads while the request was in flight,
-      // don't paint the stale result.
-      if (state.selectedId !== threadId) return;
-
+      // v5.17 — IMPORTANT: write the in-memory cache + Firestore cache
+      // BEFORE the "did the operator switch threads" guard. The summary
+      // we just got back is valid for the thread it was generated for,
+      // and other devices/operators viewing that thread later should
+      // get the cached version regardless of whether THIS operator is
+      // still on it.
+      //
+      // Pre-v5.17 the FS write was after the guard, which meant: if the
+      // operator opened a thread on mobile, briefly tapped back to the
+      // inbox before Haiku finished, then later opened the same thread
+      // on desktop, the desktop would re-summarize because no FS cache
+      // had been written. The guard correctly prevents PAINTING stale
+      // results into the wrong mount, but the cache write should
+      // happen unconditionally.
       if (cacheKey) state._summaryCache.set(cacheKey, summary);
 
       // v5.15 — Persist the summary back to the thread doc so other
@@ -5444,6 +5514,10 @@
           console.warn("[summary] FS cache write failed:", e.message);
         });
       }
+
+      // If the operator switched threads while the request was in flight,
+      // don't paint the stale result. Cache writes above already happened.
+      if (state.selectedId !== threadId) return;
 
       mount.innerHTML = _renderSummaryCardHtml(summary);
     }
@@ -15537,6 +15611,24 @@
           <div class="m-summary-card-body" id="mSummaryCardBody"></div>
         </div>
 
+        <!-- v5.16 — Sales conversation card. Mutually exclusive with
+             #mSummaryCard above: if the thread has SalesContext,
+             mUpdateSalesCard hides the summary and shows this; if not,
+             the summary stays and this stays hidden. Same head/body
+             chrome as the summary card; populated by mUpdateSalesCard
+             on thread mount. -->
+        <div class="m-sales-card stage-discovery" id="mSalesCard" style="display:none;">
+          <div class="m-sales-card-head" id="mSalesCardHead">
+            <i class="material-icons m-lead">point_of_sale</i>
+            <div style="flex:1 1 auto; min-width: 0;">
+              <div class="m-sales-card-title">Sales conversation</div>
+              <div class="m-sales-card-tagline" id="mSalesTagline">Loading…</div>
+            </div>
+            <i class="material-icons m-chev">expand_more</i>
+          </div>
+          <div class="m-sales-card-body" id="mSalesCardBody"></div>
+        </div>
+
         <!-- v5.6 — AI draft card removed from the conversation top.
              Per operator feedback: the AI's reply belongs in the
              composer at the BOTTOM where they actually type, not as
@@ -15569,12 +15661,28 @@
           document.getElementById("mSummaryCard").classList.toggle("open");
         });
       }
+      // v5.16 — Wire sales card head — toggles open. Same gesture as
+      // the summary card; mutual exclusion is handled by display:none
+      // toggling in mUpdateSalesCard, not by the click handler.
+      const salesHead = document.getElementById("mSalesCardHead");
+      if (salesHead) {
+        salesHead.addEventListener("click", () => {
+          document.getElementById("mSalesCard").classList.toggle("open");
+        });
+      }
 
       // Trigger summary card render — populates state._summaryCache
       // via desktop's existing pipeline. mUpdateSummaryCard reads from
       // there.
       if (typeof renderSalesCardForThread === "function") {
         renderSalesCardForThread(t.id).catch(() => {});
+      }
+      // v5.16 — Render the mobile-specific sales card. Hits Firestore
+      // for SalesContext directly (cheap GET); if present, hides the
+      // summary card and shows the sales card instead. If no sales
+      // context, the summary card remains visible.
+      if (typeof mUpdateSalesCard === "function") {
+        mUpdateSalesCard(t).catch(() => {});
       }
 
       // Hydrate composer textarea
@@ -15681,10 +15789,27 @@
           }).join("");
         }
         const imgRow = imgsHtml ? `<div class="m-msg-img-row">${imgsHtml}</div>` : "";
+
+        // v5.17 — Etsy listing cards. Mirrors the desktop pattern at
+        // line 12604: each message can carry an array of listingCards
+        // (extracted server-side from any Etsy listing URLs in the
+        // message text). renderListingCard returns a fully self-styled
+        // <a> element. We wrap them in an inline-block container so
+        // the wrap's text-align (right for outbound) auto-aligns them
+        // to the same side as the bubble. The .m-msg-listings CSS
+        // overrides the card's transparent background since on mobile
+        // the cards sit outside the bubble.
+        let listingsHtml = "";
+        if (Array.isArray(m.listingCards) && m.listingCards.length && typeof renderListingCard === "function") {
+          listingsHtml = '<div class="m-msg-listings">' +
+            m.listingCards.map(renderListingCard).join("") +
+            '</div>';
+        }
         return `
           <div class="m-msg-wrap ${dir}">
             <div class="m-msg-meta ${dir}">${mEsc(fromName)} · ${mEsc(time)}</div>
             <div class="m-msg-bubble ${dir}">${mEsc(text)}${imgRow}</div>
+            ${listingsHtml}
           </div>`;
       }).join("");
 
@@ -15934,6 +16059,139 @@
         ${flagsHtml}
       `;
     }
+
+    // ── Sales conversation card (v5.16) ──────────────────────────
+    //
+    // Mobile equivalent of desktop's emSalesCardMount, scoped to the
+    // CURRENT round only. We don't render the desktop's tabbed round
+    // history — operators on mobile are looking at "what's the current
+    // state of this sale and what's missing". Archived rounds are
+    // available on desktop when needed.
+    //
+    // Mutual exclusion with #mSummaryCard:
+    //   - SalesContext exists for this thread → show this card, hide
+    //     summary. The sales conversation IS the operative narrative
+    //     for sales-funnel threads; the summary would be redundant.
+    //   - No SalesContext → hide this card, leave summary visible.
+    //     Matches desktop's behavior in renderSalesCardForThread,
+    //     which falls back to renderConversationSummaryCard when
+    //     ctx is null.
+    //
+    // The card surfaces the fields operators need at a glance:
+    //   - stage chip (Discovery / Spec / Quote / Revision / etc.)
+    //   - quoted dollar amount, if any
+    //   - accumulated spec rows (key/value)
+    //   - missing inputs (pills)
+    //   - block reason banner if the agent is blocked
+    //
+    // Stage-advance buttons (advance to spec / abandon / re-engage)
+    // are intentionally NOT rendered on mobile. Those are operator-
+    // control actions that benefit from desktop's screen real estate
+    // and the mistake-cost is high. Operators wanting to override
+    // stage transitions can do so from the desktop view.
+    const M_STAGE_LABELS = {
+      discovery              : "Discovery",
+      spec                   : "Spec",
+      quote                  : "Quote",
+      revision               : "Revision",
+      pending_close_approval : "Ready to close",
+      abandoned              : "Abandoned",
+      completed              : "Completed"
+    };
+    async function mUpdateSalesCard(thread) {
+      const card = document.getElementById("mSalesCard");
+      const summaryCard = document.getElementById("mSummaryCard");
+      if (!card) return;
+      if (!thread || !thread.id) {
+        card.style.display = "none";
+        return;
+      }
+      let ctx = null;
+      try {
+        if (typeof fetchSalesContext === "function") {
+          ctx = await fetchSalesContext(thread.id);
+        }
+      } catch (e) {
+        // Non-fatal — fall through to "no sales context"
+        console.warn("[mobile] fetchSalesContext failed:", e.message);
+      }
+      // Bail if the operator switched threads while we were fetching —
+      // the data we just got is for a thread that's no longer open.
+      if (state.selectedId !== thread.id) return;
+
+      if (!ctx) {
+        // No SalesContext — hide sales card, ensure summary card is
+        // available to show (mUpdateSummaryCard handles its own
+        // visibility based on whether summary data has loaded).
+        card.style.display = "none";
+        return;
+      }
+
+      // SalesContext exists — show sales card, hide summary card.
+      // The summary would be a redundant analytical view of the same
+      // conversation that the sales card shows operationally.
+      if (summaryCard) summaryCard.style.display = "none";
+
+      const stage = String(ctx.stage || "discovery");
+      const stageLabel = M_STAGE_LABELS[stage] || stage;
+      // Reset stage classes, apply the current one. Use a known set
+      // so an unexpected backend value doesn't leave a stale class
+      // behind.
+      const stageClasses = ["stage-discovery", "stage-spec", "stage-quote", "stage-revision", "stage-pending_close_approval", "stage-completed", "stage-abandoned"];
+      stageClasses.forEach(c => card.classList.remove(c));
+      card.classList.add("stage-" + stage);
+      card.style.display = "";
+
+      // Tagline: stage + dollar amount (when available)
+      const quoted = (typeof ctx.totalQuotedUsd === "number") ? ctx.totalQuotedUsd : null;
+      const quotedStr = quoted !== null
+        ? "$" + (quoted.toFixed ? quoted.toFixed(2) : String(quoted))
+        : null;
+      const tagline = document.getElementById("mSalesTagline");
+      if (tagline) {
+        tagline.textContent = quotedStr
+          ? stageLabel + " · " + quotedStr
+          : stageLabel;
+      }
+
+      // Body: spec rows, missing inputs, block reason, quote amount.
+      const bodyEl = document.getElementById("mSalesCardBody");
+      if (!bodyEl) return;
+
+      const spec = ctx.accumulatedSpec || {};
+      const specEntries = Object.entries(spec)
+        .filter(([_, v]) => v !== null && v !== "" && v !== undefined);
+      const specHtml = specEntries.length
+        ? specEntries.map(([k, v]) =>
+            '<div class="m-spec-row"><span class="m-spec-key">' + mEsc(k) + '</span>' +
+            '<span class="m-spec-val">' + mEsc(typeof v === "object" ? JSON.stringify(v) : String(v)) + '</span></div>'
+          ).join("")
+        : '<div style="font-size:12px; color: var(--m-c-text-muted);">No spec captured yet.</div>';
+
+      const missing = Array.isArray(ctx.missingInputs) ? ctx.missingInputs : [];
+      const missingHtml = missing.length
+        ? '<div style="margin-top: 8px;"><div class="m-lab" style="font-size:12px; font-weight:600; color: var(--m-c-text-muted); margin-bottom: 4px;">Missing</div>' +
+          missing.map(m => '<span class="m-missing-pill">' + mEsc(m) + '</span>').join("") + '</div>'
+        : "";
+
+      const blockReason = ctx.lastSalesAgentBlockReason || ctx.blockReason || null;
+      const blockHtml = blockReason
+        ? '<div class="m-block-banner"><b>Agent blocked:</b> ' + mEsc(String(blockReason)) + '</div>'
+        : "";
+
+      const quoteAmountHtml = quotedStr
+        ? '<div class="m-quote">' + mEsc(quotedStr) + '</div>'
+        : "";
+
+      bodyEl.innerHTML =
+        blockHtml +
+        '<div class="m-row"><div class="m-lab">Stage</div><div><span class="m-stage-chip">' + mEsc(stageLabel) + '</span></div></div>' +
+        quoteAmountHtml +
+        '<div class="m-row" style="margin-top: 8px;"><div class="m-lab">Spec</div><div></div></div>' +
+        '<div>' + specHtml + '</div>' +
+        missingHtml;
+    }
+    window.mUpdateSalesCard = mUpdateSalesCard;
 
     // ── Order detail (full-screen) ───────────────────────────────
     async function mOpenOrderDetail(receiptId) {
