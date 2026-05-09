@@ -1988,6 +1988,62 @@
       padding: 0 4px;
     }
 
+    /* v5.18 — Always-visible search input in the appbar.
+     * On the list screen, the title block is hidden and this input
+     * takes the central area instead — the operator can search the
+     * inbox at any time by tapping it directly, no separate toggle
+     * needed. On all other screens (conv, order, settings) the input
+     * is hidden and the title block is shown. mUpdateAppbar handles
+     * the visibility flip. The previous slide-in searchbar overlay
+     * (#mSearchbar) and the magnifying glass icon (#mSearchIcon) are
+     * deprecated; they're left in the DOM but kept hidden via CSS to
+     * avoid breaking any external references. */
+    .m-appbar-searchwrap {
+      flex: 1 1 auto; min-width: 0;
+      display: flex; align-items: center;
+      background: var(--m-c-surface-2);
+      border-radius: 999px;
+      height: 38px;
+      padding: 0 4px 0 12px;
+      margin: 0 4px;
+    }
+    .m-appbar-searchwrap .m-appbar-search-leadicon {
+      color: var(--m-c-text-muted); font-size: 18px;
+      flex: 0 0 auto; margin-right: 6px;
+    }
+    .m-appbar-search-input {
+      flex: 1 1 auto;
+      height: 100%;
+      border: none; outline: none; background: transparent;
+      font-size: 15px; font-family: inherit;
+      color: var(--m-c-text);
+      min-width: 0;
+      padding: 0;
+    }
+    .m-appbar-search-input::placeholder { color: var(--m-c-text-faint); }
+    .m-appbar-search-clear {
+      flex: 0 0 auto;
+      width: 30px; height: 30px;
+      border: none; background: transparent; cursor: pointer;
+      border-radius: 50%;
+      display: none; /* shown via JS when query is non-empty */
+      align-items: center; justify-content: center;
+      color: var(--m-c-text-muted);
+    }
+    .m-appbar-search-clear.visible { display: inline-flex; }
+    .m-appbar-search-clear .material-icons { font-size: 18px; }
+
+    /* List vs other-screens visibility flip */
+    body.em-mobile.m-screen-list .m-appbar-titlewrap { display: none; }
+    body.em-mobile:not(.m-screen-list) .m-appbar-searchwrap { display: none; }
+
+    /* Deprecate the v5.2 slide-in searchbar — the always-visible
+       inline input replaces it. Keep the DOM nodes so any in-flight
+       references don't error, but force them hidden. */
+    body.em-mobile.m-search-active .m-searchbar { display: none; }
+    body.em-mobile.m-search-active #mAppbar { display: flex; }
+    #mSearchIcon { display: none !important; }
+
     /* ─── Main + screens ──────────────────────────────────────────── */
     .m-main { flex: 1 1 auto; overflow: hidden; position: relative; }
     .m-screen {
@@ -4314,6 +4370,24 @@
       <div class="m-appbar-titlewrap">
         <div class="m-appbar-title" id="mTitle">Inbox</div>
         <div class="m-appbar-subtitle" id="mSubtitle"></div>
+      </div>
+      <!-- v5.18 — Always-visible inline search. Takes the central area
+           on the list screen (mUpdateAppbar adds .m-screen-list to body
+           which hides the title block above and reveals this). The old
+           magnifying glass icon (#mSearchIcon) is hidden via CSS and
+           the slide-in overlay searchbar is deprecated. The input
+           writes to the same mState.searchQuery the list-filter logic
+           already reads, so behavior is identical to v5.2 — only the
+           UX changes (always tappable instead of two-step). -->
+      <div class="m-appbar-searchwrap">
+        <i class="material-icons m-appbar-search-leadicon">search</i>
+        <input type="search" id="mAppbarSearchInput"
+               class="m-appbar-search-input"
+               placeholder="Search inbox…"
+               autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+        <button class="m-appbar-search-clear" id="mAppbarSearchClear" aria-label="Clear search">
+          <i class="material-icons">close</i>
+        </button>
       </div>
       <button class="m-appbar-icon" id="mSearchIcon" aria-label="Search">
         <i class="material-icons">search</i>
@@ -14814,6 +14888,13 @@
       const leftIcon   = document.getElementById("mLeftIconGlyph");
       const screen     = mState.currentScreen;
 
+      // v5.18 — Drive the always-visible search input's visibility via
+      // a body class. CSS hides the title block on the list screen and
+      // shows the search input there, and vice versa on conv/order/
+      // settings. Single source of truth so no chance of getting out
+      // of sync if mUpdateAppbar fires out of order.
+      document.body.classList.toggle("m-screen-list", screen === "list");
+
       if (screen === "list") {
         leftIcon.textContent = "menu";
         const filter = (RAIL_FILTERS || []).find(f => f.id === mState.currentFilterId) || (RAIL_FILTERS || [])[0];
@@ -16519,6 +16600,12 @@
       // bar (replaces appbar visually). Type → filter threads in
       // memory (mFilteredThreads reads mState.searchQuery). Tap × →
       // clear text but keep bar open. Tap ← → close bar entirely.
+      // v5.18 — DEPRECATED in favor of the always-visible inline
+      // search (#mAppbarSearchInput) wired below. The slide-in bar
+      // remains in the DOM and its event handlers stay attached so
+      // any external callers / inherited muscle memory don't break,
+      // but the magnifying glass icon (#mSearchIcon) is hidden so
+      // operators never see the slide-in flow.
       const sbInput = document.getElementById("mSearchInput");
       const sbClose = document.getElementById("mSearchClose");
       const sbClear = document.getElementById("mSearchClear");
@@ -16564,6 +16651,39 @@
       sbInput.addEventListener("keydown", (e) => {
         if (e.key === "Escape") _closeSearch();
       });
+
+      // v5.18 — Always-visible inline search input. Same debounce + same
+      // mState.searchQuery target as the slide-in version above; only the
+      // UI shape changes. Operator types directly into the appbar input,
+      // results filter live, no toggle step.
+      const inlineSearch      = document.getElementById("mAppbarSearchInput");
+      const inlineSearchClear = document.getElementById("mAppbarSearchClear");
+      if (inlineSearch && inlineSearchClear) {
+        const _runInlineSearch = () => {
+          const q = inlineSearch.value || "";
+          mState.searchQuery = q;
+          mState.shownCount = mState.pageSize;  // reset pagination on every query
+          mState.dirtyList = true;
+          inlineSearchClear.classList.toggle("visible", q.length > 0);
+          mRequestRender();
+        };
+        inlineSearch.addEventListener("input", () => {
+          clearTimeout(mState._searchDebounce);
+          mState._searchDebounce = setTimeout(_runInlineSearch, 200);
+        });
+        inlineSearchClear.addEventListener("click", () => {
+          inlineSearch.value = "";
+          _runInlineSearch();
+          inlineSearch.focus();
+        });
+        inlineSearch.addEventListener("keydown", (e) => {
+          if (e.key === "Escape") {
+            inlineSearch.value = "";
+            _runInlineSearch();
+            inlineSearch.blur();
+          }
+        });
+      }
 
       drawerBd.addEventListener("click", mCloseDrawer);
       sheetBd.addEventListener("click", mCloseSheet);
