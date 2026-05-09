@@ -2262,9 +2262,13 @@
     .m-translate-preview-head { display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; background: var(--m-c-warning-tint); border-bottom: 1px solid var(--m-c-border-strong); font-size: 11px; font-weight: 600; color: var(--m-c-warning); }
     .m-translate-preview-head button { border: none; background: transparent; font-size: 14px; line-height: 1; color: var(--m-c-warning); cursor: pointer; padding: 2px 6px; }
     .m-translate-preview-body { padding: 8px 10px; font-size: 13px; line-height: 1.5; max-height: 100px; overflow-y: auto; white-space: pre-wrap; }
-    .m-composer-textarea-wrap { display: flex; align-items: flex-end; gap: 6px; }
+    /* v5.9 — textarea-wrap no longer holds the send button (moved
+     * to action row), so it's just a thin wrapper around the
+     * textarea now. Kept as block so the textarea can take 100%
+     * width without competing with siblings. */
+    .m-composer-textarea-wrap { display: block; }
     .m-composer-textarea {
-      flex: 1 1 auto;
+      width: 100%;
       min-height: var(--m-composer-min-h);
       max-height: var(--m-composer-max-h);
       background: var(--m-c-surface-2);
@@ -2283,7 +2287,11 @@
       border: none; background: var(--m-c-accent); color: #fff;
       border-radius: 50%;
       display: flex; align-items: center; justify-content: center;
-      cursor: pointer; align-self: flex-end;
+      cursor: pointer;
+      /* v5.9 — push send button to the far right of the action row,
+       * separating it visually from the AI/Attach/Translate cluster
+       * on the left. */
+      margin-left: auto;
     }
     .m-composer-send-btn:disabled { background: var(--m-c-border-strong); cursor: default; }
     .m-composer-send-btn .material-icons { font-size: 18px; }
@@ -4226,9 +4234,6 @@
           <div class="m-composer-textarea-wrap">
             <textarea class="m-composer-textarea" id="mComposerTextarea"
                       placeholder="Type a reply…" rows="1"></textarea>
-            <button class="m-composer-send-btn" id="mComposerSend" disabled aria-label="Send">
-              <i class="material-icons">send</i>
-            </button>
           </div>
           <div class="m-composer-actions">
             <button class="m-composer-action ai" id="mActionAi" title="AI Draft">
@@ -4239,6 +4244,17 @@
             </button>
             <button class="m-composer-action translate" id="mActionTrans" title="Translate">
               <i class="material-icons">translate</i>
+            </button>
+            <!-- v5.9 — Send button relocated here from inside the
+                 textarea-wrap. Operator feedback: the textarea was
+                 width-constrained because the send button sat to its
+                 right. Moving it into the action row lets the textarea
+                 span the full composer width, and groups all primary
+                 composer actions together. The send button keeps its
+                 distinct blue primary styling and sits on the right
+                 of the action row (margin-left: auto pushes it). -->
+            <button class="m-composer-send-btn" id="mComposerSend" disabled aria-label="Send">
+              <i class="material-icons">send</i>
             </button>
           </div>
           <input type="file" id="mPhotoInput" class="m-photo-input"
@@ -4303,7 +4319,7 @@
       </div>
     </div>
 
-    <!-- Overflow menu -->
+    <!-- Overflow menu (per-thread actions; shown on conv screen) -->
     <div class="m-menu" id="mMenu">
       <div class="m-menu-item" data-action="archive"><i class="material-icons">archive</i>Archive thread</div>
       <div class="m-menu-item" data-action="rush"><i class="material-icons">local_fire_department</i>Mark as rush</div>
@@ -4313,6 +4329,23 @@
       <div class="m-menu-item" data-action="open-etsy"><i class="material-icons">open_in_new</i>Open on Etsy</div>
       <div class="m-menu-divider"></div>
       <div class="m-menu-item danger" data-action="delete"><i class="material-icons">delete_forever</i>Delete thread</div>
+    </div>
+
+    <!-- v5.10 — List-screen overflow menu. Mirrors the desktop's
+         topbar buttons (refresh, empty folder, settings) since on
+         mobile we don't have a topbar — the three-dots in the appbar
+         is the natural home for these global actions. The "Empty
+         folder" label updates dynamically based on the active
+         filter and its count, same logic as desktop's updateTopbarPurgeBtn. -->
+    <div class="m-menu" id="mListMenu">
+      <div class="m-menu-item" data-action="refresh"><i class="material-icons">refresh</i>Refresh</div>
+      <div class="m-menu-item" id="mListMenuPurge" data-action="purge-current-folder">
+        <i class="material-icons">delete_sweep</i>
+        <span id="mListMenuPurgeLabel">Empty folder</span>
+      </div>
+      <div class="m-menu-divider"></div>
+      <div class="m-menu-item" data-action="settings"><i class="material-icons">settings</i>Settings</div>
+      <div class="m-menu-item" data-action="signout"><i class="material-icons">logout</i>Sign out</div>
     </div>
   </div>
 
@@ -14453,13 +14486,20 @@
     // band below the appbar showing the current operator's display
     // name and role. Hidden when nobody is signed in. Tap it to jump
     // to the Settings screen (where Sign Out lives).
+    //
+    // v5.11 — Only show on the LIST screen. Inside a conversation
+    // (or the order detail / settings screens), vertical space is at
+    // a premium — the operator already knows who they're signed in
+    // as, repeating it on every screen is just chrome. The strip
+    // re-appears the moment the operator backs out to the list.
     function mUpdateOperatorStrip() {
       const strip   = document.getElementById("mOpStrip");
       const nameEl  = document.getElementById("mOpName");
       const roleEl  = document.getElementById("mOpRole");
       if (!strip) return;
       const u = state.currentUser;
-      if (!u) {
+      // Hide if not signed in OR not on the list screen
+      if (!u || mState.currentScreen !== "list") {
         strip.style.display = "none";
         return;
       }
@@ -14475,6 +14515,54 @@
     function mCloseSheet()  { document.getElementById("mSheetBackdrop").classList.remove("visible");  document.getElementById("mSheet").classList.remove("visible"); }
     function mToggleMenu()  { document.getElementById("mMenu").classList.toggle("visible"); }
     function mCloseMenu()   { document.getElementById("mMenu").classList.remove("visible"); }
+    // v5.10 — List-screen menu helpers. Same pattern as the per-thread
+    // mMenu so click-outside / open / close / dynamic label updates
+    // all share visual style.
+    function mToggleListMenu() { document.getElementById("mListMenu").classList.toggle("visible"); }
+    function mCloseListMenu()  { const m = document.getElementById("mListMenu"); if (m) m.classList.remove("visible"); }
+
+    // Update the "Empty folder" menu item label + disabled state to
+    // match the active filter and its count. Mirrors the desktop's
+    // updateTopbarPurgeBtn logic at line ~7806. PURGE_BUTTON_HIDDEN_FOR
+    // keeps All/Completed Sales out of the purge flow (those are
+    // backend-blocked anyway).
+    function mUpdateListMenuPurge() {
+      const item  = document.getElementById("mListMenuPurge");
+      const label = document.getElementById("mListMenuPurgeLabel");
+      if (!item || !label) return;
+      const PURGE_BUTTON_HIDDEN_FOR = new Set(["all", "completed_sales"]);
+      const filter = (typeof RAIL_FILTERS !== "undefined")
+        ? RAIL_FILTERS.find(f => f.id === mState.currentFilterId)
+        : null;
+      // Reset state
+      item.classList.remove("disabled");
+      item.style.pointerEvents = "";
+      item.style.opacity = "";
+      if (!filter || PURGE_BUTTON_HIDDEN_FOR.has(filter.id)) {
+        label.textContent = "Empty folder";
+        item.classList.add("disabled");
+        item.style.pointerEvents = "none";
+        item.style.opacity = "0.4";
+        return;
+      }
+      // Same count derivation desktop uses
+      let count = 0;
+      if (filter.countKey) count = state.counts[filter.countKey] || 0;
+      else if (Array.isArray(filter.status)) {
+        count = filter.status.reduce((s, st) => s + (state.counts[st] || 0), 0);
+      } else if (filter.status) {
+        count = state.counts[filter.status] || 0;
+      }
+      if (count === 0) {
+        label.textContent = `${filter.label} is empty`;
+        item.classList.add("disabled");
+        item.style.pointerEvents = "none";
+        item.style.opacity = "0.4";
+      } else {
+        label.textContent = `Empty ${filter.label} (${count})`;
+      }
+    }
+    window.mUpdateListMenuPurge = mUpdateListMenuPurge;
 
     // ── Drawer rendering ─────────────────────────────────────────
     function mRenderDrawer() {
@@ -15580,8 +15668,22 @@
       });
 
       menuIcon.addEventListener("click", () => {
-        if (mState.currentScreen === "conv") mToggleMenu();
-        else mCloseMenu();
+        // v5.10 — Two distinct menus: per-thread actions on the conv
+        // screen, global/folder actions on the list screen. The
+        // per-thread menu (#mMenu) makes no sense outside a conv;
+        // the list menu (#mListMenu) handles refresh, empty folder,
+        // settings, sign out.
+        if (mState.currentScreen === "conv") {
+          mCloseListMenu();
+          mToggleMenu();
+        } else if (mState.currentScreen === "list") {
+          mCloseMenu();
+          mUpdateListMenuPurge();
+          mToggleListMenu();
+        } else {
+          mCloseMenu();
+          mCloseListMenu();
+        }
       });
 
       // v5.2 — Search bar wiring. Tap search icon → show the search
@@ -15775,6 +15877,72 @@
         state.composerTranslation = null;
       });
 
+      // v5.10 — List-screen menu wiring. Mirrors the per-thread
+      // menu pattern but with global / folder-level actions.
+      document.querySelectorAll("#mListMenu .m-menu-item").forEach(el => {
+        el.addEventListener("click", async () => {
+          const action = el.getAttribute("data-action");
+          mCloseListMenu();
+          if (action === "refresh") {
+            // Match the desktop's refresh button: pull threads,
+            // counts, and config in parallel. Toast on completion.
+            try {
+              if (typeof fetchThreadListNow === "function") fetchThreadListNow();
+              if (typeof fetchCountsNow === "function") fetchCountsNow();
+              if (typeof toast === "function") toast("Refreshing…");
+            } catch (e) {
+              if (typeof toast === "function") toast("Refresh failed: " + (e.message || "unknown"));
+            }
+          }
+          else if (action === "purge-current-folder") {
+            // Mirrors desktop's emPurgeFolderBtn flow: confirm with
+            // the operator, then call purgeFolderById which is
+            // owner-only on the backend. Use the current MOBILE
+            // filter id (mState.currentFilterId), not the desktop
+            // active filter — those track separately on mobile.
+            const filterId = mState.currentFilterId;
+            const filter = (typeof RAIL_FILTERS !== "undefined")
+              ? RAIL_FILTERS.find(f => f.id === filterId) : null;
+            if (!filter) { if (typeof toast === "function") toast("No folder selected"); return; }
+            // Mirror state.activeFilterId so purgeFolderById picks
+            // up the right filter (it reads state.activeFilterId).
+            const prevActive = state.activeFilterId;
+            state.activeFilterId = filterId;
+            try {
+              if (typeof purgeFolderById === "function") {
+                await purgeFolderById(filterId);
+              } else if (typeof toast === "function") {
+                toast("Purge function unavailable");
+              }
+            } catch (e) {
+              if (typeof toast === "function") toast("Purge failed: " + (e.message || "unknown"));
+            } finally {
+              // Don't restore prevActive — purgeFolderById may have
+              // intentionally moved us elsewhere. If desktop+mobile
+              // were on different folders, the next interaction will
+              // re-sync them anyway.
+            }
+          }
+          else if (action === "settings") {
+            mState.dirtySettings = true;
+            mShowScreen("settings");
+            if (typeof mRenderSettings === "function") mRenderSettings();
+          }
+          else if (action === "signout") {
+            // Match desktop's logout button. handleLogout clears the
+            // session token and re-prompts for login.
+            if (!confirm("Sign out of EtsyMail?")) return;
+            try {
+              if (typeof handleLogout === "function") {
+                await handleLogout();
+              }
+            } catch (e) {
+              if (typeof toast === "function") toast("Sign out failed: " + (e.message || "unknown"));
+            }
+          }
+        });
+      });
+
       // Overflow menu
       document.querySelectorAll("#mMenu .m-menu-item").forEach(el => {
         el.addEventListener("click", async () => {
@@ -15807,8 +15975,15 @@
       });
       document.addEventListener("click", (e) => {
         const menu = document.getElementById("mMenu");
-        if (!menu.contains(e.target) && e.target !== document.getElementById("mMenuIcon") && !document.getElementById("mMenuIcon").contains(e.target)) {
+        const listMenu = document.getElementById("mListMenu");
+        const menuIcon = document.getElementById("mMenuIcon");
+        // v5.10 — Close BOTH menus on outside click. Either could be
+        // the active one depending on screen.
+        if (menu && !menu.contains(e.target) && e.target !== menuIcon && !menuIcon.contains(e.target)) {
           mCloseMenu();
+        }
+        if (listMenu && !listMenu.contains(e.target) && e.target !== menuIcon && !menuIcon.contains(e.target)) {
+          mCloseListMenu();
         }
       });
 
