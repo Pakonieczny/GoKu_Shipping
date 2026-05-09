@@ -3250,143 +3250,150 @@
 
     /* ────────────────────────────────────────────────────────────────
      * NARROW MOBILE — regular phones, fold closed (≤599px)
-     * Default sizes; v5.5 + 33%. Cumulative ~+150% from v5.0 baseline.
+     * Default sizes. v5.8 — halved from v5.7 because v5.7 felt
+     * "huge" per operator feedback. These are now roughly 1.2-1.3×
+     * the wide-mobile sizes (which the operator confirmed feel
+     * "perfect" on fold-open). Slightly larger than wide-mobile
+     * because narrow phones need bigger relative sizes for one-
+     * handed use.
      * ──────────────────────────────────────────────────────────────── */
     @media (max-width: 599px) {
-      body.em-mobile #emMobileApp { font-size: 40px; }
+      body.em-mobile #emMobileApp { font-size: 20px; }
       body.em-mobile {
-        --m-appbar-h: 154px;
-        --m-row-h: 224px;
+        --m-appbar-h: 77px;
+        --m-row-h: 112px;
       }
-      body.em-mobile .m-appbar-icon { width: 106px; height: 106px; }
-      body.em-mobile .m-appbar-icon .material-icons { font-size: 58px; }
-      body.em-mobile .m-appbar-title    { font-size: 42px; }
-      body.em-mobile .m-appbar-subtitle { font-size: 28px; }
+      body.em-mobile .m-appbar-icon { width: 53px; height: 53px; }
+      body.em-mobile .m-appbar-icon .material-icons { font-size: 29px; }
+      body.em-mobile .m-appbar-title    { font-size: 21px; }
+      body.em-mobile .m-appbar-subtitle { font-size: 14px; }
 
-      body.em-mobile .m-avatar { width: 114px; height: 114px; font-size: 37px; }
-      body.em-mobile .m-customer-card-head .m-avatar { width: 90px; height: 90px; font-size: 32px; }
+      body.em-mobile .m-avatar { width: 57px; height: 57px; font-size: 18px; }
+      body.em-mobile .m-customer-card-head .m-avatar { width: 45px; height: 45px; font-size: 16px; }
 
-      body.em-mobile .m-thread-line-1   { font-size: 37px; }
-      body.em-mobile .m-thread-time     { font-size: 28px; }
-      body.em-mobile .m-thread-subject  { font-size: 31px; }
-      body.em-mobile .m-thread-snippet  { font-size: 28px; }
-      body.em-mobile .m-thread-row-content { padding-left: 50px; }
+      body.em-mobile .m-thread-line-1   { font-size: 18px; }
+      body.em-mobile .m-thread-time     { font-size: 14px; }
+      body.em-mobile .m-thread-subject  { font-size: 15px; }
+      body.em-mobile .m-thread-snippet  { font-size: 14px; }
+      body.em-mobile .m-thread-row-content { padding-left: 25px; }
       body.em-mobile .m-thread-row.unread .m-thread-row-content::before {
-        width: 20px; height: 20px;
+        width: 10px; height: 10px;
       }
 
-      body.em-mobile .m-drawer-folder { font-size: 35px; padding: 30px 48px; }
-      body.em-mobile .m-drawer-folder .material-icons { font-size: 50px; }
-      body.em-mobile .m-drawer-folder .m-fcnt { font-size: 28px; }
-      body.em-mobile .m-drawer-header .m-name { font-size: 35px; }
-      body.em-mobile .m-drawer-header .m-role { font-size: 28px; }
+      body.em-mobile .m-drawer-folder { font-size: 17px; padding: 15px 24px; }
+      body.em-mobile .m-drawer-folder .material-icons { font-size: 25px; }
+      body.em-mobile .m-drawer-folder .m-fcnt { font-size: 14px; }
+      body.em-mobile .m-drawer-header .m-name { font-size: 17px; }
+      body.em-mobile .m-drawer-header .m-role { font-size: 14px; }
 
-      body.em-mobile .m-customer-card-head .m-name { font-size: 35px; }
-      body.em-mobile .m-customer-card-head .m-meta { font-size: 28px; }
-      body.em-mobile .m-customer-card-head .m-repeat { font-size: 24px; padding: 6px 17px; }
-      body.em-mobile .m-customer-card-head .m-chev { font-size: 58px; }
-      body.em-mobile .m-customer-card-body { font-size: 31px; }
-      body.em-mobile .m-order-row { font-size: 31px; padding: 30px 18px; }
-      body.em-mobile .m-order-row .m-oid   { font-size: 28px; }
-      body.em-mobile .m-order-row .m-ostat { font-size: 24px; padding: 6px 17px; }
-      body.em-mobile .m-order-row .m-ochev { font-size: 50px; }
+      body.em-mobile .m-customer-card-head .m-name { font-size: 17px; }
+      body.em-mobile .m-customer-card-head .m-meta { font-size: 14px; }
+      body.em-mobile .m-customer-card-head .m-repeat { font-size: 12px; padding: 3px 8px; }
+      body.em-mobile .m-customer-card-head .m-chev { font-size: 29px; }
+      body.em-mobile .m-customer-card-body { font-size: 15px; }
+      body.em-mobile .m-order-row { font-size: 15px; padding: 15px 9px; }
+      body.em-mobile .m-order-row .m-oid   { font-size: 14px; }
+      body.em-mobile .m-order-row .m-ostat { font-size: 12px; padding: 3px 8px; }
+      body.em-mobile .m-order-row .m-ochev { font-size: 25px; }
 
-      body.em-mobile .m-summary-card-head .m-lead { font-size: 56px; }
-      body.em-mobile .m-summary-card-head .m-chev { font-size: 58px; }
-      body.em-mobile .m-summary-card-title    { font-size: 33px; }
-      body.em-mobile .m-summary-card-tagline  { font-size: 28px; }
-      body.em-mobile .m-summary-card-body     { font-size: 31px; }
-      body.em-mobile .m-summary-card-body .m-row .m-lab { font-size: 28px; }
-      body.em-mobile .m-summary-card-body .m-urg-chip { font-size: 24px; padding: 6px 17px; }
-      body.em-mobile .m-summary-card-body .m-flag { font-size: 25px; padding: 6px 17px; }
+      body.em-mobile .m-summary-card-head .m-lead { font-size: 28px; }
+      body.em-mobile .m-summary-card-head .m-chev { font-size: 29px; }
+      body.em-mobile .m-summary-card-title    { font-size: 16px; }
+      body.em-mobile .m-summary-card-tagline  { font-size: 14px; }
+      body.em-mobile .m-summary-card-body     { font-size: 15px; }
+      body.em-mobile .m-summary-card-body .m-row .m-lab { font-size: 14px; }
+      body.em-mobile .m-summary-card-body .m-urg-chip { font-size: 12px; padding: 3px 8px; }
+      body.em-mobile .m-summary-card-body .m-flag { font-size: 13px; padding: 3px 8px; }
 
-      body.em-mobile .m-msg-meta { font-size: 25px; }
-      body.em-mobile .m-msg-bubble { font-size: 35px; padding: 26px 34px; border-radius: 38px; }
-      body.em-mobile .m-msg-img { width: 224px; height: 224px; }
+      body.em-mobile .m-msg-meta { font-size: 13px; }
+      body.em-mobile .m-msg-bubble { font-size: 18px; padding: 13px 17px; border-radius: 19px; }
+      body.em-mobile .m-msg-img { width: 112px; height: 112px; }
 
-      /* COMPOSER (extra-large for thumb-tapping per v5.6 feedback) */
-      body.em-mobile .m-composer-textarea { font-size: 35px; padding: 24px 34px; }
-      body.em-mobile .m-composer-send-btn { width: 110px; height: 110px; }
-      body.em-mobile .m-composer-send-btn .material-icons { font-size: 56px; }
-      body.em-mobile .m-composer-action { width: 110px; height: 110px; }
-      body.em-mobile .m-composer-action .material-icons { font-size: 60px; }
-      body.em-mobile .m-composer-attach-chip { width: 154px; height: 154px; }
+      /* COMPOSER — kept slightly bigger than the proportional 50%
+       * shrink because operators tap these the most. Big enough for
+       * comfortable thumb-tapping (Apple HIG recommends ≥44pt). */
+      body.em-mobile .m-composer-textarea { font-size: 18px; padding: 12px 17px; }
+      body.em-mobile .m-composer-send-btn { width: 60px; height: 60px; }
+      body.em-mobile .m-composer-send-btn .material-icons { font-size: 30px; }
+      body.em-mobile .m-composer-action { width: 60px; height: 60px; }
+      body.em-mobile .m-composer-action .material-icons { font-size: 32px; }
+      body.em-mobile .m-composer-attach-chip { width: 77px; height: 77px; }
 
-      body.em-mobile .m-order-detail-status { font-size: 28px; padding: 9px 24px; }
-      body.em-mobile .m-order-detail-date { font-size: 28px; }
-      body.em-mobile .m-order-detail-etsy { font-size: 28px; }
-      body.em-mobile .m-order-section h5 { font-size: 28px; }
+      body.em-mobile .m-order-detail-status { font-size: 14px; padding: 5px 12px; }
+      body.em-mobile .m-order-detail-date { font-size: 14px; }
+      body.em-mobile .m-order-detail-etsy { font-size: 14px; }
+      body.em-mobile .m-order-section h5 { font-size: 14px; }
       body.em-mobile .m-order-item img,
-      body.em-mobile .m-order-item .m-item-img-fallback { width: 154px; height: 154px; }
-      body.em-mobile .m-order-item .m-item-title { font-size: 31px; }
-      body.em-mobile .m-order-item .m-item-meta { font-size: 28px; }
-      body.em-mobile .m-order-item .m-item-perso { font-size: 28px; padding: 13px 18px; }
-      body.em-mobile .m-order-item-price { font-size: 31px; }
-      body.em-mobile .m-order-address { font-size: 31px; padding: 30px 33px; }
-      body.em-mobile .m-order-totals { font-size: 31px; }
-      body.em-mobile .m-order-totals tr.total { font-size: 33px; }
+      body.em-mobile .m-order-item .m-item-img-fallback { width: 77px; height: 77px; }
+      body.em-mobile .m-order-item .m-item-title { font-size: 15px; }
+      body.em-mobile .m-order-item .m-item-meta { font-size: 14px; }
+      body.em-mobile .m-order-item .m-item-perso { font-size: 14px; padding: 6px 9px; }
+      body.em-mobile .m-order-item-price { font-size: 15px; }
+      body.em-mobile .m-order-address { font-size: 15px; padding: 15px 16px; }
+      body.em-mobile .m-order-totals { font-size: 15px; }
+      body.em-mobile .m-order-totals tr.total { font-size: 16px; }
 
-      body.em-mobile .m-sheet-title { font-size: 40px; }
-      body.em-mobile .m-sheet-row .m-lab { font-size: 35px; }
-      body.em-mobile .m-sheet-row select { font-size: 35px; }
-      body.em-mobile .m-sheet-action-btn { font-size: 35px; padding: 33px; }
+      body.em-mobile .m-sheet-title { font-size: 20px; }
+      body.em-mobile .m-sheet-row .m-lab { font-size: 18px; }
+      body.em-mobile .m-sheet-row select { font-size: 18px; }
+      body.em-mobile .m-sheet-action-btn { font-size: 18px; padding: 17px; }
 
-      body.em-mobile .m-menu-item { font-size: 35px; padding: 33px 40px; }
-      body.em-mobile .m-menu-item .material-icons { font-size: 50px; }
+      body.em-mobile .m-menu-item { font-size: 18px; padding: 17px 20px; }
+      body.em-mobile .m-menu-item .material-icons { font-size: 25px; }
 
-      body.em-mobile .m-settings-section summary { font-size: 35px; padding: 40px; }
-      body.em-mobile .m-settings-content { font-size: 35px; }
-      body.em-mobile .m-settings-content .m-desc { font-size: 28px; }
-      body.em-mobile .m-settings-content button { height: 93px; font-size: 31px; padding: 0 37px; }
+      body.em-mobile .m-settings-section summary { font-size: 18px; padding: 20px; }
+      body.em-mobile .m-settings-content { font-size: 18px; }
+      body.em-mobile .m-settings-content .m-desc { font-size: 14px; }
+      body.em-mobile .m-settings-content button { height: 47px; font-size: 16px; padding: 0 19px; }
       body.em-mobile .m-settings-content input[type="text"],
-      body.em-mobile .m-settings-content input[type="password"] { font-size: 33px; padding: 24px 28px; }
+      body.em-mobile .m-settings-content input[type="password"] { font-size: 16px; padding: 12px 14px; }
 
-      body.em-mobile .m-op-strip { font-size: 32px; padding: 19px 33px; }
-      body.em-mobile .m-op-strip .material-icons { font-size: 48px; }
-      body.em-mobile .m-op-role { font-size: 25px; padding: 5px 19px; }
+      body.em-mobile .m-op-strip { font-size: 16px; padding: 10px 17px; }
+      body.em-mobile .m-op-strip .material-icons { font-size: 24px; }
+      body.em-mobile .m-op-role { font-size: 13px; padding: 3px 10px; }
 
       body.em-mobile .em-badge {
-        font-size: 25px;
-        padding: 8px 19px;
-        border-radius: 9px;
+        font-size: 13px;
+        padding: 4px 10px;
+        border-radius: 5px;
       }
       body.em-mobile .m-conv-pills-row .em-badge {
-        font-size: 28px;
-        padding: 9px 22px;
-        border-radius: 11px;
+        font-size: 14px;
+        padding: 5px 11px;
+        border-radius: 6px;
       }
 
-      /* Modal sizes — narrow mobile bumped */
-      body.em-mobile .em-modal-backdrop .em-modal h2 { font-size: 41px; }
+      /* Modal sizes — narrow */
+      body.em-mobile .em-modal-backdrop .em-modal h2 { font-size: 21px; }
       body.em-mobile .em-modal-backdrop .em-modal p,
       body.em-mobile .em-modal-backdrop .em-modal label,
-      body.em-mobile .em-modal-backdrop .em-modal small { font-size: 28px !important; }
+      body.em-mobile .em-modal-backdrop .em-modal small { font-size: 14px !important; }
       body.em-mobile .em-modal-backdrop .em-modal input[type="text"],
       body.em-mobile .em-modal-backdrop .em-modal input[type="password"],
       body.em-mobile .em-modal-backdrop .em-modal input[type="email"],
       body.em-mobile .em-modal-backdrop .em-modal input[type="search"],
       body.em-mobile .em-modal-backdrop .em-modal textarea {
-        font-size: 29px !important;
-        padding: 21px 27px !important;
-        min-height: 85px;
+        font-size: 16px !important;
+        padding: 11px 14px !important;
+        min-height: 44px;
       }
       body.em-mobile .em-modal-backdrop .em-modal button {
-        font-size: 29px;
-        padding: 21px 37px;
-        min-height: 85px;
+        font-size: 15px;
+        padding: 11px 19px;
+        min-height: 44px;
       }
       body.em-mobile .em-modal-backdrop .em-modal-error {
-        font-size: 25px !important;
+        font-size: 13px !important;
       }
       body.em-mobile .em-modal-backdrop .em-modal .em-reveal-btn {
-        width: 85px; height: 85px;
+        width: 44px; height: 44px;
       }
       body.em-mobile .em-modal-backdrop .em-modal .em-reveal-btn .material-icons {
-        font-size: 40px;
+        font-size: 20px;
       }
 
       /* Search bar — narrow */
-      body.em-mobile .m-searchbar-input { font-size: 32px; }
+      body.em-mobile .m-searchbar-input { font-size: 16px; }
     }
 
     /* ────────────────────────────────────────────────────────────────
@@ -3572,9 +3579,9 @@
     .m-ai-indicator-close:active { opacity: 1; background: rgba(0,0,0,0.08); }
 
     @media (max-width: 599px) {
-      body.em-mobile .m-ai-indicator { font-size: 26px; padding: 14px 22px; gap: 14px; }
-      body.em-mobile .m-ai-indicator .material-icons { font-size: 32px; }
-      body.em-mobile .m-ai-indicator-close { width: 44px; height: 44px; font-size: 32px; }
+      body.em-mobile .m-ai-indicator { font-size: 14px; padding: 8px 14px; gap: 8px; }
+      body.em-mobile .m-ai-indicator .material-icons { font-size: 18px; }
+      body.em-mobile .m-ai-indicator-close { width: 26px; height: 26px; font-size: 20px; }
     }
     @media (min-width: 600px) {
       body.em-mobile .m-ai-indicator { font-size: 14px; padding: 7px 14px; }
@@ -9502,11 +9509,31 @@
 
       try {
         const data = await api("etsyMailDraftReply", { method: "POST", body: reqBody });
-        // Populate textarea
-        $("emDraftText").value = data.text || "";
-        autoSizeDraftTextarea($("emDraftText"));   // v0.9.17: RAF-deferred grow
-        // v5.0 — Mobile composer mirror hook
+        // v5.8 — Defensively check for #emDraftText. It doesn't exist
+        // on mobile (created dynamically by renderDetail; see line
+        // 9184). Without this guard, the .value assignment would throw
+        // a TypeError on mobile and the rest of the success path
+        // (mShowAiDraftCard, toast, revise row) would never run.
+        const _draftTa = $("emDraftText");
+        if (_draftTa) {
+          _draftTa.value = data.text || "";
+          autoSizeDraftTextarea(_draftTa);   // v0.9.17: RAF-deferred grow
+        }
+        // v5.0 — Mobile composer mirror hook (operates via #emDraftText
+        // when present; on mobile it now also writes to #mComposerTextarea
+        // via the independent block below).
         if (window.IS_MOBILE && typeof window.mNotifyDraftChanged === "function") window.mNotifyDraftChanged();
+        // v5.8 — Independent mobile textarea write. Same reasoning as
+        // hydrateAiDraft: desktop textarea may not exist on mobile.
+        if (window.IS_MOBILE) {
+          const _mta = document.getElementById("mComposerTextarea");
+          if (_mta) {
+            _mta.value = data.text || "";
+            if (typeof mAutoGrow === "function") mAutoGrow(_mta);
+            const _send = document.getElementById("mComposerSend");
+            if (_send) _send.disabled = !((_mta.value || "").trim());
+          }
+        }
         // Render AI card
         renderAiDraftCard(data);
         // v5.5 — Mobile AI draft card: build from the response payload.
@@ -11543,6 +11570,23 @@
           // just hydrated with the AI draft. mNotifyDraftChanged
           // copies from #emDraftText into #mComposerTextarea.
           if (window.IS_MOBILE && typeof window.mNotifyDraftChanged === "function") window.mNotifyDraftChanged();
+        }
+        // v5.8 — Independent mobile textarea write. The desktop
+        // #emDraftText is created dynamically by renderDetail (line
+        // 9184), which runs on desktop's openThread but NOT on mobile's
+        // mOpenThread. So on mobile, $("emDraftText") returns null and
+        // the block above no-ops entirely. Mobile's #mComposerTextarea
+        // is in static HTML, so we write to it directly here. Same
+        // empty-guard semantics as desktop (only write if operator
+        // hasn't typed something) so we don't clobber operator text.
+        if (window.IS_MOBILE && isHydratableState) {
+          const _mta = document.getElementById("mComposerTextarea");
+          if (_mta && !_mta.value.trim()) {
+            _mta.value = d.text || "";
+            if (typeof mAutoGrow === "function") mAutoGrow(_mta);
+            const _send = document.getElementById("mComposerSend");
+            if (_send) _send.disabled = !((_mta.value || "").trim());
+          }
         }
         renderAiDraftCard(d);
         // v5.5 — Mobile AI draft card: build directly from the Firestore
@@ -14731,18 +14775,42 @@
       // open and update the mobile card the moment it appears.
       mStartSummaryWatch(threadId);
 
-      // v5.4 — Trigger the desktop's AI draft load for this thread. On
-      // desktop this is part of openThread/renderDetail; on mobile we
-      // need to call it explicitly so the desktop's #emAiCardBody gets
-      // populated, which mMirrorAiDraftCard then mirrors into the
-      // mobile-mounted #mAiDraftCard. The function reads from
-      // EtsyMail_Drafts and calls renderAiDraftCard with the doc.
-      try {
-        if (typeof hydrateAiDraft === "function") {
-          // hydrateAiDraft expects a thread object, not just an id
-          if (t) hydrateAiDraft(t).catch(() => {});
-        }
-      } catch (e) { /* swallow */ }
+      // v5.8 — Build the desktop conversation UI even on mobile.
+      //
+      // Why: the desktop's renderDetail (line 9037) DYNAMICALLY creates
+      // many elements that the rest of the system depends on:
+      //   - #emDraftText (the composer textarea — line 9184)
+      //   - #emComposerChips (attachment chip strip)
+      //   - #emReviseRow, #emReviseInput, #emReviseBtn
+      //   - #emAiCardBody (now removed but other cards still get
+      //     mounted), #emTrackingImages, #emReferencedReceipts
+      //   - the entire conversation message list #emThreadBody
+      //
+      // None of these exist in static HTML; they only appear after
+      // renderDetail writes into #emDetail.innerHTML. On desktop,
+      // openThread → renderDetail does this. On mobile, prior to
+      // v5.8, mOpenThread skipped renderDetail — so:
+      //   - hydrateAiDraft tried to write to a null #emDraftText
+      //     (the if-guard skipped it), no AI text reached the
+      //     composer, mNotifyDraftChanged never fired
+      //   - generateAiDraft threw a TypeError on $("emDraftText").value=
+      //     and the success path (mShowAiDraftCard, toast) never ran
+      //   - sendViaEtsy's `if (!ta) return;` guard at line 11285
+      //     bailed silently, MAKING SEND BROKEN on mobile
+      //   - addImageAttachment, callTranslate, and other composer
+      //     functions had similar null-element issues
+      //
+      // Calling renderDetail fixes all of them. The desktop UI is
+      // visually hidden by `body.em-mobile > .em-app { display: none }`,
+      // but the DOM tree gets built in memory. All event handlers
+      // wire to elements that exist; functions find what they expect.
+      // renderDetail also internally calls hydrateAiDraft (line 9449),
+      // hydrateCustomerPanel, renderThreadMessages, setupTranslateBar,
+      // renderSalesCardForThread — so we no longer need our standalone
+      // hydrateAiDraft call here either.
+      if (t && typeof renderDetail === "function") {
+        try { renderDetail(t); } catch (e) { console.warn("[mobile] renderDetail failed:", e); }
+      }
     }
 
     // ── Summary cache watcher ────────────────────────────────────
