@@ -12929,9 +12929,15 @@
       if (!thread) return;
       // Step 1 — skip if known.
       if (thread.customerLanguage) {
-        // Sync the picker dropdown to the stored value if it isn't already.
+        // Sync the picker dropdowns to the stored value if they aren't already.
+        // v5.20 — also sync the MOBILE picker (#mLangSelect). Pre-v5.20 only
+        // the desktop picker was updated, so on mobile the operator saw
+        // "Auto-detect" forever and the Translate-reply button hard-failed
+        // with "Pick a language first" because the value was still "auto".
         const sel = $("emTranslateLangSelect");
         if (sel) sel.value = thread.customerLanguage;
+        const mSel = document.getElementById("mLangSelect");
+        if (mSel) _syncMobileLangPicker(mSel, thread.customerLanguage);
         return;
       }
       // Step 2 — gather inbound sample.
@@ -12958,6 +12964,9 @@
       // Update the picker either way so the operator sees the guess.
       const sel = $("emTranslateLangSelect");
       if (sel) sel.value = code;
+      // v5.20 — Same update for the mobile picker.
+      const mSel = document.getElementById("mLangSelect");
+      if (mSel) _syncMobileLangPicker(mSel, code);
 
       // Step 5 — persist only if confidence is high enough that we trust
       // the guess. Below 0.5 we leave the field unset; the picker
@@ -12984,6 +12993,27 @@
       } catch (e) {
         console.warn("[translate] persist customerLanguage failed:", e.message);
       }
+    }
+
+    // v5.20 — Helper to sync the mobile language picker. The mobile
+    // picker has fewer options than desktop's (no pt-BR variants,
+    // fewer Slavic languages, etc). If the detected code isn't one
+    // of our options, fall back to the base language ("pt-BR" → "pt").
+    // If neither matches, leave the picker on "auto" so the operator
+    // can pick manually rather than getting a misleading selection.
+    function _syncMobileLangPicker(selEl, code) {
+      if (!selEl || !code) return;
+      const opts = Array.from(selEl.options).map(o => o.value);
+      if (opts.includes(code)) {
+        selEl.value = code;
+        return;
+      }
+      const base = String(code).split("-")[0];
+      if (opts.includes(base)) {
+        selEl.value = base;
+        return;
+      }
+      // Neither exact nor base match — leave alone.
     }
 
     /** Re-paint the translate bar's button labels + states based on the
@@ -15655,6 +15685,25 @@
           }
         }
       }
+
+      // v5.20 — Trigger customer-language auto-detect on mobile thread
+      // open, mirroring desktop's openThread (line 9184). Pre-v5.20 only
+      // the desktop openThread fired detection; mOpenThread's renderDetail
+      // call did NOT cascade into maybeAutoDetectCustomerLanguage because
+      // setupTranslateBar (which runs from renderDetail) only updates the
+      // bar UI — it doesn't kick off detection. Result: on mobile, the
+      // customerLanguage was never auto-set, the mobile picker stayed at
+      // "Auto-detect", and the Translate-reply button hard-failed with
+      // "Pick a language first" because the picker was still on "auto"
+      // and there was no customerLanguage to fall back to.
+      //
+      // Fire-and-forget — detection is async (1-2 seconds). The picker
+      // updates via _syncMobileLangPicker when detection resolves.
+      if (t && typeof maybeAutoDetectCustomerLanguage === "function") {
+        maybeAutoDetectCustomerLanguage(t).catch((e) => {
+          console.warn("[mobile] language auto-detect failed:", e.message);
+        });
+      }
     }
 
     // ── Summary cache watcher ────────────────────────────────────
@@ -16934,22 +16983,26 @@
       // had to pick the customer's language every single time even when
       // we already knew it. We also expose the thread's autoTranslate
       // toggle here so its state survives the sheet open/close.
-      document.getElementById("mActionTrans").addEventListener("click", () => {
+      // v5.20 — If customerLanguage is unknown when the sheet opens,
+      // kick off detection right now instead of waiting for the next
+      // thread-open render. Common case: thread loads with no inbound
+      // messages yet, customer replies, mobile operator wants to
+      // translate their own reply — we never re-ran detection so the
+      // picker is still on "auto".
+      document.getElementById("mActionTrans").addEventListener("click", async () => {
         const langSel = document.getElementById("mLangSelect");
+        const t = state.threads && state.threads.find(x => x && x.id === state.selectedId);
+        const known = t && (t.customerLanguage || t.detectedLanguage);
         if (langSel) {
-          const t = state.threads && state.threads.find(x => x && x.id === state.selectedId);
-          const known = t && (t.customerLanguage || t.detectedLanguage);
           if (known && known !== "en") {
-            // Find a matching option — fall back to the closest base
-            // language code if the exact tag (e.g. "pt-BR") isn't in
-            // the picker but "pt" is.
-            const opts = Array.from(langSel.options).map(o => o.value);
-            if (opts.includes(known)) {
-              langSel.value = known;
-            } else {
-              const base = known.split("-")[0];
-              if (opts.includes(base)) langSel.value = base;
-            }
+            _syncMobileLangPicker(langSel, known);
+          } else if (t && !t.customerLanguage && typeof maybeAutoDetectCustomerLanguage === "function") {
+            // Don't await — the sheet should open immediately so the
+            // operator isn't staring at a frozen UI. Detection updates
+            // the picker via _syncMobileLangPicker when it resolves.
+            maybeAutoDetectCustomerLanguage(t).catch((e) => {
+              console.warn("[translate] sheet-open detect failed:", e.message);
+            });
           }
         }
         // Reflect any prior auto-translate state if it was set elsewhere.
@@ -16979,13 +17032,32 @@
         // The pre-v5.19 hard fail ("Pick a language first") was a UX
         // dead-end for operators who hadn't realized they needed to
         // open the sheet first.
+        // v5.20 — If still unknown (detection never ran or hasn't
+        // completed yet), try detecting inline before giving up. This
+        // closes the race where the operator opens a thread and taps
+        // Translate before the async on-open detection resolves.
         if (lang === "auto") {
-          const t = state.threads && state.threads.find(x => x && x.id === state.selectedId);
-          const known = t && (t.customerLanguage || t.detectedLanguage);
+          let t = state.threads && state.threads.find(x => x && x.id === state.selectedId);
+          let known = t && (t.customerLanguage || t.detectedLanguage);
+          if (!known && t && typeof maybeAutoDetectCustomerLanguage === "function") {
+            try {
+              await maybeAutoDetectCustomerLanguage(t);
+              // Re-read — maybeAutoDetectCustomerLanguage mutates the
+              // in-memory thread doc on success, but state.threads may
+              // have been refreshed by a list poll between then and now.
+              t = state.threads && state.threads.find(x => x && x.id === state.selectedId);
+              known = t && (t.customerLanguage || t.detectedLanguage);
+            } catch (e) {
+              console.warn("[mobile] inline detect failed:", e.message);
+            }
+          }
           if (known && known !== "en") {
             lang = known;
+          } else if (known === "en") {
+            if (typeof toast === "function") toast("Customer speaks English — no translation needed.");
+            return;
           } else {
-            if (typeof toast === "function") toast("Pick a language first.");
+            if (typeof toast === "function") toast("Couldn't detect customer's language — pick one from the menu.");
             return;
           }
         }
