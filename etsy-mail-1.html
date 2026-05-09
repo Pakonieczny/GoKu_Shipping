@@ -4533,6 +4533,18 @@
           </select>
         </div>
         <button class="m-sheet-action-btn" id="mSheetTranslateBtn">Translate reply</button>
+        <!-- v5.19 — "Show English (review only)" button. When the AI
+             generates the draft directly in the customer's language
+             (e.g. Spanish for a Spanish customer), the operator can't
+             read what's about to be sent. This button takes whatever
+             is in the composer and shows an English version above it
+             for review. The composer text itself is NOT modified — the
+             original (Spanish) is what the Send button still dispatches.
+             It's a read-only sanity check, not a substitution. -->
+        <button class="m-sheet-action-btn secondary" id="mSheetShowEnglishBtn"
+                style="margin-top: 8px; background: var(--m-c-surface-2); color: var(--m-c-text); border: 1px solid var(--m-c-border-strong);">
+          Show English (review only)
+        </button>
         <p style="font-size: 11px; color: var(--m-c-text-muted); margin: 12px 0 0;">
           Translation preview will appear above the composer; nothing sends until you tap the Send button.
         </p>
@@ -9527,6 +9539,21 @@
                         title="Translate the staff reply text into the customer's language. Shows a preview; nothing is sent until you click Send via Etsy.">
                   <span id="emTranslateReplyBtnLabel">Translate reply</span>
                 </button>
+                <!-- v5.19 — Show English (review only). When the AI
+                     auto-generates the draft in the customer's language
+                     directly (e.g. Spanish reply for a Spanish customer),
+                     the operator can't read what's about to be sent.
+                     This button takes whatever's in the composer textarea
+                     and shows an English version above it for review.
+                     The textarea text is unchanged — the actual outbound
+                     payload is still whatever's in the textarea, NOT the
+                     English review. Different state slot
+                     (composerEnglishPreview) so sendViaEtsy can't
+                     accidentally pick it up. -->
+                <button type="button" id="emShowEnglishBtn" class="em-translate-btn"
+                        title="Show me an English version of the composer text for review. The composer is unchanged; what gets sent is still the textarea text exactly as written.">
+                  <span>Show English</span>
+                </button>
               </div>
 
               <div id="emComposerChips" class="em-composer-chips"></div>
@@ -9620,6 +9647,44 @@
       });
       $("emTranslateReplyBtn")?.addEventListener("click", () => {
         translateComposerToCustomerLang().catch((e) => console.warn("[translate]", e));
+      });
+      // v5.19 — Show English (review-only) button. Takes the current
+      // composer text and translates it to English purely for the
+      // operator to read. The textarea is unchanged — what gets sent
+      // is still whatever is in the textarea, regardless of what
+      // appears in the review preview. Stored in a separate state
+      // slot (composerEnglishPreview) so sendViaEtsy never picks it
+      // up by mistake.
+      $("emShowEnglishBtn")?.addEventListener("click", async () => {
+        const ta = $("emDraftText");
+        const text = ((ta && ta.value) || "").trim();
+        if (!text) {
+          if (typeof toast === "function") toast("Nothing to review yet.");
+          return;
+        }
+        const btn = $("emShowEnglishBtn");
+        const labelEl = btn && btn.querySelector("span");
+        const prev = labelEl ? labelEl.textContent : null;
+        if (btn) btn.disabled = true;
+        if (labelEl) labelEl.textContent = "Translating…";
+        try {
+          if (typeof callTranslate !== "function") return;
+          const translated = await callTranslate(text, "en", null);
+          // Use a separate state slot — sendViaEtsy reads
+          // composerTranslation, not composerEnglishPreview, so this
+          // is purely for review. Clear composerTranslation in case
+          // the operator had a prior outbound translation queued; we
+          // don't want them confused about which one is which.
+          state.composerEnglishPreview = { source: text, translated };
+          state.composerTranslation = null;
+          renderComposerPreviewPane();
+          if (typeof toast === "function") toast("English review — composer text is unchanged and will be sent as-is.");
+        } catch (e) {
+          if (typeof toast === "function") toast("Translate failed: " + (e.message || String(e)));
+        } finally {
+          if (btn) btn.disabled = false;
+          if (labelEl && prev) labelEl.textContent = prev;
+        }
       });
       $("emTranslatePreviewRetranslateBtn")?.addEventListener("click", () => {
         // Re-translate from the current textarea — useful after editing
@@ -13112,32 +13177,52 @@
       const title = $("emTranslatePreviewTitle");
       if (!wrap || !body || !title) return;
 
-      if (!state.composerTranslation) {
-        wrap.style.display = "none";
-        body.contentEditable = "false";
-        body.textContent = "";
+      // v5.19 — Two preview modes:
+      //   A. composerTranslation (outbound): editable, this text gets
+      //      sent. Existing v3.7 behavior.
+      //   B. composerEnglishPreview (review only): read-only, shown
+      //      so the operator can understand a foreign-language draft
+      //      the AI generated. The textarea text is what gets sent;
+      //      the preview body is purely informational.
+      // composerTranslation takes priority if both happen to be set.
+      if (state.composerTranslation) {
+        const ct = state.composerTranslation;
+        title.textContent = `Translated reply (${langDisplayName(ct.lang)}) — this will be sent`;
+        body.contentEditable = "true";
+        body.textContent = ct.translated;
+        wrap.style.display = "";
+        // Mirror edits back into state. Re-bind every render — body is
+        // the same DOM node but listeners stack if we don't.
+        body.oninput = () => {
+          if (state.composerTranslation) {
+            state.composerTranslation.translated = body.textContent || "";
+          }
+        };
         return;
       }
 
-      const ct = state.composerTranslation;
-      title.textContent = `Translated reply (${langDisplayName(ct.lang)}) — this will be sent`;
-      body.contentEditable = "true";
-      body.textContent = ct.translated;
-      wrap.style.display = "";
+      if (state.composerEnglishPreview) {
+        const ep = state.composerEnglishPreview;
+        title.textContent = "English review (won't be sent — composer is sent as-is)";
+        body.contentEditable = "false";
+        body.textContent = ep.translated;
+        body.oninput = null;
+        wrap.style.display = "";
+        return;
+      }
 
-      // Mirror edits back into state. Re-bind every render — body is
-      // the same DOM node but listeners stack if we don't.
-      body.oninput = () => {
-        if (state.composerTranslation) {
-          state.composerTranslation.translated = body.textContent || "";
-        }
-      };
+      wrap.style.display = "none";
+      body.contentEditable = "false";
+      body.textContent = "";
+      body.oninput = null;
     }
 
     /** Discard the current translation preview and revert to sending
      *  whatever's in the English textarea as-is. */
     function clearComposerTranslation() {
       state.composerTranslation = null;
+      // v5.19 — Also clear the English review preview if active.
+      state.composerEnglishPreview = null;
       renderComposerPreviewPane();
     }
 
@@ -14857,13 +14942,28 @@
     window.mNotifyTranslationChanged = () => {
       // state.composerTranslation was set by callTranslate; render the
       // mobile preview pane.
+      // v5.19 — There are now TWO possible preview sources:
+      //   - state.composerTranslation        (outbound; will be sent)
+      //   - state.composerEnglishPreview     (review only; not sent)
+      // We render whichever is set, with a different label so the
+      // operator can tell at a glance whether what they see is going
+      // to be sent. composerTranslation takes priority if both happen
+      // to be set.
       const pane = document.getElementById("mTranslatePreview");
       const body = document.getElementById("mTranslatePreviewBody");
+      const head = pane && pane.querySelector(".m-translate-preview-head > span");
       const btn  = document.getElementById("mActionTrans");
       if (!pane || !body) return;
       const t = state.composerTranslation;
+      const eng = state.composerEnglishPreview;
       if (t && t.translated) {
         body.textContent = t.translated;
+        if (head) head.textContent = "Translated reply (preview — this will be sent)";
+        pane.classList.add("visible");
+        if (btn) btn.classList.add("active");
+      } else if (eng && eng.translated) {
+        body.textContent = eng.translated;
+        if (head) head.textContent = "English review (won't be sent — composer is sent as-is)";
         pane.classList.add("visible");
         if (btn) btn.classList.add("active");
       } else {
@@ -16827,8 +16927,37 @@
         mRenderAttachments();
       });
 
-      // Translate sheet
-      document.getElementById("mActionTrans").addEventListener("click", () => mOpenSheet());
+      // v5.19 — When the translate sheet opens, pre-select the customer's
+      // known language in the picker so the operator doesn't have to
+      // manually pick. Pre-v5.19 the picker defaulted to "auto" and the
+      // translate button bailed with "Pick a language first" — operators
+      // had to pick the customer's language every single time even when
+      // we already knew it. We also expose the thread's autoTranslate
+      // toggle here so its state survives the sheet open/close.
+      document.getElementById("mActionTrans").addEventListener("click", () => {
+        const langSel = document.getElementById("mLangSelect");
+        if (langSel) {
+          const t = state.threads && state.threads.find(x => x && x.id === state.selectedId);
+          const known = t && (t.customerLanguage || t.detectedLanguage);
+          if (known && known !== "en") {
+            // Find a matching option — fall back to the closest base
+            // language code if the exact tag (e.g. "pt-BR") isn't in
+            // the picker but "pt" is.
+            const opts = Array.from(langSel.options).map(o => o.value);
+            if (opts.includes(known)) {
+              langSel.value = known;
+            } else {
+              const base = known.split("-")[0];
+              if (opts.includes(base)) langSel.value = base;
+            }
+          }
+        }
+        // Reflect any prior auto-translate state if it was set elsewhere.
+        const tgl = document.getElementById("mToggleAuto");
+        const desktopAuto = document.getElementById("emAutoTranslateToggle");
+        if (tgl && desktopAuto) tgl.classList.toggle("on", !!desktopAuto.checked);
+        mOpenSheet();
+      });
       document.getElementById("mToggleAuto").addEventListener("click", () => {
         document.getElementById("mToggleAuto").classList.toggle("on");
         // Mirror to desktop's auto-translate toggle if present
@@ -16844,10 +16973,21 @@
           return;
         }
         const langSel = document.getElementById("mLangSelect");
-        const lang = langSel ? langSel.value : "auto";
+        let lang = langSel ? langSel.value : "auto";
+        // v5.19 — When picker is "auto" and we know the customer's
+        // language from the thread doc, use that instead of bailing.
+        // The pre-v5.19 hard fail ("Pick a language first") was a UX
+        // dead-end for operators who hadn't realized they needed to
+        // open the sheet first.
         if (lang === "auto") {
-          if (typeof toast === "function") toast("Pick a language first.");
-          return;
+          const t = state.threads && state.threads.find(x => x && x.id === state.selectedId);
+          const known = t && (t.customerLanguage || t.detectedLanguage);
+          if (known && known !== "en") {
+            lang = known;
+          } else {
+            if (typeof toast === "function") toast("Pick a language first.");
+            return;
+          }
         }
         try {
           if (typeof callTranslate === "function") {
@@ -16869,7 +17009,40 @@
         document.getElementById("mTranslatePreview").classList.remove("visible");
         document.getElementById("mActionTrans").classList.remove("active");
         state.composerTranslation = null;
+        // v5.19 — Also clear any review-only English preview.
+        state.composerEnglishPreview = null;
       });
+
+      // v5.19 — Show English button on mobile. Translates the composer
+      // text into English for the operator to review, but does NOT
+      // affect what gets sent. The composer text (Spanish, French,
+      // whatever) remains as the actual outbound payload. Used when
+      // the AI auto-generates in the customer's language and the
+      // operator wants to read it before sending.
+      const mShowEng = document.getElementById("mSheetShowEnglishBtn");
+      if (mShowEng) {
+        mShowEng.addEventListener("click", async () => {
+          mCloseSheet();
+          const ta = document.getElementById("mComposerTextarea");
+          const text = (ta.value || "").trim();
+          if (!text) {
+            if (typeof toast === "function") toast("Nothing to review yet.");
+            return;
+          }
+          try {
+            if (typeof callTranslate !== "function") return;
+            const translated = await callTranslate(text, "en", null);
+            // Use a SEPARATE state slot from composerTranslation so
+            // sendViaEtsy never picks this up as the outbound payload.
+            state.composerEnglishPreview = { source: text, translated };
+            state.composerTranslation = null;  // ensure no outbound mix-up
+            // Render the preview pane in review mode (different label).
+            window.mNotifyTranslationChanged();
+          } catch (e) {
+            if (typeof toast === "function") toast("Translate failed: " + e.message);
+          }
+        });
+      }
 
       // v5.10 — List-screen menu wiring. Mirrors the per-thread
       // menu pattern but with global / folder-level actions.
