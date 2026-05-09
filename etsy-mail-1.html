@@ -3597,6 +3597,92 @@
       body.em-mobile .m-ai-indicator-close { width: 24px; height: 24px; font-size: 18px; }
     }
 
+    /* ════════════════════════════════════════════════════════════════
+     * v5.12 — Fullscreen image preview modal with pinch-zoom + pan.
+     * ════════════════════════════════════════════════════════════════
+     * Tap any inline message image → opens this modal at fit-to-screen.
+     * Pinch with two fingers → zooms (1× to 5×) centered on the pinch
+     * midpoint. Drag with one finger when zoomed in → pans. Double-tap
+     * resets to 1×. Tap × or background → closes.
+     *
+     * Why JS instead of native browser pinch-zoom: element-level pinch-
+     * zoom via `touch-action: pinch-zoom` is inconsistent across iOS
+     * Safari and Chrome. JS gives us deterministic behavior and a
+     * proper "zoom-bounded-to-the-image" UX (page chrome doesn't
+     * scale).
+     */
+    .m-image-modal {
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.96);
+      z-index: 200;
+      display: none;
+      flex-direction: column;
+      touch-action: none;        /* let our JS handlers own all gestures */
+      user-select: none;
+    }
+    .m-image-modal.visible { display: flex; }
+    .m-image-modal-stage {
+      flex: 1 1 auto;
+      display: flex; align-items: center; justify-content: center;
+      overflow: hidden;
+      position: relative;
+      touch-action: none;
+    }
+    .m-image-modal-img {
+      max-width: 100%; max-height: 100%;
+      object-fit: contain;
+      transform-origin: 0 0;     /* JS handlers compute absolute translate+scale */
+      transform: translate(0,0) scale(1);
+      will-change: transform;
+      user-select: none;
+      -webkit-user-drag: none;
+      pointer-events: none;      /* pointer events go to the stage so we hit a stable target */
+    }
+    .m-image-modal-close {
+      position: absolute;
+      top: max(12px, env(safe-area-inset-top));
+      right: max(12px, env(safe-area-inset-right));
+      width: 48px; height: 48px;
+      background: rgba(0,0,0,0.55);
+      border: none;
+      border-radius: 50%;
+      color: #fff;
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer;
+      z-index: 2;
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
+    }
+    .m-image-modal-close:active { background: rgba(0,0,0,0.8); }
+    .m-image-modal-close .material-icons { font-size: 28px; }
+    .m-image-modal-hint {
+      position: absolute;
+      bottom: max(16px, env(safe-area-inset-bottom));
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0,0,0,0.55);
+      color: #fff;
+      font-size: 13px;
+      padding: 6px 14px;
+      border-radius: 14px;
+      pointer-events: none;
+      transition: opacity 0.4s ease;
+    }
+    .m-image-modal-hint.faded { opacity: 0; }
+
+    /* Sized-up close + hint for narrow phones */
+    @media (max-width: 599px) {
+      body.em-mobile .m-image-modal-close { width: 56px; height: 56px; }
+      body.em-mobile .m-image-modal-close .material-icons { font-size: 32px; }
+      body.em-mobile .m-image-modal-hint { font-size: 14px; padding: 8px 16px; }
+    }
+
+    /* Mark inline message images as tappable */
+    .m-msg-img {
+      cursor: pointer;
+      -webkit-tap-highlight-color: rgba(0, 0, 0, 0.15);
+    }
+
   </style>
 </head>
 <body>
@@ -4346,6 +4432,21 @@
       <div class="m-menu-divider"></div>
       <div class="m-menu-item" data-action="settings"><i class="material-icons">settings</i>Settings</div>
       <div class="m-menu-item" data-action="signout"><i class="material-icons">logout</i>Sign out</div>
+    </div>
+
+    <!-- v5.12 — Fullscreen image viewer with pinch-to-zoom + pan.
+         Hidden by default. Shown when operator taps a message image.
+         The transform is driven by JS touch handlers (mImageModal*)
+         since browser-native element pinch-zoom is too inconsistent
+         across iOS Safari and Chrome on Android. -->
+    <div class="m-image-modal" id="mImageModal" aria-hidden="true">
+      <button class="m-image-modal-close" id="mImageModalClose" aria-label="Close image">
+        <i class="material-icons">close</i>
+      </button>
+      <div class="m-image-modal-stage" id="mImageModalStage">
+        <img class="m-image-modal-img" id="mImageModalImg" src="" alt="" draggable="false">
+      </div>
+      <div class="m-image-modal-hint" id="mImageModalHint">Pinch to zoom · Double-tap to reset · Drag to pan</div>
     </div>
   </div>
 
@@ -14564,6 +14665,204 @@
     }
     window.mUpdateListMenuPurge = mUpdateListMenuPurge;
 
+    // ── Image preview modal with pinch-zoom + pan (v5.12) ────────
+    //
+    // Opens when the operator taps any inline message image. Uses
+    // a single set of touch handlers wired in mInit; this function
+    // just shows the modal and resets the transform.
+    //
+    // State is held in the closure created by _wireImageModalOnce
+    // (called from mInit); only the open/close triggers live here.
+    let _mImageModalState = null;
+    function mOpenImageModal(url) {
+      const modal = document.getElementById("mImageModal");
+      const img   = document.getElementById("mImageModalImg");
+      const hint  = document.getElementById("mImageModalHint");
+      if (!modal || !img) return;
+      img.src = url;
+      modal.classList.add("visible");
+      modal.setAttribute("aria-hidden", "false");
+      // Reset transform on every open
+      if (_mImageModalState) {
+        _mImageModalState.scale = 1;
+        _mImageModalState.tx = 0;
+        _mImageModalState.ty = 0;
+        _mImageModalState.applyTransform();
+      }
+      // Show then fade the hint after 2.5s
+      if (hint) {
+        hint.classList.remove("faded");
+        clearTimeout(hint._fadeTimer);
+        hint._fadeTimer = setTimeout(() => hint.classList.add("faded"), 2500);
+      }
+    }
+    function mCloseImageModal() {
+      const modal = document.getElementById("mImageModal");
+      const img   = document.getElementById("mImageModalImg");
+      if (!modal) return;
+      modal.classList.remove("visible");
+      modal.setAttribute("aria-hidden", "true");
+      // Free the image src so the browser can release memory
+      if (img) img.src = "";
+    }
+    window.mOpenImageModal  = mOpenImageModal;
+    window.mCloseImageModal = mCloseImageModal;
+
+    // Wire all the touch math + delegated tap handler. Called from
+    // mInit; runs once per page load. The handlers use closures to
+    // hold scale/translation state across touch events.
+    function _wireImageModalOnce() {
+      const modal = document.getElementById("mImageModal");
+      const stage = document.getElementById("mImageModalStage");
+      const img   = document.getElementById("mImageModalImg");
+      const closeBtn = document.getElementById("mImageModalClose");
+      if (!modal || !stage || !img || !closeBtn) return;
+
+      // Transform state
+      let scale = 1, tx = 0, ty = 0;
+      const MIN_SCALE = 1, MAX_SCALE = 5;
+
+      // Pinch tracking
+      let pinchStartDist = 0;
+      let pinchStartScale = 1;
+      let pinchMidX = 0, pinchMidY = 0;
+      let pinchStartTx = 0, pinchStartTy = 0;
+
+      // Pan tracking
+      let panActive = false;
+      let panStartX = 0, panStartY = 0, panStartTx = 0, panStartTy = 0;
+
+      // Double-tap detection
+      let lastTapTime = 0;
+
+      // Apply current transform to the image. We use translate +
+      // scale order; transform-origin is 0,0 so translates feel
+      // natural (positive = right/down). Bounds-checked so the
+      // user can't pan the image off-screen at scale=1.
+      const applyTransform = () => {
+        // At scale=1, no pan allowed
+        if (scale <= 1) { tx = 0; ty = 0; }
+        else {
+          // Bound pan so image doesn't fly off the stage
+          const stageRect = stage.getBoundingClientRect();
+          const imgRect = img.getBoundingClientRect();
+          // imgRect already reflects the current transform — compute
+          // pre-transform dimensions
+          const baseW = imgRect.width / scale;
+          const baseH = imgRect.height / scale;
+          const scaledW = baseW * scale;
+          const scaledH = baseH * scale;
+          // Allowed translation range so at least some image stays on screen
+          const maxTx = Math.max(0, (scaledW - stageRect.width) / 2 + scaledW * 0.2);
+          const maxTy = Math.max(0, (scaledH - stageRect.height) / 2 + scaledH * 0.2);
+          tx = Math.max(-maxTx, Math.min(maxTx, tx));
+          ty = Math.max(-maxTy, Math.min(maxTy, ty));
+        }
+        img.style.transformOrigin = "center center";
+        img.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
+      };
+
+      // Save into shared state so mOpenImageModal can reset transform.
+      _mImageModalState = {
+        get scale() { return scale; }, set scale(v) { scale = v; },
+        get tx() { return tx; }, set tx(v) { tx = v; },
+        get ty() { return ty; }, set ty(v) { ty = v; },
+        applyTransform
+      };
+
+      const distance = (t1, t2) => {
+        const dx = t1.clientX - t2.clientX;
+        const dy = t1.clientY - t2.clientY;
+        return Math.sqrt(dx*dx + dy*dy);
+      };
+
+      stage.addEventListener("touchstart", (e) => {
+        if (e.touches.length === 2) {
+          // Begin pinch
+          pinchStartDist  = distance(e.touches[0], e.touches[1]);
+          pinchStartScale = scale;
+          pinchMidX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+          pinchMidY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+          pinchStartTx = tx;
+          pinchStartTy = ty;
+          panActive = false;
+          e.preventDefault();
+        } else if (e.touches.length === 1) {
+          // Track for pan + double-tap
+          if (scale > 1) {
+            panActive = true;
+            panStartX = e.touches[0].clientX;
+            panStartY = e.touches[0].clientY;
+            panStartTx = tx;
+            panStartTy = ty;
+          }
+          // Double-tap detect
+          const now = Date.now();
+          if (now - lastTapTime < 280) {
+            // Toggle: 1× → 2.5×, otherwise → 1×
+            if (scale > 1) { scale = 1; tx = 0; ty = 0; }
+            else { scale = 2.5; tx = 0; ty = 0; }
+            applyTransform();
+            lastTapTime = 0;
+          } else {
+            lastTapTime = now;
+          }
+        }
+      }, { passive: false });
+
+      stage.addEventListener("touchmove", (e) => {
+        if (e.touches.length === 2 && pinchStartDist > 0) {
+          const newDist = distance(e.touches[0], e.touches[1]);
+          const newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, pinchStartScale * (newDist / pinchStartDist)));
+          // Adjust translation so the pinch midpoint stays fixed in
+          // screen space — this is what makes pinch feel "centered
+          // on what I'm pinching" rather than "centered on element."
+          const stageRect = stage.getBoundingClientRect();
+          const midRelX = pinchMidX - stageRect.left - stageRect.width / 2;
+          const midRelY = pinchMidY - stageRect.top  - stageRect.height / 2;
+          const factor = newScale / pinchStartScale;
+          tx = pinchStartTx * factor + (midRelX - midRelX * factor);
+          ty = pinchStartTy * factor + (midRelY - midRelY * factor);
+          scale = newScale;
+          applyTransform();
+          e.preventDefault();
+        } else if (e.touches.length === 1 && panActive) {
+          tx = panStartTx + (e.touches[0].clientX - panStartX);
+          ty = panStartTy + (e.touches[0].clientY - panStartY);
+          applyTransform();
+          e.preventDefault();
+        }
+      }, { passive: false });
+
+      stage.addEventListener("touchend", () => {
+        pinchStartDist = 0;
+        panActive = false;
+      });
+
+      // Tap on the stage background (not the image) closes
+      stage.addEventListener("click", (e) => {
+        // Only close on direct stage hits, and only when not zoomed
+        if (e.target === stage && scale === 1) mCloseImageModal();
+      });
+
+      closeBtn.addEventListener("click", mCloseImageModal);
+
+      // Delegated tap on any message image opens the modal
+      document.addEventListener("click", (e) => {
+        const tile = e.target.closest(".m-msg-img");
+        if (!tile) return;
+        const url = tile.dataset.fullurl;
+        if (url) mOpenImageModal(url);
+      });
+
+      // Esc closes (helpful for desktop testing in mobile mode)
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && modal.classList.contains("visible")) {
+          mCloseImageModal();
+        }
+      });
+    }
+
     // ── Drawer rendering ─────────────────────────────────────────
     function mRenderDrawer() {
       const folders = document.getElementById("mDrawerFolders");
@@ -14995,7 +15294,6 @@
     function mMountConv(t) {
       const body = document.getElementById("mConvBody");
       if (!body) return;
-      const pillsHtml = mStatusPills(t);
 
       const custInitials = mInitials(t.customerName || t.etsyUsername);
       const custColor = mAvatarColor(t.customerName || t.etsyUsername);
@@ -15004,9 +15302,10 @@
         : mEsc(custInitials);
 
       body.innerHTML = `
-        <div class="m-conv-header">
-          ${pillsHtml ? `<div class="m-conv-pills-row">${pillsHtml}</div>` : ""}
-        </div>
+        <!-- v5.12 — Pills row removed. Same pills already render on
+             the thread row in the inbox list; repeating them at the
+             top of the conv was just chrome stealing vertical space.
+             Operators tap into a thread already knowing its state. -->
 
         <div class="m-customer-card" id="mCustomerCard">
           <div class="m-customer-card-head" id="mCustomerCardHead">
@@ -15171,7 +15470,12 @@
             const storagePath = Array.isArray(m.storageImagePaths) ? m.storageImagePaths[idx] : null;
             const mirrorUrl = storagePath ? FN("etsyMailImage") + "?path=" + encodeURIComponent(storagePath) : null;
             const displayThumb = mirrorUrl || thumbUrl;
-            return `<div class="m-msg-img" style="background-image:url('${mEsc(displayThumb)}')"></div>`;
+            // v5.12 — Carry the full-resolution URL as a data attribute
+            // so a delegated tap handler can open the image modal. We
+            // prefer the storage-mirrored full URL (sidesteps Etsy's
+            // hotlink protection) and fall back to the raw CDN URL.
+            const fullDisplayUrl = mirrorUrl || fullUrl;
+            return `<div class="m-msg-img" data-fullurl="${mEsc(fullDisplayUrl)}" style="background-image:url('${mEsc(displayThumb)}')"></div>`;
           }).join("");
         }
         const imgRow = imgsHtml ? `<div class="m-msg-img-row">${imgsHtml}</div>` : "";
@@ -15993,6 +16297,13 @@
       if (state.activeFilterId) mState.currentFilterId = state.activeFilterId;
       mRenderDrawer();
       mRenderList();
+
+      // v5.12 — Wire the image preview modal once. Sets up touch
+      // handlers (pinch-zoom + pan + double-tap reset) and a single
+      // delegated click listener that opens the modal whenever any
+      // .m-msg-img is tapped. Idempotent — safe to call multiple
+      // times in pathological re-init scenarios.
+      _wireImageModalOnce();
 
       // v5.3 — Auth safety net. By the time mInit runs, bootstrapSession
       // has already kicked off (it's earlier in the DOMContentLoaded
