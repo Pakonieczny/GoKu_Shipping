@@ -5308,7 +5308,7 @@
 
       const cacheKey = _summaryCacheKey(threadId);
 
-      // Cache hit — paint immediately, no network.
+      // Cache hit (in-memory) — paint immediately, no network.
       if (cacheKey && state._summaryCache.has(cacheKey)) {
         mount.innerHTML = _renderSummaryCardHtml(state._summaryCache.get(cacheKey));
         return;
@@ -5316,6 +5316,38 @@
 
       // Cache miss — paint loading state, then call backend.
       mount.innerHTML = _renderSummaryCardHtml(null, { loading: true });
+
+      // v5.15 — Firestore-backed cache layer between in-memory cache
+      // and Haiku. Other devices/operators looking at the same thread
+      // can reuse this device's cached summary without paying for
+      // their own Haiku call. Cache is stored on the thread doc as
+      //   summaryCache: { key, summary, generatedAt }
+      // The key embeds threadId|lastMessageMs, so a new inbound
+      // message naturally invalidates it (cache key changes → miss
+      // → fresh Haiku call → write back).
+      if (cacheKey) {
+        try {
+          const tRes = await api("firestoreProxy", {
+            method: "GET",
+            query: { op: "get", coll: "EtsyMail_Threads", id: threadId }
+          });
+          const sc = tRes && tRes.exists && tRes.doc && tRes.doc.summaryCache;
+          if (sc && sc.key === cacheKey && sc.summary) {
+            // FS cache hit — populate in-memory cache for instant
+            // subsequent reads on this device, then render. Bail if
+            // the operator switched threads while we were fetching.
+            state._summaryCache.set(cacheKey, sc.summary);
+            if (state.selectedId === threadId) {
+              mount.innerHTML = _renderSummaryCardHtml(sc.summary);
+            }
+            return;
+          }
+        } catch (e) {
+          // FS cache lookup failed — fall through to Haiku. Don't
+          // block on a read failure; worst case we pay for the call.
+          console.warn("[summary] FS cache check failed:", e.message);
+        }
+      }
 
       // Build a sanitized message list for the backend. Pass only the
       // fields the summarize prompt needs (text, direction, senderName).
@@ -5385,6 +5417,34 @@
       if (state.selectedId !== threadId) return;
 
       if (cacheKey) state._summaryCache.set(cacheKey, summary);
+
+      // v5.15 — Persist the summary back to the thread doc so other
+      // devices/operators can reuse it without paying for their own
+      // Haiku call. Fire-and-forget — don't block the render on the
+      // write. A failed write just means other devices will pay for
+      // a redundant Haiku, which is the pre-v5.15 behavior anyway.
+      if (cacheKey) {
+        api("firestoreProxy", {
+          method: "POST",
+          body: {
+            op: "set",
+            coll: "EtsyMail_Threads",
+            id: threadId,
+            merge: true,
+            actor: getEmployeeName() || "operator",
+            data: {
+              summaryCache: {
+                key: cacheKey,
+                summary,
+                generatedAt: { _ts: true, ms: Date.now() }
+              }
+            }
+          }
+        }).catch(e => {
+          console.warn("[summary] FS cache write failed:", e.message);
+        });
+      }
+
       mount.innerHTML = _renderSummaryCardHtml(summary);
     }
 
@@ -9639,6 +9699,99 @@
       }
       if (instructions && instructions.trim()) {
         reqBody.instructions = instructions.trim();
+      }
+
+      // v5.15 — Cache-first. Before paying for an Opus call, check
+      // Firestore for an existing fresh draft. "Fresh" means the
+      // draft was generated AFTER the thread's last inbound message,
+      // so it's still relevant. Saves a duplicate AI call when
+      // multiple devices/operators click "AI Draft" for the same
+      // thread state. Skipped for "revise" and "follow_up" — those
+      // are explicit operator requests for a different take.
+      if (mode === "initial") {
+        try {
+          const cacheRes = await api("firestoreProxy", {
+            method: "GET",
+            query: { op: "get", coll: "EtsyMail_Drafts", id: "draft_" + threadId }
+          });
+          if (cacheRes && cacheRes.exists && cacheRes.doc) {
+            const d = cacheRes.doc;
+            // Only treat status="draft" (or no status) as a cache hit.
+            // Once queued/sending/sent/failed, the draft has been acted
+            // upon and we shouldn't silently swap it back into the
+            // composer. Match hydrateAiDraft's isHydratableState rule.
+            if (!d.status || d.status === "draft") {
+              const t = (state.threads || []).find(x => x && x.id === threadId);
+              // Local timestamp normalizer — Firestore proxy serializes
+              // server timestamps as {_ts:true, ms:N}; native SDK uses
+              // toMillis(). Cover both shapes plus _seconds and numbers.
+              const _ts = (v) => {
+                if (!v) return 0;
+                if (typeof v === "number") return v;
+                if (typeof v.toMillis === "function") { try { return v.toMillis(); } catch { return 0; } }
+                if (typeof v.ms === "number") return v.ms;
+                if (typeof v._seconds === "number") return v._seconds * 1000;
+                if (v instanceof Date) return v.getTime();
+                if (typeof v === "string") { const dt = new Date(v); return isNaN(dt.getTime()) ? 0 : dt.getTime(); }
+                return 0;
+              };
+              const inboundMs = t ? _ts(t.lastInboundAt) : 0;
+              // Try multiple timestamp field names — backend may use any
+              // of these depending on which path enqueued the draft
+              // (auto-pipeline vs manual generate vs revise).
+              const draftMs = _ts(d.aiMeta && d.aiMeta.generatedAt) ||
+                              _ts(d.lastUpdatedAt) ||
+                              _ts(d.updatedAt) ||
+                              _ts(d.generatedAt) ||
+                              _ts(d.createdAt);
+              if (draftMs > 0 && (inboundMs === 0 || draftMs > inboundMs)) {
+                // CACHE HIT — hydrate the composer the same way
+                // hydrateAiDraft does, restore button state, toast, and
+                // return without making the Opus call.
+                const _draftTa = $("emDraftText");
+                if (_draftTa) {
+                  _draftTa.value = d.text || "";
+                  autoSizeDraftTextarea(_draftTa);
+                }
+                // Mobile mirror — #emDraftText doesn't exist on mobile
+                // until renderDetail runs; write to #mComposerTextarea
+                // independently so mobile shows the cached text.
+                if (window.IS_MOBILE) {
+                  const _mta = document.getElementById("mComposerTextarea");
+                  if (_mta) {
+                    _mta.value = d.text || "";
+                    if (typeof mAutoGrow === "function") mAutoGrow(_mta);
+                    const _send = document.getElementById("mComposerSend");
+                    if (_send) _send.disabled = !((_mta.value || "").trim());
+                  }
+                }
+                try { renderAiDraftCard(d); } catch (e) { console.warn("renderAiDraftCard:", e.message); }
+                if (window.IS_MOBILE && typeof window.mShowAiDraftCard === "function") {
+                  try { window.mShowAiDraftCard(d); } catch (e) { console.warn("mShowAiDraftCard:", e.message); }
+                }
+                // Restore the button + token-counter UI we set above.
+                allBtns.forEach(b => { b.disabled = false; });
+                if (primaryLabel && primaryOriginalLabel) primaryLabel.textContent = primaryOriginalLabel;
+                if (tc) tc.innerHTML = "";
+                if (body && (body.querySelector(".spinner") || body.querySelector(".em-ai-meta"))) {
+                  // Replace the "thinking" body with the rendered draft
+                  // card body so the operator doesn't see a permanent
+                  // spinner. renderAiDraftCard above already wrote the
+                  // real content; if it didn't (no element), clear the
+                  // transient state.
+                  // No-op: renderAiDraftCard handles emAiCardBody when
+                  // present.
+                }
+                toast("Loaded existing AI draft (no AI cost)");
+                return;
+              }
+            }
+          }
+        } catch (e) {
+          // Cache check failed — log and fall through to the real AI
+          // call. We never want a cache failure to block generation.
+          console.warn("[generateAiDraft] cache check failed:", e.message);
+        }
       }
 
       try {
