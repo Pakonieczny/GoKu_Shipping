@@ -15624,7 +15624,30 @@
       mShowScreen("conv");
       mRenderConv(); // first paint with whatever's in state.messages already
       // Trigger a fresh fetch
-      if (typeof fetchMessagesNow === "function") fetchMessagesNow(threadId);
+      // v5.21 — Chain language detection AFTER fetchMessagesNow resolves.
+      // Pre-v5.21 we fired detection immediately after renderDetail,
+      // but state.messages was still the PREVIOUS thread's contents (or
+      // empty on first open) at that moment because fetchMessagesNow is
+      // async. maybeAutoDetectCustomerLanguage reads state.messages
+      // directly and bails when there are no inbound messages — so on
+      // mobile, detection ran against stale/empty data and either
+      // returned silently or detected the WRONG customer's language.
+      // The chain ensures messages are loaded first.
+      if (typeof fetchMessagesNow === "function") {
+        fetchMessagesNow(threadId).then(() => {
+          // Bail if the operator switched threads while the fetch was
+          // in flight — running detection against a thread we no longer
+          // care about would be wasteful (and could overwrite the
+          // current thread's customerLanguage).
+          if (state.selectedId !== threadId) return;
+          const tNow = state.threads && state.threads.find(x => x && x.id === threadId);
+          if (tNow && typeof maybeAutoDetectCustomerLanguage === "function") {
+            return maybeAutoDetectCustomerLanguage(tNow);
+          }
+        }).catch((e) => {
+          console.warn("[mobile] fetch+detect chain failed:", e.message);
+        });
+      }
       // v5.1 — Start the 4s message poller so newer messages arriving
       // while the operator has the thread open actually appear. Without
       // this, mobile only sees whatever was in state.messages at open
@@ -15686,24 +15709,12 @@
         }
       }
 
-      // v5.20 — Trigger customer-language auto-detect on mobile thread
-      // open, mirroring desktop's openThread (line 9184). Pre-v5.20 only
-      // the desktop openThread fired detection; mOpenThread's renderDetail
-      // call did NOT cascade into maybeAutoDetectCustomerLanguage because
-      // setupTranslateBar (which runs from renderDetail) only updates the
-      // bar UI — it doesn't kick off detection. Result: on mobile, the
-      // customerLanguage was never auto-set, the mobile picker stayed at
-      // "Auto-detect", and the Translate-reply button hard-failed with
-      // "Pick a language first" because the picker was still on "auto"
-      // and there was no customerLanguage to fall back to.
-      //
-      // Fire-and-forget — detection is async (1-2 seconds). The picker
-      // updates via _syncMobileLangPicker when detection resolves.
-      if (t && typeof maybeAutoDetectCustomerLanguage === "function") {
-        maybeAutoDetectCustomerLanguage(t).catch((e) => {
-          console.warn("[mobile] language auto-detect failed:", e.message);
-        });
-      }
+      // v5.20 → v5.21 — Detection now runs after fetchMessagesNow
+      // resolves (see the .then() chain above). The standalone immediate
+      // call here was racing against fetchMessagesNow and bailing on
+      // empty state.messages, which is why the mobile picker stayed at
+      // "Auto-detect" even though the on-thread-open path was being
+      // executed.
     }
 
     // ── Summary cache watcher ────────────────────────────────────
@@ -15992,8 +16003,13 @@
       // (count + last-message-id + last-message-timestamp). Skip the
       // innerHTML write if it matches what we last rendered. Eliminates
       // even the brief paint pulse when nothing has actually changed.
+      // v5.21 — Include translateView in the signature so toggling
+      // auto-translate (which doesn't change message ids/timestamps,
+      // only what we render for each) actually triggers a re-render.
+      // Without this, switching translate ON/OFF would be a no-op
+      // visually until a new message arrived.
       const lastMsg = _sortedMsgs[_sortedMsgs.length - 1] || {};
-      const sig = _sortedMsgs.length + "|" + (lastMsg.id || "") + "|" + _msToInt(lastMsg);
+      const sig = _sortedMsgs.length + "|" + (lastMsg.id || "") + "|" + _msToInt(lastMsg) + "|" + (state.translateView ? "tx" : "raw");
       if (list.dataset.lastSig === sig) return;
       list.dataset.lastSig = sig;
 
@@ -16001,7 +16017,18 @@
         const dir = m.direction === "outbound" ? "outbound" : "inbound";
         const fromName = dir === "outbound" ? (m.employeeName || "You") : (t.customerName || t.etsyUsername || "Customer");
         const time = mFmtThreadTime(m.timestamp || m.createdAt);
-        const text = m.text || m.body || "";
+        // v5.21 — When the auto-translate-conversation toggle is on
+        // (state.translateView=true), look up an English translation
+        // for this message in state.translatedTexts. Falls back to the
+        // raw text if no translation is available (translate batch
+        // failed, message arrived after batch, etc.) so the operator
+        // never sees a blank bubble. Match desktop's renderThreadMessages
+        // pattern at line 12729.
+        let text = m.text || m.body || "";
+        if (state.translateView && state.translatedTexts) {
+          const tx = state.translatedTexts.get(m.id) || state.translatedTexts.get(m.messageId);
+          if (tx) text = tx;
+        }
         let imgsHtml = "";
         if (Array.isArray(m.imageUrls) && m.imageUrls.length) {
           const thumbs = (Array.isArray(m.thumbnailUrls) && m.thumbnailUrls.length) ? m.thumbnailUrls : m.imageUrls;
@@ -17006,16 +17033,43 @@
           }
         }
         // Reflect any prior auto-translate state if it was set elsewhere.
+        // v5.21 — Source of truth is state.translateView, not the
+        // (deprecated) #emAutoTranslateToggle checkbox. The toggle
+        // visual reflects whether the convo is currently being shown
+        // in translated form.
         const tgl = document.getElementById("mToggleAuto");
-        const desktopAuto = document.getElementById("emAutoTranslateToggle");
-        if (tgl && desktopAuto) tgl.classList.toggle("on", !!desktopAuto.checked);
+        if (tgl) tgl.classList.toggle("on", !!state.translateView);
         mOpenSheet();
       });
-      document.getElementById("mToggleAuto").addEventListener("click", () => {
-        document.getElementById("mToggleAuto").classList.toggle("on");
-        // Mirror to desktop's auto-translate toggle if present
-        const desktopAuto = document.getElementById("emAutoTranslateToggle");
-        if (desktopAuto) desktopAuto.checked = document.getElementById("mToggleAuto").classList.contains("on");
+      // v5.21 — Auto-translate-conversation toggle. Pre-v5.21 this only
+      // flipped its own visual state and mirrored to a desktop checkbox
+      // that has no behavioral side effect. The actual translation work
+      // lives in toggleAutoTranslateConvo() — which translates every
+      // message in the thread to English in parallel, populates
+      // state.translatedTexts, and calls renderThreadMessages (desktop)
+      // / mNotifyMessagesChanged (mobile, after the v5.21 mRenderMessages
+      // update) to re-paint with translated content.
+      document.getElementById("mToggleAuto").addEventListener("click", async () => {
+        const tgl = document.getElementById("mToggleAuto");
+        if (typeof toggleAutoTranslateConvo !== "function") return;
+        // Visually pre-flip so the operator sees instant feedback while
+        // the parallel translate batch runs (3-15s for long threads).
+        // toggleAutoTranslateConvo will reconcile the visual to the
+        // actual state.translateView when it finishes.
+        try {
+          await toggleAutoTranslateConvo();
+        } catch (e) {
+          if (typeof toast === "function") toast("Translate failed: " + (e.message || String(e)));
+        }
+        // Reflect the resolved state.translateView back to the toggle
+        // visual — toggleAutoTranslateConvo updates desktop's chip but
+        // doesn't know about the mobile toggle.
+        if (tgl) tgl.classList.toggle("on", !!state.translateView);
+        // Trigger a mobile re-render so translated message bubbles
+        // appear (or disappear when toggling off).
+        if (typeof window.mNotifyMessagesChanged === "function") {
+          window.mNotifyMessagesChanged();
+        }
       });
       document.getElementById("mSheetTranslateBtn").addEventListener("click", async () => {
         mCloseSheet();
