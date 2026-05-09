@@ -2,6 +2,19 @@
 <html>
 <head>
   <meta charset="UTF-8">
+  <!-- v5.7 — Viewport meta. Without this, mobile browsers default to
+       a virtual viewport of ~980px CSS pixels, regardless of the
+       actual phone screen size. That breaks ALL of our @media width
+       queries: a 393px-wide iPhone reports as 980px, hits the
+       (min-width: 600px) "wide mobile" block, gets 18px fonts, and
+       the browser then zooms the whole page out to fit the physical
+       screen — making everything tiny.
+       
+       With width=device-width, the browser reports the real screen
+       width (393px on iPhone Pro, 884px on fold open, etc.), so our
+       (max-width: 599px) "narrow mobile" block correctly fires on
+       phones and (min-width: 600px) fires on fold-open / tablet. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>EtsyMail — Operator Inbox</title>
 
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css">
@@ -14659,6 +14672,25 @@
       // update the (hidden) desktop UI. That's fine — it's a no-op for
       // the user since desktop UI is hidden on mobile.
       state.selectedId = threadId;
+
+      // v5.7 — Clear both composer textareas and the AI indicator chip
+      // before the thread switch resolves. Reason: hydrateAiDraft
+      // (called below) only writes to #emDraftText if it's currently
+      // empty (the `!ta.value.trim()` guard at line ~11538). Without
+      // this clear, switching from thread A to B would leave thread
+      // A's text in #emDraftText, hydrateAiDraft would skip the write
+      // for thread B, and the mNotifyDraftChanged mirror that follows
+      // it would never fire — leaving the mobile textarea stuck on
+      // thread A's text (or empty), even though the AI indicator
+      // chip would still appear because it's set unconditionally.
+      // On desktop this isn't an issue: openThread → renderDetail
+      // wipes #emDetail.innerHTML, recreating the textarea fresh.
+      // On mobile we don't run renderDetail, so we clear manually.
+      const _desktopTa = document.getElementById("emDraftText");
+      const _mobileTa  = document.getElementById("mComposerTextarea");
+      if (_desktopTa) _desktopTa.value = "";
+      if (_mobileTa)  _mobileTa.value  = "";
+      if (typeof mHideAiIndicator === "function") mHideAiIndicator();
 
       // v5.4 — Mark the thread read. Two parts:
       //   (a) Optimistic local update: flip t.unread to false in
