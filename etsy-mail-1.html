@@ -4990,7 +4990,29 @@
       // funnel folder catches AI-replied and pending-customer threads
       // alike. The auto-replied state is communicated via a rail pill.
       { id: "sales_active",         label: "Sales — Active", icon: "trending_up",
-        status: ["sales_active", "sales_discovery", "sales_spec", "sales_quote", "sales_revision", "sales_pending_close_approval"] },
+        status: ["sales_active", "sales_discovery", "sales_spec", "sales_quote", "sales_revision", "sales_pending_close_approval"],
+        // ─── v5.23 — Dynamic intent-based exclusion ──────────────────────
+        // The thread-status set above reflects what the BACKEND tracks
+        // for sales-funnel routing — once a thread enters the funnel,
+        // the auto-pipeline keeps it stateful so the sales agent can
+        // continue engaging across short / ambiguous replies (see
+        // etsyMailAutoPipeline-background.js comment around line 1040).
+        // That's correct for the AI's routing decisions, but produces
+        // a UX wart: a thread whose latest inbound the intent
+        // classifier confidently calls something OTHER than sales_lead
+        // (e.g. "post-purchase" when the customer asks about shipping
+        // after their order is paid for) keeps showing up in this
+        // folder even though the operator no longer thinks of it as
+        // an active sale.
+        //
+        // Frontend fix: filter the folder by the AI's CURRENT intent.
+        // Threads classified at high confidence as anything NOT in
+        // intentAllowlist get hidden from this folder — they remain
+        // accessible in "All" and still keep their sales status, so
+        // the backend's sales-agent routing is unaffected. Only the
+        // visual placement changes.
+        intentAllowlist: ["sales_lead"],
+        intentConfidenceThreshold: 0.85 },
       // ─── v4.3 — Completed Sales ────────────────────────────────────────
       // Folder membership is keyed off salesCompletedAt (set ONCE by the
       // listing-creator worker on success, never overwritten by any other
@@ -8516,6 +8538,48 @@
       // Then: message-type filter, date filter, date sort.
       let filtered = state.threads.slice();
 
+      // v5.23 — Per-folder intent allowlist filter.
+      //
+      // Each RAIL_FILTERS entry MAY declare:
+      //   intentAllowlist            : array of allowed intent classifications
+      //   intentConfidenceThreshold  : confidence above which the
+      //                                classification is trusted enough to
+      //                                evict the thread (default 0.85)
+      //
+      // If the active filter declares an allowlist, we hide threads whose
+      // CURRENT intent classification is high-confidence and not in the
+      // allowlist. Threads with no classification, or low-confidence
+      // classifications we shouldn't trust to evict, stay visible — better
+      // a false-include than a false-exclude (operator can find them; an
+      // evicted thread is invisible).
+      //
+      // The thread doc is unchanged; this is a pure UI filter. Backend
+      // state remains consistent with whatever the auto-pipeline decided.
+      const _activeFilter = (typeof RAIL_FILTERS !== "undefined")
+        ? RAIL_FILTERS.find(f => f.id === state.activeFilterId)
+        : null;
+      let _intentHidden = 0;
+      if (_activeFilter && Array.isArray(_activeFilter.intentAllowlist) && _activeFilter.intentAllowlist.length) {
+        const allow = _activeFilter.intentAllowlist;
+        const threshold = typeof _activeFilter.intentConfidenceThreshold === "number"
+          ? _activeFilter.intentConfidenceThreshold
+          : 0.85;
+        filtered = filtered.filter(t => {
+          const cls = t && t.intentClassification;
+          const conf = (t && typeof t.intentConfidence === "number") ? t.intentConfidence : 0;
+          // No classification, or low-confidence one — keep visible.
+          // Don't evict on a guess; we'd rather show a stale category
+          // than make the thread vanish.
+          if (!cls || conf < threshold) return true;
+          // High-confidence classification: only show if the folder
+          // explicitly allows this intent.
+          const ok = allow.includes(cls);
+          if (!ok) _intentHidden++;
+          return ok;
+        });
+      }
+      state._intentHiddenCount = _intentHidden;
+
       if (q) {
         filtered = filtered.filter(t =>
           (t.searchableText || "").toLowerCase().includes(q) ||
@@ -8594,13 +8658,47 @@
           '</div>';
       }
 
+      // v5.23 — Intent-hidden notice. When the active filter has an
+      // intentAllowlist and one or more threads were excluded from view
+      // because their CURRENT intent classification doesn't match,
+      // show a small in-list banner so the operator knows the count
+      // they see here is smaller than the rail count, and where to
+      // find the hidden ones. The thread isn't gone — it just lives
+      // under "All" now (and still has its sales status, so the
+      // backend's sales-agent routing keeps engaging if appropriate).
+      let intentHiddenBanner = "";
+      if (state._intentHiddenCount > 0 && _activeFilter && _activeFilter.intentAllowlist) {
+        const n = state._intentHiddenCount;
+        intentHiddenBanner =
+          '<div class="em-search-banner" style="background:#fff8eb; border-color:#f0d39a;">' +
+            '<i class="material-icons" style="color:#a06200;">filter_alt</i>' +
+            '<span><b>' + n + '</b> thread' + (n === 1 ? '' : 's') +
+            ' hidden because the AI no longer classifies ' + (n === 1 ? 'it' : 'them') +
+            ' as ' + esc(_activeFilter.label.toLowerCase()) + '. ' +
+            '<a href="#" data-intent-hidden-link="all" style="color:#0066cc; text-decoration:underline;">View in All</a>.' +
+            '</span>' +
+          '</div>';
+      }
+
       if (!filtered.length) {
         const hint = (q || mtf !== "all" || df !== "all")
           ? (state.searchMode
               ? `No threads match <b>"${esc(q)}"</b>.<br><span class="em-muted">Try a shorter or different query, or click <b>reset</b>.</span>`
               : "No threads match the current filters.<br><span class=\"em-muted\">Click <b>reset</b> to clear filters.</span>")
           : `No threads in this view.<br><span class="em-muted">Use <b>New (test)</b> in the top bar to seed one.</span>`;
-        host.innerHTML = searchBanner + `<div class="em-list-empty">${hint}</div>`;
+        host.innerHTML = searchBanner + intentHiddenBanner + `<div class="em-list-empty">${hint}</div>`;
+        // v5.23 — Wire the "View in All" link if the intent banner was rendered.
+        const _emptyIntentLink = host.querySelector('[data-intent-hidden-link="all"]');
+        if (_emptyIntentLink) {
+          _emptyIntentLink.addEventListener("click", (e) => {
+            e.preventDefault();
+            state.activeFilterId = "all";
+            state.threadListPage = 1;
+            if (state.selectionMode) exitSelectionMode();
+            renderRail();
+            fetchThreadListNow().catch(err => console.warn("[v5.23 view-in-all]", err.message));
+          });
+        }
         renderPagination(0);
         return;
       }
@@ -8621,7 +8719,7 @@
       const pageSlice = filtered.slice(startIdx, endIdx);
 
       const sel = state.selectionMode;
-      host.innerHTML = searchBanner + pageSlice.map(t => {
+      host.innerHTML = searchBanner + intentHiddenBanner + pageSlice.map(t => {
         const selected = state.selectedId === t.id ? " selected" : "";
         const unread   = t.unread ? " unread" : "";
         const checked  = state.checkedIds.has(t.id) ? " checked" : "";
@@ -8854,6 +8952,21 @@
           </div>`;
       }).join("");
 
+      // v5.23 — Wire the "View in All" link in the intent-hidden banner.
+      // Switches the active filter to "all" so the operator can see the
+      // threads that were excluded from this folder.
+      const intentLink = host.querySelector('[data-intent-hidden-link="all"]');
+      if (intentLink) {
+        intentLink.addEventListener("click", (e) => {
+          e.preventDefault();
+          state.activeFilterId = "all";
+          state.threadListPage = 1;
+          if (state.selectionMode) exitSelectionMode();
+          renderRail();
+          fetchThreadListNow().catch(err => console.warn("[v5.23 view-in-all]", err.message));
+        });
+      }
+
       host.querySelectorAll(".em-list-item").forEach(el => {
         const id = el.dataset.id;
         // Checkbox: toggle without opening the thread
@@ -8861,8 +8974,7 @@
         if (checkbox) {
           checkbox.addEventListener("click", (e) => e.stopPropagation());
           checkbox.addEventListener("change", () => toggleChecked(id));
-        }
-        el.addEventListener("click", (e) => {
+        }        el.addEventListener("click", (e) => {
           if (state.selectionMode) {
             // In selection mode, clicks anywhere on the row toggle the box
             if (e.target !== checkbox) toggleChecked(id);
@@ -12175,15 +12287,29 @@
     // rest of the app uses (employee_name or employee_id). Falls back
     // to null, which the backend handles with a generic signature.
     function getEmployeeName() {
-      // v4.1 — Prefer the logged-in user's display name. The session
-      // token in localStorage is the canonical source of identity now;
-      // legacy `employee_name` / `etsymail_operator` keys remain as a
-      // fallback for any thread that hasn't been touched since the
-      // auth migration. Backend endpoints will eventually derive `actor`
-      // from the session token directly (Phase 2), at which point this
-      // helper becomes purely cosmetic.
-      if (state && state.currentUser && state.currentUser.displayName) {
-        return state.currentUser.displayName;
+      // v5.23 — Returns the operator's USERNAME (the EtsyMail_Operators
+      // doc ID), not their displayName. The backend's role checks
+      // (requireOwner / requireAnyRole in _etsyMailRoles.js) look up
+      // EtsyMail_Operators/{actor} where actor is exactly this value,
+      // and that doc is keyed by username. Sending displayName here
+      // means owner-only operations like deleteThread, configure
+      // Gmail watcher, edit collateral, etc. all return
+      // "Owner role required" because the doc lookup misses on the
+      // wrong key — even when state.currentUser.role === "owner".
+      //
+      // History: pre-v4.1 this read username from localStorage
+      // (working). v4.1 prefer-displayName change broke the actor
+      // flow. v4.1.1 patched the role-badge UI to read currentUser
+      // directly, but missed the dozens of `actor: getEmployeeName()`
+      // call sites which kept sending displayName. v5.23 closes the
+      // remaining gap by reverting the function to its actor-key
+      // semantics.
+      //
+      // For UI display ("Signed in as <Name>"), read
+      // state.currentUser.displayName directly — this helper is now
+      // strictly an actor-id provider.
+      if (state && state.currentUser && state.currentUser.username) {
+        return state.currentUser.username;
       }
       try {
         return localStorage.getItem("etsymail_session_user") ||
@@ -15440,6 +15566,25 @@
           if ((t.lastInboundPreview || "").toLowerCase().includes(q)) return true;
           if (t.linkedOrderId && String(t.linkedOrderId).includes(q)) return true;
           return false;
+        });
+      }
+
+      // 2b. v5.23 — Per-folder intent allowlist filter (mirrors desktop's
+      // renderThreadList). When the active filter declares an
+      // intentAllowlist, hide threads whose CURRENT intent classification
+      // is high-confidence and not in the allowlist. The thread doc is
+      // unchanged — backend keeps routing it via its (sticky) status;
+      // only the visual placement changes.
+      if (filter && Array.isArray(filter.intentAllowlist) && filter.intentAllowlist.length) {
+        const allow = filter.intentAllowlist;
+        const threshold = typeof filter.intentConfidenceThreshold === "number"
+          ? filter.intentConfidenceThreshold
+          : 0.85;
+        threads = threads.filter(t => {
+          const cls = t && t.intentClassification;
+          const conf = (t && typeof t.intentConfidence === "number") ? t.intentConfidence : 0;
+          if (!cls || conf < threshold) return true;
+          return allow.includes(cls);
         });
       }
 
