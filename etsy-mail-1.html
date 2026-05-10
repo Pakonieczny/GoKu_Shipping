@@ -4620,6 +4620,23 @@
       <button class="em-gmail-pull" id="emGmailPullBtn" title="Pull new Etsy notification emails right now" disabled>
         <i class="material-icons">cloud_download</i>Pull now
       </button>
+      <!-- v5.26 — Deep Pull. The regular "Pull now" does an INCREMENTAL
+           scan respecting the watermark, which is useless if the
+           watermark already advanced past an orphaned email (e.g. a
+           transient extraction failure caused the email to be skipped
+           and the watermark advanced past it anyway). Deep Pull does
+           three things at once that no other button does:
+             1. mode:"full" — wipes the watermark for this run only
+             2. windowDays:1 — re-scans the last 24h of Gmail
+             3. query:"from:etsy.com" — overrides any pinned GMAIL_QUERY
+                env var, in case it's been narrowed to a single sender
+           Use this when emails are visibly in Gmail but missing from
+           the inbox. -->
+      <button class="em-gmail-pull" id="emGmailDeepPullBtn"
+              title="DEEP PULL: re-scan the last 24 hours of Gmail with a wide query (from:etsy.com). Use this if regular Pull isn't finding emails that are visibly in your Gmail. Doesn't disturb the running watermark — only fills gaps." disabled
+              style="background:#fff5f5;">
+        <i class="material-icons">refresh</i>Deep Pull (24h)
+      </button>
       <button id="emRefreshBtn" title="Refresh now"><i class="material-icons">refresh</i>Refresh</button>
       <button id="emPurgeFolderBtn" class="em-purge-folder-btn" title="Empty the currently active folder — moves every thread out of it back to Needs review">
         <i class="material-icons">delete_sweep</i><span id="emPurgeFolderLabel">Empty folder</span>
@@ -13825,9 +13842,36 @@
             meta.textContent  = String(lastErr).slice(0, 40);
           } else {
             label.textContent = enabled ? "Gmail: on" : "Gmail: off";
+            // v5.26 — Show skip count alongside scanned/enqueued so
+            // operators can see when emails ARE being seen but the
+            // extractor is failing. "scanned 47 · enqueued 0 · skipped 47"
+            // tells a very different story than "scanned 0".
+            const skipped = sync.lastSyncSkippedNoLink || 0;
+            const baseStr = `last ${fmtAgo(sync.lastSyncCompletedAt)} · scanned ${sync.lastSyncMessagesScanned} · enqueued ${sync.lastSyncJobsEnqueued}`;
             meta.textContent  = inFlight
               ? "syncing now…"
-              : `last ${fmtAgo(sync.lastSyncCompletedAt)} · scanned ${sync.lastSyncMessagesScanned} · enqueued ${sync.lastSyncJobsEnqueued}`;
+              : skipped > 0 ? `${baseStr} · skipped ${skipped}` : baseStr;
+          }
+
+          // v5.26 — Surface the actual query being used in the pill's
+          // tooltip. Operators can hover to see whether the new broad
+          // query is in effect or whether GMAIL_QUERY env var is still
+          // pinning the narrow one.
+          if (sync.lastSyncQuery) {
+            const tipParts = ["Query: " + String(sync.lastSyncQuery)];
+            if (sync.lastInternalDateMs) {
+              const wm = new Date(sync.lastInternalDateMs);
+              tipParts.push("Watermark: " + wm.toLocaleString());
+            }
+            if (typeof sync.lastSyncDurationMs === "number") {
+              tipParts.push("Duration: " + sync.lastSyncDurationMs + "ms");
+            }
+            if (sync.lastSyncSkippedAlreadyProcessed) {
+              tipParts.push("Already-processed: " + sync.lastSyncSkippedAlreadyProcessed);
+            }
+            pill.title = tipParts.join(" · ");
+          } else {
+            pill.title = "Gmail watcher status";
           }
 
           // Toggle button — only owners can flip it.
@@ -13853,6 +13897,18 @@
             : inFlight
               ? "A sync is already in progress…"
               : "Pull new Etsy notification emails from Gmail right now";
+
+          // v5.26 — Deep Pull mirrors the same enable conditions.
+          const deepBtn = document.getElementById("emGmailDeepPullBtn");
+          if (deepBtn) {
+            deepBtn.disabled = !oauthOk || inFlight;
+            deepBtn.classList.toggle("spinning", inFlight);
+            deepBtn.title = !oauthOk
+              ? "OAuth tokens not seeded yet — seed them first"
+              : inFlight
+                ? "A sync is already in progress…"
+                : "DEEP PULL: re-scan the last 24 hours of Gmail with a wide query (from:etsy.com). Use this if regular Pull isn't finding emails that are visibly in your Gmail.";
+          }
 
         } catch (err) {
           console.warn("[gmail-panel] refresh failed:", err.message);
@@ -13964,6 +14020,72 @@
           await refreshGmailPanel();
         }
       });
+
+      // v5.26 — Deep Pull handler. Three explicit overrides so it
+      // works regardless of what backend version is deployed or what
+      // GMAIL_QUERY env var the operator has set:
+      //   - mode: "full"            → wipes watermark for this run
+      //   - windowDays: 1           → re-scans the last 24h
+      //   - query: "from:etsy.com"  → broad query, catches every
+      //                               sender at etsy.com or any
+      //                               subdomain (overrides any
+      //                               narrower pinned env var)
+      // Confirms with the operator first since it's a heavier action
+      // than Pull now (potentially 100s of emails to extract).
+      const deepBtn = $("emGmailDeepPullBtn");
+      if (deepBtn) {
+        deepBtn.addEventListener("click", async () => {
+          if (deepBtn.disabled) return;
+          const ok = confirm(
+            "Deep Pull will re-scan the last 24 HOURS of Gmail with a broad query " +
+            "(from:etsy.com). Use this when emails are visibly in Gmail but missing " +
+            "from the inbox.\n\n" +
+            "It does NOT advance the watermark, so the regular Pull-now schedule is undisturbed. " +
+            "Already-linked emails are skipped (idempotent). Any orphaned emails get processed " +
+            "and enqueued for scraping.\n\n" +
+            "This may take 1-3 minutes to complete. Continue?"
+          );
+          if (!ok) return;
+          deepBtn.disabled = true;
+          deepBtn.classList.add("spinning");
+          try {
+            const res = await gmailApi("etsyMailGmail?action=trigger", {
+              method: "POST",
+              body  : JSON.stringify({
+                mode: "full",
+                windowDays: 1,
+                query: "from:etsy.com"
+              })
+            });
+            const data = await res.json();
+            if (!res.ok) {
+              throw new Error(data.error || `HTTP ${res.status}`);
+            }
+            // The trigger endpoint returns 202 immediately; the actual
+            // background sync runs for up to 15 min. Poll the status
+            // panel for ~2 minutes so the operator sees the running /
+            // completed state without manual refresh.
+            toast("Deep Pull started — scanning last 24h of Gmail. This may take 1-3 min.");
+            for (let i = 0; i < 60; i++) {
+              await new Promise(r => setTimeout(r, 2000));
+              await refreshGmailPanel();
+              const meta = $("emGmailMeta");
+              if (meta && !/syncing now/.test(meta.textContent)) {
+                // Sync finished — show how many were enqueued in the toast.
+                const summary = (meta.textContent || "").trim();
+                toast("Deep Pull complete · " + summary, true);
+                break;
+              }
+            }
+          } catch (err) {
+            alert("Deep Pull failed: " + err.message);
+          } finally {
+            deepBtn.classList.remove("spinning");
+            deepBtn.disabled = false;
+            await refreshGmailPanel();
+          }
+        });
+      }
 
       // Expose refreshGmailPanel to the module-scope settings-modal code
       // so saveGmailPullFromCursor() can re-render the topbar pill after
@@ -15256,15 +15378,25 @@
       const nameEl  = document.getElementById("mOpName");
       const roleEl  = document.getElementById("mOpRole");
       if (!strip) return;
+      // v5.27 — Always hide. Operators reported the strip wasted vertical
+      // space on the list screen (which is the only place it ever rendered
+      // anyway). The same identity info — display name and role — is
+      // available in the hamburger drawer (mDrawer) and on the Settings
+      // screen, so showing it here too was duplicate chrome eating
+      // pixels above-the-fold on small phones.
+      //
+      // The function still exists (and is called from mNotifyAuthChanged
+      // and mUpdateAppbar) so we don't break the call sites; it's now
+      // a no-op that just ensures the strip stays hidden if any prior
+      // render set display="".
+      strip.style.display = "none";
+      // Keep the name/role text current in case future code surfaces
+      // the strip again (e.g. an operator-switching modal). Cheap.
       const u = state.currentUser;
-      // Hide if not signed in OR not on the list screen
-      if (!u || mState.currentScreen !== "list") {
-        strip.style.display = "none";
-        return;
+      if (u) {
+        if (nameEl) nameEl.textContent = u.displayName || u.username || "Signed in";
+        if (roleEl) roleEl.textContent = state.isOwner ? "Owner" : "Operator";
       }
-      strip.style.display = "";
-      if (nameEl) nameEl.textContent = u.displayName || u.username || "Signed in";
-      if (roleEl) roleEl.textContent = state.isOwner ? "Owner" : "Operator";
     }
     window.mUpdateOperatorStrip = mUpdateOperatorStrip;
 
