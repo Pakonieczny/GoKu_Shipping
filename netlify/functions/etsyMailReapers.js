@@ -179,7 +179,14 @@ const SCRAPE_UNKNOWN_GRACE_MS = 2 * 60 * 1000;
 // Mirrors MAX_ATTEMPTS in etsyMailJobs.js. If they ever diverge, jobs
 // could get stuck in a loop where the reaper keeps requeueing past the
 // extension's max-attempts threshold. Keep aligned.
-const MAX_SCRAPE_ATTEMPTS = 3;
+//
+// v0.9.17 — Raised from 3 to 10 in lockstep with MAX_ATTEMPTS in
+// etsyMailJobs.js. See the comment there for the full rationale.
+// Short version: 3 was hit too easily on legitimate transient
+// failures (offline mid-scrape cycles, Etsy hiccups, ad-blocker
+// glitches), and a "failed" job is permanently lost from the
+// pipeline — no retry, no message, no record in the inbox.
+const MAX_SCRAPE_ATTEMPTS = 10;
 
 // Defense-in-depth caps per invocation. The 30s scheduled-function
 // budget is plenty for these numbers; the cap is mainly to prevent a

@@ -17052,19 +17052,43 @@
       document.getElementById("mToggleAuto").addEventListener("click", async () => {
         const tgl = document.getElementById("mToggleAuto");
         if (typeof toggleAutoTranslateConvo !== "function") return;
-        // Visually pre-flip so the operator sees instant feedback while
-        // the parallel translate batch runs (3-15s for long threads).
-        // toggleAutoTranslateConvo will reconcile the visual to the
-        // actual state.translateView when it finishes.
+        // v5.22 — Actually pre-flip the toggle for instant visual
+        // feedback. v5.21's "pre-flip" comment was a lie — the code
+        // awaited toggleAutoTranslateConvo BEFORE updating the visual,
+        // so the toggle sat motionless for 3-15 seconds while the
+        // parallel translate batch ran. To the operator that looked
+        // identical to a broken toggle.
+        //
+        // Now: flip the class immediately to whatever the OPPOSITE of
+        // the current state.translateView is (which is what
+        // toggleAutoTranslateConvo will eventually settle on), show a
+        // "Translating…" toast so they know work is happening, await
+        // the actual translate, then reconcile in case toggle failed.
+        const turningOn = !state.translateView;
+        if (tgl) tgl.classList.toggle("on", turningOn);
+        if (turningOn && typeof toast === "function") {
+          toast("Translating conversation…", 30000);
+        }
         try {
           await toggleAutoTranslateConvo();
         } catch (e) {
           if (typeof toast === "function") toast("Translate failed: " + (e.message || String(e)));
         }
-        // Reflect the resolved state.translateView back to the toggle
-        // visual — toggleAutoTranslateConvo updates desktop's chip but
-        // doesn't know about the mobile toggle.
+        // Reconcile — if toggleAutoTranslateConvo rejected (or did
+        // something unexpected), the visual would be wrong without
+        // this. state.translateView is the source of truth.
         if (tgl) tgl.classList.toggle("on", !!state.translateView);
+        // Clear the "Translating…" toast by replacing it with a
+        // completion toast. toast() clears the previous timer and
+        // displays the new message immediately.
+        if (typeof toast === "function") {
+          if (state.translateView) {
+            toast(`Translated ${(state.translatedTexts || new Map()).size} message${(state.translatedTexts || new Map()).size === 1 ? "" : "s"} to English`);
+          }
+          // toggle-OFF path: toggleAutoTranslateConvo already returns
+          // synchronously (no async work), so no need for a "done"
+          // toast — the visual flip is enough feedback.
+        }
         // Trigger a mobile re-render so translated message bubbles
         // appear (or disappear when toggling off).
         if (typeof window.mNotifyMessagesChanged === "function") {
@@ -17117,6 +17141,13 @@
         }
         try {
           if (typeof callTranslate === "function") {
+            // v5.22 — Loading toast so the operator knows work is
+            // happening. callTranslate takes 2-8 seconds depending on
+            // text length; without feedback the sheet just closes and
+            // there's silence until the preview pane suddenly populates.
+            // Operators were tapping the button repeatedly thinking
+            // nothing was happening.
+            if (typeof toast === "function") toast("Translating reply…", 30000);
             const translated = await callTranslate(text, lang, null);
             // Write into desktop's composerTranslation slot — sendViaEtsy
             // checks this and uses translated text if present.
@@ -17126,6 +17157,7 @@
             state.composerTranslation = { source: text, translated, lang };
             // Trigger our own UI update via the hook
             window.mNotifyTranslationChanged();
+            if (typeof toast === "function") toast("Translated to " + (langDisplayName ? langDisplayName(lang) : lang));
           }
         } catch (e) {
           if (typeof toast === "function") toast("Translate failed: " + e.message);
@@ -17157,6 +17189,9 @@
           }
           try {
             if (typeof callTranslate !== "function") return;
+            // v5.22 — Loading toast so the operator sees feedback while
+            // callTranslate runs.
+            if (typeof toast === "function") toast("Translating to English for review…", 30000);
             const translated = await callTranslate(text, "en", null);
             // Use a SEPARATE state slot from composerTranslation so
             // sendViaEtsy never picks this up as the outbound payload.
@@ -17164,6 +17199,7 @@
             state.composerTranslation = null;  // ensure no outbound mix-up
             // Render the preview pane in review mode (different label).
             window.mNotifyTranslationChanged();
+            if (typeof toast === "function") toast("English review — composer text is unchanged and will be sent as-is.");
           } catch (e) {
             if (typeof toast === "function") toast("Translate failed: " + e.message);
           }

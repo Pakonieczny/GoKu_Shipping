@@ -25,7 +25,16 @@ const FV = admin.firestore.FieldValue;
 
 const JOBS_COLL  = "EtsyMail_Jobs";
 const AUDIT_COLL = "EtsyMail_Audit";
-const MAX_ATTEMPTS = 3;
+// v0.9.17 — Raised from 3 to 10. The previous ceiling was hit too easily
+// when the operator's machine cycles through power-offs mid-scrape:
+// every reaper-recovered claim re-increments attempts in claimNextJob's
+// transaction (see ./etsyMailReapers.js subsweep A), which conflated
+// "infrastructure recovery from a stuck claim" with "actual scrape
+// failures". Three offline shutdowns mid-scrape was enough to mark the
+// job permanently failed and lose the message. 10 gives substantial
+// headroom for both transient Etsy/network errors AND multiple
+// machine-down cycles before we permanently give up.
+const MAX_ATTEMPTS = 10;
 
 function json(statusCode, body) { return { statusCode, headers: CORS, body: JSON.stringify(body) }; }
 function bad(msg, code = 400)    { return json(code, { error: msg }); }
@@ -60,14 +69,35 @@ async function claimNextJob(workerId, jobTypes) {
         const data = fresh.data();
         if (data.status !== "queued") return null;  // somebody else got it
 
+        // v0.9.17 — Don't double-count reaper-recovered claims.
+        //
+        // BEFORE: every claim incremented attempts unconditionally. So
+        // the cycle "claim → operator powers off mid-scrape → reaper
+        // requeues 5 min later → claim again → increment" burned an
+        // attempt every machine-down cycle, NOT just on real scrape
+        // failures. Three power cycles → job marked failed → message
+        // lost.
+        //
+        // NOW: if the doc has lastError starting with "Reaped stuck
+        // claim" (the exact prefix the reaper writes — see
+        // etsyMailReapers.js line 929), don't bump attempts. The
+        // previous claim never reported success/fail; the reaper just
+        // recovered it. Only count attempts that actually got to the
+        // fail/complete API call.
+        const recoveredFromReaper = typeof data.lastError === "string" &&
+                                    data.lastError.startsWith("Reaped stuck claim");
+        const newAttempts = recoveredFromReaper
+          ? (data.attempts || 0)        // unchanged
+          : (data.attempts || 0) + 1;   // real claim → bump
+
         tx.update(ref, {
           status    : "claimed",
           claimedBy : workerId,
           claimedAt : FV.serverTimestamp(),
-          attempts  : (data.attempts || 0) + 1,
+          attempts  : newAttempts,
           updatedAt : FV.serverTimestamp()
         });
-        return { id: ref.id, ...data, status: "claimed", claimedBy: workerId, attempts: (data.attempts || 0) + 1 };
+        return { id: ref.id, ...data, status: "claimed", claimedBy: workerId, attempts: newAttempts };
       });
       if (claimed) return claimed;
     } catch (e) {
