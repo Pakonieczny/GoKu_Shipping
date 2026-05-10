@@ -570,6 +570,91 @@
       border: 2px solid rgba(255,255,255,.35); border-top-color: #fff;
       border-radius: 50%; animation: em-spin .7s linear infinite;
     }
+    /* v5.29 — AI Draft button loading state.
+     *
+     * Desktop: when the AI button has .is-loading, the icon is hidden
+     * and a small spinner takes its place. The label still shows
+     * "Generating…" via the JS path. Visible feedback right at the
+     * click point — operators were clicking and watching the AI card
+     * area instead of the button, then doubting whether the click
+     * registered.
+     *
+     * Mobile: AI button gets a pulsing purple ring around it while
+     * loading. The icon stays in place (recognizable) but pulses with
+     * a soft glow + slow rotation to communicate "working". On mobile
+     * we also surface a "Composing draft…" badge in the existing
+     * mAiIndicator surface, but the in-button animation is the
+     * primary signal at the click location.
+     */
+    .em-ai-btn-spinner {
+      display: inline-block;
+      width: 14px; height: 14px;
+      border: 2px solid rgba(255,255,255,.35);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: em-spin .7s linear infinite;
+      vertical-align: middle;
+    }
+    button#emAiDraftBtn.is-loading .material-icons,
+    button#emAiFollowUpBtn.is-loading .material-icons,
+    button#emReviseBtn.is-loading .material-icons {
+      display: none;
+    }
+    button#emAiDraftBtn.is-loading::before,
+    button#emAiFollowUpBtn.is-loading::before,
+    button#emReviseBtn.is-loading::before {
+      content: "";
+      display: inline-block;
+      width: 14px; height: 14px;
+      margin-right: 6px;
+      border: 2px solid rgba(255,255,255,.35);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: em-spin .7s linear infinite;
+      vertical-align: middle;
+    }
+    /* Mobile AI button — pulsing ring while loading. Icon stays
+     * visible (operators recognize the sparkle); the ring pulses to
+     * say "working". Slower, calmer animation than desktop's spinner
+     * so it doesn't feel frantic on a small screen. */
+    .m-composer-action.ai.is-loading {
+      position: relative;
+      pointer-events: none;
+    }
+    .m-composer-action.ai.is-loading .material-icons {
+      animation: em-ai-pulse-icon 1.2s ease-in-out infinite;
+    }
+    .m-composer-action.ai.is-loading::after {
+      content: "";
+      position: absolute;
+      inset: -3px;
+      border-radius: 50%;
+      border: 2px solid rgba(130, 80, 223, 0.45);
+      border-top-color: #8250df;
+      animation: em-spin 1s linear infinite;
+      pointer-events: none;
+    }
+    @keyframes em-ai-pulse-icon {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50%      { opacity: 0.6; transform: scale(0.9); }
+    }
+    /* Loading indicator that appears in the existing mAiIndicator
+     * surface above the composer. Reuses that real estate so we
+     * don't add another fixed element. */
+    .m-ai-indicator.is-loading {
+      background: linear-gradient(90deg, rgba(130,80,223,0.10), rgba(130,80,223,0.05), rgba(130,80,223,0.10));
+      background-size: 200% 100%;
+      animation: em-ai-shimmer 1.4s ease-in-out infinite;
+      border-color: rgba(130,80,223,0.35);
+    }
+    .m-ai-indicator.is-loading .m-ai-indicator-text {
+      color: #6639ba;
+      font-weight: 500;
+    }
+    @keyframes em-ai-shimmer {
+      0%   { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
     /* v3.7 — Translate controls. Three pieces:
      *   .em-translate-bar  : header strip with toggle + language picker + translate button
      *   .em-translate-preview : side-by-side English-vs-target preview pane
@@ -10141,6 +10226,28 @@
       const primaryOriginalLabel = primaryLabel?.textContent;
 
       allBtns.forEach(b => { b.disabled = true; });
+      // v5.29 — Add .is-loading to the primary button so its CSS
+      // shows a spinner in place of the icon. Only the primary
+      // (whichever AI action was clicked) gets the spinner; the
+      // others are just disabled.
+      if (primaryBtn) primaryBtn.classList.add("is-loading");
+      // Mobile parity: pulse the mActionAi button + show a shimmering
+      // "Composing draft…" badge in the existing mAiIndicator surface.
+      // The indicator text reverts to the standard "AI draft loaded"
+      // when the call completes (or to whatever caller subsequently
+      // sets via mShowAiIndicator).
+      const mAiBtn = document.getElementById("mActionAi");
+      if (mAiBtn) mAiBtn.classList.add("is-loading");
+      const mInd     = document.getElementById("mAiIndicator");
+      const mIndText = document.getElementById("mAiIndicatorText");
+      if (mInd && mIndText) {
+        mInd.style.display = "";
+        mInd.classList.add("is-loading");
+        const verb = mode === "revise"     ? "Revising draft"
+                   : mode === "follow_up"  ? "Composing follow-up"
+                   :                          "Composing draft";
+        mIndText.textContent = verb + "…";
+      }
       if (primaryLabel) primaryLabel.textContent = "Generating…";
 
       // Show transient "thinking" state
@@ -10239,6 +10346,16 @@
                 }
                 // Restore the button + token-counter UI we set above.
                 allBtns.forEach(b => { b.disabled = false; });
+                // v5.29 — Cache-hit early-return path also needs to
+                // clear the loading classes set up in the prologue.
+                // Without this, the spinner spins forever after a
+                // sub-second cache hit because the finally{} block
+                // is skipped.
+                if (primaryBtn) primaryBtn.classList.remove("is-loading");
+                const _mAiBtnHit = document.getElementById("mActionAi");
+                if (_mAiBtnHit) _mAiBtnHit.classList.remove("is-loading");
+                const _mIndHit = document.getElementById("mAiIndicator");
+                if (_mIndHit) _mIndHit.classList.remove("is-loading");
                 if (primaryLabel && primaryOriginalLabel) primaryLabel.textContent = primaryOriginalLabel;
                 if (tc) tc.innerHTML = "";
                 if (body && (body.querySelector(".spinner") || body.querySelector(".em-ai-meta"))) {
@@ -10430,6 +10547,16 @@
         toast("AI error: " + e.message, 4000);
       } finally {
         allBtns.forEach(b => { b.disabled = false; });
+        // v5.29 — Clear loading classes set at the start of the function.
+        if (primaryBtn) primaryBtn.classList.remove("is-loading");
+        const _mAiBtn = document.getElementById("mActionAi");
+        if (_mAiBtn) _mAiBtn.classList.remove("is-loading");
+        const _mInd = document.getElementById("mAiIndicator");
+        if (_mInd) _mInd.classList.remove("is-loading");
+        // The indicator's text and visibility are reset by the success
+        // path (mShowAiIndicator) or by mNotifyDraftChanged. If neither
+        // ran (e.g. exception thrown before the draft was rendered),
+        // leave the indicator hidden — caller can re-show as needed.
         if (primaryLabel && primaryOriginalLabel) primaryLabel.textContent = primaryOriginalLabel;
       }
     }
