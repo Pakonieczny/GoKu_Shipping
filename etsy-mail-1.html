@@ -4923,20 +4923,89 @@
     // "desktop" | unset. Lets a satellite operator force one mode for
     // testing. Set via DevTools — no UI yet.
     const IS_MOBILE = (function detectMobile() {
+      // v5.28 — Multi-layered detection. Pre-v5.28 we had:
+      //
+      //   phoneUA || (isIPad && narrowViewport)
+      //
+      // The phoneUA regex required literal "Mobile" in Android UAs:
+      //   /Android.+Mobile/
+      // which silently failed for:
+      //   - Samsung Internet builds that drop "Mobile"
+      //   - Chrome Android with "Request desktop site" toggled
+      //     inadvertently (sticks across sessions in some Chromes)
+      //   - Newer Android browsers / forks that haven't gotten on
+      //     the user-agent client hints train yet
+      //   - Foldables in their compact mode
+      //
+      // Result: an actual phone fell through to desktop layout. The
+      // operator's screen was 360px wide and the desktop layout's
+      // 1024px+ left/right rails just clipped off the side.
+      //
+      // New layered detection:
+      //   1. Explicit override (URL param or localStorage)
+      //   2. Original phone-UA regex (covers vast majority)
+      //   3. iPad in narrow viewport (modern iPads lie about UA)
+      //   4. Android (any) in narrow viewport — catches the
+      //      Samsung-Internet / desktop-site / fork case
+      //   5. Touch + narrow viewport — last resort for any future
+      //      browser we haven't anticipated
+      //
+      // Each layer is a positive case for "this is a phone-class
+      // device". Falsing on any of them keeps us conservative.
+
+      // Layer 1a — URL param override (?force=mobile or ?force=desktop).
+      // Useful for the operator who landed on the wrong layout on a
+      // device they don't own (loaner phone, customer demo, etc.) and
+      // can't fiddle with localStorage. The param ALSO writes to
+      // localStorage so it sticks across refreshes — operator only
+      // needs to do this once per device.
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const forceQs = params.get("force");
+        if (forceQs === "mobile" || forceQs === "desktop") {
+          try { localStorage.setItem("etsymail_force_view", forceQs); } catch (_) {}
+          return forceQs === "mobile";
+        }
+      } catch (_) {}
+      // Layer 1b — localStorage override (set by a prior URL-param
+      // visit, by dev tools, or by a future Settings toggle).
       try {
         const force = localStorage.getItem("etsymail_force_view");
         if (force === "mobile")  return true;
         if (force === "desktop") return false;
       } catch (_) {}
+
       const ua = (navigator.userAgent || "");
+      const narrowViewport = (window.innerWidth || 0) <= 820;
+      const hasTouch = (navigator.maxTouchPoints || 0) > 0 || ('ontouchstart' in window);
+
+      // Layer 2 — Original phone-UA regex.
       const phoneUA = /iPhone|iPod|Android.+Mobile|BlackBerry|webOS|IEMobile|Opera Mini|Mobile.+Firefox/i.test(ua);
-      // iPad UA quirks: modern iPadOS lies about being macOS; detect via
-      // touch + Safari + Macintosh combo. Then gate on viewport width
-      // because we want full-screen iPads to keep getting desktop.
+      if (phoneUA) return true;
+
+      // Layer 3 — iPad detection. Modern iPadOS sends a Macintosh UA
+      // with multi-touch points; we treat that as iPad. iPads with
+      // wide viewports (full-screen on iPad Pro) keep desktop layout.
       const isIPad = /iPad/.test(ua) ||
                      (/Macintosh/.test(ua) && (navigator.maxTouchPoints || 0) > 1);
-      const narrowViewport = (window.innerWidth || 0) <= 820;
-      return phoneUA || (isIPad && narrowViewport);
+      if (isIPad && narrowViewport) return true;
+
+      // Layer 4 — Android-anything in narrow viewport. Catches the
+      // Samsung-Internet / desktop-site / Android-fork case where
+      // the UA contains "Android" but not "Mobile".
+      const androidUA = /Android/i.test(ua);
+      if (androidUA && narrowViewport) return true;
+
+      // Layer 5 — Touch + narrow viewport. Last-resort for future
+      // browsers whose UA we haven't anticipated. Mobile-only devices
+      // (phones, small tablets) reliably have BOTH a touch screen and
+      // a narrow viewport. A desktop user with a touchscreen laptop
+      // and a deliberately-narrowed window MIGHT trigger this — they
+      // get the mobile layout, which is arguably correct for that
+      // narrow a viewport anyway.
+      if (hasTouch && narrowViewport) return true;
+
+      return false;
     })();
     // Expose on window so the mobile JS module (defined later in this
     // same script block) can read the same value without re-detecting.
