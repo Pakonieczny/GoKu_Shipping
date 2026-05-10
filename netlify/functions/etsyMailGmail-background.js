@@ -129,13 +129,44 @@ const SYNC_STATE_DOC = "EtsyMail_Config/gmailSyncState";   // 2-segment path
 
 // ─── Tuning constants ────────────────────────────────────────────────────
 
-// Default Gmail search filter. Picks up Etsy's "new message" notification
-// emails. Operators can override via GMAIL_QUERY env var if their inbox
-// uses a label-based filter or a different sender list.
+// Default Gmail search filter. Picks up notification emails from EVERY
+// Etsy sender, not just the original `notify@etsy.com` notification
+// address.
+//
+// v1.6 — Broadened from `from:notify@etsy.com` to `from:etsy.com`.
+// Etsy sends conversation notifications from MULTIPLE addresses:
+//   - notify@etsy.com               (original "new message" notifications)
+//   - no-reply@account.etsy.com     (Apr 2026+ "View message" CTA wrapper, see v1.1 notes)
+//   - conversations@etsy.com /
+//     <something>@etsy.com          ("Etsy Conversations — <Customer> needs help with an order they placed")
+//     ...and likely more we haven't seen.
+//
+// The narrow `from:notify@etsy.com` query silently dropped any email
+// from a different sender. Operator-reported case (May 10 2026):
+// "Samantha needs help with an order they placed" arrived from
+// "Etsy Conversations" (a different sender than notify@etsy.com)
+// and never appeared in the inbox. The Gmail watcher's status line
+// in the topbar showed `scanned 0` — the query found zero messages —
+// not because nothing was there, but because the query didn't match.
+//
+// `from:etsy.com` matches ANY sender at etsy.com or any subdomain
+// (account.etsy.com, notifications.etsy.com, etc.). The risk of
+// false positives (newsletters, transaction confirmations) is
+// neutralized by extractEtsyConversationLink — emails without a
+// recoverable conversation URL get audited as
+// `gmail_message_skipped_no_link` and skipped. The audit volume
+// itself is a useful signal: a flood of skips means Etsy started
+// blasting non-conversation emails from a similar sender, and the
+// operator can tighten the query via the GMAIL_QUERY env var.
+//
+// IMPORTANT FOR OPERATORS UPGRADING: this default ONLY applies if
+// you have NOT set GMAIL_QUERY in Netlify env vars. If you have,
+// update it manually to a broader pattern (or unset it to use this
+// new default). Check Netlify → Environment variables → GMAIL_QUERY.
 //
 // NB: this is COMBINED with `after:<seconds>` from the watermark before
 // being sent to Gmail. So the env var should NOT include an after: clause.
-const DEFAULT_GMAIL_QUERY = "from:notify@etsy.com";
+const DEFAULT_GMAIL_QUERY = "from:etsy.com";
 
 // On the very first run (no watermark in syncState), don't pull all-time
 // history — limit to the last N days. Operators can override per-request
