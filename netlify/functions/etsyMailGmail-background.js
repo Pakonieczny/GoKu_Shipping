@@ -743,6 +743,280 @@ async function runIncremental({ invocationStartMs, mode, query, windowDays }) {
   };
 }
 
+// ─── Safety-net sweep ──────────────────────────────────────────────────────
+//
+// v1.5 — The bulletproof gap-filler. Independent of the watermark.
+//
+// WHY THIS EXISTS
+//
+// The main runIncremental flow advances `newestInternalDateMs` for EVERY
+// message it lists, including ones where extractEtsyConversationLink
+// returned null (line ~615 in this file's main loop):
+//
+//     // Track newest internalDate for watermark advance — even messages
+//     // we skip count, otherwise we'd reprocess them on every poll.
+//     if (summary.internalDateMs && summary.internalDateMs > newestInternalDateMs) {
+//       newestInternalDateMs = summary.internalDateMs;
+//     }
+//
+// That's the right call for permanently-unparseable emails (keeps the
+// queue bounded). But it's a silent data-loss bug for TRANSIENT
+// extraction failures: a SendGrid 503 mid-redirect, a Branch.io
+// hiccup, a momentary network blip. Those failures should self-heal
+// — the message should be re-tried — but the watermark already
+// advanced past them by the time the next tick runs.
+//
+// Real-world symptom (operator-reported, May 10 2026): customer
+// "Samantha needs help with an order they placed" sat in Gmail at
+// 10:05 AM but never appeared in EtsyMail. The 8:06 AM message did.
+// Watermark advanced past 10:05 AM and Samantha's email was orphaned.
+//
+// HOW IT WORKS
+//
+// Every invocation, AFTER the main incremental flow:
+//   1. List Gmail messages from the last SWEEP_WINDOW_HOURS (6h).
+//   2. For each message id, check Firestore for an EtsyMail_Threads
+//      doc with that gmailMessageId.
+//   3. Any message id NOT linked to a thread doc → re-process it
+//      with the same path as the main flow (extract, upsert, enqueue).
+//   4. Audit each recovery so operators can see when the safety net
+//      fires and which messages had to be rescued (= a signal that
+//      the main flow's extraction is failing too often).
+//
+// The sweep does NOT touch the watermark. Both paths are write-safe
+// (upsertThreadFromGmail short-circuits if the thread is already
+// linked, and enqueueScrapeJob uses a deterministic doc id).
+//
+// COSTS
+//
+// Steady state: one Gmail listMessages call per tick + one chunked
+// Firestore "in" query. All messages are already linked, no
+// getMessage calls. Cheap (~200-500ms total).
+//
+// During a recovery: the actually-missed messages get full processing
+// (getMessage + extractEtsyConversationLink + upsert + enqueue),
+// matching the main flow's per-message cost. Bounded by the 5-page
+// listing cap (max 500 messages in the window).
+//
+// WHAT IT DOESN'T DO
+//
+// It doesn't recover messages older than SWEEP_WINDOW_HOURS. A
+// permanent extraction bug that lasts >6h still loses the messages
+// past the window. We log every skip in the audit as
+// "gmail_sweep_skipped_no_link"; operators monitoring the audit can
+// catch persistent issues. For deeper recovery, a manual trigger of
+// etsyMailGmail with a fresh windowDays parameter is the escape hatch.
+const SWEEP_WINDOW_HOURS = 6;
+const SWEEP_MAX_PAGES = 5;
+
+async function runSafetyNetSweep({ invocationStartMs }) {
+  const result = {
+    listed             : 0,
+    alreadyLinked      : 0,
+    recoveredCreated   : 0,
+    recoveredLinked    : 0,
+    recoveredEnqueued  : 0,
+    skippedNoLink      : 0,
+    errors             : 0,
+    durationMs         : 0
+  };
+  const t0 = Date.now();
+
+  // Budget check — if the main flow already used >12 min of the 15
+  // min Netlify budget, skip the sweep this tick. The main flow's
+  // watermark advance has already happened, so we'd run it next tick.
+  const budgetUsedMs = Date.now() - invocationStartMs;
+  if (budgetUsedMs > 12 * 60 * 1000) {
+    console.warn(`[gmail-sweep] skipping (budget tight: ${budgetUsedMs}ms used)`);
+    result.skipped = "budget_tight";
+    return result;
+  }
+
+  // 1. List Gmail messages in the sweep window.
+  const baseQuery = process.env.GMAIL_QUERY || DEFAULT_GMAIL_QUERY;
+  const sinceSec = Math.floor((Date.now() - SWEEP_WINDOW_HOURS * 3600 * 1000) / 1000);
+  const q = `${baseQuery} after:${sinceSec}`;
+  const gmailIds = [];
+  let pageToken = null;
+  let pages = 0;
+  try {
+    while (pages < SWEEP_MAX_PAGES) {
+      const resp = await listMessages({ q, pageToken, maxResults: 100 });
+      pages++;
+      const stubs = (resp && resp.messages) || [];
+      for (const s of stubs) {
+        if (s && s.id) gmailIds.push(s.id);
+      }
+      pageToken = resp && resp.nextPageToken;
+      if (!pageToken) break;
+    }
+  } catch (err) {
+    console.warn("[gmail-sweep] listMessages failed:", err.message);
+    result.errors++;
+    result.durationMs = Date.now() - t0;
+    return result;
+  }
+  result.listed = gmailIds.length;
+  if (gmailIds.length === 0) {
+    result.durationMs = Date.now() - t0;
+    return result;
+  }
+
+  // 2. Bulk-check Firestore: which of these gmailIds are already
+  //    linked to a thread doc? Firestore "in" filters take up to 30
+  //    values per query; chunk accordingly.
+  const linkedIds = new Set();
+  const CHUNK = 30;
+  for (let i = 0; i < gmailIds.length; i += CHUNK) {
+    const chunk = gmailIds.slice(i, i + CHUNK);
+    try {
+      const snap = await db.collection(THREADS_COLL)
+        .where("gmailMessageId", "in", chunk)
+        .get();
+      snap.forEach(doc => {
+        const d = doc.data() || {};
+        if (d.gmailMessageId) linkedIds.add(d.gmailMessageId);
+      });
+    } catch (err) {
+      console.warn("[gmail-sweep] thread-link check chunk failed:", err.message);
+      result.errors++;
+      // Continue anyway — un-checked chunks just means we may re-
+      // process some already-processed messages. upsertThreadFromGmail
+      // is idempotent so this is safe (just slower).
+    }
+  }
+  result.alreadyLinked = linkedIds.size;
+
+  const orphaned = gmailIds.filter(id => !linkedIds.has(id));
+  if (orphaned.length === 0) {
+    // Nothing to recover; this is the steady state — fast path.
+    result.durationMs = Date.now() - t0;
+    return result;
+  }
+
+  console.log(`[gmail-sweep] found ${orphaned.length} orphaned message(s) in last ${SWEEP_WINDOW_HOURS}h — recovering`);
+
+  // 3. For each orphaned message, run the same path as the main flow.
+  for (const gmailId of orphaned) {
+    // Per-message budget check — bail if we've exceeded Netlify's
+    // overall budget envelope. Whatever's left for next tick.
+    if (Date.now() - invocationStartMs > MAX_INVOCATION_MS) {
+      console.warn("[gmail-sweep] hit MAX_INVOCATION_MS, deferring rest to next tick");
+      break;
+    }
+
+    let full;
+    try {
+      full = await getMessage(gmailId);
+    } catch (err) {
+      console.warn(`[gmail-sweep] getMessage(${gmailId}) failed:`, err.message);
+      result.errors++;
+      await sleep(FETCH_DELAY_MS);
+      continue;
+    }
+    const summary = summarizeMessage(full);
+
+    // Same extractor as the main flow.
+    let link = null;
+    try {
+      link = await extractEtsyConversationLink(full);
+    } catch (err) {
+      console.warn(`[gmail-sweep] extract failed for ${gmailId}:`, err.message);
+      result.errors++;
+      await sleep(FETCH_DELAY_MS);
+      continue;
+    }
+
+    if (!link || !link.conversationId) {
+      result.skippedNoLink++;
+      // Audit so operators can spot persistent extraction failures
+      // (same email keeps appearing in sweep audits → Etsy changed
+      // their email format and the parser needs an update).
+      await writeAudit({
+        threadId : null,
+        eventType: "gmail_sweep_skipped_no_link",
+        actor    : "system:gmail-sweep",
+        payload  : {
+          gmailMessageId : summary.gmailMessageId,
+          subject        : summary.subject,
+          from           : summary.from,
+          ageHours       : summary.internalDateMs
+            ? ((Date.now() - summary.internalDateMs) / 3600000).toFixed(1)
+            : null
+        }
+      });
+      await sleep(FETCH_DELAY_MS);
+      continue;
+    }
+
+    // UPSERT thread (idempotent; will short-circuit if already linked).
+    let upsertResult;
+    try {
+      upsertResult = await upsertThreadFromGmail({
+        conversationId : link.conversationId,
+        conversationUrl: link.conversationUrl,
+        gmailMessageId : summary.gmailMessageId,
+        gmailThreadId  : summary.gmailThreadId,
+        internalDateMs : summary.internalDateMs,
+        customerName   : null,
+        customerEmail  : null,
+        subject        : summary.subject
+      });
+    } catch (err) {
+      console.warn(`[gmail-sweep] upsertThread failed for ${summary.gmailMessageId}:`, err.message);
+      result.errors++;
+      await sleep(FETCH_DELAY_MS);
+      continue;
+    }
+    if (upsertResult.action === "created") result.recoveredCreated++;
+    else if (upsertResult.action === "linked") result.recoveredLinked++;
+    else if (upsertResult.action === "skipped_already_linked") {
+      // Race: the main flow ran in parallel and linked this one.
+      // Don't enqueue — it's already in the pipeline.
+      await sleep(FETCH_DELAY_MS);
+      continue;
+    }
+
+    // ENQUEUE (idempotent — deterministic job id).
+    try {
+      await enqueueScrapeJob({
+        threadId       : upsertResult.threadId,
+        conversationUrl: link.conversationUrl,
+        gmailMessageId : summary.gmailMessageId,
+        gmailThreadId  : summary.gmailThreadId
+      });
+      result.recoveredEnqueued++;
+
+      // Audit the recovery — this is the trail operators can use to
+      // see "the safety net just saved a message that the main flow
+      // missed". A burst of these audits = main flow has a bug
+      // worth investigating.
+      await writeAudit({
+        threadId : upsertResult.threadId,
+        eventType: "gmail_sweep_recovered_message",
+        actor    : "system:gmail-sweep",
+        payload  : {
+          gmailMessageId : summary.gmailMessageId,
+          conversationId : link.conversationId,
+          subject        : summary.subject,
+          ageHours       : summary.internalDateMs
+            ? ((Date.now() - summary.internalDateMs) / 3600000).toFixed(1)
+            : null,
+          upsertAction   : upsertResult.action
+        }
+      });
+    } catch (err) {
+      console.warn(`[gmail-sweep] enqueue failed for ${summary.gmailMessageId}:`, err.message);
+      result.errors++;
+    }
+    await sleep(FETCH_DELAY_MS);
+  }
+
+  result.durationMs = Date.now() - t0;
+  console.log(`[gmail-sweep] done: ${JSON.stringify(result)}`);
+  return result;
+}
+
 // ─── Entry ───────────────────────────────────────────────────────────────
 exports.handler = async (event) => {
   const invocationStartMs = Date.now();
@@ -783,8 +1057,22 @@ exports.handler = async (event) => {
 
     const summary = await runIncremental({ invocationStartMs, mode, query, windowDays });
 
-    console.log("[gmail-watcher] complete:", JSON.stringify(summary));
-    return { statusCode: 200, body: JSON.stringify({ ok: true, ...summary }) };
+    // v1.5 — Run the safety-net sweep AFTER the main incremental flow.
+    // Independent of the watermark; catches any messages the main
+    // flow advanced past without processing (transient extraction
+    // failures, race conditions, network blips). Errors here don't
+    // fail the invocation — the main flow already succeeded.
+    let sweepSummary = null;
+    try {
+      sweepSummary = await runSafetyNetSweep({ invocationStartMs });
+    } catch (err) {
+      console.warn("[gmail-watcher] safety-net sweep failed (non-fatal):", err.message);
+      sweepSummary = { error: err.message || String(err) };
+    }
+
+    const combined = { ...summary, sweep: sweepSummary };
+    console.log("[gmail-watcher] complete:", JSON.stringify(combined));
+    return { statusCode: 200, body: JSON.stringify({ ok: true, ...combined }) };
 
   } catch (err) {
     console.error("[gmail-watcher] fatal:", err);

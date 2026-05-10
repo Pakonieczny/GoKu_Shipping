@@ -2063,24 +2063,33 @@ async function handleSummarizeThreadOp(body) {
 
   const system =
     "You analyze customer-service conversations from an Etsy shop's inbox " +
-    "and produce a structured summary an operator can scan in 5 seconds. " +
+    "and produce a structured summary an operator can scan in UNDER 3 SECONDS. " +
     "Respond ONLY with a JSON object — no preamble, no markdown fences. " +
     "The JSON shape MUST be:\n" +
     "{\n" +
     '  "intent": "shipping_question"|"refund_request"|"complaint"|"order_question"|"general_inquiry"|"praise"|"other",\n' +
     '  "intentLabel": "<3-5 word human label>",\n' +
     '  "urgency": "high"|"medium"|"low",\n' +
-    '  "urgencyReason": "<1 short sentence why>",\n' +
-    '  "ask": "<1 sentence: what does the customer want right now>",\n' +
-    '  "flags": ["<0-5 short tags worth flagging: emotion, threats, deadlines, repeated asks, mentions order #, etc.>"],\n' +
-    '  "suggestedAction": "<1 sentence: what should staff do next>"\n' +
+    '  "urgencyReason": "<MAX 8 WORDS — telegraphic fragment, NOT a sentence>",\n' +
+    '  "ask": "<MAX 10 WORDS — what they want, telegraphic, NOT a sentence>",\n' +
+    '  "flags": ["<0-5 short tags worth flagging: emotion, threats, deadlines, repeated asks, mentions order #, etc.>"]\n' +
     "}\n\n" +
-    "Guidelines:\n" +
+    "BREVITY IS MANDATORY. Operators are scanning a packed inbox; long sentences cost them seconds per thread. " +
+    "Examples of GOOD outputs (notice these are FRAGMENTS, not sentences):\n" +
+    '  urgencyReason: "3 unanswered + Mother\'s Day deadline"   ✓\n' +
+    '  urgencyReason: "Chargeback threatened"                    ✓\n' +
+    '  ask: "Cancel order, refund to card not credit"            ✓\n' +
+    '  ask: "Tracking number for order #2841"                    ✓\n\n' +
+    "Examples of BAD outputs (rejected — too verbose):\n" +
+    '  urgencyReason: "Customer has made repeated urgent requests (3 messages) and mentions time-sensitive Mother\'s Day event that has likely already passed."   ✗\n' +
+    '  ask: "Cancel one silver initial necklace order and refund to original payment method, not Etsy credit."   ✗\n\n' +
+    "Rules:\n" +
     "- Urgency 'high' is reserved for: chargeback threats, time-sensitive deadlines (event/birthday/wedding within ~1 week), explicit anger, repeated unanswered asks.\n" +
     "- 'medium' for active questions where the customer is waiting on a response.\n" +
     "- 'low' for already-resolved threads, praise, FYI messages, or polite waiting.\n" +
-    "- 'ask' should be in the customer's voice but paraphrased ('Wants tracking for order #123' not 'where is my order?').\n" +
-    "- 'flags' MUST be an array; empty [] is fine when nothing notable.";
+    "- 'ask' is in the customer's voice but paraphrased — drop subjects, articles, and pleasantries. Telegraphic.\n" +
+    "- 'flags' MUST be an array; empty [] is fine when nothing notable.\n" +
+    "- DO NOT include any 'suggestedAction', 'nextStep', or similar advisory field. Operators decide actions themselves.";
 
   let resp;
   try {
@@ -2107,6 +2116,10 @@ async function handleSummarizeThreadOp(body) {
 
   // Normalize / sanity-check the parsed payload. Defensive — bad model
   // output shouldn't crash the front-end render.
+  // v0.9.18 — Tightened length caps to enforce telegraphic brevity even
+  // if the model regresses to verbose mode. urgencyReason 200→80 chars,
+  // ask 300→100 chars. suggestedAction dropped entirely (operators
+  // decide actions themselves; field was removed from prompt).
   const validIntents = new Set([
     "shipping_question", "refund_request", "complaint",
     "order_question", "general_inquiry", "praise", "other"
@@ -2116,12 +2129,11 @@ async function handleSummarizeThreadOp(body) {
     intent          : validIntents.has(parsed.intent) ? parsed.intent : "other",
     intentLabel     : String(parsed.intentLabel || "Conversation").slice(0, 60),
     urgency         : validUrgency.has(parsed.urgency) ? parsed.urgency : "low",
-    urgencyReason   : String(parsed.urgencyReason || "").slice(0, 200),
-    ask             : String(parsed.ask || "").slice(0, 300),
+    urgencyReason   : String(parsed.urgencyReason || "").slice(0, 80),
+    ask             : String(parsed.ask || "").slice(0, 100),
     flags           : Array.isArray(parsed.flags)
       ? parsed.flags.filter(f => typeof f === "string").slice(0, 5).map(f => f.slice(0, 60))
-      : [],
-    suggestedAction : String(parsed.suggestedAction || "").slice(0, 300)
+      : []
   };
 
   return json(200, { ok: true, ...out });

@@ -5394,7 +5394,20 @@
         else if (v && typeof v.toMillis === "function") { try { ms = v.toMillis(); } catch {} }
         if (ms > latestMs) latestMs = ms;
       }
-      return `${threadId}|${latestMs}`;
+      // v5.24 — version suffix "|v2" forces regeneration of every cached
+      // summary in Firestore (the summaryCache field on each thread doc
+      // and the in-memory state._summaryCache Map). Existing entries had
+      // verbose paragraph-style urgencyReason/ask plus a suggestedAction
+      // field that's been removed; without the version bump the inbox
+      // would keep showing the old long format on every thread that
+      // hasn't received a new message since deploy. The cost is one
+      // fresh Haiku call per active thread on first visit — modest, and
+      // the new short format is the whole point of this release.
+      // v5.25 — bumped to "|v3" because the layout changed (no row
+      // labels, hierarchical card). Old v2 cached payloads still
+      // render fine — but if the AI hasn't been re-prompted with the
+      // tightened brevity guidance, a fresh call now is cheap insurance.
+      return `${threadId}|${latestMs}|v3`;
     }
 
     /** Build the card HTML from a summary payload. Pure render — no
@@ -5426,23 +5439,67 @@
         bodyHtml = '<div style="font-size:12px; color:#82071e;">Couldn\'t generate a summary: ' + esc(errorMsg) + '</div>';
       } else {
         const flagsHtml = (summary.flags && summary.flags.length)
-          ? '<div style="margin-top:8px; display:flex; gap:4px; flex-wrap:wrap;">' +
+          ? '<div style="margin-top:10px; display:flex; gap:4px; flex-wrap:wrap;">' +
             summary.flags.map(f =>
               '<span style="font-size:10px; padding:2px 6px; background:#eaeef2; color:#57606a; border-radius:3px;">' + esc(f) + '</span>'
             ).join("") +
             '</div>'
           : "";
+        // v5.25 — Glanceable layout. Replaces the v5.24 labeled grid
+        // ("Intent / Urgency / Customer's ask" each in its own row
+        // with a label column) which still read like a form.
+        //
+        // The new layout is hierarchical:
+        //   [URGENCY-CHIP]  Intent label                  ← classification line
+        //                   urgency reason (small/muted)  ← context line
+        //   "<full ask>"                                  ← focal point
+        //   [chip] [chip]                                 ← flags
+        //
+        // No row labels — visual hierarchy carries meaning. Important
+        // changes from the v5.25-prelim version:
+        //   1. urgencyReason stays VISIBLE (small muted text below
+        //      the chip). The earlier hide-in-tooltip approach left
+        //      operators staring at a chip with no context.
+        //   2. The ask is rendered FULL (no aggressive 2-line clamp).
+        //      Operators reported the truncated version was "far too
+        //      summarized" — losing context like which product or
+        //      what specifically was being asked. We trust the
+        //      backend prompt's brevity guidance to keep ask short;
+        //      the layout shouldn't over-correct via clamping. If the
+        //      AI does regress to a paragraph, defensive 4-line clamp
+        //      keeps the card from blowing up the right rail.
+        //   3. Explicit colors (#1f2328, #57606a) match the inbox's
+        //      light theme. No CSS variables — the rest of the inbox
+        //      doesn't theme either.
+        const askText = String(summary.ask || "").trim();
+        const askHtml = askText
+          ? '<div style="font-size:13px; line-height:1.5; color:#1f2328; ' +
+              'display:-webkit-box; -webkit-line-clamp:4; -webkit-box-orient:vertical; ' +
+              'overflow:hidden; text-overflow:ellipsis; ' +
+              'padding:6px 10px; background:rgba(255,255,255,0.55); border-radius:4px; ' +
+              'border-left:2px solid rgba(31,35,40,0.15);">' +
+              esc(askText) +
+            '</div>'
+          : '<div style="font-size:12px; color:#9ca3af; font-style:italic; padding:6px 10px;">No clear ask identified yet</div>';
         bodyHtml =
-          '<div style="display:grid; grid-template-columns:auto 1fr; gap:6px 10px; font-size:12px; line-height:1.5;">' +
-            '<div style="color:#57606a; font-weight:600;">Intent</div>' +
-            '<div>' + esc(summary.intentLabel || "—") + '</div>' +
-            '<div style="color:#57606a; font-weight:600;">Urgency</div>' +
-            '<div><span style="display:inline-block; padding:1px 6px; font-size:10px; font-weight:600; background:' + urgencyTint.chipBg + '; color:' + urgencyTint.chipColor + '; border-radius:3px; margin-right:6px;">' + urgencyTint.label + '</span>' +
-            (summary.urgencyReason ? '<span style="color:#57606a;">' + esc(summary.urgencyReason) + '</span>' : '') +
+          '<div style="display:flex; align-items:flex-start; gap:8px; margin-bottom:10px;">' +
+            '<span style="display:inline-block; padding:2px 8px; font-size:10px; font-weight:700; ' +
+              'letter-spacing:0.3px; background:' + urgencyTint.chipBg + '; color:' + urgencyTint.chipColor + '; ' +
+              'border-radius:3px; flex-shrink:0; margin-top:1px;">' +
+              urgencyTint.label +
+            '</span>' +
+            '<div style="min-width:0; flex:1;">' +
+              '<div style="font-size:13px; color:#1f2328; font-weight:500; line-height:1.3;">' +
+                esc(summary.intentLabel || "Conversation") +
+              '</div>' +
+              (summary.urgencyReason
+                ? '<div style="font-size:11px; color:#6b7280; line-height:1.4; margin-top:2px;">' +
+                    esc(summary.urgencyReason) +
+                  '</div>'
+                : '') +
             '</div>' +
-            (summary.ask ? '<div style="color:#57606a; font-weight:600;">Customer\'s ask</div><div>' + esc(summary.ask) + '</div>' : '') +
-            (summary.suggestedAction ? '<div style="color:#57606a; font-weight:600;">Suggested next</div><div>' + esc(summary.suggestedAction) + '</div>' : '') +
           '</div>' +
+          askHtml +
           flagsHtml;
       }
 
@@ -16454,10 +16511,25 @@
       const flagsHtml = (Array.isArray(payload.flags) && payload.flags.length)
         ? `<div class="m-flags">${payload.flags.map(f => `<span class="m-flag">${mEsc(f)}</span>`).join("")}</div>`
         : "";
+      // v5.25 — Glanceable layout (mirrors desktop _renderSummaryCardHtml).
+      // Tagline above the body already shows "Intent · Urgency"; the
+      // body keeps the urgency reason as small muted context, then
+      // the full ask in a highlighted box. NOT aggressively clamped —
+      // operators want the full sentence, not a 9-word abbreviation.
+      const askText = String(payload.ask || "").trim();
+      const askHtml = askText
+        ? `<div style="font-size:14px; line-height:1.5; color:var(--m-c-text); padding:8px 10px;
+              background:rgba(255,255,255,0.6); border-radius:6px;
+              border-left:3px solid rgba(0,0,0,0.12);
+              display:-webkit-box; -webkit-line-clamp:5; -webkit-box-orient:vertical;
+              overflow:hidden; text-overflow:ellipsis;">${mEsc(askText)}</div>`
+        : `<div style="font-size:13px; color:var(--m-c-text-muted); font-style:italic; padding:8px 10px;">No clear ask identified yet</div>`;
+      const urgReasonHtml = payload.urgencyReason
+        ? `<div style="font-size:12px; color:var(--m-c-text-muted); line-height:1.4; margin:0 0 8px 4px;">${mEsc(payload.urgencyReason)}</div>`
+        : "";
       bodyEl.innerHTML = `
-        <div class="m-row"><div class="m-lab">Urgency</div><div><span class="m-urg-chip">${mEsc(urgLabel)}</span><span style="color: var(--m-c-text-muted);">${mEsc(payload.urgencyReason || "")}</span></div></div>
-        <div class="m-row"><div class="m-lab">Customer's ask</div><div>${mEsc(payload.ask || "—")}</div></div>
-        <div class="m-row"><div class="m-lab">Suggested next</div><div>${mEsc(payload.suggestedAction || "—")}</div></div>
+        ${urgReasonHtml}
+        ${askHtml}
         ${flagsHtml}
       `;
     }
