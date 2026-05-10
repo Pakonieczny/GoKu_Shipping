@@ -6552,9 +6552,23 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
     • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
     • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
-    • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
-    • The Charm/Pendant must be gold in colour just like the necklace chain in the reference image, do not saturate the Charm/Pendant gold colour.
     • The chain must remain exactly the same size and detail as in the reference image. Only the charm is scaled.
+
+    ENGRAVING STANDARD (UNIFORM ACROSS ALL SLOTS — CRITICAL CONSISTENCY RULE)
+    • Engravings MUST read as real shallow grooves cut INTO the metal surface — subtle but unmistakably three-dimensional. They are NOT flat decals, NOT painted ink, NOT pencil-drawn lines on top of the metal, NOT raised/embossed high-relief metal.
+    • Render each engraved stroke with a fine inner shadow on one edge and a faint highlight on the opposing edge to convey roughly 0.1mm of recessed depth. Depth must be subtle (shallow laser etch), never deep gouges, never high-relief 3D.
+    • Engraving fill colour MUST be a slightly DARKER, WARMER UNDERTONE of the same base metal as the charm — brass/copper undertone for gold charms, gunmetal undertone for silver charms. The engraving stays in the SAME COLOUR FAMILY as the charm body.
+    • HARD FAIL: engraving rendered as black, near-black, charcoal, dark grey, or any colour that reads as ink/paint/Sharpie. If a viewer would describe it as "the engraving looks black," it is wrong.
+    • HARD FAIL: engraving so faint, so light, or so flat that it looks pencil-drawn or disappears into the charm surface. If a viewer would describe it as "drawn on with a pencil," it is wrong.
+    • Target contrast is MODERATE — clearly legible at the rendered charm size while remaining unmistakably the same metal colour family as the charm body.
+    • Visual reference: real laser-engraved brass/copper jewelry where the cut reveals a slightly darker, warmer undertone of the same metal — never a different colour altogether.
+
+    GOLD CHARM COLOUR STANDARD (UNIFORM ACROSS ALL SLOTS — CRITICAL CONSISTENCY RULE)
+    • Render the Charm/Pendant in authentic 14K YELLOW gold: a warm yellow tone with the tiniest hint of green-gold. NOT rose gold, NOT pink, NOT peach, NOT salmon, NOT red-orange, NOT copper-pink.
+    • The charm gold MUST visually match the necklace chain gold in the reference image: same hue, same saturation, same brightness. Charm and chain must look like they came from the same gold stock.
+    • Pull the red channel slightly DOWN and bias toward yellow/green-gold until the charm reads as a classic yellow wedding band, NOT a rose gold ring.
+    • HARD FAIL: charm reading as pinker, peachier, warmer, or redder than the chain. Even a small pink shift is a fail — the human eye picks it up immediately.
+    • Consistency rule: the gold colour rendered for the charm in this slot MUST be identical to the gold colour rendered for the charm in every other slot of the same listing set.
 
     TASK
     Duplicate and zoom-in into the reference image, only replace the charm onto the existing necklace chain in the reference image as a hanging flat charm.
@@ -6599,22 +6613,43 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • The hoop MUST connect with a wide, solid bridge of metal (large surface area).
     • HARD FAIL if the hoop looks barely touching, point-connected, floating, or welded-on.
 
+    GOLD CHARM COLOUR STANDARD (UNIFORM ACROSS ALL SLOTS — CRITICAL CONSISTENCY RULE)
+    • Render the Charm/Pendant in authentic 14K YELLOW gold: a warm yellow tone with the tiniest hint of green-gold. NOT rose gold, NOT pink, NOT peach, NOT salmon, NOT red-orange, NOT copper-pink.
+    • Pull the red channel slightly DOWN and bias toward yellow/green-gold until the charm reads as a classic yellow wedding band, NOT a rose gold ring.
+    • HARD FAIL: charm reading pink, peachy, warm, or red. Even a small pink shift is a fail — the human eye picks it up immediately.
+    • Consistency rule: the gold colour rendered for the charm in this slot MUST be identical to the gold colour rendered for the charm in every other slot of the same listing set.
+
     HARD FAIL CONDITIONS
     - Any text change.
     - Any charm size mismatch vs charm image.
-    - Any weak or disconnected hoop connection.`;
+    - Any weak or disconnected hoop connection.
+    - Any pink/rose-gold colour cast on the charm.`;
 
     const DEFAULT_PROMPT =
     `CRITICAL: This is a standard fashion product photo edit. Keep the subject modest. No nudity.
 
     ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
-    • Force the Charm to be very small: final on-image charm height MUST be 9 pixels tall (absolute pixel height, not relative).
+    • Force the Charm to be very small: final on-image charm height MUST be 10 pixels tall (absolute pixel height, not relative).
     • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
     • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
-    • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
     • Do NOT allow any shadows (Contact or otherwise) to be visible undereath and around the Charm/Pendant placement, block all Charm/Pendant related shadows.
-    • The Charm/Pendant must be gold colour, do not saturate the Charm/Pendant gold colour.
     • The chain must remain exactly the same size and detail as reference image. Only the charm is scaled.
+
+    ENGRAVING STANDARD (UNIFORM ACROSS ALL SLOTS — CRITICAL CONSISTENCY RULE)
+    • Engravings MUST read as real shallow grooves cut INTO the metal surface — subtle but unmistakably three-dimensional. They are NOT flat decals, NOT painted ink, NOT pencil-drawn lines on top of the metal, NOT raised/embossed high-relief metal.
+    • Render each engraved stroke with a fine inner shadow on one edge and a faint highlight on the opposing edge to convey roughly 0.1mm of recessed depth. Depth must be subtle (shallow laser etch), never deep gouges, never high-relief 3D.
+    • Engraving fill colour MUST be a slightly DARKER, WARMER UNDERTONE of the same base metal as the charm — brass/copper undertone for gold charms, gunmetal undertone for silver charms. The engraving stays in the SAME COLOUR FAMILY as the charm body.
+    • HARD FAIL: engraving rendered as black, near-black, charcoal, dark grey, or any colour that reads as ink/paint/Sharpie. If a viewer would describe it as "the engraving looks black," it is wrong.
+    • HARD FAIL: engraving so faint, so light, or so flat that it looks pencil-drawn or disappears into the charm surface. If a viewer would describe it as "drawn on with a pencil," it is wrong.
+    • Target contrast is MODERATE — clearly legible at the rendered charm size while remaining unmistakably the same metal colour family as the charm body.
+    • Visual reference: real laser-engraved brass/copper jewelry where the cut reveals a slightly darker, warmer undertone of the same metal — never a different colour altogether.
+
+    GOLD CHARM COLOUR STANDARD (UNIFORM ACROSS ALL SLOTS — CRITICAL CONSISTENCY RULE)
+    • Render the Charm/Pendant in authentic 14K YELLOW gold: a warm yellow tone with the tiniest hint of green-gold. NOT rose gold, NOT pink, NOT peach, NOT salmon, NOT red-orange, NOT copper-pink.
+    • The charm gold MUST visually match the necklace chain gold in the reference image: same hue, same saturation, same brightness. Charm and chain must look like they came from the same gold stock.
+    • Pull the red channel slightly DOWN and bias toward yellow/green-gold until the charm reads as a classic yellow wedding band, NOT a rose gold ring.
+    • HARD FAIL: charm reading as pinker, peachier, warmer, or redder than the chain. Even a small pink shift is a fail — the human eye picks it up immediately.
+    • Consistency rule: the gold colour rendered for the charm in this slot MUST be identical to the gold colour rendered for the charm in every other slot of the same listing set.
 
     TASK
     Duplicate and zoom-in into the female model in reference image, only replace the charm from Charm Image onto the existing necklace chain in reference image as a hanging flat charm.
@@ -6640,21 +6675,39 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • Do NOT move, resize, restyle, blur, or alter any text.
     • Do NOT crop, zoom, or reframe the image.
 
-    CHARM POSITION + SIZE MATCH (NON-NEGOTIABLE)
-    • The silver necklace charm is the backside of the gold chain charm. When replacing the charms you must produce the same output where one charm is front facing and the silver charm is showing the bakc with an engraved name.
-    • Both new charms must sit in the EXACT same position as the original charms in the reference image.
-    • The new charm must match the original charm’s on-image size EXACTLY.
-    • This is a strict size match — no scaling up or down.
+    CRITICAL CHARM SIZE OVERRIDE (BOTH GOLD AND SILVER — TOP PRIORITY)
+    • Render BOTH the front-facing gold charm AND the back-facing silver charm at approximately 75% of the charm size shown in the reference image — i.e. 25% SMALLER than the reference template placeholder.
+    • This override exists to compensate for systematic upscaling: the model has historically rendered both charms ~25% too large. Correct that bias here.
+    • The 25% reduction MUST apply equally to both charms — neither should be larger than the other; they must remain matched in size to each other.
+    • Both charms must remain centered on their original reference positions even after the size reduction.
+    • Do NOT crop or reframe to compensate for the smaller size; the empty space around the smaller charms is intentional and correct.
+
+    CHARM POSITION + LAYOUT
+    • The silver necklace charm is the backside of the gold chain charm. When replacing the charms you must produce the same output where one charm is front facing and the silver charm is showing the back with an engraved name.
+    • Both new charms must sit centered on the EXACT same positions as the original charms in the reference image.
+    • Front charm = gold, fully detailed front face. Back charm = silver, showing the engraved name on the back.
 
     CHARM FIDELITY
     • Preserve the exact outer perimeter, cutouts, engraving, and integrated hoop from the reference image.
     • Do NOT redraw, smooth, stylize, thicken, clean up, or reinterpret.
     • Keep edges crisp. No blur or smear.
 
+    GOLD CHARM COLOUR STANDARD (UNIFORM ACROSS ALL SLOTS — CRITICAL CONSISTENCY RULE)
+    • Render the front-facing gold Charm/Pendant in authentic 14K YELLOW gold: a warm yellow tone with the tiniest hint of green-gold. NOT rose gold, NOT pink, NOT peach, NOT salmon, NOT red-orange, NOT copper-pink.
+    • Pull the red channel slightly DOWN and bias toward yellow/green-gold until the charm reads as a classic yellow wedding band, NOT a rose gold ring.
+    • HARD FAIL: gold charm reading as pinker, peachier, warmer, or redder than a classic yellow gold reference. Even a small pink shift is a fail — the human eye picks it up immediately.
+    • Consistency rule: the gold colour rendered for the charm in this slot MUST be identical to the gold colour rendered for the charm in every other slot of the same listing set (Slots 1, 2, 3, 5, 7).
+
+    SILVER CHARM COLOUR STANDARD
+    • Render the back-facing silver Charm/Pendant in a neutral, slightly cool silver/white-metal tone — no yellow cast, no pink cast.
+    • Silver charm tone must remain consistent across all listings.
+
     HARD FAIL CONDITIONS
     - Any text change.
-    - Any charm size mismatch vs charm image.
-    - Any weak or disconnected hoop connection.`;
+    - Either charm rendered at reference-template size (must be ~25% smaller than reference).
+    - Charms rendered at mismatched sizes (one larger than the other).
+    - Any weak or disconnected hoop connection.
+    - Any pink/rose-gold cast on the gold charm.`;
 
     const SLOT5_PROMPT =
     `CRITICAL: This is a standard fashion product photo edit. Keep the subject modest. No nudity.
@@ -6663,10 +6716,24 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • Force the Charm to be very small: final on-image charm height MUST be 10 pixels tall (absolute pixel height, not relative).
     • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
     • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
-    • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
     • Do NOT allow any shadows (Contact or otherwise) to be visible undereath and around the Charm/Pendant placement, block all Charm/Pendant related shadows.
-    • The Charm/Pendant must be gold colour, do not saturate the Charm/Pendant gold colour, do not show visible reflections.
     • The chain must remain exactly the same size and detail as reference image. Only the charm is scaled.
+
+    ENGRAVING STANDARD (UNIFORM ACROSS ALL SLOTS — CRITICAL CONSISTENCY RULE)
+    • Engravings MUST read as real shallow grooves cut INTO the metal surface — subtle but unmistakably three-dimensional. They are NOT flat decals, NOT painted ink, NOT pencil-drawn lines on top of the metal, NOT raised/embossed high-relief metal.
+    • Render each engraved stroke with a fine inner shadow on one edge and a faint highlight on the opposing edge to convey roughly 0.1mm of recessed depth. Depth must be subtle (shallow laser etch), never deep gouges, never high-relief 3D.
+    • Engraving fill colour MUST be a slightly DARKER, WARMER UNDERTONE of the same base metal as the charm — brass/copper undertone for gold charms, gunmetal undertone for silver charms. The engraving stays in the SAME COLOUR FAMILY as the charm body.
+    • HARD FAIL: engraving rendered as black, near-black, charcoal, dark grey, or any colour that reads as ink/paint/Sharpie. If a viewer would describe it as "the engraving looks black," it is wrong.
+    • HARD FAIL: engraving so faint, so light, or so flat that it looks pencil-drawn or disappears into the charm surface. If a viewer would describe it as "drawn on with a pencil," it is wrong.
+    • Target contrast is MODERATE — clearly legible at the rendered charm size while remaining unmistakably the same metal colour family as the charm body.
+    • Visual reference: real laser-engraved brass/copper jewelry where the cut reveals a slightly darker, warmer undertone of the same metal — never a different colour altogether.
+
+    GOLD CHARM COLOUR STANDARD (UNIFORM ACROSS ALL SLOTS — CRITICAL CONSISTENCY RULE)
+    • Render the Charm/Pendant in authentic 14K YELLOW gold: a warm yellow tone with the tiniest hint of green-gold. NOT rose gold, NOT pink, NOT peach, NOT salmon, NOT red-orange, NOT copper-pink.
+    • The charm gold MUST visually match the necklace chain gold in the reference image: same hue, same saturation, same brightness. Charm and chain must look like they came from the same gold stock.
+    • Pull the red channel slightly DOWN and bias toward yellow/green-gold until the charm reads as a classic yellow wedding band, NOT a rose gold ring.
+    • HARD FAIL: charm reading as pinker, peachier, warmer, or redder than the chain. Even a small pink shift is a fail — the human eye picks it up immediately.
+    • Consistency rule: the gold colour rendered for the charm in this slot MUST be identical to the gold colour rendered for the charm in every other slot of the same listing set.
 
     TASK
     Duplicate and zoom-in into the female model in reference image, only replace the charm from Charm Image onto the existing necklace chain in reference image as a hanging flat charm.
@@ -6681,13 +6748,27 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
     const SLOT7_PROMPT =
     `    ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
-    • Force the Charm to be very small: final on-image charm height MUST be 13 pixels tall (absolute pixel height, not relative).
+    • Force the Charm to be very small: final on-image charm height MUST be 14 pixels tall (absolute pixel height, not relative).
     • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
      • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
-    • Do not embossed engravings on the Charm/Pendant, all engravings must be visible and flat and superficial having no descernable depth.
     • Limit any shadows (Contact or otherwise) to be visible undereath and around the Charm/Pendant placement.
-    • The Charm/Pendant must be gold colour, do not saturate the Charm/Pendant gold colour.
     • The chain must remain exactly the same size and detail as in the reference image. Only the charm is scaled.
+
+    ENGRAVING STANDARD (UNIFORM ACROSS ALL SLOTS — CRITICAL CONSISTENCY RULE)
+    • Engravings MUST read as real shallow grooves cut INTO the metal surface — subtle but unmistakably three-dimensional. They are NOT flat decals, NOT painted ink, NOT pencil-drawn lines on top of the metal, NOT raised/embossed high-relief metal.
+    • Render each engraved stroke with a fine inner shadow on one edge and a faint highlight on the opposing edge to convey roughly 0.1mm of recessed depth. Depth must be subtle (shallow laser etch), never deep gouges, never high-relief 3D.
+    • Engraving fill colour MUST be a slightly DARKER, WARMER UNDERTONE of the same base metal as the charm — brass/copper undertone for gold charms, gunmetal undertone for silver charms. The engraving stays in the SAME COLOUR FAMILY as the charm body.
+    • HARD FAIL: engraving rendered as black, near-black, charcoal, dark grey, or any colour that reads as ink/paint/Sharpie. If a viewer would describe it as "the engraving looks black," it is wrong.
+    • HARD FAIL: engraving so faint, so light, or so flat that it looks pencil-drawn or disappears into the charm surface. If a viewer would describe it as "drawn on with a pencil," it is wrong.
+    • Target contrast is MODERATE — clearly legible at the rendered charm size while remaining unmistakably the same metal colour family as the charm body.
+    • Visual reference: real laser-engraved brass/copper jewelry where the cut reveals a slightly darker, warmer undertone of the same metal — never a different colour altogether.
+
+    GOLD CHARM COLOUR STANDARD (UNIFORM ACROSS ALL SLOTS — CRITICAL CONSISTENCY RULE)
+    • Render the Charm/Pendant in authentic 14K YELLOW gold: a warm yellow tone with the tiniest hint of green-gold. NOT rose gold, NOT pink, NOT peach, NOT salmon, NOT red-orange, NOT copper-pink.
+    • The charm gold MUST visually match the necklace chain gold in the reference image: same hue, same saturation, same brightness. Charm and chain must look like they came from the same gold stock.
+    • Pull the red channel slightly DOWN and bias toward yellow/green-gold until the charm reads as a classic yellow wedding band, NOT a rose gold ring.
+    • HARD FAIL: charm reading as pinker, peachier, warmer, or redder than the chain. Even a small pink shift is a fail — the human eye picks it up immediately.
+    • Consistency rule: the gold colour rendered for the charm in this slot MUST be identical to the gold colour rendered for the charm in every other slot of the same listing set.
 
     TASK
     Duplicate and zoom-in into the reference image, only replace the charm onto the existing necklace chain in the reference image as a hanging flat charm.
@@ -6707,9 +6788,23 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • Force the Charm to be small: final on-image charm height MUST be 15 pixels tall (absolute pixel height, not relative).
     • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
     • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
-    • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
-    • The Charm/Pendant must be gold in colour just like the necklace chain in the reference image, do not saturate the Charm/Pendant gold colour.
     • The chain must remain exactly the same size and detail as in the reference image. Only the charm is scaled.
+
+    ENGRAVING STANDARD (UNIFORM ACROSS ALL SLOTS — CRITICAL CONSISTENCY RULE)
+    • Engravings MUST read as real shallow grooves cut INTO the metal surface — subtle but unmistakably three-dimensional. They are NOT flat decals, NOT painted ink, NOT pencil-drawn lines on top of the metal, NOT raised/embossed high-relief metal.
+    • Render each engraved stroke with a fine inner shadow on one edge and a faint highlight on the opposing edge to convey roughly 0.1mm of recessed depth. Depth must be subtle (shallow laser etch), never deep gouges, never high-relief 3D.
+    • Engraving fill colour MUST be a slightly DARKER, WARMER UNDERTONE of the same base metal as the charm — brass/copper undertone for gold charms, gunmetal undertone for silver charms. The engraving stays in the SAME COLOUR FAMILY as the charm body.
+    • HARD FAIL: engraving rendered as black, near-black, charcoal, dark grey, or any colour that reads as ink/paint/Sharpie. If a viewer would describe it as "the engraving looks black," it is wrong.
+    • HARD FAIL: engraving so faint, so light, or so flat that it looks pencil-drawn or disappears into the charm surface. If a viewer would describe it as "drawn on with a pencil," it is wrong.
+    • Target contrast is MODERATE — clearly legible at the rendered charm size while remaining unmistakably the same metal colour family as the charm body.
+    • Visual reference: real laser-engraved brass/copper jewelry where the cut reveals a slightly darker, warmer undertone of the same metal — never a different colour altogether.
+
+    GOLD CHARM COLOUR STANDARD (UNIFORM ACROSS ALL SLOTS — CRITICAL CONSISTENCY RULE)
+    • Render the Charm/Pendant in authentic 14K YELLOW gold: a warm yellow tone with the tiniest hint of green-gold. NOT rose gold, NOT pink, NOT peach, NOT salmon, NOT red-orange, NOT copper-pink.
+    • The charm gold MUST visually match the necklace chain gold in the reference image: same hue, same saturation, same brightness. Charm and chain must look like they came from the same gold stock.
+    • Pull the red channel slightly DOWN and bias toward yellow/green-gold until the charm reads as a classic yellow wedding band, NOT a rose gold ring.
+    • HARD FAIL: charm reading as pinker, peachier, warmer, or redder than the chain. Even a small pink shift is a fail — the human eye picks it up immediately.
+    • Consistency rule: the gold colour rendered for the charm in this slot MUST be identical to the gold colour rendered for the charm in every other slot of the same listing set.
 
     TASK
     Duplicate and zoom-in into the reference image, only replace the charm onto the existing necklace chain in the reference image as a hanging flat charm.
@@ -6753,23 +6848,44 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • The hoop MUST connect with a wide, solid bridge of metal (large surface area).
     • HARD FAIL if the hoop looks barely touching, point-connected, floating, or welded-on.
 
+    GOLD CHARM COLOUR STANDARD (UNIFORM ACROSS ALL SLOTS — CRITICAL CONSISTENCY RULE)
+    • Render the Charm/Pendant in authentic 14K YELLOW gold: a warm yellow tone with the tiniest hint of green-gold. NOT rose gold, NOT pink, NOT peach, NOT salmon, NOT red-orange, NOT copper-pink.
+    • Pull the red channel slightly DOWN and bias toward yellow/green-gold until the charm reads as a classic yellow wedding band, NOT a rose gold ring.
+    • HARD FAIL: charm reading pink, peachy, warm, or red. Even a small pink shift is a fail — the human eye picks it up immediately.
+    • Consistency rule: the gold colour rendered for the charm in this slot MUST be identical to the gold colour rendered for the charm in every other slot of the same listing set.
+
     HARD FAIL CONDITIONS
     - Any text change.
     - Any charm size mismatch vs charm image.
-    - Any weak or disconnected hoop connection.`;
+    - Any weak or disconnected hoop connection.
+    - Any pink/rose-gold colour cast on the charm.`;
 
     const REGULAR_DEFAULT_PROMPT =
     `CRITICAL: This is a standard fashion product photo edit. Keep the subject modest. No nudity.
 
     ULTRA-MICRO SIZE OVERRIDE 
-    • Force the Charm to be very small: final on-image charm height MUST be 12 pixels tall (absolute pixel height, not relative).
+    • Force the Charm to be very small: final on-image charm height MUST be 13 pixels tall (absolute pixel height, not relative).
     • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
     • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
-    • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
     • limit shadows (Contact or otherwise) to be visible undereath and around the Charm/Pendant placement.
-    • The Charm/Pendant must be gold colour, do not saturate the Charm/Pendant gold colour.
     • When generating the necklace chain ensure the fidelity of every single chain link and correct any link/chain imperfections.
     • Slightly vary the wardrobe.
+
+    ENGRAVING STANDARD (UNIFORM ACROSS ALL SLOTS — CRITICAL CONSISTENCY RULE)
+    • Engravings MUST read as real shallow grooves cut INTO the metal surface — subtle but unmistakably three-dimensional. They are NOT flat decals, NOT painted ink, NOT pencil-drawn lines on top of the metal, NOT raised/embossed high-relief metal.
+    • Render each engraved stroke with a fine inner shadow on one edge and a faint highlight on the opposing edge to convey roughly 0.1mm of recessed depth. Depth must be subtle (shallow laser etch), never deep gouges, never high-relief 3D.
+    • Engraving fill colour MUST be a slightly DARKER, WARMER UNDERTONE of the same base metal as the charm — brass/copper undertone for gold charms, gunmetal undertone for silver charms. The engraving stays in the SAME COLOUR FAMILY as the charm body.
+    • HARD FAIL: engraving rendered as black, near-black, charcoal, dark grey, or any colour that reads as ink/paint/Sharpie. If a viewer would describe it as "the engraving looks black," it is wrong.
+    • HARD FAIL: engraving so faint, so light, or so flat that it looks pencil-drawn or disappears into the charm surface. If a viewer would describe it as "drawn on with a pencil," it is wrong.
+    • Target contrast is MODERATE — clearly legible at the rendered charm size while remaining unmistakably the same metal colour family as the charm body.
+    • Visual reference: real laser-engraved brass/copper jewelry where the cut reveals a slightly darker, warmer undertone of the same metal — never a different colour altogether.
+
+    GOLD CHARM COLOUR STANDARD (UNIFORM ACROSS ALL SLOTS — CRITICAL CONSISTENCY RULE)
+    • Render the Charm/Pendant in authentic 14K YELLOW gold: a warm yellow tone with the tiniest hint of green-gold. NOT rose gold, NOT pink, NOT peach, NOT salmon, NOT red-orange, NOT copper-pink.
+    • The charm gold MUST visually match the necklace chain gold in the reference image: same hue, same saturation, same brightness. Charm and chain must look like they came from the same gold stock.
+    • Pull the red channel slightly DOWN and bias toward yellow/green-gold until the charm reads as a classic yellow wedding band, NOT a rose gold ring.
+    • HARD FAIL: charm reading as pinker, peachier, warmer, or redder than the chain. Even a small pink shift is a fail — the human eye picks it up immediately.
+    • Consistency rule: the gold colour rendered for the charm in this slot MUST be identical to the gold colour rendered for the charm in every other slot of the same listing set.
 
     TASK
     Duplicate and zoom-in into the female model in reference image, only replace the charm from Charm Image onto the existing necklace chain in reference image as a hanging flat charm.
@@ -6795,21 +6911,39 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • Do NOT move, resize, restyle, blur, or alter any text.
     • Do NOT crop, zoom, or reframe the image.
 
-    CHARM POSITION + SIZE MATCH (NON-NEGOTIABLE)
-    • The silver necklace charm is the backside of the gold chain charm. When replacing the charms you must produce the same output where one charm is front facing and the silver charm is showing the bakc with an engraved name.
-    • Both new charms must sit in the EXACT same position as the original charms in the reference image.
-    • The new charm must match the original charm’s on-image size EXACTLY.
-    • This is a strict size match — no scaling up or down.
+    CRITICAL CHARM SIZE OVERRIDE (BOTH GOLD AND SILVER — TOP PRIORITY)
+    • Render BOTH the front-facing gold charm AND the back-facing silver charm at approximately 75% of the charm size shown in the reference image — i.e. 25% SMALLER than the reference template placeholder.
+    • This override exists to compensate for systematic upscaling: the model has historically rendered both charms ~25% too large. Correct that bias here.
+    • The 25% reduction MUST apply equally to both charms — neither should be larger than the other; they must remain matched in size to each other.
+    • Both charms must remain centered on their original reference positions even after the size reduction.
+    • Do NOT crop or reframe to compensate for the smaller size; the empty space around the smaller charms is intentional and correct.
+
+    CHARM POSITION + LAYOUT
+    • The silver necklace charm is the backside of the gold chain charm. When replacing the charms you must produce the same output where one charm is front facing and the silver charm is showing the back with an engraved name.
+    • Both new charms must sit centered on the EXACT same positions as the original charms in the reference image.
+    • Front charm = gold, fully detailed front face. Back charm = silver, showing the engraved name on the back.
 
     CHARM FIDELITY
     • Preserve the exact outer perimeter, cutouts, engraving, and integrated hoop from the reference image.
     • Do NOT redraw, smooth, stylize, thicken, clean up, or reinterpret.
     • Keep edges crisp. No blur or smear.
 
+    GOLD CHARM COLOUR STANDARD (UNIFORM ACROSS ALL SLOTS — CRITICAL CONSISTENCY RULE)
+    • Render the front-facing gold Charm/Pendant in authentic 14K YELLOW gold: a warm yellow tone with the tiniest hint of green-gold. NOT rose gold, NOT pink, NOT peach, NOT salmon, NOT red-orange, NOT copper-pink.
+    • Pull the red channel slightly DOWN and bias toward yellow/green-gold until the charm reads as a classic yellow wedding band, NOT a rose gold ring.
+    • HARD FAIL: gold charm reading as pinker, peachier, warmer, or redder than a classic yellow gold reference. Even a small pink shift is a fail — the human eye picks it up immediately.
+    • Consistency rule: the gold colour rendered for the charm in this slot MUST be identical to the gold colour rendered for the charm in every other slot of the same listing set (Slots 1, 2, 3, 5, 7).
+
+    SILVER CHARM COLOUR STANDARD
+    • Render the back-facing silver Charm/Pendant in a neutral, slightly cool silver/white-metal tone — no yellow cast, no pink cast.
+    • Silver charm tone must remain consistent across all listings.
+
     HARD FAIL CONDITIONS
     - Any text change.
-    - Any charm size mismatch vs charm image.
-    - Any weak or disconnected hoop connection.`;
+    - Either charm rendered at reference-template size (must be ~25% smaller than reference).
+    - Charms rendered at mismatched sizes (one larger than the other).
+    - Any weak or disconnected hoop connection.
+    - Any pink/rose-gold cast on the gold charm.`;
 
     const REGULAR_SLOT5_PROMPT =
     `CRITICAL: This is a standard fashion product photo edit. Keep the subject modest. No nudity.
@@ -6818,11 +6952,25 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • Force the Charm to be very small: final on-image charm height MUST be 12 pixels tall (absolute pixel height, not relative).
     • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
     • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
-    • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
     • limit shadows (Contact or otherwise) to be visible undereath and around the Charm/Pendant placement.
-    • The Charm/Pendant must be gold colour, do not saturate the Charm/Pendant gold colour, do not show visible reflections.
     • When generating the necklace chain ensure the fidelity of every single chain link and correct any link/chain imperfections.
     • Vary the wardrobe.
+
+    ENGRAVING STANDARD (UNIFORM ACROSS ALL SLOTS — CRITICAL CONSISTENCY RULE)
+    • Engravings MUST read as real shallow grooves cut INTO the metal surface — subtle but unmistakably three-dimensional. They are NOT flat decals, NOT painted ink, NOT pencil-drawn lines on top of the metal, NOT raised/embossed high-relief metal.
+    • Render each engraved stroke with a fine inner shadow on one edge and a faint highlight on the opposing edge to convey roughly 0.1mm of recessed depth. Depth must be subtle (shallow laser etch), never deep gouges, never high-relief 3D.
+    • Engraving fill colour MUST be a slightly DARKER, WARMER UNDERTONE of the same base metal as the charm — brass/copper undertone for gold charms, gunmetal undertone for silver charms. The engraving stays in the SAME COLOUR FAMILY as the charm body.
+    • HARD FAIL: engraving rendered as black, near-black, charcoal, dark grey, or any colour that reads as ink/paint/Sharpie. If a viewer would describe it as "the engraving looks black," it is wrong.
+    • HARD FAIL: engraving so faint, so light, or so flat that it looks pencil-drawn or disappears into the charm surface. If a viewer would describe it as "drawn on with a pencil," it is wrong.
+    • Target contrast is MODERATE — clearly legible at the rendered charm size while remaining unmistakably the same metal colour family as the charm body.
+    • Visual reference: real laser-engraved brass/copper jewelry where the cut reveals a slightly darker, warmer undertone of the same metal — never a different colour altogether.
+
+    GOLD CHARM COLOUR STANDARD (UNIFORM ACROSS ALL SLOTS — CRITICAL CONSISTENCY RULE)
+    • Render the Charm/Pendant in authentic 14K YELLOW gold: a warm yellow tone with the tiniest hint of green-gold. NOT rose gold, NOT pink, NOT peach, NOT salmon, NOT red-orange, NOT copper-pink.
+    • The charm gold MUST visually match the necklace chain gold in the reference image: same hue, same saturation, same brightness. Charm and chain must look like they came from the same gold stock.
+    • Pull the red channel slightly DOWN and bias toward yellow/green-gold until the charm reads as a classic yellow wedding band, NOT a rose gold ring.
+    • HARD FAIL: charm reading as pinker, peachier, warmer, or redder than the chain. Even a small pink shift is a fail — the human eye picks it up immediately.
+    • Consistency rule: the gold colour rendered for the charm in this slot MUST be identical to the gold colour rendered for the charm in every other slot of the same listing set.
 
     TASK
     Duplicate and zoom-in into the female model in reference image, only replace the charm from Charm Image onto the existing necklace chain in reference image as a hanging flat charm.
@@ -6837,12 +6985,26 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
     const REGULAR_SLOT7_PROMPT =
     `ULTRA-MICRO SIZE OVERRIDE 
-    • Force the Charm to be small: final on-image charm height MUST be 15 pixels tall (absolute pixel height, not relative).
+    • Force the Charm to be small: final on-image charm height MUST be 16 pixels tall (absolute pixel height, not relative).
     • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
     • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
-    • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
-    • The Charm/Pendant must be gold in colour just like the necklace chain in the reference image, do not saturate the Charm/Pendant gold colour.
     • The chain must remain exactly the same size and detail as in the reference image. Only the charm is scaled.
+
+    ENGRAVING STANDARD (UNIFORM ACROSS ALL SLOTS — CRITICAL CONSISTENCY RULE)
+    • Engravings MUST read as real shallow grooves cut INTO the metal surface — subtle but unmistakably three-dimensional. They are NOT flat decals, NOT painted ink, NOT pencil-drawn lines on top of the metal, NOT raised/embossed high-relief metal.
+    • Render each engraved stroke with a fine inner shadow on one edge and a faint highlight on the opposing edge to convey roughly 0.1mm of recessed depth. Depth must be subtle (shallow laser etch), never deep gouges, never high-relief 3D.
+    • Engraving fill colour MUST be a slightly DARKER, WARMER UNDERTONE of the same base metal as the charm — brass/copper undertone for gold charms, gunmetal undertone for silver charms. The engraving stays in the SAME COLOUR FAMILY as the charm body.
+    • HARD FAIL: engraving rendered as black, near-black, charcoal, dark grey, or any colour that reads as ink/paint/Sharpie. If a viewer would describe it as "the engraving looks black," it is wrong.
+    • HARD FAIL: engraving so faint, so light, or so flat that it looks pencil-drawn or disappears into the charm surface. If a viewer would describe it as "drawn on with a pencil," it is wrong.
+    • Target contrast is MODERATE — clearly legible at the rendered charm size while remaining unmistakably the same metal colour family as the charm body.
+    • Visual reference: real laser-engraved brass/copper jewelry where the cut reveals a slightly darker, warmer undertone of the same metal — never a different colour altogether.
+
+    GOLD CHARM COLOUR STANDARD (UNIFORM ACROSS ALL SLOTS — CRITICAL CONSISTENCY RULE)
+    • Render the Charm/Pendant in authentic 14K YELLOW gold: a warm yellow tone with the tiniest hint of green-gold. NOT rose gold, NOT pink, NOT peach, NOT salmon, NOT red-orange, NOT copper-pink.
+    • The charm gold MUST visually match the necklace chain gold in the reference image: same hue, same saturation, same brightness. Charm and chain must look like they came from the same gold stock.
+    • Pull the red channel slightly DOWN and bias toward yellow/green-gold until the charm reads as a classic yellow wedding band, NOT a rose gold ring.
+    • HARD FAIL: charm reading as pinker, peachier, warmer, or redder than the chain. Even a small pink shift is a fail — the human eye picks it up immediately.
+    • Consistency rule: the gold colour rendered for the charm in this slot MUST be identical to the gold colour rendered for the charm in every other slot of the same listing set.
 
     TASK
     Duplicate and zoom-in into the reference image, only replace the charm onto the existing necklace chain in the reference image as a hanging flat charm.
