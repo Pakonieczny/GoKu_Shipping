@@ -5252,9 +5252,31 @@ function updateApproveButtonState() {
         // step. These helpers add stagger between submissions plus retry-with-
         // exponential-backoff so the loop recovers gracefully when the rate-limit
         // window clears.
-        const CHUNK_STAGGER_MS = 1500;                          // ~40 chunks/min peak — safe under Files API ceiling
+        const CHUNK_STAGGER_MS = 2000;                          // base stagger (~30 chunks/min peak)
+        const CHUNK_STAGGER_MAX_MS = 8000;                      // cap when adaptive backoff kicks in
+        const CHUNK_STAGGER_BACKOFF_MULT = 2;                   // doubling factor on rate-limit hit
+        const CHUNK_STAGGER_RECOVERY_PER_OK_MS = 200;           // ms shaved per successful chunk
         const RATE_LIMIT_BACKOFF_MS = [30000, 60000, 120000];   // 30s, 60s, 120s
         const RATE_LIMIT_MAX_RETRIES = RATE_LIMIT_BACKOFF_MS.length;
+
+        // Mutable adaptive stagger — starts at base, grows toward MAX after
+        // 429s, shrinks back toward base after successful chunks. Each chunk
+        // loop should call _resetChunkStagger() at the start, and the
+        // helpers below as events occur.
+        let _currentChunkStaggerMs = CHUNK_STAGGER_MS;
+        function _resetChunkStagger() { _currentChunkStaggerMs = CHUNK_STAGGER_MS; }
+        function _onChunkRateLimited() {
+          _currentChunkStaggerMs = Math.min(
+            CHUNK_STAGGER_MAX_MS,
+            Math.round(_currentChunkStaggerMs * CHUNK_STAGGER_BACKOFF_MULT)
+          );
+        }
+        function _onChunkSuccess() {
+          _currentChunkStaggerMs = Math.max(
+            CHUNK_STAGGER_MS,
+            _currentChunkStaggerMs - CHUNK_STAGGER_RECOVERY_PER_OK_MS
+          );
+        }
 
         // Number of sets per Gemini batch job. Was originally a per-handler
         // local constant in the main batch button's click handler, but
@@ -8965,6 +8987,10 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         const sessionStartMs = Date.now();
         const sessionId = `sess_${sessionStartMs}_${Math.random().toString(36).slice(2, 8)}`;
 
+        // Reset adaptive stagger at session start. Each chunk's
+        // outcome adjusts _currentChunkStaggerMs for the NEXT chunk.
+        _resetChunkStagger();
+
         for (let c = 0; c < effectiveChunkCount; c++) {
           const start = c * CHUNK_SIZE;
           const slice = allSets.slice(start, start + CHUNK_SIZE);
@@ -8974,6 +9000,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
             ? `lg1-${category}-${effectiveCount}sets-${stamp}`
             : `lg1-${category}-${effectiveCount}sets-${stamp}-part${c + 1}of${effectiveChunkCount}`;
 
+          let chunkHitRateLimit = false;
           try {
             const resp = await _submitChunkWithRetry(
               "geminiImageProxy",
@@ -8985,14 +9012,18 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
                 sessionId,
               },
               (secs, attempt, maxAttempts) => {
+                chunkHitRateLimit = true;
                 _setBatchProgress(c, effectiveChunkCount,
                   `Rate-limited on chunk ${c + 1}; waiting ${secs}s before retry ${attempt}/${maxAttempts}…`);
               }
             );
             submitted.push(resp);
+            if (chunkHitRateLimit) _onChunkRateLimited(); else _onChunkSuccess();
           } catch (chunkErr) {
             console.error(`[batch_submit chunk ${c+1}] failed`, chunkErr);
             submitErrors.push({ chunk: c + 1, error: chunkErr?.message || String(chunkErr) });
+            // Even on failure, if it was rate-limit-related, slow down for next chunk.
+            if (_isRateLimitError(chunkErr)) _onChunkRateLimited();
             // If it's a Files API storage quota error, ALL remaining chunks
             // will fail the same way. Abort the loop to save time.
             if (_isStorageQuotaError(chunkErr)) {
@@ -9006,10 +9037,15 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
             // independent Gemini batch.
           }
 
-          // Stagger between chunks so we don't burst the Gemini Files API
-          // rate limit. Skip after the last chunk.
+          // Adaptive stagger between chunks. Starts at CHUNK_STAGGER_MS,
+          // doubles after rate-limit hits, recovers gradually toward base
+          // after successful chunks.
           if (c < effectiveChunkCount - 1) {
-            await sleep(CHUNK_STAGGER_MS);
+            if (_currentChunkStaggerMs > CHUNK_STAGGER_MS) {
+              _setBatchProgress(c + 1, effectiveChunkCount,
+                `Waiting ${Math.round(_currentChunkStaggerMs / 1000)}s before chunk ${c + 2}/${effectiveChunkCount} (adaptive throttle after rate-limit)…`);
+            }
+            await sleep(_currentChunkStaggerMs);
           }
         }
 
@@ -9601,6 +9637,10 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         const sessionStartMs = Date.now();
         const sessionId = `sess_resume_${sessionStartMs}_${Math.random().toString(36).slice(2, 8)}`;
 
+        // Reset adaptive stagger at session start. Each chunk's outcome
+        // adjusts _currentChunkStaggerMs for the NEXT chunk.
+        _resetChunkStagger();
+
         for (let c = 0; c < effectiveChunkCount; c++) {
           if (_batchCancelRequested) break;
           const start = c * CHUNK_SIZE;
@@ -9611,6 +9651,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
             ? `lg1-${category}-resume${effectiveCount}sets-${stamp}`
             : `lg1-${category}-resume${effectiveCount}sets-${stamp}-part${c + 1}of${effectiveChunkCount}`;
 
+          let chunkHitRateLimit = false;
           try {
             const resp = await _submitChunkWithRetry(
               "geminiImageProxy",
@@ -9622,14 +9663,17 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
                 sessionId,
               },
               (secs, attempt, maxAttempts) => {
+                chunkHitRateLimit = true;
                 _setBatchProgress(c, effectiveChunkCount,
                   `Rate-limited on chunk ${c + 1}; waiting ${secs}s before retry ${attempt}/${maxAttempts}…`);
               }
             );
             submitted.push(resp);
+            if (chunkHitRateLimit) _onChunkRateLimited(); else _onChunkSuccess();
           } catch (chunkErr) {
             console.error(`[resume_empty_sets chunk ${c+1}] failed`, chunkErr);
             submitErrors.push({ chunk: c + 1, error: chunkErr?.message || String(chunkErr) });
+            if (_isRateLimitError(chunkErr)) _onChunkRateLimited();
             // Storage-quota errors are unrecoverable by retry — every
             // remaining chunk will fail the same way. Abort the loop.
             if (_isStorageQuotaError(chunkErr)) {
@@ -9640,9 +9684,15 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
             }
           }
 
-          // Stagger between chunks to stay under Gemini Files API rate limit.
+          // Adaptive stagger between chunks. Doubles after a rate-limit
+          // hit (capped at CHUNK_STAGGER_MAX_MS); recovers gradually after
+          // successful chunks.
           if (c < effectiveChunkCount - 1) {
-            await sleep(CHUNK_STAGGER_MS);
+            if (_currentChunkStaggerMs > CHUNK_STAGGER_MS) {
+              _setBatchProgress(c + 1, effectiveChunkCount,
+                `Waiting ${Math.round(_currentChunkStaggerMs / 1000)}s before chunk ${c + 2}/${effectiveChunkCount} (adaptive throttle after rate-limit)…`);
+            }
+            await sleep(_currentChunkStaggerMs);
           }
         }
 
