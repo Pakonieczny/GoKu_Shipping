@@ -6700,31 +6700,59 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • Do NOT allow any shadows (Contact or otherwise) to be visible undereath and around the Charm/Pendant placement, block all Charm/Pendant related shadows.
     • The chain must remain exactly the same size and detail as reference image. Only the charm is scaled.
 
-    CHARM-TO-MODEL PROPORTION (PRIMARY SIZE RULE — INVARIANT TO ZOOM AND CAMERA DISTANCE)
-    Critical observation from real-world renderings: the SAME charm has been rendered at dramatically different proportional sizes across different reference images — appropriate in close-up shots, much too large in wider/zoomed-out shots. The model has been sizing the charm to "fit the composition" rather than at a consistent proportion to the wearer. This is the root cause of cross-image inconsistency and MUST be fixed with a proportional anchor that is inherently zoom-invariant:
+    CAMERA-DISTANCE-ANCHORED CHARM SIZE (PRIMARY RULE — MODEL-FEATURE PROPORTION)
 
-    • PRIMARY RULE — CHARM WIDTH ≈ 1/5 OF MODEL'S NECK WIDTH: the charm's width on canvas MUST be approximately ONE-FIFTH the width of the model's NECK at its widest visible point (typically just below the jawline). This proportion is INVARIANT to camera distance: closer shots show a wider-rendered neck AND a proportionally wider-rendered charm; wider shots show a narrower-rendered neck AND a proportionally narrower-rendered charm. The RATIO stays at 1/5 regardless of zoom or framing. This is the ONLY rule that produces consistency across reference images.
+    KEY PRINCIPLE: camera distance determines how large the model's features appear on canvas. The charm must be sized as a fixed PROPORTION of a specific model feature that itself scales linearly with camera distance. Result: when the model is photographed closer (features larger in pixels), the charm renders proportionally larger; when photographed farther (features smaller), the charm renders proportionally smaller. The RATIO stays constant — absolute pixels follow camera distance automatically.
 
-    • VERIFICATION TEST — "FIVE ACROSS THE NECK": mentally place copies of the charm side-by-side across the model's visible neck width. You MUST be able to fit approximately FIVE charms across. If you can only fit 3 or 4 copies, the charm is TOO LARGE — scale it down until 5 fit. If you can fit 7 or 8 copies, scale up slightly to reach ~5.
+    Why prior anchors have NOT worked: pixel targets are below the model's rendering precision and saturate; "neck width" is too ambiguous (neck tapers, gets cropped); nostril/eye anchors require the face to be in frame (often it isn't); chain-thickness ratios don't link the charm to the wearer. The correct anchor is a feature that is (a) always visible in product shots, (b) clearly identifiable, (c) anatomically stable, and (d) scales linearly with camera distance.
 
-    • SECONDARY ANCHOR — CHARM HEIGHT ≈ 1/4 OF CHIN-TO-COLLARBONE-DIP DISTANCE: charm height on canvas should be approximately ONE-QUARTER the visible distance from the model's chin to the suprasternal notch (the dip between the collarbones at the base of the throat). Another zoom-invariant proportion that complements the neck-width rule.
+    ═══════════════════════════════════════════════════════
+    PRIMARY ANCHOR — CHARM HEIGHT vs. CHIN-TO-COLLARBONE-DIP DISTANCE
 
-    • OVERRIDES THE PIXEL TARGET ABOVE: the pixel number is now a secondary hint only. The proportional anchors above are the PRIMARY rule. If the pixel hint and the proportional anchors disagree about charm size, FOLLOW THE PROPORTIONAL ANCHORS.
+    On every reference image, identify these two specific points on the model:
+    • CHIN POINT: the bottom-most point of the chin, where the jawline transitions into the neck.
+    • COLLARBONE DIP: the small V-shaped depression at the base of the throat between the two collarbones (anatomically: the suprasternal notch / jugular notch).
 
-    • CROSS-IMAGE CONSISTENCY (CRITICAL): the SAME charm rendered across DIFFERENT reference images of the same listing set MUST appear at the SAME proportional size on each model. If reference image A shows the model from chest-up and reference image B shows them from waist-up, the charm in both should still be 1/5 the neck width in each — same proportion, different absolute pixels.
+    These two points are visible in virtually every product-photography crop, are anatomically stable, and the distance between them scales linearly with the camera-to-model distance. Closer camera → larger chin-to-dip distance in pixels. Farther camera → smaller chin-to-dip distance in pixels. The model's other features scale identically.
 
-    • HARD FAIL: charm width clearly exceeds 1/4 of the model's neck width on canvas (you could fit fewer than 4 charms across the neck).
-    • HARD FAIL: same charm rendered at noticeably different proportional sizes across different reference images of the same listing set.
-    • HARD FAIL: charm sized to "fit the composition" or "look balanced in the frame" rather than according to the 1/5-neck-width rule. The composition does not drive size — the proportion-to-model does.
+    THE RULE: the CHARM HEIGHT on canvas MUST be approximately ONE-FIFTH (1/5) of the vertical pixel distance from the chin point to the collarbone dip.
 
-    CHARM SIZE CALIBRATION TO CAMERA DISTANCE (CRITICAL CONSISTENCY)
-    • The pixel range above is a CAMERA-DISTANCE-NORMALIZED baseline — it assumes the model is photographed at a moderate distance with their upper torso filling roughly half the frame.
-    • If the reference image shows the model photographed CLOSER (face/neck dominates the frame), proportionally INCREASE the on-canvas charm pixel size so the charm reads at the same real-world physical scale. The 6–7 pixel cap may be exceeded ONLY in this close-zoom case, and only by the amount required to maintain proportional scale.
-    • If the reference image shows the model photographed FURTHER AWAY (more body/background visible), proportionally DECREASE the on-canvas charm pixel size so the perceived charm scale stays consistent. The 6-pixel floor may go below ONLY in this far-zoom case, and only by the amount required to maintain proportional scale.
-    • Anchor to chain thickness: the charm width must always remain in fixed proportion to the chain's on-canvas thickness in the reference image. If the chain reads as thickness T on canvas, the charm width should be roughly 5–6× T regardless of overall image zoom.
-    • Anchor to real-world scale: the charm's real-world physical size is roughly that of a fingernail (~10–12mm tall). Render at whatever on-canvas pixel size produces that real-world scale given the model's apparent zoom level.
-    • When in doubt, target the LOWER end of the acceptable range — small consistent under-shoot is far more forgiving than over-shoot.
-    • HARD FAIL: identical on-canvas charm pixel size across two reference images showing the model at clearly different camera distances. The perceived charm size must stay consistent across the listing set, which means absolute pixel size must scale with model zoom.
+    CONCRETE EXAMPLES:
+    • Reference image where chin-to-dip distance appears ~250 px on canvas → render charm at ~50 px height.
+    • Reference image where chin-to-dip distance appears ~150 px on canvas → render charm at ~30 px height.
+    • Reference image where chin-to-dip distance appears ~80 px on canvas → render charm at ~16 px height.
+    • Reference image where chin-to-dip distance appears ~400 px on canvas (very close-up shot) → render charm at ~80 px height.
+
+    The 1/5 ratio is INVARIANT. The absolute pixel size of the charm follows camera distance automatically because the chin-to-dip distance is itself a function of camera distance.
+    ═══════════════════════════════════════════════════════
+
+    SECONDARY ANCHOR (cross-check) — CHARM WIDTH vs. NECK WIDTH:
+    • Charm width on canvas should also be approximately ONE-FIFTH (1/5) of the model's neck width at the widest point just below the jawline.
+    • Use this as a secondary verification: both anchors should agree on charm size. If they disagree, prefer the chin-to-dip anchor.
+
+    SELF-CHECK PROCESS (apply before finalizing):
+    1. Locate the model's chin point and the V-dip between the collarbones.
+    2. Estimate the vertical pixel distance between them.
+    3. Verify the rendered charm height is approximately 1/5 of that distance.
+    4. If the charm is clearly more than 1/4 of the chin-to-dip distance, the charm is too large — scale down.
+    5. If the charm is clearly less than 1/8 of the chin-to-dip distance, the charm may be too small — scale up slightly.
+
+    CROSS-IMAGE CONSISTENCY (THE MAIN PROBLEM THIS RULE SOLVES):
+    For the same charm rendered across multiple reference images of the same listing set:
+    • Each reference image will have a different chin-to-dip pixel distance (because camera distance differs).
+    • The charm's ABSOLUTE pixel size will therefore differ across images (this is expected and correct).
+    • BUT the charm-to-distance RATIO must be the same (~1/5) in every image.
+    • Visual result: the charm reads as the same proportional size on the model regardless of which image is viewed.
+
+    HARD FAILS:
+    • Charm height clearly exceeds 1/3 of the chin-to-collarbone-dip distance (grossly oversized).
+    • Charm width clearly exceeds 1/3 of the model's neck width at the widest point.
+    • Same charm rendered at noticeably different charm-to-feature ratios across different reference images of the same listing set — the ratio must be invariant.
+    • Charm sized to "fit the composition" or "look balanced in the frame" rather than to match the chin-to-dip 1/5 ratio.
+
+    CHARM SIZE — CAMERA DISTANCE NOTE:
+    The CAMERA-DISTANCE-ANCHORED CHARM SIZE rule above (using the chin-to-collarbone-dip 1/5 ratio) is the primary camera-distance handler. The chin-to-dip distance itself scales with camera distance, so applying the 1/5 ratio automatically gives the correct charm size at any zoom level. The pixel target in the ULTRA-MICRO SIZE OVERRIDE is a soft baseline only — if it conflicts with the 1/5 chin-to-dip ratio, follow the ratio.
+    • HARD FAIL: identical on-canvas charm pixel size across two reference images at clearly different camera distances. The charm pixel size MUST scale with camera distance because the chin-to-dip distance scales with camera distance, and the charm height is locked to 1/5 of that distance.
 
     ENGRAVING STANDARD (UNIFORM ACROSS ALL SLOTS — CRITICAL CONSISTENCY RULE)
     • Engravings MUST read as real grooves cut INTO the metal surface — clearly three-dimensional with visible recessed depth. They are NOT flat decals, NOT painted ink, NOT pencil-drawn lines on top of the metal, NOT raised/embossed high-relief metal.
@@ -6915,31 +6943,59 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • Do NOT allow any shadows (Contact or otherwise) to be visible undereath and around the Charm/Pendant placement, block all Charm/Pendant related shadows.
     • The chain must remain exactly the same size and detail as reference image. Only the charm is scaled.
 
-    CHARM-TO-MODEL PROPORTION (PRIMARY SIZE RULE — INVARIANT TO ZOOM AND CAMERA DISTANCE)
-    Critical observation from real-world renderings: the SAME charm has been rendered at dramatically different proportional sizes across different reference images — appropriate in close-up shots, much too large in wider/zoomed-out shots. The model has been sizing the charm to "fit the composition" rather than at a consistent proportion to the wearer. This is the root cause of cross-image inconsistency and MUST be fixed with a proportional anchor that is inherently zoom-invariant:
+    CAMERA-DISTANCE-ANCHORED CHARM SIZE (PRIMARY RULE — MODEL-FEATURE PROPORTION)
 
-    • PRIMARY RULE — CHARM WIDTH ≈ 1/5 OF MODEL'S NECK WIDTH: the charm's width on canvas MUST be approximately ONE-FIFTH the width of the model's NECK at its widest visible point (typically just below the jawline). This proportion is INVARIANT to camera distance: closer shots show a wider-rendered neck AND a proportionally wider-rendered charm; wider shots show a narrower-rendered neck AND a proportionally narrower-rendered charm. The RATIO stays at 1/5 regardless of zoom or framing. This is the ONLY rule that produces consistency across reference images.
+    KEY PRINCIPLE: camera distance determines how large the model's features appear on canvas. The charm must be sized as a fixed PROPORTION of a specific model feature that itself scales linearly with camera distance. Result: when the model is photographed closer (features larger in pixels), the charm renders proportionally larger; when photographed farther (features smaller), the charm renders proportionally smaller. The RATIO stays constant — absolute pixels follow camera distance automatically.
 
-    • VERIFICATION TEST — "FIVE ACROSS THE NECK": mentally place copies of the charm side-by-side across the model's visible neck width. You MUST be able to fit approximately FIVE charms across. If you can only fit 3 or 4 copies, the charm is TOO LARGE — scale it down until 5 fit. If you can fit 7 or 8 copies, scale up slightly to reach ~5.
+    Why prior anchors have NOT worked: pixel targets are below the model's rendering precision and saturate; "neck width" is too ambiguous (neck tapers, gets cropped); nostril/eye anchors require the face to be in frame (often it isn't); chain-thickness ratios don't link the charm to the wearer. The correct anchor is a feature that is (a) always visible in product shots, (b) clearly identifiable, (c) anatomically stable, and (d) scales linearly with camera distance.
 
-    • SECONDARY ANCHOR — CHARM HEIGHT ≈ 1/4 OF CHIN-TO-COLLARBONE-DIP DISTANCE: charm height on canvas should be approximately ONE-QUARTER the visible distance from the model's chin to the suprasternal notch (the dip between the collarbones at the base of the throat). Another zoom-invariant proportion that complements the neck-width rule.
+    ═══════════════════════════════════════════════════════
+    PRIMARY ANCHOR — CHARM HEIGHT vs. CHIN-TO-COLLARBONE-DIP DISTANCE
 
-    • OVERRIDES THE PIXEL TARGET ABOVE: the pixel number is now a secondary hint only. The proportional anchors above are the PRIMARY rule. If the pixel hint and the proportional anchors disagree about charm size, FOLLOW THE PROPORTIONAL ANCHORS.
+    On every reference image, identify these two specific points on the model:
+    • CHIN POINT: the bottom-most point of the chin, where the jawline transitions into the neck.
+    • COLLARBONE DIP: the small V-shaped depression at the base of the throat between the two collarbones (anatomically: the suprasternal notch / jugular notch).
 
-    • CROSS-IMAGE CONSISTENCY (CRITICAL): the SAME charm rendered across DIFFERENT reference images of the same listing set MUST appear at the SAME proportional size on each model. If reference image A shows the model from chest-up and reference image B shows them from waist-up, the charm in both should still be 1/5 the neck width in each — same proportion, different absolute pixels.
+    These two points are visible in virtually every product-photography crop, are anatomically stable, and the distance between them scales linearly with the camera-to-model distance. Closer camera → larger chin-to-dip distance in pixels. Farther camera → smaller chin-to-dip distance in pixels. The model's other features scale identically.
 
-    • HARD FAIL: charm width clearly exceeds 1/4 of the model's neck width on canvas (you could fit fewer than 4 charms across the neck).
-    • HARD FAIL: same charm rendered at noticeably different proportional sizes across different reference images of the same listing set.
-    • HARD FAIL: charm sized to "fit the composition" or "look balanced in the frame" rather than according to the 1/5-neck-width rule. The composition does not drive size — the proportion-to-model does.
+    THE RULE: the CHARM HEIGHT on canvas MUST be approximately ONE-FIFTH (1/5) of the vertical pixel distance from the chin point to the collarbone dip.
 
-    CHARM SIZE CALIBRATION TO CAMERA DISTANCE (CRITICAL CONSISTENCY)
-    • The pixel range above is a CAMERA-DISTANCE-NORMALIZED baseline — it assumes the model is photographed at a moderate distance with their upper torso filling roughly half the frame.
-    • If the reference image shows the model photographed CLOSER (face/neck dominates the frame), proportionally INCREASE the on-canvas charm pixel size so the charm reads at the same real-world physical scale. The 6–7 pixel cap may be exceeded ONLY in this close-zoom case, and only by the amount required to maintain proportional scale.
-    • If the reference image shows the model photographed FURTHER AWAY (more body/background visible), proportionally DECREASE the on-canvas charm pixel size so the perceived charm scale stays consistent. The 6-pixel floor may go below ONLY in this far-zoom case, and only by the amount required to maintain proportional scale.
-    • Anchor to chain thickness: the charm width must always remain in fixed proportion to the chain's on-canvas thickness in the reference image. If the chain reads as thickness T on canvas, the charm width should be roughly 5–6× T regardless of overall image zoom.
-    • Anchor to real-world scale: the charm's real-world physical size is roughly that of a fingernail (~10–12mm tall). Render at whatever on-canvas pixel size produces that real-world scale given the model's apparent zoom level.
-    • When in doubt, target the LOWER end of the acceptable range — small consistent under-shoot is far more forgiving than over-shoot.
-    • HARD FAIL: identical on-canvas charm pixel size across two reference images showing the model at clearly different camera distances. The perceived charm size must stay consistent across the listing set, which means absolute pixel size must scale with model zoom.
+    CONCRETE EXAMPLES:
+    • Reference image where chin-to-dip distance appears ~250 px on canvas → render charm at ~50 px height.
+    • Reference image where chin-to-dip distance appears ~150 px on canvas → render charm at ~30 px height.
+    • Reference image where chin-to-dip distance appears ~80 px on canvas → render charm at ~16 px height.
+    • Reference image where chin-to-dip distance appears ~400 px on canvas (very close-up shot) → render charm at ~80 px height.
+
+    The 1/5 ratio is INVARIANT. The absolute pixel size of the charm follows camera distance automatically because the chin-to-dip distance is itself a function of camera distance.
+    ═══════════════════════════════════════════════════════
+
+    SECONDARY ANCHOR (cross-check) — CHARM WIDTH vs. NECK WIDTH:
+    • Charm width on canvas should also be approximately ONE-FIFTH (1/5) of the model's neck width at the widest point just below the jawline.
+    • Use this as a secondary verification: both anchors should agree on charm size. If they disagree, prefer the chin-to-dip anchor.
+
+    SELF-CHECK PROCESS (apply before finalizing):
+    1. Locate the model's chin point and the V-dip between the collarbones.
+    2. Estimate the vertical pixel distance between them.
+    3. Verify the rendered charm height is approximately 1/5 of that distance.
+    4. If the charm is clearly more than 1/4 of the chin-to-dip distance, the charm is too large — scale down.
+    5. If the charm is clearly less than 1/8 of the chin-to-dip distance, the charm may be too small — scale up slightly.
+
+    CROSS-IMAGE CONSISTENCY (THE MAIN PROBLEM THIS RULE SOLVES):
+    For the same charm rendered across multiple reference images of the same listing set:
+    • Each reference image will have a different chin-to-dip pixel distance (because camera distance differs).
+    • The charm's ABSOLUTE pixel size will therefore differ across images (this is expected and correct).
+    • BUT the charm-to-distance RATIO must be the same (~1/5) in every image.
+    • Visual result: the charm reads as the same proportional size on the model regardless of which image is viewed.
+
+    HARD FAILS:
+    • Charm height clearly exceeds 1/3 of the chin-to-collarbone-dip distance (grossly oversized).
+    • Charm width clearly exceeds 1/3 of the model's neck width at the widest point.
+    • Same charm rendered at noticeably different charm-to-feature ratios across different reference images of the same listing set — the ratio must be invariant.
+    • Charm sized to "fit the composition" or "look balanced in the frame" rather than to match the chin-to-dip 1/5 ratio.
+
+    CHARM SIZE — CAMERA DISTANCE NOTE:
+    The CAMERA-DISTANCE-ANCHORED CHARM SIZE rule above (using the chin-to-collarbone-dip 1/5 ratio) is the primary camera-distance handler. The chin-to-dip distance itself scales with camera distance, so applying the 1/5 ratio automatically gives the correct charm size at any zoom level. The pixel target in the ULTRA-MICRO SIZE OVERRIDE is a soft baseline only — if it conflicts with the 1/5 chin-to-dip ratio, follow the ratio.
+    • HARD FAIL: identical on-canvas charm pixel size across two reference images at clearly different camera distances. The charm pixel size MUST scale with camera distance because the chin-to-dip distance scales with camera distance, and the charm height is locked to 1/5 of that distance.
 
     ENGRAVING STANDARD (UNIFORM ACROSS ALL SLOTS — CRITICAL CONSISTENCY RULE)
     • Engravings MUST read as real grooves cut INTO the metal surface — clearly three-dimensional with visible recessed depth. They are NOT flat decals, NOT painted ink, NOT pencil-drawn lines on top of the metal, NOT raised/embossed high-relief metal.
@@ -7230,31 +7286,59 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • When generating the necklace chain ensure the fidelity of every single chain link and correct any link/chain imperfections.
     • Slightly vary the wardrobe.
 
-    CHARM-TO-MODEL PROPORTION (PRIMARY SIZE RULE — INVARIANT TO ZOOM AND CAMERA DISTANCE)
-    Critical observation from real-world renderings: the SAME charm has been rendered at dramatically different proportional sizes across different reference images — appropriate in close-up shots, much too large in wider/zoomed-out shots. The model has been sizing the charm to "fit the composition" rather than at a consistent proportion to the wearer. This is the root cause of cross-image inconsistency and MUST be fixed with a proportional anchor that is inherently zoom-invariant:
+    CAMERA-DISTANCE-ANCHORED CHARM SIZE (PRIMARY RULE — MODEL-FEATURE PROPORTION)
 
-    • PRIMARY RULE — CHARM WIDTH ≈ 1/5 OF MODEL'S NECK WIDTH: the charm's width on canvas MUST be approximately ONE-FIFTH the width of the model's NECK at its widest visible point (typically just below the jawline). This proportion is INVARIANT to camera distance: closer shots show a wider-rendered neck AND a proportionally wider-rendered charm; wider shots show a narrower-rendered neck AND a proportionally narrower-rendered charm. The RATIO stays at 1/5 regardless of zoom or framing. This is the ONLY rule that produces consistency across reference images.
+    KEY PRINCIPLE: camera distance determines how large the model's features appear on canvas. The charm must be sized as a fixed PROPORTION of a specific model feature that itself scales linearly with camera distance. Result: when the model is photographed closer (features larger in pixels), the charm renders proportionally larger; when photographed farther (features smaller), the charm renders proportionally smaller. The RATIO stays constant — absolute pixels follow camera distance automatically.
 
-    • VERIFICATION TEST — "FIVE ACROSS THE NECK": mentally place copies of the charm side-by-side across the model's visible neck width. You MUST be able to fit approximately FIVE charms across. If you can only fit 3 or 4 copies, the charm is TOO LARGE — scale it down until 5 fit. If you can fit 7 or 8 copies, scale up slightly to reach ~5.
+    Why prior anchors have NOT worked: pixel targets are below the model's rendering precision and saturate; "neck width" is too ambiguous (neck tapers, gets cropped); nostril/eye anchors require the face to be in frame (often it isn't); chain-thickness ratios don't link the charm to the wearer. The correct anchor is a feature that is (a) always visible in product shots, (b) clearly identifiable, (c) anatomically stable, and (d) scales linearly with camera distance.
 
-    • SECONDARY ANCHOR — CHARM HEIGHT ≈ 1/4 OF CHIN-TO-COLLARBONE-DIP DISTANCE: charm height on canvas should be approximately ONE-QUARTER the visible distance from the model's chin to the suprasternal notch (the dip between the collarbones at the base of the throat). Another zoom-invariant proportion that complements the neck-width rule.
+    ═══════════════════════════════════════════════════════
+    PRIMARY ANCHOR — CHARM HEIGHT vs. CHIN-TO-COLLARBONE-DIP DISTANCE
 
-    • OVERRIDES THE PIXEL TARGET ABOVE: the pixel number is now a secondary hint only. The proportional anchors above are the PRIMARY rule. If the pixel hint and the proportional anchors disagree about charm size, FOLLOW THE PROPORTIONAL ANCHORS.
+    On every reference image, identify these two specific points on the model:
+    • CHIN POINT: the bottom-most point of the chin, where the jawline transitions into the neck.
+    • COLLARBONE DIP: the small V-shaped depression at the base of the throat between the two collarbones (anatomically: the suprasternal notch / jugular notch).
 
-    • CROSS-IMAGE CONSISTENCY (CRITICAL): the SAME charm rendered across DIFFERENT reference images of the same listing set MUST appear at the SAME proportional size on each model. If reference image A shows the model from chest-up and reference image B shows them from waist-up, the charm in both should still be 1/5 the neck width in each — same proportion, different absolute pixels.
+    These two points are visible in virtually every product-photography crop, are anatomically stable, and the distance between them scales linearly with the camera-to-model distance. Closer camera → larger chin-to-dip distance in pixels. Farther camera → smaller chin-to-dip distance in pixels. The model's other features scale identically.
 
-    • HARD FAIL: charm width clearly exceeds 1/4 of the model's neck width on canvas (you could fit fewer than 4 charms across the neck).
-    • HARD FAIL: same charm rendered at noticeably different proportional sizes across different reference images of the same listing set.
-    • HARD FAIL: charm sized to "fit the composition" or "look balanced in the frame" rather than according to the 1/5-neck-width rule. The composition does not drive size — the proportion-to-model does.
+    THE RULE: the CHARM HEIGHT on canvas MUST be approximately ONE-FIFTH (1/5) of the vertical pixel distance from the chin point to the collarbone dip.
 
-    CHARM SIZE CALIBRATION TO CAMERA DISTANCE (CRITICAL CONSISTENCY)
-    • The pixel range above is a CAMERA-DISTANCE-NORMALIZED baseline — it assumes the model is photographed at a moderate distance with their upper torso filling roughly half the frame.
-    • If the reference image shows the model photographed CLOSER (face/neck dominates the frame), proportionally INCREASE the on-canvas charm pixel size so the charm reads at the same real-world physical scale. The 9–10 pixel cap may be exceeded ONLY in this close-zoom case, and only by the amount required to maintain proportional scale.
-    • If the reference image shows the model photographed FURTHER AWAY (more body/background visible), proportionally DECREASE the on-canvas charm pixel size so the perceived charm scale stays consistent. The 9-pixel floor may go below ONLY in this far-zoom case, and only by the amount required to maintain proportional scale.
-    • Anchor to chain thickness: the charm width must always remain in fixed proportion to the chain's on-canvas thickness in the reference image. If the chain reads as thickness T on canvas, the charm width should be roughly 5–6× T regardless of overall image zoom.
-    • Anchor to real-world scale: the charm's real-world physical size is roughly that of a fingernail (~10–12mm tall). Render at whatever on-canvas pixel size produces that real-world scale given the model's apparent zoom level.
-    • When in doubt, target the LOWER end of the acceptable range — small consistent under-shoot is far more forgiving than over-shoot.
-    • HARD FAIL: identical on-canvas charm pixel size across two reference images showing the model at clearly different camera distances. The perceived charm size must stay consistent across the listing set, which means absolute pixel size must scale with model zoom.
+    CONCRETE EXAMPLES:
+    • Reference image where chin-to-dip distance appears ~250 px on canvas → render charm at ~50 px height.
+    • Reference image where chin-to-dip distance appears ~150 px on canvas → render charm at ~30 px height.
+    • Reference image where chin-to-dip distance appears ~80 px on canvas → render charm at ~16 px height.
+    • Reference image where chin-to-dip distance appears ~400 px on canvas (very close-up shot) → render charm at ~80 px height.
+
+    The 1/5 ratio is INVARIANT. The absolute pixel size of the charm follows camera distance automatically because the chin-to-dip distance is itself a function of camera distance.
+    ═══════════════════════════════════════════════════════
+
+    SECONDARY ANCHOR (cross-check) — CHARM WIDTH vs. NECK WIDTH:
+    • Charm width on canvas should also be approximately ONE-FIFTH (1/5) of the model's neck width at the widest point just below the jawline.
+    • Use this as a secondary verification: both anchors should agree on charm size. If they disagree, prefer the chin-to-dip anchor.
+
+    SELF-CHECK PROCESS (apply before finalizing):
+    1. Locate the model's chin point and the V-dip between the collarbones.
+    2. Estimate the vertical pixel distance between them.
+    3. Verify the rendered charm height is approximately 1/5 of that distance.
+    4. If the charm is clearly more than 1/4 of the chin-to-dip distance, the charm is too large — scale down.
+    5. If the charm is clearly less than 1/8 of the chin-to-dip distance, the charm may be too small — scale up slightly.
+
+    CROSS-IMAGE CONSISTENCY (THE MAIN PROBLEM THIS RULE SOLVES):
+    For the same charm rendered across multiple reference images of the same listing set:
+    • Each reference image will have a different chin-to-dip pixel distance (because camera distance differs).
+    • The charm's ABSOLUTE pixel size will therefore differ across images (this is expected and correct).
+    • BUT the charm-to-distance RATIO must be the same (~1/5) in every image.
+    • Visual result: the charm reads as the same proportional size on the model regardless of which image is viewed.
+
+    HARD FAILS:
+    • Charm height clearly exceeds 1/3 of the chin-to-collarbone-dip distance (grossly oversized).
+    • Charm width clearly exceeds 1/3 of the model's neck width at the widest point.
+    • Same charm rendered at noticeably different charm-to-feature ratios across different reference images of the same listing set — the ratio must be invariant.
+    • Charm sized to "fit the composition" or "look balanced in the frame" rather than to match the chin-to-dip 1/5 ratio.
+
+    CHARM SIZE — CAMERA DISTANCE NOTE:
+    The CAMERA-DISTANCE-ANCHORED CHARM SIZE rule above (using the chin-to-collarbone-dip 1/5 ratio) is the primary camera-distance handler. The chin-to-dip distance itself scales with camera distance, so applying the 1/5 ratio automatically gives the correct charm size at any zoom level. The pixel target in the ULTRA-MICRO SIZE OVERRIDE is a soft baseline only — if it conflicts with the 1/5 chin-to-dip ratio, follow the ratio.
+    • HARD FAIL: identical on-canvas charm pixel size across two reference images at clearly different camera distances. The charm pixel size MUST scale with camera distance because the chin-to-dip distance scales with camera distance, and the charm height is locked to 1/5 of that distance.
 
     ENGRAVING STANDARD (UNIFORM ACROSS ALL SLOTS — CRITICAL CONSISTENCY RULE)
     • Engravings MUST read as real grooves cut INTO the metal surface — clearly three-dimensional with visible recessed depth. They are NOT flat decals, NOT painted ink, NOT pencil-drawn lines on top of the metal, NOT raised/embossed high-relief metal.
@@ -7446,31 +7530,59 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • When generating the necklace chain ensure the fidelity of every single chain link and correct any link/chain imperfections.
     • Vary the wardrobe.
 
-    CHARM-TO-MODEL PROPORTION (PRIMARY SIZE RULE — INVARIANT TO ZOOM AND CAMERA DISTANCE)
-    Critical observation from real-world renderings: the SAME charm has been rendered at dramatically different proportional sizes across different reference images — appropriate in close-up shots, much too large in wider/zoomed-out shots. The model has been sizing the charm to "fit the composition" rather than at a consistent proportion to the wearer. This is the root cause of cross-image inconsistency and MUST be fixed with a proportional anchor that is inherently zoom-invariant:
+    CAMERA-DISTANCE-ANCHORED CHARM SIZE (PRIMARY RULE — MODEL-FEATURE PROPORTION)
 
-    • PRIMARY RULE — CHARM WIDTH ≈ 1/5 OF MODEL'S NECK WIDTH: the charm's width on canvas MUST be approximately ONE-FIFTH the width of the model's NECK at its widest visible point (typically just below the jawline). This proportion is INVARIANT to camera distance: closer shots show a wider-rendered neck AND a proportionally wider-rendered charm; wider shots show a narrower-rendered neck AND a proportionally narrower-rendered charm. The RATIO stays at 1/5 regardless of zoom or framing. This is the ONLY rule that produces consistency across reference images.
+    KEY PRINCIPLE: camera distance determines how large the model's features appear on canvas. The charm must be sized as a fixed PROPORTION of a specific model feature that itself scales linearly with camera distance. Result: when the model is photographed closer (features larger in pixels), the charm renders proportionally larger; when photographed farther (features smaller), the charm renders proportionally smaller. The RATIO stays constant — absolute pixels follow camera distance automatically.
 
-    • VERIFICATION TEST — "FIVE ACROSS THE NECK": mentally place copies of the charm side-by-side across the model's visible neck width. You MUST be able to fit approximately FIVE charms across. If you can only fit 3 or 4 copies, the charm is TOO LARGE — scale it down until 5 fit. If you can fit 7 or 8 copies, scale up slightly to reach ~5.
+    Why prior anchors have NOT worked: pixel targets are below the model's rendering precision and saturate; "neck width" is too ambiguous (neck tapers, gets cropped); nostril/eye anchors require the face to be in frame (often it isn't); chain-thickness ratios don't link the charm to the wearer. The correct anchor is a feature that is (a) always visible in product shots, (b) clearly identifiable, (c) anatomically stable, and (d) scales linearly with camera distance.
 
-    • SECONDARY ANCHOR — CHARM HEIGHT ≈ 1/4 OF CHIN-TO-COLLARBONE-DIP DISTANCE: charm height on canvas should be approximately ONE-QUARTER the visible distance from the model's chin to the suprasternal notch (the dip between the collarbones at the base of the throat). Another zoom-invariant proportion that complements the neck-width rule.
+    ═══════════════════════════════════════════════════════
+    PRIMARY ANCHOR — CHARM HEIGHT vs. CHIN-TO-COLLARBONE-DIP DISTANCE
 
-    • OVERRIDES THE PIXEL TARGET ABOVE: the pixel number is now a secondary hint only. The proportional anchors above are the PRIMARY rule. If the pixel hint and the proportional anchors disagree about charm size, FOLLOW THE PROPORTIONAL ANCHORS.
+    On every reference image, identify these two specific points on the model:
+    • CHIN POINT: the bottom-most point of the chin, where the jawline transitions into the neck.
+    • COLLARBONE DIP: the small V-shaped depression at the base of the throat between the two collarbones (anatomically: the suprasternal notch / jugular notch).
 
-    • CROSS-IMAGE CONSISTENCY (CRITICAL): the SAME charm rendered across DIFFERENT reference images of the same listing set MUST appear at the SAME proportional size on each model. If reference image A shows the model from chest-up and reference image B shows them from waist-up, the charm in both should still be 1/5 the neck width in each — same proportion, different absolute pixels.
+    These two points are visible in virtually every product-photography crop, are anatomically stable, and the distance between them scales linearly with the camera-to-model distance. Closer camera → larger chin-to-dip distance in pixels. Farther camera → smaller chin-to-dip distance in pixels. The model's other features scale identically.
 
-    • HARD FAIL: charm width clearly exceeds 1/4 of the model's neck width on canvas (you could fit fewer than 4 charms across the neck).
-    • HARD FAIL: same charm rendered at noticeably different proportional sizes across different reference images of the same listing set.
-    • HARD FAIL: charm sized to "fit the composition" or "look balanced in the frame" rather than according to the 1/5-neck-width rule. The composition does not drive size — the proportion-to-model does.
+    THE RULE: the CHARM HEIGHT on canvas MUST be approximately ONE-FIFTH (1/5) of the vertical pixel distance from the chin point to the collarbone dip.
 
-    CHARM SIZE CALIBRATION TO CAMERA DISTANCE (CRITICAL CONSISTENCY)
-    • The pixel range above is a CAMERA-DISTANCE-NORMALIZED baseline — it assumes the model is photographed at a moderate distance with their upper torso filling roughly half the frame.
-    • If the reference image shows the model photographed CLOSER (face/neck dominates the frame), proportionally INCREASE the on-canvas charm pixel size so the charm reads at the same real-world physical scale. The 8–9 pixel cap may be exceeded ONLY in this close-zoom case, and only by the amount required to maintain proportional scale.
-    • If the reference image shows the model photographed FURTHER AWAY (more body/background visible), proportionally DECREASE the on-canvas charm pixel size so the perceived charm scale stays consistent. The 8-pixel floor may go below ONLY in this far-zoom case, and only by the amount required to maintain proportional scale.
-    • Anchor to chain thickness: the charm width must always remain in fixed proportion to the chain's on-canvas thickness in the reference image. If the chain reads as thickness T on canvas, the charm width should be roughly 5–6× T regardless of overall image zoom.
-    • Anchor to real-world scale: the charm's real-world physical size is roughly that of a fingernail (~10–12mm tall). Render at whatever on-canvas pixel size produces that real-world scale given the model's apparent zoom level.
-    • When in doubt, target the LOWER end of the acceptable range — small consistent under-shoot is far more forgiving than over-shoot.
-    • HARD FAIL: identical on-canvas charm pixel size across two reference images showing the model at clearly different camera distances. The perceived charm size must stay consistent across the listing set, which means absolute pixel size must scale with model zoom.
+    CONCRETE EXAMPLES:
+    • Reference image where chin-to-dip distance appears ~250 px on canvas → render charm at ~50 px height.
+    • Reference image where chin-to-dip distance appears ~150 px on canvas → render charm at ~30 px height.
+    • Reference image where chin-to-dip distance appears ~80 px on canvas → render charm at ~16 px height.
+    • Reference image where chin-to-dip distance appears ~400 px on canvas (very close-up shot) → render charm at ~80 px height.
+
+    The 1/5 ratio is INVARIANT. The absolute pixel size of the charm follows camera distance automatically because the chin-to-dip distance is itself a function of camera distance.
+    ═══════════════════════════════════════════════════════
+
+    SECONDARY ANCHOR (cross-check) — CHARM WIDTH vs. NECK WIDTH:
+    • Charm width on canvas should also be approximately ONE-FIFTH (1/5) of the model's neck width at the widest point just below the jawline.
+    • Use this as a secondary verification: both anchors should agree on charm size. If they disagree, prefer the chin-to-dip anchor.
+
+    SELF-CHECK PROCESS (apply before finalizing):
+    1. Locate the model's chin point and the V-dip between the collarbones.
+    2. Estimate the vertical pixel distance between them.
+    3. Verify the rendered charm height is approximately 1/5 of that distance.
+    4. If the charm is clearly more than 1/4 of the chin-to-dip distance, the charm is too large — scale down.
+    5. If the charm is clearly less than 1/8 of the chin-to-dip distance, the charm may be too small — scale up slightly.
+
+    CROSS-IMAGE CONSISTENCY (THE MAIN PROBLEM THIS RULE SOLVES):
+    For the same charm rendered across multiple reference images of the same listing set:
+    • Each reference image will have a different chin-to-dip pixel distance (because camera distance differs).
+    • The charm's ABSOLUTE pixel size will therefore differ across images (this is expected and correct).
+    • BUT the charm-to-distance RATIO must be the same (~1/5) in every image.
+    • Visual result: the charm reads as the same proportional size on the model regardless of which image is viewed.
+
+    HARD FAILS:
+    • Charm height clearly exceeds 1/3 of the chin-to-collarbone-dip distance (grossly oversized).
+    • Charm width clearly exceeds 1/3 of the model's neck width at the widest point.
+    • Same charm rendered at noticeably different charm-to-feature ratios across different reference images of the same listing set — the ratio must be invariant.
+    • Charm sized to "fit the composition" or "look balanced in the frame" rather than to match the chin-to-dip 1/5 ratio.
+
+    CHARM SIZE — CAMERA DISTANCE NOTE:
+    The CAMERA-DISTANCE-ANCHORED CHARM SIZE rule above (using the chin-to-collarbone-dip 1/5 ratio) is the primary camera-distance handler. The chin-to-dip distance itself scales with camera distance, so applying the 1/5 ratio automatically gives the correct charm size at any zoom level. The pixel target in the ULTRA-MICRO SIZE OVERRIDE is a soft baseline only — if it conflicts with the 1/5 chin-to-dip ratio, follow the ratio.
+    • HARD FAIL: identical on-canvas charm pixel size across two reference images at clearly different camera distances. The charm pixel size MUST scale with camera distance because the chin-to-dip distance scales with camera distance, and the charm height is locked to 1/5 of that distance.
 
     ENGRAVING STANDARD (UNIFORM ACROSS ALL SLOTS — CRITICAL CONSISTENCY RULE)
     • Engravings MUST read as real grooves cut INTO the metal surface — clearly three-dimensional with visible recessed depth. They are NOT flat decals, NOT painted ink, NOT pencil-drawn lines on top of the metal, NOT raised/embossed high-relief metal.
