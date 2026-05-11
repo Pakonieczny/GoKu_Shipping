@@ -9022,26 +9022,42 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     //
     // The server-side scan_empty_sets endpoint relies on Firestore counters
     // and metadata, which can drift from actual Firebase Storage state in
-    // two ways:
+    // three ways:
     //   1. PHANTOM ALLOCATIONS: when batch_submit fails AFTER alloc_set
     //      has already incremented the counter, the counter says "Set_N
     //      exists" but Storage has no folder there. Server scan misses
     //      these.
-    //   2. PARTIAL CONTENT: a folder may have a manifest.json (created at
-    //      alloc time) but no Slot_*.png files (because generation never
-    //      ran). Server may count these as "populated" based on manifest
-    //      presence, but they actually need filling.
+    //   2. STATIC COPY FILES MASQUERADING AS POPULATION: at alloc_set time,
+    //      the system writes the "copy" type slots (e.g., Necklace_Size_Guide
+    //      as Slot_6.png, Care_Metal_Guide as Slot_8.png — static reference
+    //      files pulled from Firebase, NOT generated). So an "empty" folder
+    //      where generation never ran STILL has 1-2 Slot_*.png files in it.
+    //      A naive "any Slot_*.png exists" check falsely marks these as
+    //      populated. We require ≥ MIN_SLOT_IMAGES_FOR_POPULATED instead.
+    //   3. PARTIAL CONTENT: a folder may have e.g. 3 of 6 expected generated
+    //      slots — counted as "empty/partial" so resume refills it.
     //
-    // This function walks [1, highestN] and checks each Set_N folder
-    // directly in Storage. Slower (parallelized to ~8 concurrent listAll
-    // calls) but accurate. Returns the actual empty list to fill.
+    // This function walks [1, highestN] and verifies each folder directly
+    // against Storage with concurrency 8. Returns the actual fill-list.
     //
-    // Returns: { empty, populatedCount, approvedCount, phantomCount }
-    // where `empty` is sorted ascending by setN.
+    // Returns: { empty, populatedCount, approvedCount, phantomCount, partialCount }
+    // where empty is sorted ascending by setN. Each empty entry includes
+    // a `reason`: "phantom" (no folder), "partial" (folder has <MIN slots),
+    // or "error" (listing failed, retried safely).
     // ------------------------------------------------------------
+    // Threshold for considering a folder "populated" — see comments below.
+    // Set at 6 because every category's slotPlan has exactly 6 "gen" type
+    // slots (Beady/Regular/Stud/Hoop/Charms). Bracelets has 8 gen slots so
+    // a folder with 6-7 gen slots would be marked populated even if not 100%
+    // complete; that's acceptable for the resume use case.
+    const MIN_SLOT_IMAGES_FOR_POPULATED = 6;
+
     async function _verifyEmptySetsClientSide(category, highestN, onProgress) {
       if (!highestN || highestN <= 0) {
-        return { empty: [], populatedCount: 0, approvedCount: 0, phantomCount: 0 };
+        return {
+          empty: [], populatedCount: 0, approvedCount: 0,
+          phantomCount: 0, partialCount: 0,
+        };
       }
 
       // 1) Get the set of already-approved Set_N for this category by
@@ -9078,14 +9094,22 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       }
 
       // 3) For each N in [1, highestN], classify:
-      //      approved        → skip
-      //      not in existing → phantom empty (folder never existed)
-      //      in existing & has Slot_*.png → populated
-      //      in existing & no Slot_*.png → empty (manifest only, etc.)
+      //      approved          → skip
+      //      not in existing   → phantom empty (folder never existed)
+      //      in existing & ≥ MIN_SLOT_IMAGES_FOR_POPULATED slot images → populated
+      //      in existing & < MIN slot images → partial empty (needs filling)
+      //
+      //    The threshold matters because at alloc_set time, the "copy" type
+      //    slots are written as static files (e.g., Necklace_Size_Guide as
+      //    Slot_6.png, Care_Metal_Guide as Slot_8.png). These exist even in
+      //    folders where generation completely failed. A naive "any slot
+      //    image exists" check would falsely mark them populated. The
+      //    threshold of 6 matches the count of "gen" type slots per category.
       const reallyEmpty = [];
       let populatedCount = 0;
       let approvedCount = 0;
       let phantomCount = 0;
+      let partialCount = 0;
       let done = 0;
 
       const ns = [];
@@ -9104,18 +9128,28 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
             reallyEmpty.push({
               setN: n,
               outputBasePath: `${ROOT}/${category}/Ready_To_List/Set_${n}`,
+              reason: "phantom",
             });
           } else {
-            // Folder exists — check for actual slot images.
+            // Folder exists — count actual slot image files. Requires at
+            // least MIN_SLOT_IMAGES_FOR_POPULATED to count as populated,
+            // because empty folders always have 1-2 static "copy" slot files
+            // already in them at alloc time.
             const folderPath = `${ROOT}/${category}/Ready_To_List/Set_${n}`;
             const listResult = await listAll(ref(storage, folderPath));
-            const hasSlotImages = listResult.items.some(
+            const slotFileCount = listResult.items.filter(
               (item) => /Slot_\d+\.png$/i.test(item.name)
-            );
-            if (hasSlotImages) {
+            ).length;
+            if (slotFileCount >= MIN_SLOT_IMAGES_FOR_POPULATED) {
               populatedCount++;
             } else {
-              reallyEmpty.push({ setN: n, outputBasePath: folderPath });
+              partialCount++;
+              reallyEmpty.push({
+                setN: n,
+                outputBasePath: folderPath,
+                reason: "partial",
+                slotsFound: slotFileCount,
+              });
             }
           }
         } catch (e) {
@@ -9124,6 +9158,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
           reallyEmpty.push({
             setN: n,
             outputBasePath: `${ROOT}/${category}/Ready_To_List/Set_${n}`,
+            reason: "error",
           });
         }
         done++;
@@ -9145,7 +9180,13 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
       reallyEmpty.sort((a, b) => a.setN - b.setN);
 
-      return { empty: reallyEmpty, populatedCount, approvedCount, phantomCount };
+      return {
+        empty: reallyEmpty,
+        populatedCount,
+        approvedCount,
+        phantomCount,
+        partialCount,
+      };
     }
 
     // ------------------------------------------------------------
@@ -9226,12 +9267,13 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         const populatedCount = verified.populatedCount;
         const approvedCount = verified.approvedCount;
         const phantomCount = verified.phantomCount;
+        const partialCount = verified.partialCount;
 
         if (empty.length === 0) {
           alert(
             `No empty sets found for ${category} (verified by direct storage scan).\n\n` +
             `Highest allocated: Set_${highestN}\n` +
-            `Populated (with slot images): ${populatedCount}\n` +
+            `Populated (≥${MIN_SLOT_IMAGES_FOR_POPULATED} slot images): ${populatedCount}\n` +
             `Already approved (skipped): ${approvedCount}\n` +
             `Empty: 0`
           );
@@ -9244,10 +9286,19 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         const minN = setNs[0];
         const maxN = setNs[setNs.length - 1];
 
-        const discrepancyNote = (phantomCount > 0)
-          ? `\n⚠ ${phantomCount} phantom allocation(s) detected — counter says ` +
-            `they exist but Firebase storage has no folder. Typical after ` +
-            `batch submission failures.\n`
+        const breakdownLines = [];
+        if (phantomCount > 0) {
+          breakdownLines.push(
+            `   • ${phantomCount} phantom (counter says allocated, but no folder exists in Storage)`
+          );
+        }
+        if (partialCount > 0) {
+          breakdownLines.push(
+            `   • ${partialCount} partial (folder exists but has <${MIN_SLOT_IMAGES_FOR_POPULATED} slot images — likely only the 1-2 static "copy" slots that get written at alloc time)`
+          );
+        }
+        const breakdownNote = breakdownLines.length
+          ? `\nBreakdown of empties:\n${breakdownLines.join("\n")}\n`
           : '';
 
         const serverMismatchNote = (Math.abs(serverEmptyCount - empty.length) > 0)
@@ -9258,12 +9309,12 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         const proceed = confirm(
           `Verified scan results for ${category} (direct storage check):\n\n` +
           `Highest allocated: Set_${highestN}\n` +
-          `Populated (with slot images): ${populatedCount}\n` +
+          `Populated (≥${MIN_SLOT_IMAGES_FOR_POPULATED} slot images): ${populatedCount}\n` +
           `Already approved (skipped): ${approvedCount}\n` +
           `Empty (to be filled): ${empty.length}` +
-          discrepancyNote +
+          breakdownNote +
           serverMismatchNote +
-          `\n\nEmpty set range: Set_${minN} … Set_${maxN}\n\n` +
+          `\nEmpty set range: Set_${minN} … Set_${maxN}\n\n` +
           `Click OK to submit ${empty.length} batch jobs (one per empty set) using ` +
           `fresh charms from the pool. Populated and already-approved sets will NOT be touched.`
         );
