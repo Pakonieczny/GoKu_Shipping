@@ -5247,6 +5247,14 @@ function updateApproveButtonState() {
         const RATE_LIMIT_BACKOFF_MS = [30000, 60000, 120000];   // 30s, 60s, 120s
         const RATE_LIMIT_MAX_RETRIES = RATE_LIMIT_BACKOFF_MS.length;
 
+        // Number of sets per Gemini batch job. Was originally a per-handler
+        // local constant in the main batch button's click handler, but
+        // resume_empty_sets needs the same value, so it's hoisted here at
+        // module scope. CHUNK_SIZE history: tried 8 (server OOM), 4 (server
+        // OOM), settled on 1 set per chunk — one Files API resumable
+        // upload + one batchGenerateContent call per set.
+        const CHUNK_SIZE = 1;
+
         function _isRateLimitError(err) {
           const msg = String(err?.message || err || "");
           // Match HTTP 429, "RESOURCE_EXHAUSTED", and Google's quota phrasing.
@@ -8783,13 +8791,12 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       if (!slotPlan) { alert(`Unknown category: ${category}`); return; }
 
       // Auto-chunk. Each chunk = one Gemini batch job.
-      // CHUNK_SIZE history: 8 OOM'd, 4 OOM'd. Setting to 1 as a
-      // diagnostic — if a 1-set chunk still OOMs the function, the
-      // problem isn't accumulation, it's something more fundamental
-      // (possibly firebase-admin SDK memory leak, or Files API
-      // upload buffering badly). We'll see real numbers in the function
-      // logs from the memLog() calls in the backend.
-      const CHUNK_SIZE = 1;
+      // CHUNK_SIZE is hoisted to module scope (see near postJson around
+      // line ~5246) so resume_empty_sets can share it. CHUNK_SIZE history:
+      // 8 OOM'd, 4 OOM'd. Currently set to 1 as a diagnostic — if a 1-set
+      // chunk still OOMs the function, the problem isn't accumulation,
+      // it's something more fundamental (firebase-admin SDK memory leak,
+      // Files API upload buffering, etc).
       const chunkCount = Math.ceil(count / CHUNK_SIZE);
 
       const confirmMsg = chunkCount === 1
