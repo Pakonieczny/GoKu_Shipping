@@ -6707,9 +6707,10 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     PROGRESSION HISTORY (CRITICAL CONTEXT — DO NOT REVERT):
     This rule has been progressively refined across multiple rounds based on real-world feedback:
     • At 1/5 target: HIGH VARIANCE — some renders correct, many at 1/3 (grossly oversized).
-    • At 1/6 target: VARIANCE RESOLVED (consistent across renders) but consistent 5-10% overshoot from ideal.
-    • At 1/7 target: variance + average bias both resolved on medium-zoom shots. HOWEVER, a new bidirectional pattern emerged: FAR-zoomed shots (small chin-to-dip) render charm LARGER than 1/7 (mean-reverted UP toward "default" size). CLOSE-zoomed shots (large chin-to-dip) render charm SMALLER than 1/7 (mean-reverted DOWN toward "default" size). This is the MEAN-REVERSION failure pattern — the model is averaging the 1/7 target toward its own preferred default charm size, which happens to align with medium-zoom shots but breaks at extremes.
-    • THIS ROUND keeps 1/7 as base target and adds explicit ANTI-MEAN-REVERSION rules with extreme-zoom examples to enforce linear scaling at all zoom levels.
+    • At 1/6 target: VARIANCE RESOLVED (consistent) but 5-10% overshoot from ideal.
+    • At 1/7 target (basic): variance + average bias resolved on medium-zoom shots. BIDIRECTIONAL pattern emerged: far shots over-rendered, close shots under-rendered (mean-reversion to internal default ~30-50 px).
+    • At 1/7 target + ANTI-MEAN-REVERSION rules + extreme-zoom examples: close-shot under-render eliminated (success). However, base 7-10% overshoot returned across the board, with extra over-render still on far shots (residual mean-reversion).
+    • THIS ROUND: tighten target from 1/7 to 1/8 to pre-correct the across-the-board 7-10% overshoot. Keep anti-mean-reversion infrastructure. Tighten the far-shot HARD FAIL threshold to catch residual far-shot over-render.
     The consistency from prior rounds is GOOD and must be preserved. Do NOT revert to compositionally-prominent sizing OR to a "default size" regardless of zoom.
 
     ═══════════════════════════════════════════════════════
@@ -6719,73 +6720,73 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • CHIN POINT: the bottom-most point of the chin, where the jawline transitions into the neck.
     • COLLARBONE DIP: the small V-shaped depression at the base of the throat between the two collarbones (anatomically: the suprasternal notch / jugular notch).
 
-    THE RULE: the CHARM HEIGHT on canvas MUST be approximately ONE-SEVENTH (1/7) of the vertical pixel distance from the chin point to the collarbone dip. Acceptable range: 1/6 to 1/8. HARD FAIL above 1/5.
+    THE RULE: the CHARM HEIGHT on canvas MUST be approximately ONE-EIGHTH (1/8) of the vertical pixel distance from the chin point to the collarbone dip. Acceptable range: 1/7 to 1/9. HARD FAIL above 1/6.
 
-    CRITICAL — LINEAR SCALING WITH NO DEFAULT FLOOR/CEILING: the 1/7 ratio scales LINEARLY with chin-to-dip distance across ALL zoom levels. If chin-to-dip doubles, charm height doubles. If chin-to-dip halves, charm height halves. There is NO floor, NO ceiling, NO "minimum reasonable size", NO "maximum reasonable size", NO "default size" override. The math IS the answer.
+    CRITICAL — LINEAR SCALING WITH NO DEFAULT FLOOR/CEILING: the 1/8 ratio scales LINEARLY with chin-to-dip distance across ALL zoom levels. If chin-to-dip doubles, charm height doubles. If chin-to-dip halves, charm height halves. There is NO floor, NO ceiling, NO "minimum reasonable size", NO "maximum reasonable size", NO "default size" override. The math IS the answer.
 
     CONCRETE EXAMPLES SPANNING ALL ZOOM LEVELS (APPLY EVEN IF THE RESULT LOOKS UNUSUAL):
 
     FAR-SHOT EXTREMES (small chin-to-dip — charm should be VERY SMALL, do NOT scale UP toward "default"):
-    • Chin-to-dip ~80 px → charm MUST be ~11 px tall. This is tiny — render it tiny anyway.
-    • Chin-to-dip ~100 px → charm MUST be ~14 px tall. DO NOT inflate to 25-30 px.
-    • Chin-to-dip ~120 px → charm MUST be ~17 px tall.
-    • Chin-to-dip ~150 px → charm MUST be ~21 px tall.
+    • Chin-to-dip ~80 px → charm MUST be ~10 px tall. This is tiny — render it tiny anyway.
+    • Chin-to-dip ~100 px → charm MUST be ~13 px tall. DO NOT inflate to 25-30 px.
+    • Chin-to-dip ~120 px → charm MUST be ~15 px tall.
+    • Chin-to-dip ~150 px → charm MUST be ~19 px tall.
 
-    MEDIUM-SHOT BASELINE (these usually render correctly already):
-    • Chin-to-dip ~200 px → charm MUST be ~29 px tall.
-    • Chin-to-dip ~250 px → charm MUST be ~36 px tall.
-    • Chin-to-dip ~300 px → charm MUST be ~43 px tall.
+    MEDIUM-SHOT BASELINE:
+    • Chin-to-dip ~200 px → charm MUST be ~25 px tall.
+    • Chin-to-dip ~250 px → charm MUST be ~31 px tall.
+    • Chin-to-dip ~300 px → charm MUST be ~38 px tall.
 
     CLOSE-SHOT EXTREMES (large chin-to-dip — charm should be LARGER than typical, do NOT scale DOWN toward "default"):
-    • Chin-to-dip ~350 px → charm MUST be ~50 px tall.
-    • Chin-to-dip ~400 px → charm MUST be ~57 px tall. DO NOT shrink to 40-45 px.
-    • Chin-to-dip ~450 px → charm MUST be ~64 px tall.
-    • Chin-to-dip ~500 px → charm MUST be ~71 px tall — larger than the model's typical default.
-    • Chin-to-dip ~600 px (extreme close-up) → charm MUST be ~86 px tall.
+    • Chin-to-dip ~350 px → charm MUST be ~44 px tall.
+    • Chin-to-dip ~400 px → charm MUST be ~50 px tall.
+    • Chin-to-dip ~450 px → charm MUST be ~56 px tall.
+    • Chin-to-dip ~500 px → charm MUST be ~63 px tall.
+    • Chin-to-dip ~600 px (extreme close-up) → charm MUST be ~75 px tall.
 
-    The pattern is LINEAR. Compute: charm height = (chin-to-dip pixel distance) × (1/7). Render at exactly that.
+    The pattern is LINEAR. Compute: charm height = (chin-to-dip pixel distance) × (1/8). Render at exactly that.
     ═══════════════════════════════════════════════════════
 
-    ANTI-MEAN-REVERSION RULE (CRITICAL — TARGETS THE LATEST FAILURE PATTERN):
-    The model has been observed REGRESSING toward an internal "default" charm size (roughly 30-50 px regardless of context), partially overriding the 1/7 ratio at extreme zooms:
-    • FAR-zoomed shots (chin-to-dip <150 px): model pulls charm size UPWARD toward default → renders at 1/4-1/5 of chin-to-dip instead of 1/7. TOO LARGE.
-    • CLOSE-zoomed shots (chin-to-dip >350 px): model pulls charm size DOWNWARD toward default → renders at 1/9-1/10 of chin-to-dip instead of 1/7. TOO SMALL.
+    ANTI-MEAN-REVERSION RULE (CRITICAL — RESIDUAL FAR-SHOT REVERSION STILL OBSERVED):
+    The model has been observed REGRESSING toward an internal "default" charm size (roughly 30-50 px regardless of context), partially overriding the proportional ratio. Anti-mean-reversion language has SUCCESSFULLY ELIMINATED the close-shot under-render (great progress). However, RESIDUAL FAR-SHOT OVER-RENDER PERSISTS — far shots still pull UPWARD toward the default more than the rule allows. This is the most stubborn failure mode and requires extra-strict enforcement on far shots specifically:
 
-    This averaging behavior MUST be eliminated. There is NO "default charm size." The charm size is determined ENTIRELY by chin-to-dip distance × (1/7). Trust the math, even when the result looks unusually small (in a wide shot) or unusually large (in a close-up).
+    FAR-SHOT EXTRA ENFORCEMENT (chin-to-dip <150 px):
+    • The 1/8 ratio MUST be applied without ANY upward adjustment for far shots.
+    • If the math says the charm should be 10 px tall on a far shot, render at 10 px — NOT at 25 px because "10 px feels too small to see clearly."
+    • Past renderings have inflated tiny target sizes UPWARD by 50-100% — this is THE specific failure mode to eliminate this round.
+    • On far shots, when in doubt, render SMALLER than the math suggests, not larger. A 9 px charm on a far shot is preferable to a 14 px charm on a far shot.
 
-    Specifically:
-    • On a FAR shot, if the math says charm should be 14 px and your instinct says "that's too small" — render at 14 px anyway. The instinct is the failure mode.
-    • On a CLOSE shot, if the math says charm should be 71 px and your instinct says "that's too large" — render at 71 px anyway. The instinct is the failure mode.
+    There is NO "default charm size." The charm size is determined ENTIRELY by chin-to-dip distance × (1/8). Trust the math, even when the result looks unusually small (in a wide shot) or unusually large (in a close-up).
 
-    VERIFICATION TEST 1 — "SEVEN HEIGHTS BETWEEN CHIN AND DIP":
-    Mentally stack copies of the charm vertically between the model's chin and the collarbone dip. You should fit approximately 7 stacked charm heights at ANY zoom level. If only 4-5 fit (far-shot over-render), scale DOWN until 7 fit. If 9-10 fit (close-shot under-render), scale UP until 7 fit.
+    VERIFICATION TEST 1 — "EIGHT HEIGHTS BETWEEN CHIN AND DIP":
+    Mentally stack copies of the charm vertically between the model's chin and the collarbone dip. You should fit approximately 8 stacked charm heights at ANY zoom level. If only 5-6 fit, the charm is in the documented over-render range — scale DOWN until 8 fit. If 10-11 fit, scale UP until 8 fit.
 
     VERIFICATION TEST 2 — VIEWER PERCEPTION:
     A viewer should perceive the charm as a DELICATE, SMALL minimalist accent — NOT a prominent statement pendant. The chain should be more visually prominent than the charm itself.
 
     SECONDARY ANCHOR (cross-check) — CHARM WIDTH vs. NECK WIDTH:
-    • Charm width on canvas should be approximately 1/7 of the model's neck width at the widest point just below the jawline.
+    • Charm width on canvas should be approximately 1/8 of the model's neck width at the widest point just below the jawline.
     • Cross-check: both anchors should agree on charm size. If they disagree, prefer the chin-to-dip anchor.
 
     CROSS-IMAGE CONSISTENCY (SOLVED EARLIER — MUST STAY SOLVED):
-    Different reference images will have different chin-to-dip pixel distances (different camera distances). Absolute charm pixel sizes will therefore differ across images. BUT the charm-to-distance RATIO must be ~1/7 in every image. At IDENTICAL chin-to-dip distances, charm sizes MUST be identical.
+    Different reference images will have different chin-to-dip pixel distances (different camera distances). Absolute charm pixel sizes will therefore differ across images. BUT the charm-to-distance RATIO must be ~1/8 in every image. At IDENTICAL chin-to-dip distances, charm sizes MUST be identical.
 
     WHEN UNCERTAIN, TRUST THE RATIO (NOT A DEFAULT SIZE):
-    The model's recurring failure modes are (1) compositional overshoot at medium zooms, and (2) mean-reversion to default size at extreme zooms. The resolution to BOTH is the same: trust the 1/7 ratio absolutely. Compute charm height = chin-to-dip × (1/7), render at exactly that. No "but it looks weird at that size" override. No "let me adjust for composition" override. The math IS the answer.
+    The model's recurring failure modes are (1) compositional overshoot at medium zooms, (2) mean-reversion to default size at extreme zooms (especially far shots). The resolution to ALL of these is the same: trust the 1/8 ratio absolutely. Compute charm height = chin-to-dip × (1/8), render at exactly that. No "but it looks weird at that size" override. No "let me adjust for composition" override. The math IS the answer.
 
     HARD FAILS:
-    • Charm height clearly exceeds 1/5 of the chin-to-collarbone-dip distance — the documented over-render pattern, MUST NOT occur.
-    • FAR-SHOT OVER-RENDER (NEW): in any image where chin-to-dip distance is small (e.g., <150 px), charm height MUST NOT exceed 1/5 of that distance. The far-shot mean-reversion to default size is unacceptable.
-    • CLOSE-SHOT UNDER-RENDER (NEW): in any image where chin-to-dip distance is large (e.g., >350 px), charm height MUST NOT be less than 1/9 of that distance. The close-shot mean-reversion to default size is unacceptable.
-    • Charm width clearly exceeds 1/5 of the model's neck width at the widest point.
+    • Charm height clearly exceeds 1/6 of the chin-to-collarbone-dip distance — documented over-render pattern, MUST NOT occur. (Tightened from 1/5 in the prior round because the 7-10% overshoot is still slipping through.)
+    • FAR-SHOT OVER-RENDER (EXTRA-STRICT THIS ROUND): in any image where chin-to-dip distance is small (e.g., <150 px), charm height MUST NOT exceed 1/6 of that distance. The far-shot mean-reversion is the persistent failure mode that must be eliminated this round.
+    • CLOSE-SHOT UNDER-RENDER: in any image where chin-to-dip distance is large (e.g., >350 px), charm height MUST NOT be less than 1/10 of that distance.
+    • Charm width clearly exceeds 1/6 of the model's neck width at the widest point.
     • Same charm rendered at noticeably different ratios across different reference images of the same listing set, ESPECIALLY at identical zoom levels.
     • Charm rendered as a "prominent" or "statement" pendant rather than a delicate small accent.
-    • Charm sized to "fit the composition" or to a "default reasonable size" rather than to the chin-to-dip 1/7 ratio.
+    • Charm sized to "fit the composition" or to a "default reasonable size" rather than to the chin-to-dip 1/8 ratio.
 
     CHARM SIZE — CAMERA DISTANCE NOTE:
-    The CAMERA-DISTANCE-ANCHORED CHARM SIZE rule above (using the chin-to-collarbone-dip 1/7 ratio) is the primary camera-distance handler. The chin-to-dip distance itself scales with camera distance, so applying the 1/7 ratio automatically gives the correct charm size at any zoom level. The pixel target in the ULTRA-MICRO SIZE OVERRIDE is a soft baseline only — if it conflicts with the 1/7 chin-to-dip ratio, follow the ratio.
-    • HARD FAIL: identical on-canvas charm pixel size across two reference images at clearly different camera distances. The charm pixel size MUST scale with camera distance because the chin-to-dip distance scales with camera distance, and the charm height is locked to 1/7 of that distance.
-    • HARD FAIL: DIFFERENT charm pixel sizes across two reference images at CLEARLY SIMILAR camera distances. If the chin-to-dip distance is similar in two images, the charm size MUST also be similar. This consistency was achieved in the prior tightening round and MUST be preserved.
+    The CAMERA-DISTANCE-ANCHORED CHARM SIZE rule above (using the chin-to-collarbone-dip 1/8 ratio) is the primary camera-distance handler. The chin-to-dip distance itself scales with camera distance, so applying the 1/8 ratio automatically gives the correct charm size at any zoom level. The pixel target in the ULTRA-MICRO SIZE OVERRIDE is a soft baseline only — if it conflicts with the 1/8 chin-to-dip ratio, follow the ratio.
+    • HARD FAIL: identical on-canvas charm pixel size across two reference images at clearly different camera distances. The charm pixel size MUST scale with camera distance because the chin-to-dip distance scales with camera distance, and the charm height is locked to 1/8 of that distance.
+    • HARD FAIL: DIFFERENT charm pixel sizes across two reference images at CLEARLY SIMILAR camera distances. If the chin-to-dip distance is similar in two images, the charm size MUST also be similar. This consistency was achieved earlier in the prompt iteration and MUST be preserved.
 
     ENGRAVING STANDARD (UNIFORM ACROSS ALL SLOTS — CRITICAL CONSISTENCY RULE)
     • Engravings MUST read as real grooves cut INTO the metal surface — clearly three-dimensional with visible recessed depth. They are NOT flat decals, NOT painted ink, NOT pencil-drawn lines on top of the metal, NOT raised/embossed high-relief metal.
@@ -6983,9 +6984,10 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     PROGRESSION HISTORY (CRITICAL CONTEXT — DO NOT REVERT):
     This rule has been progressively refined across multiple rounds based on real-world feedback:
     • At 1/5 target: HIGH VARIANCE — some renders correct, many at 1/3 (grossly oversized).
-    • At 1/6 target: VARIANCE RESOLVED (consistent across renders) but consistent 5-10% overshoot from ideal.
-    • At 1/7 target: variance + average bias both resolved on medium-zoom shots. HOWEVER, a new bidirectional pattern emerged: FAR-zoomed shots (small chin-to-dip) render charm LARGER than 1/7 (mean-reverted UP toward "default" size). CLOSE-zoomed shots (large chin-to-dip) render charm SMALLER than 1/7 (mean-reverted DOWN toward "default" size). This is the MEAN-REVERSION failure pattern — the model is averaging the 1/7 target toward its own preferred default charm size, which happens to align with medium-zoom shots but breaks at extremes.
-    • THIS ROUND keeps 1/7 as base target and adds explicit ANTI-MEAN-REVERSION rules with extreme-zoom examples to enforce linear scaling at all zoom levels.
+    • At 1/6 target: VARIANCE RESOLVED (consistent) but 5-10% overshoot from ideal.
+    • At 1/7 target (basic): variance + average bias resolved on medium-zoom shots. BIDIRECTIONAL pattern emerged: far shots over-rendered, close shots under-rendered (mean-reversion to internal default ~30-50 px).
+    • At 1/7 target + ANTI-MEAN-REVERSION rules + extreme-zoom examples: close-shot under-render eliminated (success). However, base 7-10% overshoot returned across the board, with extra over-render still on far shots (residual mean-reversion).
+    • THIS ROUND: tighten target from 1/7 to 1/8 to pre-correct the across-the-board 7-10% overshoot. Keep anti-mean-reversion infrastructure. Tighten the far-shot HARD FAIL threshold to catch residual far-shot over-render.
     The consistency from prior rounds is GOOD and must be preserved. Do NOT revert to compositionally-prominent sizing OR to a "default size" regardless of zoom.
 
     ═══════════════════════════════════════════════════════
@@ -6995,73 +6997,73 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • CHIN POINT: the bottom-most point of the chin, where the jawline transitions into the neck.
     • COLLARBONE DIP: the small V-shaped depression at the base of the throat between the two collarbones (anatomically: the suprasternal notch / jugular notch).
 
-    THE RULE: the CHARM HEIGHT on canvas MUST be approximately ONE-SEVENTH (1/7) of the vertical pixel distance from the chin point to the collarbone dip. Acceptable range: 1/6 to 1/8. HARD FAIL above 1/5.
+    THE RULE: the CHARM HEIGHT on canvas MUST be approximately ONE-EIGHTH (1/8) of the vertical pixel distance from the chin point to the collarbone dip. Acceptable range: 1/7 to 1/9. HARD FAIL above 1/6.
 
-    CRITICAL — LINEAR SCALING WITH NO DEFAULT FLOOR/CEILING: the 1/7 ratio scales LINEARLY with chin-to-dip distance across ALL zoom levels. If chin-to-dip doubles, charm height doubles. If chin-to-dip halves, charm height halves. There is NO floor, NO ceiling, NO "minimum reasonable size", NO "maximum reasonable size", NO "default size" override. The math IS the answer.
+    CRITICAL — LINEAR SCALING WITH NO DEFAULT FLOOR/CEILING: the 1/8 ratio scales LINEARLY with chin-to-dip distance across ALL zoom levels. If chin-to-dip doubles, charm height doubles. If chin-to-dip halves, charm height halves. There is NO floor, NO ceiling, NO "minimum reasonable size", NO "maximum reasonable size", NO "default size" override. The math IS the answer.
 
     CONCRETE EXAMPLES SPANNING ALL ZOOM LEVELS (APPLY EVEN IF THE RESULT LOOKS UNUSUAL):
 
     FAR-SHOT EXTREMES (small chin-to-dip — charm should be VERY SMALL, do NOT scale UP toward "default"):
-    • Chin-to-dip ~80 px → charm MUST be ~11 px tall. This is tiny — render it tiny anyway.
-    • Chin-to-dip ~100 px → charm MUST be ~14 px tall. DO NOT inflate to 25-30 px.
-    • Chin-to-dip ~120 px → charm MUST be ~17 px tall.
-    • Chin-to-dip ~150 px → charm MUST be ~21 px tall.
+    • Chin-to-dip ~80 px → charm MUST be ~10 px tall. This is tiny — render it tiny anyway.
+    • Chin-to-dip ~100 px → charm MUST be ~13 px tall. DO NOT inflate to 25-30 px.
+    • Chin-to-dip ~120 px → charm MUST be ~15 px tall.
+    • Chin-to-dip ~150 px → charm MUST be ~19 px tall.
 
-    MEDIUM-SHOT BASELINE (these usually render correctly already):
-    • Chin-to-dip ~200 px → charm MUST be ~29 px tall.
-    • Chin-to-dip ~250 px → charm MUST be ~36 px tall.
-    • Chin-to-dip ~300 px → charm MUST be ~43 px tall.
+    MEDIUM-SHOT BASELINE:
+    • Chin-to-dip ~200 px → charm MUST be ~25 px tall.
+    • Chin-to-dip ~250 px → charm MUST be ~31 px tall.
+    • Chin-to-dip ~300 px → charm MUST be ~38 px tall.
 
     CLOSE-SHOT EXTREMES (large chin-to-dip — charm should be LARGER than typical, do NOT scale DOWN toward "default"):
-    • Chin-to-dip ~350 px → charm MUST be ~50 px tall.
-    • Chin-to-dip ~400 px → charm MUST be ~57 px tall. DO NOT shrink to 40-45 px.
-    • Chin-to-dip ~450 px → charm MUST be ~64 px tall.
-    • Chin-to-dip ~500 px → charm MUST be ~71 px tall — larger than the model's typical default.
-    • Chin-to-dip ~600 px (extreme close-up) → charm MUST be ~86 px tall.
+    • Chin-to-dip ~350 px → charm MUST be ~44 px tall.
+    • Chin-to-dip ~400 px → charm MUST be ~50 px tall.
+    • Chin-to-dip ~450 px → charm MUST be ~56 px tall.
+    • Chin-to-dip ~500 px → charm MUST be ~63 px tall.
+    • Chin-to-dip ~600 px (extreme close-up) → charm MUST be ~75 px tall.
 
-    The pattern is LINEAR. Compute: charm height = (chin-to-dip pixel distance) × (1/7). Render at exactly that.
+    The pattern is LINEAR. Compute: charm height = (chin-to-dip pixel distance) × (1/8). Render at exactly that.
     ═══════════════════════════════════════════════════════
 
-    ANTI-MEAN-REVERSION RULE (CRITICAL — TARGETS THE LATEST FAILURE PATTERN):
-    The model has been observed REGRESSING toward an internal "default" charm size (roughly 30-50 px regardless of context), partially overriding the 1/7 ratio at extreme zooms:
-    • FAR-zoomed shots (chin-to-dip <150 px): model pulls charm size UPWARD toward default → renders at 1/4-1/5 of chin-to-dip instead of 1/7. TOO LARGE.
-    • CLOSE-zoomed shots (chin-to-dip >350 px): model pulls charm size DOWNWARD toward default → renders at 1/9-1/10 of chin-to-dip instead of 1/7. TOO SMALL.
+    ANTI-MEAN-REVERSION RULE (CRITICAL — RESIDUAL FAR-SHOT REVERSION STILL OBSERVED):
+    The model has been observed REGRESSING toward an internal "default" charm size (roughly 30-50 px regardless of context), partially overriding the proportional ratio. Anti-mean-reversion language has SUCCESSFULLY ELIMINATED the close-shot under-render (great progress). However, RESIDUAL FAR-SHOT OVER-RENDER PERSISTS — far shots still pull UPWARD toward the default more than the rule allows. This is the most stubborn failure mode and requires extra-strict enforcement on far shots specifically:
 
-    This averaging behavior MUST be eliminated. There is NO "default charm size." The charm size is determined ENTIRELY by chin-to-dip distance × (1/7). Trust the math, even when the result looks unusually small (in a wide shot) or unusually large (in a close-up).
+    FAR-SHOT EXTRA ENFORCEMENT (chin-to-dip <150 px):
+    • The 1/8 ratio MUST be applied without ANY upward adjustment for far shots.
+    • If the math says the charm should be 10 px tall on a far shot, render at 10 px — NOT at 25 px because "10 px feels too small to see clearly."
+    • Past renderings have inflated tiny target sizes UPWARD by 50-100% — this is THE specific failure mode to eliminate this round.
+    • On far shots, when in doubt, render SMALLER than the math suggests, not larger. A 9 px charm on a far shot is preferable to a 14 px charm on a far shot.
 
-    Specifically:
-    • On a FAR shot, if the math says charm should be 14 px and your instinct says "that's too small" — render at 14 px anyway. The instinct is the failure mode.
-    • On a CLOSE shot, if the math says charm should be 71 px and your instinct says "that's too large" — render at 71 px anyway. The instinct is the failure mode.
+    There is NO "default charm size." The charm size is determined ENTIRELY by chin-to-dip distance × (1/8). Trust the math, even when the result looks unusually small (in a wide shot) or unusually large (in a close-up).
 
-    VERIFICATION TEST 1 — "SEVEN HEIGHTS BETWEEN CHIN AND DIP":
-    Mentally stack copies of the charm vertically between the model's chin and the collarbone dip. You should fit approximately 7 stacked charm heights at ANY zoom level. If only 4-5 fit (far-shot over-render), scale DOWN until 7 fit. If 9-10 fit (close-shot under-render), scale UP until 7 fit.
+    VERIFICATION TEST 1 — "EIGHT HEIGHTS BETWEEN CHIN AND DIP":
+    Mentally stack copies of the charm vertically between the model's chin and the collarbone dip. You should fit approximately 8 stacked charm heights at ANY zoom level. If only 5-6 fit, the charm is in the documented over-render range — scale DOWN until 8 fit. If 10-11 fit, scale UP until 8 fit.
 
     VERIFICATION TEST 2 — VIEWER PERCEPTION:
     A viewer should perceive the charm as a DELICATE, SMALL minimalist accent — NOT a prominent statement pendant. The chain should be more visually prominent than the charm itself.
 
     SECONDARY ANCHOR (cross-check) — CHARM WIDTH vs. NECK WIDTH:
-    • Charm width on canvas should be approximately 1/7 of the model's neck width at the widest point just below the jawline.
+    • Charm width on canvas should be approximately 1/8 of the model's neck width at the widest point just below the jawline.
     • Cross-check: both anchors should agree on charm size. If they disagree, prefer the chin-to-dip anchor.
 
     CROSS-IMAGE CONSISTENCY (SOLVED EARLIER — MUST STAY SOLVED):
-    Different reference images will have different chin-to-dip pixel distances (different camera distances). Absolute charm pixel sizes will therefore differ across images. BUT the charm-to-distance RATIO must be ~1/7 in every image. At IDENTICAL chin-to-dip distances, charm sizes MUST be identical.
+    Different reference images will have different chin-to-dip pixel distances (different camera distances). Absolute charm pixel sizes will therefore differ across images. BUT the charm-to-distance RATIO must be ~1/8 in every image. At IDENTICAL chin-to-dip distances, charm sizes MUST be identical.
 
     WHEN UNCERTAIN, TRUST THE RATIO (NOT A DEFAULT SIZE):
-    The model's recurring failure modes are (1) compositional overshoot at medium zooms, and (2) mean-reversion to default size at extreme zooms. The resolution to BOTH is the same: trust the 1/7 ratio absolutely. Compute charm height = chin-to-dip × (1/7), render at exactly that. No "but it looks weird at that size" override. No "let me adjust for composition" override. The math IS the answer.
+    The model's recurring failure modes are (1) compositional overshoot at medium zooms, (2) mean-reversion to default size at extreme zooms (especially far shots). The resolution to ALL of these is the same: trust the 1/8 ratio absolutely. Compute charm height = chin-to-dip × (1/8), render at exactly that. No "but it looks weird at that size" override. No "let me adjust for composition" override. The math IS the answer.
 
     HARD FAILS:
-    • Charm height clearly exceeds 1/5 of the chin-to-collarbone-dip distance — the documented over-render pattern, MUST NOT occur.
-    • FAR-SHOT OVER-RENDER (NEW): in any image where chin-to-dip distance is small (e.g., <150 px), charm height MUST NOT exceed 1/5 of that distance. The far-shot mean-reversion to default size is unacceptable.
-    • CLOSE-SHOT UNDER-RENDER (NEW): in any image where chin-to-dip distance is large (e.g., >350 px), charm height MUST NOT be less than 1/9 of that distance. The close-shot mean-reversion to default size is unacceptable.
-    • Charm width clearly exceeds 1/5 of the model's neck width at the widest point.
+    • Charm height clearly exceeds 1/6 of the chin-to-collarbone-dip distance — documented over-render pattern, MUST NOT occur. (Tightened from 1/5 in the prior round because the 7-10% overshoot is still slipping through.)
+    • FAR-SHOT OVER-RENDER (EXTRA-STRICT THIS ROUND): in any image where chin-to-dip distance is small (e.g., <150 px), charm height MUST NOT exceed 1/6 of that distance. The far-shot mean-reversion is the persistent failure mode that must be eliminated this round.
+    • CLOSE-SHOT UNDER-RENDER: in any image where chin-to-dip distance is large (e.g., >350 px), charm height MUST NOT be less than 1/10 of that distance.
+    • Charm width clearly exceeds 1/6 of the model's neck width at the widest point.
     • Same charm rendered at noticeably different ratios across different reference images of the same listing set, ESPECIALLY at identical zoom levels.
     • Charm rendered as a "prominent" or "statement" pendant rather than a delicate small accent.
-    • Charm sized to "fit the composition" or to a "default reasonable size" rather than to the chin-to-dip 1/7 ratio.
+    • Charm sized to "fit the composition" or to a "default reasonable size" rather than to the chin-to-dip 1/8 ratio.
 
     CHARM SIZE — CAMERA DISTANCE NOTE:
-    The CAMERA-DISTANCE-ANCHORED CHARM SIZE rule above (using the chin-to-collarbone-dip 1/7 ratio) is the primary camera-distance handler. The chin-to-dip distance itself scales with camera distance, so applying the 1/7 ratio automatically gives the correct charm size at any zoom level. The pixel target in the ULTRA-MICRO SIZE OVERRIDE is a soft baseline only — if it conflicts with the 1/7 chin-to-dip ratio, follow the ratio.
-    • HARD FAIL: identical on-canvas charm pixel size across two reference images at clearly different camera distances. The charm pixel size MUST scale with camera distance because the chin-to-dip distance scales with camera distance, and the charm height is locked to 1/7 of that distance.
-    • HARD FAIL: DIFFERENT charm pixel sizes across two reference images at CLEARLY SIMILAR camera distances. If the chin-to-dip distance is similar in two images, the charm size MUST also be similar. This consistency was achieved in the prior tightening round and MUST be preserved.
+    The CAMERA-DISTANCE-ANCHORED CHARM SIZE rule above (using the chin-to-collarbone-dip 1/8 ratio) is the primary camera-distance handler. The chin-to-dip distance itself scales with camera distance, so applying the 1/8 ratio automatically gives the correct charm size at any zoom level. The pixel target in the ULTRA-MICRO SIZE OVERRIDE is a soft baseline only — if it conflicts with the 1/8 chin-to-dip ratio, follow the ratio.
+    • HARD FAIL: identical on-canvas charm pixel size across two reference images at clearly different camera distances. The charm pixel size MUST scale with camera distance because the chin-to-dip distance scales with camera distance, and the charm height is locked to 1/8 of that distance.
+    • HARD FAIL: DIFFERENT charm pixel sizes across two reference images at CLEARLY SIMILAR camera distances. If the chin-to-dip distance is similar in two images, the charm size MUST also be similar. This consistency was achieved earlier in the prompt iteration and MUST be preserved.
 
     ENGRAVING STANDARD (UNIFORM ACROSS ALL SLOTS — CRITICAL CONSISTENCY RULE)
     • Engravings MUST read as real grooves cut INTO the metal surface — clearly three-dimensional with visible recessed depth. They are NOT flat decals, NOT painted ink, NOT pencil-drawn lines on top of the metal, NOT raised/embossed high-relief metal.
@@ -7359,9 +7361,10 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     PROGRESSION HISTORY (CRITICAL CONTEXT — DO NOT REVERT):
     This rule has been progressively refined across multiple rounds based on real-world feedback:
     • At 1/5 target: HIGH VARIANCE — some renders correct, many at 1/3 (grossly oversized).
-    • At 1/6 target: VARIANCE RESOLVED (consistent across renders) but consistent 5-10% overshoot from ideal.
-    • At 1/7 target: variance + average bias both resolved on medium-zoom shots. HOWEVER, a new bidirectional pattern emerged: FAR-zoomed shots (small chin-to-dip) render charm LARGER than 1/7 (mean-reverted UP toward "default" size). CLOSE-zoomed shots (large chin-to-dip) render charm SMALLER than 1/7 (mean-reverted DOWN toward "default" size). This is the MEAN-REVERSION failure pattern — the model is averaging the 1/7 target toward its own preferred default charm size, which happens to align with medium-zoom shots but breaks at extremes.
-    • THIS ROUND keeps 1/7 as base target and adds explicit ANTI-MEAN-REVERSION rules with extreme-zoom examples to enforce linear scaling at all zoom levels.
+    • At 1/6 target: VARIANCE RESOLVED (consistent) but 5-10% overshoot from ideal.
+    • At 1/7 target (basic): variance + average bias resolved on medium-zoom shots. BIDIRECTIONAL pattern emerged: far shots over-rendered, close shots under-rendered (mean-reversion to internal default ~30-50 px).
+    • At 1/7 target + ANTI-MEAN-REVERSION rules + extreme-zoom examples: close-shot under-render eliminated (success). However, base 7-10% overshoot returned across the board, with extra over-render still on far shots (residual mean-reversion).
+    • THIS ROUND: tighten target from 1/7 to 1/8 to pre-correct the across-the-board 7-10% overshoot. Keep anti-mean-reversion infrastructure. Tighten the far-shot HARD FAIL threshold to catch residual far-shot over-render.
     The consistency from prior rounds is GOOD and must be preserved. Do NOT revert to compositionally-prominent sizing OR to a "default size" regardless of zoom.
 
     ═══════════════════════════════════════════════════════
@@ -7371,73 +7374,73 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • CHIN POINT: the bottom-most point of the chin, where the jawline transitions into the neck.
     • COLLARBONE DIP: the small V-shaped depression at the base of the throat between the two collarbones (anatomically: the suprasternal notch / jugular notch).
 
-    THE RULE: the CHARM HEIGHT on canvas MUST be approximately ONE-SEVENTH (1/7) of the vertical pixel distance from the chin point to the collarbone dip. Acceptable range: 1/6 to 1/8. HARD FAIL above 1/5.
+    THE RULE: the CHARM HEIGHT on canvas MUST be approximately ONE-EIGHTH (1/8) of the vertical pixel distance from the chin point to the collarbone dip. Acceptable range: 1/7 to 1/9. HARD FAIL above 1/6.
 
-    CRITICAL — LINEAR SCALING WITH NO DEFAULT FLOOR/CEILING: the 1/7 ratio scales LINEARLY with chin-to-dip distance across ALL zoom levels. If chin-to-dip doubles, charm height doubles. If chin-to-dip halves, charm height halves. There is NO floor, NO ceiling, NO "minimum reasonable size", NO "maximum reasonable size", NO "default size" override. The math IS the answer.
+    CRITICAL — LINEAR SCALING WITH NO DEFAULT FLOOR/CEILING: the 1/8 ratio scales LINEARLY with chin-to-dip distance across ALL zoom levels. If chin-to-dip doubles, charm height doubles. If chin-to-dip halves, charm height halves. There is NO floor, NO ceiling, NO "minimum reasonable size", NO "maximum reasonable size", NO "default size" override. The math IS the answer.
 
     CONCRETE EXAMPLES SPANNING ALL ZOOM LEVELS (APPLY EVEN IF THE RESULT LOOKS UNUSUAL):
 
     FAR-SHOT EXTREMES (small chin-to-dip — charm should be VERY SMALL, do NOT scale UP toward "default"):
-    • Chin-to-dip ~80 px → charm MUST be ~11 px tall. This is tiny — render it tiny anyway.
-    • Chin-to-dip ~100 px → charm MUST be ~14 px tall. DO NOT inflate to 25-30 px.
-    • Chin-to-dip ~120 px → charm MUST be ~17 px tall.
-    • Chin-to-dip ~150 px → charm MUST be ~21 px tall.
+    • Chin-to-dip ~80 px → charm MUST be ~10 px tall. This is tiny — render it tiny anyway.
+    • Chin-to-dip ~100 px → charm MUST be ~13 px tall. DO NOT inflate to 25-30 px.
+    • Chin-to-dip ~120 px → charm MUST be ~15 px tall.
+    • Chin-to-dip ~150 px → charm MUST be ~19 px tall.
 
-    MEDIUM-SHOT BASELINE (these usually render correctly already):
-    • Chin-to-dip ~200 px → charm MUST be ~29 px tall.
-    • Chin-to-dip ~250 px → charm MUST be ~36 px tall.
-    • Chin-to-dip ~300 px → charm MUST be ~43 px tall.
+    MEDIUM-SHOT BASELINE:
+    • Chin-to-dip ~200 px → charm MUST be ~25 px tall.
+    • Chin-to-dip ~250 px → charm MUST be ~31 px tall.
+    • Chin-to-dip ~300 px → charm MUST be ~38 px tall.
 
     CLOSE-SHOT EXTREMES (large chin-to-dip — charm should be LARGER than typical, do NOT scale DOWN toward "default"):
-    • Chin-to-dip ~350 px → charm MUST be ~50 px tall.
-    • Chin-to-dip ~400 px → charm MUST be ~57 px tall. DO NOT shrink to 40-45 px.
-    • Chin-to-dip ~450 px → charm MUST be ~64 px tall.
-    • Chin-to-dip ~500 px → charm MUST be ~71 px tall — larger than the model's typical default.
-    • Chin-to-dip ~600 px (extreme close-up) → charm MUST be ~86 px tall.
+    • Chin-to-dip ~350 px → charm MUST be ~44 px tall.
+    • Chin-to-dip ~400 px → charm MUST be ~50 px tall.
+    • Chin-to-dip ~450 px → charm MUST be ~56 px tall.
+    • Chin-to-dip ~500 px → charm MUST be ~63 px tall.
+    • Chin-to-dip ~600 px (extreme close-up) → charm MUST be ~75 px tall.
 
-    The pattern is LINEAR. Compute: charm height = (chin-to-dip pixel distance) × (1/7). Render at exactly that.
+    The pattern is LINEAR. Compute: charm height = (chin-to-dip pixel distance) × (1/8). Render at exactly that.
     ═══════════════════════════════════════════════════════
 
-    ANTI-MEAN-REVERSION RULE (CRITICAL — TARGETS THE LATEST FAILURE PATTERN):
-    The model has been observed REGRESSING toward an internal "default" charm size (roughly 30-50 px regardless of context), partially overriding the 1/7 ratio at extreme zooms:
-    • FAR-zoomed shots (chin-to-dip <150 px): model pulls charm size UPWARD toward default → renders at 1/4-1/5 of chin-to-dip instead of 1/7. TOO LARGE.
-    • CLOSE-zoomed shots (chin-to-dip >350 px): model pulls charm size DOWNWARD toward default → renders at 1/9-1/10 of chin-to-dip instead of 1/7. TOO SMALL.
+    ANTI-MEAN-REVERSION RULE (CRITICAL — RESIDUAL FAR-SHOT REVERSION STILL OBSERVED):
+    The model has been observed REGRESSING toward an internal "default" charm size (roughly 30-50 px regardless of context), partially overriding the proportional ratio. Anti-mean-reversion language has SUCCESSFULLY ELIMINATED the close-shot under-render (great progress). However, RESIDUAL FAR-SHOT OVER-RENDER PERSISTS — far shots still pull UPWARD toward the default more than the rule allows. This is the most stubborn failure mode and requires extra-strict enforcement on far shots specifically:
 
-    This averaging behavior MUST be eliminated. There is NO "default charm size." The charm size is determined ENTIRELY by chin-to-dip distance × (1/7). Trust the math, even when the result looks unusually small (in a wide shot) or unusually large (in a close-up).
+    FAR-SHOT EXTRA ENFORCEMENT (chin-to-dip <150 px):
+    • The 1/8 ratio MUST be applied without ANY upward adjustment for far shots.
+    • If the math says the charm should be 10 px tall on a far shot, render at 10 px — NOT at 25 px because "10 px feels too small to see clearly."
+    • Past renderings have inflated tiny target sizes UPWARD by 50-100% — this is THE specific failure mode to eliminate this round.
+    • On far shots, when in doubt, render SMALLER than the math suggests, not larger. A 9 px charm on a far shot is preferable to a 14 px charm on a far shot.
 
-    Specifically:
-    • On a FAR shot, if the math says charm should be 14 px and your instinct says "that's too small" — render at 14 px anyway. The instinct is the failure mode.
-    • On a CLOSE shot, if the math says charm should be 71 px and your instinct says "that's too large" — render at 71 px anyway. The instinct is the failure mode.
+    There is NO "default charm size." The charm size is determined ENTIRELY by chin-to-dip distance × (1/8). Trust the math, even when the result looks unusually small (in a wide shot) or unusually large (in a close-up).
 
-    VERIFICATION TEST 1 — "SEVEN HEIGHTS BETWEEN CHIN AND DIP":
-    Mentally stack copies of the charm vertically between the model's chin and the collarbone dip. You should fit approximately 7 stacked charm heights at ANY zoom level. If only 4-5 fit (far-shot over-render), scale DOWN until 7 fit. If 9-10 fit (close-shot under-render), scale UP until 7 fit.
+    VERIFICATION TEST 1 — "EIGHT HEIGHTS BETWEEN CHIN AND DIP":
+    Mentally stack copies of the charm vertically between the model's chin and the collarbone dip. You should fit approximately 8 stacked charm heights at ANY zoom level. If only 5-6 fit, the charm is in the documented over-render range — scale DOWN until 8 fit. If 10-11 fit, scale UP until 8 fit.
 
     VERIFICATION TEST 2 — VIEWER PERCEPTION:
     A viewer should perceive the charm as a DELICATE, SMALL minimalist accent — NOT a prominent statement pendant. The chain should be more visually prominent than the charm itself.
 
     SECONDARY ANCHOR (cross-check) — CHARM WIDTH vs. NECK WIDTH:
-    • Charm width on canvas should be approximately 1/7 of the model's neck width at the widest point just below the jawline.
+    • Charm width on canvas should be approximately 1/8 of the model's neck width at the widest point just below the jawline.
     • Cross-check: both anchors should agree on charm size. If they disagree, prefer the chin-to-dip anchor.
 
     CROSS-IMAGE CONSISTENCY (SOLVED EARLIER — MUST STAY SOLVED):
-    Different reference images will have different chin-to-dip pixel distances (different camera distances). Absolute charm pixel sizes will therefore differ across images. BUT the charm-to-distance RATIO must be ~1/7 in every image. At IDENTICAL chin-to-dip distances, charm sizes MUST be identical.
+    Different reference images will have different chin-to-dip pixel distances (different camera distances). Absolute charm pixel sizes will therefore differ across images. BUT the charm-to-distance RATIO must be ~1/8 in every image. At IDENTICAL chin-to-dip distances, charm sizes MUST be identical.
 
     WHEN UNCERTAIN, TRUST THE RATIO (NOT A DEFAULT SIZE):
-    The model's recurring failure modes are (1) compositional overshoot at medium zooms, and (2) mean-reversion to default size at extreme zooms. The resolution to BOTH is the same: trust the 1/7 ratio absolutely. Compute charm height = chin-to-dip × (1/7), render at exactly that. No "but it looks weird at that size" override. No "let me adjust for composition" override. The math IS the answer.
+    The model's recurring failure modes are (1) compositional overshoot at medium zooms, (2) mean-reversion to default size at extreme zooms (especially far shots). The resolution to ALL of these is the same: trust the 1/8 ratio absolutely. Compute charm height = chin-to-dip × (1/8), render at exactly that. No "but it looks weird at that size" override. No "let me adjust for composition" override. The math IS the answer.
 
     HARD FAILS:
-    • Charm height clearly exceeds 1/5 of the chin-to-collarbone-dip distance — the documented over-render pattern, MUST NOT occur.
-    • FAR-SHOT OVER-RENDER (NEW): in any image where chin-to-dip distance is small (e.g., <150 px), charm height MUST NOT exceed 1/5 of that distance. The far-shot mean-reversion to default size is unacceptable.
-    • CLOSE-SHOT UNDER-RENDER (NEW): in any image where chin-to-dip distance is large (e.g., >350 px), charm height MUST NOT be less than 1/9 of that distance. The close-shot mean-reversion to default size is unacceptable.
-    • Charm width clearly exceeds 1/5 of the model's neck width at the widest point.
+    • Charm height clearly exceeds 1/6 of the chin-to-collarbone-dip distance — documented over-render pattern, MUST NOT occur. (Tightened from 1/5 in the prior round because the 7-10% overshoot is still slipping through.)
+    • FAR-SHOT OVER-RENDER (EXTRA-STRICT THIS ROUND): in any image where chin-to-dip distance is small (e.g., <150 px), charm height MUST NOT exceed 1/6 of that distance. The far-shot mean-reversion is the persistent failure mode that must be eliminated this round.
+    • CLOSE-SHOT UNDER-RENDER: in any image where chin-to-dip distance is large (e.g., >350 px), charm height MUST NOT be less than 1/10 of that distance.
+    • Charm width clearly exceeds 1/6 of the model's neck width at the widest point.
     • Same charm rendered at noticeably different ratios across different reference images of the same listing set, ESPECIALLY at identical zoom levels.
     • Charm rendered as a "prominent" or "statement" pendant rather than a delicate small accent.
-    • Charm sized to "fit the composition" or to a "default reasonable size" rather than to the chin-to-dip 1/7 ratio.
+    • Charm sized to "fit the composition" or to a "default reasonable size" rather than to the chin-to-dip 1/8 ratio.
 
     CHARM SIZE — CAMERA DISTANCE NOTE:
-    The CAMERA-DISTANCE-ANCHORED CHARM SIZE rule above (using the chin-to-collarbone-dip 1/7 ratio) is the primary camera-distance handler. The chin-to-dip distance itself scales with camera distance, so applying the 1/7 ratio automatically gives the correct charm size at any zoom level. The pixel target in the ULTRA-MICRO SIZE OVERRIDE is a soft baseline only — if it conflicts with the 1/7 chin-to-dip ratio, follow the ratio.
-    • HARD FAIL: identical on-canvas charm pixel size across two reference images at clearly different camera distances. The charm pixel size MUST scale with camera distance because the chin-to-dip distance scales with camera distance, and the charm height is locked to 1/7 of that distance.
-    • HARD FAIL: DIFFERENT charm pixel sizes across two reference images at CLEARLY SIMILAR camera distances. If the chin-to-dip distance is similar in two images, the charm size MUST also be similar. This consistency was achieved in the prior tightening round and MUST be preserved.
+    The CAMERA-DISTANCE-ANCHORED CHARM SIZE rule above (using the chin-to-collarbone-dip 1/8 ratio) is the primary camera-distance handler. The chin-to-dip distance itself scales with camera distance, so applying the 1/8 ratio automatically gives the correct charm size at any zoom level. The pixel target in the ULTRA-MICRO SIZE OVERRIDE is a soft baseline only — if it conflicts with the 1/8 chin-to-dip ratio, follow the ratio.
+    • HARD FAIL: identical on-canvas charm pixel size across two reference images at clearly different camera distances. The charm pixel size MUST scale with camera distance because the chin-to-dip distance scales with camera distance, and the charm height is locked to 1/8 of that distance.
+    • HARD FAIL: DIFFERENT charm pixel sizes across two reference images at CLEARLY SIMILAR camera distances. If the chin-to-dip distance is similar in two images, the charm size MUST also be similar. This consistency was achieved earlier in the prompt iteration and MUST be preserved.
 
     ENGRAVING STANDARD (UNIFORM ACROSS ALL SLOTS — CRITICAL CONSISTENCY RULE)
     • Engravings MUST read as real grooves cut INTO the metal surface — clearly three-dimensional with visible recessed depth. They are NOT flat decals, NOT painted ink, NOT pencil-drawn lines on top of the metal, NOT raised/embossed high-relief metal.
@@ -7636,9 +7639,10 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     PROGRESSION HISTORY (CRITICAL CONTEXT — DO NOT REVERT):
     This rule has been progressively refined across multiple rounds based on real-world feedback:
     • At 1/5 target: HIGH VARIANCE — some renders correct, many at 1/3 (grossly oversized).
-    • At 1/6 target: VARIANCE RESOLVED (consistent across renders) but consistent 5-10% overshoot from ideal.
-    • At 1/7 target: variance + average bias both resolved on medium-zoom shots. HOWEVER, a new bidirectional pattern emerged: FAR-zoomed shots (small chin-to-dip) render charm LARGER than 1/7 (mean-reverted UP toward "default" size). CLOSE-zoomed shots (large chin-to-dip) render charm SMALLER than 1/7 (mean-reverted DOWN toward "default" size). This is the MEAN-REVERSION failure pattern — the model is averaging the 1/7 target toward its own preferred default charm size, which happens to align with medium-zoom shots but breaks at extremes.
-    • THIS ROUND keeps 1/7 as base target and adds explicit ANTI-MEAN-REVERSION rules with extreme-zoom examples to enforce linear scaling at all zoom levels.
+    • At 1/6 target: VARIANCE RESOLVED (consistent) but 5-10% overshoot from ideal.
+    • At 1/7 target (basic): variance + average bias resolved on medium-zoom shots. BIDIRECTIONAL pattern emerged: far shots over-rendered, close shots under-rendered (mean-reversion to internal default ~30-50 px).
+    • At 1/7 target + ANTI-MEAN-REVERSION rules + extreme-zoom examples: close-shot under-render eliminated (success). However, base 7-10% overshoot returned across the board, with extra over-render still on far shots (residual mean-reversion).
+    • THIS ROUND: tighten target from 1/7 to 1/8 to pre-correct the across-the-board 7-10% overshoot. Keep anti-mean-reversion infrastructure. Tighten the far-shot HARD FAIL threshold to catch residual far-shot over-render.
     The consistency from prior rounds is GOOD and must be preserved. Do NOT revert to compositionally-prominent sizing OR to a "default size" regardless of zoom.
 
     ═══════════════════════════════════════════════════════
@@ -7648,73 +7652,73 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • CHIN POINT: the bottom-most point of the chin, where the jawline transitions into the neck.
     • COLLARBONE DIP: the small V-shaped depression at the base of the throat between the two collarbones (anatomically: the suprasternal notch / jugular notch).
 
-    THE RULE: the CHARM HEIGHT on canvas MUST be approximately ONE-SEVENTH (1/7) of the vertical pixel distance from the chin point to the collarbone dip. Acceptable range: 1/6 to 1/8. HARD FAIL above 1/5.
+    THE RULE: the CHARM HEIGHT on canvas MUST be approximately ONE-EIGHTH (1/8) of the vertical pixel distance from the chin point to the collarbone dip. Acceptable range: 1/7 to 1/9. HARD FAIL above 1/6.
 
-    CRITICAL — LINEAR SCALING WITH NO DEFAULT FLOOR/CEILING: the 1/7 ratio scales LINEARLY with chin-to-dip distance across ALL zoom levels. If chin-to-dip doubles, charm height doubles. If chin-to-dip halves, charm height halves. There is NO floor, NO ceiling, NO "minimum reasonable size", NO "maximum reasonable size", NO "default size" override. The math IS the answer.
+    CRITICAL — LINEAR SCALING WITH NO DEFAULT FLOOR/CEILING: the 1/8 ratio scales LINEARLY with chin-to-dip distance across ALL zoom levels. If chin-to-dip doubles, charm height doubles. If chin-to-dip halves, charm height halves. There is NO floor, NO ceiling, NO "minimum reasonable size", NO "maximum reasonable size", NO "default size" override. The math IS the answer.
 
     CONCRETE EXAMPLES SPANNING ALL ZOOM LEVELS (APPLY EVEN IF THE RESULT LOOKS UNUSUAL):
 
     FAR-SHOT EXTREMES (small chin-to-dip — charm should be VERY SMALL, do NOT scale UP toward "default"):
-    • Chin-to-dip ~80 px → charm MUST be ~11 px tall. This is tiny — render it tiny anyway.
-    • Chin-to-dip ~100 px → charm MUST be ~14 px tall. DO NOT inflate to 25-30 px.
-    • Chin-to-dip ~120 px → charm MUST be ~17 px tall.
-    • Chin-to-dip ~150 px → charm MUST be ~21 px tall.
+    • Chin-to-dip ~80 px → charm MUST be ~10 px tall. This is tiny — render it tiny anyway.
+    • Chin-to-dip ~100 px → charm MUST be ~13 px tall. DO NOT inflate to 25-30 px.
+    • Chin-to-dip ~120 px → charm MUST be ~15 px tall.
+    • Chin-to-dip ~150 px → charm MUST be ~19 px tall.
 
-    MEDIUM-SHOT BASELINE (these usually render correctly already):
-    • Chin-to-dip ~200 px → charm MUST be ~29 px tall.
-    • Chin-to-dip ~250 px → charm MUST be ~36 px tall.
-    • Chin-to-dip ~300 px → charm MUST be ~43 px tall.
+    MEDIUM-SHOT BASELINE:
+    • Chin-to-dip ~200 px → charm MUST be ~25 px tall.
+    • Chin-to-dip ~250 px → charm MUST be ~31 px tall.
+    • Chin-to-dip ~300 px → charm MUST be ~38 px tall.
 
     CLOSE-SHOT EXTREMES (large chin-to-dip — charm should be LARGER than typical, do NOT scale DOWN toward "default"):
-    • Chin-to-dip ~350 px → charm MUST be ~50 px tall.
-    • Chin-to-dip ~400 px → charm MUST be ~57 px tall. DO NOT shrink to 40-45 px.
-    • Chin-to-dip ~450 px → charm MUST be ~64 px tall.
-    • Chin-to-dip ~500 px → charm MUST be ~71 px tall — larger than the model's typical default.
-    • Chin-to-dip ~600 px (extreme close-up) → charm MUST be ~86 px tall.
+    • Chin-to-dip ~350 px → charm MUST be ~44 px tall.
+    • Chin-to-dip ~400 px → charm MUST be ~50 px tall.
+    • Chin-to-dip ~450 px → charm MUST be ~56 px tall.
+    • Chin-to-dip ~500 px → charm MUST be ~63 px tall.
+    • Chin-to-dip ~600 px (extreme close-up) → charm MUST be ~75 px tall.
 
-    The pattern is LINEAR. Compute: charm height = (chin-to-dip pixel distance) × (1/7). Render at exactly that.
+    The pattern is LINEAR. Compute: charm height = (chin-to-dip pixel distance) × (1/8). Render at exactly that.
     ═══════════════════════════════════════════════════════
 
-    ANTI-MEAN-REVERSION RULE (CRITICAL — TARGETS THE LATEST FAILURE PATTERN):
-    The model has been observed REGRESSING toward an internal "default" charm size (roughly 30-50 px regardless of context), partially overriding the 1/7 ratio at extreme zooms:
-    • FAR-zoomed shots (chin-to-dip <150 px): model pulls charm size UPWARD toward default → renders at 1/4-1/5 of chin-to-dip instead of 1/7. TOO LARGE.
-    • CLOSE-zoomed shots (chin-to-dip >350 px): model pulls charm size DOWNWARD toward default → renders at 1/9-1/10 of chin-to-dip instead of 1/7. TOO SMALL.
+    ANTI-MEAN-REVERSION RULE (CRITICAL — RESIDUAL FAR-SHOT REVERSION STILL OBSERVED):
+    The model has been observed REGRESSING toward an internal "default" charm size (roughly 30-50 px regardless of context), partially overriding the proportional ratio. Anti-mean-reversion language has SUCCESSFULLY ELIMINATED the close-shot under-render (great progress). However, RESIDUAL FAR-SHOT OVER-RENDER PERSISTS — far shots still pull UPWARD toward the default more than the rule allows. This is the most stubborn failure mode and requires extra-strict enforcement on far shots specifically:
 
-    This averaging behavior MUST be eliminated. There is NO "default charm size." The charm size is determined ENTIRELY by chin-to-dip distance × (1/7). Trust the math, even when the result looks unusually small (in a wide shot) or unusually large (in a close-up).
+    FAR-SHOT EXTRA ENFORCEMENT (chin-to-dip <150 px):
+    • The 1/8 ratio MUST be applied without ANY upward adjustment for far shots.
+    • If the math says the charm should be 10 px tall on a far shot, render at 10 px — NOT at 25 px because "10 px feels too small to see clearly."
+    • Past renderings have inflated tiny target sizes UPWARD by 50-100% — this is THE specific failure mode to eliminate this round.
+    • On far shots, when in doubt, render SMALLER than the math suggests, not larger. A 9 px charm on a far shot is preferable to a 14 px charm on a far shot.
 
-    Specifically:
-    • On a FAR shot, if the math says charm should be 14 px and your instinct says "that's too small" — render at 14 px anyway. The instinct is the failure mode.
-    • On a CLOSE shot, if the math says charm should be 71 px and your instinct says "that's too large" — render at 71 px anyway. The instinct is the failure mode.
+    There is NO "default charm size." The charm size is determined ENTIRELY by chin-to-dip distance × (1/8). Trust the math, even when the result looks unusually small (in a wide shot) or unusually large (in a close-up).
 
-    VERIFICATION TEST 1 — "SEVEN HEIGHTS BETWEEN CHIN AND DIP":
-    Mentally stack copies of the charm vertically between the model's chin and the collarbone dip. You should fit approximately 7 stacked charm heights at ANY zoom level. If only 4-5 fit (far-shot over-render), scale DOWN until 7 fit. If 9-10 fit (close-shot under-render), scale UP until 7 fit.
+    VERIFICATION TEST 1 — "EIGHT HEIGHTS BETWEEN CHIN AND DIP":
+    Mentally stack copies of the charm vertically between the model's chin and the collarbone dip. You should fit approximately 8 stacked charm heights at ANY zoom level. If only 5-6 fit, the charm is in the documented over-render range — scale DOWN until 8 fit. If 10-11 fit, scale UP until 8 fit.
 
     VERIFICATION TEST 2 — VIEWER PERCEPTION:
     A viewer should perceive the charm as a DELICATE, SMALL minimalist accent — NOT a prominent statement pendant. The chain should be more visually prominent than the charm itself.
 
     SECONDARY ANCHOR (cross-check) — CHARM WIDTH vs. NECK WIDTH:
-    • Charm width on canvas should be approximately 1/7 of the model's neck width at the widest point just below the jawline.
+    • Charm width on canvas should be approximately 1/8 of the model's neck width at the widest point just below the jawline.
     • Cross-check: both anchors should agree on charm size. If they disagree, prefer the chin-to-dip anchor.
 
     CROSS-IMAGE CONSISTENCY (SOLVED EARLIER — MUST STAY SOLVED):
-    Different reference images will have different chin-to-dip pixel distances (different camera distances). Absolute charm pixel sizes will therefore differ across images. BUT the charm-to-distance RATIO must be ~1/7 in every image. At IDENTICAL chin-to-dip distances, charm sizes MUST be identical.
+    Different reference images will have different chin-to-dip pixel distances (different camera distances). Absolute charm pixel sizes will therefore differ across images. BUT the charm-to-distance RATIO must be ~1/8 in every image. At IDENTICAL chin-to-dip distances, charm sizes MUST be identical.
 
     WHEN UNCERTAIN, TRUST THE RATIO (NOT A DEFAULT SIZE):
-    The model's recurring failure modes are (1) compositional overshoot at medium zooms, and (2) mean-reversion to default size at extreme zooms. The resolution to BOTH is the same: trust the 1/7 ratio absolutely. Compute charm height = chin-to-dip × (1/7), render at exactly that. No "but it looks weird at that size" override. No "let me adjust for composition" override. The math IS the answer.
+    The model's recurring failure modes are (1) compositional overshoot at medium zooms, (2) mean-reversion to default size at extreme zooms (especially far shots). The resolution to ALL of these is the same: trust the 1/8 ratio absolutely. Compute charm height = chin-to-dip × (1/8), render at exactly that. No "but it looks weird at that size" override. No "let me adjust for composition" override. The math IS the answer.
 
     HARD FAILS:
-    • Charm height clearly exceeds 1/5 of the chin-to-collarbone-dip distance — the documented over-render pattern, MUST NOT occur.
-    • FAR-SHOT OVER-RENDER (NEW): in any image where chin-to-dip distance is small (e.g., <150 px), charm height MUST NOT exceed 1/5 of that distance. The far-shot mean-reversion to default size is unacceptable.
-    • CLOSE-SHOT UNDER-RENDER (NEW): in any image where chin-to-dip distance is large (e.g., >350 px), charm height MUST NOT be less than 1/9 of that distance. The close-shot mean-reversion to default size is unacceptable.
-    • Charm width clearly exceeds 1/5 of the model's neck width at the widest point.
+    • Charm height clearly exceeds 1/6 of the chin-to-collarbone-dip distance — documented over-render pattern, MUST NOT occur. (Tightened from 1/5 in the prior round because the 7-10% overshoot is still slipping through.)
+    • FAR-SHOT OVER-RENDER (EXTRA-STRICT THIS ROUND): in any image where chin-to-dip distance is small (e.g., <150 px), charm height MUST NOT exceed 1/6 of that distance. The far-shot mean-reversion is the persistent failure mode that must be eliminated this round.
+    • CLOSE-SHOT UNDER-RENDER: in any image where chin-to-dip distance is large (e.g., >350 px), charm height MUST NOT be less than 1/10 of that distance.
+    • Charm width clearly exceeds 1/6 of the model's neck width at the widest point.
     • Same charm rendered at noticeably different ratios across different reference images of the same listing set, ESPECIALLY at identical zoom levels.
     • Charm rendered as a "prominent" or "statement" pendant rather than a delicate small accent.
-    • Charm sized to "fit the composition" or to a "default reasonable size" rather than to the chin-to-dip 1/7 ratio.
+    • Charm sized to "fit the composition" or to a "default reasonable size" rather than to the chin-to-dip 1/8 ratio.
 
     CHARM SIZE — CAMERA DISTANCE NOTE:
-    The CAMERA-DISTANCE-ANCHORED CHARM SIZE rule above (using the chin-to-collarbone-dip 1/7 ratio) is the primary camera-distance handler. The chin-to-dip distance itself scales with camera distance, so applying the 1/7 ratio automatically gives the correct charm size at any zoom level. The pixel target in the ULTRA-MICRO SIZE OVERRIDE is a soft baseline only — if it conflicts with the 1/7 chin-to-dip ratio, follow the ratio.
-    • HARD FAIL: identical on-canvas charm pixel size across two reference images at clearly different camera distances. The charm pixel size MUST scale with camera distance because the chin-to-dip distance scales with camera distance, and the charm height is locked to 1/7 of that distance.
-    • HARD FAIL: DIFFERENT charm pixel sizes across two reference images at CLEARLY SIMILAR camera distances. If the chin-to-dip distance is similar in two images, the charm size MUST also be similar. This consistency was achieved in the prior tightening round and MUST be preserved.
+    The CAMERA-DISTANCE-ANCHORED CHARM SIZE rule above (using the chin-to-collarbone-dip 1/8 ratio) is the primary camera-distance handler. The chin-to-dip distance itself scales with camera distance, so applying the 1/8 ratio automatically gives the correct charm size at any zoom level. The pixel target in the ULTRA-MICRO SIZE OVERRIDE is a soft baseline only — if it conflicts with the 1/8 chin-to-dip ratio, follow the ratio.
+    • HARD FAIL: identical on-canvas charm pixel size across two reference images at clearly different camera distances. The charm pixel size MUST scale with camera distance because the chin-to-dip distance scales with camera distance, and the charm height is locked to 1/8 of that distance.
+    • HARD FAIL: DIFFERENT charm pixel sizes across two reference images at CLEARLY SIMILAR camera distances. If the chin-to-dip distance is similar in two images, the charm size MUST also be similar. This consistency was achieved earlier in the prompt iteration and MUST be preserved.
 
     ENGRAVING STANDARD (UNIFORM ACROSS ALL SLOTS — CRITICAL CONSISTENCY RULE)
     • Engravings MUST read as real grooves cut INTO the metal surface — clearly three-dimensional with visible recessed depth. They are NOT flat decals, NOT painted ink, NOT pencil-drawn lines on top of the metal, NOT raised/embossed high-relief metal.
