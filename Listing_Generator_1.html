@@ -6693,8 +6693,8 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     const DEFAULT_PROMPT =
     `CRITICAL: This is a standard fashion product photo edit. Keep the subject modest. No nudity.
 
-    ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
-    • Force the Charm to be very small: final on-image charm height MUST be approximately 6 pixels tall (acceptable range: 6 to 7 pixels, target the LOW END of this range — i.e. aim at 6, not 7). HARD MAXIMUM: 7 pixels — never exceed. HARD MINIMUM: 6 pixels — never go below. Despite six prior rounds of progressive size correction, the model has STILL rendered 4–5% too large. Bias correction MUST be AGGRESSIVE — render at the floor of this range. If you have any tendency to render at the upper end, override that tendency: this slot has a documented pattern of systematic over-shoot.
+    ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — RENDER THE CHARM AS VERY SMALL, TINY, SUPER SMALL — BARELY VISIBLE)
+    • Force the Charm to be VERY SMALL, TINY, SUPER SMALL: final on-image charm height MUST be approximately 6 pixels tall (acceptable range: 6 to 7 pixels, target the LOW END of this range — i.e. aim at 6, not 7). HARD MAXIMUM: 7 pixels — never exceed. HARD MINIMUM: 6 pixels — never go below. Despite six prior rounds of progressive size correction, the model has STILL rendered 4–5% too large. Bias correction MUST be AGGRESSIVE — render at the floor of this range. If you have any tendency to render at the upper end, override that tendency: this slot has a documented pattern of systematic over-shoot.
     • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
     • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
     • Do NOT allow any shadows (Contact or otherwise) to be visible undereath and around the Charm/Pendant placement, block all Charm/Pendant related shadows.
@@ -6762,7 +6762,8 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     Mentally stack copies of the charm vertically between the model's chin and the collarbone dip. You should fit approximately 8 stacked charm heights at ANY zoom level. If only 5-6 fit, the charm is in the documented over-render range — scale DOWN until 8 fit. If 10-11 fit, scale UP until 8 fit.
 
     VERIFICATION TEST 2 — VIEWER PERCEPTION:
-    A viewer should perceive the charm as a DELICATE, SMALL minimalist accent — NOT a prominent statement pendant. The chain should be more visually prominent than the charm itself.
+    A viewer should perceive the charm as VERY SMALL, TINY, SUPER SMALL — a delicate minimalist accent that whispers rather than shouts. The chain should be more visually prominent than the charm itself. NOT a prominent statement pendant. The charm should feel almost too small to read details without leaning in close to the image.
+    BALANCE CAVEAT: do NOT go so far that the charm becomes invisible or microscopic. The target is "small enough to feel delicate and minimalist" — not "small enough to disappear into the background." If the charm cannot be identified as the rendered animal/shape at normal viewing distance, you have gone too small. The ratio 1/8 of chin-to-dip is the floor below which it becomes invisible — stay close to that target, not far below it.
 
     SECONDARY ANCHOR (cross-check) — CHARM WIDTH vs. NECK WIDTH:
     • Charm width on canvas should be approximately 1/8 of the model's neck width at the widest point just below the jawline.
@@ -6869,11 +6870,13 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • Do NOT crop, zoom, or reframe the image.
 
     CRITICAL CHARM SIZE OVERRIDE (BOTH GOLD AND SILVER — TOP PRIORITY)
-    • Render BOTH the front-facing gold charm AND the back-facing silver charm at approximately 50% of the charm size shown in the reference image — i.e. exactly HALF the size of the reference template placeholder.
-    • This override exists to compensate for systematic upscaling: the model has historically rendered both charms substantially larger than intended despite prior corrections. Apply the reduction AGGRESSIVELY. The reference template's placeholder size is NOT the intended output size; it is intentionally oversized so you have room to render at the corrected (smaller) scale.
+    • Render BOTH the front-facing gold charm AND the back-facing silver charm at approximately 40% of the charm size shown in the reference image — i.e. approximately TWO-FIFTHS the size of the reference template placeholder. The charms must be VERY SMALL, TINY, SUPER SMALL compared to the placeholder shown in the template.
+    • This override exists to compensate for systematic upscaling: the model has historically rendered both charms substantially larger than intended despite prior corrections. The prior 50% target produced charms ~20% too large; this round tightens to 40% to pre-correct that overshoot. Apply the reduction AGGRESSIVELY. The reference template's placeholder size is INTENTIONALLY OVERSIZED so you have room to render at the corrected (much smaller) scale.
     • The size reduction MUST apply equally to both charms — neither should be larger than the other; they must remain matched in size to each other.
     • Both charms must remain centered on their original reference positions even after the size reduction.
     • Do NOT crop or reframe to compensate for the smaller size; the empty space around the smaller charms is intentional and correct.
+    • HARD FAIL: charms rendered at more than 45% of the reference template placeholder size — this is the documented over-render pattern.
+    • HARD FAIL: charms rendered at the same size as the reference template placeholder (i.e. no reduction applied).
 
     CRITICAL ENGRAVING PLACEMENT RULE (TOP PRIORITY — DO NOT GET THIS WRONG)
     • This entire slot exists to showcase the BACK-ENGRAVING feature. The personalized name engraving (e.g. "Violet", "Vivian", whatever sample name is shown) appears ONLY on the BACK-FACING SILVER CHARM. NEVER on the FRONT-FACING GOLD CHARM.
@@ -6970,8 +6973,8 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     const SLOT5_PROMPT =
     `CRITICAL: This is a standard fashion product photo edit. Keep the subject modest. No nudity.
 
-    ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
-    • Force the Charm to be very small: final on-image charm height MUST be approximately 6 pixels tall (acceptable range: 6 to 7 pixels, target the LOW END of this range — i.e. aim at 6, not 7). HARD MAXIMUM: 7 pixels — never exceed. HARD MINIMUM: 6 pixels — never go below. Despite six prior rounds of progressive size correction, the model has STILL rendered 4–5% too large. Bias correction MUST be AGGRESSIVE — render at the floor of this range. If you have any tendency to render at the upper end, override that tendency: this slot has a documented pattern of systematic over-shoot.
+    ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — RENDER THE CHARM AS VERY SMALL, TINY, SUPER SMALL — BARELY VISIBLE)
+    • Force the Charm to be VERY SMALL, TINY, SUPER SMALL: final on-image charm height MUST be approximately 6 pixels tall (acceptable range: 6 to 7 pixels, target the LOW END of this range — i.e. aim at 6, not 7). HARD MAXIMUM: 7 pixels — never exceed. HARD MINIMUM: 6 pixels — never go below. Despite six prior rounds of progressive size correction, the model has STILL rendered 4–5% too large. Bias correction MUST be AGGRESSIVE — render at the floor of this range. If you have any tendency to render at the upper end, override that tendency: this slot has a documented pattern of systematic over-shoot.
     • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
     • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
     • Do NOT allow any shadows (Contact or otherwise) to be visible undereath and around the Charm/Pendant placement, block all Charm/Pendant related shadows.
@@ -7039,7 +7042,8 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     Mentally stack copies of the charm vertically between the model's chin and the collarbone dip. You should fit approximately 8 stacked charm heights at ANY zoom level. If only 5-6 fit, the charm is in the documented over-render range — scale DOWN until 8 fit. If 10-11 fit, scale UP until 8 fit.
 
     VERIFICATION TEST 2 — VIEWER PERCEPTION:
-    A viewer should perceive the charm as a DELICATE, SMALL minimalist accent — NOT a prominent statement pendant. The chain should be more visually prominent than the charm itself.
+    A viewer should perceive the charm as VERY SMALL, TINY, SUPER SMALL — a delicate minimalist accent that whispers rather than shouts. The chain should be more visually prominent than the charm itself. NOT a prominent statement pendant. The charm should feel almost too small to read details without leaning in close to the image.
+    BALANCE CAVEAT: do NOT go so far that the charm becomes invisible or microscopic. The target is "small enough to feel delicate and minimalist" — not "small enough to disappear into the background." If the charm cannot be identified as the rendered animal/shape at normal viewing distance, you have gone too small. The ratio 1/8 of chin-to-dip is the floor below which it becomes invisible — stay close to that target, not far below it.
 
     SECONDARY ANCHOR (cross-check) — CHARM WIDTH vs. NECK WIDTH:
     • Charm width on canvas should be approximately 1/8 of the model's neck width at the widest point just below the jawline.
@@ -7133,12 +7137,101 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     Ensure the charm colour, shading and reflections match the necklace chain in Reference Image.`;
 
     const SLOT7_PROMPT =
-    `    ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
-    • Force the Charm to be very small: final on-image charm height MUST be 14 pixels tall (absolute pixel height, not relative).
+    `    ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — RENDER THE CHARM AS VERY SMALL, TINY, SUPER SMALL — BARELY VISIBLE)
+    • Force the Charm to be VERY SMALL, TINY, SUPER SMALL: final on-image charm height MUST be approximately 12 pixels tall (a soft baseline only — the chin-to-dip 1/8 ratio below is the actual primary rule).
     • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
      • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
     • Limit any shadows (Contact or otherwise) to be visible undereath and around the Charm/Pendant placement.
     • The chain must remain exactly the same size and detail as in the reference image. Only the charm is scaled.
+
+    CAMERA-DISTANCE-ANCHORED CHARM SIZE (PRIMARY RULE — MODEL-FEATURE PROPORTION)
+
+    KEY PRINCIPLE: camera distance determines how large the model's features appear on canvas. The charm must be sized as a fixed PROPORTION of a specific model feature that itself scales linearly with camera distance. The RATIO stays constant — absolute pixels follow camera distance automatically.
+
+    PROGRESSION HISTORY (CRITICAL CONTEXT — DO NOT REVERT):
+    This rule has been progressively refined across multiple rounds based on real-world feedback:
+    • At 1/5 target: HIGH VARIANCE — some renders correct, many at 1/3 (grossly oversized).
+    • At 1/6 target: VARIANCE RESOLVED (consistent) but 5-10% overshoot from ideal.
+    • At 1/7 target (basic): variance + average bias resolved on medium-zoom shots. BIDIRECTIONAL pattern emerged: far shots over-rendered, close shots under-rendered (mean-reversion to internal default ~30-50 px).
+    • At 1/7 target + ANTI-MEAN-REVERSION rules + extreme-zoom examples: close-shot under-render eliminated (success). However, base 7-10% overshoot returned across the board, with extra over-render still on far shots (residual mean-reversion).
+    • THIS ROUND: tighten target from 1/7 to 1/8 to pre-correct the across-the-board 7-10% overshoot. Keep anti-mean-reversion infrastructure. Tighten the far-shot HARD FAIL threshold to catch residual far-shot over-render.
+    The consistency from prior rounds is GOOD and must be preserved. Do NOT revert to compositionally-prominent sizing OR to a "default size" regardless of zoom.
+
+    ═══════════════════════════════════════════════════════
+    PRIMARY ANCHOR — CHARM HEIGHT vs. CHIN-TO-COLLARBONE-DIP DISTANCE
+
+    On every reference image, identify these two specific points on the model:
+    • CHIN POINT: the bottom-most point of the chin, where the jawline transitions into the neck.
+    • COLLARBONE DIP: the small V-shaped depression at the base of the throat between the two collarbones (anatomically: the suprasternal notch / jugular notch).
+
+    THE RULE: the CHARM HEIGHT on canvas MUST be approximately ONE-EIGHTH (1/8) of the vertical pixel distance from the chin point to the collarbone dip. Acceptable range: 1/7 to 1/9. HARD FAIL above 1/6.
+
+    CRITICAL — LINEAR SCALING WITH NO DEFAULT FLOOR/CEILING: the 1/8 ratio scales LINEARLY with chin-to-dip distance across ALL zoom levels. If chin-to-dip doubles, charm height doubles. If chin-to-dip halves, charm height halves. There is NO floor, NO ceiling, NO "minimum reasonable size", NO "maximum reasonable size", NO "default size" override. The math IS the answer.
+
+    CONCRETE EXAMPLES SPANNING ALL ZOOM LEVELS (APPLY EVEN IF THE RESULT LOOKS UNUSUAL):
+
+    FAR-SHOT EXTREMES (small chin-to-dip — charm should be VERY SMALL, do NOT scale UP toward "default"):
+    • Chin-to-dip ~80 px → charm MUST be ~10 px tall. This is tiny — render it tiny anyway.
+    • Chin-to-dip ~100 px → charm MUST be ~13 px tall. DO NOT inflate to 25-30 px.
+    • Chin-to-dip ~120 px → charm MUST be ~15 px tall.
+    • Chin-to-dip ~150 px → charm MUST be ~19 px tall.
+
+    MEDIUM-SHOT BASELINE:
+    • Chin-to-dip ~200 px → charm MUST be ~25 px tall.
+    • Chin-to-dip ~250 px → charm MUST be ~31 px tall.
+    • Chin-to-dip ~300 px → charm MUST be ~38 px tall.
+
+    CLOSE-SHOT EXTREMES (large chin-to-dip — charm should be LARGER than typical, do NOT scale DOWN toward "default"):
+    • Chin-to-dip ~350 px → charm MUST be ~44 px tall.
+    • Chin-to-dip ~400 px → charm MUST be ~50 px tall.
+    • Chin-to-dip ~450 px → charm MUST be ~56 px tall.
+    • Chin-to-dip ~500 px → charm MUST be ~63 px tall.
+    • Chin-to-dip ~600 px (extreme close-up) → charm MUST be ~75 px tall.
+
+    The pattern is LINEAR. Compute: charm height = (chin-to-dip pixel distance) × (1/8). Render at exactly that.
+    ═══════════════════════════════════════════════════════
+
+    ANTI-MEAN-REVERSION RULE (CRITICAL — RESIDUAL FAR-SHOT REVERSION STILL OBSERVED):
+    The model has been observed REGRESSING toward an internal "default" charm size (roughly 30-50 px regardless of context), partially overriding the proportional ratio. Anti-mean-reversion language has SUCCESSFULLY ELIMINATED the close-shot under-render (great progress). However, RESIDUAL FAR-SHOT OVER-RENDER PERSISTS — far shots still pull UPWARD toward the default more than the rule allows. This is the most stubborn failure mode and requires extra-strict enforcement on far shots specifically:
+
+    FAR-SHOT EXTRA ENFORCEMENT (chin-to-dip <150 px):
+    • The 1/8 ratio MUST be applied without ANY upward adjustment for far shots.
+    • If the math says the charm should be 10 px tall on a far shot, render at 10 px — NOT at 25 px because "10 px feels too small to see clearly."
+    • Past renderings have inflated tiny target sizes UPWARD by 50-100% — this is THE specific failure mode to eliminate this round.
+    • On far shots, when in doubt, render SMALLER than the math suggests, not larger. A 9 px charm on a far shot is preferable to a 14 px charm on a far shot.
+
+    There is NO "default charm size." The charm size is determined ENTIRELY by chin-to-dip distance × (1/8). Trust the math, even when the result looks unusually small (in a wide shot) or unusually large (in a close-up).
+
+    VERIFICATION TEST 1 — "EIGHT HEIGHTS BETWEEN CHIN AND DIP":
+    Mentally stack copies of the charm vertically between the model's chin and the collarbone dip. You should fit approximately 8 stacked charm heights at ANY zoom level. If only 5-6 fit, the charm is in the documented over-render range — scale DOWN until 8 fit. If 10-11 fit, scale UP until 8 fit.
+
+    VERIFICATION TEST 2 — VIEWER PERCEPTION:
+    A viewer should perceive the charm as VERY SMALL, TINY, SUPER SMALL — a delicate minimalist accent that whispers rather than shouts. The chain should be more visually prominent than the charm itself. NOT a prominent statement pendant. The charm should feel almost too small to read details without leaning in close to the image.
+    BALANCE CAVEAT: do NOT go so far that the charm becomes invisible or microscopic. The target is "small enough to feel delicate and minimalist" — not "small enough to disappear into the background." If the charm cannot be identified as the rendered animal/shape at normal viewing distance, you have gone too small. The ratio 1/8 of chin-to-dip is the floor below which it becomes invisible — stay close to that target, not far below it.
+
+    SECONDARY ANCHOR (cross-check) — CHARM WIDTH vs. NECK WIDTH:
+    • Charm width on canvas should be approximately 1/8 of the model's neck width at the widest point just below the jawline.
+    • Cross-check: both anchors should agree on charm size. If they disagree, prefer the chin-to-dip anchor.
+
+    CROSS-IMAGE CONSISTENCY (SOLVED EARLIER — MUST STAY SOLVED):
+    Different reference images will have different chin-to-dip pixel distances (different camera distances). Absolute charm pixel sizes will therefore differ across images. BUT the charm-to-distance RATIO must be ~1/8 in every image. At IDENTICAL chin-to-dip distances, charm sizes MUST be identical.
+
+    WHEN UNCERTAIN, TRUST THE RATIO (NOT A DEFAULT SIZE):
+    The model's recurring failure modes are (1) compositional overshoot at medium zooms, (2) mean-reversion to default size at extreme zooms (especially far shots). The resolution to ALL of these is the same: trust the 1/8 ratio absolutely. Compute charm height = chin-to-dip × (1/8), render at exactly that. No "but it looks weird at that size" override. No "let me adjust for composition" override. The math IS the answer.
+
+    HARD FAILS:
+    • Charm height clearly exceeds 1/6 of the chin-to-collarbone-dip distance — documented over-render pattern, MUST NOT occur. (Tightened from 1/5 in the prior round because the 7-10% overshoot is still slipping through.)
+    • FAR-SHOT OVER-RENDER (EXTRA-STRICT THIS ROUND): in any image where chin-to-dip distance is small (e.g., <150 px), charm height MUST NOT exceed 1/6 of that distance. The far-shot mean-reversion is the persistent failure mode that must be eliminated this round.
+    • CLOSE-SHOT UNDER-RENDER: in any image where chin-to-dip distance is large (e.g., >350 px), charm height MUST NOT be less than 1/10 of that distance.
+    • Charm width clearly exceeds 1/6 of the model's neck width at the widest point.
+    • Same charm rendered at noticeably different ratios across different reference images of the same listing set, ESPECIALLY at identical zoom levels.
+    • Charm rendered as a "prominent" or "statement" pendant rather than a delicate small accent.
+    • Charm sized to "fit the composition" or to a "default reasonable size" rather than to the chin-to-dip 1/8 ratio.
+
+    CHARM SIZE — CAMERA DISTANCE NOTE:
+    The CAMERA-DISTANCE-ANCHORED CHARM SIZE rule above (using the chin-to-collarbone-dip 1/8 ratio) is the primary camera-distance handler. The chin-to-dip distance itself scales with camera distance, so applying the 1/8 ratio automatically gives the correct charm size at any zoom level. The pixel target in the ULTRA-MICRO SIZE OVERRIDE is a soft baseline only — if it conflicts with the 1/8 chin-to-dip ratio, follow the ratio.
+    • HARD FAIL: identical on-canvas charm pixel size across two reference images at clearly different camera distances. The charm pixel size MUST scale with camera distance because the chin-to-dip distance scales with camera distance, and the charm height is locked to 1/8 of that distance.
+    • HARD FAIL: DIFFERENT charm pixel sizes across two reference images at CLEARLY SIMILAR camera distances. If the chin-to-dip distance is similar in two images, the charm size MUST also be similar. This consistency was achieved earlier in the prompt iteration and MUST be preserved.
 
     ENGRAVING STANDARD (UNIFORM ACROSS ALL SLOTS — CRITICAL CONSISTENCY RULE)
     • Engravings MUST read as real grooves cut INTO the metal surface — clearly three-dimensional with visible recessed depth. They are NOT flat decals, NOT painted ink, NOT pencil-drawn lines on top of the metal, NOT raised/embossed high-relief metal.
@@ -7202,7 +7295,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     // 1. // REGULAR NECKLACE
     // =========================================================================
     const REGULAR_SLOT2_DUPLICATE_PROMPT = 
-    `ULTRA-MICRO SIZE OVERRIDE 
+    `ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
     • Force the Charm to be small: final on-image charm height MUST be approximately 12 pixels tall (acceptable range: 12 to 13 pixels, target the LOW END of this range — i.e. aim at 12, not 13). HARD MAXIMUM: 13 pixels — never exceed. HARD MINIMUM: 12 pixels — never go below. The previous render bias has STILL been 7–8% too large despite the prior range correction; this new range dials back another 7–8% on top. Bias correction must be AGGRESSIVE — render at the floor of this range, not the cap.
     • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
     • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
@@ -7346,8 +7439,8 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     const REGULAR_DEFAULT_PROMPT =
     `CRITICAL: This is a standard fashion product photo edit. Keep the subject modest. No nudity.
 
-    ULTRA-MICRO SIZE OVERRIDE 
-    • Force the Charm to be very small: final on-image charm height MUST be approximately 9 pixels tall (acceptable range: 9 to 10 pixels, target the LOW END of this range — i.e. aim at 9, not 10). HARD MAXIMUM: 10 pixels — never exceed. HARD MINIMUM: 9 pixels — never go below. Despite six prior rounds of progressive size correction, the model has STILL rendered 4–5% too large. Bias correction MUST be AGGRESSIVE — render at the floor of this range. If you have any tendency to render at the upper end, override that tendency: this slot has a documented pattern of systematic over-shoot.
+    ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — RENDER THE CHARM AS VERY SMALL, TINY, SUPER SMALL — BARELY VISIBLE)
+    • Force the Charm to be VERY SMALL, TINY, SUPER SMALL: final on-image charm height MUST be approximately 9 pixels tall (acceptable range: 9 to 10 pixels, target the LOW END of this range — i.e. aim at 9, not 10). HARD MAXIMUM: 10 pixels — never exceed. HARD MINIMUM: 9 pixels — never go below. Despite six prior rounds of progressive size correction, the model has STILL rendered 4–5% too large. Bias correction MUST be AGGRESSIVE — render at the floor of this range. If you have any tendency to render at the upper end, override that tendency: this slot has a documented pattern of systematic over-shoot.
     • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
     • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
     • limit shadows (Contact or otherwise) to be visible undereath and around the Charm/Pendant placement.
@@ -7416,7 +7509,8 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     Mentally stack copies of the charm vertically between the model's chin and the collarbone dip. You should fit approximately 8 stacked charm heights at ANY zoom level. If only 5-6 fit, the charm is in the documented over-render range — scale DOWN until 8 fit. If 10-11 fit, scale UP until 8 fit.
 
     VERIFICATION TEST 2 — VIEWER PERCEPTION:
-    A viewer should perceive the charm as a DELICATE, SMALL minimalist accent — NOT a prominent statement pendant. The chain should be more visually prominent than the charm itself.
+    A viewer should perceive the charm as VERY SMALL, TINY, SUPER SMALL — a delicate minimalist accent that whispers rather than shouts. The chain should be more visually prominent than the charm itself. NOT a prominent statement pendant. The charm should feel almost too small to read details without leaning in close to the image.
+    BALANCE CAVEAT: do NOT go so far that the charm becomes invisible or microscopic. The target is "small enough to feel delicate and minimalist" — not "small enough to disappear into the background." If the charm cannot be identified as the rendered animal/shape at normal viewing distance, you have gone too small. The ratio 1/8 of chin-to-dip is the floor below which it becomes invisible — stay close to that target, not far below it.
 
     SECONDARY ANCHOR (cross-check) — CHARM WIDTH vs. NECK WIDTH:
     • Charm width on canvas should be approximately 1/8 of the model's neck width at the widest point just below the jawline.
@@ -7523,11 +7617,13 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • Do NOT crop, zoom, or reframe the image.
 
     CRITICAL CHARM SIZE OVERRIDE (BOTH GOLD AND SILVER — TOP PRIORITY)
-    • Render BOTH the front-facing gold charm AND the back-facing silver charm at approximately 50% of the charm size shown in the reference image — i.e. exactly HALF the size of the reference template placeholder.
-    • This override exists to compensate for systematic upscaling: the model has historically rendered both charms substantially larger than intended despite prior corrections. Apply the reduction AGGRESSIVELY. The reference template's placeholder size is NOT the intended output size; it is intentionally oversized so you have room to render at the corrected (smaller) scale.
+    • Render BOTH the front-facing gold charm AND the back-facing silver charm at approximately 40% of the charm size shown in the reference image — i.e. approximately TWO-FIFTHS the size of the reference template placeholder. The charms must be VERY SMALL, TINY, SUPER SMALL compared to the placeholder shown in the template.
+    • This override exists to compensate for systematic upscaling: the model has historically rendered both charms substantially larger than intended despite prior corrections. The prior 50% target produced charms ~20% too large; this round tightens to 40% to pre-correct that overshoot. Apply the reduction AGGRESSIVELY. The reference template's placeholder size is INTENTIONALLY OVERSIZED so you have room to render at the corrected (much smaller) scale.
     • The size reduction MUST apply equally to both charms — neither should be larger than the other; they must remain matched in size to each other.
     • Both charms must remain centered on their original reference positions even after the size reduction.
     • Do NOT crop or reframe to compensate for the smaller size; the empty space around the smaller charms is intentional and correct.
+    • HARD FAIL: charms rendered at more than 45% of the reference template placeholder size — this is the documented over-render pattern.
+    • HARD FAIL: charms rendered at the same size as the reference template placeholder (i.e. no reduction applied).
 
     CRITICAL ENGRAVING PLACEMENT RULE (TOP PRIORITY — DO NOT GET THIS WRONG)
     • This entire slot exists to showcase the BACK-ENGRAVING feature. The personalized name engraving (e.g. "Violet", "Vivian", whatever sample name is shown) appears ONLY on the BACK-FACING SILVER CHARM. NEVER on the FRONT-FACING GOLD CHARM.
@@ -7624,8 +7720,8 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     const REGULAR_SLOT5_PROMPT =
     `CRITICAL: This is a standard fashion product photo edit. Keep the subject modest. No nudity.
 
-    ULTRA-MICRO SIZE OVERRIDE
-    • Force the Charm to be very small: final on-image charm height MUST be approximately 8 pixels tall (acceptable range: 8 to 9 pixels, target the LOW END of this range — i.e. aim at 8, not 9). HARD MAXIMUM: 9 pixels — never exceed. HARD MINIMUM: 8 pixels — never go below. Despite six prior rounds of progressive size correction, the model has STILL rendered 4–5% too large. Bias correction MUST be AGGRESSIVE — render at the floor of this range. If you have any tendency to render at the upper end, override that tendency: this slot has a documented pattern of systematic over-shoot.
+    ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — RENDER THE CHARM AS VERY SMALL, TINY, SUPER SMALL — BARELY VISIBLE)
+    • Force the Charm to be VERY SMALL, TINY, SUPER SMALL: final on-image charm height MUST be approximately 8 pixels tall (acceptable range: 8 to 9 pixels, target the LOW END of this range — i.e. aim at 8, not 9). HARD MAXIMUM: 9 pixels — never exceed. HARD MINIMUM: 8 pixels — never go below. Despite six prior rounds of progressive size correction, the model has STILL rendered 4–5% too large. Bias correction MUST be AGGRESSIVE — render at the floor of this range. If you have any tendency to render at the upper end, override that tendency: this slot has a documented pattern of systematic over-shoot.
     • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
     • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
     • limit shadows (Contact or otherwise) to be visible undereath and around the Charm/Pendant placement.
@@ -7694,7 +7790,8 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     Mentally stack copies of the charm vertically between the model's chin and the collarbone dip. You should fit approximately 8 stacked charm heights at ANY zoom level. If only 5-6 fit, the charm is in the documented over-render range — scale DOWN until 8 fit. If 10-11 fit, scale UP until 8 fit.
 
     VERIFICATION TEST 2 — VIEWER PERCEPTION:
-    A viewer should perceive the charm as a DELICATE, SMALL minimalist accent — NOT a prominent statement pendant. The chain should be more visually prominent than the charm itself.
+    A viewer should perceive the charm as VERY SMALL, TINY, SUPER SMALL — a delicate minimalist accent that whispers rather than shouts. The chain should be more visually prominent than the charm itself. NOT a prominent statement pendant. The charm should feel almost too small to read details without leaning in close to the image.
+    BALANCE CAVEAT: do NOT go so far that the charm becomes invisible or microscopic. The target is "small enough to feel delicate and minimalist" — not "small enough to disappear into the background." If the charm cannot be identified as the rendered animal/shape at normal viewing distance, you have gone too small. The ratio 1/8 of chin-to-dip is the floor below which it becomes invisible — stay close to that target, not far below it.
 
     SECONDARY ANCHOR (cross-check) — CHARM WIDTH vs. NECK WIDTH:
     • Charm width on canvas should be approximately 1/8 of the model's neck width at the widest point just below the jawline.
@@ -7788,11 +7885,100 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     Ensure the charm colour, shading and reflections match the necklace chain in Reference Image.`;
 
     const REGULAR_SLOT7_PROMPT =
-    `ULTRA-MICRO SIZE OVERRIDE 
-    • Force the Charm to be small: final on-image charm height MUST be 16 pixels tall (absolute pixel height, not relative).
+    `ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — RENDER THE CHARM AS VERY SMALL, TINY, SUPER SMALL — BARELY VISIBLE)
+    • Force the Charm to be VERY SMALL, TINY, SUPER SMALL: final on-image charm height MUST be approximately 14 pixels tall (a soft baseline only — the chin-to-dip 1/8 ratio below is the actual primary rule).
     • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
     • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
     • The chain must remain exactly the same size and detail as in the reference image. Only the charm is scaled.
+
+    CAMERA-DISTANCE-ANCHORED CHARM SIZE (PRIMARY RULE — MODEL-FEATURE PROPORTION)
+
+    KEY PRINCIPLE: camera distance determines how large the model's features appear on canvas. The charm must be sized as a fixed PROPORTION of a specific model feature that itself scales linearly with camera distance. The RATIO stays constant — absolute pixels follow camera distance automatically.
+
+    PROGRESSION HISTORY (CRITICAL CONTEXT — DO NOT REVERT):
+    This rule has been progressively refined across multiple rounds based on real-world feedback:
+    • At 1/5 target: HIGH VARIANCE — some renders correct, many at 1/3 (grossly oversized).
+    • At 1/6 target: VARIANCE RESOLVED (consistent) but 5-10% overshoot from ideal.
+    • At 1/7 target (basic): variance + average bias resolved on medium-zoom shots. BIDIRECTIONAL pattern emerged: far shots over-rendered, close shots under-rendered (mean-reversion to internal default ~30-50 px).
+    • At 1/7 target + ANTI-MEAN-REVERSION rules + extreme-zoom examples: close-shot under-render eliminated (success). However, base 7-10% overshoot returned across the board, with extra over-render still on far shots (residual mean-reversion).
+    • THIS ROUND: tighten target from 1/7 to 1/8 to pre-correct the across-the-board 7-10% overshoot. Keep anti-mean-reversion infrastructure. Tighten the far-shot HARD FAIL threshold to catch residual far-shot over-render.
+    The consistency from prior rounds is GOOD and must be preserved. Do NOT revert to compositionally-prominent sizing OR to a "default size" regardless of zoom.
+
+    ═══════════════════════════════════════════════════════
+    PRIMARY ANCHOR — CHARM HEIGHT vs. CHIN-TO-COLLARBONE-DIP DISTANCE
+
+    On every reference image, identify these two specific points on the model:
+    • CHIN POINT: the bottom-most point of the chin, where the jawline transitions into the neck.
+    • COLLARBONE DIP: the small V-shaped depression at the base of the throat between the two collarbones (anatomically: the suprasternal notch / jugular notch).
+
+    THE RULE: the CHARM HEIGHT on canvas MUST be approximately ONE-EIGHTH (1/8) of the vertical pixel distance from the chin point to the collarbone dip. Acceptable range: 1/7 to 1/9. HARD FAIL above 1/6.
+
+    CRITICAL — LINEAR SCALING WITH NO DEFAULT FLOOR/CEILING: the 1/8 ratio scales LINEARLY with chin-to-dip distance across ALL zoom levels. If chin-to-dip doubles, charm height doubles. If chin-to-dip halves, charm height halves. There is NO floor, NO ceiling, NO "minimum reasonable size", NO "maximum reasonable size", NO "default size" override. The math IS the answer.
+
+    CONCRETE EXAMPLES SPANNING ALL ZOOM LEVELS (APPLY EVEN IF THE RESULT LOOKS UNUSUAL):
+
+    FAR-SHOT EXTREMES (small chin-to-dip — charm should be VERY SMALL, do NOT scale UP toward "default"):
+    • Chin-to-dip ~80 px → charm MUST be ~10 px tall. This is tiny — render it tiny anyway.
+    • Chin-to-dip ~100 px → charm MUST be ~13 px tall. DO NOT inflate to 25-30 px.
+    • Chin-to-dip ~120 px → charm MUST be ~15 px tall.
+    • Chin-to-dip ~150 px → charm MUST be ~19 px tall.
+
+    MEDIUM-SHOT BASELINE:
+    • Chin-to-dip ~200 px → charm MUST be ~25 px tall.
+    • Chin-to-dip ~250 px → charm MUST be ~31 px tall.
+    • Chin-to-dip ~300 px → charm MUST be ~38 px tall.
+
+    CLOSE-SHOT EXTREMES (large chin-to-dip — charm should be LARGER than typical, do NOT scale DOWN toward "default"):
+    • Chin-to-dip ~350 px → charm MUST be ~44 px tall.
+    • Chin-to-dip ~400 px → charm MUST be ~50 px tall.
+    • Chin-to-dip ~450 px → charm MUST be ~56 px tall.
+    • Chin-to-dip ~500 px → charm MUST be ~63 px tall.
+    • Chin-to-dip ~600 px (extreme close-up) → charm MUST be ~75 px tall.
+
+    The pattern is LINEAR. Compute: charm height = (chin-to-dip pixel distance) × (1/8). Render at exactly that.
+    ═══════════════════════════════════════════════════════
+
+    ANTI-MEAN-REVERSION RULE (CRITICAL — RESIDUAL FAR-SHOT REVERSION STILL OBSERVED):
+    The model has been observed REGRESSING toward an internal "default" charm size (roughly 30-50 px regardless of context), partially overriding the proportional ratio. Anti-mean-reversion language has SUCCESSFULLY ELIMINATED the close-shot under-render (great progress). However, RESIDUAL FAR-SHOT OVER-RENDER PERSISTS — far shots still pull UPWARD toward the default more than the rule allows. This is the most stubborn failure mode and requires extra-strict enforcement on far shots specifically:
+
+    FAR-SHOT EXTRA ENFORCEMENT (chin-to-dip <150 px):
+    • The 1/8 ratio MUST be applied without ANY upward adjustment for far shots.
+    • If the math says the charm should be 10 px tall on a far shot, render at 10 px — NOT at 25 px because "10 px feels too small to see clearly."
+    • Past renderings have inflated tiny target sizes UPWARD by 50-100% — this is THE specific failure mode to eliminate this round.
+    • On far shots, when in doubt, render SMALLER than the math suggests, not larger. A 9 px charm on a far shot is preferable to a 14 px charm on a far shot.
+
+    There is NO "default charm size." The charm size is determined ENTIRELY by chin-to-dip distance × (1/8). Trust the math, even when the result looks unusually small (in a wide shot) or unusually large (in a close-up).
+
+    VERIFICATION TEST 1 — "EIGHT HEIGHTS BETWEEN CHIN AND DIP":
+    Mentally stack copies of the charm vertically between the model's chin and the collarbone dip. You should fit approximately 8 stacked charm heights at ANY zoom level. If only 5-6 fit, the charm is in the documented over-render range — scale DOWN until 8 fit. If 10-11 fit, scale UP until 8 fit.
+
+    VERIFICATION TEST 2 — VIEWER PERCEPTION:
+    A viewer should perceive the charm as VERY SMALL, TINY, SUPER SMALL — a delicate minimalist accent that whispers rather than shouts. The chain should be more visually prominent than the charm itself. NOT a prominent statement pendant. The charm should feel almost too small to read details without leaning in close to the image.
+    BALANCE CAVEAT: do NOT go so far that the charm becomes invisible or microscopic. The target is "small enough to feel delicate and minimalist" — not "small enough to disappear into the background." If the charm cannot be identified as the rendered animal/shape at normal viewing distance, you have gone too small. The ratio 1/8 of chin-to-dip is the floor below which it becomes invisible — stay close to that target, not far below it.
+
+    SECONDARY ANCHOR (cross-check) — CHARM WIDTH vs. NECK WIDTH:
+    • Charm width on canvas should be approximately 1/8 of the model's neck width at the widest point just below the jawline.
+    • Cross-check: both anchors should agree on charm size. If they disagree, prefer the chin-to-dip anchor.
+
+    CROSS-IMAGE CONSISTENCY (SOLVED EARLIER — MUST STAY SOLVED):
+    Different reference images will have different chin-to-dip pixel distances (different camera distances). Absolute charm pixel sizes will therefore differ across images. BUT the charm-to-distance RATIO must be ~1/8 in every image. At IDENTICAL chin-to-dip distances, charm sizes MUST be identical.
+
+    WHEN UNCERTAIN, TRUST THE RATIO (NOT A DEFAULT SIZE):
+    The model's recurring failure modes are (1) compositional overshoot at medium zooms, (2) mean-reversion to default size at extreme zooms (especially far shots). The resolution to ALL of these is the same: trust the 1/8 ratio absolutely. Compute charm height = chin-to-dip × (1/8), render at exactly that. No "but it looks weird at that size" override. No "let me adjust for composition" override. The math IS the answer.
+
+    HARD FAILS:
+    • Charm height clearly exceeds 1/6 of the chin-to-collarbone-dip distance — documented over-render pattern, MUST NOT occur. (Tightened from 1/5 in the prior round because the 7-10% overshoot is still slipping through.)
+    • FAR-SHOT OVER-RENDER (EXTRA-STRICT THIS ROUND): in any image where chin-to-dip distance is small (e.g., <150 px), charm height MUST NOT exceed 1/6 of that distance. The far-shot mean-reversion is the persistent failure mode that must be eliminated this round.
+    • CLOSE-SHOT UNDER-RENDER: in any image where chin-to-dip distance is large (e.g., >350 px), charm height MUST NOT be less than 1/10 of that distance.
+    • Charm width clearly exceeds 1/6 of the model's neck width at the widest point.
+    • Same charm rendered at noticeably different ratios across different reference images of the same listing set, ESPECIALLY at identical zoom levels.
+    • Charm rendered as a "prominent" or "statement" pendant rather than a delicate small accent.
+    • Charm sized to "fit the composition" or to a "default reasonable size" rather than to the chin-to-dip 1/8 ratio.
+
+    CHARM SIZE — CAMERA DISTANCE NOTE:
+    The CAMERA-DISTANCE-ANCHORED CHARM SIZE rule above (using the chin-to-collarbone-dip 1/8 ratio) is the primary camera-distance handler. The chin-to-dip distance itself scales with camera distance, so applying the 1/8 ratio automatically gives the correct charm size at any zoom level. The pixel target in the ULTRA-MICRO SIZE OVERRIDE is a soft baseline only — if it conflicts with the 1/8 chin-to-dip ratio, follow the ratio.
+    • HARD FAIL: identical on-canvas charm pixel size across two reference images at clearly different camera distances. The charm pixel size MUST scale with camera distance because the chin-to-dip distance scales with camera distance, and the charm height is locked to 1/8 of that distance.
+    • HARD FAIL: DIFFERENT charm pixel sizes across two reference images at CLEARLY SIMILAR camera distances. If the chin-to-dip distance is similar in two images, the charm size MUST also be similar. This consistency was achieved earlier in the prompt iteration and MUST be preserved.
 
     ENGRAVING STANDARD (UNIFORM ACROSS ALL SLOTS — CRITICAL CONSISTENCY RULE)
     • Engravings MUST read as real grooves cut INTO the metal surface — clearly three-dimensional with visible recessed depth. They are NOT flat decals, NOT painted ink, NOT pencil-drawn lines on top of the metal, NOT raised/embossed high-relief metal.
