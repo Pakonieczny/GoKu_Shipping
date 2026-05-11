@@ -6573,6 +6573,34 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • HARD FAIL: charm reading as pinker, peachier, warmer, or redder than the chain. Even a small pink shift is a fail — the human eye picks it up immediately.
     • Consistency rule: the gold colour rendered for the charm in this slot MUST be identical to the gold colour rendered for the charm in every other slot of the same listing set.
 
+    CHARM SILHOUETTE FIDELITY — NO FOREIGN OBJECTS (UNIFORM ACROSS ALL SLOTS — CRITICAL)
+    • The charm rendered in the output MUST be design-faithful to the source Charm Image. Outline, internal cutouts, engraved lines, surface details, and integrated hoop are ALL locked to the source artwork.
+    • NEVER add decorative elements that are NOT in the source charm: no diamonds, gemstones, rhinestones, crystals, jewels, beads, pearls, dots, stars, hearts, or any other ornamental flourish on or inlaid into the charm body.
+    • NEVER add inlay, enamel fill, stone settings, prong mounts, bezel mounts, paint, or any embedded element to the charm.
+    • NEVER add extra cutouts, holes, dots, scratches, or surface markings that are not present in the source artwork.
+    • Rule of thumb: if the source charm has no gemstone, the output has NO gemstone. If the source has no beadwork, the output has NO beadwork. If the source has no dots/stars/hearts, the output has none either. The charm is exactly what the source artwork shows — nothing more.
+    • HARD FAIL: any visible gemstone, crystal, diamond, jewel, bead, pearl, or decorative element on the charm that is NOT present in the source Charm Image.
+    • HARD FAIL: any added dot, bump, surface decoration, or "creative improvement" not in the source design.
+
+    JUMP RING & HANGING PHYSICS (CRITICAL — REAL JEWELRY BEHAVIOR)
+    • The charm has exactly ONE hoop/bail built into its silhouette as shown in the source Charm Image. The jump ring from the necklace chain MUST pass through THAT EXACT existing hoop — and only that hoop.
+    • NEVER invent, render, or composite an additional hoop, loop, ring, or attachment point above, below, beside, or near the charm. There is only ONE hoop on this charm, and it is the one drawn into the source artwork.
+    • NEVER thread the jump ring through empty space above the charm and pretend a hoop exists there. The chain's jump ring must visibly enter and exit the actual metal loop on the charm — the physical connection must read as real.
+    • If the existing hoop on the charm is small or hard to see, render it more clearly rather than fabricating a new one nearby.
+    • HARD FAIL: chain or jump ring connecting to a "ghost" hoop in empty space above or around the charm (this is the most common failure mode — DO NOT do this).
+    • HARD FAIL: two visible hoops on or around the charm (one real from the source, one invented).
+    • HARD FAIL: jump ring floating near the charm without clearly threading through the actual hoop.
+
+    GRAVITY-BASED HANGING ORIENTATION (CRITICAL — REAL JEWELRY BEHAVIOR)
+    • The charm hangs under real gravity, suspended from the single point where the jump ring passes through the charm's hoop. Render the charm's rotation accordingly.
+    • If the hoop sits CENTERED on top of the charm (directly above the charm's horizontal centre of mass), the charm hangs perfectly vertical and balanced — no tilt.
+    • If the hoop is OFFSET to the LEFT of the charm's centre of mass, the charm naturally rotates CLOCKWISE (the heavier right side falls) until the hoop sits directly above the new centre of mass.
+    • If the hoop is OFFSET to the RIGHT of the charm's centre of mass, the charm naturally rotates COUNTER-CLOCKWISE (the heavier left side falls) for the same reason.
+    • The amount of tilt is proportional to the offset: a small offset produces a small tilt, a large offset produces a noticeable tilt. The tilt direction and magnitude are dictated entirely by gravity acting on the hoop position — never arbitrary, never decorative.
+    • Visual reference: real-world necklace charms hanging from a single attachment point ALWAYS rotate so the heaviest part of the charm falls directly below the hoop. Render this faithfully.
+    • HARD FAIL: charm rendered perfectly level/vertical when its hoop is clearly offset to one side of the charm's mass — real physics never allows this.
+    • HARD FAIL: charm tilted in a direction inconsistent with where the hoop sits relative to its centre of mass.
+
     TASK
     Duplicate and zoom-in into the reference image, only replace the charm onto the existing necklace chain in the reference image as a hanging flat charm.
     Match the subject identity from reference image; 
@@ -6611,6 +6639,15 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • Do NOT redraw, smooth, stylize, thicken, clean up, or reinterpret.
     • Keep edges crisp. No blur or smear.
 
+    CHARM SILHOUETTE FIDELITY — NO FOREIGN OBJECTS (UNIFORM ACROSS ALL SLOTS — CRITICAL)
+    • The charm rendered in the output MUST be design-faithful to the source Charm Image. Outline, internal cutouts, engraved lines, surface details, and integrated hoop are ALL locked to the source artwork.
+    • NEVER add decorative elements that are NOT in the source charm: no diamonds, gemstones, rhinestones, crystals, jewels, beads, pearls, dots, stars, hearts, or any other ornamental flourish on or inlaid into the charm body.
+    • NEVER add inlay, enamel fill, stone settings, prong mounts, bezel mounts, paint, or any embedded element to the charm.
+    • NEVER add extra cutouts, holes, dots, scratches, or surface markings that are not present in the source artwork.
+    • Rule of thumb: if the source charm has no gemstone, the output has NO gemstone. If the source has no beadwork, the output has NO beadwork. If the source has no dots/stars/hearts, the output has none either. The charm is exactly what the source artwork shows — nothing more.
+    • HARD FAIL: any visible gemstone, crystal, diamond, jewel, bead, pearl, or decorative element on the charm that is NOT present in the source Charm Image.
+    • HARD FAIL: any added dot, bump, surface decoration, or "creative improvement" not in the source design.
+
     INTEGRATED HOOP RULE
     • The hoop/bail MUST be part of the same laser-cut silhouette as the charm body.
     • The hoop MUST connect with a wide, solid bridge of metal (large surface area).
@@ -6638,25 +6675,27 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     - Any text change.
     - Any charm size mismatch vs charm image.
     - Any weak or disconnected hoop connection.
-    - Any pink/rose-gold colour cast on the charm.`;
+    - Any pink/rose-gold colour cast on the charm.
+    - Any gemstone, diamond, bead, dot, or decorative element added to the charm that is not in the source artwork.
+    - Any second/phantom hoop added near the charm.`;
 
     const DEFAULT_PROMPT =
     `CRITICAL: This is a standard fashion product photo edit. Keep the subject modest. No nudity.
 
     ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
-    • Force the Charm to be very small: final on-image charm height MUST be 10 pixels tall (absolute pixel height, not relative) — bias toward the lower end of this target rather than the upper end.
+    • Force the Charm to be very small: final on-image charm height MUST be approximately 9 pixels tall (acceptable range: 9 to 10 pixels, target the LOW END of this range — i.e. aim at 9, not 10). HARD MAXIMUM: 10 pixels — never exceed. HARD MINIMUM: 9 pixels — never go below. The previous render bias has consistently been too large; the goal of this range is to dial that back by approximately 5–7%.
     • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
     • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
     • Do NOT allow any shadows (Contact or otherwise) to be visible undereath and around the Charm/Pendant placement, block all Charm/Pendant related shadows.
     • The chain must remain exactly the same size and detail as reference image. Only the charm is scaled.
 
     CHARM SIZE CALIBRATION TO CAMERA DISTANCE (CRITICAL CONSISTENCY)
-    • The pixel target above is a CAMERA-DISTANCE-NORMALIZED baseline — it assumes the model is photographed at a moderate distance with their upper torso filling roughly half the frame.
-    • If the reference image shows the model photographed CLOSER (face/neck dominates the frame), proportionally INCREASE the on-canvas charm pixel size so the charm reads at the same real-world physical scale.
-    • If the reference image shows the model photographed FURTHER AWAY (more body/background visible), proportionally DECREASE the on-canvas charm pixel size so the perceived charm scale stays consistent.
-    • Anchor to chain thickness: the charm width must always remain in fixed proportion to the chain's on-canvas thickness in the reference image. If the chain reads as thickness T on canvas, the charm width should be roughly 8–10× T regardless of overall image zoom.
+    • The pixel range above is a CAMERA-DISTANCE-NORMALIZED baseline — it assumes the model is photographed at a moderate distance with their upper torso filling roughly half the frame.
+    • If the reference image shows the model photographed CLOSER (face/neck dominates the frame), proportionally INCREASE the on-canvas charm pixel size so the charm reads at the same real-world physical scale. The 9–10 pixel cap may be exceeded ONLY in this close-zoom case, and only by the amount required to maintain proportional scale.
+    • If the reference image shows the model photographed FURTHER AWAY (more body/background visible), proportionally DECREASE the on-canvas charm pixel size so the perceived charm scale stays consistent. The 9-pixel floor may go below ONLY in this far-zoom case, and only by the amount required to maintain proportional scale.
+    • Anchor to chain thickness: the charm width must always remain in fixed proportion to the chain's on-canvas thickness in the reference image. If the chain reads as thickness T on canvas, the charm width should be roughly 7–9× T regardless of overall image zoom.
     • Anchor to real-world scale: the charm's real-world physical size is roughly that of a fingernail (~10–12mm tall). Render at whatever on-canvas pixel size produces that real-world scale given the model's apparent zoom level.
-    • When in doubt, err slightly SMALLER rather than slightly larger — bias toward the lower end of the pixel target.
+    • When in doubt, target the LOWER end of the acceptable range — small consistent under-shoot is far more forgiving than over-shoot.
     • HARD FAIL: identical on-canvas charm pixel size across two reference images showing the model at clearly different camera distances. The perceived charm size must stay consistent across the listing set, which means absolute pixel size must scale with model zoom.
 
     ENGRAVING STANDARD (UNIFORM ACROSS ALL SLOTS — CRITICAL CONSISTENCY RULE)
@@ -6677,6 +6716,34 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • Pull the red channel slightly DOWN and bias toward yellow/green-gold until the charm reads as a classic yellow wedding band, NOT a rose gold ring.
     • HARD FAIL: charm reading as pinker, peachier, warmer, or redder than the chain. Even a small pink shift is a fail — the human eye picks it up immediately.
     • Consistency rule: the gold colour rendered for the charm in this slot MUST be identical to the gold colour rendered for the charm in every other slot of the same listing set.
+
+    CHARM SILHOUETTE FIDELITY — NO FOREIGN OBJECTS (UNIFORM ACROSS ALL SLOTS — CRITICAL)
+    • The charm rendered in the output MUST be design-faithful to the source Charm Image. Outline, internal cutouts, engraved lines, surface details, and integrated hoop are ALL locked to the source artwork.
+    • NEVER add decorative elements that are NOT in the source charm: no diamonds, gemstones, rhinestones, crystals, jewels, beads, pearls, dots, stars, hearts, or any other ornamental flourish on or inlaid into the charm body.
+    • NEVER add inlay, enamel fill, stone settings, prong mounts, bezel mounts, paint, or any embedded element to the charm.
+    • NEVER add extra cutouts, holes, dots, scratches, or surface markings that are not present in the source artwork.
+    • Rule of thumb: if the source charm has no gemstone, the output has NO gemstone. If the source has no beadwork, the output has NO beadwork. If the source has no dots/stars/hearts, the output has none either. The charm is exactly what the source artwork shows — nothing more.
+    • HARD FAIL: any visible gemstone, crystal, diamond, jewel, bead, pearl, or decorative element on the charm that is NOT present in the source Charm Image.
+    • HARD FAIL: any added dot, bump, surface decoration, or "creative improvement" not in the source design.
+
+    JUMP RING & HANGING PHYSICS (CRITICAL — REAL JEWELRY BEHAVIOR)
+    • The charm has exactly ONE hoop/bail built into its silhouette as shown in the source Charm Image. The jump ring from the necklace chain MUST pass through THAT EXACT existing hoop — and only that hoop.
+    • NEVER invent, render, or composite an additional hoop, loop, ring, or attachment point above, below, beside, or near the charm. There is only ONE hoop on this charm, and it is the one drawn into the source artwork.
+    • NEVER thread the jump ring through empty space above the charm and pretend a hoop exists there. The chain's jump ring must visibly enter and exit the actual metal loop on the charm — the physical connection must read as real.
+    • If the existing hoop on the charm is small or hard to see, render it more clearly rather than fabricating a new one nearby.
+    • HARD FAIL: chain or jump ring connecting to a "ghost" hoop in empty space above or around the charm (this is the most common failure mode — DO NOT do this).
+    • HARD FAIL: two visible hoops on or around the charm (one real from the source, one invented).
+    • HARD FAIL: jump ring floating near the charm without clearly threading through the actual hoop.
+
+    GRAVITY-BASED HANGING ORIENTATION (CRITICAL — REAL JEWELRY BEHAVIOR)
+    • The charm hangs under real gravity, suspended from the single point where the jump ring passes through the charm's hoop. Render the charm's rotation accordingly.
+    • If the hoop sits CENTERED on top of the charm (directly above the charm's horizontal centre of mass), the charm hangs perfectly vertical and balanced — no tilt.
+    • If the hoop is OFFSET to the LEFT of the charm's centre of mass, the charm naturally rotates CLOCKWISE (the heavier right side falls) until the hoop sits directly above the new centre of mass.
+    • If the hoop is OFFSET to the RIGHT of the charm's centre of mass, the charm naturally rotates COUNTER-CLOCKWISE (the heavier left side falls) for the same reason.
+    • The amount of tilt is proportional to the offset: a small offset produces a small tilt, a large offset produces a noticeable tilt. The tilt direction and magnitude are dictated entirely by gravity acting on the hoop position — never arbitrary, never decorative.
+    • Visual reference: real-world necklace charms hanging from a single attachment point ALWAYS rotate so the heaviest part of the charm falls directly below the hoop. Render this faithfully.
+    • HARD FAIL: charm rendered perfectly level/vertical when its hoop is clearly offset to one side of the charm's mass — real physics never allows this.
+    • HARD FAIL: charm tilted in a direction inconsistent with where the hoop sits relative to its centre of mass.
 
     TASK
     Duplicate and zoom-in into the female model in reference image, only replace the charm from Charm Image onto the existing necklace chain in reference image as a hanging flat charm.
@@ -6719,6 +6786,15 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • Do NOT redraw, smooth, stylize, thicken, clean up, or reinterpret.
     • Keep edges crisp. No blur or smear.
 
+    CHARM SILHOUETTE FIDELITY — NO FOREIGN OBJECTS (UNIFORM ACROSS ALL SLOTS — CRITICAL)
+    • Each charm rendered in the output MUST be design-faithful to the source Charm Image. Outline, internal cutouts, engraved lines, surface details, and integrated hoop are ALL locked to the source artwork.
+    • NEVER add decorative elements that are NOT in the source charm: no diamonds, gemstones, rhinestones, crystals, jewels, beads, pearls, dots, stars, hearts, or any other ornamental flourish on or inlaid into either charm body.
+    • NEVER add inlay, enamel fill, stone settings, prong mounts, bezel mounts, paint, or any embedded element to either charm.
+    • NEVER add extra cutouts, holes, dots, scratches, or surface markings that are not present in the source artwork.
+    • Rule of thumb: if the source charm has no gemstone, the output has NO gemstone. If the source has no beadwork, the output has NO beadwork. If the source has no dots/stars/hearts, the output has none either. Both charms are exactly what the source artwork shows — nothing more.
+    • HARD FAIL: any visible gemstone, crystal, diamond, jewel, bead, pearl, or decorative element on either charm that is NOT present in the source Charm Image.
+    • HARD FAIL: any added dot, bump, surface decoration, or "creative improvement" not in the source design, on either the gold or silver charm.
+
     ENGRAVING STANDARD (UNIFORM ACROSS ALL SLOTS — CRITICAL CONSISTENCY RULE)
     • Engravings MUST read as real shallow grooves cut INTO the metal surface — subtle but unmistakably three-dimensional. They are NOT flat decals, NOT painted ink, NOT pencil-drawn lines on top of the metal, NOT raised/embossed high-relief metal.
     • Render each engraved stroke with a fine inner shadow on one edge and a faint highlight on the opposing edge to convey roughly 0.1mm of recessed depth. The shallow groove and its tiny inner shadow are what make the engraving legible — colour does NOT carry the contrast.
@@ -6746,17 +6822,28 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     - Any weak or disconnected hoop connection.
     - Any pink/rose-gold cast on the gold charm.
     - Engraving rendered as black/dark grey/gunmetal on either charm.
-    - Engraving rendered as pencil-drawn or flat with no recessed depth.`;
+    - Engraving rendered as pencil-drawn or flat with no recessed depth.
+    - Any gemstone, diamond, bead, dot, or decorative element added to either charm that is not in the source artwork.
+    - Any second/phantom hoop added near either charm.`;
 
     const SLOT5_PROMPT =
     `CRITICAL: This is a standard fashion product photo edit. Keep the subject modest. No nudity.
 
     ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
-    • Force the Charm to be very small: final on-image charm height MUST be 10 pixels tall (absolute pixel height, not relative).
+    • Force the Charm to be very small: final on-image charm height MUST be approximately 9 pixels tall (acceptable range: 9 to 10 pixels, target the LOW END of this range — i.e. aim at 9, not 10). HARD MAXIMUM: 10 pixels — never exceed. HARD MINIMUM: 9 pixels — never go below. The previous render bias has consistently been too large; the goal of this range is to dial that back by approximately 5–7%.
     • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
     • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
     • Do NOT allow any shadows (Contact or otherwise) to be visible undereath and around the Charm/Pendant placement, block all Charm/Pendant related shadows.
     • The chain must remain exactly the same size and detail as reference image. Only the charm is scaled.
+
+    CHARM SIZE CALIBRATION TO CAMERA DISTANCE (CRITICAL CONSISTENCY)
+    • The pixel range above is a CAMERA-DISTANCE-NORMALIZED baseline — it assumes the model is photographed at a moderate distance with their upper torso filling roughly half the frame.
+    • If the reference image shows the model photographed CLOSER (face/neck dominates the frame), proportionally INCREASE the on-canvas charm pixel size so the charm reads at the same real-world physical scale. The 9–10 pixel cap may be exceeded ONLY in this close-zoom case, and only by the amount required to maintain proportional scale.
+    • If the reference image shows the model photographed FURTHER AWAY (more body/background visible), proportionally DECREASE the on-canvas charm pixel size so the perceived charm scale stays consistent. The 9-pixel floor may go below ONLY in this far-zoom case, and only by the amount required to maintain proportional scale.
+    • Anchor to chain thickness: the charm width must always remain in fixed proportion to the chain's on-canvas thickness in the reference image. If the chain reads as thickness T on canvas, the charm width should be roughly 7–9× T regardless of overall image zoom.
+    • Anchor to real-world scale: the charm's real-world physical size is roughly that of a fingernail (~10–12mm tall). Render at whatever on-canvas pixel size produces that real-world scale given the model's apparent zoom level.
+    • When in doubt, target the LOWER end of the acceptable range — small consistent under-shoot is far more forgiving than over-shoot.
+    • HARD FAIL: identical on-canvas charm pixel size across two reference images showing the model at clearly different camera distances. The perceived charm size must stay consistent across the listing set, which means absolute pixel size must scale with model zoom.
 
     ENGRAVING STANDARD (UNIFORM ACROSS ALL SLOTS — CRITICAL CONSISTENCY RULE)
     • Engravings MUST read as real shallow grooves cut INTO the metal surface — subtle but unmistakably three-dimensional. They are NOT flat decals, NOT painted ink, NOT pencil-drawn lines on top of the metal, NOT raised/embossed high-relief metal.
@@ -6776,6 +6863,34 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • Pull the red channel slightly DOWN and bias toward yellow/green-gold until the charm reads as a classic yellow wedding band, NOT a rose gold ring.
     • HARD FAIL: charm reading as pinker, peachier, warmer, or redder than the chain. Even a small pink shift is a fail — the human eye picks it up immediately.
     • Consistency rule: the gold colour rendered for the charm in this slot MUST be identical to the gold colour rendered for the charm in every other slot of the same listing set.
+
+    CHARM SILHOUETTE FIDELITY — NO FOREIGN OBJECTS (UNIFORM ACROSS ALL SLOTS — CRITICAL)
+    • The charm rendered in the output MUST be design-faithful to the source Charm Image. Outline, internal cutouts, engraved lines, surface details, and integrated hoop are ALL locked to the source artwork.
+    • NEVER add decorative elements that are NOT in the source charm: no diamonds, gemstones, rhinestones, crystals, jewels, beads, pearls, dots, stars, hearts, or any other ornamental flourish on or inlaid into the charm body.
+    • NEVER add inlay, enamel fill, stone settings, prong mounts, bezel mounts, paint, or any embedded element to the charm.
+    • NEVER add extra cutouts, holes, dots, scratches, or surface markings that are not present in the source artwork.
+    • Rule of thumb: if the source charm has no gemstone, the output has NO gemstone. If the source has no beadwork, the output has NO beadwork. If the source has no dots/stars/hearts, the output has none either. The charm is exactly what the source artwork shows — nothing more.
+    • HARD FAIL: any visible gemstone, crystal, diamond, jewel, bead, pearl, or decorative element on the charm that is NOT present in the source Charm Image.
+    • HARD FAIL: any added dot, bump, surface decoration, or "creative improvement" not in the source design.
+
+    JUMP RING & HANGING PHYSICS (CRITICAL — REAL JEWELRY BEHAVIOR)
+    • The charm has exactly ONE hoop/bail built into its silhouette as shown in the source Charm Image. The jump ring from the necklace chain MUST pass through THAT EXACT existing hoop — and only that hoop.
+    • NEVER invent, render, or composite an additional hoop, loop, ring, or attachment point above, below, beside, or near the charm. There is only ONE hoop on this charm, and it is the one drawn into the source artwork.
+    • NEVER thread the jump ring through empty space above the charm and pretend a hoop exists there. The chain's jump ring must visibly enter and exit the actual metal loop on the charm — the physical connection must read as real.
+    • If the existing hoop on the charm is small or hard to see, render it more clearly rather than fabricating a new one nearby.
+    • HARD FAIL: chain or jump ring connecting to a "ghost" hoop in empty space above or around the charm (this is the most common failure mode — DO NOT do this).
+    • HARD FAIL: two visible hoops on or around the charm (one real from the source, one invented).
+    • HARD FAIL: jump ring floating near the charm without clearly threading through the actual hoop.
+
+    GRAVITY-BASED HANGING ORIENTATION (CRITICAL — REAL JEWELRY BEHAVIOR)
+    • The charm hangs under real gravity, suspended from the single point where the jump ring passes through the charm's hoop. Render the charm's rotation accordingly.
+    • If the hoop sits CENTERED on top of the charm (directly above the charm's horizontal centre of mass), the charm hangs perfectly vertical and balanced — no tilt.
+    • If the hoop is OFFSET to the LEFT of the charm's centre of mass, the charm naturally rotates CLOCKWISE (the heavier right side falls) until the hoop sits directly above the new centre of mass.
+    • If the hoop is OFFSET to the RIGHT of the charm's centre of mass, the charm naturally rotates COUNTER-CLOCKWISE (the heavier left side falls) for the same reason.
+    • The amount of tilt is proportional to the offset: a small offset produces a small tilt, a large offset produces a noticeable tilt. The tilt direction and magnitude are dictated entirely by gravity acting on the hoop position — never arbitrary, never decorative.
+    • Visual reference: real-world necklace charms hanging from a single attachment point ALWAYS rotate so the heaviest part of the charm falls directly below the hoop. Render this faithfully.
+    • HARD FAIL: charm rendered perfectly level/vertical when its hoop is clearly offset to one side of the charm's mass — real physics never allows this.
+    • HARD FAIL: charm tilted in a direction inconsistent with where the hoop sits relative to its centre of mass.
 
     TASK
     Duplicate and zoom-in into the female model in reference image, only replace the charm from Charm Image onto the existing necklace chain in reference image as a hanging flat charm.
@@ -6814,6 +6929,34 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • Pull the red channel slightly DOWN and bias toward yellow/green-gold until the charm reads as a classic yellow wedding band, NOT a rose gold ring.
     • HARD FAIL: charm reading as pinker, peachier, warmer, or redder than the chain. Even a small pink shift is a fail — the human eye picks it up immediately.
     • Consistency rule: the gold colour rendered for the charm in this slot MUST be identical to the gold colour rendered for the charm in every other slot of the same listing set.
+
+    CHARM SILHOUETTE FIDELITY — NO FOREIGN OBJECTS (UNIFORM ACROSS ALL SLOTS — CRITICAL)
+    • The charm rendered in the output MUST be design-faithful to the source Charm Image. Outline, internal cutouts, engraved lines, surface details, and integrated hoop are ALL locked to the source artwork.
+    • NEVER add decorative elements that are NOT in the source charm: no diamonds, gemstones, rhinestones, crystals, jewels, beads, pearls, dots, stars, hearts, or any other ornamental flourish on or inlaid into the charm body.
+    • NEVER add inlay, enamel fill, stone settings, prong mounts, bezel mounts, paint, or any embedded element to the charm.
+    • NEVER add extra cutouts, holes, dots, scratches, or surface markings that are not present in the source artwork.
+    • Rule of thumb: if the source charm has no gemstone, the output has NO gemstone. If the source has no beadwork, the output has NO beadwork. If the source has no dots/stars/hearts, the output has none either. The charm is exactly what the source artwork shows — nothing more.
+    • HARD FAIL: any visible gemstone, crystal, diamond, jewel, bead, pearl, or decorative element on the charm that is NOT present in the source Charm Image.
+    • HARD FAIL: any added dot, bump, surface decoration, or "creative improvement" not in the source design.
+
+    JUMP RING & HANGING PHYSICS (CRITICAL — REAL JEWELRY BEHAVIOR)
+    • The charm has exactly ONE hoop/bail built into its silhouette as shown in the source Charm Image. The jump ring from the necklace chain MUST pass through THAT EXACT existing hoop — and only that hoop.
+    • NEVER invent, render, or composite an additional hoop, loop, ring, or attachment point above, below, beside, or near the charm. There is only ONE hoop on this charm, and it is the one drawn into the source artwork.
+    • NEVER thread the jump ring through empty space above the charm and pretend a hoop exists there. The chain's jump ring must visibly enter and exit the actual metal loop on the charm — the physical connection must read as real.
+    • If the existing hoop on the charm is small or hard to see, render it more clearly rather than fabricating a new one nearby.
+    • HARD FAIL: chain or jump ring connecting to a "ghost" hoop in empty space above or around the charm (this is the most common failure mode — DO NOT do this).
+    • HARD FAIL: two visible hoops on or around the charm (one real from the source, one invented).
+    • HARD FAIL: jump ring floating near the charm without clearly threading through the actual hoop.
+
+    GRAVITY-BASED HANGING ORIENTATION (CRITICAL — REAL JEWELRY BEHAVIOR)
+    • The charm hangs under real gravity, suspended from the single point where the jump ring passes through the charm's hoop. Render the charm's rotation accordingly.
+    • If the hoop sits CENTERED on top of the charm (directly above the charm's horizontal centre of mass), the charm hangs perfectly vertical and balanced — no tilt.
+    • If the hoop is OFFSET to the LEFT of the charm's centre of mass, the charm naturally rotates CLOCKWISE (the heavier right side falls) until the hoop sits directly above the new centre of mass.
+    • If the hoop is OFFSET to the RIGHT of the charm's centre of mass, the charm naturally rotates COUNTER-CLOCKWISE (the heavier left side falls) for the same reason.
+    • The amount of tilt is proportional to the offset: a small offset produces a small tilt, a large offset produces a noticeable tilt. The tilt direction and magnitude are dictated entirely by gravity acting on the hoop position — never arbitrary, never decorative.
+    • Visual reference: real-world necklace charms hanging from a single attachment point ALWAYS rotate so the heaviest part of the charm falls directly below the hoop. Render this faithfully.
+    • HARD FAIL: charm rendered perfectly level/vertical when its hoop is clearly offset to one side of the charm's mass — real physics never allows this.
+    • HARD FAIL: charm tilted in a direction inconsistent with where the hoop sits relative to its centre of mass.
 
     TASK
     Duplicate and zoom-in into the reference image, only replace the charm onto the existing necklace chain in the reference image as a hanging flat charm.
@@ -6854,6 +6997,34 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • HARD FAIL: charm reading as pinker, peachier, warmer, or redder than the chain. Even a small pink shift is a fail — the human eye picks it up immediately.
     • Consistency rule: the gold colour rendered for the charm in this slot MUST be identical to the gold colour rendered for the charm in every other slot of the same listing set.
 
+    CHARM SILHOUETTE FIDELITY — NO FOREIGN OBJECTS (UNIFORM ACROSS ALL SLOTS — CRITICAL)
+    • The charm rendered in the output MUST be design-faithful to the source Charm Image. Outline, internal cutouts, engraved lines, surface details, and integrated hoop are ALL locked to the source artwork.
+    • NEVER add decorative elements that are NOT in the source charm: no diamonds, gemstones, rhinestones, crystals, jewels, beads, pearls, dots, stars, hearts, or any other ornamental flourish on or inlaid into the charm body.
+    • NEVER add inlay, enamel fill, stone settings, prong mounts, bezel mounts, paint, or any embedded element to the charm.
+    • NEVER add extra cutouts, holes, dots, scratches, or surface markings that are not present in the source artwork.
+    • Rule of thumb: if the source charm has no gemstone, the output has NO gemstone. If the source has no beadwork, the output has NO beadwork. If the source has no dots/stars/hearts, the output has none either. The charm is exactly what the source artwork shows — nothing more.
+    • HARD FAIL: any visible gemstone, crystal, diamond, jewel, bead, pearl, or decorative element on the charm that is NOT present in the source Charm Image.
+    • HARD FAIL: any added dot, bump, surface decoration, or "creative improvement" not in the source design.
+
+    JUMP RING & HANGING PHYSICS (CRITICAL — REAL JEWELRY BEHAVIOR)
+    • The charm has exactly ONE hoop/bail built into its silhouette as shown in the source Charm Image. The jump ring from the necklace chain MUST pass through THAT EXACT existing hoop — and only that hoop.
+    • NEVER invent, render, or composite an additional hoop, loop, ring, or attachment point above, below, beside, or near the charm. There is only ONE hoop on this charm, and it is the one drawn into the source artwork.
+    • NEVER thread the jump ring through empty space above the charm and pretend a hoop exists there. The chain's jump ring must visibly enter and exit the actual metal loop on the charm — the physical connection must read as real.
+    • If the existing hoop on the charm is small or hard to see, render it more clearly rather than fabricating a new one nearby.
+    • HARD FAIL: chain or jump ring connecting to a "ghost" hoop in empty space above or around the charm (this is the most common failure mode — DO NOT do this).
+    • HARD FAIL: two visible hoops on or around the charm (one real from the source, one invented).
+    • HARD FAIL: jump ring floating near the charm without clearly threading through the actual hoop.
+
+    GRAVITY-BASED HANGING ORIENTATION (CRITICAL — REAL JEWELRY BEHAVIOR)
+    • The charm hangs under real gravity, suspended from the single point where the jump ring passes through the charm's hoop. Render the charm's rotation accordingly.
+    • If the hoop sits CENTERED on top of the charm (directly above the charm's horizontal centre of mass), the charm hangs perfectly vertical and balanced — no tilt.
+    • If the hoop is OFFSET to the LEFT of the charm's centre of mass, the charm naturally rotates CLOCKWISE (the heavier right side falls) until the hoop sits directly above the new centre of mass.
+    • If the hoop is OFFSET to the RIGHT of the charm's centre of mass, the charm naturally rotates COUNTER-CLOCKWISE (the heavier left side falls) for the same reason.
+    • The amount of tilt is proportional to the offset: a small offset produces a small tilt, a large offset produces a noticeable tilt. The tilt direction and magnitude are dictated entirely by gravity acting on the hoop position — never arbitrary, never decorative.
+    • Visual reference: real-world necklace charms hanging from a single attachment point ALWAYS rotate so the heaviest part of the charm falls directly below the hoop. Render this faithfully.
+    • HARD FAIL: charm rendered perfectly level/vertical when its hoop is clearly offset to one side of the charm's mass — real physics never allows this.
+    • HARD FAIL: charm tilted in a direction inconsistent with where the hoop sits relative to its centre of mass.
+
     TASK
     Duplicate and zoom-in into the reference image, only replace the charm onto the existing necklace chain in the reference image as a hanging flat charm.
     
@@ -6891,6 +7062,15 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • Do NOT redraw, smooth, stylize, thicken, clean up, or reinterpret.
     • Keep edges crisp. No blur or smear.
 
+    CHARM SILHOUETTE FIDELITY — NO FOREIGN OBJECTS (UNIFORM ACROSS ALL SLOTS — CRITICAL)
+    • The charm rendered in the output MUST be design-faithful to the source Charm Image. Outline, internal cutouts, engraved lines, surface details, and integrated hoop are ALL locked to the source artwork.
+    • NEVER add decorative elements that are NOT in the source charm: no diamonds, gemstones, rhinestones, crystals, jewels, beads, pearls, dots, stars, hearts, or any other ornamental flourish on or inlaid into the charm body.
+    • NEVER add inlay, enamel fill, stone settings, prong mounts, bezel mounts, paint, or any embedded element to the charm.
+    • NEVER add extra cutouts, holes, dots, scratches, or surface markings that are not present in the source artwork.
+    • Rule of thumb: if the source charm has no gemstone, the output has NO gemstone. If the source has no beadwork, the output has NO beadwork. If the source has no dots/stars/hearts, the output has none either. The charm is exactly what the source artwork shows — nothing more.
+    • HARD FAIL: any visible gemstone, crystal, diamond, jewel, bead, pearl, or decorative element on the charm that is NOT present in the source Charm Image.
+    • HARD FAIL: any added dot, bump, surface decoration, or "creative improvement" not in the source design.
+
     INTEGRATED HOOP RULE
     • The hoop/bail MUST be part of the same laser-cut silhouette as the charm body.
     • The hoop MUST connect with a wide, solid bridge of metal (large surface area).
@@ -6918,13 +7098,15 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     - Any text change.
     - Any charm size mismatch vs charm image.
     - Any weak or disconnected hoop connection.
-    - Any pink/rose-gold colour cast on the charm.`;
+    - Any pink/rose-gold colour cast on the charm.
+    - Any gemstone, diamond, bead, dot, or decorative element added to the charm that is not in the source artwork.
+    - Any second/phantom hoop added near the charm.`;
 
     const REGULAR_DEFAULT_PROMPT =
     `CRITICAL: This is a standard fashion product photo edit. Keep the subject modest. No nudity.
 
     ULTRA-MICRO SIZE OVERRIDE 
-    • Force the Charm to be very small: final on-image charm height MUST be 13 pixels tall (absolute pixel height, not relative) — bias toward the lower end of this target rather than the upper end.
+    • Force the Charm to be very small: final on-image charm height MUST be approximately 12 pixels tall (acceptable range: 12 to 13 pixels, target the LOW END of this range — i.e. aim at 12, not 13). HARD MAXIMUM: 13 pixels — never exceed. HARD MINIMUM: 12 pixels — never go below. The previous render bias has consistently been too large; the goal of this range is to dial that back by approximately 5–7%.
     • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
     • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
     • limit shadows (Contact or otherwise) to be visible undereath and around the Charm/Pendant placement.
@@ -6932,12 +7114,12 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • Slightly vary the wardrobe.
 
     CHARM SIZE CALIBRATION TO CAMERA DISTANCE (CRITICAL CONSISTENCY)
-    • The pixel target above is a CAMERA-DISTANCE-NORMALIZED baseline — it assumes the model is photographed at a moderate distance with their upper torso filling roughly half the frame.
-    • If the reference image shows the model photographed CLOSER (face/neck dominates the frame), proportionally INCREASE the on-canvas charm pixel size so the charm reads at the same real-world physical scale.
-    • If the reference image shows the model photographed FURTHER AWAY (more body/background visible), proportionally DECREASE the on-canvas charm pixel size so the perceived charm scale stays consistent.
-    • Anchor to chain thickness: the charm width must always remain in fixed proportion to the chain's on-canvas thickness in the reference image. If the chain reads as thickness T on canvas, the charm width should be roughly 8–10× T regardless of overall image zoom.
+    • The pixel range above is a CAMERA-DISTANCE-NORMALIZED baseline — it assumes the model is photographed at a moderate distance with their upper torso filling roughly half the frame.
+    • If the reference image shows the model photographed CLOSER (face/neck dominates the frame), proportionally INCREASE the on-canvas charm pixel size so the charm reads at the same real-world physical scale. The 12–13 pixel cap may be exceeded ONLY in this close-zoom case, and only by the amount required to maintain proportional scale.
+    • If the reference image shows the model photographed FURTHER AWAY (more body/background visible), proportionally DECREASE the on-canvas charm pixel size so the perceived charm scale stays consistent. The 12-pixel floor may go below ONLY in this far-zoom case, and only by the amount required to maintain proportional scale.
+    • Anchor to chain thickness: the charm width must always remain in fixed proportion to the chain's on-canvas thickness in the reference image. If the chain reads as thickness T on canvas, the charm width should be roughly 7–9× T regardless of overall image zoom.
     • Anchor to real-world scale: the charm's real-world physical size is roughly that of a fingernail (~10–12mm tall). Render at whatever on-canvas pixel size produces that real-world scale given the model's apparent zoom level.
-    • When in doubt, err slightly SMALLER rather than slightly larger — bias toward the lower end of the pixel target.
+    • When in doubt, target the LOWER end of the acceptable range — small consistent under-shoot is far more forgiving than over-shoot.
     • HARD FAIL: identical on-canvas charm pixel size across two reference images showing the model at clearly different camera distances. The perceived charm size must stay consistent across the listing set, which means absolute pixel size must scale with model zoom.
 
     ENGRAVING STANDARD (UNIFORM ACROSS ALL SLOTS — CRITICAL CONSISTENCY RULE)
@@ -6958,6 +7140,34 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • Pull the red channel slightly DOWN and bias toward yellow/green-gold until the charm reads as a classic yellow wedding band, NOT a rose gold ring.
     • HARD FAIL: charm reading as pinker, peachier, warmer, or redder than the chain. Even a small pink shift is a fail — the human eye picks it up immediately.
     • Consistency rule: the gold colour rendered for the charm in this slot MUST be identical to the gold colour rendered for the charm in every other slot of the same listing set.
+
+    CHARM SILHOUETTE FIDELITY — NO FOREIGN OBJECTS (UNIFORM ACROSS ALL SLOTS — CRITICAL)
+    • The charm rendered in the output MUST be design-faithful to the source Charm Image. Outline, internal cutouts, engraved lines, surface details, and integrated hoop are ALL locked to the source artwork.
+    • NEVER add decorative elements that are NOT in the source charm: no diamonds, gemstones, rhinestones, crystals, jewels, beads, pearls, dots, stars, hearts, or any other ornamental flourish on or inlaid into the charm body.
+    • NEVER add inlay, enamel fill, stone settings, prong mounts, bezel mounts, paint, or any embedded element to the charm.
+    • NEVER add extra cutouts, holes, dots, scratches, or surface markings that are not present in the source artwork.
+    • Rule of thumb: if the source charm has no gemstone, the output has NO gemstone. If the source has no beadwork, the output has NO beadwork. If the source has no dots/stars/hearts, the output has none either. The charm is exactly what the source artwork shows — nothing more.
+    • HARD FAIL: any visible gemstone, crystal, diamond, jewel, bead, pearl, or decorative element on the charm that is NOT present in the source Charm Image.
+    • HARD FAIL: any added dot, bump, surface decoration, or "creative improvement" not in the source design.
+
+    JUMP RING & HANGING PHYSICS (CRITICAL — REAL JEWELRY BEHAVIOR)
+    • The charm has exactly ONE hoop/bail built into its silhouette as shown in the source Charm Image. The jump ring from the necklace chain MUST pass through THAT EXACT existing hoop — and only that hoop.
+    • NEVER invent, render, or composite an additional hoop, loop, ring, or attachment point above, below, beside, or near the charm. There is only ONE hoop on this charm, and it is the one drawn into the source artwork.
+    • NEVER thread the jump ring through empty space above the charm and pretend a hoop exists there. The chain's jump ring must visibly enter and exit the actual metal loop on the charm — the physical connection must read as real.
+    • If the existing hoop on the charm is small or hard to see, render it more clearly rather than fabricating a new one nearby.
+    • HARD FAIL: chain or jump ring connecting to a "ghost" hoop in empty space above or around the charm (this is the most common failure mode — DO NOT do this).
+    • HARD FAIL: two visible hoops on or around the charm (one real from the source, one invented).
+    • HARD FAIL: jump ring floating near the charm without clearly threading through the actual hoop.
+
+    GRAVITY-BASED HANGING ORIENTATION (CRITICAL — REAL JEWELRY BEHAVIOR)
+    • The charm hangs under real gravity, suspended from the single point where the jump ring passes through the charm's hoop. Render the charm's rotation accordingly.
+    • If the hoop sits CENTERED on top of the charm (directly above the charm's horizontal centre of mass), the charm hangs perfectly vertical and balanced — no tilt.
+    • If the hoop is OFFSET to the LEFT of the charm's centre of mass, the charm naturally rotates CLOCKWISE (the heavier right side falls) until the hoop sits directly above the new centre of mass.
+    • If the hoop is OFFSET to the RIGHT of the charm's centre of mass, the charm naturally rotates COUNTER-CLOCKWISE (the heavier left side falls) for the same reason.
+    • The amount of tilt is proportional to the offset: a small offset produces a small tilt, a large offset produces a noticeable tilt. The tilt direction and magnitude are dictated entirely by gravity acting on the hoop position — never arbitrary, never decorative.
+    • Visual reference: real-world necklace charms hanging from a single attachment point ALWAYS rotate so the heaviest part of the charm falls directly below the hoop. Render this faithfully.
+    • HARD FAIL: charm rendered perfectly level/vertical when its hoop is clearly offset to one side of the charm's mass — real physics never allows this.
+    • HARD FAIL: charm tilted in a direction inconsistent with where the hoop sits relative to its centre of mass.
 
     TASK
     Duplicate and zoom-in into the female model in reference image, only replace the charm from Charm Image onto the existing necklace chain in reference image as a hanging flat charm.
@@ -7000,6 +7210,15 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • Do NOT redraw, smooth, stylize, thicken, clean up, or reinterpret.
     • Keep edges crisp. No blur or smear.
 
+    CHARM SILHOUETTE FIDELITY — NO FOREIGN OBJECTS (UNIFORM ACROSS ALL SLOTS — CRITICAL)
+    • Each charm rendered in the output MUST be design-faithful to the source Charm Image. Outline, internal cutouts, engraved lines, surface details, and integrated hoop are ALL locked to the source artwork.
+    • NEVER add decorative elements that are NOT in the source charm: no diamonds, gemstones, rhinestones, crystals, jewels, beads, pearls, dots, stars, hearts, or any other ornamental flourish on or inlaid into either charm body.
+    • NEVER add inlay, enamel fill, stone settings, prong mounts, bezel mounts, paint, or any embedded element to either charm.
+    • NEVER add extra cutouts, holes, dots, scratches, or surface markings that are not present in the source artwork.
+    • Rule of thumb: if the source charm has no gemstone, the output has NO gemstone. If the source has no beadwork, the output has NO beadwork. If the source has no dots/stars/hearts, the output has none either. Both charms are exactly what the source artwork shows — nothing more.
+    • HARD FAIL: any visible gemstone, crystal, diamond, jewel, bead, pearl, or decorative element on either charm that is NOT present in the source Charm Image.
+    • HARD FAIL: any added dot, bump, surface decoration, or "creative improvement" not in the source design, on either the gold or silver charm.
+
     ENGRAVING STANDARD (UNIFORM ACROSS ALL SLOTS — CRITICAL CONSISTENCY RULE)
     • Engravings MUST read as real shallow grooves cut INTO the metal surface — subtle but unmistakably three-dimensional. They are NOT flat decals, NOT painted ink, NOT pencil-drawn lines on top of the metal, NOT raised/embossed high-relief metal.
     • Render each engraved stroke with a fine inner shadow on one edge and a faint highlight on the opposing edge to convey roughly 0.1mm of recessed depth. The shallow groove and its tiny inner shadow are what make the engraving legible — colour does NOT carry the contrast.
@@ -7027,18 +7246,29 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     - Any weak or disconnected hoop connection.
     - Any pink/rose-gold cast on the gold charm.
     - Engraving rendered as black/dark grey/gunmetal on either charm.
-    - Engraving rendered as pencil-drawn or flat with no recessed depth.`;
+    - Engraving rendered as pencil-drawn or flat with no recessed depth.
+    - Any gemstone, diamond, bead, dot, or decorative element added to either charm that is not in the source artwork.
+    - Any second/phantom hoop added near either charm.`;
 
     const REGULAR_SLOT5_PROMPT =
     `CRITICAL: This is a standard fashion product photo edit. Keep the subject modest. No nudity.
 
     ULTRA-MICRO SIZE OVERRIDE
-    • Force the Charm to be very small: final on-image charm height MUST be 12 pixels tall (absolute pixel height, not relative).
+    • Force the Charm to be very small: final on-image charm height MUST be approximately 11 pixels tall (acceptable range: 11 to 12 pixels, target the LOW END of this range — i.e. aim at 11, not 12). HARD MAXIMUM: 12 pixels — never exceed. HARD MINIMUM: 11 pixels — never go below. The previous render bias has consistently been too large; the goal of this range is to dial that back by approximately 5–7%.
     • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
     • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
     • limit shadows (Contact or otherwise) to be visible undereath and around the Charm/Pendant placement.
     • When generating the necklace chain ensure the fidelity of every single chain link and correct any link/chain imperfections.
     • Vary the wardrobe.
+
+    CHARM SIZE CALIBRATION TO CAMERA DISTANCE (CRITICAL CONSISTENCY)
+    • The pixel range above is a CAMERA-DISTANCE-NORMALIZED baseline — it assumes the model is photographed at a moderate distance with their upper torso filling roughly half the frame.
+    • If the reference image shows the model photographed CLOSER (face/neck dominates the frame), proportionally INCREASE the on-canvas charm pixel size so the charm reads at the same real-world physical scale. The 11–12 pixel cap may be exceeded ONLY in this close-zoom case, and only by the amount required to maintain proportional scale.
+    • If the reference image shows the model photographed FURTHER AWAY (more body/background visible), proportionally DECREASE the on-canvas charm pixel size so the perceived charm scale stays consistent. The 11-pixel floor may go below ONLY in this far-zoom case, and only by the amount required to maintain proportional scale.
+    • Anchor to chain thickness: the charm width must always remain in fixed proportion to the chain's on-canvas thickness in the reference image. If the chain reads as thickness T on canvas, the charm width should be roughly 7–9× T regardless of overall image zoom.
+    • Anchor to real-world scale: the charm's real-world physical size is roughly that of a fingernail (~10–12mm tall). Render at whatever on-canvas pixel size produces that real-world scale given the model's apparent zoom level.
+    • When in doubt, target the LOWER end of the acceptable range — small consistent under-shoot is far more forgiving than over-shoot.
+    • HARD FAIL: identical on-canvas charm pixel size across two reference images showing the model at clearly different camera distances. The perceived charm size must stay consistent across the listing set, which means absolute pixel size must scale with model zoom.
 
     ENGRAVING STANDARD (UNIFORM ACROSS ALL SLOTS — CRITICAL CONSISTENCY RULE)
     • Engravings MUST read as real shallow grooves cut INTO the metal surface — subtle but unmistakably three-dimensional. They are NOT flat decals, NOT painted ink, NOT pencil-drawn lines on top of the metal, NOT raised/embossed high-relief metal.
@@ -7058,6 +7288,34 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • Pull the red channel slightly DOWN and bias toward yellow/green-gold until the charm reads as a classic yellow wedding band, NOT a rose gold ring.
     • HARD FAIL: charm reading as pinker, peachier, warmer, or redder than the chain. Even a small pink shift is a fail — the human eye picks it up immediately.
     • Consistency rule: the gold colour rendered for the charm in this slot MUST be identical to the gold colour rendered for the charm in every other slot of the same listing set.
+
+    CHARM SILHOUETTE FIDELITY — NO FOREIGN OBJECTS (UNIFORM ACROSS ALL SLOTS — CRITICAL)
+    • The charm rendered in the output MUST be design-faithful to the source Charm Image. Outline, internal cutouts, engraved lines, surface details, and integrated hoop are ALL locked to the source artwork.
+    • NEVER add decorative elements that are NOT in the source charm: no diamonds, gemstones, rhinestones, crystals, jewels, beads, pearls, dots, stars, hearts, or any other ornamental flourish on or inlaid into the charm body.
+    • NEVER add inlay, enamel fill, stone settings, prong mounts, bezel mounts, paint, or any embedded element to the charm.
+    • NEVER add extra cutouts, holes, dots, scratches, or surface markings that are not present in the source artwork.
+    • Rule of thumb: if the source charm has no gemstone, the output has NO gemstone. If the source has no beadwork, the output has NO beadwork. If the source has no dots/stars/hearts, the output has none either. The charm is exactly what the source artwork shows — nothing more.
+    • HARD FAIL: any visible gemstone, crystal, diamond, jewel, bead, pearl, or decorative element on the charm that is NOT present in the source Charm Image.
+    • HARD FAIL: any added dot, bump, surface decoration, or "creative improvement" not in the source design.
+
+    JUMP RING & HANGING PHYSICS (CRITICAL — REAL JEWELRY BEHAVIOR)
+    • The charm has exactly ONE hoop/bail built into its silhouette as shown in the source Charm Image. The jump ring from the necklace chain MUST pass through THAT EXACT existing hoop — and only that hoop.
+    • NEVER invent, render, or composite an additional hoop, loop, ring, or attachment point above, below, beside, or near the charm. There is only ONE hoop on this charm, and it is the one drawn into the source artwork.
+    • NEVER thread the jump ring through empty space above the charm and pretend a hoop exists there. The chain's jump ring must visibly enter and exit the actual metal loop on the charm — the physical connection must read as real.
+    • If the existing hoop on the charm is small or hard to see, render it more clearly rather than fabricating a new one nearby.
+    • HARD FAIL: chain or jump ring connecting to a "ghost" hoop in empty space above or around the charm (this is the most common failure mode — DO NOT do this).
+    • HARD FAIL: two visible hoops on or around the charm (one real from the source, one invented).
+    • HARD FAIL: jump ring floating near the charm without clearly threading through the actual hoop.
+
+    GRAVITY-BASED HANGING ORIENTATION (CRITICAL — REAL JEWELRY BEHAVIOR)
+    • The charm hangs under real gravity, suspended from the single point where the jump ring passes through the charm's hoop. Render the charm's rotation accordingly.
+    • If the hoop sits CENTERED on top of the charm (directly above the charm's horizontal centre of mass), the charm hangs perfectly vertical and balanced — no tilt.
+    • If the hoop is OFFSET to the LEFT of the charm's centre of mass, the charm naturally rotates CLOCKWISE (the heavier right side falls) until the hoop sits directly above the new centre of mass.
+    • If the hoop is OFFSET to the RIGHT of the charm's centre of mass, the charm naturally rotates COUNTER-CLOCKWISE (the heavier left side falls) for the same reason.
+    • The amount of tilt is proportional to the offset: a small offset produces a small tilt, a large offset produces a noticeable tilt. The tilt direction and magnitude are dictated entirely by gravity acting on the hoop position — never arbitrary, never decorative.
+    • Visual reference: real-world necklace charms hanging from a single attachment point ALWAYS rotate so the heaviest part of the charm falls directly below the hoop. Render this faithfully.
+    • HARD FAIL: charm rendered perfectly level/vertical when its hoop is clearly offset to one side of the charm's mass — real physics never allows this.
+    • HARD FAIL: charm tilted in a direction inconsistent with where the hoop sits relative to its centre of mass.
 
     TASK
     Duplicate and zoom-in into the female model in reference image, only replace the charm from Charm Image onto the existing necklace chain in reference image as a hanging flat charm.
@@ -7095,6 +7353,34 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • Pull the red channel slightly DOWN and bias toward yellow/green-gold until the charm reads as a classic yellow wedding band, NOT a rose gold ring.
     • HARD FAIL: charm reading as pinker, peachier, warmer, or redder than the chain. Even a small pink shift is a fail — the human eye picks it up immediately.
     • Consistency rule: the gold colour rendered for the charm in this slot MUST be identical to the gold colour rendered for the charm in every other slot of the same listing set.
+
+    CHARM SILHOUETTE FIDELITY — NO FOREIGN OBJECTS (UNIFORM ACROSS ALL SLOTS — CRITICAL)
+    • The charm rendered in the output MUST be design-faithful to the source Charm Image. Outline, internal cutouts, engraved lines, surface details, and integrated hoop are ALL locked to the source artwork.
+    • NEVER add decorative elements that are NOT in the source charm: no diamonds, gemstones, rhinestones, crystals, jewels, beads, pearls, dots, stars, hearts, or any other ornamental flourish on or inlaid into the charm body.
+    • NEVER add inlay, enamel fill, stone settings, prong mounts, bezel mounts, paint, or any embedded element to the charm.
+    • NEVER add extra cutouts, holes, dots, scratches, or surface markings that are not present in the source artwork.
+    • Rule of thumb: if the source charm has no gemstone, the output has NO gemstone. If the source has no beadwork, the output has NO beadwork. If the source has no dots/stars/hearts, the output has none either. The charm is exactly what the source artwork shows — nothing more.
+    • HARD FAIL: any visible gemstone, crystal, diamond, jewel, bead, pearl, or decorative element on the charm that is NOT present in the source Charm Image.
+    • HARD FAIL: any added dot, bump, surface decoration, or "creative improvement" not in the source design.
+
+    JUMP RING & HANGING PHYSICS (CRITICAL — REAL JEWELRY BEHAVIOR)
+    • The charm has exactly ONE hoop/bail built into its silhouette as shown in the source Charm Image. The jump ring from the necklace chain MUST pass through THAT EXACT existing hoop — and only that hoop.
+    • NEVER invent, render, or composite an additional hoop, loop, ring, or attachment point above, below, beside, or near the charm. There is only ONE hoop on this charm, and it is the one drawn into the source artwork.
+    • NEVER thread the jump ring through empty space above the charm and pretend a hoop exists there. The chain's jump ring must visibly enter and exit the actual metal loop on the charm — the physical connection must read as real.
+    • If the existing hoop on the charm is small or hard to see, render it more clearly rather than fabricating a new one nearby.
+    • HARD FAIL: chain or jump ring connecting to a "ghost" hoop in empty space above or around the charm (this is the most common failure mode — DO NOT do this).
+    • HARD FAIL: two visible hoops on or around the charm (one real from the source, one invented).
+    • HARD FAIL: jump ring floating near the charm without clearly threading through the actual hoop.
+
+    GRAVITY-BASED HANGING ORIENTATION (CRITICAL — REAL JEWELRY BEHAVIOR)
+    • The charm hangs under real gravity, suspended from the single point where the jump ring passes through the charm's hoop. Render the charm's rotation accordingly.
+    • If the hoop sits CENTERED on top of the charm (directly above the charm's horizontal centre of mass), the charm hangs perfectly vertical and balanced — no tilt.
+    • If the hoop is OFFSET to the LEFT of the charm's centre of mass, the charm naturally rotates CLOCKWISE (the heavier right side falls) until the hoop sits directly above the new centre of mass.
+    • If the hoop is OFFSET to the RIGHT of the charm's centre of mass, the charm naturally rotates COUNTER-CLOCKWISE (the heavier left side falls) for the same reason.
+    • The amount of tilt is proportional to the offset: a small offset produces a small tilt, a large offset produces a noticeable tilt. The tilt direction and magnitude are dictated entirely by gravity acting on the hoop position — never arbitrary, never decorative.
+    • Visual reference: real-world necklace charms hanging from a single attachment point ALWAYS rotate so the heaviest part of the charm falls directly below the hoop. Render this faithfully.
+    • HARD FAIL: charm rendered perfectly level/vertical when its hoop is clearly offset to one side of the charm's mass — real physics never allows this.
+    • HARD FAIL: charm tilted in a direction inconsistent with where the hoop sits relative to its centre of mass.
 
     TASK
     Duplicate and zoom-in into the reference image, only replace the charm onto the existing necklace chain in the reference image as a hanging flat charm.
