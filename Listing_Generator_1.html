@@ -6558,7 +6558,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • The pixel range above is a CAMERA-DISTANCE-NORMALIZED baseline — it assumes the model is photographed at a moderate distance with their upper torso filling roughly half the frame.
     • If the reference image shows the model photographed CLOSER (face/neck dominates the frame), proportionally INCREASE the on-canvas charm pixel size so the charm reads at the same real-world physical scale. The 9–10 pixel cap may be exceeded ONLY in this close-zoom case, and only by the amount required to maintain proportional scale.
     • If the reference image shows the model photographed FURTHER AWAY (more body/background visible), proportionally DECREASE the on-canvas charm pixel size so the perceived charm scale stays consistent. The 9-pixel floor may go below ONLY in this far-zoom case, and only by the amount required to maintain proportional scale.
-    • Anchor to chain thickness: the charm width must always remain in fixed proportion to the chain's on-canvas thickness in the reference image. If the chain reads as thickness T on canvas, the charm width should be roughly 6–8× T regardless of overall image zoom.
+    • Anchor to chain thickness: the charm width must always remain in fixed proportion to the chain's on-canvas thickness in the reference image. If the chain reads as thickness T on canvas, the charm width should be roughly 5–6× T regardless of overall image zoom.
     • Anchor to real-world scale: the charm's real-world physical size is roughly that of a fingernail (~10–12mm tall). Render at whatever on-canvas pixel size produces that real-world scale given the model's apparent zoom level.
     • When in doubt, target the LOWER end of the acceptable range — small consistent under-shoot is far more forgiving than over-shoot.
     • HARD FAIL: identical on-canvas charm pixel size across two reference images showing the model at clearly different camera distances. The perceived charm size must stay consistent across the listing set, which means absolute pixel size must scale with model zoom.
@@ -6700,11 +6700,18 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • Do NOT allow any shadows (Contact or otherwise) to be visible undereath and around the Charm/Pendant placement, block all Charm/Pendant related shadows.
     • The chain must remain exactly the same size and detail as reference image. Only the charm is scaled.
 
+    MODEL-FEATURE & PERCEPTUAL ANCHORS (CRITICAL — APPLY TOGETHER WITH PIXEL TARGET ABOVE)
+    The pixel directive above has SATURATED — across many rounds, progressive pixel-number reductions have stopped reducing the actual rendered size, indicating the pixel number alone is no longer being respected. The following ADDITIONAL anchors MUST be applied alongside the pixel target:
+    • MODEL-NOSTRIL ANCHOR (CRITICAL): the rendered charm height on canvas should be APPROXIMATELY EQUAL to the height of ONE of the model's NOSTRIL OPENINGS. NOT the model's eye height, NOT the model's lip height, NOT a quarter of their face. If the charm is clearly taller than a single nostril, it is too large.
+    • PERCEPTUAL TEST: when viewing the final image, a viewer's eye should land on (1) the MODEL'S FACE first, (2) the CHAIN as a continuous line, (3) the CHARM as a small detail noticed only on closer inspection. If the charm reads as a focal point or dominant visual element, it is rendered too large — scale it DOWN until it reads as "a small accent on the chain."
+    • TIGHTENED CHAIN RATIO: charm width ≈ 5–6× the chain link thickness on canvas (tighter than prior rounds).
+    • FALLBACK RULE: if you cannot apply pixels precisely, satisfy the MODEL-NOSTRIL ANCHOR and the PERCEPTUAL TEST instead. These two together are sufficient to define the correct size.
+
     CHARM SIZE CALIBRATION TO CAMERA DISTANCE (CRITICAL CONSISTENCY)
     • The pixel range above is a CAMERA-DISTANCE-NORMALIZED baseline — it assumes the model is photographed at a moderate distance with their upper torso filling roughly half the frame.
     • If the reference image shows the model photographed CLOSER (face/neck dominates the frame), proportionally INCREASE the on-canvas charm pixel size so the charm reads at the same real-world physical scale. The 6–7 pixel cap may be exceeded ONLY in this close-zoom case, and only by the amount required to maintain proportional scale.
     • If the reference image shows the model photographed FURTHER AWAY (more body/background visible), proportionally DECREASE the on-canvas charm pixel size so the perceived charm scale stays consistent. The 6-pixel floor may go below ONLY in this far-zoom case, and only by the amount required to maintain proportional scale.
-    • Anchor to chain thickness: the charm width must always remain in fixed proportion to the chain's on-canvas thickness in the reference image. If the chain reads as thickness T on canvas, the charm width should be roughly 6–8× T regardless of overall image zoom.
+    • Anchor to chain thickness: the charm width must always remain in fixed proportion to the chain's on-canvas thickness in the reference image. If the chain reads as thickness T on canvas, the charm width should be roughly 5–6× T regardless of overall image zoom.
     • Anchor to real-world scale: the charm's real-world physical size is roughly that of a fingernail (~10–12mm tall). Render at whatever on-canvas pixel size produces that real-world scale given the model's apparent zoom level.
     • When in doubt, target the LOWER end of the acceptable range — small consistent under-shoot is far more forgiving than over-shoot.
     • HARD FAIL: identical on-canvas charm pixel size across two reference images showing the model at clearly different camera distances. The perceived charm size must stay consistent across the listing set, which means absolute pixel size must scale with model zoom.
@@ -6721,6 +6728,14 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • HARD FAIL ON SILVER SPECIFICALLY: silver engraving rendered with strong colour contrast against the silver body, or rendered in any darker grey/gunmetal/charcoal tone. Silver engravings must look like very faint depressions in the same silver metal.
     • Target contrast comes from DEPTH/SHADOW, not from colour difference: the engraving must be clearly legible at the rendered charm size because the groove geometry is visible, while the engraving fill colour stays unmistakably in the same metal colour family as the charm body. Past renderings have looked too flat — push the depth/shadow signal, NOT the colour darkness.
     • Visual reference: real laser-engraved brass/copper jewelry for gold charms; real laser-engraved Sterling Silver for silver charms — where the cut reveals essentially the same metal underneath but the recessed depth creates clearly visible groove geometry with crisp inner shadows.
+    SLOT-SPECIFIC ENGRAVING ADJUSTMENT (overrides the universal "err LIGHTER" bias for THIS SLOT ONLY)
+    • In this particular slot, engraving renderings have consistently been TOO LIGHT and TOO FLAT — the OPPOSITE of the universal block's lean. Override the universal "err LIGHTER" instruction here.
+    • Push recessed depth slightly DEEPER for this slot: target ~0.22–0.27mm rather than the universal 0.15–0.2mm. The inner-shadow geometry should be more pronounced — clearly readable 3D groove cut, not a faint surface mark.
+    • Push gold engraving fill colour slightly DARKER for this slot: target approximately a quarter-to-third-shade darker than the gold charm body (rather than the universal "at most a quarter-shade, often less"). Still in the same warm gold colour family — never charcoal/black — but with enough warm undertone to be clearly visible.
+    • Silver engraving fill colour in this slot stays unchanged from the universal silver rule — same silver tone as the charm body, depth carries legibility.
+    • Goal for this slot: engraving that is CLEARLY VISIBLE without being dark — with obvious 3D depth signal and a moderate (not stark, not invisible) warm-undertone fill on gold.
+
+
 
     GOLD CHARM COLOUR STANDARD (UNIFORM ACROSS ALL SLOTS — CRITICAL CONSISTENCY RULE)
     • Render the Charm/Pendant in authentic 14K YELLOW gold: a warm yellow tone with the tiniest hint of green-gold. NOT rose gold, NOT pink, NOT peach, NOT salmon, NOT red-orange, NOT copper-pink.
@@ -6890,11 +6905,18 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • Do NOT allow any shadows (Contact or otherwise) to be visible undereath and around the Charm/Pendant placement, block all Charm/Pendant related shadows.
     • The chain must remain exactly the same size and detail as reference image. Only the charm is scaled.
 
+    MODEL-FEATURE & PERCEPTUAL ANCHORS (CRITICAL — APPLY TOGETHER WITH PIXEL TARGET ABOVE)
+    The pixel directive above has SATURATED — across many rounds, progressive pixel-number reductions have stopped reducing the actual rendered size, indicating the pixel number alone is no longer being respected. The following ADDITIONAL anchors MUST be applied alongside the pixel target:
+    • MODEL-NOSTRIL ANCHOR (CRITICAL): the rendered charm height on canvas should be APPROXIMATELY EQUAL to the height of ONE of the model's NOSTRIL OPENINGS. NOT the model's eye height, NOT the model's lip height, NOT a quarter of their face. If the charm is clearly taller than a single nostril, it is too large.
+    • PERCEPTUAL TEST: when viewing the final image, a viewer's eye should land on (1) the MODEL'S FACE first, (2) the CHAIN as a continuous line, (3) the CHARM as a small detail noticed only on closer inspection. If the charm reads as a focal point or dominant visual element, it is rendered too large — scale it DOWN until it reads as "a small accent on the chain."
+    • TIGHTENED CHAIN RATIO: charm width ≈ 5–6× the chain link thickness on canvas (tighter than prior rounds).
+    • FALLBACK RULE: if you cannot apply pixels precisely, satisfy the MODEL-NOSTRIL ANCHOR and the PERCEPTUAL TEST instead. These two together are sufficient to define the correct size.
+
     CHARM SIZE CALIBRATION TO CAMERA DISTANCE (CRITICAL CONSISTENCY)
     • The pixel range above is a CAMERA-DISTANCE-NORMALIZED baseline — it assumes the model is photographed at a moderate distance with their upper torso filling roughly half the frame.
     • If the reference image shows the model photographed CLOSER (face/neck dominates the frame), proportionally INCREASE the on-canvas charm pixel size so the charm reads at the same real-world physical scale. The 6–7 pixel cap may be exceeded ONLY in this close-zoom case, and only by the amount required to maintain proportional scale.
     • If the reference image shows the model photographed FURTHER AWAY (more body/background visible), proportionally DECREASE the on-canvas charm pixel size so the perceived charm scale stays consistent. The 6-pixel floor may go below ONLY in this far-zoom case, and only by the amount required to maintain proportional scale.
-    • Anchor to chain thickness: the charm width must always remain in fixed proportion to the chain's on-canvas thickness in the reference image. If the chain reads as thickness T on canvas, the charm width should be roughly 6–8× T regardless of overall image zoom.
+    • Anchor to chain thickness: the charm width must always remain in fixed proportion to the chain's on-canvas thickness in the reference image. If the chain reads as thickness T on canvas, the charm width should be roughly 5–6× T regardless of overall image zoom.
     • Anchor to real-world scale: the charm's real-world physical size is roughly that of a fingernail (~10–12mm tall). Render at whatever on-canvas pixel size produces that real-world scale given the model's apparent zoom level.
     • When in doubt, target the LOWER end of the acceptable range — small consistent under-shoot is far more forgiving than over-shoot.
     • HARD FAIL: identical on-canvas charm pixel size across two reference images showing the model at clearly different camera distances. The perceived charm size must stay consistent across the listing set, which means absolute pixel size must scale with model zoom.
@@ -6911,6 +6933,14 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • HARD FAIL ON SILVER SPECIFICALLY: silver engraving rendered with strong colour contrast against the silver body, or rendered in any darker grey/gunmetal/charcoal tone. Silver engravings must look like very faint depressions in the same silver metal.
     • Target contrast comes from DEPTH/SHADOW, not from colour difference: the engraving must be clearly legible at the rendered charm size because the groove geometry is visible, while the engraving fill colour stays unmistakably in the same metal colour family as the charm body. Past renderings have looked too flat — push the depth/shadow signal, NOT the colour darkness.
     • Visual reference: real laser-engraved brass/copper jewelry for gold charms; real laser-engraved Sterling Silver for silver charms — where the cut reveals essentially the same metal underneath but the recessed depth creates clearly visible groove geometry with crisp inner shadows.
+    SLOT-SPECIFIC ENGRAVING ADJUSTMENT (overrides the universal "err LIGHTER" bias for THIS SLOT ONLY)
+    • In this particular slot, engraving renderings have consistently been TOO LIGHT and TOO FLAT — the OPPOSITE of the universal block's lean. Override the universal "err LIGHTER" instruction here.
+    • Push recessed depth slightly DEEPER for this slot: target ~0.22–0.27mm rather than the universal 0.15–0.2mm. The inner-shadow geometry should be more pronounced — clearly readable 3D groove cut, not a faint surface mark.
+    • Push gold engraving fill colour slightly DARKER for this slot: target approximately a quarter-to-third-shade darker than the gold charm body (rather than the universal "at most a quarter-shade, often less"). Still in the same warm gold colour family — never charcoal/black — but with enough warm undertone to be clearly visible.
+    • Silver engraving fill colour in this slot stays unchanged from the universal silver rule — same silver tone as the charm body, depth carries legibility.
+    • Goal for this slot: engraving that is CLEARLY VISIBLE without being dark — with obvious 3D depth signal and a moderate (not stark, not invisible) warm-undertone fill on gold.
+
+
 
     GOLD CHARM COLOUR STANDARD (UNIFORM ACROSS ALL SLOTS — CRITICAL CONSISTENCY RULE)
     • Render the Charm/Pendant in authentic 14K YELLOW gold: a warm yellow tone with the tiniest hint of green-gold. NOT rose gold, NOT pink, NOT peach, NOT salmon, NOT red-orange, NOT copper-pink.
@@ -7038,7 +7068,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • The pixel range above is a CAMERA-DISTANCE-NORMALIZED baseline — it assumes the model is photographed at a moderate distance with their upper torso filling roughly half the frame.
     • If the reference image shows the model photographed CLOSER (face/neck dominates the frame), proportionally INCREASE the on-canvas charm pixel size so the charm reads at the same real-world physical scale. The 12–13 pixel cap may be exceeded ONLY in this close-zoom case, and only by the amount required to maintain proportional scale.
     • If the reference image shows the model photographed FURTHER AWAY (more body/background visible), proportionally DECREASE the on-canvas charm pixel size so the perceived charm scale stays consistent. The 12-pixel floor may go below ONLY in this far-zoom case, and only by the amount required to maintain proportional scale.
-    • Anchor to chain thickness: the charm width must always remain in fixed proportion to the chain's on-canvas thickness in the reference image. If the chain reads as thickness T on canvas, the charm width should be roughly 6–8× T regardless of overall image zoom.
+    • Anchor to chain thickness: the charm width must always remain in fixed proportion to the chain's on-canvas thickness in the reference image. If the chain reads as thickness T on canvas, the charm width should be roughly 5–6× T regardless of overall image zoom.
     • Anchor to real-world scale: the charm's real-world physical size is roughly that of a fingernail (~10–12mm tall). Render at whatever on-canvas pixel size produces that real-world scale given the model's apparent zoom level.
     • When in doubt, target the LOWER end of the acceptable range — small consistent under-shoot is far more forgiving than over-shoot.
     • HARD FAIL: identical on-canvas charm pixel size across two reference images showing the model at clearly different camera distances. The perceived charm size must stay consistent across the listing set, which means absolute pixel size must scale with model zoom.
@@ -7180,11 +7210,18 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • When generating the necklace chain ensure the fidelity of every single chain link and correct any link/chain imperfections.
     • Slightly vary the wardrobe.
 
+    MODEL-FEATURE & PERCEPTUAL ANCHORS (CRITICAL — APPLY TOGETHER WITH PIXEL TARGET ABOVE)
+    The pixel directive above has SATURATED — across many rounds, progressive pixel-number reductions have stopped reducing the actual rendered size, indicating the pixel number alone is no longer being respected. The following ADDITIONAL anchors MUST be applied alongside the pixel target:
+    • MODEL-NOSTRIL ANCHOR (CRITICAL): the rendered charm height on canvas should be APPROXIMATELY EQUAL to the height of ONE of the model's NOSTRIL OPENINGS. NOT the model's eye height, NOT the model's lip height, NOT a quarter of their face. If the charm is clearly taller than a single nostril, it is too large.
+    • PERCEPTUAL TEST: when viewing the final image, a viewer's eye should land on (1) the MODEL'S FACE first, (2) the CHAIN as a continuous line, (3) the CHARM as a small detail noticed only on closer inspection. If the charm reads as a focal point or dominant visual element, it is rendered too large — scale it DOWN until it reads as "a small accent on the chain."
+    • TIGHTENED CHAIN RATIO: charm width ≈ 5–6× the chain link thickness on canvas (tighter than prior rounds).
+    • FALLBACK RULE: if you cannot apply pixels precisely, satisfy the MODEL-NOSTRIL ANCHOR and the PERCEPTUAL TEST instead. These two together are sufficient to define the correct size.
+
     CHARM SIZE CALIBRATION TO CAMERA DISTANCE (CRITICAL CONSISTENCY)
     • The pixel range above is a CAMERA-DISTANCE-NORMALIZED baseline — it assumes the model is photographed at a moderate distance with their upper torso filling roughly half the frame.
     • If the reference image shows the model photographed CLOSER (face/neck dominates the frame), proportionally INCREASE the on-canvas charm pixel size so the charm reads at the same real-world physical scale. The 9–10 pixel cap may be exceeded ONLY in this close-zoom case, and only by the amount required to maintain proportional scale.
     • If the reference image shows the model photographed FURTHER AWAY (more body/background visible), proportionally DECREASE the on-canvas charm pixel size so the perceived charm scale stays consistent. The 9-pixel floor may go below ONLY in this far-zoom case, and only by the amount required to maintain proportional scale.
-    • Anchor to chain thickness: the charm width must always remain in fixed proportion to the chain's on-canvas thickness in the reference image. If the chain reads as thickness T on canvas, the charm width should be roughly 6–8× T regardless of overall image zoom.
+    • Anchor to chain thickness: the charm width must always remain in fixed proportion to the chain's on-canvas thickness in the reference image. If the chain reads as thickness T on canvas, the charm width should be roughly 5–6× T regardless of overall image zoom.
     • Anchor to real-world scale: the charm's real-world physical size is roughly that of a fingernail (~10–12mm tall). Render at whatever on-canvas pixel size produces that real-world scale given the model's apparent zoom level.
     • When in doubt, target the LOWER end of the acceptable range — small consistent under-shoot is far more forgiving than over-shoot.
     • HARD FAIL: identical on-canvas charm pixel size across two reference images showing the model at clearly different camera distances. The perceived charm size must stay consistent across the listing set, which means absolute pixel size must scale with model zoom.
@@ -7201,6 +7238,14 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • HARD FAIL ON SILVER SPECIFICALLY: silver engraving rendered with strong colour contrast against the silver body, or rendered in any darker grey/gunmetal/charcoal tone. Silver engravings must look like very faint depressions in the same silver metal.
     • Target contrast comes from DEPTH/SHADOW, not from colour difference: the engraving must be clearly legible at the rendered charm size because the groove geometry is visible, while the engraving fill colour stays unmistakably in the same metal colour family as the charm body. Past renderings have looked too flat — push the depth/shadow signal, NOT the colour darkness.
     • Visual reference: real laser-engraved brass/copper jewelry for gold charms; real laser-engraved Sterling Silver for silver charms — where the cut reveals essentially the same metal underneath but the recessed depth creates clearly visible groove geometry with crisp inner shadows.
+    SLOT-SPECIFIC ENGRAVING ADJUSTMENT (overrides the universal "err LIGHTER" bias for THIS SLOT ONLY)
+    • In this particular slot, engraving renderings have consistently been TOO LIGHT and TOO FLAT — the OPPOSITE of the universal block's lean. Override the universal "err LIGHTER" instruction here.
+    • Push recessed depth slightly DEEPER for this slot: target ~0.22–0.27mm rather than the universal 0.15–0.2mm. The inner-shadow geometry should be more pronounced — clearly readable 3D groove cut, not a faint surface mark.
+    • Push gold engraving fill colour slightly DARKER for this slot: target approximately a quarter-to-third-shade darker than the gold charm body (rather than the universal "at most a quarter-shade, often less"). Still in the same warm gold colour family — never charcoal/black — but with enough warm undertone to be clearly visible.
+    • Silver engraving fill colour in this slot stays unchanged from the universal silver rule — same silver tone as the charm body, depth carries legibility.
+    • Goal for this slot: engraving that is CLEARLY VISIBLE without being dark — with obvious 3D depth signal and a moderate (not stark, not invisible) warm-undertone fill on gold.
+
+
 
     GOLD CHARM COLOUR STANDARD (UNIFORM ACROSS ALL SLOTS — CRITICAL CONSISTENCY RULE)
     • Render the Charm/Pendant in authentic 14K YELLOW gold: a warm yellow tone with the tiniest hint of green-gold. NOT rose gold, NOT pink, NOT peach, NOT salmon, NOT red-orange, NOT copper-pink.
@@ -7371,11 +7416,18 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • When generating the necklace chain ensure the fidelity of every single chain link and correct any link/chain imperfections.
     • Vary the wardrobe.
 
+    MODEL-FEATURE & PERCEPTUAL ANCHORS (CRITICAL — APPLY TOGETHER WITH PIXEL TARGET ABOVE)
+    The pixel directive above has SATURATED — across many rounds, progressive pixel-number reductions have stopped reducing the actual rendered size, indicating the pixel number alone is no longer being respected. The following ADDITIONAL anchors MUST be applied alongside the pixel target:
+    • MODEL-NOSTRIL ANCHOR (CRITICAL): the rendered charm height on canvas should be APPROXIMATELY EQUAL to the height of ONE of the model's NOSTRIL OPENINGS. NOT the model's eye height, NOT the model's lip height, NOT a quarter of their face. If the charm is clearly taller than a single nostril, it is too large.
+    • PERCEPTUAL TEST: when viewing the final image, a viewer's eye should land on (1) the MODEL'S FACE first, (2) the CHAIN as a continuous line, (3) the CHARM as a small detail noticed only on closer inspection. If the charm reads as a focal point or dominant visual element, it is rendered too large — scale it DOWN until it reads as "a small accent on the chain."
+    • TIGHTENED CHAIN RATIO: charm width ≈ 5–6× the chain link thickness on canvas (tighter than prior rounds).
+    • FALLBACK RULE: if you cannot apply pixels precisely, satisfy the MODEL-NOSTRIL ANCHOR and the PERCEPTUAL TEST instead. These two together are sufficient to define the correct size.
+
     CHARM SIZE CALIBRATION TO CAMERA DISTANCE (CRITICAL CONSISTENCY)
     • The pixel range above is a CAMERA-DISTANCE-NORMALIZED baseline — it assumes the model is photographed at a moderate distance with their upper torso filling roughly half the frame.
     • If the reference image shows the model photographed CLOSER (face/neck dominates the frame), proportionally INCREASE the on-canvas charm pixel size so the charm reads at the same real-world physical scale. The 8–9 pixel cap may be exceeded ONLY in this close-zoom case, and only by the amount required to maintain proportional scale.
     • If the reference image shows the model photographed FURTHER AWAY (more body/background visible), proportionally DECREASE the on-canvas charm pixel size so the perceived charm scale stays consistent. The 8-pixel floor may go below ONLY in this far-zoom case, and only by the amount required to maintain proportional scale.
-    • Anchor to chain thickness: the charm width must always remain in fixed proportion to the chain's on-canvas thickness in the reference image. If the chain reads as thickness T on canvas, the charm width should be roughly 6–8× T regardless of overall image zoom.
+    • Anchor to chain thickness: the charm width must always remain in fixed proportion to the chain's on-canvas thickness in the reference image. If the chain reads as thickness T on canvas, the charm width should be roughly 5–6× T regardless of overall image zoom.
     • Anchor to real-world scale: the charm's real-world physical size is roughly that of a fingernail (~10–12mm tall). Render at whatever on-canvas pixel size produces that real-world scale given the model's apparent zoom level.
     • When in doubt, target the LOWER end of the acceptable range — small consistent under-shoot is far more forgiving than over-shoot.
     • HARD FAIL: identical on-canvas charm pixel size across two reference images showing the model at clearly different camera distances. The perceived charm size must stay consistent across the listing set, which means absolute pixel size must scale with model zoom.
@@ -7392,6 +7444,14 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • HARD FAIL ON SILVER SPECIFICALLY: silver engraving rendered with strong colour contrast against the silver body, or rendered in any darker grey/gunmetal/charcoal tone. Silver engravings must look like very faint depressions in the same silver metal.
     • Target contrast comes from DEPTH/SHADOW, not from colour difference: the engraving must be clearly legible at the rendered charm size because the groove geometry is visible, while the engraving fill colour stays unmistakably in the same metal colour family as the charm body. Past renderings have looked too flat — push the depth/shadow signal, NOT the colour darkness.
     • Visual reference: real laser-engraved brass/copper jewelry for gold charms; real laser-engraved Sterling Silver for silver charms — where the cut reveals essentially the same metal underneath but the recessed depth creates clearly visible groove geometry with crisp inner shadows.
+    SLOT-SPECIFIC ENGRAVING ADJUSTMENT (overrides the universal "err LIGHTER" bias for THIS SLOT ONLY)
+    • In this particular slot, engraving renderings have consistently been TOO LIGHT and TOO FLAT — the OPPOSITE of the universal block's lean. Override the universal "err LIGHTER" instruction here.
+    • Push recessed depth slightly DEEPER for this slot: target ~0.22–0.27mm rather than the universal 0.15–0.2mm. The inner-shadow geometry should be more pronounced — clearly readable 3D groove cut, not a faint surface mark.
+    • Push gold engraving fill colour slightly DARKER for this slot: target approximately a quarter-to-third-shade darker than the gold charm body (rather than the universal "at most a quarter-shade, often less"). Still in the same warm gold colour family — never charcoal/black — but with enough warm undertone to be clearly visible.
+    • Silver engraving fill colour in this slot stays unchanged from the universal silver rule — same silver tone as the charm body, depth carries legibility.
+    • Goal for this slot: engraving that is CLEARLY VISIBLE without being dark — with obvious 3D depth signal and a moderate (not stark, not invisible) warm-undertone fill on gold.
+
+
 
     GOLD CHARM COLOUR STANDARD (UNIFORM ACROSS ALL SLOTS — CRITICAL CONSISTENCY RULE)
     • Render the Charm/Pendant in authentic 14K YELLOW gold: a warm yellow tone with the tiniest hint of green-gold. NOT rose gold, NOT pink, NOT peach, NOT salmon, NOT red-orange, NOT copper-pink.
