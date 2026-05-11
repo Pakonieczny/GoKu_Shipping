@@ -9018,6 +9018,137 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     }
 
     // ------------------------------------------------------------
+    // Client-side verification of empty Set_N folders.
+    //
+    // The server-side scan_empty_sets endpoint relies on Firestore counters
+    // and metadata, which can drift from actual Firebase Storage state in
+    // two ways:
+    //   1. PHANTOM ALLOCATIONS: when batch_submit fails AFTER alloc_set
+    //      has already incremented the counter, the counter says "Set_N
+    //      exists" but Storage has no folder there. Server scan misses
+    //      these.
+    //   2. PARTIAL CONTENT: a folder may have a manifest.json (created at
+    //      alloc time) but no Slot_*.png files (because generation never
+    //      ran). Server may count these as "populated" based on manifest
+    //      presence, but they actually need filling.
+    //
+    // This function walks [1, highestN] and checks each Set_N folder
+    // directly in Storage. Slower (parallelized to ~8 concurrent listAll
+    // calls) but accurate. Returns the actual empty list to fill.
+    //
+    // Returns: { empty, populatedCount, approvedCount, phantomCount }
+    // where `empty` is sorted ascending by setN.
+    // ------------------------------------------------------------
+    async function _verifyEmptySetsClientSide(category, highestN, onProgress) {
+      if (!highestN || highestN <= 0) {
+        return { empty: [], populatedCount: 0, approvedCount: 0, phantomCount: 0 };
+      }
+
+      // 1) Get the set of already-approved Set_N for this category by
+      //    listing Completed_Listing_Sets once. Approved set folders are
+      //    named `${category}_Set_${N}` per the move logic at line ~5015.
+      const approvedSet = new Set();
+      try {
+        const completedList = await listAll(
+          ref(storage, `${ROOT}/Generated_Listing_Sets/Completed_Listing_Sets`)
+        );
+        const prefix = `${category}_Set_`;
+        for (const folderRef of completedList.prefixes) {
+          if (folderRef.name.startsWith(prefix)) {
+            const n = parseInt(folderRef.name.substring(prefix.length), 10);
+            if (!isNaN(n)) approvedSet.add(n);
+          }
+        }
+      } catch (e) {
+        console.warn("[verifyEmpty] Could not list Completed_Listing_Sets:", e);
+      }
+
+      // 2) Get the set of Set_N folders that ACTUALLY EXIST in Storage
+      //    under Ready_To_List (one listAll call). Anything in [1, highestN]
+      //    not in this set is a phantom allocation.
+      const existingSet = new Set();
+      try {
+        const list = await listAll(ref(storage, `${ROOT}/${category}/Ready_To_List`));
+        for (const folderRef of list.prefixes) {
+          const m = folderRef.name.match(/^Set_(\d+)$/);
+          if (m) existingSet.add(parseInt(m[1], 10));
+        }
+      } catch (e) {
+        console.warn("[verifyEmpty] Could not list Ready_To_List:", e);
+      }
+
+      // 3) For each N in [1, highestN], classify:
+      //      approved        → skip
+      //      not in existing → phantom empty (folder never existed)
+      //      in existing & has Slot_*.png → populated
+      //      in existing & no Slot_*.png → empty (manifest only, etc.)
+      const reallyEmpty = [];
+      let populatedCount = 0;
+      let approvedCount = 0;
+      let phantomCount = 0;
+      let done = 0;
+
+      const ns = [];
+      for (let n = 1; n <= highestN; n++) ns.push(n);
+
+      const CONCURRENCY = 8;
+      let nextIdx = 0;
+
+      async function checkOne(n) {
+        try {
+          if (approvedSet.has(n)) {
+            approvedCount++;
+          } else if (!existingSet.has(n)) {
+            // Phantom: counter says it's allocated, but Storage has no folder.
+            phantomCount++;
+            reallyEmpty.push({
+              setN: n,
+              outputBasePath: `${ROOT}/${category}/Ready_To_List/Set_${n}`,
+            });
+          } else {
+            // Folder exists — check for actual slot images.
+            const folderPath = `${ROOT}/${category}/Ready_To_List/Set_${n}`;
+            const listResult = await listAll(ref(storage, folderPath));
+            const hasSlotImages = listResult.items.some(
+              (item) => /Slot_\d+\.png$/i.test(item.name)
+            );
+            if (hasSlotImages) {
+              populatedCount++;
+            } else {
+              reallyEmpty.push({ setN: n, outputBasePath: folderPath });
+            }
+          }
+        } catch (e) {
+          console.warn(`[verifyEmpty] Could not check Set_${n}:`, e);
+          // On error, treat as empty (safer to retry than to skip).
+          reallyEmpty.push({
+            setN: n,
+            outputBasePath: `${ROOT}/${category}/Ready_To_List/Set_${n}`,
+          });
+        }
+        done++;
+        if (onProgress) {
+          try { onProgress(done, highestN); } catch (_) {}
+        }
+      }
+
+      async function worker() {
+        while (nextIdx < ns.length) {
+          const n = ns[nextIdx++];
+          await checkOne(n);
+        }
+      }
+
+      const workers = [];
+      for (let i = 0; i < CONCURRENCY; i++) workers.push(worker());
+      await Promise.all(workers);
+
+      reallyEmpty.sort((a, b) => a.setN - b.setN);
+
+      return { empty: reallyEmpty, populatedCount, approvedCount, phantomCount };
+    }
+
+    // ------------------------------------------------------------
     // Resume Empty Sets — recovery flow for partially-failed batches
     //
     // When a 295-set submission only fully populates ~100 of those Set_N
@@ -9058,38 +9189,81 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       _setBatchProgress(0, 1, `Scanning ${category} for empty sets…`);
 
       try {
-        // 1) Scan
+        // 1) Server-side scan (we use this only for the reliable highestN
+        //    counter — the populated/empty figures are not trustworthy if
+        //    a prior batch_submit failed after alloc_set, see comments on
+        //    _verifyEmptySetsClientSide above).
         const scan = await postJson("geminiImageProxy", {
           kind: "scan_empty_sets",
           activeCategory: category,
         });
-        const empty = Array.isArray(scan?.empty) ? scan.empty : [];
         const highestN = Number(scan?.highestN || 0);
-        const populatedCount = Number(scan?.populatedCount || 0);
-        const approvedCount = Number(scan?.approvedCount || 0);
+        const serverEmptyCount = Array.isArray(scan?.empty) ? scan.empty.length : 0;
+        const serverPopulatedCount = Number(scan?.populatedCount || 0);
+        const serverApprovedCount = Number(scan?.approvedCount || 0);
+
+        if (highestN <= 0) {
+          alert(`No sets have been allocated yet for ${category}. Nothing to resume.`);
+          return;
+        }
+
+        // 2) Client-side verification — walks every Set_N in [1, highestN]
+        //    against actual Firebase Storage. Catches phantom allocations
+        //    (counter bumped but no folder created, e.g., after a failed
+        //    batch_submit) that the server-side counter scan misses.
+        _setBatchProgress(0, highestN, `Verifying ${highestN} folders against Firebase storage…`);
+        const verified = await _verifyEmptySetsClientSide(
+          category,
+          highestN,
+          (done, total) => {
+            // Throttle UI updates so we don't repaint on every single resolution.
+            if (done === total || done % 5 === 0) {
+              _setBatchProgress(done, total, `Verifying folder ${done}/${total}…`);
+            }
+          }
+        );
+        const empty = verified.empty;
+        const populatedCount = verified.populatedCount;
+        const approvedCount = verified.approvedCount;
+        const phantomCount = verified.phantomCount;
 
         if (empty.length === 0) {
           alert(
-            `No empty sets found for ${category}.\n\n` +
+            `No empty sets found for ${category} (verified by direct storage scan).\n\n` +
             `Highest allocated: Set_${highestN}\n` +
-            `Populated: ${populatedCount}\n` +
+            `Populated (with slot images): ${populatedCount}\n` +
             `Already approved (skipped): ${approvedCount}\n` +
             `Empty: 0`
           );
           return;
         }
 
-        // 2) Confirm
+        // 3) Confirm with verified numbers — include discrepancy with server
+        //    so the user sees that phantom allocations were caught.
         const setNs = empty.map((e) => e.setN);
         const minN = setNs[0];
         const maxN = setNs[setNs.length - 1];
+
+        const discrepancyNote = (phantomCount > 0)
+          ? `\n⚠ ${phantomCount} phantom allocation(s) detected — counter says ` +
+            `they exist but Firebase storage has no folder. Typical after ` +
+            `batch submission failures.\n`
+          : '';
+
+        const serverMismatchNote = (Math.abs(serverEmptyCount - empty.length) > 0)
+          ? `\n(Server counter reported only ${serverEmptyCount} empty; direct ` +
+            `storage scan found ${empty.length}. Trusting the storage scan.)\n`
+          : '';
+
         const proceed = confirm(
-          `Scan results for ${category}:\n\n` +
+          `Verified scan results for ${category} (direct storage check):\n\n` +
           `Highest allocated: Set_${highestN}\n` +
-          `Populated (with content): ${populatedCount}\n` +
+          `Populated (with slot images): ${populatedCount}\n` +
           `Already approved (skipped): ${approvedCount}\n` +
-          `Empty (to be filled): ${empty.length}\n\n` +
-          `Empty set range: Set_${minN} … Set_${maxN}\n\n` +
+          `Empty (to be filled): ${empty.length}` +
+          discrepancyNote +
+          serverMismatchNote +
+          `\n\nEmpty set range: Set_${minN} … Set_${maxN}\n\n` +
           `Click OK to submit ${empty.length} batch jobs (one per empty set) using ` +
           `fresh charms from the pool. Populated and already-approved sets will NOT be touched.`
         );
