@@ -2107,6 +2107,7 @@
               <div class="counter-label">Approved buffer</div>
               <div class="counter-value" id="completedSetsCounter">
                 Completed Sets Available: <span style="font-weight: bold; font-size: 15px;">0</span>
+                <div id="completedSetsBreakdown" style="color: var(--muted); font-size: 11px; margin-top: 3px; line-height: 1.4; letter-spacing: 0.2px; font-family: var(--font-mono);"></div>
               </div>
               <div class="muted" style="margin-top: 4px; font-size: 11px;">downloads as ZIP · files remain in <code>Completed_Listing_Sets</code> for external pickup</div>
             </div>
@@ -4275,17 +4276,56 @@ The output must look like the input image with ONLY the user's requested change 
     }
 
     async function updateCompletedSetsCounter() {
-        const counterSpan = document.querySelector("#completedSetsCounter span");
+        // Use direct-child selector so we don't accidentally pick up text from
+        // inside the breakdown div (the breakdown contains no <span>, but be explicit).
+        const counterSpan = document.querySelector("#completedSetsCounter > span");
+        const breakdownEl = document.getElementById("completedSetsBreakdown");
         if (!counterSpan) return;
         try {
             await ensureStorageSignedIn();
             const folderPath = `${ROOT}/Generated_Listing_Sets/Completed_Listing_Sets`;
             const baseRef = ref(storage, folderPath);
             const res = await listAll(baseRef);
-            counterSpan.textContent = res.prefixes.length; // Counting folders
+
+            // Parse each subfolder name (format: "Category_Set_N") to count per category.
+            // Folder names look like "Regular_Necklace_Set_17", "Beady_Necklace_Set_3", etc.
+            // The category prefix is everything before the final "_Set_<digits>".
+            const counts = {};
+            for (const prefix of res.prefixes) {
+                const m = prefix.name.match(/^(.+)_Set_\d+$/);
+                const category = m ? m[1] : "Other";
+                counts[category] = (counts[category] || 0) + 1;
+            }
+
+            counterSpan.textContent = res.prefixes.length; // Total across all categories
+
+            if (breakdownEl) {
+                // Short display names — keep the line compact while staying readable.
+                const SHORT = {
+                    "Beady_Necklace":   "Beady",
+                    "Regular_Necklace": "Regular",
+                    "Stud_Earrings":    "Stud",
+                    "Hoop_Earrings":    "Hoop",
+                    "Charms":           "Charms",
+                    "Bracelets":        "Bracelets",
+                };
+                // Stable category order from GENERATABLE_CATEGORIES — always show
+                // every generatable category (even at 0) so the layout doesn't
+                // jitter as categories fill up.
+                const ordered = Array.from(GENERATABLE_CATEGORIES).filter(c => SHORT[c]);
+                const parts = ordered.map(c => `${SHORT[c]}: ${counts[c] || 0}`);
+                // Surface any unrecognized prefix found in storage so nothing is
+                // silently hidden from the total.
+                const accountedFor = new Set(ordered);
+                for (const c of Object.keys(counts)) {
+                    if (!accountedFor.has(c)) parts.push(`${c}: ${counts[c]}`);
+                }
+                breakdownEl.textContent = parts.join("  ·  ");
+            }
         } catch (e) {
             console.warn("Failed to get completed sets count:", e);
             counterSpan.textContent = "Error";
+            if (breakdownEl) breakdownEl.textContent = "";
         }
     }
 
@@ -9792,7 +9832,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       _pipelineRunning = true;
       try {
         // Buffer count and archive count: read from existing counters
-        const bufferText = document.querySelector('#completedSetsCounter span')?.textContent?.trim() || '—';
+        const bufferText = document.querySelector('#completedSetsCounter > span')?.textContent?.trim() || '—';
         const archiveText = document.querySelector('#totalAllTimeCounter span')?.textContent?.trim() || '—';
         document.getElementById('pipelineBuffer').textContent = bufferText;
         document.getElementById('pipelineArchive').textContent = archiveText;
