@@ -9056,14 +9056,22 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       if (!highestN || highestN <= 0) {
         return {
           empty: [], populatedCount: 0, approvedCount: 0,
-          phantomCount: 0, partialCount: 0,
+          phantomCount: 0, partialCount: 0, fakeApprovedCount: 0,
         };
       }
 
       // 1) Get the set of already-approved Set_N for this category by
-      //    listing Completed_Listing_Sets once. Approved set folders are
+      //    listing Completed_Listing_Sets once. Approved folders are
       //    named `${category}_Set_${N}` per the move logic at line ~5015.
-      const approvedSet = new Set();
+      //    Collect FOLDER REFS (not just names) because we'll verify each
+      //    folder's content in step 2.5 — a folder existing in
+      //    Completed_Listing_Sets doesn't prove it has real generated
+      //    content. The approve flow moves whatever was in
+      //    Ready_To_List/Set_N to Completed_Listing_Sets, including
+      //    partial-failure folders that have only the 1-2 static "copy"
+      //    slots. These false-approvals would otherwise get skipped from
+      //    the fill list when they actually need re-generation.
+      const approvedRefs = new Map();  // setN -> folderRef
       try {
         const completedList = await listAll(
           ref(storage, `${ROOT}/Generated_Listing_Sets/Completed_Listing_Sets`)
@@ -9072,7 +9080,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         for (const folderRef of completedList.prefixes) {
           if (folderRef.name.startsWith(prefix)) {
             const n = parseInt(folderRef.name.substring(prefix.length), 10);
-            if (!isNaN(n)) approvedSet.add(n);
+            if (!isNaN(n)) approvedRefs.set(n, folderRef);
           }
         }
       } catch (e) {
@@ -9091,6 +9099,81 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         }
       } catch (e) {
         console.warn("[verifyEmpty] Could not list Ready_To_List:", e);
+      }
+
+      // Parallelism for all Storage verification stages below.
+      const CONCURRENCY = 8;
+
+      // 2.5) Verify content of each approved folder in Completed_Listing_Sets.
+      //      Same threshold as Ready_To_List folders: ≥6 unique slot images
+      //      = real approval; <6 = fake-approved (the approve flow moved an
+      //      already-empty folder, so we need to re-fill it in place at the
+      //      Completed_Listing_Sets path).
+      const approvedSet = new Set();          // truly approved (≥6 slots)
+      const fakeApprovedEntries = [];          // false-approvals to re-fill
+      {
+        const approvedNs = Array.from(approvedRefs.keys());
+        let aDone = 0;
+        let aIdx = 0;
+
+        async function checkApprovedOne(n) {
+          const folderRef = approvedRefs.get(n);
+          try {
+            const list = await listAll(folderRef);
+            const slotIndices = new Set();
+            for (const item of list.items) {
+              const m = item.name.match(/^Slot_(\d+)\.[a-z0-9]+$/i);
+              if (m) slotIndices.add(parseInt(m[1], 10));
+            }
+            if (slotIndices.size >= MIN_SLOT_IMAGES_FOR_POPULATED) {
+              approvedSet.add(n);
+            } else {
+              // Fake-approved: was moved to Completed_Listing_Sets but has
+              // <MIN unique slot images. Target this folder for re-fill in
+              // place (outputBasePath points to the Completed location, not
+              // the original Ready_To_List path which no longer exists).
+              fakeApprovedEntries.push({
+                setN: n,
+                outputBasePath: `${ROOT}/Generated_Listing_Sets/Completed_Listing_Sets/${category}_Set_${n}`,
+                reason: "fakeApproved",
+                slotsFound: slotIndices.size,
+                slotIndices: Array.from(slotIndices).sort((a, b) => a - b),
+                totalFiles: list.items.length,
+              });
+              console.log(
+                `[verifyEmpty] Set_${n} FAKE-APPROVED in Completed_Listing_Sets ` +
+                `with ${slotIndices.size} unique slot(s): ` +
+                `[${Array.from(slotIndices).sort((a,b)=>a-b).join(', ')}]  ` +
+                `(${list.items.length} total files in folder)`
+              );
+            }
+          } catch (e) {
+            console.warn(`[verifyEmpty] Could not check approved Set_${n}:`, e);
+            // On error, conservatively trust the approval to avoid
+            // accidentally re-filling something that's actually complete.
+            approvedSet.add(n);
+          }
+          aDone++;
+          if (onProgress) {
+            try { onProgress(aDone, approvedNs.length, "approved"); } catch (_) {}
+          }
+        }
+
+        async function approvedWorker() {
+          while (aIdx < approvedNs.length) {
+            const n = approvedNs[aIdx++];
+            await checkApprovedOne(n);
+          }
+        }
+
+        if (approvedNs.length > 0) {
+          if (onProgress) {
+            try { onProgress(0, approvedNs.length, "approved"); } catch (_) {}
+          }
+          const aWorkers = [];
+          for (let i = 0; i < CONCURRENCY; i++) aWorkers.push(approvedWorker());
+          await Promise.all(aWorkers);
+        }
       }
 
       // 3) For each N in [1, highestN], classify:
@@ -9115,7 +9198,6 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       const ns = [];
       for (let n = 1; n <= highestN; n++) ns.push(n);
 
-      const CONCURRENCY = 8;
       let nextIdx = 0;
 
       async function checkOne(n) {
@@ -9131,17 +9213,32 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
               reason: "phantom",
             });
           } else {
-            // Folder exists — count actual slot image files. Requires at
-            // least MIN_SLOT_IMAGES_FOR_POPULATED to count as populated,
-            // because empty folders always have 1-2 static "copy" slot files
-            // already in them at alloc time.
+            // Folder exists — count UNIQUE slot indices via permissive
+            // extension match. Tracking unique indices (not file count)
+            // handles the edge case of duplicate slot files, and we accept
+            // any image extension because gen outputs may be PNG, JPG, or
+            // WebP depending on the pipeline. Auxiliary files like
+            // `Slot_1_input.png` are deliberately ignored (no boundary
+            // between digits and extension).
             const folderPath = `${ROOT}/${category}/Ready_To_List/Set_${n}`;
             const listResult = await listAll(ref(storage, folderPath));
-            const slotFileCount = listResult.items.filter(
-              (item) => /Slot_\d+\.png$/i.test(item.name)
-            ).length;
+            const slotIndices = new Set();
+            for (const item of listResult.items) {
+              const m = item.name.match(/^Slot_(\d+)\.[a-z0-9]+$/i);
+              if (m) slotIndices.add(parseInt(m[1], 10));
+            }
+            const slotFileCount = slotIndices.size;
             if (slotFileCount >= MIN_SLOT_IMAGES_FOR_POPULATED) {
               populatedCount++;
+              // Log borderline cases so user can spot-check populated
+              // folders that are right at the threshold.
+              if (slotFileCount <= MIN_SLOT_IMAGES_FOR_POPULATED + 1) {
+                console.log(
+                  `[verifyEmpty] Set_${n} populated with ${slotFileCount} unique slot(s): ` +
+                  `[${Array.from(slotIndices).sort((a,b)=>a-b).join(', ')}]  ` +
+                  `(${listResult.items.length} total files in folder)`
+                );
+              }
             } else {
               partialCount++;
               reallyEmpty.push({
@@ -9149,7 +9246,14 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
                 outputBasePath: folderPath,
                 reason: "partial",
                 slotsFound: slotFileCount,
+                slotIndices: Array.from(slotIndices).sort((a,b)=>a-b),
+                totalFiles: listResult.items.length,
               });
+              console.log(
+                `[verifyEmpty] Set_${n} PARTIAL with ${slotFileCount} unique slot(s): ` +
+                `[${Array.from(slotIndices).sort((a,b)=>a-b).join(', ')}]  ` +
+                `(${listResult.items.length} total files in folder)`
+              );
             }
           }
         } catch (e) {
@@ -9178,6 +9282,14 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       for (let i = 0; i < CONCURRENCY; i++) workers.push(worker());
       await Promise.all(workers);
 
+      // Append fake-approved entries (from step 2.5) to the empty list.
+      // These are folders that exist in Completed_Listing_Sets but have
+      // <MIN slot images — outputBasePath points to the Completed location
+      // so the resume submission fills them in place.
+      for (const fa of fakeApprovedEntries) {
+        reallyEmpty.push(fa);
+      }
+
       reallyEmpty.sort((a, b) => a.setN - b.setN);
 
       return {
@@ -9186,6 +9298,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         approvedCount,
         phantomCount,
         partialCount,
+        fakeApprovedCount: fakeApprovedEntries.length,
       };
     }
 
@@ -9252,14 +9365,23 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         //    against actual Firebase Storage. Catches phantom allocations
         //    (counter bumped but no folder created, e.g., after a failed
         //    batch_submit) that the server-side counter scan misses.
-        _setBatchProgress(0, highestN, `Verifying ${highestN} folders against Firebase storage…`);
+        _setBatchProgress(0, highestN, `Verifying folders against Firebase storage…`);
         const verified = await _verifyEmptySetsClientSide(
           category,
           highestN,
-          (done, total) => {
+          (done, total, phase) => {
+            // The verification function calls onProgress for two phases:
+            //   "approved" — checking content of folders in Completed_Listing_Sets
+            //   (no phase passed) — checking Ready_To_List/Set_N folders
             // Throttle UI updates so we don't repaint on every single resolution.
             if (done === total || done % 5 === 0) {
-              _setBatchProgress(done, total, `Verifying folder ${done}/${total}…`);
+              if (phase === "approved") {
+                _setBatchProgress(done, total,
+                  `Verifying approved folder content ${done}/${total}…`);
+              } else {
+                _setBatchProgress(done, total,
+                  `Verifying Ready_To_List folder ${done}/${total}…`);
+              }
             }
           }
         );
@@ -9268,6 +9390,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         const approvedCount = verified.approvedCount;
         const phantomCount = verified.phantomCount;
         const partialCount = verified.partialCount;
+        const fakeApprovedCount = verified.fakeApprovedCount;
 
         if (empty.length === 0) {
           alert(
@@ -9280,11 +9403,34 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
           return;
         }
 
-        // 3) Confirm with verified numbers — include discrepancy with server
-        //    so the user sees that phantom allocations were caught.
+        // 3) Confirm with verified numbers — show actual Set_N values
+        //    (not just min/max range) so the user can spot-check against
+        //    Firebase. If the empty list is large, truncate sensibly.
         const setNs = empty.map((e) => e.setN);
         const minN = setNs[0];
         const maxN = setNs[setNs.length - 1];
+
+        const MAX_INLINE_SETS = 30;
+        const setNsDisplay = (setNs.length <= MAX_INLINE_SETS)
+          ? setNs.map((n) => `Set_${n}`).join(", ")
+          : setNs.slice(0, 20).map((n) => `Set_${n}`).join(", ") +
+            `,  …(+${setNs.length - 25} more)…,  ` +
+            setNs.slice(-5).map((n) => `Set_${n}`).join(", ");
+
+        // Detailed breakdown of partial / fake-approved folders so the
+        // user can verify exactly what slot indices are present.
+        const partialsList = empty.filter(
+          (e) => e.reason === "partial" || e.reason === "fakeApproved"
+        );
+        const partialsDetail = partialsList.length > 0
+          ? `\nDetails (slot indices found):\n` +
+            partialsList.slice(0, 15).map((e) => {
+              const marker = e.reason === "fakeApproved" ? "[FAKE-APPROVED]" : "[partial]";
+              return `   • Set_${e.setN} ${marker}: ${e.slotsFound} slot(s) [${(e.slotIndices || []).join(", ")}]` +
+                ` (${e.totalFiles ?? "?"} total files)`;
+            }).join("\n") +
+            (partialsList.length > 15 ? `\n   …(+${partialsList.length - 15} more, see console)` : "")
+          : "";
 
         const breakdownLines = [];
         if (phantomCount > 0) {
@@ -9294,7 +9440,12 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         }
         if (partialCount > 0) {
           breakdownLines.push(
-            `   • ${partialCount} partial (folder exists but has <${MIN_SLOT_IMAGES_FOR_POPULATED} slot images — likely only the 1-2 static "copy" slots that get written at alloc time)`
+            `   • ${partialCount} partial (folder exists in Ready_To_List but has <${MIN_SLOT_IMAGES_FOR_POPULATED} slot images — likely only the 1-2 static "copy" slots)`
+          );
+        }
+        if (fakeApprovedCount > 0) {
+          breakdownLines.push(
+            `   • ${fakeApprovedCount} FAKE-APPROVED ⚠ (folder is in Completed_Listing_Sets — i.e., was "approved" — but has <${MIN_SLOT_IMAGES_FOR_POPULATED} slot images inside. The approve flow moved an empty/partial folder there. Will be re-filled in place.)`
           );
         }
         const breakdownNote = breakdownLines.length
@@ -9306,15 +9457,20 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
             `storage scan found ${empty.length}. Trusting the storage scan.)\n`
           : '';
 
+        const consoleHint = `\n💡 Open the browser console (F12 / Cmd+Opt+I) to see per-folder ` +
+          `slot-index details. Search for "[verifyEmpty]" to verify which slots each folder has.\n`;
+
         const proceed = confirm(
           `Verified scan results for ${category} (direct storage check):\n\n` +
           `Highest allocated: Set_${highestN}\n` +
-          `Populated (≥${MIN_SLOT_IMAGES_FOR_POPULATED} slot images): ${populatedCount}\n` +
+          `Populated (≥${MIN_SLOT_IMAGES_FOR_POPULATED} unique slot images): ${populatedCount}\n` +
           `Already approved (skipped): ${approvedCount}\n` +
           `Empty (to be filled): ${empty.length}` +
           breakdownNote +
           serverMismatchNote +
-          `\nEmpty set range: Set_${minN} … Set_${maxN}\n\n` +
+          partialsDetail +
+          consoleHint +
+          `\nEmpty Set_Ns: ${setNsDisplay}\n\n` +
           `Click OK to submit ${empty.length} batch jobs (one per empty set) using ` +
           `fresh charms from the pool. Populated and already-approved sets will NOT be touched.`
         );
