@@ -5235,6 +5235,46 @@ function updateApproveButtonState() {
           return j;
         }
 
+        // ---- Rate-limit handling for Gemini Files API ----
+        // The Gemini Files API (used by batch_submit's resumable JSONL upload) has a
+        // per-minute rate limit that is SEPARATE from — and tighter than — the
+        // batchGenerateContent quota. Even on paid Tier 3 accounts, hammering many
+        // batch_submit calls back-to-back triggers HTTP 429 on the resumable-start
+        // step. These helpers add stagger between submissions plus retry-with-
+        // exponential-backoff so the loop recovers gracefully when the rate-limit
+        // window clears.
+        const CHUNK_STAGGER_MS = 1500;                          // ~40 chunks/min peak — safe under Files API ceiling
+        const RATE_LIMIT_BACKOFF_MS = [30000, 60000, 120000];   // 30s, 60s, 120s
+        const RATE_LIMIT_MAX_RETRIES = RATE_LIMIT_BACKOFF_MS.length;
+
+        function _isRateLimitError(err) {
+          const msg = String(err?.message || err || "");
+          // Match HTTP 429, "RESOURCE_EXHAUSTED", and Google's quota phrasing.
+          return /\b429\b|RESOURCE_EXHAUSTED|exceeded your current quota|rate.?limit/i.test(msg);
+        }
+
+        // Submit one chunk via postJson, automatically retrying on HTTP 429 with
+        // exponential backoff. `onWait(seconds, attemptNumber, maxAttempts)` is
+        // called before each wait so callers can update progress UI. Non-429
+        // errors throw immediately without retrying.
+        async function _submitChunkWithRetry(path, body, onWait) {
+          let lastErr = null;
+          for (let attempt = 0; attempt <= RATE_LIMIT_MAX_RETRIES; attempt++) {
+            try {
+              return await postJson(path, body);
+            } catch (err) {
+              lastErr = err;
+              if (!_isRateLimitError(err) || attempt === RATE_LIMIT_MAX_RETRIES) throw err;
+              const waitMs = RATE_LIMIT_BACKOFF_MS[attempt];
+              if (typeof onWait === "function") {
+                try { onWait(Math.round(waitMs / 1000), attempt + 1, RATE_LIMIT_MAX_RETRIES); } catch (_) {}
+              }
+              await sleep(waitMs);
+            }
+          }
+          throw lastErr;
+        }
+
         const GEMINI_FN = "geminiImageProxy";
         const GEMINI_BG_FN = "geminiImageProxy-background";
 
@@ -8895,13 +8935,20 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
             : `lg1-${category}-${effectiveCount}sets-${stamp}-part${c + 1}of${effectiveChunkCount}`;
 
           try {
-            const resp = await postJson("geminiImageProxy", {
-              kind: "batch_submit",
-              sets: slice,
-              imageSize: BATCH_DEFAULT_IMAGE_SIZE,
-              displayName: dn,
-              sessionId,
-            });
+            const resp = await _submitChunkWithRetry(
+              "geminiImageProxy",
+              {
+                kind: "batch_submit",
+                sets: slice,
+                imageSize: BATCH_DEFAULT_IMAGE_SIZE,
+                displayName: dn,
+                sessionId,
+              },
+              (secs, attempt, maxAttempts) => {
+                _setBatchProgress(c, effectiveChunkCount,
+                  `Rate-limited on chunk ${c + 1}; waiting ${secs}s before retry ${attempt}/${maxAttempts}…`);
+              }
+            );
             submitted.push(resp);
           } catch (chunkErr) {
             console.error(`[batch_submit chunk ${c+1}] failed`, chunkErr);
@@ -8909,6 +8956,12 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
             // Don't abort the whole submission — keep going so that
             // remaining chunks still get submitted. Each chunk is an
             // independent Gemini batch.
+          }
+
+          // Stagger between chunks so we don't burst the Gemini Files API
+          // rate limit. Skip after the last chunk.
+          if (c < effectiveChunkCount - 1) {
+            await sleep(CHUNK_STAGGER_MS);
           }
         }
 
@@ -9130,17 +9183,29 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
             : `lg1-${category}-resume${effectiveCount}sets-${stamp}-part${c + 1}of${effectiveChunkCount}`;
 
           try {
-            const resp = await postJson("geminiImageProxy", {
-              kind: "batch_submit",
-              sets: slice,
-              imageSize: BATCH_DEFAULT_IMAGE_SIZE,
-              displayName: dn,
-              sessionId,
-            });
+            const resp = await _submitChunkWithRetry(
+              "geminiImageProxy",
+              {
+                kind: "batch_submit",
+                sets: slice,
+                imageSize: BATCH_DEFAULT_IMAGE_SIZE,
+                displayName: dn,
+                sessionId,
+              },
+              (secs, attempt, maxAttempts) => {
+                _setBatchProgress(c, effectiveChunkCount,
+                  `Rate-limited on chunk ${c + 1}; waiting ${secs}s before retry ${attempt}/${maxAttempts}…`);
+              }
+            );
             submitted.push(resp);
           } catch (chunkErr) {
             console.error(`[resume_empty_sets chunk ${c+1}] failed`, chunkErr);
             submitErrors.push({ chunk: c + 1, error: chunkErr?.message || String(chunkErr) });
+          }
+
+          // Stagger between chunks to stay under Gemini Files API rate limit.
+          if (c < effectiveChunkCount - 1) {
+            await sleep(CHUNK_STAGGER_MS);
           }
         }
 
