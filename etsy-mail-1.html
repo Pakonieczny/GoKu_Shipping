@@ -66,6 +66,35 @@
     .em-topbar .em-status-dot { width: 8px; height: 8px; border-radius: 50%; background: #e74c3c; }
     .em-topbar .em-status-dot.ok { background: #2ecc71; }
 
+    /* v5.30 — Collapsible action group + chevron toggle.
+     * Owner-facing controls (Pull now / Deep Pull / Refresh / Empty
+     * folder / New test / Settings gear) get wrapped in
+     * #emTopbarActions and hidden by default. The chevron toggle
+     * shows/hides the group; preference is persisted to localStorage.
+     * Status indicators (logo, role badge, polling, Backend, Gmail
+     * pill, On toggle) stay visible at all times. */
+    .em-topbar-actions {
+      display: inline-flex; align-items: center; gap: 12px;
+      transition: max-width .2s ease, opacity .15s ease;
+      overflow: hidden;
+    }
+    .em-topbar-actions.collapsed {
+      max-width: 0; opacity: 0;
+      pointer-events: none;
+      margin-left: 0 !important; margin-right: 0 !important;
+      padding-left: 0; padding-right: 0;
+      gap: 0;
+    }
+    .em-topbar-actions:not(.collapsed) { max-width: 1400px; opacity: 1; }
+    .em-topbar-toggle {
+      background: #2a2f36; color: #d4d8df; border: 1px solid #3a424b;
+      width: 26px; height: 26px; padding: 0;
+      border-radius: 4px; cursor: pointer;
+      display: inline-flex; align-items: center; justify-content: center;
+    }
+    .em-topbar-toggle:hover { background: #353b44; color: #fff; }
+    .em-topbar-toggle .material-icons { font-size: 18px; }
+
     /* ─── Gmail watcher panel (topbar) ─── */
     .em-gmail-pill {
       display: inline-flex; align-items: center; gap: 6px;
@@ -147,10 +176,32 @@
     .em-list-items { flex: 1; overflow-y: auto; }
     .em-list-item {
       padding: 10px 14px; border-bottom: 1px solid #f0f2f5; cursor: pointer;
-      display: grid; grid-template-columns: 1fr auto; gap: 4px 10px;
-      grid-template-areas: "name time" "snippet snippet" "badges badges";
+      display: grid; grid-template-columns: 1fr auto auto; gap: 4px 10px;
+      grid-template-areas: "name star time" "snippet snippet snippet" "badges badges badges";
       position: relative;
     }
+    /* v5.30 — Star icon in thread row.
+     * Lives in its own grid cell between the name and the time so it
+     * doesn't push the name's ellipsis truncation around. Visually
+     * lightweight when off (muted outline) and prominent when on
+     * (filled amber). Click is stop-propagation so it doesn't open
+     * the thread. */
+    .em-star-btn {
+      grid-area: star;
+      background: none;
+      border: none;
+      padding: 0 2px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      color: #bcc4cd;
+      transition: color .12s ease, transform .12s ease;
+    }
+    .em-star-btn:hover  { color: #8a94a0; transform: scale(1.1); }
+    .em-star-btn.is-on  { color: #d4a017; }
+    .em-star-btn.is-on:hover { color: #b88a13; }
+    .em-star-btn .material-icons { font-size: 18px; }
     .em-list-item:hover { background: #f6f8fa; }
     .em-list-item.selected { background: #e7f3ff; }
     .em-list-item.unread .em-name { font-weight: 700; }
@@ -2185,6 +2236,23 @@
 
     .m-thread-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
     .m-thread-line-1 { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+    /* v5.30 — Mobile star button. Tighter touch target than the
+     * desktop equivalent but the same visual logic: muted outline
+     * when off, amber-filled when on. */
+    .m-thread-star {
+      flex: 0 0 auto;
+      background: none; border: none;
+      padding: 4px;
+      margin: -4px -4px -4px 0;   /* expand touch target without shifting layout */
+      cursor: pointer;
+      color: var(--m-c-text-faint);
+      display: inline-flex; align-items: center; justify-content: center;
+    }
+    .m-thread-star.is-on { color: #d4a017; }
+    .m-thread-star .material-icons { font-size: 20px; }
+    /* Mobile appbar star — slightly different proportions for the bar */
+    .m-appbar-icon.m-appbar-star.is-on { color: #d4a017; }
+    .m-appbar-icon.m-appbar-star.is-on .material-icons { font-weight: 700; }
     .m-thread-name { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 500; }
     .m-thread-time { flex: 0 0 auto; font-size: 12px; color: var(--m-c-text-muted); }
     .m-thread-subject { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--m-c-text); }
@@ -4477,6 +4545,13 @@
       <button class="m-appbar-icon" id="mSearchIcon" aria-label="Search">
         <i class="material-icons">search</i>
       </button>
+      <!-- v5.30 — Conv-only star button. Hidden on list/order/settings
+           screens via display:none, shown only when viewing a thread.
+           mUpdateAppbar handles visibility and is-on state. -->
+      <button class="m-appbar-icon m-appbar-star" id="mAppbarStarBtn"
+              aria-label="Star" style="display:none;">
+        <i class="material-icons">star_border</i>
+      </button>
       <button class="m-appbar-icon" id="mMenuIcon" aria-label="More">
         <i class="material-icons">more_vert</i>
       </button>
@@ -4702,6 +4777,21 @@
       <button class="em-gmail-toggle off" id="emGmailToggleBtn" title="Enable/disable the Gmail watcher cron" disabled>
         <i class="material-icons">power_settings_new</i><span id="emGmailToggleLabel">Off</span>
       </button>
+      <!-- v5.30 — Chevron toggle for the action group. Hidden-by-default
+           presentation: the action buttons (Pull / Deep Pull / Refresh /
+           Empty folder / New test / Settings) live inside
+           #emTopbarActions and collapse to width:0. Status indicators
+           (logo, role badge, polling, Backend, Gmail pill, On toggle)
+           stay visible at all times — those are read-only signals, not
+           actions, so they don't need to be hidden. Preference is
+           persisted to localStorage so it survives reloads. -->
+      <button class="em-topbar-toggle" id="emTopbarToggleBtn"
+              aria-label="Show/hide topbar actions"
+              aria-expanded="false"
+              title="Show/hide topbar actions">
+        <i class="material-icons" id="emTopbarToggleIcon">expand_more</i>
+      </button>
+      <div class="em-topbar-actions collapsed" id="emTopbarActions">
       <button class="em-gmail-pull" id="emGmailPullBtn" title="Pull new Etsy notification emails right now" disabled>
         <i class="material-icons">cloud_download</i>Pull now
       </button>
@@ -4728,6 +4818,7 @@
       </button>
       <button id="emNewThreadBtn" title="Create test thread"><i class="material-icons">add</i>New (test)</button>
       <button id="emSettingsBtn" title="Settings"><i class="material-icons">settings</i></button>
+      </div>
     </div>
 
     <div class="em-rail" id="emRail"></div>
@@ -6827,6 +6918,132 @@
         : { year: "numeric", month: "short", day: "numeric" });
     }
 
+    // ─── v5.30 — Thread interaction-time resolver ──────────────────────
+    //
+    // Single source of truth for "when did this thread last have human
+    // activity" — used by:
+    //   - The thread list sort (newest activity first)
+    //   - The thread row's displayed time
+    //   - The date filter
+    //
+    // Pre-v5.30 chain was: `lastInboundAt || updatedAt || createdAt`
+    // which had a UX bug: when the OPERATOR sent a reply, only
+    // `updatedAt` advanced; `lastInboundAt` (set on incoming customer
+    // messages) stayed at the older timestamp. Because the OR chain
+    // takes the first truthy value, `lastInboundAt` dominated and the
+    // reply didn't push the thread up the list. Operator had to wait
+    // for the customer's NEXT inbound to see their own just-sent
+    // reply at the top.
+    //
+    // The fix: take MAX of (lastInboundAt, lastOperatorReplyAt). Both
+    // fields represent real human interaction — a customer message OR
+    // our reply — and either should bump the thread. updatedAt and
+    // createdAt remain as last-resort fallbacks for threads that
+    // haven't had any messages yet (newly imported, status-only
+    // changes, etc.) but are NOT included in the max — admin-only
+    // updates like AI labeling shouldn't bump threads to the top.
+    //
+    // `lastOperatorReplyAt` is written by:
+    //   - Backend `etsyMailDraftSend.js` when a send completes
+    //   - Frontend `sendViaEtsy` as an OPTIMISTIC client-side bump so
+    //     the operator sees the reorder immediately rather than after
+    //     the next thread-list poll.
+    function pickThreadInteractionMs(t) {
+      if (!t) return 0;
+      const inbound  = tsToMs(t.lastInboundAt);
+      const reply    = tsToMs(t.lastOperatorReplyAt);
+      const human    = Math.max(inbound, reply);
+      if (human > 0) return human;
+      return tsToMs(t.updatedAt) || tsToMs(t.createdAt) || 0;
+    }
+    // Small shim for use sites that want a Date-shaped value
+    function pickThreadInteractionDate(t) {
+      const ms = pickThreadInteractionMs(t);
+      return ms ? new Date(ms) : null;
+    }
+
+    // tsToMs: handles {_seconds,_nanoseconds}, Date, number, ISO string,
+    // null/undefined. Same logic the inbox already uses inline in a few
+    // places; centralized here so pickThreadInteractionMs has one
+    // consistent path.
+    function tsToMs(v) {
+      if (!v) return 0;
+      if (typeof v === "number") return v;
+      if (v instanceof Date) return v.getTime();
+      if (typeof v === "object") {
+        if (typeof v._seconds === "number") return v._seconds * 1000;
+        if (typeof v.seconds  === "number") return v.seconds  * 1000;
+      }
+      if (typeof v === "string") {
+        const t = Date.parse(v);
+        return isNaN(t) ? 0 : t;
+      }
+      return 0;
+    }
+
+    // ─── v5.30 — Starred-thread toggle ─────────────────────────────────
+    //
+    // Owner-facing flag on the thread doc. Surfaces as a star icon in
+    // the thread row (desktop + mobile) and in the thread detail header
+    // (desktop + mobile). Persisted as `starred: boolean` on the thread
+    // — uses firestoreProxy op:set with merge so we don't blow away
+    // other thread fields. starredAt is set on transitions for future
+    // sort/filter affordances (e.g. an eventual "Starred" rail folder).
+    //
+    // Optimistic: flips the local state immediately and re-renders so
+    // the operator sees the star change without a network round-trip.
+    // Reverts on failure with a toast.
+    async function toggleThreadStarred(threadId) {
+      if (!threadId) return;
+      const thread = (state.threads || []).find(t => t.id === threadId);
+      if (!thread) return;
+      const next = !thread.starred;
+      thread.starred = next;
+      if (next) thread.starredAt = new Date();   // optimistic placeholder
+      if (typeof renderThreadList === "function") {
+        try { renderThreadList(); } catch (e) { console.warn("[star] renderThreadList:", e.message); }
+      }
+      if (typeof mRenderList === "function") {
+        try { mRenderList(); } catch (e) { console.warn("[star] mRenderList:", e.message); }
+      }
+      // If we're currently viewing the thread, refresh the detail header
+      // so the in-detail star icon updates too.
+      if (state.selectedId === threadId && typeof renderThreadDetailHeader === "function") {
+        try { renderThreadDetailHeader(); } catch {}
+      }
+      if (typeof mUpdateAppbar === "function") {
+        try { mUpdateAppbar(); } catch {}
+      }
+      try {
+        await api("firestoreProxy", {
+          method: "POST",
+          body: {
+            op    : "set",
+            coll  : "EtsyMail_Threads",
+            id    : String(threadId),
+            merge : true,
+            actor : getEmployeeName() || "operator",
+            data  : {
+              starred  : next,
+              starredAt: next ? { __serverTimestamp: true } : null,
+              starredBy: next ? (getEmployeeName() || "operator") : null
+            }
+          }
+        });
+      } catch (e) {
+        console.warn("[star] backend write failed, reverting:", e.message);
+        thread.starred = !next;
+        if (typeof renderThreadList === "function") {
+          try { renderThreadList(); } catch {}
+        }
+        if (typeof mRenderList === "function") {
+          try { mRenderList(); } catch {}
+        }
+        if (typeof toast === "function") toast("Couldn't update star — try again");
+      }
+    }
+    window.toggleThreadStarred = toggleThreadStarred;
+
     /* v0.9.24 — Bubble-row timestamp formatter.
      *
      * fmtTime() above is the global "compact" formatter used in many
@@ -8847,19 +9064,24 @@
             ? new Date().setHours(0, 0, 0, 0)
             : (now - days * dayMs);
           filtered = filtered.filter(t => {
-            const d = toDate(t.lastInboundAt || t.updatedAt || t.createdAt);
-            return d && d.getTime() >= minMs;
+            // v5.30 — use pickThreadInteractionMs so operator replies
+            // count as "interactions" for the date filter, not just
+            // inbound customer messages.
+            const ms = pickThreadInteractionMs(t);
+            return ms && ms >= minMs;
           });
         }
       }
 
       // Sort by date desc — ALWAYS. The user wants every folder ordered
       // by date regardless of how they got there.
-      filtered.sort((a, b) => {
-        const da = toDate(a.lastInboundAt || a.updatedAt || a.createdAt);
-        const db = toDate(b.lastInboundAt || b.updatedAt || b.createdAt);
-        return (db ? db.getTime() : 0) - (da ? da.getTime() : 0);
-      });
+      // v5.30 — pickThreadInteractionMs uses MAX(lastInboundAt,
+      // lastOperatorReplyAt). Previously the OR chain meant operator
+      // sends didn't push their thread to the top until the customer
+      // replied. Now the operator's own reply bumps the thread
+      // immediately (frontend optimistic in sendViaEtsy + backend
+      // persistence in etsyMailDraftSend).
+      filtered.sort((a, b) => pickThreadInteractionMs(b) - pickThreadInteractionMs(a));
 
       // ── v1.3 / v1.4: Search-mode banner ─────────────────────────
       // When the user is searching server-side (q ≥ 2 chars), prepend
@@ -8952,7 +9174,7 @@
         const unread   = t.unread ? " unread" : "";
         const checked  = state.checkedIds.has(t.id) ? " checked" : "";
         const selectableCls = sel ? " selectable" : "";
-        const when     = fmtTime(t.lastInboundAt || t.updatedAt || t.createdAt);
+        const when     = fmtTime(pickThreadInteractionMs(t));
 
         const badges = [];
         // v3.24: Production rush badge — pin to FIRST position for max
@@ -9174,6 +9396,13 @@
           <div class="em-list-item${selected}${unread}${checked}${selectableCls}" data-id="${esc(t.id)}">
             ${checkboxHtml}
             <div class="em-name">${esc(t.customerName || "Unknown customer")}</div>
+            <button type="button"
+                    class="em-star-btn${t.starred ? " is-on" : ""}"
+                    data-star-id="${esc(t.id)}"
+                    aria-label="${t.starred ? "Unstar thread" : "Star thread"}"
+                    title="${t.starred ? "Starred — click to remove" : "Star this thread"}">
+              <i class="material-icons">${t.starred ? "star" : "star_border"}</i>
+            </button>
             <div class="em-time">${esc(when)}</div>
             <div class="em-snippet">${esc(snippet)}</div>
             <div class="em-badges">${badges.join("")}</div>
@@ -9202,7 +9431,17 @@
         if (checkbox) {
           checkbox.addEventListener("click", (e) => e.stopPropagation());
           checkbox.addEventListener("change", () => toggleChecked(id));
-        }        el.addEventListener("click", (e) => {
+        }
+        // v5.30 — Star: stop propagation so it doesn't open the thread.
+        const starBtn = el.querySelector(".em-star-btn");
+        if (starBtn) {
+          starBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            const sid = starBtn.getAttribute("data-star-id") || id;
+            toggleThreadStarred(sid);
+          });
+        }
+        el.addEventListener("click", (e) => {
           if (state.selectionMode) {
             // In selection mode, clicks anywhere on the row toggle the box
             if (e.target !== checkbox) toggleChecked(id);
@@ -9775,6 +10014,15 @@
                INTO this action row so it stays visible. The rush badge
                (when present) follows it. -->
           <div class="em-h-actions">
+            <button type="button"
+                    id="emDetailStarBtn"
+                    class="em-star-btn${t.starred ? " is-on" : ""}"
+                    aria-label="${t.starred ? "Unstar thread" : "Star thread"}"
+                    title="${t.starred ? "Starred — click to remove" : "Star this thread"}"
+                    data-star-id="${esc(t.id)}"
+                    style="margin-right:4px;">
+              <i class="material-icons">${t.starred ? "star" : "star_border"}</i>
+            </button>
             <span class="em-status-pill ${esc(chipClass)}">${esc(chipLabel)}</span>
             ${(t.productionRush && t.productionRush.acceptedAt && !t.productionRush.removedAt)
               ? `<span class="em-badge rush" title="$15 rush production accepted — production target 2-3 business days">🔥RUSH🔥</span>`
@@ -10087,6 +10335,24 @@
 
       $("emReviewBtn")?.addEventListener("click", () => setStatus(t.id, "pending_human_review", "operator triage"));
       $("emArchiveBtn")?.addEventListener("click", () => setStatus(t.id, "archived", "operator archive"));
+      // v5.30 — Star button in the detail header. Same toggle as the
+      // list view (state.threads[t.id].starred). Optimistic flip + UI
+      // re-render inside toggleThreadStarred; we just need to repaint
+      // this header's button to reflect the new state without
+      // re-opening the whole thread. Done by swapping the icon glyph
+      // and the `.is-on` class in place.
+      $("emDetailStarBtn")?.addEventListener("click", async () => {
+        const btn = $("emDetailStarBtn");
+        await toggleThreadStarred(t.id);
+        const tNow = (state.threads || []).find(x => x.id === t.id);
+        if (btn && tNow) {
+          btn.classList.toggle("is-on", !!tNow.starred);
+          const icon = btn.querySelector(".material-icons");
+          if (icon) icon.textContent = tNow.starred ? "star" : "star_border";
+          btn.setAttribute("title", tNow.starred ? "Starred — click to remove" : "Star this thread");
+          btn.setAttribute("aria-label", tNow.starred ? "Unstar thread" : "Star thread");
+        }
+      });
       // v3.0 — quick-action buttons. Each just calls setStatus with a
       // pre-determined target. The optimistic-count update inside
       // setStatus keeps the rail counts in sync the instant the click
@@ -12371,6 +12637,18 @@
         // doesn't insert a second time on the next render.
         state._optimInsertedFor = state._optimInsertedFor || new Set();
         state._optimInsertedFor.add(resp.draftId);
+        // v5.30 — Optimistic thread-bump. Without this the operator's
+        // reply doesn't visibly push the thread to the top of the list
+        // until the next thread-list poll picks up the backend's
+        // lastOperatorReplyAt write. Setting it client-side here means
+        // the next renderThreadList / mRenderList tick re-sorts the
+        // thread to the top instantly. The Date object will be replaced
+        // by Firestore's canonical Timestamp on the next poll. The
+        // backend update is authoritative; this is just UX.
+        try {
+          const targetThread = (state.threads || []).find(x => x && x.id === threadId);
+          if (targetThread) targetThread.lastOperatorReplyAt = new Date();
+        } catch {}
         // Clear the composer.
         ta.value = "";
         autoSizeDraftTextarea(ta);   // v0.9.17: RAF-deferred shrink
@@ -13920,6 +14198,46 @@
 
     document.addEventListener("DOMContentLoaded", () => {
       renderRail();
+
+      // v5.30 — Topbar action-group collapse toggle. The action buttons
+      // (Pull / Deep Pull / Refresh / Empty folder / New test /
+      // Settings) live inside #emTopbarActions and start collapsed by
+      // default. localStorage remembers the operator's last choice so
+      // the bar's state survives reloads. Status indicators (Backend,
+      // Gmail pill, On toggle, role badge, polling) live OUTSIDE the
+      // collapsible group and stay visible at all times — they're
+      // read-only signals the operator wants always-on visibility for.
+      try {
+        const actionsEl = $("emTopbarActions");
+        const toggleBtn = $("emTopbarToggleBtn");
+        const iconEl    = $("emTopbarToggleIcon");
+        if (actionsEl && toggleBtn && iconEl) {
+          const KEY = "etsymail_topbar_collapsed";
+          // Default: collapsed (matches the user request "hide by
+          // default; expand on demand"). Reading "0" explicitly means
+          // the operator chose to expand last session.
+          const stored = (() => {
+            try { return localStorage.getItem(KEY); } catch { return null; }
+          })();
+          let collapsed = stored === null ? true : stored === "1";
+          const applyState = () => {
+            actionsEl.classList.toggle("collapsed", collapsed);
+            iconEl.textContent = collapsed ? "expand_more" : "expand_less";
+            toggleBtn.setAttribute("aria-expanded", String(!collapsed));
+            toggleBtn.setAttribute("title", collapsed
+              ? "Show topbar actions"
+              : "Hide topbar actions");
+          };
+          applyState();
+          toggleBtn.addEventListener("click", () => {
+            collapsed = !collapsed;
+            try { localStorage.setItem(KEY, collapsed ? "1" : "0"); } catch {}
+            applyState();
+          });
+        }
+      } catch (e) {
+        console.warn("[v5.30 topbar collapse] init failed:", e.message);
+      }
 
       $("emRefreshBtn").addEventListener("click", () => {
         fetchThreadListNow();
@@ -15517,6 +15835,7 @@
       const titleEl    = document.getElementById("mTitle");
       const subEl      = document.getElementById("mSubtitle");
       const leftIcon   = document.getElementById("mLeftIconGlyph");
+      const starBtn    = document.getElementById("mAppbarStarBtn");
       const screen     = mState.currentScreen;
 
       // v5.18 — Drive the always-visible search input's visibility via
@@ -15532,6 +15851,7 @@
         titleEl.textContent = filter ? filter.label : "Inbox";
         const total = mFilteredThreads().length;
         subEl.textContent = `${total} thread${total === 1 ? "" : "s"}`;
+        if (starBtn) starBtn.style.display = "none";
       } else if (screen === "conv") {
         leftIcon.textContent = "arrow_back";
         const t = state.threads && state.threads.find(x => x && x.id === state.selectedId);
@@ -15539,18 +15859,30 @@
           titleEl.textContent = t.customerName || t.etsyUsername || "(Unknown)";
           const username = t.etsyUsername ? "@" + t.etsyUsername : "";
           subEl.textContent = username;
+          // v5.30 — Conv-screen star button reflects this thread's state.
+          if (starBtn) {
+            starBtn.style.display = "";
+            starBtn.classList.toggle("is-on", !!t.starred);
+            const icon = starBtn.querySelector(".material-icons");
+            if (icon) icon.textContent = t.starred ? "star" : "star_border";
+            starBtn.setAttribute("aria-label", t.starred ? "Unstar" : "Star");
+            starBtn.setAttribute("title", t.starred ? "Starred — tap to remove" : "Star this thread");
+          }
         } else {
           titleEl.textContent = "Conversation";
           subEl.textContent = "";
+          if (starBtn) starBtn.style.display = "none";
         }
       } else if (screen === "order") {
         leftIcon.textContent = "arrow_back";
         titleEl.textContent = mState.openOrderReceiptId ? "Order #" + mState.openOrderReceiptId : "Order";
         subEl.textContent = "";
+        if (starBtn) starBtn.style.display = "none";
       } else if (screen === "settings") {
         leftIcon.textContent = "arrow_back";
         titleEl.textContent = "Settings";
         subEl.textContent = state.currentUser ? (state.isOwner ? "Owner" : "Operator") : "";
+        if (starBtn) starBtn.style.display = "none";
       }
 
       // v5.4 — Refresh the operator strip whenever the appbar refreshes.
@@ -15978,11 +16310,11 @@
       // this, state.threads is in arbitrary (Firestore-internal) order and
       // the operator sees times jump around (15:42 then 15:01 then 15:35
       // — the v5.1 bug).
-      threads.sort((a, b) => {
-        const ta = mTsToMs(a.lastInboundAt || a.updatedAt || a.createdAt);
-        const tb = mTsToMs(b.lastInboundAt || b.updatedAt || b.createdAt);
-        return tb - ta;  // newest first
-      });
+      // v5.30 — Use pickThreadInteractionMs so operator-sent replies
+      // bump the thread to the top, not just customer inbound messages.
+      // Pre-v5.30 OR chain left the operator's reply hidden until
+      // customer's next message.
+      threads.sort((a, b) => pickThreadInteractionMs(b) - pickThreadInteractionMs(a));
 
       return threads;
     }
@@ -16032,7 +16364,7 @@
         const color     = mAvatarColor(name);
         // Field-name parity with desktop renderThreadList (line ~7008):
         //   lastInboundAt → updatedAt → createdAt is the canonical chain.
-        const time      = mFmtThreadTime(t.lastInboundAt || t.updatedAt || t.createdAt);
+        const time      = mFmtThreadTime(pickThreadInteractionMs(t));
         // v5.2 — Subject is suppressed if it's literally just the
         // auto-generated "Conversation with {customerName}" pattern,
         // which adds no information. Show order id snippet instead
@@ -16055,6 +16387,12 @@
               <div class="m-thread-text">
                 <div class="m-thread-line-1">
                   <span class="m-thread-name">${mEsc(name)}</span>
+                  <button type="button"
+                          class="m-thread-star${t.starred ? " is-on" : ""}"
+                          data-star-id="${mEsc(t.id)}"
+                          aria-label="${t.starred ? "Unstar" : "Star"}">
+                    <i class="material-icons">${t.starred ? "star" : "star_border"}</i>
+                  </button>
                   <span class="m-thread-time">${mEsc(time)}</span>
                 </div>
                 ${subjectLine ? `<div class="m-thread-subject">${mEsc(subjectLine)}</div>` : ""}
@@ -16076,6 +16414,16 @@
       list.querySelectorAll(".m-thread-row").forEach(row => {
         const id = row.getAttribute("data-id");
         const content = row.querySelector(".m-thread-row-content");
+        // v5.30 — Star: stop propagation so the row's open-thread tap
+        // doesn't fire.
+        const star = row.querySelector(".m-thread-star");
+        if (star) {
+          star.addEventListener("click", (e) => {
+            e.stopPropagation();
+            const sid = star.getAttribute("data-star-id") || id;
+            toggleThreadStarred(sid);
+          });
+        }
         content.addEventListener("click", () => mOpenThread(id));
       });
 
@@ -17280,6 +17628,21 @@
       const searchIcon= document.getElementById("mSearchIcon");
       const drawerBd  = document.getElementById("mDrawerBackdrop");
       const sheetBd   = document.getElementById("mSheetBackdrop");
+      // v5.30 — Mobile appbar star button. Only meaningful on conv
+      // screen; mUpdateAppbar manages visibility. Click toggles the
+      // current thread's starred state.
+      const appbarStarBtn = document.getElementById("mAppbarStarBtn");
+      if (appbarStarBtn) {
+        appbarStarBtn.addEventListener("click", async () => {
+          if (mState.currentScreen !== "conv" || !state.selectedId) return;
+          await toggleThreadStarred(state.selectedId);
+          // Repaint appbar to reflect new state (toggleThreadStarred
+          // already calls mUpdateAppbar, but call again here in case
+          // the function wiring loaded before toggleThreadStarred's
+          // optimistic-flip ran).
+          mUpdateAppbar();
+        });
+      }
 
       leftIcon.addEventListener("click", () => {
         if (mState.currentScreen === "list") mOpenDrawer();

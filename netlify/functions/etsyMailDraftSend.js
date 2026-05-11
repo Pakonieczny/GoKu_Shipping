@@ -1075,18 +1075,27 @@ exports.handler = async (event) => {
         }, { merge: true });
 
         // Then the thread status update, if we decided one is needed.
+        // v5.30 — Also writes lastOperatorReplyAt: the inbox uses
+        // MAX(lastInboundAt, lastOperatorReplyAt) to sort threads, so
+        // a successful operator send must bump this field for the
+        // thread to rise to the top of the list. Pre-v5.30 only
+        // updatedAt was written, which was masked by lastInboundAt in
+        // the inbox's OR-chain — the operator's reply stayed hidden
+        // below older inbound messages until the next customer reply.
         if (threadStatusUpdate === "pending_human_review") {
           tx.set(tRef, {
-            status            : "pending_human_review",
-            lastAutoDecision  : threadDemoteReason,
-            lastAutoDecisionAt: FV.serverTimestamp(),
-            updatedAt         : FV.serverTimestamp()
+            status              : "pending_human_review",
+            lastAutoDecision    : threadDemoteReason,
+            lastAutoDecisionAt  : FV.serverTimestamp(),
+            lastOperatorReplyAt : FV.serverTimestamp(),
+            updatedAt           : FV.serverTimestamp()
           }, { merge: true });
         } else if (threadStatusUpdate === "auto_replied") {
           tx.set(tRef, {
             status                    : "auto_replied",
             lastAutoDecision          : "auto_send_confirmed",
             lastAutoDecisionAt        : FV.serverTimestamp(),
+            lastOperatorReplyAt       : FV.serverTimestamp(),
             // v3.2 — Surface the send origin on the thread so the inbox
             // can render "Manually Sent" vs "auto-sent" without having
             // to fetch the draft. prev.sendOrigin was set at enqueue
@@ -1101,6 +1110,17 @@ exports.handler = async (event) => {
             manualMoveReason          : FV.delete(),
             manualMoveFromStatus      : FV.delete(),
             updatedAt                 : FV.serverTimestamp()
+          }, { merge: true });
+        } else if (prev.threadId && tSnap && tSnap.exists) {
+          // v5.30 — No status transition needed (operator manual send
+          // on a thread that stays in pending_human_review, or a
+          // status-persistent flow), but the thread still has to be
+          // bumped to the top of the list because the operator just
+          // replied. Write JUST the bump fields — leave status,
+          // sendOrigin, lastAutoDecision et al. untouched.
+          tx.set(tRef, {
+            lastOperatorReplyAt: FV.serverTimestamp(),
+            updatedAt          : FV.serverTimestamp()
           }, { merge: true });
         }
 
