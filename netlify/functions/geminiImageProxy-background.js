@@ -2198,6 +2198,118 @@ async function _handlerImpl(event) {
       return json(200, { ok: true, cancelled: true, batchName });
     }
 
+    // ------------------------------------------------------------
+    // files_cleanup
+    //   Lists ALL files uploaded to the Gemini Files API for this API key
+    //   and deletes them. Used to free the 20 GB cumulative
+    //   file_storage_bytes quota that accumulates across batch_submit
+    //   JSONL/reference uploads.
+    //
+    //   Optional body params:
+    //     maxDelete  number  — cap deletion at N files this call (default:
+    //                          no cap; use for chunked cleanup if you
+    //                          have thousands of files and the function
+    //                          might time out)
+    //     prefix     string  — only delete files whose displayName starts
+    //                          with this prefix (e.g., "lg1-Beady_Necklace-").
+    //                          Useful if the same API key is shared with
+    //                          other projects.
+    //
+    //   Returns:
+    //     { ok, deleted, totalListed, candidateCount, bytesFreed,
+    //       truncated, errors }
+    //
+    //   CAUTION: deleting Files API uploads breaks any in-flight batch
+    //   jobs that still reference those input files. Caller is responsible
+    //   for confirmation before invoking.
+    // ------------------------------------------------------------
+    if (kind === "files_cleanup") {
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) return json(400, { error: { message: "Missing GEMINI_API_KEY env var" } });
+
+      const maxDeleteRaw = Number(body?.maxDelete);
+      const maxDelete = Number.isFinite(maxDeleteRaw) && maxDeleteRaw > 0 ? maxDeleteRaw : Infinity;
+      const prefix = typeof body?.prefix === "string" && body.prefix.length > 0 ? body.prefix : null;
+
+      const baseUrl = "https://generativelanguage.googleapis.com/v1beta";
+
+      // 1) Paginate through all files. Hard guard against runaway
+      //    pagination at 200 pages × 100/page = 20,000 files.
+      const listed = [];
+      let pageToken = null;
+      let pages = 0;
+      const MAX_PAGES = 200;
+      do {
+        const url = `${baseUrl}/files?key=${encodeURIComponent(apiKey)}&pageSize=100` +
+                    (pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : "");
+        const r = await fetch(url);
+        if (!r.ok) {
+          const errBody = await r.text().catch(() => "");
+          return json(r.status, {
+            error: { message: `Files API list failed: HTTP ${r.status}: ${errBody.slice(0, 300)}` },
+          });
+        }
+        const data = await r.json();
+        for (const f of (data.files || [])) listed.push(f);
+        pageToken = data.nextPageToken || null;
+        pages++;
+      } while (pageToken && pages < MAX_PAGES);
+
+      // 2) Optional displayName prefix filter
+      const candidates = prefix
+        ? listed.filter((f) => typeof f.displayName === "string" && f.displayName.startsWith(prefix))
+        : listed.slice();
+
+      // 3) Cap deletion count (for chunked cleanup if maxDelete supplied)
+      const toDelete = maxDelete === Infinity
+        ? candidates
+        : candidates.slice(0, maxDelete);
+
+      // 4) Delete with concurrency 10 — fast enough that even 1000s of
+      //    files complete inside the 15-minute background-function budget,
+      //    while not so parallel that we trigger our own rate-limit on
+      //    the Files API delete endpoint.
+      let deleted = 0;
+      let bytesFreed = 0;
+      const errors = [];
+      let idx = 0;
+      const CONC = 10;
+
+      async function deleteWorker() {
+        while (idx < toDelete.length) {
+          const myIdx = idx++;
+          const f = toDelete[myIdx];
+          try {
+            const delUrl = `${baseUrl}/${f.name}?key=${encodeURIComponent(apiKey)}`;
+            const r = await fetch(delUrl, { method: "DELETE" });
+            if (!r.ok) {
+              const errBody = await r.text().catch(() => "");
+              errors.push(`${f.name}: HTTP ${r.status} ${errBody.slice(0, 80)}`);
+            } else {
+              deleted++;
+              bytesFreed += Number(f.sizeBytes || 0);
+            }
+          } catch (e) {
+            errors.push(`${f.name}: ${e?.message || e}`);
+          }
+        }
+      }
+
+      const workers = [];
+      for (let i = 0; i < CONC; i++) workers.push(deleteWorker());
+      await Promise.all(workers);
+
+      return json(200, {
+        ok: true,
+        deleted,
+        totalListed: listed.length,
+        candidateCount: candidates.length,
+        bytesFreed,
+        truncated: candidates.length > toDelete.length,
+        errors: errors.slice(0, 20),
+      });
+    }
+
 // ------------------------------------------------------------
     // NEW: run_set_async
     // - One request kicks off the whole set
