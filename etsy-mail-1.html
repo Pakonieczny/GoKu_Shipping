@@ -66,29 +66,42 @@
     .em-topbar .em-status-dot { width: 8px; height: 8px; border-radius: 50%; background: #e74c3c; }
     .em-topbar .em-status-dot.ok { background: #2ecc71; }
 
-    /* v5.30 — Collapsible action group + chevron toggle.
-     * Owner-facing controls (Pull now / Deep Pull / Refresh / Empty
-     * folder / New test / Settings gear) get wrapped in
-     * #emTopbarActions and hidden by default. The chevron toggle
-     * shows/hides the group; preference is persisted to localStorage.
-     * Status indicators (logo, role badge, polling, Backend, Gmail
-     * pill, On toggle) stay visible at all times. */
-    .em-topbar-actions {
-      display: inline-flex; align-items: center; gap: 12px;
-      transition: max-width .2s ease, opacity .15s ease;
-      overflow: hidden;
+    /* v5.30 — Full-topbar collapse via chevron.
+     *
+     * The chevron lives at the far right and is ALWAYS visible. All
+     * other topbar content — logo, role badge, polling indicator,
+     * Backend status, Gmail pill + toggle, and the action buttons —
+     * lives inside #emTopbarContent and collapses to width:0 by default.
+     * Click the chevron to expand; click again to re-collapse. The
+     * preference is persisted to localStorage so reloads honor it.
+     *
+     * Topbar uses justify-content:flex-end so when the content is
+     * collapsed (max-width:0), the chevron lands at the right edge;
+     * when expanded, the content's flex:1 pushes the chevron back to
+     * the right edge anyway. So the chevron's screen position is
+     * stable regardless of state — operator can re-collapse from
+     * exactly where they expanded. */
+    .em-topbar {
+      justify-content: flex-end;
+      padding: 0 12px;
     }
-    .em-topbar-actions.collapsed {
+    .em-topbar-content {
+      display: flex; align-items: center; gap: 12px;
+      flex: 1;
+      overflow: hidden;
+      transition: max-width .2s ease, opacity .15s ease;
+    }
+    .em-topbar-content.collapsed {
       max-width: 0; opacity: 0;
       pointer-events: none;
-      margin-left: 0 !important; margin-right: 0 !important;
-      padding-left: 0; padding-right: 0;
+      flex: 0 0 0;
       gap: 0;
+      padding: 0 !important; margin: 0 !important;
     }
-    .em-topbar-actions:not(.collapsed) { max-width: 1400px; opacity: 1; }
     .em-topbar-toggle {
+      flex: 0 0 auto;
       background: #2a2f36; color: #d4d8df; border: 1px solid #3a424b;
-      width: 26px; height: 26px; padding: 0;
+      width: 28px; height: 28px; padding: 0;
       border-radius: 4px; cursor: pointer;
       display: inline-flex; align-items: center; justify-content: center;
     }
@@ -4758,6 +4771,20 @@
 
   <div class="em-app">
     <div class="em-topbar">
+      <!-- v5.30 — Chevron toggle. Always visible. The rest of the
+           topbar is wrapped in #emTopbarContent and hidden by default.
+           Clicking the chevron expands the full topbar (logo, status
+           indicators, action buttons); clicking again collapses it.
+           Persisted to localStorage so reloads preserve the operator's
+           preference. The chevron itself stays put at the far right of
+           the bar — operator can always reach it. -->
+      <button class="em-topbar-toggle" id="emTopbarToggleBtn"
+              aria-label="Show/hide topbar"
+              aria-expanded="false"
+              title="Show topbar">
+        <i class="material-icons" id="emTopbarToggleIcon">expand_more</i>
+      </button>
+      <div class="em-topbar-content collapsed" id="emTopbarContent">
       <span class="em-title">EtsyMail <span class="em-tag">operator inbox · proxy mode</span></span>
       <span class="em-spacer"></span>
       <span id="emOperatorRoleBadge" class="em-role-badge unknown" style="display:none;" title="Your operator role for sales-mode permissions">
@@ -4777,21 +4804,6 @@
       <button class="em-gmail-toggle off" id="emGmailToggleBtn" title="Enable/disable the Gmail watcher cron" disabled>
         <i class="material-icons">power_settings_new</i><span id="emGmailToggleLabel">Off</span>
       </button>
-      <!-- v5.30 — Chevron toggle for the action group. Hidden-by-default
-           presentation: the action buttons (Pull / Deep Pull / Refresh /
-           Empty folder / New test / Settings) live inside
-           #emTopbarActions and collapse to width:0. Status indicators
-           (logo, role badge, polling, Backend, Gmail pill, On toggle)
-           stay visible at all times — those are read-only signals, not
-           actions, so they don't need to be hidden. Preference is
-           persisted to localStorage so it survives reloads. -->
-      <button class="em-topbar-toggle" id="emTopbarToggleBtn"
-              aria-label="Show/hide topbar actions"
-              aria-expanded="false"
-              title="Show/hide topbar actions">
-        <i class="material-icons" id="emTopbarToggleIcon">expand_more</i>
-      </button>
-      <div class="em-topbar-actions collapsed" id="emTopbarActions">
       <button class="em-gmail-pull" id="emGmailPullBtn" title="Pull new Etsy notification emails right now" disabled>
         <i class="material-icons">cloud_download</i>Pull now
       </button>
@@ -6962,17 +6974,39 @@
       return ms ? new Date(ms) : null;
     }
 
-    // tsToMs: handles {_seconds,_nanoseconds}, Date, number, ISO string,
-    // null/undefined. Same logic the inbox already uses inline in a few
-    // places; centralized here so pickThreadInteractionMs has one
-    // consistent path.
+    // tsToMs — canonical normalizer for every timestamp shape the
+    // inbox encounters. Pre-v5.30 this lived inline at multiple call
+    // sites; centralized here so pickThreadInteractionMs has one
+    // consistent path. Handles:
+    //   - number (raw millis)                       e.g. 1736183092000
+    //   - Date                                       e.g. new Date()
+    //   - Firestore proxy serialization              e.g. {_ts:true, ms:1736183092000}
+    //   - Firestore Admin SDK Timestamp              e.g. {toMillis: () => ...}
+    //   - Firestore REST API Timestamp               e.g. {_seconds:..., _nanoseconds:...}
+    //   - Firestore client SDK Timestamp             e.g. {seconds:..., nanoseconds:...}
+    //   - ISO string                                  e.g. "2026-05-11T22:31:00Z"
+    //
+    // CRITICAL: missing any of these returns 0, which (a) makes
+    // fmtTime() render empty (because toDate(0) is null), and (b)
+    // makes the sort comparator return 0 for affected pairs — and
+    // JavaScript's Array.prototype.sort is only guaranteed stable in
+    // modern engines IF all comparator results are consistent. When
+    // many threads collapse to "equal", the rendered order becomes
+    // dependent on insertion order, which changes on every fetch
+    // (different paginations, parallel docs returned in different
+    // orders, etc.). That manifests as the inbox visibly reshuffling
+    // on every poll cycle — the v5.30 bug operators saw.
     function tsToMs(v) {
       if (!v) return 0;
       if (typeof v === "number") return v;
       if (v instanceof Date) return v.getTime();
       if (typeof v === "object") {
-        if (typeof v._seconds === "number") return v._seconds * 1000;
-        if (typeof v.seconds  === "number") return v.seconds  * 1000;
+        if (typeof v.toMillis === "function") {
+          try { return v.toMillis(); } catch { return 0; }
+        }
+        if (typeof v.ms === "number")        return v.ms;
+        if (typeof v._seconds === "number")  return v._seconds * 1000;
+        if (typeof v.seconds  === "number")  return v.seconds  * 1000;
       }
       if (typeof v === "string") {
         const t = Date.parse(v);
@@ -14199,34 +14233,30 @@
     document.addEventListener("DOMContentLoaded", () => {
       renderRail();
 
-      // v5.30 — Topbar action-group collapse toggle. The action buttons
-      // (Pull / Deep Pull / Refresh / Empty folder / New test /
-      // Settings) live inside #emTopbarActions and start collapsed by
-      // default. localStorage remembers the operator's last choice so
-      // the bar's state survives reloads. Status indicators (Backend,
-      // Gmail pill, On toggle, role badge, polling) live OUTSIDE the
-      // collapsible group and stay visible at all times — they're
-      // read-only signals the operator wants always-on visibility for.
+      // v5.30 — Topbar collapse toggle. The chevron is always visible at
+      // the right edge; clicking it expands or collapses the entire
+      // topbar content (logo, role badge, polling, Backend, Gmail pill +
+      // toggle, action buttons). Default is collapsed per operator
+      // request — they wanted a clean view by default and the topbar
+      // exposed only on demand. localStorage remembers the operator's
+      // last choice so a deliberate expand survives reloads.
       try {
-        const actionsEl = $("emTopbarActions");
+        const contentEl = $("emTopbarContent");
         const toggleBtn = $("emTopbarToggleBtn");
         const iconEl    = $("emTopbarToggleIcon");
-        if (actionsEl && toggleBtn && iconEl) {
+        if (contentEl && toggleBtn && iconEl) {
           const KEY = "etsymail_topbar_collapsed";
-          // Default: collapsed (matches the user request "hide by
-          // default; expand on demand"). Reading "0" explicitly means
-          // the operator chose to expand last session.
+          // Default: collapsed. Stored "0" means operator chose to
+          // expand last session; "1" or null means collapsed.
           const stored = (() => {
             try { return localStorage.getItem(KEY); } catch { return null; }
           })();
           let collapsed = stored === null ? true : stored === "1";
           const applyState = () => {
-            actionsEl.classList.toggle("collapsed", collapsed);
+            contentEl.classList.toggle("collapsed", collapsed);
             iconEl.textContent = collapsed ? "expand_more" : "expand_less";
             toggleBtn.setAttribute("aria-expanded", String(!collapsed));
-            toggleBtn.setAttribute("title", collapsed
-              ? "Show topbar actions"
-              : "Hide topbar actions");
+            toggleBtn.setAttribute("title", collapsed ? "Show topbar" : "Hide topbar");
           };
           applyState();
           toggleBtn.addEventListener("click", () => {
