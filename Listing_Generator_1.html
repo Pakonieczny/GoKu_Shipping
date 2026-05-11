@@ -6546,13 +6546,22 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
     const SLOT2_DUPLICATE_PROMPT = 
     `ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
-    • Force the Charm to be very small: final on-image charm height MUST be 12 pixels tall (absolute pixel height, not relative).
+    • Force the Charm to be very small: final on-image charm height MUST be approximately 10 pixels tall (acceptable range: 10 to 11 pixels, target the LOW END of this range — i.e. aim at 10, not 11). HARD MAXIMUM: 11 pixels — never exceed. HARD MINIMUM: 10 pixels — never go below. The previous render bias has been approximately 7–8% too large; this range dials that back.
 
     • Critical: Never Cut out darkened areas of the Charm/Pendant. Darkened portions of the Charm/Pendant are typically hatched engravings.
 
     • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
     • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
     • The chain must remain exactly the same size and detail as in the reference image. Only the charm is scaled.
+
+    CHARM SIZE CALIBRATION TO CAMERA DISTANCE (CRITICAL CONSISTENCY)
+    • The pixel range above is a CAMERA-DISTANCE-NORMALIZED baseline — it assumes the model is photographed at a moderate distance with their upper torso filling roughly half the frame.
+    • If the reference image shows the model photographed CLOSER (face/neck dominates the frame), proportionally INCREASE the on-canvas charm pixel size so the charm reads at the same real-world physical scale. The 10–11 pixel cap may be exceeded ONLY in this close-zoom case, and only by the amount required to maintain proportional scale.
+    • If the reference image shows the model photographed FURTHER AWAY (more body/background visible), proportionally DECREASE the on-canvas charm pixel size so the perceived charm scale stays consistent. The 10-pixel floor may go below ONLY in this far-zoom case, and only by the amount required to maintain proportional scale.
+    • Anchor to chain thickness: the charm width must always remain in fixed proportion to the chain's on-canvas thickness in the reference image. If the chain reads as thickness T on canvas, the charm width should be roughly 7–9× T regardless of overall image zoom.
+    • Anchor to real-world scale: the charm's real-world physical size is roughly that of a fingernail (~10–12mm tall). Render at whatever on-canvas pixel size produces that real-world scale given the model's apparent zoom level.
+    • When in doubt, target the LOWER end of the acceptable range — small consistent under-shoot is far more forgiving than over-shoot.
+    • HARD FAIL: identical on-canvas charm pixel size across two reference images showing the model at clearly different camera distances. The perceived charm size must stay consistent across the listing set, which means absolute pixel size must scale with model zoom.
 
     ENGRAVING STANDARD (UNIFORM ACROSS ALL SLOTS — CRITICAL CONSISTENCY RULE)
     • Engravings MUST read as real shallow grooves cut INTO the metal surface — subtle but unmistakably three-dimensional. They are NOT flat decals, NOT painted ink, NOT pencil-drawn lines on top of the metal, NOT raised/embossed high-relief metal.
@@ -6683,7 +6692,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     `CRITICAL: This is a standard fashion product photo edit. Keep the subject modest. No nudity.
 
     ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
-    • Force the Charm to be very small: final on-image charm height MUST be approximately 9 pixels tall (acceptable range: 9 to 10 pixels, target the LOW END of this range — i.e. aim at 9, not 10). HARD MAXIMUM: 10 pixels — never exceed. HARD MINIMUM: 9 pixels — never go below. The previous render bias has consistently been too large; the goal of this range is to dial that back by approximately 5–7%.
+    • Force the Charm to be very small: final on-image charm height MUST be approximately 8 pixels tall (acceptable range: 8 to 9 pixels, target the LOW END of this range — i.e. aim at 8, not 9). HARD MAXIMUM: 9 pixels — never exceed. HARD MINIMUM: 8 pixels — never go below. The previous render bias has STILL been 5–6% too large despite the prior range correction; this new range dials back another 5–6% on top.
     • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
     • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
     • Do NOT allow any shadows (Contact or otherwise) to be visible undereath and around the Charm/Pendant placement, block all Charm/Pendant related shadows.
@@ -6691,8 +6700,8 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
     CHARM SIZE CALIBRATION TO CAMERA DISTANCE (CRITICAL CONSISTENCY)
     • The pixel range above is a CAMERA-DISTANCE-NORMALIZED baseline — it assumes the model is photographed at a moderate distance with their upper torso filling roughly half the frame.
-    • If the reference image shows the model photographed CLOSER (face/neck dominates the frame), proportionally INCREASE the on-canvas charm pixel size so the charm reads at the same real-world physical scale. The 9–10 pixel cap may be exceeded ONLY in this close-zoom case, and only by the amount required to maintain proportional scale.
-    • If the reference image shows the model photographed FURTHER AWAY (more body/background visible), proportionally DECREASE the on-canvas charm pixel size so the perceived charm scale stays consistent. The 9-pixel floor may go below ONLY in this far-zoom case, and only by the amount required to maintain proportional scale.
+    • If the reference image shows the model photographed CLOSER (face/neck dominates the frame), proportionally INCREASE the on-canvas charm pixel size so the charm reads at the same real-world physical scale. The 8–9 pixel cap may be exceeded ONLY in this close-zoom case, and only by the amount required to maintain proportional scale.
+    • If the reference image shows the model photographed FURTHER AWAY (more body/background visible), proportionally DECREASE the on-canvas charm pixel size so the perceived charm scale stays consistent. The 8-pixel floor may go below ONLY in this far-zoom case, and only by the amount required to maintain proportional scale.
     • Anchor to chain thickness: the charm width must always remain in fixed proportion to the chain's on-canvas thickness in the reference image. If the chain reads as thickness T on canvas, the charm width should be roughly 7–9× T regardless of overall image zoom.
     • Anchor to real-world scale: the charm's real-world physical size is roughly that of a fingernail (~10–12mm tall). Render at whatever on-canvas pixel size produces that real-world scale given the model's apparent zoom level.
     • When in doubt, target the LOWER end of the acceptable range — small consistent under-shoot is far more forgiving than over-shoot.
@@ -6770,16 +6779,31 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • Do NOT crop, zoom, or reframe the image.
 
     CRITICAL CHARM SIZE OVERRIDE (BOTH GOLD AND SILVER — TOP PRIORITY)
-    • Render BOTH the front-facing gold charm AND the back-facing silver charm at approximately 67% of the charm size shown in the reference image — i.e. about 33% SMALLER than the reference template placeholder.
-    • This override exists to compensate for systematic upscaling: the model has historically rendered both charms larger than intended. Correct that bias here.
+    • Render BOTH the front-facing gold charm AND the back-facing silver charm at approximately 50% of the charm size shown in the reference image — i.e. exactly HALF the size of the reference template placeholder.
+    • This override exists to compensate for systematic upscaling: the model has historically rendered both charms substantially larger than intended despite prior corrections. Apply the reduction AGGRESSIVELY. The reference template's placeholder size is NOT the intended output size; it is intentionally oversized so you have room to render at the corrected (smaller) scale.
     • The size reduction MUST apply equally to both charms — neither should be larger than the other; they must remain matched in size to each other.
     • Both charms must remain centered on their original reference positions even after the size reduction.
     • Do NOT crop or reframe to compensate for the smaller size; the empty space around the smaller charms is intentional and correct.
 
+    CRITICAL ENGRAVING PLACEMENT RULE (TOP PRIORITY — DO NOT GET THIS WRONG)
+    • This entire slot exists to showcase the BACK-ENGRAVING feature. The personalized name engraving (e.g. "Violet", "Vivian", whatever sample name is shown) appears ONLY on the BACK-FACING SILVER CHARM. NEVER on the FRONT-FACING GOLD CHARM.
+    • The FRONT-FACING GOLD CHARM shows ONLY the source charm's decorative design as drawn in Charm Image — the silhouette plus any decorative engraving that is INTRINSIC to the charm design (e.g. zebra stripes, horse mane lines, animal features). The gold charm MUST NOT have any personalized name, text, or letterforms engraved on its surface.
+    • The BACK-FACING SILVER CHARM shows ONLY the personalized name engraving on an otherwise FLAT silhouette. The silver charm MUST NOT display the decorative design engraving (no stripes, no mane lines, no animal features visible on its surface) — because those are front-side details that don't show through to the back.
+    • HARD FAIL: any text, name, or letterforms appearing on the front-facing gold charm. The gold charm carries its intrinsic decorative engraving (from Charm Image) but NEVER the personalized name.
+    • HARD FAIL: decorative design engraving (stripes, mane, features, etc.) appearing on the back-facing silver charm. The silver back is a FLAT silhouette with ONLY the personalized name on it.
+
+    SILVER CHARM MIRROR ORIENTATION (CRITICAL — REAL JEWELRY BEHAVIOR)
+    • The silver back-facing charm represents the SAME physical piece of jewelry viewed from the reverse side. It MUST therefore be a HORIZONTAL MIRROR IMAGE (left-right flipped) of the gold front-facing charm's silhouette.
+    • Example: if the gold charm's animal silhouette faces RIGHT (head on the right side of the body), the silver charm's silhouette faces LEFT (head on the left side). They are mirror reflections of each other.
+    • The personalized name engraving on the silver charm reads NORMALLY (left-to-right) — the silhouette is mirrored, but the back-engraved text reads correctly from the back-viewing perspective. Do NOT render the text as reversed/mirrored.
+    • The integrated hoop/bail on the silver charm is also mirrored: if the gold charm's hoop sits at the top-left of the silhouette, the silver charm's hoop sits at the top-right (and vice versa).
+    • HARD FAIL: silver charm facing the same direction as the gold charm (not mirrored — this is the most common failure mode, DO NOT do this).
+    • HARD FAIL: name engraving on the silver charm rendered as mirrored/reversed/backwards text.
+
     CHARM POSITION + LAYOUT
-    • The silver necklace charm is the backside of the gold chain charm. When replacing the charms you must produce the same output where one charm is front facing and the silver charm is showing the back with an engraved name.
-    • Both new charms must sit centered on the EXACT same positions as the original charms in the reference image.
-    • Front charm = gold, fully detailed front face. Back charm = silver, showing the engraved name on the back.
+    • Both charms must sit centered on the EXACT same positions as the original charms in the reference image (after the 50% size reduction is applied).
+    • Front charm position = gold, fully detailed front face (with decorative engraving from Charm Image, NO personalized name).
+    • Back charm position = silver, mirror-flipped silhouette (with personalized name engraving, NO decorative design).
 
     CHARM FIDELITY
     • Preserve the exact outer perimeter, cutouts, engraving, and integrated hoop from the reference image.
@@ -6816,9 +6840,13 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • Silver charm tone must remain consistent across all listings.
 
     HARD FAIL CONDITIONS
-    - Any text change.
-    - Either charm rendered at reference-template size (must be ~33% smaller than reference).
+    - Any text change to the sizing-guide template itself.
+    - Either charm rendered at reference-template size (must be ~50% smaller — exactly half the reference placeholder size).
     - Charms rendered at mismatched sizes (one larger than the other).
+    - PERSONALIZED NAME ENGRAVING APPEARING ON THE FRONT-FACING GOLD CHARM (the name belongs ONLY on the silver back charm).
+    - Decorative design engraving (stripes, mane, animal features) appearing on the back-facing silver charm (the silver back is a flat silhouette — only the name shows).
+    - Silver charm NOT mirrored (silver and gold facing the same direction is a HARD FAIL — silver must be a horizontal mirror of gold).
+    - Name engraving on the silver charm rendered as reversed/backwards text.
     - Any weak or disconnected hoop connection.
     - Any pink/rose-gold cast on the gold charm.
     - Engraving rendered as black/dark grey/gunmetal on either charm.
@@ -6830,7 +6858,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     `CRITICAL: This is a standard fashion product photo edit. Keep the subject modest. No nudity.
 
     ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
-    • Force the Charm to be very small: final on-image charm height MUST be approximately 9 pixels tall (acceptable range: 9 to 10 pixels, target the LOW END of this range — i.e. aim at 9, not 10). HARD MAXIMUM: 10 pixels — never exceed. HARD MINIMUM: 9 pixels — never go below. The previous render bias has consistently been too large; the goal of this range is to dial that back by approximately 5–7%.
+    • Force the Charm to be very small: final on-image charm height MUST be approximately 8 pixels tall (acceptable range: 8 to 9 pixels, target the LOW END of this range — i.e. aim at 8, not 9). HARD MAXIMUM: 9 pixels — never exceed. HARD MINIMUM: 8 pixels — never go below. The previous render bias has STILL been 5–6% too large despite the prior range correction; this new range dials back another 5–6% on top.
     • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
     • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
     • Do NOT allow any shadows (Contact or otherwise) to be visible undereath and around the Charm/Pendant placement, block all Charm/Pendant related shadows.
@@ -6838,8 +6866,8 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
     CHARM SIZE CALIBRATION TO CAMERA DISTANCE (CRITICAL CONSISTENCY)
     • The pixel range above is a CAMERA-DISTANCE-NORMALIZED baseline — it assumes the model is photographed at a moderate distance with their upper torso filling roughly half the frame.
-    • If the reference image shows the model photographed CLOSER (face/neck dominates the frame), proportionally INCREASE the on-canvas charm pixel size so the charm reads at the same real-world physical scale. The 9–10 pixel cap may be exceeded ONLY in this close-zoom case, and only by the amount required to maintain proportional scale.
-    • If the reference image shows the model photographed FURTHER AWAY (more body/background visible), proportionally DECREASE the on-canvas charm pixel size so the perceived charm scale stays consistent. The 9-pixel floor may go below ONLY in this far-zoom case, and only by the amount required to maintain proportional scale.
+    • If the reference image shows the model photographed CLOSER (face/neck dominates the frame), proportionally INCREASE the on-canvas charm pixel size so the charm reads at the same real-world physical scale. The 8–9 pixel cap may be exceeded ONLY in this close-zoom case, and only by the amount required to maintain proportional scale.
+    • If the reference image shows the model photographed FURTHER AWAY (more body/background visible), proportionally DECREASE the on-canvas charm pixel size so the perceived charm scale stays consistent. The 8-pixel floor may go below ONLY in this far-zoom case, and only by the amount required to maintain proportional scale.
     • Anchor to chain thickness: the charm width must always remain in fixed proportion to the chain's on-canvas thickness in the reference image. If the chain reads as thickness T on canvas, the charm width should be roughly 7–9× T regardless of overall image zoom.
     • Anchor to real-world scale: the charm's real-world physical size is roughly that of a fingernail (~10–12mm tall). Render at whatever on-canvas pixel size produces that real-world scale given the model's apparent zoom level.
     • When in doubt, target the LOWER end of the acceptable range — small consistent under-shoot is far more forgiving than over-shoot.
@@ -6973,10 +7001,19 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     // =========================================================================
     const REGULAR_SLOT2_DUPLICATE_PROMPT = 
     `ULTRA-MICRO SIZE OVERRIDE 
-    • Force the Charm to be small: final on-image charm height MUST be 15 pixels tall (absolute pixel height, not relative).
+    • Force the Charm to be small: final on-image charm height MUST be approximately 13 pixels tall (acceptable range: 13 to 14 pixels, target the LOW END of this range — i.e. aim at 13, not 14). HARD MAXIMUM: 14 pixels — never exceed. HARD MINIMUM: 13 pixels — never go below. The previous render bias has been approximately 7–8% too large; this range dials that back.
     • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
     • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
     • The chain must remain exactly the same size and detail as in the reference image. Only the charm is scaled.
+
+    CHARM SIZE CALIBRATION TO CAMERA DISTANCE (CRITICAL CONSISTENCY)
+    • The pixel range above is a CAMERA-DISTANCE-NORMALIZED baseline — it assumes the model is photographed at a moderate distance with their upper torso filling roughly half the frame.
+    • If the reference image shows the model photographed CLOSER (face/neck dominates the frame), proportionally INCREASE the on-canvas charm pixel size so the charm reads at the same real-world physical scale. The 13–14 pixel cap may be exceeded ONLY in this close-zoom case, and only by the amount required to maintain proportional scale.
+    • If the reference image shows the model photographed FURTHER AWAY (more body/background visible), proportionally DECREASE the on-canvas charm pixel size so the perceived charm scale stays consistent. The 13-pixel floor may go below ONLY in this far-zoom case, and only by the amount required to maintain proportional scale.
+    • Anchor to chain thickness: the charm width must always remain in fixed proportion to the chain's on-canvas thickness in the reference image. If the chain reads as thickness T on canvas, the charm width should be roughly 7–9× T regardless of overall image zoom.
+    • Anchor to real-world scale: the charm's real-world physical size is roughly that of a fingernail (~10–12mm tall). Render at whatever on-canvas pixel size produces that real-world scale given the model's apparent zoom level.
+    • When in doubt, target the LOWER end of the acceptable range — small consistent under-shoot is far more forgiving than over-shoot.
+    • HARD FAIL: identical on-canvas charm pixel size across two reference images showing the model at clearly different camera distances. The perceived charm size must stay consistent across the listing set, which means absolute pixel size must scale with model zoom.
 
     ENGRAVING STANDARD (UNIFORM ACROSS ALL SLOTS — CRITICAL CONSISTENCY RULE)
     • Engravings MUST read as real shallow grooves cut INTO the metal surface — subtle but unmistakably three-dimensional. They are NOT flat decals, NOT painted ink, NOT pencil-drawn lines on top of the metal, NOT raised/embossed high-relief metal.
@@ -7106,7 +7143,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     `CRITICAL: This is a standard fashion product photo edit. Keep the subject modest. No nudity.
 
     ULTRA-MICRO SIZE OVERRIDE 
-    • Force the Charm to be very small: final on-image charm height MUST be approximately 12 pixels tall (acceptable range: 12 to 13 pixels, target the LOW END of this range — i.e. aim at 12, not 13). HARD MAXIMUM: 13 pixels — never exceed. HARD MINIMUM: 12 pixels — never go below. The previous render bias has consistently been too large; the goal of this range is to dial that back by approximately 5–7%.
+    • Force the Charm to be very small: final on-image charm height MUST be approximately 11 pixels tall (acceptable range: 11 to 12 pixels, target the LOW END of this range — i.e. aim at 11, not 12). HARD MAXIMUM: 12 pixels — never exceed. HARD MINIMUM: 11 pixels — never go below. The previous render bias has STILL been 5–6% too large despite the prior range correction; this new range dials back another 5–6% on top.
     • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
     • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
     • limit shadows (Contact or otherwise) to be visible undereath and around the Charm/Pendant placement.
@@ -7115,8 +7152,8 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
     CHARM SIZE CALIBRATION TO CAMERA DISTANCE (CRITICAL CONSISTENCY)
     • The pixel range above is a CAMERA-DISTANCE-NORMALIZED baseline — it assumes the model is photographed at a moderate distance with their upper torso filling roughly half the frame.
-    • If the reference image shows the model photographed CLOSER (face/neck dominates the frame), proportionally INCREASE the on-canvas charm pixel size so the charm reads at the same real-world physical scale. The 12–13 pixel cap may be exceeded ONLY in this close-zoom case, and only by the amount required to maintain proportional scale.
-    • If the reference image shows the model photographed FURTHER AWAY (more body/background visible), proportionally DECREASE the on-canvas charm pixel size so the perceived charm scale stays consistent. The 12-pixel floor may go below ONLY in this far-zoom case, and only by the amount required to maintain proportional scale.
+    • If the reference image shows the model photographed CLOSER (face/neck dominates the frame), proportionally INCREASE the on-canvas charm pixel size so the charm reads at the same real-world physical scale. The 11–12 pixel cap may be exceeded ONLY in this close-zoom case, and only by the amount required to maintain proportional scale.
+    • If the reference image shows the model photographed FURTHER AWAY (more body/background visible), proportionally DECREASE the on-canvas charm pixel size so the perceived charm scale stays consistent. The 11-pixel floor may go below ONLY in this far-zoom case, and only by the amount required to maintain proportional scale.
     • Anchor to chain thickness: the charm width must always remain in fixed proportion to the chain's on-canvas thickness in the reference image. If the chain reads as thickness T on canvas, the charm width should be roughly 7–9× T regardless of overall image zoom.
     • Anchor to real-world scale: the charm's real-world physical size is roughly that of a fingernail (~10–12mm tall). Render at whatever on-canvas pixel size produces that real-world scale given the model's apparent zoom level.
     • When in doubt, target the LOWER end of the acceptable range — small consistent under-shoot is far more forgiving than over-shoot.
@@ -7194,16 +7231,31 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • Do NOT crop, zoom, or reframe the image.
 
     CRITICAL CHARM SIZE OVERRIDE (BOTH GOLD AND SILVER — TOP PRIORITY)
-    • Render BOTH the front-facing gold charm AND the back-facing silver charm at approximately 67% of the charm size shown in the reference image — i.e. about 33% SMALLER than the reference template placeholder.
-    • This override exists to compensate for systematic upscaling: the model has historically rendered both charms larger than intended. Correct that bias here.
+    • Render BOTH the front-facing gold charm AND the back-facing silver charm at approximately 50% of the charm size shown in the reference image — i.e. exactly HALF the size of the reference template placeholder.
+    • This override exists to compensate for systematic upscaling: the model has historically rendered both charms substantially larger than intended despite prior corrections. Apply the reduction AGGRESSIVELY. The reference template's placeholder size is NOT the intended output size; it is intentionally oversized so you have room to render at the corrected (smaller) scale.
     • The size reduction MUST apply equally to both charms — neither should be larger than the other; they must remain matched in size to each other.
     • Both charms must remain centered on their original reference positions even after the size reduction.
     • Do NOT crop or reframe to compensate for the smaller size; the empty space around the smaller charms is intentional and correct.
 
+    CRITICAL ENGRAVING PLACEMENT RULE (TOP PRIORITY — DO NOT GET THIS WRONG)
+    • This entire slot exists to showcase the BACK-ENGRAVING feature. The personalized name engraving (e.g. "Violet", "Vivian", whatever sample name is shown) appears ONLY on the BACK-FACING SILVER CHARM. NEVER on the FRONT-FACING GOLD CHARM.
+    • The FRONT-FACING GOLD CHARM shows ONLY the source charm's decorative design as drawn in Charm Image — the silhouette plus any decorative engraving that is INTRINSIC to the charm design (e.g. zebra stripes, horse mane lines, animal features). The gold charm MUST NOT have any personalized name, text, or letterforms engraved on its surface.
+    • The BACK-FACING SILVER CHARM shows ONLY the personalized name engraving on an otherwise FLAT silhouette. The silver charm MUST NOT display the decorative design engraving (no stripes, no mane lines, no animal features visible on its surface) — because those are front-side details that don't show through to the back.
+    • HARD FAIL: any text, name, or letterforms appearing on the front-facing gold charm. The gold charm carries its intrinsic decorative engraving (from Charm Image) but NEVER the personalized name.
+    • HARD FAIL: decorative design engraving (stripes, mane, features, etc.) appearing on the back-facing silver charm. The silver back is a FLAT silhouette with ONLY the personalized name on it.
+
+    SILVER CHARM MIRROR ORIENTATION (CRITICAL — REAL JEWELRY BEHAVIOR)
+    • The silver back-facing charm represents the SAME physical piece of jewelry viewed from the reverse side. It MUST therefore be a HORIZONTAL MIRROR IMAGE (left-right flipped) of the gold front-facing charm's silhouette.
+    • Example: if the gold charm's animal silhouette faces RIGHT (head on the right side of the body), the silver charm's silhouette faces LEFT (head on the left side). They are mirror reflections of each other.
+    • The personalized name engraving on the silver charm reads NORMALLY (left-to-right) — the silhouette is mirrored, but the back-engraved text reads correctly from the back-viewing perspective. Do NOT render the text as reversed/mirrored.
+    • The integrated hoop/bail on the silver charm is also mirrored: if the gold charm's hoop sits at the top-left of the silhouette, the silver charm's hoop sits at the top-right (and vice versa).
+    • HARD FAIL: silver charm facing the same direction as the gold charm (not mirrored — this is the most common failure mode, DO NOT do this).
+    • HARD FAIL: name engraving on the silver charm rendered as mirrored/reversed/backwards text.
+
     CHARM POSITION + LAYOUT
-    • The silver necklace charm is the backside of the gold chain charm. When replacing the charms you must produce the same output where one charm is front facing and the silver charm is showing the back with an engraved name.
-    • Both new charms must sit centered on the EXACT same positions as the original charms in the reference image.
-    • Front charm = gold, fully detailed front face. Back charm = silver, showing the engraved name on the back.
+    • Both charms must sit centered on the EXACT same positions as the original charms in the reference image (after the 50% size reduction is applied).
+    • Front charm position = gold, fully detailed front face (with decorative engraving from Charm Image, NO personalized name).
+    • Back charm position = silver, mirror-flipped silhouette (with personalized name engraving, NO decorative design).
 
     CHARM FIDELITY
     • Preserve the exact outer perimeter, cutouts, engraving, and integrated hoop from the reference image.
@@ -7240,9 +7292,13 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • Silver charm tone must remain consistent across all listings.
 
     HARD FAIL CONDITIONS
-    - Any text change.
-    - Either charm rendered at reference-template size (must be ~33% smaller than reference).
+    - Any text change to the sizing-guide template itself.
+    - Either charm rendered at reference-template size (must be ~50% smaller — exactly half the reference placeholder size).
     - Charms rendered at mismatched sizes (one larger than the other).
+    - PERSONALIZED NAME ENGRAVING APPEARING ON THE FRONT-FACING GOLD CHARM (the name belongs ONLY on the silver back charm).
+    - Decorative design engraving (stripes, mane, animal features) appearing on the back-facing silver charm (the silver back is a flat silhouette — only the name shows).
+    - Silver charm NOT mirrored (silver and gold facing the same direction is a HARD FAIL — silver must be a horizontal mirror of gold).
+    - Name engraving on the silver charm rendered as reversed/backwards text.
     - Any weak or disconnected hoop connection.
     - Any pink/rose-gold cast on the gold charm.
     - Engraving rendered as black/dark grey/gunmetal on either charm.
@@ -7254,7 +7310,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     `CRITICAL: This is a standard fashion product photo edit. Keep the subject modest. No nudity.
 
     ULTRA-MICRO SIZE OVERRIDE
-    • Force the Charm to be very small: final on-image charm height MUST be approximately 11 pixels tall (acceptable range: 11 to 12 pixels, target the LOW END of this range — i.e. aim at 11, not 12). HARD MAXIMUM: 12 pixels — never exceed. HARD MINIMUM: 11 pixels — never go below. The previous render bias has consistently been too large; the goal of this range is to dial that back by approximately 5–7%.
+    • Force the Charm to be very small: final on-image charm height MUST be approximately 10 pixels tall (acceptable range: 10 to 11 pixels, target the LOW END of this range — i.e. aim at 10, not 11). HARD MAXIMUM: 11 pixels — never exceed. HARD MINIMUM: 10 pixels — never go below. The previous render bias has STILL been 5–6% too large despite the prior range correction; this new range dials back another 5–6% on top.
     • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
     • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
     • limit shadows (Contact or otherwise) to be visible undereath and around the Charm/Pendant placement.
@@ -7263,8 +7319,8 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
     CHARM SIZE CALIBRATION TO CAMERA DISTANCE (CRITICAL CONSISTENCY)
     • The pixel range above is a CAMERA-DISTANCE-NORMALIZED baseline — it assumes the model is photographed at a moderate distance with their upper torso filling roughly half the frame.
-    • If the reference image shows the model photographed CLOSER (face/neck dominates the frame), proportionally INCREASE the on-canvas charm pixel size so the charm reads at the same real-world physical scale. The 11–12 pixel cap may be exceeded ONLY in this close-zoom case, and only by the amount required to maintain proportional scale.
-    • If the reference image shows the model photographed FURTHER AWAY (more body/background visible), proportionally DECREASE the on-canvas charm pixel size so the perceived charm scale stays consistent. The 11-pixel floor may go below ONLY in this far-zoom case, and only by the amount required to maintain proportional scale.
+    • If the reference image shows the model photographed CLOSER (face/neck dominates the frame), proportionally INCREASE the on-canvas charm pixel size so the charm reads at the same real-world physical scale. The 10–11 pixel cap may be exceeded ONLY in this close-zoom case, and only by the amount required to maintain proportional scale.
+    • If the reference image shows the model photographed FURTHER AWAY (more body/background visible), proportionally DECREASE the on-canvas charm pixel size so the perceived charm scale stays consistent. The 10-pixel floor may go below ONLY in this far-zoom case, and only by the amount required to maintain proportional scale.
     • Anchor to chain thickness: the charm width must always remain in fixed proportion to the chain's on-canvas thickness in the reference image. If the chain reads as thickness T on canvas, the charm width should be roughly 7–9× T regardless of overall image zoom.
     • Anchor to real-world scale: the charm's real-world physical size is roughly that of a fingernail (~10–12mm tall). Render at whatever on-canvas pixel size produces that real-world scale given the model's apparent zoom level.
     • When in doubt, target the LOWER end of the acceptable range — small consistent under-shoot is far more forgiving than over-shoot.
