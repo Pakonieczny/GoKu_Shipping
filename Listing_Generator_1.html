@@ -6720,13 +6720,39 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • Consistency rule: the gold colour rendered for the charm in this slot MUST be identical to the gold colour rendered for the charm in every other slot of the same listing set.
 
     CHARM SILHOUETTE FIDELITY — NO FOREIGN OBJECTS (UNIFORM ACROSS ALL SLOTS — CRITICAL)
-    • The charm rendered in the output MUST be design-faithful to the source Charm Image. Outline, internal cutouts, engraved lines, surface details, and integrated hoop are ALL locked to the source artwork.
-    • NEVER add decorative elements that are NOT in the source charm: no diamonds, gemstones, rhinestones, crystals, jewels, beads, pearls, dots, stars, hearts, or any other ornamental flourish on or inlaid into the charm body.
+
+    CHARM SOURCE-OF-TRUTH RULE (TWO INPUTS, ONE ROLE EACH — TOP PRIORITY):
+    • You are given TWO distinct image inputs for this task: (1) a REFERENCE NECKLACE IMAGE showing a necklace on a model/surface with some EXISTING charm hanging from it, and (2) a SEPARATE NEW CHARM IMAGE showing the charm that must appear in the output.
+    • THESE TWO IMAGES HAVE DIFFERENT JOBS. The REFERENCE NECKLACE IMAGE is for COMPOSITION ONLY — chain style, model pose, lighting direction, framing, background, skin tone, fabric. The NEW CHARM IMAGE is the ONLY source of truth for the charm itself — its silhouette, internal cutouts, engraved lines, surface details, integrated hoop, proportions, subject identity, design language.
+    • THE EXISTING CHARM IN THE REFERENCE NECKLACE IMAGE MUST BE COMPLETELY IGNORED AND REPLACED. Pretend that charm is not there. Do NOT borrow any visual feature, line, cutout, engraving, silhouette curve, or surface detail from it. The output is the NEW CHARM IMAGE's charm rendered onto the reference necklace's chain.
+
+    ZERO BLEED-THROUGH FROM REFERENCE IMAGE'S CHARM:
+    • Every line, curve, dot, engraving, cutout, internal opening, perforation, and surface marking in the output charm MUST trace back to the NEW CHARM IMAGE — and ONLY the new charm image. Nothing originates from the reference necklace's existing charm.
+    • If the reference necklace's charm has a feature (e.g., a star cutout, a dot pattern, an outline curve, an engraved line) that is NOT present in the new charm image, the output charm MUST NOT have it.
+    • The subject identity of the output charm (e.g., dog, cat, dinosaur, heart, planet, paper plane, leaf, bee) is determined EXCLUSIVELY by the new charm image. Never blended, never averaged, never substituted with whatever the reference necklace happened to have.
+    • If the new charm image shows a dog and the reference necklace shows a planet, the output is a DOG charm — with zero planet features. No partial blending. No "compromise" rendering.
+
+    PIXEL-FAITHFUL REPLICATION OF NEW CHARM IMAGE:
+    • Reproduce the new charm with maximum fidelity. Every engraved line, every internal cutout, every surface marking, every proportional detail must match the new charm image exactly.
+    • Engraved details, internal lines, cutout shapes, and outline silhouette are the most distinctive identifiers of this charm — these are NON-NEGOTIABLE and must be reproduced exactly as shown in the new charm image.
+    • No "creative reinterpretation." No "stylistic smoothing." No "combining design elements." The output charm IS the new charm image's charm — just rotated, scaled, lit, and shaded to fit the necklace context.
+    • If the new charm image has a specific engraving style (clean lines, dotted texture, hatching, smooth surface, etc.), reproduce that exact style. Do NOT invent your own styling.
+
+    NO FOREIGN OBJECTS — never add to the charm:
+    • NEVER add decorative elements that are NOT in the new charm image: no diamonds, gemstones, rhinestones, crystals, jewels, beads, pearls, dots, stars, hearts, or any other ornamental flourish on or inlaid into the charm body.
     • NEVER add inlay, enamel fill, stone settings, prong mounts, bezel mounts, paint, or any embedded element to the charm.
-    • NEVER add extra cutouts, holes, dots, scratches, or surface markings that are not present in the source artwork.
-    • Rule of thumb: if the source charm has no gemstone, the output has NO gemstone. If the source has no beadwork, the output has NO beadwork. If the source has no dots/stars/hearts, the output has none either. The charm is exactly what the source artwork shows — nothing more.
-    • HARD FAIL: any visible gemstone, crystal, diamond, jewel, bead, pearl, or decorative element on the charm that is NOT present in the source Charm Image.
-    • HARD FAIL: any added dot, bump, surface decoration, or "creative improvement" not in the source design.
+    • NEVER add extra cutouts, holes, dots, scratches, or surface markings that are not present in the new charm image.
+    • Rule of thumb: if the new charm image has no gemstone, the output has NO gemstone. If the new charm image has no beadwork, the output has NO beadwork. The charm is EXACTLY what the new charm image shows — nothing more, nothing less, nothing borrowed from anywhere else.
+
+    HARD FAILS — BLEED-THROUGH (NEW, CRITICAL):
+    • HARD FAIL: any visual detail (engraving, cutout, line, curve, dot, surface marking, outline feature) from the reference necklace image's existing charm appearing on the output charm.
+    • HARD FAIL: output charm silhouette is a blend, hybrid, or "average" of the new charm image and the reference necklace's existing charm.
+    • HARD FAIL: output charm subject identity differs from the new charm image (e.g., new charm image shows a dog but output renders a planet, heart, dinosaur, or any other animal/object).
+    • HARD FAIL: output charm has missing details that ARE in the new charm image (e.g., new charm image shows specific engraved facial features on a dog and the output renders a generic dog silhouette without those features).
+
+    HARD FAILS — FOREIGN OBJECTS:
+    • HARD FAIL: any visible gemstone, crystal, diamond, jewel, bead, pearl, or decorative element on the charm that is NOT present in the new charm image.
+    • HARD FAIL: any added dot, bump, surface decoration, or "creative improvement" not in the new charm image's design.
 
     JUMP RING & HANGING PHYSICS (CRITICAL — REAL JEWELRY BEHAVIOR)
     • The charm has exactly ONE hoop/bail built into its silhouette as shown in the source Charm Image. The jump ring from the necklace chain MUST pass through THAT EXACT existing hoop — and only that hoop.
@@ -6786,13 +6812,39 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • Keep edges crisp. No blur or smear.
 
     CHARM SILHOUETTE FIDELITY — NO FOREIGN OBJECTS (UNIFORM ACROSS ALL SLOTS — CRITICAL)
-    • The charm rendered in the output MUST be design-faithful to the source Charm Image. Outline, internal cutouts, engraved lines, surface details, and integrated hoop are ALL locked to the source artwork.
-    • NEVER add decorative elements that are NOT in the source charm: no diamonds, gemstones, rhinestones, crystals, jewels, beads, pearls, dots, stars, hearts, or any other ornamental flourish on or inlaid into the charm body.
+
+    CHARM SOURCE-OF-TRUTH RULE (TWO INPUTS, ONE ROLE EACH — TOP PRIORITY):
+    • You are given TWO distinct image inputs for this task: (1) a REFERENCE NECKLACE IMAGE showing a necklace on a model/surface with some EXISTING charm hanging from it, and (2) a SEPARATE NEW CHARM IMAGE showing the charm that must appear in the output.
+    • THESE TWO IMAGES HAVE DIFFERENT JOBS. The REFERENCE NECKLACE IMAGE is for COMPOSITION ONLY — chain style, model pose, lighting direction, framing, background, skin tone, fabric. The NEW CHARM IMAGE is the ONLY source of truth for the charm itself — its silhouette, internal cutouts, engraved lines, surface details, integrated hoop, proportions, subject identity, design language.
+    • THE EXISTING CHARM IN THE REFERENCE NECKLACE IMAGE MUST BE COMPLETELY IGNORED AND REPLACED. Pretend that charm is not there. Do NOT borrow any visual feature, line, cutout, engraving, silhouette curve, or surface detail from it. The output is the NEW CHARM IMAGE's charm rendered onto the reference necklace's chain.
+
+    ZERO BLEED-THROUGH FROM REFERENCE IMAGE'S CHARM:
+    • Every line, curve, dot, engraving, cutout, internal opening, perforation, and surface marking in the output charm MUST trace back to the NEW CHARM IMAGE — and ONLY the new charm image. Nothing originates from the reference necklace's existing charm.
+    • If the reference necklace's charm has a feature (e.g., a star cutout, a dot pattern, an outline curve, an engraved line) that is NOT present in the new charm image, the output charm MUST NOT have it.
+    • The subject identity of the output charm (e.g., dog, cat, dinosaur, heart, planet, paper plane, leaf, bee) is determined EXCLUSIVELY by the new charm image. Never blended, never averaged, never substituted with whatever the reference necklace happened to have.
+    • If the new charm image shows a dog and the reference necklace shows a planet, the output is a DOG charm — with zero planet features. No partial blending. No "compromise" rendering.
+
+    PIXEL-FAITHFUL REPLICATION OF NEW CHARM IMAGE:
+    • Reproduce the new charm with maximum fidelity. Every engraved line, every internal cutout, every surface marking, every proportional detail must match the new charm image exactly.
+    • Engraved details, internal lines, cutout shapes, and outline silhouette are the most distinctive identifiers of this charm — these are NON-NEGOTIABLE and must be reproduced exactly as shown in the new charm image.
+    • No "creative reinterpretation." No "stylistic smoothing." No "combining design elements." The output charm IS the new charm image's charm — just rotated, scaled, lit, and shaded to fit the necklace context.
+    • If the new charm image has a specific engraving style (clean lines, dotted texture, hatching, smooth surface, etc.), reproduce that exact style. Do NOT invent your own styling.
+
+    NO FOREIGN OBJECTS — never add to the charm:
+    • NEVER add decorative elements that are NOT in the new charm image: no diamonds, gemstones, rhinestones, crystals, jewels, beads, pearls, dots, stars, hearts, or any other ornamental flourish on or inlaid into the charm body.
     • NEVER add inlay, enamel fill, stone settings, prong mounts, bezel mounts, paint, or any embedded element to the charm.
-    • NEVER add extra cutouts, holes, dots, scratches, or surface markings that are not present in the source artwork.
-    • Rule of thumb: if the source charm has no gemstone, the output has NO gemstone. If the source has no beadwork, the output has NO beadwork. If the source has no dots/stars/hearts, the output has none either. The charm is exactly what the source artwork shows — nothing more.
-    • HARD FAIL: any visible gemstone, crystal, diamond, jewel, bead, pearl, or decorative element on the charm that is NOT present in the source Charm Image.
-    • HARD FAIL: any added dot, bump, surface decoration, or "creative improvement" not in the source design.
+    • NEVER add extra cutouts, holes, dots, scratches, or surface markings that are not present in the new charm image.
+    • Rule of thumb: if the new charm image has no gemstone, the output has NO gemstone. If the new charm image has no beadwork, the output has NO beadwork. The charm is EXACTLY what the new charm image shows — nothing more, nothing less, nothing borrowed from anywhere else.
+
+    HARD FAILS — BLEED-THROUGH (NEW, CRITICAL):
+    • HARD FAIL: any visual detail (engraving, cutout, line, curve, dot, surface marking, outline feature) from the reference necklace image's existing charm appearing on the output charm.
+    • HARD FAIL: output charm silhouette is a blend, hybrid, or "average" of the new charm image and the reference necklace's existing charm.
+    • HARD FAIL: output charm subject identity differs from the new charm image (e.g., new charm image shows a dog but output renders a planet, heart, dinosaur, or any other animal/object).
+    • HARD FAIL: output charm has missing details that ARE in the new charm image (e.g., new charm image shows specific engraved facial features on a dog and the output renders a generic dog silhouette without those features).
+
+    HARD FAILS — FOREIGN OBJECTS:
+    • HARD FAIL: any visible gemstone, crystal, diamond, jewel, bead, pearl, or decorative element on the charm that is NOT present in the new charm image.
+    • HARD FAIL: any added dot, bump, surface decoration, or "creative improvement" not in the new charm image's design.
 
     INTEGRATED HOOP RULE
     • The hoop/bail MUST be part of the same laser-cut silhouette as the charm body.
@@ -6954,13 +7006,39 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • Consistency rule: the gold colour rendered for the charm in this slot MUST be identical to the gold colour rendered for the charm in every other slot of the same listing set.
 
     CHARM SILHOUETTE FIDELITY — NO FOREIGN OBJECTS (UNIFORM ACROSS ALL SLOTS — CRITICAL)
-    • The charm rendered in the output MUST be design-faithful to the source Charm Image. Outline, internal cutouts, engraved lines, surface details, and integrated hoop are ALL locked to the source artwork.
-    • NEVER add decorative elements that are NOT in the source charm: no diamonds, gemstones, rhinestones, crystals, jewels, beads, pearls, dots, stars, hearts, or any other ornamental flourish on or inlaid into the charm body.
+
+    CHARM SOURCE-OF-TRUTH RULE (TWO INPUTS, ONE ROLE EACH — TOP PRIORITY):
+    • You are given TWO distinct image inputs for this task: (1) a REFERENCE NECKLACE IMAGE showing a necklace on a model/surface with some EXISTING charm hanging from it, and (2) a SEPARATE NEW CHARM IMAGE showing the charm that must appear in the output.
+    • THESE TWO IMAGES HAVE DIFFERENT JOBS. The REFERENCE NECKLACE IMAGE is for COMPOSITION ONLY — chain style, model pose, lighting direction, framing, background, skin tone, fabric. The NEW CHARM IMAGE is the ONLY source of truth for the charm itself — its silhouette, internal cutouts, engraved lines, surface details, integrated hoop, proportions, subject identity, design language.
+    • THE EXISTING CHARM IN THE REFERENCE NECKLACE IMAGE MUST BE COMPLETELY IGNORED AND REPLACED. Pretend that charm is not there. Do NOT borrow any visual feature, line, cutout, engraving, silhouette curve, or surface detail from it. The output is the NEW CHARM IMAGE's charm rendered onto the reference necklace's chain.
+
+    ZERO BLEED-THROUGH FROM REFERENCE IMAGE'S CHARM:
+    • Every line, curve, dot, engraving, cutout, internal opening, perforation, and surface marking in the output charm MUST trace back to the NEW CHARM IMAGE — and ONLY the new charm image. Nothing originates from the reference necklace's existing charm.
+    • If the reference necklace's charm has a feature (e.g., a star cutout, a dot pattern, an outline curve, an engraved line) that is NOT present in the new charm image, the output charm MUST NOT have it.
+    • The subject identity of the output charm (e.g., dog, cat, dinosaur, heart, planet, paper plane, leaf, bee) is determined EXCLUSIVELY by the new charm image. Never blended, never averaged, never substituted with whatever the reference necklace happened to have.
+    • If the new charm image shows a dog and the reference necklace shows a planet, the output is a DOG charm — with zero planet features. No partial blending. No "compromise" rendering.
+
+    PIXEL-FAITHFUL REPLICATION OF NEW CHARM IMAGE:
+    • Reproduce the new charm with maximum fidelity. Every engraved line, every internal cutout, every surface marking, every proportional detail must match the new charm image exactly.
+    • Engraved details, internal lines, cutout shapes, and outline silhouette are the most distinctive identifiers of this charm — these are NON-NEGOTIABLE and must be reproduced exactly as shown in the new charm image.
+    • No "creative reinterpretation." No "stylistic smoothing." No "combining design elements." The output charm IS the new charm image's charm — just rotated, scaled, lit, and shaded to fit the necklace context.
+    • If the new charm image has a specific engraving style (clean lines, dotted texture, hatching, smooth surface, etc.), reproduce that exact style. Do NOT invent your own styling.
+
+    NO FOREIGN OBJECTS — never add to the charm:
+    • NEVER add decorative elements that are NOT in the new charm image: no diamonds, gemstones, rhinestones, crystals, jewels, beads, pearls, dots, stars, hearts, or any other ornamental flourish on or inlaid into the charm body.
     • NEVER add inlay, enamel fill, stone settings, prong mounts, bezel mounts, paint, or any embedded element to the charm.
-    • NEVER add extra cutouts, holes, dots, scratches, or surface markings that are not present in the source artwork.
-    • Rule of thumb: if the source charm has no gemstone, the output has NO gemstone. If the source has no beadwork, the output has NO beadwork. If the source has no dots/stars/hearts, the output has none either. The charm is exactly what the source artwork shows — nothing more.
-    • HARD FAIL: any visible gemstone, crystal, diamond, jewel, bead, pearl, or decorative element on the charm that is NOT present in the source Charm Image.
-    • HARD FAIL: any added dot, bump, surface decoration, or "creative improvement" not in the source design.
+    • NEVER add extra cutouts, holes, dots, scratches, or surface markings that are not present in the new charm image.
+    • Rule of thumb: if the new charm image has no gemstone, the output has NO gemstone. If the new charm image has no beadwork, the output has NO beadwork. The charm is EXACTLY what the new charm image shows — nothing more, nothing less, nothing borrowed from anywhere else.
+
+    HARD FAILS — BLEED-THROUGH (NEW, CRITICAL):
+    • HARD FAIL: any visual detail (engraving, cutout, line, curve, dot, surface marking, outline feature) from the reference necklace image's existing charm appearing on the output charm.
+    • HARD FAIL: output charm silhouette is a blend, hybrid, or "average" of the new charm image and the reference necklace's existing charm.
+    • HARD FAIL: output charm subject identity differs from the new charm image (e.g., new charm image shows a dog but output renders a planet, heart, dinosaur, or any other animal/object).
+    • HARD FAIL: output charm has missing details that ARE in the new charm image (e.g., new charm image shows specific engraved facial features on a dog and the output renders a generic dog silhouette without those features).
+
+    HARD FAILS — FOREIGN OBJECTS:
+    • HARD FAIL: any visible gemstone, crystal, diamond, jewel, bead, pearl, or decorative element on the charm that is NOT present in the new charm image.
+    • HARD FAIL: any added dot, bump, surface decoration, or "creative improvement" not in the new charm image's design.
 
     JUMP RING & HANGING PHYSICS (CRITICAL — REAL JEWELRY BEHAVIOR)
     • The charm has exactly ONE hoop/bail built into its silhouette as shown in the source Charm Image. The jump ring from the necklace chain MUST pass through THAT EXACT existing hoop — and only that hoop.
@@ -7053,13 +7131,36 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • Keep edges crisp. No blur or smear.
 
     CHARM SILHOUETTE FIDELITY — NO FOREIGN OBJECTS (UNIFORM ACROSS ALL SLOTS — CRITICAL)
-    • Each charm rendered in the output MUST be design-faithful to the source Charm Image. Outline, internal cutouts, engraved lines, surface details, and integrated hoop are ALL locked to the source artwork.
-    • NEVER add decorative elements that are NOT in the source charm: no diamonds, gemstones, rhinestones, crystals, jewels, beads, pearls, dots, stars, hearts, or any other ornamental flourish on or inlaid into either charm body.
+
+    CHARM SOURCE-OF-TRUTH RULE (TWO INPUTS, ONE ROLE EACH — TOP PRIORITY):
+    • You are given TWO distinct image inputs for this task: (1) a REFERENCE TEMPLATE IMAGE showing the back-engraving layout with a placeholder charm, and (2) a SEPARATE NEW CHARM IMAGE showing the charm whose silhouette must appear in the output as BOTH the gold front-facing charm AND the silver back-facing charm.
+    • THESE TWO IMAGES HAVE DIFFERENT JOBS. The REFERENCE TEMPLATE IMAGE is for LAYOUT, COMPOSITION, AND POSITIONING ONLY — where the charms sit, framing, background, the engraving placement area. The NEW CHARM IMAGE is the ONLY source of truth for the charm silhouettes themselves — their outline, internal cutouts, engraved lines, surface details, integrated hoop, proportions, subject identity, design language.
+    • THE PLACEHOLDER CHARM IN THE REFERENCE TEMPLATE MUST BE COMPLETELY IGNORED AND REPLACED. Pretend that placeholder is not there. Do NOT borrow any visual feature, line, cutout, engraving, silhouette curve, or surface detail from it. Both output charms (gold front + silver back) are the NEW CHARM IMAGE's charm rendered into the template's layout.
+
+    ZERO BLEED-THROUGH FROM REFERENCE IMAGE'S PLACEHOLDER CHARM:
+    • Every line, curve, dot, engraving, cutout, internal opening, perforation, and surface marking on BOTH the gold and silver charms MUST trace back to the NEW CHARM IMAGE — and ONLY the new charm image. Nothing originates from the reference template's placeholder charm.
+    • If the placeholder has a feature (e.g., a star cutout, a dot pattern, an outline curve, an engraved line) that is NOT present in the new charm image, neither output charm MUST have it.
+    • The subject identity of both output charms (e.g., dog, cat, dinosaur, heart, planet, paper plane, leaf, bee) is determined EXCLUSIVELY by the new charm image. Never blended, never averaged, never substituted with whatever the placeholder happened to show.
+
+    PIXEL-FAITHFUL REPLICATION OF NEW CHARM IMAGE (BOTH CHARMS):
+    • Reproduce the new charm with maximum fidelity in BOTH positions. Every engraved line, every internal cutout, every surface marking, every proportional detail must match the new charm image exactly.
+    • Engraved details, internal lines, cutout shapes, and outline silhouette are the most distinctive identifiers of this charm — these are NON-NEGOTIABLE and must be reproduced exactly as shown in the new charm image, on both the front gold charm and the back silver charm.
+    • No "creative reinterpretation." No "stylistic smoothing." No "combining design elements." Both output charms ARE the new charm image's charm — just rotated, mirrored (for the silver back), sized, lit, and shaded appropriately.
+
+    NO FOREIGN OBJECTS — never add to either charm:
+    • NEVER add decorative elements that are NOT in the new charm image: no diamonds, gemstones, rhinestones, crystals, jewels, beads, pearls, dots, stars, hearts, or any other ornamental flourish on or inlaid into either charm body.
     • NEVER add inlay, enamel fill, stone settings, prong mounts, bezel mounts, paint, or any embedded element to either charm.
-    • NEVER add extra cutouts, holes, dots, scratches, or surface markings that are not present in the source artwork.
-    • Rule of thumb: if the source charm has no gemstone, the output has NO gemstone. If the source has no beadwork, the output has NO beadwork. If the source has no dots/stars/hearts, the output has none either. Both charms are exactly what the source artwork shows — nothing more.
-    • HARD FAIL: any visible gemstone, crystal, diamond, jewel, bead, pearl, or decorative element on either charm that is NOT present in the source Charm Image.
-    • HARD FAIL: any added dot, bump, surface decoration, or "creative improvement" not in the source design, on either the gold or silver charm.
+    • NEVER add extra cutouts, holes, dots, scratches, or surface markings that are not present in the new charm image.
+    • Rule of thumb: if the new charm image has no gemstone, neither output charm has a gemstone. Both charms are EXACTLY what the new charm image shows.
+
+    HARD FAILS — BLEED-THROUGH (NEW, CRITICAL):
+    • HARD FAIL: any visual detail (engraving, cutout, line, curve, dot, surface marking, outline feature) from the reference template's placeholder charm appearing on EITHER the gold or silver output charm.
+    • HARD FAIL: either output charm silhouette is a blend, hybrid, or "average" of the new charm image and the placeholder.
+    • HARD FAIL: output charm subject identity differs from the new charm image on either the gold or silver charm.
+
+    HARD FAILS — FOREIGN OBJECTS:
+    • HARD FAIL: any visible gemstone, crystal, diamond, jewel, bead, pearl, or decorative element on either charm that is NOT present in the new charm image.
+    • HARD FAIL: any added dot, bump, surface decoration, or "creative improvement" not in the new charm image's design, on either the gold or silver charm.
 
     JUMP RING & HANGING PHYSICS (CRITICAL — REAL JEWELRY BEHAVIOR)
     • EACH charm has exactly ONE hoop/bail built into its silhouette as shown in the source Charm Image. The jump ring from the necklace chain MUST pass through THAT EXACT existing hoop on each charm — and only that hoop. This applies to BOTH the gold front charm AND the silver back charm.
@@ -7247,13 +7348,39 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • Consistency rule: the gold colour rendered for the charm in this slot MUST be identical to the gold colour rendered for the charm in every other slot of the same listing set.
 
     CHARM SILHOUETTE FIDELITY — NO FOREIGN OBJECTS (UNIFORM ACROSS ALL SLOTS — CRITICAL)
-    • The charm rendered in the output MUST be design-faithful to the source Charm Image. Outline, internal cutouts, engraved lines, surface details, and integrated hoop are ALL locked to the source artwork.
-    • NEVER add decorative elements that are NOT in the source charm: no diamonds, gemstones, rhinestones, crystals, jewels, beads, pearls, dots, stars, hearts, or any other ornamental flourish on or inlaid into the charm body.
+
+    CHARM SOURCE-OF-TRUTH RULE (TWO INPUTS, ONE ROLE EACH — TOP PRIORITY):
+    • You are given TWO distinct image inputs for this task: (1) a REFERENCE NECKLACE IMAGE showing a necklace on a model/surface with some EXISTING charm hanging from it, and (2) a SEPARATE NEW CHARM IMAGE showing the charm that must appear in the output.
+    • THESE TWO IMAGES HAVE DIFFERENT JOBS. The REFERENCE NECKLACE IMAGE is for COMPOSITION ONLY — chain style, model pose, lighting direction, framing, background, skin tone, fabric. The NEW CHARM IMAGE is the ONLY source of truth for the charm itself — its silhouette, internal cutouts, engraved lines, surface details, integrated hoop, proportions, subject identity, design language.
+    • THE EXISTING CHARM IN THE REFERENCE NECKLACE IMAGE MUST BE COMPLETELY IGNORED AND REPLACED. Pretend that charm is not there. Do NOT borrow any visual feature, line, cutout, engraving, silhouette curve, or surface detail from it. The output is the NEW CHARM IMAGE's charm rendered onto the reference necklace's chain.
+
+    ZERO BLEED-THROUGH FROM REFERENCE IMAGE'S CHARM:
+    • Every line, curve, dot, engraving, cutout, internal opening, perforation, and surface marking in the output charm MUST trace back to the NEW CHARM IMAGE — and ONLY the new charm image. Nothing originates from the reference necklace's existing charm.
+    • If the reference necklace's charm has a feature (e.g., a star cutout, a dot pattern, an outline curve, an engraved line) that is NOT present in the new charm image, the output charm MUST NOT have it.
+    • The subject identity of the output charm (e.g., dog, cat, dinosaur, heart, planet, paper plane, leaf, bee) is determined EXCLUSIVELY by the new charm image. Never blended, never averaged, never substituted with whatever the reference necklace happened to have.
+    • If the new charm image shows a dog and the reference necklace shows a planet, the output is a DOG charm — with zero planet features. No partial blending. No "compromise" rendering.
+
+    PIXEL-FAITHFUL REPLICATION OF NEW CHARM IMAGE:
+    • Reproduce the new charm with maximum fidelity. Every engraved line, every internal cutout, every surface marking, every proportional detail must match the new charm image exactly.
+    • Engraved details, internal lines, cutout shapes, and outline silhouette are the most distinctive identifiers of this charm — these are NON-NEGOTIABLE and must be reproduced exactly as shown in the new charm image.
+    • No "creative reinterpretation." No "stylistic smoothing." No "combining design elements." The output charm IS the new charm image's charm — just rotated, scaled, lit, and shaded to fit the necklace context.
+    • If the new charm image has a specific engraving style (clean lines, dotted texture, hatching, smooth surface, etc.), reproduce that exact style. Do NOT invent your own styling.
+
+    NO FOREIGN OBJECTS — never add to the charm:
+    • NEVER add decorative elements that are NOT in the new charm image: no diamonds, gemstones, rhinestones, crystals, jewels, beads, pearls, dots, stars, hearts, or any other ornamental flourish on or inlaid into the charm body.
     • NEVER add inlay, enamel fill, stone settings, prong mounts, bezel mounts, paint, or any embedded element to the charm.
-    • NEVER add extra cutouts, holes, dots, scratches, or surface markings that are not present in the source artwork.
-    • Rule of thumb: if the source charm has no gemstone, the output has NO gemstone. If the source has no beadwork, the output has NO beadwork. If the source has no dots/stars/hearts, the output has none either. The charm is exactly what the source artwork shows — nothing more.
-    • HARD FAIL: any visible gemstone, crystal, diamond, jewel, bead, pearl, or decorative element on the charm that is NOT present in the source Charm Image.
-    • HARD FAIL: any added dot, bump, surface decoration, or "creative improvement" not in the source design.
+    • NEVER add extra cutouts, holes, dots, scratches, or surface markings that are not present in the new charm image.
+    • Rule of thumb: if the new charm image has no gemstone, the output has NO gemstone. If the new charm image has no beadwork, the output has NO beadwork. The charm is EXACTLY what the new charm image shows — nothing more, nothing less, nothing borrowed from anywhere else.
+
+    HARD FAILS — BLEED-THROUGH (NEW, CRITICAL):
+    • HARD FAIL: any visual detail (engraving, cutout, line, curve, dot, surface marking, outline feature) from the reference necklace image's existing charm appearing on the output charm.
+    • HARD FAIL: output charm silhouette is a blend, hybrid, or "average" of the new charm image and the reference necklace's existing charm.
+    • HARD FAIL: output charm subject identity differs from the new charm image (e.g., new charm image shows a dog but output renders a planet, heart, dinosaur, or any other animal/object).
+    • HARD FAIL: output charm has missing details that ARE in the new charm image (e.g., new charm image shows specific engraved facial features on a dog and the output renders a generic dog silhouette without those features).
+
+    HARD FAILS — FOREIGN OBJECTS:
+    • HARD FAIL: any visible gemstone, crystal, diamond, jewel, bead, pearl, or decorative element on the charm that is NOT present in the new charm image.
+    • HARD FAIL: any added dot, bump, surface decoration, or "creative improvement" not in the new charm image's design.
 
     JUMP RING & HANGING PHYSICS (CRITICAL — REAL JEWELRY BEHAVIOR)
     • The charm has exactly ONE hoop/bail built into its silhouette as shown in the source Charm Image. The jump ring from the necklace chain MUST pass through THAT EXACT existing hoop — and only that hoop.
@@ -7403,13 +7530,39 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • Consistency rule: the gold colour rendered for the charm in this slot MUST be identical to the gold colour rendered for the charm in every other slot of the same listing set.
 
     CHARM SILHOUETTE FIDELITY — NO FOREIGN OBJECTS (UNIFORM ACROSS ALL SLOTS — CRITICAL)
-    • The charm rendered in the output MUST be design-faithful to the source Charm Image. Outline, internal cutouts, engraved lines, surface details, and integrated hoop are ALL locked to the source artwork.
-    • NEVER add decorative elements that are NOT in the source charm: no diamonds, gemstones, rhinestones, crystals, jewels, beads, pearls, dots, stars, hearts, or any other ornamental flourish on or inlaid into the charm body.
+
+    CHARM SOURCE-OF-TRUTH RULE (TWO INPUTS, ONE ROLE EACH — TOP PRIORITY):
+    • You are given TWO distinct image inputs for this task: (1) a REFERENCE NECKLACE IMAGE showing a necklace on a model/surface with some EXISTING charm hanging from it, and (2) a SEPARATE NEW CHARM IMAGE showing the charm that must appear in the output.
+    • THESE TWO IMAGES HAVE DIFFERENT JOBS. The REFERENCE NECKLACE IMAGE is for COMPOSITION ONLY — chain style, model pose, lighting direction, framing, background, skin tone, fabric. The NEW CHARM IMAGE is the ONLY source of truth for the charm itself — its silhouette, internal cutouts, engraved lines, surface details, integrated hoop, proportions, subject identity, design language.
+    • THE EXISTING CHARM IN THE REFERENCE NECKLACE IMAGE MUST BE COMPLETELY IGNORED AND REPLACED. Pretend that charm is not there. Do NOT borrow any visual feature, line, cutout, engraving, silhouette curve, or surface detail from it. The output is the NEW CHARM IMAGE's charm rendered onto the reference necklace's chain.
+
+    ZERO BLEED-THROUGH FROM REFERENCE IMAGE'S CHARM:
+    • Every line, curve, dot, engraving, cutout, internal opening, perforation, and surface marking in the output charm MUST trace back to the NEW CHARM IMAGE — and ONLY the new charm image. Nothing originates from the reference necklace's existing charm.
+    • If the reference necklace's charm has a feature (e.g., a star cutout, a dot pattern, an outline curve, an engraved line) that is NOT present in the new charm image, the output charm MUST NOT have it.
+    • The subject identity of the output charm (e.g., dog, cat, dinosaur, heart, planet, paper plane, leaf, bee) is determined EXCLUSIVELY by the new charm image. Never blended, never averaged, never substituted with whatever the reference necklace happened to have.
+    • If the new charm image shows a dog and the reference necklace shows a planet, the output is a DOG charm — with zero planet features. No partial blending. No "compromise" rendering.
+
+    PIXEL-FAITHFUL REPLICATION OF NEW CHARM IMAGE:
+    • Reproduce the new charm with maximum fidelity. Every engraved line, every internal cutout, every surface marking, every proportional detail must match the new charm image exactly.
+    • Engraved details, internal lines, cutout shapes, and outline silhouette are the most distinctive identifiers of this charm — these are NON-NEGOTIABLE and must be reproduced exactly as shown in the new charm image.
+    • No "creative reinterpretation." No "stylistic smoothing." No "combining design elements." The output charm IS the new charm image's charm — just rotated, scaled, lit, and shaded to fit the necklace context.
+    • If the new charm image has a specific engraving style (clean lines, dotted texture, hatching, smooth surface, etc.), reproduce that exact style. Do NOT invent your own styling.
+
+    NO FOREIGN OBJECTS — never add to the charm:
+    • NEVER add decorative elements that are NOT in the new charm image: no diamonds, gemstones, rhinestones, crystals, jewels, beads, pearls, dots, stars, hearts, or any other ornamental flourish on or inlaid into the charm body.
     • NEVER add inlay, enamel fill, stone settings, prong mounts, bezel mounts, paint, or any embedded element to the charm.
-    • NEVER add extra cutouts, holes, dots, scratches, or surface markings that are not present in the source artwork.
-    • Rule of thumb: if the source charm has no gemstone, the output has NO gemstone. If the source has no beadwork, the output has NO beadwork. If the source has no dots/stars/hearts, the output has none either. The charm is exactly what the source artwork shows — nothing more.
-    • HARD FAIL: any visible gemstone, crystal, diamond, jewel, bead, pearl, or decorative element on the charm that is NOT present in the source Charm Image.
-    • HARD FAIL: any added dot, bump, surface decoration, or "creative improvement" not in the source design.
+    • NEVER add extra cutouts, holes, dots, scratches, or surface markings that are not present in the new charm image.
+    • Rule of thumb: if the new charm image has no gemstone, the output has NO gemstone. If the new charm image has no beadwork, the output has NO beadwork. The charm is EXACTLY what the new charm image shows — nothing more, nothing less, nothing borrowed from anywhere else.
+
+    HARD FAILS — BLEED-THROUGH (NEW, CRITICAL):
+    • HARD FAIL: any visual detail (engraving, cutout, line, curve, dot, surface marking, outline feature) from the reference necklace image's existing charm appearing on the output charm.
+    • HARD FAIL: output charm silhouette is a blend, hybrid, or "average" of the new charm image and the reference necklace's existing charm.
+    • HARD FAIL: output charm subject identity differs from the new charm image (e.g., new charm image shows a dog but output renders a planet, heart, dinosaur, or any other animal/object).
+    • HARD FAIL: output charm has missing details that ARE in the new charm image (e.g., new charm image shows specific engraved facial features on a dog and the output renders a generic dog silhouette without those features).
+
+    HARD FAILS — FOREIGN OBJECTS:
+    • HARD FAIL: any visible gemstone, crystal, diamond, jewel, bead, pearl, or decorative element on the charm that is NOT present in the new charm image.
+    • HARD FAIL: any added dot, bump, surface decoration, or "creative improvement" not in the new charm image's design.
 
     JUMP RING & HANGING PHYSICS (CRITICAL — REAL JEWELRY BEHAVIOR)
     • The charm has exactly ONE hoop/bail built into its silhouette as shown in the source Charm Image. The jump ring from the necklace chain MUST pass through THAT EXACT existing hoop — and only that hoop.
@@ -7480,13 +7633,39 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • Consistency rule: the gold colour rendered for the charm in this slot MUST be identical to the gold colour rendered for the charm in every other slot of the same listing set.
 
     CHARM SILHOUETTE FIDELITY — NO FOREIGN OBJECTS (UNIFORM ACROSS ALL SLOTS — CRITICAL)
-    • The charm rendered in the output MUST be design-faithful to the source Charm Image. Outline, internal cutouts, engraved lines, surface details, and integrated hoop are ALL locked to the source artwork.
-    • NEVER add decorative elements that are NOT in the source charm: no diamonds, gemstones, rhinestones, crystals, jewels, beads, pearls, dots, stars, hearts, or any other ornamental flourish on or inlaid into the charm body.
+
+    CHARM SOURCE-OF-TRUTH RULE (TWO INPUTS, ONE ROLE EACH — TOP PRIORITY):
+    • You are given TWO distinct image inputs for this task: (1) a REFERENCE NECKLACE IMAGE showing a necklace on a model/surface with some EXISTING charm hanging from it, and (2) a SEPARATE NEW CHARM IMAGE showing the charm that must appear in the output.
+    • THESE TWO IMAGES HAVE DIFFERENT JOBS. The REFERENCE NECKLACE IMAGE is for COMPOSITION ONLY — chain style, model pose, lighting direction, framing, background, skin tone, fabric. The NEW CHARM IMAGE is the ONLY source of truth for the charm itself — its silhouette, internal cutouts, engraved lines, surface details, integrated hoop, proportions, subject identity, design language.
+    • THE EXISTING CHARM IN THE REFERENCE NECKLACE IMAGE MUST BE COMPLETELY IGNORED AND REPLACED. Pretend that charm is not there. Do NOT borrow any visual feature, line, cutout, engraving, silhouette curve, or surface detail from it. The output is the NEW CHARM IMAGE's charm rendered onto the reference necklace's chain.
+
+    ZERO BLEED-THROUGH FROM REFERENCE IMAGE'S CHARM:
+    • Every line, curve, dot, engraving, cutout, internal opening, perforation, and surface marking in the output charm MUST trace back to the NEW CHARM IMAGE — and ONLY the new charm image. Nothing originates from the reference necklace's existing charm.
+    • If the reference necklace's charm has a feature (e.g., a star cutout, a dot pattern, an outline curve, an engraved line) that is NOT present in the new charm image, the output charm MUST NOT have it.
+    • The subject identity of the output charm (e.g., dog, cat, dinosaur, heart, planet, paper plane, leaf, bee) is determined EXCLUSIVELY by the new charm image. Never blended, never averaged, never substituted with whatever the reference necklace happened to have.
+    • If the new charm image shows a dog and the reference necklace shows a planet, the output is a DOG charm — with zero planet features. No partial blending. No "compromise" rendering.
+
+    PIXEL-FAITHFUL REPLICATION OF NEW CHARM IMAGE:
+    • Reproduce the new charm with maximum fidelity. Every engraved line, every internal cutout, every surface marking, every proportional detail must match the new charm image exactly.
+    • Engraved details, internal lines, cutout shapes, and outline silhouette are the most distinctive identifiers of this charm — these are NON-NEGOTIABLE and must be reproduced exactly as shown in the new charm image.
+    • No "creative reinterpretation." No "stylistic smoothing." No "combining design elements." The output charm IS the new charm image's charm — just rotated, scaled, lit, and shaded to fit the necklace context.
+    • If the new charm image has a specific engraving style (clean lines, dotted texture, hatching, smooth surface, etc.), reproduce that exact style. Do NOT invent your own styling.
+
+    NO FOREIGN OBJECTS — never add to the charm:
+    • NEVER add decorative elements that are NOT in the new charm image: no diamonds, gemstones, rhinestones, crystals, jewels, beads, pearls, dots, stars, hearts, or any other ornamental flourish on or inlaid into the charm body.
     • NEVER add inlay, enamel fill, stone settings, prong mounts, bezel mounts, paint, or any embedded element to the charm.
-    • NEVER add extra cutouts, holes, dots, scratches, or surface markings that are not present in the source artwork.
-    • Rule of thumb: if the source charm has no gemstone, the output has NO gemstone. If the source has no beadwork, the output has NO beadwork. If the source has no dots/stars/hearts, the output has none either. The charm is exactly what the source artwork shows — nothing more.
-    • HARD FAIL: any visible gemstone, crystal, diamond, jewel, bead, pearl, or decorative element on the charm that is NOT present in the source Charm Image.
-    • HARD FAIL: any added dot, bump, surface decoration, or "creative improvement" not in the source design.
+    • NEVER add extra cutouts, holes, dots, scratches, or surface markings that are not present in the new charm image.
+    • Rule of thumb: if the new charm image has no gemstone, the output has NO gemstone. If the new charm image has no beadwork, the output has NO beadwork. The charm is EXACTLY what the new charm image shows — nothing more, nothing less, nothing borrowed from anywhere else.
+
+    HARD FAILS — BLEED-THROUGH (NEW, CRITICAL):
+    • HARD FAIL: any visual detail (engraving, cutout, line, curve, dot, surface marking, outline feature) from the reference necklace image's existing charm appearing on the output charm.
+    • HARD FAIL: output charm silhouette is a blend, hybrid, or "average" of the new charm image and the reference necklace's existing charm.
+    • HARD FAIL: output charm subject identity differs from the new charm image (e.g., new charm image shows a dog but output renders a planet, heart, dinosaur, or any other animal/object).
+    • HARD FAIL: output charm has missing details that ARE in the new charm image (e.g., new charm image shows specific engraved facial features on a dog and the output renders a generic dog silhouette without those features).
+
+    HARD FAILS — FOREIGN OBJECTS:
+    • HARD FAIL: any visible gemstone, crystal, diamond, jewel, bead, pearl, or decorative element on the charm that is NOT present in the new charm image.
+    • HARD FAIL: any added dot, bump, surface decoration, or "creative improvement" not in the new charm image's design.
 
     JUMP RING & HANGING PHYSICS (CRITICAL — REAL JEWELRY BEHAVIOR)
     • The charm has exactly ONE hoop/bail built into its silhouette as shown in the source Charm Image. The jump ring from the necklace chain MUST pass through THAT EXACT existing hoop — and only that hoop.
@@ -7545,13 +7724,39 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • Keep edges crisp. No blur or smear.
 
     CHARM SILHOUETTE FIDELITY — NO FOREIGN OBJECTS (UNIFORM ACROSS ALL SLOTS — CRITICAL)
-    • The charm rendered in the output MUST be design-faithful to the source Charm Image. Outline, internal cutouts, engraved lines, surface details, and integrated hoop are ALL locked to the source artwork.
-    • NEVER add decorative elements that are NOT in the source charm: no diamonds, gemstones, rhinestones, crystals, jewels, beads, pearls, dots, stars, hearts, or any other ornamental flourish on or inlaid into the charm body.
+
+    CHARM SOURCE-OF-TRUTH RULE (TWO INPUTS, ONE ROLE EACH — TOP PRIORITY):
+    • You are given TWO distinct image inputs for this task: (1) a REFERENCE NECKLACE IMAGE showing a necklace on a model/surface with some EXISTING charm hanging from it, and (2) a SEPARATE NEW CHARM IMAGE showing the charm that must appear in the output.
+    • THESE TWO IMAGES HAVE DIFFERENT JOBS. The REFERENCE NECKLACE IMAGE is for COMPOSITION ONLY — chain style, model pose, lighting direction, framing, background, skin tone, fabric. The NEW CHARM IMAGE is the ONLY source of truth for the charm itself — its silhouette, internal cutouts, engraved lines, surface details, integrated hoop, proportions, subject identity, design language.
+    • THE EXISTING CHARM IN THE REFERENCE NECKLACE IMAGE MUST BE COMPLETELY IGNORED AND REPLACED. Pretend that charm is not there. Do NOT borrow any visual feature, line, cutout, engraving, silhouette curve, or surface detail from it. The output is the NEW CHARM IMAGE's charm rendered onto the reference necklace's chain.
+
+    ZERO BLEED-THROUGH FROM REFERENCE IMAGE'S CHARM:
+    • Every line, curve, dot, engraving, cutout, internal opening, perforation, and surface marking in the output charm MUST trace back to the NEW CHARM IMAGE — and ONLY the new charm image. Nothing originates from the reference necklace's existing charm.
+    • If the reference necklace's charm has a feature (e.g., a star cutout, a dot pattern, an outline curve, an engraved line) that is NOT present in the new charm image, the output charm MUST NOT have it.
+    • The subject identity of the output charm (e.g., dog, cat, dinosaur, heart, planet, paper plane, leaf, bee) is determined EXCLUSIVELY by the new charm image. Never blended, never averaged, never substituted with whatever the reference necklace happened to have.
+    • If the new charm image shows a dog and the reference necklace shows a planet, the output is a DOG charm — with zero planet features. No partial blending. No "compromise" rendering.
+
+    PIXEL-FAITHFUL REPLICATION OF NEW CHARM IMAGE:
+    • Reproduce the new charm with maximum fidelity. Every engraved line, every internal cutout, every surface marking, every proportional detail must match the new charm image exactly.
+    • Engraved details, internal lines, cutout shapes, and outline silhouette are the most distinctive identifiers of this charm — these are NON-NEGOTIABLE and must be reproduced exactly as shown in the new charm image.
+    • No "creative reinterpretation." No "stylistic smoothing." No "combining design elements." The output charm IS the new charm image's charm — just rotated, scaled, lit, and shaded to fit the necklace context.
+    • If the new charm image has a specific engraving style (clean lines, dotted texture, hatching, smooth surface, etc.), reproduce that exact style. Do NOT invent your own styling.
+
+    NO FOREIGN OBJECTS — never add to the charm:
+    • NEVER add decorative elements that are NOT in the new charm image: no diamonds, gemstones, rhinestones, crystals, jewels, beads, pearls, dots, stars, hearts, or any other ornamental flourish on or inlaid into the charm body.
     • NEVER add inlay, enamel fill, stone settings, prong mounts, bezel mounts, paint, or any embedded element to the charm.
-    • NEVER add extra cutouts, holes, dots, scratches, or surface markings that are not present in the source artwork.
-    • Rule of thumb: if the source charm has no gemstone, the output has NO gemstone. If the source has no beadwork, the output has NO beadwork. If the source has no dots/stars/hearts, the output has none either. The charm is exactly what the source artwork shows — nothing more.
-    • HARD FAIL: any visible gemstone, crystal, diamond, jewel, bead, pearl, or decorative element on the charm that is NOT present in the source Charm Image.
-    • HARD FAIL: any added dot, bump, surface decoration, or "creative improvement" not in the source design.
+    • NEVER add extra cutouts, holes, dots, scratches, or surface markings that are not present in the new charm image.
+    • Rule of thumb: if the new charm image has no gemstone, the output has NO gemstone. If the new charm image has no beadwork, the output has NO beadwork. The charm is EXACTLY what the new charm image shows — nothing more, nothing less, nothing borrowed from anywhere else.
+
+    HARD FAILS — BLEED-THROUGH (NEW, CRITICAL):
+    • HARD FAIL: any visual detail (engraving, cutout, line, curve, dot, surface marking, outline feature) from the reference necklace image's existing charm appearing on the output charm.
+    • HARD FAIL: output charm silhouette is a blend, hybrid, or "average" of the new charm image and the reference necklace's existing charm.
+    • HARD FAIL: output charm subject identity differs from the new charm image (e.g., new charm image shows a dog but output renders a planet, heart, dinosaur, or any other animal/object).
+    • HARD FAIL: output charm has missing details that ARE in the new charm image (e.g., new charm image shows specific engraved facial features on a dog and the output renders a generic dog silhouette without those features).
+
+    HARD FAILS — FOREIGN OBJECTS:
+    • HARD FAIL: any visible gemstone, crystal, diamond, jewel, bead, pearl, or decorative element on the charm that is NOT present in the new charm image.
+    • HARD FAIL: any added dot, bump, surface decoration, or "creative improvement" not in the new charm image's design.
 
     INTEGRATED HOOP RULE
     • The hoop/bail MUST be part of the same laser-cut silhouette as the charm body.
@@ -7714,13 +7919,39 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • Consistency rule: the gold colour rendered for the charm in this slot MUST be identical to the gold colour rendered for the charm in every other slot of the same listing set.
 
     CHARM SILHOUETTE FIDELITY — NO FOREIGN OBJECTS (UNIFORM ACROSS ALL SLOTS — CRITICAL)
-    • The charm rendered in the output MUST be design-faithful to the source Charm Image. Outline, internal cutouts, engraved lines, surface details, and integrated hoop are ALL locked to the source artwork.
-    • NEVER add decorative elements that are NOT in the source charm: no diamonds, gemstones, rhinestones, crystals, jewels, beads, pearls, dots, stars, hearts, or any other ornamental flourish on or inlaid into the charm body.
+
+    CHARM SOURCE-OF-TRUTH RULE (TWO INPUTS, ONE ROLE EACH — TOP PRIORITY):
+    • You are given TWO distinct image inputs for this task: (1) a REFERENCE NECKLACE IMAGE showing a necklace on a model/surface with some EXISTING charm hanging from it, and (2) a SEPARATE NEW CHARM IMAGE showing the charm that must appear in the output.
+    • THESE TWO IMAGES HAVE DIFFERENT JOBS. The REFERENCE NECKLACE IMAGE is for COMPOSITION ONLY — chain style, model pose, lighting direction, framing, background, skin tone, fabric. The NEW CHARM IMAGE is the ONLY source of truth for the charm itself — its silhouette, internal cutouts, engraved lines, surface details, integrated hoop, proportions, subject identity, design language.
+    • THE EXISTING CHARM IN THE REFERENCE NECKLACE IMAGE MUST BE COMPLETELY IGNORED AND REPLACED. Pretend that charm is not there. Do NOT borrow any visual feature, line, cutout, engraving, silhouette curve, or surface detail from it. The output is the NEW CHARM IMAGE's charm rendered onto the reference necklace's chain.
+
+    ZERO BLEED-THROUGH FROM REFERENCE IMAGE'S CHARM:
+    • Every line, curve, dot, engraving, cutout, internal opening, perforation, and surface marking in the output charm MUST trace back to the NEW CHARM IMAGE — and ONLY the new charm image. Nothing originates from the reference necklace's existing charm.
+    • If the reference necklace's charm has a feature (e.g., a star cutout, a dot pattern, an outline curve, an engraved line) that is NOT present in the new charm image, the output charm MUST NOT have it.
+    • The subject identity of the output charm (e.g., dog, cat, dinosaur, heart, planet, paper plane, leaf, bee) is determined EXCLUSIVELY by the new charm image. Never blended, never averaged, never substituted with whatever the reference necklace happened to have.
+    • If the new charm image shows a dog and the reference necklace shows a planet, the output is a DOG charm — with zero planet features. No partial blending. No "compromise" rendering.
+
+    PIXEL-FAITHFUL REPLICATION OF NEW CHARM IMAGE:
+    • Reproduce the new charm with maximum fidelity. Every engraved line, every internal cutout, every surface marking, every proportional detail must match the new charm image exactly.
+    • Engraved details, internal lines, cutout shapes, and outline silhouette are the most distinctive identifiers of this charm — these are NON-NEGOTIABLE and must be reproduced exactly as shown in the new charm image.
+    • No "creative reinterpretation." No "stylistic smoothing." No "combining design elements." The output charm IS the new charm image's charm — just rotated, scaled, lit, and shaded to fit the necklace context.
+    • If the new charm image has a specific engraving style (clean lines, dotted texture, hatching, smooth surface, etc.), reproduce that exact style. Do NOT invent your own styling.
+
+    NO FOREIGN OBJECTS — never add to the charm:
+    • NEVER add decorative elements that are NOT in the new charm image: no diamonds, gemstones, rhinestones, crystals, jewels, beads, pearls, dots, stars, hearts, or any other ornamental flourish on or inlaid into the charm body.
     • NEVER add inlay, enamel fill, stone settings, prong mounts, bezel mounts, paint, or any embedded element to the charm.
-    • NEVER add extra cutouts, holes, dots, scratches, or surface markings that are not present in the source artwork.
-    • Rule of thumb: if the source charm has no gemstone, the output has NO gemstone. If the source has no beadwork, the output has NO beadwork. If the source has no dots/stars/hearts, the output has none either. The charm is exactly what the source artwork shows — nothing more.
-    • HARD FAIL: any visible gemstone, crystal, diamond, jewel, bead, pearl, or decorative element on the charm that is NOT present in the source Charm Image.
-    • HARD FAIL: any added dot, bump, surface decoration, or "creative improvement" not in the source design.
+    • NEVER add extra cutouts, holes, dots, scratches, or surface markings that are not present in the new charm image.
+    • Rule of thumb: if the new charm image has no gemstone, the output has NO gemstone. If the new charm image has no beadwork, the output has NO beadwork. The charm is EXACTLY what the new charm image shows — nothing more, nothing less, nothing borrowed from anywhere else.
+
+    HARD FAILS — BLEED-THROUGH (NEW, CRITICAL):
+    • HARD FAIL: any visual detail (engraving, cutout, line, curve, dot, surface marking, outline feature) from the reference necklace image's existing charm appearing on the output charm.
+    • HARD FAIL: output charm silhouette is a blend, hybrid, or "average" of the new charm image and the reference necklace's existing charm.
+    • HARD FAIL: output charm subject identity differs from the new charm image (e.g., new charm image shows a dog but output renders a planet, heart, dinosaur, or any other animal/object).
+    • HARD FAIL: output charm has missing details that ARE in the new charm image (e.g., new charm image shows specific engraved facial features on a dog and the output renders a generic dog silhouette without those features).
+
+    HARD FAILS — FOREIGN OBJECTS:
+    • HARD FAIL: any visible gemstone, crystal, diamond, jewel, bead, pearl, or decorative element on the charm that is NOT present in the new charm image.
+    • HARD FAIL: any added dot, bump, surface decoration, or "creative improvement" not in the new charm image's design.
 
     JUMP RING & HANGING PHYSICS (CRITICAL — REAL JEWELRY BEHAVIOR)
     • The charm has exactly ONE hoop/bail built into its silhouette as shown in the source Charm Image. The jump ring from the necklace chain MUST pass through THAT EXACT existing hoop — and only that hoop.
@@ -7813,13 +8044,36 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • Keep edges crisp. No blur or smear.
 
     CHARM SILHOUETTE FIDELITY — NO FOREIGN OBJECTS (UNIFORM ACROSS ALL SLOTS — CRITICAL)
-    • Each charm rendered in the output MUST be design-faithful to the source Charm Image. Outline, internal cutouts, engraved lines, surface details, and integrated hoop are ALL locked to the source artwork.
-    • NEVER add decorative elements that are NOT in the source charm: no diamonds, gemstones, rhinestones, crystals, jewels, beads, pearls, dots, stars, hearts, or any other ornamental flourish on or inlaid into either charm body.
+
+    CHARM SOURCE-OF-TRUTH RULE (TWO INPUTS, ONE ROLE EACH — TOP PRIORITY):
+    • You are given TWO distinct image inputs for this task: (1) a REFERENCE TEMPLATE IMAGE showing the back-engraving layout with a placeholder charm, and (2) a SEPARATE NEW CHARM IMAGE showing the charm whose silhouette must appear in the output as BOTH the gold front-facing charm AND the silver back-facing charm.
+    • THESE TWO IMAGES HAVE DIFFERENT JOBS. The REFERENCE TEMPLATE IMAGE is for LAYOUT, COMPOSITION, AND POSITIONING ONLY — where the charms sit, framing, background, the engraving placement area. The NEW CHARM IMAGE is the ONLY source of truth for the charm silhouettes themselves — their outline, internal cutouts, engraved lines, surface details, integrated hoop, proportions, subject identity, design language.
+    • THE PLACEHOLDER CHARM IN THE REFERENCE TEMPLATE MUST BE COMPLETELY IGNORED AND REPLACED. Pretend that placeholder is not there. Do NOT borrow any visual feature, line, cutout, engraving, silhouette curve, or surface detail from it. Both output charms (gold front + silver back) are the NEW CHARM IMAGE's charm rendered into the template's layout.
+
+    ZERO BLEED-THROUGH FROM REFERENCE IMAGE'S PLACEHOLDER CHARM:
+    • Every line, curve, dot, engraving, cutout, internal opening, perforation, and surface marking on BOTH the gold and silver charms MUST trace back to the NEW CHARM IMAGE — and ONLY the new charm image. Nothing originates from the reference template's placeholder charm.
+    • If the placeholder has a feature (e.g., a star cutout, a dot pattern, an outline curve, an engraved line) that is NOT present in the new charm image, neither output charm MUST have it.
+    • The subject identity of both output charms (e.g., dog, cat, dinosaur, heart, planet, paper plane, leaf, bee) is determined EXCLUSIVELY by the new charm image. Never blended, never averaged, never substituted with whatever the placeholder happened to show.
+
+    PIXEL-FAITHFUL REPLICATION OF NEW CHARM IMAGE (BOTH CHARMS):
+    • Reproduce the new charm with maximum fidelity in BOTH positions. Every engraved line, every internal cutout, every surface marking, every proportional detail must match the new charm image exactly.
+    • Engraved details, internal lines, cutout shapes, and outline silhouette are the most distinctive identifiers of this charm — these are NON-NEGOTIABLE and must be reproduced exactly as shown in the new charm image, on both the front gold charm and the back silver charm.
+    • No "creative reinterpretation." No "stylistic smoothing." No "combining design elements." Both output charms ARE the new charm image's charm — just rotated, mirrored (for the silver back), sized, lit, and shaded appropriately.
+
+    NO FOREIGN OBJECTS — never add to either charm:
+    • NEVER add decorative elements that are NOT in the new charm image: no diamonds, gemstones, rhinestones, crystals, jewels, beads, pearls, dots, stars, hearts, or any other ornamental flourish on or inlaid into either charm body.
     • NEVER add inlay, enamel fill, stone settings, prong mounts, bezel mounts, paint, or any embedded element to either charm.
-    • NEVER add extra cutouts, holes, dots, scratches, or surface markings that are not present in the source artwork.
-    • Rule of thumb: if the source charm has no gemstone, the output has NO gemstone. If the source has no beadwork, the output has NO beadwork. If the source has no dots/stars/hearts, the output has none either. Both charms are exactly what the source artwork shows — nothing more.
-    • HARD FAIL: any visible gemstone, crystal, diamond, jewel, bead, pearl, or decorative element on either charm that is NOT present in the source Charm Image.
-    • HARD FAIL: any added dot, bump, surface decoration, or "creative improvement" not in the source design, on either the gold or silver charm.
+    • NEVER add extra cutouts, holes, dots, scratches, or surface markings that are not present in the new charm image.
+    • Rule of thumb: if the new charm image has no gemstone, neither output charm has a gemstone. Both charms are EXACTLY what the new charm image shows.
+
+    HARD FAILS — BLEED-THROUGH (NEW, CRITICAL):
+    • HARD FAIL: any visual detail (engraving, cutout, line, curve, dot, surface marking, outline feature) from the reference template's placeholder charm appearing on EITHER the gold or silver output charm.
+    • HARD FAIL: either output charm silhouette is a blend, hybrid, or "average" of the new charm image and the placeholder.
+    • HARD FAIL: output charm subject identity differs from the new charm image on either the gold or silver charm.
+
+    HARD FAILS — FOREIGN OBJECTS:
+    • HARD FAIL: any visible gemstone, crystal, diamond, jewel, bead, pearl, or decorative element on either charm that is NOT present in the new charm image.
+    • HARD FAIL: any added dot, bump, surface decoration, or "creative improvement" not in the new charm image's design, on either the gold or silver charm.
 
     JUMP RING & HANGING PHYSICS (CRITICAL — REAL JEWELRY BEHAVIOR)
     • EACH charm has exactly ONE hoop/bail built into its silhouette as shown in the source Charm Image. The jump ring from the necklace chain MUST pass through THAT EXACT existing hoop on each charm — and only that hoop. This applies to BOTH the gold front charm AND the silver back charm.
@@ -8008,13 +8262,39 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • Consistency rule: the gold colour rendered for the charm in this slot MUST be identical to the gold colour rendered for the charm in every other slot of the same listing set.
 
     CHARM SILHOUETTE FIDELITY — NO FOREIGN OBJECTS (UNIFORM ACROSS ALL SLOTS — CRITICAL)
-    • The charm rendered in the output MUST be design-faithful to the source Charm Image. Outline, internal cutouts, engraved lines, surface details, and integrated hoop are ALL locked to the source artwork.
-    • NEVER add decorative elements that are NOT in the source charm: no diamonds, gemstones, rhinestones, crystals, jewels, beads, pearls, dots, stars, hearts, or any other ornamental flourish on or inlaid into the charm body.
+
+    CHARM SOURCE-OF-TRUTH RULE (TWO INPUTS, ONE ROLE EACH — TOP PRIORITY):
+    • You are given TWO distinct image inputs for this task: (1) a REFERENCE NECKLACE IMAGE showing a necklace on a model/surface with some EXISTING charm hanging from it, and (2) a SEPARATE NEW CHARM IMAGE showing the charm that must appear in the output.
+    • THESE TWO IMAGES HAVE DIFFERENT JOBS. The REFERENCE NECKLACE IMAGE is for COMPOSITION ONLY — chain style, model pose, lighting direction, framing, background, skin tone, fabric. The NEW CHARM IMAGE is the ONLY source of truth for the charm itself — its silhouette, internal cutouts, engraved lines, surface details, integrated hoop, proportions, subject identity, design language.
+    • THE EXISTING CHARM IN THE REFERENCE NECKLACE IMAGE MUST BE COMPLETELY IGNORED AND REPLACED. Pretend that charm is not there. Do NOT borrow any visual feature, line, cutout, engraving, silhouette curve, or surface detail from it. The output is the NEW CHARM IMAGE's charm rendered onto the reference necklace's chain.
+
+    ZERO BLEED-THROUGH FROM REFERENCE IMAGE'S CHARM:
+    • Every line, curve, dot, engraving, cutout, internal opening, perforation, and surface marking in the output charm MUST trace back to the NEW CHARM IMAGE — and ONLY the new charm image. Nothing originates from the reference necklace's existing charm.
+    • If the reference necklace's charm has a feature (e.g., a star cutout, a dot pattern, an outline curve, an engraved line) that is NOT present in the new charm image, the output charm MUST NOT have it.
+    • The subject identity of the output charm (e.g., dog, cat, dinosaur, heart, planet, paper plane, leaf, bee) is determined EXCLUSIVELY by the new charm image. Never blended, never averaged, never substituted with whatever the reference necklace happened to have.
+    • If the new charm image shows a dog and the reference necklace shows a planet, the output is a DOG charm — with zero planet features. No partial blending. No "compromise" rendering.
+
+    PIXEL-FAITHFUL REPLICATION OF NEW CHARM IMAGE:
+    • Reproduce the new charm with maximum fidelity. Every engraved line, every internal cutout, every surface marking, every proportional detail must match the new charm image exactly.
+    • Engraved details, internal lines, cutout shapes, and outline silhouette are the most distinctive identifiers of this charm — these are NON-NEGOTIABLE and must be reproduced exactly as shown in the new charm image.
+    • No "creative reinterpretation." No "stylistic smoothing." No "combining design elements." The output charm IS the new charm image's charm — just rotated, scaled, lit, and shaded to fit the necklace context.
+    • If the new charm image has a specific engraving style (clean lines, dotted texture, hatching, smooth surface, etc.), reproduce that exact style. Do NOT invent your own styling.
+
+    NO FOREIGN OBJECTS — never add to the charm:
+    • NEVER add decorative elements that are NOT in the new charm image: no diamonds, gemstones, rhinestones, crystals, jewels, beads, pearls, dots, stars, hearts, or any other ornamental flourish on or inlaid into the charm body.
     • NEVER add inlay, enamel fill, stone settings, prong mounts, bezel mounts, paint, or any embedded element to the charm.
-    • NEVER add extra cutouts, holes, dots, scratches, or surface markings that are not present in the source artwork.
-    • Rule of thumb: if the source charm has no gemstone, the output has NO gemstone. If the source has no beadwork, the output has NO beadwork. If the source has no dots/stars/hearts, the output has none either. The charm is exactly what the source artwork shows — nothing more.
-    • HARD FAIL: any visible gemstone, crystal, diamond, jewel, bead, pearl, or decorative element on the charm that is NOT present in the source Charm Image.
-    • HARD FAIL: any added dot, bump, surface decoration, or "creative improvement" not in the source design.
+    • NEVER add extra cutouts, holes, dots, scratches, or surface markings that are not present in the new charm image.
+    • Rule of thumb: if the new charm image has no gemstone, the output has NO gemstone. If the new charm image has no beadwork, the output has NO beadwork. The charm is EXACTLY what the new charm image shows — nothing more, nothing less, nothing borrowed from anywhere else.
+
+    HARD FAILS — BLEED-THROUGH (NEW, CRITICAL):
+    • HARD FAIL: any visual detail (engraving, cutout, line, curve, dot, surface marking, outline feature) from the reference necklace image's existing charm appearing on the output charm.
+    • HARD FAIL: output charm silhouette is a blend, hybrid, or "average" of the new charm image and the reference necklace's existing charm.
+    • HARD FAIL: output charm subject identity differs from the new charm image (e.g., new charm image shows a dog but output renders a planet, heart, dinosaur, or any other animal/object).
+    • HARD FAIL: output charm has missing details that ARE in the new charm image (e.g., new charm image shows specific engraved facial features on a dog and the output renders a generic dog silhouette without those features).
+
+    HARD FAILS — FOREIGN OBJECTS:
+    • HARD FAIL: any visible gemstone, crystal, diamond, jewel, bead, pearl, or decorative element on the charm that is NOT present in the new charm image.
+    • HARD FAIL: any added dot, bump, surface decoration, or "creative improvement" not in the new charm image's design.
 
     JUMP RING & HANGING PHYSICS (CRITICAL — REAL JEWELRY BEHAVIOR)
     • The charm has exactly ONE hoop/bail built into its silhouette as shown in the source Charm Image. The jump ring from the necklace chain MUST pass through THAT EXACT existing hoop — and only that hoop.
@@ -8163,13 +8443,39 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • Consistency rule: the gold colour rendered for the charm in this slot MUST be identical to the gold colour rendered for the charm in every other slot of the same listing set.
 
     CHARM SILHOUETTE FIDELITY — NO FOREIGN OBJECTS (UNIFORM ACROSS ALL SLOTS — CRITICAL)
-    • The charm rendered in the output MUST be design-faithful to the source Charm Image. Outline, internal cutouts, engraved lines, surface details, and integrated hoop are ALL locked to the source artwork.
-    • NEVER add decorative elements that are NOT in the source charm: no diamonds, gemstones, rhinestones, crystals, jewels, beads, pearls, dots, stars, hearts, or any other ornamental flourish on or inlaid into the charm body.
+
+    CHARM SOURCE-OF-TRUTH RULE (TWO INPUTS, ONE ROLE EACH — TOP PRIORITY):
+    • You are given TWO distinct image inputs for this task: (1) a REFERENCE NECKLACE IMAGE showing a necklace on a model/surface with some EXISTING charm hanging from it, and (2) a SEPARATE NEW CHARM IMAGE showing the charm that must appear in the output.
+    • THESE TWO IMAGES HAVE DIFFERENT JOBS. The REFERENCE NECKLACE IMAGE is for COMPOSITION ONLY — chain style, model pose, lighting direction, framing, background, skin tone, fabric. The NEW CHARM IMAGE is the ONLY source of truth for the charm itself — its silhouette, internal cutouts, engraved lines, surface details, integrated hoop, proportions, subject identity, design language.
+    • THE EXISTING CHARM IN THE REFERENCE NECKLACE IMAGE MUST BE COMPLETELY IGNORED AND REPLACED. Pretend that charm is not there. Do NOT borrow any visual feature, line, cutout, engraving, silhouette curve, or surface detail from it. The output is the NEW CHARM IMAGE's charm rendered onto the reference necklace's chain.
+
+    ZERO BLEED-THROUGH FROM REFERENCE IMAGE'S CHARM:
+    • Every line, curve, dot, engraving, cutout, internal opening, perforation, and surface marking in the output charm MUST trace back to the NEW CHARM IMAGE — and ONLY the new charm image. Nothing originates from the reference necklace's existing charm.
+    • If the reference necklace's charm has a feature (e.g., a star cutout, a dot pattern, an outline curve, an engraved line) that is NOT present in the new charm image, the output charm MUST NOT have it.
+    • The subject identity of the output charm (e.g., dog, cat, dinosaur, heart, planet, paper plane, leaf, bee) is determined EXCLUSIVELY by the new charm image. Never blended, never averaged, never substituted with whatever the reference necklace happened to have.
+    • If the new charm image shows a dog and the reference necklace shows a planet, the output is a DOG charm — with zero planet features. No partial blending. No "compromise" rendering.
+
+    PIXEL-FAITHFUL REPLICATION OF NEW CHARM IMAGE:
+    • Reproduce the new charm with maximum fidelity. Every engraved line, every internal cutout, every surface marking, every proportional detail must match the new charm image exactly.
+    • Engraved details, internal lines, cutout shapes, and outline silhouette are the most distinctive identifiers of this charm — these are NON-NEGOTIABLE and must be reproduced exactly as shown in the new charm image.
+    • No "creative reinterpretation." No "stylistic smoothing." No "combining design elements." The output charm IS the new charm image's charm — just rotated, scaled, lit, and shaded to fit the necklace context.
+    • If the new charm image has a specific engraving style (clean lines, dotted texture, hatching, smooth surface, etc.), reproduce that exact style. Do NOT invent your own styling.
+
+    NO FOREIGN OBJECTS — never add to the charm:
+    • NEVER add decorative elements that are NOT in the new charm image: no diamonds, gemstones, rhinestones, crystals, jewels, beads, pearls, dots, stars, hearts, or any other ornamental flourish on or inlaid into the charm body.
     • NEVER add inlay, enamel fill, stone settings, prong mounts, bezel mounts, paint, or any embedded element to the charm.
-    • NEVER add extra cutouts, holes, dots, scratches, or surface markings that are not present in the source artwork.
-    • Rule of thumb: if the source charm has no gemstone, the output has NO gemstone. If the source has no beadwork, the output has NO beadwork. If the source has no dots/stars/hearts, the output has none either. The charm is exactly what the source artwork shows — nothing more.
-    • HARD FAIL: any visible gemstone, crystal, diamond, jewel, bead, pearl, or decorative element on the charm that is NOT present in the source Charm Image.
-    • HARD FAIL: any added dot, bump, surface decoration, or "creative improvement" not in the source design.
+    • NEVER add extra cutouts, holes, dots, scratches, or surface markings that are not present in the new charm image.
+    • Rule of thumb: if the new charm image has no gemstone, the output has NO gemstone. If the new charm image has no beadwork, the output has NO beadwork. The charm is EXACTLY what the new charm image shows — nothing more, nothing less, nothing borrowed from anywhere else.
+
+    HARD FAILS — BLEED-THROUGH (NEW, CRITICAL):
+    • HARD FAIL: any visual detail (engraving, cutout, line, curve, dot, surface marking, outline feature) from the reference necklace image's existing charm appearing on the output charm.
+    • HARD FAIL: output charm silhouette is a blend, hybrid, or "average" of the new charm image and the reference necklace's existing charm.
+    • HARD FAIL: output charm subject identity differs from the new charm image (e.g., new charm image shows a dog but output renders a planet, heart, dinosaur, or any other animal/object).
+    • HARD FAIL: output charm has missing details that ARE in the new charm image (e.g., new charm image shows specific engraved facial features on a dog and the output renders a generic dog silhouette without those features).
+
+    HARD FAILS — FOREIGN OBJECTS:
+    • HARD FAIL: any visible gemstone, crystal, diamond, jewel, bead, pearl, or decorative element on the charm that is NOT present in the new charm image.
+    • HARD FAIL: any added dot, bump, surface decoration, or "creative improvement" not in the new charm image's design.
 
     JUMP RING & HANGING PHYSICS (CRITICAL — REAL JEWELRY BEHAVIOR)
     • The charm has exactly ONE hoop/bail built into its silhouette as shown in the source Charm Image. The jump ring from the necklace chain MUST pass through THAT EXACT existing hoop — and only that hoop.
