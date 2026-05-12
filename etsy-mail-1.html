@@ -223,8 +223,8 @@
       transition: color .12s ease, transform .12s ease;
     }
     .em-star-btn:hover  { color: #8a94a0; transform: scale(1.1); }
-    .em-star-btn.is-on  { color: #d4a017; }
-    .em-star-btn.is-on:hover { color: #b88a13; }
+    .em-star-btn.is-on  { color: #ed8936; }
+    .em-star-btn.is-on:hover { color: #dd6b20; }
     .em-star-btn .material-icons { font-size: 18px; }
     .em-list-item:hover { background: #f6f8fa; }
     .em-list-item.selected { background: #e7f3ff; }
@@ -2272,10 +2272,10 @@
       color: var(--m-c-text-faint);
       display: inline-flex; align-items: center; justify-content: center;
     }
-    .m-thread-star.is-on { color: #d4a017; }
+    .m-thread-star.is-on { color: #ed8936; }
     .m-thread-star .material-icons { font-size: 20px; }
     /* Mobile appbar star — slightly different proportions for the bar */
-    .m-appbar-icon.m-appbar-star.is-on { color: #d4a017; }
+    .m-appbar-icon.m-appbar-star.is-on { color: #ed8936; }
     .m-appbar-icon.m-appbar-star.is-on .material-icons { font-weight: 700; }
     .m-thread-name { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 500; }
     .m-thread-time { flex: 0 0 auto; font-size: 12px; color: var(--m-c-text-muted); }
@@ -7026,66 +7026,191 @@
       return 0;
     }
 
-    // ─── v5.30 — Starred-thread toggle ─────────────────────────────────
+    // ─── v5.30 — Starred-thread toggle (robust v5.30.3) ───────────────
     //
-    // Owner-facing flag on the thread doc. Surfaces as a star icon in
-    // the thread row (desktop + mobile) and in the thread detail header
-    // (desktop + mobile). Persisted as `starred: boolean` on the thread
-    // — uses firestoreProxy op:set with merge so we don't blow away
-    // other thread fields. starredAt is set on transitions for future
-    // sort/filter affordances (e.g. an eventual "Starred" rail folder).
+    // Pre-v5.30.3 implementation had three latency / consistency bugs:
     //
-    // Optimistic: flips the local state immediately and re-renders so
-    // the operator sees the star change without a network round-trip.
-    // Reverts on failure with a toast.
-    async function toggleThreadStarred(threadId) {
+    //   1. CLICK LATENCY. The toggle called renderThreadList() and
+    //      mRenderList() to repaint the star. Both rebuild every row
+    //      from scratch — for a 100-thread list that's 50-100ms of
+    //      DOM work, visible as a delay between click and the star
+    //      turning yellow.
+    //
+    //   2. DETAIL-HEADER OUT OF SYNC. The toggle called a function
+    //      named renderThreadDetailHeader() that doesn't exist (the
+    //      detail header is inline in openThread, not a separate
+    //      function). So when the operator clicked the row star, the
+    //      detail header's star didn't update.
+    //
+    //   3. RAPID-CLICK RACES. Each click fired its own backend write
+    //      and awaited it. Two problems compound:
+    //        (a) Out-of-order writes: rapid clicks fire concurrent
+    //            firestoreProxy POSTs. If Write 1's request takes
+    //            longer than Write 2's, Firestore ends up with Click
+    //            1's value (the older intent) overwriting Click 2.
+    //        (b) Polling overwrite: fetchThreadListNow runs every 5s
+    //            and replaces state.threads. If polling fires before
+    //            the backend write lands, the polled (stale) value
+    //            silently un-does the optimistic toggle.
+    //      Combined, these created the "click once, star reverts on
+    //      its own; click twice to remove it" behavior the operator
+    //      reported.
+    //
+    // v5.30.3 fixes all three:
+    //
+    //   - Update affected star DOM elements IN PLACE — no full
+    //     re-render. Visual flip is synchronous with the click.
+    //   - One selector (.em-star-btn[data-star-id=...]) matches BOTH
+    //     the row star AND the detail-header star; a separate
+    //     selector handles the mobile row + appbar variants. So all
+    //     copies sync atomically.
+    //   - DEBOUNCE backend writes per-thread (STAR_WRITE_DEBOUNCE_MS).
+    //     Rapid clicks coalesce into a single write of the FINAL
+    //     state. Out-of-order races eliminated.
+    //   - Maintain a per-thread OVERRIDE in state._starOverrides.
+    //     fetchThreadListNow applies these on top of polled data so
+    //     a poll firing mid-flight or shortly after a write doesn't
+    //     resurrect stale state. Override held for STAR_OVERRIDE_HOLD_MS
+    //     after the write confirms, then expires (poll value trusted).
+    //
+    const STAR_WRITE_DEBOUNCE_MS = 600;
+    const STAR_OVERRIDE_HOLD_MS  = 5000;
+
+    function _starCssEsc(s) {
+      if (window.CSS && typeof CSS.escape === "function") return CSS.escape(String(s));
+      // Thread IDs are alphanumeric+underscore; this fallback is safe.
+      return String(s).replace(/['"\\]/g, "\\$&");
+    }
+
+    function _updateAllStarDOM(threadId, starred) {
+      const idSel = _starCssEsc(threadId);
+      // Desktop row star + desktop detail-header star.
+      // Both carry .em-star-btn and data-star-id, so one selector covers them.
+      document.querySelectorAll(`.em-star-btn[data-star-id="${idSel}"]`).forEach(btn => {
+        btn.classList.toggle("is-on", starred);
+        const icon = btn.querySelector(".material-icons");
+        if (icon) icon.textContent = starred ? "star" : "star_border";
+        btn.setAttribute("aria-label", starred ? "Unstar thread" : "Star thread");
+        btn.setAttribute("title", starred ? "Starred — click to remove" : "Star this thread");
+      });
+      // Mobile row star — different class so it doesn't get picked up by the
+      // desktop selector (intentional — kept separate for mobile styling).
+      document.querySelectorAll(`.m-thread-star[data-star-id="${idSel}"]`).forEach(btn => {
+        btn.classList.toggle("is-on", starred);
+        const icon = btn.querySelector(".material-icons");
+        if (icon) icon.textContent = starred ? "star" : "star_border";
+        btn.setAttribute("aria-label", starred ? "Unstar" : "Star");
+      });
+      // Mobile appbar star — only meaningful when viewing this thread.
+      if (state.selectedId === threadId) {
+        const appStar = document.getElementById("mAppbarStarBtn");
+        if (appStar) {
+          appStar.classList.toggle("is-on", starred);
+          const icon = appStar.querySelector(".material-icons");
+          if (icon) icon.textContent = starred ? "star" : "star_border";
+          appStar.setAttribute("aria-label", starred ? "Unstar" : "Star");
+          appStar.setAttribute("title", starred ? "Starred — tap to remove" : "Star this thread");
+        }
+      }
+    }
+
+    // Apply any in-flight star overrides on top of newly-fetched thread
+    // data. Called by fetchThreadListNow after replacing state.threads.
+    // Public so the fetch function can reach it.
+    function applyStarOverrides(threads) {
+      if (!state._starOverrides || state._starOverrides.size === 0) return;
+      const now = Date.now();
+      const expired = [];
+      for (const [tid, override] of state._starOverrides.entries()) {
+        if (override.expiresAt <= now) {
+          expired.push(tid);
+          continue;
+        }
+        const t = (threads || []).find(x => x && x.id === tid);
+        if (t) t.starred = override.value;
+      }
+      for (const tid of expired) state._starOverrides.delete(tid);
+    }
+    window.applyStarOverrides = applyStarOverrides;
+
+    function toggleThreadStarred(threadId) {
       if (!threadId) return;
       const thread = (state.threads || []).find(t => t.id === threadId);
       if (!thread) return;
-      const next = !thread.starred;
+
+      // Lazy-init state buckets so we don't need a separate boot step.
+      if (!state._starOverrides)   state._starOverrides   = new Map();
+      if (!state._starWriteTimers) state._starWriteTimers = new Map();
+
+      // Current local view: override (if any) wins over thread.starred.
+      const current = state._starOverrides.has(threadId)
+        ? state._starOverrides.get(threadId).value
+        : !!thread.starred;
+      const next = !current;
+
+      // 1. Local state + DOM update IMMEDIATELY. No re-render.
       thread.starred = next;
-      if (next) thread.starredAt = new Date();   // optimistic placeholder
-      if (typeof renderThreadList === "function") {
-        try { renderThreadList(); } catch (e) { console.warn("[star] renderThreadList:", e.message); }
-      }
-      if (typeof mRenderList === "function") {
-        try { mRenderList(); } catch (e) { console.warn("[star] mRenderList:", e.message); }
-      }
-      // If we're currently viewing the thread, refresh the detail header
-      // so the in-detail star icon updates too.
-      if (state.selectedId === threadId && typeof renderThreadDetailHeader === "function") {
-        try { renderThreadDetailHeader(); } catch {}
-      }
-      if (typeof mUpdateAppbar === "function") {
-        try { mUpdateAppbar(); } catch {}
-      }
-      try {
-        await api("firestoreProxy", {
-          method: "POST",
-          body: {
-            op    : "set",
-            coll  : "EtsyMail_Threads",
-            id    : String(threadId),
-            merge : true,
-            actor : getEmployeeName() || "operator",
-            data  : {
-              starred  : next,
-              starredAt: next ? { __serverTimestamp: true } : null,
-              starredBy: next ? (getEmployeeName() || "operator") : null
+      state._starOverrides.set(threadId, {
+        value    : next,
+        // Hold the override "indefinitely" until the backend write
+        // confirms. After confirmation we'll shrink it to a finite
+        // window so polling can eventually take over.
+        expiresAt: Number.MAX_SAFE_INTEGER
+      });
+      _updateAllStarDOM(threadId, next);
+
+      // 2. Debounce the backend write. Each click resets the timer, so
+      // a burst of clicks resolves to a single write with the final
+      // intent. This eliminates out-of-order request races.
+      const existingTimer = state._starWriteTimers.get(threadId);
+      if (existingTimer) clearTimeout(existingTimer);
+
+      const timer = setTimeout(async () => {
+        state._starWriteTimers.delete(threadId);
+        const override = state._starOverrides.get(threadId);
+        if (!override) return;  // race: cleared between scheduling and firing
+        const valueToWrite = override.value;
+        try {
+          await api("firestoreProxy", {
+            method: "POST",
+            body  : {
+              op    : "set",
+              coll  : "EtsyMail_Threads",
+              id    : String(threadId),
+              merge : true,
+              actor : (typeof getEmployeeName === "function" ? getEmployeeName() : null) || "operator",
+              data  : {
+                starred  : valueToWrite,
+                starredAt: valueToWrite ? { __serverTimestamp: true } : null,
+                starredBy: valueToWrite ? ((typeof getEmployeeName === "function" ? getEmployeeName() : null) || "operator") : null
+              }
             }
+          });
+          // Success: shrink the override window to a finite hold so
+          // polling eventually takes over the source of truth. We can't
+          // delete it immediately because Firestore's eventual
+          // consistency may briefly return the pre-write value.
+          const stillThere = state._starOverrides.get(threadId);
+          if (stillThere && stillThere.value === valueToWrite) {
+            stillThere.expiresAt = Date.now() + STAR_OVERRIDE_HOLD_MS;
           }
-        });
-      } catch (e) {
-        console.warn("[star] backend write failed, reverting:", e.message);
-        thread.starred = !next;
-        if (typeof renderThreadList === "function") {
-          try { renderThreadList(); } catch {}
+          // If the override value changed between scheduling and now
+          // (another click landed during the await), don't shrink the
+          // window — leave it indefinite so the next debounced write
+          // can run cleanly.
+        } catch (e) {
+          console.warn("[star] backend write failed:", e.message);
+          // Drop the override and revert the local DOM to the previous
+          // server value (whatever is on thread.starred BEFORE the
+          // failed click). Since we don't have a "snapshot before
+          // click" cached, we reload state from the next poll — simpler
+          // than maintaining a snapshot stack. For now just drop the
+          // override so the next poll wins.
+          state._starOverrides.delete(threadId);
+          if (typeof toast === "function") toast("Couldn't save star — try again");
         }
-        if (typeof mRenderList === "function") {
-          try { mRenderList(); } catch {}
-        }
-        if (typeof toast === "function") toast("Couldn't update star — try again");
-      }
+      }, STAR_WRITE_DEBOUNCE_MS);
+      state._starWriteTimers.set(threadId, timer);
     }
     window.toggleThreadStarred = toggleThreadStarred;
 
@@ -8915,6 +9040,12 @@
         // would briefly flash the wrong folder's contents.
         if (seq !== state.listFetchSeq) return;
         state.threads = docs;
+        // v5.30.3 — Apply in-flight star overrides on top of polled
+        // data. Without this, a click whose backend write hasn't
+        // landed yet (or whose effect hasn't propagated through
+        // Firestore eventual-consistency) gets silently un-done by
+        // the next poll.
+        if (typeof applyStarOverrides === "function") applyStarOverrides(state.threads);
         renderThreadList();
         // v5.0 — Mobile re-render hook
         if (window.IS_MOBILE && typeof window.mNotifyThreadsChanged === "function") window.mNotifyThreadsChanged();
@@ -8970,6 +9101,9 @@
         if (!state.searchText.trim()) return;
 
         state.threads = data.docs || [];
+        // v5.30.3 — Apply star overrides (see comment at the primary
+        // fetch site above).
+        if (typeof applyStarOverrides === "function") applyStarOverrides(state.threads);
         state.searchScanned = data.scanned || 0;
         state.searchMaxedOut = !!data.maxedOut;
         state.searchScopedTo = filter.status ? filter.label : null;
