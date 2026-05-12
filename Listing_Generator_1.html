@@ -6726,6 +6726,34 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • THESE TWO IMAGES HAVE DIFFERENT JOBS. The REFERENCE NECKLACE IMAGE is for COMPOSITION ONLY — chain style, model pose, lighting direction, framing, background, skin tone, fabric. The NEW CHARM IMAGE is the ONLY source of truth for the charm itself — its silhouette, internal cutouts, engraved lines, surface details, integrated hoop, proportions, subject identity, design language.
     • THE EXISTING CHARM IN THE REFERENCE NECKLACE IMAGE MUST BE COMPLETELY IGNORED AND REPLACED. Pretend that charm is not there. Do NOT borrow any visual feature, line, cutout, engraving, silhouette curve, or surface detail from it. The output is the NEW CHARM IMAGE's charm rendered onto the reference necklace's chain.
 
+    CHARM ORIENTATION & DIRECTION LOCK (ABSOLUTE — TOP PRIORITY):
+    • The orientation and facing direction of the output charm MUST match the new charm image EXACTLY. If the new charm image shows the subject facing LEFT, the output shows the subject facing LEFT. If facing RIGHT, output faces RIGHT. If at a specific angle, exactly that same angle.
+    • DO NOT mirror, flip, or horizontally reverse the charm. Mirroring is a HARD FAIL — a mirrored charm is the WRONG-FACING charm. Customers ordering a "left-facing wolf" do NOT want a right-facing wolf delivered.
+    • DO NOT rotate the charm to a different orientation than shown in the new charm image, OTHER than the small natural tilt from gravity when hanging (covered in the gravity rules elsewhere in this prompt).
+    • A charm rendered facing the opposite direction from its source image is functionally a DIFFERENT charm. The customer's product reference and the delivered charm must face the same direction.
+    • HARD FAIL: output charm facing the opposite direction from the new charm image (horizontal mirror flip is NEVER allowed).
+    • HARD FAIL: output charm rotated/oriented differently than the new charm image beyond the small gravity-induced hanging tilt.
+
+    ZERO ADDED DETAILS — NOTHING ADDED THAT ISN'T IN THE NEW CHARM IMAGE (ABSOLUTE — TOP PRIORITY):
+    • If the new charm image shows a SOLID FLAT silhouette with NO internal engraving (no body lines, no fur detail, no muscle definition, no eye markings, no anatomical features inside the outline), the output charm MUST also be a flat solid silhouette with ZERO internal engraving.
+    • DO NOT add fur texture, muscle definition, body lines, leg articulation, eye dots, mouth/nose markings, paw details, or ANY internal detail that is not explicitly engraved in the new charm image.
+    • You are NOT the designer. You are a faithful replicator. Treating the charm as a "design opportunity" to add visual detail or anatomical realism is STRICTLY FORBIDDEN.
+    • If the source charm is a clean flat cutout silhouette, the output is a clean flat cutout silhouette — even if it would "look more interesting" or "more realistic" with added details. The customer's order matches the source design EXACTLY; adding detail is a manufacturing defect.
+    • THIS IS THE SINGLE MOST COMMON FAILURE MODE FOR ANIMAL-SHAPED CHARMS. The AI sees a flat wolf/cat/dog silhouette and "improves" it by adding fur, leg muscles, eyes, mouth, paw articulation, etc. This is NEVER ACCEPTABLE under any circumstances.
+    • HARD FAIL: any internal engraved line, dot, surface marking, or interior detail on the output charm that is NOT present in the new charm image.
+    • HARD FAIL: rendering a "detailed" or "anatomical" version of a simple silhouette charm (e.g., new charm image shows a flat wolf outline with no internal engraving → output shows a wolf with visible fur lines, leg muscle definition, eye, mouth, paw separation — this is the wolf-charm failure pattern and is NEVER ALLOWED).
+    • HARD FAIL: adding depth lines, joint indications, anatomical detail, or surface texture to a flat silhouette charm.
+
+    ZERO OMITTED DETAILS — NOTHING REMOVED FROM THE NEW CHARM IMAGE (ABSOLUTE):
+    • If the new charm image DOES contain engraved details (specific lines, dots, surface markings, internal cutouts, facial features), the output MUST reproduce ALL of them exactly.
+    • Do NOT simplify, smooth, abstract, or omit any detail present in the new charm image. Faithful replication works in BOTH directions: nothing added (above), nothing removed (here).
+    • HARD FAIL: output charm missing engraved details that ARE present in the new charm image.
+
+    NO CHANGES OR ADAPTATIONS WHATSOEVER (USER MANDATE):
+    • The output charm must be the new charm image's charm — UNCHANGED in shape, UNCHANGED in orientation, UNCHANGED in engraving (or absence of engraving), UNCHANGED in proportions, UNCHANGED in design. Only color/lighting/shading may adapt to the necklace's lighting context. Everything else is LOCKED.
+    • NOTHING ADDED. NOTHING OMITTED. NOTHING CHANGED. NOTHING ADAPTED. Read those four words again. They are non-negotiable.
+    • No "AI improvement" passes. No "stylistic adjustment." No "polish." No "refinement." No "making it look more realistic." If you find yourself thinking "this would look better if I added/removed/changed/improved X," STOP — that change is FORBIDDEN.
+
     ZERO BLEED-THROUGH FROM REFERENCE IMAGE'S CHARM:
     • Every line, curve, dot, engraving, cutout, internal opening, perforation, and surface marking in the output charm MUST trace back to the NEW CHARM IMAGE — and ONLY the new charm image. Nothing originates from the reference necklace's existing charm.
     • If the reference necklace's charm has a feature (e.g., a star cutout, a dot pattern, an outline curve, an engraved line) that is NOT present in the new charm image, the output charm MUST NOT have it.
@@ -6817,6 +6845,34 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • You are given TWO distinct image inputs for this task: (1) a REFERENCE NECKLACE IMAGE showing a necklace on a model/surface with some EXISTING charm hanging from it, and (2) a SEPARATE NEW CHARM IMAGE showing the charm that must appear in the output.
     • THESE TWO IMAGES HAVE DIFFERENT JOBS. The REFERENCE NECKLACE IMAGE is for COMPOSITION ONLY — chain style, model pose, lighting direction, framing, background, skin tone, fabric. The NEW CHARM IMAGE is the ONLY source of truth for the charm itself — its silhouette, internal cutouts, engraved lines, surface details, integrated hoop, proportions, subject identity, design language.
     • THE EXISTING CHARM IN THE REFERENCE NECKLACE IMAGE MUST BE COMPLETELY IGNORED AND REPLACED. Pretend that charm is not there. Do NOT borrow any visual feature, line, cutout, engraving, silhouette curve, or surface detail from it. The output is the NEW CHARM IMAGE's charm rendered onto the reference necklace's chain.
+
+    CHARM ORIENTATION & DIRECTION LOCK (ABSOLUTE — TOP PRIORITY):
+    • The orientation and facing direction of the output charm MUST match the new charm image EXACTLY. If the new charm image shows the subject facing LEFT, the output shows the subject facing LEFT. If facing RIGHT, output faces RIGHT. If at a specific angle, exactly that same angle.
+    • DO NOT mirror, flip, or horizontally reverse the charm. Mirroring is a HARD FAIL — a mirrored charm is the WRONG-FACING charm. Customers ordering a "left-facing wolf" do NOT want a right-facing wolf delivered.
+    • DO NOT rotate the charm to a different orientation than shown in the new charm image, OTHER than the small natural tilt from gravity when hanging (covered in the gravity rules elsewhere in this prompt).
+    • A charm rendered facing the opposite direction from its source image is functionally a DIFFERENT charm. The customer's product reference and the delivered charm must face the same direction.
+    • HARD FAIL: output charm facing the opposite direction from the new charm image (horizontal mirror flip is NEVER allowed).
+    • HARD FAIL: output charm rotated/oriented differently than the new charm image beyond the small gravity-induced hanging tilt.
+
+    ZERO ADDED DETAILS — NOTHING ADDED THAT ISN'T IN THE NEW CHARM IMAGE (ABSOLUTE — TOP PRIORITY):
+    • If the new charm image shows a SOLID FLAT silhouette with NO internal engraving (no body lines, no fur detail, no muscle definition, no eye markings, no anatomical features inside the outline), the output charm MUST also be a flat solid silhouette with ZERO internal engraving.
+    • DO NOT add fur texture, muscle definition, body lines, leg articulation, eye dots, mouth/nose markings, paw details, or ANY internal detail that is not explicitly engraved in the new charm image.
+    • You are NOT the designer. You are a faithful replicator. Treating the charm as a "design opportunity" to add visual detail or anatomical realism is STRICTLY FORBIDDEN.
+    • If the source charm is a clean flat cutout silhouette, the output is a clean flat cutout silhouette — even if it would "look more interesting" or "more realistic" with added details. The customer's order matches the source design EXACTLY; adding detail is a manufacturing defect.
+    • THIS IS THE SINGLE MOST COMMON FAILURE MODE FOR ANIMAL-SHAPED CHARMS. The AI sees a flat wolf/cat/dog silhouette and "improves" it by adding fur, leg muscles, eyes, mouth, paw articulation, etc. This is NEVER ACCEPTABLE under any circumstances.
+    • HARD FAIL: any internal engraved line, dot, surface marking, or interior detail on the output charm that is NOT present in the new charm image.
+    • HARD FAIL: rendering a "detailed" or "anatomical" version of a simple silhouette charm (e.g., new charm image shows a flat wolf outline with no internal engraving → output shows a wolf with visible fur lines, leg muscle definition, eye, mouth, paw separation — this is the wolf-charm failure pattern and is NEVER ALLOWED).
+    • HARD FAIL: adding depth lines, joint indications, anatomical detail, or surface texture to a flat silhouette charm.
+
+    ZERO OMITTED DETAILS — NOTHING REMOVED FROM THE NEW CHARM IMAGE (ABSOLUTE):
+    • If the new charm image DOES contain engraved details (specific lines, dots, surface markings, internal cutouts, facial features), the output MUST reproduce ALL of them exactly.
+    • Do NOT simplify, smooth, abstract, or omit any detail present in the new charm image. Faithful replication works in BOTH directions: nothing added (above), nothing removed (here).
+    • HARD FAIL: output charm missing engraved details that ARE present in the new charm image.
+
+    NO CHANGES OR ADAPTATIONS WHATSOEVER (USER MANDATE):
+    • The output charm must be the new charm image's charm — UNCHANGED in shape, UNCHANGED in orientation, UNCHANGED in engraving (or absence of engraving), UNCHANGED in proportions, UNCHANGED in design. Only color/lighting/shading may adapt to the necklace's lighting context. Everything else is LOCKED.
+    • NOTHING ADDED. NOTHING OMITTED. NOTHING CHANGED. NOTHING ADAPTED. Read those four words again. They are non-negotiable.
+    • No "AI improvement" passes. No "stylistic adjustment." No "polish." No "refinement." No "making it look more realistic." If you find yourself thinking "this would look better if I added/removed/changed/improved X," STOP — that change is FORBIDDEN.
 
     ZERO BLEED-THROUGH FROM REFERENCE IMAGE'S CHARM:
     • Every line, curve, dot, engraving, cutout, internal opening, perforation, and surface marking in the output charm MUST trace back to the NEW CHARM IMAGE — and ONLY the new charm image. Nothing originates from the reference necklace's existing charm.
@@ -7012,6 +7068,34 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • THESE TWO IMAGES HAVE DIFFERENT JOBS. The REFERENCE NECKLACE IMAGE is for COMPOSITION ONLY — chain style, model pose, lighting direction, framing, background, skin tone, fabric. The NEW CHARM IMAGE is the ONLY source of truth for the charm itself — its silhouette, internal cutouts, engraved lines, surface details, integrated hoop, proportions, subject identity, design language.
     • THE EXISTING CHARM IN THE REFERENCE NECKLACE IMAGE MUST BE COMPLETELY IGNORED AND REPLACED. Pretend that charm is not there. Do NOT borrow any visual feature, line, cutout, engraving, silhouette curve, or surface detail from it. The output is the NEW CHARM IMAGE's charm rendered onto the reference necklace's chain.
 
+    CHARM ORIENTATION & DIRECTION LOCK (ABSOLUTE — TOP PRIORITY):
+    • The orientation and facing direction of the output charm MUST match the new charm image EXACTLY. If the new charm image shows the subject facing LEFT, the output shows the subject facing LEFT. If facing RIGHT, output faces RIGHT. If at a specific angle, exactly that same angle.
+    • DO NOT mirror, flip, or horizontally reverse the charm. Mirroring is a HARD FAIL — a mirrored charm is the WRONG-FACING charm. Customers ordering a "left-facing wolf" do NOT want a right-facing wolf delivered.
+    • DO NOT rotate the charm to a different orientation than shown in the new charm image, OTHER than the small natural tilt from gravity when hanging (covered in the gravity rules elsewhere in this prompt).
+    • A charm rendered facing the opposite direction from its source image is functionally a DIFFERENT charm. The customer's product reference and the delivered charm must face the same direction.
+    • HARD FAIL: output charm facing the opposite direction from the new charm image (horizontal mirror flip is NEVER allowed).
+    • HARD FAIL: output charm rotated/oriented differently than the new charm image beyond the small gravity-induced hanging tilt.
+
+    ZERO ADDED DETAILS — NOTHING ADDED THAT ISN'T IN THE NEW CHARM IMAGE (ABSOLUTE — TOP PRIORITY):
+    • If the new charm image shows a SOLID FLAT silhouette with NO internal engraving (no body lines, no fur detail, no muscle definition, no eye markings, no anatomical features inside the outline), the output charm MUST also be a flat solid silhouette with ZERO internal engraving.
+    • DO NOT add fur texture, muscle definition, body lines, leg articulation, eye dots, mouth/nose markings, paw details, or ANY internal detail that is not explicitly engraved in the new charm image.
+    • You are NOT the designer. You are a faithful replicator. Treating the charm as a "design opportunity" to add visual detail or anatomical realism is STRICTLY FORBIDDEN.
+    • If the source charm is a clean flat cutout silhouette, the output is a clean flat cutout silhouette — even if it would "look more interesting" or "more realistic" with added details. The customer's order matches the source design EXACTLY; adding detail is a manufacturing defect.
+    • THIS IS THE SINGLE MOST COMMON FAILURE MODE FOR ANIMAL-SHAPED CHARMS. The AI sees a flat wolf/cat/dog silhouette and "improves" it by adding fur, leg muscles, eyes, mouth, paw articulation, etc. This is NEVER ACCEPTABLE under any circumstances.
+    • HARD FAIL: any internal engraved line, dot, surface marking, or interior detail on the output charm that is NOT present in the new charm image.
+    • HARD FAIL: rendering a "detailed" or "anatomical" version of a simple silhouette charm (e.g., new charm image shows a flat wolf outline with no internal engraving → output shows a wolf with visible fur lines, leg muscle definition, eye, mouth, paw separation — this is the wolf-charm failure pattern and is NEVER ALLOWED).
+    • HARD FAIL: adding depth lines, joint indications, anatomical detail, or surface texture to a flat silhouette charm.
+
+    ZERO OMITTED DETAILS — NOTHING REMOVED FROM THE NEW CHARM IMAGE (ABSOLUTE):
+    • If the new charm image DOES contain engraved details (specific lines, dots, surface markings, internal cutouts, facial features), the output MUST reproduce ALL of them exactly.
+    • Do NOT simplify, smooth, abstract, or omit any detail present in the new charm image. Faithful replication works in BOTH directions: nothing added (above), nothing removed (here).
+    • HARD FAIL: output charm missing engraved details that ARE present in the new charm image.
+
+    NO CHANGES OR ADAPTATIONS WHATSOEVER (USER MANDATE):
+    • The output charm must be the new charm image's charm — UNCHANGED in shape, UNCHANGED in orientation, UNCHANGED in engraving (or absence of engraving), UNCHANGED in proportions, UNCHANGED in design. Only color/lighting/shading may adapt to the necklace's lighting context. Everything else is LOCKED.
+    • NOTHING ADDED. NOTHING OMITTED. NOTHING CHANGED. NOTHING ADAPTED. Read those four words again. They are non-negotiable.
+    • No "AI improvement" passes. No "stylistic adjustment." No "polish." No "refinement." No "making it look more realistic." If you find yourself thinking "this would look better if I added/removed/changed/improved X," STOP — that change is FORBIDDEN.
+
     ZERO BLEED-THROUGH FROM REFERENCE IMAGE'S CHARM:
     • Every line, curve, dot, engraving, cutout, internal opening, perforation, and surface marking in the output charm MUST trace back to the NEW CHARM IMAGE — and ONLY the new charm image. Nothing originates from the reference necklace's existing charm.
     • If the reference necklace's charm has a feature (e.g., a star cutout, a dot pattern, an outline curve, an engraved line) that is NOT present in the new charm image, the output charm MUST NOT have it.
@@ -7136,6 +7220,31 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • You are given TWO distinct image inputs for this task: (1) a REFERENCE TEMPLATE IMAGE showing the back-engraving layout with a placeholder charm, and (2) a SEPARATE NEW CHARM IMAGE showing the charm whose silhouette must appear in the output as BOTH the gold front-facing charm AND the silver back-facing charm.
     • THESE TWO IMAGES HAVE DIFFERENT JOBS. The REFERENCE TEMPLATE IMAGE is for LAYOUT, COMPOSITION, AND POSITIONING ONLY — where the charms sit, framing, background, the engraving placement area. The NEW CHARM IMAGE is the ONLY source of truth for the charm silhouettes themselves — their outline, internal cutouts, engraved lines, surface details, integrated hoop, proportions, subject identity, design language.
     • THE PLACEHOLDER CHARM IN THE REFERENCE TEMPLATE MUST BE COMPLETELY IGNORED AND REPLACED. Pretend that placeholder is not there. Do NOT borrow any visual feature, line, cutout, engraving, silhouette curve, or surface detail from it. Both output charms (gold front + silver back) are the NEW CHARM IMAGE's charm rendered into the template's layout.
+
+    CHARM ORIENTATION & DIRECTION LOCK FOR BOTH CHARMS (ABSOLUTE — TOP PRIORITY):
+    • GOLD FRONT-FACING CHARM: orientation and facing direction MUST match the new charm image EXACTLY. If the new charm image shows the subject facing LEFT, the gold output faces LEFT. If facing RIGHT, output faces RIGHT. NEVER mirror, flip, or horizontally reverse the gold charm. A mirrored gold charm is a WRONG-FACING charm and is unacceptable.
+    • SILVER BACK-FACING CHARM: this represents the BACK of the same physical charm, so it is necessarily a HORIZONTAL MIRROR of the gold front charm. If the new charm image (and therefore the gold front) faces LEFT, the silver back faces RIGHT. This specific mirroring is intentional and physically correct — you ARE looking at the back of the charm — and is the ONLY allowed mirror operation.
+    • Do NOT rotate either charm to any orientation other than what these rules specify (other than small natural gravity-induced hanging tilt).
+    • HARD FAIL: gold front charm facing the opposite direction from the new charm image.
+    • HARD FAIL: silver back charm facing the SAME direction as the new charm image (it MUST mirror the gold, which means opposite of the source).
+    • HARD FAIL: either charm rotated/oriented differently than these rules specify.
+
+    ZERO ADDED DETAILS ON EITHER CHARM (ABSOLUTE — TOP PRIORITY):
+    • If the new charm image shows a SOLID FLAT silhouette with NO internal engraving, BOTH the gold and silver output charms MUST be flat solid silhouettes with ZERO internal engraving (other than the user's name on the silver back, which is intentional and covered by the engraving placement rule).
+    • DO NOT add fur texture, muscle definition, body lines, leg articulation, eye dots, mouth/nose markings, paw details, or ANY internal detail that is not explicitly engraved in the new charm image.
+    • You are NOT the designer. You are a faithful replicator. Treating either charm as a "design opportunity" to add visual detail or anatomical realism is STRICTLY FORBIDDEN.
+    • THIS IS THE SINGLE MOST COMMON FAILURE MODE FOR ANIMAL-SHAPED CHARMS. The AI sees a flat silhouette and "improves" it by adding fur, leg muscles, eyes, mouth, paw articulation, etc. NEVER do this on either the gold or silver charm.
+    • HARD FAIL: any internal engraved line, dot, surface marking, or interior detail on EITHER charm that is NOT present in the new charm image (the name engraving on the silver back is the only exception).
+    • HARD FAIL: rendering a "detailed" or "anatomical" version of a simple silhouette charm in either position.
+
+    ZERO OMITTED DETAILS ON EITHER CHARM (ABSOLUTE):
+    • If the new charm image DOES contain engraved details, BOTH output charms MUST reproduce ALL of those details exactly.
+    • HARD FAIL: either charm missing engraved details that ARE present in the new charm image.
+
+    NO CHANGES OR ADAPTATIONS WHATSOEVER (USER MANDATE):
+    • Both output charms must be the new charm image's charm — UNCHANGED in shape, UNCHANGED in engraving (or absence of engraving), UNCHANGED in proportions, UNCHANGED in design. Allowed adaptations: silver back is mirrored from gold (as specified above), color differs (gold vs silver), name engraving on silver back. Everything else is LOCKED.
+    • NOTHING ADDED. NOTHING OMITTED. NOTHING CHANGED. NOTHING ADAPTED. Read those four words again. They are non-negotiable.
+    • No "AI improvement" passes. No "stylistic adjustment." No "polish." No "refinement." No "making it look more realistic." If you find yourself thinking "this would look better if I added/removed/changed/improved X," STOP — that change is FORBIDDEN.
 
     ZERO BLEED-THROUGH FROM REFERENCE IMAGE'S PLACEHOLDER CHARM:
     • Every line, curve, dot, engraving, cutout, internal opening, perforation, and surface marking on BOTH the gold and silver charms MUST trace back to the NEW CHARM IMAGE — and ONLY the new charm image. Nothing originates from the reference template's placeholder charm.
@@ -7354,6 +7463,34 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • THESE TWO IMAGES HAVE DIFFERENT JOBS. The REFERENCE NECKLACE IMAGE is for COMPOSITION ONLY — chain style, model pose, lighting direction, framing, background, skin tone, fabric. The NEW CHARM IMAGE is the ONLY source of truth for the charm itself — its silhouette, internal cutouts, engraved lines, surface details, integrated hoop, proportions, subject identity, design language.
     • THE EXISTING CHARM IN THE REFERENCE NECKLACE IMAGE MUST BE COMPLETELY IGNORED AND REPLACED. Pretend that charm is not there. Do NOT borrow any visual feature, line, cutout, engraving, silhouette curve, or surface detail from it. The output is the NEW CHARM IMAGE's charm rendered onto the reference necklace's chain.
 
+    CHARM ORIENTATION & DIRECTION LOCK (ABSOLUTE — TOP PRIORITY):
+    • The orientation and facing direction of the output charm MUST match the new charm image EXACTLY. If the new charm image shows the subject facing LEFT, the output shows the subject facing LEFT. If facing RIGHT, output faces RIGHT. If at a specific angle, exactly that same angle.
+    • DO NOT mirror, flip, or horizontally reverse the charm. Mirroring is a HARD FAIL — a mirrored charm is the WRONG-FACING charm. Customers ordering a "left-facing wolf" do NOT want a right-facing wolf delivered.
+    • DO NOT rotate the charm to a different orientation than shown in the new charm image, OTHER than the small natural tilt from gravity when hanging (covered in the gravity rules elsewhere in this prompt).
+    • A charm rendered facing the opposite direction from its source image is functionally a DIFFERENT charm. The customer's product reference and the delivered charm must face the same direction.
+    • HARD FAIL: output charm facing the opposite direction from the new charm image (horizontal mirror flip is NEVER allowed).
+    • HARD FAIL: output charm rotated/oriented differently than the new charm image beyond the small gravity-induced hanging tilt.
+
+    ZERO ADDED DETAILS — NOTHING ADDED THAT ISN'T IN THE NEW CHARM IMAGE (ABSOLUTE — TOP PRIORITY):
+    • If the new charm image shows a SOLID FLAT silhouette with NO internal engraving (no body lines, no fur detail, no muscle definition, no eye markings, no anatomical features inside the outline), the output charm MUST also be a flat solid silhouette with ZERO internal engraving.
+    • DO NOT add fur texture, muscle definition, body lines, leg articulation, eye dots, mouth/nose markings, paw details, or ANY internal detail that is not explicitly engraved in the new charm image.
+    • You are NOT the designer. You are a faithful replicator. Treating the charm as a "design opportunity" to add visual detail or anatomical realism is STRICTLY FORBIDDEN.
+    • If the source charm is a clean flat cutout silhouette, the output is a clean flat cutout silhouette — even if it would "look more interesting" or "more realistic" with added details. The customer's order matches the source design EXACTLY; adding detail is a manufacturing defect.
+    • THIS IS THE SINGLE MOST COMMON FAILURE MODE FOR ANIMAL-SHAPED CHARMS. The AI sees a flat wolf/cat/dog silhouette and "improves" it by adding fur, leg muscles, eyes, mouth, paw articulation, etc. This is NEVER ACCEPTABLE under any circumstances.
+    • HARD FAIL: any internal engraved line, dot, surface marking, or interior detail on the output charm that is NOT present in the new charm image.
+    • HARD FAIL: rendering a "detailed" or "anatomical" version of a simple silhouette charm (e.g., new charm image shows a flat wolf outline with no internal engraving → output shows a wolf with visible fur lines, leg muscle definition, eye, mouth, paw separation — this is the wolf-charm failure pattern and is NEVER ALLOWED).
+    • HARD FAIL: adding depth lines, joint indications, anatomical detail, or surface texture to a flat silhouette charm.
+
+    ZERO OMITTED DETAILS — NOTHING REMOVED FROM THE NEW CHARM IMAGE (ABSOLUTE):
+    • If the new charm image DOES contain engraved details (specific lines, dots, surface markings, internal cutouts, facial features), the output MUST reproduce ALL of them exactly.
+    • Do NOT simplify, smooth, abstract, or omit any detail present in the new charm image. Faithful replication works in BOTH directions: nothing added (above), nothing removed (here).
+    • HARD FAIL: output charm missing engraved details that ARE present in the new charm image.
+
+    NO CHANGES OR ADAPTATIONS WHATSOEVER (USER MANDATE):
+    • The output charm must be the new charm image's charm — UNCHANGED in shape, UNCHANGED in orientation, UNCHANGED in engraving (or absence of engraving), UNCHANGED in proportions, UNCHANGED in design. Only color/lighting/shading may adapt to the necklace's lighting context. Everything else is LOCKED.
+    • NOTHING ADDED. NOTHING OMITTED. NOTHING CHANGED. NOTHING ADAPTED. Read those four words again. They are non-negotiable.
+    • No "AI improvement" passes. No "stylistic adjustment." No "polish." No "refinement." No "making it look more realistic." If you find yourself thinking "this would look better if I added/removed/changed/improved X," STOP — that change is FORBIDDEN.
+
     ZERO BLEED-THROUGH FROM REFERENCE IMAGE'S CHARM:
     • Every line, curve, dot, engraving, cutout, internal opening, perforation, and surface marking in the output charm MUST trace back to the NEW CHARM IMAGE — and ONLY the new charm image. Nothing originates from the reference necklace's existing charm.
     • If the reference necklace's charm has a feature (e.g., a star cutout, a dot pattern, an outline curve, an engraved line) that is NOT present in the new charm image, the output charm MUST NOT have it.
@@ -7536,6 +7673,34 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • THESE TWO IMAGES HAVE DIFFERENT JOBS. The REFERENCE NECKLACE IMAGE is for COMPOSITION ONLY — chain style, model pose, lighting direction, framing, background, skin tone, fabric. The NEW CHARM IMAGE is the ONLY source of truth for the charm itself — its silhouette, internal cutouts, engraved lines, surface details, integrated hoop, proportions, subject identity, design language.
     • THE EXISTING CHARM IN THE REFERENCE NECKLACE IMAGE MUST BE COMPLETELY IGNORED AND REPLACED. Pretend that charm is not there. Do NOT borrow any visual feature, line, cutout, engraving, silhouette curve, or surface detail from it. The output is the NEW CHARM IMAGE's charm rendered onto the reference necklace's chain.
 
+    CHARM ORIENTATION & DIRECTION LOCK (ABSOLUTE — TOP PRIORITY):
+    • The orientation and facing direction of the output charm MUST match the new charm image EXACTLY. If the new charm image shows the subject facing LEFT, the output shows the subject facing LEFT. If facing RIGHT, output faces RIGHT. If at a specific angle, exactly that same angle.
+    • DO NOT mirror, flip, or horizontally reverse the charm. Mirroring is a HARD FAIL — a mirrored charm is the WRONG-FACING charm. Customers ordering a "left-facing wolf" do NOT want a right-facing wolf delivered.
+    • DO NOT rotate the charm to a different orientation than shown in the new charm image, OTHER than the small natural tilt from gravity when hanging (covered in the gravity rules elsewhere in this prompt).
+    • A charm rendered facing the opposite direction from its source image is functionally a DIFFERENT charm. The customer's product reference and the delivered charm must face the same direction.
+    • HARD FAIL: output charm facing the opposite direction from the new charm image (horizontal mirror flip is NEVER allowed).
+    • HARD FAIL: output charm rotated/oriented differently than the new charm image beyond the small gravity-induced hanging tilt.
+
+    ZERO ADDED DETAILS — NOTHING ADDED THAT ISN'T IN THE NEW CHARM IMAGE (ABSOLUTE — TOP PRIORITY):
+    • If the new charm image shows a SOLID FLAT silhouette with NO internal engraving (no body lines, no fur detail, no muscle definition, no eye markings, no anatomical features inside the outline), the output charm MUST also be a flat solid silhouette with ZERO internal engraving.
+    • DO NOT add fur texture, muscle definition, body lines, leg articulation, eye dots, mouth/nose markings, paw details, or ANY internal detail that is not explicitly engraved in the new charm image.
+    • You are NOT the designer. You are a faithful replicator. Treating the charm as a "design opportunity" to add visual detail or anatomical realism is STRICTLY FORBIDDEN.
+    • If the source charm is a clean flat cutout silhouette, the output is a clean flat cutout silhouette — even if it would "look more interesting" or "more realistic" with added details. The customer's order matches the source design EXACTLY; adding detail is a manufacturing defect.
+    • THIS IS THE SINGLE MOST COMMON FAILURE MODE FOR ANIMAL-SHAPED CHARMS. The AI sees a flat wolf/cat/dog silhouette and "improves" it by adding fur, leg muscles, eyes, mouth, paw articulation, etc. This is NEVER ACCEPTABLE under any circumstances.
+    • HARD FAIL: any internal engraved line, dot, surface marking, or interior detail on the output charm that is NOT present in the new charm image.
+    • HARD FAIL: rendering a "detailed" or "anatomical" version of a simple silhouette charm (e.g., new charm image shows a flat wolf outline with no internal engraving → output shows a wolf with visible fur lines, leg muscle definition, eye, mouth, paw separation — this is the wolf-charm failure pattern and is NEVER ALLOWED).
+    • HARD FAIL: adding depth lines, joint indications, anatomical detail, or surface texture to a flat silhouette charm.
+
+    ZERO OMITTED DETAILS — NOTHING REMOVED FROM THE NEW CHARM IMAGE (ABSOLUTE):
+    • If the new charm image DOES contain engraved details (specific lines, dots, surface markings, internal cutouts, facial features), the output MUST reproduce ALL of them exactly.
+    • Do NOT simplify, smooth, abstract, or omit any detail present in the new charm image. Faithful replication works in BOTH directions: nothing added (above), nothing removed (here).
+    • HARD FAIL: output charm missing engraved details that ARE present in the new charm image.
+
+    NO CHANGES OR ADAPTATIONS WHATSOEVER (USER MANDATE):
+    • The output charm must be the new charm image's charm — UNCHANGED in shape, UNCHANGED in orientation, UNCHANGED in engraving (or absence of engraving), UNCHANGED in proportions, UNCHANGED in design. Only color/lighting/shading may adapt to the necklace's lighting context. Everything else is LOCKED.
+    • NOTHING ADDED. NOTHING OMITTED. NOTHING CHANGED. NOTHING ADAPTED. Read those four words again. They are non-negotiable.
+    • No "AI improvement" passes. No "stylistic adjustment." No "polish." No "refinement." No "making it look more realistic." If you find yourself thinking "this would look better if I added/removed/changed/improved X," STOP — that change is FORBIDDEN.
+
     ZERO BLEED-THROUGH FROM REFERENCE IMAGE'S CHARM:
     • Every line, curve, dot, engraving, cutout, internal opening, perforation, and surface marking in the output charm MUST trace back to the NEW CHARM IMAGE — and ONLY the new charm image. Nothing originates from the reference necklace's existing charm.
     • If the reference necklace's charm has a feature (e.g., a star cutout, a dot pattern, an outline curve, an engraved line) that is NOT present in the new charm image, the output charm MUST NOT have it.
@@ -7639,6 +7804,34 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • THESE TWO IMAGES HAVE DIFFERENT JOBS. The REFERENCE NECKLACE IMAGE is for COMPOSITION ONLY — chain style, model pose, lighting direction, framing, background, skin tone, fabric. The NEW CHARM IMAGE is the ONLY source of truth for the charm itself — its silhouette, internal cutouts, engraved lines, surface details, integrated hoop, proportions, subject identity, design language.
     • THE EXISTING CHARM IN THE REFERENCE NECKLACE IMAGE MUST BE COMPLETELY IGNORED AND REPLACED. Pretend that charm is not there. Do NOT borrow any visual feature, line, cutout, engraving, silhouette curve, or surface detail from it. The output is the NEW CHARM IMAGE's charm rendered onto the reference necklace's chain.
 
+    CHARM ORIENTATION & DIRECTION LOCK (ABSOLUTE — TOP PRIORITY):
+    • The orientation and facing direction of the output charm MUST match the new charm image EXACTLY. If the new charm image shows the subject facing LEFT, the output shows the subject facing LEFT. If facing RIGHT, output faces RIGHT. If at a specific angle, exactly that same angle.
+    • DO NOT mirror, flip, or horizontally reverse the charm. Mirroring is a HARD FAIL — a mirrored charm is the WRONG-FACING charm. Customers ordering a "left-facing wolf" do NOT want a right-facing wolf delivered.
+    • DO NOT rotate the charm to a different orientation than shown in the new charm image, OTHER than the small natural tilt from gravity when hanging (covered in the gravity rules elsewhere in this prompt).
+    • A charm rendered facing the opposite direction from its source image is functionally a DIFFERENT charm. The customer's product reference and the delivered charm must face the same direction.
+    • HARD FAIL: output charm facing the opposite direction from the new charm image (horizontal mirror flip is NEVER allowed).
+    • HARD FAIL: output charm rotated/oriented differently than the new charm image beyond the small gravity-induced hanging tilt.
+
+    ZERO ADDED DETAILS — NOTHING ADDED THAT ISN'T IN THE NEW CHARM IMAGE (ABSOLUTE — TOP PRIORITY):
+    • If the new charm image shows a SOLID FLAT silhouette with NO internal engraving (no body lines, no fur detail, no muscle definition, no eye markings, no anatomical features inside the outline), the output charm MUST also be a flat solid silhouette with ZERO internal engraving.
+    • DO NOT add fur texture, muscle definition, body lines, leg articulation, eye dots, mouth/nose markings, paw details, or ANY internal detail that is not explicitly engraved in the new charm image.
+    • You are NOT the designer. You are a faithful replicator. Treating the charm as a "design opportunity" to add visual detail or anatomical realism is STRICTLY FORBIDDEN.
+    • If the source charm is a clean flat cutout silhouette, the output is a clean flat cutout silhouette — even if it would "look more interesting" or "more realistic" with added details. The customer's order matches the source design EXACTLY; adding detail is a manufacturing defect.
+    • THIS IS THE SINGLE MOST COMMON FAILURE MODE FOR ANIMAL-SHAPED CHARMS. The AI sees a flat wolf/cat/dog silhouette and "improves" it by adding fur, leg muscles, eyes, mouth, paw articulation, etc. This is NEVER ACCEPTABLE under any circumstances.
+    • HARD FAIL: any internal engraved line, dot, surface marking, or interior detail on the output charm that is NOT present in the new charm image.
+    • HARD FAIL: rendering a "detailed" or "anatomical" version of a simple silhouette charm (e.g., new charm image shows a flat wolf outline with no internal engraving → output shows a wolf with visible fur lines, leg muscle definition, eye, mouth, paw separation — this is the wolf-charm failure pattern and is NEVER ALLOWED).
+    • HARD FAIL: adding depth lines, joint indications, anatomical detail, or surface texture to a flat silhouette charm.
+
+    ZERO OMITTED DETAILS — NOTHING REMOVED FROM THE NEW CHARM IMAGE (ABSOLUTE):
+    • If the new charm image DOES contain engraved details (specific lines, dots, surface markings, internal cutouts, facial features), the output MUST reproduce ALL of them exactly.
+    • Do NOT simplify, smooth, abstract, or omit any detail present in the new charm image. Faithful replication works in BOTH directions: nothing added (above), nothing removed (here).
+    • HARD FAIL: output charm missing engraved details that ARE present in the new charm image.
+
+    NO CHANGES OR ADAPTATIONS WHATSOEVER (USER MANDATE):
+    • The output charm must be the new charm image's charm — UNCHANGED in shape, UNCHANGED in orientation, UNCHANGED in engraving (or absence of engraving), UNCHANGED in proportions, UNCHANGED in design. Only color/lighting/shading may adapt to the necklace's lighting context. Everything else is LOCKED.
+    • NOTHING ADDED. NOTHING OMITTED. NOTHING CHANGED. NOTHING ADAPTED. Read those four words again. They are non-negotiable.
+    • No "AI improvement" passes. No "stylistic adjustment." No "polish." No "refinement." No "making it look more realistic." If you find yourself thinking "this would look better if I added/removed/changed/improved X," STOP — that change is FORBIDDEN.
+
     ZERO BLEED-THROUGH FROM REFERENCE IMAGE'S CHARM:
     • Every line, curve, dot, engraving, cutout, internal opening, perforation, and surface marking in the output charm MUST trace back to the NEW CHARM IMAGE — and ONLY the new charm image. Nothing originates from the reference necklace's existing charm.
     • If the reference necklace's charm has a feature (e.g., a star cutout, a dot pattern, an outline curve, an engraved line) that is NOT present in the new charm image, the output charm MUST NOT have it.
@@ -7729,6 +7922,34 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • You are given TWO distinct image inputs for this task: (1) a REFERENCE NECKLACE IMAGE showing a necklace on a model/surface with some EXISTING charm hanging from it, and (2) a SEPARATE NEW CHARM IMAGE showing the charm that must appear in the output.
     • THESE TWO IMAGES HAVE DIFFERENT JOBS. The REFERENCE NECKLACE IMAGE is for COMPOSITION ONLY — chain style, model pose, lighting direction, framing, background, skin tone, fabric. The NEW CHARM IMAGE is the ONLY source of truth for the charm itself — its silhouette, internal cutouts, engraved lines, surface details, integrated hoop, proportions, subject identity, design language.
     • THE EXISTING CHARM IN THE REFERENCE NECKLACE IMAGE MUST BE COMPLETELY IGNORED AND REPLACED. Pretend that charm is not there. Do NOT borrow any visual feature, line, cutout, engraving, silhouette curve, or surface detail from it. The output is the NEW CHARM IMAGE's charm rendered onto the reference necklace's chain.
+
+    CHARM ORIENTATION & DIRECTION LOCK (ABSOLUTE — TOP PRIORITY):
+    • The orientation and facing direction of the output charm MUST match the new charm image EXACTLY. If the new charm image shows the subject facing LEFT, the output shows the subject facing LEFT. If facing RIGHT, output faces RIGHT. If at a specific angle, exactly that same angle.
+    • DO NOT mirror, flip, or horizontally reverse the charm. Mirroring is a HARD FAIL — a mirrored charm is the WRONG-FACING charm. Customers ordering a "left-facing wolf" do NOT want a right-facing wolf delivered.
+    • DO NOT rotate the charm to a different orientation than shown in the new charm image, OTHER than the small natural tilt from gravity when hanging (covered in the gravity rules elsewhere in this prompt).
+    • A charm rendered facing the opposite direction from its source image is functionally a DIFFERENT charm. The customer's product reference and the delivered charm must face the same direction.
+    • HARD FAIL: output charm facing the opposite direction from the new charm image (horizontal mirror flip is NEVER allowed).
+    • HARD FAIL: output charm rotated/oriented differently than the new charm image beyond the small gravity-induced hanging tilt.
+
+    ZERO ADDED DETAILS — NOTHING ADDED THAT ISN'T IN THE NEW CHARM IMAGE (ABSOLUTE — TOP PRIORITY):
+    • If the new charm image shows a SOLID FLAT silhouette with NO internal engraving (no body lines, no fur detail, no muscle definition, no eye markings, no anatomical features inside the outline), the output charm MUST also be a flat solid silhouette with ZERO internal engraving.
+    • DO NOT add fur texture, muscle definition, body lines, leg articulation, eye dots, mouth/nose markings, paw details, or ANY internal detail that is not explicitly engraved in the new charm image.
+    • You are NOT the designer. You are a faithful replicator. Treating the charm as a "design opportunity" to add visual detail or anatomical realism is STRICTLY FORBIDDEN.
+    • If the source charm is a clean flat cutout silhouette, the output is a clean flat cutout silhouette — even if it would "look more interesting" or "more realistic" with added details. The customer's order matches the source design EXACTLY; adding detail is a manufacturing defect.
+    • THIS IS THE SINGLE MOST COMMON FAILURE MODE FOR ANIMAL-SHAPED CHARMS. The AI sees a flat wolf/cat/dog silhouette and "improves" it by adding fur, leg muscles, eyes, mouth, paw articulation, etc. This is NEVER ACCEPTABLE under any circumstances.
+    • HARD FAIL: any internal engraved line, dot, surface marking, or interior detail on the output charm that is NOT present in the new charm image.
+    • HARD FAIL: rendering a "detailed" or "anatomical" version of a simple silhouette charm (e.g., new charm image shows a flat wolf outline with no internal engraving → output shows a wolf with visible fur lines, leg muscle definition, eye, mouth, paw separation — this is the wolf-charm failure pattern and is NEVER ALLOWED).
+    • HARD FAIL: adding depth lines, joint indications, anatomical detail, or surface texture to a flat silhouette charm.
+
+    ZERO OMITTED DETAILS — NOTHING REMOVED FROM THE NEW CHARM IMAGE (ABSOLUTE):
+    • If the new charm image DOES contain engraved details (specific lines, dots, surface markings, internal cutouts, facial features), the output MUST reproduce ALL of them exactly.
+    • Do NOT simplify, smooth, abstract, or omit any detail present in the new charm image. Faithful replication works in BOTH directions: nothing added (above), nothing removed (here).
+    • HARD FAIL: output charm missing engraved details that ARE present in the new charm image.
+
+    NO CHANGES OR ADAPTATIONS WHATSOEVER (USER MANDATE):
+    • The output charm must be the new charm image's charm — UNCHANGED in shape, UNCHANGED in orientation, UNCHANGED in engraving (or absence of engraving), UNCHANGED in proportions, UNCHANGED in design. Only color/lighting/shading may adapt to the necklace's lighting context. Everything else is LOCKED.
+    • NOTHING ADDED. NOTHING OMITTED. NOTHING CHANGED. NOTHING ADAPTED. Read those four words again. They are non-negotiable.
+    • No "AI improvement" passes. No "stylistic adjustment." No "polish." No "refinement." No "making it look more realistic." If you find yourself thinking "this would look better if I added/removed/changed/improved X," STOP — that change is FORBIDDEN.
 
     ZERO BLEED-THROUGH FROM REFERENCE IMAGE'S CHARM:
     • Every line, curve, dot, engraving, cutout, internal opening, perforation, and surface marking in the output charm MUST trace back to the NEW CHARM IMAGE — and ONLY the new charm image. Nothing originates from the reference necklace's existing charm.
@@ -7925,6 +8146,34 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • THESE TWO IMAGES HAVE DIFFERENT JOBS. The REFERENCE NECKLACE IMAGE is for COMPOSITION ONLY — chain style, model pose, lighting direction, framing, background, skin tone, fabric. The NEW CHARM IMAGE is the ONLY source of truth for the charm itself — its silhouette, internal cutouts, engraved lines, surface details, integrated hoop, proportions, subject identity, design language.
     • THE EXISTING CHARM IN THE REFERENCE NECKLACE IMAGE MUST BE COMPLETELY IGNORED AND REPLACED. Pretend that charm is not there. Do NOT borrow any visual feature, line, cutout, engraving, silhouette curve, or surface detail from it. The output is the NEW CHARM IMAGE's charm rendered onto the reference necklace's chain.
 
+    CHARM ORIENTATION & DIRECTION LOCK (ABSOLUTE — TOP PRIORITY):
+    • The orientation and facing direction of the output charm MUST match the new charm image EXACTLY. If the new charm image shows the subject facing LEFT, the output shows the subject facing LEFT. If facing RIGHT, output faces RIGHT. If at a specific angle, exactly that same angle.
+    • DO NOT mirror, flip, or horizontally reverse the charm. Mirroring is a HARD FAIL — a mirrored charm is the WRONG-FACING charm. Customers ordering a "left-facing wolf" do NOT want a right-facing wolf delivered.
+    • DO NOT rotate the charm to a different orientation than shown in the new charm image, OTHER than the small natural tilt from gravity when hanging (covered in the gravity rules elsewhere in this prompt).
+    • A charm rendered facing the opposite direction from its source image is functionally a DIFFERENT charm. The customer's product reference and the delivered charm must face the same direction.
+    • HARD FAIL: output charm facing the opposite direction from the new charm image (horizontal mirror flip is NEVER allowed).
+    • HARD FAIL: output charm rotated/oriented differently than the new charm image beyond the small gravity-induced hanging tilt.
+
+    ZERO ADDED DETAILS — NOTHING ADDED THAT ISN'T IN THE NEW CHARM IMAGE (ABSOLUTE — TOP PRIORITY):
+    • If the new charm image shows a SOLID FLAT silhouette with NO internal engraving (no body lines, no fur detail, no muscle definition, no eye markings, no anatomical features inside the outline), the output charm MUST also be a flat solid silhouette with ZERO internal engraving.
+    • DO NOT add fur texture, muscle definition, body lines, leg articulation, eye dots, mouth/nose markings, paw details, or ANY internal detail that is not explicitly engraved in the new charm image.
+    • You are NOT the designer. You are a faithful replicator. Treating the charm as a "design opportunity" to add visual detail or anatomical realism is STRICTLY FORBIDDEN.
+    • If the source charm is a clean flat cutout silhouette, the output is a clean flat cutout silhouette — even if it would "look more interesting" or "more realistic" with added details. The customer's order matches the source design EXACTLY; adding detail is a manufacturing defect.
+    • THIS IS THE SINGLE MOST COMMON FAILURE MODE FOR ANIMAL-SHAPED CHARMS. The AI sees a flat wolf/cat/dog silhouette and "improves" it by adding fur, leg muscles, eyes, mouth, paw articulation, etc. This is NEVER ACCEPTABLE under any circumstances.
+    • HARD FAIL: any internal engraved line, dot, surface marking, or interior detail on the output charm that is NOT present in the new charm image.
+    • HARD FAIL: rendering a "detailed" or "anatomical" version of a simple silhouette charm (e.g., new charm image shows a flat wolf outline with no internal engraving → output shows a wolf with visible fur lines, leg muscle definition, eye, mouth, paw separation — this is the wolf-charm failure pattern and is NEVER ALLOWED).
+    • HARD FAIL: adding depth lines, joint indications, anatomical detail, or surface texture to a flat silhouette charm.
+
+    ZERO OMITTED DETAILS — NOTHING REMOVED FROM THE NEW CHARM IMAGE (ABSOLUTE):
+    • If the new charm image DOES contain engraved details (specific lines, dots, surface markings, internal cutouts, facial features), the output MUST reproduce ALL of them exactly.
+    • Do NOT simplify, smooth, abstract, or omit any detail present in the new charm image. Faithful replication works in BOTH directions: nothing added (above), nothing removed (here).
+    • HARD FAIL: output charm missing engraved details that ARE present in the new charm image.
+
+    NO CHANGES OR ADAPTATIONS WHATSOEVER (USER MANDATE):
+    • The output charm must be the new charm image's charm — UNCHANGED in shape, UNCHANGED in orientation, UNCHANGED in engraving (or absence of engraving), UNCHANGED in proportions, UNCHANGED in design. Only color/lighting/shading may adapt to the necklace's lighting context. Everything else is LOCKED.
+    • NOTHING ADDED. NOTHING OMITTED. NOTHING CHANGED. NOTHING ADAPTED. Read those four words again. They are non-negotiable.
+    • No "AI improvement" passes. No "stylistic adjustment." No "polish." No "refinement." No "making it look more realistic." If you find yourself thinking "this would look better if I added/removed/changed/improved X," STOP — that change is FORBIDDEN.
+
     ZERO BLEED-THROUGH FROM REFERENCE IMAGE'S CHARM:
     • Every line, curve, dot, engraving, cutout, internal opening, perforation, and surface marking in the output charm MUST trace back to the NEW CHARM IMAGE — and ONLY the new charm image. Nothing originates from the reference necklace's existing charm.
     • If the reference necklace's charm has a feature (e.g., a star cutout, a dot pattern, an outline curve, an engraved line) that is NOT present in the new charm image, the output charm MUST NOT have it.
@@ -8049,6 +8298,31 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • You are given TWO distinct image inputs for this task: (1) a REFERENCE TEMPLATE IMAGE showing the back-engraving layout with a placeholder charm, and (2) a SEPARATE NEW CHARM IMAGE showing the charm whose silhouette must appear in the output as BOTH the gold front-facing charm AND the silver back-facing charm.
     • THESE TWO IMAGES HAVE DIFFERENT JOBS. The REFERENCE TEMPLATE IMAGE is for LAYOUT, COMPOSITION, AND POSITIONING ONLY — where the charms sit, framing, background, the engraving placement area. The NEW CHARM IMAGE is the ONLY source of truth for the charm silhouettes themselves — their outline, internal cutouts, engraved lines, surface details, integrated hoop, proportions, subject identity, design language.
     • THE PLACEHOLDER CHARM IN THE REFERENCE TEMPLATE MUST BE COMPLETELY IGNORED AND REPLACED. Pretend that placeholder is not there. Do NOT borrow any visual feature, line, cutout, engraving, silhouette curve, or surface detail from it. Both output charms (gold front + silver back) are the NEW CHARM IMAGE's charm rendered into the template's layout.
+
+    CHARM ORIENTATION & DIRECTION LOCK FOR BOTH CHARMS (ABSOLUTE — TOP PRIORITY):
+    • GOLD FRONT-FACING CHARM: orientation and facing direction MUST match the new charm image EXACTLY. If the new charm image shows the subject facing LEFT, the gold output faces LEFT. If facing RIGHT, output faces RIGHT. NEVER mirror, flip, or horizontally reverse the gold charm. A mirrored gold charm is a WRONG-FACING charm and is unacceptable.
+    • SILVER BACK-FACING CHARM: this represents the BACK of the same physical charm, so it is necessarily a HORIZONTAL MIRROR of the gold front charm. If the new charm image (and therefore the gold front) faces LEFT, the silver back faces RIGHT. This specific mirroring is intentional and physically correct — you ARE looking at the back of the charm — and is the ONLY allowed mirror operation.
+    • Do NOT rotate either charm to any orientation other than what these rules specify (other than small natural gravity-induced hanging tilt).
+    • HARD FAIL: gold front charm facing the opposite direction from the new charm image.
+    • HARD FAIL: silver back charm facing the SAME direction as the new charm image (it MUST mirror the gold, which means opposite of the source).
+    • HARD FAIL: either charm rotated/oriented differently than these rules specify.
+
+    ZERO ADDED DETAILS ON EITHER CHARM (ABSOLUTE — TOP PRIORITY):
+    • If the new charm image shows a SOLID FLAT silhouette with NO internal engraving, BOTH the gold and silver output charms MUST be flat solid silhouettes with ZERO internal engraving (other than the user's name on the silver back, which is intentional and covered by the engraving placement rule).
+    • DO NOT add fur texture, muscle definition, body lines, leg articulation, eye dots, mouth/nose markings, paw details, or ANY internal detail that is not explicitly engraved in the new charm image.
+    • You are NOT the designer. You are a faithful replicator. Treating either charm as a "design opportunity" to add visual detail or anatomical realism is STRICTLY FORBIDDEN.
+    • THIS IS THE SINGLE MOST COMMON FAILURE MODE FOR ANIMAL-SHAPED CHARMS. The AI sees a flat silhouette and "improves" it by adding fur, leg muscles, eyes, mouth, paw articulation, etc. NEVER do this on either the gold or silver charm.
+    • HARD FAIL: any internal engraved line, dot, surface marking, or interior detail on EITHER charm that is NOT present in the new charm image (the name engraving on the silver back is the only exception).
+    • HARD FAIL: rendering a "detailed" or "anatomical" version of a simple silhouette charm in either position.
+
+    ZERO OMITTED DETAILS ON EITHER CHARM (ABSOLUTE):
+    • If the new charm image DOES contain engraved details, BOTH output charms MUST reproduce ALL of those details exactly.
+    • HARD FAIL: either charm missing engraved details that ARE present in the new charm image.
+
+    NO CHANGES OR ADAPTATIONS WHATSOEVER (USER MANDATE):
+    • Both output charms must be the new charm image's charm — UNCHANGED in shape, UNCHANGED in engraving (or absence of engraving), UNCHANGED in proportions, UNCHANGED in design. Allowed adaptations: silver back is mirrored from gold (as specified above), color differs (gold vs silver), name engraving on silver back. Everything else is LOCKED.
+    • NOTHING ADDED. NOTHING OMITTED. NOTHING CHANGED. NOTHING ADAPTED. Read those four words again. They are non-negotiable.
+    • No "AI improvement" passes. No "stylistic adjustment." No "polish." No "refinement." No "making it look more realistic." If you find yourself thinking "this would look better if I added/removed/changed/improved X," STOP — that change is FORBIDDEN.
 
     ZERO BLEED-THROUGH FROM REFERENCE IMAGE'S PLACEHOLDER CHARM:
     • Every line, curve, dot, engraving, cutout, internal opening, perforation, and surface marking on BOTH the gold and silver charms MUST trace back to the NEW CHARM IMAGE — and ONLY the new charm image. Nothing originates from the reference template's placeholder charm.
@@ -8268,6 +8542,34 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • THESE TWO IMAGES HAVE DIFFERENT JOBS. The REFERENCE NECKLACE IMAGE is for COMPOSITION ONLY — chain style, model pose, lighting direction, framing, background, skin tone, fabric. The NEW CHARM IMAGE is the ONLY source of truth for the charm itself — its silhouette, internal cutouts, engraved lines, surface details, integrated hoop, proportions, subject identity, design language.
     • THE EXISTING CHARM IN THE REFERENCE NECKLACE IMAGE MUST BE COMPLETELY IGNORED AND REPLACED. Pretend that charm is not there. Do NOT borrow any visual feature, line, cutout, engraving, silhouette curve, or surface detail from it. The output is the NEW CHARM IMAGE's charm rendered onto the reference necklace's chain.
 
+    CHARM ORIENTATION & DIRECTION LOCK (ABSOLUTE — TOP PRIORITY):
+    • The orientation and facing direction of the output charm MUST match the new charm image EXACTLY. If the new charm image shows the subject facing LEFT, the output shows the subject facing LEFT. If facing RIGHT, output faces RIGHT. If at a specific angle, exactly that same angle.
+    • DO NOT mirror, flip, or horizontally reverse the charm. Mirroring is a HARD FAIL — a mirrored charm is the WRONG-FACING charm. Customers ordering a "left-facing wolf" do NOT want a right-facing wolf delivered.
+    • DO NOT rotate the charm to a different orientation than shown in the new charm image, OTHER than the small natural tilt from gravity when hanging (covered in the gravity rules elsewhere in this prompt).
+    • A charm rendered facing the opposite direction from its source image is functionally a DIFFERENT charm. The customer's product reference and the delivered charm must face the same direction.
+    • HARD FAIL: output charm facing the opposite direction from the new charm image (horizontal mirror flip is NEVER allowed).
+    • HARD FAIL: output charm rotated/oriented differently than the new charm image beyond the small gravity-induced hanging tilt.
+
+    ZERO ADDED DETAILS — NOTHING ADDED THAT ISN'T IN THE NEW CHARM IMAGE (ABSOLUTE — TOP PRIORITY):
+    • If the new charm image shows a SOLID FLAT silhouette with NO internal engraving (no body lines, no fur detail, no muscle definition, no eye markings, no anatomical features inside the outline), the output charm MUST also be a flat solid silhouette with ZERO internal engraving.
+    • DO NOT add fur texture, muscle definition, body lines, leg articulation, eye dots, mouth/nose markings, paw details, or ANY internal detail that is not explicitly engraved in the new charm image.
+    • You are NOT the designer. You are a faithful replicator. Treating the charm as a "design opportunity" to add visual detail or anatomical realism is STRICTLY FORBIDDEN.
+    • If the source charm is a clean flat cutout silhouette, the output is a clean flat cutout silhouette — even if it would "look more interesting" or "more realistic" with added details. The customer's order matches the source design EXACTLY; adding detail is a manufacturing defect.
+    • THIS IS THE SINGLE MOST COMMON FAILURE MODE FOR ANIMAL-SHAPED CHARMS. The AI sees a flat wolf/cat/dog silhouette and "improves" it by adding fur, leg muscles, eyes, mouth, paw articulation, etc. This is NEVER ACCEPTABLE under any circumstances.
+    • HARD FAIL: any internal engraved line, dot, surface marking, or interior detail on the output charm that is NOT present in the new charm image.
+    • HARD FAIL: rendering a "detailed" or "anatomical" version of a simple silhouette charm (e.g., new charm image shows a flat wolf outline with no internal engraving → output shows a wolf with visible fur lines, leg muscle definition, eye, mouth, paw separation — this is the wolf-charm failure pattern and is NEVER ALLOWED).
+    • HARD FAIL: adding depth lines, joint indications, anatomical detail, or surface texture to a flat silhouette charm.
+
+    ZERO OMITTED DETAILS — NOTHING REMOVED FROM THE NEW CHARM IMAGE (ABSOLUTE):
+    • If the new charm image DOES contain engraved details (specific lines, dots, surface markings, internal cutouts, facial features), the output MUST reproduce ALL of them exactly.
+    • Do NOT simplify, smooth, abstract, or omit any detail present in the new charm image. Faithful replication works in BOTH directions: nothing added (above), nothing removed (here).
+    • HARD FAIL: output charm missing engraved details that ARE present in the new charm image.
+
+    NO CHANGES OR ADAPTATIONS WHATSOEVER (USER MANDATE):
+    • The output charm must be the new charm image's charm — UNCHANGED in shape, UNCHANGED in orientation, UNCHANGED in engraving (or absence of engraving), UNCHANGED in proportions, UNCHANGED in design. Only color/lighting/shading may adapt to the necklace's lighting context. Everything else is LOCKED.
+    • NOTHING ADDED. NOTHING OMITTED. NOTHING CHANGED. NOTHING ADAPTED. Read those four words again. They are non-negotiable.
+    • No "AI improvement" passes. No "stylistic adjustment." No "polish." No "refinement." No "making it look more realistic." If you find yourself thinking "this would look better if I added/removed/changed/improved X," STOP — that change is FORBIDDEN.
+
     ZERO BLEED-THROUGH FROM REFERENCE IMAGE'S CHARM:
     • Every line, curve, dot, engraving, cutout, internal opening, perforation, and surface marking in the output charm MUST trace back to the NEW CHARM IMAGE — and ONLY the new charm image. Nothing originates from the reference necklace's existing charm.
     • If the reference necklace's charm has a feature (e.g., a star cutout, a dot pattern, an outline curve, an engraved line) that is NOT present in the new charm image, the output charm MUST NOT have it.
@@ -8448,6 +8750,34 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • You are given TWO distinct image inputs for this task: (1) a REFERENCE NECKLACE IMAGE showing a necklace on a model/surface with some EXISTING charm hanging from it, and (2) a SEPARATE NEW CHARM IMAGE showing the charm that must appear in the output.
     • THESE TWO IMAGES HAVE DIFFERENT JOBS. The REFERENCE NECKLACE IMAGE is for COMPOSITION ONLY — chain style, model pose, lighting direction, framing, background, skin tone, fabric. The NEW CHARM IMAGE is the ONLY source of truth for the charm itself — its silhouette, internal cutouts, engraved lines, surface details, integrated hoop, proportions, subject identity, design language.
     • THE EXISTING CHARM IN THE REFERENCE NECKLACE IMAGE MUST BE COMPLETELY IGNORED AND REPLACED. Pretend that charm is not there. Do NOT borrow any visual feature, line, cutout, engraving, silhouette curve, or surface detail from it. The output is the NEW CHARM IMAGE's charm rendered onto the reference necklace's chain.
+
+    CHARM ORIENTATION & DIRECTION LOCK (ABSOLUTE — TOP PRIORITY):
+    • The orientation and facing direction of the output charm MUST match the new charm image EXACTLY. If the new charm image shows the subject facing LEFT, the output shows the subject facing LEFT. If facing RIGHT, output faces RIGHT. If at a specific angle, exactly that same angle.
+    • DO NOT mirror, flip, or horizontally reverse the charm. Mirroring is a HARD FAIL — a mirrored charm is the WRONG-FACING charm. Customers ordering a "left-facing wolf" do NOT want a right-facing wolf delivered.
+    • DO NOT rotate the charm to a different orientation than shown in the new charm image, OTHER than the small natural tilt from gravity when hanging (covered in the gravity rules elsewhere in this prompt).
+    • A charm rendered facing the opposite direction from its source image is functionally a DIFFERENT charm. The customer's product reference and the delivered charm must face the same direction.
+    • HARD FAIL: output charm facing the opposite direction from the new charm image (horizontal mirror flip is NEVER allowed).
+    • HARD FAIL: output charm rotated/oriented differently than the new charm image beyond the small gravity-induced hanging tilt.
+
+    ZERO ADDED DETAILS — NOTHING ADDED THAT ISN'T IN THE NEW CHARM IMAGE (ABSOLUTE — TOP PRIORITY):
+    • If the new charm image shows a SOLID FLAT silhouette with NO internal engraving (no body lines, no fur detail, no muscle definition, no eye markings, no anatomical features inside the outline), the output charm MUST also be a flat solid silhouette with ZERO internal engraving.
+    • DO NOT add fur texture, muscle definition, body lines, leg articulation, eye dots, mouth/nose markings, paw details, or ANY internal detail that is not explicitly engraved in the new charm image.
+    • You are NOT the designer. You are a faithful replicator. Treating the charm as a "design opportunity" to add visual detail or anatomical realism is STRICTLY FORBIDDEN.
+    • If the source charm is a clean flat cutout silhouette, the output is a clean flat cutout silhouette — even if it would "look more interesting" or "more realistic" with added details. The customer's order matches the source design EXACTLY; adding detail is a manufacturing defect.
+    • THIS IS THE SINGLE MOST COMMON FAILURE MODE FOR ANIMAL-SHAPED CHARMS. The AI sees a flat wolf/cat/dog silhouette and "improves" it by adding fur, leg muscles, eyes, mouth, paw articulation, etc. This is NEVER ACCEPTABLE under any circumstances.
+    • HARD FAIL: any internal engraved line, dot, surface marking, or interior detail on the output charm that is NOT present in the new charm image.
+    • HARD FAIL: rendering a "detailed" or "anatomical" version of a simple silhouette charm (e.g., new charm image shows a flat wolf outline with no internal engraving → output shows a wolf with visible fur lines, leg muscle definition, eye, mouth, paw separation — this is the wolf-charm failure pattern and is NEVER ALLOWED).
+    • HARD FAIL: adding depth lines, joint indications, anatomical detail, or surface texture to a flat silhouette charm.
+
+    ZERO OMITTED DETAILS — NOTHING REMOVED FROM THE NEW CHARM IMAGE (ABSOLUTE):
+    • If the new charm image DOES contain engraved details (specific lines, dots, surface markings, internal cutouts, facial features), the output MUST reproduce ALL of them exactly.
+    • Do NOT simplify, smooth, abstract, or omit any detail present in the new charm image. Faithful replication works in BOTH directions: nothing added (above), nothing removed (here).
+    • HARD FAIL: output charm missing engraved details that ARE present in the new charm image.
+
+    NO CHANGES OR ADAPTATIONS WHATSOEVER (USER MANDATE):
+    • The output charm must be the new charm image's charm — UNCHANGED in shape, UNCHANGED in orientation, UNCHANGED in engraving (or absence of engraving), UNCHANGED in proportions, UNCHANGED in design. Only color/lighting/shading may adapt to the necklace's lighting context. Everything else is LOCKED.
+    • NOTHING ADDED. NOTHING OMITTED. NOTHING CHANGED. NOTHING ADAPTED. Read those four words again. They are non-negotiable.
+    • No "AI improvement" passes. No "stylistic adjustment." No "polish." No "refinement." No "making it look more realistic." If you find yourself thinking "this would look better if I added/removed/changed/improved X," STOP — that change is FORBIDDEN.
 
     ZERO BLEED-THROUGH FROM REFERENCE IMAGE'S CHARM:
     • Every line, curve, dot, engraving, cutout, internal opening, perforation, and surface marking in the output charm MUST trace back to the NEW CHARM IMAGE — and ONLY the new charm image. Nothing originates from the reference necklace's existing charm.
