@@ -66,47 +66,58 @@
     .em-topbar .em-status-dot { width: 8px; height: 8px; border-radius: 50%; background: #e74c3c; }
     .em-topbar .em-status-dot.ok { background: #2ecc71; }
 
-    /* v5.30 — Full-topbar collapse via chevron.
+    /* v5.30.2 — Topbar full-collapse.
      *
-     * The chevron lives at the far right and is ALWAYS visible. All
-     * other topbar content — logo, role badge, polling indicator,
-     * Backend status, Gmail pill + toggle, and the action buttons —
-     * lives inside #emTopbarContent and collapses to width:0 by default.
-     * Click the chevron to expand; click again to re-collapse. The
-     * preference is persisted to localStorage so reloads honor it.
+     * Pre-v5.30.2 the chevron lived INSIDE the topbar; the grid row
+     * kept its 48px height regardless of collapse state; collapsing
+     * the content just hid the buttons inside an otherwise empty
+     * black bar. Wasted vertical space.
      *
-     * Topbar uses justify-content:flex-end so when the content is
-     * collapsed (max-width:0), the chevron lands at the right edge;
-     * when expanded, the content's flex:1 pushes the chevron back to
-     * the right edge anyway. So the chevron's screen position is
-     * stable regardless of state — operator can re-collapse from
-     * exactly where they expanded. */
+     * NOW the chevron lives OUTSIDE the topbar as a fixed-positioned
+     * floating button (always visible at the top-right of the page).
+     * When body has the .em-topbar-collapsed class:
+     *   - The .em-app grid row that holds the topbar collapses to 0
+     *   - The .em-topbar element is display:none
+     *   - The entire vertical space is reclaimed by the rail/list/detail
+     *     panels which slide up to fill it
+     *   - The chevron stays put, ready to reopen
+     * When NOT collapsed:
+     *   - Grid row is the normal 48px
+     *   - Topbar shows all content
+     *   - Chevron sits over the topbar's right edge (visually integrated)
+     *     — em-topbar's padding-right reserves space so it doesn't
+     *     overlap any button.
+     */
+    body.em-topbar-collapsed .em-app {
+      grid-template-rows: 0 1fr;
+    }
+    body.em-topbar-collapsed .em-topbar {
+      display: none !important;
+    }
     .em-topbar {
-      justify-content: flex-end;
-      padding: 0 12px;
+      padding-right: 56px;   /* reserves room for the floating chevron */
     }
-    .em-topbar-content {
-      display: flex; align-items: center; gap: 12px;
-      flex: 1;
-      overflow: hidden;
-      transition: max-width .2s ease, opacity .15s ease;
-    }
-    .em-topbar-content.collapsed {
-      max-width: 0; opacity: 0;
-      pointer-events: none;
-      flex: 0 0 0;
-      gap: 0;
-      padding: 0 !important; margin: 0 !important;
-    }
-    .em-topbar-toggle {
-      flex: 0 0 auto;
-      background: #2a2f36; color: #d4d8df; border: 1px solid #3a424b;
+    .em-topbar-floating-toggle {
+      position: fixed;
+      top: 6px;
+      right: 14px;
+      z-index: 50;
       width: 28px; height: 28px; padding: 0;
-      border-radius: 4px; cursor: pointer;
+      background: #2a2f36; color: #d4d8df;
+      border: 1px solid #3a424b; border-radius: 4px;
+      cursor: pointer;
       display: inline-flex; align-items: center; justify-content: center;
+      box-shadow: 0 1px 4px rgba(0,0,0,.15);
     }
-    .em-topbar-toggle:hover { background: #353b44; color: #fff; }
-    .em-topbar-toggle .material-icons { font-size: 18px; }
+    .em-topbar-floating-toggle:hover { background: #353b44; color: #fff; }
+    .em-topbar-floating-toggle .material-icons { font-size: 18px; }
+    /* When the topbar is collapsed, the chevron sits on a light page
+     * area (no dark bar behind it). Add a subtle outline so it's still
+     * clearly clickable. */
+    body.em-topbar-collapsed .em-topbar-floating-toggle {
+      border-color: #5a6168;
+      box-shadow: 0 2px 8px rgba(0,0,0,.25);
+    }
 
     /* ─── Gmail watcher panel (topbar) ─── */
     .em-gmail-pill {
@@ -4770,21 +4781,22 @@
   </div>
 
   <div class="em-app">
-    <div class="em-topbar">
-      <!-- v5.30 — Chevron toggle. Always visible. The rest of the
-           topbar is wrapped in #emTopbarContent and hidden by default.
-           Clicking the chevron expands the full topbar (logo, status
-           indicators, action buttons); clicking again collapses it.
-           Persisted to localStorage so reloads preserve the operator's
-           preference. The chevron itself stays put at the far right of
-           the bar — operator can always reach it. -->
-      <button class="em-topbar-toggle" id="emTopbarToggleBtn"
-              aria-label="Show/hide topbar"
-              aria-expanded="false"
-              title="Show topbar">
-        <i class="material-icons" id="emTopbarToggleIcon">expand_more</i>
-      </button>
-      <div class="em-topbar-content collapsed" id="emTopbarContent">
+    <!-- v5.30.2 — Always-visible chevron toggle. Lives OUTSIDE the
+         topbar so it stays accessible when the topbar itself
+         collapses to height 0. Fixed-positioned at the top-right so
+         the operator can reach it no matter the topbar state.
+         When expanded, the chevron sits ON the topbar's right edge;
+         when collapsed, it floats at the top-right of the page with
+         a subtle dark pill background so it doesn't get lost on a
+         light page area. -->
+    <button class="em-topbar-floating-toggle" id="emTopbarToggleBtn"
+            aria-label="Show/hide topbar"
+            aria-expanded="false"
+            title="Show topbar">
+      <i class="material-icons" id="emTopbarToggleIcon">expand_more</i>
+    </button>
+
+    <div class="em-topbar" id="emTopbarContent">
       <span class="em-title">EtsyMail <span class="em-tag">operator inbox · proxy mode</span></span>
       <span class="em-spacer"></span>
       <span id="emOperatorRoleBadge" class="em-role-badge unknown" style="display:none;" title="Your operator role for sales-mode permissions">
@@ -4830,7 +4842,6 @@
       </button>
       <button id="emNewThreadBtn" title="Create test thread"><i class="material-icons">add</i>New (test)</button>
       <button id="emSettingsBtn" title="Settings"><i class="material-icons">settings</i></button>
-      </div>
     </div>
 
     <div class="em-rail" id="emRail"></div>
@@ -14233,19 +14244,28 @@
     document.addEventListener("DOMContentLoaded", () => {
       renderRail();
 
-      // v5.30 — Topbar collapse toggle. The chevron is always visible at
-      // the right edge; clicking it expands or collapses the entire
-      // topbar content (logo, role badge, polling, Backend, Gmail pill +
-      // toggle, action buttons). Default is collapsed per operator
-      // request — they wanted a clean view by default and the topbar
-      // exposed only on demand. localStorage remembers the operator's
-      // last choice so a deliberate expand survives reloads.
+      // v5.30.2 — Topbar full-hide toggle.
+      // The chevron is OUTSIDE the topbar (fixed-positioned, always
+      // visible). Clicking it toggles a class on the BODY:
+      //   .em-topbar-collapsed → grid row collapses to 0, topbar hides
+      //   (no class)            → grid row 48px, topbar shown
+      //
+      // The grid-template-rows change reclaims the vertical space —
+      // the rail / list / detail panels slide up to fill the gap.
+      //
+      // KEY VERSIONING: the storage key gets a "_v2" suffix because
+      // pre-v5.30.2 used the same key with different semantics. Any
+      // operator who clicked the chevron once on the old build had
+      // localStorage set to "0" (expanded). Under the new semantics
+      // we want "default = collapsed" for everyone after the change,
+      // including those operators. Bumping the key forces a fresh
+      // default-collapsed state; the new key preserves the user's
+      // new preference from this point forward.
       try {
-        const contentEl = $("emTopbarContent");
         const toggleBtn = $("emTopbarToggleBtn");
         const iconEl    = $("emTopbarToggleIcon");
-        if (contentEl && toggleBtn && iconEl) {
-          const KEY = "etsymail_topbar_collapsed";
+        if (toggleBtn && iconEl) {
+          const KEY = "etsymail_topbar_collapsed_v2";
           // Default: collapsed. Stored "0" means operator chose to
           // expand last session; "1" or null means collapsed.
           const stored = (() => {
@@ -14253,7 +14273,7 @@
           })();
           let collapsed = stored === null ? true : stored === "1";
           const applyState = () => {
-            contentEl.classList.toggle("collapsed", collapsed);
+            document.body.classList.toggle("em-topbar-collapsed", collapsed);
             iconEl.textContent = collapsed ? "expand_more" : "expand_less";
             toggleBtn.setAttribute("aria-expanded", String(!collapsed));
             toggleBtn.setAttribute("title", collapsed ? "Show topbar" : "Hide topbar");
@@ -14266,7 +14286,7 @@
           });
         }
       } catch (e) {
-        console.warn("[v5.30 topbar collapse] init failed:", e.message);
+        console.warn("[v5.30.2 topbar collapse] init failed:", e.message);
       }
 
       $("emRefreshBtn").addEventListener("click", () => {

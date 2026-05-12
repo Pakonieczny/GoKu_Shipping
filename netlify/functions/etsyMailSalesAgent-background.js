@@ -3187,21 +3187,78 @@ Do NOT pick next_action: ask_one_question and then write reply text that mention
       // above. Acceptance fields are only written on actual acceptance
       // turns. Once customerAccepted is true on the thread, follow-up
       // turns leave it alone — the worker reads stable state.
-      ...(parsed.customer_accepted ? {
-        customerAccepted   : true,
-        acceptedQuoteUsd   : (typeof quotedTotal === "number") ? quotedTotal : null,
-        acceptedQuoteFamily: (salesCtx._lastResolverResult
-                                && salesCtx._lastResolverResult.success
-                                && typeof salesCtx._lastResolverResult.family === "string")
-                                  ? salesCtx._lastResolverResult.family
-                                  : null,
-        customerAcceptedAt  : FV.serverTimestamp(),
-        // customListingStatus: "queued" — explicit sentinel that the
-        // cron's primary query keys off. Only written on acceptance, so
-        // a follow-up turn doesn't overwrite a "creating" / "created"
-        // state set later by the cron / worker.
-        customListingStatus : "queued"
-      } : {}),
+      //
+      // v5.30.1 — acceptedQuoteUsd fallback chain.
+      //
+      // Pre-v5.30.1 we wrote `quotedTotal` directly, with null when
+      // the current turn lacked a parsed number. That created a
+      // failure mode: when the customer's acceptance turn was a bare
+      // "yes please" (no price restated), parsed.quoted_total_usd was
+      // undefined and we wrote null. The listing-creator cron then
+      // picked up the queued thread and threw "No accepted quote on
+      // thread", marking it as failed.
+      //
+      // Fix: walk a chain of "best available" sources before falling
+      // back to null. In priority order:
+      //   1. The CURRENT turn's quotedTotal (most authoritative)
+      //   2. The CURRENT turn's resolver result (just ran successfully)
+      //   3. The PERSISTED resolver result from a prior turn
+      //   4. The persisted totalQuotedUsd (last quoting turn)
+      //   5. The last entry in quoteHistory with a number
+      // The customer's acceptance follows the LAST quote they saw, and
+      // that quote came from one of these sources — so adopting it
+      // here is correct.
+      ...(parsed.customer_accepted ? (() => {
+        const inMemLrr   = salesCtx._lastResolverResult;
+        const persistedLrr = salesCtx.lastResolverResult;
+        const fromCurrentTurn = (typeof quotedTotal === "number" && quotedTotal > 0) ? quotedTotal : null;
+        const fromInMemLrr    = (inMemLrr && inMemLrr.success && typeof inMemLrr.total === "number" && inMemLrr.total > 0)
+                                  ? inMemLrr.total : null;
+        const fromPersistedLrr = (persistedLrr && persistedLrr.success && typeof persistedLrr.total === "number" && persistedLrr.total > 0)
+                                  ? persistedLrr.total : null;
+        const fromTotalQuoted = (typeof salesCtx.totalQuotedUsd === "number" && salesCtx.totalQuotedUsd > 0)
+                                  ? salesCtx.totalQuotedUsd : null;
+        let fromHistory = null;
+        if (Array.isArray(salesCtx.quoteHistory)) {
+          for (let i = salesCtx.quoteHistory.length - 1; i >= 0; i--) {
+            const h = salesCtx.quoteHistory[i];
+            if (h && typeof h.total === "number" && h.total > 0) { fromHistory = h.total; break; }
+          }
+        }
+        const resolvedQuote = fromCurrentTurn ?? fromInMemLrr ?? fromPersistedLrr ?? fromTotalQuoted ?? fromHistory;
+        // Pick the family from current/persisted resolver result, in same
+        // priority order as the price.
+        const fromInMemFamily = (inMemLrr && inMemLrr.success && typeof inMemLrr.family === "string") ? inMemLrr.family : null;
+        const fromPersistedFamily = (persistedLrr && persistedLrr.success && typeof persistedLrr.family === "string") ? persistedLrr.family : null;
+        const resolvedFamily = fromInMemFamily || fromPersistedFamily || null;
+        if (resolvedQuote == null) {
+          // NOTHING to fall back to. Don't queue — that would just fail
+          // downstream. Mark the thread as needing operator review so
+          // the listing isn't lost; the operator can attach a price
+          // manually and re-queue.
+          console.warn(`[salesAgent] customer_accepted=true on ${threadId} but no quote available from any source — flagging needsOperatorReview instead of queueing`);
+          return {
+            customerAccepted        : true,
+            customerAcceptedAt      : FV.serverTimestamp(),
+            needsOperatorReview     : true,
+            needsOperatorReviewReason: "customer_accepted_without_recorded_quote",
+            // Explicitly NOT setting customListingStatus — leaves the
+            // thread out of the listing-creator cron's "queued" query
+            // until an operator (or a future AI turn) supplies a quote.
+          };
+        }
+        return {
+          customerAccepted   : true,
+          acceptedQuoteUsd   : resolvedQuote,
+          acceptedQuoteFamily: resolvedFamily,
+          customerAcceptedAt : FV.serverTimestamp(),
+          // customListingStatus: "queued" — explicit sentinel that the
+          // cron's primary query keys off. Only written on acceptance, so
+          // a follow-up turn doesn't overwrite a "creating" / "created"
+          // state set later by the cron / worker.
+          customListingStatus: "queued"
+        };
+      })() : {}),
       // lastResolverResult updates on every turn — it reflects the agent's
       // current understanding of what the customer wants. The locked
       // version of the spec at acceptance time is captured implicitly via
