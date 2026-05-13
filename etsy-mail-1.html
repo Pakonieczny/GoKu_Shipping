@@ -12555,13 +12555,54 @@
             ? "flex" : "none";
         }
       } catch {}
-      if (!draft || !Array.isArray(draft.draftAttachments)) return;
-      const atts = draft.draftAttachments.map(a => ({
-        ...a,
-        status: a.status || "ready"
-      }));
-      setComposerAttachments(threadId, atts);
-      renderComposerChips();
+      if (!draft) return;
+
+      // v3.28 — Preserve in-memory tracking_image chips when hydrating.
+      //
+      // Per the v3.19 design, tracking_image chips live in MEMORY only
+      // — persistComposerAttachments deliberately filters them out
+      // before writing draft.draftAttachments. The source of truth for
+      // tracking images is draft.trackingImages, which renderAiDraftCard
+      // → renderTrackingImages → syncTrackingImagesToChips auto-promotes
+      // into composer attachments on every render.
+      //
+      // The bug: openThread calls renderAiDraftCard FIRST (line 13139),
+      // which adds the tracking chip into composer attachments, then
+      // calls hydrateComposerFromDraft (line 13161). The old hydrate
+      // body unconditionally did `setComposerAttachments(threadId,
+      // draftAttachments)`, which OVERWROTE the chip with an empty
+      // array (because draftAttachments has no tracking entries by
+      // design). Net effect: chip appeared for a microsecond, then
+      // got wiped before the next paint. Operator saw a reply that
+      // mentioned "tracking details attached below" with no actual
+      // chip in the composer — making the tracking image effectively
+      // invisible despite being fully generated and ready.
+      //
+      // Fix: snapshot any tracking_image chips already in the composer
+      // before we overwrite, then append them back into the hydrated
+      // array. De-dupe by attachmentId so a chip already in
+      // draftAttachments (shouldn't happen but defensive) isn't doubled.
+      const existing = getComposerAttachments(threadId) || [];
+      const trackingChipsToPreserve = existing.filter(a => a && a.type === "tracking_image");
+
+      if (Array.isArray(draft.draftAttachments)) {
+        const atts = draft.draftAttachments.map(a => ({
+          ...a,
+          status: a.status || "ready"
+        }));
+        for (const chip of trackingChipsToPreserve) {
+          if (!atts.some(a => a && a.attachmentId === chip.attachmentId)) {
+            atts.push(chip);
+          }
+        }
+        setComposerAttachments(threadId, atts);
+        renderComposerChips();
+      } else if (trackingChipsToPreserve.length) {
+        // draftAttachments missing entirely — leave the tracking chips
+        // alone but force a render so they're visible in case something
+        // upstream cleared the chip strip.
+        renderComposerChips();
+      }
     }
 
     /** Start or restart polling the send status for a draft. */
