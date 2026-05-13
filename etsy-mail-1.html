@@ -1152,6 +1152,40 @@
       background: #f6f8fa; color: #24292f;
     }
 
+    /* v5.30.5 — Sort / starred-only toggle buttons in the filters row.
+     * Three small icon-only buttons next to the reset link:
+     *   - Sort ascending (oldest first)
+     *   - Sort descending (newest first; the default)
+     *   - Starred-only filter (orange star icon when active)
+     * Ascending and descending are mutually exclusive — they reflect
+     * state.sortDirection. Starred-only is independent — it reflects
+     * state.starredOnly.
+     * Active state uses the same blue accent as other UI affordances
+     * (matches the selection-bar accent at #0366d6), except the
+     * starred-only button flips to the orange we use elsewhere for
+     * stars so the visual language stays consistent. */
+    .em-sort-btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 24px; height: 22px;
+      padding: 0; margin-left: 2px;
+      border: 1px solid #d0d7de;
+      background: #fff;
+      color: #57606a;
+      border-radius: 4px;
+      cursor: pointer;
+      vertical-align: middle;
+    }
+    .em-sort-btn:hover { background: #f6f8fa; color: #24292f; }
+    .em-sort-btn.is-active {
+      background: #e7f3ff; color: #0366d6; border-color: #b6d4f5;
+    }
+    /* Starred-only gets the orange treatment when active to match the
+     * star icons it filters by. */
+    #emStarredOnlyBtn.is-active {
+      background: #fff5e6; color: #ed8936; border-color: #f0c69a;
+    }
+    .em-sort-btn .material-icons { font-size: 14px; }
+
     /* ── Selection-mode action bar (above thread list) ───────────────── */
     .em-selection-bar {
       display: none;
@@ -4851,6 +4885,19 @@
         <i class="material-icons" style="font-size:16px;">check_box</i>
         <span class="em-sel-count"><span id="emSelCount">0</span> selected</span>
         <span class="em-sel-spacer"></span>
+        <!-- v5.30.4 — One-click Archive action. The Move-to dropdown
+             below already includes "Archived" as one of its targets,
+             but Archive is the most common bulk operation operators
+             want, so it earns a dedicated button. Same code path:
+             moveCheckedTo("archived") handles the confirm, the
+             sequential backend writes, the audit-tagged actor, and
+             the post-move cleanup (exitSelectionMode clears
+             state.checkedIds and hides this bar; fetchThreadListNow
+             + fetchCountsNow refresh the inbox). -->
+        <button class="em-sel-btn em-sel-archive-btn" id="emSelArchiveBtn"
+                title="Archive all selected threads">
+          <i class="material-icons">archive</i>Archive
+        </button>
         <select class="em-move-select" id="emMoveSelect" title="Move selected threads to a folder">
           <option value="">Move to…</option>
         </select>
@@ -4887,6 +4934,25 @@
             <i class="material-icons" style="font-size:13px;vertical-align:middle;">refresh</i>
             reset
           </span>
+          <!-- v5.30.5 — Sort + starred-only toggles.
+               Ascending and Descending are mutually exclusive: clicking
+               one activates it and deactivates the other. Starred-only
+               is independent — a filter that hides non-starred threads. -->
+          <button class="em-sort-btn" id="emSortAscBtn"
+                  aria-pressed="false"
+                  title="Sort oldest first (ascending)">
+            <i class="material-icons">arrow_upward</i>
+          </button>
+          <button class="em-sort-btn is-active" id="emSortDescBtn"
+                  aria-pressed="true"
+                  title="Sort newest first (descending) — default">
+            <i class="material-icons">arrow_downward</i>
+          </button>
+          <button class="em-sort-btn" id="emStarredOnlyBtn"
+                  aria-pressed="false"
+                  title="Show starred threads only">
+            <i class="material-icons">star_border</i>
+          </button>
         </div>
       </div>
       <div class="em-list-items" id="emListItems">
@@ -6796,6 +6862,15 @@
       selectedId        : null,
       messages          : [],
       searchText        : "",
+      // v5.30.5 — Operator-facing sort + starred-only controls.
+      //   sortDirection : "desc" (default, newest first) | "asc"
+      //   starredOnly   : when true, the thread list filters to only
+      //                   threads where t.starred === true. Used by
+      //                   both renderThreadList (desktop) and
+      //                   mFilteredThreads (mobile) so the two stay
+      //                   consistent. Reset by emFilterClear.
+      sortDirection     : "desc",
+      starredOnly       : false,
       // v1.3: server-side full-text search mode. When true, fetchThreadListNow
       // skips its work (so the 5s list-poll doesn't clobber search results)
       // and the rail folders are visually inactive (search is global).
@@ -9252,15 +9327,28 @@
         }
       }
 
-      // Sort by date desc — ALWAYS. The user wants every folder ordered
-      // by date regardless of how they got there.
+      // Sort by date — direction respects state.sortDirection.
       // v5.30 — pickThreadInteractionMs uses MAX(lastInboundAt,
       // lastOperatorReplyAt). Previously the OR chain meant operator
       // sends didn't push their thread to the top until the customer
       // replied. Now the operator's own reply bumps the thread
       // immediately (frontend optimistic in sendViaEtsy + backend
       // persistence in etsyMailDraftSend).
-      filtered.sort((a, b) => pickThreadInteractionMs(b) - pickThreadInteractionMs(a));
+      // v5.30.5 — Direction toggle. desc = newest first (default).
+      // asc = oldest first. Operator picks via the sort buttons in
+      // the filters row.
+      filtered.sort((a, b) => {
+        const delta = pickThreadInteractionMs(b) - pickThreadInteractionMs(a);
+        return state.sortDirection === "asc" ? -delta : delta;
+      });
+
+      // v5.30.5 — Starred-only filter. Applied AFTER the date/type
+      // filters above so the operator sees "starred ∩ current folder
+      // ∩ current filters" — not "starred from all threads". This is
+      // the standard combine-with-AND behavior other filters use too.
+      if (state.starredOnly) {
+        filtered = filtered.filter(t => !!t.starred);
+      }
 
       // ── v1.3 / v1.4: Search-mode banner ─────────────────────────
       // When the user is searching server-side (q ≥ 2 chars), prepend
@@ -14917,11 +15005,72 @@
         state.dateFilter = "all";
         state.searchMode = false;
         state.threadListPage = 1;   // v3.22
+        // v5.30.5 — Reset also clears sort direction back to desc and
+        // turns off starred-only, so "reset" really means "back to
+        // defaults" across the board, not just for the filter chips.
+        state.sortDirection = "desc";
+        state.starredOnly = false;
         $("emSearchInput").value = "";
         $("emMessageTypeFilter").value = "all";
         $("emDateFilter").value = "all";
+        if (typeof updateSortBtnStates === "function") updateSortBtnStates();
         fetchThreadListNow();
       });
+
+      // v5.30.5 — Sort + starred-only button wiring + visual-state
+      // helper. updateSortBtnStates is the single source of truth for
+      // how the three buttons render — anything that mutates
+      // state.sortDirection or state.starredOnly should call it.
+      function updateSortBtnStates() {
+        const asc  = $("emSortAscBtn");
+        const desc = $("emSortDescBtn");
+        const star = $("emStarredOnlyBtn");
+        if (asc)  {
+          asc.classList.toggle("is-active", state.sortDirection === "asc");
+          asc.setAttribute("aria-pressed", String(state.sortDirection === "asc"));
+        }
+        if (desc) {
+          desc.classList.toggle("is-active", state.sortDirection === "desc");
+          desc.setAttribute("aria-pressed", String(state.sortDirection === "desc"));
+        }
+        if (star) {
+          star.classList.toggle("is-active", !!state.starredOnly);
+          star.setAttribute("aria-pressed", String(!!state.starredOnly));
+          // Swap icon glyph so the active state reads like "this is a
+          // FILLED star, the filter is on" vs. "this is an OUTLINE
+          // star, click to turn the filter on".
+          const icon = star.querySelector(".material-icons");
+          if (icon) icon.textContent = state.starredOnly ? "star" : "star_border";
+          star.setAttribute("title", state.starredOnly
+            ? "Showing starred only — click to show all"
+            : "Show starred threads only");
+        }
+      }
+      $("emSortAscBtn")?.addEventListener("click", () => {
+        state.sortDirection = "asc";
+        state.threadListPage = 1;  // reset to first page so the operator sees the change
+        updateSortBtnStates();
+        renderThreadList();
+        // Also refresh mobile if it's currently mounted; mFilteredThreads
+        // reads state.sortDirection, so mRenderList picks up the change.
+        if (typeof mRenderList === "function") { try { mRenderList(); } catch {} }
+      });
+      $("emSortDescBtn")?.addEventListener("click", () => {
+        state.sortDirection = "desc";
+        state.threadListPage = 1;
+        updateSortBtnStates();
+        renderThreadList();
+        if (typeof mRenderList === "function") { try { mRenderList(); } catch {} }
+      });
+      $("emStarredOnlyBtn")?.addEventListener("click", () => {
+        state.starredOnly = !state.starredOnly;
+        state.threadListPage = 1;
+        updateSortBtnStates();
+        renderThreadList();
+        if (typeof mRenderList === "function") { try { mRenderList(); } catch {} }
+      });
+      // Initialize visual state to match the defaults.
+      updateSortBtnStates();
 
       // ── Selection-mode wiring ────────────────────────────────────
       $("emSelectModeBtn")?.addEventListener("click", () => {
@@ -14929,6 +15078,18 @@
         else enterSelectionMode();
       });
       $("emSelClearBtn")?.addEventListener("click", exitSelectionMode);
+      // v5.30.4 — Bulk Archive shortcut. moveCheckedTo handles
+      // everything else (confirm, sequential setStatus calls, audit,
+      // exitSelectionMode which clears state.checkedIds, and the
+      // list/counts refresh). If nothing is selected we just toast —
+      // matches the Move-to dropdown's behavior.
+      $("emSelArchiveBtn")?.addEventListener("click", () => {
+        if (!state.checkedIds.size) {
+          toast("No threads selected");
+          return;
+        }
+        moveCheckedTo("archived");
+      });
       $("emMoveSelect")?.addEventListener("change", (e) => {
         const v = e.target.value;
         if (v) moveCheckedTo(v);
@@ -16489,16 +16650,20 @@
         });
       }
 
-      // 3. Chronological sort, newest first. Mirrors desktop renderThreadList
-      // which sorts by `lastInboundAt || updatedAt || createdAt`. Without
-      // this, state.threads is in arbitrary (Firestore-internal) order and
-      // the operator sees times jump around (15:42 then 15:01 then 15:35
-      // — the v5.1 bug).
+      // 3. Chronological sort, direction set by state.sortDirection.
       // v5.30 — Use pickThreadInteractionMs so operator-sent replies
       // bump the thread to the top, not just customer inbound messages.
-      // Pre-v5.30 OR chain left the operator's reply hidden until
-      // customer's next message.
-      threads.sort((a, b) => pickThreadInteractionMs(b) - pickThreadInteractionMs(a));
+      // v5.30.5 — Direction is shared with desktop; toggling the sort
+      // buttons in the desktop filters row also affects this list.
+      threads.sort((a, b) => {
+        const delta = pickThreadInteractionMs(b) - pickThreadInteractionMs(a);
+        return state.sortDirection === "asc" ? -delta : delta;
+      });
+
+      // v5.30.5 — Starred-only filter (state shared with desktop).
+      if (state.starredOnly) {
+        threads = threads.filter(t => !!t.starred);
+      }
 
       return threads;
     }
