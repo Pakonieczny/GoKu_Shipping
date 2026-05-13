@@ -678,8 +678,7 @@
     }
     button#emAiDraftBtn.is-loading::before,
     button#emAiFollowUpBtn.is-loading::before,
-    button#emReviseBtn.is-loading::before,
-    button#emCustomListingBtn.is-loading::before {
+    button#emReviseBtn.is-loading::before {
       content: "";
       display: inline-block;
       width: 14px; height: 14px;
@@ -689,6 +688,25 @@
       border-radius: 50%;
       animation: em-spin .7s linear infinite;
       vertical-align: middle;
+    }
+    button#emCustomListingBtn.is-loading {
+      background: #ecfdf5;
+      border-color: #0f766e;
+      color: #0f766e;
+      opacity: 1 !important;
+      cursor: wait;
+    }
+    button#emCustomListingBtn.is-loading::before {
+      content: "";
+      display: inline-block;
+      width: 14px; height: 14px;
+      margin-right: 6px;
+      border: 2px solid rgba(15,118,110,.25);
+      border-top-color: #0f766e;
+      border-radius: 50%;
+      animation: em-spin .7s linear infinite;
+      vertical-align: middle;
+      flex: 0 0 auto;
     }
     /* Mobile AI button — pulsing ring while loading. Icon stays
      * visible (operators recognize the sparkle); the ring pulses to
@@ -10860,8 +10878,6 @@
       const desktopBtn = $("emCustomListingBtn");
       const desktopLabel = desktopBtn?.querySelector("span");
       const mobileBtn = document.getElementById("mActionCustomListing");
-      const sendBtn = $("emSendEtsyBtn");
-      const mobileSend = document.getElementById("mComposerSend");
 
       if (desktopBtn) {
         desktopBtn.disabled = !!isLoading;
@@ -10878,50 +10894,24 @@
         mobileBtn.title = isLoading ? "Creating custom listing…" : "Generate custom listing";
       }
 
-      if (sendBtn) sendBtn.disabled = !!isLoading;
-      if (mobileSend && isLoading) mobileSend.disabled = true;
-      if (mobileSend && !isLoading) {
-        const mta = document.getElementById("mComposerTextarea");
-        mobileSend.disabled = !(((mta && mta.value) || "").trim() || (typeof mGetCurrentAttachments === "function" && mGetCurrentAttachments().length > 0));
-      }
+      // Manual custom-listing generation should not touch any other control.
+      // Only the custom-listing button itself shows busy state.
     }
 
     async function generateManualCustomListing(threadId) {
       if (!threadId) return false;
       if (state.manualCustomListingBusyThreadId === threadId) {
-        toast("Custom listing is already being created…");
         return false;
       }
 
-      const t = (state.threads || []).find(x => x && x.id === threadId) || { id: threadId };
-      const existingUrl = t.customListingUrl || "";
-
-      // v4.3.19 — Manual custom-listing button is an intentional operator
-      // action. Do not show a native browser confirm() explaining what the
-      // button does; it interrupts the workflow and makes successful listing
-      // creation feel like a warning/error. If this thread already has a
-      // listing, keep the operator informed with a toast, but continue.
-      if (existingUrl) {
-        toast("Existing custom listing found — creating another listing…");
-      }
+      // v4.3.20 — Manual custom-listing creation must be visually quiet.
+      // Do not show a native confirm(), do not toast at start, do not render
+      // an optimistic status card, and do not refresh/re-scroll the thread while
+      // generation is running. The only in-progress feedback is the spinner
+      // inside the Custom Listing button.
 
       try {
         setManualCustomListingLoading(threadId, true);
-        toast("Creating custom listing…");
-
-        // Optimistic local status so the operator sees immediate feedback.
-        const idx = state.threads.findIndex(x => x && x.id === threadId);
-        if (idx >= 0) {
-          state.threads[idx] = {
-            ...state.threads[idx],
-            customListingStatus: "creating",
-            customListingManualMode: true
-          };
-          if (state.selectedId === threadId) {
-            renderDetail(state.threads[idx]);
-            setManualCustomListingLoading(threadId, true);
-          }
-        }
 
         const res = await api("etsyMailListingCreator-background", {
           method: "POST",
@@ -10945,10 +10935,6 @@
         if (threadDoc) {
           const j = state.threads.findIndex(x => x && x.id === threadId);
           if (j >= 0) state.threads[j] = threadDoc;
-          if (state.selectedId === threadId) {
-            renderDetail(threadDoc);
-            setManualCustomListingLoading(threadId, true);
-          }
         }
 
         const replyText = (draftDoc && draftDoc.text) || (threadDoc && threadDoc.customListingReplyText) || "";
@@ -10964,10 +10950,6 @@
             if (typeof mAutoGrow === "function") mAutoGrow(mta);
           }
         }
-
-        await fetchThreadListNow().catch(() => {});
-        await fetchCountsNow().catch(() => {});
-        if (state.selectedId === threadId) fetchMessagesNow(threadId).catch(() => {});
 
         const url = (threadDoc && threadDoc.customListingUrl) || res.listingUrl || "";
         toast(url ? "Custom listing created and loaded into reply" : "Custom listing created");
