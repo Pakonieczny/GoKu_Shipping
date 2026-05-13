@@ -18994,15 +18994,50 @@
             else if (t && t.etsyConversationId) window.open("https://www.etsy.com/your/conversations/" + t.etsyConversationId, "_blank");
           }
           else if (action === "delete") {
-            if (!confirm("Delete this thread permanently? This cannot be undone.")) return;
+            // v5.31 — Mobile delete must use the same destructive backend
+            // contract as desktop. The old mobile path called
+            // etsyMailThreads with action:"delete", but etsyMailThreads
+            // never implemented that action, so mobile showed:
+            //   Delete failed: unknown action "delete"
+            // Desktop already uses firestoreProxy op:"deleteThread", which
+            // wipes the thread, messages, drafts, sales/intent docs, and
+            // Firebase Storage objects. Keep mobile aligned with that path.
+            if (!confirm(
+              "PERMANENTLY DELETE this thread?\n\n" +
+              "This wipes the thread, messages, AI drafts, sales state, and stored attachments.\n\n" +
+              "This cannot be undone."
+            )) return;
             try {
-              await api("etsyMailThreads", { method: "POST", body: { action: "delete", threadId: tid, actor: getEmployeeName() || "operator" } });
-              if (typeof toast === "function") toast("Thread deleted");
+              if (typeof toast === "function") toast("Deleting thread…");
+              const res = await api("firestoreProxy", {
+                method: "POST",
+                body: {
+                  op      : "deleteThread",
+                  threadId: tid,
+                  actor   : getEmployeeName() || "operator",
+                  confirm : true
+                }
+              });
+              const c = (res && res.counts) || {};
+              const summary = `${c.thread || 0} thread, ${c.messages || 0} msgs, ${c.drafts || 0} drafts`;
+              if (res && res.partial) {
+                if (typeof toast === "function") toast(`Deleted with warnings (${summary}).`, true);
+                console.warn("mobile deleteThread partial:", res);
+              } else if (typeof toast === "function") {
+                toast(`Thread permanently deleted (${summary}).`);
+              }
               state.selectedId = null;
+              try {
+                state.threads = (state.threads || []).filter(t => t && t.id !== tid);
+              } catch {}
+              mState.dirtyList = true;
+              mState.dirtyDrawer = true;
               mShowScreen("list");
               if (typeof fetchThreadListNow === "function") fetchThreadListNow();
+              if (typeof fetchCountsNow === "function") fetchCountsNow();
             } catch (e) {
-              if (typeof toast === "function") toast("Delete failed: " + e.message);
+              if (typeof toast === "function") toast("Delete failed: " + (e.message || "unknown"));
+              console.error("mobile deleteThread:", e);
             }
           }
         });
