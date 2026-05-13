@@ -10995,8 +10995,8 @@
 
         const ta = $("emDraftText");
         if (ta) { ta.value = replyText; autoSizeDraftTextarea(ta); }
-        if (threadDoc && typeof renderCustomListingReplyPreview === "function") {
-          renderCustomListingReplyPreview(threadDoc, draftDoc || {}, replyText);
+        if (typeof renderCustomListingReplyPreview === "function") {
+          renderCustomListingReplyPreview(threadDoc || {}, draftDoc || {}, replyText);
         }
         const mta = document.getElementById("mComposerTextarea");
         if (mta) {
@@ -13487,47 +13487,11 @@
     }
 
     function renderCustomListingReplyPreview(thread, draft, replyText) {
-      const card = $("emComposerCard");
-      const ta = $("emDraftText");
-      if (!card || !ta) return;
-
-      let box = $("emCustomListingReplyPreview");
-      if (!box) {
-        box = document.createElement("div");
-        box.id = "emCustomListingReplyPreview";
-        ta.parentNode.insertBefore(box, ta);
-      }
-
-      const listingUrl =
-        (thread && thread.customListingUrl) ||
-        (draft && draft.customListingUrl) ||
-        (draft && draft.aiMeta && draft.aiMeta.listingUrl) ||
-        extractFirstUrl(replyText);
-      const status = (draft && draft.status) || (thread && thread.customListingStatus) || "draft";
-      const isTerminal = ["sent", "sent_unverified", "sent_text_only"].includes(status);
-      const statusLabel =
-        status === "queued" ? "Queued for Etsy send" :
-        status === "sending" ? "Sending through Etsy" :
-        isTerminal ? "Already sent / inserted" :
-        (thread && thread.customListingStatus === "created") ? "Listing created" :
-        "Ready to send";
-
-      const safeReply = String(replyText || "").trim();
-      box.innerHTML = `
-        <div style="margin:0 0 10px; padding:10px 12px; background:#f0f9ff; border:1px solid #b6e3ff; border-left:4px solid #0969da; border-radius:6px; font-size:12px; line-height:1.45; color:#1f2328;">
-          <div style="display:flex; align-items:center; gap:6px; font-weight:700; color:#0969da; margin-bottom:5px;">
-            <i class="material-icons" style="font-size:16px;">link</i>
-            Custom listing reply ${esc(statusLabel)}
-          </div>
-          ${listingUrl ? `<div style="margin-bottom:6px;"><strong>Listing URL added:</strong> <a href="${esc(listingUrl)}" target="_blank">${esc(listingUrl)}</a></div>` : `<div style="margin-bottom:6px;"><strong>Listing URL:</strong> waiting for listing creator...</div>`}
-          ${safeReply ? `<div style="white-space:pre-wrap; background:#fff; border:1px solid #d0d7de; border-radius:4px; padding:8px; color:#24292f; max-height:160px; overflow:auto;">${esc(safeReply)}</div>` : ""}
-          <div style="margin-top:6px; color:#57606a;">
-            ${isTerminal
-              ? "This message has already been sent or inserted into the thread. The text above is shown so the operator can verify the listing link was included."
-              : "The same text is loaded in the Staff Reply box below, so manual Send via Etsy will include the listing link if the operator sends it manually."}
-          </div>
-        </div>`;
-      box.style.display = "block";
+      // v4.3.22 — No separate custom-listing preview card.
+      // The operator only wants the generated listing reply pasted into the
+      // actual Staff Reply textbox. Do not render any extra card/banner/popup.
+      const box = $("emCustomListingReplyPreview");
+      if (box) box.remove();
     }
 
     function hideCustomListingReplyPreview() {
@@ -13558,12 +13522,9 @@
         }
         const d = res.doc;
 
-        // v4.3.17 — Customer acceptance / custom listing reply visibility.
-        // Older builds suppressed the composer on acceptance turns because the
-        // listing-creator owns the customer reply. That made operators think the
-        // listing URL was missing. Now we surface the exact customer-facing
-        // listing reply in the Staff Reply box whenever a custom-listing draft
-        // exists, while still allowing the auto-send pipeline to proceed.
+        // v4.3.22 — Customer acceptance / custom listing reply visibility.
+        // Surface the exact customer-facing listing reply only in the Staff
+        // Reply textbox. No extra preview card/banner should be rendered.
         const isAcceptanceTurn =
           thread.aiDraftStatus === "skipped_acceptance" ||
           d.aiDraftStatus       === "skipped_acceptance" ||
@@ -13575,7 +13536,7 @@
           const isTerminalSend = ["sent", "sent_unverified", "sent_text_only"].includes(draftStatus);
           const ta = $("emDraftText");
 
-          // Show the operator a persistent preview above the textarea.
+          // Ensure no stale custom-listing preview card remains.
           renderCustomListingReplyPreview(thread, d, replyText);
 
           // For manual Send via Etsy, the listing URL must be inside the
