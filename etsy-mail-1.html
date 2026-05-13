@@ -11378,6 +11378,17 @@
         Array.isArray(draft.trackingImages) ? draft.trackingImages : [],
         { autoPromoteToChips: !isSentLike }
       );
+      // v3.31 — Fresh-draft tracking sync. Some render paths carry a stale
+      // thread.draft object while the tracking worker has already written
+      // the ready image to EtsyMail_Drafts. Re-read the draft once after
+      // rendering so the visible card and composer chip converge on the
+      // canonical Firestore trackingImages array.
+      if (!isSentLike && state.selectedId && typeof refreshTrackingImagesFromDraft === "function") {
+        queueMicrotask(() => {
+          refreshTrackingImagesFromDraft(state.selectedId, { render: true, autoPromoteToChips: true })
+            .catch(e => console.warn("[tracking-sync] post-render refresh failed:", e.message));
+        });
+      }
       // v5.4 — Mobile mirror: copy the just-rendered AI draft card body
       // into the mobile-mounted equivalent so mobile operators see the
       // same draft + meta + suggested actions.
@@ -11721,6 +11732,17 @@
       if (!images || !images.length) {
         box.style.display = "none";
         box.innerHTML = "";
+        // If this is an editable draft, an empty trackingImages source should
+        // also clear any stale tracking chips from a prior render.
+        if (autoPromoteToChips && typeof syncTrackingImagesToChips === "function") {
+          try {
+            const threadId = state.selectedId;
+            const hasStaleTrackingChip = !!threadId && getComposerAttachments(threadId).some(a => a && a.type === "tracking_image");
+            if (hasStaleTrackingChip) syncTrackingImagesToChips([]);
+          } catch (e) {
+            console.warn("clear tracking chips failed:", e);
+          }
+        }
         return;
       }
       box.style.display = "flex";
@@ -11953,6 +11975,26 @@
           if (typeof syncTrackingImagesToChips === "function") {
             syncTrackingImagesToChips(images);
           }
+          // v3.30 — Persist the toggle to draft.trackingImages so the
+          // backend's enqueue-time safety net (reconcileTrackingAttachments
+          // in etsyMailDraftSend.js) honors operator de-queue intent.
+          // Without this write, the toggle is in-memory only — the
+          // backend would re-attach the image even after the operator
+          // explicitly removed it.
+          //
+          // Best-effort: a failed write doesn't undo the local toggle
+          // (the operator still sees their click reflected), but on
+          // refresh the toggle would revert. Acceptable trade-off vs.
+          // blocking on Firestore in the click handler.
+          try {
+            const _threadId = (typeof state !== "undefined" && state.selectedId) || null;
+            if (_threadId && typeof persistTrackingImagesForThread === "function") {
+              persistTrackingImagesForThread(_threadId, images, "tracking-toggle")
+                .catch(e => console.warn("[tracking-toggle] persist failed:", e.message));
+            }
+          } catch (e) {
+            console.warn("[tracking-toggle] persist skipped:", e.message);
+          }
         });
       });
 
@@ -11977,7 +12019,18 @@
             if (data.inline && data.imageUrl) {
               // Got cache hit (weird for forceRefresh, but handle it)
               Object.assign(img, data, { status: "ready" });
+              try {
+                const _threadId = (typeof state !== "undefined" && state.selectedId) || null;
+                if (_threadId && typeof persistTrackingImagesForThread === "function") {
+                  await persistTrackingImagesForThread(_threadId, images, "tracking-retry");
+                }
+              } catch (e) {
+                console.warn("[tracking-retry] persist failed:", e.message);
+              }
               rerender();
+              if (autoPromoteToChips && typeof syncTrackingImagesToChips === "function") {
+                try { syncTrackingImagesToChips(images); } catch (e) { console.warn("retry sync chips failed:", e); }
+              }
             } else if (data.jobId) {
               img.jobId = data.jobId;
               rerender();
@@ -12074,6 +12127,84 @@
 
     function setComposerAttachments(threadId, arr) {
       state.composerAttachments.set(threadId, Array.isArray(arr) ? arr : []);
+    }
+
+    function trackingImageLooksReady(img) {
+      return !!(img && (img.status === "ready" || img.imageUrl || img.imageStoragePath));
+    }
+
+    function trackingImageIsPendingForSend(img) {
+      if (!img || !img.trackingCode) return false;
+      if (img.queuedForSend === false) return false;
+      if (img.status === "failed") return false;
+      return !trackingImageLooksReady(img);
+    }
+
+    function trackingImageCodesFromAttachments(atts) {
+      return new Set((atts || [])
+        .filter(a => a && a.type === "tracking_image" && a.trackingCode)
+        .map(a => String(a.trackingCode)));
+    }
+
+    async function persistTrackingImagesForThread(threadId, images, actor) {
+      if (!threadId) return;
+      const safeImages = Array.isArray(images) ? images.map(x => ({ ...x })) : [];
+      await api("firestoreProxy", {
+        method: "POST",
+        body: {
+          op    : "set",
+          coll  : "EtsyMail_Drafts",
+          id    : "draft_" + threadId,
+          merge : true,
+          actor : actor || (typeof getEmployeeName === "function" && getEmployeeName()) || "tracking-sync",
+          data  : {
+            trackingImages: safeImages,
+            updatedAt     : { __serverTimestamp: true }
+          }
+        }
+      });
+    }
+
+    /**
+     * Freshly re-read draft.trackingImages and make the UI/chips match it.
+     * This is the frontend half of the tracking-image contract: the visible
+     * card + composer chip are derived from the current draft doc, not from
+     * a stale thread cache or a previous render.
+     */
+    async function refreshTrackingImagesFromDraft(threadId, opts = {}) {
+      const out = { ok: false, draft: null, images: [], pending: [] };
+      if (!threadId) return out;
+      try {
+        const res = await api("firestoreProxy", {
+          method: "GET",
+          query: { op: "get", coll: "EtsyMail_Drafts", id: "draft_" + threadId }
+        });
+        if (!res || !res.exists || !res.doc) return out;
+
+        const draft = res.doc || {};
+        const images = Array.isArray(draft.trackingImages) ? draft.trackingImages : [];
+        out.ok = true;
+        out.draft = draft;
+        out.images = images;
+        out.pending = images.filter(trackingImageIsPendingForSend);
+
+        // Keep the thread cache from lying to later render paths.
+        const t = (state.threads || []).find(x => x && x.id === threadId);
+        if (t) t.draft = { ...(t.draft || {}), ...draft };
+
+        if (state.selectedId === threadId) {
+          const autoPromoteToChips = opts.autoPromoteToChips !== false;
+          if (opts.render !== false) {
+            renderTrackingImages(images, { autoPromoteToChips });
+          }
+          if (autoPromoteToChips && typeof syncTrackingImagesToChips === "function") {
+            syncTrackingImagesToChips(images);
+          }
+        }
+      } catch (e) {
+        console.warn("[tracking-sync] fresh draft read failed:", e.message);
+      }
+      return out;
     }
 
     /** Called when the operator clicks Clear — wipes this thread's chips. */
@@ -12851,7 +12982,7 @@
       if (!ta) {
         console.warn("[sendViaEtsy] No composer textarea found — neither #emDraftText nor #mComposerTextarea.");
         if (typeof toast === "function") toast("Send failed: composer not ready. Reopen the thread and try again.");
-        return;
+        return false;
       }
       // v3.7 — When the operator has activated the translation preview
       // pane (state.composerTranslation set), the OUTBOUND text is the
@@ -12867,7 +12998,29 @@
       const text = usingTranslation
         ? state.composerTranslation.translated.trim()
         : englishText;
+      // v3.32 — Manual Send must never be blocked by inferred tracking-image
+      // requirements. We still refresh draft.trackingImages and promote any
+      // ready image into visible composer chips before reading attachments,
+      // but pending/missing tracking images are warnings only. The operator's
+      // explicit Send via Etsy click remains authoritative.
+      const trackingCodesBeforePreflight = trackingImageCodesFromAttachments(getComposerAttachments(threadId));
+      let trackingPreflight = null;
+      if (typeof refreshTrackingImagesFromDraft === "function") {
+        trackingPreflight = await refreshTrackingImagesFromDraft(threadId, {
+          render: true,
+          autoPromoteToChips: true
+        });
+        if (trackingPreflight && trackingPreflight.pending && trackingPreflight.pending.length) {
+          const codes = trackingPreflight.pending.map(x => x.trackingCode).filter(Boolean).join(", ");
+          toast(`Tracking image still generating${codes ? " (" + codes + ")" : ""} — sending manually without the pending image.`);
+        }
+      }
       const atts = getComposerAttachments(threadId);
+      const trackingCodesAfterPreflight = trackingImageCodesFromAttachments(atts);
+      const newlyVisibleTracking = [...trackingCodesAfterPreflight].filter(code => !trackingCodesBeforePreflight.has(code));
+      if (newlyVisibleTracking.length) {
+        toast("Tracking image was attached to the composer and will be included in this send.");
+      }
 
       // v5.13 — Defensive currentThreadUrl: the desktop's renderDetail
       // → setupComposerInteractions sets state.currentThreadUrl from
@@ -12885,26 +13038,18 @@
 
       if (!text && !atts.length) {
         toast("Nothing to send — add some text or attachments first");
-        return;
+        return false;
       }
 
       // Confirm uploading attachments are all done
       const uploading = atts.filter(a => a.status === "uploading" || a.status === "loading");
       if (uploading.length) {
         toast(uploading.length + " attachment(s) still uploading — wait a moment");
-        return;
+        return false;
       }
-      // v3.16: ALSO confirm any tracking-timeline cards are no longer
-      // pending. Tracking images are NOT in the composer attachments
-      // map until syncTrackingImagesToChips promotes them after the
-      // background job finishes — which polls every 2.5 seconds. Until
-      // then, the AI's draft references a tracking image that doesn't
-      // yet exist as a sendable chip. If the operator clicks Send
-      // before the chip materializes, only text gets sent and the
-      // attachment is silently dropped.
-      //
-      // We detect pending tracking jobs by querying the DOM for the
-      // pending-state placeholder rendered by renderTrackingImages.
+      // v3.32: Pending tracking cards are warnings only for manual Send.
+      // The operator may intentionally send the message now without the
+      // generated tracking image; do not hard-block Send via Etsy here.
       const pendingTrackingCards = document.querySelectorAll(
         "#emTrackingImages .em-ti-placeholder.em-ti-pending"
       );
@@ -12913,47 +13058,36 @@
           pendingTrackingCards.length +
           " tracking timeline" +
           (pendingTrackingCards.length === 1 ? "" : "s") +
-          " still generating — wait for the spinner to finish"
+          " still generating — sending manually without pending tracking image"
         );
-        return;
       }
       const errored = atts.filter(a => a.status === "error");
       if (errored.length) {
-        if (!confirm(errored.length + " attachment(s) failed to load. Send without them?")) return;
+        if (!confirm(errored.length + " attachment(s) failed to load. Send without them?")) return false;
       }
       const usableAtts = atts.filter(a => a.status !== "error" && a.status !== "uploading" && a.status !== "loading");
 
-      // v0.9.21 — CUSTOM LISTING PROMISE GATE.
+      // v3.33 — CUSTOM LISTING PROMISE WARNING ONLY.
       //
-      // Operator policy: a reply that promises to send a custom Etsy
-      // listing (or that commits to creating one for the customer) MUST
-      // NOT be sent unless the listing actually exists as an attachment
-      // chip above the staff notes. The customer would otherwise
-      // receive a message saying "the custom listing is on the way" or
-      // "we'll send you a custom listing" with nothing arriving — the
-      // exact failure mode behind the operator's complaint that the
-      // AI was making fake follow-through promises.
+      // Earlier builds hard-blocked manual Send via Etsy when reply text
+      // appeared to promise a custom Etsy listing but no listing chip was
+      // attached. Operator policy is now stricter in the other direction:
+      // inferred attachment requirements may warn, but must not override
+      // an explicit manual Send click.
       //
-      // Detection is intentionally broad. Any phrasing in the reply
-      // text that commits to delivering a custom listing requires at
-      // least one attachment of type "listing" in the composer chips
-      // before send fires. Tracking images / line sheets do NOT
-      // satisfy this gate — they're a different artifact.
-      //
-      // The gate applies to manual Send via Etsy (this function) and
-      // mirrors the prompt-side rule (noFakeFollowthroughPromises +
-      // attach_line_sheet sync). On auto-pipeline sends, a parallel
-      // gate lives backend-side and is a separate concern.
+      // Keep the detector because the warning is valuable, but do not
+      // return false here. Tracking images / line sheets do NOT satisfy
+      // this warning because they are different artifacts. Auto-pipeline
+      // policy can remain stricter; this block is manual-send only.
       const customListingPromisePattern = /\b(?:custom\s+(?:etsy\s+)?(?:listing|link)|custom\s+listing|create\s+(?:a\s+|the\s+)?(?:custom\s+)?listing|generate\s+(?:a\s+|the\s+)?(?:custom\s+)?listing|send(?:\s+you|\s+over)?\s+(?:a\s+|the\s+)?(?:custom\s+)?listing|listing\s+(?:will|is)\s+(?:come|coming|on\s+the\s+way))\b/i;
       const promisesCustomListing = customListingPromisePattern.test(text);
       const hasListingAttachment = usableAtts.some(a => a && a.type === "listing");
       if (promisesCustomListing && !hasListingAttachment) {
+        // v3.32 — Do not block manual Send based on inferred attachment
+        // requirements. Surface the risk, but let the operator decide.
         toast(
-          "Reply text promises a custom listing but no listing is attached. " +
-          "Generate the custom listing first and attach it before sending."
+          "Warning: reply text mentions a custom listing but no listing is attached. Sending anyway."
         );
-        if (btn) { btn.disabled = false; }
-        return;
       }
 
       // v4.3.16 — Removed the confirm() dialog that asked "Queue this
@@ -12974,6 +13108,10 @@
             text,
             attachments         : usableAtts,
             employeeName        : getEmployeeName(),
+            // v3.32 — Manual Send via Etsy is an explicit operator override.
+            // Backend should attach ready tracking images when available, but
+            // must not 409/block if a generated tracking image is still pending.
+            allowSendWithoutPendingTracking: true,
             // v3.2 — Tag this enqueue as manual so the badge on the
             // thread reads "Manually Sent" once the extension confirms
             // delivery, not "auto-sent". This is the *only* path in the
@@ -13001,11 +13139,20 @@
           } else if (e.data && e.data.errorCode === "SEND_DISABLED") {
             // v0.9.1 #8: kill switch is on
             toast("Send pipeline is disabled. Re-enable it from the banner first.");
-            return;
+            return false;
+          } else if (e.data && e.data.errorCode === "TRACKING_STILL_PENDING") {
+            // Compatibility fallback for older backend responses. Retry once
+            // with the explicit manual override so Send via Etsy is not blocked
+            // by a pending generated tracking image.
+            const codes = Array.isArray(e.data.pending) ? e.data.pending.join(", ") : "";
+            toast(`Tracking image still generating${codes ? " (" + codes + ")" : ""} — sending manually without the pending image.`);
+            resp = await enqueueOnce(true);
           } else {
             throw e;
           }
         }
+        const sentAtts = Array.isArray(resp && resp.attachments) ? resp.attachments : usableAtts;
+
         // v0.9.7: No more polling, no more spinner, no more "verifying"
         // anything. The operator clicked Send; the extension will deliver
         // it on Etsy in the background. We optimistically insert the
@@ -13019,7 +13166,7 @@
             draftId     : resp.draftId,
             threadId,
             text,
-            attachments : usableAtts,
+            attachments : sentAtts,
             createdBy   : getEmployeeName() || "operator"
           });
         } catch (e) {
@@ -13055,6 +13202,7 @@
         if (state.selectedId) fetchMessagesNow(state.selectedId);
         fetchThreadListNow();
         toast("Sent ✓");
+        return true;
       } catch (e) {
         if (e.message && /currently sending/.test(e.message)) {
           toast("Already sending — wait for the current send to finish");
@@ -13063,6 +13211,7 @@
         } else {
           toast("Failed to queue: " + (e.message || "unknown"));
         }
+        return false;
       } finally {
         if (btn) btn.disabled = false;
       }
@@ -18343,11 +18492,10 @@
           return;
         }
         const textForSend = (ta.value || "").trim();
-        const hasAttachments = mGetCurrentAttachments().length > 0;
-        if (!textForSend && !hasAttachments) {
-          if (typeof toast === "function") toast("Nothing to send");
-          return;
-        }
+        // v3.31 — Do not pre-block mobile sends on the local attachment
+        // strip. sendViaEtsy now performs the authoritative empty check
+        // after refreshing draft.trackingImages and promoting any ready
+        // tracking image into the composer.
         // v5.13 — Defensive setup before calling sendViaEtsy.
         // sendViaEtsy reads from #emDraftText (which only exists if
         // renderDetail has run and created it) and from
@@ -18373,7 +18521,11 @@
         send.disabled = true;
         if (typeof sendViaEtsy === "function") {
           try {
-            await sendViaEtsy(tid);
+            const queued = await sendViaEtsy(tid);
+            if (queued !== true) {
+              send.disabled = false;
+              return;
+            }
           } catch (e) {
             console.error("[mobile] send failed:", e);
             // v5.13 — Visible error so the operator knows what

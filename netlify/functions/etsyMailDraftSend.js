@@ -331,6 +331,216 @@ function normalizeAttachments(raw) {
   return out;
 }
 
+// ─── v3.30: Tracking-image attachment safety net ────────────────────────
+//
+// Background: the AI's generate_tracking_image tool kicks off a background
+// snapshot job (etsyMailTrackingSnapshot-background) and records a
+// `tracking_image` entry on draft.trackingImages + draft.attachments. On
+// cache MISS the job is still pending when the AI finishes its draft.
+// The inbox UI's pollTrackingJob is supposed to detect ready status and
+// call syncTrackingImagesToChips, which promotes the image into the
+// in-memory composer chips. If the operator clicks Send before the chip
+// is promoted (or the page never had a polling session open at all), the
+// send body's `attachments` array is empty, the enqueue transaction
+// fully replaces draft.attachments with that empty array, and the
+// customer receives text-only. The later draftWriteback can't recreate
+// the attachment — it only mutates existing entries.
+//
+// The auto-pipeline path already solves this via its own waitForTrackingJobs
+// gate (see etsyMailAutoPipeline-background.js). The manual-Send path
+// did not. v3.30 adds the equivalent gate here.
+//
+// Policy:
+//   - draft.trackingImages is the canonical record of what should be
+//     attached. The send body's attachments is a HINT.
+//   - Honor in-memory operator de-queue (queuedForSend === false) — those
+//     stay excluded.
+//   - For status === "ready" entries, synthesize a tracking_image
+//     attachment if one isn't already in the body's list (dedup by
+//     trackingCode).
+//   - For status === "pending" or "running" entries, poll the job doc
+//     for up to TRACKING_WAIT_MAX_MS, then either synthesize (if it
+//     became ready) or, for manual operator sends, skip pending images
+//     and continue. Auto/system sends may still opt into blocking.
+
+const TRACKING_WAIT_MAX_MS  = 8000;   // hard cap on synchronous wait — Netlify funcs are 10s
+const TRACKING_POLL_EVERY_MS = 1000;
+const TRACKING_JOBS_COLL    = "EtsyMail_TrackingJobs";
+
+/** Synthesize a tracking_image attachment from a draft.trackingImages entry.
+ *  Returns null if the entry doesn't have what the extension needs to
+ *  fetch bytes (proxyUrl is deterministic from trackingCode, so the gate
+ *  is really just "has a trackingCode"). */
+function trackingImageEntryToAttachment(img) {
+  if (!img || !img.trackingCode) return null;
+  const code = String(img.trackingCode);
+  return {
+    attachmentId  : "trk_" + code,
+    type          : "tracking_image",
+    trackingCode  : code,
+    carrier       : img.carrierDisplay || img.carrier || "Tracking",
+    trackingStatus: img.statusText || null,
+    proxyUrl      : "/.netlify/functions/etsyMailTrackingImage?trackingCode=" + encodeURIComponent(code),
+    storagePath   : img.imageStoragePath || null,
+    contentType   : "image/png",
+    bytes         : null,
+    filename      : "tracking-" + code.replace(/[^a-z0-9]/gi, "_") + ".png"
+  };
+}
+
+/** Read the current draft and reconcile its trackingImages with the
+ *  caller-provided attachments. Waits for any pending tracking jobs up to
+ *  TRACKING_WAIT_MAX_MS. Returns:
+ *    { ok:true,  merged: <attachments[]> }            on success
+ *    { ok:false, errorCode, error, pending: <codes> } if any are still
+ *                                                    pending after the
+ *                                                    wait
+ *
+ *  Caller-provided attachments take precedence on dedup conflicts — the
+ *  inbox sometimes ships chips with extra fields (e.g. operator-toggled
+ *  ones). We only synthesize an entry when there is NO existing
+ *  tracking_image attachment for that trackingCode in the send body. */
+async function reconcileTrackingAttachments(draftId, bodyAttachments, options = {}) {
+  const bodyAtts = Array.isArray(bodyAttachments) ? [...bodyAttachments] : [];
+  const blockOnPending = options.blockOnPending !== false;
+
+  let snap;
+  try {
+    snap = await db.collection(DRAFTS_COLL).doc(draftId).get();
+  } catch (e) {
+    console.warn(`[enqueue] tracking-recon: draft read failed for ${draftId}: ${e.message}`);
+    return { ok: true, merged: bodyAtts };  // fail-open — don't block enqueue on a recon-only read failure
+  }
+  if (!snap.exists) return { ok: true, merged: bodyAtts };
+
+  const draft = snap.data() || {};
+  const trackingImages = Array.isArray(draft.trackingImages) ? draft.trackingImages : [];
+  if (!trackingImages.length) return { ok: true, merged: bodyAtts };
+
+  // Index existing tracking_image attachments in the send body by trackingCode
+  // so we don't double-attach the same image.
+  const codesInBody = new Set();
+  for (const a of bodyAtts) {
+    if (a && a.type === "tracking_image" && a.trackingCode) {
+      codesInBody.add(String(a.trackingCode));
+    }
+  }
+
+  // Categorize trackingImages entries. A tracking image is sendable if
+  // either its status is ready OR it already has image metadata. Older
+  // draft docs sometimes carried imageUrl/imageStoragePath without updating
+  // status, and treating those as pending caused avoidable text-only sends.
+  const toAttachReady = [];        // ready right now → synthesize and union
+  const toWaitOn      = [];        // pending/running with jobId → poll
+  const noJobPending  = [];        // pending but no jobId → explicit retry, not silent skip
+
+  for (const img of trackingImages) {
+    if (!img || !img.trackingCode) continue;
+    if (img.queuedForSend === false) continue;                // operator opt-out
+    if (img.status === "failed") continue;                    // tracking lookup failed; skip silently
+    if (codesInBody.has(String(img.trackingCode))) continue;   // already in send body
+
+    const looksReady = img.status === "ready" || !!img.imageUrl || !!img.imageStoragePath;
+    if (looksReady) {
+      toAttachReady.push({ ...img, status: "ready" });
+    } else if (img.jobId) {
+      // status is "pending" / "running" / undefined — wait on the job doc
+      toWaitOn.push(img);
+    } else {
+      // This should be rare, but it is the dangerous case: the draft says
+      // a tracking image should be attached, but there is neither ready
+      // image data nor a job to poll. Do not silently send text-only.
+      noJobPending.push(img);
+    }
+  }
+
+  // Fast path: nothing pending, just synthesize and return.
+  if (!toWaitOn.length && !noJobPending.length) {
+    for (const img of toAttachReady) {
+      const a = trackingImageEntryToAttachment(img);
+      if (a) bodyAtts.push(a);
+    }
+    return { ok: true, merged: bodyAtts };
+  }
+
+  // Slow path: poll the job docs until all are ready/failed or deadline hit.
+  console.log(`[enqueue] tracking-recon: waiting on ${toWaitOn.length} pending tracking job(s) for ${draftId}`);
+  const deadline = Date.now() + TRACKING_WAIT_MAX_MS;
+  const stillPending = new Map(); // jobId → img
+  for (const img of toWaitOn) {
+    stillPending.set(img.jobId, img);
+  }
+
+  while (stillPending.size && Date.now() < deadline) {
+    for (const [jobId, img] of [...stillPending.entries()]) {
+      let job;
+      try {
+        const jSnap = await db.collection(TRACKING_JOBS_COLL).doc(jobId).get();
+        if (!jSnap.exists) continue;
+        job = jSnap.data();
+      } catch (e) {
+        console.warn(`[enqueue] tracking-recon: job poll failed for ${jobId}: ${e.message}`);
+        continue;
+      }
+      if (job.status === "ready") {
+        // Hydrate the local img with job data so the synthesized attachment
+        // has the freshest fields.
+        const hydrated = {
+          ...img,
+          status          : "ready",
+          imageUrl        : job.imageUrl || img.imageUrl || null,
+          imageStoragePath: job.imageStoragePath || img.imageStoragePath || null,
+          imageWidth      : job.imageWidth || null,
+          imageHeight     : job.imageHeight || null,
+          carrier         : job.carrier || img.carrier || null,
+          carrierDisplay  : job.carrierDisplay || img.carrierDisplay || null,
+          statusKey       : job.statusKey || img.statusKey || null,
+          statusText      : job.statusText || img.statusText || null
+        };
+        toAttachReady.push(hydrated);
+        stillPending.delete(jobId);
+      } else if (job.status === "failed") {
+        console.warn(`[enqueue] tracking-recon: job ${jobId} (${img.trackingCode}) failed: ${job.error || "unknown"} — skipping attachment`);
+        stillPending.delete(jobId);
+      }
+      // else: keep polling
+    }
+    if (stillPending.size) {
+      await new Promise(r => setTimeout(r, TRACKING_POLL_EVERY_MS));
+    }
+  }
+
+  // Anything still pending at this point can either block or be skipped.
+  // Manual Send via Etsy must never be blocked by inferred/generated
+  // attachment state, so the inbox passes blockOnPending:false. Auto/system
+  // callers can keep the stricter 409 behavior if desired.
+  const pending = [
+    ...noJobPending.map(i => i.trackingCode).filter(Boolean),
+    ...[...stillPending.values()].map(i => i.trackingCode).filter(Boolean)
+  ];
+  if (pending.length && blockOnPending) {
+    return {
+      ok       : false,
+      errorCode: "TRACKING_STILL_PENDING",
+      error    : `Tracking image${pending.length === 1 ? "" : "s"} still generating (${pending.join(", ")}). Try Send again in a few seconds.`,
+      pending
+    };
+  }
+
+  // Synthesize and union the ready ones. Pending entries are intentionally
+  // skipped when blockOnPending:false so manual sends can continue.
+  for (const img of toAttachReady) {
+    const a = trackingImageEntryToAttachment(img);
+    if (a) bodyAtts.push(a);
+  }
+
+  return {
+    ok: true,
+    merged: bodyAtts,
+    skippedPendingTracking: pending
+  };
+}
+
 exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") {
     return { statusCode: 200, headers: CORS, body: "ok" };
@@ -435,7 +645,11 @@ exports.handler = async (event) => {
         // but the thread would still be at pending_human_review, which
         // is the wrong folder. Pre-v1.5 manual enqueue path doesn't
         // pass this and behavior is unchanged.
-        parentThreadFinalizePatch = null
+        parentThreadFinalizePatch = null,
+        // v3.32 — Explicit manual-send override. The operator clicked
+        // Send via Etsy; pending generated tracking images should warn/skip,
+        // not block the send.
+        allowSendWithoutPendingTracking = false
       } = body;
 
       if (!threadId || !/^etsy_conv_\d+$/.test(String(threadId))) {
@@ -455,7 +669,32 @@ exports.handler = async (event) => {
         return bad("etsyConversationUrl must be an Etsy conversation URL");
       }
       const cleanText = String(text || "").trim();
-      const normalized = normalizeAttachments(attachments);
+
+      // v3.33 — Resolve origin BEFORE tracking reconciliation.
+      // The inbox sends sendOrigin:"manual" + allowSendWithoutPendingTracking:true,
+      // but the backend must also be safe if an older/alternate manual caller
+      // omits those fields. The same convention used later for persisted
+      // sendOrigin applies here: AI-generated aiMeta => auto, otherwise manual.
+      const inferredSendOriginForRecon = sendOrigin
+        || (aiMeta && aiMeta.generatedByAI ? "auto" : "manual");
+
+      // v3.30 — Tracking-image attachment safety net. Reconciles the
+      // send body's attachments with draft.trackingImages so a manual
+      // Send always carries any ready (or about-to-be-ready) tracking
+      // image, even when the inbox UI's chip-promotion poller hasn't
+      // fired yet. See reconcileTrackingAttachments for full rationale.
+      const draftIdForRecon = "draft_" + threadId;
+      const recon = await reconcileTrackingAttachments(draftIdForRecon, attachments, {
+        blockOnPending: !(allowSendWithoutPendingTracking === true || inferredSendOriginForRecon === "manual")
+      });
+      if (!recon.ok) {
+        return json(409, {
+          error    : recon.error,
+          errorCode: recon.errorCode,
+          pending  : recon.pending || []
+        });
+      }
+      const normalized = normalizeAttachments(recon.merged);
 
       if (!cleanText && !normalized.length) {
         return bad("Draft must have text or at least one attachment");
@@ -512,8 +751,7 @@ exports.handler = async (event) => {
         // The resolved value persists on the draft AND propagates onto
         // the thread when the send confirms — see the auto_replied
         // branch below for the thread-side write.
-        const resolvedSendOrigin = sendOrigin
-          || (aiMeta && aiMeta.generatedByAI ? "auto" : "manual");
+        const resolvedSendOrigin = inferredSendOriginForRecon;
 
         const payload = {
           draftId,
@@ -604,7 +842,8 @@ exports.handler = async (event) => {
       await audit(threadId, draftId, "draft_enqueued", employeeName || "operator", {
         textLength   : cleanText.length,
         attachmentCount: normalized.length,
-        attachmentTypes: normalized.map(a => a.type)
+        attachmentTypes: normalized.map(a => a.type),
+        skippedPendingTracking: recon.skippedPendingTracking || []
       });
 
       // v0.9.7: write the optimistic outbound message into the thread's
@@ -643,6 +882,11 @@ exports.handler = async (event) => {
         status      : "queued",
         threadId,
         attachmentCount: normalized.length,
+        // Return the authoritative server-side attachment list. The frontend
+        // uses this for its optimistic message so the UI reflects backend
+        // reconciliation, not stale composer-chip state.
+        attachments : normalized,
+        skippedPendingTracking: recon.skippedPendingTracking || [],
         pollUrl     : `/.netlify/functions/etsyMailDraftSend?op=status&draftId=${encodeURIComponent(draftId)}`
       });
     }
