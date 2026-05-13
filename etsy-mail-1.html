@@ -2653,9 +2653,24 @@
     .m-composer-action.custom-listing.is-loading {
       position: relative;
       pointer-events: none;
+      opacity: 1;
+      cursor: wait;
     }
     .m-composer-action.custom-listing.is-loading .material-icons {
-      animation: em-spin 1s linear infinite;
+      display: none;
+    }
+    .m-composer-action.custom-listing.is-loading::before {
+      content: "";
+      display: inline-block;
+      width: 24px; height: 24px;
+      border: 3px solid rgba(15, 118, 110, 0.25);
+      border-top-color: #0f766e;
+      border-radius: 50%;
+      animation: em-spin .75s linear infinite;
+    }
+    body.em-mobile .m-composer-action.custom-listing.is-loading::before {
+      width: 32px; height: 32px;
+      border-width: 4px;
     }
     .m-composer-action.attach.has-files::after {
       content: attr(data-count);
@@ -10325,6 +10340,7 @@
       const isGmailLinked = !!t.gmailMessageId;
       const hasOrder      = !!t.linkedOrderId;
       const etsyUrl       = t.etsyConversationUrl || "";
+      const manualCustomListingBusy = state.manualCustomListingBusyThreadId === t.id;
 
       // v3.2 — Status chip rendering. The raw status field is the
       // primary source of truth, but for auto_replied threads we also
@@ -10542,7 +10558,7 @@
               <div class="em-compose-bar">
                 <button id="emAiDraftBtn" class="ai" title="Generate a reply with AI"><i class="material-icons">auto_awesome</i><span>AI Draft</span></button>
                 <button id="emAttachBtn" title="Attach image (or drag &amp; drop, or paste)"><i class="material-icons">attach_file</i>Attach</button>
-                <button id="emCustomListingBtn" title="Create a real Etsy custom listing from this conversation"><i class="material-icons">add_business</i><span>Custom Listing</span></button>
+                <button id="emCustomListingBtn" class="${manualCustomListingBusy ? 'is-loading' : ''}" ${manualCustomListingBusy ? 'disabled aria-busy="true"' : ''} title="${manualCustomListingBusy ? 'Creating custom listing…' : 'Create a real Etsy custom listing from this conversation'}"><i class="material-icons">add_business</i><span>${manualCustomListingBusy ? 'Creating…' : 'Custom Listing'}</span></button>
                 <button id="emSendEtsyBtn" class="send-etsy" title="Queue this draft for the browser extension to send via Etsy"><i class="material-icons">send</i>Send via Etsy</button>
               </div>
             </div>
@@ -10837,14 +10853,45 @@
     }
 
     // ─── Manual Custom Listing creation ────────────────────────────────
-    async function generateManualCustomListing(threadId) {
-      if (!threadId) return false;
+    function setManualCustomListingLoading(threadId, isLoading) {
+      if (!threadId) return;
+      state.manualCustomListingBusyThreadId = isLoading ? threadId : null;
+
       const desktopBtn = $("emCustomListingBtn");
-      const mobileBtn  = document.getElementById("mActionCustomListing");
       const desktopLabel = desktopBtn?.querySelector("span");
-      const oldDesktopLabel = desktopLabel?.textContent || "Custom Listing";
+      const mobileBtn = document.getElementById("mActionCustomListing");
       const sendBtn = $("emSendEtsyBtn");
       const mobileSend = document.getElementById("mComposerSend");
+
+      if (desktopBtn) {
+        desktopBtn.disabled = !!isLoading;
+        desktopBtn.classList.toggle("is-loading", !!isLoading);
+        desktopBtn.setAttribute("aria-busy", isLoading ? "true" : "false");
+        desktopBtn.title = isLoading ? "Creating custom listing…" : "Create a real Etsy custom listing from this conversation";
+      }
+      if (desktopLabel) desktopLabel.textContent = isLoading ? "Creating…" : "Custom Listing";
+
+      if (mobileBtn) {
+        mobileBtn.disabled = !!isLoading;
+        mobileBtn.classList.toggle("is-loading", !!isLoading);
+        mobileBtn.setAttribute("aria-busy", isLoading ? "true" : "false");
+        mobileBtn.title = isLoading ? "Creating custom listing…" : "Generate custom listing";
+      }
+
+      if (sendBtn) sendBtn.disabled = !!isLoading;
+      if (mobileSend && isLoading) mobileSend.disabled = true;
+      if (mobileSend && !isLoading) {
+        const mta = document.getElementById("mComposerTextarea");
+        mobileSend.disabled = !(((mta && mta.value) || "").trim() || (typeof mGetCurrentAttachments === "function" && mGetCurrentAttachments().length > 0));
+      }
+    }
+
+    async function generateManualCustomListing(threadId) {
+      if (!threadId) return false;
+      if (state.manualCustomListingBusyThreadId === threadId) {
+        toast("Custom listing is already being created…");
+        return false;
+      }
 
       const t = (state.threads || []).find(x => x && x.id === threadId) || { id: threadId };
       const existingUrl = t.customListingUrl || "";
@@ -10859,11 +10906,7 @@
       }
 
       try {
-        if (desktopBtn) { desktopBtn.disabled = true; desktopBtn.classList.add("is-loading"); }
-        if (desktopLabel) desktopLabel.textContent = "Creating…";
-        if (mobileBtn) { mobileBtn.disabled = true; mobileBtn.classList.add("is-loading"); mobileBtn.title = "Creating custom listing…"; }
-        if (sendBtn) sendBtn.disabled = true;
-        if (mobileSend) mobileSend.disabled = true;
+        setManualCustomListingLoading(threadId, true);
         toast("Creating custom listing…");
 
         // Optimistic local status so the operator sees immediate feedback.
@@ -10874,7 +10917,10 @@
             customListingStatus: "creating",
             customListingManualMode: true
           };
-          if (state.selectedId === threadId) renderDetail(state.threads[idx]);
+          if (state.selectedId === threadId) {
+            renderDetail(state.threads[idx]);
+            setManualCustomListingLoading(threadId, true);
+          }
         }
 
         const res = await api("etsyMailListingCreator-background", {
@@ -10899,7 +10945,10 @@
         if (threadDoc) {
           const j = state.threads.findIndex(x => x && x.id === threadId);
           if (j >= 0) state.threads[j] = threadDoc;
-          if (state.selectedId === threadId) renderDetail(threadDoc);
+          if (state.selectedId === threadId) {
+            renderDetail(threadDoc);
+            setManualCustomListingLoading(threadId, true);
+          }
         }
 
         const replyText = (draftDoc && draftDoc.text) || (threadDoc && threadDoc.customListingReplyText) || "";
@@ -10928,12 +10977,7 @@
         toast("Custom listing failed: " + (e.message || "unknown"));
         return false;
       } finally {
-        if (desktopBtn) { desktopBtn.disabled = false; desktopBtn.classList.remove("is-loading"); }
-        if (desktopLabel) desktopLabel.textContent = oldDesktopLabel;
-        if (mobileBtn) { mobileBtn.disabled = false; mobileBtn.classList.remove("is-loading"); mobileBtn.title = "Generate custom listing"; }
-        if (sendBtn) sendBtn.disabled = false;
-        const mta = document.getElementById("mComposerTextarea");
-        if (mobileSend) mobileSend.disabled = !(((mta && mta.value) || "").trim() || (typeof mGetCurrentAttachments === "function" && mGetCurrentAttachments().length > 0));
+        setManualCustomListingLoading(threadId, false);
       }
     }
 
