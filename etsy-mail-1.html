@@ -13217,6 +13217,80 @@
       }
     }
 
+    // v4.3.17 — Custom listing reply visibility helper.
+    // When the sales agent creates a real custom Etsy listing, the operator
+    // must be able to see the exact customer-facing message that contains the
+    // listing URL. This applies to auto-send and manual Send via Etsy flows.
+    function extractFirstUrl(text) {
+      const m = String(text || "").match(/https?:\/\/\S+/i);
+      return m ? m[0].replace(/[).,;]+$/, "") : "";
+    }
+
+    function buildCustomListingReplyText(thread, draft) {
+      if (draft && draft.text && String(draft.text).trim()) return String(draft.text).trim();
+      const listingUrl = (thread && thread.customListingUrl) ||
+        (draft && draft.customListingUrl) ||
+        (draft && draft.aiMeta && draft.aiMeta.listingUrl) ||
+        "";
+      if (!listingUrl) return "";
+      const family = (thread && thread.acceptedQuoteFamily) ||
+        (draft && draft.aiMeta && draft.aiMeta.family) ||
+        "custom";
+      return `Here's the custom listing for your ${family}: ${listingUrl}\n\nOnce you check out, we'll get to work on your order. Let us know if you have any questions.`;
+    }
+
+    function renderCustomListingReplyPreview(thread, draft, replyText) {
+      const card = $("emComposerCard");
+      const ta = $("emDraftText");
+      if (!card || !ta) return;
+
+      let box = $("emCustomListingReplyPreview");
+      if (!box) {
+        box = document.createElement("div");
+        box.id = "emCustomListingReplyPreview";
+        ta.parentNode.insertBefore(box, ta);
+      }
+
+      const listingUrl =
+        (thread && thread.customListingUrl) ||
+        (draft && draft.customListingUrl) ||
+        (draft && draft.aiMeta && draft.aiMeta.listingUrl) ||
+        extractFirstUrl(replyText);
+      const status = (draft && draft.status) || (thread && thread.customListingStatus) || "draft";
+      const isTerminal = ["sent", "sent_unverified", "sent_text_only"].includes(status);
+      const statusLabel =
+        status === "queued" ? "Queued for Etsy send" :
+        status === "sending" ? "Sending through Etsy" :
+        isTerminal ? "Already sent / inserted" :
+        (thread && thread.customListingStatus === "created") ? "Listing created" :
+        "Ready to send";
+
+      const safeReply = String(replyText || "").trim();
+      box.innerHTML = `
+        <div style="margin:0 0 10px; padding:10px 12px; background:#f0f9ff; border:1px solid #b6e3ff; border-left:4px solid #0969da; border-radius:6px; font-size:12px; line-height:1.45; color:#1f2328;">
+          <div style="display:flex; align-items:center; gap:6px; font-weight:700; color:#0969da; margin-bottom:5px;">
+            <i class="material-icons" style="font-size:16px;">link</i>
+            Custom listing reply ${esc(statusLabel)}
+          </div>
+          ${listingUrl ? `<div style="margin-bottom:6px;"><strong>Listing URL added:</strong> <a href="${esc(listingUrl)}" target="_blank">${esc(listingUrl)}</a></div>` : `<div style="margin-bottom:6px;"><strong>Listing URL:</strong> waiting for listing creator...</div>`}
+          ${safeReply ? `<div style="white-space:pre-wrap; background:#fff; border:1px solid #d0d7de; border-radius:4px; padding:8px; color:#24292f; max-height:160px; overflow:auto;">${esc(safeReply)}</div>` : ""}
+          <div style="margin-top:6px; color:#57606a;">
+            ${isTerminal
+              ? "This message has already been sent or inserted into the thread. The text above is shown so the operator can verify the listing link was included."
+              : "The same text is loaded in the Staff Reply box below, so manual Send via Etsy will include the listing link if the operator sends it manually."}
+          </div>
+        </div>`;
+      box.style.display = "block";
+    }
+
+    function hideCustomListingReplyPreview() {
+      const box = $("emCustomListingReplyPreview");
+      if (box) {
+        box.innerHTML = "";
+        box.style.display = "none";
+      }
+    }
+
     // Load any existing draft from Firestore and render it. Called on
     // thread open. Silent if no draft exists (card shows empty state).
     async function hydrateAiDraft(thread) {
@@ -13237,59 +13311,76 @@
         }
         const d = res.doc;
 
-        // v4.3.2 — Don't populate the staff-reply composer or render
-        // the AI draft card on threads where the agent recognized
-        // customer acceptance. The listing-creator pipeline takes
-        // over from here: it creates the Etsy listing, sends the URL
-        // to the customer with its own message, and writes the sale
-        // synopsis to the thread. Anything the operator typed (or the
-        // AI generated as a "courtesy" reply on that turn) would just
-        // get thrown away.
-        //
-        // Signals that combine to identify this state:
-        //   - thread.aiDraftStatus === "skipped_acceptance" (set by
-        //     the sales agent when parsed.customer_accepted is true),
-        //   - OR thread.customerAccepted is true and there's a
-        //     customListingStatus already (queued/creating/created/
-        //     failed) — i.e. the pipeline has been triggered.
-        //
-        // If the listing eventually fails (customListingStatus="failed"),
-        // the Custom Listing status card in the conversation column
-        // surfaces the error + recovery hint. The composer stays
-        // suppressed because the operator action is to retry the
-        // pipeline (clear the failed status), not to draft a reply.
+        // v4.3.17 — Customer acceptance / custom listing reply visibility.
+        // Older builds suppressed the composer on acceptance turns because the
+        // listing-creator owns the customer reply. That made operators think the
+        // listing URL was missing. Now we surface the exact customer-facing
+        // listing reply in the Staff Reply box whenever a custom-listing draft
+        // exists, while still allowing the auto-send pipeline to proceed.
         const isAcceptanceTurn =
           thread.aiDraftStatus === "skipped_acceptance" ||
           d.aiDraftStatus       === "skipped_acceptance" ||
           (thread.customerAccepted === true &&
-           ["queued", "creating", "created"].includes(thread.customListingStatus));
+           ["queued", "creating", "created", "failed"].includes(thread.customListingStatus));
         if (isAcceptanceTurn) {
-          // Replace the AI draft card body with a "no draft needed" notice.
+          const replyText = buildCustomListingReplyText(thread, d);
+          const draftStatus = d.status || "draft";
+          const isTerminalSend = ["sent", "sent_unverified", "sent_text_only"].includes(draftStatus);
+          const ta = $("emDraftText");
+
+          // Show the operator a persistent preview above the textarea.
+          renderCustomListingReplyPreview(thread, d, replyText);
+
+          // For manual Send via Etsy, the listing URL must be inside the
+          // editable staff reply textbox. Do this for draft/queued/sending
+          // states so an operator can visually verify or manually send.
+          // Terminal sends are shown in the preview/conversation only to
+          // avoid inviting accidental duplicate sends.
+          if (!isTerminalSend && replyText && ta && !ta.value.trim()) {
+            ta.value = replyText;
+            autoSizeDraftTextarea(ta);
+          }
+          if (window.IS_MOBILE && !isTerminalSend && replyText) {
+            const _mta = document.getElementById("mComposerTextarea");
+            if (_mta && !_mta.value.trim()) {
+              _mta.value = replyText;
+              if (typeof mAutoGrow === "function") mAutoGrow(_mta);
+              const _send = document.getElementById("mComposerSend");
+              if (_send) _send.disabled = !((_mta.value || "").trim());
+            }
+          }
+
+          // Replace the AI draft card body with a status explanation if that
+          // legacy surface exists in this layout.
           const body = $("emAiCardBody");
           if (body) {
             body.innerHTML = `
               <div style="padding: 14px; background: #f0f9ff; border-left: 3px solid #0969da; border-radius: 4px;">
                 <div style="font-size: 13px; font-weight: 600; color: #0969da; margin-bottom: 4px;">
                   <i class="material-icons" style="font-size: 16px; vertical-align: middle;">check_circle</i>
-                  Customer accepted — listing creator handled the reply
+                  Customer accepted — custom listing reply prepared
                 </div>
                 <div style="font-size: 12px; color: #57606a; line-height: 1.5;">
-                  No staff draft needed. The listing-creator pipeline sent the customer the listing URL automatically. See the Custom Listing card above for status, or the Sale Synopsis card if completed.
+                  The listing creator prepared the customer reply and the listing URL is visible in the Staff Reply box / preview. Auto-send can deliver it, or the operator can click Send via Etsy manually.
                 </div>
               </div>
             `;
           }
-          // Hide the revise row — there's nothing to revise.
+
           const row = $("emReviseRow");
           if (row) row.style.display = "none";
-          // Don't populate the textarea or chips — keep them clean for
-          // any post-sale follow-up the operator might want to send.
           setComposerAttachments(thread.id, []);
           renderComposerChips();
-          hideSendStatus();
+
           if (state.sendPoller) { clearInterval(state.sendPoller); state.sendPoller = null; }
+          if (draftStatus === "sent" || draftStatus === "sent_text_only" || draftStatus === "sent_unverified" || draftStatus === "failed") {
+            showSendStatus({ ...d, id: draftId });
+          } else {
+            hideSendStatus();
+          }
           return;
         }
+        hideCustomListingReplyPreview();
 
         // v0.9.1 #5: don't re-populate the composer for a draft that has
         // already been sent / failed. Reopening a thread after a clean

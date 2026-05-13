@@ -814,6 +814,14 @@ Once you check out, we'll get to work on your order. Let us know if you have any
 }
 
 async function sendListingUrlToCustomer({ threadId, etsyConversationUrl, listingUrl, family, listingId }) {
+  // v4.3.17 — Build the exact customer-facing reply up front and persist
+  // it onto the thread while staking the at-most-once claim. The inbox UI
+  // uses these fields as a visible operator contract: the listing URL was
+  // created and the same text is what auto-send / manual Send via Etsy will
+  // deliver.
+  const text = buildListingDeliveryMessage(family, listingUrl);
+  const draftId = "draft_" + threadId;
+
   // v4.3.4 — AT-MOST-ONCE GUARD. Prevent duplicate sends to Etsy.
   //
   // The earlier worker-resume design (v4.3) made sendListingUrlToCustomer
@@ -868,6 +876,10 @@ async function sendListingUrlToCustomer({ threadId, etsyConversationUrl, listing
     tx.update(threadRef, {
       customListingSentAt        : FV.serverTimestamp(),
       customListingSentListingId : String(listingId),
+      customListingReplyText     : text,
+      customListingReplyDraftId  : draftId,
+      customListingReplyStatus   : "queued",
+      customListingReplyQueuedAt : FV.serverTimestamp(),
       updatedAt                  : FV.serverTimestamp()
     });
     return { proceed: true };
@@ -878,8 +890,6 @@ async function sendListingUrlToCustomer({ threadId, etsyConversationUrl, listing
       (claim.sentAt ? ` (sent ${new Date(claim.sentAt).toISOString()}, listing ${claim.sentListingId})` : ""));
     return { skipped: true, reason: claim.reason };
   }
-
-  const text = buildListingDeliveryMessage(family, listingUrl);
 
   const res = await fetch(`${functionsBase()}/.netlify/functions/etsyMailDraftSend`, {
     method : "POST",
@@ -909,8 +919,14 @@ async function sendListingUrlToCustomer({ threadId, etsyConversationUrl, listing
         model        : AI_MODEL,
         source       : "listing_creator",
         listingId    : String(listingId),
-        listingUrl
+        listingUrl,
+        family
       },
+      // Explicitly mark this as an automated listing-creator send. Do not
+      // let etsyMailDraftSend infer "manual" just because generatedByAI is
+      // false; the customer-facing text is template-generated, but the send
+      // is still system-owned.
+      sendOrigin          : "auto",
       // v4.3.4 — Was force:true, now force:false. The at-most-once
       // claim above is the authoritative guard against duplicate sends;
       // we don't need (and don't want) enqueue to overwrite a prior
@@ -931,6 +947,9 @@ async function sendListingUrlToCustomer({ threadId, etsyConversationUrl, listing
       await threadRef.update({
         customListingSentAt        : FV.delete(),
         customListingSentListingId : FV.delete(),
+        customListingReplyStatus   : FV.delete(),
+        customListingReplyQueuedAt : FV.delete(),
+        customListingReplyEnqueuedAt: FV.delete(),
         updatedAt                  : FV.serverTimestamp()
       });
     } catch (e) {
@@ -939,7 +958,21 @@ async function sendListingUrlToCustomer({ threadId, etsyConversationUrl, listing
     throw new Error(`enqueue send failed (${res.status}): ${responseText.slice(0, 300)}`);
   }
 
-  return { skipped: false };
+  try {
+    let enqueueJson = null;
+    try { enqueueJson = responseText ? JSON.parse(responseText) : null; } catch {}
+    await threadRef.set({
+      customListingReplyText      : text,
+      customListingReplyDraftId   : (enqueueJson && enqueueJson.draftId) || draftId,
+      customListingReplyStatus    : "queued",
+      customListingReplyEnqueuedAt: FV.serverTimestamp(),
+      updatedAt                   : FV.serverTimestamp()
+    }, { merge: true });
+  } catch (e) {
+    console.warn(`[listingCreator] reply visibility write-back failed (non-fatal): ${e.message}`);
+  }
+
+  return { skipped: false, text, draftId };
 }
 
 // ─── 9. Idempotency markers ──────────────────────────────────────────────
@@ -953,6 +986,7 @@ async function markSuccess({ threadId, listingId, listingUrl, generated, imagesU
     customListingUrl        : listingUrl,
     customListingCreatedAt  : FV.serverTimestamp(),
     customListingStatus     : "created",
+    customListingReplyStatus: "queued",
     customListingError      : FV.delete(),
     customListingErrorAt    : FV.delete(),
     customListingErrorCount : FV.delete(),
