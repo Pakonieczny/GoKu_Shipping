@@ -4064,6 +4064,24 @@
       -webkit-tap-highlight-color: rgba(0, 0, 0, 0.15);
     }
 
+  
+    /* v4.3.23 — Hard-remove custom-listing reply preview card.
+     * The manual custom listing flow must only paste the generated reply into
+     * the real Staff Reply textbox. No separate banner/card/preview UI. */
+    #emCustomListingReplyPreview,
+    .em-custom-listing-reply-preview,
+    [data-em-custom-listing-reply-preview="true"] {
+      display: none !important;
+      visibility: hidden !important;
+      height: 0 !important;
+      min-height: 0 !important;
+      max-height: 0 !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      border: 0 !important;
+      overflow: hidden !important;
+    }
+
   </style>
 </head>
 <body>
@@ -11003,6 +11021,9 @@
           mta.value = replyText;
           if (typeof mAutoGrow === "function") mAutoGrow(mta);
         }
+        if (typeof removeCustomListingReplyPreviewCards === "function") {
+          removeCustomListingReplyPreviewCards();
+        }
 
         toast(url ? "Custom listing created and loaded into reply" : "Custom listing loaded into reply");
         return true;
@@ -13486,20 +13507,39 @@
       return `Here's the custom listing for your ${family}: ${listingUrl}\n\nOnce you check out, we'll get to work on your order. Let us know if you have any questions.`;
     }
 
+    function removeCustomListingReplyPreviewCards() {
+      // v4.3.23 — Hard removal. Older deployed builds created a large blue
+      // custom-listing reply preview card above the Staff Reply textbox. The
+      // desired UX is ONLY: spinner in the button, then paste the final reply
+      // into the real textbox. Remove any old/new variant of that card.
+      const selectors = [
+        "#emCustomListingReplyPreview",
+        ".em-custom-listing-reply-preview",
+        "[data-em-custom-listing-reply-preview='true']"
+      ];
+      document.querySelectorAll(selectors.join(",")).forEach(el => el.remove());
+
+      // Defensive cleanup for old inline-style cards that might have been
+      // inserted without a durable class by a prior build.
+      const composer = document.getElementById("emComposerCard");
+      if (composer) {
+        Array.from(composer.querySelectorAll("div")).forEach(el => {
+          const txt = (el.textContent || "").trim();
+          if (/Custom listing reply/i.test(txt) && /Listing URL added/i.test(txt)) {
+            el.remove();
+          }
+        });
+      }
+    }
+
     function renderCustomListingReplyPreview(thread, draft, replyText) {
-      // v4.3.22 — No separate custom-listing preview card.
-      // The operator only wants the generated listing reply pasted into the
-      // actual Staff Reply textbox. Do not render any extra card/banner/popup.
-      const box = $("emCustomListingReplyPreview");
-      if (box) box.remove();
+      // Do not render any extra card/banner/popup. The only visible result
+      // should be the generated reply pasted into the Staff Reply textbox.
+      removeCustomListingReplyPreviewCards();
     }
 
     function hideCustomListingReplyPreview() {
-      const box = $("emCustomListingReplyPreview");
-      if (box) {
-        box.innerHTML = "";
-        box.style.display = "none";
-      }
+      removeCustomListingReplyPreviewCards();
     }
 
     // Load any existing draft from Firestore and render it. Called on
