@@ -1166,7 +1166,7 @@ async function markManualSuccess({ threadId, listingId, listingUrl, generated, i
       customListingErrorCount  : FV.delete(),
       acceptedQuoteUsd         : priceUsd,
       acceptedQuoteFamily      : family,
-      salesSynopsis            : salesSynopsis || `Manual custom listing created. Review the Etsy listing, edit any missing details, then send the visible listing reply manually if appropriate.`,
+      salesSynopsis            : salesSynopsis || buildStructuredSalesSynopsis({ thread: { acceptedQuoteUsd: priceUsd, acceptedQuoteFamily: family }, family, listingId, listingUrl }),
       needsOperatorReview      : false,
       needsOperatorReviewReason: null,
       updatedAt                : FV.serverTimestamp()
@@ -1322,20 +1322,59 @@ async function persistImagesUploaded(threadId, imagesUploaded) {
 // ─── 9c. Sales synopsis (operator-facing summary at completion) ─────────
 
 const SYNOPSIS_SYSTEM_PROMPT =
-`You are writing a brief synopsis of a customer-service conversation for the next employee who needs to review this thread. The sale just completed and the listing was sent to the customer.
+`You are writing a compact operator handoff after a custom Etsy listing was created.
 
-Cover, in this order:
-1. Who the customer is and what they wanted.
-2. Key clarifications, negotiation points, or unusual requests during the conversation.
-3. What was finalized: the spec accepted and the price.
-4. Anything notable for follow-up: special instructions, customer sentiment, edge cases the next person should know about.
+Output 3 to 5 bullet points only. No paragraphs. No preamble. Each bullet must be short and operational.
 
-Length: 150 to 300 words. Plain text, no markdown, no bullet points, no headers. Third person. Matter-of-fact. No em-dashes or en-dashes. No service-script clichés ("happy to", "absolutely", "lock it in"). Refer to the shop as "we", not "I". No specific shipping or delivery timeframes.
+Include only:
+• final item/spec
+• price and product family
+• listing status/link or listing id
+• reference images or special production notes, only if relevant
+• one follow-up caution, only if needed
 
-Output the synopsis text only, with no preamble.`;
+Do not retell the full conversation. Do not include customer-service script language. Do not mention shipping timelines.`;
+
+function buildStructuredSalesSynopsis({ thread, family, listingId, listingUrl }) {
+  const lr = thread.lastResolverResult || {};
+  const price = thread.acceptedQuoteUsd || lr.total || lr.totalUsd || null;
+  const items = Array.isArray(lr.lineItems) ? lr.lineItems : [];
+  const itemText = items.length
+    ? items.map(li => li.label || li.name || li.description || li.code || JSON.stringify(li)).filter(Boolean).join("; ")
+    : (thread.acceptedQuoteFamily || family || "custom order");
+  const photoCount = thread.customListingImagesCount;
+
+  const bullets = [];
+  bullets.push(`• Final spec: ${clampStr(itemText || "custom order", 180)}`);
+  bullets.push(`• Price/family: ${price ? `$${price}` : "price on listing"}${family ? ` · ${family}` : ""}`);
+  bullets.push(`• Listing: ${listingUrl || (listingId ? `Etsy listing ${listingId}` : "created")}`);
+  if (photoCount != null) bullets.push(`• Reference images: ${photoCount}`);
+  bullets.push("• Follow-up: review listing details before production if the order has manual or inferred specs.");
+  return bullets.slice(0, 5).join("\n");
+}
+
+function compactSynopsisText(text, fallback) {
+  const raw = String(text || "").trim();
+  const source = raw || String(fallback || "").trim();
+  if (!source) return "";
+
+  const lines = source
+    .split(/\n+/)
+    .map(line => line.trim())
+    .filter(Boolean)
+    .map(line => line.replace(/^[•\-*]\s*/, ""))
+    .filter(Boolean);
+
+  const useful = lines.length > 1
+    ? lines
+    : source.split(/(?<=[.!?])\s+/).map(x => x.trim()).filter(Boolean);
+
+  return useful.slice(0, 5).map(line => `• ${clampStr(line.replace(/\s+/g, " "), 180)}`).join("\n");
+}
 
 async function generateSalesSynopsis({ thread, family, listingId, listingUrl, fullThreadContext }) {
   const customer = thread.customerName || thread.buyerName || thread.etsyUsername || "the customer";
+  const fallback = buildStructuredSalesSynopsis({ thread, family, listingId, listingUrl });
   const userPrompt =
 `Customer: ${customer}
 Etsy username: ${thread.etsyUsername || "n/a"}
@@ -1352,36 +1391,25 @@ ${JSON.stringify(thread.lastResolverResult || {}, null, 2)}
 Full conversation (oldest first, last 30 messages):
 ${fullThreadContext.map(m => `[${m.direction}] ${m.text}`).join("\n")}
 
-Write the synopsis now.`;
+Write the compact bullet handoff now.`;
 
   try {
     const resp = await callClaudeRaw({
       model      : AI_MODEL,
-      maxTokens  : 800,
+      maxTokens  : 320,
       system     : SYNOPSIS_SYSTEM_PROMPT,
       messages   : [{ role: "user", content: userPrompt }],
       useThinking: false
     });
     const text = extractTextFromClaudeResponse(resp).trim();
-    if (text) return text;
+    if (text) return compactSynopsisText(text, fallback);
   } catch (e) {
     console.warn("[listingCreator] synopsis generation failed:", e.message);
   }
 
-  // Fallback: structured summary from known fields. We never want a missing
-  // synopsis to block markSuccess — operator visibility is nice-to-have.
-  const lr = thread.lastResolverResult || {};
-  const lineSummary = Array.isArray(lr.lineItems)
-    ? lr.lineItems.map(li => `${li.qty || 1}x ${li.name || li.description || JSON.stringify(li)}`).join("; ")
-    : "(see lastResolverResult)";
-  return (
-    `Sale completed for ${customer} (Etsy: ${thread.etsyUsername || "n/a"}). ` +
-    `Family: ${family}. Final price: $${thread.acceptedQuoteUsd}. ` +
-    `Spec: ${lineSummary}. ` +
-    `Listing: ${listingUrl}. ` +
-    `Reference photos: ${thread.customListingImagesCount != null ? thread.customListingImagesCount : "unknown"}. ` +
-    `(Auto-generated synopsis fallback — Claude synopsis call failed; review the full thread for context.)`
-  );
+  // Fallback: compact structured handoff. Synopsis should never block listing
+  // completion, and it should never become a full conversation narrative.
+  return fallback;
 }
 
 /** Wider context for the synopsis (last 30 messages, oldest first).

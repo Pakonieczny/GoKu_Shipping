@@ -10189,6 +10189,57 @@
     //               by Sale Synopsis card instead)
     //   failed    — terminal failure; needsOperatorReview is set
     //   retracted — operator manually retracted before listing went live
+    function formatSaleSynopsisForDisplay(t) {
+      const raw = String((t && t.salesSynopsis) || "").trim();
+      if (!raw) return "";
+
+      // Already compact point-form: keep it, but cap extremely long legacy text.
+      const existingLines = raw.split(/\n+/).map(x => x.trim()).filter(Boolean);
+      const alreadyBulleted = existingLines.length && existingLines.every(x => /^[•\-*]/.test(x));
+      if (alreadyBulleted && raw.length <= 900) return existingLines.slice(0, 6).join("\n");
+
+      const bullets = [];
+      const add = (label, value) => {
+        const v = String(value || "").replace(/\s+/g, " ").trim();
+        if (!v) return;
+        const clipped = v.length > 170 ? v.slice(0, 167).trim() + "…" : v;
+        if (!bullets.some(b => b.toLowerCase() === (`• ${label}: ${clipped}`).toLowerCase())) {
+          bullets.push(`• ${label}: ${clipped}`);
+        }
+      };
+
+      if (t && (t.acceptedQuoteUsd || t.acceptedQuoteFamily)) {
+        add("Order", `${t.acceptedQuoteFamily || "custom listing"}${t.acceptedQuoteUsd ? ` · $${t.acceptedQuoteUsd}` : ""}`);
+      }
+
+      const finalized = raw.match(/(?:What was finalized|Finalized|Final spec)\s*:\s*([\s\S]*?)(?=\n\s*\n|For follow[- ]up|Follow[- ]up|$)/i);
+      if (finalized && finalized[1]) add("Final spec", finalized[1]);
+
+      const follow = raw.match(/(?:For follow[- ]up|Follow[- ]up|Production note)\s*:\s*([\s\S]*?)(?=\n\s*\n|$)/i);
+      if (follow && follow[1]) add("Follow-up", follow[1]);
+
+      const photo = raw.match(/(?:reference photos?|attached images?|photos?)\s+[^.]*\./i);
+      if (photo) add("Images", photo[0]);
+
+      const rush = raw.match(/(?:No rush was requested|Rush requested|no rush|rush)[^.]*\./i);
+      if (rush) add("Rush", rush[0]);
+
+      // Legacy paragraph fallback: pick the most useful short sentences, not
+      // the whole multi-paragraph narrative.
+      if (bullets.length < 3) {
+        const sentences = raw
+          .replace(/https?:\/\/\S+/g, "")
+          .split(/(?<=[.!?])\s+/)
+          .map(x => x.trim())
+          .filter(Boolean);
+        const important = sentences.filter(x => /wanted|confirmed|quoted|finalized|chose|accepted|no chain|chain-free|reference|photo|rush|engraving|follow[- ]up|listing/i.test(x));
+        for (const sentence of important.slice(0, 4)) add("Note", sentence);
+      }
+
+      if (!bullets.length) add("Summary", raw);
+      return bullets.slice(0, 5).join("\n");
+    }
+
     function renderCustomListingStatusCard(t) {
       const s = t.customListingStatus;
       if (!s || s === "created") return "";   // not started, or use synopsis card
@@ -10355,7 +10406,7 @@
                 ${t.salesCompletedAt ? `<span class="em-muted" style="font-size:11px; font-weight:400; margin-left:auto;">completed ${esc(fmtTime(t.salesCompletedAt))}</span>` : ""}
               </h4>
               ${t.customListingUrl ? `<div style="margin-bottom:10px; font-size:13px;"><strong>Listing:</strong> <a href="${esc(t.customListingUrl)}" target="_blank">${esc(t.customListingUrl)}</a>${t.acceptedQuoteUsd ? ` &nbsp;·&nbsp; <strong>$${esc(String(t.acceptedQuoteUsd))}</strong>` : ""}${t.acceptedQuoteFamily ? ` &nbsp;·&nbsp; ${esc(t.acceptedQuoteFamily)}` : ""}</div>` : ""}
-              <div style="white-space:pre-wrap; line-height:1.5; font-size:13px; color:#1f2328;">${esc(t.salesSynopsis)}</div>
+              <div style="white-space:pre-wrap; line-height:1.5; font-size:13px; color:#1f2328;">${esc(formatSaleSynopsisForDisplay(t))}</div>
             </div>
             ` : renderCustomListingStatusCard(t)}
             <div class="em-card">
@@ -10797,11 +10848,14 @@
 
       const t = (state.threads || []).find(x => x && x.id === threadId) || { id: threadId };
       const existingUrl = t.customListingUrl || "";
-      if (existingUrl && !confirm("This thread already has a custom listing. Create another real Etsy listing anyway?")) {
-        return false;
-      }
-      if (!existingUrl && !confirm("Create a real Etsy custom listing from this conversation?\n\nThe system will use the conversation, Sales context, and attached/reference images where available. Missing details will be filled as best as possible so you can edit the Etsy listing afterward.")) {
-        return false;
+
+      // v4.3.19 — Manual custom-listing button is an intentional operator
+      // action. Do not show a native browser confirm() explaining what the
+      // button does; it interrupts the workflow and makes successful listing
+      // creation feel like a warning/error. If this thread already has a
+      // listing, keep the operator informed with a toast, but continue.
+      if (existingUrl) {
+        toast("Existing custom listing found — creating another listing…");
       }
 
       try {
@@ -10837,7 +10891,7 @@
         // customListingUrl + a visible draft reply containing that URL.
         const [freshThread, freshDraft] = await Promise.all([
           api("firestoreProxy", { query: { op: "get", coll: THREADS_COLL, id: threadId } }).catch(() => null),
-          api("firestoreProxy", { query: { op: "get", coll: DRAFTS_COLL,  id: "draft_" + threadId } }).catch(() => null)
+          api("firestoreProxy", { query: { op: "get", coll: "EtsyMail_Drafts", id: "draft_" + threadId } }).catch(() => null)
         ]);
         const threadDoc = freshThread && freshThread.doc ? { id: threadId, ...freshThread.doc } : null;
         const draftDoc  = freshDraft  && freshDraft.doc  ? freshDraft.doc : null;
