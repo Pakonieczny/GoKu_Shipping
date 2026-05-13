@@ -10898,17 +10898,80 @@
       // Only the custom-listing button itself shows busy state.
     }
 
+    function manualCustomListingDelay(ms) {
+      return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    function getManualCustomListingReply(threadDoc, draftDoc, apiResponse) {
+      const url =
+        (draftDoc && draftDoc.customListingUrl) ||
+        (threadDoc && threadDoc.customListingUrl) ||
+        (apiResponse && (apiResponse.listingUrl || apiResponse.customListingUrl)) ||
+        "";
+
+      let text =
+        (draftDoc && typeof draftDoc.text === "string" && draftDoc.text.trim()) ||
+        (draftDoc && typeof draftDoc.customListingReplyText === "string" && draftDoc.customListingReplyText.trim()) ||
+        (threadDoc && typeof threadDoc.customListingReplyText === "string" && threadDoc.customListingReplyText.trim()) ||
+        "";
+
+      // If the creator wrote the listing URL but the draft reply has not
+      // materialized yet, still provide a visible operator-editable reply.
+      // This keeps the spinner alive until the textbox can show the link.
+      if (!text && url) {
+        text = "Here is your custom listing: " + url;
+      }
+
+      return { url, text };
+    }
+
+    async function waitForManualCustomListingReply(threadId, apiResponse) {
+      const startedAt = Date.now();
+      const timeoutMs = 4 * 60 * 1000;
+      const pollMs = 2500;
+      let lastThreadDoc = null;
+      let lastDraftDoc = null;
+
+      while ((Date.now() - startedAt) < timeoutMs) {
+        const [freshThread, freshDraft] = await Promise.all([
+          api("firestoreProxy", { query: { op: "get", coll: THREADS_COLL, id: threadId } }).catch(() => null),
+          api("firestoreProxy", { query: { op: "get", coll: "EtsyMail_Drafts", id: "draft_" + threadId } }).catch(() => null)
+        ]);
+
+        lastThreadDoc = freshThread && freshThread.doc ? { id: threadId, ...freshThread.doc } : null;
+        lastDraftDoc  = freshDraft  && freshDraft.doc  ? freshDraft.doc : null;
+
+        const status = lastThreadDoc && lastThreadDoc.customListingStatus;
+        const errorMsg = (lastThreadDoc && (lastThreadDoc.customListingError || lastThreadDoc.needsOperatorReviewReason)) || "";
+        if (status === "failed" || (lastThreadDoc && lastThreadDoc.needsOperatorReview && errorMsg)) {
+          throw new Error(errorMsg || "custom listing creation failed");
+        }
+
+        const reply = getManualCustomListingReply(lastThreadDoc, lastDraftDoc, apiResponse);
+        if (reply.text && (!reply.url || reply.text.includes(reply.url))) {
+          return { threadDoc: lastThreadDoc, draftDoc: lastDraftDoc, replyText: reply.text, url: reply.url };
+        }
+
+        await manualCustomListingDelay(pollMs);
+      }
+
+      const fallback = getManualCustomListingReply(lastThreadDoc, lastDraftDoc, apiResponse);
+      if (fallback.text) {
+        return { threadDoc: lastThreadDoc, draftDoc: lastDraftDoc, replyText: fallback.text, url: fallback.url };
+      }
+      throw new Error("custom listing was not loaded into the reply box before timeout");
+    }
+
     async function generateManualCustomListing(threadId) {
       if (!threadId) return false;
       if (state.manualCustomListingBusyThreadId === threadId) {
         return false;
       }
 
-      // v4.3.20 — Manual custom-listing creation must be visually quiet.
-      // Do not show a native confirm(), do not toast at start, do not render
-      // an optimistic status card, and do not refresh/re-scroll the thread while
-      // generation is running. The only in-progress feedback is the spinner
-      // inside the Custom Listing button.
+      // v4.3.21 — Spinner lifetime is tied to the operator-visible result.
+      // The button must keep spinning until the customer-facing listing reply
+      // has been pasted into the desktop/mobile reply textbox. No scroll, no
+      // optimistic card render, and no thread refresh while generation runs.
 
       try {
         setManualCustomListingLoading(threadId, true);
@@ -10923,42 +10986,33 @@
           }
         });
 
-        // Fetch the fresh thread/draft because the background function writes
-        // customListingUrl + a visible draft reply containing that URL.
-        const [freshThread, freshDraft] = await Promise.all([
-          api("firestoreProxy", { query: { op: "get", coll: THREADS_COLL, id: threadId } }).catch(() => null),
-          api("firestoreProxy", { query: { op: "get", coll: "EtsyMail_Drafts", id: "draft_" + threadId } }).catch(() => null)
-        ]);
-        const threadDoc = freshThread && freshThread.doc ? { id: threadId, ...freshThread.doc } : null;
-        const draftDoc  = freshDraft  && freshDraft.doc  ? freshDraft.doc : null;
+        const { threadDoc, draftDoc, replyText, url } = await waitForManualCustomListingReply(threadId, res || {});
 
         if (threadDoc) {
           const j = state.threads.findIndex(x => x && x.id === threadId);
           if (j >= 0) state.threads[j] = threadDoc;
         }
 
-        const replyText = (draftDoc && draftDoc.text) || (threadDoc && threadDoc.customListingReplyText) || "";
-        if (replyText) {
-          const ta = $("emDraftText");
-          if (ta) { ta.value = replyText; autoSizeDraftTextarea(ta); }
-          if (threadDoc && typeof renderCustomListingReplyPreview === "function") {
-            renderCustomListingReplyPreview(threadDoc, draftDoc || {}, replyText);
-          }
-          const mta = document.getElementById("mComposerTextarea");
-          if (mta) {
-            mta.value = replyText;
-            if (typeof mAutoGrow === "function") mAutoGrow(mta);
-          }
+        const ta = $("emDraftText");
+        if (ta) { ta.value = replyText; autoSizeDraftTextarea(ta); }
+        if (threadDoc && typeof renderCustomListingReplyPreview === "function") {
+          renderCustomListingReplyPreview(threadDoc, draftDoc || {}, replyText);
+        }
+        const mta = document.getElementById("mComposerTextarea");
+        if (mta) {
+          mta.value = replyText;
+          if (typeof mAutoGrow === "function") mAutoGrow(mta);
         }
 
-        const url = (threadDoc && threadDoc.customListingUrl) || res.listingUrl || "";
-        toast(url ? "Custom listing created and loaded into reply" : "Custom listing created");
+        toast(url ? "Custom listing created and loaded into reply" : "Custom listing loaded into reply");
         return true;
       } catch (e) {
         console.error("manual custom listing failed:", e);
         toast("Custom listing failed: " + (e.message || "unknown"));
         return false;
       } finally {
+        // Stop only after the reply text/link has been pasted, or after a
+        // genuine failure/timeout. This is intentionally the last action.
         setManualCustomListingLoading(threadId, false);
       }
     }
