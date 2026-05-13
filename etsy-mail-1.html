@@ -750,6 +750,17 @@
       background: #f6f8fa; border: 1px solid #d0d7de; border-radius: 4px;
       font-size: 11px;
     }
+    /* v3.26 — Attachment-claim mismatch warning in the staff reply
+     * composer. Amber color stack so it reads as a caution (review
+     * needed) rather than a hard error (e.g. send failed). */
+    .em-attach-claim-warn {
+      display: flex; align-items: flex-start; gap: 8px;
+      padding: 8px 12px; margin: 0 0 8px;
+      background: #fff8e1; border: 1px solid #f9c74f;
+      border-radius: 6px; color: #7a4f00;
+      font-size: 12px; line-height: 1.45;
+    }
+    .em-attach-claim-warn .material-icons { font-size: 18px; color: #b8860b; flex: 0 0 auto; }
     .em-compose .em-translate-bar select.em-translate-lang {
       font-size: 11px; padding: 2px 4px; border: 1px solid #d0d7de;
       border-radius: 3px; background: #fff;
@@ -10344,6 +10355,26 @@
             <div class="em-card em-compose" id="emComposerCard">
               <h4>Staff reply</h4>
 
+              <!-- v3.26 — Attachment-claim mismatch warning. Visible
+                   only when the draft has aiAttachmentClaimMismatch=true,
+                   i.e. the AI's reply text claims an attachment (e.g.
+                   "I've attached the tracking details below") but no
+                   attachment-producing tool ran successfully this turn.
+                   The operator should either remove the false claim
+                   from the reply, or attach the image manually before
+                   sending. Backend forces such drafts to confidence=0
+                   (human review) but this UI surface is what tells the
+                   operator WHY. -->
+              <div class="em-attach-claim-warn" id="emAttachClaimWarn" style="display:none;">
+                <i class="material-icons">warning</i>
+                <span>
+                  <b>AI claims an attachment that doesn't exist.</b>
+                  The reply mentions an attached tracking image / file, but
+                  none was generated. Either remove that mention from the
+                  reply text, or attach the artifact yourself, before sending.
+                </span>
+              </div>
+
               <!-- v3.7 — Translation controls. Three things in one strip:
                    - Auto Translate toggle: flips the entire conversation
                      in #emThreadBox to English (and back).
@@ -11591,6 +11622,49 @@
               img.imageHeight      = doc.imageHeight;
               img.events           = doc.events || [];
               rerender();
+
+              // v3.27 — PERSIST the merged state back to the draft
+              // document so subsequent inbox loads see the ready
+              // state immediately (chip appears on open) instead of
+              // having to re-discover it via polling. Also, drafts
+              // that get auto-sent without an inbox session open
+              // would otherwise go out with status:"pending" + no
+              // imageUrl, dropping the attachment silently. Writing
+              // back here makes the persisted record match reality.
+              //
+              // Best-effort: failures are logged but not surfaced
+              // since the in-memory state already works for the
+              // current operator's render path. The next-load case
+              // is the one this fixes.
+              try {
+                const _threadId = (typeof state !== "undefined" && state.selectedId) || null;
+                if (_threadId) {
+                  const _draftId = "draft_" + _threadId;
+                  // Build the updated trackingImages array (preserve
+                  // any other images, swap in our merged one) AND
+                  // mirror the same merge into the attachments[] entry
+                  // that shares this jobId, since chip-render in the
+                  // composer reads from attachments after promotion.
+                  const _trackingImagesNext = (imagesRef || []).map(x => ({ ...x }));
+                  api("firestoreProxy", {
+                    method: "POST",
+                    body: {
+                      op   : "set",
+                      coll : "EtsyMail_Drafts",
+                      id   : _draftId,
+                      merge: true,
+                      actor: (typeof getEmployeeName === "function" && getEmployeeName()) || "tracking-reconcile",
+                      data : {
+                        trackingImages: _trackingImagesNext,
+                        updatedAt     : { __serverTimestamp: true }
+                      }
+                    }
+                  }).catch(e => console.warn("[trackingPoll] writeback failed:", e.message));
+                }
+              } catch (e) {
+                console.warn("[trackingPoll] writeback skipped:", e.message);
+              }
+
               // v3.19: re-enabled auto-promote to composer chip — now safe.
               // The previous v3.16 attempt persisted the chip into
               // draft.draftAttachments, which made it sticky across page
@@ -12471,6 +12545,16 @@
 
     /** Called by hydrateAiDraft — restore chips from saved draftAttachments. */
     function hydrateComposerFromDraft(threadId, draft) {
+      // v3.26 — Show/hide the attach-claim mismatch warning. Always
+      // runs (regardless of draft.draftAttachments) so the warning
+      // toggles correctly when the operator opens different threads.
+      try {
+        const warnEl = document.getElementById("emAttachClaimWarn");
+        if (warnEl) {
+          warnEl.style.display = (draft && draft.aiAttachmentClaimMismatch === true)
+            ? "flex" : "none";
+        }
+      } catch {}
       if (!draft || !Array.isArray(draft.draftAttachments)) return;
       const atts = draft.draftAttachments.map(a => ({
         ...a,

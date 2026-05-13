@@ -1263,6 +1263,29 @@ explain what the customer should understand from the timeline (the
 scan events, expected delivery, what's normal). Don't just dump the
 image; contextualize it.
 
+ATTACHMENT-CLAIM RULE — ZERO TOLERANCE:
+You MUST NOT write phrases like "I've attached", "see attached", "find
+attached", "tracking details below", "tracking image attached", "you'll
+find [...] below", or any other phrasing that promises an artifact UNLESS
+you have actually called generate_tracking_image (or another attachment-
+producing tool) in this turn AND the tool returned without error. The
+operator's UI displays attachments based on the actual tool-call results
+the backend persists — NOT based on what your reply text says. If you
+write that something is attached but the tool never ran (or errored), the
+customer receives a reply promising an artifact that does not exist. This
+is a trust-eroding failure mode and the backend's post-validation will
+force any draft that does this into human review with confidence=0.
+
+If you intended to attach tracking details but generate_tracking_image
+failed, OR if lookup_order_tracking didn't return a tracking code, write
+a reply that ACCURATELY reflects the situation. For example:
+  - "I don't see tracking activity for your order yet — the moment it
+    scans I'll send the details."
+  - "Your tracking number is 1234ABC — you can paste that into USPS's
+    site for the latest scans."
+Either is honest and useful. "I've attached the tracking details below"
+with nothing actually attached is dishonest and useless.
+
 Do NOT emit prose replies directly — only via compose_draft_reply.
 Reasoning in plain text is fine between tool calls (Claude's adaptive
 thinking handles that); just make sure the final action is
@@ -1672,7 +1695,14 @@ function buildToolExecutors(ctx) {
         res = await fetch(endpoint, {
           method : "POST",
           headers: { "Content-Type": "application/json" },
-          body   : JSON.stringify({ trackingCode }),
+          // v3.27 — Pass draftId so the snapshot worker can write the
+          // ready state back to this draft directly when the image
+          // finishes. Without it, only the inbox's poller would
+          // reconcile (and only while someone has the inbox open).
+          // Drafts referencing pending jobs that nobody's watching
+          // would otherwise auto-send with pending state and drop
+          // the attachment silently.
+          body   : JSON.stringify({ trackingCode, draftId }),
           timeout: 9000
         });
         const text = await res.text();
@@ -2395,6 +2425,43 @@ exports.handler = async (event) => {
       .filter(s => s.listingId && s.title)
       .slice(0, 5);
 
+    // ─── v3.26 — Attachment-claim sanity check ─────────────────────
+    //
+    // The AI sometimes produces a reply whose prose claims an
+    // attachment ("I've attached the tracking details below") without
+    // having actually called generate_tracking_image (or with the
+    // tool having errored). The operator's inbox renders attachments
+    // from `trackingImages`/`attachments`, not from the prose — so
+    // the customer would receive a reply promising an artifact that
+    // does not exist.
+    //
+    // The prompt now strictly forbids this, but a model can ignore
+    // prompt rules. This backend check is the enforcement layer:
+    // if the reply's prose claims an attachment AND no real tracking
+    // image was produced this turn, we:
+    //   1. Stamp `aiAttachmentClaimMismatch: true` on the draft (so
+    //      the inbox UI can warn the operator).
+    //   2. Force confidence to 0 so the auto-pipeline routes the
+    //      draft to human review instead of auto-sending it.
+    //   3. Append a reasoning note so the operator sees WHY confidence
+    //      collapsed.
+    // We do NOT modify parsed.text — the operator might want to keep
+    // the prose and attach manually. Letting them see the dissonance
+    // and decide is better than silently rewriting the AI's words.
+    const _hasRealAttachment = (toolContext.trackingImages || []).some(img =>
+      img && (img.status === "ready" || img.status === "pending")
+            && (img.imageUrl || img.jobId)
+    );
+    const _attachmentClaimRx = /\b(?:i'?ve\s+attached|i\s+have\s+attached|see\s+attached|find\s+attached|attached\s+(?:below|here|to\s+this|the\s+tracking|are|is)|tracking\s+(?:details|image|timeline|info(?:rmation)?|snapshot)\s+(?:below|attached|here)|below\s+(?:you'?ll\s+find|you\s+can\s+(?:see|find)|please\s+(?:see|find)))\b/i;
+    const _claimsAttachment = parsed.text && _attachmentClaimRx.test(parsed.text);
+    if (_claimsAttachment && !_hasRealAttachment) {
+      console.warn(`[draftReply ${threadId}] AI reply claims attachment but no tracking image was generated — forcing to human review`);
+      parsed.aiAttachmentClaimMismatch = true;
+      parsed.confidence = 0;
+      const note = " | AI claimed an attachment in the reply but no attachment-producing tool ran successfully. Forced confidence=0 for operator review.";
+      parsed.confidenceReasoning = (parsed.confidenceReasoning || "") + note;
+    }
+
     // ─── 6. Persist draft ──────────────────────────────────────────
     const draftRef = db.collection(DRAFTS_COLL).doc(draftId);
     const now = FV.serverTimestamp();
@@ -2473,6 +2540,13 @@ exports.handler = async (event) => {
       aiConfidence          : parsed.confidence,
       aiDifficulty          : parsed.difficulty,
       aiConfidenceReasoning : parsed.confidenceReasoning,
+      // v3.26 — Stamped true when the AI's prose claims an attachment
+      // (e.g. "I've attached the tracking details below") but no
+      // attachment-producing tool ran successfully this turn. The
+      // inbox can read this to surface a warning above the staff
+      // reply so the operator either removes the false claim or
+      // attaches the image manually before sending.
+      aiAttachmentClaimMismatch: !!parsed.aiAttachmentClaimMismatch,
       attachments,
       trackingImages,
       generatedByAI         : true,

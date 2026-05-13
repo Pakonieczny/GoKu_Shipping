@@ -24,7 +24,7 @@
 
 const admin = require("./firebaseAdmin");
 const { requireExtensionAuth } = require("./_etsyMailAuth");
-const { requireOwner, requireAnyRole, logUnauthorized } = require("./_etsyMailRoles");
+const { requireOwner, requireAnyRole, requireSession, logUnauthorized } = require("./_etsyMailRoles");
 const db    = admin.firestore();
 const FV    = admin.firestore.FieldValue;
 
@@ -115,29 +115,62 @@ function assertSub(sub) {
   if (!CALLABLE_SUBS.has(sub)) throw new Error(`Subcollection '${sub}' not in allowlist`);
 }
 
-async function requireProxyWriteRole(coll, op, actor, payload = {}) {
+async function requireProxyWriteRole(coll, op, actor, event, payload = {}) {
+  // v3.27 — Session-first actor resolution. The inbox passes a
+  // client-supplied `actor` (derived from localStorage's employee
+  // name), but that field is missing or stale in two real-world
+  // cases: (1) the operator's session is logged out and the inbox
+  // falls back to the literal string "operator" which isn't a
+  // registered role, and (2) the operator's local employee_name
+  // doesn't match their EtsyMail_Operators doc id. Both produce
+  // "Registered operator role required" 403s.
+  //
+  // If the request carries a valid X-EtsyMail-Session header, we
+  // derive the actor from the server-side session doc instead of
+  // trusting whatever the client sent. Falls back to client-supplied
+  // actor when no session is present — preserves the extension flow
+  // which uses X-EtsyMail-Secret without sessions.
+  //
+  // Failure modes: if session resolution throws or returns ok:false
+  // we still proceed with the client-supplied actor and let the
+  // normal role check decide. We never UPGRADE a session — if the
+  // session is invalid, the role check below sees whatever the
+  // client claimed and likely 403s anyway. We never DOWNGRADE either;
+  // the session check is purely a more-trustworthy source of actor.
+  let effectiveActor = actor;
+  if (event && event.headers && (event.headers["x-etsymail-session"] || event.headers["X-EtsyMail-Session"])) {
+    try {
+      const sess = await requireSession(event);
+      if (sess.ok && sess.username) {
+        effectiveActor = sess.username;
+      }
+    } catch (e) {
+      console.warn("[firestoreProxy] session resolution failed (continuing with client actor):", e.message);
+    }
+  }
+
   if (OWNER_WRITE_COLLS.has(coll)) {
-    const owner = await requireOwner(actor);
+    const owner = await requireOwner(effectiveActor);
     if (!owner.ok) {
       await logUnauthorized({
-        actor,
+        actor: effectiveActor,
         eventType: "firestore_proxy_write_unauthorized",
-        payload: { coll, op, reason: owner.reason, ...payload }
+        payload: { coll, op, reason: owner.reason, clientActor: actor, ...payload }
       });
       return { ok: false, statusCode: 403, error: "Owner role required", reason: owner.reason };
     }
   } else if (OPERATOR_WRITE_COLLS.has(coll)) {
-    const operator = await requireAnyRole(actor);
+    const operator = await requireAnyRole(effectiveActor);
     if (!operator.ok) {
       await logUnauthorized({
-        actor,
+        actor: effectiveActor,
         eventType: "firestore_proxy_write_unauthorized",
-        payload: { coll, op, reason: operator.reason, ...payload }
+        payload: { coll, op, reason: operator.reason, clientActor: actor, ...payload }
       });
       return { ok: false, statusCode: 403, error: "Registered operator role required", reason: operator.reason };
     }
   }
-  return { ok: true };
+  return { ok: true, effectiveActor };
 }
 
 /* Recursively substitute { __serverTimestamp:true } with server timestamps
@@ -299,7 +332,7 @@ exports.handler = async (event) => {
         const { coll, id, data, merge = false, actor = null } = body;
         if (!coll || !id || !data) return bad("Missing coll, id, or data");
         assertColl(coll);
-        const role = await requireProxyWriteRole(coll, op, actor, { id: String(id) });
+        const role = await requireProxyWriteRole(coll, op, actor, event, { id: String(id) });
         if (!role.ok) return json(role.statusCode, { error: role.error, reason: role.reason });
         await db.collection(coll).doc(String(id)).set(hydrate(data), { merge: !!merge });
         return ok({ id: String(id) });
@@ -310,7 +343,7 @@ exports.handler = async (event) => {
         const { coll, data, actor = null } = body;
         if (!coll || !data) return bad("Missing coll or data");
         assertColl(coll);
-        const role = await requireProxyWriteRole(coll, op, actor);
+        const role = await requireProxyWriteRole(coll, op, actor, event);
         if (!role.ok) return json(role.statusCode, { error: role.error, reason: role.reason });
         const ref = await db.collection(coll).add(hydrate(data));
         return ok({ id: ref.id });
@@ -322,7 +355,7 @@ exports.handler = async (event) => {
         if (!coll || !id || !sub || !data) return bad("Missing coll, id, sub, or data");
         assertColl(coll);
         assertSub(sub);
-        const role = await requireProxyWriteRole(coll, op, actor, { id: String(id), sub });
+        const role = await requireProxyWriteRole(coll, op, actor, event, { id: String(id), sub });
         if (!role.ok) return json(role.statusCode, { error: role.error, reason: role.reason });
         const ref = await db.collection(coll).doc(String(id)).collection(sub).add(hydrate(data));
         return ok({ id: ref.id });
@@ -333,7 +366,7 @@ exports.handler = async (event) => {
         const { coll, id, data, actor = null } = body;
         if (!coll || !id || !data) return bad("Missing coll, id, or data");
         assertColl(coll);
-        const role = await requireProxyWriteRole(coll, op, actor, { id: String(id) });
+        const role = await requireProxyWriteRole(coll, op, actor, event, { id: String(id) });
         if (!role.ok) return json(role.statusCode, { error: role.error, reason: role.reason });
         await db.collection(coll).doc(String(id)).update(hydrate(data));
         return ok({ id: String(id) });
@@ -350,7 +383,7 @@ exports.handler = async (event) => {
         if (confirm !== true) return bad("Refusing to deleteSub without { confirm: true } flag");
         assertColl(coll);
         assertSub(sub);
-        const role = await requireProxyWriteRole(coll, op, actor, { id: String(id), sub });
+        const role = await requireProxyWriteRole(coll, op, actor, event, { id: String(id), sub });
         if (!role.ok) return json(role.statusCode, { error: role.error, reason: role.reason });
 
         const subRef = db.collection(coll).doc(String(id)).collection(sub);
@@ -388,7 +421,7 @@ exports.handler = async (event) => {
         if (!coll || !id) return bad("Missing coll or id");
         if (confirm !== true) return bad("Refusing to deleteDoc without { confirm: true } flag");
         assertColl(coll);
-        const role = await requireProxyWriteRole(coll, op, actor, { id: String(id) });
+        const role = await requireProxyWriteRole(coll, op, actor, event, { id: String(id) });
         if (!role.ok) return json(role.statusCode, { error: role.error, reason: role.reason });
         await db.collection(coll).doc(String(id)).delete();
         return ok({ id: String(id), deleted: true });

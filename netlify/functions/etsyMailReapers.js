@@ -133,6 +133,8 @@ const AUDIT_COLL   = "EtsyMail_Audit";
 const CONFIG_COLL  = "EtsyMail_Config";
 // v2.5 — Jobs collection used by the gmail_scrape pass below.
 const JOBS_COLL    = "EtsyMail_Jobs";
+// v3.27 — Tracking jobs collection used by the tracking_reconcile pass.
+const TRACKING_JOBS_COLL = "EtsyMail_TrackingJobs";
 
 // ─── Auto-pipeline reaper config ───────────────────────────────────────
 // A claim is "stale" once this much time has passed without a finalize.
@@ -1400,6 +1402,252 @@ async function reapMangledUnicodeFields() {
   return { fixed, scanned };
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// v3.27 — Tracking-attachment reconciliation pass.
+//
+// Backstop for drafts whose `trackingImages` array references a tracking
+// job that's already `ready`, but whose draft state is frozen at
+// `pending`. Two propagation paths already exist:
+//
+//   1. etsyMailTrackingSnapshot-background draftWriteback (forward path)
+//   2. inbox pollTrackingJob writeback                    (interactive path)
+//
+// Both rely on the job carrying a draftId. Pre-v3.27 jobs don't have one,
+// and even on v3.27+ the worker writeback can fail (network blip,
+// transaction conflict, draft created without the new pass-through). This
+// pass is the third-layer safety net: it scans for stuck drafts and
+// reconciles them.
+//
+// Idempotent and safe to run on every reaper cycle. Default limit per
+// pass is 100 drafts (newest-first) — keeps Firestore reads bounded.
+// Owner can invoke with a higher limit for one-shot bulk migration of
+// pre-v3.27 drafts, e.g.:
+//
+//   POST /.netlify/functions/etsyMailReapers
+//     { "op": "tracking_reconcile", "limit": 2000 }
+//
+// Or with dryRun:true to preview without writing.
+
+const TRACKING_RECONCILE_MAX_PER_RUN = 100;
+
+/** Pure helper: build merged trackingImages + attachments arrays for one
+ *  draft when one of its jobs has hit "ready". Returns the new arrays and
+ *  a `mutated` flag indicating whether anything actually changed.
+ *  Operator edits to other fields (queuedForSend, suggestedListings,
+ *  text, etc.) are preserved — we only touch the entries that match
+ *  the jobId AND are not already ready.
+ */
+function _trackingApplyJobToArrays(trackingImages, attachments, jobId, job) {
+  let mutated = false;
+  const newTrackingImages = (trackingImages || []).map(img => {
+    if (img && img.jobId === jobId && img.status !== "ready") {
+      mutated = true;
+      return {
+        ...img,
+        status           : "ready",
+        carrier          : job.carrier          ?? img.carrier          ?? null,
+        carrierDisplay   : job.carrierDisplay   ?? img.carrierDisplay   ?? null,
+        statusText       : job.statusText       ?? img.statusText       ?? null,
+        statusKey        : job.statusKey        ?? img.statusKey        ?? null,
+        estimatedDelivery: job.estimatedDelivery ?? img.estimatedDelivery ?? null,
+        destination      : job.destination      ?? img.destination      ?? null,
+        imageUrl         : job.imageUrl,
+        imageStoragePath : job.imageStoragePath,
+        imageWidth       : job.imageWidth       ?? img.imageWidth       ?? null,
+        imageHeight      : job.imageHeight      ?? img.imageHeight      ?? null,
+        eventCount       : Array.isArray(job.events) ? job.events.length : (img.eventCount || 0),
+        latestEvent      : Array.isArray(job.events) && job.events.length ? job.events[0] : (img.latestEvent || null)
+      };
+    }
+    return img;
+  });
+  const newAttachments = (attachments || []).map(a => {
+    if (a && a.jobId === jobId && a.type === "tracking_image" && a.status !== "ready") {
+      mutated = true;
+      return {
+        ...a,
+        status          : "ready",
+        imageUrl        : job.imageUrl,
+        imageStoragePath: job.imageStoragePath,
+        imageWidth      : job.imageWidth      ?? a.imageWidth      ?? null,
+        imageHeight     : job.imageHeight     ?? a.imageHeight     ?? null,
+        carrier         : job.carrier         ?? a.carrier         ?? null,
+        carrierDisplay  : job.carrierDisplay  ?? a.carrierDisplay  ?? null,
+        statusKey       : job.statusKey       ?? a.statusKey       ?? null,
+        statusText      : job.statusText      ?? a.statusText      ?? null
+      };
+    }
+    return a;
+  });
+  return { newTrackingImages, newAttachments, mutated };
+}
+
+/** Reconcile a single draft: look up each referenced job, and if any are
+ *  ready, transactionally write the merged state. Best-effort; per-draft
+ *  errors are caught and reported in the outcome row. */
+async function _reconcileOneDraft(draftRef, dryRun) {
+  const outcome = {
+    draftId         : draftRef.id,
+    jobsExamined    : [],
+    jobsReconciled  : [],
+    jobsNotReady    : [],
+    jobsMissing     : [],
+    error           : null
+  };
+
+  let draftSnap;
+  try {
+    draftSnap = await draftRef.get();
+  } catch (e) {
+    outcome.error = `Draft read failed: ${e.message}`;
+    return outcome;
+  }
+  if (!draftSnap.exists) {
+    outcome.error = "Draft not found";
+    return outcome;
+  }
+
+  const draft = draftSnap.data() || {};
+  const trackingImages = Array.isArray(draft.trackingImages) ? draft.trackingImages : [];
+  const pending = trackingImages.filter(i => i && i.jobId && i.status !== "ready");
+  if (!pending.length) return outcome;
+
+  // Fetch each referenced job once (outside txn — jobs are immutable
+  // once ready, so no consistency issue).
+  const jobsByJobId = {};
+  for (const img of pending) {
+    if (jobsByJobId[img.jobId] !== undefined) continue;
+    outcome.jobsExamined.push(img.jobId);
+    try {
+      const js = await db.collection(TRACKING_JOBS_COLL).doc(img.jobId).get();
+      if (!js.exists) {
+        jobsByJobId[img.jobId] = null;
+        outcome.jobsMissing.push(img.jobId);
+        continue;
+      }
+      const jd = js.data() || {};
+      if (jd.status !== "ready") {
+        jobsByJobId[img.jobId] = null;
+        outcome.jobsNotReady.push({ jobId: img.jobId, status: jd.status || "unknown" });
+        continue;
+      }
+      jobsByJobId[img.jobId] = jd;
+    } catch (e) {
+      jobsByJobId[img.jobId] = null;
+      outcome.error = (outcome.error ? outcome.error + " | " : "") + `Job ${img.jobId} read failed: ${e.message}`;
+    }
+  }
+
+  const readyJobIds = Object.keys(jobsByJobId).filter(k => jobsByJobId[k]);
+  if (!readyJobIds.length) return outcome;
+  outcome.jobsReconciled = readyJobIds;
+  if (dryRun) return outcome;
+
+  try {
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(draftRef);
+      if (!snap.exists) throw new Error("Draft disappeared mid-transaction");
+      const cur = snap.data() || {};
+      let nextTracking = Array.isArray(cur.trackingImages) ? cur.trackingImages : [];
+      let nextAttach   = Array.isArray(cur.attachments)    ? cur.attachments    : [];
+      let anyMutation  = false;
+      for (const jobId of readyJobIds) {
+        const r = _trackingApplyJobToArrays(nextTracking, nextAttach, jobId, jobsByJobId[jobId]);
+        if (r.mutated) {
+          nextTracking = r.newTrackingImages;
+          nextAttach   = r.newAttachments;
+          anyMutation  = true;
+        }
+      }
+      if (!anyMutation) return;  // operator may have already ack'd
+      tx.set(draftRef, {
+        trackingImages           : nextTracking,
+        attachments              : nextAttach,
+        updatedAt                : FV.serverTimestamp(),
+        reconciledByReaperAt     : FV.serverTimestamp(),
+        reconciledByReaperJobs   : FV.arrayUnion(...readyJobIds)
+      }, { merge: true });
+    });
+    await writeAudit(draft.threadId || null, draftRef.id, "draft_tracking_reconciled_by_reaper", {
+      jobIds      : readyJobIds,
+      mode        : "tracking_reconcile",
+      jobsExamined: outcome.jobsExamined.length,
+      jobsNotReady: outcome.jobsNotReady.length,
+      jobsMissing : outcome.jobsMissing.length
+    });
+  } catch (e) {
+    outcome.error = (outcome.error ? outcome.error + " | " : "") + `Transaction failed: ${e.message}`;
+    outcome.jobsReconciled = [];
+  }
+
+  return outcome;
+}
+
+/**
+ * Top-level entry for the tracking_reconcile pass. Conforms to the
+ * runFooPass() shape used by the other reapers — returns { pass,
+ * scanned, hadPending, reaped, errors, ... }. `reaped` mirrors the
+ * convention used by sibling passes (counts drafts touched, not jobs)
+ * so the top-level totalReaped summation in the dispatcher remains
+ * meaningful.
+ *
+ * Inputs (from event body, merged with defaults):
+ *   limit   — max drafts to scan this pass (newest-first). default 100.
+ *             Owner can bump for bulk migration: { op:"tracking_reconcile",
+ *             limit:2000 }
+ *   dryRun  — when true, examines but does not write. default false.
+ *   verbose — when true, includes per-draft outcome rows in the result.
+ */
+async function runTrackingReconcilePass({ limit, dryRun = false, verbose = false } = {}) {
+  const tStart = Date.now();
+  const effectiveLimit = Math.min(Math.max(Number(limit) || TRACKING_RECONCILE_MAX_PER_RUN, 1), 2000);
+
+  const summary = {
+    pass            : "tracking_reconcile",
+    scanned         : 0,
+    hadPending      : 0,
+    reaped          : 0,   // drafts actually reconciled (mirror sibling pass convention)
+    errors          : 0,
+    skippedNotReady : 0,
+    skippedMissing  : 0,
+    dryRun          : !!dryRun,
+    limit           : effectiveLimit,
+    drafts          : []
+  };
+
+  let draftsSnap;
+  try {
+    draftsSnap = await db.collection(DRAFTS_COLL)
+      .orderBy("createdAt", "desc")
+      .limit(effectiveLimit)
+      .get();
+  } catch (e) {
+    summary.errors = 1;
+    summary.errorMessage = `Draft scan failed: ${e.message}`;
+    summary.durationMs = Date.now() - tStart;
+    return summary;
+  }
+
+  for (const doc of draftsSnap.docs) {
+    summary.scanned++;
+    const draft = doc.data();
+    const trackingImages = Array.isArray(draft.trackingImages) ? draft.trackingImages : [];
+    const hasPending = trackingImages.some(i => i && i.jobId && i.status !== "ready");
+    if (!hasPending) continue;
+    summary.hadPending++;
+
+    const outcome = await _reconcileOneDraft(doc.ref, dryRun);
+    if (outcome.error) summary.errors++;
+    if (outcome.jobsReconciled.length) summary.reaped++;
+    summary.skippedNotReady += outcome.jobsNotReady.length;
+    summary.skippedMissing  += outcome.jobsMissing.length;
+    if (verbose) summary.drafts.push(outcome);
+  }
+
+  summary.durationMs = Date.now() - tStart;
+  return summary;
+}
+
 /**
  * Top-level entry for the gmail_scrape pass. Runs four sub-sweeps in
  * order and returns a combined summary. Each sub-sweep wraps its own
@@ -1530,12 +1778,28 @@ exports.handler = async (event) => {
       try { results.gmailScrape = await runGmailScrapePass(); }
       catch (e) { errors.push({ pass: "gmail_scrape", error: e.message }); console.error("gmailScrape pass:", e); }
     }
+    // v3.27 — Tracking-attachment reconciliation. Default scan size is
+    // 100 drafts (newest-first); owner can override via { limit, dryRun,
+    // verbose } in the request body for bulk migration of pre-v3.27
+    // stuck drafts. Runs on the same cron schedule as the other passes
+    // so the system is self-healing without intervention.
+    if (!op || op === "tracking_reconcile") {
+      try {
+        results.trackingReconcile = await runTrackingReconcilePass({
+          limit  : body.limit,
+          dryRun : body.dryRun === true || body.dryRun === "1" || body.dryRun === "true",
+          verbose: body.verbose === true || body.verbose === "1" || body.verbose === "true"
+        });
+      }
+      catch (e) { errors.push({ pass: "tracking_reconcile", error: e.message }); console.error("trackingReconcile pass:", e); }
+    }
 
     const totalReaped =
-        ((results.autoPipeline && results.autoPipeline.reaped) || 0)
-      + ((results.sendQueue    && results.sendQueue.reaped)    || 0)
-      + ((results.salesFunnels && results.salesFunnels.reaped) || 0)
-      + ((results.gmailScrape  && results.gmailScrape.reaped)  || 0);
+        ((results.autoPipeline      && results.autoPipeline.reaped)      || 0)
+      + ((results.sendQueue         && results.sendQueue.reaped)         || 0)
+      + ((results.salesFunnels      && results.salesFunnels.reaped)      || 0)
+      + ((results.gmailScrape       && results.gmailScrape.reaped)       || 0)
+      + ((results.trackingReconcile && results.trackingReconcile.reaped) || 0);
 
     const summary = {
       success    : errors.length === 0,

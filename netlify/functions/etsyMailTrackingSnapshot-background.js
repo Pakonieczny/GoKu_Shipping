@@ -67,6 +67,7 @@ if (admin) {
 }
 
 const JOBS_COLL = "EtsyMail_TrackingJobs";
+const DRAFTS_COLL = "EtsyMail_Drafts";
 
 async function updateJob(jobId, patch) {
   try {
@@ -76,6 +77,96 @@ async function updateJob(jobId, patch) {
     }, { merge: true });
   } catch (e) {
     console.error(`[tracking-bg] Failed to update job ${jobId}:`, e.message);
+  }
+}
+
+// v3.27 — Write the ready tracking state back into the draft document
+// that originated this job. Without this, drafts stay frozen at
+// status:"pending" even after the job finishes. The inbox's
+// pollTrackingJob would eventually pick it up — but only if someone has
+// the inbox open. For drafts headed straight to auto-send (or for the
+// chip to render on the next open), the persisted draft needs to match
+// reality.
+//
+// Operates in a transaction so we don't race the operator if they're
+// also editing the draft (e.g., toggling queuedForSend, adding listing
+// suggestions). Best-effort: failure logs but doesn't fail the job.
+async function draftWriteback(draftId, jobId, result) {
+  if (!draftId) return;  // nothing to do — caller didn't supply a target
+  if (!result) return;
+  const draftRef = db.collection(DRAFTS_COLL).doc(draftId);
+  try {
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(draftRef);
+      if (!snap.exists) {
+        console.warn(`[tracking-bg] draftWriteback: draft ${draftId} not found — skipping`);
+        return;
+      }
+      const draft = snap.data() || {};
+      const trackingImages = Array.isArray(draft.trackingImages) ? draft.trackingImages : [];
+      const attachments    = Array.isArray(draft.attachments)    ? draft.attachments    : [];
+
+      // Find any entry whose jobId matches — could be in either or both
+      // arrays. The draft is the authoritative source for what the
+      // operator sees, so we update every reference.
+      let mutated = false;
+      const newTrackingImages = trackingImages.map(img => {
+        if (img && img.jobId === jobId) {
+          mutated = true;
+          return {
+            ...img,
+            status           : "ready",
+            carrier          : result.carrier,
+            carrierDisplay   : result.carrierDisplay,
+            statusText       : result.status,
+            statusKey        : result.statusKey,
+            estimatedDelivery: result.estimatedDelivery || null,
+            destination      : result.destination || null,
+            imageUrl         : result.imageUrl,
+            imageStoragePath : result.imageStoragePath,
+            imageWidth       : result.imageWidth,
+            imageHeight      : result.imageHeight,
+            eventCount       : (result.events || []).length,
+            latestEvent      : (result.events && result.events[0]) || null
+          };
+        }
+        return img;
+      });
+      const newAttachments = attachments.map(a => {
+        if (a && a.jobId === jobId && a.type === "tracking_image") {
+          mutated = true;
+          return {
+            ...a,
+            status          : "ready",
+            imageUrl        : result.imageUrl,
+            imageStoragePath: result.imageStoragePath,
+            imageWidth      : result.imageWidth,
+            imageHeight     : result.imageHeight,
+            carrier         : result.carrier,
+            carrierDisplay  : result.carrierDisplay,
+            statusKey       : result.statusKey,
+            statusText      : result.status
+          };
+        }
+        return a;
+      });
+
+      if (!mutated) {
+        console.warn(`[tracking-bg] draftWriteback: draft ${draftId} has no entries referencing job ${jobId} — skipping (may have been edited)`);
+        return;
+      }
+
+      tx.set(draftRef, {
+        trackingImages: newTrackingImages,
+        attachments   : newAttachments,
+        updatedAt     : FV.serverTimestamp()
+      }, { merge: true });
+    });
+    console.log(`[tracking-bg] draftWriteback: ${draftId} updated from job ${jobId}`);
+  } catch (e) {
+    console.error(`[tracking-bg] draftWriteback failed for ${draftId}:`, e.message);
+    // Don't rethrow — the job itself completed successfully; the
+    // writeback is a best-effort propagation.
   }
 }
 
@@ -103,8 +194,13 @@ exports.handler = async (event) => {
   const jobId        = String(body.jobId || "").trim();
   const forceRefresh = Boolean(body.forceRefresh);
   const carrierHint  = String(body.carrierHint || "").trim().toLowerCase();
+  // v3.27 — Optional draftId. If present, the worker mirrors the
+  // ready tracking state back into EtsyMail_Drafts/{draftId} on
+  // completion so drafts become eventually consistent without
+  // requiring an inbox session to poll. See draftWriteback below.
+  const draftId      = String(body.draftId || "").trim();
 
-  console.log(`[tracking-bg] jobId=${jobId} trackingCode=${trackingCode} forceRefresh=${forceRefresh}`);
+  console.log(`[tracking-bg] jobId=${jobId} trackingCode=${trackingCode} forceRefresh=${forceRefresh} draftId=${draftId || "(none)"}`);
 
   if (!trackingCode || !jobId) {
     console.error(`[tracking-bg] Missing trackingCode or jobId. trackingCode=${trackingCode} jobId=${jobId}`);
@@ -160,6 +256,14 @@ exports.handler = async (event) => {
     });
 
     console.log(`[tracking-bg] Job ${jobId} ready (${result.durationMs}ms, cached=${result.cached})`);
+
+    // v3.27 — Propagate the ready state to the originating draft.
+    // Best-effort: writeback failure is logged but doesn't fail the
+    // job (the job is already marked ready above; the inbox's poller
+    // will reconcile on next render as a fallback).
+    if (draftId) {
+      await draftWriteback(draftId, jobId, result);
+    }
 
   } catch (e) {
     console.error(`[tracking-bg] Job ${jobId} failed:`, e.code, e.message);

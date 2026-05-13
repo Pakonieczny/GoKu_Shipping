@@ -79,13 +79,17 @@ exports.handler = async (event) => {
     return { statusCode: 200, headers: CORS, body: "ok" };
   }
 
-  let trackingCode, carrierHint, forceRefresh;
+  let trackingCode, carrierHint, forceRefresh, draftId;
 
   if (event.httpMethod === "GET") {
     const q = event.queryStringParameters || {};
     trackingCode = String(q.trackingCode || q.code || "").trim();
     carrierHint  = String(q.carrier || "").trim().toLowerCase();
     forceRefresh = q.refresh === "1" || q.refresh === "true";
+    // v3.27 — Optional draftId: if provided, the background worker
+    // will write the ready tracking state back to this draft when
+    // the image finishes. See draftWriteback in the background fn.
+    draftId      = String(q.draftId || "").trim();
   } else if (event.httpMethod === "POST") {
     let body;
     try { body = JSON.parse(event.body || "{}"); }
@@ -93,6 +97,7 @@ exports.handler = async (event) => {
     trackingCode = String(body.trackingCode || body.code || "").trim();
     carrierHint  = String(body.carrierHint || body.carrier || "").trim().toLowerCase();
     forceRefresh = Boolean(body.forceRefresh);
+    draftId      = String(body.draftId || "").trim();
   } else {
     return json(405, { error: "Method not allowed" });
   }
@@ -145,7 +150,13 @@ exports.handler = async (event) => {
       createdAt  : FV.serverTimestamp(),
       updatedAt  : FV.serverTimestamp(),
       forceRefresh: Boolean(forceRefresh),
-      carrierHint : carrierHint || null
+      carrierHint : carrierHint || null,
+      // v3.27 — draftId reference (if caller supplied). Used by the
+      // background worker on completion to mirror the ready state
+      // back into EtsyMail_Drafts/{draftId}.trackingImages so drafts
+      // become eventually consistent without requiring an inbox
+      // session to be open and polling.
+      draftId     : draftId || null
     });
   } catch (e) {
     return json(500, { error: `Failed to create job: ${e.message}`, trackingCode });
@@ -173,7 +184,9 @@ exports.handler = async (event) => {
     const bgResp = await fetch(bgUrl, {
       method : "POST",
       headers: { "Content-Type": "application/json" },
-      body   : JSON.stringify({ jobId, trackingCode, carrierHint, forceRefresh }),
+      // v3.27 — Forward draftId so the worker can write the ready
+      // state back to the originating draft when generation completes.
+      body   : JSON.stringify({ jobId, trackingCode, carrierHint, forceRefresh, draftId: draftId || null }),
       signal : controller.signal
     });
     clearTimeout(abortTimeout);
