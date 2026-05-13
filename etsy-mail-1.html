@@ -13327,6 +13327,25 @@
           }
         }
         renderAiDraftCard(d);
+
+        // v5.7.1 — Tracking images must hydrate independently of the AI card body.
+        // Some layouts intentionally omit #emAiCardBody, so renderAiDraftCard(d)
+        // returns early before it reaches the tracking-image renderer. That left
+        // valid draft.trackingImages invisible and unpromoted to composer chips.
+        // The draft doc is the source of truth; always render/promote directly
+        // from it after the draft is fetched.
+        try {
+          const trackingImages = Array.isArray(d.trackingImages) ? d.trackingImages : [];
+          if (typeof renderTrackingImages === "function") {
+            renderTrackingImages(trackingImages, { autoPromoteToChips: isHydratableState });
+          }
+          if (isHydratableState && typeof syncTrackingImagesToChips === "function") {
+            syncTrackingImagesToChips(trackingImages);
+          }
+        } catch (e) {
+          console.warn("[tracking-sync] hydrate render/promote failed:", e.message || e);
+        }
+
         // v5.5 — Mobile AI draft card: build directly from the Firestore
         // draft doc. The desktop's #emAiCardBody was removed in v0.9.46,
         // so the v5.4 "mirror" approach was reading an empty element.
