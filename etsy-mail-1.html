@@ -14636,6 +14636,67 @@
         console.warn("[v5.30.2 topbar collapse] init failed:", e.message);
       }
 
+      // v3.29 — Document-level Ctrl/Cmd+V paste-to-attach.
+      //
+      // The composer's textarea (#emDraftText) has its own paste handler
+      // (set in setupComposerInteractions) that converts pasted images
+      // into composer attachments. That handler only fires when the
+      // textarea has focus. The common case — operator copies a customer
+      // photo, opens the conversation, hits Cmd/Ctrl+V — usually happens
+      // BEFORE clicking into the textarea, so without this broader
+      // listener the paste falls into the void and the operator has to
+      // click into the textarea, then paste again.
+      //
+      // Scope rules:
+      //   - Only fires when a thread is open (state.selectedId set) so
+      //     pasting on the empty inbox lands harmlessly.
+      //   - Skips when the target is the staff-reply textarea itself —
+      //     the textarea's own paste handler runs and is also wired to
+      //     handle Etsy listing URLs in addition to images.
+      //   - Skips when any OTHER editable element has focus (search
+      //     input, language picker, modal fields, etc.) so the operator
+      //     can still paste text into those.
+      //   - Only handles image clipboard items. Text/URL pastes go
+      //     through normally to whichever element has focus, or end up
+      //     ignored if no editable element has focus — same as before.
+      //
+      // Registered ONCE at DOMContentLoaded. Survives every thread
+      // open/close (those re-bind only the textarea-local handler).
+      document.addEventListener("paste", async (e) => {
+        try {
+          if (!e.clipboardData) return;
+          if (!state.selectedId) return;
+          // Defer to the textarea's own handler when it's the target.
+          if (e.target && e.target.id === "emDraftText") return;
+          // Don't hijack pastes intended for other editable elements.
+          const active = document.activeElement;
+          if (active && active !== document.body) {
+            const tag = (active.tagName || "").toLowerCase();
+            const isEditable =
+              tag === "input"    ||
+              tag === "textarea" ||
+              tag === "select"   ||
+              active.isContentEditable;
+            if (isEditable && active.id !== "emDraftText") return;
+          }
+          // Find the first image item in the clipboard.
+          const items = e.clipboardData.items || [];
+          let imgFile = null;
+          for (const it of items) {
+            if (it.kind === "file" && it.type && it.type.startsWith("image/")) {
+              imgFile = it.getAsFile();
+              if (imgFile) break;
+            }
+          }
+          if (!imgFile) return;  // nothing image-shaped — let the paste proceed
+          e.preventDefault();
+          await addImageAttachment(imgFile, { fromPaste: true });
+          if (typeof toast === "function") toast("✓ Image pasted as attachment");
+        } catch (err) {
+          console.warn("[paste-to-attach] failed:", err.message);
+        }
+      });
+
       $("emRefreshBtn").addEventListener("click", () => {
         fetchThreadListNow();
         fetchCountsNow();
