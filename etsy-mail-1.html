@@ -672,12 +672,14 @@
     }
     button#emAiDraftBtn.is-loading .material-icons,
     button#emAiFollowUpBtn.is-loading .material-icons,
-    button#emReviseBtn.is-loading .material-icons {
+    button#emReviseBtn.is-loading .material-icons,
+    button#emCustomListingBtn.is-loading .material-icons {
       display: none;
     }
     button#emAiDraftBtn.is-loading::before,
     button#emAiFollowUpBtn.is-loading::before,
-    button#emReviseBtn.is-loading::before {
+    button#emReviseBtn.is-loading::before,
+    button#emCustomListingBtn.is-loading::before {
       content: "";
       display: inline-block;
       width: 14px; height: 14px;
@@ -2647,6 +2649,14 @@
     .m-composer-action.translate { color: var(--m-c-accent); }
     .m-composer-action.translate.active { background: var(--m-c-accent); color: #fff; }
     .m-composer-action.attach.has-files { color: var(--m-c-accent); }
+    .m-composer-action.custom-listing { color: #0f766e; }
+    .m-composer-action.custom-listing.is-loading {
+      position: relative;
+      pointer-events: none;
+    }
+    .m-composer-action.custom-listing.is-loading .material-icons {
+      animation: em-spin 1s linear infinite;
+    }
     .m-composer-action.attach.has-files::after {
       content: attr(data-count);
       position: absolute; top: 2px; right: 2px;
@@ -4687,6 +4697,9 @@
           <div class="m-composer-actions">
             <button class="m-composer-action ai" id="mActionAi" title="AI Draft">
               <i class="material-icons">auto_awesome</i>
+            </button>
+            <button class="m-composer-action custom-listing" id="mActionCustomListing" title="Generate custom listing">
+              <i class="material-icons">add_business</i>
             </button>
             <button class="m-composer-action attach" id="mActionAttach" title="Attach photo">
               <i class="material-icons">attach_file</i>
@@ -10478,6 +10491,7 @@
               <div class="em-compose-bar">
                 <button id="emAiDraftBtn" class="ai" title="Generate a reply with AI"><i class="material-icons">auto_awesome</i><span>AI Draft</span></button>
                 <button id="emAttachBtn" title="Attach image (or drag &amp; drop, or paste)"><i class="material-icons">attach_file</i>Attach</button>
+                <button id="emCustomListingBtn" title="Create a real Etsy custom listing from this conversation"><i class="material-icons">add_business</i><span>Custom Listing</span></button>
                 <button id="emSendEtsyBtn" class="send-etsy" title="Queue this draft for the browser extension to send via Etsy"><i class="material-icons">send</i>Send via Etsy</button>
               </div>
             </div>
@@ -10745,6 +10759,7 @@
 
       // ─── M4: AI draft wiring ──────────────────────────────────────────
       $("emAiDraftBtn")?.addEventListener("click", () => generateAiDraft(t.id, "initial"));
+      $("emCustomListingBtn")?.addEventListener("click", () => generateManualCustomListing(t.id));
       $("emAiFollowUpBtn")?.addEventListener("click", () => generateAiDraft(t.id, "follow_up"));
       $("emReviseBtn")?.addEventListener("click", () => {
         const instructions = ($("emReviseInput")?.value || "").trim();
@@ -10768,6 +10783,104 @@
 
       // M3: populate customer panel
       hydrateCustomerPanel(t);
+    }
+
+    // ─── Manual Custom Listing creation ────────────────────────────────
+    async function generateManualCustomListing(threadId) {
+      if (!threadId) return false;
+      const desktopBtn = $("emCustomListingBtn");
+      const mobileBtn  = document.getElementById("mActionCustomListing");
+      const desktopLabel = desktopBtn?.querySelector("span");
+      const oldDesktopLabel = desktopLabel?.textContent || "Custom Listing";
+      const sendBtn = $("emSendEtsyBtn");
+      const mobileSend = document.getElementById("mComposerSend");
+
+      const t = (state.threads || []).find(x => x && x.id === threadId) || { id: threadId };
+      const existingUrl = t.customListingUrl || "";
+      if (existingUrl && !confirm("This thread already has a custom listing. Create another real Etsy listing anyway?")) {
+        return false;
+      }
+      if (!existingUrl && !confirm("Create a real Etsy custom listing from this conversation?\n\nThe system will use the conversation, Sales context, and attached/reference images where available. Missing details will be filled as best as possible so you can edit the Etsy listing afterward.")) {
+        return false;
+      }
+
+      try {
+        if (desktopBtn) { desktopBtn.disabled = true; desktopBtn.classList.add("is-loading"); }
+        if (desktopLabel) desktopLabel.textContent = "Creating…";
+        if (mobileBtn) { mobileBtn.disabled = true; mobileBtn.classList.add("is-loading"); mobileBtn.title = "Creating custom listing…"; }
+        if (sendBtn) sendBtn.disabled = true;
+        if (mobileSend) mobileSend.disabled = true;
+        toast("Creating custom listing…");
+
+        // Optimistic local status so the operator sees immediate feedback.
+        const idx = state.threads.findIndex(x => x && x.id === threadId);
+        if (idx >= 0) {
+          state.threads[idx] = {
+            ...state.threads[idx],
+            customListingStatus: "creating",
+            customListingManualMode: true
+          };
+          if (state.selectedId === threadId) renderDetail(state.threads[idx]);
+        }
+
+        const res = await api("etsyMailListingCreator-background", {
+          method: "POST",
+          body: {
+            threadId,
+            manual: true,
+            manualCreate: true,
+            requestedBy: getEmployeeName() || "operator"
+          }
+        });
+
+        // Fetch the fresh thread/draft because the background function writes
+        // customListingUrl + a visible draft reply containing that URL.
+        const [freshThread, freshDraft] = await Promise.all([
+          api("firestoreProxy", { query: { op: "get", coll: THREADS_COLL, id: threadId } }).catch(() => null),
+          api("firestoreProxy", { query: { op: "get", coll: DRAFTS_COLL,  id: "draft_" + threadId } }).catch(() => null)
+        ]);
+        const threadDoc = freshThread && freshThread.doc ? { id: threadId, ...freshThread.doc } : null;
+        const draftDoc  = freshDraft  && freshDraft.doc  ? freshDraft.doc : null;
+
+        if (threadDoc) {
+          const j = state.threads.findIndex(x => x && x.id === threadId);
+          if (j >= 0) state.threads[j] = threadDoc;
+          if (state.selectedId === threadId) renderDetail(threadDoc);
+        }
+
+        const replyText = (draftDoc && draftDoc.text) || (threadDoc && threadDoc.customListingReplyText) || "";
+        if (replyText) {
+          const ta = $("emDraftText");
+          if (ta) { ta.value = replyText; autoSizeDraftTextarea(ta); }
+          if (threadDoc && typeof renderCustomListingReplyPreview === "function") {
+            renderCustomListingReplyPreview(threadDoc, draftDoc || {}, replyText);
+          }
+          const mta = document.getElementById("mComposerTextarea");
+          if (mta) {
+            mta.value = replyText;
+            if (typeof mAutoGrow === "function") mAutoGrow(mta);
+          }
+        }
+
+        await fetchThreadListNow().catch(() => {});
+        await fetchCountsNow().catch(() => {});
+        if (state.selectedId === threadId) fetchMessagesNow(threadId).catch(() => {});
+
+        const url = (threadDoc && threadDoc.customListingUrl) || res.listingUrl || "";
+        toast(url ? "Custom listing created and loaded into reply" : "Custom listing created");
+        return true;
+      } catch (e) {
+        console.error("manual custom listing failed:", e);
+        toast("Custom listing failed: " + (e.message || "unknown"));
+        return false;
+      } finally {
+        if (desktopBtn) { desktopBtn.disabled = false; desktopBtn.classList.remove("is-loading"); }
+        if (desktopLabel) desktopLabel.textContent = oldDesktopLabel;
+        if (mobileBtn) { mobileBtn.disabled = false; mobileBtn.classList.remove("is-loading"); mobileBtn.title = "Generate custom listing"; }
+        if (sendBtn) sendBtn.disabled = false;
+        const mta = document.getElementById("mComposerTextarea");
+        if (mobileSend) mobileSend.disabled = !(((mta && mta.value) || "").trim() || (typeof mGetCurrentAttachments === "function" && mGetCurrentAttachments().length > 0));
+      }
     }
 
     // ─── M4: AI draft generation ────────────────────────────────────────
@@ -18690,6 +18803,25 @@
           send.disabled = !((ta.value || "").trim() || mGetCurrentAttachments().length > 0);
         }
       });
+
+      // Manual custom listing creation — parity with desktop.
+      const mCustomListingBtn = document.getElementById("mActionCustomListing");
+      if (mCustomListingBtn) {
+        mCustomListingBtn.addEventListener("click", async () => {
+          const tid = state.selectedId;
+          if (!tid) return;
+          if (typeof generateManualCustomListing === "function") {
+            try { await generateManualCustomListing(tid); }
+            catch (e) { console.error("[mobile] manual custom listing failed:", e); }
+          }
+          const desktopTa = document.getElementById("emDraftText");
+          if (desktopTa) {
+            ta.value = desktopTa.value || ta.value || "";
+            mAutoGrow(ta);
+            send.disabled = !((ta.value || "").trim() || mGetCurrentAttachments().length > 0);
+          }
+        });
+      }
 
       // Photo attach — open native picker
       document.getElementById("mActionAttach").addEventListener("click", () => {

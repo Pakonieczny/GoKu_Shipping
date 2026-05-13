@@ -53,6 +53,7 @@ const SALES_COLL    = "EtsyMail_SalesContext";   // v4.3 — reset on completion
 const TEMPLATES_DOC = "listingTemplates";
 
 const ALLOWED_FAMILIES = ["necklace", "huggie", "stud"];
+const MANUAL_LISTING_DEFAULT_PRICE_USD = Math.max(1, Number(process.env.ETSYMAIL_MANUAL_LISTING_DEFAULT_PRICE_USD || 1));
 
 const AI_MODEL =
   process.env.ETSYMAIL_LISTING_CREATOR_MODEL ||
@@ -91,7 +92,174 @@ function clampStr(s, n) {
   return String(s == null ? "" : s).slice(0, n);
 }
 
+
+function positiveMoney(v) {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function firstPositiveMoney(...vals) {
+  for (const v of vals) {
+    const n = positiveMoney(v);
+    if (n != null) return n;
+  }
+  return null;
+}
+
+function extractMoneyFromText(text) {
+  const s = String(text || "");
+  const matches = [...s.matchAll(/\$\s*([0-9]{1,5})(?:\.([0-9]{1,2}))?/g)];
+  if (!matches.length) return null;
+  // Use the last quoted amount in the conversation. In sales threads, the
+  // latest dollar amount is normally the current offer the customer accepted.
+  const m = matches[matches.length - 1];
+  const dollars = Number(m[1]);
+  const cents = m[2] ? Number("0." + m[2].padEnd(2, "0")) : 0;
+  const total = dollars + cents;
+  return Number.isFinite(total) && total > 0 ? total : null;
+}
+
+function normalizeManualFamily(v) {
+  const f = String(v || "").toLowerCase().trim();
+  if (ALLOWED_FAMILIES.includes(f)) return f;
+  if (/\bstud\b|studs|post\s*earrings?/.test(f)) return "stud";
+  if (/\bhuggie\b|huggies|hoops?|earrings?/.test(f)) return "huggie";
+  if (/necklace|chain|pendant|charm/.test(f)) return "necklace";
+  return "";
+}
+
+function inferFamilyFromConversation(text) {
+  const s = String(text || "").toLowerCase();
+  if (/\bstud\b|studs|post\s*earrings?/.test(s)) return "stud";
+  if (/\bhuggie\b|huggies|hoops?|earrings?/.test(s)) return "huggie";
+  if (/necklace|chain|pendant|charm/.test(s)) return "necklace";
+  return "necklace";
+}
+
+function buildManualResolverResult({ family, priceUsd, sales, threadContext, inferredPrice }) {
+  const existing = (sales && (sales.lastResolverResult || sales._lastResolverResult)) || null;
+  if (existing && typeof existing === "object") {
+    return {
+      ...existing,
+      success : existing.success !== false,
+      family  : normalizeManualFamily(existing.family) || family,
+      total   : positiveMoney(existing.total) || priceUsd,
+      manualGenerated: true,
+      manualFallback : true
+    };
+  }
+
+  const brief = threadContext
+    .map(m => String(m.text || "").trim())
+    .filter(Boolean)
+    .slice(-4)
+    .join(" | ")
+    .slice(0, 500);
+
+  return {
+    success: true,
+    family,
+    quantity: 1,
+    total: priceUsd,
+    subtotal: priceUsd,
+    perPieceAfterModifier: priceUsd,
+    bulkTier: null,
+    rush: null,
+    shippingSummary: null,
+    escalations: [],
+    manualGenerated: true,
+    manualFallback: true,
+    missingFieldsAllowed: true,
+    priceWasInferred: !!inferredPrice,
+    lineItems: [
+      {
+        code: "MANUAL-CUSTOM",
+        label: brief || "Manual custom listing generated from the conversation",
+        priceUsd,
+        priceQuote: true,
+        isModifier: false
+      }
+    ]
+  };
+}
+
 // ─── 1. Load thread data ─────────────────────────────────────────────────
+
+// ─── 1a. Manual listing fallback loader ─────────────────────────────────────
+
+async function loadManualThreadData(threadId) {
+  const threadRef = db.collection(THREADS_COLL).doc(threadId);
+  const draftRef  = db.collection(DRAFTS_COLL).doc(`draft_${threadId}`);
+  const salesRef  = db.collection(SALES_COLL).doc(threadId);
+
+  const [threadSnap, draftSnap, salesSnap] = await Promise.all([
+    threadRef.get(), draftRef.get(), salesRef.get()
+  ]);
+  if (!threadSnap.exists) throw new Error(`Thread not found: ${threadId}`);
+
+  const thread = threadSnap.data() || {};
+  const draft  = draftSnap.exists ? (draftSnap.data() || {}) : {};
+  const sales  = salesSnap.exists ? (salesSnap.data() || {}) : {};
+  const threadContext = await loadThreadContext(threadId);
+  const contextText = [
+    thread.subject,
+    thread.snippet,
+    thread.lastMessageText,
+    draft.text,
+    ...(threadContext || []).map(m => m && m.text)
+  ].filter(Boolean).join("\n");
+
+  const family =
+    normalizeManualFamily(thread.acceptedQuoteFamily) ||
+    normalizeManualFamily(thread.lastResolverResult && thread.lastResolverResult.family) ||
+    normalizeManualFamily(sales.family) ||
+    normalizeManualFamily(sales.knownFacts && sales.knownFacts.family) ||
+    normalizeManualFamily(sales.lastResolverResult && sales.lastResolverResult.family) ||
+    inferFamilyFromConversation(contextText);
+
+  const inferredTextPrice = extractMoneyFromText(contextText);
+  const priceUsd = firstPositiveMoney(
+    thread.acceptedQuoteUsd,
+    thread.lastResolverResult && thread.lastResolverResult.total,
+    sales.totalQuotedUsd,
+    sales.acceptedQuoteUsd,
+    sales.knownFacts && sales.knownFacts.acceptedPriceUsd,
+    sales.lastResolverResult && sales.lastResolverResult.total,
+    sales._lastResolverResult && sales._lastResolverResult.total,
+    inferredTextPrice,
+    MANUAL_LISTING_DEFAULT_PRICE_USD
+  );
+
+  const lastResolverResult = thread.lastResolverResult ||
+    buildManualResolverResult({ family, priceUsd, sales, threadContext, inferredPrice: inferredTextPrice != null });
+
+  const preparedThread = {
+    ...thread,
+    customerAccepted   : true,
+    acceptedQuoteUsd   : priceUsd,
+    acceptedQuoteFamily: family,
+    lastResolverResult,
+    manualListingMode  : true
+  };
+
+  if (!preparedThread.etsyConversationUrl && /^etsy_conv_\d+$/.test(threadId)) {
+    preparedThread.etsyConversationUrl = `https://www.etsy.com/your/conversations/${threadId.replace(/^etsy_conv_/, "")}`;
+  }
+
+  const referenceAttachments = await collectThreadImageAttachments(threadId, draft);
+
+  await threadRef.set({
+    acceptedQuoteUsd      : priceUsd,
+    acceptedQuoteFamily   : family,
+    lastResolverResult,
+    customListingStatus   : "creating",
+    customListingManualMode: true,
+    customListingManualRequestedAt: FV.serverTimestamp(),
+    updatedAt             : FV.serverTimestamp()
+  }, { merge: true });
+
+  return { thread: preparedThread, draft, referenceAttachments, family };
+}
 
 async function loadThreadData(threadId) {
   const threadRef = db.collection(THREADS_COLL).doc(threadId);
@@ -977,6 +1145,71 @@ async function sendListingUrlToCustomer({ threadId, etsyConversationUrl, listing
 
 // ─── 9. Idempotency markers ──────────────────────────────────────────────
 
+async function markManualSuccess({ threadId, listingId, listingUrl, generated, imagesUploaded, salesSynopsis, family, priceUsd }) {
+  const threadRef = db.collection(THREADS_COLL).doc(threadId);
+  const draftId = "draft_" + threadId;
+  const replyText = buildListingDeliveryMessage(family, listingUrl);
+
+  await Promise.all([
+    threadRef.set({
+      customListingId          : String(listingId),
+      customListingUrl         : listingUrl,
+      customListingCreatedAt   : FV.serverTimestamp(),
+      customListingStatus      : "created",
+      customListingManualMode  : true,
+      customListingManualCreatedAt: FV.serverTimestamp(),
+      customListingReplyText   : replyText,
+      customListingReplyDraftId: draftId,
+      customListingReplyStatus : "draft_ready",
+      customListingError       : FV.delete(),
+      customListingErrorAt     : FV.delete(),
+      customListingErrorCount  : FV.delete(),
+      acceptedQuoteUsd         : priceUsd,
+      acceptedQuoteFamily      : family,
+      salesSynopsis            : salesSynopsis || `Manual custom listing created. Review the Etsy listing, edit any missing details, then send the visible listing reply manually if appropriate.`,
+      needsOperatorReview      : false,
+      needsOperatorReviewReason: null,
+      updatedAt                : FV.serverTimestamp()
+    }, { merge: true }),
+    db.collection(DRAFTS_COLL).doc(draftId).set({
+      draftId,
+      threadId,
+      status                  : "draft",
+      text                    : replyText,
+      generatedByAI           : false,
+      generatedBySalesAgent   : false,
+      customListingManualMode : true,
+      customListingId         : String(listingId),
+      customListingUrl        : listingUrl,
+      customListingReplyStatus: "draft_ready",
+      aiMeta: {
+        generatedByAI: false,
+        source       : "manual_listing_creator",
+        listingId    : String(listingId),
+        listingUrl,
+        family
+      },
+      updatedAt               : FV.serverTimestamp(),
+      createdAt               : FV.serverTimestamp()
+    }, { merge: true })
+  ]);
+
+  await db.collection(AUDIT_COLL).add({
+    threadId,
+    eventType : "custom_listing_manual_created",
+    actor     : "operator:manual-listing-button",
+    payload   : {
+      listingId      : String(listingId),
+      listingUrl,
+      priceUsd,
+      family,
+      imagesUploaded,
+      titlePreview   : generated ? clampStr(generated.title, 140) : "(resumed — no fresh title)"
+    },
+    createdAt : FV.serverTimestamp()
+  });
+}
+
 async function markSuccess({ threadId, listingId, listingUrl, generated, imagesUploaded, salesSynopsis, isResume }) {
   const threadRef = db.collection(THREADS_COLL).doc(threadId);
 
@@ -1256,13 +1489,22 @@ exports.handler = async function (event) {
 
   try {
     const body = event && event.body ? JSON.parse(event.body) : {};
+    const manualMode = body.manual === true || body.manualCreate === true || body.mode === "manual";
     threadId = String(body.threadId || "").trim();
-    if (!threadId || !/^etsy_conv_\d+$/.test(threadId)) {
+    const validThreadId = manualMode
+      ? /^etsy_conv_[A-Za-z0-9_-]+$/.test(threadId)
+      : /^etsy_conv_\d+$/.test(threadId);
+    if (!threadId || !validThreadId) {
       return { statusCode: 400, headers: CORS, body: JSON.stringify({ error: "Invalid threadId" }) };
     }
 
-    // 1. Load thread + draft + family
-    const { thread, referenceAttachments, family } = await loadThreadData(threadId);
+    // 1. Load thread + draft + family. Manual mode intentionally accepts
+    // incomplete sales context and fills the minimum Etsy-required fields
+    // from the conversation/SalesContext so the operator can edit the live
+    // listing afterward.
+    const { thread, referenceAttachments, family } = manualMode
+      ? await loadManualThreadData(threadId)
+      : await loadThreadData(threadId);
 
     const attempts = Number(thread.customListingAttempts || 0);
     if (attempts > 1) {
@@ -1278,7 +1520,7 @@ exports.handler = async function (event) {
     //    cleaned up before firing us, but if we got here anyway, don't
     //    re-process). customListingStatus="created" is the same signal
     //    in the listing-pipeline state machine.
-    if (thread.status === "sales_completed" || thread.customListingStatus === "created") {
+    if (!manualMode && (thread.status === "sales_completed" || thread.customListingStatus === "created")) {
       console.log(`[listingCreator] thread ${threadId} already terminal (status=${thread.status}, customListingStatus=${thread.customListingStatus}), bailing.`);
       // Best-effort: align customListingStatus to "created" if it drifted.
       if (thread.customListingStatus !== "created") {
@@ -1401,31 +1643,49 @@ exports.handler = async function (event) {
     const freshThread = (await db.collection(THREADS_COLL).doc(threadId).get()).data() || thread;
     const fullThreadContext = await loadFullThreadContext(threadId);
 
-    const [, salesSynopsis] = await Promise.all([
-      sendListingUrlToCustomer({
-        threadId,
-        etsyConversationUrl: thread.etsyConversationUrl,
-        listingUrl,
-        family,
-        listingId: newListingId
-      }),
-      generateSalesSynopsis({
+    let salesSynopsis;
+    if (manualMode) {
+      salesSynopsis = await generateSalesSynopsis({
         thread: freshThread, family, listingId: newListingId, listingUrl, fullThreadContext
-      })
-    ]);
+      });
+      await markManualSuccess({
+        threadId,
+        listingId     : newListingId,
+        listingUrl,
+        generated,
+        imagesUploaded,
+        salesSynopsis,
+        family,
+        priceUsd      : thread.acceptedQuoteUsd
+      });
+    } else {
+      const [, generatedSynopsis] = await Promise.all([
+        sendListingUrlToCustomer({
+          threadId,
+          etsyConversationUrl: thread.etsyConversationUrl,
+          listingUrl,
+          family,
+          listingId: newListingId
+        }),
+        generateSalesSynopsis({
+          thread: freshThread, family, listingId: newListingId, listingUrl, fullThreadContext
+        })
+      ]);
+      salesSynopsis = generatedSynopsis;
 
-    // 10. Success markers + audit. This write also flips thread.status to
-    //     "sales_completed" — a terminal status the sales agent honors,
-    //     and the dashboard's "Completed Sales" menu filters on.
-    await markSuccess({
-      threadId,
-      listingId     : newListingId,
-      listingUrl,
-      generated,
-      imagesUploaded,
-      salesSynopsis,
-      isResume
-    });
+      // 10. Success markers + audit. This write also flips thread.status to
+      //     "sales_completed" — a terminal status the sales agent honors,
+      //     and the dashboard's "Completed Sales" menu filters on.
+      await markSuccess({
+        threadId,
+        listingId     : newListingId,
+        listingUrl,
+        generated,
+        imagesUploaded,
+        salesSynopsis,
+        isResume
+      });
+    }
 
     return {
       statusCode: 200,
@@ -1436,6 +1696,7 @@ exports.handler = async function (event) {
         listingId : String(newListingId),
         listingUrl,
         resumed   : isResume,
+        manual    : !!manualMode,
         synopsisChars: (salesSynopsis || "").length,
         elapsedMs : Date.now() - tStart
       })
