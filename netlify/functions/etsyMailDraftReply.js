@@ -86,6 +86,29 @@ try {
   searchListings = null;
 }
 
+// v5.20 — Collateral search for line sheets, product cards, etc.
+// Parallel import to the sales agent's pattern. If etsyMailCollateral
+// isn't deployed yet, the get_collateral tool returns a graceful empty
+// result rather than crashing.
+let searchCollateral = null;
+try {
+  ({ searchCollateral } = require("./etsyMailCollateral"));
+} catch (e) {
+  console.warn("draftReply: etsyMailCollateral not loadable — get_collateral tool will return graceful empty.", e.message);
+  searchCollateral = null;
+}
+
+// v5.20 — URL safety filter for collateral matches. Operator-uploaded
+// collateral with placeholder URLs ("REPLACE_WITH_PUBLIC_URL") or test
+// URLs ("example.com") must not be served to customers. Mirror of the
+// sales agent's isCustomerVisibleUrl helper.
+function isCustomerVisibleUrl(url) {
+  return typeof url === "string"
+    && /^https?:\/\//i.test(url)
+    && !/REPLACE_WITH_PUBLIC_URL/i.test(url)
+    && !/example\.com/i.test(url);
+}
+
 const db     = admin.firestore();
 const bucket = admin.storage().bucket();
 const FV     = admin.firestore.FieldValue;
@@ -1659,7 +1682,7 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
 
 --- TOOL USE ---
 
-You have five tools:
+You have six tools:
   - lookup_order_tracking(receiptId) — returns tracking code, carrier,
     ship date, delivery status for a specific order. Use this whenever
     the customer asks about tracking/where their order is/has it shipped.
@@ -1676,7 +1699,18 @@ You have five tools:
   - search_shop_listings(query) — searches the mirrored active Etsy
     listing catalog. Use it for pre-purchase availability questions like
     "do you sell X?", "do you have this in silver?", or "how much is Y?"
-    when the thread did not route into sales mode.
+    when the thread did not route into sales mode. ALSO use it when a
+    customer names specific shop products they want to order with
+    standard variants (see POINTING TO EXISTING LISTINGS below) — the
+    URLs you return become the answer.
+  - get_collateral(category, kind?, keywords?) — retrieves operator-
+    curated collateral (line sheets, product cards, lookbooks, image
+    sets, care guides) by category. Returns URLs you reference in your
+    reply. Use this whenever a pre-purchase question is better answered
+    with a reference attachment than typed-out prose (see WHEN TO
+    SEND A LINE SHEET below). Useful categories: "necklace", "huggie",
+    "stud", "metals_education", "aftercare". For line sheets
+    specifically, call with kind:"line_sheet".
   - compose_draft_reply(...) — THE TERMINAL TOOL. Call this exactly
     ONCE when you've completed all lookups and are ready to commit the
     reply. This ends the draft generation.
@@ -1693,14 +1727,102 @@ Workflow:
   5. If the active question is a product availability, variant, or price
      question and no exact listing is already clear from the thread,
      call search_shop_listings before suggesting products or prices
-  6. Call compose_draft_reply with the final text + reasoning +
+  6. If the active question is about sizes, materials, available variants,
+     or any other "what's available" topic that benefits from a reference
+     attachment, call get_collateral(category, kind:"line_sheet") and
+     include the returned URL in your reply
+  7. Call compose_draft_reply with the final text + reasoning +
      referenced receiptIds + any listing suggestions
 
-When you've generated a tracking image, mention it naturally in your
-reply — "I've attached the current tracking details below" — and then
-explain what the customer should understand from the timeline (the
-scan events, expected delivery, what's normal). Don't just dump the
-image; contextualize it.
+WHEN TO SEND A LINE SHEET (use get_collateral):
+
+A line sheet is a single reference image showing every size, metal,
+chain length, and engraving option for a product family on one page.
+Operators send it constantly because one image answers a paragraph of
+follow-up questions before they get asked. The following patterns
+should trigger a get_collateral(category, kind:"line_sheet") call:
+
+  - "What sizes do your charms come in?"
+  - "What size are your <design> charms?"
+  - "Do you have a chart / sheet / breakdown of the options?"
+  - "What metals do you offer?" (when scoped to a specific family)
+  - "What chain lengths can I pick from?"
+  - "Show me what's available" / "what are my options"
+  - "I'm not sure which one to pick" (after they've named the family)
+
+Identify the family from the customer's message or the listing they
+linked. "Charms" / "pendant" / "necklace" → category "necklace".
+"Huggies" / "hoops" → category "huggie". "Studs" / "earrings"
+(non-hoop) → category "stud". Then call:
+
+  get_collateral({ category: "<family>", kind: "line_sheet" })
+
+When matches come back, pick the most-relevant one and include its
+URL in your reply naturally:
+
+  "Our standard necklace charms are 9-10mm. Here's our charm sheet
+  with all the sizes laid out: [URL]. Larger sizes are available if
+  you're after a specific size."
+
+Sending the line sheet does NOT count as a soft promise or holding
+reply — you're providing the actual reference the customer asked for.
+Mention it briefly, don't over-explain it. The operator's typical
+phrasing is "please see the attached sheet" or "here's our charm
+sheet" — one sentence, not a paragraph of description.
+
+If get_collateral returns no matches for the family, fall back to
+typing the answer in prose. Do NOT promise an attachment that
+doesn't exist (see the ATTACHMENT-CLAIM RULE below).
+
+POINTING TO EXISTING LISTINGS (use search_shop_listings):
+
+A common pattern: the customer names specific shop products they want
+to buy ("I'd like to order the theatre mask, the ram, and the mountain
+charm — in gold filled, 9-10mm, no engraving") and they're asking for
+standard variants that the listing itself offers. The right answer is
+NOT to compute a custom quote or escalate; it's to confirm the listings
+exist and provide the URLs.
+
+Trigger pattern:
+
+  - Customer names one or more shop products by their listing name or
+    description ("the theatre mask charm", "your ram zodiac pendant")
+  - Variants requested are standard listing options (gold filled,
+    sterling silver, 9-10mm, no engraving) — i.e., choices the customer
+    can make at checkout via the listing's dropdowns
+  - No customization signal: no engraving text, no custom metal mix,
+    no off-listing modifications, no "make me a bigger one", no
+    inspiration photo
+
+Workflow:
+
+  1. Call search_shop_listings(query) once per item — use the design
+     name as the query ("theatre mask charm", "ram zodiac charm",
+     "mountain charm")
+  2. If matches come back, pick the best one per item
+  3. Compose a brief reply with the URLs:
+
+       "Yes, you can order all three from the listings. Theatre Mask:
+       [URL]. Ram Charm: [URL]. Mountain Charm: [URL]. All three come
+       in 9-10mm gold filled — just pick the variants at checkout.
+       Many Thanks, CustomBrites"
+
+  4. Set confidence honestly. If all listings were found and the
+     customer's request is unambiguous, this is a high-confidence
+     reply. If any listing didn't return a match, lower confidence and
+     mention what you couldn't find rather than inventing a URL.
+
+What this is NOT: a custom quote workflow. Don't try to compute pricing
+yourself, don't reference line-sheet codes, don't ask follow-up
+clarifying questions about specs the customer already gave you. The
+listings have all that info on them; the customer picks at checkout.
+
+If the customer ASKS for customization on top ("can you do the theatre
+mask in 12mm instead of 9-10mm?", "with my mom's name engraved"), the
+thread should re-route through the sales agent on its next turn. For
+this turn, answer the customization question briefly and note that
+custom sizing/personalization is what we'd send a custom listing for —
+the intent classifier will pick up the customization signal next time.
 
 ATTACHMENT-CLAIM RULE — ZERO TOLERANCE:
 You MUST NOT write phrases like "I've attached", "see attached", "find
@@ -1927,6 +2049,23 @@ const TOOL_SPECS = [
     }
   },
   {
+    name: "get_collateral",
+    description: "Retrieve operator-curated collateral (line sheets, product cards, lookbooks, image sets, terms/care/material guides) by category. Returns URLs you can reference in your reply. Use this for pre-purchase product information that's better answered with an attached reference than typed-out prose: 'what sizes do your charms come in', 'what metals do you offer', 'do you have a chart showing the necklace options', 'how do I care for sterling silver'. Useful categories: 'necklace', 'huggie', 'stud', 'metals_education', 'aftercare'. The line sheet is the go-to attachment for any 'what's available' question — operators send it constantly because one image beats a paragraph of description.",
+    input_schema: {
+      type: "object",
+      properties: {
+        category: { type: "string", description: "The category to search within (e.g., 'necklace', 'metals_education')." },
+        kind: {
+          type: "string",
+          enum: ["line_sheet", "product_card", "lookbook", "image_set", "terms"],
+          description: "Optional. Filter by collateral kind."
+        },
+        keywords: { type: "array", items: { type: "string" }, description: "Optional. Extra keyword filter terms." }
+      },
+      required: ["category"]
+    }
+  },
+  {
     name: "compose_draft_reply",
     description: "Emit the final reply text that will be shown to the operator. Call this EXACTLY ONCE at the end of your reasoning/tool-use process. This ends the draft generation. Self-rate confidence and difficulty honestly — these scores drive the auto-reply pipeline (high confidence → auto-sent; low confidence → routed to human review). Do NOT inflate confidence to seem useful; under-confident is far less harmful than over-confident.",
     input_schema: {
@@ -2091,6 +2230,33 @@ function buildToolExecutors(ctx) {
         };
       } catch (e) {
         return { error: `search_shop_listings failed: ${e.message}`, query, matches: [] };
+      }
+    },
+
+    // v5.20 — Operator-curated collateral retrieval. Mirrors the sales
+    // agent's executor for consistency. Filters out non-customer-visible
+    // URLs (placeholders, test URLs) before returning matches.
+    get_collateral: async ({ category, kind, keywords }) => {
+      if (!searchCollateral) {
+        return {
+          matches: [],
+          note: "Collateral retrieval is not yet deployed."
+        };
+      }
+      try {
+        const result = await searchCollateral({
+          category: category ? String(category) : undefined,
+          kind: kind ? String(kind) : undefined,
+          keywords: Array.isArray(keywords) ? keywords : undefined,
+          limit: 5
+        });
+        if (result && Array.isArray(result.matches)) {
+          result.matches = result.matches.filter(m => m && isCustomerVisibleUrl(m.url));
+          result.count = result.matches.length;
+        }
+        return result;
+      } catch (e) {
+        return { matches: [], error: e.message };
       }
     },
 
