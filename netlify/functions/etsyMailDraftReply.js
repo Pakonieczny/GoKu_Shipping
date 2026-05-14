@@ -621,6 +621,20 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
         one, set ready_for_human_approval:true with a brief, honest
         synopsis rather than a meta-commentary reply.
 
+        On apologizing for "the delay" specifically: the shop's policy
+        is that a response within 30-40 minutes of the customer's most
+        recent inbound message is NOT considered late. If you're
+        composing a reply and the customer's last message was less
+        than 40 minutes ago, DO NOT include any apology for delay,
+        wait, slow response, or thanks-for-patience phrasing. There
+        is no delay to apologize for. Lead with the answer. The
+        TEMPORAL CONTEXT block above tells you when the customer's
+        latest message was sent; use it to calibrate. Apology phrasings
+        are allowed only when the gap genuinely exceeds 40 minutes,
+        and even then they should be brief ("Sorry for the wait — ")
+        and immediately followed by the actual answer, not a meta-
+        commentary preamble.
+
         The system blocks these phrasings via a soft-promise gate.
         Replies containing them will be force-routed to operator
         review, regardless of your other settings.
@@ -2718,6 +2732,68 @@ exports.handler = async (event) => {
       // here to keep the apology + answer combination legal.
     ];
 
+    // v5.18 — Time-aware delay-apology patterns.
+    //
+    // The AI must NOT apologize for being late when it isn't actually late.
+    // Shop policy: a response within 30-40 minutes of the customer's most
+    // recent inbound message is not considered late. So an apology like
+    // "apologies for the delay" or "thanks for your patience" is only
+    // legitimate when the elapsed time since the customer's last inbound
+    // message exceeds the non-late window. Below that window, apology
+    // language is a fake-courtesy tell that the model emits as a soft
+    // opener; we block it.
+    //
+    // Threshold: 40 minutes (the upper bound of the non-late window).
+    // Below 40 minutes → apology is unwarranted, flag it.
+    // 40 minutes or more → apology may be appropriate, don't flag.
+    // Gap unknown → flag conservatively (can't verify the apology is
+    // earned, so err toward not allowing it).
+    const NON_LATE_WINDOW_MS = 40 * 60 * 1000;  // 40 minutes
+
+    const DELAY_APOLOGY_PATTERNS = [
+      // "apologies for the delay" / "sorry for the delay" + variants
+      /\b(?:apologies?|sorry)\s+for\s+(?:the\s+)?(?:delay|wait|long\s+wait|slow\s+response)\b/i,
+      /\b(?:apologies?|sorry)\s+for\s+(?:the\s+)?late\s+(?:reply|response|message|getting\s+back)\b/i,
+      /\b(?:apologies?|sorry)\s+for\s+(?:the\s+)?delay\s+(?:getting\s+back|in\s+getting\s+back|in\s+responding|in\s+replying)\b/i,
+      // "apologies for keeping you waiting" / "sorry for keeping you waiting"
+      /\b(?:apologies?|sorry)\s+for\s+keeping\s+you\s+waiting\b/i,
+      // "sorry it took (so/this) long"
+      /\b(?:apologies?|sorry)\s+(?:it|that\s+it)\s+took\s+(?:so\s+|this\s+)?long\b/i,
+      // "thanks/thank you for your patience" — implies a delay required patience
+      /\bthanks?\s+(?:so\s+much\s+)?(?:you\s+)?for\s+(?:your\s+|the\s+)?patience\b/i,
+      /\bthank\s+you\s+(?:so\s+much\s+)?for\s+(?:your\s+)?patience\b/i,
+      // "thanks for waiting"
+      /\bthanks?\s+for\s+(?:bearing\s+with\s+us|hanging\s+in|waiting)\b/i,
+    ];
+
+    /**
+     * Compute the milliseconds elapsed since the customer's most recent
+     * inbound message. Walks `messages` backwards looking for the latest
+     * message where direction is NOT outbound and the timestamp can be
+     * resolved. Returns null if no inbound message is found or no
+     * timestamp can be parsed — callers should treat null as "unknown"
+     * and apply their own policy.
+     *
+     * Timestamp shape tolerated: Firestore Timestamp (with .toMillis()),
+     * a raw number of milliseconds, or absent. Mirrors the parsing
+     * pattern used elsewhere in this file for customer message age.
+     */
+    function _msSinceLatestInboundMessage(msgs) {
+      if (!Array.isArray(msgs) || !msgs.length) return null;
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        const m = msgs[i];
+        if (!m || typeof m !== "object") continue;
+        const isOutbound = m.direction === "outbound" || m.senderRole === "staff";
+        if (isOutbound) continue;
+        const ts = (m.timestamp && typeof m.timestamp.toMillis === "function" ? m.timestamp.toMillis() : null) ||
+                   (m.createdAt && typeof m.createdAt.toMillis === "function" ? m.createdAt.toMillis() : null) ||
+                   (typeof m.timestamp === "number" ? m.timestamp : null) ||
+                   (typeof m.createdAt === "number" ? m.createdAt : null);
+        if (ts) return Date.now() - ts;
+      }
+      return null;
+    }
+
     // Confidence threshold above which the draft would auto-send.
     // Below this, the model is implicitly signaling "this needs
     // review" and vague holding language is permitted.
@@ -2728,9 +2804,13 @@ exports.handler = async (event) => {
      *
      * @param {string} text                   The drafted reply text
      * @param {number} confidence             AI's self-rated confidence
+     * @param {number|null} msSinceLastInbound  Elapsed ms since customer's
+     *                                         latest inbound message (null
+     *                                         if unknown). Used to gate
+     *                                         delay-apology patterns.
      * @returns {Array<{type, match, message}>}  Violations (empty if clean)
      */
-    function checkSoftPromiseViolations(text, confidence) {
+    function checkSoftPromiseViolations(text, confidence, msSinceLastInbound) {
       if (!text || typeof text !== "string") return [];
       const violations = [];
       // Always-forbidden patterns: fire regardless of confidence
@@ -2758,6 +2838,30 @@ exports.handler = async (event) => {
               type   : "soft_promise_high_confidence",
               match  : m[0],
               message: `Reply contains handoff/forward-promise language ("${m[0]}") at high confidence. Either answer the customer from policy in this turn (see prompt sections 7 and 10), or lower confidence so the draft routes to operator review.`
+            });
+          }
+        }
+      }
+      // v5.18 — Time-aware delay-apology check. Fires when the reply
+      // contains apology-for-delay language AND the elapsed time since
+      // the customer's latest inbound message is under the non-late
+      // window (40 minutes), OR the gap is unknown (conservative). At
+      // 40+ minutes the apology may be earned, so we don't flag.
+      const isWithinNonLateWindow =
+           msSinceLastInbound === null
+        || msSinceLastInbound === undefined
+        || msSinceLastInbound < NON_LATE_WINDOW_MS;
+      if (isWithinNonLateWindow) {
+        for (const rx of DELAY_APOLOGY_PATTERNS) {
+          const m = text.match(rx);
+          if (m) {
+            const gapDesc = msSinceLastInbound == null
+              ? "unknown (no inbound message timestamp resolved)"
+              : `${Math.round(msSinceLastInbound / 60000)} minutes since the customer's last message`;
+            violations.push({
+              type   : "unwarranted_delay_apology",
+              match  : m[0],
+              message: `Reply contains a delay-apology phrasing ("${m[0]}") but the gap is ${gapDesc}, which is under the 40-minute non-late window. The AI should NOT apologize for being late when it isn't. Remove the apology and lead with the actual answer.`
             });
           }
         }
@@ -2933,8 +3037,14 @@ exports.handler = async (event) => {
     // operator review, stamp aiSoftPromiseViolations on the draft so
     // the inbox UI can show what fired, and append a reasoning note.
     // Mirrors the attachment-claim mismatch handling above.
+    //
+    // v5.18 — Compute the elapsed time since the customer's latest
+    // inbound message so the gate can decide whether apology-for-delay
+    // phrasings are warranted (>= 40 minutes) or fake-courtesy stalling
+    // (< 40 minutes, or gap unknown).
+    const _msSinceLastInbound = _msSinceLatestInboundMessage(messages);
     const _softPromiseViolations = checkSoftPromiseViolations(
-      parsed.text, parsed.confidence
+      parsed.text, parsed.confidence, _msSinceLastInbound
     );
     if (_softPromiseViolations.length) {
       console.warn(
