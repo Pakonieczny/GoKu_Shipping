@@ -584,6 +584,83 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
         didn't request. Rule of thumb: if you're explaining something
         they already knew, delete it.
 
+      - MATCH THE CONVERSATIONAL REGISTER. Read the shop's recent
+        outbound messages in this thread. Match their length, tone,
+        and degree of formality. If the shop has been answering in
+        single-sentence casual replies ("Sorry! We are sold out of
+        that chain!", "We can do the large paper clip chain at the
+        top of your photo!"), do NOT suddenly write a three-paragraph
+        formal reply with apologies and meta-commentary. If the shop
+        has been more detailed in earlier messages, you have more
+        latitude, but always lean shorter rather than longer. A
+        customer who's been getting quick one-line answers will read
+        a sudden long-form reply as a tonal break, often interpreted
+        as "something is wrong" or "this just got escalated to someone
+        more formal." That's almost never the impression you want.
+
+      - ANSWER, DON'T META-COMMENT. Never write a reply that DESCRIBES
+        what you're about to do instead of just doing it. Forbidden
+        patterns, all of which read as stalling rather than helping:
+
+           "Your questions are a little tangled, so let us..."
+           "Let us look at the listings together and we'll come back with..."
+           "We want to make sure we point you to the right path..."
+           "Apologies for the delay getting back to you" (when there's no actual delay)
+           "Let me/us walk through this with you..."
+           "We need to take a step back and..."
+           "First, let me address X, then Y, then Z..."
+           "Let us pull this together and follow up with..."
+           "We'll review the conversation and circle back with..."
+           "Let us make sure we have the full picture before..."
+
+        These are stalling replies that promise a future answer
+        instead of giving one. Either you can answer in this turn or
+        you can escalate; there is no "I'll think about it out loud"
+        option. If you find yourself about to write one of these, ask:
+        what's the actual answer? Write that instead. If there isn't
+        one, set ready_for_human_approval:true with a brief, honest
+        synopsis rather than a meta-commentary reply.
+
+        The system blocks these phrasings via a soft-promise gate.
+        Replies containing them will be force-routed to operator
+        review, regardless of your other settings.
+
+      - REFERENCE WHAT THE CUSTOMER SENT. When the customer has
+        attached a photo, linked a listing, or made a specific decision
+        in a prior turn, reference it directly in your reply. "The
+        chain in your screenshot" / "the listing you linked" / "the
+        bracelet you picked" / "the engraving you specified" tells the
+        customer you read their message and know what they're talking
+        about. Don't use vague pronouns ("that one", "this option",
+        "the item we discussed") when a specific reference is
+        available. The reference itself is also part of brevity: "the
+        chain in your screenshot" is shorter AND clearer than "the
+        thinner option I believe you were asking about."
+
+      - SOMETIMES THE RIGHT REPLY IS A SHORT ONE OR NONE. If the
+        shop's most recent messages have already answered the
+        customer's open questions and the conversation is now waiting
+        on the customer's next decision (their choice between options,
+        their confirmation, their next move), there may be no useful
+        new reply to draft. In that case, two acceptable outcomes:
+
+           (a) A very short nudge if one would help — e.g., "Just let
+               us know which chain you'd like and we'll send the
+               custom listing." One sentence, no preamble, signed off.
+
+           (b) Set confidence low (≤ 0.4) with confidenceReasoning
+               explaining "shop has already answered open questions;
+               conversation awaiting customer's choice — operator can
+               decide whether to send a nudge or wait." The draft routes
+               to operator review and the operator decides whether to
+               ship a one-line nudge, ship nothing, or wait.
+
+        Do NOT manufacture a reply that summarizes what's already been
+        said, re-asks questions the customer has already answered, or
+        offers to "consolidate" / "pull together" / "clarify" things
+        the shop already clarified in prior turns. The customer reads
+        the whole thread; you don't need to recap it for them.
+
       - PERSONAL TOUCH — KEEP IT BUSINESS-LIKE: When a customer mentions
         personal context (a trip, an event, a family member, a holiday,
         a hobby), DO NOT comment on it, congratulate them, send wishes,
@@ -2604,18 +2681,41 @@ exports.handler = async (event) => {
       /\bI['\u2019]?ll\s+flag\s+(?:this|that|your|the)\s+(?:order|conversation|thread)\b/i,
       // "I'm passing this to the team" / "I'll pass this on to the team"
       /\bI['\u2019]?(?:m|ll)\s+pass(?:ing)?\s+(?:this|that|these|it|your\s+\w+)\s+(?:on\s+)?to\s+the\s+team\b/i,
+      // v5.17 — Meta-commentary "we'll come back / circle back with"
+      // pattern. Promises future analysis instead of providing it.
+      // From the operator screenshot: "we'll come back with a clear
+      // answer on Figaro vs the other chain options..."
+      /\b(?:we['\u2019]?ll|we\s+will)\s+(?:come\s+back|circle\s+back|get\s+back\s+to\s+you|follow\s+up\s+with\s+you)\s+(?:with|on|about)\b/i,
     ];
 
     const SOFT_PROMISE_PATTERNS = [
       // I/we + forward-promise verb
-      /\bwe['\u2019]?ll\s+(send|follow up|get back|check|pull up|reach out|have those|be in touch|look into|review this)\b/i,
-      /\bI['\u2019]?ll\s+(send|follow up|get back|check|pull up|reach out|have those|be in touch|flag|forward|escalate|review)\b/i,
-      // Let me/us + investigative verb
-      /\blet\s+(us|me)\s+(check|pull up|put together|look into|see if|look at|investigate)\b/i,
+      /\bwe['\u2019]?ll\s+(send|follow up|get back|check|pull up|reach out|have those|be in touch|look into|review this|come back|circle back)\b/i,
+      /\bI['\u2019]?ll\s+(send|follow up|get back|check|pull up|reach out|have those|be in touch|flag|forward|escalate|review|come back|circle back)\b/i,
+      // Let me/us + investigative verb (extended for v5.17 meta-commentary)
+      /\blet\s+(?:us|me)\s+(?:check|pull up|put together|look into|see if|look at|investigate|walk you through|walk through|take a step back|make sure we|pull this together|review the conversation)\b/i,
       // "Get back to you" framings
       /\bget(?:ting)?\s+(?:back|those|that)\s+(?:to|over\s+to)\s+you\b/i,
       // "Have someone reach out"
       /\bhave\s+(?:someone|a\s+team\s+member)\s+(?:reach\s+out|follow\s+up|get\s+in\s+touch|message\s+you)\b/i,
+      // v5.17 — Meta-commentary patterns that describe future analysis
+      // instead of providing it. These showed up as the dominant
+      // failure mode in mid-conversation drafts where the shop had
+      // already been answering directly.
+      /\b(?:we|let\s+us)\s+want\s+to\s+make\s+sure\s+we\s+(?:point|guide|walk|get|have)\b/i,
+      /\bpoint\s+you\s+(?:to|in)\s+the\s+(?:right|correct)\s+(?:path|direction)\b/i,
+      /\bsend\s+you\s+in\s+circles\b/i,
+      /\bwe\s+(?:want|need)\s+to\s+(?:take\s+a\s+step\s+back|step\s+back)\b/i,
+      /\bbefore\s+we\s+(?:say|tell\s+you)\s+anything\s+specific\b/i,
+      // "Apologies for the delay" when used as a soft opener with no
+      // substantive answer to follow. We can't tell from regex whether
+      // there's a real delay or not, but pairing it with stalling
+      // language is a strong tell. The pattern fires when "apologies
+      // for the delay" appears alongside any other meta-commentary
+      // phrase; firing only on the combo keeps the false-positive rate
+      // down (a real apology + real answer is fine).
+      // Implemented as a conditional check below rather than a regex
+      // here to keep the apology + answer combination legal.
     ];
 
     // Confidence threshold above which the draft would auto-send.
