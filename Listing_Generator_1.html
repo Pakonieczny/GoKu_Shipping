@@ -9643,6 +9643,45 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         ☐ Does the ring's size/style/proportion match the source template's ring?
         If ANY answer is NO, do not finalize — fix it and re-check.
 
+      ═══════════════════════════════════════════════════════════════════════
+      THE EXACT CONNECTOR FAILURE TO ELIMINATE (DIAGNOSTIC — READ CAREFULLY)
+      ═══════════════════════════════════════════════════════════════════════
+
+      CONFIRMED RECURRING FAILURE OBSERVED IN PAST OUTPUTS:
+        • Outputs have repeatedly shown a small extra ring between the charm body and the oversized ring. This produces TWO rings between the charm and the hoop (small + oversized) instead of the correct ONE ring.
+        • Visual signature of the failure: charm body → small loop/jump-ring → larger ring → hoop wire. Four components stacked vertically.
+        • Correct visual signature: charm body → ONE oversized ring → hoop wire. Three components, with the ring threaded directly on the hoop.
+
+      WHY THIS KEEPS HAPPENING (ROOT CAUSE):
+        • The new charm reference image shows the charm in isolation, and the isolated charm typically has ITS OWN small jump ring or attachment loop at the top of its body.
+        • The AI is keeping that jump ring from the reference AND adding the template's oversized ring above it, producing the wrong 2-ring stack.
+        • THIS IS THE BUG. The new charm's own jump ring MUST BE DISCARDED.
+
+      THE FIX — DISCARD THE NEW CHARM'S OWN JUMP RING:
+        • When extracting the charm from its reference image, take ONLY the body silhouette (the animal/object shape).
+        • Whatever small jump ring, loop, or attachment hardware sits at the top of the isolated charm reference image — IGNORE IT, CROP IT OUT MENTALLY, DO NOT INCLUDE IT IN THE OUTPUT.
+        • The new charm's body silhouette is the ONLY part of the new charm reference that transfers to the output. Its jump ring does NOT transfer.
+
+      EXPLICIT STEP-BY-STEP RENDERING SEQUENCE (FOLLOW EXACTLY):
+        Step 1: Render the hoop wire (the huggie earring's curved metal wire).
+        Step 2: Render exactly ONE oversized ring threaded directly onto the hoop wire. The hoop wire visibly passes straight THROUGH this ring's interior. The ring's inner diameter is clearly larger than the hoop wire's thickness.
+        Step 3: Render the charm body silhouette (animal/object) fused directly to the BOTTOM of that single ring. The body's top edge meets the ring's bottom edge with NO gap, NO intermediate hardware, NO additional loop.
+        Step 4: STOP. Do not add any other rings, loops, jump rings, or connecting hardware anywhere in the connection.
+
+      RESULT: between the hoop wire and the charm body there is EXACTLY ONE ring. Not two. Not three. ONE ring.
+
+      MANDATORY PRE-RENDER RING COUNT (FINAL GATE):
+        • Look at each charm-on-hoop in your output. Count the rings between the charm body and the hoop wire.
+        • CORRECT COUNT: exactly 1 ring per charm-on-hoop connection.
+        • WRONG COUNT: 2 or more rings stacked between a charm body and the hoop wire.
+        • If the count is wrong, the render is WRONG. Remove the extra ring(s) and re-render.
+
+      HARD FAILS (NEW, ABSOLUTE):
+        • HARD FAIL: any small ring, loop, or jump ring visible between the charm body and the oversized connecting ring.
+        • HARD FAIL: more than 1 ring between any charm body and the hoop wire in the output.
+        • HARD FAIL: the new charm's own jump ring (from its reference image) appearing anywhere in the output.
+        • HARD FAIL: any visible gap or intermediate hardware between the charm body's top edge and the bottom of the oversized ring.
+
       CHARM-TO-HOOP PROPORTIONALITY — MATCH SOURCE EXACTLY (CRITICAL):
         • The source template image shows a specific size relationship between the charm and the hoop. The charm height/width relative to the hoop's outer diameter is a deliberate design choice that defines this listing's visual layout.
         • Reproduce this EXACT proportional relationship in the output. Do NOT auto-size the new charm based on the dimensions shown in its source Charm Reference image — instead, SCALE the new charm to match the proportional size shown in the source template.
@@ -9814,6 +9853,45 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         ☐ Does the hoop wire pass directly through that single ring with no intermediary hardware?
         ☐ Does the ring's size/style/proportion match the source template's ring?
         If ANY answer is NO, do not finalize — fix it and re-check.
+
+      ═══════════════════════════════════════════════════════════════════════
+      THE EXACT CONNECTOR FAILURE TO ELIMINATE (DIAGNOSTIC — READ CAREFULLY)
+      ═══════════════════════════════════════════════════════════════════════
+
+      CONFIRMED RECURRING FAILURE OBSERVED IN PAST OUTPUTS:
+        • Outputs have repeatedly shown a small extra ring between the charm body and the oversized ring. This produces TWO rings between the charm and the hoop (small + oversized) instead of the correct ONE ring.
+        • Visual signature of the failure: charm body → small loop/jump-ring → larger ring → hoop wire. Four components stacked vertically.
+        • Correct visual signature: charm body → ONE oversized ring → hoop wire. Three components, with the ring threaded directly on the hoop.
+
+      WHY THIS KEEPS HAPPENING (ROOT CAUSE):
+        • The new charm reference image shows the charm in isolation, and the isolated charm typically has ITS OWN small jump ring or attachment loop at the top of its body.
+        • The AI is keeping that jump ring from the reference AND adding the template's oversized ring above it, producing the wrong 2-ring stack.
+        • THIS IS THE BUG. The new charm's own jump ring MUST BE DISCARDED.
+
+      THE FIX — DISCARD THE NEW CHARM'S OWN JUMP RING:
+        • When extracting the charm from its reference image, take ONLY the body silhouette (the animal/object shape).
+        • Whatever small jump ring, loop, or attachment hardware sits at the top of the isolated charm reference image — IGNORE IT, CROP IT OUT MENTALLY, DO NOT INCLUDE IT IN THE OUTPUT.
+        • The new charm's body silhouette is the ONLY part of the new charm reference that transfers to the output. Its jump ring does NOT transfer.
+
+      EXPLICIT STEP-BY-STEP RENDERING SEQUENCE (FOLLOW EXACTLY):
+        Step 1: Render the hoop wire (the huggie earring's curved metal wire).
+        Step 2: Render exactly ONE oversized ring threaded directly onto the hoop wire. The hoop wire visibly passes straight THROUGH this ring's interior. The ring's inner diameter is clearly larger than the hoop wire's thickness.
+        Step 3: Render the charm body silhouette (animal/object) fused directly to the BOTTOM of that single ring. The body's top edge meets the ring's bottom edge with NO gap, NO intermediate hardware, NO additional loop.
+        Step 4: STOP. Do not add any other rings, loops, jump rings, or connecting hardware anywhere in the connection.
+
+      RESULT: between the hoop wire and the charm body there is EXACTLY ONE ring. Not two. Not three. ONE ring.
+
+      MANDATORY PRE-RENDER RING COUNT (FINAL GATE):
+        • Look at each charm-on-hoop in your output. Count the rings between the charm body and the hoop wire.
+        • CORRECT COUNT: exactly 1 ring per charm-on-hoop connection.
+        • WRONG COUNT: 2 or more rings stacked between a charm body and the hoop wire.
+        • If the count is wrong, the render is WRONG. Remove the extra ring(s) and re-render.
+
+      HARD FAILS (NEW, ABSOLUTE):
+        • HARD FAIL: any small ring, loop, or jump ring visible between the charm body and the oversized connecting ring.
+        • HARD FAIL: more than 1 ring between any charm body and the hoop wire in the output.
+        • HARD FAIL: the new charm's own jump ring (from its reference image) appearing anywhere in the output.
+        • HARD FAIL: any visible gap or intermediate hardware between the charm body's top edge and the bottom of the oversized ring.
 
       CHARM-TO-HOOP PROPORTIONALITY — MATCH SOURCE EXACTLY (CRITICAL):
         • The source template image shows a specific size relationship between the charm and the hoop. The charm height/width relative to the hoop's outer diameter is a deliberate design choice that defines this listing's visual layout.
