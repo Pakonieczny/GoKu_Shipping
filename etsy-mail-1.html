@@ -10861,7 +10861,7 @@
       $("emSaveStaffMsgBtn")?.addEventListener("click", () => saveStaffMessage(t.id));
 
       // ─── M4: AI draft wiring ──────────────────────────────────────────
-      $("emAiDraftBtn")?.addEventListener("click", () => generateAiDraft(t.id, "initial"));
+      $("emAiDraftBtn")?.addEventListener("click", () => generateAiDraft(t.id, "initial", null, /*forceRegenerate=*/true));
       $("emCustomListingBtn")?.addEventListener("click", () => generateManualCustomListing(t.id));
       $("emAiFollowUpBtn")?.addEventListener("click", () => generateAiDraft(t.id, "follow_up"));
       $("emReviseBtn")?.addEventListener("click", () => {
@@ -11048,7 +11048,18 @@
     //   "initial"   — fresh draft from scratch
     //   "revise"    — refine current textarea text; passes currentDraft
     //   "follow_up" — warm re-engagement for stalled threads
-    async function generateAiDraft(threadId, mode = "initial", instructions = null) {
+    //
+    // forceRegenerate (v5.16):
+    //   When true, bypasses the cache-first check below. Button-click
+    //   callers ALWAYS pass true because an operator clicking "AI Draft"
+    //   with a draft already in the composer is explicitly asking for
+    //   an alternate response, not the cached one. Internal callers
+    //   that genuinely want the dedupe behavior (multi-device race
+    //   protection) can leave the default false. "revise" and
+    //   "follow_up" modes already bypass the cache by virtue of the
+    //   `mode === "initial"` guard, so this flag only affects initial-
+    //   mode calls.
+    async function generateAiDraft(threadId, mode = "initial", instructions = null, forceRegenerate = false) {
       const allBtns = ["emAiDraftBtn", "emAiFollowUpBtn", "emReviseBtn"].map($).filter(Boolean);
       const body   = $("emAiCardBody");
       const primaryBtn = mode === "follow_up" ? $("emAiFollowUpBtn")
@@ -11115,7 +11126,16 @@
       // multiple devices/operators click "AI Draft" for the same
       // thread state. Skipped for "revise" and "follow_up" — those
       // are explicit operator requests for a different take.
-      if (mode === "initial") {
+      //
+      // v5.16 — ALSO skipped when forceRegenerate is true. The button
+      // click handlers pass forceRegenerate:true because an operator
+      // clicking "AI Draft" with a hydrated draft already in the
+      // composer is explicitly asking for an alternate response, not
+      // the cached one. Returning the cached draft in that case was
+      // a UX bug (the operator saw the same text reappear). The
+      // multi-device dedupe optimization is preserved for any caller
+      // that genuinely wants it via forceRegenerate:false (default).
+      if (mode === "initial" && !forceRegenerate) {
         try {
           const cacheRes = await api("firestoreProxy", {
             method: "GET",
@@ -18925,7 +18945,12 @@
         const tid = state.selectedId;
         if (!tid) return;
         if (typeof generateAiDraft === "function") {
-          try { await generateAiDraft(tid, "initial"); }
+          // v5.16 — Pass forceRegenerate:true so the button always
+          // produces a fresh draft. Without this, the cache-first path
+          // in generateAiDraft would return whatever's currently
+          // hydrated, which defeats the operator's intent when they
+          // click "AI Draft" hoping for an alternate response.
+          try { await generateAiDraft(tid, "initial", null, /*forceRegenerate=*/true); }
           catch (e) { console.error("[mobile] AI draft failed:", e); }
         }
         // After it finishes, mNotifyDraftChanged hook (called from inside
