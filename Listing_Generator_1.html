@@ -9554,7 +9554,30 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         • All engravings must be coloured-in/filled-in using a light shade of copper colour, and must be flat having only superficial depth.
         • Ensure all engravings are a light shade of copper colour.
         • The Charm/Pendant material is a perfectly flat and very thin sheet of metal, always render the Charm/Pendant completely flat and EXTREMELY thin. 
-        • DO NOT allow any rounded/radius on the cutout edges.`;
+        • DO NOT allow any rounded/radius on the cutout edges.
+
+      GOLD COLOR TONE — MATCH SOURCE TEMPLATE EXACTLY (CRITICAL):
+        • The metal in the source template image (charm bodies, hoops, chain, connecting rings) is rendered as 14K YELLOW GOLD — a warm yellow tone, NOT rose gold, NOT pink, NOT peach, NOT salmon, NOT copper-pink, NOT red-orange.
+        • Sample the metal color from the source template image and reproduce that EXACT tone in the output. The generated metal must look like the same alloy as the template.
+        • The "light shade of copper" instruction above applies ONLY to engraved details/text INSIDE the charm body for visual contrast — it does NOT apply to: the charm body itself, the hoop wire, the chain, or the connecting rings. Those must all remain warm yellow gold.
+        • When in doubt about the gold tone, pull AWAY from red/pink and toward neutral warm yellow. The acceptable range is "warm yellow wedding band" — never crossing into rose, pink, peach, or salmon territory.
+        • HARD FAIL: any visible rose, pink, peach, salmon, or red-orange tint to the metal (charm body, hoop, chain, or connecting rings).
+        • HARD FAIL: metal in the generated output reading as a noticeably different/pinker gold than the source template image.
+        • HARD FAIL: the copper engraving color bleeding into or affecting the surrounding charm body color.
+
+      WHICH IMAGE TO SAMPLE COLOR FROM (CRITICAL — COMMON SOURCE OF ROSE-GOLD ERROR):
+        • Color comes from the SOURCE TEMPLATE IMAGE — NOT from the source charm reference image.
+        • The source charm reference image may have been shot under warm/orange lighting, which can make the metal in that isolation photo appear pinker than it actually is. Disregard the charm reference image's lighting and color tone entirely for color decisions.
+        • When determining the gold color, look ONLY at the source template image. That is the ONLY color reference.
+
+      THE AI DEFAULT GOLD INSTINCT YOU MUST OVERRIDE:
+        • Your training has likely associated "fine jewelry" with "rose gold" or "warm pinkish gold" as a default aesthetic. This is the WRONG default for this product.
+        • The intended product is CLASSIC YELLOW GOLD — think yellow wedding band, sunny lemon-tinted yellow. NOT pinkish, NOT peachy, NOT rose, NOT salmon.
+        • When you find yourself rendering gold with even a slight pink/peach/red cast, STOP. That is the AI's default reflex, not what this product looks like. Pull the color back toward pure neutral warm yellow.
+
+      COLOR VERIFICATION TEST:
+        • Mental test: if a customer received the metal shown in your output and held it up next to the source template image, would they think "same metal" or "two different metals"?
+        • If "two different metals" or "the output is pinker" — your color is wrong. Revise toward warmer yellow, away from pink/peach/red.`;
 
     const CHARM_TYPES_PROMPT = 
     `TASK (Force the Charm to be EXTREMELY SMALL)
@@ -9565,7 +9588,95 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         • The Charm/Pendant material is a perfectly flat and very thin sheet of metal, always render the Charm/Pendant completely flat and EXTREMELY thin. 
         • DO NOT allow any rounded/radius on the cutout edges.
         • You must output any visible text exactly like in the reference image.
-        • Ensure the charm colour, shading and reflections match the necklace chain in the reference image.`;
+        • Ensure the charm colour, shading and reflections match the necklace chain in the reference image.
+
+      GOLD COLOR TONE — MATCH SOURCE TEMPLATE EXACTLY (CRITICAL):
+        • The metal in the source template image (charm bodies, hoops, chain, connecting rings) is rendered as 14K YELLOW GOLD — a warm yellow tone, NOT rose gold, NOT pink, NOT peach, NOT salmon, NOT copper-pink, NOT red-orange.
+        • Sample the metal color from the source template image and reproduce that EXACT tone in the output. The generated metal must look like the same alloy as the template.
+        • The "light shade of copper" instruction above applies ONLY to engraved details/text INSIDE the charm body for visual contrast — it does NOT apply to: the charm body itself, the hoop wire, the chain, or the connecting rings. Those must all remain warm yellow gold.
+        • When in doubt about the gold tone, pull AWAY from red/pink and toward neutral warm yellow. The acceptable range is "warm yellow wedding band" — never crossing into rose, pink, peach, or salmon territory.
+        • HARD FAIL: any visible rose, pink, peach, salmon, or red-orange tint to the metal (charm body, hoop, chain, or connecting rings).
+        • HARD FAIL: metal in the generated output reading as a noticeably different/pinker gold than the source template image.
+        • HARD FAIL: the copper engraving color bleeding into or affecting the surrounding charm body color.
+
+      WHICH IMAGE TO SAMPLE COLOR FROM (CRITICAL — COMMON SOURCE OF ROSE-GOLD ERROR):
+        • Color comes from the SOURCE TEMPLATE IMAGE — NOT from the source charm reference image.
+        • The source charm reference image may have been shot under warm/orange lighting, which can make the metal in that isolation photo appear pinker than it actually is. Disregard the charm reference image's lighting and color tone entirely for color decisions.
+        • When determining the gold color, look ONLY at the source template image. That is the ONLY color reference.
+
+      THE AI DEFAULT GOLD INSTINCT YOU MUST OVERRIDE:
+        • Your training has likely associated "fine jewelry" with "rose gold" or "warm pinkish gold" as a default aesthetic. This is the WRONG default for this product.
+        • The intended product is CLASSIC YELLOW GOLD — think yellow wedding band, sunny lemon-tinted yellow. NOT pinkish, NOT peachy, NOT rose, NOT salmon.
+        • When you find yourself rendering gold with even a slight pink/peach/red cast, STOP. That is the AI's default reflex, not what this product looks like. Pull the color back toward pure neutral warm yellow.
+
+      COLOR VERIFICATION TEST:
+        • Mental test: if a customer received the metal shown in your output and held it up next to the source template image, would they think "same metal" or "two different metals"?
+        • If "two different metals" or "the output is pinker" — your color is wrong. Revise toward warmer yellow, away from pink/peach/red.
+
+      HUGGIE HOOP CONNECTION RING — STRUCTURE MUST MATCH SOURCE EXACTLY (CRITICAL):
+        • The source template image shows charms connected to the huggie hoop via a SINGLE OVERSIZED CONNECTING RING per charm. This ring is large enough in inner diameter to slip DIRECTLY OVER the hoop wire. There is NO intermediary jump ring between the charm's connecting ring and the hoop — they connect directly, with the hoop wire passing through the charm's oversized ring.
+        • Reproduce this EXACT 2-component connection structure:
+            (1) ONE oversized connecting ring on top of each charm
+            (2) The hoop wire passing DIRECTLY through that ring
+          That is it. NO smaller jump ring. NO secondary link. NO intermediary connector of any kind between the charm's ring and the hoop wire.
+        • If you find yourself rendering a 3-component chain (small jump ring + larger ring + hoop wire), STOP — that is wrong. The correct structure has only 2 components: oversized connecting ring + hoop wire.
+        • The connecting ring must be visibly OVERSIZED — its inner diameter must clearly be larger than the hoop wire's gauge. It is a "slip-over" ring, not a "threaded" jump ring.
+        • IGNORE any small jump ring, attachment loop, or hoop attachment that may be present on the source Charm Reference image. Replace it with the template's oversized slip-over ring style.
+        • HARD FAIL: any intermediary jump ring, link, or connector between the charm's connecting ring and the hoop wire.
+        • HARD FAIL: charm connecting ring too small to physically slide over the hoop wire (i.e., ring inner diameter visibly smaller than the hoop's wire thickness).
+        • HARD FAIL: charm connection structure showing more than 2 visible components (the oversized ring and the hoop wire are the ONLY two pieces in the connection).
+        • HARD FAIL: small/thin connecting ring on the new charm compared to the bold oversized ring shown in the source template.
+
+      THE AI'S DEFAULT JEWELRY-CONSTRUCTION INSTINCT YOU MUST OVERRIDE:
+        • Standard jewelry construction uses small jump rings to attach pendants to chains and hoops. Your training has built this "small jump ring + pendant" pattern as a strong default reflex.
+        • THIS PRODUCT IS DIFFERENT. The charms in this listing connect to the huggie hoop via a single OVERSIZED slip-over ring — NOT via a small jump ring. The connecting ring is welded/integral to the charm body itself, NOT a separate piece of hardware to be added between the charm and the hoop.
+        • When you find yourself rendering a small jump ring between the charm and the hoop "because that's how charms are usually attached," STOP. That default does NOT apply to this product. Override that instinct every single time it arises.
+
+      THE CONNECTING RING IS PART OF THE CHARM BODY (CRITICAL MENTAL MODEL):
+        • Think of the connecting ring as PART OF the charm's physical structure — like a keychain's split ring is fused to the keychain head. It is welded or cast directly to the charm body. It is NOT a separate piece of jewelry hardware.
+        • When you "replace the charm," you replace BOTH the charm body AND ITS BUILT-IN OVERSIZED RING with the source template's version. The new charm reference image's own jump ring/loop is IRRELEVANT and does NOT transfer over — only the new charm's body silhouette transfers, and the source template's oversized ring style stays in place.
+
+      PRE-RENDER CONNECTOR CHECK (run this mentally before finalizing):
+        ☐ Is there exactly ONE ring (not two) between each charm body and the hoop wire?
+        ☐ Is that one ring visibly LARGE — inner diameter clearly larger than the hoop wire's gauge?
+        ☐ Does the hoop wire pass directly through that single ring with no intermediary hardware?
+        ☐ Does the ring's size/style/proportion match the source template's ring?
+        If ANY answer is NO, do not finalize — fix it and re-check.
+
+      CHARM-TO-HOOP PROPORTIONALITY — MATCH SOURCE EXACTLY (CRITICAL):
+        • The source template image shows a specific size relationship between the charm and the hoop. The charm height/width relative to the hoop's outer diameter is a deliberate design choice that defines this listing's visual layout.
+        • Reproduce this EXACT proportional relationship in the output. Do NOT auto-size the new charm based on the dimensions shown in its source Charm Reference image — instead, SCALE the new charm to match the proportional size shown in the source template.
+        • Reference rule: look at the source template image. Mentally measure the charm's vertical height against the hoop's outer diameter. Compute the ratio (e.g., "charm height ≈ 60% of hoop diameter"). Apply that SAME ratio to the new charm in the output.
+        • If the source template shows the charm as approximately the same size as or smaller than the hoop, the output must show the new charm at that SAME proportion — even if the new charm's reference image shows it at a different proportion in isolation.
+        • The new charm's reference image proportions are NOT a sizing input. The TEMPLATE'S proportions are the sizing input.
+        • HARD FAIL: the new charm is visibly LARGER (relative to the hoop) than the source template's charm is.
+        • HARD FAIL: the new charm is visibly SMALLER (relative to the hoop) than the source template's charm is.
+        • HARD FAIL: the new charm "overwhelms" the hoop visually when the template shows a balanced or charm-smaller-than-hoop composition.
+
+      PROPORTIONALITY MENTAL MODEL (READ CAREFULLY):
+        • The source template's charm-to-hoop size ratio IS the design of this listing. It tells the customer "this is how big the charm looks on the hoop in real life." If your output shows a different ratio, the listing photo is misrepresenting the actual product.
+        • The source charm reference image is a PHOTO of the charm in isolation. Its in-frame dimensions reflect the photo's framing/crop — NOT how big the charm actually is on the hoop. Ignore those isolation dimensions completely for sizing decisions.
+
+      PRE-RENDER PROPORTIONALITY CHECK:
+        ☐ Mentally measure the source template: what fraction of the hoop's outer diameter does the charm's height occupy? (e.g., "charm height ≈ 45% of hoop outer diameter")
+        ☐ Mentally measure your output: does the new charm occupy the SAME fraction (within ~10%)?
+        ☐ If the new charm visibly takes up a larger or smaller fraction of the hoop than the source template's charm did, the ratio is wrong.
+        If proportionality is off, rescale the charm to match and re-check before finalizing.
+
+      ═══════════════════════════════════════════════════════════════
+      FINAL PRE-RENDER VERIFICATION CHECKLIST (THE LAST GATE)
+      ═══════════════════════════════════════════════════════════════
+      Mentally lay your output side-by-side with the source template image. For each item, verify true. If ANY check fails, do NOT finalize — revise and re-check.
+
+      ☐ CONNECTOR COUNT: exactly ONE ring per charm-to-hoop connection (NOT two rings stacked, NOT a small jump ring connecting to a larger one).
+      ☐ CONNECTOR SIZE: that single connecting ring is visibly OVERSIZED — inner diameter clearly accommodates the hoop wire's gauge.
+      ☐ CONNECTOR ENGAGEMENT: the hoop wire passes DIRECTLY through the charm's connecting ring with no intermediary hardware.
+      ☐ CHARM-TO-HOOP RATIO: the new charm's size relative to the hoop matches the source template's ratio (within ~10%).
+      ☐ GOLD HUE: the metal looks like warm yellow gold (NOT rose, NOT pink, NOT peach, NOT salmon). The output's metal color and the source template's metal color should look like the SAME alloy.
+      ☐ COPPER LIMITATION: the "light copper" color appears ONLY on engraved text/details inside the charm body — NOT on the charm body itself, the hoop wire, the chain, or the connecting rings.
+      ☐ TEXT FIDELITY: any visible text in the source template is reproduced exactly as shown.
+
+      If any check fails, REVISE the output and re-check. Do NOT finalize a render that fails any of these gates.`;
 
     const CHARM_MODEL_PROMPT = 
     `TASK: (Force the Charm to be EXTREMELY SMALL)
@@ -9579,7 +9690,30 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         • The chain must be bright realistic Yellow 14K gold colour and light reflections.
         • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
         • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
-        • The chain must remain exactly the same size and detail as in the reference image.`;
+        • The chain must remain exactly the same size and detail as in the reference image.
+
+      GOLD COLOR TONE — MATCH SOURCE TEMPLATE EXACTLY (CRITICAL):
+        • The metal in the source template image (charm bodies, hoops, chain, connecting rings) is rendered as 14K YELLOW GOLD — a warm yellow tone, NOT rose gold, NOT pink, NOT peach, NOT salmon, NOT copper-pink, NOT red-orange.
+        • Sample the metal color from the source template image and reproduce that EXACT tone in the output. The generated metal must look like the same alloy as the template.
+        • The "light shade of copper" instruction above applies ONLY to engraved details/text INSIDE the charm body for visual contrast — it does NOT apply to: the charm body itself, the hoop wire, the chain, or the connecting rings. Those must all remain warm yellow gold.
+        • When in doubt about the gold tone, pull AWAY from red/pink and toward neutral warm yellow. The acceptable range is "warm yellow wedding band" — never crossing into rose, pink, peach, or salmon territory.
+        • HARD FAIL: any visible rose, pink, peach, salmon, or red-orange tint to the metal (charm body, hoop, chain, or connecting rings).
+        • HARD FAIL: metal in the generated output reading as a noticeably different/pinker gold than the source template image.
+        • HARD FAIL: the copper engraving color bleeding into or affecting the surrounding charm body color.
+
+      WHICH IMAGE TO SAMPLE COLOR FROM (CRITICAL — COMMON SOURCE OF ROSE-GOLD ERROR):
+        • Color comes from the SOURCE TEMPLATE IMAGE — NOT from the source charm reference image.
+        • The source charm reference image may have been shot under warm/orange lighting, which can make the metal in that isolation photo appear pinker than it actually is. Disregard the charm reference image's lighting and color tone entirely for color decisions.
+        • When determining the gold color, look ONLY at the source template image. That is the ONLY color reference.
+
+      THE AI DEFAULT GOLD INSTINCT YOU MUST OVERRIDE:
+        • Your training has likely associated "fine jewelry" with "rose gold" or "warm pinkish gold" as a default aesthetic. This is the WRONG default for this product.
+        • The intended product is CLASSIC YELLOW GOLD — think yellow wedding band, sunny lemon-tinted yellow. NOT pinkish, NOT peachy, NOT rose, NOT salmon.
+        • When you find yourself rendering gold with even a slight pink/peach/red cast, STOP. That is the AI's default reflex, not what this product looks like. Pull the color back toward pure neutral warm yellow.
+
+      COLOR VERIFICATION TEST:
+        • Mental test: if a customer received the metal shown in your output and held it up next to the source template image, would they think "same metal" or "two different metals"?
+        • If "two different metals" or "the output is pinker" — your color is wrong. Revise toward warmer yellow, away from pink/peach/red.`;
 
     const CHARM_ENGRAVING_PROMPT = 
     `  TASK:
@@ -9592,7 +9726,30 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         • You must output any visible text exactly like in the reference image.
 
       HARD FAIL CONDITIONS
-        • Any weak or disconnected hoop connection.`;
+        • Any weak or disconnected hoop connection.
+
+      GOLD COLOR TONE — MATCH SOURCE TEMPLATE EXACTLY (CRITICAL):
+        • The metal in the source template image (charm bodies, hoops, chain, connecting rings) is rendered as 14K YELLOW GOLD — a warm yellow tone, NOT rose gold, NOT pink, NOT peach, NOT salmon, NOT copper-pink, NOT red-orange.
+        • Sample the metal color from the source template image and reproduce that EXACT tone in the output. The generated metal must look like the same alloy as the template.
+        • The "light shade of copper" instruction above applies ONLY to engraved details/text INSIDE the charm body for visual contrast — it does NOT apply to: the charm body itself, the hoop wire, the chain, or the connecting rings. Those must all remain warm yellow gold.
+        • When in doubt about the gold tone, pull AWAY from red/pink and toward neutral warm yellow. The acceptable range is "warm yellow wedding band" — never crossing into rose, pink, peach, or salmon territory.
+        • HARD FAIL: any visible rose, pink, peach, salmon, or red-orange tint to the metal (charm body, hoop, chain, or connecting rings).
+        • HARD FAIL: metal in the generated output reading as a noticeably different/pinker gold than the source template image.
+        • HARD FAIL: the copper engraving color bleeding into or affecting the surrounding charm body color.
+
+      WHICH IMAGE TO SAMPLE COLOR FROM (CRITICAL — COMMON SOURCE OF ROSE-GOLD ERROR):
+        • Color comes from the SOURCE TEMPLATE IMAGE — NOT from the source charm reference image.
+        • The source charm reference image may have been shot under warm/orange lighting, which can make the metal in that isolation photo appear pinker than it actually is. Disregard the charm reference image's lighting and color tone entirely for color decisions.
+        • When determining the gold color, look ONLY at the source template image. That is the ONLY color reference.
+
+      THE AI DEFAULT GOLD INSTINCT YOU MUST OVERRIDE:
+        • Your training has likely associated "fine jewelry" with "rose gold" or "warm pinkish gold" as a default aesthetic. This is the WRONG default for this product.
+        • The intended product is CLASSIC YELLOW GOLD — think yellow wedding band, sunny lemon-tinted yellow. NOT pinkish, NOT peachy, NOT rose, NOT salmon.
+        • When you find yourself rendering gold with even a slight pink/peach/red cast, STOP. That is the AI's default reflex, not what this product looks like. Pull the color back toward pure neutral warm yellow.
+
+      COLOR VERIFICATION TEST:
+        • Mental test: if a customer received the metal shown in your output and held it up next to the source template image, would they think "same metal" or "two different metals"?
+        • If "two different metals" or "the output is pinker" — your color is wrong. Revise toward warmer yellow, away from pink/peach/red.`;
 
 
     const CHARM_HOOP_GUIDE_PROMPT = 
@@ -9603,7 +9760,95 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         • Ensure all engravings are a light shade of copper colour.
         • The Charm/Pendant material is a perfectly flat and very thin sheet of metal, always render the Charm/Pendant completely flat and EXTREMELY thin. 
         • DO NOT allow any rounded/radius on the cutout edges.
-        • You must output any visible text exactly like in the reference image.`;
+        • You must output any visible text exactly like in the reference image.
+
+      GOLD COLOR TONE — MATCH SOURCE TEMPLATE EXACTLY (CRITICAL):
+        • The metal in the source template image (charm bodies, hoops, chain, connecting rings) is rendered as 14K YELLOW GOLD — a warm yellow tone, NOT rose gold, NOT pink, NOT peach, NOT salmon, NOT copper-pink, NOT red-orange.
+        • Sample the metal color from the source template image and reproduce that EXACT tone in the output. The generated metal must look like the same alloy as the template.
+        • The "light shade of copper" instruction above applies ONLY to engraved details/text INSIDE the charm body for visual contrast — it does NOT apply to: the charm body itself, the hoop wire, the chain, or the connecting rings. Those must all remain warm yellow gold.
+        • When in doubt about the gold tone, pull AWAY from red/pink and toward neutral warm yellow. The acceptable range is "warm yellow wedding band" — never crossing into rose, pink, peach, or salmon territory.
+        • HARD FAIL: any visible rose, pink, peach, salmon, or red-orange tint to the metal (charm body, hoop, chain, or connecting rings).
+        • HARD FAIL: metal in the generated output reading as a noticeably different/pinker gold than the source template image.
+        • HARD FAIL: the copper engraving color bleeding into or affecting the surrounding charm body color.
+
+      WHICH IMAGE TO SAMPLE COLOR FROM (CRITICAL — COMMON SOURCE OF ROSE-GOLD ERROR):
+        • Color comes from the SOURCE TEMPLATE IMAGE — NOT from the source charm reference image.
+        • The source charm reference image may have been shot under warm/orange lighting, which can make the metal in that isolation photo appear pinker than it actually is. Disregard the charm reference image's lighting and color tone entirely for color decisions.
+        • When determining the gold color, look ONLY at the source template image. That is the ONLY color reference.
+
+      THE AI DEFAULT GOLD INSTINCT YOU MUST OVERRIDE:
+        • Your training has likely associated "fine jewelry" with "rose gold" or "warm pinkish gold" as a default aesthetic. This is the WRONG default for this product.
+        • The intended product is CLASSIC YELLOW GOLD — think yellow wedding band, sunny lemon-tinted yellow. NOT pinkish, NOT peachy, NOT rose, NOT salmon.
+        • When you find yourself rendering gold with even a slight pink/peach/red cast, STOP. That is the AI's default reflex, not what this product looks like. Pull the color back toward pure neutral warm yellow.
+
+      COLOR VERIFICATION TEST:
+        • Mental test: if a customer received the metal shown in your output and held it up next to the source template image, would they think "same metal" or "two different metals"?
+        • If "two different metals" or "the output is pinker" — your color is wrong. Revise toward warmer yellow, away from pink/peach/red.
+
+      HUGGIE HOOP CONNECTION RING — STRUCTURE MUST MATCH SOURCE EXACTLY (CRITICAL):
+        • The source template image shows charms connected to the huggie hoop via a SINGLE OVERSIZED CONNECTING RING per charm. This ring is large enough in inner diameter to slip DIRECTLY OVER the hoop wire. There is NO intermediary jump ring between the charm's connecting ring and the hoop — they connect directly, with the hoop wire passing through the charm's oversized ring.
+        • Reproduce this EXACT 2-component connection structure:
+            (1) ONE oversized connecting ring on top of each charm
+            (2) The hoop wire passing DIRECTLY through that ring
+          That is it. NO smaller jump ring. NO secondary link. NO intermediary connector of any kind between the charm's ring and the hoop wire.
+        • If you find yourself rendering a 3-component chain (small jump ring + larger ring + hoop wire), STOP — that is wrong. The correct structure has only 2 components: oversized connecting ring + hoop wire.
+        • The connecting ring must be visibly OVERSIZED — its inner diameter must clearly be larger than the hoop wire's gauge. It is a "slip-over" ring, not a "threaded" jump ring.
+        • IGNORE any small jump ring, attachment loop, or hoop attachment that may be present on the source Charm Reference image. Replace it with the template's oversized slip-over ring style.
+        • HARD FAIL: any intermediary jump ring, link, or connector between the charm's connecting ring and the hoop wire.
+        • HARD FAIL: charm connecting ring too small to physically slide over the hoop wire (i.e., ring inner diameter visibly smaller than the hoop's wire thickness).
+        • HARD FAIL: charm connection structure showing more than 2 visible components (the oversized ring and the hoop wire are the ONLY two pieces in the connection).
+        • HARD FAIL: small/thin connecting ring on the new charm compared to the bold oversized ring shown in the source template.
+
+      THE AI'S DEFAULT JEWELRY-CONSTRUCTION INSTINCT YOU MUST OVERRIDE:
+        • Standard jewelry construction uses small jump rings to attach pendants to chains and hoops. Your training has built this "small jump ring + pendant" pattern as a strong default reflex.
+        • THIS PRODUCT IS DIFFERENT. The charms in this listing connect to the huggie hoop via a single OVERSIZED slip-over ring — NOT via a small jump ring. The connecting ring is welded/integral to the charm body itself, NOT a separate piece of hardware to be added between the charm and the hoop.
+        • When you find yourself rendering a small jump ring between the charm and the hoop "because that's how charms are usually attached," STOP. That default does NOT apply to this product. Override that instinct every single time it arises.
+
+      THE CONNECTING RING IS PART OF THE CHARM BODY (CRITICAL MENTAL MODEL):
+        • Think of the connecting ring as PART OF the charm's physical structure — like a keychain's split ring is fused to the keychain head. It is welded or cast directly to the charm body. It is NOT a separate piece of jewelry hardware.
+        • When you "replace the charm," you replace BOTH the charm body AND ITS BUILT-IN OVERSIZED RING with the source template's version. The new charm reference image's own jump ring/loop is IRRELEVANT and does NOT transfer over — only the new charm's body silhouette transfers, and the source template's oversized ring style stays in place.
+
+      PRE-RENDER CONNECTOR CHECK (run this mentally before finalizing):
+        ☐ Is there exactly ONE ring (not two) between each charm body and the hoop wire?
+        ☐ Is that one ring visibly LARGE — inner diameter clearly larger than the hoop wire's gauge?
+        ☐ Does the hoop wire pass directly through that single ring with no intermediary hardware?
+        ☐ Does the ring's size/style/proportion match the source template's ring?
+        If ANY answer is NO, do not finalize — fix it and re-check.
+
+      CHARM-TO-HOOP PROPORTIONALITY — MATCH SOURCE EXACTLY (CRITICAL):
+        • The source template image shows a specific size relationship between the charm and the hoop. The charm height/width relative to the hoop's outer diameter is a deliberate design choice that defines this listing's visual layout.
+        • Reproduce this EXACT proportional relationship in the output. Do NOT auto-size the new charm based on the dimensions shown in its source Charm Reference image — instead, SCALE the new charm to match the proportional size shown in the source template.
+        • Reference rule: look at the source template image. Mentally measure the charm's vertical height against the hoop's outer diameter. Compute the ratio (e.g., "charm height ≈ 60% of hoop diameter"). Apply that SAME ratio to the new charm in the output.
+        • If the source template shows the charm as approximately the same size as or smaller than the hoop, the output must show the new charm at that SAME proportion — even if the new charm's reference image shows it at a different proportion in isolation.
+        • The new charm's reference image proportions are NOT a sizing input. The TEMPLATE'S proportions are the sizing input.
+        • HARD FAIL: the new charm is visibly LARGER (relative to the hoop) than the source template's charm is.
+        • HARD FAIL: the new charm is visibly SMALLER (relative to the hoop) than the source template's charm is.
+        • HARD FAIL: the new charm "overwhelms" the hoop visually when the template shows a balanced or charm-smaller-than-hoop composition.
+
+      PROPORTIONALITY MENTAL MODEL (READ CAREFULLY):
+        • The source template's charm-to-hoop size ratio IS the design of this listing. It tells the customer "this is how big the charm looks on the hoop in real life." If your output shows a different ratio, the listing photo is misrepresenting the actual product.
+        • The source charm reference image is a PHOTO of the charm in isolation. Its in-frame dimensions reflect the photo's framing/crop — NOT how big the charm actually is on the hoop. Ignore those isolation dimensions completely for sizing decisions.
+
+      PRE-RENDER PROPORTIONALITY CHECK:
+        ☐ Mentally measure the source template: what fraction of the hoop's outer diameter does the charm's height occupy? (e.g., "charm height ≈ 45% of hoop outer diameter")
+        ☐ Mentally measure your output: does the new charm occupy the SAME fraction (within ~10%)?
+        ☐ If the new charm visibly takes up a larger or smaller fraction of the hoop than the source template's charm did, the ratio is wrong.
+        If proportionality is off, rescale the charm to match and re-check before finalizing.
+
+      ═══════════════════════════════════════════════════════════════
+      FINAL PRE-RENDER VERIFICATION CHECKLIST (THE LAST GATE)
+      ═══════════════════════════════════════════════════════════════
+      Mentally lay your output side-by-side with the source template image. For each item, verify true. If ANY check fails, do NOT finalize — revise and re-check.
+
+      ☐ CONNECTOR COUNT: exactly ONE ring per charm-to-hoop connection (NOT two rings stacked, NOT a small jump ring connecting to a larger one).
+      ☐ CONNECTOR SIZE: that single connecting ring is visibly OVERSIZED — inner diameter clearly accommodates the hoop wire's gauge.
+      ☐ CONNECTOR ENGAGEMENT: the hoop wire passes DIRECTLY through the charm's connecting ring with no intermediary hardware.
+      ☐ CHARM-TO-HOOP RATIO: the new charm's size relative to the hoop matches the source template's ratio (within ~10%).
+      ☐ GOLD HUE: the metal looks like warm yellow gold (NOT rose, NOT pink, NOT peach, NOT salmon). The output's metal color and the source template's metal color should look like the SAME alloy.
+      ☐ COPPER LIMITATION: the "light copper" color appears ONLY on engraved text/details inside the charm body — NOT on the charm body itself, the hoop wire, the chain, or the connecting rings.
+      ☐ TEXT FIDELITY: any visible text in the source template is reproduced exactly as shown.
+
+      If any check fails, REVISE the output and re-check. Do NOT finalize a render that fails any of these gates.`;
 
 
     const CHARM_SIZE_GUIDE_PROMPT = 
@@ -9614,7 +9859,30 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         • Ensure all engravings are a light shade of copper colour.
         • The Charm/Pendant material is a perfectly flat and very thin sheet of metal, always render the Charm/Pendant completely flat and EXTREMELY thin. 
         • DO NOT allow any rounded/radius on the cutout edges.
-        • You must output any visible text exactly like in the reference image.`;
+        • You must output any visible text exactly like in the reference image.
+
+      GOLD COLOR TONE — MATCH SOURCE TEMPLATE EXACTLY (CRITICAL):
+        • The metal in the source template image (charm bodies, hoops, chain, connecting rings) is rendered as 14K YELLOW GOLD — a warm yellow tone, NOT rose gold, NOT pink, NOT peach, NOT salmon, NOT copper-pink, NOT red-orange.
+        • Sample the metal color from the source template image and reproduce that EXACT tone in the output. The generated metal must look like the same alloy as the template.
+        • The "light shade of copper" instruction above applies ONLY to engraved details/text INSIDE the charm body for visual contrast — it does NOT apply to: the charm body itself, the hoop wire, the chain, or the connecting rings. Those must all remain warm yellow gold.
+        • When in doubt about the gold tone, pull AWAY from red/pink and toward neutral warm yellow. The acceptable range is "warm yellow wedding band" — never crossing into rose, pink, peach, or salmon territory.
+        • HARD FAIL: any visible rose, pink, peach, salmon, or red-orange tint to the metal (charm body, hoop, chain, or connecting rings).
+        • HARD FAIL: metal in the generated output reading as a noticeably different/pinker gold than the source template image.
+        • HARD FAIL: the copper engraving color bleeding into or affecting the surrounding charm body color.
+
+      WHICH IMAGE TO SAMPLE COLOR FROM (CRITICAL — COMMON SOURCE OF ROSE-GOLD ERROR):
+        • Color comes from the SOURCE TEMPLATE IMAGE — NOT from the source charm reference image.
+        • The source charm reference image may have been shot under warm/orange lighting, which can make the metal in that isolation photo appear pinker than it actually is. Disregard the charm reference image's lighting and color tone entirely for color decisions.
+        • When determining the gold color, look ONLY at the source template image. That is the ONLY color reference.
+
+      THE AI DEFAULT GOLD INSTINCT YOU MUST OVERRIDE:
+        • Your training has likely associated "fine jewelry" with "rose gold" or "warm pinkish gold" as a default aesthetic. This is the WRONG default for this product.
+        • The intended product is CLASSIC YELLOW GOLD — think yellow wedding band, sunny lemon-tinted yellow. NOT pinkish, NOT peachy, NOT rose, NOT salmon.
+        • When you find yourself rendering gold with even a slight pink/peach/red cast, STOP. That is the AI's default reflex, not what this product looks like. Pull the color back toward pure neutral warm yellow.
+
+      COLOR VERIFICATION TEST:
+        • Mental test: if a customer received the metal shown in your output and held it up next to the source template image, would they think "same metal" or "two different metals"?
+        • If "two different metals" or "the output is pinker" — your color is wrong. Revise toward warmer yellow, away from pink/peach/red.`;
 
 
     // =========================================================================
