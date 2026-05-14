@@ -468,18 +468,28 @@ exports.handler = async (event) => {
        * number of threads where salesCompletedAt is set. Used by the
        * dashboard's "Completed Sales" folder, whose membership is
        * keyed off salesCompletedAt rather than status (status gets
-       * overwritten by post-sale chatter in finalizeThread). */
+       * overwritten by post-sale chatter in finalizeThread).
+       * v5.21 — also returns a synthetic _refundFlagged count: the
+       * number of threads where refundFlaggedAt is set. Used by the
+       * dashboard's "Refunds" folder, whose membership is keyed off
+       * refundFlaggedAt for the same reason — refund discussions span
+       * multiple turns and the thread.status changes as the AI/operator
+       * replies, so an orderByField filter is the durable membership
+       * criterion. */
       if (qs.counts === "1") {
-        const snap   = await db.collection(THREADS_COLL).select("status", "salesCompletedAt").get();
+        const snap   = await db.collection(THREADS_COLL).select("status", "salesCompletedAt", "refundFlaggedAt").get();
         const counts = {};
         let completedSalesCount = 0;
+        let refundFlaggedCount  = 0;
         snap.forEach(d => {
           const data = d.data() || {};
           const s = data.status || "unknown";
           counts[s] = (counts[s] || 0) + 1;
           if (data.salesCompletedAt) completedSalesCount++;
+          if (data.refundFlaggedAt)  refundFlaggedCount++;
         });
         counts._completedSales = completedSalesCount;
+        counts._refundFlagged  = refundFlaggedCount;
         return ok({ counts });
       }
 

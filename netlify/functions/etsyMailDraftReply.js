@@ -3072,6 +3072,99 @@ exports.handler = async (event) => {
       return null;
     }
 
+    // v5.21 — Refund / return signal detection.
+    //
+    // The "Refunds" folder in the inbox surfaces threads whose customer
+    // has asked for a refund or return, OR where the staff (AI or
+    // operator) has already started discussing return logistics. The
+    // membership marker is thread.refundFlaggedAt — a timestamp set the
+    // first time we detect signals on a thread and refreshed on
+    // subsequent detections (so the folder sorts by most-recent-refund-
+    // activity, mirroring how Completed Sales sorts by salesCompletedAt).
+    //
+    // We scan TWO sources every draft turn:
+    //   1. The customer's latest inbound message — catches refund
+    //      INITIATION. The Etsy "Help with Order" structured-form
+    //      message is the highest-volume case and has very specific
+    //      field names ("ideal resolution:", "Preferred refund method:").
+    //   2. The AI's draft reply text — catches refund HANDLING. If the
+    //      AI is drafting a return-instruction reply ("happy to take
+    //      these back", "return address:", "send them back in their
+    //      original condition"), the thread is now refund-relevant
+    //      even if the customer's prior message didn't trip the
+    //      inbound patterns.
+    //
+    // Operator-typed replies that go directly through etsyMailDraftSend
+    // without an AI draft are caught by a mirror of this detection in
+    // that file. The single source of truth for the patterns is here;
+    // etsyMailDraftSend duplicates the array (low overhead, two files).
+    const REFUND_SIGNAL_PATTERNS = [
+      // ── Etsy "Help with Order" structured-form fields ───────────────
+      // These appear verbatim when a buyer opens a Help with Order
+      // request and routes it to the seller. The form's field names are
+      // very specific phrases unlikely to false-positive elsewhere.
+      /\b(?:your\s+)?ideal\s+resolution\s*:\s*(?:return|refund|replace|exchange)/i,
+      /\bpreferred\s+refund\s+method\s*:/i,
+      /\bI\s+want\s+to\s+message\s+the\s+seller\s+about/i,
+
+      // ── Direct customer refund/return language ──────────────────────
+      /\b(?:I[\u2019']?d?|I\s+would)\s+(?:like|want)\s+to\s+(?:return|refund)\b/i,
+      /\b(?:want|need|requesting?)\s+(?:to\s+)?(?:get\s+)?(?:a\s+)?refund\b/i,
+      /\bcan\s+I\s+(?:return|get\s+a\s+refund|refund\s+this)\b/i,
+      /\bhow\s+(?:do|can)\s+I\s+(?:return|get\s+a\s+refund|refund)\b/i,
+      /\brefund\s+(?:request|please|me|for|on)\b/i,
+      /\bmoney\s+back\b/i,
+      /\breturning\s+(?:the|this|my|it|them|these)\b/i,
+      /\bsend(?:ing)?\s+(?:it|them|these|this|the\s+\w+)\s+back\s+for\s+(?:a\s+)?(?:refund|return)/i,
+      /\bI\s+(?:want|need|would\s+like)\s+to\s+send\s+(?:it|them|these|this)\s+back\b/i,
+
+      // ── Staff / AI outbound return-instruction language ─────────────
+      // Fires when the AI's draft (or operator's manual reply) contains
+      // return-instruction patterns. Example from operator screenshot:
+      // "Happy to take these back since they're not personalized. Please
+      // send them back in their original condition within 14 days of
+      // delivery, and once they arrive we'll process your refund (return
+      // shipping is on the buyer's end). Return Address: ..."
+      /\breturn\s+address\s*:/i,
+      /\bsend\s+(?:it|them|these|this|the\s+\w+)\s+back\s+(?:in\s+(?:its|their)\s+original|within\s+\d+\s+days)/i,
+      /\bonce\s+(?:they|it)\s+arrive[s]?\s+we[\u2019']?ll\s+process\s+(?:your\s+)?refund/i,
+      /\bhappy\s+to\s+(?:take\s+(?:these|that|it|them)\s+back|accept\s+(?:the|your)\s+return)/i,
+      /\b14[\s-]?day\s+(?:return|refund)\s+window/i,
+      /\bprocess\s+(?:your\s+|a\s+)?refund\s+(?:once|after|when)\b/i,
+    ];
+
+    /**
+     * Detect refund / return signals in arbitrary message text.
+     * Returns the matched substring on first hit (for audit logging) or
+     * null if no signal found. Caller decides what to do with the hit.
+     */
+    function _detectRefundSignals(text) {
+      if (!text || typeof text !== "string") return null;
+      for (const rx of REFUND_SIGNAL_PATTERNS) {
+        const m = text.match(rx);
+        if (m) return m[0];
+      }
+      return null;
+    }
+
+    /**
+     * Walk messages backward to find the latest inbound message TEXT
+     * (parallel to _msSinceLatestInboundMessage which returns elapsed
+     * time). Returns the trimmed string or empty string if none found.
+     */
+    function _latestInboundMessageText(msgs) {
+      if (!Array.isArray(msgs) || !msgs.length) return "";
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        const m = msgs[i];
+        if (!m || typeof m !== "object") continue;
+        const isOutbound = m.direction === "outbound" || m.senderRole === "staff";
+        if (isOutbound) continue;
+        const t = (m.text || "").trim();
+        if (t) return t;
+      }
+      return "";
+    }
+
     // Confidence threshold above which the draft would auto-send.
     // Below this, the model is implicitly signaling "this needs
     // review" and vague holding language is permitted.
@@ -3535,6 +3628,37 @@ exports.handler = async (event) => {
       aiDifficulty : parsed.difficulty,
       updatedAt    : now
     };
+
+    // v5.21 — Refund / return signal detection.
+    //
+    // Scan the customer's latest inbound message AND the AI's draft
+    // reply. If either contains refund/return signals, set
+    // thread.refundFlaggedAt so the Refunds folder picks the thread up.
+    // We don't read the thread first to check "already set" — setting
+    // it again just refreshes the timestamp, which makes the Refunds
+    // folder show most-recently-active refund threads at the top
+    // (mirrors how Completed Sales sorts by salesCompletedAt).
+    try {
+      const _refundHitInbound = _detectRefundSignals(_latestInboundMessageText(messages));
+      const _refundHitDraft = _detectRefundSignals(parsed.text);
+      if (_refundHitInbound || _refundHitDraft) {
+        threadPatch.refundFlaggedAt = now;
+        threadPatch.refundFlaggedReason = _refundHitInbound
+          ? `inbound:"${_refundHitInbound.slice(0, 60)}"`
+          : `draft:"${_refundHitDraft.slice(0, 60)}"`;
+        console.log(
+          `[draftReply ${threadId}] Refund signal detected (${threadPatch.refundFlaggedReason}) — ` +
+          `tagging thread with refundFlaggedAt for Refunds folder.`
+        );
+      }
+    } catch (refundDetectErr) {
+      // Detection failure must not block the draft write. Log and move on.
+      console.warn(
+        `[draftReply ${threadId}] Refund detection failed:`,
+        refundDetectErr.message
+      );
+    }
+
     await db.collection(THREADS_COLL).doc(threadId).set(threadPatch, { merge: true });
 
     // ─── 8. Audit ─────────────────────────────────────────────────

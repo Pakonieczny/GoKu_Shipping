@@ -97,6 +97,52 @@ const MAX_CLAIM_LOOKBACK_MIN = 30;              // ignore draft docs older than 
 let _killSwitchCache = { value: null, fetchedAt: 0 };
 const KILL_SWITCH_CACHE_MS = 15 * 1000;
 
+// v5.21 — Refund / return signal detection.
+//
+// Mirror of the patterns in etsyMailDraftReply.js. Duplicated here (not
+// imported) to keep this function self-contained and avoid cross-module
+// import overhead in the hot path. The patterns must stay in sync —
+// when adding a new pattern to draftReply, mirror it here.
+//
+// Purpose: catch refund-relevant outbound text on the manual-send path.
+// AI-drafted outbound is already detected in draftReply; this catches
+// the case where an operator types a manual reply about refunds without
+// using AI Draft. Setting thread.refundFlaggedAt here makes the thread
+// appear in the inbox's "Refunds" folder, mirroring how draftReply
+// flags the AI-handled case.
+const REFUND_SIGNAL_PATTERNS = [
+  // Etsy "Help with Order" structured-form fields
+  /\b(?:your\s+)?ideal\s+resolution\s*:\s*(?:return|refund|replace|exchange)/i,
+  /\bpreferred\s+refund\s+method\s*:/i,
+  /\bI\s+want\s+to\s+message\s+the\s+seller\s+about/i,
+  // Direct customer refund/return language
+  /\b(?:I[\u2019']?d?|I\s+would)\s+(?:like|want)\s+to\s+(?:return|refund)\b/i,
+  /\b(?:want|need|requesting?)\s+(?:to\s+)?(?:get\s+)?(?:a\s+)?refund\b/i,
+  /\bcan\s+I\s+(?:return|get\s+a\s+refund|refund\s+this)\b/i,
+  /\bhow\s+(?:do|can)\s+I\s+(?:return|get\s+a\s+refund|refund)\b/i,
+  /\brefund\s+(?:request|please|me|for|on)\b/i,
+  /\bmoney\s+back\b/i,
+  /\breturning\s+(?:the|this|my|it|them|these)\b/i,
+  /\bsend(?:ing)?\s+(?:it|them|these|this|the\s+\w+)\s+back\s+for\s+(?:a\s+)?(?:refund|return)/i,
+  /\bI\s+(?:want|need|would\s+like)\s+to\s+send\s+(?:it|them|these|this)\s+back\b/i,
+  // Staff / operator outbound return-instruction language
+  /\breturn\s+address\s*:/i,
+  /\bsend\s+(?:it|them|these|this|the\s+\w+)\s+back\s+(?:in\s+(?:its|their)\s+original|within\s+\d+\s+days)/i,
+  /\bonce\s+(?:they|it)\s+arrive[s]?\s+we[\u2019']?ll\s+process\s+(?:your\s+)?refund/i,
+  /\bhappy\s+to\s+(?:take\s+(?:these|that|it|them)\s+back|accept\s+(?:the|your)\s+return)/i,
+  /\b14[\s-]?day\s+(?:return|refund)\s+window/i,
+  /\bprocess\s+(?:your\s+|a\s+)?refund\s+(?:once|after|when)\b/i,
+];
+
+function _detectRefundSignals(text) {
+  if (!text || typeof text !== "string") return null;
+  for (const rx of REFUND_SIGNAL_PATTERNS) {
+    const m = text.match(rx);
+    if (m) return m[0];
+  }
+  return null;
+}
+
 function json(statusCode, body) {
   return { statusCode, headers: CORS, body: JSON.stringify(body) };
 }
@@ -1326,13 +1372,33 @@ exports.handler = async (event) => {
         // updatedAt was written, which was masked by lastInboundAt in
         // the inbox's OR-chain — the operator's reply stayed hidden
         // below older inbound messages until the next customer reply.
+        //
+        // v5.21 — Scan the sent text for refund signals BEFORE composing
+        // the thread patch, so refundFlaggedAt can be folded into the
+        // single tx.set() write below (no extra read, no extra write).
+        // Catches operator-typed manual replies about refunds that
+        // bypass the AI-draft path. AI-drafted refund replies are
+        // already flagged in etsyMailDraftReply.js.
+        const _refundHitOutbound = _detectRefundSignals(prev.text || "");
+        const _refundFields = _refundHitOutbound ? {
+          refundFlaggedAt    : FV.serverTimestamp(),
+          refundFlaggedReason: `outbound_send:"${_refundHitOutbound.slice(0, 60)}"`
+        } : {};
+        if (_refundHitOutbound) {
+          console.log(
+            `[draftSend ${prev.threadId || draftId}] Refund signal in outbound text ("${_refundHitOutbound}") — ` +
+            `tagging thread refundFlaggedAt for Refunds folder.`
+          );
+        }
+
         if (threadStatusUpdate === "pending_human_review") {
           tx.set(tRef, {
             status              : "pending_human_review",
             lastAutoDecision    : threadDemoteReason,
             lastAutoDecisionAt  : FV.serverTimestamp(),
             lastOperatorReplyAt : FV.serverTimestamp(),
-            updatedAt           : FV.serverTimestamp()
+            updatedAt           : FV.serverTimestamp(),
+            ..._refundFields
           }, { merge: true });
         } else if (threadStatusUpdate === "auto_replied") {
           tx.set(tRef, {
@@ -1353,7 +1419,8 @@ exports.handler = async (event) => {
             manualMoveAt              : FV.delete(),
             manualMoveReason          : FV.delete(),
             manualMoveFromStatus      : FV.delete(),
-            updatedAt                 : FV.serverTimestamp()
+            updatedAt                 : FV.serverTimestamp(),
+            ..._refundFields
           }, { merge: true });
         } else if (prev.threadId && tSnap && tSnap.exists) {
           // v5.30 — No status transition needed (operator manual send
@@ -1364,7 +1431,8 @@ exports.handler = async (event) => {
           // sendOrigin, lastAutoDecision et al. untouched.
           tx.set(tRef, {
             lastOperatorReplyAt: FV.serverTimestamp(),
-            updatedAt          : FV.serverTimestamp()
+            updatedAt          : FV.serverTimestamp(),
+            ..._refundFields
           }, { merge: true });
         }
 

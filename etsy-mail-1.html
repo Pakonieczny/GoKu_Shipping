@@ -5406,6 +5406,30 @@
       // first.
       { id: "production_rush",      label: "Production Rush", icon: "local_fire_department",
         status: "production_rush" },
+      // ─── v5.21 — Refunds ───────────────────────────────────────────────
+      // Threads where the customer has asked for a refund or return, OR
+      // where the staff (AI or operator) has started discussing return
+      // logistics. Membership is keyed off refundFlaggedAt — written by
+      // etsyMailDraftReply when refund signals are detected on the
+      // inbound customer message or the AI's draft, AND by
+      // etsyMailDraftSend when refund-instruction language is detected
+      // in operator-typed outbound text. We can't filter on status
+      // because refund conversations span many turns and the thread's
+      // status changes as the AI/operator replies (pending_human_review
+      // → auto_replied → pending_human_review and so on). The
+      // orderByField pattern queries firestoreProxy with
+      // orderBy=refundFlaggedAt,desc, which both filters (Firestore's
+      // orderBy implicitly excludes docs missing the field) and sorts
+      // by most-recent-refund-activity in one operation. Counts come
+      // from a synthetic _refundFlagged key on the etsyMailThreads
+      // ?counts=1 response.
+      //
+      // Sits above Sales — Active because refunds are an operational
+      // priority — they're time-sensitive (14-day return window) and
+      // can affect ratings if mishandled. Same logic that puts
+      // Production Rush above Sales.
+      { id: "refunds",              label: "Refunds",         icon: "currency_exchange",
+        orderByField: "refundFlaggedAt", countKey: "_refundFlagged" },
       // ─── v2.0 Step 2 ──
       // Aggregates all active sales-funnel statuses. Counts work
       // automatically since etsyMailThreads ?counts=1 groups by status.
@@ -17322,6 +17346,8 @@
         threads = all.slice();
       } else if (filter.countKey === "_completedSales") {
         threads = all.filter(t => t && t.salesCompletedAt);
+      } else if (filter.countKey === "_refundFlagged") {
+        threads = all.filter(t => t && t.refundFlaggedAt);
       } else if (Array.isArray(filter.status)) {
         threads = all.filter(t => t && filter.status.includes(t.status));
       } else if (filter.status) {
