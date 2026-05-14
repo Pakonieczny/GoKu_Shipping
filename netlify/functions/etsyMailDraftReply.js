@@ -819,6 +819,93 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
    policy (return required first), offer the return path if they want
    to proceed.
 
+   ─── Shipping destinations, costs, and timing ───
+   The shop ships from the United States (origin ZIP 14305, New York).
+   Eligible destinations are LIMITED to the regions below. If a
+   customer asks "do you ship to <country>?", consult this list and
+   answer DIRECTLY in this turn. Do not escalate. Do not defer. Do not
+   write "let us double-check shipping eligibility on our end" — the
+   policy is here; this IS the answer.
+
+   DESTINATIONS WE SHIP TO:
+
+     • UNITED STATES — FREE shipping (USPS Ground Advantage, 2-5
+       business days transit after we ship).
+     • CANADA — $9 USD flat (USPS Priority Mail Express International,
+       3-5 business days transit).
+     • UNITED KINGDOM — $9 USD flat (USPS Priority Mail International,
+       6-10 business days transit).
+     • EUROPEAN UNION member countries — $9 USD flat (USPS Priority
+       Mail International, 6-10 business days transit). EU member
+       states include Austria, Belgium, Bulgaria, Croatia, Cyprus,
+       Czechia, Denmark, Estonia, Finland, France, Germany, Greece,
+       Hungary, Ireland, Italy, Latvia, Lithuania, Luxembourg, Malta,
+       Netherlands, Poland, Portugal, Romania, Slovakia, Slovenia,
+       Spain, Sweden. The UK is NOT in the EU (listed separately
+       above; same rate, same transit time, but a distinct destination
+       in Etsy's profile).
+     • MEXICO — $15 USD flat (USPS Priority Mail International, 6-10
+       business days transit).
+     • JAPAN — $15 USD flat (USPS Priority Mail International, 6-10
+       business days transit).
+
+   All shipping rates above are FLAT regardless of order size (the
+   "additional item" cost is $0). A 3-piece order ships at the same
+   shipping price as a 1-piece order.
+
+   DESTINATIONS WE DO NOT SHIP TO: anything not listed above. Common
+   examples customers may ask about that we currently CANNOT ship to:
+   Switzerland, Norway, Iceland, Australia, New Zealand, Brazil,
+   Argentina, China, India, South Africa, UAE, Singapore, Hong Kong,
+   Korea. When a customer asks about one of these, state plainly that
+   we don't currently ship to that destination, and list the regions
+   we do ship to so they know whether a workaround (e.g., a friend in
+   the US receiving the package) is feasible. Don't escalate.
+
+   DOMESTIC SHIPPING UPGRADES (US ORDERS ONLY):
+
+     • USPS Priority Mail — 1-3 business days transit, +$18 per
+       item.
+     • USPS Priority Mail Express — 1-2 business days transit, +$55
+       per item.
+
+   These upgrades are selected by the customer at checkout on the
+   listing page. The AI cannot apply them retroactively to existing
+   orders. International orders do NOT have shipping upgrade options;
+   international shipping is the standard rate at the published
+   transit time, period.
+
+   ANSWERING SHIPPING QUESTIONS — APPLY THESE RULES:
+
+     1. Pick the relevant info for what the customer actually asked.
+        Don't dump the whole list. If they asked about Italy, you say
+        "yes, we ship to Italy" + the EU rate + the transit time. You
+        don't list every other country.
+
+     2. Always pair the transit time with the no-guarantee sentence
+        from section 7.3 ("we don't guarantee specific delivery
+        dates"). Transit time is the carrier's typical window, not a
+        commitment.
+
+     3. Production time (4-6 business days) is SEPARATE from shipping
+        time. When the customer asks "how long will it take to get
+        here?", the honest answer is production-plus-shipping:
+           - US: 4-6 days production + 2-5 days shipping = ~6-11 business days
+           - Canada: 4-6 + 3-5 = ~7-11 business days
+           - EU / UK: 4-6 + 6-10 = ~10-16 business days
+           - Mexico / Japan: 4-6 + 6-10 = ~10-16 business days
+        Always with the no-guarantee caveat. Apply the under-2-weeks
+        rule from section 7.3 if the customer has a deadline.
+
+     4. When a customer asks specifically about shipping COST without
+        naming a country, ask them where they're shipping to (it
+        depends on destination). One short clarifier.
+
+     5. If the customer is shipping somewhere we don't cover, the
+        answer is a clean no plus the list of regions we do cover.
+        Don't offer to "check with the team" — there is no checking;
+        the list is the policy.
+
    ─── Lost or undelivered packages ───
    When a customer says their package hasn't arrived, the framework is:
 
@@ -2700,14 +2787,27 @@ exports.handler = async (event) => {
       // From the operator screenshot: "we'll come back with a clear
       // answer on Figaro vs the other chain options..."
       /\b(?:we['\u2019]?ll|we\s+will)\s+(?:come\s+back|circle\s+back|get\s+back\s+to\s+you|follow\s+up\s+with\s+you)\s+(?:with|on|about)\b/i,
+      // v5.19 — Italy-thread style: "we'll/we will get back to you"
+      // (standalone, no "with X" qualifier needed). Same problem as
+      // the v5.17 pattern but without the qualifier word.
+      /\b(?:we['\u2019]?ll|we\s+will)\s+get\s+back\s+to\s+you\b/i,
+      // v5.19 — "as soon as we hear back from the team" pattern.
+      // Commits a specific team-action with deferred timing,
+      // unverifiable. From Italy-thread: "We'll get back to you as
+      // soon as we hear back from the team."
+      /\bas\s+soon\s+as\s+we\s+hear\s+(?:back\s+)?(?:from|on)\s+(?:the\s+)?(?:team|operator|staff)\b/i,
     ];
 
     const SOFT_PROMISE_PATTERNS = [
-      // I/we + forward-promise verb
-      /\bwe['\u2019]?ll\s+(send|follow up|get back|check|pull up|reach out|have those|be in touch|look into|review this|come back|circle back)\b/i,
-      /\bI['\u2019]?ll\s+(send|follow up|get back|check|pull up|reach out|have those|be in touch|flag|forward|escalate|review|come back|circle back)\b/i,
-      // Let me/us + investigative verb (extended for v5.17 meta-commentary)
-      /\blet\s+(?:us|me)\s+(?:check|pull up|put together|look into|see if|look at|investigate|walk you through|walk through|take a step back|make sure we|pull this together|review the conversation)\b/i,
+      // I/we + forward-promise verb (v5.19 adds "double-check" /
+      // "double check" as a common dodge phrasing seen in shipping-
+      // eligibility deferrals)
+      /\bwe['\u2019]?ll\s+(send|follow up|get back|check|pull up|reach out|have those|be in touch|look into|review this|come back|circle back|double[\s-]?check)\b/i,
+      /\bI['\u2019]?ll\s+(send|follow up|get back|check|pull up|reach out|have those|be in touch|flag|forward|escalate|review|come back|circle back|double[\s-]?check)\b/i,
+      // Let me/us + investigative verb (extended for v5.17 meta-commentary
+      // and v5.19 shipping deferral with "double-check" / "verify" /
+      // "confirm")
+      /\blet\s+(?:us|me)\s+(?:check|double[\s-]?check|pull up|put together|look into|see if|look at|investigate|verify|confirm|walk you through|walk through|take a step back|make sure we|pull this together|review the conversation)\b/i,
       // "Get back to you" framings
       /\bget(?:ting)?\s+(?:back|those|that)\s+(?:to|over\s+to)\s+you\b/i,
       // "Have someone reach out"
@@ -2721,6 +2821,18 @@ exports.handler = async (event) => {
       /\bsend\s+you\s+in\s+circles\b/i,
       /\bwe\s+(?:want|need)\s+to\s+(?:take\s+a\s+step\s+back|step\s+back)\b/i,
       /\bbefore\s+we\s+(?:say|tell\s+you)\s+anything\s+specific\b/i,
+      // v5.19 — Shipping-eligibility-deferral patterns. The Italy
+      // thread showed the AI punting on a shipping question it should
+      // have answered directly from prompt section 7. The shop has
+      // documented shipping policy now (see "Shipping destinations,
+      // costs, and timing" subsection), so phrasings like "let us
+      // check shipping eligibility on our end" are unwarranted
+      // deferrals. The list IS the policy; no checking is needed.
+      /\b(?:check|confirm|verify|look\s+into)\s+(?:shipping\s+)?(?:eligibility|availability)\s+(?:to|for|on)\b/i,
+      // v5.19 — "check on our end" / "verify with the team" patterns.
+      // Generic deferral phrasings that signal the AI is punting
+      // instead of consulting the policy in the prompt.
+      /\b(?:check|look\s+into|verify|confirm)\s+(?:on|with)\s+(?:our|the)\s+end\b/i,
       // "Apologies for the delay" when used as a soft opener with no
       // substantive answer to follow. We can't tell from regex whether
       // there's a real delay or not, but pairing it with stalling
