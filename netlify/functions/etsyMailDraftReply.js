@@ -1720,10 +1720,10 @@ Workflow:
   2. Identify the active question (per rules above)
   3. If the question is about tracking/shipping/an order detail, call
      lookup_order_tracking and/or lookup_order_details as needed
-  4. If a visual tracking timeline would genuinely help the customer
-     (they're anxious about a package, asking "where is it?", or the
-     tracking has unusual detail worth showing), call
-     generate_tracking_image with the tracking code from step 3
+  4. If the question fits any "WHERE IS MY ORDER" pattern below, you
+     MUST call generate_tracking_image AFTER lookup_order_tracking
+     returns a tracking code. This is NOT a judgment call — see WHEN
+     TO GENERATE A TRACKING IMAGE below.
   5. If the active question is a product availability, variant, or price
      question and no exact listing is already clear from the thread,
      call search_shop_listings before suggesting products or prices
@@ -1733,6 +1733,73 @@ Workflow:
      include the returned URL in your reply
   7. Call compose_draft_reply with the final text + reasoning +
      referenced receiptIds + any listing suggestions
+
+WHEN TO GENERATE A TRACKING IMAGE (use generate_tracking_image):
+
+The tracking image is a branded visual timeline of the package's scan
+history (origin, in-transit scans, out-for-delivery, delivered). It
+turns "where is my order?" from a multi-message back-and-forth into a
+single self-explanatory reply. Operators reach for it constantly
+because one image answers most follow-up questions before they get
+asked.
+
+You MUST call generate_tracking_image when ANY of these are true:
+
+  - Customer says "where is my order?" / "where is my package?"
+  - Customer says "hasn't arrived" / "still hasn't arrived" /
+    "haven't received it"
+  - Etsy "Help with Order" structured form contains "Order hasn't
+    arrived" or "Ideal resolution: replace" with a missing-package note
+  - Customer says "any update on shipping?" / "any updates?" /
+    "when will my order arrive?"
+  - Customer says "is my package lost?" / "is it lost?" / "missing
+    package"
+  - Customer references a tracking event and asks for interpretation
+    ("tracking says it was delivered but I don't have it", "tracking
+    hasn't moved in a week")
+  - Order shipped 7+ days ago (US) or 10+ days ago (international)
+    and the customer is following up about delivery
+
+This list is NOT exhaustive — the underlying principle is "the
+customer wants to know where their package is, the answer is on the
+tracking, the tracking image makes the answer immediate." Whenever
+that principle applies, call the tool.
+
+DO NOT skip the tracking image because:
+
+  - "The order is past the typical delivery window, this might need
+    review" → the tracking image is exactly what an operator would
+    look at to make that judgment; show it.
+  - "The customer asked for a refund/replace" → the customer chose a
+    resolution option in Etsy's form, but their actual question is
+    still where the package is. Tracking comes first; refund/replace
+    conversation comes after (and only when 7+ days past EDD per
+    section 7).
+  - "I don't have enough information about next steps" → the next
+    steps come from the tracking, not the other way around. Generate
+    the image, then write the reply around what the tracking says.
+  - "Seeing the scan history might not 'genuinely help'" — IT DOES.
+    Stop second-guessing. If the trigger pattern fires, fire the tool.
+
+Workflow for these cases:
+
+  1. lookup_order_tracking(receiptId) — pick the relevant order from
+     the customer's recent receipts. For "Order hasn't arrived"
+     messages, the order is almost always the most recent shipped
+     one.
+  2. If the returned trackingCode is non-empty, call
+     generate_tracking_image(trackingCode). The carrier is auto-
+     detected.
+  3. Write your reply describing what the tracking shows in plain
+     English, naturally referencing the attached image ("I've pulled
+     the current tracking for you below"). Apply the
+     undelivered-package policy from section 7 if relevant (Etsy
+     non-delivery case eligible only at 7+ days past EDD).
+
+If lookup_order_tracking returns no tracking code (label printed but
+never scanned, or no order found), write your reply in prose. Do NOT
+write that something is attached when it isn't — see the ATTACHMENT-
+CLAIM RULE below.
 
 WHEN TO SEND A LINE SHEET (use get_collateral):
 
@@ -2962,6 +3029,12 @@ exports.handler = async (event) => {
       // unverifiable. From Italy-thread: "We'll get back to you as
       // soon as we hear back from the team."
       /\bas\s+soon\s+as\s+we\s+hear\s+(?:back\s+)?(?:from|on)\s+(?:the\s+)?(?:team|operator|staff)\b/i,
+      // v5.22 — Kari-thread variant: "we'll be back to you" / "we
+      // will be back to you (soon)" / "we'll be in touch (soon)". Same
+      // commit-to-future-action problem as the v5.17 and v5.19
+      // patterns, just phrased without "get" or "come". From Kari
+      // thread reply: "We'll be back to you soon."
+      /\b(?:we['\u2019]?ll|we\s+will)\s+be\s+(?:back\s+to\s+you|in\s+touch)\b/i,
     ];
 
     const SOFT_PROMISE_PATTERNS = [
@@ -2999,6 +3072,25 @@ exports.handler = async (event) => {
       // Generic deferral phrasings that signal the AI is punting
       // instead of consulting the policy in the prompt.
       /\b(?:check|look\s+into|verify|confirm)\s+(?:on|with)\s+(?:our|the)\s+end\b/i,
+      // v5.22 — Kari-thread broader "on our end" variants. The v5.19
+      // pattern only fires on tight phrasings like "check on our end".
+      // Operators often write "look at this carefully on our end" or
+      // "review this thoroughly on our end" — same deferral, just with
+      // intervening qualifier words. This pattern fires when ANY
+      // review/inspection verb precedes "on our end" with up to 6
+      // words of intervening text. From Kari thread: "we want to look
+      // at this carefully on our end before we say anything specific."
+      /\b(?:look|review|investigate|dig|examine|sort)\s+(?:into\s+|at\s+|over\s+|through\s+)?(?:this|it|that|things|matters|the\s+order|the\s+details|carefully|closely|thoroughly)?(?:\s+\w+){0,4}\s+on\s+(?:our|the)\s+end\b/i,
+      // v5.22 — "before we say anything specific" stalling phrasing.
+      // Generic temporal defer. Catches variants like "before we can
+      // say anything specific", "before giving you a specific answer",
+      // "until we say anything more". From Kari thread: "before we say
+      // anything specific about next steps."
+      /\bbefore\s+(?:we|I)\s+(?:can\s+)?(?:say|tell\s+you|share|give\s+you|provide|commit\s+to)\s+(?:anything|something|a)\s+(?:specific|definitive|concrete|more|firm|definite)\b/i,
+      // v5.22 — Temporal-deferral patterns: "until/once/after we look
+      // at this" — implies the answer comes "later, not now". Sibling
+      // of the above; the stall is the timing word.
+      /\b(?:until|once|after)\s+we\s+(?:look\s+at|review|check|investigate|verify|sort\s+through)\s+(?:this|it|things|matters|the\s+order|the\s+details)\b/i,
       // "Apologies for the delay" when used as a soft opener with no
       // substantive answer to follow. We can't tell from regex whether
       // there's a real delay or not, but pairing it with stalling
