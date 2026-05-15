@@ -5364,9 +5364,71 @@
     const NETLIFY_BASE = "";
     const FN = (name) => `${NETLIFY_BASE}/.netlify/functions/${name}`;
 
-    const LIST_POLL_MS     = 5000;
-    const MESSAGES_POLL_MS = 4000;
-    const COUNTS_POLL_MS   = 15000;
+    // v5.31 — Poll intervals widened to cut Firestore read pressure.
+    // The dashboard previously polled every 4–15s which, combined with
+    // unbounded full-collection counts (now fixed in etsyMailThreads.js
+    // v5.31), drove millions of reads per day. New cadence:
+    //
+    //   • LIST_POLL_MS     5s → 15s   (rail thread list)
+    //   • MESSAGES_POLL_MS 4s → 10s   (open-thread message poll)
+    //   • COUNTS_POLL_MS   15s → 60s  (folder badge counts)
+    //
+    // User-initiated actions (clicking a thread/folder, sending a
+    // message, focusing a tab after hiding) still fetch immediately —
+    // see the visibility-resume hook below — so perceived latency is
+    // unchanged from the operator's seat. Only the background-tab
+    // bleed is reduced.
+    const LIST_POLL_MS     = 15000;
+    const MESSAGES_POLL_MS = 10000;
+    const COUNTS_POLL_MS   = 60000;
+
+    // v5.31 — Visibility-aware polling helpers.
+    //
+    // Each poller in this file uses setInterval to refresh a piece of
+    // dashboard state (list, counts, open-thread messages, kill switch,
+    // Gmail panel, operator role). When the tab is hidden — backgrounded,
+    // minimized, screen-locked, on another desktop — every one of those
+    // timers continues firing, burning Firestore reads for data the
+    // operator can't see. With dozens of tabs open across the day, this
+    // was the dominant background cost.
+    //
+    // `isTabVisible()` — single source of truth for the visibility check.
+    // We use `document.visibilityState` instead of `document.hasFocus()`
+    // because the latter reports false on the active tab whenever any
+    // other window holds focus (Slack, dev tools, OS dialog) — too
+    // aggressive. visibilityState only flips on tab/window switches.
+    //
+    // `visibleInterval(fn, ms)` — drop-in replacement for setInterval
+    // that no-ops the callback while the tab is hidden but keeps the
+    // timer alive (so we don't have to tear down and rebuild it on
+    // every visibility change). Returns the timer handle for clearInterval.
+    //
+    // `onTabBecameVisible(fn)` — register a one-shot refresh to run
+    // when the tab returns to visible. Multiple registrations stack;
+    // each fires once per hidden→visible transition. Used to fetch
+    // fresh data the instant the operator comes back to the inbox.
+    function isTabVisible() {
+      return typeof document === "undefined" || document.visibilityState !== "hidden";
+    }
+    function visibleInterval(fn, ms) {
+      return setInterval(() => {
+        if (!isTabVisible()) return;
+        try { fn(); } catch (e) { console.warn("poll callback threw:", e && e.message); }
+      }, ms);
+    }
+    const _visibleResumeHandlers = new Set();
+    function onTabBecameVisible(fn) {
+      if (typeof fn === "function") _visibleResumeHandlers.add(fn);
+    }
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") {
+          for (const fn of _visibleResumeHandlers) {
+            try { fn(); } catch (e) { console.warn("resume handler threw:", e && e.message); }
+          }
+        }
+      });
+    }
 
     const THREADS_COLL = "EtsyMail_Threads";
     const CUSTOMERS_COLL = "EtsyMail_Customers";
@@ -8799,9 +8861,15 @@
     }
     function startKillSwitchPolling() {
       if (_killSwitchPoller) return;
-      _killSwitchPoller = setInterval(pollKillSwitch, 30 * 1000);
+      // v5.31: visibility-aware. Kill-switch state changes are rare;
+      // we don't need to poll while the tab is hidden, and we refresh
+      // on every visibility-resume below anyway.
+      _killSwitchPoller = visibleInterval(pollKillSwitch, 30 * 1000);
       pollKillSwitch();  // immediate
     }
+    onTabBecameVisible(() => {
+      if (_killSwitchPoller) pollKillSwitch();
+    });
 
     /* ══════════════════════════════════════════════════════════════
      * v0.9.3: Optimistic outbound-message insert
@@ -9306,12 +9374,23 @@
       // The timer fetches pass source:'poll' so the in-flight guard
       // prevents the 5s timer from piling up parallel requests when
       // the network is slow.
+      // v5.31: poller now skips its tick when the tab is hidden, and
+      // any hidden→visible transition triggers an immediate refresh
+      // so the rail is fresh the moment the operator returns. Net
+      // effect on the operator's experience: identical to before
+      // when the tab is active; zero cost when it isn't.
       fetchThreadListNow();
-      state.listPollTimer = setInterval(
+      state.listPollTimer = visibleInterval(
         () => fetchThreadListNow({ source: "poll" }),
         LIST_POLL_MS
       );
     }
+    onTabBecameVisible(() => {
+      // Only refresh if list polling is actually wired up; otherwise the
+      // user is on a screen that doesn't show the list and the fetch
+      // would be wasted.
+      if (state.listPollTimer) fetchThreadListNow({ source: "poll" });
+    });
     function stopListPolling() {
       if (state.listPollTimer) { clearInterval(state.listPollTimer); state.listPollTimer = null; }
     }
@@ -10078,9 +10157,13 @@
     }
     function startCountsPolling() {
       stopCountsPolling();
+      // v5.31: visibility-aware. See startListPolling for rationale.
       fetchCountsNow();
-      state.countsPollTimer = setInterval(fetchCountsNow, COUNTS_POLL_MS);
+      state.countsPollTimer = visibleInterval(fetchCountsNow, COUNTS_POLL_MS);
     }
+    onTabBecameVisible(() => {
+      if (state.countsPollTimer) fetchCountsNow();
+    });
     function stopCountsPolling() {
       if (state.countsPollTimer) { clearInterval(state.countsPollTimer); state.countsPollTimer = null; }
     }
@@ -10194,11 +10277,14 @@
       // open-thread network load roughly in half.
       let pollTickCount = 0;
 
-      state.msgPollTimer = setInterval(async () => {
+      state.msgPollTimer = visibleInterval(async () => {
         // v0.9.14: timer-driven fetch — apply in-flight guard so the
         // 4s timer doesn't pile up parallel requests when the network
         // is slow. (Card clicks call fetchMessagesNow directly with
         // the user default and bypass the guard.)
+        // v5.31: visibleInterval skips this entire callback when the
+        // tab is hidden, so we don't poll for an open thread the
+        // operator can't currently see.
         fetchMessagesNow(threadId, { source: "poll" });
         // v2.0 Step 2: keep sales card in sync. Cheap: skipped silently
         // if no SalesContext exists for this thread.
@@ -10248,6 +10334,14 @@
         }
       }, MESSAGES_POLL_MS);
     }
+    onTabBecameVisible(() => {
+      // If a thread is open when the operator returns to the tab, pull
+      // fresh messages immediately so they see latest activity rather
+      // than waiting up to MESSAGES_POLL_MS for the next tick.
+      if (state.msgPollTimer && state.selectedId) {
+        fetchMessagesNow(state.selectedId, { source: "user" });
+      }
+    });
     function stopMessagesPolling() {
       if (state.msgPollTimer) { clearInterval(state.msgPollTimer); state.msgPollTimer = null; }
     }
@@ -15685,8 +15779,12 @@
       // Kick off the panel refresh loop. First refresh is immediate so
       // operators see status at page load; subsequent refreshes every
       // GMAIL_PANEL_REFRESH_MS keep it current without polling spam.
+      // v5.31: visibility-aware so the panel stops polling while the
+      // tab is hidden; the visibility-resume hook below refreshes on
+      // return so the operator sees current status without delay.
       refreshGmailPanel();
-      setInterval(refreshGmailPanel, GMAIL_PANEL_REFRESH_MS);
+      visibleInterval(refreshGmailPanel, GMAIL_PANEL_REFRESH_MS);
+      onTabBecameVisible(() => { refreshGmailPanel(); });
 
       // ── Filter wiring ────────────────────────────────────────────
       // ── v1.6: Real-time per-keystroke search ────────────────────
@@ -15981,9 +16079,12 @@
       // Boot calls (from this point down): role-fetch on first paint,
       // poll role every 60s, refresh sales card whenever a thread is
       // open, wire pricing-rules + collateral modals.
+      // v5.31: role poll is visibility-aware. Role assignments are
+      // changed by an owner explicitly; we don't need to recheck while
+      // the tab is hidden.
       // ─────────────────────────────────────────────────────────────────
       fetchOperatorRole().then(renderOperatorRoleBadge).catch(() => {});
-      setInterval(() => fetchOperatorRole().then(renderOperatorRoleBadge).catch(() => {}), 60 * 1000);
+      visibleInterval(() => fetchOperatorRole().then(renderOperatorRoleBadge).catch(() => {}), 60 * 1000);
 
       $("emOptionSheetsBtn")?.addEventListener("click", openOptionSheetsModal);
       $("emCollateralBtn")?.addEventListener("click", openCollateralModal);

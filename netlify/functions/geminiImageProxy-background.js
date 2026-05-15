@@ -2495,6 +2495,159 @@ async function _handlerImpl(event) {
       await bucket.file(p).save(buf, { contentType: "application/json", resumable: false });
       return json(200, { ok: true, storagePath: p });
     }
+
+    // ============================================================
+    // move_set_to_completed (v5.31)
+    // ------------------------------------------------------------
+    // Server-side replacement for the browser-driven
+    // runBackgroundApproval flow in Listing_Generator_1.html.
+    //
+    // The old flow downloaded every PNG from Ready_To_List/Set_N
+    // into the browser, re-uploaded it to Completed_Listing_Sets/
+    // {cat}_Set_N, then deleted the source. That round-tripped 100%
+    // of the bytes through the operator's bandwidth and Firebase
+    // egress on every approval. For our typical 4–8 MB per slot ×
+    // 4–6 slots per set × dozens of approvals/day, this was a
+    // significant chunk of the monthly bandwidth bill — and worse,
+    // it could leave files orphaned in Ready_To_List if any step
+    // failed mid-loop because the UI hides the set immediately
+    // (addHiddenSets) without retrying.
+    //
+    // This handler does the same work entirely server-side:
+    //   • bucket.file(src).copy(dst) is a Google-internal byte
+    //     transfer with no egress charge.
+    //   • Manifest tidying for skipped slots happens here too, so
+    //     the client doesn't need to know about manifest structure.
+    //   • Per-file errors are collected and returned so the client
+    //     can decide whether to surface them; the loop continues
+    //     past failures (best-effort) so a single flaky file
+    //     doesn't strand a 95%-complete approval.
+    //
+    // Body:
+    //   {
+    //     kind        : "move_set_to_completed",
+    //     activeCategory: "Beady_Necklace" | ... (one of GENERATABLE_CATEGORIES),
+    //     setName     : "Set_42",           // matches /^Set_\d+$/
+    //     skippedSlots: ["Slot_3.png", ...] // optional; these get
+    //                                       // deleted from src instead of moved
+    //   }
+    //
+    // Response:
+    //   { ok: true, moved: N, skippedDeleted: M, errors: [...] }
+    //
+    // The client should treat ANY non-2xx response or `ok:false` as
+    // a signal to fall back to the legacy browser-mediated flow so
+    // approvals never get stuck on a deploy lag.
+    if (kind === "move_set_to_completed") {
+      const cat = normalizeCategory(activeCategory);
+      if (!GENERATABLE_CATEGORIES.has(cat)) {
+        return json(400, { error: { message: "activeCategory not generatable" } });
+      }
+      const setName = String(body?.setName || "").trim();
+      if (!/^Set_\d+$/.test(setName)) {
+        return json(400, { error: { message: "setName must look like 'Set_<n>'" } });
+      }
+      const skippedSlots = Array.isArray(body?.skippedSlots)
+        ? body.skippedSlots.filter((s) => typeof s === "string" && /^Slot_\d+\.png$/.test(s))
+        : [];
+      const skipSet = new Set(skippedSlots);
+
+      const bucket = admin.storage().bucket();
+      const srcPrefix = `listing-generator-1/${cat}/Ready_To_List/${setName}/`;
+      const dstPrefix = `listing-generator-1/Generated_Listing_Sets/Completed_Listing_Sets/${cat}_${setName}/`;
+
+      // Step 1: Enumerate source files. getFiles with a prefix is a
+      // single-shot list — no pagination needed at this scale (a set
+      // is at most ~10 files).
+      let files;
+      try {
+        const [f] = await bucket.getFiles({ prefix: srcPrefix });
+        files = f;
+      } catch (e) {
+        return json(500, { ok: false, error: { message: `getFiles failed: ${e?.message || e}` } });
+      }
+      if (!files.length) {
+        // Nothing to do — set folder is already empty. Treat as success
+        // so callers (and the optional fallback path on the client) can
+        // proceed without surfacing a confusing "no files" error.
+        return json(200, { ok: true, moved: 0, skippedDeleted: 0, errors: [], note: "source folder empty" });
+      }
+
+      // Step 2: If there are skipped slots and a manifest is present,
+      // tidy the manifest before moving. We mirror the exact transform
+      // the old browser code performed:
+      //   slots[i] = { ...slots[i], skipped: true, output: null }
+      //     for any slot whose Slot_<n>.png is in skipSet.
+      // This keeps the manifest semantically truthful in its new home.
+      const manifestFile = files.find((f) => f.name === srcPrefix + "manifest.json");
+      let tidiedManifestBuf = null;
+      if (manifestFile && skipSet.size > 0) {
+        try {
+          const [raw] = await manifestFile.download();
+          const data = JSON.parse(raw.toString("utf8"));
+          const tidied = {
+            ...data,
+            slots: (data.slots || []).map((s) =>
+              s && typeof s.slot === "number" && skipSet.has(`Slot_${s.slot}.png`)
+                ? { ...s, skipped: true, output: null }
+                : s
+            ),
+          };
+          tidiedManifestBuf = Buffer.from(JSON.stringify(tidied, null, 2), "utf8");
+        } catch (e) {
+          // Manifest unreadable — proceed without tidying. The original
+          // manifest will be copied verbatim below, which mirrors the
+          // browser code's fallback when its own manifest read fails.
+          console.warn(`[move_set_to_completed] manifest read failed for ${srcPrefix}: ${e?.message || e}`);
+        }
+      }
+
+      // Step 3: Walk files, mirroring the browser logic.
+      let moved = 0;
+      let skippedDeleted = 0;
+      const errors = [];
+      for (const f of files) {
+        const filename = f.name.slice(srcPrefix.length);
+        if (!filename) continue; // pseudo-folder entry
+
+        try {
+          if (skipSet.has(filename)) {
+            // Skipped slot → delete from src, do not copy.
+            await f.delete();
+            skippedDeleted++;
+          } else if (filename === "manifest.json" && tidiedManifestBuf) {
+            // Manifest with tidying applied → write tidied version to
+            // dst, then delete src.
+            const dstFile = bucket.file(dstPrefix + filename);
+            await dstFile.save(tidiedManifestBuf, {
+              contentType: "application/json",
+              resumable: false,
+            });
+            await f.delete();
+            moved++;
+          } else {
+            // Default: server-side copy + delete.
+            const dstFile = bucket.file(dstPrefix + filename);
+            await f.copy(dstFile);
+            await f.delete();
+            moved++;
+          }
+        } catch (e) {
+          // Per-file failure: log + continue. Returning the error list
+          // lets the client decide whether to retry or fall back.
+          errors.push({ file: filename, error: String(e?.message || e) });
+        }
+      }
+
+      return json(200, {
+        ok: errors.length === 0,
+        moved,
+        skippedDeleted,
+        errors: errors.slice(0, 20),
+        srcPrefix,
+        dstPrefix,
+      });
+    }
   } catch (e) {
     return json(400, { ok: false, error: safeErr(e) });
   }

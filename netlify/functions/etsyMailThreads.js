@@ -475,22 +475,80 @@ exports.handler = async (event) => {
        * refundFlaggedAt for the same reason — refund discussions span
        * multiple turns and the thread.status changes as the AI/operator
        * replies, so an orderByField filter is the durable membership
-       * criterion. */
+       * criterion.
+       *
+       * v5.31 — Switched from a full-collection scan to Firestore
+       * aggregation queries (count()). The previous implementation read
+       * EVERY thread doc on every call (the dashboard polls this every
+       * 15s by default), which drove a multi-million-read-per-day cost
+       * on the inbox. With aggregation, each per-status count() is
+       * billed as 1 read per ~1000 matched docs — so the total cost
+       * for a single ?counts=1 call is now O(statuses) ≈ ~30 reads
+       * regardless of how many threads exist.
+       *
+       * Behavior preservation:
+       *   • Response shape is identical: { counts: { <status>: N, ...,
+       *     _completedSales: X, _refundFlagged: Y } }.
+       *   • Every key from VALID_STATUSES is present (defaults to 0
+       *     when the status has no docs) — same as the old code, where
+       *     missing keys also effectively meant 0.
+       *   • _completedSales uses orderBy("salesCompletedAt").count(),
+       *     which implicitly excludes docs where the field is unset —
+       *     exactly matching the old `if (data.salesCompletedAt)` check.
+       *     Same for _refundFlagged.
+       *   • If aggregation fails for any reason (network, missing
+       *     index, SDK incompatibility), we fall back to the legacy
+       *     full-scan path so the dashboard never breaks.
+       */
       if (qs.counts === "1") {
-        const snap   = await db.collection(THREADS_COLL).select("status", "salesCompletedAt", "refundFlaggedAt").get();
-        const counts = {};
-        let completedSalesCount = 0;
-        let refundFlaggedCount  = 0;
-        snap.forEach(d => {
-          const data = d.data() || {};
-          const s = data.status || "unknown";
-          counts[s] = (counts[s] || 0) + 1;
-          if (data.salesCompletedAt) completedSalesCount++;
-          if (data.refundFlaggedAt)  refundFlaggedCount++;
-        });
-        counts._completedSales = completedSalesCount;
-        counts._refundFlagged  = refundFlaggedCount;
-        return ok({ counts });
+        try {
+          const baseQ = db.collection(THREADS_COLL);
+          const statusList = Array.from(VALID_STATUSES);
+
+          // Fire all aggregation queries in parallel.
+          //   - one count() per known status
+          //   - one count() filtered to docs where salesCompletedAt is set
+          //     (orderBy on a field excludes docs without that field —
+          //     this is the same trick used by the orderByField folder
+          //     path at ~line 510 below)
+          //   - one count() filtered to docs where refundFlaggedAt is set
+          const aggPromises = [
+            ...statusList.map(s => baseQ.where("status", "==", s).count().get()),
+            baseQ.orderBy("salesCompletedAt").count().get(),
+            baseQ.orderBy("refundFlaggedAt").count().get(),
+          ];
+
+          const aggResults = await Promise.all(aggPromises);
+
+          const counts = {};
+          statusList.forEach((s, i) => {
+            counts[s] = aggResults[i].data().count;
+          });
+          counts._completedSales = aggResults[statusList.length].data().count;
+          counts._refundFlagged  = aggResults[statusList.length + 1].data().count;
+          return ok({ counts });
+        } catch (aggErr) {
+          // Fallback to the legacy full-scan path on any aggregation
+          // failure. This preserves availability if the project's
+          // Firestore SDK version is older than aggregation support, or
+          // if a transient index-build failure happens. Logged so the
+          // operator can see why aggregation didn't take.
+          console.warn("[etsyMailThreads:counts] aggregation failed, falling back to scan:", aggErr.message);
+          const snap   = await db.collection(THREADS_COLL).select("status", "salesCompletedAt", "refundFlaggedAt").get();
+          const counts = {};
+          let completedSalesCount = 0;
+          let refundFlaggedCount  = 0;
+          snap.forEach(d => {
+            const data = d.data() || {};
+            const s = data.status || "unknown";
+            counts[s] = (counts[s] || 0) + 1;
+            if (data.salesCompletedAt) completedSalesCount++;
+            if (data.refundFlaggedAt)  refundFlaggedCount++;
+          });
+          counts._completedSales = completedSalesCount;
+          counts._refundFlagged  = refundFlaggedCount;
+          return ok({ counts });
+        }
       }
 
       /* ?threadId=... → single thread + messages */

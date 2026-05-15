@@ -5060,82 +5060,134 @@ function updateApproveButtonState() {
         console.log(`[Queue] Starting background move for ${setName}`);
 
         const srcFolder = `${ROOT}/${category}/Ready_To_List/${setName}`;
-        const destFolderName = `${category}_${setName}`; 
+        const destFolderName = `${category}_${setName}`;
         const destFolder = `${ROOT}/Generated_Listing_Sets/Completed_Listing_Sets/${destFolderName}`; // UPDATED
 
+        // v5.31 — Two-tier execution:
+        //
+        //   1. Preferred path: POST kind:move_set_to_completed to
+        //      geminiImageProxy-background. The server does
+        //      bucket.file(src).copy(dst) + delete server-side. No bytes
+        //      ever leave Google's infra → no Firebase egress charges,
+        //      no orphan-on-failure UI footgun, and no operator-side
+        //      bandwidth burned on every approval.
+        //
+        //   2. Legacy fallback: the original getBytes / uploadBytesResumable
+        //      / deleteObject loop. Used automatically when the new
+        //      endpoint isn't reachable (function not deployed yet,
+        //      5xx, network blip) or when it returns ok:false with
+        //      per-file errors (we re-process whatever remains in src,
+        //      which the browser listAll() will discover).
+        //
+        // Functional behavior of the UI (status text, counters, hidden-set
+        // dropdown handling) is identical to pre-v5.31 in both branches.
+
+        // Read the manifest once up front. Both branches need to know which
+        // slots the operator marked "skipped" so they can be deleted (not
+        // moved) and their manifest entries tidied. If the read fails the
+        // skip set stays empty — same fallback the old code had.
+        let manifestData = null;
+        let skippedFileNames = new Set();
         try {
             await ensureStorageSignedIn();
-
-            // Read the manifest first so we know which slots the user
-            // toggled "skip" on. Skipped slots are deleted from the source
-            // folder rather than copied to the destination, and their
-            // output field in the moved manifest is set to null so any
-            // downstream consumer can tell the slot was intentionally
-            // omitted (instead of the file being mysteriously missing).
-            // If the manifest can't be read for any reason, fall back to
-            // the original "copy everything" behavior.
-            let manifestData = null;
             try {
                 const manifestBuffer = await getBytes(ref(storage, `${srcFolder}/manifest.json`));
                 manifestData = JSON.parse(new TextDecoder().decode(manifestBuffer));
+                skippedFileNames = new Set(
+                    (manifestData?.slots || [])
+                        .filter(s => s && s.skipped)
+                        .map(s => `Slot_${s.slot}.png`)
+                );
             } catch (_) { /* manifest missing — proceed without skip handling */ }
-
-            const skippedFileNames = new Set(
-              (manifestData?.slots || [])
-                .filter(s => s && s.skipped)
-                .map(s => `Slot_${s.slot}.png`)
-            );
-            const haveSkips = skippedFileNames.size > 0;
-
-            const srcRef = ref(storage, srcFolder);
-            const res = await listAll(srcRef);
-
-            for (const itemRef of res.items) {
-              // Skipped slot file → delete from source, do not copy.
-              if (skippedFileNames.has(itemRef.name)) {
-                await deleteObject(itemRef);
-                console.log(`[Queue] Skipped (not moved): ${itemRef.name}`);
-                continue;
-              }
-
-              // The manifest gets a tidy-pass when there are skips so the
-              // moved copy reflects the final state. We also strip 'output'
-              // from skipped slots since the file no longer exists.
-              if (haveSkips && itemRef.name === "manifest.json" && manifestData) {
-                const tidied = {
-                  ...manifestData,
-                  slots: (manifestData.slots || []).map(s =>
-                    s && s.skipped ? { ...s, output: null } : s
-                  ),
-                };
-                const newRef = ref(storage, `${destFolder}/${itemRef.name}`);
-                const buf = new TextEncoder().encode(JSON.stringify(tidied, null, 2));
-                await uploadBytesResumable(newRef, buf, { contentType: "application/json" });
-                await deleteObject(itemRef);
-                continue;
-              }
-
-              // Default: copy + delete (existing behavior).
-              const buffer = await getBytes(itemRef);
-              const newRef = ref(storage, `${destFolder}/${itemRef.name}`);
-              await uploadBytesResumable(newRef, buffer); 
-              await deleteObject(itemRef);
-            }
-            console.log(`[Queue] Finished moving ${setName}${haveSkips ? ` (${skippedFileNames.size} slot(s) skipped)` : ""}`);
-            backgroundQueueStatus.textContent = `Completed: ${setName}`;
-            
-            setTimeout(() => {
-                if (backgroundQueueStatus.textContent.includes(setName)) {
-                    backgroundQueueStatus.textContent = "";
-                }
-                updateCompletedSetsCounter(); // <--- ADD THIS LINE HERE
-                updateTotalAllTimeCounter();
-            }, 3000);
-
-        } catch (e) {
-            console.error(`[Queue] Failed to move ${setName}`, e);
-            backgroundQueueStatus.textContent = `Error moving ${setName}`;
+        } catch (signinErr) {
+            console.warn(`[Queue] Storage sign-in failed for ${setName} (will attempt server path anyway):`, signinErr?.message || signinErr);
         }
+
+        // ─── Tier 1: server-side move ───────────────────────────────────
+        let serverDone = false;
+        try {
+            const resp = await postJson("geminiImageProxy-background", {
+                kind          : "move_set_to_completed",
+                activeCategory: category,
+                setName,
+                skippedSlots  : Array.from(skippedFileNames),
+            });
+            if (resp && resp.ok === true) {
+                console.log(`[Queue] Server move completed for ${setName} — moved=${resp.moved}, skippedDeleted=${resp.skippedDeleted}`);
+                serverDone = true;
+            } else if (resp) {
+                console.warn(`[Queue] Server move reported partial state for ${setName}; falling back to browser flow.`, resp.errors || resp);
+            }
+        } catch (e) {
+            // 404 (endpoint not deployed), 5xx, network, JSON parse — all
+            // funnel here. We log + try the legacy path so the operator
+            // never sees a stuck approval just because the new function
+            // hasn't been deployed yet.
+            console.warn(`[Queue] Server move unavailable for ${setName} (${e?.message || e}); falling back to browser flow.`);
+        }
+
+        // ─── Tier 2: legacy browser path (pre-v5.31) ────────────────────
+        // Runs only when the server path didn't finish. Whatever files
+        // remain in Ready_To_List get the same treatment they would have
+        // gotten before this patch existed: download → upload to dest →
+        // delete source. listAll naturally skips files already moved by
+        // the server, so partial-then-fallback is safe and lossless.
+        if (!serverDone) {
+            try {
+                await ensureStorageSignedIn();
+                const haveSkips = skippedFileNames.size > 0;
+
+                const srcRef = ref(storage, srcFolder);
+                const res = await listAll(srcRef);
+
+                for (const itemRef of res.items) {
+                    // Skipped slot file → delete from source, do not copy.
+                    if (skippedFileNames.has(itemRef.name)) {
+                        await deleteObject(itemRef);
+                        console.log(`[Queue] Skipped (not moved): ${itemRef.name}`);
+                        continue;
+                    }
+
+                    // The manifest gets a tidy-pass when there are skips so the
+                    // moved copy reflects the final state. We also strip 'output'
+                    // from skipped slots since the file no longer exists.
+                    if (haveSkips && itemRef.name === "manifest.json" && manifestData) {
+                        const tidied = {
+                            ...manifestData,
+                            slots: (manifestData.slots || []).map(s =>
+                                s && s.skipped ? { ...s, output: null } : s
+                            ),
+                        };
+                        const newRef = ref(storage, `${destFolder}/${itemRef.name}`);
+                        const buf = new TextEncoder().encode(JSON.stringify(tidied, null, 2));
+                        await uploadBytesResumable(newRef, buf, { contentType: "application/json" });
+                        await deleteObject(itemRef);
+                        continue;
+                    }
+
+                    // Default: copy + delete (existing behavior).
+                    const buffer = await getBytes(itemRef);
+                    const newRef = ref(storage, `${destFolder}/${itemRef.name}`);
+                    await uploadBytesResumable(newRef, buffer);
+                    await deleteObject(itemRef);
+                }
+                console.log(`[Queue] Finished moving ${setName} via browser fallback${haveSkips ? ` (${skippedFileNames.size} slot(s) skipped)` : ""}`);
+            } catch (e) {
+                console.error(`[Queue] Failed to move ${setName}`, e);
+                backgroundQueueStatus.textContent = `Error moving ${setName}`;
+                return;
+            }
+        }
+
+        // ─── Success UI (identical to pre-v5.31) ────────────────────────
+        backgroundQueueStatus.textContent = `Completed: ${setName}`;
+        setTimeout(() => {
+            if (backgroundQueueStatus.textContent.includes(setName)) {
+                backgroundQueueStatus.textContent = "";
+            }
+            updateCompletedSetsCounter(); // <--- ADD THIS LINE HERE
+            updateTotalAllTimeCounter();
+        }, 3000);
     }
 
     approveSetBtn.addEventListener("click", approveSet);
