@@ -78,11 +78,18 @@ const THREADS_COLL = "EtsyMail_Threads";
 const AUDIT_COLL   = "EtsyMail_Audit";
 
 // ─── Model config ───────────────────────────────────────────────────────
-// v3.0: thread-aware classifier needs strong reasoning to identify the
-// current customer arc inside a multi-arc long-running thread. Opus 4.7
-// is the right default; cost is acceptable since classification fires
-// once per inbound, not per token.
-const INTENT_MODEL = process.env.ETSYMAIL_INTENT_MODEL || "claude-opus-4-7";
+// v3.31: rolled back from Opus 4.7 → Haiku 4.5. v3.0 had upgraded to
+// Opus 4.7 to handle multi-arc thread-aware classification (long
+// threads where the customer's "current arc" sits inside months of
+// older context). In practice the prompt + thread tail is well-
+// structured and 5-bucket classification is a domain Haiku 4.5
+// handles cleanly. Cost matters here: classification fires once per
+// inbound, every inbound, before any draft is generated — so the
+// per-call savings (~25x cheaper output, ~5x cheaper input) compound
+// faster than for any other path in the system. If we see wrong-arc
+// misroutes in the audit log on long threads, the right escalation
+// is Sonnet 4.6, not back to Opus.
+const INTENT_MODEL = process.env.ETSYMAIL_INTENT_MODEL || "claude-haiku-4-5-20251001";
 const INTENT_MAX_TOKENS = 600;     // larger than v2 to leave room for the
                                     // model's "reasoning" field on
                                     // arc-boundary calls. Cap on output.

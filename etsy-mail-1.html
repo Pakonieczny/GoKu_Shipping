@@ -4211,6 +4211,19 @@
           Below it, replies go to <b>Needs Review</b>. Higher = safer, fewer auto-sends.
         </p>
 
+        <label class="em-modal-range" for="emQuietPeriodInput" style="margin-top:10px;">
+          <span style="white-space:nowrap;">Quiet period</span>
+          <input type="range" id="emQuietPeriodInput"
+                 min="0" max="30" step="1" />
+          <span class="em-modal-range-val" id="emQuietPeriodVal">5 min</span>
+        </label>
+        <p style="font-size:11px;color:#6a737d;margin:0 0 8px;">
+          Minutes the customer's most recent message must be "settled" before the AI drafts a reply.
+          Customers often send 3-4 messages in quick succession; without a quiet period each message burns an AI call.
+          The timer resets every time the customer sends again — the pipeline fires once, after they stop typing.
+          Set to <b>0</b> to draft immediately on every inbound (legacy behavior).
+        </p>
+
         <label style="display:flex; align-items:center; gap:10px; margin:14px 0 6px; cursor:pointer;">
           <input type="checkbox" id="emManualAutoSendInput" style="width:16px; height:16px; cursor:pointer;">
           <span><b>Auto-send when I click "AI Draft"</b> &mdash; if AI rates the draft above the threshold, queue it for delivery automatically.</span>
@@ -5612,6 +5625,11 @@
     const AUTO_CFG_DEFAULTS = {
       enabled              : true,
       threshold            : 0.80,
+      // v3.30 — Quiet-period debounce. Minutes the latest inbound must
+      // be "settled" before the pipeline runs. Prevents 3-4 rapid-fire
+      // customer messages from burning 3-4 Anthropic calls when one
+      // reply (after they stop typing) is what we actually want.
+      quietPeriodMinutes   : 5,
       manualAiDraftAutoSend: true,   // v1.8: defaults to ON to preserve existing behavior
       // ─── v2.0 Step 1 (default OFF — operator opts in after deploy verifies) ──
       listingsMirrorEnabled  : false,
@@ -5643,6 +5661,11 @@
             enabled              : d.enabled !== false,
             threshold            : (typeof d.threshold === "number" && d.threshold >= 0 && d.threshold <= 1)
                                    ? d.threshold : AUTO_CFG_DEFAULTS.threshold,
+            // v3.30: clamp to [0, 60] minutes. Missing field => 5 (the
+            // default — matches the server-side fallback). Setting 0
+            // disables the debounce entirely (legacy behavior).
+            quietPeriodMinutes   : (typeof d.quietPeriodMinutes === "number" && d.quietPeriodMinutes >= 0 && d.quietPeriodMinutes <= 60)
+                                   ? d.quietPeriodMinutes : AUTO_CFG_DEFAULTS.quietPeriodMinutes,
             // v1.8: missing field defaults to true (preserves pre-v1.8 behavior
             // for configs written before this toggle existed). Explicit `false`
             // turns it off.
@@ -5741,7 +5764,7 @@
       return _listingTemplates;
     }
 
-    async function saveAutoConfig({ enabled, threshold, manualAiDraftAutoSend,
+    async function saveAutoConfig({ enabled, threshold, quietPeriodMinutes, manualAiDraftAutoSend,
                                     listingsMirrorEnabled, intentClassifierEnabled,
                                     salesModeEnabled, salesAutoEngage, salesAutoSendEnabled, salesPilotThreadIds,
                                     by }) {
@@ -5757,9 +5780,17 @@
         .filter(s => s.length > 0)
         .slice(0, 500);   // sanity cap
 
+      // v3.30: parse + clamp quietPeriodMinutes to [0, 60]. Integer-only
+      // since fractional minutes have no UX meaning here.
+      const quietRaw = parseInt(quietPeriodMinutes, 10);
+      const quietClean = Math.max(0, Math.min(60,
+        Number.isFinite(quietRaw) ? quietRaw : AUTO_CFG_DEFAULTS.quietPeriodMinutes
+      ));
+
       const clean = {
         enabled              : enabled !== false,
         threshold            : Math.max(0, Math.min(1, parseFloat(threshold) || AUTO_CFG_DEFAULTS.threshold)),
+        quietPeriodMinutes   : quietClean,
         manualAiDraftAutoSend: manualAiDraftAutoSend !== false,   // v1.8
         // v2.0 Step 1: explicit-true semantics.
         listingsMirrorEnabled  : listingsMirrorEnabled === true,
@@ -7061,6 +7092,11 @@
       listPollTimer     : null,
       msgPollTimer      : null,
       countsPollTimer   : null,
+      // v3.30 — 1Hz ticker for the auto-pipeline countdown banner.
+      // Set by renderAutoPipelineTimer when a thread is in
+      // deferred_quiet_period; cleared on every renderDetail call
+      // (re-entered or hidden).
+      autoTimerInterval : null,
       inFlightList      : false,
       inFlightMsgs      : false,
       inFlightSearch    : false,
@@ -8676,6 +8712,8 @@
       const enabledInput  = $("emAutoEnabledInput");
       const thr           = $("emConfThresholdInput");
       const thrVal        = $("emConfThresholdVal");
+      const quiet         = $("emQuietPeriodInput");      // v3.30
+      const quietVal      = $("emQuietPeriodVal");        // v3.30
       const manualInput   = $("emManualAutoSendInput");   // v1.8
       const listingsInput = $("emListingsMirrorInput");   // v2.0 Step 1
       const intentInput   = $("emIntentClassifierInput"); // v2.0 Step 1
@@ -8691,6 +8729,13 @@
         if (thr && thrVal) {
           thr.value = String(_autoCfg.threshold);
           thrVal.textContent = Math.round(_autoCfg.threshold * 100) + "%";
+        }
+        // v3.30: render quiet period as "N min" (or "Off" at 0).
+        if (quiet && quietVal) {
+          const q = (typeof _autoCfg.quietPeriodMinutes === "number")
+            ? _autoCfg.quietPeriodMinutes : AUTO_CFG_DEFAULTS.quietPeriodMinutes;
+          quiet.value = String(q);
+          quietVal.textContent = q === 0 ? "Off" : (q + " min");
         }
         // v1.8: missing field = true (preserves existing behavior)
         if (manualInput) manualInput.checked = _autoCfg.manualAiDraftAutoSend !== false;
@@ -8720,6 +8765,13 @@
       if (thr && thrVal) {
         thr.oninput = () => {
           thrVal.textContent = Math.round(parseFloat(thr.value) * 100) + "%";
+        };
+      }
+      // v3.30: live-update the quiet-period readout on slider drag.
+      if (quiet && quietVal) {
+        quiet.oninput = () => {
+          const q = parseInt(quiet.value, 10) || 0;
+          quietVal.textContent = q === 0 ? "Off" : (q + " min");
         };
       }
       // Refresh from Firestore so we always show the truth
@@ -8808,6 +8860,7 @@
       // is the consumer. No localStorage, no env vars.
       const enabledInput = $("emAutoEnabledInput");
       const thr          = $("emConfThresholdInput");
+      const quiet        = $("emQuietPeriodInput");      // v3.30
       const manualInput  = $("emManualAutoSendInput");   // v1.8
       const listingsInput = $("emListingsMirrorInput");   // v2.0 Step 1
       const intentInput   = $("emIntentClassifierInput"); // v2.0 Step 1
@@ -8820,6 +8873,7 @@
         await saveAutoConfig({
           enabled              : enabledInput ? enabledInput.checked : true,
           threshold            : thr ? thr.value : AUTO_CFG_DEFAULTS.threshold,
+          quietPeriodMinutes   : quiet ? quiet.value : AUTO_CFG_DEFAULTS.quietPeriodMinutes,   // v3.30
           manualAiDraftAutoSend: manualInput ? manualInput.checked : true,   // v1.8
           listingsMirrorEnabled  : listingsInput ? listingsInput.checked : false,  // v2.0 Step 1
           intentClassifierEnabled: intentInput   ? intentInput.checked   : false,  // v2.0 Step 1
@@ -10774,9 +10828,111 @@
       return s.length > n ? s.slice(0, n - 1) + "…" : s;
     }
 
+    // ═════════════════════════════════════════════════════════════════
+    // v3.30 — Auto-pipeline countdown timer
+    // ═════════════════════════════════════════════════════════════════
+    //
+    // Visible per-thread when the server-side quiet-period debounce
+    // has deferred the AI draft for this thread (added in
+    // etsyMailAutoPipeline-background.js section 1.4). The thread
+    // doc carries:
+    //   lastAutoDecision         === "deferred_quiet_period"
+    //   autoPipelineDeferUntilMs === <ms timestamp when defer expires>
+    //
+    // Lifecycle:
+    //   • renderDetail() calls renderAutoPipelineTimer() at the end of
+    //     every paint. The function clears any prior interval first,
+    //     then either shows the banner with a 1Hz ticker or hides it
+    //     (no-op if already hidden).
+    //   • Switching threads ⇒ renderDetail runs for the new thread,
+    //     which clears the prior interval and re-evaluates.
+    //   • When the customer sends another message during the defer,
+    //     the server slides autoPipelineDeferUntilMs forward; the
+    //     10-second messages poll picks up the new value and the
+    //     timer re-anchors on next render. (No mid-tick re-anchor;
+    //     accepted: at most 10s of stale countdown after a slide.)
+    //   • When the defer time elapses, the banner morphs from a
+    //     countdown to "Reaper sweep imminent" until the reaper fires
+    //     the pipeline and lastAutoDecision flips out of the deferred
+    //     state. The next renderDetail then hides the banner.
+    //
+    // visibleInterval pattern: the ticker pauses while the tab is
+    // hidden (same as every other poller in this file) so we don't
+    // burn CPU on background tabs.
+    function renderAutoPipelineTimer(thread) {
+      const el = $("emAutoTimerBanner");
+      if (!el) return;
+
+      // Always clear any prior ticker before deciding what to do — keeps
+      // state.autoTimerInterval at exactly one live timer.
+      if (state.autoTimerInterval) {
+        clearInterval(state.autoTimerInterval);
+        state.autoTimerInterval = null;
+      }
+
+      const isDeferred = thread && thread.lastAutoDecision === "deferred_quiet_period";
+      const deferUntil = (thread && typeof thread.autoPipelineDeferUntilMs === "number")
+        ? thread.autoPipelineDeferUntilMs
+        : null;
+
+      if (!isDeferred || !deferUntil) {
+        el.style.display = "none";
+        return;
+      }
+
+      el.style.display = "flex";
+
+      const valEl   = $("emAutoTimerValue");
+      const labelEl = $("emAutoTimerLabel");
+      const subEl   = $("emAutoTimerSub");
+
+      const tick = () => {
+        const remainingMs = deferUntil - Date.now();
+        if (remainingMs > 0) {
+          const totalSec = Math.ceil(remainingMs / 1000);
+          const mm = Math.floor(totalSec / 60);
+          const ss = totalSec % 60;
+          if (valEl)   valEl.textContent   = mm + ":" + (ss < 10 ? "0" + ss : String(ss));
+          if (labelEl) labelEl.textContent = "Next AI draft in";
+          if (subEl)   subEl.textContent   = "Customer is mid-burst — pipeline will fire once they stop typing.";
+          valEl && (valEl.style.color = "#0969da");
+        } else {
+          // Defer time has passed. The reaper cron (every 5 min) will
+          // pick this thread up on its next tick. Show how long we've
+          // been waiting for the reaper — useful for debugging if the
+          // cron has stopped firing.
+          const overdueSec = Math.floor(-remainingMs / 1000);
+          const mm = Math.floor(overdueSec / 60);
+          const ss = overdueSec % 60;
+          if (valEl)   valEl.textContent   = "+" + mm + ":" + (ss < 10 ? "0" + ss : String(ss));
+          if (labelEl) labelEl.textContent = "Awaiting cron sweep";
+          if (subEl)   subEl.textContent   = "Quiet period elapsed — reaper will fire on its next 5-min tick.";
+          valEl && (valEl.style.color = "#bf8700");  // amber: not an error, just waiting
+        }
+      };
+      tick();
+      state.autoTimerInterval = visibleInterval(tick, 1000);
+    }
+
+    // Public teardown — called when leaving a thread (selectedId cleared
+    // / detail pane reset) so we don't leak a ticker into the empty
+    // state. Idempotent.
+    function stopAutoPipelineTimer() {
+      if (state.autoTimerInterval) {
+        clearInterval(state.autoTimerInterval);
+        state.autoTimerInterval = null;
+      }
+      const el = $("emAutoTimerBanner");
+      if (el) el.style.display = "none";
+    }
+
     function renderDetail(thread) {
       if (!thread) {
         $("emDetail").innerHTML = `<div class="em-detail-empty">No thread selected.</div>`;
+        // v3.30 — kill the countdown ticker if we're emptying the pane
+        // (e.g. operator cleared selection). The banner is gone with
+        // the innerHTML reset; this just stops the orphan setInterval.
+        stopAutoPipelineTimer();
         return;
       }
       const t = thread;
@@ -10870,6 +11026,29 @@
             ` : renderCustomListingStatusCard(t)}
             <div class="em-card">
               <h4>Conversation</h4>
+              <!-- v3.30 — Auto-pipeline countdown timer. Visible only
+                   when this thread is in the deferred_quiet_period
+                   state (server-side debounce). Counts down to
+                   autoPipelineDeferUntilMs; after zero, the 5-min
+                   reaper cron picks it up and fires the AI draft.
+                   renderAutoPipelineTimer() in the JS below toggles
+                   visibility based on thread.lastAutoDecision. -->
+              <div id="emAutoTimerBanner"
+                   class="em-auto-timer"
+                   style="display:none; align-items:center; gap:10px; margin:0 0 10px;
+                          padding:8px 12px; background:#f0f6fc; border:1px solid #c0d4eb;
+                          border-left:3px solid #0969da; border-radius:4px; font-size:13px;">
+                <i class="material-icons" style="font-size:18px; color:#0969da;">schedule</i>
+                <span id="emAutoTimerLabel" style="color:#1f2328; font-weight:500;">Next AI draft in</span>
+                <span id="emAutoTimerValue"
+                      style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+                             font-weight:600; font-size:14px; color:#0969da;
+                             background:#fff; padding:2px 8px; border-radius:3px;
+                             border:1px solid #d0d7de; min-width:48px; text-align:center;">—:—</span>
+                <span class="em-muted" id="emAutoTimerSub" style="font-size:11px; margin-left:auto;">
+                  Customer is mid-burst — pipeline will fire once they stop typing.
+                </span>
+              </div>
               <div class="em-thread" id="emThreadBox">
                 <div class="em-muted" style="font-size:12px;">Loading messages…</div>
               </div>
@@ -11293,6 +11472,13 @@
 
       // M3: populate customer panel
       hydrateCustomerPanel(t);
+
+      // v3.30 — Start (or re-anchor / hide) the quiet-period
+      // countdown banner inside the Conversation card. Reads
+      // thread.lastAutoDecision + thread.autoPipelineDeferUntilMs and
+      // ticks 1Hz while the tab is visible. No-op (banner stays
+      // hidden) for threads that aren't currently deferred.
+      renderAutoPipelineTimer(t);
     }
 
     // ─── Manual Custom Listing creation ────────────────────────────────
@@ -11467,6 +11653,48 @@
     //   `mode === "initial"` guard, so this flag only affects initial-
     //   mode calls.
     async function generateAiDraft(threadId, mode = "initial", instructions = null, forceRegenerate = false) {
+      // ──── v3.30 — Manual override of quiet-period defer ──────────────
+      // If this thread is currently in deferred_quiet_period (server-
+      // side debounce parked the AI draft because the customer was
+      // mid-burst), the operator clicking "AI Draft" is an explicit
+      // "I want this NOW" signal. Clear the defer fields so:
+      //   1. The countdown banner hides immediately (renderAutoPipeline-
+      //      Timer hides when lastAutoDecision != "deferred_quiet_period").
+      //   2. The reaper's runDeferredAutoPipelinePass won't fire a
+      //      second pipeline run later (its query is gated on
+      //      lastAutoDecision == "deferred_quiet_period").
+      // Fire-and-forget on the proxy write so the operator doesn't see
+      // added latency. Worst case if it fails: the timer takes one
+      // 10-second poll cycle to disappear, and the reaper might fire a
+      // wasted pipeline run that the auto-pipeline's isDraftInFlight
+      // check would short-circuit anyway.
+      const threadInState = (state.threads || []).find(t => t && t.id === threadId);
+      if (threadInState && threadInState.lastAutoDecision === "deferred_quiet_period") {
+        // Visual: hide the banner now and tear down the ticker.
+        stopAutoPipelineTimer();
+        // Local state: patch so the next renderDetail doesn't re-show it.
+        threadInState.lastAutoDecision         = "manual_override";
+        threadInState.autoPipelineDeferUntilMs = null;
+        // Server: clear the defer fields so the reaper passes over this
+        // thread. Operator-write to EtsyMail_Threads is already in the
+        // firestoreProxy OPERATOR_WRITE_COLLS allowlist.
+        api("firestoreProxy", {
+          method: "POST",
+          body  : {
+            op   : "update",
+            coll : THREADS_COLL,
+            id   : threadId,
+            actor: getEmployeeName() || "operator",
+            data : {
+              lastAutoDecision         : "manual_override",
+              lastAutoDecisionAt       : { __serverTimestamp: true },
+              autoPipelineDeferUntilMs : null,
+              updatedAt                : { __serverTimestamp: true }
+            }
+          }
+        }).catch((e) => console.warn("[autoTimer] manual-override clear failed:", e.message));
+      }
+
       const allBtns = ["emAiDraftBtn", "emAiFollowUpBtn", "emReviseBtn"].map($).filter(Boolean);
       const body   = $("emAiCardBody");
       const primaryBtn = mode === "follow_up" ? $("emAiFollowUpBtn")

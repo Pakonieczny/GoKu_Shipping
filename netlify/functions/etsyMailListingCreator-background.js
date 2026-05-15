@@ -55,10 +55,16 @@ const TEMPLATES_DOC = "listingTemplates";
 const ALLOWED_FAMILIES = ["necklace", "huggie", "stud"];
 const MANUAL_LISTING_DEFAULT_PRICE_USD = Math.max(1, Number(process.env.ETSYMAIL_MANUAL_LISTING_DEFAULT_PRICE_USD || 1));
 
+// v3.31: default Sonnet 4.6 (was Opus 4.7). Listing creation fires
+// rarely (once per closed sale) but each call generates title +
+// description + tags — three structured-text tasks Sonnet handles
+// cleanly. The original sales-agent default chain remains as a
+// secondary fallback so if you set ETSYMAIL_SALES_MODEL globally to
+// (say) Opus you can opt this back into Opus without a code edit.
 const AI_MODEL =
   process.env.ETSYMAIL_LISTING_CREATOR_MODEL ||
   process.env.ETSYMAIL_SALES_MODEL ||
-  "claude-opus-4-7";
+  "claude-sonnet-4-6";
 
 const MAX_IMAGES_PER_LISTING = 10;   // Etsy's hard cap
 

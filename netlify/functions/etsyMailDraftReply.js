@@ -51,7 +51,7 @@
  *  ═══ ENV VARS ═══
  *
  *  ANTHROPIC_API_KEY              required
- *  ETSYMAIL_AI_MODEL              optional; default claude-opus-4-7
+ *  ETSYMAIL_AI_MODEL              optional; default claude-sonnet-4-6
  *  ETSYMAIL_AI_EFFORT             optional; default "high"
  *  ETSYMAIL_AI_MAX_TOKENS         optional; default 12000 (Opus 4.7 counts
  *                                 thinking + response + tool-use ALL
@@ -128,7 +128,15 @@ const CONFIG_COLL    = "EtsyMail_Config";
 // this is a change from 4.6 where thinking had its own budget). At
 // effort:"high" with multimodal input and a 2-3 tool call loop, 5000 is
 // tight; 12000 gives comfortable headroom without uncapping spend.
-const AI_MODEL     = process.env.ETSYMAIL_AI_MODEL    || "claude-opus-4-7";
+// v3.31 — Default support drafter to Sonnet 4.6 (was Opus 4.7).
+// Sonnet is ~40% cheaper on rate card and avoids Opus 4.7's tokenizer
+// inflation (effective ~50% cost cut). The ETSYMAIL_AI_MODEL env var
+// still overrides — set it to "claude-opus-4-7" to revert per-deploy
+// without touching code. The sales agent (etsyMailSalesAgent-background)
+// remains on Opus 4.7 by default — phased rollout: support first, then
+// sales once the cheaper model proves out on confidence-score and
+// human-review-rate metrics.
+const AI_MODEL     = process.env.ETSYMAIL_AI_MODEL    || "claude-sonnet-4-6";
 const AI_EFFORT    = process.env.ETSYMAIL_AI_EFFORT   || "high";
 const AI_MAX_TOKENS = parseInt(process.env.ETSYMAIL_AI_MAX_TOKENS || "12000", 10);
 

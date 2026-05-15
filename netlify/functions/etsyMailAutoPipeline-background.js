@@ -126,6 +126,13 @@ async function getAutoPipelineConfig() {
   let value = {
     enabled                 : FALLBACK_ENABLED,
     threshold               : FALLBACK_THRESHOLD,
+    // ─── v3.30 Quiet-period debounce ────────────────────────────
+    // Minutes the most recent inbound must be "settled" before the
+    // pipeline acts. When a customer fires 3-4 messages in 5 minutes,
+    // we defer until they stop typing rather than burn an Anthropic
+    // call per draft (most of which would be obsoleted by the next
+    // message anyway). 0 disables; default 5.
+    quietPeriodMinutes      : 5,
     // ─── v2.0 Step 1 flags (default OFF — operator must opt in) ──
     listingsMirrorEnabled   : false,
     intentClassifierEnabled : false,
@@ -145,9 +152,16 @@ async function getAutoPipelineConfig() {
     if (doc.exists) {
       const d = doc.data() || {};
       const t = typeof d.threshold === "number" ? d.threshold : FALLBACK_THRESHOLD;
+      // v3.30: clamp quiet period to a sane band [0, 60] minutes.
+      // Missing field falls back to the FALLBACK default (5 min) so a
+      // config doc that pre-dates this field gets debounce by default —
+      // matching the rollout intent.
+      const rawQuiet = typeof d.quietPeriodMinutes === "number" ? d.quietPeriodMinutes : 5;
+      const quietPeriodMinutes = Math.max(0, Math.min(60, rawQuiet));
       value = {
         enabled  : d.enabled !== false,             // default true if doc exists but unset
         threshold: Math.max(0, Math.min(1, t)),
+        quietPeriodMinutes,
         // v2.0 Step 1: explicit-true semantics. Missing field => false.
         // We do NOT default to true even if the surrounding doc exists,
         // because flipping these on without operator review is unsafe.
@@ -986,6 +1000,68 @@ exports.handler = async (event) => {
         threadId, decision: "skipped",
         skipReason: `draft already ${inFlight}`,
         durationMs: Date.now() - tStart
+      });
+    }
+
+    // ─── 1.4. Quiet-period debounce (v3.30) ─────────────────────────
+    // If the customer's most recent inbound is fresher than the
+    // configured quiet period, they're probably still typing
+    // follow-ups. Release the claim, mark the thread
+    // "deferred_quiet_period", and exit without burning the Anthropic
+    // bill.
+    //
+    // Sliding-window semantics: each new inbound that lands during the
+    // quiet period re-enters this function (snapshot fires it on every
+    // ingest), the claim re-succeeds because we cleared
+    // lastAutoProcessedInboundAt below, the new inboundMs is fresh
+    // again, and we defer again — pushing autoPipelineDeferUntilMs
+    // forward. The customer's last keystroke effectively resets the
+    // timer.
+    //
+    // When the customer goes quiet: nothing re-triggers us, and
+    // etsyMailReapers's runDeferredAutoPipelinePass picks up threads
+    // whose autoPipelineDeferUntilMs has elapsed and fires the
+    // pipeline once. That single fire passes through this gate
+    // (sinceInboundMs >= quietMs) and proceeds to intent + drafting.
+    //
+    // forceRerun bypasses (operator manual trigger from the inbox UI
+    // should always run, no debounce). quietPeriodMinutes:0 also
+    // disables the gate entirely.
+    const quietMinutes = typeof autoCfg.quietPeriodMinutes === "number"
+                         ? autoCfg.quietPeriodMinutes : 5;
+    const quietMs = Math.max(0, quietMinutes * 60_000);
+    const inboundMs = claim.inboundMs;
+    const sinceInboundMs = inboundMs ? (Date.now() - inboundMs) : Infinity;
+
+    if (quietMs > 0 && sinceInboundMs < quietMs && !forceRerun) {
+      const deferUntilMs = inboundMs + quietMs;
+      await threadRef.set({
+        lastAutoDecision           : "deferred_quiet_period",
+        lastAutoDecisionAt         : FV.serverTimestamp(),
+        lastAutoProcessedInboundAt : null,           // release the lock so new inbounds re-claim
+        autoPipelineDeferUntilMs   : deferUntilMs,   // reaper pickup field
+        updatedAt                  : FV.serverTimestamp()
+      }, { merge: true });
+
+      await writeAudit({
+        threadId,
+        eventType: "auto_pipeline_deferred",
+        payload  : {
+          reason          : "quiet_period",
+          sinceInboundMs,
+          quietPeriodMs   : quietMs,
+          deferUntilMs,
+          deferUntilIso   : new Date(deferUntilMs).toISOString()
+        }
+      });
+
+      return ok({
+        threadId,
+        decision      : "deferred",
+        deferUntilMs,
+        sinceInboundMs,
+        quietPeriodMs : quietMs,
+        durationMs    : Date.now() - tStart
       });
     }
 
