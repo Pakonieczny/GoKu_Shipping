@@ -10875,7 +10875,22 @@
         ? thread.autoPipelineDeferUntilMs
         : null;
 
-      if (!isDeferred || !deferUntil) {
+      // v3.32 — Self-correcting check. Hide the timer if the operator
+      // has manually replied to the latest inbound (lastOutboundAt
+      // newer than lastInboundAt). The thread doc's lastAutoDecision
+      // / autoPipelineDeferUntilMs fields can lag behind a manual
+      // send by a few seconds (until snapshot ingest catches up or
+      // the server-side draftSend complete handler clears them), so
+      // anchoring purely on those would leave a stale countdown
+      // visible. The outbound-vs-inbound comparison is the
+      // authoritative "no AI draft is wanted on this thread anymore"
+      // signal — whether the reaper would also bail (it does — see
+      // evaluateEligibility in etsyMailAutoPipeline) or not.
+      const inboundMs  = thread ? tsToMs(thread.lastInboundAt)  : 0;
+      const outboundMs = thread ? tsToMs(thread.lastOutboundAt) : 0;
+      const operatorAlreadyReplied = outboundMs > 0 && outboundMs >= inboundMs;
+
+      if (!isDeferred || !deferUntil || operatorAlreadyReplied) {
         el.style.display = "none";
         return;
       }
@@ -13881,6 +13896,39 @@
 
     /** Operator clicked "Send via Etsy". Enqueue the draft for the extension. */
     async function sendViaEtsy(threadId) {
+      // ──── v3.32 — Manual send clears any active quiet-period defer ────
+      // If the thread is parked in deferred_quiet_period, an operator
+      // hitting Send via Etsy is the final word on this conversation
+      // turn. The AI no longer needs to draft anything, the reaper
+      // should pass over this thread, and the countdown banner must
+      // disappear immediately (not 10 seconds later on the next poll).
+      // Mirrors the manual-AI-Draft override path — same shape, same
+      // local state patch, same firestoreProxy fire-and-forget.
+      // lastAutoDecision is set to "manual_send_during_defer" so the
+      // audit log distinguishes "operator overrode by drafting" from
+      // "operator overrode by sending."
+      const threadForDeferCheck = (state.threads || []).find(x => x && x.id === threadId);
+      if (threadForDeferCheck && threadForDeferCheck.lastAutoDecision === "deferred_quiet_period") {
+        stopAutoPipelineTimer();
+        threadForDeferCheck.lastAutoDecision         = "manual_send_during_defer";
+        threadForDeferCheck.autoPipelineDeferUntilMs = null;
+        api("firestoreProxy", {
+          method: "POST",
+          body  : {
+            op   : "update",
+            coll : THREADS_COLL,
+            id   : threadId,
+            actor: getEmployeeName() || "operator",
+            data : {
+              lastAutoDecision         : "manual_send_during_defer",
+              lastAutoDecisionAt       : { __serverTimestamp: true },
+              autoPipelineDeferUntilMs : null,
+              updatedAt                : { __serverTimestamp: true }
+            }
+          }
+        }).catch((e) => console.warn("[autoTimer] manual-send defer clear failed:", e.message));
+      }
+
       const btn = $("emSendEtsyBtn");
       let ta = $("emDraftText");
       // v5.13 — Mobile fallback. The desktop textarea #emDraftText is

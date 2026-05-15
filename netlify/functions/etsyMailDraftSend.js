@@ -1397,6 +1397,14 @@ exports.handler = async (event) => {
             lastAutoDecision    : threadDemoteReason,
             lastAutoDecisionAt  : FV.serverTimestamp(),
             lastOperatorReplyAt : FV.serverTimestamp(),
+            // v3.32 — Wipe the quiet-period defer fields on every
+            // successful send. lastAutoDecision is already being
+            // overwritten above (so the reaper's deferred-pipeline
+            // query passes over this thread), but autoPipelineDefer-
+            // UntilMs would otherwise linger as orphan data. Cleared
+            // here so the inbox timer-banner self-correction has a
+            // consistent state to read.
+            autoPipelineDeferUntilMs : FV.delete(),
             updatedAt           : FV.serverTimestamp(),
             ..._refundFields
           }, { merge: true });
@@ -1419,6 +1427,8 @@ exports.handler = async (event) => {
             manualMoveAt              : FV.delete(),
             manualMoveReason          : FV.delete(),
             manualMoveFromStatus      : FV.delete(),
+            // v3.32 — same defer-field cleanup as the demotion branch.
+            autoPipelineDeferUntilMs  : FV.delete(),
             updatedAt                 : FV.serverTimestamp(),
             ..._refundFields
           }, { merge: true });
@@ -1429,9 +1439,27 @@ exports.handler = async (event) => {
           // bumped to the top of the list because the operator just
           // replied. Write JUST the bump fields — leave status,
           // sendOrigin, lastAutoDecision et al. untouched.
+          //
+          // v3.32 — EXCEPTION: if this thread was in deferred_quiet_-
+          // period when the operator sent, the manual send is the
+          // final word for this conversation turn and the defer state
+          // is now obsolete. Clear lastAutoDecision (so the reaper's
+          // deferred-pipeline query passes over this thread) and
+          // autoPipelineDeferUntilMs (so the inbox timer hides). Other
+          // lastAutoDecision values are preserved as-is — e.g. a
+          // thread parked in "skipped_no_inbound" should stay that
+          // way after a manual operator bump.
+          const prevAutoDecision = (tSnap.data() && tSnap.data().lastAutoDecision) || null;
+          const wasDeferred = prevAutoDecision === "deferred_quiet_period";
+          const _deferClearFields = wasDeferred ? {
+            lastAutoDecision         : "manual_send_during_defer",
+            lastAutoDecisionAt       : FV.serverTimestamp(),
+            autoPipelineDeferUntilMs : FV.delete()
+          } : {};
           tx.set(tRef, {
             lastOperatorReplyAt: FV.serverTimestamp(),
             updatedAt          : FV.serverTimestamp(),
+            ..._deferClearFields,
             ..._refundFields
           }, { merge: true });
         }

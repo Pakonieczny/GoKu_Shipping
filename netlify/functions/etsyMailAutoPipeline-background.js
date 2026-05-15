@@ -527,7 +527,17 @@ async function claimThread(threadRef, options = {}) {
     const data = snap.data() || {};
 
     const elig = evaluateEligibility(data, options);
-    if (!elig.ok) return { ok: false, claimed: false, reason: elig.reason, status: data.status };
+    if (!elig.ok) return {
+      ok: false, claimed: false,
+      reason: elig.reason, status: data.status,
+      // v3.32 — expose prior lastAutoDecision so the handler's bail
+      // path can detect orphan "deferred_quiet_period" state (left
+      // behind when the operator manually replied between when
+      // section 1.4 set the defer and when the reaper picked it up)
+      // and clean it up. Without this, the reaper re-fires the same
+      // stuck thread every 5 minutes forever.
+      prevLastAutoDecision: data.lastAutoDecision || null
+    };
 
     // Decide what status to claim with. If the thread is currently in a
     // hidden intake state, surface it to Needs Review so it's visible to
@@ -961,6 +971,29 @@ exports.handler = async (event) => {
     // wasted Opus calls in race scenarios.
     const claim = await claimThread(threadRef, { forceRerun });
     if (!claim.ok) {
+      // v3.32 — Orphan defer cleanup. If this thread was sitting in
+      // deferred_quiet_period when the operator manually replied,
+      // nothing on the manual-send path (pre-v3.32) cleared the
+      // defer fields, so the reaper kept picking the thread up
+      // every 5 min and the auto-pipeline kept bailing here without
+      // resolving the orphan state. Self-heal: when we bail AND
+      // the thread's prior lastAutoDecision was deferred_quiet_period,
+      // write a terminal value and delete autoPipelineDeferUntilMs.
+      // Next reaper sweep won't see this thread (its query filters
+      // on lastAutoDecision == "deferred_quiet_period") and the UI
+      // timer's existing self-correction confirms hidden.
+      if (claim.prevLastAutoDecision === "deferred_quiet_period") {
+        await threadRef.set({
+          lastAutoDecision         : "skipped_already_replied",
+          lastAutoDecisionAt       : FV.serverTimestamp(),
+          autoPipelineDeferUntilMs : FV.delete(),
+          updatedAt                : FV.serverTimestamp()
+        }, { merge: true });
+        await writeAudit({
+          threadId, eventType: "auto_pipeline_defer_orphan_cleared",
+          payload: { reason: claim.reason, status: claim.status }
+        });
+      }
       await writeAudit({
         threadId, eventType: "auto_pipeline_skipped",
         payload: { reason: claim.reason, status: claim.status }
