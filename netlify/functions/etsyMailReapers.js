@@ -115,6 +115,11 @@
 
 const admin = require("./firebaseAdmin");
 const { CORS, requireExtensionAuth, isScheduledInvocation } = require("./_etsyMailAuth");
+// v3.30 — node-fetch required by runDeferredAutoPipelinePass to invoke
+// the auto-pipeline background function for threads whose quiet period
+// has elapsed. Every other pass operates on Firestore directly; this
+// new pass is the only one that needs an HTTP client.
+const fetch = require("node-fetch");
 const {
   demoteThreadInTxn,
   isStaleQueued,
@@ -2191,6 +2196,180 @@ async function runGmailScrapePass() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
+//  Pass — Deferred auto-pipeline fire (v3.30)
+// ═══════════════════════════════════════════════════════════════════════
+//
+// Companion to the quiet-period debounce added in
+// etsyMailAutoPipeline-background.js. When the customer stops typing
+// during a quiet-period defer, nothing re-triggers the pipeline — the
+// snapshot ingest only fires on new inbound messages. This pass picks
+// up threads whose `autoPipelineDeferUntilMs` has elapsed and invokes
+// the auto-pipeline once so the deferred draft actually gets generated.
+//
+// Query: lastAutoDecision == "deferred_quiet_period"
+//        AND autoPipelineDeferUntilMs <= now
+//
+// Requires a composite Firestore index on
+// (lastAutoDecision ASC, autoPipelineDeferUntilMs ASC). Firestore will
+// surface a one-click index-creation link in the console the first
+// time this pass runs without it.
+//
+// Race notes:
+//   • If a new customer message lands while the reaper is firing,
+//     snapshot will independently invoke the auto-pipeline. The
+//     pipeline's claim transaction is atomic, so we get one extra
+//     invocation in the worst case — both runs see the SAME inboundMs
+//     and the second one's claim fails on the idempotency gate.
+//   • If the reaper crashes after firing N of M threads, the
+//     remaining M-N stay deferred and pick up on the next tick.
+//     Effectively at-least-once delivery, which the pipeline tolerates
+//     via its existing idempotency lock.
+
+const MAX_DEFERRED_FIRES_PER_RUN = 100;
+const DEFERRED_FIRE_TIMEOUT_MS   = 5_000;   // background-fn returns 202 in ~1s
+
+function _functionsBase() {
+  return process.env.URL
+      || process.env.DEPLOY_URL
+      || process.env.NETLIFY_BASE_URL
+      || "http://localhost:8888";
+}
+
+async function fireDeferredThread(threadId) {
+  // Background function — Netlify returns 202 immediately and runs the
+  // pipeline asynchronously up to 15 min. We just need the invoke to
+  // succeed; the pipeline's own writes are the result.
+  const url = `${_functionsBase()}/.netlify/functions/etsyMailAutoPipeline-background`;
+  const headers = { "Content-Type": "application/json" };
+  if (process.env.ETSYMAIL_EXTENSION_SECRET) {
+    headers["X-EtsyMail-Secret"] = process.env.ETSYMAIL_EXTENSION_SECRET;
+  }
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), DEFERRED_FIRE_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, {
+      method : "POST",
+      headers,
+      body   : JSON.stringify({ threadId }),
+      signal : controller.signal
+    });
+    if (res.status !== 202 && !res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`autoPipeline returned ${res.status}: ${text.slice(0, 200)}`);
+    }
+    return { ok: true, status: res.status };
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+async function runDeferredAutoPipelinePass() {
+  const tStart = Date.now();
+  const now    = Date.now();
+
+  // v3.32 — single-field query + in-code time filter. The prior
+  // implementation used a composite (lastAutoDecision, autoPipelineDefer-
+  // UntilMs) query which required a one-click Firestore index that
+  // had to be created manually after first deploy. If the index was
+  // never created, the query failed and the entire deferred pass
+  // silently no-op'd every 5 minutes — fail-safe (no crash) but
+  // fail-invisible (no AI drafts ever generated for deferred threads).
+  //
+  // The new path queries only on lastAutoDecision (single-field index
+  // is auto-created by Firestore on first write of the field), pulls
+  // up to MAX_DEFERRED_FIRES_PER_RUN candidates, then filters the
+  // time check in memory. Trade-off: at most MAX candidates are read
+  // even if some aren't ready yet, but in practice the deferred set
+  // is small (10s, not 1000s) so this is negligible. No index
+  // creation step required from the operator.
+  let snap;
+  try {
+    snap = await db.collection(THREADS_COLL)
+      .where("lastAutoDecision", "==", "deferred_quiet_period")
+      .limit(MAX_DEFERRED_FIRES_PER_RUN)
+      .get();
+  } catch (e) {
+    console.warn("[reapers] deferred pass query failed:", e.message);
+    return {
+      pass       : "deferred_auto_pipeline",
+      scanned    : 0,
+      fired      : 0,
+      skipped    : 0,
+      errors     : [e.message],
+      durationMs : Date.now() - tStart
+    };
+  }
+
+  if (snap.empty) {
+    return {
+      pass       : "deferred_auto_pipeline",
+      scanned    : 0,
+      fired      : 0,
+      skipped    : 0,
+      durationMs : Date.now() - tStart
+    };
+  }
+
+  // In-code filter: only fire threads whose defer window has elapsed.
+  // Sort ascending by defer time so the oldest-overdue thread fires
+  // first (matches the prior orderBy behavior).
+  const candidates = snap.docs
+    .map(doc => ({
+      id   : doc.id,
+      data : doc.data() || {},
+      deferUntilMs: (() => {
+        const v = (doc.data() || {}).autoPipelineDeferUntilMs;
+        return typeof v === "number" ? v : 0;
+      })()
+    }))
+    .filter(c => c.deferUntilMs > 0 && c.deferUntilMs <= now)
+    .sort((a, b) => a.deferUntilMs - b.deferUntilMs);
+
+  if (candidates.length === 0) {
+    return {
+      pass       : "deferred_auto_pipeline",
+      scanned    : snap.size,
+      fired      : 0,
+      skipped    : 0,
+      notReadyYet: snap.size,   // pulled but not yet eligible
+      durationMs : Date.now() - tStart
+    };
+  }
+
+  let fired   = 0;
+  let skipped = 0;
+  const errors = [];
+
+  for (const candidate of candidates) {
+    const threadId = candidate.id;
+    const deferUntilMs = candidate.deferUntilMs;
+
+    try {
+      await fireDeferredThread(threadId);
+      fired++;
+      writeAudit(threadId, null, "auto_pipeline_deferred_fired", {
+        deferUntilMs,
+        deferOverdueMs: now - deferUntilMs
+      }).catch((e) => console.warn("[reapers] deferred audit failed:", e.message));
+    } catch (e) {
+      skipped++;
+      errors.push({ threadId, error: e.message });
+      console.warn(`[reapers] deferred fire failed for ${threadId}:`, e.message);
+    }
+  }
+
+  return {
+    pass       : "deferred_auto_pipeline",
+    scanned    : snap.size,
+    eligible   : candidates.length,
+    fired      : fired,
+    skipped    : skipped,
+    errors     : errors.length ? errors : undefined,
+    durationMs : Date.now() - tStart
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 //  Handler
 // ═══════════════════════════════════════════════════════════════════════
 
@@ -2224,6 +2403,14 @@ exports.handler = async (event) => {
     if (!op || op === "auto_pipeline") {
       try { results.autoPipeline = await runAutoPipelinePass(); }
       catch (e) { errors.push({ pass: "auto_pipeline", error: e.message }); console.error("autoPipeline pass:", e); }
+    }
+    // v3.30 — Deferred auto-pipeline fire. Companion to the quiet-period
+    // debounce in etsyMailAutoPipeline-background. Picks up threads where
+    // the quiet window has elapsed with no new inbound and re-fires the
+    // pipeline once so the deferred draft actually generates.
+    if (!op || op === "deferred_auto_pipeline") {
+      try { results.deferredAutoPipeline = await runDeferredAutoPipelinePass(); }
+      catch (e) { errors.push({ pass: "deferred_auto_pipeline", error: e.message }); console.error("deferredAutoPipeline pass:", e); }
     }
     if (!op || op === "send_queue") {
       try { results.sendQueue = await runSendQueuePass(); }
@@ -2308,6 +2495,7 @@ exports.handler = async (event) => {
 
 // Exports for tests / manual debugging.
 module.exports.runAutoPipelinePass         = runAutoPipelinePass;
+module.exports.runDeferredAutoPipelinePass = runDeferredAutoPipelinePass;
 module.exports.runSendQueuePass            = runSendQueuePass;
 module.exports.runSalesFunnelPass          = runSalesFunnelPass;
 module.exports.runGmailScrapePass          = runGmailScrapePass;
