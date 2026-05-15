@@ -5364,23 +5364,37 @@
     const NETLIFY_BASE = "";
     const FN = (name) => `${NETLIFY_BASE}/.netlify/functions/${name}`;
 
-    // v5.31 — Poll intervals widened to cut Firestore read pressure.
-    // The dashboard previously polled every 4–15s which, combined with
-    // unbounded full-collection counts (now fixed in etsyMailThreads.js
-    // v5.31), drove millions of reads per day. New cadence:
+    // v5.32 — Poll intervals tuned for the delta-sync architecture
+    // (see fetchThreadListNow and fetchMessagesNow for the per-call
+    // read-cost analysis). Versus pre-v5.31 polling, the changes are:
     //
-    //   • LIST_POLL_MS     5s → 15s   (rail thread list)
+    //   • LIST_POLL_MS     5s → 60s   (rail thread list)
     //   • MESSAGES_POLL_MS 4s → 10s   (open-thread message poll)
-    //   • COUNTS_POLL_MS   15s → 60s  (folder badge counts)
+    //   • COUNTS_POLL_MS   15s → 300s (folder badge counts)
     //
-    // User-initiated actions (clicking a thread/folder, sending a
-    // message, focusing a tab after hiding) still fetch immediately —
-    // see the visibility-resume hook below — so perceived latency is
-    // unchanged from the operator's seat. Only the background-tab
-    // bleed is reduced.
-    const LIST_POLL_MS     = 15000;
+    // List poll is the most expensive per-call but is now DELTA-BASED:
+    // each poll fetches only docs whose updatedAt is newer than the
+    // last cursor, typically 0–5 docs. So the 60s interval is fine.
+    //
+    // Counts is bumped to 5 minutes because:
+    //   • The aggregation queries it runs (Patch 1 / v5.31) cost ~27
+    //     reads per call. Polling them every 60s still costs ~13k
+    //     reads/day per active tab, which on its own busts an
+    //     aggressive read budget.
+    //   • Badges (rail counts) only need to be roughly correct.
+    //     5-minute staleness is invisible to the operator in practice.
+    //   • Every user action that affects counts — sending, archiving,
+    //     setStatus, etc. — already triggers an immediate fetchCountsNow
+    //     via the explicit refresh code paths, so the operator sees
+    //     their own changes reflected instantly.
+    //
+    // Message poll stays at 10s because that's the only place a slower
+    // refresh is perceptible (waiting on a live reply). Like the list,
+    // it's now delta-based — each poll only fetches messages newer
+    // than the last cursor, typically 0 docs.
+    const LIST_POLL_MS     = 60000;
     const MESSAGES_POLL_MS = 10000;
-    const COUNTS_POLL_MS   = 60000;
+    const COUNTS_POLL_MS   = 300000;
 
     // v5.31 — Visibility-aware polling helpers.
     //
@@ -7058,6 +7072,27 @@
       // in flight — when the stale poll finally returns, its result is dropped).
       listFetchSeq      : 0,
       msgFetchSeq       : 0,
+      // v5.32 — Delta-sync cursors.
+      //
+      //   lastListFilterKey : JSON-encoded {id,status,orderByField} of the
+      //                       filter the most recent list fetch ran against.
+      //                       fetchThreadListNow compares this on every call;
+      //                       a mismatch forces a FULL fetch (and resets the
+      //                       cursor below).
+      //   threadCursorMs    : the newest updatedAt (in ms since epoch) we've
+      //                       seen for any thread in the current folder.
+      //                       Each delta poll asks the server for docs with
+      //                       updatedAt > threadCursorMs, and the response
+      //                       advances the cursor to the new max.
+      //   msgCursorThreadId : which threadId the current msgCursorMs is for.
+      //                       Mismatch ⇒ full fetch on next poll.
+      //   msgCursorMs       : newest message timestamp (ms) seen in the open
+      //                       thread. Same delta semantics as threadCursorMs
+      //                       but for the messages subcollection.
+      lastListFilterKey : null,
+      threadCursorMs    : null,
+      msgCursorThreadId : null,
+      msgCursorMs       : null,
       // v3.22: client-side pagination of the thread list. 100 per page.
       // Reset to 1 whenever folder, search, message-type, or date-filter
       // changes. Always paginates the post-filter, post-sort `filtered`
@@ -8283,6 +8318,12 @@
         // empty (or close to it for a truncated wipe).
         state.threads = [];
         state.counts  = {};
+        // v5.32 — Drop the delta cursor so the next list poll does a
+        // full fetch. Without this, the cursor would still point to
+        // pre-purge updatedAt values and the next poll would only see
+        // deltas (probably nothing since the purge cleared the data).
+        state.threadCursorMs = null;
+        state.lastListFilterKey = null;
         renderRail();
         renderThreadList();
         fetchCountsNow();
@@ -8601,6 +8642,13 @@
       state.threads = [];
       state.messages = [];
       state.selectedId = null;
+      // v5.32 — Drop delta-sync cursors. Different operator, different
+      // role-scoped view — the next list/message fetch needs to be a
+      // FULL fetch, not a delta off the prior operator's session.
+      state.threadCursorMs = null;
+      state.lastListFilterKey = null;
+      state.msgCursorMs = null;
+      state.msgCursorThreadId = null;
       if (typeof renderThreadList === "function") renderThreadList();
       if (typeof renderRail === "function")       renderRail();
       const detail = $("emDetail");
@@ -8992,7 +9040,11 @@
             state.searchMode = false;
             // v0.9.14: source:'user' — never let a background poll's
             // in-flight window swallow this click.
-            fetchThreadListNow({ source: "user" });
+            // v5.32: forceFullFetch — state.threads currently holds the
+            // search-result set (or stale folder content), not the
+            // current folder's actual list, so the delta cursor is
+            // invalid here. Force a full fetch to repopulate cleanly.
+            fetchThreadListNow({ source: "user", forceFullFetch: true });
           }
         });
       });
@@ -9192,6 +9244,53 @@
       return RAIL_FILTERS.find(f => f.id === state.activeFilterId) || RAIL_FILTERS[0];
     }
 
+    // v5.32 — Helper: does a thread doc belong in this filter's folder?
+    //
+    // The pre-v5.32 fetch logic had the SERVER filter by status (one of
+    // several query shapes depending on filter type), so this match
+    // function didn't exist — anything the server returned was in the
+    // folder by definition. With delta sync (see fetchThreadListNow
+    // below), the server stops doing folder filtering on delta polls
+    // and the client takes over the match decision so it can apply
+    // the same logic the original full-fetch query path would have.
+    //
+    // Behavior is symmetric with the four query branches in the
+    // full-fetch path:
+    //   • filter.orderByField    → match if the field is set (truthy).
+    //                               Mirrors the implicit "exists" semantic
+    //                               that orderBy(field) gives in Firestore.
+    //   • filter.status (array)  → match if thread.status is in the array.
+    //                               Multi-status union folders.
+    //   • filter.status (string) → match if thread.status === that string.
+    //                               Single-status folders.
+    //   • neither                → match unconditionally. The "All" folder.
+    function threadMatchesFilter(thread, filter) {
+      if (!thread) return false;
+      if (filter && filter.orderByField) {
+        return !!thread[filter.orderByField];
+      }
+      if (filter && Array.isArray(filter.status)) {
+        return filter.status.includes(thread.status);
+      }
+      if (filter && typeof filter.status === "string") {
+        return thread.status === filter.status;
+      }
+      return true; // All folder
+    }
+
+    // v5.32 — Helper: extract the millisecond updatedAt from a serialized
+    // thread doc.
+    //
+    // The firestoreProxy serializer wraps Firestore Timestamps as
+    // { _ts: true, ms: <number> }. Defensive against the field being
+    // absent or oddly shaped so we never throw inside the polling loop.
+    function _threadUpdatedAtMs(thread) {
+      if (!thread || !thread.updatedAt) return 0;
+      if (typeof thread.updatedAt === "number") return thread.updatedAt;
+      if (typeof thread.updatedAt.ms === "number") return thread.updatedAt.ms;
+      return 0;
+    }
+
     async function fetchThreadListNow(opts = {}) {
       // v0.9.14: source-aware fetch.
       //   - 'user' (default): always runs. A click MUST NOT be silently
@@ -9231,57 +9330,171 @@
         // 500 threads, the user sees the newest 500 (sorted client-side
         // by date) and search still spans all 500. Beyond that, real
         // server-side cursor pagination is the right answer.
+        //
+        // v5.32 — Two-mode fetch: FULL vs DELTA.
+        //
+        // The old once-every-15s full-folder re-fetch was reading 100–500
+        // thread docs per poll, on every poll, regardless of whether
+        // anything had actually changed. With ~500 threads in a folder
+        // and a tab open all day, that's 50k+ reads/day just from the
+        // rail. Way over our daily budget.
+        //
+        // Now:
+        //   • FULL fetch happens on first load and on any folder change
+        //     (detected via filterKey below). Uses the same four query
+        //     shapes as before — orderByField, multi-status, single-
+        //     status, or "All" — and returns up to 500 docs.
+        //   • DELTA fetch happens on every subsequent poll within the
+        //     same folder. Server returns only docs whose updatedAt
+        //     is newer than the cursor we got from the last call,
+        //     typically 0–5 docs per minute. Client merges into the
+        //     existing in-memory list and removes any docs whose status
+        //     no longer matches the current folder (i.e. the operator
+        //     or another process moved them out). The cursor advances
+        //     to the newest updatedAt seen.
+        //
+        // Read-cost impact: a polling tab in a folder of 500 docs goes
+        // from ~50k reads/day to ~2.5k reads/day for this endpoint —
+        // a 20× reduction, with no change in perceived freshness.
+        //
+        // Eventual consistency caveat: a doc whose status changes to
+        // something outside the current folder is removed from the rail
+        // ONLY when the delta poll picks up its updatedAt bump. Status
+        // writes already bump updatedAt (etsyMailThreads setStatus
+        // serverTimestamp), so this works for any change that goes
+        // through that endpoint. A doc that mutates without bumping
+        // updatedAt would be invisible to the delta — but no current
+        // code path does that.
+        const filterKey = JSON.stringify({
+          id: filter.id,
+          status: filter.status,
+          orderByField: filter.orderByField || null,
+        });
+        const filterChanged = filterKey !== state.lastListFilterKey;
+        if (filterChanged) {
+          // Reset cursor + clear displayed threads so we don't briefly
+          // show last-folder's threads through this transition.
+          state.lastListFilterKey = filterKey;
+          state.threadCursorMs = null;
+        }
+        const wantFull = filterChanged
+          || state.threadCursorMs == null
+          || opts.forceFullFetch === true;
+
         let docs;
-        if (filter.orderByField) {
-          // v4.3 — orderByField folder (e.g. Completed Sales). Firestore's
-          // orderBy implicitly excludes docs where the field is missing,
-          // so this is both an "exists" filter AND a sort in one op.
-          // No composite index needed (single-field).
-          const data = await api("firestoreProxy", { query: {
-            op: "list", coll: THREADS_COLL,
-            orderBy: `${filter.orderByField},desc`, limit: 500
-          } });
-          docs = data.docs || [];
-        } else if (Array.isArray(filter.status)) {
-          // Multi-status folder (Auto-Reply): one query per status, merge.
-          const responses = await Promise.all(filter.status.map(s =>
-            api("firestoreProxy", { query: {
+        let isFullFetch = wantFull;
+
+        if (wantFull) {
+          // ─── FULL FETCH (existing four-branch logic) ────────────────
+          if (filter.orderByField) {
+            // v4.3 — orderByField folder (e.g. Completed Sales). Firestore's
+            // orderBy implicitly excludes docs where the field is missing,
+            // so this is both an "exists" filter AND a sort in one op.
+            // No composite index needed (single-field).
+            const data = await api("firestoreProxy", { query: {
               op: "list", coll: THREADS_COLL,
-              where: `status,==,${s}`, limit: 500
-              // No orderBy — single-field index sufficient.
-            } })
-          ));
-          const seen = new Set();
-          docs = [];
-          for (const r of responses) {
-            for (const d of (r.docs || [])) {
-              if (seen.has(d.id)) continue;
-              seen.add(d.id);
-              docs.push(d);
+              orderBy: `${filter.orderByField},desc`, limit: 500
+            } });
+            docs = data.docs || [];
+          } else if (Array.isArray(filter.status)) {
+            // Multi-status folder (Auto-Reply): one query per status, merge.
+            const responses = await Promise.all(filter.status.map(s =>
+              api("firestoreProxy", { query: {
+                op: "list", coll: THREADS_COLL,
+                where: `status,==,${s}`, limit: 500
+                // No orderBy — single-field index sufficient.
+              } })
+            ));
+            const seen = new Set();
+            docs = [];
+            for (const r of responses) {
+              for (const d of (r.docs || [])) {
+                if (seen.has(d.id)) continue;
+                seen.add(d.id);
+                docs.push(d);
+              }
             }
+          } else if (filter.status) {
+            // Single-status folder.
+            const data = await api("firestoreProxy", { query: {
+              op: "list", coll: THREADS_COLL,
+              where: `status,==,${filter.status}`, limit: 500
+              // No orderBy.
+            } });
+            docs = data.docs || [];
+          } else {
+            // "All" — orderBy by date is fine, no composite index needed.
+            const data = await api("firestoreProxy", { query: {
+              op: "list", coll: THREADS_COLL,
+              orderBy: "updatedAt,desc", limit: 500
+            } });
+            docs = data.docs || [];
           }
-        } else if (filter.status) {
-          // Single-status folder.
-          const data = await api("firestoreProxy", { query: {
-            op: "list", coll: THREADS_COLL,
-            where: `status,==,${filter.status}`, limit: 500
-            // No orderBy.
-          } });
-          docs = data.docs || [];
         } else {
-          // "All" — orderBy by date is fine, no composite index needed.
+          // ─── DELTA FETCH ───────────────────────────────────────────
+          //
+          // Single combined query: "give me every thread whose updatedAt
+          // is newer than my cursor." NO status filter server-side — we
+          // do the folder match client-side so this query stays single-
+          // field-indexed (the auto-built updatedAt index) and never
+          // needs a composite-index build.
+          //
+          // limit:200 is a safety ceiling. If the system is bursting (200+
+          // threads update in a single minute across all folders), we
+          // advance the cursor to the newest updatedAt in the returned
+          // batch and the NEXT poll picks up where this one left off.
+          // So bursts cause latency, never lost updates.
           const data = await api("firestoreProxy", { query: {
             op: "list", coll: THREADS_COLL,
-            orderBy: "updatedAt,desc", limit: 500
+            orderBy: "updatedAt,asc",
+            since: String(state.threadCursorMs),
+            sinceField: "updatedAt",
+            limit: 200,
           } });
           docs = data.docs || [];
         }
+
         // v0.9.14: latest-wins guard. If a newer fetch was started while
         // this one was on the wire, drop our result silently — the newer
         // fetch will overwrite it anyway, and applying our stale data
         // would briefly flash the wrong folder's contents.
         if (seq !== state.listFetchSeq) return;
-        state.threads = docs;
+
+        if (isFullFetch) {
+          // Replace in-memory state with the full result.
+          state.threads = docs;
+        } else {
+          // Merge delta into existing state. For each returned doc:
+          //   • If its status (or orderByField presence) still matches
+          //     the current folder, upsert it into state.threads.
+          //   • Otherwise, remove it from state.threads if it's there.
+          // This lets the rail self-correct when a thread is moved
+          // between folders by an operator action or background reaper.
+          const byId = new Map(state.threads.map(t => [t.id, t]));
+          for (const d of docs) {
+            if (threadMatchesFilter(d, filter)) {
+              byId.set(d.id, d);
+            } else if (byId.has(d.id)) {
+              byId.delete(d.id);
+            }
+          }
+          state.threads = Array.from(byId.values());
+        }
+
+        // Advance cursor to the max updatedAt across what we know.
+        // We base it on the FULL state.threads (not just the delta)
+        // because a freshly merged doc has the newest updatedAt by
+        // definition, and using state-wide max protects against the
+        // edge case where a doc that was always-in-folder gets bumped
+        // but we miss it (e.g. limit ceiling hit). Newer cursor ⇒
+        // smaller future delta, never larger.
+        let maxMs = state.threadCursorMs || 0;
+        for (const t of state.threads) {
+          const ms = _threadUpdatedAtMs(t);
+          if (ms > maxMs) maxMs = ms;
+        }
+        if (maxMs > 0) state.threadCursorMs = maxMs;
+
         // v5.30.3 — Apply in-flight star overrides on top of polled
         // data. Without this, a click whose backend write hasn't
         // landed yet (or whose effect hasn't propagated through
@@ -10224,17 +10437,93 @@
       const seq = ++state.msgFetchSeq;
       state.inFlightMsgs = true;
       try {
-        const data = await api("firestoreProxy", {
-          query: {
-            op: "listSub", coll: THREADS_COLL, id: threadId, sub: "messages",
-            orderBy: "timestamp,asc", limit: 500
-          }
-        });
+        // v5.32 — Delta sync for the open-thread message list.
+        //
+        // Pre-v5.32, every 4–10s poll re-fetched up to 500 messages from
+        // the subcollection, even when nothing new had arrived. For an
+        // operator with a thread open for an hour, that's tens of
+        // thousands of reads on a single thread. Now:
+        //
+        //   • FULL fetch on first open of a thread (or after a thread
+        //     switch — detected via state.msgCursorThreadId tracking).
+        //     Same query shape as before: orderBy(timestamp,asc),
+        //     limit 500.
+        //   • DELTA fetch on subsequent polls within the SAME thread.
+        //     Server returns only messages with timestamp > cursor,
+        //     typically 0 docs per poll, ~1 doc when a reply lands.
+        //
+        // Messages are append-only (snapshot writes don't mutate
+        // existing messages except for an occasional timestamp refine,
+        // which is rare and benign — at worst the message re-anchors
+        // a few ms in the sorted list on next FULL fetch).
+        //
+        // Read-cost impact: an open thread goes from ~43k reads/day
+        // (10s × 8h × 30 msgs) to ~500 reads/day (per-day fresh opens
+        // + actual reply count).
+        const wantFull = state.msgCursorThreadId !== threadId
+          || state.msgCursorMs == null
+          || opts.forceFullFetch === true;
+
+        let docs;
+        if (wantFull) {
+          const data = await api("firestoreProxy", {
+            query: {
+              op: "listSub", coll: THREADS_COLL, id: threadId, sub: "messages",
+              orderBy: "timestamp,asc", limit: 500
+            }
+          });
+          docs = data.docs || [];
+        } else {
+          const data = await api("firestoreProxy", {
+            query: {
+              op: "listSub", coll: THREADS_COLL, id: threadId, sub: "messages",
+              orderBy: "timestamp,asc",
+              since: String(state.msgCursorMs),
+              sinceField: "timestamp",
+              limit: 200,
+            }
+          });
+          docs = data.docs || [];
+        }
+
         if (seq !== state.msgFetchSeq) return;  // stale, newer fetch in flight
         // Also guard against switching threads while we were waiting:
         // if the user navigated to a different thread, drop this result.
         if (state.selectedId !== threadId) return;
-        state.messages = data.docs || [];
+
+        if (wantFull) {
+          // Replace in-memory state with the full result and reset the
+          // per-thread cursor.
+          state.messages = docs;
+          state.msgCursorThreadId = threadId;
+        } else if (docs.length > 0) {
+          // Append delta. Messages are append-only by id, but we still
+          // dedupe defensively so a server retry that returns the same
+          // message twice can't double-render.
+          const known = new Set(state.messages.map(m => m.id));
+          for (const m of docs) {
+            if (!known.has(m.id)) {
+              state.messages.push(m);
+              known.add(m.id);
+            }
+          }
+          // Keep order stable. Messages are queried orderBy timestamp asc;
+          // a sort by ms ensures any out-of-order arrival re-anchors.
+          state.messages.sort((a, b) => {
+            const am = (a.timestamp && a.timestamp.ms) || 0;
+            const bm = (b.timestamp && b.timestamp.ms) || 0;
+            return am - bm;
+          });
+        }
+
+        // Advance cursor to the newest timestamp we know about.
+        let maxMs = state.msgCursorMs || 0;
+        for (const m of state.messages) {
+          const ms = (m.timestamp && m.timestamp.ms) || 0;
+          if (ms > maxMs) maxMs = ms;
+        }
+        if (maxMs > 0) state.msgCursorMs = maxMs;
+
         renderThreadMessages();
         // v5.0 — Mobile conversation re-render hook
         if (window.IS_MOBILE && typeof window.mNotifyMessagesChanged === "function") window.mNotifyMessagesChanged();
@@ -15821,7 +16110,9 @@
         } else if (state.searchMode) {
           // Cleared / too short: drop search mode and refetch folder
           state.searchMode = false;
-          fetchThreadListNow();
+          // v5.32: state.threads holds search results; cursor is invalid
+          // for the resumed folder view. Force a full fetch.
+          fetchThreadListNow({ forceFullFetch: true });
         }
       });
       $("emMessageTypeFilter")?.addEventListener("change", (e) => {
@@ -15849,7 +16140,10 @@
         $("emMessageTypeFilter").value = "all";
         $("emDateFilter").value = "all";
         if (typeof updateSortBtnStates === "function") updateSortBtnStates();
-        fetchThreadListNow();
+        // v5.32: full fetch — clearing the filter chips effectively
+        // resets the view, so we want fresh folder contents, not a
+        // delta off whatever state.threads currently holds.
+        fetchThreadListNow({ forceFullFetch: true });
       });
 
       // v5.30.5 — Sort + starred-only button wiring + visual-state

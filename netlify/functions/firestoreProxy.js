@@ -265,6 +265,46 @@ exports.handler = async (event) => {
         const orders = parseOrderBy(mvqs.orderBy || qs.orderBy);
         for (const o of orders) q = q.orderBy(o.field, o.dir);
 
+        // v5.32 — Delta sync support.
+        //
+        // When the client passes ?since=<millis>, we add an "updatedAt > since"
+        // filter so the response contains only docs that have changed since
+        // the cursor. This is the cornerstone of the dashboard's read-budget
+        // strategy: instead of re-fetching the whole folder every poll, the
+        // client fetches once (full) and then only deltas (typically 0–5
+        // docs/minute) thereafter.
+        //
+        // Index posture:
+        //   - On its own, "where(updatedAt,>,since).orderBy(updatedAt,desc)"
+        //     uses Firestore's auto-built single-field index for updatedAt.
+        //     No composite index required.
+        //   - If the caller stacks since on top of additional where clauses
+        //     (e.g. where=status,==,X), Firestore WILL require a composite
+        //     index (status, updatedAt). That's a deliberate caller choice;
+        //     we don't strip the other wheres because doing so would change
+        //     semantics. The dashboard's delta path is therefore designed
+        //     to send since BY ITSELF (no status where) and filter client-
+        //     side. See fetchThreadListNow in etsy-mail-1.html.
+        //
+        // sinceField defaults to "updatedAt". A caller can override with
+        // ?sinceField=otherField if the collection uses a different cursor
+        // (e.g. "timestamp" for the messages subcollection — see listSub
+        // below).
+        if (qs.since != null && qs.since !== "") {
+          const sinceMs = Number(qs.since);
+          if (Number.isFinite(sinceMs) && sinceMs > 0) {
+            const sinceField = String(qs.sinceField || "updatedAt");
+            q = q.where(sinceField, ">", admin.firestore.Timestamp.fromMillis(sinceMs));
+            // If the caller hasn't specified an orderBy on the cursor field,
+            // add one — Firestore requires range filters to be the first
+            // orderBy clause.
+            const hasOrderOnCursor = orders.some(o => o.field === sinceField);
+            if (!hasOrderOnCursor) {
+              q = q.orderBy(sinceField, "asc");
+            }
+          }
+        }
+
         const limit = Math.min(parseInt(qs.limit || "100", 10), 500);
         q = q.limit(limit);
 
@@ -292,6 +332,24 @@ exports.handler = async (event) => {
         let q = db.collection(coll).doc(String(id)).collection(sub);
         const orders = parseOrderBy(mvqs.orderBy || qs.orderBy);
         for (const o of orders) q = q.orderBy(o.field, o.dir);
+
+        // v5.32 — Delta sync support for subcollections. See block comment in
+        // the "list" handler above. For the messages subcollection the cursor
+        // is "timestamp" (messages are append-only with a timestamp field),
+        // so the dashboard sends ?sinceField=timestamp. Default stays
+        // "updatedAt" for any caller that doesn't override.
+        if (qs.since != null && qs.since !== "") {
+          const sinceMs = Number(qs.since);
+          if (Number.isFinite(sinceMs) && sinceMs > 0) {
+            const sinceField = String(qs.sinceField || "updatedAt");
+            q = q.where(sinceField, ">", admin.firestore.Timestamp.fromMillis(sinceMs));
+            const hasOrderOnCursor = orders.some(o => o.field === sinceField);
+            if (!hasOrderOnCursor) {
+              q = q.orderBy(sinceField, "asc");
+            }
+          }
+        }
+
         const limit = Math.min(parseInt(qs.limit || "500", 10), 2000);
         q = q.limit(limit);
 
