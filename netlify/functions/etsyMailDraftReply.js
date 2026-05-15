@@ -51,7 +51,7 @@
  *  ═══ ENV VARS ═══
  *
  *  ANTHROPIC_API_KEY              required
- *  ETSYMAIL_AI_MODEL              optional; default claude-sonnet-4-6
+ *  ETSYMAIL_AI_MODEL              optional; default claude-opus-4-7
  *  ETSYMAIL_AI_EFFORT             optional; default "high"
  *  ETSYMAIL_AI_MAX_TOKENS         optional; default 12000 (Opus 4.7 counts
  *                                 thinking + response + tool-use ALL
@@ -128,15 +128,7 @@ const CONFIG_COLL    = "EtsyMail_Config";
 // this is a change from 4.6 where thinking had its own budget). At
 // effort:"high" with multimodal input and a 2-3 tool call loop, 5000 is
 // tight; 12000 gives comfortable headroom without uncapping spend.
-// v3.31 — Default support drafter to Sonnet 4.6 (was Opus 4.7).
-// Sonnet is ~40% cheaper on rate card and avoids Opus 4.7's tokenizer
-// inflation (effective ~50% cost cut). The ETSYMAIL_AI_MODEL env var
-// still overrides — set it to "claude-opus-4-7" to revert per-deploy
-// without touching code. The sales agent (etsyMailSalesAgent-background)
-// remains on Opus 4.7 by default — phased rollout: support first, then
-// sales once the cheaper model proves out on confidence-score and
-// human-review-rate metrics.
-const AI_MODEL     = process.env.ETSYMAIL_AI_MODEL    || "claude-sonnet-4-6";
+const AI_MODEL     = process.env.ETSYMAIL_AI_MODEL    || "claude-opus-4-7";
 const AI_EFFORT    = process.env.ETSYMAIL_AI_EFFORT   || "high";
 const AI_MAX_TOKENS = parseInt(process.env.ETSYMAIL_AI_MAX_TOKENS || "12000", 10);
 
@@ -539,6 +531,35 @@ function buildSystemPromptText(config, shopEnrichment, employeeName) {
   // Conversation-boundary instruction — critical for accurate replies
   sys += `
 
+STEP ZERO — READ THE MESSAGE BEFORE YOU REACH FOR ANY TOOL OR RULE:
+
+This is the most important reasoning instruction in this entire prompt. Apply it every single turn, before you do anything else.
+
+Before you decide which tool to call, before you classify the case, before you reach for any specific rule below, you ask yourself one question:
+
+  **What is the customer actually asking for in this message?**
+
+Not "what does this case look like in the abstract." Not "what would a generic support reply do." What did the customer LITERALLY ASK FOR in the text of their most recent message — read as a human would read it, including the INTENT behind the words, not just the surface vocabulary?
+
+Customers don't write in the vocabulary your rules use. They write in their own words, often asking the underlying question via a surface question that sounds like something else. Two examples:
+
+  - Customer wrote: "Is there a way to track this?" along with "I haven't received it yet."
+    SURFACE: they want to know how to track → just give a tracking number.
+    INTENT: they haven't received their package and want to know where it is. The right answer is the tracking image, which shows the scan history AND gives them the tracking number AND embeds the carrier's official URL. The "here's your tracking number, paste it into X" reply technically answers the surface question but misses what they actually need.
+
+  - Customer wrote: "How long will my order take?"
+    SURFACE: they want a number → quote a window.
+    INTENT: depends on whether they're pre-purchase ("what's the lead time?") or post-purchase ("where's my order?"). Different tools, different answers. Check whether they've ordered before answering.
+
+The general rule: the SURFACE question and the INTENT can diverge. Always read the intent. The most common failure mode is taking a customer too literally — interpreting "is there a way to track this?" as a request for a tracking number when in context it's a request for delivery status.
+
+Anti-patterns that mean you're being too literal:
+
+  - You're about to point the customer to an external service or site when you have a tool that does the same thing better. The shop's own tools always come before redirects.
+  - You're about to ask the customer for information you can look up yourself (which order, when shipped, etc.). Call the lookup tool first.
+
+Read what they said. Read what's underneath what they said. THEN choose the action.
+
 CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
 
 1. IDENTIFY THE ACTIVE QUESTION. A long thread may contain multiple
@@ -629,46 +650,68 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
         as "something is wrong" or "this just got escalated to someone
         more formal." That's almost never the impression you want.
 
-      - ANSWER, DON'T META-COMMENT. Never write a reply that DESCRIBES
-        what you're about to do instead of just doing it. Forbidden
-        patterns, all of which read as stalling rather than helping:
+      - ANSWER, DON'T META-COMMENT. Never write a reply that describes
+        what you're about to do instead of doing it. Stalling replies
+        promise a future answer instead of giving one — "let us look
+        at this and circle back," "we want to make sure we point you
+        to the right path," "let us walk through this with you,"
+        "first let me address X then Y then Z." Either answer in this
+        turn or escalate. There is no "I'll think about it out loud"
+        option. If you find yourself drafting one of these, ask: what
+        is the actual answer? Write that. If there isn't one, set
+        ready_for_human_approval:true with a brief honest synopsis
+        rather than a meta-commentary reply.
 
-           "Your questions are a little tangled, so let us..."
-           "Let us look at the listings together and we'll come back with..."
-           "We want to make sure we point you to the right path..."
-           "Apologies for the delay getting back to you" (when there's no actual delay)
-           "Let me/us walk through this with you..."
-           "We need to take a step back and..."
-           "First, let me address X, then Y, then Z..."
-           "Let us pull this together and follow up with..."
-           "We'll review the conversation and circle back with..."
-           "Let us make sure we have the full picture before..."
+        On apologizing for "the delay": the shop's policy is that a
+        response within 30-40 minutes of the customer's most recent
+        inbound message is NOT late. Don't apologize for delay, wait,
+        slow response, or thank for patience when there is no actual
+        gap to apologize for — it reads as fake courtesy. Use the
+        TEMPORAL CONTEXT block above to calibrate. Apology language
+        is appropriate only when the gap genuinely exceeds the
+        non-late window, and even then it should be brief and
+        immediately followed by the answer.
 
-        These are stalling replies that promise a future answer
-        instead of giving one. Either you can answer in this turn or
-        you can escalate; there is no "I'll think about it out loud"
-        option. If you find yourself about to write one of these, ask:
-        what's the actual answer? Write that instead. If there isn't
-        one, set ready_for_human_approval:true with a brief, honest
-        synopsis rather than a meta-commentary reply.
+      - NEVER ADMIT FAULT TO THE CUSTOMER. Even when the shop has
+        clearly made an operational mistake (production ran longer
+        than planned, a ship date moved, the wrong size went out,
+        an order was overlooked for a few days), the AI's reply must
+        NEVER admit fault, blame the shop, or apologize in self-
+        deprecating terms. Admitting fault hands the customer leverage
+        to demand remedies the shop may not be prepared to offer —
+        once the shop has said "this was our fault," the customer can
+        reasonably push for "so refund the whole thing." Staying
+        NEUTRAL protects the shop's negotiating position without
+        being cold or dismissive. The shop owner can choose to
+        apologize formally and offer concessions in their own reply
+        if they want to; that's their call to make, not yours to
+        make for them.
 
-        On apologizing for "the delay" specifically: the shop's policy
-        is that a response within 30-40 minutes of the customer's most
-        recent inbound message is NOT considered late. If you're
-        composing a reply and the customer's last message was less
-        than 40 minutes ago, DO NOT include any apology for delay,
-        wait, slow response, or thanks-for-patience phrasing. There
-        is no delay to apologize for. Lead with the answer. The
-        TEMPORAL CONTEXT block above tells you when the customer's
-        latest message was sent; use it to calibrate. Apology phrasings
-        are allowed only when the gap genuinely exceeds 40 minutes,
-        and even then they should be brief ("Sorry for the wait — ")
-        and immediately followed by the actual answer, not a meta-
-        commentary preamble.
+        The rule is: describe WHAT IS, not WHO CAUSED IT. "Production
+        has been running a bit longer than expected" is neutral.
+        "Production has been running longer because of our delay" is
+        fault admission. The first is appropriate; the second hands
+        the customer leverage you didn't owe them. Any phrasing that
+        attributes the cause to the shop — "on our end," "on our
+        side," "our mistake," "our oversight," "we should have," "we
+        dropped the ball," "this is on us," "we take responsibility,"
+        anything that puts the blame on the shop — is forbidden.
+        Strip the cause and keep the description.
 
-        The system blocks these phrasings via a soft-promise gate.
-        Replies containing them will be force-routed to operator
-        review, regardless of your other settings.
+        Empathy is NOT the same as blame. You can warmly acknowledge
+        the customer's frustration ("totally hear you on that",
+        "completely understand the timing piece") without taking the
+        blame for what caused it. Empathy is "I see your situation";
+        fault-admission is "I caused your situation." Stay in the
+        first; never venture into the second.
+
+        If the customer EXPLICITLY says it's the shop's fault ("you
+        guys messed this up", "this is your error"), do not confirm
+        or deny — neutral acknowledgment plus the actual answer:
+           "Thanks for the note. The production is running longer
+            than expected; we'll keep moving as quickly as we can."
+        Don't agree. Don't argue. Just describe the situation
+        factually and move forward.
 
       - REFERENCE WHAT THE CUSTOMER SENT. When the customer has
         attached a photo, linked a listing, or made a specific decision
@@ -714,37 +757,24 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
         not a personal friend, and unsolicited warm commentary on a
         customer's life reads as fake or intrusive.
 
-        FORBIDDEN — never write any of these or anything similar:
-           "Hope the Hawaii trip is amazing!"
-           "Have an absolutely fantastic and amazing trip to Disneyland!"
-           "Sending good vibes to your mom."
-           "Bet your daughter is going to love it."
-           "Say hi to your wife for us!"
-           "Have a wonderful birthday!"
-           "So happy for you and the new baby!"
-           "Hope you feel better soon!"
-           "Such a sweet reason behind this one."
-           "Wishing your sister a beautiful wedding!"
-           "Wishing your daughter the best on graduation!"
-           "Such a thoughtful gift idea!"
-           "What a beautiful tribute."
-           "Thank you so much for taking the time to look again with
-            better lighting and for being so kind in how you've shared
-            this." (excessive performative gratitude — see below)
+        The category to avoid: any line wishing the customer's family
+        member well, blessing an upcoming event, projecting on a
+        gift's emotional weight, or commenting on a personal detail
+        the customer shared in passing. Vacations, weddings,
+        graduations, illnesses, new babies, birthdays, sweet
+        sentiments — none of these get a separate sentence in your
+        reply. They are simply context for the order, not a topic
+        of conversation.
 
-        Also FORBIDDEN — performative gratitude / fake niceness. These
-        read as obviously AI-generated even more than wishes do:
-           "Thank you so much for taking the time to..."
-           "I really appreciate you sharing..."
-           "What a kind way to put it..."
-           "I love how thoughtful you're being about this..."
-        A simple "Thanks for the photos" or no opener at all is the
+        Performative gratitude reads the same way and gets cut for
+        the same reason: "thank you so much for taking the time to,"
+        "I really appreciate you sharing," "what a kind way to put
+        it," "I love how thoughtful you're being about this." A
+        simple "Thanks for the photos" or no opener at all is the
         right tone. Do not stack acknowledgment phrases.
 
-        These are the EXACT category of phrases that read as fake
-        AI-generated friendliness even when well-intentioned. The
-        shop's tone is warm but transactional — answer the actual
-        question, then sign off. No life commentary, ever.
+        The shop's tone is warm but transactional — answer the
+        actual question, then sign off. No life commentary, ever.
 
         The ONE exception: if a customer's personal detail is directly
         relevant to the order (e.g. they tell you the engraving is for
@@ -1552,20 +1582,15 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
           actively invites another customer message instead of
           empowering the customer to self-serve.
 
-    FORBIDDEN — never write any of these or anything similar:
-      "Message me back if..."
-      "Reach out again if..."
-      "Let me know if anything changes"
-      "Feel free to follow up if..."
-      "Just shoot me a message if..."
-      "Get back to me if you need anything else"
-      "I'll keep an eye on it / be watching / be tracking it"
-      "I'll personally make sure..."
-      "I'll follow up with you tomorrow / in a few days"
-      "We'll touch base again..."
-      "Let's talk through next steps together"
-      "Happy to help further if..."
-      "Don't hesitate to reach out"
+    The category to avoid: open-ended invitations for the customer to
+    write back ("reach out if anything changes," "let me know if you
+    need anything else," "feel free to follow up," "happy to help
+    further") and fake personal-monitoring commitments the AI can't
+    keep ("I'll keep an eye on it," "I'll personally make sure," "I'll
+    follow up tomorrow," "we'll touch base again"). Both kinds of
+    close turn a finished conversation into an open one, generate
+    unnecessary follow-ups, and in the second case promise things
+    the AI doesn't have agency to deliver.
 
     PREFER — passive close that empowers self-help:
       • For tracking: the attached tracking image / customer's tracking
@@ -1593,30 +1618,20 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
 
 18. PARAPHRASES OF FORBIDDEN PERSONAL COMMENTARY ALSO COUNT.
 
-    Section 6's PERSONAL TOUCH list of forbidden phrases is illustrative,
-    not exhaustive. Any sentence whose function is to comment on,
-    congratulate, wish well, or otherwise emote about a customer's
-    personal life event — recipient, occasion, deadline reason, gift
-    purpose, family member — is forbidden, regardless of exact wording.
+    Section 6's PERSONAL TOUCH guidance applies to any phrasing, not
+    just literal matches. Any sentence whose function is to comment
+    on, congratulate, wish well, or otherwise emote about a
+    customer's personal life event — recipient, occasion, deadline
+    reason, gift purpose, family member — is forbidden, regardless
+    of exact wording.
 
     The structural test: would a stranger writing a transactional
-    customer-service reply about a package or order ever include this
-    sentence? If no, delete it. Examples of paraphrases that would have
-    slipped past a literal-string filter but are still forbidden:
-
-      ❌ "Thanks for reaching out, and congrats to your daughter on
-          her graduation!"  (paraphrase of the forbidden "Wishing
-          your daughter the best on graduation!")
-      ❌ "Hope the celebration goes wonderfully."
-      ❌ "What a sweet occasion."
-      ❌ "Such a meaningful gift."
-      ❌ "Sounds like a wonderful event."
-      ❌ "Best of luck with everything."
-
-    Even a single such sentence makes the reply read as AI-generated,
-    because real shop staff don't write that way in a tracking inquiry.
-    Skip it entirely. The customer mentioned the personal context to
-    give YOU information, not to receive a wish in return.
+    customer-service reply about a package or order ever include
+    this sentence? If no, delete it. Even a single such sentence
+    makes the reply read as AI-generated, because real shop staff
+    don't write that way in a tracking inquiry. The customer
+    mentioned the personal context to give YOU information, not to
+    receive a wish in return.
 
 19. MANDATORY SIGN-OFF — EXACT FORMAT, NO PERSONAL NAMES.
 
@@ -1751,43 +1766,44 @@ single self-explanatory reply. Operators reach for it constantly
 because one image answers most follow-up questions before they get
 asked.
 
-You MUST call generate_tracking_image when ANY of these are true:
+The rule is INTENT-based, language-agnostic, and not optional.
+Generate the tracking image whenever the customer is asking — in any
+language, by any phrasing — about the location, status, or arrival of
+their package. This covers the obvious cases ("where is my order?",
+"hasn't arrived," "any update on shipping?") and the less obvious
+ones that sound like requests for information rather than status:
+"is there a way to track this?" alongside "haven't received it" is a
+where-is-my-package question; the customer asked for a tracking
+*number* but needs a tracking *status*, and the image gives both.
+Read the intent, not the surface words.
 
-  - Customer says "where is my order?" / "where is my package?"
-  - Customer says "hasn't arrived" / "still hasn't arrived" /
-    "haven't received it"
-  - Etsy "Help with Order" structured form contains "Order hasn't
-    arrived" or "Ideal resolution: replace" with a missing-package note
-  - Customer says "any update on shipping?" / "any updates?" /
-    "when will my order arrive?"
-  - Customer says "is my package lost?" / "is it lost?" / "missing
-    package"
-  - Customer references a tracking event and asks for interpretation
-    ("tracking says it was delivered but I don't have it", "tracking
-    hasn't moved in a week")
-  - Order shipped 7+ days ago (US) or 10+ days ago (international)
-    and the customer is following up about delivery
+The Etsy "Help with Order" structured form deserves special note:
+the dropdown the customer chose ("Another order issue", "Order hasn't
+arrived", "Ideal resolution: refund/replace") is a category label,
+not the question. The actual question is in the customer's NOTE TO
+SELLER below the dropdown. Read the note.
 
-This list is NOT exhaustive — the underlying principle is "the
-customer wants to know where their package is, the answer is on the
-tracking, the tracking image makes the answer immediate." Whenever
-that principle applies, call the tool.
+NEVER POINT THE CUSTOMER TO A THIRD-PARTY TRACKING SITE — not by
+name, not by description, not by suggestion. The shop has its own
+generate_tracking_image tool that produces a branded image of the
+scan history with the correct carrier's official URL embedded
+(Chit Chats for LX...NL tracking codes, USPS for domestic). Anything
+that sends the customer off-shop to figure out their own tracking is
+wrong, regardless of phrasing — it offloads work the AI should be
+doing and signals to the customer "we don't have visibility into our
+own shipping," which is the opposite of what's true. If you're about
+to suggest the customer paste their tracking number into a separate
+service: STOP. Call generate_tracking_image instead. The image gets
+attached to your reply; the customer sees the scans inline.
 
-DO NOT skip the tracking image because:
-
-  - "The order is past the typical delivery window, this might need
-    review" → the tracking image is exactly what an operator would
-    look at to make that judgment; show it.
-  - "The customer asked for a refund/replace" → the customer chose a
-    resolution option in Etsy's form, but their actual question is
-    still where the package is. Tracking comes first; refund/replace
-    conversation comes after (and only when 7+ days past EDD per
-    section 7).
-  - "I don't have enough information about next steps" → the next
-    steps come from the tracking, not the other way around. Generate
-    the image, then write the reply around what the tracking says.
-  - "Seeing the scan history might not 'genuinely help'" — IT DOES.
-    Stop second-guessing. If the trigger pattern fires, fire the tool.
+The most common bad reasons to skip the tracking image are: (1) the
+customer's message isn't in English so it doesn't match a template
+you remember, (2) the customer asked for a tracking number rather
+than for status, (3) the customer's Etsy form header isn't the
+"right" category. All three are wrong. The trigger is the underlying
+intent, not the surface form. If a real human reading the message
+would understand "this person wants to know where their package is,"
+fire the tool.
 
 Workflow for these cases:
 
@@ -1799,10 +1815,12 @@ Workflow for these cases:
      generate_tracking_image(trackingCode). The carrier is auto-
      detected.
   3. Write your reply describing what the tracking shows in plain
-     English, naturally referencing the attached image ("I've pulled
-     the current tracking for you below"). Apply the
-     undelivered-package policy from section 7 if relevant (Etsy
-     non-delivery case eligible only at 7+ days past EDD).
+     prose, in the SAME LANGUAGE the customer wrote in (if they wrote
+     French, reply in French; if Spanish, reply in Spanish; etc. —
+     unless the customer specifically asked for English). Naturally
+     reference the attached image. Apply the undelivered-package
+     policy from section 7 if relevant (Etsy non-delivery case
+     eligible only at 7+ days past EDD).
 
 If lookup_order_tracking returns no tracking code (label printed but
 never scanned, or no order found), write your reply in prose. Do NOT
@@ -2988,269 +3006,10 @@ exports.handler = async (event) => {
     let parsed;
     let parsedOk = false;
 
-    // ─── Soft-promise validation gate ────────────────────────────────
-    // Reject draft replies containing handoff/forward-promise language
-    // that the system cannot guarantee.
-    //
-    // This drafter doesn't have an explicit `ready_for_human_approval`
-    // parameter; escalation intent is signaled by LOW CONFIDENCE (the
-    // model self-rates low to route the reply to operator review).
-    // So the gate's logic is:
-    //
-    //   - ALWAYS_FORBIDDEN_HANDOFF_PATTERNS: fire regardless of
-    //     confidence. These commit a specific actor and a specific
-    //     timing the system cannot guarantee ("someone will follow
-    //     up directly today", "I'm flagging this with the team").
-    //     There is no honest version of these phrasings.
-    //
-    //   - SOFT_PROMISE_PATTERNS: fire only when confidence is high
-    //     enough that the reply would auto-send (>= 0.7). A reply
-    //     the model is escalating via low confidence may use vague
-    //     holding language ("we'll be back to you soon") legitimately.
-    //
-    // On violation, the gate forces confidence to 0 (parallel to the
-    // attachment-claim mismatch check below), sets a flag on the
-    // draft, and appends a reasoning note. No retry-loop — the
-    // operator sees the draft, the flag, and the reason.
-    const ALWAYS_FORBIDDEN_HANDOFF_PATTERNS = [
-      // "someone / a team member / the team will <action>"
-      /\b(?:someone|a\s+team\s+member|the\s+team|our\s+team|the\s+staff)\s+will\s+(?:follow\s+up|reach\s+out|get\s+back|be\s+in\s+touch|contact\s+you|message\s+you)\b/i,
-      // "someone will follow up with you directly today/tomorrow/shortly"
-      /\bsomeone\s+will\s+(?:follow\s+up|reach\s+out|get\s+back|be\s+in\s+touch|contact\s+you)\s+(?:with\s+you\s+)?(?:directly\s+)?(?:today|tomorrow|shortly|soon|this\s+(?:morning|afternoon|evening))\b/i,
-      // "I'm flagging your order with the team"
-      /\bI['\u2019]?m\s+flagging\s+(?:your|the|this)\s+(?:order|conversation|thread)\s+with\s+the\s+team\b/i,
-      // "I'll flag this with the team" / "I'll flag your order"
-      /\bI['\u2019]?ll\s+flag\s+(?:this|that|your|the)\s+(?:order|conversation|thread)\b/i,
-      // "I'm passing this to the team" / "I'll pass this on to the team"
-      /\bI['\u2019]?(?:m|ll)\s+pass(?:ing)?\s+(?:this|that|these|it|your\s+\w+)\s+(?:on\s+)?to\s+the\s+team\b/i,
-      // v5.17 — Meta-commentary "we'll come back / circle back with"
-      // pattern. Promises future analysis instead of providing it.
-      // From the operator screenshot: "we'll come back with a clear
-      // answer on Figaro vs the other chain options..."
-      /\b(?:we['\u2019]?ll|we\s+will)\s+(?:come\s+back|circle\s+back|get\s+back\s+to\s+you|follow\s+up\s+with\s+you)\s+(?:with|on|about)\b/i,
-      // v5.19 — Italy-thread style: "we'll/we will get back to you"
-      // (standalone, no "with X" qualifier needed). Same problem as
-      // the v5.17 pattern but without the qualifier word.
-      /\b(?:we['\u2019]?ll|we\s+will)\s+get\s+back\s+to\s+you\b/i,
-      // v5.19 — "as soon as we hear back from the team" pattern.
-      // Commits a specific team-action with deferred timing,
-      // unverifiable. From Italy-thread: "We'll get back to you as
-      // soon as we hear back from the team."
-      /\bas\s+soon\s+as\s+we\s+hear\s+(?:back\s+)?(?:from|on)\s+(?:the\s+)?(?:team|operator|staff)\b/i,
-      // v5.22 — Kari-thread variant: "we'll be back to you" / "we
-      // will be back to you (soon)" / "we'll be in touch (soon)". Same
-      // commit-to-future-action problem as the v5.17 and v5.19
-      // patterns, just phrased without "get" or "come". From Kari
-      // thread reply: "We'll be back to you soon."
-      /\b(?:we['\u2019]?ll|we\s+will)\s+be\s+(?:back\s+to\s+you|in\s+touch)\b/i,
-    ];
-
-    const SOFT_PROMISE_PATTERNS = [
-      // I/we + forward-promise verb (v5.19 adds "double-check" /
-      // "double check" as a common dodge phrasing seen in shipping-
-      // eligibility deferrals)
-      /\bwe['\u2019]?ll\s+(send|follow up|get back|check|pull up|reach out|have those|be in touch|look into|review this|come back|circle back|double[\s-]?check)\b/i,
-      /\bI['\u2019]?ll\s+(send|follow up|get back|check|pull up|reach out|have those|be in touch|flag|forward|escalate|review|come back|circle back|double[\s-]?check)\b/i,
-      // Let me/us + investigative verb (extended for v5.17 meta-commentary
-      // and v5.19 shipping deferral with "double-check" / "verify" /
-      // "confirm")
-      /\blet\s+(?:us|me)\s+(?:check|double[\s-]?check|pull up|put together|look into|see if|look at|investigate|verify|confirm|walk you through|walk through|take a step back|make sure we|pull this together|review the conversation)\b/i,
-      // "Get back to you" framings
-      /\bget(?:ting)?\s+(?:back|those|that)\s+(?:to|over\s+to)\s+you\b/i,
-      // "Have someone reach out"
-      /\bhave\s+(?:someone|a\s+team\s+member)\s+(?:reach\s+out|follow\s+up|get\s+in\s+touch|message\s+you)\b/i,
-      // v5.17 — Meta-commentary patterns that describe future analysis
-      // instead of providing it. These showed up as the dominant
-      // failure mode in mid-conversation drafts where the shop had
-      // already been answering directly.
-      /\b(?:we|let\s+us)\s+want\s+to\s+make\s+sure\s+we\s+(?:point|guide|walk|get|have)\b/i,
-      /\bpoint\s+you\s+(?:to|in)\s+the\s+(?:right|correct)\s+(?:path|direction)\b/i,
-      /\bsend\s+you\s+in\s+circles\b/i,
-      /\bwe\s+(?:want|need)\s+to\s+(?:take\s+a\s+step\s+back|step\s+back)\b/i,
-      /\bbefore\s+we\s+(?:say|tell\s+you)\s+anything\s+specific\b/i,
-      // v5.19 — Shipping-eligibility-deferral patterns. The Italy
-      // thread showed the AI punting on a shipping question it should
-      // have answered directly from prompt section 7. The shop has
-      // documented shipping policy now (see "Shipping destinations,
-      // costs, and timing" subsection), so phrasings like "let us
-      // check shipping eligibility on our end" are unwarranted
-      // deferrals. The list IS the policy; no checking is needed.
-      /\b(?:check|confirm|verify|look\s+into)\s+(?:shipping\s+)?(?:eligibility|availability)\s+(?:to|for|on)\b/i,
-      // v5.19 — "check on our end" / "verify with the team" patterns.
-      // Generic deferral phrasings that signal the AI is punting
-      // instead of consulting the policy in the prompt.
-      /\b(?:check|look\s+into|verify|confirm)\s+(?:on|with)\s+(?:our|the)\s+end\b/i,
-      // v5.22 — Kari-thread broader "on our end" variants. The v5.19
-      // pattern only fires on tight phrasings like "check on our end".
-      // Operators often write "look at this carefully on our end" or
-      // "review this thoroughly on our end" — same deferral, just with
-      // intervening qualifier words. This pattern fires when ANY
-      // review/inspection verb precedes "on our end" with up to 6
-      // words of intervening text. From Kari thread: "we want to look
-      // at this carefully on our end before we say anything specific."
-      /\b(?:look|review|investigate|dig|examine|sort)\s+(?:into\s+|at\s+|over\s+|through\s+)?(?:this|it|that|things|matters|the\s+order|the\s+details|carefully|closely|thoroughly)?(?:\s+\w+){0,4}\s+on\s+(?:our|the)\s+end\b/i,
-      // v5.22 — "before we say anything specific" stalling phrasing.
-      // Generic temporal defer. Catches variants like "before we can
-      // say anything specific", "before giving you a specific answer",
-      // "until we say anything more". From Kari thread: "before we say
-      // anything specific about next steps."
-      /\bbefore\s+(?:we|I)\s+(?:can\s+)?(?:say|tell\s+you|share|give\s+you|provide|commit\s+to)\s+(?:anything|something|a)\s+(?:specific|definitive|concrete|more|firm|definite)\b/i,
-      // v5.22 — Temporal-deferral patterns: "until/once/after we look
-      // at this" — implies the answer comes "later, not now". Sibling
-      // of the above; the stall is the timing word.
-      /\b(?:until|once|after)\s+we\s+(?:look\s+at|review|check|investigate|verify|sort\s+through)\s+(?:this|it|things|matters|the\s+order|the\s+details)\b/i,
-      // "Apologies for the delay" when used as a soft opener with no
-      // substantive answer to follow. We can't tell from regex whether
-      // there's a real delay or not, but pairing it with stalling
-      // language is a strong tell. The pattern fires when "apologies
-      // for the delay" appears alongside any other meta-commentary
-      // phrase; firing only on the combo keeps the false-positive rate
-      // down (a real apology + real answer is fine).
-      // Implemented as a conditional check below rather than a regex
-      // here to keep the apology + answer combination legal.
-    ];
-
-    // v5.18 — Time-aware delay-apology patterns.
-    //
-    // The AI must NOT apologize for being late when it isn't actually late.
-    // Shop policy: a response within 30-40 minutes of the customer's most
-    // recent inbound message is not considered late. So an apology like
-    // "apologies for the delay" or "thanks for your patience" is only
-    // legitimate when the elapsed time since the customer's last inbound
-    // message exceeds the non-late window. Below that window, apology
-    // language is a fake-courtesy tell that the model emits as a soft
-    // opener; we block it.
-    //
-    // Threshold: 40 minutes (the upper bound of the non-late window).
-    // Below 40 minutes → apology is unwarranted, flag it.
-    // 40 minutes or more → apology may be appropriate, don't flag.
-    // Gap unknown → flag conservatively (can't verify the apology is
-    // earned, so err toward not allowing it).
-    const NON_LATE_WINDOW_MS = 40 * 60 * 1000;  // 40 minutes
-
-    const DELAY_APOLOGY_PATTERNS = [
-      // "apologies for the delay" / "sorry for the delay" + variants
-      /\b(?:apologies?|sorry)\s+for\s+(?:the\s+)?(?:delay|wait|long\s+wait|slow\s+response)\b/i,
-      /\b(?:apologies?|sorry)\s+for\s+(?:the\s+)?late\s+(?:reply|response|message|getting\s+back)\b/i,
-      /\b(?:apologies?|sorry)\s+for\s+(?:the\s+)?delay\s+(?:getting\s+back|in\s+getting\s+back|in\s+responding|in\s+replying)\b/i,
-      // "apologies for keeping you waiting" / "sorry for keeping you waiting"
-      /\b(?:apologies?|sorry)\s+for\s+keeping\s+you\s+waiting\b/i,
-      // "sorry it took (so/this) long"
-      /\b(?:apologies?|sorry)\s+(?:it|that\s+it)\s+took\s+(?:so\s+|this\s+)?long\b/i,
-      // "thanks/thank you for your patience" — implies a delay required patience
-      /\bthanks?\s+(?:so\s+much\s+)?(?:you\s+)?for\s+(?:your\s+|the\s+)?patience\b/i,
-      /\bthank\s+you\s+(?:so\s+much\s+)?for\s+(?:your\s+)?patience\b/i,
-      // "thanks for waiting"
-      /\bthanks?\s+for\s+(?:bearing\s+with\s+us|hanging\s+in|waiting)\b/i,
-    ];
 
     /**
-     * Compute the milliseconds elapsed since the customer's most recent
-     * inbound message. Walks `messages` backwards looking for the latest
-     * message where direction is NOT outbound and the timestamp can be
-     * resolved. Returns null if no inbound message is found or no
-     * timestamp can be parsed — callers should treat null as "unknown"
-     * and apply their own policy.
-     *
-     * Timestamp shape tolerated: Firestore Timestamp (with .toMillis()),
-     * a raw number of milliseconds, or absent. Mirrors the parsing
-     * pattern used elsewhere in this file for customer message age.
-     */
-    function _msSinceLatestInboundMessage(msgs) {
-      if (!Array.isArray(msgs) || !msgs.length) return null;
-      for (let i = msgs.length - 1; i >= 0; i--) {
-        const m = msgs[i];
-        if (!m || typeof m !== "object") continue;
-        const isOutbound = m.direction === "outbound" || m.senderRole === "staff";
-        if (isOutbound) continue;
-        const ts = (m.timestamp && typeof m.timestamp.toMillis === "function" ? m.timestamp.toMillis() : null) ||
-                   (m.createdAt && typeof m.createdAt.toMillis === "function" ? m.createdAt.toMillis() : null) ||
-                   (typeof m.timestamp === "number" ? m.timestamp : null) ||
-                   (typeof m.createdAt === "number" ? m.createdAt : null);
-        if (ts) return Date.now() - ts;
-      }
-      return null;
-    }
-
-    // v5.21 — Refund / return signal detection.
-    //
-    // The "Refunds" folder in the inbox surfaces threads whose customer
-    // has asked for a refund or return, OR where the staff (AI or
-    // operator) has already started discussing return logistics. The
-    // membership marker is thread.refundFlaggedAt — a timestamp set the
-    // first time we detect signals on a thread and refreshed on
-    // subsequent detections (so the folder sorts by most-recent-refund-
-    // activity, mirroring how Completed Sales sorts by salesCompletedAt).
-    //
-    // We scan TWO sources every draft turn:
-    //   1. The customer's latest inbound message — catches refund
-    //      INITIATION. The Etsy "Help with Order" structured-form
-    //      message is the highest-volume case and has very specific
-    //      field names ("ideal resolution:", "Preferred refund method:").
-    //   2. The AI's draft reply text — catches refund HANDLING. If the
-    //      AI is drafting a return-instruction reply ("happy to take
-    //      these back", "return address:", "send them back in their
-    //      original condition"), the thread is now refund-relevant
-    //      even if the customer's prior message didn't trip the
-    //      inbound patterns.
-    //
-    // Operator-typed replies that go directly through etsyMailDraftSend
-    // without an AI draft are caught by a mirror of this detection in
-    // that file. The single source of truth for the patterns is here;
-    // etsyMailDraftSend duplicates the array (low overhead, two files).
-    const REFUND_SIGNAL_PATTERNS = [
-      // ── Etsy "Help with Order" structured-form fields ───────────────
-      // These appear verbatim when a buyer opens a Help with Order
-      // request and routes it to the seller. The form's field names are
-      // very specific phrases unlikely to false-positive elsewhere.
-      /\b(?:your\s+)?ideal\s+resolution\s*:\s*(?:return|refund|replace|exchange)/i,
-      /\bpreferred\s+refund\s+method\s*:/i,
-      /\bI\s+want\s+to\s+message\s+the\s+seller\s+about/i,
-
-      // ── Direct customer refund/return language ──────────────────────
-      /\b(?:I[\u2019']?d?|I\s+would)\s+(?:like|want)\s+to\s+(?:return|refund)\b/i,
-      /\b(?:want|need|requesting?)\s+(?:to\s+)?(?:get\s+)?(?:a\s+)?refund\b/i,
-      /\bcan\s+I\s+(?:return|get\s+a\s+refund|refund\s+this)\b/i,
-      /\bhow\s+(?:do|can)\s+I\s+(?:return|get\s+a\s+refund|refund)\b/i,
-      /\brefund\s+(?:request|please|me|for|on)\b/i,
-      /\bmoney\s+back\b/i,
-      /\breturning\s+(?:the|this|my|it|them|these)\b/i,
-      /\bsend(?:ing)?\s+(?:it|them|these|this|the\s+\w+)\s+back\s+for\s+(?:a\s+)?(?:refund|return)/i,
-      /\bI\s+(?:want|need|would\s+like)\s+to\s+send\s+(?:it|them|these|this)\s+back\b/i,
-
-      // ── Staff / AI outbound return-instruction language ─────────────
-      // Fires when the AI's draft (or operator's manual reply) contains
-      // return-instruction patterns. Example from operator screenshot:
-      // "Happy to take these back since they're not personalized. Please
-      // send them back in their original condition within 14 days of
-      // delivery, and once they arrive we'll process your refund (return
-      // shipping is on the buyer's end). Return Address: ..."
-      /\breturn\s+address\s*:/i,
-      /\bsend\s+(?:it|them|these|this|the\s+\w+)\s+back\s+(?:in\s+(?:its|their)\s+original|within\s+\d+\s+days)/i,
-      /\bonce\s+(?:they|it)\s+arrive[s]?\s+we[\u2019']?ll\s+process\s+(?:your\s+)?refund/i,
-      /\bhappy\s+to\s+(?:take\s+(?:these|that|it|them)\s+back|accept\s+(?:the|your)\s+return)/i,
-      /\b14[\s-]?day\s+(?:return|refund)\s+window/i,
-      /\bprocess\s+(?:your\s+|a\s+)?refund\s+(?:once|after|when)\b/i,
-    ];
-
-    /**
-     * Detect refund / return signals in arbitrary message text.
-     * Returns the matched substring on first hit (for audit logging) or
-     * null if no signal found. Caller decides what to do with the hit.
-     */
-    function _detectRefundSignals(text) {
-      if (!text || typeof text !== "string") return null;
-      for (const rx of REFUND_SIGNAL_PATTERNS) {
-        const m = text.match(rx);
-        if (m) return m[0];
-      }
-      return null;
-    }
-
-    /**
-     * Walk messages backward to find the latest inbound message TEXT
-     * (parallel to _msSinceLatestInboundMessage which returns elapsed
-     * time). Returns the trimmed string or empty string if none found.
+     * Walk messages backward to find the latest inbound message TEXT.
+     * Returns the trimmed string or empty string if none found.
      */
     function _latestInboundMessageText(msgs) {
       if (!Array.isArray(msgs) || !msgs.length) return "";
@@ -3263,81 +3022,6 @@ exports.handler = async (event) => {
         if (t) return t;
       }
       return "";
-    }
-
-    // Confidence threshold above which the draft would auto-send.
-    // Below this, the model is implicitly signaling "this needs
-    // review" and vague holding language is permitted.
-    const SOFT_PROMISE_CONFIDENCE_THRESHOLD = 0.7;
-
-    /**
-     * Check the draft text for soft-promise violations.
-     *
-     * @param {string} text                   The drafted reply text
-     * @param {number} confidence             AI's self-rated confidence
-     * @param {number|null} msSinceLastInbound  Elapsed ms since customer's
-     *                                         latest inbound message (null
-     *                                         if unknown). Used to gate
-     *                                         delay-apology patterns.
-     * @returns {Array<{type, match, message}>}  Violations (empty if clean)
-     */
-    function checkSoftPromiseViolations(text, confidence, msSinceLastInbound) {
-      if (!text || typeof text !== "string") return [];
-      const violations = [];
-      // Always-forbidden patterns: fire regardless of confidence
-      for (const rx of ALWAYS_FORBIDDEN_HANDOFF_PATTERNS) {
-        const m = text.match(rx);
-        if (m) {
-          violations.push({
-            type   : "always_forbidden_handoff",
-            match  : m[0],
-            message: `Reply commits a specific operator action ("${m[0]}") that the system cannot guarantee. Forbidden regardless of escalation. Rephrase to reference the shop generally with vague timing ("we'll be back to you soon").`
-          });
-        }
-      }
-      // Standard soft-promise patterns: only fire when confidence is
-      // high enough that the reply would auto-send. Low-confidence
-      // replies are headed for operator review anyway; vague holding
-      // language in that context is acceptable.
-      const isAutoSendable = typeof confidence === "number"
-        && confidence >= SOFT_PROMISE_CONFIDENCE_THRESHOLD;
-      if (isAutoSendable) {
-        for (const rx of SOFT_PROMISE_PATTERNS) {
-          const m = text.match(rx);
-          if (m) {
-            violations.push({
-              type   : "soft_promise_high_confidence",
-              match  : m[0],
-              message: `Reply contains handoff/forward-promise language ("${m[0]}") at high confidence. Either answer the customer from policy in this turn (see prompt sections 7 and 10), or lower confidence so the draft routes to operator review.`
-            });
-          }
-        }
-      }
-      // v5.18 — Time-aware delay-apology check. Fires when the reply
-      // contains apology-for-delay language AND the elapsed time since
-      // the customer's latest inbound message is under the non-late
-      // window (40 minutes), OR the gap is unknown (conservative). At
-      // 40+ minutes the apology may be earned, so we don't flag.
-      const isWithinNonLateWindow =
-           msSinceLastInbound === null
-        || msSinceLastInbound === undefined
-        || msSinceLastInbound < NON_LATE_WINDOW_MS;
-      if (isWithinNonLateWindow) {
-        for (const rx of DELAY_APOLOGY_PATTERNS) {
-          const m = text.match(rx);
-          if (m) {
-            const gapDesc = msSinceLastInbound == null
-              ? "unknown (no inbound message timestamp resolved)"
-              : `${Math.round(msSinceLastInbound / 60000)} minutes since the customer's last message`;
-            violations.push({
-              type   : "unwarranted_delay_apology",
-              match  : m[0],
-              message: `Reply contains a delay-apology phrasing ("${m[0]}") but the gap is ${gapDesc}, which is under the 40-minute non-late window. The AI should NOT apologize for being late when it isn't. Remove the apology and lead with the actual answer.`
-            });
-          }
-        }
-      }
-      return violations;
     }
 
     /**
@@ -3491,44 +3175,6 @@ exports.handler = async (event) => {
       parsed.aiAttachmentClaimMismatch = true;
       parsed.confidence = 0;
       const note = " | AI claimed an attachment in the reply but no attachment-producing tool ran successfully. Forced confidence=0 for operator review.";
-      parsed.confidenceReasoning = (parsed.confidenceReasoning || "") + note;
-    }
-
-    // ─── Soft-promise validation ───────────────────────────────────
-    //
-    // Check the drafted reply for handoff/forward-promise language
-    // that the system cannot guarantee. The two pattern classes:
-    //   - ALWAYS_FORBIDDEN_HANDOFF_PATTERNS fire regardless of
-    //     confidence (commit a specific actor + specific timing).
-    //   - SOFT_PROMISE_PATTERNS fire only at high confidence (the
-    //     reply would auto-send). Low-confidence escalation replies
-    //     may legitimately use vague holding language.
-    //
-    // On any violation: force confidence to 0 so the reply routes to
-    // operator review, stamp aiSoftPromiseViolations on the draft so
-    // the inbox UI can show what fired, and append a reasoning note.
-    // Mirrors the attachment-claim mismatch handling above.
-    //
-    // v5.18 — Compute the elapsed time since the customer's latest
-    // inbound message so the gate can decide whether apology-for-delay
-    // phrasings are warranted (>= 40 minutes) or fake-courtesy stalling
-    // (< 40 minutes, or gap unknown).
-    const _msSinceLastInbound = _msSinceLatestInboundMessage(messages);
-    const _softPromiseViolations = checkSoftPromiseViolations(
-      parsed.text, parsed.confidence, _msSinceLastInbound
-    );
-    if (_softPromiseViolations.length) {
-      console.warn(
-        `[draftReply ${threadId}] Soft-promise violations detected (${_softPromiseViolations.length}): ` +
-        _softPromiseViolations.map(v => `${v.type}:"${v.match}"`).join("; ") +
-        ` — forcing to human review`
-      );
-      parsed.aiSoftPromiseViolations = _softPromiseViolations;
-      parsed.confidence = 0;
-      const violationSummary = _softPromiseViolations
-        .map(v => `[${v.type}] matched: "${v.match}"`)
-        .join("; ");
-      const note = ` | Soft-promise violations detected: ${violationSummary}. Forced confidence=0 for operator review (see prompt sections 7 and 10).`;
       parsed.confidenceReasoning = (parsed.confidenceReasoning || "") + note;
     }
 

@@ -802,11 +802,11 @@ function buildToolExecutors({ threadId, salesCtx, customerHistory, cfg }) {
 
 const TOOL_SPEC_SEARCH_LISTINGS = {
   name: "search_shop_listings",
-  description: "Search the shop's active Etsy catalog. Returns title, priceUsd, primary image URL, and listing URL for matching items. Use to confirm the shop sells something the customer references, or to suggest a related/upsell item.",
+  description: "Search the shop's active Etsy catalog. Returns title, priceUsd, primary image URL, and listing URL for matching items. Use cases: (1) confirm the shop sells something the customer references; (2) suggest a related/upsell item; (3) POINT THE CUSTOMER TO AN EXISTING LISTING TO BUY DIRECTLY when their request maps to an existing shop product (e.g., they want an add-on item the shop already sells, or they want a standard variant of an existing listing). In case (3), the resolution is to return the URL inline in your reply — no quote computation needed, no listing creator needed, the listing already exists and the customer picks variants at Etsy checkout. This is critical for shop-initiated arcs where the prior shop message offered to send a link and the customer is asking for it: search_shop_listings finds the URL, you include it in your reply, done.",
   input_schema: {
     type: "object",
     properties: {
-      query: { type: "string", description: "Product name, material, color, or other search term." },
+      query: { type: "string", description: "Product name, material, color, theme, design, add-on type, or other search term. For shop-initiated add-on requests, search for the add-on listing (e.g., 'huggie add-on charm', 'extra charm', 'charm add-on')." },
       limit: { type: "integer", minimum: 1, maximum: 25 }
     },
     required: ["query"]
@@ -1316,9 +1316,15 @@ function validateOptionCConsistency({ parsed, toolNamesCalled }) {
     violations.push("compute_quote_missing_tool");
     messages.push("You declared next_action: compute_quote but did not call resolveQuote this turn. Call resolveQuote with the family, selectedCodes, and quantity, then state the result.");
   }
-  if (na === "attach_collateral" && !toolNamesCalled.includes("get_collateral")) {
+  if (na === "attach_collateral" && !toolNamesCalled.includes("get_collateral") && !toolNamesCalled.includes("search_shop_listings")) {
+    // v5.24 — attach_collateral can be sourced from either get_collateral
+    // (curated collateral) OR search_shop_listings (existing shop
+    // listing URLs). Both flows end with the AI putting a URL in the
+    // reply, which is what attach_collateral semantically means. The
+    // validation accepts either tool call as evidence that the action
+    // was actually executed.
     violations.push("attach_collateral_missing_tool");
-    messages.push("You declared next_action: attach_collateral but did not call get_collateral this turn. Call get_collateral(category, kind) and include the URL in your reply.");
+    messages.push("You declared next_action: attach_collateral but did not call get_collateral OR search_shop_listings this turn. For curated collateral (line sheets, product cards), call get_collateral(category, kind). For existing shop listing URLs (add-ons, standard products), call search_shop_listings(query). Either way, include the URL in your reply.");
   }
 
   // Rule 1b — compute_quote requires items_quoted populated and matching
