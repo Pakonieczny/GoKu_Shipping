@@ -683,15 +683,26 @@ function _careTopicDetected(text) {
 }
 
 async function prefetchCareCollateral({ latestInboundText, recentThreadMessages = null }) {
-  if (!searchCollateral) return [];
+  // v2.8.1 — Returns a structured object with diagnostics instead of just
+  // an array. Callers that only want the URLs read .matches; the audit
+  // payload reads the whole object so the operator can see at a glance
+  // whether the prefetch fired, what it found, and what got filtered.
+  // Backward-compat: { matches:[], topicDetected:false, rawCount:0,
+  // filteredOutPlaceholder:[] }.
+  const empty = (reason) => ({
+    matches: [],
+    topicDetected: false,
+    rawCount: 0,
+    filteredOutPlaceholder: [],
+    reason: reason || null
+  });
 
-  // Pass 1: check the current inbound. Most common case.
+  if (!searchCollateral) return empty("SEARCH_COLLATERAL_UNAVAILABLE");
+
+  // Pass 1: check the current inbound.
   let topicHit = _careTopicDetected(latestInboundText);
 
-  // Pass 2: scan the last few thread messages. Customers sometimes ask
-  // a follow-up like "and the chain?" after a prior message established
-  // the topic. Bound to the most recent 3 messages to avoid stale
-  // triggers from long-ago threads.
+  // Pass 2: scan the last few thread messages.
   if (!topicHit && Array.isArray(recentThreadMessages)) {
     for (let i = recentThreadMessages.length - 1; i >= Math.max(0, recentThreadMessages.length - 3); i--) {
       const m = recentThreadMessages[i];
@@ -702,33 +713,192 @@ async function prefetchCareCollateral({ latestInboundText, recentThreadMessages 
     }
   }
 
-  if (!topicHit) return [];
+  if (!topicHit) return empty("NO_CARE_TOPIC_DETECTED");
 
   try {
-    // Broad keyword search — pulls both the metals-comparison card
-    // (category: metals_education) AND the care guide (category:
-    // aftercare). Either or both may match depending on what the
-    // operator has in the library.
     const result = await searchCollateral({
       keywords: ["tarnish", "care", "shower", "metal", "gold filled", "comparison", "aftercare"],
       limit   : 8
     });
     const matches = Array.isArray(result && result.matches) ? result.matches : [];
-    // Filter to entries with customer-visible URLs. Dedupe by id in case
-    // the same card matches on multiple keywords.
+    const rawCount = matches.length;
+
+    // Split: keep URLs that pass the customer-visibility filter; capture
+    // the ones that fail SO THE OPERATOR CAN SEE THEM. Common cause of
+    // silent failure: collateral docs in Firestore still have
+    // "REPLACE_WITH_PUBLIC_URL" placeholders because the operator hasn't
+    // uploaded the actual card image to a public URL yet. Without this
+    // diagnostic, the prefetch silently returns empty and the AI has
+    // nothing to attach — exactly the failure mode we hit in production.
     const seen = new Set();
-    const out  = [];
+    const visible = [];
+    const filteredOutPlaceholder = [];
     for (const m of matches) {
-      if (!m || !m.url || !isCustomerVisibleUrl(m.url)) continue;
+      if (!m || !m.url) continue;
       if (m.id && seen.has(m.id)) continue;
       if (m.id) seen.add(m.id);
-      out.push(m);
-      if (out.length >= 4) break;
+      if (isCustomerVisibleUrl(m.url)) {
+        visible.push(m);
+        if (visible.length >= 4) continue;   // cap visible at 4 but keep recording filtered
+      } else {
+        filteredOutPlaceholder.push({
+          id: m.id || null,
+          name: m.name || null,
+          url: m.url   // operator NEEDS to see the bad URL here
+        });
+      }
     }
-    return out;
+
+    return {
+      matches: visible.slice(0, 4),
+      topicDetected: true,
+      rawCount,
+      filteredOutPlaceholder,
+      reason: visible.length === 0 && filteredOutPlaceholder.length > 0
+        ? "ALL_MATCHES_HAVE_PLACEHOLDER_URLS"
+        : (visible.length === 0 && rawCount === 0
+          ? "NO_COLLATERAL_MATCHES_IN_LIBRARY"
+          : null)
+    };
   } catch (e) {
     console.warn("salesAgent: care collateral prefetch failed:", e.message);
-    return [];
+    return empty("PREFETCH_ERROR:" + e.message);
+  }
+}
+
+// ─── v2.8.2 — Topic-driven sizing / fit / measurements prefetch ──────────
+//
+// Mirror of prefetchCareCollateral, fires on sizing-question keywords:
+// "what size," "how long is the necklace," "chain length," "wrist," "fit,"
+// specific lengths ("16 inch", "18 inch"), etc. Pulls collateral filed
+// under category "sizing" first (canonical), falls back to a keyword scan
+// if the operator hasn't renamed categories yet. Returns the same
+// structured diagnostic shape as prefetchCareCollateral.
+
+const SIZING_TOPIC_KEYWORDS = [
+  // generic size / fit / measure
+  "size", "sizes", "sizing", "size chart", "size guide",
+  "fit", "fits", "fit guide", "fit reference", "fit chart",
+  "measure", "measuring", "measurement", "measurements",
+  "how to measure", "how do i measure",
+  // chain / necklace length
+  "chain length", "chain size", "chain inches",
+  "necklace length", "necklace size",
+  "how long is the necklace", "how long is this", "how long is it",
+  "pendant length", "drop length", "drop",
+  // wrist / bracelet
+  "wrist", "wrist size", "wrist circumference",
+  "bracelet size", "bracelet length", "bracelet sizing",
+  // specific lengths (common chain inches)
+  "16 inch", "16-inch", "16\"", "16in",
+  "18 inch", "18-inch", "18\"", "18in",
+  "20 inch", "20-inch", "20\"", "20in",
+  "22 inch", "22-inch", "22\"", "22in",
+  "24 inch", "24-inch", "24\"", "24in",
+  // fit questions
+  "what size should i get", "what size do you recommend",
+  "what length", "what length should",
+  "will it fit", "will this fit", "fit my",
+  "how long should", "how should it fit",
+  // body-reference phrasings
+  "on body", "lies on", "sits at", "falls at",
+  "collarbone", "below collarbone", "above collarbone",
+  "chest", "bustline", "between collarbone"
+];
+
+function _sizingTopicDetected(text) {
+  if (!text || typeof text !== "string") return false;
+  const lower = text.toLowerCase();
+  return SIZING_TOPIC_KEYWORDS.some(kw => lower.includes(kw));
+}
+
+async function prefetchSizingCollateral({ latestInboundText, recentThreadMessages = null }) {
+  const empty = (reason) => ({
+    matches: [],
+    topicDetected: false,
+    rawCount: 0,
+    filteredOutPlaceholder: [],
+    reason: reason || null
+  });
+
+  if (!searchCollateral) return empty("SEARCH_COLLATERAL_UNAVAILABLE");
+
+  // Pass 1: check the current inbound.
+  let topicHit = _sizingTopicDetected(latestInboundText);
+
+  // Pass 2: scan the last few thread messages.
+  if (!topicHit && Array.isArray(recentThreadMessages)) {
+    for (let i = recentThreadMessages.length - 1; i >= Math.max(0, recentThreadMessages.length - 3); i--) {
+      const m = recentThreadMessages[i];
+      if (m && m.text && _sizingTopicDetected(m.text)) {
+        topicHit = true;
+        break;
+      }
+    }
+  }
+
+  if (!topicHit) return empty("NO_SIZING_TOPIC_DETECTED");
+
+  try {
+    // Strategy A: try category="sizing" first. This is the canonical
+    // category for fit/sizing references once the operator has renamed
+    // their entries per the post-launch cleanup. Cheap (Firestore
+    // prefilter) and precise.
+    let result = await searchCollateral({
+      category: "sizing",
+      limit   : 8
+    });
+    let matches = Array.isArray(result && result.matches) ? result.matches : [];
+
+    // Strategy B: fallback to keyword-only scan. Runs if Strategy A
+    // returned nothing (e.g., operator hasn't renamed categories yet,
+    // or the entries are filed under family categories like "Necklace"
+    // and "Bracelet" as in the original library). The scan picks up
+    // entries whose name contains sizing/fit keywords regardless of
+    // category. Graceful-degradation path — works without operator
+    // intervention.
+    if (matches.length === 0) {
+      result = await searchCollateral({
+        keywords: ["sizing", "fit", "size", "wrist", "chain length", "necklace length", "fit reference", "sizing reference"],
+        limit   : 8
+      });
+      matches = Array.isArray(result && result.matches) ? result.matches : [];
+    }
+
+    const rawCount = matches.length;
+    const seen = new Set();
+    const visible = [];
+    const filteredOutPlaceholder = [];
+    for (const m of matches) {
+      if (!m || !m.url) continue;
+      if (m.id && seen.has(m.id)) continue;
+      if (m.id) seen.add(m.id);
+      if (isCustomerVisibleUrl(m.url)) {
+        visible.push(m);
+        if (visible.length >= 4) continue;
+      } else {
+        filteredOutPlaceholder.push({
+          id: m.id || null,
+          name: m.name || null,
+          url: m.url
+        });
+      }
+    }
+
+    return {
+      matches: visible.slice(0, 4),
+      topicDetected: true,
+      rawCount,
+      filteredOutPlaceholder,
+      reason: visible.length === 0 && filteredOutPlaceholder.length > 0
+        ? "ALL_MATCHES_HAVE_PLACEHOLDER_URLS"
+        : (visible.length === 0 && rawCount === 0
+          ? "NO_SIZING_COLLATERAL_IN_LIBRARY"
+          : null)
+    };
+  } catch (e) {
+    console.warn("salesAgent: sizing collateral prefetch failed:", e.message);
+    return empty("PREFETCH_ERROR:" + e.message);
   }
 }
 
@@ -1887,14 +2057,23 @@ exports.handler = async (event) => {
       latestInboundText, salesCtx, recentThreadMessages
     });
     // v2.8 — Topic-driven care/durability/metal-comparison prefetch.
-    // Fires when the inbound (or recent thread) discusses tarnish,
-    // shower-safety, daily wear, durability, hypoallergenic, metal
-    // comparison, or care/cleaning. The agent reads the resulting
-    // URLs from prefetchedCareCollateral and includes them in the
-    // response — no get_collateral tool call required.
-    const prefetchedCareCollateral = await prefetchCareCollateral({
+    // v2.8.1 — Returns a structured diagnostic object now; .matches is
+    // the URL list for the AI, the rest is for operator visibility.
+    const prefetchedCareCollateralResult = await prefetchCareCollateral({
       latestInboundText, recentThreadMessages
     });
+    const prefetchedCareCollateral = prefetchedCareCollateralResult.matches || [];
+
+    // v2.8.2 — Topic-driven sizing/fit/measurements prefetch. Mirrors
+    // the care prefetch shape; surfaces sizing reference cards when
+    // the customer asks about size, fit, chain length, wrist sizing,
+    // etc. Operator can rename their sizing entries to category="sizing"
+    // for the most efficient lookup (Strategy A); otherwise the
+    // function falls back to a keyword scan (Strategy B).
+    const prefetchedSizingCollateralResult = await prefetchSizingCollateral({
+      latestInboundText, recentThreadMessages
+    });
+    const prefetchedSizingCollateral = prefetchedSizingCollateralResult.matches || [];
 
     // ── Load the unified sales prompt ──
     const promptLoad = await loadSalesPrompt();
@@ -1976,6 +2155,11 @@ exports.handler = async (event) => {
       // the prompt mandates the agent include these URLs in the
       // customer reply with a brief intro for each.
       prefetchedCareCollateral,
+      // v2.8.2 — Sizing/fit/measurements collateral pre-fetched
+      // deterministically by prefetchSizingCollateral. Same pattern as
+      // prefetchedCareCollateral — non-empty array means the prompt's
+      // sizing rule fires.
+      prefetchedSizingCollateral,
       customerHistory    : {
         isRepeat          : !!(customerHistory && customerHistory.isRepeat),
         orderCount        : (customerHistory && customerHistory.orderCount) || 0,
@@ -3151,11 +3335,29 @@ Do NOT pick next_action: ask_one_question and then write reply text that mention
       aiMissingInputs       : Array.isArray(parsed.missing_inputs) ? parsed.missing_inputs.slice(0, 12) : [],
       aiCollateralReferenced: Array.isArray(parsed.collateral_referenced) ? parsed.collateral_referenced : [],
       aiRecommendedCollateral: recommendedCollateral,
-      // v2.8 — Record what we pre-fetched on the care/durability topic
-      // so the operator can verify in the Sales Conversation panel that
-      // the AI had the URLs in its context. Empty array on
-      // non-care-topic turns.
+      // v2.8.1 — Record the FULL prefetch diagnostic on the draft so
+      // the operator can see at a glance:
+      //   • whether the topic was detected
+      //   • how many matches Firestore returned
+      //   • which URLs got filtered out as placeholders (operator
+      //     hasn't uploaded the actual card image yet)
+      //   • a `reason` field when nothing got attached
+      // This makes silent failures impossible.
       aiPrefetchedCareCollateral: prefetchedCareCollateral,
+      aiCareCollateralDiagnostic: {
+        topicDetected         : prefetchedCareCollateralResult.topicDetected,
+        rawCount              : prefetchedCareCollateralResult.rawCount,
+        filteredOutPlaceholder: prefetchedCareCollateralResult.filteredOutPlaceholder,
+        reason                : prefetchedCareCollateralResult.reason
+      },
+      // v2.8.2 — Same audit shape for the sizing prefetch.
+      aiPrefetchedSizingCollateral: prefetchedSizingCollateral,
+      aiSizingCollateralDiagnostic: {
+        topicDetected         : prefetchedSizingCollateralResult.topicDetected,
+        rawCount              : prefetchedSizingCollateralResult.rawCount,
+        filteredOutPlaceholder: prefetchedSizingCollateralResult.filteredOutPlaceholder,
+        reason                : prefetchedSizingCollateralResult.reason
+      },
       readyForHumanApproval : !!parsed.ready_for_human_approval,
       // v4.1 — customer_accepted is the signal for the downstream
       // listing-creator automation. The agent sets it true ONLY on the
