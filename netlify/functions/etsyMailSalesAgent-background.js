@@ -620,6 +620,118 @@ async function prefetchLineSheetCollateral({ latestInboundText, salesCtx, recent
   }
 }
 
+// ─── v2.8 — Topic-driven care / durability / metal-comparison prefetch ──
+//
+// The line-sheet prefetch above is family-driven (deterministic for any
+// product family the customer mentions). This sibling prefetch is
+// TOPIC-driven: when the inbound message (or recent thread) discusses
+// tarnish, shower-safety, daily wear, durability, cleaning, hypoallergenic,
+// or metal-type comparison, we pre-fetch the relevant collateral cards
+// from EtsyMail_Collateral and pass them into the agent's context as
+// `prefetchedCareCollateral`. The agent then uses those URLs directly —
+// no get_collateral tool call required.
+//
+// Why deterministic prefetch instead of relying on the agent to call the
+// tool: production showed the agent gets it right on text (per-metal
+// nuance) but skips the tool call, so customers never see the visual
+// reference cards. Putting the URLs in context with a strong prompt
+// directive moves the failure mode from "agent didn't think to look" to
+// "agent has the URL right there".
+//
+// Trigger keywords are permissive — many ways customers phrase the same
+// question (tarnish/tarnishes/tarnishing, "wear in the shower"/"shower-safe"
+// /"can I shower", etc). Match on ANY one is enough to fire.
+const CARE_TOPIC_KEYWORDS = [
+  // tarnish / corrosion / fade
+  "tarnish", "tarnishes", "tarnishing", "tarnish-resistant", "anti-tarnish",
+  "rust", "rusts", "rusting",
+  "corrode", "corrodes", "corrosion",
+  "patina",
+  "fade", "fades", "fading",
+  "discolor", "discolors", "discoloring",
+  // water / shower / swim
+  "shower", "showering", "wear in the shower", "wear in shower", "shower-safe",
+  "swim", "swimming", "pool", "ocean", "salt water", "saltwater",
+  "chlorine", "chlorinated", "hot tub", "sauna",
+  "water-safe", "waterproof", "water resistant", "water-resistant",
+  "wet", "getting wet",
+  // daily wear / durability
+  "wear daily", "daily wear", "everyday", "every day", "all the time", "24/7",
+  "durable", "durability", "sturdy", "delicate",
+  "lifespan", "long does it last", "how long will it last", "how long does it last",
+  "longevity", "lasting", "last long",
+  // skin reactions / allergy
+  "turn green", "turn black", "skin reaction", "allergic", "allergy",
+  "hypoallergenic", "sensitive skin", "irritate", "irritation",
+  // care / cleaning / storage
+  "care for", "how do i care", "how to care", "care instructions",
+  "how to clean", "how do i clean", "cleaning", "polish", "polishing",
+  "soft cloth", "polish cloth",
+  "store it", "storage", "how to store",
+  // metal-type comparison
+  "gold filled vs", "gold plated vs", "solid gold vs",
+  "what is gold filled", "what does gold filled mean", "what is gold-filled",
+  "difference between", "vs plated", "vs filled",
+  "real gold", "what kind of gold", "is this real gold",
+  "14k vs", "is it plated", "is it solid", "is it gold filled"
+];
+
+function _careTopicDetected(text) {
+  if (!text || typeof text !== "string") return false;
+  const lower = text.toLowerCase();
+  return CARE_TOPIC_KEYWORDS.some(kw => lower.includes(kw));
+}
+
+async function prefetchCareCollateral({ latestInboundText, recentThreadMessages = null }) {
+  if (!searchCollateral) return [];
+
+  // Pass 1: check the current inbound. Most common case.
+  let topicHit = _careTopicDetected(latestInboundText);
+
+  // Pass 2: scan the last few thread messages. Customers sometimes ask
+  // a follow-up like "and the chain?" after a prior message established
+  // the topic. Bound to the most recent 3 messages to avoid stale
+  // triggers from long-ago threads.
+  if (!topicHit && Array.isArray(recentThreadMessages)) {
+    for (let i = recentThreadMessages.length - 1; i >= Math.max(0, recentThreadMessages.length - 3); i--) {
+      const m = recentThreadMessages[i];
+      if (m && m.text && _careTopicDetected(m.text)) {
+        topicHit = true;
+        break;
+      }
+    }
+  }
+
+  if (!topicHit) return [];
+
+  try {
+    // Broad keyword search — pulls both the metals-comparison card
+    // (category: metals_education) AND the care guide (category:
+    // aftercare). Either or both may match depending on what the
+    // operator has in the library.
+    const result = await searchCollateral({
+      keywords: ["tarnish", "care", "shower", "metal", "gold filled", "comparison", "aftercare"],
+      limit   : 8
+    });
+    const matches = Array.isArray(result && result.matches) ? result.matches : [];
+    // Filter to entries with customer-visible URLs. Dedupe by id in case
+    // the same card matches on multiple keywords.
+    const seen = new Set();
+    const out  = [];
+    for (const m of matches) {
+      if (!m || !m.url || !isCustomerVisibleUrl(m.url)) continue;
+      if (m.id && seen.has(m.id)) continue;
+      if (m.id) seen.add(m.id);
+      out.push(m);
+      if (out.length >= 4) break;
+    }
+    return out;
+  } catch (e) {
+    console.warn("salesAgent: care collateral prefetch failed:", e.message);
+    return [];
+  }
+}
+
 // ─── Tool executors ────────────────────────────────────────────────────
 
 function buildToolExecutors({ threadId, salesCtx, customerHistory, cfg }) {
@@ -1774,6 +1886,15 @@ exports.handler = async (event) => {
     const recommendedCollateral = await prefetchLineSheetCollateral({
       latestInboundText, salesCtx, recentThreadMessages
     });
+    // v2.8 — Topic-driven care/durability/metal-comparison prefetch.
+    // Fires when the inbound (or recent thread) discusses tarnish,
+    // shower-safety, daily wear, durability, hypoallergenic, metal
+    // comparison, or care/cleaning. The agent reads the resulting
+    // URLs from prefetchedCareCollateral and includes them in the
+    // response — no get_collateral tool call required.
+    const prefetchedCareCollateral = await prefetchCareCollateral({
+      latestInboundText, recentThreadMessages
+    });
 
     // ── Load the unified sales prompt ──
     const promptLoad = await loadSalesPrompt();
@@ -1850,6 +1971,11 @@ exports.handler = async (event) => {
       referenceAttachments: compactAttachmentList(referenceAttachments),
       hasReferenceImage: referenceAttachments.length > 0,
       recommendedCollateral,
+      // v2.8 — Care/durability/metal-comparison collateral pre-fetched
+      // deterministically by prefetchCareCollateral. When non-empty,
+      // the prompt mandates the agent include these URLs in the
+      // customer reply with a brief intro for each.
+      prefetchedCareCollateral,
       customerHistory    : {
         isRepeat          : !!(customerHistory && customerHistory.isRepeat),
         orderCount        : (customerHistory && customerHistory.orderCount) || 0,
@@ -3025,6 +3151,11 @@ Do NOT pick next_action: ask_one_question and then write reply text that mention
       aiMissingInputs       : Array.isArray(parsed.missing_inputs) ? parsed.missing_inputs.slice(0, 12) : [],
       aiCollateralReferenced: Array.isArray(parsed.collateral_referenced) ? parsed.collateral_referenced : [],
       aiRecommendedCollateral: recommendedCollateral,
+      // v2.8 — Record what we pre-fetched on the care/durability topic
+      // so the operator can verify in the Sales Conversation panel that
+      // the AI had the URLs in its context. Empty array on
+      // non-care-topic turns.
+      aiPrefetchedCareCollateral: prefetchedCareCollateral,
       readyForHumanApproval : !!parsed.ready_for_human_approval,
       // v4.1 — customer_accepted is the signal for the downstream
       // listing-creator automation. The agent sets it true ONLY on the
