@@ -537,6 +537,11 @@ function compactOptionSheetForAi(sheet) {
     // lookup_listing_specs instead — that tool does the same resolution
     // internally.
     charmStyles: sheet.charmStyles || null,
+    // v2.6: surface metalSpecs so the agent can answer thickness / gauge
+    // questions directly without escalation. Same block is also returned
+    // by lookup_listing_specs for existing-listing queries — either path
+    // gets the agent the same answer.
+    metalSpecs: sheet.metalSpecs || null,
     sections: sheet.sections.map(sec => ({
       sectionId: sec.sectionId,
       name: sec.name,

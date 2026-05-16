@@ -394,6 +394,11 @@ async function resolveListingSpecs({ query }) {
     dimensions,
     dimensionsSummary,
     dimensionsSource,
+    // v2.6 — Surface the family's metalSpecs alongside dimensions so the
+    // agent has thickness/gauge info available for any follow-up
+    // question without a second tool call. metalSpecs is universal
+    // across the product line (same value on every family doc).
+    metalSpecs: (familySheet && familySheet.metalSpecs) || null,
     availableMetals: Array.isArray(entry.availableMetals) ? entry.availableMetals : null,
     basePriceUsd: typeof entry.basePriceUsd === "number" ? entry.basePriceUsd : null,
     regularPriceUsd: typeof entry.regularPriceUsd === "number" ? entry.regularPriceUsd : null,

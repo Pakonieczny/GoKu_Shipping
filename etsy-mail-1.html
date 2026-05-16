@@ -6804,6 +6804,11 @@
       // orders. If the field isn't present (pre-v2.5 family doc),
       // render nothing — degrades gracefully.
       const charmStylesHtml = sheet.charmStyles ? renderCharmStyles(sheet.charmStyles, sheet.family) : "";
+      // v2.6 — Render the metalSpecs block (universal 20-22 gauge
+      // metal thickness) added in v2.6. Same universal value across
+      // every family; rendered here so the operator can verify the
+      // data the AI reads when answering thickness questions.
+      const metalSpecsHtml = sheet.metalSpecs ? renderMetalSpecs(sheet.metalSpecs) : "";
       const sectionsHtml = (sheet.sections || []).map(s => renderOptionSection(s)).join("");
       // v2.5 — Render existing listings catalog filtered to this family.
       // Catalog is loaded async on modal open; we render a placeholder
@@ -6813,8 +6818,90 @@
         <h4 style="margin:0 0 8px; font-size:13px;">${esc(sheet.displayName || sheet.family)}</h4>
         ${uomHtml}
         ${charmStylesHtml}
+        ${metalSpecsHtml}
         ${listingsHtml}
         ${sectionsHtml}
+      `;
+    }
+
+    // v2.6 — Render the metalSpecs block. Universal 20-22 gauge spec
+    // applies across every family/metal/style — same block content on
+    // each family doc. We show the headline (gauge + range in both
+    // units) prominently, and the per-gauge conversion table below
+    // for operator reference. The AI reads the same fields at runtime
+    // via get_option_sheet and lookup_listing_specs.
+    // v2.7 — Also renders the metalDurability sub-block (per-metal
+    // tarnish profile, shower-safety, lifespan). The AI consults this
+    // for any care/tarnish/durability customer question.
+    function renderMetalSpecs(ms) {
+      const headline = `${esc(ms.gauge || "—")} · ${esc(ms.thicknessRangeMm || "")} (${esc(ms.thicknessRangeInches || "")})`;
+      const conversions = ms.gaugeConversions || {};
+      const conversionRows = Object.entries(conversions).map(([g, c]) => `
+        <tr>
+          <td><code>${esc(g)}</code></td>
+          <td>${esc(c.mm != null ? c.mm + " mm" : "—")}</td>
+          <td>${esc(c.inches != null ? c.inches + " in" : "—")}</td>
+        </tr>
+      `).join("");
+      const metalsLine = Array.isArray(ms.appliesToMetals) && ms.appliesToMetals.length
+        ? `<div class="em-muted" style="font-size:11px; margin-top:4px;">Applies to: ${esc(ms.appliesToMetals.join(", "))}</div>`
+        : "";
+      const stoneNote = ms.stoneSettingNote
+        ? `<div style="margin-top:6px; padding:6px 8px; background:#fff8c5; border:1px solid #d4a72c; border-radius:3px; font-size:11px; color:#1f2328;"><b>Stone-setting note:</b> ${esc(ms.stoneSettingNote)}</div>`
+        : "";
+
+      // v2.7: render metalDurability (per-metal tarnish/care profile)
+      // as a compact summary table. Each row is one metal + tarnish
+      // resistance + shower-safety + a one-line lifespan note.
+      let durabilityHtml = "";
+      if (ms.metalDurability) {
+        const md = ms.metalDurability;
+        const metalRows = Object.entries(md)
+          .filter(([k, v]) => v && typeof v === "object" && !k.startsWith("_") && k !== "rankingByDurability" && k !== "criticalRule" && k !== "collateralRule")
+          .map(([metal, p]) => `
+            <tr>
+              <td><b>${esc(metal)}</b></td>
+              <td>${esc(p.tarnishResistance || "—")}</td>
+              <td>${esc(p.showerSafe || "—")}</td>
+              <td style="font-size:10px;">${esc(p.lifespan || "—")}</td>
+            </tr>
+          `).join("");
+        const criticalRule = md.criticalRule
+          ? `<div style="margin-top:6px; padding:6px 8px; background:#ffebe9; border:1px solid #cf222e; border-radius:3px; font-size:11px; color:#82071e;"><b>Critical:</b> ${esc(md.criticalRule)}</div>`
+          : "";
+        const collateralRule = md.collateralRule
+          ? `<div style="margin-top:6px; padding:6px 8px; background:#ddf4ff; border:1px solid #0969da; border-radius:3px; font-size:11px; color:#1f2328;"><b>Collateral rule:</b> ${esc(md.collateralRule)}</div>`
+          : "";
+        durabilityHtml = `
+          <div style="margin-top:8px; padding-top:8px; border-top:1px dashed #d0d7de;">
+            <div style="font-weight:600; font-size:11px; color:#57606a; margin-bottom:4px;">Per-metal durability (care &amp; tarnish profile)</div>
+            <table class="em-os-options-table" style="font-size:11px;">
+              <thead><tr><th>Metal</th><th>Tarnish resistance</th><th>Shower-safe</th><th>Lifespan</th></tr></thead>
+              <tbody>${metalRows}</tbody>
+            </table>
+            ${criticalRule}
+            ${collateralRule}
+          </div>
+        `;
+      }
+
+      return `
+        <div style="margin:10px 0 6px;">
+          <div style="font-weight:600; font-size:12px; color:#57606a; margin-bottom:4px; text-transform:uppercase; letter-spacing:0.5px;">Metal Thickness &amp; Durability</div>
+          <div style="margin:6px 0; padding:8px 10px; background:#f6f8fa; border:1px solid #d0d7de; border-radius:4px;">
+            <div style="font-weight:600; font-size:12px; color:#1f2328;">Universal across all families, metals, and styles <span style="font-weight:normal; color:#0969da; margin-left:6px; font-size:11px;">v2.7</span></div>
+            <div style="margin-top:4px; font-size:13px; color:#1f2328;"><b>${headline}</b></div>
+            ${metalsLine}
+            ${conversionRows ? `
+              <table class="em-os-options-table" style="font-size:11px; margin-top:6px;">
+                <thead><tr><th>Gauge</th><th>mm</th><th>inches</th></tr></thead>
+                <tbody>${conversionRows}</tbody>
+              </table>
+            ` : ""}
+            ${stoneNote}
+            ${durabilityHtml}
+          </div>
+        </div>
       `;
     }
 
