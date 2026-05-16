@@ -6747,6 +6747,11 @@
 
     let _osCurrentFamily = "huggie";
     const _osCache = new Map();   // family → sheet doc
+    // v2.5 — Existing-listings catalog cache. Single doc covers all
+    // families; we fetch once per modal open and reset on each open
+    // so operator edits between sessions are seen immediately.
+    let _osListingsCache = null;
+    let _osListingsLoading = false;
 
     function openOptionSheetsModal() {
       $("emOptionSheetsError").classList.remove("active");
@@ -6754,6 +6759,11 @@
       $("emOptionSheetsModal").classList.add("active");
       // Reset to huggie tab
       _osCurrentFamily = "huggie";
+      // v2.5 — Drop the listings catalog cache on every modal open so
+      // the operator sees fresh data after they import or hand-edit
+      // EtsyMail_OptionSheets/existingListings between sessions.
+      _osListingsCache = null;
+      _osListingsLoading = false;
       document.querySelectorAll(".em-os-tab").forEach(b =>
         b.classList.toggle("active", b.dataset.family === "huggie"));
       loadOptionSheet("huggie");
@@ -6787,12 +6797,213 @@
       const uomHtml = sheet.unitOfMeasure
         ? `<div class="em-os-uom"><b>Unit of measure:</b> ${esc(sheet.unitOfMeasure.label || "")}<br><span class="em-muted">${esc(sheet.unitOfMeasure.explainer || "")}</span></div>`
         : "";
+      // v2.5 — Render the charmStyles block (silhouette/disc reference
+      // dimensions) added in the v2.5 seed. This is the data the AI
+      // reads at runtime to answer "how big is the charm?" questions
+      // for both existing listings (universal per family) and custom
+      // orders. If the field isn't present (pre-v2.5 family doc),
+      // render nothing — degrades gracefully.
+      const charmStylesHtml = sheet.charmStyles ? renderCharmStyles(sheet.charmStyles, sheet.family) : "";
       const sectionsHtml = (sheet.sections || []).map(s => renderOptionSection(s)).join("");
+      // v2.5 — Render existing listings catalog filtered to this family.
+      // Catalog is loaded async on modal open; we render a placeholder
+      // here and fill in once the data arrives (or now if cached).
+      const listingsHtml = renderListingsForFamily(sheet.family);
       body.innerHTML = `
         <h4 style="margin:0 0 8px; font-size:13px;">${esc(sheet.displayName || sheet.family)}</h4>
         ${uomHtml}
+        ${charmStylesHtml}
+        ${listingsHtml}
         ${sectionsHtml}
       `;
+    }
+
+    // v2.5 — Render the charmStyles block for a family. Shows the
+    // universal silhouette dimensions (the answer the AI gives for ANY
+    // listing in this family) and disc dimensions (per-listing variable,
+    // shown here as the option matrix). Inline-styled to match the
+    // existing em-os-* card aesthetic without adding CSS.
+    function renderCharmStyles(cs, family) {
+      const blocks = [];
+
+      if (cs.silhouette) {
+        const sil = cs.silhouette;
+        const u   = sil.universalDimensions || {};
+        // Build a friendly summary line based on family.
+        let summary = "—";
+        if (family === "huggie") {
+          if (u.charmWidthMm != null && u.charmHeightMm != null) {
+            summary = `${u.charmWidthMm}×${u.charmHeightMm}mm charm`;
+            if (u.ringInnerDiameterMm != null) summary += ` · ${u.ringInnerDiameterMm}mm I.D. ring`;
+          }
+        } else if (family === "necklace") {
+          if (u.charmSizeMm) {
+            summary = `${u.charmSizeMm}mm charm`;
+            if (sil.jumpRingDiameter) summary += ` · ${sil.jumpRingDiameter} jump ring`;
+          }
+        } else if (u.charmWidthMm || u.charmSizeMm) {
+          summary = JSON.stringify(u);
+        }
+        const appliesTo = u.appliesTo ? `<div class="em-muted" style="font-size:11px; margin-top:4px;">${esc(u.appliesTo)}</div>` : "";
+        const imgUrl = sil.visualReferenceImageUrl;
+        const hasImg = imgUrl && !/REPLACE_WITH/i.test(imgUrl);
+        const imgLink = hasImg
+          ? `<a href="${esc(imgUrl)}" target="_blank" rel="noopener" style="font-size:11px;">view reference image ↗</a>`
+          : `<span class="em-muted" style="font-size:11px;">(no reference image uploaded yet)</span>`;
+        blocks.push(`
+          <div style="margin:6px 0; padding:8px 10px; background:#f6f8fa; border:1px solid #d0d7de; border-radius:4px;">
+            <div style="font-weight:600; font-size:12px; color:#1f2328;">Silhouette style <span style="font-weight:normal; color:#0969da; margin-left:6px; font-size:11px;">universal across this family</span></div>
+            <div style="margin-top:4px; font-size:13px; color:#1f2328;"><b>${esc(summary)}</b></div>
+            ${appliesTo}
+            <div style="margin-top:6px;">${imgLink}</div>
+          </div>
+        `);
+      }
+
+      if (cs.disc) {
+        const disc = cs.disc;
+        let summary = "—";
+        let options = "";
+        if (Array.isArray(disc.discDiameterOptions) && disc.discDiameterOptions.length) {
+          summary = disc.discDiameterOptions.map(o => `${o.diameterMm}mm disc`).join(" · ");
+          options = `<div class="em-muted" style="font-size:11px; margin-top:4px;">Per-listing — each disc-style listing carries its own discDiameterMm. ${disc.jumpRingDiameter ? "Jump ring: " + esc(disc.jumpRingDiameter) + "." : ""}</div>`;
+        } else if (disc.availability && /not_standard|custom_quote_only|needs_operator_confirmation/i.test(disc.availability)) {
+          summary = `Disc style: ${disc.availability.replace(/_/g, " ")}`;
+        } else if (Array.isArray(disc.discDiameters)) {
+          summary = disc.discDiameters.join(" · ");
+        }
+        const imgUrl = disc.visualReferenceImageUrl;
+        const hasImg = imgUrl && !/REPLACE_WITH/i.test(imgUrl);
+        const imgLink = hasImg
+          ? `<a href="${esc(imgUrl)}" target="_blank" rel="noopener" style="font-size:11px;">view reference image ↗</a>`
+          : `<span class="em-muted" style="font-size:11px;">(no reference image uploaded yet)</span>`;
+        blocks.push(`
+          <div style="margin:6px 0; padding:8px 10px; background:#f6f8fa; border:1px solid #d0d7de; border-radius:4px;">
+            <div style="font-weight:600; font-size:12px; color:#1f2328;">Disc style <span style="font-weight:normal; color:#bf8700; margin-left:6px; font-size:11px;">per-listing dimensions</span></div>
+            <div style="margin-top:4px; font-size:13px; color:#1f2328;"><b>${esc(summary)}</b></div>
+            ${options}
+            <div style="margin-top:6px;">${imgLink}</div>
+          </div>
+        `);
+      }
+
+      if (blocks.length === 0) return "";
+      return `
+        <div style="margin:10px 0 6px;">
+          <div style="font-weight:600; font-size:12px; color:#57606a; margin-bottom:4px; text-transform:uppercase; letter-spacing:0.5px;">Charm Style Reference</div>
+          ${blocks.join("")}
+        </div>
+      `;
+    }
+
+    // v2.5 — Render the existing-listings catalog filtered to the
+    // current family. The catalog is loaded async via _osListingsCache;
+    // if it isn't ready yet, render a "loading" stub and let the
+    // catalog-load completion re-render. Renders an empty state with
+    // operator instruction when no listings match this family.
+    // (Cache declarations hoisted to the top alongside _osCurrentFamily.)
+
+    function renderListingsForFamily(family) {
+      if (!_osListingsCache && !_osListingsLoading) {
+        // Trigger an async load — when it returns it'll re-render the
+        // current family. This is a no-op if already loading.
+        loadExistingListingsCatalog();
+        return `<div style="margin:10px 0 6px;">
+          <div style="font-weight:600; font-size:12px; color:#57606a; margin-bottom:4px; text-transform:uppercase; letter-spacing:0.5px;">Existing Listings (${esc(family || "")})</div>
+          <div class="em-muted" style="font-size:11px;">Loading catalog…</div>
+        </div>`;
+      }
+      if (_osListingsLoading) {
+        return `<div style="margin:10px 0 6px;">
+          <div style="font-weight:600; font-size:12px; color:#57606a; margin-bottom:4px; text-transform:uppercase; letter-spacing:0.5px;">Existing Listings (${esc(family || "")})</div>
+          <div class="em-muted" style="font-size:11px;">Loading catalog…</div>
+        </div>`;
+      }
+      const listings = (_osListingsCache && _osListingsCache.listings) || {};
+      const matches = Object.entries(listings)
+        .filter(([id, v]) => v && v.family === family && v.active !== false)
+        .map(([id, v]) => ({ id, ...v }));
+
+      if (matches.length === 0) {
+        return `<div style="margin:10px 0 6px;">
+          <div style="font-weight:600; font-size:12px; color:#57606a; margin-bottom:4px; text-transform:uppercase; letter-spacing:0.5px;">Existing Listings (${esc(family || "")})</div>
+          <div class="em-muted" style="font-size:11px;">
+            No listings catalogued for this family yet. Add entries to <code>EtsyMail_OptionSheets/existingListings.listings</code> in Firestore, or update the seed and re-import.
+          </div>
+        </div>`;
+      }
+
+      // Resolve a display-friendly dimension string per entry. Silhouettes
+      // pull from the family universal (which the operator can see right
+      // above in the Charm Style Reference block); discs use their own.
+      const rows = matches.map(m => {
+        let dimText = "—";
+        if (m.charmStyle === "disc" && m.discDiameterMm != null) {
+          dimText = `${m.discDiameterMm}mm disc`;
+        } else if (m.charmStyle === "silhouette") {
+          dimText = `silhouette (uses family universal above)`;
+        } else if (/REPLACE_WITH/i.test(m.charmStyle || "")) {
+          dimText = `<span style="color:#cf222e;">⚠ needs family + charmStyle</span>`;
+        } else if (m.charmStyle) {
+          dimText = m.charmStyle;
+        }
+        const metalsText = Array.isArray(m.availableMetals) ? m.availableMetals.join(", ") : "—";
+        const priceText = typeof m.basePriceUsd === "number" ? `$${m.basePriceUsd}` : "—";
+        const titleLink = m.etsyUrl
+          ? `<a href="${esc(m.etsyUrl)}" target="_blank" rel="noopener">${esc(m.title || m.id)}</a>`
+          : esc(m.title || m.id);
+        return `
+          <tr>
+            <td><code>${esc(m.id)}</code></td>
+            <td>${titleLink}</td>
+            <td>${dimText}</td>
+            <td>${esc(metalsText)}</td>
+            <td>${priceText}</td>
+          </tr>
+        `;
+      }).join("");
+
+      return `
+        <div style="margin:10px 0 6px;">
+          <div style="font-weight:600; font-size:12px; color:#57606a; margin-bottom:4px; text-transform:uppercase; letter-spacing:0.5px;">Existing Listings (${esc(family || "")})</div>
+          <table class="em-os-options-table" style="font-size:11px;">
+            <thead>
+              <tr><th>Listing ID</th><th>Title</th><th>Dimensions</th><th>Metals</th><th>Base Price</th></tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      `;
+    }
+
+    // v2.5 — Load the existing-listings catalog from the option resolver.
+    // Caches in-module for the duration of the modal session. On
+    // completion, re-renders the current family view so the listings
+    // section fills in.
+    async function loadExistingListingsCatalog() {
+      if (_osListingsLoading || _osListingsCache) return;
+      _osListingsLoading = true;
+      try {
+        const res = await api("etsyMailOptionResolver", {
+          method: "POST",
+          body  : { op: "getExistingListings" }
+        });
+        _osListingsCache = (res && res.catalog) || { listings: {} };
+      } catch (e) {
+        console.warn("loadExistingListingsCatalog failed:", e.message);
+        _osListingsCache = { listings: {} };   // graceful empty
+      } finally {
+        _osListingsLoading = false;
+        // Re-render the current family with the catalog now available.
+        // Pull straight from the sheet cache and call renderOptionSheet
+        // directly — avoids the "Loading…" flash that loadOptionSheet
+        // would briefly show even on a cache hit.
+        if (_osCurrentFamily) {
+          const cached = _osCache.get(_osCurrentFamily);
+          if (cached) renderOptionSheet(cached);
+          else loadOptionSheet(_osCurrentFamily);
+        }
+      }
     }
 
     function renderOptionSection(section) {

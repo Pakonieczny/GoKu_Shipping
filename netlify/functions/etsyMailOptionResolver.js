@@ -840,6 +840,16 @@ exports.handler = async (event) => {
       return ok({ success: true, sheet });
     }
 
+    // v2.5 — Expose the existing-listings catalog to the inbox UI viewer
+    // so the operator can see which listings are catalogued (and their
+    // resolved dimensions) per family. The agent uses the same catalog
+    // via resolveListingSpecs at runtime.
+    if (op === "getExistingListings") {
+      const catalog = await loadExistingListings();
+      if (!catalog) return ok({ success: true, catalog: { listings: {} } });
+      return ok({ success: true, catalog });
+    }
+
     if (op === "listFamilies") {
       const snap = await db.collection(SHEETS_COLL).limit(50).get();
       const families = [];
