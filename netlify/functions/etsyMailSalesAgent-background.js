@@ -157,10 +157,11 @@ try {
 // to human review rather than hallucinating a price.
 let resolveQuote = null;
 let loadOptionSheet = null;
+let resolveListingSpecs = null;   // v2.5 — listing specs lookup
 try {
-  ({ resolveQuote, loadSheet: loadOptionSheet } = require("./etsyMailOptionResolver"));
+  ({ resolveQuote, loadSheet: loadOptionSheet, resolveListingSpecs } = require("./etsyMailOptionResolver"));
 } catch (e) {
-  console.error("salesAgent: etsyMailOptionResolver not loadable — resolveQuote / get_option_sheet tools will be unavailable. Sales quoting cannot proceed.", e.message);
+  console.error("salesAgent: etsyMailOptionResolver not loadable — resolveQuote / get_option_sheet / lookup_listing_specs tools will be unavailable. Sales quoting cannot proceed.", e.message);
 }
 
 // v2.3 — Direct import of the listing URL parser + lookup. Used for the
@@ -530,6 +531,12 @@ function compactOptionSheetForAi(sheet) {
     family: sheet.family || null,
     displayName: sheet.displayName || sheet.family || null,
     unitOfMeasure: sheet.unitOfMeasure || null,
+    // v2.5: surface charmStyles so the agent can answer dimension/style
+    // questions for CUSTOM orders (silhouette vs disc, universal
+    // dimensions per style). For EXISTING listings, the agent uses
+    // lookup_listing_specs instead — that tool does the same resolution
+    // internally.
+    charmStyles: sheet.charmStyles || null,
     sections: sheet.sections.map(sec => ({
       sectionId: sec.sectionId,
       name: sec.name,
@@ -753,6 +760,34 @@ function buildToolExecutors({ threadId, salesCtx, customerHistory, cfg }) {
       }
     },
 
+    // v2.5 — Listing specs lookup. Reads the internal catalog
+    // (EtsyMail_OptionSheets/existingListings) plus the appropriate
+    // family option sheet to return either family-universal silhouette
+    // dimensions or per-listing disc dimensions for the referenced
+    // listing. Robust to messy inputs (URL, bare ID, slug, fuzzy title).
+    // The handler is intentionally thin — all resolution logic lives in
+    // resolveListingSpecs so the same path is testable in isolation.
+    lookup_listing_specs: async ({ query }) => {
+      if (!resolveListingSpecs) {
+        return {
+          found: false,
+          reason: "RESOLVER_UNAVAILABLE",
+          error: "Listing specs resolver is not available in this deployment.",
+          recommendation: "Acknowledge briefly and escalate to human review — do NOT estimate."
+        };
+      }
+      try {
+        return await resolveListingSpecs({ query });
+      } catch (e) {
+        return {
+          found: false,
+          reason: "RESOLVER_ERROR",
+          error: e.message,
+          recommendation: "Acknowledge briefly and escalate to human review — do NOT estimate."
+        };
+      }
+    },
+
     get_option_sheet: async ({ family }) => {
       const fam = String(family || "").toLowerCase().trim();
       if (!["huggie", "necklace", "stud"].includes(fam)) {
@@ -802,11 +837,11 @@ function buildToolExecutors({ threadId, salesCtx, customerHistory, cfg }) {
 
 const TOOL_SPEC_SEARCH_LISTINGS = {
   name: "search_shop_listings",
-  description: "Search the shop's active Etsy catalog. Returns title, priceUsd, primary image URL, and listing URL for matching items. Use cases: (1) confirm the shop sells something the customer references; (2) suggest a related/upsell item; (3) POINT THE CUSTOMER TO AN EXISTING LISTING TO BUY DIRECTLY when their request maps to an existing shop product (e.g., they want an add-on item the shop already sells, or they want a standard variant of an existing listing). In case (3), the resolution is to return the URL inline in your reply — no quote computation needed, no listing creator needed, the listing already exists and the customer picks variants at Etsy checkout. This is critical for shop-initiated arcs where the prior shop message offered to send a link and the customer is asking for it: search_shop_listings finds the URL, you include it in your reply, done.",
+  description: "Search the shop's active Etsy catalog. Returns title, priceUsd, primary image URL, and listing URL for matching items. Use to confirm the shop sells something the customer references, or to suggest a related/upsell item.",
   input_schema: {
     type: "object",
     properties: {
-      query: { type: "string", description: "Product name, material, color, theme, design, add-on type, or other search term. For shop-initiated add-on requests, search for the add-on listing (e.g., 'huggie add-on charm', 'extra charm', 'charm add-on')." },
+      query: { type: "string", description: "Product name, material, color, or other search term." },
       limit: { type: "integer", minimum: 1, maximum: 25 }
     },
     required: ["query"]
@@ -921,6 +956,31 @@ const TOOL_SPEC_LOOKUP_LISTING_BY_URL = {
   }
 };
 
+// v2.5 — Listing specs lookup. Resolves dimensions, charm style, and family
+// for a specific Etsy listing from the internal catalog (EtsyMail_OptionSheets
+// /existingListings). Use this WHENEVER a customer asks about dimensions,
+// sizing, measurements, or any physical spec of a listing they've referenced.
+// Critical: silhouette dimensions are FAMILY-UNIVERSAL (huggie silhouettes are
+// always 5×6mm + 2.1mm I.D. ring; necklace silhouettes are always 9-11mm +
+// 3.5mm jump ring). Disc dimensions are PER-LISTING and come from the
+// listing's discDiameterMm field. The tool resolves either case automatically.
+// If found:false OR incomplete:true, the agent MUST escalate — never estimate
+// from "similar items".
+const TOOL_SPEC_LOOKUP_LISTING_SPECS = {
+  name: "lookup_listing_specs",
+  description: "Look up the dimensions and charm specs for a specific Etsy listing from the internal product catalog. Call this WHENEVER a customer asks about dimensions, sizing, measurements, or physical specs (e.g. 'how big is it?', 'what size?', 'dimensions please?', 'measurements?', 'how many mm?') AND the customer has referenced a specific listing — by full Etsy URL, bare listing ID, URL slug, partial title, or any contextual reference (e.g. 'this charm', 'the duckie one'). The tool accepts flexible input and resolves to the canonical catalog entry. It returns dimensionsSummary (a ready-to-paraphrase one-liner like '5×6mm silhouette charm with 2.1mm I.D. mounting ring') and structured dimensions for follow-up questions. CRITICAL BEHAVIOR: if found is false, OR incomplete is true, OR the response includes a 'recommendation' to escalate — DO NOT estimate dimensions from similar items, DO NOT guess based on the listing title, DO NOT use the customer's own phrasing as a confirmation. Acknowledge briefly ('let me grab the exact measurements and get back shortly') and escalate to human review. Confident-wrong dimension answers are the single highest-impact credibility burn this agent can cause.",
+  input_schema: {
+    type: "object",
+    properties: {
+      query: {
+        type: "string",
+        description: "The customer's reference to the listing. Pass it raw — the resolver tries listing-ID extraction first (handles full URL like https://www.etsy.com/listing/4463967317/kawaii-rubber-duckie-charm, bare ID like '4463967317', URL slugs, and locale-prefixed URLs), then falls back to fuzzy match by title/slug/full-title (handles inputs like 'kawaii rubber duckie' or 'the duckie charm'). If the customer hasn't named a listing in their current message, scan their thread history for a URL or ID and pass the most recent one."
+      }
+    },
+    required: ["query"]
+  }
+};
+
 function buildToolSpecs() {
   // v4.0: all tools available always. The agent decides what to call
   // based on conversation state, not on a stage gate.
@@ -928,6 +988,7 @@ function buildToolSpecs() {
     TOOL_SPEC_SEARCH_LISTINGS,
     TOOL_SPEC_GET_OPTION_SHEET,
     TOOL_SPEC_LOOKUP_LISTING_BY_URL,
+    TOOL_SPEC_LOOKUP_LISTING_SPECS,
     TOOL_SPEC_REQUEST_PHOTO,
     TOOL_SPEC_REQUEST_DIMENSIONS,
     TOOL_SPEC_RESOLVE_QUOTE,
@@ -1316,15 +1377,9 @@ function validateOptionCConsistency({ parsed, toolNamesCalled }) {
     violations.push("compute_quote_missing_tool");
     messages.push("You declared next_action: compute_quote but did not call resolveQuote this turn. Call resolveQuote with the family, selectedCodes, and quantity, then state the result.");
   }
-  if (na === "attach_collateral" && !toolNamesCalled.includes("get_collateral") && !toolNamesCalled.includes("search_shop_listings")) {
-    // v5.24 — attach_collateral can be sourced from either get_collateral
-    // (curated collateral) OR search_shop_listings (existing shop
-    // listing URLs). Both flows end with the AI putting a URL in the
-    // reply, which is what attach_collateral semantically means. The
-    // validation accepts either tool call as evidence that the action
-    // was actually executed.
+  if (na === "attach_collateral" && !toolNamesCalled.includes("get_collateral")) {
     violations.push("attach_collateral_missing_tool");
-    messages.push("You declared next_action: attach_collateral but did not call get_collateral OR search_shop_listings this turn. For curated collateral (line sheets, product cards), call get_collateral(category, kind). For existing shop listing URLs (add-ons, standard products), call search_shop_listings(query). Either way, include the URL in your reply.");
+    messages.push("You declared next_action: attach_collateral but did not call get_collateral this turn. Call get_collateral(category, kind) and include the URL in your reply.");
   }
 
   // Rule 1b — compute_quote requires items_quoted populated and matching

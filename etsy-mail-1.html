@@ -16748,12 +16748,18 @@
               }
             });
             const written = (res && res.written) || [];
+            const writtenConfigDocs = (res && res.writtenConfigDocs) || [];
             const skipped = (res && res.skipped) || [];
-            toast(`Imported ${written.length} ${written.length === 1 ? "family" : "families"}: ${written.join(", ")}`);
+            const totalWritten = written.length + writtenConfigDocs.length;
+            const parts = [];
+            if (written.length) parts.push(`${written.length} ${written.length === 1 ? "family" : "families"}: ${written.join(", ")}`);
+            if (writtenConfigDocs.length) parts.push(`${writtenConfigDocs.length} config ${writtenConfigDocs.length === 1 ? "doc" : "docs"}: ${writtenConfigDocs.join(", ")}`);
+            toast(`Imported ${parts.join(" + ") || "(nothing)"}`);
             preview.innerHTML = `
               <div style="padding:8px 10px; background:#dafbe1; border:1px solid #1a7f37; border-radius:3px; color:#1f2328; font-size:12px;">
                 <b>Import succeeded.</b><br>
-                Written: <code>${written.join(", ") || "(none)"}</code><br>
+                Families: <code>${written.join(", ") || "(none)"}</code><br>
+                ${writtenConfigDocs.length ? `Config docs: <code>${writtenConfigDocs.join(", ")}</code><br>` : ""}
                 ${skipped.length ? `Skipped (non-family keys): <code>${skipped.join(", ")}</code><br>` : ""}
                 Reloading current tab…
               </div>
@@ -16824,11 +16830,45 @@
           }
 
           // Build a per-family preview row showing what will be written.
+          // v2.5 — Also recognize a small allowlist of "config doc" keys
+          // that don't follow the family-sheet shape (no sections[] array)
+          // but ARE meant to be imported as docs in EtsyMail_OptionSheets.
+          // Each gets a lighter schema check against its expected field.
+          const KNOWN_CONFIG_DOCS = {
+            "customerInquiryGuidance": {
+              requiredField: "rules",
+              requiredType : "array",
+              summaryFn    : (v) => `${Array.isArray(v.rules) ? v.rules.length : 0} rules`
+            },
+            "existingListings": {
+              requiredField: "listings",
+              requiredType : "object",
+              summaryFn    : (v) => `${v.listings && typeof v.listings === "object" ? Object.keys(v.listings).length : 0} listings`
+            }
+          };
           const rows = [];
           const skipped = [];
           for (const [key, val] of Object.entries(sheets)) {
             if (key.startsWith("_") || !val || typeof val !== "object" || Array.isArray(val)) {
               skipped.push(key);
+              continue;
+            }
+            // v2.5: config docs get their own validation path.
+            if (KNOWN_CONFIG_DOCS[key]) {
+              const cfg = KNOWN_CONFIG_DOCS[key];
+              const fieldVal = val[cfg.requiredField];
+              let cfgIssue = null;
+              if (cfg.requiredType === "array" && !Array.isArray(fieldVal)) {
+                cfgIssue = `expected '${cfg.requiredField}' to be an array`;
+              } else if (cfg.requiredType === "object" && (!fieldVal || typeof fieldVal !== "object" || Array.isArray(fieldVal))) {
+                cfgIssue = `expected '${cfg.requiredField}' to be an object`;
+              }
+              rows.push({
+                family: key,
+                isConfigDoc: true,
+                configSummary: cfg.summaryFn(val),
+                issue: cfgIssue
+              });
               continue;
             }
             const sectionCount = Array.isArray(val.sections) ? val.sections.length : 0;
@@ -16865,16 +16905,18 @@
           const rowsHtml = rows.map(r =>
             r.issue
               ? `<tr><td style="color:#cf222e;">✗ ${esc(r.family)}</td><td colspan="2" style="color:#cf222e;">${esc(r.issue)}</td></tr>`
-              : `<tr><td>${esc(r.family)}</td><td>${r.sectionCount} sections</td><td>${r.codeCount} codes</td></tr>`
+              : r.isConfigDoc
+                ? `<tr><td>${esc(r.family)}</td><td colspan="2" style="color:#57606a;">config doc · ${esc(r.configSummary)}</td></tr>`
+                : `<tr><td>${esc(r.family)}</td><td>${r.sectionCount} sections</td><td>${r.codeCount} codes</td></tr>`
           ).join("");
 
           preview.style.display = "block";
           preview.innerHTML = `
             <div style="padding:8px 10px; background:${hasIssue ? "#fff8c5" : "#ddf4ff"}; border:1px solid ${hasIssue ? "#d4a72c" : "#0969da"}; border-radius:3px; color:#1f2328; font-size:12px;">
-              <b>${hasIssue ? "Validation issues — fix before importing:" : "Ready to import — this will REPLACE these families:"}</b>
+              <b>${hasIssue ? "Validation issues — fix before importing:" : "Ready to import — this will REPLACE the following:"}</b>
               <table style="margin-top:6px; width:100%; font-size:11px; border-collapse:collapse;">
                 <thead><tr style="text-align:left; border-bottom:1px solid #d0d7de;">
-                  <th style="padding:3px 6px;">Family</th><th>Sections</th><th>Options</th>
+                  <th style="padding:3px 6px;">Family / Doc</th><th>Sections</th><th>Options</th>
                 </tr></thead>
                 <tbody>${rowsHtml}</tbody>
               </table>

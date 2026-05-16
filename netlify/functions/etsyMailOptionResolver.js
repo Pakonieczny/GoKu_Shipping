@@ -88,6 +88,15 @@ const AUDIT_COLL  = "EtsyMail_Audit";
 const SHEET_CACHE_MS = 60 * 1000;
 const _sheetCache = new Map();   // family → { value, fetchedAt }
 
+// v2.5 — In-memory cache for the existing-listings catalog (separate
+// Firestore doc at EtsyMail_OptionSheets/existingListings). Same TTL as
+// the sheet cache so updates from the operator's Collateral Library UI
+// propagate to the agent within ~1 minute. Single-doc cache keyed by a
+// constant since there's only one catalog doc.
+const LISTINGS_CACHE_MS = 60 * 1000;
+let _listingsCacheValue = null;
+let _listingsCacheAt    = 0;
+
 // ─── Helpers ────────────────────────────────────────────────────────────
 
 function json(statusCode, body) {
@@ -136,6 +145,260 @@ async function loadSheet(family) {
     console.warn(`loadSheet(${family}) failed:`, e.message);
     return null;
   }
+}
+
+// ─── Existing-listings catalog (v2.5) ──────────────────────────────────
+//
+// Lives at EtsyMail_OptionSheets/existingListings. Keyed by Etsy listing
+// ID, each entry has family + charmStyle + (optional) discDiameterMm +
+// metadata. The agent's lookup_listing_specs tool calls resolveListingSpecs
+// below to translate "customer pasted a URL" → "here are the dimensions".
+//
+// Design tenets:
+//   - Silhouette dimensions are family-universal. We read them once from
+//     the family sheet (loadSheet) so an operator updating the family-
+//     wide silhouette spec affects every listing in that family, with no
+//     per-listing edits required.
+//   - Disc dimensions are per-listing. We read discDiameterMm directly
+//     from the catalog entry.
+//   - Placeholder values (REPLACE_WITH_*) in catalog entries flag
+//     incomplete data — the agent surfaces this as 'incomplete:true' and
+//     escalates, never guesses.
+//   - Fuzzy match by title/slug/full-title is supported as a fallback so
+//     the tool tolerates messy inputs like "the duckie charm" without an
+//     ID. Direct ID lookup wins when available.
+
+async function loadExistingListings() {
+  if (_listingsCacheValue !== null && (Date.now() - _listingsCacheAt < LISTINGS_CACHE_MS)) {
+    return _listingsCacheValue;
+  }
+  try {
+    const doc = await db.collection(SHEETS_COLL).doc("existingListings").get();
+    if (!doc.exists) {
+      _listingsCacheValue = null;
+      _listingsCacheAt    = Date.now();
+      return null;
+    }
+    const data = doc.data() || {};
+    _listingsCacheValue = data;
+    _listingsCacheAt    = Date.now();
+    return data;
+  } catch (e) {
+    console.warn("loadExistingListings failed:", e.message);
+    return null;
+  }
+}
+
+function invalidateExistingListingsCache() {
+  _listingsCacheValue = null;
+  _listingsCacheAt    = 0;
+}
+
+// Score a candidate listing against a free-text query for fuzzy fallback.
+// Returns 0 if no signal; otherwise a positive score. Higher is better.
+function _scoreListingMatch(entry, queryLower) {
+  if (!entry || !queryLower) return 0;
+  let score = 0;
+  const title     = String(entry.title || "").toLowerCase();
+  const fullTitle = String(entry.fullTitle || "").toLowerCase();
+  const slug      = String(entry.etsyUrlFragment || "").toLowerCase();
+
+  // Whole-substring hits on the title/slug are strong signals.
+  if (title && title.includes(queryLower)) score += 100;
+  if (slug && slug.includes(queryLower))   score += 90;
+  if (fullTitle && fullTitle.includes(queryLower)) score += 60;
+  if (title && queryLower.includes(title)) score += 40;   // query contains the title
+
+  // Token-level overlap covers reorderings and partial matches like "duckie
+  // rubber" vs "rubber duckie". Drop tokens shorter than 3 chars (stopwords).
+  const qTokens = queryLower.split(/[\s/_-]+/).filter(t => t.length >= 3);
+  if (qTokens.length > 0) {
+    const corpus = (title + " " + fullTitle + " " + slug).toLowerCase();
+    const corpusTokens = new Set(corpus.split(/[\s/_-]+/).filter(t => t.length >= 3));
+    let overlap = 0;
+    for (const t of qTokens) {
+      if (corpusTokens.has(t)) overlap++;
+    }
+    score += Math.round((overlap / qTokens.length) * 50);
+  }
+
+  return score;
+}
+
+// Extract an Etsy listing ID from any of: full URL, bare ID, slugged URL,
+// "/your/listings/" URL, with or without locale prefix. Returns the digit
+// string or null. Etsy listing IDs are 9-10 digits in practice; we allow
+// 8+ to future-proof.
+function _extractListingId(query) {
+  if (!query || typeof query !== "string") return null;
+  // Most reliable: /listing/<digits>/
+  const m = query.match(/\/listing\/(\d{8,})/i);
+  if (m) return m[1];
+  // Fallback: any 8-12 digit run (covers bare-ID input). Restrict to
+  // 8+ to avoid matching prices or random numbers in the query.
+  const m2 = query.match(/(?<!\d)(\d{8,12})(?!\d)/);
+  if (m2) return m2[1];
+  return null;
+}
+
+/**
+ * Resolve specs (dimensions, charm style, family) for a listing.
+ * Accepts flexible input — URL, bare ID, slug, or title fragment.
+ *
+ * Returns a flat object the AI can read directly. Possible shapes:
+ *   • Success (complete):
+ *     { found:true, listingId, title, family, charmStyle, dimensions,
+ *       dimensionsSummary, dimensionsSource, availableMetals, basePriceUsd,
+ *       regularPriceUsd?, matchKind:"id"|"fuzzy" }
+ *   • Success (incomplete catalog entry):
+ *     { found:true, incomplete:true, listingId, missingFields, recommendation }
+ *   • No match:
+ *     { found:false, reason:"LISTING_NOT_IN_CATALOG", query, recommendation }
+ *   • Catalog not deployed:
+ *     { found:false, reason:"CATALOG_NOT_DEPLOYED" }
+ *
+ * In every case where found is false OR incomplete is true, the
+ * recommendation is to ESCALATE — never estimate.
+ */
+async function resolveListingSpecs({ query }) {
+  const catalog = await loadExistingListings();
+  if (!catalog) {
+    return { found: false, reason: "CATALOG_NOT_DEPLOYED" };
+  }
+  const listings = (catalog && catalog.listings) || {};
+
+  // Pass 1: direct lookup by extracted listing ID.
+  let entry = null;
+  let listingId = _extractListingId(query);
+  let matchKind = null;
+  if (listingId && listings[listingId]) {
+    entry = listings[listingId];
+    matchKind = "id";
+  }
+
+  // Pass 2: fuzzy match by title/slug/fullTitle if no ID hit.
+  if (!entry) {
+    const q = String(query || "").toLowerCase().trim();
+    if (q) {
+      const ranked = Object.entries(listings)
+        .filter(([_, v]) => v && v.active !== false)
+        .map(([k, v]) => ({ id: k, entry: v, score: _scoreListingMatch(v, q) }))
+        .filter(x => x.score >= 60)   // threshold: avoid weak matches
+        .sort((a, b) => b.score - a.score);
+      if (ranked.length > 0) {
+        entry = ranked[0].entry;
+        listingId = ranked[0].id;
+        matchKind = "fuzzy";
+      }
+    }
+  }
+
+  if (!entry) {
+    return {
+      found: false,
+      reason: "LISTING_NOT_IN_CATALOG",
+      query,
+      recommendation: "Listing isn't in the internal catalog. Escalate to human review — do NOT estimate dimensions from similar items."
+    };
+  }
+
+  // Detect placeholder/incomplete data (REPLACE_WITH_* tokens or missing fields).
+  const incompleteFields = [];
+  const family     = entry.family || null;
+  const charmStyle = entry.charmStyle || null;
+  if (!family || /REPLACE_WITH/i.test(family))        incompleteFields.push("family");
+  if (!charmStyle || /REPLACE_WITH/i.test(charmStyle)) incompleteFields.push("charmStyle");
+  if (charmStyle === "disc" && (entry.discDiameterMm == null || isNaN(Number(entry.discDiameterMm)))) {
+    incompleteFields.push("discDiameterMm");
+  }
+  if (incompleteFields.length > 0) {
+    return {
+      found: true,
+      incomplete: true,
+      listingId,
+      title: entry.title || null,
+      missingFields: incompleteFields,
+      recommendation: "Listing is in catalog but missing required fields. Escalate to human review — do NOT estimate."
+    };
+  }
+
+  // Resolve dimensions based on style.
+  // SILHOUETTE: family-universal — read from the family sheet's charmStyles.silhouette.universalDimensions.
+  // DISC: per-listing — read discDiameterMm from the catalog entry, jump-ring from the family sheet.
+  let dimensions = null;
+  let dimensionsSummary = null;
+  let dimensionsSource  = null;
+
+  const familySheet = await loadSheet(family);
+  const charmStyles = (familySheet && familySheet.charmStyles) || {};
+
+  if (charmStyle === "silhouette") {
+    const sil = charmStyles.silhouette || {};
+    const u = sil.universalDimensions || {};
+    dimensionsSource = "family.charmStyles.silhouette.universalDimensions";
+    if (family === "huggie") {
+      // huggie universal: charmWidthMm × charmHeightMm + ringInnerDiameterMm
+      dimensions = {
+        charmWidthMm: u.charmWidthMm ?? null,
+        charmHeightMm: u.charmHeightMm ?? null,
+        ringInnerDiameterMm: u.ringInnerDiameterMm ?? null
+      };
+      const w = u.charmWidthMm, h = u.charmHeightMm, r = u.ringInnerDiameterMm;
+      if (w != null && h != null) {
+        dimensionsSummary = `${w}×${h}mm silhouette charm` + (r != null ? ` with ${r}mm I.D. mounting ring` : "");
+      }
+    } else if (family === "necklace") {
+      // necklace universal: charmSizeMm string range + family jumpRingDiameter
+      const jr = sil.jumpRingDiameter || null;
+      dimensions = {
+        charmSizeMm: u.charmSizeMm ?? null,
+        jumpRingDiameter: jr
+      };
+      if (u.charmSizeMm) {
+        dimensionsSummary = `${u.charmSizeMm}mm silhouette charm` + (jr ? ` with ${jr} jump ring` : "");
+      }
+    } else {
+      // stud or other — fall through to whatever universalDimensions has
+      dimensions = { ...u };
+      dimensionsSummary = `silhouette ${family} charm`;
+    }
+  } else if (charmStyle === "disc") {
+    const disc = charmStyles.disc || {};
+    const jr = disc.jumpRingDiameter || null;
+    dimensions = {
+      discDiameterMm: Number(entry.discDiameterMm),
+      jumpRingDiameter: jr
+    };
+    dimensionsSource = `existingListings.listings[${listingId}].discDiameterMm`;
+    dimensionsSummary = `${entry.discDiameterMm}mm disc with engraved design` + (jr ? `, ${jr} jump ring` : "");
+  } else {
+    // Style is neither silhouette nor disc — unsupported; flag and escalate.
+    return {
+      found: true,
+      incomplete: true,
+      listingId,
+      title: entry.title || null,
+      missingFields: ["charmStyle (unsupported value: " + charmStyle + ")"],
+      recommendation: "Listing's charmStyle is not 'silhouette' or 'disc'. Escalate."
+    };
+  }
+
+  return {
+    found: true,
+    listingId,
+    title: entry.title || null,
+    fullTitle: entry.fullTitle || null,
+    etsyUrl: entry.etsyUrl || null,
+    family,
+    charmStyle,
+    dimensions,
+    dimensionsSummary,
+    dimensionsSource,
+    availableMetals: Array.isArray(entry.availableMetals) ? entry.availableMetals : null,
+    basePriceUsd: typeof entry.basePriceUsd === "number" ? entry.basePriceUsd : null,
+    regularPriceUsd: typeof entry.regularPriceUsd === "number" ? entry.regularPriceUsd : null,
+    matchKind   // "id" or "fuzzy" — lets the prompt know how confident the match is
+  };
 }
 
 // Index a sheet's options by code for O(1) lookup. Stud section 2 (Choose
@@ -680,8 +943,23 @@ exports.handler = async (event) => {
       }
 
       // Phase 1 — partition + validate every family before any write.
-      const candidates = []; // [{ family, sheet }]
-      const skipped    = []; // top-level keys we deliberately ignore
+      // v2.5: also recognize an allowlist of "config doc" keys that
+      // don't follow the family-sheet shape (no sections[] array) but
+      // ARE meant to be written as docs in EtsyMail_OptionSheets. Each
+      // gets a light schema check against its expected field.
+      const KNOWN_CONFIG_DOCS = {
+        customerInquiryGuidance: {
+          requiredField: "rules",
+          requiredType : "array"
+        },
+        existingListings: {
+          requiredField: "listings",
+          requiredType : "object"
+        }
+      };
+      const candidates  = []; // [{ family, sheet }]
+      const configDocs  = []; // [{ key, doc }]
+      const skipped     = []; // top-level keys we deliberately ignore
       for (const [key, val] of Object.entries(sheets)) {
         // Ignore _meta and any non-object top-level entry. The seed
         // file's _meta block carries human-readable notes about the
@@ -691,6 +969,25 @@ exports.handler = async (event) => {
           skipped.push(key);
           continue;
         }
+        // v2.5 — config-doc path. Light schema check; no family/sections
+        // validation since these aren't family sheets.
+        if (KNOWN_CONFIG_DOCS[key]) {
+          const cfg = KNOWN_CONFIG_DOCS[key];
+          const fieldVal = val[cfg.requiredField];
+          const fieldOk = cfg.requiredType === "array"
+            ? Array.isArray(fieldVal)
+            : (fieldVal && typeof fieldVal === "object" && !Array.isArray(fieldVal));
+          if (!fieldOk) {
+            return json(422, {
+              error: "Config doc schema invalid",
+              key,
+              reason: `${key} must have a '${cfg.requiredField}' ${cfg.requiredType}`
+            });
+          }
+          configDocs.push({ key, doc: val });
+          continue;
+        }
+        // Family-sheet path — existing strict validation.
         if (val.family && val.family !== key) {
           return json(422, {
             error: "Family mismatch",
@@ -707,15 +1004,13 @@ exports.handler = async (event) => {
         }
         candidates.push({ family: key, sheet: val });
       }
-      if (candidates.length === 0) {
-        return bad("No valid sheets found in payload (every top-level key was skipped)");
+      if (candidates.length === 0 && configDocs.length === 0) {
+        return bad("No valid sheets or config docs found in payload (every top-level key was skipped)");
       }
 
-      // Phase 2 — write each family, stamp metadata, invalidate cache.
-      // We use a batch write so all families land atomically. The
-      // seed-script path uses individual `set()` calls because the
-      // script can retry per-family; the UI path benefits more from
-      // atomicity than retry-ability.
+      // Phase 2 — write each family + config doc, stamp metadata,
+      // invalidate caches. Single batch so the multi-family import is
+      // still atomic; config docs join the same batch.
       const batch = db.batch();
       for (const { family, sheet } of candidates) {
         const toWrite = {
@@ -726,18 +1021,34 @@ exports.handler = async (event) => {
         };
         batch.set(db.collection(SHEETS_COLL).doc(family), toWrite, { merge: false });
       }
+      // v2.5 — config doc writes. Same collection, but no `family` stamp
+      // (these aren't families) and we don't run the sheet validators
+      // against them.
+      for (const { key, doc } of configDocs) {
+        const toWrite = {
+          ...doc,
+          lastUpdatedBy: body.actor,
+          updatedAt: FV.serverTimestamp()
+        };
+        batch.set(db.collection(SHEETS_COLL).doc(key), toWrite, { merge: false });
+      }
       await batch.commit();
 
       // Cache invalidation must run AFTER the commit so a concurrent
       // resolveQuote during the write can't repopulate the cache from
       // the old doc.
       for (const { family } of candidates) invalidateSheetCache(family);
+      // v2.5 — the existing-listings catalog has its own cache.
+      if (configDocs.some(c => c.key === "existingListings")) {
+        invalidateExistingListingsCache();
+      }
 
       await writeAudit({
         eventType: "option_sheets_put_bulk",
         actor: body.actor,
         payload: {
           written: candidates.map(c => c.family),
+          writtenConfigDocs: configDocs.map(c => c.key),
           skipped
         }
       });
@@ -745,6 +1056,7 @@ exports.handler = async (event) => {
       return ok({
         success: true,
         written: candidates.map(c => c.family),
+        writtenConfigDocs: configDocs.map(c => c.key),
         skipped
       });
     }
@@ -764,3 +1076,8 @@ module.exports.resolveQuote        = resolveQuote;
 module.exports.loadSheet           = loadSheet;
 module.exports.indexSheetCodes     = indexSheetCodes;
 module.exports.invalidateSheetCache = invalidateSheetCache;
+// v2.5 — Existing-listings catalog reader + spec resolver. Consumed by
+// the salesAgent's lookup_listing_specs tool.
+module.exports.loadExistingListings          = loadExistingListings;
+module.exports.resolveListingSpecs           = resolveListingSpecs;
+module.exports.invalidateExistingListingsCache = invalidateExistingListingsCache;
