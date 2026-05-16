@@ -2150,16 +2150,19 @@ exports.handler = async (event) => {
       referenceAttachments: compactAttachmentList(referenceAttachments),
       hasReferenceImage: referenceAttachments.length > 0,
       recommendedCollateral,
-      // v2.8 — Care/durability/metal-comparison collateral pre-fetched
-      // deterministically by prefetchCareCollateral. When non-empty,
-      // the prompt mandates the agent include these URLs in the
-      // customer reply with a brief intro for each.
-      prefetchedCareCollateral,
-      // v2.8.2 — Sizing/fit/measurements collateral pre-fetched
-      // deterministically by prefetchSizingCollateral. Same pattern as
-      // prefetchedCareCollateral — non-empty array means the prompt's
-      // sizing rule fires.
-      prefetchedSizingCollateral,
+      // v2.8.3 — Care/sizing collateral URLs are NO LONGER surfaced to
+      // the AI. Previously we passed prefetchedCareCollateral /
+      // prefetchedSizingCollateral so the AI could embed URLs in the
+      // reply text — which is exactly the failure mode the operator
+      // flagged: URLs in message body instead of file attachments. Now
+      // the system auto-sets the matching attach_* boolean flags from
+      // the prefetch results (see post-backfill block in main handler),
+      // which the existing multi-kind attachment construction picks up
+      // and turns into real image attachments on the draft. The AI's
+      // job is just to reference the attached image in reply text,
+      // same pattern as line sheets. Detection state still lives on
+      // the audit (aiPrefetchedCareCollateral, aiCareCollateralDiagnostic,
+      // aiPrefetchedSizingCollateral, aiSizingCollateralDiagnostic).
       customerHistory    : {
         isRepeat          : !!(customerHistory && customerHistory.isRepeat),
         orderCount        : (customerHistory && customerHistory.orderCount) || 0,
@@ -2977,6 +2980,79 @@ Do NOT pick next_action: ask_one_question and then write reply text that mention
       // populated for the deprecated cycle.
       backfillLegacyFieldsFromV5(parsed);
 
+      // ── v2.8.3 — Deterministic care/sizing collateral attachment ──
+      //
+      // The line-sheet attachment system supports five collateral kinds
+      // (line_sheet, care_instructions, metal_comparison, fit_reference,
+      // bracelet_sizing) via boolean flags on parsed. The line-sheet
+      // flag has both an AI-set path AND a server-side text-pattern
+      // fallback. Care/sizing previously had neither — only a "put the
+      // URL in the reply text" prompt instruction the AI followed
+      // inconsistently AND incorrectly (URLs in text instead of files).
+      //
+      // This block makes care/sizing as deterministic as line sheets.
+      // When prefetch detects the topic, set the matching attach_*
+      // flag. The existing attachment construction code at line ~3273
+      // then resolves each flag to an attachable collateral entry via
+      // findAttachableForKind, builds an image-attachment record, and
+      // writes it to draft.attachments — same path as line sheets.
+      //
+      // Reply text concerns are handled in the prompt: the AI is told
+      // not to embed URLs and to reference the attached image
+      // naturally, mirroring line-sheet phrasing.
+      if (prefetchedCareCollateralResult && prefetchedCareCollateralResult.topicDetected) {
+        // Care/tarnish/durability/comparison topic → attach BOTH the
+        // care guide AND the metals comparison card. They complement
+        // each other on every care question (one explains the why,
+        // the other explains the how-to).
+        if (parsed.attach_care_instructions !== true) {
+          parsed.attach_care_instructions = true;
+          parsed._attachCareInstructionsAutoSet = true;
+        }
+        if (parsed.attach_metal_comparison !== true) {
+          parsed.attach_metal_comparison = true;
+          parsed._attachMetalComparisonAutoSet = true;
+        }
+      }
+
+      if (prefetchedSizingCollateralResult && prefetchedSizingCollateralResult.topicDetected) {
+        // Sizing topic → attach the family-specific reference. Look at
+        // recent text to decide which one. Generic-only fires both
+        // (necklace fit + bracelet sizing) so the customer sees options.
+        const sizingHaystack = (
+          (latestInboundText || "") + " " +
+          (Array.isArray(recentThreadMessages)
+            ? recentThreadMessages.slice(-3).map(m => (m && m.text) || "").join(" ")
+            : "")
+        ).toLowerCase();
+        const isNecklaceSizing =
+          /\b(necklace|chain length|chain size|chain inches|pendant|collarbone|drop length|bustline|on body|lies on|sits at|falls at)\b/.test(sizingHaystack) ||
+          /\b(16|18|20|22|24)[\s-]?(?:inch|in|")/.test(sizingHaystack);
+        const isBraceletSizing = /\b(wrist|bracelet)\b/.test(sizingHaystack);
+
+        if (isNecklaceSizing && parsed.attach_fit_reference !== true) {
+          parsed.attach_fit_reference = true;
+          parsed._attachFitReferenceAutoSet = true;
+        }
+        if (isBraceletSizing && parsed.attach_bracelet_sizing !== true) {
+          parsed.attach_bracelet_sizing = true;
+          parsed._attachBraceletSizingAutoSet = true;
+        }
+        // Generic sizing question with no family cue → attach both;
+        // customer sees the relevant one.
+        if (!isNecklaceSizing && !isBraceletSizing) {
+          if (parsed.attach_fit_reference !== true) {
+            parsed.attach_fit_reference = true;
+            parsed._attachFitReferenceAutoSet = true;
+          }
+          if (parsed.attach_bracelet_sizing !== true) {
+            parsed.attach_bracelet_sizing = true;
+            parsed._attachBraceletSizingAutoSet = true;
+          }
+        }
+      }
+      // ──────────────────────────────────────────────────────────────
+
       // Run v5.0 consistency validation
       const toolNamesCalled = extractToolNamesCalled(loopResult);
       validationResult = validateOptionCConsistency({ parsed, toolNamesCalled });
@@ -3267,6 +3343,40 @@ Do NOT pick next_action: ask_one_question and then write reply text that mention
         );
         if (exactKindHit) return exactKindHit;
       } catch {}
+
+      // v2.8.3 — Name-based fallback. The kind-based lookup above
+      // requires the operator to have set kind="care_instructions" etc.
+      // on their collateral entries. In practice operators frequently
+      // leave kind="line_sheet" as the default and rely on the entry
+      // NAME ("Jewellery care instructions", "Gold metals comparison")
+      // to convey the document type. Match by name as a last resort
+      // so a properly-uploaded card still attaches even with imperfect
+      // kind metadata. Keyword sets are aligned with kind semantics —
+      // each kind has a small set of distinctive name-words.
+      const KIND_NAME_KEYWORDS = {
+        care_instructions: ["care", "aftercare", "cleaning", "polish"],
+        metal_comparison : ["metal comparison", "gold filled", "gold plated", "filled vs", "plated vs", "metals comparison"],
+        fit_reference    : ["fit reference", "chain length on body", "necklace fit", "on body"],
+        bracelet_sizing  : ["bracelet sizing", "wrist sizing", "wrist chart", "bracelet size"],
+        line_sheet       : []   // line_sheet has the strict kind path; no name fallback
+      };
+      const nameKeywords = KIND_NAME_KEYWORDS[kind] || [];
+      if (nameKeywords.length > 0) {
+        try {
+          const { searchCollateral } = require("./etsyMailCollateral");
+          // Search broadly across all active collateral, then filter
+          // in JS by name-keyword match. We don't pass `kind` here
+          // because that's what we're working around.
+          const result = await searchCollateral({ limit: 50 });
+          const matches = (result && Array.isArray(result.matches)) ? result.matches : [];
+          const nameHit = matches.find(c => {
+            if (!c || !c.storagePath || !c.uploadedContentType) return false;
+            const name = String(c.name || "").toLowerCase();
+            return nameKeywords.some(kw => name.includes(kw));
+          });
+          if (nameHit) return nameHit;
+        } catch {}
+      }
       return null;
     }
 
