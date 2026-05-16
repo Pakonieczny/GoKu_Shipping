@@ -3815,7 +3815,17 @@ exports.handler = async (event) => {
     const _hasRealAttachment = (toolContext.trackingImages || []).some(img =>
       img && (img.status === "ready" || img.status === "pending")
             && (img.imageUrl || img.jobId)
-    );
+    ) ||
+      // v2.8.3 — Also accept auto-attached care/sizing collateral as a
+      // "real attachment" for purposes of this check. The collateral
+      // attachments are built later in the handler from the prefetch
+      // results, but if either prefetched array has matches at this
+      // point, at least one image will land on the draft via the
+      // attachment construction below. The AI's prose mentioning "I've
+      // attached our care guide" (per the AUTO-ATTACHED COLLATERAL
+      // prompt section) is legitimate when this is true.
+      (Array.isArray(prefetchedCareCollateral)   && prefetchedCareCollateral.length   > 0) ||
+      (Array.isArray(prefetchedSizingCollateral) && prefetchedSizingCollateral.length > 0);
     const _attachmentClaimRx = /\b(?:i'?ve\s+attached|i\s+have\s+attached|see\s+attached|find\s+attached|attached\s+(?:below|here|to\s+this|the\s+tracking|are|is)|tracking\s+(?:details|image|timeline|info(?:rmation)?|snapshot)\s+(?:below|attached|here)|below\s+(?:you'?ll\s+find|you\s+can\s+(?:see|find)|please\s+(?:see|find)))\b/i;
     const _claimsAttachment = parsed.text && _attachmentClaimRx.test(parsed.text);
     if (_claimsAttachment && !_hasRealAttachment) {
