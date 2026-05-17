@@ -116,7 +116,7 @@
 
 const admin = require("./firebaseAdmin");
 const { CORS, requireExtensionAuth } = require("./_etsyMailAuth");
-const { getListing, getListingImages, SHOP_ID } = require("./_etsyMailEtsy");
+const { getListing, getListingImages, getListingInventory, SHOP_ID } = require("./_etsyMailEtsy");
 
 const db = admin.firestore();
 const FV = admin.firestore.FieldValue;
@@ -277,7 +277,7 @@ async function getListingFromCacheById(listingId) {
  *  the AI consumes. `apiData` is the result of getListing(); `imageInfo`
  *  is the result of getListingImages(). Either may be null when this is
  *  called against the cache-fallback path. */
-function normalizeListing(apiData, imageInfo, fallbackCacheDoc) {
+function normalizeListing(apiData, imageInfo, fallbackCacheDoc, inventoryInfo) {
   // Prefer fresh API data when present, fall back to cache for missing
   // fields (cache has older but still-valid title/description/etc.)
   const pickStr = (apiKey, cacheKey) => {
@@ -373,8 +373,56 @@ function normalizeListing(apiData, imageInfo, fallbackCacheDoc) {
                         ? Number(apiData.processing_max)
                         : (fallbackCacheDoc && Number.isFinite(Number(fallbackCacheDoc.leadTimeDays))
                             ? Number(fallbackCacheDoc.leadTimeDays) : null),
+    // v2.5 — Live variants the buyer sees in the listing's dropdown.
+    // Source of truth for "what metals/options does this listing
+    // offer?". Each entry: { name, propertyName, priceUsd, enabled,
+    // quantity }. Empty array means inventory fetch failed or listing
+    // has no variants. The AI prompt directs the model to use this for
+    // any variant-availability question (metals offered, prices per
+    // variant, what's actually orderable). Inventory fetch is non-
+    // fatal — listing data still returns even if this is empty.
+    variants         : normalizeInventoryVariants(inventoryInfo),
     fetchedAt        : Date.now()
   };
+}
+
+// ─── Inventory normalization ───────────────────────────────────────────
+
+/** Convert Etsy's getListingInventory() response into a slim array of
+ *  variants the AI can reason about. Each Etsy "product" is one variant
+ *  combination (e.g. "14K Solid Gold", or "Gold + Engrave" for a multi-
+ *  property listing). Maps to:
+ *    { name, propertyName, priceUsd, enabled, quantity }
+ *  Returns [] if input is missing/malformed. */
+function normalizeInventoryVariants(inventoryInfo) {
+  const products = (inventoryInfo && Array.isArray(inventoryInfo.products))
+    ? inventoryInfo.products : [];
+  return products
+    .filter(p => p && p.is_deleted !== true)
+    .map(p => {
+      const propValues = Array.isArray(p.property_values) ? p.property_values : [];
+      const nameParts  = [];
+      let propertyName = null;
+      for (const pv of propValues) {
+        if (!pv) continue;
+        if (!propertyName) propertyName = pv.property_name || null;
+        const vals = Array.isArray(pv.values) ? pv.values : [];
+        if (vals.length) nameParts.push(vals.join("/"));
+      }
+      const name = nameParts.join(" + ").trim() || null;
+
+      const firstOffering = Array.isArray(p.offerings) ? p.offerings[0] : null;
+      const priceObj      = firstOffering && firstOffering.price;
+      const priceUsd      = priceObj && typeof priceObj.amount === "number" && typeof priceObj.divisor === "number"
+        ? Math.round((priceObj.amount / priceObj.divisor) * 100) / 100
+        : null;
+      const enabled       = firstOffering ? firstOffering.is_enabled !== false : true;
+      const quantity      = firstOffering && typeof firstOffering.quantity === "number"
+        ? firstOffering.quantity : null;
+
+      return { name, propertyName, priceUsd, enabled, quantity };
+    })
+    .filter(v => v.name);
 }
 
 // ─── Core lookup ───────────────────────────────────────────────────────
@@ -395,7 +443,7 @@ async function lookupListingById({ listingId, threadId = null }) {
     return cached.value;
   }
 
-  let apiData = null, imageInfo = null;
+  let apiData = null, imageInfo = null, inventoryInfo = null;
   let etsyApiCallSuccessful = false;
   let etsyApiError = null;
   let cacheDoc = null;
@@ -406,10 +454,18 @@ async function lookupListingById({ listingId, threadId = null }) {
   // both take `listingId` directly, no dependency between them. Cuts
   // typical lookup latency from ~700ms to ~400ms (one round-trip
   // instead of two). Image fetch failure is non-fatal.
-  let apiCallErr = null, imageErr = null;
-  const [apiRes, imgRes] = await Promise.allSettled([
+  // v2.5 — also fetch inventory in parallel so the AI sees the real
+  // variants/options/prices the buyer sees on the listing page. Cache
+  // mirror has chronic gaps (a listing's "14K Solid Gold" variant
+  // wasn't in the catalog's availableMetals array, so the AI gave an
+  // incomplete answer omitting the premium tier). The Etsy inventory
+  // endpoint is the source of truth. Failure is non-fatal — listing
+  // data still returns even if inventory fetch breaks.
+  let apiCallErr = null, imageErr = null, inventoryErr = null;
+  const [apiRes, imgRes, invRes] = await Promise.allSettled([
     getListing(listingId),
-    getListingImages(listingId)
+    getListingImages(listingId),
+    getListingInventory(listingId)
   ]);
   if (apiRes.status === "fulfilled") {
     apiData = apiRes.value;
@@ -426,6 +482,15 @@ async function lookupListingById({ listingId, threadId = null }) {
     // data and can render without an image.
     if (etsyApiCallSuccessful) {
       console.warn(`getListingImages(${listingId}) failed (non-fatal):`, imageErr);
+    }
+  }
+  if (invRes.status === "fulfilled") {
+    inventoryInfo = invRes.value;
+  } else {
+    inventoryErr = invRes.reason && (invRes.reason.message || String(invRes.reason));
+    // Non-fatal: listing data still returns; variants will be absent.
+    if (etsyApiCallSuccessful) {
+      console.warn(`getListingInventory(${listingId}) failed (non-fatal):`, inventoryErr);
     }
   }
 
@@ -453,7 +518,7 @@ async function lookupListingById({ listingId, threadId = null }) {
   }
 
   // ── Normalize ──
-  const normalized = normalizeListing(apiData, imageInfo, cacheDoc);
+  const normalized = normalizeListing(apiData, imageInfo, cacheDoc, inventoryInfo);
 
   // ── Shop ownership check ──
   // If the API returned a shop_id and it doesn't match ours, the customer

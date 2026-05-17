@@ -227,6 +227,12 @@ async function getListing(listingId) {
   return etsyFetch(`/listings/${listingId}`);
 }
 
+/** Full inventory for a listing: every variant with price/SKU/quantity.
+ *  GET /listings/{listing_id}/inventory */
+async function getListingInventory(listingId) {
+  return etsyFetch(`/listings/${listingId}/inventory`);
+}
+
 module.exports = {
   getValidEtsyAccessToken,
   etsyFetch,
@@ -236,5 +242,6 @@ module.exports = {
   getShopReceiptShipments,
   getListing,
   getListingImages,
+  getListingInventory,
   SHOP_ID
 };
