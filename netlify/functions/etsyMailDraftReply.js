@@ -3807,34 +3807,70 @@ exports.handler = async (event) => {
       parsed.confidenceReasoning = (parsed.confidenceReasoning || "") + note;
     }
 
-    // ─── v3.27 — Raw tracking-digit detection ─────────────────────
+    // ─── v3.27 — Raw tracking-digit detection + AUTO-FIX ──────────
     //
-    // Symmetric to v3.26 but for the OPPOSITE failure: AI pasted a
-    // long tracking-number-shaped digit string directly into the
-    // prose reply without calling generate_tracking_image. The prompt
-    // strictly forbids this ("always generate the image, never paste
-    // raw tracking digits") but a model can ignore prompt rules.
+    // The prompt strictly forbids pasting raw tracking digits into
+    // prose without calling generate_tracking_image, but a model can
+    // ignore prompt rules. Earlier v3.27 forced confidence=0 to route
+    // to human review when this happened — but that's not enough:
+    // the operator opens the inbox to find a tracking question with
+    // no image attached, and has to manually regenerate. The
+    // attachment is still missing.
     //
-    // What we detect: a contiguous run of 12+ digits (USPS, UPS,
-    // FedEx, Chit Chats tracking numbers are all 12-26 digits with
-    // no spaces; below 12 we risk false-positives on order numbers,
-    // dates, prices, listing IDs). When such a run appears in prose
-    // AND no real tracking image was generated this turn, the same
-    // remediation as v3.26 fires:
-    //   1. Stamp `aiRawTrackingDigitMismatch: true` on the draft.
-    //   2. Force confidence to 0 so the auto-pipeline routes to
-    //      human review.
-    //   3. Append a reasoning note so the operator sees WHY.
-    // The operator can decide whether to re-prompt the AI, keep the
-    // prose and attach manually, or rewrite the reply themselves.
+    // This iteration AUTO-FIXES: extract the tracking-number-shaped
+    // digit run from the prose, call generate_tracking_image directly
+    // with that code (bypassing the AI), and let the existing
+    // attachment construction below pick up the new image from
+    // toolContext.trackingImages. Net result: the draft has the
+    // image even though the AI forgot to call the tool.
+    //
+    // Detection logic: a contiguous run of 12+ digits (USPS, UPS,
+    // FedEx, Chit Chats tracking numbers are 12-26+ digits). Below
+    // 12 we risk false-positives on order numbers (10 digits),
+    // listing IDs (10 digits), dates, prices.
+    //
+    // Note we check _hasRealTrackingImage specifically (not just
+    // _hasRealAttachment): if a care-collateral chip is attached
+    // but no tracking image AND prose has raw digits, that's still
+    // a fixable failure — the tracking image is what's missing.
+    const _hasRealTrackingImage = (toolContext.trackingImages || []).some(img =>
+      img && (img.status === "ready" || img.status === "pending")
+            && (img.imageUrl || img.jobId)
+    );
     const _rawTrackingDigitRx = /\b\d{12,}\b/;
-    const _hasRawTrackingDigits = parsed.text && _rawTrackingDigitRx.test(parsed.text);
-    if (_hasRawTrackingDigits && !_hasRealAttachment) {
-      console.warn(`[draftReply ${threadId}] AI pasted raw tracking-number digits in prose without generating tracking image — forcing to human review`);
-      parsed.aiRawTrackingDigitMismatch = true;
-      parsed.confidence = 0;
-      const note = " | AI pasted a 12+ digit tracking-number-shaped string directly into the reply without calling generate_tracking_image. The branded tracking image must always be used in place of raw digits. Forced confidence=0 for operator review.";
-      parsed.confidenceReasoning = (parsed.confidenceReasoning || "") + note;
+    const _rawDigitMatch = parsed.text && parsed.text.match(_rawTrackingDigitRx);
+    if (_rawDigitMatch && !_hasRealTrackingImage) {
+      const trackingCode = _rawDigitMatch[0];
+      console.warn(`[draftReply ${threadId}] AI pasted raw tracking digits ${trackingCode} without calling generate_tracking_image — auto-correcting`);
+      try {
+        const result = await toolExecutors.generate_tracking_image({ trackingCode });
+        if (result && !result.error) {
+          // Successfully enqueued. toolContext.trackingImages now has
+          // the entry. The trackingAttachments build below will pick
+          // it up automatically. Don't force confidence=0 — the
+          // draft is now correct.
+          parsed.aiRawTrackingDigitAutoFixed = true;
+          parsed.aiRawTrackingDigitAutoFixedCode = trackingCode;
+          const note = ` | AI omitted generate_tracking_image and pasted raw tracking digits in prose. Backend auto-called generate_tracking_image with extracted code ${trackingCode}; the branded tracking image will attach to this draft.`;
+          parsed.confidenceReasoning = (parsed.confidenceReasoning || "") + note;
+        } else {
+          // Auto-fix failed (invalid code, API error, no carrier match).
+          // Fall back to the old behavior: flag and force human review.
+          console.warn(`[draftReply ${threadId}] Auto-fix failed: ${result && result.error}`);
+          parsed.aiRawTrackingDigitMismatch = true;
+          parsed.aiRawTrackingDigitAutoFixFailed = (result && result.error) || "unknown";
+          parsed.confidence = 0;
+          const note = ` | AI pasted raw tracking digits ${trackingCode} without calling generate_tracking_image. Backend auto-fix attempt FAILED (${(result && result.error) || "unknown"}). Forced confidence=0 for operator review.`;
+          parsed.confidenceReasoning = (parsed.confidenceReasoning || "") + note;
+        }
+      } catch (e) {
+        console.warn(`[draftReply ${threadId}] Auto-fix threw: ${e.message}`);
+        parsed.aiRawTrackingDigitMismatch = true;
+        parsed.aiRawTrackingDigitAutoFixFailed = e.message;
+        parsed.confidence = 0;
+        const note = ` | AI pasted raw tracking digits ${trackingCode}. Backend auto-fix attempt threw error: ${e.message}. Forced confidence=0 for operator review.`;
+        parsed.confidenceReasoning = (parsed.confidenceReasoning || "") + note;
+      }
     }
 
     // ─── Soft-promise validation ───────────────────────────────────
