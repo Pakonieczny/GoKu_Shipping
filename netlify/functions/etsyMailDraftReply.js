@@ -2010,6 +2010,14 @@ You MUST call generate_tracking_image when ANY of these are true:
   - Customer references a tracking event and asks for interpretation
     ("tracking says it was delivered but I don't have it", "tracking
     hasn't moved in a week")
+  - **Customer asks for the tracking NUMBER itself** — "could I have
+    the tracking number please" / "what's the tracking number" /
+    "can you send me tracking" / "send me the tracking info" / "do you
+    have a tracking number for this" / any phrasing where the customer
+    wants tracking information from you. The tracking image SHOWS the
+    tracking number prominently AND the current scan status — it
+    answers more than the customer asked, which is the right service.
+    Pasting a raw 30-digit string into chat is wrong here every time.
   - Order shipped 7+ days ago (US) or 10+ days ago (international)
     and the customer is following up about delivery
 
@@ -2033,6 +2041,13 @@ DO NOT skip the tracking image because:
     the image, then write the reply around what the tracking says.
   - "Seeing the scan history might not 'genuinely help'" — IT DOES.
     Stop second-guessing. If the trigger pattern fires, fire the tool.
+  - **"The customer only asked for the tracking number, not for an
+    update"** → IRRELEVANT. The image includes the number. The image
+    is the format we send tracking info in. Pasting raw tracking
+    digits into a chat message is wrong even when the customer's
+    literal request was for "the tracking number." Always generate
+    the image. Never paste raw tracking digits into prose as a
+    substitute for the image.
 
 Workflow for these cases:
 
@@ -3789,6 +3804,36 @@ exports.handler = async (event) => {
       parsed.aiAttachmentClaimMismatch = true;
       parsed.confidence = 0;
       const note = " | AI claimed an attachment in the reply but no attachment-producing tool ran successfully. Forced confidence=0 for operator review.";
+      parsed.confidenceReasoning = (parsed.confidenceReasoning || "") + note;
+    }
+
+    // ─── v3.27 — Raw tracking-digit detection ─────────────────────
+    //
+    // Symmetric to v3.26 but for the OPPOSITE failure: AI pasted a
+    // long tracking-number-shaped digit string directly into the
+    // prose reply without calling generate_tracking_image. The prompt
+    // strictly forbids this ("always generate the image, never paste
+    // raw tracking digits") but a model can ignore prompt rules.
+    //
+    // What we detect: a contiguous run of 12+ digits (USPS, UPS,
+    // FedEx, Chit Chats tracking numbers are all 12-26 digits with
+    // no spaces; below 12 we risk false-positives on order numbers,
+    // dates, prices, listing IDs). When such a run appears in prose
+    // AND no real tracking image was generated this turn, the same
+    // remediation as v3.26 fires:
+    //   1. Stamp `aiRawTrackingDigitMismatch: true` on the draft.
+    //   2. Force confidence to 0 so the auto-pipeline routes to
+    //      human review.
+    //   3. Append a reasoning note so the operator sees WHY.
+    // The operator can decide whether to re-prompt the AI, keep the
+    // prose and attach manually, or rewrite the reply themselves.
+    const _rawTrackingDigitRx = /\b\d{12,}\b/;
+    const _hasRawTrackingDigits = parsed.text && _rawTrackingDigitRx.test(parsed.text);
+    if (_hasRawTrackingDigits && !_hasRealAttachment) {
+      console.warn(`[draftReply ${threadId}] AI pasted raw tracking-number digits in prose without generating tracking image — forcing to human review`);
+      parsed.aiRawTrackingDigitMismatch = true;
+      parsed.confidence = 0;
+      const note = " | AI pasted a 12+ digit tracking-number-shaped string directly into the reply without calling generate_tracking_image. The branded tracking image must always be used in place of raw digits. Forced confidence=0 for operator review.";
       parsed.confidenceReasoning = (parsed.confidenceReasoning || "") + note;
     }
 
