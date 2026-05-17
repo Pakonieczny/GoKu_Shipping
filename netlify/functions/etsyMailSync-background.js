@@ -631,6 +631,71 @@ async function runIncremental({ invocationStartMs }) {
   return { receiptsProcessed, customersUpdated, pagesFetched };
 }
 
+// ─── Per-buyer sync ─────────────────────────────────────────────────────────
+//
+// v4.4 — Targeted sync of a single buyer's receipts. Used by
+// etsyMailSnapshot.js to refresh customer order data immediately after
+// a scrape — closes the data gap that previously left brand-new
+// customers (or recently-active ones) without an EtsyMail_Customers
+// doc until the next scheduled cron ran.
+//
+// Etsy's getShopReceipts endpoint accepts a `buyer_user_id` query
+// param that filters server-side, so we only fetch this buyer's
+// receipts (typically 0–20 docs, single page).
+//
+// Does NOT touch lastReceiptUpdatedAt or other incremental-sync
+// watermarks. Buyer syncs are independent of the scheduled cron and
+// must not affect its "next run since X" computation. Does NOT set
+// lastSyncInProgress for the same reason — multiple buyer syncs can
+// run in parallel without colliding with the scheduled cron.
+async function runBuyerSync({ buyerUserId, invocationStartMs }) {
+  const deadlineMs = invocationStartMs + MAX_INVOCATION_MS;
+  const accessToken = await getValidEtsyAccessToken();
+
+  if (!buyerUserId) {
+    throw new Error("runBuyerSync requires buyerUserId");
+  }
+  // Etsy's getShopReceipts accepts buyer_user_id as a server-side
+  // filter. We sort by created desc so the few-receipt result set
+  // comes back newest-first and pagination terminates fast.
+  const params = {
+    limit         : PAGE_SIZE,
+    sort_on       : "created",
+    sort_order    : "desc",
+    buyer_user_id : String(buyerUserId)
+  };
+
+  const aggregator = createCustomerAggregator();
+  let offset = 0;
+  let pagesFetched = 0;
+  let receiptsProcessed = 0;
+
+  while (true) {
+    if (Date.now() > deadlineMs) break;
+
+    const page = await getReceiptsPage(accessToken, { ...params, offset });
+    pagesFetched++;
+
+    const receipts = page.results || [];
+    if (!receipts.length) break;
+
+    for (const r of receipts) {
+      aggregator.accumulate(receiptToSummary(r));
+    }
+    receiptsProcessed += receipts.length;
+
+    if (receipts.length < PAGE_SIZE) break;
+    offset += PAGE_SIZE;
+    if (offset >= 12000) break;          // safety cap; this buyer should never hit it
+    await sleep(REQUEST_DELAY_MS);
+  }
+
+  const customersUpdated = await aggregator.flush();
+
+  console.log(`Buyer sync complete for ${buyerUserId}: pages=${pagesFetched} receipts=${receiptsProcessed} customers=${customersUpdated}`);
+  return { receiptsProcessed, customersUpdated, pagesFetched, buyerUserId };
+}
+
 // ─── Entry ─────────────────────────────────────────────────────────────────
 exports.handler = async (event) => {
   const invocationStartMs = Date.now();
@@ -642,19 +707,42 @@ exports.handler = async (event) => {
 
   let mode = null;
   let daysBack = DEFAULT_DAYS_BACK;
+  let buyerUserId = null;
   try {
     if (event.body) {
       const body = JSON.parse(event.body);
       if (body.mode) mode = body.mode;
       if (body.daysBack) daysBack = Math.max(1, parseInt(body.daysBack, 10));
+      if (body.buyerUserId) buyerUserId = String(body.buyerUserId);
     }
     if (event.queryStringParameters) {
       if (event.queryStringParameters.mode) mode = event.queryStringParameters.mode;
       if (event.queryStringParameters.daysBack) {
         daysBack = Math.max(1, parseInt(event.queryStringParameters.daysBack, 10));
       }
+      if (event.queryStringParameters.buyerUserId) {
+        buyerUserId = String(event.queryStringParameters.buyerUserId);
+      }
     }
   } catch {}
+
+  // ── v4.4 — buyer mode short-circuits the regular sync-state flow.
+  // It does NOT touch lastSyncInProgress, lastReceiptUpdatedAt, or
+  // any of the cron's watermark fields. This lets the per-buyer
+  // refresh (typically invoked from etsyMailSnapshot.js after a
+  // scrape) run safely in parallel with the scheduled cron.
+  if (mode === "buyer") {
+    if (!buyerUserId) {
+      return { statusCode: 400, body: "buyer mode requires buyerUserId" };
+    }
+    try {
+      const result = await runBuyerSync({ buyerUserId, invocationStartMs });
+      return { statusCode: 200, body: JSON.stringify({ ok: true, mode: "buyer", ...result }) };
+    } catch (err) {
+      console.error(`etsyMailSync-background buyer mode failed for ${buyerUserId}:`, err.message || err);
+      return { statusCode: 500, body: JSON.stringify({ ok: false, error: err.message || String(err) }) };
+    }
+  }
 
   try {
     const state = await readSyncState();

@@ -138,8 +138,16 @@ const CARE_TOPIC_KEYWORDS = [
   "tarnish", "tarnishing", "tarnishes", "rust", "rusting", "corrode", "corrosion",
   "shower", "showering", "swim", "swimming", "water", "wet", "soap", "shampoo",
   "chlorine", "pool", "hot tub", "sauna", "ocean", "sweat", "workout",
-  "care", "caring", "clean", "cleaning", "polish", "polishing", "store", "storage",
-  "wear it everyday", "daily wear", "every day", "long-lasting", "longevity",
+  // v4.5 — Removed "store" and "storage" (too broad — matched logistics
+  // phrasings unrelated to jewelry care). Kept care/clean/polish.
+  "care", "caring", "clean", "cleaning", "polish", "polishing",
+  // v4.5 — Removed "wear it everyday" and "every day". Both fired on
+  // intent statements ("I want to wear it every day", "for every day use")
+  // that signal frequency-of-wear, not a durability question. The result
+  // was metals-comparison + care-guide chips auto-attaching on reorder
+  // threads where they weren't relevant. "daily wear" stays — that
+  // phrasing is specific enough to reliably indicate a durability question.
+  "daily wear", "long-lasting", "longevity",
   "hypoallergenic", "allergic", "allergy", "sensitive skin",
   "durable", "durability", "fade", "fading",
   "lotion", "perfume", "cologne", "deodorant", "skincare",

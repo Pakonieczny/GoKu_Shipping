@@ -622,6 +622,43 @@ exports.handler = async (event) => {
       });
     }
 
+    // ─── 7) Trigger per-buyer order sync (v4.4 — fire-and-forget) ───
+    // Closes the gap where manual scrapes left brand-new customers (or
+    // recently-active ones) without an EtsyMail_Customers doc until the
+    // next scheduled etsyMailSync cron. Triggering directly off the
+    // snapshot here makes manual and auto-pipeline paths equivalent:
+    // both refresh the customer's order data immediately after a scrape.
+    //
+    // Async-invoke into etsyMailSync-background via Netlify's background
+    // dispatch URL. We do NOT await — order sync is independent of the
+    // snapshot's primary responsibility (saving messages) and shouldn't
+    // block the response. Errors are logged but never bubbled up.
+    const buyerForSync = (customer && customer.buyerUserId) ? String(customer.buyerUserId) : null;
+    if (buyerForSync) {
+      const fnHost = process.env.URL || process.env.DEPLOY_PRIME_URL || null;
+      if (fnHost) {
+        // Same-deployment URL so the call hits the matching env context
+        // (Etsy OAuth tokens, SHOP_ID, etc.). etsyMailSync-background
+        // currently has no auth gate at its entry — matches the rest
+        // of the -background function pattern in this codebase.
+        const syncUrl = `${fnHost}/.netlify/functions/etsyMailSync-background`;
+        // Fire-and-forget — must not block the snapshot response. The
+        // promise is intentionally not awaited; any rejection is logged
+        // via the catch handler so it doesn't surface as an unhandled
+        // promise rejection in the Netlify Function runtime.
+        require("node-fetch")(syncUrl, {
+          method : "POST",
+          headers: { "Content-Type": "application/json" },
+          body   : JSON.stringify({ mode: "buyer", buyerUserId: buyerForSync })
+        }).catch(err => {
+          console.warn(`buyer sync trigger failed for ${buyerForSync}:`, err.message || err);
+        });
+        console.log(`[snapshot] queued buyer sync for buyerUserId=${buyerForSync} threadId=${threadId}`);
+      } else {
+        console.warn(`[snapshot] no fnHost (URL/DEPLOY_PRIME_URL) — skipping buyer sync trigger for ${buyerForSync}`);
+      }
+    }
+
     return json(200, {
       success         : true,
       threadId,

@@ -190,6 +190,18 @@ try {
   console.warn("salesAgent: etsyMailCollateral not loadable — get_collateral tool will return graceful empty.", e.message);
 }
 
+// B3 — Existing-order lookup. The shared Etsy helper handles OAuth
+// token refresh and the v3 API call. If unavailable (missing env vars
+// for SHOP_ID / CLIENT_ID / CLIENT_SECRET, or the file isn't deployed),
+// the lookup_existing_order tool returns a structured error and the
+// agent can fall back to ask_one_question or escalate_to_human.
+let getShopReceiptFull = null;
+try {
+  ({ getShopReceiptFull } = require("./_etsyMailEtsy"));
+} catch (e) {
+  console.warn("salesAgent: _etsyMailEtsy not loadable — lookup_existing_order tool will return graceful errors.", e.message);
+}
+
 const db = admin.firestore();
 const FV = admin.firestore.FieldValue;
 
@@ -656,7 +668,16 @@ const CARE_TOPIC_KEYWORDS = [
   "water-safe", "waterproof", "water resistant", "water-resistant",
   "wet", "getting wet",
   // daily wear / durability
-  "wear daily", "daily wear", "everyday", "every day", "all the time", "24/7",
+  // v4.5 — Removed "everyday" and "every day" (and the standalone
+  // "all the time"): in operator-tested drafts, these matched
+  // intent statements like "I want to wear it every day" or
+  // "I'll use it every day" — phrases that signal frequency-of-wear,
+  // not a durability QUESTION. They were causing the metals-comparison
+  // and care-guide chips to auto-attach on reorder threads where
+  // the operator only wanted (at most) the sizing chip. "wear daily"
+  // and "daily wear" stay — those phrasings are specific enough to
+  // reliably indicate a durability question.
+  "wear daily", "daily wear", "24/7",
   "durable", "durability", "sturdy", "delicate",
   "lifespan", "long does it last", "how long will it last", "how long does it last",
   "longevity", "lasting", "last long",
@@ -664,10 +685,13 @@ const CARE_TOPIC_KEYWORDS = [
   "turn green", "turn black", "skin reaction", "allergic", "allergy",
   "hypoallergenic", "sensitive skin", "irritate", "irritation",
   // care / cleaning / storage
+  // v4.5 — Removed "store it" and standalone "storage": "store it
+  // for me until X" and similar logistics phrasings were false-
+  // positives. "how to store" is specific enough on its own.
   "care for", "how do i care", "how to care", "care instructions",
   "how to clean", "how do i clean", "cleaning", "polish", "polishing",
   "soft cloth", "polish cloth",
-  "store it", "storage", "how to store",
+  "how to store",
   // metal-type comparison
   "gold filled vs", "gold plated vs", "solid gold vs",
   "what is gold filled", "what does gold filled mean", "what is gold-filled",
@@ -904,7 +928,7 @@ async function prefetchSizingCollateral({ latestInboundText, recentThreadMessage
 
 // ─── Tool executors ────────────────────────────────────────────────────
 
-function buildToolExecutors({ threadId, salesCtx, customerHistory, cfg }) {
+function buildToolExecutors({ threadId, salesCtx, customerHistory, buyerUserId, cfg }) {
   return {
     search_shop_listings: async ({ query, limit = 8 }) => {
       if (!cfg.listingsMirrorEnabled) {
@@ -1116,6 +1140,164 @@ function buildToolExecutors({ threadId, salesCtx, customerHistory, cfg }) {
       } catch (e) {
         return { matches: [], error: e.message };
       }
+    },
+
+    // B3 — Look up a specific past Etsy order's variant details for the
+    // current customer. The thin summary in EtsyMail_Customers (receiptId,
+    // grandTotal, orderedAt, status) is enough for "is this a repeat
+    // buyer" decisions but doesn't carry the variant codes the agent
+    // needs to answer reorder/variant questions (e.g. "rose gold is
+    // available on Regular Chain but not on Beady — which chain style
+    // do they have?").
+    //
+    // Resolution order for the target receipt:
+    //   1. If receiptId argument is provided, fetch that specific receipt.
+    //   2. Otherwise, look up the customer doc by buyerUserId and use the
+    //      most recent receipt from `recentReceipts[]` (which the
+    //      etsyMailSync-background cron + the B2 per-buyer sync keep
+    //      fresh on every snapshot).
+    //
+    // Returns a SLIM object focused on what the AI needs for
+    // existing-listing reorders: per-line-item title, listing URL, the
+    // variations array (chain style, length, metal, charm size etc.),
+    // and any personalizations (engraving text). Heavy receipt fields
+    // (shipping address, payment details, transaction metadata) are
+    // stripped — the agent doesn't need them and they bloat the context.
+    lookup_existing_order: async ({ receiptId } = {}) => {
+      if (!getShopReceiptFull) {
+        return {
+          found: false,
+          reason: "ETSY_HELPER_UNAVAILABLE",
+          recommendation: "Acknowledge briefly and either ask the customer one specific clarifying question or escalate_to_human with reason past_order."
+        };
+      }
+
+      let resolvedReceiptId = receiptId ? String(receiptId).trim() : null;
+      let resolvedFromMostRecent = false;
+      if (!resolvedReceiptId) {
+        if (!buyerUserId) {
+          return {
+            found: false,
+            reason: "NO_BUYER_ID",
+            recommendation: "The thread has no Etsy buyer ID on record — we can't look up orders without it. Either ask the customer for the order number directly or escalate_to_human with reason past_order."
+          };
+        }
+        try {
+          const cSnap = await db.collection("EtsyMail_Customers").doc(String(buyerUserId)).get();
+          if (!cSnap.exists) {
+            return {
+              found: false,
+              reason: "NO_CUSTOMER_DOC",
+              buyerUserId,
+              recommendation: "No order history is on record for this customer yet. They may be a new buyer or the sync hasn't caught up. Treat as new-customer flow or ask the customer to share the order number."
+            };
+          }
+          const cData = cSnap.data() || {};
+          const recent = Array.isArray(cData.recentReceipts) ? cData.recentReceipts : [];
+          if (!recent.length) {
+            return {
+              found: false,
+              reason: "NO_RECEIPTS",
+              buyerUserId,
+              recommendation: "Customer doc exists but has no receipts on record. Ask the customer for the order number or treat as a new-customer flow."
+            };
+          }
+          // Customer doc stores recentReceipts sorted by orderedAt desc
+          // (see createCustomerAggregator in etsyMailSync-background.js).
+          // [0] is the most recent.
+          resolvedReceiptId = String(recent[0].receiptId);
+          resolvedFromMostRecent = true;
+        } catch (e) {
+          return {
+            found: false,
+            reason: "CUSTOMER_DOC_ERROR",
+            error: e.message,
+            recommendation: "Couldn't read customer order history. Acknowledge briefly and escalate_to_human."
+          };
+        }
+      }
+
+      // Fetch full receipt via the shared helper.
+      let payload;
+      try {
+        payload = await getShopReceiptFull(resolvedReceiptId);
+      } catch (e) {
+        return {
+          found: false,
+          reason: "ETSY_API_ERROR",
+          error: e.message,
+          receiptId: resolvedReceiptId,
+          recommendation: "Etsy API failed to return the receipt. Try once more or escalate_to_human."
+        };
+      }
+
+      if (!payload || typeof payload !== "object") {
+        return {
+          found: false,
+          reason: "RECEIPT_EMPTY",
+          receiptId: resolvedReceiptId
+        };
+      }
+
+      const transactions = Array.isArray(payload.transactions) ? payload.transactions : [];
+
+      // Convert a money object ({amount, divisor, currency_code}) to a
+      // plain { amount, currency } pair. Etsy expresses prices as
+      // (amount / divisor) where divisor is typically 100.
+      const money = (m) => {
+        if (!m || typeof m !== "object") return null;
+        const divisor = m.divisor || 1;
+        const amount = (typeof m.amount === "number") ? m.amount / divisor : null;
+        if (amount === null) return null;
+        return { amount, currency: m.currency_code || "USD" };
+      };
+
+      const slimLineItems = transactions.map(t => {
+        const variations = Array.isArray(t.variations) ? t.variations.map(v => ({
+          name : v.formatted_name || v.name || null,
+          value: v.formatted_value || v.value || null
+        })) : [];
+
+        // Personalizations can show up as either `personalization` (single
+        // object) or `personalization_data` (array). Normalize to an array.
+        let personalizations = [];
+        if (Array.isArray(t.personalization_data)) {
+          personalizations = t.personalization_data.map(p => ({
+            name : p.personalization_name || p.formatted_name || p.name || null,
+            value: p.personalization_value || p.formatted_value || p.value || null
+          }));
+        } else if (t.personalization && typeof t.personalization === "object") {
+          // Single personalization object — wrap as one-element array.
+          personalizations = [{
+            name : t.personalization.personalization_name || t.personalization.formatted_name || null,
+            value: t.personalization.personalization_value || t.personalization.formatted_value || null
+          }];
+        }
+
+        return {
+          title       : t.title || null,
+          listingId   : t.listing_id || null,
+          listingUrl  : t.listing_id ? `https://www.etsy.com/listing/${t.listing_id}` : null,
+          quantity    : t.quantity || 1,
+          price       : money(t.price),
+          variations,
+          personalizations
+        };
+      });
+
+      return {
+        found              : true,
+        receiptId          : resolvedReceiptId,
+        resolvedFromMostRecent,
+        buyerUserId        : payload.buyer_user_id ? String(payload.buyer_user_id) : (buyerUserId || null),
+        orderedAtSec       : payload.created_timestamp || null,
+        status             : payload.status || null,
+        isPaid             : payload.is_paid === true,
+        isShipped          : payload.is_shipped === true,
+        grandTotal         : money(payload.grandtotal),
+        lineItemCount      : slimLineItems.length,
+        lineItems          : slimLineItems
+      };
     }
   };
 }
@@ -1268,6 +1450,21 @@ const TOOL_SPEC_LOOKUP_LISTING_SPECS = {
   }
 };
 
+const TOOL_SPEC_LOOKUP_EXISTING_ORDER = {
+  name: "lookup_existing_order",
+  description: "Fetch the full variant details (chain style, chain length, metal, charm size, engraving text, etc.) of a customer's past Etsy order. Call this WHENEVER the customer references a prior purchase AND the answer depends on what specific variant they actually have on record — most commonly when they're asking for a reorder with a small change (different chain length, different metal) and you need to know what their original variants were to give a correct answer. Without calling this tool, you cannot reliably tell the customer which options are available for THEIR existing item — variant availability often differs across chain styles (e.g. some metals available on Regular Chain but not Beady, some lengths only on certain charm sizes, etc.). With no arguments, the tool defaults to the customer's MOST RECENT receipt (which is the right answer most of the time when the customer says \"my last order\" or \"the necklace I got\" without specifying further). Pass a specific receiptId only when the thread context surfaces one (e.g. notes panel mentions \"order #4045504684\") OR the customer explicitly names an order ID. Returns: { found, receiptId, lineItems: [{ title, listingId, listingUrl, variations: [{ name, value }], personalizations: [{ name, value }] }], ... }. CRITICAL BEHAVIOR: if found is false, do NOT guess the customer's original variants. Either ask one specific question to clarify or escalate_to_human with reason past_order.",
+  input_schema: {
+    type: "object",
+    properties: {
+      receiptId: {
+        type: "string",
+        description: "Optional. The specific Etsy receipt ID to look up. If omitted, the tool fetches the customer's MOST RECENT receipt (which is almost always the right answer for reorder/variant questions). Only pass a specific receiptId when one is explicitly surfaced in thread context (e.g. \"order #1234567890\" in operator notes or in the customer's own message). Must be numeric — the resolver rejects non-numeric values."
+      }
+    },
+    required: []
+  }
+};
+
 function buildToolSpecs() {
   // v4.0: all tools available always. The agent decides what to call
   // based on conversation state, not on a stage gate.
@@ -1279,7 +1476,8 @@ function buildToolSpecs() {
     TOOL_SPEC_REQUEST_PHOTO,
     TOOL_SPEC_REQUEST_DIMENSIONS,
     TOOL_SPEC_RESOLVE_QUOTE,
-    TOOL_SPEC_GET_COLLATERAL
+    TOOL_SPEC_GET_COLLATERAL,
+    TOOL_SPEC_LOOKUP_EXISTING_ORDER
   ];
 }
 
@@ -2089,8 +2287,14 @@ exports.handler = async (event) => {
     }
 
     // ── Build tools + executors ──
+    // buyerUserId is sourced from the thread doc — written there by
+    // etsyMailSnapshot.js on every scrape (see B2). The lookup_existing_
+    // order tool needs it to find the customer's recent receipts when
+    // the agent calls the tool without an explicit receiptId.
+    const buyerUserIdForTools = (threadDocData && threadDocData.buyerUserId)
+      ? String(threadDocData.buyerUserId) : null;
     const toolSpecs     = buildToolSpecs();
-    const toolExecutors = buildToolExecutors({ threadId, salesCtx, customerHistory, cfg });
+    const toolExecutors = buildToolExecutors({ threadId, salesCtx, customerHistory, buyerUserId: buyerUserIdForTools, cfg });
 
     // ── Build initial messages ──
     // v2.3 — Compact `referencedListings` for the agent's context. The
@@ -3467,6 +3671,24 @@ Do NOT pick next_action: ask_one_question and then write reply text that mention
         rawCount              : prefetchedSizingCollateralResult.rawCount,
         filteredOutPlaceholder: prefetchedSizingCollateralResult.filteredOutPlaceholder,
         reason                : prefetchedSizingCollateralResult.reason
+      },
+      // v2.8.3 — Critical diagnostic on the DRAFT doc (not just audit).
+      // For each kind whose attach_* flag was true, this records whether
+      // the lookup found an attachable collateral entry. When attached
+      // is false, the `reason` field tells you why:
+      //   "no_active_collateral_for_kind" — kind-strict lookup AND name
+      //   fallback both failed, no matching entry in EtsyMail_Collateral
+      // If the array is EMPTY despite the topic being detected, the
+      // auto-set logic above didn't fire — most likely deployment lag.
+      aiCollateralAttachInfo: collateralAttachInfo,
+      // v2.8.3 — Track which attach_* flags this code set automatically
+      // vs which the AI emitted itself. Lets us tell at a glance whether
+      // the auto-set logic ran on a given turn.
+      aiAutoSetFlags: {
+        attach_care_instructions: parsed._attachCareInstructionsAutoSet === true,
+        attach_metal_comparison : parsed._attachMetalComparisonAutoSet === true,
+        attach_fit_reference    : parsed._attachFitReferenceAutoSet === true,
+        attach_bracelet_sizing  : parsed._attachBraceletSizingAutoSet === true
       },
       readyForHumanApproval : !!parsed.ready_for_human_approval,
       // v4.1 — customer_accepted is the signal for the downstream
