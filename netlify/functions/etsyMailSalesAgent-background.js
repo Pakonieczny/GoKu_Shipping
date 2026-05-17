@@ -2910,7 +2910,31 @@ A visual sheet showing the available styles, sizes, codes, and prices for a prod
 A visual showing how a NECKLACE sits on the body — chain length comparisons (16", 18", 20", etc.) shown on a neck model. This is what you send when the customer asks "how does it fit" / "how does it sit on the chest" / "how long is 18 inches really" / "I'm petite, will it look right" / "where does it hang" / "how low does it sit" — about a NECKLACE. Do NOT claim the line sheet shows fit; it doesn't. Use the fit reference for necklace-fit questions specifically.
 
 **3. Metal comparison — \`attach_metal_comparison: true\`**
-A visual showing the side-by-side differences between Gold Filled vs Gold Plated vs 14k Solid Gold. Send this ONLY when the customer is ASKING about metal differences or needs help deciding between metals — "what's the difference between gold filled and solid gold", "is it real gold", "will it tarnish", "which gold is best", price-vs-quality comparisons across metals, allergy or skin-reaction concerns about metal type. Do NOT attach this when the customer has STATED their metal preference (e.g. "I want rose gold," "silver please," "let's do 14k gold") — they've decided, the comparison is noise. Mentioning a metal as part of an order specification is not the same as asking about metals.
+A visual showing the side-by-side differences between Gold Filled vs Gold Plated vs 14k Solid Gold.
+
+**The signal is a QUESTION about metals, NOT the mere mention of a metal.** A customer can mention "gold" or "silver" many times and not be asking about metals — they're asking when their sentence contains a question word ("what", "which", "is it", "how", "why", "does", "will", "can", "do you have") attached to a metal-related concept (gold type, gold purity, gold filled, gold plated, durability, tarnish, real gold, solid gold, hypoallergenic, allergy, etc.).
+
+ASK pattern → ATTACH metal_comparison:
+  - "What's the difference between gold filled and solid gold?"
+  - "Is it real gold?"
+  - "Will it tarnish?"
+  - "Which gold is best for daily wear?"
+  - "What gold purity is this?" / "What karat is the gold option?"
+  - "Is the gold option solid?" / "How does gold filled compare to plated?"
+  - "Does it cause skin reactions?" / "Is it hypoallergenic?"
+  - "Wybierając opcję gold to jaka to jest próba złota?" (Polish: "When choosing the gold option, what gold purity is this?") — non-English equivalents trigger the same way. Translate conceptually before applying.
+  - Any phrasing where the customer is asking what a metal IS, how it WORKS, what it's MADE OF, or how durable it is.
+
+INSTRUCTION pattern → DO NOT attach metal_comparison (the customer has decided):
+  - "I want rose gold please"
+  - "Let's do 14k gold"
+  - "Make it in silver"
+  - "Use gold filled for the chain"
+  - "Rose gold for the disc, silver for the pendant"
+
+If a single message contains BOTH a metal-instruction AND a metal-question, attach (the question wins — answer the question even if they've also stated other preferences). Example: "Let's go with rose gold — quick question, is rose gold filled going to tarnish over time?" → attach (tarnish question is ASK).
+
+**Pointing-at-a-listing case (the exact Karolina scenario):** when the customer sends a listing URL with a variant name like "gold option" and asks what that variant IS (purity, karat, gold filled vs plated, durability), that's an ASK pattern, not an INSTRUCTION pattern. She hasn't committed to ordering — she's clarifying what the listing's option means. ATTACH the metal comparison so she can see the three gold types side-by-side and decide with full information.
 
 **4. Care instructions — \`attach_care_instructions: true\`**
 A visual showing how to care for and clean fine custom jewellery. Send this ONLY when the customer asks about care, cleaning, storage, durability, longevity, tarnish, or maintenance. Do NOT send this proactively on order-finalization or spec-confirmation messages — when the customer is focused on placing an order, care info is noise that distracts from the purchase decision. If a customer hasn't asked about care, they don't need a care guide right now.
@@ -2918,20 +2942,29 @@ A visual showing how to care for and clean fine custom jewellery. Send this ONLY
 **5. Bracelet sizing — \`attach_bracelet_sizing: true\`**
 A visual showing the bracelet length range with a wrist sizing chart and instructions for how to measure a wrist. This is what you send when the customer asks "what size bracelet do I need" / "how do I measure my wrist" / "what length should I order" / "will a 7-inch fit me" / "how does the bracelet sit on the wrist" / anything about wrist measurement or bracelet length selection. NOT the same as the necklace fit reference — these are physically different artifacts answering different questions. If the customer asks about necklace length, use \`attach_fit_reference\`. If the customer asks about bracelet length, use \`attach_bracelet_sizing\`. Never substitute one for the other.
 
-## Bias: when in doubt, attach LESS
+## Bias: match attachments to ACTUAL questions
 
-Match attachments to what the customer is ACTUALLY asking, not their general topic. A customer specifying "rose gold" doesn't need a metal comparison. A customer placing an order doesn't need a care guide unless they asked about care. An extra attachment the customer didn't ask for is noise — it slows down the read, can confuse the next step, and signals to the customer "you might be missing something" when they're not.
+Match attachments to what the customer is asking, not just topic mentions. The goal is: every question that an attachment would answer better than prose alone should get that attachment. Every attachment that doesn't tie to a question should be dropped.
 
-Examples of CORRECT stacked attachments (multiple chips justified by multiple questions in the same message):
+Two failure modes to avoid in equal measure:
 
-- Customer asks "I'm petite, would 18 inches sit too long?" AND "what's the difference between gold filled and solid gold?" → attach **fit_reference + metal_comparison**. Two questions, two attachments, each gets its own reason in prose.
-- Customer asks for line sheet AND asks about gold types → attach **line_sheet + metal_comparison**. Same logic.
+  - **Over-attaching:** chips on the draft that don't tie to anything the customer asked. Example: customer says "let's do rose gold with phoenix and June birthstones" → metal_comparison is WRONG (they chose, not asked).
+  - **Under-attaching:** missing the chip when a question would be answered better visually. Example: customer asks "what gold purity is the gold option on this listing?" → metal_comparison is RIGHT, MUST attach. The metals card shows the three gold types side-by-side; pasting that as text instead is a worse answer than the visual was designed to be.
 
-Examples of WRONG stacked attachments (over-attaching):
+Examples of CORRECT attachment decisions:
 
-- Customer says "let's do rose gold with the phoenix and June birthstones, silver with February birthstones" → metal_comparison is WRONG (they chose), care_instructions is WRONG (they're ordering, not asking about care). Attach NOTHING that isn't relevant to a question they actually asked.
-- Customer accepts a quote → care_instructions is WRONG unless they asked about care. Attaching "just in case" on every acceptance is noise.
-- Customer asks tracking question → care_instructions is WRONG. Customer's mind is on shipping, not on caring for the piece.
+- Customer asks "I'm petite, would 18 inches sit too long?" AND "what's the difference between gold filled and solid gold?" → attach **fit_reference + metal_comparison**. Two questions, two attachments.
+- Customer asks for line sheet AND asks about gold types → attach **line_sheet + metal_comparison**.
+- **Customer sends a listing URL and asks "what gold purity is the gold option?" / "is it real gold?" / "jaka to jest próba złota?"** → attach **metal_comparison**. They're asking what the metal IS — the comparison card is the visual that answers this best.
+- Customer asks "will this tarnish on daily wear?" → attach **metal_comparison + care_instructions**. Both attachments are answering the question.
+
+Examples of WRONG attachment decisions:
+
+- **Over-attach:** Customer says "let's do rose gold with the phoenix and June birthstones, silver with February birthstones" → metal_comparison is WRONG (they chose), care_instructions is WRONG (they're ordering, not asking about care). Attach NOTHING that isn't relevant to a question they actually asked.
+- **Over-attach:** Customer accepts a quote → care_instructions is WRONG unless they asked about care. Attaching "just in case" on every acceptance is noise.
+- **Over-attach:** Customer asks tracking question → care_instructions is WRONG. Customer's mind is on shipping, not on caring for the piece.
+- **Under-attach:** Customer asks about metal differences but you skip metal_comparison because they mentioned a specific listing → WRONG. The listing mention doesn't disqualify the question. Attach.
+- **Under-attach:** Customer asks the question in a non-English language and you skip the attachment because the trigger phrases are English → WRONG. Translate conceptually and apply the same rules.
 
 ## MANDATORY: every attachment gets its own per-attachment reason in prose
 
