@@ -373,26 +373,20 @@ function normalizeListing(apiData, imageInfo, fallbackCacheDoc, inventoryInfo) {
                         ? Number(apiData.processing_max)
                         : (fallbackCacheDoc && Number.isFinite(Number(fallbackCacheDoc.leadTimeDays))
                             ? Number(fallbackCacheDoc.leadTimeDays) : null),
-    // v2.5 — Live variants the buyer sees in the listing's dropdown.
-    // Source of truth for "what metals/options does this listing
-    // offer?". Each entry: { name, propertyName, priceUsd, enabled,
-    // quantity }. Empty array means inventory fetch failed or listing
-    // has no variants. The AI prompt directs the model to use this for
-    // any variant-availability question (metals offered, prices per
-    // variant, what's actually orderable). Inventory fetch is non-
-    // fatal — listing data still returns even if this is empty.
+    // v2.5 — Live variants from Etsy's /listings/{id}/inventory endpoint.
+    // The exact list the buyer sees in the listing's option dropdown,
+    // with current prices and stock status. Source of truth for "what's
+    // actually orderable on this listing" — replaces guesswork from
+    // title/description.
     variants         : normalizeInventoryVariants(inventoryInfo),
     fetchedAt        : Date.now()
   };
 }
 
-// ─── Inventory normalization ───────────────────────────────────────────
-
-/** Convert Etsy's getListingInventory() response into a slim array of
- *  variants the AI can reason about. Each Etsy "product" is one variant
- *  combination (e.g. "14K Solid Gold", or "Gold + Engrave" for a multi-
- *  property listing). Maps to:
- *    { name, propertyName, priceUsd, enabled, quantity }
+/** Convert getListingInventory() raw response into a slim variant array.
+ *  Each Etsy "product" is one variant combination (e.g. "14K Solid Gold"
+ *  alone, or "Gold + Engrave" for a multi-property listing).
+ *  Returns: [{ name, propertyName, priceUsd, enabled, quantity }, ...]
  *  Returns [] if input is missing/malformed. */
 function normalizeInventoryVariants(inventoryInfo) {
   const products = (inventoryInfo && Array.isArray(inventoryInfo.products))
@@ -454,13 +448,11 @@ async function lookupListingById({ listingId, threadId = null }) {
   // both take `listingId` directly, no dependency between them. Cuts
   // typical lookup latency from ~700ms to ~400ms (one round-trip
   // instead of two). Image fetch failure is non-fatal.
-  // v2.5 — also fetch inventory in parallel so the AI sees the real
-  // variants/options/prices the buyer sees on the listing page. Cache
-  // mirror has chronic gaps (a listing's "14K Solid Gold" variant
-  // wasn't in the catalog's availableMetals array, so the AI gave an
-  // incomplete answer omitting the premium tier). The Etsy inventory
-  // endpoint is the source of truth. Failure is non-fatal — listing
-  // data still returns even if inventory fetch breaks.
+  // v2.5 — also fetch inventory in parallel so the AI sees the actual
+  // variants the buyer sees in the listing's option dropdown (metals,
+  // engraving options, prices per variant, etc.). The Firestore mirror's
+  // catalog doesn't store variant data; the live API is the only
+  // source of truth. Failure is non-fatal — listing data still returns.
   let apiCallErr = null, imageErr = null, inventoryErr = null;
   const [apiRes, imgRes, invRes] = await Promise.allSettled([
     getListing(listingId),
@@ -478,8 +470,6 @@ async function lookupListingById({ listingId, threadId = null }) {
     imageInfo = imgRes.value;
   } else {
     imageErr = imgRes.reason && (imgRes.reason.message || String(imgRes.reason));
-    // Don't fail on image-fetch error; we still have the main listing
-    // data and can render without an image.
     if (etsyApiCallSuccessful) {
       console.warn(`getListingImages(${listingId}) failed (non-fatal):`, imageErr);
     }
@@ -488,7 +478,6 @@ async function lookupListingById({ listingId, threadId = null }) {
     inventoryInfo = invRes.value;
   } else {
     inventoryErr = invRes.reason && (invRes.reason.message || String(invRes.reason));
-    // Non-fatal: listing data still returns; variants will be absent.
     if (etsyApiCallSuccessful) {
       console.warn(`getListingInventory(${listingId}) failed (non-fatal):`, inventoryErr);
     }

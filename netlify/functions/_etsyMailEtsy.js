@@ -227,7 +227,8 @@ async function getListing(listingId) {
   return etsyFetch(`/listings/${listingId}`);
 }
 
-/** Full inventory for a listing: every variant with price/SKU/quantity.
+/** Full inventory for a listing: every variant the buyer sees in the
+ *  option dropdown, with price, SKU, quantity, and enabled state.
  *  GET /listings/{listing_id}/inventory */
 async function getListingInventory(listingId) {
   return etsyFetch(`/listings/${listingId}/inventory`);

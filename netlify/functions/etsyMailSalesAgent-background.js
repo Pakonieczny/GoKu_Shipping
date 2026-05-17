@@ -632,112 +632,31 @@ async function prefetchLineSheetCollateral({ latestInboundText, salesCtx, recent
   }
 }
 
-// ─── v2.8 — Topic-driven care / durability / metal-comparison prefetch ──
+// ─── v5.21 — Care / durability / metal-comparison prefetch (AI decider) ─
 //
-// The line-sheet prefetch above is family-driven (deterministic for any
-// product family the customer mentions). This sibling prefetch is
-// TOPIC-driven: when the inbound message (or recent thread) discusses
-// tarnish, shower-safety, daily wear, durability, cleaning, hypoallergenic,
-// or metal-type comparison, we pre-fetch the relevant collateral cards
-// from EtsyMail_Collateral and pass them into the agent's context as
-// `prefetchedCareCollateral`. The agent then uses those URLs directly —
-// no get_collateral tool call required.
-//
-// Why deterministic prefetch instead of relying on the agent to call the
-// tool: production showed the agent gets it right on text (per-metal
-// nuance) but skips the tool call, so customers never see the visual
-// reference cards. Putting the URLs in context with a strong prompt
-// directive moves the failure mode from "agent didn't think to look" to
-// "agent has the URL right there".
-//
-// Trigger keywords are permissive — many ways customers phrase the same
-// question (tarnish/tarnishes/tarnishing, "wear in the shower"/"shower-safe"
-// /"can I shower", etc). Match on ANY one is enough to fire.
-const CARE_TOPIC_KEYWORDS = [
-  // tarnish / corrosion / fade
-  "tarnish", "tarnishes", "tarnishing", "tarnish-resistant", "anti-tarnish",
-  "rust", "rusts", "rusting",
-  "corrode", "corrodes", "corrosion",
-  "patina",
-  "fade", "fades", "fading",
-  "discolor", "discolors", "discoloring",
-  // water / shower / swim
-  "shower", "showering", "wear in the shower", "wear in shower", "shower-safe",
-  "swim", "swimming", "pool", "ocean", "salt water", "saltwater",
-  "chlorine", "chlorinated", "hot tub", "sauna",
-  "water-safe", "waterproof", "water resistant", "water-resistant",
-  "wet", "getting wet",
-  // daily wear / durability
-  // v4.5 — Removed "everyday" and "every day" (and the standalone
-  // "all the time"): in operator-tested drafts, these matched
-  // intent statements like "I want to wear it every day" or
-  // "I'll use it every day" — phrases that signal frequency-of-wear,
-  // not a durability QUESTION. They were causing the metals-comparison
-  // and care-guide chips to auto-attach on reorder threads where
-  // the operator only wanted (at most) the sizing chip. "wear daily"
-  // and "daily wear" stay — those phrasings are specific enough to
-  // reliably indicate a durability question.
-  "wear daily", "daily wear", "24/7",
-  "durable", "durability", "sturdy", "delicate",
-  "lifespan", "long does it last", "how long will it last", "how long does it last",
-  "longevity", "lasting", "last long",
-  // skin reactions / allergy
-  "turn green", "turn black", "skin reaction", "allergic", "allergy",
-  "hypoallergenic", "sensitive skin", "irritate", "irritation",
-  // care / cleaning / storage
-  // v4.5 — Removed "store it" and standalone "storage": "store it
-  // for me until X" and similar logistics phrasings were false-
-  // positives. "how to store" is specific enough on its own.
-  "care for", "how do i care", "how to care", "care instructions",
-  "how to clean", "how do i clean", "cleaning", "polish", "polishing",
-  "soft cloth", "polish cloth",
-  "how to store",
-  // metal-type comparison
-  "gold filled vs", "gold plated vs", "solid gold vs",
-  "what is gold filled", "what does gold filled mean", "what is gold-filled",
-  "difference between", "vs plated", "vs filled",
-  "real gold", "what kind of gold", "is this real gold",
-  "14k vs", "is it plated", "is it solid", "is it gold filled"
-];
+// The keyword-driven topic detection was removed. Why: keywords are
+// English-only and substring-based, so they missed non-English questions
+// (e.g. Polish "Wybierając opcję gold to jaka to jest próba złota?" =
+// "what gold purity") and they over-fired on incidental mentions of a
+// metal name in a settled order spec. The collateral pool is now
+// fetched unconditionally and the AI decides — via
+// parsed.attach_care_instructions / parsed.attach_metal_comparison on
+// its JSON output — whether to attach anything from the pool.
 
-function _careTopicDetected(text) {
-  if (!text || typeof text !== "string") return false;
-  const lower = text.toLowerCase();
-  return CARE_TOPIC_KEYWORDS.some(kw => lower.includes(kw));
-}
-
-async function prefetchCareCollateral({ latestInboundText, recentThreadMessages = null }) {
-  // v2.8.1 — Returns a structured object with diagnostics instead of just
-  // an array. Callers that only want the URLs read .matches; the audit
-  // payload reads the whole object so the operator can see at a glance
-  // whether the prefetch fired, what it found, and what got filtered.
-  // Backward-compat: { matches:[], topicDetected:false, rawCount:0,
-  // filteredOutPlaceholder:[] }.
+async function prefetchCareCollateral() {
+  // v5.21 — Keyword-based gating removed. The pool is always fetched
+  // so it's available when the AI sets attach_care_instructions or
+  // attach_metal_comparison. The AI is the decision-maker; this
+  // function just prepares the candidate collateral. The returned
+  // shape preserves the diagnostic fields downstream code expects.
   const empty = (reason) => ({
     matches: [],
-    topicDetected: false,
     rawCount: 0,
     filteredOutPlaceholder: [],
     reason: reason || null
   });
 
   if (!searchCollateral) return empty("SEARCH_COLLATERAL_UNAVAILABLE");
-
-  // Pass 1: check the current inbound.
-  let topicHit = _careTopicDetected(latestInboundText);
-
-  // Pass 2: scan the last few thread messages.
-  if (!topicHit && Array.isArray(recentThreadMessages)) {
-    for (let i = recentThreadMessages.length - 1; i >= Math.max(0, recentThreadMessages.length - 3); i--) {
-      const m = recentThreadMessages[i];
-      if (m && m.text && _careTopicDetected(m.text)) {
-        topicHit = true;
-        break;
-      }
-    }
-  }
-
-  if (!topicHit) return empty("NO_CARE_TOPIC_DETECTED");
 
   try {
     const result = await searchCollateral({
@@ -751,9 +670,7 @@ async function prefetchCareCollateral({ latestInboundText, recentThreadMessages 
     // the ones that fail SO THE OPERATOR CAN SEE THEM. Common cause of
     // silent failure: collateral docs in Firestore still have
     // "REPLACE_WITH_PUBLIC_URL" placeholders because the operator hasn't
-    // uploaded the actual card image to a public URL yet. Without this
-    // diagnostic, the prefetch silently returns empty and the AI has
-    // nothing to attach — exactly the failure mode we hit in production.
+    // uploaded the actual card image to a public URL yet.
     const seen = new Set();
     const visible = [];
     const filteredOutPlaceholder = [];
@@ -763,19 +680,18 @@ async function prefetchCareCollateral({ latestInboundText, recentThreadMessages 
       if (m.id) seen.add(m.id);
       if (isCustomerVisibleUrl(m.url)) {
         visible.push(m);
-        if (visible.length >= 4) continue;   // cap visible at 4 but keep recording filtered
+        if (visible.length >= 4) continue;
       } else {
         filteredOutPlaceholder.push({
           id: m.id || null,
           name: m.name || null,
-          url: m.url   // operator NEEDS to see the bad URL here
+          url: m.url
         });
       }
     }
 
     return {
       matches: visible.slice(0, 4),
-      topicDetected: true,
       rawCount,
       filteredOutPlaceholder,
       reason: visible.length === 0 && filteredOutPlaceholder.length > 0
@@ -790,78 +706,23 @@ async function prefetchCareCollateral({ latestInboundText, recentThreadMessages 
   }
 }
 
-// ─── v2.8.2 — Topic-driven sizing / fit / measurements prefetch ──────────
+// ─── v5.21 — Sizing / fit / measurements prefetch (AI is the decider) ──
 //
-// Mirror of prefetchCareCollateral, fires on sizing-question keywords:
-// "what size," "how long is the necklace," "chain length," "wrist," "fit,"
-// specific lengths ("16 inch", "18 inch"), etc. Pulls collateral filed
-// under category "sizing" first (canonical), falls back to a keyword scan
-// if the operator hasn't renamed categories yet. Returns the same
-// structured diagnostic shape as prefetchCareCollateral.
+// Pulls collateral filed under category "sizing" first (canonical),
+// falls back to a keyword scan if the operator hasn't renamed
+// categories yet. The keyword-based topic gate has been removed —
+// the pool is always fetched so it's available when the AI sets
+// attach_fit_reference or attach_bracelet_sizing.
 
-const SIZING_TOPIC_KEYWORDS = [
-  // generic size / fit / measure
-  "size", "sizes", "sizing", "size chart", "size guide",
-  "fit", "fits", "fit guide", "fit reference", "fit chart",
-  "measure", "measuring", "measurement", "measurements",
-  "how to measure", "how do i measure",
-  // chain / necklace length
-  "chain length", "chain size", "chain inches",
-  "necklace length", "necklace size",
-  "how long is the necklace", "how long is this", "how long is it",
-  "pendant length", "drop length", "drop",
-  // wrist / bracelet
-  "wrist", "wrist size", "wrist circumference",
-  "bracelet size", "bracelet length", "bracelet sizing",
-  // specific lengths (common chain inches)
-  "16 inch", "16-inch", "16\"", "16in",
-  "18 inch", "18-inch", "18\"", "18in",
-  "20 inch", "20-inch", "20\"", "20in",
-  "22 inch", "22-inch", "22\"", "22in",
-  "24 inch", "24-inch", "24\"", "24in",
-  // fit questions
-  "what size should i get", "what size do you recommend",
-  "what length", "what length should",
-  "will it fit", "will this fit", "fit my",
-  "how long should", "how should it fit",
-  // body-reference phrasings
-  "on body", "lies on", "sits at", "falls at",
-  "collarbone", "below collarbone", "above collarbone",
-  "chest", "bustline", "between collarbone"
-];
-
-function _sizingTopicDetected(text) {
-  if (!text || typeof text !== "string") return false;
-  const lower = text.toLowerCase();
-  return SIZING_TOPIC_KEYWORDS.some(kw => lower.includes(kw));
-}
-
-async function prefetchSizingCollateral({ latestInboundText, recentThreadMessages = null }) {
+async function prefetchSizingCollateral() {
   const empty = (reason) => ({
     matches: [],
-    topicDetected: false,
     rawCount: 0,
     filteredOutPlaceholder: [],
     reason: reason || null
   });
 
   if (!searchCollateral) return empty("SEARCH_COLLATERAL_UNAVAILABLE");
-
-  // Pass 1: check the current inbound.
-  let topicHit = _sizingTopicDetected(latestInboundText);
-
-  // Pass 2: scan the last few thread messages.
-  if (!topicHit && Array.isArray(recentThreadMessages)) {
-    for (let i = recentThreadMessages.length - 1; i >= Math.max(0, recentThreadMessages.length - 3); i--) {
-      const m = recentThreadMessages[i];
-      if (m && m.text && _sizingTopicDetected(m.text)) {
-        topicHit = true;
-        break;
-      }
-    }
-  }
-
-  if (!topicHit) return empty("NO_SIZING_TOPIC_DETECTED");
 
   try {
     // Strategy A: try category="sizing" first. This is the canonical
@@ -911,7 +772,6 @@ async function prefetchSizingCollateral({ latestInboundText, recentThreadMessage
 
     return {
       matches: visible.slice(0, 4),
-      topicDetected: true,
       rawCount,
       filteredOutPlaceholder,
       reason: visible.length === 0 && filteredOutPlaceholder.length > 0
@@ -1412,7 +1272,7 @@ const TOOL_SPEC_GET_COLLATERAL = {
 // authoritative data from Etsy's API (with cache fallback).
 const TOOL_SPEC_LOOKUP_LISTING_BY_URL = {
   name: "lookup_listing_by_url",
-  description: "Fetch the full data for a specific Etsy listing when the customer has pasted or referenced a listing URL. Recognizes all Etsy URL formats: canonical (etsy.com/listing/12345), with locale prefix (etsy.com/uk/listing/12345), with slug or query params, and the seller's internal /your/listings/ URLs. Etsy short links (etsy.me/...) are detected but NOT auto-resolved (returns SHORT_LINK_UNRESOLVED — ask the customer for the full URL). Returns authoritative data direct from Etsy's API including title, price, description excerpt, primary image URL, listing state, shop ownership, and customizability flag. The result includes notOurShop:true if the listing belongs to a competitor (in which case acknowledge but pivot to your own offerings) and isActive:false if the listing is sold-out, expired, or draft (in which case mention the listing is no longer available and offer to make something similar via custom order).",
+  description: "Fetch the full data for a specific Etsy listing when the customer has pasted or referenced a listing URL. Recognizes all Etsy URL formats: canonical (etsy.com/listing/12345), with locale prefix (etsy.com/uk/listing/12345), with slug or query params, and the seller's internal /your/listings/ URLs. Etsy short links (etsy.me/...) are detected but NOT auto-resolved (returns SHORT_LINK_UNRESOLVED — ask the customer for the full URL). Returns authoritative data direct from Etsy's API including title, price, description excerpt, primary image URL, listing state, shop ownership, customizability flag, AND `listing.variants` — the full list of option-dropdown entries the buyer actually sees on the listing (each with name, price, and enabled/quantity). Use `listing.variants` as the source of truth for any 'what metals/options/sizes does this offer', 'is X in stock', or 'how much for the gold version' question. The result includes notOurShop:true if the listing belongs to a competitor (in which case acknowledge but pivot to your own offerings) and isActive:false if the listing is sold-out, expired, or draft (in which case mention the listing is no longer available and offer to make something similar via custom order).",
   input_schema: {
     type: "object",
     properties: {
@@ -2254,23 +2114,13 @@ exports.handler = async (event) => {
     const recommendedCollateral = await prefetchLineSheetCollateral({
       latestInboundText, salesCtx, recentThreadMessages
     });
-    // v2.8 — Topic-driven care/durability/metal-comparison prefetch.
-    // v2.8.1 — Returns a structured diagnostic object now; .matches is
-    // the URL list for the AI, the rest is for operator visibility.
-    const prefetchedCareCollateralResult = await prefetchCareCollateral({
-      latestInboundText, recentThreadMessages
-    });
+    // v5.21 — Always prefetch the care/sizing collateral pools. The
+    // AI decides via parsed.attach_* flags on its JSON output whether
+    // to attach anything; this just prepares the candidate pool.
+    const prefetchedCareCollateralResult = await prefetchCareCollateral();
     const prefetchedCareCollateral = prefetchedCareCollateralResult.matches || [];
 
-    // v2.8.2 — Topic-driven sizing/fit/measurements prefetch. Mirrors
-    // the care prefetch shape; surfaces sizing reference cards when
-    // the customer asks about size, fit, chain length, wrist sizing,
-    // etc. Operator can rename their sizing entries to category="sizing"
-    // for the most efficient lookup (Strategy A); otherwise the
-    // function falls back to a keyword scan (Strategy B).
-    const prefetchedSizingCollateralResult = await prefetchSizingCollateral({
-      latestInboundText, recentThreadMessages
-    });
+    const prefetchedSizingCollateralResult = await prefetchSizingCollateral();
     const prefetchedSizingCollateral = prefetchedSizingCollateralResult.matches || [];
 
     // ── Load the unified sales prompt ──
@@ -2328,7 +2178,12 @@ exports.handler = async (event) => {
                             ? li.descriptionShort.slice(0, 400) : null,
           tags          : Array.isArray(li.tags) ? li.tags.slice(0, 8) : [],
           materials     : Array.isArray(li.materials) ? li.materials.slice(0, 6) : [],
-          isCustomizable: li.isCustomizable
+          isCustomizable: li.isCustomizable,
+          // v2.5 — Live variants from Etsy /listings/{id}/inventory.
+          // Source of truth for "what options/metals/prices does this
+          // listing actually offer". Empty array = inventory fetch
+          // failed or listing has no variants.
+          variants      : Array.isArray(li.variants) ? li.variants : []
         };
       });
 
@@ -3194,77 +3049,20 @@ Do NOT pick next_action: ask_one_question and then write reply text that mention
       // populated for the deprecated cycle.
       backfillLegacyFieldsFromV5(parsed);
 
-      // ── v2.8.3 — Deterministic care/sizing collateral attachment ──
+      // ── v5.21 — AI decides care/sizing collateral attachments ───────
       //
-      // The line-sheet attachment system supports five collateral kinds
-      // (line_sheet, care_instructions, metal_comparison, fit_reference,
-      // bracelet_sizing) via boolean flags on parsed. The line-sheet
-      // flag has both an AI-set path AND a server-side text-pattern
-      // fallback. Care/sizing previously had neither — only a "put the
-      // URL in the reply text" prompt instruction the AI followed
-      // inconsistently AND incorrectly (URLs in text instead of files).
-      //
-      // This block makes care/sizing as deterministic as line sheets.
-      // When prefetch detects the topic, set the matching attach_*
-      // flag. The existing attachment construction code at line ~3273
-      // then resolves each flag to an attachable collateral entry via
-      // findAttachableForKind, builds an image-attachment record, and
-      // writes it to draft.attachments — same path as line sheets.
-      //
-      // Reply text concerns are handled in the prompt: the AI is told
-      // not to embed URLs and to reference the attached image
-      // naturally, mirroring line-sheet phrasing.
-      if (prefetchedCareCollateralResult && prefetchedCareCollateralResult.topicDetected) {
-        // Care/tarnish/durability/comparison topic → attach BOTH the
-        // care guide AND the metals comparison card. They complement
-        // each other on every care question (one explains the why,
-        // the other explains the how-to).
-        if (parsed.attach_care_instructions !== true) {
-          parsed.attach_care_instructions = true;
-          parsed._attachCareInstructionsAutoSet = true;
-        }
-        if (parsed.attach_metal_comparison !== true) {
-          parsed.attach_metal_comparison = true;
-          parsed._attachMetalComparisonAutoSet = true;
-        }
-      }
-
-      if (prefetchedSizingCollateralResult && prefetchedSizingCollateralResult.topicDetected) {
-        // Sizing topic → attach the family-specific reference. Look at
-        // recent text to decide which one. Generic-only fires both
-        // (necklace fit + bracelet sizing) so the customer sees options.
-        const sizingHaystack = (
-          (latestInboundText || "") + " " +
-          (Array.isArray(recentThreadMessages)
-            ? recentThreadMessages.slice(-3).map(m => (m && m.text) || "").join(" ")
-            : "")
-        ).toLowerCase();
-        const isNecklaceSizing =
-          /\b(necklace|chain length|chain size|chain inches|pendant|collarbone|drop length|bustline|on body|lies on|sits at|falls at)\b/.test(sizingHaystack) ||
-          /\b(16|18|20|22|24)[\s-]?(?:inch|in|")/.test(sizingHaystack);
-        const isBraceletSizing = /\b(wrist|bracelet)\b/.test(sizingHaystack);
-
-        if (isNecklaceSizing && parsed.attach_fit_reference !== true) {
-          parsed.attach_fit_reference = true;
-          parsed._attachFitReferenceAutoSet = true;
-        }
-        if (isBraceletSizing && parsed.attach_bracelet_sizing !== true) {
-          parsed.attach_bracelet_sizing = true;
-          parsed._attachBraceletSizingAutoSet = true;
-        }
-        // Generic sizing question with no family cue → attach both;
-        // customer sees the relevant one.
-        if (!isNecklaceSizing && !isBraceletSizing) {
-          if (parsed.attach_fit_reference !== true) {
-            parsed.attach_fit_reference = true;
-            parsed._attachFitReferenceAutoSet = true;
-          }
-          if (parsed.attach_bracelet_sizing !== true) {
-            parsed.attach_bracelet_sizing = true;
-            parsed._attachBraceletSizingAutoSet = true;
-          }
-        }
-      }
+      // The keyword-driven override that used to force-set
+      // parsed.attach_care_instructions, parsed.attach_metal_comparison,
+      // parsed.attach_fit_reference, parsed.attach_bracelet_sizing based
+      // on topic detection has been removed. Keywords are English-only
+      // and substring-based — they missed non-English questions and
+      // over-fired on incidental mentions of a metal name in a settled
+      // spec. The AI reads the customer's question semantically and
+      // sets these flags itself in its JSON output. The existing
+      // attachment construction code below resolves each flag to an
+      // attachable collateral entry via findAttachableForKind exactly
+      // the same way — it just reads the AI's flags instead of the
+      // keyword-overridden ones.
       // ──────────────────────────────────────────────────────────────
 
       // Run v5.0 consistency validation
@@ -3669,36 +3467,31 @@ Do NOT pick next_action: ask_one_question and then write reply text that mention
       // This makes silent failures impossible.
       aiPrefetchedCareCollateral: prefetchedCareCollateral,
       aiCareCollateralDiagnostic: {
-        topicDetected         : prefetchedCareCollateralResult.topicDetected,
         rawCount              : prefetchedCareCollateralResult.rawCount,
         filteredOutPlaceholder: prefetchedCareCollateralResult.filteredOutPlaceholder,
         reason                : prefetchedCareCollateralResult.reason
       },
-      // v2.8.2 — Same audit shape for the sizing prefetch.
+      // v5.21 — Same audit shape for the sizing prefetch.
       aiPrefetchedSizingCollateral: prefetchedSizingCollateral,
       aiSizingCollateralDiagnostic: {
-        topicDetected         : prefetchedSizingCollateralResult.topicDetected,
         rawCount              : prefetchedSizingCollateralResult.rawCount,
         filteredOutPlaceholder: prefetchedSizingCollateralResult.filteredOutPlaceholder,
         reason                : prefetchedSizingCollateralResult.reason
       },
-      // v2.8.3 — Critical diagnostic on the DRAFT doc (not just audit).
-      // For each kind whose attach_* flag was true, this records whether
-      // the lookup found an attachable collateral entry. When attached
-      // is false, the `reason` field tells you why:
-      //   "no_active_collateral_for_kind" — kind-strict lookup AND name
-      //   fallback both failed, no matching entry in EtsyMail_Collateral
-      // If the array is EMPTY despite the topic being detected, the
-      // auto-set logic above didn't fire — most likely deployment lag.
+      // v5.21 — Per-kind attach info. For each kind whose attach_* flag
+      // was true on parsed, this records whether findAttachableForKind
+      // resolved to an attachable entry. attached=false with
+      // reason="no_active_collateral_for_kind" means the operator
+      // hasn't uploaded the required collateral yet.
       aiCollateralAttachInfo: collateralAttachInfo,
-      // v2.8.3 — Track which attach_* flags this code set automatically
-      // vs which the AI emitted itself. Lets us tell at a glance whether
-      // the auto-set logic ran on a given turn.
-      aiAutoSetFlags: {
-        attach_care_instructions: parsed._attachCareInstructionsAutoSet === true,
-        attach_metal_comparison : parsed._attachMetalComparisonAutoSet === true,
-        attach_fit_reference    : parsed._attachFitReferenceAutoSet === true,
-        attach_bracelet_sizing  : parsed._attachBraceletSizingAutoSet === true
+      // v5.21 — What the AI itself set on its JSON output. The
+      // keyword-driven auto-set machinery is gone, so any true value
+      // here came from the AI's semantic read of the question.
+      aiCollateralFlagsSetByAI: {
+        attach_care_instructions: parsed.attach_care_instructions === true,
+        attach_metal_comparison : parsed.attach_metal_comparison  === true,
+        attach_fit_reference    : parsed.attach_fit_reference     === true,
+        attach_bracelet_sizing  : parsed.attach_bracelet_sizing   === true
       },
       readyForHumanApproval : !!parsed.ready_for_human_approval,
       // v4.1 — customer_accepted is the signal for the downstream
