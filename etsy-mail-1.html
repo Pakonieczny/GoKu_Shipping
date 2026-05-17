@@ -4211,19 +4211,6 @@
           Below it, replies go to <b>Needs Review</b>. Higher = safer, fewer auto-sends.
         </p>
 
-        <label class="em-modal-range" for="emQuietPeriodInput" style="margin-top:10px;">
-          <span style="white-space:nowrap;">Quiet period</span>
-          <input type="range" id="emQuietPeriodInput"
-                 min="0" max="30" step="1" />
-          <span class="em-modal-range-val" id="emQuietPeriodVal">5 min</span>
-        </label>
-        <p style="font-size:11px;color:#6a737d;margin:0 0 8px;">
-          Minutes the customer's most recent message must be "settled" before the AI drafts a reply.
-          Customers often send 3-4 messages in quick succession; without a quiet period each message burns an AI call.
-          The timer resets every time the customer sends again — the pipeline fires once, after they stop typing.
-          Set to <b>0</b> to draft immediately on every inbound (legacy behavior).
-        </p>
-
         <label style="display:flex; align-items:center; gap:10px; margin:14px 0 6px; cursor:pointer;">
           <input type="checkbox" id="emManualAutoSendInput" style="width:16px; height:16px; cursor:pointer;">
           <span><b>Auto-send when I click "AI Draft"</b> &mdash; if AI rates the draft above the threshold, queue it for delivery automatically.</span>
@@ -5625,11 +5612,6 @@
     const AUTO_CFG_DEFAULTS = {
       enabled              : true,
       threshold            : 0.80,
-      // v3.30 — Quiet-period debounce. Minutes the latest inbound must
-      // be "settled" before the pipeline runs. Prevents 3-4 rapid-fire
-      // customer messages from burning 3-4 Anthropic calls when one
-      // reply (after they stop typing) is what we actually want.
-      quietPeriodMinutes   : 5,
       manualAiDraftAutoSend: true,   // v1.8: defaults to ON to preserve existing behavior
       // ─── v2.0 Step 1 (default OFF — operator opts in after deploy verifies) ──
       listingsMirrorEnabled  : false,
@@ -5661,11 +5643,6 @@
             enabled              : d.enabled !== false,
             threshold            : (typeof d.threshold === "number" && d.threshold >= 0 && d.threshold <= 1)
                                    ? d.threshold : AUTO_CFG_DEFAULTS.threshold,
-            // v3.30: clamp to [0, 60] minutes. Missing field => 5 (the
-            // default — matches the server-side fallback). Setting 0
-            // disables the debounce entirely (legacy behavior).
-            quietPeriodMinutes   : (typeof d.quietPeriodMinutes === "number" && d.quietPeriodMinutes >= 0 && d.quietPeriodMinutes <= 60)
-                                   ? d.quietPeriodMinutes : AUTO_CFG_DEFAULTS.quietPeriodMinutes,
             // v1.8: missing field defaults to true (preserves pre-v1.8 behavior
             // for configs written before this toggle existed). Explicit `false`
             // turns it off.
@@ -5764,7 +5741,7 @@
       return _listingTemplates;
     }
 
-    async function saveAutoConfig({ enabled, threshold, quietPeriodMinutes, manualAiDraftAutoSend,
+    async function saveAutoConfig({ enabled, threshold, manualAiDraftAutoSend,
                                     listingsMirrorEnabled, intentClassifierEnabled,
                                     salesModeEnabled, salesAutoEngage, salesAutoSendEnabled, salesPilotThreadIds,
                                     by }) {
@@ -5780,17 +5757,9 @@
         .filter(s => s.length > 0)
         .slice(0, 500);   // sanity cap
 
-      // v3.30: parse + clamp quietPeriodMinutes to [0, 60]. Integer-only
-      // since fractional minutes have no UX meaning here.
-      const quietRaw = parseInt(quietPeriodMinutes, 10);
-      const quietClean = Math.max(0, Math.min(60,
-        Number.isFinite(quietRaw) ? quietRaw : AUTO_CFG_DEFAULTS.quietPeriodMinutes
-      ));
-
       const clean = {
         enabled              : enabled !== false,
         threshold            : Math.max(0, Math.min(1, parseFloat(threshold) || AUTO_CFG_DEFAULTS.threshold)),
-        quietPeriodMinutes   : quietClean,
         manualAiDraftAutoSend: manualAiDraftAutoSend !== false,   // v1.8
         // v2.0 Step 1: explicit-true semantics.
         listingsMirrorEnabled  : listingsMirrorEnabled === true,
@@ -6747,11 +6716,6 @@
 
     let _osCurrentFamily = "huggie";
     const _osCache = new Map();   // family → sheet doc
-    // v2.5 — Existing-listings catalog cache. Single doc covers all
-    // families; we fetch once per modal open and reset on each open
-    // so operator edits between sessions are seen immediately.
-    let _osListingsCache = null;
-    let _osListingsLoading = false;
 
     function openOptionSheetsModal() {
       $("emOptionSheetsError").classList.remove("active");
@@ -6759,11 +6723,6 @@
       $("emOptionSheetsModal").classList.add("active");
       // Reset to huggie tab
       _osCurrentFamily = "huggie";
-      // v2.5 — Drop the listings catalog cache on every modal open so
-      // the operator sees fresh data after they import or hand-edit
-      // EtsyMail_OptionSheets/existingListings between sessions.
-      _osListingsCache = null;
-      _osListingsLoading = false;
       document.querySelectorAll(".em-os-tab").forEach(b =>
         b.classList.toggle("active", b.dataset.family === "huggie"));
       loadOptionSheet("huggie");
@@ -6797,300 +6756,12 @@
       const uomHtml = sheet.unitOfMeasure
         ? `<div class="em-os-uom"><b>Unit of measure:</b> ${esc(sheet.unitOfMeasure.label || "")}<br><span class="em-muted">${esc(sheet.unitOfMeasure.explainer || "")}</span></div>`
         : "";
-      // v2.5 — Render the charmStyles block (silhouette/disc reference
-      // dimensions) added in the v2.5 seed. This is the data the AI
-      // reads at runtime to answer "how big is the charm?" questions
-      // for both existing listings (universal per family) and custom
-      // orders. If the field isn't present (pre-v2.5 family doc),
-      // render nothing — degrades gracefully.
-      const charmStylesHtml = sheet.charmStyles ? renderCharmStyles(sheet.charmStyles, sheet.family) : "";
-      // v2.6 — Render the metalSpecs block (universal 20-22 gauge
-      // metal thickness) added in v2.6. Same universal value across
-      // every family; rendered here so the operator can verify the
-      // data the AI reads when answering thickness questions.
-      const metalSpecsHtml = sheet.metalSpecs ? renderMetalSpecs(sheet.metalSpecs) : "";
       const sectionsHtml = (sheet.sections || []).map(s => renderOptionSection(s)).join("");
-      // v2.5 — Render existing listings catalog filtered to this family.
-      // Catalog is loaded async on modal open; we render a placeholder
-      // here and fill in once the data arrives (or now if cached).
-      const listingsHtml = renderListingsForFamily(sheet.family);
       body.innerHTML = `
         <h4 style="margin:0 0 8px; font-size:13px;">${esc(sheet.displayName || sheet.family)}</h4>
         ${uomHtml}
-        ${charmStylesHtml}
-        ${metalSpecsHtml}
-        ${listingsHtml}
         ${sectionsHtml}
       `;
-    }
-
-    // v2.6 — Render the metalSpecs block. Universal 20-22 gauge spec
-    // applies across every family/metal/style — same block content on
-    // each family doc. We show the headline (gauge + range in both
-    // units) prominently, and the per-gauge conversion table below
-    // for operator reference. The AI reads the same fields at runtime
-    // via get_option_sheet and lookup_listing_specs.
-    // v2.7 — Also renders the metalDurability sub-block (per-metal
-    // tarnish profile, shower-safety, lifespan). The AI consults this
-    // for any care/tarnish/durability customer question.
-    function renderMetalSpecs(ms) {
-      const headline = `${esc(ms.gauge || "—")} · ${esc(ms.thicknessRangeMm || "")} (${esc(ms.thicknessRangeInches || "")})`;
-      const conversions = ms.gaugeConversions || {};
-      const conversionRows = Object.entries(conversions).map(([g, c]) => `
-        <tr>
-          <td><code>${esc(g)}</code></td>
-          <td>${esc(c.mm != null ? c.mm + " mm" : "—")}</td>
-          <td>${esc(c.inches != null ? c.inches + " in" : "—")}</td>
-        </tr>
-      `).join("");
-      const metalsLine = Array.isArray(ms.appliesToMetals) && ms.appliesToMetals.length
-        ? `<div class="em-muted" style="font-size:11px; margin-top:4px;">Applies to: ${esc(ms.appliesToMetals.join(", "))}</div>`
-        : "";
-      const stoneNote = ms.stoneSettingNote
-        ? `<div style="margin-top:6px; padding:6px 8px; background:#fff8c5; border:1px solid #d4a72c; border-radius:3px; font-size:11px; color:#1f2328;"><b>Stone-setting note:</b> ${esc(ms.stoneSettingNote)}</div>`
-        : "";
-
-      // v2.7: render metalDurability (per-metal tarnish/care profile)
-      // as a compact summary table. Each row is one metal + tarnish
-      // resistance + shower-safety + a one-line lifespan note.
-      let durabilityHtml = "";
-      if (ms.metalDurability) {
-        const md = ms.metalDurability;
-        const metalRows = Object.entries(md)
-          .filter(([k, v]) => v && typeof v === "object" && !k.startsWith("_") && k !== "rankingByDurability" && k !== "criticalRule" && k !== "collateralRule")
-          .map(([metal, p]) => `
-            <tr>
-              <td><b>${esc(metal)}</b></td>
-              <td>${esc(p.tarnishResistance || "—")}</td>
-              <td>${esc(p.showerSafe || "—")}</td>
-              <td style="font-size:10px;">${esc(p.lifespan || "—")}</td>
-            </tr>
-          `).join("");
-        const criticalRule = md.criticalRule
-          ? `<div style="margin-top:6px; padding:6px 8px; background:#ffebe9; border:1px solid #cf222e; border-radius:3px; font-size:11px; color:#82071e;"><b>Critical:</b> ${esc(md.criticalRule)}</div>`
-          : "";
-        const collateralRule = md.collateralRule
-          ? `<div style="margin-top:6px; padding:6px 8px; background:#ddf4ff; border:1px solid #0969da; border-radius:3px; font-size:11px; color:#1f2328;"><b>Collateral rule:</b> ${esc(md.collateralRule)}</div>`
-          : "";
-        durabilityHtml = `
-          <div style="margin-top:8px; padding-top:8px; border-top:1px dashed #d0d7de;">
-            <div style="font-weight:600; font-size:11px; color:#57606a; margin-bottom:4px;">Per-metal durability (care &amp; tarnish profile)</div>
-            <table class="em-os-options-table" style="font-size:11px;">
-              <thead><tr><th>Metal</th><th>Tarnish resistance</th><th>Shower-safe</th><th>Lifespan</th></tr></thead>
-              <tbody>${metalRows}</tbody>
-            </table>
-            ${criticalRule}
-            ${collateralRule}
-          </div>
-        `;
-      }
-
-      return `
-        <div style="margin:10px 0 6px;">
-          <div style="font-weight:600; font-size:12px; color:#57606a; margin-bottom:4px; text-transform:uppercase; letter-spacing:0.5px;">Metal Thickness &amp; Durability</div>
-          <div style="margin:6px 0; padding:8px 10px; background:#f6f8fa; border:1px solid #d0d7de; border-radius:4px;">
-            <div style="font-weight:600; font-size:12px; color:#1f2328;">Universal across all families, metals, and styles <span style="font-weight:normal; color:#0969da; margin-left:6px; font-size:11px;">v2.7</span></div>
-            <div style="margin-top:4px; font-size:13px; color:#1f2328;"><b>${headline}</b></div>
-            ${metalsLine}
-            ${conversionRows ? `
-              <table class="em-os-options-table" style="font-size:11px; margin-top:6px;">
-                <thead><tr><th>Gauge</th><th>mm</th><th>inches</th></tr></thead>
-                <tbody>${conversionRows}</tbody>
-              </table>
-            ` : ""}
-            ${stoneNote}
-            ${durabilityHtml}
-          </div>
-        </div>
-      `;
-    }
-
-    // v2.5 — Render the charmStyles block for a family. Shows the
-    // universal silhouette dimensions (the answer the AI gives for ANY
-    // listing in this family) and disc dimensions (per-listing variable,
-    // shown here as the option matrix). Inline-styled to match the
-    // existing em-os-* card aesthetic without adding CSS.
-    function renderCharmStyles(cs, family) {
-      const blocks = [];
-
-      if (cs.silhouette) {
-        const sil = cs.silhouette;
-        const u   = sil.universalDimensions || {};
-        // Build a friendly summary line based on family.
-        let summary = "—";
-        if (family === "huggie") {
-          if (u.charmWidthMm != null && u.charmHeightMm != null) {
-            summary = `${u.charmWidthMm}×${u.charmHeightMm}mm charm`;
-            if (u.ringInnerDiameterMm != null) summary += ` · ${u.ringInnerDiameterMm}mm I.D. ring`;
-          }
-        } else if (family === "necklace") {
-          if (u.charmSizeMm) {
-            summary = `${u.charmSizeMm}mm charm`;
-            if (sil.jumpRingDiameter) summary += ` · ${sil.jumpRingDiameter} jump ring`;
-          }
-        } else if (u.charmWidthMm || u.charmSizeMm) {
-          summary = JSON.stringify(u);
-        }
-        const appliesTo = u.appliesTo ? `<div class="em-muted" style="font-size:11px; margin-top:4px;">${esc(u.appliesTo)}</div>` : "";
-        const imgUrl = sil.visualReferenceImageUrl;
-        const hasImg = imgUrl && !/REPLACE_WITH/i.test(imgUrl);
-        const imgLink = hasImg
-          ? `<a href="${esc(imgUrl)}" target="_blank" rel="noopener" style="font-size:11px;">view reference image ↗</a>`
-          : `<span class="em-muted" style="font-size:11px;">(no reference image uploaded yet)</span>`;
-        blocks.push(`
-          <div style="margin:6px 0; padding:8px 10px; background:#f6f8fa; border:1px solid #d0d7de; border-radius:4px;">
-            <div style="font-weight:600; font-size:12px; color:#1f2328;">Silhouette style <span style="font-weight:normal; color:#0969da; margin-left:6px; font-size:11px;">universal across this family</span></div>
-            <div style="margin-top:4px; font-size:13px; color:#1f2328;"><b>${esc(summary)}</b></div>
-            ${appliesTo}
-            <div style="margin-top:6px;">${imgLink}</div>
-          </div>
-        `);
-      }
-
-      if (cs.disc) {
-        const disc = cs.disc;
-        let summary = "—";
-        let options = "";
-        if (Array.isArray(disc.discDiameterOptions) && disc.discDiameterOptions.length) {
-          summary = disc.discDiameterOptions.map(o => `${o.diameterMm}mm disc`).join(" · ");
-          options = `<div class="em-muted" style="font-size:11px; margin-top:4px;">Per-listing — each disc-style listing carries its own discDiameterMm. ${disc.jumpRingDiameter ? "Jump ring: " + esc(disc.jumpRingDiameter) + "." : ""}</div>`;
-        } else if (disc.availability && /not_standard|custom_quote_only|needs_operator_confirmation/i.test(disc.availability)) {
-          summary = `Disc style: ${disc.availability.replace(/_/g, " ")}`;
-        } else if (Array.isArray(disc.discDiameters)) {
-          summary = disc.discDiameters.join(" · ");
-        }
-        const imgUrl = disc.visualReferenceImageUrl;
-        const hasImg = imgUrl && !/REPLACE_WITH/i.test(imgUrl);
-        const imgLink = hasImg
-          ? `<a href="${esc(imgUrl)}" target="_blank" rel="noopener" style="font-size:11px;">view reference image ↗</a>`
-          : `<span class="em-muted" style="font-size:11px;">(no reference image uploaded yet)</span>`;
-        blocks.push(`
-          <div style="margin:6px 0; padding:8px 10px; background:#f6f8fa; border:1px solid #d0d7de; border-radius:4px;">
-            <div style="font-weight:600; font-size:12px; color:#1f2328;">Disc style <span style="font-weight:normal; color:#bf8700; margin-left:6px; font-size:11px;">per-listing dimensions</span></div>
-            <div style="margin-top:4px; font-size:13px; color:#1f2328;"><b>${esc(summary)}</b></div>
-            ${options}
-            <div style="margin-top:6px;">${imgLink}</div>
-          </div>
-        `);
-      }
-
-      if (blocks.length === 0) return "";
-      return `
-        <div style="margin:10px 0 6px;">
-          <div style="font-weight:600; font-size:12px; color:#57606a; margin-bottom:4px; text-transform:uppercase; letter-spacing:0.5px;">Charm Style Reference</div>
-          ${blocks.join("")}
-        </div>
-      `;
-    }
-
-    // v2.5 — Render the existing-listings catalog filtered to the
-    // current family. The catalog is loaded async via _osListingsCache;
-    // if it isn't ready yet, render a "loading" stub and let the
-    // catalog-load completion re-render. Renders an empty state with
-    // operator instruction when no listings match this family.
-    // (Cache declarations hoisted to the top alongside _osCurrentFamily.)
-
-    function renderListingsForFamily(family) {
-      if (!_osListingsCache && !_osListingsLoading) {
-        // Trigger an async load — when it returns it'll re-render the
-        // current family. This is a no-op if already loading.
-        loadExistingListingsCatalog();
-        return `<div style="margin:10px 0 6px;">
-          <div style="font-weight:600; font-size:12px; color:#57606a; margin-bottom:4px; text-transform:uppercase; letter-spacing:0.5px;">Existing Listings (${esc(family || "")})</div>
-          <div class="em-muted" style="font-size:11px;">Loading catalog…</div>
-        </div>`;
-      }
-      if (_osListingsLoading) {
-        return `<div style="margin:10px 0 6px;">
-          <div style="font-weight:600; font-size:12px; color:#57606a; margin-bottom:4px; text-transform:uppercase; letter-spacing:0.5px;">Existing Listings (${esc(family || "")})</div>
-          <div class="em-muted" style="font-size:11px;">Loading catalog…</div>
-        </div>`;
-      }
-      const listings = (_osListingsCache && _osListingsCache.listings) || {};
-      const matches = Object.entries(listings)
-        .filter(([id, v]) => v && v.family === family && v.active !== false)
-        .map(([id, v]) => ({ id, ...v }));
-
-      if (matches.length === 0) {
-        return `<div style="margin:10px 0 6px;">
-          <div style="font-weight:600; font-size:12px; color:#57606a; margin-bottom:4px; text-transform:uppercase; letter-spacing:0.5px;">Existing Listings (${esc(family || "")})</div>
-          <div class="em-muted" style="font-size:11px;">
-            No listings catalogued for this family yet. Add entries to <code>EtsyMail_OptionSheets/existingListings.listings</code> in Firestore, or update the seed and re-import.
-          </div>
-        </div>`;
-      }
-
-      // Resolve a display-friendly dimension string per entry. Silhouettes
-      // pull from the family universal (which the operator can see right
-      // above in the Charm Style Reference block); discs use their own.
-      const rows = matches.map(m => {
-        let dimText = "—";
-        if (m.charmStyle === "disc" && m.discDiameterMm != null) {
-          dimText = `${m.discDiameterMm}mm disc`;
-        } else if (m.charmStyle === "silhouette") {
-          dimText = `silhouette (uses family universal above)`;
-        } else if (/REPLACE_WITH/i.test(m.charmStyle || "")) {
-          dimText = `<span style="color:#cf222e;">⚠ needs family + charmStyle</span>`;
-        } else if (m.charmStyle) {
-          dimText = m.charmStyle;
-        }
-        const metalsText = Array.isArray(m.availableMetals) ? m.availableMetals.join(", ") : "—";
-        const priceText = typeof m.basePriceUsd === "number" ? `$${m.basePriceUsd}` : "—";
-        const titleLink = m.etsyUrl
-          ? `<a href="${esc(m.etsyUrl)}" target="_blank" rel="noopener">${esc(m.title || m.id)}</a>`
-          : esc(m.title || m.id);
-        return `
-          <tr>
-            <td><code>${esc(m.id)}</code></td>
-            <td>${titleLink}</td>
-            <td>${dimText}</td>
-            <td>${esc(metalsText)}</td>
-            <td>${priceText}</td>
-          </tr>
-        `;
-      }).join("");
-
-      return `
-        <div style="margin:10px 0 6px;">
-          <div style="font-weight:600; font-size:12px; color:#57606a; margin-bottom:4px; text-transform:uppercase; letter-spacing:0.5px;">Existing Listings (${esc(family || "")})</div>
-          <table class="em-os-options-table" style="font-size:11px;">
-            <thead>
-              <tr><th>Listing ID</th><th>Title</th><th>Dimensions</th><th>Metals</th><th>Base Price</th></tr>
-            </thead>
-            <tbody>${rows}</tbody>
-          </table>
-        </div>
-      `;
-    }
-
-    // v2.5 — Load the existing-listings catalog from the option resolver.
-    // Caches in-module for the duration of the modal session. On
-    // completion, re-renders the current family view so the listings
-    // section fills in.
-    async function loadExistingListingsCatalog() {
-      if (_osListingsLoading || _osListingsCache) return;
-      _osListingsLoading = true;
-      try {
-        const res = await api("etsyMailOptionResolver", {
-          method: "POST",
-          body  : { op: "getExistingListings" }
-        });
-        _osListingsCache = (res && res.catalog) || { listings: {} };
-      } catch (e) {
-        console.warn("loadExistingListingsCatalog failed:", e.message);
-        _osListingsCache = { listings: {} };   // graceful empty
-      } finally {
-        _osListingsLoading = false;
-        // Re-render the current family with the catalog now available.
-        // Pull straight from the sheet cache and call renderOptionSheet
-        // directly — avoids the "Loading…" flash that loadOptionSheet
-        // would briefly show even on a cache hit.
-        if (_osCurrentFamily) {
-          const cached = _osCache.get(_osCurrentFamily);
-          if (cached) renderOptionSheet(cached);
-          else loadOptionSheet(_osCurrentFamily);
-        }
-      }
     }
 
     function renderOptionSection(section) {
@@ -7390,11 +7061,6 @@
       listPollTimer     : null,
       msgPollTimer      : null,
       countsPollTimer   : null,
-      // v3.30 — 1Hz ticker for the auto-pipeline countdown banner.
-      // Set by renderAutoPipelineTimer when a thread is in
-      // deferred_quiet_period; cleared on every renderDetail call
-      // (re-entered or hidden).
-      autoTimerInterval : null,
       inFlightList      : false,
       inFlightMsgs      : false,
       inFlightSearch    : false,
@@ -9010,8 +8676,6 @@
       const enabledInput  = $("emAutoEnabledInput");
       const thr           = $("emConfThresholdInput");
       const thrVal        = $("emConfThresholdVal");
-      const quiet         = $("emQuietPeriodInput");      // v3.30
-      const quietVal      = $("emQuietPeriodVal");        // v3.30
       const manualInput   = $("emManualAutoSendInput");   // v1.8
       const listingsInput = $("emListingsMirrorInput");   // v2.0 Step 1
       const intentInput   = $("emIntentClassifierInput"); // v2.0 Step 1
@@ -9027,13 +8691,6 @@
         if (thr && thrVal) {
           thr.value = String(_autoCfg.threshold);
           thrVal.textContent = Math.round(_autoCfg.threshold * 100) + "%";
-        }
-        // v3.30: render quiet period as "N min" (or "Off" at 0).
-        if (quiet && quietVal) {
-          const q = (typeof _autoCfg.quietPeriodMinutes === "number")
-            ? _autoCfg.quietPeriodMinutes : AUTO_CFG_DEFAULTS.quietPeriodMinutes;
-          quiet.value = String(q);
-          quietVal.textContent = q === 0 ? "Off" : (q + " min");
         }
         // v1.8: missing field = true (preserves existing behavior)
         if (manualInput) manualInput.checked = _autoCfg.manualAiDraftAutoSend !== false;
@@ -9063,13 +8720,6 @@
       if (thr && thrVal) {
         thr.oninput = () => {
           thrVal.textContent = Math.round(parseFloat(thr.value) * 100) + "%";
-        };
-      }
-      // v3.30: live-update the quiet-period readout on slider drag.
-      if (quiet && quietVal) {
-        quiet.oninput = () => {
-          const q = parseInt(quiet.value, 10) || 0;
-          quietVal.textContent = q === 0 ? "Off" : (q + " min");
         };
       }
       // Refresh from Firestore so we always show the truth
@@ -9158,7 +8808,6 @@
       // is the consumer. No localStorage, no env vars.
       const enabledInput = $("emAutoEnabledInput");
       const thr          = $("emConfThresholdInput");
-      const quiet        = $("emQuietPeriodInput");      // v3.30
       const manualInput  = $("emManualAutoSendInput");   // v1.8
       const listingsInput = $("emListingsMirrorInput");   // v2.0 Step 1
       const intentInput   = $("emIntentClassifierInput"); // v2.0 Step 1
@@ -9171,7 +8820,6 @@
         await saveAutoConfig({
           enabled              : enabledInput ? enabledInput.checked : true,
           threshold            : thr ? thr.value : AUTO_CFG_DEFAULTS.threshold,
-          quietPeriodMinutes   : quiet ? quiet.value : AUTO_CFG_DEFAULTS.quietPeriodMinutes,   // v3.30
           manualAiDraftAutoSend: manualInput ? manualInput.checked : true,   // v1.8
           listingsMirrorEnabled  : listingsInput ? listingsInput.checked : false,  // v2.0 Step 1
           intentClassifierEnabled: intentInput   ? intentInput.checked   : false,  // v2.0 Step 1
@@ -11126,126 +10774,9 @@
       return s.length > n ? s.slice(0, n - 1) + "…" : s;
     }
 
-    // ═════════════════════════════════════════════════════════════════
-    // v3.30 — Auto-pipeline countdown timer
-    // ═════════════════════════════════════════════════════════════════
-    //
-    // Visible per-thread when the server-side quiet-period debounce
-    // has deferred the AI draft for this thread (added in
-    // etsyMailAutoPipeline-background.js section 1.4). The thread
-    // doc carries:
-    //   lastAutoDecision         === "deferred_quiet_period"
-    //   autoPipelineDeferUntilMs === <ms timestamp when defer expires>
-    //
-    // Lifecycle:
-    //   • renderDetail() calls renderAutoPipelineTimer() at the end of
-    //     every paint. The function clears any prior interval first,
-    //     then either shows the banner with a 1Hz ticker or hides it
-    //     (no-op if already hidden).
-    //   • Switching threads ⇒ renderDetail runs for the new thread,
-    //     which clears the prior interval and re-evaluates.
-    //   • When the customer sends another message during the defer,
-    //     the server slides autoPipelineDeferUntilMs forward; the
-    //     10-second messages poll picks up the new value and the
-    //     timer re-anchors on next render. (No mid-tick re-anchor;
-    //     accepted: at most 10s of stale countdown after a slide.)
-    //   • When the defer time elapses, the banner morphs from a
-    //     countdown to "Reaper sweep imminent" until the reaper fires
-    //     the pipeline and lastAutoDecision flips out of the deferred
-    //     state. The next renderDetail then hides the banner.
-    //
-    // visibleInterval pattern: the ticker pauses while the tab is
-    // hidden (same as every other poller in this file) so we don't
-    // burn CPU on background tabs.
-    function renderAutoPipelineTimer(thread) {
-      const el = $("emAutoTimerBanner");
-      if (!el) return;
-
-      // Always clear any prior ticker before deciding what to do — keeps
-      // state.autoTimerInterval at exactly one live timer.
-      if (state.autoTimerInterval) {
-        clearInterval(state.autoTimerInterval);
-        state.autoTimerInterval = null;
-      }
-
-      const isDeferred = thread && thread.lastAutoDecision === "deferred_quiet_period";
-      const deferUntil = (thread && typeof thread.autoPipelineDeferUntilMs === "number")
-        ? thread.autoPipelineDeferUntilMs
-        : null;
-
-      // v3.32 — Self-correcting check. Hide the timer if the operator
-      // has manually replied to the latest inbound (lastOutboundAt
-      // newer than lastInboundAt). The thread doc's lastAutoDecision
-      // / autoPipelineDeferUntilMs fields can lag behind a manual
-      // send by a few seconds (until snapshot ingest catches up or
-      // the server-side draftSend complete handler clears them), so
-      // anchoring purely on those would leave a stale countdown
-      // visible. The outbound-vs-inbound comparison is the
-      // authoritative "no AI draft is wanted on this thread anymore"
-      // signal — whether the reaper would also bail (it does — see
-      // evaluateEligibility in etsyMailAutoPipeline) or not.
-      const inboundMs  = thread ? tsToMs(thread.lastInboundAt)  : 0;
-      const outboundMs = thread ? tsToMs(thread.lastOutboundAt) : 0;
-      const operatorAlreadyReplied = outboundMs > 0 && outboundMs >= inboundMs;
-
-      if (!isDeferred || !deferUntil || operatorAlreadyReplied) {
-        el.style.display = "none";
-        return;
-      }
-
-      el.style.display = "flex";
-
-      const valEl   = $("emAutoTimerValue");
-      const labelEl = $("emAutoTimerLabel");
-      const subEl   = $("emAutoTimerSub");
-
-      const tick = () => {
-        const remainingMs = deferUntil - Date.now();
-        if (remainingMs > 0) {
-          const totalSec = Math.ceil(remainingMs / 1000);
-          const mm = Math.floor(totalSec / 60);
-          const ss = totalSec % 60;
-          if (valEl)   valEl.textContent   = mm + ":" + (ss < 10 ? "0" + ss : String(ss));
-          if (labelEl) labelEl.textContent = "Next AI draft in";
-          if (subEl)   subEl.textContent   = "Customer is mid-burst — pipeline will fire once they stop typing.";
-          valEl && (valEl.style.color = "#0969da");
-        } else {
-          // Defer time has passed. The reaper cron (every 5 min) will
-          // pick this thread up on its next tick. Show how long we've
-          // been waiting for the reaper — useful for debugging if the
-          // cron has stopped firing.
-          const overdueSec = Math.floor(-remainingMs / 1000);
-          const mm = Math.floor(overdueSec / 60);
-          const ss = overdueSec % 60;
-          if (valEl)   valEl.textContent   = "+" + mm + ":" + (ss < 10 ? "0" + ss : String(ss));
-          if (labelEl) labelEl.textContent = "Awaiting cron sweep";
-          if (subEl)   subEl.textContent   = "Quiet period elapsed — reaper will fire on its next 5-min tick.";
-          valEl && (valEl.style.color = "#bf8700");  // amber: not an error, just waiting
-        }
-      };
-      tick();
-      state.autoTimerInterval = visibleInterval(tick, 1000);
-    }
-
-    // Public teardown — called when leaving a thread (selectedId cleared
-    // / detail pane reset) so we don't leak a ticker into the empty
-    // state. Idempotent.
-    function stopAutoPipelineTimer() {
-      if (state.autoTimerInterval) {
-        clearInterval(state.autoTimerInterval);
-        state.autoTimerInterval = null;
-      }
-      const el = $("emAutoTimerBanner");
-      if (el) el.style.display = "none";
-    }
-
     function renderDetail(thread) {
       if (!thread) {
         $("emDetail").innerHTML = `<div class="em-detail-empty">No thread selected.</div>`;
-        // v3.30 — kill the countdown ticker if we're emptying the pane
-        // (e.g. operator cleared selection). The banner is gone with
-        // the innerHTML reset; this just stops the orphan setInterval.
-        stopAutoPipelineTimer();
         return;
       }
       const t = thread;
@@ -11339,29 +10870,6 @@
             ` : renderCustomListingStatusCard(t)}
             <div class="em-card">
               <h4>Conversation</h4>
-              <!-- v3.30 — Auto-pipeline countdown timer. Visible only
-                   when this thread is in the deferred_quiet_period
-                   state (server-side debounce). Counts down to
-                   autoPipelineDeferUntilMs; after zero, the 5-min
-                   reaper cron picks it up and fires the AI draft.
-                   renderAutoPipelineTimer() in the JS below toggles
-                   visibility based on thread.lastAutoDecision. -->
-              <div id="emAutoTimerBanner"
-                   class="em-auto-timer"
-                   style="display:none; align-items:center; gap:10px; margin:0 0 10px;
-                          padding:8px 12px; background:#f0f6fc; border:1px solid #c0d4eb;
-                          border-left:3px solid #0969da; border-radius:4px; font-size:13px;">
-                <i class="material-icons" style="font-size:18px; color:#0969da;">schedule</i>
-                <span id="emAutoTimerLabel" style="color:#1f2328; font-weight:500;">Next AI draft in</span>
-                <span id="emAutoTimerValue"
-                      style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-                             font-weight:600; font-size:14px; color:#0969da;
-                             background:#fff; padding:2px 8px; border-radius:3px;
-                             border:1px solid #d0d7de; min-width:48px; text-align:center;">—:—</span>
-                <span class="em-muted" id="emAutoTimerSub" style="font-size:11px; margin-left:auto;">
-                  Customer is mid-burst — pipeline will fire once they stop typing.
-                </span>
-              </div>
               <div class="em-thread" id="emThreadBox">
                 <div class="em-muted" style="font-size:12px;">Loading messages…</div>
               </div>
@@ -11785,13 +11293,6 @@
 
       // M3: populate customer panel
       hydrateCustomerPanel(t);
-
-      // v3.30 — Start (or re-anchor / hide) the quiet-period
-      // countdown banner inside the Conversation card. Reads
-      // thread.lastAutoDecision + thread.autoPipelineDeferUntilMs and
-      // ticks 1Hz while the tab is visible. No-op (banner stays
-      // hidden) for threads that aren't currently deferred.
-      renderAutoPipelineTimer(t);
     }
 
     // ─── Manual Custom Listing creation ────────────────────────────────
@@ -11966,48 +11467,6 @@
     //   `mode === "initial"` guard, so this flag only affects initial-
     //   mode calls.
     async function generateAiDraft(threadId, mode = "initial", instructions = null, forceRegenerate = false) {
-      // ──── v3.30 — Manual override of quiet-period defer ──────────────
-      // If this thread is currently in deferred_quiet_period (server-
-      // side debounce parked the AI draft because the customer was
-      // mid-burst), the operator clicking "AI Draft" is an explicit
-      // "I want this NOW" signal. Clear the defer fields so:
-      //   1. The countdown banner hides immediately (renderAutoPipeline-
-      //      Timer hides when lastAutoDecision != "deferred_quiet_period").
-      //   2. The reaper's runDeferredAutoPipelinePass won't fire a
-      //      second pipeline run later (its query is gated on
-      //      lastAutoDecision == "deferred_quiet_period").
-      // Fire-and-forget on the proxy write so the operator doesn't see
-      // added latency. Worst case if it fails: the timer takes one
-      // 10-second poll cycle to disappear, and the reaper might fire a
-      // wasted pipeline run that the auto-pipeline's isDraftInFlight
-      // check would short-circuit anyway.
-      const threadInState = (state.threads || []).find(t => t && t.id === threadId);
-      if (threadInState && threadInState.lastAutoDecision === "deferred_quiet_period") {
-        // Visual: hide the banner now and tear down the ticker.
-        stopAutoPipelineTimer();
-        // Local state: patch so the next renderDetail doesn't re-show it.
-        threadInState.lastAutoDecision         = "manual_override";
-        threadInState.autoPipelineDeferUntilMs = null;
-        // Server: clear the defer fields so the reaper passes over this
-        // thread. Operator-write to EtsyMail_Threads is already in the
-        // firestoreProxy OPERATOR_WRITE_COLLS allowlist.
-        api("firestoreProxy", {
-          method: "POST",
-          body  : {
-            op   : "update",
-            coll : THREADS_COLL,
-            id   : threadId,
-            actor: getEmployeeName() || "operator",
-            data : {
-              lastAutoDecision         : "manual_override",
-              lastAutoDecisionAt       : { __serverTimestamp: true },
-              autoPipelineDeferUntilMs : null,
-              updatedAt                : { __serverTimestamp: true }
-            }
-          }
-        }).catch((e) => console.warn("[autoTimer] manual-override clear failed:", e.message));
-      }
-
       const allBtns = ["emAiDraftBtn", "emAiFollowUpBtn", "emReviseBtn"].map($).filter(Boolean);
       const body   = $("emAiCardBody");
       const primaryBtn = mode === "follow_up" ? $("emAiFollowUpBtn")
@@ -14194,39 +13653,6 @@
 
     /** Operator clicked "Send via Etsy". Enqueue the draft for the extension. */
     async function sendViaEtsy(threadId) {
-      // ──── v3.32 — Manual send clears any active quiet-period defer ────
-      // If the thread is parked in deferred_quiet_period, an operator
-      // hitting Send via Etsy is the final word on this conversation
-      // turn. The AI no longer needs to draft anything, the reaper
-      // should pass over this thread, and the countdown banner must
-      // disappear immediately (not 10 seconds later on the next poll).
-      // Mirrors the manual-AI-Draft override path — same shape, same
-      // local state patch, same firestoreProxy fire-and-forget.
-      // lastAutoDecision is set to "manual_send_during_defer" so the
-      // audit log distinguishes "operator overrode by drafting" from
-      // "operator overrode by sending."
-      const threadForDeferCheck = (state.threads || []).find(x => x && x.id === threadId);
-      if (threadForDeferCheck && threadForDeferCheck.lastAutoDecision === "deferred_quiet_period") {
-        stopAutoPipelineTimer();
-        threadForDeferCheck.lastAutoDecision         = "manual_send_during_defer";
-        threadForDeferCheck.autoPipelineDeferUntilMs = null;
-        api("firestoreProxy", {
-          method: "POST",
-          body  : {
-            op   : "update",
-            coll : THREADS_COLL,
-            id   : threadId,
-            actor: getEmployeeName() || "operator",
-            data : {
-              lastAutoDecision         : "manual_send_during_defer",
-              lastAutoDecisionAt       : { __serverTimestamp: true },
-              autoPipelineDeferUntilMs : null,
-              updatedAt                : { __serverTimestamp: true }
-            }
-          }
-        }).catch((e) => console.warn("[autoTimer] manual-send defer clear failed:", e.message));
-      }
-
       const btn = $("emSendEtsyBtn");
       let ta = $("emDraftText");
       // v5.13 — Mobile fallback. The desktop textarea #emDraftText is
@@ -14668,6 +14094,50 @@
         }
         renderAiDraftCard(d);
 
+        // v5.7.2 — Hydrate composer chips BEFORE tracking-image sync.
+        //
+        // PRE-v5.7.2 bug (alternating-chip-disappearance):
+        //   The previous order was:
+        //     1. renderAiDraftCard(d)
+        //     2. renderTrackingImages → syncTrackingImagesToChips
+        //        (persists current in-memory state to draft.draftAttachments
+        //         via persistComposerAttachments; fire-and-forget)
+        //     3. hydrateComposerFromDraft(thread.id, d)
+        //        (reads d.draftAttachments — the snapshot fetched at the
+        //         top of hydrateAiDraft, BEFORE step 2's persist completes)
+        //
+        //   For drafts whose only chips were tracking_image (the original
+        //   design), this was invisible: persistComposerAttachments filters
+        //   tracking_image entries out before writing, so the persist was
+        //   effectively a no-op.
+        //
+        //   For drafts with auto-attached COLLATERAL chips (type: "image",
+        //   source: "collateral" — added by etsyMailDraftReply / sales-
+        //   Agent's auto-attach), step 2's persist DID write — it wrote
+        //   the stale in-memory state (no collateral chips yet, since
+        //   hydrate hadn't run). Step 3 then overwrote memory with the
+        //   correct data from d.draftAttachments, but Firestore was left
+        //   wrong. On the NEXT thread-open, the fetch returned that wrong
+        //   data and the alternation began:
+        //     - Odd clicks: chips visible in memory, Firestore is empty
+        //     - Even clicks: chips wiped (matches Firestore's empty value)
+        //
+        //   Fix: hydrate FIRST so memory contains draft.draftAttachments
+        //   before the tracking sync runs. Then tracking sync keeps
+        //   collateral chips, adds tracking chips, and its persist writes
+        //   the correct merged state.
+        //
+        //   The clear-stale-chips branch (terminal draft states) stays
+        //   here too — it must run before the tracking-image render
+        //   would otherwise re-push tracking chips.
+        if (state.sendPoller) { clearInterval(state.sendPoller); state.sendPoller = null; }
+        if (isHydratableState) {
+          hydrateComposerFromDraft(thread.id, d);
+        } else {
+          setComposerAttachments(thread.id, []);
+          renderComposerChips();
+        }
+
         // v5.7.1 — Tracking images must hydrate independently of the AI card body.
         // Some layouts intentionally omit #emAiCardBody, so renderAiDraftCard(d)
         // returns early before it reaches the tracking-image renderer. That left
@@ -14698,20 +14168,6 @@
         // Show revise row since there's a draft present
         const row = $("emReviseRow");
         if (row) row.style.display = "flex";
-
-        // ── M5: restore composer chips + resume send polling if needed ──
-        // Always clear any poller from a previous thread first; pollSendStatus
-        // restarts cleanly if we re-enter the polling state below.
-        if (state.sendPoller) { clearInterval(state.sendPoller); state.sendPoller = null; }
-        // v0.9.1 #5: only hydrate chips for non-terminal drafts (same
-        // reasoning as text — we don't want a sent draft's chips to
-        // re-appear in the composer ready to be re-sent).
-        if (isHydratableState) {
-          hydrateComposerFromDraft(thread.id, d);
-        } else {
-          setComposerAttachments(thread.id, []);
-          renderComposerChips();
-        }
         if (d.status === "queued" || d.status === "sending") {
           // v0.9.7: don't show a banner and don't start polling. The
           // showSendStatus call below would render nothing anyway (the
@@ -17046,18 +16502,12 @@
               }
             });
             const written = (res && res.written) || [];
-            const writtenConfigDocs = (res && res.writtenConfigDocs) || [];
             const skipped = (res && res.skipped) || [];
-            const totalWritten = written.length + writtenConfigDocs.length;
-            const parts = [];
-            if (written.length) parts.push(`${written.length} ${written.length === 1 ? "family" : "families"}: ${written.join(", ")}`);
-            if (writtenConfigDocs.length) parts.push(`${writtenConfigDocs.length} config ${writtenConfigDocs.length === 1 ? "doc" : "docs"}: ${writtenConfigDocs.join(", ")}`);
-            toast(`Imported ${parts.join(" + ") || "(nothing)"}`);
+            toast(`Imported ${written.length} ${written.length === 1 ? "family" : "families"}: ${written.join(", ")}`);
             preview.innerHTML = `
               <div style="padding:8px 10px; background:#dafbe1; border:1px solid #1a7f37; border-radius:3px; color:#1f2328; font-size:12px;">
                 <b>Import succeeded.</b><br>
-                Families: <code>${written.join(", ") || "(none)"}</code><br>
-                ${writtenConfigDocs.length ? `Config docs: <code>${writtenConfigDocs.join(", ")}</code><br>` : ""}
+                Written: <code>${written.join(", ") || "(none)"}</code><br>
                 ${skipped.length ? `Skipped (non-family keys): <code>${skipped.join(", ")}</code><br>` : ""}
                 Reloading current tab…
               </div>
@@ -17128,45 +16578,11 @@
           }
 
           // Build a per-family preview row showing what will be written.
-          // v2.5 — Also recognize a small allowlist of "config doc" keys
-          // that don't follow the family-sheet shape (no sections[] array)
-          // but ARE meant to be imported as docs in EtsyMail_OptionSheets.
-          // Each gets a lighter schema check against its expected field.
-          const KNOWN_CONFIG_DOCS = {
-            "customerInquiryGuidance": {
-              requiredField: "rules",
-              requiredType : "array",
-              summaryFn    : (v) => `${Array.isArray(v.rules) ? v.rules.length : 0} rules`
-            },
-            "existingListings": {
-              requiredField: "listings",
-              requiredType : "object",
-              summaryFn    : (v) => `${v.listings && typeof v.listings === "object" ? Object.keys(v.listings).length : 0} listings`
-            }
-          };
           const rows = [];
           const skipped = [];
           for (const [key, val] of Object.entries(sheets)) {
             if (key.startsWith("_") || !val || typeof val !== "object" || Array.isArray(val)) {
               skipped.push(key);
-              continue;
-            }
-            // v2.5: config docs get their own validation path.
-            if (KNOWN_CONFIG_DOCS[key]) {
-              const cfg = KNOWN_CONFIG_DOCS[key];
-              const fieldVal = val[cfg.requiredField];
-              let cfgIssue = null;
-              if (cfg.requiredType === "array" && !Array.isArray(fieldVal)) {
-                cfgIssue = `expected '${cfg.requiredField}' to be an array`;
-              } else if (cfg.requiredType === "object" && (!fieldVal || typeof fieldVal !== "object" || Array.isArray(fieldVal))) {
-                cfgIssue = `expected '${cfg.requiredField}' to be an object`;
-              }
-              rows.push({
-                family: key,
-                isConfigDoc: true,
-                configSummary: cfg.summaryFn(val),
-                issue: cfgIssue
-              });
               continue;
             }
             const sectionCount = Array.isArray(val.sections) ? val.sections.length : 0;
@@ -17203,18 +16619,16 @@
           const rowsHtml = rows.map(r =>
             r.issue
               ? `<tr><td style="color:#cf222e;">✗ ${esc(r.family)}</td><td colspan="2" style="color:#cf222e;">${esc(r.issue)}</td></tr>`
-              : r.isConfigDoc
-                ? `<tr><td>${esc(r.family)}</td><td colspan="2" style="color:#57606a;">config doc · ${esc(r.configSummary)}</td></tr>`
-                : `<tr><td>${esc(r.family)}</td><td>${r.sectionCount} sections</td><td>${r.codeCount} codes</td></tr>`
+              : `<tr><td>${esc(r.family)}</td><td>${r.sectionCount} sections</td><td>${r.codeCount} codes</td></tr>`
           ).join("");
 
           preview.style.display = "block";
           preview.innerHTML = `
             <div style="padding:8px 10px; background:${hasIssue ? "#fff8c5" : "#ddf4ff"}; border:1px solid ${hasIssue ? "#d4a72c" : "#0969da"}; border-radius:3px; color:#1f2328; font-size:12px;">
-              <b>${hasIssue ? "Validation issues — fix before importing:" : "Ready to import — this will REPLACE the following:"}</b>
+              <b>${hasIssue ? "Validation issues — fix before importing:" : "Ready to import — this will REPLACE these families:"}</b>
               <table style="margin-top:6px; width:100%; font-size:11px; border-collapse:collapse;">
                 <thead><tr style="text-align:left; border-bottom:1px solid #d0d7de;">
-                  <th style="padding:3px 6px;">Family / Doc</th><th>Sections</th><th>Options</th>
+                  <th style="padding:3px 6px;">Family</th><th>Sections</th><th>Options</th>
                 </tr></thead>
                 <tbody>${rowsHtml}</tbody>
               </table>
