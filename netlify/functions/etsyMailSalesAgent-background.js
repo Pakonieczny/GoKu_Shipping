@@ -1649,13 +1649,89 @@ const STATE_ACTION_COMPAT = {
 // on the failure shapes you've been seeing without false-positiving on
 // legitimate prose. We accept some false negatives; the AI's prompt
 // rules cover the long tail.
+// v5.23 — Soft-promise / handoff pattern lists.
+//
+// TWO classes of patterns. The distinction matters because the
+// salesAgent's escalate_to_human path legitimately needs to write a
+// vague holding line ("we'll look into this") — but we must NOT let
+// the AI use that as a free pass to commit specific named actors,
+// specific timings, or whole categories of deferral phrasings that
+// have no honest version.
+//
+//   ALWAYS_FORBIDDEN_HANDOFF_PATTERNS — fire regardless of next_action.
+//     These commit a specific actor + specific timing the system
+//     cannot guarantee, or are meta-commentary stalls. No
+//     legitimate version exists, including on escalate_to_human.
+//
+//   SOFT_PROMISE_PATTERNS — fire UNLESS next_action is
+//     escalate_to_human or confirm_acceptance_and_create_listing.
+//     These are vague forward-promise framings; on escalation
+//     they're allowed because the operator is genuinely the one
+//     handling the next step.
+//
+// Mirrors etsyMailDraftReply.js's pattern lists (kept in sync — when
+// you change one, change the other).
+const ALWAYS_FORBIDDEN_HANDOFF_PATTERNS = [
+  // "someone / a team member / the team will <action>"
+  /\b(?:someone|a\s+team\s+member|the\s+team|our\s+team|the\s+staff)\s+will\s+(?:follow\s+up|reach\s+out|get\s+back|be\s+in\s+touch|contact\s+you|message\s+you)\b/i,
+  // "someone will follow up with you directly today/tomorrow/shortly"
+  /\bsomeone\s+will\s+(?:follow\s+up|reach\s+out|get\s+back|be\s+in\s+touch|contact\s+you)\s+(?:with\s+you\s+)?(?:directly\s+)?(?:today|tomorrow|shortly|soon|this\s+(?:morning|afternoon|evening))\b/i,
+  // "I'm flagging your order with the team"
+  /\bI['\u2019]?m\s+flagging\s+(?:your|the|this)\s+(?:order|conversation|thread)\s+with\s+the\s+team\b/i,
+  // "I'll flag this with the team" / "I'll flag your order"
+  /\bI['\u2019]?ll\s+flag\s+(?:this|that|your|the)\s+(?:order|conversation|thread)\b/i,
+  // "I'm passing this to the team" / "I'll pass this on to the team"
+  /\bI['\u2019]?(?:m|ll)\s+pass(?:ing)?\s+(?:this|that|these|it|your\s+\w+)\s+(?:on\s+)?to\s+the\s+team\b/i,
+  // v5.17 — Meta-commentary "we'll come back / circle back with"
+  /\b(?:we['\u2019]?ll|we\s+will)\s+(?:come\s+back|circle\s+back|get\s+back\s+to\s+you|follow\s+up\s+with\s+you)\s+(?:with|on|about)\b/i,
+  // v5.19 — Standalone "we'll/we will get back to you"
+  /\b(?:we['\u2019]?ll|we\s+will)\s+get\s+back\s+to\s+you\b/i,
+  // v5.19 — "as soon as we hear back from the team"
+  /\bas\s+soon\s+as\s+we\s+hear\s+(?:back\s+)?(?:from|on)\s+(?:the\s+)?(?:team|operator|staff)\b/i,
+  // v5.22 — "we'll be back to you" / "we'll be in touch"
+  /\b(?:we['\u2019]?ll|we\s+will)\s+be\s+(?:back\s+to\s+you|in\s+touch)\b/i,
+  // v5.23 — Miguel-thread pattern: "we'll take a closer look"
+  /\b(?:we['\u2019]?ll|we\s+will)\s+take\s+a\s+(?:closer|deeper|second|better)\s+look\b/i,
+  // v5.23 — "look at this on our end" + variants (review verb +
+  // optional qualifier(s) + on our end). Sibling of the SOFT_PROMISE
+  // version below; this one fires regardless of next_action because
+  // it's a stall phrasing with no honest version even on escalation.
+  /\b(?:look|review|investigate|dig|examine|sort)\s+(?:into\s+|at\s+|over\s+|through\s+)?(?:this|it|that|things|matters|the\s+order|the\s+details|carefully|closely|thoroughly)?(?:\s+\w+){0,4}\s+on\s+(?:our|the)\s+end\b/i,
+];
+
 const SOFT_PROMISE_PATTERNS = [
-  /\bwe['']?ll\s+(send|follow up|get back|check|pull up|reach out|have those)\b/i,
-  /\bI['']?ll\s+(send|follow up|get back|check|pull up|reach out|have those)\b/i,
-  /\blet\s+(us|me)\s+(check|pull up|put together|look into|see if)\b/i,
-  /\bthe\s+team\s+(will|can|should)\b/i,
+  // I/we + forward-promise verb (extended for v5.19 double-check, v5.23 craft/source verbs)
+  /\bwe['\u2019]?ll\s+(send|follow up|get back|check|pull up|reach out|have those|be in touch|look into|review this|come back|circle back|double[\s-]?check|source|see if we can|confirm whether)\b/i,
+  /\bI['\u2019]?ll\s+(send|follow up|get back|check|pull up|reach out|have those|be in touch|flag|forward|escalate|review|come back|circle back|double[\s-]?check)\b/i,
+  // Let me/us + investigative verb
+  /\blet\s+(?:us|me)\s+(?:check|double[\s-]?check|pull up|put together|look into|see if|look at|investigate|verify|confirm|walk you through|walk through|take a step back|make sure we|pull this together|review the conversation)\b/i,
+  // "Get back to you" framings
   /\bget(?:ting)?\s+(?:back|those|that)\s+(?:to|over\s+to)\s+you\b/i,
-  /\bsomeone\s+(?:from\s+)?(?:our\s+)?team\s+(?:will|can)\b/i
+  // "Have someone reach out"
+  /\bhave\s+(?:someone|a\s+team\s+member)\s+(?:reach\s+out|follow\s+up|get\s+in\s+touch|message\s+you)\b/i,
+  // v5.17 — Meta-commentary
+  /\b(?:we|let\s+us)\s+want\s+to\s+make\s+sure\s+we\s+(?:point|guide|walk|get|have)\b/i,
+  /\bpoint\s+you\s+(?:to|in)\s+the\s+(?:right|correct)\s+(?:path|direction)\b/i,
+  /\bsend\s+you\s+in\s+circles\b/i,
+  /\bwe\s+(?:want|need)\s+to\s+(?:take\s+a\s+step\s+back|step\s+back)\b/i,
+  /\bbefore\s+we\s+(?:say|tell\s+you)\s+anything\s+specific\b/i,
+  // v5.19 — Eligibility/availability deferral
+  /\b(?:check|confirm|verify|look\s+into)\s+(?:shipping\s+)?(?:eligibility|availability)\s+(?:to|for|on)\b/i,
+  // v5.19 — "check on our end" variants (the always-forbidden version
+  // above catches the broader review-verb + qualifier shape; this
+  // narrow pattern stays here for parity with draftReply)
+  /\b(?:check|look\s+into|verify|confirm)\s+(?:on|with)\s+(?:our|the)\s+end\b/i,
+  // v5.22 — "before we say anything specific" stall
+  /\bbefore\s+(?:we|I)\s+(?:can\s+)?(?:say|tell\s+you|share|give\s+you|provide|commit\s+to)\s+(?:anything|something|a)\s+(?:specific|definitive|concrete|more|firm|definite)\b/i,
+  // v5.22 — "until/once/after we look at this"
+  /\b(?:until|once|after)\s+we\s+(?:look\s+at|review|check|investigate|verify|sort\s+through)\s+(?:this|it|things|matters|the\s+order|the\s+details)\b/i,
+  // v5.23 — Miguel-thread sourcing pattern: shop MAKES charms, never
+  // "sources" or "needs to confirm we can source" them. This is
+  // hallucinated language with no legitimate use in the salesAgent.
+  /\b(?:source|sourcing|finding|locating)\s+(?:those|the|these|that|specific)\s+(?:charm|charms|shape|shapes|piece|pieces|component|components)\b/i,
+  /\b(?:confirm|see|check|verify)\s+whether\s+we\s+can\s+(?:source|find|locate|get)\s+(?:the|those|these|that|a)\s+(?:charm|charms|shape|shapes)\b/i,
+  // v5.23 — "before we could put something together" stall
+  /\bbefore\s+we\s+could\s+(?:put\s+something\s+together|put\s+together|build|make|craft)\b/i,
 ];
 
 // For escalate_to_human, the AI's holding line is allowed but it can
@@ -1797,8 +1873,42 @@ function validateOptionCConsistency({ parsed, toolNamesCalled }) {
     messages.push(`current_state "${cs}" is not compatible with next_action "${na}". Allowed actions for this state: ${compatActions.join(", ")}, or escalate_to_human.`);
   }
 
-  // Rule 4 — soft-promise verbs in reply text are blocked unless next_action is
-  // confirm_acceptance_and_create_listing or escalate_to_human
+  // Rule 4 — soft-promise verbs in reply text.
+  //
+  // Two-tier check (v5.23):
+  //   4a. ALWAYS_FORBIDDEN_HANDOFF_PATTERNS fire regardless of next_action.
+  //       These are stall/handoff phrasings with no honest version — even
+  //       on escalate_to_human, the AI shouldn't write "we'll take a closer
+  //       look" or "someone will follow up shortly". Use vague-but-honest
+  //       holding language instead ("we'll be back to you" is allowed via
+  //       the always-forbidden list? — no, that's blocked too; use
+  //       "we want to look at this carefully before we say anything").
+  //
+  //       Wait — that example IS in the always-forbidden list (Kari pattern).
+  //       The legitimate escalation framing on this drafter is to keep the
+  //       reply BRIEF and ambiguous: "Thanks for sending this over. We need
+  //       to look at this carefully before we can speak to it." That phrasing
+  //       doesn't match any forbidden patterns.
+  //
+  //   4b. SOFT_PROMISE_PATTERNS fire only when next_action is NOT
+  //       confirm_acceptance_and_create_listing or escalate_to_human.
+  //       These vague forward-promise framings ARE allowed on escalation.
+  if (reply) {
+    for (const rx of ALWAYS_FORBIDDEN_HANDOFF_PATTERNS) {
+      if (rx.test(reply)) {
+        violations.push("always_forbidden_handoff");
+        messages.push(
+          `Your reply contains an always-forbidden handoff/stall phrasing (matched: ${String(rx)}). ` +
+          `These commit a specific actor + timing, hallucinate sourcing language, or stall with meta-commentary. ` +
+          `No honest version exists, even on escalate_to_human. Rewrite without this phrasing. ` +
+          `If you genuinely cannot answer this turn, set next_action=escalate_to_human and write a short brief holding line ` +
+          `like "Thanks for sending this over. We need to look at this carefully before we can speak to specifics."`
+        );
+        break;
+      }
+    }
+  }
+
   const softPromiseAllowed = (na === "confirm_acceptance_and_create_listing" || na === "escalate_to_human");
   if (!softPromiseAllowed && reply) {
     for (const rx of SOFT_PROMISE_PATTERNS) {
