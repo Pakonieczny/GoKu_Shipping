@@ -1686,6 +1686,16 @@ const ALWAYS_FORBIDDEN_HANDOFF_PATTERNS = [
   /\b(?:we['\u2019]?ll|we\s+will)\s+(?:come\s+back|circle\s+back|get\s+back\s+to\s+you|follow\s+up\s+with\s+you)\s+(?:with|on|about)\b/i,
   // v5.19 — Standalone "we'll/we will get back to you"
   /\b(?:we['\u2019]?ll|we\s+will)\s+get\s+back\s+to\s+you\b/i,
+  // v5.24 — Singular deferrals are just as damaging as plural ones.
+  // Miguel-thread failure: "I'll get back to you with the custom quote
+  // and a line sheet..." passed as an escalation holding reply, but it
+  // stalled a live sales lead instead of attaching collateral / asking the
+  // next question. These are now forbidden regardless of next_action.
+  /\b(?:I['\u2019]?ll|I\s+will)\s+get\s+back\s+to\s+you\b/i,
+  /\b(?:I['\u2019]?ll|I\s+will)\s+(?:come\s+back|circle\s+back|follow\s+up)\s+(?:with|on|about)\b/i,
+  /\b(?:I['\u2019]?ll|I\s+will)\s+(?:have|send|share|provide|bring)\s+(?:you\s+)?(?:an?\s+)?(?:answer|quote|pricing|price|options?|line\s+sheet|details?)\b/i,
+  /\bas\s+soon\s+as\s+I\s+hear\s+(?:back\s+)?(?:from|on)\s+(?:the\s+)?(?:team|operator|staff)\b/i,
+  /\bonce\s+I\s+(?:hear\s+(?:back\s+)?from|check|review|look\s+(?:at|into)|confirm|verify)\b/i,
   // v5.19 — "as soon as we hear back from the team"
   /\bas\s+soon\s+as\s+we\s+hear\s+(?:back\s+)?(?:from|on)\s+(?:the\s+)?(?:team|operator|staff)\b/i,
   // v5.22 — "we'll be back to you" / "we'll be in touch"
@@ -1742,6 +1752,109 @@ const TIMEFRAME_PATTERNS = [
   /\b(in a (few|couple)\s+(minutes?|hours?))\b/i
 ];
 
+// v5.24 — Sales-collateral / customer-spec validator helpers.
+// These are deliberately code-level rails, not more prompt prose. The
+// Miguel two-fruit necklace failure showed that prompt instructions alone
+// can still let the agent escalate with a soft holding draft even though
+// the next real sales action is obvious: attach the necklace line sheet and
+// ask for the customer-selectable specs/arrangement needed before pricing.
+function familyFromParsedAndContext(parsed, validationContext = {}) {
+  const candidates = [
+    parsed && parsed.known_facts && parsed.known_facts.family,
+    parsed && parsed.extracted_spec && parsed.extracted_spec.family,
+    parsed && parsed.items_quoted && parsed.items_quoted.family,
+    validationContext && validationContext.salesCtx && validationContext.salesCtx.accumulatedSpec && validationContext.salesCtx.accumulatedSpec.family
+  ];
+  for (const raw of candidates) {
+    const v = String(raw || "").toLowerCase();
+    if (v === "necklace" || v === "huggie" || v === "stud") return v;
+  }
+  const inbound = String(validationContext.latestInboundText || "").toLowerCase();
+  if (/\b(huggie|huggy|hoop)\b/.test(inbound)) return "huggie";
+  if (/\b(necklace|chain|pendant)\b/.test(inbound)) return "necklace";
+  if (/\b(stud|studs|earring|earrings)\b/.test(inbound)) return "stud";
+  return null;
+}
+
+function lineSheetFlagged(parsed) {
+  const payload = parsed && parsed.next_action_payload && typeof parsed.next_action_payload === "object"
+    ? parsed.next_action_payload : {};
+  return !!(
+    (parsed && parsed.attach_line_sheet === true) ||
+    payload.kind === "line_sheet" ||
+    payload.collateralKind === "line_sheet"
+  );
+}
+
+function hasFamilyLineSheetCandidate(validationContext = {}, family = null) {
+  const list = Array.isArray(validationContext.recommendedCollateral)
+    ? validationContext.recommendedCollateral : [];
+  if (!list.length) return false;
+  const familyRx = family ? new RegExp("\\b" + family + "\\b", "i") : null;
+  return list.some(c => {
+    if (!c || c.kind !== "line_sheet") return false;
+    if (!familyRx) return true;
+    if (familyRx.test(String(c.name || ""))) return true;
+    if (familyRx.test(String(c.description || ""))) return true;
+    if (Array.isArray(c.keywords) && c.keywords.some(k => familyRx.test(String(k)))) return true;
+    return false;
+  });
+}
+
+function selectedCodesCount(parsed) {
+  const candidates = [
+    parsed && parsed.known_facts && parsed.known_facts.selectedCodes,
+    parsed && parsed.extracted_spec && parsed.extracted_spec.selectedCodes,
+    parsed && parsed.items_quoted && parsed.items_quoted.selectedCodes
+  ];
+  for (const arr of candidates) {
+    if (Array.isArray(arr)) return arr.filter(Boolean).length;
+  }
+  return 0;
+}
+
+function customerSelectableMissingItems(parsed) {
+  const rows = Array.isArray(parsed && parsed.missing_or_blocked) ? parsed.missing_or_blocked : [];
+  const out = [];
+  for (const row of rows) {
+    const text = String(
+      (row && (row.what || row.missing || row.reason || row.label || row.detail)) || row || ""
+    ).toLowerCase();
+    if (!text) continue;
+    const customerSpec = /\b(size|metal|chain|length|arrangement|layout|orientation|side[-\s]?by[-\s]?side|above|below|placement|preference|option|code|configuration|engraving|finish|quantity)\b/.test(text);
+    if (customerSpec) out.push(text);
+  }
+  return out;
+}
+
+function inboundLooksLikeCustomSalesSpecRequest(text) {
+  const t = String(text || "").toLowerCase();
+  if (!t) return false;
+  return (
+    /\b(custom|make|design|create|piece|necklace|huggie|stud|charm|quote|price|pricing|cost|how much|total|production time|turnaround|options?)\b/.test(t) ||
+    /etsy\.com\//i.test(t)
+  );
+}
+
+function shouldForceLineSheetSpecStep(parsed, validationContext = {}) {
+  const family = familyFromParsedAndContext(parsed, validationContext);
+  if (!family) return { force: false };
+  if (lineSheetFlagged(parsed)) return { force: false };
+  if (!inboundLooksLikeCustomSalesSpecRequest(validationContext.latestInboundText)) return { force: false };
+
+  const selectableMissing = customerSelectableMissingItems(parsed);
+  const noCodesYet = selectedCodesCount(parsed) === 0;
+  if (selectableMissing.length || noCodesYet) {
+    return {
+      force: true,
+      family,
+      selectableMissing,
+      hasLineSheetCandidate: hasFamilyLineSheetCandidate(validationContext, family)
+    };
+  }
+  return { force: false };
+}
+
 /** Pull the names of tools called this turn from a runToolLoop result.
  *  Robust to missing/empty fields — returns an array of strings. */
 function extractToolNamesCalled(loopResult) {
@@ -1759,7 +1872,7 @@ function extractToolNamesCalled(loopResult) {
  *
  *  The `message` is a targeted re-prompt for the retry attempt. It
  *  describes EXACTLY what was wrong so the AI can correct it. */
-function validateOptionCConsistency({ parsed, toolNamesCalled }) {
+function validateOptionCConsistency({ parsed, toolNamesCalled, validationContext = {} }) {
   const violations = [];
   const messages   = [];
 
@@ -1871,6 +1984,26 @@ function validateOptionCConsistency({ parsed, toolNamesCalled }) {
   if (compatActions.length && !compatActions.includes(na) && na !== "escalate_to_human") {
     violations.push("state_action_incompatible");
     messages.push(`current_state "${cs}" is not compatible with next_action "${na}". Allowed actions for this state: ${compatActions.join(", ")}, or escalate_to_human.`);
+  }
+
+  // Rule 3b — Line sheet/spec step before human escalation or bare question.
+  // When the customer asks for price/production on a custom product and
+  // the family is known but customer-selectable specs are still missing,
+  // the next useful sales move is not a holding reply. It is to attach the
+  // family line sheet and ask the customer to pick/confirm the needed specs.
+  const forcedLineSheet = shouldForceLineSheetSpecStep(parsed, validationContext);
+  if (forcedLineSheet.force && (na === "escalate_to_human" || na === "ask_one_question")) {
+    violations.push(na === "escalate_to_human"
+      ? "escalated_before_customer_specs"
+      : "missing_line_sheet_for_spec_question");
+    messages.push(
+      `The customer is asking about a custom ${forcedLineSheet.family} request, but option codes/customer-selectable specs are still missing. ` +
+      `Do not write a holding reply and do not escalate before gathering customer choices. ` +
+      `Use next_action: attach_collateral, call get_collateral(category: "${forcedLineSheet.family}", kind: "line_sheet"), set attach_line_sheet: true, populate collateral_referenced, ` +
+      `answer any production-time question briefly, and ask the customer to use the attached ${forcedLineSheet.family} line sheet to choose the missing specs. ` +
+      `For this Miguel-style two-charm necklace case, the reply should confirm we can design/make the custom piece, mention the normal production window, attach the necklace line sheet, and ask for the arrangement plus size/metal/chain/length choices. ` +
+      `Do not say "I'll get back to you", "I'll send options later", or any future quote promise.`
+    );
   }
 
   // Rule 4 — soft-promise verbs in reply text.
@@ -2095,7 +2228,12 @@ function backfillLegacyFieldsFromV5(parsed) {
       /\bsend(?:ing)?\s+(?:over\s+)?(?:our\s+)?(?:\w+\s+)?(?:charm\s+)?line\s+sheet\b/i,
       /\bsee\s+the\s+(?:attached\s+)?line\s+sheet\b/i,
       /\btake\s+a\s+look\s+at\s+(?:the\s+)?(?:attached\s+)?(?:\w+\s+)?line\s+sheet\b/i,
-      /\bcheck\s+out\s+(?:the\s+)?(?:attached\s+)?line\s+sheet\b/i
+      /\bcheck\s+out\s+(?:the\s+)?(?:attached\s+)?line\s+sheet\b/i,
+      // v5.24 — Any surviving customer-facing mention of the sheet/menu
+      // should attach it. Earlier patterns only caught promise phrasings;
+      // Miguel-style drafts can use plainer "line sheet" language while
+      // still needing the image chip.
+      /\b(?:line\s+sheet|option\s+sheet|options\s+sheet|pricing\s+sheet|menu)\b/i
     ];
     if (lineSheetPromisePatterns.some(rx => rx.test(r))) {
       parsed.attach_line_sheet = true;
@@ -3019,6 +3157,16 @@ If you find yourself in a turn where the line sheet WOULD be useful but you also
 Do NOT pick next_action: ask_one_question and then write reply text that mentions a line sheet — that's the failure mode this rule patches.
 `.trim();
 
+    // ── (11) No deferral drafts — enforce at prompt level too ──────────
+    const noDeferralDraftAddendum = `
+
+# NO DEFERRAL CUSTOMER DRAFTS — HARD OVERRIDE
+
+A customer-facing sales draft must never say "I'll get back to you", "I'll send options later", "I'll come back with a quote", "once I hear back", or any close variant. This applies even when next_action is escalate_to_human. The operator can see needs_review_synopsis internally; the customer-facing reply must still either act now, ask the next useful customer question, attach the relevant line sheet, or stay empty for operator review.
+
+For custom-shape requests that need operator pricing but still have customer-selectable choices missing, do NOT escalate as the first customer-visible move. Attach the family line sheet and ask for the customer choices first. Example for a two-charm necklace request: confirm we can design and make it, mention the normal production window if asked, attach the necklace line sheet, and ask the customer to pick charm size, metal, chain, length, and confirm the layout. Pricing can be resolved after the specs are complete; do not promise to get back later.
+`.trim();
+
     // Concatenate. Keep a clear separator so the addendum is visible
     // in any prompt-debugging output without being mistaken for
     // operator-edited content.
@@ -3046,7 +3194,9 @@ Do NOT pick next_action: ask_one_question and then write reply text that mention
       + "\n\n---\n\n"
       + signOffAddendum
       + "\n\n---\n\n"
-      + v5ReconciliationAddendum;
+      + v5ReconciliationAddendum
+      + "\n\n---\n\n"
+      + noDeferralDraftAddendum;
 
     // ════════════════════════════════════════════════════════════════════
     // ─── v5.0 OPTION C — AI CALL WITH RETRY-ONCE-THEN-ESCALATE ────────
@@ -3177,7 +3327,11 @@ Do NOT pick next_action: ask_one_question and then write reply text that mention
 
       // Run v5.0 consistency validation
       const toolNamesCalled = extractToolNamesCalled(loopResult);
-      validationResult = validateOptionCConsistency({ parsed, toolNamesCalled });
+      validationResult = validateOptionCConsistency({
+        parsed,
+        toolNamesCalled,
+        validationContext: { latestInboundText, salesCtx, recommendedCollateral }
+      });
 
       if (validationResult.valid) {
         // Passed — break out and continue with persistence
@@ -3223,37 +3377,52 @@ Do NOT pick next_action: ask_one_question and then write reply text that mention
     }
 
     // If after all attempts validation still fails, force-escalate the
-    // turn with the validation failures as the synopsis. The draft body
-    // is preserved (operator can read what the AI tried to say) but the
-    // structured routing is overridden so the listing/abandon pipelines
-    // do NOT fire on bad data.
+    // turn with the validation failures as the synopsis. Never leave the
+    // invalid customer-facing reply in the staff textarea; preserve it
+    // only inside the internal synopsis so the operator can diagnose what
+    // the AI tried to say without accidentally sending a bad draft.
     if (validationResult && !validationResult.valid) {
       const violationsList = (validationResult.violations || []).join(", ");
+      const invalidCustomerFacingReply = (typeof parsed.reply === "string") ? parsed.reply : "";
       console.error(
         `[salesAgent] Validation failed after ${attemptCount} attempts for ${threadId}. ` +
         `Forcing human review. Violations: ${violationsList}.`
       );
       // Override routing fields to safe defaults — never let bad output
-      // accidentally fire the listing pipeline or mark abandoned.
+      // accidentally fire the listing pipeline, mark abandoned, or sit in
+      // the composer as a tempting one-click send.
       parsed.customer_accepted        = false;
       parsed.advance_stage            = null;
       parsed.ready_for_human_approval = true;
+      parsed.reply                    = "";
       parsed.needs_review_synopsis    =
-        `V5.0 VALIDATION FAILURE\n\n` +
-        `The sales agent's output failed consistency validation after ${attemptCount} attempts.\n\n` +
-        `Violations: ${violationsList}\n\n` +
-        `Validator message:\n${validationResult.message}\n\n` +
-        (typeof parsed.reply === "string"
-          ? `AI's reply (excerpt): "${parsed.reply.slice(0, 300)}${parsed.reply.length > 300 ? "..." : ""}"\n\n`
+        `V5.0 VALIDATION FAILURE
+
+` +
+        `The sales agent's output failed consistency validation after ${attemptCount} attempts.
+
+` +
+        `Violations: ${violationsList}
+
+` +
+        `Validator message:
+${validationResult.message}
+
+` +
+        (invalidCustomerFacingReply
+          ? `Suppressed AI customer-facing reply (excerpt): "${invalidCustomerFacingReply.slice(0, 300)}${invalidCustomerFacingReply.length > 300 ? "..." : ""}"
+
+`
           : "") +
         `Operator action: review the conversation, decide the correct next step, ` +
-        `and either edit and send the draft manually OR clear the review flag and ` +
+        `and either write/send the draft manually OR clear the review flag and ` +
         `let the agent re-attempt on the next inbound message.`;
     }
 
     // Mirror legacy customerAcceptedRush field if present (downstream-compat).
     // The new schema doesn't reshape rush handling — it's still on extracted_spec
     // (now mirrored from known_facts.wantsRush).
+
 
     // ── Validate quote if present (server-side gate) ──
     const quoteValidation = await validateQuotedPriceIfPresent({ threadId, parsed, salesCtx });
@@ -3444,16 +3613,29 @@ Do NOT pick next_action: ask_one_question and then write reply text that mention
     // family-scoped recommendation list didn't include it.
     async function findAttachableForKind(kind) {
       const recList = Array.isArray(recommendedCollateral) ? recommendedCollateral : [];
-      const recHit = recList.find(c => c && c.kind === kind && c.storagePath && c.uploadedContentType);
+      const effectiveFamily = familyFromParsedAndContext(parsed, { latestInboundText, salesCtx, recommendedCollateral });
+      const familyRx = effectiveFamily ? new RegExp("\\b" + effectiveFamily + "\\b", "i") : null;
+      const matchesFamily = (c) => {
+        if (kind !== "line_sheet" || !familyRx) return true;
+        return familyRx.test(String(c.name || ""))
+          || familyRx.test(String(c.description || ""))
+          || (Array.isArray(c.keywords) && c.keywords.some(k => familyRx.test(String(k))));
+      };
+
+      const recHit = recList.find(c =>
+        c && c.kind === kind && c.storagePath && c.uploadedContentType && matchesFamily(c)
+      );
       if (recHit) return recHit;
       // Fallback: ask the collateral search for any active entry of this
-      // kind, regardless of category. Family-independent kinds
-      // (metal_comparison, care_instructions, fit_reference) will
-      // typically be stored without a category or under a generic
-      // category like "general" / "_all".
+      // kind. For line sheets, keep the family in the query so a necklace
+      // request doesn't accidentally attach a huggie/stud sheet if the
+      // recommendation list was missing or stale.
       try {
         const { searchCollateral } = require("./etsyMailCollateral");
-        const result = await searchCollateral({ kind, limit: 5 });
+        const searchArgs = (kind === "line_sheet" && effectiveFamily)
+          ? { kind, keywords: [effectiveFamily], limit: 10 }
+          : { kind, limit: 5 };
+        const result = await searchCollateral(searchArgs);
         const matches = (result && Array.isArray(result.matches)) ? result.matches : [];
         // Pick the first attachable: must have storagePath (uploaded
         // file, not just URL reference) AND its kind must match exactly.
@@ -3461,7 +3643,7 @@ Do NOT pick next_action: ask_one_question and then write reply text that mention
         // kind exactly when kind score is just a boost not a filter,
         // so verify here.
         const exactKindHit = matches.find(c =>
-          c && c.kind === kind && c.storagePath && c.uploadedContentType
+          c && c.kind === kind && c.storagePath && c.uploadedContentType && matchesFamily(c)
         );
         if (exactKindHit) return exactKindHit;
       } catch {}

@@ -70,7 +70,11 @@ const COLLATERAL_COLL = "EtsyMail_Collateral";
 const AUDIT_COLL      = "EtsyMail_Audit";
 
 const VALID_KINDS = new Set([
-  "line_sheet", "product_card", "lookbook", "image_set", "terms"
+  "line_sheet", "product_card", "lookbook", "image_set", "terms",
+  // v5.24 — Sales agent auto-attachment kinds. The prompt/agent already
+  // emits these for care, metals, fit, and bracelet sizing cards; the
+  // collateral admin API must accept them too.
+  "fit_reference", "metal_comparison", "care_instructions", "bracelet_sizing"
 ]);
 
 const SAFE_FIELDS = new Set([
