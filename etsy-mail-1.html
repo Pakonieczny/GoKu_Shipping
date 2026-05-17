@@ -12061,7 +12061,7 @@
       return (res && res.exists && res.doc) ? res.doc : null;
     }
 
-    async function waitForManualSalesPipelineDraft(threadId, priorDraftMs, startedAt) {
+    async function waitForManualSalesPipelineDraft(threadId, priorDraftMs, startedAt, manualRunId = null) {
       const timeoutMs = 5 * 60 * 1000;
       const pollMs = 2500;
       let polls = 0;
@@ -12077,7 +12077,8 @@
             const isSalesAgentDraft = draft.generatedBySalesAgent === true;
             const isNewerThanPrior = draftMs > (priorDraftMs || 0);
             const isClearlyThisRun = draftMs >= (startedAt - 10000);
-            if (isSalesAgentDraft && (isNewerThanPrior || isClearlyThisRun || !priorDraftMs)) {
+            const isMatchingManualRun = manualRunId && draft.manualRunId === manualRunId;
+            if (isSalesAgentDraft && (isMatchingManualRun || (!manualRunId && (isNewerThanPrior || isClearlyThisRun || !priorDraftMs)))) {
               return draft;
             }
           }
@@ -12108,8 +12109,11 @@
         await manualCustomListingDelay(pollMs);
       }
 
-      if (lastSeenDraft && lastSeenDraft.generatedBySalesAgent === true) return lastSeenDraft;
-      throw new Error("sales agent draft was not written before timeout");
+      // v5.32 — Do NOT fall back to the last seen sales-agent draft.
+      // That was the exact stale-draft failure: manual AI Draft timed out
+      // or saw an old doc and rehydrated the previous reply. A manual run
+      // either returns the matching fresh run or fails visibly.
+      throw new Error("sales agent did not write a new AI draft before timeout");
     }
 
     async function refreshThreadAfterManualSalesDraft(threadId) {
@@ -12172,17 +12176,14 @@
     //   "revise"    — refine current textarea text; passes currentDraft
     //   "follow_up" — warm re-engagement for stalled threads
     //
-    // forceRegenerate (v5.16):
-    //   When true, bypasses the cache-first check below. Button-click
-    //   callers ALWAYS pass true because an operator clicking "AI Draft"
-    //   with a draft already in the composer is explicitly asking for
-    //   an alternate response, not the cached one. Internal callers
-    //   that genuinely want the dedupe behavior (multi-device race
-    //   protection) can leave the default false. "revise" and
-    //   "follow_up" modes already bypass the cache by virtue of the
-    //   `mode === "initial"` guard, so this flag only affects initial-
-    //   mode calls.
-    async function generateAiDraft(threadId, mode = "initial", instructions = null, forceRegenerate = false) {
+    // forceRegenerate (v5.32):
+    //   AI Draft is a manual regenerate action. It must NEVER reuse an
+    //   existing draft just because EtsyMail_Drafts/draft_<threadId> already
+    //   exists. The old cache-first optimization was removed from this path
+    //   because it made the button look broken: operators clicked AI Draft
+    //   and saw the same stale reply come back. Internal callers should use
+    //   a different helper if they ever need cache/dedupe semantics.
+    async function generateAiDraft(threadId, mode = "initial", instructions = null, forceRegenerate = true) {
       // ──── v3.30 — Manual override of quiet-period defer ──────────────
       // If this thread is currently in deferred_quiet_period (server-
       // side debounce parked the AI draft because the customer was
@@ -12276,7 +12277,42 @@
       }
 
       const employeeName = getEmployeeName();
-      const reqBody = { threadId, mode, employeeName };
+      const manualRunId = (mode === "initial")
+        ? ("manual_ai_" + Date.now() + "_" + Math.random().toString(36).slice(2, 10))
+        : null;
+      const reqBody = {
+        threadId,
+        mode,
+        employeeName,
+        forceRegenerate: mode === "initial",
+        bypassExistingDraft: mode === "initial",
+        manualRunId
+      };
+
+      // v5.32 — A manual AI Draft click means "replace whatever is there
+      // with a newly generated reply." Clear the old composer contents
+      // immediately so a stale draft is not left sitting in the textarea
+      // during a long sales-agent run. Revise/follow-up keep their current
+      // behavior because they intentionally operate on existing text.
+      if (mode === "initial") {
+        const oldTa = $("emDraftText");
+        if (oldTa) {
+          oldTa.value = "";
+          autoSizeDraftTextarea(oldTa);
+        }
+        if (window.IS_MOBILE) {
+          const oldMta = document.getElementById("mComposerTextarea");
+          if (oldMta) {
+            oldMta.value = "";
+            if (typeof mAutoGrow === "function") mAutoGrow(oldMta);
+            const oldSend = document.getElementById("mComposerSend");
+            if (oldSend) oldSend.disabled = true;
+          }
+        }
+        setComposerAttachments(threadId, []);
+        renderComposerChips();
+      }
+
       if (mode === "revise") {
         reqBody.currentDraft = $("emDraftText").value || "";
       }
@@ -12284,117 +12320,9 @@
         reqBody.instructions = instructions.trim();
       }
 
-      // v5.15 — Cache-first. Before paying for an Opus call, check
-      // Firestore for an existing fresh draft. "Fresh" means the
-      // draft was generated AFTER the thread's last inbound message,
-      // so it's still relevant. Saves a duplicate AI call when
-      // multiple devices/operators click "AI Draft" for the same
-      // thread state. Skipped for "revise" and "follow_up" — those
-      // are explicit operator requests for a different take.
-      //
-      // v5.16 — ALSO skipped when forceRegenerate is true. The button
-      // click handlers pass forceRegenerate:true because an operator
-      // clicking "AI Draft" with a hydrated draft already in the
-      // composer is explicitly asking for an alternate response, not
-      // the cached one. Returning the cached draft in that case was
-      // a UX bug (the operator saw the same text reappear). The
-      // multi-device dedupe optimization is preserved for any caller
-      // that genuinely wants it via forceRegenerate:false (default).
-      if (mode === "initial" && !forceRegenerate) {
-        try {
-          const cacheRes = await api("firestoreProxy", {
-            method: "GET",
-            query: { op: "get", coll: "EtsyMail_Drafts", id: "draft_" + threadId }
-          });
-          if (cacheRes && cacheRes.exists && cacheRes.doc) {
-            const d = cacheRes.doc;
-            // Only treat status="draft" (or no status) as a cache hit.
-            // Once queued/sending/sent/failed, the draft has been acted
-            // upon and we shouldn't silently swap it back into the
-            // composer. Match hydrateAiDraft's isHydratableState rule.
-            if (!d.status || d.status === "draft") {
-              const t = (state.threads || []).find(x => x && x.id === threadId);
-              // Local timestamp normalizer — Firestore proxy serializes
-              // server timestamps as {_ts:true, ms:N}; native SDK uses
-              // toMillis(). Cover both shapes plus _seconds and numbers.
-              const _ts = (v) => {
-                if (!v) return 0;
-                if (typeof v === "number") return v;
-                if (typeof v.toMillis === "function") { try { return v.toMillis(); } catch { return 0; } }
-                if (typeof v.ms === "number") return v.ms;
-                if (typeof v._seconds === "number") return v._seconds * 1000;
-                if (v instanceof Date) return v.getTime();
-                if (typeof v === "string") { const dt = new Date(v); return isNaN(dt.getTime()) ? 0 : dt.getTime(); }
-                return 0;
-              };
-              const inboundMs = t ? _ts(t.lastInboundAt) : 0;
-              // Try multiple timestamp field names — backend may use any
-              // of these depending on which path enqueued the draft
-              // (auto-pipeline vs manual generate vs revise).
-              const draftMs = _ts(d.aiMeta && d.aiMeta.generatedAt) ||
-                              _ts(d.lastUpdatedAt) ||
-                              _ts(d.updatedAt) ||
-                              _ts(d.generatedAt) ||
-                              _ts(d.createdAt);
-              if (draftMs > 0 && (inboundMs === 0 || draftMs > inboundMs)) {
-                // CACHE HIT — hydrate the composer the same way
-                // hydrateAiDraft does, restore button state, toast, and
-                // return without making the Opus call.
-                const _draftTa = $("emDraftText");
-                if (_draftTa) {
-                  _draftTa.value = d.text || "";
-                  autoSizeDraftTextarea(_draftTa);
-                }
-                // Mobile mirror — #emDraftText doesn't exist on mobile
-                // until renderDetail runs; write to #mComposerTextarea
-                // independently so mobile shows the cached text.
-                if (window.IS_MOBILE) {
-                  const _mta = document.getElementById("mComposerTextarea");
-                  if (_mta) {
-                    _mta.value = d.text || "";
-                    if (typeof mAutoGrow === "function") mAutoGrow(_mta);
-                    const _send = document.getElementById("mComposerSend");
-                    if (_send) _send.disabled = !((_mta.value || "").trim());
-                  }
-                }
-                try { renderAiDraftCard(d); } catch (e) { console.warn("renderAiDraftCard:", e.message); }
-                if (window.IS_MOBILE && typeof window.mShowAiDraftCard === "function") {
-                  try { window.mShowAiDraftCard(d); } catch (e) { console.warn("mShowAiDraftCard:", e.message); }
-                }
-                // Restore the button + token-counter UI we set above.
-                allBtns.forEach(b => { b.disabled = false; });
-                // v5.29 — Cache-hit early-return path also needs to
-                // clear the loading classes set up in the prologue.
-                // Without this, the spinner spins forever after a
-                // sub-second cache hit because the finally{} block
-                // is skipped.
-                if (primaryBtn) primaryBtn.classList.remove("is-loading");
-                const _mAiBtnHit = document.getElementById("mActionAi");
-                if (_mAiBtnHit) _mAiBtnHit.classList.remove("is-loading");
-                const _mIndHit = document.getElementById("mAiIndicator");
-                if (_mIndHit) _mIndHit.classList.remove("is-loading");
-                if (primaryLabel && primaryOriginalLabel) primaryLabel.textContent = primaryOriginalLabel;
-                if (tc) tc.innerHTML = "";
-                if (body && (body.querySelector(".spinner") || body.querySelector(".em-ai-meta"))) {
-                  // Replace the "thinking" body with the rendered draft
-                  // card body so the operator doesn't see a permanent
-                  // spinner. renderAiDraftCard above already wrote the
-                  // real content; if it didn't (no element), clear the
-                  // transient state.
-                  // No-op: renderAiDraftCard handles emAiCardBody when
-                  // present.
-                }
-                toast("Loaded existing AI draft (no AI cost)");
-                return;
-              }
-            }
-          }
-        } catch (e) {
-          // Cache check failed — log and fall through to the real AI
-          // call. We never want a cache failure to block generation.
-          console.warn("[generateAiDraft] cache check failed:", e.message);
-        }
-      }
+      // v5.32 — No cache-first return here. This is the operator-facing
+      // AI Draft button path, and it must always make a fresh generation
+      // request even when a previous draft document exists.
 
       try {
         const salesRoute = (mode === "initial")
@@ -12425,11 +12353,14 @@
             body: {
               threadId,
               employeeName,
-              forceRerun: true
+              forceRerun: true,
+              forceRegenerate: true,
+              bypassExistingDraft: true,
+              manualRunId
             }
           });
 
-          const draft = await waitForManualSalesPipelineDraft(threadId, priorDraftMs, startedAt);
+          const draft = await waitForManualSalesPipelineDraft(threadId, priorDraftMs, startedAt, manualRunId);
           const freshThread = await refreshThreadAfterManualSalesDraft(threadId);
           if (state.selectedId === threadId && freshThread) {
             try { renderDetail(freshThread); } catch (e) { console.warn("[manual-sales-route] render refresh failed:", e.message); }
