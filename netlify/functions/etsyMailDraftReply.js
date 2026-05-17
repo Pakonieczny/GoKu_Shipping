@@ -2657,14 +2657,14 @@ function buildToolExecutors(ctx) {
         res = await fetch(endpoint, {
           method : "POST",
           headers: { "Content-Type": "application/json" },
-          // v3.27 — Pass draftId so the snapshot worker can write the
-          // ready state back to this draft directly when the image
-          // finishes. Without it, only the inbox's poller would
-          // reconcile (and only while someone has the inbox open).
-          // Drafts referencing pending jobs that nobody's watching
-          // would otherwise auto-send with pending state and drop
-          // the attachment silently.
-          body   : JSON.stringify({ trackingCode, draftId }),
+          // v3.28 — Pull draftId from ctx (was a broken free-variable
+          // reference before; threw "draftId is not defined" when the
+          // executor was called from outside the AI loop's dispatcher,
+          // e.g., by v3.27's post-hoc auto-fix or v3.28's pre-AI
+          // prefetch). buildToolExecutors is at module scope so it has
+          // no closure access to the handler-scoped draftId — must
+          // come through ctx.
+          body   : JSON.stringify({ trackingCode, draftId: ctx.draftId || null }),
           timeout: 9000
         });
         const text = await res.text();
@@ -3262,6 +3262,8 @@ exports.handler = async (event) => {
       thread,
       customer,
       latestCustomerMsgMs,       // ms timestamp of customer's most recent message
+      draftId,                   // v3.28: needed by generate_tracking_image executor so the snapshot
+                                 //         worker can write the ready state back to this draft
       trackingImages: []         // collected by generate_tracking_image executor
     };
     const toolExecutors = buildToolExecutors(toolContext);
