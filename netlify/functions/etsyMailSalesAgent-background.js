@@ -1855,6 +1855,62 @@ function shouldForceLineSheetSpecStep(parsed, validationContext = {}) {
   return { force: false };
 }
 
+
+function buildLineSheetSpecFallbackReply(family, latestInboundText = "") {
+  const fam = String(family || "").toLowerCase();
+  const text = String(latestInboundText || "").toLowerCase();
+  const familyLabel = fam === "huggie" ? "huggie charm earrings"
+                    : fam === "stud"   ? "stud earrings"
+                    : "necklace";
+
+  const specPhrase = fam === "necklace"
+    ? "size, metal, chain, and length"
+    : fam === "huggie"
+      ? "charm size and metal"
+      : "stud size, metal, and pair or single option";
+
+  let question;
+  if (fam === "necklace" && /\bkiwi\b/.test(text) && /\borange\b/.test(text)) {
+    question = "Quick check: do you prefer the kiwi above the orange, or side by side?";
+  } else if (/\b(side\s*by\s*side|above|below|top|under|stacked|layout|arrangement|placement)\b/.test(text)) {
+    question = "Quick check: do you prefer the charms stacked vertically, or side by side?";
+  } else if (fam === "necklace") {
+    question = "Quick check: which size, metal, chain, and length would you like from the sheet?";
+  } else if (fam === "huggie") {
+    question = "Quick check: which charm size and metal would you like from the sheet?";
+  } else {
+    question = "Quick check: which stud size, metal, and set option would you like from the sheet?";
+  }
+
+  return [
+    `Hi! Yes, I can design and make this as a custom ${familyLabel} piece.`,
+    "Standard production is usually about 4 to 5 business days once the details are set, plus shipping.",
+    `I've attached the ${fam || "custom"} line sheet so you can choose the ${specPhrase} needed for accurate pricing.`,
+    question,
+    "Many Thanks,\nCustomBrites"
+  ].join(" ").replace(". Many Thanks", ".\n\nMany Thanks");
+}
+
+function buildValidationFailureCustomerReply({ parsed, validationContext = {}, validationResult = null } = {}) {
+  const forced = shouldForceLineSheetSpecStep(parsed, validationContext);
+  const violations = validationResult && Array.isArray(validationResult.violations)
+    ? validationResult.violations : [];
+  const family = (forced && forced.family) || familyFromParsedAndContext(parsed, validationContext);
+  const hasSpecStepFailure = !!(forced && forced.force) || violations.some(v =>
+    v === "escalated_before_customer_specs" ||
+    v === "missing_line_sheet_for_spec_question" ||
+    v === "always_forbidden_handoff" ||
+    v === "soft_promise_in_reply"
+  );
+
+  if (!family || !hasSpecStepFailure) return null;
+
+  return {
+    family,
+    reply: buildLineSheetSpecFallbackReply(family, validationContext.latestInboundText || "")
+  };
+}
+
 /** Pull the names of tools called this turn from a runToolLoop result.
  *  Robust to missing/empty fields — returns an array of strings. */
 function extractToolNamesCalled(loopResult) {
@@ -3392,12 +3448,36 @@ For custom-shape requests that need operator pricing but still have customer-sel
         `Forcing human review. Violations: ${violationsList}.`
       );
       // Override routing fields to safe defaults — never let bad output
-      // accidentally fire the listing pipeline, mark abandoned, or sit in
-      // the composer as a tempting one-click send.
+      // accidentally fire the listing pipeline or mark the thread abandoned.
+      // However, do NOT leave the operator composer blank when the failure is
+      // the common recoverable sales-spec pattern. In that case synthesize a
+      // short deterministic customer-facing reply that attaches the family
+      // line sheet and asks the customer for the exact choices needed to price
+      // the custom piece. The suppressed AI text still lives only in the
+      // internal synopsis.
+      const safeFallback = buildValidationFailureCustomerReply({
+        parsed,
+        validationContext: { latestInboundText, salesCtx, recommendedCollateral },
+        validationResult
+      });
+
       parsed.customer_accepted        = false;
       parsed.advance_stage            = null;
       parsed.ready_for_human_approval = true;
-      parsed.reply                    = "";
+
+      if (safeFallback && safeFallback.reply) {
+        parsed.current_state        = "spec";
+        parsed.next_action          = "attach_collateral";
+        parsed.next_action_payload  = { category: safeFallback.family, kind: "line_sheet" };
+        parsed.attach_line_sheet    = true;
+        parsed.collateral_referenced = Array.isArray(parsed.collateral_referenced)
+          ? parsed.collateral_referenced
+          : [];
+        parsed.reply                = safeFallback.reply;
+      } else {
+        parsed.reply = "";
+      }
+
       parsed.needs_review_synopsis    =
         `V5.0 VALIDATION FAILURE
 
@@ -3412,6 +3492,11 @@ For custom-shape requests that need operator pricing but still have customer-sel
 ${validationResult.message}
 
 ` +
+        (safeFallback && safeFallback.reply
+          ? `Safe fallback reply was inserted into the composer because this is a recoverable line-sheet/spec gathering step.
+
+`
+          : "") +
         (invalidCustomerFacingReply
           ? `Suppressed AI customer-facing reply (excerpt): "${invalidCustomerFacingReply.slice(0, 300)}${invalidCustomerFacingReply.length > 300 ? "..." : ""}"
 
