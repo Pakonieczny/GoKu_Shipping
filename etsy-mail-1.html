@@ -11945,10 +11945,227 @@
     }
 
     // ─── M4: AI draft generation ────────────────────────────────────────
-    // Calls etsyMailDraftReply with the current thread. The new endpoint
-    // does a tool-use loop: it may call lookup_order_tracking and/or
-    // lookup_order_details before composing. Those tool calls + live
-    // tracking data are all surfaced in the UI.
+    // Calls etsyMailDraftReply for normal support threads. Sales-mode
+    // threads are routed through etsyMailAutoPipeline-background so the
+    // existing backend router can invoke etsyMailSalesAgent-background and
+    // persist the long-running result to Firestore.
+    //
+    // The sales-agent path is intentionally Firestore-polled. Netlify
+    // background functions return immediately; the actual result is the
+    // draft document written at EtsyMail_Drafts/draft_<threadId>.
+    const MANUAL_AI_DRAFT_ACTIVE_SALES_STAGES = new Set([
+      "discovery", "spec", "quote", "revision", "pending_close_approval"
+    ]);
+
+    function manualAiDraftTsMs(v) {
+      if (!v) return 0;
+      if (typeof v === "number") return v;
+      if (v instanceof Date) return v.getTime();
+      if (typeof v === "string") {
+        const d = new Date(v);
+        return isNaN(d.getTime()) ? 0 : d.getTime();
+      }
+      if (typeof v.toMillis === "function") {
+        try { return v.toMillis(); } catch { return 0; }
+      }
+      if (typeof v.ms === "number") return v.ms;
+      if (typeof v._seconds === "number") return v._seconds * 1000;
+      if (v._ts && typeof v.ms === "number") return v.ms;
+      return 0;
+    }
+
+    function manualAiDraftUpdatedMs(draft) {
+      if (!draft) return 0;
+      return manualAiDraftTsMs(draft.updatedAt) ||
+             manualAiDraftTsMs(draft.lastUpdatedAt) ||
+             manualAiDraftTsMs(draft.aiMeta && draft.aiMeta.generatedAt) ||
+             manualAiDraftTsMs(draft.generatedAt) ||
+             manualAiDraftTsMs(draft.createdAt);
+    }
+
+    function getThreadIntentRoutingFields(thread) {
+      const src = thread || {};
+      const nested = (src.intent && typeof src.intent === "object") ? src.intent : {};
+      const classification = src.intentClassification ||
+                             src.intentClass ||
+                             src.classification ||
+                             nested.classification ||
+                             nested.intent ||
+                             null;
+      const rawConfidence = src.intentConfidence ??
+                            src.classificationConfidence ??
+                            nested.confidence ??
+                            nested.intentConfidence ??
+                            null;
+      const confidence = typeof rawConfidence === "number" ? rawConfidence : Number(rawConfidence);
+      return {
+        classification: classification ? String(classification) : null,
+        confidence: Number.isFinite(confidence) ? confidence : 0
+      };
+    }
+
+    function salesPilotAllowsManualAiDraft(autoCfg, threadId) {
+      const ids = Array.isArray(autoCfg && autoCfg.salesPilotThreadIds)
+        ? autoCfg.salesPilotThreadIds.map(String).filter(Boolean)
+        : [];
+      return ids.length === 0 || ids.includes(String(threadId));
+    }
+
+    async function shouldRouteManualAiDraftThroughSalesPipeline(threadId) {
+      try { await fetchAutoConfig(); } catch (_) {}
+
+      const cfg = _autoCfg || {};
+      const pilotAllowed = salesPilotAllowsManualAiDraft(cfg, threadId);
+      const salesModeEnabled = cfg.salesModeEnabled === true;
+
+      let thread = (state.threads || []).find(t => t && t.id === threadId) || null;
+      if (!thread) {
+        try {
+          const res = await api("firestoreProxy", {
+            method: "GET",
+            query : { op: "get", coll: THREADS_COLL, id: threadId }
+          });
+          if (res && res.doc) thread = { id: threadId, ...res.doc };
+        } catch (e) {
+          console.warn("[manual-sales-route] thread fetch failed:", e.message);
+        }
+      }
+
+      const ctx = await fetchSalesContext(threadId);
+      const ctxStage = ctx && ctx.stage ? String(ctx.stage) : null;
+      const activeSalesStage = MANUAL_AI_DRAFT_ACTIVE_SALES_STAGES.has(ctxStage) ? ctxStage : null;
+
+      const intent = getThreadIntentRoutingFields(thread || {});
+      const freshSalesLead = cfg.salesAutoEngage === true &&
+                             intent.classification === "sales_lead" &&
+                             intent.confidence >= 0.7;
+
+      return {
+        route: salesModeEnabled && pilotAllowed && !!(activeSalesStage || freshSalesLead),
+        salesModeEnabled,
+        pilotAllowed,
+        activeSalesStage,
+        freshSalesLead,
+        intentClassification: intent.classification,
+        intentConfidence: intent.confidence,
+        salesStage: ctxStage,
+        thread
+      };
+    }
+
+    async function readManualSalesDraft(threadId) {
+      const res = await api("firestoreProxy", {
+        method: "GET",
+        query : { op: "get", coll: "EtsyMail_Drafts", id: "draft_" + threadId }
+      });
+      return (res && res.exists && res.doc) ? res.doc : null;
+    }
+
+    async function waitForManualSalesPipelineDraft(threadId, priorDraftMs, startedAt) {
+      const timeoutMs = 5 * 60 * 1000;
+      const pollMs = 2500;
+      let polls = 0;
+      let lastSeenDraft = null;
+
+      while ((Date.now() - startedAt) < timeoutMs) {
+        polls++;
+        try {
+          const draft = await readManualSalesDraft(threadId);
+          if (draft) {
+            lastSeenDraft = draft;
+            const draftMs = manualAiDraftUpdatedMs(draft);
+            const isSalesAgentDraft = draft.generatedBySalesAgent === true;
+            const isNewerThanPrior = draftMs > (priorDraftMs || 0);
+            const isClearlyThisRun = draftMs >= (startedAt - 10000);
+            if (isSalesAgentDraft && (isNewerThanPrior || isClearlyThisRun || !priorDraftMs)) {
+              return draft;
+            }
+          }
+        } catch (e) {
+          console.warn("[manual-sales-route] draft poll failed:", e.message);
+        }
+
+        // Light-touch thread check every few polls so hard failures surface
+        // instead of leaving the button spinning until timeout.
+        if (polls % 3 === 0) {
+          try {
+            const fresh = await api("firestoreProxy", {
+              method: "GET",
+              query : { op: "get", coll: THREADS_COLL, id: threadId }
+            });
+            const t = fresh && fresh.doc ? fresh.doc : null;
+            const decision = t && t.lastAutoDecision;
+            const reason = t && (t.needsOperatorReviewReason || t.lastSalesAgentBlockReason || t.lastAutoDecisionReason);
+            if (decision === "sales_agent_timeout" || decision === "sales_agent_failed") {
+              throw new Error(reason || "sales agent failed before writing a draft");
+            }
+          } catch (e) {
+            if (/sales agent/i.test(e.message || "")) throw e;
+            console.warn("[manual-sales-route] thread status poll failed:", e.message);
+          }
+        }
+
+        await manualCustomListingDelay(pollMs);
+      }
+
+      if (lastSeenDraft && lastSeenDraft.generatedBySalesAgent === true) return lastSeenDraft;
+      throw new Error("sales agent draft was not written before timeout");
+    }
+
+    async function refreshThreadAfterManualSalesDraft(threadId) {
+      try {
+        const fresh = await api("firestoreProxy", {
+          method: "GET",
+          query : { op: "get", coll: THREADS_COLL, id: threadId }
+        });
+        if (fresh && fresh.doc) {
+          const merged = { id: threadId, ...fresh.doc };
+          const idx = state.threads.findIndex(x => x && x.id === threadId);
+          if (idx >= 0) state.threads[idx] = merged;
+          return merged;
+        }
+      } catch (e) {
+        console.warn("[manual-sales-route] post-draft thread refresh failed:", e.message);
+      }
+      return (state.threads || []).find(x => x && x.id === threadId) || { id: threadId };
+    }
+
+    function hydrateManualSalesDraftIntoComposer(threadId, draft) {
+      const isHydratableState = !draft.status || draft.status === "draft";
+      const text = draft.text || "";
+
+      const ta = $("emDraftText");
+      if (isHydratableState && ta) {
+        ta.value = text;
+        autoSizeDraftTextarea(ta);
+      }
+
+      if (window.IS_MOBILE && isHydratableState) {
+        const mta = document.getElementById("mComposerTextarea");
+        if (mta) {
+          mta.value = text;
+          if (typeof mAutoGrow === "function") mAutoGrow(mta);
+          const send = document.getElementById("mComposerSend");
+          if (send) send.disabled = !((mta.value || "").trim());
+        }
+        if (typeof window.mNotifyDraftChanged === "function") window.mNotifyDraftChanged();
+      }
+
+      renderAiDraftCard(draft);
+      if (isHydratableState && typeof hydrateComposerFromDraft === "function") {
+        hydrateComposerFromDraft(threadId, draft);
+      } else if (!isHydratableState) {
+        setComposerAttachments(threadId, []);
+        renderComposerChips();
+      }
+
+      if (window.IS_MOBILE && typeof window.mShowAiDraftCard === "function") {
+        try { window.mShowAiDraftCard(draft); } catch (e) { console.warn("[mobile] sales AI draft card failed:", e); }
+      }
+      const row = $("emReviseRow");
+      if (row && isHydratableState) row.style.display = "flex";
+    }
+
     //
     // modes:
     //   "initial"   — fresh draft from scratch
@@ -12180,6 +12397,50 @@
       }
 
       try {
+        const salesRoute = (mode === "initial")
+          ? await shouldRouteManualAiDraftThroughSalesPipeline(threadId)
+          : { route: false };
+
+        if (salesRoute.route) {
+          if (body) {
+            const routeLabel = salesRoute.activeSalesStage
+              ? "sales context: " + salesRoute.activeSalesStage
+              : "fresh sales lead";
+            body.innerHTML =
+              '<div class="em-ai-meta"><span class="em-ai-chip">sales agent</span>' +
+              '<span><span class="spinner" style="border-top-color:#8250df;border-color:rgba(130,80,223,.25);"></span> ' +
+              'Routing through Sales Agent (' + esc(routeLabel) + ') and waiting for the Firestore draft…</span></div>';
+          }
+          if (tc) {
+            tc.className = "em-token-counter empty";
+            tc.innerHTML = '<span class="em-tok-label">Sales AI:</span><span>waiting for background draft…</span>';
+          }
+
+          const priorDraft = await readManualSalesDraft(threadId).catch(() => null);
+          const priorDraftMs = manualAiDraftUpdatedMs(priorDraft);
+          const startedAt = Date.now();
+
+          await api("etsyMailAutoPipeline-background", {
+            method: "POST",
+            body: {
+              threadId,
+              employeeName,
+              forceRerun: true
+            }
+          });
+
+          const draft = await waitForManualSalesPipelineDraft(threadId, priorDraftMs, startedAt);
+          const freshThread = await refreshThreadAfterManualSalesDraft(threadId);
+          if (state.selectedId === threadId && freshThread) {
+            try { renderDetail(freshThread); } catch (e) { console.warn("[manual-sales-route] render refresh failed:", e.message); }
+          }
+          hydrateManualSalesDraftIntoComposer(threadId, draft);
+          fetchThreadListNow({ source: "user" }).catch(e => console.warn("[manual-sales-route] list refresh failed:", e.message));
+          fetchCountsNow().catch(e => console.warn("[manual-sales-route] count refresh failed:", e.message));
+          toast("Sales draft generated");
+          return;
+        }
+
         const data = await api("etsyMailDraftReply", { method: "POST", body: reqBody });
         // v5.8 — Defensively check for #emDraftText. It doesn't exist
         // on mobile (created dynamically by renderDetail; see line
