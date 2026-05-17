@@ -2270,7 +2270,10 @@ exports.handler = async (event) => {
     customerHistory          = {},
     intentClassification     = null,
     intentConfidence         = null,
-    employeeName             = "system:auto-pipeline"
+    employeeName             = "system:auto-pipeline",
+    forceRegenerate          = false,
+    bypassExistingDraft      = false,
+    manualRunId              = null
   } = body;
 
   if (!threadId) {
@@ -3727,6 +3730,9 @@ ${validationResult.message}
     await db.collection(DRAFTS_COLL).doc(draftId).set({
       draftId,
       threadId,
+      manualRunId           : manualRunId || null,
+      forceRegenerate       : !!forceRegenerate,
+      bypassExistingDraft   : !!bypassExistingDraft,
       text                  : replyText,
       attachments           : attachmentsToWrite,
       // v0.9.18 — Mirror attachments into draftAttachments so the

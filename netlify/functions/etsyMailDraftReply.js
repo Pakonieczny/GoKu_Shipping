@@ -3164,7 +3164,10 @@ exports.handler = async (event) => {
     currentDraft  = null,
     instructions  = null,
     employeeName  = null,
-    includeImages = true
+    includeImages = true,
+    forceRegenerate = false,
+    bypassExistingDraft = false,
+    manualRunId = null
   } = body;
 
   if (!threadId) return bad("Missing threadId");
@@ -4168,6 +4171,9 @@ exports.handler = async (event) => {
     const draftDoc = {
       draftId,
       threadId,
+      manualRunId           : manualRunId || null,
+      forceRegenerate       : !!forceRegenerate,
+      bypassExistingDraft   : !!bypassExistingDraft,
       status                : "draft",
       text                  : parsed.text,
       reasoning             : parsed.reasoning,
@@ -4399,6 +4405,7 @@ exports.handler = async (event) => {
     return json(200, {
       success            : true,
       draftId,
+      manualRunId        : manualRunId || null,
       text               : parsed.text,
       reasoning          : parsed.reasoning,
       activeQuestion     : parsed.activeQuestion,
