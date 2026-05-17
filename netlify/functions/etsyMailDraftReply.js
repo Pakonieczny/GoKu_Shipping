@@ -2683,8 +2683,16 @@ function buildToolExecutors(ctx) {
       }
 
       // Record the job reference so the UI can render a placeholder + poll
+      // v3.28 — De-dupe: if a trackingImage with this code already exists
+      // (e.g., the pre-AI prefetch put it there), don't push a duplicate.
+      // The snapshot endpoint is idempotent on tracking code, so the
+      // existing entry already has the same data we'd push.
       if (ctx.trackingImages) {
-        ctx.trackingImages.push({
+        const alreadyExists = ctx.trackingImages.some(t =>
+          t && t.trackingCode && String(t.trackingCode) === String(body.trackingCode)
+        );
+        if (!alreadyExists) {
+          ctx.trackingImages.push({
           trackingCode     : body.trackingCode,
           jobId            : body.jobId || null,
           status           : body.status || "pending",    // "pending" | "ready"
@@ -2702,6 +2710,7 @@ function buildToolExecutors(ctx) {
           eventCount       : (body.events || []).length,
           latestEvent      : (body.events || [])[0] || null
         });
+        }
       }
 
       // Return a rich tracking summary to the model so it can reason about
@@ -3256,6 +3265,86 @@ exports.handler = async (event) => {
       trackingImages: []         // collected by generate_tracking_image executor
     };
     const toolExecutors = buildToolExecutors(toolContext);
+
+    // ─── v3.28 — PRE-AI TRACKING PREFETCH ──────────────────────────
+    //
+    // Belt-and-suspenders with v3.27's post-hoc auto-fix. The AI is
+    // SUPPOSED to call lookup_order_tracking + generate_tracking_image
+    // when the customer asks about tracking, but in practice it
+    // sometimes skips the image generation tool (the regression that
+    // keeps recurring). This prefetch runs BEFORE the AI and does both
+    // calls independently, so the tracking image is in
+    // toolContext.trackingImages BEFORE the AI even starts.
+    //
+    // Net result: tracking image attaches regardless of what the AI
+    // does. If the AI calls generate_tracking_image too, the snapshot
+    // endpoint returns the cached result idempotently (no duplicate
+    // work). If the AI doesn't call it, the image is already there.
+    //
+    // This is the same pattern as prefetchCareCollateral — preemptive,
+    // not dependent on AI cooperation.
+    const _latestInboundText = (latestCustomerMsg && latestCustomerMsg.text) || "";
+    const TRACKING_TOPIC_KEYWORDS = [
+      "tracking", "trackin",
+      "shipped", "shipping", "in transit",
+      "where is my", "where's my", "where is the", "where's the",
+      "hasn't arrived", "haven't received", "not arrived", "didn't arrive",
+      "any update", "any updates", "update on",
+      "when will it arrive", "when will it get here", "when does it arrive",
+      "lost package", "missing package", "package lost",
+      "out for delivery", "delivery status", "estimated delivery",
+      "usps", "ups", "fedex", "dhl", "chit chats", "chitchats"
+    ];
+    const _trackingTopicDetected = _latestInboundText &&
+      TRACKING_TOPIC_KEYWORDS.some(kw => _latestInboundText.toLowerCase().includes(kw));
+
+    if (_trackingTopicDetected) {
+      console.log(`[draftReply ${threadId}] v3.28 pre-AI tracking prefetch — topic detected in inbound`);
+      const candidateReceipts = ((customer && customer.recentReceipts) || []).slice(0, 3);
+      let prefetchedCode = null;
+      let prefetchedReceiptId = null;
+      let prefetchAttemptErrors = [];
+
+      for (const r of candidateReceipts) {
+        if (!r || !r.receiptId) continue;
+        try {
+          const lookupResult = await toolExecutors.lookup_order_tracking({
+            receiptId: String(r.receiptId)
+          });
+          if (lookupResult && !lookupResult.error) {
+            // getShopReceiptShipments returns { shipments: [{ trackingCode, ... }], ... }
+            const shipments = Array.isArray(lookupResult.shipments) ? lookupResult.shipments : [];
+            const firstWithCode = shipments.find(s => s && s.trackingCode);
+            if (firstWithCode) {
+              prefetchedCode = String(firstWithCode.trackingCode);
+              prefetchedReceiptId = String(r.receiptId);
+              break;
+            }
+          } else if (lookupResult && lookupResult.error) {
+            prefetchAttemptErrors.push(`receipt ${r.receiptId}: ${lookupResult.error}`);
+          }
+        } catch (e) {
+          prefetchAttemptErrors.push(`receipt ${r.receiptId}: ${e.message}`);
+        }
+      }
+
+      if (prefetchedCode) {
+        try {
+          const imgResult = await toolExecutors.generate_tracking_image({
+            trackingCode: prefetchedCode
+          });
+          if (imgResult && !imgResult.error) {
+            console.log(`[draftReply ${threadId}] v3.28 pre-AI prefetch SUCCESS — tracking image enqueued for receipt ${prefetchedReceiptId} code ${prefetchedCode}, toolContext.trackingImages.length=${toolContext.trackingImages.length}`);
+          } else {
+            console.warn(`[draftReply ${threadId}] v3.28 pre-AI prefetch — generate_tracking_image failed: ${imgResult && imgResult.error}`);
+          }
+        } catch (e) {
+          console.warn(`[draftReply ${threadId}] v3.28 pre-AI prefetch — generate_tracking_image threw: ${e.message}`);
+        }
+      } else {
+        console.log(`[draftReply ${threadId}] v3.28 pre-AI prefetch — no tracking code found across ${candidateReceipts.length} recent receipts. Errors: ${prefetchAttemptErrors.join("; ") || "none"}`);
+      }
+    }
 
     let loopResult;
     try {
