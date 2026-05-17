@@ -12361,6 +12361,9 @@
           });
 
           const draft = await waitForManualSalesPipelineDraft(threadId, priorDraftMs, startedAt, manualRunId);
+          if (!String((draft && draft.text) || "").trim()) {
+            throw new Error("Sales agent wrote a new draft document, but the reply text was empty. No blank draft was inserted into the composer.");
+          }
           const freshThread = await refreshThreadAfterManualSalesDraft(threadId);
           if (state.selectedId === threadId && freshThread) {
             try { renderDetail(freshThread); } catch (e) { console.warn("[manual-sales-route] render refresh failed:", e.message); }
