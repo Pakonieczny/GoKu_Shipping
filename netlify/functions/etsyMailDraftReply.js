@@ -2551,7 +2551,7 @@ function buildToolExecutors(ctx) {
       const url = String(input.url || "").trim();
       if (!url) return { found: false, reason: "INVALID_INPUT", error: "url is required" };
       try {
-        return await lookupListingByUrl({ url, threadId });
+        return await lookupListingByUrl({ url, threadId: ctx.thread && ctx.thread.id });
       } catch (e) {
         return { found: false, reason: "LOOKUP_ERROR", error: e.message };
       }
@@ -3858,7 +3858,17 @@ exports.handler = async (event) => {
         activeQuestion      : String(composeCall.input.activeQuestion || "").trim(),
         confidence          : _clamp01(composeCall.input.confidence),
         difficulty          : _clamp01(composeCall.input.difficulty),
-        confidenceReasoning : String(composeCall.input.confidenceReasoning || "").trim()
+        confidenceReasoning : String(composeCall.input.confidenceReasoning || "").trim(),
+        // v5.21 — Copy the collateral attach flags through. Without this,
+        // the downstream loop reads parsed[flag] === undefined and never
+        // attaches anything, even when the AI correctly set the flag.
+        attach_metal_comparison : composeCall.input.attach_metal_comparison  === true,
+        attach_care_instructions: composeCall.input.attach_care_instructions === true,
+        attach_fit_reference    : composeCall.input.attach_fit_reference     === true,
+        attach_bracelet_sizing  : composeCall.input.attach_bracelet_sizing   === true,
+        // Rush-flag pass-through (existing behavior preserved)
+        customerAcceptedRush    : composeCall.input.customerAcceptedRush     === true,
+        customerRemovedRush     : composeCall.input.customerRemovedRush      === true
       };
       parsedOk = Boolean(parsed.text);
     }

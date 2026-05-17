@@ -189,12 +189,21 @@ const RE_SHORT_LINK = /^https?:\/\/etsy\.me\/[A-Za-z0-9]+/i;
  *  Pure function, no I/O. */
 function extractListingIdFromUrl(urlOrText) {
   if (typeof urlOrText !== "string" || urlOrText.length < 12) return null;
-  // Find all candidate URLs in the text — it might be embedded in prose.
-  const urlMatches = urlOrText.match(/https?:\/\/[^\s<>"']+/gi) || [];
+  // v2.6 — accept bare-scheme URLs. The scanner regex now matches three
+  // forms: https?://..., www.etsy.com/..., and etsy.com/.... Internally
+  // we still need https?:// for RE_CANONICAL_LISTING etc, so normalize
+  // before matching.
+  const urlMatches = urlOrText.match(
+    /(?:https?:\/\/[^\s<>"']+|www\.(?:etsy\.com|etsy\.me)\/[^\s<>"']+|(?:^|\s|[(\[])(?:etsy\.com|etsy\.me)\/[^\s<>"']+)/gi
+  ) || [];
   // Allow callers to pass the bare URL too
-  const candidates = urlMatches.length > 0 ? urlMatches : [urlOrText.trim()];
+  const rawCandidates = urlMatches.length > 0 ? urlMatches : [urlOrText.trim()];
 
-  for (const candidate of candidates) {
+  for (const raw of rawCandidates) {
+    let candidate = raw.replace(/^[\s(\[]+/, "");
+    if (!/^https?:\/\//i.test(candidate)) {
+      candidate = "https://" + candidate.replace(/^\/\//, "");
+    }
     let m = RE_CANONICAL_LISTING.exec(candidate);
     if (m && m[1]) return m[1];
     m = RE_SELLER_INTERNAL.exec(candidate);
@@ -212,17 +221,36 @@ function extractListingIdFromUrl(urlOrText) {
  *  look up listings before the agent loop runs. */
 function findEtsyUrlsInText(text) {
   if (typeof text !== "string" || text.length < 12) return [];
-  const urlMatches = text.match(/https?:\/\/[^\s<>"']+/gi) || [];
+  // v2.6 — Accept bare URLs without a scheme. Customers regularly paste
+  // "www.etsy.com/listing/..." or "etsy.com/pl/listing/..." with no
+  // https:// prefix. Previous regex required https?:// and missed them
+  // entirely, causing the prefetch in draftReply v3.29 to detect zero
+  // URLs and skip the listing fetch. Three alternates now:
+  //   - Full scheme: https?://...
+  //   - Bare www.:   www.etsy.com/... or www.etsy.me/...
+  //   - Bare host:   etsy.com/... or etsy.me/... (word-boundary anchored)
+  const urlMatches = text.match(
+    /(?:https?:\/\/[^\s<>"']+|www\.(?:etsy\.com|etsy\.me)\/[^\s<>"']+|(?:^|\s|[(\[])(etsy\.com|etsy\.me)\/[^\s<>"']+)/gi
+  ) || [];
   const seen = new Set();
   const results = [];
-  for (const candidate of urlMatches) {
-    const cleaned = candidate.replace(/[.,;:!?)\]]+$/, "");
-    const id = extractListingIdFromUrl(cleaned);
+  for (const rawMatch of urlMatches) {
+    // Strip any leading whitespace/bracket the bare-host alt picked up
+    let candidate = rawMatch.replace(/^[\s(\[]+/, "");
+    // Strip trailing punctuation
+    candidate = candidate.replace(/[.,;:!?)\]]+$/, "");
+    // Normalize scheme so extractListingIdFromUrl (which still requires
+    // https?://) matches. Bare URLs become https://.
+    let normalized = candidate;
+    if (!/^https?:\/\//i.test(normalized)) {
+      normalized = "https://" + normalized.replace(/^\/\//, "");
+    }
+    const id = extractListingIdFromUrl(normalized);
     if (id === null) continue;
-    const dedupKey = id === "SHORT_LINK" ? `short:${cleaned}` : id;
+    const dedupKey = id === "SHORT_LINK" ? `short:${normalized}` : id;
     if (seen.has(dedupKey)) continue;
     seen.add(dedupKey);
-    results.push({ url: cleaned, listingId: id });
+    results.push({ url: normalized, listingId: id });
   }
   return results;
 }
