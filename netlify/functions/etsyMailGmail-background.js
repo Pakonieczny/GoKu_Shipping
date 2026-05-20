@@ -333,30 +333,49 @@ function buildQuery({ baseQuery, lastInternalDateMs, windowDays }) {
 // single doc lookup. The thread doc only stores the MOST RECENT
 // gmailMessageId, so we can't ask it that question.
 //
-// Doc id = gmailMessageId. Idempotent: writing the same (gmailMessageId,
-// threadId) pair twice is a no-op. Designed for ~free reads: the sweep's
-// existing chunked `in` lookup pattern works against this collection via
+// v1.8 — Extended to also remember evaluated-but-no-link messages
+// (transaction emails like "You made a sale", "Etsy Order Confirmation",
+// etc. that match the broad from:etsy.com filter but contain no
+// conversation link). Pre-v1.8 these were re-evaluated by the sweep on
+// every tick, generating a continuous flood of `gmail_sweep_skipped_no_link`
+// audits. v1.8 writes a `status: "no_link"` index doc the first time
+// they're evaluated; subsequent sweeps see them in the index and skip
+// without touching the audit log. The sweep's `linkedIds` check only
+// cares whether the doc exists, so v1.7 docs (no `status` field) keep
+// working — no migration needed.
+//
+// Doc id = gmailMessageId. Idempotent: writing the same doc twice is a
+// no-op. Designed for ~free reads: the sweep's existing chunked `in`
+// lookup pattern works against this collection via
 // FieldPath.documentId(), and document-id lookups don't need an index.
 //
 // Lifetime is "as long as the Gmail message is in the user's mailbox" —
 // not pruned automatically. Doc size is tiny (~100B) so even 100K linked
 // emails is ~10MB. If pruning becomes necessary, the same SWEEP_WINDOW
 // time window applies — anything older than 6h doesn't affect the sweep.
-async function recordGmailLink(gmailMessageId, threadId) {
-  if (!gmailMessageId || !threadId) return;
+//
+// @param status — "linked" (the normal case; threadId required) or
+//                 "no_link" (sweep+main-flow saw this gmailMessageId but
+//                 couldn't extract a conversation link from the email).
+async function recordGmailLink(gmailMessageId, threadId, status = "linked") {
+  if (!gmailMessageId) return;
+  // For "linked" status we require a real threadId; "no_link" has none.
+  if (status === "linked" && !threadId) return;
   try {
-    await db.collection(GMAIL_LINKS_COLL).doc(gmailMessageId).set({
+    const doc = {
       gmailMessageId,
-      threadId,
+      status,
       linkedAt: FV.serverTimestamp()
-    }, { merge: true });
+    };
+    if (threadId) doc.threadId = threadId;
+    await db.collection(GMAIL_LINKS_COLL).doc(gmailMessageId).set(doc, { merge: true });
   } catch (err) {
     // Non-fatal: a missed index write means the next sweep tick will see
     // this email as "orphaned" and try to re-link it. upsertThreadFromGmail
     // is idempotent, so the worst case is one redundant link + scrape.
     // We log but don't throw — the main flow has already done the
     // user-visible work.
-    console.warn(`[gmail-link-index] recordGmailLink failed for ${gmailMessageId}:`, err.message);
+    console.warn(`[gmail-link-index] recordGmailLink failed for ${gmailMessageId} (status=${status}):`, err.message);
   }
 }
 
@@ -719,6 +738,13 @@ async function runIncremental({ invocationStartMs, mode, query, windowDays }) {
       const link = await extractEtsyConversationLink(full);
       if (!link || !link.conversationId) {
         skippedNoLink++;
+        // v1.8 — Record in the link index with status="no_link" BEFORE
+        // writing the audit. This is the steady-state path for
+        // non-conversation emails (transaction notifications, etc.) that
+        // match from:etsy.com. Without this, every sweep tick would
+        // re-evaluate and re-audit the same emails until they age past
+        // SWEEP_WINDOW_HOURS — a continuous flood of skip audits.
+        await recordGmailLink(summary.gmailMessageId, null, "no_link");
         // Audit each miss so operators can spot if Etsy changes their
         // email format and we're silently dropping all of them.
         await writeAudit({
@@ -1049,6 +1075,15 @@ async function runSafetyNetSweep({ invocationStartMs }) {
 
     if (!link || !link.conversationId) {
       result.skippedNoLink++;
+      // v1.8 — Record in the link index with status="no_link" so
+      // subsequent sweeps see this gmailMessageId in linkedIds and skip
+      // it during the orphan-detection chunk-check (line ~960), without
+      // even fetching the message body. This is belt-and-suspenders
+      // alongside the main-flow write: if the main flow's index write
+      // ever fails for a given message, the sweep's write here catches
+      // it next tick. After that tick the message is permanently in the
+      // index and never re-evaluated.
+      await recordGmailLink(summary.gmailMessageId, null, "no_link");
       // Audit so operators can spot persistent extraction failures
       // (same email keeps appearing in sweep audits → Etsy changed
       // their email format and the parser needs an update).
@@ -1161,37 +1196,52 @@ async function runSafetyNetSweep({ invocationStartMs }) {
 // Stops at MAX_INVOCATION_MS (13min) for safety; if it doesn't finish
 // in one pass, the operator can re-run — already-written index docs
 // will be no-ops on the second pass thanks to set+merge.
-async function runIndexBackfill({ invocationStartMs }) {
-  const deadlineMs = invocationStartMs + MAX_INVOCATION_MS;
-  const result = {
-    scanned : 0,
-    written : 0,
-    skipped : 0,
-    errors  : 0,
-    hitLimit: false,
-    durationMs: 0
-  };
-  const t0 = Date.now();
+//
+// v1.8 — Now also backfills no-link entries. We do two passes:
+//   1. actor="system:gmail"       → link events (status: "linked")
+//   2. actor="system:gmail-sweep" → skip events (status: "no_link")
+// Without pass 2, disengaging the circuit breaker after v1.8 deploy
+// would trigger one big flood of re-evaluation as the sweep saw every
+// historical transaction-email skip as a fresh "not in index" miss.
 
-  // Stream audit events page by page. We want every event that records
-  // a Gmail link: that's both "thread_gmail_linked" and "thread_created"
-  // (when actor="system:gmail"). Each has payload.gmailMessageId.
-  //
-  // Firestore "in" with two values is supported, but to keep this
-  // resilient against future event-type additions we filter client-side
-  // on actor. Query gates on actor="system:gmail" first (already cheap
-  // because it's a single-field equality).
+// Classify an audit event into one of:
+//   { kind: "linked",  gmailMessageId, threadId }
+//   { kind: "no_link", gmailMessageId }
+//   null  (skip — wrong shape or wrong type)
+function classifyAuditForIndex(auditDoc) {
+  const data = auditDoc.data() || {};
+  const eventType = data.eventType;
+  const payload = data.payload || {};
+  const gmailMessageId = payload.gmailMessageId;
+  if (!gmailMessageId) return null;
+
+  if (eventType === "thread_gmail_linked" || eventType === "thread_created") {
+    const threadId = data.threadId;
+    if (!threadId) return null;
+    return { kind: "linked", gmailMessageId, threadId };
+  }
+  if (eventType === "gmail_message_skipped_no_link" ||
+      eventType === "gmail_sweep_skipped_no_link") {
+    return { kind: "no_link", gmailMessageId };
+  }
+  return null;
+}
+
+// Paginate one actor's audit events and write index docs. Returns
+// per-actor counts that the outer runIndexBackfill aggregates.
+async function backfillIndexForActor({ actor, deadlineMs }) {
+  const counts = { scanned: 0, written: 0, skipped: 0, errors: 0, hitLimit: false };
   const PAGE_SIZE = 500;
   let lastSnap = null;
 
   while (true) {
     if (Date.now() > deadlineMs) {
-      result.hitLimit = true;
+      counts.hitLimit = true;
       break;
     }
 
     let q = db.collection(AUDIT_COLL)
-      .where("actor", "==", "system:gmail")
+      .where("actor", "==", actor)
       .orderBy("createdAt", "asc")
       .limit(PAGE_SIZE);
     if (lastSnap) q = q.startAfter(lastSnap);
@@ -1200,50 +1250,42 @@ async function runIndexBackfill({ invocationStartMs }) {
     try {
       snap = await q.get();
     } catch (err) {
-      // If "actor + orderBy createdAt" needs a composite index that
-      // wasn't provisioned, surface it clearly. The operator can fall
-      // back to the "wait 6h with the circuit breaker engaged" strategy.
-      console.error("[gmail-index-backfill] audit query failed:", err.message);
-      result.errors++;
-      throw new Error(`audit query failed (may need composite index): ${err.message}`);
+      // The Firestore composite index (actor + createdAt asc) is shared
+      // across all actor values, so once the index is provisioned for
+      // system:gmail it works for system:gmail-sweep too. If it ISN'T
+      // provisioned, this surfaces clearly with the URL to create it.
+      console.error(`[gmail-index-backfill] audit query failed for actor=${actor}:`, err.message);
+      counts.errors++;
+      throw new Error(`audit query failed for actor=${actor} (may need composite index): ${err.message}`);
     }
 
     if (snap.empty) break;
 
-    // Batch index writes for throughput. Firestore batch cap is 500.
     let batch = db.batch();
     let inBatch = 0;
     for (const doc of snap.docs) {
-      const data = doc.data() || {};
-      const eventType = data.eventType;
-      if (eventType !== "thread_gmail_linked" && eventType !== "thread_created") {
-        result.skipped++;
-        continue;
-      }
-      const payload = data.payload || {};
-      const gmailMessageId = payload.gmailMessageId;
-      const threadId = data.threadId;
-      if (!gmailMessageId || !threadId) {
-        result.skipped++;
-        continue;
-      }
-      const ref = db.collection(GMAIL_LINKS_COLL).doc(gmailMessageId);
-      batch.set(ref, {
-        gmailMessageId,
-        threadId,
-        linkedAt        : data.createdAt || FV.serverTimestamp(),
-        backfilledAt    : FV.serverTimestamp(),
-        backfilledFromAudit: doc.id
-      }, { merge: true });
-      inBatch++;
-      result.written++;
+      const classified = classifyAuditForIndex(doc);
+      if (!classified) { counts.skipped++; continue; }
 
-      // Commit before reaching the 500 cap.
+      const ref = db.collection(GMAIL_LINKS_COLL).doc(classified.gmailMessageId);
+      const indexDoc = {
+        gmailMessageId      : classified.gmailMessageId,
+        status              : classified.kind,           // "linked" | "no_link"
+        linkedAt            : doc.data().createdAt || FV.serverTimestamp(),
+        backfilledAt        : FV.serverTimestamp(),
+        backfilledFromAudit : doc.id
+      };
+      if (classified.threadId) indexDoc.threadId = classified.threadId;
+
+      batch.set(ref, indexDoc, { merge: true });
+      inBatch++;
+      counts.written++;
+
       if (inBatch >= 450) {
         try { await batch.commit(); }
         catch (err) {
-          console.warn("[gmail-index-backfill] batch commit failed:", err.message);
-          result.errors++;
+          console.warn(`[gmail-index-backfill] batch commit failed for actor=${actor}:`, err.message);
+          counts.errors++;
         }
         batch = db.batch();
         inBatch = 0;
@@ -1252,15 +1294,44 @@ async function runIndexBackfill({ invocationStartMs }) {
     if (inBatch > 0) {
       try { await batch.commit(); }
       catch (err) {
-        console.warn("[gmail-index-backfill] final batch commit failed:", err.message);
-        result.errors++;
+        console.warn(`[gmail-index-backfill] final batch commit failed for actor=${actor}:`, err.message);
+        counts.errors++;
       }
     }
 
-    result.scanned += snap.docs.length;
+    counts.scanned += snap.docs.length;
     lastSnap = snap.docs[snap.docs.length - 1];
-    // If we got less than a full page, we're done.
     if (snap.docs.length < PAGE_SIZE) break;
+  }
+
+  return counts;
+}
+
+async function runIndexBackfill({ invocationStartMs }) {
+  const deadlineMs = invocationStartMs + MAX_INVOCATION_MS;
+  const t0 = Date.now();
+  const result = {
+    scanned : 0,
+    written : 0,
+    skipped : 0,
+    errors  : 0,
+    hitLimit: false,
+    byActor : {},
+    durationMs: 0
+  };
+
+  for (const actor of ["system:gmail", "system:gmail-sweep"]) {
+    if (Date.now() > deadlineMs) {
+      result.hitLimit = true;
+      break;
+    }
+    const counts = await backfillIndexForActor({ actor, deadlineMs });
+    result.byActor[actor] = counts;
+    result.scanned += counts.scanned;
+    result.written += counts.written;
+    result.skipped += counts.skipped;
+    result.errors  += counts.errors;
+    if (counts.hitLimit) result.hitLimit = true;
   }
 
   result.durationMs = Date.now() - t0;
