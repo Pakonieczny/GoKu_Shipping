@@ -52,7 +52,7 @@
  *      // Populated by the AI draft generator (M4); preserved here so the
  *      // draft doc is self-contained.
  *      generatedByAI      : true,
- *      aiModel            : "claude-opus-4-7",
+ *      aiModel            : "claude-sonnet-4-6",
  *      aiReasoning        : "...",
  *      aiActiveQuestion   : "...",
  *      // Lifecycle

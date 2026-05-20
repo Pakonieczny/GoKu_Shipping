@@ -543,8 +543,8 @@ exports.handler = async (event) => {
     //     OR routes the thread to "Needs review" (low confidence,
     //     vetoed, or kill-switch active)
     //
-    // Why -background: the AI draft step takes 10-60 seconds with Opus
-    // 4.7 + tool calls. Netlify's standard 10s function timeout is too
+    // Why -background: the AI draft step takes 10-60 seconds with Sonnet
+    // 4.6 + tool calls. Netlify's standard 10s function timeout is too
     // tight; the -background suffix unlocks 15 minutes and decouples
     // the response from completion (Netlify returns 202 immediately).
     //

@@ -78,8 +78,8 @@ const THREADS_COLL = "EtsyMail_Threads";
 const AUDIT_COLL   = "EtsyMail_Audit";
 
 // ─── Model config ───────────────────────────────────────────────────────
-// v3.31: rolled back from Opus 4.7 → Haiku 4.5. v3.0 had upgraded to
-// Opus 4.7 to handle multi-arc thread-aware classification (long
+// v3.31: rolled back from Sonnet 4.6 → Haiku 4.5. v3.0 had upgraded to
+// Sonnet 4.6 to handle multi-arc thread-aware classification (long
 // threads where the customer's "current arc" sits inside months of
 // older context). In practice the prompt + thread tail is well-
 // structured and 5-bucket classification is a domain Haiku 4.5

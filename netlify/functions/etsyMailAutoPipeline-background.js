@@ -6,7 +6,7 @@
  *
  *  Netlify's `-background` suffix unlocks a 15-minute timeout (vs 10s for
  *  regular synchronous functions) and decouples invocation from response.
- *  This pipeline calls etsyMailDraftReply (Opus 4.7 + tool loop, 10-60s
+ *  This pipeline calls etsyMailDraftReply (Sonnet 4.6 + tool loop, 10-60s
  *  typical) and may also call etsyMailDraftSend.enqueue, so the standard
  *  10s budget is too tight. The trade-off: callers get a 202 immediately
  *  with no body, so any return data we'd want must be persisted (we
@@ -1936,7 +1936,7 @@ exports.handler = async (event) => {
     // thread should still see the AI's suggested reply alongside its
     // confidence score, ready to edit and send manually.
     //
-    // The slow step — typically 10-60 seconds with Opus 4.7 + tool calls.
+    // The slow step — typically 10-60 seconds with Sonnet 4.6 + tool calls.
     let draftResp;
     try {
       draftResp = await callFunction("etsyMailDraftReply", {

@@ -51,7 +51,7 @@ const DRAFTS_COLL   = "EtsyMail_Drafts";
 const AUDIT_COLL    = "EtsyMail_Audit";
 const CONFIG_COLL   = "EtsyMail_Config";
 
-const AI_MODEL          = process.env.ETSYMAIL_SALES_MODEL || "claude-opus-4-7";
+const AI_MODEL          = process.env.ETSYMAIL_SALES_MODEL || "claude-sonnet-4-6";
 const _ALLOWED_EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
 const _RAW_EFFORT = process.env.ETSYMAIL_SALES_EFFORT || "high";
 const AI_EFFORT = _ALLOWED_EFFORTS.has(_RAW_EFFORT) ? _RAW_EFFORT : "high";

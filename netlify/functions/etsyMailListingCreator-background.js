@@ -55,7 +55,7 @@ const TEMPLATES_DOC = "listingTemplates";
 const ALLOWED_FAMILIES = ["necklace", "huggie", "stud"];
 const MANUAL_LISTING_DEFAULT_PRICE_USD = Math.max(1, Number(process.env.ETSYMAIL_MANUAL_LISTING_DEFAULT_PRICE_USD || 1));
 
-// v3.31: default Sonnet 4.6 (was Opus 4.7). Listing creation fires
+// v3.31: default Sonnet 4.6 (was Sonnet 4.6). Listing creation fires
 // rarely (once per closed sale) but each call generates title +
 // description + tags — three structured-text tasks Sonnet handles
 // cleanly. The original sales-agent default chain remains as a

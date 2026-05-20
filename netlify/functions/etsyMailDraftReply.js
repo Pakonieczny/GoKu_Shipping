@@ -21,8 +21,8 @@
  *    against live Etsy data. compose_draft_reply is the terminal tool
  *    that ends the loop (cleaner than JSON parsing).
  *  - Mode: added "follow_up" for re-engaging stalled custom-order prospects.
- *  - Model: Opus 4.7 with effort:"high". No temperature/top_p/top_k
- *    (not supported on 4.7). Adaptive thinking on by default.
+ *  - Model: Sonnet 4.6 with effort:"high". No temperature/top_p/top_k
+ *    (not supported on 4.6). Adaptive thinking on by default.
  *  - Uses shared _etsyMailAnthropic.js client (same HTTP pattern as
  *    claudeCodeProxy-background.js in this repo).
  *
@@ -53,7 +53,7 @@
  *  ANTHROPIC_API_KEY              required
  *  ETSYMAIL_AI_MODEL              optional; default claude-sonnet-4-6
  *  ETSYMAIL_AI_EFFORT             optional; default "high"
- *  ETSYMAIL_AI_MAX_TOKENS         optional; default 12000 (Opus 4.7 counts
+ *  ETSYMAIL_AI_MAX_TOKENS         optional; default 12000 (Sonnet 4.6 counts
  *                                 thinking + response + tool-use ALL
  *                                 against max_tokens; at effort:"high"
  *                                 with multimodal input and a 2-3 tool
@@ -325,19 +325,19 @@ const AUDIT_COLL     = "EtsyMail_Audit";
 const CONFIG_COLL    = "EtsyMail_Config";
 
 // ─── Model config ────────────────────────────────────────────────────────
-// Opus 4.7 default. effort:"high" per operator request.
+// Sonnet 4.6 default. effort:"high" per operator request.
 //
-// IMPORTANT: On Opus 4.7, max_tokens is a hard ceiling on thinking tokens +
-// response tokens + tool-use tokens COMBINED (per Anthropic's 4.7 docs —
+// IMPORTANT: On Sonnet 4.6, max_tokens is a hard ceiling on thinking tokens +
+// response tokens + tool-use tokens COMBINED (per Anthropic's 4.6 docs —
 // this is a change from 4.6 where thinking had its own budget). At
 // effort:"high" with multimodal input and a 2-3 tool call loop, 5000 is
 // tight; 12000 gives comfortable headroom without uncapping spend.
-// v3.31 — Default support drafter to Sonnet 4.6 (was Opus 4.7).
-// Sonnet is ~40% cheaper on rate card and avoids Opus 4.7's tokenizer
+// v3.31 — Default support drafter to Sonnet 4.6 (was Sonnet 4.6).
+// Sonnet is ~40% cheaper on rate card and avoids Sonnet 4.6's tokenizer
 // inflation (effective ~50% cost cut). The ETSYMAIL_AI_MODEL env var
-// still overrides — set it to "claude-opus-4-7" to revert per-deploy
+// still overrides — set it to "claude-sonnet-4-6" to revert per-deploy
 // without touching code. The sales agent (etsyMailSalesAgent-background)
-// remains on Opus 4.7 by default — phased rollout: support first, then
+// remains on Sonnet 4.6 by default — phased rollout: support first, then
 // sales once the cheaper model proves out on confidence-score and
 // human-review-rate metrics.
 const AI_MODEL     = process.env.ETSYMAIL_AI_MODEL    || "claude-sonnet-4-6";
@@ -2815,7 +2815,7 @@ async function writeAudit({ threadId, draftId, eventType, actor = "system:draftR
 // ═══════════════════════════════════════════════════════════════════════
 //
 // Three small ops live alongside the main draft-reply path. They all:
-//   - Use a cheap Haiku model (vs Opus 4.7 for drafts)
+//   - Use a cheap Haiku model (vs Sonnet 4.6 for drafts)
 //   - Don't need conversation context loading, tool loops, or images
 //   - Have their own input shapes and skip every code path between
 //     this comment and the draft-reply request validation
@@ -3137,7 +3137,7 @@ exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: CORS, body: "ok" };
   if (event.httpMethod !== "POST")     return json(405, { error: "Method Not Allowed" });
 
-  // v1.2: AI generation is expensive (Opus 4.7 + tool loop = up to ~$0.30
+  // v1.2: AI generation is expensive (Sonnet 4.6 + tool loop = up to ~$0.30
   // per call). Gate every request behind the extension secret. The inbox
   // UI forwards it from localStorage on every api() call; the auto-pipeline
   // forwards it from process.env.ETSYMAIL_EXTENSION_SECRET. If the secret
