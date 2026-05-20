@@ -639,7 +639,18 @@ async function buildConversationMessages(messages, elidedCount, hasMore, include
   }
 
   for (const m of messages) {
-    const role = m.senderRole === "staff" ? "assistant" : "user";
+    // v3.32 — Message docs carry one of TWO vocabularies for senderRole:
+    //   - etsyMailSnapshot.js writes "staff" or "customer"
+    //   - etsyMailOptimisticMessage.js writes "shop_owner" for staff sends
+    // The prior code only checked === "staff", which silently misrouted
+    // every optimistic outbound message to role:"user" (i.e., the AI saw
+    // its OWN sent replies as if the customer had written them). Use
+    // direction as the source of truth (it's set on every write path)
+    // and fall back to either senderRole value when present.
+    const isStaff = m.direction === "outbound"
+                 || m.senderRole === "staff"
+                 || m.senderRole === "shop_owner";
+    const role = isStaff ? "assistant" : "user";
 
     if (currentRole && currentRole !== role) {
       // Flush current turn
@@ -2190,7 +2201,15 @@ function buildContextPreamble({ thread, customer, mode, currentDraft, instructio
   sections.push(`Current time: ${currentTimeStr}`);
 
   // Calculate age of the latest customer message
-  const customerMessages = (messages || []).filter(m => m.sender === "customer" || m.role === "customer" || m.fromCustomer);
+  // v3.32 — Message docs are written by etsyMailSnapshot.js with fields
+  // `senderRole: "customer"|"staff"` and `direction: "inbound"|"outbound"`.
+  // The prior filter checked `m.sender` / `m.role` / `m.fromCustomer` —
+  // field names that exist nowhere in the schema — so this always returned
+  // zero messages and the latest-customer-message age was never injected
+  // into the prompt. Fixed to match the actual stored field names.
+  const customerMessages = (messages || []).filter(m =>
+    m.senderRole === "customer" || m.direction === "inbound"
+  );
   const latestCustomer = customerMessages[customerMessages.length - 1] || null;
   if (latestCustomer) {
     const ts = latestCustomer.timestamp?.toMillis?.() ||
@@ -3191,10 +3210,72 @@ exports.handler = async (event) => {
 
     if (!thread) return json(404, { error: "Thread not found", threadId });
 
-    const [{ messages, hasMore, elidedCount }, customer] = await Promise.all([
+    const [{ messages, hasMore, elidedCount }, _initialCustomer] = await Promise.all([
       loadMessages(threadId, MESSAGE_HISTORY_LIMIT),
       loadCustomer(thread.buyerUserId)
     ]);
+
+    // v3.32 — Lazy buyer-sync recovery.
+    //
+    // etsyMailSnapshot.js fires a buyer-sync as a fire-and-forget POST to
+    // etsyMailSync-background when a new thread is scraped. When that POST
+    // fails for any reason (transient network, Netlify cold-start hiccup,
+    // missing fnHost env, sync-state lock contention) the failure is
+    // silently logged but never retried. The thread ends up with a real
+    // buyerUserId but NO matching EtsyMail_Customers doc — and every
+    // downstream feature that reads `customer.recentReceipts` (tracking
+    // prefetch, repeat-buyer detection, order-history lookups in the AI
+    // tool loop) silently degrades to "no orders found."
+    //
+    // The most visible symptom: tracking questions on first-message
+    // threads always fall back to a stall reply because the prefetch
+    // can't find a receiptId to look up.
+    //
+    // Recovery: if loadCustomer returned null but we have a buyerUserId,
+    // trigger the buyer-sync inline and wait briefly for the customer
+    // doc to land. Bounded by SYNC_WAIT_MS so we never block draft
+    // generation for more than a few seconds.
+    let customer = _initialCustomer;
+    if (!customer && thread.buyerUserId) {
+      console.log(`[draftReply ${threadId}] v3.32 lazy buyer-sync — customer doc missing for buyerUserId=${thread.buyerUserId}, triggering sync`);
+      try {
+        const fnHost = process.env.URL || process.env.DEPLOY_PRIME_URL || null;
+        if (fnHost) {
+          // Fire the sync. It's a background function so it returns 202
+          // immediately; the actual write happens asynchronously.
+          const fetch = require("node-fetch");
+          await fetch(`${fnHost}/.netlify/functions/etsyMailSync-background`, {
+            method : "POST",
+            headers: { "Content-Type": "application/json" },
+            body   : JSON.stringify({ mode: "buyer", buyerUserId: String(thread.buyerUserId) }),
+            timeout: 3000
+          }).catch(e => console.warn(`[draftReply ${threadId}] v3.32 sync trigger failed:`, e.message));
+
+          // Poll for the customer doc to appear. Buyer-sync for a single
+          // buyer typically completes in 2-5s (1-2 Etsy API calls).
+          const SYNC_WAIT_MS = 8000;
+          const POLL_INTERVAL_MS = 500;
+          const deadline = Date.now() + SYNC_WAIT_MS;
+          while (Date.now() < deadline) {
+            await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
+            const retry = await loadCustomer(thread.buyerUserId);
+            if (retry) {
+              customer = retry;
+              console.log(`[draftReply ${threadId}] v3.32 lazy buyer-sync — customer doc resolved (waited ${Date.now() - (deadline - SYNC_WAIT_MS)}ms, ${(retry.recentReceipts || []).length} receipts)`);
+              break;
+            }
+          }
+          if (!customer) {
+            console.warn(`[draftReply ${threadId}] v3.32 lazy buyer-sync — customer doc still missing after ${SYNC_WAIT_MS}ms wait. Proceeding without it.`);
+          }
+        } else {
+          console.warn(`[draftReply ${threadId}] v3.32 lazy buyer-sync skipped — no URL/DEPLOY_PRIME_URL env`);
+        }
+      } catch (e) {
+        // Recovery is best-effort. Never block draft generation on it.
+        console.warn(`[draftReply ${threadId}] v3.32 lazy buyer-sync threw:`, e.message);
+      }
+    }
 
     if (!messages.length) return bad("Thread has no messages to reply to");
 
@@ -3231,8 +3312,16 @@ exports.handler = async (event) => {
     // Grab the latest customer message timestamp so tool executors can
     // reason about temporal reconciliation (e.g. "this scan happened
     // AFTER the customer wrote, so the situation has changed").
+    // v3.32 — Same field-name fix as the temporal-context filter above.
+    // The prior filter checked `m.sender` / `m.role` / `m.fromCustomer`,
+    // none of which exist on the message docs. That meant customerMsgs
+    // was ALWAYS empty, latestCustomerMsg was ALWAYS null, the inbound
+    // text was an empty string, _trackingTopicDetected was always false,
+    // and the entire pre-AI tracking prefetch silently never ran. That's
+    // why "where's my tracking" replies kept falling back to stall text:
+    // the AI was given no tracking data to work with.
     const customerMsgs = messages.filter(m =>
-      m.sender === "customer" || m.role === "customer" || m.fromCustomer
+      m.senderRole === "customer" || m.direction === "inbound"
     );
     const latestCustomerMsg = customerMsgs[customerMsgs.length - 1] || null;
     const latestCustomerMsgMs = latestCustomerMsg
