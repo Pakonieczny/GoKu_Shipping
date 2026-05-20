@@ -125,7 +125,20 @@ const FV = admin.firestore.FieldValue;
 const THREADS_COLL = "EtsyMail_Threads";
 const JOBS_COLL    = "EtsyMail_Jobs";
 const AUDIT_COLL   = "EtsyMail_Audit";
+// v1.7 — Index collection mapping gmailMessageId → threadId. One doc per
+// linked Gmail message, ID-keyed by gmailMessageId. Lets the sweep check
+// "has this gmail message EVER been linked to a thread?" cheaply — without
+// it the sweep used a thread-doc field (gmailMessageId) which only stores
+// the MOST-RECENT-linked id per thread, causing prior emails on the same
+// Etsy conversation to look "orphaned" on every tick and re-trigger the
+// scrape pipeline in a flip-flop loop (see runaway audit-log bug Apr 2026).
+const GMAIL_LINKS_COLL = "EtsyMail_GmailLinks";
 const SYNC_STATE_DOC = "EtsyMail_Config/gmailSyncState";   // 2-segment path
+// v1.7 — Hard kill-switch consulted on every sweep run, independent of the
+// gmailWatcher.enabled flag the cron checks. If a future bug recurs, an
+// operator can set sweepCircuitBreaker.enabled=true in Firestore and the
+// sweep bails out in the next ≤1min without touching the main flow.
+const SWEEP_CIRCUIT_BREAKER_DOC = "EtsyMail_Config/gmailSweepCircuitBreaker";
 
 // ─── Tuning constants ────────────────────────────────────────────────────
 
@@ -313,6 +326,40 @@ function buildQuery({ baseQuery, lastInternalDateMs, windowDays }) {
   return { q, watermarkSec };
 }
 
+// ─── Gmail link index ────────────────────────────────────────────────────
+//
+// v1.7 — Maintains a 1:1 index of gmailMessageId → threadId so the sweep
+// can answer "has this Gmail message EVER been linked to a thread?" with a
+// single doc lookup. The thread doc only stores the MOST RECENT
+// gmailMessageId, so we can't ask it that question.
+//
+// Doc id = gmailMessageId. Idempotent: writing the same (gmailMessageId,
+// threadId) pair twice is a no-op. Designed for ~free reads: the sweep's
+// existing chunked `in` lookup pattern works against this collection via
+// FieldPath.documentId(), and document-id lookups don't need an index.
+//
+// Lifetime is "as long as the Gmail message is in the user's mailbox" —
+// not pruned automatically. Doc size is tiny (~100B) so even 100K linked
+// emails is ~10MB. If pruning becomes necessary, the same SWEEP_WINDOW
+// time window applies — anything older than 6h doesn't affect the sweep.
+async function recordGmailLink(gmailMessageId, threadId) {
+  if (!gmailMessageId || !threadId) return;
+  try {
+    await db.collection(GMAIL_LINKS_COLL).doc(gmailMessageId).set({
+      gmailMessageId,
+      threadId,
+      linkedAt: FV.serverTimestamp()
+    }, { merge: true });
+  } catch (err) {
+    // Non-fatal: a missed index write means the next sweep tick will see
+    // this email as "orphaned" and try to re-link it. upsertThreadFromGmail
+    // is idempotent, so the worst case is one redundant link + scrape.
+    // We log but don't throw — the main flow has already done the
+    // user-visible work.
+    console.warn(`[gmail-link-index] recordGmailLink failed for ${gmailMessageId}:`, err.message);
+  }
+}
+
 // ─── Thread upsert ───────────────────────────────────────────────────────
 //
 // Pattern matches etsyMailThreads.js action:create — same field shape, so
@@ -413,6 +460,10 @@ async function upsertThreadFromGmail({
       buyerIsRepeatBuyer  : false
     };
     await ref.set(initial, { merge: false });
+    // v1.7 — record link index so sweep can confirm this gmailMessageId
+    // has been linked even if a later email overwrites the thread doc's
+    // gmailMessageId field.
+    await recordGmailLink(gmailMessageId, threadId);
     await writeAudit({
       threadId,
       eventType: "thread_created",
@@ -432,6 +483,12 @@ async function upsertThreadFromGmail({
   // we've already processed this email (idempotency guard for SW retries).
   const existing = snap.data() || {};
   if (existing.gmailMessageId === gmailMessageId) {
+    // v1.7 — defensive: write to the index here too. The link IS already
+    // established on the thread doc; if the index doc happens to be
+    // missing (pre-v1.7 link, or a transient earlier write failure) this
+    // backfills it so the sweep doesn't treat this id as orphaned. set+
+    // merge is idempotent, so this is a no-op for the common case.
+    await recordGmailLink(gmailMessageId, threadId);
     return { threadId, action: "skipped_already_linked" };
   }
 
@@ -467,6 +524,10 @@ async function upsertThreadFromGmail({
   }
 
   await ref.set(patch, { merge: true });
+  // v1.7 — record link index. Note we do this on the "linked" path only;
+  // the "skipped_already_linked" early-return above has already written
+  // the index on the prior call that linked this same gmailMessageId.
+  await recordGmailLink(gmailMessageId, threadId);
   await writeAudit({
     threadId,
     eventType: "thread_gmail_linked",
@@ -853,6 +914,29 @@ async function runSafetyNetSweep({ invocationStartMs }) {
   };
   const t0 = Date.now();
 
+  // v1.7 — Hard kill switch, checked FIRST. If
+  // EtsyMail_Config/gmailSweepCircuitBreaker.enabled === true the sweep
+  // bails immediately, even if everything else is green. This is the
+  // "stop the bleeding" lever an operator can throw in Firestore if the
+  // sweep ever misbehaves again — independent of the main gmailWatcher
+  // toggle (which gates the entire watcher; this gates just the sweep).
+  // Default-off semantics: missing doc = sweep runs normally.
+  try {
+    const cbSnap = await db.doc(SWEEP_CIRCUIT_BREAKER_DOC).get();
+    if (cbSnap.exists && cbSnap.data() && cbSnap.data().enabled === true) {
+      console.warn("[gmail-sweep] skipping (circuit breaker is engaged)");
+      result.skipped = "circuit_breaker";
+      result.durationMs = Date.now() - t0;
+      return result;
+    }
+  } catch (err) {
+    // If the breaker doc read fails, fall through to running the sweep —
+    // failing closed on a Firestore read error would mean a flaky
+    // Firestore takes the sweep offline. Log it so the failure isn't
+    // silent.
+    console.warn("[gmail-sweep] circuit-breaker doc read failed:", err.message);
+  }
+
   // Budget check — if the main flow already used >12 min of the 15
   // min Netlify budget, skip the sweep this tick. The main flow's
   // watermark advance has already happened, so we'd run it next tick.
@@ -893,23 +977,28 @@ async function runSafetyNetSweep({ invocationStartMs }) {
     return result;
   }
 
-  // 2. Bulk-check Firestore: which of these gmailIds are already
-  //    linked to a thread doc? Firestore "in" filters take up to 30
-  //    values per query; chunk accordingly.
+  // 2. Bulk-check Firestore: which of these gmailIds have ever been
+  //    linked to a thread? Query the EtsyMail_GmailLinks index (one doc
+  //    per linked gmailMessageId) rather than the thread doc's
+  //    gmailMessageId field — the thread only stores the MOST RECENT
+  //    linked id, so earlier emails on the same Etsy conversation would
+  //    look "orphaned" forever, causing a flip-flop re-link loop. The
+  //    index doc is keyed by gmailMessageId, so we can chunk-lookup via
+  //    FieldPath.documentId() — no composite index needed.
+  //
+  // v1.7 — Firestore "in" filters take up to 30 values per query; chunk
+  // accordingly. Same pattern as the prior implementation.
   const linkedIds = new Set();
   const CHUNK = 30;
   for (let i = 0; i < gmailIds.length; i += CHUNK) {
     const chunk = gmailIds.slice(i, i + CHUNK);
     try {
-      const snap = await db.collection(THREADS_COLL)
-        .where("gmailMessageId", "in", chunk)
+      const snap = await db.collection(GMAIL_LINKS_COLL)
+        .where(admin.firestore.FieldPath.documentId(), "in", chunk)
         .get();
-      snap.forEach(doc => {
-        const d = doc.data() || {};
-        if (d.gmailMessageId) linkedIds.add(d.gmailMessageId);
-      });
+      snap.forEach(doc => { linkedIds.add(doc.id); });
     } catch (err) {
-      console.warn("[gmail-sweep] thread-link check chunk failed:", err.message);
+      console.warn("[gmail-sweep] gmail-link-index check chunk failed:", err.message);
       result.errors++;
       // Continue anyway — un-checked chunks just means we may re-
       // process some already-processed messages. upsertThreadFromGmail
@@ -1048,6 +1137,136 @@ async function runSafetyNetSweep({ invocationStartMs }) {
   return result;
 }
 
+// ─── One-shot index backfill ────────────────────────────────────────────
+//
+// v1.7 maintenance task. Pre-v1.7, the gmailMessageId-to-threadId
+// relationship existed implicitly: only in the thread doc's
+// gmailMessageId field (overwritten on every new email for that thread)
+// and in the EtsyMail_Audit "thread_gmail_linked" / "thread_created"
+// (gmail-source) event payloads.
+//
+// v1.7 introduces the EtsyMail_GmailLinks index collection — but only
+// new links written from this version forward populate it. Running this
+// backfill once after deploy scans the audit log and writes index docs
+// for every historical link, so the safety-net sweep doesn't see
+// pre-deploy emails as "orphaned" and re-link/re-scrape them all on
+// first run.
+//
+// Idempotent (set+merge on each doc), safe to re-run. Designed to be
+// invoked once via:
+//   POST /.netlify/functions/etsyMailGmail-background  {"mode":"backfill_index"}
+// or
+//   GET  /.netlify/functions/etsyMailGmail-background?mode=backfill_index
+//
+// Stops at MAX_INVOCATION_MS (13min) for safety; if it doesn't finish
+// in one pass, the operator can re-run — already-written index docs
+// will be no-ops on the second pass thanks to set+merge.
+async function runIndexBackfill({ invocationStartMs }) {
+  const deadlineMs = invocationStartMs + MAX_INVOCATION_MS;
+  const result = {
+    scanned : 0,
+    written : 0,
+    skipped : 0,
+    errors  : 0,
+    hitLimit: false,
+    durationMs: 0
+  };
+  const t0 = Date.now();
+
+  // Stream audit events page by page. We want every event that records
+  // a Gmail link: that's both "thread_gmail_linked" and "thread_created"
+  // (when actor="system:gmail"). Each has payload.gmailMessageId.
+  //
+  // Firestore "in" with two values is supported, but to keep this
+  // resilient against future event-type additions we filter client-side
+  // on actor. Query gates on actor="system:gmail" first (already cheap
+  // because it's a single-field equality).
+  const PAGE_SIZE = 500;
+  let lastSnap = null;
+
+  while (true) {
+    if (Date.now() > deadlineMs) {
+      result.hitLimit = true;
+      break;
+    }
+
+    let q = db.collection(AUDIT_COLL)
+      .where("actor", "==", "system:gmail")
+      .orderBy("createdAt", "asc")
+      .limit(PAGE_SIZE);
+    if (lastSnap) q = q.startAfter(lastSnap);
+
+    let snap;
+    try {
+      snap = await q.get();
+    } catch (err) {
+      // If "actor + orderBy createdAt" needs a composite index that
+      // wasn't provisioned, surface it clearly. The operator can fall
+      // back to the "wait 6h with the circuit breaker engaged" strategy.
+      console.error("[gmail-index-backfill] audit query failed:", err.message);
+      result.errors++;
+      throw new Error(`audit query failed (may need composite index): ${err.message}`);
+    }
+
+    if (snap.empty) break;
+
+    // Batch index writes for throughput. Firestore batch cap is 500.
+    let batch = db.batch();
+    let inBatch = 0;
+    for (const doc of snap.docs) {
+      const data = doc.data() || {};
+      const eventType = data.eventType;
+      if (eventType !== "thread_gmail_linked" && eventType !== "thread_created") {
+        result.skipped++;
+        continue;
+      }
+      const payload = data.payload || {};
+      const gmailMessageId = payload.gmailMessageId;
+      const threadId = data.threadId;
+      if (!gmailMessageId || !threadId) {
+        result.skipped++;
+        continue;
+      }
+      const ref = db.collection(GMAIL_LINKS_COLL).doc(gmailMessageId);
+      batch.set(ref, {
+        gmailMessageId,
+        threadId,
+        linkedAt        : data.createdAt || FV.serverTimestamp(),
+        backfilledAt    : FV.serverTimestamp(),
+        backfilledFromAudit: doc.id
+      }, { merge: true });
+      inBatch++;
+      result.written++;
+
+      // Commit before reaching the 500 cap.
+      if (inBatch >= 450) {
+        try { await batch.commit(); }
+        catch (err) {
+          console.warn("[gmail-index-backfill] batch commit failed:", err.message);
+          result.errors++;
+        }
+        batch = db.batch();
+        inBatch = 0;
+      }
+    }
+    if (inBatch > 0) {
+      try { await batch.commit(); }
+      catch (err) {
+        console.warn("[gmail-index-backfill] final batch commit failed:", err.message);
+        result.errors++;
+      }
+    }
+
+    result.scanned += snap.docs.length;
+    lastSnap = snap.docs[snap.docs.length - 1];
+    // If we got less than a full page, we're done.
+    if (snap.docs.length < PAGE_SIZE) break;
+  }
+
+  result.durationMs = Date.now() - t0;
+  return result;
+}
+
 // ─── Entry ───────────────────────────────────────────────────────────────
 exports.handler = async (event) => {
   const invocationStartMs = Date.now();
@@ -1059,6 +1278,13 @@ exports.handler = async (event) => {
 
   // Parse params from body or query string. The cron passes nothing; the
   // status/trigger endpoint may pass mode/query/windowDays.
+  //
+  // v1.7 — also supports mode="backfill_index": a one-shot maintenance
+  // run that scans the audit log for past `thread_gmail_linked` and
+  // `thread_created` (gmail-source) events and writes the corresponding
+  // EtsyMail_GmailLinks index docs. Run this once immediately after
+  // deploying v1.7 so the safety-net sweep doesn't treat every previously
+  // linked Gmail message as orphaned. Idempotent; safe to re-run.
   let mode = "incremental";
   let query = null;
   let windowDays = null;
@@ -1066,16 +1292,30 @@ exports.handler = async (event) => {
     if (event.body) {
       const b = JSON.parse(event.body);
       if (b.mode === "full") mode = "full";
+      else if (b.mode === "backfill_index") mode = "backfill_index";
       if (typeof b.query === "string") query = b.query;
       if (typeof b.windowDays === "number") windowDays = b.windowDays;
     }
     if (event.queryStringParameters) {
       const qs = event.queryStringParameters;
       if (qs.mode === "full") mode = "full";
+      else if (qs.mode === "backfill_index") mode = "backfill_index";
       if (qs.query) query = qs.query;
       if (qs.windowDays) windowDays = parseInt(qs.windowDays, 10);
     }
   } catch {}
+
+  // v1.7 — one-shot index backfill. Short-circuits the normal flow.
+  if (mode === "backfill_index") {
+    try {
+      const summary = await runIndexBackfill({ invocationStartMs });
+      console.log("[gmail-index-backfill] complete:", JSON.stringify(summary));
+      return { statusCode: 200, body: JSON.stringify({ ok: true, mode: "backfill_index", ...summary }) };
+    } catch (err) {
+      console.error("[gmail-index-backfill] fatal:", err);
+      throw err;
+    }
+  }
 
   try {
     await writeSyncState({
