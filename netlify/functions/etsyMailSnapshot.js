@@ -172,6 +172,37 @@ exports.handler = async (event) => {
   // See unmangleEscapedUnicode above for the full rationale.
   body = unmangleObjectStrings(body);
 
+  // v3.2 — threadExists lookup. Lets the Chrome scraper ask, before it
+  // commits to scrolling through a long Etsy conversation, "do we
+  // already have this thread?" If yes, the scraper skips Phase 1
+  // (which triggers Etsy's load-more to pull the entire history) and
+  // sends only the bubbles that are visible without any scrolling.
+  // Those visible bubbles always include the newest message (Etsy's
+  // conversation page opens at the bottom of the thread). The snapshot
+  // ingest's content-based dedup (senderRole + normalizedText +
+  // tsMinute) handles any overlap between visible-already-known
+  // bubbles and genuinely new ones, even if multiple new messages
+  // arrived between scrapes.
+  //
+  // For a fresh thread we've never seen, this op returns exists:false
+  // and the scraper falls back to its existing full Phase 1 scroll.
+  //
+  // Returns: { exists }
+  if (body.op === "threadExists") {
+    const convId = body.etsyConversationId;
+    if (!convId) return bad("threadExists requires etsyConversationId");
+    const threadId = `etsy_conv_${convId}`;
+    try {
+      const tSnap = await db.collection(THREADS_COLL).doc(threadId).get();
+      return json(200, { exists: tSnap.exists });
+    } catch (err) {
+      console.error("threadExists failed:", err);
+      // Fail open so the scraper falls back to its full-scrape path
+      // rather than blocking on a transient backend error.
+      return json(200, { exists: false, error: err.message });
+    }
+  }
+
   const {
     etsyConversationId,
     etsyConversationUrl,
@@ -277,15 +308,89 @@ exports.handler = async (event) => {
     // a stored message's timestamp if the scraper now provides a better one
     // (e.g., scraper v0.3+ extracts real per-message Date: headers that
     // earlier scrapes missed).
-    const existingSnap = await tRef.collection("messages").select("contentHash", "timestamp").limit(2000).get();
-    const existingByHash = new Map();   // hash → { docId, currentTsMs }
+    //
+    // v3.3 — Also build a CONTENT-based dedup index. The existing
+    // contentHash includes the bubble's position in the full thread,
+    // which doesn't survive an incremental scrape: if a returning
+    // customer sends a new message, the incremental scrape sees only
+    // the bottom ~10 visible bubbles, so previously-stored bubbles get
+    // assigned different positions in the scrape than they had in
+    // storage. Different positions → different hashes → false negatives
+    // on the dedup check → duplicate copies of every old bubble inserted.
+    //
+    // The content-based index avoids that by keying on:
+    //   - role (staff/customer/shop_owner → folded into staff vs customer)
+    //   - either normalizedText (text bubbles) OR sorted imageUrls
+    //     (image bubbles), since image bubbles have empty text and would
+    //     otherwise collide with each other
+    //   - tsMinute (timestamp rounded to the minute; matches Etsy's
+    //     minute-level UI precision)
+    //
+    // Both indexes are checked for every incoming bubble: a match in
+    // EITHER means we already have it. Old bubbles in storage match
+    // via the content index; new bubbles match either way.
+    const existingSnap = await tRef.collection("messages")
+      .select("contentHash", "senderRole", "normalizedText", "text", "imageUrls", "timestamp", "messageType")
+      .limit(2000).get();
+    const existingByHash    = new Map();   // hash → { docId, currentTsMs }
+    const existingByContent = new Map();   // contentKey → { docId, currentTsMs }
+
+    // Normalize the role vocabulary. Snapshot writes "customer"/"staff".
+    // Optimistic-message writes "shop_owner" (treated as staff equivalent).
+    // Anything else falls back to customer (safer default — content match
+    // on an unknown role won't accidentally suppress a real customer
+    // bubble; the worst case is one extra dedupe miss).
+    function normalizeRole(senderRole) {
+      if (senderRole === "staff" || senderRole === "shop_owner") return "staff";
+      return "customer";
+    }
+
+    // Build a stable content-fingerprint for a bubble. For text bubbles
+    // the fingerprint is the normalized text. For image bubbles the
+    // fingerprint is the sorted, joined imageUrls (matches the in-scraper
+    // pattern at processImageAttachment: `IMAGE:${urlKey}`).
+    // Falls back to text → URLs in that order to handle borderline docs.
+    function bubbleFingerprint({ text, normalizedText, imageUrls, messageType }) {
+      const txt = normalizedText || normalize(text || "");
+      if (txt) return `T:${txt}`;
+      const urls = Array.isArray(imageUrls) ? imageUrls.filter(Boolean).slice().sort().join("|") : "";
+      if (urls) return `I:${urls}`;
+      // Empty bubble (no text, no images). Should never happen in
+      // practice but if it does, fold to a sentinel so the key is at
+      // least valid (won't collide with real bubbles since real ones
+      // always have one or the other).
+      return "E:empty";
+    }
+
+    function contentKey(senderRole, fp, tsMs) {
+      const role = normalizeRole(senderRole);
+      const minute = tsMs != null ? Math.floor(tsMs / 60000) : "";
+      return `${role}|${fp}|${minute}`;
+    }
+
     existingSnap.forEach(d => {
       const data = d.data() || {};
+      const currentTsMs = data.timestamp && typeof data.timestamp.toMillis === "function"
+        ? data.timestamp.toMillis()
+        : null;
       if (data.contentHash) {
-        const currentTsMs = data.timestamp && typeof data.timestamp.toMillis === "function"
-          ? data.timestamp.toMillis()
-          : null;
         existingByHash.set(data.contentHash, { docId: d.id, currentTsMs });
+      }
+      // Also index by content. Skip docs without enough info to
+      // fingerprint reliably (no text AND no images AND no timestamp).
+      if (currentTsMs != null && data.senderRole) {
+        const fp = bubbleFingerprint({
+          text          : data.text,
+          normalizedText: data.normalizedText,
+          imageUrls     : data.imageUrls,
+          messageType   : data.messageType
+        });
+        if (fp !== "E:empty") {
+          existingByContent.set(
+            contentKey(data.senderRole, fp, currentTsMs),
+            { docId: d.id, currentTsMs }
+          );
+        }
       }
     });
 
@@ -315,7 +420,23 @@ exports.handler = async (event) => {
         if (direction === "outbound") newest_outbound_ms = Math.max(newest_outbound_ms || 0, ts);
       }
 
-      const existing = existingByHash.get(m.contentHash);
+      // v3.3 — Check both dedup indexes. Hash match is the fast path
+      // (full-scrape case). Content match handles the incremental case
+      // where the same bubble's hash differs because its position in
+      // the scrape doesn't match its position in storage.
+      let existing = existingByHash.get(m.contentHash);
+      if (!existing) {
+        const fp = bubbleFingerprint({
+          text          : m.text,
+          normalizedText: null,                // recomputed from text
+          imageUrls     : m.imageUrls,
+          messageType   : m.messageType
+        });
+        if (fp !== "E:empty") {
+          existing = existingByContent.get(contentKey(m.senderRole, fp, ts));
+        }
+      }
+
       if (existing) {
         // Candidate for timestamp update: we have a new ts, it's different,
         // and either we stored nothing or what we stored looks like a fallback.
