@@ -71,13 +71,25 @@ function buildOptimisticDoc({ draftId, text, employeeName, attachments }) {
     senderName      : employeeName || "Shop owner",
     senderRole      : "shop_owner",
     text            : String(text || ""),
-    // v0.9.8: store timestamp as a Firestore Timestamp, not a raw number.
-    // Firestore's orderBy sorts by data type first, then by value within
-    // the type — so a number-typed timestamp sorts before every
-    // Timestamp-typed timestamp regardless of the actual time. Storing
-    // a Timestamp here ensures optimistic messages interleave correctly
-    // with M2-scraped real messages (which are also Timestamps) when
-    // the messages subcollection is listed with orderBy("timestamp").
+    // v0.9.8 — `timestamp` MUST be a Firestore Timestamp, not a raw
+    // Number. Firestore range queries compare values by type first,
+    // then value. The fetchMessagesNow delta query in firestoreProxy
+    // does:
+    //   q.where("timestamp", ">", Timestamp.fromMillis(sinceMs))
+    // If we wrote `timestamp` as a Number, the optimistic message was
+    // EXCLUDED from delta query results — because in Firestore's mixed-
+    // type ordering, Numbers compare differently than Timestamps. The
+    // operator's just-sent message would silently never come back from
+    // the delta fetch, so the in-memory state.messages didn't update,
+    // and mobile's render-skip cache (keyed on message count + last id)
+    // matched the previous render and skipped repainting.
+    //
+    // Symptom: send a message on mobile, see "Sent ✓" toast, but the
+    // sent bubble never appears in the conversation. Closing and
+    // reopening the browser forced a FULL fetch (which doesn't use the
+    // since-cursor) so the message reappeared.
+    //
+    // Snapshot writes use Timestamp.fromMillis(ts); match that exactly.
     timestamp       : admin.firestore.Timestamp.fromMillis(nowMs),
     createdAt       : FV.serverTimestamp(),
     imageUrls,
