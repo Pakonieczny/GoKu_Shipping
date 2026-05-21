@@ -61,13 +61,35 @@ exports.handler = async (event) => {
     }
 
     // ── Gate 2: don't double-trigger if a sync is already running ────
+    // v1.1 — Stale-lock detection. The background watcher writes
+    // lastSyncInProgress=true at start and false at end. If it crashes
+    // mid-run (or gets killed at the 15-min Netlify timeout) the lock
+    // stays true forever and the cron would skip every tick after that.
+    // Treat anything older than 20 min as stale and override. Netlify's
+    // max background function runtime is 15 min, so 20 min is a safe
+    // "definitely dead" threshold.
     const state = await readDoc(SYNC_STATE_DOC);
     if (state && state.lastSyncInProgress) {
-      console.log("etsyMailGmailCron: skipped (sync already in progress)");
-      return {
-        statusCode: 200,
-        body: JSON.stringify({ skipped: true, reason: "sync already in progress" })
-      };
+      const startedMs = state.lastSyncStartedAt && state.lastSyncStartedAt.toMillis
+        ? state.lastSyncStartedAt.toMillis()
+        : 0;
+      const ageMin = startedMs ? (Date.now() - startedMs) / 60000 : 999;
+      if (ageMin < 20) {
+        console.log(`etsyMailGmailCron: skipped (sync in progress, started ${Math.round(ageMin)} min ago)`);
+        return {
+          statusCode: 200,
+          body: JSON.stringify({
+            skipped     : true,
+            reason      : "sync already in progress",
+            lockAgeMin  : Math.round(ageMin)
+          })
+        };
+      }
+      // Lock is stale (>= 20 min old). The next invocation we trigger
+      // will overwrite lastSyncInProgress=true with its own fresh
+      // timestamp; the background watcher's own writeSyncState at the
+      // start of runIncremental does this unconditionally.
+      console.warn(`etsyMailGmailCron: clearing stale lock (started ${Math.round(ageMin)} min ago) and proceeding`);
     }
 
     // ── Invoke the background fn ─────────────────────────────────────
