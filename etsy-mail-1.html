@@ -15172,28 +15172,10 @@
       });
     }
 
-    // Manual sync trigger — retained for potential future use (e.g. a
-    // settings panel button to force an incremental sync). No longer used
-    // by the customer panel since a sync won't help customers who are
-    // genuinely absent from the 2-year receipt history.
-    window.triggerCustomerSync = async function() {
-      toast("Triggering sync…");
-      try {
-        const resp = await fetch(FN("etsyMailSync") + "?action=trigger&mode=incremental", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: "{}"
-        });
-        const data = await resp.json();
-        if (data.invoked) {
-          toast("Sync started. Check back in ~1 min.");
-        } else {
-          toast("Sync failed to start: " + (data.error || "unknown"));
-        }
-      } catch (e) {
-        toast("Sync error: " + e.message);
-      }
-    };
+    // window.triggerCustomerSync (the old manual incremental-sync trigger)
+    // was removed 2026-05-21 along with the cron-driven sync paths. Per-buyer
+    // sync now runs automatically via the snapshot pipeline when a customer
+    // messages the shop. No manual button is needed.
 
     // ─── M3: Order detail modal ─────────────────────────────────────────
     async function openOrderDetailModal(receiptId) {

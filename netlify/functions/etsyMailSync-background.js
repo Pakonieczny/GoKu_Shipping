@@ -1,47 +1,67 @@
 /*  netlify/functions/etsyMailSync-background.js
  *
- *  M3 Etsy customer-summaries sync — LIGHTWEIGHT version.
+ *  M3 Etsy customer-summaries sync — BUYER-ONLY MODE.
  *
  *  ═══ WHAT THIS DOES ═══
  *
- *  Builds/updates per-customer summary docs in EtsyMail_Customers based on
- *  receipts fetched from Etsy's getShopReceipts API. Does NOT store full
- *  receipts — when an operator clicks into a specific order in the inbox,
- *  that's a live call to etsyOrderProxy.js for fresh data.
+ *  Given a buyerUserId, fetches that buyer's receipts from Etsy and
+ *  upserts a single customer doc at EtsyMail_Customers/{buyerUserId}.
+ *  That's it.
+ *
+ *  ═══ WHY ONLY BUYER MODE ═══
+ *
+ *  This function previously had three modes:
+ *    - "full" — windowed 2-year backfill of every shop receipt
+ *    - "incremental" — every 25 min, pulled all receipts updated since
+ *      the last watermark, regardless of which customers were active
+ *    - "buyer" — targeted per-buyer fetch, fired by the snapshot
+ *      pipeline when a thread is scraped
+ *
+ *  The inbox's actual need is narrow: when a customer messages the
+ *  shop, show their order history in the right rail. That data is
+ *  populated by the snapshot pipeline's per-buyer fanout. The full and
+ *  incremental modes pre-populated customer docs for buyers who had
+ *  never messaged — data the inbox never uses, since the inbox is
+ *  message-driven.
+ *
+ *  Those two modes also caused a runaway: on May 21 2026, the cron
+ *  hit Etsy's daily rate limit, retry-after returned ~2 hours, the
+ *  function tried to sleep through it, got killed at the 15-min
+ *  function timeout, never cleared its lock, and got re-invoked every
+ *  5 min while concurrent invocations from prior ticks were still
+ *  spinning. Compounded with the snapshot's buyer-mode fanout, the
+ *  daily quota was exhausted by mid-morning every day.
+ *
+ *  Removing the cron paths eliminates the entire class of problem:
+ *    - No scheduled invocations means no lock contention
+ *    - No global watermarks means no concurrency races
+ *    - Per-buyer fetches are 1–2 Etsy calls each, bounded by the rate
+ *      of incoming customer messages (a few per hour at peak)
  *
  *  Customer doc shape (EtsyMail_Customers/{buyerUserId}):
  *    {
  *      buyerUserId, displayName, currency,
  *      orderCount, totalSpent,
  *      firstOrderAt, lastOrderAt,
- *      isRepeatBuyer,   // orderCount >= 2
- *      recentReceipts: [   // up to 10, newest first
+ *      isRepeatBuyer,
+ *      recentReceipts: [
  *        { receiptId, orderedAt, grandTotal, status }
  *      ],
  *      updatedAt
  *    }
  *
- *  ═══ WHY WINDOWED SYNC ═══
- *
- *  Etsy's offset cap is 12,000. For a 250K-order shop, we can't paginate
- *  straight through. Instead we window by creation date (15-day windows)
- *  — each window has well under 12K orders.
- *
  *  ═══ INVOCATION ═══
  *
- *  Scheduled (netlify.toml):
- *    - If backfillInProgress: resume the windowed backfill from cursor
- *    - Else: run incremental (receipts modified since last watermark)
+ *  POST /.netlify/functions/etsyMailSync-background
+ *    { mode: "buyer", buyerUserId: "<numeric id>" }
  *
- *  Manual trigger (via etsyMailSync?action=trigger):
- *    - mode=full: start/restart a 2-year backfill
- *    - mode=incremental: single incremental pass
+ *  Triggered by:
+ *    - etsyMailSnapshot.js after each scrape (fire-and-forget)
+ *    - etsyMailDraftReply.js v3.32 lazy recovery when customer doc is
+ *      missing despite the thread having buyerUserId set
+ *    - Manual operator-triggered refresh from the inbox
  *
- *  ═══ STORAGE IMPACT ═══
- *
- *  At ~50K unique buyers over 2 years, ~1 KB each = ~50 MB total.
- *  No receipt storage. Incremental syncs read+merge existing customer
- *  docs so running totals are preserved.
+ *  Any other `mode` value returns 400. No cron. No backfill.
  */
 
 const fetch = require("node-fetch");
@@ -59,20 +79,36 @@ const OAUTH_DOC_PATH = "config/etsyOauth";
 const TOKEN_REFRESH_BUFFER_MS = 2 * 60 * 1000;
 
 const PAGE_SIZE = 100;
-const REQUEST_DELAY_MS = 0;     // No artificial delay — HTTP latency alone keeps us under Etsy's 10/sec cap
-const DEFAULT_DAYS_BACK = 730;
-
-// 15-day windows leave safety margin for shops with up to ~800 orders/day.
-const WINDOW_SIZE_DAYS = 15;
-
-// Stop 13 min into the 15-min budget so there's time for final writes.
-const MAX_INVOCATION_MS = 13 * 60 * 1000;
-
-// Cap per-invocation API pages as defense-in-depth.
-const MAX_PAGES_PER_INVOCATION = 1200;
-
-// Recent-receipts list length on each customer doc.
+const REQUEST_DELAY_MS = 0;     // No artificial delay between pages
+const MAX_INVOCATION_MS = 13 * 60 * 1000;   // 13 min — leaves 2 min cleanup tail
 const RECENT_RECEIPTS_CAP = 10;
+
+// ─── Rate-limit guards ─────────────────────────────────────────────────────
+//
+// Etsy's daily rate limit returns retry-after values measured in hours.
+// Netlify background functions die at 15 minutes. Sleeping past that
+// budget is futile and leaves the system in a worse state than aborting
+// cleanly. These error types let getReceiptsPage signal "this can't
+// complete within our function budget" and the handler returns 503 with
+// a retry hint — neither logs as an error.
+class RateLimitNoBudgetError extends Error {
+  constructor(retryAfterSec, remainingMs) {
+    super(`Etsy rate limit retry-after=${retryAfterSec}s exceeds remaining function budget=${Math.round(remainingMs/1000)}s — aborting`);
+    this.name = "RateLimitNoBudgetError";
+    this.code = "RATE_LIMIT_NO_BUDGET";
+    this.retryAfterSec = retryAfterSec;
+  }
+}
+
+class DailyRateLimitError extends Error {
+  constructor(detail) {
+    super(`Etsy daily rate limit hit: ${detail}`);
+    this.name = "DailyRateLimitError";
+    this.code = "DAILY_RATE_LIMIT";
+  }
+}
+
+const FINALLY_TAIL_MS = 30 * 1000;
 
 // ─── OAuth token management ────────────────────────────────────────────────
 async function readEtsyToken() {
@@ -81,46 +117,48 @@ async function readEtsyToken() {
 }
 
 async function refreshEtsyToken(oldRefreshToken) {
-  if (!CLIENT_ID) throw new Error("CLIENT_ID env var missing");
   const res = await fetch("https://api.etsy.com/v3/public/oauth/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
-      grant_type: "refresh_token",
-      client_id: CLIENT_ID,
-      refresh_token: oldRefreshToken
+      grant_type    : "refresh_token",
+      client_id     : CLIENT_ID,
+      refresh_token : oldRefreshToken
     })
   });
   if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Etsy token refresh failed: ${res.status} ${body}`);
+    const text = await res.text().catch(() => "");
+    throw new Error(`Etsy OAuth refresh failed ${res.status}: ${text.slice(0, 300)}`);
   }
-  const data = await res.json();
-  const expires_at = Date.now() + Math.max(0, (data.expires_in - 120)) * 1000;
-  const stored = {
-    access_token : data.access_token,
-    refresh_token: data.refresh_token || oldRefreshToken,
-    expires_at,
-    updatedAt    : FV.serverTimestamp()
+  const t = await res.json();
+  const expiresAtMs = Date.now() + (t.expires_in || 3600) * 1000;
+  const patch = {
+    access_token  : t.access_token,
+    refresh_token : t.refresh_token || oldRefreshToken,
+    expires_in    : t.expires_in,
+    expires_at_ms : expiresAtMs,
+    refreshed_at  : FV.serverTimestamp()
   };
-  await db.doc(OAUTH_DOC_PATH).set(stored, { merge: true });
-  return stored.access_token;
+  await db.doc(OAUTH_DOC_PATH).set(patch, { merge: true });
+  return { ...patch };
 }
 
 async function getValidEtsyAccessToken() {
-  const tok = await readEtsyToken();
-  if (!tok) throw new Error(
-    `Etsy OAuth token doc not found at ${OAUTH_DOC_PATH}. Seed via etsyMailSeedTokens first.`
-  );
-  if (!tok.refresh_token) throw new Error(`No refresh_token in ${OAUTH_DOC_PATH}.`);
-  const expiresAt = typeof tok.expires_at === "number" ? tok.expires_at : 0;
-  if (!tok.access_token || expiresAt - Date.now() < TOKEN_REFRESH_BUFFER_MS) {
-    return await refreshEtsyToken(tok.refresh_token);
+  const stored = await readEtsyToken();
+  if (!stored || !stored.refresh_token) {
+    throw new Error(`Etsy OAuth not initialized — ${OAUTH_DOC_PATH} missing refresh_token`);
   }
-  return tok.access_token;
+  const expiresAtMs = stored.expires_at_ms || 0;
+  const needsRefresh = !stored.access_token
+    || Date.now() + TOKEN_REFRESH_BUFFER_MS >= expiresAtMs;
+  if (needsRefresh) {
+    const refreshed = await refreshEtsyToken(stored.refresh_token);
+    return refreshed.access_token;
+  }
+  return stored.access_token;
 }
 
-// ─── Helpers ───────────────────────────────────────────────────────────────
+// ─── HTTP helpers ──────────────────────────────────────────────────────────
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 function moneyAmt(m) {
@@ -129,11 +167,14 @@ function moneyAmt(m) {
 }
 
 /**
- * Fetch one page of getShopReceipts. Handles 429 by sleeping. Retries up to 3.
- * Enforces a 30-second timeout on each fetch so a hung Etsy response doesn't
- * burn the entire 15-min invocation budget.
+ * Fetch one page of getShopReceipts. Handles 429 with budget awareness:
+ *   - Short retry-after (per-second limit) → sleep if within budget,
+ *     else throw RateLimitNoBudgetError.
+ *   - Long retry-after (>1 hour) or "daily" in body → throw
+ *     DailyRateLimitError immediately. Writes etsyDailyLimitResetAt
+ *     to syncState so other callers can pre-empt.
  */
-async function getReceiptsPage(accessToken, params, attempt = 1) {
+async function getReceiptsPage(accessToken, params, attempt = 1, invocationStartMs = Date.now()) {
   const qs = new URLSearchParams(Object.fromEntries(
     Object.entries(params).filter(([_, v]) => v != null && v !== "")
   )).toString();
@@ -158,7 +199,7 @@ async function getReceiptsPage(accessToken, params, attempt = 1) {
       if (attempt > 3) throw new Error("Etsy API timeout after 3 attempts (30s each)");
       console.warn(`Etsy fetch timeout (attempt ${attempt}/3), retrying…`);
       await sleep(2000);
-      return getReceiptsPage(accessToken, params, attempt + 1);
+      return getReceiptsPage(accessToken, params, attempt + 1, invocationStartMs);
     }
     throw err;
   }
@@ -167,9 +208,30 @@ async function getReceiptsPage(accessToken, params, attempt = 1) {
   if (res.status === 429) {
     if (attempt > 3) throw new Error("Etsy rate limit exceeded after 3 retries");
     const retryAfter = parseInt(res.headers.get("retry-after") || "5", 10);
-    console.warn(`Rate limit (attempt ${attempt}), sleeping ${retryAfter}s`);
-    await sleep(retryAfter * 1000);
-    return getReceiptsPage(accessToken, params, attempt + 1);
+    const bodyText = await res.text().catch(() => "");
+
+    const isDaily = /daily|day/i.test(bodyText) || retryAfter > 3600;
+    if (isDaily) {
+      console.warn(`Etsy DAILY rate limit hit: retry-after=${retryAfter}s, body="${bodyText.slice(0, 200)}"`);
+      try {
+        await db.collection("EtsyMail_Config").doc("syncState").set({
+          etsyDailyLimitHitAt   : FV.serverTimestamp(),
+          etsyDailyLimitResetAt : admin.firestore.Timestamp.fromMillis(Date.now() + retryAfter * 1000),
+          etsyDailyLimitDetail  : bodyText.slice(0, 300)
+        }, { merge: true });
+      } catch {}
+      throw new DailyRateLimitError(`retry-after=${retryAfter}s body="${bodyText.slice(0, 150)}"`);
+    }
+
+    const elapsed     = Date.now() - invocationStartMs;
+    const remainingMs = MAX_INVOCATION_MS - elapsed - FINALLY_TAIL_MS;
+    const needMs      = retryAfter * 1000;
+    if (needMs > remainingMs) {
+      throw new RateLimitNoBudgetError(retryAfter, remainingMs);
+    }
+    console.warn(`Rate limit (attempt ${attempt}), sleeping ${retryAfter}s (budget remaining: ${Math.round(remainingMs/1000)}s)`);
+    await sleep(needMs);
+    return getReceiptsPage(accessToken, params, attempt + 1, invocationStartMs);
   }
 
   if (!res.ok) {
@@ -179,14 +241,11 @@ async function getReceiptsPage(accessToken, params, attempt = 1) {
   return await res.json();
 }
 
-/**
- * Extract the minimum fields we need from an Etsy receipt for customer
- * summaries. We never persist the full receipt.
- */
+// ─── Receipt → customer summary transform ──────────────────────────────────
 function receiptToSummary(r) {
   return {
     receiptId  : String(r.receipt_id),
-    orderedAt  : r.created_timestamp ? r.created_timestamp * 1000 : null,  // ms
+    orderedAt  : r.created_timestamp ? r.created_timestamp * 1000 : null,
     updatedAt  : r.updated_timestamp ? r.updated_timestamp * 1000 : null,
     grandTotal : moneyAmt(r.grandtotal),
     currency   : r.grandtotal ? r.grandtotal.currency_code : null,
@@ -198,13 +257,12 @@ function receiptToSummary(r) {
   };
 }
 
-/**
- * In-memory aggregator. Feed it receipts (summaries), flush at end to
- * upsert customer docs. Merges with any existing customer docs so
- * incremental syncs preserve running totals.
- */
+// ─── Customer aggregator ───────────────────────────────────────────────────
+//
+// In-memory map of buyerUserId → aggregated state. Single-buyer mode
+// only ever has one entry, but we keep the aggregator shape for clarity
+// and so the upsert/merge logic stays straightforward.
 function createCustomerAggregator() {
-  // buyerUserId → { displayName, currency, freshReceipts: Map(receiptId → summary) }
   const byBuyer = new Map();
 
   function accumulate(summary) {
@@ -216,26 +274,21 @@ function createCustomerAggregator() {
       byBuyer.set(userId, agg);
     }
     if (summary.buyerName && !agg.displayName) agg.displayName = summary.buyerName;
-    if (summary.currency && !agg.currency) agg.currency = summary.currency;
+    if (summary.currency  && !agg.currency)    agg.currency    = summary.currency;
     agg.freshReceipts.set(summary.receiptId, summary);
   }
 
-  /**
-   * Flush to Firestore. Reads existing docs in parallel chunks, merges
-   * aggregates, writes in batches.
-   */
-  async function flush(progressFn) {
+  async function flush() {
     const buyerIds = Array.from(byBuyer.keys());
     if (!buyerIds.length) return 0;
 
     let customersUpdated = 0;
-    const CONCURRENCY = 20;
-    const BATCH_WRITE = 400;
 
+    // Buyer mode is single-buyer; the chunk loop is theoretical but kept
+    // small for safety.
+    const CONCURRENCY = 20;
     for (let i = 0; i < buyerIds.length; i += CONCURRENCY) {
       const chunk = buyerIds.slice(i, i + CONCURRENCY);
-
-      // Parallel read of existing customer docs
       const refs = chunk.map(id => db.collection("EtsyMail_Customers").doc(String(id)));
       const snaps = await Promise.all(refs.map(r => r.get()));
 
@@ -243,10 +296,6 @@ function createCustomerAggregator() {
         const agg = byBuyer.get(userId);
         const existing = snaps[idx].exists ? snaps[idx].data() : null;
 
-        // Figure out which of our "fresh" receipts are actually new vs updates
-        // to receipts already known to the existing customer doc. We use the
-        // recentReceipts list as the known set (capped list — won't catch
-        // all historical, but sufficient for incremental dedup).
         const existingRecent = (existing && Array.isArray(existing.recentReceipts))
           ? existing.recentReceipts : [];
         const existingReceiptIds = new Set(existingRecent.map(r => r.receiptId));
@@ -267,7 +316,6 @@ function createCustomerAggregator() {
           }
         }
 
-        // Aggregate
         const existingFirst = existing && existing.firstOrderAt && existing.firstOrderAt.toMillis
           ? existing.firstOrderAt.toMillis() : null;
         const existingLast = existing && existing.lastOrderAt && existing.lastOrderAt.toMillis
@@ -283,11 +331,8 @@ function createCustomerAggregator() {
         const finalFirst = firstCandidates.length ? Math.min(...firstCandidates) : null;
         const finalLast  = lastCandidates.length  ? Math.max(...lastCandidates)  : null;
 
-        // Merge recent receipts: existing + fresh, dedup by receiptId,
-        // sort by orderedAt desc, cap to RECENT_RECEIPTS_CAP.
         const byId = new Map();
         for (const r of existingRecent) {
-          // Existing doc stores orderedAt as Firestore Timestamp — convert to ms
           const orderedAtMs = r.orderedAt && r.orderedAt.toMillis
             ? r.orderedAt.toMillis()
             : (typeof r.orderedAt === "number" ? r.orderedAt : null);
@@ -336,17 +381,12 @@ function createCustomerAggregator() {
         };
       });
 
-      // Batched writes
-      for (let j = 0; j < docsToWrite.length; j += BATCH_WRITE) {
-        const batch = db.batch();
-        for (const { userId, doc } of docsToWrite.slice(j, j + BATCH_WRITE)) {
-          batch.set(db.collection("EtsyMail_Customers").doc(String(userId)), doc, { merge: true });
-        }
-        await batch.commit();
-        customersUpdated += Math.min(BATCH_WRITE, docsToWrite.length - j);
+      const batch = db.batch();
+      for (const { userId, doc } of docsToWrite) {
+        batch.set(db.collection("EtsyMail_Customers").doc(String(userId)), doc, { merge: true });
       }
-
-      if (progressFn) progressFn(i + chunk.length, buyerIds.length);
+      await batch.commit();
+      customersUpdated += docsToWrite.length;
     }
 
     return customersUpdated;
@@ -355,299 +395,7 @@ function createCustomerAggregator() {
   return { accumulate, flush, get buyerCount() { return byBuyer.size; } };
 }
 
-// ─── State management ──────────────────────────────────────────────────────
-async function readSyncState() {
-  const snap = await db.collection("EtsyMail_Config").doc("syncState").get();
-  return snap.exists ? snap.data() : null;
-}
-
-async function writeSyncState(patch) {
-  await db.collection("EtsyMail_Config").doc("syncState").set({
-    ...patch, updatedAt: FV.serverTimestamp()
-  }, { merge: true });
-}
-
-// ─── Window fetcher ────────────────────────────────────────────────────────
-async function fetchWindow({ accessToken, windowStartSec, windowEndSec, aggregator, deadlineMs }) {
-  const baseParams = {
-    limit: PAGE_SIZE,
-    sort_on: "created",
-    sort_order: "asc",
-    min_created: windowStartSec,
-    max_created: windowEndSec - 1
-  };
-
-  let offset = 0;
-  let pagesFetched = 0;
-  let receiptsProcessed = 0;
-  let hitOffsetCap = false;
-  let ranOutOfTime = false;
-
-  while (true) {
-    if (Date.now() > deadlineMs) { ranOutOfTime = true; break; }
-
-    const page = await getReceiptsPage(accessToken, { ...baseParams, offset });
-    pagesFetched++;
-
-    const receipts = page.results || [];
-    if (!receipts.length) break;
-
-    for (const r of receipts) aggregator.accumulate(receiptToSummary(r));
-    receiptsProcessed += receipts.length;
-
-    if (receipts.length < PAGE_SIZE) break;
-    offset += PAGE_SIZE;
-    if (offset >= 12000) { hitOffsetCap = true; break; }
-
-    await sleep(REQUEST_DELAY_MS);
-  }
-
-  return { pagesFetched, receiptsProcessed, hitOffsetCap, ranOutOfTime };
-}
-
-// ─── Full backfill (windowed, resumable) ───────────────────────────────────
-async function runBackfill({ daysBack, invocationStartMs }) {
-  const deadlineMs = invocationStartMs + MAX_INVOCATION_MS;
-  const accessToken = await getValidEtsyAccessToken();
-
-  const syncState = await readSyncState();
-  const nowSec = Math.floor(Date.now() / 1000);
-  const oldestTargetSec = nowSec - (daysBack * 86400);
-
-  let windowEndSec;
-  let completedWindows;
-  let receiptsTotal;
-
-  if (syncState && syncState.backfillInProgress) {
-    windowEndSec = syncState.backfillWindowEnd;
-    completedWindows = syncState.backfillCompletedWindows || 0;
-    receiptsTotal = syncState.backfillReceiptsTotal || 0;
-    console.log(`Resuming backfill: completedWindows=${completedWindows} nextWindowEnd=${new Date(windowEndSec*1000).toISOString()}`);
-  } else {
-    windowEndSec = nowSec;
-    completedWindows = 0;
-    receiptsTotal = 0;
-    console.log(`Starting new backfill: daysBack=${daysBack} oldestTarget=${new Date(oldestTargetSec*1000).toISOString()}`);
-  }
-
-  const aggregator = createCustomerAggregator();
-  let pagesInvocation = 0;
-  let receiptsInvocation = 0;
-
-  while (windowEndSec > oldestTargetSec) {
-    if (Date.now() > deadlineMs || pagesInvocation >= MAX_PAGES_PER_INVOCATION) break;
-
-    const windowStartSec = Math.max(oldestTargetSec, windowEndSec - (WINDOW_SIZE_DAYS * 86400));
-
-    const result = await fetchWindow({
-      accessToken, windowStartSec, windowEndSec, aggregator, deadlineMs
-    });
-
-    pagesInvocation += result.pagesFetched;
-    receiptsInvocation += result.receiptsProcessed;
-    receiptsTotal += result.receiptsProcessed;
-
-    if (result.hitOffsetCap) {
-      console.warn(`Window ${new Date(windowStartSec*1000).toISOString()} hit offset cap. Halving.`);
-      const midSec = Math.floor((windowStartSec + windowEndSec) / 2);
-      windowEndSec = midSec;
-      continue;
-    }
-
-    if (result.ranOutOfTime) break;
-
-    windowEndSec = windowStartSec;
-    completedWindows++;
-
-    await writeSyncState({
-      backfillInProgress      : true,
-      backfillMode            : "full",
-      backfillWindowEnd       : windowEndSec,
-      backfillOldestTarget    : oldestTargetSec,
-      backfillCompletedWindows: completedWindows,
-      backfillReceiptsTotal   : receiptsTotal,
-      lastSyncProgress        : {
-        phase: "receipts",
-        completedWindows,
-        receiptsTotal,
-        buyersInBatch: aggregator.buyerCount,
-        currentWindow: {
-          start: new Date(windowStartSec * 1000).toISOString(),
-          end: new Date(windowEndSec * 1000).toISOString()
-        }
-      }
-    });
-  }
-
-  // Flush customer aggregates for this invocation
-  let customersUpdated = 0;
-  if (aggregator.buyerCount > 0) {
-    await writeSyncState({
-      lastSyncProgress: { phase: "customers", buyersToProcess: aggregator.buyerCount, receiptsTotal }
-    });
-    customersUpdated = await aggregator.flush((done, total) => {
-      if (done % 100 === 0) {
-        writeSyncState({
-          lastSyncProgress: { phase: "customers", buyersProcessed: done, buyersTotal: total, receiptsTotal }
-        }).catch(() => {});
-      }
-    });
-  }
-
-  const done = windowEndSec <= oldestTargetSec;
-  const stateUpdate = {
-    backfillInProgress: !done,
-    lastSyncProgress: {
-      phase: done ? "done" : "paused",
-      completedWindows,
-      receiptsTotal,
-      customersThisInvocation: customersUpdated,
-      receiptsThisInvocation: receiptsInvocation,
-      nextWindowEnd: done ? null : new Date(windowEndSec * 1000).toISOString()
-    }
-  };
-
-  if (done) {
-    stateUpdate.backfillMode = null;
-    stateUpdate.backfillWindowEnd = null;
-    stateUpdate.backfillCompletedWindows = completedWindows;
-    stateUpdate.backfillReceiptsTotal = receiptsTotal;
-    stateUpdate.lastSyncCompletedAt = FV.serverTimestamp();
-    stateUpdate.lastSyncMode = "full";
-    stateUpdate.lastSyncReceiptsCount = receiptsTotal;
-    stateUpdate.lastReceiptUpdatedAt = admin.firestore.Timestamp.fromMillis(Date.now());
-    stateUpdate.lastSyncDurationMs = Date.now() - invocationStartMs;
-  }
-
-  await writeSyncState(stateUpdate);
-
-  console.log(`Backfill ${done ? "COMPLETE" : "PAUSED"}: completedWindows=${completedWindows} receiptsScanned=${receiptsTotal} customersThisInvocation=${customersUpdated}`);
-
-  // Self-trigger the next invocation if not done. This way a multi-hour
-  // backfill doesn't have to wait for the 30-min scheduled cron between
-  // invocations — the chain continues immediately.
-  //
-  // We fire-and-forget: don't await the fetch response because we're about
-  // to return and let Netlify tear down this invocation. The target
-  // background function will be picked up independently.
-  if (!done) {
-    try {
-      const selfUrl = process.env.URL || process.env.DEPLOY_URL || "";
-      if (selfUrl) {
-        console.log(`Self-triggering next invocation: ${selfUrl}/.netlify/functions/etsyMailSync-background`);
-        // Don't await — fire and forget. Netlify typically waits ~2s for
-        // "background" HTTP responses even if we don't await.
-        fetch(`${selfUrl}/.netlify/functions/etsyMailSync-background`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ resume: true })
-        }).catch(e => console.warn("Self-trigger request failed (background function was invoked anyway):", e.message));
-        // Give fetch a moment to dispatch before Lambda shuts down
-        await sleep(500);
-      } else {
-        console.warn("Cannot self-trigger: process.env.URL not set. Will rely on scheduled cron.");
-      }
-    } catch (e) {
-      console.warn("Self-trigger error (non-fatal):", e.message);
-    }
-  }
-
-  return { done, completedWindows, receiptsTotal, receiptsInvocation, customersUpdated };
-}
-
-// ─── Incremental sync ──────────────────────────────────────────────────────
-async function runIncremental({ invocationStartMs }) {
-  const deadlineMs = invocationStartMs + MAX_INVOCATION_MS;
-  const accessToken = await getValidEtsyAccessToken();
-  const syncState = await readSyncState();
-
-  let sinceSec = null;
-  if (syncState && syncState.lastReceiptUpdatedAt) {
-    const ms = syncState.lastReceiptUpdatedAt.toMillis
-      ? syncState.lastReceiptUpdatedAt.toMillis()
-      : new Date(syncState.lastReceiptUpdatedAt).getTime();
-    sinceSec = Math.floor(ms / 1000);
-  }
-
-  const params = { limit: PAGE_SIZE, sort_on: "updated", sort_order: "asc" };
-  if (sinceSec) {
-    params.min_last_modified = sinceSec;
-  } else {
-    params.min_created = Math.floor((Date.now() - DEFAULT_DAYS_BACK * 86400 * 1000) / 1000);
-  }
-
-  const aggregator = createCustomerAggregator();
-  let offset = 0;
-  let pagesFetched = 0;
-  let receiptsProcessed = 0;
-  let newestUpdatedAtMs = 0;
-  let hitOffsetCap = false;
-
-  while (true) {
-    if (Date.now() > deadlineMs) break;
-
-    const page = await getReceiptsPage(accessToken, { ...params, offset });
-    pagesFetched++;
-
-    const receipts = page.results || [];
-    if (!receipts.length) break;
-
-    for (const r of receipts) {
-      aggregator.accumulate(receiptToSummary(r));
-      if (r.updated_timestamp && r.updated_timestamp * 1000 > newestUpdatedAtMs) {
-        newestUpdatedAtMs = r.updated_timestamp * 1000;
-      }
-    }
-    receiptsProcessed += receipts.length;
-
-    if (receipts.length < PAGE_SIZE) break;
-    offset += PAGE_SIZE;
-    if (offset >= 12000) { hitOffsetCap = true; break; }
-    await sleep(REQUEST_DELAY_MS);
-  }
-
-  const customersUpdated = await aggregator.flush();
-
-  const nextState = {
-    lastSyncMode          : "incremental",
-    lastSyncStartedAt     : admin.firestore.Timestamp.fromMillis(invocationStartMs),
-    lastSyncCompletedAt   : FV.serverTimestamp(),
-    lastSyncReceiptsCount : receiptsProcessed,
-    lastSyncCustomersCount: customersUpdated,
-    lastSyncPagesFetched  : pagesFetched,
-    lastSyncHitOffsetCap  : hitOffsetCap,
-    lastSyncInProgress    : false,
-    lastSyncError         : null,
-    lastSyncErrorAt       : null,
-    lastSyncDurationMs    : Date.now() - invocationStartMs,
-    lastSyncProgress      : { phase: "done", receiptsProcessed, customersUpdated, pagesFetched }
-  };
-  if (newestUpdatedAtMs > 0) {
-    nextState.lastReceiptUpdatedAt = admin.firestore.Timestamp.fromMillis(newestUpdatedAtMs);
-  }
-  await writeSyncState(nextState);
-
-  console.log(`Incremental complete: pages=${pagesFetched} receipts=${receiptsProcessed} customers=${customersUpdated}`);
-  return { receiptsProcessed, customersUpdated, pagesFetched };
-}
-
-// ─── Per-buyer sync ─────────────────────────────────────────────────────────
-//
-// v4.4 — Targeted sync of a single buyer's receipts. Used by
-// etsyMailSnapshot.js to refresh customer order data immediately after
-// a scrape — closes the data gap that previously left brand-new
-// customers (or recently-active ones) without an EtsyMail_Customers
-// doc until the next scheduled cron ran.
-//
-// Etsy's getShopReceipts endpoint accepts a `buyer_user_id` query
-// param that filters server-side, so we only fetch this buyer's
-// receipts (typically 0–20 docs, single page).
-//
-// Does NOT touch lastReceiptUpdatedAt or other incremental-sync
-// watermarks. Buyer syncs are independent of the scheduled cron and
-// must not affect its "next run since X" computation. Does NOT set
-// lastSyncInProgress for the same reason — multiple buyer syncs can
-// run in parallel without colliding with the scheduled cron.
+// ─── Per-buyer sync ────────────────────────────────────────────────────────
 async function runBuyerSync({ buyerUserId, invocationStartMs }) {
   const deadlineMs = invocationStartMs + MAX_INVOCATION_MS;
   const accessToken = await getValidEtsyAccessToken();
@@ -655,9 +403,7 @@ async function runBuyerSync({ buyerUserId, invocationStartMs }) {
   if (!buyerUserId) {
     throw new Error("runBuyerSync requires buyerUserId");
   }
-  // Etsy's getShopReceipts accepts buyer_user_id as a server-side
-  // filter. We sort by created desc so the few-receipt result set
-  // comes back newest-first and pagination terminates fast.
+
   const params = {
     limit         : PAGE_SIZE,
     sort_on       : "created",
@@ -673,7 +419,7 @@ async function runBuyerSync({ buyerUserId, invocationStartMs }) {
   while (true) {
     if (Date.now() > deadlineMs) break;
 
-    const page = await getReceiptsPage(accessToken, { ...params, offset });
+    const page = await getReceiptsPage(accessToken, { ...params, offset }, 1, invocationStartMs);
     pagesFetched++;
 
     const receipts = page.results || [];
@@ -686,8 +432,8 @@ async function runBuyerSync({ buyerUserId, invocationStartMs }) {
 
     if (receipts.length < PAGE_SIZE) break;
     offset += PAGE_SIZE;
-    if (offset >= 12000) break;          // safety cap; this buyer should never hit it
-    await sleep(REQUEST_DELAY_MS);
+    if (offset >= 12000) break;
+    if (REQUEST_DELAY_MS) await sleep(REQUEST_DELAY_MS);
   }
 
   const customersUpdated = await aggregator.flush();
@@ -706,79 +452,69 @@ exports.handler = async (event) => {
   }
 
   let mode = null;
-  let daysBack = DEFAULT_DAYS_BACK;
   let buyerUserId = null;
   try {
     if (event.body) {
       const body = JSON.parse(event.body);
       if (body.mode) mode = body.mode;
-      if (body.daysBack) daysBack = Math.max(1, parseInt(body.daysBack, 10));
       if (body.buyerUserId) buyerUserId = String(body.buyerUserId);
     }
     if (event.queryStringParameters) {
       if (event.queryStringParameters.mode) mode = event.queryStringParameters.mode;
-      if (event.queryStringParameters.daysBack) {
-        daysBack = Math.max(1, parseInt(event.queryStringParameters.daysBack, 10));
-      }
       if (event.queryStringParameters.buyerUserId) {
         buyerUserId = String(event.queryStringParameters.buyerUserId);
       }
     }
   } catch {}
 
-  // ── v4.4 — buyer mode short-circuits the regular sync-state flow.
-  // It does NOT touch lastSyncInProgress, lastReceiptUpdatedAt, or
-  // any of the cron's watermark fields. This lets the per-buyer
-  // refresh (typically invoked from etsyMailSnapshot.js after a
-  // scrape) run safely in parallel with the scheduled cron.
-  if (mode === "buyer") {
-    if (!buyerUserId) {
-      return { statusCode: 400, body: "buyer mode requires buyerUserId" };
+  // Daily rate-limit short-circuit. If a prior invocation hit Etsy's
+  // daily limit, refuse to make any Etsy API calls until the reset
+  // time passes — every call would just 429 anyway.
+  try {
+    const stateSnap = await db.collection("EtsyMail_Config").doc("syncState").get();
+    const state = stateSnap.exists ? stateSnap.data() : null;
+    const resetTs = state && state.etsyDailyLimitResetAt;
+    const resetMs = resetTs && resetTs.toMillis ? resetTs.toMillis() : 0;
+    if (resetMs > Date.now()) {
+      const waitMin = Math.ceil((resetMs - Date.now()) / 60000);
+      console.warn(`etsyMailSync-background: Etsy daily limit active, ${waitMin} min until reset — skipping`);
+      return {
+        statusCode: 200,
+        body: JSON.stringify({
+          skipped: true,
+          reason : "etsy_daily_rate_limit_active",
+          waitMinutes: waitMin
+        })
+      };
     }
-    try {
-      const result = await runBuyerSync({ buyerUserId, invocationStartMs });
-      return { statusCode: 200, body: JSON.stringify({ ok: true, mode: "buyer", ...result }) };
-    } catch (err) {
-      console.error(`etsyMailSync-background buyer mode failed for ${buyerUserId}:`, err.message || err);
-      return { statusCode: 500, body: JSON.stringify({ ok: false, error: err.message || String(err) }) };
-    }
+  } catch (e) {
+    console.warn("etsyMailSync-background: daily-limit pre-check failed (continuing):", e.message);
+  }
+
+  // BUYER MODE is the only supported mode.
+  if (mode !== "buyer") {
+    return {
+      statusCode: 400,
+      body: JSON.stringify({
+        error: "Only mode=buyer is supported. Cron-driven full/incremental sync was removed in 2026-05.",
+        receivedMode: mode || null
+      })
+    };
+  }
+
+  if (!buyerUserId) {
+    return { statusCode: 400, body: "buyer mode requires buyerUserId" };
   }
 
   try {
-    const state = await readSyncState();
-    const resumingBackfill = state && state.backfillInProgress;
-
-    await writeSyncState({
-      lastSyncInProgress: true,
-      lastSyncStartedAt : admin.firestore.Timestamp.fromMillis(invocationStartMs),
-      lastSyncMode      : mode || (resumingBackfill ? "full" : "incremental"),
-      lastSyncError     : null,
-      lastSyncErrorAt   : null
-    });
-
-    if (mode === "full" || resumingBackfill) {
-      const actualDaysBack = resumingBackfill && !mode
-        ? (state.backfillOldestTarget
-            ? Math.ceil((Date.now()/1000 - state.backfillOldestTarget) / 86400)
-            : DEFAULT_DAYS_BACK)
-        : daysBack;
-      await runBackfill({ daysBack: actualDaysBack, invocationStartMs });
-    } else {
-      await runIncremental({ invocationStartMs });
-    }
-
-    await writeSyncState({ lastSyncInProgress: false });
-    return { statusCode: 200, body: "Sync invocation complete" };
-
+    const result = await runBuyerSync({ buyerUserId, invocationStartMs });
+    return { statusCode: 200, body: JSON.stringify({ ok: true, mode: "buyer", ...result }) };
   } catch (err) {
-    console.error("etsyMailSync-background fatal error:", err);
-    try {
-      await writeSyncState({
-        lastSyncInProgress: false,
-        lastSyncError     : err.message || String(err),
-        lastSyncErrorAt   : FV.serverTimestamp()
-      });
-    } catch {}
-    throw err;
+    if (err.code === "DAILY_RATE_LIMIT" || err.code === "RATE_LIMIT_NO_BUDGET") {
+      console.warn(`etsyMailSync-background buyer mode aborted for ${buyerUserId}: ${err.code}`);
+      return { statusCode: 503, body: JSON.stringify({ ok: false, code: err.code, retry: true }) };
+    }
+    console.error(`etsyMailSync-background buyer mode failed for ${buyerUserId}:`, err.message || err);
+    return { statusCode: 500, body: JSON.stringify({ ok: false, error: err.message || String(err) }) };
   }
 };

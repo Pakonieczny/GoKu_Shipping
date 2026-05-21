@@ -17,32 +17,23 @@
     "netlify/functions/prompts/**"
   ]
 
-# ─── M3: Etsy receipts sync ────────────────────────────────────────────────
-# Two-function architecture:
-#   - etsyMailSyncCron (30-sec scheduled function): runs every 5 min, checks
-#     state, POSTs to the background function if sync needed. Returns fast.
-#   - etsyMailSync-background (15-min background function): does actual sync.
-#     Not scheduled directly — only invoked via HTTP.
+# ─── M3: Etsy receipts sync — REMOVED 2026-05-21 ─────────────────────────
+# The etsyMailSyncCron schedule was permanently removed. The cron drove
+# full + incremental sync passes that pre-populated EtsyMail_Customers
+# docs for buyers who had never messaged the shop — data the inbox never
+# used, since the inbox is message-driven and the snapshot pipeline
+# already triggers a targeted per-buyer sync whenever a customer
+# messages in.
 #
-# Initial full backfill is triggered manually via:
-#   POST /.netlify/functions/etsyMailSync?action=trigger&mode=full&daysBack=730
-# After that, the cron takes over for auto-resume and incremental syncs.
-# TEMPORARILY DISABLED — May 21 2026
-# This cron was caught in a runaway loop: each invocation hit Etsy's daily
-# rate limit, tried to sleep for ~2 hours, got killed at the 15-min function
-# timeout, never cleared lastSyncInProgress, and got re-invoked every 5 min
-# while concurrent invocations from prior ticks were still running. Result:
-# multiple overlapping invocations all sleeping on rate-limited Etsy calls,
-# burning through quota and never completing.
+# On 2026-05-21 the cron entered a runaway: hit Etsy's daily rate limit,
+# tried to sleep ~2h, got killed at the 15-min function timeout, didn't
+# clear its lock, got re-invoked every 5 min, stacked concurrent
+# invocations. Removing the cron eliminates that entire failure mode.
 #
-# Re-enable AFTER patching etsyMailSync-background.js to:
-#   1. Check lastSyncInProgress at start; bail if true AND fresh (< 20 min)
-#   2. Detect rate-limit responses with retry-after > remaining function
-#      budget and abort gracefully instead of sleeping past the timeout
-#   3. Clear lastSyncInProgress in a finally block so crashes don't leave
-#      the lock stuck
-# [functions."etsyMailSyncCron"]
-#   schedule = "*/5 * * * *"
+# etsyMailSync-background.js now only supports mode=buyer (single-buyer
+# targeted sync). etsyMailSync.js and etsyMailSyncCron.js were deleted
+# outright — no manual trigger remains. Per-buyer sync runs entirely
+# from the snapshot pipeline.
 
 [functions."etsyMailDraftSendCleanupCron"]
   schedule = "*/3 * * * *"

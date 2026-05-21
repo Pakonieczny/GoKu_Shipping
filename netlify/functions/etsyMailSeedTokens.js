@@ -92,7 +92,7 @@ exports.handler = async (event) => {
       expires_at,
       expires_at_iso: expires_at ? new Date(expires_at).toISOString() : null,
       willRefreshOnFirstUse: expires_at === 0,
-      nextStep: "Call /.netlify/functions/etsyMailSync?action=run&mode=full&daysBack=730 with X-EtsyMail-Secret"
+      nextStep: "OAuth seeded. The inbox will populate customer order data automatically as customers message in (snapshot pipeline triggers per-buyer sync). No manual backfill required — the cron-driven full/incremental sync paths were removed 2026-05-21."
     });
 
   } catch (err) {
