@@ -156,7 +156,19 @@
 
     .em-rail {
       grid-area: rail; background: #fff; border-right: 1px solid #e1e4e8;
-      overflow-y: auto; padding: 8px 0;
+      /* v1 — Was a single scrollable column. Now a flex column so the
+         folder list scrolls independently and the API meter stays
+         pinned below it. The inner #emRail keeps its own overflow. */
+      display: flex; flex-direction: column;
+      overflow: hidden;
+    }
+    /* The folder list (folders + counts). Lives at the top of the rail
+       and is itself scrollable if folder count grows past viewport. */
+    #emRail {
+      flex: 0 1 auto;
+      overflow-y: auto;
+      padding: 8px 0;
+      min-height: 0;  /* allow flex shrink to honor max-height boundary */
     }
     .em-rail .em-rail-section {
       padding: 10px 14px 4px; font-size: 10px; font-weight: 700;
@@ -175,6 +187,154 @@
     }
     .em-rail .em-rail-item.active .em-count { background: #0366d6; color: #fff; }
     .em-rail .em-rail-item .material-icons { font-size: 15px; margin-right: 8px; opacity: .65; }
+
+    /* ─── API meter panel ─────────────────────────────────────────────
+       Live counter of every Etsy API invocation across the system.
+       Sits in the red-box area of the left rail, below the folder list.
+       Polls EtsyMail_Config/etsyApiCounters every 3 seconds via
+       firestoreProxy. Each row maps to a single instrumented call site
+       in the backend (see _etsyApiMeter.js for the full site-ID list). */
+    .em-api-meter {
+      flex: 1 1 auto;            /* fills remaining rail space */
+      border-top: 1px solid #e1e4e8;
+      background: #f8fafc;
+      display: flex; flex-direction: column;
+      min-height: 0;
+      overflow: hidden;
+    }
+    .em-api-meter .am-head {
+      padding: 8px 12px 6px;
+      border-bottom: 1px solid #e1e4e8;
+      background: #fff;
+      flex: 0 0 auto;
+    }
+    .em-api-meter .am-head-row {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 6px;
+    }
+    .em-api-meter .am-title {
+      font-size: 10px; font-weight: 700; letter-spacing: .8px;
+      text-transform: uppercase; color: #6a737d;
+    }
+    .em-api-meter .am-day {
+      font-size: 9px; color: #9aa3ad; font-family: ui-monospace, monospace;
+    }
+    .em-api-meter .am-status-dot {
+      display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+      background: #2da44e; box-shadow: 0 0 0 0 rgba(45, 164, 78, 0.6);
+      vertical-align: middle; margin-right: 4px;
+    }
+    .em-api-meter .am-status-dot.stale { background: #d4a72c; }
+    .em-api-meter .am-status-dot.error { background: #cf222e; }
+    @keyframes amDotPulse {
+      0%   { box-shadow: 0 0 0 0 rgba(45, 164, 78, 0.55); }
+      70%  { box-shadow: 0 0 0 6px rgba(45, 164, 78, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(45, 164, 78, 0); }
+    }
+    .em-api-meter .am-status-dot.pulsing { animation: amDotPulse 1.4s infinite; }
+
+    .em-api-meter .am-grand {
+      display: flex; align-items: baseline; gap: 6px; margin-top: 4px;
+    }
+    .em-api-meter .am-grand-num {
+      font-size: 18px; font-weight: 600; color: #24292e; font-variant-numeric: tabular-nums;
+    }
+    .em-api-meter .am-grand-cap {
+      font-size: 10px; color: #6a737d;
+    }
+    .em-api-meter .am-grand-pct {
+      font-size: 10px; color: #6a737d; margin-left: auto;
+      font-variant-numeric: tabular-nums;
+    }
+    .em-api-meter .am-bar {
+      width: 100%; height: 4px; background: #eaeef2; border-radius: 2px;
+      margin-top: 4px; overflow: hidden;
+    }
+    .em-api-meter .am-bar-fill {
+      height: 100%; background: #2da44e;
+      transition: width .35s ease-out, background-color .25s ease-out;
+    }
+    .em-api-meter .am-bar-fill.amber { background: #d4a72c; }
+    .em-api-meter .am-bar-fill.red   { background: #cf222e; }
+
+    /* Scrollable body holding the per-site rows. Grouped by source
+       file/category. */
+    .em-api-meter .am-body {
+      flex: 1 1 auto;
+      overflow-y: auto;
+      padding: 4px 0 12px;
+    }
+    .em-api-meter .am-group {
+      font-size: 9px; font-weight: 700; letter-spacing: .6px;
+      text-transform: uppercase; color: #8a949e;
+      padding: 8px 12px 2px;
+    }
+    .em-api-meter .am-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 2px 6px;
+      padding: 3px 12px;
+      font-size: 11px;
+      align-items: center;
+      border-left: 2px solid transparent;
+      transition: background-color .2s, border-left-color .35s;
+    }
+    .em-api-meter .am-row:hover { background: #eef2f6; }
+    .em-api-meter .am-row.firing {
+      background: #fff8e1;
+      border-left-color: #d4a72c;
+    }
+    .em-api-meter .am-row.error-recent {
+      background: #fff5f5;
+      border-left-color: #cf222e;
+    }
+    .em-api-meter .am-row.dim { opacity: .55; }
+
+    .em-api-meter .am-label {
+      color: #24292e;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+      font-size: 10px;
+    }
+    .em-api-meter .am-total {
+      color: #24292e; font-weight: 600;
+      font-variant-numeric: tabular-nums;
+      font-size: 11px;
+      text-align: right;
+      min-width: 32px;
+    }
+    .em-api-meter .am-breakdown {
+      grid-column: 1 / span 2;
+      display: flex; gap: 6px;
+      font-size: 9px;
+      color: #6a737d;
+      font-variant-numeric: tabular-nums;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+      margin-top: 1px;
+    }
+    .em-api-meter .am-breakdown .am-chip {
+      display: inline-flex; align-items: center; gap: 2px;
+      padding: 0 4px; border-radius: 3px;
+      background: #eaeef2;
+    }
+    .em-api-meter .am-chip.ok       { color: #1a7f37; background: #dafbe1; }
+    .em-api-meter .am-chip.fail-http { color: #a40e26; background: #ffebe9; }
+    .em-api-meter .am-chip.fail-429  { color: #9a3f00; background: #fff1cc; }
+    .em-api-meter .am-chip.fail-net  { color: #57606a; background: #eaeef2; }
+    .em-api-meter .am-chip.live      { color: #0550ae; background: #dbecff; font-weight: 600; }
+    .em-api-meter .am-chip.live.zero { color: #9aa3ad; background: #eaeef2; font-weight: 400; }
+    .em-api-meter .am-chip.live.hot  { color: #fff; background: #d4a72c; font-weight: 700; animation: amDotPulse 1.4s infinite; }
+
+    .em-api-meter .am-empty {
+      padding: 12px; text-align: center;
+      font-size: 11px; color: #9aa3ad; font-style: italic;
+    }
+    .em-api-meter .am-error-banner {
+      padding: 6px 12px;
+      background: #ffebe9; color: #a40e26;
+      font-size: 10px;
+      border-bottom: 1px solid #ffc1ba;
+    }
 
     .em-list {
       grid-area: list; background: #fff; border-right: 1px solid #e1e4e8;
@@ -4966,7 +5126,35 @@
       <button id="emSettingsBtn" title="Settings"><i class="material-icons">settings</i></button>
     </div>
 
-    <div class="em-rail" id="emRail"></div>
+    <div class="em-rail">
+      <div id="emRail"></div>
+
+      <!-- ─── API meter panel ────────────────────────────────────────
+           Live counter of every Etsy API invocation across the system.
+           Populated by the polling loop further down (window.emApiMeter).
+           DOM structure is sparse here — the JS module renders all
+           rows into .am-body on each 3-second poll. -->
+      <div class="em-api-meter" id="emApiMeter" aria-live="polite">
+        <div class="am-head">
+          <div class="am-head-row">
+            <span class="am-title">
+              <span class="am-status-dot" id="emApiMeterDot" title="Polling status"></span>
+              Etsy API today
+            </span>
+            <span class="am-day" id="emApiMeterDay">—</span>
+          </div>
+          <div class="am-grand">
+            <span class="am-grand-num" id="emApiMeterTotal">0</span>
+            <span class="am-grand-cap">/ 5000 QPD</span>
+            <span class="am-grand-pct" id="emApiMeterPct">0%</span>
+          </div>
+          <div class="am-bar"><div class="am-bar-fill" id="emApiMeterBarFill" style="width:0%"></div></div>
+        </div>
+        <div class="am-body" id="emApiMeterBody">
+          <div class="am-empty">Waiting for first poll…</div>
+        </div>
+      </div>
+    </div>
 
     <div class="em-list">
       <div class="em-selection-bar" id="emSelectionBar">
@@ -9462,6 +9650,250 @@
         ? `Empty the "${filter.label}" folder — moves ${count} thread${count === 1 ? "" : "s"} back to Needs review. Threads themselves are NOT deleted.`
         : `The "${filter.label}" folder is already empty.`;
     }
+
+    /* ─── API meter (live Etsy API call counter) ─────────────────────
+       Polls EtsyMail_Config/etsyApiCounters every 3 seconds via
+       firestoreProxy. Renders one row per backend site ID into the
+       panel that sits below the folder list in the left rail.
+
+       NEVER calls Etsy directly — this is pure read-from-Firestore
+       polling. The actual counters are written server-side by every
+       Etsy-touching function via _etsyApiMeter.js (see backend).
+
+       Failure mode: if the poll fails (network blip, secret expired,
+       Firestore unreachable) the panel shows a small error banner
+       but keeps polling. Last known counts stay on screen. */
+    (function initApiMeter() {
+      const POLL_INTERVAL_MS = 3000;
+      const COUNTERS_COLL    = "EtsyMail_Config";
+      const COUNTERS_DOC_ID  = "etsyApiCounters";
+      // How recently must `lastAttemptAt` be for a row to flash as "firing"?
+      const FIRING_WINDOW_MS = 5000;
+      // QPD limit — matches Etsy's published 5000-per-day shop quota.
+      const QPD_LIMIT = 5000;
+
+      // The 11 (and then some) instrumented call sites in backend order.
+      // Grouped so the UI is readable; group header rendered above the
+      // first row of each section. The `label` is what shows in the row;
+      // `siteId` matches the keys in the Firestore doc's `sites` map.
+      const SITES = [
+        { group: "Shared helper",  siteId: "helper.etsyFetch",          label: "etsyFetch (parent)",       hint: "Every domain helper rides on this." },
+        { group: "Shared helper",  siteId: "helper.oauthRefresh",       label: "OAuth refresh (shared)",   hint: "_etsyMailEtsy refreshEtsyToken()." },
+        { group: "Shared helper",  siteId: "helper.getShop",            label: "/shops/{shop}",            hint: "getShop() — for prompt enrichment." },
+        { group: "Shared helper",  siteId: "helper.getShopSections",    label: "/shops/{shop}/sections",   hint: "getShopSections()." },
+        { group: "Shared helper",  siteId: "helper.getShopReceiptFull", label: "receipt (with includes)",  hint: "getShopReceiptFull() — AI tool." },
+        { group: "Shared helper",  siteId: "helper.getShopReceiptShip", label: "receipt (shipments)",      hint: "getShopReceiptShipments() — tracking prefetch + AI tool." },
+        { group: "Shared helper",  siteId: "helper.getListing",         label: "/listings/{id}",           hint: "getListing()." },
+        { group: "Shared helper",  siteId: "helper.getListingImages",   label: "/listings/{id}/images",    hint: "getListingImages()." },
+        { group: "Shared helper",  siteId: "helper.getListingInventory",label: "/listings/{id}/inventory", hint: "getListingInventory() — variants." },
+
+        { group: "Order modal",    siteId: "order.receiptFetch",        label: "Order modal — receipt",    hint: "etsyMailOrder.js — operator clicked an order." },
+        { group: "Order modal",    siteId: "order.imageFetch",          label: "Order modal — image",      hint: "Per-listing image inside the order modal." },
+        { group: "Order modal",    siteId: "order.oauthRefresh",        label: "OAuth refresh (order)",    hint: "etsyMailOrder.js duplicate refresh." },
+
+        { group: "Buyer sync",     siteId: "sync.receiptsPage",         label: "Receipts page",            hint: "etsyMailSync-background — buyer-receipts pagination." },
+        { group: "Buyer sync",     siteId: "sync.oauthRefresh",         label: "OAuth refresh (sync)",     hint: "etsyMailSync-background duplicate refresh." },
+
+        { group: "Catalog mirror", siteId: "catalog.activeListings",    label: "Active listings page",     hint: "etsyMailListingsCatalog — every 30 min cron." },
+
+        { group: "Shipping sync",  siteId: "shipping.profiles",         label: "Shipping profiles list",   hint: "etsyMailShippingSync — every 6h." },
+        { group: "Shipping sync",  siteId: "shipping.upgrades",         label: "Profile upgrades",         hint: "Per-profile upgrade fetch." },
+        { group: "Shipping sync",  siteId: "shipping.destinations",     label: "Profile destinations",     hint: "Per-profile destination fetch." },
+
+        { group: "Listing creator",siteId: "creator.templateListing",   label: "Template listing GET",     hint: "Read the family template before generating." },
+        { group: "Listing creator",siteId: "creator.templateInventory", label: "Template inventory GET",   hint: "Read template inventory for readiness defaults." },
+        { group: "Listing creator",siteId: "creator.readinessDefs",     label: "Readiness defs GET",       hint: "Fallback when template lacks readiness_state_id." },
+        { group: "Listing creator",siteId: "creator.createDraft",       label: "Create draft POST",        hint: "Create the new draft listing." },
+        { group: "Listing creator",siteId: "creator.templateImages",    label: "Template images GET",     hint: "Fallback when customer sent no photos." },
+        { group: "Listing creator",siteId: "creator.imageUpload",       label: "Image upload POST",        hint: "Per-photo upload. Can be 1–10 per listing." },
+        { group: "Listing creator",siteId: "creator.inventoryGet",      label: "Inventory GET",            hint: "Read inventory before setting SKU + price." },
+        { group: "Listing creator",siteId: "creator.inventoryPut",      label: "Inventory PUT",            hint: "Set SKU + price + readiness on the listing." },
+        { group: "Listing creator",siteId: "creator.publishPatch",      label: "Publish PATCH",            hint: "Activate the new listing." },
+        { group: "Listing creator",siteId: "creator.postPublishGet",    label: "Post-publish GET",         hint: "Only if PATCH response lacked the URL." }
+      ];
+
+      // DOM refs
+      const elBody     = document.getElementById("emApiMeterBody");
+      const elTotal    = document.getElementById("emApiMeterTotal");
+      const elPct      = document.getElementById("emApiMeterPct");
+      const elBarFill  = document.getElementById("emApiMeterBarFill");
+      const elDay      = document.getElementById("emApiMeterDay");
+      const elDot      = document.getElementById("emApiMeterDot");
+
+      if (!elBody) {
+        console.warn("[emApiMeter] panel DOM not found — skipping init");
+        return;
+      }
+
+      let _consecutiveErrors = 0;
+      let _lastSuccessAt = 0;
+
+      /** Convert a Firestore Timestamp (as serialized by firestoreProxy)
+       *  into millis since epoch. The proxy wraps Timestamps as
+       *  { _seconds, _nanoseconds } objects on the wire. */
+      function tsToMillis(ts) {
+        if (!ts) return 0;
+        if (typeof ts === "number") return ts;
+        if (typeof ts.toMillis === "function") return ts.toMillis();
+        if (typeof ts._seconds === "number") return ts._seconds * 1000 + Math.floor((ts._nanoseconds || 0) / 1e6);
+        if (typeof ts.seconds === "number") return ts.seconds * 1000 + Math.floor((ts.nanoseconds || 0) / 1e6);
+        return 0;
+      }
+
+      /** Tiny escape helper — the inbox already has esc() in scope, but
+       *  we don't want to depend on its lexical availability. */
+      function _esc(s) {
+        return String(s == null ? "" : s)
+          .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+      }
+
+      function renderRow(site, bucket, now) {
+        const attempt  = bucket.attempt  || 0;
+        const ok       = bucket.ok       || 0;
+        const failHttp = bucket.failHttp || 0;
+        const fail429  = bucket.fail429  || 0;
+        const failNet  = bucket.failNet  || 0;
+        const last60s  = bucket.last60s  || 0;
+        const lastMs   = tsToMillis(bucket.lastAttemptAt);
+
+        const firing       = lastMs > 0 && (now - lastMs) < FIRING_WINDOW_MS;
+        const hasRecentErr = (fail429 + failHttp + failNet) > 0 && firing;
+        const isDim        = attempt === 0;
+
+        const rowClasses = [
+          "am-row",
+          firing ? (hasRecentErr ? "error-recent" : "firing") : "",
+          isDim ? "dim" : ""
+        ].filter(Boolean).join(" ");
+
+        // Chip displays — only show non-zero outcome chips so the row
+        // doesn't get cluttered. Always show the `live` chip (it's the
+        // sliding-window pulse), with classes that reflect intensity.
+        const chips = [];
+        if (ok)       chips.push(`<span class="am-chip ok" title="2xx successes today">✓ ${ok}</span>`);
+        if (fail429)  chips.push(`<span class="am-chip fail-429" title="429 rate-limited today">429 ${fail429}</span>`);
+        if (failHttp) chips.push(`<span class="am-chip fail-http" title="Non-429 HTTP failures today">err ${failHttp}</span>`);
+        if (failNet)  chips.push(`<span class="am-chip fail-net" title="Network/timeout failures today">net ${failNet}</span>`);
+        const liveCls = last60s === 0 ? "live zero" : (last60s > 20 ? "live hot" : "live");
+        chips.push(`<span class="am-chip ${liveCls}" title="Attempts in the last 60 seconds">${last60s}/min</span>`);
+
+        return `
+          <div class="${rowClasses}" title="${_esc(site.hint || site.siteId)}">
+            <span class="am-label">${_esc(site.label)}</span>
+            <span class="am-total">${attempt}</span>
+            <div class="am-breakdown">${chips.join("")}</div>
+          </div>`;
+      }
+
+      function render(doc) {
+        const now = Date.now();
+        const sites = (doc && doc.sites) || {};
+        const grand = Number(doc && doc.grandTotal) || 0;
+        const day   = (doc && doc.day) || "—";
+
+        // Header
+        elTotal.textContent = grand.toLocaleString();
+        const pct = QPD_LIMIT > 0 ? Math.min(100, (grand / QPD_LIMIT) * 100) : 0;
+        elPct.textContent = pct.toFixed(1) + "%";
+        elBarFill.style.width = pct + "%";
+        elBarFill.classList.remove("amber", "red");
+        if (pct >= 90)      elBarFill.classList.add("red");
+        else if (pct >= 70) elBarFill.classList.add("amber");
+        elDay.textContent = day;
+
+        // Body — grouped rows
+        let html = "";
+        let currentGroup = null;
+        for (const site of SITES) {
+          if (site.group !== currentGroup) {
+            currentGroup = site.group;
+            html += `<div class="am-group">${_esc(currentGroup)}</div>`;
+          }
+          const bucket = sites[site.siteId] || {};
+          html += renderRow(site, bucket, now);
+        }
+        elBody.innerHTML = html;
+      }
+
+      function setStatus(state) {
+        // state: "ok" (pulsing green), "stale" (amber static), "error" (red static)
+        elDot.classList.remove("pulsing", "stale", "error");
+        if (state === "ok") {
+          elDot.classList.add("pulsing");
+          elDot.title = "Polling — last update " + new Date(_lastSuccessAt).toLocaleTimeString();
+        } else if (state === "stale") {
+          elDot.classList.add("stale");
+          elDot.title = "Last poll older than 30s — retrying";
+        } else if (state === "error") {
+          elDot.classList.add("error");
+          elDot.title = "Polling failed " + _consecutiveErrors + " time(s) in a row";
+        }
+      }
+
+      function ensureBanner(message) {
+        let banner = document.getElementById("emApiMeterErrBanner");
+        if (!message) {
+          if (banner) banner.remove();
+          return;
+        }
+        if (!banner) {
+          banner = document.createElement("div");
+          banner.id = "emApiMeterErrBanner";
+          banner.className = "am-error-banner";
+          elBody.parentNode.insertBefore(banner, elBody);
+        }
+        banner.textContent = message;
+      }
+
+      async function pollOnce() {
+        try {
+          // Reuses the existing api() helper which forwards extension
+          // secret + session header automatically.
+          const res = await api("firestoreProxy", {
+            method: "GET",
+            query : { op: "get", coll: COUNTERS_COLL, id: COUNTERS_DOC_ID }
+          });
+          _lastSuccessAt = Date.now();
+          _consecutiveErrors = 0;
+          ensureBanner(null);
+          setStatus("ok");
+          if (res && res.exists && res.doc) {
+            render(res.doc);
+          } else {
+            // Doc doesn't exist yet (no Etsy call has fired since deploy).
+            // Render an empty state instead of a blank panel.
+            render({ sites: {}, grandTotal: 0, day: new Date().toISOString().slice(0, 10) });
+            elBody.insertAdjacentHTML("afterbegin",
+              `<div class="am-empty">No API calls recorded yet today. The counter doc will appear on the next Etsy call.</div>`);
+          }
+        } catch (err) {
+          _consecutiveErrors++;
+          if (_consecutiveErrors === 1) {
+            // First failure — keep showing prior data, just amber dot.
+            setStatus("stale");
+          } else if (_consecutiveErrors >= 3) {
+            setStatus("error");
+            ensureBanner("API meter poll failing: " + (err && err.message ? err.message.slice(0, 80) : "unknown"));
+          }
+        }
+      }
+
+      // Initial poll, then interval. We also poll when the tab regains
+      // focus so the counter "snaps to current" rather than waiting up
+      // to 3 seconds.
+      pollOnce();
+      const pollTimer = setInterval(pollOnce, POLL_INTERVAL_MS);
+      window.addEventListener("focus", () => { pollOnce(); });
+
+      // Expose a manual-refresh entry point for any debugging from
+      // DevTools: window.emApiMeter.refresh()
+      window.emApiMeter = {
+        refresh: pollOnce,
+        stop: () => clearInterval(pollTimer),
+        _sites: SITES
+      };
+    })();
 
     /**
      * v3.0 — Empty an entire folder by moving every thread in it back
