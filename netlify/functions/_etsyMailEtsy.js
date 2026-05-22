@@ -24,10 +24,21 @@
  *  Note: etsyMailOrder.js and etsyMailSync-background.js are NOT being
  *  migrated to this module in this PR — they continue to use their own
  *  inline copies. This module is a going-forward consolidation.
+ *
+ *  ═══ METERING ═══════════════════════════════════════════════════════════
+ *  Every Etsy API call made through this module is logged to the live
+ *  counter doc at EtsyMail_Config/etsyApiCounters via _etsyApiMeter.js.
+ *  Two layers of instrumentation:
+ *    1. The low-level etsyFetch() bumps "helper.etsyFetch" (parent counter)
+ *    2. Each domain helper (getShop/getListing/etc.) bumps its OWN siteId
+ *       BEFORE calling etsyFetch — so the UI can see per-endpoint counts.
+ *    3. refreshEtsyToken() bumps "helper.oauthRefresh".
+ *  See _etsyApiMeter.js for the full site-ID list.
  */
 
 const fetch = require("node-fetch");
 const admin = require("./firebaseAdmin");
+const meter = require("./_etsyApiMeter");
 
 const db = admin.firestore();
 const FV = admin.firestore.FieldValue;
@@ -44,15 +55,23 @@ const TOKEN_REFRESH_BUFFER_MS = 2 * 60 * 1000;   // refresh if <2min to expiry
 // Etsy rotates refresh_token on each refresh, so the new one is persisted.
 
 async function refreshEtsyToken(oldRefreshToken) {
-  const res = await fetch("https://api.etsy.com/v3/public/oauth/token", {
-    method : "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body   : new URLSearchParams({
-      grant_type   : "refresh_token",
-      client_id    : CLIENT_ID,
-      refresh_token: oldRefreshToken
-    })
-  });
+  const t = meter.bump("helper.oauthRefresh");
+  let res;
+  try {
+    res = await fetch("https://api.etsy.com/v3/public/oauth/token", {
+      method : "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body   : new URLSearchParams({
+        grant_type   : "refresh_token",
+        client_id    : CLIENT_ID,
+        refresh_token: oldRefreshToken
+      })
+    });
+  } catch (err) {
+    t.failNet();
+    throw err;
+  }
+  t.fromHttp(res.status);
   if (!res.ok) {
     const body = await res.text();
     throw new Error(`Etsy token refresh failed: ${res.status} ${body}`);
@@ -81,7 +100,12 @@ async function getValidEtsyAccessToken() {
 }
 
 // ─── Low-level fetch wrapper ────────────────────────────────────────────
-
+//
+// Bumps the parent "helper.etsyFetch" counter on every call. Domain
+// helpers below bump their OWN site IDs before calling here, so a single
+// /listings/{id} call shows up under BOTH "helper.etsyFetch" and
+// "helper.getListing" in the UI — making it easy to spot which helper
+// is dominating the day's quota.
 async function etsyFetch(path, { method = "GET", query = null, body = null } = {}) {
   if (!SHOP_ID || !CLIENT_ID || !CLIENT_SECRET) {
     throw new Error("Missing SHOP_ID / CLIENT_ID / CLIENT_SECRET env vars");
@@ -98,15 +122,23 @@ async function etsyFetch(path, { method = "GET", query = null, body = null } = {
     if (qs) url += "?" + qs;
   }
 
-  const res = await fetch(url, {
-    method,
-    headers: {
-      Authorization : `Bearer ${accessToken}`,
-      "x-api-key"   : `${CLIENT_ID}:${CLIENT_SECRET}`,
-      "Content-Type": "application/json"
-    },
-    body: body ? JSON.stringify(body) : undefined
-  });
+  const t = meter.bump("helper.etsyFetch");
+  let res;
+  try {
+    res = await fetch(url, {
+      method,
+      headers: {
+        Authorization : `Bearer ${accessToken}`,
+        "x-api-key"   : `${CLIENT_ID}:${CLIENT_SECRET}`,
+        "Content-Type": "application/json"
+      },
+      body: body ? JSON.stringify(body) : undefined
+    });
+  } catch (err) {
+    t.failNet();
+    throw err;
+  }
+  t.fromHttp(res.status);
 
   const text = await res.text();
   let data;
@@ -124,12 +156,26 @@ async function etsyFetch(path, { method = "GET", query = null, body = null } = {
 }
 
 // ─── Domain helpers ──────────────────────────────────────────────────────
+//
+// Each helper bumps its own per-endpoint counter BEFORE delegating to
+// etsyFetch(). The per-endpoint counter is purely a "which helper drove
+// this call" tag — the underlying HTTP outcome is recorded against
+// "helper.etsyFetch". For the per-endpoint counter we record `attempt`
+// only (no outcome) because the outcome is identical to etsyFetch's.
+// The UI displays both rows independently — daily total per row, plus
+// the parent etsyFetch total at the top for the aggregated view.
+//
+// Note: we use bumpSimple(siteId, "attempt") here — there's no need to
+// record success/failure separately for the per-helper counter, since
+// the underlying etsyFetch call already records outcome under its own
+// site ID. Counting attempt only avoids double-booking failure rates.
 
 /** Shop-level metadata: title, announcement, policies, shipping defaults.
  *  Used by the AI draft prompt enricher so Claude can reference real
  *  shop policies instead of only the baked-in defaults.
  *  GET /shops/{shop_id} */
 async function getShop() {
+  meter.bumpSimple("helper.getShop");
   return etsyFetch(`/shops/${SHOP_ID}`);
 }
 
@@ -137,6 +183,7 @@ async function getShop() {
  *  categories when suggesting listings.
  *  GET /shops/{shop_id}/sections */
 async function getShopSections() {
+  meter.bumpSimple("helper.getShopSections");
   const data = await etsyFetch(`/shops/${SHOP_ID}/sections`);
   return Array.isArray(data.results) ? data.results : [];
 }
@@ -145,6 +192,7 @@ async function getShopSections() {
  *  Used by the AI's lookup_order_details tool for custom-order discussions.
  *  GET /shops/{shop_id}/receipts/{receipt_id} */
 async function getShopReceiptFull(receiptId) {
+  meter.bumpSimple("helper.getShopReceiptFull");
   const includes = ["Transactions", "Transactions.personalization", "Transactions.variations"];
   return etsyFetch(`/shops/${SHOP_ID}/receipts/${receiptId}`, {
     query: { includes: includes.join(",") }
@@ -165,6 +213,7 @@ async function getShopReceiptFull(receiptId) {
  *    }
  */
 async function getShopReceiptShipments(receiptId) {
+  meter.bumpSimple("helper.getShopReceiptShip");
   // The receipt endpoint returns shipments in the `shipments` array by default
   // — no extra include needed. We fetch without includes to keep the payload small.
   const receipt = await etsyFetch(`/shops/${SHOP_ID}/receipts/${receiptId}`);
@@ -208,6 +257,7 @@ async function getShopReceiptShipments(receiptId) {
  *  thumbnails in the inbox UI.
  *  GET /listings/{listing_id}/images */
 async function getListingImages(listingId) {
+  meter.bumpSimple("helper.getListingImages");
   const data = await etsyFetch(`/listings/${listingId}/images`);
   const results = Array.isArray(data.results) ? data.results : [];
   if (!results.length) return null;
@@ -224,6 +274,7 @@ async function getListingImages(listingId) {
  *  a listing actually exists before suggesting it.
  *  GET /listings/{listing_id} */
 async function getListing(listingId) {
+  meter.bumpSimple("helper.getListing");
   return etsyFetch(`/listings/${listingId}`);
 }
 
@@ -231,6 +282,7 @@ async function getListing(listingId) {
  *  option dropdown, with price, SKU, quantity, and enabled state.
  *  GET /listings/{listing_id}/inventory */
 async function getListingInventory(listingId) {
+  meter.bumpSimple("helper.getListingInventory");
   return etsyFetch(`/listings/${listingId}/inventory`);
 }
 

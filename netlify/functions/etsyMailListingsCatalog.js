@@ -48,6 +48,7 @@ const admin = require("./firebaseAdmin");
 const { CORS, requireExtensionAuth } = require("./_etsyMailAuth");
 const { isScheduledInvocation } = require("./_etsyMailScheduled");
 const { etsyFetch, SHOP_ID } = require("./_etsyMailEtsy");
+const meter = require("./_etsyApiMeter");
 
 const db = admin.firestore();
 const FV = admin.firestore.FieldValue;
@@ -244,6 +245,7 @@ async function syncCatalog({ fullSync = true, triggeredBy = "cron" } = {}) {
     let keepGoing = true;
 
     while (keepGoing) {
+      meter.bumpSimple("catalog.activeListings");
       const data = await etsyFetch(`/shops/${SHOP_ID}/listings/active`, {
         query: { limit: SYNC_PAGE_SIZE, offset, includes: "Images" }
       });
@@ -436,7 +438,7 @@ async function getSyncStatus() {
 
 // ─── Handler ───────────────────────────────────────────────────────────
 
-exports.handler = async (event) => {
+exports.handler = meter.wrapHandler(async (event) => {
   if (event.httpMethod === "OPTIONS") {
     return { statusCode: 200, headers: CORS, body: "ok" };
   }
@@ -503,7 +505,7 @@ exports.handler = async (event) => {
     console.error("listingsCatalog error:", err);
     return json(500, { error: err.message || String(err), op });
   }
-};
+});
 
 // Expose the search helper for sibling functions (etsyMailDraftReply,
 // and in v2.0 Step 2: etsyMailSalesAgent). Both call this directly,

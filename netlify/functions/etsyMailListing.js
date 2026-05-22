@@ -44,6 +44,7 @@ const {
   getListingImages
 } = require("./_etsyMailEtsy");
 const { requireExtensionAuth } = require("./_etsyMailAuth");
+const meter = require("./_etsyApiMeter");
 
 const CORS = {
   "Access-Control-Allow-Origin" : "*",
@@ -85,7 +86,7 @@ function parseListingId(raw) {
   return m ? m[1] : null;
 }
 
-exports.handler = async (event) => {
+exports.handler = meter.wrapHandler(async (event) => {
   if (event.httpMethod === "OPTIONS") {
     return { statusCode: 200, headers: CORS, body: "ok" };
   }
@@ -156,4 +157,4 @@ exports.handler = async (event) => {
       listingId
     });
   }
-};
+});

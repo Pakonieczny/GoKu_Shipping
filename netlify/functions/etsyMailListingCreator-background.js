@@ -32,6 +32,7 @@ const fetch     = require("node-fetch");
 const FormData  = require("form-data");
 
 const admin     = require("./firebaseAdmin");
+const meter     = require("./_etsyApiMeter");
 const {
   etsyFetch,
   getValidEtsyAccessToken,
@@ -580,6 +581,8 @@ async function resolveTemplateListingId(family) {
 
 async function readTemplateListing(templateListingId) {
   // legacy=false so readiness_state_id appears in the inventory payload
+  meter.bumpSimple("creator.templateListing");
+  meter.bumpSimple("creator.templateInventory");
   const [listing, inventory] = await Promise.all([
     etsyFetch(`/listings/${templateListingId}`, { query: { legacy: false } }),
     etsyFetch(`/listings/${templateListingId}/inventory`, { query: { legacy: false } })
@@ -626,6 +629,7 @@ async function resolveReadinessStateIdFallback() {
   // Used only if the template doesn't have a readiness_state_id set.
   // Reads any existing processing profile from the shop. We never
   // auto-create one — that's an operator setup problem.
+  meter.bumpSimple("creator.readinessDefs");
   const defs = await etsyFetch(`/shops/${SHOP_ID}/readiness-state-definitions`);
   const list = Array.isArray(defs.results) ? defs.results
             : Array.isArray(defs)         ? defs
@@ -757,6 +761,7 @@ async function createDraftListing({ title, description, tags, priceUsd, template
   // shop_section_id is optional — only include if the template defines one
   if (template.shopSectionId) body.shop_section_id = template.shopSectionId;
 
+  meter.bumpSimple("creator.createDraft");
   const created = await etsyFetch(
     `/shops/${SHOP_ID}/listings`,
     { method: "POST", query: { legacy: false }, body }
@@ -786,15 +791,25 @@ async function uploadOneImage({ accessToken, listingId, imageUrl, rank, altText,
   const url =
     `https://api.etsy.com/v3/application/shops/${SHOP_ID}/listings/${encodeURIComponent(listingId)}/images`;
 
-  const res = await fetch(url, {
-    method : "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "x-api-key"  : `${process.env.CLIENT_ID}:${process.env.CLIENT_SECRET || process.env.ETSY_SHARED_SECRET}`,
-      ...form.getHeaders()
-    },
-    body: form
-  });
+  // METER — this is a direct fetch (not via etsyFetch), so it has its own
+  // full outcome tracking (not just attempt-tag).
+  const _meterToken = meter.bump("creator.imageUpload");
+  let res;
+  try {
+    res = await fetch(url, {
+      method : "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "x-api-key"  : `${process.env.CLIENT_ID}:${process.env.CLIENT_SECRET || process.env.ETSY_SHARED_SECRET}`,
+        ...form.getHeaders()
+      },
+      body: form
+    });
+  } catch (err) {
+    _meterToken.failNet();
+    throw err;
+  }
+  _meterToken.fromHttp(res.status);
 
   const text = await res.text();
   if (!res.ok) {
@@ -803,6 +818,7 @@ async function uploadOneImage({ accessToken, listingId, imageUrl, rank, altText,
 }
 
 async function getTemplateImageUrls(templateListingId) {
+  meter.bumpSimple("creator.templateImages");
   const data = await etsyFetch(`/listings/${templateListingId}/images`);
   const results = Array.isArray(data.results) ? data.results : [];
   return results
@@ -877,6 +893,7 @@ function buildSku(thread, threadId) {
 async function setInventory(listingId, { priceUsd, readinessStateId, sku }) {
   // Read current inventory (createDraftListing's `price` field already
   // initialized a single product/offering — we sanitize and add SKU).
+  meter.bumpSimple("creator.inventoryGet");
   const inv = await etsyFetch(`/listings/${listingId}/inventory`, { query: { legacy: false } });
   const srcProducts = Array.isArray(inv.products) ? inv.products : [];
   if (!srcProducts.length) {
@@ -914,6 +931,7 @@ async function setInventory(listingId, { priceUsd, readinessStateId, sku }) {
     };
   });
 
+  meter.bumpSimple("creator.inventoryPut");
   await etsyFetch(`/listings/${listingId}/inventory`, {
     method: "PUT",
     query : { legacy: false },
@@ -934,16 +952,25 @@ async function publishListing(listingId) {
   const form = new URLSearchParams();
   form.append("state", "active");
 
-  const res = await fetch(url, {
-    method : "PATCH",
-    headers: {
-      Authorization : `Bearer ${accessToken}`,
-      "x-api-key"   : `${process.env.CLIENT_ID}:${process.env.CLIENT_SECRET || process.env.ETSY_SHARED_SECRET}`,
-      "Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
-      Accept        : "application/json"
-    },
-    body: form.toString()
-  });
+  // METER — direct fetch needs full outcome tracking.
+  const _meterToken = meter.bump("creator.publishPatch");
+  let res;
+  try {
+    res = await fetch(url, {
+      method : "PATCH",
+      headers: {
+        Authorization : `Bearer ${accessToken}`,
+        "x-api-key"   : `${process.env.CLIENT_ID}:${process.env.CLIENT_SECRET || process.env.ETSY_SHARED_SECRET}`,
+        "Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
+        Accept        : "application/json"
+      },
+      body: form.toString()
+    });
+  } catch (err) {
+    _meterToken.failNet();
+    throw err;
+  }
+  _meterToken.fromHttp(res.status);
 
   const text = await res.text();
   let data;
@@ -957,6 +984,7 @@ async function publishListing(listingId) {
   // do one extra GET — better than failing the whole flow on a missing field.
   if (!data.url) {
     try {
+      meter.bumpSimple("creator.postPublishGet");
       const fresh = await etsyFetch(`/listings/${listingId}`);
       if (fresh && fresh.url) data.url = fresh.url;
     } catch (e) {
@@ -1502,7 +1530,7 @@ async function markFailure({ threadId, err }) {
 
 // ─── handler ─────────────────────────────────────────────────────────────
 
-exports.handler = async function (event) {
+exports.handler = meter.wrapHandler(async function (event) {
   const tStart = Date.now();
   let threadId = null;
 
@@ -1744,4 +1772,4 @@ exports.handler = async function (event) {
       body: JSON.stringify({ ok: false, error: clampStr(err.message, 500), threadId })
     };
   }
-};
+});

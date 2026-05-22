@@ -23,10 +23,20 @@
  *
  *  If you want to tighten this later, add requireExtensionAuth or a CORS
  *  origin allowlist check.
+ *
+ *  ═══ METERING ═══════════════════════════════════════════════════════════
+ *  This file does NOT use _etsyMailEtsy.js (it has its own inline OAuth +
+ *  fetch code, kept for compatibility). To make sure every API call is
+ *  still tracked, we explicitly bump the meter at each of its three call
+ *  sites:
+ *    - order.oauthRefresh  → refreshEtsyToken()
+ *    - order.receiptFetch  → main /shops/{shop}/receipts/{rid} fetch
+ *    - order.imageFetch    → per-listing /listings/{id}/images fetch
  */
 
 const fetch = require("node-fetch");
 const admin = require("./firebaseAdmin");
+const meter = require("./_etsyApiMeter");
 
 const db = admin.firestore();
 const FV = admin.firestore.FieldValue;
@@ -54,15 +64,23 @@ function json(statusCode, body) {
 
 // OAuth token helpers — identical pattern to etsyMailSync-background
 async function refreshEtsyToken(oldRefreshToken) {
-  const res = await fetch("https://api.etsy.com/v3/public/oauth/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "refresh_token",
-      client_id: CLIENT_ID,
-      refresh_token: oldRefreshToken
-    })
-  });
+  const t = meter.bump("order.oauthRefresh");
+  let res;
+  try {
+    res = await fetch("https://api.etsy.com/v3/public/oauth/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        client_id: CLIENT_ID,
+        refresh_token: oldRefreshToken
+      })
+    });
+  } catch (err) {
+    t.failNet();
+    throw err;
+  }
+  t.fromHttp(res.status);
   if (!res.ok) {
     const body = await res.text();
     throw new Error(`Etsy token refresh failed: ${res.status} ${body}`);
@@ -90,7 +108,7 @@ async function getValidEtsyAccessToken() {
   return tok.access_token;
 }
 
-exports.handler = async (event) => {
+exports.handler = meter.wrapHandler(async (event) => {
   if (event.httpMethod === "OPTIONS") {
     return { statusCode: 204, headers: CORS, body: "" };
   }
@@ -119,13 +137,21 @@ exports.handler = async (event) => {
       `/receipts/${receiptId}?includes=` +
       ["Transactions", "Transactions.personalization", "Transactions.variations"].join(",");
 
-    const res = await fetch(url, {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "x-api-key": `${CLIENT_ID}:${CLIENT_SECRET}`,
-        "Content-Type": "application/json"
-      }
-    });
+    const t1 = meter.bump("order.receiptFetch");
+    let res;
+    try {
+      res = await fetch(url, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "x-api-key": `${CLIENT_ID}:${CLIENT_SECRET}`,
+          "Content-Type": "application/json"
+        }
+      });
+    } catch (err) {
+      t1.failNet();
+      throw err;
+    }
+    t1.fromHttp(res.status);
 
     const payload = await res.json();
     if (!res.ok) {
@@ -153,8 +179,10 @@ exports.handler = async (event) => {
     const imageUrlByListingId = {};
     if (uniqueListingIds.length) {
       await Promise.all(uniqueListingIds.map(async (listingId) => {
+        const t2 = meter.bump("order.imageFetch");
+        let imgRes;
         try {
-          const imgRes = await fetch(
+          imgRes = await fetch(
             `https://api.etsy.com/v3/application/listings/${listingId}/images`,
             {
               headers: {
@@ -164,6 +192,14 @@ exports.handler = async (event) => {
               }
             }
           );
+        } catch (err) {
+          t2.failNet();
+          // Don't let one failed image break the whole modal
+          console.warn(`Image fetch failed for listing ${listingId}:`, err.message);
+          return;
+        }
+        t2.fromHttp(imgRes.status);
+        try {
           if (!imgRes.ok) return;  // skip on failure; UI handles gracefully
           const imgData = await imgRes.json();
           const results = Array.isArray(imgData.results) ? imgData.results : [];
@@ -182,7 +218,7 @@ exports.handler = async (event) => {
             null;
         } catch (err) {
           // Don't let one failed image break the whole modal
-          console.warn(`Image fetch failed for listing ${listingId}:`, err.message);
+          console.warn(`Image fetch parse failed for listing ${listingId}:`, err.message);
         }
       }));
     }
@@ -204,4 +240,4 @@ exports.handler = async (event) => {
     console.error("etsyMailOrder error:", err);
     return json(500, { error: err.message || "Unknown error" });
   }
-};
+});

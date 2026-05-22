@@ -107,6 +107,7 @@ const { CORS, requireExtensionAuth } = require("./_etsyMailAuth");
 const { isScheduledInvocation } = require("./_etsyMailScheduled");
 const { requireOwner, logUnauthorized } = require("./_etsyMailRoles");
 const { etsyFetch, SHOP_ID } = require("./_etsyMailEtsy");
+const meter = require("./_etsyApiMeter");
 
 const db = admin.firestore();
 const FV = admin.firestore.FieldValue;
@@ -175,6 +176,7 @@ async function syncShippingFromEtsy() {
 
   let profilesRaw;
   try {
+    meter.bumpSimple("shipping.profiles");
     const resp = await etsyFetch(`/shops/${SHOP_ID}/shipping-profiles`);
     profilesRaw = (resp && Array.isArray(resp.results)) ? resp.results : [];
   } catch (e) {
@@ -193,6 +195,8 @@ async function syncShippingFromEtsy() {
     if (!profileId) continue;
 
     // Fetch upgrades + destinations for this profile in parallel
+    meter.bumpSimple("shipping.upgrades");
+    meter.bumpSimple("shipping.destinations");
     const [upgradesRes, destinationsRes] = await Promise.allSettled([
       etsyFetch(`/shops/${SHOP_ID}/shipping-profiles/${profileId}/upgrades`),
       etsyFetch(`/shops/${SHOP_ID}/shipping-profiles/${profileId}/destinations`)
@@ -361,7 +365,7 @@ function summarizeShippingForAi(cache) {
 
 // ─── Handler ───────────────────────────────────────────────────────────
 
-exports.handler = async (event) => {
+exports.handler = meter.wrapHandler(async (event) => {
   if (event.httpMethod === "OPTIONS") {
     return { statusCode: 200, headers: CORS, body: "ok" };
   }
@@ -427,7 +431,7 @@ exports.handler = async (event) => {
   }
 
   return json(400, { error: `Unknown op '${op}'` });
-};
+});
 
 module.exports.getShippingUpgradesCache = getShippingUpgradesCache;
 module.exports.summarizeShippingForAi   = summarizeShippingForAi;

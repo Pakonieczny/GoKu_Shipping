@@ -66,6 +66,7 @@
 
 const fetch = require("node-fetch");
 const admin = require("./firebaseAdmin");
+const meter = require("./_etsyApiMeter");
 
 const db = admin.firestore();
 const FV = admin.firestore.FieldValue;
@@ -117,15 +118,23 @@ async function readEtsyToken() {
 }
 
 async function refreshEtsyToken(oldRefreshToken) {
-  const res = await fetch("https://api.etsy.com/v3/public/oauth/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type    : "refresh_token",
-      client_id     : CLIENT_ID,
-      refresh_token : oldRefreshToken
-    })
-  });
+  const _meterToken = meter.bump("sync.oauthRefresh");
+  let res;
+  try {
+    res = await fetch("https://api.etsy.com/v3/public/oauth/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type    : "refresh_token",
+        client_id     : CLIENT_ID,
+        refresh_token : oldRefreshToken
+      })
+    });
+  } catch (err) {
+    _meterToken.failNet();
+    throw err;
+  }
+  _meterToken.fromHttp(res.status);
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(`Etsy OAuth refresh failed ${res.status}: ${text.slice(0, 300)}`);
@@ -183,6 +192,11 @@ async function getReceiptsPage(accessToken, params, attempt = 1, invocationStart
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 30000);
 
+  // METER — bump on EVERY fetch attempt, including retries. The recursive
+  // 429-retry below calls this function again, which re-enters here and
+  // bumps fresh. That's correct: each retry IS a new API call.
+  const _meterToken = meter.bump("sync.receiptsPage");
+
   let res;
   try {
     res = await fetch(url, {
@@ -195,6 +209,7 @@ async function getReceiptsPage(accessToken, params, attempt = 1, invocationStart
     });
   } catch (err) {
     clearTimeout(timeoutId);
+    _meterToken.failNet();
     if (err.name === "AbortError") {
       if (attempt > 3) throw new Error("Etsy API timeout after 3 attempts (30s each)");
       console.warn(`Etsy fetch timeout (attempt ${attempt}/3), retrying…`);
@@ -204,6 +219,7 @@ async function getReceiptsPage(accessToken, params, attempt = 1, invocationStart
     throw err;
   }
   clearTimeout(timeoutId);
+  _meterToken.fromHttp(res.status);
 
   if (res.status === 429) {
     if (attempt > 3) throw new Error("Etsy rate limit exceeded after 3 retries");
@@ -443,7 +459,7 @@ async function runBuyerSync({ buyerUserId, invocationStartMs }) {
 }
 
 // ─── Entry ─────────────────────────────────────────────────────────────────
-exports.handler = async (event) => {
+exports.handler = meter.wrapHandler(async (event) => {
   const invocationStartMs = Date.now();
 
   if (!SHOP_ID || !CLIENT_ID || !CLIENT_SECRET) {
@@ -517,4 +533,4 @@ exports.handler = async (event) => {
     console.error(`etsyMailSync-background buyer mode failed for ${buyerUserId}:`, err.message || err);
     return { statusCode: 500, body: JSON.stringify({ ok: false, error: err.message || String(err) }) };
   }
-};
+});
