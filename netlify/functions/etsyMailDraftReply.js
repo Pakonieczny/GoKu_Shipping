@@ -3237,6 +3237,26 @@ exports.handler = async (event) => {
     // generation for more than a few seconds.
     let customer = _initialCustomer;
     if (!customer && thread.buyerUserId) {
+      // ─── DIAGNOSTIC TOGGLE — draft-reply lazy recovery ──────────────
+      // Reads EtsyMail_Config/syncTriggers.enableDraftReplyLazyRecovery
+      // before firing. Toggle via inbox diagnostics panel to bisect which
+      // trigger source is responsible for buyer-sync quota burn.
+      // Default = ON (preserves prior v3.32 behavior).
+      let _lazyRecoveryEnabled = true;
+      try {
+        const _trigSnap = await db.collection("EtsyMail_Config").doc("syncTriggers").get();
+        if (_trigSnap.exists) {
+          const _trig = _trigSnap.data() || {};
+          if (_trig.enableDraftReplyLazyRecovery === false) _lazyRecoveryEnabled = false;
+        }
+      } catch (e) {
+        // Fail open
+        console.warn(`[draftReply ${threadId}] syncTriggers read failed (continuing with default ON):`, e.message);
+      }
+
+      if (!_lazyRecoveryEnabled) {
+        console.log(`[draftReply ${threadId}] v3.32 lazy buyer-sync DISABLED via syncTriggers.enableDraftReplyLazyRecovery=false — proceeding without customer doc`);
+      } else {
       console.log(`[draftReply ${threadId}] v3.32 lazy buyer-sync — customer doc missing for buyerUserId=${thread.buyerUserId}, triggering sync`);
       try {
         const fnHost = process.env.URL || process.env.DEPLOY_PRIME_URL || null;
@@ -3274,6 +3294,7 @@ exports.handler = async (event) => {
       } catch (e) {
         // Recovery is best-effort. Never block draft generation on it.
         console.warn(`[draftReply ${threadId}] v3.32 lazy buyer-sync threw:`, e.message);
+      }
       }
     }
 

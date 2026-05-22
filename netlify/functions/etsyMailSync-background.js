@@ -463,17 +463,36 @@ exports.handler = meter.wrapHandler(async (event) => {
   const invocationStartMs = Date.now();
 
   // ─── DIAGNOSTIC: per-invocation telemetry ────────────────────────────
-  // Bumps a separate meter counter so the UI can see invocation count
-  // independent of page-call count. Also logs caller-identifying headers
-  // so we can correlate invocations back to their trigger source
-  // (snapshot pipeline, draft-reply lazy recovery, manual operator, ...).
+  // Writes one doc per invocation to EtsyMail_DiagnosticLog so we can
+  // correlate invocations back to their trigger source (snapshot pipeline,
+  // draft-reply lazy recovery, manual operator, ...). Netlify's log view
+  // is unreliable for background functions; Firestore is the reliable
+  // record. Each write is fully best-effort — never blocks or fails the
+  // handler.
   meter.bumpSimple("sync.invocation");
-  const _callerUA      = (event.headers && (event.headers["user-agent"] || event.headers["User-Agent"])) || null;
-  const _callerReferer = (event.headers && (event.headers["referer"]    || event.headers["Referer"]))    || null;
-  const _xForwardedFor = (event.headers && (event.headers["x-forwarded-for"] || event.headers["X-Forwarded-For"])) || null;
-  // We can also see "via" if the call came from another Netlify function.
-  const _callerOrigin  = (event.headers && (event.headers["origin"]     || event.headers["Origin"]))     || null;
-  console.log(`[sync] INVOCATION_START ua="${(_callerUA || "").slice(0, 80)}" referer="${(_callerReferer || "").slice(0, 80)}" xff="${(_xForwardedFor || "").slice(0, 80)}" origin="${(_callerOrigin || "").slice(0, 80)}"`);
+  const _diagId = `${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+  const _h = event.headers || {};
+  const _diagInit = {
+    invocationId : _diagId,
+    createdAt    : FV.serverTimestamp(),
+    invocationStartMs,
+    function     : "etsyMailSync-background",
+    phase        : "start",
+    callerUA     : (_h["user-agent"]      || _h["User-Agent"]      || null),
+    callerReferer: (_h["referer"]         || _h["Referer"]         || null),
+    callerOrigin : (_h["origin"]          || _h["Origin"]          || null),
+    callerXFF    : (_h["x-forwarded-for"] || _h["X-Forwarded-For"] || null),
+    callerHost   : (_h["host"]            || _h["Host"]            || null),
+    httpMethod   : event.httpMethod,
+    queryString  : event.queryStringParameters || null,
+    bodyRaw      : (typeof event.body === "string" ? event.body.slice(0, 500) : null)
+  };
+  // Fire-and-forget write. Don't await — never let diagnostic delay
+  // the handler.
+  db.collection("EtsyMail_DiagnosticLog").doc(_diagId).set(_diagInit).catch(e => {
+    // Last-resort console log if Firestore write fails
+    console.warn("[sync] diagnostic write failed:", e.message);
+  });
 
   if (!SHOP_ID || !CLIENT_ID || !CLIENT_SECRET) {
     console.error("Missing SHOP_ID / CLIENT_ID / CLIENT_SECRET env vars");
@@ -496,9 +515,11 @@ exports.handler = meter.wrapHandler(async (event) => {
     }
   } catch {}
 
-  // DIAGNOSTIC: log the parsed mode + buyerUserId so we can see the
-  // payload that triggered this invocation.
-  console.log(`[sync] INVOCATION_PARAMS mode="${mode}" buyerUserId="${buyerUserId}"`);
+  // Update diagnostic doc with parsed params
+  db.collection("EtsyMail_DiagnosticLog").doc(_diagId).set({
+    parsedMode       : mode,
+    parsedBuyerUserId: buyerUserId
+  }, { merge: true }).catch(() => {});
 
   // Daily rate-limit short-circuit. If a prior invocation hit Etsy's
   // daily limit, refuse to make any Etsy API calls until the reset
@@ -541,12 +562,28 @@ exports.handler = meter.wrapHandler(async (event) => {
 
   try {
     const result = await runBuyerSync({ buyerUserId, invocationStartMs });
-    // DIAGNOSTIC: log invocation completion with page count so we can see
-    // per-invocation behavior in the meter + Netlify log.
-    const elapsedSec = ((Date.now() - invocationStartMs) / 1000).toFixed(1);
-    console.log(`[sync] INVOCATION_END buyerUserId=${buyerUserId} pagesFetched=${result.pagesFetched} receipts=${result.receiptsProcessed} customersUpdated=${result.customersUpdated} elapsed=${elapsedSec}s`);
+    // DIAGNOSTIC: write completion record so we can see per-invocation behavior
+    const elapsedMs = Date.now() - invocationStartMs;
+    db.collection("EtsyMail_DiagnosticLog").doc(_diagId).set({
+      phase           : "end",
+      outcome         : "ok",
+      pagesFetched    : result.pagesFetched,
+      receiptsProcessed: result.receiptsProcessed,
+      customersUpdated: result.customersUpdated,
+      elapsedMs,
+      endedAt         : FV.serverTimestamp()
+    }, { merge: true }).catch(() => {});
     return { statusCode: 200, body: JSON.stringify({ ok: true, mode: "buyer", ...result }) };
   } catch (err) {
+    const elapsedMs = Date.now() - invocationStartMs;
+    db.collection("EtsyMail_DiagnosticLog").doc(_diagId).set({
+      phase    : "end",
+      outcome  : "error",
+      errorCode: err.code || null,
+      errorMsg : (err.message || String(err)).slice(0, 500),
+      elapsedMs,
+      endedAt  : FV.serverTimestamp()
+    }, { merge: true }).catch(() => {});
     if (err.code === "DAILY_RATE_LIMIT" || err.code === "RATE_LIMIT_NO_BUDGET") {
       console.warn(`etsyMailSync-background buyer mode aborted for ${buyerUserId}: ${err.code}`);
       return { statusCode: 503, body: JSON.stringify({ ok: false, code: err.code, retry: true }) };

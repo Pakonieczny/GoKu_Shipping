@@ -797,6 +797,27 @@ exports.handler = async (event) => {
     // block the response. Errors are logged but never bubbled up.
     const buyerForSync = (customer && customer.buyerUserId) ? String(customer.buyerUserId) : null;
     if (buyerForSync) {
+      // ─── DIAGNOSTIC TOGGLE — snapshot trigger ────────────────────────
+      // Reads EtsyMail_Config/syncTriggers.enableSnapshotTrigger before
+      // firing. If explicitly set to false from the inbox UI's diagnostics
+      // panel, skip the buyer-sync entirely. Used to bisect which trigger
+      // source is responsible for the buyer-sync quota burn. Default = ON
+      // (preserves prior behavior when doc missing or flag unset).
+      let _snapshotTriggerEnabled = true;
+      try {
+        const _trigSnap = await db.collection("EtsyMail_Config").doc("syncTriggers").get();
+        if (_trigSnap.exists) {
+          const _trig = _trigSnap.data() || {};
+          if (_trig.enableSnapshotTrigger === false) _snapshotTriggerEnabled = false;
+        }
+      } catch (e) {
+        // Fail open — never block snapshot ingest on a config-read error
+        console.warn("[snapshot] syncTriggers read failed (continuing with default ON):", e.message);
+      }
+
+      if (!_snapshotTriggerEnabled) {
+        console.log(`[snapshot] buyer sync trigger DISABLED via syncTriggers.enableSnapshotTrigger=false — skipping for buyerUserId=${buyerForSync} threadId=${threadId}`);
+      } else {
       const fnHost = process.env.URL || process.env.DEPLOY_PRIME_URL || null;
       if (fnHost) {
         // Same-deployment URL so the call hits the matching env context
@@ -818,6 +839,7 @@ exports.handler = async (event) => {
         console.log(`[snapshot] queued buyer sync for buyerUserId=${buyerForSync} threadId=${threadId}`);
       } else {
         console.warn(`[snapshot] no fnHost (URL/DEPLOY_PRIME_URL) — skipping buyer sync trigger for ${buyerForSync}`);
+      }
       }
     }
 

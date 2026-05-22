@@ -62,7 +62,9 @@ const CALLABLE_COLLS = new Set([
   // ─── v2.1 Option-sheet pricing (replaces v2.0 band model) ───────────
   "EtsyMail_OptionSheets",            // line-sheet docs per product family
   // ─── v2.2 Etsy shipping upgrades cache ──────────────────────────────
-  "EtsyMail_ShippingUpgradesCache"    // synced from Etsy every 6h
+  "EtsyMail_ShippingUpgradesCache",    // synced from Etsy every 6h
+  // ─── Diagnostic log for quota investigation ─────────────────────────
+  "EtsyMail_DiagnosticLog"             // one doc per etsyMailSync-background invocation
   // ─── v2.0 Step 3 will add ───────────────────────────────────────────
   // "EtsyMail_CustomOrders",
   // "EtsyMail_CustomOrderTemplates"

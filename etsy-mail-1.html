@@ -447,6 +447,59 @@
     .em-diag .dg-sub.warn { color: #9a3f00; }
     .em-diag .dg-sub.err  { color: #a40e26; }
 
+    /* ─── Trigger controls (interactive toggles) ──────────────────── */
+    .em-diag .dg-toggles {
+      border-top: 1px solid #e1e4e8;
+      background: #fffbea;
+      padding: 4px 0 8px;
+    }
+    .em-diag .dg-toggles .dg-group {
+      background: #fffbea;
+      color: #9a3f00;
+    }
+    .em-diag .dg-toggle {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 6px;
+      padding: 5px 12px;
+      cursor: pointer;
+      user-select: none;
+      align-items: start;
+    }
+    .em-diag .dg-toggle:hover { background: #fff5cc; }
+    .em-diag .dg-toggle input[type="checkbox"] {
+      margin: 1px 0 0; cursor: pointer;
+      width: 13px; height: 13px;
+      accent-color: #2da44e;
+    }
+    .em-diag .dg-toggle.is-off input[type="checkbox"] {
+      accent-color: #cf222e;
+    }
+    .em-diag .dg-toggle-label {
+      font-family: ui-monospace, monospace;
+      font-size: 10px;
+      color: #24292e;
+      font-weight: 600;
+    }
+    .em-diag .dg-toggle-desc {
+      grid-column: 2;
+      font-size: 9px;
+      color: #6a737d;
+      margin-top: 2px;
+      line-height: 1.35;
+    }
+    .em-diag .dg-toggle-status {
+      font-size: 8px;
+      font-weight: 700;
+      padding: 0 4px;
+      border-radius: 3px;
+      margin-left: 6px;
+      letter-spacing: .5px;
+    }
+    .em-diag .dg-toggle.is-on  .dg-toggle-status { background: #dafbe1; color: #1a7f37; }
+    .em-diag .dg-toggle.is-off .dg-toggle-status { background: #ffebe9; color: #a40e26; }
+    .em-diag .dg-toggle.is-saving .dg-toggle-status { background: #dbecff; color: #0550ae; }
+
     .em-list {
       grid-area: list; background: #fff; border-right: 1px solid #e1e4e8;
       overflow-y: auto; display: flex; flex-direction: column;
@@ -9829,20 +9882,11 @@
 
         { group: "Catalog mirror", siteId: "catalog.activeListings",    label: "Active listings page",     hint: "etsyMailListingsCatalog — every 30 min cron." },
 
-        { group: "Shipping sync",  siteId: "shipping.profiles",         label: "Shipping profiles list",   hint: "etsyMailShippingSync — every 6h." },
-        { group: "Shipping sync",  siteId: "shipping.upgrades",         label: "Profile upgrades",         hint: "Per-profile upgrade fetch." },
-        { group: "Shipping sync",  siteId: "shipping.destinations",     label: "Profile destinations",     hint: "Per-profile destination fetch." },
-
-        { group: "Listing creator",siteId: "creator.templateListing",   label: "Template listing GET",     hint: "Read the family template before generating." },
-        { group: "Listing creator",siteId: "creator.templateInventory", label: "Template inventory GET",   hint: "Read template inventory for readiness defaults." },
-        { group: "Listing creator",siteId: "creator.readinessDefs",     label: "Readiness defs GET",       hint: "Fallback when template lacks readiness_state_id." },
-        { group: "Listing creator",siteId: "creator.createDraft",       label: "Create draft POST",        hint: "Create the new draft listing." },
-        { group: "Listing creator",siteId: "creator.templateImages",    label: "Template images GET",     hint: "Fallback when customer sent no photos." },
-        { group: "Listing creator",siteId: "creator.imageUpload",       label: "Image upload POST",        hint: "Per-photo upload. Can be 1–10 per listing." },
-        { group: "Listing creator",siteId: "creator.inventoryGet",      label: "Inventory GET",            hint: "Read inventory before setting SKU + price." },
-        { group: "Listing creator",siteId: "creator.inventoryPut",      label: "Inventory PUT",            hint: "Set SKU + price + readiness on the listing." },
-        { group: "Listing creator",siteId: "creator.publishPatch",      label: "Publish PATCH",            hint: "Activate the new listing." },
-        { group: "Listing creator",siteId: "creator.postPublishGet",    label: "Post-publish GET",         hint: "Only if PATCH response lacked the URL." }
+        { group: "Shipping sync",  siteId: "shipping.profiles",         label: "Shipping profiles list",   hint: "etsyMailShippingSync — every 6h." }
+        // Listing creator + profile upgrades/destinations rows removed —
+        // they remained at zero throughout the investigation and were
+        // taking sidebar space we needed for the trigger control panel.
+        // Counters are still recorded server-side; just not displayed.
       ];
 
       // DOM refs
@@ -10144,11 +10188,16 @@
         return;
       }
 
-      // Collapsed-by-default. Persist user's choice in localStorage so
-      // operators who want it expanded keep it expanded across reloads.
+      // Expanded by default — the toggles need to be visible to be
+      // useful. Operators can collapse to reclaim space if needed; the
+      // choice is persisted across reloads.
       const STORAGE_KEY = "emDiag_expanded";
       let _expanded = (function () {
-        try { return localStorage.getItem(STORAGE_KEY) === "1"; } catch { return false; }
+        try {
+          const v = localStorage.getItem(STORAGE_KEY);
+          if (v === null) return true;  // default expanded for first-time view
+          return v === "1";
+        } catch { return true; }
       })();
       function applyExpanded() {
         elPanel.classList.toggle("expanded", _expanded);
@@ -10236,7 +10285,7 @@
       }
 
       /** Render the cron + flag sections. */
-      function renderBody(autoCfg, catalogSync, syncState) {
+      function renderBody(autoCfg, catalogSync, syncState, syncTriggers) {
         let html = "";
 
         // ─── Crons section
@@ -10300,8 +10349,99 @@
             </div>`;
         }
 
-        elBody.innerHTML = html;
+        elBody.innerHTML = html + renderTriggers(syncTriggers);
       }
+
+      /* ─── Trigger controls ──────────────────────────────────────────
+         Interactive checkboxes that write to EtsyMail_Config/syncTriggers.
+         Each one gates a specific code path that triggers
+         etsyMailSync-background. Toggle them one at a time to bisect
+         which trigger source is responsible for the buyer-sync quota
+         burn. ON = current/legacy behavior; OFF = gate the trigger so
+         it skips the buyer-sync fire. */
+      const TRIGGERS = [
+        {
+          field      : "enableSnapshotTrigger",
+          label      : "Snapshot → buyer-sync",
+          description: "etsyMailSnapshot.js (line 798). Fires a buyer-sync every time a thread is scraped by the Chrome extension. Fire-and-forget POST to etsyMailSync-background.",
+          defaultOn  : true
+        },
+        {
+          field      : "enableDraftReplyLazyRecovery",
+          label      : "Draft-reply lazy recovery (v3.32)",
+          description: "etsyMailDraftReply.js (line 3239). Triggers a buyer-sync when customer doc is missing for a thread's buyerUserId. Waits up to 8s for the sync to populate the doc.",
+          defaultOn  : true
+        }
+      ];
+
+      function renderTriggers(syncTriggers) {
+        const cfg = syncTriggers || {};
+        let html = `<div class="dg-toggles">`;
+        html += `<div class="dg-group">Trigger controls — buyer-sync</div>`;
+        for (const t of TRIGGERS) {
+          // Treat undefined as the default (ON for the existing triggers
+          // we're investigating). Only explicit `false` counts as OFF.
+          const isOn = cfg[t.field] !== false;
+          const stateCls = isOn ? "is-on" : "is-off";
+          html += `
+            <label class="dg-toggle ${stateCls}" data-field="${_esc(t.field)}">
+              <input type="checkbox" ${isOn ? "checked" : ""} />
+              <span class="dg-toggle-label">${_esc(t.label)}<span class="dg-toggle-status">${isOn ? "ON" : "OFF"}</span></span>
+              <div class="dg-toggle-desc">${_esc(t.description)}</div>
+            </label>`;
+        }
+        html += `</div>`;
+        return html;
+      }
+
+      /** Click handler — writes the toggled value back to Firestore.
+       *  Optimistic: flips local state immediately, then writes. If write
+       *  fails we surface that via the next poll which will re-read the
+       *  authoritative value from Firestore. */
+      async function onToggleChange(ev) {
+        const cb    = ev.target;
+        const label = cb.closest(".dg-toggle");
+        if (!label) return;
+        const field = label.getAttribute("data-field");
+        if (!field) return;
+        const newValue = !!cb.checked;
+        // Visual feedback while saving
+        label.classList.remove("is-on", "is-off");
+        label.classList.add("is-saving");
+        const statusEl = label.querySelector(".dg-toggle-status");
+        if (statusEl) statusEl.textContent = "SAVING";
+        try {
+          const res = await api("firestoreProxy", {
+            method: "POST",
+            body  : {
+              op   : "set",
+              coll : "EtsyMail_Config",
+              id   : "syncTriggers",
+              data : { [field]: newValue },
+              merge: true
+            }
+          });
+          if (!res || res.success !== true) throw new Error("write returned non-success");
+          // Update local UI to reflect committed state
+          label.classList.remove("is-saving");
+          label.classList.add(newValue ? "is-on" : "is-off");
+          if (statusEl) statusEl.textContent = newValue ? "ON" : "OFF";
+        } catch (err) {
+          // Revert checkbox state and show error
+          cb.checked = !newValue;
+          label.classList.remove("is-saving");
+          label.classList.add(newValue ? "is-off" : "is-on");
+          if (statusEl) statusEl.textContent = "FAILED";
+          console.warn(`[emDiag] toggle write failed for ${field}:`, err.message);
+        }
+      }
+
+      // Delegated click handler — installed once
+      elBody.addEventListener("change", (ev) => {
+        if (ev.target && ev.target.matches('.dg-toggle input[type="checkbox"]')) {
+          onToggleChange(ev);
+        }
+      });
 
       /** Summary line shown collapsed. Three-state pattern:
        *    OK     — no quota issues, no flags warning
@@ -10322,23 +10462,33 @@
 
       // ─── Polling loop ────────────────────────────────────────────
       async function pollOnce() {
-        // Fetch three docs in parallel.
+        // Fetch four docs in parallel.
         try {
-          const [autoRes, syncStateRes, catalogRes] = await Promise.all([
+          const [autoRes, syncStateRes, catalogRes, triggersRes] = await Promise.all([
             api("firestoreProxy", { method: "GET",
               query: { op: "get", coll: "EtsyMail_Config", id: "autoPipeline" } }),
             api("firestoreProxy", { method: "GET",
               query: { op: "get", coll: "EtsyMail_Config", id: "syncState" } }).catch(() => null),
             api("firestoreProxy", { method: "GET",
-              query: { op: "get", coll: "EtsyMail_ListingsSync", id: "global" } }).catch(() => null)
+              query: { op: "get", coll: "EtsyMail_ListingsSync", id: "global" } }).catch(() => null),
+            api("firestoreProxy", { method: "GET",
+              query: { op: "get", coll: "EtsyMail_Config", id: "syncTriggers" } }).catch(() => null)
           ]);
 
-          const autoCfg     = (autoRes     && autoRes.exists)     ? autoRes.doc     : {};
-          const syncState   = (syncStateRes && syncStateRes.exists) ? syncStateRes.doc : null;
-          const catalogSync = (catalogRes   && catalogRes.exists)   ? catalogRes.doc   : null;
+          const autoCfg      = (autoRes      && autoRes.exists)      ? autoRes.doc      : {};
+          const syncState    = (syncStateRes && syncStateRes.exists) ? syncStateRes.doc : null;
+          const catalogSync  = (catalogRes   && catalogRes.exists)   ? catalogRes.doc   : null;
+          const syncTriggers = (triggersRes  && triggersRes.exists)  ? triggersRes.doc  : null;
 
+          // Don't re-render the body while the user is mid-interaction
+          // with a toggle (the optimistic state we set on click would
+          // get clobbered). Skip the body update if any toggle is in
+          // "saving" state.
+          const isSaving = !!elBody.querySelector(".dg-toggle.is-saving");
           const quotaState = renderQuota(syncState);
-          renderBody(autoCfg, catalogSync, syncState);
+          if (!isSaving) {
+            renderBody(autoCfg, catalogSync, syncState, syncTriggers);
+          }
           renderSummary(autoCfg, quotaState);
 
         } catch (err) {
@@ -10360,7 +10510,8 @@
         expand: () => { _expanded = true; applyExpanded(); },
         collapse: () => { _expanded = false; applyExpanded(); },
         _crons: CRONS,
-        _flags: FLAGS
+        _flags: FLAGS,
+        _triggers: TRIGGERS
       };
     })();
 
