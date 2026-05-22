@@ -462,6 +462,19 @@ async function runBuyerSync({ buyerUserId, invocationStartMs }) {
 exports.handler = meter.wrapHandler(async (event) => {
   const invocationStartMs = Date.now();
 
+  // ─── DIAGNOSTIC: per-invocation telemetry ────────────────────────────
+  // Bumps a separate meter counter so the UI can see invocation count
+  // independent of page-call count. Also logs caller-identifying headers
+  // so we can correlate invocations back to their trigger source
+  // (snapshot pipeline, draft-reply lazy recovery, manual operator, ...).
+  meter.bumpSimple("sync.invocation");
+  const _callerUA      = (event.headers && (event.headers["user-agent"] || event.headers["User-Agent"])) || null;
+  const _callerReferer = (event.headers && (event.headers["referer"]    || event.headers["Referer"]))    || null;
+  const _xForwardedFor = (event.headers && (event.headers["x-forwarded-for"] || event.headers["X-Forwarded-For"])) || null;
+  // We can also see "via" if the call came from another Netlify function.
+  const _callerOrigin  = (event.headers && (event.headers["origin"]     || event.headers["Origin"]))     || null;
+  console.log(`[sync] INVOCATION_START ua="${(_callerUA || "").slice(0, 80)}" referer="${(_callerReferer || "").slice(0, 80)}" xff="${(_xForwardedFor || "").slice(0, 80)}" origin="${(_callerOrigin || "").slice(0, 80)}"`);
+
   if (!SHOP_ID || !CLIENT_ID || !CLIENT_SECRET) {
     console.error("Missing SHOP_ID / CLIENT_ID / CLIENT_SECRET env vars");
     return { statusCode: 500, body: "Missing env vars" };
@@ -482,6 +495,10 @@ exports.handler = meter.wrapHandler(async (event) => {
       }
     }
   } catch {}
+
+  // DIAGNOSTIC: log the parsed mode + buyerUserId so we can see the
+  // payload that triggered this invocation.
+  console.log(`[sync] INVOCATION_PARAMS mode="${mode}" buyerUserId="${buyerUserId}"`);
 
   // Daily rate-limit short-circuit. If a prior invocation hit Etsy's
   // daily limit, refuse to make any Etsy API calls until the reset
@@ -524,6 +541,10 @@ exports.handler = meter.wrapHandler(async (event) => {
 
   try {
     const result = await runBuyerSync({ buyerUserId, invocationStartMs });
+    // DIAGNOSTIC: log invocation completion with page count so we can see
+    // per-invocation behavior in the meter + Netlify log.
+    const elapsedSec = ((Date.now() - invocationStartMs) / 1000).toFixed(1);
+    console.log(`[sync] INVOCATION_END buyerUserId=${buyerUserId} pagesFetched=${result.pagesFetched} receipts=${result.receiptsProcessed} customersUpdated=${result.customersUpdated} elapsed=${elapsedSec}s`);
     return { statusCode: 200, body: JSON.stringify({ ok: true, mode: "buyer", ...result }) };
   } catch (err) {
     if (err.code === "DAILY_RATE_LIMIT" || err.code === "RATE_LIMIT_NO_BUDGET") {
