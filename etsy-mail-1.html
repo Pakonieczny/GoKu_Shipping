@@ -9730,10 +9730,16 @@
 
       /** Convert a Firestore Timestamp (as serialized by firestoreProxy)
        *  into millis since epoch. The proxy wraps Timestamps as
-       *  { _seconds, _nanoseconds } objects on the wire. */
+       *  { _ts: true, ms: <millis> } objects on the wire (see the
+       *  serialize() helper in firestoreProxy.js). We also tolerate
+       *  the raw Firestore Timestamp shape ({seconds, nanoseconds} or
+       *  {_seconds, _nanoseconds}) in case the proxy serializer ever
+       *  changes — defensive against future regressions. */
       function tsToMillis(ts) {
         if (!ts) return 0;
         if (typeof ts === "number") return ts;
+        // firestoreProxy's canonical shape
+        if (ts._ts === true && typeof ts.ms === "number") return ts.ms;
         if (typeof ts.toMillis === "function") return ts.toMillis();
         if (typeof ts._seconds === "number") return ts._seconds * 1000 + Math.floor((ts._nanoseconds || 0) / 1e6);
         if (typeof ts.seconds === "number") return ts.seconds * 1000 + Math.floor((ts.nanoseconds || 0) / 1e6);
@@ -9810,7 +9816,23 @@
             currentGroup = site.group;
             html += `<div class="am-group">${_esc(currentGroup)}</div>`;
           }
-          const bucket = sites[site.siteId] || {};
+          // Firestore quirk: when our backend writes
+          //   update["sites.order.receiptFetch.attempt"] = FV.increment(1)
+          // the dotted field path is interpreted as nested object navigation,
+          // not as a literal key. So the served doc has
+          //   sites: { order: { receiptFetch: { attempt: 1 } } }
+          // not
+          //   sites: { "order.receiptFetch": { attempt: 1 } }
+          // Walk the dotted siteId to find the bucket wherever it landed.
+          // Falls back to flat lookup if some other writer ever stores flat keys.
+          let bucket = sites[site.siteId];
+          if (!bucket) {
+            bucket = site.siteId.split(".").reduce(
+              (acc, part) => (acc && typeof acc === "object" ? acc[part] : undefined),
+              sites
+            );
+          }
+          bucket = bucket || {};
           html += renderRow(site, bucket, now);
         }
         elBody.innerHTML = html;
