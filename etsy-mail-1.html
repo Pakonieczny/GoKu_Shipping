@@ -336,6 +336,117 @@
       border-bottom: 1px solid #ffc1ba;
     }
 
+    /* ─── Diagnostics panel ───────────────────────────────────────────
+       Sits above the API meter in the rail, shows live system status:
+       Etsy rate-limit state, cron schedules, feature flags. Read-only;
+       all toggles live in the Settings dialog.
+
+       Collapses to a single-line summary banner by default. Click the
+       header to expand. Live-polls every 3 seconds — same cadence as
+       the meter — and reads three Firestore docs per cycle. */
+    .em-diag {
+      flex: 0 0 auto;
+      border-bottom: 1px solid #e1e4e8;
+      background: #fbfcfd;
+      font-size: 11px;
+    }
+    .em-diag.expanded { max-height: 50vh; overflow-y: auto; }
+    .em-diag .dg-head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 6px 12px;
+      cursor: pointer;
+      user-select: none;
+      background: #fff;
+      border-bottom: 1px solid #e1e4e8;
+    }
+    .em-diag .dg-head:hover { background: #f6f8fa; }
+    .em-diag .dg-title {
+      font-size: 10px; font-weight: 700; letter-spacing: .8px;
+      text-transform: uppercase; color: #6a737d;
+      display: flex; align-items: center; gap: 5px;
+    }
+    .em-diag .dg-summary {
+      font-size: 10px; color: #57606a;
+      font-variant-numeric: tabular-nums;
+    }
+    .em-diag .dg-chev {
+      font-size: 14px; color: #8a949e;
+      transition: transform .15s;
+    }
+    .em-diag.expanded .dg-chev { transform: rotate(180deg); }
+
+    /* Quota banner — single-line status of Etsy daily rate-limit */
+    .em-diag .dg-quota {
+      padding: 6px 12px;
+      font-size: 11px;
+      border-bottom: 1px solid #e1e4e8;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .em-diag .dg-quota.ok       { background: #f0f9f1; color: #1a7f37; }
+    .em-diag .dg-quota.throttled{ background: #fff8e1; color: #9a3f00; }
+    .em-diag .dg-quota.limited  { background: #fff5f5; color: #a40e26; }
+    .em-diag .dg-quota .material-icons { font-size: 14px; }
+
+    /* The body is the collapsed-by-default content. Hidden in non-
+       expanded state via max-height; CSS-only collapse animation. */
+    .em-diag .dg-body {
+      max-height: 0; overflow: hidden;
+      transition: max-height .2s ease-out;
+    }
+    .em-diag.expanded .dg-body { max-height: none; }
+
+    .em-diag .dg-group {
+      font-size: 9px; font-weight: 700; letter-spacing: .6px;
+      text-transform: uppercase; color: #8a949e;
+      padding: 8px 12px 2px;
+      background: #f6f8fa;
+      border-top: 1px solid #e1e4e8;
+    }
+    .em-diag .dg-row {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      gap: 4px 8px;
+      padding: 4px 12px;
+      align-items: center;
+      border-left: 2px solid transparent;
+    }
+    .em-diag .dg-row:hover { background: #f6f8fa; }
+    .em-diag .dg-dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: #d0d7de;
+      flex: 0 0 auto;
+    }
+    .em-diag .dg-dot.on       { background: #2da44e; }
+    .em-diag .dg-dot.off      { background: #d0d7de; }
+    .em-diag .dg-dot.warn     { background: #d4a72c; }
+    .em-diag .dg-dot.err      { background: #cf222e; }
+    .em-diag .dg-dot.skipping { background: #8a949e; box-shadow: inset 0 0 0 2px #fff; }
+    .em-diag .dg-label {
+      color: #24292e;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+      font-size: 10px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .em-diag .dg-value {
+      color: #6a737d;
+      font-size: 9px;
+      font-variant-numeric: tabular-nums;
+      text-align: right;
+      white-space: nowrap;
+    }
+    .em-diag .dg-row.has-cost { border-left-color: transparent; }
+    .em-diag .dg-row.has-cost.is-on  { border-left-color: #d4a72c; }   /* feature ON = costs quota */
+    .em-diag .dg-row.has-cost.is-off { border-left-color: transparent; }
+
+    .em-diag .dg-sub {
+      grid-column: 2 / span 2;
+      font-size: 9px; color: #9aa3ad;
+      padding-left: 0;
+      margin-top: 1px;
+    }
+    .em-diag .dg-sub.warn { color: #9a3f00; }
+    .em-diag .dg-sub.err  { color: #a40e26; }
+
     .em-list {
       grid-area: list; background: #fff; border-right: 1px solid #e1e4e8;
       overflow-y: auto; display: flex; flex-direction: column;
@@ -5129,6 +5240,27 @@
     <div class="em-rail">
       <div id="emRail"></div>
 
+      <!-- ─── Diagnostics panel ──────────────────────────────────────
+           Read-only live view of system state: Etsy rate-limit
+           status, every cron schedule, every feature-flag toggle.
+           Collapses to a single-line banner by default; click header
+           to expand. JS module (window.emDiag) populates the body. -->
+      <div class="em-diag" id="emDiag">
+        <div class="dg-head" id="emDiagHead" role="button" tabindex="0" aria-expanded="false">
+          <span class="dg-title">
+            <i class="material-icons" style="font-size:13px;opacity:.7;">monitor_heart</i>
+            Diagnostics
+          </span>
+          <span class="dg-summary" id="emDiagSummary">loading…</span>
+          <i class="material-icons dg-chev">expand_more</i>
+        </div>
+        <div class="dg-quota" id="emDiagQuota" style="display:none;">
+          <i class="material-icons" id="emDiagQuotaIcon">check_circle</i>
+          <span id="emDiagQuotaText">No quota issues</span>
+        </div>
+        <div class="dg-body" id="emDiagBody"></div>
+      </div>
+
       <!-- ─── API meter panel ────────────────────────────────────────
            Live counter of every Etsy API invocation across the system.
            Populated by the polling loop further down (window.emApiMeter).
@@ -9914,6 +10046,320 @@
         refresh: pollOnce,
         stop: () => clearInterval(pollTimer),
         _sites: SITES
+      };
+    })();
+
+    /* ─── Diagnostics panel (read-only live system status) ─────────
+       Sits above the API meter in the rail. Shows three sections:
+         1. Quota — Etsy daily rate-limit state, from EtsyMail_Config/syncState
+         2. Crons — every scheduled function, with "firing but skipping"
+                    when the function early-returns due to a feature flag
+         3. Flags — every boolean in EtsyMail_Config/autoPipeline
+
+       Read-only by design — the operator changes flags via the Settings
+       dialog. This panel is for visibility only.
+
+       Polls 3 firestoreProxy reads every 3 seconds:
+         - EtsyMail_Config/autoPipeline
+         - EtsyMail_Config/syncState
+         - EtsyMail_ListingsSync/global
+
+       All three are tiny docs so the cost is negligible. */
+    (function initDiagnostics() {
+      const POLL_INTERVAL_MS = 3000;
+
+      // ─── Catalog of every cron and flag we surface ──────────────
+      //
+      // Each `CRONS` entry describes a scheduled function:
+      //   id        — display + DOM key
+      //   schedule  — human-readable, taken from netlify.toml
+      //   netlify   — the function name in netlify.toml
+      //   gateFlag  — optional. If set, the function early-returns when
+      //               EtsyMail_Config/autoPipeline[gateFlag] is false.
+      //               UI shows "firing but skipping" in that case.
+      //   cost      — quota-cost description ("0 calls" or "N calls per tick")
+      //
+      // Each `FLAGS` entry surfaces one boolean in EtsyMail_Config/autoPipeline:
+      //   field      — Firestore field name
+      //   label      — display
+      //   costOn     — what costs quota when ON (shown in the row's footer)
+      //   warnOn     — true if ON costs quota (paints the row amber)
+      const CRONS = [
+        { id: "draftSendCleanup",      label: "Draft send cleanup",
+          schedule: "every 3 min",   netlify: "etsyMailDraftSendCleanupCron",
+          cost: "0 Etsy calls (housekeeping only)" },
+        { id: "reapers",               label: "Auto-pipeline reapers",
+          schedule: "every 5 min",   netlify: "etsyMailReapers",
+          cost: "0 Etsy calls (sweeps Firestore state)" },
+        { id: "listingsCatalog",       label: "Listings catalog mirror",
+          schedule: "every 30 min",  netlify: "etsyMailListingsCatalog",
+          gateFlag: "listingsMirrorEnabled",
+          cost: "When ON: 1 call per 100 listings per 30 min" },
+        { id: "salesReaper",           label: "Sales reaper",
+          schedule: "every 6 hours", netlify: "etsyMailSalesReaper",
+          gateFlag: "salesModeEnabled",
+          cost: "0 Etsy calls (Firestore-only)" },
+        { id: "shippingSync",          label: "Shipping upgrades sync",
+          schedule: "every 6 hours", netlify: "etsyMailShippingSync",
+          cost: "~10–20 calls per run (depends on profile count)" },
+        { id: "listingCreatorCron",    label: "Listing-creator queue poll",
+          schedule: "every 1 min",   netlify: "etsyMailListingCreatorCron",
+          cost: "0 unless a sale was accepted (then ~10–15 calls per listing created)" },
+        { id: "gmailCron",             label: "Gmail watcher",
+          schedule: "every 1 min",   netlify: "etsyMailGmailCron",
+          cost: "0 Etsy calls (polls Gmail, not Etsy)" },
+        { id: "trackingSweepStuck",    label: "Tracking-job stuck sweeper",
+          schedule: "every 5 min",   netlify: "etsyMailTrackingSweepStuck",
+          cost: "0 Etsy calls (Firestore-only)" }
+      ];
+
+      const FLAGS = [
+        { field: "enabled",                 label: "Auto-pipeline enabled",
+          warnOn: false, costOn: "Required for any auto-reply. AI calls (not Etsy)." },
+        { field: "manualAiDraftAutoSend",   label: "Manual AI draft → auto-send",
+          warnOn: false, costOn: "0 Etsy calls — controls draft send behavior only" },
+        { field: "listingsMirrorEnabled",   label: "Listings catalog mirror",
+          warnOn: true,  costOn: "Drives the 30-min catalog sync — biggest single quota driver" },
+        { field: "intentClassifierEnabled", label: "Intent classifier",
+          warnOn: false, costOn: "0 Etsy calls (uses Anthropic API)" },
+        { field: "salesModeEnabled",        label: "Sales mode",
+          warnOn: true,  costOn: "Sales agent runs lookup_existing_order tool → 1 receipt-fetch per use" },
+        { field: "salesAutoEngage",         label: "Sales auto-engage on fresh leads",
+          warnOn: true,  costOn: "Fires sales agent on every classified sales_lead (compounds with sales mode)" },
+        { field: "salesAutoSendEnabled",    label: "Sales auto-send",
+          warnOn: false, costOn: "0 Etsy calls — controls draft send behavior only" }
+      ];
+
+      // DOM refs
+      const elPanel     = document.getElementById("emDiag");
+      const elHead      = document.getElementById("emDiagHead");
+      const elSummary   = document.getElementById("emDiagSummary");
+      const elQuota     = document.getElementById("emDiagQuota");
+      const elQuotaIcon = document.getElementById("emDiagQuotaIcon");
+      const elQuotaText = document.getElementById("emDiagQuotaText");
+      const elBody      = document.getElementById("emDiagBody");
+      if (!elPanel) {
+        console.warn("[emDiag] panel DOM not found — skipping init");
+        return;
+      }
+
+      // Collapsed-by-default. Persist user's choice in localStorage so
+      // operators who want it expanded keep it expanded across reloads.
+      const STORAGE_KEY = "emDiag_expanded";
+      let _expanded = (function () {
+        try { return localStorage.getItem(STORAGE_KEY) === "1"; } catch { return false; }
+      })();
+      function applyExpanded() {
+        elPanel.classList.toggle("expanded", _expanded);
+        elHead.setAttribute("aria-expanded", _expanded ? "true" : "false");
+      }
+      applyExpanded();
+      function toggle() {
+        _expanded = !_expanded;
+        try { localStorage.setItem(STORAGE_KEY, _expanded ? "1" : "0"); } catch {}
+        applyExpanded();
+      }
+      elHead.addEventListener("click", toggle);
+      elHead.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); }
+      });
+
+      function _esc(s) {
+        return String(s == null ? "" : s)
+          .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+      }
+
+      function tsToMillis(ts) {
+        if (!ts) return 0;
+        if (typeof ts === "number") return ts;
+        if (ts._ts === true && typeof ts.ms === "number") return ts.ms;
+        if (typeof ts.toMillis === "function") return ts.toMillis();
+        if (typeof ts._seconds === "number") return ts._seconds * 1000 + Math.floor((ts._nanoseconds || 0) / 1e6);
+        if (typeof ts.seconds === "number") return ts.seconds * 1000 + Math.floor((ts.nanoseconds || 0) / 1e6);
+        return 0;
+      }
+
+      /** Format a millis-ago duration as a compact human string. */
+      function ago(ms) {
+        if (!ms) return "never";
+        const d = Date.now() - ms;
+        if (d < 60_000)    return Math.floor(d / 1000) + "s ago";
+        if (d < 3_600_000) return Math.floor(d / 60_000) + "m ago";
+        if (d < 86_400_000) return Math.floor(d / 3_600_000) + "h ago";
+        return Math.floor(d / 86_400_000) + "d ago";
+      }
+
+      /** Render the quota banner. Reads:
+       *    syncState.etsyDailyLimitResetAt — if in future, we're blocked
+       *    syncState.etsyDailyLimitHitAt   — when the limit was last triggered
+       *    syncState.etsyDailyLimitDetail  — Etsy's error string
+       *  These are written by getReceiptsPage in etsyMailSync-background
+       *  when a daily-class 429 comes back. */
+      function renderQuota(syncState) {
+        if (!syncState) {
+          elQuota.style.display = "none";
+          return null;
+        }
+        const resetMs = tsToMillis(syncState.etsyDailyLimitResetAt);
+        const hitMs   = tsToMillis(syncState.etsyDailyLimitHitAt);
+        const now     = Date.now();
+
+        // Three states:
+        //   limited   — reset is in the future, we're actively rate-limited
+        //   throttled — was hit within the last 6h but reset has passed
+        //   ok        — no recent hits
+        if (resetMs > now) {
+          const minsLeft = Math.ceil((resetMs - now) / 60000);
+          elQuota.className = "dg-quota limited";
+          elQuotaIcon.textContent = "block";
+          elQuotaText.innerHTML =
+            `<strong>Etsy daily limit hit.</strong> Resets in ${minsLeft} min ` +
+            `(${new Date(resetMs).toLocaleTimeString()})`;
+          elQuota.style.display = "flex";
+          return "limited";
+        }
+        if (hitMs && (now - hitMs) < 6 * 3600_000) {
+          elQuota.className = "dg-quota throttled";
+          elQuotaIcon.textContent = "warning";
+          elQuotaText.innerHTML =
+            `Recently rate-limited (${ago(hitMs)}). Quota has since reset.`;
+          elQuota.style.display = "flex";
+          return "throttled";
+        }
+        elQuota.className = "dg-quota ok";
+        elQuotaIcon.textContent = "check_circle";
+        elQuotaText.textContent = "No quota issues — full daily budget available";
+        elQuota.style.display = "flex";
+        return "ok";
+      }
+
+      /** Render the cron + flag sections. */
+      function renderBody(autoCfg, catalogSync, syncState) {
+        let html = "";
+
+        // ─── Crons section
+        html += `<div class="dg-group">Scheduled jobs</div>`;
+        for (const c of CRONS) {
+          const gated = c.gateFlag ? !autoCfg[c.gateFlag] : false;
+          // The cron always fires per netlify.toml — but if its gate is
+          // off, the function early-returns inside the handler. Dot color:
+          //   green — firing AND doing real work
+          //   grey  — firing BUT skipping (gate disabled)
+          let dotCls, statusText;
+          if (gated) {
+            dotCls = "skipping";
+            statusText = "skipping (gate off)";
+          } else {
+            dotCls = "on";
+            statusText = c.schedule;
+          }
+          html += `
+            <div class="dg-row" title="${_esc(c.cost)}">
+              <span class="dg-dot ${dotCls}"></span>
+              <span class="dg-label">${_esc(c.label)}</span>
+              <span class="dg-value">${_esc(statusText)}</span>`;
+          // For the listings catalog cron specifically, show extra detail
+          // from EtsyMail_ListingsSync/global so the operator sees whether
+          // the sync is actually completing or stuck mid-flight.
+          if (c.id === "listingsCatalog" && catalogSync) {
+            const lastFull = tsToMillis(catalogSync.lastFullSyncAt);
+            const lastIncr = tsToMillis(catalogSync.lastIncrementalAt);
+            const inFlight = !!catalogSync.inFlight;
+            const total    = catalogSync.totalListings || 0;
+            const lastErr  = catalogSync.lastError;
+            const bits = [];
+            if (gated)            bits.push(`mirror disabled`);
+            else                  bits.push(`${total.toLocaleString()} listings mirrored`);
+            if (inFlight)         bits.push(`<strong>sync in flight…</strong>`);
+            if (lastFull)         bits.push(`last full: ${ago(lastFull)}`);
+            else if (!gated)      bits.push(`<strong>no full sync ever completed</strong>`);
+            if (lastIncr)         bits.push(`last update: ${ago(lastIncr)}`);
+            const subCls = (!gated && (!lastFull || inFlight)) ? "warn" : "";
+            html += `<div class="dg-sub ${subCls}">${bits.join(" · ")}</div>`;
+            if (lastErr) {
+              html += `<div class="dg-sub err">last error: ${_esc(String(lastErr).slice(0,120))}</div>`;
+            }
+          }
+          html += `</div>`;
+        }
+
+        // ─── Feature flags section
+        html += `<div class="dg-group">Feature flags</div>`;
+        for (const f of FLAGS) {
+          const on = autoCfg[f.field] === true;
+          const dotCls = on ? "on" : "off";
+          const rowCls = f.warnOn && on ? "dg-row has-cost is-on" : "dg-row has-cost is-off";
+          html += `
+            <div class="${rowCls}" title="${_esc(f.costOn)}">
+              <span class="dg-dot ${dotCls}"></span>
+              <span class="dg-label">${_esc(f.label)}</span>
+              <span class="dg-value">${on ? "ON" : "OFF"}</span>
+              <div class="dg-sub ${f.warnOn && on ? "warn" : ""}">${_esc(f.costOn)}</div>
+            </div>`;
+        }
+
+        elBody.innerHTML = html;
+      }
+
+      /** Summary line shown collapsed. Three-state pattern:
+       *    OK     — no quota issues, no flags warning
+       *    note   — at least one warnOn flag is ON
+       *    alarm  — quota currently limited */
+      function renderSummary(autoCfg, quotaState) {
+        const onWarnFlags = FLAGS.filter(f => f.warnOn && autoCfg[f.field] === true).length;
+        if (quotaState === "limited") {
+          elSummary.innerHTML = `<span style="color:#a40e26;font-weight:600;">⚠ rate-limited</span>`;
+        } else if (quotaState === "throttled") {
+          elSummary.innerHTML = `<span style="color:#9a3f00;">recently throttled</span>`;
+        } else if (onWarnFlags > 0) {
+          elSummary.innerHTML = `<span style="color:#9a3f00;">${onWarnFlags} flag${onWarnFlags === 1 ? "" : "s"} costing quota</span>`;
+        } else {
+          elSummary.innerHTML = `<span style="color:#1a7f37;">all systems nominal</span>`;
+        }
+      }
+
+      // ─── Polling loop ────────────────────────────────────────────
+      async function pollOnce() {
+        // Fetch three docs in parallel.
+        try {
+          const [autoRes, syncStateRes, catalogRes] = await Promise.all([
+            api("firestoreProxy", { method: "GET",
+              query: { op: "get", coll: "EtsyMail_Config", id: "autoPipeline" } }),
+            api("firestoreProxy", { method: "GET",
+              query: { op: "get", coll: "EtsyMail_Config", id: "syncState" } }).catch(() => null),
+            api("firestoreProxy", { method: "GET",
+              query: { op: "get", coll: "EtsyMail_ListingsSync", id: "global" } }).catch(() => null)
+          ]);
+
+          const autoCfg     = (autoRes     && autoRes.exists)     ? autoRes.doc     : {};
+          const syncState   = (syncStateRes && syncStateRes.exists) ? syncStateRes.doc : null;
+          const catalogSync = (catalogRes   && catalogRes.exists)   ? catalogRes.doc   : null;
+
+          const quotaState = renderQuota(syncState);
+          renderBody(autoCfg, catalogSync, syncState);
+          renderSummary(autoCfg, quotaState);
+
+        } catch (err) {
+          // Don't tear down the panel on a single poll failure; just log.
+          console.warn("[emDiag] poll failed:", err.message);
+          elSummary.innerHTML = `<span style="color:#a40e26;">poll failed</span>`;
+        }
+      }
+
+      // Initial poll, then interval. Refresh on tab focus too.
+      pollOnce();
+      const pollTimer = setInterval(pollOnce, POLL_INTERVAL_MS);
+      window.addEventListener("focus", () => { pollOnce(); });
+
+      // Expose for debugging
+      window.emDiag = {
+        refresh: pollOnce,
+        stop: () => clearInterval(pollTimer),
+        expand: () => { _expanded = true; applyExpanded(); },
+        collapse: () => { _expanded = false; applyExpanded(); },
+        _crons: CRONS,
+        _flags: FLAGS
       };
     })();
 
