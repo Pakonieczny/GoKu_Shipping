@@ -350,11 +350,52 @@ exports.handler = async (event) => {
     // fingerprint is the sorted, joined imageUrls (matches the in-scraper
     // pattern at processImageAttachment: `IMAGE:${urlKey}`).
     // Falls back to text → URLs in that order to handle borderline docs.
+    // Extract the stable image identifier from an Etsy CDN URL so we
+    // can dedupe image bubbles across scrapes even if the URL format
+    // varies slightly (CDN domain rotation, size suffix changes like
+    // _5760xN vs _fullxfull, cache-busting query params). Etsy's
+    // messaging-image URLs have one of these shapes:
+    //
+    //   https://i.etsystatic.com/iiii/icm/iap/<ID>/<filename>_<size>.jpg
+    //   https://i.etsystatic.com/<numeric>/r/il/<hash>/<id>/il_<size>.<id>_<rand>.jpg
+    //
+    // The identifier segment is preceded by /icm/ or /il/. We pick the
+    // last segment before the filename — that's where Etsy's image
+    // identifier consistently lives across URL variations. Falls back
+    // to the full URL if the pattern doesn't match, so we never
+    // dedupe LESS aggressively than today.
+    function extractEtsyImageId(url) {
+      const str = String(url || "");
+      if (!str) return "";
+      // Strip query string and fragment
+      const clean = str.split(/[?#]/)[0];
+      // Take the last 1-2 path segments; the actual ID is usually the
+      // second-to-last segment (the folder containing the image file).
+      // e.g. ".../icm/iap/abc123def/foo_fullxfull.jpg" → "abc123def"
+      const parts = clean.split("/").filter(Boolean);
+      if (parts.length >= 2) {
+        const candidate = parts[parts.length - 2];
+        // Reject obvious non-ID segments like "icm", "iap", "iusa"
+        if (candidate.length >= 6 && !/^(icm|iap|iusa|r|il)$/i.test(candidate)) {
+          return candidate;
+        }
+      }
+      // Fallback: use the entire cleaned URL. Still works when both
+      // sides of the dedup comparison see the same exact URL.
+      return clean;
+    }
+
     function bubbleFingerprint({ text, normalizedText, imageUrls, messageType }) {
       const txt = normalizedText || normalize(text || "");
       if (txt) return `T:${txt}`;
-      const urls = Array.isArray(imageUrls) ? imageUrls.filter(Boolean).slice().sort().join("|") : "";
-      if (urls) return `I:${urls}`;
+      if (Array.isArray(imageUrls) && imageUrls.length) {
+        const ids = imageUrls
+          .filter(Boolean)
+          .map(extractEtsyImageId)
+          .filter(Boolean)
+          .sort();
+        if (ids.length) return `I:${ids.join("|")}`;
+      }
       // Empty bubble (no text, no images). Should never happen in
       // practice but if it does, fold to a sentinel so the key is at
       // least valid (won't collide with real bubbles since real ones
