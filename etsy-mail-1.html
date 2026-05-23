@@ -7756,33 +7756,47 @@
     //   - The thread row's displayed time
     //   - The date filter
     //
-    // Pre-v5.30 chain was: `lastInboundAt || updatedAt || createdAt`
-    // which had a UX bug: when the OPERATOR sent a reply, only
-    // `updatedAt` advanced; `lastInboundAt` (set on incoming customer
-    // messages) stayed at the older timestamp. Because the OR chain
-    // takes the first truthy value, `lastInboundAt` dominated and the
-    // reply didn't push the thread up the list. Operator had to wait
-    // for the customer's NEXT inbound to see their own just-sent
-    // reply at the top.
+    // pickThreadInteractionMs — when did the thread last have ANY real
+    // message activity, regardless of direction or how it got recorded?
     //
-    // The fix: take MAX of (lastInboundAt, lastOperatorReplyAt). Both
-    // fields represent real human interaction — a customer message OR
-    // our reply — and either should bump the thread. updatedAt and
-    // createdAt remain as last-resort fallbacks for threads that
-    // haven't had any messages yet (newly imported, status-only
-    // changes, etc.) but are NOT included in the max — admin-only
-    // updates like AI labeling shouldn't bump threads to the top.
+    // Sort principle: the inbox row reflects the most recent message
+    // exchanged in the thread. Doesn't matter whether the customer sent
+    // it, the operator sent it via the in-app draft-send pipeline, or
+    // the operator sent it directly from Etsy and the scraper picked
+    // it up. All three are real human interaction and any of them
+    // should bump the thread to the top.
     //
-    // `lastOperatorReplyAt` is written by:
-    //   - Backend `etsyMailDraftSend.js` when a send completes
-    //   - Frontend `sendViaEtsy` as an OPTIMISTIC client-side bump so
-    //     the operator sees the reorder immediately rather than after
-    //     the next thread-list poll.
+    // History of this function:
+    //
+    //   Pre-v5.30 used `lastInboundAt || updatedAt || createdAt`.
+    //   When the operator replied via the in-app send, only
+    //   `updatedAt` advanced but `lastInboundAt` stayed older. The
+    //   OR chain picked `lastInboundAt` first, so operator replies
+    //   didn't push the thread up.
+    //
+    //   v5.30 added `MAX(lastInboundAt, lastOperatorReplyAt)`.
+    //   That fixed the in-app send path because the draft-send pipeline
+    //   writes `lastOperatorReplyAt`. But it missed the case where the
+    //   operator replied directly from Etsy and the scraper observed
+    //   the new outbound bubble: `lastOutboundAt` was set, but
+    //   `lastOperatorReplyAt` was not.
+    //
+    //   v5.31 (this) takes `MAX(lastInboundAt, lastOutboundAt,
+    //   lastOperatorReplyAt)`. `lastOutboundAt` is the canonical
+    //   timestamp of the newest outbound bubble in the thread,
+    //   updated by every snapshot ingest. Including it covers all
+    //   three reply paths uniformly.
+    //
+    //   `updatedAt` and `createdAt` remain as last-resort fallbacks
+    //   for threads that haven't had any messages yet (newly imported,
+    //   status-only changes, AI labeling) but are NOT included in the
+    //   max — those admin-only updates shouldn't bump threads.
     function pickThreadInteractionMs(t) {
       if (!t) return 0;
       const inbound  = tsToMs(t.lastInboundAt);
+      const outbound = tsToMs(t.lastOutboundAt);
       const reply    = tsToMs(t.lastOperatorReplyAt);
-      const human    = Math.max(inbound, reply);
+      const human    = Math.max(inbound, outbound, reply);
       if (human > 0) return human;
       return tsToMs(t.updatedAt) || tsToMs(t.createdAt) || 0;
     }
