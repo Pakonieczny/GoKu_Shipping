@@ -18,6 +18,7 @@
  *    POST body:{ action:'patch',  threadId, fields } → partial update
  *    POST body:{ action:'appendMessage', threadId, message } → append to messages subcollection
  *    POST body:{ action:'markRead', threadId } → sets lastReadAt, unread=false
+ *    POST body:{ action:'markUnread', threadId } → sets unread=true (preserves lastReadAt)
  *    POST body:{ action:'setStatus', threadId, status, reason? } → state transition + audit
  *    POST body:{ action:'enqueueJob', threadId, jobType, payload } → write EtsyMail_Jobs doc
  *
@@ -786,6 +787,23 @@ exports.handler = async (event) => {
         await db.collection(THREADS_COLL).doc(threadId).set({
           unread    : false,
           lastReadAt: FV.serverTimestamp(),
+          updatedAt : FV.serverTimestamp()
+        }, { merge: true });
+        return ok({ threadId });
+      }
+
+      /* ---------- markUnread ----------
+       * Sets unread=true so the thread regains its bold/blue-dot
+       * indicator in the rail. Inverse of markRead. Used by an
+       * operator-facing "Mark unread" button on the thread header.
+       * Does NOT touch lastReadAt — that timestamp is a historical
+       * record of when the operator last opened the thread and
+       * shouldn't be erased by toggling the unread flag. */
+      if (action === "markUnread") {
+        const { threadId } = body;
+        if (!threadId) return bad("Missing threadId");
+        await db.collection(THREADS_COLL).doc(threadId).set({
+          unread    : true,
           updatedAt : FV.serverTimestamp()
         }, { merge: true });
         return ok({ threadId });

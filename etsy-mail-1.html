@@ -5047,6 +5047,7 @@
 
     <!-- Overflow menu (per-thread actions; shown on conv screen) -->
     <div class="m-menu" id="mMenu">
+      <div class="m-menu-item" data-action="mark-unread"><i class="material-icons">mark_email_unread</i>Mark unread</div>
       <div class="m-menu-item" data-action="archive"><i class="material-icons">archive</i>Archive thread</div>
       <div class="m-menu-item" data-action="rush"><i class="material-icons">local_fire_department</i>Mark as rush</div>
       <div class="m-menu-item" data-action="sales"><i class="material-icons">trending_up</i>Move to sales</div>
@@ -11825,6 +11826,9 @@
                     style="margin-right:4px;">
               <i class="material-icons">${t.starred ? "star" : "star_border"}</i>
             </button>
+            <button id="emMarkUnreadBtn" title="Mark this thread as unread so it shows the unread indicator and bumps in sort order">
+              <i class="material-icons">mark_email_unread</i>Mark unread
+            </button>
             <span class="em-status-pill ${esc(chipClass)}">${esc(chipLabel)}</span>
             ${(t.productionRush && t.productionRush.acceptedAt && !t.productionRush.removedAt)
               ? `<span class="em-badge rush" title="$15 rush production accepted — production target 2-3 business days">🔥RUSH🔥</span>`
@@ -12181,6 +12185,37 @@
 
       $("emReviewBtn")?.addEventListener("click", () => setStatus(t.id, "pending_human_review", "operator triage"));
       $("emArchiveBtn")?.addEventListener("click", () => setStatus(t.id, "archived", "operator archive"));
+
+      // v0.9.36 — Mark a thread unread without changing its status.
+      // Optimistically flips state.threads.unread=true so the list
+      // updates immediately, fires a fire-and-forget markUnread on
+      // the backend, and navigates back to the list so the operator
+      // can see the result without an extra click. Failures are
+      // logged but don't roll back the optimistic flip — at worst
+      // the unread state reverts on the next list poll.
+      $("emMarkUnreadBtn")?.addEventListener("click", async () => {
+        const btn = $("emMarkUnreadBtn");
+        if (btn) btn.disabled = true;
+        // Optimistic local update so the rail dot reappears immediately.
+        const stThread = (state.threads || []).find(x => x && x.id === t.id);
+        if (stThread) stThread.unread = true;
+        try { renderThreadList(); } catch (e) { /* renderer name may vary; ignore */ }
+        try {
+          await api("etsyMailThreads", {
+            method: "POST",
+            body: { action: "markUnread", threadId: t.id }
+          });
+          if (typeof toast === "function") toast("Marked unread");
+        } catch (e) {
+          if (typeof toast === "function") toast("Mark unread failed: " + (e.message || "unknown"));
+          // Don't revert — next list poll will reconcile from server.
+        } finally {
+          if (btn) btn.disabled = false;
+          // Refresh list so any sort/badge changes settle.
+          if (typeof fetchThreadListNow === "function") fetchThreadListNow();
+          if (typeof fetchCountsNow === "function") fetchCountsNow();
+        }
+      });
       // v5.30 — Star button in the detail header. Same toggle as the
       // list view (state.threads[t.id].starred). Optimistic flip + UI
       // re-render inside toggleThreadStarred; we just need to repaint
@@ -20866,7 +20901,32 @@
           mCloseMenu();
           const tid = state.selectedId;
           if (!tid) return;
-          if (action === "archive")  { if (typeof setStatus === "function") await setStatus(tid, "archived", "mobile menu archive"); }
+          if (action === "mark-unread") {
+            // v0.9.36 — Optimistic local flip + fire-and-forget backend
+            // call. Mirrors desktop's emMarkUnreadBtn behavior. After the
+            // call, navigate back to the list so the operator sees the
+            // updated unread indicator immediately.
+            const stThread = (state.threads || []).find(x => x && x.id === tid);
+            if (stThread) stThread.unread = true;
+            try {
+              await api("etsyMailThreads", {
+                method: "POST",
+                body: { action: "markUnread", threadId: tid }
+              });
+              if (typeof toast === "function") toast("Marked unread");
+            } catch (e) {
+              if (typeof toast === "function") toast("Mark unread failed: " + (e.message || "unknown"));
+            }
+            // Pop back to the list so the unread-state change is visible.
+            state.selectedId = null;
+            if (typeof stopMessagesPolling === "function") stopMessagesPolling();
+            mShowScreen("list");
+            mState.dirtyList = true;
+            mRequestRender();
+            if (typeof fetchThreadListNow === "function") fetchThreadListNow();
+            if (typeof fetchCountsNow === "function") fetchCountsNow();
+          }
+          else if (action === "archive")  { if (typeof setStatus === "function") await setStatus(tid, "archived", "mobile menu archive"); }
           else if (action === "rush")    { if (typeof setStatus === "function") await setStatus(tid, "production_rush", "mobile menu rush"); }
           else if (action === "sales")   { if (typeof setStatus === "function") await setStatus(tid, "sales_active", "mobile menu sales"); }
           else if (action === "reply")   { if (typeof setStatus === "function") await setStatus(tid, "pending_human_review", "mobile menu reply"); }
@@ -20981,6 +21041,103 @@
           console.warn("[mobile] auth safety net failed:", e);
         }
       }, 600);
+
+      // ─── v0.9.36 — Android edge-swipe-back handling ────────────────
+      // On Android (and Chrome iOS, hardware back, browser back button),
+      // a back gesture pops the topmost history entry. With no history
+      // entries owned by the app, the browser pops past us — closing the
+      // tab. Most modern web apps avoid this by pushing a synthetic
+      // history entry on boot and re-pushing one after each navigation,
+      // so the user always has something to "consume" with back.
+      //
+      // We layer the response so back closes the topmost UI layer:
+      //   1. Image modal open                  → close modal
+      //   2. Per-thread or list menu visible   → close menu
+      //   3. Drawer (folders list) open        → close drawer
+      //   4. On a conv/order/settings screen   → return to list
+      //   5. Already on list                   → allow the back (let
+      //      the browser pop one more — closing the tab or going to
+      //      the previous site is fine when there's nothing left).
+      //
+      // After handling any of steps 1-4, we IMMEDIATELY pushState
+      // again so the next back gesture has another entry to pop.
+      // Without this, the second back would close the tab.
+      (function wireMobileBack() {
+        if (!IS_MOBILE) return;
+
+        // Seed one synthetic entry so the first back gesture lands here
+        // rather than closing the tab.
+        try {
+          history.pushState({ emInbox: true, depth: 0 }, "");
+        } catch (e) {
+          console.warn("[mobile-back] initial pushState failed:", e && e.message);
+          return;  // popstate without a pushed entry is pointless
+        }
+
+        let depth = 0;
+        function repush() {
+          depth++;
+          try { history.pushState({ emInbox: true, depth }, ""); }
+          catch (e) { console.warn("[mobile-back] repush failed:", e && e.message); }
+        }
+
+        window.addEventListener("popstate", (e) => {
+          // 1. Image modal
+          const imgModal = document.getElementById("mImageModal");
+          if (imgModal && imgModal.classList.contains("visible")) {
+            if (typeof mCloseImageModal === "function") mCloseImageModal();
+            repush();
+            return;
+          }
+
+          // 2. Menus (per-thread or list overflow)
+          const convMenu = document.getElementById("mMenu");
+          const listMenu = document.getElementById("mListMenu");
+          if ((convMenu && convMenu.classList.contains("visible")) ||
+              (listMenu && listMenu.classList.contains("visible"))) {
+            if (typeof mCloseMenu === "function") mCloseMenu();
+            if (typeof mCloseListMenu === "function") mCloseListMenu();
+            repush();
+            return;
+          }
+
+          // 3. Drawer
+          const drawer = document.getElementById("mDrawer");
+          if (drawer && drawer.classList.contains("visible")) {
+            if (typeof mCloseDrawer === "function") mCloseDrawer();
+            repush();
+            return;
+          }
+
+          // 4. Screen stack — mirror the leftIcon (back arrow) logic.
+          const screen = mState && mState.currentScreen;
+          if (screen === "conv") {
+            state.selectedId = null;
+            if (typeof stopMessagesPolling === "function") stopMessagesPolling();
+            mShowScreen("list");
+            repush();
+            return;
+          }
+          if (screen === "order") {
+            mShowScreen(mState.prevScreen === "order" ? "conv" : (mState.prevScreen || "list"));
+            repush();
+            return;
+          }
+          if (screen === "settings") {
+            mShowScreen("list");
+            repush();
+            return;
+          }
+
+          // 5. Already on list with nothing else open. Let the back gesture
+          // actually go back / close the tab — but immediately push a new
+          // entry too, so if the user changes their mind and the gesture
+          // gets ignored (some Android versions partially-cancel), the
+          // app state still has a back entry queued. (No-op visually; the
+          // gesture already left.)
+          repush();
+        });
+      })();
     }
     window.mInit = mInit;
 
