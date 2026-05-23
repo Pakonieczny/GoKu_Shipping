@@ -3232,32 +3232,14 @@ exports.handler = async (event) => {
     // can't find a receiptId to look up.
     //
     // Recovery: if loadCustomer returned null but we have a buyerUserId,
-    // trigger the buyer-sync inline and wait briefly for the customer
-    // doc to land. Bounded by SYNC_WAIT_MS so we never block draft
-    // generation for more than a few seconds.
+    // trigger a buyer-sync inline and wait briefly for the customer
+    // doc to land. Under the receipts-mirror architecture (May 2026)
+    // this is cheap: sync-background reads from the Firestore mirror,
+    // no Etsy calls. A successful buyer-sync typically writes the
+    // customer doc within 100-500ms.
     let customer = _initialCustomer;
     if (!customer && thread.buyerUserId) {
-      // ─── DIAGNOSTIC TOGGLE — draft-reply lazy recovery ──────────────
-      // Reads EtsyMail_Config/syncTriggers.enableDraftReplyLazyRecovery
-      // before firing. Toggle via inbox diagnostics panel to bisect which
-      // trigger source is responsible for buyer-sync quota burn.
-      // Default = ON (preserves prior v3.32 behavior).
-      let _lazyRecoveryEnabled = true;
-      try {
-        const _trigSnap = await db.collection("EtsyMail_Config").doc("syncTriggers").get();
-        if (_trigSnap.exists) {
-          const _trig = _trigSnap.data() || {};
-          if (_trig.enableDraftReplyLazyRecovery === false) _lazyRecoveryEnabled = false;
-        }
-      } catch (e) {
-        // Fail open
-        console.warn(`[draftReply ${threadId}] syncTriggers read failed (continuing with default ON):`, e.message);
-      }
-
-      if (!_lazyRecoveryEnabled) {
-        console.log(`[draftReply ${threadId}] v3.32 lazy buyer-sync DISABLED via syncTriggers.enableDraftReplyLazyRecovery=false — proceeding without customer doc`);
-      } else {
-      console.log(`[draftReply ${threadId}] v3.32 lazy buyer-sync — customer doc missing for buyerUserId=${thread.buyerUserId}, triggering sync`);
+      console.log(`[draftReply ${threadId}] lazy buyer-sync — customer doc missing for buyerUserId=${thread.buyerUserId}, triggering sync`);
       try {
         const fnHost = process.env.URL || process.env.DEPLOY_PRIME_URL || null;
         if (fnHost) {
@@ -3269,32 +3251,35 @@ exports.handler = async (event) => {
             headers: { "Content-Type": "application/json" },
             body   : JSON.stringify({ mode: "buyer", buyerUserId: String(thread.buyerUserId) }),
             timeout: 3000
-          }).catch(e => console.warn(`[draftReply ${threadId}] v3.32 sync trigger failed:`, e.message));
+          }).catch(e => console.warn(`[draftReply ${threadId}] sync trigger failed:`, e.message));
 
-          // Poll for the customer doc to appear. Buyer-sync for a single
-          // buyer typically completes in 2-5s (1-2 Etsy API calls).
-          const SYNC_WAIT_MS = 8000;
-          const POLL_INTERVAL_MS = 500;
-          const deadline = Date.now() + SYNC_WAIT_MS;
+          // Poll for the customer doc to appear. Mirror-backed sync
+          // completes in 100-500ms (single Firestore query + write).
+          // We poll up to 1500ms with a 100ms cadence so we exit
+          // promptly when the doc lands but don't wait absurdly long
+          // if the sync fails silently.
+          const SYNC_WAIT_MS = 1500;
+          const POLL_INTERVAL_MS = 100;
+          const startedAt = Date.now();
+          const deadline = startedAt + SYNC_WAIT_MS;
           while (Date.now() < deadline) {
             await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
             const retry = await loadCustomer(thread.buyerUserId);
             if (retry) {
               customer = retry;
-              console.log(`[draftReply ${threadId}] v3.32 lazy buyer-sync — customer doc resolved (waited ${Date.now() - (deadline - SYNC_WAIT_MS)}ms, ${(retry.recentReceipts || []).length} receipts)`);
+              console.log(`[draftReply ${threadId}] lazy buyer-sync — customer doc resolved (waited ${Date.now() - startedAt}ms, ${(retry.recentReceipts || []).length} receipts)`);
               break;
             }
           }
           if (!customer) {
-            console.warn(`[draftReply ${threadId}] v3.32 lazy buyer-sync — customer doc still missing after ${SYNC_WAIT_MS}ms wait. Proceeding without it.`);
+            console.warn(`[draftReply ${threadId}] lazy buyer-sync — customer doc still missing after ${SYNC_WAIT_MS}ms wait. Proceeding without it.`);
           }
         } else {
-          console.warn(`[draftReply ${threadId}] v3.32 lazy buyer-sync skipped — no URL/DEPLOY_PRIME_URL env`);
+          console.warn(`[draftReply ${threadId}] lazy buyer-sync skipped — no URL/DEPLOY_PRIME_URL env`);
         }
       } catch (e) {
         // Recovery is best-effort. Never block draft generation on it.
-        console.warn(`[draftReply ${threadId}] v3.32 lazy buyer-sync threw:`, e.message);
-      }
+        console.warn(`[draftReply ${threadId}] lazy buyer-sync threw:`, e.message);
       }
     }
 

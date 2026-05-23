@@ -38,6 +38,16 @@
 [functions."etsyMailDraftSendCleanupCron"]
   schedule = "*/3 * * * *"
 
+# ─── Receipts mirror — May 2026 ─────────────────────────────────────────────
+# etsyMailReceiptsMirrorCron runs every 3 min, pulls receipts modified since
+# the last successful run, writes them to EtsyMail_Receipts. The mirror lets
+# buyer-mode sync read order history from Firestore (one indexed query) at
+# zero Etsy cost — instead of paginating up to 12,000 receipts per buyer
+# because Etsy's `buyer_user_id` filter doesn't work. Default-on; can be
+# disabled via EtsyMail_Config/receiptsMirrorState.enabled = false.
+[functions."etsyMailReceiptsMirrorCron"]
+  schedule = "*/3 * * * *"
+
 # ─── v2.4 consolidated reaper ───────────────────────────────────────────────
 # Replaces the two pre-v2.4 functions etsyMailAutoPipelineReaper and
 # etsyMailSendQueueReaper. Both were merged into etsyMailReapers.js, which

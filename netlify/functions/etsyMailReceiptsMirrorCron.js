@@ -1,0 +1,522 @@
+/*  netlify/functions/etsyMailReceiptsMirrorCron.js
+ *
+ *  ═══ WHAT THIS DOES ═══════════════════════════════════════════════════
+ *
+ *  Scheduled function that runs every 3 minutes. Pulls receipts that have
+ *  been created or modified on Etsy since the last successful run and
+ *  mirrors them into Firestore at EtsyMail_Receipts/{receipt_id}.
+ *
+ *  This is the operational heartbeat of the receipts-mirror architecture.
+ *  Once running, EtsyMail_Customers/{buyerUserId} aggregations no longer
+ *  call Etsy at all — they query the Firestore mirror.
+ *
+ *  ═══ WHY THIS EXISTS ══════════════════════════════════════════════════
+ *
+ *  Etsy's getShopReceipts endpoint does NOT support a working
+ *  `buyer_user_id` filter. Asking "give me receipts for buyer X" returns
+ *  the entire shop's receipts. At 3,000 orders/month this means each
+ *  buyer-sync invocation would paginate hundreds of pages of unrelated
+ *  receipts to find the few belonging to that buyer — burning 5,000
+ *  QPD daily quota in hours.
+ *
+ *  The mirror inverts the model: sync ALL recently-changed receipts
+ *  every 3 min, query Firestore by buyer_user_id on demand. Etsy is hit
+ *  predictably (~480 calls/day, <10% of quota) regardless of how many
+ *  buyer-sync requests we make.
+ *
+ *  ═══ SCHEDULE ═════════════════════════════════════════════════════════
+ *
+ *  netlify.toml:
+ *    [functions."etsyMailReceiptsMirrorCron"]
+ *      schedule = "*\/3 * * * *"
+ *
+ *  Runtime envelope: 30 seconds (Netlify scheduled-function cap).
+ *  In a normal 3-min window we expect ≤1 page of changes (≤100 receipts).
+ *  Each page costs ~500ms to fetch + ~1s to batch-write. 30s is plenty
+ *  even with 5-10 pages of catch-up after a transient failure.
+ *
+ *  ═══ STATE ════════════════════════════════════════════════════════════
+ *
+ *  EtsyMail_Config/receiptsMirrorState (single doc):
+ *    {
+ *      enabled                : true,         // master kill-switch
+ *      lastSyncTimestamp      : <unix sec>,   // min_last_modified for next run
+ *      lastSyncCompletedAt    : <ts>,         // when last successful run finished
+ *      lastSyncCallCount      : <int>,        // Etsy calls made last run
+ *      lastSyncReceiptsCount  : <int>,        // receipts written last run
+ *      lastSyncOutcome        : "ok"|"error"|"skipped"|"rate_limited",
+ *      lastSyncErrorMsg       : <string|null>,
+ *      backfillProgress       : {
+ *        status               : "idle"|"running"|"complete"|"error",
+ *        startedAt            : <ts>,
+ *        completedAt          : <ts|null>,
+ *        totalPagesEstimate   : <int>,
+ *        pagesProcessed       : <int>,
+ *        receiptsProcessed    : <int>,
+ *        currentOffset        : <int>,
+ *        windowMinCreated     : <unix sec>,   // 24 months ago at start
+ *        windowMaxCreated     : <unix sec>,
+ *        errorMsg             : <string|null>
+ *      }
+ *    }
+ *
+ *  ═══ RECEIPT DOC SHAPE ════════════════════════════════════════════════
+ *
+ *  EtsyMail_Receipts/{receipt_id} (one doc per Etsy receipt):
+ *    {
+ *      receipt_id          : "123456789",
+ *      buyer_user_id       : "10408187",     // INDEXED
+ *      created_timestamp   : 1716400000,     // INDEXED (sec)
+ *      updated_timestamp   : 1716500000,     // (sec) — drives incremental
+ *      status              : "Open",
+ *      is_paid             : true,
+ *      is_shipped          : true,
+ *      grandtotal_amount   : 45.00,          // decimal dollars
+ *      grandtotal_currency : "USD",
+ *      buyer_name          : "Jane Smith",
+ *      raw                 : { ...full Etsy receipt JSON... },
+ *      mirrorWrittenAt     : <ts>            // when WE wrote it
+ *    }
+ *
+ *  Firestore composite index required for the buyer-lookup query:
+ *    Collection: EtsyMail_Receipts
+ *    Fields: buyer_user_id (asc), created_timestamp (desc)
+ *
+ *  Without the index, queries fail with a clickable auto-create link
+ *  in the error message. First query failure is the easiest path to
+ *  creating the index — Firebase shows the exact link in the response.
+ *
+ *  ═══ FAILURE BEHAVIOR ═════════════════════════════════════════════════
+ *
+ *  - Network/timeout fetching Etsy:
+ *      lastSyncTimestamp is NOT advanced. Next run retries the same
+ *      window. Diagnostic log records the error.
+ *  - Etsy returns 429 (rate-limited):
+ *      Skip this run entirely. lastSyncTimestamp unchanged. Next run
+ *      (3 min later) retries. No retry-after sleeping — we just defer.
+ *  - Etsy returns daily rate limit:
+ *      Records to syncState.etsyDailyLimitResetAt as before. Subsequent
+ *      runs short-circuit until the reset time passes.
+ *  - Partial success (some pages written, then failure):
+ *      Already-written receipts stay. lastSyncTimestamp advances only
+ *      to the max updated_timestamp of successfully-processed receipts.
+ *      Next run picks up from there. The Firestore set+merge per
+ *      receipt is idempotent: re-fetching and re-writing the same
+ *      receipt is harmless.
+ *  - Firestore write fails:
+ *      Logged, batch fails, lastSyncTimestamp NOT advanced. Next run
+ *      retries the same window.
+ */
+
+"use strict";
+
+const fetch = require("node-fetch");
+const admin = require("./firebaseAdmin");
+const meter = require("./_etsyApiMeter");
+
+const db = admin.firestore();
+const FV = admin.firestore.FieldValue;
+
+// ─── Config ────────────────────────────────────────────────────────────────
+const SHOP_ID       = process.env.SHOP_ID;
+const CLIENT_ID     = process.env.CLIENT_ID;
+const CLIENT_SECRET = process.env.CLIENT_SECRET || process.env.ETSY_SHARED_SECRET;
+
+const OAUTH_DOC_PATH    = "config/etsyOauth";
+const MIRROR_STATE_PATH = "EtsyMail_Config/receiptsMirrorState";
+const SYNC_STATE_PATH   = "EtsyMail_Config/syncState";
+
+const TOKEN_REFRESH_BUFFER_MS = 2 * 60 * 1000;
+const PAGE_SIZE       = 100;
+const MAX_PAGES       = 25;  // safety cap per cron run — 30s budget allows ~10 pages typically
+const FETCH_TIMEOUT_MS = 20 * 1000;
+
+// ─── OAuth token management (mirror of sync-background's helpers) ──────────
+async function readEtsyToken() {
+  const snap = await db.doc(OAUTH_DOC_PATH).get();
+  return snap.exists ? snap.data() : null;
+}
+
+async function refreshEtsyToken(oldRefreshToken) {
+  const _meterToken = meter.bump("mirror.oauthRefresh");
+  let res;
+  try {
+    res = await fetch("https://api.etsy.com/v3/public/oauth/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type    : "refresh_token",
+        client_id     : CLIENT_ID,
+        refresh_token : oldRefreshToken
+      })
+    });
+  } catch (err) {
+    _meterToken.failNet();
+    throw err;
+  }
+  _meterToken.fromHttp(res.status);
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Etsy OAuth refresh failed ${res.status}: ${text.slice(0, 300)}`);
+  }
+  const t = await res.json();
+  const expiresAtMs = Date.now() + (t.expires_in || 3600) * 1000;
+  const patch = {
+    access_token  : t.access_token,
+    refresh_token : t.refresh_token || oldRefreshToken,
+    expires_in    : t.expires_in,
+    expires_at_ms : expiresAtMs,
+    refreshed_at  : FV.serverTimestamp()
+  };
+  await db.doc(OAUTH_DOC_PATH).set(patch, { merge: true });
+  return { ...patch };
+}
+
+async function getValidEtsyAccessToken() {
+  const stored = await readEtsyToken();
+  if (!stored || !stored.refresh_token) {
+    throw new Error(`Etsy OAuth not initialized — ${OAUTH_DOC_PATH} missing refresh_token`);
+  }
+  const expiresAtMs = stored.expires_at_ms || 0;
+  const needsRefresh = !stored.access_token
+    || Date.now() + TOKEN_REFRESH_BUFFER_MS >= expiresAtMs;
+  if (needsRefresh) {
+    const refreshed = await refreshEtsyToken(stored.refresh_token);
+    return refreshed.access_token;
+  }
+  return stored.access_token;
+}
+
+// ─── Money helper ──────────────────────────────────────────────────────────
+function moneyAmt(m) {
+  if (!m || typeof m.amount !== "number" || typeof m.divisor !== "number") return null;
+  return m.amount / m.divisor;
+}
+
+// ─── Fetch one page of receipts ────────────────────────────────────────────
+//
+// Unlike sync-background's getReceiptsPage, this one does NOT recursively
+// retry on 429 — scheduled-function budget is too tight for sleeping.
+// Returns a structured outcome object so the caller can decide what to do.
+async function fetchOnePage(accessToken, params) {
+  const qs = new URLSearchParams(Object.fromEntries(
+    Object.entries(params).filter(([_, v]) => v != null && v !== "")
+  )).toString();
+  const url = `https://api.etsy.com/v3/application/shops/${SHOP_ID}/receipts?${qs}`;
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+
+  const _meterToken = meter.bump("mirror.receiptsPage");
+
+  let res;
+  try {
+    res = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "x-api-key": `${CLIENT_ID}:${CLIENT_SECRET}`,
+        "Content-Type": "application/json"
+      },
+      signal: controller.signal
+    });
+  } catch (err) {
+    clearTimeout(timeoutId);
+    _meterToken.failNet();
+    if (err.name === "AbortError") {
+      return { ok: false, kind: "timeout", message: "Etsy fetch timeout" };
+    }
+    return { ok: false, kind: "network", message: err.message };
+  }
+  clearTimeout(timeoutId);
+  _meterToken.fromHttp(res.status);
+
+  if (res.status === 429) {
+    const retryAfter = parseInt(res.headers.get("retry-after") || "5", 10);
+    const bodyText = await res.text().catch(() => "");
+    const isDaily = /daily|day/i.test(bodyText) || retryAfter > 3600;
+    if (isDaily) {
+      // Persist the daily-lock signal so the buyer-mode handler in
+      // sync-background can short-circuit until reset.
+      try {
+        await db.doc(SYNC_STATE_PATH).set({
+          etsyDailyLimitHitAt   : FV.serverTimestamp(),
+          etsyDailyLimitResetAt : admin.firestore.Timestamp.fromMillis(Date.now() + retryAfter * 1000),
+          etsyDailyLimitDetail  : bodyText.slice(0, 300)
+        }, { merge: true });
+      } catch {}
+      return { ok: false, kind: "daily_rate_limit", retryAfter, message: bodyText.slice(0, 200) };
+    }
+    return { ok: false, kind: "rate_limited", retryAfter, message: bodyText.slice(0, 200) };
+  }
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    return { ok: false, kind: "http_error", status: res.status, message: text.slice(0, 300) };
+  }
+
+  const json = await res.json();
+  return { ok: true, data: json };
+}
+
+// ─── Receipt → mirror doc transform ────────────────────────────────────────
+function receiptToMirrorDoc(r) {
+  return {
+    receipt_id          : String(r.receipt_id),
+    buyer_user_id       : r.buyer_user_id ? String(r.buyer_user_id) : null,
+    created_timestamp   : r.created_timestamp || null,
+    updated_timestamp   : r.updated_timestamp || null,
+    status              : r.status || null,
+    is_paid             : !!r.is_paid,
+    is_shipped          : !!r.is_shipped,
+    grandtotal_amount   : moneyAmt(r.grandtotal),
+    grandtotal_currency : r.grandtotal ? r.grandtotal.currency_code : null,
+    buyer_name          : r.name || null,
+    raw                 : r,
+    mirrorWrittenAt     : FV.serverTimestamp()
+  };
+}
+
+// ─── Batch-write receipts to Firestore ─────────────────────────────────────
+//
+// Firestore batch write cap: 500 ops per batch. We use 100-doc batches
+// (matching PAGE_SIZE) so each Etsy page maps to exactly one batch write.
+async function writeReceiptBatch(receipts) {
+  if (!receipts.length) return 0;
+  const batch = db.batch();
+  for (const r of receipts) {
+    if (!r.receipt_id) continue;
+    const doc = receiptToMirrorDoc(r);
+    batch.set(db.collection("EtsyMail_Receipts").doc(String(r.receipt_id)), doc, { merge: true });
+  }
+  await batch.commit();
+  return receipts.length;
+}
+
+// ─── Diagnostic log helper ─────────────────────────────────────────────────
+async function writeDiagLog(invocationId, payload) {
+  try {
+    await db.collection("EtsyMail_DiagnosticLog").doc(invocationId).set(payload, { merge: true });
+  } catch (e) {
+    console.warn("[mirror-cron] diagnostic write failed:", e.message);
+  }
+}
+
+// ─── Main handler ──────────────────────────────────────────────────────────
+//
+// Wrapped with meter.wrapHandler so any meter bumps made during the
+// invocation get flushed to Firestore before the container suspends.
+// Without the wrapper the counts can be lost on cold-stop.
+exports.handler = meter.wrapHandler(async () => {
+  const invocationStartMs = Date.now();
+  const invocationId = `mirror_${invocationStartMs}_${Math.random().toString(36).slice(2, 9)}`;
+
+  // Diagnostic: record invocation start
+  writeDiagLog(invocationId, {
+    invocationId,
+    function     : "etsyMailReceiptsMirrorCron",
+    phase        : "start",
+    createdAt    : FV.serverTimestamp(),
+    invocationStartMs
+  });
+
+  // Env check
+  if (!SHOP_ID || !CLIENT_ID || !CLIENT_SECRET) {
+    console.error("[mirror-cron] Missing env vars SHOP_ID/CLIENT_ID/CLIENT_SECRET");
+    writeDiagLog(invocationId, { phase: "end", outcome: "error", errorMsg: "missing env vars" });
+    return { statusCode: 500, body: "Missing env vars" };
+  }
+
+  // ─── Gate 1: kill-switch ──────────────────────────────────────────
+  let mirrorCfg = null;
+  try {
+    const snap = await db.doc(MIRROR_STATE_PATH).get();
+    mirrorCfg = snap.exists ? snap.data() : null;
+  } catch (e) {
+    console.warn("[mirror-cron] state read failed (continuing with defaults):", e.message);
+  }
+
+  // Default-on: a missing doc means we have never run. We initialize and proceed.
+  const enabled = mirrorCfg ? mirrorCfg.enabled !== false : true;
+  if (!enabled) {
+    console.log("[mirror-cron] disabled via receiptsMirrorState.enabled=false — skipping");
+    writeDiagLog(invocationId, { phase: "end", outcome: "skipped", reason: "disabled" });
+    return { statusCode: 200, body: JSON.stringify({ skipped: true, reason: "disabled" }) };
+  }
+
+  // ─── Gate 2: daily rate-limit short-circuit ───────────────────────
+  try {
+    const syncSnap = await db.doc(SYNC_STATE_PATH).get();
+    if (syncSnap.exists) {
+      const ss = syncSnap.data();
+      const resetMs = ss.etsyDailyLimitResetAt && ss.etsyDailyLimitResetAt.toMillis
+        ? ss.etsyDailyLimitResetAt.toMillis() : 0;
+      if (resetMs > Date.now()) {
+        const waitMin = Math.ceil((resetMs - Date.now()) / 60000);
+        console.log(`[mirror-cron] Etsy daily limit active for ${waitMin}m — skipping`);
+        writeDiagLog(invocationId, { phase: "end", outcome: "skipped", reason: "daily_rate_limit" });
+        return { statusCode: 200, body: JSON.stringify({ skipped: true, reason: "daily_rate_limit", waitMinutes: waitMin }) };
+      }
+    }
+  } catch (e) {
+    console.warn("[mirror-cron] syncState read failed (continuing):", e.message);
+  }
+
+  // ─── Gate 3: don't compete with backfill ──────────────────────────
+  // If a backfill is actively running, skip this tick. Backfill makes
+  // many Etsy calls per chunk; running incremental sync alongside it
+  // would just compound the rate-limit risk.
+  const backfillStatus = mirrorCfg && mirrorCfg.backfillProgress && mirrorCfg.backfillProgress.status;
+  if (backfillStatus === "running") {
+    console.log("[mirror-cron] backfill in progress — skipping incremental");
+    writeDiagLog(invocationId, { phase: "end", outcome: "skipped", reason: "backfill_running" });
+    return { statusCode: 200, body: JSON.stringify({ skipped: true, reason: "backfill_running" }) };
+  }
+
+  // ─── Compute sync window ──────────────────────────────────────────
+  // First-ever run: use 5 minutes ago as the starting point. We don't
+  // want a missing watermark to trigger a fetch of all-time receipts —
+  // that's what the explicit backfill is for. 5 min covers any startup
+  // gap.
+  const NOW_SEC = Math.floor(Date.now() / 1000);
+  const lastSyncTs = (mirrorCfg && typeof mirrorCfg.lastSyncTimestamp === "number")
+    ? mirrorCfg.lastSyncTimestamp
+    : NOW_SEC - 5 * 60;
+
+  // Avoid the edge case where the same second's receipts get re-fetched
+  // forever — we use min_last_modified which is inclusive. By default
+  // dedup happens via the Firestore set+merge, but advancing by +1 each
+  // run keeps the windows clean.
+  const minLastModified = lastSyncTs;
+
+  // ─── Paginate ─────────────────────────────────────────────────────
+  let accessToken;
+  try {
+    accessToken = await getValidEtsyAccessToken();
+  } catch (e) {
+    console.error("[mirror-cron] OAuth fetch failed:", e.message);
+    writeDiagLog(invocationId, { phase: "end", outcome: "error", errorMsg: e.message });
+    return { statusCode: 500, body: JSON.stringify({ ok: false, error: e.message }) };
+  }
+
+  let pagesFetched = 0;
+  let receiptsProcessed = 0;
+  let maxUpdatedSeen = lastSyncTs;
+  let offset = 0;
+  let outcome = "ok";
+  let lastErrorMsg = null;
+
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const params = {
+      limit             : PAGE_SIZE,
+      offset            : offset,
+      sort_on           : "updated",
+      sort_order        : "asc",
+      min_last_modified : minLastModified
+    };
+
+    const result = await fetchOnePage(accessToken, params);
+    pagesFetched++;
+
+    if (!result.ok) {
+      // Don't advance watermark on any failure. Next run retries.
+      if (result.kind === "daily_rate_limit") {
+        outcome = "rate_limited";
+        lastErrorMsg = "daily_rate_limit";
+      } else if (result.kind === "rate_limited") {
+        outcome = "rate_limited";
+        lastErrorMsg = `rate_limited retry-after=${result.retryAfter}s`;
+      } else {
+        outcome = "error";
+        lastErrorMsg = `${result.kind}: ${result.message}`;
+      }
+      console.warn(`[mirror-cron] fetch failed at page ${page}: ${lastErrorMsg}`);
+      break;
+    }
+
+    const receipts = (result.data && result.data.results) || [];
+    if (!receipts.length) break;
+
+    // Write this page to Firestore. If write fails, abort and DO NOT
+    // advance the watermark.
+    try {
+      await writeReceiptBatch(receipts);
+    } catch (e) {
+      outcome = "error";
+      lastErrorMsg = `firestore_write_failed: ${e.message}`;
+      console.error(`[mirror-cron] batch write failed at page ${page}:`, e.message);
+      break;
+    }
+
+    // Track the max updated_timestamp we successfully wrote — that's
+    // our new high-water mark.
+    for (const r of receipts) {
+      if (r.updated_timestamp && r.updated_timestamp > maxUpdatedSeen) {
+        maxUpdatedSeen = r.updated_timestamp;
+      }
+    }
+    receiptsProcessed += receipts.length;
+
+    // If page wasn't full, no more to fetch.
+    if (receipts.length < PAGE_SIZE) break;
+
+    offset += PAGE_SIZE;
+  }
+
+  // ─── Persist new state ────────────────────────────────────────────
+  //
+  // Advance lastSyncTimestamp ONLY if at least one page succeeded. If
+  // outcome=error and pagesFetched=1 and that page failed, leave the
+  // watermark alone — retry next run.
+  //
+  // We advance to (maxUpdatedSeen + 1) so the next call's
+  // min_last_modified excludes anything we already processed. Etsy's
+  // min_last_modified is inclusive, so without the +1 we'd re-fetch
+  // every newest receipt indefinitely.
+  const shouldAdvanceWatermark = receiptsProcessed > 0;
+  const nextWatermark = shouldAdvanceWatermark ? (maxUpdatedSeen + 1) : lastSyncTs;
+
+  const elapsedMs = Date.now() - invocationStartMs;
+
+  const statePatch = {
+    enabled               : true,
+    lastSyncTimestamp     : nextWatermark,
+    lastSyncCompletedAt   : FV.serverTimestamp(),
+    lastSyncCallCount     : pagesFetched,
+    lastSyncReceiptsCount : receiptsProcessed,
+    lastSyncOutcome       : outcome,
+    lastSyncErrorMsg      : lastErrorMsg,
+    lastSyncElapsedMs     : elapsedMs
+  };
+  try {
+    await db.doc(MIRROR_STATE_PATH).set(statePatch, { merge: true });
+  } catch (e) {
+    console.error("[mirror-cron] failed to persist state:", e.message);
+  }
+
+  writeDiagLog(invocationId, {
+    phase             : "end",
+    outcome,
+    pagesFetched,
+    receiptsProcessed,
+    maxUpdatedSeen,
+    nextWatermark,
+    elapsedMs,
+    errorMsg          : lastErrorMsg,
+    endedAt           : FV.serverTimestamp()
+  });
+
+  console.log(`[mirror-cron] outcome=${outcome} pages=${pagesFetched} receipts=${receiptsProcessed} elapsed=${elapsedMs}ms newWatermark=${nextWatermark}`);
+
+  return {
+    statusCode: 200,
+    body: JSON.stringify({
+      ok: outcome === "ok",
+      outcome,
+      pagesFetched,
+      receiptsProcessed,
+      nextWatermark,
+      elapsedMs,
+      errorMsg: lastErrorMsg
+    })
+  };
+});

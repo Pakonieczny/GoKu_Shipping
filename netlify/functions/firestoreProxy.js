@@ -64,7 +64,14 @@ const CALLABLE_COLLS = new Set([
   // ─── v2.2 Etsy shipping upgrades cache ──────────────────────────────
   "EtsyMail_ShippingUpgradesCache",    // synced from Etsy every 6h
   // ─── Diagnostic log for quota investigation ─────────────────────────
-  "EtsyMail_DiagnosticLog"             // one doc per etsyMailSync-background invocation
+  "EtsyMail_DiagnosticLog",            // one doc per etsyMailSync-background / mirror-cron invocation
+  // ─── Receipts mirror (May 2026) ─────────────────────────────────────
+  // EtsyMail_Receipts is the local mirror of Etsy receipts, populated by
+  // etsyMailReceiptsMirrorCron every 3 min. Read access from the dashboard
+  // is useful for diagnostics + future analytics. Write access is owner-
+  // gated since these docs are sourced from Etsy and should not be hand-
+  // edited.
+  "EtsyMail_Receipts"
   // ─── v2.0 Step 3 will add ───────────────────────────────────────────
   // "EtsyMail_CustomOrders",
   // "EtsyMail_CustomOrderTemplates"

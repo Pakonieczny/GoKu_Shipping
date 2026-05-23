@@ -1,68 +1,75 @@
 /*  netlify/functions/etsyMailSync-background.js
  *
- *  M3 Etsy customer-summaries sync — BUYER-ONLY MODE.
+ *  ═══ WHAT THIS DOES ═══════════════════════════════════════════════════
  *
- *  ═══ WHAT THIS DOES ═══
+ *  Background function (15-min budget) supporting two modes:
  *
- *  Given a buyerUserId, fetches that buyer's receipts from Etsy and
- *  upserts a single customer doc at EtsyMail_Customers/{buyerUserId}.
- *  That's it.
+ *    mode = "buyer"      — On-demand aggregation of a single buyer's
+ *                          customer doc. Reads receipts FROM THE
+ *                          FIRESTORE MIRROR (EtsyMail_Receipts) — does
+ *                          NOT call Etsy. Fast, free (1 Firestore
+ *                          query + 1 write).
  *
- *  ═══ WHY ONLY BUYER MODE ═══
+ *    mode = "backfill"   — One-time historical pull. Paginates Etsy's
+ *                          receipts endpoint over a date window
+ *                          (default 24 months), writing each receipt
+ *                          to EtsyMail_Receipts. Runs in CHUNKS — one
+ *                          invocation does up to MAX_BACKFILL_PAGES
+ *                          then returns. The UI watches Firestore
+ *                          progress and re-fires the function for the
+ *                          next chunk until complete.
  *
- *  This function previously had three modes:
- *    - "full" — windowed 2-year backfill of every shop receipt
- *    - "incremental" — every 25 min, pulled all receipts updated since
- *      the last watermark, regardless of which customers were active
- *    - "buyer" — targeted per-buyer fetch, fired by the snapshot
- *      pipeline when a thread is scraped
+ *  ═══ ARCHITECTURAL CONTEXT ════════════════════════════════════════════
  *
- *  The inbox's actual need is narrow: when a customer messages the
- *  shop, show their order history in the right rail. That data is
- *  populated by the snapshot pipeline's per-buyer fanout. The full and
- *  incremental modes pre-populated customer docs for buyers who had
- *  never messaged — data the inbox never uses, since the inbox is
- *  message-driven.
+ *  In May 2026 we discovered that Etsy's getShopReceipts endpoint does
+ *  not honor a `buyer_user_id` filter — passing it returns the entire
+ *  shop's receipts. At 3,000 orders/month this meant each buyer-sync
+ *  invocation paginated up to 12,000 unrelated receipts to find a
+ *  handful belonging to the requested buyer, burning daily quota in
+ *  hours.
  *
- *  Those two modes also caused a runaway: on May 21 2026, the cron
- *  hit Etsy's daily rate limit, retry-after returned ~2 hours, the
- *  function tried to sleep through it, got killed at the 15-min
- *  function timeout, never cleared its lock, and got re-invoked every
- *  5 min while concurrent invocations from prior ticks were still
- *  spinning. Compounded with the snapshot's buyer-mode fanout, the
- *  daily quota was exhausted by mid-morning every day.
+ *  The architectural fix is a Firestore mirror:
  *
- *  Removing the cron paths eliminates the entire class of problem:
- *    - No scheduled invocations means no lock contention
- *    - No global watermarks means no concurrency races
- *    - Per-buyer fetches are 1–2 Etsy calls each, bounded by the rate
- *      of incoming customer messages (a few per hour at peak)
+ *    etsyMailReceiptsMirrorCron.js   — Every 3 min, pulls receipts
+ *                                      modified since last run, writes
+ *                                      them to EtsyMail_Receipts.
  *
- *  Customer doc shape (EtsyMail_Customers/{buyerUserId}):
+ *    THIS FILE buyer mode             — Queries the mirror by
+ *                                      buyer_user_id. No Etsy calls.
+ *
+ *    THIS FILE backfill mode          — One-time historical population
+ *                                      of the mirror.
+ *
+ *  After backfill, buyer-sync is essentially free regardless of how
+ *  often it's invoked. Snapshot/draftReply triggers can fire on every
+ *  scrape without quota concerns.
+ *
+ *  ═══ INVOCATION ═══════════════════════════════════════════════════════
+ *
+ *  POST /.netlify/functions/etsyMailSync-background
+ *    { mode: "buyer", buyerUserId: "<numeric id>" }
+ *
+ *  POST /.netlify/functions/etsyMailSync-background
+ *    { mode: "backfill", action: "start" }    — Begin a new backfill
+ *    { mode: "backfill", action: "chunk"  }    — Process next chunk
+ *    { mode: "backfill", action: "cancel" }    — Abort an in-progress backfill
+ *
+ *  ═══ CUSTOMER DOC SHAPE (unchanged from prior versions) ═══════════════
+ *
+ *  EtsyMail_Customers/{buyerUserId}:
  *    {
  *      buyerUserId, displayName, currency,
  *      orderCount, totalSpent,
  *      firstOrderAt, lastOrderAt,
  *      isRepeatBuyer,
  *      recentReceipts: [
- *        { receiptId, orderedAt, grandTotal, status }
+ *        { receiptId, orderedAt, grandTotal, currency, status, isPaid, isShipped }
  *      ],
  *      updatedAt
  *    }
- *
- *  ═══ INVOCATION ═══
- *
- *  POST /.netlify/functions/etsyMailSync-background
- *    { mode: "buyer", buyerUserId: "<numeric id>" }
- *
- *  Triggered by:
- *    - etsyMailSnapshot.js after each scrape (fire-and-forget)
- *    - etsyMailDraftReply.js v3.32 lazy recovery when customer doc is
- *      missing despite the thread having buyerUserId set
- *    - Manual operator-triggered refresh from the inbox
- *
- *  Any other `mode` value returns 400. No cron. No backfill.
  */
+
+"use strict";
 
 const fetch = require("node-fetch");
 const admin = require("./firebaseAdmin");
@@ -76,42 +83,23 @@ const SHOP_ID       = process.env.SHOP_ID;
 const CLIENT_ID     = process.env.CLIENT_ID;
 const CLIENT_SECRET = process.env.CLIENT_SECRET || process.env.ETSY_SHARED_SECRET;
 
-const OAUTH_DOC_PATH = "config/etsyOauth";
+const OAUTH_DOC_PATH    = "config/etsyOauth";
+const MIRROR_STATE_PATH = "EtsyMail_Config/receiptsMirrorState";
+const SYNC_STATE_PATH   = "EtsyMail_Config/syncState";
+
 const TOKEN_REFRESH_BUFFER_MS = 2 * 60 * 1000;
 
 const PAGE_SIZE = 100;
-const REQUEST_DELAY_MS = 0;     // No artificial delay between pages
-const MAX_INVOCATION_MS = 13 * 60 * 1000;   // 13 min — leaves 2 min cleanup tail
 const RECENT_RECEIPTS_CAP = 10;
 
-// ─── Rate-limit guards ─────────────────────────────────────────────────────
-//
-// Etsy's daily rate limit returns retry-after values measured in hours.
-// Netlify background functions die at 15 minutes. Sleeping past that
-// budget is futile and leaves the system in a worse state than aborting
-// cleanly. These error types let getReceiptsPage signal "this can't
-// complete within our function budget" and the handler returns 503 with
-// a retry hint — neither logs as an error.
-class RateLimitNoBudgetError extends Error {
-  constructor(retryAfterSec, remainingMs) {
-    super(`Etsy rate limit retry-after=${retryAfterSec}s exceeds remaining function budget=${Math.round(remainingMs/1000)}s — aborting`);
-    this.name = "RateLimitNoBudgetError";
-    this.code = "RATE_LIMIT_NO_BUDGET";
-    this.retryAfterSec = retryAfterSec;
-  }
-}
+// Backfill tuning
+const BACKFILL_WINDOW_MONTHS = 24;
+const MAX_BACKFILL_PAGES_PER_CHUNK = 60;   // ~60 pages × ~500ms = ~30s; well within 15-min budget
+const BACKFILL_PAUSE_MS = 100;             // tiny delay between pages to be polite
+const FETCH_TIMEOUT_MS = 30 * 1000;
+const MAX_INVOCATION_MS = 13 * 60 * 1000;  // leave 2 min cleanup tail
 
-class DailyRateLimitError extends Error {
-  constructor(detail) {
-    super(`Etsy daily rate limit hit: ${detail}`);
-    this.name = "DailyRateLimitError";
-    this.code = "DAILY_RATE_LIMIT";
-  }
-}
-
-const FINALLY_TAIL_MS = 30 * 1000;
-
-// ─── OAuth token management ────────────────────────────────────────────────
+// ─── OAuth ─────────────────────────────────────────────────────────────────
 async function readEtsyToken() {
   const snap = await db.doc(OAUTH_DOC_PATH).get();
   return snap.exists ? snap.data() : null;
@@ -167,35 +155,29 @@ async function getValidEtsyAccessToken() {
   return stored.access_token;
 }
 
-// ─── HTTP helpers ──────────────────────────────────────────────────────────
-const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-
+// ─── Money helper ──────────────────────────────────────────────────────────
 function moneyAmt(m) {
   if (!m || typeof m.amount !== "number" || typeof m.divisor !== "number") return null;
   return m.amount / m.divisor;
 }
 
-/**
- * Fetch one page of getShopReceipts. Handles 429 with budget awareness:
- *   - Short retry-after (per-second limit) → sleep if within budget,
- *     else throw RateLimitNoBudgetError.
- *   - Long retry-after (>1 hour) or "daily" in body → throw
- *     DailyRateLimitError immediately. Writes etsyDailyLimitResetAt
- *     to syncState so other callers can pre-empt.
- */
-async function getReceiptsPage(accessToken, params, attempt = 1, invocationStartMs = Date.now()) {
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+// ─── Fetch one page (used by backfill) ─────────────────────────────────────
+//
+// Backfill-specific page fetch. On 429 daily-limit, writes the lock and
+// returns failure — the caller (chunk runner) records the failure to
+// backfillProgress.errorMsg and stops.
+async function fetchBackfillPage(accessToken, params) {
   const qs = new URLSearchParams(Object.fromEntries(
     Object.entries(params).filter(([_, v]) => v != null && v !== "")
   )).toString();
   const url = `https://api.etsy.com/v3/application/shops/${SHOP_ID}/receipts?${qs}`;
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 30000);
+  const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
-  // METER — bump on EVERY fetch attempt, including retries. The recursive
-  // 429-retry below calls this function again, which re-enters here and
-  // bumps fresh. That's correct: each retry IS a new API call.
-  const _meterToken = meter.bump("sync.receiptsPage");
+  const _meterToken = meter.bump("backfill.receiptsPage");
 
   let res;
   try {
@@ -211,269 +193,405 @@ async function getReceiptsPage(accessToken, params, attempt = 1, invocationStart
     clearTimeout(timeoutId);
     _meterToken.failNet();
     if (err.name === "AbortError") {
-      if (attempt > 3) throw new Error("Etsy API timeout after 3 attempts (30s each)");
-      console.warn(`Etsy fetch timeout (attempt ${attempt}/3), retrying…`);
-      await sleep(2000);
-      return getReceiptsPage(accessToken, params, attempt + 1, invocationStartMs);
+      return { ok: false, kind: "timeout", message: "Etsy fetch timeout" };
     }
-    throw err;
+    return { ok: false, kind: "network", message: err.message };
   }
   clearTimeout(timeoutId);
   _meterToken.fromHttp(res.status);
 
   if (res.status === 429) {
-    if (attempt > 3) throw new Error("Etsy rate limit exceeded after 3 retries");
     const retryAfter = parseInt(res.headers.get("retry-after") || "5", 10);
     const bodyText = await res.text().catch(() => "");
-
     const isDaily = /daily|day/i.test(bodyText) || retryAfter > 3600;
     if (isDaily) {
-      console.warn(`Etsy DAILY rate limit hit: retry-after=${retryAfter}s, body="${bodyText.slice(0, 200)}"`);
       try {
-        await db.collection("EtsyMail_Config").doc("syncState").set({
+        await db.doc(SYNC_STATE_PATH).set({
           etsyDailyLimitHitAt   : FV.serverTimestamp(),
           etsyDailyLimitResetAt : admin.firestore.Timestamp.fromMillis(Date.now() + retryAfter * 1000),
           etsyDailyLimitDetail  : bodyText.slice(0, 300)
         }, { merge: true });
       } catch {}
-      throw new DailyRateLimitError(`retry-after=${retryAfter}s body="${bodyText.slice(0, 150)}"`);
+      return { ok: false, kind: "daily_rate_limit", retryAfter, message: bodyText.slice(0, 200) };
     }
-
-    const elapsed     = Date.now() - invocationStartMs;
-    const remainingMs = MAX_INVOCATION_MS - elapsed - FINALLY_TAIL_MS;
-    const needMs      = retryAfter * 1000;
-    if (needMs > remainingMs) {
-      throw new RateLimitNoBudgetError(retryAfter, remainingMs);
-    }
-    console.warn(`Rate limit (attempt ${attempt}), sleeping ${retryAfter}s (budget remaining: ${Math.round(remainingMs/1000)}s)`);
-    await sleep(needMs);
-    return getReceiptsPage(accessToken, params, attempt + 1, invocationStartMs);
+    return { ok: false, kind: "rate_limited", retryAfter, message: bodyText.slice(0, 200) };
   }
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(`Etsy getShopReceipts failed ${res.status}: ${text.slice(0, 300)}`);
+    return { ok: false, kind: "http_error", status: res.status, message: text.slice(0, 300) };
   }
-  return await res.json();
+
+  return { ok: true, data: await res.json() };
 }
 
-// ─── Receipt → customer summary transform ──────────────────────────────────
-function receiptToSummary(r) {
+// ─── Receipt → mirror doc transform ────────────────────────────────────────
+function receiptToMirrorDoc(r) {
   return {
-    receiptId  : String(r.receipt_id),
-    orderedAt  : r.created_timestamp ? r.created_timestamp * 1000 : null,
-    updatedAt  : r.updated_timestamp ? r.updated_timestamp * 1000 : null,
-    grandTotal : moneyAmt(r.grandtotal),
-    currency   : r.grandtotal ? r.grandtotal.currency_code : null,
-    status     : r.status || null,
-    isPaid     : !!r.is_paid,
-    isShipped  : !!r.is_shipped,
-    buyerUserId: r.buyer_user_id || null,
-    buyerName  : r.name || null
+    receipt_id          : String(r.receipt_id),
+    buyer_user_id       : r.buyer_user_id ? String(r.buyer_user_id) : null,
+    created_timestamp   : r.created_timestamp || null,
+    updated_timestamp   : r.updated_timestamp || null,
+    status              : r.status || null,
+    is_paid             : !!r.is_paid,
+    is_shipped          : !!r.is_shipped,
+    grandtotal_amount   : moneyAmt(r.grandtotal),
+    grandtotal_currency : r.grandtotal ? r.grandtotal.currency_code : null,
+    buyer_name          : r.name || null,
+    raw                 : r,
+    mirrorWrittenAt     : FV.serverTimestamp()
   };
 }
 
-// ─── Customer aggregator ───────────────────────────────────────────────────
-//
-// In-memory map of buyerUserId → aggregated state. Single-buyer mode
-// only ever has one entry, but we keep the aggregator shape for clarity
-// and so the upsert/merge logic stays straightforward.
-function createCustomerAggregator() {
-  const byBuyer = new Map();
-
-  function accumulate(summary) {
-    if (!summary.buyerUserId) return;
-    const userId = summary.buyerUserId;
-    let agg = byBuyer.get(userId);
-    if (!agg) {
-      agg = { displayName: null, currency: null, freshReceipts: new Map() };
-      byBuyer.set(userId, agg);
-    }
-    if (summary.buyerName && !agg.displayName) agg.displayName = summary.buyerName;
-    if (summary.currency  && !agg.currency)    agg.currency    = summary.currency;
-    agg.freshReceipts.set(summary.receiptId, summary);
+async function writeReceiptBatch(receipts) {
+  if (!receipts.length) return 0;
+  const batch = db.batch();
+  for (const r of receipts) {
+    if (!r.receipt_id) continue;
+    const doc = receiptToMirrorDoc(r);
+    batch.set(db.collection("EtsyMail_Receipts").doc(String(r.receipt_id)), doc, { merge: true });
   }
-
-  async function flush() {
-    const buyerIds = Array.from(byBuyer.keys());
-    if (!buyerIds.length) return 0;
-
-    let customersUpdated = 0;
-
-    // Buyer mode is single-buyer; the chunk loop is theoretical but kept
-    // small for safety.
-    const CONCURRENCY = 20;
-    for (let i = 0; i < buyerIds.length; i += CONCURRENCY) {
-      const chunk = buyerIds.slice(i, i + CONCURRENCY);
-      const refs = chunk.map(id => db.collection("EtsyMail_Customers").doc(String(id)));
-      const snaps = await Promise.all(refs.map(r => r.get()));
-
-      const docsToWrite = chunk.map((userId, idx) => {
-        const agg = byBuyer.get(userId);
-        const existing = snaps[idx].exists ? snaps[idx].data() : null;
-
-        const existingRecent = (existing && Array.isArray(existing.recentReceipts))
-          ? existing.recentReceipts : [];
-        const existingReceiptIds = new Set(existingRecent.map(r => r.receiptId));
-
-        let newOrderCount = 0;
-        let newTotalSpent = 0;
-        let newFirstMs = null;
-        let newLastMs = null;
-
-        for (const [rid, s] of agg.freshReceipts.entries()) {
-          if (!existingReceiptIds.has(rid)) {
-            newOrderCount++;
-            if (typeof s.grandTotal === "number") newTotalSpent += s.grandTotal;
-            if (s.orderedAt) {
-              if (newFirstMs === null || s.orderedAt < newFirstMs) newFirstMs = s.orderedAt;
-              if (newLastMs  === null || s.orderedAt > newLastMs)  newLastMs  = s.orderedAt;
-            }
-          }
-        }
-
-        const existingFirst = existing && existing.firstOrderAt && existing.firstOrderAt.toMillis
-          ? existing.firstOrderAt.toMillis() : null;
-        const existingLast = existing && existing.lastOrderAt && existing.lastOrderAt.toMillis
-          ? existing.lastOrderAt.toMillis() : null;
-
-        const orderCount = (existing ? (existing.orderCount || 0) : 0) + newOrderCount;
-        const totalSpent = Math.round(
-          ((existing ? (existing.totalSpent || 0) : 0) + newTotalSpent) * 100
-        ) / 100;
-
-        const firstCandidates = [existingFirst, newFirstMs].filter(v => v != null && v > 0);
-        const lastCandidates  = [existingLast,  newLastMs ].filter(v => v != null && v > 0);
-        const finalFirst = firstCandidates.length ? Math.min(...firstCandidates) : null;
-        const finalLast  = lastCandidates.length  ? Math.max(...lastCandidates)  : null;
-
-        const byId = new Map();
-        for (const r of existingRecent) {
-          const orderedAtMs = r.orderedAt && r.orderedAt.toMillis
-            ? r.orderedAt.toMillis()
-            : (typeof r.orderedAt === "number" ? r.orderedAt : null);
-          byId.set(r.receiptId, { ...r, orderedAt: orderedAtMs });
-        }
-        for (const [rid, s] of agg.freshReceipts.entries()) {
-          byId.set(rid, {
-            receiptId : rid,
-            orderedAt : s.orderedAt,
-            grandTotal: s.grandTotal,
-            currency  : s.currency,
-            status    : s.status,
-            isPaid    : s.isPaid,
-            isShipped : s.isShipped
-          });
-        }
-        const recentReceipts = Array.from(byId.values())
-          .sort((a, b) => (b.orderedAt || 0) - (a.orderedAt || 0))
-          .slice(0, RECENT_RECEIPTS_CAP)
-          .map(r => ({
-            ...r,
-            orderedAt: r.orderedAt ? admin.firestore.Timestamp.fromMillis(r.orderedAt) : null
-          }));
-
-        const displayName = agg.displayName
-          || (existing ? existing.displayName : null)
-          || "Unknown";
-        const currency = agg.currency
-          || (existing ? existing.currency : null)
-          || "USD";
-
-        return {
-          userId,
-          doc: {
-            buyerUserId   : userId,
-            displayName,
-            currency,
-            orderCount,
-            totalSpent,
-            firstOrderAt  : finalFirst ? admin.firestore.Timestamp.fromMillis(finalFirst) : null,
-            lastOrderAt   : finalLast  ? admin.firestore.Timestamp.fromMillis(finalLast)  : null,
-            isRepeatBuyer : orderCount >= 2,
-            recentReceipts,
-            updatedAt     : FV.serverTimestamp()
-          }
-        };
-      });
-
-      const batch = db.batch();
-      for (const { userId, doc } of docsToWrite) {
-        batch.set(db.collection("EtsyMail_Customers").doc(String(userId)), doc, { merge: true });
-      }
-      await batch.commit();
-      customersUpdated += docsToWrite.length;
-    }
-
-    return customersUpdated;
-  }
-
-  return { accumulate, flush, get buyerCount() { return byBuyer.size; } };
+  await batch.commit();
+  return receipts.length;
 }
 
-// ─── Per-buyer sync ────────────────────────────────────────────────────────
-async function runBuyerSync({ buyerUserId, invocationStartMs }) {
+// ─── Receipt → customer summary transform (for buyer-mode aggregation) ────
+function mirrorToSummary(m) {
+  return {
+    receiptId  : String(m.receipt_id),
+    orderedAt  : m.created_timestamp ? m.created_timestamp * 1000 : null,
+    updatedAt  : m.updated_timestamp ? m.updated_timestamp * 1000 : null,
+    grandTotal : m.grandtotal_amount,
+    currency   : m.grandtotal_currency,
+    status     : m.status || null,
+    isPaid     : !!m.is_paid,
+    isShipped  : !!m.is_shipped,
+    buyerUserId: m.buyer_user_id || null,
+    buyerName  : m.buyer_name || null
+  };
+}
+
+// ─── Buyer-mode: aggregate from mirror ─────────────────────────────────────
+//
+// Reads ALL receipts for the buyer from the mirror, computes totals,
+// writes the customer doc. No Etsy calls.
+//
+// Returns: { receiptsProcessed, customersUpdated, pagesFetched, buyerUserId }
+// (pagesFetched stays at 0 — we don't hit Etsy.)
+async function runBuyerSyncFromMirror({ buyerUserId }) {
+  if (!buyerUserId) {
+    throw new Error("runBuyerSyncFromMirror requires buyerUserId");
+  }
+
+  // Query the mirror. We pull up to 1000 most recent receipts for the
+  // buyer — that's far more than RECENT_RECEIPTS_CAP, but we use the
+  // full set to compute orderCount and totalSpent accurately. A buyer
+  // with >1000 orders is implausible for our shop.
+  const snap = await db.collection("EtsyMail_Receipts")
+    .where("buyer_user_id", "==", String(buyerUserId))
+    .orderBy("created_timestamp", "desc")
+    .limit(1000)
+    .get();
+
+  const summaries = [];
+  let displayName = null;
+  let currency = null;
+  let totalSpent = 0;
+  let firstMs = null;
+  let lastMs = null;
+
+  snap.forEach(doc => {
+    const m = doc.data();
+    const s = mirrorToSummary(m);
+    summaries.push(s);
+    if (s.buyerName && !displayName) displayName = s.buyerName;
+    if (s.currency && !currency) currency = s.currency;
+    if (typeof s.grandTotal === "number") totalSpent += s.grandTotal;
+    if (s.orderedAt) {
+      if (firstMs === null || s.orderedAt < firstMs) firstMs = s.orderedAt;
+      if (lastMs  === null || s.orderedAt > lastMs ) lastMs  = s.orderedAt;
+    }
+  });
+
+  const orderCount = summaries.length;
+
+  // Build recentReceipts capped at RECENT_RECEIPTS_CAP, newest-first
+  const recentReceipts = summaries
+    .slice(0, RECENT_RECEIPTS_CAP)
+    .map(s => ({
+      receiptId : s.receiptId,
+      orderedAt : s.orderedAt ? admin.firestore.Timestamp.fromMillis(s.orderedAt) : null,
+      grandTotal: s.grandTotal,
+      currency  : s.currency,
+      status    : s.status,
+      isPaid    : s.isPaid,
+      isShipped : s.isShipped
+    }));
+
+  // Load existing customer doc to preserve fields we don't compute
+  const customerRef = db.collection("EtsyMail_Customers").doc(String(buyerUserId));
+  const existingSnap = await customerRef.get();
+  const existing = existingSnap.exists ? existingSnap.data() : null;
+
+  const finalDisplayName = displayName || (existing && existing.displayName) || "Unknown";
+  const finalCurrency    = currency    || (existing && existing.currency)    || "USD";
+
+  const customerDoc = {
+    buyerUserId  : String(buyerUserId),
+    displayName  : finalDisplayName,
+    currency     : finalCurrency,
+    orderCount,
+    totalSpent   : Math.round(totalSpent * 100) / 100,
+    firstOrderAt : firstMs ? admin.firestore.Timestamp.fromMillis(firstMs) : null,
+    lastOrderAt  : lastMs  ? admin.firestore.Timestamp.fromMillis(lastMs)  : null,
+    isRepeatBuyer: orderCount >= 2,
+    recentReceipts,
+    updatedAt    : FV.serverTimestamp(),
+    // Track the data source so any debugging can confirm which path wrote this
+    syncSource   : "mirror"
+  };
+
+  await customerRef.set(customerDoc, { merge: true });
+
+  return {
+    receiptsProcessed: orderCount,
+    customersUpdated : 1,
+    pagesFetched     : 0,
+    buyerUserId      : String(buyerUserId),
+    source           : "mirror"
+  };
+}
+
+// ─── Backfill — single chunk runner ────────────────────────────────────────
+//
+// One invocation processes up to MAX_BACKFILL_PAGES_PER_CHUNK pages then
+// returns. Caller (UI poller) detects status=running and re-fires the
+// function. State lives in EtsyMail_Config/receiptsMirrorState.backfillProgress.
+//
+// action="start"  → Initialize progress doc. Returns immediately so the
+//                   UI can show progress=0. The very next chunk picks up.
+// action="chunk"  → Process the next chunk. Updates progress incrementally.
+// action="cancel" → Mark progress.status=idle, leaving partial data in place.
+async function runBackfill({ action, invocationStartMs }) {
   const deadlineMs = invocationStartMs + MAX_INVOCATION_MS;
+  const mirrorRef = db.doc(MIRROR_STATE_PATH);
+
+  // ─── action: cancel ───────────────────────────────────────────────
+  if (action === "cancel") {
+    await mirrorRef.set({
+      backfillProgress: {
+        status      : "idle",
+        cancelledAt : FV.serverTimestamp()
+      }
+    }, { merge: true });
+    return { ok: true, action: "cancel", status: "idle" };
+  }
+
+  // ─── action: start ────────────────────────────────────────────────
+  if (action === "start") {
+    const now = Date.now();
+    const minCreatedSec = Math.floor((now - BACKFILL_WINDOW_MONTHS * 30 * 24 * 60 * 60 * 1000) / 1000);
+    const maxCreatedSec = Math.floor(now / 1000);
+
+    const initialProgress = {
+      status            : "running",
+      startedAt         : FV.serverTimestamp(),
+      completedAt       : null,
+      totalPagesEstimate: null,    // unknown until first page lands
+      pagesProcessed    : 0,
+      receiptsProcessed : 0,
+      currentOffset     : 0,
+      windowMinCreated  : minCreatedSec,
+      windowMaxCreated  : maxCreatedSec,
+      errorMsg          : null
+    };
+
+    await mirrorRef.set({
+      backfillProgress: initialProgress
+    }, { merge: true });
+
+    return { ok: true, action: "start", status: "running", progress: initialProgress };
+  }
+
+  // ─── action: chunk (default) ──────────────────────────────────────
+  // Read existing progress; abort if not running.
+  const snap = await mirrorRef.get();
+  const cfg = snap.exists ? snap.data() : null;
+  const progress = cfg && cfg.backfillProgress;
+  if (!progress || progress.status !== "running") {
+    return {
+      ok    : false,
+      reason: "not_running",
+      progress
+    };
+  }
+
+  // Daily rate-limit short-circuit
+  try {
+    const syncSnap = await db.doc(SYNC_STATE_PATH).get();
+    if (syncSnap.exists) {
+      const ss = syncSnap.data();
+      const resetMs = ss.etsyDailyLimitResetAt && ss.etsyDailyLimitResetAt.toMillis
+        ? ss.etsyDailyLimitResetAt.toMillis() : 0;
+      if (resetMs > Date.now()) {
+        await mirrorRef.set({
+          backfillProgress: {
+            errorMsg: `daily_rate_limit until ${new Date(resetMs).toISOString()}`
+          }
+        }, { merge: true });
+        return { ok: false, reason: "daily_rate_limit", waitMs: resetMs - Date.now() };
+      }
+    }
+  } catch {}
+
   const accessToken = await getValidEtsyAccessToken();
 
-  if (!buyerUserId) {
-    throw new Error("runBuyerSync requires buyerUserId");
-  }
+  let offset = progress.currentOffset || 0;
+  let pagesProcessed = progress.pagesProcessed || 0;
+  let receiptsProcessed = progress.receiptsProcessed || 0;
+  let done = false;
+  let errorMsg = null;
+  let pagesThisChunk = 0;
 
-  const params = {
-    limit         : PAGE_SIZE,
-    sort_on       : "created",
-    sort_order    : "desc",
-    buyer_user_id : String(buyerUserId)
-  };
-
-  const aggregator = createCustomerAggregator();
-  let offset = 0;
-  let pagesFetched = 0;
-  let receiptsProcessed = 0;
-
-  while (true) {
-    if (Date.now() > deadlineMs) break;
-
-    const page = await getReceiptsPage(accessToken, { ...params, offset }, 1, invocationStartMs);
-    pagesFetched++;
-
-    const receipts = page.results || [];
-    if (!receipts.length) break;
-
-    for (const r of receipts) {
-      aggregator.accumulate(receiptToSummary(r));
+  while (pagesThisChunk < MAX_BACKFILL_PAGES_PER_CHUNK) {
+    if (Date.now() > deadlineMs) {
+      console.log("[backfill] approaching invocation deadline — stopping chunk");
+      break;
     }
-    receiptsProcessed += receipts.length;
 
-    if (receipts.length < PAGE_SIZE) break;
+    const params = {
+      limit       : PAGE_SIZE,
+      offset      : offset,
+      sort_on     : "created",
+      sort_order  : "desc",
+      min_created : progress.windowMinCreated,
+      max_created : progress.windowMaxCreated
+    };
+
+    const result = await fetchBackfillPage(accessToken, params);
+    pagesThisChunk++;
+
+    if (!result.ok) {
+      errorMsg = `${result.kind}: ${result.message}`;
+      console.warn(`[backfill] page fetch failed at offset ${offset}: ${errorMsg}`);
+      // For rate_limited (per-second) — caller can retry next chunk
+      // For daily_rate_limit — caller will skip until reset
+      // For network/http_error — caller can retry
+      break;
+    }
+
+    const receipts = (result.data && result.data.results) || [];
+    const totalCount = result.data && result.data.count;
+    if (totalCount && !progress.totalPagesEstimate) {
+      progress.totalPagesEstimate = Math.ceil(totalCount / PAGE_SIZE);
+    }
+
+    if (!receipts.length) {
+      done = true;
+      break;
+    }
+
+    try {
+      await writeReceiptBatch(receipts);
+    } catch (e) {
+      errorMsg = `firestore_write_failed: ${e.message}`;
+      console.error(`[backfill] batch write failed at offset ${offset}: ${e.message}`);
+      break;
+    }
+
+    pagesProcessed++;
+    receiptsProcessed += receipts.length;
     offset += PAGE_SIZE;
-    if (offset >= 12000) break;
-    if (REQUEST_DELAY_MS) await sleep(REQUEST_DELAY_MS);
+
+    if (receipts.length < PAGE_SIZE) {
+      done = true;
+      break;
+    }
+
+    if (BACKFILL_PAUSE_MS > 0) await sleep(BACKFILL_PAUSE_MS);
   }
 
-  const customersUpdated = await aggregator.flush();
+  // ─── Persist updated progress ─────────────────────────────────────
+  const newStatus = done ? "complete" : (errorMsg ? "error" : "running");
+  const updatedProgress = {
+    status            : newStatus,
+    pagesProcessed,
+    receiptsProcessed,
+    currentOffset     : offset,
+    errorMsg
+  };
+  if (progress.totalPagesEstimate) {
+    updatedProgress.totalPagesEstimate = progress.totalPagesEstimate;
+  }
+  if (done) {
+    updatedProgress.completedAt = FV.serverTimestamp();
+  }
 
-  console.log(`Buyer sync complete for ${buyerUserId}: pages=${pagesFetched} receipts=${receiptsProcessed} customers=${customersUpdated}`);
-  return { receiptsProcessed, customersUpdated, pagesFetched, buyerUserId };
+  await mirrorRef.set({
+    backfillProgress: updatedProgress
+  }, { merge: true });
+
+  // ─── Self-trigger next chunk ──────────────────────────────────────
+  //
+  // If the chunk wrapped up with status "running" (more work to do, no
+  // error), fire-and-forget a POST to ourselves so the next chunk
+  // starts immediately. This makes backfill progress autonomous: the
+  // UI just observes, the chain continues even if the operator closes
+  // the inbox or the browser. Errors stop the chain (caller must
+  // re-start).
+  //
+  // We do NOT await this fetch — Netlify background functions return
+  // 202 immediately. By the time the next chunk starts the current
+  // chunk's handler has already returned, freeing the warm container.
+  if (newStatus === "running") {
+    const fnHost = process.env.URL || process.env.DEPLOY_PRIME_URL || null;
+    if (fnHost) {
+      // node-fetch is already required at the top of the file. We
+      // briefly delay so the Firestore write has time to settle (the
+      // next chunk reads it).
+      setTimeout(() => {
+        fetch(`${fnHost}/.netlify/functions/etsyMailSync-background`, {
+          method : "POST",
+          headers: { "Content-Type": "application/json" },
+          body   : JSON.stringify({ mode: "backfill", action: "chunk" })
+        }).catch(err => {
+          console.warn(`[backfill] self-trigger next chunk failed: ${err.message}`);
+        });
+      }, 500);
+    } else {
+      console.warn("[backfill] no fnHost — cannot self-trigger next chunk");
+    }
+  }
+
+  return {
+    ok                : !errorMsg,
+    action            : "chunk",
+    status            : newStatus,
+    pagesThisChunk,
+    pagesProcessed,
+    receiptsProcessed,
+    offset,
+    errorMsg,
+    done
+  };
 }
 
-// ─── Entry ─────────────────────────────────────────────────────────────────
+// ─── Diagnostic log helper ─────────────────────────────────────────────────
+function writeDiagLog(invocationId, payload) {
+  // fire-and-forget
+  db.collection("EtsyMail_DiagnosticLog").doc(invocationId).set(payload, { merge: true })
+    .catch(e => console.warn("[sync-bg] diagnostic write failed:", e.message));
+}
+
+// ─── Handler ───────────────────────────────────────────────────────────────
 exports.handler = meter.wrapHandler(async (event) => {
   const invocationStartMs = Date.now();
+  const invocationId = `sync_${invocationStartMs}_${Math.random().toString(36).slice(2, 9)}`;
 
-  // ─── DIAGNOSTIC: per-invocation telemetry ────────────────────────────
-  // Writes one doc per invocation to EtsyMail_DiagnosticLog so we can
-  // correlate invocations back to their trigger source (snapshot pipeline,
-  // draft-reply lazy recovery, manual operator, ...). Netlify's log view
-  // is unreliable for background functions; Firestore is the reliable
-  // record. Each write is fully best-effort — never blocks or fails the
-  // handler.
-  meter.bumpSimple("sync.invocation");
-  const _diagId = `${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+  // Diagnostic doc — start
   const _h = event.headers || {};
-  const _diagInit = {
-    invocationId : _diagId,
+  writeDiagLog(invocationId, {
+    invocationId,
     createdAt    : FV.serverTimestamp(),
     invocationStartMs,
     function     : "etsyMailSync-background",
@@ -486,109 +604,98 @@ exports.handler = meter.wrapHandler(async (event) => {
     httpMethod   : event.httpMethod,
     queryString  : event.queryStringParameters || null,
     bodyRaw      : (typeof event.body === "string" ? event.body.slice(0, 500) : null)
-  };
-  // Fire-and-forget write. Don't await — never let diagnostic delay
-  // the handler.
-  db.collection("EtsyMail_DiagnosticLog").doc(_diagId).set(_diagInit).catch(e => {
-    // Last-resort console log if Firestore write fails
-    console.warn("[sync] diagnostic write failed:", e.message);
   });
+  meter.bumpSimple("sync.invocation");
 
-  if (!SHOP_ID || !CLIENT_ID || !CLIENT_SECRET) {
-    console.error("Missing SHOP_ID / CLIENT_ID / CLIENT_SECRET env vars");
-    return { statusCode: 500, body: "Missing env vars" };
-  }
-
+  // Parse body / query
   let mode = null;
   let buyerUserId = null;
+  let action = null;
   try {
     if (event.body) {
       const body = JSON.parse(event.body);
       if (body.mode) mode = body.mode;
       if (body.buyerUserId) buyerUserId = String(body.buyerUserId);
+      if (body.action) action = body.action;
     }
     if (event.queryStringParameters) {
       if (event.queryStringParameters.mode) mode = event.queryStringParameters.mode;
-      if (event.queryStringParameters.buyerUserId) {
-        buyerUserId = String(event.queryStringParameters.buyerUserId);
-      }
+      if (event.queryStringParameters.buyerUserId) buyerUserId = String(event.queryStringParameters.buyerUserId);
+      if (event.queryStringParameters.action) action = event.queryStringParameters.action;
     }
   } catch {}
 
-  // Update diagnostic doc with parsed params
-  db.collection("EtsyMail_DiagnosticLog").doc(_diagId).set({
+  writeDiagLog(invocationId, {
     parsedMode       : mode,
-    parsedBuyerUserId: buyerUserId
-  }, { merge: true }).catch(() => {});
+    parsedBuyerUserId: buyerUserId,
+    parsedAction     : action
+  });
 
-  // Daily rate-limit short-circuit. If a prior invocation hit Etsy's
-  // daily limit, refuse to make any Etsy API calls until the reset
-  // time passes — every call would just 429 anyway.
+  // ─── Mode dispatch ────────────────────────────────────────────────
   try {
-    const stateSnap = await db.collection("EtsyMail_Config").doc("syncState").get();
-    const state = stateSnap.exists ? stateSnap.data() : null;
-    const resetTs = state && state.etsyDailyLimitResetAt;
-    const resetMs = resetTs && resetTs.toMillis ? resetTs.toMillis() : 0;
-    if (resetMs > Date.now()) {
-      const waitMin = Math.ceil((resetMs - Date.now()) / 60000);
-      console.warn(`etsyMailSync-background: Etsy daily limit active, ${waitMin} min until reset — skipping`);
-      return {
-        statusCode: 200,
-        body: JSON.stringify({
-          skipped: true,
-          reason : "etsy_daily_rate_limit_active",
-          waitMinutes: waitMin
-        })
-      };
+    if (mode === "buyer") {
+      if (!buyerUserId) {
+        const out = { ok: false, error: "buyer mode requires buyerUserId" };
+        writeDiagLog(invocationId, { phase: "end", outcome: "error", errorMsg: out.error });
+        return { statusCode: 400, body: JSON.stringify(out) };
+      }
+      const result = await runBuyerSyncFromMirror({ buyerUserId });
+      const elapsedMs = Date.now() - invocationStartMs;
+      writeDiagLog(invocationId, {
+        phase             : "end",
+        outcome           : "ok",
+        pagesFetched      : 0,
+        receiptsProcessed : result.receiptsProcessed,
+        customersUpdated  : result.customersUpdated,
+        source            : "mirror",
+        elapsedMs,
+        endedAt           : FV.serverTimestamp()
+      });
+      return { statusCode: 200, body: JSON.stringify({ ok: true, mode: "buyer", ...result }) };
     }
-  } catch (e) {
-    console.warn("etsyMailSync-background: daily-limit pre-check failed (continuing):", e.message);
-  }
 
-  // BUYER MODE is the only supported mode.
-  if (mode !== "buyer") {
-    return {
-      statusCode: 400,
-      body: JSON.stringify({
-        error: "Only mode=buyer is supported. Cron-driven full/incremental sync was removed in 2026-05.",
-        receivedMode: mode || null
-      })
+    if (mode === "backfill") {
+      if (!SHOP_ID || !CLIENT_ID || !CLIENT_SECRET) {
+        const out = { ok: false, error: "Missing env vars" };
+        writeDiagLog(invocationId, { phase: "end", outcome: "error", errorMsg: out.error });
+        return { statusCode: 500, body: JSON.stringify(out) };
+      }
+      const result = await runBackfill({ action: action || "chunk", invocationStartMs });
+      const elapsedMs = Date.now() - invocationStartMs;
+      writeDiagLog(invocationId, {
+        phase   : "end",
+        outcome : result.ok ? "ok" : "error",
+        action  : result.action,
+        status  : result.status,
+        pagesThisChunk    : result.pagesThisChunk || 0,
+        pagesProcessed    : result.pagesProcessed || 0,
+        receiptsProcessed : result.receiptsProcessed || 0,
+        errorMsg: result.errorMsg || null,
+        elapsedMs,
+        endedAt : FV.serverTimestamp()
+      });
+      return { statusCode: 200, body: JSON.stringify(result) };
+    }
+
+    // Unknown mode
+    const out = {
+      ok: false,
+      error: `Unsupported mode "${mode}". Supported: buyer, backfill.`
     };
-  }
+    writeDiagLog(invocationId, { phase: "end", outcome: "error", errorMsg: out.error });
+    return { statusCode: 400, body: JSON.stringify(out) };
 
-  if (!buyerUserId) {
-    return { statusCode: 400, body: "buyer mode requires buyerUserId" };
-  }
-
-  try {
-    const result = await runBuyerSync({ buyerUserId, invocationStartMs });
-    // DIAGNOSTIC: write completion record so we can see per-invocation behavior
-    const elapsedMs = Date.now() - invocationStartMs;
-    db.collection("EtsyMail_DiagnosticLog").doc(_diagId).set({
-      phase           : "end",
-      outcome         : "ok",
-      pagesFetched    : result.pagesFetched,
-      receiptsProcessed: result.receiptsProcessed,
-      customersUpdated: result.customersUpdated,
-      elapsedMs,
-      endedAt         : FV.serverTimestamp()
-    }, { merge: true }).catch(() => {});
-    return { statusCode: 200, body: JSON.stringify({ ok: true, mode: "buyer", ...result }) };
   } catch (err) {
     const elapsedMs = Date.now() - invocationStartMs;
-    db.collection("EtsyMail_DiagnosticLog").doc(_diagId).set({
-      phase    : "end",
-      outcome  : "error",
-      errorCode: err.code || null,
-      errorMsg : (err.message || String(err)).slice(0, 500),
+    const errorMsg = (err.message || String(err)).slice(0, 500);
+    writeDiagLog(invocationId, {
+      phase   : "end",
+      outcome : "error",
+      errorMsg,
       elapsedMs,
-      endedAt  : FV.serverTimestamp()
-    }, { merge: true }).catch(() => {});
-    if (err.code === "DAILY_RATE_LIMIT" || err.code === "RATE_LIMIT_NO_BUDGET") {
-      console.warn(`etsyMailSync-background buyer mode aborted for ${buyerUserId}: ${err.code}`);
-      return { statusCode: 503, body: JSON.stringify({ ok: false, code: err.code, retry: true }) };
-    }
-    console.error(`etsyMailSync-background buyer mode failed for ${buyerUserId}:`, err.message || err);
-    return { statusCode: 500, body: JSON.stringify({ ok: false, error: err.message || String(err) }) };
+      endedAt : FV.serverTimestamp()
+    });
+    console.error(`[sync-bg] handler failed: ${errorMsg}`);
+    return { statusCode: 500, body: JSON.stringify({ ok: false, error: errorMsg }) };
   }
 });

@@ -797,33 +797,15 @@ exports.handler = async (event) => {
     // block the response. Errors are logged but never bubbled up.
     const buyerForSync = (customer && customer.buyerUserId) ? String(customer.buyerUserId) : null;
     if (buyerForSync) {
-      // ─── DIAGNOSTIC TOGGLE — snapshot trigger ────────────────────────
-      // Reads EtsyMail_Config/syncTriggers.enableSnapshotTrigger before
-      // firing. If explicitly set to false from the inbox UI's diagnostics
-      // panel, skip the buyer-sync entirely. Used to bisect which trigger
-      // source is responsible for the buyer-sync quota burn. Default = ON
-      // (preserves prior behavior when doc missing or flag unset).
-      let _snapshotTriggerEnabled = true;
-      try {
-        const _trigSnap = await db.collection("EtsyMail_Config").doc("syncTriggers").get();
-        if (_trigSnap.exists) {
-          const _trig = _trigSnap.data() || {};
-          if (_trig.enableSnapshotTrigger === false) _snapshotTriggerEnabled = false;
-        }
-      } catch (e) {
-        // Fail open — never block snapshot ingest on a config-read error
-        console.warn("[snapshot] syncTriggers read failed (continuing with default ON):", e.message);
-      }
-
-      if (!_snapshotTriggerEnabled) {
-        console.log(`[snapshot] buyer sync trigger DISABLED via syncTriggers.enableSnapshotTrigger=false — skipping for buyerUserId=${buyerForSync} threadId=${threadId}`);
-      } else {
+      // ─── Buyer-sync trigger ──────────────────────────────────────────
+      // Fires a buyer-mode sync to refresh EtsyMail_Customers/{buyerUserId}.
+      // Under the receipts-mirror architecture (May 2026), this is FREE —
+      // sync-background reads receipts from the Firestore mirror, no Etsy
+      // calls. The earlier `syncTriggers.enableSnapshotTrigger` flag was
+      // removed once the mirror went live; firing on every scrape keeps
+      // customer docs fresh at zero quota cost.
       const fnHost = process.env.URL || process.env.DEPLOY_PRIME_URL || null;
       if (fnHost) {
-        // Same-deployment URL so the call hits the matching env context
-        // (Etsy OAuth tokens, SHOP_ID, etc.). etsyMailSync-background
-        // currently has no auth gate at its entry — matches the rest
-        // of the -background function pattern in this codebase.
         const syncUrl = `${fnHost}/.netlify/functions/etsyMailSync-background`;
         // Fire-and-forget — must not block the snapshot response. The
         // promise is intentionally not awaited; any rejection is logged
@@ -839,7 +821,6 @@ exports.handler = async (event) => {
         console.log(`[snapshot] queued buyer sync for buyerUserId=${buyerForSync} threadId=${threadId}`);
       } else {
         console.warn(`[snapshot] no fnHost (URL/DEPLOY_PRIME_URL) — skipping buyer sync trigger for ${buyerForSync}`);
-      }
       }
     }
 
