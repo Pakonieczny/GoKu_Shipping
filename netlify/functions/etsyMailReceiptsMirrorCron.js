@@ -394,13 +394,17 @@ exports.handler = meter.wrapHandler(async () => {
       console.log(`[mirror-cron] backfill appears STALLED (lastChunkAt=${lastChunkAtMs ? new Date(lastChunkAtMs).toISOString() : "never"}) — re-firing chunk`);
       const fnHost = process.env.URL || process.env.DEPLOY_PRIME_URL || null;
       if (fnHost) {
-        // Fire-and-forget. Mirror cron itself continues to short-circuit
-        // (we still skip the incremental sync this tick because backfill
-        // status is running).
-        fetch(`${fnHost}/.netlify/functions/etsyMailSync-background`, {
+        // CRITICAL: await the fetch so the chunk POST leaves this
+        // container before the handler returns. Background-function
+        // returns are 202 and quick (~200ms), so this is a short await
+        // — but without it, Netlify can suspend the container and kill
+        // the pending HTTP request before it reaches the dispatcher.
+        await fetch(`${fnHost}/.netlify/functions/etsyMailSync-background`, {
           method : "POST",
           headers: { "Content-Type": "application/json" },
           body   : JSON.stringify({ mode: "backfill", action: "chunk" })
+        }).then(r => {
+          console.log(`[mirror-cron] watchdog chunk re-fire sent, status=${r.status}`);
         }).catch(err => {
           console.warn(`[mirror-cron] watchdog chunk re-fire failed: ${err.message}`);
         });

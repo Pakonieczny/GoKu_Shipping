@@ -444,19 +444,32 @@ async function runBackfill({ action, invocationStartMs }) {
       }
     }, { merge: true });
 
-    // Kick off the first chunk so the chain restarts. Fire-and-forget;
-    // the chunk will read currentOffset from Firestore and continue.
+    // Kick off the first chunk so the chain restarts.
+    //
+    // CRITICAL: we MUST initiate the fetch synchronously (no setTimeout)
+    // and `await` the fetch promise begin — otherwise Netlify suspends
+    // the container after the handler returns, killing the pending HTTP
+    // request before it leaves the box. By awaiting `fetch().catch(...)`
+    // (which resolves quickly because background functions return 202
+    // within ~200ms), we ensure the next chunk is in Netlify's queue
+    // before this handler completes.
     const fnHost = process.env.URL || process.env.DEPLOY_PRIME_URL || null;
     if (fnHost) {
-      setTimeout(() => {
-        fetch(`${fnHost}/.netlify/functions/etsyMailSync-background`, {
-          method : "POST",
-          headers: { "Content-Type": "application/json" },
-          body   : JSON.stringify({ mode: "backfill", action: "chunk" })
-        }).catch(err => {
-          console.warn(`[backfill] resume chunk trigger failed: ${err.message}`);
-        });
-      }, 500);
+      // The fetch begins immediately. We .catch() so a rejection doesn't
+      // throw out of the handler — instead it logs and we move on.
+      // The await suspends this handler just long enough for Netlify's
+      // background-function dispatcher to ACK the chunk POST.
+      await fetch(`${fnHost}/.netlify/functions/etsyMailSync-background`, {
+        method : "POST",
+        headers: { "Content-Type": "application/json" },
+        body   : JSON.stringify({ mode: "backfill", action: "chunk" })
+      }).then(r => {
+        console.log(`[backfill] resume chunk trigger sent, status=${r.status}`);
+      }).catch(err => {
+        console.warn(`[backfill] resume chunk trigger failed: ${err.message}`);
+      });
+    } else {
+      console.warn("[backfill] no fnHost — cannot trigger first chunk after resume");
     }
     return {
       ok                : true,
@@ -599,24 +612,27 @@ async function runBackfill({ action, invocationStartMs }) {
   // the inbox or the browser. Errors stop the chain (caller must
   // re-start).
   //
-  // We do NOT await this fetch — Netlify background functions return
-  // 202 immediately. By the time the next chunk starts the current
-  // chunk's handler has already returned, freeing the warm container.
+  // CRITICAL: the fetch is awaited (not setTimeout'd) so the request
+  // leaves this container BEFORE the handler returns. Without this,
+  // Netlify suspends the container after the return and the pending
+  // HTTP request gets killed before it reaches Netlify's dispatcher.
+  // Background functions return 202 quickly (~200ms) so the await is
+  // short — and we .catch() so a rejection doesn't bubble up.
   if (newStatus === "running") {
     const fnHost = process.env.URL || process.env.DEPLOY_PRIME_URL || null;
     if (fnHost) {
-      // node-fetch is already required at the top of the file. We
-      // briefly delay so the Firestore write has time to settle (the
-      // next chunk reads it).
-      setTimeout(() => {
-        fetch(`${fnHost}/.netlify/functions/etsyMailSync-background`, {
-          method : "POST",
-          headers: { "Content-Type": "application/json" },
-          body   : JSON.stringify({ mode: "backfill", action: "chunk" })
-        }).catch(err => {
-          console.warn(`[backfill] self-trigger next chunk failed: ${err.message}`);
-        });
-      }, 500);
+      // The Firestore write above has already completed (we `await`ed
+      // it), so the next chunk will see the updated currentOffset
+      // when it reads. No delay needed.
+      await fetch(`${fnHost}/.netlify/functions/etsyMailSync-background`, {
+        method : "POST",
+        headers: { "Content-Type": "application/json" },
+        body   : JSON.stringify({ mode: "backfill", action: "chunk" })
+      }).then(r => {
+        console.log(`[backfill] self-trigger next chunk sent, status=${r.status}`);
+      }).catch(err => {
+        console.warn(`[backfill] self-trigger next chunk failed: ${err.message}`);
+      });
     } else {
       console.warn("[backfill] no fnHost — cannot self-trigger next chunk");
     }
