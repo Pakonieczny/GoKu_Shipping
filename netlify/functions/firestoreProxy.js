@@ -428,6 +428,23 @@ exports.handler = async (event) => {
         return ok({ id: ref.id });
       }
 
+      /* ─── updateSub ───────────────────────────
+       * Patch a single sub-collection document. Used for one-time
+       * timestamp corrections and other targeted edits where deleting
+       * and re-adding the doc would be destructive. */
+      if (op === "updateSub") {
+        const { coll, id, sub, subId, patch, actor = null } = body;
+        if (!coll || !id || !sub || !subId || !patch) {
+          return bad("Missing coll, id, sub, subId, or patch");
+        }
+        assertColl(coll);
+        assertSub(sub);
+        const role = await requireProxyWriteRole(coll, op, actor, event, { id: String(id), sub });
+        if (!role.ok) return json(role.statusCode, { error: role.error, reason: role.reason });
+        await db.collection(coll).doc(String(id)).collection(sub).doc(String(subId)).update(hydrate(patch));
+        return ok({ subId: String(subId) });
+      }
+
       /* ─── update ──────────────────────────── */
       if (op === "update") {
         const { coll, id, data, actor = null } = body;
