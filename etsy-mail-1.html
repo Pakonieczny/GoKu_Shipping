@@ -7911,6 +7911,54 @@
     }
     window.applyStarOverrides = applyStarOverrides;
 
+    // v0.9.37 — Mirror of applyStarOverrides for the unread bit.
+    //
+    // Problem: openThread fires markRead fire-and-forget AND
+    // optimistically flips thread.unread=false locally. But list
+    // polling runs on a 5-15s timer. If the markRead RPC hasn't been
+    // processed by the server before the next list fetch returns, the
+    // server-side doc still has unread=true and the polled value
+    // overwrites our optimistic flip. The blue dot then re-appears.
+    //
+    // Solution: hold a per-thread override for ~30s after the
+    // operator-driven flip. Each fetch reconciliation re-applies the
+    // override on top of the polled data. Once 30s pass, we trust the
+    // server (the markRead RPC almost always lands within 1-2s, so
+    // 30s is generous; expired overrides are GC'd here).
+    //
+    // The override stores the LOCAL truth (true / false). For
+    // mark-as-read it's false (operator opened the thread). For
+    // mark-as-unread it's true (operator explicitly toggled).
+    function applyUnreadOverrides(threads) {
+      if (!state._unreadOverrides || state._unreadOverrides.size === 0) return;
+      const now = Date.now();
+      const expired = [];
+      for (const [tid, override] of state._unreadOverrides.entries()) {
+        if (override.expiresAt <= now) {
+          expired.push(tid);
+          continue;
+        }
+        const t = (threads || []).find(x => x && x.id === tid);
+        if (t) t.unread = override.value;
+      }
+      for (const tid of expired) state._unreadOverrides.delete(tid);
+    }
+    window.applyUnreadOverrides = applyUnreadOverrides;
+
+    // Set an in-flight unread override for one thread. value=false
+    // means "operator marked read"; value=true means "operator marked
+    // unread". The override holds for 30s by default — long enough
+    // for the backend write to land + at least one list-poll cycle.
+    function setUnreadOverride(threadId, value) {
+      if (!threadId) return;
+      if (!state._unreadOverrides) state._unreadOverrides = new Map();
+      state._unreadOverrides.set(threadId, {
+        value,
+        expiresAt: Date.now() + 30000
+      });
+    }
+    window.setUnreadOverride = setUnreadOverride;
+
     function toggleThreadStarred(threadId) {
       if (!threadId) return;
       const thread = (state.threads || []).find(t => t.id === threadId);
@@ -10386,6 +10434,7 @@
         // Firestore eventual-consistency) gets silently un-done by
         // the next poll.
         if (typeof applyStarOverrides === "function") applyStarOverrides(state.threads);
+        if (typeof applyUnreadOverrides === "function") applyUnreadOverrides(state.threads);
         renderThreadList();
         // v5.0 — Mobile re-render hook
         if (window.IS_MOBILE && typeof window.mNotifyThreadsChanged === "function") window.mNotifyThreadsChanged();
@@ -10444,6 +10493,7 @@
         // v5.30.3 — Apply star overrides (see comment at the primary
         // fetch site above).
         if (typeof applyStarOverrides === "function") applyStarOverrides(state.threads);
+        if (typeof applyUnreadOverrides === "function") applyUnreadOverrides(state.threads);
         state.searchScanned = data.scanned || 0;
         state.searchMaxedOut = !!data.maxedOut;
         state.searchScopedTo = filter.status ? filter.label : null;
@@ -11284,6 +11334,29 @@
       // — they read state and re-paint the bar + preview pane.)
 
       api("etsyMailThreads", { method: "POST", body: { action: "markRead", threadId } }).catch(()=>{});
+
+      // v0.9.37 — Optimistic mark-as-read. Flip thread.unread=false in
+      // state.threads immediately so the blue dot disappears as soon
+      // as the operator clicks the thread, instead of waiting up to
+      // 15s for the next counts/list poll to bring back the fresh
+      // unread=false value from the server. Mobile already does this
+      // at openThread (line ~19185); desktop didn't, so the blue dot
+      // would persist visually until a folder switch or hard refresh.
+      //
+      // Also register a 30s "unread override" so the next list poll
+      // doesn't undo the flip before the server's markRead write has
+      // propagated. Without this, a poll that returns the still-
+      // unread server doc would clobber our optimistic flip.
+      const _stT = state.threads.find(x => x && x.id === threadId);
+      if (_stT && _stT.unread) {
+        _stT.unread = false;
+        if (typeof setUnreadOverride === "function") setUnreadOverride(threadId, false);
+        try { renderThreadList(); } catch (e) { /* may throw if list not yet built */ }
+      } else if (_stT) {
+        // Still register override defensively — operator may have clicked
+        // a thread that's not visually unread but is server-side unread.
+        if (typeof setUnreadOverride === "function") setUnreadOverride(threadId, false);
+      }
 
       let thread = state.threads.find(t => t.id === threadId);
       if (!thread) {
@@ -12199,6 +12272,9 @@
         // Optimistic local update so the rail dot reappears immediately.
         const stThread = (state.threads || []).find(x => x && x.id === t.id);
         if (stThread) stThread.unread = true;
+        // v0.9.37 — hold a 30s override so polling doesn't undo this
+        // before the backend markUnread RPC propagates.
+        if (typeof setUnreadOverride === "function") setUnreadOverride(t.id, true);
         try { renderThreadList(); } catch (e) { /* renderer name may vary; ignore */ }
         try {
           await api("etsyMailThreads", {
@@ -19214,9 +19290,14 @@
       const t = (state.threads || []).find(x => x && x.id === threadId);
       if (t && t.unread) {
         t.unread = false;
+        // v0.9.37 — Hold a 30s unread override so the next list poll
+        // doesn't undo this flip before the server processes markRead.
+        if (typeof setUnreadOverride === "function") setUnreadOverride(threadId, false);
         // Refresh the list so the dot disappears NOW.
         mState.dirtyList = true;
         mRequestRender();
+      } else if (t) {
+        if (typeof setUnreadOverride === "function") setUnreadOverride(threadId, false);
       }
       try {
         api("etsyMailThreads", { method: "POST", body: { action: "markRead", threadId } }).catch(() => {});
@@ -20906,8 +20987,12 @@
             // call. Mirrors desktop's emMarkUnreadBtn behavior. After the
             // call, navigate back to the list so the operator sees the
             // updated unread indicator immediately.
+            //
+            // v0.9.37 — Also register a 30s unread override so the
+            // next list poll doesn't immediately re-clear the dot.
             const stThread = (state.threads || []).find(x => x && x.id === tid);
             if (stThread) stThread.unread = true;
+            if (typeof setUnreadOverride === "function") setUnreadOverride(tid, true);
             try {
               await api("etsyMailThreads", {
                 method: "POST",
