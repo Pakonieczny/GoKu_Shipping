@@ -413,6 +413,61 @@ async function runBackfill({ action, invocationStartMs }) {
     return { ok: true, action: "start", status: "running", progress: initialProgress };
   }
 
+  // ─── action: resume ───────────────────────────────────────────────
+  // Continues a previously-paused backfill from its saved currentOffset.
+  // Unlike "start", this does NOT reset offset/pagesProcessed/receipts-
+  // Processed — it just flips status back to "running", clears the
+  // errorMsg, and triggers the first chunk. The chain self-continues
+  // from there as long as chunks succeed.
+  //
+  // Safe to call repeatedly: each call just resets status+errorMsg and
+  // re-fires a chunk, which will pick up from currentOffset wherever
+  // it last committed.
+  if (action === "resume") {
+    const snap = await mirrorRef.get();
+    const cfg = snap.exists ? snap.data() : null;
+    const progress = cfg && cfg.backfillProgress;
+    if (!progress) {
+      return { ok: false, reason: "no_progress_to_resume", action: "resume" };
+    }
+    // Don't resume if the window itself is missing — that means no
+    // backfill was ever started in this Firestore environment.
+    if (typeof progress.windowMinCreated !== "number" ||
+        typeof progress.windowMaxCreated !== "number") {
+      return { ok: false, reason: "window_missing_run_start_first", action: "resume" };
+    }
+    await mirrorRef.set({
+      backfillProgress: {
+        status     : "running",
+        errorMsg   : null,
+        resumedAt  : FV.serverTimestamp()
+      }
+    }, { merge: true });
+
+    // Kick off the first chunk so the chain restarts. Fire-and-forget;
+    // the chunk will read currentOffset from Firestore and continue.
+    const fnHost = process.env.URL || process.env.DEPLOY_PRIME_URL || null;
+    if (fnHost) {
+      setTimeout(() => {
+        fetch(`${fnHost}/.netlify/functions/etsyMailSync-background`, {
+          method : "POST",
+          headers: { "Content-Type": "application/json" },
+          body   : JSON.stringify({ mode: "backfill", action: "chunk" })
+        }).catch(err => {
+          console.warn(`[backfill] resume chunk trigger failed: ${err.message}`);
+        });
+      }, 500);
+    }
+    return {
+      ok                : true,
+      action            : "resume",
+      status            : "running",
+      currentOffset     : progress.currentOffset || 0,
+      pagesProcessed    : progress.pagesProcessed || 0,
+      receiptsProcessed : progress.receiptsProcessed || 0
+    };
+  }
+
   // ─── action: chunk (default) ──────────────────────────────────────
   // Read existing progress; abort if not running.
   const snap = await mirrorRef.get();
@@ -518,7 +573,11 @@ async function runBackfill({ action, invocationStartMs }) {
     pagesProcessed,
     receiptsProcessed,
     currentOffset     : offset,
-    errorMsg
+    errorMsg,
+    // Heartbeat for the mirror-cron watchdog: if backfill is "running"
+    // but this timestamp is stale, the cron re-fires a chunk to restart
+    // the chain (covers fire-and-forget self-trigger failures).
+    lastChunkAt       : FV.serverTimestamp()
   };
   if (progress.totalPagesEstimate) {
     updatedProgress.totalPagesEstimate = progress.totalPagesEstimate;

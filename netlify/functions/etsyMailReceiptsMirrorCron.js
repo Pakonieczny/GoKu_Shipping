@@ -365,8 +365,50 @@ exports.handler = meter.wrapHandler(async () => {
   // If a backfill is actively running, skip this tick. Backfill makes
   // many Etsy calls per chunk; running incremental sync alongside it
   // would just compound the rate-limit risk.
+  //
+  // BUT also: if backfill claims to be running but has stalled (no
+  // progress in STALL_THRESHOLD_MS), re-fire a chunk to restart the
+  // chain. This handles the case where the chunk's fire-and-forget
+  // self-trigger failed silently (network blip, container scheduling
+  // issue, etc.) and the chain is now broken with status stuck at
+  // "running" forever.
   const backfillStatus = mirrorCfg && mirrorCfg.backfillProgress && mirrorCfg.backfillProgress.status;
   if (backfillStatus === "running") {
+    // Detect stall: lastChunkAt should be within STALL_THRESHOLD_MS.
+    // If not (or if the field doesn't exist), this chunk hasn't moved
+    // recently — re-fire one chunk to restart the chain.
+    const STALL_THRESHOLD_MS = 5 * 60 * 1000;  // 5 minutes without progress = stalled
+    const lastChunkAtMs = (function () {
+      const p = mirrorCfg.backfillProgress || {};
+      const t = p.lastChunkAt;
+      if (!t) return 0;
+      if (typeof t === "number") return t;
+      if (typeof t.toMillis === "function") return t.toMillis();
+      if (typeof t._seconds === "number") return t._seconds * 1000 + Math.floor((t._nanoseconds || 0) / 1e6);
+      if (typeof t.seconds === "number") return t.seconds * 1000 + Math.floor((t.nanoseconds || 0) / 1e6);
+      return 0;
+    })();
+    const stalled = lastChunkAtMs === 0 || (Date.now() - lastChunkAtMs) > STALL_THRESHOLD_MS;
+
+    if (stalled) {
+      console.log(`[mirror-cron] backfill appears STALLED (lastChunkAt=${lastChunkAtMs ? new Date(lastChunkAtMs).toISOString() : "never"}) — re-firing chunk`);
+      const fnHost = process.env.URL || process.env.DEPLOY_PRIME_URL || null;
+      if (fnHost) {
+        // Fire-and-forget. Mirror cron itself continues to short-circuit
+        // (we still skip the incremental sync this tick because backfill
+        // status is running).
+        fetch(`${fnHost}/.netlify/functions/etsyMailSync-background`, {
+          method : "POST",
+          headers: { "Content-Type": "application/json" },
+          body   : JSON.stringify({ mode: "backfill", action: "chunk" })
+        }).catch(err => {
+          console.warn(`[mirror-cron] watchdog chunk re-fire failed: ${err.message}`);
+        });
+      }
+      await writeDiagLog(invocationId, { phase: "end", outcome: "skipped", reason: "backfill_running_watchdog_refired", lastChunkAtMs });
+      return { statusCode: 200, body: JSON.stringify({ skipped: true, reason: "backfill_running_watchdog_refired" }) };
+    }
+
     console.log("[mirror-cron] backfill in progress — skipping incremental");
     await writeDiagLog(invocationId, { phase: "end", outcome: "skipped", reason: "backfill_running" });
     return { statusCode: 200, body: JSON.stringify({ skipped: true, reason: "backfill_running" }) };

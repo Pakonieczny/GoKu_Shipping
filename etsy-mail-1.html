@@ -4394,6 +4394,11 @@
                     style="padding:5px 12px; font-size:12px; font-weight:600; background:#1f883d; color:#fff; border:1px solid #1a6b30; border-radius:3px; cursor:pointer;">
               Run 24-month backfill
             </button>
+            <button type="button" id="emBackfillResumeBtn"
+                    style="display:none; padding:5px 12px; font-size:12px; font-weight:600; background:#0969da; color:#fff; border:1px solid #0550ae; border-radius:3px; cursor:pointer;"
+                    title="Continue from the last completed page without re-fetching what's already mirrored.">
+              Resume
+            </button>
             <button type="button" id="emBackfillCancelBtn"
                     style="display:none; padding:5px 12px; font-size:12px; font-weight:600; background:#fff; color:#cf222e; border:1px solid #cf222e; border-radius:3px; cursor:pointer;">
               Cancel
@@ -9893,6 +9898,7 @@
           errorMsg           : document.getElementById("emMirrorErrorMsg"),
           backfillStatusLabel: document.getElementById("emBackfillStatusLabel"),
           backfillStartBtn   : document.getElementById("emBackfillStartBtn"),
+          backfillResumeBtn  : document.getElementById("emBackfillResumeBtn"),
           backfillCancelBtn  : document.getElementById("emBackfillCancelBtn"),
           progressWrap       : document.getElementById("emBackfillProgressWrap"),
           progressFill       : document.getElementById("emBackfillProgressFill"),
@@ -9984,6 +9990,8 @@
         const pagesProcessed = (progress && progress.pagesProcessed) || 0;
         const receiptsProcessed = (progress && progress.receiptsProcessed) || 0;
         const totalEstimate = progress && progress.totalPagesEstimate;
+        const currentOffset = (progress && progress.currentOffset) || 0;
+        const hasWindow = progress && (typeof progress.windowMinCreated === "number");
         const errMsg = progress && progress.errorMsg;
 
         el.backfillStatusLabel.textContent = status;
@@ -9992,8 +10000,17 @@
         else if (status === "error") el.backfillStatusLabel.style.color = "#a40e26";
         else el.backfillStatusLabel.style.color = "";
 
+        // Resume button visibility: shown when backfill is in a paused/
+        // errored state with progress already made AND the window is set
+        // (i.e., a backfill was previously started). Hidden during
+        // active runs and when nothing's started yet.
+        const showResume = (status === "idle" || status === "error")
+                          && currentOffset > 0
+                          && hasWindow;
+
         if (status === "running") {
           el.backfillStartBtn.style.display = "none";
+          el.backfillResumeBtn.style.display = "none";
           el.backfillCancelBtn.style.display = "";
           el.progressWrap.style.display = "block";
           el.progressText.textContent = pagesProcessed + " pages" + (totalEstimate ? (" / ~" + totalEstimate) : "");
@@ -10010,6 +10027,7 @@
           // chunk's handler. The UI just observes progress.
         } else {
           el.backfillStartBtn.style.display = "";
+          el.backfillResumeBtn.style.display = showResume ? "" : "none";
           el.backfillCancelBtn.style.display = "none";
           if (status === "complete") {
             el.progressWrap.style.display = "block";
@@ -10017,6 +10035,18 @@
             el.progressText.textContent = pagesProcessed + " pages (done)";
             el.progressReceiptsText.textContent = receiptsProcessed.toLocaleString() + " receipts";
             el.backfillStartBtn.textContent = "Re-run 24-month backfill";
+          } else if (showResume) {
+            // Show partial progress so the operator can see where it stopped
+            el.progressWrap.style.display = "block";
+            if (totalEstimate && totalEstimate > 0) {
+              const pct = Math.min(100, (pagesProcessed / totalEstimate) * 100);
+              el.progressFill.style.width = pct.toFixed(1) + "%";
+            } else {
+              el.progressFill.style.width = "10%";
+            }
+            el.progressText.textContent = pagesProcessed + " pages (paused)";
+            el.progressReceiptsText.textContent = receiptsProcessed.toLocaleString() + " receipts";
+            el.backfillStartBtn.textContent = "Restart from page 1";
           } else {
             el.progressWrap.style.display = "none";
             el.backfillStartBtn.textContent = "Run 24-month backfill";
@@ -10083,7 +10113,7 @@
       }
 
       async function onCancelClick() {
-        if (!confirm("Cancel the backfill? Progress so far stays in the mirror; you can resume later by starting again.")) return;
+        if (!confirm("Cancel the backfill? Progress so far stays in the mirror; you can resume later with the Resume button.")) return;
         try {
           await api("etsyMailSync-background", {
             method: "POST",
@@ -10092,6 +10122,32 @@
           setTimeout(pollOnce, 200);
         } catch (e) {
           alert("Failed to cancel: " + (e.message || e));
+        }
+      }
+
+      // ─── Resume backfill click handler ──────────────────────────────
+      //
+      // Continues from the last saved currentOffset. Unlike Start, does
+      // NOT reset the offset to 0 — the operator's previous work
+      // (already-mirrored receipts) is preserved and the chunk chain
+      // picks up where it left off.
+      async function onResumeClick() {
+        if (!el.backfillResumeBtn) return;
+        if (!confirm("Resume the backfill from where it stopped? Continues without re-fetching anything already mirrored.")) return;
+        el.backfillResumeBtn.disabled = true;
+        const originalText = el.backfillResumeBtn.textContent;
+        el.backfillResumeBtn.textContent = "Resuming…";
+        try {
+          await api("etsyMailSync-background", {
+            method: "POST",
+            body  : { mode: "backfill", action: "resume" }
+          });
+          // Quick poll to surface the running state in the UI
+          setTimeout(pollOnce, 400);
+        } catch (e) {
+          alert("Failed to resume: " + (e.message || e));
+          el.backfillResumeBtn.disabled = false;
+          el.backfillResumeBtn.textContent = originalText;
         }
       }
 
@@ -10104,6 +10160,7 @@
         }
         if (!_handlersBound) {
           el.backfillStartBtn && el.backfillStartBtn.addEventListener("click", onStartClick);
+          el.backfillResumeBtn && el.backfillResumeBtn.addEventListener("click", onResumeClick);
           el.backfillCancelBtn && el.backfillCancelBtn.addEventListener("click", onCancelClick);
           _handlersBound = true;
         }
