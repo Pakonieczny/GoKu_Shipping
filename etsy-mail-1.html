@@ -5057,19 +5057,10 @@
       <div class="m-menu-item danger" data-action="delete"><i class="material-icons">delete_forever</i>Delete thread</div>
     </div>
 
-    <!-- v5.10 — List-screen overflow menu. Mirrors the desktop's
-         topbar buttons (refresh, empty folder, settings) since on
-         mobile we don't have a topbar — the three-dots in the appbar
-         is the natural home for these global actions. The "Empty
-         folder" label updates dynamically based on the active
-         filter and its count, same logic as desktop's updateTopbarPurgeBtn. -->
+    <!-- v0.9.35 — Removed Refresh and Empty-folder entries from this
+         drawer to mirror the desktop top-bar removal. Settings + Sign
+         out are the only remaining items. -->
     <div class="m-menu" id="mListMenu">
-      <div class="m-menu-item" data-action="refresh"><i class="material-icons">refresh</i>Refresh</div>
-      <div class="m-menu-item" id="mListMenuPurge" data-action="purge-current-folder">
-        <i class="material-icons">delete_sweep</i>
-        <span id="mListMenuPurgeLabel">Empty folder</span>
-      </div>
-      <div class="m-menu-divider"></div>
       <div class="m-menu-item" data-action="settings"><i class="material-icons">settings</i>Settings</div>
       <div class="m-menu-item" data-action="signout"><i class="material-icons">logout</i>Sign out</div>
     </div>
@@ -5129,28 +5120,10 @@
       <button class="em-gmail-pull" id="emGmailPullBtn" title="Pull new Etsy notification emails right now" disabled>
         <i class="material-icons">cloud_download</i>Pull now
       </button>
-      <!-- v5.26 — Deep Pull. The regular "Pull now" does an INCREMENTAL
-           scan respecting the watermark, which is useless if the
-           watermark already advanced past an orphaned email (e.g. a
-           transient extraction failure caused the email to be skipped
-           and the watermark advanced past it anyway). Deep Pull does
-           three things at once that no other button does:
-             1. mode:"full" — wipes the watermark for this run only
-             2. windowDays:1 — re-scans the last 24h of Gmail
-             3. query:"from:etsy.com" — overrides any pinned GMAIL_QUERY
-                env var, in case it's been narrowed to a single sender
-           Use this when emails are visibly in Gmail but missing from
-           the inbox. -->
-      <button class="em-gmail-pull" id="emGmailDeepPullBtn"
-              title="DEEP PULL: re-scan the last 24 hours of Gmail with a wide query (from:etsy.com). Use this if regular Pull isn't finding emails that are visibly in your Gmail. Doesn't disturb the running watermark — only fills gaps." disabled
-              style="background:#fff5f5;">
-        <i class="material-icons">refresh</i>Deep Pull (24h)
-      </button>
-      <button id="emRefreshBtn" title="Refresh now"><i class="material-icons">refresh</i>Refresh</button>
-      <button id="emPurgeFolderBtn" class="em-purge-folder-btn" title="Empty the currently active folder — moves every thread out of it back to Needs review">
-        <i class="material-icons">delete_sweep</i><span id="emPurgeFolderLabel">Empty folder</span>
-      </button>
-      <button id="emNewThreadBtn" title="Create test thread"><i class="material-icons">add</i>New (test)</button>
+      <!-- v0.9.35 — Removed four top-bar buttons (Deep Pull, Refresh,
+           Empty folder, New (test)) per operator request. Their
+           associated handlers, helper functions, and update-state
+           call sites have also been removed below. -->
       <button id="emSettingsBtn" title="Settings"><i class="material-icons">settings</i></button>
     </div>
 
@@ -5253,8 +5226,7 @@
 
     <div class="em-detail" id="emDetail">
       <div class="em-detail-empty">
-        Select a thread on the left to view its contents.<br>
-        <span class="em-muted">Use <b>New (test)</b> in the top bar to seed one for Milestone 1.</span>
+        Select a thread on the left to view its contents.
       </div>
     </div>
   </div>
@@ -5731,29 +5703,13 @@
       // funnel folder catches AI-replied and pending-customer threads
       // alike. The auto-replied state is communicated via a rail pill.
       { id: "sales_active",         label: "Sales — Active", icon: "trending_up",
-        status: ["sales_active", "sales_discovery", "sales_spec", "sales_quote", "sales_revision", "sales_pending_close_approval"],
-        // ─── v5.23 — Dynamic intent-based exclusion ──────────────────────
-        // The thread-status set above reflects what the BACKEND tracks
-        // for sales-funnel routing — once a thread enters the funnel,
-        // the auto-pipeline keeps it stateful so the sales agent can
-        // continue engaging across short / ambiguous replies (see
-        // etsyMailAutoPipeline-background.js comment around line 1040).
-        // That's correct for the AI's routing decisions, but produces
-        // a UX wart: a thread whose latest inbound the intent
-        // classifier confidently calls something OTHER than sales_lead
-        // (e.g. "post-purchase" when the customer asks about shipping
-        // after their order is paid for) keeps showing up in this
-        // folder even though the operator no longer thinks of it as
-        // an active sale.
-        //
-        // Frontend fix: filter the folder by the AI's CURRENT intent.
-        // Threads classified at high confidence as anything NOT in
-        // intentAllowlist get hidden from this folder — they remain
-        // accessible in "All" and still keep their sales status, so
-        // the backend's sales-agent routing is unaffected. Only the
-        // visual placement changes.
-        intentAllowlist: ["sales_lead"],
-        intentConfidenceThreshold: 0.85 },
+        status: ["sales_active", "sales_discovery", "sales_spec", "sales_quote", "sales_revision", "sales_pending_close_approval"] },
+      // v0.9.35 — Removed intentAllowlist/intentConfidenceThreshold.
+      // Previously this folder hid threads whose CURRENT inbound was
+      // classified by the AI as something other than "sales_lead" (with
+      // confidence ≥ 0.85). Operators found the hidden-threads banner
+      // confusing and preferred to see every sales-funnel thread in
+      // this folder regardless of latest-inbound intent.
       // ─── v4.3 — Completed Sales ────────────────────────────────────────
       // Folder membership is keyed off salesCompletedAt (set ONCE by the
       // listing-creator worker on success, never overwritten by any other
@@ -9622,67 +9578,16 @@
         });
       });
 
-      // v3.3 — sync the topbar Empty-folder button with the new active
-      // filter. Called both at the end of renderRail (so folder-select
-      // clicks update the button) and from fetchCountsNow (so count
-      // changes update the button's "Empty Needs review (12)" label).
-      updateTopbarPurgeBtn();
+      // v0.9.35 — updateTopbarPurgeBtn() call removed (Empty folder
+      // button no longer exists).
     }
 
-    /**
-     * v3.3 — Topbar "Empty folder" button state machine.
-     *
-     * The button operates on whatever folder is currently active. We
-     * update three things every time the active filter or counts
-     * change:
-     *   1. Label    — "Empty <folder name> (N)" so it's obvious what's
-     *                 about to happen.
-     *   2. Disabled — true when the active folder isn't purgeable
-     *                 (All, Completed Sales) or has count 0.
-     *   3. Title    — long-form tooltip with the same context.
-     *
-     * Centralizing here means the button can never desync from the
-     * rail. Callers that mutate state.activeFilterId or state.counts
-     * just need to call this (which renderRail does).
-     */
-    function updateTopbarPurgeBtn() {
-      const btn   = document.getElementById("emPurgeFolderBtn");
-      const label = document.getElementById("emPurgeFolderLabel");
-      if (!btn || !label) return;
-
-      const PURGE_BUTTON_HIDDEN_FOR = new Set(["all", "completed_sales"]);
-      const filter = (typeof RAIL_FILTERS !== "undefined")
-        ? RAIL_FILTERS.find(f => f.id === state.activeFilterId)
-        : null;
-
-      // No filter or filter is on the don't-purge list → disable.
-      if (!filter || PURGE_BUTTON_HIDDEN_FOR.has(filter.id)) {
-        label.textContent = "Empty folder";
-        btn.disabled = true;
-        btn.title = filter
-          ? `The "${filter.label}" folder isn't eligible for bulk purge.`
-          : "Pick a folder first.";
-        return;
-      }
-
-      // Compute the count the same way renderRail does — supports
-      // single-status, multi-status, and orderByField folders.
-      let count = 0;
-      if (filter.countKey) count = state.counts[filter.countKey] || 0;
-      else if (Array.isArray(filter.status)) {
-        count = filter.status.reduce((s, st) => s + (state.counts[st] || 0), 0);
-      } else if (filter.status) {
-        count = state.counts[filter.status] || 0;
-      }
-
-      label.textContent = count > 0
-        ? `Empty ${filter.label} (${count})`
-        : `${filter.label} is empty`;
-      btn.disabled = count === 0;
-      btn.title = count > 0
-        ? `Empty the "${filter.label}" folder — moves ${count} thread${count === 1 ? "" : "s"} back to Needs review. Threads themselves are NOT deleted.`
-        : `The "${filter.label}" folder is already empty.`;
-    }
+    // v0.9.35 — updateTopbarPurgeBtn() function removed entirely.
+    // Its sole purpose was to keep the deleted Empty-folder button
+    // in sync with the active folder + counts. A no-op stub is kept
+    // so any remaining callers don't crash, but no callers should
+    // remain — grep confirmed only the call site above referenced it.
+    function updateTopbarPurgeBtn() { /* no-op since v0.9.35 */ }
 
     /* ─── API meter (live Etsy API call counter) ─────────────────────
        Polls EtsyMail_Config/etsyApiCounters every 3 seconds via
@@ -10196,133 +10101,12 @@
     })();
 
 
-    /**
-     * v3.0 — Empty an entire folder by moving every thread in it back
-     * to "Needs review". Owner-only on the backend; the click confirms
-     * with the operator first, then fires a single bulk purgeFolder
-     * call. Counts and the rail update optimistically (the entire
-     * folder's count drops to 0; Needs review goes up by the same
-     * total) and then reconcile from the server response.
-     *
-     * Special-cased for the Auto-Reply folder, which spans two statuses
-     * (auto_replied + queued_for_auto_send): we send the full status
-     * array so the server processes both in one shot. queued_for_auto_send
-     * is on the backend's PURGE_FOLDER_BLOCKED list, so the server will
-     * 400 — we strip it client-side first to avoid the dead trip.
-     */
-    async function purgeFolderById(filterId) {
-      const filter = RAIL_FILTERS.find(f => f.id === filterId);
-      if (!filter) return;
-      // Build the status set to purge. Single-status folders just use
-      // their .status; multi-status folders pass the array. Strip
-      // statuses we know the backend rejects (transient ones like
-      // queued_for_auto_send) so the server's validator accepts the
-      // whole call.
-      const BLOCKED = new Set(["queued_for_auto_send", "send_in_progress", "sales_completed"]);
-      let folderStatus;
-      if (Array.isArray(filter.status)) {
-        folderStatus = filter.status.filter(s => !BLOCKED.has(s));
-        if (folderStatus.length === 0) {
-          alert(`The "${filter.label}" folder contains only transient/protected statuses that can't be bulk-purged.`);
-          return;
-        }
-      } else if (filter.status) {
-        if (BLOCKED.has(filter.status)) {
-          alert(`The "${filter.label}" folder is a transient or protected status and can't be bulk-purged.`);
-          return;
-        }
-        folderStatus = filter.status;
-      } else {
-        // "all" / orderByField folders — already excluded by the renderRail
-        // hide-list, but defensive check.
-        return;
-      }
+    // v0.9.35 — purgeFolderById() function removed entirely along
+    // with its sole callers (desktop Empty-folder button, mobile
+    // drawer Empty-folder entry). The Netlify endpoint it called
+    // still exists; if a future feature needs bulk-purge it can be
+    // restored from version control.
 
-      // Compute the snapshot count for the confirm message + optimistic
-      // update. Read straight from state.counts (whatever the rail just
-      // showed the operator).
-      const statuses = Array.isArray(folderStatus) ? folderStatus : [folderStatus];
-      const countNow = statuses.reduce((sum, s) => sum + (state.counts[s] || 0), 0);
-
-      if (countNow === 0) {
-        toast(`"${filter.label}" is already empty.`);
-        return;
-      }
-
-      // v4.1.3 — Destination selection.
-      //
-      // The backend's default destination for purgeFolder is
-      // "pending_human_review" (the Needs Review folder). When the
-      // operator empties any OTHER folder (Auto-Reply, Archive, etc.),
-      // that's the right destination — the threads land back where a
-      // human can re-triage them.
-      //
-      // But when emptying Needs Review itself, sending them to Needs
-      // Review is a no-op the backend rejects. The operator's intent
-      // there is "I've seen these, get them out of my queue, but keep
-      // them visible in All in case I want to find them later." That
-      // means the destination should be a neutral "handled" status —
-      // we use "replied", which:
-      //   - removes the thread from every active triage folder
-      //   - keeps it visible in All (which shows everything regardless of status)
-      //   - lets a future inbound message re-classify the thread back
-      //     into Needs Review naturally (the auto-pipeline still runs)
-      const isEmptyingNeedsReview =
-        statuses.length === 1 && statuses[0] === "pending_human_review";
-      const destinationStatus = isEmptyingNeedsReview ? "replied" : "pending_human_review";
-      const destinationLabel  = isEmptyingNeedsReview
-        ? "marked as handled (still visible in All)"
-        : 'moved back to "Needs review"';
-
-      const ok = confirm(
-        `Empty the "${filter.label}" folder?\n\n` +
-        `${countNow} thread${countNow === 1 ? "" : "s"} will be ${destinationLabel}. ` +
-        `Threads themselves are NOT deleted — they just leave this folder.\n\n` +
-        `This action is logged in the audit trail.`
-      );
-      if (!ok) return;
-
-      const actor = getEmployeeName() || "operator";
-
-      // Optimistic update: zero out the source folder, bump destination.
-      const priorCounts = {};
-      for (const s of statuses) {
-        priorCounts[s] = state.counts[s] || 0;
-        state.counts[s] = 0;
-      }
-      const priorDest = state.counts[destinationStatus] || 0;
-      state.counts[destinationStatus] = priorDest + countNow;
-      renderRail();
-
-      try {
-        const res = await api("etsyMailThreads", {
-          method: "POST",
-          body  : {
-            action: "purgeFolder",
-            folderStatus,
-            destinationStatus,
-            actor,
-            reason: "operator: empty folder"
-          }
-        });
-        const moved = (res && res.totalMoved) || 0;
-        const movedDestText = isEmptyingNeedsReview
-          ? "marked as handled"
-          : "moved to Needs review";
-        toast(`Emptied "${filter.label}" — ${moved} thread${moved === 1 ? "" : "s"} ${movedDestText}.`);
-        // Reconcile from server truth.
-        fetchCountsNow();
-        // If the operator was looking at this folder, refresh the list
-        // (it should now be empty).
-        if (state.activeFilterId === filterId) fetchThreadListNow({ source: "user" });
-      } catch (e) {
-        // Revert optimistic counts and re-render.
-        for (const s of statuses) state.counts[s] = priorCounts[s];
-        state.counts[destinationStatus] = priorDest;
-        renderRail();
-        alert(`Failed to empty "${filter.label}": ${e.message}`);
-      }
-    }
 
     // ───── Thread list ─────
     function currentFilter() {
@@ -10352,6 +10136,12 @@
     function threadMatchesFilter(thread, filter) {
       if (!thread) return false;
       if (filter && filter.orderByField) {
+        // v0.9.35 — symmetric with the full-fetch query: archived
+        // threads are removed from orderByField folders even though
+        // their orderBy field may still be set. Without this, a
+        // delta-sync update of an archived thread would incorrectly
+        // re-add it to the visible list.
+        if (thread.status === "archived") return false;
         return !!thread[filter.orderByField];
       }
       if (filter && Array.isArray(filter.status)) {
@@ -10476,11 +10266,20 @@
             // orderBy implicitly excludes docs where the field is missing,
             // so this is both an "exists" filter AND a sort in one op.
             // No composite index needed (single-field).
+            //
+            // v0.9.35 — Exclude archived threads. orderByField folders
+            // are keyed off a presence-of-timestamp field that doesn't
+            // get cleared when an operator archives a thread, so an
+            // archived "Completed Sale" or "Refunds" thread would
+            // continue appearing in its source folder. Filter client-
+            // side rather than in the query to avoid composite-index
+            // requirements (status,!=,archived combined with orderBy
+            // on another field needs a composite index).
             const data = await api("firestoreProxy", { query: {
               op: "list", coll: THREADS_COLL,
               orderBy: `${filter.orderByField},desc`, limit: 500
             } });
-            docs = data.docs || [];
+            docs = (data.docs || []).filter(d => d.status !== "archived");
           } else if (Array.isArray(filter.status)) {
             // Multi-status folder (Auto-Reply): one query per status, merge.
             const responses = await Promise.all(filter.status.map(s =>
@@ -10878,7 +10677,7 @@
           ? (state.searchMode
               ? `No threads match <b>"${esc(q)}"</b>.<br><span class="em-muted">Try a shorter or different query, or click <b>reset</b>.</span>`
               : "No threads match the current filters.<br><span class=\"em-muted\">Click <b>reset</b> to clear filters.</span>")
-          : `No threads in this view.<br><span class="em-muted">Use <b>New (test)</b> in the top bar to seed one.</span>`;
+          : `No threads in this view.`;
         host.innerHTML = searchBanner + intentHiddenBanner + `<div class="em-list-empty">${hint}</div>`;
         // v5.23 — Wire the "View in All" link if the intent banner was rendered.
         const _emptyIntentLink = host.querySelector('[data-intent-hidden-link="all"]');
@@ -16974,27 +16773,10 @@
       } catch (e) { toast("Error: " + e.message); }
     }
 
-    async function createTestThread() {
-      const name = prompt("Test customer name?", "Test Customer");
-      if (!name) return;
-      const text = prompt("Initial inbound message?", "Hi, where is my order?");
-      try {
-        const data = await api("etsyMailThreads", {
-          method: "POST",
-          body: {
-            action: "create", customerName: name, initialText: text,
-            // Land test threads in Needs Review so they're immediately
-            // visible (the New / detected_from_gmail folder was removed
-            // in v1.0; kept as a valid backend status for legacy data).
-            source: "manual", status: "pending_human_review",
-            subject: text ? text.slice(0, 60) : null
-          }
-        });
-        toast(`Thread created: ${data.threadId}`);
-        fetchThreadListNow();
-        openThread(data.threadId);
-      } catch (e) { toast("Error: " + e.message); }
-    }
+    // v0.9.35 — createTestThread() function removed along with its
+    // sole caller (the "New (test)" top-bar button). Test threads can
+    // still be created by calling etsyMailThreads with action:"create"
+    // directly via API if needed for debugging.
 
     function setBackendOk(ok, label) {
       const dot = $("emBackendDot");
@@ -17127,29 +16909,11 @@
         }
       });
 
-      $("emRefreshBtn").addEventListener("click", () => {
-        fetchThreadListNow();
-        fetchCountsNow();
-        if (state.selectedId) fetchMessagesNow(state.selectedId);
-        toast("Refreshed");
-      });
-      $("emNewThreadBtn").addEventListener("click", createTestThread);
-      // v0.9.1 #1: Settings now opens the secret-setup modal
+      // v0.9.35 — Removed handlers for the deleted top-bar buttons
+      // (emRefreshBtn, emNewThreadBtn, emPurgeFolderBtn). Periodic
+      // background refresh continues to run on its own poll timer,
+      // so the inbox stays up to date without a manual button.
       $("emSettingsBtn").addEventListener("click", () => showSecretSetupModal());
-
-      // v3.3 — Topbar Empty-folder button. Calls purgeFolderById on
-      // whatever folder is currently active. The button's disabled
-      // state (managed by updateTopbarPurgeBtn) keeps the click from
-      // ever firing on an unpurgeable filter.
-      $("emPurgeFolderBtn")?.addEventListener("click", () => {
-        const btn = $("emPurgeFolderBtn");
-        if (btn && btn.disabled) return;
-        const filterId = state.activeFilterId;
-        if (!filterId) return;
-        purgeFolderById(filterId).catch(e => {
-          console.warn("[purgeFolder] failed:", e.message);
-        });
-      });
 
       // ─── Gmail Watcher panel ─────────────────────────────────────────
       // Three controls in the topbar:
@@ -17300,17 +17064,7 @@
               ? "A sync is already in progress…"
               : "Pull new Etsy notification emails from Gmail right now";
 
-          // v5.26 — Deep Pull mirrors the same enable conditions.
-          const deepBtn = document.getElementById("emGmailDeepPullBtn");
-          if (deepBtn) {
-            deepBtn.disabled = !oauthOk || inFlight;
-            deepBtn.classList.toggle("spinning", inFlight);
-            deepBtn.title = !oauthOk
-              ? "OAuth tokens not seeded yet — seed them first"
-              : inFlight
-                ? "A sync is already in progress…"
-                : "DEEP PULL: re-scan the last 24 hours of Gmail with a wide query (from:etsy.com). Use this if regular Pull isn't finding emails that are visibly in your Gmail.";
-          }
+          // v0.9.35 — Deep Pull state management removed along with the button.
 
         } catch (err) {
           console.warn("[gmail-panel] refresh failed:", err.message);
@@ -17434,60 +17188,7 @@
       //                               narrower pinned env var)
       // Confirms with the operator first since it's a heavier action
       // than Pull now (potentially 100s of emails to extract).
-      const deepBtn = $("emGmailDeepPullBtn");
-      if (deepBtn) {
-        deepBtn.addEventListener("click", async () => {
-          if (deepBtn.disabled) return;
-          const ok = confirm(
-            "Deep Pull will re-scan the last 24 HOURS of Gmail with a broad query " +
-            "(from:etsy.com). Use this when emails are visibly in Gmail but missing " +
-            "from the inbox.\n\n" +
-            "It does NOT advance the watermark, so the regular Pull-now schedule is undisturbed. " +
-            "Already-linked emails are skipped (idempotent). Any orphaned emails get processed " +
-            "and enqueued for scraping.\n\n" +
-            "This may take 1-3 minutes to complete. Continue?"
-          );
-          if (!ok) return;
-          deepBtn.disabled = true;
-          deepBtn.classList.add("spinning");
-          try {
-            const res = await gmailApi("etsyMailGmail?action=trigger", {
-              method: "POST",
-              body  : JSON.stringify({
-                mode: "full",
-                windowDays: 1,
-                query: "from:etsy.com"
-              })
-            });
-            const data = await res.json();
-            if (!res.ok) {
-              throw new Error(data.error || `HTTP ${res.status}`);
-            }
-            // The trigger endpoint returns 202 immediately; the actual
-            // background sync runs for up to 15 min. Poll the status
-            // panel for ~2 minutes so the operator sees the running /
-            // completed state without manual refresh.
-            toast("Deep Pull started — scanning last 24h of Gmail. This may take 1-3 min.");
-            for (let i = 0; i < 60; i++) {
-              await new Promise(r => setTimeout(r, 2000));
-              await refreshGmailPanel();
-              const meta = $("emGmailMeta");
-              if (meta && !/syncing now/.test(meta.textContent)) {
-                // Sync finished — show how many were enqueued in the toast.
-                const summary = (meta.textContent || "").trim();
-                toast("Deep Pull complete · " + summary, true);
-                break;
-              }
-            }
-          } catch (err) {
-            alert("Deep Pull failed: " + err.message);
-          } finally {
-            deepBtn.classList.remove("spinning");
-            deepBtn.disabled = false;
-            await refreshGmailPanel();
-          }
-        });
-      }
+      // v0.9.35 — Deep Pull handler removed along with its button.
 
       // Expose refreshGmailPanel to the module-scope settings-modal code
       // so saveGmailPullFromCursor() can re-render the topbar pill after
@@ -18960,42 +18661,10 @@
     // updateTopbarPurgeBtn logic at line ~7806. PURGE_BUTTON_HIDDEN_FOR
     // keeps All/Completed Sales out of the purge flow (those are
     // backend-blocked anyway).
-    function mUpdateListMenuPurge() {
-      const item  = document.getElementById("mListMenuPurge");
-      const label = document.getElementById("mListMenuPurgeLabel");
-      if (!item || !label) return;
-      const PURGE_BUTTON_HIDDEN_FOR = new Set(["all", "completed_sales"]);
-      const filter = (typeof RAIL_FILTERS !== "undefined")
-        ? RAIL_FILTERS.find(f => f.id === mState.currentFilterId)
-        : null;
-      // Reset state
-      item.classList.remove("disabled");
-      item.style.pointerEvents = "";
-      item.style.opacity = "";
-      if (!filter || PURGE_BUTTON_HIDDEN_FOR.has(filter.id)) {
-        label.textContent = "Empty folder";
-        item.classList.add("disabled");
-        item.style.pointerEvents = "none";
-        item.style.opacity = "0.4";
-        return;
-      }
-      // Same count derivation desktop uses
-      let count = 0;
-      if (filter.countKey) count = state.counts[filter.countKey] || 0;
-      else if (Array.isArray(filter.status)) {
-        count = filter.status.reduce((s, st) => s + (state.counts[st] || 0), 0);
-      } else if (filter.status) {
-        count = state.counts[filter.status] || 0;
-      }
-      if (count === 0) {
-        label.textContent = `${filter.label} is empty`;
-        item.classList.add("disabled");
-        item.style.pointerEvents = "none";
-        item.style.opacity = "0.4";
-      } else {
-        label.textContent = `Empty ${filter.label} (${count})`;
-      }
-    }
+    // v0.9.35 — mUpdateListMenuPurge() reduced to no-op since the
+    // mobile drawer's Empty-folder entry was removed. Stub kept so
+    // any remaining callers don't ReferenceError.
+    function mUpdateListMenuPurge() { /* no-op */ }
     window.mUpdateListMenuPurge = mUpdateListMenuPurge;
 
     // ── Image preview modal with pinch-zoom + pan (v5.12) ────────
@@ -21168,47 +20837,9 @@
         el.addEventListener("click", async () => {
           const action = el.getAttribute("data-action");
           mCloseListMenu();
-          if (action === "refresh") {
-            // Match the desktop's refresh button: pull threads,
-            // counts, and config in parallel. Toast on completion.
-            try {
-              if (typeof fetchThreadListNow === "function") fetchThreadListNow();
-              if (typeof fetchCountsNow === "function") fetchCountsNow();
-              if (typeof toast === "function") toast("Refreshing…");
-            } catch (e) {
-              if (typeof toast === "function") toast("Refresh failed: " + (e.message || "unknown"));
-            }
-          }
-          else if (action === "purge-current-folder") {
-            // Mirrors desktop's emPurgeFolderBtn flow: confirm with
-            // the operator, then call purgeFolderById which is
-            // owner-only on the backend. Use the current MOBILE
-            // filter id (mState.currentFilterId), not the desktop
-            // active filter — those track separately on mobile.
-            const filterId = mState.currentFilterId;
-            const filter = (typeof RAIL_FILTERS !== "undefined")
-              ? RAIL_FILTERS.find(f => f.id === filterId) : null;
-            if (!filter) { if (typeof toast === "function") toast("No folder selected"); return; }
-            // Mirror state.activeFilterId so purgeFolderById picks
-            // up the right filter (it reads state.activeFilterId).
-            const prevActive = state.activeFilterId;
-            state.activeFilterId = filterId;
-            try {
-              if (typeof purgeFolderById === "function") {
-                await purgeFolderById(filterId);
-              } else if (typeof toast === "function") {
-                toast("Purge function unavailable");
-              }
-            } catch (e) {
-              if (typeof toast === "function") toast("Purge failed: " + (e.message || "unknown"));
-            } finally {
-              // Don't restore prevActive — purgeFolderById may have
-              // intentionally moved us elsewhere. If desktop+mobile
-              // were on different folders, the next interaction will
-              // re-sync them anyway.
-            }
-          }
-          else if (action === "settings") {
+          // v0.9.35 — Removed "refresh" and "purge-current-folder"
+          // action handlers along with their drawer entries.
+          if (action === "settings") {
             mState.dirtySettings = true;
             mShowScreen("settings");
             if (typeof mRenderSettings === "function") mRenderSettings();
