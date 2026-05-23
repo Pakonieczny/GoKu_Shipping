@@ -187,6 +187,14 @@ exports.handler = async (event) => {
   // For a fresh thread we've never seen, this op returns exists:false
   // and the scraper falls back to its existing full Phase 1 scroll.
   //
+  // v3.4 — Also return exists:false when the thread DOC exists but has
+  // no messages (messageCount === 0 or null). This handles the "clean
+  // rescrape" workflow where an operator wiped a polluted thread's
+  // messages subcollection via deleteSub but the parent doc remained.
+  // Without this, the scraper would see exists:true, do an incremental
+  // scrape, and only capture the visible bottom of the thread — leaving
+  // the upper history permanently missing.
+  //
   // Returns: { exists }
   if (body.op === "threadExists") {
     const convId = body.etsyConversationId;
@@ -194,7 +202,14 @@ exports.handler = async (event) => {
     const threadId = `etsy_conv_${convId}`;
     try {
       const tSnap = await db.collection(THREADS_COLL).doc(threadId).get();
-      return json(200, { exists: tSnap.exists });
+      if (!tSnap.exists) return json(200, { exists: false });
+      const data = tSnap.data() || {};
+      const mc = typeof data.messageCount === "number" ? data.messageCount : null;
+      // Empty thread → treat as not existing so the scraper does a full pass
+      if (mc === 0 || mc === null) {
+        return json(200, { exists: false, reason: "thread_doc_present_but_empty" });
+      }
+      return json(200, { exists: true });
     } catch (err) {
       console.error("threadExists failed:", err);
       // Fail open so the scraper falls back to its full-scrape path
@@ -334,6 +349,7 @@ exports.handler = async (event) => {
       .limit(2000).get();
     const existingByHash    = new Map();   // hash → { docId, currentTsMs }
     const existingByContent = new Map();   // contentKey → { docId, currentTsMs }
+
 
     // Normalize the role vocabulary. Snapshot writes "customer"/"staff".
     // Optimistic-message writes "shop_owner" (treated as staff equivalent).
