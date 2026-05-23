@@ -577,10 +577,17 @@ async function runBackfill({ action, invocationStartMs }) {
 }
 
 // ─── Diagnostic log helper ─────────────────────────────────────────────────
-function writeDiagLog(invocationId, payload) {
-  // fire-and-forget
-  db.collection("EtsyMail_DiagnosticLog").doc(invocationId).set(payload, { merge: true })
-    .catch(e => console.warn("[sync-bg] diagnostic write failed:", e.message));
+//
+// Returns a promise. Caller should `await` it to ensure the write commits
+// before the handler returns (otherwise Netlify may suspend the container
+// before the write lands in Firestore). The internal try/catch ensures
+// diagnostic failures never throw — the awaited promise always resolves.
+async function writeDiagLog(invocationId, payload) {
+  try {
+    await db.collection("EtsyMail_DiagnosticLog").doc(invocationId).set(payload, { merge: true });
+  } catch (e) {
+    console.warn("[sync-bg] diagnostic write failed:", e.message);
+  }
 }
 
 // ─── Handler ───────────────────────────────────────────────────────────────
@@ -590,7 +597,7 @@ exports.handler = meter.wrapHandler(async (event) => {
 
   // Diagnostic doc — start
   const _h = event.headers || {};
-  writeDiagLog(invocationId, {
+  await writeDiagLog(invocationId, {
     invocationId,
     createdAt    : FV.serverTimestamp(),
     invocationStartMs,
@@ -625,7 +632,7 @@ exports.handler = meter.wrapHandler(async (event) => {
     }
   } catch {}
 
-  writeDiagLog(invocationId, {
+  await writeDiagLog(invocationId, {
     parsedMode       : mode,
     parsedBuyerUserId: buyerUserId,
     parsedAction     : action
@@ -636,12 +643,12 @@ exports.handler = meter.wrapHandler(async (event) => {
     if (mode === "buyer") {
       if (!buyerUserId) {
         const out = { ok: false, error: "buyer mode requires buyerUserId" };
-        writeDiagLog(invocationId, { phase: "end", outcome: "error", errorMsg: out.error });
+        await writeDiagLog(invocationId, { phase: "end", outcome: "error", errorMsg: out.error });
         return { statusCode: 400, body: JSON.stringify(out) };
       }
       const result = await runBuyerSyncFromMirror({ buyerUserId });
       const elapsedMs = Date.now() - invocationStartMs;
-      writeDiagLog(invocationId, {
+      await writeDiagLog(invocationId, {
         phase             : "end",
         outcome           : "ok",
         pagesFetched      : 0,
@@ -657,12 +664,12 @@ exports.handler = meter.wrapHandler(async (event) => {
     if (mode === "backfill") {
       if (!SHOP_ID || !CLIENT_ID || !CLIENT_SECRET) {
         const out = { ok: false, error: "Missing env vars" };
-        writeDiagLog(invocationId, { phase: "end", outcome: "error", errorMsg: out.error });
+        await writeDiagLog(invocationId, { phase: "end", outcome: "error", errorMsg: out.error });
         return { statusCode: 500, body: JSON.stringify(out) };
       }
       const result = await runBackfill({ action: action || "chunk", invocationStartMs });
       const elapsedMs = Date.now() - invocationStartMs;
-      writeDiagLog(invocationId, {
+      await writeDiagLog(invocationId, {
         phase   : "end",
         outcome : result.ok ? "ok" : "error",
         action  : result.action,
@@ -682,13 +689,13 @@ exports.handler = meter.wrapHandler(async (event) => {
       ok: false,
       error: `Unsupported mode "${mode}". Supported: buyer, backfill.`
     };
-    writeDiagLog(invocationId, { phase: "end", outcome: "error", errorMsg: out.error });
+    await writeDiagLog(invocationId, { phase: "end", outcome: "error", errorMsg: out.error });
     return { statusCode: 400, body: JSON.stringify(out) };
 
   } catch (err) {
     const elapsedMs = Date.now() - invocationStartMs;
     const errorMsg = (err.message || String(err)).slice(0, 500);
-    writeDiagLog(invocationId, {
+    await writeDiagLog(invocationId, {
       phase   : "end",
       outcome : "error",
       errorMsg,

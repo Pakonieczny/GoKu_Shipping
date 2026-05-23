@@ -311,7 +311,7 @@ exports.handler = meter.wrapHandler(async () => {
   const invocationId = `mirror_${invocationStartMs}_${Math.random().toString(36).slice(2, 9)}`;
 
   // Diagnostic: record invocation start
-  writeDiagLog(invocationId, {
+  await writeDiagLog(invocationId, {
     invocationId,
     function     : "etsyMailReceiptsMirrorCron",
     phase        : "start",
@@ -322,7 +322,7 @@ exports.handler = meter.wrapHandler(async () => {
   // Env check
   if (!SHOP_ID || !CLIENT_ID || !CLIENT_SECRET) {
     console.error("[mirror-cron] Missing env vars SHOP_ID/CLIENT_ID/CLIENT_SECRET");
-    writeDiagLog(invocationId, { phase: "end", outcome: "error", errorMsg: "missing env vars" });
+    await writeDiagLog(invocationId, { phase: "end", outcome: "error", errorMsg: "missing env vars" });
     return { statusCode: 500, body: "Missing env vars" };
   }
 
@@ -339,7 +339,7 @@ exports.handler = meter.wrapHandler(async () => {
   const enabled = mirrorCfg ? mirrorCfg.enabled !== false : true;
   if (!enabled) {
     console.log("[mirror-cron] disabled via receiptsMirrorState.enabled=false — skipping");
-    writeDiagLog(invocationId, { phase: "end", outcome: "skipped", reason: "disabled" });
+    await writeDiagLog(invocationId, { phase: "end", outcome: "skipped", reason: "disabled" });
     return { statusCode: 200, body: JSON.stringify({ skipped: true, reason: "disabled" }) };
   }
 
@@ -353,7 +353,7 @@ exports.handler = meter.wrapHandler(async () => {
       if (resetMs > Date.now()) {
         const waitMin = Math.ceil((resetMs - Date.now()) / 60000);
         console.log(`[mirror-cron] Etsy daily limit active for ${waitMin}m — skipping`);
-        writeDiagLog(invocationId, { phase: "end", outcome: "skipped", reason: "daily_rate_limit" });
+        await writeDiagLog(invocationId, { phase: "end", outcome: "skipped", reason: "daily_rate_limit" });
         return { statusCode: 200, body: JSON.stringify({ skipped: true, reason: "daily_rate_limit", waitMinutes: waitMin }) };
       }
     }
@@ -368,7 +368,7 @@ exports.handler = meter.wrapHandler(async () => {
   const backfillStatus = mirrorCfg && mirrorCfg.backfillProgress && mirrorCfg.backfillProgress.status;
   if (backfillStatus === "running") {
     console.log("[mirror-cron] backfill in progress — skipping incremental");
-    writeDiagLog(invocationId, { phase: "end", outcome: "skipped", reason: "backfill_running" });
+    await writeDiagLog(invocationId, { phase: "end", outcome: "skipped", reason: "backfill_running" });
     return { statusCode: 200, body: JSON.stringify({ skipped: true, reason: "backfill_running" }) };
   }
 
@@ -394,7 +394,7 @@ exports.handler = meter.wrapHandler(async () => {
     accessToken = await getValidEtsyAccessToken();
   } catch (e) {
     console.error("[mirror-cron] OAuth fetch failed:", e.message);
-    writeDiagLog(invocationId, { phase: "end", outcome: "error", errorMsg: e.message });
+    await writeDiagLog(invocationId, { phase: "end", outcome: "error", errorMsg: e.message });
     return { statusCode: 500, body: JSON.stringify({ ok: false, error: e.message }) };
   }
 
@@ -493,7 +493,7 @@ exports.handler = meter.wrapHandler(async () => {
     console.error("[mirror-cron] failed to persist state:", e.message);
   }
 
-  writeDiagLog(invocationId, {
+  await writeDiagLog(invocationId, {
     phase             : "end",
     outcome,
     pagesFetched,
