@@ -512,10 +512,23 @@ exports.handler = async (event) => {
           //     this is the same trick used by the orderByField folder
           //     path at ~line 510 below)
           //   - one count() filtered to docs where refundFlaggedAt is set
+          //
+          // v0.9.35 — Both folder-count aggregations now also exclude
+          // archived threads. The orderByField folders (Completed Sales,
+          // Refunds) display threads where their respective timestamp
+          // field is set, MINUS threads the operator has archived. The
+          // frontend rail filters archived threads out of the visible
+          // list (see etsy-mail-1.html threadMatchesFilter); without
+          // this matching backend exclusion the rail badge would still
+          // include archived threads and disagree with the empty list.
+          //
+          // Firestore aggregation supports chained .where() clauses;
+          // status,!= is well-supported and doesn't require a composite
+          // index when combined with orderBy on the same/single field.
           const aggPromises = [
             ...statusList.map(s => baseQ.where("status", "==", s).count().get()),
-            baseQ.orderBy("salesCompletedAt").count().get(),
-            baseQ.orderBy("refundFlaggedAt").count().get(),
+            baseQ.where("status", "!=", "archived").orderBy("salesCompletedAt").count().get(),
+            baseQ.where("status", "!=", "archived").orderBy("refundFlaggedAt").count().get(),
           ];
 
           const aggResults = await Promise.all(aggPromises);
@@ -533,6 +546,10 @@ exports.handler = async (event) => {
           // Firestore SDK version is older than aggregation support, or
           // if a transient index-build failure happens. Logged so the
           // operator can see why aggregation didn't take.
+          //
+          // v0.9.35 — Fallback path also excludes archived threads from
+          // the two synthetic counts so it stays consistent with the
+          // primary aggregation path above.
           console.warn("[etsyMailThreads:counts] aggregation failed, falling back to scan:", aggErr.message);
           const snap   = await db.collection(THREADS_COLL).select("status", "salesCompletedAt", "refundFlaggedAt").get();
           const counts = {};
@@ -542,6 +559,7 @@ exports.handler = async (event) => {
             const data = d.data() || {};
             const s = data.status || "unknown";
             counts[s] = (counts[s] || 0) + 1;
+            if (s === "archived") return;  // exclude archived from orderByField folder counts
             if (data.salesCompletedAt) completedSalesCount++;
             if (data.refundFlaggedAt)  refundFlaggedCount++;
           });
