@@ -950,17 +950,25 @@
       transition: color 0.15s ease !important;
     }
     /* ON state — entire pill takes a medium purple, with the track in
-       deeper purple so the toggle position stays clearly visible. */
+       deeper purple so the toggle position stays clearly visible.
+       Selectors prefixed with .em-compose .em-compose-bar so they match
+       or exceed the specificity of the base rule (which uses the same
+       prefix) — without this, the white background wins the !important
+       battle on specificity. */
+    .em-compose .em-compose-bar button.em-send-to-design[aria-pressed="true"],
     button.em-send-to-design[aria-pressed="true"] {
       background: #c9b6ef !important;
       border-color: #a785dd !important;
     }
+    .em-compose .em-compose-bar button.em-send-to-design[aria-pressed="true"] > .em-send-to-design-track,
     button.em-send-to-design[aria-pressed="true"] > .em-send-to-design-track {
       background: #4a2992 !important;
     }
+    .em-compose .em-compose-bar button.em-send-to-design[aria-pressed="true"] > .em-send-to-design-track > .em-send-to-design-knob,
     button.em-send-to-design[aria-pressed="true"] > .em-send-to-design-track > .em-send-to-design-knob {
       transform: translateX(10px) !important;
     }
+    .em-compose .em-compose-bar button.em-send-to-design[aria-pressed="true"] > .material-icons,
     button.em-send-to-design[aria-pressed="true"] > .material-icons {
       color: #2d1a5e !important;
     }
