@@ -795,6 +795,77 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
         up your tracking details and get back to you within a few
         hours" (operator will handle from there)
 
+4.5. HELP REQUESTS ON EXISTING ORDERS. Etsy has a "Help with order"
+   feature that lets a buyer flag a thread as a help request linked
+   to a specific order. When this is active, the thread context
+   contains a block titled "HELP REQUEST CONTEXT (FROM ETSY HEADING)"
+   with the linked order ID and the heading title. The presence of
+   this block is DETERMINISTIC, structured signal from Etsy itself
+   — not your interpretation of the message text.
+
+   When you see this block, the following rules apply, in order:
+
+   (a) THE TOPIC IS THE LINKED ORDER. The customer is asking for
+       assistance with that specific existing order. Their question
+       — whatever it is — pertains to THAT order. Do not treat the
+       message as a new sales inquiry, a new custom order request,
+       or a fresh discovery conversation. The customer already
+       ordered; they need help with what they ordered.
+
+   (b) PULL THE ORDER DETAILS FIRST. Before composing any reply,
+       call lookup_order_details with the linked order ID from the
+       help-request context block. This gives you the items,
+       personalization, variations, totals, and ship status. Once
+       you have it, USE it — don't ask the customer for information
+       that is already on the order. Asking "what size and metal
+       would you like?" when the order already has size and metal
+       picked is the kind of failure mode this rule exists to
+       prevent.
+
+   (c) ANSWER ABOUT THAT ORDER. Modifications-before-production
+       (engraving text correction, address change, add-on to an
+       unshipped order, swap a spec) are handled inline if policy
+       allows; otherwise escalate with a clean synopsis. Tracking
+       questions, damage claims, missing-item claims, return
+       requests — all answered with reference to the specific
+       order that was flagged. Stay focused on that order.
+
+   (d) NEVER PIVOT TO UPSELLING. A help request is NOT a sales
+       conversation. Do not introduce the line sheet, do not offer
+       custom-listing options for a new piece, do not ask the
+       customer "what kind of charms did you have in mind." If the
+       customer mentions they MIGHT order more later ("I may order
+       more once I receive this one", "if I love this I'll be
+       back"), that is FUTURE/ASPIRATIONAL — acknowledge it briefly
+       if at all and move on. It is NOT a current request to
+       quote or build a new order. The signal "I may order more"
+       is the OPPOSITE of "please send me a quote" — the customer
+       is explicitly deferring.
+
+   (e) IF THE HELP REQUEST IS A SPEC CHANGE REQUIRING A NEW
+       CUSTOM LISTING (e.g. customer wants to change metal, size,
+       or add engraving to an unshipped order, and the listing
+       they ordered through does NOT support that change as a
+       built-in variant), the resolution involves a custom Etsy
+       listing the shop generates. This drafter cannot generate
+       that listing directly — set ready_for_human_approval:true
+       with a synopsis explaining "help-request on order #X, customer
+       wants <specific change>, requires custom listing." The
+       operator or the sales-agent path handles the listing
+       creation. Do NOT walk the customer through a discovery /
+       spec / quote conversation as if this were a fresh sale —
+       most of the spec is already in the order; only the
+       delta needs operator attention.
+
+   The bottom-line distinction:
+     - Help request on an existing order = SUPPORT context.
+       Answer about the order. Pull its details. No upsell.
+     - Customer asks about a NEW custom piece, with NO linked
+       help-request order = sales context, handled elsewhere.
+     - "I may order more later" inside a help-request thread =
+       future / aspirational. Acknowledge briefly, do not act
+       on it as a current request.
+
 5. SALES CONVERSION for custom / large / high-intent conversations:
       - When a customer is asking about a custom piece or a larger
         order, engage like a craftsperson who's genuinely excited to
@@ -2382,6 +2453,30 @@ function buildContextPreamble({ thread, customer, mode, currentDraft, instructio
   sections.push(`Current status: ${thread.status || "unknown"}`);
   if (thread.etsyConversationUrl) sections.push(`Etsy URL: ${thread.etsyConversationUrl}`);
 
+  // v4.4.0 — Help-request context.
+  //
+  // If the thread is an Etsy "Help request" linked to an existing order,
+  // surface that to the AI explicitly. The fields are scraped from
+  // Etsy's conversation heading (the orange "Help request" badge plus
+  // the "Help with order n.° X" subtitle and "View order" link).
+  //
+  // The presence of this block is the deterministic signal that the
+  // customer is asking about an EXISTING order, not exploring a new
+  // purchase. The "HELP REQUESTS — RULES" section in the system prompt
+  // tells the AI how to respond to it.
+  const isHelpRequestThread =
+       !!thread.etsyHeadingBadge
+    && /^\s*help\s*request\s*$/i.test(String(thread.etsyHeadingBadge));
+  if (isHelpRequestThread) {
+    sections.push(`\n--- HELP REQUEST CONTEXT (FROM ETSY HEADING) ---`);
+    sections.push(`This thread is an ETSY HELP REQUEST on an EXISTING order.`);
+    sections.push(`Etsy heading badge: ${thread.etsyHeadingBadge}`);
+    if (thread.etsyHeadingTitle) sections.push(`Etsy heading title: ${thread.etsyHeadingTitle}`);
+    if (thread.etsyOrderId)      sections.push(`Linked order ID (receiptId): ${thread.etsyOrderId}`);
+    if (thread.etsyViewOrderUrl) sections.push(`Order page URL: ${thread.etsyViewOrderUrl}`);
+    sections.push(`>>> Apply the HELP REQUESTS ON EXISTING ORDERS rules from the system prompt. <<<`);
+  }
+
   sections.push(`\n--- CUSTOMER CONTEXT ---`);
   sections.push(`Display name: ${thread.customerName || "(unknown)"}`);
   if (thread.etsyUsername) sections.push(`Etsy username: ${thread.etsyUsername}`);
@@ -2440,6 +2535,48 @@ Operator signing the reply: ${employeeName || "(unspecified — use default sign
 }
 
 // ─── Tool specs + executors ──────────────────────────────────────────────
+
+// v4.4.0 — Shared receipt slim-formatter.
+//
+// Both the lookup_order_details tool executor AND the help-request
+// pre-AI prefetch (further down) need to convert a raw Etsy receipt
+// into the slim shape the model consumes. Lifted out so both paths
+// produce identical output and the prompt's interpretation is consistent
+// whether the order arrived via tool call or via prefetch context.
+function slimReceiptForModel(receipt, receiptId) {
+  if (!receipt) return { error: "receipt not found", receiptId: String(receiptId || "") };
+  const tx = Array.isArray(receipt.transactions) ? receipt.transactions : [];
+  return {
+    receiptId    : String(receiptId),
+    orderedAt    : receipt.created_timestamp ? new Date(receipt.created_timestamp * 1000).toISOString() : null,
+    buyerName    : receipt.name || null,
+    buyerMessage : receipt.message_from_buyer || null,
+    isPaid       : !!receipt.is_paid,
+    isShipped    : !!receipt.is_shipped,
+    grandTotal   : receipt.grandtotal && (Number(receipt.grandtotal.amount) / Math.pow(10, receipt.grandtotal.divisor || 2)) || null,
+    currency     : receipt.grandtotal && receipt.grandtotal.currency_code || null,
+    shippingAddress: {
+      firstLine : receipt.first_line   || null,
+      secondLine: receipt.second_line  || null,
+      city      : receipt.city         || null,
+      state     : receipt.state        || null,
+      zip       : receipt.zip          || null,
+      country   : receipt.country_iso  || null
+    },
+    items: tx.map(t => ({
+      listingId      : t.listing_id,
+      title          : t.title,
+      quantity       : t.quantity,
+      price          : t.price && (Number(t.price.amount) / Math.pow(10, t.price.divisor || 2)) || null,
+      personalization: t.personalization || t.transaction_personalization || null,
+      variations     : Array.isArray(t.variations) ? t.variations.map(v => ({
+        property: v.formatted_name  || v.property_value || null,
+        value   : v.formatted_value || null
+      })) : []
+    })),
+    isShippedStatus: !!receipt.is_shipped
+  };
+}
 
 const TOOL_SPECS = [
   {
@@ -2658,41 +2795,7 @@ function buildToolExecutors(ctx) {
       }
 
       const receipt = await getShopReceiptFull(receiptId);
-      // Slim down to the fields the model needs (the full payload is huge
-      // and wastes tokens)
-      const tx = Array.isArray(receipt.transactions) ? receipt.transactions : [];
-      return {
-        receiptId    : String(receiptId),
-        orderedAt    : receipt.created_timestamp ? new Date(receipt.created_timestamp * 1000).toISOString() : null,
-        buyerName    : receipt.name || null,
-        buyerMessage : receipt.message_from_buyer || null,
-        isPaid       : !!receipt.is_paid,
-        isShipped    : !!receipt.is_shipped,
-        grandTotal   : receipt.grandtotal && (Number(receipt.grandtotal.amount) / Math.pow(10, receipt.grandtotal.divisor || 2)) || null,
-        currency     : receipt.grandtotal && receipt.grandtotal.currency_code || null,
-        shippingAddress: {
-          firstLine : receipt.first_line   || null,
-          secondLine: receipt.second_line  || null,
-          city      : receipt.city         || null,
-          state     : receipt.state        || null,
-          zip       : receipt.zip          || null,
-          country   : receipt.country_iso  || null
-        },
-        items: tx.map(t => ({
-          listingId      : t.listing_id,
-          title          : t.title,
-          quantity       : t.quantity,
-          price          : t.price && (Number(t.price.amount) / Math.pow(10, t.price.divisor || 2)) || null,
-          personalization: t.personalization || t.transaction_personalization || null,
-          variations     : Array.isArray(t.variations) ? t.variations.map(v => ({
-            property: v.formatted_name  || v.property_value || null,
-            value   : v.formatted_value || null
-          })) : []
-        })),
-        // Shipments so the model has tracking if it asked for details
-        // instead of tracking specifically
-        isShippedStatus: !!receipt.is_shipped
-      };
+      return slimReceiptForModel(receipt, receiptId);
     },
 
     lookup_listing_by_url: async (input) => {
@@ -3430,9 +3533,65 @@ exports.handler = async (event) => {
 
     // ─── 2. Build the Anthropic message array ──────────────────────
     // Context preamble first (as a user turn), then the real conversation.
-    const preambleText = buildContextPreamble({
+    let preambleText = buildContextPreamble({
       thread, customer, mode, currentDraft, instructions, employeeName, messages
     });
+
+    // ─── 2.5. v4.4.0 — PRE-AI HELP-REQUEST ORDER-DETAILS PREFETCH ──
+    //
+    // If the thread is an Etsy "Help request" linked to an existing
+    // order, we don't want to depend on the AI calling
+    // lookup_order_details on its own. The prompt tells it to, but the
+    // prompt-only path has the same regression mode as the v3.28
+    // tracking prefetch: sometimes the AI skips the tool, sometimes it
+    // hallucinates an answer without pulling the order, sometimes it
+    // asks the customer questions whose answers are already on the order.
+    //
+    // This prefetch hits the Etsy receipts API directly with the
+    // structured order ID from the scrape, slims the receipt to the
+    // same shape lookup_order_details returns, and appends it to the
+    // preamble. The AI sees the order data as part of its initial
+    // context — no tool round-trip needed, no chance for the AI to
+    // miss it.
+    //
+    // We bypass the executor's recent-receipts cache check because the
+    // order ID came from Etsy's own conversation heading, not from AI
+    // input — it's a trustworthy signal, not something to validate
+    // against an anti-hallucination guardrail.
+    //
+    // If the customer is a first-time buyer or the cache hasn't been
+    // populated, the executor's later tool call (if any) would fail
+    // the cache check — so without this prefetch, the help-request
+    // would silently lose order context. The prefetch is also belt-
+    // and-suspenders against that.
+    const isHelpRequestThread =
+         !!thread.etsyHeadingBadge
+      && /^\s*help\s*request\s*$/i.test(String(thread.etsyHeadingBadge));
+
+    if (isHelpRequestThread && thread.etsyOrderId && /^\d+$/.test(String(thread.etsyOrderId))) {
+      try {
+        console.log(`[draftReply ${threadId}] v4.4.0 pre-AI help-request order prefetch — fetching order #${thread.etsyOrderId}`);
+        const receipt = await getShopReceiptFull(String(thread.etsyOrderId));
+        const slim = slimReceiptForModel(receipt, String(thread.etsyOrderId));
+        preambleText += `\n\n--- LINKED ORDER DETAILS (PRE-FETCHED FROM ETSY) ---
+This is the order the customer's help request is about. Pulled directly
+from the Etsy API at draft-time; treat it as authoritative. Use these
+facts (items, variations, personalization, ship status) when composing
+your reply. Do NOT ask the customer for information that is already on
+this order.
+
+${JSON.stringify(slim, null, 2)}`;
+        console.log(`[draftReply ${threadId}] v4.4.0 pre-AI help-request prefetch SUCCESS — order #${thread.etsyOrderId}, ${(slim.items || []).length} item(s), paid=${slim.isPaid}, shipped=${slim.isShipped}`);
+      } catch (e) {
+        console.warn(`[draftReply ${threadId}] v4.4.0 pre-AI help-request order prefetch FAILED for #${thread.etsyOrderId}: ${e.message}`);
+        preambleText += `\n\n--- LINKED ORDER DETAILS (PRE-FETCH FAILED) ---
+The thread is an Etsy help request linked to order #${thread.etsyOrderId},
+but the pre-fetch from Etsy failed (${e.message}). Call lookup_order_details
+yourself with receiptId="${thread.etsyOrderId}" to get the details before
+answering. Do not guess about the order's contents.`;
+      }
+    }
+
     const { turns: convTurns, imagesAttached } = await buildConversationMessages(
       messages, elidedCount, hasMore, includeImages
     );

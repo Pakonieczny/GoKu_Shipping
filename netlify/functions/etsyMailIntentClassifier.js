@@ -410,9 +410,42 @@ function _formatTailForModel(tail) {
 /** v3.0: Thread-aware classification.
  *  Pulls the recent thread tail, hands it to the model with the system
  *  prompt, returns a single classification for the CURRENT customer arc.
- *  No caching — every call is a fresh classification. */
+ *  No caching — every call is a fresh classification.
+ *
+ *  v4.4.0: Also loads the thread doc's Etsy heading metadata (badge,
+ *  linked order ID, heading title) and surfaces it to the classifier
+ *  alongside the messages. This is structured signal from Etsy itself —
+ *  "Help request" badge with a linked order means the customer is
+ *  asking for assistance with an EXISTING order, not exploring a new
+ *  purchase. The system prompt has a STRUCTURED OVERRIDE rule that
+ *  collapses to `support` whenever this signal is present, regardless
+ *  of message content.
+ */
 async function classifyThread(threadId, opts = {}) {
   const tail = await loadThreadTail(threadId);
+
+  // v4.4.0 — Load Etsy heading metadata from the thread doc so the
+  // classifier can apply the structured-override rule. Cheap single
+  // doc read; non-fatal on failure.
+  let helpRequestMetadata = null;
+  try {
+    const tDoc = await db.collection(THREADS_COLL).doc(threadId).get();
+    if (tDoc.exists) {
+      const td = tDoc.data() || {};
+      if (td.etsyHeadingBadge || td.etsyOrderId) {
+        helpRequestMetadata = {
+          etsyHeadingBadge: td.etsyHeadingBadge || null,
+          etsyHeadingTitle: td.etsyHeadingTitle || null,
+          etsyOrderId     : td.etsyOrderId      || null,
+          etsyViewOrderUrl: td.etsyViewOrderUrl || null,
+          isHelpRequest   : !!td.etsyHeadingBadge
+                            && /^\s*help\s*request\s*$/i.test(String(td.etsyHeadingBadge))
+        };
+      }
+    }
+  } catch (e) {
+    console.warn(`[intentClassifier] thread-doc read failed for ${threadId}:`, e.message);
+  }
 
   if (tail.length === 0) {
     // Edge case: thread is empty or all messages are older than 30 days.
@@ -445,9 +478,29 @@ async function classifyThread(threadId, opts = {}) {
     throw err;
   }
 
+  // Build the structured-metadata block (if any) that precedes the
+  // message tail. The system prompt's STRUCTURED OVERRIDE section reads
+  // this block to apply the help-request rule.
+  let metadataBlock = "";
+  if (helpRequestMetadata) {
+    const lines = ["═══ STRUCTURED THREAD METADATA (FROM ETSY SCRAPE) ═══"];
+    if (helpRequestMetadata.etsyHeadingBadge) lines.push(`etsyHeadingBadge: ${helpRequestMetadata.etsyHeadingBadge}`);
+    if (helpRequestMetadata.etsyHeadingTitle) lines.push(`etsyHeadingTitle: ${helpRequestMetadata.etsyHeadingTitle}`);
+    if (helpRequestMetadata.etsyOrderId)      lines.push(`etsyOrderId: ${helpRequestMetadata.etsyOrderId}`);
+    if (helpRequestMetadata.isHelpRequest) {
+      lines.push(``);
+      lines.push(`>>> This is an Etsy HELP REQUEST on an EXISTING order. The structured`);
+      lines.push(`>>> override rule applies: classification = "support", confidence ≥ 0.9,`);
+      lines.push(`>>> regardless of message body. <<<`);
+    }
+    lines.push("═══ END STRUCTURED METADATA ═══");
+    metadataBlock = lines.join("\n") + "\n\n";
+  }
+
   const userMsg =
     "Read the recent thread between this Etsy shop and one customer, then " +
     "classify the CURRENT customer arc. Older arcs are context, not signal.\n\n" +
+    metadataBlock +
     "═══ THREAD (oldest at top, newest at bottom; last 30 days, max 40 messages) ═══\n\n" +
     _formatTailForModel(tail) +
     "\n\n═══ END THREAD ═══\n\n" +

@@ -2398,6 +2398,46 @@ exports.handler = async (event) => {
       console.warn(`[salesAgent] terminal-status check failed for ${threadId}:`, e.message);
     }
 
+    // v4.4.0 — Help-request safety gate.
+    //
+    // The auto-pipeline has a hard-gate that prevents help-request
+    // threads from being routed here in the first place. This gate is
+    // belt-and-suspenders for the cases the pipeline gate can't cover:
+    //   - Legacy threads that entered the sales funnel before the
+    //     pipeline gate existed and still have an active SalesContext.
+    //   - Direct invocations of the sales agent (manual operator
+    //     trigger, retry, test harness) on a thread that was scraped
+    //     with the help-request badge.
+    //   - Future routing changes that might accidentally re-introduce
+    //     a path into sales for help-request threads.
+    //
+    // When detected, write an immediate escalation draft instead of
+    // running the sales prompt. The customer-service drafter handles
+    // help requests; the sales agent never does.
+    if (threadDocData
+        && threadDocData.etsyHeadingBadge
+        && /^\s*help\s*request\s*$/i.test(String(threadDocData.etsyHeadingBadge))) {
+      console.log(`[salesAgent] thread ${threadId} is an Etsy Help Request — escalating, sales agent does not handle these`);
+      await writeAudit({
+        threadId, eventType: "sales_agent_skipped_help_request",
+        payload: {
+          reason          : "Etsy 'Help request' badge detected on thread; sales agent never handles help requests",
+          etsyOrderId     : threadDocData.etsyOrderId || null,
+          etsyHeadingBadge: threadDocData.etsyHeadingBadge,
+          etsyHeadingTitle: threadDocData.etsyHeadingTitle || null
+        },
+        outcome: "skipped"
+      });
+      return { statusCode: 200, headers: CORS,
+               body: JSON.stringify({
+                 ok: true, skipped: true,
+                 reason: "etsy_help_request_thread",
+                 etsyOrderId     : threadDocData.etsyOrderId || null,
+                 etsyHeadingBadge: threadDocData.etsyHeadingBadge,
+                 message         : "Sales agent does not handle Etsy help requests. Route to etsyMailDraftReply instead."
+               }) };
+    }
+
     // ── Load or init the sales context ──
     const salesCtx = await loadOrInitSalesContext(threadId);
     // v4.0: stage is no longer read or referenced. Kept only in

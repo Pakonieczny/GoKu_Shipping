@@ -1168,11 +1168,52 @@ exports.handler = async (event) => {
     // to BOTH paths — if a thread isn't in pilot, even an active
     // SalesContext gets ignored (matches the spec's "rollback by
     // emptying the list" semantic).
-    if (autoCfg.salesModeEnabled
+
+    // v4.4.0 — Help-request hard-gate.
+    //
+    // Etsy threads with the "Help request" heading badge are customers
+    // asking for assistance with an EXISTING order. They are NEVER sales
+    // conversations regardless of what the message text might suggest.
+    // The Etsy scrape captures this on the thread doc as etsyHeadingBadge
+    // ("Help request") together with etsyOrderId and etsyHeadingTitle.
+    //
+    // This deterministic gate runs BEFORE the sales-routing branch so:
+    //   - Fresh help-request threads never enter the sales funnel.
+    //   - The intent classifier's potential mis-classification (e.g. on
+    //     a help-request that contains an engraving change) cannot
+    //     override the structured Etsy signal.
+    //   - An active SalesContext from a prior run on the same thread
+    //     does NOT keep a help-request inbound stuck in sales mode.
+    //
+    // Operators can still manually move a thread into sales via the UI's
+    // move-to dropdown when they truly want to override.
+    const helpRequestSnap = await threadRef.get();
+    const helpRequestData = helpRequestSnap.exists ? helpRequestSnap.data() : {};
+    const isEtsyHelpRequest =
+         !!helpRequestData.etsyHeadingBadge
+      && /^\s*help\s*request\s*$/i.test(String(helpRequestData.etsyHeadingBadge));
+
+    if (isEtsyHelpRequest) {
+      await writeAudit({
+        threadId,
+        eventType: "sales_routing_skipped_help_request",
+        payload  : {
+          reason          : "Etsy 'Help request' badge — thread routed to support, not sales",
+          etsyOrderId     : helpRequestData.etsyOrderId || null,
+          etsyHeadingBadge: helpRequestData.etsyHeadingBadge,
+          etsyHeadingTitle: helpRequestData.etsyHeadingTitle || null,
+          classifierSaid  : (intentResp && intentResp.classification) || null,
+          classifierConf  : (intentResp && intentResp.confidence)    || null
+        }
+      });
+      // Fall through to the draft-reply path below. Skip sales-routing
+      // branch entirely.
+    } else if (autoCfg.salesModeEnabled
         && (autoCfg.salesPilotThreadIds.length === 0
             || autoCfg.salesPilotThreadIds.includes(threadId))) {
 
       const activeSalesStage = await loadActiveSalesContextStage(threadId);
+
 
       const freshSalesLead =
            autoCfg.salesAutoEngage
