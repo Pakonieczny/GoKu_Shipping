@@ -130,6 +130,8 @@ const TOKEN_REFRESH_BUFFER_MS = 2 * 60 * 1000;
 const PAGE_SIZE       = 100;
 const MAX_PAGES       = 25;  // safety cap per cron run — 30s budget allows ~10 pages typically
 const FETCH_TIMEOUT_MS = 20 * 1000;
+const RECENT_RECEIPTS_CAP = 10;
+const CUSTOMER_REBUILD_LIMIT_PER_RUN = 100;
 
 // ─── OAuth token management (mirror of sync-background's helpers) ──────────
 async function readEtsyToken() {
@@ -260,9 +262,14 @@ async function fetchOnePage(accessToken, params) {
 
 // ─── Receipt → mirror doc transform ────────────────────────────────────────
 function receiptToMirrorDoc(r) {
+  const receiptId = String(r.receipt_id);
+  const buyerUserId = r.buyer_user_id ? String(r.buyer_user_id) : null;
   return {
-    receipt_id          : String(r.receipt_id),
-    buyer_user_id       : r.buyer_user_id ? String(r.buyer_user_id) : null,
+    receipt_id          : receiptId,
+    receiptId           : receiptId,
+    etsyOrderId         : receiptId,
+    buyer_user_id       : buyerUserId,
+    buyerUserId         : buyerUserId,
     created_timestamp   : r.created_timestamp || null,
     updated_timestamp   : r.updated_timestamp || null,
     status              : r.status || null,
@@ -290,6 +297,147 @@ async function writeReceiptBatch(receipts) {
   }
   await batch.commit();
   return receipts.length;
+}
+
+function mirrorToSummary(m) {
+  return {
+    receiptId  : String(m.receipt_id),
+    orderedAt  : m.created_timestamp ? m.created_timestamp * 1000 : null,
+    updatedAt  : m.updated_timestamp ? m.updated_timestamp * 1000 : null,
+    grandTotal : m.grandtotal_amount,
+    currency   : m.grandtotal_currency,
+    status     : m.status || null,
+    isPaid     : !!m.is_paid,
+    isShipped  : !!m.is_shipped,
+    buyerUserId: m.buyer_user_id || null,
+    buyerName  : m.buyer_name || null
+  };
+}
+
+function isMissingFirestoreIndexError(err) {
+  const msg = String((err && (err.message || err.details)) || err || "");
+  return /FAILED_PRECONDITION/i.test(msg) && /requires an index/i.test(msg);
+}
+
+async function queryBuyerMirrorReceipts(buyerUserId) {
+  const buyerId = String(buyerUserId);
+  try {
+    const snap = await db.collection("EtsyMail_Receipts")
+      .where("buyer_user_id", "==", buyerId)
+      .orderBy("created_timestamp", "desc")
+      .limit(1000)
+      .get();
+    return {
+      docs: snap.docs.map(d => d.data()),
+      queryMode: "buyer_user_id_created_timestamp_index",
+      missingIndexFallback: false,
+      missingIndexErrorMsg: null
+    };
+  } catch (err) {
+    if (!isMissingFirestoreIndexError(err)) throw err;
+
+    const fallbackSnap = await db.collection("EtsyMail_Receipts")
+      .where("buyer_user_id", "==", buyerId)
+      .limit(1000)
+      .get();
+
+    const docs = fallbackSnap.docs
+      .map(d => d.data())
+      .sort((a, b) => Number(b.created_timestamp || 0) - Number(a.created_timestamp || 0));
+
+    return {
+      docs,
+      queryMode: "buyer_user_id_single_field_fallback_sorted_in_memory",
+      missingIndexFallback: true,
+      missingIndexErrorMsg: String(err.message || err).slice(0, 700)
+    };
+  }
+}
+
+async function rebuildCustomerFromMirror(buyerUserId) {
+  const queryResult = await queryBuyerMirrorReceipts(buyerUserId);
+
+  const summaries = [];
+  let displayName = null;
+  let currency = null;
+  let totalSpent = 0;
+  let firstMs = null;
+  let lastMs = null;
+
+  for (const m of queryResult.docs) {
+    const s = mirrorToSummary(m);
+    summaries.push(s);
+    if (s.buyerName && !displayName) displayName = s.buyerName;
+    if (s.currency && !currency) currency = s.currency;
+    if (typeof s.grandTotal === "number") totalSpent += s.grandTotal;
+    if (s.orderedAt) {
+      if (firstMs === null || s.orderedAt < firstMs) firstMs = s.orderedAt;
+      if (lastMs  === null || s.orderedAt > lastMs ) lastMs  = s.orderedAt;
+    }
+  }
+
+  const orderCount = summaries.length;
+  const customerRef = db.collection("EtsyMail_Customers").doc(String(buyerUserId));
+  const existingSnap = await customerRef.get();
+  const existing = existingSnap.exists ? existingSnap.data() : null;
+
+  const recentReceipts = summaries.slice(0, RECENT_RECEIPTS_CAP).map(s => ({
+    receiptId : s.receiptId,
+    orderedAt : s.orderedAt ? admin.firestore.Timestamp.fromMillis(s.orderedAt) : null,
+    grandTotal: s.grandTotal,
+    currency  : s.currency,
+    status    : s.status,
+    isPaid    : s.isPaid,
+    isShipped : s.isShipped
+  }));
+
+  await customerRef.set({
+    buyerUserId  : String(buyerUserId),
+    displayName  : displayName || (existing && existing.displayName) || "Unknown",
+    currency     : currency || (existing && existing.currency) || "USD",
+    orderCount,
+    totalSpent   : Math.round(totalSpent * 100) / 100,
+    firstOrderAt : firstMs ? admin.firestore.Timestamp.fromMillis(firstMs) : null,
+    lastOrderAt  : lastMs  ? admin.firestore.Timestamp.fromMillis(lastMs)  : null,
+    isRepeatBuyer: orderCount >= 2,
+    recentReceipts,
+    updatedAt    : FV.serverTimestamp(),
+    syncSource   : "mirror-cron",
+    mirrorCustomerRebuiltAt: FV.serverTimestamp()
+  }, { merge: true });
+
+  return {
+    buyerUserId: String(buyerUserId),
+    receiptsProcessed: orderCount,
+    queryMode: queryResult.queryMode,
+    missingIndexFallback: !!queryResult.missingIndexFallback
+  };
+}
+
+async function rebuildCustomersForChangedBuyers(buyerIds) {
+  const ids = Array.from(new Set(Array.from(buyerIds || []).filter(Boolean).map(String)));
+  const selected = ids.slice(0, CUSTOMER_REBUILD_LIMIT_PER_RUN);
+  const skipped = Math.max(0, ids.length - selected.length);
+
+  const result = {
+    attempted: selected.length,
+    updated: 0,
+    skipped,
+    errors: [],
+    missingIndexFallbackCount: 0
+  };
+
+  for (const buyerId of selected) {
+    try {
+      const out = await rebuildCustomerFromMirror(buyerId);
+      result.updated += 1;
+      if (out.missingIndexFallback) result.missingIndexFallbackCount += 1;
+    } catch (err) {
+      result.errors.push({ buyerUserId: buyerId, error: String(err.message || err).slice(0, 500) });
+    }
+  }
+
+  return result;
 }
 
 // ─── Diagnostic log helper ─────────────────────────────────────────────────
@@ -450,6 +598,8 @@ exports.handler = meter.wrapHandler(async () => {
   let offset = 0;
   let outcome = "ok";
   let lastErrorMsg = null;
+  const changedBuyerIds = new Set();
+  let customerRebuild = { attempted: 0, updated: 0, skipped: 0, errors: [], missingIndexFallbackCount: 0 };
 
   for (let page = 0; page < MAX_PAGES; page++) {
     const params = {
@@ -493,6 +643,13 @@ exports.handler = meter.wrapHandler(async () => {
       break;
     }
 
+    // Track changed buyers so the 3-minute receipt mirror also refreshes
+    // EtsyMail_Customers/{buyerUserId}. Firestore collections are created on
+    // first write, so this is the path that creates the customer folders/docs.
+    for (const r of receipts) {
+      if (r.buyer_user_id) changedBuyerIds.add(String(r.buyer_user_id));
+    }
+
     // Track the max updated_timestamp we successfully wrote — that's
     // our new high-water mark.
     for (const r of receipts) {
@@ -518,6 +675,14 @@ exports.handler = meter.wrapHandler(async () => {
   // min_last_modified excludes anything we already processed. Etsy's
   // min_last_modified is inclusive, so without the +1 we'd re-fetch
   // every newest receipt indefinitely.
+  if (outcome === "ok" && changedBuyerIds.size) {
+    customerRebuild = await rebuildCustomersForChangedBuyers(changedBuyerIds);
+    if (customerRebuild.errors.length) {
+      lastErrorMsg = `customer_rebuild_partial_errors=${customerRebuild.errors.length}`;
+      console.warn("[mirror-cron] customer rebuild had partial errors:", customerRebuild.errors.slice(0, 5));
+    }
+  }
+
   const shouldAdvanceWatermark = receiptsProcessed > 0;
   const nextWatermark = shouldAdvanceWatermark ? (maxUpdatedSeen + 1) : lastSyncTs;
 
@@ -531,7 +696,12 @@ exports.handler = meter.wrapHandler(async () => {
     lastSyncReceiptsCount : receiptsProcessed,
     lastSyncOutcome       : outcome,
     lastSyncErrorMsg      : lastErrorMsg,
-    lastSyncElapsedMs     : elapsedMs
+    lastSyncElapsedMs     : elapsedMs,
+    lastCustomerRebuildAttempted: customerRebuild.attempted,
+    lastCustomerRebuildUpdated  : customerRebuild.updated,
+    lastCustomerRebuildSkipped  : customerRebuild.skipped,
+    lastCustomerRebuildErrorCount: customerRebuild.errors.length,
+    lastCustomerRebuildMissingIndexFallbackCount: customerRebuild.missingIndexFallbackCount
   };
   try {
     await db.doc(MIRROR_STATE_PATH).set(statePatch, { merge: true });
@@ -547,6 +717,12 @@ exports.handler = meter.wrapHandler(async () => {
     maxUpdatedSeen,
     nextWatermark,
     elapsedMs,
+    customerRebuildAttempted: customerRebuild.attempted,
+    customerRebuildUpdated  : customerRebuild.updated,
+    customerRebuildSkipped  : customerRebuild.skipped,
+    customerRebuildErrorCount: customerRebuild.errors.length,
+    customerRebuildMissingIndexFallbackCount: customerRebuild.missingIndexFallbackCount,
+    customerRebuildErrors   : customerRebuild.errors.slice(0, 10),
     errorMsg          : lastErrorMsg,
     endedAt           : FV.serverTimestamp()
   });
@@ -560,6 +736,11 @@ exports.handler = meter.wrapHandler(async () => {
       outcome,
       pagesFetched,
       receiptsProcessed,
+      customerRebuildAttempted: customerRebuild.attempted,
+      customerRebuildUpdated  : customerRebuild.updated,
+      customerRebuildSkipped  : customerRebuild.skipped,
+      customerRebuildErrorCount: customerRebuild.errors.length,
+      customerRebuildMissingIndexFallbackCount: customerRebuild.missingIndexFallbackCount,
       nextWatermark,
       elapsedMs,
       errorMsg: lastErrorMsg

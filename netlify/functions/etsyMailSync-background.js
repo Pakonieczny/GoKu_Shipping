@@ -255,6 +255,149 @@ async function writeReceiptBatch(receipts) {
   return receipts.length;
 }
 
+// ─── Targeted receipt hydrate ─────────────────────────────────────────────
+//
+// The normal mirror cron is the cheap, predictable path. But Etsy message
+// pages can expose an exact receipt/order number before the scheduled mirror
+// has captured it, or after a mirror-watermark stall. In that case the UI can
+// correctly show "Help request" for an order while the customer panel says
+// "no purchase history" because buyer-mode only queries Firestore.
+//
+// When snapshot passes a receiptId, buyer-mode first ensures that specific
+// receipt is present in EtsyMail_Receipts. This costs at most one Etsy call per
+// previously-unmirrored order, then all future buyer aggregations remain free.
+async function fetchReceiptById(accessToken, receiptId) {
+  const url =
+    `https://api.etsy.com/v3/application/shops/${SHOP_ID}` +
+    `/receipts/${encodeURIComponent(String(receiptId))}?includes=` +
+    ["Transactions", "Transactions.personalization", "Transactions.variations"].join(",");
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  const _meterToken = meter.bump("sync.targetReceiptHydrate");
+
+  let res;
+  try {
+    res = await fetch(url, {
+      headers: {
+        Authorization : `Bearer ${accessToken}`,
+        "x-api-key"   : `${CLIENT_ID}:${CLIENT_SECRET}`,
+        "Content-Type": "application/json"
+      },
+      signal: controller.signal
+    });
+  } catch (err) {
+    clearTimeout(timeoutId);
+    _meterToken.failNet();
+    if (err.name === "AbortError") {
+      return { ok: false, kind: "timeout", message: "Etsy receipt fetch timeout" };
+    }
+    return { ok: false, kind: "network", message: err.message };
+  }
+  clearTimeout(timeoutId);
+  _meterToken.fromHttp(res.status);
+
+  const text = await res.text().catch(() => "");
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch {}
+
+  if (res.status === 429) {
+    const retryAfter = parseInt(res.headers.get("retry-after") || "5", 10);
+    const isDaily = /daily|day/i.test(text) || retryAfter > 3600;
+    if (isDaily) {
+      try {
+        await db.doc(SYNC_STATE_PATH).set({
+          etsyDailyLimitHitAt   : FV.serverTimestamp(),
+          etsyDailyLimitResetAt : admin.firestore.Timestamp.fromMillis(Date.now() + retryAfter * 1000),
+          etsyDailyLimitDetail  : text.slice(0, 300)
+        }, { merge: true });
+      } catch {}
+      return { ok: false, kind: "daily_rate_limit", retryAfter, message: text.slice(0, 200) };
+    }
+    return { ok: false, kind: "rate_limited", retryAfter, message: text.slice(0, 200) };
+  }
+
+  if (!res.ok) {
+    const msg = (data && data.error) || text || `Etsy API ${res.status}`;
+    return { ok: false, kind: "http_error", status: res.status, message: String(msg).slice(0, 300) };
+  }
+
+  return { ok: true, data };
+}
+
+async function ensureReceiptMirroredById({ receiptId, expectedBuyerUserId, threadId }) {
+  if (!receiptId || !/^\d+$/.test(String(receiptId))) {
+    return { attempted: false, mirrored: false, reason: "no_valid_receipt_id" };
+  }
+
+  const receiptDocRef = db.collection("EtsyMail_Receipts").doc(String(receiptId));
+  const existingSnap = await receiptDocRef.get();
+  if (existingSnap.exists) {
+    const existing = existingSnap.data() || {};
+    if (existing.buyer_user_id) {
+      return {
+        attempted  : false,
+        mirrored   : true,
+        source     : "existing_mirror",
+        receiptId  : String(receiptId),
+        buyerUserId: String(existing.buyer_user_id)
+      };
+    }
+  }
+
+  if (!SHOP_ID || !CLIENT_ID || !CLIENT_SECRET) {
+    return {
+      attempted: false,
+      mirrored : false,
+      reason   : "missing_env_vars"
+    };
+  }
+
+  const accessToken = await getValidEtsyAccessToken();
+  const fetched = await fetchReceiptById(accessToken, receiptId);
+  if (!fetched.ok) {
+    return {
+      attempted: true,
+      mirrored : false,
+      receiptId: String(receiptId),
+      errorKind: fetched.kind,
+      errorMsg : fetched.message || null
+    };
+  }
+
+  const receipt = fetched.data || {};
+  if (!receipt.receipt_id) receipt.receipt_id = String(receiptId);
+
+  const mirroredDoc = receiptToMirrorDoc(receipt);
+  await receiptDocRef.set(mirroredDoc, { merge: true });
+
+  const receiptBuyerId = receipt.buyer_user_id ? String(receipt.buyer_user_id) : null;
+
+  // If Etsy's receipt gives us a better buyer id than the scraper had, patch
+  // the thread so the customer panel looks up the correct customer doc on the
+  // next refresh. Receipt buyer_user_id is stronger than scraped profile chrome.
+  if (threadId && receiptBuyerId && expectedBuyerUserId && receiptBuyerId !== String(expectedBuyerUserId)) {
+    try {
+      await db.collection("EtsyMail_Threads").doc(String(threadId)).set({
+        buyerUserId: receiptBuyerId,
+        buyerUserIdCorrectedFrom: String(expectedBuyerUserId),
+        buyerUserIdCorrectedAt: FV.serverTimestamp(),
+        buyerUserIdCorrectionSource: "target_receipt_hydrate"
+      }, { merge: true });
+    } catch (e) {
+      console.warn(`[buyer-sync] failed to patch thread ${threadId} buyerUserId:`, e.message);
+    }
+  }
+
+  return {
+    attempted  : true,
+    mirrored   : true,
+    source     : "target_receipt_hydrate",
+    receiptId  : String(receiptId),
+    buyerUserId: receiptBuyerId
+  };
+}
+
 // ─── Receipt → customer summary transform (for buyer-mode aggregation) ────
 function mirrorToSummary(m) {
   return {
@@ -274,13 +417,26 @@ function mirrorToSummary(m) {
 // ─── Buyer-mode: aggregate from mirror ─────────────────────────────────────
 //
 // Reads ALL receipts for the buyer from the mirror, computes totals,
-// writes the customer doc. No Etsy calls.
+// writes the customer doc. If a specific receiptId was provided and that
+// receipt is missing from the mirror, hydrates only that receipt first.
 //
 // Returns: { receiptsProcessed, customersUpdated, pagesFetched, buyerUserId }
-// (pagesFetched stays at 0 — we don't hit Etsy.)
-async function runBuyerSyncFromMirror({ buyerUserId }) {
-  if (!buyerUserId) {
-    throw new Error("runBuyerSyncFromMirror requires buyerUserId");
+// (pagesFetched stays at 0 — only targeted receipt hydrate may hit Etsy.)
+async function runBuyerSyncFromMirror({ buyerUserId, receiptId = null, threadId = null }) {
+  let effectiveBuyerUserId = buyerUserId ? String(buyerUserId) : null;
+
+  const targetReceiptHydrate = await ensureReceiptMirroredById({
+    receiptId,
+    expectedBuyerUserId: effectiveBuyerUserId,
+    threadId
+  });
+
+  if (targetReceiptHydrate.buyerUserId) {
+    effectiveBuyerUserId = String(targetReceiptHydrate.buyerUserId);
+  }
+
+  if (!effectiveBuyerUserId) {
+    throw new Error("runBuyerSyncFromMirror requires buyerUserId or a receiptId that resolves to buyer_user_id");
   }
 
   // Query the mirror. We pull up to 1000 most recent receipts for the
@@ -288,7 +444,7 @@ async function runBuyerSyncFromMirror({ buyerUserId }) {
   // full set to compute orderCount and totalSpent accurately. A buyer
   // with >1000 orders is implausible for our shop.
   const snap = await db.collection("EtsyMail_Receipts")
-    .where("buyer_user_id", "==", String(buyerUserId))
+    .where("buyer_user_id", "==", String(effectiveBuyerUserId))
     .orderBy("created_timestamp", "desc")
     .limit(1000)
     .get();
@@ -329,7 +485,7 @@ async function runBuyerSyncFromMirror({ buyerUserId }) {
     }));
 
   // Load existing customer doc to preserve fields we don't compute
-  const customerRef = db.collection("EtsyMail_Customers").doc(String(buyerUserId));
+  const customerRef = db.collection("EtsyMail_Customers").doc(String(effectiveBuyerUserId));
   const existingSnap = await customerRef.get();
   const existing = existingSnap.exists ? existingSnap.data() : null;
 
@@ -337,7 +493,7 @@ async function runBuyerSyncFromMirror({ buyerUserId }) {
   const finalCurrency    = currency    || (existing && existing.currency)    || "USD";
 
   const customerDoc = {
-    buyerUserId  : String(buyerUserId),
+    buyerUserId  : String(effectiveBuyerUserId),
     displayName  : finalDisplayName,
     currency     : finalCurrency,
     orderCount,
@@ -357,8 +513,11 @@ async function runBuyerSyncFromMirror({ buyerUserId }) {
     receiptsProcessed: orderCount,
     customersUpdated : 1,
     pagesFetched     : 0,
-    buyerUserId      : String(buyerUserId),
-    source           : "mirror"
+    buyerUserId      : String(effectiveBuyerUserId),
+    requestedBuyerUserId: buyerUserId ? String(buyerUserId) : null,
+    receiptId        : receiptId ? String(receiptId) : null,
+    targetReceiptHydrate,
+    source           : targetReceiptHydrate && targetReceiptHydrate.mirrored ? "mirror_with_target_receipt" : "mirror"
   };
 }
 
@@ -692,17 +851,23 @@ exports.handler = meter.wrapHandler(async (event) => {
   // Parse body / query
   let mode = null;
   let buyerUserId = null;
+  let receiptId = null;
+  let threadId = null;
   let action = null;
   try {
     if (event.body) {
       const body = JSON.parse(event.body);
       if (body.mode) mode = body.mode;
       if (body.buyerUserId) buyerUserId = String(body.buyerUserId);
+      if (body.receiptId) receiptId = String(body.receiptId);
+      if (body.threadId) threadId = String(body.threadId);
       if (body.action) action = body.action;
     }
     if (event.queryStringParameters) {
       if (event.queryStringParameters.mode) mode = event.queryStringParameters.mode;
       if (event.queryStringParameters.buyerUserId) buyerUserId = String(event.queryStringParameters.buyerUserId);
+      if (event.queryStringParameters.receiptId) receiptId = String(event.queryStringParameters.receiptId);
+      if (event.queryStringParameters.threadId) threadId = String(event.queryStringParameters.threadId);
       if (event.queryStringParameters.action) action = event.queryStringParameters.action;
     }
   } catch {}
@@ -710,18 +875,20 @@ exports.handler = meter.wrapHandler(async (event) => {
   await writeDiagLog(invocationId, {
     parsedMode       : mode,
     parsedBuyerUserId: buyerUserId,
+    parsedReceiptId  : receiptId,
+    parsedThreadId   : threadId,
     parsedAction     : action
   });
 
   // ─── Mode dispatch ────────────────────────────────────────────────
   try {
     if (mode === "buyer") {
-      if (!buyerUserId) {
-        const out = { ok: false, error: "buyer mode requires buyerUserId" };
+      if (!buyerUserId && !receiptId) {
+        const out = { ok: false, error: "buyer mode requires buyerUserId or receiptId" };
         await writeDiagLog(invocationId, { phase: "end", outcome: "error", errorMsg: out.error });
         return { statusCode: 400, body: JSON.stringify(out) };
       }
-      const result = await runBuyerSyncFromMirror({ buyerUserId });
+      const result = await runBuyerSyncFromMirror({ buyerUserId, receiptId, threadId });
       const elapsedMs = Date.now() - invocationStartMs;
       await writeDiagLog(invocationId, {
         phase             : "end",
@@ -729,7 +896,9 @@ exports.handler = meter.wrapHandler(async (event) => {
         pagesFetched      : 0,
         receiptsProcessed : result.receiptsProcessed,
         customersUpdated  : result.customersUpdated,
-        source            : "mirror",
+        source            : result.source || "mirror",
+        receiptId         : result.receiptId || null,
+        targetReceiptHydrate: result.targetReceiptHydrate || null,
         elapsedMs,
         endedAt           : FV.serverTimestamp()
       });

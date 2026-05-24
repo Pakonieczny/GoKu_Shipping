@@ -210,17 +210,37 @@ function serialize(value) {
   return out;
 }
 
+const STRING_WHERE_FIELDS = new Set([
+  // Etsy IDs look numeric but are stored as strings in Firestore. Do not
+  // coerce these to Number or diagnostic/admin queries silently miss docs.
+  "id",
+  "receipt_id",
+  "receiptId",
+  "etsyOrderId",
+  "buyer_user_id",
+  "buyerUserId",
+  "buyer_user_id_string",
+  "customerId",
+  "threadId",
+  "conversationId",
+  "etsyConversationId",
+  "orderId"
+]);
+
 function parseWhere(raw) {
-  // Accept repeated ?where=field,op,value  — coerce numbers/booleans
+  // Accept repeated ?where=field,op,value. Booleans/null still coerce.
+  // Numeric-looking Etsy IDs stay strings for known ID fields. For other
+  // fields, callers can force a string with where=field,==,str:<value>.
   if (!raw) return [];
   const arr = Array.isArray(raw) ? raw : [raw];
   return arr.map(s => {
     const [field, op, ...rest] = String(s).split(",");
     let value = rest.join(",");
-    if (value === "true") value = true;
+    if (value.startsWith("str:")) value = value.slice(4);
+    else if (value === "true") value = true;
     else if (value === "false") value = false;
     else if (value === "null") value = null;
-    else if (/^-?\d+(\.\d+)?$/.test(value)) value = Number(value);
+    else if (!STRING_WHERE_FIELDS.has(field) && /^-?\d+(\.\d+)?$/.test(value)) value = Number(value);
     return { field, op, value };
   });
 }
