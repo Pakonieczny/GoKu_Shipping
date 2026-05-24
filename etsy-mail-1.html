@@ -862,56 +862,46 @@
     .em-compose .em-compose-bar { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; align-items: center; }
 
     /* ═══════════════════════════════════════════════════════════════
-       v5.32.1 — Send to Design toggle. Rewritten for clarity.
-       Pill-shaped wrapper, large enough iOS-style switch that the
-       state is obvious from across the room. Always functional —
-       no client-side disable; the server returns 422 if the thread
-       has no etsyOrderId, and the dispatch error toast surfaces it.
+       v5.32.2 — Send to Design toggle. Compact version.
+       Icon + toggle pill only. The "Send to Design" text label is
+       hidden via font-size:0 (the icon overrides its own font-size
+       so it stays visible) — saves ~50% of the original width.
+       The tooltip on the label communicates what the toggle does.
        ═══════════════════════════════════════════════════════════════ */
     .em-send-to-design {
       display: inline-flex !important;
       align-items: center !important;
-      gap: 8px !important;
-      padding: 6px 12px 6px 8px !important;
-      border: 1px solid #d0d7de !important;
-      border-radius: 18px !important;
+      gap: 6px !important;
+      padding: 6px 12px !important;          /* match .em-compose button */
+      border: 1px solid #d0d7de !important;  /* match */
+      border-radius: 15px !important;        /* full pill at 30px height */
       background: #ffffff !important;
       cursor: pointer !important;
       user-select: none;
-      font-size: 13px !important;
-      font-weight: 500 !important;
-      color: #424a53 !important;
-      height: 34px !important;
       box-sizing: border-box !important;
-      transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+      transition: background-color 0.15s ease, border-color 0.15s ease;
       margin-left: auto;
+      /* Height auto-computes to ~30px from padding+border+content,
+         matching the sibling buttons exactly. */
     }
     .em-send-to-design:hover {
       background: #f6f8fa !important;
       border-color: #afb8c1 !important;
     }
-    /* Bulletproof native-checkbox hide. !important + multiple zero
-       dimensions because we've seen sticky browser defaults bleed
-       through opacity:0 on some Chromium builds. */
+    /* Native checkbox lives in the DOM (so label clicks toggle it and
+       its 'checked' state is queryable from JS) but is completely
+       removed from render. */
     .em-send-to-design > input[type="checkbox"] {
-      position: absolute !important;
-      opacity: 0 !important;
-      pointer-events: none !important;
-      width: 0 !important;
-      height: 0 !important;
-      margin: 0 !important;
-      padding: 0 !important;
-      border: 0 !important;
-      clip: rect(0, 0, 0, 0) !important;
+      display: none !important;
     }
-    /* Switch track + knob — sized so the state is unmistakable. */
+    /* Switch track + knob — sized so the state is clearly readable. */
     .em-send-to-design-track {
       position: relative;
       display: inline-block;
-      width: 32px;
-      height: 18px;
+      width: 24px;
+      height: 14px;
       background: #cfd6dd;
-      border-radius: 9px;
+      border-radius: 7px;
       flex-shrink: 0;
       transition: background-color 0.2s ease;
     }
@@ -919,40 +909,42 @@
       position: absolute;
       top: 2px;
       left: 2px;
-      width: 14px;
-      height: 14px;
+      width: 10px;
+      height: 10px;
       background: #ffffff;
       border-radius: 50%;
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.22);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.22);
       transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
     }
-    /* ON state — purple (matches AI Draft button) */
+    /* ON state — purple */
     .em-send-to-design > input:checked ~ .em-send-to-design-track {
       background: #6639ba;
     }
     .em-send-to-design > input:checked ~ .em-send-to-design-track .em-send-to-design-knob {
-      transform: translateX(14px);
+      transform: translateX(10px);
     }
-    /* Full pill takes on purple tint when ON so the operator can see
-       at a glance that the dispatch will fire on send. */
+    /* Full pill takes on purple tint when ON */
     .em-send-to-design:has(input:checked) {
       background: #f3eefb !important;
       border-color: #c9b6ef !important;
-      color: #4a2992 !important;
     }
-    .em-send-to-design > input:focus-visible ~ .em-send-to-design-track {
-      outline: 2px solid #0969da;
-      outline-offset: 2px;
-    }
+    /* Hide the "Send to Design" text label — the icon plus tooltip
+       carry the meaning. font-size:0 on the span erases the text
+       characters; the .material-icons child has its own font-size
+       so the icon glyph still renders. */
     .em-send-to-design-text {
       display: inline-flex;
       align-items: center;
-      gap: 5px;
-      white-space: nowrap;
+      font-size: 0;
+      line-height: 0;
     }
     .em-send-to-design-text .material-icons {
       font-size: 16px;
       line-height: 1;
+      color: #57606a;
+    }
+    .em-send-to-design:has(input:checked) .em-send-to-design-text .material-icons {
+      color: #4a2992;
     }
     .em-compose button {
       border: 1px solid #d0d7de; background: #fff; border-radius: 4px;
