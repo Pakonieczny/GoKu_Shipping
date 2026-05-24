@@ -751,7 +751,7 @@
     .em-rail-toggle {
       position: absolute;
       left: 0;
-      top: 10px;
+      top: 2px;
       width: 28px;
       height: 28px;
       border-radius: 50%;
@@ -824,6 +824,17 @@
        toggle — there's nothing to collapse. Uses :has() to look ahead. */
     .em-right-rail-wrapper:has(#emSalesCardMount:empty) .em-rail-toggle {
       display: none;
+    }
+
+    /* v5.30.3 — Right-rail toggle overlap fix.
+     * The collapse button now lives inside the card edge instead of half
+     * outside it, so the first card header needs a small left gutter for
+     * the round chevron. This keeps the title icon/text clear while the
+     * button sits higher in the card's top-left corner. */
+    #emSalesCardMount > .em-card:first-child > h4,
+    #emSalesCardMount .em-sales-card:first-child .em-sales-card-header {
+      padding-left: 36px;
+      min-height: 28px;
     }
 
     .em-card h4 {
