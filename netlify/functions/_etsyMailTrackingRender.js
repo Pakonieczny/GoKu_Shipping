@@ -90,15 +90,31 @@ function esc(s) {
 }
 
 // ─── Date formatting ────────────────────────────────────────────────────
+//
+// Every formatter below pins toLocaleString() to DISPLAY_TZ. Without an
+// explicit timeZone option, toLocaleString falls back to the Node runtime's
+// environment timezone — which on Netlify/AWS Lambda is unstable across
+// deploys and produced rendered times that drifted hours from the actual
+// carrier wallclock time (e.g. ChitChats reporting an event at 7:51 AM
+// Eastern but the rendered PNG showing 2:51 PM). Hard-pinning the display
+// zone makes the output deterministic regardless of where the function
+// runs.
+//
+// Default: America/Toronto (matches the shop's operating zone and the
+// ChitChats/USPS source-of-truth scan times). Override per-deploy with
+// the ETSYMAIL_DISPLAY_TZ env var if a different zone is ever needed.
+const DISPLAY_TZ = process.env.ETSYMAIL_DISPLAY_TZ || "America/Toronto";
+
 function fmtDate(iso) {
   if (!iso) return "";
   const d = new Date(iso);
   if (isNaN(d.getTime())) return String(iso);
   return d.toLocaleDateString("en-US", {
-    weekday: "long",
-    month  : "long",
-    day    : "numeric",
-    year   : "numeric"
+    weekday : "long",
+    month   : "long",
+    day     : "numeric",
+    year    : "numeric",
+    timeZone: DISPLAY_TZ
   });
 }
 
@@ -107,9 +123,10 @@ function fmtDateShort(iso) {
   const d = new Date(iso);
   if (isNaN(d.getTime())) return String(iso);
   return d.toLocaleDateString("en-US", {
-    month: "long",
-    day  : "numeric",
-    year : "numeric"
+    month   : "long",
+    day     : "numeric",
+    year    : "numeric",
+    timeZone: DISPLAY_TZ
   });
 }
 
@@ -118,9 +135,10 @@ function fmtTime(iso) {
   const d = new Date(iso);
   if (isNaN(d.getTime())) return "";
   return d.toLocaleTimeString("en-US", {
-    hour  : "numeric",
-    minute: "2-digit",
-    hour12: true
+    hour    : "numeric",
+    minute  : "2-digit",
+    hour12  : true,
+    timeZone: DISPLAY_TZ
   }).toLowerCase();
 }
 
@@ -136,9 +154,16 @@ function fmtDateTimeCompact(iso) {
   if (!iso) return "";
   const d = new Date(iso);
   if (isNaN(d.getTime())) return String(iso);
-  const date = d.toLocaleDateString("en-US", { month: "long", day: "numeric" });
+  const date = d.toLocaleDateString("en-US", {
+    month   : "long",
+    day     : "numeric",
+    timeZone: DISPLAY_TZ
+  });
   const time = d.toLocaleTimeString("en-US", {
-    hour: "numeric", minute: "2-digit", hour12: true
+    hour    : "numeric",
+    minute  : "2-digit",
+    hour12  : true,
+    timeZone: DISPLAY_TZ
   });
   return `${date} at ${time}`;
 }
@@ -159,9 +184,20 @@ function formatExpectedDelivery(iso) {
   const d = new Date(iso);
   if (isNaN(d.getTime())) return null;
 
-  const weekday = d.toLocaleDateString("en-US", { weekday: "long" }).toUpperCase();
-  const monthDay = d.toLocaleDateString("en-US", { month: "long", day: "numeric" });
-  const time = d.toLocaleTimeString("en-US", { hour: "numeric", hour12: true });
+  const weekday = d.toLocaleDateString("en-US", {
+    weekday : "long",
+    timeZone: DISPLAY_TZ
+  }).toUpperCase();
+  const monthDay = d.toLocaleDateString("en-US", {
+    month   : "long",
+    day     : "numeric",
+    timeZone: DISPLAY_TZ
+  });
+  const time = d.toLocaleTimeString("en-US", {
+    hour    : "numeric",
+    hour12  : true,
+    timeZone: DISPLAY_TZ
+  });
 
   return {
     weekday,
