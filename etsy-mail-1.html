@@ -862,89 +862,106 @@
     .em-compose .em-compose-bar { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; align-items: center; }
 
     /* ═══════════════════════════════════════════════════════════════
-       v5.32.2 — Send to Design toggle. Compact version.
-       Icon + toggle pill only. The "Send to Design" text label is
-       hidden via font-size:0 (the icon overrides its own font-size
-       so it stays visible) — saves ~50% of the original width.
-       The tooltip on the label communicates what the toggle does.
+       v5.32.3 — Send to Design toggle. BUTTON-based.
+       Earlier checkbox+label version kept losing the CSS fight against
+       global input styles in the inbox — the native checkbox stayed
+       visible and the track got resized by some unknown rule. Replaced
+       with <button aria-pressed>: no native form element, no :checked,
+       no specificity battles. Every dimension is locked with !important.
        ═══════════════════════════════════════════════════════════════ */
-    .em-send-to-design {
+    .em-compose .em-compose-bar button.em-send-to-design,
+    button.em-send-to-design {
       display: inline-flex !important;
       align-items: center !important;
       gap: 6px !important;
-      padding: 6px 12px !important;          /* match .em-compose button */
-      border: 1px solid #d0d7de !important;  /* match */
-      border-radius: 15px !important;        /* full pill at 30px height */
+      padding: 6px 12px !important;
+      border: 1px solid #d0d7de !important;
+      border-radius: 999px !important;       /* full pill, regardless of computed height */
       background: #ffffff !important;
       cursor: pointer !important;
-      user-select: none;
+      user-select: none !important;
       box-sizing: border-box !important;
-      transition: background-color 0.15s ease, border-color 0.15s ease;
-      margin-left: auto;
-      /* Height auto-computes to ~30px from padding+border+content,
-         matching the sibling buttons exactly. */
+      transition: background-color 0.15s ease, border-color 0.15s ease !important;
+      margin-left: auto !important;
+      font: inherit !important;
+      color: inherit !important;
+      outline: none !important;
+      width: auto !important;
+      min-width: 0 !important;
+      max-width: none !important;
+      box-shadow: none !important;
+      /* Stretch to match the tallest sibling button in the compose bar
+         (overrides .em-compose-bar's align-items: center). This keeps
+         the toggle the same height as Send via Etsy / AI Draft / etc.
+         without us having to hardcode a height that could drift if
+         the surrounding buttons change. */
+      align-self: stretch !important;
+      height: auto !important;
     }
-    .em-send-to-design:hover {
+    button.em-send-to-design:hover {
       background: #f6f8fa !important;
       border-color: #afb8c1 !important;
     }
-    /* Native checkbox lives in the DOM (so label clicks toggle it and
-       its 'checked' state is queryable from JS) but is completely
-       removed from render. */
-    .em-send-to-design > input[type="checkbox"] {
-      display: none !important;
+    button.em-send-to-design:focus-visible {
+      outline: 2px solid #0969da !important;
+      outline-offset: 2px !important;
     }
-    /* Switch track + knob — sized so the state is clearly readable. */
-    .em-send-to-design-track {
-      position: relative;
-      display: inline-block;
-      width: 24px;
-      height: 14px;
-      background: #cfd6dd;
-      border-radius: 7px;
-      flex-shrink: 0;
-      transition: background-color 0.2s ease;
+    button.em-send-to-design > .em-send-to-design-track {
+      position: relative !important;
+      display: inline-block !important;
+      width: 24px !important;
+      height: 14px !important;
+      min-width: 24px !important;
+      max-width: 24px !important;
+      min-height: 14px !important;
+      max-height: 14px !important;
+      background: #cfd6dd !important;
+      border: 0 !important;
+      border-radius: 7px !important;
+      flex-shrink: 0 !important;
+      padding: 0 !important;
+      margin: 0 !important;
+      transition: background-color 0.2s ease !important;
+      box-sizing: border-box !important;
     }
-    .em-send-to-design-knob {
-      position: absolute;
-      top: 2px;
-      left: 2px;
-      width: 10px;
-      height: 10px;
-      background: #ffffff;
-      border-radius: 50%;
-      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.22);
-      transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    button.em-send-to-design > .em-send-to-design-track > .em-send-to-design-knob {
+      position: absolute !important;
+      top: 2px !important;
+      left: 2px !important;
+      width: 10px !important;
+      height: 10px !important;
+      min-width: 10px !important;
+      max-width: 10px !important;
+      min-height: 10px !important;
+      max-height: 10px !important;
+      background: #ffffff !important;
+      border: 0 !important;
+      border-radius: 50% !important;
+      padding: 0 !important;
+      margin: 0 !important;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.22) !important;
+      transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
+      box-sizing: border-box !important;
     }
-    /* ON state — purple */
-    .em-send-to-design > input:checked ~ .em-send-to-design-track {
-      background: #6639ba;
+    button.em-send-to-design > .material-icons {
+      font-size: 14px !important;
+      line-height: 1 !important;
+      color: #424a53 !important;
+      transition: color 0.15s ease !important;
     }
-    .em-send-to-design > input:checked ~ .em-send-to-design-track .em-send-to-design-knob {
-      transform: translateX(10px);
-    }
-    /* Full pill takes on purple tint when ON */
-    .em-send-to-design:has(input:checked) {
+    /* ON state — driven by aria-pressed="true" (no checkbox involved). */
+    button.em-send-to-design[aria-pressed="true"] {
       background: #f3eefb !important;
       border-color: #c9b6ef !important;
     }
-    /* Hide the "Send to Design" text label — the icon plus tooltip
-       carry the meaning. font-size:0 on the span erases the text
-       characters; the .material-icons child has its own font-size
-       so the icon glyph still renders. */
-    .em-send-to-design-text {
-      display: inline-flex;
-      align-items: center;
-      font-size: 0;
-      line-height: 0;
+    button.em-send-to-design[aria-pressed="true"] > .em-send-to-design-track {
+      background: #6639ba !important;
     }
-    .em-send-to-design-text .material-icons {
-      font-size: 16px;
-      line-height: 1;
-      color: #57606a;
+    button.em-send-to-design[aria-pressed="true"] > .em-send-to-design-track > .em-send-to-design-knob {
+      transform: translateX(10px) !important;
     }
-    .em-send-to-design:has(input:checked) .em-send-to-design-text .material-icons {
-      color: #4a2992;
+    button.em-send-to-design[aria-pressed="true"] > .material-icons {
+      color: #4a2992 !important;
     }
     .em-compose button {
       border: 1px solid #d0d7de; background: #fff; border-radius: 4px;
@@ -12406,11 +12423,14 @@
                 <button id="emAiDraftBtn" class="ai" title="Generate a reply with AI"><i class="material-icons">auto_awesome</i><span>AI Draft</span></button>
                 <button id="emAttachBtn" title="Attach image (or drag &amp; drop, or paste)"><i class="material-icons">attach_file</i>Attach</button>
                 <button id="emCustomListingBtn" class="${manualCustomListingBusy ? 'is-loading' : ''}" ${manualCustomListingBusy ? 'disabled aria-busy="true"' : ''} title="${manualCustomListingBusy ? 'Creating custom listing…' : 'Create a real Etsy custom listing from this conversation'}"><i class="material-icons">add_business</i><span>${manualCustomListingBusy ? 'Creating…' : 'Custom Listing'}</span></button>
-                <label id="emSendToDesignLabel" class="em-send-to-design" title="Also condense this reply via Haiku and post to Brites Messages for the design team">
-                  <input type="checkbox" id="emSendToDesignChk" />
-                  <span class="em-send-to-design-track"><span class="em-send-to-design-knob"></span></span>
-                  <span class="em-send-to-design-text"><i class="material-icons">design_services</i>Send to Design</span>
-                </label>
+                <button type="button"
+                        id="emSendToDesignBtn"
+                        class="em-send-to-design"
+                        aria-pressed="false"
+                        title="Also condense this reply via Haiku and post to Brites Messages for the design team">
+                  <span class="em-send-to-design-track" aria-hidden="true"><span class="em-send-to-design-knob"></span></span>
+                  <i class="material-icons" aria-hidden="true">design_services</i>
+                </button>
                 <button id="emSendEtsyBtn" class="send-etsy" title="Queue this draft for the browser extension to send via Etsy"><i class="material-icons">send</i>Send via Etsy</button>
               </div>
             </div>
@@ -12536,18 +12556,28 @@
         });
       }
 
-      // v5.32.1 — Send to Design toggle initialization.
+      // v5.32.3 — Send to Design toggle initialization.
       //
-      // Always starts OFF on a freshly opened thread (operator must
-      // opt in per reply). No client-side disable — when the operator
-      // sends with the toggle on but the thread has no etsyOrderId,
-      // the server returns 422 and the error surfaces as a toast.
-      // The client-side disable in v5.32 was masking real toggles
-      // when the thread happened to load before etsyOrderId was
-      // populated and was also blocking the click handler entirely.
-      const dToggleChk = document.getElementById("emSendToDesignChk");
-      if (dToggleChk) {
-        dToggleChk.checked = false;
+      // Now a <button aria-pressed> instead of a checkbox+label
+      // (the checkbox version was being mauled by global input styles
+      // in the inbox). Always starts OFF on each thread render — the
+      // operator must opt in per reply.
+      const dToggleBtn = document.getElementById("emSendToDesignBtn");
+      if (dToggleBtn) {
+        dToggleBtn.setAttribute("aria-pressed", "false");
+        // Idempotent click binding — flag prevents duplicate listeners
+        // on re-renders.
+        if (!dToggleBtn.dataset.boundV5323) {
+          dToggleBtn.dataset.boundV5323 = "1";
+          dToggleBtn.addEventListener("click", function (e) {
+            e.preventDefault();
+            const pressed = dToggleBtn.getAttribute("aria-pressed") === "true";
+            dToggleBtn.setAttribute("aria-pressed", String(!pressed));
+            // Release focus so the focus ring doesn't linger after
+            // a mouse click — same pattern as the rail toggle.
+            try { dToggleBtn.blur(); } catch (_) {}
+          });
+        }
       }
 
       // v2.0 Step 2: render sales context panel if this thread has one.
@@ -15779,9 +15809,12 @@
         // capture the English source text (NOT the translated text)
         // since Haiku handles English best and the design team reads
         // English.
+        //
+        // v5.32.3 — toggle is now a <button aria-pressed>, not a
+        // checkbox. Read the attribute instead of .checked.
         try {
-          const dChk = document.getElementById("emSendToDesignChk");
-          if (dChk && dChk.checked) {
+          const dBtn = document.getElementById("emSendToDesignBtn");
+          if (dBtn && dBtn.getAttribute("aria-pressed") === "true") {
             const designDraftText = (englishText || text || "").trim();
             if (designDraftText) {
               api("etsyMailDesignDispatch", {
@@ -15807,7 +15840,7 @@
               });
               // Reset the toggle after dispatch is requested — operator
               // must opt back in for the next reply on this thread.
-              dChk.checked = false;
+              dBtn.setAttribute("aria-pressed", "false");
             }
           }
         } catch (e) {
