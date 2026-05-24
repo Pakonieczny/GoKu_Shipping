@@ -14806,11 +14806,11 @@
           // sendViaEtsy starts its backend work. The animation is
           // self-contained and failure-safe — any error inside it is
           // caught and won't prevent the actual send from proceeding.
+          const ta = document.getElementById("emDraftText");
+          const text = (ta && ta.value || "").trim();
           try {
             if (window.SendAnimation && typeof window.SendAnimation.play === 'function') {
-              const ta = document.getElementById("emDraftText");
               const threadContainer = document.getElementById("emThreadBox");
-              const text = (ta && ta.value || "").trim();
               if (text && ta && threadContainer) {
                 window.SendAnimation.play({
                   text: text,
@@ -14821,7 +14821,32 @@
               }
             }
           } catch (e) { /* never block sendViaEtsy */ }
+          // sendViaEtsy reads ta.value SYNCHRONOUSLY at the top of its
+          // body (before any await). So calling sendViaEtsy first lets
+          // it capture the value, then we can safely clear the textarea
+          // immediately afterward for visual feedback. This is cleaner
+          // than the previous color:transparent approach which had
+          // browser-specific quirks.
           sendViaEtsy(thread.id);
+          // v0.9.43 — Clear the textarea visually so the user doesn't
+          // see both the source text and the flying tiles. sendViaEtsy
+          // has already captured the value at this point.
+          //
+          // v0.9.44 — Defer the auto-resize. If we resize NOW, the
+          // textarea shrinks from its expanded height to min-height
+          // mid-animation, causing the whole thread container above
+          // to reflow upward — that's the "screen flicker" the user
+          // sees at the end of the animation. Wait until the animation
+          // is done (~800ms) so the resize happens AFTER the bubble
+          // has fully landed; the user perceives one smooth motion.
+          if (ta && text) {
+            ta.value = '';
+            setTimeout(() => {
+              if (typeof autoSizeDraftTextarea === 'function') {
+                try { autoSizeDraftTextarea(ta); } catch (e) {}
+              }
+            }, 800);
+          }
         });
       }
 
@@ -20860,7 +20885,33 @@
         send.disabled = true;
         if (typeof sendViaEtsy === "function") {
           try {
-            const queued = await sendViaEtsy(tid);
+            // v0.9.43 — Call sendViaEtsy without await first. sendViaEtsy
+            // executes synchronously up to its first await, capturing
+            // ta.value during that synchronous portion. Once it returns
+            // a pending promise, we can safely clear the textareas
+            // visually — sendViaEtsy has already captured the value.
+            // THEN we await the promise normally.
+            const sendPromise = sendViaEtsy(tid);
+            // Clear both textareas now that sendViaEtsy has captured the value.
+            // This gives instant visual feedback that the message is "gone."
+            //
+            // v0.9.44 — Defer the auto-resize. Resizing the textarea
+            // immediately causes the thread container above to reflow
+            // upward — the "screen flicker" at the end of animation.
+            // Wait until the animation has fully landed before shrinking.
+            if (textForSend) {
+              ta.value = '';
+              if (desktopTa) desktopTa.value = '';
+              setTimeout(() => {
+                if (typeof mAutoGrow === 'function') {
+                  try { mAutoGrow(ta); } catch (e) {}
+                }
+                if (desktopTa && typeof autoSizeDraftTextarea === 'function') {
+                  try { autoSizeDraftTextarea(desktopTa); } catch (e) {}
+                }
+              }, 800);
+            }
+            const queued = await sendPromise;
             if (queued !== true) {
               send.disabled = false;
               return;
@@ -21796,23 +21847,11 @@
         const deltaX = 0;
         const deltaY = 0;
 
-        // v0.9.39 — DO NOT clear the textarea here. sendViaEtsy reads
-        // ta.value to capture the message; if we cleared it, the send
-        // would bail silently with no text to send. sendViaEtsy clears
-        // the textarea itself on backend success (line 15364 region).
-        //
-        // We DO temporarily hide the text via a CSS class so the user
-        // doesn't see both the text in the textarea AND the flying
-        // tiles flying out of it.
-        ta.classList.add('em-sa-hide-text');
-        // Remove the class on the next input event (user starts a new
-        // message) so they can see what they're typing. Also remove
-        // after a safety timeout in case animation never completes.
-        const unhideTa = () => {
-          try { ta.classList.remove('em-sa-hide-text'); } catch (e) {}
-        };
-        ta.addEventListener('input', unhideTa, { once: true });
-        setTimeout(unhideTa, 1500);
+        // v0.9.43 — Textarea clearing is now handled by the click
+        // handlers themselves (which clear the textarea immediately
+        // after sendViaEtsy synchronously captures ta.value, before
+        // its first await yields). We no longer need the CSS-hide
+        // approach (which had browser quirks on mobile).
 
         // Build the flying tiles
         const flyEls = words.map((word, i) => {
