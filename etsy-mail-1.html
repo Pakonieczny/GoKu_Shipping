@@ -722,7 +722,10 @@
        ═══════════════════════════════════════════════════════════════════ */
 
     .em-detail-body {
-      transition: grid-template-columns 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+      /* Transition only when .rail-transitioning is also present — set by
+         the toggle click handler and removed after the animation ends.
+         Without this gate every thread-switch re-applies .right-collapsed
+         and replays the slide animation, which is jarring. */
     }
     .em-detail-body.right-collapsed {
       grid-template-columns: minmax(0, 1fr) 24px;
@@ -738,41 +741,64 @@
       height: 100%;
     }
 
-    /* The toggle handle — a small vertical tab anchored to the LEFT
-       edge of the rail. Sits half-into-the-gap (left:-12px) so it reads
-       as the divider between conversation and summary. Always clickable;
-       always visible whether the rail is open or collapsed. */
+
+    /* The toggle — a circular floating button that sits at the top-left
+       corner of the right rail, half-overlapping the gap between columns.
+       Looks and feels like a standard collapse control: clean circle,
+       clear directional chevron, obvious hover state.
+       Focus ring only shows for keyboard navigation (:focus-visible),
+       never for mouse clicks — prevents the stuck-highlight bug. */
     .em-rail-toggle {
       position: absolute;
-      left: -12px;
-      top: 8px;
-      width: 22px;
-      height: 56px;
-      background: #fff;
+      left: -14px;
+      top: 10px;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: #ffffff;
       border: 1px solid #d0d7de;
-      border-radius: 6px 0 0 6px;
       cursor: pointer;
       z-index: 5;
       display: flex;
       align-items: center;
       justify-content: center;
       padding: 0;
-      box-shadow: -2px 0 4px rgba(0, 0, 0, 0.04);
-      transition: background-color 0.15s ease, left 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.10), 0 0 0 1px rgba(0,0,0,0.04);
+      outline: none;        /* reset default — keyboard ring is via :focus-visible */
     }
-    .em-rail-toggle:hover { background: #f6f8fa; }
+    .em-rail-toggle:hover {
+      background: #f6f8fa;
+      border-color: #b0b7be;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.14), 0 0 0 1px rgba(0,0,0,0.06);
+    }
     .em-rail-toggle:focus-visible {
       outline: 2px solid #0969da;
-      outline-offset: 1px;
+      outline-offset: 2px;
     }
     .em-rail-toggle .material-icons {
-      font-size: 18px;
+      font-size: 16px;
       color: #57606a;
+      line-height: 1;
+      user-select: none;
+      pointer-events: none;   /* prevent icon from intercepting the click */
       transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
     }
-    /* When collapsed, flip the chevron so it points "out" (← to expand). */
+    /* Chevron rotates 180° when collapsed — always points toward more space */
     .em-detail-body.right-collapsed .em-rail-toggle .material-icons {
       transform: rotate(180deg);
+    }
+
+    /* Only animate when the operator explicitly clicked the toggle.
+       The JS adds this class, plays the transition, then removes it
+       via transitionend. Thread-switches never set this class so the
+       layout snaps instantly to the current saved state. */
+    .em-detail-body.rail-transitioning {
+      transition: grid-template-columns 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .em-detail-body.rail-transitioning .em-right-rail-content {
+      transition:
+        opacity 0.2s ease,
+        transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
     }
 
     /* Inner content scroller. Fades + slides right when collapsed so the
@@ -786,9 +812,7 @@
       overflow-y: auto;
       padding-right: 4px;
       padding-bottom: 32px;
-      transition:
-        opacity 0.2s ease,
-        transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+      /* No transition here — transition is on .rail-transitioning parent. */
     }
     .em-detail-body.right-collapsed .em-right-rail-content {
       opacity: 0;
@@ -12319,9 +12343,26 @@
         railBtn.dataset.boundV530 = "1";
         railBtn.addEventListener("click", function (e) {
           e.preventDefault();
+          // Immediately release focus so the browser doesn't leave the
+          // button in its :focus state (which causes the green/blue ring
+          // to persist until the user clicks elsewhere).
+          e.currentTarget.blur();
+
           const body = document.querySelector(".em-detail-body");
           if (!body) return;
           const willCollapse = !body.classList.contains("right-collapsed");
+
+          // Add the transitioning class BEFORE changing state so the
+          // browser sees both classes on the same frame and the transition
+          // fires. Remove it once the longest transition (grid-template-
+          // columns, 0.28s) completes. Only user-initiated toggles ever
+          // set this class — thread-switches never touch it.
+          body.classList.add("rail-transitioning");
+          // Force a reflow so the browser registers the class before the
+          // state change (prevents the "class added and changed in the
+          // same tick" collapse where no transition plays).
+          void body.offsetWidth;
+
           body.classList.toggle("right-collapsed", willCollapse);
           railBtn.setAttribute("aria-expanded", String(!willCollapse));
           railBtn.setAttribute(
@@ -12331,6 +12372,20 @@
           try {
             localStorage.setItem("emRailCollapsed", String(willCollapse));
           } catch (_) { /* incognito-safe */ }
+
+          // Clean up the transitioning class after animation ends.
+          // transitionend fires once per transitioning property — guard
+          // so we only remove on the first event (grid-template-columns).
+          const onDone = (ev) => {
+            if (ev.propertyName !== "grid-template-columns") return;
+            body.classList.remove("rail-transitioning");
+            body.removeEventListener("transitionend", onDone);
+          };
+          body.addEventListener("transitionend", onDone);
+
+          // Safety fallback: if transitionend never fires (e.g. reduced-
+          // motion, display:none, tab in background), clean up after 400ms.
+          setTimeout(() => body.classList.remove("rail-transitioning"), 400);
         });
       }
 
