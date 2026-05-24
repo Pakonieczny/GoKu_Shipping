@@ -12069,22 +12069,22 @@
              order). -->
         ${(t.etsyOrderId || t.etsyHeadingBadge || t.etsyViewOrderUrl) ? `
         <div class="em-etsy-heading-bar" style="display:flex; align-items:center; gap:10px; padding:8px 16px; background:#f6f8fa; border-bottom:1px solid #d0d7de; font-size:13px;">
+          ${t.etsyHeadingBadge ? `
+            <span class="em-etsy-heading-badge"
+                  style="display:inline-flex; align-items:center; background:#fff1e5; color:#9a3f00; padding:7px 16px; border-radius:18px; font-size:15px; line-height:1; font-weight:700; white-space:nowrap;">
+              ${esc(t.etsyHeadingBadge)}
+            </span>
+          ` : ""}
           ${t.etsyOrderId ? `
             <button type="button"
                     class="em-etsy-order-chip"
                     data-copy-order="${esc(t.etsyOrderId)}"
                     title="Click to copy"
-                    style="display:inline-flex; align-items:center; gap:4px; background:#ddf4ff; color:#0969da; padding:3px 8px; border-radius:12px; border:1px solid #b6e3ff; cursor:pointer; font-weight:600;">
-              <i class="material-icons" style="font-size:14px;">receipt_long</i>
+                    style="display:inline-flex; align-items:center; gap:4px; background:#ddf4ff; color:#0969da; padding:5px 10px; border-radius:14px; border:1px solid #b6e3ff; cursor:pointer; font-size:14px; line-height:1; font-weight:600; white-space:nowrap;">
+              <i class="material-icons" style="font-size:15px;">receipt_long</i>
               Order #${esc(t.etsyOrderId)}
               <i class="material-icons" style="font-size:13px; opacity:0.6;">content_copy</i>
             </button>
-          ` : ""}
-          ${t.etsyHeadingBadge ? `
-            <span style="background:#fff1e5; color:#9a3f00; padding:2px 8px; border-radius:10px; font-size:12px; font-weight:500;">${esc(t.etsyHeadingBadge)}</span>
-          ` : ""}
-          ${t.etsyHeadingTitle ? `
-            <span class="em-muted" style="font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(t.etsyHeadingTitle)}</span>
           ` : ""}
           ${t.etsyViewOrderUrl ? `
             <a href="${esc(t.etsyViewOrderUrl)}" target="_blank" style="margin-left:auto; color:#0969da; text-decoration:none; display:inline-flex; align-items:center; gap:4px;">
@@ -20020,36 +20020,26 @@
       try {
         const mount = document.getElementById("mEtsyHeadingMount");
         if (mount) {
-          if (t.etsyOrderId || t.etsyHeadingBadge || t.etsyHeadingTitle || t.etsyViewOrderUrl) {
+          if (t.etsyOrderId || t.etsyHeadingBadge || t.etsyViewOrderUrl) {
             // Avoid rebuilding the bar's innerHTML if nothing changed
             // (prevents losing the copy-chip listener wiring on
             // every poll).
             const fingerprint = (t.etsyOrderId || "") + "|" +
                                 (t.etsyHeadingBadge || "") + "|" +
-                                (t.etsyHeadingTitle || "") + "|" +
                                 (t.etsyViewOrderUrl || "");
             if (mount.dataset.fp !== fingerprint) {
               mount.innerHTML =
                 '<div class="m-etsy-heading-bar" style="display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:10px 14px; background:var(--m-c-surface-2); border-bottom:1px solid var(--m-c-border); font-size:14px;">' +
+                  (t.etsyHeadingBadge ? (
+                    '<span class="m-etsy-heading-badge" style="display:inline-flex; align-items:center; background:#fff1e5; color:#9a3f00; padding:7px 14px; border-radius:16px; font-size:15px; line-height:1; font-weight:700; white-space:nowrap;">' + mEsc(t.etsyHeadingBadge) + '</span>'
+                  ) : "") +
                   (t.etsyOrderId ? (
                     '<button type="button" class="m-etsy-order-chip" data-copy-order="' + mEsc(t.etsyOrderId) + '" ' +
-                    'style="display:inline-flex; align-items:center; gap:6px; background:#ddf4ff; color:#0969da; padding:6px 12px; border-radius:14px; border:1px solid #b6e3ff; font-weight:600; font-size:14px;">' +
-                    '<i class="material-icons" style="font-size:16px;">receipt_long</i>' +
+                    'style="display:inline-flex; align-items:center; gap:6px; background:#ddf4ff; color:#0969da; padding:5px 10px; border-radius:14px; border:1px solid #b6e3ff; font-size:13px; line-height:1; font-weight:600; white-space:nowrap;">' +
+                    '<i class="material-icons" style="font-size:15px;">receipt_long</i>' +
                     '#' + mEsc(t.etsyOrderId) +
-                    '<i class="material-icons" style="font-size:14px; opacity:0.6;">content_copy</i>' +
+                    '<i class="material-icons" style="font-size:13px; opacity:0.6;">content_copy</i>' +
                     '</button>'
-                  ) : "") +
-                  (t.etsyHeadingBadge ? (
-                    '<span style="background:#fff1e5; color:#9a3f00; padding:4px 10px; border-radius:12px; font-size:12px; font-weight:500;">' + mEsc(t.etsyHeadingBadge) + '</span>'
-                  ) : "") +
-                  // v0.9.42 — Title text ("Help with order n.º ...") was
-                  // present on desktop but missing on mobile. Surfacing
-                  // it here so operators see the customer's stated
-                  // request context (e.g., "Help with order", "Custom
-                  // order request", etc.) alongside the order chip.
-                  (t.etsyHeadingTitle ? (
-                    '<span style="color:var(--m-c-text-muted); font-size:12px; flex:1 1 100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0;">' +
-                    mEsc(t.etsyHeadingTitle) + '</span>'
                   ) : "") +
                   (t.etsyViewOrderUrl ? (
                     '<a href="' + mEsc(t.etsyViewOrderUrl) + '" target="_blank" rel="noopener" ' +
