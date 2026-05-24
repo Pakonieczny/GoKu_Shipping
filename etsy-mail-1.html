@@ -862,93 +862,97 @@
     .em-compose .em-compose-bar { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; align-items: center; }
 
     /* ═══════════════════════════════════════════════════════════════
-       v5.32 — Send to Design toggle.
-       Sits between Custom Listing and Send via Etsy in the compose
-       bar. A small inline pill toggle: track + sliding knob + label.
-       When ON, the user's reply will ALSO be condensed by Haiku and
-       written to Brites_Orders/{etsyOrderId}/messages so the design
-       team picks it up in real time. The Etsy send is unchanged.
-       Auto-disables (visually + functionally) when the thread has
-       no linked etsyOrderId.
+       v5.32.1 — Send to Design toggle. Rewritten for clarity.
+       Pill-shaped wrapper, large enough iOS-style switch that the
+       state is obvious from across the room. Always functional —
+       no client-side disable; the server returns 422 if the thread
+       has no etsyOrderId, and the dispatch error toast surfaces it.
        ═══════════════════════════════════════════════════════════════ */
     .em-send-to-design {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      padding: 4px 10px 4px 6px;
-      border: 1px solid #d0d7de;
-      border-radius: 16px;
-      background: #f6f8fa;
-      cursor: pointer;
+      display: inline-flex !important;
+      align-items: center !important;
+      gap: 8px !important;
+      padding: 6px 12px 6px 8px !important;
+      border: 1px solid #d0d7de !important;
+      border-radius: 18px !important;
+      background: #ffffff !important;
+      cursor: pointer !important;
       user-select: none;
-      font-size: 12px;
-      color: #57606a;
-      transition: background-color 0.15s ease, border-color 0.15s ease;
-      margin-left: auto;   /* push toward the Send button on wide screens */
+      font-size: 13px !important;
+      font-weight: 500 !important;
+      color: #424a53 !important;
+      height: 34px !important;
+      box-sizing: border-box !important;
+      transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+      margin-left: auto;
     }
-    .em-send-to-design:hover { background: #eaeef2; border-color: #b0b7be; }
-    .em-send-to-design input[type="checkbox"] {
-      position: absolute;
-      opacity: 0;
-      pointer-events: none;
-      width: 0;
-      height: 0;
+    .em-send-to-design:hover {
+      background: #f6f8fa !important;
+      border-color: #afb8c1 !important;
     }
-    /* Track + knob — pure CSS toggle */
+    /* Bulletproof native-checkbox hide. !important + multiple zero
+       dimensions because we've seen sticky browser defaults bleed
+       through opacity:0 on some Chromium builds. */
+    .em-send-to-design > input[type="checkbox"] {
+      position: absolute !important;
+      opacity: 0 !important;
+      pointer-events: none !important;
+      width: 0 !important;
+      height: 0 !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      border: 0 !important;
+      clip: rect(0, 0, 0, 0) !important;
+    }
+    /* Switch track + knob — sized so the state is unmistakable. */
     .em-send-to-design-track {
       position: relative;
-      width: 26px;
-      height: 14px;
+      display: inline-block;
+      width: 32px;
+      height: 18px;
       background: #cfd6dd;
-      border-radius: 8px;
-      transition: background-color 0.18s ease;
-      flex: 0 0 auto;
+      border-radius: 9px;
+      flex-shrink: 0;
+      transition: background-color 0.2s ease;
     }
     .em-send-to-design-knob {
       position: absolute;
-      top: 1px;
-      left: 1px;
-      width: 12px;
-      height: 12px;
-      background: #fff;
+      top: 2px;
+      left: 2px;
+      width: 14px;
+      height: 14px;
+      background: #ffffff;
       border-radius: 50%;
-      box-shadow: 0 1px 2px rgba(0,0,0,0.18);
-      transition: transform 0.18s cubic-bezier(0.4, 0, 0.2, 1);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.22);
+      transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
     }
-    .em-send-to-design input:checked ~ .em-send-to-design-track {
-      background: #6639ba;   /* match the AI Draft purple */
+    /* ON state — purple (matches AI Draft button) */
+    .em-send-to-design > input:checked ~ .em-send-to-design-track {
+      background: #6639ba;
     }
-    .em-send-to-design input:checked ~ .em-send-to-design-track .em-send-to-design-knob {
-      transform: translateX(12px);
+    .em-send-to-design > input:checked ~ .em-send-to-design-track .em-send-to-design-knob {
+      transform: translateX(14px);
     }
-    .em-send-to-design input:focus-visible ~ .em-send-to-design-track {
+    /* Full pill takes on purple tint when ON so the operator can see
+       at a glance that the dispatch will fire on send. */
+    .em-send-to-design:has(input:checked) {
+      background: #f3eefb !important;
+      border-color: #c9b6ef !important;
+      color: #4a2992 !important;
+    }
+    .em-send-to-design > input:focus-visible ~ .em-send-to-design-track {
       outline: 2px solid #0969da;
       outline-offset: 2px;
-    }
-    /* When toggle is ON, the whole label shifts color so the operator
-       sees at a glance that the draft will be dispatched on send. */
-    .em-send-to-design:has(input:checked) {
-      background: #f3eefb;
-      border-color: #c9b6ef;
-      color: #4a2992;
     }
     .em-send-to-design-text {
       display: inline-flex;
       align-items: center;
-      gap: 4px;
-      font-weight: 500;
+      gap: 5px;
+      white-space: nowrap;
     }
     .em-send-to-design-text .material-icons {
-      font-size: 14px;
-    }
-    /* Disabled state — applied via JS when thread has no etsyOrderId. */
-    .em-send-to-design.is-disabled {
-      opacity: 0.45;
-      cursor: not-allowed;
-      pointer-events: none;
-    }
-    .em-send-to-design.is-disabled[title]:hover::after {
-      /* tooltip will still surface via the title attr */
+      font-size: 16px;
+      line-height: 1;
     }
     .em-compose button {
       border: 1px solid #d0d7de; background: #fff; border-radius: 4px;
@@ -12410,12 +12414,6 @@
                 <button id="emAiDraftBtn" class="ai" title="Generate a reply with AI"><i class="material-icons">auto_awesome</i><span>AI Draft</span></button>
                 <button id="emAttachBtn" title="Attach image (or drag &amp; drop, or paste)"><i class="material-icons">attach_file</i>Attach</button>
                 <button id="emCustomListingBtn" class="${manualCustomListingBusy ? 'is-loading' : ''}" ${manualCustomListingBusy ? 'disabled aria-busy="true"' : ''} title="${manualCustomListingBusy ? 'Creating custom listing…' : 'Create a real Etsy custom listing from this conversation'}"><i class="material-icons">add_business</i><span>${manualCustomListingBusy ? 'Creating…' : 'Custom Listing'}</span></button>
-                <!-- v5.32 — Send to Design toggle.
-                     When ON, clicking Send via Etsy ALSO dispatches a
-                     condensed version of the draft to Brites Messages
-                     (Brites_Orders/{etsyOrderId}/messages). The Etsy send
-                     itself is unaffected. The toggle auto-disables when
-                     the thread has no linked Etsy order. -->
                 <label id="emSendToDesignLabel" class="em-send-to-design" title="Also condense this reply via Haiku and post to Brites Messages for the design team">
                   <input type="checkbox" id="emSendToDesignChk" />
                   <span class="em-send-to-design-track"><span class="em-send-to-design-knob"></span></span>
@@ -12546,26 +12544,18 @@
         });
       }
 
-      // v5.32 — Send to Design toggle initialization.
+      // v5.32.1 — Send to Design toggle initialization.
       //
-      // The toggle is per-render: it always starts OFF on a freshly
-      // opened thread (operator must opt in each time, to avoid
-      // accidentally dispatching every reply). We disable the toggle
-      // entirely when the thread has no etsyOrderId — the design
-      // workflow keys Brites_Orders by Etsy order number, so there's
-      // nowhere to write without one.
-      const dToggleLabel = document.getElementById("emSendToDesignLabel");
-      const dToggleChk   = document.getElementById("emSendToDesignChk");
-      if (dToggleLabel && dToggleChk) {
+      // Always starts OFF on a freshly opened thread (operator must
+      // opt in per reply). No client-side disable — when the operator
+      // sends with the toggle on but the thread has no etsyOrderId,
+      // the server returns 422 and the error surfaces as a toast.
+      // The client-side disable in v5.32 was masking real toggles
+      // when the thread happened to load before etsyOrderId was
+      // populated and was also blocking the click handler entirely.
+      const dToggleChk = document.getElementById("emSendToDesignChk");
+      if (dToggleChk) {
         dToggleChk.checked = false;
-        const hasOrder = !!(t && t.etsyOrderId);
-        if (hasOrder) {
-          dToggleLabel.classList.remove("is-disabled");
-          dToggleLabel.title = "Also condense this reply via Haiku and post to Brites Messages (order #" + t.etsyOrderId + ")";
-        } else {
-          dToggleLabel.classList.add("is-disabled");
-          dToggleLabel.title = "Disabled — thread has no linked Etsy order, so there's no Brites_Orders entry to post into";
-        }
       }
 
       // v2.0 Step 2: render sales context panel if this thread has one.
