@@ -226,7 +226,10 @@ exports.handler = async (event) => {
     participants = [],
     subject = null,
     messages = [],
-    session = {}
+    session = {},
+    // v0.9.38 — Etsy's new in-thread heading. Optional; older scrapers
+    // and odd thread types (no related order) may omit it.
+    conversationHeading = null
   } = body;
 
   if (!etsyConversationId) return bad("Missing etsyConversationId");
@@ -261,6 +264,25 @@ exports.handler = async (event) => {
       if (customer.buyerUserId)   threadPatch.buyerUserId = String(customer.buyerUserId);
       if (typeof customer.isRepeatBuyer === "boolean") {
         threadPatch.buyerIsRepeatBuyer = customer.isRepeatBuyer;
+      }
+    }
+
+    // v0.9.38 — Persist Etsy's conversation-heading info if the scraper
+    // surfaced it. Per-field rather than blob so missing fields don't
+    // clobber previously-captured ones (e.g. if Etsy briefly removes
+    // the order link from the heading, we keep the last-seen orderId).
+    if (conversationHeading && typeof conversationHeading === "object") {
+      if (conversationHeading.orderId) {
+        threadPatch.etsyOrderId = String(conversationHeading.orderId);
+      }
+      if (conversationHeading.categoryBadge) {
+        threadPatch.etsyHeadingBadge = String(conversationHeading.categoryBadge);
+      }
+      if (conversationHeading.title) {
+        threadPatch.etsyHeadingTitle = String(conversationHeading.title);
+      }
+      if (conversationHeading.viewOrderUrl) {
+        threadPatch.etsyViewOrderUrl = String(conversationHeading.viewOrderUrl);
       }
     }
 
@@ -311,7 +333,15 @@ exports.handler = async (event) => {
         buyerUserId         : (customer && customer.buyerUserId) ? String(customer.buyerUserId) : null,
         buyerPeopleUrl      : (customer && customer.peopleUrl) || null,
         buyerAvatarUrl      : (customer && customer.avatarUrl) || null,
-        buyerIsRepeatBuyer  : !!(customer && customer.isRepeatBuyer)
+        buyerIsRepeatBuyer  : !!(customer && customer.isRepeatBuyer),
+        // v0.9.38 — Mirror Etsy's conversation-heading metadata into
+        // initial-create too so first-scrape threads carry it. Older
+        // scrapers send conversationHeading=null and these stay null.
+        etsyOrderId         : (conversationHeading && conversationHeading.orderId)
+                              ? String(conversationHeading.orderId) : null,
+        etsyHeadingBadge    : (conversationHeading && conversationHeading.categoryBadge) || null,
+        etsyHeadingTitle    : (conversationHeading && conversationHeading.title) || null,
+        etsyViewOrderUrl    : (conversationHeading && conversationHeading.viewOrderUrl) || null
       };
       await tRef.set(initial, { merge: false });
     } else {
