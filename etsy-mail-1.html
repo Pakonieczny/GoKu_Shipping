@@ -701,6 +701,107 @@
     }
     .em-card { background: #fff; border: 1px solid #e1e4e8; border-radius: 6px; padding: 12px 14px; }
     .em-card + .em-card { margin-top: 12px; }
+
+    /* ═══════════════════════════════════════════════════════════════════
+       v5.30 — Collapsible right rail (Sales conversation / Conversation
+       summary card). Lets operators reclaim horizontal space when they
+       want full attention on the conversation pane. State is persisted
+       in localStorage so the choice survives reloads and thread switches.
+
+       Design:
+       - The grid's right column shrinks from 300px → 24px on collapse.
+       - Inner content fades + translates right so it doesn't fight the
+         shrinking column for space (avoids text reflow flicker).
+       - The toggle handle sits in the gap between columns, anchored to
+         the rail wrapper. As the column shrinks, the handle moves with
+         it (because the grid track shrinks and the wrapper's left edge
+         slides rightward). The button is therefore always at the edge
+         of the visible panel and always one click away.
+       - When the mount has no content, `:has(:empty)` hides the toggle
+         so we don't show a control with nothing to act on.
+       ═══════════════════════════════════════════════════════════════════ */
+
+    .em-detail-body {
+      transition: grid-template-columns 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .em-detail-body.right-collapsed {
+      grid-template-columns: minmax(0, 1fr) 24px;
+    }
+
+    /* Right-rail wrapper — gives us a positioning context for the toggle
+       and a flex column so the inner scroll area sizes correctly. */
+    .em-right-rail-wrapper {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      height: 100%;
+    }
+
+    /* The toggle handle — a small vertical tab anchored to the LEFT
+       edge of the rail. Sits half-into-the-gap (left:-12px) so it reads
+       as the divider between conversation and summary. Always clickable;
+       always visible whether the rail is open or collapsed. */
+    .em-rail-toggle {
+      position: absolute;
+      left: -12px;
+      top: 8px;
+      width: 22px;
+      height: 56px;
+      background: #fff;
+      border: 1px solid #d0d7de;
+      border-radius: 6px 0 0 6px;
+      cursor: pointer;
+      z-index: 5;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      box-shadow: -2px 0 4px rgba(0, 0, 0, 0.04);
+      transition: background-color 0.15s ease, left 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .em-rail-toggle:hover { background: #f6f8fa; }
+    .em-rail-toggle:focus-visible {
+      outline: 2px solid #0969da;
+      outline-offset: 1px;
+    }
+    .em-rail-toggle .material-icons {
+      font-size: 18px;
+      color: #57606a;
+      transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    /* When collapsed, flip the chevron so it points "out" (← to expand). */
+    .em-detail-body.right-collapsed .em-rail-toggle .material-icons {
+      transform: rotate(180deg);
+    }
+
+    /* Inner content scroller. Fades + slides right when collapsed so the
+       transition feels intentional rather than crushed. The original
+       padding-bottom: 32px that the previous .em-detail-body > div had
+       moves here so the content still has scroll breathing room. */
+    .em-right-rail-content {
+      flex: 1;
+      min-height: 0;
+      width: 100%;
+      overflow-y: auto;
+      padding-right: 4px;
+      padding-bottom: 32px;
+      transition:
+        opacity 0.2s ease,
+        transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .em-detail-body.right-collapsed .em-right-rail-content {
+      opacity: 0;
+      pointer-events: none;
+      transform: translateX(16px);
+    }
+
+    /* If the mount has no rendered card (empty inner div), don't show the
+       toggle — there's nothing to collapse. Uses :has() to look ahead. */
+    .em-right-rail-wrapper:has(#emSalesCardMount:empty) .em-rail-toggle {
+      display: none;
+    }
+
     .em-card h4 {
       margin: 0 0 8px; font-size: 11px; font-weight: 700;
       letter-spacing: .6px; text-transform: uppercase; color: #6a737d;
@@ -12144,35 +12245,94 @@
             </div>
           </div>
 
-          <div>
-            <!-- v0.9.45 — Thread details and Linked order cards hidden
-                 per operator request. They were taking vertical space
-                 above the Sales conversation card without surfacing
-                 anything operators reported using day-to-day. The data
-                 is still on the thread doc; we can restore the cards
-                 (or fold the most useful fields into the sales card)
-                 if a need surfaces. -->
+          <div class="em-right-rail-wrapper">
+            <!-- v5.30 — Collapse toggle. Click to slide the rail
+                 horizontally to a thin handle; click again to restore.
+                 State persists across reloads via localStorage. -->
+            <button type="button"
+                    id="emRailToggleBtn"
+                    class="em-rail-toggle"
+                    aria-label="Collapse rail"
+                    aria-expanded="true"
+                    title="Collapse / expand the sales conversation panel">
+              <i class="material-icons">chevron_right</i>
+            </button>
+            <div class="em-right-rail-content">
+              <!-- v0.9.45 — Thread details and Linked order cards hidden
+                   per operator request. They were taking vertical space
+                   above the Sales conversation card without surfacing
+                   anything operators reported using day-to-day. The data
+                   is still on the thread doc; we can restore the cards
+                   (or fold the most useful fields into the sales card)
+                   if a need surfaces. -->
 
-            <!-- v2.0 Step 2 — Sales context panel. Now the SOLE card in
-                 the right rail. Hidden by default; shown by
-                 renderSalesCard() when fetchSalesContext finds a
-                 SalesContext doc for this thread. -->
-            <div id="emSalesCardMount"></div>
+              <!-- v2.0 Step 2 — Sales context panel. Now the SOLE card in
+                   the right rail. Hidden by default; shown by
+                   renderSalesCard() when fetchSalesContext finds a
+                   SalesContext doc for this thread. -->
+              <div id="emSalesCardMount"></div>
 
-            <!-- v0.9.46 — AI draft card removed. The card surfaced the
-                 same draft text that's already editable in the staff
-                 reply textarea on the left, plus a Revise button few
-                 operators used. Removing it gives the sales card the
-                 full height of the right column.
-                 emAiCardBody / emReviseRow / emReviseInput / emReviseBtn
-                 elements no longer render; the JS bindings that look
-                 them up (renderAiDraftCard, etc.) safely no-op via
-                 their existing null guards. -->
+              <!-- v0.9.46 — AI draft card removed. The card surfaced the
+                   same draft text that's already editable in the staff
+                   reply textarea on the left, plus a Revise button few
+                   operators used. Removing it gives the sales card the
+                   full height of the right column.
+                   emAiCardBody / emReviseRow / emReviseInput / emReviseBtn
+                   elements no longer render; the JS bindings that look
+                   them up (renderAiDraftCard, etc.) safely no-op via
+                   their existing null guards. -->
+            </div>
           </div>
         </div>
       `;
 
       renderThreadMessages();
+
+      // v5.30 — Apply persisted rail-collapse state every render. The
+      // detail body is re-built on every thread selection, so the
+      // class would otherwise be lost on switch. We read once from
+      // localStorage and re-apply.
+      try {
+        const railWasCollapsed = localStorage.getItem("emRailCollapsed") === "true";
+        const detailBody = document.querySelector(".em-detail-body");
+        if (detailBody) {
+          detailBody.classList.toggle("right-collapsed", railWasCollapsed);
+          const _btn = document.getElementById("emRailToggleBtn");
+          if (_btn) {
+            _btn.setAttribute("aria-expanded", String(!railWasCollapsed));
+            _btn.setAttribute(
+              "aria-label",
+              railWasCollapsed ? "Expand rail" : "Collapse rail"
+            );
+          }
+        }
+      } catch (e) {
+        // localStorage can throw in some incognito modes — non-fatal.
+      }
+
+      // v5.30 — Bind the toggle. Idempotent: we set a data flag so
+      // re-renders don't stack listeners. The class lives on
+      // .em-detail-body so the grid-template-columns transition fires
+      // on the correct element.
+      const railBtn = document.getElementById("emRailToggleBtn");
+      if (railBtn && !railBtn.dataset.boundV530) {
+        railBtn.dataset.boundV530 = "1";
+        railBtn.addEventListener("click", function (e) {
+          e.preventDefault();
+          const body = document.querySelector(".em-detail-body");
+          if (!body) return;
+          const willCollapse = !body.classList.contains("right-collapsed");
+          body.classList.toggle("right-collapsed", willCollapse);
+          railBtn.setAttribute("aria-expanded", String(!willCollapse));
+          railBtn.setAttribute(
+            "aria-label",
+            willCollapse ? "Expand rail" : "Collapse rail"
+          );
+          try {
+            localStorage.setItem("emRailCollapsed", String(willCollapse));
+          } catch (_) { /* incognito-safe */ }
+        });
+      }
 
       // v2.0 Step 2: render sales context panel if this thread has one.
       // Fires async; mounts above the AI Draft card. Does nothing if
