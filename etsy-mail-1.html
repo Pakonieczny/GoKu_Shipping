@@ -19604,31 +19604,11 @@
              top of the conv was just chrome stealing vertical space.
              Operators tap into a thread already knowing its state. -->
 
-        ${(t.etsyOrderId || t.etsyHeadingBadge || t.etsyViewOrderUrl) ? `
-        <!-- v0.9.38 — Etsy conversation-heading info. Same data the
-             desktop heading bar surfaces; on mobile we lay it out
-             stacked + scaled up so it's tap-friendly. -->
-        <div class="m-etsy-heading-bar" style="display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:10px 14px; background:var(--m-c-surface-2); border-bottom:1px solid var(--m-c-border); font-size:14px;">
-          ${t.etsyOrderId ? `
-            <button type="button"
-                    class="m-etsy-order-chip"
-                    data-copy-order="${mEsc(t.etsyOrderId)}"
-                    style="display:inline-flex; align-items:center; gap:6px; background:#ddf4ff; color:#0969da; padding:6px 12px; border-radius:14px; border:1px solid #b6e3ff; font-weight:600; font-size:14px;">
-              <i class="material-icons" style="font-size:16px;">receipt_long</i>
-              #${mEsc(t.etsyOrderId)}
-              <i class="material-icons" style="font-size:14px; opacity:0.6;">content_copy</i>
-            </button>
-          ` : ""}
-          ${t.etsyHeadingBadge ? `
-            <span style="background:#fff1e5; color:#9a3f00; padding:4px 10px; border-radius:12px; font-size:12px; font-weight:500;">${mEsc(t.etsyHeadingBadge)}</span>
-          ` : ""}
-          ${t.etsyViewOrderUrl ? `
-            <a href="${mEsc(t.etsyViewOrderUrl)}" target="_blank" rel="noopener" style="margin-left:auto; color:#0969da; text-decoration:none; display:inline-flex; align-items:center; gap:4px; font-size:13px;">
-              <i class="material-icons" style="font-size:16px;">open_in_new</i>View order
-            </a>
-          ` : ""}
-        </div>
-        ` : ""}
+        <!-- v0.9.41 — Etsy heading bar mount point. mRenderMessages
+             populates this on every poll so the bar appears as soon
+             as `t.etsyOrderId` lands on the thread doc. Empty if no
+             heading data is available. -->
+        <div id="mEtsyHeadingMount"></div>
 
         <div class="m-customer-card" id="mCustomerCard">
           <div class="m-customer-card-head" id="mCustomerCardHead">
@@ -19732,29 +19712,10 @@
         mUpdateSalesCard(t).catch(() => {});
       }
 
-      // v0.9.38 — Wire the mobile Etsy order chip to copy-on-tap.
-      // Same UX as the desktop chip; tries the modern Clipboard API
-      // first and falls back to a hidden textarea for old contexts
-      // (some Android WebViews still need this).
-      const orderChip = document.querySelector("#mConvBody .m-etsy-order-chip");
-      if (orderChip) {
-        orderChip.addEventListener("click", async () => {
-          const orderId = orderChip.getAttribute("data-copy-order") || "";
-          if (!orderId) return;
-          try {
-            await navigator.clipboard.writeText(orderId);
-            if (typeof toast === "function") toast(`Copied #${orderId}`);
-          } catch (e) {
-            const ta = document.createElement("textarea");
-            ta.value = orderId;
-            document.body.appendChild(ta);
-            ta.select();
-            try { document.execCommand("copy"); if (typeof toast === "function") toast(`Copied #${orderId}`); }
-            catch (e2) { if (typeof toast === "function") toast("Copy failed"); }
-            finally { document.body.removeChild(ta); }
-          }
-        });
-      }
+      // v0.9.41 — Etsy order chip click handling is now done by
+      // mRenderMessages (which (re)builds the heading bar every
+      // poll). The previous one-time wiring here didn't survive
+      // the bar being absent at mount time and added later.
 
       // Hydrate composer textarea
       const ta = document.getElementById("mComposerTextarea");
@@ -19794,6 +19755,86 @@
       const wasNearBottom = body
         ? (body.scrollHeight - body.scrollTop - body.clientHeight) < 80
         : true;
+
+      // v0.9.41 — Refresh the Etsy conversation heading bar from
+      // current `t`. The shell-mount path (mMountConv) only runs
+      // ONCE per thread open; if the heading fields hadn't synced
+      // yet at that moment, the bar wouldn't have rendered. This
+      // ensures the bar appears as soon as `t.etsyOrderId` (etc.)
+      // shows up on the thread doc.
+      //
+      // We use a stable mount node (#mEtsyHeadingMount) inside the
+      // shell. mMountConv now renders an empty container there;
+      // this function refreshes its contents every poll.
+      try {
+        const mount = document.getElementById("mEtsyHeadingMount");
+        if (mount) {
+          if (t.etsyOrderId || t.etsyHeadingBadge || t.etsyHeadingTitle || t.etsyViewOrderUrl) {
+            // Avoid rebuilding the bar's innerHTML if nothing changed
+            // (prevents losing the copy-chip listener wiring on
+            // every poll).
+            const fingerprint = (t.etsyOrderId || "") + "|" +
+                                (t.etsyHeadingBadge || "") + "|" +
+                                (t.etsyHeadingTitle || "") + "|" +
+                                (t.etsyViewOrderUrl || "");
+            if (mount.dataset.fp !== fingerprint) {
+              mount.innerHTML =
+                '<div class="m-etsy-heading-bar" style="display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:10px 14px; background:var(--m-c-surface-2); border-bottom:1px solid var(--m-c-border); font-size:14px;">' +
+                  (t.etsyOrderId ? (
+                    '<button type="button" class="m-etsy-order-chip" data-copy-order="' + mEsc(t.etsyOrderId) + '" ' +
+                    'style="display:inline-flex; align-items:center; gap:6px; background:#ddf4ff; color:#0969da; padding:6px 12px; border-radius:14px; border:1px solid #b6e3ff; font-weight:600; font-size:14px;">' +
+                    '<i class="material-icons" style="font-size:16px;">receipt_long</i>' +
+                    '#' + mEsc(t.etsyOrderId) +
+                    '<i class="material-icons" style="font-size:14px; opacity:0.6;">content_copy</i>' +
+                    '</button>'
+                  ) : "") +
+                  (t.etsyHeadingBadge ? (
+                    '<span style="background:#fff1e5; color:#9a3f00; padding:4px 10px; border-radius:12px; font-size:12px; font-weight:500;">' + mEsc(t.etsyHeadingBadge) + '</span>'
+                  ) : "") +
+                  // v0.9.42 — Title text ("Help with order n.º ...") was
+                  // present on desktop but missing on mobile. Surfacing
+                  // it here so operators see the customer's stated
+                  // request context (e.g., "Help with order", "Custom
+                  // order request", etc.) alongside the order chip.
+                  (t.etsyHeadingTitle ? (
+                    '<span style="color:var(--m-c-text-muted); font-size:12px; flex:1 1 100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0;">' +
+                    mEsc(t.etsyHeadingTitle) + '</span>'
+                  ) : "") +
+                  (t.etsyViewOrderUrl ? (
+                    '<a href="' + mEsc(t.etsyViewOrderUrl) + '" target="_blank" rel="noopener" ' +
+                    'style="margin-left:auto; color:#0969da; text-decoration:none; display:inline-flex; align-items:center; gap:4px; font-size:13px;">' +
+                    '<i class="material-icons" style="font-size:16px;">open_in_new</i>View order</a>'
+                  ) : "") +
+                '</div>';
+              mount.dataset.fp = fingerprint;
+              // Re-wire the copy chip
+              const chip = mount.querySelector(".m-etsy-order-chip");
+              if (chip) {
+                chip.addEventListener("click", async () => {
+                  const orderId = chip.getAttribute("data-copy-order") || "";
+                  if (!orderId) return;
+                  try {
+                    await navigator.clipboard.writeText(orderId);
+                    if (typeof toast === "function") toast("Copied #" + orderId);
+                  } catch (e) {
+                    const ta = document.createElement("textarea");
+                    ta.value = orderId;
+                    document.body.appendChild(ta);
+                    ta.select();
+                    try { document.execCommand("copy"); if (typeof toast === "function") toast("Copied #" + orderId); }
+                    catch (e2) { if (typeof toast === "function") toast("Copy failed"); }
+                    finally { document.body.removeChild(ta); }
+                  }
+                });
+              }
+            }
+          } else if (mount.dataset.fp) {
+            // Thread no longer has heading data — clear the mount
+            mount.innerHTML = "";
+            mount.dataset.fp = "";
+          }
+        }
+      } catch (e) { /* never throw out of render */ }
 
       // Sort + dedup (same logic as v5.1)
       const _msToInt = (m) => {
