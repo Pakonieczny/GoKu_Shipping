@@ -2676,7 +2676,7 @@
     .m-msg-bubble { display: inline-block; max-width: 85%; padding: 10px 14px; border-radius: 18px; font-size: 14px; line-height: 1.45; word-wrap: break-word; white-space: pre-wrap; }
     .m-msg-bubble.inbound { background: var(--m-c-surface-2); border-bottom-left-radius: 4px; color: var(--m-c-text); }
     .m-msg-wrap.outbound { text-align: right; }
-    .m-msg-bubble.outbound { background: var(--m-c-accent); color: #fff; border-bottom-right-radius: 4px; }
+    .m-msg-bubble.outbound { background: var(--m-c-accent); color: #fff; border-bottom-right-radius: 4px; text-align: left; }
     .m-msg-img-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
     .m-msg-img { width: 80px; height: 80px; background-size: cover; background-position: center; border-radius: 8px; background-color: var(--m-c-surface-3); }
 
@@ -14801,7 +14801,28 @@
 
       // Send button
       if (send) {
-        send.addEventListener("click", () => sendViaEtsy(thread.id));
+        send.addEventListener("click", () => {
+          // v0.9.39 — Play send animation immediately on click, before
+          // sendViaEtsy starts its backend work. The animation is
+          // self-contained and failure-safe — any error inside it is
+          // caught and won't prevent the actual send from proceeding.
+          try {
+            if (window.SendAnimation && typeof window.SendAnimation.play === 'function') {
+              const ta = document.getElementById("emDraftText");
+              const threadContainer = document.getElementById("emThreadBox");
+              const text = (ta && ta.value || "").trim();
+              if (text && ta && threadContainer) {
+                window.SendAnimation.play({
+                  text: text,
+                  sourceTextarea: ta,
+                  threadContainer: threadContainer,
+                  isMobile: false
+                });
+              }
+            }
+          } catch (e) { /* never block sendViaEtsy */ }
+          sendViaEtsy(thread.id);
+        });
       }
 
       // Initial render of chips (in case hydrate already populated them)
@@ -16259,6 +16280,20 @@
           </div>`;
       }).join("");
       box.scrollTop = box.scrollHeight;
+      // v0.9.39 — Reconcile any send-animation preview bubbles that
+      // are still in the DOM against the real outbound messages we
+      // just rendered. If the real message has arrived, remove the
+      // preview (they would otherwise both render until the next
+      // full re-render replaced innerHTML).
+      // NOTE: setting box.innerHTML above already destroyed any
+      // previews that were children of box, so this is mostly a
+      // belt-and-suspenders check. Kept for the case where a
+      // preview's parent isn't box (defensive).
+      try {
+        if (window.SendAnimation && typeof window.SendAnimation.reconcileAgainstRealMessages === 'function') {
+          window.SendAnimation.reconcileAgainstRealMessages(state.messages);
+        }
+      } catch (e) {}
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -19870,6 +19905,15 @@
       if (wasNearBottom && body) {
         requestAnimationFrame(() => { body.scrollTop = body.scrollHeight; });
       }
+      // v0.9.39 — Reconcile send-animation preview bubbles against
+      // real outbound messages. If a preview's text matches a real
+      // outbound now in state.messages, the floating overlay can
+      // be removed since the real bubble will paint in the same spot.
+      try {
+        if (window.SendAnimation && typeof window.SendAnimation.reconcileAgainstRealMessages === 'function') {
+          window.SendAnimation.reconcileAgainstRealMessages(state.messages);
+        }
+      } catch (e) {}
     }
 
     // ── Mobile-native AI draft card (v5.5) ──────────────────────
@@ -20725,6 +20769,27 @@
           return;
         }
         const textForSend = (ta.value || "").trim();
+
+        // v0.9.39 — Play send animation immediately. Fires before any
+        // backend calls so it feels instantaneous. The animation is
+        // failure-safe: any internal error is caught and won't block
+        // the actual send.
+        try {
+          if (textForSend && window.SendAnimation && typeof window.SendAnimation.play === 'function') {
+            const messagesList = document.getElementById("mMessagesList");
+            const convBody = document.getElementById("mConvBody");
+            if (messagesList) {
+              window.SendAnimation.play({
+                text: textForSend,
+                sourceTextarea: ta,
+                threadContainer: messagesList,
+                // mConvBody is the actual scrollable parent on mobile
+                scrollContainer: convBody || messagesList,
+                isMobile: true
+              });
+            }
+          }
+        } catch (e) { /* never block sendViaEtsy */ }
         // v3.31 — Do not pre-block mobile sends on the local attachment
         // strip. sendViaEtsy now performs the authoritative empty check
         // after refreshing draft.trackingImages and promoting any ready
@@ -21337,6 +21402,501 @@
     }
     window.mInit = mInit;
 
+  })();
+  </script>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       v0.9.39 — Send animation (words fly into the bubble)
+       ═══════════════════════════════════════════════════════════════
+       Self-contained module. Adds CSS for the animation and a global
+       window.SendAnimation.play({...}) function. Failure-safe: if any
+       step throws or measurements are bad, falls through silently so
+       the send pipeline isn't blocked.
+
+       The module is in a separate <script> block (not the main IIFE
+       above) so it has its own error boundary — any bug in here can
+       never break the main inbox logic. -->
+  <style>
+    /* v0.9.39 — Register --chip-alpha as an animatable number so
+       Chromium-based browsers can interpolate smoothly between
+       waypoints. Browsers that don't support @property (older
+       Safari) will use discrete interpolation which is OK because
+       our 16-waypoint animation keeps the steps small (~6% per step). */
+    @property --chip-alpha {
+      syntax: '<number>';
+      inherits: false;
+      initial-value: 1;
+    }
+    /* Flying tile during the animation. Chip background uses a CSS
+       var so it can fade to transparent over the last 30% of flight
+       without changing the tile's outer size (which would cause
+       visible re-centering). Color matches the production outbound
+       bubble color (#0366d6 desktop, accent on mobile — we just use
+       #0366d6 as a close-enough match for both). */
+    .em-sa-flying {
+      position: fixed; pointer-events: none; z-index: 9999;
+      font-size: 13px; line-height: 1.4; color: #ffffff;
+      background-color: rgba(3, 102, 214, var(--chip-alpha, 1));
+      padding: 2px 6px;
+      border-radius: 6px;
+      font-weight: 500;
+      will-change: transform, opacity;
+      white-space: nowrap;
+      box-shadow: 0 2px 6px rgba(3, 102, 214, calc(0.3 * var(--chip-alpha, 1)));
+    }
+    /* While the animation is playing, hide the textarea text via
+       transparent color so the user doesn't see both the source
+       text AND the flying tiles. The text itself remains in
+       ta.value — sendViaEtsy reads from there. The class is
+       removed automatically after a short safety timeout. */
+    .em-sa-hide-text {
+      color: transparent !important;
+      caret-color: transparent !important;
+    }
+    /* Sparks at ignition */
+    .em-sa-spark {
+      position: fixed; pointer-events: none;
+      width: 5px; height: 5px; border-radius: 50%;
+      background: radial-gradient(circle, #fff 0%, #79c0ff 60%, transparent 100%);
+      opacity: 0; z-index: 9998;
+      will-change: transform, opacity;
+    }
+    @keyframes em-sa-spark-fly {
+      0%   { transform: translate(0, 0) scale(0.5); opacity: 1; }
+      100% { transform: translate(var(--dx), var(--dy)) scale(0); opacity: 0; }
+    }
+    .em-sa-ripple {
+      position: fixed; pointer-events: none;
+      width: 20px; height: 20px; border-radius: 50%;
+      border: 2px solid #0366d6; opacity: 0;
+      z-index: 9997; will-change: transform, opacity;
+    }
+    @keyframes em-sa-ripple-out {
+      0%   { transform: scale(0.5); opacity: 0.8; }
+      100% { transform: scale(4);   opacity: 0;   }
+    }
+    .em-sa-preview-landed {
+      animation: em-sa-landed-pulse 700ms cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    @keyframes em-sa-landed-pulse {
+      0%   { box-shadow: 0 0 0 0 rgba(3, 102, 214, 0.5); }
+      50%  { box-shadow: 0 0 0 12px rgba(3, 102, 214, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(3, 102, 214, 0); }
+    }
+    /* Preview bubble. v0.9.39 — Positioned as a FIXED overlay
+       (not appended to the thread container) so it survives
+       innerHTML re-renders from renderThreadMessages/mRenderMessages
+       that wipe the thread container's contents. Coordinates are
+       computed at play() time to match where the bubble WOULD
+       appear if it were inside the thread.
+       During the animation phase, the inner word spans are hidden
+       (visibility) so they reserve layout but don't paint until the
+       flying tile delivers them. Each word is revealed individually
+       by adding .em-sa-word-typed.
+       Bubble's growth is via clip-path so its on-page size is correct
+       from frame 0. */
+    .em-sa-preview {
+      pointer-events: none;
+      z-index: 9996;
+      will-change: clip-path, opacity;
+      /* position: fixed is set inline by JS after measurement */
+    }
+    .em-sa-preview .em-sa-word {
+      visibility: hidden;
+    }
+    .em-sa-preview .em-sa-word.em-sa-word-typed {
+      visibility: visible;
+    }
+    /* On mobile, the .m-msg-wrap.outbound has text-align: right to
+       position the inline-block .m-msg-bubble on the right side of
+       the row. Text inside the bubble should still flow left-to-right
+       though. In production the bubble text isn't word-wrapped in
+       spans, so right-alignment doesn't matter visually. But our
+       preview wraps each word in a span, and those inline spans
+       inherit the wrap's text-align: right, putting them on the
+       wrong side. Override so words flow left-to-right inside the
+       inner bubble. */
+    .em-sa-preview .em-sa-bubble-inner {
+      text-align: left;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .em-sa-flying, .em-sa-spark, .em-sa-ripple { display: none !important; }
+      .em-sa-preview { clip-path: none !important; }
+      .em-sa-preview .em-sa-word { visibility: visible !important; }
+      .em-sa-preview-landed { animation: none; }
+    }
+  </style>
+  <script>
+  (function () {
+    'use strict';
+
+    // ── Tunables ─────────────────────────────────────────
+    const TIMING = {
+      flightDuration:  400,
+      wordStagger:     8,
+      bubbleRevealDur: 480
+    };
+    // Mobile vs desktop. Detected at play-time, not module-init time,
+    // so it picks up viewport-width changes.
+    function isMobileViewport() {
+      try {
+        return window.IS_MOBILE === true ||
+               (window.matchMedia && window.matchMedia('(max-width: 600px)').matches);
+      } catch (e) {
+        return false;
+      }
+    }
+
+    // ── Helpers ──────────────────────────────────────────
+    function splitWords(text) {
+      return String(text).trim().split(/\s+/).filter(Boolean);
+    }
+    function escapeHtml(s) {
+      return String(s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+    function normalizeText(s) {
+      // Mirror the dedup normalization used by renderThreadMessages
+      return String(s || '')
+        .trim().toLowerCase()
+        .replace(/https?:\/\/(www\.)?/g, '')
+        .replace(/(^|\s)www\./g, '$1')
+        .replace(/\s+/g, ' ').slice(0, 200);
+    }
+
+    // Build a hidden measurement scaffold matching the textarea so
+    // we can read where each word will appear visually within it.
+    function measureSourceWordPositions(srcRect, words, ta) {
+      const cs = window.getComputedStyle(ta);
+      const wrap = document.createElement('div');
+      Object.assign(wrap.style, {
+        position: 'fixed',
+        left: srcRect.left + 'px', top: srcRect.top + 'px',
+        width: srcRect.width + 'px', height: srcRect.height + 'px',
+        padding: cs.padding, fontSize: cs.fontSize,
+        lineHeight: cs.lineHeight, fontFamily: cs.fontFamily,
+        boxSizing: 'border-box', visibility: 'hidden',
+        pointerEvents: 'none', zIndex: '-1', whiteSpace: 'normal'
+      });
+      wrap.innerHTML = words.map(w =>
+        '<span class="em-sa-scaffold-word" style="display:inline-block;padding:2px 4px;margin-right:2px;">' +
+        escapeHtml(w) + '</span>'
+      ).join('');
+      document.body.appendChild(wrap);
+      const rects = Array.from(wrap.querySelectorAll('.em-sa-scaffold-word'))
+        .map(el => el.getBoundingClientRect());
+      wrap.remove();
+      return rects;
+    }
+
+    function fireSparks(x, y) {
+      const N = 8;
+      for (let i = 0; i < N; i++) {
+        const spark = document.createElement('div');
+        spark.className = 'em-sa-spark';
+        spark.style.left = (x - 3) + 'px';
+        spark.style.top  = (y - 3) + 'px';
+        const angle = (i / N) * Math.PI * 2 + Math.random() * 0.3;
+        const dist  = 35 + Math.random() * 30;
+        spark.style.setProperty('--dx', Math.cos(angle) * dist + 'px');
+        spark.style.setProperty('--dy', Math.sin(angle) * dist + 'px');
+        document.body.appendChild(spark);
+        spark.style.animation = 'em-sa-spark-fly ' + (320 + Math.random() * 200) + 'ms ease-out forwards';
+        setTimeout(() => spark.remove(), 700);
+      }
+    }
+    function fireRipple(x, y) {
+      const r = document.createElement('div');
+      r.className = 'em-sa-ripple';
+      r.style.left = (x - 10) + 'px';
+      r.style.top  = (y - 10) + 'px';
+      document.body.appendChild(r);
+      r.style.animation = 'em-sa-ripple-out 600ms cubic-bezier(0.16, 1, 0.3, 1) forwards';
+      setTimeout(() => r.remove(), 700);
+    }
+
+    // ── Main entry ───────────────────────────────────────
+    // opts:
+    //   text:            message text to animate
+    //   sourceTextarea:  the element to fly out of
+    //   threadContainer: the message-list element (where the bubble
+    //                    is appended for measurement)
+    //   scrollContainer: the actual scrollable parent (often the same
+    //                    as threadContainer; on mobile they differ:
+    //                    threadContainer is #mMessagesList but the
+    //                    scrollable parent is #mConvBody). Defaults
+    //                    to threadContainer if not provided.
+    //   isMobile:        explicit override (else auto-detected)
+    //
+    // Strategy:
+    //   1. Append the preview bubble to the thread container (inline)
+    //      so its natural flex-layout position can be measured. This
+    //      momentarily pushes existing messages up — desired UX.
+    //   2. Scroll the container to bottom so the bubble is visible.
+    //   3. Measure the bubble's bounding rect AND each word's
+    //      destination position.
+    //   4. DETACH the bubble and re-append it to document.body as a
+    //      position:fixed overlay at the measured coordinates. This
+    //      way the bubble survives renderThreadMessages re-renders
+    //      that wipe the thread container's innerHTML.
+    //   5. The thread container's natural layout now collapses (no
+    //      new bubble), but that's fine — when the real outbound
+    //      message arrives via the next poll/insert, it lands in
+    //      the exact same spot. Reconcile then removes the floating
+    //      preview.
+    function play(opts) {
+      try {
+        if (!opts || !opts.text || !opts.sourceTextarea || !opts.threadContainer) return;
+        const text = String(opts.text);
+        const ta = opts.sourceTextarea;
+        const container = opts.threadContainer;
+        const scrollContainer = opts.scrollContainer || container;
+        const mobile = (opts.isMobile === true) || (opts.isMobile === false ? false : isMobileViewport());
+
+        const words = splitWords(text);
+        if (!words.length) return;
+
+        // v0.9.39 — On mobile, if the soft keyboard is open the
+        // viewport is squashed and measurements would be off by
+        // the keyboard's height once it dismisses. Blur the
+        // textarea now so the keyboard begins dismissing
+        // BEFORE we measure. We can't wait for the dismissal
+        // animation to finish (would delay the visual feedback),
+        // but at least the visual viewport will be more stable.
+        // On desktop blur is a no-op since there's no keyboard.
+        if (mobile && typeof ta.blur === 'function') {
+          try { ta.blur(); } catch (e) {}
+        }
+
+        const srcRect = ta.getBoundingClientRect();
+        if (srcRect.width === 0 || srcRect.height === 0) return;
+
+        // Step 1: Build the preview bubble with appropriate classes
+        // matching what renderThreadMessages would produce.
+        const bubble = document.createElement('div');
+        const wordsHtml = words.map((w, i) =>
+          '<span class="em-sa-word" data-i="' + i + '">' + escapeHtml(w) + '</span>'
+        ).join(' ');
+        if (mobile) {
+          bubble.className = 'm-msg-wrap outbound em-sa-preview';
+          bubble.innerHTML =
+            '<div class="m-msg-meta outbound">CustomBrites · just now</div>' +
+            '<div class="m-msg-bubble outbound em-sa-bubble-inner">' + wordsHtml + '</div>';
+        } else {
+          bubble.className = 'em-msg outbound em-sa-preview';
+          bubble.innerHTML =
+            '<div class="em-meta">CustomBrites · just now</div>' +
+            '<div class="em-sa-bubble-inner">' + wordsHtml + '</div>';
+        }
+        bubble.setAttribute('data-em-sa-preview', normalizeText(text));
+        bubble.style.opacity = '0';
+
+        // Step 2: Append to thread container as a real flex child.
+        // v0.9.40 — Reverted to the v8 mockup approach: the bubble
+        // stays IN the thread the whole time. This means flex layout
+        // naturally pushes earlier messages up to make room (the
+        // entire reason we want growth), and the bubble can never
+        // overflow into the composer because it lives inside the
+        // thread's overflow-hidden region.
+        //
+        // The concern that motivated the earlier "detach to body"
+        // approach was that renderThreadMessages does innerHTML =
+        // and would wipe the bubble during a poll. But the animation
+        // only lasts ~600ms and polls are seconds apart — and the
+        // reconcile step (called after every renderThreadMessages)
+        // removes the preview anyway when the real outbound arrives.
+        // The risk window is small enough to ignore.
+        container.appendChild(bubble);
+
+        // Step 3: Scroll the bubble into view BEFORE measuring.
+        // Reading offsetTop forces a synchronous reflow so the
+        // scroll position is committed before we measure word
+        // destination positions.
+        scrollContainer.scrollTop = scrollContainer.scrollHeight;
+        // eslint-disable-next-line no-unused-expressions
+        bubble.offsetTop;
+        const destRect = bubble.getBoundingClientRect();
+        if (destRect.width === 0 || destRect.height === 0) {
+          bubble.remove();
+          return;
+        }
+        // For mobile, the visible bubble is the .m-msg-bubble INNER
+        // element (the .m-msg-wrap is a wider layout container for
+        // the meta line that sits above). Clip-path must target the
+        // inner element on mobile, the outer .em-msg on desktop.
+        const clipTarget = mobile ? bubble.querySelector('.em-sa-bubble-inner') : bubble;
+        const clipTargetRect = clipTarget.getBoundingClientRect();
+
+        // Read the bubble's computed border-radius so the clip-path's
+        // rounded corners match the bubble exactly.
+        let bubbleRadius = 8;
+        try {
+          const cs = window.getComputedStyle(clipTarget);
+          const r = parseFloat(cs.borderTopLeftRadius);
+          if (!isNaN(r) && r > 0) bubbleRadius = r;
+        } catch (e) {}
+
+        // Measure each word's destination position
+        const destWordEls = Array.from(bubble.querySelectorAll('.em-sa-word'));
+        const destWordRects = destWordEls.map(el => el.getBoundingClientRect());
+
+        // Measure source word positions in the textarea
+        const originRects = measureSourceWordPositions(srcRect, words, ta);
+
+        // Initial clip-path: show only the top ~38px (a hint of pill)
+        // Applied to the clipTarget element (bubble itself on desktop,
+        // inner .m-msg-bubble on mobile).
+        const startClipHeight = Math.min(38, clipTargetRect.height);
+        clipTarget.style.clipPath = 'inset(0 0 ' + (clipTargetRect.height - startClipHeight) + 'px 0 round ' + bubbleRadius + 'px)';
+
+        // No delta — bubble stayed in thread, no detach
+        const deltaX = 0;
+        const deltaY = 0;
+
+        // v0.9.39 — DO NOT clear the textarea here. sendViaEtsy reads
+        // ta.value to capture the message; if we cleared it, the send
+        // would bail silently with no text to send. sendViaEtsy clears
+        // the textarea itself on backend success (line 15364 region).
+        //
+        // We DO temporarily hide the text via a CSS class so the user
+        // doesn't see both the text in the textarea AND the flying
+        // tiles flying out of it.
+        ta.classList.add('em-sa-hide-text');
+        // Remove the class on the next input event (user starts a new
+        // message) so they can see what they're typing. Also remove
+        // after a safety timeout in case animation never completes.
+        const unhideTa = () => {
+          try { ta.classList.remove('em-sa-hide-text'); } catch (e) {}
+        };
+        ta.addEventListener('input', unhideTa, { once: true });
+        setTimeout(unhideTa, 1500);
+
+        // Build the flying tiles
+        const flyEls = words.map((word, i) => {
+          const el = document.createElement('div');
+          el.className = 'em-sa-flying';
+          el.textContent = word;
+          const o = originRects[i] || { left: srcRect.left + 10, top: srcRect.top + 10, width: 40, height: 20 };
+          el.style.left = o.left + 'px';
+          el.style.top  = o.top + 'px';
+          document.body.appendChild(el);
+          return { el, origin: o, destEl: destWordEls[i], destRect: destWordRects[i] };
+        });
+
+        // Fade the bubble shell in. Use rAF so the initial-opacity-0
+        // is committed before the transition starts.
+        requestAnimationFrame(() => {
+          bubble.style.transition = 'opacity 180ms ease-out';
+          bubble.style.opacity = '1';
+        });
+        fireSparks(srcRect.left + srcRect.width / 2, srcRect.top + 8);
+
+        // Animate clip-path open
+        const totalWordTime = TIMING.flightDuration + (flyEls.length - 1) * TIMING.wordStagger;
+        const revealDuration = Math.max(totalWordTime - 100, 400);
+        clipTarget.animate([
+          { clipPath: 'inset(0 0 ' + (clipTargetRect.height - startClipHeight) + 'px 0 round ' + bubbleRadius + 'px)' },
+          { clipPath: 'inset(0 0 0px 0 round ' + bubbleRadius + 'px)' }
+        ], {
+          duration: revealDuration,
+          easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+          fill: 'forwards'
+        });
+
+        // Launch each word's direct flight to its destination
+        const apexLiftFactor = mobile ? 0.18 : 0.25;
+        const apexLiftMax    = mobile ? 80  : 120;
+        const apexLiftBase   = mobile ? 28  : 40;
+
+        flyEls.forEach((fw, i) => {
+          const delay = i * TIMING.wordStagger;
+          const srcCx = fw.origin.left + fw.origin.width / 2;
+          const srcCy = fw.origin.top  + fw.origin.height / 2;
+          const dstCx = fw.destRect.left + fw.destRect.width / 2 + deltaX;
+          const dstCy = fw.destRect.top  + fw.destRect.height / 2 + deltaY;
+          const apexLift = Math.min(apexLiftMax, Math.abs(srcCy - dstCy) * apexLiftFactor + apexLiftBase);
+          const apexX = (srcCx + dstCx) / 2;
+          const apexY = Math.min(srcCy, dstCy) - apexLift;
+
+          const N = 16;
+          const waypoints = [];
+          for (let j = 0; j <= N; j++) {
+            const t = j / N;
+            const x = (1-t)*(1-t)*srcCx + 2*(1-t)*t*apexX + t*t*dstCx;
+            const y = (1-t)*(1-t)*srcCy + 2*(1-t)*t*apexY + t*t*dstCy;
+            const dx = x - srcCx;
+            const dy = y - srcCy;
+            const fadeT = t > 0.7 ? (t - 0.7) / 0.3 : 0;
+            const chipAlpha = 1 - fadeT;
+            waypoints.push({
+              transform: 'translate(' + dx + 'px, ' + dy + 'px)',
+              '--chip-alpha': chipAlpha,
+              opacity: 1
+            });
+          }
+          const anim = fw.el.animate(waypoints, {
+            duration: TIMING.flightDuration,
+            delay: delay,
+            easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+            fill: 'forwards'
+          });
+          anim.onfinish = () => {
+            try {
+              fw.destEl.classList.add('em-sa-word-typed');
+              fw.el.style.display = 'none';
+            } catch (e) {}
+
+            if (i === flyEls.length - 1) {
+              clipTarget.style.clipPath = 'none';
+              bubble.classList.add('em-sa-preview-landed');
+              try {
+                fireRipple(fw.destRect.right, fw.destRect.top + fw.destRect.height / 2);
+              } catch (e) {}
+              setTimeout(() => {
+                flyEls.forEach(f => { try { f.el.remove(); } catch (e) {} });
+              }, 300);
+              // Safety net: remove preview after 60s if real message
+              // never arrived (backend send failed silently, etc.)
+              setTimeout(() => {
+                if (bubble && bubble.parentNode) bubble.remove();
+              }, 60000);
+            }
+          };
+        });
+      } catch (err) {
+        try { console.warn('[SendAnimation] play() error:', err); } catch (e) {}
+      }
+    }
+
+    // Remove all preview bubbles AND their thread placeholders whose
+    // normalized text matches a real outbound message. Called by
+    // renderThreadMessages when real messages arrive in state.messages.
+    // Without this the floating preview + placeholder would persist
+    // until the 60s safety timeout, even though the real bubble is
+    // already in the thread.
+    function reconcileAgainstRealMessages(messages) {
+      try {
+        if (!Array.isArray(messages) || !messages.length) return;
+        const realOutboundKeys = new Set();
+        for (const m of messages) {
+          if (m && m.direction === 'outbound') {
+            const k = normalizeText(m.text);
+            if (k) realOutboundKeys.add(k);
+          }
+        }
+        if (!realOutboundKeys.size) return;
+        // Preview bubbles in the thread (or wherever they are)
+        const previews = document.querySelectorAll('[data-em-sa-preview]');
+        previews.forEach(p => {
+          const k = p.getAttribute('data-em-sa-preview');
+          if (k && realOutboundKeys.has(k)) p.remove();
+        });
+      } catch (e) { /* never throw */ }
+    }
+
+    window.SendAnimation = { play, reconcileAgainstRealMessages };
   })();
   </script>
 </body>
