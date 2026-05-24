@@ -7,7 +7,7 @@
  *    2. This function finds (or creates) a thread doc keyed by etsyConversationId.
  *    3. For each scraped message, it dedupes by contentHash and writes only new ones.
  *    4. It updates the thread's lastSyncedAt, lastScrapedDomHash, customer/username if newly learned,
- *       and advances status detected_from_gmail → etsy_scraped.
+ *       and surfaces successful hidden/manual scrape results into Needs Review so they are visible.
  *    5. Writes an audit event.
  *
  *  POST body shape (from extension):
@@ -40,6 +40,43 @@ const FV  = admin.firestore.FieldValue;
 
 const THREADS_COLL = "EtsyMail_Threads";
 const AUDIT_COLL   = "EtsyMail_Audit";
+
+// v4.5 — Snapshot visibility repair.
+//
+// The Chrome extension can be invoked manually from an Etsy conversation page.
+// In that path there may be zero newly-written messages because the backend
+// already has the bubbles. Pre-v4.5 that meant the snapshot was technically
+// successful but the thread could remain in a hidden/stale status such as
+// etsy_scraped, sent, failed_scrape, or archived — so the operator saw
+// "SUCCESS" in the scraper service worker while the customer still did not
+// appear in the active inbox folders.
+//
+// These are the same hidden intake/legacy statuses the auto-pipeline already
+// surfaces when it claims a genuinely new inbound. Snapshot must do the
+// lighter version too: any successful scrape that sees real message bubbles
+// can safely bring a hidden thread back to Needs Review. Active sales/rush/
+// auto-reply statuses are deliberately NOT included here.
+const SNAPSHOT_SURFACE_TO_REVIEW_STATUSES = new Set([
+  null,
+  undefined,
+  "detected_from_gmail",
+  "pending_etsy_scrape",
+  "etsy_scraped",
+  "pending_order_enrichment",
+  "ready_for_ai",
+  "draft_ready",
+  "sent",
+  "hold_uncertain",
+  "hold_missing_order",
+  "hold_login_required",
+  "failed_scrape",
+  "failed_send",
+  "archived"
+]);
+
+function shouldSurfaceSnapshotToReview(status) {
+  return SNAPSHOT_SURFACE_TO_REVIEW_STATUSES.has(status == null ? status : String(status));
+}
 
 function json(statusCode, body) { return { statusCode, headers: CORS, body: JSON.stringify(body) }; }
 function bad(msg, code = 400)    { return json(code, { error: msg }); }
@@ -247,6 +284,12 @@ exports.handler = async (event) => {
     let threadExisted = tSnap.exists;
     let currentStatus = tSnap.exists ? (tSnap.data().status || null) : null;
 
+    const hasScrapedMessageBubbles = Array.isArray(messages) && messages.length > 0;
+    const shouldSurfaceToReview = hasScrapedMessageBubbles && shouldSurfaceSnapshotToReview(currentStatus);
+    const resurfacedFromStatus = shouldSurfaceToReview
+      ? (currentStatus == null ? null : String(currentStatus))
+      : null;
+
     const threadPatch = {
       etsyConversationId,
       etsyConversationUrl: etsyConversationUrl || null,
@@ -286,14 +329,24 @@ exports.handler = async (event) => {
       }
     }
 
-    // Advance status on first successful scrape
-    const advanceable = ["detected_from_gmail", "pending_etsy_scrape", null, undefined];
-    if (advanceable.includes(currentStatus)) {
-      threadPatch.status = "etsy_scraped";
+    // v4.5 — Surface successful hidden/manual scrapes into a visible folder.
+    //
+    // This is intentionally done before message upsert. Manual scraper runs
+    // often return newMessages=0 because every visible bubble already exists
+    // in Firestore; relying on writtenCount would miss exactly the failing
+    // case. The guard requires at least one scraped bubble so a broken/empty
+    // scrape cannot resurrect a stale or archived thread.
+    if (shouldSurfaceToReview) {
+      threadPatch.status = "pending_human_review";
+      threadPatch.needsHumanReview = true;
+      threadPatch.snapshotResurfacedAt = now;
+      threadPatch.snapshotResurfacedFromStatus = resurfacedFromStatus;
     }
 
     if (!threadExisted) {
-      // Create fresh
+      // Create fresh. Successful first scrapes should be visible immediately;
+      // the auto-pipeline may later move them to Auto-Reply/Sales/etc.
+      const initialStatus = hasScrapedMessageBubbles ? "pending_human_review" : "etsy_scraped";
       const initial = {
         threadId,
         etsyConversationId,
@@ -306,7 +359,7 @@ exports.handler = async (event) => {
         etsyUsername        : (customer && customer.etsyUsername) || null,
         linkedOrderId       : null,
         linkedListingIds    : [],
-        status              : "etsy_scraped",
+        status              : initialStatus,
         category            : null,
         confidence          : null,
         needsHumanReview    : true,
@@ -325,6 +378,8 @@ exports.handler = async (event) => {
         subject             : subject || null,
         createdAt           : now,
         updatedAt           : now,
+        snapshotResurfacedAt: hasScrapedMessageBubbles ? now : null,
+        snapshotResurfacedFromStatus: null,
         // v4.3.16 — Buyer metadata. Previously these fields were only
         // written via threadPatch (the `merge: true` path for existing
         // threads), so on a FIRST scrape — the precise moment when we
@@ -813,7 +868,9 @@ exports.handler = async (event) => {
         updatedMessageCount  : updatedCount,
         totalMessagesScraped : messages.length,
         threadDomHash        : threadDomHash || null,
-        scrapedAt            : scrapedAt || null
+        scrapedAt            : scrapedAt || null,
+        surfacedToReview     : !!shouldSurfaceToReview || (!threadExisted && hasScrapedMessageBubbles),
+        resurfacedFromStatus : resurfacedFromStatus
       }
     });
 
@@ -877,6 +934,8 @@ exports.handler = async (event) => {
       newMessages     : writtenCount,
       updatedMessages : updatedCount,
       totalScanned    : messages.length,
+      surfacedToReview: !!shouldSurfaceToReview || (!threadExisted && hasScrapedMessageBubbles),
+      resurfacedFromStatus,
       imagesToMirror
     });
 
