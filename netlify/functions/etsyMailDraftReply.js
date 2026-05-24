@@ -3473,18 +3473,34 @@ exports.handler = async (event) => {
     // no Etsy calls. A successful buyer-sync typically writes the
     // customer doc within 100-500ms.
     let customer = _initialCustomer;
-    if (!customer && thread.buyerUserId) {
-      console.log(`[draftReply ${threadId}] lazy buyer-sync — customer doc missing for buyerUserId=${thread.buyerUserId}, triggering sync`);
+    // v4.4.1 — Fire on EITHER buyerUserId OR a linked order ID. The
+    // help-request flow can land here with thread.etsyOrderId set but
+    // thread.buyerUserId still missing (the scrape didn't capture it
+    // from the help-request page DOM), and the targeted-hydrate path in
+    // sync-background can resolve the buyer FROM the receipt — but only
+    // if we actually send it the receiptId.
+    const lazyReceiptId =
+         (thread.etsyOrderId && /^\d+$/.test(String(thread.etsyOrderId)))
+      ? String(thread.etsyOrderId) : null;
+
+    if (!customer && (thread.buyerUserId || lazyReceiptId)) {
+      console.log(
+        `[draftReply ${threadId}] lazy buyer-sync — customer doc missing ` +
+        `(buyerUserId=${thread.buyerUserId || "(none)"} receiptId=${lazyReceiptId || "(none)"}), triggering sync`
+      );
       try {
         const fnHost = process.env.URL || process.env.DEPLOY_PRIME_URL || null;
         if (fnHost) {
           // Fire the sync. It's a background function so it returns 202
           // immediately; the actual write happens asynchronously.
           const fetch = require("node-fetch");
+          const syncBody = { mode: "buyer", threadId };
+          if (thread.buyerUserId) syncBody.buyerUserId = String(thread.buyerUserId);
+          if (lazyReceiptId)      syncBody.receiptId   = lazyReceiptId;
           await fetch(`${fnHost}/.netlify/functions/etsyMailSync-background`, {
             method : "POST",
             headers: { "Content-Type": "application/json" },
-            body   : JSON.stringify({ mode: "buyer", buyerUserId: String(thread.buyerUserId) }),
+            body   : JSON.stringify(syncBody),
             timeout: 3000
           }).catch(e => console.warn(`[draftReply ${threadId}] sync trigger failed:`, e.message));
 
@@ -3493,21 +3509,41 @@ exports.handler = async (event) => {
           // We poll up to 1500ms with a 100ms cadence so we exit
           // promptly when the doc lands but don't wait absurdly long
           // if the sync fails silently.
+          //
+          // v4.4.1 — When the receipt-hydrate path resolves a
+          // buyerUserId that the original scrape missed,
+          // runBuyerSyncFromMirror writes that ID back to the thread
+          // doc (via patchThreadWithBuyer in sync-background) AND
+          // writes the customer doc keyed by it. We may therefore need
+          // to re-read the thread to learn which buyerUserId to poll
+          // on — `thread.buyerUserId` in this function's closure is
+          // stale if the original load saw null.
           const SYNC_WAIT_MS = 1500;
           const POLL_INTERVAL_MS = 100;
           const startedAt = Date.now();
           const deadline = startedAt + SYNC_WAIT_MS;
+          let pollBuyerUserId = thread.buyerUserId ? String(thread.buyerUserId) : null;
           while (Date.now() < deadline) {
             await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
-            const retry = await loadCustomer(thread.buyerUserId);
+            // Refresh the polled buyerUserId from the thread doc each
+            // iteration in case the receipt-hydrate path wrote it.
+            if (!pollBuyerUserId) {
+              try {
+                const tSnap = await db.collection("EtsyMail_Threads").doc(threadId).get();
+                const tData = tSnap.exists ? tSnap.data() : null;
+                if (tData && tData.buyerUserId) pollBuyerUserId = String(tData.buyerUserId);
+              } catch (_) { /* non-fatal */ }
+            }
+            if (!pollBuyerUserId) continue;
+            const retry = await loadCustomer(pollBuyerUserId);
             if (retry) {
               customer = retry;
-              console.log(`[draftReply ${threadId}] lazy buyer-sync — customer doc resolved (waited ${Date.now() - startedAt}ms, ${(retry.recentReceipts || []).length} receipts)`);
+              console.log(`[draftReply ${threadId}] lazy buyer-sync — customer doc resolved (waited ${Date.now() - startedAt}ms, buyerUserId=${pollBuyerUserId}, ${(retry.recentReceipts || []).length} receipts)`);
               break;
             }
           }
           if (!customer) {
-            console.warn(`[draftReply ${threadId}] lazy buyer-sync — customer doc still missing after ${SYNC_WAIT_MS}ms wait. Proceeding without it.`);
+            console.warn(`[draftReply ${threadId}] lazy buyer-sync — customer doc still missing after ${SYNC_WAIT_MS}ms wait (polled buyerUserId=${pollBuyerUserId || "(unresolved)"}). Proceeding without it.`);
           }
         } else {
           console.warn(`[draftReply ${threadId}] lazy buyer-sync skipped — no URL/DEPLOY_PRIME_URL env`);

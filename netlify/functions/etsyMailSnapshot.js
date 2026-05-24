@@ -7,7 +7,7 @@
  *    2. This function finds (or creates) a thread doc keyed by etsyConversationId.
  *    3. For each scraped message, it dedupes by contentHash and writes only new ones.
  *    4. It updates the thread's lastSyncedAt, lastScrapedDomHash, customer/username if newly learned,
- *       and surfaces successful hidden/manual scrape results into Needs Review so they are visible.
+ *       and advances status detected_from_gmail → etsy_scraped.
  *    5. Writes an audit event.
  *
  *  POST body shape (from extension):
@@ -40,43 +40,6 @@ const FV  = admin.firestore.FieldValue;
 
 const THREADS_COLL = "EtsyMail_Threads";
 const AUDIT_COLL   = "EtsyMail_Audit";
-
-// v4.5 — Snapshot visibility repair.
-//
-// The Chrome extension can be invoked manually from an Etsy conversation page.
-// In that path there may be zero newly-written messages because the backend
-// already has the bubbles. Pre-v4.5 that meant the snapshot was technically
-// successful but the thread could remain in a hidden/stale status such as
-// etsy_scraped, sent, failed_scrape, or archived — so the operator saw
-// "SUCCESS" in the scraper service worker while the customer still did not
-// appear in the active inbox folders.
-//
-// These are the same hidden intake/legacy statuses the auto-pipeline already
-// surfaces when it claims a genuinely new inbound. Snapshot must do the
-// lighter version too: any successful scrape that sees real message bubbles
-// can safely bring a hidden thread back to Needs Review. Active sales/rush/
-// auto-reply statuses are deliberately NOT included here.
-const SNAPSHOT_SURFACE_TO_REVIEW_STATUSES = new Set([
-  null,
-  undefined,
-  "detected_from_gmail",
-  "pending_etsy_scrape",
-  "etsy_scraped",
-  "pending_order_enrichment",
-  "ready_for_ai",
-  "draft_ready",
-  "sent",
-  "hold_uncertain",
-  "hold_missing_order",
-  "hold_login_required",
-  "failed_scrape",
-  "failed_send",
-  "archived"
-]);
-
-function shouldSurfaceSnapshotToReview(status) {
-  return SNAPSHOT_SURFACE_TO_REVIEW_STATUSES.has(status == null ? status : String(status));
-}
 
 function json(statusCode, body) { return { statusCode, headers: CORS, body: JSON.stringify(body) }; }
 function bad(msg, code = 400)    { return json(code, { error: msg }); }
@@ -284,12 +247,6 @@ exports.handler = async (event) => {
     let threadExisted = tSnap.exists;
     let currentStatus = tSnap.exists ? (tSnap.data().status || null) : null;
 
-    const hasScrapedMessageBubbles = Array.isArray(messages) && messages.length > 0;
-    const shouldSurfaceToReview = hasScrapedMessageBubbles && shouldSurfaceSnapshotToReview(currentStatus);
-    const resurfacedFromStatus = shouldSurfaceToReview
-      ? (currentStatus == null ? null : String(currentStatus))
-      : null;
-
     const threadPatch = {
       etsyConversationId,
       etsyConversationUrl: etsyConversationUrl || null,
@@ -329,24 +286,14 @@ exports.handler = async (event) => {
       }
     }
 
-    // v4.5 — Surface successful hidden/manual scrapes into a visible folder.
-    //
-    // This is intentionally done before message upsert. Manual scraper runs
-    // often return newMessages=0 because every visible bubble already exists
-    // in Firestore; relying on writtenCount would miss exactly the failing
-    // case. The guard requires at least one scraped bubble so a broken/empty
-    // scrape cannot resurrect a stale or archived thread.
-    if (shouldSurfaceToReview) {
-      threadPatch.status = "pending_human_review";
-      threadPatch.needsHumanReview = true;
-      threadPatch.snapshotResurfacedAt = now;
-      threadPatch.snapshotResurfacedFromStatus = resurfacedFromStatus;
+    // Advance status on first successful scrape
+    const advanceable = ["detected_from_gmail", "pending_etsy_scrape", null, undefined];
+    if (advanceable.includes(currentStatus)) {
+      threadPatch.status = "etsy_scraped";
     }
 
     if (!threadExisted) {
-      // Create fresh. Successful first scrapes should be visible immediately;
-      // the auto-pipeline may later move them to Auto-Reply/Sales/etc.
-      const initialStatus = hasScrapedMessageBubbles ? "pending_human_review" : "etsy_scraped";
+      // Create fresh
       const initial = {
         threadId,
         etsyConversationId,
@@ -359,7 +306,7 @@ exports.handler = async (event) => {
         etsyUsername        : (customer && customer.etsyUsername) || null,
         linkedOrderId       : null,
         linkedListingIds    : [],
-        status              : initialStatus,
+        status              : "etsy_scraped",
         category            : null,
         confidence          : null,
         needsHumanReview    : true,
@@ -378,8 +325,6 @@ exports.handler = async (event) => {
         subject             : subject || null,
         createdAt           : now,
         updatedAt           : now,
-        snapshotResurfacedAt: hasScrapedMessageBubbles ? now : null,
-        snapshotResurfacedFromStatus: null,
         // v4.3.16 — Buyer metadata. Previously these fields were only
         // written via threadPatch (the `merge: true` path for existing
         // threads), so on a FIRST scrape — the precise moment when we
@@ -868,9 +813,7 @@ exports.handler = async (event) => {
         updatedMessageCount  : updatedCount,
         totalMessagesScraped : messages.length,
         threadDomHash        : threadDomHash || null,
-        scrapedAt            : scrapedAt || null,
-        surfacedToReview     : !!shouldSurfaceToReview || (!threadExisted && hasScrapedMessageBubbles),
-        resurfacedFromStatus : resurfacedFromStatus
+        scrapedAt            : scrapedAt || null
       }
     });
 
@@ -887,44 +830,81 @@ exports.handler = async (event) => {
       });
     }
 
-    // ─── 7) Trigger per-buyer order sync (v4.4 — fire-and-forget) ───
+    // ─── 7) Trigger per-buyer order sync (v4.4.1 — fire-and-forget) ───
     // Closes the gap where manual scrapes left brand-new customers (or
     // recently-active ones) without an EtsyMail_Customers doc until the
     // next scheduled etsyMailSync cron. Triggering directly off the
     // snapshot here makes manual and auto-pipeline paths equivalent:
     // both refresh the customer's order data immediately after a scrape.
     //
+    // v4.4.1 — Also pass receiptId+threadId so sync-background's new
+    // targeted-hydrate path (ensureReceiptMirroredById) can pull a
+    // specific receipt directly from Etsy if it's not yet in the mirror.
+    // Without this, a help-request thread on a brand-new order ends up
+    // with "No purchase history" in the customer panel because:
+    //   - the mirror cron hasn't picked the receipt up yet, AND
+    //   - the buyer-sync's mirror query returns 0 results, AND
+    //   - the customer doc gets written with orderCount=0 (or worse, not
+    //     at all when buyerUserId never came through on the scrape).
+    // Passing receiptId resolves buyerUserId from the receipt itself if
+    // the scrape didn't capture it, and guarantees the specific order
+    // the customer is writing about is present in the mirror before the
+    // aggregation runs.
+    //
     // Async-invoke into etsyMailSync-background via Netlify's background
     // dispatch URL. We do NOT await — order sync is independent of the
     // snapshot's primary responsibility (saving messages) and shouldn't
     // block the response. Errors are logged but never bubbled up.
     const buyerForSync = (customer && customer.buyerUserId) ? String(customer.buyerUserId) : null;
-    if (buyerForSync) {
-      // ─── Buyer-sync trigger ──────────────────────────────────────────
-      // Fires a buyer-mode sync to refresh EtsyMail_Customers/{buyerUserId}.
-      // Under the receipts-mirror architecture (May 2026), this is FREE —
-      // sync-background reads receipts from the Firestore mirror, no Etsy
-      // calls. The earlier `syncTriggers.enableSnapshotTrigger` flag was
-      // removed once the mirror went live; firing on every scrape keeps
-      // customer docs fresh at zero quota cost.
+
+    // Pull a structured order ID from the scraped conversation heading
+    // (Etsy's "Help request" / "Help with order n.°" banner). Falls back
+    // to the field that just got written to the thread doc.
+    const receiptForSync =
+         (body && body.conversationHeading && body.conversationHeading.orderId)
+      || threadPatch.etsyOrderId
+      || null;
+    const receiptIdValid = receiptForSync && /^\d+$/.test(String(receiptForSync))
+      ? String(receiptForSync) : null;
+
+    // Fire the trigger whenever we have EITHER signal. With only
+    // buyerUserId: standard mirror-aggregation path. With only receiptId:
+    // targeted hydrate resolves buyer from the receipt, then aggregates.
+    // With both: belt-and-suspenders, the hydrate confirms the receipt
+    // and may correct a stale buyerUserId.
+    if (buyerForSync || receiptIdValid) {
       const fnHost = process.env.URL || process.env.DEPLOY_PRIME_URL || null;
       if (fnHost) {
         const syncUrl = `${fnHost}/.netlify/functions/etsyMailSync-background`;
-        // Fire-and-forget — must not block the snapshot response. The
-        // promise is intentionally not awaited; any rejection is logged
-        // via the catch handler so it doesn't surface as an unhandled
-        // promise rejection in the Netlify Function runtime.
+        const syncBody = { mode: "buyer", threadId };
+        if (buyerForSync)   syncBody.buyerUserId = buyerForSync;
+        if (receiptIdValid) syncBody.receiptId   = receiptIdValid;
+
         require("node-fetch")(syncUrl, {
           method : "POST",
           headers: { "Content-Type": "application/json" },
-          body   : JSON.stringify({ mode: "buyer", buyerUserId: buyerForSync })
+          body   : JSON.stringify(syncBody)
         }).catch(err => {
-          console.warn(`buyer sync trigger failed for ${buyerForSync}:`, err.message || err);
+          console.warn(
+            `buyer sync trigger failed for buyerUserId=${buyerForSync || "(none)"} receiptId=${receiptIdValid || "(none)"}:`,
+            err.message || err
+          );
         });
-        console.log(`[snapshot] queued buyer sync for buyerUserId=${buyerForSync} threadId=${threadId}`);
+        console.log(
+          `[snapshot] queued buyer sync — buyerUserId=${buyerForSync || "(unresolved)"}` +
+          ` receiptId=${receiptIdValid || "(none)"} threadId=${threadId}`
+        );
       } else {
-        console.warn(`[snapshot] no fnHost (URL/DEPLOY_PRIME_URL) — skipping buyer sync trigger for ${buyerForSync}`);
+        console.warn(
+          `[snapshot] no fnHost (URL/DEPLOY_PRIME_URL) — skipping buyer sync trigger ` +
+          `(buyerUserId=${buyerForSync || "(none)"}, receiptId=${receiptIdValid || "(none)"})`
+        );
       }
+    } else {
+      console.log(
+        `[snapshot] no buyer-sync signal available for thread ${threadId} ` +
+        `(no buyerUserId from scrape, no orderId in conversation heading) — skipping trigger`
+      );
     }
 
     return json(200, {
@@ -934,8 +914,6 @@ exports.handler = async (event) => {
       newMessages     : writtenCount,
       updatedMessages : updatedCount,
       totalScanned    : messages.length,
-      surfacedToReview: !!shouldSurfaceToReview || (!threadExisted && hasScrapedMessageBubbles),
-      resurfacedFromStatus,
       imagesToMirror
     });
 

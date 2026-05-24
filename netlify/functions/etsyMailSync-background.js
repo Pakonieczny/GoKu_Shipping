@@ -373,17 +373,37 @@ async function ensureReceiptMirroredById({ receiptId, expectedBuyerUserId, threa
 
   const receiptBuyerId = receipt.buyer_user_id ? String(receipt.buyer_user_id) : null;
 
-  // If Etsy's receipt gives us a better buyer id than the scraper had, patch
-  // the thread so the customer panel looks up the correct customer doc on the
-  // next refresh. Receipt buyer_user_id is stronger than scraped profile chrome.
-  if (threadId && receiptBuyerId && expectedBuyerUserId && receiptBuyerId !== String(expectedBuyerUserId)) {
+  // Patch the thread doc with the resolved buyerUserId whenever it's
+  // useful: either the scrape captured nothing (expectedBuyerUserId is
+  // null) and we just resolved one from the receipt, OR the scrape
+  // captured a value and the receipt disagrees (correct the stale ID).
+  // Both cases need the same write so the UI's customer-panel lookup
+  // resolves on the next refresh.
+  //
+  // v4.4.1 — Original gate was `expectedBuyerUserId && receiptBuyerId !==
+  // String(expectedBuyerUserId)`, which silently dropped the patch when
+  // the scrape had no buyerUserId at all (the most common help-request
+  // failure mode). That left the customer doc correctly written under
+  // the resolved ID but the thread still pointing at nothing, so the UI
+  // kept showing "No purchase history" forever.
+  const expectedAsString = expectedBuyerUserId ? String(expectedBuyerUserId) : null;
+  const shouldPatchThread = threadId
+    && receiptBuyerId
+    && (!expectedAsString || receiptBuyerId !== expectedAsString);
+
+  if (shouldPatchThread) {
     try {
-      await db.collection("EtsyMail_Threads").doc(String(threadId)).set({
+      const patch = {
         buyerUserId: receiptBuyerId,
-        buyerUserIdCorrectedFrom: String(expectedBuyerUserId),
-        buyerUserIdCorrectedAt: FV.serverTimestamp(),
-        buyerUserIdCorrectionSource: "target_receipt_hydrate"
-      }, { merge: true });
+        buyerUserIdResolvedAt: FV.serverTimestamp(),
+        buyerUserIdResolvedSource: "target_receipt_hydrate"
+      };
+      if (expectedAsString) {
+        patch.buyerUserIdCorrectedFrom = expectedAsString;
+        patch.buyerUserIdCorrectedAt = FV.serverTimestamp();
+        patch.buyerUserIdCorrectionSource = "target_receipt_hydrate";
+      }
+      await db.collection("EtsyMail_Threads").doc(String(threadId)).set(patch, { merge: true });
     } catch (e) {
       console.warn(`[buyer-sync] failed to patch thread ${threadId} buyerUserId:`, e.message);
     }
