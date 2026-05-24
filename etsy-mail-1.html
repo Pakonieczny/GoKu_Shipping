@@ -3012,6 +3012,18 @@
     .m-composer-action.translate.active { background: var(--m-c-accent); color: #fff; }
     .m-composer-action.attach.has-files { color: var(--m-c-accent); }
     .m-composer-action.custom-listing { color: #0f766e; }
+    /* v5.32.4 — Send to Design mobile toggle. Color when OFF matches the
+       AI-Draft purple so the icon reads as a sibling control. When ON,
+       fills the 38x38 circle with medium purple — same palette as the
+       desktop toggle's ON state for visual consistency across views. */
+    .m-composer-action.send-to-design { color: #6639ba; }
+    .m-composer-action.send-to-design[aria-pressed="true"] {
+      background: #c9b6ef;
+      color: #2d1a5e;
+    }
+    .m-composer-action.send-to-design[aria-pressed="true"]:active {
+      background: #a785dd;
+    }
     .m-composer-action.custom-listing.is-loading {
       position: relative;
       pointer-events: none;
@@ -5195,6 +5207,14 @@
             </button>
             <button class="m-composer-action translate" id="mActionTrans" title="Translate">
               <i class="material-icons">translate</i>
+            </button>
+            <!-- v5.32.4 — Send to Design toggle for mobile. Mirrors the
+                 desktop button: tap to toggle, ON state turns the icon's
+                 button background purple, and the actual dispatch fires
+                 inside sendViaEtsy when either the desktop OR mobile
+                 toggle is aria-pressed="true". -->
+            <button class="m-composer-action send-to-design" id="mActionSendToDesign" type="button" aria-pressed="false" title="Send to Design — condense and post to Brites Messages">
+              <i class="material-icons">design_services</i>
             </button>
             <!-- v5.9 — Send button relocated here from inside the
                  textarea-wrap. Operator feedback: the textarea was
@@ -15811,19 +15831,23 @@
         state._optimInsertedFor.add(resp.draftId);
 
         // ─── v5.32 — Send to Design dispatch ────────────────────────
-        // If the operator flipped the toggle on for this reply, fire
-        // the Haiku+Firebase pipeline in parallel. Fire-and-forget by
-        // design — a failure here must never affect the Etsy send,
-        // which is already queued and irrevocable at this point. We
-        // capture the English source text (NOT the translated text)
-        // since Haiku handles English best and the design team reads
-        // English.
+        // If the operator flipped the toggle on for this reply (on
+        // either desktop or mobile), fire the Haiku+Firebase pipeline
+        // in parallel. Fire-and-forget by design — a failure here must
+        // never affect the Etsy send, which is already queued and
+        // irrevocable at this point. We capture the English source
+        // text (NOT the translated text) since Haiku handles English
+        // best and the design team reads English.
         //
-        // v5.32.3 — toggle is now a <button aria-pressed>, not a
-        // checkbox. Read the attribute instead of .checked.
+        // v5.32.3 — toggle is a <button aria-pressed>, not a checkbox.
+        // v5.32.4 — also check the mobile toggle button; both buttons
+        // share the same dispatch path through sendViaEtsy.
         try {
-          const dBtn = document.getElementById("emSendToDesignBtn");
-          if (dBtn && dBtn.getAttribute("aria-pressed") === "true") {
+          const dBtnDesktop = document.getElementById("emSendToDesignBtn");
+          const dBtnMobile  = document.getElementById("mActionSendToDesign");
+          const desktopOn = dBtnDesktop && dBtnDesktop.getAttribute("aria-pressed") === "true";
+          const mobileOn  = dBtnMobile  && dBtnMobile.getAttribute("aria-pressed")  === "true";
+          if (desktopOn || mobileOn) {
             const designDraftText = (englishText || text || "").trim();
             if (designDraftText) {
               api("etsyMailDesignDispatch", {
@@ -15847,9 +15871,10 @@
                 toast(`Design dispatch failed: ${err.message}`);
                 console.warn("[designDispatch] threw:", err);
               });
-              // Reset the toggle after dispatch is requested — operator
-              // must opt back in for the next reply on this thread.
-              dBtn.setAttribute("aria-pressed", "false");
+              // Reset both toggles after dispatch — operator must opt
+              // back in for the next reply on this thread.
+              if (dBtnDesktop) dBtnDesktop.setAttribute("aria-pressed", "false");
+              if (dBtnMobile)  dBtnMobile.setAttribute("aria-pressed", "false");
             }
           }
         } catch (e) {
@@ -20062,6 +20087,11 @@
       if (isFreshMount) {
         mMountConv(t);
         body.dataset.threadId = tid;
+        // v5.32.4 — Reset Send to Design toggle to OFF on every fresh
+        // thread mount. Operator must opt in per reply, matching the
+        // desktop behavior in renderDetail.
+        const mSendToDesignBtn = document.getElementById("mActionSendToDesign");
+        if (mSendToDesignBtn) mSendToDesignBtn.setAttribute("aria-pressed", "false");
       }
       mRenderMessages(t);
       // Try to paint summary card from cache (no-op if cache miss; the
@@ -21512,6 +21542,19 @@
         if (tgl) tgl.classList.toggle("on", !!state.translateView);
         mOpenSheet();
       });
+      // v5.32.4 — Mobile Send to Design toggle. Tap to flip aria-pressed;
+      // the CSS does the rest. The actual dispatch fires inside
+      // sendViaEtsy when either the desktop OR mobile button is pressed
+      // (sendViaEtsy is shared between both view layers).
+      const mSendToDesignBtn = document.getElementById("mActionSendToDesign");
+      if (mSendToDesignBtn) {
+        mSendToDesignBtn.addEventListener("click", function (e) {
+          e.preventDefault();
+          const pressed = mSendToDesignBtn.getAttribute("aria-pressed") === "true";
+          mSendToDesignBtn.setAttribute("aria-pressed", String(!pressed));
+          try { mSendToDesignBtn.blur(); } catch (_) {}
+        });
+      }
       // v5.21 — Auto-translate-conversation toggle. Pre-v5.21 this only
       // flipped its own visual state and mirrored to a desktop checkbox
       // that has no behavioral side effect. The actual translation work
