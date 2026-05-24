@@ -743,28 +743,28 @@
 
 
     /* The toggle — a circular floating button that sits at the top-left
-       corner of the right rail, half-overlapping the gap between columns.
-       Looks and feels like a standard collapse control: clean circle,
-       clear directional chevron, obvious hover state.
-       Focus ring only shows for keyboard navigation (:focus-visible),
-       never for mouse clicks — prevents the stuck-highlight bug. */
+       corner of the right rail, anchored to the card's left edge at the
+       same vertical level as the card title. Fully inside the wrapper
+       (left: 0) so overflow-y: auto on the wrapper does not clip it —
+       CSS forces both axes to clip when either is non-visible, so any
+       negative left would be cut off regardless. */
     .em-rail-toggle {
       position: absolute;
-      left: 0;
-      top: 2px;
+      left: 3px;
+      top: 14px;
       width: 28px;
       height: 28px;
       border-radius: 50%;
       background: #ffffff;
       border: 1px solid #d0d7de;
       cursor: pointer;
-      z-index: 5;
+      z-index: 10;
       display: flex;
       align-items: center;
       justify-content: center;
       padding: 0;
       box-shadow: 0 1px 4px rgba(0, 0, 0, 0.10), 0 0 0 1px rgba(0,0,0,0.04);
-      outline: none;        /* reset default — keyboard ring is via :focus-visible */
+      outline: none;
     }
     .em-rail-toggle:hover {
       background: #f6f8fa;
@@ -824,17 +824,6 @@
        toggle — there's nothing to collapse. Uses :has() to look ahead. */
     .em-right-rail-wrapper:has(#emSalesCardMount:empty) .em-rail-toggle {
       display: none;
-    }
-
-    /* v5.30.3 — Right-rail toggle overlap fix.
-     * The collapse button now lives inside the card edge instead of half
-     * outside it, so the first card header needs a small left gutter for
-     * the round chevron. This keeps the title icon/text clear while the
-     * button sits higher in the card's top-left corner. */
-    #emSalesCardMount > .em-card:first-child > h4,
-    #emSalesCardMount .em-sales-card:first-child .em-sales-card-header {
-      padding-left: 36px;
-      min-height: 28px;
     }
 
     .em-card h4 {
@@ -8065,6 +8054,24 @@
     // The override stores the LOCAL truth (true / false). For
     // mark-as-read it's false (operator opened the thread). For
     // mark-as-unread it's true (operator explicitly toggled).
+    //
+    // v5.31 — Inbound-message invalidation.
+    //
+    // Without this, a 30s "stay marked read" window after the operator
+    // opens a thread would silently suppress the blue dot when a new
+    // customer message arrives mid-window. The snapshot correctly
+    // writes unread=true to the doc, the polled value comes back true,
+    // and then this function would overwrite it with the stale "false"
+    // override — so the operator sees the new message in the thread
+    // body update but the rail row stays read-styled.
+    //
+    // Fix: when setting an override we capture the thread's
+    // lastInboundAt at that moment as the baseline. Each pass through
+    // applyUnreadOverrides compares the current polled lastInboundAt
+    // against the baseline. If the server's value is NEWER, a new
+    // inbound landed since the override was placed — the override is
+    // no longer valid (the operator hasn't actually seen this message)
+    // and we drop it so the unread=true value from the server wins.
     function applyUnreadOverrides(threads) {
       if (!state._unreadOverrides || state._unreadOverrides.size === 0) return;
       const now = Date.now();
@@ -8075,7 +8082,23 @@
           continue;
         }
         const t = (threads || []).find(x => x && x.id === tid);
-        if (t) t.unread = override.value;
+        if (t) {
+          // v5.31 — Invalidate the override when a new inbound message
+          // has arrived since the override was placed. Only applies to
+          // mark-as-read overrides (value=false); for explicit mark-
+          // as-unread (value=true) a new inbound arrival doesn't
+          // contradict the desired state.
+          const currentInboundMs = _threadLastInboundMs(t);
+          if (
+            override.value === false
+            && typeof override.baselineInboundMs === "number"
+            && currentInboundMs > override.baselineInboundMs
+          ) {
+            expired.push(tid);
+            continue;
+          }
+          t.unread = override.value;
+        }
       }
       for (const tid of expired) state._unreadOverrides.delete(tid);
     }
@@ -8085,12 +8108,19 @@
     // means "operator marked read"; value=true means "operator marked
     // unread". The override holds for 30s by default — long enough
     // for the backend write to land + at least one list-poll cycle.
+    //
+    // v5.31 — Capture the current lastInboundAt as a baseline so
+    // applyUnreadOverrides can invalidate the override when a new
+    // customer message arrives mid-window.
     function setUnreadOverride(threadId, value) {
       if (!threadId) return;
       if (!state._unreadOverrides) state._unreadOverrides = new Map();
+      const thread = (state.threads || []).find(t => t && t.id === threadId);
+      const baselineInboundMs = thread ? _threadLastInboundMs(thread) : 0;
       state._unreadOverrides.set(threadId, {
         value,
-        expiresAt: Date.now() + 30000
+        expiresAt: Date.now() + 30000,
+        baselineInboundMs
       });
     }
     window.setUnreadOverride = setUnreadOverride;
@@ -10351,6 +10381,21 @@
       return 0;
     }
 
+    // v5.31 — Companion to _threadUpdatedAtMs for the inbound-message
+    // timestamp specifically. Used by the unread-override invalidation
+    // logic so a new customer message after the operator marked the
+    // thread read correctly re-raises the blue dot (instead of being
+    // silently suppressed by the 30s override window).
+    function _threadLastInboundMs(thread) {
+      if (!thread || !thread.lastInboundAt) return 0;
+      if (typeof thread.lastInboundAt === "number") return thread.lastInboundAt;
+      if (typeof thread.lastInboundAt.ms === "number") return thread.lastInboundAt.ms;
+      if (typeof thread.lastInboundAt.toDate === "function") {
+        try { return thread.lastInboundAt.toDate().getTime(); } catch (_) {}
+      }
+      return 0;
+    }
+
     async function fetchThreadListNow(opts = {}) {
       // v0.9.14: source-aware fetch.
       //   - 'user' (default): always runs. A click MUST NOT be silently
@@ -12069,22 +12114,22 @@
              order). -->
         ${(t.etsyOrderId || t.etsyHeadingBadge || t.etsyViewOrderUrl) ? `
         <div class="em-etsy-heading-bar" style="display:flex; align-items:center; gap:10px; padding:8px 16px; background:#f6f8fa; border-bottom:1px solid #d0d7de; font-size:13px;">
-          ${t.etsyHeadingBadge ? `
-            <span class="em-etsy-heading-badge"
-                  style="display:inline-flex; align-items:center; background:#fff1e5; color:#9a3f00; padding:7px 16px; border-radius:18px; font-size:15px; line-height:1; font-weight:700; white-space:nowrap;">
-              ${esc(t.etsyHeadingBadge)}
-            </span>
-          ` : ""}
           ${t.etsyOrderId ? `
             <button type="button"
                     class="em-etsy-order-chip"
                     data-copy-order="${esc(t.etsyOrderId)}"
                     title="Click to copy"
-                    style="display:inline-flex; align-items:center; gap:4px; background:#ddf4ff; color:#0969da; padding:5px 10px; border-radius:14px; border:1px solid #b6e3ff; cursor:pointer; font-size:14px; line-height:1; font-weight:600; white-space:nowrap;">
-              <i class="material-icons" style="font-size:15px;">receipt_long</i>
+                    style="display:inline-flex; align-items:center; gap:4px; background:#ddf4ff; color:#0969da; padding:3px 8px; border-radius:12px; border:1px solid #b6e3ff; cursor:pointer; font-weight:600;">
+              <i class="material-icons" style="font-size:14px;">receipt_long</i>
               Order #${esc(t.etsyOrderId)}
               <i class="material-icons" style="font-size:13px; opacity:0.6;">content_copy</i>
             </button>
+          ` : ""}
+          ${t.etsyHeadingBadge ? `
+            <span style="background:#fff1e5; color:#9a3f00; padding:2px 8px; border-radius:10px; font-size:12px; font-weight:500;">${esc(t.etsyHeadingBadge)}</span>
+          ` : ""}
+          ${t.etsyHeadingTitle ? `
+            <span class="em-muted" style="font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(t.etsyHeadingTitle)}</span>
           ` : ""}
           ${t.etsyViewOrderUrl ? `
             <a href="${esc(t.etsyViewOrderUrl)}" target="_blank" style="margin-left:auto; color:#0969da; text-decoration:none; display:inline-flex; align-items:center; gap:4px;">
@@ -20020,26 +20065,36 @@
       try {
         const mount = document.getElementById("mEtsyHeadingMount");
         if (mount) {
-          if (t.etsyOrderId || t.etsyHeadingBadge || t.etsyViewOrderUrl) {
+          if (t.etsyOrderId || t.etsyHeadingBadge || t.etsyHeadingTitle || t.etsyViewOrderUrl) {
             // Avoid rebuilding the bar's innerHTML if nothing changed
             // (prevents losing the copy-chip listener wiring on
             // every poll).
             const fingerprint = (t.etsyOrderId || "") + "|" +
                                 (t.etsyHeadingBadge || "") + "|" +
+                                (t.etsyHeadingTitle || "") + "|" +
                                 (t.etsyViewOrderUrl || "");
             if (mount.dataset.fp !== fingerprint) {
               mount.innerHTML =
                 '<div class="m-etsy-heading-bar" style="display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:10px 14px; background:var(--m-c-surface-2); border-bottom:1px solid var(--m-c-border); font-size:14px;">' +
-                  (t.etsyHeadingBadge ? (
-                    '<span class="m-etsy-heading-badge" style="display:inline-flex; align-items:center; background:#fff1e5; color:#9a3f00; padding:7px 14px; border-radius:16px; font-size:15px; line-height:1; font-weight:700; white-space:nowrap;">' + mEsc(t.etsyHeadingBadge) + '</span>'
-                  ) : "") +
                   (t.etsyOrderId ? (
                     '<button type="button" class="m-etsy-order-chip" data-copy-order="' + mEsc(t.etsyOrderId) + '" ' +
-                    'style="display:inline-flex; align-items:center; gap:6px; background:#ddf4ff; color:#0969da; padding:5px 10px; border-radius:14px; border:1px solid #b6e3ff; font-size:13px; line-height:1; font-weight:600; white-space:nowrap;">' +
-                    '<i class="material-icons" style="font-size:15px;">receipt_long</i>' +
+                    'style="display:inline-flex; align-items:center; gap:6px; background:#ddf4ff; color:#0969da; padding:6px 12px; border-radius:14px; border:1px solid #b6e3ff; font-weight:600; font-size:14px;">' +
+                    '<i class="material-icons" style="font-size:16px;">receipt_long</i>' +
                     '#' + mEsc(t.etsyOrderId) +
-                    '<i class="material-icons" style="font-size:13px; opacity:0.6;">content_copy</i>' +
+                    '<i class="material-icons" style="font-size:14px; opacity:0.6;">content_copy</i>' +
                     '</button>'
+                  ) : "") +
+                  (t.etsyHeadingBadge ? (
+                    '<span style="background:#fff1e5; color:#9a3f00; padding:4px 10px; border-radius:12px; font-size:12px; font-weight:500;">' + mEsc(t.etsyHeadingBadge) + '</span>'
+                  ) : "") +
+                  // v0.9.42 — Title text ("Help with order n.º ...") was
+                  // present on desktop but missing on mobile. Surfacing
+                  // it here so operators see the customer's stated
+                  // request context (e.g., "Help with order", "Custom
+                  // order request", etc.) alongside the order chip.
+                  (t.etsyHeadingTitle ? (
+                    '<span style="color:var(--m-c-text-muted); font-size:12px; flex:1 1 100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0;">' +
+                    mEsc(t.etsyHeadingTitle) + '</span>'
                   ) : "") +
                   (t.etsyViewOrderUrl ? (
                     '<a href="' + mEsc(t.etsyViewOrderUrl) + '" target="_blank" rel="noopener" ' +
