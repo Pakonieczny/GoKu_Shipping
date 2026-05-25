@@ -99,61 +99,13 @@ const BACKFILL_PAUSE_MS = 100;             // tiny delay between pages to be pol
 const FETCH_TIMEOUT_MS = 30 * 1000;
 const MAX_INVOCATION_MS = 13 * 60 * 1000;  // leave 2 min cleanup tail
 
-// ─── OAuth ─────────────────────────────────────────────────────────────────
-async function readEtsyToken() {
-  const snap = await db.doc(OAUTH_DOC_PATH).get();
-  return snap.exists ? snap.data() : null;
-}
-
-async function refreshEtsyToken(oldRefreshToken) {
-  const _meterToken = meter.bump("sync.oauthRefresh");
-  let res;
-  try {
-    res = await fetch("https://api.etsy.com/v3/public/oauth/token", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        grant_type    : "refresh_token",
-        client_id     : CLIENT_ID,
-        refresh_token : oldRefreshToken
-      })
-    });
-  } catch (err) {
-    _meterToken.failNet();
-    throw err;
-  }
-  _meterToken.fromHttp(res.status);
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`Etsy OAuth refresh failed ${res.status}: ${text.slice(0, 300)}`);
-  }
-  const t = await res.json();
-  const expiresAtMs = Date.now() + (t.expires_in || 3600) * 1000;
-  const patch = {
-    access_token  : t.access_token,
-    refresh_token : t.refresh_token || oldRefreshToken,
-    expires_in    : t.expires_in,
-    expires_at_ms : expiresAtMs,
-    refreshed_at  : FV.serverTimestamp()
-  };
-  await db.doc(OAUTH_DOC_PATH).set(patch, { merge: true });
-  return { ...patch };
-}
-
-async function getValidEtsyAccessToken() {
-  const stored = await readEtsyToken();
-  if (!stored || !stored.refresh_token) {
-    throw new Error(`Etsy OAuth not initialized — ${OAUTH_DOC_PATH} missing refresh_token`);
-  }
-  const expiresAtMs = stored.expires_at_ms || 0;
-  const needsRefresh = !stored.access_token
-    || Date.now() + TOKEN_REFRESH_BUFFER_MS >= expiresAtMs;
-  if (needsRefresh) {
-    const refreshed = await refreshEtsyToken(stored.refresh_token);
-    return refreshed.access_token;
-  }
-  return stored.access_token;
-}
+// ─── OAuth — uses shared helper from _etsyMailEtsy.js ──────────────────────
+// v5.1: Was previously duplicated inline here with field-name mismatch
+// (expires_at_ms vs _etsyMailEtsy's expires_at) that caused the two
+// implementations to invalidate each other's cached tokens. Unified
+// helper adds in-memory module-level caching that survives across
+// invocations within the same warm Node process.
+const { getValidEtsyAccessToken } = require("./_etsyMailEtsy");
 
 // ─── Money helper ──────────────────────────────────────────────────────────
 function moneyAmt(m) {
@@ -512,6 +464,16 @@ async function runBuyerSyncFromMirror({ buyerUserId, receiptId = null, threadId 
   const finalDisplayName = displayName || (existing && existing.displayName) || "Unknown";
   const finalCurrency    = currency    || (existing && existing.currency)    || "USD";
 
+  // Compute the next-eligible-at timestamp for the per-buyer debounce.
+  // Uniform random between 3 and 5 minutes from NOW. The gate at the
+  // top of the handler reads this field to decide whether to short-
+  // circuit incoming buyer-sync requests for this buyer.
+  const BUYER_DEBOUNCE_MIN_MS = 3 * 60 * 1000;
+  const BUYER_DEBOUNCE_MAX_MS = 5 * 60 * 1000;
+  const buyerDebounceJitterMs = BUYER_DEBOUNCE_MIN_MS
+    + Math.floor(Math.random() * (BUYER_DEBOUNCE_MAX_MS - BUYER_DEBOUNCE_MIN_MS + 1));
+  const nextBuyerSyncEligibleAtMs = Date.now() + buyerDebounceJitterMs;
+
   const customerDoc = {
     buyerUserId  : String(effectiveBuyerUserId),
     displayName  : finalDisplayName,
@@ -523,6 +485,14 @@ async function runBuyerSyncFromMirror({ buyerUserId, receiptId = null, threadId 
     isRepeatBuyer: orderCount >= 2,
     recentReceipts,
     updatedAt    : FV.serverTimestamp(),
+    // Per-buyer debounce: skip incoming buyer-sync requests for this
+    // buyer until this timestamp. Window is randomized 3-5 min per
+    // sync to defeat deterministic-cadence patterns.
+    nextBuyerSyncEligibleAtMs,
+    lastBuyerSyncJitterSeconds: Math.round(buyerDebounceJitterMs / 1000),
+    // Kept for monitoring/debug visibility — answers "when did this
+    // customer last get synced?" at a glance in the Firebase console.
+    lastBuyerSyncAt: FV.serverTimestamp(),
     // Track the data source so any debugging can confirm which path wrote this
     syncSource   : "mirror"
   };
@@ -908,6 +878,48 @@ exports.handler = meter.wrapHandler(async (event) => {
         await writeDiagLog(invocationId, { phase: "end", outcome: "error", errorMsg: out.error });
         return { statusCode: 400, body: JSON.stringify(out) };
       }
+
+      // ─── Per-buyer debounce ─────────────────────────────────────────
+      // When the same buyerUserId triggers buyer-sync multiple times in
+      // rapid succession (multi-message bursts, operator-opens-thread
+      // races, etc.), short-circuit if we just synced this buyer.
+      // Suppresses redundant Etsy calls AND helps mask deterministic
+      // request patterns that can trip Etsy's anti-spam heuristics.
+      //
+      // The debounce window is randomized 3-5 min per successful sync.
+      // Each completed sync writes `nextBuyerSyncEligibleAtMs` on the
+      // customer doc; ticks inside that window skip without hitting
+      // Etsy. The mirror cron is running on its own 7-10 min schedule
+      // refreshing all receipts independently, so a 3-5 min per-buyer
+      // gap doesn't cause stale customer context — the cron picks up
+      // any genuine order changes regardless.
+      //
+      // Only applies when buyerUserId is known upfront. The receiptId-
+      // only path (lazy recovery from a help-request thread that had
+      // no buyer captured at scrape time) skips debouncing — those
+      // calls are rare and important.
+      if (buyerUserId) {
+        try {
+          const cSnap = await db.collection("EtsyMail_Customers").doc(String(buyerUserId)).get();
+          if (cSnap.exists) {
+            const cData = cSnap.data() || {};
+            const nextEligible = cData.nextBuyerSyncEligibleAtMs;
+            const nextEligibleMs = typeof nextEligible === "number" ? nextEligible : 0;
+            if (nextEligibleMs && Date.now() < nextEligibleMs) {
+              const waitSec = Math.ceil((nextEligibleMs - Date.now()) / 1000);
+              console.log(`[buyer-sync] debounced — buyer ${buyerUserId} inside randomized window, ${waitSec}s remaining`);
+              await writeDiagLog(invocationId, {
+                phase: "end", outcome: "skipped", reason: "buyer_debounce",
+                buyerUserId: String(buyerUserId), waitSec
+              });
+              return { statusCode: 200, body: JSON.stringify({ ok: true, mode: "buyer", skipped: true, reason: "buyer_debounce", waitSec }) };
+            }
+          }
+        } catch (e) {
+          console.warn(`[buyer-sync] debounce check failed (proceeding anyway): ${e.message}`);
+        }
+      }
+
       const result = await runBuyerSyncFromMirror({ buyerUserId, receiptId, threadId });
       const elapsedMs = Date.now() - invocationStartMs;
       await writeDiagLog(invocationId, {

@@ -62,51 +62,11 @@ function json(statusCode, body) {
   };
 }
 
-// OAuth token helpers — identical pattern to etsyMailSync-background
-async function refreshEtsyToken(oldRefreshToken) {
-  const t = meter.bump("order.oauthRefresh");
-  let res;
-  try {
-    res = await fetch("https://api.etsy.com/v3/public/oauth/token", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        grant_type: "refresh_token",
-        client_id: CLIENT_ID,
-        refresh_token: oldRefreshToken
-      })
-    });
-  } catch (err) {
-    t.failNet();
-    throw err;
-  }
-  t.fromHttp(res.status);
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Etsy token refresh failed: ${res.status} ${body}`);
-  }
-  const data = await res.json();
-  const expires_at = Date.now() + Math.max(0, (data.expires_in - 120)) * 1000;
-  await db.doc(OAUTH_DOC_PATH).set({
-    access_token : data.access_token,
-    refresh_token: data.refresh_token || oldRefreshToken,
-    expires_at,
-    updatedAt    : FV.serverTimestamp()
-  }, { merge: true });
-  return data.access_token;
-}
-
-async function getValidEtsyAccessToken() {
-  const snap = await db.doc(OAUTH_DOC_PATH).get();
-  if (!snap.exists) throw new Error(`Etsy OAuth not seeded at ${OAUTH_DOC_PATH}`);
-  const tok = snap.data();
-  if (!tok.refresh_token) throw new Error("No refresh_token in OAuth doc");
-  const expiresAt = typeof tok.expires_at === "number" ? tok.expires_at : 0;
-  if (!tok.access_token || expiresAt - Date.now() < TOKEN_REFRESH_BUFFER_MS) {
-    return await refreshEtsyToken(tok.refresh_token);
-  }
-  return tok.access_token;
-}
+// OAuth token helpers — v5.1, replaced inline duplicate with shared
+// helper from _etsyMailEtsy.js. The shared helper has Firestore-backed
+// caching plus a module-level in-memory cache that survives across
+// invocations within the same warm Node process.
+const { getValidEtsyAccessToken } = require("./_etsyMailEtsy");
 
 exports.handler = meter.wrapHandler(async (event) => {
   if (event.httpMethod === "OPTIONS") {

@@ -52,7 +52,34 @@ const TOKEN_REFRESH_BUFFER_MS = 2 * 60 * 1000;   // refresh if <2min to expiry
 
 // ─── OAuth token management ──────────────────────────────────────────────
 // Mirrors etsyMailOrder.js — read current token, refresh if stale.
+// ═══ OAuth token caching ══════════════════════════════════════════════════
+//
+// Token state is cached in TWO layers:
+//
+//   1. Firestore (`config/etsyOauth`) — durable, shared across function
+//      invocations. Every Netlify function reads from here on cold start.
+//   2. Module-level in-memory cache — survives across multiple invocations
+//      within the same warm Node.js process. Saves a Firestore round-trip
+//      per Etsy call when the same function instance is reused.
+//
+// On a cold function start, the first Etsy call reads from Firestore and
+// populates the in-memory cache. Subsequent calls in that same process
+// use the in-memory copy until it's stale (TOKEN_REFRESH_BUFFER_MS before
+// expiry), at which point we refresh and re-cache both layers.
+//
+// When refreshing, we write BOTH `expires_at` and `expires_at_ms` to the
+// Firestore doc — historical compat with three other files in the
+// codebase that read the long-form field name. Once all callers have been
+// migrated to this helper, the compat field can be retired.
+//
 // Etsy rotates refresh_token on each refresh, so the new one is persisted.
+let _inMemoryAccessToken = null;
+let _inMemoryExpiresAtMs = 0;
+
+function _cacheTokenInMemory(accessToken, expiresAtMs) {
+  _inMemoryAccessToken = accessToken;
+  _inMemoryExpiresAtMs = expiresAtMs;
+}
 
 async function refreshEtsyToken(oldRefreshToken) {
   const t = meter.bump("helper.oauthRefresh");
@@ -77,26 +104,55 @@ async function refreshEtsyToken(oldRefreshToken) {
     throw new Error(`Etsy token refresh failed: ${res.status} ${body}`);
   }
   const data = await res.json();
-  const expires_at = Date.now() + Math.max(0, (data.expires_in - 120)) * 1000;
+  const expiresAtMs = Date.now() + Math.max(0, (data.expires_in - 120)) * 1000;
   await db.doc(OAUTH_DOC_PATH).set({
     access_token : data.access_token,
     refresh_token: data.refresh_token || oldRefreshToken,
-    expires_at,
+    // Dual-field write for compat with files that haven't been migrated
+    // to use this helper yet. Both fields carry the same Unix-ms value;
+    // once all readers have migrated, drop `expires_at` and keep
+    // `expires_at_ms` as the canonical name.
+    expires_at   : expiresAtMs,
+    expires_at_ms: expiresAtMs,
+    expires_in   : data.expires_in,
+    refreshed_at : FV.serverTimestamp(),
     updatedAt    : FV.serverTimestamp()
   }, { merge: true });
+  _cacheTokenInMemory(data.access_token, expiresAtMs);
   return data.access_token;
 }
 
 async function getValidEtsyAccessToken() {
+  // Layer 1 — in-memory cache. Reused across invocations within the same
+  // warm Node process. Cuts the Firestore round-trip out entirely when
+  // the cached token is still well within its lifetime.
+  if (_inMemoryAccessToken && _inMemoryExpiresAtMs - Date.now() > TOKEN_REFRESH_BUFFER_MS) {
+    return _inMemoryAccessToken;
+  }
+
+  // Layer 2 — Firestore cache. Shared across all function invocations
+  // and across cold starts.
   const snap = await db.doc(OAUTH_DOC_PATH).get();
   if (!snap.exists) throw new Error(`Etsy OAuth not seeded at ${OAUTH_DOC_PATH}. Run etsyMailSeedTokens first.`);
   const tok = snap.data();
   if (!tok.refresh_token) throw new Error("No refresh_token in OAuth doc");
-  const expiresAt = typeof tok.expires_at === "number" ? tok.expires_at : 0;
-  if (!tok.access_token || expiresAt - Date.now() < TOKEN_REFRESH_BUFFER_MS) {
-    return await refreshEtsyToken(tok.refresh_token);
+
+  // Read either field name — handles tokens that were last written by the
+  // legacy paths that used `expires_at_ms`. Once all callers migrate to
+  // this helper, this fallback is no-op.
+  const expiresAtMs = (typeof tok.expires_at_ms === "number" && tok.expires_at_ms)
+    || (typeof tok.expires_at === "number" && tok.expires_at)
+    || 0;
+
+  if (tok.access_token && expiresAtMs - Date.now() > TOKEN_REFRESH_BUFFER_MS) {
+    // Firestore token is still valid — warm the in-memory cache and
+    // return it without a refresh.
+    _cacheTokenInMemory(tok.access_token, expiresAtMs);
+    return tok.access_token;
   }
-  return tok.access_token;
+
+  // Both caches stale — refresh from Etsy.
+  return await refreshEtsyToken(tok.refresh_token);
 }
 
 // ─── Low-level fetch wrapper ────────────────────────────────────────────

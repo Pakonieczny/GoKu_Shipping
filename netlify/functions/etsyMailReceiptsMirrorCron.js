@@ -2,8 +2,20 @@
  *
  *  ═══ WHAT THIS DOES ═══════════════════════════════════════════════════
  *
- *  Scheduled function that runs every 3 minutes. Pulls receipts that have
- *  been created or modified on Etsy since the last successful run and
+ *  Scheduled function that runs every 3 minutes (cron cadence) but
+ *  only does real Etsy work once every 7-10 minutes (randomized).
+ *  Each successful run schedules the next eligibility window via
+ *  `nextEligibleAtMs` in EtsyMail_Config/receiptsMirrorState; ticks
+ *  inside that window skip without hitting Etsy.
+ *
+ *  Why randomized: Etsy's anti-abuse heuristics can throttle clients
+ *  that hit the API on a precise deterministic schedule even when the
+ *  raw QPD count is well under the daily cap. A random 7-10 min
+ *  spacing keeps us under the 5,000 QPD ceiling by ~3x compared to
+ *  the prior 3-min cadence AND removes the rhythmic signature.
+ *
+ *  When the function does run, it pulls receipts that have been
+ *  created or modified on Etsy since the last successful run and
  *  mirrors them into Firestore at EtsyMail_Receipts/{receipt_id}.
  *
  *  This is the operational heartbeat of the receipts-mirror architecture.
@@ -113,6 +125,13 @@
 const fetch = require("node-fetch");
 const admin = require("./firebaseAdmin");
 const meter = require("./_etsyApiMeter");
+// v5.1 — Use the shared OAuth helper from _etsyMailEtsy.js for token
+// management. Cuts redundant token-refresh calls and adds an in-memory
+// cache layer that survives across invocations within the same warm
+// Node process. Was previously duplicated inline here with a field-name
+// mismatch (`expires_at_ms` vs `expires_at`) that caused the two paths
+// to invalidate each other's cached tokens.
+const { getValidEtsyAccessToken } = require("./_etsyMailEtsy");
 
 const db = admin.firestore();
 const FV = admin.firestore.FieldValue;
@@ -132,62 +151,6 @@ const MAX_PAGES       = 25;  // safety cap per cron run — 30s budget allows ~1
 const FETCH_TIMEOUT_MS = 20 * 1000;
 const RECENT_RECEIPTS_CAP = 10;
 const CUSTOMER_REBUILD_LIMIT_PER_RUN = 100;
-
-// ─── OAuth token management (mirror of sync-background's helpers) ──────────
-async function readEtsyToken() {
-  const snap = await db.doc(OAUTH_DOC_PATH).get();
-  return snap.exists ? snap.data() : null;
-}
-
-async function refreshEtsyToken(oldRefreshToken) {
-  const _meterToken = meter.bump("mirror.oauthRefresh");
-  let res;
-  try {
-    res = await fetch("https://api.etsy.com/v3/public/oauth/token", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        grant_type    : "refresh_token",
-        client_id     : CLIENT_ID,
-        refresh_token : oldRefreshToken
-      })
-    });
-  } catch (err) {
-    _meterToken.failNet();
-    throw err;
-  }
-  _meterToken.fromHttp(res.status);
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`Etsy OAuth refresh failed ${res.status}: ${text.slice(0, 300)}`);
-  }
-  const t = await res.json();
-  const expiresAtMs = Date.now() + (t.expires_in || 3600) * 1000;
-  const patch = {
-    access_token  : t.access_token,
-    refresh_token : t.refresh_token || oldRefreshToken,
-    expires_in    : t.expires_in,
-    expires_at_ms : expiresAtMs,
-    refreshed_at  : FV.serverTimestamp()
-  };
-  await db.doc(OAUTH_DOC_PATH).set(patch, { merge: true });
-  return { ...patch };
-}
-
-async function getValidEtsyAccessToken() {
-  const stored = await readEtsyToken();
-  if (!stored || !stored.refresh_token) {
-    throw new Error(`Etsy OAuth not initialized — ${OAUTH_DOC_PATH} missing refresh_token`);
-  }
-  const expiresAtMs = stored.expires_at_ms || 0;
-  const needsRefresh = !stored.access_token
-    || Date.now() + TOKEN_REFRESH_BUFFER_MS >= expiresAtMs;
-  if (needsRefresh) {
-    const refreshed = await refreshEtsyToken(stored.refresh_token);
-    return refreshed.access_token;
-  }
-  return stored.access_token;
-}
 
 // ─── Money helper ──────────────────────────────────────────────────────────
 function moneyAmt(m) {
@@ -491,6 +454,31 @@ exports.handler = meter.wrapHandler(async () => {
     return { statusCode: 200, body: JSON.stringify({ skipped: true, reason: "disabled" }) };
   }
 
+  // ─── Gate 1.5: randomized 7-10 min eligibility window ─────────────
+  //
+  // The Netlify cron fires every 3 min, but we don't want to hit Etsy
+  // that often. Etsy can throttle for "too-frequent identical requests"
+  // even when we're well under the 5,000 QPD daily cap. By introducing
+  // a randomized 7-10 min minimum interval between runs, we (a) cut
+  // the request volume to roughly 1/3 of the prior pace, and (b) avoid
+  // the deterministic-cadence pattern that anti-spam heuristics catch.
+  //
+  // Logic: each successful run writes `nextEligibleAtMs` = now + 7..10
+  // min (uniform random). Subsequent cron ticks check this before
+  // doing any Etsy work and skip if we're still inside the window.
+  // Failed runs do NOT bump nextEligibleAtMs, so a transient error
+  // gets retried on the next tick instead of waiting another 7-10 min.
+  const nextEligibleAtMs = mirrorCfg && typeof mirrorCfg.nextEligibleAtMs === "number"
+    ? mirrorCfg.nextEligibleAtMs
+    : 0;
+  if (nextEligibleAtMs && Date.now() < nextEligibleAtMs) {
+    const waitMs = nextEligibleAtMs - Date.now();
+    const waitSec = Math.ceil(waitMs / 1000);
+    console.log(`[mirror-cron] inside randomized interval window — ${waitSec}s remaining, skipping`);
+    await writeDiagLog(invocationId, { phase: "end", outcome: "skipped", reason: "inside_jitter_window", waitSec });
+    return { statusCode: 200, body: JSON.stringify({ skipped: true, reason: "inside_jitter_window", waitSec }) };
+  }
+
   // ─── Gate 2: daily rate-limit short-circuit ───────────────────────
   try {
     const syncSnap = await db.doc(SYNC_STATE_PATH).get();
@@ -688,6 +676,18 @@ exports.handler = meter.wrapHandler(async () => {
 
   const elapsedMs = Date.now() - invocationStartMs;
 
+  // Compute the next-eligible-at timestamp for the randomized interval
+  // gate. Uniform random between 7 and 10 minutes from NOW. We persist
+  // this regardless of outcome (success, error, or "no new receipts")
+  // because the goal is rate-spacing toward Etsy, not retry-on-error;
+  // a transient error doesn't justify re-hitting Etsy in 3 minutes.
+  // (If a critical error occurs that needs faster retry, an operator
+  // can manually clear the field via the Firebase console.)
+  const JITTER_MIN_MS = 7 * 60 * 1000;
+  const JITTER_MAX_MS = 10 * 60 * 1000;
+  const jitterMs = JITTER_MIN_MS + Math.floor(Math.random() * (JITTER_MAX_MS - JITTER_MIN_MS + 1));
+  const newNextEligibleAtMs = Date.now() + jitterMs;
+
   const statePatch = {
     enabled               : true,
     lastSyncTimestamp     : nextWatermark,
@@ -697,6 +697,10 @@ exports.handler = meter.wrapHandler(async () => {
     lastSyncOutcome       : outcome,
     lastSyncErrorMsg      : lastErrorMsg,
     lastSyncElapsedMs     : elapsedMs,
+    // Randomized eligibility window — next run no sooner than this.
+    // See Gate 1.5 in this file for the consuming logic.
+    nextEligibleAtMs      : newNextEligibleAtMs,
+    lastJitterMinutes     : Math.round(jitterMs / 60000),
     lastCustomerRebuildAttempted: customerRebuild.attempted,
     lastCustomerRebuildUpdated  : customerRebuild.updated,
     lastCustomerRebuildSkipped  : customerRebuild.skipped,
