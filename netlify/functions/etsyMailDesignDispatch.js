@@ -168,16 +168,23 @@ async function condenseForDesign({ operatorDraft, threadMessages, orderId, custo
     "the current summary. If unsure where the arc starts, prefer the",
     "narrower interpretation (more recent messages only).",
     "",
-    "═══ WHAT TO EXTRACT (current-arc production spec ONLY) ══════════",
+    "═══ WHAT TO EXTRACT (anything production/fulfillment needs to know) ══",
     "",
-    "The design team only needs what's required to MAKE the piece.",
-    "Strict omit-by-default rule: if a spec field wasn't discussed in",
-    "the current arc, DO NOT MENTION IT. Silence on a field means",
-    "'not applicable to this arc'.",
+    "OVERALL PHILOSOPHY. The operator made a deliberate choice to send",
+    "this to design/production. That means the operator believes there is",
+    "SOMETHING in this reply the team needs to see. Your job is to find",
+    "it — not to second-guess whether it qualifies. If the customer is",
+    "requesting any change to their order, asking for any action on it,",
+    "or confirming any spec, that's what you surface. The strict omit-by-",
+    "default rule applies to FIELDS THAT WEREN'T RAISED, not to the",
+    "decision of whether to summarize at all.",
     "",
-    "Core spec fields — include each ONLY when it was raised in the arc.",
-    "If a field wasn't discussed, omit it entirely. The design team will",
-    "scan the source thread themselves if they need a missing field.",
+    "Production/fulfillment-relevant content falls into two buckets:",
+    "",
+    "─── BUCKET A: New-piece specs (when building from scratch) ───────",
+    "",
+    "Include each field only when it was raised in the arc. If not",
+    "discussed, omit it entirely — silence means 'not part of this arc'.",
     "  - Engraving: exact text in quotes (verbatim, character-for-",
     "    character).",
     "  - Charm/family: necklace / earring / bracelet / charm / etc.",
@@ -185,28 +192,60 @@ async function condenseForDesign({ operatorDraft, threadMessages, orderId, custo
     "    '18 inch chain').",
     "  - Metal: gold filled / sterling / 14k / etc.",
     "  - Chain length / style.",
-    "  - Modification to an existing order — describe the change only.",
     "",
-    "NO PLACEHOLDERS. Never output 'Size: TBD', 'Metal: TBD', 'Chain: TBD',",
-    "or any equivalent. If a field wasn't discussed, it doesn't appear in",
-    "the summary at all. Silence equals 'not part of this arc'.",
+    "NO PLACEHOLDERS for new-piece specs. Never output 'Size: TBD',",
+    "'Metal: TBD', 'Chain: TBD', or any equivalent. If a field wasn't",
+    "discussed, it doesn't appear in the summary at all.",
     "",
-    "Include the following ONLY when the customer explicitly raised them:",
+    "─── BUCKET B: Order modifications and fulfillment changes ────────",
+    "",
+    "These are explicit customer-requested changes to an EXISTING order.",
+    "All of these are production/fulfillment-relevant and MUST be",
+    "surfaced when the customer is requesting them (or the operator is",
+    "confirming the change):",
+    "  - Engraving change on an existing order (new text, different",
+    "    layout, removed engraving, etc.)",
+    "  - Spec swap on an existing order (metal change, size change,",
+    "    chain length change, charm style change, etc.)",
+    "  - Shipping address change — the customer asking to update where",
+    "    the order ships. State the new address verbatim. Note that",
+    "    shipping addresses are only relevant when the customer is",
+    "    actively requesting a CHANGE; addresses that just appear",
+    "    incidentally in a message (e.g., in a signature) are not.",
+    "  - Order cancellation or hold request.",
+    "  - Rush request on an existing order (\"can you ship sooner\",",
+    "    \"need it by X\").",
+    "  - Add-on to an unstarted order (additional piece, second charm,",
+    "    etc.).",
+    "",
+    "When the customer explicitly raises any of the above:",
+    "  - Lead with what's being CHANGED (\"Shipping address update:\",",
+    "    \"Engraving change:\", etc.)",
+    "  - State the new value verbatim.",
+    "  - If the existing-order reference is to a specific order number,",
+    "    include it.",
+    "",
+    "─── ADDITIONAL FLAGS (only when explicitly raised) ───────────────",
+    "",
     "  - Rush production (only if the word 'rush' or equivalent urgency",
     "    appears — never default to 'no rush').",
     "  - Deadline date (date only, never as a promise — only if the",
     "    customer named a specific date).",
     "",
-    "Forbidden — never include any of these:",
+    "─── FORBIDDEN — never include these ──────────────────────────────",
+    "",
     "  - Pleasantries, thanks, signoffs",
-    "  - Delivery-window discussion / shipping ETAs",
-    "  - Shipping addresses",
+    "  - Delivery-window discussion / shipping ETAs from the shop side",
+    "    (\"we'll ship in 4-5 days\") — these are ops-side timing, not a",
+    "    production input.",
     "  - Sales/quoting math, prices, taxes",
     "  - Speculation about future or follow-up orders ('customer may",
     "    order more later', 'might do another piece', etc.) — even when",
-    "    the customer said it. This is noise for production.",
+    "    the customer said it.",
     "  - Customer mood or emotion ('excited', 'happy', 'frustrated')",
-    "  - Backstory or context not directly tied to the spec",
+    "  - Backstory or context not directly tied to a spec or change",
+    "    (\"this is for her birthday\", \"she's been wanting one for",
+    "    months\", etc.)",
     "  - Editorial flags like '(not actionable yet)', '(low priority)'",
     "  - Workflow meta-commentary about who decides what: phrases like",
     "    'operator's call on layout', 'designer's choice', 'use your",
@@ -241,6 +280,15 @@ async function condenseForDesign({ operatorDraft, threadMessages, orderId, custo
     "",
     "  Modify order: swap 14k charm to gold filled, same engraving",
     "  ('Sarah'). Rush requested — needs by May 30.",
+    "",
+    "  Shipping address update for order #4072468345: 513 Mount Vernon",
+    "  Rd, Greer, SC 29651. Update before fulfillment.",
+    "",
+    "  Engraving change on order #4123: from 'My Dream' to a heart",
+    "  symbol. Order still in paid-not-shipped state.",
+    "",
+    "  Order hold request: customer asking to pause order #4099 while",
+    "  she reconsiders the metal choice.",
     "",
     "BAD output (rejected — placeholder padding):",
     "  ✗ 'Necklace charm. Engraving: \"Mom 2024\". Size: TBD. Metal: TBD.'",
@@ -355,8 +403,25 @@ async function condenseForDesign({ operatorDraft, threadMessages, orderId, custo
     throw new Error("Haiku returned non-JSON output");
   }
 
-  const summary = String(parsed.summary || "").trim();
-  if (!summary) throw new Error("Haiku returned empty summary");
+  // Empty-summary handling. When Haiku returns no summary text, the
+  // operator's deliberate toggle action is still respected — we don't
+  // silently drop the dispatch just because Haiku didn't find anything
+  // to extract. The operator chose to send this; that's a signal that
+  // something in the reply belongs in front of production/design,
+  // even if Haiku's pattern-matching missed it.
+  //
+  // Fallback: pass the operator's own reply through verbatim (capped),
+  // so the production team sees the message and can decide for
+  // themselves whether it's actionable. We log a warning so we can
+  // tune the prompt later if this case becomes common.
+  let summary = String(parsed.summary || "").trim();
+  if (!summary) {
+    const draftSnippet = String(operatorDraft || "").trim().slice(0, 600);
+    summary = draftSnippet
+      ? "Operator dispatched: " + draftSnippet
+      : "Operator triggered design dispatch with empty reply.";
+    console.warn("[designDispatch] Haiku returned empty summary; falling back to operator draft");
+  }
 
   // Resolve acceptedImage tag → URL via the index we built.
   let acceptedImageUrl = null;
