@@ -71,7 +71,18 @@ const { CORS, requireExtensionAuth } = require("./_etsyMailAuth");
 // calls without the tool-use machinery; runToolLoop is the wrong shape
 // for those. Both helpers share the HTTP client, retry logic, and
 // overload handling inside _etsyMailAnthropic.js.
-const { runToolLoop, callClaudeRaw } = require("./_etsyMailAnthropic");
+// v5.0 — Shared utilities consolidated in _etsyMailAnthropic.js: the
+// raw-document context fetcher and the shared investigation protocol
+// the classifier, sales agent, and draft-reply all use to reason from
+// the same source of truth.
+const {
+  runToolLoop,
+  callClaudeRaw,
+  fetchClassificationContext,
+  formatContextForPrompt,
+  INVESTIGATION_PROTOCOL_TEXT,
+  INVESTIGATION_JSON_SCHEMA,
+} = require("./_etsyMailAnthropic");
 const {
   getShop,
   getShopSections,
@@ -3639,7 +3650,72 @@ answering. Do not guess about the order's contents.`;
     ];
 
     // ─── 3. Build system prompt ────────────────────────────────────
-    const system = buildSystemPromptText(promptConfig, shopEnrichment, employeeName);
+    // v5.0 — append the shared investigation protocol + draft-reply-
+    // specific instructions for grounding the reply in the findings.
+    const baseSystem = buildSystemPromptText(promptConfig, shopEnrichment, employeeName);
+    const draftReplyInvestigationAddendum = [
+      "═══ DRAFT-REPLY INVESTIGATION GROUNDING ═══════════════════════════════",
+      "",
+      "After completing the mandatory investigation protocol, your output",
+      "JSON MUST include an `investigation` field at the top with the shape",
+      "described in the protocol. Your reply draft MUST be grounded in those",
+      "findings — not in the default reply template, not in surface-language",
+      "pattern-match.",
+      "",
+      "Concretely: if your investigation found that the customer's 'the",
+      "necklace' resolves to a specific paid order with a specific status,",
+      "your reply addresses THAT order. If your investigation found that no",
+      "order in `recentReceipts` matches the customer's references, your",
+      "reply acknowledges the gap rather than guessing. If your investigation",
+      "found that the conversation began before any order was placed, your",
+      "reply treats this as pre-purchase. The reply must be consistent with",
+      "what your investigation says is true.",
+      "",
+      "If `investigation.needs_human_review` is true, your reply should be",
+      "brief and non-committal — the operator will resolve the ambiguity",
+      "before sending. Do not draft a confident, specific reply on an",
+      "ambiguous situation.",
+      "",
+      "Your output JSON shape:",
+      "  {",
+      '    "investigation": { ... per the protocol above ... },',
+      '    "reply": "<the operator-facing reply draft>",',
+      '    ... (rest of the fields the existing draft-reply schema requires) ...',
+      "  }",
+    ].join("\n");
+
+    const system = [
+      baseSystem,
+      "",
+      INVESTIGATION_PROTOCOL_TEXT,
+      "",
+      INVESTIGATION_JSON_SCHEMA,
+      "",
+      draftReplyInvestigationAddendum,
+    ].join("\n\n");
+
+    // v5.0 — Fetch the raw-document context and prepend it to the
+    // preamble. The model reads the actual Firestore documents alongside
+    // the conversation turns. The investigation protocol in the system
+    // prompt instructs it to walk through these documents before drafting.
+    try {
+      const ctx = await fetchClassificationContext(threadId, {
+        messageLimit : 40,
+        perMessageCap: 1000,
+        receiptLimit : 10,
+      });
+      const rawContextBlock = formatContextForPrompt(ctx);
+      // Inject at the START of the first user message's text content.
+      // initialMessages[0] is { role: "user", content: [{type:"text", text: preambleText}] }
+      if (initialMessages[0] && Array.isArray(initialMessages[0].content)
+          && initialMessages[0].content[0] && initialMessages[0].content[0].type === "text") {
+        initialMessages[0].content[0].text = rawContextBlock + "\n\n" + initialMessages[0].content[0].text;
+      }
+    } catch (e) {
+      console.warn(`[draftReply] fetchClassificationContext failed for ${threadId}: ${e.message}`);
+      // Non-fatal — proceed without the raw context block. The investigation
+      // protocol will note its absence in step 1's finding.
+    }
 
     // ─── 4. Run the tool-use loop ──────────────────────────────────
     // Grab the latest customer message timestamp so tool executors can

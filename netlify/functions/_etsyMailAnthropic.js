@@ -352,5 +352,376 @@ module.exports = {
   runToolLoop,
   isClaudeOverloadError,
   buildSystemBlocks,
-  sleep
+  sleep,
+  // v5.0 — shared context-fetcher + investigation protocol used by every
+  // AI component in EtsyMail (classifier, sales agent, draft-reply,
+  // design dispatch). Implementations live at the bottom of this file.
+  fetchClassificationContext,
+  formatContextForPrompt,
+  INVESTIGATION_PROTOCOL_TEXT,
+  INVESTIGATION_JSON_SCHEMA,
 };
+
+// ════════════════════════════════════════════════════════════════════════
+//  v5.0 — Shared classification context + investigation protocol
+// ════════════════════════════════════════════════════════════════════════
+//
+// Everything below this banner is the shared reasoning discipline every
+// AI component in EtsyMail follows. The classifier, sales agent, draft-
+// reply, and design-dispatch all import these utilities from this file
+// (rather than from a separate module) to keep the Netlify-deployable
+// surface small.
+//
+// Two pieces:
+//
+//   1. fetchClassificationContext(threadId) — returns the RAW Firestore
+//      documents the model needs in order to reason about a thread.
+//      No derived flags, no synthetic summaries, no pre-computed
+//      correlations. The data is the source of truth; the model does
+//      its own investigation against it. Timestamps are normalized to
+//      ISO strings so the model parses them consistently (receipts
+//      store created_timestamp as Unix SECONDS — without normalization
+//      the model could mistake them for milliseconds).
+//
+//   2. INVESTIGATION_PROTOCOL_TEXT — the five-step reasoning protocol
+//      every AI component prepends to its system prompt. Forces the
+//      model to (1) inventory the customer's orders, (2) identify the
+//      conversation arc timing, (3) compute temporal correlations,
+//      (4) resolve definite references against the order history, and
+//      (5) state the current ask in one paragraph — BEFORE producing
+//      any component-specific output. The required JSON output shape
+//      includes the investigation findings as the first field so the
+//      reasoning is auditable and the downstream verdict can't quietly
+//      contradict it.
+//
+//   3. formatContextForPrompt(ctx) — renders the raw payload as a
+//      user-message-ready text block with clear delimiters.
+//
+// ════════════════════════════════════════════════════════════════════════
+
+const admin = require("firebase-admin");
+function _ctxDb() { return admin.firestore(); }
+
+// ─── Collection names ────────────────────────────────────────────────────
+const _CTX_THREADS_COLL   = "EtsyMail_Threads";
+const _CTX_CUSTOMERS_COLL = "EtsyMail_Customers";
+const _CTX_RECEIPTS_COLL  = "EtsyMail_Receipts";
+
+// ─── Fetcher tunables ────────────────────────────────────────────────────
+const _CTX_DEFAULT_MESSAGE_LIMIT  = 40;
+const _CTX_DEFAULT_MESSAGE_CAP    = 1200;
+const _CTX_DEFAULT_RECEIPT_LIMIT  = 10;
+
+// ─── Timestamp normalization ─────────────────────────────────────────────
+//
+// Receipts store created_timestamp and updated_timestamp as Unix SECONDS
+// (raw numbers, not Firestore Timestamps). Without normalization the
+// model could mistake them for milliseconds (resolving to Jan 1970) and
+// the investigation protocol's temporal correlation step would silently
+// produce nonsense deltas. Solution: walk the payload, and whenever we
+// find a numeric value at a key that looks like a timestamp, convert it
+// to an ISO string. Heuristic range-checks prevent false-positive
+// normalization of money values or IDs.
+function _ctxLooksLikeTimestampKey(key) {
+  if (typeof key !== "string") return false;
+  const k = key.toLowerCase();
+  return k.includes("timestamp") || k.endsWith("at") || k.endsWith("_at");
+}
+function _ctxMaybeNormalizeNumericTimestamp(key, value) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return value;
+  if (!_ctxLooksLikeTimestampKey(key)) return value;
+  // Unix seconds in plausible range (2001 → 2286)
+  if (value >= 1e9 && value < 1e10) {
+    try { return new Date(value * 1000).toISOString(); } catch { return value; }
+  }
+  // Unix milliseconds in plausible range
+  if (value >= 1e12 && value < 1e13) {
+    try { return new Date(value).toISOString(); } catch { return value; }
+  }
+  return value;
+}
+function _ctxScrubTimestamps(value, parentKey) {
+  if (value === null || value === undefined) return value;
+  if (typeof value === "number") {
+    return _ctxMaybeNormalizeNumericTimestamp(parentKey, value);
+  }
+  if (typeof value !== "object") return value;
+  if (Array.isArray(value)) return value.map(v => _ctxScrubTimestamps(v, parentKey));
+  if (typeof value.toDate === "function") {
+    try { return value.toDate().toISOString(); } catch { return null; }
+  }
+  if (typeof value.seconds === "number" && typeof value.nanoseconds === "number") {
+    try { return new Date(value.seconds * 1000 + Math.floor(value.nanoseconds / 1e6)).toISOString(); } catch { return null; }
+  }
+  const out = {};
+  for (const k of Object.keys(value)) out[k] = _ctxScrubTimestamps(value[k], k);
+  return out;
+}
+
+// ─── Document loaders ────────────────────────────────────────────────────
+async function _ctxLoadThread(threadId) {
+  if (!threadId) return null;
+  try {
+    const snap = await _ctxDb().collection(_CTX_THREADS_COLL).doc(threadId).get();
+    if (!snap.exists) return null;
+    return { id: snap.id, ..._ctxScrubTimestamps(snap.data() || {}) };
+  } catch (e) {
+    console.warn(`[classificationContext] thread load failed for ${threadId}: ${e.message}`);
+    return null;
+  }
+}
+async function _ctxLoadCustomer(buyerUserId) {
+  if (!buyerUserId) return null;
+  try {
+    const buyerId = String(buyerUserId);
+    const snap = await _ctxDb().collection(_CTX_CUSTOMERS_COLL).doc(buyerId).get();
+    if (!snap.exists) return null;
+    return { id: snap.id, ..._ctxScrubTimestamps(snap.data() || {}) };
+  } catch (e) {
+    console.warn(`[classificationContext] customer load failed for ${buyerUserId}: ${e.message}`);
+    return null;
+  }
+}
+async function _ctxLoadReceipts(buyerUserId, limit) {
+  if (!buyerUserId) return [];
+  try {
+    const buyerId = String(buyerUserId);
+    const snap = await _ctxDb().collection(_CTX_RECEIPTS_COLL)
+      .where("buyer_user_id", "==", buyerId)
+      .orderBy("created_timestamp", "desc")
+      .limit(limit)
+      .get();
+    if (snap.empty) return [];
+    const out = [];
+    snap.forEach(d => out.push({ id: d.id, ..._ctxScrubTimestamps(d.data() || {}) }));
+    return out;
+  } catch (e) {
+    console.warn(`[classificationContext] receipts load failed for ${buyerUserId}: ${e.message}`);
+    return [];
+  }
+}
+async function _ctxLoadMessages(threadId, limit, perMessageCap) {
+  if (!threadId) return [];
+  try {
+    const snap = await _ctxDb().collection(_CTX_THREADS_COLL).doc(threadId)
+      .collection("messages")
+      .orderBy("timestamp", "desc")
+      .limit(limit * 2)
+      .get();
+    if (snap.empty) return [];
+    const newestFirst = [];
+    snap.forEach(d => {
+      const m = d.data() || {};
+      const text = String(m.text || "").trim();
+      const imageUrls = Array.isArray(m.imageUrls)
+        ? m.imageUrls.filter(u => typeof u === "string" && u)
+        : [];
+      if (!text && imageUrls.length === 0) return;
+      let isoTime = null;
+      if (m.timestamp && typeof m.timestamp.toDate === "function") {
+        try { isoTime = m.timestamp.toDate().toISOString(); } catch (_) {}
+      } else if (typeof m.timestamp === "number") {
+        try { isoTime = new Date(m.timestamp).toISOString(); } catch (_) {}
+      } else if (typeof m.timestampMs === "number") {
+        try { isoTime = new Date(m.timestampMs).toISOString(); } catch (_) {}
+      }
+      newestFirst.push({
+        id        : d.id,
+        direction : m.direction || "unknown",
+        senderName: m.senderName || (m.direction === "inbound" ? "Customer" : "Shop"),
+        timestamp : isoTime,
+        text      : text.slice(0, perMessageCap),
+        imageUrls,
+      });
+    });
+    return newestFirst.slice(0, limit).reverse(); // chronological
+  } catch (e) {
+    console.warn(`[classificationContext] messages load failed for ${threadId}: ${e.message}`);
+    return [];
+  }
+}
+
+// ─── Public: fetchClassificationContext ──────────────────────────────────
+async function fetchClassificationContext(threadId, opts = {}) {
+  const messageLimit  = opts.messageLimit  || _CTX_DEFAULT_MESSAGE_LIMIT;
+  const perMessageCap = opts.perMessageCap || _CTX_DEFAULT_MESSAGE_CAP;
+  const receiptLimit  = opts.receiptLimit  || _CTX_DEFAULT_RECEIPT_LIMIT;
+
+  const thread = await _ctxLoadThread(threadId);
+  const buyerUserId = (thread && (thread.buyerUserId || thread.buyer_user_id)) || null;
+
+  const [customer, recentReceipts, messages] = await Promise.all([
+    _ctxLoadCustomer(buyerUserId),
+    _ctxLoadReceipts(buyerUserId, receiptLimit),
+    _ctxLoadMessages(threadId, messageLimit, perMessageCap),
+  ]);
+
+  return {
+    fetchedAt    : new Date().toISOString(),
+    thread,
+    customer,
+    recentReceipts,
+    messages,
+  };
+}
+
+// ─── Investigation protocol — the shared reasoning discipline ────────────
+const INVESTIGATION_PROTOCOL_TEXT = `
+═══ MANDATORY INVESTIGATION PROTOCOL ═══════════════════════════════════════
+
+Before producing any component-specific output (classification, sales
+action, reply draft, design summary), you MUST complete this five-step
+investigation against the raw documents provided in the user message
+under "═══ THREAD CONTEXT (raw documents) ═══". No exceptions, no
+shortcuts. Your downstream output will be explicitly conditioned on
+your findings here.
+
+The user message contains four raw Firestore document collections from
+this conversation: \`thread\`, \`customer\`, \`recentReceipts\`, and
+\`messages\`. These are real data — not pre-digested summaries. You
+will read them and reason about them yourself.
+
+─── STEP 1: ORDER HISTORY ────────────────────────────────────────────
+
+From \`recentReceipts\` (and from \`customer\` if present), list this
+customer's paid orders with their timestamps and statuses. Identify
+the most recent paid order — when was it placed, what is its current
+status (paid / shipped / delivered / refunded / etc.), what items did
+it contain, what was the total.
+
+If \`recentReceipts\` is empty AND \`customer\` is null, state explicitly:
+"No order history on record — this customer has either never ordered,
+or the receipt mirror has not yet captured their orders." This is a
+valid state; many pre-purchase inquiries start this way.
+
+─── STEP 2: CONVERSATION TIMING ──────────────────────────────────────
+
+From \`messages\` (ordered oldest-first), identify:
+  - When the CURRENT customer-led conversation arc began. A thread can
+    span months with multiple arcs; the current arc starts at the
+    first message in the most recent back-and-forth burst, after any
+    long quiet gap.
+  - When the most recent customer message was sent.
+  - Whether the operator has already replied within this arc.
+
+─── STEP 3: TEMPORAL CORRELATION ─────────────────────────────────────
+
+Compare the timestamps from Steps 1 and 2. State explicitly:
+  - How much time elapsed between the most recent paid order and the
+    start of the current conversation arc. Compute the actual delta;
+    do not say "recent" or "long ago" — say "23 minutes" or "4 days"
+    or "3 months".
+  - Did the conversation arc start BEFORE or AFTER the most recent paid
+    order was placed? This matters: an arc that started after an order
+    was paid is almost always about that order.
+  - How recent is the most recent paid order in absolute terms — minutes,
+    hours, days, weeks, months, never. State the bucket.
+
+─── STEP 4: REFERENCE RESOLUTION (the critical step) ─────────────────
+
+Read the customer's messages in the current arc carefully. Identify
+every reference the customer makes to a product, item, or order. For
+each reference, classify it:
+
+  DEFINITE — presupposes a known antecedent. The human operator reading
+    the message would automatically fill in WHICH thing. Examples:
+      "the charm", "my charm", "the necklace", "that piece",
+      "the one you sent", "it", "this", "my order", "for my order",
+      bare nouns with "the", possessives like "my/our/his/her".
+
+  INDEFINITE — introduces a new entity to the conversation. Examples:
+      "a charm", "an engraved necklace", "one of your necklaces",
+      "do you make...", "would it be possible to...".
+
+For each DEFINITE reference, attempt resolution against
+\`recentReceipts\`:
+  - If exactly ONE order plausibly matches (right item type, right
+    timeframe, etc.), the reference resolves to that order. State the
+    order ID and your reasoning. Treat the message as post-purchase
+    about that order.
+  - If MULTIPLE orders could match, state which orders are candidates
+    and what makes each plausible. The message is still post-purchase
+    but resolution is ambiguous.
+  - If NO order in \`recentReceipts\` plausibly matches, state that.
+    Either (a) the customer is referring to something we don't have a
+    record of yet (recent order not yet mirrored, or a different shop
+    entirely), or (b) the customer is using "the" loosely to mean
+    "your products in general" (in which case the framing is closer
+    to an inquiry). Decide based on the rest of the arc and state
+    your decision.
+
+Indefinite references with no temporal anchor in past-tense order
+language are forward-looking shopping intent.
+
+IMPORTANT: verb tense alone is misleading. "I'd like to add engraving
+to the charm" has present-tense verb morphology but a DEFINITE reference
+("the charm") that resolves to the customer's existing order. The
+determiner ("the" vs "a") is a stronger signal than the verb.
+
+─── STEP 5: STATE OF THE CURRENT ASK ─────────────────────────────────
+
+Given the findings of Steps 1-4, state in one paragraph what the
+customer is actually requesting RIGHT NOW. Be specific — not "asking
+about an order" but "asking to change the engraving on Order #4123 from
+'My Dream' to a heart symbol, while it is still in paid-but-not-shipped
+state." If reference resolution was ambiguous, state the ambiguity.
+
+If the most plausible interpretation of the arc would meaningfully
+change based on which definite reference resolves to which order, set
+\`needs_human_review: true\` in your output and explain in the synopsis.
+A misroute is more costly than a flagged thread for an operator to
+inspect.
+
+═══ END INVESTIGATION PROTOCOL ═════════════════════════════════════════════
+
+After completing the investigation, produce your component-specific
+output as described below. Your output JSON MUST include the
+investigation findings as the first top-level field (\`investigation\`)
+before any component-specific fields. The investigation is not optional
+and is not "thinking" — it's the audit trail your output is grounded
+in.
+`.trim();
+
+const INVESTIGATION_JSON_SCHEMA = `
+The \`investigation\` field in your output JSON MUST have this shape:
+
+  "investigation": {
+    "order_history": "<step 1 finding — paragraph or bullet list>",
+    "conversation_timing": "<step 2 finding — arc start, latest message, operator-replied-yet>",
+    "temporal_correlation": "<step 3 finding — explicit time delta, before/after, recency bucket>",
+    "reference_resolution": "<step 4 finding — each definite reference and what it resolves to>",
+    "current_ask": "<step 5 finding — one-paragraph statement of what the customer needs>",
+    "needs_human_review": <true if reference resolution is ambiguous in a route-changing way; otherwise false>
+  }
+
+If a step cannot be answered from the documents (e.g., no order history
+at all), say so explicitly in that step's field. Do not invent data.
+Do not skip steps. Empty strings are NOT acceptable for any field —
+say "no data" or "none applicable" if the answer is literally nothing.
+`.trim();
+
+// ─── Context formatter — renders the raw payload for the user message ────
+function formatContextForPrompt(ctx) {
+  if (!ctx || typeof ctx !== "object") {
+    return "═══ THREAD CONTEXT (raw documents) ═══\n(empty — no context fetched)\n═══ END THREAD CONTEXT ═══";
+  }
+  const lines = [];
+  lines.push("═══ THREAD CONTEXT (raw documents) ═══");
+  lines.push("");
+  lines.push(`Context fetched at: ${ctx.fetchedAt || "(unknown)"}`);
+  lines.push("");
+  lines.push("─── thread doc ───");
+  lines.push(JSON.stringify(ctx.thread || null, null, 2));
+  lines.push("");
+  lines.push("─── customer doc ───");
+  lines.push(JSON.stringify(ctx.customer || null, null, 2));
+  lines.push("");
+  lines.push("─── recent receipts (most-recent first) ───");
+  lines.push(JSON.stringify(ctx.recentReceipts || [], null, 2));
+  lines.push("");
+  lines.push("─── messages (oldest at top, newest at bottom) ───");
+  lines.push(JSON.stringify(ctx.messages || [], null, 2));
+  lines.push("");
+  lines.push("═══ END THREAD CONTEXT ═══");
+  return lines.join("\n");
+}

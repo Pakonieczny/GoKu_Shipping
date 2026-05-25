@@ -67,7 +67,17 @@ const path = require("path");
 
 const admin = require("./firebaseAdmin");
 const { CORS, requireExtensionAuth } = require("./_etsyMailAuth");
-const { callClaudeRaw } = require("./_etsyMailAnthropic");
+// v5.0 — Shared utilities are now consolidated in _etsyMailAnthropic.js.
+// The fetcher returns the raw documents (thread, customer, receipts,
+// messages) every AI component reasons against. The investigation
+// protocol is the five-step reasoning discipline every component uses.
+const {
+  callClaudeRaw,
+  fetchClassificationContext,
+  formatContextForPrompt,
+  INVESTIGATION_PROTOCOL_TEXT,
+  INVESTIGATION_JSON_SCHEMA,
+} = require("./_etsyMailAnthropic");
 
 const db = admin.firestore();
 const FV = admin.firestore.FieldValue;
@@ -90,7 +100,10 @@ const AUDIT_COLL   = "EtsyMail_Audit";
 // misroutes in the audit log on long threads, the right escalation
 // is Sonnet 4.6, not back to Opus.
 const INTENT_MODEL = process.env.ETSYMAIL_INTENT_MODEL || "claude-haiku-4-5-20251001";
-const INTENT_MAX_TOKENS = 600;     // larger than v2 to leave room for the
+const INTENT_MAX_TOKENS = 1500;    // v5.0: bumped from 600 to accommodate
+                                   // the investigation block (5 step
+                                   // fields + the classifier verdict).
+                                   // 600 was tight even before v5.0.
                                     // model's "reasoning" field on
                                     // arc-boundary calls. Cap on output.
 const MESSAGE_TEXT_CAP = 4000;     // legacy single-message cap; only used
@@ -226,6 +239,12 @@ async function writeResult(threadId, result, messageText) {
     confidence    : result.confidence,
     signals       : result.signals,
     reasoning     : result.reasoning,
+    // v5.0 — persist investigation findings so the audit trail captures
+    // not just the verdict but the reasoning chain that produced it.
+    // Lets us replay misroutes and see which investigation step went
+    // sideways without re-running the classifier.
+    investigation : (result.investigation && typeof result.investigation === "object")
+                       ? result.investigation : null,
     model         : result.model,
     // Hash of message text (prefix 200 chars) so we can later detect when
     // the source message changed — useful for Step 2 if we want to
@@ -407,70 +426,78 @@ function _formatTailForModel(tail) {
   return lines.join("\n\n");
 }
 
-/** v3.0: Thread-aware classification.
- *  Pulls the recent thread tail, hands it to the model with the system
- *  prompt, returns a single classification for the CURRENT customer arc.
- *  No caching — every call is a fresh classification.
+/** v5.0 — Investigation-protocol classification.
  *
- *  v4.4.0: Also loads the thread doc's Etsy heading metadata (badge,
- *  linked order ID, heading title) and surfaces it to the classifier
- *  alongside the messages. This is structured signal from Etsy itself —
- *  "Help request" badge with a linked order means the customer is
- *  asking for assistance with an EXISTING order, not exploring a new
- *  purchase. The system prompt has a STRUCTURED OVERRIDE rule that
- *  collapses to `support` whenever this signal is present, regardless
- *  of message content.
+ *  Major rewrite of the classifier internals. Old version pulled just
+ *  the message tail + thin help-request metadata block and asked the
+ *  model to classify from that alone. New version fetches the full raw-
+ *  document context (thread, customer, recent receipts, messages) via
+ *  the shared `fetchClassificationContext`, prepends the shared five-
+ *  step investigation protocol to the system prompt, and forces the
+ *  model to output its investigation findings BEFORE its classification
+ *  verdict. The verdict is then conditioned on the findings rather
+ *  than guessed from message text alone.
+ *
+ *  Why: the classifier was misrouting threads where the customer used
+ *  language whose meaning depended on order history we never showed
+ *  it. Example: "I just ordered another necklace for my Grandmom" with
+ *  engraving instructions classified as `sales_lead` because the
+ *  classifier couldn't see that the customer's most recent paid order
+ *  was placed minutes before the conversation began. The investigation
+ *  protocol forces the model to do that correlation explicitly.
+ *
+ *  The Firestore-stored system prompt (intent_classifier.md) keeps its
+ *  category definitions and structured-override section unchanged. The
+ *  investigation protocol is layered on top in code so the same protocol
+ *  string is used across the classifier, sales agent, and draft-reply
+ *  — one source of truth for the investigation discipline.
  */
 async function classifyThread(threadId, opts = {}) {
-  const tail = await loadThreadTail(threadId);
+  // ─── Fetch the full raw-document context ──────────────────────────────
+  // This call is shared across every AI component in the system; the
+  // model sees the same documents the sales agent and draft-reply see.
+  const ctx = await fetchClassificationContext(threadId, {
+    messageLimit : 40,
+    perMessageCap: 800,
+    receiptLimit : 10,
+  });
 
-  // v4.4.0 — Load Etsy heading metadata from the thread doc so the
-  // classifier can apply the structured-override rule. Cheap single
-  // doc read; non-fatal on failure.
-  let helpRequestMetadata = null;
-  try {
-    const tDoc = await db.collection(THREADS_COLL).doc(threadId).get();
-    if (tDoc.exists) {
-      const td = tDoc.data() || {};
-      if (td.etsyHeadingBadge || td.etsyOrderId) {
-        helpRequestMetadata = {
-          etsyHeadingBadge: td.etsyHeadingBadge || null,
-          etsyHeadingTitle: td.etsyHeadingTitle || null,
-          etsyOrderId     : td.etsyOrderId      || null,
-          etsyViewOrderUrl: td.etsyViewOrderUrl || null,
-          isHelpRequest   : !!td.etsyHeadingBadge
-                            && /^\s*help\s*request\s*$/i.test(String(td.etsyHeadingBadge))
-        };
-      }
-    }
-  } catch (e) {
-    console.warn(`[intentClassifier] thread-doc read failed for ${threadId}:`, e.message);
-  }
-
-  if (tail.length === 0) {
-    // Edge case: thread is empty or all messages are older than 30 days.
-    // If a legacy caller passed messageText, fall back to it as a single-
-    // message classification so we don't hard-fail.
+  // Legacy single-message fallback. If the thread has no messages in
+  // the window AND a legacy caller passed messageText, synthesize a
+  // single-message context entry so we don't hard-fail. Otherwise
+  // return the empty-thread shape.
+  if ((!ctx.messages || ctx.messages.length === 0)) {
     const legacyText = String(opts.legacyMessageText || "").trim().slice(0, MESSAGE_TEXT_CAP);
     if (!legacyText) {
       return {
         classification: "unclear",
         confidence    : 0.95,
         signals       : ["no recent messages"],
-        reasoning     : "Thread has no messages within the last 30 days and no legacy message text was provided.",
+        reasoning     : "Thread has no messages within the recent window and no legacy message text was provided.",
         parseError    : null,
         model         : INTENT_MODEL,
         tailSize      : 0
       };
     }
-    // Synthesize a single-message tail
-    tail.push({
-      direction: "inbound", senderName: "Customer",
-      timestampMs: Date.now(),
-      text: legacyText
-    });
+    ctx.messages = [{
+      id        : "synthetic-legacy",
+      direction : "inbound",
+      senderName: "Customer",
+      timestamp : new Date().toISOString(),
+      text      : legacyText,
+      imageUrls : [],
+    }];
   }
 
+  // ─── Build the system prompt ──────────────────────────────────────────
+  // System prompt = (Firestore-stored classifier prompt) + (shared
+  // investigation protocol) + (the JSON shape we require the model to
+  // produce). The Firestore-stored prompt owns category definitions
+  // and shop-specific routing rules; the investigation protocol owns
+  // the reasoning discipline. Keeping these separate means the
+  // investigation protocol stays in lock-step across classifier, sales
+  // agent, and draft-reply without anyone having to remember to copy
+  // a change across three Firestore docs.
   const promptLoad = await loadSystemPrompt();
   if (!promptLoad.ok) {
     const err = new Error(promptLoad.error);
@@ -478,38 +505,55 @@ async function classifyThread(threadId, opts = {}) {
     throw err;
   }
 
-  // Build the structured-metadata block (if any) that precedes the
-  // message tail. The system prompt's STRUCTURED OVERRIDE section reads
-  // this block to apply the help-request rule.
-  let metadataBlock = "";
-  if (helpRequestMetadata) {
-    const lines = ["═══ STRUCTURED THREAD METADATA (FROM ETSY SCRAPE) ═══"];
-    if (helpRequestMetadata.etsyHeadingBadge) lines.push(`etsyHeadingBadge: ${helpRequestMetadata.etsyHeadingBadge}`);
-    if (helpRequestMetadata.etsyHeadingTitle) lines.push(`etsyHeadingTitle: ${helpRequestMetadata.etsyHeadingTitle}`);
-    if (helpRequestMetadata.etsyOrderId)      lines.push(`etsyOrderId: ${helpRequestMetadata.etsyOrderId}`);
-    if (helpRequestMetadata.isHelpRequest) {
-      lines.push(``);
-      lines.push(`>>> This is an Etsy HELP REQUEST on an EXISTING order. The structured`);
-      lines.push(`>>> override rule applies: classification = "support", confidence ≥ 0.9,`);
-      lines.push(`>>> regardless of message body. <<<`);
-    }
-    lines.push("═══ END STRUCTURED METADATA ═══");
-    metadataBlock = lines.join("\n") + "\n\n";
-  }
+  const systemPrompt = [
+    promptLoad.prompt,
+    "",
+    INVESTIGATION_PROTOCOL_TEXT,
+    "",
+    INVESTIGATION_JSON_SCHEMA,
+    "",
+    "═══ CLASSIFIER-SPECIFIC OUTPUT REQUIREMENTS ════════════════════════════",
+    "",
+    "After the `investigation` field, your output JSON MUST also include the",
+    "classifier verdict, conditioned explicitly on what your investigation",
+    "found. The full required output shape is:",
+    "",
+    "  {",
+    '    "investigation": { ... as specified in the protocol above ... },',
+    '    "classification": "support" | "sales_lead" | "policy_question" | "promotion" | "spam" | "unclear",',
+    '    "confidence": <number between 0 and 1>,',
+    '    "signals": [ "<short label>", ... ],',
+    '    "reasoning": "<one paragraph tying your classification to specific findings from the investigation>"',
+    "  }",
+    "",
+    "Your `reasoning` MUST reference at least one specific finding from your",
+    "`investigation` — for example, \"per temporal_correlation, the conversation",
+    "began 23 minutes after the most recent paid order, and per reference_resolution",
+    "the customer's 'the charm' resolves to Order #X; this is post-purchase, so",
+    "support.\" If your reasoning could be written without looking at the",
+    "investigation findings, you have not done the investigation properly.",
+    "",
+    "If `investigation.needs_human_review` is `true`, set `classification` to",
+    "`unclear` and explain in `reasoning` why a human should disambiguate.",
+  ].join("\n");
 
-  const userMsg =
-    "Read the recent thread between this Etsy shop and one customer, then " +
-    "classify the CURRENT customer arc. Older arcs are context, not signal.\n\n" +
-    metadataBlock +
-    "═══ THREAD (oldest at top, newest at bottom; last 30 days, max 40 messages) ═══\n\n" +
-    _formatTailForModel(tail) +
-    "\n\n═══ END THREAD ═══\n\n" +
-    "What is the customer asking right now? Output the JSON only.";
+  // ─── Build the user message ───────────────────────────────────────────
+  // User message = raw documents + the task. The model reads the docs,
+  // walks the investigation protocol, and produces its verdict.
+  const userMsg = [
+    formatContextForPrompt(ctx),
+    "",
+    "═══ YOUR TASK ═══",
+    "",
+    "Complete the mandatory investigation protocol against the raw documents",
+    "above, then classify the CURRENT customer arc. Output ONLY the JSON",
+    "object with the required shape. No preamble, no markdown fences.",
+  ].join("\n");
 
   const resp = await callClaudeRaw({
     model      : INTENT_MODEL,
     maxTokens  : INTENT_MAX_TOKENS,
-    system     : promptLoad.prompt,
+    system     : systemPrompt,
     messages   : [{ role: "user", content: userMsg }],
     useThinking: false
   });
@@ -519,11 +563,22 @@ async function classifyThread(threadId, opts = {}) {
   const parsed = tryParseJson(rawText);
   const parseError = parsed ? null : "json_parse_failed";
   const coerced = coerceClassification(parsed, parseError);
+
+  // Surface the investigation findings in the return value so they're
+  // visible to the auto-pipeline (which writes them to the audit log
+  // and can include them when handing off to downstream agents).
+  const investigation = (parsed && parsed.investigation && typeof parsed.investigation === "object")
+    ? parsed.investigation
+    : null;
+
   return {
     ...coerced,
+    investigation,
     model    : INTENT_MODEL,
-    rawText  : rawText.slice(0, 500),
-    tailSize : tail.length
+    rawText  : rawText.slice(0, 800),
+    tailSize : ctx.messages.length,
+    ctxBuyerUserId: (ctx.thread && (ctx.thread.buyerUserId || ctx.thread.buyer_user_id)) || null,
+    ctxReceiptCount: (ctx.recentReceipts || []).length,
   };
 }
 

@@ -123,7 +123,17 @@ const path = require("path");
 
 const admin = require("./firebaseAdmin");
 const { CORS, requireExtensionAuth } = require("./_etsyMailAuth");
-const { runToolLoop } = require("./_etsyMailAnthropic");
+// v5.0 — Shared utilities consolidated in _etsyMailAnthropic.js: the
+// raw-document context fetcher and the shared investigation protocol
+// the sales agent, classifier, and draft-reply all use to reason from
+// the same source of truth.
+const {
+  runToolLoop,
+  fetchClassificationContext,
+  formatContextForPrompt,
+  INVESTIGATION_PROTOCOL_TEXT,
+  INVESTIGATION_JSON_SCHEMA,
+} = require("./_etsyMailAnthropic");
 // ─── In-bundle module imports — guarded with try/catch ────────────────
 //
 // These modules are all part of the Step 2.3 bundle and should always be
@@ -1549,20 +1559,31 @@ async function validateQuotedPriceIfPresent({ threadId, parsed, salesCtx }) {
 
 // ─── Build initial messages for the agent ──────────────────────────────
 
-function buildInitialMessages({ contextSummary, latestInboundText, referenceAttachments }) {
+function buildInitialMessages({ contextSummary, latestInboundText, referenceAttachments, rawContextBlock }) {
   const safeRefAttachments = compactAttachmentList(referenceAttachments);
-  const userContent = [
-    {
-      type: "text",
-      text: [
-        "═══ Sales context ═══",
-        JSON.stringify(contextSummary, null, 2),
-        "",
-        "═══ Latest customer message ═══",
-        String(latestInboundText || "(no text)").slice(0, 6000)
-      ].join("\n")
-    }
-  ];
+  const textParts = [];
+
+  // v5.0 — Raw-document context block. Prepended to the user message so
+  // the model sees the actual Firestore documents (thread, customer,
+  // recent receipts, messages) before the legacy `contextSummary`. The
+  // model is instructed (by the investigation protocol in the system
+  // prompt) to walk through the raw docs and produce its findings as
+  // the first field of its output. The legacy contextSummary remains
+  // for backwards-compat: it carries operator-curated signals the
+  // raw docs don't (referencedListings, recentMessages summary,
+  // etc.) — but it is no longer the SOLE source of context.
+  if (typeof rawContextBlock === "string" && rawContextBlock) {
+    textParts.push(rawContextBlock);
+    textParts.push("");
+  }
+
+  textParts.push("═══ Sales context (operator-curated summary) ═══");
+  textParts.push(JSON.stringify(contextSummary, null, 2));
+  textParts.push("");
+  textParts.push("═══ Latest customer message ═══");
+  textParts.push(String(latestInboundText || "(no text)").slice(0, 6000));
+
+  const userContent = [{ type: "text", text: textParts.join("\n") }];
 
   if (safeRefAttachments.length) {
     userContent.push({
@@ -2602,8 +2623,29 @@ exports.handler = async (event) => {
         };
       })()
     };
+    // v5.0 — Fetch the raw-document context (thread, customer,
+    // recent receipts, messages) using the shared fetcher. Pass it
+    // into the initial messages so the model can walk the investigation
+    // protocol against real Firestore data, not just the operator-
+    // curated `contextSummary`. The fetch is wrapped in a guard so a
+    // missing customer doc or empty receipts list doesn't block the
+    // agent — the protocol explicitly handles those cases.
+    let rawContextBlock = null;
+    try {
+      const ctx = await fetchClassificationContext(threadId, {
+        messageLimit : 40,
+        perMessageCap: 1000,
+        receiptLimit : 10,
+      });
+      rawContextBlock = formatContextForPrompt(ctx);
+    } catch (e) {
+      console.warn(`[salesAgent] fetchClassificationContext failed for ${threadId}: ${e.message}`);
+      // Non-fatal — proceed with the legacy contextSummary alone. The
+      // investigation protocol will note the missing context block.
+    }
+
     const initialMessages = buildInitialMessages({
-      contextSummary, latestInboundText, referenceAttachments
+      contextSummary, latestInboundText, referenceAttachments, rawContextBlock
     });
 
     // ── Run the tool loop ──
@@ -3266,9 +3308,94 @@ A customer-facing sales draft must never say "I'll get back to you", "I'll send 
 For custom-shape requests that need operator pricing but still have customer-selectable choices missing, do NOT escalate as the first customer-visible move. Attach the family line sheet and ask for the customer choices first. Example for a two-charm necklace request: confirm we can design and make it, mention the normal production window if asked, attach the necklace line sheet, and ask the customer to pick charm size, metal, chain, length, and confirm the layout. Pricing can be resolved after the specs are complete; do not promise to get back later.
 `.trim();
 
-    // Concatenate. Keep a clear separator so the addendum is visible
-    // in any prompt-debugging output without being mistaken for
-    // operator-edited content.
+    // v5.0 — Sales-agent-specific investigation addendum. Pairs with
+    // the shared INVESTIGATION_PROTOCOL_TEXT to teach Sonnet what to
+    // DO once it has completed the five-step investigation. The key
+    // clause: a SELF-ESCAPE for threads that aren't actually new sales,
+    // which is what produced the Gianna-thread misfire (Sonnet correctly
+    // diagnosed "not a new sale" in its notes field and then drafted a
+    // sales-funnel reply anyway because the prompt had no instruction
+    // to vary behavior on the diagnosis).
+    const salesAgentInvestigationAddendum = `
+═══ SALES-AGENT-SPECIFIC ACTION RULES (post-investigation) ═══════════════
+
+After completing the mandatory investigation protocol, your output JSON
+MUST include an \`investigation\` field at the top with the shape described
+in the protocol. Your downstream actions are explicitly conditioned on
+your findings there.
+
+─── SELF-ESCAPE: when the investigation reveals this isn't a new sale ─
+
+The sales agent's job is to push toward a NEW purchase or a NEW custom
+listing. If your investigation finds any of the following, you are NOT
+in your lane and you MUST escape rather than draft a sales-funnel reply:
+
+  A. The customer's current ask resolves (per reference_resolution) to
+     an EXISTING paid order they're already a customer for, and what
+     they want is:
+       - to confirm or modify a spec on that existing order
+       - to ask about delivery, tracking, or status of that order
+       - to request a refund, exchange, or repair on that order
+       - to thank you / send a follow-up about that order
+
+  B. The investigation's current_ask is post-purchase support of any
+     kind — even if the customer's language uses present-tense verbs
+     like "I'd like to add" or "can you change". Verb tense alone is
+     not the test; reference resolution to an existing order IS.
+
+  C. needs_human_review is true because the resolution is ambiguous in
+     a way that would change whether this is a sale.
+
+When ANY of those apply, your output must be:
+
+  - \`current_state\`: \`non_sales\`
+  - \`next_action\`: \`escalate_to_human\`
+  - \`ready_for_human_approval\`: \`true\`
+  - \`needs_review_synopsis\`: a one-paragraph summary that quotes the
+     specific investigation finding driving this decision (e.g.,
+     "reference_resolution found 'the necklace' resolves to Order
+     #4123, status paid-not-shipped; customer is requesting an engraving
+     change on that order, which is post-purchase modification — not a
+     new sale.")
+  - \`reply\`: brief and ambiguous about timing, in the standard escalation
+     form: "Thanks for sending this over. I need to look at this carefully
+     before I can speak to specifics." followed by the sign-off.
+
+Never run discovery, never ask spec questions, never offer the line
+sheet, never quote prices — even if the customer's message contains
+words that would normally trigger one of those actions. The investigation
+finding overrides every other classification heuristic in this prompt.
+
+─── PROCEED NORMALLY: when the investigation confirms this is a sale ─
+
+If your investigation's current_ask is a genuine new purchase or new
+custom request — no resolution to an existing paid order, no post-
+purchase intent, indefinite references introducing new product
+interest — then proceed with the normal sales workflow as described
+in the rest of this prompt. Your downstream sales-funnel actions
+(discovery questions, line sheet attachments, resolver tool, quoting)
+should be grounded in what your investigation surfaced about the
+customer's actual ask.
+
+When you produce the reply, the language and content MUST be consistent
+with what your investigation found. If your investigation says "customer
+is dictating engraving specs for a recently-paid order," your reply
+cannot ask "what size and metal would you like from the line sheet?" —
+that contradicts your own finding. Your reply must derive directly
+from your investigation, not from the default sales script.
+`.trim();
+
+    // it's the freshest instruction in the model's context. The
+    // protocol forces a five-step reasoning pass (order history,
+    // conversation timing, temporal correlation, reference resolution,
+    // current ask) before any sales-funnel action is chosen. This is
+    // the same protocol the classifier and draft-reply use — single
+    // source of truth for the investigation discipline so all three
+    // components reason against the same payload the same way.
+    //
+    // The raw context payload (thread doc, customer doc, recent
+    // receipts, messages) is injected into the user message via
+    // formatContextForPrompt(ctx); see the runToolLoop call below.
     const fullSystemPrompt = String(promptLoad.prompt || "").trim()
       + "\n\n---\n\n"
       + lineSheetEagernessAddendum
@@ -3295,7 +3422,11 @@ For custom-shape requests that need operator pricing but still have customer-sel
       + "\n\n---\n\n"
       + v5ReconciliationAddendum
       + "\n\n---\n\n"
-      + noDeferralDraftAddendum;
+      + noDeferralDraftAddendum
+      + "\n\n---\n\n"
+      + INVESTIGATION_PROTOCOL_TEXT
+      + "\n\n---\n\n"
+      + salesAgentInvestigationAddendum;
 
     // ════════════════════════════════════════════════════════════════════
     // ─── v5.0 OPTION C — AI CALL WITH RETRY-ONCE-THEN-ESCALATE ────────
