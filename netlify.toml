@@ -60,13 +60,35 @@
   schedule = "*/5 * * * *"
 
 # ─── v2.0 Sales Mode: Step 1 — Catalog sync ─────────────────────────────────
-# etsyMailListingsCatalog pulls active listings via Etsy API every 30 min,
-# writes to EtsyMail_Listings. Operator can also trigger on-demand from the
-# Catalog tab (POST op:"sync"). Gated by EtsyMail_Config/autoPipeline
-# .listingsMirrorEnabled — the cron still fires but the function early-returns
-# if the flag is off.
+# etsyMailListingsCatalog pulls active listings via Etsy API and writes to
+# EtsyMail_Listings. The cron now runs ONCE DAILY at 04:00 UTC (midnight EDT
+# / 9pm PDT) instead of every 30 min.
+#
+# Pre-2026-05-26: schedule was "*/30 * * * *". At this shop's catalog size
+# (4,700 active listings × 47 pages per full sync), that produced ~1,128
+# Etsy API calls/day from this cron alone — roughly 50% of the daily
+# 5,000 QPD limit before any operator-triggered work.
+#
+# Post-cutover: 47 calls/day. The 4am UTC window is deliberately overnight
+# in North American timezones so the burst doesn't compete with daytime
+# operator activity for API budget.
+#
+# Trade-offs:
+#   - New listings appear in the AI's fuzzy-search catalog up to 24 hr later.
+#   - Edits to existing listings propagate up to 24 hr later.
+#   - Deletions are flagged active:false up to 24 hr later.
+# Real-time path preserved:
+#   - URL-based lookup (lookupListingByUrl) has live-fallback to Etsy API
+#     on cache miss — customers pasting URLs to brand-new listings still
+#     resolve immediately.
+#   - Manual sync via POST { op: "sync" } is available for right-after-
+#     publishing situations.
+#
+# Operator can also trigger on-demand from the Catalog tab (POST op:"sync").
+# Gated by EtsyMail_Config/autoPipeline.listingsMirrorEnabled — the cron
+# still fires but the function early-returns if the flag is off.
 [functions."etsyMailListingsCatalog"]
-  schedule = "*/30 * * * *"
+  schedule = "0 4 * * *"
 
 # ─── v2.0 Sales Mode: Step 2 — Sales reaper ─────────────────────────────────
 # etsyMailSalesReaper detects abandoned funnels (no customer reply 7+ days,
