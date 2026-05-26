@@ -10035,7 +10035,67 @@
         return agg;
       }
 
-      function renderRow(bucket, now) {
+      /** Walk the entire sites tree and return every bucket (leaf object
+       *  with a numeric `attempt` field). Handles Firestore's dotted-key
+       *  quirk where writes like "helper.etsyFetch" land as nested
+       *  objects sites.helper.etsyFetch. Robust to future siteIds being
+       *  added without UI changes — any newly instrumented site is
+       *  automatically rolled up because we don't hard-code the list. */
+      function walkAllBuckets(sites) {
+        const buckets = [];
+        function recurse(v) {
+          if (!v || typeof v !== "object") return;
+          // A bucket is a leaf object with a numeric `attempt` field.
+          // Anything else is a container — recurse into its children.
+          if (typeof v.attempt === "number") {
+            buckets.push(v);
+            return;
+          }
+          for (const k of Object.keys(v)) recurse(v[k]);
+        }
+        recurse(sites);
+        return buckets;
+      }
+
+      /** Aggregate ALL Etsy API call sites into a single bucket-shape.
+       *  Uses doc.grandTotal as the authoritative attempt count (it is
+       *  atomically maintained via FieldValue.increment in the meter's
+       *  flush transaction). Other outcome buckets are summed from the
+       *  walk because they aren't tracked at the doc level. */
+      function aggregateAllBuckets(doc) {
+        const sites = (doc && doc.sites) || {};
+        const buckets = walkAllBuckets(sites);
+        const agg = {
+          attempt : 0, ok: 0, failHttp: 0, fail429: 0, failNet: 0,
+          last60s : 0,
+          lastAttemptAt: null
+        };
+        let maxLastMs = 0;
+        for (const b of buckets) {
+          agg.attempt  += (b.attempt  || 0);
+          agg.ok       += (b.ok       || 0);
+          agg.failHttp += (b.failHttp || 0);
+          agg.fail429  += (b.fail429  || 0);
+          agg.failNet  += (b.failNet  || 0);
+          agg.last60s  += (b.last60s  || 0);
+          const lastMs = tsToMillis(b.lastAttemptAt);
+          if (lastMs > maxLastMs) maxLastMs = lastMs;
+        }
+        // Prefer doc.grandTotal for the total — it's the authoritative
+        // counter, incremented atomically in the meter flush and not
+        // subject to transient inconsistencies during partial writes.
+        // Fall back to the walked sum if grandTotal isn't present
+        // (older doc shape, brand-new day before first flush, etc.).
+        if (typeof doc.grandTotal === "number" && doc.grandTotal > 0) {
+          agg.attempt = doc.grandTotal;
+        }
+        if (maxLastMs) agg.lastAttemptAt = { _ts: true, ms: maxLastMs };
+        return agg;
+      }
+
+      function renderRow(bucket, now, opts = {}) {
+        const label   = opts.label   || "Receipts page";
+        const tooltip = opts.tooltip || "All receipts-page calls today: sync-background buyer mode, the 3-min mirror cron, and any active backfill. Burn here = Etsy QPD burn.";
         const attempt  = bucket.attempt  || 0;
         const ok       = bucket.ok       || 0;
         const failHttp = bucket.failHttp || 0;
@@ -10063,8 +10123,8 @@
         chips.push(`<span class="am-chip ${liveCls}" title="Attempts in the last 60 seconds">${last60s}/min</span>`);
 
         return `
-          <div class="${rowClasses}" title="All receipts-page calls today: sync-background buyer mode, the 3-min mirror cron, and any active backfill. Burn here = Etsy QPD burn.">
-            <span class="am-label">Receipts page</span>
+          <div class="${rowClasses}" title="${_esc(tooltip)}">
+            <span class="am-label">${_esc(label)}</span>
             <span class="am-total">${attempt}</span>
             <div class="am-breakdown">${chips.join("")}</div>
           </div>`;
@@ -10073,8 +10133,17 @@
       function render(doc) {
         const now = Date.now();
         const sites = (doc && doc.sites) || {};
-        const bucket = aggregateReceiptBuckets(sites);
-        elBody.innerHTML = renderRow(bucket, now);
+        // Two rows: aggregate-all on top (the headline number), then
+        // the receipts-page row below (the per-source detail that
+        // shows where most of the burn actually comes from).
+        const allAgg      = aggregateAllBuckets(doc || {});
+        const receiptsAgg = aggregateReceiptBuckets(sites);
+        elBody.innerHTML =
+          renderRow(allAgg, now, {
+            label  : "All Etsy API calls",
+            tooltip: "Every Etsy API call made by the entire EtsyMail system today: receipts pages, order detail lookups, listing fetches, OAuth refreshes, listing creator, shipping sync — everything. Resets at midnight UTC. This is the number to watch against Etsy's 5,000 QPD quota."
+          }) +
+          renderRow(receiptsAgg, now);
       }
 
       function ensureBanner(message) {
@@ -10104,10 +10173,11 @@
           if (res && res.exists && res.doc) {
             render(res.doc);
           } else {
-            // Counter doc doesn't exist yet — render empty state.
-            render({ sites: {} });
+            // Counter doc doesn't exist yet — render empty state with
+            // zero rows; the doc gets created on the first meter flush.
+            render({ sites: {}, grandTotal: 0 });
             elBody.insertAdjacentHTML("afterbegin",
-              `<div class="am-empty">No receipts-page calls recorded yet today.</div>`);
+              `<div class="am-empty">No Etsy API calls recorded yet today.</div>`);
           }
         } catch (err) {
           _consecutiveErrors++;
