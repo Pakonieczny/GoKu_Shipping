@@ -68,7 +68,7 @@
  *  ═══ FIRESTORE DOC SHAPE ════════════════════════════════════════════════
  *
  *  EtsyMail_Config/etsyApiCounters {
- *    day                   : "2026-05-22"          (UTC ISO date)
+ *    day                   : "2026-05-22"          (America/New_York date, YYYY-MM-DD)
  *    grandTotal            : 1432                  (sum of all `attempt` counts)
  *    sites: {
  *      "helper.etsyFetch": { attempt: 982, ok: 980, failHttp: 0, fail429: 2, failNet: 0,
@@ -79,7 +79,9 @@
  *    updatedAt             : <Timestamp>
  *  }
  *
- *  When the UTC day rolls over, the next bump() detects the date change
+ *  When the America/New_York day rolls over (midnight ET, which is
+ *  04:00 UTC during EST / 05:00 UTC during EDT), the next bump()
+ *  detects the date change
  *  and archives the previous day's counters into
  *      EtsyMail_Config/etsyApiCountersHistory_{YYYY-MM-DD}
  *  then resets the live doc to zero.
@@ -157,8 +159,32 @@ let _pendingCount = 0;
 
 // ─── Helpers ────────────────────────────────────────────────────────────
 
-function todayKeyUTC() {
-  return new Date().toISOString().slice(0, 10);   // YYYY-MM-DD
+// ─── Day key (America/New_York timezone) ────────────────────────────────
+//
+// Returns YYYY-MM-DD in America/New_York time. Counter rollover happens
+// at midnight NY time (which is 04:00 UTC during EST, 05:00 UTC during
+// EDT) — the operator's local day boundary, not the UTC day boundary.
+//
+// Why NY time, not UTC: the operator runs the shop on a NY calendar,
+// reads "today's API usage" with that mental model, and expects the
+// counter to reset when their day ends — not at 8pm EDT (midnight UTC)
+// which falls mid-evening of the same day they're still working in.
+//
+// Intl.DateTimeFormat with sv-SE locale produces the ISO YYYY-MM-DD
+// shape directly (e.g. "2026-05-26"). The locale is a deliberate
+// choice — sv-SE is Sweden which formats dates as YYYY-MM-DD natively,
+// avoiding the need to manually reorder month/day parts that en-US
+// would give as "05/26/2026". This pattern is well-established in
+// Node.js timezone-handling code.
+const _DAY_KEY_FORMATTER = new Intl.DateTimeFormat("sv-SE", {
+  timeZone: "America/New_York",
+  year    : "numeric",
+  month   : "2-digit",
+  day     : "2-digit"
+});
+
+function todayKey() {
+  return _DAY_KEY_FORMATTER.format(new Date());
 }
 
 function emptyBucket() {
@@ -202,7 +228,7 @@ function _last60sCount(siteId, now) {
 // live doc. We do this INSIDE a transaction so two concurrent flushes
 // from different functions don't race the archive step.
 async function _checkAndRollDay(tx, liveRef) {
-  const today = todayKeyUTC();
+  const today = todayKey();
   const liveSnap = await tx.get(liveRef);
   if (!liveSnap.exists) {
     // First write ever — initialize cleanly

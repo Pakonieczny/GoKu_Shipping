@@ -15912,6 +15912,12 @@
         // v5.32.3 — toggle is a <button aria-pressed>, not a checkbox.
         // v5.32.4 — also check the mobile toggle button; both buttons
         // share the same dispatch path through sendViaEtsy.
+        // v5.32.5 — surface failures clearly. The original code used
+        // `err.message` which can be undefined for some error shapes,
+        // producing "Design dispatch failed: undefined" — easy to
+        // miss during a busy sending session. Now we explicitly name
+        // the thread so the operator knows EXACTLY which dispatch
+        // failed, and the toast stays up longer for visibility.
         try {
           const dBtnDesktop = document.getElementById("emSendToDesignBtn");
           const dBtnMobile  = document.getElementById("mActionSendToDesign");
@@ -15919,6 +15925,15 @@
           const mobileOn  = dBtnMobile  && dBtnMobile.getAttribute("aria-pressed")  === "true";
           if (desktopOn || mobileOn) {
             const designDraftText = (englishText || text || "").trim();
+            // Capture customer name for the failure toast so the
+            // operator can tell which dispatch missed even if they've
+            // already moved to another thread.
+            const failureLabel = (() => {
+              try {
+                const t = (state.threads || []).find(x => x && x.id === threadId);
+                return (t && (t.customerName || t.subject)) || threadId;
+              } catch { return threadId; }
+            })();
             if (designDraftText) {
               api("etsyMailDesignDispatch", {
                 method: "POST",
@@ -15933,12 +15948,14 @@
                   toast(`Design message sent to order #${r.orderId}`);
                   console.log("[designDispatch] success:", r);
                 } else {
-                  toast(`Design dispatch failed: ${(r && r.error) || "unknown"}`);
+                  const why = (r && r.error) || "unknown error";
+                  toast(`⚠ Design dispatch FAILED for ${failureLabel}: ${why}`, 8000);
                   console.warn("[designDispatch] response indicated failure:", r);
                 }
               })
               .catch(err => {
-                toast(`Design dispatch failed: ${err.message}`);
+                const why = (err && (err.message || err.data && err.data.error)) || "network error";
+                toast(`⚠ Design dispatch FAILED for ${failureLabel}: ${why}`, 8000);
                 console.warn("[designDispatch] threw:", err);
               });
               // Reset both toggles after dispatch — operator must opt

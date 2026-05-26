@@ -1,5 +1,5 @@
 /**
- *  etsyMailDesignDispatch — v1.0.0
+ *  etsyMailDesignDispatch — v1.0.1
  *
  *  Hooks the inbox's Staff Reply card into Brites Messages (the
  *  internal design-team chat backed by Brites_Orders/{orderId}/messages
@@ -65,11 +65,27 @@ function bad(msg, code = 400) { return { statusCode: code, headers: { "Content-T
  * latest draft.
  *
  * Returns oldest-first so the transcript reads naturally top to bottom.
+ *
+ * v1.0.1 — CRITICAL FIX: field name was wrong in the original.
+ *
+ * etsyMailSnapshot.js writes messages with field `timestamp` (a
+ * Firestore Timestamp object via admin.firestore.Timestamp.fromMillis).
+ * The original dispatcher queried `orderBy("timestampMs", "desc")`,
+ * which Firestore handles by RETURNING ZERO DOCUMENTS because no doc
+ * has a `timestampMs` field. The result: Haiku always saw "no prior
+ * messages in window" and had to summarize from the operator's draft
+ * alone — explaining the "wrong information passed to production"
+ * complaint, since Haiku couldn't see what was actually discussed/
+ * agreed/imaged earlier in the arc.
+ *
+ * The defensive read of `m.timestamp` handles both the canonical case
+ * (Firestore Timestamp with .toMillis) and any future shape changes
+ * (raw millis or seconds+nanoseconds objects) without crashing.
  */
 async function loadRecentThreadMessages(threadId, limit = RECENT_MESSAGES_FOR_CONTEXT) {
   const snap = await db.collection(THREADS_COLL).doc(threadId)
     .collection("messages")
-    .orderBy("timestampMs", "desc")
+    .orderBy("timestamp", "desc")
     .limit(limit)
     .get();
   const out = [];
@@ -83,8 +99,24 @@ async function loadRecentThreadMessages(threadId, limit = RECENT_MESSAGES_FOR_CO
     // to reason about and they're often scrape artifacts.
     if (!text && imageUrls.length === 0) return;
     const isOutbound = m.direction === "outbound" || m.senderRole === "staff";
+
+    // v1.0.1 — Defensive timestamp extraction. The admin SDK
+    // deserializes Firestore Timestamp fields into objects with a
+    // .toMillis() method. Older docs (pre-snapshot-v3) may have a
+    // raw timestampMs millis field. Fall back to 0 only if both fail.
+    let whenMs = 0;
+    if (m.timestamp && typeof m.timestamp.toMillis === "function") {
+      whenMs = m.timestamp.toMillis();
+    } else if (typeof m.timestampMs === "number") {
+      whenMs = m.timestampMs;
+    } else if (m.timestamp && typeof m.timestamp.seconds === "number") {
+      // Cross-runtime defensive: if a doc has been read in a way that
+      // returns the raw {seconds, nanoseconds} shape, handle it too.
+      whenMs = m.timestamp.seconds * 1000 + Math.floor((m.timestamp.nanoseconds || 0) / 1e6);
+    }
+
     out.push({
-      when      : m.timestampMs || 0,
+      when      : whenMs,
       direction : isOutbound ? "staff" : "customer",
       senderName: m.senderName || (isOutbound ? "Staff" : "Customer"),
       text      : text.slice(0, MAX_MESSAGE_CHARS),
@@ -464,6 +496,32 @@ exports.handler = async (event) => {
   if (!threadId)  return bad("Missing threadId");
   if (!draftText) return bad("Missing draftText");
 
+  // v1.0.1 — Entry-time audit log. The original audit was at the END
+  // (after success), meaning if the function crashed early (Haiku
+  // timeout, Firestore transient on the load, etc.) we had NO record
+  // the operator even tried. Result: "messages not arriving" felt
+  // mysterious because the only paper trail was the dispatched
+  // message itself.
+  //
+  // Now we write a "started" audit row IMMEDIATELY on entry, best-
+  // effort (silent catch). Every attempt leaves a trace. The success
+  // audit at the end still fires with the dispatched message IDs;
+  // having both lets you correlate "started but never finished" rows
+  // with the actual failure to see where the dispatch died.
+  const dispatchStartedAt = Date.now();
+  try {
+    await db.collection("EtsyMail_Audit").add({
+      eventType : "design_dispatch_started",
+      threadId,
+      actor     : senderName,
+      payload   : {
+        draftLength    : draftText.length,
+        draftPreview   : draftText.slice(0, 120),
+      },
+      createdAt : FV.serverTimestamp(),
+    });
+  } catch (_) { /* best-effort */ }
+
   // ─── 1) Load thread to learn the order ID and customer name ──────
   const tSnap = await db.collection(THREADS_COLL).doc(threadId).get();
   if (!tSnap.exists) return bad("Thread not found", 404);
@@ -489,6 +547,19 @@ exports.handler = async (event) => {
     // Non-fatal — Haiku can still produce a useful summary from just
     // the operator's draft, though arc detection will be weaker.
     console.warn(`[designDispatch] failed to load recent messages for ${threadId}: ${e.message}`);
+  }
+
+  // v1.0.1 — Loud warning when the thread-context load returns nothing.
+  // The original timestampMs-vs-timestamp bug caused this to be silently
+  // empty on EVERY dispatch, and there was no signal anywhere — Haiku
+  // just got "(no prior messages in window)" forever and hallucinated.
+  //
+  // After the v1.0.1 fix this should be non-empty for any thread that's
+  // been scraped at least once. If you ever see this warning post-fix,
+  // it means either (a) the field name changed again, or (b) the
+  // thread genuinely has no messages yet (legitimately fresh).
+  if (threadMessages.length === 0) {
+    console.warn(`[designDispatch] thread ${threadId} produced ZERO context messages — Haiku will summarize from operator draft only. If this thread has visible messages, the messages subcollection field schema may have changed.`);
   }
 
   // ─── 3) Condense via Haiku (arc-aware + image-aware) ─────────────
@@ -526,20 +597,58 @@ exports.handler = async (event) => {
   // SECOND message holding just the image URL. design-message.html
   // renders text and image as separate bubbles (text OR image per
   // doc, never both) — so two writes match the existing UI shape.
+  //
+  // v1.0.1 — Wrap each write in a retry loop. Firestore can return
+  // transient UNAVAILABLE / DEADLINE_EXCEEDED / INTERNAL errors under
+  // load; without retry, one of those = lost message + 502 to client.
+  // The original symptom "sometimes messages don't arrive" almost
+  // certainly included one or more transient failures of this kind.
+  //
+  // Retry policy: 3 attempts, backoff 250ms → 750ms → 2250ms (3x).
+  // Total worst-case latency added: ~3.5s. Acceptable given dispatch
+  // is fire-and-forget UX-wise (operator already saw "Sent ✓").
+  // Only retry on transient codes; permanent errors (PERMISSION_DENIED,
+  // INVALID_ARGUMENT) fail fast since retrying won't help.
+  const TRANSIENT_ERROR_CODES = new Set([
+    "unavailable", "deadline-exceeded", "internal", "aborted",
+    "resource-exhausted", "cancelled"
+  ]);
+  async function withRetry(label, fn) {
+    let lastErr;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        return await fn();
+      } catch (e) {
+        lastErr = e;
+        const code = (e && (e.code || "")).toString().toLowerCase();
+        const isTransient = TRANSIENT_ERROR_CODES.has(code);
+        if (!isTransient || attempt === 3) {
+          console.warn(`[designDispatch] ${label} attempt ${attempt} failed (code=${code || "?"}); ${isTransient ? "out of retries" : "non-transient"}: ${e.message}`);
+          throw e;
+        }
+        const backoffMs = 250 * Math.pow(3, attempt - 1);
+        console.warn(`[designDispatch] ${label} attempt ${attempt} transient (${code}); retrying in ${backoffMs}ms: ${e.message}`);
+        await new Promise(r => setTimeout(r, backoffMs));
+      }
+    }
+    throw lastErr; // unreachable but quiets linters
+  }
+
   let textWriteRef;
   let imageWriteRef = null;
   try {
     const orderRef = db.collection(BRITES_ORDERS_COLL).doc(orderId);
-    await orderRef.set({
+
+    await withRetry("orderRef.set", () => orderRef.set({
       orderId            : orderId,
       lastMessageAt      : FV.serverTimestamp(),
       lastMessageBy      : senderName,
       lastMessageSource  : "etsymail_design_dispatch",
       customerName       : customerName,
-    }, { merge: true });
+    }, { merge: true }));
 
     // Text message — the condensed substance.
-    textWriteRef = await orderRef
+    textWriteRef = await withRetry("messages.add (text)", () => orderRef
       .collection("messages")
       .add({
         text       : condensed,
@@ -550,12 +659,12 @@ exports.handler = async (event) => {
         sourceThreadId : threadId,
         sourceOriginalLength : draftText.length,
         hasDesignAction,
-      });
+      }));
 
     // Image message — only when Haiku confidently identified an
     // accepted design proof in the current arc.
     if (acceptedImageUrl) {
-      imageWriteRef = await orderRef
+      imageWriteRef = await withRetry("messages.add (image)", () => orderRef
         .collection("messages")
         .add({
           imageUrl   : acceptedImageUrl,
@@ -566,10 +675,30 @@ exports.handler = async (event) => {
           source     : "etsymail_design_dispatch_image",
           sourceThreadId : threadId,
           acceptedImageReason : acceptedImageReason || null,
-        });
+        }));
     }
   } catch (e) {
-    console.error(`[designDispatch] Firestore write failed for order ${orderId}:`, e.message);
+    console.error(`[designDispatch] Firestore write failed for order ${orderId} after retries:`, e.message);
+    // v1.0.1 — Write a failure-audit row so the operator can correlate
+    // their "I clicked Send to Design and nothing showed up" complaint
+    // with a concrete server-side failure. Best-effort — if even this
+    // audit write fails, we still 502 the client.
+    try {
+      await db.collection("EtsyMail_Audit").add({
+        eventType : "design_dispatch_write_failed",
+        threadId,
+        etsyOrderId: orderId,
+        actor     : senderName,
+        payload   : {
+          errorMessage   : e.message || String(e),
+          errorCode      : (e && e.code) || null,
+          condensedLength: (condensed || "").length,
+          acceptedImageUrl: acceptedImageUrl || null,
+          elapsedMs      : Date.now() - dispatchStartedAt,
+        },
+        createdAt : FV.serverTimestamp(),
+      });
+    } catch (_) { /* best-effort */ }
     return bad(`Write to Brites_Orders failed: ${e.message}`, 502);
   }
 
