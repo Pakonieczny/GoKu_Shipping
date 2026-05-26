@@ -16681,14 +16681,33 @@
         box.innerHTML = `<div class="em-muted" style="font-size:12px;">No messages yet. The extension will populate this after its first scrape.</div>`;
         return;
       }
-      // ── v0.9.3: dedupe optimistic outbound messages ─────────────────
-      // An "optimistic" message is one we wrote ourselves on send-success
-      // (status flipped to sent / sent_text_only / sent_unverified) so
-      // the operator sees their reply in the thread immediately.
-      // Once M2's scraper picks up the real Etsy message, both versions
-      // exist in Firestore — we want to show only the canonical one.
-      // Match criterion: an outbound message exists with matching trimmed
-      // text and is NOT itself optimistic. If yes, hide the optimistic.
+      // ── v5.33 — Timestamp-aware dedup of optimistic outbound messages ─
+      // An "optimistic" message is one we wrote ourselves on send (a
+      // ghost doc keyed `optim_<draftId>` with localOptimistic:true) so
+      // the operator sees their reply in the thread immediately, without
+      // waiting for the next M2 scrape to pull in the canonical Etsy
+      // message. Once the scraper writes the real outbound, we want to
+      // show ONE bubble, not two — so we hide the optim.
+      //
+      // PRE-v5.33 BUG: dedup matched on text alone, treating ANY real
+      // outbound with matching text as the optim's counterpart. That
+      // breaks for templated replies: a "Thank you!" sent yesterday
+      // would hide today's "Thank you!" optim immediately on send,
+      // BEFORE the real scrape arrived. Symptoms operators reported:
+      //   - The bubble appears briefly then disappears
+      //   - Previous messages appear before the new one shows up
+      //   - Switching tabs and coming back makes it reappear (because
+      //     by then the real scraped outbound is in state.messages and
+      //     renders in place of the hidden optim)
+      // Both symptoms were the same root cause: stale duplicate-text
+      // hits were filtering the optim before its actual counterpart
+      // arrived.
+      //
+      // FIX: a real outbound only counts as a counterpart if its
+      // timestamp is AT OR AFTER the optim's timestamp (with 60s
+      // backward tolerance for clock skew and Etsy's send-time
+      // rounding). Older messages with matching text are ignored —
+      // they can't be the counterpart of a send that happened later.
       //
       // v4.3.4 — Normalize URLs before comparing. Etsy rewrites pasted
       // URLs in its UI: a system-sent message containing
@@ -16713,22 +16732,31 @@
           .replace(/\s+/g, " ")
           .slice(0, 200);
       };
+      // 60-second backward tolerance: handles clock skew between the
+      // operator's browser (where optim.timestamp comes from) and the
+      // server-side scrape time, plus Etsy's occasional minute-rounding
+      // of displayed send times. Keep this number small enough that an
+      // identical templated reply sent more than a minute ago doesn't
+      // get treated as the counterpart.
+      const OPTIM_DEDUP_TOLERANCE_MS = 60 * 1000;
       const renderableMessages = (() => {
         const optimisticOnes = state.messages.filter(m => m && m.localOptimistic === true);
         if (!optimisticOnes.length) return state.messages;
-        // Build a quick lookup of "real" outbound text keys
-        const realOutboundTextKeys = new Set();
-        for (const m of state.messages) {
-          if (m && m.direction === "outbound" && !m.localOptimistic) {
-            const key = normalizeForDedup(m.text);
-            if (key) realOutboundTextKeys.add(key);
-          }
-        }
-        // Drop optimistic entries whose textKey already has a real counterpart
         return state.messages.filter(m => {
           if (!m || !m.localOptimistic) return true;
-          const key = normalizeForDedup(m.optimisticTextKey || m.text);
-          return !realOutboundTextKeys.has(key);
+          const okey = normalizeForDedup(m.optimisticTextKey || m.text);
+          if (!okey) return true;
+          const optimMs = (m.timestamp && m.timestamp.ms) || 0;
+          // Hide this optim ONLY when a non-optimistic outbound with
+          // matching text exists at or after the optim's timestamp
+          // (within tolerance). Older duplicates don't count.
+          return !state.messages.some(r => {
+            if (!r || r.localOptimistic) return false;
+            if (r.direction !== "outbound") return false;
+            if (normalizeForDedup(r.text) !== okey) return false;
+            const realMs = (r.timestamp && r.timestamp.ms) || 0;
+            return realMs >= (optimMs - OPTIM_DEDUP_TOLERANCE_MS);
+          });
         });
       })();
 
@@ -20442,17 +20470,24 @@
       const _optimistic = _allMsgs.filter(m => m && m.localOptimistic === true);
       let _renderable = _allMsgs;
       if (_optimistic.length) {
-        const realKeys = new Set();
-        for (const m of _allMsgs) {
-          if (m && m.direction === "outbound" && !m.localOptimistic) {
-            const k = _normalizeForDedup(m.text);
-            if (k) realKeys.add(k);
-          }
-        }
+        // v5.33 — Timestamp-aware dedup. See the desktop equivalent in
+        // renderThreadMessages for the full reasoning. Short version:
+        // an optim is hidden only when a real outbound with matching
+        // text exists at or after the optim's timestamp (within 60s
+        // backward tolerance for clock skew). Stale older duplicates
+        // can no longer hide the optim before the real scrape arrives.
+        const _OPTIM_TOL_MS = 60 * 1000;
         _renderable = _allMsgs.filter(m => {
           if (!m || !m.localOptimistic) return true;
-          const k = _normalizeForDedup(m.optimisticTextKey || m.text);
-          return !realKeys.has(k);
+          const okey = _normalizeForDedup(m.optimisticTextKey || m.text);
+          if (!okey) return true;
+          const optimMs = _msToInt(m);
+          return !_allMsgs.some(r => {
+            if (!r || r.localOptimistic) return false;
+            if (r.direction !== "outbound") return false;
+            if (_normalizeForDedup(r.text) !== okey) return false;
+            return _msToInt(r) >= (optimMs - _OPTIM_TOL_MS);
+          });
         });
       }
       const _sortedMsgs = _renderable.slice().sort((a, b) => _msToInt(a) - _msToInt(b));
