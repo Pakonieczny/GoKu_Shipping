@@ -15969,18 +15969,85 @@
         // operator sees their reply land. If Etsy ever silently rejects
         // (rare; rate-limit / ban / etc.), the operator notices on Etsy
         // directly — that's an explicitly accepted tradeoff.
+        //
+        // v5.34 — CRITICAL FIX: the bubble was being driven by
+        // insertOptimisticMessage's BACKEND write followed by a delta
+        // fetch that was supposed to pull the just-written doc back
+        // down. Two problems with that path:
+        //
+        //   1. Firestore queries are eventually consistent (a few
+        //      hundred ms typically; can be longer under load). The
+        //      doc was committed by .set() but the query firing
+        //      immediately after could miss it because the index
+        //      hadn't been updated yet. Delta returns nothing, no
+        //      render happens for this thread, no bubble. Then when
+        //      the operator clicked off and back, a FULL fetch ran
+        //      (cursor mismatch), the doc was queryable by then, and
+        //      the bubble appeared. Exactly the reported symptom.
+        //
+        //   2. The post-send flow had no direct call to
+        //      renderThreadMessages — the bubble's appearance was
+        //      coupled to the fetchMessagesNow eventually returning
+        //      with data. If anything went sideways (consistency
+        //      window, in-flight stale guard, network hiccup), the
+        //      bubble simply never showed.
+        //
+        // The new approach: inject a synthetic optim doc into
+        // state.messages CLIENT-SIDE with the same id the backend
+        // would use (optim_<draftId>), then render IMMEDIATELY. The
+        // backend write still happens (no longer awaited) so the doc
+        // persists across reload / cross-device. When the next delta
+        // fetch later pulls the backend optim, the id-based dedup in
+        // fetchMessagesNow's merge silently skips it (same id is
+        // already known) — no duplicate bubble.
+        const optimDocId = "optim_" + resp.draftId;
+        const optimMs    = Date.now();
         try {
-          await insertOptimisticMessage({
-            id          : resp.draftId,
-            draftId     : resp.draftId,
-            threadId,
-            text,
-            attachments : sentAtts,
-            createdBy   : getEmployeeName() || "operator"
-          });
+          const known = new Set((state.messages || []).map(m => m && m.id));
+          if (!known.has(optimDocId)) {
+            const synthOptim = {
+              id                  : optimDocId,
+              direction           : "outbound",
+              senderName          : getEmployeeName() || "Operator",
+              senderRole          : "staff",
+              text                : text,
+              timestamp           : { _ts: true, ms: optimMs },
+              createdAt           : { _ts: true, ms: optimMs },
+              localOptimistic     : true,
+              optimisticDraftId   : resp.draftId,
+              optimisticTextKey   : String(text || "").trim().toLowerCase().slice(0, 200),
+              imageUrls           : (sentAtts || []).map(a => a && (a.imageUrl || a.url)).filter(Boolean),
+              thumbnailUrls       : (sentAtts || []).map(a => a && (a.thumbnailUrl || a.imageUrl || a.url)).filter(Boolean),
+              storageImagePaths   : (sentAtts || []).map(a => a && (a.storagePath || "")).filter(Boolean),
+              listingCards        : [],
+              attachmentUrls      : []
+            };
+            state.messages = [...(state.messages || []), synthOptim];
+          }
+          // Immediate render — bubble appears in the same paint cycle
+          // as the toast, no network round-trip required.
+          if (typeof renderThreadMessages === "function") renderThreadMessages();
+          if (window.IS_MOBILE && typeof window.mNotifyMessagesChanged === "function") {
+            window.mNotifyMessagesChanged();
+          }
         } catch (e) {
-          console.warn("optimistic insert from sendViaEtsy failed:", e.message);
+          console.warn("local optimistic injection failed:", e.message);
         }
+
+        // Backend write — for persistence across reload / cross-device
+        // sync. Fire-and-forget; we no longer await it because the UI
+        // bubble is already rendered from the local injection above.
+        // If this write fails the local bubble still stays, and the
+        // real scraped outbound will eventually arrive and the dedup
+        // hides the optim normally. No user-visible failure mode.
+        insertOptimisticMessage({
+          id          : resp.draftId,
+          draftId     : resp.draftId,
+          threadId,
+          text,
+          attachments : sentAtts,
+          createdBy   : getEmployeeName() || "operator"
+        }).catch(e => console.warn("optimistic backend insert failed:", e.message));
         // Mark this draft as already-optimistic-inserted so showSendStatus
         // doesn't insert a second time on the next render.
         state._optimInsertedFor = state._optimInsertedFor || new Set();
