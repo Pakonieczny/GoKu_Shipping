@@ -527,12 +527,90 @@ exports.handler = async (event) => {
   if (!tSnap.exists) return bad("Thread not found", 404);
   const thread = tSnap.data() || {};
 
-  const orderId = thread.etsyOrderId ? String(thread.etsyOrderId).trim() : null;
+  // v1.0.2 — Resolve etsyOrderId with a fallback path.
+  //
+  // The thread's etsyOrderId is populated by the snapshot pipeline
+  // from Etsy's conversation-heading bar (the strip that shows the
+  // linked order on Etsy's conversation page). That heading is only
+  // present when Etsy's UI itself displays a linked order — which
+  // commonly does NOT happen for conversations that pre-date the
+  // customer's purchase, conversations about products the customer
+  // bought on a separate checkout, or conversations Etsy simply
+  // failed to auto-link.
+  //
+  // The result before this fix: an operator on a thread for a
+  // customer with a clearly visible paid order (right-rail customer
+  // card shows the order) would try to dispatch and get
+  // "Thread has no linked etsyOrderId" — even though the order is
+  // sitting right there in EtsyMail_Receipts.
+  //
+  // EtsyMail_Receipts is keyed by receipt_id (which IS the
+  // etsyOrderId — the mirror writes them as the same value at line
+  // 233 of etsyMailReceiptsMirrorCron.js) and indexed on
+  // (buyer_user_id asc, created_timestamp desc). When the thread
+  // has no etsyOrderId but we have a buyerUserId, fall back to the
+  // buyer's most recent receipt as the dispatch target. Backfill
+  // thread.etsyOrderId on success so subsequent dispatches and any
+  // other code path reading the field also benefit.
+  let orderId = thread.etsyOrderId ? String(thread.etsyOrderId).trim() : null;
+  let orderIdSource = orderId ? "thread.etsyOrderId" : null;
+
   if (!orderId) {
-    // No linked order — Brites_Orders is keyed by order ID, so we
-    // genuinely have nowhere to write. The UI should pre-disable the
-    // toggle in this case; this is the server-side double-check.
-    return bad("Thread has no linked etsyOrderId — cannot route to Brites Messages", 422);
+    const buyerUserId = thread.buyerUserId ? String(thread.buyerUserId).trim() : null;
+    if (buyerUserId) {
+      try {
+        const receiptsSnap = await db.collection("EtsyMail_Receipts")
+          .where("buyer_user_id", "==", buyerUserId)
+          .orderBy("created_timestamp", "desc")
+          .limit(1)
+          .get();
+        if (!receiptsSnap.empty) {
+          const receiptDoc = receiptsSnap.docs[0];
+          orderId = String(receiptDoc.id);  // doc id IS the receipt_id IS the etsyOrderId
+          orderIdSource = "buyer_receipts_fallback";
+
+          // Backfill the thread so subsequent code paths see the
+          // resolved order ID. Best-effort — if this write fails we
+          // still proceed with the dispatch using the resolved id.
+          db.collection(THREADS_COLL).doc(threadId).set({
+            etsyOrderId: orderId,
+            etsyOrderIdResolvedBy: "buyer_receipts_fallback",
+            etsyOrderIdResolvedAt: FV.serverTimestamp(),
+            updatedAt: FV.serverTimestamp(),
+          }, { merge: true }).catch(e =>
+            console.warn(`[designDispatch] backfill etsyOrderId on ${threadId} failed: ${e.message}`)
+          );
+
+          // Audit: keep a record so it's clear when threads needed
+          // the fallback vs. had a heading-derived order link.
+          db.collection("EtsyMail_Audit").add({
+            eventType: "design_dispatch_orderid_fallback",
+            threadId,
+            actor: senderName,
+            payload: {
+              buyerUserId,
+              resolvedOrderId: orderId,
+              receiptCreatedTs: (receiptDoc.data() || {}).created_timestamp || null,
+            },
+            createdAt: FV.serverTimestamp(),
+          }).catch(_ => { /* best-effort */ });
+
+          console.log(`[designDispatch] resolved missing etsyOrderId for thread ${threadId} via buyer fallback → ${orderId}`);
+        }
+      } catch (e) {
+        console.warn(`[designDispatch] buyer-receipts fallback query failed for ${threadId} (buyerUserId=${buyerUserId}): ${e.message}`);
+      }
+    }
+  }
+
+  if (!orderId) {
+    // No linked order on the thread AND no receipts on file for the
+    // buyer. This is a genuine "can't dispatch" case (pre-purchase
+    // inquiry from a buyer who has never ordered, OR a thread with
+    // no buyerUserId resolved yet so we can't look up receipts).
+    // Brites_Orders is keyed by order ID — without one we have
+    // nowhere to write.
+    return bad("Thread has no linked etsyOrderId and no recent receipts for this buyer — cannot route to Brites Messages", 422);
   }
 
   const customerName = (thread.participants || []).find(p => p && p.role === "customer")?.displayName
