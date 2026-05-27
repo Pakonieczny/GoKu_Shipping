@@ -11899,6 +11899,34 @@
 
     // ───── Detail pane ─────
     async function openThread(threadId) {
+      // v5.37 — CRITICAL FIX. Clear state.messages whenever the operator
+      // switches to a different thread, so leftover messages from the
+      // previously-open thread can't leak into the new thread's view.
+      //
+      // The leak this guards against: state.messages was only ever
+      // reset on logout (line 9683). On thread switch, the wholesale-
+      // replace branches of fetchMessagesNow used to overwrite
+      // state.messages with the new thread's docs, which was fine —
+      // until v5.35 added a "carry forward localOptimistic messages
+      // whose id isn't in docs" rule. That filter had no thread-scope
+      // check, so any synthOptim from a prior thread's sendViaEtsy
+      // (which had no threadId field on it) would survive every
+      // subsequent thread switch and pollute every other conversation.
+      // The symptom in production: an operator who sent on threads
+      // A, B, C would then see synthOptim bubbles from A+B+C on every
+      // thread they opened afterward, including brand-new threads
+      // with no operator history.
+      //
+      // The defense here is the empty-state reset: when the next
+      // thread starts, state.messages goes back to [] and only fills
+      // up with the new thread's actual messages from fetch. Combined
+      // with the threadId tag on synthOptim (the per-message guard)
+      // and the threadId check in carry-forward filters, the leak is
+      // closed three ways.
+      const prevThreadId = state.selectedId;
+      if (prevThreadId && prevThreadId !== threadId) {
+        state.messages = [];
+      }
       state.selectedId = threadId;
       renderThreadList();
 
@@ -11954,7 +11982,11 @@
           const incomingDocs = data.messages || [];
           const incomingIds  = new Set(incomingDocs.map(d => d && d.id));
           const carryForward = (state.messages || []).filter(
-            m => m && m.localOptimistic && m.id && !incomingIds.has(m.id)
+            // v5.37 — Per-thread scope. Only carry forward optims that
+            // belong to this thread; without this clause, optims from
+            // any prior thread the operator had open would survive
+            // every wholesale-replace and pollute every other thread.
+            m => m && m.localOptimistic && m.id && m.threadId === threadId && !incomingIds.has(m.id)
           );
           state.messages = carryForward.length
             ? incomingDocs.concat(carryForward)
@@ -12068,7 +12100,11 @@
           // cleanly. No duplication, no flicker.
           const knownInDocs = new Set(docs.map(d => d && d.id));
           const carryForward = (state.messages || []).filter(
-            m => m && m.localOptimistic && m.id && !knownInDocs.has(m.id)
+            // v5.37 — Per-thread scope; see openThread carry-forward for
+            // rationale. Without this guard, optims from any prior
+            // thread leaked into the wholesale-replace and stayed in
+            // state.messages on every subsequent thread switch.
+            m => m && m.localOptimistic && m.id && m.threadId === threadId && !knownInDocs.has(m.id)
           );
           state.messages = carryForward.length ? docs.concat(carryForward) : docs;
           state.msgCursorThreadId = threadId;
@@ -16156,6 +16192,15 @@
           if (!known.has(optimDocId)) {
             const synthOptim = {
               id                  : optimDocId,
+              // v5.37 — Tag threadId on every optimistic message so the
+              // carry-forward filters in openThread / fetchMessagesNow
+              // can refuse to leak this message into other threads.
+              // Without this field, the carry-forward had no way to know
+              // which thread the optim belonged to, and the synthOptim
+              // would survive into any subsequent thread the operator
+              // opened — cross-thread pollution where optim messages
+              // from one conversation appeared in every other.
+              threadId            : threadId,
               direction           : "outbound",
               senderName          : getEmployeeName() || "Operator",
               senderRole          : "staff",
@@ -20239,6 +20284,16 @@
       // internally; the desktop's renderDetail() will also fire and
       // update the (hidden) desktop UI. That's fine — it's a no-op for
       // the user since desktop UI is hidden on mobile.
+      //
+      // v5.37 — Mirror desktop openThread's cross-thread leak fix. On
+      // thread switch, clear state.messages so the new thread starts
+      // empty rather than inheriting any leftover messages (especially
+      // localOptimistic synthOptim bubbles) from the previously-open
+      // thread.
+      const _prevThreadIdMobile = state.selectedId;
+      if (_prevThreadIdMobile && _prevThreadIdMobile !== threadId) {
+        state.messages = [];
+      }
       state.selectedId = threadId;
 
       // v5.7 — Clear both composer textareas and the AI indicator chip
