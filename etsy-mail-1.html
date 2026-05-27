@@ -8061,6 +8061,118 @@
       return 0;
     }
 
+    // ─── v5.36 — Robust optimistic-message dedup with chronological pairing ─
+    //
+    // Single source of truth for which optim docs to hide on render.
+    // Replaces the per-renderer inline dedup logic that had two bugs:
+    //
+    //   1. ATTACHMENT-ONLY OPTIMS NEVER HID. The previous logic matched
+    //      optim → real by text only, with an empty-text short-circuit
+    //      that returned "keep this optim." Send a line-sheet image
+    //      (text=""), the real outbound arrives via scrape (also text=""
+    //      or with a placeholder), and the optim was never matched — so
+    //      both bubbles rendered indefinitely.
+    //
+    //   2. MULTI-SEND COLLISIONS. With multiple sends in flight, the
+    //      previous logic asked "does ANY real outbound with matching
+    //      text exist at ts >= optim_ts - 60s?". A real for Send #1
+    //      arriving at T+2min would qualify as a counterpart for an
+    //      optim from Send #2 at T+30s (because T+2min >= T+30s-60s),
+    //      hiding Send #2's optim before its actual counterpart arrived.
+    //
+    // Fix: chronological 1:1 pairing. Walk optims oldest-first, pair
+    // each with the earliest unpaired real outbound that satisfies a
+    // content-match rule. Content matching now handles three cases:
+    //
+    //   - Both have text → must match (normalized)
+    //   - Both have empty text + both have images → match (line sheets)
+    //   - Optim empty text + real has text + both have images → match
+    //     (defensive: scraper may have filled text from Etsy's UI)
+    //
+    // Result: an optim is hidden ONLY when it has a definite real
+    // counterpart, paired uniquely, no collisions across concurrent
+    // sends. Returns a Set of optim doc IDs to hide.
+    //
+    // Tolerance is 60s backward (clock skew + Etsy timestamp rounding).
+    // Forward window is unbounded — if a real outbound with matching
+    // content arrives later, it IS the counterpart no matter how late.
+    const OPTIM_DEDUP_TOLERANCE_MS = 60 * 1000;
+    function _optimDedupNormalize(s) {
+      return String(s || "")
+        .trim()
+        .toLowerCase()
+        .replace(/https?:\/\/(www\.)?/g, "")
+        .replace(/(^|\s)www\./g, "$1")
+        .replace(/\s+/g, " ")
+        .slice(0, 200);
+    }
+    function _optimDedupHasImages(m) {
+      return Array.isArray(m && m.imageUrls) && m.imageUrls.length > 0;
+    }
+    function _optimDedupIsContentMatch(optim, real) {
+      const optimText = _optimDedupNormalize(optim.optimisticTextKey || optim.text);
+      const realText  = _optimDedupNormalize(real.text);
+      // Rule 1: both have text — strict normalized match
+      if (optimText && realText) return optimText === realText;
+      // Rule 2: both empty text — must both have images (line-sheet case)
+      if (!optimText && !realText) {
+        return _optimDedupHasImages(optim) && _optimDedupHasImages(real);
+      }
+      // Rule 3: only one has text BUT both have images — defensive match
+      // (scraper may have extracted text the optim lacked, or vice versa).
+      // Without this, a line-sheet optim with empty text + real with
+      // Etsy-extracted "[image]" placeholder would render as duplicates.
+      if (_optimDedupHasImages(optim) && _optimDedupHasImages(real)) return true;
+      return false;
+    }
+    function _optimDedupMsFor(m) {
+      const v = (m && (m.timestamp || m.createdAt)) || 0;
+      if (typeof v === "number") return v;
+      if (v instanceof Date) return v.getTime();
+      if (v && typeof v === "object" && v._ts && typeof v.ms === "number") return v.ms;
+      if (v && typeof v.toMillis === "function") { try { return v.toMillis(); } catch { return 0; } }
+      if (typeof v === "string") { const t = Date.parse(v); return isNaN(t) ? 0 : t; }
+      return 0;
+    }
+    /**
+     * Returns a Set of optim doc IDs that should be hidden from render
+     * because each has a definite real-outbound counterpart. Pairing
+     * is 1:1 and chronological — no collisions across multiple in-
+     * flight sends. Empty Set if nothing to hide.
+     */
+    function computeHiddenOptimIds(messages) {
+      const hide = new Set();
+      if (!Array.isArray(messages) || !messages.length) return hide;
+      const optims = [];
+      const reals  = [];
+      for (const m of messages) {
+        if (!m) continue;
+        if (m.localOptimistic) optims.push(m);
+        else if (m.direction === "outbound") reals.push(m);
+      }
+      if (!optims.length || !reals.length) return hide;
+      // Sort both ascending by ms so pairing is chronological
+      optims.sort((a, b) => _optimDedupMsFor(a) - _optimDedupMsFor(b));
+      reals.sort((a, b)  => _optimDedupMsFor(a) - _optimDedupMsFor(b));
+      const usedReals = new Set();
+      for (const optim of optims) {
+        const optimMs = _optimDedupMsFor(optim);
+        for (const real of reals) {
+          if (!real.id || usedReals.has(real.id)) continue;
+          const realMs = _optimDedupMsFor(real);
+          // Real must arrive AT OR AFTER optim (within tolerance for skew)
+          if (realMs < optimMs - OPTIM_DEDUP_TOLERANCE_MS) continue;
+          if (!_optimDedupIsContentMatch(optim, real)) continue;
+          // Pair found
+          if (optim.id) hide.add(optim.id);
+          usedReals.add(real.id);
+          break;
+        }
+      }
+      return hide;
+    }
+    window.computeHiddenOptimIds = computeHiddenOptimIds;
+
     // ─── v5.30 — Starred-thread toggle (robust v5.30.3) ───────────────
     //
     // Pre-v5.30.3 implementation had three latency / consistency bugs:
@@ -11832,7 +11944,21 @@
         try {
           const data = await api("etsyMailThreads", { query: { threadId } });
           thread = data.thread;
-          state.messages = data.messages || [];
+          // v5.35 — Carry forward localOptimistic messages on this
+          // replace too. Same rationale as the fetchMessagesNow full-
+          // replace path: if the operator just sent something on this
+          // thread before this fetch returned, we don't want to wipe
+          // the local optim. Deterministic id (optim_<draftId>)
+          // prevents duplication when the backend version eventually
+          // shows up in a later fetch.
+          const incomingDocs = data.messages || [];
+          const incomingIds  = new Set(incomingDocs.map(d => d && d.id));
+          const carryForward = (state.messages || []).filter(
+            m => m && m.localOptimistic && m.id && !incomingIds.has(m.id)
+          );
+          state.messages = carryForward.length
+            ? incomingDocs.concat(carryForward)
+            : incomingDocs;
           // v5.0 — Mobile re-render hook
           if (window.IS_MOBILE && typeof window.mNotifyMessagesChanged === "function") window.mNotifyMessagesChanged();
         } catch (e) {
@@ -11921,7 +12047,30 @@
         if (wantFull) {
           // Replace in-memory state with the full result and reset the
           // per-thread cursor.
-          state.messages = docs;
+          //
+          // v5.35 — Carry forward localOptimistic messages whose id is
+          // NOT in the server response. Critical for the just-sent
+          // bubble: when sendViaEtsy fires a fetchMessagesNow while a
+          // prior in-flight fetch (e.g., from openThread) hasn't yet
+          // set state.msgCursorThreadId, the second fetch ALSO ends up
+          // wantFull, and this branch wholesale-replaces state.messages
+          // — including the local optim we just injected client-side.
+          // Symptom: bubble appears for ~1s after Send then vanishes,
+          // reappearing only after the operator clicks off and back
+          // (which forces another full fetch that by then can see the
+          // backend optim doc post-consistency-window).
+          //
+          // The local optim has a deterministic id (optim_<draftId>)
+          // matching whatever the backend would write. We keep any
+          // local optim whose id is NOT in the new docs — i.e. the
+          // backend optim hasn't propagated to query results yet. When
+          // it eventually does, the same id makes the next merge dedup
+          // cleanly. No duplication, no flicker.
+          const knownInDocs = new Set(docs.map(d => d && d.id));
+          const carryForward = (state.messages || []).filter(
+            m => m && m.localOptimistic && m.id && !knownInDocs.has(m.id)
+          );
+          state.messages = carryForward.length ? docs.concat(carryForward) : docs;
           state.msgCursorThreadId = threadId;
         } else if (docs.length > 0) {
           // Append delta. Messages are append-only by id, but we still
@@ -16868,83 +17017,24 @@
         box.innerHTML = `<div class="em-muted" style="font-size:12px;">No messages yet. The extension will populate this after its first scrape.</div>`;
         return;
       }
-      // ── v5.33 — Timestamp-aware dedup of optimistic outbound messages ─
-      // An "optimistic" message is one we wrote ourselves on send (a
-      // ghost doc keyed `optim_<draftId>` with localOptimistic:true) so
-      // the operator sees their reply in the thread immediately, without
-      // waiting for the next M2 scrape to pull in the canonical Etsy
-      // message. Once the scraper writes the real outbound, we want to
-      // show ONE bubble, not two — so we hide the optim.
+      // ── v5.36 — Optimistic dedup via shared chronological-pairing helper ─
       //
-      // PRE-v5.33 BUG: dedup matched on text alone, treating ANY real
-      // outbound with matching text as the optim's counterpart. That
-      // breaks for templated replies: a "Thank you!" sent yesterday
-      // would hide today's "Thank you!" optim immediately on send,
-      // BEFORE the real scrape arrived. Symptoms operators reported:
-      //   - The bubble appears briefly then disappears
-      //   - Previous messages appear before the new one shows up
-      //   - Switching tabs and coming back makes it reappear (because
-      //     by then the real scraped outbound is in state.messages and
-      //     renders in place of the hidden optim)
-      // Both symptoms were the same root cause: stale duplicate-text
-      // hits were filtering the optim before its actual counterpart
-      // arrived.
+      // See computeHiddenOptimIds (defined near pickThreadInteractionMs)
+      // for the full reasoning. Replaces the prior inline dedup which:
+      //   • never hid attachment-only optims (empty text + empty text)
+      //   • could mis-pair multiple in-flight sends because every real
+      //     outbound within tolerance was a potential counterpart for
+      //     every still-pending optim — first match won, irrespective
+      //     of which send the real actually was the counterpart of.
       //
-      // FIX: a real outbound only counts as a counterpart if its
-      // timestamp is AT OR AFTER the optim's timestamp (with 60s
-      // backward tolerance for clock skew and Etsy's send-time
-      // rounding). Older messages with matching text are ignored —
-      // they can't be the counterpart of a send that happened later.
-      //
-      // v4.3.4 — Normalize URLs before comparing. Etsy rewrites pasted
-      // URLs in its UI: a system-sent message containing
-      // "https://www.etsy.com/listing/123/foo" comes back through the
-      // scrape as "www.etsy.com/listing/123/foo" (no protocol). Without
-      // normalization, the optimistic ghost and the real scraped
-      // message look like different texts and BOTH render — making it
-      // appear that the customer received a duplicate. They didn't:
-      // confirmed by checking Etsy.com directly. The duplicate is
-      // purely a rendering artifact of the dashboard's dedup not
-      // accounting for Etsy's URL-stripping rewrite. Etsy received
-      // exactly one message; the dashboard just shows two because the
-      // text strings differ by 8 characters of URL prefix.
-      const normalizeForDedup = (s) => {
-        return String(s || "")
-          .trim()
-          .toLowerCase()
-          // Strip http(s):// and optional www. so URL renderings line up.
-          .replace(/https?:\/\/(www\.)?/g, "")
-          .replace(/(^|\s)www\./g, "$1")
-          // Collapse whitespace runs (newline-vs-space rendering jitter).
-          .replace(/\s+/g, " ")
-          .slice(0, 200);
-      };
-      // 60-second backward tolerance: handles clock skew between the
-      // operator's browser (where optim.timestamp comes from) and the
-      // server-side scrape time, plus Etsy's occasional minute-rounding
-      // of displayed send times. Keep this number small enough that an
-      // identical templated reply sent more than a minute ago doesn't
-      // get treated as the counterpart.
-      const OPTIM_DEDUP_TOLERANCE_MS = 60 * 1000;
+      // The helper returns a Set of optim doc IDs to hide, computed
+      // by chronological 1:1 pairing with content-aware matching that
+      // handles text-only, text+image, and image-only sends.
       const renderableMessages = (() => {
-        const optimisticOnes = state.messages.filter(m => m && m.localOptimistic === true);
-        if (!optimisticOnes.length) return state.messages;
-        return state.messages.filter(m => {
-          if (!m || !m.localOptimistic) return true;
-          const okey = normalizeForDedup(m.optimisticTextKey || m.text);
-          if (!okey) return true;
-          const optimMs = (m.timestamp && m.timestamp.ms) || 0;
-          // Hide this optim ONLY when a non-optimistic outbound with
-          // matching text exists at or after the optim's timestamp
-          // (within tolerance). Older duplicates don't count.
-          return !state.messages.some(r => {
-            if (!r || r.localOptimistic) return false;
-            if (r.direction !== "outbound") return false;
-            if (normalizeForDedup(r.text) !== okey) return false;
-            const realMs = (r.timestamp && r.timestamp.ms) || 0;
-            return realMs >= (optimMs - OPTIM_DEDUP_TOLERANCE_MS);
-          });
-        });
+        if (typeof computeHiddenOptimIds !== "function") return state.messages;
+        const hideIds = computeHiddenOptimIds(state.messages);
+        if (!hideIds.size) return state.messages;
+        return state.messages.filter(m => !(m && m.localOptimistic && m.id && hideIds.has(m.id)));
       })();
 
       // v0.9.8: defensive client-side sort by ms, regardless of whether the
@@ -20648,34 +20738,17 @@
         if (typeof v === "string") { const d = new Date(v); return isNaN(d.getTime()) ? 0 : d.getTime(); }
         return 0;
       };
-      const _normalizeForDedup = (s) => String(s || "")
-        .trim().toLowerCase()
-        .replace(/https?:\/\/(www\.)?/g, "")
-        .replace(/(^|\s)www\./g, "$1")
-        .replace(/\s+/g, " ").slice(0, 200);
+      // v5.36 — Optimistic dedup via shared helper. Replaces the prior
+      // text-only matching that left attachment-only optims rendering
+      // as duplicates after the real scraped outbound arrived. See
+      // computeHiddenOptimIds for full reasoning.
       const _allMsgs = state.messages || [];
-      const _optimistic = _allMsgs.filter(m => m && m.localOptimistic === true);
       let _renderable = _allMsgs;
-      if (_optimistic.length) {
-        // v5.33 — Timestamp-aware dedup. See the desktop equivalent in
-        // renderThreadMessages for the full reasoning. Short version:
-        // an optim is hidden only when a real outbound with matching
-        // text exists at or after the optim's timestamp (within 60s
-        // backward tolerance for clock skew). Stale older duplicates
-        // can no longer hide the optim before the real scrape arrives.
-        const _OPTIM_TOL_MS = 60 * 1000;
-        _renderable = _allMsgs.filter(m => {
-          if (!m || !m.localOptimistic) return true;
-          const okey = _normalizeForDedup(m.optimisticTextKey || m.text);
-          if (!okey) return true;
-          const optimMs = _msToInt(m);
-          return !_allMsgs.some(r => {
-            if (!r || r.localOptimistic) return false;
-            if (r.direction !== "outbound") return false;
-            if (_normalizeForDedup(r.text) !== okey) return false;
-            return _msToInt(r) >= (optimMs - _OPTIM_TOL_MS);
-          });
-        });
+      if (typeof computeHiddenOptimIds === "function") {
+        const _hideIds = computeHiddenOptimIds(_allMsgs);
+        if (_hideIds.size) {
+          _renderable = _allMsgs.filter(m => !(m && m.localOptimistic && m.id && _hideIds.has(m.id)));
+        }
       }
       const _sortedMsgs = _renderable.slice().sort((a, b) => _msToInt(a) - _msToInt(b));
 
