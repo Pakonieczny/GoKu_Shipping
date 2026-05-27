@@ -799,6 +799,62 @@ exports.handler = async (event) => {
         // branch below for the thread-side write.
         const resolvedSendOrigin = inferredSendOriginForRecon;
 
+        // ━━━ v1.6 — Duplicate-auto-send guard ━━━━━━━━━━━━━━━━━━━━━━━━━━
+        //
+        // BUG PATTERN: an operator observed a "syncing…" duplicate of a
+        // message that was correctly sent 10 hours earlier. The
+        // duplicate appeared right after the customer replied. Root
+        // cause: the auto-pipeline ran with stale conversation context
+        // (the scraper had intermittently missed the customer's reply
+        // — see the separate scraper-miss issue), so the AI re-generated
+        // the EXACT SAME response as before and enqueued it. The optim
+        // doc id is deterministic (optim_<draftId>) and writes use
+        // set(merge:false), so the new enqueue overwrites the existing
+        // optim with a fresh nowMs timestamp — producing a "syncing"
+        // bubble at the new time that visually duplicates the older
+        // real outbound. The customer may or may not have received the
+        // duplicate via Etsy depending on whether the extension also
+        // delivered it — either way, the operator's inbox shows a
+        // visually-incorrect duplicate.
+        //
+        // GUARD: when an AUTO send arrives whose text is identical to
+        // the previous successfully-sent draft, refuse the enqueue.
+        // Manual sends are always allowed — an operator may legitimately
+        // want to re-send the same text (e.g., a customer says "you
+        // never replied" to a misdelivered message). This guard targets
+        // ONLY the automated path that has no business sending the same
+        // response twice without the AI noticing.
+        //
+        // Why check just prev.text (not the messages subcollection): the
+        // draft doc is what enqueue overwrites on every send, so prev.text
+        // is always the most-recently-enqueued text — exactly what we'd
+        // compare against. Reading the messages subcollection would be
+        // more thorough but adds Firestore reads inside the txn and
+        // catches no additional cases (the draft IS the source of truth
+        // for what was just sent).
+        const TERMINAL_SENT_STATUSES = new Set([
+          "sent", "sent_unverified", "sent_text_only"
+        ]);
+        const isDuplicateAutoSend =
+          resolvedSendOrigin === "auto" &&
+          prev &&
+          TERMINAL_SENT_STATUSES.has(prev.status) &&
+          cleanText.length > 0 &&
+          String(prev.text || "").trim() === cleanText;
+
+        if (isDuplicateAutoSend) {
+          return {
+            duplicateAutoSend: true,
+            prevStatus       : prev.status,
+            prevSentAtMs     : prev.sentAt && prev.sentAt.toMillis
+                               ? prev.sentAt.toMillis()
+                               : null,
+            prevTextLen      : (prev.text || "").length
+          };
+        }
+        // ━━━ end v1.6 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
         const payload = {
           draftId,
           threadId,
@@ -884,6 +940,35 @@ exports.handler = async (event) => {
           prevQueuedAt  : result.prevQueuedAt
         });
       }
+
+      // ━━━ v1.6 — Duplicate-auto-send: surface, audit, no-op ━━━━━━━━━━
+      // Don't 4xx — auto-pipelines treat 4xx as a real failure and
+      // retry / demote / log scary alerts. This is the OPPOSITE of a
+      // failure: the system did exactly the right thing by NOT sending.
+      // Return 200 with a duplicateBlocked flag and the prior draft's
+      // metadata. Callers that care can branch on it; ones that don't
+      // see a normal success shape.
+      if (result.duplicateAutoSend) {
+        await audit(threadId, draftId, "auto_send_duplicate_blocked", employeeName || "system:auto-pipeline", {
+          reason             : "identical_text_to_prev_send",
+          prevStatus         : result.prevStatus,
+          prevSentAtMs       : result.prevSentAtMs,
+          prevTextLen        : result.prevTextLen,
+          attemptedTextLen   : cleanText.length,
+          resolvedSendOrigin : "auto"
+        });
+        console.warn(`[etsyMailDraftSend] v1.6 — auto duplicate blocked for ${threadId} (prev sent at ${result.prevSentAtMs ? new Date(result.prevSentAtMs).toISOString() : "?"})`);
+        return ok({
+          draftId,
+          status               : result.prevStatus,
+          threadId,
+          duplicateBlocked     : true,
+          duplicateReason      : "identical_text_to_prev_send",
+          prevSentAtMs         : result.prevSentAtMs,
+          attachmentCount      : normalized.length
+        });
+      }
+      // ━━━ end v1.6 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
       await audit(threadId, draftId, "draft_enqueued", employeeName || "operator", {
         textLength   : cleanText.length,
