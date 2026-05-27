@@ -8168,6 +8168,81 @@
     }
     window.applyStarOverrides = applyStarOverrides;
 
+    // v5.33 — Optimistic-bump override for lastOperatorReplyAt.
+    //
+    // Problem: when the operator clicks Send via Etsy, the inbox sets
+    // targetThread.lastOperatorReplyAt = new Date() in-memory so the
+    // thread visibly jumps to the top of the rail. Pre-v5.33 there
+    // were TWO bugs that defeated this:
+    //
+    //   1. NO immediate re-render. The optimistic in-memory bump was
+    //      done but renderThreadList / mRenderList was not called
+    //      until fetchThreadListNow returned (200ms-2s later). During
+    //      that window the thread stayed in its old rail position.
+    //
+    //   2. MERGE CLOBBER. fetchThreadListNow's delta merge does
+    //      byId.set(d.id, d) — unconditionally replacing the in-memory
+    //      thread object with the server doc. The server's
+    //      lastOperatorReplyAt has NOT been bumped at enqueue time
+    //      (only updatedAt is); lastOperatorReplyAt only advances when
+    //      the extension actually delivers the message minutes later.
+    //      So the merge wiped out the optimistic timestamp and the
+    //      thread snapped back to its old position — giving the
+    //      operator the impression that the rail takes 30-60s to
+    //      catch up with their own action.
+    //
+    // Solution mirrors the star + unread overrides: a per-thread map
+    // holding the optimistic timestamp. Each fetch reconciliation
+    // re-applies the override on top of the polled data. The override
+    // expires when the server-side lastOperatorReplyAt finally catches
+    // up (becomes >= our optimistic value), or after 5 minutes —
+    // whichever first.
+    //
+    // 5 minutes is generous; in practice the extension delivers within
+    // seconds-to-a-minute and the server's bump arrives in the next
+    // 60s list poll. The cap protects against the case where the send
+    // fails entirely so the server never bumps — the override
+    // eventually decays and the rail returns to truth.
+    function applyReplyAtOverrides(threads) {
+      if (!state._replyAtOverrides || state._replyAtOverrides.size === 0) return;
+      const now = Date.now();
+      const expired = [];
+      for (const [tid, override] of state._replyAtOverrides.entries()) {
+        if (override.expiresAt <= now) {
+          expired.push(tid);
+          continue;
+        }
+        const t = (threads || []).find(x => x && x.id === tid);
+        if (!t) continue;
+        // If the server has now caught up (lastOperatorReplyAt >= our
+        // optimistic value), drop the override — server is authoritative.
+        const serverMs = tsToMs(t.lastOperatorReplyAt);
+        if (serverMs >= override.ms) {
+          expired.push(tid);
+          continue;
+        }
+        // Otherwise reinstate the optimistic value so pickThreadInteractionMs
+        // continues to sort this thread to the top.
+        t.lastOperatorReplyAt = new Date(override.ms);
+      }
+      for (const tid of expired) state._replyAtOverrides.delete(tid);
+    }
+    window.applyReplyAtOverrides = applyReplyAtOverrides;
+
+    // Set a 5-minute reply-at override. Called from sendViaEtsy
+    // immediately after the optimistic in-memory bump so the override
+    // survives any subsequent delta merge that clobbers the in-memory
+    // thread object.
+    function setReplyAtOverride(threadId, ms) {
+      if (!threadId || !ms) return;
+      if (!state._replyAtOverrides) state._replyAtOverrides = new Map();
+      state._replyAtOverrides.set(threadId, {
+        ms,
+        expiresAt: Date.now() + 5 * 60 * 1000
+      });
+    }
+    window.setReplyAtOverride = setReplyAtOverride;
+
     // v0.9.37 — Mirror of applyStarOverrides for the unread bit.
     //
     // Problem: openThread fires markRead fire-and-forget AND
@@ -10818,6 +10893,15 @@
         // the next poll.
         if (typeof applyStarOverrides === "function") applyStarOverrides(state.threads);
         if (typeof applyUnreadOverrides === "function") applyUnreadOverrides(state.threads);
+        // v5.33 — Reapply optimistic lastOperatorReplyAt overrides. The
+        // delta merge above unconditionally replaces matched threads
+        // with the server doc, which has the OLD lastOperatorReplyAt
+        // until the extension actually delivers the message. Without
+        // this line, every Send via Etsy gets undone visually within
+        // a couple seconds of clicking — the thread snaps back to
+        // its prior rail position. The override is dropped once the
+        // server-side timestamp catches up.
+        if (typeof applyReplyAtOverrides === "function") applyReplyAtOverrides(state.threads);
         renderThreadList();
         // v5.0 — Mobile re-render hook
         if (window.IS_MOBILE && typeof window.mNotifyThreadsChanged === "function") window.mNotifyThreadsChanged();
@@ -10877,6 +10961,8 @@
         // fetch site above).
         if (typeof applyStarOverrides === "function") applyStarOverrides(state.threads);
         if (typeof applyUnreadOverrides === "function") applyUnreadOverrides(state.threads);
+        // v5.33 — Apply reply-at overrides (see fetchThreadListNow).
+        if (typeof applyReplyAtOverrides === "function") applyReplyAtOverrides(state.threads);
         state.searchScanned = data.scanned || 0;
         state.searchMaxedOut = !!data.maxedOut;
         state.searchScopedTo = filter.status ? filter.label : null;
@@ -15971,14 +16057,31 @@
         // v5.30 — Optimistic thread-bump. Without this the operator's
         // reply doesn't visibly push the thread to the top of the list
         // until the next thread-list poll picks up the backend's
-        // lastOperatorReplyAt write. Setting it client-side here means
-        // the next renderThreadList / mRenderList tick re-sorts the
-        // thread to the top instantly. The Date object will be replaced
-        // by Firestore's canonical Timestamp on the next poll. The
-        // backend update is authoritative; this is just UX.
+        // lastOperatorReplyAt write.
+        //
+        // v5.33 — Two changes that fix the "rail takes 30-60s to
+        // update after send" complaint:
+        //
+        //   (a) Set a reply-at OVERRIDE in addition to mutating the
+        //       in-memory thread. Without the override, the very next
+        //       fetchThreadListNow delta merge clobbers our optimistic
+        //       timestamp because the server doc still has the old
+        //       lastOperatorReplyAt (only updatedAt bumps at enqueue
+        //       time; the canonical bump happens later when the
+        //       extension actually delivers the message).
+        //
+        //   (b) Trigger an IMMEDIATE renderThreadList + mRenderList
+        //       so the rail jumps the thread to the top within the
+        //       same paint cycle. The old comment promised this
+        //       happened "instantly" but actually waited for the
+        //       fetchThreadListNow round trip (200ms-2s).
         try {
+          const nowMs = Date.now();
           const targetThread = (state.threads || []).find(x => x && x.id === threadId);
-          if (targetThread) targetThread.lastOperatorReplyAt = new Date();
+          if (targetThread) targetThread.lastOperatorReplyAt = new Date(nowMs);
+          if (typeof setReplyAtOverride === "function") setReplyAtOverride(threadId, nowMs);
+          if (typeof renderThreadList === "function") renderThreadList();
+          if (typeof mRenderList === "function") { try { mRenderList(); } catch {} }
         } catch {}
         // Clear the composer.
         ta.value = "";
