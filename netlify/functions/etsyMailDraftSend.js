@@ -216,9 +216,23 @@ function isStaleHeartbeat(hbTs) {
  *  was forgotten about for hours and an Etsy tab opens later, sending
  *  yesterday's draft today is the wrong behavior. */
 function isStaleQueued(queuedAtTs) {
-  if (!queuedAtTs) return false;   // no queuedAt = treat as fresh (defensive)
+  // v1.1 — CHANGED: a queued draft with no queuedAt timestamp used to
+  // return false here ("treat as fresh, defensive"). That was the wrong
+  // default: a draft can land in status=queued without a queuedAt if it
+  // was written by a non-standard path, or if a partial write dropped
+  // the field. With the old behavior such a draft was NEVER stale, so
+  // the send-queue reaper skipped it forever — and the extension's
+  // pollQueuedSends re-opened/foregrounded its tab every 30s indefinitely
+  // (operator-reported "one conversation continuously taking over my
+  // computer"). A queued draft with no queuedAt is, by definition,
+  // un-trackable for freshness, so the safe action is to treat it as
+  // stale and let the reaper expire it to human_review (where an operator
+  // can re-send deliberately). The normal enqueue ALWAYS sets queuedAt
+  // (see etsyMailDraftSend payload), so this only fires for anomalous
+  // docs — exactly the ones we want cleaned up.
+  if (!queuedAtTs) return true;   // v1.1 — was: return false
   const ms = queuedAtTs.toMillis ? queuedAtTs.toMillis() : Number(queuedAtTs);
-  if (!ms) return false;
+  if (!ms) return true;           // v1.1 — was: return false
   return (Date.now() - ms) > (MAX_CLAIM_LOOKBACK_MIN * 60 * 1000);
 }
 
@@ -1627,6 +1641,75 @@ exports.handler = async (event) => {
         status      : result.requeued ? "queued" : "failed",
         requeued    : result.requeued,
         attempts    : result.attempts,
+        threadStatus: result.threadStatusUpdate
+      });
+    }
+
+    /* ── forceExpire (client circuit breaker → server) ───────────
+     *  v1.2 — Lets the extension's per-draft circuit breaker
+     *  permanently clear a draft that is wedged in status="queued"
+     *  and cannot be delivered. Unlike op:"fail", this does NOT
+     *  require a sendSessionId — the breaker fires from the polling
+     *  loop, which never holds a send session (the session is only
+     *  created during op:"claim", and a wedged draft is precisely one
+     *  the content-sender never successfully claimed).
+     *
+     *  SAFETY: only acts on drafts in status="queued". If the draft is
+     *  sending / sent / failed, we leave it untouched and report a
+     *  skip — we must never clobber a send that's actually progressing.
+     *  This keeps a mis-fired breaker from cancelling a legitimate
+     *  in-flight delivery.
+     *
+     *  EFFECT: status → "failed", thread demoted out of
+     *  queued_for_auto_send to human review. The draft drops out of
+     *  the firestoreProxy "status==queued" list immediately, ending
+     *  the extension's re-dispatch loop on the next poll.
+     *
+     *  Input:  { op:"forceExpire", draftId, reason? }
+     *  Output: { ok, status, threadId, threadStatus } | { skipped } */
+    if (op === "forceExpire") {
+      const { draftId, reason = "client_circuit_breaker" } = body;
+      if (!draftId) return bad("Missing draftId");
+
+      const ref = db.collection(DRAFTS_COLL).doc(String(draftId));
+      const result = await db.runTransaction(async (tx) => {
+        const snap = await tx.get(ref);
+        if (!snap.exists) return { notFound: true };
+        const prev = snap.data();
+        // Only expire drafts genuinely stuck in queued. Anything else
+        // is either done or actively progressing — don't touch it.
+        if (prev.status !== "queued") {
+          return { skipped: true, currentStatus: prev.status };
+        }
+        // Hoist thread read before writes (Firestore txn rule).
+        const threadPrefetch = await prefetchThreadForDemoteInTxn(tx, prev.threadId);
+        tx.set(ref, {
+          status         : "failed",
+          sendError      : "Force-expired by client circuit breaker — draft could not be delivered after repeated dispatch attempts. Re-send manually after checking the conversation.",
+          sendErrorCode  : "CLIENT_CIRCUIT_BREAKER",
+          sendHeartbeatAt: FV.serverTimestamp(),
+          updatedAt      : FV.serverTimestamp()
+        }, { merge: true });
+        const threadStatusUpdate = demoteThreadWriteOnlyInTxn(
+          tx, threadPrefetch, "human_review_after_circuit_breaker"
+        );
+        return { ok: true, threadId: prev.threadId, threadStatusUpdate };
+      });
+
+      if (result.notFound) return json(404, { error: "Draft not found" });
+      if (result.skipped) {
+        return ok({ skipped: true, currentStatus: result.currentStatus, draftId });
+      }
+      await audit(result.threadId, draftId, "draft_force_expired_by_circuit_breaker", "system:client-circuit-breaker", {
+        reason,
+        threadStatusUpdate: result.threadStatusUpdate
+      });
+      console.warn(`[etsyMailDraftSend] v1.2 — force-expired wedged draft ${draftId} (reason: ${reason})`);
+      return ok({
+        ok          : true,
+        status      : "failed",
+        draftId,
+        threadId    : result.threadId,
         threadStatus: result.threadStatusUpdate
       });
     }
