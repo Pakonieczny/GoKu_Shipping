@@ -72,6 +72,25 @@ async function gql(query, variables) {
   return data.data;
 }
 
+/* ---- make sure card.framing is a defined, storefront-readable metafield ----
+   Runs once per warm container. Without a definition with PUBLIC_READ storefront
+   access, app-set metafields can fail to surface on the theme/storefront. If the
+   app lacks metafield-definition scope this throws and we ignore it (the metafield
+   is still written and is readable in Liquid by default). */
+let _framingDefDone = false;
+async function ensureFramingDefinition() {
+  if (_framingDefDone) return;
+  _framingDefDone = true;
+  try {
+    await gql(`mutation {
+      metafieldDefinitionCreate(definition: {
+        name: "Card framing", namespace: "card", key: "framing", type: "json",
+        ownerType: PRODUCT, access: { storefront: PUBLIC_READ }
+      }) { createdDefinition { id } userErrors { code message } }
+    }`);
+  } catch (e) { /* already exists, or no definition scope — non-fatal */ }
+}
+
 /* ---- shape a GraphQL product into the REST-like form the editor expects ---- */
 function shapeProduct(node) {
   const optPos = {};
@@ -84,11 +103,13 @@ function shapeProduct(node) {
   const images = ((node.media && node.media.edges) || [])
     .map(e => (e.node && e.node.image) ? { id: e.node.id, src: e.node.image.url } : null)
     .filter(Boolean);
+  let framing = null;
+  if (node.framing && node.framing.value) { try { framing = JSON.parse(node.framing.value); } catch (e) { framing = null; } }
   return {
     id: node.id, title: node.title, handle: node.handle,
     product_type: node.productType, tags: (node.tags || []).join(", "),
     options: (node.options || []).map(o => ({ name: o.name, position: o.position })),
-    variants, images
+    variants, images, framing
   };
 }
 
@@ -149,6 +170,7 @@ exports.handler = async function (event) {
             options { name position }
             media(first: 50) { edges { node { ... on MediaImage { id image { url } } } } }
             variants(first: 100) { edges { node { id price selectedOptions { name value } } } }
+            framing: metafield(namespace: "card", key: "framing") { value }
           } } }
         }`, { q: "handle:" + handle });
         const node = (d.products.edges[0] || {}).node;
@@ -280,6 +302,7 @@ exports.handler = async function (event) {
 
       // Save image zoom/pan as a product metafield (non-destructive, upsert).
       case "setFraming": {
+        await ensureFramingDefinition();
         const value = JSON.stringify({ scale: body.scale, offsetX: body.offsetX, offsetY: body.offsetY });
         const d = await gql(`mutation($mf: [MetafieldsSetInput!]!) {
           metafieldsSet(metafields: $mf) { userErrors { field message } }
