@@ -1,6 +1,19 @@
 const fetch = require("node-fetch");
 
+// CORS so the in-grid editor on britesjewelry.com can call this cross-origin.
+// (The Listing Generator runs same-origin on goldenspike.app and didn't need this.)
+const CORS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Content-Type": "application/json"
+};
+
 exports.handler = async (event, context) => {
+  // Answer the browser's CORS preflight before anything else.
+  if (event.httpMethod === "OPTIONS") {
+    return { statusCode: 200, headers: CORS, body: "" };
+  }
   try {
     console.log("openaiProxy received event:", event);
 
@@ -75,6 +88,7 @@ exports.handler = async (event, context) => {
       console.error("OpenAI API error:", data);
       return {
         statusCode: response.status,
+        headers: CORS,
         body: JSON.stringify({ error: data })
       };
     }
@@ -82,12 +96,14 @@ exports.handler = async (event, context) => {
     console.log("OpenAI API response:", data);
     return {
       statusCode: 200,
+      headers: CORS,
       body: JSON.stringify(data)
     };
   } catch (error) {
     console.error("Error in openaiProxy function:", error);
     return {
       statusCode: 500,
+      headers: CORS,
       body: JSON.stringify({ error: error.message })
     };
   }
