@@ -226,10 +226,56 @@ exports.handler = async function (event) {
       // Promote an existing image to primary (move it to position 0).
       case "setPrimaryImage": {
         const d = await gql(`mutation($id: ID!, $moves: [MoveInput!]!) {
-          productReorderMedia(id: $id, moves: $moves) { userErrors { field message } }
+          productReorderMedia(id: $id, moves: $moves) { job { id } mediaUserErrors { field message } }
         }`, { id: body.product_id, moves: [{ id: body.image_id, newPosition: "0" }] });
-        const ue = d.productReorderMedia.userErrors;
+        const ue = d.productReorderMedia.mediaUserErrors;
         return ue.length ? reply(400, { error: ue[0].message }) : reply(200, { ok: true });
+      }
+
+      // Copy an image into this product by URL. Shopify fetches the URL and
+      // creates an independent MediaImage on the target product (a true copy).
+      // Returns immediately with the new media id; the file finishes processing
+      // on Shopify's side a moment later (status PROCESSING -> READY).
+      case "addImage": {
+        const src = body.src;
+        if (!src) return reply(400, { error: "Missing image src" });
+        const d = await gql(`mutation($pid: ID!, $media: [CreateMediaInput!]!) {
+          productCreateMedia(productId: $pid, media: $media) {
+            media { ... on MediaImage { id status image { url } } }
+            mediaUserErrors { field message }
+          }
+        }`, { pid: body.product_id, media: [{ originalSource: src, mediaContentType: "IMAGE", alt: body.alt || "" }] });
+        const ue = d.productCreateMedia.mediaUserErrors;
+        if (ue.length) return reply(400, { error: ue[0].message });
+        const m = (d.productCreateMedia.media || [])[0] || {};
+        return reply(200, { ok: true, image: { id: m.id, src: (m.image && m.image.url) || src, status: m.status || "PROCESSING" } });
+      }
+
+      // Reorder a product's media to exactly match body.image_ids (the full
+      // desired order). First id becomes the primary image. Async on Shopify's
+      // side (returns a job) but takes effect within a few seconds.
+      case "reorderImages": {
+        const ids = body.image_ids || [];
+        if (!ids.length) return reply(400, { error: "No image order supplied" });
+        const moves = ids.map((id, i) => ({ id, newPosition: String(i) }));
+        const d = await gql(`mutation($id: ID!, $moves: [MoveInput!]!) {
+          productReorderMedia(id: $id, moves: $moves) { job { id } mediaUserErrors { field message } }
+        }`, { id: body.product_id, moves });
+        const ue = d.productReorderMedia.mediaUserErrors;
+        return ue.length ? reply(400, { error: ue[0].message }) : reply(200, { ok: true });
+      }
+
+      // Permanently remove one or more media from a product.
+      case "deleteImage": {
+        const ids = body.image_ids || (body.image_id ? [body.image_id] : []);
+        if (!ids.length) return reply(400, { error: "No image id supplied" });
+        const d = await gql(`mutation($mediaIds: [ID!]!, $productId: ID!) {
+          productDeleteMedia(mediaIds: $mediaIds, productId: $productId) {
+            deletedMediaIds mediaUserErrors { field message }
+          }
+        }`, { mediaIds: ids, productId: body.product_id });
+        const ue = d.productDeleteMedia.mediaUserErrors;
+        return ue.length ? reply(400, { error: ue[0].message }) : reply(200, { ok: true, deleted: d.productDeleteMedia.deletedMediaIds });
       }
 
       // Save image zoom/pan as a product metafield (non-destructive, upsert).
