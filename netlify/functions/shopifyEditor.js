@@ -288,6 +288,15 @@ exports.handler = async function (event) {
         return ue.length ? reply(400, { error: ue[0].message }) : reply(200, { ok: true });
       }
 
+      // Permanently delete an entire product (and its variants + media).
+      case "deleteProduct": {
+        const d = await gql(`mutation($input: ProductDeleteInput!) {
+          productDelete(input: $input) { deletedProductId userErrors { field message } }
+        }`, { input: { id: body.product_id } });
+        const ue = d.productDelete.userErrors;
+        return ue.length ? reply(400, { error: ue[0].message }) : reply(200, { ok: true, deleted: d.productDelete.deletedProductId });
+      }
+
       default:
         return reply(400, { error: "Unknown action: " + action });
     }

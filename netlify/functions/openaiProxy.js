@@ -7,8 +7,11 @@ exports.handler = async (event, context) => {
     // Parse the incoming payload
     let payload = JSON.parse(event.body);
 
-    // Force the model to "gpt-4o-mini"
-    payload.model = "gpt-4o-mini";
+    // Model: default to gpt-4o-mini (keeps existing callers unchanged), but allow
+    // a caller to request a specific model via "model_override" (e.g. Smart Match
+    // uses gpt-5.4-mini). model_override is stripped before forwarding to OpenAI.
+    payload.model = payload.model_override || "gpt-4o-mini";
+    delete payload.model_override;
 
     // If the payload does not already contain a "messages" array,
     // and an "image" field is provided, then construct the proper messages array.
