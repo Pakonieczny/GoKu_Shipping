@@ -72,11 +72,13 @@ async function gql(query, variables) {
   return data.data;
 }
 
-/* ---- make sure card.framing is a defined, storefront-readable metafield ----
-   Runs once per warm container. Without a definition with PUBLIC_READ storefront
-   access, app-set metafields can fail to surface on the theme/storefront. If the
-   app lacks metafield-definition scope this throws and we ignore it (the metafield
-   is still written and is readable in Liquid by default). */
+/* ---- make sure card.frame is a defined, storefront-readable metafield ----
+   Framing is stored under key "frame" as a single_line_text_field ("scale|offsetX|offsetY").
+   App-set JSON metafields read back as an UNPARSED STRING in theme Liquid, which broke the
+   storefront transform; a plain string is read directly by Liquid with no parsing needed.
+   The definition (best-effort) just adds storefront-API access + a tidy admin label; if the
+   app lacks metafield-definition scope this throws and we ignore it (a string metafield is
+   readable in Liquid regardless). */
 let _framingDefDone = false;
 async function ensureFramingDefinition() {
   if (_framingDefDone) return;
@@ -84,7 +86,7 @@ async function ensureFramingDefinition() {
   try {
     await gql(`mutation {
       metafieldDefinitionCreate(definition: {
-        name: "Card framing", namespace: "card", key: "framing", type: "json",
+        name: "Card framing", namespace: "card", key: "frame", type: "single_line_text_field",
         ownerType: PRODUCT, access: { storefront: PUBLIC_READ }
       }) { createdDefinition { id } userErrors { code message } }
     }`);
@@ -104,7 +106,12 @@ function shapeProduct(node) {
     .map(e => (e.node && e.node.image) ? { id: e.node.id, src: e.node.image.url } : null)
     .filter(Boolean);
   let framing = null;
-  if (node.framing && node.framing.value) { try { framing = JSON.parse(node.framing.value); } catch (e) { framing = null; } }
+  if (node.framing && node.framing.value) {
+    const fp = String(node.framing.value).split("|");
+    if (fp[0] !== undefined && fp[0] !== "") {
+      framing = { scale: parseFloat(fp[0]) || 1, offsetX: parseFloat(fp[1]) || 0, offsetY: parseFloat(fp[2]) || 0 };
+    }
+  }
   return {
     id: node.id, title: node.title, handle: node.handle,
     product_type: node.productType, tags: (node.tags || []).join(", "),
@@ -170,7 +177,7 @@ exports.handler = async function (event) {
             options { name position }
             media(first: 50) { edges { node { ... on MediaImage { id image { url } } } } }
             variants(first: 100) { edges { node { id price selectedOptions { name value } } } }
-            framing: metafield(namespace: "card", key: "framing") { value }
+            framing: metafield(namespace: "card", key: "frame") { value }
           } } }
         }`, { q: "handle:" + handle });
         const node = (d.products.edges[0] || {}).node;
@@ -303,10 +310,16 @@ exports.handler = async function (event) {
       // Save image zoom/pan as a product metafield (non-destructive, upsert).
       case "setFraming": {
         await ensureFramingDefinition();
-        const value = JSON.stringify({ scale: body.scale, offsetX: body.offsetX, offsetY: body.offsetY });
+        // Store as a plain "scale|offsetX|offsetY" string (NOT json). App-set json
+        // metafields read back as an unparsed string in theme Liquid, so the storefront
+        // transform never applied. A delimited string is read directly by Liquid.
+        const sc = (body.scale == null ? 1 : body.scale);
+        const ox = (body.offsetX == null ? 0 : body.offsetX);
+        const oy = (body.offsetY == null ? 0 : body.offsetY);
+        const value = [sc, ox, oy].join("|");
         const d = await gql(`mutation($mf: [MetafieldsSetInput!]!) {
           metafieldsSet(metafields: $mf) { userErrors { field message } }
-        }`, { mf: [{ ownerId: body.product_id, namespace: "card", key: "framing", type: "json", value }] });
+        }`, { mf: [{ ownerId: body.product_id, namespace: "card", key: "frame", type: "single_line_text_field", value }] });
         const ue = d.metafieldsSet.userErrors;
         return ue.length ? reply(400, { error: ue[0].message }) : reply(200, { ok: true });
       }
