@@ -227,18 +227,31 @@ async function getToken() {
 }
 
 /* ---- GraphQL helper ---- */
-async function gql(query, variables) {
+async function gql(query, variables, _attempt) {
   const store = process.env.SHOPIFY_STORE;
   const token = await getToken();
-  const res = await fetch(`https://${store}/admin/api/${API_VERSION}/graphql.json`, {
-    method: "POST",
-    headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" },
-    body: JSON.stringify({ query, variables: variables || {} })
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error("GraphQL HTTP " + res.status);
-  if (data.errors && data.errors.length) throw new Error("GraphQL: " + JSON.stringify(data.errors));
-  return data.data;
+  try {
+    const res = await fetch(`https://${store}/admin/api/${API_VERSION}/graphql.json`, {
+      method: "POST",
+      headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" },
+      body: JSON.stringify({ query, variables: variables || {} })
+    });
+    if (res.status >= 500) throw new Error("GraphQL HTTP " + res.status);   // treat 5xx as transient
+    const data = await res.json();
+    if (!res.ok) throw new Error("GraphQL HTTP " + res.status);
+    if (data.errors && data.errors.length) throw new Error("GraphQL: " + JSON.stringify(data.errors));
+    return data.data;
+  } catch (e) {
+    // Retry transient network blips (e.g. ECONNRESET, dropped sockets, 5xx) a couple of times.
+    const msg = String((e && e.message) || e);
+    const transient = /ECONNRESET|ETIMEDOUT|socket hang up|network|fetch failed|EAI_AGAIN|ECONNREFUSED|GraphQL HTTP 5\d\d/i.test(msg);
+    const attempt = _attempt || 0;
+    if (transient && attempt < 2) {
+      await new Promise(function (r) { setTimeout(r, 350 * (attempt + 1)); });
+      return gql(query, variables, attempt + 1);
+    }
+    throw e;
+  }
 }
 
 /* ---- make sure card.frame is a defined, storefront-readable metafield ----
