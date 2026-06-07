@@ -611,46 +611,106 @@ exports.handler = async function (event) {
         let qty = parseInt(body.quantity, 10); if (isNaN(qty) || qty < 0) qty = 999;
         if (!productId) return reply(400, { error: "Missing product_id" });
         const denied = (e) => /access.?denied/i.test(String(e && e.message));
+        const scopeReply = (m) => reply(200, { ok: false, needsScope: true, error: m });
 
+        // 1) Resolve the location we'll stock at.
         let locationId = null;
         try {
           const loc = await gql(`query { locations(first: 1) { nodes { id } } }`);
           locationId = ((loc.locations && loc.locations.nodes[0]) || {}).id || null;
         } catch (e) {
-          if (denied(e)) return reply(200, { ok: false, needsScope: true, error: "Quantity needs the read_locations + write_inventory scopes added to the app." });
+          if (denied(e)) return scopeReply("Quantity needs the read_locations + write_inventory scopes added to the app.");
           throw e;
         }
-        if (!locationId) return reply(200, { ok: false, needsScope: true, error: "No accessible location (read_locations scope)." });
+        if (!locationId) return scopeReply("No accessible location (read_locations scope).");
 
+        // 2) Read each variant's inventory item: is it tracked, and is it already
+        //    stocked AT THIS LOCATION? (inventoryLevel(locationId:) is null when not stocked.)
         let nodes = [];
         try {
-          const d = await gql(`query($id: ID!) { product(id: $id) { variants(first: 100) { nodes { inventoryItem { id tracked } } } } }`, { id: productId });
+          const d = await gql(`query($id: ID!, $loc: ID!) {
+            product(id: $id) {
+              variants(first: 100) { nodes { inventoryItem {
+                id tracked
+                inventoryLevel(locationId: $loc) { id }
+              } } }
+            }
+          }`, { id: productId, loc: locationId });
           if (!d.product) return reply(404, { error: "Product not found" });
           nodes = (d.product.variants.nodes || []).filter(n => n.inventoryItem && n.inventoryItem.id);
         } catch (e) {
-          if (denied(e)) return reply(200, { ok: false, needsScope: true, error: "Quantity needs the read_inventory scope added to the app." });
+          if (denied(e)) return scopeReply("Quantity needs the read_inventory scope added to the app.");
           throw e;
         }
         if (!nodes.length) return reply(200, { ok: true, set: 0, quantity: qty });
 
-        // an untracked item can't hold a count — turn tracking on first (best-effort)
-        for (const n of nodes) {
-          if (n.inventoryItem.tracked === false) {
-            try { await gql(`mutation($id: ID!){ inventoryItemUpdate(id:$id, input:{ tracked:true }){ userErrors{ message } } }`, { id: n.inventoryItem.id }); } catch (e) { if (denied(e)) return reply(200, { ok:false, needsScope:true, error:"Quantity needs the write_inventory scope added to the app." }); }
+        // Split: items NOT yet stocked here must be ACTIVATED (which also sets the
+        // initial available qty in one call); items already stocked use setQuantities.
+        // CRITICAL: we set the quantity FIRST and only flip tracking ON afterward, so a
+        // failure can never leave an item "tracked + empty" (which reads as Sold Out).
+        const toActivate = nodes.filter(n => !n.inventoryItem.inventoryLevel);
+        const toSet      = nodes.filter(n => n.inventoryItem.inventoryLevel);
+        const okItemIds  = {};      // inventoryItem ids whose qty was successfully set
+        const errs = [];
+
+        // 2a) Activate (stock + set available) the unstocked ones — this is also what
+        //     repairs listings the earlier build left tracked-but-unstocked (Sold Out).
+        for (const n of toActivate) {
+          try {
+            const r = await gql(`mutation($itemId: ID!, $loc: ID!, $q: Int){
+              inventoryActivate(inventoryItemId: $itemId, locationId: $loc, available: $q){
+                inventoryLevel { id } userErrors { field message }
+              }
+            }`, { itemId: n.inventoryItem.id, loc: locationId, q: qty });
+            const ue = (r.inventoryActivate && r.inventoryActivate.userErrors) || [];
+            if (ue.length) errs.push(ue.map(e => e.message).join("; "));
+            else okItemIds[n.inventoryItem.id] = true;
+          } catch (e) {
+            if (denied(e)) return scopeReply("Quantity needs the write_inventory scope added to the app.");
+            errs.push(String(e && e.message));
           }
         }
-        const quantities = nodes.map(n => ({ inventoryItemId: n.inventoryItem.id, locationId, quantity: qty }));
-        try {
-          const r = await gql(`mutation($input: InventorySetQuantitiesInput!){
-            inventorySetQuantities(input:$input){ userErrors{ field message } }
-          }`, { input: { name: "available", reason: "correction", ignoreCompareQuantity: true, quantities } });
-          const ue = (r.inventorySetQuantities && r.inventorySetQuantities.userErrors) || [];
-          if (ue.length) return reply(200, { ok: false, error: "inventory: " + ue.map(e => e.message).join("; "), userErrors: ue });
-          return reply(200, { ok: true, set: nodes.length, quantity: qty });
-        } catch (e) {
-          if (denied(e)) return reply(200, { ok: false, needsScope: true, error: "Quantity needs the write_inventory scope added to the app." });
-          throw e;
+
+        // 2b) Set absolute available qty for items already stocked here (one batched call).
+        if (toSet.length) {
+          try {
+            const quantities = toSet.map(n => ({ inventoryItemId: n.inventoryItem.id, locationId, quantity: qty }));
+            const r = await gql(`mutation($input: InventorySetQuantitiesInput!){
+              inventorySetQuantities(input:$input){ userErrors{ field message } }
+            }`, { input: { name: "available", reason: "correction", ignoreCompareQuantity: true, quantities } });
+            const ue = (r.inventorySetQuantities && r.inventorySetQuantities.userErrors) || [];
+            if (ue.length) errs.push(ue.map(e => e.message).join("; "));
+            else toSet.forEach(n => { okItemIds[n.inventoryItem.id] = true; });
+          } catch (e) {
+            if (denied(e)) return scopeReply("Quantity needs the write_inventory scope added to the app.");
+            errs.push(String(e && e.message));
+          }
         }
+
+        // 3) NOW turn tracking on — only for items whose qty we actually set, so the 999
+        //    is enforced/shown. Items we couldn't set stay as they were (untracked items
+        //    remain purchasable rather than flipping to a tracked-empty Sold Out).
+        let tracked = 0;
+        for (const n of nodes) {
+          if (n.inventoryItem.tracked === false && okItemIds[n.inventoryItem.id]) {
+            try {
+              await gql(`mutation($id: ID!){ inventoryItemUpdate(id:$id, input:{ tracked:true }){ userErrors{ message } } }`, { id: n.inventoryItem.id });
+              tracked++;
+            } catch (e) {
+              if (denied(e)) return scopeReply("Quantity needs the write_inventory scope added to the app.");
+              errs.push(String(e && e.message));
+            }
+          }
+        }
+
+        const setCount = Object.keys(okItemIds).length;
+        if (!setCount && errs.length) return reply(200, { ok: false, error: "inventory: " + errs.join(" | ") });
+        return reply(200, {
+          ok: true, set: setCount, quantity: qty, variants: nodes.length,
+          activated: toActivate.filter(n => okItemIds[n.inventoryItem.id]).length,
+          trackedOn: tracked,
+          partial: errs.length ? errs.join(" | ") : undefined
+        });
       }
       // ── Pricing scheme: permanent Firebase storage + retrieval ───────────
       case "getPricingScheme": {
