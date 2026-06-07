@@ -100,14 +100,20 @@ const PRICING_ENGINE = (function () {
         out.push(v({ "Metal Choice": m[1], "Charm Type": "Charm + Engraving" }, TBL.charmEng[m[0]][i]));
         out.push(v({ "Metal Choice": m[1], "Charm Type": "Huggie Charm Set" },  TBL.charmHug[m[0]][i])); });
     } else if (category==="ring") {
-      [["S",M.S],["GF",M.GF],["ROSE",M.ROSE]].forEach(function(m){ RING_SIZE.forEach(function(sz){ out.push(v({ "Metal Choice": m[1], "Ring Size": sz }, TBL.ringFlat[m[0]])); }); });
+      [["S",M.S],["GF",M.GF],["ROSE",M.ROSE]].forEach(function(m){ RING_SIZE.forEach(function(sz){
+        [["None",0],["Single side",10],["Front & back",20]].forEach(function(e){ out.push(v({ "Metal Choice": m[1], "Ring Size": sz, "Engraving": e[0] }, TBL.ringFlat[m[0]]+e[1])); }); }); });
     } else if (category==="bracelet") {
       [["S",M.S],["GF",M.GF],["ROSE",M.ROSE],["SOLID",M.SOLID]].forEach(function(m){ BRAC_SIZE.forEach(function(sz){
         [["None",0],["Single side",10],["Front & back",20]].forEach(function(e){ out.push(v({ "Metal Choice": m[1], "Bracelet Length": sz, "Engraving": e[0] }, TBL.bracFlat[m[0]]+e[1])); }); }); });
     }
     return out;
   }
-  return { M: M, TBL: TBL, inferTier: inferTier, buildMatrix: buildMatrix };
+  function optionOrder(category){ return ({
+    stud:["Metal Choice"], huggie:["Metal Choice","Hoop Size"],
+    beady:["Metal Choice","Length","Engraving"], regular:["Metal Choice","Length","Engraving"],
+    charm:["Metal Choice","Charm Type"], ring:["Metal Choice","Ring Size","Engraving"],
+    bracelet:["Metal Choice","Bracelet Length","Engraving"] })[category] || ["Metal Choice"]; }
+  return { M: M, TBL: TBL, inferTier: inferTier, buildMatrix: buildMatrix, optionOrder: optionOrder };
 })();
 
 function bsNorm(x) { return String(x == null ? "" : x).replace(/\s+/g, " ").trim().toLowerCase(); }
@@ -498,7 +504,79 @@ exports.handler = async function (event) {
         if (valid.indexOf(category) < 0) return reply(400, { error: "Unknown category: " + category });
         const tier = PRICING_ENGINE.inferTier(category, body.currentByMetal || null);
         const variants = PRICING_ENGINE.buildMatrix(category, tier);
-        return reply(200, { category: category, tier: tier, count: variants.length, variants: variants });
+        const order = PRICING_ENGINE.optionOrder(category);
+        return reply(200, { category: category, tier: tier, count: variants.length, optionOrder: order, variants: variants });
+      }
+      // Apply the proposed matrix atomically. productSet reconciles options+variants in one call;
+      // we match current variants by a NORMALIZED option tuple and carry their SKU/barcode/inventory
+      // so renames don't lose stock. Variants not in the target are removed (structure enforcement).
+      case "applyPricing": {
+        const productId = body.product_id;
+        const category = (body.category || "").toString().toLowerCase();
+        const target = body.variants || [];
+        const order = body.optionOrder || [];
+        if (!productId || !target.length || !order.length) return reply(400, { error: "Missing product_id / variants / optionOrder" });
+
+        const loc = await gql(`query { locations(first: 1, query: "status:active") { nodes { id } } }`);
+        const locationId = ((loc.locations && loc.locations.nodes[0]) || {}).id || null;
+        const cur = await gql(`query($id: ID!) {
+          product(id: $id) {
+            id
+            variants(first: 100) {
+              nodes { id price barcode sku selectedOptions { name value } inventoryItem { tracked } inventoryQuantity }
+            }
+          }
+        }`, { id: productId });
+        if (!cur.product) return reply(404, { error: "Product not found" });
+
+        function normMetal(v){ v=(v||"").toLowerCase();
+          if(v.indexOf("silver")>=0)return"silver"; if(v.indexOf("rose")>=0)return"rose";
+          if(v.indexOf("solid")>=0)return"solid"; if(v.indexOf("filled")>=0)return"gf";
+          if(v.indexOf("14k")>=0)return"solid"; if(v.indexOf("gold")>=0)return"gf"; return v; }
+        function role(name){ name=(name||"").toLowerCase();
+          if(name.indexOf("metal")>=0||name.indexOf("material")>=0)return"metal";
+          if(name.indexOf("engrav")>=0)return"engrave";
+          if(name.indexOf("length")>=0)return"length";
+          if(name.indexOf("hoop")>=0||name.indexOf("ring size")>=0||name==="size")return"size";
+          if(name.indexOf("charm")>=0||name.indexOf("type")>=0)return"ctype";
+          return name; }
+        function nv(name, v){ if(role(name)==="metal") return normMetal(v);
+          return (v||"").toString().trim().toLowerCase().replace(/inch(es)?/g,'"').replace(/\s+/g,""); }
+        function tupleOf(pairs){ var r={}; pairs.forEach(function(p){ r[role(p.name)]=nv(p.name,p.value); });
+          return Object.keys(r).sort().map(function(k){ return k+"="+r[k]; }).join("|"); }
+
+        const curByTuple={};
+        (cur.product.variants.nodes||[]).forEach(function(vn){ curByTuple[tupleOf(vn.selectedOptions)] = vn; });
+
+        const valuesByOpt={}; order.forEach(function(n){ valuesByOpt[n]=[]; });
+        target.forEach(function(tv){ order.forEach(function(n){ var val=tv.options[n];
+          if(val!=null && valuesByOpt[n].indexOf(val)<0) valuesByOpt[n].push(val); }); });
+        const productOptions = order.map(function(n,idx){ return { name:n, position:idx+1, values: valuesByOpt[n].map(function(val){ return { name:val }; }) }; });
+
+        let carried=0;
+        const setVariants = target.map(function(tv){
+          const pairs = order.map(function(n){ return { name:n, value:tv.options[n] }; });
+          const match = curByTuple[tupleOf(pairs)];
+          const variant = { optionValues: pairs.map(function(p){ return { optionName:p.name, name:String(p.value) }; }), price: String(tv.price) };
+          if (match) { carried++;
+            if (match.sku) variant.inventoryItem = { sku: match.sku, tracked: !!(match.inventoryItem && match.inventoryItem.tracked) };
+            if (match.barcode) variant.barcode = match.barcode;
+            if (locationId && match.inventoryQuantity != null) variant.inventoryQuantities = [{ locationId: locationId, name: "available", quantity: match.inventoryQuantity }];
+          }
+          return variant;
+        });
+
+        const setRes = await gql(`mutation($input: ProductSetInput!) {
+          productSet(synchronous: true, input: $input) {
+            product { id variantsCount { count } }
+            userErrors { field message }
+          }
+        }`, { input: { id: productId, productOptions: productOptions, variants: setVariants } });
+        const errs = (setRes.productSet && setRes.productSet.userErrors) || [];
+        if (errs.length) return reply(422, { error: "productSet: " + errs.map(function(e){return e.message;}).join("; "), userErrors: errs });
+        const removed = (cur.product.variants.nodes||[]).length - carried;
+        return reply(200, { ok: true, category: category, applied: setVariants.length, carried: carried, removed: (removed>0?removed:0),
+                            variantsCount: ((setRes.productSet.product||{}).variantsCount||{}).count });
       }
       // ── Pricing scheme: permanent Firebase storage + retrieval ───────────
       case "getPricingScheme": {
