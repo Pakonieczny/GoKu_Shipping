@@ -193,7 +193,7 @@ exports.handler = async function (event) {
           products(first: 40, after: $cursor) { edges { node {
             id title handle productType tags
             options { name position }
-            variants(first: 20) { edges { node { id price selectedOptions { name value } } } }
+            variants(first: 100) { edges { node { id price selectedOptions { name value } } } }
           } } pageInfo { hasNextPage endCursor } }
         }`, { cursor });
         const products = (d.products.edges || []).map(e => shapeProduct(e.node));
@@ -263,6 +263,33 @@ exports.handler = async function (event) {
           }
         }`, { pid: body.product_id, ids: vids });
         const ue = d.productVariantsBulkDelete.userErrors;
+        return ue.length ? reply(400, { error: ue[0].message }) : reply(200, { ok: true });
+      }
+
+      // Remove ONE value of an option (e.g. a wrong "14k Gold Filled" under "Metal Choice").
+      // Uses productOptionUpdate so Shopify deletes every variant referencing that value
+      // and rebuilds the variant matrix cleanly — no orphaned values, other options intact.
+      case "deleteOptionValue": {
+        const oname = String(body.option_name || "").trim();
+        const oval = String(body.value || "");
+        const q = await gql(`query($id: ID!) {
+          product(id: $id) { options { id name optionValues { id name } } }
+        }`, { id: body.product_id });
+        const opts = (q.product && q.product.options) || [];
+        const opt = opts.find(o => (o.name || "").toLowerCase() === oname.toLowerCase())
+                 || opts.find(o => (o.name || "").toLowerCase().indexOf("metal") >= 0);
+        if (!opt) return reply(400, { error: "Option not found: " + oname });
+        const values = opt.optionValues || [];
+        const val = values.find(v => v.name === oval)
+                 || values.find(v => (v.name || "").toLowerCase() === oval.toLowerCase());
+        if (!val) return reply(400, { error: "Option value not found: " + oval });
+        if (values.length <= 1) return reply(400, { error: "Can't remove the only value of the " + opt.name + " option." });
+        const d = await gql(`mutation($pid: ID!, $opt: OptionUpdateInput!, $del: [ID!], $vs: ProductOptionUpdateVariantStrategy) {
+          productOptionUpdate(productId: $pid, option: $opt, optionValuesToDelete: $del, variantStrategy: $vs) {
+            product { id } userErrors { field message code }
+          }
+        }`, { pid: body.product_id, opt: { id: opt.id }, del: [val.id], vs: "MANAGE" });
+        const ue = d.productOptionUpdate.userErrors;
         return ue.length ? reply(400, { error: ue[0].message }) : reply(200, { ok: true });
       }
 
