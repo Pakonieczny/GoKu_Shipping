@@ -22,6 +22,88 @@
 
 const fetch = require("node-fetch");
 
+/* ─── Firebase (Firestore + Storage) via the shared admin module ───────────
+   Lazy + defensive: if Firebase isn't configured in this deploy, the editor's
+   Shopify features keep working and only the persistence/best-seller extras
+   degrade. The browser never touches Firebase — only this function does. */
+let _fb = null;
+function fb() {
+  if (_fb !== null) return _fb;
+  try {
+    const admin = require("./firebaseAdmin");
+    _fb = { admin, db: admin.firestore(), FV: admin.firestore.FieldValue, bucket: admin.storage().bucket() };
+  } catch (e) { console.error("[shopifyEditor] Firebase unavailable:", e.message); _fb = false; }
+  return _fb;
+}
+function numericId(gid) { return String(gid == null ? "" : gid).replace(/^.*\//, ""); }
+
+/* Parsed Top-200 best-sellers index (seeded from the uploaded CSV). Default that
+   self-seeds into Firestore (Brites_Editor_Meta/bestSellers) on first use; the
+   live doc then takes over so the list can be updated without a redeploy. */
+const BEST_SELLERS_SEED = JSON.parse("[{\"rank\":1,\"name\":\"Dainty Bunny Necklace\",\"skus\":[\"Bunny5\",\"Bunny5-ENG\"],\"orders\":182},{\"rank\":2,\"name\":\"Cardinal Bird Pendant Necklace\",\"skus\":[\"Cardinal_87245\"],\"orders\":104},{\"rank\":3,\"name\":\"Fire Badge Necklace\",\"skus\":[\"fire badge\",\"fire badge-ENG\"],\"orders\":118},{\"rank\":4,\"name\":\"Dainty Sun Necklace\",\"skus\":[\"celestial1-sun\",\"celestial1-sun-ENG\"],\"orders\":110},{\"rank\":5,\"name\":\"Norse Runes Charm\",\"skus\":[\"Viking Rune\"],\"orders\":117},{\"rank\":6,\"name\":\"Phoenix Bird Pendant Necklace\",\"skus\":[\"FIREBIRD 2\"],\"orders\":108},{\"rank\":7,\"name\":\"Sunflower Charm Necklace\",\"skus\":[\"Sunflower3 - Beady\"],\"orders\":86},{\"rank\":8,\"name\":\"Hummingbird Charm Stud Earrings\",\"skus\":[\"Hummingbird Cut out\"],\"orders\":86},{\"rank\":9,\"name\":\"Norse Runes Charm\",\"skus\":[\"Viking Rune\"],\"orders\":86},{\"rank\":10,\"name\":\"Circle Jacket Charm Necklace Set of 2\",\"skus\":[\"Circle_4443\"],\"orders\":82},{\"rank\":11,\"name\":\"Bunny Charm Stud Earrings\",\"skus\":[\"Bunny5\"],\"orders\":79},{\"rank\":12,\"name\":\"Dainty Cancer Ribbon Necklace\",\"skus\":[\"Health5-Cancer Ribbon\",\"Health5-Cancer Ribbon-ENG\"],\"orders\":68},{\"rank\":13,\"name\":\"Book Reader Charm Necklace\",\"skus\":[\"Book_47142\"],\"orders\":74},{\"rank\":14,\"name\":\"Dragonfly Pendant Necklace\",\"skus\":[\"DragonFly2\"],\"orders\":69},{\"rank\":15,\"name\":\"Gold Bar Necklace, Handwritten Bar Necklace - YOUR HANDWRITING - or Image, Sterling Silver, Gold or Rose Gold, Jewelry For Her\",\"skus\":[\"Gold_7478 | Gold_Bar_3804\"],\"orders\":60},{\"rank\":16,\"name\":\"Wolf Necklace\",\"skus\":[\"Wolf Charm\",\"Wolf Charm-ENG\"],\"orders\":65},{\"rank\":17,\"name\":\"Hummingbird Pendant Necklace\",\"skus\":[\"HUMMING BIRD cutout\"],\"orders\":58},{\"rank\":18,\"name\":\"Baseball Charm Huggie\",\"skus\":[\"Huggie Hoops- Alien Head\"],\"orders\":66},{\"rank\":19,\"name\":\"Squirrel Charm Necklace\",\"skus\":[\"Squirrel 1 (eating)\",\"Squirrel 1 (eating)-ENG\"],\"orders\":65},{\"rank\":20,\"name\":\"Cardinal Bird Pendant Necklace\",\"skus\":[\"Cardinal_26531\"],\"orders\":44},{\"rank\":21,\"name\":\"Eagle Pendant Necklace\",\"skus\":[\"American Eagle - Beady\"],\"orders\":62},{\"rank\":22,\"name\":\"Chicken Charm Stud Earrings\",\"skus\":[\"Chicken 3\"],\"orders\":14},{\"rank\":23,\"name\":\"Lemon Pendant Necklace\",\"skus\":[\"LEMON\"],\"orders\":42},{\"rank\":24,\"name\":\"Dainty Rubber Ducky Necklace\",\"skus\":[\"shape\"],\"orders\":56},{\"rank\":25,\"name\":\"Add on an Extender to Charm\",\"skus\":[\"Add_6663\"],\"orders\":51},{\"rank\":26,\"name\":\"Movie Slate Charm\",\"skus\":[\"Movie Slate\",\"Movie Slate-ENG\"],\"orders\":55},{\"rank\":27,\"name\":\"Circle Jacket Charm Necklace Set of 2\",\"skus\":[\"Circle_4443\"],\"orders\":54},{\"rank\":28,\"name\":\"Killer Whale Charm Necklace\",\"skus\":[\"Killer Whale 2\",\"Killer Whale 2-ENG\"],\"orders\":53},{\"rank\":29,\"name\":\"Sitting Cat Earrings\",\"skus\":[\"Cat 1- Sitting Cat\"],\"orders\":52},{\"rank\":30,\"name\":\"Cute Sea Turtle Necklace\",\"skus\":[\"Sea Turtle2\",\"Sea Turtle2-ENG\"],\"orders\":50},{\"rank\":31,\"name\":\"Crab Pendant Necklace\",\"skus\":[\"CRAB 2\"],\"orders\":4},{\"rank\":32,\"name\":\"Mythical Dragon Charm Stud Earrings\",\"skus\":[\"Dragon11\"],\"orders\":50},{\"rank\":33,\"name\":\"Alligator Necklace\",\"skus\":[\"Reptile 4-Gator\",\"Reptile 4-Gator-ENG\"],\"orders\":45},{\"rank\":34,\"name\":\"Skating Necklace\",\"skus\":[\"Sports 10 - figure skate\",\"Sports 10 - figure skate-ENG\"],\"orders\":49},{\"rank\":35,\"name\":\"Running Horse Stud\",\"skus\":[\"Horse2\"],\"orders\":48},{\"rank\":36,\"name\":\"Camping Earrings Campfire\",\"skus\":[\"Camp5 - Mountain Peak\"],\"orders\":47},{\"rank\":37,\"name\":\"Theatre Happy Sad\",\"skus\":[\"Masks Happy/Sad\"],\"orders\":47},{\"rank\":38,\"name\":\"Tiny Moon Necklace\",\"skus\":[\"tiny moon\"],\"orders\":40},{\"rank\":39,\"name\":\"Mismatched Tennis Ball\",\"skus\":[\"Huggie Hoops- Alien Head\"],\"orders\":39},{\"rank\":40,\"name\":\"Sheep Lamb Pendant\",\"skus\":[\"Sheep3\"],\"orders\":43},{\"rank\":41,\"name\":\"Team Charm Necklace\",\"skus\":[\"Cable Chain only\"],\"orders\":44},{\"rank\":42,\"name\":\"Chicken Pendant\",\"skus\":[\"Beady Chicken 3\",\"Beady Chicken 3-ENG\"],\"orders\":33},{\"rank\":43,\"name\":\"Puzzle Pendant Necklace\",\"skus\":[\"PUZZLE PIECE\"],\"orders\":33},{\"rank\":44,\"name\":\"Cheerleading Team Jewelry\",\"skus\":[\"Cheer 1 - Megaphone(plain)\",\"Cheer 1 - Megaphone(plain)-ENG\"],\"orders\":20},{\"rank\":45,\"name\":\"Little Hummingbird Necklace\",\"skus\":[\"hummingbird3\",\"hummingbird3-ENG\"],\"orders\":41},{\"rank\":46,\"name\":\"Hammered Skinny Mini Gold Bar Bar Necklace\",\"skus\":[\"Hammered_4617\"],\"orders\":41},{\"rank\":47,\"name\":\"Tooth Necklace, Dentist Gift\",\"skus\":[\"Health9-tooth\",\"Health9-tooth-ENG\"],\"orders\":38},{\"rank\":48,\"name\":\"Key Charm Pendant\",\"skus\":[\"Key2\",\"Key2-ENG\"],\"orders\":36},{\"rank\":49,\"name\":\"Tooth Charm Huggie Hoops\",\"skus\":[\"Huggie Hoops- Health9-Tooth\"],\"orders\":36},{\"rank\":50,\"name\":\"USA Map Pendant Necklace\",\"skus\":[\"USA_27250\"],\"orders\":36},{\"rank\":51,\"name\":\"Theatre Mask Charm Pendant\",\"skus\":[\"Comedy_48247\"],\"orders\":33},{\"rank\":52,\"name\":\"Puzzle Piece Beady Charm Necklace\",\"skus\":[\"Beady Puzzle Piece\"],\"orders\":29},{\"rank\":53,\"name\":\"Soaring Pelican Pendant Necklace\",\"skus\":[\"Soaring_74233\"],\"orders\":36},{\"rank\":54,\"name\":\"Penguin Charm Necklace\",\"skus\":[\"Beady Penguin 2\"],\"orders\":36},{\"rank\":55,\"name\":\"Hawk Charm Necklace\",\"skus\":[\"Beady Hawk\"],\"orders\":35},{\"rank\":56,\"name\":\"Gold Dumbbell Charm Necklace\",\"skus\":[\"Sports 24- Dumbbell\"],\"orders\":33},{\"rank\":57,\"name\":\"Lotus Pendant Necklace\",\"skus\":[\"LOTUS 2\"],\"orders\":30},{\"rank\":58,\"name\":\"Map of Palestine Pendant Necklace\",\"skus\":[\"palestine map\"],\"orders\":18},{\"rank\":59,\"name\":\"Lighthouse Charm Earrings\",\"skus\":[\"Lighthouse Disc\"],\"orders\":35},{\"rank\":60,\"name\":\"Stethoscope earring Doctor\",\"skus\":[\"Health 8\"],\"orders\":35},{\"rank\":61,\"name\":\"Boho Feather Charm Necklace\",\"skus\":[\"FEATHER CHARM\"],\"orders\":34},{\"rank\":62,\"name\":\"Dainty Oval Disc Caduceus Necklace\",\"skus\":[\"Health3\",\"Health3-ENG\"],\"orders\":32},{\"rank\":63,\"name\":\"Dragonfly Charm Stud Earrings\",\"skus\":[\"DragonFly2\"],\"orders\":32},{\"rank\":64,\"name\":\"Palestine Map Necklace\",\"skus\":[\"palestine map\"],\"orders\":34},{\"rank\":65,\"name\":\"Stethoscope Necklace Doctor\",\"skus\":[\"Health8-stethoscope\",\"Health8-stethoscope-ENG\"],\"orders\":33},{\"rank\":66,\"name\":\"Dragon Pendant Necklace\",\"skus\":[\"DRAGON 11\"],\"orders\":32},{\"rank\":67,\"name\":\"Graduation Cap Pendant Necklace\",\"skus\":[\"Graduation_11271\"],\"orders\":30},{\"rank\":68,\"name\":\"Capybara Charm Earrings\",\"skus\":[\"Huggie Hoops- Capybara1\"],\"orders\":33},{\"rank\":69,\"name\":\"Raccoon Charm Necklace\",\"skus\":[\"Beady Raccoon2\"],\"orders\":33},{\"rank\":70,\"name\":\"Bear Charm Necklace\",\"skus\":[\"Bear 1\",\"Bear 1-ENG\"],\"orders\":32},{\"rank\":71,\"name\":\"Small Cat Necklace\",\"skus\":[\"Cat 1 - sitting cat\",\"Cat 1 - sitting cat-ENG\"],\"orders\":32},{\"rank\":72,\"name\":\"Ballet Shoes pendant\",\"skus\":[\"BalletShoes\",\"BalletShoes-ENG\"],\"orders\":31},{\"rank\":73,\"name\":\"Initial Charm Necklace\",\"skus\":[\"decorative initial\",\"decorative initial-ENG\"],\"orders\":30},{\"rank\":74,\"name\":\"Map of Palestine Charm Huggie Hoops\",\"skus\":[\"Huggie Hoops- Surfboard\"],\"orders\":28},{\"rank\":75,\"name\":\"Apple Charm Necklace\",\"skus\":[\"Apple 2\",\"Apple 2-ENG\"],\"orders\":23},{\"rank\":76,\"name\":\"Steamboat Willie Mickey\",\"skus\":[\"Old Mickey - Beady\",\"Old Mickey - Beady-ENG\"],\"orders\":28},{\"rank\":77,\"name\":\"Comedy Tragedy Mask Pendant Necklace\",\"skus\":[\"Beady Mask Smile Frown\"],\"orders\":28},{\"rank\":78,\"name\":\"Apple Charm with\",\"skus\":[\"Apple cut out - Beady\",\"Apple cut out - Beady-ENG\"],\"orders\":26},{\"rank\":79,\"name\":\"Fire Department Badge\",\"skus\":[\"Fire Dept Badge\"],\"orders\":26},{\"rank\":80,\"name\":\"Music Note Pendant Necklace\",\"skus\":[\"Music_3831\"],\"orders\":26},{\"rank\":81,\"name\":\"Horse Pendant Necklace\",\"skus\":[\"HORSE 2\"],\"orders\":24},{\"rank\":82,\"name\":\"Ballet Charm Stud Earrings\",\"skus\":[\"BalletShoes\"],\"orders\":25},{\"rank\":83,\"name\":\"Hockey Stick Pendant Necklace\",\"skus\":[\"HOCKEY STICK 1\"],\"orders\":25},{\"rank\":84,\"name\":\"Leaping Bunny Pendant Necklace\",\"skus\":[\"Leaping_40171\"],\"orders\":25},{\"rank\":85,\"name\":\"Dainty Cowboy Boot Necklace\",\"skus\":[\"Cowboy3- Boot\",\"Cowboy3- Boot-ENG\"],\"orders\":23},{\"rank\":86,\"name\":\"Chicken Stud Earrings\",\"skus\":[\"Chicken 3\"],\"orders\":26},{\"rank\":87,\"name\":\"Rock On Stud\",\"skus\":[\"Handsign 4-rock on\"],\"orders\":26},{\"rank\":88,\"name\":\"Sunflower Necklace\",\"skus\":[\"Sunflower1\",\"Sunflower1-ENG\"],\"orders\":26},{\"rank\":89,\"name\":\"Running Shoe Pendant Necklace\",\"skus\":[\"SPORTS 9 - Running Shoe\"],\"orders\":25},{\"rank\":90,\"name\":\"Dainty Bunny Necklace\",\"skus\":[\"Bunny5\",\"Bunny5-ENG\"],\"orders\":24},{\"rank\":91,\"name\":\"Wolf Pendant Necklace\",\"skus\":[\"WOLF\"],\"orders\":24},{\"rank\":92,\"name\":\"Heart Charm Necklace\",\"skus\":[\"Heart_7610\"],\"orders\":21},{\"rank\":93,\"name\":\"Running Shoe Necklace\",\"skus\":[\"sports9-running shoe\",\"sports9-running shoe-ENG\"],\"orders\":21},{\"rank\":94,\"name\":\"Lion Pendant Necklace\",\"skus\":[\"Africa4- Lion\"],\"orders\":19},{\"rank\":95,\"name\":\"Ram Pendant Necklace\",\"skus\":[\"RAM 3\"],\"orders\":19},{\"rank\":96,\"name\":\"Lemon Charm pendant\",\"skus\":[\"lemon\",\"lemon-ENG\"],\"orders\":18},{\"rank\":97,\"name\":\"Paperclip Earrings\",\"skus\":[\"paperclip\"],\"orders\":16},{\"rank\":98,\"name\":\"Bunny Charm Huggie\",\"skus\":[\"Huggie Hoops- Alien Head\"],\"orders\":25},{\"rank\":99,\"name\":\"Compass Disc Charm Necklace\",\"skus\":[\"COMPASS 6\"],\"orders\":25},{\"rank\":100,\"name\":\"Otter Charm Necklace\",\"skus\":[\"Otter\",\"Otter-ENG\"],\"orders\":25},{\"rank\":101,\"name\":\"Swan Charm Necklace\",\"skus\":[\"Swan\",\"Swan-ENG\"],\"orders\":25},{\"rank\":102,\"name\":\"Cute Rubber Ducky Necklace\",\"skus\":[\"shape\"],\"orders\":22},{\"rank\":103,\"name\":\"Skating Earrings Ice\",\"skus\":[\"sports 10- figure skate\"],\"orders\":22},{\"rank\":104,\"name\":\"Four Leaf Clover Pendant Necklace\",\"skus\":[\"4 Leaf Clover\"],\"orders\":16},{\"rank\":105,\"name\":\"Cherry Blossom Flower\",\"skus\":[\"Cherry Blossom\",\"Cherry Blossom-ENG\"],\"orders\":11},{\"rank\":106,\"name\":\"Caduceus Pendant Necklace\",\"skus\":[\"HEALTH 1 CADUCEUS\"],\"orders\":24},{\"rank\":107,\"name\":\"Dachshund Earrings Animal\",\"skus\":[\"Dachshund Dog\"],\"orders\":24},{\"rank\":108,\"name\":\"Dainty Cut out Fox Necklace\",\"skus\":[\"Origami1-Fox cut out\",\"Origami1-Fox cut out-ENG\"],\"orders\":24},{\"rank\":109,\"name\":\"Monkey Charm Necklace\",\"skus\":[\"Africa 3-Monkey\",\"Africa 3-Monkey-ENG\"],\"orders\":24},{\"rank\":110,\"name\":\"Hockey Skate Pendant Necklace\",\"skus\":[\"HOCKEY 2\"],\"orders\":23},{\"rank\":111,\"name\":\"Mountain Pendant Necklace\",\"skus\":[\"CAMP 5- Mountain Peak\"],\"orders\":23},{\"rank\":112,\"name\":\"Swan Studs 14k\",\"skus\":[\"Swan\"],\"orders\":23},{\"rank\":113,\"name\":\"Runner Earrings Sports\",\"skus\":[\"sports9-running shoe\"],\"orders\":21},{\"rank\":114,\"name\":\"Labrador Pendant Necklace\",\"skus\":[\"LABRADOR\"],\"orders\":20},{\"rank\":115,\"name\":\"Dove of Peace Pendant Necklace\",\"skus\":[\"DOVE 4\"],\"orders\":21},{\"rank\":116,\"name\":\"Flag Pendant Necklace\",\"skus\":[\"FLAGS\"],\"orders\":19},{\"rank\":117,\"name\":\"Dumpster Fire Pendant Necklace\",\"skus\":[\"DUMPSTER FIRE\"],\"orders\":16},{\"rank\":118,\"name\":\"Graduation Cap Charm Necklace\",\"skus\":[\"Grad Cap\",\"Grad Cap-ENG\"],\"orders\":22},{\"rank\":119,\"name\":\"Small Cat Necklace\",\"skus\":[\"Cat 1 - sitting cat\",\"Cat 1 - sitting cat-ENG\"],\"orders\":22},{\"rank\":120,\"name\":\"Running Horse Charm\",\"skus\":[\"Running Horse2\",\"Running Horse2-ENG\"],\"orders\":21},{\"rank\":121,\"name\":\"Owl Charm Necklace\",\"skus\":[\"OWL 2\"],\"orders\":20},{\"rank\":122,\"name\":\"Chick Pendant Necklace\",\"skus\":[\"CHICK - IN EGG\"],\"orders\":14},{\"rank\":123,\"name\":\"Hockey Stick Pendant\",\"skus\":[\"hockey 1-sticks\",\"hockey 1-sticks-ENG\"],\"orders\":11},{\"rank\":124,\"name\":\"Blooming Dandelion Pendant Necklace\",\"skus\":[\"Blooming_16014\"],\"orders\":21},{\"rank\":125,\"name\":\"Caduceus Charm Stud Earrings\",\"skus\":[\"HEALTH 3 CADUCEUS\"],\"orders\":21},{\"rank\":126,\"name\":\"Horse Huggie Hoops\",\"skus\":[\"Huggie Hoops- Alien Head\"],\"orders\":21},{\"rank\":127,\"name\":\"Raccoon Charm Stud Earrings\",\"skus\":[\"Raccoon_8823\"],\"orders\":21},{\"rank\":128,\"name\":\"Scuba Diver Earring 14k Goggle Charm Stud Earrings\",\"skus\":[\"Aquatic4 - Goggles\"],\"orders\":21},{\"rank\":129,\"name\":\"Heron Bird Pendant Necklace\",\"skus\":[\"Heron_38478\"],\"orders\":20},{\"rank\":130,\"name\":\"Lion Necklace Lion\",\"skus\":[\"Africa 4- Lion\",\"Africa 4- Lion-ENG\"],\"orders\":20},{\"rank\":131,\"name\":\"Music Note Pendant Necklace\",\"skus\":[\"music - treble clef\"],\"orders\":20},{\"rank\":132,\"name\":\"Peach Pendant Necklace\",\"skus\":[\"PEACH\"],\"orders\":20},{\"rank\":133,\"name\":\"Cardinal Bird Pendant Necklace\",\"skus\":[\"Cardinal_74064\"],\"orders\":19},{\"rank\":134,\"name\":\"Pansy Flower Necklace\",\"skus\":[\"Floral5\"],\"orders\":18},{\"rank\":135,\"name\":\"Sea Turtle Pendant Necklace\",\"skus\":[\"SEA TURTLE 3\"],\"orders\":17},{\"rank\":136,\"name\":\"Dna Pendant Necklace\",\"skus\":[\"DNA STRAND\"],\"orders\":15},{\"rank\":137,\"name\":\"Skating Earrings Ice\",\"skus\":[\"sports 10- figure skate\"],\"orders\":12},{\"rank\":138,\"name\":\"Pisces Zodiac Stud\",\"skus\":[\"Zodiac REVAMP\"],\"orders\":20},{\"rank\":139,\"name\":\"Gecko Necklace\",\"skus\":[\"Reptile 1-Gecko\",\"Reptile 1-Gecko-ENG\"],\"orders\":20},{\"rank\":140,\"name\":\"Jupiter Necklace\",\"skus\":[\"Space1-Jupiter\"],\"orders\":20},{\"rank\":141,\"name\":\"Mountain Charm Necklace\",\"skus\":[\"Mountain Cut out\",\"Mountain Cut out-ENG\"],\"orders\":20},{\"rank\":142,\"name\":\"Initial Charm Huggie Hoops\",\"skus\":[\"Huggie Hoops- lowercase initials\"],\"orders\":20},{\"rank\":143,\"name\":\"Police Badge Necklace\",\"skus\":[\"police badge\",\"police badge-ENG\"],\"orders\":20},{\"rank\":144,\"name\":\"Theatre Mask Pendant Necklace\",\"skus\":[\"MASK SMILE FROWN\"],\"orders\":20},{\"rank\":145,\"name\":\"Mini Volleyball Necklace\",\"skus\":[\"Volleyball\",\"Volleyball-ENG\"],\"orders\":20},{\"rank\":146,\"name\":\"Gold Bunny Earrings\",\"skus\":[\"Bunny5\"],\"orders\":18},{\"rank\":147,\"name\":\"Leaf Pendant Necklace\",\"skus\":[\"FLORALS 6\"],\"orders\":17},{\"rank\":148,\"name\":\"Maple Leaf Pendant Necklace\",\"skus\":[\"MAPLE LEAF\"],\"orders\":15},{\"rank\":149,\"name\":\"Lobster Pendant Necklace\",\"skus\":[\"LOBSTER 2\"],\"orders\":12},{\"rank\":150,\"name\":\"Dachshund Charm Earrings\",\"skus\":[\"DACHSHUND\"],\"orders\":19},{\"rank\":151,\"name\":\"Handcrafted Elephant Hoop\",\"skus\":[\"Huggie Hoops- Alien Head\"],\"orders\":19},{\"rank\":152,\"name\":\"Hippopotamus Zoo Pendant Necklace\",\"skus\":[\"Hippo_53162\"],\"orders\":19},{\"rank\":153,\"name\":\"Jesus Fish Faith Pendant Necklace\",\"skus\":[\"Ichthys_98120\"],\"orders\":19},{\"rank\":154,\"name\":\"Manta Ray Charm Stud Earrings\",\"skus\":[\"Manta_0320\"],\"orders\":19},{\"rank\":155,\"name\":\"Orca Earrings Killer\",\"skus\":[\"Killer Whale2\"],\"orders\":19},{\"rank\":156,\"name\":\"Raccoon Pendant Necklace\",\"skus\":[\"RACCOON 2\"],\"orders\":19},{\"rank\":157,\"name\":\"Tiny Tag Necklace\",\"skus\":[\"Tiny Initial Tag 3\",\"Tiny Initial Tag 3-ENG\"],\"orders\":19},{\"rank\":158,\"name\":\"Dinosaur Charm Necklace\",\"skus\":[\"Trex - Beady\",\"Trex - Beady-ENG\"],\"orders\":19},{\"rank\":159,\"name\":\"Zoo Animal Charm Pendant\",\"skus\":[\"Crocodile_44839\"],\"orders\":18},{\"rank\":160,\"name\":\"Circle Jacket Charm Necklace Set of 2\",\"skus\":[\"Circle_4443\"],\"orders\":18},{\"rank\":161,\"name\":\"Mama Bear Necklace\",\"skus\":[\"Bear mama\",\"Bear mama-ENG\"],\"orders\":18},{\"rank\":162,\"name\":\"Medical Caduceus Pendant\",\"skus\":[\"Caduceus - Beady\",\"Caduceus - Beady-ENG\"],\"orders\":18},{\"rank\":163,\"name\":\"Number Pendant Necklace\",\"skus\":[\"Comic Number\"],\"orders\":16},{\"rank\":164,\"name\":\"Chicken Bar Necklace\",\"skus\":[\"Running_73848\"],\"orders\":14},{\"rank\":165,\"name\":\"Bicycle Charm Stud Earrings\",\"skus\":[\"Sports 27-Bike\"],\"orders\":18},{\"rank\":166,\"name\":\"Bullseye Pendant Necklace\",\"skus\":[\"SPORTS 12 - Bullseye\"],\"orders\":18},{\"rank\":167,\"name\":\"Chick Pendant Necklace\",\"skus\":[\"CHICK - IN EGG\"],\"orders\":18},{\"rank\":168,\"name\":\"Monogram Pendant Necklace\",\"skus\":[\"Monogram_5351\"],\"orders\":18},{\"rank\":169,\"name\":\"Skating Earrings Ice\",\"skus\":[\"sports 10- figure skate\"],\"orders\":18},{\"rank\":170,\"name\":\"Cherry Blossom Stud\",\"skus\":[\"Cherry Blossom\"],\"orders\":17},{\"rank\":171,\"name\":\"Fox Lover Pendant Necklace\",\"skus\":[\"Fox_97250\"],\"orders\":17},{\"rank\":172,\"name\":\"Dragonfly Charm Stud Earrings\",\"skus\":[\"DragonFly5\"],\"orders\":17},{\"rank\":173,\"name\":\"Baby Bear Charm Earrings\",\"skus\":[\"BEAR BABY\"],\"orders\":15},{\"rank\":174,\"name\":\"Flying Hawk Earrings\",\"skus\":[\"NEW1\"],\"orders\":15},{\"rank\":175,\"name\":\"Star of David Charm Huggie Hoops\",\"skus\":[\"Huggie Hoops- Star of David\"],\"orders\":15},{\"rank\":176,\"name\":\"Capybara Pendant\",\"skus\":[\"Capybara1\",\"Capybara1-ENG\"],\"orders\":17},{\"rank\":177,\"name\":\"Lightning Bolt Thunderbolt Charm Necklace\",\"skus\":[\"Lightning_3071\"],\"orders\":17},{\"rank\":178,\"name\":\"Eagle Pendant Necklace\",\"skus\":[\"Eagle_4275\"],\"orders\":17},{\"rank\":179,\"name\":\"Dragon Charm Necklace\",\"skus\":[\"dragon10 - dragon body\"],\"orders\":17},{\"rank\":180,\"name\":\"Heart Charm Necklace\",\"skus\":[\"Heart_7610\"],\"orders\":17},{\"rank\":181,\"name\":\"Heart Pendant Necklace\",\"skus\":[\"HEART LONG\"],\"orders\":17},{\"rank\":182,\"name\":\"Poodle Charm Necklace\",\"skus\":[\"Beady Poodle\"],\"orders\":17},{\"rank\":183,\"name\":\"Saturn Pendant Necklace\",\"skus\":[\"Space2-Saturn\"],\"orders\":17},{\"rank\":184,\"name\":\"Aztec Dragon Pendant Necklace\",\"skus\":[\"MEXICO 4\"],\"orders\":16},{\"rank\":185,\"name\":\"Bear Pendant Necklace\",\"skus\":[\"BEAR 1\"],\"orders\":16},{\"rank\":186,\"name\":\"Book Lover Charm Pendant\",\"skus\":[\"Book_23102\"],\"orders\":16},{\"rank\":187,\"name\":\"Dragon Pendant Necklace\",\"skus\":[\"DRAGON 2\"],\"orders\":16},{\"rank\":188,\"name\":\"Volleyball Huggie Hoop\",\"skus\":[\"Huggie Hoops- Alien Head\"],\"orders\":16},{\"rank\":189,\"name\":\"Raccoon Pendant Necklace\",\"skus\":[\"Raccoon_6193\"],\"orders\":15},{\"rank\":190,\"name\":\"Hamster Pendant Necklace\",\"skus\":[\"HAMSTER\"],\"orders\":13},{\"rank\":191,\"name\":\"Beaver Charm Earrings\",\"skus\":[\"BEAVER\"],\"orders\":12},{\"rank\":192,\"name\":\"Baseball Charm Necklace\",\"skus\":[\"Baseball_64293\"],\"orders\":16},{\"rank\":193,\"name\":\"Cancer Ribbon Earring\",\"skus\":[\"Health5\"],\"orders\":16},{\"rank\":194,\"name\":\"Cherry Blossom Charm\",\"skus\":[\"Huggie Hoops- Alien Head\"],\"orders\":16},{\"rank\":195,\"name\":\"Dragonfly Pendant Necklace\",\"skus\":[\"DragonFly2\"],\"orders\":16},{\"rank\":196,\"name\":\"Team Charm Necklace\",\"skus\":[\"Cable Chain only\"],\"orders\":16},{\"rank\":197,\"name\":\"Lyre Harp Music Charm Necklace\",\"skus\":[\"Music 2 - Lyre Harp\",\"Music 2 - Lyre Harp-ENG\"],\"orders\":16},{\"rank\":198,\"name\":\"Panda Charm Necklace\",\"skus\":[\"PANDA 3\"],\"orders\":16},{\"rank\":199,\"name\":\"Space Charm Huggie\",\"skus\":[\"Huggie Hoops- Alien Head\"],\"orders\":16},{\"rank\":200,\"name\":\"Science Laboratory Flasks Pendant Necklace\",\"skus\":[\"Science_90441\"],\"orders\":16}]");
+
+function bsNorm(x) { return String(x == null ? "" : x).replace(/\s+/g, " ").trim().toLowerCase(); }
+function bestSellerLookup(rows) {
+  const bySku = {}, byTitle = {};
+  (rows || []).forEach(function (r) {
+    (r.skus || []).forEach(function (sk) {
+      const k = bsNorm(sk); if (!k) return;
+      if (!(k in bySku) || (r.rank || 9999) < (bySku[k].rank || 9999)) bySku[k] = { rank: r.rank, name: r.name };
+    });
+    const tk = bsNorm(r.name);
+    if (tk && (!(tk in byTitle) || (r.rank || 9999) < (byTitle[tk].rank || 9999))) byTitle[tk] = { rank: r.rank, name: r.name };
+  });
+  return { bySku, byTitle };
+}
+async function loadBestSellers() {
+  const f = fb();
+  if (!f) return BEST_SELLERS_SEED;
+  try {
+    const ref = f.db.collection("Brites_Editor_Meta").doc("bestSellers");
+    const snap = await ref.get();
+    if (snap.exists && Array.isArray((snap.data() || {}).rows) && snap.data().rows.length) return snap.data().rows;
+    await ref.set({ rows: BEST_SELLERS_SEED, source: "seed", updatedAt: f.FV.serverTimestamp() });
+    try {
+      const csv = "Rank,Item Name,SKU,Number of Orders\n" + BEST_SELLERS_SEED.map(function (r) {
+        return [r.rank, JSON.stringify(r.name), JSON.stringify((r.skus || []).join(", ")), r.orders].join(",");
+      }).join("\n");
+      await f.bucket.file("brites/best-sellers/top-200.csv").save(csv, { contentType: "text/csv" });
+    } catch (e) { console.warn("[shopifyEditor] best-sellers CSV archive failed:", e.message); }
+    return BEST_SELLERS_SEED;
+  } catch (e) { console.warn("[shopifyEditor] loadBestSellers fell back to seed:", e.message); return BEST_SELLERS_SEED; }
+}
+
+async function findBestSellersCollection() {
+  const q = await gql(`query { collections(first: 60, query: "title:*best*") {
+    edges { node { id title handle ruleSet { rules { column relation condition } } } } } }`);
+  const nodes = ((q.collections && q.collections.edges) || []).map(function (e) { return e.node; });
+  return nodes.find(function (n) { return /best\s*sell/i.test(n.title || ""); }) || null;
+}
+async function addToBestSellersCollection(prod) {
+  const coll = await findBestSellersCollection();
+  if (!coll) return { added: false, note: "No 'Best Sellers' collection found in this store" };
+  if (!coll.ruleSet) {
+    const d = await gql(`mutation($id: ID!, $pids: [ID!]!) {
+      collectionAddProducts(id: $id, productIds: $pids) { userErrors { message } } }`,
+      { id: coll.id, pids: [prod.id] });
+    const ue = d.collectionAddProducts.userErrors;
+    return ue.length ? { added: false, id: coll.id, title: coll.title, note: ue[0].message }
+                     : { added: true, id: coll.id, title: coll.title };
+  }
+  const tagRule = (coll.ruleSet.rules || []).find(function (r) { return r.column === "TAG" && r.relation === "EQUALS"; });
+  if (tagRule) {
+    const tag = tagRule.condition;
+    const has = (prod.tags || []).some(function (t) { return bsNorm(t) === bsNorm(tag); });
+    if (has) return { added: true, id: coll.id, title: coll.title, note: "already tagged '" + tag + "'" };
+    const d = await gql(`mutation($id: ID!, $tags: [String!]!) {
+      tagsAdd(id: $id, tags: $tags) { userErrors { message } } }`, { id: prod.id, tags: [tag] });
+    const ue = d.tagsAdd.userErrors;
+    return ue.length ? { added: false, id: coll.id, title: coll.title, note: ue[0].message }
+                     : { added: true, id: coll.id, title: coll.title, note: "via tag '" + tag + "'" };
+  }
+  return { added: false, id: coll.id, title: coll.title, note: "Smart collection without a tag rule — can't auto-add" };
+}
+
 const API_VERSION = process.env.SHOPIFY_API_VERSION || "2025-10";
 
 const ALLOWED_ORIGINS = ["https://britesjewelry.com", "https://www.britesjewelry.com"];
@@ -291,6 +373,96 @@ exports.handler = async function (event) {
         }`, { pid: body.product_id, opt: { id: opt.id }, del: [val.id], vs: "MANAGE" });
         const ue = d.productOptionUpdate.userErrors;
         return ue.length ? reply(400, { error: ue[0].message }) : reply(200, { ok: true });
+      }
+
+      // Best-seller cross-reference: match the product's SKUs/title against the
+      // Top-200 index and, on a hit, add it to the storefront "Best Sellers" collection.
+      case "checkBestSeller": {
+        const pq = await gql(`query($id: ID!) {
+          product(id: $id) { id title handle tags variants(first: 100) { edges { node { sku } } } }
+        }`, { id: body.product_id });
+        const prod = pq.product;
+        if (!prod) return reply(404, { error: "Product not found" });
+        const rows = await loadBestSellers();
+        const lk = bestSellerLookup(rows);
+        const skus = ((prod.variants && prod.variants.edges) || []).map(function (e) { return e.node.sku; }).filter(Boolean);
+        let match = null, matchedBy = null;
+        skus.forEach(function (sk) {
+          const hit = lk.bySku[bsNorm(sk)];
+          if (hit && (!match || (hit.rank || 9999) < (match.rank || 9999))) { match = hit; matchedBy = "sku"; }
+        });
+        if (!match) { const t = lk.byTitle[bsNorm(prod.title)]; if (t) { match = t; matchedBy = "title"; } }
+        let added = false, collTitle = null, note = null;
+        if (match && body.add !== false) {
+          const r = await addToBestSellersCollection(prod);
+          added = r.added; collTitle = r.title || null; note = r.note || null;
+        }
+        const f = fb();
+        if (f && match) {
+          try {
+            await f.db.collection("Brites_Editor_Status").doc(numericId(body.product_id)).set({
+              productId: numericId(body.product_id), title: prod.title || null,
+              bestSeller: true, bestSellerRank: match.rank || null, bestSellerName: match.name || null,
+              updatedAt: f.FV.serverTimestamp()
+            }, { merge: true });
+          } catch (e) { /* non-fatal */ }
+        }
+        return reply(200, { match: !!match, matchedBy, rank: match ? match.rank : null, name: match ? match.name : null, added, collection: collTitle, note });
+      }
+
+      // ── Cross-computer per-listing status (point 5) ──────────────────────
+      case "touchStatus": {
+        const f = fb(); if (!f) return reply(200, { ok: false, note: "Firebase unavailable" });
+        const id = numericId(body.product_id); if (!id) return reply(400, { error: "Missing product_id" });
+        const ref = f.db.collection("Brites_Editor_Status").doc(id);
+        const base = { productId: id, handle: body.handle || null, title: body.title || null, updatedAt: f.FV.serverTimestamp() };
+        if (body.event === "saved") {
+          await ref.set(Object.assign(base, { status: "done", lastSavedBy: body.by || "editor", lastSavedAt: f.FV.serverTimestamp() }), { merge: true });
+        } else {
+          const snap = await ref.get();
+          const cur = snap.exists ? (snap.data().status || "") : "";
+          await ref.set(Object.assign(base, { status: cur === "done" ? "done" : "in_progress", lastOpenedBy: body.by || "editor", lastOpenedAt: f.FV.serverTimestamp() }), { merge: true });
+        }
+        return reply(200, { ok: true });
+      }
+      case "listStatuses": {
+        const f = fb(); if (!f) return reply(200, { statuses: [] });
+        const snap = await f.db.collection("Brites_Editor_Status").limit(3000).get();
+        const out = [];
+        snap.forEach(function (d) {
+          const x = d.data() || {};
+          out.push({ id: d.id, handle: x.handle || null, title: x.title || null, status: x.status || null,
+                     bestSeller: !!x.bestSeller, bestSellerRank: x.bestSellerRank || null,
+                     lastSavedBy: x.lastSavedBy || null, lastOpenedBy: x.lastOpenedBy || null,
+                     lastSavedAt: x.lastSavedAt && x.lastSavedAt.toMillis ? x.lastSavedAt.toMillis() : null,
+                     updatedAt: x.updatedAt && x.updatedAt.toMillis ? x.updatedAt.toMillis() : null });
+        });
+        return reply(200, { statuses: out });
+      }
+      // ── Full change history + revert support (point 4) ───────────────────
+      case "logChange": {
+        const f = fb(); if (!f) return reply(200, { ok: false, note: "Firebase unavailable" });
+        const id = numericId(body.product_id); if (!id) return reply(400, { error: "Missing product_id" });
+        const entry = {
+          by: body.by || "editor", title: body.title || null, handle: body.handle || null,
+          kind: body.kind || "edit", changes: Array.isArray(body.changes) ? body.changes : [],
+          before: body.before || null, after: body.after || null, at: f.FV.serverTimestamp()
+        };
+        const ref = await f.db.collection("Brites_Editor_History").doc(id).collection("changes").add(entry);
+        return reply(200, { ok: true, id: ref.id });
+      }
+      case "getHistory": {
+        const f = fb(); if (!f) return reply(200, { history: [] });
+        const id = numericId(body.product_id); if (!id) return reply(400, { error: "Missing product_id" });
+        const snap = await f.db.collection("Brites_Editor_History").doc(id).collection("changes").orderBy("at", "desc").limit(50).get();
+        const out = [];
+        snap.forEach(function (d) {
+          const x = d.data() || {};
+          out.push({ id: d.id, by: x.by || null, title: x.title || null, kind: x.kind || "edit",
+                     changes: x.changes || [], before: x.before || null, after: x.after || null,
+                     at: x.at && x.at.toMillis ? x.at.toMillis() : null });
+        });
+        return reply(200, { history: out });
       }
 
       // Promote an existing image to primary (move it to position 0).
