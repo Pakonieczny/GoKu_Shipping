@@ -517,14 +517,12 @@ exports.handler = async function (event) {
         const order = body.optionOrder || [];
         if (!productId || !target.length || !order.length) return reply(400, { error: "Missing product_id / variants / optionOrder" });
 
-        const loc = await gql(`query { locations(first: 1, query: "status:active") { nodes { id } } }`);
-        const locationId = ((loc.locations && loc.locations.nodes[0]) || {}).id || null;
+        // No inventory/location queries -> no read_locations / read_inventory scopes needed.
         const cur = await gql(`query($id: ID!) {
           product(id: $id) {
             id
-            variants(first: 100) {
-              nodes { id price barcode sku selectedOptions { name value } inventoryItem { tracked } inventoryQuantity }
-            }
+            options { name }
+            variants(first: 100) { nodes { id selectedOptions { name value } } }
           }
         }`, { id: productId });
         if (!cur.product) return reply(404, { error: "Product not found" });
@@ -545,26 +543,39 @@ exports.handler = async function (event) {
         function tupleOf(pairs){ var r={}; pairs.forEach(function(p){ r[role(p.name)]=nv(p.name,p.value); });
           return Object.keys(r).sort().map(function(k){ return k+"="+r[k]; }).join("|"); }
 
+        // Reuse the listing's existing option NAMES + VALUE strings wherever they mean the same
+        // thing, and pass the matched variant's id, so productSet updates those variants in place
+        // (keeping stock + SKU) instead of recreating them. Only genuinely new combos are created.
+        const curOptNames = (cur.product.options||[]).map(function(o){ return o.name; });
+        function existingOptName(targetName){ var r=role(targetName);
+          if (r === "metal") return "Metal Choice";   // standardize the metal option NAME
+          var hit = curOptNames.filter(function(n){ return role(n)===r; })[0]; return hit || targetName; }
+        const nameForRole = {}; order.forEach(function(n){ nameForRole[n]=existingOptName(n); });
+        const existingValByRole = {};
+        (cur.product.variants.nodes||[]).forEach(function(vn){ (vn.selectedOptions||[]).forEach(function(so){
+          var r=role(so.name); (existingValByRole[r]=existingValByRole[r]||{})[nv(so.name, so.value)] = so.value; }); });
+        function valueForRole(targetName, targetVal){ var r=role(targetName);
+          if (r === "metal") return targetVal;         // standardize metal VALUES to canonical (Sterling Silver / 14k Gold Filled / 14k Rose Gold Filled / 14k Solid Gold)
+          var m=existingValByRole[r], k=nv(targetName, targetVal);
+          return (m && m[k]!=null) ? m[k] : targetVal; }
+
         const curByTuple={};
         (cur.product.variants.nodes||[]).forEach(function(vn){ curByTuple[tupleOf(vn.selectedOptions)] = vn; });
 
-        const valuesByOpt={}; order.forEach(function(n){ valuesByOpt[n]=[]; });
-        target.forEach(function(tv){ order.forEach(function(n){ var val=tv.options[n];
-          if(val!=null && valuesByOpt[n].indexOf(val)<0) valuesByOpt[n].push(val); }); });
-        const productOptions = order.map(function(n,idx){ return { name:n, position:idx+1, values: valuesByOpt[n].map(function(val){ return { name:val }; }) }; });
-
+        const valuesByName={}; order.forEach(function(n){ valuesByName[nameForRole[n]]=[]; });
         let carried=0;
         const setVariants = target.map(function(tv){
-          const pairs = order.map(function(n){ return { name:n, value:tv.options[n] }; });
-          const match = curByTuple[tupleOf(pairs)];
-          const variant = { optionValues: pairs.map(function(p){ return { optionName:p.name, name:String(p.value) }; }), price: String(tv.price) };
-          if (match) { carried++;
-            if (match.sku) variant.inventoryItem = { sku: match.sku, tracked: !!(match.inventoryItem && match.inventoryItem.tracked) };
-            if (match.barcode) variant.barcode = match.barcode;
-            if (locationId && match.inventoryQuantity != null) variant.inventoryQuantities = [{ locationId: locationId, name: "available", quantity: match.inventoryQuantity }];
-          }
+          var pairs = order.map(function(n){ return { name:n, value:tv.options[n] }; });
+          var match = curByTuple[tupleOf(pairs)];
+          var ov = order.map(function(n){ var nm=nameForRole[n], val=valueForRole(n, tv.options[n]);
+            if(valuesByName[nm].indexOf(val)<0) valuesByName[nm].push(val);
+            return { optionName: nm, name: String(val) }; });
+          var variant = { optionValues: ov, price: String(tv.price) };
+          if (match) { carried++; if (match.id) variant.id = match.id; }
           return variant;
         });
+        const productOptions = order.map(function(n,idx){ var nm=nameForRole[n];
+          return { name: nm, position: idx+1, values: valuesByName[nm].map(function(val){ return { name:val }; }) }; });
 
         const setRes = await gql(`mutation($input: ProductSetInput!) {
           productSet(synchronous: true, input: $input) {
@@ -577,6 +588,56 @@ exports.handler = async function (event) {
         const removed = (cur.product.variants.nodes||[]).length - carried;
         return reply(200, { ok: true, category: category, applied: setVariants.length, carried: carried, removed: (removed>0?removed:0),
                             variantsCount: ((setRes.productSet.product||{}).variantsCount||{}).count });
+      }
+
+      // Set the available stock for EVERY variant of a product to a fixed quantity (default 999).
+      // Requires the app to have read_locations + read_inventory + write_inventory scopes; if any
+      // are missing we return ok:false/needsScope (never throw) so Smart Match keeps working.
+      case "setInventory": {
+        const productId = body.product_id;
+        let qty = parseInt(body.quantity, 10); if (isNaN(qty) || qty < 0) qty = 999;
+        if (!productId) return reply(400, { error: "Missing product_id" });
+        const denied = (e) => /access.?denied/i.test(String(e && e.message));
+
+        let locationId = null;
+        try {
+          const loc = await gql(`query { locations(first: 1) { nodes { id } } }`);
+          locationId = ((loc.locations && loc.locations.nodes[0]) || {}).id || null;
+        } catch (e) {
+          if (denied(e)) return reply(200, { ok: false, needsScope: true, error: "Quantity needs the read_locations + write_inventory scopes added to the app." });
+          throw e;
+        }
+        if (!locationId) return reply(200, { ok: false, needsScope: true, error: "No accessible location (read_locations scope)." });
+
+        let nodes = [];
+        try {
+          const d = await gql(`query($id: ID!) { product(id: $id) { variants(first: 100) { nodes { inventoryItem { id tracked } } } } }`, { id: productId });
+          if (!d.product) return reply(404, { error: "Product not found" });
+          nodes = (d.product.variants.nodes || []).filter(n => n.inventoryItem && n.inventoryItem.id);
+        } catch (e) {
+          if (denied(e)) return reply(200, { ok: false, needsScope: true, error: "Quantity needs the read_inventory scope added to the app." });
+          throw e;
+        }
+        if (!nodes.length) return reply(200, { ok: true, set: 0, quantity: qty });
+
+        // an untracked item can't hold a count — turn tracking on first (best-effort)
+        for (const n of nodes) {
+          if (n.inventoryItem.tracked === false) {
+            try { await gql(`mutation($id: ID!){ inventoryItemUpdate(id:$id, input:{ tracked:true }){ userErrors{ message } } }`, { id: n.inventoryItem.id }); } catch (e) { if (denied(e)) return reply(200, { ok:false, needsScope:true, error:"Quantity needs the write_inventory scope added to the app." }); }
+          }
+        }
+        const quantities = nodes.map(n => ({ inventoryItemId: n.inventoryItem.id, locationId, quantity: qty }));
+        try {
+          const r = await gql(`mutation($input: InventorySetQuantitiesInput!){
+            inventorySetQuantities(input:$input){ userErrors{ field message } }
+          }`, { input: { name: "available", reason: "correction", ignoreCompareQuantity: true, quantities } });
+          const ue = (r.inventorySetQuantities && r.inventorySetQuantities.userErrors) || [];
+          if (ue.length) return reply(200, { ok: false, error: "inventory: " + ue.map(e => e.message).join("; "), userErrors: ue });
+          return reply(200, { ok: true, set: nodes.length, quantity: qty });
+        } catch (e) {
+          if (denied(e)) return reply(200, { ok: false, needsScope: true, error: "Quantity needs the write_inventory scope added to the app." });
+          throw e;
+        }
       }
       // ── Pricing scheme: permanent Firebase storage + retrieval ───────────
       case "getPricingScheme": {
