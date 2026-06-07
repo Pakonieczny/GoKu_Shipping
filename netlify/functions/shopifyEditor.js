@@ -252,6 +252,20 @@ exports.handler = async function (event) {
         return reply(200, { results });
       }
 
+      // Delete specific variants (used to remove an incorrect Metal Choice option).
+      // The product stays valid as long as at least one variant remains.
+      case "deleteVariants": {
+        const vids = (body.variant_ids || []).filter(Boolean);
+        if (!vids.length) return reply(400, { error: "No variants specified" });
+        const d = await gql(`mutation($pid: ID!, $ids: [ID!]!) {
+          productVariantsBulkDelete(productId: $pid, variantsIds: $ids) {
+            userErrors { field message }
+          }
+        }`, { pid: body.product_id, ids: vids });
+        const ue = d.productVariantsBulkDelete.userErrors;
+        return ue.length ? reply(400, { error: ue[0].message }) : reply(200, { ok: true });
+      }
+
       // Promote an existing image to primary (move it to position 0).
       case "setPrimaryImage": {
         const d = await gql(`mutation($id: ID!, $moves: [MoveInput!]!) {
