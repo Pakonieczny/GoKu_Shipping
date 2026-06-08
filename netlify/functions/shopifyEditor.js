@@ -304,6 +304,25 @@ function shapeProduct(node) {
   };
 }
 
+// The storefront product gallery only renders images whose ALT text contains the product
+// title (a theme filter). So after any rename, image alts must be re-synced to the new title
+// or the extra images vanish on the storefront (while still showing in admin). Best-effort.
+async function syncImageAltToTitle(productId, title) {
+  if (!productId || !title) return;
+  try {
+    const md = await gql(`query($id: ID!) {
+      product(id: $id) { media(first: 50) { nodes { ... on MediaImage { id alt } } } }
+    }`, { id: productId });
+    const imgs = ((((md.product || {}).media) || {}).nodes || []).filter(n => n && n.id);
+    const stale = imgs.filter(n => String(n.alt || "").indexOf(title) < 0);
+    if (stale.length) {
+      await gql(`mutation($files: [FileUpdateInput!]!) {
+        fileUpdate(files: $files) { userErrors { field message } }
+      }`, { files: stale.map(n => ({ id: n.id, alt: title })) });
+    }
+  } catch (e) { /* never block a save on alt sync */ }
+}
+
 exports.handler = async function (event) {
   const origin = event.headers.origin || event.headers.Origin || "";
   const headers = corsHeaders(origin);
@@ -392,7 +411,9 @@ exports.handler = async function (event) {
           productUpdate(product: $p) { product { id } userErrors { field message } }
         }`, { p: { id: body.product_id, title: body.title } });
         const ue = d.productUpdate.userErrors;
-        return ue.length ? reply(400, { error: ue[0].message }) : reply(200, { ok: true });
+        if (ue.length) return reply(400, { error: ue[0].message });
+        await syncImageAltToTitle(body.product_id, body.title);
+        return reply(200, { ok: true });
       }
 
       // Smart-collection levers: tags (full list) and/or product type.
@@ -536,8 +557,9 @@ exports.handler = async function (event) {
         const cur = await gql(`query($id: ID!) {
           product(id: $id) {
             id
+            title
             options { name }
-            media(first: 50) { nodes { id } }
+            media(first: 50) { nodes { id alt } }
             variants(first: 100) { nodes { id selectedOptions { name value } } }
           }
         }`, { id: productId });
@@ -596,7 +618,7 @@ exports.handler = async function (event) {
         // Preserve the product's existing media. productSet treats media as a declarative
         // LIST field, so omitting it deletes every image except the primary. Passing the
         // current media IDs back in `files` keeps the full gallery intact.
-        const keepFiles = ((cur.product.media && cur.product.media.nodes) || []).map(function (m) { return { id: m.id }; });
+        const keepFiles = ((cur.product.media && cur.product.media.nodes) || []).map(function (m) { var f = { id: m.id }; if (m.alt != null) f.alt = m.alt; return f; });
         const psInput = { id: productId, productOptions: productOptions, variants: setVariants };
         if (keepFiles.length) psInput.files = keepFiles;
         const setRes = await gql(`mutation($input: ProductSetInput!) {
@@ -607,6 +629,7 @@ exports.handler = async function (event) {
         }`, { input: psInput });
         const errs = (setRes.productSet && setRes.productSet.userErrors) || [];
         if (errs.length) return reply(422, { error: "productSet: " + errs.map(function(e){return e.message;}).join("; "), userErrors: errs });
+        await syncImageAltToTitle(productId, cur.product.title);
         const removed = (cur.product.variants.nodes||[]).length - carried;
         return reply(200, { ok: true, category: category, applied: setVariants.length, carried: carried, removed: (removed>0?removed:0),
                             variantsCount: ((setRes.productSet.product||{}).variantsCount||{}).count });
