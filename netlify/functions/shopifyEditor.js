@@ -427,6 +427,37 @@ exports.handler = async function (event) {
         const res = await syncImageAltToTitle(body.product_id, title);
         return reply(200, { ok: !res.error, retagged: res.updated, total: res.total, error: res.error });
       }
+      // One-time bulk repair: sweep the catalog (paginated) and re-sync every product's image
+      // alt text to its CURRENT title, so listings renamed in earlier sessions get fixed without
+      // re-saving each by hand. No-ops for products already correct; preserves "#group" suffixes.
+      case "bulkSyncImageAlts": {
+        const cursor = body.cursor || null;
+        const n = Math.min(parseInt(body.pageSize, 10) || 15, 30);
+        const d = await gql(`query($cursor: String, $n: Int!) {
+          products(first: $n, after: $cursor) {
+            pageInfo { hasNextPage endCursor }
+            nodes { id title media(first: 30) { nodes { ... on MediaImage { id alt } } } }
+          }
+        }`, { cursor, n });
+        const conn = d.products || { nodes: [], pageInfo: {} };
+        let scanned = 0, fixedImages = 0, fixedProducts = 0;
+        const mk = function (oldAlt, t) { const a = String(oldAlt || ""); const h = a.indexOf("#"); return h >= 0 ? (t + a.slice(h)) : t; };
+        for (const prod of (conn.nodes || [])) {
+          scanned++;
+          const t = prod.title || ""; if (!t) continue;
+          const imgs = ((prod.media && prod.media.nodes) || []).filter(x => x && x.id);
+          const stale = imgs.filter(x => String(x.alt || "").indexOf(t) < 0);
+          if (!stale.length) continue;
+          try {
+            await gql(`mutation($media: [UpdateMediaInput!]!, $productId: ID!) {
+              productUpdateMedia(media: $media, productId: $productId) { mediaUserErrors { message } }
+            }`, { media: stale.map(x => ({ id: x.id, alt: mk(x.alt, t) })), productId: prod.id });
+            fixedImages += stale.length; fixedProducts++;
+          } catch (e) { /* skip this product, keep sweeping */ }
+        }
+        return reply(200, { ok: true, scanned: scanned, fixedImages: fixedImages, fixedProducts: fixedProducts,
+                            nextCursor: conn.pageInfo.hasNextPage ? conn.pageInfo.endCursor : null, hasNext: !!conn.pageInfo.hasNextPage });
+      }
       case "updateTitle": {
         const d = await gql(`mutation($p: ProductUpdateInput!) {
           productUpdate(product: $p) { product { id } userErrors { field message } }
