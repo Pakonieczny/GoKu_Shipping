@@ -316,9 +316,19 @@ async function syncImageAltToTitle(productId, title) {
     const imgs = ((((md.product || {}).media) || {}).nodes || []).filter(n => n && n.id);
     const stale = imgs.filter(n => String(n.alt || "").indexOf(title) < 0);
     if (stale.length) {
-      await gql(`mutation($files: [FileUpdateInput!]!) {
-        fileUpdate(files: $files) { userErrors { field message } }
-      }`, { files: stale.map(n => ({ id: n.id, alt: title })) });
+      // Use productUpdateMedia (write_products scope, which this app has) rather than
+      // fileUpdate (Files API scope, which it does NOT have) so the alt actually updates.
+      // IDs are MediaImage IDs from the query above, as productUpdateMedia requires.
+      // Keep only the part BEFORE any "#" in sync with the title. The theme's image-set
+      // feature lives in the "#group_value" suffix of the alt (e.g. "Title#metal_gold"),
+      // which drives per-variant photo switching, so it must be preserved.
+      const newAlt = function (oldAlt) {
+        const a = String(oldAlt || ""); const h = a.indexOf("#");
+        return h >= 0 ? (title + a.slice(h)) : title;
+      };
+      await gql(`mutation($media: [UpdateMediaInput!]!, $productId: ID!) {
+        productUpdateMedia(media: $media, productId: $productId) { mediaUserErrors { field message } }
+      }`, { media: stale.map(n => ({ id: n.id, alt: newAlt(n.alt) })), productId: productId });
     }
   } catch (e) { /* never block a save on alt sync */ }
 }
