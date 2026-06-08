@@ -282,6 +282,8 @@ function shapeProduct(node) {
   const variants = ((node.variants && node.variants.edges) || []).map(e => {
     const v = e.node; const out = { id: v.id, price: v.price };
     (v.selectedOptions || []).forEach(so => { const p = optPos[so.name]; if (p) out["option" + p] = so.value; });
+    if (typeof v.inventoryQuantity === "number") out.qty = v.inventoryQuantity;
+    if (v.inventoryItem) out.tracked = v.inventoryItem.tracked;
     return out;
   });
   const images = ((node.media && node.media.edges) || [])
@@ -358,7 +360,7 @@ exports.handler = async function (event) {
             id title handle productType tags
             options { name position }
             media(first: 50) { edges { node { ... on MediaImage { id image { url } } } } }
-            variants(first: 100) { edges { node { id price selectedOptions { name value } } } }
+            variants(first: 100) { edges { node { id price selectedOptions { name value } inventoryQuantity inventoryItem { tracked } } } }
             framing: metafield(namespace: "card", key: "frame") { value }
           } } }
         }`, { q: "handle:" + handle });
@@ -535,6 +537,7 @@ exports.handler = async function (event) {
           product(id: $id) {
             id
             options { name }
+            media(first: 50) { nodes { id } }
             variants(first: 100) { nodes { id selectedOptions { name value } } }
           }
         }`, { id: productId });
@@ -590,12 +593,18 @@ exports.handler = async function (event) {
         const productOptions = order.map(function(n,idx){ var nm=nameForRole[n];
           return { name: nm, position: idx+1, values: valuesByName[nm].map(function(val){ return { name:val }; }) }; });
 
+        // Preserve the product's existing media. productSet treats media as a declarative
+        // LIST field, so omitting it deletes every image except the primary. Passing the
+        // current media IDs back in `files` keeps the full gallery intact.
+        const keepFiles = ((cur.product.media && cur.product.media.nodes) || []).map(function (m) { return { id: m.id }; });
+        const psInput = { id: productId, productOptions: productOptions, variants: setVariants };
+        if (keepFiles.length) psInput.files = keepFiles;
         const setRes = await gql(`mutation($input: ProductSetInput!) {
           productSet(synchronous: true, input: $input) {
             product { id variantsCount { count } }
             userErrors { field message }
           }
-        }`, { input: { id: productId, productOptions: productOptions, variants: setVariants } });
+        }`, { input: psInput });
         const errs = (setRes.productSet && setRes.productSet.userErrors) || [];
         if (errs.length) return reply(422, { error: "productSet: " + errs.map(function(e){return e.message;}).join("; "), userErrors: errs });
         const removed = (cur.product.variants.nodes||[]).length - carried;
