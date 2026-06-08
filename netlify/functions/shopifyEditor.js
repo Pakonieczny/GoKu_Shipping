@@ -308,29 +308,30 @@ function shapeProduct(node) {
 // title (a theme filter). So after any rename, image alts must be re-synced to the new title
 // or the extra images vanish on the storefront (while still showing in admin). Best-effort.
 async function syncImageAltToTitle(productId, title) {
-  if (!productId || !title) return;
+  if (!productId || !title) return { updated: 0, total: 0 };
   try {
     const md = await gql(`query($id: ID!) {
       product(id: $id) { media(first: 50) { nodes { ... on MediaImage { id alt } } } }
     }`, { id: productId });
     const imgs = ((((md.product || {}).media) || {}).nodes || []).filter(n => n && n.id);
     const stale = imgs.filter(n => String(n.alt || "").indexOf(title) < 0);
-    if (stale.length) {
-      // Use productUpdateMedia (write_products scope, which this app has) rather than
-      // fileUpdate (Files API scope, which it does NOT have) so the alt actually updates.
-      // IDs are MediaImage IDs from the query above, as productUpdateMedia requires.
-      // Keep only the part BEFORE any "#" in sync with the title. The theme's image-set
-      // feature lives in the "#group_value" suffix of the alt (e.g. "Title#metal_gold"),
-      // which drives per-variant photo switching, so it must be preserved.
-      const newAlt = function (oldAlt) {
-        const a = String(oldAlt || ""); const h = a.indexOf("#");
-        return h >= 0 ? (title + a.slice(h)) : title;
-      };
-      await gql(`mutation($media: [UpdateMediaInput!]!, $productId: ID!) {
-        productUpdateMedia(media: $media, productId: $productId) { mediaUserErrors { field message } }
-      }`, { media: stale.map(n => ({ id: n.id, alt: newAlt(n.alt) })), productId: productId });
-    }
-  } catch (e) { /* never block a save on alt sync */ }
+    if (!stale.length) return { updated: 0, total: imgs.length };
+    // Use productUpdateMedia (write_products scope, which this app has) rather than fileUpdate
+    // (Files API scope, which it does NOT have). IDs are MediaImage IDs, as it requires.
+    // Keep only the part BEFORE any "#" in sync with the title — the theme's image-set feature
+    // lives in the "#group_value" suffix of the alt and must be preserved.
+    const newAlt = function (oldAlt) {
+      const a = String(oldAlt || ""); const h = a.indexOf("#");
+      return h >= 0 ? (title + a.slice(h)) : title;
+    };
+    const r = await gql(`mutation($media: [UpdateMediaInput!]!, $productId: ID!) {
+      productUpdateMedia(media: $media, productId: $productId) { mediaUserErrors { field message } }
+    }`, { media: stale.map(n => ({ id: n.id, alt: newAlt(n.alt) })), productId: productId });
+    const ue = (r.productUpdateMedia && r.productUpdateMedia.mediaUserErrors) || [];
+    return ue.length
+      ? { updated: 0, total: imgs.length, error: ue.map(e => e.message).join("; ") }
+      : { updated: stale.length, total: imgs.length };
+  } catch (e) { return { updated: 0, total: 0, error: String(e && e.message) }; }
 }
 
 exports.handler = async function (event) {
@@ -416,6 +417,16 @@ exports.handler = async function (event) {
 
       /* ---------- WRITES ---------- */
 
+      case "syncImageAlt": {
+        if (!body.product_id) return reply(400, { error: "Missing product_id" });
+        let title = body.title;
+        if (!title) {
+          const d = await gql(`query($id: ID!) { product(id: $id) { title } }`, { id: body.product_id });
+          title = (d.product || {}).title || "";
+        }
+        const res = await syncImageAltToTitle(body.product_id, title);
+        return reply(200, { ok: !res.error, retagged: res.updated, total: res.total, error: res.error });
+      }
       case "updateTitle": {
         const d = await gql(`mutation($p: ProductUpdateInput!) {
           productUpdate(product: $p) { product { id } userErrors { field message } }
