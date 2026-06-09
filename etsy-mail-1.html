@@ -4439,8 +4439,403 @@
     }
 
   </style>
+
+<style id="emAuthV6Styles">
+/* EtsyMail v6 — invite-gated auth UI (scoped under #emAuthLayer) */
+#emAuthLayer{font-family:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;}
+#emAuthLayer{
+  --ink:#1b1f24;--ink-soft:#2b3138;--muted:#6a737d;--muted-2:#9aa3ad;
+  --line:#e2e6ea;--line-strong:#d2d8de;--field:#f6f8fa;--field-focus:#fff;
+  --blue:#2f6fed;--blue-press:#245fd0;--blue-tint:#eaf1fe;
+  --green:#1f883d;--green-tint:#e8f5ec;--red:#cf222e;--red-tint:#fdecec;--amber:#b7791f;
+  --brass:#c2922e;--brass-deep:#9a7220;--brass-tint:#f7efdd;
+  --plum:#7a45c4;--plum-deep:#5f33a0;--plum-tint:#f1eafb;
+  --canvas-1:#0c0f13;--canvas-2:#14181e;
+  --r-sm:7px;--r-md:11px;--r-lg:18px;
+  --shadow-card:0 1px 2px rgba(16,22,30,.05),0 18px 50px -18px rgba(16,22,30,.45);
+  --shadow-pop:0 8px 30px -8px rgba(16,22,30,.35);
+  --ease:cubic-bezier(.22,.61,.36,1);--t:.42s;
+}
+#emAuthLayer *{box-sizing:border-box;}
+#emAuthLayer .mono{font-family:"JetBrains Mono",ui-monospace,Menlo,monospace;}
+#emAuthLayer .app-shell{position:fixed;inset:0;display:grid;grid-template-rows:48px 1fr;grid-template-columns:220px 360px 1fr;grid-template-areas:"top top top" "rail list detail";filter:blur(7px) saturate(.85) brightness(.96);transform:scale(1.012);transition:filter var(--t) var(--ease),transform var(--t) var(--ease),opacity var(--t) var(--ease);opacity:.5;pointer-events:none;user-select:none;}
+body.authed #emAuthLayer .app-shell{filter:none;transform:none;opacity:1;pointer-events:auto;}
+#emAuthLayer .s-top{grid-area:top;background:var(--ink);display:flex;align-items:center;gap:12px;padding:0 16px;color:#e9edf1;}
+#emAuthLayer .s-top .dot{width:9px;height:9px;border-radius:50%;background:var(--green);box-shadow:0 0 0 3px rgba(31,136,61,.18);}
+#emAuthLayer .s-top b{font-weight:600;font-size:14px;letter-spacing:.2px;}
+#emAuthLayer .s-top .tag{color:var(--muted-2);font-size:12px;}
+#emAuthLayer .s-top .right{margin-left:auto;display:flex;align-items:center;gap:10px;}
+#emAuthLayer .s-top .teambtn{background:#2b333c;border:1px solid #3a434d;color:#dbe2e8;padding:5px 11px;border-radius:8px;font:inherit;font-size:12px;font-weight:500;cursor:pointer;display:inline-flex;align-items:center;gap:6px;}
+#emAuthLayer .s-top .teambtn:hover{background:#343d47;}
+#emAuthLayer .s-top .teambtn svg{width:14px;height:14px;}
+#emAuthLayer .s-top .who{font-size:12px;color:#cdd4db;display:flex;align-items:center;gap:8px;}
+#emAuthLayer .rolepill{font-size:11px;font-weight:600;padding:3px 9px;border-radius:999px;display:inline-flex;align-items:center;gap:5px;}
+#emAuthLayer .rolepill svg{width:12px;height:12px;}
+#emAuthLayer .rolepill.master{background:var(--plum-tint);color:var(--plum-deep);}
+#emAuthLayer .rolepill.user{background:var(--green-tint);color:#0a5226;}
+#emAuthLayer .rolepill.suspended{background:#f0f1f3;color:#6a737d;}
+#emAuthLayer .s-rail{grid-area:rail;background:#f3f5f7;border-right:1px solid var(--line);padding:14px 10px;}
+#emAuthLayer .s-rail .grp{height:11px;width:62%;background:#dfe4e9;border-radius:4px;margin:0 6px 16px;}
+#emAuthLayer .s-rail .item{height:32px;border-radius:7px;margin:5px 0;display:flex;align-items:center;padding:0 10px;gap:9px;}
+#emAuthLayer .s-rail .item.sel{background:var(--blue-tint);}
+#emAuthLayer .s-rail .item i{width:8px;height:8px;border-radius:50%;background:#c4ccd3;}
+#emAuthLayer .s-rail .item.sel i{background:var(--blue);}
+#emAuthLayer .s-rail .item span{height:9px;border-radius:4px;background:#cfd6dc;}
+#emAuthLayer .s-rail .item.sel span{background:#9bbcf6;}
+#emAuthLayer .s-list{grid-area:list;background:#fff;border-right:1px solid var(--line);overflow:hidden;}
+#emAuthLayer .s-list .row{padding:13px 16px;border-bottom:1px solid var(--line);display:flex;gap:11px;align-items:flex-start;}
+#emAuthLayer .s-list .row .av{width:30px;height:30px;border-radius:50%;flex:0 0 auto;background:linear-gradient(135deg,#e7ecf1,#d4dce3);}
+#emAuthLayer .s-list .row .col{flex:1;}
+#emAuthLayer .s-list .row .l1{height:10px;width:55%;background:#dde3e9;border-radius:4px;margin-bottom:8px;}
+#emAuthLayer .s-list .row .l2{height:8px;width:88%;background:#eaeef2;border-radius:4px;}
+#emAuthLayer .s-detail{grid-area:detail;background:#fbfcfd;}
+#emAuthLayer .gate-canvas{position:fixed;inset:0;z-index:1000;display:grid;place-items:center;padding:24px;background:radial-gradient(120% 90% at 80% 6%,rgba(194,146,46,.15),transparent 46%),radial-gradient(95% 80% at 8% 100%,rgba(47,111,237,.12),transparent 50%),linear-gradient(180deg,var(--canvas-2),var(--canvas-1));transition:opacity var(--t) var(--ease),visibility var(--t);}
+body.authed #emAuthLayer .gate-canvas{opacity:0;visibility:hidden;}
+#emAuthLayer .gate{width:min(860px,100%);background:#fff;border-radius:var(--r-lg);box-shadow:var(--shadow-card);display:grid;grid-template-columns:286px 1fr;overflow:hidden;transform:translateY(8px) scale(.985);opacity:0;animation:gate-in .5s var(--ease) .05s forwards;}
+@keyframes gate-in{to{transform:none;opacity:1;}}
+body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
+@keyframes gate-out{to{transform:translateY(-10px) scale(.98);opacity:0;}}
+#emAuthLayer .gate-aside{background:linear-gradient(168deg,#15181d,#0f1216);color:#e9edf1;padding:28px 26px;position:relative;overflow:hidden;}
+#emAuthLayer .gate-aside::after{content:"";position:absolute;right:-70px;top:-60px;width:200px;height:200px;border-radius:50%;border:1px solid rgba(194,146,46,.2);box-shadow:0 0 0 14px rgba(194,146,46,.04);}
+#emAuthLayer .brand{display:flex;align-items:center;gap:11px;}
+#emAuthLayer .brand .logo{width:36px;height:36px;}
+#emAuthLayer .brand .name{font-weight:700;font-size:15px;letter-spacing:.2px;}
+#emAuthLayer .brand .name small{display:block;font-weight:500;font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--brass);margin-top:1px;}
+#emAuthLayer .aside-lede{font-size:12.5px;color:#aab3bd;line-height:1.55;margin:22px 0 24px;}
+#emAuthLayer .roles-legend{display:flex;flex-direction:column;gap:13px;}
+#emAuthLayer .rl{display:grid;grid-template-columns:26px 1fr;gap:11px;align-items:start;}
+#emAuthLayer .rl .ic{width:26px;height:26px;border-radius:8px;display:grid;place-items:center;}
+#emAuthLayer .rl .ic svg{width:15px;height:15px;}
+#emAuthLayer .rl.master .ic{background:rgba(122,69,196,.18);color:#c7a6f0;}
+#emAuthLayer .rl.user .ic{background:rgba(31,136,61,.16);color:#7fd29a;}
+#emAuthLayer .rl .t{font-size:12.5px;font-weight:600;color:#e3e8ed;}
+#emAuthLayer .rl .d{font-size:11px;color:#7f8a95;margin-top:1px;line-height:1.4;}
+#emAuthLayer .aside-note{margin-top:20px;font-size:11px;color:#7f8a95;line-height:1.5;border-top:1px solid #232a32;padding-top:14px;}
+#emAuthLayer .aside-foot{position:absolute;left:26px;right:26px;bottom:22px;font-size:11px;color:#6a747e;display:flex;align-items:center;gap:6px;}
+#emAuthLayer .aside-foot svg{width:12px;height:12px;}
+#emAuthLayer .gate-main{padding:34px 38px 28px;min-height:470px;display:flex;flex-direction:column;}
+#emAuthLayer .view{display:none;flex:1;flex-direction:column;}
+#emAuthLayer .view.active{display:flex;animation:vin .32s var(--ease);}
+@keyframes vin{from{opacity:0;transform:translateX(8px);}to{opacity:1;transform:none;}}
+#emAuthLayer h1.title{font-size:22px;font-weight:700;letter-spacing:-.01em;margin:0 0 6px;}
+#emAuthLayer p.lede{font-size:13.5px;color:var(--muted);line-height:1.5;margin:0 0 22px;max-width:44ch;}
+#emAuthLayer label.fl{display:block;font-size:12px;font-weight:600;color:var(--ink-soft);margin:0 0 6px;}
+#emAuthLayer .field{position:relative;margin-bottom:15px;}
+#emAuthLayer .field input{width:100%;height:44px;padding:0 14px;font:inherit;font-size:14px;border:1.5px solid var(--line-strong);border-radius:var(--r-md);background:var(--field);color:var(--ink);transition:border-color .18s,background .18s,box-shadow .18s;}
+#emAuthLayer .field input::placeholder{color:#9aa3ad;}
+#emAuthLayer .field input:hover{border-color:#c0c8cf;}
+#emAuthLayer .field input:focus{outline:none;background:var(--field-focus);border-color:var(--blue);box-shadow:0 0 0 4px var(--blue-tint);}
+#emAuthLayer .field.has-reveal input{padding-right:48px;}
+#emAuthLayer .field.invalid input{border-color:var(--red);box-shadow:0 0 0 4px var(--red-tint);}
+#emAuthLayer .field.valid input{border-color:var(--green);}
+#emAuthLayer .field.busy input{border-color:var(--amber);}
+#emAuthLayer .field .uname-pre{position:absolute;left:14px;top:50%;transform:translateY(-50%);color:#9aa3ad;font-family:"JetBrains Mono",monospace;font-size:13px;pointer-events:none;}
+#emAuthLayer .field.has-pre input{padding-left:24px;font-family:"JetBrains Mono",monospace;}
+#emAuthLayer .field.code input{font-family:"JetBrains Mono",monospace;letter-spacing:.08em;text-transform:uppercase;}
+#emAuthLayer .field.code input:focus{border-color:var(--brass);box-shadow:0 0 0 4px var(--brass-tint);}
+#emAuthLayer .reveal{position:absolute;right:6px;top:6px;height:32px;width:38px;border:none;background:transparent;cursor:pointer;border-radius:8px;display:grid;place-items:center;color:var(--muted);}
+#emAuthLayer .reveal:hover{background:#eef1f4;color:var(--ink);}
+#emAuthLayer .reveal svg{width:19px;height:19px;}
+#emAuthLayer .field .endspin{position:absolute;right:14px;top:50%;transform:translateY(-50%);width:15px;height:15px;border-radius:50%;border:2px solid #e2c98a;border-top-color:var(--amber);animation:spin .7s linear infinite;display:none;}
+#emAuthLayer .field.busy .endspin{display:block;}
+#emAuthLayer .hintline{display:flex;align-items:center;gap:6px;min-height:15px;font-size:11.5px;margin:-7px 0 13px;}
+#emAuthLayer .hintline:empty{display:none;}
+#emAuthLayer .hintline.tip{color:var(--muted);}
+#emAuthLayer .hintline.bad{color:var(--red);}
+#emAuthLayer .hintline.good{color:var(--green);}
+#emAuthLayer .hintline.busy{color:var(--amber);}
+#emAuthLayer .hintline svg{width:13px;height:13px;flex:0 0 auto;}
+#emAuthLayer .hintline .sugg{background:none;border:none;padding:0 0 0 2px;font:inherit;font-size:11.5px;color:var(--blue);font-weight:600;cursor:pointer;text-decoration:underline;}
+#emAuthLayer .caps{display:none;align-items:center;gap:5px;color:var(--amber);font-size:11px;font-weight:600;margin:-7px 0 12px;}
+#emAuthLayer .caps.show{display:flex;}
+#emAuthLayer .caps svg{width:13px;height:13px;}
+#emAuthLayer .pw-meter{display:flex;gap:5px;margin:-6px 0 8px;}
+#emAuthLayer .pw-meter span{flex:1;height:5px;border-radius:3px;background:#e6eaee;transition:background .25s;}
+#emAuthLayer .pw-label{font-size:11px;font-weight:600;margin:-2px 0 6px;}
+#emAuthLayer .pw-reqs{display:grid;grid-template-columns:1fr 1fr;gap:3px 14px;margin:2px 0 14px;padding:0;}
+#emAuthLayer .pw-reqs li{list-style:none;display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted);}
+#emAuthLayer .pw-reqs li svg{width:13px;height:13px;color:#c4ccd3;}
+#emAuthLayer .pw-reqs li.ok{color:var(--green);}
+#emAuthLayer .pw-reqs li.ok svg{color:var(--green);}
+#emAuthLayer .lvl-badge{display:flex;align-items:center;gap:10px;border-radius:var(--r-md);padding:11px 13px;margin:0 0 18px;font-size:12.5px;border:1px solid;}
+#emAuthLayer .lvl-badge.master{background:var(--plum-tint);border-color:#dcc6f5;color:var(--plum-deep);}
+#emAuthLayer .lvl-badge.user{background:var(--green-tint);border-color:#bce0c8;color:#0a5226;}
+#emAuthLayer .lvl-badge svg{width:18px;height:18px;flex:0 0 auto;}
+#emAuthLayer .lvl-badge b{font-weight:700;}
+#emAuthLayer .banner{display:none;gap:10px;align-items:flex-start;border-radius:var(--r-md);padding:11px 13px;margin:0 0 16px;font-size:12.5px;line-height:1.45;border:1px solid transparent;animation:nudge .3s var(--ease);}
+#emAuthLayer .banner.show{display:flex;}
+#emAuthLayer .banner svg{width:16px;height:16px;flex:0 0 auto;margin-top:1px;}
+#emAuthLayer .banner.err{background:var(--red-tint);border-color:#f3c3c3;color:#8f1620;}
+#emAuthLayer .banner.warn{background:#fdf3da;border-color:#f0dca0;color:#7a560f;}
+#emAuthLayer .banner.info{background:var(--blue-tint);border-color:#bcd4fb;color:#1c4694;}
+@keyframes nudge{0%{transform:translateY(-3px);opacity:.4;}100%{transform:none;opacity:1;}}
+#emAuthLayer .shake{animation:shake .4s var(--ease);}
+@keyframes shake{10%,90%{transform:translateX(-1px)}20%,80%{transform:translateX(2px)}30%,50%,70%{transform:translateX(-4px)}40%,60%{transform:translateX(4px)}}
+#emAuthLayer .rowflex{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:2px 0 18px;}
+#emAuthLayer .remember{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ink-soft);cursor:pointer;user-select:none;}
+#emAuthLayer .remember input{width:16px;height:16px;accent-color:var(--blue);cursor:pointer;}
+#emAuthLayer .linklike{background:none;border:none;padding:0;font:inherit;font-size:12.5px;color:var(--blue);cursor:pointer;font-weight:500;}
+#emAuthLayer .linklike:hover{text-decoration:underline;}
+#emAuthLayer .btn{height:46px;width:100%;border:none;border-radius:var(--r-md);cursor:pointer;font:inherit;font-size:14px;font-weight:600;color:#fff;display:inline-flex;align-items:center;justify-content:center;gap:9px;transition:transform .12s var(--ease),background .18s,box-shadow .18s,opacity .18s;}
+#emAuthLayer .btn:active{transform:translateY(1px);}
+#emAuthLayer .btn.blue{background:var(--blue);box-shadow:0 1px 0 var(--blue-press),0 8px 18px -10px rgba(47,111,237,.7);}
+#emAuthLayer .btn.blue:hover{background:var(--blue-press);}
+#emAuthLayer .btn.ghost{background:#fff;color:var(--ink);border:1.5px solid var(--line-strong);box-shadow:none;}
+#emAuthLayer .btn.ghost:hover{background:var(--field);}
+#emAuthLayer .btn[disabled]{opacity:.5;cursor:not-allowed;transform:none;box-shadow:none;}
+#emAuthLayer .btn .spin{width:17px;height:17px;border-radius:50%;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;animation:spin .7s linear infinite;display:none;}
+#emAuthLayer .btn.ghost .spin{border-color:rgba(27,31,36,.25);border-top-color:var(--ink);}
+#emAuthLayer .btn.loading .spin{display:inline-block;}
+@keyframes spin{to{transform:rotate(360deg);}}
+#emAuthLayer .foot-note{margin-top:auto;padding-top:16px;font-size:12px;color:var(--muted);line-height:1.5;}
+#emAuthLayer .foot-note code{font-family:"JetBrains Mono",monospace;background:var(--field);padding:1px 6px;border-radius:5px;font-size:11px;}
+#emAuthLayer .divider{display:flex;align-items:center;gap:12px;margin:18px 0 16px;color:var(--muted-2);font-size:11px;text-transform:uppercase;letter-spacing:.08em;}
+#emAuthLayer .divider::before, #emAuthLayer .divider::after{content:"";flex:1;height:1px;background:var(--line);}
+#emAuthLayer .conn{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);margin-bottom:16px;min-height:14px;opacity:0;transition:opacity .2s;}
+#emAuthLayer .conn.show{opacity:1;}
+#emAuthLayer .conn .led{width:9px;height:9px;border-radius:50%;background:var(--muted-2);}
+#emAuthLayer .conn .led.ok{background:var(--green);box-shadow:0 0 0 3px rgba(31,136,61,.16);}
+#emAuthLayer .conn .led.bad{background:var(--red);box-shadow:0 0 0 3px rgba(207,34,46,.16);}
+#emAuthLayer .conn .led.busy{background:var(--amber);}
+#emAuthLayer .splash{position:fixed;inset:0;z-index:1100;display:none;place-items:center;background:radial-gradient(60% 60% at 50% 45%,rgba(15,18,22,.9),rgba(12,15,19,.96));}
+#emAuthLayer .splash.show{display:grid;}
+#emAuthLayer .splash .seal{width:96px;height:96px;}
+#emAuthLayer .splash .seal circle.ring{fill:none;stroke:var(--green);stroke-width:5;stroke-dasharray:283;stroke-dashoffset:283;animation:draw .5s var(--ease) forwards;}
+#emAuthLayer .splash .seal path.tick{fill:none;stroke:#fff;stroke-width:7;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:60;stroke-dashoffset:60;animation:draw .35s var(--ease) .42s forwards;}
+@keyframes draw{to{stroke-dashoffset:0;}}
+#emAuthLayer .splash .msg{color:#fff;font-size:15px;font-weight:600;margin-top:20px;opacity:0;animation:fade .3s var(--ease) .55s forwards;text-align:center;}
+#emAuthLayer .splash .msg small{display:block;color:var(--muted-2);font-weight:500;font-size:12.5px;margin-top:4px;}
+@keyframes fade{to{opacity:1;}}
+#emAuthLayer .toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(20px);background:var(--ink);color:#fff;padding:11px 18px;border-radius:999px;font-size:13px;font-weight:500;box-shadow:var(--shadow-pop);opacity:0;pointer-events:none;transition:all .28s var(--ease);z-index:1200;}
+#emAuthLayer .toast.show{opacity:1;transform:translateX(-50%);}
+#emAuthLayer .sheet-bg{position:fixed;inset:0;z-index:1150;background:rgba(12,15,19,.5);display:none;align-items:flex-start;justify-content:center;padding:40px 20px;overflow:auto;}
+#emAuthLayer .sheet-bg.show{display:flex;}
+#emAuthLayer .sheet{width:min(720px,100%);background:#fff;border-radius:16px;box-shadow:var(--shadow-card);overflow:hidden;animation:gate-in .3s var(--ease);}
+#emAuthLayer .sheet-head{padding:20px 24px 16px;border-bottom:1px solid var(--line);display:flex;align-items:flex-start;gap:12px;}
+#emAuthLayer .sheet-head .h{flex:1;}
+#emAuthLayer .sheet-head h2{margin:0;font-size:18px;font-weight:700;}
+#emAuthLayer .sheet-head p{margin:3px 0 0;font-size:12.5px;color:var(--muted);}
+#emAuthLayer .sheet-head .x{border:none;background:var(--field);width:32px;height:32px;border-radius:9px;cursor:pointer;font-size:18px;color:var(--muted);line-height:1;}
+#emAuthLayer .sheet-head .x:hover{background:#eceff2;}
+#emAuthLayer .sheet-body{padding:18px 24px 24px;}
+#emAuthLayer .you-card{background:linear-gradient(135deg,#fbfaf7,#f5f7fb);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:20px;}
+#emAuthLayer .you-card .top{display:flex;align-items:center;gap:10px;margin-bottom:10px;}
+#emAuthLayer .you-card .av{width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,var(--blue),var(--plum));color:#fff;display:grid;place-items:center;font-weight:700;font-size:15px;}
+#emAuthLayer .you-card .nm{font-weight:600;font-size:14px;}
+#emAuthLayer .you-card .un{font-size:12px;color:var(--muted);}
+#emAuthLayer .caps-grid{display:grid;grid-template-columns:1fr 1fr;gap:5px 18px;}
+#emAuthLayer .caps-grid div{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ink-soft);}
+#emAuthLayer .caps-grid svg{width:14px;height:14px;color:var(--green);flex:0 0 auto;}
+#emAuthLayer .caps-grid div.no{color:#b9c0c7;}
+#emAuthLayer .caps-grid div.no svg{color:#d6dbe0;}
+#emAuthLayer .sec-h{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:18px 0 12px;}
+#emAuthLayer .sec-h h3{margin:0;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);}
+#emAuthLayer .btn-sm{height:34px;padding:0 14px;border-radius:9px;border:none;background:var(--blue);color:#fff;font:inherit;font-size:12.5px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:7px;}
+#emAuthLayer .btn-sm:hover{background:var(--blue-press);}
+#emAuthLayer .btn-sm svg{width:15px;height:15px;}
+#emAuthLayer .gen-panel{display:none;border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:14px;background:var(--field);}
+#emAuthLayer .gen-panel.show{display:block;}
+#emAuthLayer .gen-panel .grow{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;}
+#emAuthLayer .lvl-seg{display:inline-flex;background:#fff;border:1px solid var(--line-strong);border-radius:9px;padding:3px;}
+#emAuthLayer .lvl-seg button{border:none;background:transparent;font:inherit;font-size:12px;font-weight:600;color:var(--muted);padding:6px 12px;border-radius:7px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;}
+#emAuthLayer .lvl-seg button svg{width:13px;height:13px;}
+#emAuthLayer .lvl-seg button.on[data-lvl="master_admin"]{background:var(--plum-tint);color:var(--plum-deep);}
+#emAuthLayer .lvl-seg button.on[data-lvl="user"]{background:var(--green-tint);color:#0a5226;}
+#emAuthLayer .gen-panel .lf{font-size:11px;font-weight:600;color:var(--muted);margin:0 0 5px;display:block;}
+#emAuthLayer .gen-panel input{height:34px;border:1px solid var(--line-strong);border-radius:9px;padding:0 11px;font:inherit;font-size:13px;background:#fff;min-width:160px;}
+#emAuthLayer .invite-box{display:none;margin:0 0 14px;padding:14px 16px;background:var(--green-tint);border:1px solid #b8e0c4;border-radius:12px;}
+#emAuthLayer .invite-box.show{display:block;}
+#emAuthLayer .invite-box .lab{font-size:12px;font-weight:600;color:#0a5226;margin-bottom:7px;}
+#emAuthLayer .invite-row{display:flex;gap:8px;}
+#emAuthLayer .invite-row input{flex:1;font-family:"JetBrains Mono",monospace;font-size:12px;padding:9px 11px;border:1px solid #b8e0c4;border-radius:9px;background:#fff;color:var(--ink);}
+#emAuthLayer .invite-row button{padding:0 14px;border:none;border-radius:9px;background:var(--green);color:#fff;font:inherit;font-size:12.5px;font-weight:600;cursor:pointer;}
+#emAuthLayer .list-tbl{width:100%;border:1px solid var(--line);border-radius:12px;overflow:hidden;}
+#emAuthLayer .lrow{display:grid;grid-template-columns:1fr auto auto;gap:12px;align-items:center;padding:11px 14px;border-bottom:1px solid var(--line);}
+#emAuthLayer .lrow:last-child{border-bottom:none;}
+#emAuthLayer .lrow.head{background:var(--field);font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600;}
+#emAuthLayer .lrow .pers{display:flex;align-items:center;gap:10px;min-width:0;}
+#emAuthLayer .lrow .pa{width:30px;height:30px;border-radius:50%;flex:0 0 auto;background:linear-gradient(135deg,#e7ecf1,#d4dce3);display:grid;place-items:center;font-weight:600;font-size:12px;color:#5a6571;}
+#emAuthLayer .lrow .pn{font-size:13px;font-weight:600;line-height:1.2;}
+#emAuthLayer .lrow .pu{font-size:11.5px;color:var(--muted);}
+#emAuthLayer .lrow .acts{display:flex;gap:6px;align-items:center;}
+#emAuthLayer .ico-btn{width:30px;height:30px;border-radius:8px;border:1px solid var(--line-strong);background:#fff;cursor:pointer;display:grid;place-items:center;color:var(--muted);}
+#emAuthLayer .ico-btn:hover{background:var(--field);color:var(--ink);}
+#emAuthLayer .ico-btn.danger:hover{background:var(--red-tint);color:var(--red);border-color:#f0bcbc;}
+#emAuthLayer .ico-btn svg{width:15px;height:15px;}
+#emAuthLayer .ico-btn:disabled{opacity:.4;cursor:not-allowed;}
+#emAuthLayer .txt-btn{border:1px solid var(--line-strong);background:#fff;border-radius:8px;padding:5px 10px;font:inherit;font-size:11.5px;font-weight:600;color:var(--ink-soft);cursor:pointer;}
+#emAuthLayer .txt-btn:hover{background:var(--field);}
+#emAuthLayer .txt-btn.plum{color:var(--plum-deep);border-color:#dcc6f5;}
+#emAuthLayer .txt-btn.plum:hover{background:var(--plum-tint);}
+#emAuthLayer .protected{font-size:11px;color:var(--plum-deep);display:inline-flex;align-items:center;gap:4px;font-weight:600;}
+#emAuthLayer .protected svg{width:12px;height:12px;}
+#emAuthLayer .code-chip{font-family:"JetBrains Mono",monospace;font-size:11.5px;background:var(--field);border:1px solid var(--line);padding:3px 8px;border-radius:6px;}
+#emAuthLayer .setup-link{display:flex;align-items:center;gap:12px;padding:13px 14px;border:1px solid var(--line);border-radius:12px;margin-bottom:10px;}
+#emAuthLayer .setup-link .si{width:34px;height:34px;border-radius:9px;background:var(--plum-tint);color:var(--plum-deep);display:grid;place-items:center;flex:0 0 auto;}
+#emAuthLayer .setup-link .si svg{width:18px;height:18px;}
+#emAuthLayer .setup-link .body{flex:1;min-width:0;}
+#emAuthLayer .setup-link .body b{font-size:13px;}
+#emAuthLayer .setup-link .body .lk{font-family:"JetBrains Mono",monospace;font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+#emAuthLayer .dock{position:fixed;right:16px;bottom:16px;z-index:1300;width:262px;background:rgba(20,24,30,.92);backdrop-filter:blur(8px);color:#e9edf1;border:1px solid #2b333c;border-radius:14px;box-shadow:var(--shadow-pop);font-size:12px;overflow:hidden;}
+#emAuthLayer .dock h4{margin:0;padding:11px 14px;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#9aa3ad;border-bottom:1px solid #2b333c;display:flex;align-items:center;justify-content:space-between;}
+#emAuthLayer .dock h4 button{background:none;border:none;color:#6a747e;cursor:pointer;font-size:15px;line-height:1;}
+#emAuthLayer .dock .body{padding:11px 12px;display:flex;flex-direction:column;gap:7px;}
+#emAuthLayer .dock .lbl{color:#7f8a95;font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;margin:4px 2px 1px;}
+#emAuthLayer .dock button.d{text-align:left;background:#1d222a;border:1px solid #2f3942;color:#dbe2e8;padding:7px 10px;border-radius:8px;cursor:pointer;font:inherit;font-size:12px;}
+#emAuthLayer .dock button.d:hover{background:#262d36;}
+#emAuthLayer .dock button.d.on{border-color:var(--brass);color:#f3e6c8;}
+#emAuthLayer .dock .seedline{font-size:10.5px;color:#7f8a95;line-height:1.5;padding:2px 2px 0;}
+#emAuthLayer .dock .seedline code{color:#cdd4db;}
+#emAuthLayer .dock.min .body{display:none;}
+@media (max-width:760px){#emAuthLayer .gate{grid-template-columns:1fr;max-width:440px;}#emAuthLayer .gate-aside{display:none;}#emAuthLayer .gate-main{padding:26px 22px 22px;min-height:0;}#emAuthLayer .app-shell{grid-template-columns:0 1fr 0;}#emAuthLayer h1.title{font-size:20px;}#emAuthLayer .pw-reqs, #emAuthLayer .caps-grid{grid-template-columns:1fr;}#emAuthLayer .lrow{grid-template-columns:1fr auto;}#emAuthLayer .lrow .acts{grid-column:1/-1;justify-content:flex-end;}}
+@media (prefers-reduced-motion:reduce){#emAuthLayer *{animation-duration:.001s!important;transition-duration:.05s!important;}}
+</style>
 </head>
 <body>
+
+<!-- ════ EtsyMail v6 — invite-gated auth layer (scoped) ════ -->
+<div id="emAuthLayer">
+<div class="gate-canvas" id="gateCanvas">
+  <div class="gate" id="gate" role="dialog" aria-modal="true" aria-labelledby="authTitle">
+    <aside class="gate-aside">
+      <div class="brand">
+        <svg class="logo" viewBox="0 0 40 40" aria-hidden="true"><rect x="3" y="3" width="34" height="34" rx="10" fill="none" stroke="#c2922e" stroke-width="1.5" opacity=".5"/><path d="M11 14h18M11 20h18M11 26h11" stroke="#e0b85c" stroke-width="2.2" stroke-linecap="round"/></svg>
+        <div class="name">EtsyMail<small>Operator Access</small></div>
+      </div>
+      <p class="aside-lede">Sign in with your username and password. New accounts are created by invitation only.</p>
+      <div class="roles-legend">
+        <div class="rl master"><div class="ic"><svg viewBox="0 0 24 24" fill="none"><path d="M4 18h16M5 18l-1.5-9 5 4 3.5-7 3.5 7 5-4L19 18" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg></div><div><div class="t">Master Admin</div><div class="d">Every privilege. The only role that can invite people.</div></div></div>
+        <div class="rl user"><div class="ic"><svg viewBox="0 0 24 24" fill="none"><path d="M4 5h16v11H4zM2 20h20" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></div><div><div class="t">User</div><div class="d">Full inbox: read, reply, move, delete.</div></div></div>
+      </div>
+      <p class="aside-note">An invite link decides which level a new account gets — chosen by a Master Admin when the link is made.</p>
+      <div class="aside-foot"><svg viewBox="0 0 24 24" fill="none"><path d="M6 10V8a6 6 0 1112 0v2" stroke="#8b95a0" stroke-width="1.6"/><rect x="4" y="10" width="16" height="10" rx="2" stroke="#8b95a0" stroke-width="1.6"/></svg>Stays in this browser · 30-day sessions</div>
+    </aside>
+
+    <main class="gate-main">
+      <div class="conn" id="conn"><span class="led busy" id="connLed"></span><span id="connText"></span></div>
+
+      <!-- SIGN IN (no create-account here) -->
+      <section class="view active" id="viewSignin">
+        <h1 class="title" id="authTitle">Welcome back</h1>
+        <p class="lede">Sign in with your operator account to open the inbox.</p>
+        <div class="banner" id="siBanner"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.7"/><path d="M12 7v6M12 16.5h.01" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><span id="siBannerText"></span></div>
+        <form id="signinForm" autocomplete="on" novalidate>
+          <label class="fl" for="siUser">Username</label>
+          <div class="field has-pre"><span class="uname-pre">@</span><input id="siUser" type="text" autocomplete="username" spellcheck="false" autocapitalize="off" autocorrect="off" placeholder="paul" /></div>
+          <label class="fl" for="siPass">Password</label>
+          <div class="field has-reveal"><input id="siPass" type="password" autocomplete="current-password" placeholder="your password" />
+            <button type="button" class="reveal" data-target="siPass" aria-label="Show password"><svg class="eye" viewBox="0 0 24 24" fill="none"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7Z" stroke="currentColor" stroke-width="1.7"/><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.7"/></svg></button></div>
+          <div class="caps" id="siCaps"><svg viewBox="0 0 24 24" fill="none"><path d="M12 4 5 11h4v5h6v-5h4L12 4Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><rect x="9" y="18" width="6" height="2.5" rx=".6" fill="currentColor"/></svg>Caps Lock is on</div>
+          <div class="rowflex"><label class="remember"><input type="checkbox" id="siRemember" checked /> Keep me signed in</label><button type="button" class="linklike" id="siForgot">Forgot password?</button></div>
+          <button class="btn blue" id="siBtn" type="submit"><span class="spin"></span><span class="lbl">Sign in</span></button>
+        </form>
+        <div class="divider">or</div>
+        <button class="btn ghost" id="toRedeem" type="button">
+          <svg viewBox="0 0 24 24" fill="none" style="width:17px;height:17px"><path d="M4 8h16v10H4zM4 8l8 5 8-5" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
+          I have an invite code
+        </button>
+      </section>
+
+      <!-- REDEEM INVITE (gate before create account) -->
+      <section class="view" id="viewRedeem">
+        <h1 class="title">Enter your invite</h1>
+        <p class="lede">Accounts are created by invitation. Paste the code from your invite link to continue.</p>
+        <div class="banner" id="rdBanner"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.7"/><path d="M12 7v6M12 16.5h.01" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><span id="rdBannerText"></span></div>
+        <form id="redeemForm" novalidate>
+          <label class="fl" for="rdCode">Invite code</label>
+          <div class="field code busy-host"><input id="rdCode" type="text" class="mono" spellcheck="false" autocapitalize="characters" placeholder="EM-XXXX-XXXX" /><span class="endspin"></span></div>
+          <div class="hintline tip" id="rdHint"></div>
+          <button class="btn blue" id="rdBtn" type="submit"><span class="spin"></span><span class="lbl">Continue</span></button>
+        </form>
+        <p class="foot-note">Don't have one? Invites come from a Master Admin. <button class="linklike" id="rdBackSignin">Back to sign in</button></p>
+      </section>
+
+      <!-- CREATE ACCOUNT (only reachable via a valid invite) -->
+      <section class="view" id="viewSignup">
+        <h1 class="title">Create your account</h1>
+        <p class="lede">You're almost in — just set up your login.</p>
+        <div class="lvl-badge" id="lvlBadge"></div>
+        <div class="banner" id="suBanner"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.7"/><path d="M12 7v6M12 16.5h.01" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><span id="suBannerText"></span></div>
+        <form id="signupForm" autocomplete="on" novalidate>
+          <label class="fl" for="suName">Full name</label>
+          <div class="field"><input id="suName" type="text" autocomplete="name" placeholder="Nadia Rahman" /></div>
+          <label class="fl" for="suUser">Choose a username</label>
+          <div class="field has-pre busy-host"><span class="uname-pre">@</span><input id="suUser" type="text" autocomplete="username" spellcheck="false" autocapitalize="off" autocorrect="off" placeholder="nadia" /><span class="endspin"></span></div>
+          <div class="hintline tip" id="suUserHint"></div>
+          <label class="fl" for="suPass">Password</label>
+          <div class="field has-reveal"><input id="suPass" type="password" autocomplete="new-password" placeholder="at least 8 characters" />
+            <button type="button" class="reveal" data-target="suPass" aria-label="Show password"><svg class="eye" viewBox="0 0 24 24" fill="none"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7Z" stroke="currentColor" stroke-width="1.7"/><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.7"/></svg></button></div>
+          <div class="pw-meter" id="suMeter"><span></span><span></span><span></span><span></span></div>
+          <div class="pw-label" id="suMeterLabel" style="display:none"></div>
+          <ul class="pw-reqs" id="suReqs">
+            <li data-r="len"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.7"/><path d="M8 12.5l2.6 2.6L16 9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>8+ characters</li>
+            <li data-r="case"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.7"/><path d="M8 12.5l2.6 2.6L16 9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>Upper &amp; lower case</li>
+            <li data-r="num"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.7"/><path d="M8 12.5l2.6 2.6L16 9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>A number</li>
+            <li data-r="sym"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.7"/><path d="M8 12.5l2.6 2.6L16 9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>A symbol</li>
+          </ul>
+          <label class="fl" for="suConfirm">Confirm password</label>
+          <div class="field has-reveal"><input id="suConfirm" type="password" autocomplete="new-password" placeholder="re-enter password" />
+            <button type="button" class="reveal" data-target="suConfirm" aria-label="Show password"><svg class="eye" viewBox="0 0 24 24" fill="none"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7Z" stroke="currentColor" stroke-width="1.7"/><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.7"/></svg></button></div>
+          <div class="hintline tip" id="suConfirmHint"></div>
+          <button class="btn blue" id="suBtn" type="submit"><span class="spin"></span><span class="lbl">Create account &amp; sign in</span></button>
+        </form>
+        <p class="foot-note">Already have an account? <button class="linklike" id="toSignin">Sign in</button></p>
+      </section>
+    </main>
+  </div>
+</div>
+
+<!-- success splash -->
+<div class="splash" id="splash"><div style="display:grid;place-items:center;">
+  <svg class="seal" viewBox="0 0 100 100"><circle class="ring" cx="50" cy="50" r="45"/><path class="tick" d="M30 52 L44 66 L72 36"/></svg>
+  <div class="msg" id="splashMsg">Signed in<small id="splashSub"></small></div>
+</div></div>
+
+<!-- setup overlay (first run: two master links) -->
+<div class="sheet-bg" id="setupBg">
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="setupTitle" style="max-width:560px">
+    <div class="sheet-head"><div class="h"><h2 id="setupTitle">Set up your Master Admins</h2><p>No accounts exist yet. These two private links create the two Master Admin accounts — one each. Send them to Paul and Shell; anyone with a link can claim that account, so don't share them publicly.</p></div></div>
+    <div class="sheet-body" id="setupLinks"></div>
+  </div>
+</div>
+
+<!-- team & privileges sheet -->
+<div class="sheet-bg" id="teamBg">
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="teamTitle">
+    <div class="sheet-head"><div class="h"><h2 id="teamTitle">Team &amp; privileges</h2><p>Invite people, set their level, and manage accounts. Changes take effect immediately.</p></div><button class="x" id="teamClose" aria-label="Close">×</button></div>
+    <div class="sheet-body">
+      <div class="you-card">
+        <div class="top"><div class="av" id="youAv">?</div><div><div class="nm" id="youName">—</div><div class="un" id="youUn"></div></div><span style="margin-left:auto" id="youRolePill"></span></div>
+        <div class="caps-grid" id="youCaps"></div>
+      </div>
+
+      <div id="masterTools">
+        <div class="sec-h"><h3>Invites</h3><button class="btn-sm" id="newInviteBtn"><svg viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>New invite</button></div>
+        <div class="gen-panel" id="genPanel">
+          <div class="grow">
+            <div><span class="lf">Permission level</span>
+              <div class="lvl-seg" id="lvlSeg">
+                <button type="button" data-lvl="user" class="on"><svg viewBox="0 0 24 24" fill="none"><path d="M4 5h16v11H4zM2 20h20" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>User</button>
+                <button type="button" data-lvl="master_admin"><svg viewBox="0 0 24 24" fill="none"><path d="M4 18h16M5 18l-1.5-9 5 4 3.5-7 3.5 7 5-4L19 18" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>Master Admin</button>
+              </div>
+            </div>
+            <div><span class="lf">Label (optional)</span><input id="genLabel" type="text" placeholder="e.g. Nadia / warehouse" /></div>
+            <button class="btn-sm" id="genBtn" style="height:34px">Generate link</button>
+          </div>
+        </div>
+        <div class="invite-box" id="inviteBox"><div class="lab" id="inviteLab"></div><div class="invite-row"><input id="inviteVal" readonly /><button id="inviteCopy">Copy</button></div></div>
+        <div class="list-tbl" id="invitesTbl" style="margin-bottom:8px"></div>
+
+        <div class="sec-h"><h3>Team members</h3></div>
+        <div class="list-tbl" id="teamTbl"></div>
+      </div>
+      <div id="userOnly" style="display:none;font-size:12.5px;color:var(--muted);padding:6px 2px;">You have inbox access. Invites and team management are handled by a Master Admin.</div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+</div>
   <!-- v0.9.1 #8: Kill-switch banner (hidden unless backend reports disabled) -->
   <div id="emKillSwitchBanner" class="em-killswitch-banner">
     <i class="material-icons">block</i>
@@ -4492,24 +4887,7 @@
   <div id="emSecretModal" class="em-modal-backdrop">
     <div class="em-modal">
       <h2>Settings</h2>
-      <p style="margin-bottom:4px;"><b>Inbox secret</b></p>
-      <p style="font-size:12px;">Same value as <code>ETSYMAIL_EXTENSION_SECRET</code> in your Netlify env. Stored locally in this browser only.</p>
       <form id="emSecretForm" autocomplete="off">
-        <label for="emSecretInput">X-EtsyMail-Secret</label>
-        <!-- v4.1.2 — Wrapper lets a small "Show/Hide" button sit inline
-             with the password input. Inputs of type=password mask their
-             content with bullets; the toggle flips type to text on
-             demand so operators can read/copy the secret to share with
-             satellite operators (same UX everywhere there's a secret-
-             style field — see Add Operator and Change Password modals). -->
-        <div class="em-secret-row">
-          <input type="password" id="emSecretInput" placeholder="paste your secret" autocomplete="off" />
-          <button type="button" class="em-reveal-btn"
-                  data-target="emSecretInput"
-                  title="Show or hide the value">
-            <i class="material-icons">visibility</i>
-          </button>
-        </div>
 
         <!-- v4.1 — My Account section. Visible to ALL operators (owner +
              satellite). Shows who's signed in, lets them change their
@@ -4529,6 +4907,10 @@
             <button type="button" id="emSignOutBtn"
                     style="padding:4px 10px; font-size:11px; background:#fff; color:#cf222e; border:1px solid #cf222e; border-radius:3px; cursor:pointer;">
               Sign out
+            </button>
+            <button type="button" id="emTeamInvitesBtn" data-owner-only="true"
+                    style="padding:4px 10px; font-size:11px; background:#7a45c4; color:#fff; border:1px solid #7a45c4; border-radius:3px; cursor:pointer;">
+              Team &amp; invites
             </button>
           </div>
         </div>
@@ -5808,6 +6190,17 @@
     // Same-origin Netlify functions. Override if hosted elsewhere.
     const NETLIFY_BASE = "";
     const FN = (name) => `${NETLIFY_BASE}/.netlify/functions/${name}`;
+    // v6 — Backend secret. The Firestore proxy requires X-EtsyMail-Secret on
+    // EVERY call, so it is attached invisibly here instead of being typed by
+    // operators. Paste your ETSYMAIL_EXTENSION_SECRET between the quotes to
+    // bake it into the build (recommended — required for invite-created
+    // accounts that have no per-browser secret). Leaving it "" keeps using
+    // the existing per-browser stored secret during migration.
+    const EM_APP_SECRET = "";
+    function emResolveSecret() {
+      try { return EM_APP_SECRET || emResolveSecret() || ""; }
+      catch (_) { return EM_APP_SECRET || ""; }
+    }
 
     // v5.32 — Poll intervals tuned for the delta-sync architecture
     // (see fetchThreadListNow and fetchMessagesNow for the per-call
@@ -6288,8 +6681,8 @@
       wrap.classList.add(cls);
       wrap.style.display = "inline-flex";
 
-      if (role === "owner")    label.textContent = "Owner";
-      else if (role === "operator") label.textContent = "Operator";
+      if (role === "owner")    label.textContent = "Master Admin";
+      else if (role === "operator") label.textContent = "User";
       else if (_operatorRole.reason === "not_signed_in") label.textContent = "Sign in";
       // Legacy reasons retained for any pre-v4.1 callers; new code
       // shouldn't surface these.
@@ -8571,8 +8964,7 @@
       // setup modal, persisted in localStorage). Backend functions
       // require X-EtsyMail-Secret in production — without it, all calls
       // 401. The setup modal opens automatically on the first 401.
-      const secret = (typeof localStorage !== "undefined") &&
-                     localStorage.getItem("etsymail_secret");
+      const secret = emResolveSecret();
       if (secret) opts.headers["X-EtsyMail-Secret"] = secret;
       // v4.1 — Forward the session token if logged in. Backend uses it
       // to derive the canonical actor (instead of trusting client-
@@ -8594,23 +8986,11 @@
         // requireSession (NO_SESSION_TOKEN, SESSION_EXPIRED, etc.) when
         // it's a session problem; secret problems have no reason.
         if (res.status === 401) {
-          const reason = data && data.reason;
-          const isSessionProblem = reason && (
-            reason === "NO_SESSION_TOKEN" ||
-            reason === "SESSION_NOT_FOUND" ||
-            reason === "SESSION_EXPIRED" ||
-            reason === "OPERATOR_REVOKED" ||
-            reason === "OPERATOR_NOT_FOUND"
-          );
-          if (isSessionProblem) {
-            // Drop the bad token and bounce to the login modal.
-            try { localStorage.removeItem("etsymail_session"); } catch {}
-            try { localStorage.removeItem("etsymail_session_user"); } catch {}
-            if (typeof showLoginModal === "function") showLoginModal();
-          } else {
-            // Secret-side problem — the bootstrap path.
-            showSecretSetupModal(data && data.error);
-          }
+          // v6 — unified auth router. EtsyMailAuth owns the lock screen and
+          // session recovery (clears bad tokens, shows the sign-in gate).
+          const _ae = new Error((data && data.error) || `${name} 401`);
+          _ae.status = 401; _ae.reason = (data && data.reason) || null; _ae.data = data;
+          try { EtsyMailAuth.onApiError(_ae); } catch (_) {}
         }
         const err = new Error(data.error || `${name} ${res.status}`);
         err.status = res.status;
@@ -8642,7 +9022,7 @@
       // helper would convert into a recursive showSecretSetupModal call.
       // Skip the fetch — show a useful hint instead.
       const haveSecret = (typeof localStorage !== "undefined") &&
-                         !!localStorage.getItem("etsymail_secret");
+                         !!emResolveSecret();
       if (!haveSecret) {
         text.innerHTML = '<span style="color:#7d4e00;">' +
           'Set the inbox secret above and click <b>Save</b> first — ' +
@@ -8779,7 +9159,7 @@
       const base = (window.NETLIFY_BASE || "").replace(/\/+$/, "")
                 || location.origin;
       const secret = window.ETSYMAIL_SECRET
-                  || localStorage.getItem("etsymail_secret")
+                  || emResolveSecret()
                   || localStorage.getItem("etsyMailSecret") || "";
       const headers = { "Content-Type": "application/json", ...(opts.headers || {}) };
       if (secret) headers["X-EtsyMail-Secret"] = secret;
@@ -8799,9 +9179,8 @@
     /** Reads the role badge in the topbar. Returns false on first paint
      *  before the badge populates, then becomes accurate. */
     function _emIsOwnerRole() {
-      const label = document.getElementById("emOperatorRoleLabel");
-      if (!label) return false;
-      return (label.textContent || "").trim().toLowerCase() === "owner";
+      // v6 — read the canonical flag instead of the (relabeled) badge text.
+      return !!(state && state.isOwner);
     }
 
     /** Convert a Date / ms to the local-time string a <input type="datetime-local">
@@ -8853,7 +9232,7 @@
       // Same secret-required guard the catalog block uses — calling the
       // backend without a secret would 401 and re-trigger the modal.
       const haveSecret = (typeof localStorage !== "undefined") &&
-                         !!localStorage.getItem("etsymail_secret");
+                         !!emResolveSecret();
       if (!haveSecret) {
         meta.innerHTML = '<span style="color:#7d4e00;">' +
           'Set the inbox secret above and click <b>Save</b> first — ' +
@@ -8957,7 +9336,7 @@
 
       // Same secret-required guard the catalog block uses.
       const haveSecret = (typeof localStorage !== "undefined") &&
-                         !!localStorage.getItem("etsymail_secret");
+                         !!emResolveSecret();
       if (!haveSecret) {
         statusEl.innerHTML = '<span style="color:#7d4e00;">' +
           'Set the inbox secret above and click <b>Save</b> first — ' +
@@ -9477,34 +9856,9 @@
      */
 
     function showLoginModal(prefillError = null) {
-      const m = $("emLoginModal");
-      if (!m) return;
-      const errEl = $("emLoginError");
-      if (errEl) {
-        if (prefillError) {
-          errEl.textContent = prefillError;
-          errEl.classList.add("active");
-        } else {
-          errEl.textContent = "";
-          errEl.classList.remove("active");
-        }
-      }
-      m.classList.add("active");
-
-      // v4.1.1 — Live-lowercase login username (same rationale as the
-      // Add Operator modal: backend stores lowercase, so don't let the
-      // operator type "Shell" and silently submit "shell").
-      const userInput = $("emLoginUsername");
-      if (userInput) {
-        userInput.oninput = () => {
-          const lowered = userInput.value.toLowerCase();
-          if (lowered !== userInput.value) userInput.value = lowered;
-        };
-      }
-
-      // Focus username when freshly opened. Defer to next frame so the
-      // modal's CSS transition finishes first.
-      setTimeout(() => $("emLoginUsername")?.focus(), 50);
+      // v6 — the legacy login modal is replaced by the EtsyMailAuth gate.
+      // Name kept (many call sites); delegate to the gate's lock screen.
+      try { EtsyMailAuth.lock(); } catch (_) { document.body.classList.remove("authed"); }
     }
 
     function hideLoginModal() {
@@ -9559,48 +9913,12 @@
      *  Skips entirely if no inbox secret is set yet — in that case the
      *  secret modal handles bootstrap and login waits its turn. */
     async function bootstrapSession() {
-      const haveSecret = (typeof localStorage !== "undefined") &&
-                         !!localStorage.getItem("etsymail_secret");
-      if (!haveSecret) {
-        // Secret modal will show; login will be triggered after that
-        // succeeds (via the secret-modal save flow, which calls
-        // bootstrapSession again).
-        return;
-      }
-
-      const token = localStorage.getItem("etsymail_session");
-      if (!token) {
-        showLoginModal();
-        return;
-      }
-
-      try {
-        const res = await api("etsyMailAuth", {
-          method: "POST",
-          body  : { op: "currentUser" }
-        });
-        if (!res || !res.ok) throw new Error("currentUser returned non-ok");
-        state.currentUser = {
-          username   : res.username,
-          displayName: res.displayName,
-          role       : res.role
-        };
-        state.isOwner = res.role === "owner";
-        applyRoleVisibility();
-        // Mirror the display name into the legacy operator-name slot so
-        // existing code paths that read getEmployeeName() see the
-        // session's identity.
-        try { localStorage.setItem("etsymail_session_user", res.displayName || res.username); } catch {}
-        // v5.0 — Mobile auth hook
-        if (window.IS_MOBILE && typeof window.mNotifyAuthChanged === "function") window.mNotifyAuthChanged();
-      } catch (e) {
-        // 401 path already cleaned the token + showed login. Anything
-        // else (5xx) — surface the error inline on the login modal.
-        if (e.status !== 401) {
-          console.warn("[bootstrapSession] failed:", e.message);
-          showLoginModal("Couldn't validate your session: " + (e.message || String(e)));
-        }
-      }
+      // v6 — delegate to the EtsyMailAuth gate, which owns session
+      // validation, the sign-in screen, first-run master setup links, and
+      // invite-gated account creation. The applyRole/onAuthed hooks
+      // populate state.currentUser/isOwner and start the pollers.
+      try { return await EtsyMailAuth.boot(); }
+      catch (e) { console.warn("[bootstrapSession→EtsyMailAuth.boot]", e && e.message); }
     }
 
     async function handleLoginSubmit(ev) {
@@ -9663,43 +9981,11 @@
     }
 
     async function handleLogout() {
-      // Best-effort server-side delete; swallow errors so a broken
-      // network can't trap the operator in the app.
-      try {
-        await api("etsyMailAuth", { method: "POST", body: { op: "logout" } });
-      } catch (e) {
-        console.warn("[logout] server call failed:", e.message);
-      }
-      try {
-        localStorage.removeItem("etsymail_session");
-        localStorage.removeItem("etsymail_session_user");
-      } catch {}
-      state.currentUser = null;
-      state.isOwner = false;
-      applyRoleVisibility();
-      // Wipe any thread/message state so the next operator doesn't see
-      // it before their fetch returns. Empty the inbox UI.
-      state.threads = [];
-      state.messages = [];
-      state.selectedId = null;
-      // v5.32 — Drop delta-sync cursors. Different operator, different
-      // role-scoped view — the next list/message fetch needs to be a
-      // FULL fetch, not a delta off the prior operator's session.
-      state.threadCursorMs = null;
-      state.lastListFilterKey = null;
-      state.msgCursorMs = null;
-      state.msgCursorThreadId = null;
-      if (typeof renderThreadList === "function") renderThreadList();
-      if (typeof renderRail === "function")       renderRail();
-      const detail = $("emDetail");
-      if (detail) detail.innerHTML = '<div class="em-detail-empty">Sign in to view threads.</div>';
-      // v5.0 — Mobile auth + state hooks
-      if (window.IS_MOBILE) {
-        if (typeof window.mNotifyAuthChanged    === "function") window.mNotifyAuthChanged();
-        if (typeof window.mNotifyThreadsChanged === "function") window.mNotifyThreadsChanged();
-        if (typeof window.mNotifyMessagesChanged === "function") window.mNotifyMessagesChanged();
-      }
-      showLoginModal();
+      // v6 — delegate to the gate (calls op:logout best-effort, clears the
+      // token, runs the onSignedOut bridge that wipes inbox state + mobile
+      // hooks, and shows the sign-in screen).
+      try { return await EtsyMailAuth.signOut(); }
+      catch (e) { console.warn("[handleLogout→EtsyMailAuth.signOut]", e && e.message); }
     }
 
     function showSecretSetupModal(errMsg = null) {
@@ -9707,8 +9993,7 @@
       const input = $("emSecretInput");
       const errEl = $("emSecretError");
       if (!modal) return;
-      // Pre-fill secret from localStorage (per-browser, intentionally)
-      try { input.value = localStorage.getItem("etsymail_secret") || ""; } catch {}
+      // v6 — the secret field was removed; nothing to pre-fill.
 
       // Show modal first; populate auto-pipeline fields with current
       // cached config, then refresh from Firestore in the background
@@ -9852,18 +10137,9 @@
       try { window.emMirror && window.emMirror.stop(); } catch (e) {}
     }
     async function saveSecretFromModal() {
-      const input = $("emSecretInput");
-      const v = (input.value || "").trim();
-      if (!v) {
-        $("emSecretError").textContent = "Secret cannot be empty.";
-        $("emSecretError").classList.add("active");
-        return;
-      }
-      try { localStorage.setItem("etsymail_secret", v); } catch (e) {
-        $("emSecretError").textContent = "Couldn't save secret: " + e.message;
-        $("emSecretError").classList.add("active");
-        return;
-      }
+      // v6 — the per-browser inbox-secret field was removed (the app attaches
+      // the backend secret as a build constant). This handler now just
+      // persists the auto-pipeline + listing-template settings below.
       // Persist auto-pipeline config to Firestore.
       // Single source of truth: the inbox UI is the editor; the server
       // is the consumer. No localStorage, no env vars.
@@ -9926,10 +10202,7 @@
       // threshold immediately. No need to reload the page.
       if (state.selectedId) fetchMessagesNow(state.selectedId);
       fetchThreadListNow();
-      // v4.1 — Now that the secret is in place, kick off the session
-      // check. If the operator already has a valid session, this is a
-      // no-op; if not, the login modal opens.
-      bootstrapSession().catch((e) => console.warn("[bootstrapSession after secret save]", e));
+      // v6 — no per-browser secret to set; nothing to re-bootstrap here.
     }
 
     /** Poll the kill-switch state every 30s. Show/hide banner accordingly. */
@@ -17931,7 +18204,7 @@
         stopMessagesPolling();
         stopCountsPolling();
         $("emPollingIndicator").textContent = "paused (tab hidden)";
-      } else {
+      } else if (state.currentUser) {
         startListPolling();
         startCountsPolling();
         if (state.selectedId) startMessagesPolling(state.selectedId);
@@ -18090,13 +18363,8 @@
       }
 
       function isOwnerRole() {
-        // The role badge in the topbar carries this — read it from there
-        // so we don't duplicate role lookup logic. Falls back to false on
-        // first paint before the badge populates, then becomes accurate.
-        const badge = document.getElementById("emOperatorRoleBadge");
-        const label = document.getElementById("emOperatorRoleLabel");
-        if (!badge || !label) return false;
-        return (label.textContent || "").trim().toLowerCase() === "owner";
+        // v6 — canonical flag (badge text is now a relabeled display only).
+        return !!(state && state.isOwner);
       }
 
       function fmtAgo(iso) {
@@ -18570,9 +18838,7 @@
         saveSecretFromModal();
       });
       $("emSecretCancelBtn").addEventListener("click", hideSecretSetupModal);
-      $("emSecretInput").addEventListener("keydown", (e) => {
-        if (e.key === "Escape") hideSecretSetupModal();
-      });
+      { const _si = $("emSecretInput"); if (_si) _si.addEventListener("keydown", (e) => { if (e.key === "Escape") hideSecretSetupModal(); }); }
 
       // v4.1 — Wire the login modal form. Submit via Enter key OR the
       // explicit Sign-in button. Esc on either field doesn't dismiss
@@ -19347,12 +19613,9 @@
       // rating chips render with the real threshold from first paint.
       // Refreshed every counts-poll tick (15s) inside startCountsPolling
       // so multi-operator threshold edits propagate without a reload.
-      fetchAutoConfig().catch(() => {});
-
-      startListPolling();
-      startCountsPolling();
-      // v0.9.1 #8: start kill-switch banner polling (every 30s)
-      startKillSwitchPolling();
+      // v6 — boot-time pollers + config fetch now start from
+      // EtsyMailAuth.hooks.onAuthed (after a valid session is confirmed),
+      // so an unauthenticated load no longer 401-storms behind the gate.
 
       // v5.0 — Mobile init. Only runs on detected mobile devices.
       if (IS_MOBILE) {
@@ -21296,7 +21559,7 @@
       try {
         const resp = await fetch(FN("etsyMailOrder") + "?receiptId=" + encodeURIComponent(receiptId), {
           headers: {
-            "X-EtsyMail-Secret"  : localStorage.getItem("etsymail_secret") || "",
+            "X-EtsyMail-Secret"  : emResolveSecret() || "",
             "X-EtsyMail-Session" : localStorage.getItem("etsymail_session") || ""
           }
         });
@@ -22308,7 +22571,7 @@
       // already authenticated is a no-op.
       setTimeout(() => {
         try {
-          const secret  = localStorage.getItem("etsymail_secret");
+          const secret  = emResolveSecret();
           const session = localStorage.getItem("etsymail_session");
           if (!secret) {
             if (typeof showSecretSetupModal === "function") showSecretSetupModal();
@@ -22418,6 +22681,487 @@
       })();
     }
     window.mInit = mInit;
+
+
+    /* ════════════════════════════════════════════════════════════════
+     * v6 — EtsyMailAuth: invite-gated auth + accounts (integrated)
+     *   • Username/password sign-in (no public sign-up).
+     *   • Account creation gated behind an invite code/link.
+     *   • Two levels: master_admin (all) · user (inbox). Only a master
+     *     mints invites and picks the level. Two master setup links.
+     *   • Bridges to the existing app via hooks (role map, pollers).
+     * ════════════════════════════════════════════════════════════════ */
+const EtsyMailAuth=(()=>{
+  const LS={session:"etsymail_session",user:"etsymail_session_user"};
+  const FN=name=>`/.netlify/functions/${name}`;
+  const APP_SECRET="__app_build_secret__";   // build constant; users never see it
+
+  const CAPS={
+    "inbox.read":"Read conversations","inbox.reply":"Reply to customers",
+    "inbox.move":"Move & organize threads","inbox.delete":"Delete threads",
+    "settings.view":"View settings","settings.edit":"Edit pipeline settings",
+    "team.view":"View the team","team.invite":"Create invites",
+    "team.manage":"Manage accounts","danger.purge":"Danger zone (master purge)",
+  };
+  const ROLE_CAPS={
+    user:["inbox.read","inbox.reply","inbox.move","inbox.delete"],
+    master_admin:Object.keys(CAPS),
+  };
+  const ROLE_LABEL={master_admin:"Master Admin",user:"User"};
+
+  const auth={
+    phase:"boot",user:null,
+    get role(){return this.user?this.user.role:null;},
+    get isMaster(){return this.role==="master_admin";},
+    can(cap){return !!this.user&&(ROLE_CAPS[this.role]||[]).includes(cap);},
+  };
+
+  async function transport(name,{body=null}={},{retries=2}={}){
+    const headers={"Content-Type":"application/json"}; const _sec=emResolveSecret(); if(_sec)headers["X-EtsyMail-Secret"]=_sec;
+    try{const s=localStorage.getItem(LS.session);if(s)headers["X-EtsyMail-Session"]=s;}catch{}
+    for(let a=0;;a++){
+      let res; try{res=await transport.send(name,{method:"POST",headers,body});}
+      catch{ if(a<retries){await backoff(a);continue;} const e=new Error("offline");e.kind="network";throw e; }
+      const {status}=res,data=res.body||{};
+      if(status>=200&&status<300) return data;
+      if(status>=500&&a<retries){await backoff(a);continue;}
+      const e=new Error(data.error||`${name} ${status}`);e.status=status;e.reason=data.reason||null;e.data=data;throw e;
+    }
+  }
+  transport.send=async (n,o)=>{ const r=await fetch(FN(n),{method:(o&&o.method)||"POST",headers:(o&&o.headers)||{},body:(o&&o.body)?JSON.stringify(o.body):undefined}); let parsed={}; try{parsed=await r.json();}catch(_){} return {status:r.status,body:parsed}; };
+  const backoff=n=>new Promise(r=>setTimeout(r,250*2**n));
+
+  const NOTICE={
+    BAD_PASSWORD:"That password doesn't match. Try again, or have a Master Admin reset it.",
+    OPERATOR_NOT_FOUND:"We couldn't find that account. Check the username with a Master Admin.",
+    ACCOUNT_SUSPENDED:"This account is suspended. Ask a Master Admin to reactivate it.",
+    SESSION_EXPIRED:"Your session expired — sign in again.",
+    SESSION_NOT_FOUND:"Your session is no longer valid — sign in again.",
+    INVITE_REQUIRED:"That invite isn't valid or has already been used.",
+    network:"Can't reach the server. Check your connection — we'll keep trying.",
+  };
+
+  async function boot(){
+    auth.phase="boot"; ui.openGate();
+    let token=null; try{token=localStorage.getItem(LS.session);}catch{}
+    if(token){
+      ui.conn("busy","Restoring your session…");
+      try{
+        const me=await transport("etsyMailAuth",{body:{op:"currentUser"}});
+        if(!me||!me.ok) throw Object.assign(new Error("bad"),{status:401,reason:"SESSION_NOT_FOUND"});
+        ui.conn("ok","Connected"); return enter(me,{silent:true});
+      }catch(e){ return fail(e); }
+    }
+    // No session. A deep-link invite drives straight to the invite flow —
+    // boot owns navigation so nothing flashes the sign-in screen first.
+    const hashCode=(location.hash.startsWith("#invite=")?decodeURIComponent(location.hash.split("=")[1]||""):"");
+    if(hashCode){ ui.deeplink(hashCode); return; }
+    ui.conn("busy","Checking the workspace…");
+    try{
+      const st=await transport("etsyMailAuth",{body:{op:"setupState"}});
+      ui.conn(null,"");
+      if(st&&st.needsSetup){ ui.show("signin"); ui.setup(st.masterLinks||[]); return; }
+    }catch(e){ ui.conn(null,""); }
+    return ui.show("signin");
+  }
+
+  function fail(e){
+    if(e.kind==="network"){ ui.conn("bad","Can't reach the server — retrying…"); ui.show("signin"); ui.banner("signin","warn",NOTICE.network); return; }
+    try{localStorage.removeItem(LS.session);localStorage.removeItem(LS.user);}catch{}
+    ui.conn(null,""); ui.show("signin");
+    if(e.reason&&NOTICE[e.reason]&&e.reason!=="NO_SESSION_TOKEN") ui.banner("signin","warn",NOTICE[e.reason]);
+  }
+  function onApiError(e){ if(e&&(e.status===401||e.kind==="network")) fail(e); }
+
+  async function signIn({username,password,remember}){
+    const u=(username||"").trim().toLowerCase(),p=password||"";
+    if(!u||!p) return {ok:false,msg:"Enter your username and password."};
+    ui.conn("busy","Signing in…");
+    try{
+      const res=await transport("etsyMailAuth",{body:{op:"login",username:u,password:p,userAgent:navigator.userAgent||null}});
+      if(!res||!res.ok||!res.sessionToken) throw new Error("Login response missing token");
+      persist(res,remember); enter(res); return {ok:true};
+    }catch(e){ ui.conn(null,"");
+      if(e.reason&&NOTICE[e.reason]) return {ok:false,reason:e.reason,msg:NOTICE[e.reason]};
+      if(e.kind==="network") return {ok:false,msg:NOTICE.network};
+      return {ok:false,msg:e.message||"Sign-in failed."};
+    }
+  }
+
+  function validateInvite(code){ return transport("etsyMailAuth",{body:{op:"validateInvite",code}}); }
+
+  async function signUp({displayName,username,password,invite,remember}){
+    const u=(username||"").trim().toLowerCase();
+    if(!/^[a-z0-9_-]{3,32}$/.test(u)) return {ok:false,msg:"Pick a valid username (3–32 chars)."};
+    if((password||"").length<8) return {ok:false,msg:"Password must be at least 8 characters."};
+    if(!invite) return {ok:false,msg:"An invite is required."};
+    ui.conn("busy","Creating your account…");
+    try{
+      const res=await transport("etsyMailAuth",{body:{op:"signup",displayName,username:u,password,invite}});
+      if(!res||!res.ok||!res.sessionToken) throw new Error("Sign-up failed");
+      persist(res,remember); enter(res,{welcome:true}); return {ok:true};
+    }catch(e){ ui.conn(null,"");
+      if(e.reason&&NOTICE[e.reason]) return {ok:false,reason:e.reason,msg:NOTICE[e.reason]};
+      return {ok:false,msg:e.message||"Sign-up failed."};
+    }
+  }
+
+  async function signOut(){
+    try{await transport("etsyMailAuth",{body:{op:"logout"}});}catch{}
+    try{localStorage.removeItem(LS.session);localStorage.removeItem(LS.user);}catch{}
+    auth.user=null;auth.phase="signin"; emit("authchange",{user:null}); hooks.onSignedOut&&hooks.onSignedOut();
+    document.body.classList.remove("authed"); ui.conn(null,""); ui.show("signin"); ui.toast("Signed out");
+  }
+
+  function persist(res,remember){ try{localStorage.setItem(LS.session,res.sessionToken);localStorage.setItem(LS.user,res.displayName||res.username);}catch{} void remember; }
+  function enter(res,{silent=false,welcome=false}={}){
+    auth.user={username:res.username,displayName:res.displayName,role:res.role}; auth.phase="ready";
+    emit("authchange",{user:auth.user}); hooks.applyRole&&hooks.applyRole(auth.user);
+    const finish=()=>{document.body.classList.add("authed");hooks.onAuthed&&hooks.onAuthed(auth.user);};
+    if(silent) finish(); else ui.splash(auth.user,{welcome},finish);
+  }
+
+  const team={
+    list:()=>transport("etsyMailAuth",{body:{op:"listUsers"}}),
+    invites:()=>transport("etsyMailAuth",{body:{op:"listInvites"}}),
+    createInvite:(role,forName)=>transport("etsyMailAuth",{body:{op:"createInvite",role,forName}}),
+    revokeInvite:(code)=>transport("etsyMailAuth",{body:{op:"revokeInvite",code}}),
+    setRole:(username,role)=>transport("etsyMailAuth",{body:{op:"setRole",username,role}}),
+    suspend:(username,suspended)=>transport("etsyMailAuth",{body:{op:"setSuspended",username,suspended}}),
+    resetPassword:(username,newPassword)=>transport("etsyMailAuth",{body:{op:"resetPassword",username,newPassword}}),
+    checkUsername:(username)=>transport("etsyMailAuth",{body:{op:"checkUsername",username}}),
+  };
+
+  function lock(){ try{document.body.classList.remove("authed");}catch(_){} if(ui&&ui.show){ try{ui.conn&&ui.conn(null,"");}catch(_){} ui.show("signin"); } }
+  function emit(n,d){window.dispatchEvent(new CustomEvent(n,{detail:d}));}
+  const hooks={onAuthed:null,onSignedOut:null,applyRole:null};
+  let ui=null; const bindUI=u=>ui=u;
+  return {boot,signIn,signUp,signOut,validateInvite,onApiError,team,auth,bindUI,hooks,transport,lock,CAPS,ROLE_CAPS,ROLE_LABEL,NOTICE};
+})();
+
+(function(){
+  const $=id=>document.getElementById(id); const A=EtsyMailAuth;
+  let currentView="signin";
+  let pendingInvite=null;   // {code, role, forName} — set after a valid invite
+
+  const roleIcon=r=>({
+    master_admin:'<svg viewBox="0 0 24 24" fill="none"><path d="M4 18h16M5 18l-1.5-9 5 4 3.5-7 3.5 7 5-4L19 18" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>',
+    user:'<svg viewBox="0 0 24 24" fill="none"><path d="M4 5h16v11H4zM2 20h20" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  }[r]||"");
+  const roleCls=r=>r==="master_admin"?"master":"user";
+  const pill=r=>`<span class="rolepill ${roleCls(r)}">${roleIcon(r)}${A.ROLE_LABEL[r]||r}</span>`;
+  const initials=n=>(n||"?").split(/\s+/).map(w=>w[0]).slice(0,2).join("").toUpperCase();
+  const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]));
+  const ico=k=>k==="good"?'<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.7"/><path d="M8 12.5l2.6 2.6L16 9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+    :k==="bad"?'<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.7"/><path d="M12 7v6M12 16.5h.01" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>'
+    :'<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.7" opacity=".5"/></svg>';
+
+  const ui={
+    openGate(){$("gateCanvas").style.visibility="visible";},
+    show(view){
+      currentView=view;
+      ["signin","redeem","signup"].forEach(v=>$("view"+v[0].toUpperCase()+v.slice(1)).classList.toggle("active",v===view));
+      setTimeout(()=>{const f={signin:"siUser",redeem:"rdCode",signup:"suName"}[view];$(f)&&$(f).focus();},60);
+    },
+    conn(state,text){const c=$("conn");$("connLed").className="led"+(state?" "+state:"");$("connText").textContent=text||"";c.classList.toggle("show",!!text);},
+    banner(view,tone,text){
+      const map={signin:["siBanner","siBannerText","signinForm"],redeem:["rdBanner","rdBannerText","redeemForm"],signup:["suBanner","suBannerText","signupForm"]};
+      const[b,t,f]=map[view]; $(b).className="banner "+tone+" show"; $(t).textContent=text;
+      $(f).classList.remove("shake");void $(f).offsetWidth;$(f).classList.add("shake");
+    },
+    clearBanner(view){const m={signin:"siBanner",redeem:"rdBanner",signup:"suBanner"};$(m[view]).classList.remove("show");},
+    splash(user,{welcome},done){$("splashMsg").firstChild.textContent=welcome?"Account created":"Signed in";
+      $("splashSub").textContent=`${user.displayName} · ${A.ROLE_LABEL[user.role]}`;$("splash").classList.add("show");
+      setTimeout(()=>{$("splash").classList.remove("show");done&&done();},1150);},
+    toast(m){const t=$("toast");t.textContent=m;t.classList.add("show");clearTimeout(ui._t);ui._t=setTimeout(()=>t.classList.remove("show"),2200);},
+    btnLoading(btn,on,label){btn.classList.toggle("loading",on);btn.disabled=on;const l=btn.querySelector(".lbl");if(on){btn._p=l.textContent;if(label)l.textContent=label;}else if(btn._p)l.textContent=btn._p;},
+    setup(links){
+      if(!links||!links.length)return;
+      const host=$("setupLinks"); host.innerHTML="";
+      links.forEach(l=>{
+        const url=`${location.origin}${location.pathname}#invite=${l.code}`;
+        const row=document.createElement("div"); row.className="setup-link";
+        row.innerHTML=`<div class="si"><svg viewBox="0 0 24 24" fill="none"><path d="M4 18h16M5 18l-1.5-9 5 4 3.5-7 3.5 7 5-4L19 18" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg></div>
+          <div class="body"><b>${esc(l.forName||"Master Admin")}</b><div class="lk">${esc(url)}</div></div>
+          <button class="txt-btn plum" data-code="${esc(l.code)}" data-name="${esc(l.forName||"")}">Create account</button>`;
+        host.appendChild(row);
+      });
+      host.querySelectorAll(".txt-btn").forEach(b=>b.addEventListener("click",async()=>{
+        $("setupBg").classList.remove("show");
+        await beginRedeem(b.dataset.code,b.dataset.name);
+      }));
+      $("setupBg").classList.add("show");
+    },
+    deeplink(code){ beginRedeem(code,""); },
+  };
+  A.bindUI(ui);
+
+  /* reveal toggles */
+  document.body.addEventListener("click",e=>{const b=e.target.closest&&e.target.closest(".reveal");if(!b)return;
+    const i=$(b.dataset.target);if(!i)return;const sh=i.type==="text";i.type=sh?"password":"text";
+    b.querySelector(".eye").innerHTML=sh?'<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7Z" stroke="currentColor" stroke-width="1.7"/><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.7"/>'
+      :'<path d="M3 3l18 18M10.6 10.7a3 3 0 004.2 4.2M9.9 5.2A9.7 9.7 0 0112 5c6.4 0 10 7 10 7a17 17 0 01-3.3 4M6.1 6.2A17 17 0 002 12s3.6 7 10 7a9.7 9.7 0 003.9-.8" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>';});
+
+  /* navigation */
+  $("toRedeem").onclick=()=>{ui.clearBanner("redeem");ui.show("redeem");};
+  $("rdBackSignin").onclick=()=>ui.show("signin");
+  $("toSignin").onclick=()=>ui.show("signin");
+
+  /* caps + lowercase */
+  const capsOn=(el,warn)=>{const f=e=>{if(e.getModifierState)$(warn).classList.toggle("show",e.getModifierState("CapsLock"));};el.addEventListener("keydown",f);el.addEventListener("keyup",f);el.addEventListener("blur",()=>$(warn).classList.remove("show"));};
+  capsOn($("siPass"),"siCaps");
+  const lower=el=>{const v=el.value,l=v.toLowerCase();if(l!==v)el.value=l;};
+  $("siUser").addEventListener("input",e=>{lower(e.target);ui.clearBanner("signin");});
+  $("siPass").addEventListener("input",()=>ui.clearBanner("signin"));
+
+  /* ── SIGN IN ── */
+  $("signinForm").addEventListener("submit",async e=>{
+    e.preventDefault();ui.clearBanner("signin");ui.btnLoading($("siBtn"),true,"Signing in…");
+    const r=await A.signIn({username:$("siUser").value,password:$("siPass").value,remember:$("siRemember").checked});
+    ui.btnLoading($("siBtn"),false);
+    if(!r.ok){$("siPass").value="";ui.banner("signin","err",r.msg);(r.reason==="OPERATOR_NOT_FOUND"?$("siUser"):$("siPass")).focus();}
+  });
+  $("siForgot").onclick=()=>ui.banner("signin","info","Passwords are reset by a Master Admin in Team & privileges. Ask Paul or Shell.");
+
+  /* ── REDEEM INVITE ── */
+  async function beginRedeem(code,prefillName){
+    ui.show("redeem"); $("rdCode").value=(code||"").toUpperCase();
+    if(code){ // auto-validate (deep link / setup link)
+      $("rdCode").dispatchEvent(new Event("input"));
+      // small delay so the field shows, then continue if valid
+      setTimeout(()=>{ if(pendingInvite&&pendingInvite.code===code.toUpperCase()) proceedToSignup(prefillName); },520);
+    }
+  }
+  let rdTimer=null, rdValid=null;
+  $("rdCode").addEventListener("input",()=>{
+    const code=$("rdCode").value.trim().toUpperCase(); $("rdCode").value=code;
+    const f=$("rdCode").closest(".field"),h=$("rdHint"); clearTimeout(rdTimer); rdValid=null; ui.clearBanner("redeem");
+    f.classList.remove("valid","invalid","busy");
+    if(!code){h.className="hintline tip";h.textContent="";return;}
+    f.classList.add("busy");h.className="hintline busy";h.innerHTML=ico("busy")+"<span>Checking code…</span>";
+    rdTimer=setTimeout(async()=>{
+      try{const r=await A.validateInvite(code); f.classList.remove("busy");
+        if(r.valid){rdValid={code,role:r.role,forName:r.forName||""};pendingInvite=rdValid;f.classList.add("valid");
+          h.className="hintline good";h.innerHTML=ico("good")+`<span>Valid — creates a ${A.ROLE_LABEL[r.role]} account.</span>`;}
+        else{f.classList.add("invalid");h.className="hintline bad";h.innerHTML=ico("bad")+"<span>This code isn't valid or has been used.</span>";}
+      }catch{f.classList.remove("busy");h.className="hintline tip";h.textContent="";}
+    },360);
+  });
+  $("redeemForm").addEventListener("submit",async e=>{
+    e.preventDefault(); ui.clearBanner("redeem");
+    const code=$("rdCode").value.trim().toUpperCase();
+    if(!code) return ui.banner("redeem","err","Enter your invite code.");
+    ui.btnLoading($("rdBtn"),true,"Checking…");
+    // ensure validated (in case they hit enter fast)
+    if(!rdValid||rdValid.code!==code){ try{const r=await A.validateInvite(code); if(r.valid)rdValid={code,role:r.role,forName:r.forName||""};}catch{} }
+    ui.btnLoading($("rdBtn"),false);
+    if(!rdValid||rdValid.code!==code){ ui.banner("redeem","err","This code isn't valid or has been used."); return; }
+    pendingInvite=rdValid; proceedToSignup(rdValid.forName);
+  });
+
+  function proceedToSignup(prefillName){
+    if(!pendingInvite) return ui.show("redeem");
+    // level badge
+    const lb=$("lvlBadge"); const r=pendingInvite.role;
+    lb.className="lvl-badge "+roleCls(r);
+    lb.innerHTML=roleIcon(r)+`<span>This invite creates a <b>${A.ROLE_LABEL[r]}</b> account.</span>`;
+    if(prefillName&&!$("suName").value) $("suName").value=prefillName;
+    ui.show("signup"); validateSignup();
+  }
+
+  /* ── SIGN UP (username availability, strength, confirm) ── */
+  let unTimer=null, unState={valid:false,available:false};
+  const suUser=$("suUser"),suUserField=suUser.closest(".field"),suUserHint=$("suUserHint");
+  suUser.addEventListener("input",()=>{
+    lower(suUser);ui.clearBanner("signup");const v=suUser.value.trim();
+    clearTimeout(unTimer);suUserField.classList.remove("valid","invalid","busy");unState={valid:false,available:false};
+    if(!v){suUserHint.className="hintline tip";suUserHint.textContent="";validateSignup();return;}
+    if(!/^[a-z0-9_-]{3,32}$/.test(v)){suUserField.classList.add("invalid");suUserHint.className="hintline bad";suUserHint.innerHTML=ico("bad")+"<span>3–32 chars: lowercase letters, numbers, _ or -</span>";validateSignup();return;}
+    suUserField.classList.add("busy");suUserHint.className="hintline busy";suUserHint.innerHTML=ico("busy")+"<span>Checking availability…</span>";
+    unTimer=setTimeout(async()=>{
+      try{const res=await A.team.checkUsername(v);suUserField.classList.remove("busy");
+        if(res.available){unState={valid:true,available:true};suUserField.classList.add("valid");suUserHint.className="hintline good";suUserHint.innerHTML=ico("good")+`<span>@${v} is available</span>`;}
+        else{suUserField.classList.add("invalid");suUserHint.className="hintline bad";
+          const sug=(res.suggestions||[]).map(s=>`<button type="button" class="sugg" data-u="${s}">@${s}</button>`).join(" ");
+          suUserHint.innerHTML=ico("bad")+`<span>@${v} is taken.${sug?" Try "+sug:""}</span>`;}
+      }catch{suUserField.classList.remove("busy");suUserHint.className="hintline tip";suUserHint.textContent="";}
+      validateSignup();
+    },380);
+    validateSignup();
+  });
+  suUserHint.addEventListener("click",e=>{const b=e.target.closest(".sugg");if(!b)return;suUser.value=b.dataset.u;suUser.dispatchEvent(new Event("input"));});
+
+  const reqDefs={len:p=>p.length>=8,case:p=>/[a-z]/.test(p)&&/[A-Z]/.test(p),num:p=>/\d/.test(p),sym:p=>/[^A-Za-z0-9]/.test(p)};
+  const meterColors=["#cf222e","#d4892c","#caa61e","#1f883d"],meterWords=["Weak","Fair","Good","Strong"];
+  const scorePw=p=>{let s=0;for(const k in reqDefs)if(reqDefs[k](p))s++;return s;};
+  $("suPass").addEventListener("input",()=>{
+    const p=$("suPass").value;ui.clearBanner("signup");
+    Object.keys(reqDefs).forEach(k=>document.querySelector(`#suReqs li[data-r="${k}"]`).classList.toggle("ok",reqDefs[k](p)));
+    const s=scorePw(p),bars=$("suMeter").children;for(let i=0;i<4;i++)bars[i].style.background=i<s?meterColors[Math.max(0,s-1)]:"#e6eaee";
+    const lab=$("suMeterLabel");if(p){lab.style.display="block";lab.textContent=meterWords[Math.max(0,s-1)];lab.style.color=meterColors[Math.max(0,s-1)];}else lab.style.display="none";
+    confirmCheck();validateSignup();
+  });
+  function confirmCheck(){const p=$("suPass").value,c=$("suConfirm").value,f=$("suConfirm").closest(".field"),h=$("suConfirmHint");
+    f.classList.remove("valid","invalid");if(!c){h.className="hintline tip";h.textContent="";return;}
+    if(c===p){f.classList.add("valid");h.className="hintline good";h.innerHTML=ico("good")+"<span>Passwords match</span>";}
+    else{f.classList.add("invalid");h.className="hintline bad";h.innerHTML=ico("bad")+"<span>Passwords don't match yet</span>";}}
+  $("suConfirm").addEventListener("input",()=>{ui.clearBanner("signup");confirmCheck();validateSignup();});
+  $("suName").addEventListener("input",validateSignup);
+  capsOn($("suPass"),"siCaps");
+
+  function validateSignup(){
+    const nameOk=$("suName").value.trim().length>=2;
+    const userOk=unState.valid&&unState.available;
+    const p=$("suPass").value,pwOk=reqDefs.len(p)&&scorePw(p)>=2;
+    const confOk=$("suConfirm").value===p&&p.length>0;
+    $("suBtn").disabled=!(nameOk&&userOk&&pwOk&&confOk&&pendingInvite);
+  }
+  $("suBtn").disabled=true;
+  $("signupForm").addEventListener("submit",async e=>{
+    e.preventDefault();ui.clearBanner("signup");
+    if(!pendingInvite){ui.banner("signup","err","Your invite is missing. Start again from your invite link.");ui.show("redeem");return;}
+    ui.btnLoading($("suBtn"),true,"Creating…");
+    const r=await A.signUp({displayName:$("suName").value,username:$("suUser").value,password:$("suPass").value,invite:pendingInvite.code,remember:true});
+    ui.btnLoading($("suBtn"),false);
+    if(!r.ok){ui.banner("signup","err",r.msg);$("suBtn").disabled=false;if(r.reason==="INVITE_REQUIRED")pendingInvite=null;}
+  });
+
+  /* focus trap + inert esc */
+  $("gate").addEventListener("keydown",e=>{
+    if(e.key==="Escape"){e.stopPropagation();e.preventDefault();return;}
+    if(e.key!=="Tab")return;
+    const pane=$("view"+currentView[0].toUpperCase()+currentView.slice(1));
+    const f=[...pane.querySelectorAll('input,button,a,[tabindex]:not([tabindex="-1"])')].filter(el=>!el.disabled&&el.offsetParent!==null);
+    if(!f.length)return;const first=f[0],last=f[f.length-1];
+    if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}
+    else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}
+  });
+
+  /* ════ Team & privileges ════ */
+  const teamBg=$("teamBg");
+  function openTeam(){teamBg.classList.add("show");renderYou();if(A.auth.can("team.view")){renderInvites();renderTeam();}$("inviteBox").classList.remove("show");$("genPanel").classList.remove("show");}
+  function closeTeam(){teamBg.classList.remove("show");}
+  var _tib=$("emTeamInvitesBtn"); if(_tib)_tib.addEventListener("click",function(e){e.preventDefault();e.stopPropagation();openTeam();}); $("teamClose").onclick=closeTeam;
+  teamBg.addEventListener("click",e=>{if(e.target===teamBg)closeTeam();});
+
+  function renderYou(){
+    const u=A.auth.user;if(!u)return;
+    $("youAv").textContent=initials(u.displayName);$("youName").textContent=u.displayName;$("youUn").textContent="@"+u.username;
+    $("youRolePill").innerHTML=pill(u.role);
+    const grid=$("youCaps");grid.innerHTML="";
+    Object.keys(A.CAPS).forEach(cap=>{const has=A.auth.can(cap);const d=document.createElement("div");d.className=has?"":"no";
+      d.innerHTML=(has?'<svg viewBox="0 0 24 24" fill="none"><path d="M5 12.5l4 4L19 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>':'<svg viewBox="0 0 24 24" fill="none"><path d="M7 12h10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>')+`<span>${A.CAPS[cap]}</span>`;grid.appendChild(d);});
+    const master=A.auth.isMaster;$("masterTools").style.display=master?"block":"none";$("userOnly").style.display=master?"none":"block";
+  }
+
+  /* invite generation */
+  let genLevel="user";
+  $("newInviteBtn").onclick=()=>{$("genPanel").classList.toggle("show");$("inviteBox").classList.remove("show");};
+  $("lvlSeg").addEventListener("click",e=>{const b=e.target.closest("button");if(!b)return;genLevel=b.dataset.lvl;
+    $("lvlSeg").querySelectorAll("button").forEach(x=>x.classList.toggle("on",x===b));});
+  $("genBtn").onclick=async()=>{
+    try{
+      const r=await A.team.createInvite(genLevel,$("genLabel").value);
+      const link=`${location.origin}${location.pathname}#invite=${r.code}`;
+      $("inviteLab").textContent=`${A.ROLE_LABEL[r.role]} invite · ${r.code}`;
+      $("inviteVal").value=link;$("inviteBox").classList.add("show");$("inviteVal").focus();$("inviteVal").select();
+      $("genLabel").value=""; renderInvites();
+    }catch(e){ui.toast(e.message||"Couldn't create invite");}
+  };
+  $("inviteCopy").onclick=()=>{$("inviteVal").select();try{document.execCommand("copy");ui.toast("Invite link copied");}catch{}};
+
+  async function renderInvites(){
+    const tbl=$("invitesTbl");tbl.innerHTML='<div class="lrow head"><div>Pending invites</div><div>Level</div><div style="text-align:right">—</div></div><div class="lrow"><div class="pu">Loading…</div></div>';
+    let res;try{res=await A.team.invites();}catch(e){tbl.innerHTML="";return;}
+    let html='<div class="lrow head"><div>Pending invites</div><div>Level</div><div style="text-align:right">Actions</div></div>';
+    if(!res.invites.length) html+='<div class="lrow"><div class="pu" style="grid-column:1/-1">No pending invites. Create one above.</div></div>';
+    res.invites.forEach(inv=>{
+      html+=`<div class="lrow"><div style="min-width:0"><div class="pn"><span class="code-chip">${esc(inv.code)}</span></div><div class="pu">${inv.forName?esc(inv.forName)+" · ":""}made by @${esc(inv.by)}</div></div>
+        <div>${pill(inv.role)}</div>
+        <div class="acts">
+          <button class="txt-btn" data-copy="${esc(inv.code)}">Copy link</button>
+          <button class="ico-btn danger" title="Revoke" data-revoke="${esc(inv.code)}"><svg viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
+        </div></div>`;
+    });
+    tbl.innerHTML=html;
+    tbl.querySelectorAll("[data-copy]").forEach(b=>b.addEventListener("click",()=>{
+      const link=`${location.origin}${location.pathname}#invite=${b.dataset.copy}`;
+      navigator.clipboard?navigator.clipboard.writeText(link).then(()=>ui.toast("Invite link copied")):ui.toast(link);
+    }));
+    tbl.querySelectorAll("[data-revoke]").forEach(b=>b.addEventListener("click",async()=>{
+      if(!confirm("Revoke this invite? The link will stop working."))return;
+      try{await A.team.revokeInvite(b.dataset.revoke);ui.toast("Invite revoked");renderInvites();}catch(e){ui.toast(e.message||"Couldn't revoke");}
+    }));
+  }
+
+  async function renderTeam(){
+    const tbl=$("teamTbl");tbl.innerHTML='<div class="lrow head"><div>Member</div><div>Level</div><div style="text-align:right">Actions</div></div><div class="lrow"><div class="pu">Loading…</div></div>';
+    let res;try{res=await A.team.list();}catch(e){tbl.innerHTML=`<div class="lrow"><div class="pu">Couldn't load: ${esc(e.message)}</div></div>`;return;}
+    const me=A.auth.user;
+    let html='<div class="lrow head"><div>Member</div><div>Level</div><div style="text-align:right">Actions</div></div>';
+    res.users.forEach(u=>{
+      const isMe=u.username===me.username,isMaster=u.role==="master_admin";
+      const acts=isMaster
+        ?'<span class="protected"><svg viewBox="0 0 24 24" fill="none"><path d="M6 10V8a6 6 0 1112 0v2" stroke="currentColor" stroke-width="1.6"/><rect x="4" y="10" width="16" height="10" rx="2" stroke="currentColor" stroke-width="1.6"/></svg>Protected</span>'
+        :`<button class="txt-btn plum" data-act="promote" data-u="${esc(u.username)}">Make Master</button>
+          <button class="ico-btn" title="Reset password" data-act="reset" data-u="${esc(u.username)}"><svg viewBox="0 0 24 24" fill="none"><path d="M3 12a9 9 0 0115.5-6.3M21 12a9 9 0 01-15.5 6.3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M18 3v4h-4M6 21v-4h4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+          <button class="ico-btn ${u.suspended?'':'danger'}" title="${u.suspended?'Reactivate':'Suspend'}" data-act="suspend" data-u="${esc(u.username)}" data-s="${u.suspended?'0':'1'}">${u.suspended?'<svg viewBox="0 0 24 24" fill="none"><path d="M5 12l5 5L20 7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>':'<svg viewBox="0 0 24 24" fill="none"><path d="M10 9v6M14 9v6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.6"/></svg>'}</button>`;
+      html+=`<div class="lrow"><div class="pers"><div class="pa">${initials(u.displayName)}</div>
+        <div style="min-width:0"><div class="pn">${esc(u.displayName)} ${isMe?'<span class="pu">· you</span>':''}</div><div class="pu">@${esc(u.username)}${u.suspended?' · suspended':''}</div></div></div>
+        <div>${pill(u.role)}</div><div class="acts">${acts}</div></div>`;
+    });
+    tbl.innerHTML=html;
+    tbl.querySelectorAll('[data-act="promote"]').forEach(b=>b.addEventListener("click",async()=>{
+      if(!confirm(`Promote @${b.dataset.u} to Master Admin? They'll get every privilege, including inviting others.`))return;
+      try{await A.team.setRole(b.dataset.u,"master_admin");ui.toast(`@${b.dataset.u} is now a Master Admin`);renderTeam();}catch(e){ui.toast(e.message||"Couldn't promote");}
+    }));
+    tbl.querySelectorAll('[data-act="reset"]').forEach(b=>b.addEventListener("click",async()=>{
+      const np=prompt(`Set a new password for @${b.dataset.u} (min 8 chars). Their other sessions sign out.`);
+      if(np===null)return;if(np.length<8){ui.toast("Password must be 8+ characters");return;}
+      try{await A.team.resetPassword(b.dataset.u,np);ui.toast(`Password reset for @${b.dataset.u}`);}catch(e){ui.toast(e.message||"Reset failed");}
+    }));
+    tbl.querySelectorAll('[data-act="suspend"]').forEach(b=>b.addEventListener("click",async()=>{
+      const s=b.dataset.s==="1";try{await A.team.suspend(b.dataset.u,s);ui.toast(s?`@${b.dataset.u} suspended`:`@${b.dataset.u} reactivated`);renderTeam();}catch(e){ui.toast(e.message||"Couldn't update");}
+    }));
+  }
+
+  /* host hooks — bridge the controller into the existing EtsyMail app.
+     New role  → legacy app role:  master_admin → "owner",  user → "operator".
+     This keeps every existing data-owner-only / isOwner() gate working while
+     the badge shows the new labels (Master Admin / User). */
+  A.hooks.applyRole=function(user){
+    var legacy = user.role==="master_admin" ? "owner" : "operator";
+    state.currentUser = { username:user.username, displayName:user.displayName, role:legacy };
+    state.isOwner = (user.role==="master_admin");
+    try{ localStorage.setItem("etsymail_session_user", user.displayName||user.username); }catch(_){}
+    try{ applyRoleVisibility(); }catch(_){}
+    var tib=$("emTeamInvitesBtn"); if(tib) tib.style.display = state.isOwner ? "" : "none";
+    if(window.IS_MOBILE && typeof window.mNotifyAuthChanged==="function"){ try{window.mNotifyAuthChanged();}catch(_){} }
+  };
+  A.hooks.onAuthed=function(user){
+    pendingInvite=null;
+    try{ fetchAutoConfig().catch(function(){}); }catch(_){}
+    try{ startListPolling(); }catch(_){}
+    try{ startCountsPolling(); }catch(_){}
+    try{ startKillSwitchPolling(); }catch(_){}
+    try{ if(typeof fetchThreadListNow==="function") fetchThreadListNow({source:"user"}); }catch(_){}
+    try{ if(typeof fetchCountsNow==="function") fetchCountsNow(); }catch(_){}
+  };
+  A.hooks.onSignedOut=function(){
+    state.currentUser=null; state.isOwner=false;
+    try{ applyRoleVisibility(); }catch(_){}
+    state.threads=[]; state.messages=[]; state.selectedId=null;
+    state.threadCursorMs=null; state.lastListFilterKey=null; state.msgCursorMs=null; state.msgCursorThreadId=null;
+    try{ if(typeof renderThreadList==="function") renderThreadList(); }catch(_){}
+    try{ if(typeof renderRail==="function") renderRail(); }catch(_){}
+    var detail=$("emDetail"); if(detail) detail.innerHTML='<div class="em-detail-empty">Sign in to view threads.</div>';
+    try{ closeTeam(); }catch(_){}
+    if(window.IS_MOBILE){ try{window.mNotifyAuthChanged&&window.mNotifyAuthChanged();}catch(_){} try{window.mNotifyThreadsChanged&&window.mNotifyThreadsChanged();}catch(_){} try{window.mNotifyMessagesChanged&&window.mNotifyMessagesChanged();}catch(_){} }
+  };
+
+  /* deep-link invites (#invite=CODE) are handled by boot(); boot() itself
+     is kicked off by bootstrapSession() during the app's DOMContentLoaded. */
+})();
 
   })();
   </script>
