@@ -4490,7 +4490,7 @@ body.authed #emAuthLayer .app-shell{filter:none;transform:none;opacity:1;pointer
 #emAuthLayer .s-list .row .l2{height:8px;width:88%;background:#eaeef2;border-radius:4px;}
 #emAuthLayer .s-detail{grid-area:detail;background:#fbfcfd;}
 #emAuthLayer .gate-canvas{position:fixed;inset:0;z-index:1000;display:grid;place-items:center;padding:24px;background:radial-gradient(120% 90% at 80% 6%,rgba(194,146,46,.15),transparent 46%),radial-gradient(95% 80% at 8% 100%,rgba(47,111,237,.12),transparent 50%),linear-gradient(180deg,var(--canvas-2),var(--canvas-1));transition:opacity var(--t) var(--ease),visibility var(--t);}
-body.authed #emAuthLayer .gate-canvas{opacity:0;visibility:hidden;}
+body.authed #emAuthLayer .gate-canvas{opacity:0;visibility:hidden;pointer-events:none;}
 #emAuthLayer .gate{width:min(860px,100%);background:#fff;border-radius:var(--r-lg);box-shadow:var(--shadow-card);display:grid;grid-template-columns:286px 1fr;overflow:hidden;transform:translateY(8px) scale(.985);opacity:0;animation:gate-in .5s var(--ease) .05s forwards;}
 @keyframes gate-in{to{transform:none;opacity:1;}}
 body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
@@ -22815,7 +22815,7 @@ const EtsyMailAuth=(()=>{
 
   function persist(res,remember){ try{localStorage.setItem(LS.session,res.sessionToken);localStorage.setItem(LS.user,res.displayName||res.username);}catch{} void remember; }
   function enter(res,{silent=false,welcome=false}={}){
-    auth.user={username:res.username,displayName:res.displayName,role:res.role}; auth.phase="ready";
+    auth.user={username:res.username,displayName:res.displayName,role:(res.role==="owner"?"master_admin":res.role==="operator"?"user":(res.role||"user"))}; auth.phase="ready";
     emit("authchange",{user:auth.user}); hooks.applyRole&&hooks.applyRole(auth.user);
     const finish=()=>{document.body.classList.add("authed");hooks.onAuthed&&hooks.onAuthed(auth.user);};
     if(silent) finish(); else ui.splash(auth.user,{welcome},finish);
@@ -22857,7 +22857,7 @@ const EtsyMailAuth=(()=>{
     :'<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.7" opacity=".5"/></svg>';
 
   const ui={
-    openGate(){$("gateCanvas").style.visibility="visible";},
+    openGate(){var g=document.getElementById("gateCanvas"); if(g) g.style.visibility="";},
     show(view){
       currentView=view;
       ["signin","redeem","signup"].forEach(v=>$("view"+v[0].toUpperCase()+v.slice(1)).classList.toggle("active",v===view));
