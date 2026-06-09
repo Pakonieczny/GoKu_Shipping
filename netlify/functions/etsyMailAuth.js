@@ -116,6 +116,15 @@ const SALT_BYTES        = 32;
 // 30-day session lifetime, expressed in ms.
 const SESSION_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000;
 
+// ─── Invite system (v6) ──────────────────────────────────────────────────
+const INVITES_COLL = "EtsyMail_Invites";
+// Invites expire after 14 days if unused. Enforced on validate + signup.
+const INVITE_LIFETIME_MS = 14 * 24 * 60 * 60 * 1000;
+// Unambiguous code alphabet (no 0/O/1/I/L). Code shape: XXXXX-XXXXX.
+// 31^10 ≈ 8.2e14 keyspace; combined with the X-EtsyMail-Secret outer gate
+// this is not feasibly guessable. (Still: add login/validate rate-limiting.)
+const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+
 // ─── Helpers ────────────────────────────────────────────────────────────
 
 function json(statusCode, body) {
@@ -183,6 +192,37 @@ function generateSessionToken() {
  *  collisions like trailing-whitespace usernames. */
 function isValidUsername(s) {
   return typeof s === "string" && /^[a-z0-9_-]{3,32}$/.test(s);
+}
+
+/** The v6 auth UI speaks master_admin/user; storage + login + the legacy
+ *  operator panel speak owner/operator. Translate at the boundary so both
+ *  layers stay coherent and the canonical stored role never changes. */
+function toCanonicalRole(r) {
+  const s = String(r || "").toLowerCase();
+  if (s === "owner" || s === "master_admin") return "owner";
+  return "operator"; // "user", "operator", or anything unexpected
+}
+function toV6Role(r) {
+  return String(r || "").toLowerCase() === "owner" ? "master_admin" : "user";
+}
+
+/** Cryptographically-random invite code, shape XXXXX-XXXXX. */
+function generateInviteCode() {
+  const pick = () => CODE_ALPHABET[crypto.randomInt(CODE_ALPHABET.length)];
+  let a = "", b = "";
+  for (let i = 0; i < 5; i++) a += pick();
+  for (let i = 0; i < 5; i++) b += pick();
+  return `${a}-${b}`;
+}
+
+/** An invite is redeemable only if it isn't used, revoked, or expired. */
+function inviteIsPending(inv, now = Date.now()) {
+  if (!inv) return false;
+  if (inv.used || inv.usedAt) return false;
+  if (inv.revokedAt) return false;
+  const expMs = inv.expiresAt && inv.expiresAt.toMillis ? inv.expiresAt.toMillis() : 0;
+  if (expMs && expMs < now) return false;
+  return true;
 }
 
 async function writeAudit({ eventType, actor, payload = {} }) {
@@ -554,6 +594,314 @@ async function handleResetOperatorPassword(event, body) {
   return json(200, { ok: true, killedSessions: killed });
 }
 
+// ─── v6 invite + team handlers ────────────────────────────────────────────
+
+/** Public (secret-gated). Tells the gate whether this is a fresh install
+ *  (no operators yet) and surfaces any pending owner invites as setup links. */
+async function handleSetupState() {
+  const opsSnap = await db.collection(OPERATORS_COLL).get();
+  const activeOps = opsSnap.docs.filter(d => !(d.data() || {}).revokedAt);
+  const needsSetup = activeOps.length === 0;
+
+  const now = Date.now();
+  const invSnap = await db.collection(INVITES_COLL).get();
+  const masterLinks = invSnap.docs
+    .map(d => d.data() || {})
+    .filter(v => inviteIsPending(v, now) && toCanonicalRole(v.role) === "owner")
+    .map(v => ({ code: v.code, forName: v.forName || "" }));
+
+  return json(200, { ok: true, needsSetup, masterLinks });
+}
+
+/** Public (secret-gated). Username availability check during invite signup,
+ *  before any session exists. Any existing doc id (even soft-revoked) blocks
+ *  reuse so we never resurrect a stale audit identity. */
+async function handleCheckUsername(body) {
+  const username = String(body.username || "").trim().toLowerCase();
+  if (!isValidUsername(username)) {
+    return json(200, { ok: true, available: false, reason: "invalid", suggestions: [] });
+  }
+  const snap = await db.collection(OPERATORS_COLL).doc(username).get();
+  if (!snap.exists) return json(200, { ok: true, available: true, suggestions: [] });
+
+  const suggestions = [];
+  for (let i = 0; suggestions.length < 3 && i < 60; i++) {
+    const cand = `${username}${crypto.randomInt(10, 100)}`.slice(0, 32);
+    if (!isValidUsername(cand) || suggestions.includes(cand)) continue;
+    const cs = await db.collection(OPERATORS_COLL).doc(cand).get();
+    if (!cs.exists) suggestions.push(cand);
+  }
+  return json(200, { ok: true, available: false, suggestions });
+}
+
+/** Public (secret-gated). The invitee has no session yet, so this can't
+ *  require one. Returns {valid:false} (not an error) for bad/used codes so
+ *  the UI shows the friendly "not valid or used" hint. */
+async function handleValidateInvite(body) {
+  const code = String(body.code || "").trim().toUpperCase();
+  if (!code) return json(200, { ok: true, valid: false });
+  const snap = await db.collection(INVITES_COLL).doc(code).get();
+  if (!snap.exists) return json(200, { ok: true, valid: false });
+  const inv = snap.data() || {};
+  if (!inviteIsPending(inv)) return json(200, { ok: true, valid: false });
+  return json(200, { ok: true, valid: true, role: toV6Role(inv.role), forName: inv.forName || "" });
+}
+
+async function handleCreateInvite(event, body) {
+  const sess = await requireOwnerSession(event);
+  if (!sess.ok) return json(403, { error: "Owner role required", reason: sess.reason });
+
+  const role = toCanonicalRole(body.role);
+  const forName = String(body.forName || "").trim().slice(0, 80);
+
+  // Mint a unique code (retry on the astronomically unlikely collision).
+  let code = generateInviteCode();
+  for (let i = 0; i < 5; i++) {
+    const existing = await db.collection(INVITES_COLL).doc(code).get();
+    if (!existing.exists) break;
+    code = generateInviteCode();
+  }
+
+  const expiresAt = admin.firestore.Timestamp.fromMillis(Date.now() + INVITE_LIFETIME_MS);
+  await db.collection(INVITES_COLL).doc(code).set({
+    code,
+    role,
+    forName: forName || null,
+    createdAt: FV.serverTimestamp(),
+    createdBy: sess.username,
+    expiresAt,
+    used: false,
+    usedAt: null,
+    usedBy: null,
+    revokedAt: null
+  }, { merge: false });
+
+  await writeAudit({
+    eventType: "invite_created",
+    actor: sess.username,
+    payload: { code, role, forName: forName || null }
+  });
+
+  return json(200, { ok: true, code, role: toV6Role(role), forName: forName || "" });
+}
+
+async function handleListInvites(event) {
+  const sess = await requireOwnerSession(event);
+  if (!sess.ok) return json(403, { error: "Owner role required", reason: sess.reason });
+
+  const snap = await db.collection(INVITES_COLL).get();
+  const now = Date.now();
+  const invites = [];
+  for (const d of snap.docs) {
+    const v = d.data() || {};
+    if (!inviteIsPending(v, now)) continue;   // pending only — matches the UI header
+    invites.push({
+      code: v.code || d.id,
+      role: toV6Role(v.role),
+      forName: v.forName || "",
+      by: v.createdBy || "—"
+    });
+  }
+  invites.sort((a, b) => (a.code || "").localeCompare(b.code || ""));
+  return json(200, { ok: true, invites });
+}
+
+async function handleRevokeInvite(event, body) {
+  const sess = await requireOwnerSession(event);
+  if (!sess.ok) return json(403, { error: "Owner role required", reason: sess.reason });
+
+  const code = String(body.code || "").trim().toUpperCase();
+  if (!code) return bad("code required");
+  const ref = db.collection(INVITES_COLL).doc(code);
+  const snap = await ref.get();
+  if (!snap.exists) return bad("No such invite", 404);
+
+  await ref.set({ revokedAt: FV.serverTimestamp(), revokedBy: sess.username }, { merge: true });
+  await writeAudit({ eventType: "invite_revoked", actor: sess.username, payload: { code } });
+  return json(200, { ok: true });
+}
+
+/** Public (secret-gated). Redeems an invite and creates the operator. The
+ *  invite-consume + account-create run in a transaction so a code can't be
+ *  redeemed twice under a race, and no half-account is ever left behind.
+ *  Logs the new operator straight in (the UI expects a session back). */
+async function handleSignup(body) {
+  const code = String(body.invite || "").trim().toUpperCase();
+  const username = String(body.username || "").trim().toLowerCase();
+  const displayName = String(body.displayName || "").trim() || username;
+  const password = String(body.password || "");
+  const userAgent = String(body.userAgent || "").slice(0, 200) || null;
+
+  if (!code) return json(400, { error: "An invite is required.", reason: "INVITE_REQUIRED" });
+  if (!isValidUsername(username)) {
+    return bad("Username must be 3-32 chars, lowercase letters/digits/underscore/dash");
+  }
+  if (password.length < 8) return bad("Password must be at least 8 characters");
+
+  const inviteRef = db.collection(INVITES_COLL).doc(code);
+  const opRef = db.collection(OPERATORS_COLL).doc(username);
+  const fresh = hashSecret(password);
+
+  let canonicalRole, createdBy;
+  try {
+    const result = await db.runTransaction(async (tx) => {
+      const invSnap = await tx.get(inviteRef);
+      if (!invSnap.exists) { const e = new Error("That invite isn't valid or has already been used."); e._reason = "INVITE_REQUIRED"; throw e; }
+      const inv = invSnap.data() || {};
+      if (!inviteIsPending(inv)) { const e = new Error("That invite isn't valid or has already been used."); e._reason = "INVITE_REQUIRED"; throw e; }
+
+      const opSnap = await tx.get(opRef);
+      if (opSnap.exists) { const e = new Error("That username is taken."); e._reason = "USERNAME_TAKEN"; throw e; }
+
+      const r = toCanonicalRole(inv.role);
+      tx.set(opRef, {
+        username,
+        displayName,
+        role: r,
+        passwordHash: fresh.hash,
+        salt        : fresh.salt,
+        iterations  : fresh.iterations,
+        digest      : fresh.digest,
+        createdAt   : FV.serverTimestamp(),
+        createdBy   : inv.createdBy || `invite:${code}`,
+        signedUpViaInvite: code
+      });
+      tx.set(inviteRef, { used: true, usedAt: FV.serverTimestamp(), usedBy: username }, { merge: true });
+      return { role: r, by: inv.createdBy || null };
+    });
+    canonicalRole = result.role; createdBy = result.by;
+  } catch (e) {
+    if (e._reason === "INVITE_REQUIRED") return json(400, { error: e.message, reason: "INVITE_REQUIRED" });
+    if (e._reason === "USERNAME_TAKEN") return json(409, { error: e.message, reason: "USERNAME_TAKEN" });
+    throw e;
+  }
+
+  invalidateRoleCache(username);
+
+  // Issue a session immediately — the UI logs the new account straight in.
+  const token = generateSessionToken();
+  const expiresAtMs = Date.now() + SESSION_LIFETIME_MS;
+  await db.collection(SESSIONS_COLL).doc(token).set({
+    username,
+    createdAt : FV.serverTimestamp(),
+    expiresAt : admin.firestore.Timestamp.fromMillis(expiresAtMs),
+    lastSeenAt: FV.serverTimestamp(),
+    userAgent
+  });
+  await db.collection(OPERATORS_COLL).doc(username).set({ lastLoginAt: FV.serverTimestamp() }, { merge: true });
+
+  await writeAudit({
+    eventType: "operator_signup",
+    actor: username,
+    payload: { viaInvite: code, role: canonicalRole, invitedBy: createdBy, displayName }
+  });
+
+  return json(200, {
+    ok          : true,
+    sessionToken: token,
+    username,
+    displayName,
+    role        : canonicalRole,   // owner/operator; the gate maps to master_admin/user
+    expiresAtMs
+  });
+}
+
+async function handleListUsers(event) {
+  const sess = await requireOwnerSession(event);
+  if (!sess.ok) return json(403, { error: "Owner role required", reason: sess.reason });
+
+  const snap = await db.collection(OPERATORS_COLL).get();
+  const users = [];
+  for (const d of snap.docs) {
+    const data = d.data() || {};
+    users.push({
+      username   : d.id,
+      displayName: data.displayName || d.id,
+      role       : toV6Role(data.role),
+      suspended  : !!data.revokedAt
+    });
+  }
+  // Masters first, then alphabetical — matches how the team sheet reads.
+  users.sort((a, b) =>
+    a.role === b.role
+      ? (a.username || "").localeCompare(b.username || "")
+      : (a.role === "master_admin" ? -1 : 1)
+  );
+  return json(200, { ok: true, users });
+}
+
+async function handleSetRole(event, body) {
+  const sess = await requireOwnerSession(event);
+  if (!sess.ok) return json(403, { error: "Owner role required", reason: sess.reason });
+
+  const username = String(body.username || "").trim();
+  if (!username) return bad("username required");
+  if (username.length > 200) return bad("username too long");
+  const role = toCanonicalRole(body.role);
+
+  const ref = db.collection(OPERATORS_COLL).doc(username);
+  const snap = await ref.get();
+  if (!snap.exists) return bad("No such operator", 404);
+  const data = snap.data() || {};
+
+  // Never demote the last active owner — that strands team management.
+  if (data.role === "owner" && role !== "owner") {
+    const owners = await db.collection(OPERATORS_COLL).where("role", "==", "owner").get();
+    const activeOwners = owners.docs.filter(d => !(d.data() || {}).revokedAt);
+    if (activeOwners.length <= 1) return bad("Cannot demote the last remaining owner");
+  }
+
+  await ref.set({ role, roleChangedAt: FV.serverTimestamp(), roleChangedBy: sess.username }, { merge: true });
+  invalidateRoleCache(username);
+  await writeAudit({ eventType: "operator_role_changed", actor: sess.username, payload: { username, role } });
+  return json(200, { ok: true, username, role: toV6Role(role) });
+}
+
+async function handleSetSuspended(event, body) {
+  const sess = await requireOwnerSession(event);
+  if (!sess.ok) return json(403, { error: "Owner role required", reason: sess.reason });
+
+  const username = String(body.username || "").trim();
+  if (!username) return bad("username required");
+  if (username.length > 200) return bad("username too long");
+  const suspended = !!body.suspended;
+
+  if (username === sess.username) return bad("You cannot suspend your own account");
+
+  const ref = db.collection(OPERATORS_COLL).doc(username);
+  const snap = await ref.get();
+  if (!snap.exists) return bad("No such operator", 404);
+  const data = snap.data() || {};
+
+  if (suspended && data.role === "owner") {
+    const owners = await db.collection(OPERATORS_COLL).where("role", "==", "owner").get();
+    const activeOwners = owners.docs.filter(d => !(d.data() || {}).revokedAt);
+    if (activeOwners.length <= 1) return bad("Cannot suspend the last remaining active owner");
+  }
+
+  let killed = 0;
+  if (suspended) {
+    // revokedAt is the same flag login already checks, so a suspended user
+    // is blocked at the door and their live sessions are torn down now.
+    await ref.set({ revokedAt: FV.serverTimestamp(), revokedBy: sess.username }, { merge: true });
+    killed = await deleteSessionsForUser(username);
+  } else {
+    await ref.set({
+      revokedAt: FV.delete(),
+      revokedBy: FV.delete(),
+      reactivatedAt: FV.serverTimestamp(),
+      reactivatedBy: sess.username
+    }, { merge: true });
+  }
+  invalidateRoleCache(username);
+  await writeAudit({
+    eventType: suspended ? "operator_suspended" : "operator_reactivated",
+    actor: sess.username,
+    payload: { username, killedSessions: killed }
+  });
+  return json(200, { ok: true, suspended, killedSessions: killed });
+}
+
 // ─── Handler ────────────────────────────────────────────────────────────
 
 exports.handler = async (event) => {
@@ -582,6 +930,20 @@ exports.handler = async (event) => {
       case "addoperator":            return await handleAddOperator(event, body);
       case "removeoperator":         return await handleRemoveOperator(event, body);
       case "resetoperatorpassword":  return await handleResetOperatorPassword(event, body);
+
+      // ── v6 invite-gated auth + team management ──
+      case "setupstate":             return await handleSetupState();
+      case "checkusername":          return await handleCheckUsername(body);
+      case "validateinvite":         return await handleValidateInvite(body);
+      case "signup":                 return await handleSignup(body);
+      case "createinvite":           return await handleCreateInvite(event, body);
+      case "listinvites":            return await handleListInvites(event);
+      case "revokeinvite":           return await handleRevokeInvite(event, body);
+      case "listusers":              return await handleListUsers(event);
+      case "setrole":                return await handleSetRole(event, body);
+      case "setsuspended":           return await handleSetSuspended(event, body);
+      // v6 team sheet uses op:"resetPassword"; route to the existing handler.
+      case "resetpassword":          return await handleResetOperatorPassword(event, body);
       default:
         return bad(`Unknown op '${body.op}'`);
     }
