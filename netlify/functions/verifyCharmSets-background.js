@@ -123,8 +123,15 @@ async function judgeFamily(imgs) {
     'Reply with ONLY a JSON array, one entry per photo starting from photo 2: [{"photo":2,"same_charm":true,"charm":"<meaning, e.g. Leo (zodiac)>","charm_detail":"<literal depiction>","confidence":"high|medium|low","reason":"short"}]' }];
   for (const im of imgs) content.push({ type: "image_url", image_url: { url: im.url, detail: "low" } });
 
-  const payload = { model, max_tokens: 700, messages: [{ role: "user", content }] };
-  if (/^gpt-5/.test(model)) payload.reasoning_effort = "low"; // mirror Smart Match SMART_EFFORT
+  const payload = { model, messages: [{ role: "user", content }] };
+  if (/^(gpt-5|o\d)/.test(model)) {
+    // GPT-5 / o-series reject "max_tokens" on chat completions — they require
+    // max_completion_tokens (which must also cover reasoning tokens).
+    payload.max_completion_tokens = 1500;
+    payload.reasoning_effort = "low"; // mirror Smart Match SMART_EFFORT
+  } else {
+    payload.max_tokens = 700;
+  }
   const upstream = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
@@ -173,7 +180,8 @@ exports.handler = async (event) => {
   let processed = 0, mismatches = 0, errors = 0;
 
   for (const fam of fams) {
-    if (state.verified[fam.key]) continue;
+    const prev = state.verified[fam.key];
+    if (prev && !(typeof prev.verdict === "string" && prev.verdict.indexOf("error") === 0)) continue; // retry errored families
     if (Date.now() - started > BUDGET_MS) break;
     try {
       // one batched Shopify lookup per family

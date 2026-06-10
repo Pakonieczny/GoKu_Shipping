@@ -93,9 +93,15 @@ exports.handler = async (event) => {
     const recent = Object.keys(audits).slice(-12).map(k => ({ family: k, at: audits[k].at,
       members: (audits[k].members || []).length,
       verdicts: (audits[k].detail || []).map(d => (d.same_charm ? "✓ " : "✗ ") + d.handle + (d.charm ? " (" + d.charm + ")" : "")) }));
+    const errs = Object.values(state.verified || {})
+      .filter(v => typeof v.verdict === "string" && v.verdict.indexOf("error") === 0);
     return { statusCode: 200, headers: HEADERS, body: JSON.stringify({
       ok: true, summary: state.summary || { familiesVerified: Object.keys(state.verified || {}).length, complete: false, note: "no run yet" },
-      prunedTotal: state.pruned || 0, recent }, null, 1) };
+      prunedTotal: state.pruned || 0,
+      errorCount: errs.length,
+      errorSample: errs.slice(-3).map(v => v.verdict),
+      note: errs.length ? "Errored families retry automatically on the next run." : undefined,
+      recent }, null, 1) };
   } catch (e) {
     return { statusCode: 500, headers: HEADERS, body: JSON.stringify({ error: String(e.message || e) }) };
   }
