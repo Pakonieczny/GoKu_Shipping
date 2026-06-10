@@ -93,10 +93,19 @@ exports.handler = async (event) => {
     const recent = Object.keys(audits).slice(-12).map(k => ({ family: k, at: audits[k].at,
       members: (audits[k].members || []).length,
       verdicts: (audits[k].detail || []).map(d => (d.same_charm ? "✓ " : "✗ ") + d.handle + (d.charm ? " (" + d.charm + ")" : "")) }));
-    const errs = Object.values(state.verified || {})
-      .filter(v => typeof v.verdict === "string" && v.verdict.indexOf("error") === 0);
+    const all = Object.values(state.verified || {});
+    const errs = all.filter(v => typeof v.verdict === "string" && v.verdict.indexOf("error") === 0);
+    const liveVerified = all.length - errs.length; // live count, updates every checkpoint mid-run
+    const total = (state.summary && state.summary.familiesTotal) || 377;
+    const liveSummary = Object.assign({}, state.summary || {}, {
+      familiesVerified: liveVerified, familiesTotal: total,
+      complete: liveVerified >= total });
+    const liveCount = Object.keys(state.verified || {}).length;
+    const summary = Object.assign({ complete: false }, state.summary || {});
+    summary.familiesVerified = liveCount; // live, regardless of summary staleness
+    if (summary.inProgress) summary.note = "run in progress — refresh to watch";
     return { statusCode: 200, headers: HEADERS, body: JSON.stringify({
-      ok: true, summary: state.summary || { familiesVerified: Object.keys(state.verified || {}).length, complete: false, note: "no run yet" },
+      ok: true, summary,
       prunedTotal: state.pruned || 0,
       errorCount: errs.length,
       errorSample: errs.slice(-3).map(v => v.verdict),

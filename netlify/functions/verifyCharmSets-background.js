@@ -230,14 +230,17 @@ exports.handler = async (event) => {
       state.verified[fam.key] = { at: new Date().toISOString(), verdict: "error: " + String(e.message || e).slice(0, 140) };
       if (errors > 15) break; // bail on systemic failure (bad key, quota) rather than burn the run
     }
-    // periodic checkpoint so a crash never loses progress
-    if (f && processed % 10 === 0) {
+    // periodic checkpoint so a crash never loses progress — includes a LIVE
+    // summary so the console's progress bar moves during the run.
+    if (f && processed % 5 === 0) {
+      state.summary = { lastRun: new Date().toISOString(), inProgress: true,
+        familiesVerified: Object.keys(state.verified).length, familiesTotal: fams.length, complete: false };
       try { await f.db.collection("Brites_Editor_Meta").doc("charmVerifyState").set(state); } catch (e) {}
     }
   }
 
   const totalDone = Object.keys(state.verified).length;
-  state.summary = { lastRun: new Date().toISOString(), processedThisRun: processed,
+  state.summary = { lastRun: new Date().toISOString(), running: false, processedThisRun: processed,
     mismatchesThisRun: mismatches, errorsThisRun: errors,
     familiesVerified: totalDone, familiesTotal: fams.length,
     complete: totalDone >= fams.length };
