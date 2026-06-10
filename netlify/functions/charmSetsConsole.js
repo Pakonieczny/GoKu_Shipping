@@ -1,6 +1,6 @@
 // netlify/functions/charmSetsConsole.js
 // Backend for the standalone Set Matcher Console (Brites_Set_Matcher_Console.html).
-// Runs entirely outside the storefront. Passcode-gated (X-Edit-Passcode).
+// Runs entirely outside the storefront. NO passcode (owner request — one-time use).
 // Actions (POST {action}):
 //   status    -> verification progress summary + recent family verdicts
 //   kick      -> triggers verifyCharmSets-background (15-min run), returns 202 status
@@ -67,8 +67,7 @@ async function exportCsv() {
 
 exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return { statusCode: 204, headers: HEADERS };
-  const pass = (event.headers && (event.headers["x-edit-passcode"] || event.headers["X-Edit-Passcode"])) || "";
-  if (pass !== process.env.EDIT_PASSCODE) return { statusCode: 401, headers: HEADERS, body: JSON.stringify({ error: "bad passcode" }) };
+  // Passcode removed at owner request (single-user, one-time tool). Delete these functions after the run.
 
   try {
     const b = event.httpMethod === "POST" ? JSON.parse(event.body || "{}") : {};
@@ -77,7 +76,7 @@ exports.handler = async (event) => {
     if (action === "kick") {
       const base = process.env.URL || "https://goldenspike.app";
       const r = await fetch(base + "/.netlify/functions/verifyCharmSets-background", {
-        method: "POST", headers: { "X-Edit-Passcode": process.env.EDIT_PASSCODE } });
+        method: "POST" });
       return { statusCode: 200, headers: HEADERS, body: JSON.stringify({ ok: true, kicked: true, upstream: r.status,
         note: "Background run started (up to 15 min). Refresh status to watch progress." }) };
     }
