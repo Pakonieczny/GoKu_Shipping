@@ -241,6 +241,17 @@ exports.handler = async function (event) {
   if (event.httpMethod === "OPTIONS") return { statusCode: 204, headers };
 
   const scheduled = !!(event.headers && (event.headers["x-nf-event"] === "schedule" || event.isScheduled));
+  // Browser trigger: opening the URL with ?run=now runs immediately (owner request).
+  const q = event.queryStringParameters || {};
+  if (event.httpMethod === "GET" && q.run === "now") {
+    try {
+      const out = await runSync({});
+      return { statusCode: 200, headers, body: JSON.stringify(out, null, 2) };
+    } catch (e) {
+      return { statusCode: 500, headers, body: JSON.stringify({ ok: false, error: String(e.message || e) }) };
+    }
+  }
+
   const pass = (event.headers && (event.headers["x-edit-passcode"] || event.headers["X-Edit-Passcode"])) || "";
   if (!scheduled && pass !== process.env.EDIT_PASSCODE) {
     return { statusCode: 401, headers, body: JSON.stringify({ error: "bad passcode" }) };
