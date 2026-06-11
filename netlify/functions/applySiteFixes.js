@@ -294,43 +294,6 @@ async function setCustomLabels(dryRun, cursor) {
 /* ================= state + automatic runner ================= */
 const STATE_DOC = "siteFixesState";
 
-/* ---- ensureCollections: create themed + mega-menu smart collections ------
-   Idempotent: skips handles that already exist. Smart collections with
-   disjunctive title-contains rules — they self-populate from the catalog
-   and stay current as products are added. ---- */
-const SMART_COLLECTIONS = [
-  { handle: "animal-lovers", title: "The Animal Lover", terms: ["bunny","rabbit","cat ","dog ","puppy","wolf","fox ","bear","bird","cardinal","owl","turtle","dolphin","whale","horse","elephant","lion","tiger","deer","butterfly","bee ","dragonfly","hummingbird","penguin","koala","panda","frog","snake","paw"] },
-  { handle: "heart-jewelry", title: "Mom, Daughter & Family", terms: ["heart","initial","letter","mama","mom ","mother","daughter","grandma","nana","sister","family"] },
-  { handle: "memorial", title: "In Loving Memory", terms: ["memorial","remembrance","angel","wing","halo","in loving","sympathy"] },
-  { handle: "sports-athletics", title: "Profession & Passion", terms: ["soccer","basketball","baseball","football","hockey","tennis","golf","dance","ballet","cheer","gymnast","runner","running","volleyball","swim","skate","yoga","nurse","teacher","firefighter","fire badge","police","doctor","paramedic","chef","musician"] },
-  { handle: "floral-flower-lovers", title: "Floral & Nature", terms: ["flower","floral","rose","sunflower","daisy","lotus","tulip","peony","lily","leaf","branch","mountain","ocean","wave","tree","cactus"] },
-  { handle: "beady-chain", title: "Beady Chain Necklaces", terms: ["beady"] },
-  { handle: "engraved-bar", title: "Bar & Engraved", terms: ["bar necklace","engraved bar","bar bracelet"] },
-  { handle: "disc-and-coin", title: "Disc & Coin", terms: ["disc","coin"] },
-  { handle: "charm-studs", title: "Charm Studs", terms: ["stud"] },
-  { handle: "huggie-hoops", title: "Huggie Hoops", terms: ["huggie"] },
-  { handle: "dangle-and-drop", title: "Dangle & Drop", terms: ["dangle","drop earring"] },
-  { handle: "charms-only", title: "Charms Only", terms: ["charm only"] },
-  { handle: "add-ons-extenders", title: "Add-Ons & Extenders", terms: ["extender","add on","add-on"] }
-];
-
-async function ensureCollections(dryRun) {
-  const out = [];
-  for (const c of SMART_COLLECTIONS) {
-    const ex = await gql(`query($h:String!){ collectionByHandle(handle:$h){ id } }`, { h: c.handle });
-    if (ex.collectionByHandle) { out.push(c.handle + ": exists"); continue; }
-    if (dryRun) { out.push(c.handle + ": WOULD CREATE (" + c.terms.length + " rules)"); continue; }
-    const rules = c.terms.map(t => ({ column: "TITLE", relation: "CONTAINS", condition: t }));
-    const r = await gql(`mutation($input: CollectionInput!){
-      collectionCreate(input:$input){ collection{ id handle } userErrors{ field message } } }`,
-      { input: { title: c.title, handle: c.handle,
-        ruleSet: { appliedDisjunctively: true, rules: rules } } });
-    const ue = r.collectionCreate.userErrors || [];
-    out.push(c.handle + ": " + (ue.length ? "ERROR " + ue[0].message : "created"));
-  }
-  return out;
-}
-
 async function loadState() {
   const f = fb();
   if (!f) return { labelsCursor: null, labelsDone: false, structureDone: false, runs: 0 };
@@ -359,7 +322,6 @@ async function autoRun() {
   // Structural fixes: cheap and idempotent, run every time until confirmed done.
   if (!state.structureDone) {
     try {
-      const r0 = await ensureCollections(false); log.push({ ensureCollections: r0 });
       const r1 = await renameHandles(false); log.push({ renameHandles: r1 });
       const r2 = await createPages(false);   log.push({ createPages: r2 });
       const r3 = await fixMenus(false);      log.push({ fixMenus: r3 });
