@@ -42,9 +42,10 @@
 // ---------------------------------------------------------------------------
 
 const fetch = require("node-fetch");
-const { RANKS } = require("./charmSetsData");
-const { CHARM_SETS, DATA_VERSION, PRIOR_CONFIRMED } = require("./charmSetsCandidates");
-const CONF = new Set(PRIOR_CONFIRMED);
+// PHASE 2: judge the exact pairs the family-walk never compared directly.
+// All data lives in charmSetsData.js — no auxiliary modules.
+const { CHARM_SETS, RANKS, PHASE2_FAMILIES, PHASE2_FORMS, PHASE2_VERSION } = require("./charmSetsData");
+const DATA_VERSION = PHASE2_VERSION;
 
 let _fb = null;
 function fb() {
@@ -172,7 +173,7 @@ exports.handler = async (event) => {
   const started = Date.now();
   const BUDGET_MS = 13 * 60 * 1000;
   const f = fb();
-  let state = { verified: {}, pruned: 0, dataVersion: DATA_VERSION };
+  let state = { verified: {}, pruned: 0, pairs: {}, dataVersion: DATA_VERSION };
   if (f) {
     try { const s = await f.db.collection("Brites_Editor_Meta").doc("charmVerifyState").get();
       if (s.exists) state = Object.assign(state, s.data()); } catch (e) {}
@@ -181,23 +182,15 @@ exports.handler = async (event) => {
   // baked into the candidates module, so no image budget is re-spent)
   if (state.dataVersion !== DATA_VERSION) state = { verified: {}, pruned: 0, dataVersion: DATA_VERSION };
 
-  const fams = buildFamilies();
+  const fams = PHASE2_FAMILIES; /* phase-2 pair families */
   let processed = 0, mismatches = 0, errors = 0;
 
   for (const fam of fams) {
     const prev = state.verified[fam.key];
     if (prev && !(typeof prev.verdict === "string" && prev.verdict.indexOf("error") === 0)) continue; // retry errored families
     if (Date.now() - started > BUDGET_MS) break;
-    // prior-confirmed partners need no re-judging; if every partner in the
-    // family is already image-confirmed, the family is done without any API.
     const ref0 = fam.members[0];
-    const judgeMembers = fam.members.filter(function(h, j){
-      return j === 0 || !CONF.has([ref0, h].sort().join("|"));
-    });
-    if (judgeMembers.length < 2) {
-      state.verified[fam.key] = { at: new Date().toISOString(), verdict: "confirmed (prior verification)" };
-      processed++; continue;
-    }
+    const judgeMembers = fam.members;
     try {
       // one batched Shopify lookup per family (new/unjudged members only)
       const q = judgeMembers.map((h, j) => `p${j}: productByHandle(handle: ${JSON.stringify(h)}) { id title featuredImage { url } }`).join("\n");
@@ -207,9 +200,8 @@ exports.handler = async (event) => {
       judgeMembers.forEach((h, j) => {
         byHandle[h] = d["p" + j];
         if (d["p" + j] && d["p" + j].featuredImage) {
-          const partner = (CHARM_SETS[ref0] || []).find(p => p.h === h);
           imgs.push({ handle: h, url: d["p" + j].featuredImage.url,
-            form: j === 0 ? "Reference" : (partner ? partner.f : "") });
+            form: j === 0 ? "Reference" : (PHASE2_FORMS[h] || "") });
         }
       });
       if (imgs.length < 2) {
@@ -225,11 +217,14 @@ exports.handler = async (event) => {
           const im = imgs[i + 1];
           if (!im) return;
           detail.push({ handle: im.handle, same_charm: !!v.same_charm, charm: v.charm || "", charm_detail: v.charm_detail || "", confidence: v.confidence || "", reason: v.reason || "" });
+          state.pairs = state.pairs || {};
+          state.pairs[[ref0, im.handle].sort().join("|")] = { ok: !!v.same_charm, charm: v.charm || "", reason: (v.reason || "").slice(0, 200) };
           if (v.same_charm === false) offenders.push(im.handle);
         });
       }
       if (offenders.length) {
-        await pruneFamily(fam, byHandle, offenders);
+        /* phase 2: pair verdicts only — NO metafield writes; the final
+           charmSetsData publish + sync applies everything at once */
         mismatches += offenders.length;
         state.pruned = (state.pruned || 0) + offenders.length;
       }

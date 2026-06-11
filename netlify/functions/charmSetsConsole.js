@@ -8,7 +8,7 @@
 //                verdicts from Firestore (confirmed / pruned / pending)
 
 const fetch = require("node-fetch");
-const { CHARM_SETS, DATA_VERSION } = require("./charmSetsCandidates");
+const { CHARM_SETS, PHASE2_FAMILIES: P2_FAMILIES, PHASE2_VERSION: DATA_VERSION } = require("./charmSetsData");
 let _fb = null;
 function fb() {
   if (_fb !== null) return _fb;
@@ -67,6 +67,12 @@ async function exportCsv() {
 
 exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return { statusCode: 204, headers: HEADERS };
+  if (event.httpMethod === "GET") {
+    const st = await getState();
+    return { statusCode: 200, headers: HEADERS, body: JSON.stringify({
+      dataVersion: DATA_VERSION, summary: st.summary || {},
+      pairCount: Object.keys(st.pairs || {}).length, pairs: st.pairs || {} }) };
+  }
   // Passcode removed at owner request (single-user, one-time tool). Delete these functions after the run.
 
   try {
@@ -74,7 +80,8 @@ exports.handler = async (event) => {
     const action = b.action || "status";
 
     // family total for THIS deployed universe (same grouping as the verifier)
-    function familiesTotal(){
+    function familiesTotal(){ return P2_FAMILIES.length; }
+    function _unused_familiesTotal(){
       const visited = new Set(); let n = 0;
       for (const h of Object.keys(CHARM_SETS)) {
         if (visited.has(h)) continue;
