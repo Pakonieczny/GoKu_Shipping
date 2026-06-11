@@ -333,3 +333,33 @@
   to = "/etsy-mail-2.html"
   status = 200
   force = true
+
+# ─── Brites storefront automation — June 2026 ───────────────────────────────
+# Self-running site fixes for britesjewelry.com (handle renames + redirects,
+# pages, menus, checkout branding, custom labels, 14→30-day returns copy in
+# product descriptions). Hourly until complete, then dormant via Firestore
+# state (Brites_Editor_Meta/siteFixesState). Manual: POST with X-Edit-Passcode.
+[functions."applySiteFixes"]
+  schedule = "0 * * * *"
+
+# Verified charm-set metafields (brites.set) — writes 937 products' curated
+# "complete the set" partners from charmSetsData.js. Offset :30 so it never
+# stacks with applySiteFixes. DATA_VERSION change auto-restarts the walk;
+# dormant when done (Brites_Editor_Meta/charmSetsState).
+[functions."syncCharmSets"]
+  schedule = "30 * * * *"
+
+# Best-sellers collection sync: membership + true sales-rank order + tags +
+# bs_rank metafields. Weekly, Monday 05:00 UTC (overnight NA, mirroring the
+# 04:00 listings-catalog convention).
+[functions."syncBestSellers"]
+  schedule = "0 5 * * 1"
+
+# Visual set verification kicker: daily trigger for the 15-min background
+# verifier until all families are confirmed, then early-returns dormant.
+# NOTE: verification is COMPLETE as of 2026-06-10 — this entry and the three
+# verifier functions (verifyCharmSetsKick, verifyCharmSets-background,
+# charmSetsConsole) can be deleted once the verified syncCharmSets walk
+# finishes writing metafields.
+[functions."verifyCharmSetsKick"]
+  schedule = "15 4 * * *"
