@@ -42,7 +42,9 @@
 // ---------------------------------------------------------------------------
 
 const fetch = require("node-fetch");
-const { CHARM_SETS, RANKS } = require("./charmSetsData");
+const { RANKS } = require("./charmSetsData");
+const { CHARM_SETS, DATA_VERSION, PRIOR_CONFIRMED } = require("./charmSetsCandidates");
+const CONF = new Set(PRIOR_CONFIRMED);
 
 let _fb = null;
 function fb() {
@@ -170,11 +172,14 @@ exports.handler = async (event) => {
   const started = Date.now();
   const BUDGET_MS = 13 * 60 * 1000;
   const f = fb();
-  let state = { verified: {}, pruned: 0 };
+  let state = { verified: {}, pruned: 0, dataVersion: DATA_VERSION };
   if (f) {
     try { const s = await f.db.collection("Brites_Editor_Meta").doc("charmVerifyState").get();
       if (s.exists) state = Object.assign(state, s.data()); } catch (e) {}
   }
+  // new candidate universe? restart the walk cleanly (prior pair verdicts are
+  // baked into the candidates module, so no image budget is re-spent)
+  if (state.dataVersion !== DATA_VERSION) state = { verified: {}, pruned: 0, dataVersion: DATA_VERSION };
 
   const fams = buildFamilies();
   let processed = 0, mismatches = 0, errors = 0;
@@ -183,16 +188,26 @@ exports.handler = async (event) => {
     const prev = state.verified[fam.key];
     if (prev && !(typeof prev.verdict === "string" && prev.verdict.indexOf("error") === 0)) continue; // retry errored families
     if (Date.now() - started > BUDGET_MS) break;
+    // prior-confirmed partners need no re-judging; if every partner in the
+    // family is already image-confirmed, the family is done without any API.
+    const ref0 = fam.members[0];
+    const judgeMembers = fam.members.filter(function(h, j){
+      return j === 0 || !CONF.has([ref0, h].sort().join("|"));
+    });
+    if (judgeMembers.length < 2) {
+      state.verified[fam.key] = { at: new Date().toISOString(), verdict: "confirmed (prior verification)" };
+      processed++; continue;
+    }
     try {
-      // one batched Shopify lookup per family
-      const q = fam.members.map((h, j) => `p${j}: productByHandle(handle: ${JSON.stringify(h)}) { id title featuredImage { url } }`).join("\n");
+      // one batched Shopify lookup per family (new/unjudged members only)
+      const q = judgeMembers.map((h, j) => `p${j}: productByHandle(handle: ${JSON.stringify(h)}) { id title featuredImage { url } }`).join("\n");
       const d = await gql(`query { ${q} }`);
       const byHandle = {};
       const imgs = [];
-      fam.members.forEach((h, j) => {
+      judgeMembers.forEach((h, j) => {
         byHandle[h] = d["p" + j];
         if (d["p" + j] && d["p" + j].featuredImage) {
-          const partner = (CHARM_SETS[fam.members[0]] || []).find(p => p.h === h);
+          const partner = (CHARM_SETS[ref0] || []).find(p => p.h === h);
           imgs.push({ handle: h, url: d["p" + j].featuredImage.url,
             form: j === 0 ? "Reference" : (partner ? partner.f : "") });
         }

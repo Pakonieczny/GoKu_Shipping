@@ -8,7 +8,7 @@
 //                verdicts from Firestore (confirmed / pruned / pending)
 
 const fetch = require("node-fetch");
-const { CHARM_SETS } = require("./charmSetsData");
+const { CHARM_SETS, DATA_VERSION } = require("./charmSetsCandidates");
 let _fb = null;
 function fb() {
   if (_fb !== null) return _fb;
