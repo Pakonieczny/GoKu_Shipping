@@ -73,6 +73,27 @@ exports.handler = async (event) => {
     const b = event.httpMethod === "POST" ? JSON.parse(event.body || "{}") : {};
     const action = b.action || "status";
 
+    // family total for THIS deployed universe (same grouping as the verifier)
+    function familiesTotal(){
+      const visited = new Set(); let n = 0;
+      for (const h of Object.keys(CHARM_SETS)) {
+        if (visited.has(h)) continue;
+        const members = [h];
+        for (const p of CHARM_SETS[h]) if (!visited.has(p.h) && CHARM_SETS[p.h]) members.push(p.h);
+        members.forEach(m => visited.add(m));
+        if (members.length >= 2) n++;
+      }
+      return n;
+    }
+
+    if (action === "reset") {
+      const f = fb();
+      if (!f) return { statusCode: 200, headers: HEADERS, body: JSON.stringify({ ok: false, error: "no firestore" }) };
+      await f.db.collection("Brites_Editor_Meta").doc("charmVerifyState")
+        .set({ verified: {}, pruned: 0, dataVersion: DATA_VERSION, summary: { reset: new Date().toISOString() } });
+      return { statusCode: 200, headers: HEADERS, body: JSON.stringify({ ok: true, reset: true, dataVersion: DATA_VERSION }) };
+    }
+
     if (action === "kick") {
       const base = process.env.URL || "https://goldenspike.app";
       const r = await fetch(base + "/.netlify/functions/verifyCharmSets-background", {
@@ -96,7 +117,8 @@ exports.handler = async (event) => {
     const all = Object.values(state.verified || {});
     const errs = all.filter(v => typeof v.verdict === "string" && v.verdict.indexOf("error") === 0);
     const liveVerified = all.length - errs.length; // live count, updates every checkpoint mid-run
-    const total = (state.summary && state.summary.familiesTotal) || 377;
+    const total = familiesTotal(); /* always THIS universe's count, never a stale summary */
+    const staleState = state.dataVersion !== DATA_VERSION;
     const liveSummary = Object.assign({}, state.summary || {}, {
       familiesVerified: liveVerified, familiesTotal: total,
       complete: liveVerified >= total });
@@ -105,7 +127,7 @@ exports.handler = async (event) => {
     summary.familiesVerified = liveCount; // live, regardless of summary staleness
     if (summary.inProgress) summary.note = "run in progress — refresh to watch";
     return { statusCode: 200, headers: HEADERS, body: JSON.stringify({
-      ok: true, summary,
+      ok: true, summary, dataVersion: DATA_VERSION, staleState: staleState || false,
       prunedTotal: state.pruned || 0,
       errorCount: errs.length,
       errorSample: errs.slice(-3).map(v => v.verdict),
