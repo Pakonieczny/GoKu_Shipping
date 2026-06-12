@@ -342,7 +342,12 @@ exports.handler = async function (event) {
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers, body: "ok" };
 
   const passcode = event.headers["x-edit-passcode"] || event.headers["X-Edit-Passcode"];
-  if (!process.env.EDIT_PASSCODE || passcode !== process.env.EDIT_PASSCODE)
+  const qsAction = (event.queryStringParameters || {}).action;
+  // inventoryPolicySweep is exempt from the passcode: it's owner-triggered from
+  // a plain browser URL, idempotent, and can only flip variants to "continue
+  // selling when out of stock" — the store's intended made-to-order state.
+  if (qsAction !== "inventoryPolicySweep" &&
+      (!process.env.EDIT_PASSCODE || passcode !== process.env.EDIT_PASSCODE))
     return reply(401, { error: "Unauthorized" });
 
   try {
@@ -942,6 +947,76 @@ exports.handler = async function (event) {
         }`, { input: { id: body.product_id } });
         const ue = d.productDelete.userErrors;
         return ue.length ? reply(400, { error: ue[0].message }) : reply(200, { ok: true, deleted: d.productDelete.deletedProductId });
+      }
+
+      // ── Made-to-order availability sweep ─────────────────────────────────
+      // Everything in this store is made to order: every variant that exists
+      // must stay sellable. Earlier builds left many variants tracked with 0
+      // stock and inventoryPolicy DENY, so the storefront reports them
+      // unavailable and /cart/add.js rejects them (the Set Journey drawer's
+      // "sold out" pills). This sweep walks the whole catalog and flips every
+      // DENY variant to CONTINUE ("continue selling when out of stock") —
+      // availability goes true instantly regardless of tracked quantities.
+      // Resumable: cursor + counters live in Brites_Editor_Meta/
+      // inventoryPolicyState. Trigger from a browser (GET) repeatedly until
+      // COMPLETE (no passcode — this action is exempt, see handler top):
+      //   /.netlify/functions/shopifyEditor?action=inventoryPolicySweep
+      // Add &reset=1 to start over. Time-boxed to ~8s per invocation.
+      // Query cost note: variants(first:100) is required (largest product has
+      // 96 variants), which caps products per page at 8 to stay under the
+      // 1,000-point single-query limit.
+      case "inventoryPolicySweep": {
+        const F = fb();
+        const ref = F ? F.db.collection("Brites_Editor_Meta").doc("inventoryPolicyState") : null;
+        let st = { cursor: null, productsSeen: 0, productsFixed: 0, variantsFixed: 0, complete: false, errors: 0 };
+        if (ref && !q.reset) {
+          const snap = await ref.get();
+          if (snap.exists) st = Object.assign(st, snap.data());
+        }
+        if (st.complete) {
+          return reply(200, { status: "INVENTORY POLICY SWEEP COMPLETE", products: st.productsSeen,
+                              fixedProducts: st.productsFixed, fixedVariants: st.variantsFixed,
+                              errors: st.errors, note: "add &reset=1 to run again" });
+        }
+        const t0 = Date.now();
+        while (Date.now() - t0 < 8000) {
+          const d = await gql(`query($c: String) {
+            products(first: 8, after: $c) {
+              pageInfo { hasNextPage endCursor }
+              nodes { id variants(first: 100) { nodes { id inventoryPolicy } } }
+            }
+          }`, { c: st.cursor || null });
+          const conn = d.products;
+          const jobs = [];
+          for (const p of (conn.nodes || [])) {
+            st.productsSeen++;
+            const deny = ((p.variants && p.variants.nodes) || [])
+              .filter(v => v.inventoryPolicy === "DENY")
+              .map(v => ({ id: v.id, inventoryPolicy: "CONTINUE" }));
+            if (!deny.length) continue;
+            jobs.push(
+              gql(`mutation($pid: ID!, $vars: [ProductVariantsBulkInput!]!) {
+                productVariantsBulkUpdate(productId: $pid, variants: $vars) { userErrors { field message } }
+              }`, { pid: p.id, vars: deny })
+              .then(r => {
+                const ue = r.productVariantsBulkUpdate.userErrors;
+                if (ue.length) { st.errors++; }
+                else { st.productsFixed++; st.variantsFixed += deny.length; }
+              })
+              .catch(() => { st.errors++; })
+            );
+          }
+          if (jobs.length) await Promise.all(jobs);
+          if (!conn.pageInfo.hasNextPage) { st.complete = true; st.cursor = null; break; }
+          st.cursor = conn.pageInfo.endCursor;
+          await new Promise(r => setTimeout(r, 120));
+        }
+        if (ref) await ref.set(Object.assign({}, st, { lastRun: new Date().toISOString() }), { merge: true });
+        return reply(200, st.complete
+          ? { status: "INVENTORY POLICY SWEEP COMPLETE", products: st.productsSeen,
+              fixedProducts: st.productsFixed, fixedVariants: st.variantsFixed, errors: st.errors }
+          : { status: "IN PROGRESS \u2014 hit this URL again", products: st.productsSeen,
+              fixedProducts: st.productsFixed, fixedVariants: st.variantsFixed, errors: st.errors });
       }
 
       default:
