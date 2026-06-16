@@ -105,8 +105,16 @@ async function gql(query, variables, _attempt) {
 
 /* ─── CORS (storefront origin only, same allow-list as shopifyEditor.js) ─── */
 const ALLOWED_ORIGINS = ["https://britesjewelry.com", "https://www.britesjewelry.com"];
-function corsHeaders(origin) {
-  const allow = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+const ADMIN_ACTIONS = ["import", "moderate", "pending"];
+function corsHeaders(origin, action) {
+  // Public actions (list / submit) stay locked to the storefront origin.
+  // Admin actions (import / moderate / pending) are passwordless and guarded by
+  // server-side verification + a function URL nothing links to — not by CORS.
+  // So we let the admin page run from anywhere, including a local HTML file you
+  // just double-click (its Origin is "null"). No hosting / no URL required.
+  let allow;
+  if (ADMIN_ACTIONS.indexOf(action) !== -1) allow = origin || "*";
+  else allow = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
   return {
     "Access-Control-Allow-Origin": allow,
     "Access-Control-Allow-Headers": "Content-Type, X-Edit-Passcode",
@@ -204,7 +212,8 @@ async function verifyBuyer(customerId, email, handle) {
 /* ─── handler ─────────────────────────────────────────────────────────────── */
 exports.handler = async function (event) {
   const origin = event.headers.origin || event.headers.Origin || "";
-  const headers = corsHeaders(origin);
+  const preAction = (event.queryStringParameters || {}).action;
+  const headers = corsHeaders(origin, preAction);
   headers["Cache-Control"] = "no-store"; // reviews are real-time; never serve stale
   const reply = (status, obj) => ({ statusCode: status, headers, body: JSON.stringify(obj) });
 
