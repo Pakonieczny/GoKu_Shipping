@@ -985,21 +985,83 @@ exports.handler = async function (event) {
         return ue.length ? reply(400, { error: ue[0].message }) : reply(200, { ok: true, deleted: d.productDeleteMedia.deletedMediaIds });
       }
 
-      // Save image zoom/pan as a product metafield (non-destructive, upsert).
+      // Save image zoom/pan as a product metafield (non-destructive, upsert) AND make sure it's
+      // actually readable. The value writes fine with write_products, but it only shows in the
+      // admin Metafields UI and on the storefront if a DEFINITION exists with Storefront access.
+      // So: ensure/repair the definition, write the value, then read it back and report exactly
+      // what happened so the editor can tell the user if anything still needs doing.
       case "setFraming": {
-        await ensureFramingDefinition();
-        // Store as a plain "scale|offsetX|offsetY" string (NOT json). App-set json
-        // metafields read back as an unparsed string in theme Liquid, so the storefront
-        // transform never applied. A delimited string is read directly by Liquid.
         const sc = (body.scale == null ? 1 : body.scale);
         const ox = (body.offsetX == null ? 0 : body.offsetX);
         const oy = (body.offsetY == null ? 0 : body.offsetY);
         const value = [sc, ox, oy].join("|");
-        const d = await gql(`mutation($mf: [MetafieldsSetInput!]!) {
-          metafieldsSet(metafields: $mf) { userErrors { field message } }
+
+        // 1) Inspect the existing definition (if any).
+        let defExists = false, defType = null, defStorefront = false, defNote = null;
+        try {
+          const dq = await gql(`query {
+            metafieldDefinitions(first: 1, ownerType: PRODUCT, namespace: "card", key: "frame") {
+              nodes { id type { name } access { storefront } }
+            }
+          }`);
+          const def = ((dq.metafieldDefinitions || {}).nodes || [])[0];
+          if (def) { defExists = true; defType = def.type && def.type.name; defStorefront = (def.access && def.access.storefront) === "PUBLIC_READ"; }
+        } catch (e) { defNote = "could not read metafield definitions"; }
+
+        // 2a) No definition yet → create one with Storefront read access.
+        if (!defExists) {
+          try {
+            const cd = await gql(`mutation {
+              metafieldDefinitionCreate(definition: {
+                name: "Card framing", namespace: "card", key: "frame", type: "single_line_text_field",
+                ownerType: PRODUCT, access: { storefront: PUBLIC_READ }
+              }) { createdDefinition { id } userErrors { code message } }
+            }`);
+            const cdd = cd.metafieldDefinitionCreate;
+            if (cdd.createdDefinition) { defExists = true; defType = "single_line_text_field"; defStorefront = true; }
+            else if (cdd.userErrors && cdd.userErrors.length) { defNote = cdd.userErrors[0].message; }
+          } catch (e) { defNote = "no permission to create metafield definitions (needs write_metafield_definitions)"; }
+        }
+        // 2b) Definition exists but isn't storefront-readable → try to enable it.
+        else if (!defStorefront) {
+          try {
+            const ud = await gql(`mutation {
+              metafieldDefinitionUpdate(definition: {
+                namespace: "card", key: "frame", ownerType: PRODUCT, access: { storefront: PUBLIC_READ }
+              }) { updatedDefinition { access { storefront } } userErrors { code message } }
+            }`);
+            const upd = ud.metafieldDefinitionUpdate.updatedDefinition;
+            if (upd && upd.access && upd.access.storefront === "PUBLIC_READ") defStorefront = true;
+            else if (ud.metafieldDefinitionUpdate.userErrors && ud.metafieldDefinitionUpdate.userErrors.length) defNote = ud.metafieldDefinitionUpdate.userErrors[0].message;
+          } catch (e) { defNote = "could not enable storefront access on the existing definition"; }
+        }
+
+        // 3) Write the value.
+        const ms = await gql(`mutation($mf: [MetafieldsSetInput!]!) {
+          metafieldsSet(metafields: $mf) { metafields { id value } userErrors { field message } }
         }`, { mf: [{ ownerId: body.product_id, namespace: "card", key: "frame", type: "single_line_text_field", value }] });
-        const ue = d.metafieldsSet.userErrors;
-        return ue.length ? reply(400, { error: ue[0].message }) : reply(200, { ok: true });
+        const ue = ms.metafieldsSet.userErrors;
+        if (ue && ue.length) {
+          const msg = ue[0].message;
+          const hint = /type/i.test(msg) ? "A 'card.frame' definition with a different type already exists — delete it in Settings → Custom data → Products, then save again." : null;
+          return reply(400, { error: msg, hint });
+        }
+
+        // 4) Read the value back to confirm it actually persisted.
+        let readBack = null;
+        try {
+          const rq = await gql(`query($id: ID!) { product(id: $id) { metafield(namespace: "card", key: "frame") { value } } }`, { id: body.product_id });
+          readBack = rq.product && rq.product.metafield ? rq.product.metafield.value : null;
+        } catch (e) { /* read-back is best-effort */ }
+
+        return reply(200, {
+          ok: true,
+          value: value,
+          saved: readBack === value,            // did the value actually persist?
+          readBack: readBack,
+          storefrontReadable: defStorefront,    // will the theme be able to render it?
+          definition: { exists: defExists, type: defType, storefront: defStorefront, note: defNote }
+        });
       }
 
       // Permanently delete an entire product (and its variants + media).
