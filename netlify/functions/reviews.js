@@ -57,6 +57,12 @@ function fb() {
 const API_VERSION = process.env.SHOPIFY_API_VERSION || "2025-10";
 let _token = null, _tokenExp = 0;
 
+/* Cache for the site-wide "global" feed so we don't re-read every approved
+   review from Firestore on each modal open. Netlify keeps the function warm,
+   so most calls hit this in-memory cache; it self-refreshes every 10 min. */
+let _globalCache = null, _globalCacheExp = 0;
+const GLOBAL_TTL_MS = 10 * 60 * 1000;
+
 async function getToken() {
   if (_token && Date.now() < _tokenExp - 60000) return _token;
   const store = process.env.SHOPIFY_STORE;
@@ -393,6 +399,38 @@ exports.handler = async function (event) {
           nextStart: done ? null : start + slice.length,
           totalHandles: keys.length, done
         });
+      }
+
+      /* ---------- PUBLIC: site-wide feed — every approved review ---------- */
+      // Powers the homepage "Read all reviews" modal: all approved reviews
+      // across all products + a recomputed global summary. Cached in memory.
+      case "global": {
+        const now = Date.now();
+        if (_globalCache && now < _globalCacheExp) return reply(200, _globalCache);
+
+        const snap = await F.db.collectionGroup("items").where("s", "==", "approved").get();
+        const reviews = [];
+        const dist = { "1": 0, "2": 0, "3": 0, "4": 0, "5": 0 };
+        let sum = 0;
+        snap.forEach(doc => {
+          const d = doc.data();
+          const r = clampRating(d.r);
+          if (!r) return;
+          // parent path: Brites_Reviews/{handle}/items/{id}
+          const h = doc.ref.parent.parent ? doc.ref.parent.parent.id : "";
+          // email/PII never included — only public review fields go over the wire.
+          reviews.push({ r: r, n: d.n || "", d: d.d || "", b: d.b || "", v: d.v ? 1 : 0, h: h });
+          dist[String(r)]++; sum += r;
+        });
+        const count = reviews.length;
+        const avg = count ? Math.round((sum / count) * 100) / 100 : 0;
+        // newest first (in-memory; no composite index needed)
+        reviews.sort((a, b) => (a.d < b.d ? 1 : a.d > b.d ? -1 : 0));
+
+        const payload = { summary: { count: count, avg: avg, dist: dist }, reviews: reviews };
+        _globalCache = payload;
+        _globalCacheExp = now + GLOBAL_TTL_MS;
+        return reply(200, payload);
       }
 
       default:
