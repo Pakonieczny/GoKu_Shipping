@@ -341,8 +341,11 @@ exports.handler = async function (event) {
 
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers, body: "ok" };
 
+  // Passcode is OPTIONAL. Enforce it only when an EDIT_PASSCODE env var is set; if it is
+  // unset/empty, the editor is open (no passcode). To re-enable a passcode later, just add
+  // the EDIT_PASSCODE variable back in Netlify — no code change needed.
   const passcode = event.headers["x-edit-passcode"] || event.headers["X-Edit-Passcode"];
-  if (!process.env.EDIT_PASSCODE || passcode !== process.env.EDIT_PASSCODE)
+  if (process.env.EDIT_PASSCODE && passcode !== process.env.EDIT_PASSCODE)
     return reply(401, { error: "Unauthorized" });
 
   try {
