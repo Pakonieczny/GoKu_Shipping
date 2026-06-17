@@ -342,12 +342,7 @@ exports.handler = async function (event) {
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers, body: "ok" };
 
   const passcode = event.headers["x-edit-passcode"] || event.headers["X-Edit-Passcode"];
-  const qsAction = (event.queryStringParameters || {}).action;
-  // inventoryPolicySweep is exempt from the passcode: it's owner-triggered from
-  // a plain browser URL, idempotent, and can only flip variants to "continue
-  // selling when out of stock" — the store's intended made-to-order state.
-  if (qsAction !== "inventoryPolicySweep" &&
-      (!process.env.EDIT_PASSCODE || passcode !== process.env.EDIT_PASSCODE))
+  if (!process.env.EDIT_PASSCODE || passcode !== process.env.EDIT_PASSCODE)
     return reply(401, { error: "Unauthorized" });
 
   try {
@@ -553,6 +548,70 @@ exports.handler = async function (event) {
         }`, { pid: body.product_id, opt: { id: opt.id }, del: [val.id], vs: "MANAGE" });
         const ue = d.productOptionUpdate.userErrors;
         return ue.length ? reply(400, { error: ue[0].message }) : reply(200, { ok: true });
+      }
+
+      // Inverse of deleteOptionValue: add a value to an option (e.g. a metal choice) and
+      // create its variants at a flat price across every combination of the other options.
+      // Targeted — existing variants are left untouched (LEAVE_AS_IS), then the new variants
+      // are bulk-created. The editor restocks afterwards via setInventory.
+      case "addOptionValue": {
+        const oname = String(body.option_name || "").trim();
+        const oval  = String(body.value || "").trim();
+        const price = Math.round(Number(body.price));
+        if (!oval) return reply(400, { error: "Missing value" });
+        if (!Number.isFinite(price) || price <= 0) return reply(400, { error: "Missing or invalid price" });
+        const q = await gql(`query($id: ID!) {
+          product(id: $id) {
+            options { id name position optionValues { id name } }
+            variants(first: 100) { nodes { selectedOptions { name value } } }
+          }
+        }`, { id: body.product_id });
+        const prod = q.product;
+        if (!prod) return reply(404, { error: "Product not found" });
+        const opts = prod.options || [];
+        const opt = opts.find(o => (o.name || "").toLowerCase() === oname.toLowerCase())
+                 || opts.find(o => (o.name || "").toLowerCase().indexOf("metal") >= 0);
+        if (!opt) return reply(400, { error: "Option not found: " + oname });
+        if ((opt.optionValues || []).some(v => (v.name || "").toLowerCase() === oval.toLowerCase()))
+          return reply(400, { error: "\u201C" + oval + "\u201D is already a " + opt.name + " on this listing" });
+
+        // Distinct combinations of every OTHER option, taken from existing variants.
+        const others = opts.filter(o => o.id !== opt.id);
+        const seen = {}, combos = [];
+        ((prod.variants && prod.variants.nodes) || []).forEach(v => {
+          const combo = others.map(o => {
+            const so = (v.selectedOptions || []).find(s => s.name === o.name);
+            return { optionName: o.name, name: so ? so.value : null };
+          });
+          const key = combo.map(c => c.name).join(" / ");
+          if (!seen[key]) { seen[key] = true; combos.push(combo); }
+        });
+        if (!combos.length) combos.push([]); // single-option (metal-only) product
+
+        // 1) Register the new value without disturbing existing variants.
+        const add = await gql(`mutation($pid: ID!, $opt: OptionUpdateInput!, $vals: [OptionValueCreateInput!], $vs: ProductOptionUpdateVariantStrategy) {
+          productOptionUpdate(productId: $pid, option: $opt, optionValuesToAdd: $vals, variantStrategy: $vs) {
+            product { id } userErrors { field message code }
+          }
+        }`, { pid: body.product_id, opt: { id: opt.id }, vals: [{ name: oval }], vs: "LEAVE_AS_IS" });
+        const ae = add.productOptionUpdate.userErrors;
+        if (ae && ae.length) return reply(400, { error: ae[0].message });
+
+        // 2) Create a variant for (new value × each existing other-combo) at the flat price.
+        const variants = combos.map(combo => ({
+          price: String(price),
+          optionValues: [{ optionName: opt.name, name: oval }].concat(
+            combo.map(c => ({ optionName: c.optionName, name: c.name }))
+          )
+        }));
+        const cr = await gql(`mutation($pid: ID!, $variants: [ProductVariantsBulkInput!]!) {
+          productVariantsBulkCreate(productId: $pid, variants: $variants) {
+            productVariants { id } userErrors { field message }
+          }
+        }`, { pid: body.product_id, variants });
+        const ce = cr.productVariantsBulkCreate.userErrors;
+        if (ce && ce.length) return reply(400, { error: ce[0].message });
+        return reply(200, { ok: true, added: (cr.productVariantsBulkCreate.productVariants || []).length });
       }
 
       // Best-seller cross-reference: match the product's SKUs/title against the
@@ -947,76 +1006,6 @@ exports.handler = async function (event) {
         }`, { input: { id: body.product_id } });
         const ue = d.productDelete.userErrors;
         return ue.length ? reply(400, { error: ue[0].message }) : reply(200, { ok: true, deleted: d.productDelete.deletedProductId });
-      }
-
-      // ── Made-to-order availability sweep ─────────────────────────────────
-      // Everything in this store is made to order: every variant that exists
-      // must stay sellable. Earlier builds left many variants tracked with 0
-      // stock and inventoryPolicy DENY, so the storefront reports them
-      // unavailable and /cart/add.js rejects them (the Set Journey drawer's
-      // "sold out" pills). This sweep walks the whole catalog and flips every
-      // DENY variant to CONTINUE ("continue selling when out of stock") —
-      // availability goes true instantly regardless of tracked quantities.
-      // Resumable: cursor + counters live in Brites_Editor_Meta/
-      // inventoryPolicyState. Trigger from a browser (GET) repeatedly until
-      // COMPLETE (no passcode — this action is exempt, see handler top):
-      //   /.netlify/functions/shopifyEditor?action=inventoryPolicySweep
-      // Add &reset=1 to start over. Time-boxed to ~8s per invocation.
-      // Query cost note: variants(first:100) is required (largest product has
-      // 96 variants), which caps products per page at 8 to stay under the
-      // 1,000-point single-query limit.
-      case "inventoryPolicySweep": {
-        const F = fb();
-        const ref = F ? F.db.collection("Brites_Editor_Meta").doc("inventoryPolicyState") : null;
-        let st = { cursor: null, productsSeen: 0, productsFixed: 0, variantsFixed: 0, complete: false, errors: 0 };
-        if (ref && !q.reset) {
-          const snap = await ref.get();
-          if (snap.exists) st = Object.assign(st, snap.data());
-        }
-        if (st.complete) {
-          return reply(200, { status: "INVENTORY POLICY SWEEP COMPLETE", products: st.productsSeen,
-                              fixedProducts: st.productsFixed, fixedVariants: st.variantsFixed,
-                              errors: st.errors, note: "add &reset=1 to run again" });
-        }
-        const t0 = Date.now();
-        while (Date.now() - t0 < 8000) {
-          const d = await gql(`query($c: String) {
-            products(first: 8, after: $c) {
-              pageInfo { hasNextPage endCursor }
-              nodes { id variants(first: 100) { nodes { id inventoryPolicy } } }
-            }
-          }`, { c: st.cursor || null });
-          const conn = d.products;
-          const jobs = [];
-          for (const p of (conn.nodes || [])) {
-            st.productsSeen++;
-            const deny = ((p.variants && p.variants.nodes) || [])
-              .filter(v => v.inventoryPolicy === "DENY")
-              .map(v => ({ id: v.id, inventoryPolicy: "CONTINUE" }));
-            if (!deny.length) continue;
-            jobs.push(
-              gql(`mutation($pid: ID!, $vars: [ProductVariantsBulkInput!]!) {
-                productVariantsBulkUpdate(productId: $pid, variants: $vars) { userErrors { field message } }
-              }`, { pid: p.id, vars: deny })
-              .then(r => {
-                const ue = r.productVariantsBulkUpdate.userErrors;
-                if (ue.length) { st.errors++; }
-                else { st.productsFixed++; st.variantsFixed += deny.length; }
-              })
-              .catch(() => { st.errors++; })
-            );
-          }
-          if (jobs.length) await Promise.all(jobs);
-          if (!conn.pageInfo.hasNextPage) { st.complete = true; st.cursor = null; break; }
-          st.cursor = conn.pageInfo.endCursor;
-          await new Promise(r => setTimeout(r, 120));
-        }
-        if (ref) await ref.set(Object.assign({}, st, { lastRun: new Date().toISOString() }), { merge: true });
-        return reply(200, st.complete
-          ? { status: "INVENTORY POLICY SWEEP COMPLETE", products: st.productsSeen,
-              fixedProducts: st.productsFixed, fixedVariants: st.variantsFixed, errors: st.errors }
-          : { status: "IN PROGRESS \u2014 hit this URL again", products: st.productsSeen,
-              fixedProducts: st.productsFixed, fixedVariants: st.variantsFixed, errors: st.errors });
       }
 
       default:
