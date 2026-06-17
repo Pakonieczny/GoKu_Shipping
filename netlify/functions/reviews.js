@@ -408,12 +408,18 @@ exports.handler = async function (event) {
         const now = Date.now();
         if (_globalCache && now < _globalCacheExp) return reply(200, _globalCache);
 
-        const snap = await F.db.collectionGroup("items").where("s", "==", "approved").get();
+        // Unfiltered collection-group read so we DON'T need a custom
+        // collection-group index on the status field (a filtered
+        // collectionGroup(...).where("s","==",...) would require one). We
+        // filter to "approved" in memory; imported reviews are all approved,
+        // so this reads essentially the same volume.
+        const snap = await F.db.collectionGroup("items").get();
         const reviews = [];
         const dist = { "1": 0, "2": 0, "3": 0, "4": 0, "5": 0 };
         let sum = 0;
         snap.forEach(doc => {
           const d = doc.data();
+          if (d.s && d.s !== "approved") return;   // skip pending / rejected
           const r = clampRating(d.r);
           if (!r) return;
           // parent path: Brites_Reviews/{handle}/items/{id}
