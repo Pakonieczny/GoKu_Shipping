@@ -1,0 +1,371 @@
+[build]
+  functions = "netlify/functions"
+
+[functions]
+  node_bundler = "esbuild"
+  external_node_modules = ["sharp", "@resvg/resvg-js"]
+  # Asset bundling: every file matching these patterns gets copied into
+  # the bundle directory of every function, alongside the bundled .js.
+  # Functions reference these via path.join(__dirname, "...") at runtime.
+  #
+  #   fonts/    — used by _etsyMailTrackingRender via resvg-js
+  #   prompts/  — used by etsyMailIntentClassifier (v2.0 Step 1) and
+  #               will be used by etsyMailSalesAgent (v2.0 Step 2 — five
+  #               per-stage prompts under prompts/sales/)
+  included_files = [
+    "netlify/functions/fonts/**",
+    "netlify/functions/prompts/**"
+  ]
+
+# ─── M3: Etsy receipts sync — REMOVED 2026-05-21 ─────────────────────────
+# The etsyMailSyncCron schedule was permanently removed. The cron drove
+# full + incremental sync passes that pre-populated EtsyMail_Customers
+# docs for buyers who had never messaged the shop — data the inbox never
+# used, since the inbox is message-driven and the snapshot pipeline
+# already triggers a targeted per-buyer sync whenever a customer
+# messages in.
+#
+# On 2026-05-21 the cron entered a runaway: hit Etsy's daily rate limit,
+# tried to sleep ~2h, got killed at the 15-min function timeout, didn't
+# clear its lock, got re-invoked every 5 min, stacked concurrent
+# invocations. Removing the cron eliminates that entire failure mode.
+#
+# etsyMailSync-background.js now only supports mode=buyer (single-buyer
+# targeted sync). etsyMailSync.js and etsyMailSyncCron.js were deleted
+# outright — no manual trigger remains. Per-buyer sync runs entirely
+# from the snapshot pipeline.
+
+[functions."etsyMailDraftSendCleanupCron"]
+  schedule = "*/3 * * * *"
+
+# ─── Receipts mirror — May 2026 ─────────────────────────────────────────────
+# etsyMailReceiptsMirrorCron runs every 3 min, pulls receipts modified since
+# the last successful run, writes them to EtsyMail_Receipts. The mirror lets
+# buyer-mode sync read order history from Firestore (one indexed query) at
+# zero Etsy cost — instead of paginating up to 12,000 receipts per buyer
+# because Etsy's `buyer_user_id` filter doesn't work. Default-on; can be
+# disabled via EtsyMail_Config/receiptsMirrorState.enabled = false.
+[functions."etsyMailReceiptsMirrorCron"]
+  schedule = "*/3 * * * *"
+
+# ─── v2.4 consolidated reaper ───────────────────────────────────────────────
+# Replaces the two pre-v2.4 functions etsyMailAutoPipelineReaper and
+# etsyMailSendQueueReaper. Both were merged into etsyMailReapers.js, which
+# runs all reaper passes on every invocation. Netlify silently ignores
+# schedule entries pointing at nonexistent functions, so the old names left
+# the reaper effectively unscheduled — the symptom was threads stuck at
+# `queued_for_auto_send` after stranded post-click sends, because only the
+# reaper (not the cleanup cron) demotes the thread.
+[functions."etsyMailReapers"]
+  schedule = "*/5 * * * *"
+
+# ─── v2.0 Sales Mode: Step 1 — Catalog sync ─────────────────────────────────
+# etsyMailListingsCatalog pulls active listings via Etsy API and writes to
+# EtsyMail_Listings. The cron now runs ONCE DAILY at 04:00 UTC (midnight EDT
+# / 9pm PDT) instead of every 30 min.
+#
+# Pre-2026-05-26: schedule was "*/30 * * * *". At this shop's catalog size
+# (4,700 active listings × 47 pages per full sync), that produced ~1,128
+# Etsy API calls/day from this cron alone — roughly 50% of the daily
+# 5,000 QPD limit before any operator-triggered work.
+#
+# Post-cutover: 47 calls/day. The 4am UTC window is deliberately overnight
+# in North American timezones so the burst doesn't compete with daytime
+# operator activity for API budget.
+#
+# Trade-offs:
+#   - New listings appear in the AI's fuzzy-search catalog up to 24 hr later.
+#   - Edits to existing listings propagate up to 24 hr later.
+#   - Deletions are flagged active:false up to 24 hr later.
+# Real-time path preserved:
+#   - URL-based lookup (lookupListingByUrl) has live-fallback to Etsy API
+#     on cache miss — customers pasting URLs to brand-new listings still
+#     resolve immediately.
+#   - Manual sync via POST { op: "sync" } is available for right-after-
+#     publishing situations.
+#
+# Operator can also trigger on-demand from the Catalog tab (POST op:"sync").
+# Gated by EtsyMail_Config/autoPipeline.listingsMirrorEnabled — the cron
+# still fires but the function early-returns if the flag is off.
+[functions."etsyMailListingsCatalog"]
+  schedule = "0 4 * * *"
+
+# ─── v2.0 Sales Mode: Step 2 — Sales reaper ─────────────────────────────────
+# etsyMailSalesReaper detects abandoned funnels (no customer reply 7+ days,
+# stage in [discovery, spec, quote, revision]). Marks them sales_abandoned.
+# Gated by EtsyMail_Config/autoPipeline.salesModeEnabled.
+[functions."etsyMailSalesReaper"]
+  schedule = "0 */6 * * *"
+
+# ─── v2.2 Sales Mode: Etsy shipping upgrades sync ───────────────────────────
+# etsyMailShippingSync pulls shipping-profiles + upgrades + destinations from
+# Etsy and caches them in EtsyMail_ShippingUpgradesCache for the sales agent
+# to surface (price range, fastest-days text) when a customer mentions
+# urgency. 6h refresh keeps API usage minimal — shipping upgrades rarely
+# change. Manual re-sync via POST { op: "syncNow" } is owner-only.
+[functions."etsyMailShippingSync"]
+  schedule = "0 */6 * * *"
+
+# ─── v4.3 Custom Listing Automation ────────────────────────────────────────
+# Polls accepted custom-order sales threads, claims queued listing jobs,
+# and invokes etsyMailListingCreator-background.
+[functions."etsyMailListingCreatorCron"]
+  schedule = "* * * * *"
+
+# ─── M6 Gmail Watcher ──────────────────────────────────────────────────────
+# Polls Gmail every minute for new Etsy notification emails. The cron
+# itself reads EtsyMail_Config/gmailWatcher.enabled — operator can toggle
+# the watcher on/off from the inbox UI's topbar without redeploying.
+# Default-off until enabled, so the schedule going live here is harmless.
+[functions."etsyMailGmailCron"]
+  schedule = "* * * * *"
+
+# ─── v3.14: Tracking-job stuck sweeper ─────────────────────────────────────
+# Catches tracking jobs left in pending/running state too long and marks
+# them failed. Two failure modes covered:
+#   - pending > 2 min  → fire-and-forget background invocation never reached
+#                        Netlify (BG_TRIGGER_LOST). Most common.
+#   - running > 16 min → background function exceeded Netlify's 15-min cap
+#                        and got hard-killed before writing failure status
+#                        (BG_TIMEOUT). Rare.
+# Without this sweeper, stuck jobs pollute Firestore forever and the inbox
+# UI's 3-min poll-timeout fires but the Firestore doc stays in an incorrect
+# state, confusing later inspections and any retry logic.
+[functions."etsyMailTrackingSweepStuck"]
+  schedule = "*/5 * * * *"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Cross-Origin-Opener-Policy = "same-origin"
+    Cross-Origin-Embedder-Policy = "require-corp"
+
+[[redirects]]
+  from = "https://scanner.goldenspike.app"
+  to = "/scanner.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "https://sorting.goldenspike.app"
+  to = "/sorting.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "https://sort-scan.goldenspike.app"
+  to = "/sort-scan.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "https://design.goldenspike.app"
+  to = "/design.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "https://design-scan.goldenspike.app"
+  to = "/design-scan.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "https://weld-1.goldenspike.app"
+  to = "/weld-1.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "https://weld-scan-1.goldenspike.app"
+  to = "/weld-scan-1.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "https://shipping-1.goldenspike.app"
+  to = "/shipping-1.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "https://shipping-scan-1.goldenspike.app"
+  to = "/shipping-scan-1.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "https://shipping-2.goldenspike.app"
+  to = "/shipping-2.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "https://shipping-scan-2.goldenspike.app"
+  to = "/shipping-scan-2.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "https://shipping-3.goldenspike.app"
+  to = "/shipping-3.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "https://shipping-scan-3.goldenspike.app"
+  to = "/shipping-scan-3.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "https://assembly-1.goldenspike.app"
+  to = "/assembly-1.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "https://assembly-2.goldenspike.app"
+  to = "/assembly-2.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "https://assembly-3.goldenspike.app"
+  to = "/assembly-3.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "https://assembly-4.goldenspike.app"
+  to = "/assembly-4.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "https://assembly-scan-1.goldenspike.app"
+  to = "/assembly-scan-1.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "https://assembly-scan-2.goldenspike.app"
+  to = "/assembly-scan-2.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "https://assembly-scan-3.goldenspike.app"
+  to = "/assembly-scan-3.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "https://assembly-scan-4.goldenspike.app"
+  to = "/assembly-scan-4.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "https://design-1.goldenspike.app"
+  to = "/design-1.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "https://design-message.goldenspike.app"
+  to = "/design-message.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "https://design-message-1.goldenspike.app"
+  to = "/design-message-1.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "https://sorting-2.goldenspike.app"
+  to = "/sorting-2.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "https://sku.goldenspike.app"
+  to = "/SKU_List_V1.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "https://brites-vfx.goldenspike.app"
+  to = "/brites-vfx.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "https://listing-generator-1.goldenspike.app"
+  to = "/Listing_Generator_1.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "https://game-generator-1.goldenspike.app"
+  to = "/Game_Generator_1.html"
+  status = 200
+  force = true
+
+# ─── EtsyMail inbox UI ──────────────────────────────────────────────────────
+# v1.x → v1.5: served at etsy-mail-1.goldenspike.app → /etsy-mail-1.html
+# v1.6 → v1.10 + v2.0: served at etsy-mail-2.goldenspike.app → /etsy-mail-2.html
+#
+# The legacy redirect is preserved so anyone with the old URL bookmarked
+# still lands on something working. Operators should switch to etsy-mail-2.
+# When v2.0 features stabilize, the etsy-mail-1 redirect can be repointed
+# to /etsy-mail-2.html so both URLs converge.
+[[redirects]]
+  from = "https://etsy-mail-1.goldenspike.app"
+  to = "/etsy-mail-1.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "https://etsy-mail-2.goldenspike.app"
+  to = "/etsy-mail-2.html"
+  status = 200
+  force = true
+
+# ─── Brites storefront automation — June 2026 ───────────────────────────────
+# Self-running site fixes for britesjewelry.com (handle renames + redirects,
+# pages, menus, checkout branding, custom labels, 14→30-day returns copy in
+# product descriptions). Hourly until complete, then dormant via Firestore
+# state (Brites_Editor_Meta/siteFixesState). Manual: POST with X-Edit-Passcode.
+[functions."applySiteFixes"]
+  schedule = "0 * * * *"
+
+# Google Shopping recommended attributes (color per-variant from the metal,
+# plus age_group="adult" and gender="unisex" at the product level), written
+# into the mm-google-shopping metafield namespace the Google & YouTube channel
+# reads. Cursor-paginated catalog walk; resumes each run; dormant once complete
+# (Brites_Editor_Meta/googleAttributesState). Offset :15 so it never stacks with
+# applySiteFixes (:00) or syncCharmSets (:30). No passcode; manual: ?run=now.
+[functions."googleAttributes"]
+  schedule = "15 * * * *"
+
+# Verified charm-set metafields (brites.set) — full-catalog v3 data
+# (verified-full-v3-2026-06-12: 2,231 products' sets + 395 clears = 2,626
+# writes) from charmSetsData.js. Offset :30 so it never stacks with
+# applySiteFixes. DATA_VERSION change auto-restarts the walk; dormant when
+# done (Brites_Editor_Meta/charmSetsState).
+[functions."syncCharmSets"]
+  schedule = "30 * * * *"
+
+# Best-sellers collection sync: membership + true sales-rank order + tags +
+# bs_rank metafields. Weekly, Monday 05:00 UTC (overnight NA, mirroring the
+# 04:00 listings-catalog convention).
+[functions."syncBestSellers"]
+  schedule = "0 5 * * 1"
+
+# Visual set verification — COMPLETE (main run + phase-2 + phase-3,
+# 2026-06-12). The verifier trio (verifyCharmSetsKick,
+# verifyCharmSets-background, charmSetsConsole) and its schedule were
+# removed in the verified-full-v3 deploy.
