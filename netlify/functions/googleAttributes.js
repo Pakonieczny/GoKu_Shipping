@@ -36,6 +36,7 @@
 //      SHOPIFY_API_VERSION?      (default "2025-10")
 //      GMC_AGE_GROUP?            (default "adult")
 //      GMC_GENDER_DEFAULT?       (default "unisex")
+//      GMC_WRITE_CONCURRENCY?    (default 5 — parallel metafield writes per page)
 //
 // NOTE on color & the native channel: the Google & YouTube channel auto-maps a
 // variant option literally named "Color" to the color attribute. Your option is
@@ -61,6 +62,7 @@ const API_VERSION = process.env.SHOPIFY_API_VERSION || "2025-10";
 const NS          = "mm-google-shopping";
 const AGE_GROUP   = process.env.GMC_AGE_GROUP || "adult";
 const GENDER      = process.env.GMC_GENDER_DEFAULT || "unisex";
+const WRITE_CONCURRENCY = Number(process.env.GMC_WRITE_CONCURRENCY || 5);   // parallel metafield writes per page; throttle-retry in gql() handles backpressure
 
 /* ---- token + gql: identical pattern to applySiteFixes.js / shopifyEditor.js ---- */
 let _token = null, _tokenExp = 0;
@@ -102,6 +104,19 @@ async function gql(query, variables, _attempt) {
     if (transient && attempt < 2) { await new Promise(r => setTimeout(r, 350 * (attempt + 1))); return gql(query, variables, attempt + 1); }
     throw e;
   }
+}
+
+/* ---- small concurrency-limited runner (no deps) ---- */
+async function runWithConcurrency(tasks, limit) {
+  let i = 0;
+  const n = Math.min(limit, tasks.length);
+  const workers = new Array(n).fill(0).map(async () => {
+    while (i < tasks.length) {
+      const idx = i++;            // single-threaded JS: i++ is atomic
+      await tasks[idx]();
+    }
+  });
+  await Promise.all(workers);
 }
 
 /* ================= color derivation ================= */
@@ -165,13 +180,20 @@ async function processPage(dryRun, cursor) {
   }
 
   if (!dryRun && metafields.length) {
-    for (let i = 0; i < metafields.length; i += 25) {
+    // Split into Shopify's 25-per-call limit, then write the chunks in parallel
+    // (capped). gql()'s THROTTLED retry self-paces if we outrun the rate limit.
+    const chunks = [];
+    for (let i = 0; i < metafields.length; i += 25) chunks.push(metafields.slice(i, i + 25));
+    let firstError = null;
+    await runWithConcurrency(chunks.map(chunk => async () => {
+      if (firstError) return;                       // stop issuing new writes after an error
       const r = await gql(`mutation($metafields: [MetafieldsSetInput!]!) {
         metafieldsSet(metafields: $metafields) { userErrors { field message } } }`,
-        { metafields: metafields.slice(i, i + 25) });
+        { metafields: chunk });
       const ue = r.metafieldsSet.userErrors;
-      if (ue.length) return { error: ue[0].message, cursor };
-    }
+      if (ue.length && !firstError) firstError = ue[0].message;
+    }), WRITE_CONCURRENCY);
+    if (firstError) return { error: firstError, cursor };   // leave cursor un-advanced → page retries next run (idempotent)
   }
 
   return {
