@@ -16,6 +16,18 @@
 // applySiteFixes.setCustomLabels already uses for custom_label_0/1. So this
 // piggybacks on the existing, proven feed pipeline. No Google API required.
 //
+// PRODUCT IDENTIFIERS (for Product Ratings): during the same catalog walk this
+// also captures each product's representative SKU + barcode and writes them to
+// Firestore at  Brites_ProductIds/{handle} = { sku, gtin, title, updatedAt }.
+// productReviewsFeed.js reads that collection to emit GTIN / SKU / Brand+MPN on
+// each review, which is what clears Merchant Center's "Missing or invalid
+// product_id" warning so star ratings can serve. Identifier writes happen on
+// every live run (covering new products going forward); for a fast one-time
+// backfill of the existing catalog use idsOnly mode (skips the metafield writes
+// entirely — just reads products and writes the id docs):
+//
+//   ...?run=now&drain=1&force=1&idsonly=1   (deploy as -background for the 14-min budget)
+//
 // Architecture is intentionally identical to applySiteFixes.js: client-creds
 // token, retrying gql(), cursor-paginated catalog walk, time budget, progress
 // in Firestore (Brites_Editor_Meta/googleAttributesState), idempotent re-runs.
@@ -27,9 +39,11 @@
 //     schedule = "@hourly"
 //
 // HTTP (diagnostics / manual kick) — no auth; idempotent feed writes only:
-//   GET  ...?run=now            -> one immediate run (live writes)
-//   GET  ...?run=now&drain=1    -> one longer run (for fast backfill)
-//   POST { action, dryRun?, cursor?, drain? }
+//   GET  ...?run=now                         -> one immediate run (live writes)
+//   GET  ...?run=now&drain=1                  -> one longer run (fast backfill)
+//   GET  ...?run=now&force=1                  -> re-walk the whole catalog again
+//   GET  ...?run=now&force=1&idsonly=1&drain=1-> fast id-only backfill (no metafield writes)
+//   POST { action, dryRun?, cursor?, drain?, force?, idsOnly? }
 //        actions: "run" (default dryRun=true), "status"
 //
 // Env: SHOPIFY_STORE, SHOPIFY_CLIENT_ID, SHOPIFY_CLIENT_SECRET,
@@ -63,6 +77,7 @@ const NS          = "mm-google-shopping";
 const AGE_GROUP   = process.env.GMC_AGE_GROUP || "adult";
 const GENDER      = process.env.GMC_GENDER_DEFAULT || "unisex";
 const WRITE_CONCURRENCY = Number(process.env.GMC_WRITE_CONCURRENCY || 5);   // parallel metafield writes per page; throttle-retry in gql() handles backpressure
+const PRODUCT_IDS_COLLECTION = "Brites_ProductIds";   // {handle} -> { sku, gtin, title, updatedAt }; read by productReviewsFeed.js
 
 /* ---- token + gql: identical pattern to applySiteFixes.js / shopifyEditor.js ---- */
 let _token = null, _tokenExp = 0;
@@ -141,45 +156,87 @@ function variantColor(variant) {
   return null;
 }
 
+/* ================= product-identifier write ================= */
+// Persist one representative SKU + barcode per product to Firestore so the
+// reviews feed can match reviews -> products. Non-fatal: an identifier-write
+// failure must never break the attribute pass.
+async function writeProductIds(idRows) {
+  const f = fb();
+  if (!f || !idRows.length) return 0;
+  const batch = f.db.batch();
+  let n = 0;
+  for (const row of idRows) {
+    if (!row.handle) continue;
+    if (!row.sku && !row.barcode) continue;     // nothing useful to match on -> skip (feed falls back to brand)
+    batch.set(
+      f.db.collection(PRODUCT_IDS_COLLECTION).doc(row.handle),
+      { sku: row.sku || "", gtin: row.barcode || "", title: row.title || "", updatedAt: new Date().toISOString() },
+      { merge: true }
+    );
+    n++;
+  }
+  if (!n) return 0;
+  try { await batch.commit(); return n; }
+  catch (e) { console.error("[googleAttributes] product-id write failed:", e && e.message); return 0; }
+}
+
 /* ================= one catalog page ================= */
 // Page size is constrained by Shopify's 1000-point query-cost cap: a nested
 // products×variants query costs roughly 2 + products×(2 + variants×2), so
 // 6 products × 50 variants ≈ 614 points — safely under the cap, with each
 // variant still becoming a colour metafield. Brites products top out around
-// 32 variants, so first:50 captures every variant.
-async function processPage(dryRun, cursor) {
+// 32 variants, so first:50 captures every variant. (sku/barcode are scalar
+// fields and add ~0 to the query cost.)
+//
+// idsOnly: skip ALL metafield writes; only read products and persist their
+// SKU/barcode identifier docs. Used for the fast one-time id backfill.
+async function processPage(dryRun, cursor, idsOnly) {
   const d = await gql(`query($after: String) {
     products(first: 6, after: $after) {
       pageInfo { hasNextPage endCursor }
       edges { node {
-        id title
-        variants(first: 50) { edges { node { id selectedOptions { name value } } } }
+        id title handle
+        variants(first: 50) { edges { node { id selectedOptions { name value } sku barcode } } }
       } }
     } }`, { after: cursor || null });
 
   const edges = d.products.edges;
   const metafields = [];
+  const idRows = [];
   let colorSet = 0, colorSkipped = 0;
   const sample = [];
 
   for (const e of edges) {
     const p = e.node;
-    // product-level constants
-    metafields.push({ ownerId: p.id, namespace: NS, key: "age_group", type: "single_line_text_field", value: AGE_GROUP });
-    metafields.push({ ownerId: p.id, namespace: NS, key: "gender",    type: "single_line_text_field", value: GENDER });
-    // per-variant colour
     const vedges = (p.variants && p.variants.edges) || [];
+
+    // representative identifiers: first non-empty sku + first non-empty barcode
+    let repSku = "", repBarcode = "";
     for (const ve of vedges) {
-      const color = variantColor(ve.node);
-      if (color) {
-        metafields.push({ ownerId: ve.node.id, namespace: NS, key: "color", type: "single_line_text_field", value: color });
-        colorSet++;
-      } else { colorSkipped++; }
+      const v = ve.node || {};
+      if (!repSku && v.sku && String(v.sku).trim()) repSku = String(v.sku).trim();
+      if (!repBarcode && v.barcode && String(v.barcode).trim()) repBarcode = String(v.barcode).trim();
+      if (repSku && repBarcode) break;
     }
-    if (sample.length < 5) sample.push({ title: p.title, variants: vedges.length });
+    idRows.push({ handle: p.handle, title: p.title, sku: repSku, barcode: repBarcode });
+
+    if (!idsOnly) {
+      // product-level constants
+      metafields.push({ ownerId: p.id, namespace: NS, key: "age_group", type: "single_line_text_field", value: AGE_GROUP });
+      metafields.push({ ownerId: p.id, namespace: NS, key: "gender",    type: "single_line_text_field", value: GENDER });
+      // per-variant colour
+      for (const ve of vedges) {
+        const color = variantColor(ve.node);
+        if (color) {
+          metafields.push({ ownerId: ve.node.id, namespace: NS, key: "color", type: "single_line_text_field", value: color });
+          colorSet++;
+        } else { colorSkipped++; }
+      }
+    }
+    if (sample.length < 5) sample.push({ title: p.title, handle: p.handle, variants: vedges.length, sku: repSku, gtin: repBarcode });
   }
 
-  if (!dryRun && metafields.length) {
+  if (!dryRun && !idsOnly && metafields.length) {
     // Split into Shopify's 25-per-call limit, then write the chunks in parallel
     // (capped). gql()'s THROTTLED retry self-paces if we outrun the rate limit.
     const chunks = [];
@@ -196,8 +253,12 @@ async function processPage(dryRun, cursor) {
     if (firstError) return { error: firstError, cursor };   // leave cursor un-advanced → page retries next run (idempotent)
   }
 
+  // identifier docs are written on every live run (both modes)
+  let idsWritten = 0;
+  if (!dryRun) idsWritten = await writeProductIds(idRows);
+
   return {
-    products: edges.length, colorSet, colorSkipped, sample,
+    products: edges.length, colorSet, colorSkipped, idsWritten, sample,
     done: !d.products.pageInfo.hasNextPage,
     cursor: d.products.pageInfo.endCursor
   };
@@ -205,7 +266,7 @@ async function processPage(dryRun, cursor) {
 
 /* ================= state ================= */
 const STATE_DOC = "googleAttributesState";
-function baseState() { return { cursor: null, done: false, productsProcessed: 0, colorSet: 0, runs: 0 }; }
+function baseState() { return { cursor: null, done: false, productsProcessed: 0, colorSet: 0, idsWritten: 0, runs: 0 }; }
 async function loadState() {
   const f = fb();
   if (!f) return baseState();
@@ -226,6 +287,7 @@ async function autoRun(opts) {
   const started = Date.now();
   const budget  = opts.drain ? 840000 : 8000;   // drain = 14 min, for the one-time backfill when deployed as a -background function; incremental saves make any earlier timeout harmless
   const dryRun  = !!opts.dryRun;
+  const idsOnly = !!opts.idsOnly;
   const state   = await loadState();
   state.runs = (state.runs || 0) + 1;
   state.lastRunAt = new Date().toISOString();
@@ -238,10 +300,11 @@ async function autoRun(opts) {
   let pages = 0;
   try {
     while (Date.now() - started < budget) {
-      const r = await processPage(dryRun, cursor);
+      const r = await processPage(dryRun, cursor, idsOnly);
       if (r.error) { log.push({ error: r.error }); break; }
       state.productsProcessed = (state.productsProcessed || 0) + r.products;
       state.colorSet = (state.colorSet || 0) + r.colorSet;
+      state.idsWritten = (state.idsWritten || 0) + (r.idsWritten || 0);
       cursor = r.cursor; pages++;
       state.cursor = cursor;
       if (!dryRun) await saveState(state);   // incremental save: a timeout never loses progress
@@ -253,8 +316,8 @@ async function autoRun(opts) {
   state.cursor = cursor;
   if (state.done) state.completedAt = new Date().toISOString();
   if (!dryRun) await saveState(state);
-  log.push({ pagesThisRun: pages, productsProcessed: state.productsProcessed, colorSet: state.colorSet, done: !!state.done });
-  return { status: state.done ? "ALL ATTRIBUTES SET" : "in progress — continues next scheduled run", log, state };
+  log.push({ pagesThisRun: pages, productsProcessed: state.productsProcessed, colorSet: state.colorSet, idsWritten: state.idsWritten, idsOnly, done: !!state.done });
+  return { status: state.done ? (idsOnly ? "ALL PRODUCT IDS WRITTEN" : "ALL ATTRIBUTES SET") : "in progress — continues next scheduled run", log, state };
 }
 
 /* ================= handler (scheduled + HTTP) ================= */
@@ -279,11 +342,12 @@ exports.handler = async (event) => {
     }
   }
 
-  // Browser trigger: ?run=now runs immediately; add &drain=1 for a longer backfill pass.
+  // Browser trigger: ?run=now runs immediately. &drain=1 longer pass; &force=1
+  // re-walks the whole catalog; &idsonly=1 writes only the product-id docs.
   const q = event.queryStringParameters || {};
   if (event.httpMethod === "GET" && q.run === "now") {
     try {
-      const out = await autoRun({ drain: q.drain === "1" });
+      const out = await autoRun({ drain: q.drain === "1", force: q.force === "1", idsOnly: q.idsonly === "1" });
       return { statusCode: 200, headers, body: JSON.stringify(out, null, 2) };
     } catch (e) {
       return { statusCode: 500, headers, body: JSON.stringify({ ok: false, error: String(e.message || e) }) };
@@ -296,7 +360,7 @@ exports.handler = async (event) => {
     let result;
     switch (b.action) {
       case "run":
-        result = await autoRun({ dryRun, drain: !!b.drain, force: !!b.force, cursor: b.cursor });
+        result = await autoRun({ dryRun, drain: !!b.drain, force: !!b.force, idsOnly: !!b.idsOnly, cursor: b.cursor });
         break;
       case "status": {
         const state = await loadState();
