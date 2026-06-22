@@ -28,6 +28,13 @@
 //
 //   ...?run=now&drain=1&force=1&idsonly=1   (deploy as -background for the 14-min budget)
 //
+// AUTO-COVERAGE OF NEW PRODUCTS: once the initial backfill is complete, each
+// scheduled run instead performs a "recent-changes sweep" — it scans products
+// updated since the last sweep (sortKey UPDATED_AT) and writes BOTH attributes
+// and identifier docs for them. So products added/edited in Shopify get fully
+// populated automatically within the hour, with no manual re-run. Watermark is
+// stored in Brites_Editor_Meta/googleAttributesState.lastSweepAt.
+//
 // Architecture is intentionally identical to applySiteFixes.js: client-creds
 // token, retrying gql(), cursor-paginated catalog walk, time budget, progress
 // in Firestore (Brites_Editor_Meta/googleAttributesState), idempotent re-runs.
@@ -180,27 +187,10 @@ async function writeProductIds(idRows) {
   catch (e) { console.error("[googleAttributes] product-id write failed:", e && e.message); return 0; }
 }
 
-/* ================= one catalog page ================= */
-// Page size is constrained by Shopify's 1000-point query-cost cap: a nested
-// products×variants query costs roughly 2 + products×(2 + variants×2), so
-// 6 products × 50 variants ≈ 614 points — safely under the cap, with each
-// variant still becoming a colour metafield. Brites products top out around
-// 32 variants, so first:50 captures every variant. (sku/barcode are scalar
-// fields and add ~0 to the query cost.)
-//
-// idsOnly: skip ALL metafield writes; only read products and persist their
-// SKU/barcode identifier docs. Used for the fast one-time id backfill.
-async function processPage(dryRun, cursor, idsOnly) {
-  const d = await gql(`query($after: String) {
-    products(first: 6, after: $after) {
-      pageInfo { hasNextPage endCursor }
-      edges { node {
-        id title handle
-        variants(first: 50) { edges { node { id selectedOptions { name value } sku barcode } } }
-      } }
-    } }`, { after: cursor || null });
-
-  const edges = d.products.edges;
+/* ================= process a batch of product edges ================= */
+// Shared by the full-catalog walk (processPage) and the recent-changes sweep.
+// Writes attribute metafields (unless idsOnly) and the Brites_ProductIds docs.
+async function processEdges(edges, dryRun, idsOnly) {
   const metafields = [];
   const idRows = [];
   let colorSet = 0, colorSkipped = 0;
@@ -250,15 +240,41 @@ async function processPage(dryRun, cursor, idsOnly) {
       const ue = r.metafieldsSet.userErrors;
       if (ue.length && !firstError) firstError = ue[0].message;
     }), WRITE_CONCURRENCY);
-    if (firstError) return { error: firstError, cursor };   // leave cursor un-advanced → page retries next run (idempotent)
+    if (firstError) return { error: firstError, colorSet, colorSkipped, sample, idsWritten: 0 };
   }
 
   // identifier docs are written on every live run (both modes)
   let idsWritten = 0;
   if (!dryRun) idsWritten = await writeProductIds(idRows);
 
+  return { colorSet, colorSkipped, idsWritten, sample };
+}
+
+/* ================= one catalog page (full walk) ================= */
+// Page size is constrained by Shopify's 1000-point query-cost cap: a nested
+// products×variants query costs roughly 2 + products×(2 + variants×2), so
+// 6 products × 50 variants ≈ 614 points — safely under the cap, with each
+// variant still becoming a colour metafield. Brites products top out around
+// 32 variants, so first:50 captures every variant. (sku/barcode are scalar
+// fields and add ~0 to the query cost.)
+//
+// idsOnly: skip ALL metafield writes; only read products and persist their
+// SKU/barcode identifier docs. Used for the fast one-time id backfill.
+async function processPage(dryRun, cursor, idsOnly) {
+  const d = await gql(`query($after: String) {
+    products(first: 6, after: $after) {
+      pageInfo { hasNextPage endCursor }
+      edges { node {
+        id title handle
+        variants(first: 50) { edges { node { id selectedOptions { name value } sku barcode } } }
+      } }
+    } }`, { after: cursor || null });
+
+  const r = await processEdges(d.products.edges, dryRun, idsOnly);
+  if (r.error) return { error: r.error, cursor };   // leave cursor un-advanced → page retries next run (idempotent)
   return {
-    products: edges.length, colorSet, colorSkipped, idsWritten, sample,
+    products: d.products.edges.length, colorSet: r.colorSet, colorSkipped: r.colorSkipped,
+    idsWritten: r.idsWritten, sample: r.sample,
     done: !d.products.pageInfo.hasNextPage,
     cursor: d.products.pageInfo.endCursor
   };
@@ -266,7 +282,7 @@ async function processPage(dryRun, cursor, idsOnly) {
 
 /* ================= state ================= */
 const STATE_DOC = "googleAttributesState";
-function baseState() { return { cursor: null, done: false, productsProcessed: 0, colorSet: 0, idsWritten: 0, runs: 0 }; }
+function baseState() { return { cursor: null, done: false, productsProcessed: 0, colorSet: 0, idsWritten: 0, runs: 0, lastSweepAt: null }; }
 async function loadState() {
   const f = fb();
   if (!f) return baseState();
@@ -320,6 +336,65 @@ async function autoRun(opts) {
   return { status: state.done ? (idsOnly ? "ALL PRODUCT IDS WRITTEN" : "ALL ATTRIBUTES SET") : "in progress — continues next scheduled run", log, state };
 }
 
+/* ================= recent-changes sweep (auto-covers new/edited products) =================
+   Runs on the schedule once the initial backfill is complete. Scans products
+   updated since the watermark (state.lastSweepAt), oldest-changed first, and
+   writes BOTH attributes and identifier docs. The watermark advances to the
+   newest product processed, so it resumes correctly across runs and never
+   misses or permanently skips a product. Idempotent: re-touching a product
+   just re-writes the same values. */
+async function sweepRecent(opts) {
+  opts = opts || {};
+  const started = Date.now();
+  const budget  = opts.drain ? 840000 : 8000;
+  const state   = await loadState();
+  state.runs = (state.runs || 0) + 1;
+  state.lastRunAt = new Date().toISOString();
+  const log = [];
+
+  // Watermark: last sweep, else when the backfill completed, else 2 days back.
+  const sinceTs = state.lastSweepAt || state.completedAt || new Date(Date.now() - 2 * 864e5).toISOString();
+  const sinceQ  = new Date(sinceTs).toISOString().replace(/\.\d{3}Z$/, "Z");
+
+  let cursor = null, hasNext = true, pages = 0, processed = 0, idsWritten = 0, colorSet = 0;
+  let maxUpdated = sinceTs;
+  try {
+    while (hasNext && Date.now() - started < budget) {
+      const d = await gql(`query($after: String, $q: String) {
+        products(first: 6, after: $after, query: $q, sortKey: UPDATED_AT) {
+          pageInfo { hasNextPage endCursor }
+          edges { node {
+            id title handle updatedAt
+            variants(first: 50) { edges { node { id selectedOptions { name value } sku barcode } } }
+          } }
+        } }`, { after: cursor, q: `updated_at:>${sinceQ}` });
+
+      // Skip any product not strictly newer than the watermark (query is a backstop).
+      const edges = (d.products.edges || []).filter(e => !e.node.updatedAt || e.node.updatedAt > sinceTs);
+      if (edges.length) {
+        const r = await processEdges(edges, false, false);   // full: attributes + identifiers
+        if (r.error) { log.push({ error: r.error }); break; }
+        processed += edges.length; idsWritten += r.idsWritten; colorSet += r.colorSet;
+        for (const e of edges) { if (e.node.updatedAt && e.node.updatedAt > maxUpdated) maxUpdated = e.node.updatedAt; }
+      }
+      cursor = d.products.pageInfo.endCursor;
+      hasNext = d.products.pageInfo.hasNextPage;
+      pages++;
+    }
+  } catch (e) { log.push({ error: String(e.message || e) }); }
+
+  // Advance the watermark: to the newest product we processed, or to "now" when
+  // nothing changed (so we don't re-scan the same empty window next time).
+  state.lastSweepAt = processed > 0 ? maxUpdated : new Date(started).toISOString();
+  state.lastSweepRunAt = new Date().toISOString();
+  state.lastSweepProcessed = processed;
+  state.idsWritten = (state.idsWritten || 0) + idsWritten;
+  await saveState(state);
+
+  log.push({ swept: processed, idsWritten, colorSet, pages, caughtUp: !hasNext, watermark: state.lastSweepAt });
+  return { status: "sweep complete", log, state };
+}
+
 /* ================= handler (scheduled + HTTP) ================= */
 exports.handler = async (event) => {
   const headers = {
@@ -334,7 +409,10 @@ exports.handler = async (event) => {
   const scheduled = !!(event.headers && (event.headers["x-nf-event"] === "schedule" || event.isScheduled));
   if (scheduled) {
     try {
-      const out = await autoRun();
+      // Until the initial backfill finishes, keep walking the full catalog.
+      // After that, switch to the recent-changes sweep to auto-cover new/edited products.
+      const st  = await loadState();
+      const out = st.done ? await sweepRecent() : await autoRun();
       console.log("[googleAttributes] scheduled run:", JSON.stringify(out.status));
       return { statusCode: 200, headers, body: JSON.stringify(out) };
     } catch (e) {
@@ -347,7 +425,9 @@ exports.handler = async (event) => {
   const q = event.queryStringParameters || {};
   if (event.httpMethod === "GET" && q.run === "now") {
     try {
-      const out = await autoRun({ drain: q.drain === "1", force: q.force === "1", idsOnly: q.idsonly === "1" });
+      const out = (q.sweep === "1")
+        ? await sweepRecent({ drain: q.drain === "1" })
+        : await autoRun({ drain: q.drain === "1", force: q.force === "1", idsOnly: q.idsonly === "1" });
       return { statusCode: 200, headers, body: JSON.stringify(out, null, 2) };
     } catch (e) {
       return { statusCode: 500, headers, body: JSON.stringify({ ok: false, error: String(e.message || e) }) };
@@ -362,6 +442,9 @@ exports.handler = async (event) => {
       case "run":
         result = await autoRun({ dryRun, drain: !!b.drain, force: !!b.force, idsOnly: !!b.idsOnly, cursor: b.cursor });
         break;
+      case "sweep":
+        result = await sweepRecent({ drain: !!b.drain });
+        break;
       case "status": {
         const state = await loadState();
         const preview = await processPage(true, state.cursor);   // dry preview of the next page
@@ -369,7 +452,7 @@ exports.handler = async (event) => {
         break;
       }
       default:
-        return { statusCode: 400, headers, body: JSON.stringify({ error: "unknown action", actions: ["run", "status"] }) };
+        return { statusCode: 400, headers, body: JSON.stringify({ error: "unknown action", actions: ["run", "sweep", "status"] }) };
     }
     return { statusCode: 200, headers, body: JSON.stringify({ ok: true, action: b.action, dryRun, result }, null, 1) };
   } catch (e) {
