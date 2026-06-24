@@ -365,6 +365,19 @@
 [functions."syncBestSellers"]
   schedule = "0 5 * * 1"
 
+# ─── Brites Ad Autopilot — June 2026 ────────────────────────────────────────
+# Hourly kicker for the Google Ads autopilot (generate → deploy → measure →
+# adapt). Decides which tasks are due by clock (cheap tasks — anomaly +
+# offline-conversion upload — hourly; measure/mine/prune/event-generation
+# daily at GADS_DAILY_HOUR; budget reallocation weekly on GADS_WEEKLY_DOW)
+# and POSTs them to googleAdsAutopilot-background. Offset :45 so it never
+# stacks with applySiteFixes (:00), googleAttributes (:15), or
+# syncCharmSets (:30). Honors the kill switch + dry-run in
+# Brites_GAds_Control — dormant until enabled. Console + manual run:
+# GET/POST /.netlify/functions/googleAdsAutopilotKick (X-Edit-Passcode).
+[functions."googleAdsAutopilotKick"]
+  schedule = "45 * * * *"
+
 # Visual set verification — COMPLETE (main run + phase-2 + phase-3,
 # 2026-06-12). The verifier trio (verifyCharmSetsKick,
 # verifyCharmSets-background, charmSetsConsole) and its schedule were
