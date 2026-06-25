@@ -50,6 +50,7 @@ const COL = {
   ledger:    "Brites_GAds_Ledger",       // every mutation, with experiment ids (auto-id)
   approvals: "Brites_GAds_Approvals",    // pending creative/budget ops (auto-id)
   calendar:  "Brites_GAds_Calendar",     // event×collection config (doc per collection)
+  occasions: "Brites_GAds_Occasions",    // per-occasion memory (uses + attributed performance)
   convQueue: "Brites_GAds_ConvQueue"     // offline conversions waiting for upload (auto-id)
 };
 
@@ -62,6 +63,23 @@ const LOGIN_CID  = (ENV.GADS_LOGIN_CUSTOMER_ID || CID).replace(/\D/g, ""); // ma
 const DEV_TOKEN  = ENV.GADS_DEVELOPER_TOKEN || "";
 const GEN_MODEL  = ENV.GADS_GEN_MODEL || "gpt-5.4-mini";                   // text generation
 const CURRENCY   = ENV.GADS_CURRENCY || "USD";
+
+// The store's nine homepage collections (handle ↔ title) — drives the Draft Bench picker.
+const COLLECTIONS = [
+  { handle: "gifts-for-teachers", title: "Teachers" },
+  { handle: "gifts-for-nurses-doctors", title: "Nurses & Doctors" },
+  { handle: "animal-lovers", title: "Animal Lovers" },
+  { handle: "bird-lovers", title: "Bird Lovers" },
+  { handle: "beach-ocean", title: "Beach & Ocean" },
+  { handle: "cop", title: "Sports & Athletics" },
+  { handle: "floral-flower-lovers", title: "Floral & Flower Lovers" },
+  { handle: "celestial", title: "Celestial" },
+  { handle: "bar-engraved", title: "Personalized" }
+];
+const OCCASIONS = [
+  "Evergreen gifting", "Teacher Appreciation Week", "Nurses Week", "Mother's Day", "Father's Day",
+  "Graduation", "Back to School", "Valentine's Day", "Christmas", "Memorial / Sympathy", "Birthday / Zodiac"
+];
 
 // Control defaults; Firestore Brites_GAds_Control/control overrides these live.
 const DEFAULT_CONTROL = {
@@ -456,6 +474,7 @@ async function measure() {
     impr: Number(r.metrics.impressions || 0)
   }));
   if (f) await f.db.collection(COL.metrics).add({ at: f.FV.serverTimestamp(), kind: "campaign14d", snapshot });
+  await attributeOccasionsFromSnapshot(snapshot);
   return snapshot;
 }
 
@@ -588,10 +607,183 @@ async function anomalyCheck({ ctrl } = {}) {
   return { yesterday: +yCost.toFixed(2), trailingAvg: +tCost.toFixed(2), tripped };
 }
 
-/* ============================ Summary for console ============================ */
+/* ===================== Live Shopify collections ===================== */
+// Pulls real collections from the store (same client-credentials pattern the rest
+// of the repo uses), cached in Firestore so the Bench loads fast. force=true re-pulls.
+let _shTok = null, _shExp = 0;
+async function shopifyToken() {
+  if (_shTok && Date.now() < _shExp - 60000) return _shTok;
+  const store = ENV.SHOPIFY_STORE;
+  const res = await fetch(`https://${store}/admin/oauth/access_token`, {
+    method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ grant_type: "client_credentials",
+      client_id: ENV.SHOPIFY_CLIENT_ID, client_secret: ENV.SHOPIFY_CLIENT_SECRET })
+  });
+  const txt = await res.text();
+  if (!res.ok) throw new Error("Shopify token " + res.status + ": " + txt.slice(0, 160));
+  const d = JSON.parse(txt); _shTok = d.access_token; _shExp = Date.now() + (d.expires_in || 86399) * 1000;
+  return _shTok;
+}
+async function shopifyGql(query) {
+  const store = ENV.SHOPIFY_STORE, ver = ENV.SHOPIFY_API_VERSION || "2025-10", token = await shopifyToken();
+  const res = await fetch(`https://${store}/admin/api/${ver}/graphql.json`, {
+    method: "POST", headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" },
+    body: JSON.stringify({ query })
+  });
+  const d = await res.json().catch(() => ({}));
+  if (!res.ok || d.errors) throw new Error("Shopify GQL: " + JSON.stringify(d.errors || res.status).slice(0, 200));
+  return d.data;
+}
+async function fetchShopifyCollections() {
+  const out = []; let cursor = null, guard = 0;
+  do {
+    const after = cursor ? `, after: "${cursor}"` : "";
+    const d = await shopifyGql(`{ collections(first: 250, sortKey: TITLE${after}) {
+      pageInfo { hasNextPage endCursor } edges { node { title handle } } } }`);
+    const edges = (d.collections && d.collections.edges) || [];
+    edges.forEach(e => { if (e.node && e.node.handle) out.push({ handle: e.node.handle, title: e.node.title }); });
+    const pi = d.collections && d.collections.pageInfo;
+    cursor = pi && pi.hasNextPage ? pi.endCursor : null;
+  } while (cursor && ++guard < 10);
+  return out;
+}
+async function getCollections({ force } = {}) {
+  const f = fb();
+  if (f && !force) {
+    try {
+      const s = await f.db.collection(COL.state).doc("collections").get();
+      if (s.exists) { const x = s.data(); if (x.at && (Date.now() - x.at) < 60 * 60 * 1000 && Array.isArray(x.list) && x.list.length) return x.list; }
+    } catch (e) {}
+  }
+  let list;
+  try { list = await fetchShopifyCollections(); }
+  catch (e) {
+    if (f) { try { const s = await f.db.collection(COL.state).doc("collections").get(); if (s.exists && Array.isArray(s.data().list) && s.data().list.length) return s.data().list; } catch (_) {} }
+    return COLLECTIONS; // last-resort static fallback
+  }
+  if (!list.length) return COLLECTIONS;
+  if (f) { try { await f.db.collection(COL.state).doc("collections").set({ list, at: Date.now() }); } catch (e) {} }
+  return list;
+}
+
+/* ===================== Occasion memory + AI suggestions ===================== */
+function slugify(s) { return String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60); }
+
+// Called when a draft is created — remembers the occasion was used (+ its campaign tag).
+async function recordOccasionUse(occasion, handle, tag) {
+  const f = fb(); if (!f || !occasion) return;
+  const slug = slugify(occasion); const ref = f.db.collection(COL.occasions).doc(slug);
+  try {
+    const s = await ref.get(); const x = s.exists ? s.data() : { occasion, slug, timesUsed: 0, collections: {}, tags: [], outcome: "untested" };
+    x.occasion = occasion; x.timesUsed = (x.timesUsed || 0) + 1; x.lastUsed = f.FV.serverTimestamp();
+    x.collections = x.collections || {}; if (handle) { x.collections[handle] = x.collections[handle] || { count: 0 }; x.collections[handle].count++; }
+    x.tags = Array.isArray(x.tags) ? x.tags : []; if (tag && x.tags.indexOf(tag) < 0) x.tags.push(tag);
+    await ref.set(x, { merge: true });
+  } catch (e) {}
+}
+
+// Called from measure(): roll real campaign performance back onto each occasion,
+// marking success/fail so future suggestions learn from outcomes.
+async function attributeOccasionsFromSnapshot(snapshot) {
+  const f = fb(); if (!f || !snapshot || !snapshot.length) return;
+  const live = {};
+  snapshot.forEach(c => { const m = /^BA · (.+)$/.exec(c.name || ""); if (m) live[m[1]] = { cost: +c.cost || 0, conv: +c.conv || 0, value: +c.value || 0 }; });
+  if (!Object.keys(live).length) return;
+  try {
+    const target = (await control()).targetRoas || 2.5;
+    const snap = await f.db.collection(COL.occasions).get();
+    const batch = f.db.batch(); let any = false;
+    snap.forEach(doc => {
+      const x = doc.data(); const tags = x.tags || []; let cost = 0, conv = 0, value = 0;
+      tags.forEach(t => { if (live[t]) { cost += live[t].cost; conv += live[t].conv; value += live[t].value; } });
+      if (cost > 0) {
+        const roas = value / cost;
+        const outcome = roas >= target ? "success" : (cost >= 20 ? "fail" : "untested");
+        batch.set(doc.ref, { agg: { spend: +cost.toFixed(2), conv, value: +value.toFixed(2), roas: +roas.toFixed(2) }, outcome, attributedAt: f.FV.serverTimestamp() }, { merge: true });
+        any = true;
+      }
+    });
+    if (any) await batch.commit();
+  } catch (e) {}
+}
+
+// AI-generated, memory-weighted occasion suggestions for a collection. Cached 12h; force re-rolls.
+async function suggestOccasions(handle, { force } = {}) {
+  const f = fb(); const cacheKey = "occasions_" + (handle || "global");
+  if (f && !force) {
+    try {
+      const s = await f.db.collection(COL.state).doc(cacheKey).get();
+      if (s.exists) { const x = s.data(); if (x.at && (Date.now() - x.at) < 12 * 60 * 60 * 1000 && Array.isArray(x.list) && x.list.length) return x.list; }
+    } catch (e) {}
+  }
+  let memory = [];
+  if (f) {
+    try { const snap = await f.db.collection(COL.occasions).get(); snap.forEach(d => { const x = d.data(); memory.push({ occasion: x.occasion, timesUsed: x.timesUsed || 0, outcome: x.outcome || "untested", roas: (x.agg && x.agg.roas) || null }); }); } catch (e) {}
+  }
+  const collTitle = handle ? (await collectionMeta(handle)).title : "the store";
+  const dateStr = new Date().toISOString().slice(0, 10);
+  const memText = memory.length
+    ? memory.map(m => `- ${m.occasion}: used ${m.timesUsed}x, outcome ${m.outcome}${m.roas ? `, ROAS ${m.roas}x` : ""}`).join("\n")
+    : "(no history yet — nothing has run)";
+  const prompt =
+`Today is ${dateStr}. Plan Google Ads occasions for Brites, a handcrafted personalized charm-jewelry brand (gift- and emotion-led). Target collection: "${collTitle}".
+Occasion memory (what we've run and how it did):
+${memText}
+Suggest 8-12 occasions/events to advertise over the NEXT ~90 DAYS from today, ranked best-first. Favor:
+- timely seasonal/gifting moments genuinely upcoming within ~90 days of today,
+- occasions fitting this collection's audience,
+- occasions memory marks "success" (repeat the winners).
+Avoid occasions memory marks "fail" or that are out of season right now. Always include an "Evergreen gifting" option.
+Return ONLY JSON: {"occasions":[{"label":"","daysOut":<int>,"recommendation":"push|test|skip","proven":<bool>,"why":"<=90 chars"}]}`;
+  let list = null;
+  try { const j = await openaiJSON(prompt, { maxTokens: 1000 }); if (j && Array.isArray(j.occasions)) list = j.occasions.filter(o => o && o.label).slice(0, 12); } catch (e) {}
+  if (!list || !list.length) list = OCCASIONS.map(o => ({ label: o, daysOut: null, recommendation: "test", proven: false, why: "" }));
+  if (!list.some(o => /evergreen/i.test(o.label))) list.unshift({ label: "Evergreen gifting", daysOut: 0, recommendation: "test", proven: false, why: "always-on baseline" });
+  if (f) { try { await f.db.collection(COL.state).doc(cacheKey).set({ list, at: Date.now() }); } catch (e) {} }
+  return list;
+}
+
+/* ===================== Force-generate (Draft Bench) ===================== */
+// Build a real draft for ANY collection × occasion, regardless of calendar date,
+// and queue it for approval. This is the live path behind the console's Bench.
+async function collectionMeta(handle) {
+  const cal = await loadCalendar();
+  const fromCal = cal[handle];
+  const known = COLLECTIONS.find(c => c.handle === handle);
+  const title = (fromCal && fromCal.title) || (known && known.title) ||
+                handle.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+  return { handle, title, heroProducts: fromCal && fromCal.heroProducts,
+           reviewProof: (fromCal && fromCal.reviewProof) || "thousands of 5-star reviews" };
+}
+
+async function generateForCollection(handle, eventLabel, budget, { ctrl } = {}) {
+  ctrl = ctrl || (await control());
+  if (!handle) return { ok: false, reason: "no collection given" };
+  const coll = await collectionMeta(handle);
+  const event = (eventLabel && eventLabel !== "Evergreen gifting") ? { label: eventLabel, angle: "" } : null;
+  const assets = await generateRSAAssets(coll, event);
+  if (!assets) return { ok: false, reason: "generation rejected — copy failed brand-safety or fell under RSA minimums" };
+  const dailyBudget = Number(budget) || Number(ENV.GADS_NEW_CAMPAIGN_BUDGET || 8);
+  const { ops, tag } = buildSearchCampaignOps(coll, event, assets, { dailyBudget });
+  await recordOccasionUse(event ? event.label : "Evergreen gifting", coll.handle, tag);
+  const id = await enqueueApproval({
+    type: "creative", vetted: false,
+    summary: `NEW Search campaign “${tag}”${event ? ` for ${event.label}` : ""} — ${assets.headlines.length} headlines, starts PAUSED (drafted on the Bench)`,
+    payload: { mutateOperations: ops, finalCollection: coll.handle, event: event ? event.label : null },
+    experimentId: tag
+  });
+  return { ok: true, approvalId: id, tag, title: coll.title, event: event ? event.label : null,
+           budget: dailyBudget, currency: CURRENCY, assets };
+}
+
+
 async function dashboard() {
   const f = fb(); const ctrl = await control();
-  const out = { control: ctrl, pending: [], recentLedger: [], lastMetrics: null };
+  const out = {
+    control: ctrl, currency: CURRENCY,
+    collections: COLLECTIONS, occasions: OCCASIONS, terms: BRAND.termExclusions,
+    pending: [], recentLedger: [], lastMetrics: null, metricsSeries: []
+  };
   if (!f) return out;
   try {
     const ap = await f.db.collection(COL.approvals).where("status", "==", "PENDING").orderBy("createdAt", "desc").limit(25).get();
@@ -599,11 +791,14 @@ async function dashboard() {
   } catch (e) {}
   try {
     const lg = await f.db.collection(COL.ledger).orderBy("at", "desc").limit(20).get();
-    lg.forEach(d => out.recentLedger.push({ ...d.data(), at: undefined }));
+    lg.forEach(d => { const x = d.data(); out.recentLedger.push({ ...x, at: x.at && x.at.toMillis ? x.at.toMillis() : null }); });
   } catch (e) {}
   try {
-    const mt = await f.db.collection(COL.metrics).orderBy("at", "desc").limit(1).get();
-    mt.forEach(d => out.lastMetrics = d.data().snapshot);
+    const mt = await f.db.collection(COL.metrics).orderBy("at", "desc").limit(14).get();
+    const rows = [];
+    mt.forEach(d => { const x = d.data(); rows.push({ at: x.at && x.at.toMillis ? x.at.toMillis() : null, kind: x.kind, snapshot: x.snapshot }); });
+    if (rows.length) out.lastMetrics = rows[0].snapshot;
+    out.metricsSeries = rows.reverse(); // oldest → newest
   } catch (e) {}
   return out;
 }
@@ -614,6 +809,8 @@ module.exports = {
   enqueueConversion, uploadConversions,
   ledger, enqueueApproval, applyApproval, applyApprovalById: applyApproval,
   generateRSAAssets, buildSearchCampaignOps, textGuidelinesOp, brandSafe,
+  generateForCollection, COLLECTIONS, OCCASIONS,
+  getCollections, suggestOccasions, recordOccasionUse,
   loadCalendar, dueEvents,
   measure, pruneAssets, mineSearchTerms, reallocateBudgets, anomalyCheck,
   dashboard,

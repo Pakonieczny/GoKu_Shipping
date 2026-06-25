@@ -99,6 +99,18 @@ async function handleAction(body) {
     try { await E.applyApproval(body.id, ctrl); return { id: body.id, status: "APPLIED", dryRun: !!ctrl.dryRun }; }
     catch (e) { return { id: body.id, error: e.message }; }
   }
+  if (a === "collections") {
+    try { return { collections: await E.getCollections({ force: !!body.force }) }; }
+    catch (e) { return { collections: [], error: e.message }; }
+  }
+  if (a === "occasions") {
+    try { return { occasions: await E.suggestOccasions(body.coll, { force: !!body.force }) }; }
+    catch (e) { return { occasions: [], error: e.message }; }
+  }
+  if (a === "generate") {
+    try { return await E.generateForCollection(body.coll, body.event, body.budget, { ctrl }); }
+    catch (e) { return { ok: false, reason: e.message }; }
+  }
   if (a === "runNow") {
     const tasks = Array.isArray(body.tasks) && body.tasks.length ? body.tasks
       : ["anomaly","conversions","measure","mine","prune","budgets","events"];
