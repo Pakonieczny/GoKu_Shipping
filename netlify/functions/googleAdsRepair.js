@@ -5,13 +5,15 @@
 // field). Fully self-contained — does NOT call googleAdsAutopilot.js, so it works
 // even if that file hasn't been redeployed.
 //
-// Just open it in a browser (no query string needed):
+// Open it in a browser (no query string needed):
 //   https://goldenspike.app/.netlify/functions/googleAdsRepair
-// Type your console passcode (EDIT_PASSCODE) into the box and click a button.
-// "Preview" validates without creating; "Create campaigns" actually builds them (PAUSED).
+// Then click a button. "Preview" validates without creating; "Create campaigns"
+// actually builds them (PAUSED).
 //
-// The passcode is sent as a request header, so special characters (+ & # space …)
-// can never get mangled in a URL. Safe to delete this function once done.
+// Gate matches the rest of the tooling: if EDIT_PASSCODE is set, it's required;
+// if it's unset, this tool is open (just like the console). GET only ever shows the
+// page — campaigns are created only when you click a button (a POST). Delete this
+// function once your campaigns exist.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const fetch = require("node-fetch");
@@ -117,18 +119,17 @@ async function run(dry) {
 }
 
 function page(gateSet) {
-  const warn = gateSet ? "" :
-    `<div style="background:#fbeae7;border:1px solid #e2b6ad;color:#b3402f;padding:11px 13px;border-radius:8px;margin-bottom:16px;font-size:13.5px">
-       <b>EDIT_PASSCODE isn't set on this site.</b> Add it in Netlify &rarr; Site settings &rarr; Environment variables, redeploy, then reload this page.</div>`;
+  const auth = gateSet
+    ? `<input id="k" type="password" placeholder="Console passcode (EDIT_PASSCODE)" autocomplete="off"
+         style="flex:1;min-width:240px;padding:11px 13px;border:1px solid #ccc;border-radius:9px;font-size:14px"
+         onkeydown="if(event.key==='Enter')go(true)">`
+    : `<div style="flex:1;min-width:200px;font-size:13px;color:#666;background:#f3f0e9;border:1px solid #e3ddcf;border-radius:9px;padding:10px 13px">No passcode is set on this site, so this tool is open. You can lock it later by adding <code>EDIT_PASSCODE</code> in Netlify.</div>`;
   return htmlOut(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Ad Autopilot · repair</title>
 <body style="font-family:-apple-system,Segoe UI,sans-serif;max-width:760px;margin:40px auto;color:#1a1a1a;padding:0 18px">
 <h2 style="font-weight:600;margin-bottom:4px">Ad Autopilot — repair stuck approvals</h2>
 <p style="color:#666;font-size:14px;margin-top:0">Re-applies drafts that were approved but errored on send. Campaigns are created <b>PAUSED</b> — nothing spends until you enable it.</p>
-${warn}
 <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:18px 0">
-  <input id="k" type="password" placeholder="Console passcode (EDIT_PASSCODE)" autocomplete="off"
-    style="flex:1;min-width:240px;padding:11px 13px;border:1px solid #ccc;border-radius:9px;font-size:14px"
-    onkeydown="if(event.key==='Enter')go(true)">
+  ${auth}
   <button onclick="go(true)"  style="padding:11px 16px;border:1px solid #c9a23a;background:#f3e7c4;color:#5a4a1d;border-radius:9px;font-weight:600;font-size:13.5px;cursor:pointer">Preview (dry run)</button>
   <button onclick="go(false)" style="padding:11px 16px;border:none;background:#1a1a1a;color:#fff;border-radius:9px;font-weight:600;font-size:13.5px;cursor:pointer">Create campaigns</button>
 </div>
@@ -141,14 +142,15 @@ function row(i){var col=i.status==='created'?'#3c7a39':i.status==='validated'?'#
     '<td style="font-family:monospace;font-size:11px;padding:7px 9px;border-bottom:1px solid #eee">'+esc(i.campaign||(i.error?'':'\u2014'))+'</td>'+
     '<td style="font-size:11px;color:#b3402f;padding:7px 9px;border-bottom:1px solid #eee">'+esc(i.error||'')+'</td></tr>';}
 async function go(dry){
-  var key=document.getElementById('k').value.trim();
+  var inp=document.getElementById('k');
+  var key=inp?inp.value.trim():'';
   var out=document.getElementById('out');
-  if(!key){out.innerHTML='<div style="color:#b3402f;font-size:13px">Enter your passcode first.</div>';return;}
+  if(inp&&!key){out.innerHTML='<div style="color:#b3402f;font-size:13px">Enter your passcode first.</div>';return;}
   out.innerHTML='<div style="color:#888;font-size:13px">Working\u2026</div>';
   try{
     var res=await fetch(location.pathname,{method:'POST',headers:{'Content-Type':'application/json','x-edit-passcode':key},body:JSON.stringify({dry:dry})});
     var d=await res.json();
-    if(res.status===401){out.innerHTML='<div style="background:#fbeae7;border:1px solid #e2b6ad;color:#b3402f;padding:11px 13px;border-radius:8px;font-size:13.5px">'+(d.editPasscodeSet===false?'EDIT_PASSCODE is not set on this site.':'Passcode did not match. Double-check the EDIT_PASSCODE value in Netlify (watch for trailing spaces).')+'</div>';return;}
+    if(res.status===401){out.innerHTML='<div style="background:#fbeae7;border:1px solid #e2b6ad;color:#b3402f;padding:11px 13px;border-radius:8px;font-size:13.5px">Passcode did not match. Check the EDIT_PASSCODE value in Netlify (watch for trailing spaces).</div>';return;}
     if(d.fatal){out.innerHTML='<div style="background:#fbeae7;border:1px solid #e2b6ad;color:#b3402f;padding:11px 13px;border-radius:8px;font-size:13.5px">Could not run: '+esc(d.fatal)+'</div>';return;}
     var head='<div style="background:'+((!dry&&d.created)?'#eaf3e8':'#f6f3ec')+';border:1px solid #d9d2c2;padding:11px 13px;border-radius:8px;font-size:14px;margin-bottom:12px">Found <b>'+d.found+'</b> stuck approval(s). '+(dry?('Validated <b>'+d.validated+'</b> \u2014 dry run, nothing created.'):('Created <b>'+d.created+'</b> campaign(s) in Google Ads (PAUSED).'))+'</div>';
     var rows=(d.items||[]).map(row).join('')||'<tr><td colspan="4" style="padding:9px">Nothing stuck in APPROVED \u2014 nothing to repair.</td></tr>';
@@ -165,30 +167,23 @@ exports.handler = async (event) => {
   let body = {};
   try { if (event.body) body = JSON.parse(event.body); } catch (e) {}
 
-  // self-check: confirm the env var is configured WITHOUT revealing it
+  // self-check: confirm config WITHOUT revealing the passcode
   if (q.check === "1") {
     const g = gateVal();
-    return json(200, { editPasscodeSet: !!g, passcodeLength: g.length, customerId: CID || null, hasDevToken: !!ENV.GADS_DEVELOPER_TOKEN, ready: !!(g && CID && ENV.GADS_DEVELOPER_TOKEN) });
+    return json(200, { editPasscodeSet: !!g, passcodeLength: g.length, open: !g, customerId: CID || null, hasDevToken: !!ENV.GADS_DEVELOPER_TOKEN, ready: !!(CID && ENV.GADS_DEVELOPER_TOKEN) });
   }
 
   const gate = gateVal();
-  const key = (headers["x-edit-passcode"] || q.key || body.key || "").trim();
-  const dry = q.dry === "1" || q.dry === "true" || body.dry === true || body.dry === "1";
-  const valid = !!gate && key === gate;
 
-  if (!valid) {
-    if (method === "POST") return json(401, { error: gate ? "wrong passcode" : "EDIT_PASSCODE not set", editPasscodeSet: !!gate });
-    return page(!!gate); // GET → interactive form
-  }
+  // GET only ever shows the page — it never creates anything. Creation happens on the
+  // POST that a button fires.
+  if (method !== "POST") return page(!!gate);
 
+  // POST: gate matches the console — required only if EDIT_PASSCODE is set.
+  const key = (headers["x-edit-passcode"] || headers["X-Edit-Passcode"] || body.key || "").trim();
+  if (gate && key !== gate) return json(401, { error: "wrong passcode", editPasscodeSet: true });
+
+  const dry = body.dry === true || body.dry === "1" || q.dry === "1";
   const r = await run(dry);
-  if (method === "POST") return json(200, r);
-
-  // direct GET with a valid ?key= — render a simple server-side results page
-  const rowColor = s => s === "created" ? "#3c7a39" : s === "validated" ? "#7a5a1d" : s === "error" ? "#b3402f" : "#8a8a8a";
-  const rows = (r.items || []).map(i => `<tr><td style="font-size:12px;padding:7px 9px;border-bottom:1px solid #eee">${esc(i.summary)}</td><td style="padding:7px 9px;border-bottom:1px solid #eee"><b style="color:${rowColor(i.status)}">${esc(i.status || "?")}</b></td><td style="font-family:monospace;font-size:11px;padding:7px 9px;border-bottom:1px solid #eee">${esc(i.campaign || (i.error ? "" : "—"))}</td><td style="font-size:11px;color:#b3402f;padding:7px 9px;border-bottom:1px solid #eee">${esc(i.error || "")}</td></tr>`).join("") || `<tr><td colspan="4" style="padding:9px">Nothing stuck in APPROVED — nothing to repair.</td></tr>`;
-  const head = r.fatal
-    ? `<div style="background:#fbeae7;border:1px solid #e2b6ad;color:#b3402f;padding:11px 13px;border-radius:8px">Couldn't run: ${esc(r.fatal)}</div>`
-    : `<div style="background:${(!r.dry && r.created) ? "#eaf3e8" : "#f6f3ec"};border:1px solid #d9d2c2;padding:11px 13px;border-radius:8px;font-size:14px;margin-bottom:12px">Found <b>${r.found}</b> stuck approval(s). ${r.dry ? `Validated <b>${r.validated}</b> — dry run.` : `Created <b>${r.created}</b> campaign(s), PAUSED.`}</div>`;
-  return htmlOut(`<!doctype html><meta charset="utf-8"><title>Ad Autopilot · repair</title><body style="font-family:-apple-system,Segoe UI,sans-serif;max-width:760px;margin:36px auto;color:#1a1a1a;padding:0 18px"><h2 style="font-weight:600">Ad Autopilot — repair</h2>${head}<table style="border-collapse:collapse;width:100%;border:1px solid #eee;font-size:13px"><thead><tr style="background:#f3f0e9;text-align:left"><th style="padding:7px 9px">Draft</th><th style="padding:7px 9px">Result</th><th style="padding:7px 9px">New campaign</th><th style="padding:7px 9px">Error</th></tr></thead><tbody>${rows}</tbody></table></body>`);
+  return json(200, r);
 };
