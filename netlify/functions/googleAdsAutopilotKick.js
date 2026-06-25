@@ -99,6 +99,14 @@ async function handleAction(body) {
     try { await E.applyApproval(body.id, ctrl); return { id: body.id, status: "APPLIED", dryRun: !!ctrl.dryRun }; }
     catch (e) { return { id: body.id, error: e.message }; }
   }
+  if (a === "setBudget") {
+    try { return await E.setCampaignBudget(body.id, body.budget, { ctrl, budgetRes: body.budgetRes }); }
+    catch (e) { return { ok: false, error: e.message }; }
+  }
+  if (a === "analyzeCampaign") {
+    try { return await E.analyzeCampaign(body.id, { force: !!body.force }); }
+    catch (e) { return { error: e.message }; }
+  }
   if (a === "setStatus") {
     try { return await E.setCampaignStatus(body.id, body.status, { ctrl }); }
     catch (e) { return { ok: false, error: e.message }; }

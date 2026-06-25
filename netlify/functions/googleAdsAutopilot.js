@@ -465,13 +465,14 @@ async function measure() {
   // 1) ALL campaigns (config only, no date segment) — guarantees brand-new / paused /
   //    zero-impression campaigns are included, which a date-segmented query would drop.
   const base = await gaql(
-    `SELECT campaign.id, campaign.name, campaign.status, campaign_budget.amount_micros
+    `SELECT campaign.id, campaign.name, campaign.status, campaign_budget.resource_name, campaign_budget.amount_micros
      FROM campaign WHERE campaign.status != 'REMOVED'`);
   const byId = {};
   base.forEach(r => {
     byId[r.campaign.id] = {
       id: r.campaign.id, name: r.campaign.name, status: r.campaign.status,
       budget: fromMicros(r.campaignBudget && r.campaignBudget.amountMicros),
+      budgetRes: (r.campaignBudget && r.campaignBudget.resourceName) || null,
       cost: 0, conv: 0, value: 0, clicks: 0, impr: 0
     };
   });
@@ -774,6 +775,81 @@ async function setCampaignStatus(campaignId, status, { ctrl } = {}) {
   return { ok: true, id, status, dryRun: !!ctrl.dryRun };
 }
 
+/* ===================== Manual budget control ===================== */
+async function campaignBudgetRes(campaignId) {
+  const id = String(campaignId).replace(/\D/g, "");
+  const rows = await gaql(`SELECT campaign_budget.resource_name FROM campaign WHERE campaign.id = ${id} LIMIT 1`);
+  const r = rows[0]; return r && r.campaignBudget && r.campaignBudget.resourceName;
+}
+async function setCampaignBudget(campaignId, dailyBudget, { ctrl, budgetRes } = {}) {
+  ctrl = ctrl || (await control());
+  const amt = Number(dailyBudget);
+  if (!(amt > 0)) throw new Error("budget must be a positive number");
+  if (ctrl.maxDailyBudgetTotal && amt > ctrl.maxDailyBudgetTotal)
+    throw new Error(`budget ${CURRENCY}${amt} exceeds your account ceiling ${CURRENCY}${ctrl.maxDailyBudgetTotal}`);
+  let res = budgetRes || await campaignBudgetRes(campaignId);
+  if (!res) throw new Error("could not resolve this campaign's budget resource");
+  const op = { update: { resourceName: res, amountMicros: micros(amt) }, updateMask: "amount_micros" };
+  await mutate("campaignBudgets", [op], { ctrl, label: "setBudget:" + amt });
+  return { ok: true, id: String(campaignId).replace(/\D/g, ""), budget: amt, dryRun: !!ctrl.dryRun };
+}
+
+/* ===================== Per-campaign AI optimization analysis ===================== */
+async function latestSnapshotCampaign(campaignId) {
+  const f = fb(); if (!f) return null;
+  try {
+    const mt = await f.db.collection(COL.metrics).orderBy("at", "desc").limit(1).get();
+    let snap = null; mt.forEach(d => snap = d.data().snapshot);
+    if (!snap) return null;
+    const id = String(campaignId).replace(/\D/g, "");
+    return snap.find(c => String(c.id) === id) || null;
+  } catch (e) { return null; }
+}
+// Researches one campaign's real metrics and returns a structured optimization read.
+// Honest like Google's own recommendations: if there isn't enough data, it says so.
+async function analyzeCampaign(campaignId, { force } = {}) {
+  const f = fb(); const ctrl = await control();
+  const id = String(campaignId).replace(/\D/g, "");
+  const cacheKey = "analysis_" + id;
+  if (f && !force) {
+    try { const s = await f.db.collection(COL.state).doc(cacheKey).get(); if (s.exists) { const x = s.data(); if (x.at && (Date.now() - x.at) < 6 * 60 * 60 * 1000 && x.analysis) return x.analysis; } } catch (e) {}
+  }
+  const c = await latestSnapshotCampaign(id);
+  if (!c) return { score: null, status: "unknown", summary: "No snapshot for this campaign yet — run Measure first.", actions: [], campaignId: id, currency: CURRENCY };
+  const roas = c.cost > 0 ? c.value / c.cost : null, ctr = c.impr > 0 ? c.clicks / c.impr * 100 : null, cpa = c.conv > 0 ? c.cost / c.conv : null;
+  const target = ctrl.targetRoas || 0, ccy = CURRENCY;
+  const enoughData = c.conv >= 15 || c.cost >= 50;
+  const metrics = `status=${c.status}, dailyBudget=${ccy}${c.budget}, spend14d=${ccy}${c.cost}, impressions=${c.impr}, clicks=${c.clicks}, ctr=${ctr == null ? "n/a" : ctr.toFixed(2) + "%"}, conversions=${c.conv}, convValue=${ccy}${c.value}, roas=${roas == null ? "n/a" : roas.toFixed(2) + "x"}, cpa=${cpa == null ? "n/a" : ccy + cpa.toFixed(2)}`;
+  const prompt =
+`You are a senior Google Ads strategist optimizing a Search campaign for Brites, a handcrafted personalized charm-jewelry brand (gift/emotion-led). Currency ${ccy}. Account target ROAS: ${target || "unset (maximize value)"}. Account daily budget ceiling: ${ccy}${ctrl.maxDailyBudgetTotal}.
+Campaign "${c.name}" — last 14 days: ${metrics}.
+Give an honest optimization assessment. If there isn't enough data to optimize responsibly (Google Smart Bidding generally needs ~15+ conversions), SAY SO and recommend gathering data rather than inventing changes. Otherwise recommend concrete, prioritized actions (budget, bidding, keywords, creative, or status).
+Return ONLY JSON:
+{"score": <0-100 optimization/health score>,
+ "status": "<one of: not serving | learning | limited by budget | underperforming | healthy | scaling | insufficient data>",
+ "summary": "<2 plain-language sentences>",
+ "actions": [{"title":"<short>","detail":"<why + expected effect, <=140 chars>","type":"<budget|bid|status|keywords|creative|wait>","suggestedBudget": <number in ${ccy} or null>}]}`;
+  let out = null;
+  try { const j = await openaiJSON(prompt, { maxTokens: 800 }); if (j && j.summary) out = j; } catch (e) {}
+  if (!out) {
+    out = {
+      score: enoughData ? 55 : 25,
+      status: c.status === "PAUSED" ? "not serving" : (c.cost > 0 ? (roas != null && target && roas >= target ? "healthy" : "underperforming") : "learning"),
+      summary: enoughData ? "Automated read from current metrics (AI analysis unavailable)." : "Not enough conversion data yet to optimize responsibly — let it gather conversions first.",
+      actions: c.status === "PAUSED" ? [{ title: "Enable to start", detail: "Campaign is paused — enable it to begin serving and gathering data.", type: "status", suggestedBudget: null }] : []
+    };
+  }
+  out.score = Math.max(0, Math.min(100, Number(out.score) || 0));
+  out.actions = Array.isArray(out.actions) ? out.actions.slice(0, 5).map(a => ({
+    title: String(a.title || "").slice(0, 70), detail: String(a.detail || "").slice(0, 160),
+    type: ["budget", "bid", "status", "keywords", "creative", "wait"].indexOf(a.type) >= 0 ? a.type : "wait",
+    suggestedBudget: a.suggestedBudget != null ? Math.max(1, Math.min(ctrl.maxDailyBudgetTotal || 9999, Number(a.suggestedBudget))) : null
+  })) : [];
+  out.campaignId = id; out.currency = ccy; out.generatedAt = Date.now();
+  if (f) { try { await f.db.collection(COL.state).doc(cacheKey).set({ analysis: out, at: Date.now() }); } catch (e) {} }
+  return out;
+}
+
 /* ===================== Opportunity engine (the planner) ===================== */
 // Pulls the store's best-selling products (bounded) so the AI can reference real heroes.
 async function fetchTopProducts() {
@@ -915,7 +991,7 @@ module.exports = {
   generateRSAAssets, buildSearchCampaignOps, textGuidelinesOp, brandSafe,
   generateForCollection, COLLECTIONS, OCCASIONS,
   getCollections, suggestOccasions, recordOccasionUse,
-  scanOpportunities, fetchTopProducts, setCampaignStatus,
+  scanOpportunities, fetchTopProducts, setCampaignStatus, setCampaignBudget, analyzeCampaign,
   loadCalendar, dueEvents,
   measure, pruneAssets, mineSearchTerms, reallocateBudgets, anomalyCheck,
   dashboard,
