@@ -489,7 +489,7 @@ function renderApprovals(){var list=$("#apprList");var p=DASH.pending||[];
     var card=elFrom('<div class="draft"><div class="draft__top"><span class="tagk '+(a.type||"creative")+'">'+esc(a.type||"draft")+'</span><div><div class="ti">'+esc((a.summary||"").slice(0,80))+'</div><div class="me">'+(a.vetted?"vetted template":"needs review")+'</div></div><span class="chev">▾</span></div><div class="draft__body">'+body+'</div></div>');
     card.querySelector(".draft__top").onclick=()=>card.classList.toggle("open");list.appendChild(card);
   });
-  list.querySelectorAll("[data-ap]").forEach(b=>b.onclick=async e=>{e.stopPropagation();b.textContent="…";try{var r=await api("approve",{id:b.dataset.ap});toast((DASH.control||{}).dryRun?"Validated & logged (dry-run) — nothing applied":"Approved & sent to Google Ads",true);}catch(x){toast(x.message);}await reload();});
+  list.querySelectorAll("[data-ap]").forEach(b=>b.onclick=async e=>{e.stopPropagation();b.textContent="…";try{var r=await api("approve",{id:b.dataset.ap});if(r&&r.error){toast("Apply failed: "+r.error);}else{toast((DASH.control||{}).dryRun?"Validated (dry-run) — nothing applied":"Approved & sent to Google Ads ✓",true);}}catch(x){toast(x.message);}await reload();});
   list.querySelectorAll("[data-rj]").forEach(b=>b.onclick=async e=>{e.stopPropagation();try{await api("reject",{id:b.dataset.rj});toast("Rejected");}catch(x){toast(x.message);}await reload();});
 }
 
