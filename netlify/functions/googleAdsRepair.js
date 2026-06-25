@@ -81,6 +81,11 @@ function normalize(ops) {
       if (cc.text_guidelines !== undefined) { delete cc.text_guidelines; fixed++; }
       if (cc.textGuidelines !== undefined) { delete cc.textGuidelines; fixed++; }
     }
+    // newer required field the old builder predates (non-political advertiser)
+    const ccreate = op.campaignOperation && op.campaignOperation.create;
+    if (ccreate && ccreate.containsEuPoliticalAdvertising === undefined && ccreate.contains_eu_political_advertising === undefined) {
+      ccreate.containsEuPoliticalAdvertising = "DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING"; fixed++;
+    }
     const aa = op.adGroupAdOperation && op.adGroupAdOperation.create;
     if (aa && aa.adGroupAd && typeof aa.adGroupAd === "object") { op.adGroupAdOperation.create = aa.adGroupAd; fixed++; }
     const ac = op.adGroupCriterionOperation && op.adGroupCriterionOperation.create;
@@ -101,7 +106,15 @@ function extractAdsError(data) {
       const path = ((e.location && e.location.fieldPathElements) || [])
         .map(f => f.fieldName + (f.index != null ? "[" + f.index + "]" : "")).join(".");
       const code = e.errorCode ? Object.entries(e.errorCode).map(([k, v]) => k + ":" + v).join(",") : "";
-      parts.push((path ? path + " → " : "") + (e.message || "") + (code ? "  [" + code + "]" : ""));
+      let extra = "";
+      const pf = e.details && e.details.policyFindingDetails;
+      if (pf && pf.policyTopicEntries) {
+        extra = "  {policy: " + pf.policyTopicEntries.map(t => {
+          const ev = (t.evidences || []).map(x => (x.textList && x.textList.texts || []).join("/")).filter(Boolean).join(" / ");
+          return (t.topic || "?") + "(" + (t.type || "") + ")" + (ev ? " ← \"" + ev + "\"" : "");
+        }).join(", ") + "}";
+      }
+      parts.push((path ? path + " → " : "") + (e.message || "") + (code ? "  [" + code + "]" : "") + extra);
     });
   });
   if (parts.length) return parts.join("  ||  ");

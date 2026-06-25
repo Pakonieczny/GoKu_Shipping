@@ -465,6 +465,7 @@ function buildSearchCampaignOps(coll, event, assets, { dailyBudget }) {
     { campaignOperation: { create: {
         resourceName: cRes, name: `BA · ${tag}`, status: "PAUSED",      // always start PAUSED
         advertisingChannelType: "SEARCH", campaignBudget: bRes,
+        containsEuPoliticalAdvertising: "DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING",
         maximizeConversionValue: ENV.GADS_TARGET_ROAS ? { targetRoas: Number(ENV.GADS_TARGET_ROAS) } : {},
         networkSettings: { targetGoogleSearch: true, targetSearchNetwork: true, targetContentNetwork: false } } } },
     { adGroupOperation: { create: {
