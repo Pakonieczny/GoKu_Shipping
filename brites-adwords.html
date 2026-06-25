@@ -711,7 +711,10 @@ function bindControlsOnce(){
   slider("cAppr","cApprV",v=>v+"%","budgetMoveApprovalPct",v=>+v);
   var bb=$("#bBudget");bb.oninput=()=>$("#bBudgetV").textContent="$"+bb.value;
   $("#oppScan").onclick=()=>loadOpportunities(true);var cw=$("#customWrap");if(cw)cw.addEventListener("toggle",function(){if(cw.open)ensureBench();});$("#bColl").onchange=()=>loadOccasions(false);$("#bEvent").onchange=showOccWhy;$("#bOccRefresh").onclick=()=>loadOccasions(true);$("#bCollRefresh").onclick=()=>loadCollections(true);$("#bGen").onclick=generateBench;
-  $("#btnRefresh").onclick=()=>reload(true);
+  $("#btnRefresh").onclick=async function(){var b=$("#btnRefresh");var t=b.textContent;b.textContent="Refreshing\u2026";b.disabled=true;
+    try{var r=await api("measureNow");if(r&&r.ok===false){toast("Live pull failed: "+(r.error||"unknown"));}else{toast("Pulled "+(((r&&r.campaigns)!=null)?r.campaigns+" campaigns ":"")+"live from Google Ads",true);}}
+    catch(x){toast("Live pull error: "+x.message);}
+    b.textContent=t;b.disabled=false;await reload();};
 }
 async function runNow(tasks){$("#runMsg").textContent=" running…";try{var r=await api("runNow",{tasks:tasks});$("#runMsg").textContent=" "+(r.status||"")+" ["+tasks.join(",")+"] — refreshing in ~5s";setTimeout(()=>reload(),5000);}catch(x){$("#runMsg").textContent=" "+x.message;}}
 
