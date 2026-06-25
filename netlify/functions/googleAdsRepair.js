@@ -52,6 +52,26 @@ async function mintToken() {
 //  2) un-nest the extra resource layer the old builder put inside create
 //     (REST: an operation's `create` field IS the resource — no inner
 //      adGroupAd / adGroupCriterion / adGroup wrapper).
+// Summarize the payload so the result shows the actual shape (a too-few-descriptions
+// or odd-bidding issue is a common cause of the generic "invalid argument").
+function payloadInfo(ops) {
+  const info = { headlines: 0, descriptions: 0, keywords: 0, budget: null, bidding: null, finalUrl: null, ops: (ops || []).length };
+  (ops || []).forEach(op => {
+    if (op.campaignBudgetOperation && op.campaignBudgetOperation.create) info.budget = (Number(op.campaignBudgetOperation.create.amountMicros) || 0) / 1e6;
+    if (op.campaignOperation && op.campaignOperation.create) {
+      const c = op.campaignOperation.create;
+      info.bidding = c.maximizeConversionValue ? "maximizeConversionValue" : c.maximizeConversions ? "maximizeConversions" :
+        c.targetRoas ? "targetRoas" : c.targetSpend ? "targetSpend" : c.manualCpc ? "manualCpc" : c.targetCpa ? "targetCpa" : "(none set)";
+    }
+    if (op.adGroupAdOperation && op.adGroupAdOperation.create) {
+      const cr = op.adGroupAdOperation.create; const ad = (cr.adGroupAd ? cr.adGroupAd : cr).ad || {}; const rsa = ad.responsiveSearchAd || {};
+      info.headlines = (rsa.headlines || []).length; info.descriptions = (rsa.descriptions || []).length; info.finalUrl = (ad.finalUrls || [])[0] || null;
+    }
+    if (op.adGroupCriterionOperation) info.keywords++;
+  });
+  return info;
+}
+
 function normalize(ops) {
   let fixed = 0;
   (Array.isArray(ops) ? ops : []).forEach(op => {
@@ -71,6 +91,23 @@ function normalize(ops) {
   return fixed;
 }
 
+// Google Ads failures hide the useful detail in error.details[].errors[] —
+// error.message is just the generic "Request contains an invalid argument."
+function extractAdsError(data) {
+  const parts = [];
+  const det = (data && data.error && data.error.details) || [];
+  det.forEach(d => {
+    (d.errors || []).forEach(e => {
+      const path = ((e.location && e.location.fieldPathElements) || [])
+        .map(f => f.fieldName + (f.index != null ? "[" + f.index + "]" : "")).join(".");
+      const code = e.errorCode ? Object.entries(e.errorCode).map(([k, v]) => k + ":" + v).join(",") : "";
+      parts.push((path ? path + " → " : "") + (e.message || "") + (code ? "  [" + code + "]" : ""));
+    });
+  });
+  if (parts.length) return parts.join("  ||  ");
+  return (data && data.error && data.error.message) || JSON.stringify(data).slice(0, 800);
+}
+
 async function applyOne(token, ops, dry) {
   const res = await fetch(`https://googleads.googleapis.com/${V}/customers/${CID}/googleAds:mutate`, {
     method: "POST",
@@ -81,8 +118,8 @@ async function applyOne(token, ops, dry) {
     body: JSON.stringify({ mutateOperations: ops, partialFailure: false, validateOnly: !!dry })
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error("HTTP " + res.status + " — " + JSON.stringify(data.error ? data.error.message : data).slice(0, 1600));
-  if (data.partialFailureError) throw new Error("partial failure — " + JSON.stringify(data.partialFailureError).slice(0, 400));
+  if (!res.ok) throw new Error("HTTP " + res.status + " — " + extractAdsError(data).slice(0, 1800));
+  if (data.partialFailureError) throw new Error("partial failure — " + extractAdsError({ error: data.partialFailureError }).slice(0, 1800));
   let campaign = null;
   (data.mutateOperationResponses || []).forEach(r => {
     if (r && r.campaignResult && r.campaignResult.resourceName) campaign = r.campaignResult.resourceName;
@@ -109,11 +146,12 @@ async function run(dry) {
 
   for (const doc of docs) {
     const it = doc.data || {};
-    const item = { id: doc.id, summary: (it.summary || "").slice(0, 90), fixed: 0, status: "", campaign: null, error: null };
+    const item = { id: doc.id, summary: (it.summary || "").slice(0, 90), fixed: 0, info: null, status: "", campaign: null, error: null };
     const p = it.payload || {};
     const ops = p.mutateOperations || null;
     if (!ops) { item.status = "skipped"; item.error = "no mutateOperations in payload (can't repair this shape)."; out.items.push(item); continue; }
     item.fixed = normalize(ops);
+    item.info = payloadInfo(ops);
     try {
       const campaign = await applyOne(token, ops, dry);
       if (dry) { item.status = "validated"; out.validated++; }
@@ -147,7 +185,8 @@ function page(gateSet) {
 <script>
 function esc(s){return String(s==null?'':s).replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];});}
 function row(i){var col=i.status==='created'?'#3c7a39':i.status==='validated'?'#7a5a1d':i.status==='error'?'#b3402f':'#8a8a8a';
-  return '<tr><td style="font-size:12px;padding:7px 9px;border-bottom:1px solid #eee">'+esc(i.summary)+'</td>'+
+  var info=i.info?'<div style="font-size:10.5px;color:#999;margin-top:3px">'+i.info.headlines+' headlines · '+i.info.descriptions+' descriptions · '+i.info.keywords+' keywords · '+esc(i.info.bidding||'')+(i.info.budget!=null?' · $'+i.info.budget+'/day':'')+'</div>':'';
+  return '<tr><td style="font-size:12px;padding:7px 9px;border-bottom:1px solid #eee">'+esc(i.summary)+info+'</td>'+
     '<td style="padding:7px 9px;border-bottom:1px solid #eee"><b style="color:'+col+'">'+esc(i.status||'?')+'</b></td>'+
     '<td style="font-family:monospace;font-size:11px;padding:7px 9px;border-bottom:1px solid #eee">'+esc(i.campaign||(i.error?'':'\u2014'))+'</td>'+
     '<td style="font-size:11px;color:#b3402f;padding:7px 9px;border-bottom:1px solid #eee">'+esc(i.error||'')+'</td></tr>';}
