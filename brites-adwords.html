@@ -555,7 +555,8 @@ function detailHtml(c){
   var budCol='<div><div class="eyebrow" style="margin-bottom:6px">Daily budget ('+cur()+')</div>'+
     '<div class="range" style="min-width:200px"><input type="range" class="pbud" data-id="'+c.id+'" min="2" max="'+ceil+'" value="'+(c.budget||8)+'"><span class="rngval pbudv" data-id="'+c.id+'">'+money(c.budget||8)+'</span></div>'+
     '<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn ghost sm psave" data-id="'+c.id+'" data-res="'+esc(c.budgetRes||"")+'">Save budget</button>'+
-    '<button class="btn '+(en?"ghost":"gold")+' sm pstat" data-id="'+c.id+'" data-name="'+esc(c.name)+'" data-budget="'+(c.budget||0)+'" data-to="'+(en?"PAUSED":"ENABLED")+'">'+(en?"Pause":"Enable")+'</button></div></div>';
+    '<button class="btn '+(en?"ghost":"gold")+' sm pstat" data-id="'+c.id+'" data-name="'+esc(c.name)+'" data-budget="'+(c.budget||0)+'" data-to="'+(en?"PAUSED":"ENABLED")+'">'+(en?"Pause":"Enable")+'</button>'+
+    '<button class="btn ghost sm pstat" data-id="'+c.id+'" data-name="'+esc(c.name)+'" data-budget="0" data-to="REMOVED" style="border-color:var(--clay);color:var(--clay)">Archive</button></div></div>';
   var anaCol;
   if(P.loading[c.id])anaCol='<div style="display:flex;align-items:center;gap:10px;color:var(--ink-45);font-size:13px"><span class="spin"></span>Researching this campaign\u2019s metrics\u2026</div>';
   else if(P.analysis[c.id])anaCol=analysisHtml(c,P.analysis[c.id]);
@@ -595,12 +596,17 @@ async function setBudget(id,amt,res){
 async function campStatus(id,name,budget,status){
   if((DASH.control||{}).dryRun){if(!confirm("Dry-run is ON \u2014 this will validate only and NOT actually change the campaign.\n\nContinue anyway?"))return;}
   else if(status==="ENABLED"){if(!confirm("Enable \u201c"+name+"\u201d?\n\nIt will start serving ads and spending up to "+money(budget)+"/day of REAL budget."))return;}
+  else if(status==="REMOVED"){if(!confirm("Archive / remove \u201c"+name+"\u201d?\n\nThis STOPS the campaign and removes it from Google Ads. It CANNOT be undone or re-enabled (history is kept for reporting). To only pause it, cancel and use Pause instead."))return;}
   else {if(!confirm("Pause \u201c"+name+"\u201d?\n\nIt will stop serving ads."))return;}
   try{var r=await api("setStatus",{id:id,status:status});
-    if(r&&r.ok){if(r.dryRun)toast("Validated (dry-run) \u2014 status NOT changed. Turn off dry-run to apply.");else toast((status==="ENABLED"?"Enabled":"Paused")+" \u201c"+name+"\u201d \u2713",true);}
-    else toast("Failed: "+((r&&r.error)||"unknown"));}
-  catch(x){toast(x.message);}
-  await reload();}
+    if(r&&r.ok){
+      if(r.dryRun){toast("Validated (dry-run) \u2014 status NOT changed. Turn off dry-run to apply.");await reload();return;}
+      var verb=status==="ENABLED"?"Enabled":status==="REMOVED"?"Archived":"Paused";
+      toast(verb+" \u201c"+name+"\u201d \u2713",true);
+      if(DASH.lastMetrics){ if(status==="REMOVED"){DASH.lastMetrics=DASH.lastMetrics.filter(function(c){return String(c.id)!==String(id);});delete P.expanded[id];} else {var cc=DASH.lastMetrics.find(function(c){return String(c.id)===String(id);});if(cc)cc.status=status;} }
+      renderAll();
+    } else { toast("Failed: "+((r&&r.error)||"unknown")); await reload(); }
+  }catch(x){toast(x.message);await reload();}}
 
 /* ---- render: bench ---- */
 var benchLoaded=false; var OCC=[];
@@ -637,56 +643,105 @@ function showDraft(r){var a=r.assets||{};var out=$("#benchOut");
 }
 
 
-/* ---- render: opportunities ---- */
-var OPPS=[]; var oppLoaded=false;
+/* ---- render: opportunities (Unused vs In-use reconciliation) ---- */
+var OPPS=[]; var oppLoaded=false; var oppView="unused";
 async function ensureOpportunities(){ if(oppLoaded)return; oppLoaded=true; loadOpportunities(false); }
 async function loadOpportunities(force){
   var box=$("#oppList"); $("#oppScan").disabled=true;
-  box.innerHTML='<div class="empty" style="height:210px"><div class="spin" style="margin:0 auto 4px"></div><div>'+(force?"Re-scanning":"Analyzing")+' your catalog, calendar &amp; history\u2026</div><div style="font-size:12px">Full OpenAI analysis \u2014 about 10\u201320s.</div></div>';
+  box.innerHTML='<div class="empty" style="height:210px"><div class="spin" style="margin:0 auto 4px"></div><div>'+(force?"Re-scanning":"Analyzing")+' your catalog, calendar &amp; history\u2026</div><div style="font-size:12px">Cross-checking each idea against Approvals &amp; live Google Ads campaigns.</div></div>';
   try{ var r=await api("opportunities",{force:!!force}); OPPS=(r&&r.opportunities)||[];
-    $("#oppMeta").textContent=OPPS.length?(OPPS.length+" opportunities \u00b7 scanned "+(r.scannedAt?timeago(r.scannedAt)+" ago":"just now")):"";
+    setOppMeta(r&&r.scannedAt);
     renderOpportunities(); if(force)toast("Re-scanned \u2014 "+OPPS.length+" opportunities",true);
   }catch(x){ box.innerHTML='<div class="empty" style="height:160px"><div>Scan failed.</div><div style="font-size:12px">'+esc(x.message)+'</div></div>'; }
   $("#oppScan").disabled=false;
 }
+function setOppMeta(scannedAt){ var u=OPPS.filter(function(o){return !o.acted;}).length; $("#oppMeta").textContent=OPPS.length?(u+" unused \u00b7 "+(OPPS.length-u)+" in use"+(scannedAt?" \u00b7 scanned "+timeago(scannedAt)+" ago":"")):""; }
 function priMeta(p){ return p==="high"?["High priority","var(--gold-soft)","#7a5a1d"]:p==="medium"?["Medium","var(--sage-soft)","#3c5a39"]:["Test","var(--slate-soft)","#33525d"]; }
+function actedBadge(a){
+  if(!a) return ["Unused","var(--slate-soft)","#33525d"];
+  if(a.where==="campaign"){ var m={ENABLED:["Live","var(--sage-soft)","#3c5a39"],PAUSED:["Paused","var(--gold-soft)","#7a5a1d"],REMOVED:["Archived","var(--slate-soft)","#33525d"]}; return m[a.status]||["In Google Ads","var(--slate-soft)","#33525d"]; }
+  var ap={PENDING:["In approval","var(--gold-soft)","#7a5a1d"],APPROVED:["Approved","var(--sage-soft)","#3c5a39"],APPLIED:["Approved \u00b7 live","var(--sage-soft)","#3c5a39"],REJECTED:["Rejected","var(--clay-soft)","var(--clay)"]};
+  return ap[a.status]||["Acted","var(--slate-soft)","#33525d"];
+}
+function oppTabBtn(key,label,n){ var on=oppView===key;
+  return '<button class="oppTab" data-view="'+key+'" style="padding:8px 15px;border-radius:9px;border:1px solid '+(on?"var(--ink)":"var(--line)")+';background:'+(on?"var(--ink)":"transparent")+';color:'+(on?"var(--paper)":"var(--ink-70)")+';font-weight:600;font-size:13px;cursor:pointer">'+label+' <span style="opacity:.65;font-family:var(--mono)">'+n+'</span></button>'; }
 function renderOpportunities(){
   var box=$("#oppList");
   if(!OPPS.length){box.innerHTML='<div class="empty" style="height:160px"><div>No opportunities surfaced.</div><div style="font-size:12px">Try Scan again, or use Custom build below.</div></div>';return;}
+  var unused=[],inuse=[];
+  OPPS.forEach(function(o,i){ (o.acted?inuse:unused).push({o:o,i:i}); });
+  var tabs='<div style="display:flex;gap:8px;margin-bottom:18px">'+oppTabBtn("unused","Unused",unused.length)+oppTabBtn("inuse","In use",inuse.length)+'</div>';
+  box.innerHTML=tabs+'<div id="oppCards"></div>';
+  box.querySelectorAll(".oppTab").forEach(function(b){ b.onclick=function(){ oppView=b.dataset.view; renderOpportunities(); }; });
+  var cards=$("#oppCards"); var list=oppView==="inuse"?inuse:unused;
+  if(!list.length){ cards.innerHTML='<div class="empty" style="height:150px"><div>'+(oppView==="inuse"?"Nothing here yet.":"All current suggestions are already in use.")+'</div><div style="font-size:12px">'+(oppView==="inuse"?"Generated, approved, or live campaigns show up here so they\u2019re never re-suggested.":"Re-scan to surface fresh ideas.")+'</div></div>'; return; }
+  if(oppView==="inuse"){ list.forEach(function(x){ cards.appendChild(inUseCard(x.o)); }); return; }
   var ceil=Math.max(20,(DASH.control||{}).maxDailyBudgetTotal||100);
-  box.innerHTML="";
-  OPPS.forEach(function(o,i){ var pm=priMeta(o.priority);
-    var when=(o.daysOut!=null&&o.daysOut>0)?(o.daysOut+"d out"):"evergreen";
-    var past=(o.pastStats&&o.pastStats.roas)?'<span class="'+(o.pastStats.roas>=3?"roas-good":"roas-bad")+'">'+o.pastStats.roas+'x last run</span>':'<span class="muted">no history yet</span>';
-    var lab='font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-45)';
-    var card=elFrom('<div class="exp" data-i="'+i+'">'+
-      '<div class="exp__h"><span class="verdict" style="background:'+pm[1]+';color:'+pm[2]+'">'+pm[0]+'</span><span class="nm" style="font-weight:600">'+esc(o.collectionTitle)+' \u00b7 '+esc(o.occasion)+'</span><span class="st muted" style="font-family:var(--mono);font-size:12px">'+when+'</span></div>'+
-      '<div style="font-size:13px;color:var(--ink-70);margin:2px 0 14px">'+esc(o.rationale||"")+'</div>'+
-      '<div class="grid" style="grid-template-columns:1.5fr 1fr 1fr;gap:16px;align-items:end">'+
-        '<div><label style="'+lab+'">Daily budget ('+esc(o.currency||cur())+')</label><div class="range"><input type="range" class="opBud" data-i="'+i+'" min="2" max="'+ceil+'" value="'+o.recommendedDailyBudget+'"><span class="rngval opBudV" data-i="'+i+'">'+money(o.recommendedDailyBudget)+'</span></div><div class="muted" style="font-size:10.5px;margin-top:3px">AI suggests '+money(o.recommendedDailyBudget)+'</div></div>'+
-        '<div><label style="'+lab+'">Run for</label><div style="padding-top:7px;font-family:var(--mono);font-size:14px"><input type="number" class="opDur" data-i="'+i+'" value="'+o.durationDays+'" min="3" max="90" style="width:54px;padding:6px 7px;font-family:var(--mono)"> days</div></div>'+
-        '<div><label style="'+lab+'">Est. total</label><div class="opTot" data-i="'+i+'" style="padding-top:7px;font-family:var(--mono);font-size:17px;font-weight:600">'+money(o.estTotalSpend)+'</div></div>'+
-      '</div>'+
-      '<div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:14px;font-size:12.5px"><span class="muted">Expected ROAS&nbsp;<b style="color:var(--ink);font-family:var(--mono)">'+esc(o.expectedRoasBand||"\u2014")+'</b>&nbsp;<span style="font-size:11px">('+(o.proven?"from history":"estimate")+')</span></span><span class="muted">Past:&nbsp;'+past+'</span></div>'+
-      '<details style="margin-top:12px"><summary style="cursor:pointer;font-size:12.5px;color:var(--gold);font-weight:600">Keywords &amp; phrases</summary>'+
-        '<div class="eyebrow" style="margin:10px 0 6px">Keywords</div><div class="chips">'+((o.keywords||[]).map(function(k){return '<span class="chip on">'+esc(k)+'</span>';}).join("")||'<span class="muted" style="font-size:12px">\u2014</span>')+'</div>'+
-        '<div class="eyebrow" style="margin:12px 0 6px">Key phrases</div><div class="chips">'+((o.keyPhrases||[]).map(function(k){return '<span class="chip">'+esc(k)+'</span>';}).join("")||'<span class="muted" style="font-size:12px">\u2014</span>')+'</div></details>'+
-      '<div class="actions"><button class="btn gold sm opGen" data-i="'+i+'">Generate campaign</button><span class="opMsg muted" data-i="'+i+'" style="font-size:12px"></span></div>'+
-    '</div>');
-    box.appendChild(card);
-  });
-  function tot(i){ var b=+box.querySelector('.opBud[data-i="'+i+'"]').value; var d=+box.querySelector('.opDur[data-i="'+i+'"]').value||1; box.querySelector('.opTot[data-i="'+i+'"]').textContent=money(b*d); }
-  box.querySelectorAll(".opBud").forEach(function(s){ s.oninput=function(){ box.querySelector('.opBudV[data-i="'+s.dataset.i+'"]').textContent=money(s.value); tot(s.dataset.i); }; });
-  box.querySelectorAll(".opDur").forEach(function(d){ d.oninput=function(){ tot(d.dataset.i); }; });
-  box.querySelectorAll(".opGen").forEach(function(b){ b.onclick=function(){ launchOpp(b.dataset.i,b); }; });
+  list.forEach(function(x){ cards.appendChild(oppCard(x.o,x.i,ceil)); });
+  cards.querySelectorAll(".opBud").forEach(function(s){ s.oninput=function(){ cards.querySelector('.opBudV[data-i="'+s.dataset.i+'"]').textContent=money(s.value); oppRecalc(cards,s.dataset.i); }; });
+  cards.querySelectorAll(".opStart").forEach(function(d){ d.onchange=function(){ oppRecalc(cards,d.dataset.i); }; });
+  cards.querySelectorAll(".opEnd").forEach(function(d){ d.onchange=function(){ oppRecalc(cards,d.dataset.i); }; });
+  cards.querySelectorAll(".opGen").forEach(function(b){ b.onclick=function(){ launchOpp(b.dataset.i,b); }; });
 }
-async function launchOpp(i,btn){ var o=OPPS[i]; if(!o)return; var box=$("#oppList");
-  var bud=+box.querySelector('.opBud[data-i="'+i+'"]').value; var msg=box.querySelector('.opMsg[data-i="'+i+'"]');
-  btn.disabled=true; btn.textContent="Generating\u2026"; msg.textContent="";
-  try{ var r=await api("generate",{coll:o.collectionHandle,event:o.occasion,budget:bud});
-    if(r&&r.ok){ btn.textContent="Queued \u2713"; btn.classList.remove("gold"); msg.innerHTML=' in <a href="#" onclick="go(&#39;approvals&#39;);return false" style="color:var(--gold)">Approvals</a> \u00b7 '+((r.assets&&r.assets.headlines)?r.assets.headlines.length:0)+' headlines, paused'; reload(); }
-    else { btn.disabled=false; btn.textContent="Generate campaign"; msg.textContent=" "+((r&&r.reason)||"failed"); }
-  }catch(x){ btn.disabled=false; btn.textContent="Generate campaign"; msg.textContent=" "+x.message; }
+function fmtDate(s){ if(!s)return"\u2014"; var d=new Date(s+"T00:00:00"); if(isNaN(d.getTime()))return s; return d.toLocaleDateString(undefined,{month:"short",day:"numeric"}); }
+function daysBtw(a,b){ if(!a||!b)return 0; var d=Math.round((new Date(b+"T00:00:00")-new Date(a+"T00:00:00"))/86400000); return d>0?d:1; }
+function oppRecalc(cards,i){
+  var bud=+cards.querySelector('.opBud[data-i="'+i+'"]').value;
+  var s=cards.querySelector('.opStart[data-i="'+i+'"]').value, e=cards.querySelector('.opEnd[data-i="'+i+'"]').value;
+  var days=daysBtw(s,e);
+  var win=cards.querySelector('.opWin[data-i="'+i+'"]'); if(win)win.textContent=fmtDate(s)+" \u2013 "+fmtDate(e);
+  var dur=cards.querySelector('.opDur[data-i="'+i+'"]'); if(dur)dur.textContent=days;
+  var tot=cards.querySelector('.opTot[data-i="'+i+'"]'); if(tot)tot.textContent=money(bud*days);
+}
+function oppCard(o,i,ceil){ var pm=priMeta(o.priority);
+  var when=(o.daysOut!=null&&o.daysOut>0)?("starts in "+o.daysOut+"d"):"starts now";
+  var past=(o.pastStats&&o.pastStats.roas)?'<span class="'+(o.pastStats.roas>=3?"roas-good":"roas-bad")+'">'+o.pastStats.roas+'x last run</span>':'<span class="muted">no history yet</span>';
+  var lab='font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-45)';
+  var din='padding:7px 8px;font-family:var(--mono);font-size:13px;width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink)';
+  var winTxt=fmtDate(o.startDate)+" \u2013 "+fmtDate(o.endDate);
+  return elFrom('<div class="exp" data-i="'+i+'">'+
+    '<div class="exp__h"><span class="verdict" style="background:'+pm[1]+';color:'+pm[2]+'">'+pm[0]+'</span><span class="nm" style="font-weight:600">'+esc(o.collectionTitle)+' \u00b7 '+esc(o.occasion)+'</span><span class="st muted" style="font-family:var(--mono);font-size:12px">'+when+'</span></div>'+
+    '<div style="font-size:13px;color:var(--ink-70);margin:2px 0 14px">'+esc(o.rationale||"")+'</div>'+
+    '<div class="grid" style="grid-template-columns:1.4fr 1fr 1fr;gap:16px;align-items:end">'+
+      '<div><label style="'+lab+'">Daily budget ('+esc(o.currency||cur())+')</label><div class="range"><input type="range" class="opBud" data-i="'+i+'" min="2" max="'+ceil+'" value="'+o.recommendedDailyBudget+'"><span class="rngval opBudV" data-i="'+i+'">'+money(o.recommendedDailyBudget)+'</span></div><div class="muted" style="font-size:10.5px;margin-top:3px">AI suggests '+money(o.recommendedDailyBudget)+'</div></div>'+
+      '<div><label style="'+lab+'">Start date</label><div style="padding-top:6px"><input type="date" class="opStart" data-i="'+i+'" value="'+esc(o.startDate||"")+'" style="'+din+'"></div></div>'+
+      '<div><label style="'+lab+'">End date</label><div style="padding-top:6px"><input type="date" class="opEnd" data-i="'+i+'" value="'+esc(o.endDate||"")+'" style="'+din+'"></div></div>'+
+    '</div>'+
+    '<div style="margin-top:13px;display:flex;gap:20px;flex-wrap:wrap;align-items:baseline;font-size:12.5px">'+
+      '<span class="muted">Window&nbsp;<b class="opWin" data-i="'+i+'" style="color:var(--ink);font-family:var(--mono)">'+winTxt+'</b></span>'+
+      '<span class="muted"><b class="opDur" data-i="'+i+'" style="color:var(--ink);font-family:var(--mono)">'+o.durationDays+'</b> days</span>'+
+      '<span class="muted">Est. total&nbsp;<b class="opTot" data-i="'+i+'" style="color:var(--ink);font-family:var(--mono);font-size:15px">'+money(o.estTotalSpend)+'</b></span>'+
+      '<span class="muted" style="font-size:11px">AI suggests this window</span>'+
+    '</div>'+
+    '<div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:12px;font-size:12.5px"><span class="muted">Expected ROAS&nbsp;<b style="color:var(--ink);font-family:var(--mono)">'+esc(o.expectedRoasBand||"\u2014")+'</b>&nbsp;<span style="font-size:11px">('+(o.proven?"from history":"estimate")+')</span></span><span class="muted">Past:&nbsp;'+past+'</span></div>'+
+    '<details style="margin-top:12px"><summary style="cursor:pointer;font-size:12.5px;color:var(--gold);font-weight:600">Keywords &amp; phrases</summary>'+
+      '<div class="eyebrow" style="margin:10px 0 6px">Keywords</div><div class="chips">'+((o.keywords||[]).map(function(k){return '<span class="chip on">'+esc(k)+'</span>';}).join("")||'<span class="muted" style="font-size:12px">\u2014</span>')+'</div>'+
+      '<div class="eyebrow" style="margin:12px 0 6px">Key phrases</div><div class="chips">'+((o.keyPhrases||[]).map(function(k){return '<span class="chip">'+esc(k)+'</span>';}).join("")||'<span class="muted" style="font-size:12px">\u2014</span>')+'</div></details>'+
+    '<div class="actions"><button class="btn gold sm opGen" data-i="'+i+'">Generate campaign</button><span class="opMsg muted" data-i="'+i+'" style="font-size:12px"></span></div>'+
+  '</div>');
+}
+function inUseCard(o){ var b=actedBadge(o.acted); var a=o.acted||{};
+  var loc = a.where==="campaign" ? ('Google Ads \u00b7 campaign '+(a.campaignId||"")) : 'Approval pipeline';
+  var link = (a.where==="campaign"&&a.status!=="REMOVED") ? '<a href="#" onclick="go(&#39;perf&#39;);return false" style="color:var(--gold)">View in Performance</a>'
+           : (a.where==="approval"&&a.status==="PENDING") ? '<a href="#" onclick="go(&#39;approvals&#39;);return false" style="color:var(--gold)">View in Approvals</a>' : '';
+  return elFrom('<div class="exp" style="opacity:.94">'+
+    '<div class="exp__h"><span class="verdict" style="background:'+b[1]+';color:'+b[2]+'">'+b[0]+'</span><span class="nm" style="font-weight:600">'+esc(o.collectionTitle)+' \u00b7 '+esc(o.occasion)+'</span><span class="st muted" style="font-family:var(--mono);font-size:11px">'+esc(loc)+'</span></div>'+
+    '<div style="font-size:12.5px;color:var(--ink-70);margin:4px 0 0">'+esc(o.rationale||"")+'</div>'+
+    ((o.startDate&&o.endDate)?'<div class="muted" style="font-size:11.5px;margin-top:6px;font-family:var(--mono)">Window '+fmtDate(o.startDate)+' \u2013 '+fmtDate(o.endDate)+'</div>':'')+
+    '<div class="muted" style="font-size:11.5px;margin-top:8px">Already acted on \u2014 won\u2019t be re-suggested. '+link+'</div>'+
+  '</div>');
+}
+async function launchOpp(i,btn){ var o=OPPS[i]; if(!o)return; var scope=$("#oppCards")||document;
+  var bud=+scope.querySelector('.opBud[data-i="'+i+'"]').value; var msg=scope.querySelector('.opMsg[data-i="'+i+'"]');
+  var se=scope.querySelector('.opStart[data-i="'+i+'"]'), ee=scope.querySelector('.opEnd[data-i="'+i+'"]');
+  var startDate=se?se.value:(o.startDate||""), endDate=ee?ee.value:(o.endDate||"");
+  btn.disabled=true; btn.textContent="Generating\u2026"; if(msg)msg.textContent="";
+  try{ var r=await api("generate",{coll:o.collectionHandle,event:o.occasion,budget:bud,startDate:startDate,endDate:endDate});
+    if(r&&r.ok){ btn.textContent="Queued \u2713"; btn.classList.remove("gold"); if(msg)msg.innerHTML=' in <a href="#" onclick="go(&#39;approvals&#39;);return false" style="color:var(--gold)">Approvals</a> \u00b7 '+((r.assets&&r.assets.headlines)?r.assets.headlines.length:0)+' headlines, paused';
+      o.acted={where:"approval",status:"PENDING"}; reload();
+      setTimeout(function(){ setOppMeta(); renderOpportunities(); }, 1500);
+    } else { btn.disabled=false; btn.textContent="Generate campaign"; if(msg)msg.textContent=" "+((r&&r.reason)||"failed"); }
+  }catch(x){ btn.disabled=false; btn.textContent="Generate campaign"; if(msg)msg.textContent=" "+x.message; }
 }
 
 /* ---- render: controls ---- */
