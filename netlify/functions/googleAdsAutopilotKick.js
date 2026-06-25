@@ -99,6 +99,10 @@ async function handleAction(body) {
     try { await E.applyApproval(body.id, ctrl); return { id: body.id, status: "APPLIED", dryRun: !!ctrl.dryRun }; }
     catch (e) { return { id: body.id, error: e.message }; }
   }
+  if (a === "opportunities") {
+    try { return await E.scanOpportunities({ force: !!body.force }); }
+    catch (e) { return { opportunities: [], error: e.message }; }
+  }
   if (a === "collections") {
     try { return { collections: await E.getCollections({ force: !!body.force }) }; }
     catch (e) { return { collections: [], error: e.message }; }

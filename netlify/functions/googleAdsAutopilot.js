@@ -743,6 +743,75 @@ Return ONLY JSON: {"occasions":[{"label":"","daysOut":<int>,"recommendation":"pu
   return list;
 }
 
+/* ===================== Opportunity engine (the planner) ===================== */
+// Pulls the store's best-selling products (bounded) so the AI can reference real heroes.
+async function fetchTopProducts() {
+  const d = await shopifyGql(`{ products(first: 40, sortKey: BEST_SELLING) { edges { node { title handle } } } }`);
+  return ((d.products && d.products.edges) || []).map(e => ({ title: e.node.title, handle: e.node.handle })).filter(p => p.title);
+}
+
+// THE big analysis: cross-reference all collections + best-sellers + calendar + memory
+// → a ranked list of fully-specified campaign opportunities (budget, duration, keywords…).
+// Cached 12h; force re-rolls. Stored in Firestore for recall.
+async function scanOpportunities({ force } = {}) {
+  const f = fb(); const ctrl = await control();
+  if (f && !force) {
+    try {
+      const s = await f.db.collection(COL.state).doc("opportunities").get();
+      if (s.exists) { const x = s.data(); if (x.at && (Date.now() - x.at) < 12 * 60 * 60 * 1000 && Array.isArray(x.list) && x.list.length) return { opportunities: x.list, scannedAt: x.at }; }
+    } catch (e) {}
+  }
+  const collections = await getCollections({});
+  let products = []; try { products = await fetchTopProducts(); } catch (e) {}
+  let memory = [];
+  if (f) { try { const snap = await f.db.collection(COL.occasions).get(); snap.forEach(d => { const x = d.data(); memory.push({ occasion: x.occasion, outcome: x.outcome || "untested", roas: (x.agg && x.agg.roas) || null, collections: Object.keys(x.collections || {}) }); }); } catch (e) {} }
+  const dateStr = new Date().toISOString().slice(0, 10);
+  const ceiling = ctrl.maxDailyBudgetTotal || 100, ccy = CURRENCY;
+  const collText = collections.map(c => c.title).join(", ");
+  const prodText = products.length ? products.map(p => p.title).slice(0, 40).join("; ") : "(not available)";
+  const memText = memory.length ? memory.map(m => `${m.occasion} [${(m.collections || []).join("/")}]: ${m.outcome}${m.roas ? ` ${m.roas}x` : ""}`).join("; ") : "(no history yet — nothing has run)";
+  const prompt =
+`Today: ${dateStr}. You are the campaign strategist for Brites, a handcrafted personalized charm-jewelry brand (gift/emotion-led). Currency ${ccy}. Total daily ad ceiling ${ccy} ${ceiling}.
+ALL COLLECTIONS: ${collText}
+TOP-SELLING PRODUCTS: ${prodText}
+PAST OCCASION PERFORMANCE (memory): ${memText}
+Find the 10-14 best advertising OPPORTUNITIES to act on over the next ~90 days. Cross-reference upcoming calendar / seasonal gifting moments with the collections and best-sellers that fit them and with past performance. For EACH opportunity return:
+- collectionTitle (MUST be exactly one of the collections listed above)
+- occasion (the event/emotion to lead with)
+- daysOut (int: days until the occasion's peak from today; 0 for evergreen)
+- priority: "high" (timely + strong fit, or proven winner), "medium" (solid), "test" (speculative)
+- recommendedDailyBudget (number in ${ccy}; scale to importance — larger for major gifting events, smaller for niche/evergreen; keep realistic vs the ${ceiling} ceiling)
+- durationDays (int: how long to run, e.g. 14-30 around an event, more for evergreen)
+- expectedRoasBand (e.g. "3-4x"; be conservative)
+- proven (bool: true ONLY if memory shows success for this occasion)
+- rationale (<=120 chars: why now, why this collection)
+- keywords (4-6 phrase-match keywords a shopper would search)
+- keyPhrases (3-4 short emotional ad phrases)
+Rank best-first. Avoid out-of-season occasions and any memory marks as fail. Return ONLY JSON: {"opportunities":[ ... ]}`;
+  let list = null;
+  try { const j = await openaiJSON(prompt, { maxTokens: 2400 }); if (j && Array.isArray(j.opportunities)) list = j.opportunities.filter(o => o && o.collectionTitle && o.occasion); } catch (e) {}
+  if (!list) list = [];
+  const byTitle = {}; collections.forEach(c => byTitle[c.title.toLowerCase()] = c.handle);
+  list = list.map((o, i) => {
+    const t = String(o.collectionTitle).toLowerCase();
+    const handle = byTitle[t] || (collections.find(c => c.title.toLowerCase().indexOf(t) >= 0) || {}).handle || null;
+    const mem = memory.find(m => m.occasion && String(m.occasion).toLowerCase() === String(o.occasion).toLowerCase());
+    const dur = Math.max(3, Math.min(90, +o.durationDays || 21));
+    const bud = Math.max(2, Math.min(ceiling, Number(o.recommendedDailyBudget) || 8));
+    return {
+      id: "op" + i, collectionHandle: handle, collectionTitle: o.collectionTitle, occasion: o.occasion,
+      daysOut: o.daysOut != null ? +o.daysOut : null, priority: (["high", "medium", "test"].indexOf(o.priority) >= 0 ? o.priority : "test"),
+      recommendedDailyBudget: bud, durationDays: dur, estTotalSpend: Math.round(bud * dur),
+      expectedRoasBand: o.expectedRoasBand || null, proven: !!o.proven,
+      rationale: o.rationale || "", keywords: Array.isArray(o.keywords) ? o.keywords.slice(0, 6) : [],
+      keyPhrases: Array.isArray(o.keyPhrases) ? o.keyPhrases.slice(0, 4) : [],
+      pastStats: mem && mem.roas ? { roas: mem.roas, outcome: mem.outcome } : null, currency: ccy
+    };
+  }).filter(o => o.collectionHandle);
+  if (f && list.length) { try { await f.db.collection(COL.state).doc("opportunities").set({ list, at: Date.now() }); } catch (e) {} }
+  return { opportunities: list, scannedAt: Date.now() };
+}
+
 /* ===================== Force-generate (Draft Bench) ===================== */
 // Build a real draft for ANY collection × occasion, regardless of calendar date,
 // and queue it for approval. This is the live path behind the console's Bench.
@@ -811,6 +880,7 @@ module.exports = {
   generateRSAAssets, buildSearchCampaignOps, textGuidelinesOp, brandSafe,
   generateForCollection, COLLECTIONS, OCCASIONS,
   getCollections, suggestOccasions, recordOccasionUse,
+  scanOpportunities, fetchTopProducts,
   loadCalendar, dueEvents,
   measure, pruneAssets, mineSearchTerms, reallocateBudgets, anomalyCheck,
   dashboard,
