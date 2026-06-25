@@ -131,6 +131,10 @@ async function handleAction(body) {
     try { return await E.generateForCollection(body.coll, body.event, body.budget, { ctrl }); }
     catch (e) { return { ok: false, reason: e.message }; }
   }
+  if (a === "measureNow") {
+    try { const snap = await E.measure(); return { ok: true, campaigns: Array.isArray(snap) ? snap.length : null, at: Date.now() }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  }
   if (a === "runNow") {
     const tasks = Array.isArray(body.tasks) && body.tasks.length ? body.tasks
       : ["anomaly","conversions","measure","mine","prune","budgets","events"];
