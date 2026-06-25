@@ -321,19 +321,26 @@ svg{display:block}
     </section>
 
     <section class="view hidden" id="v-bench">
-      <div class="view__head"><div><h2>Draft Bench</h2><p>Generate a real campaign — live copy, brand-safety pass, queued paused to Approvals.</p></div></div>
-      <div class="grid bench">
-        <div class="card pad" style="align-self:start">
-          <div class="field"><label>Collection <button type="button" id="bCollRefresh" style="background:none;border:none;color:var(--gold);cursor:pointer;font-size:11px;font-weight:600;padding:0 0 0 6px">↻ refresh</button></label><select id="bColl"></select></div>
-          <div class="field"><label>Occasion / emotion <button type="button" id="bOccRefresh" style="background:none;border:none;color:var(--gold);cursor:pointer;font-size:11px;font-weight:600;padding:0 0 0 6px">✨ suggest</button></label><select id="bEvent"></select><div id="bOccWhy" class="muted" style="font-size:11px;margin-top:5px;min-height:14px"></div></div>
-          <div class="field"><label>Daily budget <span id="curLab" class="muted"></span></label><div class="range"><input type="range" id="bBudget" min="4" max="40" value="8"><span class="rngval" id="bBudgetV">$8</span></div></div>
-          <button class="btn gold" id="bGen" style="width:100%">Generate draft</button>
-          <div style="font-size:11.5px;color:var(--ink-45);margin-top:12px;line-height:1.5">Live: OpenAI copy → char-limit clamp (30/90) → brand-safety filter → atomic campaign build, queued <b>paused</b> to Approvals.</div>
-        </div>
-        <div class="card pad benchout" id="benchOut">
-          <div class="empty"><div class="ring"></div><div>Pick a collection and occasion, then generate.</div><div style="font-size:12px">This calls your live engine and drops a real draft in the queue.</div></div>
-        </div>
+      <div class="view__head"><div><h2>Opportunities</h2><p>Campaigns the AI recommends right now — scanned across all your collections, best-sellers, the calendar, and past performance. Adjust the budget, then generate: it builds a paused Search campaign (themed copy + keywords) and sends it to Approvals.</p></div></div>
+      <div class="card pad" style="margin-bottom:14px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+        <button class="btn gold" id="oppScan">\u27f3 Scan for opportunities</button>
+        <span id="oppMeta" class="muted" style="font-size:12.5px"></span>
+        <div style="flex:1"></div>
+        <div class="legend" style="margin:0"><span><i style="background:var(--gold)"></i><b>High</b>&nbsp;act now</span><span><i style="background:var(--sage)"></i><b>Medium</b>&nbsp;solid bet</span><span><i style="background:var(--slate)"></i><b>Test</b>&nbsp;speculative</span></div>
       </div>
+      <div id="oppList"><div class="empty" style="height:200px"><div class="ring"></div><div>Hit \u201cScan for opportunities\u201d.</div><div style="font-size:12px">The AI cross-references your catalog, the calendar, and past results, then ranks what to act on.</div></div></div>
+      <details class="card pad" style="margin-top:16px" id="customWrap">
+        <summary style="cursor:pointer;font-weight:600;font-size:14px">Custom build \u2014 pick any collection \u00d7 occasion manually</summary>
+        <div class="grid bench" style="margin-top:14px">
+          <div style="align-self:start">
+            <div class="field"><label>Collection <button type="button" id="bCollRefresh" style="background:none;border:none;color:var(--gold);cursor:pointer;font-size:11px;font-weight:600;padding:0 0 0 6px">\u21bb refresh</button></label><select id="bColl"></select></div>
+            <div class="field"><label>Occasion <button type="button" id="bOccRefresh" style="background:none;border:none;color:var(--gold);cursor:pointer;font-size:11px;font-weight:600;padding:0 0 0 6px">\u2728 suggest</button></label><select id="bEvent"></select><div id="bOccWhy" class="muted" style="font-size:11px;margin-top:5px;min-height:14px"></div></div>
+            <div class="field"><label>Daily budget <span id="curLab" class="muted"></span></label><div class="range"><input type="range" id="bBudget" min="4" max="40" value="8"><span class="rngval" id="bBudgetV">$8</span></div></div>
+            <button class="btn ghost" id="bGen" style="width:100%">Generate draft</button>
+          </div>
+          <div class="card pad benchout" id="benchOut"><div class="empty"><div class="ring"></div><div>Pick a collection and occasion, then generate.</div></div></div>
+        </div>
+      </details>
     </section>
 
     <section class="view hidden" id="v-controls">
@@ -423,10 +430,10 @@ function gauge(val,max){var p=Math.min(1,(val||0)/(max||1));var size=190,r=74,c=
 function sparkline(data,color){if(!data.length)return "";var w=64,h=26,mx=Math.max.apply(null,data),mn=Math.min.apply(null,data);var d=data.map((v,i)=>(i?"L":"M")+(i*(w/Math.max(1,data.length-1))).toFixed(1)+" "+(h-((v-mn)/(mx-mn||1))*h).toFixed(1)).join(" ");return '<svg class="spark" viewBox="0 0 '+w+' '+h+'"><path d="'+d+'" fill="none" stroke="'+color+'" stroke-width="1.6"/></svg>';}
 
 /* ---- nav ---- */
-var NAV=[["command","Command Center","What the autopilot is doing right now","◆"],["approvals","Approvals","Drafts waiting for your call","✎"],["ab","A/B Assay","Head-to-head ad tests","⚖"],["perf","Performance","Where the money worked","▤"],["insights","Insights & Strategy","The reading behind the moves","✦"],["bench","Draft Bench","Generate a real campaign","⚒"],["controls","Controls","Guardrails & switches","⚙"]];
+var NAV=[["command","Command Center","What the autopilot is doing right now","◆"],["approvals","Approvals","Drafts waiting for your call","✎"],["ab","A/B Assay","Head-to-head ad tests","⚖"],["perf","Performance","Where the money worked","▤"],["insights","Insights & Strategy","The reading behind the moves","✦"],["bench","Opportunities","AI-found campaigns to launch","⚒"],["controls","Controls","Guardrails & switches","⚙"]];
 function buildNav(){var n=$("#nav");n.innerHTML="";NAV.forEach(function(it){var b=elFrom('<button data-v="'+it[0]+'"><span class="ic" style="font-size:15px">'+it[3]+'</span><span>'+it[1]+'</span></button>');b.onclick=()=>go(it[0]);n.appendChild(b);});updateBadges();}
 function updateBadges(){var b=$('#nav button[data-v="approvals"]');if(!b)return;var x=b.querySelector(".badge");var c=(DASH&&DASH.pending||[]).length;if(c){if(!x){x=elFrom('<span class="badge"></span>');b.appendChild(x);}x.textContent=c;}else if(x)x.remove();}
-function go(k){$$(".view").forEach(v=>v.classList.add("hidden"));$("#v-"+k).classList.remove("hidden");$$(".nav button").forEach(b=>b.classList.toggle("active",b.dataset.v===k));var m=NAV.find(n=>n[0]===k);$("#vtitle").textContent=m[1];$("#vsub").textContent=m[2];window.scrollTo(0,0);if(k==="bench")ensureBench();}
+function go(k){$$(".view").forEach(v=>v.classList.add("hidden"));$("#v-"+k).classList.remove("hidden");$$(".nav button").forEach(b=>b.classList.toggle("active",b.dataset.v===k));var m=NAV.find(n=>n[0]===k);$("#vtitle").textContent=m[1];$("#vsub").textContent=m[2];window.scrollTo(0,0);if(k==="bench")ensureOpportunities();}
 
 /* ---- totals ---- */
 function totals(camps){var t={cost:0,conv:0,value:0,clicks:0,impr:0,budget:0};(camps||[]).forEach(function(c){t.cost+=+c.cost||0;t.conv+=+c.conv||0;t.value+=+c.value||0;t.clicks+=+c.clicks||0;t.impr+=+c.impr||0;t.budget+=+c.budget||0;});return t;}
@@ -537,6 +544,59 @@ function showDraft(r){var a=r.assets||{};var out=$("#benchOut");
   reload();
 }
 
+
+/* ---- render: opportunities ---- */
+var OPPS=[]; var oppLoaded=false;
+async function ensureOpportunities(){ if(oppLoaded)return; oppLoaded=true; loadOpportunities(false); }
+async function loadOpportunities(force){
+  var box=$("#oppList"); $("#oppScan").disabled=true;
+  box.innerHTML='<div class="empty" style="height:210px"><div class="spin" style="margin:0 auto 4px"></div><div>'+(force?"Re-scanning":"Analyzing")+' your catalog, calendar &amp; history\u2026</div><div style="font-size:12px">Full OpenAI analysis \u2014 about 10\u201320s.</div></div>';
+  try{ var r=await api("opportunities",{force:!!force}); OPPS=(r&&r.opportunities)||[];
+    $("#oppMeta").textContent=OPPS.length?(OPPS.length+" opportunities \u00b7 scanned "+(r.scannedAt?timeago(r.scannedAt)+" ago":"just now")):"";
+    renderOpportunities(); if(force)toast("Re-scanned \u2014 "+OPPS.length+" opportunities",true);
+  }catch(x){ box.innerHTML='<div class="empty" style="height:160px"><div>Scan failed.</div><div style="font-size:12px">'+esc(x.message)+'</div></div>'; }
+  $("#oppScan").disabled=false;
+}
+function priMeta(p){ return p==="high"?["High priority","var(--gold-soft)","#7a5a1d"]:p==="medium"?["Medium","var(--sage-soft)","#3c5a39"]:["Test","var(--slate-soft)","#33525d"]; }
+function renderOpportunities(){
+  var box=$("#oppList");
+  if(!OPPS.length){box.innerHTML='<div class="empty" style="height:160px"><div>No opportunities surfaced.</div><div style="font-size:12px">Try Scan again, or use Custom build below.</div></div>';return;}
+  var ceil=Math.max(20,(DASH.control||{}).maxDailyBudgetTotal||100);
+  box.innerHTML="";
+  OPPS.forEach(function(o,i){ var pm=priMeta(o.priority);
+    var when=(o.daysOut!=null&&o.daysOut>0)?(o.daysOut+"d out"):"evergreen";
+    var past=(o.pastStats&&o.pastStats.roas)?'<span class="'+(o.pastStats.roas>=3?"roas-good":"roas-bad")+'">'+o.pastStats.roas+'x last run</span>':'<span class="muted">no history yet</span>';
+    var lab='font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-45)';
+    var card=elFrom('<div class="exp" data-i="'+i+'">'+
+      '<div class="exp__h"><span class="verdict" style="background:'+pm[1]+';color:'+pm[2]+'">'+pm[0]+'</span><span class="nm" style="font-weight:600">'+esc(o.collectionTitle)+' \u00b7 '+esc(o.occasion)+'</span><span class="st muted" style="font-family:var(--mono);font-size:12px">'+when+'</span></div>'+
+      '<div style="font-size:13px;color:var(--ink-70);margin:2px 0 14px">'+esc(o.rationale||"")+'</div>'+
+      '<div class="grid" style="grid-template-columns:1.5fr 1fr 1fr;gap:16px;align-items:end">'+
+        '<div><label style="'+lab+'">Daily budget ('+esc(o.currency||cur())+')</label><div class="range"><input type="range" class="opBud" data-i="'+i+'" min="2" max="'+ceil+'" value="'+o.recommendedDailyBudget+'"><span class="rngval opBudV" data-i="'+i+'">'+money(o.recommendedDailyBudget)+'</span></div><div class="muted" style="font-size:10.5px;margin-top:3px">AI suggests '+money(o.recommendedDailyBudget)+'</div></div>'+
+        '<div><label style="'+lab+'">Run for</label><div style="padding-top:7px;font-family:var(--mono);font-size:14px"><input type="number" class="opDur" data-i="'+i+'" value="'+o.durationDays+'" min="3" max="90" style="width:54px;padding:6px 7px;font-family:var(--mono)"> days</div></div>'+
+        '<div><label style="'+lab+'">Est. total</label><div class="opTot" data-i="'+i+'" style="padding-top:7px;font-family:var(--mono);font-size:17px;font-weight:600">'+money(o.estTotalSpend)+'</div></div>'+
+      '</div>'+
+      '<div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:14px;font-size:12.5px"><span class="muted">Expected ROAS&nbsp;<b style="color:var(--ink);font-family:var(--mono)">'+esc(o.expectedRoasBand||"\u2014")+'</b>&nbsp;<span style="font-size:11px">('+(o.proven?"from history":"estimate")+')</span></span><span class="muted">Past:&nbsp;'+past+'</span></div>'+
+      '<details style="margin-top:12px"><summary style="cursor:pointer;font-size:12.5px;color:var(--gold);font-weight:600">Keywords &amp; phrases</summary>'+
+        '<div class="eyebrow" style="margin:10px 0 6px">Keywords</div><div class="chips">'+((o.keywords||[]).map(function(k){return '<span class="chip on">'+esc(k)+'</span>';}).join("")||'<span class="muted" style="font-size:12px">\u2014</span>')+'</div>'+
+        '<div class="eyebrow" style="margin:12px 0 6px">Key phrases</div><div class="chips">'+((o.keyPhrases||[]).map(function(k){return '<span class="chip">'+esc(k)+'</span>';}).join("")||'<span class="muted" style="font-size:12px">\u2014</span>')+'</div></details>'+
+      '<div class="actions"><button class="btn gold sm opGen" data-i="'+i+'">Generate campaign</button><span class="opMsg muted" data-i="'+i+'" style="font-size:12px"></span></div>'+
+    '</div>');
+    box.appendChild(card);
+  });
+  function tot(i){ var b=+box.querySelector('.opBud[data-i="'+i+'"]').value; var d=+box.querySelector('.opDur[data-i="'+i+'"]').value||1; box.querySelector('.opTot[data-i="'+i+'"]').textContent=money(b*d); }
+  box.querySelectorAll(".opBud").forEach(function(s){ s.oninput=function(){ box.querySelector('.opBudV[data-i="'+s.dataset.i+'"]').textContent=money(s.value); tot(s.dataset.i); }; });
+  box.querySelectorAll(".opDur").forEach(function(d){ d.oninput=function(){ tot(d.dataset.i); }; });
+  box.querySelectorAll(".opGen").forEach(function(b){ b.onclick=function(){ launchOpp(b.dataset.i,b); }; });
+}
+async function launchOpp(i,btn){ var o=OPPS[i]; if(!o)return; var box=$("#oppList");
+  var bud=+box.querySelector('.opBud[data-i="'+i+'"]').value; var msg=box.querySelector('.opMsg[data-i="'+i+'"]');
+  btn.disabled=true; btn.textContent="Generating\u2026"; msg.textContent="";
+  try{ var r=await api("generate",{coll:o.collectionHandle,event:o.occasion,budget:bud});
+    if(r&&r.ok){ btn.textContent="Queued \u2713"; btn.classList.remove("gold"); msg.innerHTML=' in <a href="#" onclick="go(&#39;approvals&#39;);return false" style="color:var(--gold)">Approvals</a> \u00b7 '+((r.assets&&r.assets.headlines)?r.assets.headlines.length:0)+' headlines, paused'; reload(); }
+    else { btn.disabled=false; btn.textContent="Generate campaign"; msg.textContent=" "+((r&&r.reason)||"failed"); }
+  }catch(x){ btn.disabled=false; btn.textContent="Generate campaign"; msg.textContent=" "+x.message; }
+}
+
 /* ---- render: controls ---- */
 function setSw(id,on){var s=$("#"+id);s.classList.toggle("on",!!on);}
 function renderControls(){var c=DASH.control||{};
@@ -558,7 +618,7 @@ function bindControlsOnce(){
   slider("cRoas","cRoasV",v=>(+v?(v/100).toFixed(1)+"x":"auto"),"targetRoas",v=>+v/100);
   slider("cAppr","cApprV",v=>v+"%","budgetMoveApprovalPct",v=>+v);
   var bb=$("#bBudget");bb.oninput=()=>$("#bBudgetV").textContent="$"+bb.value;
-  $("#bColl").onchange=()=>loadOccasions(false);$("#bEvent").onchange=showOccWhy;$("#bOccRefresh").onclick=()=>loadOccasions(true);$("#bCollRefresh").onclick=()=>loadCollections(true);$("#bGen").onclick=generateBench;
+  $("#oppScan").onclick=()=>loadOpportunities(true);var cw=$("#customWrap");if(cw)cw.addEventListener("toggle",function(){if(cw.open)ensureBench();});$("#bColl").onchange=()=>loadOccasions(false);$("#bEvent").onchange=showOccWhy;$("#bOccRefresh").onclick=()=>loadOccasions(true);$("#bCollRefresh").onclick=()=>loadCollections(true);$("#bGen").onclick=generateBench;
   $("#btnRefresh").onclick=()=>reload(true);
 }
 async function runNow(tasks){$("#runMsg").textContent=" running…";try{var r=await api("runNow",{tasks:tasks});$("#runMsg").textContent=" "+(r.status||"")+" ["+tasks.join(",")+"] — refreshing in ~5s";setTimeout(()=>reload(),5000);}catch(x){$("#runMsg").textContent=" "+x.message;}}
