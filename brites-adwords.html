@@ -483,22 +483,38 @@ function parseCreative(ops){var o={headlines:[],descriptions:[],keywords:[],budg
 });return o;}
 function copyLine(txt,max){var len=(txt||"").length;var over=len>max,warn=len>max*.86&&!over;var bad=(DASH.terms||[]).find(b=>(txt||"").toLowerCase().includes(b));
   return '<div class="copyline"><div class="meter '+(over?"over":warn?"warn":"")+'"><i style="width:'+Math.min(100,len/max*100)+'%"></i></div><div class="cc">'+len+'/'+max+'</div><div class="txt">'+esc(txt)+'</div><div class="safe '+(bad?"bad":"ok")+'">'+(bad?"✕":"✓")+'</div></div>';}
-function renderApprovals(){var list=$("#apprList");var p=DASH.pending||[];
-  if(!p.length){list.innerHTML='<div class="empty" style="height:240px"><div class="ring"></div><div>Queue\u2019s clear.</div><div style="font-size:12px">New drafts land here when the autopilot runs.</div></div>';return;}
+function stuckCard(a){var pl=a.payload||{};var dry=(DASH.control||{}).dryRun;
+  var body='<div class="why"><span class="i">\ud83d\udca1</span><div><b>Draft:</b> '+esc(a.summary||"")+'</div></div>';
+  if(pl.mutateOperations){var c=parseCreative(pl.mutateOperations);
+    if(c.headlines.length)body+='<div class="eyebrow" style="margin:8px 0 6px">Headlines \u00b7 \u226430</div>'+c.headlines.slice(0,4).map(t=>copyLine(t,30)).join("")+(c.headlines.length>4?'<div class="muted" style="font-size:11px;margin-top:4px">+'+(c.headlines.length-4)+' more headlines</div>':"");
+    body+='<div class="kv" style="margin-top:10px;color:var(--ink-45)">'+(c.finalUrl?'URL <span style="color:var(--ink)">'+esc(c.finalUrl.replace("https://britesjewelry.com",""))+'</span> \u00b7 ':"")+(c.budget!=null?'budget <span style="color:var(--ink)">'+money(c.budget)+'/day</span> \u00b7 ':"")+'status <span style="color:var(--ink)">PAUSED</span></div>';
+  } else if(pl.operations){body+='<div class="kv muted">'+pl.operations.length+' operation(s) on '+esc(pl.service||"")+'</div>';}
+  body+='<div class="actions"><button class="btn gold sm" data-retry="'+a.id+'">Retry apply'+(dry?" (dry-run)":"")+'</button><button class="btn ghost sm" data-rj="'+a.id+'">Discard</button></div>';
+  return elFrom('<div class="draft"><div class="draft__top"><span class="tagk creative" style="background:var(--clay-soft);color:var(--clay)">stuck</span><div><div class="ti">'+esc((a.summary||"").slice(0,80))+'</div><div class="me" style="color:var(--clay)">approved \u00b7 apply errored</div></div><span class="chev">\u25be</span></div><div class="draft__body">'+body+'</div></div>');
+}
+function renderApprovals(){var list=$("#apprList");var p=DASH.pending||[];var stuck=DASH.stuck||[];
   list.innerHTML="";
-  p.forEach(function(a){var pl=a.payload||{};var body='<div class="why"><span class="i">💡</span><div><b>Why this:</b> '+esc(a.summary||"")+'</div></div>';
+  if(stuck.length){
+    var banner=elFrom('<div class="card pad" style="border:1px solid var(--clay);background:var(--clay-soft);margin-bottom:14px"><div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--clay);white-space:nowrap">\u26a0 '+stuck.length+' approved draft'+(stuck.length>1?"s":"")+' didn\u2019t apply</span><span style="font-size:12.5px;color:var(--ink-70);flex:1;min-width:160px">Approved before a fix and errored on send. Retry to create them in Google Ads now (they\u2019ll start PAUSED).</span><button class="btn gold sm" id="retryAll">Retry all</button></div></div>');
+    list.appendChild(banner);
+    stuck.forEach(function(a){var c=stuckCard(a);c.querySelector(".draft__top").onclick=function(){c.classList.toggle("open");};list.appendChild(c);});
+    banner.querySelector("#retryAll").onclick=async function(){var btn=this;btn.textContent="\u2026";try{var r=await api("retryStuck",{});if(r&&r.error)toast("Retry failed: "+r.error);else{var f=(r.failed&&r.failed.length)||0;toast(r.dryRun?"Validated "+(r.tried||0)+" (dry-run) \u2014 nothing created":((r.applied||0)+" created"+(f?", "+f+" still failing":"")+" \u2713"),!f);}}catch(x){toast(x.message);}await reload();};
+  }
+  if(!p.length&&!stuck.length){list.innerHTML='<div class="empty" style="height:240px"><div class="ring"></div><div>Queue\u2019s clear.</div><div style="font-size:12px">New drafts land here when the autopilot runs.</div></div>';return;}
+  p.forEach(function(a){var pl=a.payload||{};var body='<div class="why"><span class="i">\ud83d\udca1</span><div><b>Why this:</b> '+esc(a.summary||"")+'</div></div>';
     if(pl.mutateOperations){var c=parseCreative(pl.mutateOperations);
-      if(c.headlines.length)body+='<div class="eyebrow" style="margin:4px 0 6px">Headlines · ≤30</div>'+c.headlines.map(t=>copyLine(t,30)).join("");
-      if(c.descriptions.length)body+='<div class="eyebrow" style="margin:14px 0 6px">Descriptions · ≤90</div>'+c.descriptions.map(t=>copyLine(t,90)).join("");
+      if(c.headlines.length)body+='<div class="eyebrow" style="margin:4px 0 6px">Headlines \u00b7 \u226430</div>'+c.headlines.map(t=>copyLine(t,30)).join("");
+      if(c.descriptions.length)body+='<div class="eyebrow" style="margin:14px 0 6px">Descriptions \u00b7 \u226490</div>'+c.descriptions.map(t=>copyLine(t,90)).join("");
       if(c.keywords.length)body+='<div class="eyebrow" style="margin:14px 0 7px">Keywords</div><div class="chips">'+c.keywords.map(k=>'<span class="chip on">'+esc(k)+'</span>').join("")+'</div>';
-      body+='<div class="kv" style="margin-top:12px;color:var(--ink-45)">'+(c.finalUrl?'URL <span style="color:var(--ink)">'+esc(c.finalUrl.replace("https://britesjewelry.com",""))+'</span> · ':"")+(c.budget!=null?'budget <span style="color:var(--ink)">'+money(c.budget)+'/day</span> · ':"")+'status <span style="color:var(--ink)">PAUSED</span></div>';
+      body+='<div class="kv" style="margin-top:12px;color:var(--ink-45)">'+(c.finalUrl?'URL <span style="color:var(--ink)">'+esc(c.finalUrl.replace("https://britesjewelry.com",""))+'</span> \u00b7 ':"")+(c.budget!=null?'budget <span style="color:var(--ink)">'+money(c.budget)+'/day</span> \u00b7 ':"")+'status <span style="color:var(--ink)">PAUSED</span></div>';
     } else if(pl.operations){ body+='<div class="kv muted">'+pl.operations.length+' operation(s) on '+esc(pl.service||"")+'</div>'; }
     body+='<div class="actions"><button class="btn gold sm" data-ap="'+a.id+'">Approve'+((DASH.control||{}).dryRun?" (dry-run)":"")+'</button><button class="btn ghost sm" data-rj="'+a.id+'">Reject</button></div>';
-    var card=elFrom('<div class="draft"><div class="draft__top"><span class="tagk '+(a.type||"creative")+'">'+esc(a.type||"draft")+'</span><div><div class="ti">'+esc((a.summary||"").slice(0,80))+'</div><div class="me">'+(a.vetted?"vetted template":"needs review")+'</div></div><span class="chev">▾</span></div><div class="draft__body">'+body+'</div></div>');
+    var card=elFrom('<div class="draft"><div class="draft__top"><span class="tagk '+(a.type||"creative")+'">'+esc(a.type||"draft")+'</span><div><div class="ti">'+esc((a.summary||"").slice(0,80))+'</div><div class="me">'+(a.vetted?"vetted template":"needs review")+'</div></div><span class="chev">\u25be</span></div><div class="draft__body">'+body+'</div></div>');
     card.querySelector(".draft__top").onclick=()=>card.classList.toggle("open");list.appendChild(card);
   });
-  list.querySelectorAll("[data-ap]").forEach(b=>b.onclick=async e=>{e.stopPropagation();b.textContent="…";try{var r=await api("approve",{id:b.dataset.ap});if(r&&r.error){toast("Apply failed: "+r.error);}else{toast((DASH.control||{}).dryRun?"Validated (dry-run) — nothing applied":"Approved & sent to Google Ads ✓",true);}}catch(x){toast(x.message);}await reload();});
-  list.querySelectorAll("[data-rj]").forEach(b=>b.onclick=async e=>{e.stopPropagation();try{await api("reject",{id:b.dataset.rj});toast("Rejected");}catch(x){toast(x.message);}await reload();});
+  list.querySelectorAll("[data-ap]").forEach(b=>b.onclick=async e=>{e.stopPropagation();b.textContent="\u2026";try{var r=await api("approve",{id:b.dataset.ap});if(r&&r.error){toast("Apply failed: "+r.error);}else{toast((DASH.control||{}).dryRun?"Validated (dry-run) \u2014 nothing applied":"Approved & sent to Google Ads \u2713",true);}}catch(x){toast(x.message);}await reload();});
+  list.querySelectorAll("[data-retry]").forEach(b=>b.onclick=async e=>{e.stopPropagation();b.textContent="\u2026";try{var r=await api("apply",{id:b.dataset.retry});if(r&&r.error){toast("Still failing: "+r.error);}else{toast((DASH.control||{}).dryRun?"Validated (dry-run) \u2014 nothing created":"Created in Google Ads \u2713",true);}}catch(x){toast(x.message);}await reload();});
+  list.querySelectorAll("[data-rj]").forEach(b=>b.onclick=async e=>{e.stopPropagation();try{await api("reject",{id:b.dataset.rj});toast("Removed");}catch(x){toast(x.message);}await reload();});
 }
 
 /* ---- render: performance (sortable, expandable, AI-analyzed) ---- */
