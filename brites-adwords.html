@@ -324,8 +324,8 @@ svg{display:block}
       <div class="view__head"><div><h2>Draft Bench</h2><p>Generate a real campaign — live copy, brand-safety pass, queued paused to Approvals.</p></div></div>
       <div class="grid bench">
         <div class="card pad" style="align-self:start">
-          <div class="field"><label>Collection</label><select id="bColl"></select></div>
-          <div class="field"><label>Occasion / emotion</label><select id="bEvent"></select></div>
+          <div class="field"><label>Collection <button type="button" id="bCollRefresh" style="background:none;border:none;color:var(--gold);cursor:pointer;font-size:11px;font-weight:600;padding:0 0 0 6px">↻ refresh</button></label><select id="bColl"></select></div>
+          <div class="field"><label>Occasion / emotion <button type="button" id="bOccRefresh" style="background:none;border:none;color:var(--gold);cursor:pointer;font-size:11px;font-weight:600;padding:0 0 0 6px">✨ suggest</button></label><select id="bEvent"></select><div id="bOccWhy" class="muted" style="font-size:11px;margin-top:5px;min-height:14px"></div></div>
           <div class="field"><label>Daily budget <span id="curLab" class="muted"></span></label><div class="range"><input type="range" id="bBudget" min="4" max="40" value="8"><span class="rngval" id="bBudgetV">$8</span></div></div>
           <button class="btn gold" id="bGen" style="width:100%">Generate draft</button>
           <div style="font-size:11.5px;color:var(--ink-45);margin-top:12px;line-height:1.5">Live: OpenAI copy → char-limit clamp (30/90) → brand-safety filter → atomic campaign build, queued <b>paused</b> to Approvals.</div>
@@ -426,7 +426,7 @@ function sparkline(data,color){if(!data.length)return "";var w=64,h=26,mx=Math.m
 var NAV=[["command","Command Center","What the autopilot is doing right now","◆"],["approvals","Approvals","Drafts waiting for your call","✎"],["ab","A/B Assay","Head-to-head ad tests","⚖"],["perf","Performance","Where the money worked","▤"],["insights","Insights & Strategy","The reading behind the moves","✦"],["bench","Draft Bench","Generate a real campaign","⚒"],["controls","Controls","Guardrails & switches","⚙"]];
 function buildNav(){var n=$("#nav");n.innerHTML="";NAV.forEach(function(it){var b=elFrom('<button data-v="'+it[0]+'"><span class="ic" style="font-size:15px">'+it[3]+'</span><span>'+it[1]+'</span></button>');b.onclick=()=>go(it[0]);n.appendChild(b);});updateBadges();}
 function updateBadges(){var b=$('#nav button[data-v="approvals"]');if(!b)return;var x=b.querySelector(".badge");var c=(DASH&&DASH.pending||[]).length;if(c){if(!x){x=elFrom('<span class="badge"></span>');b.appendChild(x);}x.textContent=c;}else if(x)x.remove();}
-function go(k){$$(".view").forEach(v=>v.classList.add("hidden"));$("#v-"+k).classList.remove("hidden");$$(".nav button").forEach(b=>b.classList.toggle("active",b.dataset.v===k));var m=NAV.find(n=>n[0]===k);$("#vtitle").textContent=m[1];$("#vsub").textContent=m[2];window.scrollTo(0,0);}
+function go(k){$$(".view").forEach(v=>v.classList.add("hidden"));$("#v-"+k).classList.remove("hidden");$$(".nav button").forEach(b=>b.classList.toggle("active",b.dataset.v===k));var m=NAV.find(n=>n[0]===k);$("#vtitle").textContent=m[1];$("#vsub").textContent=m[2];window.scrollTo(0,0);if(k==="bench")ensureBench();}
 
 /* ---- totals ---- */
 function totals(camps){var t={cost:0,conv:0,value:0,clicks:0,impr:0,budget:0};(camps||[]).forEach(function(c){t.cost+=+c.cost||0;t.conv+=+c.conv||0;t.value+=+c.value||0;t.clicks+=+c.clicks||0;t.impr+=+c.impr||0;t.budget+=+c.budget||0;});return t;}
@@ -504,7 +504,21 @@ function renderTable(camps){var cols=["Campaign","Status","Budget","Conv","ROAS"
 }
 
 /* ---- render: bench ---- */
-function fillBench(){var cs=$("#bColl");if(cs.options.length)return;(DASH.collections||[]).forEach(c=>cs.add(new Option(c.title,c.handle)));(DASH.occasions||[]).forEach(e=>$("#bEvent").add(new Option(e,e)));$("#curLab").textContent="("+cur()+")";}
+var benchLoaded=false; var OCC=[];
+async function ensureBench(){ if(benchLoaded)return; benchLoaded=true; $("#curLab").textContent="("+cur()+")"; await loadCollections(false); await loadOccasions(false); }
+async function loadCollections(force){var cs=$("#bColl");cs.innerHTML='<option>loading collections…</option>';cs.disabled=true;
+  try{var r=await api("collections",{force:!!force});var list=(r&&r.collections)||[];cs.innerHTML="";
+    if(!list.length){cs.innerHTML='<option value="">no collections found</option>';return;}
+    list.forEach(c=>cs.add(new Option(c.title,c.handle)));cs.disabled=false;if(force)toast("Collections refreshed from Shopify",true);
+  }catch(x){cs.innerHTML='<option value="">error loading</option>';toast(x.message);}}
+async function loadOccasions(force){var es=$("#bEvent");var prev=es.value;es.innerHTML='<option>thinking… ✨</option>';es.disabled=true;$("#bOccWhy").textContent=force?"generating suggestions from history + season…":"";
+  try{var coll=$("#bColl").value;var r=await api("occasions",{coll:coll,force:!!force});OCC=(r&&r.occasions)||[];es.innerHTML="";
+    if(!OCC.length){es.innerHTML='<option value="Evergreen gifting">Evergreen gifting</option>';es.disabled=false;return;}
+    OCC.forEach(function(o){var star=o.proven?"★ ":"";var d=(o.daysOut!=null&&o.daysOut>0)?(" · "+o.daysOut+"d"):"";var rec=o.recommendation?(" · "+o.recommendation):"";es.add(new Option(star+o.label+d+rec,o.label));});
+    es.disabled=false;if(prev){for(var i=0;i<es.options.length;i++){if(es.options[i].value===prev){es.selectedIndex=i;break;}}}
+    showOccWhy();if(force)toast("Occasions regenerated",true);
+  }catch(x){es.innerHTML='<option value="">error</option>';toast(x.message);}}
+function showOccWhy(){var v=$("#bEvent").value;var o=OCC.find(x=>x.label===v);$("#bOccWhy").textContent=o&&o.why?("— "+o.why):"";}
 async function generateBench(){var coll=$("#bColl").value,collT=$("#bColl").selectedOptions[0].text,ev=$("#bEvent").value,bud=$("#bBudget").value;var out=$("#benchOut");
   out.innerHTML='<div class="card__h"><h3>Generating · '+esc(collT)+' × '+esc(ev)+'</h3></div><div id="genlog"></div>';
   var steps=["Calling OpenAI for on-brand copy…","Clamping headlines/descriptions…","Running brand-safety filter…","Building campaign & queuing paused…"];var log=$("#genlog");var i=0;
@@ -544,14 +558,14 @@ function bindControlsOnce(){
   slider("cRoas","cRoasV",v=>(+v?(v/100).toFixed(1)+"x":"auto"),"targetRoas",v=>+v/100);
   slider("cAppr","cApprV",v=>v+"%","budgetMoveApprovalPct",v=>+v);
   var bb=$("#bBudget");bb.oninput=()=>$("#bBudgetV").textContent="$"+bb.value;
-  $("#bGen").onclick=generateBench;
+  $("#bColl").onchange=()=>loadOccasions(false);$("#bEvent").onchange=showOccWhy;$("#bOccRefresh").onclick=()=>loadOccasions(true);$("#bCollRefresh").onclick=()=>loadCollections(true);$("#bGen").onclick=generateBench;
   $("#btnRefresh").onclick=()=>reload(true);
 }
 async function runNow(tasks){$("#runMsg").textContent=" running…";try{var r=await api("runNow",{tasks:tasks});$("#runMsg").textContent=" "+(r.status||"")+" ["+tasks.join(",")+"] — refreshing in ~5s";setTimeout(()=>reload(),5000);}catch(x){$("#runMsg").textContent=" "+x.message;}}
 
 /* ---- load / reload ---- */
 async function reload(toastOk){try{DASH=await api("dashboard");renderAll();$("#connDot").style.background="var(--sage)";$("#connText").textContent="connected";lastSync=Date.now();if(toastOk)toast("Refreshed",true);}catch(x){$("#connDot").style.background="var(--clay)";$("#connText").textContent="error";toast(x.message);}}
-function renderAll(){renderControlBar();renderCommand();renderApprovals();renderPerf();renderControls();fillBench();updateBadges();}
+function renderAll(){renderControlBar();renderCommand();renderApprovals();renderPerf();renderControls();updateBadges();}
 
 async function unlock(e){e.preventDefault();PASS=$("#pc").value;$("#gateErr").textContent="";
   try{ DASH=await api("dashboard"); $("#gate").style.display="none";$("#app").style.display="grid";
