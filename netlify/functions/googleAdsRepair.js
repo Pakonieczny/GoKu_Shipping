@@ -2,20 +2,16 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // ONE-CLICK REPAIR for approvals stuck in APPROVED (approved, but the apply errored
 // because the saved payload was frozen with the rejected Campaign.text_guidelines
-// field). This endpoint is fully self-contained — it does NOT call googleAdsAutopilot.js,
-// so it works even if that file hasn't been redeployed.
+// field). Fully self-contained — does NOT call googleAdsAutopilot.js, so it works
+// even if that file hasn't been redeployed.
 //
-// What it does, for every approval whose status is APPROVED (not yet APPLIED):
-//   1) loads its frozen payload from Firestore
-//   2) STRIPS text_guidelines / textGuidelines from the campaign create op
-//   3) sends it to Google Ads (real create — campaigns are built PAUSED)
-//   4) flips the approval to APPLIED and records the new campaign resource name
+// Just open it in a browser (no query string needed):
+//   https://goldenspike.app/.netlify/functions/googleAdsRepair
+// Type your console passcode (EDIT_PASSCODE) into the box and click a button.
+// "Preview" validates without creating; "Create campaigns" actually builds them (PAUSED).
 //
-// Usage (open in a browser):
-//   https://goldenspike.app/.netlify/functions/googleAdsRepair?key=YOUR_EDIT_PASSCODE
-// Add &dry=1 to validate WITHOUT creating (a safe test run).
-//
-// Safe to delete once your campaigns exist. Needs node-fetch + ./firebaseAdmin only.
+// The passcode is sent as a request header, so special characters (+ & # space …)
+// can never get mangled in a URL. Safe to delete this function once done.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const fetch = require("node-fetch");
@@ -25,11 +21,16 @@ const CID = (ENV.GADS_CUSTOMER_ID || "").replace(/\D/g, "");
 const LOGIN = (ENV.GADS_LOGIN_CUSTOMER_ID || "").replace(/\D/g, "");
 const APPROVALS = "Brites_GAds_Approvals";
 
+// trim + strip accidental surrounding quotes so a value pasted as "abc" still matches abc
+function gateVal() { return (ENV.EDIT_PASSCODE || "").trim().replace(/^["']|["']$/g, ""); }
+
 function db() {
   try { const admin = require("./firebaseAdmin"); return { d: admin.firestore(), admin }; }
   catch (e) { return { d: null, admin: null }; }
 }
-const esc = s => String(s == null ? "" : s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const json = (code, obj) => ({ statusCode: code, headers: { "Content-Type": "application/json" }, body: JSON.stringify(obj, null, 2) });
+const htmlOut = body => ({ statusCode: 200, headers: { "Content-Type": "text/html; charset=utf-8" }, body });
 
 async function mintToken() {
   const res = await fetch("https://oauth2.googleapis.com/token", {
@@ -44,7 +45,7 @@ async function mintToken() {
   return d.access_token;
 }
 
-// Remove the field that Google rejects from any campaign create/update op (both spellings).
+// Remove the field Google rejects from any campaign create/update op (both spellings).
 function sanitize(ops) {
   let removed = 0;
   (Array.isArray(ops) ? ops : []).forEach(op => {
@@ -70,7 +71,6 @@ async function applyOne(token, ops, dry) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error("HTTP " + res.status + " — " + JSON.stringify(data).slice(0, 500));
   if (data.partialFailureError) throw new Error("partial failure — " + JSON.stringify(data.partialFailureError).slice(0, 400));
-  // pull the new campaign resource name if present
   let campaign = null;
   (data.mutateOperationResponses || []).forEach(r => {
     if (r && r.campaignResult && r.campaignResult.resourceName) campaign = r.campaignResult.resourceName;
@@ -99,7 +99,7 @@ async function run(dry) {
     const it = doc.data || {};
     const item = { id: doc.id, summary: (it.summary || "").slice(0, 90), stripped: 0, status: "", campaign: null, error: null };
     const p = it.payload || {};
-    const ops = p.mutateOperations || (p.operations ? null : null);
+    const ops = p.mutateOperations || null;
     if (!ops) { item.status = "skipped"; item.error = "no mutateOperations in payload (can't repair this shape)."; out.items.push(item); continue; }
     item.stripped = sanitize(ops);
     try {
@@ -116,43 +116,79 @@ async function run(dry) {
   return out;
 }
 
-exports.handler = async (event) => {
-  const q = (event && event.queryStringParameters) || {};
-  const wantsHtml = (event.headers && /text\/html/.test(event.headers.accept || ""));
-  const gate = ENV.EDIT_PASSCODE || "";
+function page(gateSet) {
+  const warn = gateSet ? "" :
+    `<div style="background:#fbeae7;border:1px solid #e2b6ad;color:#b3402f;padding:11px 13px;border-radius:8px;margin-bottom:16px;font-size:13.5px">
+       <b>EDIT_PASSCODE isn't set on this site.</b> Add it in Netlify &rarr; Site settings &rarr; Environment variables, redeploy, then reload this page.</div>`;
+  return htmlOut(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Ad Autopilot · repair</title>
+<body style="font-family:-apple-system,Segoe UI,sans-serif;max-width:760px;margin:40px auto;color:#1a1a1a;padding:0 18px">
+<h2 style="font-weight:600;margin-bottom:4px">Ad Autopilot — repair stuck approvals</h2>
+<p style="color:#666;font-size:14px;margin-top:0">Re-applies drafts that were approved but errored on send. Campaigns are created <b>PAUSED</b> — nothing spends until you enable it.</p>
+${warn}
+<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:18px 0">
+  <input id="k" type="password" placeholder="Console passcode (EDIT_PASSCODE)" autocomplete="off"
+    style="flex:1;min-width:240px;padding:11px 13px;border:1px solid #ccc;border-radius:9px;font-size:14px"
+    onkeydown="if(event.key==='Enter')go(true)">
+  <button onclick="go(true)"  style="padding:11px 16px;border:1px solid #c9a23a;background:#f3e7c4;color:#5a4a1d;border-radius:9px;font-weight:600;font-size:13.5px;cursor:pointer">Preview (dry run)</button>
+  <button onclick="go(false)" style="padding:11px 16px;border:none;background:#1a1a1a;color:#fff;border-radius:9px;font-weight:600;font-size:13.5px;cursor:pointer">Create campaigns</button>
+</div>
+<div id="out" style="margin-top:10px"></div>
+<script>
+function esc(s){return String(s==null?'':s).replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];});}
+function row(i){var col=i.status==='created'?'#3c7a39':i.status==='validated'?'#7a5a1d':i.status==='error'?'#b3402f':'#8a8a8a';
+  return '<tr><td style="font-size:12px;padding:7px 9px;border-bottom:1px solid #eee">'+esc(i.summary)+'</td>'+
+    '<td style="padding:7px 9px;border-bottom:1px solid #eee"><b style="color:'+col+'">'+esc(i.status||'?')+'</b></td>'+
+    '<td style="font-family:monospace;font-size:11px;padding:7px 9px;border-bottom:1px solid #eee">'+esc(i.campaign||(i.error?'':'\u2014'))+'</td>'+
+    '<td style="font-size:11px;color:#b3402f;padding:7px 9px;border-bottom:1px solid #eee">'+esc(i.error||'')+'</td></tr>';}
+async function go(dry){
+  var key=document.getElementById('k').value.trim();
+  var out=document.getElementById('out');
+  if(!key){out.innerHTML='<div style="color:#b3402f;font-size:13px">Enter your passcode first.</div>';return;}
+  out.innerHTML='<div style="color:#888;font-size:13px">Working\u2026</div>';
+  try{
+    var res=await fetch(location.pathname,{method:'POST',headers:{'Content-Type':'application/json','x-edit-passcode':key},body:JSON.stringify({dry:dry})});
+    var d=await res.json();
+    if(res.status===401){out.innerHTML='<div style="background:#fbeae7;border:1px solid #e2b6ad;color:#b3402f;padding:11px 13px;border-radius:8px;font-size:13.5px">'+(d.editPasscodeSet===false?'EDIT_PASSCODE is not set on this site.':'Passcode did not match. Double-check the EDIT_PASSCODE value in Netlify (watch for trailing spaces).')+'</div>';return;}
+    if(d.fatal){out.innerHTML='<div style="background:#fbeae7;border:1px solid #e2b6ad;color:#b3402f;padding:11px 13px;border-radius:8px;font-size:13.5px">Could not run: '+esc(d.fatal)+'</div>';return;}
+    var head='<div style="background:'+((!dry&&d.created)?'#eaf3e8':'#f6f3ec')+';border:1px solid #d9d2c2;padding:11px 13px;border-radius:8px;font-size:14px;margin-bottom:12px">Found <b>'+d.found+'</b> stuck approval(s). '+(dry?('Validated <b>'+d.validated+'</b> \u2014 dry run, nothing created.'):('Created <b>'+d.created+'</b> campaign(s) in Google Ads (PAUSED).'))+'</div>';
+    var rows=(d.items||[]).map(row).join('')||'<tr><td colspan="4" style="padding:9px">Nothing stuck in APPROVED \u2014 nothing to repair.</td></tr>';
+    out.innerHTML=head+'<table style="border-collapse:collapse;width:100%;border:1px solid #eee;font-size:13px"><thead><tr style="background:#f3f0e9;text-align:left"><th style="padding:7px 9px">Draft</th><th style="padding:7px 9px">Result</th><th style="padding:7px 9px">New campaign</th><th style="padding:7px 9px">Error</th></tr></thead><tbody>'+rows+'</tbody></table>'+((dry&&d.found)?'<div style="font-size:12px;color:#666;margin-top:10px">Looks good? Click <b>Create campaigns</b> to build them for real.</div>':'')+((!dry&&d.created)?'<div style="font-size:12px;color:#666;margin-top:10px">Open Google Ads or the console Performance tab to enable them.</div>':'');
+  }catch(e){out.innerHTML='<div style="color:#b3402f;font-size:13px">Request failed: '+esc(e.message)+'</div>';}
+}
+</script></body>`);
+}
 
-  // passcode gate — this endpoint mutates, so it must not run by accident
-  if (!gate || q.key !== gate) {
-    const msg = "Add ?key=YOUR_EDIT_PASSCODE to the URL to run the repair. Add &dry=1 to validate without creating.";
-    if (!wantsHtml) return { statusCode: 401, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ error: "unauthorized", hint: msg }) };
-    return { statusCode: 401, headers: { "Content-Type": "text/html; charset=utf-8" },
-      body: `<!doctype html><meta charset="utf-8"><body style="font-family:-apple-system,Segoe UI,sans-serif;max-width:680px;margin:40px auto;color:#1a1a1a;padding:0 16px"><h2 style="font-weight:600">Ad Autopilot — repair</h2><p style="color:#555">${esc(msg)}</p></body>` };
+exports.handler = async (event) => {
+  const method = (event.httpMethod || "GET").toUpperCase();
+  const q = (event && event.queryStringParameters) || {};
+  const headers = event.headers || {};
+  let body = {};
+  try { if (event.body) body = JSON.parse(event.body); } catch (e) {}
+
+  // self-check: confirm the env var is configured WITHOUT revealing it
+  if (q.check === "1") {
+    const g = gateVal();
+    return json(200, { editPasscodeSet: !!g, passcodeLength: g.length, customerId: CID || null, hasDevToken: !!ENV.GADS_DEVELOPER_TOKEN, ready: !!(g && CID && ENV.GADS_DEVELOPER_TOKEN) });
   }
 
-  const dry = q.dry === "1" || q.dry === "true";
+  const gate = gateVal();
+  const key = (headers["x-edit-passcode"] || q.key || body.key || "").trim();
+  const dry = q.dry === "1" || q.dry === "true" || body.dry === true || body.dry === "1";
+  const valid = !!gate && key === gate;
+
+  if (!valid) {
+    if (method === "POST") return json(401, { error: gate ? "wrong passcode" : "EDIT_PASSCODE not set", editPasscodeSet: !!gate });
+    return page(!!gate); // GET → interactive form
+  }
+
   const r = await run(dry);
+  if (method === "POST") return json(200, r);
 
-  if (!wantsHtml) return { statusCode: 200, headers: { "Content-Type": "application/json" }, body: JSON.stringify(r, null, 2) };
-
+  // direct GET with a valid ?key= — render a simple server-side results page
   const rowColor = s => s === "created" ? "#3c7a39" : s === "validated" ? "#7a5a1d" : s === "error" ? "#b3402f" : "#8a8a8a";
-  const rows = (r.items || []).map(i => `<tr>
-      <td style="font-size:12px">${esc(i.summary)}</td>
-      <td><b style="color:${rowColor(i.status)}">${esc(i.status || "?")}</b></td>
-      <td style="font-family:monospace;font-size:11px">${esc(i.campaign || (i.error ? "" : "—"))}</td>
-      <td style="font-size:11px;color:#b3402f">${esc(i.error || "")}</td></tr>`).join("") || `<tr><td colspan="4">No approvals were stuck in APPROVED — nothing to repair.</td></tr>`;
-
-  const banner = r.fatal
-    ? `<div style="background:#fbeae7;border:1px solid #e2b6ad;color:#b3402f;padding:12px 14px;border-radius:8px">Couldn't run: ${esc(r.fatal)}</div>`
-    : `<div style="background:${r.created ? "#eaf3e8" : "#f6f3ec"};border:1px solid #d9d2c2;padding:12px 14px;border-radius:8px;font-size:14px">
-        Found <b>${r.found}</b> stuck approval(s). ${r.dry ? `Validated <b>${r.validated}</b> (dry run — nothing created).` : `Created <b>${r.created}</b> campaign(s) in Google Ads (PAUSED).`}
-        ${(!r.dry && r.created) ? " Open Google Ads or the console's Performance tab to enable them." : ""}</div>`;
-
-  const html = `<!doctype html><meta charset="utf-8"><title>Ad Autopilot · repair</title>
-  <body style="font-family:-apple-system,Segoe UI,sans-serif;max-width:820px;margin:36px auto;color:#1a1a1a;padding:0 16px">
-  <h2 style="font-weight:600">Ad Autopilot — repair stuck approvals</h2>
-  ${banner}
-  <h3 style="margin:22px 0 6px">Results ${r.dry ? "<span style='font-weight:400;font-size:12px;color:#888'>(dry run)</span>" : ""}</h3>
-  <table style="border-collapse:collapse;width:100%;border:1px solid #eee;font-size:13px"><thead><tr style="background:#f3f0e9;text-align:left"><th>Draft</th><th>Result</th><th>New campaign</th><th>Error</th></tr></thead><tbody>${rows}</tbody></table>
-  <p style="color:#888;font-size:12px;margin-top:18px">This stripped the rejected <code>text_guidelines</code> field from each frozen payload and re-sent it. Campaigns are created <b>PAUSED</b> — nothing spends until you enable it. ${r.dry ? "Remove <code>&dry=1</code> to actually create them." : "Re-run with <code>&dry=1</code> anytime to preview."} Safe to delete this function once done.</p></body>`;
-  return { statusCode: 200, headers: { "Content-Type": "text/html; charset=utf-8" }, body: html };
+  const rows = (r.items || []).map(i => `<tr><td style="font-size:12px;padding:7px 9px;border-bottom:1px solid #eee">${esc(i.summary)}</td><td style="padding:7px 9px;border-bottom:1px solid #eee"><b style="color:${rowColor(i.status)}">${esc(i.status || "?")}</b></td><td style="font-family:monospace;font-size:11px;padding:7px 9px;border-bottom:1px solid #eee">${esc(i.campaign || (i.error ? "" : "—"))}</td><td style="font-size:11px;color:#b3402f;padding:7px 9px;border-bottom:1px solid #eee">${esc(i.error || "")}</td></tr>`).join("") || `<tr><td colspan="4" style="padding:9px">Nothing stuck in APPROVED — nothing to repair.</td></tr>`;
+  const head = r.fatal
+    ? `<div style="background:#fbeae7;border:1px solid #e2b6ad;color:#b3402f;padding:11px 13px;border-radius:8px">Couldn't run: ${esc(r.fatal)}</div>`
+    : `<div style="background:${(!r.dry && r.created) ? "#eaf3e8" : "#f6f3ec"};border:1px solid #d9d2c2;padding:11px 13px;border-radius:8px;font-size:14px;margin-bottom:12px">Found <b>${r.found}</b> stuck approval(s). ${r.dry ? `Validated <b>${r.validated}</b> — dry run.` : `Created <b>${r.created}</b> campaign(s), PAUSED.`}</div>`;
+  return htmlOut(`<!doctype html><meta charset="utf-8"><title>Ad Autopilot · repair</title><body style="font-family:-apple-system,Segoe UI,sans-serif;max-width:760px;margin:36px auto;color:#1a1a1a;padding:0 18px"><h2 style="font-weight:600">Ad Autopilot — repair</h2>${head}<table style="border-collapse:collapse;width:100%;border:1px solid #eee;font-size:13px"><thead><tr style="background:#f3f0e9;text-align:left"><th style="padding:7px 9px">Draft</th><th style="padding:7px 9px">Result</th><th style="padding:7px 9px">New campaign</th><th style="padding:7px 9px">Error</th></tr></thead><tbody>${rows}</tbody></table></body>`);
 };
