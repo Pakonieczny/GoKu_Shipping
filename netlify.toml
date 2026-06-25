@@ -302,6 +302,16 @@
   status = 200
   force = true
 
+# ─── Brites Ad Autopilot — live console ─────────────────────────────────────
+# Serves the wired control room (brites-adwords.html) at its own subdomain.
+# The console calls /.netlify/functions/googleAdsAutopilotKick same-origin from
+# here (no CORS needed), exactly like the EtsyMail inbox does from its subdomain.
+[[redirects]]
+  from = "https://brites-adwords.goldenspike.app"
+  to = "/brites-adwords.html"
+  status = 200
+  force = true
+
 [[redirects]]
   from = "https://listing-generator-1.goldenspike.app"
   to = "/Listing_Generator_1.html"
@@ -342,6 +352,15 @@
 [functions."applySiteFixes"]
   schedule = "0 * * * *"
 
+# Google Shopping recommended attributes (color per-variant from the metal,
+# plus age_group="adult" and gender="unisex" at the product level), written
+# into the mm-google-shopping metafield namespace the Google & YouTube channel
+# reads. Cursor-paginated catalog walk; resumes each run; dormant once complete
+# (Brites_Editor_Meta/googleAttributesState). Offset :15 so it never stacks with
+# applySiteFixes (:00) or syncCharmSets (:30). No passcode; manual: ?run=now.
+[functions."googleAttributes"]
+  schedule = "15 * * * *"
+
 # Verified charm-set metafields (brites.set) — full-catalog v3 data
 # (verified-full-v3-2026-06-12: 2,231 products' sets + 395 clears = 2,626
 # writes) from charmSetsData.js. Offset :30 so it never stacks with
@@ -355,6 +374,19 @@
 # 04:00 listings-catalog convention).
 [functions."syncBestSellers"]
   schedule = "0 5 * * 1"
+
+# ─── Brites Ad Autopilot — June 2026 ────────────────────────────────────────
+# Hourly kicker for the Google Ads autopilot (generate → deploy → measure →
+# adapt). Decides which tasks are due by clock (cheap tasks — anomaly +
+# offline-conversion upload — hourly; measure/mine/prune/event-generation
+# daily at GADS_DAILY_HOUR; budget reallocation weekly on GADS_WEEKLY_DOW)
+# and POSTs them to googleAdsAutopilot-background. Offset :45 so it never
+# stacks with applySiteFixes (:00), googleAttributes (:15), or
+# syncCharmSets (:30). Honors the kill switch + dry-run in
+# Brites_GAds_Control — dormant until enabled. Console + manual run:
+# GET/POST /.netlify/functions/googleAdsAutopilotKick (X-Edit-Passcode).
+[functions."googleAdsAutopilotKick"]
+  schedule = "45 * * * *"
 
 # Visual set verification — COMPLETE (main run + phase-2 + phase-3,
 # 2026-06-12). The verifier trio (verifyCharmSetsKick,
