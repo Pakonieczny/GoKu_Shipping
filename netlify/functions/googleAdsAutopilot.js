@@ -298,9 +298,10 @@ function daysUntil(mmdd, now = new Date()) {
 }
 
 /* ===================== Brand-safety guardrails (your edge) ===================== */
-// Two layers: (1) we filter generated copy here before it is ever queued, and
-// (2) we stamp Campaign.text_guidelines on created campaigns so Google's own AI
-// (PMax / AI-Max) is constrained server-side too (v23.1+).
+// Generated copy is filtered HERE before it is ever queued — every headline/description
+// runs through brandSafe() and the char clamps, so unsafe or off-tone lines never reach
+// a campaign. (An earlier build also tried to stamp Campaign.text_guidelines server-side,
+// but that field shape is rejected by the API, so brand-safety is enforced client-side only.)
 const BRAND = {
   // never let AI write these into emotional/memorial/medical-adjacent copy
   termExclusions: (ENV.GADS_TERM_EXCLUSIONS ||
@@ -436,8 +437,7 @@ function buildSearchCampaignOps(coll, event, assets, { dailyBudget }) {
         resourceName: cRes, name: `BA · ${tag}`, status: "PAUSED",      // always start PAUSED
         advertisingChannelType: "SEARCH", campaignBudget: bRes,
         maximizeConversionValue: ENV.GADS_TARGET_ROAS ? { targetRoas: Number(ENV.GADS_TARGET_ROAS) } : {},
-        networkSettings: { targetGoogleSearch: true, targetSearchNetwork: true, targetContentNetwork: false },
-        textGuidelines: textGuidelinesOp() } } },
+        networkSettings: { targetGoogleSearch: true, targetSearchNetwork: true, targetContentNetwork: false } } } },
     { adGroupOperation: { create: {
         resourceName: agRes, name: `${coll.title} · ${event ? event.label : "Evergreen"}`,
         campaign: cRes, type: "SEARCH_STANDARD", cpcBidMicros: micros(0.40) } } },
@@ -760,6 +760,20 @@ Return ONLY JSON: {"occasions":[{"label":"","daysOut":<int>,"recommendation":"pu
   return list;
 }
 
+/* ===================== Manual campaign enable / pause ===================== */
+// Flip a single campaign ENABLED/PAUSED. Same update+updateMask shape as the
+// (working) budget reallocation path, on the campaigns service. Honors dry-run.
+async function setCampaignStatus(campaignId, status, { ctrl } = {}) {
+  ctrl = ctrl || (await control());
+  status = String(status || "").toUpperCase();
+  if (status !== "ENABLED" && status !== "PAUSED") throw new Error("status must be ENABLED or PAUSED");
+  const id = String(campaignId).replace(/\D/g, "");
+  if (!id) throw new Error("missing campaign id");
+  const op = { update: { resourceName: `customers/${CID}/campaigns/${id}`, status }, updateMask: "status" };
+  await mutate("campaigns", [op], { ctrl, label: "setStatus:" + status });
+  return { ok: true, id, status, dryRun: !!ctrl.dryRun };
+}
+
 /* ===================== Opportunity engine (the planner) ===================== */
 // Pulls the store's best-selling products (bounded) so the AI can reference real heroes.
 async function fetchTopProducts() {
@@ -901,7 +915,7 @@ module.exports = {
   generateRSAAssets, buildSearchCampaignOps, textGuidelinesOp, brandSafe,
   generateForCollection, COLLECTIONS, OCCASIONS,
   getCollections, suggestOccasions, recordOccasionUse,
-  scanOpportunities, fetchTopProducts,
+  scanOpportunities, fetchTopProducts, setCampaignStatus,
   loadCalendar, dueEvents,
   measure, pruneAssets, mineSearchTerms, reallocateBudgets, anomalyCheck,
   dashboard,
