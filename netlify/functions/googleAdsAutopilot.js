@@ -855,8 +855,12 @@ async function dashboard() {
   };
   if (!f) return out;
   try {
-    const ap = await f.db.collection(COL.approvals).where("status", "==", "PENDING").orderBy("createdAt", "desc").limit(25).get();
-    ap.forEach(d => out.pending.push({ id: d.id, ...d.data(), createdAt: undefined }));
+    // Equality-only filter needs no composite index; sort newest-first in memory.
+    const ap = await f.db.collection(COL.approvals).where("status", "==", "PENDING").limit(50).get();
+    const rows = [];
+    ap.forEach(d => { const x = d.data(); rows.push({ id: d.id, ...x, _ts: x.createdAt && x.createdAt.toMillis ? x.createdAt.toMillis() : 0, createdAt: undefined }); });
+    rows.sort((a, b) => b._ts - a._ts);
+    rows.slice(0, 25).forEach(r => { delete r._ts; out.pending.push(r); });
   } catch (e) {}
   try {
     const lg = await f.db.collection(COL.ledger).orderBy("at", "desc").limit(20).get();
