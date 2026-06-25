@@ -313,6 +313,7 @@ function micros(v) { return Math.round(Number(v) * 1e6); }
 function fromMicros(m) { return (Number(m) || 0) / 1e6; }
 function clampHeadline(s) { return String(s).slice(0, 30); }   // RSA headline ≤30
 function clampDescription(s) { return String(s).slice(0, 90); } // RSA description ≤90
+function cleanAdText(s) { return String(s == null ? "" : s).replace(/[\p{So}\p{Sk}\p{Extended_Pictographic}\u2190-\u21FF\u27F0-\u27FF\u2900-\u297F\u2B00-\u2BFF]/gu, "").replace(/\s{2,}/g, " ").trim(); } // strip prohibited symbols/emoji
 function gAdsTime(d) {
   // "yyyy-MM-dd HH:mm:ss+00:00"
   const p = n => String(n).padStart(2, "0");
@@ -475,8 +476,8 @@ function buildSearchCampaignOps(coll, event, assets, { dailyBudget }) {
         adGroup: agRes, status: "ENABLED", ad: {
           finalUrls: [finalUrl],
           responsiveSearchAd: {
-            headlines: assets.headlines.map(t => ({ text: t })),
-            descriptions: assets.descriptions.map(t => ({ text: t }))
+            headlines: assets.headlines.map(t => ({ text: clampHeadline(cleanAdText(t)) })).filter(h => h.text),
+            descriptions: assets.descriptions.map(t => ({ text: clampDescription(cleanAdText(t)) })).filter(d => d.text)
           } } } } }
   ];
   // Keyword themes from collection title + event (phrase match)

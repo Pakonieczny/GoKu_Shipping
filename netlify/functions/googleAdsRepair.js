@@ -72,6 +72,13 @@ function payloadInfo(ops) {
   return info;
 }
 
+// Google's editorial "Symbols" policy disapproves decorative symbols/emoji in ad copy
+// (★, dingbats, arrows, emoji…). Strip them; keep letters, digits, normal punctuation,
+// and currency ($ € £, which are category Sc, not So).
+function cleanAdText(s) {
+  return String(s == null ? "" : s).replace(/[\p{So}\p{Sk}\p{Extended_Pictographic}\u2190-\u21FF\u27F0-\u27FF\u2900-\u297F\u2B00-\u2BFF]/gu, "").replace(/\s{2,}/g, " ").trim();
+}
+
 function normalize(ops) {
   let fixed = 0;
   (Array.isArray(ops) ? ops : []).forEach(op => {
@@ -88,6 +95,17 @@ function normalize(ops) {
     }
     const aa = op.adGroupAdOperation && op.adGroupAdOperation.create;
     if (aa && aa.adGroupAd && typeof aa.adGroupAd === "object") { op.adGroupAdOperation.create = aa.adGroupAd; fixed++; }
+    // strip prohibited symbols from the responsive search ad copy
+    const adc = op.adGroupAdOperation && op.adGroupAdOperation.create;
+    const rsa = adc && adc.ad && adc.ad.responsiveSearchAd;
+    if (rsa) {
+      ["headlines", "descriptions"].forEach(k => {
+        if (Array.isArray(rsa[k])) {
+          rsa[k].forEach(t => { if (t && typeof t.text === "string") { const c = cleanAdText(t.text); if (c !== t.text) { t.text = c; fixed++; } } });
+          rsa[k] = rsa[k].filter(t => t && t.text && t.text.trim());
+        }
+      });
+    }
     const ac = op.adGroupCriterionOperation && op.adGroupCriterionOperation.create;
     if (ac && ac.adGroupCriterion && typeof ac.adGroupCriterion === "object") { op.adGroupCriterionOperation.create = ac.adGroupCriterion; fixed++; }
     const ag = op.adGroupOperation && op.adGroupOperation.create;
