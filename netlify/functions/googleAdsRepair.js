@@ -47,18 +47,28 @@ async function mintToken() {
   return d.access_token;
 }
 
-// Remove the field Google rejects from any campaign create/update op (both spellings).
-function sanitize(ops) {
-  let removed = 0;
+// Heal frozen payloads built by the old code:
+//  1) strip Campaign.text_guidelines (rejected free-text field)
+//  2) un-nest the extra resource layer the old builder put inside create
+//     (REST: an operation's `create` field IS the resource — no inner
+//      adGroupAd / adGroupCriterion / adGroup wrapper).
+function normalize(ops) {
+  let fixed = 0;
   (Array.isArray(ops) ? ops : []).forEach(op => {
     if (!op) return;
-    const c = (op.campaignOperation && (op.campaignOperation.create || op.campaignOperation.update)) || op.create || op.update;
-    if (c && typeof c === "object") {
-      if (c.text_guidelines !== undefined) { delete c.text_guidelines; removed++; }
-      if (c.textGuidelines !== undefined) { delete c.textGuidelines; removed++; }
+    const cc = op.campaignOperation && (op.campaignOperation.create || op.campaignOperation.update);
+    if (cc) {
+      if (cc.text_guidelines !== undefined) { delete cc.text_guidelines; fixed++; }
+      if (cc.textGuidelines !== undefined) { delete cc.textGuidelines; fixed++; }
     }
+    const aa = op.adGroupAdOperation && op.adGroupAdOperation.create;
+    if (aa && aa.adGroupAd && typeof aa.adGroupAd === "object") { op.adGroupAdOperation.create = aa.adGroupAd; fixed++; }
+    const ac = op.adGroupCriterionOperation && op.adGroupCriterionOperation.create;
+    if (ac && ac.adGroupCriterion && typeof ac.adGroupCriterion === "object") { op.adGroupCriterionOperation.create = ac.adGroupCriterion; fixed++; }
+    const ag = op.adGroupOperation && op.adGroupOperation.create;
+    if (ag && ag.adGroup && typeof ag.adGroup === "object" && ag.adGroup.name) { op.adGroupOperation.create = ag.adGroup; fixed++; }
   });
-  return removed;
+  return fixed;
 }
 
 async function applyOne(token, ops, dry) {
@@ -71,7 +81,7 @@ async function applyOne(token, ops, dry) {
     body: JSON.stringify({ mutateOperations: ops, partialFailure: false, validateOnly: !!dry })
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error("HTTP " + res.status + " — " + JSON.stringify(data).slice(0, 500));
+  if (!res.ok) throw new Error("HTTP " + res.status + " — " + JSON.stringify(data.error ? data.error.message : data).slice(0, 1600));
   if (data.partialFailureError) throw new Error("partial failure — " + JSON.stringify(data.partialFailureError).slice(0, 400));
   let campaign = null;
   (data.mutateOperationResponses || []).forEach(r => {
@@ -99,11 +109,11 @@ async function run(dry) {
 
   for (const doc of docs) {
     const it = doc.data || {};
-    const item = { id: doc.id, summary: (it.summary || "").slice(0, 90), stripped: 0, status: "", campaign: null, error: null };
+    const item = { id: doc.id, summary: (it.summary || "").slice(0, 90), fixed: 0, status: "", campaign: null, error: null };
     const p = it.payload || {};
     const ops = p.mutateOperations || null;
     if (!ops) { item.status = "skipped"; item.error = "no mutateOperations in payload (can't repair this shape)."; out.items.push(item); continue; }
-    item.stripped = sanitize(ops);
+    item.fixed = normalize(ops);
     try {
       const campaign = await applyOne(token, ops, dry);
       if (dry) { item.status = "validated"; out.validated++; }

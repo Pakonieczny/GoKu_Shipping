@@ -471,18 +471,18 @@ function buildSearchCampaignOps(coll, event, assets, { dailyBudget }) {
         resourceName: agRes, name: `${coll.title} · ${event ? event.label : "Evergreen"}`,
         campaign: cRes, type: "SEARCH_STANDARD", cpcBidMicros: micros(0.40) } } },
     { adGroupAdOperation: { create: {
-        adGroupAd: { adGroup: agRes, status: "ENABLED", ad: {
+        adGroup: agRes, status: "ENABLED", ad: {
           finalUrls: [finalUrl],
           responsiveSearchAd: {
             headlines: assets.headlines.map(t => ({ text: t })),
             descriptions: assets.descriptions.map(t => ({ text: t }))
-          } } } } } }
+          } } } } }
   ];
   // Keyword themes from collection title + event (phrase match)
   const kws = [coll.title, `${coll.title} gift`, `${coll.title} necklace`,
                event ? `${coll.title} ${event.label}` : null].filter(Boolean);
   kws.forEach((k, i) => ops.push({ adGroupCriterionOperation: { create: {
-    adGroupCriterion: { adGroup: agRes, status: "ENABLED", keyword: { text: k, matchType: "PHRASE" } } } } }));
+    adGroup: agRes, status: "ENABLED", keyword: { text: k, matchType: "PHRASE" } } } }));
   return { ops, tag, finalUrl };
 }
 
