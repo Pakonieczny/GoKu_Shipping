@@ -453,12 +453,21 @@ async function dueEvents(now = new Date()) {
 /* ===================== Build a Search campaign (atomic) ===================== */
 // Returns mutateOperations[] for googleAds:mutate. Creates budget→campaign→adgroup
 // →RSA in one transaction using temp resource names. Gated/queued by the worker.
-function buildSearchCampaignOps(coll, event, assets, { dailyBudget }) {
+/* date helpers for campaign scheduling windows (YYYY-MM-DD ↔ Google's YYYYMMDD) */
+function _ymd(d) { return d.toISOString().slice(0, 10); }
+function _parseYmd(s) { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(s || "").trim()); if (!m) return null; const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])); return isNaN(d.getTime()) ? null : d; }
+function _todayUtc() { const t = new Date(); return new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate())); }
+function _daysBetween(a, b) { return Math.round((b.getTime() - a.getTime()) / 86400000); }
+function gAdsDate(s, clampToday) { let d = _parseYmd(s); if (!d) return null; if (clampToday) { const t = _todayUtc(); if (d < t) d = t; } return _ymd(d).replace(/-/g, ""); }
+
+function buildSearchCampaignOps(coll, event, assets, { dailyBudget, startDate, endDate }) {
   const tag = `${coll.handle}-${(event ? event.label : "evergreen").toLowerCase().replace(/[^a-z0-9]+/g, "-")}`.slice(0, 40);
   const bRes = `customers/${CID}/campaignBudgets/-1`;
   const cRes = `customers/${CID}/campaigns/-2`;
   const agRes = `customers/${CID}/adGroups/-3`;
   const finalUrl = `https://${(ENV.SITE_NAME ? "" : "")}britesjewelry.com/collections/${coll.handle}`;
+  const startYmd = gAdsDate(startDate, true);   // clamp start to today-or-later
+  const endYmd = gAdsDate(endDate, false);
   const ops = [
     { campaignBudgetOperation: { create: {
         resourceName: bRes, name: `BA · ${tag} · ${Date.now()}`,
@@ -467,6 +476,8 @@ function buildSearchCampaignOps(coll, event, assets, { dailyBudget }) {
         resourceName: cRes, name: `BA · ${tag}`, status: "PAUSED",      // always start PAUSED
         advertisingChannelType: "SEARCH", campaignBudget: bRes,
         containsEuPoliticalAdvertising: "DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING",
+        ...(startYmd ? { startDate: startYmd } : {}),
+        ...(endYmd ? { endDate: endYmd } : {}),
         maximizeConversionValue: ENV.GADS_TARGET_ROAS ? { targetRoas: Number(ENV.GADS_TARGET_ROAS) } : {},
         networkSettings: { targetGoogleSearch: true, targetSearchNetwork: true, targetContentNetwork: false } } } },
     { adGroupOperation: { create: {
@@ -798,7 +809,7 @@ Return ONLY JSON: {"occasions":[{"label":"","daysOut":<int>,"recommendation":"pu
 async function setCampaignStatus(campaignId, status, { ctrl } = {}) {
   ctrl = ctrl || (await control());
   status = String(status || "").toUpperCase();
-  if (status !== "ENABLED" && status !== "PAUSED") throw new Error("status must be ENABLED or PAUSED");
+  if (status !== "ENABLED" && status !== "PAUSED" && status !== "REMOVED") throw new Error("status must be ENABLED, PAUSED, or REMOVED");
   const id = String(campaignId).replace(/\D/g, "");
   if (!id) throw new Error("missing campaign id");
   const op = { update: { resourceName: `customers/${CID}/campaigns/${id}`, status }, updateMask: "status" };
@@ -913,41 +924,116 @@ async function scanOpportunities({ force } = {}) {
 ALL COLLECTIONS: ${collText}
 TOP-SELLING PRODUCTS: ${prodText}
 PAST OCCASION PERFORMANCE (memory): ${memText}
-Find the 10-14 best advertising OPPORTUNITIES to act on over the next ~90 days. Cross-reference upcoming calendar / seasonal gifting moments with the collections and best-sellers that fit them and with past performance. For EACH opportunity return:
+Find the 8-12 best advertising OPPORTUNITIES to act on within the NEXT ~30 DAYS. Do NOT suggest anything whose run window starts more than ~30 days from today — near-term relevance only. Cross-reference upcoming calendar / seasonal gifting moments with the collections and best-sellers that fit them and with past performance. For EACH opportunity return:
 - collectionTitle (MUST be exactly one of the collections listed above)
 - occasion (the event/emotion to lead with)
-- daysOut (int: days until the occasion's peak from today; 0 for evergreen)
+- startDate (YYYY-MM-DD: when the campaign should START — a sensible lead time before the occasion's peak so it can ramp; today or later, and within ~30 days)
+- endDate (YYYY-MM-DD: when it should STOP — at or shortly after the peak; for "Evergreen gifting" use a ~30-day rolling window from startDate)
+- daysOut (int: days from today until startDate; 0 if it should start now)
 - priority: "high" (timely + strong fit, or proven winner), "medium" (solid), "test" (speculative)
 - recommendedDailyBudget (number in ${ccy}; scale to importance — larger for major gifting events, smaller for niche/evergreen; keep realistic vs the ${ceiling} ceiling)
-- durationDays (int: how long to run, e.g. 14-30 around an event, more for evergreen)
 - expectedRoasBand (e.g. "3-4x"; be conservative)
 - proven (bool: true ONLY if memory shows success for this occasion)
 - rationale (<=120 chars: why now, why this collection)
 - keywords (4-6 phrase-match keywords a shopper would search)
 - keyPhrases (3-4 short emotional ad phrases)
-Rank best-first. Avoid out-of-season occasions and any memory marks as fail. Return ONLY JSON: {"opportunities":[ ... ]}`;
+Only include opportunities genuinely relevant within ~30 days. Rank best-first (soonest + strongest first). Avoid out-of-season occasions and any memory marks as fail. Return ONLY JSON: {"opportunities":[ ... ]}`;
   let list = null;
   try { const j = await openaiJSON(prompt, { maxTokens: 2400 }); if (j && Array.isArray(j.opportunities)) list = j.opportunities.filter(o => o && o.collectionTitle && o.occasion); } catch (e) {}
   if (!list) list = [];
   const byTitle = {}; collections.forEach(c => byTitle[c.title.toLowerCase()] = c.handle);
+  const today0 = _todayUtc();
   list = list.map((o, i) => {
     const t = String(o.collectionTitle).toLowerCase();
     const handle = byTitle[t] || (collections.find(c => c.title.toLowerCase().indexOf(t) >= 0) || {}).handle || null;
     const mem = memory.find(m => m.occasion && String(m.occasion).toLowerCase() === String(o.occasion).toLowerCase());
-    const dur = Math.max(3, Math.min(90, +o.durationDays || 21));
     const bud = Math.max(2, Math.min(ceiling, Number(o.recommendedDailyBudget) || 8));
+    // Resolve the run window. Trust the AI's dates; fall back to daysOut + a default length.
+    let start = _parseYmd(o.startDate), end = _parseYmd(o.endDate);
+    const durHint = Math.max(3, Math.min(60, +o.durationDays || 21));
+    if (!start) { const lead = Math.max(0, (o.daysOut != null ? +o.daysOut : 7)); start = new Date(today0.getTime() + lead * 86400000); }
+    if (start < today0) start = today0;                       // never before today
+    if (!end || end <= start) end = new Date(start.getTime() + durHint * 86400000);
+    const durationDays = Math.max(3, Math.min(90, _daysBetween(start, end)));
+    const startDate = _ymd(start), endDate = _ymd(end);
+    const daysOut = Math.max(0, _daysBetween(today0, start));
     return {
       id: "op" + i, collectionHandle: handle, collectionTitle: o.collectionTitle, occasion: o.occasion,
-      daysOut: o.daysOut != null ? +o.daysOut : null, priority: (["high", "medium", "test"].indexOf(o.priority) >= 0 ? o.priority : "test"),
-      recommendedDailyBudget: bud, durationDays: dur, estTotalSpend: Math.round(bud * dur),
+      startDate, endDate, daysOut, durationDays,
+      priority: (["high", "medium", "test"].indexOf(o.priority) >= 0 ? o.priority : "test"),
+      recommendedDailyBudget: bud, estTotalSpend: Math.round(bud * durationDays),
       expectedRoasBand: o.expectedRoasBand || null, proven: !!o.proven,
       rationale: o.rationale || "", keywords: Array.isArray(o.keywords) ? o.keywords.slice(0, 6) : [],
       keyPhrases: Array.isArray(o.keyPhrases) ? o.keyPhrases.slice(0, 4) : [],
       pastStats: mem && mem.roas ? { roas: mem.roas, outcome: mem.outcome } : null, currency: ccy
     };
-  }).filter(o => o.collectionHandle);
+  }).filter(o => o.collectionHandle)
+    .filter(o => o.daysOut <= 32)   // ~30-day forward window: drop anything that starts too far out
+    .sort((a, b) => a.daysOut - b.daysOut);
   if (f && list.length) { try { await f.db.collection(COL.state).doc("opportunities").set({ list, at: Date.now() }); } catch (e) {} }
   return { opportunities: list, scannedAt: Date.now() };
+}
+
+/* ============ Opportunity ↔ approval ↔ campaign reconciliation ============ */
+// The join key is the campaign tag: `{handle}-{slug(occasion)}` (sliced to 40),
+// identical to what buildSearchCampaignOps stamps onto `BA · {tag}`. So an
+// opportunity, its queued/approved approval, and the live campaign all share one tag.
+function oppTag(handle, occasion) {
+  const lbl = (occasion && occasion !== "Evergreen gifting") ? occasion : "evergreen";
+  return `${handle}-${String(lbl).toLowerCase().replace(/[^a-z0-9]+/g, "-")}`.slice(0, 40);
+}
+function tagFromCampaignName(name) {
+  const m = /^BA · (.+)$/.exec(name || ""); return m ? m[1].slice(0, 40) : null;
+}
+function approvalTag(x) {
+  const ops = (x && x.payload && x.payload.mutateOperations) || [];
+  for (const op of ops) {
+    const c = op.campaignOperation && op.campaignOperation.create;
+    if (c && c.name) { const t = tagFromCampaignName(c.name); if (t) return t; }
+  }
+  return (x && x.tag) || null;
+}
+const _AP_RANK = { REJECTED: 0, PENDING: 1, APPROVED: 2, APPLIED: 3 };
+const _CAMP_RANK = { REMOVED: 0, PAUSED: 1, ENABLED: 2 };
+// tag -> { where:"approval"|"campaign", status, approvalId?, campaignId? }
+// A live campaign is ground truth and overrides any approval record for that tag.
+async function takenTags() {
+  const map = {}; const f = fb();
+  if (f) {
+    try {
+      const ap = await f.db.collection(COL.approvals).limit(300).get();
+      ap.forEach(d => {
+        const x = d.data(); const tag = approvalTag(x); if (!tag) return;
+        const cur = map[tag];
+        if (!cur || (_AP_RANK[x.status] || 0) >= (_AP_RANK[cur.status] || 0))
+          map[tag] = { where: "approval", status: x.status, approvalId: d.id };
+      });
+    } catch (e) {}
+  }
+  try {
+    const rows = await gaql(`SELECT campaign.id, campaign.name, campaign.status FROM campaign`);
+    const campMap = {};
+    rows.forEach(r => {
+      const tag = tagFromCampaignName(r.campaign.name); if (!tag) return;
+      const cur = campMap[tag]; const st = r.campaign.status;
+      if (!cur || (_CAMP_RANK[st] || 0) >= (_CAMP_RANK[cur.status] || 0))
+        campMap[tag] = { where: "campaign", status: st, campaignId: r.campaign.id };
+    });
+    Object.keys(campMap).forEach(tag => { map[tag] = campMap[tag]; }); // campaigns override approvals
+  } catch (e) {}
+  return map;
+}
+// Opportunities annotated with their current real state, so the UI can split
+// "unused" from "already acted on" and never re-suggest a taken campaign.
+async function opportunitiesWithStatus({ force } = {}) {
+  const r = await scanOpportunities({ force });
+  let taken = {};
+  try { taken = await takenTags(); } catch (e) {}
+  const opportunities = (r.opportunities || []).map(o => {
+    const tag = oppTag(o.collectionHandle, o.occasion);
+    return Object.assign({}, o, { tag, acted: taken[tag] || null });
+  });
+  return { opportunities, scannedAt: r.scannedAt, taken };
 }
 
 /* ===================== Force-generate (Draft Bench) ===================== */
@@ -963,7 +1049,7 @@ async function collectionMeta(handle) {
            reviewProof: (fromCal && fromCal.reviewProof) || "thousands of 5-star reviews" };
 }
 
-async function generateForCollection(handle, eventLabel, budget, { ctrl } = {}) {
+async function generateForCollection(handle, eventLabel, budget, { ctrl, startDate, endDate } = {}) {
   ctrl = ctrl || (await control());
   if (!handle) return { ok: false, reason: "no collection given" };
   const coll = await collectionMeta(handle);
@@ -971,12 +1057,13 @@ async function generateForCollection(handle, eventLabel, budget, { ctrl } = {}) 
   const assets = await generateRSAAssets(coll, event);
   if (!assets) return { ok: false, reason: "generation rejected — copy failed brand-safety or fell under RSA minimums" };
   const dailyBudget = Number(budget) || Number(ENV.GADS_NEW_CAMPAIGN_BUDGET || 8);
-  const { ops, tag } = buildSearchCampaignOps(coll, event, assets, { dailyBudget });
+  const { ops, tag } = buildSearchCampaignOps(coll, event, assets, { dailyBudget, startDate, endDate });
   await recordOccasionUse(event ? event.label : "Evergreen gifting", coll.handle, tag);
+  const win = (startDate && endDate) ? ` (${startDate} → ${endDate})` : "";
   const id = await enqueueApproval({
     type: "creative", vetted: false,
-    summary: `NEW Search campaign “${tag}”${event ? ` for ${event.label}` : ""} — ${assets.headlines.length} headlines, starts PAUSED (drafted on the Bench)`,
-    payload: { mutateOperations: ops, finalCollection: coll.handle, event: event ? event.label : null },
+    summary: `NEW Search campaign “${tag}”${event ? ` for ${event.label}` : ""}${win} — ${assets.headlines.length} headlines, starts PAUSED (drafted on the Bench)`,
+    payload: { mutateOperations: ops, finalCollection: coll.handle, event: event ? event.label : null, startDate: startDate || null, endDate: endDate || null },
     experimentId: tag
   });
   return { ok: true, approvalId: id, tag, title: coll.title, event: event ? event.label : null,
@@ -1028,7 +1115,7 @@ module.exports = {
   generateRSAAssets, buildSearchCampaignOps, textGuidelinesOp, brandSafe,
   generateForCollection, COLLECTIONS, OCCASIONS,
   getCollections, suggestOccasions, recordOccasionUse,
-  scanOpportunities, fetchTopProducts, setCampaignStatus, setCampaignBudget, analyzeCampaign,
+  scanOpportunities, opportunitiesWithStatus, takenTags, fetchTopProducts, setCampaignStatus, setCampaignBudget, analyzeCampaign,
   loadCalendar, dueEvents,
   measure, pruneAssets, mineSearchTerms, reallocateBudgets, anomalyCheck,
   dashboard,

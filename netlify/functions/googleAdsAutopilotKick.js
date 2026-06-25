@@ -116,7 +116,7 @@ async function handleAction(body) {
     catch (e) { return { ok: false, error: e.message }; }
   }
   if (a === "opportunities") {
-    try { return await E.scanOpportunities({ force: !!body.force }); }
+    try { return await E.opportunitiesWithStatus({ force: !!body.force }); }
     catch (e) { return { opportunities: [], error: e.message }; }
   }
   if (a === "collections") {
@@ -128,7 +128,7 @@ async function handleAction(body) {
     catch (e) { return { occasions: [], error: e.message }; }
   }
   if (a === "generate") {
-    try { return await E.generateForCollection(body.coll, body.event, body.budget, { ctrl }); }
+    try { return await E.generateForCollection(body.coll, body.event, body.budget, { ctrl, startDate: body.startDate, endDate: body.endDate }); }
     catch (e) { return { ok: false, reason: e.message }; }
   }
   if (a === "measureNow") {
