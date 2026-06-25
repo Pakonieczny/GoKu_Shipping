@@ -246,6 +246,15 @@ svg{display:block}
 }
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 
+.mono{font-family:var(--mono)}
+table.ptable{width:100%;border-collapse:collapse;font-size:13px}
+table.ptable th{font-size:10.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-45);text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);cursor:pointer;user-select:none;white-space:nowrap}
+table.ptable th.r{text-align:right}table.ptable th.c{text-align:center}
+table.ptable td{padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:middle}
+table.ptable td.r{text-align:right}table.ptable td.c{text-align:center}
+table.ptable tr.prow:hover>td{background:var(--paper)}
+table.ptable tr.pdetail>td{border-bottom:2px solid var(--line)}
+
 .gatewrap{min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--paper);padding:20px}
 .gatecard{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:28px;width:340px;box-shadow:var(--sh)}
 .gatecard .logo{font-family:var(--serif);font-size:20px}.gatecard .logo b{color:var(--gold)}
@@ -307,12 +316,11 @@ svg{display:block}
     </section>
 
     <section class="view hidden" id="v-perf">
-      <div class="view__head"><div><h2>Performance</h2><p>Where the money worked, where it didn't.</p></div></div>
-      <div class="grid two" style="margin-bottom:16px">
-        <div class="card pad"><div class="card__h"><h3>ROAS by campaign</h3><span class="sub">last snapshot</span></div><div id="chartColl"></div></div>
-        <div class="card pad"><div class="card__h"><h3>Budget distribution</h3></div><div id="donut" style="display:flex;gap:18px;align-items:center"></div></div>
+      <div class="view__head"><div><h2>Performance</h2><p>Every campaign in one sortable list. Click any column to sort; expand a row to edit its budget, flip status, or run an AI optimization analysis.</p></div></div>
+      <div class="card pad">
+        <div class="card__h" style="margin-bottom:10px"><h3>Campaigns</h3><span class="sub" id="perfMeta"></span></div>
+        <div style="overflow-x:auto"><table class="ptable" id="ptable"></table></div>
       </div>
-      <div class="card__h" style="margin-bottom:4px"><h3>Campaigns</h3><span class="sub">status, metrics, recommendation &amp; live controls per campaign</span></div><div id="campCards"></div>
     </section>
 
     <section class="view hidden" id="v-insights">
@@ -493,72 +501,90 @@ function renderApprovals(){var list=$("#apprList");var p=DASH.pending||[];
   list.querySelectorAll("[data-rj]").forEach(b=>b.onclick=async e=>{e.stopPropagation();try{await api("reject",{id:b.dataset.rj});toast("Rejected");}catch(x){toast(x.message);}await reload();});
 }
 
-/* ---- render: performance ---- */
-var sortState={k:4,dir:-1};
-function renderPerf(){var camps=DASH.lastMetrics||[];
-  if(!camps.length){$("#chartColl").innerHTML='<div class="empty" style="height:180px"><div style="font-size:12px">No campaigns loaded — run Measure.</div></div>';$("#donut").innerHTML="";$("#campCards").innerHTML="";return;}
-  var perf=camps.filter(c=>+c.cost>0).map(c=>[c.name,c.value/c.cost]).sort((a,b)=>b[1]-a[1]);
-  $("#chartColl").innerHTML=perf.length?barChart(perf,{colorFn:v=>v>=3?"var(--sage)":v>=2.5?"var(--gold)":"var(--clay)"}):'<div class="empty" style="height:180px"><div style="font-size:12px">No spend yet — ROAS appears once campaigns run.</div></div>';
-  var split=camps.filter(c=>+c.budget>0).map((c,i)=>[c.name,c.budget,["var(--gold)","var(--ink)","var(--sage)","var(--slate)","var(--clay)","var(--ink-25)"][i%6]]);
-  $("#donut").innerHTML=split.length?donut(split):'<div class="muted" style="font-size:12px">No budgets set.</div>';
-  renderCampCards(camps);
+/* ---- render: performance (sortable, expandable, AI-analyzed) ---- */
+var P={sortKey:"cost",dir:-1,expanded:{},analysis:{},loading:{}};
+function fieldVal(c,k){var roas=c.cost>0?c.value/c.cost:-1,ctr=c.impr>0?c.clicks/c.impr*100:-1,cpa=c.conv>0?c.cost/c.conv:1e15;var an=P.analysis[c.id];
+  return {name:(c.name||"").toLowerCase(),status:c.status||"",budget:+c.budget||0,cost:+c.cost||0,impr:+c.impr||0,ctr:ctr,conv:+c.conv||0,cpa:cpa,roas:roas,opt:an?an.score:-1}[k];}
+function optDot(score){if(score==null)return '<span style="color:var(--ink-25)">—</span>';var col=score>=70?"var(--sage)":score>=40?"var(--gold)":"var(--clay)";return '<span title="optimization score" style="display:inline-flex;align-items:center;gap:5px;font-family:var(--mono);font-size:12px;justify-content:center"><span style="width:9px;height:9px;border-radius:50%;background:'+col+'"></span>'+score+'</span>';}
+function renderPerf(){
+  var camps=(DASH.lastMetrics||[]).slice();
+  if(!camps.length){$("#ptable").innerHTML='<tbody><tr><td style="padding:26px;color:var(--ink-45);font-size:13px">No campaigns loaded yet \u2014 run Measure (Controls \u2192 Measure, or Command \u2192 Run now).</td></tr></tbody>';$("#perfMeta").textContent="";return;}
+  var t=totals(camps);$("#perfMeta").textContent=camps.length+" campaigns \u00b7 "+camps.filter(c=>c.status==="ENABLED").length+" live \u00b7 "+money(t.cost)+" spend \u00b7 "+money(t.value)+" revenue (14d)";
+  camps.sort(function(a,b){var va=fieldVal(a,P.sortKey),vb=fieldVal(b,P.sortKey);if(va<vb)return -P.dir;if(va>vb)return P.dir;return 0;});
+  var cols=[["name","Campaign","l"],["status","Status","l"],["budget","Budget","r"],["cost","Spend","r"],["impr","Impr","r"],["ctr","CTR","r"],["conv","Conv","r"],["cpa","CPA","r"],["roas","ROAS","r"],["opt","Opt","c"]];
+  var head='<thead><tr><th style="width:22px"></th>'+cols.map(function(c){var ar=P.sortKey===c[0]?(P.dir<0?" \u2193":" \u2191"):"";return '<th data-sort="'+c[0]+'" class="'+(c[2]==="r"?"r":c[2]==="c"?"c":"")+'">'+c[1]+ar+'</th>';}).join("")+'</tr></thead>';
+  $("#ptable").innerHTML=head+'<tbody>'+camps.map(rowHtml).join("")+'</tbody>';
+  $("#ptable").querySelectorAll("th[data-sort]").forEach(function(th){th.onclick=function(){var k=th.dataset.sort;if(P.sortKey===k)P.dir=-P.dir;else{P.sortKey=k;P.dir=(k==="name"||k==="status")?1:-1;}renderPerf();};});
+  wirePerf();
 }
-function recForCampaign(c,ctrl){
-  var target=(ctrl&&ctrl.targetRoas)||0;
-  var roas=c.cost>0?c.value/c.cost:null;
-  var isBA=/^BA \u00b7 /.test(c.name||"");
-  if(c.status==="PAUSED"){
-    if(isBA) return {label:"Ready to launch",tone:"good",reason:"Drafted, approved and created \u2014 enable to start serving ads.",action:{type:"enable",label:"Enable & launch"}};
-    return {label:"Paused",tone:"neutral",reason:"Not serving right now. Enable when you want it live.",action:{type:"enable",label:"Enable"}};
-  }
-  if(!c.budget) return {label:"No budget",tone:"bad",reason:"Live but $0/day \u2014 it can\u2019t serve. Give it a daily budget.",action:{type:"pause",label:"Pause"}};
-  if(c.impr===0) return {label:"No traffic yet",tone:"warn",reason:"Live but no impressions. Give it a day; if it stays flat, check bids and keywords.",action:{type:"pause",label:"Pause"}};
-  if(c.cost>0){
-    if(c.conv===0) return {label:"Spending, no conversions",tone:"bad",reason:"Burning budget without converting. Pause and revise targeting or copy.",action:{type:"pause",label:"Pause"}};
-    if(target&&roas>=target*1.3) return {label:"Strong \u2014 scale up",tone:"good",reason:"ROAS "+roas.toFixed(1)+"x is well above your "+target+"x target. Room to raise budget.",action:null};
-    if(target&&roas>=target) return {label:"Healthy",tone:"good",reason:"ROAS "+roas.toFixed(1)+"x meets target. Hold steady.",action:null};
-    if(!target&&roas>=3) return {label:"Strong",tone:"good",reason:"ROAS "+roas.toFixed(1)+"x. Worth scaling.",action:null};
-    if(roas<(target||2)) return {label:"Underperforming",tone:"warn",reason:"ROAS "+roas.toFixed(1)+"x is below target. Lower budget or revise the campaign.",action:{type:"pause",label:"Pause"}};
-  }
-  return {label:"Monitoring",tone:"neutral",reason:"Live and gathering data.",action:null};
+function rowHtml(c){
+  var roas=c.cost>0?c.value/c.cost:null,ctr=c.impr>0?c.clicks/c.impr*100:null,cpa=c.conv>0?c.cost/c.conv:null;
+  var an=P.analysis[c.id],open=!!P.expanded[c.id];
+  var r='<tr class="prow"><td class="pexp" data-id="'+c.id+'" style="text-align:center;color:var(--ink-45);cursor:pointer">'+(open?"\u25be":"\u25b8")+'</td>'+
+    '<td class="pexp" data-id="'+c.id+'" style="font-weight:600;max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer">'+esc(c.name)+'</td>'+
+    '<td>'+badge(c.status)+'</td>'+
+    '<td class="r mono">'+(c.budget?money(c.budget):"\u2014")+'</td>'+
+    '<td class="r mono">'+money(c.cost)+'</td>'+
+    '<td class="r mono">'+(c.impr||0).toLocaleString()+'</td>'+
+    '<td class="r mono">'+(ctr==null?"\u2014":ctr.toFixed(1)+"%")+'</td>'+
+    '<td class="r mono">'+(c.conv||0)+'</td>'+
+    '<td class="r mono">'+(cpa==null?"\u2014":money(cpa))+'</td>'+
+    '<td class="r mono">'+(roas==null?"\u2014":'<span class="'+(roas>=3?"roas-good":roas>=2?"roas-mid":"roas-bad")+'">'+roas.toFixed(2)+'x</span>')+'</td>'+
+    '<td class="c">'+optDot(an?an.score:null)+'</td></tr>';
+  if(open)r+='<tr class="pdetail"><td colspan="11" style="padding:0;background:var(--paper)"><div style="padding:16px 18px">'+detailHtml(c)+'</div></td></tr>';
+  return r;
 }
-function renderCampCards(camps){
-  var ctrl=DASH.control||{}; var box=$("#campCards");
-  var tCol={good:"var(--sage)",warn:"var(--gold)",bad:"var(--clay)",neutral:"var(--slate)"};
-  var tBg={good:"var(--sage-soft)",warn:"var(--gold-soft)",bad:"var(--clay-soft)",neutral:"var(--slate-soft)"};
-  var order={ENABLED:0,PAUSED:1}; var sorted=camps.slice().sort(function(a,b){var oa=order[a.status];var ob=order[b.status];if(oa==null)oa=9;if(ob==null)ob=9;return oa-ob||(b.cost-a.cost);});
-  function met(l,v){return '<div><div style="font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-45)">'+l+'</div><div style="font-family:var(--mono);font-size:15px;font-weight:600;margin-top:2px">'+v+'</div></div>';}
-  box.innerHTML=sorted.map(function(c){
-    var roas=c.cost>0?c.value/c.cost:null, ctr=c.impr>0?c.clicks/c.impr*100:null;
-    var rec=recForCampaign(c,ctrl); var enabled=c.status==="ENABLED";
-    var act=rec.action?'<button class="btn '+(rec.action.type==="enable"?"gold":"ghost")+' sm cstat" data-id="'+c.id+'" data-name="'+esc(c.name)+'" data-budget="'+(c.budget||0)+'" data-to="'+(rec.action.type==="enable"?"ENABLED":"PAUSED")+'">'+esc(rec.action.label)+'</button>':'';
-    return '<div class="card pad" style="margin-bottom:12px">'+
-      '<div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap">'+
-        '<span style="font-weight:600;font-size:15px;flex:1;min-width:160px">'+esc(c.name)+'</span>'+badge(c.status)+
-        '<button class="cstat" data-id="'+c.id+'" data-name="'+esc(c.name)+'" data-budget="'+(c.budget||0)+'" data-to="'+(enabled?"PAUSED":"ENABLED")+'" style="border:1px solid '+(enabled?"var(--clay)":"var(--sage)")+';color:'+(enabled?"var(--clay)":"var(--sage)")+';background:none;border-radius:8px;padding:6px 13px;font-weight:600;font-size:12.5px;cursor:pointer">'+(enabled?"Pause":"Enable")+'</button>'+
-      '</div>'+
-      '<div style="display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-bottom:14px">'+
-        met("Budget",c.budget?money(c.budget):"\u2014")+met("Spend",money(c.cost))+met("Revenue",money(c.value))+
-        met("ROAS",roas==null?"\u2014":roas.toFixed(2)+"x")+met("Conv",String(c.conv||0))+met("CTR",ctr==null?"\u2014":ctr.toFixed(1)+"%")+
-      '</div>'+
-      '<div style="display:flex;gap:12px;align-items:center;background:'+tBg[rec.tone]+';border:1px solid '+tCol[rec.tone]+';border-radius:10px;padding:10px 13px;flex-wrap:wrap">'+
-        '<span style="font-size:10.5px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;color:'+tCol[rec.tone]+';white-space:nowrap">\u2728 '+esc(rec.label)+'</span>'+
-        '<span style="font-size:12.5px;color:var(--ink-70);flex:1;min-width:160px">'+esc(rec.reason)+'</span>'+act+
-      '</div>'+
-    '</div>';
-  }).join("");
-  box.querySelectorAll(".cstat").forEach(function(b){ b.onclick=function(){ campStatus(b.dataset.id,b.dataset.name,b.dataset.budget,b.dataset.to); }; });
+function detailHtml(c){
+  var ceil=Math.max(20,(DASH.control||{}).maxDailyBudgetTotal||100);var en=c.status==="ENABLED";
+  var budCol='<div><div class="eyebrow" style="margin-bottom:6px">Daily budget ('+cur()+')</div>'+
+    '<div class="range" style="min-width:200px"><input type="range" class="pbud" data-id="'+c.id+'" min="2" max="'+ceil+'" value="'+(c.budget||8)+'"><span class="rngval pbudv" data-id="'+c.id+'">'+money(c.budget||8)+'</span></div>'+
+    '<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn ghost sm psave" data-id="'+c.id+'" data-res="'+esc(c.budgetRes||"")+'">Save budget</button>'+
+    '<button class="btn '+(en?"ghost":"gold")+' sm pstat" data-id="'+c.id+'" data-name="'+esc(c.name)+'" data-budget="'+(c.budget||0)+'" data-to="'+(en?"PAUSED":"ENABLED")+'">'+(en?"Pause":"Enable")+'</button></div></div>';
+  var anaCol;
+  if(P.loading[c.id])anaCol='<div style="display:flex;align-items:center;gap:10px;color:var(--ink-45);font-size:13px"><span class="spin"></span>Researching this campaign\u2019s metrics\u2026</div>';
+  else if(P.analysis[c.id])anaCol=analysisHtml(c,P.analysis[c.id]);
+  else anaCol='<div><button class="btn gold sm panalyze" data-id="'+c.id+'">\u2728 Analyze with AI</button><div class="muted" style="font-size:11.5px;margin-top:6px">Researches this campaign\u2019s metrics &amp; recommends specific optimizations.</div></div>';
+  return '<div class="grid two" style="gap:20px;align-items:start"><div>'+budCol+'</div><div>'+anaCol+'</div></div>';
 }
+function actIcon(t){return {budget:"\ud83d\udcb0",bid:"\ud83c\udfaf",status:"\u23fb",keywords:"\ud83d\udd11",creative:"\u270d\ufe0f",wait:"\u23f3"}[t]||"\u2022";}
+function analysisHtml(c,an){
+  var acts=(an.actions||[]).map(function(a){var ap='';
+    if(a.type==="budget"&&a.suggestedBudget)ap='<button class="btn gold sm papply" data-id="'+c.id+'" data-budget="'+a.suggestedBudget+'" data-res="'+esc(c.budgetRes||"")+'">Set '+money(a.suggestedBudget)+'</button>';
+    else if(a.type==="status")ap='<button class="btn ghost sm pstat" data-id="'+c.id+'" data-name="'+esc(c.name)+'" data-budget="'+(c.budget||0)+'" data-to="'+(c.status==="ENABLED"?"PAUSED":"ENABLED")+'">'+(c.status==="ENABLED"?"Pause":"Enable")+'</button>';
+    return '<div style="display:flex;gap:10px;align-items:flex-start;padding:9px 0;border-top:1px solid var(--line)"><span>'+actIcon(a.type)+'</span><div style="flex:1"><div style="font-weight:600;font-size:13px">'+esc(a.title)+'</div><div style="font-size:12px;color:var(--ink-70)">'+esc(a.detail)+'</div></div>'+ap+'</div>';}).join("");
+  return '<div><div style="display:flex;align-items:center;gap:10px;margin-bottom:7px"><span class="eyebrow">AI optimization</span>'+optDot(an.score)+'<span class="badge2" style="background:var(--paper-2);text-transform:capitalize">'+esc(an.status)+'</span><button class="btn ghost sm panalyze" data-id="'+c.id+'" style="margin-left:auto;padding:4px 10px;font-size:11px">Re-analyze</button></div>'+
+    '<div style="font-size:13px;color:var(--ink-70);margin-bottom:4px">'+esc(an.summary)+'</div>'+(acts||'<div class="muted" style="font-size:12px;padding-top:6px">No specific actions right now.</div>')+'</div>';
+}
+function wirePerf(){
+  var T=$("#ptable");
+  T.querySelectorAll(".pexp").forEach(function(e){e.onclick=function(){var id=e.dataset.id;P.expanded[id]=!P.expanded[id];renderPerf();if(P.expanded[id]&&!P.analysis[id]&&!P.loading[id])doAnalyze(id,false);};});
+  T.querySelectorAll(".pbud").forEach(function(s){s.oninput=function(){T.querySelector('.pbudv[data-id="'+s.dataset.id+'"]').textContent=money(s.value);};});
+  T.querySelectorAll(".psave").forEach(function(b){b.onclick=function(){var s=T.querySelector('.pbud[data-id="'+b.dataset.id+'"]');setBudget(b.dataset.id,+s.value,b.dataset.res);};});
+  T.querySelectorAll(".papply").forEach(function(b){b.onclick=function(){setBudget(b.dataset.id,+b.dataset.budget,b.dataset.res);};});
+  T.querySelectorAll(".pstat").forEach(function(b){b.onclick=function(){campStatus(b.dataset.id,b.dataset.name,b.dataset.budget,b.dataset.to);};});
+  T.querySelectorAll(".panalyze").forEach(function(b){b.onclick=function(){doAnalyze(b.dataset.id,true);};});
+}
+async function doAnalyze(id,force){P.loading[id]=true;renderPerf();
+  try{var r=await api("analyzeCampaign",{id:id,force:!!force});if(r&&!r.error)P.analysis[id]=r;else toast((r&&r.error)||"analysis failed");}
+  catch(x){toast(x.message);}
+  P.loading[id]=false;renderPerf();}
+async function setBudget(id,amt,res){
+  if((DASH.control||{}).dryRun){if(!confirm("Dry-run is ON \u2014 this will validate only and NOT change the budget. Continue?"))return;}
+  else if(!confirm("Set daily budget to "+money(amt)+"?\n\nThis changes real spend."))return;
+  try{var r=await api("setBudget",{id:id,budget:amt,budgetRes:res||undefined});
+    if(r&&r.ok){if(r.dryRun)toast("Validated (dry-run) \u2014 budget NOT changed.");else toast("Budget set to "+money(amt),true);}
+    else toast("Failed: "+((r&&r.error)||"unknown"));}
+  catch(x){toast(x.message);}
+  await reload();}
 async function campStatus(id,name,budget,status){
-  if((DASH.control||{}).dryRun){ if(!confirm("Dry-run is ON \u2014 this will validate only and NOT actually change the campaign.\n\nContinue anyway?")) return; }
-  else if(status==="ENABLED"){ if(!confirm("Enable \u201c"+name+"\u201d?\n\nIt will start serving ads and spending up to "+money(budget)+"/day of REAL budget.")) return; }
-  else { if(!confirm("Pause \u201c"+name+"\u201d?\n\nIt will stop serving ads.")) return; }
-  try{ var r=await api("setStatus",{id:id,status:status});
-    if(r&&r.ok){ if(r.dryRun) toast("Validated (dry-run) \u2014 status NOT changed. Turn off dry-run to apply."); else toast((status==="ENABLED"?"Enabled":"Paused")+" \u201c"+name+"\u201d \u2713",true); }
-    else toast("Failed: "+((r&&r.error)||"unknown"));
-  }catch(x){ toast(x.message); }
-  await reload();
-}
+  if((DASH.control||{}).dryRun){if(!confirm("Dry-run is ON \u2014 this will validate only and NOT actually change the campaign.\n\nContinue anyway?"))return;}
+  else if(status==="ENABLED"){if(!confirm("Enable \u201c"+name+"\u201d?\n\nIt will start serving ads and spending up to "+money(budget)+"/day of REAL budget."))return;}
+  else {if(!confirm("Pause \u201c"+name+"\u201d?\n\nIt will stop serving ads."))return;}
+  try{var r=await api("setStatus",{id:id,status:status});
+    if(r&&r.ok){if(r.dryRun)toast("Validated (dry-run) \u2014 status NOT changed. Turn off dry-run to apply.");else toast((status==="ENABLED"?"Enabled":"Paused")+" \u201c"+name+"\u201d \u2713",true);}
+    else toast("Failed: "+((r&&r.error)||"unknown"));}
+  catch(x){toast(x.message);}
+  await reload();}
 
 /* ---- render: bench ---- */
 var benchLoaded=false; var OCC=[];
