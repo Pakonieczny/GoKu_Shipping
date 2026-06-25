@@ -99,6 +99,10 @@ async function handleAction(body) {
     try { await E.applyApproval(body.id, ctrl); return { id: body.id, status: "APPLIED", dryRun: !!ctrl.dryRun }; }
     catch (e) { return { id: body.id, error: e.message }; }
   }
+  if (a === "retryStuck") {
+    try { return await E.retryStuckApprovals(ctrl); }
+    catch (e) { return { error: e.message }; }
+  }
   if (a === "setBudget") {
     try { return await E.setCampaignBudget(body.id, body.budget, { ctrl, budgetRes: body.budgetRes }); }
     catch (e) { return { ok: false, error: e.message }; }

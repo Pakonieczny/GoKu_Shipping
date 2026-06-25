@@ -264,6 +264,19 @@ async function enqueueApproval(item) {
 }
 
 // Apply one approved queue item by replaying its stored payload through the right mutate.
+// Defensive heal for payloads frozen before the text_guidelines fix: the API rejects
+// Campaign.text_guidelines (free-text messaging_restrictions). Strip it from any campaign
+// create/update op so drafts approved under the old builder can apply after the fix.
+function sanitizeOps(ops) {
+  if (!Array.isArray(ops)) return ops;
+  ops.forEach(op => {
+    if (!op) return;
+    const c = (op.campaignOperation && (op.campaignOperation.create || op.campaignOperation.update)) ||
+              op.create || op.update;
+    if (c && typeof c === "object") { delete c.text_guidelines; delete c.textGuidelines; }
+  });
+  return ops;
+}
 async function applyApproval(id, ctrl) {
   ctrl = ctrl || (await control());
   const f = fb(); if (!f) throw new Error("no firestore");
@@ -273,10 +286,26 @@ async function applyApproval(id, ctrl) {
   const it = snap.data();
   if (it.status !== "APPROVED") throw new Error("approval not in APPROVED state");
   const p = it.payload || {};
-  if (p.service && p.operations) await mutate(p.service, p.operations, { ctrl, label: "approval:" + it.type });
-  else if (p.mutateOperations)   await mutateAll(p.mutateOperations, { ctrl, label: "approval:" + it.type });
-  await ref.update({ status: "APPLIED", appliedAt: f.FV.serverTimestamp() });
+  const vo = !!ctrl.dryRun;
+  if (p.service && p.operations) await mutate(p.service, sanitizeOps(p.operations), { ctrl, label: "approval:" + it.type });
+  else if (p.mutateOperations)   await mutateAll(sanitizeOps(p.mutateOperations), { ctrl, label: "approval:" + it.type });
+  // Only flip to APPLIED when it actually ran; a dry-run only validated, so leave it APPROVED.
+  if (!vo) await ref.update({ status: "APPLIED", appliedAt: f.FV.serverTimestamp() });
   return true;
+}
+// Re-apply every approval stuck in APPROVED (approved but its apply errored). The sanitizer
+// above removes the dead field, so these now create cleanly. Honors dry-run.
+async function retryStuckApprovals(ctrl) {
+  ctrl = ctrl || (await control());
+  const f = fb(); if (!f) return { tried: 0, applied: 0, failed: [] };
+  const st = await f.db.collection(COL.approvals).where("status", "==", "APPROVED").limit(25).get();
+  const ids = []; st.forEach(d => ids.push(d.id));
+  let applied = 0; const failed = [];
+  for (const id of ids) {
+    try { await applyApproval(id, ctrl); if (!ctrl.dryRun) applied++; }
+    catch (e) { failed.push({ id, error: String((e && e.message) || e).slice(0, 300) }); }
+  }
+  return { tried: ids.length, applied, failed, dryRun: !!ctrl.dryRun };
 }
 
 /* ============================ Helpers ============================ */
@@ -969,6 +998,12 @@ async function dashboard() {
     rows.sort((a, b) => b._ts - a._ts);
     rows.slice(0, 25).forEach(r => { delete r._ts; out.pending.push(r); });
   } catch (e) {}
+  out.stuck = [];
+  try {
+    // APPROVED but not yet APPLIED = apply errored. Surface so the operator can retry.
+    const st = await f.db.collection(COL.approvals).where("status", "==", "APPROVED").limit(25).get();
+    st.forEach(d => { const x = d.data(); out.stuck.push({ id: d.id, type: x.type, summary: x.summary, vetted: x.vetted, payload: x.payload }); });
+  } catch (e) {}
   try {
     const lg = await f.db.collection(COL.ledger).orderBy("at", "desc").limit(20).get();
     lg.forEach(d => { const x = d.data(); out.recentLedger.push({ ...x, at: x.at && x.at.toMillis ? x.at.toMillis() : null }); });
@@ -987,7 +1022,7 @@ module.exports = {
   COL, V, CID,
   control, mintToken, gaql, mutate, mutateAll,
   enqueueConversion, uploadConversions,
-  ledger, enqueueApproval, applyApproval, applyApprovalById: applyApproval,
+  ledger, enqueueApproval, applyApproval, applyApprovalById: applyApproval, retryStuckApprovals, sanitizeOps,
   generateRSAAssets, buildSearchCampaignOps, textGuidelinesOp, brandSafe,
   generateForCollection, COLLECTIONS, OCCASIONS,
   getCollections, suggestOccasions, recordOccasionUse,
