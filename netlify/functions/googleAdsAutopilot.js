@@ -462,17 +462,34 @@ function buildSearchCampaignOps(coll, event, assets, { dailyBudget }) {
 // MEASURE: snapshot campaign + asset + search-term performance into Firestore.
 async function measure() {
   const f = fb();
-  const campaigns = await gaql(
-    `SELECT campaign.id, campaign.name, campaign.status, campaign_budget.amount_micros,
-            metrics.cost_micros, metrics.conversions, metrics.conversions_value, metrics.clicks, metrics.impressions
-     FROM campaign WHERE segments.date DURING LAST_14_DAYS AND campaign.status != 'REMOVED'`);
-  const snapshot = campaigns.map(r => ({
-    id: r.campaign.id, name: r.campaign.name, status: r.campaign.status,
-    budget: fromMicros(r.campaignBudget && r.campaignBudget.amountMicros),
-    cost: fromMicros(r.metrics.costMicros), conv: Number(r.metrics.conversions || 0),
-    value: Number(r.metrics.conversionsValue || 0), clicks: Number(r.metrics.clicks || 0),
-    impr: Number(r.metrics.impressions || 0)
-  }));
+  // 1) ALL campaigns (config only, no date segment) — guarantees brand-new / paused /
+  //    zero-impression campaigns are included, which a date-segmented query would drop.
+  const base = await gaql(
+    `SELECT campaign.id, campaign.name, campaign.status, campaign_budget.amount_micros
+     FROM campaign WHERE campaign.status != 'REMOVED'`);
+  const byId = {};
+  base.forEach(r => {
+    byId[r.campaign.id] = {
+      id: r.campaign.id, name: r.campaign.name, status: r.campaign.status,
+      budget: fromMicros(r.campaignBudget && r.campaignBudget.amountMicros),
+      cost: 0, conv: 0, value: 0, clicks: 0, impr: 0
+    };
+  });
+  // 2) Last-14-day metrics — overlay onto campaigns that have activity (aggregated per campaign,
+  //    since a date-segmented query returns one row per campaign per day).
+  try {
+    const met = await gaql(
+      `SELECT campaign.id, metrics.cost_micros, metrics.conversions, metrics.conversions_value,
+              metrics.clicks, metrics.impressions
+       FROM campaign WHERE segments.date DURING LAST_14_DAYS AND campaign.status != 'REMOVED'`);
+    met.forEach(r => {
+      const c = byId[r.campaign.id]; if (!c) return;
+      c.cost += fromMicros(r.metrics.costMicros); c.conv += Number(r.metrics.conversions || 0);
+      c.value += Number(r.metrics.conversionsValue || 0); c.clicks += Number(r.metrics.clicks || 0);
+      c.impr += Number(r.metrics.impressions || 0);
+    });
+  } catch (e) {}
+  const snapshot = Object.values(byId);
   if (f) await f.db.collection(COL.metrics).add({ at: f.FV.serverTimestamp(), kind: "campaign14d", snapshot });
   await attributeOccasionsFromSnapshot(snapshot);
   return snapshot;
