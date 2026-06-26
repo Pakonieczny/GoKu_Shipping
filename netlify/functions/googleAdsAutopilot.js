@@ -61,7 +61,7 @@ const BASE       = `https://googleads.googleapis.com/${V}`;
 const CID        = (ENV.GADS_CUSTOMER_ID || "").replace(/\D/g, "");        // Brites account
 const LOGIN_CID  = (ENV.GADS_LOGIN_CUSTOMER_ID || CID).replace(/\D/g, ""); // manager (MCC)
 const DEV_TOKEN  = ENV.GADS_DEVELOPER_TOKEN || "";
-const GEN_MODEL  = ENV.GADS_GEN_MODEL || "gpt-5.4-mini";                   // text generation
+const GEN_MODEL  = ENV.GADS_GEN_MODEL || "gpt-5.5";                       // text generation
 const CURRENCY   = ENV.GADS_CURRENCY || "USD";
 
 // The store's nine homepage collections (handle ↔ title) — drives the Draft Bench picker.
