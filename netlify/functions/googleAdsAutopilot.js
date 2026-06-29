@@ -401,7 +401,15 @@ function sanitizeOps(ops) {
     if (!op) return;
     const c = (op.campaignOperation && (op.campaignOperation.create || op.campaignOperation.update)) ||
               op.create || op.update;
-    if (c && typeof c === "object") { delete c.text_guidelines; delete c.textGuidelines; }
+    if (c && typeof c === "object") {
+      delete c.text_guidelines; delete c.textGuidelines;
+      // Legacy schedule fields: Campaign uses startDateTime/endDateTime ("yyyyMMdd HH:MM:SS"),
+      // not startDate/endDate. Migrate any draft queued before this fix so it applies cleanly.
+      if (c.startDate != null) { const v = _toGAdsDateTime(c.startDate, "00:00:00"); if (v) c.startDateTime = v; delete c.startDate; }
+      if (c.endDate != null)   { const v = _toGAdsDateTime(c.endDate, "23:59:59"); if (v) c.endDateTime = v; delete c.endDate; }
+      if (c.start_date != null){ const v = _toGAdsDateTime(c.start_date, "00:00:00"); if (v && !c.startDateTime) c.startDateTime = v; delete c.start_date; }
+      if (c.end_date != null)  { const v = _toGAdsDateTime(c.end_date, "23:59:59"); if (v && !c.endDateTime) c.endDateTime = v; delete c.end_date; }
+    }
   });
   return ops;
 }
@@ -588,6 +596,18 @@ function _todayUtc() { const t = new Date(); return new Date(Date.UTC(t.getUTCFu
 function _daysBetween(a, b) { return Math.round((b.getTime() - a.getTime()) / 86400000); }
 function gAdsDate(s, clampToday) { let d = _parseYmd(s); if (!d) return null; if (clampToday) { const t = _todayUtc(); if (d < t) d = t; } return _ymd(d).replace(/-/g, ""); }
 
+// Google Ads campaign schedule fields are startDateTime/endDateTime in "yyyyMMdd HH:MM:SS".
+// Accepts a date (YYYY-MM-DD / YYYYMMDD) and appends a time, or passes through an existing datetime.
+function _toGAdsDateTime(val, time) {
+  if (val == null) return null;
+  const s = String(val).trim();
+  if (!s) return null;
+  if (/\d{1,2}:\d{2}/.test(s)) return s;            // already has a time component
+  const ymd = s.replace(/-/g, "");
+  if (!/^\d{8}$/.test(ymd)) return null;
+  return ymd + " " + time;
+}
+
 function buildSearchCampaignOps(coll, event, assets, { dailyBudget, startDate, endDate }) {
   const tag = `${coll.handle}-${(event ? event.label : "evergreen").toLowerCase().replace(/[^a-z0-9]+/g, "-")}`.slice(0, 40);
   const bRes = `customers/${CID}/campaignBudgets/-1`;
@@ -604,8 +624,8 @@ function buildSearchCampaignOps(coll, event, assets, { dailyBudget, startDate, e
         resourceName: cRes, name: `BA · ${tag}`, status: "PAUSED",      // always start PAUSED
         advertisingChannelType: "SEARCH", campaignBudget: bRes,
         containsEuPoliticalAdvertising: "DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING",
-        ...(startYmd ? { startDate: startYmd } : {}),
-        ...(endYmd ? { endDate: endYmd } : {}),
+        ...(startYmd ? { startDateTime: startYmd + " 00:00:00" } : {}),
+        ...(endYmd ? { endDateTime: endYmd + " 23:59:59" } : {}),
         maximizeConversionValue: ENV.GADS_TARGET_ROAS ? { targetRoas: Number(ENV.GADS_TARGET_ROAS) } : {},
         networkSettings: { targetGoogleSearch: true, targetSearchNetwork: true, targetContentNetwork: false } } } },
     { adGroupOperation: { create: {
