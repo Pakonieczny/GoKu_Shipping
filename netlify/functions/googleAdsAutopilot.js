@@ -1185,7 +1185,11 @@ async function opportunitiesWithStatus({ force, cacheOnly } = {}) {
   const opportunities = (r.opportunities || []).map(o => {
     const tag = oppTag(o.collectionHandle, o.occasion);
     return Object.assign({}, o, { tag, acted: taken[tag] || null });
-  });
+  })
+  // Archived campaigns are terminal: drop their opportunity from every list
+  // (not "in use", not re-suggested as "unused"). Live/paused/approval states stay,
+  // shown with their actual status.
+  .filter(o => !(o.acted && o.acted.where === "campaign" && o.acted.status === "REMOVED"));
   return { opportunities, scannedAt: r.scannedAt, scanning: !!r.scanning, taken };
 }
 
