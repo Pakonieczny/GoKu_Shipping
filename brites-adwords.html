@@ -260,6 +260,9 @@ table.ptable tr.pdetail>td{border-bottom:2px solid var(--line)}
 .gatecard .logo{font-family:var(--serif);font-size:20px}.gatecard .logo b{color:var(--gold)}
 .gatecard .tag{font-size:10px;letter-spacing:.22em;text-transform:uppercase;color:var(--ink-45)}
 
+/* ---- richer campaign serving-status badges (primary_status) ---- */
+.b-warn{background:var(--gold-soft);color:#8a4a1d}
+.b-bad{background:var(--clay-soft);color:var(--clay)}
 /* ---- base spinner (was only scoped to .runbar; now global) ---- */
 .spin{display:inline-block;width:16px;height:16px;border-radius:50%;border:2px solid var(--ink-25);border-top-color:var(--gold);animation:spin .7s linear infinite;vertical-align:middle;box-sizing:border-box}
 .spin.sm{width:12px;height:12px}
@@ -657,9 +660,15 @@ function renderCommand(){
   // snapshot list
   if(!camps.length){ $("#snapshot").innerHTML='<div class="empty" style="height:160px"><div style="font-size:13px">No snapshot yet.</div><div style="font-size:12px">Hit Refresh after a Measure run.</div></div>'; }
   else { $("#snapSub").textContent=camps.length+" campaigns";
-    $("#snapshot").innerHTML='<table><thead><tr><th>Campaign</th><th>Status</th><th class="r">Budget</th><th class="r">Cost</th><th class="r">ROAS</th></tr></thead><tbody>'+camps.map(function(c){var r=(+c.cost>0)?(c.value/c.cost):null;return '<tr><td style="font-weight:500">'+esc(c.name)+'</td><td>'+badge(c.status)+'</td><td class="r">'+(c.budget?money(c.budget):"—")+'</td><td class="r">'+money(c.cost)+'</td><td class="r">'+(r==null?"—":'<span class="'+(r>=3?"roas-good":r>=2.5?"roas-mid":"roas-bad")+'">'+r.toFixed(1)+'x</span>')+'</td></tr>';}).join("")+'</tbody></table>'; }
+    $("#snapshot").innerHTML='<table><thead><tr><th>Campaign</th><th>Status</th><th class="r">Budget</th><th class="r">Cost</th><th class="r">ROAS</th></tr></thead><tbody>'+camps.map(function(c){var r=(+c.cost>0)?(c.value/c.cost):null;return '<tr><td style="font-weight:500">'+esc(c.name)+'</td><td>'+statusBadge(c)+'</td><td class="r">'+(c.budget?money(c.budget):"—")+'</td><td class="r">'+money(c.cost)+'</td><td class="r">'+(r==null?"—":'<span class="'+(r>=3?"roas-good":r>=2.5?"roas-mid":"roas-bad")+'">'+r.toFixed(1)+'x</span>')+'</td></tr>';}).join("")+'</tbody></table>'; }
 }
 function badge(s){var cls=s==="ENABLED"?"b-on":s==="PAUSED"?"b-pause":"b-learn";var t=s==="ENABLED"?"live":String(s||"").toLowerCase();return '<span class="badge2 '+cls+'">'+t+'</span>';}
+// Google Ads campaign.primary_status -> friendly label + badge class (the real serving state).
+var PRI_STATUS={ELIGIBLE:["Serving","b-on"],LEARNING:["Learning","b-learn"],LIMITED:["Limited","b-warn"],PAUSED:["Paused","b-pause"],PENDING:["Scheduled","b-learn"],ENDED:["Ended","b-pause"],MISCONFIGURED:["Misconfigured","b-bad"],NOT_ELIGIBLE:["Not eligible","b-bad"],REMOVED:["Removed","b-pause"]};
+var REASON_LABEL={BIDDING_STRATEGY_LEARNING:"Bid strategy learning",BIDDING_STRATEGY_LIMITED:"Bid strategy limited \u2014 needs more conversion data",BIDDING_STRATEGY_MISCONFIGURED:"Bid strategy misconfigured",BIDDING_STRATEGY_SUGGESTED:"Could capture more value \u2014 adjust ROAS target",CAMPAIGN_BUDGET_LIMITED:"Limited by budget",CAMPAIGN_BUDGET_MISCONFIGURED:"Budget misconfigured",CAMPAIGN_PENDING:"Starts in the future",CAMPAIGN_ENDED:"End date has passed",CAMPAIGN_PAUSED:"Campaign paused",CAMPAIGN_DRAFT:"Draft campaign",CAMPAIGN_REMOVED:"Campaign removed",AD_GROUPS_PAUSED:"All ad groups paused",NO_AD_GROUPS:"No ad groups",KEYWORDS_PAUSED:"All keywords paused",NO_KEYWORDS:"No keywords",AD_GROUP_ADS_PAUSED:"All ads paused",NO_AD_GROUP_ADS:"No ads",HAS_ADS_LIMITED_BY_POLICY:"Some ads limited by policy",HAS_ADS_DISAPPROVED:"Some ads disapproved",MOST_ADS_UNDER_REVIEW:"Ads under review"};
+function reasonText(rs){if(!rs||!rs.length)return "";return rs.map(function(r){return REASON_LABEL[r]||String(r||"").toLowerCase().replace(/_/g," ");}).join(" \u00b7 ");}
+function primaryStatusInfo(c){var ps=c&&c.primaryStatus;if(ps&&PRI_STATUS[ps])return PRI_STATUS[ps];var st=c&&c.status;return st==="ENABLED"?["Live","b-on"]:st==="PAUSED"?["Paused","b-pause"]:st==="REMOVED"?["Removed","b-pause"]:[String(st||"\u2014").toLowerCase(),"b-learn"];}
+function statusBadge(c){var info=primaryStatusInfo(c);var rt=reasonText(c&&c.primaryStatusReasons);return '<span class="badge2 '+info[1]+'"'+(rt?' title="'+esc(rt)+'"':"")+'>'+esc(info[0])+'</span>';}
 function renderFeed(){var lg=DASH.recentLedger||[];if(!lg.length){$("#feed").innerHTML='<div class="muted" style="font-size:12.5px;padding:8px 0">No activity logged yet. Run a cycle from Controls.</div>';return;}
   $("#feed").innerHTML=lg.map(function(l){var ok=l.ok!==false;var mk=l.kind==="mutate"||l.kind==="mutateAll"?"g":l.kind==="uploadConversions"?"s":"b";var when=l.at?timeago(l.at):"";var label=(l.label||l.service||l.kind||"event")+(l.validateOnly?" · dry-run":"")+(ok?"":" · ERROR");return '<div class="feed__i"><div class="mk '+(ok?mk:"c")+'">'+(ok?"✓":"⊘")+'</div><div class="tx">'+esc(label)+(l.error?'<div class="muted" style="font-size:11px">'+esc(String(l.error).slice(0,120))+'</div>':"")+'</div><time>'+when+'</time></div>';}).join("");}
 function timeago(ms){var s=Math.floor((Date.now()-ms)/1000);if(s<60)return s+"s";if(s<3600)return Math.floor(s/60)+"m";if(s<86400)return Math.floor(s/3600)+"h";return Math.floor(s/86400)+"d";}
@@ -727,7 +736,7 @@ function rowHtml(c){
   var an=P.analysis[c.id],open=!!P.expanded[c.id];
   var r='<tr class="prow"><td class="pexp" data-id="'+c.id+'" style="text-align:center;color:var(--ink-45);cursor:pointer">'+(open?"\u25be":"\u25b8")+'</td>'+
     '<td class="pexp" data-id="'+c.id+'" style="font-weight:600;max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer">'+esc(c.name)+'</td>'+
-    '<td>'+badge(c.status)+'</td>'+
+    '<td>'+statusBadge(c)+'</td>'+
     '<td class="r mono">'+(c.budget?money(c.budget):"\u2014")+'</td>'+
     '<td class="r mono">'+money(c.cost)+'</td>'+
     '<td class="r mono">'+(c.impr||0).toLocaleString()+'</td>'+
@@ -795,7 +804,7 @@ async function campStatus(id,name,budget,status,btn){
       if(r.dryRun){actEnd(aid);toast("Validated (dry-run) \u2014 status NOT changed. Turn off dry-run to apply.");await reload();return;}
       var verb=status==="ENABLED"?"Enabled":status==="REMOVED"?"Archived":"Paused";
       toast(verb+" \u201c"+name+"\u201d \u2713",true);
-      if(DASH.lastMetrics){ if(status==="REMOVED"){DASH.lastMetrics=DASH.lastMetrics.filter(function(c){return String(c.id)!==String(id);});delete P.expanded[id];} else {var cc=DASH.lastMetrics.find(function(c){return String(c.id)===String(id);});if(cc)cc.status=status;} }
+      if(DASH.lastMetrics){ if(status==="REMOVED"){DASH.lastMetrics=DASH.lastMetrics.filter(function(c){return String(c.id)!==String(id);});delete P.expanded[id];} else {var cc=DASH.lastMetrics.find(function(c){return String(c.id)===String(id);});if(cc){cc.status=status;cc.primaryStatus=null;cc.primaryStatusReasons=[];}} }
       actEnd(aid);renderAll();
       if(typeof oppLoaded!=="undefined"&&oppLoaded&&!oppPollTimer)loadOpportunities(false); // archived drop out; paused/live badges refresh
     } else { actEnd(aid);toast("Failed: "+((r&&r.error)||"unknown")); await reload(); }
@@ -884,7 +893,7 @@ function setOppMeta(scannedAt){ var u=OPPS.filter(function(o){return !o.acted;})
 function priMeta(p){ return p==="high"?["High priority","var(--gold-soft)","#7a5a1d"]:p==="medium"?["Medium","var(--sage-soft)","#3c5a39"]:["Test","var(--slate-soft)","#33525d"]; }
 function actedBadge(a){
   if(!a) return ["Unused","var(--slate-soft)","#33525d"];
-  if(a.where==="campaign"){ var m={ENABLED:["Live","var(--sage-soft)","#3c5a39"],PAUSED:["Paused","var(--gold-soft)","#7a5a1d"],REMOVED:["Archived","var(--slate-soft)","#33525d"]}; return m[a.status]||["In Google Ads","var(--slate-soft)","#33525d"]; }
+  if(a.where==="campaign"){ var pm={ELIGIBLE:["Serving","var(--sage-soft)","#3c5a39"],LEARNING:["Learning","var(--slate-soft)","#33525d"],LIMITED:["Limited","var(--gold-soft)","#7a5a1d"],PAUSED:["Paused","var(--gold-soft)","#7a5a1d"],PENDING:["Scheduled","var(--slate-soft)","#33525d"],ENDED:["Ended","var(--gold-soft)","#7a5a1d"],MISCONFIGURED:["Misconfigured","var(--clay-soft)","var(--clay)"],NOT_ELIGIBLE:["Not eligible","var(--clay-soft)","var(--clay)"],REMOVED:["Archived","var(--slate-soft)","#33525d"]}; if(a.primaryStatus&&pm[a.primaryStatus])return pm[a.primaryStatus]; var m={ENABLED:["Live","var(--sage-soft)","#3c5a39"],PAUSED:["Paused","var(--gold-soft)","#7a5a1d"],REMOVED:["Archived","var(--slate-soft)","#33525d"]}; return m[a.status]||["In Google Ads","var(--slate-soft)","#33525d"]; }
   var ap={PENDING:["In approval","var(--gold-soft)","#7a5a1d"],APPROVED:["Approved","var(--sage-soft)","#3c5a39"],APPLIED:["Approved \u00b7 live","var(--sage-soft)","#3c5a39"],REJECTED:["Rejected","var(--clay-soft)","var(--clay)"]};
   return ap[a.status]||["Acted","var(--slate-soft)","#33525d"];
 }
