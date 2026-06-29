@@ -60,7 +60,7 @@ exports.handler = async (event) => {
 
   const tasks = Array.isArray(body.tasks) && body.tasks.length
     ? body.tasks
-    : ["anomaly", "conversions", "measure", "mine", "prune", "budgets", "events"];
+    : ["anomaly", "conversions", "adjustments", "measure", "mine", "prune", "budgets", "events"];
 
   const result = {};
 
@@ -78,6 +78,7 @@ exports.handler = async (event) => {
     if (over()) { log.push("time budget reached — deferring rest to next run"); break; }
     try {
       if (task === "conversions") { result.conversions = await E.uploadConversions({ ctrl }); }
+      else if (task === "adjustments") { result.adjustments = await E.uploadConversionAdjustments({ ctrl }); }
       else if (task === "measure") { result.measure = { campaigns: (await E.measure()).length }; }
       else if (task === "mine")     { result.mine = await E.mineSearchTerms({ ctrl }); }
       else if (task === "prune")    { result.prune = await E.pruneAssets({ ctrl }); }

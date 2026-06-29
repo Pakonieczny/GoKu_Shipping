@@ -51,7 +51,8 @@ const COL = {
   approvals: "Brites_GAds_Approvals",    // pending creative/budget ops (auto-id)
   calendar:  "Brites_GAds_Calendar",     // event×collection config (doc per collection)
   occasions: "Brites_GAds_Occasions",    // per-occasion memory (uses + attributed performance)
-  convQueue: "Brites_GAds_ConvQueue"     // offline conversions waiting for upload (auto-id)
+  convQueue: "Brites_GAds_ConvQueue",    // offline conversions waiting for upload (auto-id)
+  convAdj:   "Brites_GAds_ConvAdjQueue"  // conversion adjustments (refunds/retractions) waiting for upload (auto-id)
 };
 
 /* ============================ Config / control ============================ */
@@ -205,14 +206,17 @@ async function mutateAll(mutateOperations, { ctrl, label = "", validateOnly = nu
 async function enqueueConversion({ gclid, gbraid, wbraid, value, currency, orderId, conversionDateTime }) {
   const f = fb(); if (!f) return false;
   if (!gclid && !gbraid && !wbraid) return false; // no click id ⇒ unattributable
+  if (orderId) { // dedup: Shopify retries webhooks; one conversion per order
+    try { const ex = await f.db.collection(COL.convQueue).where("orderId", "==", orderId).limit(1).get(); if (!ex.empty) return { duplicate: true, orderId }; } catch (e) {}
+  }
   await f.db.collection(COL.convQueue).add({
     gclid: gclid || null, gbraid: gbraid || null, wbraid: wbraid || null,
     value: Number(value) || 0, currency: currency || CURRENCY,
-    orderId: orderId || null,
+    orderId: orderId || null, refundedTotal: 0,
     conversionDateTime: conversionDateTime || gAdsTime(new Date()),
     uploaded: false, createdAt: f.FV.serverTimestamp()
   });
-  return true;
+  return { enqueued: true, orderId: orderId || null };
 }
 
 async function uploadConversions({ ctrl, limit = 500 } = {}) {
@@ -246,6 +250,110 @@ async function uploadConversions({ ctrl, limit = 500 } = {}) {
     await batch.commit();
   }
   return { uploaded: res.ok && !ctrl.dryRun ? conversions.length : 0, validateOnly: !!ctrl.dryRun };
+}
+
+/* ---- Conversion adjustments (refunds → retraction / restatement) ---- */
+// Shopify refunds/create → recordRefund() looks up the original conversion (by orderId),
+// tracks cumulative refund, and queues a RETRACTION (fully refunded) or RESTATEMENT
+// (partial — new net value). Keeps Google Ads ROAS honest so Smart Bidding and the
+// recommendation engine don't optimize toward revenue that was handed back.
+async function enqueueConversionAdjustment({ orderId, gclid, adjustmentType, restatementValue, currency, adjustmentDateTime }) {
+  const f = fb(); if (!f) return false;
+  if (!orderId && !gclid) return false;
+  await f.db.collection(COL.convAdj).add({
+    orderId: orderId || null, gclid: gclid || null,
+    adjustmentType: adjustmentType || "RETRACTION",
+    restatementValue: restatementValue != null ? Number(restatementValue) : null,
+    currency: currency || CURRENCY,
+    adjustmentDateTime: adjustmentDateTime || gAdsTime(new Date()),
+    uploaded: false, createdAt: f.FV.serverTimestamp()
+  });
+  return true;
+}
+
+async function recordRefund({ orderId, refundAmount, when }) {
+  const f = fb(); if (!f || !orderId) return { ok: false, reason: "no orderId" };
+  let orig = null;
+  try { const q = await f.db.collection(COL.convQueue).where("orderId", "==", orderId).limit(1).get(); q.forEach(d => { orig = Object.assign({ ref: d.ref }, d.data()); }); } catch (e) {}
+  if (!orig) return { ok: true, skipped: "no matching ad-attributed conversion for this order" };
+  const refundedSoFar = (Number(orig.refundedTotal) || 0) + (Number(refundAmount) || 0);
+  const newValue = Math.max(0, (Number(orig.value) || 0) - refundedSoFar);
+  const full = newValue <= 0.005;
+  await enqueueConversionAdjustment({
+    orderId, gclid: orig.gclid || null,
+    adjustmentType: full ? "RETRACTION" : "RESTATEMENT",
+    restatementValue: full ? null : newValue,
+    currency: orig.currency, adjustmentDateTime: when || gAdsTime(new Date())
+  });
+  try { await orig.ref.update({ refundedTotal: refundedSoFar }); } catch (e) {}
+  return { ok: true, adjustmentType: full ? "RETRACTION" : "RESTATEMENT", newValue };
+}
+
+async function uploadConversionAdjustments({ ctrl, limit = 500 } = {}) {
+  ctrl = ctrl || (await control());
+  const f = fb(); if (!f) return { uploaded: 0 };
+  const action = ENV.GADS_CONVERSION_ACTION;
+  if (!action) return { uploaded: 0, skipped: "GADS_CONVERSION_ACTION not set" };
+  const snap = await f.db.collection(COL.convAdj).where("uploaded", "==", false).limit(limit).get();
+  if (snap.empty) return { uploaded: 0 };
+  const docs = []; const adjustments = [];
+  snap.forEach(d => {
+    const x = d.data(); docs.push(d.ref);
+    const a = { conversionAction: action, adjustmentType: x.adjustmentType, adjustmentDateTime: x.adjustmentDateTime, orderId: x.orderId || undefined };
+    if (!x.orderId && x.gclid) a.gclidDateTimePair = { gclid: x.gclid, conversionDateTime: x.adjustmentDateTime };
+    if (x.adjustmentType === "RESTATEMENT" && x.restatementValue != null) a.restatementValue = { adjustedValue: x.restatementValue, currencyCode: x.currency };
+    adjustments.push(a);
+  });
+  const token = await mintToken();
+  const body = { conversionAdjustments: adjustments, partialFailure: true };
+  if (ctrl.dryRun) body.validateOnly = true;
+  const res = await fetch(`${BASE}/customers/${CID}:uploadConversionAdjustments`, { method: "POST", headers: adsHeaders(token), body: JSON.stringify(body) });
+  const data = await res.json().catch(() => ({}));
+  await ledger({ kind: "uploadConversionAdjustments", count: adjustments.length, validateOnly: !!ctrl.dryRun, ok: res.ok, error: res.ok ? null : JSON.stringify(data).slice(0, 600), partialFailure: data.partialFailureError || null });
+  if (res.ok && !ctrl.dryRun) { const batch = f.db.batch(); docs.forEach(ref => batch.update(ref, { uploaded: true, uploadedAt: f.FV.serverTimestamp() })); await batch.commit(); }
+  return { uploaded: res.ok && !ctrl.dryRun ? adjustments.length : 0, validateOnly: !!ctrl.dryRun };
+}
+
+/* ---- Conversion-tracking health (the 3-way connection's vital sign) ---- */
+// Verifies the Shopify → Google Ads → app loop is actually live: account tracking
+// status, enabled conversion actions, recent recorded conversions, upload-queue depth,
+// and last upload. `validated` gates whether recommendations may trust ROAS history.
+async function conversionHealth({ force } = {}) {
+  const f = fb();
+  if (f && !force) {
+    try { const s = await f.db.collection(COL.state).doc("conv_health").get(); if (s.exists) { const x = s.data(); if (x.at && (Date.now() - x.at) < 15 * 60 * 1000 && x.data) return x.data; } } catch (e) {}
+  }
+  const out = { status: "UNKNOWN", actionConfigured: !!ENV.GADS_CONVERSION_ACTION, actionId: ENV.GADS_CONVERSION_ACTION || null,
+    actions: [], recentConversions: null, queueDepth: null, adjQueueDepth: null, lastUpload: null,
+    healthy: false, validated: false, reasons: [], at: Date.now() };
+  try {
+    const r = await gaql(`SELECT customer.conversion_tracking_setting.conversion_tracking_status FROM customer`);
+    const cs = r[0] && r[0].customer && r[0].customer.conversionTrackingSetting;
+    if (cs && cs.conversionTrackingStatus) out.status = cs.conversionTrackingStatus;
+  } catch (e) { out.reasons.push("status check failed: " + String(e.message).slice(0, 70)); }
+  try {
+    const rows = await gaql(`SELECT conversion_action.id, conversion_action.name, conversion_action.status, conversion_action.type, conversion_action.category FROM conversion_action`);
+    out.actions = rows.map(r => ({ id: String(r.conversionAction.id), name: r.conversionAction.name, status: r.conversionAction.status, type: r.conversionAction.type, category: r.conversionAction.category }));
+  } catch (e) { out.reasons.push("conversion-action list failed: " + String(e.message).slice(0, 70)); }
+  try {
+    const r = await gaql(`SELECT metrics.conversions, metrics.all_conversions FROM customer DURING LAST_30_DAYS`);
+    out.recentConversions = r[0] && r[0].metrics ? Number(r[0].metrics.conversions || 0) : 0;
+  } catch (e) {}
+  if (f) {
+    try { const q = await f.db.collection(COL.convQueue).where("uploaded", "==", false).limit(500).get(); out.queueDepth = q.size; } catch (e) {}
+    try { const q = await f.db.collection(COL.convAdj).where("uploaded", "==", false).limit(500).get(); out.adjQueueDepth = q.size; } catch (e) {}
+    try { const lg = await f.db.collection(COL.ledger).orderBy("at", "desc").limit(50).get(); let found = null; lg.forEach(d => { const x = d.data(); if (!found && x.kind === "uploadConversions") found = { at: x.at && x.at.toMillis ? x.at.toMillis() : null, count: x.count, ok: x.ok }; }); out.lastUpload = found; } catch (e) {}
+  }
+  const enabledAction = out.actions.some(a => a.status === "ENABLED");
+  out.healthy = !!(out.actionConfigured && enabledAction && out.status && out.status !== "NOT_CONVERSION_TRACKED" && out.status !== "UNKNOWN");
+  out.validated = !!(out.healthy && Number(out.recentConversions) > 0);
+  if (!out.actionConfigured) out.reasons.push("GADS_CONVERSION_ACTION env var is not set");
+  if (!enabledAction && out.actions.length === 0) out.reasons.push("no conversion actions found in the Google Ads account");
+  else if (!enabledAction) out.reasons.push("no ENABLED conversion action (create/enable an Import 'from clicks' action)");
+  if (out.status === "NOT_CONVERSION_TRACKED") out.reasons.push("account status is NOT_CONVERSION_TRACKED");
+  if (out.healthy && Number(out.recentConversions) === 0) out.reasons.push("tracking is configured but no conversions recorded in 30d yet");
+  if (f) { try { await f.db.collection(COL.state).doc("conv_health").set({ data: out, at: Date.now() }); } catch (e) {} }
+  return out;
 }
 
 /* ============================ Ledger / approvals ============================ */
@@ -861,10 +969,13 @@ async function analyzeCampaign(campaignId, { force } = {}) {
   const roas = c.cost > 0 ? c.value / c.cost : null, ctr = c.impr > 0 ? c.clicks / c.impr * 100 : null, cpa = c.conv > 0 ? c.cost / c.conv : null;
   const target = ctrl.targetRoas || 0, ccy = CURRENCY;
   const enoughData = c.conv >= 15 || c.cost >= 50;
+  const _convH = await conversionHealth().catch(() => ({ validated: false, healthy: false }));
+  const convNote = _convH.validated ? "" :
+    `\nCRITICAL: account conversion tracking is ${_convH.healthy ? "configured but has recorded no sales yet" : "NOT confirmed to be recording sales"}. Any ROAS/CPA above may be undercounted or zero for that reason — treat performance as UNVALIDATED. Do NOT recommend scaling on ROAS; if conversions are 0, prioritize verifying conversion tracking over campaign changes.`;
   const metrics = `status=${c.status}, dailyBudget=${ccy}${c.budget}, spend14d=${ccy}${c.cost}, impressions=${c.impr}, clicks=${c.clicks}, ctr=${ctr == null ? "n/a" : ctr.toFixed(2) + "%"}, conversions=${c.conv}, convValue=${ccy}${c.value}, roas=${roas == null ? "n/a" : roas.toFixed(2) + "x"}, cpa=${cpa == null ? "n/a" : ccy + cpa.toFixed(2)}`;
   const prompt =
 `You are a senior Google Ads strategist optimizing a Search campaign for Brites, a handcrafted personalized charm-jewelry brand (gift/emotion-led). Currency ${ccy}. Account target ROAS: ${target || "unset (maximize value)"}. Account daily budget ceiling: ${ccy}${ctrl.maxDailyBudgetTotal}.
-Campaign "${c.name}" — last 14 days: ${metrics}.
+Campaign "${c.name}" — last 14 days: ${metrics}.${convNote}
 Give an honest optimization assessment. If there isn't enough data to optimize responsibly (Google Smart Bidding generally needs ~15+ conversions), SAY SO and recommend gathering data rather than inventing changes. Otherwise recommend concrete, prioritized actions (budget, bidding, keywords, creative, or status).
 Return ONLY JSON:
 {"score": <0-100 optimization/health score>,
@@ -919,8 +1030,13 @@ async function scanOpportunities({ force } = {}) {
   const collText = collections.map(c => c.title).join(", ");
   const prodText = products.length ? products.map(p => p.title).slice(0, 40).join("; ") : "(not available)";
   const memText = memory.length ? memory.map(m => `${m.occasion} [${(m.collections || []).join("/")}]: ${m.outcome}${m.roas ? ` ${m.roas}x` : ""}`).join("; ") : "(no history yet — nothing has run)";
+  const _convH = await conversionHealth().catch(() => ({ validated: false }));
+  const convDirective = _convH.validated
+    ? "CONVERSION TRACKING: LIVE and recording sales — ROAS/outcome history is reliable. Weight proven occasions heavily; you may recommend scaling winners."
+    : "CONVERSION TRACKING: NOT YET RECORDING SALES — you have NO validated ROAS data. Do NOT label any occasion 'proven'; treat every expectedRoasBand as a conservative ESTIMATE, keep recommendedDailyBudget at modest test levels, and favor low-risk bets over aggressive spend until conversions flow.";
   const prompt =
 `Today: ${dateStr}. You are the campaign strategist for Brites, a handcrafted personalized charm-jewelry brand (gift/emotion-led). Currency ${ccy}. Total daily ad ceiling ${ccy} ${ceiling}.
+${convDirective}
 ALL COLLECTIONS: ${collText}
 TOP-SELLING PRODUCTS: ${prodText}
 PAST OCCASION PERFORMANCE (memory): ${memText}
@@ -1104,13 +1220,14 @@ async function dashboard() {
     if (rows.length) out.lastMetrics = rows[0].snapshot;
     out.metricsSeries = rows.reverse(); // oldest → newest
   } catch (e) {}
+  try { out.conversionHealth = await conversionHealth(); } catch (e) { out.conversionHealth = null; }
   return out;
 }
 
 module.exports = {
   COL, V, CID,
   control, mintToken, gaql, mutate, mutateAll,
-  enqueueConversion, uploadConversions,
+  enqueueConversion, uploadConversions, enqueueConversionAdjustment, uploadConversionAdjustments, recordRefund, conversionHealth, gAdsTime,
   ledger, enqueueApproval, applyApproval, applyApprovalById: applyApproval, retryStuckApprovals, sanitizeOps,
   generateRSAAssets, buildSearchCampaignOps, textGuidelinesOp, brandSafe,
   generateForCollection, COLLECTIONS, OCCASIONS,

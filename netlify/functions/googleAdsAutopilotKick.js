@@ -82,6 +82,11 @@ async function handleAction(body) {
   const a = body.action;
   const ctrl = await E.control();
   if (a === "dashboard") return await E.dashboard();
+  if (a === "conversionHealth") { try { return await E.conversionHealth({ force: !!body.force }); } catch (e) { return { error: e.message }; } }
+  if (a === "syncConversions") {
+    try { const up = await E.uploadConversions({ ctrl }); const adj = await E.uploadConversionAdjustments({ ctrl }); const health = await E.conversionHealth({ force: true }); return { ok: true, uploaded: up, adjustments: adj, health }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  }
   if (a === "kill")   { if (f) await f.db.collection(E.COL.control).doc("control").set({ enabled: false }, { merge: true }); return { enabled: false }; }
   if (a === "resume") { if (f) await f.db.collection(E.COL.control).doc("control").set({ enabled: true }, { merge: true });  return { enabled: true }; }
   if (a === "dryRun") { if (f) await f.db.collection(E.COL.control).doc("control").set({ dryRun: !!body.on }, { merge: true }); return { dryRun: !!body.on }; }
