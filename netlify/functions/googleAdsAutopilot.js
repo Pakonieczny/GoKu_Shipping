@@ -655,12 +655,14 @@ async function measure() {
   // 1) ALL campaigns (config only, no date segment) — guarantees brand-new / paused /
   //    zero-impression campaigns are included, which a date-segmented query would drop.
   const base = await gaql(
-    `SELECT campaign.id, campaign.name, campaign.status, campaign_budget.resource_name, campaign_budget.amount_micros
+    `SELECT campaign.id, campaign.name, campaign.status, campaign.primary_status, campaign.primary_status_reasons, campaign_budget.resource_name, campaign_budget.amount_micros
      FROM campaign WHERE campaign.status != 'REMOVED'`);
   const byId = {};
   base.forEach(r => {
     byId[r.campaign.id] = {
       id: r.campaign.id, name: r.campaign.name, status: r.campaign.status,
+      primaryStatus: r.campaign.primaryStatus || null,
+      primaryStatusReasons: r.campaign.primaryStatusReasons || [],
       budget: fromMicros(r.campaignBudget && r.campaignBudget.amountMicros),
       budgetRes: (r.campaignBudget && r.campaignBudget.resourceName) || null,
       cost: 0, conv: 0, value: 0, clicks: 0, impr: 0
@@ -1184,13 +1186,14 @@ async function takenTags() {
     } catch (e) {}
   }
   try {
-    const rows = await gaql(`SELECT campaign.id, campaign.name, campaign.status FROM campaign`);
+    const rows = await gaql(`SELECT campaign.id, campaign.name, campaign.status, campaign.primary_status, campaign.primary_status_reasons FROM campaign`);
     const campMap = {};
     rows.forEach(r => {
       const tag = tagFromCampaignName(r.campaign.name); if (!tag) return;
       const cur = campMap[tag]; const st = r.campaign.status;
       if (!cur || (_CAMP_RANK[st] || 0) >= (_CAMP_RANK[cur.status] || 0))
-        campMap[tag] = { where: "campaign", status: st, campaignId: r.campaign.id };
+        campMap[tag] = { where: "campaign", status: st, campaignId: r.campaign.id,
+          primaryStatus: r.campaign.primaryStatus || null, primaryStatusReasons: r.campaign.primaryStatusReasons || [] };
     });
     Object.keys(campMap).forEach(tag => { map[tag] = campMap[tag]; }); // campaigns override approvals
   } catch (e) {}
