@@ -121,8 +121,24 @@ async function handleAction(body) {
     catch (e) { return { ok: false, error: e.message }; }
   }
   if (a === "opportunities") {
-    try { return await E.opportunitiesWithStatus({ force: !!body.force }); }
-    catch (e) { return { opportunities: [], error: e.message }; }
+    try {
+      if (body.force) {
+        // The AI scan is slow (gpt-5.5 reasoning) and overran the 60s sync limit → 504.
+        // Run it in the background function (15-min budget); mark scanning and return the
+        // current cache immediately. The console polls (cacheOnly) until fresh results land.
+        try { if (f) await f.db.collection(E.COL.state).doc("opportunities").set({ scanning: true }, { merge: true }); } catch (e) {}
+        try {
+          await fetch(baseUrl() + "/.netlify/functions/googleAdsAutopilot-background", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ tasks: ["scanOpportunities"], token: process.env.EDIT_PASSCODE || undefined })
+          });
+        } catch (e) {}
+        const cur = await E.opportunitiesWithStatus({ cacheOnly: true });
+        return Object.assign({}, cur, { scanning: true, started: true });
+      }
+      // Never scan synchronously from the console — cache read only.
+      return await E.opportunitiesWithStatus({ cacheOnly: true });
+    } catch (e) { return { opportunities: [], error: e.message }; }
   }
   if (a === "collections") {
     try { return { collections: await E.getCollections({ force: !!body.force }) }; }

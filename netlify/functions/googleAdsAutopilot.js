@@ -1025,13 +1025,17 @@ async function fetchTopProducts() {
 // THE big analysis: cross-reference all collections + best-sellers + calendar + memory
 // → a ranked list of fully-specified campaign opportunities (budget, duration, keywords…).
 // Cached 12h; force re-rolls. Stored in Firestore for recall.
-async function scanOpportunities({ force } = {}) {
+async function scanOpportunities({ force, cacheOnly } = {}) {
   const f = fb(); const ctrl = await control();
-  if (f && !force) {
+  if (f && (cacheOnly || !force)) {
     try {
       const s = await f.db.collection(COL.state).doc("opportunities").get();
-      if (s.exists) { const x = s.data(); if (x.at && (Date.now() - x.at) < 12 * 60 * 60 * 1000 && Array.isArray(x.list) && x.list.length) return { opportunities: x.list, scannedAt: x.at }; }
-    } catch (e) {}
+      if (s.exists) {
+        const x = s.data();
+        if (cacheOnly) return { opportunities: Array.isArray(x.list) ? x.list : [], scannedAt: x.at || null, scanning: !!x.scanning };
+        if (x.at && (Date.now() - x.at) < 12 * 60 * 60 * 1000 && Array.isArray(x.list) && x.list.length) return { opportunities: x.list, scannedAt: x.at };
+      } else if (cacheOnly) { return { opportunities: [], scannedAt: null, scanning: false }; }
+    } catch (e) { if (cacheOnly) return { opportunities: [], scannedAt: null, scanning: false }; }
   }
   const collections = await getCollections({});
   let products = []; try { products = await fetchTopProducts(); } catch (e) {}
@@ -1098,7 +1102,8 @@ Only include opportunities genuinely relevant within ~30 days. Rank best-first (
   }).filter(o => o.collectionHandle)
     .filter(o => o.daysOut <= 32)   // ~30-day forward window: drop anything that starts too far out
     .sort((a, b) => a.daysOut - b.daysOut);
-  if (f && list.length) { try { await f.db.collection(COL.state).doc("opportunities").set({ list, at: Date.now() }); } catch (e) {} }
+  if (f && list.length) { try { await f.db.collection(COL.state).doc("opportunities").set({ list, at: Date.now(), scanning: false }); } catch (e) {} }
+  else if (f) { try { await f.db.collection(COL.state).doc("opportunities").set({ scanning: false, at: Date.now() }, { merge: true }); } catch (e) {} }
   return { opportunities: list, scannedAt: Date.now() };
 }
 
@@ -1153,15 +1158,15 @@ async function takenTags() {
 }
 // Opportunities annotated with their current real state, so the UI can split
 // "unused" from "already acted on" and never re-suggest a taken campaign.
-async function opportunitiesWithStatus({ force } = {}) {
-  const r = await scanOpportunities({ force });
+async function opportunitiesWithStatus({ force, cacheOnly } = {}) {
+  const r = await scanOpportunities({ force, cacheOnly });
   let taken = {};
   try { taken = await takenTags(); } catch (e) {}
   const opportunities = (r.opportunities || []).map(o => {
     const tag = oppTag(o.collectionHandle, o.occasion);
     return Object.assign({}, o, { tag, acted: taken[tag] || null });
   });
-  return { opportunities, scannedAt: r.scannedAt, taken };
+  return { opportunities, scannedAt: r.scannedAt, scanning: !!r.scanning, taken };
 }
 
 /* ===================== Force-generate (Draft Bench) ===================== */

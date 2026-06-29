@@ -51,16 +51,20 @@ exports.handler = async (event) => {
   }
 
   const ctrl = await E.control();
-  // HARD KILL SWITCH — the only thing that always runs is the anomaly check & state note.
-  if (!ctrl.enabled) {
-    log.push("autopilot DISABLED (kill switch) — no mutations this run");
-    // still allow draining conversions if explicitly requested? No: stay fully dormant.
-    return { statusCode: 200, body: JSON.stringify({ status: "dormant", log }) };
-  }
 
   const tasks = Array.isArray(body.tasks) && body.tasks.length
     ? body.tasks
     : ["anomaly", "conversions", "adjustments", "measure", "mine", "prune", "budgets", "events"];
+
+  // Read-only tasks (no Google Ads mutations) are allowed even when the kill switch is off.
+  const READONLY = new Set(["scanOpportunities"]);
+  const allReadOnly = tasks.every(t => READONLY.has(t));
+
+  // HARD KILL SWITCH — blocks anything that could mutate. Read-only analysis still runs.
+  if (!ctrl.enabled && !allReadOnly) {
+    log.push("autopilot DISABLED (kill switch) — no mutations this run");
+    return { statusCode: 200, body: JSON.stringify({ status: "dormant", log }) };
+  }
 
   const result = {};
 
@@ -78,6 +82,7 @@ exports.handler = async (event) => {
     if (over()) { log.push("time budget reached — deferring rest to next run"); break; }
     try {
       if (task === "conversions") { result.conversions = await E.uploadConversions({ ctrl }); }
+      else if (task === "scanOpportunities") { result.scanOpportunities = { n: ((await E.opportunitiesWithStatus({ force: true })).opportunities || []).length }; }
       else if (task === "adjustments") { result.adjustments = await E.uploadConversionAdjustments({ ctrl }); }
       else if (task === "measure") { result.measure = { campaigns: (await E.measure()).length }; }
       else if (task === "mine")     { result.mine = await E.mineSearchTerms({ ctrl }); }
