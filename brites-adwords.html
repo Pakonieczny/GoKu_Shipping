@@ -333,7 +333,7 @@ table.ptable tr.pdetail>td{border-bottom:2px solid var(--line)}
     <section class="view hidden" id="v-bench">
       <div class="view__head"><div><h2>Opportunities</h2><p>Campaigns the AI recommends right now — scanned across all your collections, best-sellers, the calendar, and past performance. Adjust the budget, then generate: it builds a paused Search campaign (themed copy + keywords) and sends it to Approvals.</p></div></div>
       <div class="card pad" style="margin-bottom:14px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
-        <button class="btn gold" id="oppScan">\u27f3 Scan for opportunities</button>
+        <button class="btn gold" id="oppScan">Scan for opportunities</button>
         <span id="oppMeta" class="muted" style="font-size:12.5px"></span>
         <div style="flex:1"></div>
         <div class="legend" style="margin:0"><span><i style="background:var(--gold)"></i><b>High</b>&nbsp;act now</span><span><i style="background:var(--sage)"></i><b>Medium</b>&nbsp;solid bet</span><span><i style="background:var(--slate)"></i><b>Test</b>&nbsp;speculative</span></div>
@@ -684,14 +684,39 @@ function showDraft(r){var a=r.assets||{};var out=$("#benchOut");
 /* ---- render: opportunities (Unused vs In-use reconciliation) ---- */
 var OPPS=[]; var oppLoaded=false; var oppView="unused";
 async function ensureOpportunities(){ if(oppLoaded)return; oppLoaded=true; loadOpportunities(false); }
+var oppPollTimer=null;
 async function loadOpportunities(force){
   var box=$("#oppList"); $("#oppScan").disabled=true;
-  box.innerHTML='<div class="empty" style="height:210px"><div class="spin" style="margin:0 auto 4px"></div><div>'+(force?"Re-scanning":"Analyzing")+' your catalog, calendar &amp; history\u2026</div><div style="font-size:12px">Cross-checking each idea against Approvals &amp; live Google Ads campaigns.</div></div>';
-  try{ var r=await api("opportunities",{force:!!force}); OPPS=(r&&r.opportunities)||[];
-    setOppMeta(r&&r.scannedAt);
-    renderOpportunities(); if(force)toast("Re-scanned \u2014 "+OPPS.length+" opportunities",true);
-  }catch(x){ box.innerHTML='<div class="empty" style="height:160px"><div>Scan failed.</div><div style="font-size:12px">'+esc(x.message)+'</div></div>'; }
-  $("#oppScan").disabled=false;
+  if(oppPollTimer){clearInterval(oppPollTimer);oppPollTimer=null;}
+  box.innerHTML='<div class="empty" style="height:210px"><div class="spin" style="margin:0 auto 4px"></div><div>'+(force?"Scanning your catalog, calendar &amp; history\u2026 (up to a minute)":"Loading\u2026")+'</div><div style="font-size:12px">Cross-checking each idea against Approvals &amp; live Google Ads campaigns.</div></div>';
+  try{
+    var r=await api("opportunities",{force:!!force});
+    OPPS=(r&&r.opportunities)||[]; setOppMeta(r&&r.scannedAt);
+    if(!force){ renderOpportunities(); $("#oppScan").disabled=false; return; }
+    // Forced scan runs in the background (avoids the 60s sync limit). Show any existing
+    // results immediately, then poll until a fresher scan lands.
+    var prevAt=(r&&r.scannedAt)||0;
+    if(OPPS.length){ renderOpportunities(); }
+    else { box.innerHTML='<div class="empty" style="height:210px"><div class="spin" style="margin:0 auto 4px"></div><div>Scanning\u2026 new opportunities in ~1 min.</div><div style="font-size:12px">You can leave this tab \u2014 results appear automatically.</div></div>'; }
+    var tries=0;
+    oppPollTimer=setInterval(async function(){
+      tries++;
+      try{
+        var p=await api("opportunities",{cacheOnly:true});
+        var at=(p&&p.scannedAt)||0;
+        if(at>prevAt && !(p&&p.scanning)){
+          clearInterval(oppPollTimer); oppPollTimer=null;
+          OPPS=(p&&p.opportunities)||[]; setOppMeta(at); renderOpportunities();
+          toast("Re-scanned \u2014 "+OPPS.length+" opportunities",true);
+          $("#oppScan").disabled=false;
+        } else if(tries>=36){
+          clearInterval(oppPollTimer); oppPollTimer=null; $("#oppScan").disabled=false;
+          if(!OPPS.length) box.innerHTML='<div class="empty" style="height:160px"><div>Scan is taking longer than usual.</div><div style="font-size:12px">Give it a moment and hit Scan again.</div></div>';
+          else toast("Scan still running \u2014 results will refresh shortly.");
+        }
+      }catch(e){ if(tries>=36){clearInterval(oppPollTimer); oppPollTimer=null; $("#oppScan").disabled=false;} }
+    },5000);
+  }catch(x){ box.innerHTML='<div class="empty" style="height:160px"><div>Scan failed.</div><div style="font-size:12px">'+esc(x.message)+'</div></div>'; $("#oppScan").disabled=false; }
 }
 function setOppMeta(scannedAt){ var u=OPPS.filter(function(o){return !o.acted;}).length; $("#oppMeta").textContent=OPPS.length?(u+" unused \u00b7 "+(OPPS.length-u)+" in use"+(scannedAt?" \u00b7 scanned "+timeago(scannedAt)+" ago":"")):""; }
 function priMeta(p){ return p==="high"?["High priority","var(--gold-soft)","#7a5a1d"]:p==="medium"?["Medium","var(--sage-soft)","#3c5a39"]:["Test","var(--slate-soft)","#33525d"]; }
