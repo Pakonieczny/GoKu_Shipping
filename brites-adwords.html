@@ -300,6 +300,18 @@ table.ptable tr.pdetail>td{border-bottom:2px solid var(--line)}
 .lhint{font-size:11.5px;color:var(--ink-45);margin-top:8px}
 .lhint b{color:var(--ink-70);font-weight:600}
 
+/* ---- scrollable lists: keep panels from growing past their window ---- */
+.feed{max-height:360px;overflow-y:auto;overflow-x:hidden;padding-right:4px}
+.scrollcap{max-height:72vh;overflow-y:auto;overflow-x:hidden;padding-right:4px}
+.scrollcap-sm{max-height:320px;overflow-y:auto;overflow-x:hidden;padding-right:4px}
+.ptscroll{max-height:560px;overflow:auto}
+.ptscroll table.ptable thead th{position:sticky;top:0;background:var(--card);z-index:2;box-shadow:0 1px 0 var(--line)}
+/* thin, on-brand scrollbars */
+.feed::-webkit-scrollbar,.scrollcap::-webkit-scrollbar,.scrollcap-sm::-webkit-scrollbar,.ptscroll::-webkit-scrollbar{width:9px;height:9px}
+.feed::-webkit-scrollbar-thumb,.scrollcap::-webkit-scrollbar-thumb,.scrollcap-sm::-webkit-scrollbar-thumb,.ptscroll::-webkit-scrollbar-thumb{background:var(--ink-25);border-radius:7px;border:2px solid var(--card)}
+.feed::-webkit-scrollbar-thumb:hover,.scrollcap::-webkit-scrollbar-thumb:hover,.scrollcap-sm::-webkit-scrollbar-thumb:hover,.ptscroll::-webkit-scrollbar-thumb:hover{background:var(--ink-45)}
+.feed,.scrollcap,.scrollcap-sm,.ptscroll{scrollbar-width:thin;scrollbar-color:var(--ink-25) transparent}
+
 </style>
 </head>
 <body>
@@ -343,14 +355,14 @@ table.ptable tr.pdetail>td{border-bottom:2px solid var(--line)}
         <div class="card pad"><div class="card__h"><h3>Spend vs daily ceiling</h3></div><div id="gauge" style="display:flex;justify-content:center;padding:6px 0 2px"></div><div id="ceilNote" style="text-align:center;font-size:12.5px;color:var(--ink-70);margin-top:6px"></div></div>
       </div>
       <div class="grid two">
-        <div class="card pad"><div class="card__h"><h3>Autopilot activity</h3><span class="sub">recent ledger</span></div><div class="feed" id="feed"></div></div>
-        <div class="card pad"><div class="card__h"><h3>Your campaigns</h3><span class="sub" id="snapSub">last snapshot</span></div><div id="snapshot"></div></div>
+        <div class="card pad"><div class="card__h"><h3>Autopilot activity</h3><span class="sub">recent ledger</span><button class="btn ghost sm" id="clearFeed" style="margin-left:8px;padding:3px 10px;font-size:11px">Clear</button></div><div class="feed" id="feed"></div></div>
+        <div class="card pad"><div class="card__h"><h3>Your campaigns</h3><span class="sub" id="snapSub">last snapshot</span></div><div id="snapshot" class="scrollcap-sm"></div></div>
       </div>
     </section>
 
     <section class="view hidden" id="v-approvals">
       <div class="view__head"><div><h2>Approvals</h2><p>Drafts the autopilot wants to ship. Nothing goes live until you approve.</p></div></div>
-      <div class="appr" id="apprList"></div>
+      <div class="appr scrollcap" id="apprList"></div>
     </section>
 
     <section class="view hidden" id="v-ab">
@@ -362,7 +374,7 @@ table.ptable tr.pdetail>td{border-bottom:2px solid var(--line)}
       <div class="view__head"><div><h2>Performance</h2><p>Every campaign in one sortable list. Click any column to sort; expand a row to edit its budget, flip status, or run an AI optimization analysis.</p></div></div>
       <div class="card pad">
         <div class="card__h" style="margin-bottom:10px"><h3>Campaigns</h3><span class="sub" id="perfMeta"></span></div>
-        <div style="overflow-x:auto"><table class="ptable" id="ptable"></table></div>
+        <div class="ptscroll" style="overflow:auto"><table class="ptable" id="ptable"></table></div>
       </div>
     </section>
 
@@ -467,7 +479,8 @@ var LOADINFO={
   kill:{verb:"Stopping autopilot",detail:"",eta:"~2s"},
   dryRun:{verb:"Switching dry-run mode",detail:"",eta:"~2s"},
   setControl:{verb:"Saving setting",detail:"",eta:"1\u20132s"},
-  runNow:{verb:"Running tasks now",detail:"Handing off to the background worker",eta:"~5s"}
+  runNow:{verb:"Running tasks now",detail:"Handing off to the background worker",eta:"~5s"},
+  clearLedger:{verb:"Clearing activity log",detail:"Deleting recorded ledger history",eta:"~2\u20135s"}
 };
 function loadInfo(key,over){return Object.assign({verb:"Working",detail:"",eta:""},LOADINFO[key]||{},over||{});}
 
@@ -851,7 +864,7 @@ function renderOpportunities(){
   var unused=[],inuse=[];
   OPPS.forEach(function(o,i){ (o.acted?inuse:unused).push({o:o,i:i}); });
   var tabs='<div style="display:flex;gap:8px;margin-bottom:18px">'+oppTabBtn("unused","Unused",unused.length)+oppTabBtn("inuse","In use",inuse.length)+'</div>';
-  box.innerHTML=tabs+'<div id="oppCards"></div>';
+  box.innerHTML=tabs+'<div id="oppCards" class="scrollcap"></div>';
   box.querySelectorAll(".oppTab").forEach(function(b){ b.onclick=function(){ oppView=b.dataset.view; renderOpportunities(); }; });
   var cards=$("#oppCards"); var list=oppView==="inuse"?inuse:unused;
   if(!list.length){ cards.innerHTML='<div class="empty" style="height:150px"><div>'+(oppView==="inuse"?"Nothing here yet.":"All current suggestions are already in use.")+'</div><div style="font-size:12px">'+(oppView==="inuse"?"Generated, approved, or live campaigns show up here so they\u2019re never re-suggested.":"Re-scan to surface fresh ideas.")+'</div></div>'; return; }
@@ -937,6 +950,12 @@ function renderControls(){var c=DASH.control||{};
   $("#termChips").innerHTML=(DASH.terms||[]).map(t=>'<span class="chip x">'+esc(t)+'</span>').join("")||'<span class="muted" style="font-size:12px">none set</span>';
 }
 function bindControlsOnce(){
+  var cf=$("#clearFeed");if(cf)cf.onclick=async function(){
+    if(!confirm("Clear the autopilot activity log?\n\nThis permanently deletes the recorded ledger history. It does NOT touch your campaigns, approvals, conversions, or settings."))return;
+    var done=btnBusy(cf,"Clearing\u2026");var aid=actStart("clearLedger");
+    try{var r=await api("clearLedger");DASH.recentLedger=[];renderFeed();toast("Activity log cleared"+((r&&r.deleted)?" \u2014 "+r.deleted+" entries removed":""),true);}
+    catch(x){toast(x.message);}
+    actEnd(aid);done();};
   $("#swLive").onclick=async()=>{var on=!$("#swLive").classList.contains("on");var aid=actStart(on?"resume":"kill");try{await api(on?"resume":"kill");toast("Autopilot "+(on?"live":"stopped"),on);}catch(x){toast(x.message);}actEnd(aid);await reload();};
   $("#swDry").onclick=async()=>{var on=!$("#swDry").classList.contains("on");var aid=actStart("dryRun");try{await api("dryRun",{on:on});toast("Dry-run "+(on?"on":"off"),on);}catch(x){toast(x.message);}actEnd(aid);await reload();};
   $("#swAuto").onclick=async()=>{var on=!$("#swAuto").classList.contains("on");var aid=actStart("setControl",{verb:"Saving auto-approve"});try{await api("setControl",{patch:{autoApproveVettedTemplates:on}});toast("Auto-approve "+(on?"on":"off"),on);}catch(x){toast(x.message);}actEnd(aid);await reload();};
