@@ -766,6 +766,7 @@ async function campStatus(id,name,budget,status,btn){
       toast(verb+" \u201c"+name+"\u201d \u2713",true);
       if(DASH.lastMetrics){ if(status==="REMOVED"){DASH.lastMetrics=DASH.lastMetrics.filter(function(c){return String(c.id)!==String(id);});delete P.expanded[id];} else {var cc=DASH.lastMetrics.find(function(c){return String(c.id)===String(id);});if(cc)cc.status=status;} }
       actEnd(aid);renderAll();
+      if(typeof oppLoaded!=="undefined"&&oppLoaded&&!oppPollTimer)loadOpportunities(false); // archived drop out; paused/live badges refresh
     } else { actEnd(aid);toast("Failed: "+((r&&r.error)||"unknown")); await reload(); }
   }catch(x){actEnd(aid);toast(x.message);await reload();}}
 
