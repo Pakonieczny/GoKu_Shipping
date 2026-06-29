@@ -336,7 +336,9 @@ async function conversionHealth({ force } = {}) {
     out.actions = rows.map(r => ({ id: String(r.conversionAction.id), name: r.conversionAction.name, status: r.conversionAction.status, type: r.conversionAction.type, category: r.conversionAction.category }));
   } catch (e) { out.reasons.push("conversion-action list failed: " + String(e.message).slice(0, 70)); }
   try {
-    const r = await gaql(`SELECT metrics.conversions, metrics.all_conversions FROM customer DURING LAST_30_DAYS`);
+    const tz = await _accountTz();
+    const end = _acctDateYmd(tz, 0), start = _acctDateYmd(tz, -29 * 86400000);
+    const r = await gaql(`SELECT metrics.conversions, metrics.all_conversions FROM customer WHERE segments.date BETWEEN '${start}' AND '${end}'`);
     out.recentConversions = r[0] && r[0].metrics ? Number(r[0].metrics.conversions || 0) : 0;
   } catch (e) {}
   if (f) {
@@ -622,6 +624,8 @@ function _accountDateTime(tz, offsetMs) {
   const hh = (o.hour === "24") ? "00" : o.hour;   // some environments emit "24" for midnight
   return `${o.year}${o.month}${o.day} ${hh}:${o.minute}:${o.second}`;
 }
+// Account-timezone calendar date (with optional ms offset) as "YYYY-MM-DD", for segments.date ranges.
+function _acctDateYmd(tz, offsetMs) { const s = _accountDateTime(tz, offsetMs || 0); return `${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6,8)}`; }
 
 // Google Ads campaign schedule fields are startDateTime/endDateTime in "yyyyMMdd HH:MM:SS".
 // Accepts a date (YYYY-MM-DD / YYYYMMDD) and appends a time, or passes through an existing datetime.
@@ -701,13 +705,16 @@ async function measure() {
       cost: 0, conv: 0, value: 0, clicks: 0, impr: 0
     };
   });
-  // 2) Last-14-day metrics — overlay onto campaigns that have activity (aggregated per campaign,
-  //    since a date-segmented query returns one row per campaign per day).
+  // 2) Metrics for the last 14 days INCLUDING today — Google's LAST_14_DAYS excludes today, so a
+  //    campaign that only started serving today would otherwise read $0 spend / 0 conversions no
+  //    matter how often you refresh. Window computed in the account's timezone.
+  const _mtz = await _accountTz();
+  const _mEnd = _acctDateYmd(_mtz, 0), _mStart = _acctDateYmd(_mtz, -13 * 86400000);
   try {
     const met = await gaql(
       `SELECT campaign.id, metrics.cost_micros, metrics.conversions, metrics.conversions_value,
               metrics.clicks, metrics.impressions
-       FROM campaign WHERE segments.date DURING LAST_14_DAYS AND campaign.status != 'REMOVED'`);
+       FROM campaign WHERE segments.date BETWEEN '${_mStart}' AND '${_mEnd}' AND campaign.status != 'REMOVED'`);
     met.forEach(r => {
       const c = byId[r.campaign.id]; if (!c) return;
       c.cost += fromMicros(r.metrics.costMicros); c.conv += Number(r.metrics.conversions || 0);
