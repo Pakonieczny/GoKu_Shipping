@@ -362,6 +362,26 @@ async function ledger(entry) {
   try { await f.db.collection(COL.ledger).add({ ...entry, at: f.FV.serverTimestamp() }); } catch (e) {}
 }
 
+// Clear the activity ledger. With {keep:N}, deletes all but the N most-recent
+// entries (used for automatic bounding); with no args, deletes everything.
+async function clearLedger({ keep } = {}) {
+  const f = fb(); if (!f) return { ok: false, deleted: 0, error: "no firestore" };
+  let deleted = 0, kept = 0;
+  try {
+    const col = f.db.collection(COL.ledger);
+    const snap = (keep && keep > 0) ? await col.orderBy("at", "desc").get() : await col.get();
+    const docs = []; snap.forEach(d => docs.push(d));
+    let batch = f.db.batch(), n = 0;
+    for (let i = 0; i < docs.length; i++) {
+      if (keep && keep > 0 && i < keep) { kept++; continue; }
+      batch.delete(docs[i].ref); n++; deleted++;
+      if (n >= 400) { await batch.commit(); batch = f.db.batch(); n = 0; }
+    }
+    if (n > 0) await batch.commit();
+    return { ok: true, deleted, kept };
+  } catch (e) { return { ok: false, deleted, error: e.message }; }
+}
+
 async function enqueueApproval(item) {
   // item: { type:'creative'|'budget'|'negatives'|'keywords'|'pmax', summary, payload, experimentId, vetted }
   const f = fb(); if (!f) return null;
@@ -1245,7 +1265,7 @@ module.exports = {
   COL, V, CID,
   control, mintToken, gaql, mutate, mutateAll,
   enqueueConversion, uploadConversions, enqueueConversionAdjustment, uploadConversionAdjustments, recordRefund, conversionHealth, gAdsTime,
-  ledger, enqueueApproval, applyApproval, applyApprovalById: applyApproval, retryStuckApprovals, sanitizeOps,
+  ledger, clearLedger, enqueueApproval, applyApproval, applyApprovalById: applyApproval, retryStuckApprovals, sanitizeOps,
   generateRSAAssets, buildSearchCampaignOps, textGuidelinesOp, brandSafe,
   generateForCollection, COLLECTIONS, OCCASIONS,
   getCollections, suggestOccasions, recordOccasionUse,

@@ -120,6 +120,11 @@ async function handleAction(body) {
     try { return await E.setCampaignStatus(body.id, body.status, { ctrl }); }
     catch (e) { return { ok: false, error: e.message }; }
   }
+  if (a === "clearLedger") {
+    try { return await E.clearLedger({}); }
+    catch (e) { return { ok: false, error: e.message }; }
+  }
+
   if (a === "opportunities") {
     try {
       if (body.force) {

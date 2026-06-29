@@ -54,10 +54,10 @@ exports.handler = async (event) => {
 
   const tasks = Array.isArray(body.tasks) && body.tasks.length
     ? body.tasks
-    : ["anomaly", "conversions", "adjustments", "measure", "mine", "prune", "budgets", "events"];
+    : ["anomaly", "conversions", "adjustments", "measure", "mine", "prune", "budgets", "events", "pruneLedger"];
 
   // Read-only tasks (no Google Ads mutations) are allowed even when the kill switch is off.
-  const READONLY = new Set(["scanOpportunities"]);
+  const READONLY = new Set(["scanOpportunities", "pruneLedger"]);
   const allReadOnly = tasks.every(t => READONLY.has(t));
 
   // HARD KILL SWITCH — blocks anything that could mutate. Read-only analysis still runs.
@@ -89,6 +89,7 @@ exports.handler = async (event) => {
       else if (task === "prune")    { result.prune = await E.pruneAssets({ ctrl }); }
       else if (task === "budgets")  { result.budgets = await E.reallocateBudgets({ ctrl }); }
       else if (task === "events")   { await runEvents(ctrl, log); result.events = "ok"; }
+      else if (task === "pruneLedger") { result.pruneLedger = await E.clearLedger({ keep: 500 }); }
       if (result[task] !== undefined && task !== "events") log.push(task + ": " + JSON.stringify(result[task]));
     } catch (e) { log.push(task + " ERROR " + e.message); }
   }
