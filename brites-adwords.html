@@ -660,7 +660,7 @@ function renderCommand(){
   // snapshot list
   if(!camps.length){ $("#snapshot").innerHTML='<div class="empty" style="height:160px"><div style="font-size:13px">No snapshot yet.</div><div style="font-size:12px">Hit Refresh after a Measure run.</div></div>'; }
   else { $("#snapSub").textContent=camps.length+" campaigns";
-    $("#snapshot").innerHTML='<table><thead><tr><th>Campaign</th><th>Status</th><th class="r">Budget</th><th class="r">Cost</th><th class="r">ROAS</th></tr></thead><tbody>'+camps.map(function(c){var r=(+c.cost>0)?(c.value/c.cost):null;return '<tr><td style="font-weight:500">'+esc(c.name)+'</td><td>'+statusBadge(c)+'</td><td class="r">'+(c.budget?money(c.budget):"—")+'</td><td class="r">'+money(c.cost)+'</td><td class="r">'+(r==null?"—":'<span class="'+(r>=3?"roas-good":r>=2.5?"roas-mid":"roas-bad")+'">'+r.toFixed(1)+'x</span>')+'</td></tr>';}).join("")+'</tbody></table>'; }
+    $("#snapshot").innerHTML='<table><thead><tr><th>Campaign</th><th>Status</th><th class="r">Budget</th><th class="r">Cost</th><th class="r">ROAS</th></tr></thead><tbody>'+camps.map(function(c){var r=(+c.cost>0)?(c.value/c.cost):null;return '<tr><td style="font-weight:500">'+esc(c.name)+'</td><td>'+statusBadge(c)+schedHint(c)+'</td><td class="r">'+(c.budget?money(c.budget):"—")+'</td><td class="r">'+money(c.cost)+'</td><td class="r">'+(r==null?"—":'<span class="'+(r>=3?"roas-good":r>=2.5?"roas-mid":"roas-bad")+'">'+r.toFixed(1)+'x</span>')+'</td></tr>';}).join("")+'</tbody></table>'; }
 }
 function badge(s){var cls=s==="ENABLED"?"b-on":s==="PAUSED"?"b-pause":"b-learn";var t=s==="ENABLED"?"live":String(s||"").toLowerCase();return '<span class="badge2 '+cls+'">'+t+'</span>';}
 // Google Ads campaign.primary_status -> friendly label + badge class (the real serving state).
@@ -669,6 +669,12 @@ var REASON_LABEL={BIDDING_STRATEGY_LEARNING:"Bid strategy learning",BIDDING_STRA
 function reasonText(rs){if(!rs||!rs.length)return "";return rs.map(function(r){return REASON_LABEL[r]||String(r||"").toLowerCase().replace(/_/g," ");}).join(" \u00b7 ");}
 function primaryStatusInfo(c){var ps=c&&c.primaryStatus;if(ps&&PRI_STATUS[ps])return PRI_STATUS[ps];var st=c&&c.status;return st==="ENABLED"?["Live","b-on"]:st==="PAUSED"?["Paused","b-pause"]:st==="REMOVED"?["Removed","b-pause"]:[String(st||"\u2014").toLowerCase(),"b-learn"];}
 function statusBadge(c){var info=primaryStatusInfo(c);var rt=reasonText(c&&c.primaryStatusReasons);return '<span class="badge2 '+info[1]+'"'+(rt?' title="'+esc(rt)+'"':"")+'>'+esc(info[0])+'</span>';}
+var _MON=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+function fmtMon(d){if(!d)return "";var p=String(d).split("-");if(p.length<3)return d;var mi=(+p[1]||1)-1;return (_MON[mi]||"")+" "+(+p[2]);}
+// compact "starts <date>" shown under a Scheduled badge in the snapshot + perf tables
+function schedHint(c){if(!c||c.primaryStatus!=="PENDING"||!c.startDate)return "";return '<div class="muted" style="font-size:10px;margin-top:2px;white-space:nowrap">starts '+esc(fmtMon(c.startDate))+'</div>';}
+// full schedule line + Start-now button for the expanded campaign detail
+function schedHtml(c){if(!c.startDate&&!c.endDate)return "";var sched=c.primaryStatus==="PENDING";var s=c.startDate?fmtMon(c.startDate):"\u2014",e=c.endDate?fmtMon(c.endDate):"\u2014";var btn=sched?'<button class="btn gold sm pstart" data-id="'+c.id+'" data-name="'+esc(c.name)+'" style="margin-left:10px;padding:3px 10px;font-size:11px">Start now</button>':"";return '<div style="margin-top:10px;font-size:11.5px;color:var(--ink-70)">Schedule: <b>'+esc(s)+'</b> \u2192 <b>'+esc(e)+'</b>'+(sched?' \u00b7 <span style="color:#33525d">scheduled to start '+esc(s)+'</span>':"")+btn+'</div>';}
 function renderFeed(){var lg=DASH.recentLedger||[];if(!lg.length){$("#feed").innerHTML='<div class="muted" style="font-size:12.5px;padding:8px 0">No activity logged yet. Run a cycle from Controls.</div>';return;}
   $("#feed").innerHTML=lg.map(function(l){var ok=l.ok!==false;var mk=l.kind==="mutate"||l.kind==="mutateAll"?"g":l.kind==="uploadConversions"?"s":"b";var when=l.at?timeago(l.at):"";var label=(l.label||l.service||l.kind||"event")+(l.validateOnly?" · dry-run":"")+(ok?"":" · ERROR");return '<div class="feed__i"><div class="mk '+(ok?mk:"c")+'">'+(ok?"✓":"⊘")+'</div><div class="tx">'+esc(label)+(l.error?'<div class="muted" style="font-size:11px">'+esc(String(l.error).slice(0,120))+'</div>':"")+'</div><time>'+when+'</time></div>';}).join("");}
 function timeago(ms){var s=Math.floor((Date.now()-ms)/1000);if(s<60)return s+"s";if(s<3600)return Math.floor(s/60)+"m";if(s<86400)return Math.floor(s/3600)+"h";return Math.floor(s/86400)+"d";}
@@ -736,7 +742,7 @@ function rowHtml(c){
   var an=P.analysis[c.id],open=!!P.expanded[c.id];
   var r='<tr class="prow"><td class="pexp" data-id="'+c.id+'" style="text-align:center;color:var(--ink-45);cursor:pointer">'+(open?"\u25be":"\u25b8")+'</td>'+
     '<td class="pexp" data-id="'+c.id+'" style="font-weight:600;max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer">'+esc(c.name)+'</td>'+
-    '<td>'+statusBadge(c)+'</td>'+
+    '<td>'+statusBadge(c)+schedHint(c)+'</td>'+
     '<td class="r mono">'+(c.budget?money(c.budget):"\u2014")+'</td>'+
     '<td class="r mono">'+money(c.cost)+'</td>'+
     '<td class="r mono">'+(c.impr||0).toLocaleString()+'</td>'+
@@ -754,7 +760,7 @@ function detailHtml(c){
     '<div class="range" style="min-width:200px"><input type="range" class="pbud" data-id="'+c.id+'" min="2" max="'+ceil+'" value="'+(c.budget||8)+'"><span class="rngval pbudv" data-id="'+c.id+'">'+money(c.budget||8)+'</span></div>'+
     '<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn ghost sm psave" data-id="'+c.id+'" data-res="'+esc(c.budgetRes||"")+'">Save budget</button>'+
     '<button class="btn '+(en?"ghost":"gold")+' sm pstat" data-id="'+c.id+'" data-name="'+esc(c.name)+'" data-budget="'+(c.budget||0)+'" data-to="'+(en?"PAUSED":"ENABLED")+'">'+(en?"Pause":"Enable")+'</button>'+
-    '<button class="btn ghost sm pstat" data-id="'+c.id+'" data-name="'+esc(c.name)+'" data-budget="0" data-to="REMOVED" style="border-color:var(--clay);color:var(--clay)">Archive</button></div></div>';
+    '<button class="btn ghost sm pstat" data-id="'+c.id+'" data-name="'+esc(c.name)+'" data-budget="0" data-to="REMOVED" style="border-color:var(--clay);color:var(--clay)">Archive</button></div>'+schedHtml(c)+'</div>';
   var anaCol;
   if(P.loading[c.id])anaCol='<div class="lrow"><span class="spin gold"></span><div><div style="font-weight:600;color:var(--ink)">Analyzing this campaign with AI\u2026</div><div style="font-size:11.5px;color:var(--ink-70)">Researching the metrics, then writing specific moves \u00b7 <span class="mono">20\u201340s</span></div></div></div>';
   else if(P.analysis[c.id])anaCol=analysisHtml(c,P.analysis[c.id]);
@@ -777,6 +783,7 @@ function wirePerf(){
   T.querySelectorAll(".psave").forEach(function(b){b.onclick=function(){var s=T.querySelector('.pbud[data-id="'+b.dataset.id+'"]');setBudget(b.dataset.id,+s.value,b.dataset.res,b);};});
   T.querySelectorAll(".papply").forEach(function(b){b.onclick=function(){setBudget(b.dataset.id,+b.dataset.budget,b.dataset.res,b);};});
   T.querySelectorAll(".pstat").forEach(function(b){b.onclick=function(){campStatus(b.dataset.id,b.dataset.name,b.dataset.budget,b.dataset.to,b);};});
+  T.querySelectorAll(".pstart").forEach(function(b){b.onclick=function(){campStartNow(b.dataset.id,b.dataset.name,b);};});
   T.querySelectorAll(".panalyze").forEach(function(b){b.onclick=function(){doAnalyze(b.dataset.id,true);};});
 }
 async function doAnalyze(id,force){P.loading[id]=true;renderPerf();var aid=actStart("analyzeCampaign");
@@ -809,6 +816,21 @@ async function campStatus(id,name,budget,status,btn){
       if(typeof oppLoaded!=="undefined"&&oppLoaded&&!oppPollTimer)loadOpportunities(false); // archived drop out; paused/live badges refresh
     } else { actEnd(aid);toast("Failed: "+((r&&r.error)||"unknown")); await reload(); }
   }catch(x){actEnd(aid);toast(x.message);await reload();}}
+
+async function campStartNow(id,name,btn){
+  if((DASH.control||{}).dryRun){if(!confirm("Dry-run is ON \u2014 this will validate only and NOT actually change the start date.\n\nContinue anyway?"))return;}
+  else if(!confirm("Start \u201c"+name+"\u201d now?\n\nThis moves the campaign\u2019s start date to today (in your account timezone) so it can begin serving immediately. The end date is unchanged."))return;
+  btnBusy(btn,"Starting\u2026");var aid=actStart("startNow",{verb:"Moving start date to today"});
+  try{var r=await api("startNow",{id:id});
+    if(r&&r.ok){
+      if(r.dryRun){actEnd(aid);toast("Validated (dry-run) \u2014 start date NOT changed. Turn off dry-run to apply.");await reload();return;}
+      toast("\u201c"+name+"\u201d set to start today \u2713",true);
+      if(DASH.lastMetrics){var cc=DASH.lastMetrics.find(function(c){return String(c.id)===String(id);});if(cc){if(r.startDate)cc.startDate=r.startDate;cc.primaryStatus=null;cc.primaryStatusReasons=[];}}
+      actEnd(aid);renderAll();
+      if(typeof oppLoaded!=="undefined"&&oppLoaded&&!oppPollTimer)loadOpportunities(false);
+    } else { actEnd(aid);toast("Failed: "+((r&&r.error)||"unknown")); await reload(); }
+  }catch(x){actEnd(aid);toast(x.message);await reload();}
+}
 
 /* ---- render: bench ---- */
 var benchLoaded=false; var OCC=[];
