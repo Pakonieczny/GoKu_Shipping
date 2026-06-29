@@ -260,6 +260,46 @@ table.ptable tr.pdetail>td{border-bottom:2px solid var(--line)}
 .gatecard .logo{font-family:var(--serif);font-size:20px}.gatecard .logo b{color:var(--gold)}
 .gatecard .tag{font-size:10px;letter-spacing:.22em;text-transform:uppercase;color:var(--ink-45)}
 
+/* ---- base spinner (was only scoped to .runbar; now global) ---- */
+.spin{display:inline-block;width:16px;height:16px;border-radius:50%;border:2px solid var(--ink-25);border-top-color:var(--gold);animation:spin .7s linear infinite;vertical-align:middle;box-sizing:border-box}
+.spin.sm{width:12px;height:12px}
+.spin.lg{width:30px;height:30px;border-width:3px}
+.spin.gold{border-color:var(--gold-line);border-top-color:var(--gold)}
+.spin.light{border-color:rgba(244,236,220,.28);border-top-color:#f4ecdc}
+.spin.ink{border-color:var(--ink-25);border-top-color:var(--ink)}
+
+/* ---- inline button spinner (keeps the label visible) ---- */
+.btn .bspin{width:13px;height:13px;border-width:2px;margin-right:7px;border-color:rgba(28,26,23,.22);border-top-color:currentColor;position:relative;top:1px}
+.btn.gold .bspin{border-color:rgba(42,32,19,.28);border-top-color:#2a2013}
+.btn[disabled]{opacity:.62;cursor:default}
+.btn.is-busy{cursor:progress}
+
+/* ---- global activity bar (sticky, top of app content) ---- */
+.actbar{display:none;align-items:center;gap:11px;position:sticky;top:10px;z-index:60;background:linear-gradient(95deg,#262019,#332a20);color:#f4ecdc;border-radius:12px;padding:11px 15px;margin-bottom:16px;box-shadow:0 10px 26px rgba(0,0,0,.20);border:1px solid var(--velvet-line)}
+.actbar.show{display:flex;animation:tin .22s ease}
+.actbar .alabel{font-weight:600;font-size:13.5px;white-space:nowrap}
+.actbar .adetail{font-size:12px;opacity:.72;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.actbar .acount{font-family:var(--mono);font-size:11px;opacity:.6;white-space:nowrap}
+.actbar .aeta{margin-left:auto;font-family:var(--mono);font-size:11px;background:rgba(244,236,220,.13);padding:3px 9px;border-radius:999px;white-space:nowrap;flex:none}
+
+/* ---- panel loading block (lists / selects-area / in-row) ---- */
+.lblock{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:9px;padding:32px 18px;color:var(--ink-45);min-height:120px}
+.lblock .lv{font-weight:600;color:var(--ink);font-size:14px}
+.lblock .ld{font-size:12.5px;color:var(--ink-70);max-width:380px;line-height:1.45}
+.lblock .leta{font-family:var(--mono);font-size:11px;color:var(--ink-45);background:var(--card-2);border:1px solid var(--line);padding:3px 11px;border-radius:999px;display:inline-flex;align-items:center;gap:6px}
+.lrow{display:flex;align-items:center;gap:9px;color:var(--ink-70);font-size:13px}
+
+/* ---- animated step list (long AI ops) ---- */
+.steps{display:flex;flex-direction:column;gap:7px;margin:6px 0}
+.steprow{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--ink-45);transition:color .2s,opacity .2s}
+.steprow .sdot{width:15px;height:15px;flex:none;display:inline-flex;align-items:center;justify-content:center;font-size:13px}
+.steprow.pending{opacity:.5}
+.steprow.active{color:var(--ink)}
+.steprow.done{color:var(--ink-70)}
+.steprow.done .sdot{color:var(--sage);font-weight:800}
+.lhint{font-size:11.5px;color:var(--ink-45);margin-top:8px}
+.lhint b{color:var(--ink-70);font-weight:600}
+
 </style>
 </head>
 <body>
@@ -293,6 +333,7 @@ table.ptable tr.pdetail>td{border-bottom:2px solid var(--line)}
     </header>
 
     <div id="convHealthBar" style="display:none"></div>
+    <div class="actbar" id="actbar" role="status" aria-live="polite"></div>
 
     <section class="view" id="v-command">
       <div class="runbar" id="runbar"><span class="spin"></span><span class="step" id="runstep">working…</span></div>
@@ -404,6 +445,72 @@ function pctTxt(n){ return (n>0?"+":"")+(Number(n)||0).toFixed(0)+"%"; }
 function esc(s){ return String(s==null?"":s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
 function toast(msg,ok){const t=elFrom('<div class="toast '+(ok?"ok":"")+'"><span class="d"></span><span>'+esc(msg)+'</span></div>');$("#toasts").appendChild(t);setTimeout(()=>{t.style.opacity=0;t.style.transform="translateX(20px)";setTimeout(()=>t.remove(),250);},3200);}
 
+/* ============================ loading subsystem ============================ */
+/* Central copy for every async action: what's happening, how long, what you get. */
+var LOADINFO={
+  dashboard:{verb:"Loading your dashboard",detail:"Campaigns, metrics & approvals",eta:"~2s"},
+  measureNow:{verb:"Pulling live data from Google Ads",detail:"Current campaign metrics",eta:"3\u20136s"},
+  analyzeCampaign:{verb:"Analyzing campaign with AI",detail:"Researching the metrics, then writing specific moves",eta:"20\u201340s"},
+  generate:{verb:"Generating campaign with AI",detail:"On-brand copy + keywords, queued to Approvals as paused",eta:"20\u201340s"},
+  occasions:{verb:"Suggesting occasions with AI",detail:"From your history, catalog & the calendar",eta:"10\u201320s"},
+  collections:{verb:"Loading collections",detail:"From your Shopify catalog",eta:"2\u20135s"},
+  opportunities:{verb:"Scanning for opportunities",detail:"Cross-referencing catalog, calendar & past results",eta:"up to a minute"},
+  approve:{verb:"Approving \u2192 Google Ads",detail:"Creating the campaign (starts paused)",eta:"3\u20138s"},
+  apply:{verb:"Creating in Google Ads",detail:"Building the campaign (starts paused)",eta:"3\u20138s"},
+  retryStuck:{verb:"Retrying stuck drafts",detail:"Re-sending approved campaigns to Google Ads",eta:"5\u201315s"},
+  reject:{verb:"Removing draft",detail:"",eta:"1\u20132s"},
+  setBudget:{verb:"Updating budget in Google Ads",detail:"",eta:"2\u20134s"},
+  setStatus:{verb:"Updating campaign in Google Ads",detail:"",eta:"2\u20134s"},
+  syncConversions:{verb:"Syncing conversions",detail:"Uploading purchases & refund adjustments to Google Ads",eta:"3\u20138s"},
+  conversionHealth:{verb:"Re-checking conversion tracking",detail:"Querying Google Ads conversion status",eta:"3\u20138s"},
+  resume:{verb:"Starting autopilot",detail:"",eta:"~2s"},
+  kill:{verb:"Stopping autopilot",detail:"",eta:"~2s"},
+  dryRun:{verb:"Switching dry-run mode",detail:"",eta:"~2s"},
+  setControl:{verb:"Saving setting",detail:"",eta:"1\u20132s"},
+  runNow:{verb:"Running tasks now",detail:"Handing off to the background worker",eta:"~5s"}
+};
+function loadInfo(key,over){return Object.assign({verb:"Working",detail:"",eta:""},LOADINFO[key]||{},over||{});}
+
+/* --- global activity bar: a stack so concurrent ops still read clearly --- */
+var ACT={stack:[],seq:0};
+function actRender(){var bar=$("#actbar");if(!bar)return;var top=ACT.stack[ACT.stack.length-1];
+  if(!top){bar.classList.remove("show");bar.innerHTML="";return;}
+  var more=ACT.stack.length>1?'<span class="acount">+'+(ACT.stack.length-1)+'</span>':"";
+  bar.innerHTML='<span class="spin light"></span><span class="alabel">'+esc(top.verb)+'\u2026</span>'+
+    (top.detail?'<span class="adetail">'+esc(top.detail)+'</span>':"")+more+
+    (top.eta?'<span class="aeta">'+esc(top.eta)+'</span>':"");
+  bar.classList.add("show");}
+function actStart(key,over){var i=loadInfo(key,over);var id=++ACT.seq;ACT.stack.push({id:id,verb:i.verb,detail:i.detail,eta:i.eta});actRender();return id;}
+function actEnd(id){if(id==null)return;ACT.stack=ACT.stack.filter(function(t){return t.id!==id;});actRender();}
+
+/* --- button busy: swap to spinner+label, return done() to restore/finalize --- */
+function btnBusy(btn,label){if(!btn)return function(){};
+  var html=btn.innerHTML,dis=btn.disabled,cls=btn.className;
+  btn.disabled=true;btn.classList.add("is-busy");
+  btn.innerHTML='<span class="spin bspin"></span>'+(label!=null?esc(label):"");
+  return function(finalHTML){
+    if(finalHTML!=null){btn.classList.remove("is-busy");btn.innerHTML=finalHTML;btn.disabled=true;}
+    else{btn.innerHTML=html;btn.disabled=dis;btn.className=cls;}};}
+
+/* --- panel loader: drop a labelled spinner block into a container --- */
+function loadBlock(el,key,over){if(!el)return;var i=loadInfo(key,over);
+  el.innerHTML='<div class="lblock"><span class="spin lg gold"></span><div class="lv">'+esc(i.verb)+'\u2026</div>'+
+    (i.detail?'<div class="ld">'+esc(i.detail)+'</div>':"")+
+    (i.eta?'<div class="leta"><span class="spin sm"></span>about '+esc(i.eta)+'</div>':"")+'</div>';}
+
+/* --- step runner: animated checklist for long AI waits --- */
+function runSteps(el,steps,opts){opts=opts||{};
+  el.innerHTML='<div class="steps"></div>'+
+    (opts.eta||opts.result?'<div class="lhint">'+(opts.eta?'Estimated <b>'+esc(opts.eta)+'</b>':"")+(opts.result?(opts.eta?' \u00b7 ':"")+'you\u2019ll get <b>'+esc(opts.result)+'</b>':"")+'</div>':"");
+  var box=el.querySelector(".steps");
+  var rows=steps.map(function(s){var r=elFrom('<div class="steprow pending"><span class="sdot">\u25cb</span><span>'+esc(s)+'</span></div>');box.appendChild(r);return r;});
+  var i=-1;
+  function tick(){ if(i>=0&&rows[i]){rows[i].className="steprow done";rows[i].querySelector(".sdot").textContent="\u2713";}
+    i++; if(i<rows.length){rows[i].className="steprow active";rows[i].querySelector(".sdot").innerHTML='<span class="spin sm"></span>';} }
+  tick();
+  var iv=setInterval(function(){ if(i<rows.length-1)tick(); else clearInterval(iv); },opts.every||1700);
+  return {stop:function(ok){clearInterval(iv);if(ok!==false){rows.forEach(function(r){r.className="steprow done";var d=r.querySelector(".sdot");d.textContent="\u2713";});}}};}
+
 async function api(action, extra){
   const res = await fetch(ENDPOINT, { method:"POST",
     headers:{ "Content-Type":"application/json", "X-Edit-Passcode": PASS },
@@ -485,8 +592,8 @@ function renderConvHealth(){
       '<button class="btn ghost sm" id="convRecheck" style="border-color:'+bd+';color:'+bd+'">Re-check</button>'+
       '<button class="btn ghost sm" id="convSync" style="border-color:'+bd+';color:'+bd+'">Sync now</button>'+
     '</div>'+reasons+actionsList+fix+'</div>';
-  $("#convRecheck").onclick=async function(){ var b=this;b.disabled=true;b.textContent="Checking\u2026"; try{ var r=await api("conversionHealth",{force:true}); DASH.conversionHealth=r; renderConvHealth(); toast("Conversion tracking re-checked",true);}catch(e){b.disabled=false;b.textContent="Re-check";toast(e.message);} };
-  $("#convSync").onclick=async function(){ var b=this;b.disabled=true;b.textContent="Syncing\u2026"; try{ var r=await api("syncConversions",{}); if(r&&r.health)DASH.conversionHealth=r.health; renderConvHealth(); toast("Synced \u2014 "+(((r.uploaded||{}).uploaded)||0)+" conversions, "+(((r.adjustments||{}).uploaded)||0)+" adjustments",true);}catch(e){b.disabled=false;b.textContent="Sync now";toast(e.message);} };
+  $("#convRecheck").onclick=async function(){ var b=this;var done=btnBusy(b,"Checking\u2026");var aid=actStart("conversionHealth"); try{ var r=await api("conversionHealth",{force:true}); DASH.conversionHealth=r; renderConvHealth(); toast("Conversion tracking re-checked",true);}catch(e){done();toast(e.message);} actEnd(aid); };
+  $("#convSync").onclick=async function(){ var b=this;var done=btnBusy(b,"Syncing\u2026");var aid=actStart("syncConversions"); try{ var r=await api("syncConversions",{}); if(r&&r.health)DASH.conversionHealth=r.health; renderConvHealth(); toast("Synced \u2014 "+(((r.uploaded||{}).uploaded)||0)+" conversions, "+(((r.adjustments||{}).uploaded)||0)+" adjustments",true);}catch(e){done();toast(e.message);} actEnd(aid); };
 }
 function renderCommand(){
   var camps=DASH.lastMetrics||[];var t=totals(camps);var c=DASH.control||{};
@@ -536,7 +643,7 @@ function renderApprovals(){var list=$("#apprList");var p=DASH.pending||[];var st
     var banner=elFrom('<div class="card pad" style="border:1px solid var(--clay);background:var(--clay-soft);margin-bottom:14px"><div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--clay);white-space:nowrap">\u26a0 '+stuck.length+' approved draft'+(stuck.length>1?"s":"")+' didn\u2019t apply</span><span style="font-size:12.5px;color:var(--ink-70);flex:1;min-width:160px">Approved before a fix and errored on send. Retry to create them in Google Ads now (they\u2019ll start PAUSED).</span><button class="btn gold sm" id="retryAll">Retry all</button></div></div>');
     list.appendChild(banner);
     stuck.forEach(function(a){var c=stuckCard(a);c.querySelector(".draft__top").onclick=function(){c.classList.toggle("open");};list.appendChild(c);});
-    banner.querySelector("#retryAll").onclick=async function(){var btn=this;btn.textContent="\u2026";try{var r=await api("retryStuck",{});if(r&&r.error)toast("Retry failed: "+r.error);else{var f=(r.failed&&r.failed.length)||0;toast(r.dryRun?"Validated "+(r.tried||0)+" (dry-run) \u2014 nothing created":((r.applied||0)+" created"+(f?", "+f+" still failing":"")+" \u2713"),!f);}}catch(x){toast(x.message);}await reload();};
+    banner.querySelector("#retryAll").onclick=async function(){var btn=this;btnBusy(btn,"Retrying\u2026");var aid=actStart("retryStuck");try{var r=await api("retryStuck",{});if(r&&r.error)toast("Retry failed: "+r.error);else{var f=(r.failed&&r.failed.length)||0;toast(r.dryRun?"Validated "+(r.tried||0)+" (dry-run) \u2014 nothing created":((r.applied||0)+" created"+(f?", "+f+" still failing":"")+" \u2713"),!f);}}catch(x){toast(x.message);}actEnd(aid);await reload();};
   }
   if(!p.length&&!stuck.length){list.innerHTML='<div class="empty" style="height:240px"><div class="ring"></div><div>Queue\u2019s clear.</div><div style="font-size:12px">New drafts land here when the autopilot runs.</div></div>';return;}
   p.forEach(function(a){var pl=a.payload||{};var body='<div class="why"><span class="i">\ud83d\udca1</span><div><b>Why this:</b> '+esc(a.summary||"")+'</div></div>';
@@ -550,9 +657,9 @@ function renderApprovals(){var list=$("#apprList");var p=DASH.pending||[];var st
     var card=elFrom('<div class="draft"><div class="draft__top"><span class="tagk '+(a.type||"creative")+'">'+esc(a.type||"draft")+'</span><div><div class="ti">'+esc((a.summary||"").slice(0,80))+'</div><div class="me">'+(a.vetted?"vetted template":"needs review")+'</div></div><span class="chev">\u25be</span></div><div class="draft__body">'+body+'</div></div>');
     card.querySelector(".draft__top").onclick=()=>card.classList.toggle("open");list.appendChild(card);
   });
-  list.querySelectorAll("[data-ap]").forEach(b=>b.onclick=async e=>{e.stopPropagation();b.textContent="\u2026";try{var r=await api("approve",{id:b.dataset.ap});if(r&&r.error){toast("Apply failed: "+r.error);}else{toast((DASH.control||{}).dryRun?"Validated (dry-run) \u2014 nothing applied":"Approved & sent to Google Ads \u2713",true);}}catch(x){toast(x.message);}await reload();});
-  list.querySelectorAll("[data-retry]").forEach(b=>b.onclick=async e=>{e.stopPropagation();b.textContent="\u2026";try{var r=await api("apply",{id:b.dataset.retry});if(r&&r.error){toast("Still failing: "+r.error);}else{toast((DASH.control||{}).dryRun?"Validated (dry-run) \u2014 nothing created":"Created in Google Ads \u2713",true);}}catch(x){toast(x.message);}await reload();});
-  list.querySelectorAll("[data-rj]").forEach(b=>b.onclick=async e=>{e.stopPropagation();try{await api("reject",{id:b.dataset.rj});toast("Removed");}catch(x){toast(x.message);}await reload();});
+  list.querySelectorAll("[data-ap]").forEach(b=>b.onclick=async e=>{e.stopPropagation();btnBusy(b,"Sending\u2026");var aid=actStart("approve");try{var r=await api("approve",{id:b.dataset.ap});if(r&&r.error){toast("Apply failed: "+r.error);}else{toast((DASH.control||{}).dryRun?"Validated (dry-run) \u2014 nothing applied":"Approved & sent to Google Ads \u2713",true);}}catch(x){toast(x.message);}actEnd(aid);await reload();});
+  list.querySelectorAll("[data-retry]").forEach(b=>b.onclick=async e=>{e.stopPropagation();btnBusy(b,"Creating\u2026");var aid=actStart("apply");try{var r=await api("apply",{id:b.dataset.retry});if(r&&r.error){toast("Still failing: "+r.error);}else{toast((DASH.control||{}).dryRun?"Validated (dry-run) \u2014 nothing created":"Created in Google Ads \u2713",true);}}catch(x){toast(x.message);}actEnd(aid);await reload();});
+  list.querySelectorAll("[data-rj]").forEach(b=>b.onclick=async e=>{e.stopPropagation();btnBusy(b,"Removing\u2026");var aid=actStart("reject");try{await api("reject",{id:b.dataset.rj});toast("Removed");}catch(x){toast(x.message);}actEnd(aid);await reload();});
 }
 
 /* ---- render: performance (sortable, expandable, AI-analyzed) ---- */
@@ -596,7 +703,7 @@ function detailHtml(c){
     '<button class="btn '+(en?"ghost":"gold")+' sm pstat" data-id="'+c.id+'" data-name="'+esc(c.name)+'" data-budget="'+(c.budget||0)+'" data-to="'+(en?"PAUSED":"ENABLED")+'">'+(en?"Pause":"Enable")+'</button>'+
     '<button class="btn ghost sm pstat" data-id="'+c.id+'" data-name="'+esc(c.name)+'" data-budget="0" data-to="REMOVED" style="border-color:var(--clay);color:var(--clay)">Archive</button></div></div>';
   var anaCol;
-  if(P.loading[c.id])anaCol='<div style="display:flex;align-items:center;gap:10px;color:var(--ink-45);font-size:13px"><span class="spin"></span>Researching this campaign\u2019s metrics\u2026</div>';
+  if(P.loading[c.id])anaCol='<div class="lrow"><span class="spin gold"></span><div><div style="font-weight:600;color:var(--ink)">Analyzing this campaign with AI\u2026</div><div style="font-size:11.5px;color:var(--ink-70)">Researching the metrics, then writing specific moves \u00b7 <span class="mono">20\u201340s</span></div></div></div>';
   else if(P.analysis[c.id])anaCol=analysisHtml(c,P.analysis[c.id]);
   else anaCol='<div><button class="btn gold sm panalyze" data-id="'+c.id+'">\u2728 Analyze with AI</button><div class="muted" style="font-size:11.5px;margin-top:6px">Researches this campaign\u2019s metrics &amp; recommends specific optimizations.</div></div>';
   return '<div class="grid two" style="gap:20px;align-items:start"><div>'+budCol+'</div><div>'+anaCol+'</div></div>';
@@ -614,62 +721,71 @@ function wirePerf(){
   var T=$("#ptable");
   T.querySelectorAll(".pexp").forEach(function(e){e.onclick=function(){var id=e.dataset.id;P.expanded[id]=!P.expanded[id];renderPerf();if(P.expanded[id]&&!P.analysis[id]&&!P.loading[id])doAnalyze(id,false);};});
   T.querySelectorAll(".pbud").forEach(function(s){s.oninput=function(){T.querySelector('.pbudv[data-id="'+s.dataset.id+'"]').textContent=money(s.value);};});
-  T.querySelectorAll(".psave").forEach(function(b){b.onclick=function(){var s=T.querySelector('.pbud[data-id="'+b.dataset.id+'"]');setBudget(b.dataset.id,+s.value,b.dataset.res);};});
-  T.querySelectorAll(".papply").forEach(function(b){b.onclick=function(){setBudget(b.dataset.id,+b.dataset.budget,b.dataset.res);};});
-  T.querySelectorAll(".pstat").forEach(function(b){b.onclick=function(){campStatus(b.dataset.id,b.dataset.name,b.dataset.budget,b.dataset.to);};});
+  T.querySelectorAll(".psave").forEach(function(b){b.onclick=function(){var s=T.querySelector('.pbud[data-id="'+b.dataset.id+'"]');setBudget(b.dataset.id,+s.value,b.dataset.res,b);};});
+  T.querySelectorAll(".papply").forEach(function(b){b.onclick=function(){setBudget(b.dataset.id,+b.dataset.budget,b.dataset.res,b);};});
+  T.querySelectorAll(".pstat").forEach(function(b){b.onclick=function(){campStatus(b.dataset.id,b.dataset.name,b.dataset.budget,b.dataset.to,b);};});
   T.querySelectorAll(".panalyze").forEach(function(b){b.onclick=function(){doAnalyze(b.dataset.id,true);};});
 }
-async function doAnalyze(id,force){P.loading[id]=true;renderPerf();
+async function doAnalyze(id,force){P.loading[id]=true;renderPerf();var aid=actStart("analyzeCampaign");
   try{var r=await api("analyzeCampaign",{id:id,force:!!force});if(r&&!r.error)P.analysis[id]=r;else toast((r&&r.error)||"analysis failed");}
   catch(x){toast(x.message);}
-  P.loading[id]=false;renderPerf();}
-async function setBudget(id,amt,res){
+  actEnd(aid);P.loading[id]=false;renderPerf();}
+async function setBudget(id,amt,res,btn){
   if((DASH.control||{}).dryRun){if(!confirm("Dry-run is ON \u2014 this will validate only and NOT change the budget. Continue?"))return;}
   else if(!confirm("Set daily budget to "+money(amt)+"?\n\nThis changes real spend."))return;
+  btnBusy(btn,"Saving\u2026");var aid=actStart("setBudget");
   try{var r=await api("setBudget",{id:id,budget:amt,budgetRes:res||undefined});
     if(r&&r.ok){if(r.dryRun)toast("Validated (dry-run) \u2014 budget NOT changed.");else toast("Budget set to "+money(amt),true);}
     else toast("Failed: "+((r&&r.error)||"unknown"));}
   catch(x){toast(x.message);}
-  await reload();}
-async function campStatus(id,name,budget,status){
+  actEnd(aid);await reload();}
+async function campStatus(id,name,budget,status,btn){
   if((DASH.control||{}).dryRun){if(!confirm("Dry-run is ON \u2014 this will validate only and NOT actually change the campaign.\n\nContinue anyway?"))return;}
   else if(status==="ENABLED"){if(!confirm("Enable \u201c"+name+"\u201d?\n\nIt will start serving ads and spending up to "+money(budget)+"/day of REAL budget."))return;}
   else if(status==="REMOVED"){if(!confirm("Archive / remove \u201c"+name+"\u201d?\n\nThis STOPS the campaign and removes it from Google Ads. It CANNOT be undone or re-enabled (history is kept for reporting). To only pause it, cancel and use Pause instead."))return;}
   else {if(!confirm("Pause \u201c"+name+"\u201d?\n\nIt will stop serving ads."))return;}
+  var ing=status==="ENABLED"?"Enabling\u2026":status==="REMOVED"?"Archiving\u2026":"Pausing\u2026";
+  btnBusy(btn,ing);var aid=actStart("setStatus",{verb:(status==="ENABLED"?"Enabling campaign":status==="REMOVED"?"Archiving campaign":"Pausing campaign")});
   try{var r=await api("setStatus",{id:id,status:status});
     if(r&&r.ok){
-      if(r.dryRun){toast("Validated (dry-run) \u2014 status NOT changed. Turn off dry-run to apply.");await reload();return;}
+      if(r.dryRun){actEnd(aid);toast("Validated (dry-run) \u2014 status NOT changed. Turn off dry-run to apply.");await reload();return;}
       var verb=status==="ENABLED"?"Enabled":status==="REMOVED"?"Archived":"Paused";
       toast(verb+" \u201c"+name+"\u201d \u2713",true);
       if(DASH.lastMetrics){ if(status==="REMOVED"){DASH.lastMetrics=DASH.lastMetrics.filter(function(c){return String(c.id)!==String(id);});delete P.expanded[id];} else {var cc=DASH.lastMetrics.find(function(c){return String(c.id)===String(id);});if(cc)cc.status=status;} }
-      renderAll();
-    } else { toast("Failed: "+((r&&r.error)||"unknown")); await reload(); }
-  }catch(x){toast(x.message);await reload();}}
+      actEnd(aid);renderAll();
+    } else { actEnd(aid);toast("Failed: "+((r&&r.error)||"unknown")); await reload(); }
+  }catch(x){actEnd(aid);toast(x.message);await reload();}}
 
 /* ---- render: bench ---- */
 var benchLoaded=false; var OCC=[];
 async function ensureBench(){ if(benchLoaded)return; benchLoaded=true; $("#curLab").textContent="("+cur()+")"; await loadCollections(false); await loadOccasions(false); }
 async function loadCollections(force){var cs=$("#bColl");cs.innerHTML='<option>loading collections…</option>';cs.disabled=true;
+  var aid=force?actStart("collections"):null;var rb=$("#bCollRefresh");if(rb&&force)rb.disabled=true;
   try{var r=await api("collections",{force:!!force});var list=(r&&r.collections)||[];cs.innerHTML="";
-    if(!list.length){cs.innerHTML='<option value="">no collections found</option>';return;}
-    list.forEach(c=>cs.add(new Option(c.title,c.handle)));cs.disabled=false;if(force)toast("Collections refreshed from Shopify",true);
-  }catch(x){cs.innerHTML='<option value="">error loading</option>';toast(x.message);}}
+    if(!list.length){cs.innerHTML='<option value="">no collections found</option>';}
+    else{list.forEach(c=>cs.add(new Option(c.title,c.handle)));cs.disabled=false;if(force)toast("Collections refreshed from Shopify",true);}
+  }catch(x){cs.innerHTML='<option value="">error loading</option>';toast(x.message);}
+  actEnd(aid);if(rb)rb.disabled=false;}
 async function loadOccasions(force){var es=$("#bEvent");var prev=es.value;es.innerHTML='<option>thinking… ✨</option>';es.disabled=true;$("#bOccWhy").textContent=force?"generating suggestions from history + season…":"";
+  var aid=force?actStart("occasions"):null;var rb=$("#bOccRefresh");if(rb&&force)rb.disabled=true;
   try{var coll=$("#bColl").value;var r=await api("occasions",{coll:coll,force:!!force});OCC=(r&&r.occasions)||[];es.innerHTML="";
-    if(!OCC.length){es.innerHTML='<option value="Evergreen gifting">Evergreen gifting</option>';es.disabled=false;return;}
-    OCC.forEach(function(o){var star=o.proven?"★ ":"";var d=(o.daysOut!=null&&o.daysOut>0)?(" · "+o.daysOut+"d"):"";var rec=o.recommendation?(" · "+o.recommendation):"";es.add(new Option(star+o.label+d+rec,o.label));});
+    if(!OCC.length){es.innerHTML='<option value="Evergreen gifting">Evergreen gifting</option>';es.disabled=false;}
+    else{OCC.forEach(function(o){var star=o.proven?"★ ":"";var d=(o.daysOut!=null&&o.daysOut>0)?(" · "+o.daysOut+"d"):"";var rec=o.recommendation?(" · "+o.recommendation):"";es.add(new Option(star+o.label+d+rec,o.label));});
     es.disabled=false;if(prev){for(var i=0;i<es.options.length;i++){if(es.options[i].value===prev){es.selectedIndex=i;break;}}}
-    showOccWhy();if(force)toast("Occasions regenerated",true);
-  }catch(x){es.innerHTML='<option value="">error</option>';toast(x.message);}}
+    showOccWhy();if(force)toast("Occasions regenerated",true);}
+  }catch(x){es.innerHTML='<option value="">error</option>';toast(x.message);}
+  actEnd(aid);if(rb)rb.disabled=false;}
 function showOccWhy(){var v=$("#bEvent").value;var o=OCC.find(x=>x.label===v);$("#bOccWhy").textContent=o&&o.why?("— "+o.why):"";}
 async function generateBench(){var coll=$("#bColl").value,collT=$("#bColl").selectedOptions[0].text,ev=$("#bEvent").value,bud=$("#bBudget").value;var out=$("#benchOut");
+  var gb=$("#bGen");var gdone=btnBusy(gb,"Generating\u2026");var aid=actStart("generate");
   out.innerHTML='<div class="card__h"><h3>Generating · '+esc(collT)+' × '+esc(ev)+'</h3></div><div id="genlog"></div>';
-  var steps=["Calling OpenAI for on-brand copy…","Clamping headlines/descriptions…","Running brand-safety filter…","Building campaign & queuing paused…"];var log=$("#genlog");var i=0;
-  var iv=setInterval(()=>{if(i<steps.length){log.insertAdjacentHTML("beforeend",'<div class="genrow"><span class="tick">✓</span>'+steps[i]+'</div>');i++;}},220);
-  try{ var r=await api("generate",{coll:coll,event:ev,budget:+bud}); clearInterval(iv);
-    if(!r.ok){ out.innerHTML='<div class="why" style="background:var(--clay-soft);border-color:#e7c9bf"><span class="i">⚠</span><div>'+esc(r.reason||"generation failed")+'</div></div>'; return; }
+  var steps=["Researching the collection & past results","Writing on-brand headlines & descriptions","Clamping lengths and brand-safety check","Building the campaign & queuing it paused"];
+  var runner=runSteps($("#genlog"),steps,{eta:"20\u201340s",result:"a paused draft in Approvals"});
+  try{ var r=await api("generate",{coll:coll,event:ev,budget:+bud}); runner.stop();
+    if(!r.ok){ out.innerHTML='<div class="why" style="background:var(--clay-soft);border-color:#e7c9bf"><span class="i">⚠</span><div>'+esc(r.reason||"generation failed")+'</div></div>'; actEnd(aid);gdone();return; }
     showDraft(r);
-  }catch(x){ clearInterval(iv); out.innerHTML='<div class="why" style="background:var(--clay-soft);border-color:#e7c9bf"><span class="i">⚠</span><div>'+esc(x.message)+'</div></div>'; }
+  }catch(x){ runner.stop(false); out.innerHTML='<div class="why" style="background:var(--clay-soft);border-color:#e7c9bf"><span class="i">⚠</span><div>'+esc(x.message)+'</div></div>'; }
+  actEnd(aid);gdone();
 }
 function showDraft(r){var a=r.assets||{};var out=$("#benchOut");
   out.innerHTML='<div class="card__h"><h3>Draft queued · '+esc(r.title)+(r.event?" × "+esc(r.event):"")+'</h3><span class="sub">'+esc(r.tag||"")+'</span></div>'+
@@ -688,7 +804,8 @@ var oppPollTimer=null;
 async function loadOpportunities(force){
   var box=$("#oppList"); $("#oppScan").disabled=true;
   if(oppPollTimer){clearInterval(oppPollTimer);oppPollTimer=null;}
-  box.innerHTML='<div class="empty" style="height:210px"><div class="spin" style="margin:0 auto 4px"></div><div>'+(force?"Scanning your catalog, calendar &amp; history\u2026 (up to a minute)":"Loading\u2026")+'</div><div style="font-size:12px">Cross-checking each idea against Approvals &amp; live Google Ads campaigns.</div></div>';
+  box.innerHTML='<div class="empty" style="height:210px"><span class="spin lg gold"></span><div style="font-weight:600;color:var(--ink)">'+(force?"Scanning your catalog, calendar &amp; history\u2026":"Loading\u2026")+'</div><div style="font-size:12px">Cross-checking each idea against Approvals &amp; live Google Ads campaigns.'+(force?' <span class="mono">up to a minute</span>':"")+'</div></div>';
+  var scanAct=force?actStart("opportunities"):null;
   try{
     var r=await api("opportunities",{force:!!force});
     OPPS=(r&&r.opportunities)||[]; setOppMeta(r&&r.scannedAt);
@@ -697,7 +814,7 @@ async function loadOpportunities(force){
     // results immediately, then poll until a fresher scan lands.
     var prevAt=(r&&r.scannedAt)||0;
     if(OPPS.length){ renderOpportunities(); }
-    else { box.innerHTML='<div class="empty" style="height:210px"><div class="spin" style="margin:0 auto 4px"></div><div>Scanning\u2026 new opportunities in ~1 min.</div><div style="font-size:12px">You can leave this tab \u2014 results appear automatically.</div></div>'; }
+    else { box.innerHTML='<div class="empty" style="height:210px"><span class="spin lg gold"></span><div style="font-weight:600;color:var(--ink)">Scanning\u2026 new opportunities in ~1 min.</div><div style="font-size:12px">You can leave this tab \u2014 results appear automatically.</div></div>'; }
     var tries=0;
     oppPollTimer=setInterval(async function(){
       tries++;
@@ -705,18 +822,18 @@ async function loadOpportunities(force){
         var p=await api("opportunities",{cacheOnly:true});
         var at=(p&&p.scannedAt)||0;
         if(at>prevAt && !(p&&p.scanning)){
-          clearInterval(oppPollTimer); oppPollTimer=null;
+          clearInterval(oppPollTimer); oppPollTimer=null; actEnd(scanAct);
           OPPS=(p&&p.opportunities)||[]; setOppMeta(at); renderOpportunities();
           toast("Re-scanned \u2014 "+OPPS.length+" opportunities",true);
           $("#oppScan").disabled=false;
         } else if(tries>=36){
-          clearInterval(oppPollTimer); oppPollTimer=null; $("#oppScan").disabled=false;
+          clearInterval(oppPollTimer); oppPollTimer=null; actEnd(scanAct); $("#oppScan").disabled=false;
           if(!OPPS.length) box.innerHTML='<div class="empty" style="height:160px"><div>Scan is taking longer than usual.</div><div style="font-size:12px">Give it a moment and hit Scan again.</div></div>';
           else toast("Scan still running \u2014 results will refresh shortly.");
         }
-      }catch(e){ if(tries>=36){clearInterval(oppPollTimer); oppPollTimer=null; $("#oppScan").disabled=false;} }
+      }catch(e){ if(tries>=36){clearInterval(oppPollTimer); oppPollTimer=null; actEnd(scanAct); $("#oppScan").disabled=false;} }
     },5000);
-  }catch(x){ box.innerHTML='<div class="empty" style="height:160px"><div>Scan failed.</div><div style="font-size:12px">'+esc(x.message)+'</div></div>'; $("#oppScan").disabled=false; }
+  }catch(x){ actEnd(scanAct); box.innerHTML='<div class="empty" style="height:160px"><div>Scan failed.</div><div style="font-size:12px">'+esc(x.message)+'</div></div>'; $("#oppScan").disabled=false; }
 }
 function setOppMeta(scannedAt){ var u=OPPS.filter(function(o){return !o.acted;}).length; $("#oppMeta").textContent=OPPS.length?(u+" unused \u00b7 "+(OPPS.length-u)+" in use"+(scannedAt?" \u00b7 scanned "+timeago(scannedAt)+" ago":"")):""; }
 function priMeta(p){ return p==="high"?["High priority","var(--gold-soft)","#7a5a1d"]:p==="medium"?["Medium","var(--sage-soft)","#3c5a39"]:["Test","var(--slate-soft)","#33525d"]; }
@@ -798,13 +915,14 @@ async function launchOpp(i,btn){ var o=OPPS[i]; if(!o)return; var scope=$("#oppC
   var bud=+scope.querySelector('.opBud[data-i="'+i+'"]').value; var msg=scope.querySelector('.opMsg[data-i="'+i+'"]');
   var se=scope.querySelector('.opStart[data-i="'+i+'"]'), ee=scope.querySelector('.opEnd[data-i="'+i+'"]');
   var startDate=se?se.value:(o.startDate||""), endDate=ee?ee.value:(o.endDate||"");
-  btn.disabled=true; btn.textContent="Generating\u2026"; if(msg)msg.textContent="";
+  btnBusy(btn,"Generating\u2026"); var aid=actStart("generate"); if(msg)msg.innerHTML='<span class="spin sm"></span> writing copy & building the campaign\u2026 <span class="mono">20\u201340s</span>';
   try{ var r=await api("generate",{coll:o.collectionHandle,event:o.occasion,budget:bud,startDate:startDate,endDate:endDate});
-    if(r&&r.ok){ btn.textContent="Queued \u2713"; btn.classList.remove("gold"); if(msg)msg.innerHTML=' in <a href="#" onclick="go(&#39;approvals&#39;);return false" style="color:var(--gold)">Approvals</a> \u00b7 '+((r.assets&&r.assets.headlines)?r.assets.headlines.length:0)+' headlines, paused';
+    if(r&&r.ok){ btn.classList.remove("is-busy");btn.disabled=true;btn.innerHTML="Queued \u2713"; btn.classList.remove("gold"); if(msg)msg.innerHTML=' in <a href="#" onclick="go(&#39;approvals&#39;);return false" style="color:var(--gold)">Approvals</a> \u00b7 '+((r.assets&&r.assets.headlines)?r.assets.headlines.length:0)+' headlines, paused';
       o.acted={where:"approval",status:"PENDING"}; reload();
       setTimeout(function(){ setOppMeta(); renderOpportunities(); }, 1500);
-    } else { btn.disabled=false; btn.textContent="Generate campaign"; if(msg)msg.textContent=" "+((r&&r.reason)||"failed"); }
-  }catch(x){ btn.disabled=false; btn.textContent="Generate campaign"; if(msg)msg.textContent=" "+x.message; }
+    } else { btn.classList.remove("is-busy");btn.disabled=false; btn.innerHTML="Generate campaign"; if(msg)msg.textContent=" "+((r&&r.reason)||"failed"); }
+  }catch(x){ btn.classList.remove("is-busy");btn.disabled=false; btn.innerHTML="Generate campaign"; if(msg)msg.textContent=" "+x.message; }
+  actEnd(aid);
 }
 
 /* ---- render: controls ---- */
@@ -819,9 +937,9 @@ function renderControls(){var c=DASH.control||{};
   $("#termChips").innerHTML=(DASH.terms||[]).map(t=>'<span class="chip x">'+esc(t)+'</span>').join("")||'<span class="muted" style="font-size:12px">none set</span>';
 }
 function bindControlsOnce(){
-  $("#swLive").onclick=async()=>{var on=!$("#swLive").classList.contains("on");try{await api(on?"resume":"kill");toast("Autopilot "+(on?"live":"stopped"),on);}catch(x){toast(x.message);}await reload();};
-  $("#swDry").onclick=async()=>{var on=!$("#swDry").classList.contains("on");try{await api("dryRun",{on:on});toast("Dry-run "+(on?"on":"off"),on);}catch(x){toast(x.message);}await reload();};
-  $("#swAuto").onclick=async()=>{var on=!$("#swAuto").classList.contains("on");try{await api("setControl",{patch:{autoApproveVettedTemplates:on}});toast("Auto-approve "+(on?"on":"off"),on);}catch(x){toast(x.message);}await reload();};
+  $("#swLive").onclick=async()=>{var on=!$("#swLive").classList.contains("on");var aid=actStart(on?"resume":"kill");try{await api(on?"resume":"kill");toast("Autopilot "+(on?"live":"stopped"),on);}catch(x){toast(x.message);}actEnd(aid);await reload();};
+  $("#swDry").onclick=async()=>{var on=!$("#swDry").classList.contains("on");var aid=actStart("dryRun");try{await api("dryRun",{on:on});toast("Dry-run "+(on?"on":"off"),on);}catch(x){toast(x.message);}actEnd(aid);await reload();};
+  $("#swAuto").onclick=async()=>{var on=!$("#swAuto").classList.contains("on");var aid=actStart("setControl",{verb:"Saving auto-approve"});try{await api("setControl",{patch:{autoApproveVettedTemplates:on}});toast("Auto-approve "+(on?"on":"off"),on);}catch(x){toast(x.message);}actEnd(aid);await reload();};
   function slider(id,vid,fmt,key,map){var r=$("#"+id),v=$("#"+vid);r.oninput=()=>{v.textContent=fmt(r.value);};r.onchange=async()=>{try{await api("setControl",{patch:{[key]:map(r.value)}});toast("Saved",true);}catch(x){toast(x.message);}};}
   slider("cCeil","cCeilV",v=>money(v),"maxDailyBudgetTotal",v=>+v);
   slider("cStep","cStepV",v=>v+"%","maxBudgetStepPct",v=>+v);
@@ -829,22 +947,24 @@ function bindControlsOnce(){
   slider("cAppr","cApprV",v=>v+"%","budgetMoveApprovalPct",v=>+v);
   var bb=$("#bBudget");bb.oninput=()=>$("#bBudgetV").textContent="$"+bb.value;
   $("#oppScan").onclick=()=>loadOpportunities(true);var cw=$("#customWrap");if(cw)cw.addEventListener("toggle",function(){if(cw.open)ensureBench();});$("#bColl").onchange=()=>loadOccasions(false);$("#bEvent").onchange=showOccWhy;$("#bOccRefresh").onclick=()=>loadOccasions(true);$("#bCollRefresh").onclick=()=>loadCollections(true);$("#bGen").onclick=generateBench;
-  $("#btnRefresh").onclick=async function(){var b=$("#btnRefresh");var t=b.textContent;b.textContent="Refreshing\u2026";b.disabled=true;
+  $("#btnRefresh").onclick=async function(){var b=$("#btnRefresh");var done=btnBusy(b,"Refreshing\u2026");var aid=actStart("measureNow");
     try{var r=await api("measureNow");if(r&&r.ok===false){toast("Live pull failed: "+(r.error||"unknown"));}else{toast("Pulled "+(((r&&r.campaigns)!=null)?r.campaigns+" campaigns ":"")+"live from Google Ads",true);}}
     catch(x){toast("Live pull error: "+x.message);}
-    b.textContent=t;b.disabled=false;await reload();};
+    actEnd(aid);done();await reload();};
 }
-async function runNow(tasks){$("#runMsg").textContent=" running…";try{var r=await api("runNow",{tasks:tasks});$("#runMsg").textContent=" "+(r.status||"")+" ["+tasks.join(",")+"] — refreshing in ~5s";setTimeout(()=>reload(),5000);}catch(x){$("#runMsg").textContent=" "+x.message;}}
+async function runNow(tasks){$("#runMsg").textContent=" running…";var aid=actStart("runNow",{detail:tasks.join(", ")});try{var r=await api("runNow",{tasks:tasks});$("#runMsg").textContent=" "+(r.status||"")+" ["+tasks.join(",")+"] — refreshing in ~5s";setTimeout(()=>reload(),5000);}catch(x){$("#runMsg").textContent=" "+x.message;}actEnd(aid);}
 
 /* ---- load / reload ---- */
 async function reload(toastOk){try{DASH=await api("dashboard");renderAll();$("#connDot").style.background="var(--sage)";$("#connText").textContent="connected";lastSync=Date.now();if(toastOk)toast("Refreshed",true);}catch(x){$("#connDot").style.background="var(--clay)";$("#connText").textContent="error";toast(x.message);}}
 function renderAll(){renderControlBar();renderConvHealth();renderCommand();renderApprovals();renderPerf();renderControls();updateBadges();}
 
 async function unlock(e){e.preventDefault();PASS=$("#pc").value;$("#gateErr").textContent="";
+  var gb=$(".gatecard button[type=submit]");var gdone=btnBusy(gb,"Connecting\u2026");var aid=actStart("dashboard");
   try{ DASH=await api("dashboard"); $("#gate").style.display="none";$("#app").style.display="grid";
     buildNav();bindControlsOnce();renderAll();go("command");lastSync=Date.now();
     if(timer)clearInterval(timer);timer=setInterval(()=>{$("#sync").textContent="synced "+Math.floor((Date.now()-lastSync)/1000)+"s ago";if((Date.now()-lastSync)>30000)reload();},1000);
   }catch(x){ $("#gateErr").textContent=x.message.indexOf("401")>=0?"Wrong passcode.":x.message; }
+  actEnd(aid);gdone();
   return false;
 }
 document.getElementById("epLabel").textContent=ENDPOINT.replace("https://","");
