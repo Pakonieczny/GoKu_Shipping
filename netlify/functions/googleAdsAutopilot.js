@@ -596,6 +596,23 @@ function _todayUtc() { const t = new Date(); return new Date(Date.UTC(t.getUTCFu
 function _daysBetween(a, b) { return Math.round((b.getTime() - a.getTime()) / 86400000); }
 function gAdsDate(s, clampToday) { let d = _parseYmd(s); if (!d) return null; if (clampToday) { const t = _todayUtc(); if (d < t) d = t; } return _ymd(d).replace(/-/g, ""); }
 
+// Extract a clean YYYY-MM-DD from a Google Ads date/datetime string ("2026-06-29 00:00:00", "20260629 000000", "2026-06-29").
+function _dateOnly(s) { if (!s) return null; const m = String(s).match(/(\d{4})-?(\d{2})-?(\d{2})/); return m ? `${m[1]}-${m[2]}-${m[3]}` : null; }
+
+// "Today" in the AD ACCOUNT's timezone (not the server's UTC), as YYYYMMDD — so scheduling
+// decisions match how Google Ads evaluates start dates. Falls back to UTC if the lookup fails.
+async function _accountTodayYmd() {
+  let tz = "America/Toronto";
+  try { const r = await gaql(`SELECT customer.time_zone FROM customer LIMIT 1`);
+        if (r[0] && r[0].customer && r[0].customer.timeZone) tz = r[0].customer.timeZone; } catch (e) {}
+  try {
+    const o = {}; new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" })
+      .formatToParts(new Date()).forEach(p => { o[p.type] = p.value; });
+    if (o.year && o.month && o.day) return `${o.year}${o.month}${o.day}`;
+  } catch (e) {}
+  return _ymd(_todayUtc()).replace(/-/g, "");
+}
+
 // Google Ads campaign schedule fields are startDateTime/endDateTime in "yyyyMMdd HH:MM:SS".
 // Accepts a date (YYYY-MM-DD / YYYYMMDD) and appends a time, or passes through an existing datetime.
 function _toGAdsDateTime(val, time) {
@@ -682,6 +699,19 @@ async function measure() {
       c.impr += Number(r.metrics.impressions || 0);
     });
   } catch (e) {}
+  // 3) Schedule window (start/end) — queried separately, with a field-name fallback, so a
+  //    naming difference can never blank the whole dashboard. Overlays startDate/endDate.
+  for (const [sf, ef, sk, ek] of [
+    ["campaign.start_date_time", "campaign.end_date_time", "startDateTime", "endDateTime"],
+    ["campaign.start_date", "campaign.end_date", "startDate", "endDate"]
+  ]) {
+    try {
+      const sch = await gaql(`SELECT campaign.id, ${sf}, ${ef} FROM campaign WHERE campaign.status != 'REMOVED'`);
+      sch.forEach(r => { const c = byId[r.campaign.id]; if (!c) return;
+        c.startDate = _dateOnly(r.campaign[sk]); c.endDate = _dateOnly(r.campaign[ek]); });
+      break; // first field-set that works wins
+    } catch (e) { /* try the next field naming */ }
+  }
   const snapshot = Object.values(byId);
   if (f) await f.db.collection(COL.metrics).add({ at: f.FV.serverTimestamp(), kind: "campaign14d", snapshot });
   await attributeOccasionsFromSnapshot(snapshot);
@@ -977,6 +1007,23 @@ async function setCampaignStatus(campaignId, status, { ctrl } = {}) {
     throw new Error(`Google Ads rejected ${status} for campaign ${id}: ${msg}`);
   }
   return { ok: true, id, status, dryRun: !!ctrl.dryRun };
+}
+
+// "Start now": move a scheduled (PENDING) campaign's start date to today in the ACCOUNT'S
+// timezone so Google Ads stops treating it as future-dated and lets it begin serving.
+// Leaves the end date untouched (the window's end is preserved).
+async function startCampaignNow(campaignId, { ctrl } = {}) {
+  ctrl = ctrl || (await control());
+  const id = String(campaignId).replace(/\D/g, "");
+  if (!id) throw new Error("missing campaign id");
+  const ymd = await _accountTodayYmd();
+  const op = { update: { resourceName: `customers/${CID}/campaigns/${id}`, startDateTime: ymd + " 00:00:00" }, updateMask: "start_date_time" };
+  const res = await mutate("campaigns", [op], { ctrl, label: "startNow:" + id });
+  if (res && res.partialFailureError) {
+    const msg = (res.partialFailureError.message || JSON.stringify(res.partialFailureError)).slice(0, 400);
+    throw new Error(`Google Ads rejected start-now for campaign ${id}: ${msg}`);
+  }
+  return { ok: true, id, startDate: `${ymd.slice(0, 4)}-${ymd.slice(4, 6)}-${ymd.slice(6, 8)}`, dryRun: !!ctrl.dryRun };
 }
 
 /* ===================== Manual budget control ===================== */
@@ -1296,7 +1343,7 @@ module.exports = {
   generateRSAAssets, buildSearchCampaignOps, textGuidelinesOp, brandSafe,
   generateForCollection, COLLECTIONS, OCCASIONS,
   getCollections, suggestOccasions, recordOccasionUse,
-  scanOpportunities, opportunitiesWithStatus, takenTags, fetchTopProducts, setCampaignStatus, setCampaignBudget, analyzeCampaign,
+  scanOpportunities, opportunitiesWithStatus, takenTags, fetchTopProducts, setCampaignStatus, startCampaignNow, setCampaignBudget, analyzeCampaign,
   loadCalendar, dueEvents,
   measure, pruneAssets, mineSearchTerms, reallocateBudgets, anomalyCheck,
   dashboard,
