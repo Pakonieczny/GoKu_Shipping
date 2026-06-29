@@ -920,7 +920,13 @@ async function setCampaignStatus(campaignId, status, { ctrl } = {}) {
   if (status !== "ENABLED" && status !== "PAUSED" && status !== "REMOVED") throw new Error("status must be ENABLED, PAUSED, or REMOVED");
   const id = String(campaignId).replace(/\D/g, "");
   if (!id) throw new Error("missing campaign id");
-  const op = { update: { resourceName: `customers/${CID}/campaigns/${id}`, status }, updateMask: "status" };
+  const resourceName = `customers/${CID}/campaigns/${id}`;
+  // REMOVED is a terminal state reached via a remove operation — Google Ads rejects
+  // an update of status=REMOVED ("Enum value 'REMOVED' cannot be used"). ENABLED/PAUSED
+  // are valid status updates.
+  const op = status === "REMOVED"
+    ? { remove: resourceName }
+    : { update: { resourceName, status }, updateMask: "status" };
   const res = await mutate("campaigns", [op], { ctrl, label: "setStatus:" + status });
   // mutate() uses partialFailure, so an operation Google Ads rejects returns HTTP 200
   // with partialFailureError. Surface it instead of falsely reporting success.
