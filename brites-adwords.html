@@ -424,6 +424,7 @@ table.ptable tr.pdetail>td{border-bottom:2px solid var(--line)}
             <div class="field"><label>Collection <button type="button" id="bCollRefresh" style="background:none;border:none;color:var(--gold);cursor:pointer;font-size:11px;font-weight:600;padding:0 0 0 6px">\u21bb refresh</button></label><select id="bColl"></select></div>
             <div class="field"><label>Occasion <button type="button" id="bOccRefresh" style="background:none;border:none;color:var(--gold);cursor:pointer;font-size:11px;font-weight:600;padding:0 0 0 6px">\u2728 suggest</button></label><select id="bEvent"></select><div id="bOccWhy" class="muted" style="font-size:11px;margin-top:5px;min-height:14px"></div></div>
             <div class="field"><label>Daily budget <span id="curLab" class="muted"></span></label><div class="range"><input type="range" id="bBudget" min="4" max="40" value="8"><span class="rngval" id="bBudgetV">$8</span></div></div>
+            <div class="field"><label>Countries <span class="muted" style="font-weight:400">\u00b7 where it runs</span></label><div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap"><span id="bCtyChips" style="display:flex;gap:6px;flex-wrap:wrap"></span><button type="button" class="btn ghost sm" id="bCtyEdit" style="padding:3px 9px;font-size:11px">Edit</button></div></div>
             <button class="btn ghost" id="bGen" style="width:100%">Generate draft</button>
           </div>
           <div class="card pad benchout" id="benchOut"><div class="empty"><div class="ring"></div><div>Pick a collection and occasion, then generate.</div></div></div>
@@ -446,6 +447,7 @@ table.ptable tr.pdetail>td{border-bottom:2px solid var(--line)}
           <div class="field"><label>Max budget move per cycle</label><div class="range"><input type="range" id="cStep" min="5" max="50" step="5"><span class="rngval" id="cStepV"></span></div></div>
           <div class="field"><label>Target ROAS (0 = auto)</label><div class="range"><input type="range" id="cRoas" min="0" max="700" step="25"><span class="rngval" id="cRoasV"></span></div></div>
           <div class="field"><label>Approval needed above</label><div class="range"><input type="range" id="cAppr" min="5" max="50" step="5"><span class="rngval" id="cApprV"></span></div></div>
+          <div class="field"><label>Default target countries <span class="muted" style="font-weight:400">\u00b7 every new draft starts here</span></label><div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap"><span id="defCtyChips" style="display:flex;gap:6px;flex-wrap:wrap"></span><button type="button" class="btn ghost sm" id="defCtyEdit" style="padding:3px 9px;font-size:11px">Edit default</button></div></div>
         </div>
         <div class="card pad" style="grid-column:1/-1">
           <div class="card__h"><h3>Run a cycle now</h3><span class="sub">runs in dry-run if dry-run is on</span></div>
@@ -517,6 +519,12 @@ function openCountryEditor(o){
   box.querySelector(".ctysave").onclick=function(){var ids=Object.keys(sel).filter(function(k){return sel[k];});var btn=this;btn.classList.add("is-busy");btn.disabled=true;(o.onSave||function(_,d){d();})(ids,function(){close();});};
   ensureCountries().then(function(){upd();paint();});
 }
+function defCountries(){var d=(DASH.control||{}).defaultCountries;return (d&&d.length)?d.slice():["2124"];}
+var benchCountries=null;
+function benchCty(){return (benchCountries&&benchCountries.length)?benchCountries:defCountries();}
+function paintBenchCty(){var el=$("#bCtyChips");if(el)el.innerHTML=ctyChips(benchCty());}
+var oppCountries={};
+function oppCty(i){return (oppCountries[i]&&oppCountries[i].length)?oppCountries[i]:defCountries();}
 
 /* ============================ loading subsystem ============================ */
 /* Central copy for every async action: what's happening, how long, what you get. */
@@ -911,7 +919,7 @@ async function generateBench(){var coll=$("#bColl").value,collT=$("#bColl").sele
   out.innerHTML='<div class="card__h"><h3>Generating · '+esc(collT)+' × '+esc(ev)+'</h3></div><div id="genlog"></div>';
   var steps=["Researching the collection & past results","Writing on-brand headlines & descriptions","Clamping lengths and brand-safety check","Building the campaign & queuing it paused"];
   var runner=runSteps($("#genlog"),steps,{eta:"20\u201340s",result:"a paused draft in Approvals"});
-  try{ var r=await api("generate",{coll:coll,event:ev,budget:+bud}); runner.stop();
+  try{ var r=await api("generate",{coll:coll,event:ev,budget:+bud,countries:benchCty()}); runner.stop();
     if(!r.ok){ out.innerHTML='<div class="why" style="background:var(--clay-soft);border-color:#e7c9bf"><span class="i">⚠</span><div>'+esc(r.reason||"generation failed")+'</div></div>'; actEnd(aid);gdone();return; }
     showDraft(r);
   }catch(x){ runner.stop(false); out.innerHTML='<div class="why" style="background:var(--clay-soft);border-color:#e7c9bf"><span class="i">⚠</span><div>'+esc(x.message)+'</div></div>'; }
@@ -992,6 +1000,8 @@ function renderOpportunities(){
   cards.querySelectorAll(".opStart").forEach(function(d){ d.onchange=function(){ oppRecalc(cards,d.dataset.i); }; });
   cards.querySelectorAll(".opEnd").forEach(function(d){ d.onchange=function(){ oppRecalc(cards,d.dataset.i); }; });
   cards.querySelectorAll(".opGen").forEach(function(b){ b.onclick=function(){ launchOpp(b.dataset.i,b); }; });
+  cards.querySelectorAll(".opCty").forEach(function(s){ s.innerHTML=ctyChips(oppCty(s.dataset.i)); });
+  cards.querySelectorAll(".opCtyEdit").forEach(function(b){ b.onclick=function(){ openCountryEditor({selected:oppCty(b.dataset.i),title:"Target countries",subtitle:"Where this campaign will run \u2014 baked in when you generate.",saveLabel:"Use these",onSave:function(ids,done){ oppCountries[b.dataset.i]=ids.slice(); var s=cards.querySelector('.opCty[data-i="'+b.dataset.i+'"]'); if(s)s.innerHTML=ctyChips(ids); done(); }}); }; });
 }
 function fmtDate(s){ if(!s)return"\u2014"; var d=new Date(s+"T00:00:00"); if(isNaN(d.getTime()))return s; return d.toLocaleDateString(undefined,{month:"short",day:"numeric"}); }
 function daysBtw(a,b){ if(!a||!b)return 0; var d=Math.round((new Date(b+"T00:00:00")-new Date(a+"T00:00:00"))/86400000); return d>0?d:1; }
@@ -1027,7 +1037,7 @@ function oppCard(o,i,ceil){ var pm=priMeta(o.priority);
     '<details style="margin-top:12px"><summary style="cursor:pointer;font-size:12.5px;color:var(--gold);font-weight:600">Keywords &amp; phrases</summary>'+
       '<div class="eyebrow" style="margin:10px 0 6px">Keywords</div><div class="chips">'+((o.keywords||[]).map(function(k){return '<span class="chip on">'+esc(k)+'</span>';}).join("")||'<span class="muted" style="font-size:12px">\u2014</span>')+'</div>'+
       '<div class="eyebrow" style="margin:12px 0 6px">Key phrases</div><div class="chips">'+((o.keyPhrases||[]).map(function(k){return '<span class="chip">'+esc(k)+'</span>';}).join("")||'<span class="muted" style="font-size:12px">\u2014</span>')+'</div></details>'+
-    '<div class="actions"><button class="btn gold sm opGen" data-i="'+i+'">Generate campaign</button><span class="opMsg muted" data-i="'+i+'" style="font-size:12px"></span></div>'+
+    '<div style="margin-top:11px;font-size:12px;color:var(--ink-70);display:flex;gap:7px;align-items:center;flex-wrap:wrap">Countries: <span class="opCty" data-i="'+i+'" style="display:flex;gap:6px;flex-wrap:wrap"></span><button type="button" class="btn ghost sm opCtyEdit" data-i="'+i+'" style="padding:2px 8px;font-size:11px">Edit</button></div>'+'<div class="actions"><button class="btn gold sm opGen" data-i="'+i+'">Generate campaign</button><span class="opMsg muted" data-i="'+i+'" style="font-size:12px"></span></div>'+
   '</div>');
 }
 function inUseCard(o){ var b=actedBadge(o.acted); var a=o.acted||{};
@@ -1046,7 +1056,7 @@ async function launchOpp(i,btn){ var o=OPPS[i]; if(!o)return; var scope=$("#oppC
   var se=scope.querySelector('.opStart[data-i="'+i+'"]'), ee=scope.querySelector('.opEnd[data-i="'+i+'"]');
   var startDate=se?se.value:(o.startDate||""), endDate=ee?ee.value:(o.endDate||"");
   btnBusy(btn,"Generating\u2026"); var aid=actStart("generate"); if(msg)msg.innerHTML='<span class="spin sm"></span> writing copy & building the campaign\u2026 <span class="mono">20\u201340s</span>';
-  try{ var r=await api("generate",{coll:o.collectionHandle,event:o.occasion,budget:bud,startDate:startDate,endDate:endDate});
+  try{ var r=await api("generate",{coll:o.collectionHandle,event:o.occasion,budget:bud,startDate:startDate,endDate:endDate,countries:oppCty(i)});
     if(r&&r.ok){ btn.classList.remove("is-busy");btn.disabled=true;btn.innerHTML="Queued \u2713"; btn.classList.remove("gold"); if(msg)msg.innerHTML=' in <a href="#" onclick="go(&#39;approvals&#39;);return false" style="color:var(--gold)">Approvals</a> \u00b7 '+((r.assets&&r.assets.headlines)?r.assets.headlines.length:0)+' headlines, paused';
       o.acted={where:"approval",status:"PENDING"}; reload();
       setTimeout(function(){ setOppMeta(); renderOpportunities(); }, 1500);
@@ -1065,6 +1075,7 @@ function renderControls(){var c=DASH.control||{};
   $("#cAppr").value=c.budgetMoveApprovalPct||20;$("#cApprV").textContent=(c.budgetMoveApprovalPct||20)+"%";
   $("#curLab2").textContent="· "+cur();$("#curLab").textContent="("+cur()+")";
   $("#termChips").innerHTML=(DASH.terms||[]).map(t=>'<span class="chip x">'+esc(t)+'</span>').join("")||'<span class="muted" style="font-size:12px">none set</span>';
+  var dc=$("#defCtyChips");if(dc)dc.innerHTML=ctyChips(defCountries());
 }
 function bindControlsOnce(){
   var cf=$("#clearFeed");if(cf)cf.onclick=async function(){
@@ -1076,13 +1087,15 @@ function bindControlsOnce(){
   $("#swLive").onclick=async()=>{var on=!$("#swLive").classList.contains("on");var aid=actStart(on?"resume":"kill");try{await api(on?"resume":"kill");toast("Autopilot "+(on?"live":"stopped"),on);}catch(x){toast(x.message);}actEnd(aid);await reload();};
   $("#swDry").onclick=async()=>{var on=!$("#swDry").classList.contains("on");var aid=actStart("dryRun");try{await api("dryRun",{on:on});toast("Dry-run "+(on?"on":"off"),on);}catch(x){toast(x.message);}actEnd(aid);await reload();};
   $("#swAuto").onclick=async()=>{var on=!$("#swAuto").classList.contains("on");var aid=actStart("setControl",{verb:"Saving auto-approve"});try{await api("setControl",{patch:{autoApproveVettedTemplates:on}});toast("Auto-approve "+(on?"on":"off"),on);}catch(x){toast(x.message);}actEnd(aid);await reload();};
+  var dce=$("#defCtyEdit");if(dce)dce.onclick=function(){openCountryEditor({selected:defCountries(),title:"Default target countries",subtitle:"Every new draft starts with these. You can still override per draft or per campaign.",saveLabel:"Save default",onSave:async function(ids,done){if(!ids.length){toast("Pick at least one country.");done();return;}var aid=actStart("setControl",{verb:"Saving default countries"});try{await api("setControl",{patch:{defaultCountries:ids}});toast("Default countries saved \u2713",true);done();actEnd(aid);await reload();}catch(x){actEnd(aid);toast(x.message);done();}}});};
   function slider(id,vid,fmt,key,map){var r=$("#"+id),v=$("#"+vid);r.oninput=()=>{v.textContent=fmt(r.value);};r.onchange=async()=>{try{await api("setControl",{patch:{[key]:map(r.value)}});toast("Saved",true);}catch(x){toast(x.message);}};}
   slider("cCeil","cCeilV",v=>money(v),"maxDailyBudgetTotal",v=>+v);
   slider("cStep","cStepV",v=>v+"%","maxBudgetStepPct",v=>+v);
   slider("cRoas","cRoasV",v=>(+v?(v/100).toFixed(1)+"x":"auto"),"targetRoas",v=>+v/100);
   slider("cAppr","cApprV",v=>v+"%","budgetMoveApprovalPct",v=>+v);
   var bb=$("#bBudget");bb.oninput=()=>$("#bBudgetV").textContent="$"+bb.value;
-  $("#oppScan").onclick=()=>loadOpportunities(true);var cw=$("#customWrap");if(cw)cw.addEventListener("toggle",function(){if(cw.open)ensureBench();});$("#bColl").onchange=()=>loadOccasions(false);$("#bEvent").onchange=showOccWhy;$("#bOccRefresh").onclick=()=>loadOccasions(true);$("#bCollRefresh").onclick=()=>loadCollections(true);$("#bGen").onclick=generateBench;
+  $("#oppScan").onclick=()=>loadOpportunities(true);var cw=$("#customWrap");if(cw)cw.addEventListener("toggle",function(){if(cw.open){ensureBench();paintBenchCty();}});$("#bColl").onchange=()=>loadOccasions(false);$("#bEvent").onchange=showOccWhy;$("#bOccRefresh").onclick=()=>loadOccasions(true);$("#bCollRefresh").onclick=()=>loadCollections(true);$("#bGen").onclick=generateBench;
+  var bce=$("#bCtyEdit");if(bce)bce.onclick=function(){openCountryEditor({selected:benchCty(),title:"Target countries",subtitle:"Where this draft will run \u2014 baked in at generation.",saveLabel:"Use these",onSave:function(ids,done){benchCountries=ids.slice();paintBenchCty();done();}});};
   $("#btnRefresh").onclick=async function(){var b=$("#btnRefresh");var done=btnBusy(b,"Refreshing\u2026");var aid=actStart("measureNow");
     try{var r=await api("measureNow");if(r&&r.ok===false){toast("Live pull failed: "+(r.error||"unknown"));}else{toast("Pulled "+(((r&&r.campaigns)!=null)?r.campaigns+" campaigns ":"")+"live from Google Ads",true);}}
     catch(x){toast("Live pull error: "+x.message);}
@@ -1092,7 +1105,7 @@ async function runNow(tasks){$("#runMsg").textContent=" running…";var aid=actS
 
 /* ---- load / reload ---- */
 async function reload(toastOk){try{DASH=await api("dashboard");renderAll();$("#connDot").style.background="var(--sage)";$("#connText").textContent="connected";lastSync=Date.now();if(toastOk)toast("Refreshed",true);if(!countriesLoaded){ensureCountries().then(function(){if(COUNTRIES.length)renderAll();});}}catch(x){$("#connDot").style.background="var(--clay)";$("#connText").textContent="error";toast(x.message);}}
-function renderAll(){renderControlBar();renderConvHealth();renderCommand();renderApprovals();renderPerf();renderControls();updateBadges();}
+function renderAll(){renderControlBar();renderConvHealth();renderCommand();renderApprovals();renderPerf();renderControls();updateBadges();paintBenchCty();}
 
 async function unlock(e){e.preventDefault();PASS=$("#pc").value;$("#gateErr").textContent="";
   var gb=$(".gatecard button[type=submit]");var gdone=btnBusy(gb,"Connecting\u2026");var aid=actStart("dashboard");
