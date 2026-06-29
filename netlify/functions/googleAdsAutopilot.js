@@ -921,7 +921,13 @@ async function setCampaignStatus(campaignId, status, { ctrl } = {}) {
   const id = String(campaignId).replace(/\D/g, "");
   if (!id) throw new Error("missing campaign id");
   const op = { update: { resourceName: `customers/${CID}/campaigns/${id}`, status }, updateMask: "status" };
-  await mutate("campaigns", [op], { ctrl, label: "setStatus:" + status });
+  const res = await mutate("campaigns", [op], { ctrl, label: "setStatus:" + status });
+  // mutate() uses partialFailure, so an operation Google Ads rejects returns HTTP 200
+  // with partialFailureError. Surface it instead of falsely reporting success.
+  if (res && res.partialFailureError) {
+    const msg = (res.partialFailureError.message || JSON.stringify(res.partialFailureError)).slice(0, 400);
+    throw new Error(`Google Ads rejected ${status} for campaign ${id}: ${msg}`);
+  }
   return { ok: true, id, status, dryRun: !!ctrl.dryRun };
 }
 
