@@ -320,6 +320,20 @@ table.ptable tr.pdetail>td{border-bottom:2px solid var(--line)}
 .convbar .convchev{display:inline-block;transition:transform .18s}
 .convbar[open] .convchev{transform:rotate(180deg)}
 
+/* ---- long expandable content scrolls inside its own card ---- */
+/* an open approval draft can list 15+ headlines; keep it from blowing past the window */
+.draft__body{max-height:62vh;overflow-y:auto;overflow-x:hidden}
+.draft__body::-webkit-scrollbar{width:9px}
+.draft__body::-webkit-scrollbar-thumb{background:var(--ink-25);border-radius:7px;border:2px solid var(--card-2)}
+.draft__body{scrollbar-width:thin;scrollbar-color:var(--ink-25) transparent}
+/* keep Approve/Reject reachable without scrolling to the bottom */
+.draft__body .actions{position:sticky;bottom:0;margin:15px -16px 0;padding:12px 16px;background:var(--card-2);border-top:1px solid var(--line-2)}
+/* the Bench draft output lists every headline/description too */
+.benchout{max-height:64vh;overflow:auto}
+.benchout::-webkit-scrollbar{width:9px}
+.benchout::-webkit-scrollbar-thumb{background:var(--ink-25);border-radius:7px;border:2px solid var(--card)}
+.benchout{scrollbar-width:thin;scrollbar-color:var(--ink-25) transparent}
+
 </style>
 </head>
 <body>
