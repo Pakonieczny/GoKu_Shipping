@@ -635,7 +635,7 @@ function _toGAdsDateTime(val, time) {
   return ymd + " " + time;
 }
 
-function buildSearchCampaignOps(coll, event, assets, { dailyBudget, startDate, endDate }) {
+function buildSearchCampaignOps(coll, event, assets, { dailyBudget, startDate, endDate, countries }) {
   const tag = `${coll.handle}-${(event ? event.label : "evergreen").toLowerCase().replace(/[^a-z0-9]+/g, "-")}`.slice(0, 40);
   const bRes = `customers/${CID}/campaignBudgets/-1`;
   const cRes = `customers/${CID}/campaigns/-2`;
@@ -671,6 +671,12 @@ function buildSearchCampaignOps(coll, event, assets, { dailyBudget, startDate, e
                event ? `${coll.title} ${event.label}` : null].filter(Boolean);
   kws.forEach((k, i) => ops.push({ adGroupCriterionOperation: { create: {
     adGroup: agRes, status: "ENABLED", keyword: { text: k, matchType: "PHRASE" } } } }));
+  // Location targeting — one positive campaign criterion per chosen country. With NO location
+  // criteria, Google Ads defaults to "all countries and territories", so we set these explicitly.
+  (countries || []).map(x => String(x).replace(/\D/g, "")).filter(Boolean).forEach(gid => {
+    ops.push({ campaignCriterionOperation: { create: {
+      campaign: cRes, location: { geoTargetConstant: `geoTargetConstants/${gid}` } } } });
+  });
   return { ops, tag, finalUrl };
 }
 
@@ -722,6 +728,19 @@ async function measure() {
       break; // first field-set that works wins
     } catch (e) { /* try the next field naming */ }
   }
+  // 4) Current target countries per campaign (positive LOCATION criteria) — isolated so any issue
+  //    can't blank the dashboard. Overlays an array of geo IDs onto each campaign record.
+  try {
+    const loc = await gaql(
+      `SELECT campaign.id, campaign_criterion.location.geo_target_constant, campaign_criterion.negative
+       FROM campaign_criterion
+       WHERE campaign_criterion.type = 'LOCATION' AND campaign_criterion.status != 'REMOVED'`);
+    loc.forEach(r => { const c = byId[r.campaign.id]; if (!c) return;
+      const cc = r.campaignCriterion || {}; if (cc.negative) return;
+      const gid = String(((cc.location && cc.location.geoTargetConstant) || "").split("/").pop() || "");
+      if (!gid) return; (c.countries = c.countries || []).push(gid);
+    });
+  } catch (e) {}
   const snapshot = Object.values(byId);
   if (f) await f.db.collection(COL.metrics).add({ at: f.FV.serverTimestamp(), kind: "campaign14d", snapshot });
   await attributeOccasionsFromSnapshot(snapshot);
@@ -1040,6 +1059,84 @@ async function startCampaignNow(campaignId, { ctrl } = {}) {
   return { ok: true, id, startDate: `${dt.slice(0, 4)}-${dt.slice(4, 6)}-${dt.slice(6, 8)}`, startDateTime: dt, dryRun: !!ctrl.dryRun };
 }
 
+/* ===================== Location / country targeting ===================== */
+
+// Full list of targetable COUNTRIES (geo target constants), cached in Firestore since it's static.
+async function listCountries({ force } = {}) {
+  const f = fb();
+  if (!force && f) {
+    try { const d = await f.db.collection(COL.state).doc("countries").get();
+          if (d.exists && Array.isArray(d.data().list) && d.data().list.length) return d.data().list; } catch (e) {}
+  }
+  let list = [];
+  try {
+    const rows = await gaql(
+      `SELECT geo_target_constant.id, geo_target_constant.name, geo_target_constant.country_code
+       FROM geo_target_constant
+       WHERE geo_target_constant.target_type = 'Country' AND geo_target_constant.status = 'ENABLED'`);
+    list = rows.map(r => { const g = r.geoTargetConstant || {}; return { id: String(g.id), name: g.name, code: g.countryCode }; })
+               .filter(c => c.id && c.name)
+               .sort((a, b) => a.name.localeCompare(b.name));
+  } catch (e) {}
+  if (f && list.length) { try { await f.db.collection(COL.state).doc("countries").set({ list, at: f.FV.serverTimestamp() }); } catch (e) {} }
+  return list;
+}
+
+// The country geo IDs a LIVE campaign currently targets (positive location criteria).
+async function campaignCountries(campaignId) {
+  const id = String(campaignId).replace(/\D/g, ""); if (!id) return [];
+  try {
+    const rows = await gaql(
+      `SELECT campaign_criterion.criterion_id, campaign_criterion.location.geo_target_constant, campaign_criterion.negative
+       FROM campaign_criterion
+       WHERE campaign.id = ${id} AND campaign_criterion.type = 'LOCATION' AND campaign_criterion.status != 'REMOVED'`);
+    return rows.map(r => {
+      const cc = r.campaignCriterion || {};
+      return { critId: String(cc.criterionId), geoId: String(((cc.location && cc.location.geoTargetConstant) || "").split("/").pop() || ""), negative: !!cc.negative };
+    }).filter(x => x.geoId && !x.negative);
+  } catch (e) { return []; }
+}
+
+// Set the exact set of target countries on a LIVE campaign: removes criteria no longer wanted,
+// adds the new ones, leaves unchanged ones in place (so we never needlessly churn the campaign).
+async function setCampaignCountries(campaignId, countryIds, { ctrl } = {}) {
+  ctrl = ctrl || (await control());
+  const id = String(campaignId).replace(/\D/g, ""); if (!id) throw new Error("missing campaign id");
+  const want = [...new Set((countryIds || []).map(x => String(x).replace(/\D/g, "")).filter(Boolean))];
+  if (!want.length) throw new Error("pick at least one country (a campaign can't target zero locations)");
+  const campaignRes = `customers/${CID}/campaigns/${id}`;
+  const existing = await campaignCountries(id);
+  const have = new Set(existing.map(e => e.geoId));
+  const ops = [];
+  existing.forEach(e => { if (!want.includes(e.geoId)) ops.push({ campaignCriterionOperation: { remove: `customers/${CID}/campaignCriteria/${id}~${e.critId}` } }); });
+  want.forEach(gid => { if (!have.has(gid)) ops.push({ campaignCriterionOperation: { create: { campaign: campaignRes, location: { geoTargetConstant: `geoTargetConstants/${gid}` } } } }); });
+  if (!ops.length) return { ok: true, id, countries: want, unchanged: true, dryRun: !!ctrl.dryRun };
+  const res = await mutateAll(ops, { ctrl, label: "setCountries:" + id });
+  if (res && res.partialFailureError) {
+    const msg = (res.partialFailureError.message || JSON.stringify(res.partialFailureError)).slice(0, 400);
+    throw new Error(`Google Ads rejected country update for campaign ${id}: ${msg}`);
+  }
+  return { ok: true, id, countries: want, dryRun: !!ctrl.dryRun };
+}
+
+// Rewrite the target countries on a PENDING approval draft (before it's applied), by swapping the
+// location criterion ops inside its stored payload. Lets the user choose countries at approval time.
+async function setApprovalCountries(approvalId, countryIds) {
+  const f = fb(); if (!f) throw new Error("no firestore");
+  const ref = f.db.collection(COL.approvals).doc(approvalId);
+  const snap = await ref.get(); if (!snap.exists) throw new Error("approval not found");
+  const p = (snap.data() || {}).payload || {};
+  const want = [...new Set((countryIds || []).map(x => String(x).replace(/\D/g, "")).filter(Boolean))];
+  let ops = Array.isArray(p.mutateOperations) ? p.mutateOperations.slice() : [];
+  let campRes = null;
+  ops.forEach(o => { const c = o && o.campaignOperation && o.campaignOperation.create; if (c && c.resourceName) campRes = c.resourceName; });
+  // drop existing positive location criterion ops, then append the chosen ones
+  ops = ops.filter(o => { const c = o && o.campaignCriterionOperation && o.campaignCriterionOperation.create; return !(c && c.location && c.location.geoTargetConstant); });
+  if (campRes) want.forEach(gid => ops.push({ campaignCriterionOperation: { create: { campaign: campRes, location: { geoTargetConstant: `geoTargetConstants/${gid}` } } } }));
+  await ref.set({ payload: { ...p, mutateOperations: ops, countries: want } }, { merge: true });
+  return { ok: true, id: approvalId, countries: want };
+}
+
 /* ===================== Manual budget control ===================== */
 async function campaignBudgetRes(campaignId) {
   const id = String(campaignId).replace(/\D/g, "");
@@ -1290,7 +1387,7 @@ async function collectionMeta(handle) {
            reviewProof: (fromCal && fromCal.reviewProof) || "thousands of 5-star reviews" };
 }
 
-async function generateForCollection(handle, eventLabel, budget, { ctrl, startDate, endDate } = {}) {
+async function generateForCollection(handle, eventLabel, budget, { ctrl, startDate, endDate, countries } = {}) {
   ctrl = ctrl || (await control());
   if (!handle) return { ok: false, reason: "no collection given" };
   const coll = await collectionMeta(handle);
@@ -1298,17 +1395,22 @@ async function generateForCollection(handle, eventLabel, budget, { ctrl, startDa
   const assets = await generateRSAAssets(coll, event);
   if (!assets) return { ok: false, reason: "generation rejected — copy failed brand-safety or fell under RSA minimums" };
   const dailyBudget = Number(budget) || Number(ENV.GADS_NEW_CAMPAIGN_BUDGET || 8);
-  const { ops, tag } = buildSearchCampaignOps(coll, event, assets, { dailyBudget, startDate, endDate });
+  // Default target countries (so a draft never silently launches to "all countries"). Falls back
+  // to the saved control default, then Canada (2124) — the brand's home market.
+  let cty = (countries && countries.length) ? countries
+          : (Array.isArray(ctrl.defaultCountries) && ctrl.defaultCountries.length ? ctrl.defaultCountries : ["2124"]);
+  cty = [...new Set(cty.map(x => String(x).replace(/\D/g, "")).filter(Boolean))];
+  const { ops, tag } = buildSearchCampaignOps(coll, event, assets, { dailyBudget, startDate, endDate, countries: cty });
   await recordOccasionUse(event ? event.label : "Evergreen gifting", coll.handle, tag);
   const win = (startDate && endDate) ? ` (${startDate} → ${endDate})` : "";
   const id = await enqueueApproval({
     type: "creative", vetted: false,
     summary: `NEW Search campaign “${tag}”${event ? ` for ${event.label}` : ""}${win} — ${assets.headlines.length} headlines, starts PAUSED (drafted on the Bench)`,
-    payload: { mutateOperations: ops, finalCollection: coll.handle, event: event ? event.label : null, startDate: startDate || null, endDate: endDate || null },
+    payload: { mutateOperations: ops, finalCollection: coll.handle, event: event ? event.label : null, startDate: startDate || null, endDate: endDate || null, countries: cty },
     experimentId: tag
   });
   return { ok: true, approvalId: id, tag, title: coll.title, event: event ? event.label : null,
-           budget: dailyBudget, currency: CURRENCY, assets };
+           budget: dailyBudget, currency: CURRENCY, countries: cty, assets };
 }
 
 
@@ -1358,6 +1460,7 @@ module.exports = {
   generateForCollection, COLLECTIONS, OCCASIONS,
   getCollections, suggestOccasions, recordOccasionUse,
   scanOpportunities, opportunitiesWithStatus, takenTags, fetchTopProducts, setCampaignStatus, startCampaignNow, setCampaignBudget, analyzeCampaign,
+  listCountries, campaignCountries, setCampaignCountries, setApprovalCountries,
   loadCalendar, dueEvents,
   measure, pruneAssets, mineSearchTerms, reallocateBudgets, anomalyCheck,
   dashboard,

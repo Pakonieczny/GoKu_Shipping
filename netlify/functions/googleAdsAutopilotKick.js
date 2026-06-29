@@ -124,6 +124,18 @@ async function handleAction(body) {
     try { return await E.startCampaignNow(body.id, { ctrl }); }
     catch (e) { return { ok: false, error: e.message }; }
   }
+  if (a === "countries") {
+    try { return { ok: true, list: await E.listCountries({ force: !!body.force }) }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  }
+  if (a === "setCountries") {
+    try { return await E.setCampaignCountries(body.id, body.countries || [], { ctrl }); }
+    catch (e) { return { ok: false, error: e.message }; }
+  }
+  if (a === "setApprovalCountries") {
+    try { return await E.setApprovalCountries(body.id, body.countries || []); }
+    catch (e) { return { ok: false, error: e.message }; }
+  }
   if (a === "clearLedger") {
     try { return await E.clearLedger({}); }
     catch (e) { return { ok: false, error: e.message }; }
