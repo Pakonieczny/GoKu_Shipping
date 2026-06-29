@@ -481,6 +481,42 @@ function money(n){ n=Number(n)||0; return "$"+(Math.round(n*100)/100).toLocaleSt
 function pctTxt(n){ return (n>0?"+":"")+(Number(n)||0).toFixed(0)+"%"; }
 function esc(s){ return String(s==null?"":s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
 function toast(msg,ok){const t=elFrom('<div class="toast '+(ok?"ok":"")+'"><span class="d"></span><span>'+esc(msg)+'</span></div>');$("#toasts").appendChild(t);setTimeout(()=>{t.style.opacity=0;t.style.transform="translateX(20px)";setTimeout(()=>t.remove(),250);},3200);}
+/* ---- country / location targeting ---- */
+var COUNTRIES=[];var countriesLoaded=false;
+async function ensureCountries(){ if(countriesLoaded&&COUNTRIES.length)return COUNTRIES; try{var r=await api("countries",{});if(r&&r.ok&&r.list&&r.list.length){COUNTRIES=r.list;countriesLoaded=true;}}catch(e){} return COUNTRIES; }
+function ctyName(id){var s=String(id);for(var i=0;i<COUNTRIES.length;i++){if(String(COUNTRIES[i].id)===s)return COUNTRIES[i].name;}return "#"+s;}
+function ctyChips(ids){ if(!ids||!ids.length)return '<span class="muted" style="font-size:12px">All countries &amp; territories \u2014 no restriction set</span>'; return ids.map(function(id){return '<span class="chip on">'+esc(ctyName(id))+'</span>';}).join(""); }
+function openCountryEditor(o){
+  o=o||{};var sel={};(o.selected||[]).forEach(function(id){sel[String(id)]=true;});
+  var ov=elFrom('<div style="position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:rgba(22,19,15,.45)"></div>');
+  var box=elFrom('<div style="background:var(--paper);border:1px solid var(--line);border-radius:14px;width:min(460px,92vw);max-height:84vh;display:flex;flex-direction:column;box-shadow:var(--sh);overflow:hidden"></div>');
+  box.innerHTML='<div style="padding:16px 18px;border-bottom:1px solid var(--line)"><div style="font-weight:700;font-size:15px">'+esc(o.title||"Target countries")+'</div><div class="muted" style="font-size:12px;margin-top:3px">'+esc(o.subtitle||"Choose where this ad runs.")+'</div></div>'+
+    '<div style="padding:12px 18px 4px"><input class="ctyq" placeholder="Search countries\u2026" style="width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:9px;font-size:13px;box-sizing:border-box;background:var(--paper)"></div>'+
+    '<div style="padding:6px 18px;display:flex;gap:7px;flex-wrap:wrap">'+
+      '<button class="btn ghost sm ctyq-p" data-ids="2124" style="padding:3px 9px;font-size:11px">Canada</button>'+
+      '<button class="btn ghost sm ctyq-p" data-ids="2124,2840" style="padding:3px 9px;font-size:11px">Canada + US</button>'+
+      '<button class="btn ghost sm ctyq-p" data-ids="2124,2840,2826,2036" style="padding:3px 9px;font-size:11px">CA / US / UK / AU</button>'+
+    '</div>'+
+    '<div class="ctylist" style="flex:1;overflow:auto;padding:2px 18px 6px;min-height:120px"><div class="lrow" style="padding:18px 0"><span class="spin"></span> <span class="muted">Loading countries\u2026</span></div></div>'+
+    '<div style="padding:13px 18px;border-top:1px solid var(--line);display:flex;gap:10px;align-items:center"><span class="ctycount muted" style="font-size:12px;flex:1"></span><button class="btn ghost sm ctycancel">Cancel</button><button class="btn gold sm ctysave">'+esc(o.saveLabel||"Save")+'</button></div>';
+  ov.appendChild(box);document.body.appendChild(ov);
+  function close(){ov.remove();}
+  ov.onclick=function(e){if(e.target===ov)close();};
+  box.querySelector(".ctycancel").onclick=close;
+  var listEl=box.querySelector(".ctylist"),countEl=box.querySelector(".ctycount"),q=box.querySelector(".ctyq");
+  function upd(){var n=Object.keys(sel).filter(function(k){return sel[k];}).length;countEl.textContent=n+" selected";}
+  function paint(){
+    var f=(q.value||"").trim().toLowerCase();
+    listEl.innerHTML=COUNTRIES.filter(function(c){return !f||c.name.toLowerCase().indexOf(f)>-1||(c.code||"").toLowerCase()===f;}).map(function(c){
+      return '<label style="display:flex;gap:9px;align-items:center;padding:6px 2px;font-size:13px;cursor:pointer;border-bottom:1px solid var(--line-2)"><input type="checkbox" class="ctycb" value="'+c.id+'"'+(sel[String(c.id)]?" checked":"")+'><span style="flex:1">'+esc(c.name)+'</span><span class="muted" style="font-family:var(--mono);font-size:10.5px">'+esc(c.code||"")+'</span></label>';
+    }).join("")||'<div class="muted" style="padding:14px 0">No match.</div>';
+    listEl.querySelectorAll(".ctycb").forEach(function(cb){cb.onchange=function(){sel[cb.value]=cb.checked;upd();};});
+  }
+  box.querySelectorAll(".ctyq-p").forEach(function(b){b.onclick=function(){sel={};(b.dataset.ids||"").split(",").forEach(function(id){if(id)sel[id]=true;});paint();upd();};});
+  q.oninput=paint;
+  box.querySelector(".ctysave").onclick=function(){var ids=Object.keys(sel).filter(function(k){return sel[k];});var btn=this;btn.classList.add("is-busy");btn.disabled=true;(o.onSave||function(_,d){d();})(ids,function(){close();});};
+  ensureCountries().then(function(){upd();paint();});
+}
 
 /* ============================ loading subsystem ============================ */
 /* Central copy for every async action: what's happening, how long, what you get. */
@@ -711,6 +747,7 @@ function renderApprovals(){var list=$("#apprList");var p=DASH.pending||[];var st
       if(c.descriptions.length)body+='<div class="eyebrow" style="margin:14px 0 6px">Descriptions \u00b7 \u226490</div>'+c.descriptions.map(t=>copyLine(t,90)).join("");
       if(c.keywords.length)body+='<div class="eyebrow" style="margin:14px 0 7px">Keywords</div><div class="chips">'+c.keywords.map(k=>'<span class="chip on">'+esc(k)+'</span>').join("")+'</div>';
       body+='<div class="kv" style="margin-top:12px;color:var(--ink-45)">'+(c.finalUrl?'URL <span style="color:var(--ink)">'+esc(c.finalUrl.replace("https://britesjewelry.com",""))+'</span> \u00b7 ':"")+(c.budget!=null?'budget <span style="color:var(--ink)">'+money(c.budget)+'/day</span> \u00b7 ':"")+'status <span style="color:var(--ink)">PAUSED</span></div>';
+      body+='<div class="eyebrow" style="margin:14px 0 7px">Countries <span class="muted" style="text-transform:none;font-weight:400;letter-spacing:0">\u00b7 where it runs</span></div><div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap">'+ctyChips(pl.countries)+'<button class="btn ghost sm apcty-edit" data-id="'+a.id+'" data-sel="'+((pl.countries||[]).join(","))+'" style="padding:3px 9px;font-size:11px">Edit</button></div>';
     } else if(pl.operations){ body+='<div class="kv muted">'+pl.operations.length+' operation(s) on '+esc(pl.service||"")+'</div>'; }
     body+='<div class="actions"><button class="btn gold sm" data-ap="'+a.id+'">Approve'+((DASH.control||{}).dryRun?" (dry-run)":"")+'</button><button class="btn ghost sm" data-rj="'+a.id+'">Reject</button></div>';
     var card=elFrom('<div class="draft"><div class="draft__top"><span class="tagk '+(a.type||"creative")+'">'+esc(a.type||"draft")+'</span><div><div class="ti">'+esc((a.summary||"").slice(0,80))+'</div><div class="me">'+(a.vetted?"vetted template":"needs review")+'</div></div><span class="chev">\u25be</span></div><div class="draft__body">'+body+'</div></div>');
@@ -719,6 +756,7 @@ function renderApprovals(){var list=$("#apprList");var p=DASH.pending||[];var st
   list.querySelectorAll("[data-ap]").forEach(b=>b.onclick=async e=>{e.stopPropagation();btnBusy(b,"Sending\u2026");var aid=actStart("approve");try{var r=await api("approve",{id:b.dataset.ap});if(r&&r.error){toast("Apply failed: "+r.error);}else{toast((DASH.control||{}).dryRun?"Validated (dry-run) \u2014 nothing applied":"Approved & sent to Google Ads \u2713",true);}}catch(x){toast(x.message);}actEnd(aid);await reload();});
   list.querySelectorAll("[data-retry]").forEach(b=>b.onclick=async e=>{e.stopPropagation();btnBusy(b,"Creating\u2026");var aid=actStart("apply");try{var r=await api("apply",{id:b.dataset.retry});if(r&&r.error){toast("Still failing: "+r.error);}else{toast((DASH.control||{}).dryRun?"Validated (dry-run) \u2014 nothing created":"Created in Google Ads \u2713",true);}}catch(x){toast(x.message);}actEnd(aid);await reload();});
   list.querySelectorAll("[data-rj]").forEach(b=>b.onclick=async e=>{e.stopPropagation();btnBusy(b,"Removing\u2026");var aid=actStart("reject");try{await api("reject",{id:b.dataset.rj});toast("Removed");}catch(x){toast(x.message);}actEnd(aid);await reload();});
+  list.querySelectorAll(".apcty-edit").forEach(function(b){b.onclick=function(e){e.stopPropagation();var sel=(b.dataset.sel||"").split(",").filter(Boolean);openCountryEditor({selected:sel,title:"Target countries",subtitle:"Where this ad will run \u2014 applied when you approve it.",saveLabel:"Save countries",onSave:async function(ids,done){try{var r=await api("setApprovalCountries",{id:b.dataset.id,countries:ids});if(r&&r.ok){toast("Countries updated \u2713",true);done();await reload();}else{toast("Failed: "+((r&&r.error)||"unknown"));done();}}catch(x){toast(x.message);done();}}});};});
 }
 
 /* ---- render: performance (sortable, expandable, AI-analyzed) ---- */
@@ -760,7 +798,8 @@ function detailHtml(c){
     '<div class="range" style="min-width:200px"><input type="range" class="pbud" data-id="'+c.id+'" min="2" max="'+ceil+'" value="'+(c.budget||8)+'"><span class="rngval pbudv" data-id="'+c.id+'">'+money(c.budget||8)+'</span></div>'+
     '<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn ghost sm psave" data-id="'+c.id+'" data-res="'+esc(c.budgetRes||"")+'">Save budget</button>'+
     '<button class="btn '+(en?"ghost":"gold")+' sm pstat" data-id="'+c.id+'" data-name="'+esc(c.name)+'" data-budget="'+(c.budget||0)+'" data-to="'+(en?"PAUSED":"ENABLED")+'">'+(en?"Pause":"Enable")+'</button>'+
-    '<button class="btn ghost sm pstat" data-id="'+c.id+'" data-name="'+esc(c.name)+'" data-budget="0" data-to="REMOVED" style="border-color:var(--clay);color:var(--clay)">Archive</button></div>'+schedHtml(c)+'</div>';
+    '<button class="btn ghost sm pstat" data-id="'+c.id+'" data-name="'+esc(c.name)+'" data-budget="0" data-to="REMOVED" style="border-color:var(--clay);color:var(--clay)">Archive</button></div>'+schedHtml(c)+
+    '<div style="margin-top:12px"><div class="eyebrow" style="margin-bottom:6px">Countries</div><div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap">'+ctyChips(c.countries)+'<button class="btn ghost sm pcty-edit" data-id="'+c.id+'" data-name="'+esc(c.name)+'" data-sel="'+((c.countries||[]).join(","))+'" style="padding:3px 9px;font-size:11px">Edit countries</button></div></div>'+'</div>';
   var anaCol;
   if(P.loading[c.id])anaCol='<div class="lrow"><span class="spin gold"></span><div><div style="font-weight:600;color:var(--ink)">Analyzing this campaign with AI\u2026</div><div style="font-size:11.5px;color:var(--ink-70)">Researching the metrics, then writing specific moves \u00b7 <span class="mono">20\u201340s</span></div></div></div>';
   else if(P.analysis[c.id])anaCol=analysisHtml(c,P.analysis[c.id]);
@@ -784,6 +823,7 @@ function wirePerf(){
   T.querySelectorAll(".papply").forEach(function(b){b.onclick=function(){setBudget(b.dataset.id,+b.dataset.budget,b.dataset.res,b);};});
   T.querySelectorAll(".pstat").forEach(function(b){b.onclick=function(){campStatus(b.dataset.id,b.dataset.name,b.dataset.budget,b.dataset.to,b);};});
   T.querySelectorAll(".pstart").forEach(function(b){b.onclick=function(){campStartNow(b.dataset.id,b.dataset.name,b);};});
+  T.querySelectorAll(".pcty-edit").forEach(function(b){b.onclick=function(){var sel=(b.dataset.sel||"").split(",").filter(Boolean);openCountryEditor({selected:sel,title:"Target countries",subtitle:"Live campaign \u201c"+b.dataset.name+"\u201d \u2014 changes apply to Google Ads immediately.",saveLabel:"Save countries",onSave:function(ids,done){campSetCountries(b.dataset.id,b.dataset.name,ids,done);}});};});
   T.querySelectorAll(".panalyze").forEach(function(b){b.onclick=function(){doAnalyze(b.dataset.id,true);};});
 }
 async function doAnalyze(id,force){P.loading[id]=true;renderPerf();var aid=actStart("analyzeCampaign");
@@ -830,6 +870,20 @@ async function campStartNow(id,name,btn){
       if(typeof oppLoaded!=="undefined"&&oppLoaded&&!oppPollTimer)loadOpportunities(false);
     } else { actEnd(aid);toast("Failed: "+((r&&r.error)||"unknown")); await reload(); }
   }catch(x){actEnd(aid);toast(x.message);await reload();}
+}
+
+async function campSetCountries(id,name,ids,done){
+  if(!ids||!ids.length){toast("Pick at least one country.");if(done)done();return;}
+  var aid=actStart("setCountries",{verb:"Updating target countries"});
+  try{var r=await api("setCountries",{id:id,countries:ids});
+    if(r&&r.ok){
+      if(r.dryRun){toast("Validated (dry-run) \u2014 countries NOT changed.");}
+      else if(r.unchanged){toast("No change \u2014 countries already set.");}
+      else{toast("Countries updated for \u201c"+name+"\u201d \u2713",true);}
+      if(DASH.lastMetrics){var cc=DASH.lastMetrics.find(function(c){return String(c.id)===String(id);});if(cc)cc.countries=(r.countries||ids).slice();}
+      if(done)done();actEnd(aid);renderAll();
+    } else { if(done)done();actEnd(aid);toast("Failed: "+((r&&r.error)||"unknown")); }
+  }catch(x){if(done)done();actEnd(aid);toast(x.message);}
 }
 
 /* ---- render: bench ---- */
@@ -1037,7 +1091,7 @@ function bindControlsOnce(){
 async function runNow(tasks){$("#runMsg").textContent=" running…";var aid=actStart("runNow",{detail:tasks.join(", ")});try{var r=await api("runNow",{tasks:tasks});$("#runMsg").textContent=" "+(r.status||"")+" ["+tasks.join(",")+"] — refreshing in ~5s";setTimeout(()=>reload(),5000);}catch(x){$("#runMsg").textContent=" "+x.message;}actEnd(aid);}
 
 /* ---- load / reload ---- */
-async function reload(toastOk){try{DASH=await api("dashboard");renderAll();$("#connDot").style.background="var(--sage)";$("#connText").textContent="connected";lastSync=Date.now();if(toastOk)toast("Refreshed",true);}catch(x){$("#connDot").style.background="var(--clay)";$("#connText").textContent="error";toast(x.message);}}
+async function reload(toastOk){try{DASH=await api("dashboard");renderAll();$("#connDot").style.background="var(--sage)";$("#connText").textContent="connected";lastSync=Date.now();if(toastOk)toast("Refreshed",true);if(!countriesLoaded){ensureCountries().then(function(){if(COUNTRIES.length)renderAll();});}}catch(x){$("#connDot").style.background="var(--clay)";$("#connText").textContent="error";toast(x.message);}}
 function renderAll(){renderControlBar();renderConvHealth();renderCommand();renderApprovals();renderPerf();renderControls();updateBadges();}
 
 async function unlock(e){e.preventDefault();PASS=$("#pc").value;$("#gateErr").textContent="";
