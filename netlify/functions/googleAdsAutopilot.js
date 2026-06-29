@@ -601,16 +601,26 @@ function _dateOnly(s) { if (!s) return null; const m = String(s).match(/(\d{4})-
 
 // "Today" in the AD ACCOUNT's timezone (not the server's UTC), as YYYYMMDD — so scheduling
 // decisions match how Google Ads evaluates start dates. Falls back to UTC if the lookup fails.
-async function _accountTodayYmd() {
-  let tz = "America/Toronto";
+async function _accountTz() {
   try { const r = await gaql(`SELECT customer.time_zone FROM customer LIMIT 1`);
-        if (r[0] && r[0].customer && r[0].customer.timeZone) tz = r[0].customer.timeZone; } catch (e) {}
+        if (r[0] && r[0].customer && r[0].customer.timeZone) return r[0].customer.timeZone; } catch (e) {}
+  return "America/Toronto";
+}
+// Current wall-clock in the account's timezone (+optional ms offset) as "yyyyMMdd HH:MM:SS".
+// Used for scheduling so Google Ads never sees a start_date_time in the past.
+function _accountDateTime(tz, offsetMs) {
+  const when = new Date(Date.now() + (offsetMs || 0)); const o = {};
   try {
-    const o = {}; new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" })
-      .formatToParts(new Date()).forEach(p => { o[p.type] = p.value; });
-    if (o.year && o.month && o.day) return `${o.year}${o.month}${o.day}`;
-  } catch (e) {}
-  return _ymd(_todayUtc()).replace(/-/g, "");
+    new Intl.DateTimeFormat("en-CA", { timeZone: tz, hour12: false, year: "numeric", month: "2-digit",
+      day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" })
+      .formatToParts(when).forEach(p => { o[p.type] = p.value; });
+  } catch (e) {
+    o.year = when.getUTCFullYear(); o.month = String(when.getUTCMonth() + 1).padStart(2, "0");
+    o.day = String(when.getUTCDate()).padStart(2, "0"); o.hour = String(when.getUTCHours()).padStart(2, "0");
+    o.minute = String(when.getUTCMinutes()).padStart(2, "0"); o.second = String(when.getUTCSeconds()).padStart(2, "0");
+  }
+  const hh = (o.hour === "24") ? "00" : o.hour;   // some environments emit "24" for midnight
+  return `${o.year}${o.month}${o.day} ${hh}:${o.minute}:${o.second}`;
 }
 
 // Google Ads campaign schedule fields are startDateTime/endDateTime in "yyyyMMdd HH:MM:SS".
@@ -1016,14 +1026,18 @@ async function startCampaignNow(campaignId, { ctrl } = {}) {
   ctrl = ctrl || (await control());
   const id = String(campaignId).replace(/\D/g, "");
   if (!id) throw new Error("missing campaign id");
-  const ymd = await _accountTodayYmd();
-  const op = { update: { resourceName: `customers/${CID}/campaigns/${id}`, startDateTime: ymd + " 00:00:00" }, updateMask: "start_date_time" };
+  const tz = await _accountTz();
+  // Google Ads rejects a start_date_time in the past, and treats it as a full timestamp
+  // (not just a date), so "today 00:00:00" fails by midday. Use the account's current
+  // wall-clock + a 2-minute buffer (clock skew / processing) → effectively "starts now".
+  const dt = _accountDateTime(tz, 2 * 60 * 1000);
+  const op = { update: { resourceName: `customers/${CID}/campaigns/${id}`, startDateTime: dt }, updateMask: "start_date_time" };
   const res = await mutate("campaigns", [op], { ctrl, label: "startNow:" + id });
   if (res && res.partialFailureError) {
     const msg = (res.partialFailureError.message || JSON.stringify(res.partialFailureError)).slice(0, 400);
     throw new Error(`Google Ads rejected start-now for campaign ${id}: ${msg}`);
   }
-  return { ok: true, id, startDate: `${ymd.slice(0, 4)}-${ymd.slice(4, 6)}-${ymd.slice(6, 8)}`, dryRun: !!ctrl.dryRun };
+  return { ok: true, id, startDate: `${dt.slice(0, 4)}-${dt.slice(4, 6)}-${dt.slice(6, 8)}`, startDateTime: dt, dryRun: !!ctrl.dryRun };
 }
 
 /* ===================== Manual budget control ===================== */
