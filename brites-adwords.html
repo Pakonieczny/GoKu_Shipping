@@ -689,12 +689,26 @@ function renderConvHealth(){
   $("#convRecheck").onclick=async function(){ var b=this;var done=btnBusy(b,"Checking\u2026");var aid=actStart("conversionHealth"); try{ var r=await api("conversionHealth",{force:true}); DASH.conversionHealth=r; renderConvHealth(); toast("Conversion tracking re-checked",true);}catch(e){done();toast(e.message);} actEnd(aid); };
   $("#convSync").onclick=async function(){ var b=this;var done=btnBusy(b,"Syncing\u2026");var aid=actStart("syncConversions"); try{ var r=await api("syncConversions",{}); if(r&&r.health)DASH.conversionHealth=r.health; renderConvHealth(); toast("Synced \u2014 "+(((r.uploaded||{}).uploaded)||0)+" conversions, "+(((r.adjustments||{}).uploaded)||0)+" adjustments",true);}catch(e){done();toast(e.message);} actEnd(aid); };
 }
+function wireBackfill(scope){
+  Array.prototype.forEach.call((scope||document).querySelectorAll(".intel-backfill"),function(b){
+    b.onclick=async function(){var done=btnBusy(this,"Pulling\u2026");var aid=actStart("backfillOrders",{verb:"Pulling recent Shopify orders"});
+      try{var r=await api("backfillOrders",{limit:100});
+        if(r&&r.ok){toast("Logged "+(r.added||0)+" Shopify orders"+((r.skipped)?(" \u00b7 "+r.skipped+" already in log"):"")+" \u2713",true);}
+        else{toast("Backfill failed: "+((r&&r.error)||"unknown")+(/orders|scope|403/i.test((r&&r.error)||"")?" \u2014 the Shopify token likely needs read_orders":""));}}
+      catch(x){toast(x.message);}
+      actEnd(aid);done();await reload();};
+  });
+}
 function renderStoreIntel(){
   var el=$("#storeIntel"); if(!el) return;
-  var s=DASH.storeSignals, orders=DASH.recentOrders||[];
-  if((!s||!s.orders)&&(!orders||!orders.length)){ el.style.display="none"; return; }
   el.style.display="block";
+  var s=DASH.storeSignals, orders=DASH.recentOrders||[];
   function money(n){return cur()+(Math.round((Number(n)||0)*100)/100);}
+  if((!s||!s.orders)&&(!orders||!orders.length)){
+    el.innerHTML='<div class="card pad" style="margin-bottom:16px"><div style="display:flex;gap:8px;align-items:center;margin-bottom:5px"><b style="font-size:13px">Store intelligence</b><span class="muted" style="font-size:11px">\u00b7 every order, ad + organic \u2014 learning what to advertise</span></div><div class="muted" style="font-size:12px;line-height:1.55">No orders logged yet. Pull your recent Shopify orders to populate this now, or wait for new sales to log automatically. As data arrives you\u2019ll see the ad-vs-organic revenue split, top-selling products (each with a <b>Build paid \u2192</b> shortcut), and a per-order log marking captured (ad) vs organic.</div><button class="btn gold sm intel-backfill" style="margin-top:10px">Pull last 100 Shopify orders</button></div>';
+    wireBackfill(el);
+    return;
+  }
   var split="";
   if(s&&s.orders){
     var adR=s.adRevenue||0, orgR=s.organicRevenue||0, tot=adR+orgR, orgPct=tot>0?Math.round(orgR/tot*100):0;
@@ -728,7 +742,8 @@ function renderStoreIntel(){
           '<span style="font-size:10.5px;text-align:right;'+(ok?"color:var(--sage)":"opacity:.62")+'">'+esc(ok?"captured":(o.reason||"skipped"))+'</span></div>';
       }).join('')+'</div></details>';
   }
-  el.innerHTML='<div class="card pad" style="margin-bottom:16px"><div style="display:flex;gap:8px;align-items:center;margin-bottom:6px"><b style="font-size:13px">Store intelligence</b><span class="muted" style="font-size:11px">\u00b7 every order, ad + organic \u2014 learning what to advertise</span></div>'+split+prods+srcs+log+'</div>';
+  el.innerHTML='<div class="card pad" style="margin-bottom:16px"><div style="display:flex;gap:8px;align-items:center;margin-bottom:6px"><b style="font-size:13px">Store intelligence</b><span class="muted" style="font-size:11px">\u00b7 every order, ad + organic \u2014 learning what to advertise</span><span style="flex:1"></span><button class="btn ghost sm intel-backfill" style="padding:3px 9px;font-size:11px">Pull Shopify orders</button></div>'+split+prods+srcs+log+'</div>';
+  wireBackfill(el);
   Array.prototype.forEach.call(el.querySelectorAll(".intel-launch"),function(b){
     b.onclick=function(){var nm=this.getAttribute("data-name");var cw=$("#customWrap");if(cw&&!cw.open)cw.open=true;try{ensureBench();}catch(e){}var bc=$("#bColl");if(bc&&bc.scrollIntoView){try{bc.scrollIntoView({behavior:"smooth",block:"center"});}catch(e){}}toast("Pick the collection matching \u201c"+nm+"\u201d, then Generate draft",true);};
   });
