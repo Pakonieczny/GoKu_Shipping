@@ -82,6 +82,7 @@ async function handleAction(body) {
   const a = body.action;
   const ctrl = await E.control();
   if (a === "dashboard") return await E.dashboard();
+  if (a === "metricsRange") { try { return await E.metricsRange({ start: body.start, end: body.end }); } catch (e) { return { error: e.message }; } }
   if (a === "conversionHealth") { try { return await E.conversionHealth({ force: !!body.force }); } catch (e) { return { error: e.message }; } }
   if (a === "syncConversions") {
     try { const up = await E.uploadConversions({ ctrl }); const adj = await E.uploadConversionAdjustments({ ctrl }); const health = await E.conversionHealth({ force: true }); return { ok: true, uploaded: up, adjustments: adj, health }; }
@@ -191,7 +192,7 @@ async function handleAction(body) {
     catch (e) { return { occasions: [], error: e.message }; }
   }
   if (a === "generate") {
-    try { return await E.generateForCollection(body.coll, body.event, body.budget, { ctrl, startDate: body.startDate, endDate: body.endDate, countries: body.countries, maxCpc: body.maxCpc, peakDate: body.peakDate }); }
+    try { return await E.generateForCollection(body.coll, body.event, body.budget, { ctrl, startDate: body.startDate, endDate: body.endDate, countries: body.countries, maxCpc: body.maxCpc, peakDate: body.peakDate, smartBidding: body.smartBidding }); }
     catch (e) { return { ok: false, reason: e.message }; }
   }
   if (a === "measureNow") {

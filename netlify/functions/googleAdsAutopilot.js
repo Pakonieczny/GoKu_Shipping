@@ -799,6 +799,49 @@ function _toGAdsDateTime(val, time) {
   return ymd + " " + time;
 }
 
+/* ===================== Real keyword research (Google Keyword Planner) =====================
+   Pulls REAL per-keyword data from Google Ads' Keyword Planner (generateKeywordIdeas):
+   12-month avg monthly searches, competition index (0-100), and 20th/80th-percentile
+   top-of-page bids. This is what makes each opportunity's CPC cap, demand, and click/sales
+   projection REAL and differentiated instead of a generic tier guess. Falls back silently to
+   the tier heuristic if the account lacks Keyword Planner access or the call fails. */
+async function keywordResearch(keywords, geoIds, { langId = "1000" } = {}) {
+  const seeds = [...new Set((keywords || []).map(k => String(k).trim().toLowerCase()).filter(Boolean))].slice(0, 20);
+  if (!seeds.length) return { ok: false, error: "no seeds" };
+  const geos = ((geoIds && geoIds.length) ? geoIds : ["2124"]).map(g => `geoTargetConstants/${String(g).replace(/\D/g, "")}`).filter(g => /\d/.test(g));
+  const body = { language: `languageConstants/${langId}`, geoTargetConstants: geos, includeAdultKeywords: false, keywordPlanNetwork: "GOOGLE_SEARCH", keywordSeed: { keywords: seeds } };
+  try {
+    const token = await mintToken();
+    const res = await fetch(`${BASE}/customers/${CID}:generateKeywordIdeas`, { method: "POST", headers: adsHeaders(token), body: JSON.stringify(body) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: (data.error && data.error.message) || JSON.stringify(data).slice(0, 200) };
+    const ideas = (data.results || []).map(r => {
+      const m = r.keywordIdeaMetrics || {};
+      return { text: r.text, searches: Number(m.avgMonthlySearches) || 0,
+               competition: m.competition || "UNKNOWN", competitionIndex: m.competitionIndex != null ? Number(m.competitionIndex) : null,
+               low: fromMicros(m.lowTopOfPageBidMicros), high: fromMicros(m.highTopOfPageBidMicros) };
+    });
+    return { ok: true, ideas };
+  } catch (e) { return { ok: false, error: e.message }; }
+}
+function _median(arr) { const a = (arr || []).filter(x => x != null && !isNaN(x)).sort((x, y) => x - y); if (!a.length) return null; const m = Math.floor(a.length / 2); return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2; }
+// Turn a seed keyword set into a concrete, real CPC range + demand + validated keyword list.
+async function researchOpportunity(seeds, geoIds) {
+  const r = await keywordResearch(seeds, geoIds);
+  if (!r.ok || !r.ideas || !r.ideas.length) return { ok: false, error: r.error || "no ideas" };
+  const seedSet = new Set((seeds || []).map(s => String(s).trim().toLowerCase()));
+  let own = r.ideas.filter(i => seedSet.has(String(i.text).toLowerCase()));
+  if (!own.length) own = r.ideas;
+  const cpcLow = _median(own.map(i => i.low).filter(x => x > 0));
+  const cpcHigh = _median(own.map(i => i.high).filter(x => x > 0));
+  const searchVolume = own.reduce((a, i) => a + (i.searches || 0), 0);
+  const competitionIndex = _median(own.map(i => i.competitionIndex).filter(x => x != null));
+  const ranked = r.ideas.slice().sort((a, b) => (b.searches || 0) - (a.searches || 0));
+  const keywords = ranked.filter(i => (i.searches || 0) >= 10).slice(0, 10)
+    .map(i => ({ text: i.text, searches: i.searches, competition: i.competition, low: _r2(i.low), high: _r2(i.high) }));
+  return { ok: true, cpc: { low: _r2(cpcLow), high: _r2(cpcHigh) }, searchVolume, competitionIndex, keywords, ideaCount: r.ideas.length };
+}
+
 /* ===================== Campaign planner (research-grounded) =====================
    Every opportunity (scanned or custom) is sized from Google Ads reality for a
    LOW-VOLUME handmade-jewelry advertiser:
@@ -848,11 +891,20 @@ function _nextOccasionPeak(label) {
 }
 // The whole research output for one campaign: CPC cap, daily budget, run window, expected
 // outcome, plus plain-language rationale strings the console surfaces on every opportunity.
-function planCampaign({ title, occasion, peakDate, ceiling, headroom, smartBidding } = {}) {
+function planCampaign({ title, occasion, peakDate, ceiling, headroom, smartBidding, research, aov } = {}) {
   const ccy = CURRENCY; const smart = !!smartBidding;
   const tier = _cpcTier(title, occasion);
-  const cpc = Object.assign({}, CPC_TIERS[tier]);
   const tierLabel = _TIER_LABEL[tier];
+  // CPC: REAL Keyword Planner top-of-page bids when we have them, tier heuristic otherwise.
+  const R = (research && research.ok && (research.cpc.high > 0 || research.cpc.low > 0)) ? research : null;
+  let cpc, cpcSource;
+  if (R) {
+    const hi = R.cpc.high || (R.cpc.low * 1.6), lo = R.cpc.low || (hi * 0.45);
+    cpc = { low: _r2(lo), target: _r2(R.cpc.low || hi * 0.65), max: _r2(hi) };
+    cpcSource = "google_keyword_planner";
+  } else {
+    cpc = Object.assign({}, CPC_TIERS[tier]); cpcSource = "estimate";
+  }
   const today = _todayUtc();
   const FLOOR = 21, DEFAULT = 28, MAX = 45, LEAD = 17, TAIL = 5;
   const peak = peakDate ? _parseYmd(peakDate) : (occasion ? _parseYmd(_nextOccasionPeak(occasion)) : null);
@@ -866,6 +918,11 @@ function planCampaign({ title, occasion, peakDate, ceiling, headroom, smartBiddi
     durBasis = `Runs ${DEFAULT} days \u2014 at jewelry's ~${Math.round(PLAN_CVR * 100)}% conversion rate a shorter test produces too few sales to read reliably.`;
   }
   let durationDays = Math.max(FLOOR, Math.min(MAX, _daysBetween(start, end)));
+  // Real competition nudges the run length: hotter auctions need more days to gather data.
+  if (R && R.competitionIndex != null) {
+    const adj = R.competitionIndex > 66 ? 5 : (R.competitionIndex < 33 ? -3 : 0);
+    if (adj) { durationDays = Math.max(FLOOR, Math.min(MAX, durationDays + adj)); durBasis += ` Extended for high keyword competition (${Math.round(R.competitionIndex)}/100).`.replace(" Extended", R.competitionIndex > 66 ? " Extended" : " Trimmed"); }
+  }
   end = new Date(start.getTime() + durationDays * 86400000);
   const room = headroom != null ? headroom : (ceiling != null ? ceiling : 25);
   const PACE = 9; // target clicks/day for a readable test
@@ -877,36 +934,69 @@ function planCampaign({ title, occasion, peakDate, ceiling, headroom, smartBiddi
   const clicksTotal = Math.round(clicksPerDay * durationDays);
   const conversions = _r2(clicksTotal * PLAN_CVR);
   const spendTotal = Math.round(daily * durationDays);
+  const revenue = (aov && aov > 0) ? _r2(conversions * aov) : null;
   // ---- strategy-aware framing ----
   const caveats = [];
   let cpcBasis, budgetBasis, goal, strategy, strategyLabel;
+  const realNote = R ? `Google Keyword Planner: top-of-page bids ${ccy} ${cpc.low.toFixed(2)}\u2013${cpc.max.toFixed(2)} across your keywords` + (R.searchVolume ? ` (~${R.searchVolume.toLocaleString()} searches/mo` : "") + (R.competitionIndex != null ? `${R.searchVolume ? ", " : " ("}competition ${Math.round(R.competitionIndex)}/100)` : (R.searchVolume ? ")" : "")) + "." : "";
   if (smart) {
     strategy = "SMART_BIDDING"; strategyLabel = "Smart Bidding";
     goal = `Maximize conversion value automatically \u2014 no per-click cap`;
-    cpcBasis = `Estimate only \u2014 Smart Bidding sets each bid itself, so the ${ccy} ${cpc.max.toFixed(2)} figure is NOT a cap. Clicks can cost more, especially while learning.`;
+    cpcBasis = (R ? realNote + " " : "") + `Smart Bidding sets each bid itself, so the ${ccy} ${cpc.max.toFixed(2)} figure is a reference, NOT a cap \u2014 clicks can cost more, especially while learning.`;
     budgetBasis = `Smart Bidding spends close to the full daily budget; keep it steady (no \u00b1>20% swings) so it doesn't restart learning.`;
     caveats.push(`Smart Bidding chases conversions by setting bids per auction \u2014 great when you have volume, but there is NO max-CPC cap, so cost per click can spike (most during the 1\u20132 week learning phase).`);
     if (conversions < 15) caveats.push(`This budget yields ~${conversions} sales over the run \u2014 below the ~15\u201330/month Google needs to exit learning, so it may keep spending unpredictably. Manual CPC gives a hard cap until volume grows.`);
   } else {
     strategy = "MANUAL_CPC"; strategyLabel = "Manual CPC";
     goal = `Maximize sales within a ${ccy} ${cpc.max.toFixed(2)} max CPC`;
-    cpcBasis = `${tierLabel} terms. Retail search clicks run ~$1\u20133; capped at ${ccy} ${cpc.max.toFixed(2)} to stay in the auction without overpaying for this category.`;
+    cpcBasis = R ? `${realNote} Capped at the 80th-percentile bid (${ccy} ${cpc.max.toFixed(2)}) so your ad reliably reaches the top without overpaying.`
+                 : `${tierLabel} terms (no live Keyword Planner data \u2014 estimate). Retail search clicks run ~$1\u20133; capped at ${ccy} ${cpc.max.toFixed(2)}.`;
     budgetBasis = `\u2248${Math.round(clicksPerDay)} clicks/day at the ${ccy} ${cpc.target.toFixed(2)} target CPC \u2014 enough traffic to read without burning the ceiling.`;
     caveats.push(`Manual CPC: you never pay more than ${ccy} ${cpc.max.toFixed(2)} per click, and the daily budget caps each day's spend. No learning phase \u2014 but Google won't auto-raise bids to chase a likely sale.`);
     if (conversions < 15) caveats.push(`At this budget you'll gather directional data (~${conversions} sales over the run), short of the ~15\u201330/month Smart Bidding would need \u2014 which is exactly why a hard CPC cap is the safer default here.`);
   }
+  if (revenue != null) caveats.push(`Projected revenue ~${ccy} ${revenue.toLocaleString()} = ~${conversions} sales \u00d7 ${ccy} ${_r2(aov).toFixed(2)} average order (your real store data).`);
   if (noRoom) caveats.push(`Ceiling headroom (${ccy} ${_r2(room)}) is below the ${ccy} ${minDaily} a campaign needs to gather data \u2014 raise the daily ceiling or pause a campaign first.`);
   return {
-    currency: ccy, tier, tierLabel, cvr: PLAN_CVR, smartBidding: smart, capApplies: !smart,
-    cpc: { low: cpc.low, target: cpc.target, max: cpc.max, basis: cpcBasis },
+    currency: ccy, tier, tierLabel, cvr: PLAN_CVR, smartBidding: smart, capApplies: !smart, researched: !!R, cpcSource,
+    cpc: { low: cpc.low, target: cpc.target, max: cpc.max, source: cpcSource, basis: cpcBasis },
     duration: { days: durationDays, startDate: _ymd(start), endDate: _ymd(end), basis: durBasis },
     budget: { daily, basis: budgetBasis },
-    expected: { clicksPerDay: Math.round(clicksPerDay), clicksTotal, conversions, spendTotal },
+    expected: { clicksPerDay: Math.round(clicksPerDay), clicksTotal, conversions, spendTotal, revenue, aov: aov || null, searchVolume: R ? R.searchVolume : null, competitionIndex: R ? R.competitionIndex : null },
     strategy, strategyLabel, goal, caveats
   };
 }
 
-function buildSearchCampaignOps(coll, event, assets, { dailyBudget, startDate, endDate, countries, maxCpc, smartBidding, targetRoas }) {
+// Default campaign-level negative keywords for a premium, made-to-order jewelry store: strip out
+// makers, bargain-hunters, repairs, jobs, and competitor-marketplace traffic that won't convert.
+// Broad-match negatives exclude the term in any query. Cuts wasted spend → better effective ROAS.
+const DEFAULT_NEGATIVES = ["free", "diy", "how to make", "tutorial", "pattern", "cheap", "wholesale",
+  "bulk", "supplier", "manufacturer", "repair", "fix", "job", "jobs", "hiring", "salary", "fake",
+  "replica", "knockoff", "amazon", "temu", "shein", "wish", "meaning", "definition", "clipart", "svg", "png"];
+// Brand callouts — descriptive (not promises), true for Brites, each ≤25 chars.
+const BRAND_CALLOUTS = ["Handmade in Canada", "Personalized Charms", "Custom-Made Gifts", "Unique Handmade Designs"];
+const _clip = (s, n) => String(s || "").slice(0, n);
+// Sitelink + callout + structured-snippet assets. Google: sitelinks alone lift conversions ~15% by
+// adding relevant links + ad real estate. All URLs are pages that always exist (collection, homepage,
+// Shopify's built-in /collections/all sorts) so nothing 404s. Returned as asset + campaignAsset ops
+// with temp resource names, all applied atomically with the campaign.
+function buildCampaignAssets(coll, finalUrl, cRes) {
+  const ASSET = n => `customers/${CID}/assets/${n}`; const ops = []; let an = -10;
+  const short = _clip(coll.title, 16);
+  const ALL = "https://britesjewelry.com/collections/all";
+  const sitelinks = [
+    { linkText: _clip("Shop " + short, 25), d1: "Browse the full collection", d2: "Personalized, made to order", url: finalUrl },
+    { linkText: "Best Sellers", d1: "Our most-loved pieces", d2: "Top customer favorites", url: ALL + "?sort_by=best-selling" },
+    { linkText: "New Arrivals", d1: "Fresh handmade designs", d2: "Just added to the shop", url: ALL + "?sort_by=created-descending" },
+    { linkText: "Personalize a Gift", d1: "Add names, dates & charms", d2: "Made unique, just for them", url: finalUrl }
+  ];
+  sitelinks.forEach(s => { const a = ASSET(an--); ops.push({ assetOperation: { create: { resourceName: a, finalUrls: [s.url], sitelinkAsset: { linkText: _clip(s.linkText, 25), description1: _clip(s.d1, 35), description2: _clip(s.d2, 35) } } } }); ops.push({ campaignAssetOperation: { create: { asset: a, campaign: cRes, fieldType: "SITELINK" } } }); });
+  BRAND_CALLOUTS.forEach(t => { const a = ASSET(an--); ops.push({ assetOperation: { create: { resourceName: a, calloutAsset: { calloutText: _clip(t, 25) } } } }); ops.push({ campaignAssetOperation: { create: { asset: a, campaign: cRes, fieldType: "CALLOUT" } } }); });
+  const ss = ASSET(an--); ops.push({ assetOperation: { create: { resourceName: ss, structuredSnippetAsset: { header: "Types", values: ["Necklaces", "Bracelets", "Earrings", "Rings", "Charms"] } } } }); ops.push({ campaignAssetOperation: { create: { asset: ss, campaign: cRes, fieldType: "STRUCTURED_SNIPPET" } } });
+  return { ops, summary: { sitelinks: sitelinks.length, callouts: BRAND_CALLOUTS.length, structuredSnippets: 1 } };
+}
+
+function buildSearchCampaignOps(coll, event, assets, { dailyBudget, startDate, endDate, countries, maxCpc, smartBidding, targetRoas, negatives, withAssets } = {}) {
   const tag = `${coll.handle}-${(event ? event.label : "evergreen").toLowerCase().replace(/[^a-z0-9]+/g, "-")}`.slice(0, 40);
   const bRes = `customers/${CID}/campaignBudgets/-1`;
   const cRes = `customers/${CID}/campaigns/-2`;
@@ -958,7 +1048,15 @@ function buildSearchCampaignOps(coll, event, assets, { dailyBudget, startDate, e
     ops.push({ campaignCriterionOperation: { create: {
       campaign: cRes, location: { geoTargetConstant: `geoTargetConstants/${gid}` } } } });
   });
-  return { ops, tag, finalUrl };
+  // Negative keywords (campaign level) — exclude non-buyer traffic. Saves spend → lifts real ROAS.
+  const negs = (Array.isArray(negatives) ? negatives : DEFAULT_NEGATIVES).map(n => String(n).trim().toLowerCase()).filter(Boolean);
+  const negSet = [...new Set(negs)];
+  negSet.forEach(n => ops.push({ campaignCriterionOperation: { create: {
+    campaign: cRes, negative: true, keyword: { text: n, matchType: "BROAD" } } } }));
+  // Sitelink + callout + structured-snippet assets — extra links/real estate that lift CTR & conversions.
+  let assetSummary = null;
+  if (withAssets !== false) { const ca = buildCampaignAssets(coll, finalUrl, cRes); ca.ops.forEach(o => ops.push(o)); assetSummary = ca.summary; }
+  return { ops, tag, finalUrl, negatives: negSet, assetSummary };
 }
 
 /* ============================ STAGES ============================ */
@@ -1031,8 +1129,42 @@ async function measure() {
   return snapshot;
 }
 
-// PRUNE: find LOW-rated RSA headlines/descriptions with enough exposure; ask the
-// model for on-brand replacements; QUEUE the swap (never auto-apply text blind).
+// METRICS for an arbitrary date range — powers the Command Center's per-section calendar pickers.
+// Same shape as measure()'s snapshot (per-campaign cost/conv/value/clicks/impr + schedule), but for
+// the chosen [start,end] window and WITHOUT writing a Firestore snapshot. Read-only.
+async function metricsRange({ start, end } = {}) {
+  const tz = await _accountTz();
+  let s = _dateOnly(start) || _acctDateYmd(tz, -29 * 86400000);
+  let e = _dateOnly(end) || _acctDateYmd(tz, 0);
+  if (s > e) { const t = s; s = e; e = t; }
+  const base = await gaql(
+    `SELECT campaign.id, campaign.name, campaign.status, campaign.primary_status, campaign.primary_status_reasons, campaign_budget.amount_micros
+     FROM campaign WHERE campaign.status != 'REMOVED'`);
+  const byId = {};
+  base.forEach(r => { byId[r.campaign.id] = {
+    id: r.campaign.id, name: r.campaign.name, status: r.campaign.status,
+    primaryStatus: r.campaign.primaryStatus || null, primaryStatusReasons: r.campaign.primaryStatusReasons || [],
+    budget: fromMicros(r.campaignBudget && r.campaignBudget.amountMicros),
+    cost: 0, conv: 0, value: 0, clicks: 0, impr: 0 }; });
+  try {
+    const met = await gaql(
+      `SELECT campaign.id, metrics.cost_micros, metrics.conversions, metrics.conversions_value, metrics.clicks, metrics.impressions
+       FROM campaign WHERE segments.date BETWEEN '${s}' AND '${e}' AND campaign.status != 'REMOVED'`);
+    met.forEach(r => { const c = byId[r.campaign.id]; if (!c) return;
+      c.cost += fromMicros(r.metrics.costMicros); c.conv += Number(r.metrics.conversions || 0);
+      c.value += Number(r.metrics.conversionsValue || 0); c.clicks += Number(r.metrics.clicks || 0);
+      c.impr += Number(r.metrics.impressions || 0); });
+  } catch (er) {}
+  for (const [sf, ef, sk, ek] of [
+    ["campaign.start_date_time", "campaign.end_date_time", "startDateTime", "endDateTime"],
+    ["campaign.start_date", "campaign.end_date", "startDate", "endDate"]
+  ]) {
+    try { const sch = await gaql(`SELECT campaign.id, ${sf}, ${ef} FROM campaign WHERE campaign.status != 'REMOVED'`);
+      sch.forEach(r => { const c = byId[r.campaign.id]; if (!c) return; c.startDate = _dateOnly(r.campaign[sk]); c.endDate = _dateOnly(r.campaign[ek]); }); break;
+    } catch (e2) {}
+  }
+  return { snapshot: Object.values(byId), range: { start: s, end: e } };
+}
 async function pruneAssets({ ctrl, minImpr = 500 } = {}) {
   ctrl = ctrl || (await control());
   const rows = await gaql(
@@ -1635,25 +1767,38 @@ Only include opportunities genuinely relevant within ~30 days. Rank best-first (
   const today0 = _todayUtc();
   let _enabled = 0; try { _enabled = await _enabledBudgetTotal(); } catch (e) {}
   const headroom = Math.max(0, ceiling - _enabled);
+  // Real store AOV (from logged Shopify orders) so projected revenue uses YOUR numbers, not a guess.
+  let aov = 0; try { const sig = await storeSignals({ days: 120 }); const rev = (sig.adRevenue || 0) + (sig.organicRevenue || 0); if (sig.orders > 0) aov = _r2(rev / sig.orders); } catch (e) {}
+  const geoIds = (Array.isArray(ctrl.defaultCountries) && ctrl.defaultCountries.length) ? ctrl.defaultCountries : ["2124"];
+  // Real Keyword Planner research for each opportunity, in parallel (one generateKeywordIdeas
+  // call per opp). Each is independent and falls back to the heuristic on any failure.
+  const research = await Promise.all(list.map(o =>
+    researchOpportunity(Array.isArray(o.keywords) ? o.keywords : [], geoIds).catch(() => ({ ok: false }))
+  ));
   list = list.map((o, i) => {
     const t = String(o.collectionTitle).toLowerCase();
     const handle = byTitle[t] || (collections.find(c => c.title.toLowerCase().indexOf(t) >= 0) || {}).handle || null;
     const mem = memory.find(m => m.occasion && String(m.occasion).toLowerCase() === String(o.occasion).toLowerCase());
-    // The AI proposes WHAT (collection × occasion × keywords) and roughly WHEN (peak). The planner
-    // owns HOW: research-grounded CPC cap, learning-aware run length, and a budget that fits the
-    // ceiling — so every opportunity carries a costed plan aimed at maximizing conversions.
+    const res = research[i] && research[i].ok ? research[i] : null;
+    // The AI proposes WHAT (collection × occasion × seed keywords). Keyword Planner supplies the
+    // real numbers — CPC, demand, competition, validated keywords — and the planner turns those
+    // into a costed plan (CPC cap, learning-aware run length, budget, projected sales/revenue).
     const peakDate = o.endDate || o.startDate || _nextOccasionPeak(o.occasion);
-    const plan = planCampaign({ title: o.collectionTitle, occasion: o.occasion, peakDate, ceiling, headroom, smartBidding: !!ctrl.smartBidding });
+    const plan = planCampaign({ title: o.collectionTitle, occasion: o.occasion, peakDate, ceiling, headroom, smartBidding: !!ctrl.smartBidding, research: res, aov });
     const startDate = plan.duration.startDate, endDate = plan.duration.endDate, durationDays = plan.duration.days;
     const bud = plan.budget.daily, maxCpc = plan.cpc.max;
     const daysOut = Math.max(0, _daysBetween(today0, _parseYmd(startDate)));
+    // Validated, real-demand keywords (ranked by search volume) replace the raw AI guesses when available.
+    const kws = res && res.keywords && res.keywords.length ? res.keywords.map(k => k.text).slice(0, 8)
+              : (Array.isArray(o.keywords) ? o.keywords.slice(0, 6) : []);
     return {
       id: "op" + i, collectionHandle: handle, collectionTitle: o.collectionTitle, occasion: o.occasion,
       startDate, endDate, daysOut, durationDays, maxCpc, plan,
       priority: (["high", "medium", "test"].indexOf(o.priority) >= 0 ? o.priority : "test"),
       recommendedDailyBudget: bud, estTotalSpend: plan.expected.spendTotal,
       expectedRoasBand: o.expectedRoasBand || null, proven: !!o.proven,
-      rationale: o.rationale || "", keywords: Array.isArray(o.keywords) ? o.keywords.slice(0, 6) : [],
+      rationale: o.rationale || "", keywords: kws, keywordData: res ? res.keywords : null,
+      research: res ? { searchVolume: res.searchVolume, competitionIndex: res.competitionIndex, cpc: res.cpc, source: "google_keyword_planner" } : { source: "estimate" },
       keyPhrases: Array.isArray(o.keyPhrases) ? o.keyPhrases.slice(0, 4) : [],
       pastStats: mem && mem.roas ? { roas: mem.roas, outcome: mem.outcome } : null, currency: ccy
     };
@@ -1745,7 +1890,7 @@ async function collectionMeta(handle) {
            reviewProof: (fromCal && fromCal.reviewProof) || "thousands of 5-star reviews" };
 }
 
-async function generateForCollection(handle, eventLabel, budget, { ctrl, startDate, endDate, countries, maxCpc, peakDate } = {}) {
+async function generateForCollection(handle, eventLabel, budget, { ctrl, startDate, endDate, countries, maxCpc, peakDate, smartBidding } = {}) {
   ctrl = ctrl || (await control());
   if (!handle) return { ok: false, reason: "no collection given" };
   const coll = await collectionMeta(handle);
@@ -1757,8 +1902,13 @@ async function generateForCollection(handle, eventLabel, budget, { ctrl, startDa
   // console sends nothing but collection + occasion. Explicit values from the caller win.
   let _enabled = 0; try { _enabled = await _enabledBudgetTotal(); } catch (e) {}
   const ceiling = ctrl.maxDailyBudgetTotal || 100;
-  const smart = !!ctrl.smartBidding;
-  const plan = planCampaign({ title: coll.title, occasion: eventLabel, peakDate, ceiling, headroom: Math.max(0, ceiling - _enabled), smartBidding: smart });
+  const smart = (smartBidding != null) ? !!smartBidding : !!ctrl.smartBidding;
+  // Same real treatment as a scanned opportunity: Keyword Planner CPC/demand + real store AOV.
+  const _geo = (countries && countries.length) ? countries : ((Array.isArray(ctrl.defaultCountries) && ctrl.defaultCountries.length) ? ctrl.defaultCountries : ["2124"]);
+  const _seeds = [coll.title, `${coll.title} gift`, `${coll.title} necklace`, (event ? `${coll.title} ${event.label}` : null)].filter(Boolean);
+  let _res = null; try { _res = await researchOpportunity(_seeds, _geo); } catch (e) {}
+  let _aov = 0; try { const sig = await storeSignals({ days: 120 }); const rev = (sig.adRevenue || 0) + (sig.organicRevenue || 0); if (sig.orders > 0) _aov = _r2(rev / sig.orders); } catch (e) {}
+  const plan = planCampaign({ title: coll.title, occasion: eventLabel, peakDate, ceiling, headroom: Math.max(0, ceiling - _enabled), smartBidding: smart, research: (_res && _res.ok ? _res : null), aov: _aov });
   const dailyBudget = Number(budget) > 0 ? Number(budget) : plan.budget.daily;
   const sDate = startDate || plan.duration.startDate;
   const eDate = endDate || plan.duration.endDate;
@@ -1768,18 +1918,19 @@ async function generateForCollection(handle, eventLabel, budget, { ctrl, startDa
   let cty = (countries && countries.length) ? countries
           : (Array.isArray(ctrl.defaultCountries) && ctrl.defaultCountries.length ? ctrl.defaultCountries : ["2124"]);
   cty = [...new Set(cty.map(x => String(x).replace(/\D/g, "")).filter(Boolean))];
-  const { ops, tag } = buildSearchCampaignOps(coll, event, assets, { dailyBudget, startDate: sDate, endDate: eDate, countries: cty, maxCpc: capCpc, smartBidding: smart, targetRoas: Number(ctrl.targetRoas || 0) });
+  const { ops, tag, negatives, assetSummary } = buildSearchCampaignOps(coll, event, assets, { dailyBudget, startDate: sDate, endDate: eDate, countries: cty, maxCpc: capCpc, smartBidding: smart, targetRoas: Number(ctrl.targetRoas || 0) });
   await recordOccasionUse(event ? event.label : "Evergreen gifting", coll.handle, tag);
   const win = (sDate && eDate) ? ` (${sDate} → ${eDate}, ${plan.duration.days}d)` : "";
   const bidTxt = smart ? "Smart Bidding (no CPC cap)" : `Manual CPC ≤ ${CURRENCY} ${capCpc.toFixed(2)}/click`;
+  const assetTxt = assetSummary ? `, ${assetSummary.sitelinks} sitelinks + ${assetSummary.callouts} callouts` : "";
   const id = await enqueueApproval({
     type: "creative", vetted: false,
-    summary: `NEW Search campaign “${tag}”${event ? ` for ${event.label}` : ""}${win} — ${bidTxt}, ${assets.headlines.length} headlines, starts PAUSED (drafted on the Bench)`,
-    payload: { mutateOperations: ops, finalCollection: coll.handle, event: event ? event.label : null, startDate: sDate || null, endDate: eDate || null, countries: cty, maxCpc: capCpc, smartBidding: smart, plan },
+    summary: `NEW Search campaign “${tag}”${event ? ` for ${event.label}` : ""}${win} — ${bidTxt}, ${assets.headlines.length} headlines${assetTxt}, ${negatives.length} negatives, starts PAUSED (drafted on the Bench)`,
+    payload: { mutateOperations: ops, finalCollection: coll.handle, event: event ? event.label : null, startDate: sDate || null, endDate: eDate || null, countries: cty, maxCpc: capCpc, smartBidding: smart, negatives, assetSummary, plan },
     experimentId: tag
   });
   return { ok: true, approvalId: id, tag, title: coll.title, event: event ? event.label : null,
-           budget: dailyBudget, maxCpc: capCpc, smartBidding: smart, startDate: sDate, endDate: eDate, plan, currency: CURRENCY, countries: cty, assets };
+           budget: dailyBudget, maxCpc: capCpc, smartBidding: smart, startDate: sDate, endDate: eDate, plan, currency: CURRENCY, countries: cty, assets, negatives, assetSummary };
 }
 
 
@@ -1827,7 +1978,7 @@ module.exports = {
   enqueueConversion, uploadConversions, enqueueConversionAdjustment, uploadConversionAdjustments, recordRefund, conversionHealth, gAdsTime,
   recordOrderEvent, recentOrders, storeSignals, clearOrderLog, backfillOrders,
   ledger, clearLedger, enqueueApproval, applyApproval, applyApprovalById: applyApproval, retryStuckApprovals, sanitizeOps,
-  generateRSAAssets, buildSearchCampaignOps, planCampaign, textGuidelinesOp, brandSafe,
+  generateRSAAssets, buildSearchCampaignOps, buildCampaignAssets, planCampaign, keywordResearch, researchOpportunity, metricsRange, textGuidelinesOp, brandSafe,
   generateForCollection, COLLECTIONS, OCCASIONS,
   getCollections, suggestOccasions, recordOccasionUse,
   scanOpportunities, opportunitiesWithStatus, takenTags, fetchTopProducts, setCampaignStatus, startCampaignNow, setCampaignBudget, analyzeCampaign,
