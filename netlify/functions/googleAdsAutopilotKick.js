@@ -93,8 +93,9 @@ async function handleAction(body) {
   if (a === "setControl") {
     const allow = ["maxDailyBudgetTotal","maxBudgetStepPct","budgetMoveApprovalPct","targetRoas",
                    "minConvForTargetTune","anomalySpendMultiple","autoApproveVettedTemplates","learningCooldownDays",
-                   "defaultCountries","maxMonthlySpend"];
+                   "defaultCountries","maxMonthlySpend","smartBidding"];
     const patch = {}; allow.forEach(k => { if (body.patch && body.patch[k] !== undefined) patch[k] = body.patch[k]; });
+    if (patch.smartBidding !== undefined) patch.smartBidding = !!patch.smartBidding;
     if (patch.defaultCountries !== undefined) {
       patch.defaultCountries = [...new Set((Array.isArray(patch.defaultCountries) ? patch.defaultCountries : [])
         .map(x => String(x).replace(/\D/g, "")).filter(Boolean))];
@@ -190,7 +191,7 @@ async function handleAction(body) {
     catch (e) { return { occasions: [], error: e.message }; }
   }
   if (a === "generate") {
-    try { return await E.generateForCollection(body.coll, body.event, body.budget, { ctrl, startDate: body.startDate, endDate: body.endDate, countries: body.countries }); }
+    try { return await E.generateForCollection(body.coll, body.event, body.budget, { ctrl, startDate: body.startDate, endDate: body.endDate, countries: body.countries, maxCpc: body.maxCpc, peakDate: body.peakDate }); }
     catch (e) { return { ok: false, reason: e.message }; }
   }
   if (a === "measureNow") {

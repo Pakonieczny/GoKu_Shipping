@@ -92,6 +92,7 @@ const DEFAULT_CONTROL = {
   budgetMoveApprovalPct: 20,      // budget moves above this % need human approval
   autoApproveVettedTemplates: true,
   targetRoas: Number(ENV.GADS_TARGET_ROAS || 0),  // 0 = don't auto-tune tROAS
+  smartBidding: Number(ENV.GADS_TARGET_ROAS || 0) > 0,  // false = Manual CPC (capped) · true = Smart Bidding (Max Conversion Value, no CPC cap)
   minConvForTargetTune: 30,       // Smart Bidding volume floor before nudging targets
   learningCooldownDays: 7,        // don't restructure a campaign changed within N days
   anomalySpendMultiple: 2.5       // yesterday spend > N× trailing avg ⇒ trip breaker
@@ -798,7 +799,114 @@ function _toGAdsDateTime(val, time) {
   return ymd + " " + time;
 }
 
-function buildSearchCampaignOps(coll, event, assets, { dailyBudget, startDate, endDate, countries }) {
+/* ===================== Campaign planner (research-grounded) =====================
+   Every opportunity (scanned or custom) is sized from Google Ads reality for a
+   LOW-VOLUME handmade-jewelry advertiser:
+   - Bidding: Manual CPC. It has no learning phase, and the max CPC bid is a HARD cap
+     on what you pay per click — the lever the owner asked for. (Smart Bidding can't be
+     CPC-capped and needs ~15-50 conversions/mo to optimize, which this account can't feed.)
+   - Run length >= 21d (default 28; up to 45 around a dated occasion). Jewelry converts at
+     ~2%, so a 1-week test yields too few sales to read, and Google needs 1-2+ weeks of
+     steady data before performance stabilizes. Occasion campaigns start ~17d pre-peak to ramp.
+   - CPC tiers from 2025-26 retail search benchmarks (e-commerce ~$1-3/click, cheaper for
+     niche/long-tail), bumped a tier for competitive gifting peaks. All money in CURRENCY.   */
+const PLAN_CVR = 0.02;  // jewelry/apparel conversion-rate benchmark (~1.5-3%)
+const CPC_TIERS = [
+  { low: 0.32, target: 0.50, max: 0.70 },  // 0 niche / long-tail themed
+  { low: 0.50, target: 0.78, max: 1.05 },  // 1 personalized staple
+  { low: 0.75, target: 1.10, max: 1.45 }   // 2 competitive gifting / precious
+];
+const _TIER_LABEL = ["niche / long-tail", "personalized staple", "competitive gifting"];
+function _r2(n) { return Math.round(Number(n) * 100) / 100; }
+function _cpcTier(title, occasion) {
+  const t = String(title || "").toLowerCase(), o = String(occasion || "").toLowerCase();
+  let tier = 1;
+  if (/(dinosaur|axolotl|mushroom|frog|\bcat\b|\bdog\b|dragon|\bfox\b|\bbee\b|cottagecore|zodiac|astrolog|gamer|anime|kawaii|spooky|niche)/.test(t)) tier = 0;
+  else if (/(name|personaliz|custom|initial|birthstone|charm|couple|family|monogram|letter|bracelet|necklace|ring|earring|pendant)/.test(t)) tier = 1;
+  if (/(diamond|gold|bridal|engagement|wedding|proposal)/.test(t)) tier = 2;
+  if (/(mother'?s day|christmas|valentine|anniversary|wedding|engagement|graduation)/.test(o)) tier = Math.min(2, tier + 1);
+  return tier;
+}
+function _nthWeekdayOfMonth(year, month, weekday, n) {
+  const first = new Date(Date.UTC(year, month, 1));
+  const day = 1 + ((weekday - first.getUTCDay() + 7) % 7) + (n - 1) * 7;
+  return new Date(Date.UTC(year, month, day));
+}
+// Next upcoming peak date (YYYY-MM-DD) for a known annual occasion, else null (evergreen).
+function _nextOccasionPeak(label) {
+  const s = String(label || "").toLowerCase(); const now = _todayUtc();
+  function pick(make) { let d = make(now.getUTCFullYear()); if (d < now) d = make(now.getUTCFullYear() + 1); return d; }
+  if (/mother/.test(s)) return _ymd(pick(y => _nthWeekdayOfMonth(y, 4, 0, 2)));   // 2nd Sun May
+  if (/father/.test(s)) return _ymd(pick(y => _nthWeekdayOfMonth(y, 5, 0, 3)));   // 3rd Sun Jun
+  if (/valentine/.test(s)) return _ymd(pick(y => new Date(Date.UTC(y, 1, 14))));
+  if (/christmas/.test(s)) return _ymd(pick(y => new Date(Date.UTC(y, 11, 25))));
+  if (/graduation/.test(s)) return _ymd(pick(y => new Date(Date.UTC(y, 5, 10))));
+  if (/back to school/.test(s)) return _ymd(pick(y => new Date(Date.UTC(y, 8, 1))));
+  if (/teacher/.test(s)) return _ymd(pick(y => _nthWeekdayOfMonth(y, 4, 2, 1)));  // ~1st Tue May
+  if (/nurse/.test(s)) return _ymd(pick(y => new Date(Date.UTC(y, 4, 12))));      // May 12
+  return null;
+}
+// The whole research output for one campaign: CPC cap, daily budget, run window, expected
+// outcome, plus plain-language rationale strings the console surfaces on every opportunity.
+function planCampaign({ title, occasion, peakDate, ceiling, headroom, smartBidding } = {}) {
+  const ccy = CURRENCY; const smart = !!smartBidding;
+  const tier = _cpcTier(title, occasion);
+  const cpc = Object.assign({}, CPC_TIERS[tier]);
+  const tierLabel = _TIER_LABEL[tier];
+  const today = _todayUtc();
+  const FLOOR = 21, DEFAULT = 28, MAX = 45, LEAD = 17, TAIL = 5;
+  const peak = peakDate ? _parseYmd(peakDate) : (occasion ? _parseYmd(_nextOccasionPeak(occasion)) : null);
+  let start, end, durBasis;
+  if (peak && peak > today) {
+    start = new Date(Math.max(today.getTime(), peak.getTime() - LEAD * 86400000));
+    end = new Date(Math.max(start.getTime() + FLOOR * 86400000, peak.getTime() + TAIL * 86400000));
+    durBasis = `Starts ~${Math.round((peak - start) / 86400000)} days before the ${occasion || "occasion"} peak to ramp and clear Google's 1\u20132 week learning window, then runs through it.`;
+  } else {
+    start = today; end = new Date(today.getTime() + DEFAULT * 86400000);
+    durBasis = `Runs ${DEFAULT} days \u2014 at jewelry's ~${Math.round(PLAN_CVR * 100)}% conversion rate a shorter test produces too few sales to read reliably.`;
+  }
+  let durationDays = Math.max(FLOOR, Math.min(MAX, _daysBetween(start, end)));
+  end = new Date(start.getTime() + durationDays * 86400000);
+  const room = headroom != null ? headroom : (ceiling != null ? ceiling : 25);
+  const PACE = 9; // target clicks/day for a readable test
+  const minDaily = Math.max(5, Math.ceil(4 * cpc.target));
+  const capDaily = Math.max(minDaily, Math.min(room > 0 ? room : 25, 25));
+  let daily = Math.max(minDaily, Math.min(capDaily, Math.round(PACE * cpc.target)));
+  const noRoom = room > 0 && room < minDaily;
+  const clicksPerDay = _r2(daily / cpc.target);
+  const clicksTotal = Math.round(clicksPerDay * durationDays);
+  const conversions = _r2(clicksTotal * PLAN_CVR);
+  const spendTotal = Math.round(daily * durationDays);
+  // ---- strategy-aware framing ----
+  const caveats = [];
+  let cpcBasis, budgetBasis, goal, strategy, strategyLabel;
+  if (smart) {
+    strategy = "SMART_BIDDING"; strategyLabel = "Smart Bidding";
+    goal = `Maximize conversion value automatically \u2014 no per-click cap`;
+    cpcBasis = `Estimate only \u2014 Smart Bidding sets each bid itself, so the ${ccy} ${cpc.max.toFixed(2)} figure is NOT a cap. Clicks can cost more, especially while learning.`;
+    budgetBasis = `Smart Bidding spends close to the full daily budget; keep it steady (no \u00b1>20% swings) so it doesn't restart learning.`;
+    caveats.push(`Smart Bidding chases conversions by setting bids per auction \u2014 great when you have volume, but there is NO max-CPC cap, so cost per click can spike (most during the 1\u20132 week learning phase).`);
+    if (conversions < 15) caveats.push(`This budget yields ~${conversions} sales over the run \u2014 below the ~15\u201330/month Google needs to exit learning, so it may keep spending unpredictably. Manual CPC gives a hard cap until volume grows.`);
+  } else {
+    strategy = "MANUAL_CPC"; strategyLabel = "Manual CPC";
+    goal = `Maximize sales within a ${ccy} ${cpc.max.toFixed(2)} max CPC`;
+    cpcBasis = `${tierLabel} terms. Retail search clicks run ~$1\u20133; capped at ${ccy} ${cpc.max.toFixed(2)} to stay in the auction without overpaying for this category.`;
+    budgetBasis = `\u2248${Math.round(clicksPerDay)} clicks/day at the ${ccy} ${cpc.target.toFixed(2)} target CPC \u2014 enough traffic to read without burning the ceiling.`;
+    caveats.push(`Manual CPC: you never pay more than ${ccy} ${cpc.max.toFixed(2)} per click, and the daily budget caps each day's spend. No learning phase \u2014 but Google won't auto-raise bids to chase a likely sale.`);
+    if (conversions < 15) caveats.push(`At this budget you'll gather directional data (~${conversions} sales over the run), short of the ~15\u201330/month Smart Bidding would need \u2014 which is exactly why a hard CPC cap is the safer default here.`);
+  }
+  if (noRoom) caveats.push(`Ceiling headroom (${ccy} ${_r2(room)}) is below the ${ccy} ${minDaily} a campaign needs to gather data \u2014 raise the daily ceiling or pause a campaign first.`);
+  return {
+    currency: ccy, tier, tierLabel, cvr: PLAN_CVR, smartBidding: smart, capApplies: !smart,
+    cpc: { low: cpc.low, target: cpc.target, max: cpc.max, basis: cpcBasis },
+    duration: { days: durationDays, startDate: _ymd(start), endDate: _ymd(end), basis: durBasis },
+    budget: { daily, basis: budgetBasis },
+    expected: { clicksPerDay: Math.round(clicksPerDay), clicksTotal, conversions, spendTotal },
+    strategy, strategyLabel, goal, caveats
+  };
+}
+
+function buildSearchCampaignOps(coll, event, assets, { dailyBudget, startDate, endDate, countries, maxCpc, smartBidding, targetRoas }) {
   const tag = `${coll.handle}-${(event ? event.label : "evergreen").toLowerCase().replace(/[^a-z0-9]+/g, "-")}`.slice(0, 40);
   const bRes = `customers/${CID}/campaignBudgets/-1`;
   const cRes = `customers/${CID}/campaigns/-2`;
@@ -806,6 +914,16 @@ function buildSearchCampaignOps(coll, event, assets, { dailyBudget, startDate, e
   const finalUrl = `https://${(ENV.SITE_NAME ? "" : "")}britesjewelry.com/collections/${coll.handle}`;
   const startYmd = gAdsDate(startDate, true);   // clamp start to today-or-later
   const endYmd = gAdsDate(endDate, false);
+  // Bidding: Manual CPC by default so the ad-group max CPC bid is a HARD cap on spend/click
+  // (no learning phase; predictable budgets). Smart Bidding (Max Conversion Value, optional tROAS)
+  // is opt-in via the console toggle (control.smartBidding) or GADS_TARGET_ROAS — note that
+  // strategy CANNOT be CPC-capped. The choice is baked into the ops at generate time.
+  const capCpc = Number(maxCpc) > 0 ? Number(maxCpc) : 0.80;
+  const useSmart = (smartBidding != null) ? !!smartBidding : !!ENV.GADS_TARGET_ROAS;
+  const tRoas = Number(targetRoas || ENV.GADS_TARGET_ROAS || 0);
+  const bidding = useSmart
+    ? { maximizeConversionValue: tRoas > 0 ? { targetRoas: tRoas } : {} }
+    : { manualCpc: { enhancedCpcEnabled: false } };
   const ops = [
     { campaignBudgetOperation: { create: {
         resourceName: bRes, name: `BA · ${tag} · ${Date.now()}`,
@@ -816,11 +934,11 @@ function buildSearchCampaignOps(coll, event, assets, { dailyBudget, startDate, e
         containsEuPoliticalAdvertising: "DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING",
         ...(startYmd ? { startDateTime: startYmd + " 00:00:00" } : {}),
         ...(endYmd ? { endDateTime: endYmd + " 23:59:59" } : {}),
-        maximizeConversionValue: ENV.GADS_TARGET_ROAS ? { targetRoas: Number(ENV.GADS_TARGET_ROAS) } : {},
+        ...bidding,
         networkSettings: { targetGoogleSearch: true, targetSearchNetwork: true, targetContentNetwork: false } } } },
     { adGroupOperation: { create: {
         resourceName: agRes, name: `${coll.title} · ${event ? event.label : "Evergreen"}`,
-        campaign: cRes, type: "SEARCH_STANDARD", cpcBidMicros: micros(0.40) } } },
+        campaign: cRes, type: "SEARCH_STANDARD", cpcBidMicros: micros(capCpc) } } },
     { adGroupAdOperation: { create: {
         adGroup: agRes, status: "ENABLED", ad: {
           finalUrls: [finalUrl],
@@ -1515,25 +1633,25 @@ Only include opportunities genuinely relevant within ~30 days. Rank best-first (
   if (!list) list = [];
   const byTitle = {}; collections.forEach(c => byTitle[c.title.toLowerCase()] = c.handle);
   const today0 = _todayUtc();
+  let _enabled = 0; try { _enabled = await _enabledBudgetTotal(); } catch (e) {}
+  const headroom = Math.max(0, ceiling - _enabled);
   list = list.map((o, i) => {
     const t = String(o.collectionTitle).toLowerCase();
     const handle = byTitle[t] || (collections.find(c => c.title.toLowerCase().indexOf(t) >= 0) || {}).handle || null;
     const mem = memory.find(m => m.occasion && String(m.occasion).toLowerCase() === String(o.occasion).toLowerCase());
-    const bud = Math.max(2, Math.min(ceiling, Number(o.recommendedDailyBudget) || 8));
-    // Resolve the run window. Trust the AI's dates; fall back to daysOut + a default length.
-    let start = _parseYmd(o.startDate), end = _parseYmd(o.endDate);
-    const durHint = Math.max(3, Math.min(60, +o.durationDays || 21));
-    if (!start) { const lead = Math.max(0, (o.daysOut != null ? +o.daysOut : 7)); start = new Date(today0.getTime() + lead * 86400000); }
-    if (start < today0) start = today0;                       // never before today
-    if (!end || end <= start) end = new Date(start.getTime() + durHint * 86400000);
-    const durationDays = Math.max(3, Math.min(90, _daysBetween(start, end)));
-    const startDate = _ymd(start), endDate = _ymd(end);
-    const daysOut = Math.max(0, _daysBetween(today0, start));
+    // The AI proposes WHAT (collection × occasion × keywords) and roughly WHEN (peak). The planner
+    // owns HOW: research-grounded CPC cap, learning-aware run length, and a budget that fits the
+    // ceiling — so every opportunity carries a costed plan aimed at maximizing conversions.
+    const peakDate = o.endDate || o.startDate || _nextOccasionPeak(o.occasion);
+    const plan = planCampaign({ title: o.collectionTitle, occasion: o.occasion, peakDate, ceiling, headroom, smartBidding: !!ctrl.smartBidding });
+    const startDate = plan.duration.startDate, endDate = plan.duration.endDate, durationDays = plan.duration.days;
+    const bud = plan.budget.daily, maxCpc = plan.cpc.max;
+    const daysOut = Math.max(0, _daysBetween(today0, _parseYmd(startDate)));
     return {
       id: "op" + i, collectionHandle: handle, collectionTitle: o.collectionTitle, occasion: o.occasion,
-      startDate, endDate, daysOut, durationDays,
+      startDate, endDate, daysOut, durationDays, maxCpc, plan,
       priority: (["high", "medium", "test"].indexOf(o.priority) >= 0 ? o.priority : "test"),
-      recommendedDailyBudget: bud, estTotalSpend: Math.round(bud * durationDays),
+      recommendedDailyBudget: bud, estTotalSpend: plan.expected.spendTotal,
       expectedRoasBand: o.expectedRoasBand || null, proven: !!o.proven,
       rationale: o.rationale || "", keywords: Array.isArray(o.keywords) ? o.keywords.slice(0, 6) : [],
       keyPhrases: Array.isArray(o.keyPhrases) ? o.keyPhrases.slice(0, 4) : [],
@@ -1627,30 +1745,41 @@ async function collectionMeta(handle) {
            reviewProof: (fromCal && fromCal.reviewProof) || "thousands of 5-star reviews" };
 }
 
-async function generateForCollection(handle, eventLabel, budget, { ctrl, startDate, endDate, countries } = {}) {
+async function generateForCollection(handle, eventLabel, budget, { ctrl, startDate, endDate, countries, maxCpc, peakDate } = {}) {
   ctrl = ctrl || (await control());
   if (!handle) return { ok: false, reason: "no collection given" };
   const coll = await collectionMeta(handle);
   const event = (eventLabel && eventLabel !== "Evergreen gifting") ? { label: eventLabel, angle: "" } : null;
   const assets = await generateRSAAssets(coll, event);
   if (!assets) return { ok: false, reason: "generation rejected — copy failed brand-safety or fell under RSA minimums" };
-  const dailyBudget = Number(budget) || Number(ENV.GADS_NEW_CAMPAIGN_BUDGET || 8);
+  // Research-grounded plan: gives a custom build the SAME costed treatment as a scanned one —
+  // a learning-aware run length, a CPC cap, and a budget that fits the ceiling — even when the
+  // console sends nothing but collection + occasion. Explicit values from the caller win.
+  let _enabled = 0; try { _enabled = await _enabledBudgetTotal(); } catch (e) {}
+  const ceiling = ctrl.maxDailyBudgetTotal || 100;
+  const smart = !!ctrl.smartBidding;
+  const plan = planCampaign({ title: coll.title, occasion: eventLabel, peakDate, ceiling, headroom: Math.max(0, ceiling - _enabled), smartBidding: smart });
+  const dailyBudget = Number(budget) > 0 ? Number(budget) : plan.budget.daily;
+  const sDate = startDate || plan.duration.startDate;
+  const eDate = endDate || plan.duration.endDate;
+  const capCpc = Number(maxCpc) > 0 ? Number(maxCpc) : plan.cpc.max;
   // Default target countries (so a draft never silently launches to "all countries"). Falls back
   // to the saved control default, then Canada (2124) — the brand's home market.
   let cty = (countries && countries.length) ? countries
           : (Array.isArray(ctrl.defaultCountries) && ctrl.defaultCountries.length ? ctrl.defaultCountries : ["2124"]);
   cty = [...new Set(cty.map(x => String(x).replace(/\D/g, "")).filter(Boolean))];
-  const { ops, tag } = buildSearchCampaignOps(coll, event, assets, { dailyBudget, startDate, endDate, countries: cty });
+  const { ops, tag } = buildSearchCampaignOps(coll, event, assets, { dailyBudget, startDate: sDate, endDate: eDate, countries: cty, maxCpc: capCpc, smartBidding: smart, targetRoas: Number(ctrl.targetRoas || 0) });
   await recordOccasionUse(event ? event.label : "Evergreen gifting", coll.handle, tag);
-  const win = (startDate && endDate) ? ` (${startDate} → ${endDate})` : "";
+  const win = (sDate && eDate) ? ` (${sDate} → ${eDate}, ${plan.duration.days}d)` : "";
+  const bidTxt = smart ? "Smart Bidding (no CPC cap)" : `Manual CPC ≤ ${CURRENCY} ${capCpc.toFixed(2)}/click`;
   const id = await enqueueApproval({
     type: "creative", vetted: false,
-    summary: `NEW Search campaign “${tag}”${event ? ` for ${event.label}` : ""}${win} — ${assets.headlines.length} headlines, starts PAUSED (drafted on the Bench)`,
-    payload: { mutateOperations: ops, finalCollection: coll.handle, event: event ? event.label : null, startDate: startDate || null, endDate: endDate || null, countries: cty },
+    summary: `NEW Search campaign “${tag}”${event ? ` for ${event.label}` : ""}${win} — ${bidTxt}, ${assets.headlines.length} headlines, starts PAUSED (drafted on the Bench)`,
+    payload: { mutateOperations: ops, finalCollection: coll.handle, event: event ? event.label : null, startDate: sDate || null, endDate: eDate || null, countries: cty, maxCpc: capCpc, smartBidding: smart, plan },
     experimentId: tag
   });
   return { ok: true, approvalId: id, tag, title: coll.title, event: event ? event.label : null,
-           budget: dailyBudget, currency: CURRENCY, countries: cty, assets };
+           budget: dailyBudget, maxCpc: capCpc, smartBidding: smart, startDate: sDate, endDate: eDate, plan, currency: CURRENCY, countries: cty, assets };
 }
 
 
@@ -1698,7 +1827,7 @@ module.exports = {
   enqueueConversion, uploadConversions, enqueueConversionAdjustment, uploadConversionAdjustments, recordRefund, conversionHealth, gAdsTime,
   recordOrderEvent, recentOrders, storeSignals, clearOrderLog, backfillOrders,
   ledger, clearLedger, enqueueApproval, applyApproval, applyApprovalById: applyApproval, retryStuckApprovals, sanitizeOps,
-  generateRSAAssets, buildSearchCampaignOps, textGuidelinesOp, brandSafe,
+  generateRSAAssets, buildSearchCampaignOps, planCampaign, textGuidelinesOp, brandSafe,
   generateForCollection, COLLECTIONS, OCCASIONS,
   getCollections, suggestOccasions, recordOccasionUse,
   scanOpportunities, opportunitiesWithStatus, takenTags, fetchTopProducts, setCampaignStatus, startCampaignNow, setCampaignBudget, analyzeCampaign,
