@@ -54,7 +54,7 @@ exports.handler = async (event) => {
 
   const tasks = Array.isArray(body.tasks) && body.tasks.length
     ? body.tasks
-    : ["anomaly", "conversions", "adjustments", "measure", "mine", "prune", "budgets", "events", "pruneLedger"];
+    : ["anomaly", "monthly", "conversions", "adjustments", "measure", "mine", "prune", "budgets", "ceiling", "events", "pruneLedger"];
 
   // Read-only tasks (no Google Ads mutations) are allowed even when the kill switch is off.
   const READONLY = new Set(["scanOpportunities", "pruneLedger"]);
@@ -78,6 +78,16 @@ exports.handler = async (event) => {
     }
   }
 
+  // monthly hard cap — if month-to-date spend hit the limit, it pauses campaigns + disables; bail.
+  if (tasks.includes("monthly") && !over()) {
+    try { result.monthly = await E.monthlySpendGuard({ ctrl }); log.push("monthly: " + JSON.stringify(result.monthly)); }
+    catch (e) { log.push("monthly ERROR " + e.message); }
+    if (result.monthly && result.monthly.tripped) {
+      log.push("MONTHLY CAP REACHED — campaigns paused, autopilot disabled, halting run");
+      return { statusCode: 200, body: JSON.stringify({ status: "capped", result, log }) };
+    }
+  }
+
   for (const task of tasks) {
     if (over()) { log.push("time budget reached — deferring rest to next run"); break; }
     try {
@@ -88,8 +98,9 @@ exports.handler = async (event) => {
       else if (task === "mine")     { result.mine = await E.mineSearchTerms({ ctrl }); }
       else if (task === "prune")    { result.prune = await E.pruneAssets({ ctrl }); }
       else if (task === "budgets")  { result.budgets = await E.reallocateBudgets({ ctrl }); }
+      else if (task === "ceiling")  { result.ceiling = await E.enforceBudgetCeiling({ ctrl }); }
       else if (task === "events")   { await runEvents(ctrl, log); result.events = "ok"; }
-      else if (task === "pruneLedger") { result.pruneLedger = await E.clearLedger({ keep: 500 }); }
+      else if (task === "pruneLedger") { result.pruneLedger = await E.clearLedger({ keep: 500 }); try { result.pruneOrders = await E.clearOrderLog({ keep: 1000 }); } catch (e) {} }
       if (result[task] !== undefined && task !== "events") log.push(task + ": " + JSON.stringify(result[task]));
     } catch (e) { log.push(task + " ERROR " + e.message); }
   }

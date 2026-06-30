@@ -52,7 +52,8 @@ const COL = {
   calendar:  "Brites_GAds_Calendar",     // event×collection config (doc per collection)
   occasions: "Brites_GAds_Occasions",    // per-occasion memory (uses + attributed performance)
   convQueue: "Brites_GAds_ConvQueue",    // offline conversions waiting for upload (auto-id)
-  convAdj:   "Brites_GAds_ConvAdjQueue"  // conversion adjustments (refunds/retractions) waiting for upload (auto-id)
+  convAdj:   "Brites_GAds_ConvAdjQueue", // conversion adjustments (refunds/retractions) waiting for upload (auto-id)
+  orderLog:  "Brites_GAds_OrderLog"      // EVERY Shopify order outcome (captured/skipped) + attribution, for the log + organic intelligence (auto-id)
 };
 
 /* ============================ Config / control ============================ */
@@ -358,6 +359,70 @@ async function conversionHealth({ force } = {}) {
   return out;
 }
 
+/* ===================== Store order log + organic intelligence ===================== */
+// Every Shopify order (ad-attributed or not) is logged here. Orders that DIDN'T come from a
+// Google ad click still teach us what's selling — we mine that to inform future ad campaigns.
+
+async function recordOrderEvent(ev) {
+  const f = fb(); if (!f) return false;
+  const row = {
+    orderId: ev.orderId || null, value: Number(ev.value) || 0, currency: ev.currency || CURRENCY,
+    source: ev.source || null, medium: ev.medium || null, campaign: ev.campaign || null,
+    hasClickId: !!ev.gclid, captured: !!ev.captured, reason: ev.reason || null,
+    products: Array.isArray(ev.products) ? ev.products.slice(0, 12) : [],
+    handle: ev.handle || null, at: f.FV.serverTimestamp(), ts: Date.now()
+  };
+  try { await f.db.collection(COL.orderLog).add(row); return true; } catch (e) { return false; }
+}
+
+// Most recent order outcomes for the console log.
+async function recentOrders({ limit = 25 } = {}) {
+  const f = fb(); if (!f) return [];
+  try {
+    const q = await f.db.collection(COL.orderLog).orderBy("ts", "desc").limit(Math.min(100, limit)).get();
+    const out = []; q.forEach(d => { const x = d.data(); out.push({ id: d.id, orderId: x.orderId, value: x.value, currency: x.currency, source: x.source, medium: x.medium, campaign: x.campaign, captured: x.captured, hasClickId: x.hasClickId, reason: x.reason, products: x.products || [], handle: x.handle, ts: x.ts }); });
+    return out;
+  } catch (e) { return []; }
+}
+
+// Aggregate organic (non-ad) demand from the order log: revenue split, top products, top sources.
+async function storeSignals({ days = 30, max = 500 } = {}) {
+  const f = fb(); if (!f) return null;
+  const since = Date.now() - days * 86400000;
+  let rows = [];
+  try {
+    const q = await f.db.collection(COL.orderLog).orderBy("ts", "desc").limit(max).get();
+    q.forEach(d => { const x = d.data(); if ((x.ts || 0) >= since) rows.push(x); });
+  } catch (e) { return null; }
+  const out = { days, orders: rows.length, adOrders: 0, organicOrders: 0, adRevenue: 0, organicRevenue: 0,
+    topProducts: [], topSources: [] };
+  const prod = {}, src = {};
+  rows.forEach(x => {
+    const v = Number(x.value) || 0; const isAd = !!x.hasClickId;
+    if (isAd) { out.adOrders++; out.adRevenue += v; } else { out.organicOrders++; out.organicRevenue += v; }
+    (x.products || []).forEach(p => { const k = String(p).trim(); if (!k) return; (prod[k] = prod[k] || { name: k, orders: 0, revenue: 0, ad: 0, organic: 0 }); prod[k].orders++; prod[k].revenue += v / Math.max(1, (x.products || []).length); isAd ? prod[k].ad++ : prod[k].organic++; });
+    const sk = ((x.source || "direct") + " / " + (x.medium || "none")).toLowerCase();
+    (src[sk] = src[sk] || { source: sk, orders: 0, revenue: 0 }); src[sk].orders++; src[sk].revenue += v;
+  });
+  out.adRevenue = +out.adRevenue.toFixed(2); out.organicRevenue = +out.organicRevenue.toFixed(2);
+  out.topProducts = Object.values(prod).map(p => ({ ...p, revenue: +p.revenue.toFixed(2) })).sort((a, b) => b.orders - a.orders || b.revenue - a.revenue).slice(0, 10);
+  out.topSources = Object.values(src).map(s => ({ ...s, revenue: +s.revenue.toFixed(2) })).sort((a, b) => b.orders - a.orders).slice(0, 8);
+  return out;
+}
+
+async function clearOrderLog({ keep = 1000 } = {}) {
+  const f = fb(); if (!f) return { deleted: 0 };
+  try {
+    const q = await f.db.collection(COL.orderLog).orderBy("ts", "desc").get();
+    const docs = q.docs || []; let deleted = 0;
+    for (let i = keep; i < docs.length; i += 400) {
+      const batch = f.db.batch(); docs.slice(i, i + 400).forEach(d => { batch.delete(d.ref); deleted++; });
+      await batch.commit();
+    }
+    return { deleted };
+  } catch (e) { return { deleted: 0, error: e.message }; }
+}
+
 /* ============================ Ledger / approvals ============================ */
 async function ledger(entry) {
   const f = fb(); if (!f) return;
@@ -425,8 +490,29 @@ async function applyApproval(id, ctrl) {
   if (it.status !== "APPROVED") throw new Error("approval not in APPROVED state");
   const p = it.payload || {};
   const vo = !!ctrl.dryRun;
+  // Creation-time ceiling guard: a new-campaign draft must fit under the daily-budget ceiling.
+  // Trim its budget to the remaining headroom (vs enabled campaigns), or refuse if there's none.
+  let _ctrim = null;
+  if (p.mutateOperations && Number(ctrl.maxDailyBudgetTotal) > 0) {
+    const bOp = p.mutateOperations.find(o => o && o.campaignBudgetOperation && o.campaignBudgetOperation.create && o.campaignBudgetOperation.create.amountMicros != null);
+    if (bOp) {
+      const want = fromMicros(bOp.campaignBudgetOperation.create.amountMicros);
+      const current = await _enabledBudgetTotal();
+      const headroom = Number(ctrl.maxDailyBudgetTotal) - current;
+      if (want > headroom + 0.001) {
+        if (headroom >= 1) {
+          const trimmed = +headroom.toFixed(2);
+          bOp.campaignBudgetOperation.create.amountMicros = micros(trimmed);
+          _ctrim = { from: want, to: trimmed, ceiling: Number(ctrl.maxDailyBudgetTotal), current: +current.toFixed(2) };
+        } else {
+          throw new Error(`Can't launch under your ceiling: enabled campaigns already use ${CURRENCY}${current.toFixed(2)}/day of your ${CURRENCY}${Number(ctrl.maxDailyBudgetTotal).toFixed(2)}/day cap. Raise the ceiling (Controls) or pause/trim a campaign first.`);
+        }
+      }
+    }
+  }
   if (p.service && p.operations) await mutate(p.service, sanitizeOps(p.operations), { ctrl, label: "approval:" + it.type });
   else if (p.mutateOperations)   await mutateAll(sanitizeOps(p.mutateOperations), { ctrl, label: "approval:" + it.type });
+  if (!vo && _ctrim) { try { await ledger({ kind: "ceilingTrim", from: _ctrim.from, to: _ctrim.to, ceiling: _ctrim.ceiling }); } catch (e) {} }
   // Only flip to APPLIED when it actually ran; a dry-run only validated, so leave it APPROVED.
   if (!vo) await ref.update({ status: "APPLIED", appliedAt: f.FV.serverTimestamp() });
   return true;
@@ -881,6 +967,80 @@ async function anomalyCheck({ ctrl } = {}) {
       { merge: true });
   }
   return { yesterday: +yCost.toFixed(2), trailingAvg: +tCost.toFixed(2), tripped };
+}
+
+/* ===================== Spend-cap enforcement ===================== */
+
+// Sum of ENABLED campaigns' daily budgets (the budgets that can actually spend right now).
+async function _enabledBudgetTotal() {
+  try {
+    const rows = await gaql(`SELECT campaign.id, campaign_budget.amount_micros FROM campaign WHERE campaign.status = 'ENABLED'`);
+    return rows.reduce((s, r) => s + fromMicros(r.campaignBudget && r.campaignBudget.amountMicros), 0);
+  } catch (e) { return 0; }
+}
+
+// Keep the SUM of enabled campaigns' daily budgets at/under the ceiling by scaling them all down
+// proportionally. Catches drift from manual edits or many concurrent launches.
+async function enforceBudgetCeiling({ ctrl } = {}) {
+  ctrl = ctrl || (await control());
+  const ceiling = Number(ctrl.maxDailyBudgetTotal) || 0;
+  if (!(ceiling > 0)) return { ok: true, skipped: "no ceiling set" };
+  const rows = await gaql(
+    `SELECT campaign.id, campaign.name, campaign_budget.resource_name, campaign_budget.amount_micros
+     FROM campaign WHERE campaign.status = 'ENABLED'`);
+  const items = rows.map(r => ({ id: r.campaign.id, name: r.campaign.name,
+      res: r.campaignBudget && r.campaignBudget.resourceName,
+      budget: fromMicros(r.campaignBudget && r.campaignBudget.amountMicros) }))
+    .filter(x => x.res && x.budget > 0);
+  const total = items.reduce((a, b) => a + b.budget, 0);
+  if (total <= ceiling + 0.001) return { ok: true, total: +total.toFixed(2), ceiling, withinCeiling: true };
+  const factor = ceiling / total, floor = 1;
+  const ops = [], moves = [];
+  items.forEach(x => {
+    const nb = Math.max(floor, +(x.budget * factor).toFixed(2));
+    if (Math.abs(nb - x.budget) < 0.01) return;
+    moves.push({ campaign: x.name, from: x.budget, to: nb });
+    ops.push({ update: { resourceName: x.res, amountMicros: micros(nb) }, updateMask: "amount_micros" });
+  });
+  if (!ops.length) return { ok: true, total: +total.toFixed(2), ceiling, withinCeiling: false, trimmed: 0 };
+  const res = await mutate("campaignBudgets", ops, { ctrl, label: "enforceCeiling" });
+  if (res && res.partialFailureError) { const m = (res.partialFailureError.message || "").slice(0, 300); throw new Error(`ceiling trim rejected: ${m}`); }
+  await ledger({ kind: "enforceBudgetCeiling", total: +total.toFixed(2), ceiling, trimmed: ops.length, validateOnly: !!ctrl.dryRun });
+  return { ok: true, total: +total.toFixed(2), ceiling, trimmed: ops.length, detail: moves, dryRun: !!ctrl.dryRun };
+}
+
+// Month-to-date account spend (computed in the account's timezone).
+async function _mtdSpend() {
+  const tz = await _accountTz();
+  const end = _acctDateYmd(tz, 0);
+  const start = end.slice(0, 8) + "01"; // first day of the current month, YYYY-MM-01
+  const r = await gaql(`SELECT metrics.cost_micros FROM customer WHERE segments.date BETWEEN '${start}' AND '${end}'`);
+  return { mtd: fromMicros((r[0] && r[0].metrics && r[0].metrics.costMicros) || 0), start, end };
+}
+
+// Hard monthly cap (opt-in): when month-to-date account spend reaches maxMonthlySpend, PAUSE every
+// enabled campaign and stop the autopilot. This is the only true hard stop, since Google has no
+// native account-level cap. Does nothing unless maxMonthlySpend is set.
+async function monthlySpendGuard({ ctrl } = {}) {
+  ctrl = ctrl || (await control());
+  const limit = Number(ctrl.maxMonthlySpend) || 0;
+  if (!(limit > 0)) return { ok: true, skipped: "no monthly cap set" };
+  const { mtd, start, end } = await _mtdSpend();
+  const pct = +(mtd / limit * 100).toFixed(1);
+  if (mtd < limit) return { ok: true, mtd: +mtd.toFixed(2), limit, pct, tripped: false, window: { start, end } };
+  let paused = 0;
+  try {
+    const rows = await gaql(`SELECT campaign.id, campaign.resource_name FROM campaign WHERE campaign.status = 'ENABLED'`);
+    const ops = rows.map(r => ({ update: { resourceName: (r.campaign && r.campaign.resourceName) || `customers/${CID}/campaigns/${r.campaign.id}`, status: "PAUSED" }, updateMask: "status" }));
+    if (ops.length && !ctrl.dryRun) await mutate("campaigns", ops, { ctrl, label: "monthlyCapPause" });
+    paused = ops.length;
+  } catch (e) {}
+  const f = fb();
+  if (f && !ctrl.dryRun) {
+    try { await f.db.collection(COL.control).doc("control").set({ enabled: false, trippedAt: f.FV.serverTimestamp(), tripReason: `monthly cap reached: ${CURRENCY}${mtd.toFixed(2)} \u2265 ${CURRENCY}${limit}` }, { merge: true }); } catch (e) {}
+  }
+  await ledger({ kind: "monthlySpendGuard", mtd: +mtd.toFixed(2), limit, paused, validateOnly: !!ctrl.dryRun });
+  return { ok: true, mtd: +mtd.toFixed(2), limit, pct, tripped: true, paused, dryRun: !!ctrl.dryRun };
 }
 
 /* ===================== Live Shopify collections ===================== */
@@ -1455,6 +1615,8 @@ async function dashboard() {
     out.metricsSeries = rows.reverse(); // oldest → newest
   } catch (e) {}
   try { out.conversionHealth = await conversionHealth(); } catch (e) { out.conversionHealth = null; }
+  try { out.recentOrders = await recentOrders({ limit: 25 }); } catch (e) { out.recentOrders = []; }
+  try { out.storeSignals = await storeSignals({ days: 30 }); } catch (e) { out.storeSignals = null; }
   return out;
 }
 
@@ -1462,6 +1624,7 @@ module.exports = {
   COL, V, CID,
   control, mintToken, gaql, mutate, mutateAll,
   enqueueConversion, uploadConversions, enqueueConversionAdjustment, uploadConversionAdjustments, recordRefund, conversionHealth, gAdsTime,
+  recordOrderEvent, recentOrders, storeSignals, clearOrderLog,
   ledger, clearLedger, enqueueApproval, applyApproval, applyApprovalById: applyApproval, retryStuckApprovals, sanitizeOps,
   generateRSAAssets, buildSearchCampaignOps, textGuidelinesOp, brandSafe,
   generateForCollection, COLLECTIONS, OCCASIONS,
@@ -1470,6 +1633,7 @@ module.exports = {
   listCountries, campaignCountries, setCampaignCountries, setApprovalCountries,
   loadCalendar, dueEvents,
   measure, pruneAssets, mineSearchTerms, reallocateBudgets, anomalyCheck,
+  enforceBudgetCeiling, monthlySpendGuard,
   dashboard,
   _util: { micros, fromMicros, clampHeadline, clampDescription, gAdsTime, daysUntil }
 };

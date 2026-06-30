@@ -40,7 +40,7 @@ function authed(event, body) {
 /* ----------------------------- scheduled kick ----------------------------- */
 async function decideTasks() {
   const now = new Date();
-  const tasks = new Set(["anomaly", "conversions"]); // cheap + high value every hour
+  const tasks = new Set(["anomaly", "monthly", "ceiling", "conversions"]); // cheap + high value every hour
   const dailyHour = Number(process.env.GADS_DAILY_HOUR || 8);   // UTC
   const weeklyDow = Number(process.env.GADS_WEEKLY_DOW || 1);   // 1=Mon
   const isDailySlot = now.getUTCHours() === dailyHour;
@@ -93,11 +93,14 @@ async function handleAction(body) {
   if (a === "setControl") {
     const allow = ["maxDailyBudgetTotal","maxBudgetStepPct","budgetMoveApprovalPct","targetRoas",
                    "minConvForTargetTune","anomalySpendMultiple","autoApproveVettedTemplates","learningCooldownDays",
-                   "defaultCountries"];
+                   "defaultCountries","maxMonthlySpend"];
     const patch = {}; allow.forEach(k => { if (body.patch && body.patch[k] !== undefined) patch[k] = body.patch[k]; });
     if (patch.defaultCountries !== undefined) {
       patch.defaultCountries = [...new Set((Array.isArray(patch.defaultCountries) ? patch.defaultCountries : [])
         .map(x => String(x).replace(/\D/g, "")).filter(Boolean))];
+    }
+    if (patch.maxMonthlySpend !== undefined) {
+      const n = Number(patch.maxMonthlySpend); patch.maxMonthlySpend = (isFinite(n) && n > 0) ? Math.round(n * 100) / 100 : 0;
     }
     if (f && Object.keys(patch).length) await f.db.collection(E.COL.control).doc("control").set(patch, { merge: true });
     return { patched: patch };
@@ -127,6 +130,14 @@ async function handleAction(body) {
   }
   if (a === "startNow") {
     try { return await E.startCampaignNow(body.id, { ctrl }); }
+    catch (e) { return { ok: false, error: e.message }; }
+  }
+  if (a === "enforceCeiling") {
+    try { return await E.enforceBudgetCeiling({ ctrl }); }
+    catch (e) { return { ok: false, error: e.message }; }
+  }
+  if (a === "monthlyGuard") {
+    try { return await E.monthlySpendGuard({ ctrl }); }
     catch (e) { return { ok: false, error: e.message }; }
   }
   if (a === "countries") {

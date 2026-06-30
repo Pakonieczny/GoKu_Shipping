@@ -65,6 +65,28 @@ function clickIdsFromLanding(url) {
   } catch (e) { return {}; }
 }
 
+// Marketing attribution (utm_source / utm_medium / utm_campaign) + product handle from the order's
+// landing page or note attributes. Used to log organic vs ad demand for the intelligence layer.
+function attributionFrom(payload) {
+  const note = payload.note_attributes || [];
+  let source = noteAttr(note, "utm_source"), medium = noteAttr(note, "utm_medium"), campaign = noteAttr(note, "utm_campaign");
+  let handle = null;
+  try {
+    const u = new URL(payload.landing_site || "", "https://x.invalid");
+    source = source || u.searchParams.get("utm_source");
+    medium = medium || u.searchParams.get("utm_medium");
+    campaign = campaign || u.searchParams.get("utm_campaign");
+    const m = (u.pathname || "").match(/\/products\/([^\/?#]+)/);
+    if (m) handle = m[1];
+  } catch (e) {}
+  return { source: source || null, medium: medium || null, campaign: campaign || null, handle };
+}
+
+function productTitles(payload) {
+  const li = Array.isArray(payload.line_items) ? payload.line_items : [];
+  return li.map(x => String(x.title || x.name || "").trim()).filter(Boolean).slice(0, 12);
+}
+
 function refundAmount(payload) {
   const txns = Array.isArray(payload.transactions) ? payload.transactions : [];
   const fromTxns = txns
@@ -77,18 +99,21 @@ function refundAmount(payload) {
   return fromLines + ship;
 }
 
+const LOG = (...a) => console.log("[shopifyWebhook]", ...a);
+
 exports.handler = async (event) => {
-  if (event.httpMethod !== "POST") return { statusCode: 405, body: "POST only" };
+  if (event.httpMethod !== "POST") { LOG(event.httpMethod, "-> 405 (POST only)"); return { statusCode: 405, body: "POST only" }; }
 
   const secret = process.env.SHOPIFY_WEBHOOK_SECRET;
   const hmac = header(event.headers, "x-shopify-hmac-sha256");
   const raw = rawBody(event);
-  if (!verifyHmac(raw, hmac, secret)) return { statusCode: 401, body: "hmac verification failed" };
+  const topicHdr = String(header(event.headers, "x-shopify-topic") || "").toLowerCase();
+  if (!verifyHmac(raw, hmac, secret)) { LOG(topicHdr || "?", "-> 401 (HMAC failed — unsigned/test or wrong secret)"); return { statusCode: 401, body: "hmac verification failed" }; }
 
-  const topic = String(header(event.headers, "x-shopify-topic") || "").toLowerCase();
+  const topic = topicHdr;
   let payload;
   try { payload = JSON.parse(raw.toString("utf8")); }
-  catch (e) { return { statusCode: 400, body: "bad json" }; }
+  catch (e) { LOG(topic, "-> 400 (bad json)"); return { statusCode: 400, body: "bad json" }; }
 
   try {
     if (topic === "orders/paid" || topic === "orders/create") {
@@ -101,14 +126,26 @@ exports.handler = async (event) => {
         const land = clickIdsFromLanding(payload.landing_site);
         gclid = land.gclid; gbraid = land.gbraid; wbraid = land.wbraid;
       }
-      if (!gclid && !gbraid && !wbraid) {
-        return { statusCode: 200, body: JSON.stringify({ ok: true, skipped: "no Google click id — non-ad / organic order" }) };
-      }
       const value = Number(payload.total_price || payload.current_total_price || 0);
       const currency = payload.currency || payload.presentment_currency || undefined;
+      const attr = attributionFrom(payload);
+      const products = productTitles(payload);
+      const clickId = gclid || gbraid || wbraid || null;
+
+      if (!clickId) {
+        // Organic / non-ad order: never a Google Ads conversion, but we LOG it so the store
+        // intelligence layer can learn what's selling and inform future ad campaigns.
+        const reason = attr.campaign === "sag_organic" ? "organic — free Google listing (sag_organic)"
+          : (attr.source ? `non-ad — ${attr.source}/${attr.medium || "none"}` : "organic / no Google click id");
+        try { await E.recordOrderEvent({ orderId, value, currency, source: attr.source, medium: attr.medium, campaign: attr.campaign, gclid: null, captured: false, reason, products, handle: attr.handle }); } catch (e) { LOG("orderLog ERROR", e.message); }
+        LOG(topic, "order", orderId, "-> 200 SKIPPED (" + reason + ")");
+        return { statusCode: 200, body: JSON.stringify({ ok: true, skipped: reason, logged: true }) };
+      }
       const when = payload.created_at ? E.gAdsTime(new Date(payload.created_at)) : undefined;
       const r = await E.enqueueConversion({ gclid, gbraid, wbraid, value, currency, orderId, conversionDateTime: when });
-      return { statusCode: 200, body: JSON.stringify({ ok: true, result: r }) };
+      try { await E.recordOrderEvent({ orderId, value, currency, source: attr.source, medium: attr.medium, campaign: attr.campaign, gclid: clickId, captured: true, reason: "captured — Google ad click", products, handle: attr.handle }); } catch (e) { LOG("orderLog ERROR", e.message); }
+      LOG(topic, "order", orderId, "click", clickId, "value", value, currency, "->", JSON.stringify(r));
+      return { statusCode: 200, body: JSON.stringify({ ok: true, result: r, logged: true }) };
     }
 
     if (topic === "refunds/create") {
@@ -116,11 +153,14 @@ exports.handler = async (event) => {
       const amt = refundAmount(payload);
       const when = payload.created_at || (payload.processed_at) ? E.gAdsTime(new Date(payload.created_at || payload.processed_at)) : undefined;
       const r = await E.recordRefund({ orderId, refundAmount: amt, when });
+      LOG(topic, "order", orderId, "refund", amt, "->", JSON.stringify(r));
       return { statusCode: 200, body: JSON.stringify({ ok: true, result: r }) };
     }
 
+    LOG(topic, "-> 200 (ignored topic)");
     return { statusCode: 200, body: JSON.stringify({ ok: true, ignored: topic }) };
   } catch (e) {
+    LOG(topic, "-> 200 (internal error:", e.message + ")");
     // Return 200 on internal errors so Shopify doesn't aggressively retry on our bugs;
     // the failure is logged via the response body and can be replayed manually.
     return { statusCode: 200, body: JSON.stringify({ ok: false, error: e.message }) };
