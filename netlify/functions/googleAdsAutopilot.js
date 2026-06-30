@@ -53,7 +53,8 @@ const COL = {
   occasions: "Brites_GAds_Occasions",    // per-occasion memory (uses + attributed performance)
   convQueue: "Brites_GAds_ConvQueue",    // offline conversions waiting for upload (auto-id)
   convAdj:   "Brites_GAds_ConvAdjQueue", // conversion adjustments (refunds/retractions) waiting for upload (auto-id)
-  orderLog:  "Brites_GAds_OrderLog"      // EVERY Shopify order outcome (captured/skipped) + attribution, for the log + organic intelligence (auto-id)
+  orderLog:  "Brites_GAds_OrderLog",     // EVERY Shopify order outcome (captured/skipped) + attribution, for the log + organic intelligence (auto-id)
+  kwCache:   "Brites_GAds_KwCache"       // cached Keyword Planner results keyed by seed-set+geo (TTL), to spare API quota
 };
 
 /* ============================ Config / control ============================ */
@@ -818,6 +819,8 @@ function _toGAdsDateTime(val, time) {
 // Whichever returns data is locked in. If all 403, it's a true account-access gap (enable Keyword
 // Planner / billing on an account) and we fall back to AI research.
 let _kpAttempt = null; // null = undiscovered; else an attempt.key
+const _sleep = ms => new Promise(r => setTimeout(r, ms));
+const _KP_BACKOFF_MS = Number(ENV.KP_BACKOFF_MS || 1500);
 function _kpAttempts() {
   const a = [
     { key: "mcc",  customer: CID,      login: undefined },
@@ -837,9 +840,14 @@ async function keywordResearch(keywords, geoIds, { langId = "1000" } = {}) {
   let lastErr = null, lastStatus = null;
   for (const at of attempts) {
     try {
-      const token = await mintToken();
-      const res = await fetch(`${BASE}/customers/${at.customer}:generateKeywordIdeas`, { method: "POST", headers: adsHeaders(token, at.login), body: JSON.stringify(body) });
-      const data = await res.json().catch(() => ({}));
+      let res, data;
+      for (let n = 0; n < 2; n++) {
+        const token = await mintToken();
+        res = await fetch(`${BASE}/customers/${at.customer}:generateKeywordIdeas`, { method: "POST", headers: adsHeaders(token, at.login), body: JSON.stringify(body) });
+        data = await res.json().catch(() => ({}));
+        if (res.status === 429 && n === 0) { await _sleep(_KP_BACKOFF_MS); continue; } // brief backoff on rate limit
+        break;
+      }
       if (res.ok) {
         _kpAttempt = at.key;
         const ideas = (data.results || []).map(r => {
@@ -852,6 +860,9 @@ async function keywordResearch(keywords, geoIds, { langId = "1000" } = {}) {
       }
       lastErr = (data.error && (data.error.message || (data.error.details && JSON.stringify(data.error.details)))) || JSON.stringify(data).slice(0, 300);
       lastStatus = res.status;
+      // 429 = rate/quota limited but AUTHORIZED. The auth path works; trying the others just burns
+      // more quota. Stop and report it as a rate limit (the caller backs off / uses cache).
+      if (res.status === 429) { _kpAttempt = at.key; break; }
       if (!/permission|unauthor|USER_PERMISSION|login.customer/i.test(lastErr || "") && res.status !== 403 && res.status !== 401) break;
     } catch (e) { lastErr = e.message; lastStatus = null; }
   }
@@ -922,6 +933,50 @@ async function researchOpportunity(seeds, geoIds) {
   const merged = mergeKeywordResearch(seeds, kp);
   merged.error = kp.ok ? null : (kp.error || "unavailable");
   return merged;
+}
+
+/* ===================== Batched + cached keyword research pool =====================
+   Keyword Planner (generateKeywordIdeas) is rate-limited to ~1 request/sec per developer token
+   (a SEPARATE limit from the 15,000/day operation quota, and NOT removed by Standard access).
+   Firing one call per opportunity in parallel trips it instantly. So instead we:
+     1) collect the UNIQUE seed phrases across every opportunity,
+     2) serve them from a Firestore cache when fresh (same response over a long time span),
+     3) otherwise query Google in SERIAL chunks of <=20 seeds with a small gap between chunks,
+        stopping immediately on a 429 (rate limited), and cache whatever we got.
+   Returns { ok, ideasByText:{lowercased text -> idea}, status, error, cached }. Callers pull each
+   opportunity's own seeds out of the shared pool; seeds not reached (e.g. a mid-batch 429) simply
+   fall back to AI estimates for that opportunity. */
+function _kwCacheKey(seeds, geoKey) {
+  const raw = seeds.slice().sort().join("|") + "@" + geoKey;
+  return "kw_" + Buffer.from(raw).toString("base64").replace(/[^a-zA-Z0-9]/g, "").slice(0, 100);
+}
+async function _kwCacheGet(key) {
+  const f = fb(); if (!f) return null;
+  try { const d = await f.db.collection(COL.kwCache).doc(key).get();
+    if (d.exists) { const x = d.data() || {}; if (x.at && (Date.now() - x.at) < 14 * 86400000) return x.ideasByText || null; } } catch (e) {}
+  return null;
+}
+async function _kwCacheSet(key, ideasByText) {
+  const f = fb(); if (!f) return;
+  try { await f.db.collection(COL.kwCache).doc(key).set({ at: Date.now(), ideasByText }); } catch (e) {}
+}
+async function keywordResearchPool(seeds, geoIds, { langId = "1000" } = {}) {
+  const uniq = [...new Set((seeds || []).map(s => String(s).trim().toLowerCase()).filter(Boolean))];
+  if (!uniq.length) return { ok: false, error: "no seeds", status: null, ideasByText: {} };
+  const geoKey = ((geoIds && geoIds.length) ? geoIds : ["2124"]).map(g => String(g).replace(/\D/g, "")).sort().join(",");
+  const cacheKey = _kwCacheKey(uniq, geoKey);
+  const cached = await _kwCacheGet(cacheKey);
+  if (cached && Object.keys(cached).length) return { ok: true, ideasByText: cached, status: 200, cached: true };
+  const ideasByText = {}; let anyOk = false, lastErr = null, lastStatus = null;
+  for (let i = 0; i < uniq.length; i += 20) {
+    const chunk = uniq.slice(i, i + 20);
+    if (i > 0) await _sleep(_KP_BACKOFF_MS); // serialize: stay under ~1 request/second
+    const r = await keywordResearch(chunk, geoIds, { langId }).catch(e => ({ ok: false, error: e && e.message, status: null }));
+    if (r.ok) { anyOk = true; (r.ideas || []).forEach(idea => { const k = String(idea.text || "").toLowerCase(); if (k && !ideasByText[k]) ideasByText[k] = idea; }); }
+    else { lastErr = r.error; lastStatus = r.status; if (r.status === 429) break; } // rate limited: stop, keep what we have
+  }
+  if (anyOk) await _kwCacheSet(cacheKey, ideasByText);
+  return { ok: anyOk, error: anyOk ? null : lastErr, status: lastStatus, ideasByText, cached: false };
 }
 
 /* ===================== Campaign planner (research-grounded) =====================
@@ -1860,19 +1915,21 @@ Only include opportunities genuinely relevant within ~30 days. Rank best-first (
   // Real store AOV (from logged Shopify orders) so projected revenue uses YOUR numbers, not a guess.
   let aov = 0; try { const sig = await storeSignals({ days: 120 }); const rev = (sig.adRevenue || 0) + (sig.organicRevenue || 0); if (sig.orders > 0) aov = _r2(rev / sig.orders); } catch (e) {}
   const geoIds = (Array.isArray(ctrl.defaultCountries) && ctrl.defaultCountries.length) ? ctrl.defaultCountries : ["2124"];
-  // Real Keyword Planner per opp (parallel). Error captured per opp, never swallowed. Then merged
-  // with the model's per-keyword research so every card is individually researched + differentiated.
-  const kp = await Promise.all(list.map(o => {
-    const texts = (Array.isArray(o.keywords) ? o.keywords : []).map(k => typeof k === "string" ? k : (k && k.text)).filter(Boolean);
-    return keywordResearch(texts, geoIds).catch(e => ({ ok: false, error: e && e.message, status: null }));
-  }));
+  // Real Keyword Planner data — but Keyword Planner is rate-limited to ~1 req/sec, so we do NOT
+  // fire one call per opportunity. We collect every opportunity's unique seeds, run ONE batched +
+  // cached pool (serial chunks, backoff, stops on 429), then hand each opportunity its own slice.
+  const _oppTexts = o => (Array.isArray(o.keywords) ? o.keywords : []).map(k => typeof k === "string" ? k : (k && k.text)).filter(Boolean);
+  const allSeeds = [...new Set(list.flatMap(o => _oppTexts(o).map(s => String(s).toLowerCase())))];
+  const pool = await keywordResearchPool(allSeeds, geoIds).catch(e => ({ ok: false, error: e && e.message, status: null, ideasByText: {} }));
   list = list.map((o, i) => {
     const t = String(o.collectionTitle).toLowerCase();
     const handle = byTitle[t] || (collections.find(c => c.title.toLowerCase().indexOf(t) >= 0) || {}).handle || null;
     const mem = memory.find(m => m.occasion && String(m.occasion).toLowerCase() === String(o.occasion).toLowerCase());
-    // Per-opportunity research: real Keyword Planner data merged OVER the model's keyword research.
-    const merged = mergeKeywordResearch(o.keywords, kp[i]);
-    merged.error = (kp[i] && !kp[i].ok) ? (kp[i].error || "unavailable") : null;
+    // Pull this opportunity's own seeds out of the shared pool; merge real data OVER the model's research.
+    const oppIdeas = pool.ok ? _oppTexts(o).map(x => pool.ideasByText[String(x).toLowerCase()]).filter(Boolean) : [];
+    const kpForOpp = pool.ok ? { ok: true, ideas: oppIdeas, status: pool.status } : { ok: false, error: pool.error, status: pool.status };
+    const merged = mergeKeywordResearch(o.keywords, kpForOpp);
+    merged.error = pool.ok ? null : (pool.error || null);
     merged.strategy = o.keywordStrategy || null;
     const peakDate = o.endDate || o.startDate || _nextOccasionPeak(o.occasion);
     const plan = planCampaign({ title: o.collectionTitle, occasion: o.occasion, peakDate, ceiling, headroom, smartBidding: !!ctrl.smartBidding, research: merged, aov });
@@ -2070,7 +2127,7 @@ module.exports = {
   enqueueConversion, uploadConversions, enqueueConversionAdjustment, uploadConversionAdjustments, recordRefund, conversionHealth, gAdsTime,
   recordOrderEvent, recentOrders, storeSignals, clearOrderLog, backfillOrders,
   ledger, clearLedger, enqueueApproval, applyApproval, applyApprovalById: applyApproval, retryStuckApprovals, sanitizeOps,
-  generateRSAAssets, buildSearchCampaignOps, buildCampaignAssets, planCampaign, keywordResearch, researchOpportunity, mergeKeywordResearch, keywordDiag, metricsRange, textGuidelinesOp, brandSafe,
+  generateRSAAssets, buildSearchCampaignOps, buildCampaignAssets, planCampaign, keywordResearch, keywordResearchPool, researchOpportunity, mergeKeywordResearch, keywordDiag, metricsRange, textGuidelinesOp, brandSafe,
   generateForCollection, COLLECTIONS, OCCASIONS,
   getCollections, suggestOccasions, recordOccasionUse,
   scanOpportunities, opportunitiesWithStatus, takenTags, fetchTopProducts, setCampaignStatus, startCampaignNow, setCampaignBudget, analyzeCampaign,
