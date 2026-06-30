@@ -428,9 +428,11 @@ table.ptable tr.pdetail>td{border-bottom:2px solid var(--line)}
         <button class="btn gold" id="oppScan">Scan for opportunities</button>
         <span id="oppMeta" class="muted" style="font-size:12.5px"></span>
         <div style="flex:1"></div>
+        <button class="btn ghost sm" id="kwDiag" style="padding:6px 12px;font-size:12px">Test keyword research</button>
         <div id="oppBid" style="display:flex;align-items:center"></div>
         <div class="legend" style="margin:0"><span><i style="background:var(--gold)"></i><b>High</b>&nbsp;act now</span><span><i style="background:var(--sage)"></i><b>Medium</b>&nbsp;solid bet</span><span><i style="background:var(--slate)"></i><b>Test</b>&nbsp;speculative</span></div>
       </div>
+      <div id="kwDiagPanel" style="display:none;margin-bottom:14px"></div>
       <div id="oppList"><div class="empty" style="height:200px"><div class="ring"></div><div>Hit \u201cScan for opportunities\u201d.</div><div style="font-size:12px">The AI cross-references your catalog, the calendar, and past results, then ranks what to act on.</div></div></div>
       <details class="card pad" style="margin-top:16px" id="customWrap">
         <summary style="cursor:pointer;font-weight:600;font-size:14px">Custom build \u2014 pick any collection \u00d7 occasion manually</summary>
@@ -1213,6 +1215,24 @@ function actedBadge(a){
 }
 function oppTabBtn(key,label,n){ var on=oppView===key;
   return '<button class="oppTab" data-view="'+key+'" style="padding:8px 15px;border-radius:9px;border:1px solid '+(on?"var(--ink)":"var(--line)")+';background:'+(on?"var(--ink)":"transparent")+';color:'+(on?"var(--paper)":"var(--ink-70)")+';font-weight:600;font-size:13px;cursor:pointer">'+label+' <span style="opacity:.65;font-family:var(--mono)">'+n+'</span></button>'; }
+async function runKwDiag(){var btn=$("#kwDiag");var panel=$("#kwDiagPanel");if(!panel)return;var done=btnBusy(btn,"Testing\u2026");panel.style.display="block";
+  panel.innerHTML='<div class="card pad"><div class="muted" style="font-size:12.5px">Running a live Google Keyword Planner request\u2026</div></div>';
+  try{var r=await api("keywordDiag",{keyword:"name necklace"});var ok=r&&r.ok&&r.ideaCount>0;
+    var head=ok?'<span style="color:var(--sage);font-weight:700">\u2713 Live Keyword Planner is working</span>':'<span style="color:var(--clay);font-weight:700">\u2717 Live Keyword Planner is not returning data</span>';
+    var detail="";
+    if(ok){detail='<div class="muted" style="font-size:12px;margin-top:6px">Returned '+r.ideaCount+' keyword ideas \u2014 opportunities will use real Google data.</div><table style="width:100%;border-collapse:collapse;font-size:11.5px;margin-top:10px"><thead><tr style="text-align:left;color:var(--ink-45)"><th style="padding:4px 8px 4px 0">Keyword</th><th style="padding:4px 8px;text-align:right">Searches/mo</th><th style="padding:4px 8px">Competition</th><th style="padding:4px 8px;text-align:right">CPC range</th></tr></thead><tbody>'+(r.sample||[]).map(function(s){return '<tr style="border-top:1px solid var(--line)"><td style="padding:5px 8px 5px 0">'+esc(s.text)+'</td><td style="padding:5px 8px;text-align:right;font-family:var(--mono)">'+(s.searches!=null?Number(s.searches).toLocaleString():"\u2014")+'</td><td style="padding:5px 8px">'+compChip(s.competition,s.competitionIndex)+'</td><td style="padding:5px 8px;text-align:right;font-family:var(--mono)">'+((s.low||s.high)?(money(s.low||0)+"\u2013"+money(s.high||0)):"\u2014")+'</td></tr>';}).join("")+'</tbody></table>';}
+    else{detail='<div style="font-size:12px;margin-top:8px;line-height:1.7"><div><b>HTTP status:</b> <span class="mono">'+((r&&r.status!=null)?r.status:"\u2014")+'</span></div><div style="margin-top:3px"><b>Error from Google:</b> <span style="color:var(--clay)">'+esc((r&&r.error)||"no error, but 0 ideas returned")+'</span></div><div class="muted" style="margin-top:8px"><b>Likely cause:</b> '+kwDiagHint((r&&r.error)||"")+'</div></div>';}
+    var req=(r&&r.request)?('<div class="muted" style="font-size:10.5px;margin-top:10px;font-family:var(--mono)">POST '+esc(r.request.version+"/"+r.request.endpoint)+' \u00b7 login-customer-id '+esc(String(r.request.loginCustomerId||"(none)"))+' \u00b7 seed \u201c'+esc(r.request.seed)+'\u201d</div>'):'';
+    panel.innerHTML='<div class="card pad"><div style="font-size:13.5px">'+head+'</div>'+detail+req+'<div style="margin-top:10px"><button class="btn ghost sm" onclick="document.getElementById(\'kwDiagPanel\').style.display=\'none\'" style="padding:4px 11px;font-size:11.5px">Dismiss</button></div></div>';
+  }catch(e){panel.innerHTML='<div class="card pad"><div style="color:var(--clay);font-weight:600">Diagnostic failed: '+esc(e.message)+'</div></div>';}
+  done();}
+function kwDiagHint(err){var e=String(err||"").toLowerCase();
+  if(/developer_token_not_approved|test account|only.*test/.test(e))return "the developer token is at Test access \u2014 it can\u2019t query production data. Apply for Basic access in Google Ads \u2192 Tools \u2192 API Center.";
+  if(/permission_denied|not.*permission|unauthor/.test(e))return "this account doesn\u2019t have Keyword Planner access yet \u2014 it typically unlocks once billing is set up and the account has some ad spend history.";
+  if(/quota|rate|resource_exhausted/.test(e))return "the daily Keyword Planner quota is exhausted \u2014 try later, or apply for Standard access to remove the limit.";
+  if(/customer.*not.*found|invalid_customer|login.customer/.test(e))return "the customer / login-customer-id pairing was rejected \u2014 verify GADS_CUSTOMER_ID and GADS_LOGIN_CUSTOMER_ID in Netlify.";
+  if(!e)return "the call returned no ideas \u2014 the seed may be too niche, or Keyword Planner has no data for this account yet.";
+  return "the message above is straight from Google\u2019s API \u2014 it pinpoints what to fix.";}
 function renderOppBid(){ var ob=$("#oppBid"); if(!ob)return; var smart=bidView();
   ob.innerHTML='<span class="muted" style="font-size:11px;margin-right:7px">Bidding</span><span style="display:inline-flex;gap:4px;background:var(--paper-2);padding:3px;border-radius:9px">'+
     [["Manual CPC",0],["Smart",1]].map(function(o){var on=(o[1]===1)===smart;return '<button class="bidSeg" data-smart="'+o[1]+'" title="'+(o[1]?"Smart Bidding \u2014 Google sets bids, no CPC cap":"Manual CPC \u2014 hard per-click cap")+'" style="padding:4px 11px;border:none;border-radius:7px;font-size:11.5px;font-weight:600;cursor:pointer;background:'+(on?"var(--card)":"transparent")+';color:'+(on?"var(--ink)":"var(--ink-45)")+';box-shadow:'+(on?"var(--sh)":"none")+'">'+o[0]+'</button>';}).join("")+'</span>';
@@ -1264,14 +1284,39 @@ function bidView(){ return !!(typeof DASH!=="undefined"&&DASH&&DASH.control&&DAS
 function stratLine(p,smart){ var max=p?money(p.cpc.max):"\u2014";
   if(smart)return {label:"Smart Bidding",note:"Smart Bidding chases conversions by setting bids itself \u2014 there\u2019s no max-CPC cap, so clicks can cost more (most during its 1\u20132 week learning phase). Best once you have ~15\u201330 sales/month."};
   return {label:"Manual CPC",note:"Manual CPC: no learning phase and you never pay above the cap \u2014 best while volume is low. Google won\u2019t auto-raise bids to chase a likely sale."};}
+function compChip(level,idx){var L=String(level||(idx!=null?(idx>=66?"HIGH":idx>=33?"MEDIUM":"LOW"):"")).toUpperCase();
+  var col=L==="HIGH"?"var(--clay)":L==="MEDIUM"?"var(--gold)":L==="LOW"?"var(--sage)":"var(--ink-45)";
+  var t=L==="HIGH"?"High":L==="MEDIUM"?"Med":L==="LOW"?"Low":"\u2014";
+  return '<span style="font-size:10.5px;font-weight:600;color:'+col+'">'+t+'</span>';}
+function tailChip(tail){var T=String(tail||"").toUpperCase();var m={HEAD:["Head","var(--clay-soft)","var(--clay)"],MID:["Mid","var(--gold-soft)","var(--ink-70)"],LONG:["Long-tail","var(--sage-soft)","var(--sage)"]}[T];if(!m)return"";
+  return '<span style="font-size:9.5px;font-weight:600;padding:1px 6px;border-radius:5px;background:'+m[1]+';color:'+m[2]+'">'+m[0]+'</span>';}
+// Full per-opportunity keyword research: source, reach, competition, CPC, long-tail mix, per-keyword table.
+function kwResearchPanel(o){var r=o.research||{};var kd=o.keywordData||[];var real=r.source==="google_keyword_planner";
+  var srcBadge=real?'<span style="font-size:10px;font-weight:600;padding:2px 9px;border-radius:6px;background:var(--sage-soft);color:var(--sage)">Google Keyword Planner'+(r.realCount?(" \u00b7 "+r.realCount+" live"):"")+'</span>':'<span style="font-size:10px;font-weight:600;padding:2px 9px;border-radius:6px;background:var(--gold-soft);color:var(--ink-70)">AI keyword research</span>';
+  var summary='<div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;margin:10px 0;font-size:11.5px">'+srcBadge+
+    (r.searchVolume!=null?'<span class="muted">Reach&nbsp;<b style="color:var(--ink);font-family:var(--mono)">~'+Number(r.searchVolume).toLocaleString()+'</b>/mo searches</span>':'')+
+    (r.competitionIndex!=null?'<span class="muted">Avg competition&nbsp;<b style="color:var(--ink)">'+Math.round(r.competitionIndex)+'/100</b></span>':'')+
+    (r.cpc?'<span class="muted">CPC&nbsp;<b style="color:var(--ink);font-family:var(--mono)">'+money(r.cpc.low)+'\u2013'+money(r.cpc.high)+'</b></span>':'')+
+    (r.longTailRatio!=null?'<span class="muted">Long-tail&nbsp;<b style="color:var(--ink)">'+r.longTailRatio+'%</b></span>':'')+'</div>';
+  var errNote=(!real&&r.error)?'<div class="muted" style="font-size:10.5px;color:var(--clay);margin-bottom:8px;line-height:1.5">Live Keyword Planner unavailable: '+esc(String(r.error).slice(0,110))+' \u2014 figures below are AI-researched estimates. Run \u201cTest keyword research\u201d in the header to see the exact API response.</div>':"";
+  var rows=kd.length?('<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px"><thead><tr style="text-align:left;color:var(--ink-45)"><th style="padding:4px 8px 4px 0;font-weight:600">Keyword</th><th style="padding:4px 8px;font-weight:600;text-align:right">Searches/mo</th><th style="padding:4px 8px;font-weight:600">Competition</th><th style="padding:4px 8px;font-weight:600;text-align:right">CPC range</th><th style="padding:4px 8px;font-weight:600">Type</th></tr></thead><tbody>'+
+    kd.map(function(k){return '<tr style="border-top:1px solid var(--line)">'+
+      '<td style="padding:5px 8px 5px 0">'+esc(k.text)+(k.real?' <span style="font-size:9px;color:var(--sage)" title="Live Google Keyword Planner data">\u25cf</span>':'')+'</td>'+
+      '<td style="padding:5px 8px;text-align:right;font-family:var(--mono)">'+(k.searches!=null?Number(k.searches).toLocaleString():"\u2014")+'</td>'+
+      '<td style="padding:5px 8px">'+compChip(k.competition,k.competitionIndex)+'</td>'+
+      '<td style="padding:5px 8px;text-align:right;font-family:var(--mono)">'+((k.low||k.high)?(money(k.low||0)+'\u2013'+money(k.high||0)):"\u2014")+'</td>'+
+      '<td style="padding:5px 8px">'+tailChip(k.tail)+(k.intent?(' <span style="font-size:9px;color:var(--ink-45)">'+esc(k.intent)+'</span>'):'')+'</td></tr>';}).join("")+'</tbody></table></div>'):'<div class="muted" style="font-size:12px">\u2014</div>';
+  var strat=r.strategy?'<div class="muted" style="font-size:11px;margin-top:9px;line-height:1.6"><b>Why these keywords:</b> '+esc(r.strategy)+'</div>':"";
+  var crit='<div class="muted" style="font-size:10.5px;margin-top:7px;line-height:1.6">Selection criteria: ranked by demand & intent \u2014 '+(r.longCount||0)+' long-tail (specific, lower competition, higher purchase intent) balanced with '+(r.headCount||0)+' head term'+((r.headCount||0)===1?"":"s")+' for reach. '+(real?'<b style="color:var(--sage)">\u25cf</b> marks live Google data.':'AI estimates until live Keyword Planner data is available.')+'</div>';
+  return summary+errNote+rows+strat+crit;}
 function planBlock(o,i){ var p=o.plan; if(!p)return ""; var smart=oppBidOf(i); var cap=oppCpcOf(i); var s=stratLine(p,smart);
   var bud=o.recommendedDailyBudget, dur=o.durationDays||(p.duration&&p.duration.days)||28, cvr=p.cvr||0.02;
   var cpd=cap>0?(bud/cap):0; var sales=Math.round(cpd*dur*cvr*100)/100;
   var aov=(p.expected&&p.expected.aov)||0; var rev=aov>0?Math.round(sales*aov):null;
-  var researched=o.research&&o.research.source==="google_keyword_planner";
-  var src=researched
-    ? '<span class="muted" style="color:var(--sage)">'+(o.research.searchVolume!=null?('Keyword Planner \u00b7 ~'+Number(o.research.searchVolume).toLocaleString()+'/mo searches'):'Keyword Planner')+(o.research.competitionIndex!=null?(' \u00b7 comp '+Math.round(o.research.competitionIndex)+'/100'):'')+'</span>'
-    : '<span class="muted" style="color:var(--clay)">estimate \u2014 live Keyword Planner data unavailable</span>';
+  var real=o.research&&o.research.source==="google_keyword_planner";
+  var src=real
+    ? '<span class="muted" style="color:var(--sage)">Google Keyword Planner'+(o.research.realCount?(" \u00b7 "+o.research.realCount+" live"):"")+(o.research.searchVolume!=null?(' \u00b7 ~'+Number(o.research.searchVolume).toLocaleString()+'/mo'):'')+(o.research.competitionIndex!=null?(' \u00b7 comp '+Math.round(o.research.competitionIndex)+'/100'):'')+'</span>'
+    : '<span class="muted" style="color:var(--ink-70)">AI keyword research'+((o.research&&o.research.searchVolume!=null)?(' \u00b7 ~'+Number(o.research.searchVolume).toLocaleString()+'/mo est.'):'')+((o.research&&o.research.competitionIndex!=null)?(' \u00b7 comp '+Math.round(o.research.competitionIndex)+'/100'):'')+'</span>';
   var basis=[esc(s.note)];
   if(p.cpc&&p.cpc.basis)basis.push("<b>CPC</b> \u2014 "+esc(p.cpc.basis));
   if(p.duration&&p.duration.basis)basis.push("<b>Run length</b> \u2014 "+esc(p.duration.basis));
@@ -1315,9 +1360,9 @@ function oppCard(o,i,ceil){ var pm=priMeta(o.priority);
     '</div>'+
     '<div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:12px;font-size:12.5px"><span class="muted">Expected ROAS&nbsp;<b style="color:var(--ink);font-family:var(--mono)">'+esc(o.expectedRoasBand||"\u2014")+'</b>&nbsp;<span style="font-size:11px">('+(o.proven?"from history":"estimate")+')</span></span><span class="muted">Past:&nbsp;'+past+'</span></div>'+
     planBlock(o,i)+
-    '<details style="margin-top:12px"><summary style="cursor:pointer;font-size:12.5px;color:var(--gold);font-weight:600">Keywords &amp; phrases</summary>'+
-      '<div class="eyebrow" style="margin:10px 0 6px">Keywords'+((o.keywordData&&o.keywordData.length)?' <span class="muted" style="font-weight:400;text-transform:none;letter-spacing:0">\u00b7 real monthly search volume</span>':'')+'</div><div class="chips">'+((o.keywords||[]).map(function(k){var kd=(o.keywordData||[]).find(function(x){return x.text===k;});var vol=(kd&&kd.searches)?(' <span class="muted" style="font-size:10px">'+Number(kd.searches).toLocaleString()+'/mo</span>'):'';return '<span class="chip on">'+esc(k)+vol+'</span>';}).join("")||'<span class="muted" style="font-size:12px">\u2014</span>')+'</div>'+
-      '<div class="eyebrow" style="margin:12px 0 6px">Key phrases</div><div class="chips">'+((o.keyPhrases||[]).map(function(k){return '<span class="chip">'+esc(k)+'</span>';}).join("")||'<span class="muted" style="font-size:12px">\u2014</span>')+'</div>'+
+    '<details style="margin-top:12px" open><summary style="cursor:pointer;font-size:12.5px;color:var(--gold);font-weight:600">Keyword research &amp; phrases</summary>'+
+      kwResearchPanel(o)+
+      '<div class="eyebrow" style="margin:12px 0 6px">Key phrases <span class="muted" style="font-weight:400;text-transform:none;letter-spacing:0">\u00b7 emotional ad copy</span></div><div class="chips">'+((o.keyPhrases||[]).map(function(k){return '<span class="chip">'+esc(k)+'</span>';}).join("")||'<span class="muted" style="font-size:12px">\u2014</span>')+'</div>'+
       '<div class="muted" style="font-size:11px;margin-top:10px;line-height:1.6">When generated, this campaign auto-adds <b>4 sitelinks</b>, <b>4 callouts</b> &amp; a <b>structured snippet</b> for more ad real estate, and <b>excludes ~28 non-buyer terms</b> (free, diy, wholesale, cheap, repair\u2026) to stop wasted spend.</div></details>'+
     '<div style="margin-top:11px;font-size:12px;color:var(--ink-70);display:flex;gap:7px;align-items:center;flex-wrap:wrap">Countries: <span class="opCty" data-i="'+i+'" style="display:flex;gap:6px;flex-wrap:wrap"></span><button type="button" class="btn ghost sm opCtyEdit" data-i="'+i+'" style="padding:2px 8px;font-size:11px">Edit</button></div>'+'<div class="actions"><button class="btn gold sm opGen" data-i="'+i+'">Generate campaign</button><span class="opMsg muted" data-i="'+i+'" style="font-size:12px"></span></div>'+
   '</div>');
@@ -1384,7 +1429,7 @@ function bindControlsOnce(){
   slider("cRoas","cRoasV",v=>(+v?(v/100).toFixed(1)+"x":"auto"),"targetRoas",v=>+v/100);
   slider("cAppr","cApprV",v=>v+"%","budgetMoveApprovalPct",v=>+v);
   var bb=$("#bBudget");bb.oninput=()=>$("#bBudgetV").textContent="$"+bb.value;
-  $("#oppScan").onclick=()=>loadOpportunities(true);var cw=$("#customWrap");if(cw)cw.addEventListener("toggle",function(){if(cw.open){ensureBench();paintBenchCty();}});$("#bColl").onchange=()=>loadOccasions(false);$("#bEvent").onchange=showOccWhy;$("#bOccRefresh").onclick=()=>loadOccasions(true);$("#bCollRefresh").onclick=()=>loadCollections(true);$("#bGen").onclick=generateBench;
+  $("#oppScan").onclick=()=>loadOpportunities(true);var kdb=$("#kwDiag");if(kdb)kdb.onclick=runKwDiag;var cw=$("#customWrap");if(cw)cw.addEventListener("toggle",function(){if(cw.open){ensureBench();paintBenchCty();}});$("#bColl").onchange=()=>loadOccasions(false);$("#bEvent").onchange=showOccWhy;$("#bOccRefresh").onclick=()=>loadOccasions(true);$("#bCollRefresh").onclick=()=>loadCollections(true);$("#bGen").onclick=generateBench;
   var bce=$("#bCtyEdit");if(bce)bce.onclick=function(){openCountryEditor({selected:benchCty(),title:"Target countries",subtitle:"Where this draft will run \u2014 baked in at generation.",saveLabel:"Use these",onSave:function(ids,done){benchCountries=ids.slice();paintBenchCty();done();}});};
   $("#btnRefresh").onclick=async function(){var b=$("#btnRefresh");var done=btnBusy(b,"Refreshing\u2026");var aid=actStart("measureNow");
     try{var r=await api("measureNow");if(r&&r.ok===false){toast("Live pull failed: "+(r.error||"unknown"));}else{toast("Pulled "+(((r&&r.campaigns)!=null)?r.campaigns+" campaigns ":"")+"live from Google Ads",true);}}
