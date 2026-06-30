@@ -369,8 +369,6 @@ table.ptable tr.pdetail>td{border-bottom:2px solid var(--line)}
       <button class="btn ghost sm" id="btnRefresh">Refresh</button>
     </header>
 
-    <div id="convHealthBar" style="display:none"></div>
-    <div id="storeIntel" style="display:none"></div>
     <div class="actbar" id="actbar" role="status" aria-live="polite"></div>
 
     <section class="view" id="v-command">
@@ -382,8 +380,22 @@ table.ptable tr.pdetail>td{border-bottom:2px solid var(--line)}
       </div>
       <div class="grid two">
         <div class="card pad"><div class="card__h"><h3>Autopilot activity</h3><span class="sub">recent ledger</span><button class="btn ghost sm" id="clearFeed" style="margin-left:8px;padding:3px 10px;font-size:11px">Clear</button></div><div class="feed" id="feed"></div></div>
-        <div class="card pad"><div class="card__h"><h3>Your campaigns</h3><span class="sub" id="snapSub">last snapshot</span></div><div id="snapshot" class="scrollcap-sm"></div></div>
+        <div class="card pad" id="cmdSales"></div>
       </div>
+      <div class="card pad" style="margin-top:16px"><div class="card__h"><h3>Your campaigns</h3><span class="sub" id="snapSub">last snapshot</span></div><div id="snapshot" class="scrollcap-sm"></div></div>
+    </section>
+
+    <section class="view hidden" id="v-sales">
+      <div class="view__head"><div><h2>Sales</h2><p>Every order from your store — where it came from, what sold, when, and which sales your ads actually drove.</p></div></div>
+      <div id="salesCtrls"></div>
+      <div class="grid kpis" id="salesKpis" style="margin-bottom:16px"></div>
+      <div class="grid two" style="margin-bottom:16px">
+        <div class="card pad"><div class="card__h"><h3>Where it's coming from</h3><span class="sub">source of each sale</span></div><div id="salesSources"></div></div>
+        <div class="card pad"><div class="card__h"><h3>What's selling</h3><span class="sub">top listings by units</span></div><div id="salesProducts"></div></div>
+      </div>
+      <div class="card pad" style="margin-bottom:16px"><div class="card__h"><h3>When it's selling</h3><span class="sub">daily revenue</span></div><div id="salesTrend"></div></div>
+      <div id="salesConv" style="margin-bottom:16px"></div>
+      <div class="card pad"><div class="card__h" style="margin-bottom:10px"><h3>Orders</h3><span class="sub" id="salesOrdMeta"></span></div><div id="salesTable"></div></div>
     </section>
 
     <section class="view hidden" id="v-approvals">
@@ -397,7 +409,7 @@ table.ptable tr.pdetail>td{border-bottom:2px solid var(--line)}
     </section>
 
     <section class="view hidden" id="v-perf">
-      <div class="view__head"><div><h2>Performance</h2><p>Every campaign in one sortable list. Click any column to sort; expand a row to edit its budget, flip status, or run an AI optimization analysis.</p></div></div>
+      <div class="view__head"><div><h2>Performance</h2><p>Every campaign in one sortable list. Click any column to sort; expand a row to edit its budget, flip status, or run an AI optimization analysis.</p></div><div id="perfConv" style="display:none"></div></div>
       <div class="card pad">
         <div class="card__h" style="margin-bottom:10px"><h3>Campaigns</h3><span class="sub" id="perfMeta"></span></div>
         <div class="ptscroll" style="overflow:auto"><table class="ptable" id="ptable"></table></div>
@@ -632,7 +644,7 @@ function gauge(val,max){var p=Math.min(1,(val||0)/(max||1));var size=190,r=74,c=
 function sparkline(data,color){if(!data.length)return "";var w=64,h=26,mx=Math.max.apply(null,data),mn=Math.min.apply(null,data);var d=data.map((v,i)=>(i?"L":"M")+(i*(w/Math.max(1,data.length-1))).toFixed(1)+" "+(h-((v-mn)/(mx-mn||1))*h).toFixed(1)).join(" ");return '<svg class="spark" viewBox="0 0 '+w+' '+h+'"><path d="'+d+'" fill="none" stroke="'+color+'" stroke-width="1.6"/></svg>';}
 
 /* ---- nav ---- */
-var NAV=[["command","Command Center","What the autopilot is doing right now","◆"],["approvals","Approvals","Drafts waiting for your call","✎"],["ab","A/B Assay","Head-to-head ad tests","⚖"],["perf","Performance","Where the money worked","▤"],["insights","Insights & Strategy","The reading behind the moves","✦"],["bench","Opportunities","AI-found campaigns to launch","⚒"],["controls","Controls","Guardrails & switches","⚙"]];
+var NAV=[["command","Command Center","What the autopilot is doing right now","◆"],["sales","Sales","Where your money comes from","◷"],["approvals","Approvals","Drafts waiting for your call","✎"],["ab","A/B Assay","Head-to-head ad tests","⚖"],["perf","Performance","Where the money worked","▤"],["insights","Insights & Strategy","The reading behind the moves","✦"],["bench","Opportunities","AI-found campaigns to launch","⚒"],["controls","Controls","Guardrails & switches","⚙"]];
 function buildNav(){var n=$("#nav");n.innerHTML="";NAV.forEach(function(it){var b=elFrom('<button data-v="'+it[0]+'"><span class="ic" style="font-size:15px">'+it[3]+'</span><span>'+it[1]+'</span></button>');b.onclick=()=>go(it[0]);n.appendChild(b);});updateBadges();}
 function updateBadges(){var b=$('#nav button[data-v="approvals"]');if(!b)return;var x=b.querySelector(".badge");var c=(DASH&&DASH.pending||[]).length;if(c){if(!x){x=elFrom('<span class="badge"></span>');b.appendChild(x);}x.textContent=c;}else if(x)x.remove();}
 function go(k){$$(".view").forEach(v=>v.classList.add("hidden"));$("#v-"+k).classList.remove("hidden");$$(".nav button").forEach(b=>b.classList.toggle("active",b.dataset.v===k));var m=NAV.find(n=>n[0]===k);$("#vtitle").textContent=m[1];$("#vsub").textContent=m[2];window.scrollTo(0,0);if(k==="bench")ensureOpportunities();}
@@ -645,109 +657,92 @@ function renderControlBar(){var c=DASH.control||{};
   $("#pillLive").className="pill "+(c.enabled?"live":"stop");$("#pillLive").innerHTML='<span class="d"></span>'+(c.enabled?"LIVE":"STOPPED");
   $("#pillDry").style.display=c.dryRun?"inline-flex":"none";}
 var convOpen=false;
-function renderConvHealth(){
-  var el=$("#convHealthBar"); if(!el) return;
-  var h=DASH.conversionHealth;
-  if(!h){ el.style.display="none"; return; }
-  el.style.display="block";
-  var state=h.validated?"ok":(h.healthy?"warn":"bad");
-  var bg=state==="ok"?"var(--sage-soft)":state==="warn"?"var(--gold-soft)":"var(--clay-soft)";
-  var bd=state==="ok"?"#3c5a39":state==="warn"?"#7a5a1d":"var(--clay)";
-  var icon=state==="ok"?"\u25cf":state==="warn"?"\u25d0":"\u25b2";
-  var head=state==="ok"?"Conversion tracking is live":state==="warn"?"Conversion tracking configured \u2014 no sales recorded yet":"Conversion tracking is NOT active \u2014 recommendations are running blind";
-  var enabledAction=(h.actions||[]).some(function(a){return a.status==="ENABLED";});
-  var bits=[];
-  bits.push("action: "+(h.actionConfigured?(enabledAction?"enabled":"set, not enabled"):"not set"));
-  if(h.recentConversions!=null) bits.push(h.recentConversions+" conv / 30d");
-  if(h.queueDepth!=null) bits.push("queue "+h.queueDepth+(h.adjQueueDepth?(" +"+h.adjQueueDepth+" adj"):""));
-  if(h.lastUpload&&h.lastUpload.at) bits.push("last upload "+timeago(h.lastUpload.at)+" ago");
-  var reasons=(!h.healthy&&h.reasons&&h.reasons.length)?'<div style="margin-top:8px;font-size:12px">'+h.reasons.map(function(r){return "\u2022 "+esc(r);}).join("<br>")+'</div>':"";
-  var actionsList=(h.actions&&h.actions.length)?'<div style="margin-top:8px;font-size:12px"><b>Detected conversion actions</b> \u2014 copy one resource name into the <code>GADS_CONVERSION_ACTION</code> env var:<br>'+h.actions.map(function(a){return "\u2022 "+esc(a.name||"(unnamed)")+" ["+esc(a.status||"")+"] \u2014 <code style=\"user-select:all\">customers/6236267810/conversionActions/"+esc(String(a.id||""))+"</code>";}).join("<br>")+'</div>':"";
-  var fix=(!h.healthy)?'<details style="margin-top:10px"><summary style="cursor:pointer;font-size:12px;font-weight:600">How to connect the server-side pipeline</summary><div style="font-size:12px;margin-top:7px;line-height:1.6">'+
-    '1. Google Ads \u2192 Goals \u2192 Conversions: create a <b>Website</b> \u2192 <b>Purchase</b> action, value <b>use different values</b>, count <b>one</b>, and enable <b>Import from clicks</b> (offline). Copy its resource name.<br>'+
-    '2. Set <code>GADS_CONVERSION_ACTION</code> in Netlify = customers/'+esc(String(h.actionId||"6236267810").replace(/\/conversionActions.*/,""))+'/conversionActions/NNN.<br>'+
-    '3. Add <code>brites-gclid-capture.liquid</code> to the Shopify theme (render before &lt;/body&gt;).<br>'+
-    '4. Shopify webhooks for <b>orders/paid</b> and <b>refunds/create</b> \u2192 the shopifyOrderWebhook URL; set <code>SHOPIFY_WEBHOOK_SECRET</code> in Netlify.<br>'+
-    '5. Place a real order via an ad click, then hit <b>Sync now</b> \u2014 it should appear here within a day.'+
-    '</div></details>':"";
-  var open=(state==="bad"||convOpen)?" open":"";
-  el.innerHTML='<details class="convbar"'+open+' style="background:'+bg+';border:1px solid '+bd+';color:'+bd+';border-radius:12px;margin-bottom:16px">'+
-    '<summary style="padding:11px 16px;display:flex;gap:10px;flex-wrap:wrap">'+
-      '<span style="font-size:12px">'+icon+'</span><b style="font-size:13px">'+head+'</b>'+
-      '<span style="flex:1;min-width:12px"></span>'+
-      '<span style="font-size:11.5px;opacity:.82">'+esc(bits.join("  \u00b7  "))+'</span>'+
-      '<span class="convchev" style="font-size:11px;opacity:.7">\u25be</span>'+
-    '</summary>'+
-    '<div style="padding:2px 16px 14px">'+
-      '<div style="display:flex;gap:8px;flex-wrap:wrap'+((reasons||actionsList||fix)?";margin-bottom:4px":"")+'">'+
-        '<button class="btn ghost sm" id="convRecheck" style="border-color:'+bd+';color:'+bd+'">Re-check</button>'+
-        '<button class="btn ghost sm" id="convSync" style="border-color:'+bd+';color:'+bd+'">Sync now</button>'+
-      '</div>'+reasons+actionsList+fix+
-    '</div>'+
-  '</details>';
-  var dt=el.querySelector(".convbar"); if(dt)dt.addEventListener("toggle",function(){convOpen=dt.open;});
-  $("#convRecheck").onclick=async function(){ var b=this;var done=btnBusy(b,"Checking\u2026");var aid=actStart("conversionHealth"); try{ var r=await api("conversionHealth",{force:true}); DASH.conversionHealth=r; renderConvHealth(); toast("Conversion tracking re-checked",true);}catch(e){done();toast(e.message);} actEnd(aid); };
-  $("#convSync").onclick=async function(){ var b=this;var done=btnBusy(b,"Syncing\u2026");var aid=actStart("syncConversions"); try{ var r=await api("syncConversions",{}); if(r&&r.health)DASH.conversionHealth=r.health; renderConvHealth(); toast("Synced \u2014 "+(((r.uploaded||{}).uploaded)||0)+" conversions, "+(((r.adjustments||{}).uploaded)||0)+" adjustments",true);}catch(e){done();toast(e.message);} actEnd(aid); };
-}
-function wireBackfill(scope){
-  Array.prototype.forEach.call((scope||document).querySelectorAll(".intel-backfill"),function(b){
-    b.onclick=async function(){var done=btnBusy(this,"Pulling\u2026");var aid=actStart("backfillOrders",{verb:"Pulling recent Shopify orders"});
-      try{var r=await api("backfillOrders",{limit:100});
-        if(r&&r.ok){toast("Logged "+(r.added||0)+" Shopify orders"+((r.skipped)?(" \u00b7 "+r.skipped+" already in log"):"")+" \u2713",true);}
-        else{toast("Backfill failed: "+((r&&r.error)||"unknown")+(/orders|scope|403/i.test((r&&r.error)||"")?" \u2014 the Shopify token likely needs read_orders":""));}}
-      catch(x){toast(x.message);}
-      actEnd(aid);done();await reload();};
-  });
-}
-function renderStoreIntel(){
-  var el=$("#storeIntel"); if(!el) return;
-  el.style.display="block";
-  var s=DASH.storeSignals, orders=DASH.recentOrders||[];
-  function money(n){return cur()+(Math.round((Number(n)||0)*100)/100);}
-  if((!s||!s.orders)&&(!orders||!orders.length)){
-    el.innerHTML='<div class="card pad" style="margin-bottom:16px"><div style="display:flex;gap:8px;align-items:center;margin-bottom:5px"><b style="font-size:13px">Store intelligence</b><span class="muted" style="font-size:11px">\u00b7 every order, ad + organic \u2014 learning what to advertise</span></div><div class="muted" style="font-size:12px;line-height:1.55">No orders logged yet. Pull your recent Shopify orders to populate this now, or wait for new sales to log automatically. As data arrives you\u2019ll see the ad-vs-organic revenue split, top-selling products (each with a <b>Build paid \u2192</b> shortcut), and a per-order log marking captured (ad) vs organic.</div><button class="btn gold sm intel-backfill" style="margin-top:10px">Pull last 100 Shopify orders</button></div>';
-    wireBackfill(el);
-    return;
-  }
-  var split="";
-  if(s&&s.orders){
-    var adR=s.adRevenue||0, orgR=s.organicRevenue||0, tot=adR+orgR, orgPct=tot>0?Math.round(orgR/tot*100):0;
-    split='<div style="display:flex;gap:16px;flex-wrap:wrap;font-size:12.5px;margin:2px 0 10px">'+
-      '<div><b>'+s.orders+'</b> orders / '+s.days+'d</div>'+
-      '<div>from ads: <b>'+s.adOrders+'</b> ('+money(adR)+')</div>'+
-      '<div>organic: <b>'+s.organicOrders+'</b> ('+money(orgR)+')</div>'+
-      '<div style="opacity:.72">'+orgPct+'% of revenue is non-ad</div></div>';
-  }
-  var prods="";
-  if(s&&s.topProducts&&s.topProducts.length){
-    prods='<div style="font-size:12px;font-weight:600;margin:4px 0 5px">What\u2019s selling \u2014 proven demand to advertise</div><div style="display:flex;flex-direction:column;gap:5px">'+
-      s.topProducts.slice(0,6).map(function(p){return '<div style="display:flex;gap:8px;align-items:center;font-size:12px">'+
-        '<span style="flex:1;min-width:80px">'+esc(p.name)+'</span>'+
-        '<span class="muted" style="font-size:11px;white-space:nowrap">'+p.orders+' ord \u00b7 '+money(p.revenue)+(p.organic?(' \u00b7 '+p.organic+' organic'):'')+'</span>'+
-        '<button class="btn ghost sm intel-launch" data-name="'+esc(p.name)+'" style="padding:3px 9px;font-size:11px;white-space:nowrap">Build paid \u2192</button></div>';}).join('')+'</div>';
-  }
-  var srcs="";
-  if(s&&s.topSources&&s.topSources.length){
-    srcs='<div style="margin-top:9px;font-size:11.5px;opacity:.8"><b>Top sources:</b> '+s.topSources.slice(0,5).map(function(x){return esc(x.source)+' ('+x.orders+')';}).join('  \u00b7  ')+'</div>';
-  }
-  var log="";
-  if(orders.length){
-    log='<details style="margin-top:11px"><summary style="cursor:pointer;font-size:12px;font-weight:600">Recent orders ('+orders.length+')</summary><div style="margin-top:7px;display:flex;flex-direction:column;gap:0;max-height:300px;overflow:auto">'+
-      orders.map(function(o){var ok=o.captured;var src=(o.source||"direct")+"/"+(o.medium||"none");
-        return '<div style="display:flex;gap:8px;align-items:baseline;font-size:11.5px;padding:4px 0;border-bottom:1px solid var(--line)">'+
-          '<span style="color:'+(ok?"var(--sage)":"var(--ink-45)")+'">'+(ok?"\u25cf":"\u25cb")+'</span>'+
-          '<span style="font-weight:600;min-width:52px">'+esc(o.orderId?("#"+String(o.orderId).slice(-6)):"\u2014")+'</span>'+
-          '<span style="min-width:58px">'+money(o.value)+'</span>'+
-          '<span class="muted" style="flex:1;min-width:70px">'+esc(src)+'</span>'+
-          '<span style="font-size:10.5px;text-align:right;'+(ok?"color:var(--sage)":"opacity:.62")+'">'+esc(ok?"captured":(o.reason||"skipped"))+'</span></div>';
-      }).join('')+'</div></details>';
-  }
-  el.innerHTML='<div class="card pad" style="margin-bottom:16px"><div style="display:flex;gap:8px;align-items:center;margin-bottom:6px"><b style="font-size:13px">Store intelligence</b><span class="muted" style="font-size:11px">\u00b7 every order, ad + organic \u2014 learning what to advertise</span><span style="flex:1"></span><button class="btn ghost sm intel-backfill" style="padding:3px 9px;font-size:11px">Pull Shopify orders</button></div>'+split+prods+srcs+log+'</div>';
-  wireBackfill(el);
-  Array.prototype.forEach.call(el.querySelectorAll(".intel-launch"),function(b){
-    b.onclick=function(){var nm=this.getAttribute("data-name");var cw=$("#customWrap");if(cw&&!cw.open)cw.open=true;try{ensureBench();}catch(e){}var bc=$("#bColl");if(bc&&bc.scrollIntoView){try{bc.scrollIntoView({behavior:"smooth",block:"center"});}catch(e){}}toast("Pick the collection matching \u201c"+nm+"\u201d, then Generate draft",true);};
-  });
-}
+var salesRangeIdx=5; var salesFilter="all";
+var SALES_RANGES=[["7d",7],["30d",30],["90d",90],["6mo",182],["1y",365],["All",null]];
+function reldate(ts){if(!ts)return "\u2014";var s=Math.floor((Date.now()-ts)/1000);if(s<60)return "just now";if(s<3600)return Math.floor(s/60)+"m ago";if(s<86400)return Math.floor(s/3600)+"h ago";var dd=Math.floor(s/86400);if(dd<30)return dd+"d ago";var d=new Date(ts);return (d.getMonth()+1)+"/"+d.getDate()+"/"+String(d.getFullYear()).slice(2);}
+function fmtDateTime(d){var mon=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];var h=d.getHours(),m=d.getMinutes(),ap=h>=12?"pm":"am",hh=h%12||12;return mon[d.getMonth()]+" "+d.getDate()+", "+d.getFullYear()+" \u00b7 "+hh+":"+(m<10?"0":"")+m+ap;}
+function srcLabel(s){s=String(s||"");if(/sag_organic|product_sync/i.test(s))return "Google free listing";if(/cpc|ppc|paid/i.test(s))return "Google Ads";if(/^direct/i.test(s))return "Direct";if(/email/i.test(s))return "Email";if(/(^|[^a-z])(facebook|instagram|meta|tiktok|pinterest)/i.test(s))return "Social";return s;}
+function salesAgg(orders,days){var now=Date.now();
+  var rows=(orders||[]).filter(function(o){return days==null||(now-(o.ts||0))<=days*86400000;});
+  var a={orders:rows.length,revenue:0,units:0,adOrders:0,organicOrders:0,adRevenue:0,organicRevenue:0,prod:{},src:{},daily:{},rows:rows};
+  rows.forEach(function(o){var v=Number(o.value)||0,isAd=!!o.hasClickId,its=o.items||[];
+    var units=(o.itemCount!=null)?o.itemCount:its.reduce(function(s,b){return s+(b.qty||1);},0);
+    a.revenue+=v;a.units+=units;if(isAd){a.adOrders++;a.adRevenue+=v;}else{a.organicOrders++;a.organicRevenue+=v;}
+    its.forEach(function(it){var k=String(it.title||"").trim();if(!k)return;var p=a.prod[k]=a.prod[k]||{name:k,orders:0,units:0,revenue:0,ad:0,organic:0};p.orders++;p.units+=(it.qty||1);p.revenue+=v/Math.max(1,its.length);isAd?p.ad++:p.organic++;});
+    var sk=(o.source||"direct")+" / "+(o.medium||"none");var s=a.src[sk]=a.src[sk]||{source:sk,orders:0,revenue:0,ad:0};s.orders++;s.revenue+=v;if(isAd)s.ad++;
+    var dt=new Date(o.ts||now);dt.setHours(0,0,0,0);var dk=dt.getTime();var dd=a.daily[dk]=a.daily[dk]||{orders:0,revenue:0};dd.orders++;dd.revenue+=v;});
+  a.avg=a.orders?a.revenue/a.orders:0;a.revenue=Math.round(a.revenue*100)/100;a.adRevenue=Math.round(a.adRevenue*100)/100;a.organicRevenue=Math.round(a.organicRevenue*100)/100;
+  a.topProducts=Object.keys(a.prod).map(function(k){var p=a.prod[k];p.revenue=Math.round(p.revenue*100)/100;return p;}).sort(function(x,y){return y.units-x.units||y.revenue-x.revenue;});
+  a.topSources=Object.keys(a.src).map(function(k){var s=a.src[k];s.revenue=Math.round(s.revenue*100)/100;return s;}).sort(function(x,y){return y.revenue-x.revenue;});
+  return a;}
+function convChipHtml(h){if(!h)return "";var state=h.validated?"ok":(h.healthy?"warn":"bad");var col=state==="ok"?"var(--sage)":state==="warn"?"var(--gold)":"var(--clay)";var lab=state==="ok"?"Conversion tracking live":state==="warn"?"Tracking on \u00b7 no ad sales yet":"Conversion tracking off";var extra=h.queueDepth?(" \u00b7 "+h.queueDepth+" queued"):"";return '<button class="convchip" onclick="go(\'sales\')" style="display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);background:var(--paper);border-radius:999px;padding:6px 13px;font-size:12px;cursor:pointer;color:var(--ink-70)"><span style="width:8px;height:8px;border-radius:50%;background:'+col+'"></span>'+lab+extra+' <span style="opacity:.5">\u2192</span></button>';}
+function convHealthHtml(h){if(!h)return '<div class="muted" style="font-size:12.5px">Conversion status unavailable.</div>';
+  var state=h.validated?"ok":(h.healthy?"warn":"bad");var col=state==="ok"?"var(--sage)":state==="warn"?"var(--gold)":"var(--clay)";
+  var head=state==="ok"?"Conversion tracking is live":state==="warn"?"Configured \u2014 no ad-driven sales recorded yet":"Conversion tracking is not active";
+  var sub=state==="ok"?"Ad-click purchases upload to Google Ads automatically.":state==="warn"?"Your ads haven\u2019t produced a tracked sale yet. The organic sales above don\u2019t count here \u2014 and shouldn\u2019t.":"Recommendations run blind until this is connected.";
+  var enabledAction=(h.actions||[]).some(function(a){return a.status==="ENABLED";});var bits=[];
+  bits.push("action "+(h.actionConfigured?(enabledAction?"enabled":"set, not enabled"):"not set"));
+  if(h.recentConversions!=null)bits.push(h.recentConversions+" tracked / 30d");
+  if(h.queueDepth!=null)bits.push(h.queueDepth+" queued"+(h.adjQueueDepth?(" +"+h.adjQueueDepth+" adj"):""));
+  if(h.lastUpload&&h.lastUpload.at)bits.push("last sync "+timeago(h.lastUpload.at)+" ago");
+  var reasons=(!h.healthy&&h.reasons&&h.reasons.length)?'<div style="margin-top:8px;font-size:12px;color:var(--ink-70)">'+h.reasons.map(function(r){return "\u2022 "+esc(r);}).join("<br>")+'</div>':"";
+  var actionsList=(h.actions&&h.actions.length)?'<details style="margin-top:9px"><summary style="cursor:pointer;font-size:12px;font-weight:600">Detected conversion actions ('+h.actions.length+')</summary><div style="font-size:11.5px;margin-top:6px;line-height:1.6">Copy one resource name into <code>GADS_CONVERSION_ACTION</code>:<br>'+h.actions.map(function(a){return "\u2022 "+esc(a.name||"(unnamed)")+" ["+esc(a.status||"")+"] \u2014 <code style=\"user-select:all\">customers/6236267810/conversionActions/"+esc(String(a.id||""))+"</code>";}).join("<br>")+'</div></details>':"";
+  var fix=(!h.healthy)?'<details style="margin-top:9px"><summary style="cursor:pointer;font-size:12px;font-weight:600">How to connect the server-side pipeline</summary><div style="font-size:11.5px;margin-top:6px;line-height:1.6">1. Google Ads \u2192 Goals \u2192 Conversions: create a <b>Website \u2192 Purchase</b> action (value: use different values; count: one; Import from clicks).<br>2. Set <code>GADS_CONVERSION_ACTION</code> in Netlify.<br>3. Add <code>brites-gclid-capture.liquid</code> to the theme.<br>4. Shopify webhooks for <b>orders/paid</b> + <b>refunds/create</b> \u2192 the shopifyOrderWebhook URL.<br>5. Place an order via an ad click, then hit <b>Sync now</b>.</div></details>':"";
+  return '<div style="display:flex;gap:11px;align-items:flex-start"><span style="width:10px;height:10px;border-radius:50%;background:'+col+';margin-top:5px;flex:none"></span><div style="flex:1"><div style="font-weight:600;font-size:13.5px">'+head+'</div><div class="muted" style="font-size:12px;margin-top:2px">'+sub+'</div><div class="muted" style="font-size:11.5px;margin-top:7px;font-family:var(--mono)">'+esc(bits.join("  \u00b7  "))+'</div>'+reasons+actionsList+fix+'<div style="margin-top:10px;display:flex;gap:8px"><button class="btn ghost sm convRecheck" style="padding:4px 11px;font-size:12px">Re-check</button><button class="btn ghost sm convSync" style="padding:4px 11px;font-size:12px">Sync now</button></div></div></div>';}
+function wireConv(scope){scope=scope||document;
+  Array.prototype.forEach.call(scope.querySelectorAll(".convRecheck"),function(b){b.onclick=async function(){var done=btnBusy(this,"Checking\u2026");var aid=actStart("conversionHealth");try{var r=await api("conversionHealth",{force:true});DASH.conversionHealth=r;renderSales();renderSalesSummary();renderConvStrip();toast("Conversion tracking re-checked",true);}catch(e){toast(e.message);}actEnd(aid);done();};});
+  Array.prototype.forEach.call(scope.querySelectorAll(".convSync"),function(b){b.onclick=async function(){var done=btnBusy(this,"Syncing\u2026");var aid=actStart("syncConversions");try{var r=await api("syncConversions",{});if(r&&r.health)DASH.conversionHealth=r.health;renderSales();renderSalesSummary();renderConvStrip();toast("Synced \u2014 "+(((r.uploaded||{}).uploaded)||0)+" conversions, "+(((r.adjustments||{}).uploaded)||0)+" adjustments",true);}catch(e){toast(e.message);}actEnd(aid);done();};});}
+function wireBackfill(scope){Array.prototype.forEach.call((scope||document).querySelectorAll(".intel-backfill"),function(b){
+  b.onclick=async function(){var done=btnBusy(this,"Pulling\u2026");var aid=actStart("backfillOrders",{verb:"Pulling recent Shopify orders"});
+    try{var r=await api("backfillOrders",{limit:100});if(r&&r.ok){toast("Logged "+(r.added||0)+" Shopify orders"+((r.skipped)?(" \u00b7 "+r.skipped+" already in log"):"")+" \u2713",true);}else{toast("Backfill failed: "+((r&&r.error)||"unknown")+(/orders|scope|403/i.test((r&&r.error)||"")?" \u2014 the Shopify token needs read_orders":""));}}
+    catch(x){toast(x.message);}actEnd(aid);done();await reload();};});}
+function donutInline(segs){var size=104,th=18;var tot=segs.reduce(function(a,s){return a+s[1];},0)||1;var off=0,arcs="";var r=(size-th)/2,c=size/2,C=2*Math.PI*r;segs.forEach(function(s){var fr=s[1]/tot;arcs+='<circle cx="'+c+'" cy="'+c+'" r="'+r+'" fill="none" stroke="'+s[2]+'" stroke-width="'+th+'" stroke-dasharray="'+(fr*C).toFixed(1)+" "+C+'" stroke-dashoffset="'+(-off*C).toFixed(1)+'" transform="rotate(-90 '+c+" "+c+')"/>';off+=fr;});var leg=segs.map(function(s){return '<div style="display:flex;align-items:center;gap:6px;font-size:11.5px;padding:1px 0"><i style="width:9px;height:9px;border-radius:3px;background:'+s[2]+';display:inline-block"></i><span style="flex:1">'+s[0]+'</span><b class="mono">'+money(s[1])+'</b></div>';}).join("");return '<svg viewBox="0 0 '+size+" "+size+'" width="'+size+'" height="'+size+'">'+arcs+'<text x="'+c+'" y="'+(c+4)+'" text-anchor="middle" font-size="13" font-family="var(--mono)" font-weight="700">'+Math.round((segs[1]?segs[1][1]:0)/tot*100)+'%</text></svg><div style="flex:1">'+leg+'</div>';}
+function segRange(){return '<div style="display:inline-flex;gap:5px;background:var(--paper-2);padding:4px;border-radius:11px">'+SALES_RANGES.map(function(r,i){var on=i===salesRangeIdx;return '<button class="segR" data-i="'+i+'" style="padding:5px 12px;border:none;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;background:'+(on?"var(--card)":"transparent")+';color:'+(on?"var(--ink)":"var(--ink-45)")+';box-shadow:'+(on?"var(--sh)":"none")+'">'+r[0]+'</button>';}).join("")+'</div>';}
+function segFilter(){var F=[["All","all"],["From ads","ad"],["Organic","organic"]];return '<div style="display:inline-flex;gap:5px;background:var(--paper-2);padding:4px;border-radius:11px">'+F.map(function(f){var on=f[1]===salesFilter;return '<button class="segF" data-f="'+f[1]+'" style="padding:5px 12px;border:none;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;background:'+(on?"var(--card)":"transparent")+';color:'+(on?"var(--ink)":"var(--ink-45)")+';box-shadow:'+(on?"var(--sh)":"none")+'">'+f[0]+'</button>';}).join("")+'</div>';}
+function ordersTableHtml(rows,filter){var fr=rows.filter(function(o){return filter==="all"||(filter==="ad"?o.hasClickId:!o.hasClickId);});
+  if(!fr.length)return '<div class="empty" style="height:120px"><div style="font-size:13px">No orders match this filter.</div></div>';
+  var body=fr.map(function(o,i){var d=new Date(o.ts||Date.now());var its=o.items||[];var ic=(o.itemCount!=null)?o.itemCount:its.reduce(function(s,b){return s+(b.qty||1);},0);
+    var first=its[0]?esc(its[0].title)+(its.length>1?(' <span class="muted">+'+(its.length-1)+'</span>'):""):"\u2014";var ad=o.hasClickId;
+    var row='<tr class="srow" data-i="'+i+'" style="cursor:pointer"><td class="mono" style="white-space:nowrap" title="'+esc(fmtDateTime(d))+'">'+esc(reldate(o.ts))+'</td><td style="font-weight:600">'+esc(o.orderId?("#"+String(o.orderId).replace(/^#/,"")):"\u2014")+'</td><td><b>'+ic+'</b> \u00d7 '+first+'</td><td class="r mono">'+money(o.value)+'</td><td class="muted" style="font-size:11px">'+esc(srcLabel((o.source||"direct")+" / "+(o.medium||"none")))+'</td><td>'+(ad?'<span class="badge2 b-on">ad</span>':'<span class="badge2 b-pause">organic</span>')+'</td></tr>';
+    var det='<tr class="sdet" data-d="'+i+'" style="display:none"><td colspan="6" style="background:var(--paper-2)"><div style="padding:9px 6px;font-size:12px"><div style="display:flex;flex-wrap:wrap;gap:18px;margin-bottom:9px"><span><b>When</b> '+esc(fmtDateTime(d))+'</span><span><b>Value</b> '+money(o.value)+'</span><span><b>Source</b> '+esc((o.source||"direct")+" / "+(o.medium||"none"))+(o.campaign?(" \u00b7 "+esc(o.campaign)):"")+'</span><span><b>Counts as a Google Ads conversion?</b> '+(ad?"yes \u2014 ad click":"no \u2014 "+esc(o.reason||"organic"))+'</span></div><table style="width:auto;font-size:12px"><thead><tr><th style="text-align:left;padding-right:24px">Listing</th><th class="r">Qty</th></tr></thead><tbody>'+(its.length?its.map(function(it){return '<tr><td style="padding-right:24px">'+esc(it.title)+'</td><td class="r mono">'+(it.qty||1)+'</td></tr>';}).join(""):'<tr><td colspan="2" class="muted">No line items captured</td></tr>')+'</tbody></table></div></td></tr>';
+    return row+det;}).join("");
+  return '<div class="ptscroll" style="overflow:auto;max-height:62vh"><table class="ptable"><thead><tr><th>Date</th><th>Order</th><th>Items</th><th class="r">Value</th><th>Source</th><th>Type</th></tr></thead><tbody>'+body+'</tbody></table></div>';}
+function wireOrderRows(scope){Array.prototype.forEach.call(scope.querySelectorAll(".srow"),function(r){r.onclick=function(){var i=this.getAttribute("data-i");var d=scope.querySelector('.sdet[data-d="'+i+'"]');if(d)d.style.display=d.style.display==="none"?"":"none";};});}
+function renderSales(){var host=$("#v-sales");if(!host)return;var orders=DASH.recentOrders||[];
+  var ctrls=$("#salesCtrls");
+  if(ctrls){ctrls.innerHTML='<div class="card pad" style="margin-bottom:16px;display:flex;gap:16px;align-items:center;flex-wrap:wrap"><div style="display:flex;flex-direction:column;gap:4px"><span class="muted" style="font-size:10px;letter-spacing:.13em;text-transform:uppercase">Date range</span>'+segRange()+'</div><div style="display:flex;flex-direction:column;gap:4px"><span class="muted" style="font-size:10px;letter-spacing:.13em;text-transform:uppercase">Show</span>'+segFilter()+'</div><div style="flex:1"></div><button class="btn ghost sm intel-backfill" style="padding:7px 13px;font-size:12px">Pull last 100 Shopify orders</button></div>';
+    Array.prototype.forEach.call(ctrls.querySelectorAll(".segR"),function(b){b.onclick=function(){salesRangeIdx=+this.getAttribute("data-i");renderSales();};});
+    Array.prototype.forEach.call(ctrls.querySelectorAll(".segF"),function(b){b.onclick=function(){salesFilter=this.getAttribute("data-f");renderSales();};});
+    wireBackfill(ctrls);}
+  var cEl=$("#salesConv");
+  if(cEl){if(DASH.conversionHealth){cEl.innerHTML='<div class="card pad"><div class="card__h"><h3>How it affects your ads</h3><span class="sub">conversion tracking</span></div>'+convHealthHtml(DASH.conversionHealth)+'</div>';wireConv(cEl);}else{cEl.innerHTML="";}}
+  if(!orders.length){["salesKpis","salesSources","salesProducts","salesTrend"].forEach(function(id){var e=$("#"+id);if(e)e.innerHTML="";});
+    var t=$("#salesTable");if(t){t.innerHTML='<div class="empty" style="height:220px"><div class="ring"></div><div style="font-weight:600">No orders yet</div><div style="font-size:12.5px;max-width:440px">Pull your recent Shopify orders to populate this, or wait for new sales to log automatically. You\u2019ll see revenue, where each sale came from, what sold, when, and which sales your ads drove.</div><button class="btn gold intel-backfill" style="margin-top:12px">Pull last 100 Shopify orders</button></div>';wireBackfill(t);}
+    var m=$("#salesOrdMeta");if(m)m.textContent="";return;}
+  var days=SALES_RANGES[salesRangeIdx][1];var a=salesAgg(orders,days);
+  var orgPct=a.revenue>0?Math.round(a.organicRevenue/a.revenue*100):0;
+  var kpis=[["Revenue",money(a.revenue),""],["Orders",String(a.orders),""],["Avg order",money(a.avg),""],["Units sold",String(a.units),""],["From ads",a.adOrders+" \u00b7 "+money(a.adRevenue),""],["Organic",a.organicOrders+" \u00b7 "+money(a.organicRevenue),orgPct+"% of revenue"]];
+  var k=$("#salesKpis");if(k)k.innerHTML=kpis.map(function(x,i){return '<div class="kpi '+(i===0?"accent":"")+'"><div class="lab">'+x[0]+'</div><div class="val">'+x[1]+'</div><div class="delta muted" style="font-size:11px">'+(x[2]||"&nbsp;")+'</div></div>';}).join("");
+  var sEl=$("#salesSources");
+  if(sEl){var maxRev=Math.max.apply(null,a.topSources.map(function(s){return s.revenue;}).concat([1]));
+    sEl.innerHTML='<div style="display:flex;gap:14px;align-items:center;margin-bottom:13px">'+donutInline([["From ads",a.adRevenue,"var(--gold)"],["Organic",a.organicRevenue,"var(--sage)"]])+'</div>'+a.topSources.slice(0,7).map(function(s){var w=Math.round(s.revenue/maxRev*100);return '<div style="margin-bottom:9px"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px"><span>'+esc(srcLabel(s.source))+(s.ad?' <span class="badge2 b-on" style="font-size:9px;padding:1px 5px">ad</span>':"")+'</span><span class="mono muted">'+s.orders+" \u00b7 "+money(s.revenue)+'</span></div><div style="height:6px;background:var(--paper-2);border-radius:4px;overflow:hidden"><div style="height:100%;width:'+w+'%;background:'+(s.ad?"var(--gold)":"var(--sage)")+';border-radius:4px"></div></div></div>';}).join("");}
+  var pEl=$("#salesProducts");
+  if(pEl){if(!a.topProducts.length){pEl.innerHTML='<div class="muted" style="font-size:12.5px">No products in this range.</div>';}
+    else{var maxU=Math.max.apply(null,a.topProducts.map(function(p){return p.units;}).concat([1]));
+      pEl.innerHTML=a.topProducts.slice(0,8).map(function(p){var w=Math.round(p.units/maxU*100);return '<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:12px;margin-bottom:3px"><span style="flex:1;min-width:60px">'+esc(p.name)+'</span><span class="mono muted" style="white-space:nowrap">'+p.units+" sold \u00b7 "+money(p.revenue)+'</span><button class="btn ghost sm intel-launch" data-name="'+esc(p.name)+'" style="padding:2px 8px;font-size:10.5px;white-space:nowrap">Build paid</button></div><div style="height:6px;background:var(--paper-2);border-radius:4px;overflow:hidden"><div style="height:100%;width:'+w+'%;background:var(--clay);border-radius:4px"></div></div></div>';}).join("");
+      Array.prototype.forEach.call(pEl.querySelectorAll(".intel-launch"),function(b){b.onclick=function(){var nm=this.getAttribute("data-name");var cw=$("#customWrap");if(cw&&!cw.open)cw.open=true;go("bench");try{ensureBench();}catch(e){}toast("Pick the collection matching \u201c"+nm+"\u201d, then Generate draft",true);};});}}
+  var tEl=$("#salesTrend");
+  if(tEl){var keys=Object.keys(a.daily).map(Number).sort(function(x,y){return x-y;});
+    if(keys.length<2){tEl.innerHTML='<div class="empty" style="height:140px"><div style="font-size:12.5px">Not enough days in this range to chart a trend.</div></div>';}
+    else{var rev=keys.map(function(kk){return a.daily[kk].revenue;});tEl.innerHTML=lineChart([{data:rev,color:"var(--gold)",fill:true,dots:keys.length<40}],{fmt:function(v){return "$"+v;},h:170})+'<div class="muted" style="font-size:11px;text-align:center;margin-top:4px">'+esc(new Date(keys[0]).toLocaleDateString())+" \u2192 "+esc(new Date(keys[keys.length-1]).toLocaleDateString())+'</div>';}}
+  var oEl=$("#salesTable"),meta=$("#salesOrdMeta");
+  if(oEl){oEl.innerHTML=ordersTableHtml(a.rows,salesFilter);wireOrderRows(oEl);}
+  if(meta){var shown=a.rows.filter(function(o){return salesFilter==="all"||(salesFilter==="ad"?o.hasClickId:!o.hasClickId);}).length;meta.textContent=shown+" order"+(shown===1?"":"s")+(days==null?" \u00b7 all time":" \u00b7 last "+SALES_RANGES[salesRangeIdx][0]);}}
+function renderSalesSummary(){var el=$("#cmdSales");if(!el)return;var orders=DASH.recentOrders||[];
+  if(!orders.length){el.innerHTML='<div class="card__h"><h3>Store sales</h3><span class="sub">last 30 days</span></div><div class="empty" style="height:130px"><div style="font-size:12.5px">No orders logged yet.</div><button class="btn ghost sm intel-backfill" style="margin-top:9px">Pull Shopify orders</button></div>';wireBackfill(el);return;}
+  var a=salesAgg(orders,30);var orgPct=a.revenue>0?Math.round(a.organicRevenue/a.revenue*100):0;var top=a.topProducts[0];
+  el.innerHTML='<div class="card__h"><h3>Store sales</h3><span class="sub">last 30 days</span><button class="btn ghost sm" onclick="go(\'sales\')" style="margin-left:auto;padding:3px 10px;font-size:11px">View all \u2192</button></div><div style="display:flex;gap:20px;flex-wrap:wrap;margin:6px 0 11px"><div><div class="muted" style="font-size:11px">Revenue</div><div style="font-size:21px;font-weight:700;font-family:var(--mono)">'+money(a.revenue)+'</div></div><div><div class="muted" style="font-size:11px">Orders</div><div style="font-size:21px;font-weight:700;font-family:var(--mono)">'+a.orders+'</div></div><div><div class="muted" style="font-size:11px">Avg order</div><div style="font-size:21px;font-weight:700;font-family:var(--mono)">'+money(a.avg)+'</div></div></div><div style="height:9px;border-radius:5px;overflow:hidden;display:flex;margin-bottom:6px">'+(a.revenue>0?'<div style="width:'+(100-orgPct)+'%;background:var(--gold)"></div><div style="width:'+orgPct+'%;background:var(--sage)"></div>':'<div style="width:100%;background:var(--paper-2)"></div>')+'</div><div style="display:flex;justify-content:space-between;font-size:11.5px;color:var(--ink-70)"><span><i style="display:inline-block;width:8px;height:8px;border-radius:2px;background:var(--gold);margin-right:5px"></i>Ads '+money(a.adRevenue)+'</span><span><i style="display:inline-block;width:8px;height:8px;border-radius:2px;background:var(--sage);margin-right:5px"></i>Organic '+money(a.organicRevenue)+'</span></div>'+(top?'<div style="margin-top:10px;font-size:11.5px;color:var(--ink-70)">Top seller: <b>'+esc(top.name)+'</b> \u00b7 '+top.units+' sold</div>':"");}
+function renderConvStrip(){var el=$("#perfConv");if(!el)return;if(!DASH.conversionHealth){el.style.display="none";return;}el.style.display="block";el.innerHTML=convChipHtml(DASH.conversionHealth);}
 function renderCommand(){
   var camps=DASH.lastMetrics||[];var t=totals(camps);var c=DASH.control||{};
   var roas=t.cost>0?(t.value/t.cost):null, ctr=t.impr>0?(t.clicks/t.impr*100):null, cpa=t.conv>0?(t.cost/t.conv):null;
@@ -1182,7 +1177,7 @@ async function livePull(){
   finally{ livePulling=false; }
 }
 async function reload(toastOk){try{DASH=await api("dashboard");renderAll();$("#connDot").style.background="var(--sage)";$("#connText").textContent="connected";lastSync=Date.now();if(toastOk)toast("Refreshed",true);if(!countriesLoaded){ensureCountries().then(function(){if(COUNTRIES.length)renderAll();});}}catch(x){$("#connDot").style.background="var(--clay)";$("#connText").textContent="error";toast(x.message);}}
-function renderAll(){renderControlBar();renderConvHealth();renderStoreIntel();renderCommand();renderApprovals();renderPerf();renderControls();updateBadges();paintBenchCty();}
+function renderAll(){renderControlBar();renderCommand();renderSales();renderSalesSummary();renderConvStrip();renderApprovals();renderPerf();renderControls();updateBadges();paintBenchCty();}
 
 async function unlock(e){e.preventDefault();PASS=$("#pc").value;$("#gateErr").textContent="";
   var gb=$(".gatecard button[type=submit]");var gdone=btnBusy(gb,"Connecting\u2026");var aid=actStart("dashboard");
