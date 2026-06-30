@@ -370,6 +370,7 @@ table.ptable tr.pdetail>td{border-bottom:2px solid var(--line)}
     </header>
 
     <div id="convHealthBar" style="display:none"></div>
+    <div id="storeIntel" style="display:none"></div>
     <div class="actbar" id="actbar" role="status" aria-live="polite"></div>
 
     <section class="view" id="v-command">
@@ -448,6 +449,8 @@ table.ptable tr.pdetail>td{border-bottom:2px solid var(--line)}
           <div class="field"><label>Target ROAS (0 = auto)</label><div class="range"><input type="range" id="cRoas" min="0" max="700" step="25"><span class="rngval" id="cRoasV"></span></div></div>
           <div class="field"><label>Approval needed above</label><div class="range"><input type="range" id="cAppr" min="5" max="50" step="5"><span class="rngval" id="cApprV"></span></div></div>
           <div class="field"><label>Default target countries <span class="muted" style="font-weight:400">\u00b7 every new draft starts here</span></label><div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap"><span id="defCtyChips" style="display:flex;gap:6px;flex-wrap:wrap"></span><button type="button" class="btn ghost sm" id="defCtyEdit" style="padding:3px 9px;font-size:11px">Edit default</button></div></div>
+          <div class="field"><label>Monthly spend cap <span class="muted" style="font-weight:400">\u00b7 hard stop \u2014 pauses all campaigns when month-to-date spend hits this</span></label><div style="display:flex;gap:8px;align-items:center"><span id="cMonCur" class="muted" style="font-size:13px"></span><input type="number" id="cMonthly" min="0" step="10" placeholder="off" style="width:120px;padding:7px 9px;border:1px solid var(--line);border-radius:8px;font-size:13px;background:var(--paper)"><button type="button" class="btn ghost sm" id="cMonthlySave" style="padding:5px 11px;font-size:12px">Save</button><span id="cMonthlyMsg" class="muted" style="font-size:11.5px"></span></div></div>
+          <div class="field"><label>Total daily budget <span class="muted" style="font-weight:400">\u00b7 keep the sum of campaign budgets under the ceiling</span></label><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button type="button" class="btn ghost sm" id="cTrim" style="padding:5px 11px;font-size:12px">Trim budgets to ceiling now</button><span id="cTrimMsg" class="muted" style="font-size:11.5px"></span></div></div>
         </div>
         <div class="card pad" style="grid-column:1/-1">
           <div class="card__h"><h3>Run a cycle now</h3><span class="sub">runs in dry-run if dry-run is on</span></div>
@@ -474,7 +477,7 @@ const ENDPOINT = (typeof window!=="undefined" && window.__GADS_ENDPOINT)
   || ((location.origin && location.origin.indexOf("http")===0)
         ? location.origin + "/.netlify/functions/googleAdsAutopilotKick"   // same-origin when hosted (no CORS)
         : "https://goldenspike.app/.netlify/functions/googleAdsAutopilotKick"); // fallback if opened as a local file
-let PASS=""; let DASH=null; let lastSync=0; let timer=null;
+let PASS=""; let DASH=null; let lastSync=0; let timer=null; let lastLivePull=0; let livePulling=false;
 
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const elFrom=h=>{const t=document.createElement("template");t.innerHTML=h.trim();return t.content.firstChild;};
@@ -685,6 +688,50 @@ function renderConvHealth(){
   var dt=el.querySelector(".convbar"); if(dt)dt.addEventListener("toggle",function(){convOpen=dt.open;});
   $("#convRecheck").onclick=async function(){ var b=this;var done=btnBusy(b,"Checking\u2026");var aid=actStart("conversionHealth"); try{ var r=await api("conversionHealth",{force:true}); DASH.conversionHealth=r; renderConvHealth(); toast("Conversion tracking re-checked",true);}catch(e){done();toast(e.message);} actEnd(aid); };
   $("#convSync").onclick=async function(){ var b=this;var done=btnBusy(b,"Syncing\u2026");var aid=actStart("syncConversions"); try{ var r=await api("syncConversions",{}); if(r&&r.health)DASH.conversionHealth=r.health; renderConvHealth(); toast("Synced \u2014 "+(((r.uploaded||{}).uploaded)||0)+" conversions, "+(((r.adjustments||{}).uploaded)||0)+" adjustments",true);}catch(e){done();toast(e.message);} actEnd(aid); };
+}
+function renderStoreIntel(){
+  var el=$("#storeIntel"); if(!el) return;
+  var s=DASH.storeSignals, orders=DASH.recentOrders||[];
+  if((!s||!s.orders)&&(!orders||!orders.length)){ el.style.display="none"; return; }
+  el.style.display="block";
+  function money(n){return cur()+(Math.round((Number(n)||0)*100)/100);}
+  var split="";
+  if(s&&s.orders){
+    var adR=s.adRevenue||0, orgR=s.organicRevenue||0, tot=adR+orgR, orgPct=tot>0?Math.round(orgR/tot*100):0;
+    split='<div style="display:flex;gap:16px;flex-wrap:wrap;font-size:12.5px;margin:2px 0 10px">'+
+      '<div><b>'+s.orders+'</b> orders / '+s.days+'d</div>'+
+      '<div>from ads: <b>'+s.adOrders+'</b> ('+money(adR)+')</div>'+
+      '<div>organic: <b>'+s.organicOrders+'</b> ('+money(orgR)+')</div>'+
+      '<div style="opacity:.72">'+orgPct+'% of revenue is non-ad</div></div>';
+  }
+  var prods="";
+  if(s&&s.topProducts&&s.topProducts.length){
+    prods='<div style="font-size:12px;font-weight:600;margin:4px 0 5px">What\u2019s selling \u2014 proven demand to advertise</div><div style="display:flex;flex-direction:column;gap:5px">'+
+      s.topProducts.slice(0,6).map(function(p){return '<div style="display:flex;gap:8px;align-items:center;font-size:12px">'+
+        '<span style="flex:1;min-width:80px">'+esc(p.name)+'</span>'+
+        '<span class="muted" style="font-size:11px;white-space:nowrap">'+p.orders+' ord \u00b7 '+money(p.revenue)+(p.organic?(' \u00b7 '+p.organic+' organic'):'')+'</span>'+
+        '<button class="btn ghost sm intel-launch" data-name="'+esc(p.name)+'" style="padding:3px 9px;font-size:11px;white-space:nowrap">Build paid \u2192</button></div>';}).join('')+'</div>';
+  }
+  var srcs="";
+  if(s&&s.topSources&&s.topSources.length){
+    srcs='<div style="margin-top:9px;font-size:11.5px;opacity:.8"><b>Top sources:</b> '+s.topSources.slice(0,5).map(function(x){return esc(x.source)+' ('+x.orders+')';}).join('  \u00b7  ')+'</div>';
+  }
+  var log="";
+  if(orders.length){
+    log='<details style="margin-top:11px"><summary style="cursor:pointer;font-size:12px;font-weight:600">Recent orders ('+orders.length+')</summary><div style="margin-top:7px;display:flex;flex-direction:column;gap:0;max-height:300px;overflow:auto">'+
+      orders.map(function(o){var ok=o.captured;var src=(o.source||"direct")+"/"+(o.medium||"none");
+        return '<div style="display:flex;gap:8px;align-items:baseline;font-size:11.5px;padding:4px 0;border-bottom:1px solid var(--line)">'+
+          '<span style="color:'+(ok?"var(--sage)":"var(--ink-45)")+'">'+(ok?"\u25cf":"\u25cb")+'</span>'+
+          '<span style="font-weight:600;min-width:52px">'+esc(o.orderId?("#"+String(o.orderId).slice(-6)):"\u2014")+'</span>'+
+          '<span style="min-width:58px">'+money(o.value)+'</span>'+
+          '<span class="muted" style="flex:1;min-width:70px">'+esc(src)+'</span>'+
+          '<span style="font-size:10.5px;text-align:right;'+(ok?"color:var(--sage)":"opacity:.62")+'">'+esc(ok?"captured":(o.reason||"skipped"))+'</span></div>';
+      }).join('')+'</div></details>';
+  }
+  el.innerHTML='<div class="card pad" style="margin-bottom:16px"><div style="display:flex;gap:8px;align-items:center;margin-bottom:6px"><b style="font-size:13px">Store intelligence</b><span class="muted" style="font-size:11px">\u00b7 every order, ad + organic \u2014 learning what to advertise</span></div>'+split+prods+srcs+log+'</div>';
+  Array.prototype.forEach.call(el.querySelectorAll(".intel-launch"),function(b){
+    b.onclick=function(){var nm=this.getAttribute("data-name");var cw=$("#customWrap");if(cw&&!cw.open)cw.open=true;try{ensureBench();}catch(e){}var bc=$("#bColl");if(bc&&bc.scrollIntoView){try{bc.scrollIntoView({behavior:"smooth",block:"center"});}catch(e){}}toast("Pick the collection matching \u201c"+nm+"\u201d, then Generate draft",true);};
+  });
 }
 function renderCommand(){
   var camps=DASH.lastMetrics||[];var t=totals(camps);var c=DASH.control||{};
@@ -1076,6 +1123,8 @@ function renderControls(){var c=DASH.control||{};
   $("#curLab2").textContent="· "+cur();$("#curLab").textContent="("+cur()+")";
   $("#termChips").innerHTML=(DASH.terms||[]).map(t=>'<span class="chip x">'+esc(t)+'</span>').join("")||'<span class="muted" style="font-size:12px">none set</span>';
   var dc=$("#defCtyChips");if(dc)dc.innerHTML=ctyChips(defCountries());
+  var cm=$("#cMonthly");if(cm&&document.activeElement!==cm){cm.value=(c.maxMonthlySpend&&+c.maxMonthlySpend>0)?(+c.maxMonthlySpend):"";}
+  var cmc=$("#cMonCur");if(cmc)cmc.textContent=cur();
 }
 function bindControlsOnce(){
   var cf=$("#clearFeed");if(cf)cf.onclick=async function(){
@@ -1088,6 +1137,8 @@ function bindControlsOnce(){
   $("#swDry").onclick=async()=>{var on=!$("#swDry").classList.contains("on");var aid=actStart("dryRun");try{await api("dryRun",{on:on});toast("Dry-run "+(on?"on":"off"),on);}catch(x){toast(x.message);}actEnd(aid);await reload();};
   $("#swAuto").onclick=async()=>{var on=!$("#swAuto").classList.contains("on");var aid=actStart("setControl",{verb:"Saving auto-approve"});try{await api("setControl",{patch:{autoApproveVettedTemplates:on}});toast("Auto-approve "+(on?"on":"off"),on);}catch(x){toast(x.message);}actEnd(aid);await reload();};
   var dce=$("#defCtyEdit");if(dce)dce.onclick=function(){openCountryEditor({selected:defCountries(),title:"Default target countries",subtitle:"Every new draft starts with these. You can still override per draft or per campaign.",saveLabel:"Save default",onSave:async function(ids,done){if(!ids.length){toast("Pick at least one country.");done();return;}var aid=actStart("setControl",{verb:"Saving default countries"});try{await api("setControl",{patch:{defaultCountries:ids}});toast("Default countries saved \u2713",true);done();actEnd(aid);await reload();}catch(x){actEnd(aid);toast(x.message);done();}}});};
+  var cms=$("#cMonthlySave");if(cms)cms.onclick=async function(){var v=Number($("#cMonthly").value)||0;var msg=$("#cMonthlyMsg");var done=btnBusy(this,"Saving\u2026");var aid=actStart("setControl",{verb:"Saving monthly cap"});try{await api("setControl",{patch:{maxMonthlySpend:v}});if(msg)msg.textContent=v>0?("hard stop at "+cur()+v):"monthly cap off";toast(v>0?("Monthly cap set to "+cur()+v):"Monthly cap turned off",true);}catch(x){toast(x.message);}actEnd(aid);done();await reload();};
+  var ct=$("#cTrim");if(ct)ct.onclick=async function(){var msg=$("#cTrimMsg");var done=btnBusy(this,"Checking\u2026");var aid=actStart("enforceCeiling",{verb:"Trimming budgets to ceiling"});try{var r=await api("enforceCeiling",{});if(r&&r.ok){if(r.skipped){if(msg)msg.textContent="set a ceiling first";toast("Set a daily ceiling first.");}else if(r.withinCeiling){if(msg)msg.textContent="already within ceiling ("+cur()+(r.total||0)+" / "+cur()+(r.ceiling||0)+")";toast("Already within ceiling \u2713",true);}else if(r.dryRun){if(msg)msg.textContent="validated (dry-run)";toast("Validated (dry-run) \u2014 nothing changed.");}else{if(msg)msg.textContent="trimmed "+(r.trimmed||0)+" campaigns to fit "+cur()+(r.ceiling||0);toast("Trimmed "+(r.trimmed||0)+" campaigns to your ceiling \u2713",true);}}else{toast("Failed: "+((r&&r.error)||"unknown"));}}catch(x){toast(x.message);}actEnd(aid);done();await reload();};
   function slider(id,vid,fmt,key,map){var r=$("#"+id),v=$("#"+vid);r.oninput=()=>{v.textContent=fmt(r.value);};r.onchange=async()=>{try{await api("setControl",{patch:{[key]:map(r.value)}});toast("Saved",true);}catch(x){toast(x.message);}};}
   slider("cCeil","cCeilV",v=>money(v),"maxDailyBudgetTotal",v=>+v);
   slider("cStep","cStepV",v=>v+"%","maxBudgetStepPct",v=>+v);
@@ -1104,14 +1155,32 @@ function bindControlsOnce(){
 async function runNow(tasks){$("#runMsg").textContent=" running…";var aid=actStart("runNow",{detail:tasks.join(", ")});try{var r=await api("runNow",{tasks:tasks});$("#runMsg").textContent=" "+(r.status||"")+" ["+tasks.join(",")+"] — refreshing in ~5s";setTimeout(()=>reload(),5000);}catch(x){$("#runMsg").textContent=" "+x.message;}actEnd(aid);}
 
 /* ---- load / reload ---- */
+async function livePull(){
+  if(livePulling)return; livePulling=true; lastLivePull=Date.now();
+  try{
+    try{ await api("measureNow"); }catch(e){}
+    try{ await api("enforceCeiling",{}); }catch(e){}
+    try{ var mg=await api("monthlyGuard",{}); if(mg&&mg.tripped){toast("Monthly cap reached \u2014 all campaigns paused",false);} }catch(e){}
+    DASH=await api("dashboard"); renderAll();
+    $("#connDot").style.background="var(--sage)";$("#connText").textContent="connected";lastSync=Date.now();
+  }catch(x){ /* quiet on background pulls */ }
+  finally{ livePulling=false; }
+}
 async function reload(toastOk){try{DASH=await api("dashboard");renderAll();$("#connDot").style.background="var(--sage)";$("#connText").textContent="connected";lastSync=Date.now();if(toastOk)toast("Refreshed",true);if(!countriesLoaded){ensureCountries().then(function(){if(COUNTRIES.length)renderAll();});}}catch(x){$("#connDot").style.background="var(--clay)";$("#connText").textContent="error";toast(x.message);}}
-function renderAll(){renderControlBar();renderConvHealth();renderCommand();renderApprovals();renderPerf();renderControls();updateBadges();paintBenchCty();}
+function renderAll(){renderControlBar();renderConvHealth();renderStoreIntel();renderCommand();renderApprovals();renderPerf();renderControls();updateBadges();paintBenchCty();}
 
 async function unlock(e){e.preventDefault();PASS=$("#pc").value;$("#gateErr").textContent="";
   var gb=$(".gatecard button[type=submit]");var gdone=btnBusy(gb,"Connecting\u2026");var aid=actStart("dashboard");
   try{ DASH=await api("dashboard"); $("#gate").style.display="none";$("#app").style.display="grid";
-    buildNav();bindControlsOnce();renderAll();go("command");lastSync=Date.now();
-    if(timer)clearInterval(timer);timer=setInterval(()=>{$("#sync").textContent="synced "+Math.floor((Date.now()-lastSync)/1000)+"s ago";if((Date.now()-lastSync)>30000)reload();},1000);
+    buildNav();bindControlsOnce();renderAll();go("command");lastSync=Date.now();lastLivePull=Date.now();
+    if(timer)clearInterval(timer);timer=setInterval(async ()=>{
+      var since=Math.floor((Date.now()-lastSync)/1000);
+      var lp=Math.floor((Date.now()-lastLivePull)/60000);
+      var el=$("#sync");if(el)el.textContent="synced "+since+"s ago \u00b7 live pull "+lp+"m ago";
+      if(livePulling)return;
+      if((Date.now()-lastLivePull)>=300000){ await livePull(); }
+      else if((Date.now()-lastSync)>30000){ reload(); }
+    },1000);
   }catch(x){ $("#gateErr").textContent=x.message.indexOf("401")>=0?"Wrong passcode.":x.message; }
   actEnd(aid);gdone();
   return false;
