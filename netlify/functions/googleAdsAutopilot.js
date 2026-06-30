@@ -810,43 +810,52 @@ function _toGAdsDateTime(val, time) {
       CPC range, intent, and head/long-tail class — so cards are still tailored + differentiated
       when Keyword Planner is unavailable. Real Planner data OVERRIDES the estimate per keyword.
    The API error (if any) is captured and surfaced — never swallowed. */
-// Keyword Planner permission is checked PER auth path. Search/mutate work via the manager
-// (login-customer-id = MCC), but generateKeywordIdeas can 403 there while succeeding when the
-// client account is addressed directly. So on a permission failure we transparently retry with
-// (a) login-customer-id = the client account itself, then (b) no login-customer-id header, and
-// lock onto whichever path returns data. If none work it's a true account-access gap (enable
-// Keyword Planner / billing on the account) and we fall back to AI research.
-let _kpAuthMode = null; // null = undiscovered; else "mcc" | "cid" | "none"
-const _KP_MODES = { mcc: undefined, cid: CID, none: false };
+// Keyword Planner permission is checked PER auth path AND per operating customer. Search/mutate
+// work via the manager, but generateKeywordIdeas can 403 there. Keyword ideas are market-wide data
+// (geo + language), NOT account-specific — so ANY account the user can reach that has Keyword Planner
+// enabled returns the same numbers. We transparently try: the client via manager, the client direct,
+// the client with no manager header, and finally the MANAGER account itself as the operating customer.
+// Whichever returns data is locked in. If all 403, it's a true account-access gap (enable Keyword
+// Planner / billing on an account) and we fall back to AI research.
+let _kpAttempt = null; // null = undiscovered; else an attempt.key
+function _kpAttempts() {
+  const a = [
+    { key: "mcc",  customer: CID,      login: undefined },
+    { key: "cid",  customer: CID,      login: CID },
+    { key: "none", customer: CID,      login: false }
+  ];
+  if (LOGIN_CID && LOGIN_CID !== CID) a.push({ key: "mgr", customer: LOGIN_CID, login: LOGIN_CID });
+  return a;
+}
 async function keywordResearch(keywords, geoIds, { langId = "1000" } = {}) {
   const seeds = [...new Set((keywords || []).map(k => String(k).trim().toLowerCase()).filter(Boolean))].slice(0, 20);
   if (!seeds.length) return { ok: false, error: "no seeds", status: null };
   const geos = ((geoIds && geoIds.length) ? geoIds : ["2124"]).map(g => `geoTargetConstants/${String(g).replace(/\D/g, "")}`).filter(g => /\d/.test(g));
   const body = { language: `languageConstants/${langId}`, geoTargetConstants: geos, includeAdultKeywords: false, keywordPlanNetwork: "GOOGLE_SEARCH", keywordSeed: { keywords: seeds } };
-  const modes = _kpAuthMode ? [_kpAuthMode] : ["mcc", "cid", "none"];
+  const all = _kpAttempts();
+  const attempts = _kpAttempt ? all.filter(a => a.key === _kpAttempt) : all;
   let lastErr = null, lastStatus = null;
-  for (const mode of modes) {
+  for (const at of attempts) {
     try {
       const token = await mintToken();
-      const res = await fetch(`${BASE}/customers/${CID}:generateKeywordIdeas`, { method: "POST", headers: adsHeaders(token, _KP_MODES[mode]), body: JSON.stringify(body) });
+      const res = await fetch(`${BASE}/customers/${at.customer}:generateKeywordIdeas`, { method: "POST", headers: adsHeaders(token, at.login), body: JSON.stringify(body) });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        _kpAuthMode = mode; // lock onto the path that works
+        _kpAttempt = at.key;
         const ideas = (data.results || []).map(r => {
           const m = r.keywordIdeaMetrics || {};
           return { text: r.text, searches: Number(m.avgMonthlySearches) || 0,
                    competition: m.competition || "UNKNOWN", competitionIndex: m.competitionIndex != null ? Number(m.competitionIndex) : null,
                    low: fromMicros(m.lowTopOfPageBidMicros), high: fromMicros(m.highTopOfPageBidMicros) };
         });
-        return { ok: true, ideas, status: res.status, authMode: mode };
+        return { ok: true, ideas, status: res.status, authMode: at.key };
       }
       lastErr = (data.error && (data.error.message || (data.error.details && JSON.stringify(data.error.details)))) || JSON.stringify(data).slice(0, 300);
       lastStatus = res.status;
-      // Only keep trying other auth paths for permission/auth failures; anything else is terminal.
       if (!/permission|unauthor|USER_PERMISSION|login.customer/i.test(lastErr || "") && res.status !== 403 && res.status !== 401) break;
     } catch (e) { lastErr = e.message; lastStatus = null; }
   }
-  return { ok: false, error: lastErr, status: lastStatus, triedModes: modes };
+  return { ok: false, error: lastErr, status: lastStatus, triedModes: attempts.map(a => a.key) };
 }
 function _median(arr) { const a = (arr || []).filter(x => x != null && !isNaN(x)).sort((x, y) => x - y); if (!a.length) return null; const m = Math.floor(a.length / 2); return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2; }
 function _tailOf(text) { const w = String(text || "").trim().split(/\s+/).filter(Boolean).length; return w >= 4 ? "LONG" : w === 3 ? "MID" : "HEAD"; }
@@ -899,9 +908,9 @@ function mergeKeywordResearch(aiKeywords, kpResult) {
 // so the actual reason for any failure is visible instead of silently falling back.
 async function keywordDiag({ keyword, geo } = {}) {
   const kw = (keyword && String(keyword).trim()) || "name necklace";
-  _kpAuthMode = null; // force a fresh discovery so the diagnostic tests every auth path
+  _kpAttempt = null; // force a fresh discovery so the diagnostic tests every path
   const r = await keywordResearch([kw], (geo && geo.length) ? geo : ["2124"]);
-  const modeLabel = { mcc: "via manager (login-customer-id = MCC)", cid: "client account direct (login-customer-id = account)", none: "no login-customer-id header" };
+  const modeLabel = { mcc: "via manager (login-customer-id = MCC)", cid: "client account direct (login-customer-id = account)", none: "no login-customer-id header", mgr: "manager account as data source (customers/" + LOGIN_CID + ")" };
   return { ok: !!r.ok, status: r.status || null, error: r.error || null, ideaCount: (r.ideas || []).length,
     authMode: r.authMode || null, authModeLabel: r.authMode ? modeLabel[r.authMode] : null, triedModes: r.triedModes || (r.authMode ? [r.authMode] : null),
     sample: (r.ideas || []).slice(0, 6).map(i => ({ text: i.text, searches: i.searches, competition: i.competition, competitionIndex: i.competitionIndex, low: _r2(i.low), high: _r2(i.high) })),
