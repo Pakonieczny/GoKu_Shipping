@@ -135,13 +135,16 @@ async function mintToken() {
   return _tok;
 }
 
-function adsHeaders(token) {
+function adsHeaders(token, loginCidOverride) {
   const h = {
     "Authorization": "Bearer " + token,
     "developer-token": DEV_TOKEN,
     "Content-Type": "application/json"
   };
-  if (LOGIN_CID) h["login-customer-id"] = LOGIN_CID;
+  // Default: manager (MCC) login-customer-id. Override with a specific CID, or `false` to omit the
+  // header entirely (used by the Keyword Planner auth-path fallback).
+  const lc = (loginCidOverride === undefined) ? LOGIN_CID : loginCidOverride;
+  if (lc) h["login-customer-id"] = String(lc).replace(/\D/g, "");
   return h;
 }
 
@@ -807,27 +810,43 @@ function _toGAdsDateTime(val, time) {
       CPC range, intent, and head/long-tail class — so cards are still tailored + differentiated
       when Keyword Planner is unavailable. Real Planner data OVERRIDES the estimate per keyword.
    The API error (if any) is captured and surfaced — never swallowed. */
+// Keyword Planner permission is checked PER auth path. Search/mutate work via the manager
+// (login-customer-id = MCC), but generateKeywordIdeas can 403 there while succeeding when the
+// client account is addressed directly. So on a permission failure we transparently retry with
+// (a) login-customer-id = the client account itself, then (b) no login-customer-id header, and
+// lock onto whichever path returns data. If none work it's a true account-access gap (enable
+// Keyword Planner / billing on the account) and we fall back to AI research.
+let _kpAuthMode = null; // null = undiscovered; else "mcc" | "cid" | "none"
+const _KP_MODES = { mcc: undefined, cid: CID, none: false };
 async function keywordResearch(keywords, geoIds, { langId = "1000" } = {}) {
   const seeds = [...new Set((keywords || []).map(k => String(k).trim().toLowerCase()).filter(Boolean))].slice(0, 20);
   if (!seeds.length) return { ok: false, error: "no seeds", status: null };
   const geos = ((geoIds && geoIds.length) ? geoIds : ["2124"]).map(g => `geoTargetConstants/${String(g).replace(/\D/g, "")}`).filter(g => /\d/.test(g));
   const body = { language: `languageConstants/${langId}`, geoTargetConstants: geos, includeAdultKeywords: false, keywordPlanNetwork: "GOOGLE_SEARCH", keywordSeed: { keywords: seeds } };
-  try {
-    const token = await mintToken();
-    const res = await fetch(`${BASE}/customers/${CID}:generateKeywordIdeas`, { method: "POST", headers: adsHeaders(token), body: JSON.stringify(body) });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      const err = (data.error && (data.error.message || (data.error.details && JSON.stringify(data.error.details)))) || JSON.stringify(data).slice(0, 300);
-      return { ok: false, error: err, status: res.status };
-    }
-    const ideas = (data.results || []).map(r => {
-      const m = r.keywordIdeaMetrics || {};
-      return { text: r.text, searches: Number(m.avgMonthlySearches) || 0,
-               competition: m.competition || "UNKNOWN", competitionIndex: m.competitionIndex != null ? Number(m.competitionIndex) : null,
-               low: fromMicros(m.lowTopOfPageBidMicros), high: fromMicros(m.highTopOfPageBidMicros) };
-    });
-    return { ok: true, ideas, status: res.status };
-  } catch (e) { return { ok: false, error: e.message, status: null }; }
+  const modes = _kpAuthMode ? [_kpAuthMode] : ["mcc", "cid", "none"];
+  let lastErr = null, lastStatus = null;
+  for (const mode of modes) {
+    try {
+      const token = await mintToken();
+      const res = await fetch(`${BASE}/customers/${CID}:generateKeywordIdeas`, { method: "POST", headers: adsHeaders(token, _KP_MODES[mode]), body: JSON.stringify(body) });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        _kpAuthMode = mode; // lock onto the path that works
+        const ideas = (data.results || []).map(r => {
+          const m = r.keywordIdeaMetrics || {};
+          return { text: r.text, searches: Number(m.avgMonthlySearches) || 0,
+                   competition: m.competition || "UNKNOWN", competitionIndex: m.competitionIndex != null ? Number(m.competitionIndex) : null,
+                   low: fromMicros(m.lowTopOfPageBidMicros), high: fromMicros(m.highTopOfPageBidMicros) };
+        });
+        return { ok: true, ideas, status: res.status, authMode: mode };
+      }
+      lastErr = (data.error && (data.error.message || (data.error.details && JSON.stringify(data.error.details)))) || JSON.stringify(data).slice(0, 300);
+      lastStatus = res.status;
+      // Only keep trying other auth paths for permission/auth failures; anything else is terminal.
+      if (!/permission|unauthor|USER_PERMISSION|login.customer/i.test(lastErr || "") && res.status !== 403 && res.status !== 401) break;
+    } catch (e) { lastErr = e.message; lastStatus = null; }
+  }
+  return { ok: false, error: lastErr, status: lastStatus, triedModes: modes };
 }
 function _median(arr) { const a = (arr || []).filter(x => x != null && !isNaN(x)).sort((x, y) => x - y); if (!a.length) return null; const m = Math.floor(a.length / 2); return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2; }
 function _tailOf(text) { const w = String(text || "").trim().split(/\s+/).filter(Boolean).length; return w >= 4 ? "LONG" : w === 3 ? "MID" : "HEAD"; }
@@ -880,8 +899,11 @@ function mergeKeywordResearch(aiKeywords, kpResult) {
 // so the actual reason for any failure is visible instead of silently falling back.
 async function keywordDiag({ keyword, geo } = {}) {
   const kw = (keyword && String(keyword).trim()) || "name necklace";
+  _kpAuthMode = null; // force a fresh discovery so the diagnostic tests every auth path
   const r = await keywordResearch([kw], (geo && geo.length) ? geo : ["2124"]);
+  const modeLabel = { mcc: "via manager (login-customer-id = MCC)", cid: "client account direct (login-customer-id = account)", none: "no login-customer-id header" };
   return { ok: !!r.ok, status: r.status || null, error: r.error || null, ideaCount: (r.ideas || []).length,
+    authMode: r.authMode || null, authModeLabel: r.authMode ? modeLabel[r.authMode] : null, triedModes: r.triedModes || (r.authMode ? [r.authMode] : null),
     sample: (r.ideas || []).slice(0, 6).map(i => ({ text: i.text, searches: i.searches, competition: i.competition, competitionIndex: i.competitionIndex, low: _r2(i.low), high: _r2(i.high) })),
     request: { endpoint: `customers/${CID}:generateKeywordIdeas`, customerId: CID, loginCustomerId: LOGIN_CID || null, version: V, seed: kw } };
 }
