@@ -365,12 +365,16 @@ async function conversionHealth({ force } = {}) {
 
 async function recordOrderEvent(ev) {
   const f = fb(); if (!f) return false;
+  const items = Array.isArray(ev.items)
+    ? ev.items.map(it => ({ title: String(it.title || "").slice(0, 160), qty: Number(it.qty) || 1 })).filter(it => it.title).slice(0, 25)
+    : (Array.isArray(ev.products) ? ev.products.map(t => ({ title: String(t).slice(0, 160), qty: 1 })).filter(it => it.title).slice(0, 25) : []);
+  const itemCount = ev.itemCount != null ? (Number(ev.itemCount) || 0) : items.reduce((a, b) => a + (b.qty || 1), 0);
   const row = {
     orderId: ev.orderId || null, value: Number(ev.value) || 0, currency: ev.currency || CURRENCY,
     source: ev.source || null, medium: ev.medium || null, campaign: ev.campaign || null,
     hasClickId: !!ev.gclid, captured: !!ev.captured, reason: ev.reason || null,
-    products: Array.isArray(ev.products) ? ev.products.slice(0, 12) : [],
-    handle: ev.handle || null, at: f.FV.serverTimestamp(), ts: Date.now()
+    items, itemCount, products: items.map(i => i.title),
+    handle: ev.handle || null, at: f.FV.serverTimestamp(), ts: ev.ts || Date.now()
   };
   try { await f.db.collection(COL.orderLog).add(row); return true; } catch (e) { return false; }
 }
@@ -379,8 +383,8 @@ async function recordOrderEvent(ev) {
 async function recentOrders({ limit = 25 } = {}) {
   const f = fb(); if (!f) return [];
   try {
-    const q = await f.db.collection(COL.orderLog).orderBy("ts", "desc").limit(Math.min(100, limit)).get();
-    const out = []; q.forEach(d => { const x = d.data(); out.push({ id: d.id, orderId: x.orderId, value: x.value, currency: x.currency, source: x.source, medium: x.medium, campaign: x.campaign, captured: x.captured, hasClickId: x.hasClickId, reason: x.reason, products: x.products || [], handle: x.handle, ts: x.ts }); });
+    const q = await f.db.collection(COL.orderLog).orderBy("ts", "desc").limit(Math.min(250, limit)).get();
+    const out = []; q.forEach(d => { const x = d.data(); out.push({ id: d.id, orderId: x.orderId, value: x.value, currency: x.currency, source: x.source, medium: x.medium, campaign: x.campaign, captured: x.captured, hasClickId: x.hasClickId, reason: x.reason, items: x.items || ((x.products || []).map(t => ({ title: t, qty: 1 }))), itemCount: x.itemCount != null ? x.itemCount : ((x.products || []).length), handle: x.handle, ts: x.ts }); });
     return out;
   } catch (e) { return []; }
 }
@@ -422,12 +426,12 @@ async function backfillOrders({ limit = 100 } = {}) {
       totalPriceSet { shopMoney { amount currencyCode } }
       customAttributes { key value }
       customerJourneySummary { firstVisit { landingPage utmParameters { source medium campaign } } }
-      lineItems(first: 12) { edges { node { title } } } } } } }`;
+      lineItems(first: 25) { edges { node { title quantity } } } } } } }`;
   const MIN = `{ orders(first: ${want}, sortKey: CREATED_AT, reverse: true) { edges { node {
       id name createdAt
       totalPriceSet { shopMoney { amount currencyCode } }
       customAttributes { key value }
-      lineItems(first: 12) { edges { node { title } } } } } } }`;
+      lineItems(first: 25) { edges { node { title quantity } } } } } } }`;
   let d;
   try { d = await shopifyGql(FULL); }
   catch (e) { d = await shopifyGql(MIN); } // customer-journey field/scope unavailable → still backfill
@@ -458,14 +462,15 @@ async function backfillOrders({ limit = 100 } = {}) {
       source = source || u.searchParams.get("utm_source"); medium = medium || u.searchParams.get("utm_medium"); campaign = campaign || u.searchParams.get("utm_campaign");
       const mm = (u.pathname || "").match(/\/products\/([^\/?#]+)/); if (mm) handle = mm[1];
     } catch (x) {} }
-    const products = (((n.lineItems && n.lineItems.edges) || []).map(li => li.node && li.node.title).filter(Boolean)).slice(0, 12);
+    const items = (((n.lineItems && n.lineItems.edges) || []).map(li => ({ title: (li.node && li.node.title) || "", qty: Number(li.node && li.node.quantity) || 1 })).filter(it => it.title)).slice(0, 25);
+    const itemCount = items.reduce((a, b) => a + (b.qty || 1), 0);
     const clickId = gclid || gbraid || wbraid || null;
     const captured = !!clickId;
     const reason = captured ? "captured — Google ad click (backfill)"
       : (campaign === "sag_organic" ? "organic — free Google listing (sag_organic)"
          : (source ? `non-ad — ${source}/${medium || "none"}` : "organic / no Google click id"));
     rows.push({ orderId, value, currency, source: source || null, medium: medium || null, campaign: campaign || null,
-      hasClickId: captured, captured, reason, products, handle: handle || null,
+      hasClickId: captured, captured, reason, items, itemCount, products: items.map(i => i.title), handle: handle || null,
       ts: n.createdAt ? Date.parse(n.createdAt) : Date.now(), backfill: true });
   });
 
@@ -1683,8 +1688,7 @@ async function dashboard() {
     out.metricsSeries = rows.reverse(); // oldest → newest
   } catch (e) {}
   try { out.conversionHealth = await conversionHealth(); } catch (e) { out.conversionHealth = null; }
-  try { out.recentOrders = await recentOrders({ limit: 25 }); } catch (e) { out.recentOrders = []; }
-  try { out.storeSignals = await storeSignals({ days: 30 }); } catch (e) { out.storeSignals = null; }
+  try { out.recentOrders = await recentOrders({ limit: 200 }); } catch (e) { out.recentOrders = []; }
   return out;
 }
 

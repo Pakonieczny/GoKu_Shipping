@@ -82,9 +82,9 @@ function attributionFrom(payload) {
   return { source: source || null, medium: medium || null, campaign: campaign || null, handle };
 }
 
-function productTitles(payload) {
+function lineItemsFrom(payload) {
   const li = Array.isArray(payload.line_items) ? payload.line_items : [];
-  return li.map(x => String(x.title || x.name || "").trim()).filter(Boolean).slice(0, 12);
+  return li.map(x => ({ title: String(x.title || x.name || "").trim(), qty: Number(x.quantity) || 1 })).filter(it => it.title).slice(0, 25);
 }
 
 function refundAmount(payload) {
@@ -129,7 +129,7 @@ exports.handler = async (event) => {
       const value = Number(payload.total_price || payload.current_total_price || 0);
       const currency = payload.currency || payload.presentment_currency || undefined;
       const attr = attributionFrom(payload);
-      const products = productTitles(payload);
+      const items = lineItemsFrom(payload);
       const clickId = gclid || gbraid || wbraid || null;
 
       if (!clickId) {
@@ -137,13 +137,13 @@ exports.handler = async (event) => {
         // intelligence layer can learn what's selling and inform future ad campaigns.
         const reason = attr.campaign === "sag_organic" ? "organic — free Google listing (sag_organic)"
           : (attr.source ? `non-ad — ${attr.source}/${attr.medium || "none"}` : "organic / no Google click id");
-        try { await E.recordOrderEvent({ orderId, value, currency, source: attr.source, medium: attr.medium, campaign: attr.campaign, gclid: null, captured: false, reason, products, handle: attr.handle }); } catch (e) { LOG("orderLog ERROR", e.message); }
+        try { await E.recordOrderEvent({ orderId, value, currency, source: attr.source, medium: attr.medium, campaign: attr.campaign, gclid: null, captured: false, reason, items, handle: attr.handle }); } catch (e) { LOG("orderLog ERROR", e.message); }
         LOG(topic, "order", orderId, "-> 200 SKIPPED (" + reason + ")");
         return { statusCode: 200, body: JSON.stringify({ ok: true, skipped: reason, logged: true }) };
       }
       const when = payload.created_at ? E.gAdsTime(new Date(payload.created_at)) : undefined;
       const r = await E.enqueueConversion({ gclid, gbraid, wbraid, value, currency, orderId, conversionDateTime: when });
-      try { await E.recordOrderEvent({ orderId, value, currency, source: attr.source, medium: attr.medium, campaign: attr.campaign, gclid: clickId, captured: true, reason: "captured — Google ad click", products, handle: attr.handle }); } catch (e) { LOG("orderLog ERROR", e.message); }
+      try { await E.recordOrderEvent({ orderId, value, currency, source: attr.source, medium: attr.medium, campaign: attr.campaign, gclid: clickId, captured: true, reason: "captured — Google ad click", items, handle: attr.handle }); } catch (e) { LOG("orderLog ERROR", e.message); }
       LOG(topic, "order", orderId, "click", clickId, "value", value, currency, "->", JSON.stringify(r));
       return { statusCode: 200, body: JSON.stringify({ ok: true, result: r, logged: true }) };
     }
