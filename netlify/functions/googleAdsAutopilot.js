@@ -410,6 +410,74 @@ async function storeSignals({ days = 30, max = 500 } = {}) {
   return out;
 }
 
+// One-time / on-demand backfill: pull the most recent Shopify orders into the order log so the
+// intelligence panel is populated immediately, without waiting for new webhook orders. Records
+// to the log ONLY (never re-uploads conversions to Google Ads — that would risk double-counting
+// stale/organic data). Idempotent: orders already in the log are skipped.
+async function backfillOrders({ limit = 100 } = {}) {
+  const f = fb(); if (!f) throw new Error("no firestore");
+  const want = Math.min(250, Math.max(1, limit | 0));
+  const FULL = `{ orders(first: ${want}, sortKey: CREATED_AT, reverse: true) { edges { node {
+      id name createdAt
+      totalPriceSet { shopMoney { amount currencyCode } }
+      customAttributes { key value }
+      customerJourneySummary { firstVisit { landingPage utmParameters { source medium campaign } } }
+      lineItems(first: 12) { edges { node { title } } } } } } }`;
+  const MIN = `{ orders(first: ${want}, sortKey: CREATED_AT, reverse: true) { edges { node {
+      id name createdAt
+      totalPriceSet { shopMoney { amount currencyCode } }
+      customAttributes { key value }
+      lineItems(first: 12) { edges { node { title } } } } } } }`;
+  let d;
+  try { d = await shopifyGql(FULL); }
+  catch (e) { d = await shopifyGql(MIN); } // customer-journey field/scope unavailable → still backfill
+  const edges = (d && d.orders && d.orders.edges) || [];
+
+  const existing = new Set();
+  try { const q = await f.db.collection(COL.orderLog).get(); q.forEach(x => { const o = x.data(); if (o.orderId) existing.add(String(o.orderId)); }); } catch (e) {}
+
+  const rows = [];
+  edges.forEach(e => {
+    const n = (e && e.node) || {};
+    const orderId = String(n.name || n.id || "").replace(/^gid:\/\/shopify\/Order\//, "");
+    if (!orderId || existing.has(orderId)) return;
+    existing.add(orderId);
+    const money = n.totalPriceSet && n.totalPriceSet.shopMoney;
+    const value = Number(money && money.amount) || 0;
+    const currency = (money && money.currencyCode) || CURRENCY;
+    const attrs = n.customAttributes || [];
+    const ga = k => { const m = attrs.find(a => String(a.key || "").toLowerCase() === k); return (m && m.value) || null; };
+    let gclid = ga("gclid"), gbraid = ga("gbraid"), wbraid = ga("wbraid");
+    const fv = (n.customerJourneySummary && n.customerJourneySummary.firstVisit) || {};
+    let source = (fv.utmParameters && fv.utmParameters.source) || ga("utm_source");
+    let medium = (fv.utmParameters && fv.utmParameters.medium) || ga("utm_medium");
+    let campaign = (fv.utmParameters && fv.utmParameters.campaign) || ga("utm_campaign");
+    let handle = null;
+    if (fv.landingPage) { try { const u = new URL(fv.landingPage, "https://x.invalid");
+      gclid = gclid || u.searchParams.get("gclid"); gbraid = gbraid || u.searchParams.get("gbraid"); wbraid = wbraid || u.searchParams.get("wbraid");
+      source = source || u.searchParams.get("utm_source"); medium = medium || u.searchParams.get("utm_medium"); campaign = campaign || u.searchParams.get("utm_campaign");
+      const mm = (u.pathname || "").match(/\/products\/([^\/?#]+)/); if (mm) handle = mm[1];
+    } catch (x) {} }
+    const products = (((n.lineItems && n.lineItems.edges) || []).map(li => li.node && li.node.title).filter(Boolean)).slice(0, 12);
+    const clickId = gclid || gbraid || wbraid || null;
+    const captured = !!clickId;
+    const reason = captured ? "captured — Google ad click (backfill)"
+      : (campaign === "sag_organic" ? "organic — free Google listing (sag_organic)"
+         : (source ? `non-ad — ${source}/${medium || "none"}` : "organic / no Google click id"));
+    rows.push({ orderId, value, currency, source: source || null, medium: medium || null, campaign: campaign || null,
+      hasClickId: captured, captured, reason, products, handle: handle || null,
+      ts: n.createdAt ? Date.parse(n.createdAt) : Date.now(), backfill: true });
+  });
+
+  let added = 0;
+  for (let i = 0; i < rows.length; i += 400) {
+    const batch = f.db.batch();
+    rows.slice(i, i + 400).forEach(r => { const ref = f.db.collection(COL.orderLog).doc(); batch.set(ref, Object.assign({ at: f.FV.serverTimestamp() }, r)); added++; });
+    await batch.commit();
+  }
+  return { ok: true, fetched: edges.length, added, skipped: edges.length - added };
+}
+
 async function clearOrderLog({ keep = 1000 } = {}) {
   const f = fb(); if (!f) return { deleted: 0 };
   try {
@@ -1624,7 +1692,7 @@ module.exports = {
   COL, V, CID,
   control, mintToken, gaql, mutate, mutateAll,
   enqueueConversion, uploadConversions, enqueueConversionAdjustment, uploadConversionAdjustments, recordRefund, conversionHealth, gAdsTime,
-  recordOrderEvent, recentOrders, storeSignals, clearOrderLog,
+  recordOrderEvent, recentOrders, storeSignals, clearOrderLog, backfillOrders,
   ledger, clearLedger, enqueueApproval, applyApproval, applyApprovalById: applyApproval, retryStuckApprovals, sanitizeOps,
   generateRSAAssets, buildSearchCampaignOps, textGuidelinesOp, brandSafe,
   generateForCollection, COLLECTIONS, OCCASIONS,

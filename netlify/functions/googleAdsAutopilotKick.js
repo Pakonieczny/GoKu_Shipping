@@ -136,6 +136,10 @@ async function handleAction(body) {
     try { return await E.enforceBudgetCeiling({ ctrl }); }
     catch (e) { return { ok: false, error: e.message }; }
   }
+  if (a === "backfillOrders") {
+    try { return await E.backfillOrders({ limit: Number(body.limit) || 100 }); }
+    catch (e) { return { ok: false, error: e.message }; }
+  }
   if (a === "monthlyGuard") {
     try { return await E.monthlySpendGuard({ ctrl }); }
     catch (e) { return { ok: false, error: e.message }; }
