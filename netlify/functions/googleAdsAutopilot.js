@@ -799,47 +799,98 @@ function _toGAdsDateTime(val, time) {
   return ymd + " " + time;
 }
 
-/* ===================== Real keyword research (Google Keyword Planner) =====================
-   Pulls REAL per-keyword data from Google Ads' Keyword Planner (generateKeywordIdeas):
-   12-month avg monthly searches, competition index (0-100), and 20th/80th-percentile
-   top-of-page bids. This is what makes each opportunity's CPC cap, demand, and click/sales
-   projection REAL and differentiated instead of a generic tier guess. Falls back silently to
-   the tier heuristic if the account lacks Keyword Planner access or the call fails. */
+/* ===================== Keyword research (Google Keyword Planner + AI) =====================
+   Two real signals, merged per keyword so EVERY opportunity is individually researched:
+   1) Google Keyword Planner (generateKeywordIdeas): real 12-mo avg searches, competition index
+      (0-100), and 20th/80th-percentile top-of-page bids. Used whenever the call succeeds.
+   2) AI keyword research (from the opportunity model): per-keyword estimated searches, competition,
+      CPC range, intent, and head/long-tail class — so cards are still tailored + differentiated
+      when Keyword Planner is unavailable. Real Planner data OVERRIDES the estimate per keyword.
+   The API error (if any) is captured and surfaced — never swallowed. */
 async function keywordResearch(keywords, geoIds, { langId = "1000" } = {}) {
   const seeds = [...new Set((keywords || []).map(k => String(k).trim().toLowerCase()).filter(Boolean))].slice(0, 20);
-  if (!seeds.length) return { ok: false, error: "no seeds" };
+  if (!seeds.length) return { ok: false, error: "no seeds", status: null };
   const geos = ((geoIds && geoIds.length) ? geoIds : ["2124"]).map(g => `geoTargetConstants/${String(g).replace(/\D/g, "")}`).filter(g => /\d/.test(g));
   const body = { language: `languageConstants/${langId}`, geoTargetConstants: geos, includeAdultKeywords: false, keywordPlanNetwork: "GOOGLE_SEARCH", keywordSeed: { keywords: seeds } };
   try {
     const token = await mintToken();
     const res = await fetch(`${BASE}/customers/${CID}:generateKeywordIdeas`, { method: "POST", headers: adsHeaders(token), body: JSON.stringify(body) });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) return { ok: false, error: (data.error && data.error.message) || JSON.stringify(data).slice(0, 200) };
+    if (!res.ok) {
+      const err = (data.error && (data.error.message || (data.error.details && JSON.stringify(data.error.details)))) || JSON.stringify(data).slice(0, 300);
+      return { ok: false, error: err, status: res.status };
+    }
     const ideas = (data.results || []).map(r => {
       const m = r.keywordIdeaMetrics || {};
       return { text: r.text, searches: Number(m.avgMonthlySearches) || 0,
                competition: m.competition || "UNKNOWN", competitionIndex: m.competitionIndex != null ? Number(m.competitionIndex) : null,
                low: fromMicros(m.lowTopOfPageBidMicros), high: fromMicros(m.highTopOfPageBidMicros) };
     });
-    return { ok: true, ideas };
-  } catch (e) { return { ok: false, error: e.message }; }
+    return { ok: true, ideas, status: res.status };
+  } catch (e) { return { ok: false, error: e.message, status: null }; }
 }
 function _median(arr) { const a = (arr || []).filter(x => x != null && !isNaN(x)).sort((x, y) => x - y); if (!a.length) return null; const m = Math.floor(a.length / 2); return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2; }
-// Turn a seed keyword set into a concrete, real CPC range + demand + validated keyword list.
+function _tailOf(text) { const w = String(text || "").trim().split(/\s+/).filter(Boolean).length; return w >= 4 ? "LONG" : w === 3 ? "MID" : "HEAD"; }
+function _compIdx(level) { const l = String(level || "").toUpperCase(); return l === "HIGH" ? 80 : l === "MEDIUM" ? 50 : l === "LOW" ? 20 : null; }
+function _compLabel(idx) { return idx == null ? "UNKNOWN" : idx >= 66 ? "HIGH" : idx >= 33 ? "MEDIUM" : "LOW"; }
+// Normalize the model's per-keyword research (objects or bare strings) into the KP idea shape.
+function aiKeywordResearch(aiKeywords) {
+  return (aiKeywords || []).map(k => {
+    if (typeof k === "string") return { text: k, searches: null, competition: "UNKNOWN", competitionIndex: null, low: null, high: null, tail: _tailOf(k), intent: null, real: false };
+    if (!k || !k.text) return null;
+    const ci = (k.competitionIndex != null) ? Number(k.competitionIndex) : _compIdx(k.competition);
+    return { text: String(k.text), searches: (k.searches != null ? Number(k.searches) : null),
+      competition: String(k.competition || _compLabel(ci) || "UNKNOWN").toUpperCase(), competitionIndex: ci,
+      low: (k.cpcLow != null ? _r2(k.cpcLow) : null), high: (k.cpcHigh != null ? _r2(k.cpcHigh) : null),
+      tail: (k.tail ? String(k.tail).toUpperCase() : _tailOf(k.text)), intent: k.intent || null, real: false };
+  }).filter(Boolean);
+}
+// Merge AI keyword research with real Keyword Planner ideas. Real data wins per keyword text.
+// Always returns a usable research object so the planner is NEVER stuck on a generic tier guess.
+function mergeKeywordResearch(aiKeywords, kpResult) {
+  const out = aiKeywordResearch(aiKeywords);
+  const byText = {}; out.forEach(k => byText[k.text.toLowerCase()] = k);
+  let realCount = 0;
+  if (kpResult && kpResult.ok && Array.isArray(kpResult.ideas)) {
+    kpResult.ideas.forEach(idea => {
+      const key = String(idea.text || "").toLowerCase(); if (!key) return;
+      const ex = byText[key];
+      const rec = { text: idea.text, searches: idea.searches, competition: idea.competition || _compLabel(idea.competitionIndex),
+        competitionIndex: idea.competitionIndex, low: _r2(idea.low) || null, high: _r2(idea.high) || null,
+        tail: ex ? ex.tail : _tailOf(idea.text), intent: ex ? ex.intent : null, real: true };
+      if (ex) Object.assign(ex, rec); else { out.push(rec); byText[key] = rec; }
+      realCount++;
+    });
+  }
+  const withVol = out.filter(k => k.searches != null);
+  const searchVolume = withVol.length ? withVol.reduce((a, k) => a + (k.searches || 0), 0) : null;
+  let cpcLow = _median(out.map(k => k.low).filter(x => x > 0));
+  let cpcHigh = _median(out.map(k => k.high).filter(x => x > 0));
+  const competitionIndex = _median(out.map(k => k.competitionIndex).filter(x => x != null));
+  // If no bid data anywhere, derive a CPC band from real competition — still differentiated per opp.
+  if (!(cpcHigh > 0)) { const ci = competitionIndex != null ? competitionIndex : 45; cpcHigh = _r2(0.55 + (ci / 100) * 2.6); cpcLow = _r2(cpcHigh * 0.45); }
+  const longCount = out.filter(k => k.tail === "LONG").length, headCount = out.filter(k => k.tail === "HEAD").length;
+  const longTailRatio = out.length ? Math.round(longCount / out.length * 100) : 0;
+  out.sort((a, b) => (b.real ? 1 : 0) - (a.real ? 1 : 0) || (b.searches || 0) - (a.searches || 0));
+  return { ok: true, source: realCount > 0 ? "google_keyword_planner" : "ai_estimate", realCount,
+    keywords: out.slice(0, 12), searchVolume, competitionIndex, cpc: { low: cpcLow, high: cpcHigh },
+    longTailRatio, longCount, headCount };
+}
+// Diagnostic: run one live Keyword Planner call and return the raw outcome (status + error + sample)
+// so the actual reason for any failure is visible instead of silently falling back.
+async function keywordDiag({ keyword, geo } = {}) {
+  const kw = (keyword && String(keyword).trim()) || "name necklace";
+  const r = await keywordResearch([kw], (geo && geo.length) ? geo : ["2124"]);
+  return { ok: !!r.ok, status: r.status || null, error: r.error || null, ideaCount: (r.ideas || []).length,
+    sample: (r.ideas || []).slice(0, 6).map(i => ({ text: i.text, searches: i.searches, competition: i.competition, competitionIndex: i.competitionIndex, low: _r2(i.low), high: _r2(i.high) })),
+    request: { endpoint: `customers/${CID}:generateKeywordIdeas`, customerId: CID, loginCustomerId: LOGIN_CID || null, version: V, seed: kw } };
+}
+// Back-compat wrapper: a real-only research object (used by custom builds, which have no AI seeds).
 async function researchOpportunity(seeds, geoIds) {
-  const r = await keywordResearch(seeds, geoIds);
-  if (!r.ok || !r.ideas || !r.ideas.length) return { ok: false, error: r.error || "no ideas" };
-  const seedSet = new Set((seeds || []).map(s => String(s).trim().toLowerCase()));
-  let own = r.ideas.filter(i => seedSet.has(String(i.text).toLowerCase()));
-  if (!own.length) own = r.ideas;
-  const cpcLow = _median(own.map(i => i.low).filter(x => x > 0));
-  const cpcHigh = _median(own.map(i => i.high).filter(x => x > 0));
-  const searchVolume = own.reduce((a, i) => a + (i.searches || 0), 0);
-  const competitionIndex = _median(own.map(i => i.competitionIndex).filter(x => x != null));
-  const ranked = r.ideas.slice().sort((a, b) => (b.searches || 0) - (a.searches || 0));
-  const keywords = ranked.filter(i => (i.searches || 0) >= 10).slice(0, 10)
-    .map(i => ({ text: i.text, searches: i.searches, competition: i.competition, low: _r2(i.low), high: _r2(i.high) }));
-  return { ok: true, cpc: { low: _r2(cpcLow), high: _r2(cpcHigh) }, searchVolume, competitionIndex, keywords, ideaCount: r.ideas.length };
+  const kp = await keywordResearch(seeds, geoIds);
+  const merged = mergeKeywordResearch(seeds, kp);
+  merged.error = kp.ok ? null : (kp.error || "unavailable");
+  return merged;
 }
 
 /* ===================== Campaign planner (research-grounded) =====================
@@ -901,7 +952,7 @@ function planCampaign({ title, occasion, peakDate, ceiling, headroom, smartBiddi
   if (R) {
     const hi = R.cpc.high || (R.cpc.low * 1.6), lo = R.cpc.low || (hi * 0.45);
     cpc = { low: _r2(lo), target: _r2(R.cpc.low || hi * 0.65), max: _r2(hi) };
-    cpcSource = "google_keyword_planner";
+    cpcSource = research.source || "google_keyword_planner";
   } else {
     cpc = Object.assign({}, CPC_TIERS[tier]); cpcSource = "estimate";
   }
@@ -938,7 +989,8 @@ function planCampaign({ title, occasion, peakDate, ceiling, headroom, smartBiddi
   // ---- strategy-aware framing ----
   const caveats = [];
   let cpcBasis, budgetBasis, goal, strategy, strategyLabel;
-  const realNote = R ? `Google Keyword Planner: top-of-page bids ${ccy} ${cpc.low.toFixed(2)}\u2013${cpc.max.toFixed(2)} across your keywords` + (R.searchVolume ? ` (~${R.searchVolume.toLocaleString()} searches/mo` : "") + (R.competitionIndex != null ? `${R.searchVolume ? ", " : " ("}competition ${Math.round(R.competitionIndex)}/100)` : (R.searchVolume ? ")" : "")) + "." : "";
+  const _srcName = R ? (cpcSource === "google_keyword_planner" ? "Google Keyword Planner" : "AI keyword research") : "";
+  const realNote = R ? `${_srcName}: top-of-page bids ${ccy} ${cpc.low.toFixed(2)}\u2013${cpc.max.toFixed(2)} across ${(R.keywords ? R.keywords.length : "your")} keywords` + (R.searchVolume ? ` (~${R.searchVolume.toLocaleString()} searches/mo` : "") + (R.competitionIndex != null ? `${R.searchVolume ? ", " : " ("}competition ${Math.round(R.competitionIndex)}/100)` : (R.searchVolume ? ")" : "")) + "." : "";
   if (smart) {
     strategy = "SMART_BIDDING"; strategyLabel = "Smart Bidding";
     goal = `Maximize conversion value automatically \u2014 no per-click cap`;
@@ -1757,11 +1809,18 @@ Find the 8-12 best advertising OPPORTUNITIES to act on within the NEXT ~30 DAYS.
 - expectedRoasBand (e.g. "3-4x"; be conservative)
 - proven (bool: true ONLY if memory shows success for this occasion)
 - rationale (<=120 chars: why now, why this collection)
-- keywords (4-6 phrase-match keywords a shopper would search)
+- keywords: an array of 5-8 RESEARCHED keyword objects. MIX broad "head" terms with specific "long-tail" phrases, and DIFFERENTIATE the numbers per keyword and per opportunity (do not reuse the same figures). Each object:
+    {"text": phrase a shopper would search,
+     "searches": realistic estimated AVERAGE MONTHLY Google searches in the target countries (broad head terms in the hundreds-to-thousands; niche/long-tail 10-300; reflect how popular THIS exact phrase really is),
+     "competition": "LOW" | "MEDIUM" | "HIGH" (long-tail/niche usually LOW; broad jewelry/gift terms HIGH),
+     "cpcLow": realistic LOW top-of-page CPC in ${ccy}, "cpcHigh": realistic HIGH top-of-page CPC in ${ccy} (2025-26 retail-jewelry search runs ~$0.30-$3.50; long-tail cheaper, broad or gifting-peak terms pricier),
+     "intent": "high" (ready to buy) | "medium" | "low",
+     "tail": "HEAD" (1-2 words) | "MID" (3 words) | "LONG" (4+ words, specific)}
+- keywordStrategy: <=180 chars explaining why THIS keyword mix for THIS collection+occasion (the head vs long-tail balance, buyer intent, and why more or fewer terms)
 - keyPhrases (3-4 short emotional ad phrases)
 Only include opportunities genuinely relevant within ~30 days. Rank best-first (soonest + strongest first). Avoid out-of-season occasions and any memory marks as fail. Return ONLY JSON: {"opportunities":[ ... ]}`;
   let list = null;
-  try { const j = await openaiJSON(prompt, { maxTokens: 2400 }); if (j && Array.isArray(j.opportunities)) list = j.opportunities.filter(o => o && o.collectionTitle && o.occasion); } catch (e) {}
+  try { const j = await openaiJSON(prompt, { maxTokens: 4200 }); if (j && Array.isArray(j.opportunities)) list = j.opportunities.filter(o => o && o.collectionTitle && o.occasion); } catch (e) {}
   if (!list) list = [];
   const byTitle = {}; collections.forEach(c => byTitle[c.title.toLowerCase()] = c.handle);
   const today0 = _todayUtc();
@@ -1770,35 +1829,37 @@ Only include opportunities genuinely relevant within ~30 days. Rank best-first (
   // Real store AOV (from logged Shopify orders) so projected revenue uses YOUR numbers, not a guess.
   let aov = 0; try { const sig = await storeSignals({ days: 120 }); const rev = (sig.adRevenue || 0) + (sig.organicRevenue || 0); if (sig.orders > 0) aov = _r2(rev / sig.orders); } catch (e) {}
   const geoIds = (Array.isArray(ctrl.defaultCountries) && ctrl.defaultCountries.length) ? ctrl.defaultCountries : ["2124"];
-  // Real Keyword Planner research for each opportunity, in parallel (one generateKeywordIdeas
-  // call per opp). Each is independent and falls back to the heuristic on any failure.
-  const research = await Promise.all(list.map(o =>
-    researchOpportunity(Array.isArray(o.keywords) ? o.keywords : [], geoIds).catch(() => ({ ok: false }))
-  ));
+  // Real Keyword Planner per opp (parallel). Error captured per opp, never swallowed. Then merged
+  // with the model's per-keyword research so every card is individually researched + differentiated.
+  const kp = await Promise.all(list.map(o => {
+    const texts = (Array.isArray(o.keywords) ? o.keywords : []).map(k => typeof k === "string" ? k : (k && k.text)).filter(Boolean);
+    return keywordResearch(texts, geoIds).catch(e => ({ ok: false, error: e && e.message, status: null }));
+  }));
   list = list.map((o, i) => {
     const t = String(o.collectionTitle).toLowerCase();
     const handle = byTitle[t] || (collections.find(c => c.title.toLowerCase().indexOf(t) >= 0) || {}).handle || null;
     const mem = memory.find(m => m.occasion && String(m.occasion).toLowerCase() === String(o.occasion).toLowerCase());
-    const res = research[i] && research[i].ok ? research[i] : null;
-    // The AI proposes WHAT (collection × occasion × seed keywords). Keyword Planner supplies the
-    // real numbers — CPC, demand, competition, validated keywords — and the planner turns those
-    // into a costed plan (CPC cap, learning-aware run length, budget, projected sales/revenue).
+    // Per-opportunity research: real Keyword Planner data merged OVER the model's keyword research.
+    const merged = mergeKeywordResearch(o.keywords, kp[i]);
+    merged.error = (kp[i] && !kp[i].ok) ? (kp[i].error || "unavailable") : null;
+    merged.strategy = o.keywordStrategy || null;
     const peakDate = o.endDate || o.startDate || _nextOccasionPeak(o.occasion);
-    const plan = planCampaign({ title: o.collectionTitle, occasion: o.occasion, peakDate, ceiling, headroom, smartBidding: !!ctrl.smartBidding, research: res, aov });
+    const plan = planCampaign({ title: o.collectionTitle, occasion: o.occasion, peakDate, ceiling, headroom, smartBidding: !!ctrl.smartBidding, research: merged, aov });
     const startDate = plan.duration.startDate, endDate = plan.duration.endDate, durationDays = plan.duration.days;
     const bud = plan.budget.daily, maxCpc = plan.cpc.max;
     const daysOut = Math.max(0, _daysBetween(today0, _parseYmd(startDate)));
-    // Validated, real-demand keywords (ranked by search volume) replace the raw AI guesses when available.
-    const kws = res && res.keywords && res.keywords.length ? res.keywords.map(k => k.text).slice(0, 8)
-              : (Array.isArray(o.keywords) ? o.keywords.slice(0, 6) : []);
+    const kws = merged.keywords.map(k => k.text).slice(0, 8);
     return {
       id: "op" + i, collectionHandle: handle, collectionTitle: o.collectionTitle, occasion: o.occasion,
       startDate, endDate, daysOut, durationDays, maxCpc, plan,
       priority: (["high", "medium", "test"].indexOf(o.priority) >= 0 ? o.priority : "test"),
       recommendedDailyBudget: bud, estTotalSpend: plan.expected.spendTotal,
       expectedRoasBand: o.expectedRoasBand || null, proven: !!o.proven,
-      rationale: o.rationale || "", keywords: kws, keywordData: res ? res.keywords : null,
-      research: res ? { searchVolume: res.searchVolume, competitionIndex: res.competitionIndex, cpc: res.cpc, source: "google_keyword_planner" } : { source: "estimate" },
+      rationale: o.rationale || "", keywords: kws, keywordData: merged.keywords,
+      research: { source: merged.source, error: merged.error, realCount: merged.realCount,
+        searchVolume: merged.searchVolume, competitionIndex: merged.competitionIndex, cpc: merged.cpc,
+        longTailRatio: merged.longTailRatio, headCount: merged.headCount, longCount: merged.longCount,
+        strategy: merged.strategy, keywordCount: merged.keywords.length },
       keyPhrases: Array.isArray(o.keyPhrases) ? o.keyPhrases.slice(0, 4) : [],
       pastStats: mem && mem.roas ? { roas: mem.roas, outcome: mem.outcome } : null, currency: ccy
     };
@@ -1978,7 +2039,7 @@ module.exports = {
   enqueueConversion, uploadConversions, enqueueConversionAdjustment, uploadConversionAdjustments, recordRefund, conversionHealth, gAdsTime,
   recordOrderEvent, recentOrders, storeSignals, clearOrderLog, backfillOrders,
   ledger, clearLedger, enqueueApproval, applyApproval, applyApprovalById: applyApproval, retryStuckApprovals, sanitizeOps,
-  generateRSAAssets, buildSearchCampaignOps, buildCampaignAssets, planCampaign, keywordResearch, researchOpportunity, metricsRange, textGuidelinesOp, brandSafe,
+  generateRSAAssets, buildSearchCampaignOps, buildCampaignAssets, planCampaign, keywordResearch, researchOpportunity, mergeKeywordResearch, keywordDiag, metricsRange, textGuidelinesOp, brandSafe,
   generateForCollection, COLLECTIONS, OCCASIONS,
   getCollections, suggestOccasions, recordOccasionUse,
   scanOpportunities, opportunitiesWithStatus, takenTags, fetchTopProducts, setCampaignStatus, startCampaignNow, setCampaignBudget, analyzeCampaign,
