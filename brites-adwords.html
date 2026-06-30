@@ -427,6 +427,7 @@ table.ptable tr.pdetail>td{border-bottom:2px solid var(--line)}
         <button class="btn gold" id="oppScan">Scan for opportunities</button>
         <span id="oppMeta" class="muted" style="font-size:12.5px"></span>
         <div style="flex:1"></div>
+        <div id="oppBid" style="display:flex;align-items:center"></div>
         <div class="legend" style="margin:0"><span><i style="background:var(--gold)"></i><b>High</b>&nbsp;act now</span><span><i style="background:var(--sage)"></i><b>Medium</b>&nbsp;solid bet</span><span><i style="background:var(--slate)"></i><b>Test</b>&nbsp;speculative</span></div>
       </div>
       <div id="oppList"><div class="empty" style="height:200px"><div class="ring"></div><div>Hit \u201cScan for opportunities\u201d.</div><div style="font-size:12px">The AI cross-references your catalog, the calendar, and past results, then ranks what to act on.</div></div></div>
@@ -453,6 +454,8 @@ table.ptable tr.pdetail>td{border-bottom:2px solid var(--line)}
           <div class="toggle"><div class="info"><div class="t">Autopilot live</div><div class="d">Master switch. Off = fully dormant.</div></div><div class="sw" id="swLive"><i></i></div></div>
           <div class="toggle"><div class="info"><div class="t">Dry-run</div><div class="d">Validate &amp; queue everything, apply nothing.</div></div><div class="sw" id="swDry"><i></i></div></div>
           <div class="toggle"><div class="info"><div class="t">Auto-approve vetted templates</div><div class="d">Ship safe drafts without review.</div></div><div class="sw" id="swAuto"><i></i></div></div>
+          <div class="toggle"><div class="info"><div class="t">Smart Bidding</div><div class="d">Off = Manual CPC with a hard per-click cap. On = Google sets bids automatically (no cap).</div></div><div class="sw" id="swSmart"><i></i></div></div>
+          <div id="bidNote" style="font-size:11.5px;color:var(--ink-70);line-height:1.6;margin-top:4px;padding:9px 11px;background:var(--paper-2);border-radius:9px"></div>
         </div>
         <div class="card pad">
           <div class="card__h"><h3>Spend &amp; targets <span id="curLab2" class="sub"></span></h3></div>
@@ -982,9 +985,26 @@ async function generateBench(){var coll=$("#bColl").value,collT=$("#bColl").sele
   }catch(x){ runner.stop(false); out.innerHTML='<div class="why" style="background:var(--clay-soft);border-color:#e7c9bf"><span class="i">⚠</span><div>'+esc(x.message)+'</div></div>'; }
   actEnd(aid);gdone();
 }
-function showDraft(r){var a=r.assets||{};var out=$("#benchOut");
+function showDraft(r){var a=r.assets||{};var out=$("#benchOut");var p=r.plan;var smart=!!r.smartBidding;
+  var planHtml="";
+  if(p){var basis=[];
+    basis.push(smart
+      ? "Smart Bidding sets each bid to maximize conversion value \u2014 no max-CPC cap, so clicks can cost more (most during its 1\u20132 week learning phase). Best once you have ~15\u201330 sales/month."
+      : "Manual CPC: you never pay above the cap and there\u2019s no learning phase \u2014 best while volume is low. Google won\u2019t auto-raise bids to chase a likely sale.");
+    if(p.duration&&p.duration.basis)basis.push("<b>Run length</b> \u2014 "+esc(p.duration.basis));
+    if(p.budget&&p.budget.basis)basis.push("<b>Budget</b> \u2014 "+esc(p.budget.basis));
+    (p.caveats||[]).forEach(function(c){ if(/headroom/i.test(c))basis.push(esc(c)); });
+    var bidChip=smart?'<span class="muted">Bidding&nbsp;<b style="color:var(--ink)">Smart Bidding</b></span><span class="muted">No CPC cap \u00b7 est. <b style="font-family:var(--mono)">'+money(p.cpc.max)+'</b>/click</span>'
+                     :'<span class="muted">Bidding&nbsp;<b style="color:var(--ink)">Manual CPC</b></span><span class="muted">Max CPC&nbsp;<b style="font-family:var(--mono);color:var(--ink)">'+money(r.maxCpc||p.cpc.max)+'</b></span>';
+    planHtml='<div style="margin:4px 0 14px;padding:12px 14px;background:var(--gold-soft);border:1px solid var(--line);border-radius:10px">'+
+      '<div style="display:flex;gap:18px;flex-wrap:wrap;align-items:baseline;font-size:12.5px"><span style="font-weight:700;letter-spacing:.05em;text-transform:uppercase;font-size:10.5px;color:var(--ink-45)">Researched plan</span>'+bidChip+'<span class="muted">Run&nbsp;<b style="font-family:var(--mono);color:var(--ink)">'+p.duration.days+'d</b> ('+esc(r.startDate||p.duration.startDate)+" \u2192 "+esc(r.endDate||p.duration.endDate)+')</span><span class="muted">Over the run&nbsp;~<b style="font-family:var(--mono);color:var(--ink)">'+p.expected.conversions+'</b> sales</span></div>'+
+      '<div style="font-size:12px;color:var(--ink-70);margin-top:6px">Goal: '+esc(p.goal||"")+'</div>'+
+      (basis.length?'<details style="margin-top:7px"><summary style="cursor:pointer;font-size:11.5px;color:var(--gold);font-weight:600">Why these numbers</summary><div style="font-size:11.5px;line-height:1.65;color:var(--ink-70);margin-top:6px">'+basis.map(function(b){return "\u2022 "+b;}).join("<br>")+'</div></details>':"")+
+    '</div>';}
+  var bidSum=smart?" · Smart Bidding (no CPC cap)":(r.maxCpc?(" · max CPC "+money(r.maxCpc)+"/click"):"");
   out.innerHTML='<div class="card__h"><h3>Draft queued · '+esc(r.title)+(r.event?" × "+esc(r.event):"")+'</h3><span class="sub">'+esc(r.tag||"")+'</span></div>'+
-    '<div class="why" style="margin-bottom:14px"><span class="i">✓</span><div><b>Live:</b> real campaign built and dropped into <b>Approvals</b> as PAUSED. Headlines '+(a.headlines||[]).length+' · descriptions '+(a.descriptions||[]).length+' · budget '+money(r.budget)+'/day ('+esc(r.currency||cur())+').</div></div>'+
+    '<div class="why" style="margin-bottom:14px"><span class="i">✓</span><div><b>Live:</b> real campaign built and dropped into <b>Approvals</b> as PAUSED. Headlines '+(a.headlines||[]).length+' · descriptions '+(a.descriptions||[]).length+' · budget '+money(r.budget)+'/day ('+esc(r.currency||cur())+')'+bidSum+'.</div></div>'+
+    planHtml+
     '<div class="eyebrow" style="margin:2px 0 6px">Headlines · ≤30</div>'+(a.headlines||[]).map(t=>copyLine(t,30)).join("")+
     '<div class="eyebrow" style="margin:14px 0 6px">Descriptions · ≤90</div>'+(a.descriptions||[]).map(t=>copyLine(t,90)).join("")+
     '<div class="actions"><button class="btn gold sm" onclick="go(\'approvals\')">Open in Approvals</button><button class="btn ghost sm" onclick="generateBench()">Regenerate</button></div>';
@@ -1040,7 +1060,13 @@ function actedBadge(a){
 }
 function oppTabBtn(key,label,n){ var on=oppView===key;
   return '<button class="oppTab" data-view="'+key+'" style="padding:8px 15px;border-radius:9px;border:1px solid '+(on?"var(--ink)":"var(--line)")+';background:'+(on?"var(--ink)":"transparent")+';color:'+(on?"var(--paper)":"var(--ink-70)")+';font-weight:600;font-size:13px;cursor:pointer">'+label+' <span style="opacity:.65;font-family:var(--mono)">'+n+'</span></button>'; }
+function renderOppBid(){ var ob=$("#oppBid"); if(!ob)return; var smart=bidView();
+  ob.innerHTML='<span class="muted" style="font-size:11px;margin-right:7px">Bidding</span><span style="display:inline-flex;gap:4px;background:var(--paper-2);padding:3px;border-radius:9px">'+
+    [["Manual CPC",0],["Smart",1]].map(function(o){var on=(o[1]===1)===smart;return '<button class="bidSeg" data-smart="'+o[1]+'" title="'+(o[1]?"Smart Bidding \u2014 Google sets bids, no CPC cap":"Manual CPC \u2014 hard per-click cap")+'" style="padding:4px 11px;border:none;border-radius:7px;font-size:11.5px;font-weight:600;cursor:pointer;background:'+(on?"var(--card)":"transparent")+';color:'+(on?"var(--ink)":"var(--ink-45)")+';box-shadow:'+(on?"var(--sh)":"none")+'">'+o[0]+'</button>';}).join("")+'</span>';
+  ob.querySelectorAll(".bidSeg").forEach(function(b){ b.onclick=async function(){ var want=this.getAttribute("data-smart")==="1"; if(want===bidView())return; var aid=actStart("setControl",{verb:"Saving bidding strategy"}); try{ await api("setControl",{patch:{smartBidding:want}}); toast(want?"Smart Bidding on \u2014 no CPC cap":"Manual CPC on \u2014 hard per-click cap",!want);}catch(x){toast(x.message);} actEnd(aid); await reload(); renderOpportunities(); }; });
+}
 function renderOpportunities(){
+  renderOppBid();
   var box=$("#oppList");
   if(!OPPS.length){box.innerHTML='<div class="empty" style="height:160px"><div>No opportunities surfaced.</div><div style="font-size:12px">Try Scan again, or use Custom build below.</div></div>';return;}
   var unused=[],inuse=[];
@@ -1070,6 +1096,21 @@ function oppRecalc(cards,i){
   var dur=cards.querySelector('.opDur[data-i="'+i+'"]'); if(dur)dur.textContent=days;
   var tot=cards.querySelector('.opTot[data-i="'+i+'"]'); if(tot)tot.textContent=money(bud*days);
 }
+function bidView(){ return !!(typeof DASH!=="undefined"&&DASH&&DASH.control&&DASH.control.smartBidding); }
+function stratLine(p){ var smart=bidView(); var max=p?money(p.cpc.max):"\u2014";
+  if(smart)return {label:"Smart Bidding",cap:"No CPC cap \u00b7 est. "+max+"/click",goal:"Maximize conversion value automatically",note:"Smart Bidding chases conversions by setting bids itself \u2014 there\u2019s no max-CPC cap, so clicks can cost more (most during its 1\u20132 week learning phase). Best once you have ~15\u201330 sales/month. Change in Controls."};
+  return {label:"Manual CPC",cap:"Max CPC "+max+" \u00b7 hard cap",goal:(p&&p.goal)||"Maximize sales within the CPC cap",note:"Manual CPC: no learning phase and you never pay above the cap \u2014 best while volume is low. Google won\u2019t auto-raise bids to chase a likely sale. Switch to Smart Bidding in Controls once sales pick up."};}
+function planBlock(o){ var p=o.plan; if(!p)return ""; var s=stratLine(p);
+  var sales=p.expected?('~<b style="font-family:var(--mono);color:var(--ink)">'+p.expected.conversions+'</b> sales'):"";
+  var basis=[esc(s.note)];
+  if(p.duration&&p.duration.basis)basis.push("<b>Run length</b> \u2014 "+esc(p.duration.basis));
+  (p.caveats||[]).forEach(function(c){ if(/headroom/i.test(c))basis.push(esc(c)); });
+  return '<div style="margin-top:12px;padding:11px 13px;background:var(--gold-soft);border:1px solid var(--line);border-radius:10px">'+
+    '<div style="display:flex;gap:18px;flex-wrap:wrap;align-items:baseline;font-size:12.5px"><span style="font-weight:700;letter-spacing:.05em;text-transform:uppercase;font-size:10.5px;color:var(--ink-45)">Researched plan</span><span class="muted">Bidding&nbsp;<b style="color:var(--ink)">'+esc(s.label)+'</b></span><span class="muted">'+esc(s.cap)+'</span><span class="muted">Over the run&nbsp;'+sales+'</span></div>'+
+    '<div style="font-size:12px;color:var(--ink-70);margin-top:6px">Goal: '+esc(s.goal)+'</div>'+
+    '<details style="margin-top:7px"><summary style="cursor:pointer;font-size:11.5px;color:var(--gold);font-weight:600">Why these numbers</summary><div style="font-size:11.5px;line-height:1.65;color:var(--ink-70);margin-top:6px">'+basis.map(function(b){return "\u2022 "+b;}).join("<br>")+'</div></details>'+
+  '</div>';
+}
 function oppCard(o,i,ceil){ var pm=priMeta(o.priority);
   var when=(o.daysOut!=null&&o.daysOut>0)?("starts in "+o.daysOut+"d"):"starts now";
   var past=(o.pastStats&&o.pastStats.roas)?'<span class="'+(o.pastStats.roas>=3?"roas-good":"roas-bad")+'">'+o.pastStats.roas+'x last run</span>':'<span class="muted">no history yet</span>';
@@ -1080,7 +1121,7 @@ function oppCard(o,i,ceil){ var pm=priMeta(o.priority);
     '<div class="exp__h"><span class="verdict" style="background:'+pm[1]+';color:'+pm[2]+'">'+pm[0]+'</span><span class="nm" style="font-weight:600">'+esc(o.collectionTitle)+' \u00b7 '+esc(o.occasion)+'</span><span class="st muted" style="font-family:var(--mono);font-size:12px">'+when+'</span></div>'+
     '<div style="font-size:13px;color:var(--ink-70);margin:2px 0 14px">'+esc(o.rationale||"")+'</div>'+
     '<div class="grid" style="grid-template-columns:1.4fr 1fr 1fr;gap:16px;align-items:end">'+
-      '<div><label style="'+lab+'">Daily budget ('+esc(o.currency||cur())+')</label><div class="range"><input type="range" class="opBud" data-i="'+i+'" min="2" max="'+ceil+'" value="'+o.recommendedDailyBudget+'"><span class="rngval opBudV" data-i="'+i+'">'+money(o.recommendedDailyBudget)+'</span></div><div class="muted" style="font-size:10.5px;margin-top:3px">AI suggests '+money(o.recommendedDailyBudget)+'</div></div>'+
+      '<div><label style="'+lab+'">Daily budget ('+esc(o.currency||cur())+')</label><div class="range"><input type="range" class="opBud" data-i="'+i+'" min="2" max="'+ceil+'" value="'+o.recommendedDailyBudget+'"><span class="rngval opBudV" data-i="'+i+'">'+money(o.recommendedDailyBudget)+'</span></div><div class="muted" style="font-size:10.5px;margin-top:3px">Planned '+money(o.recommendedDailyBudget)+(o.plan&&o.plan.expected?" \u00b7 \u2248"+o.plan.expected.clicksPerDay+" clicks/day":"")+'</div></div>'+
       '<div><label style="'+lab+'">Start date</label><div style="padding-top:6px"><input type="date" class="opStart" data-i="'+i+'" value="'+esc(o.startDate||"")+'" style="'+din+'"></div></div>'+
       '<div><label style="'+lab+'">End date</label><div style="padding-top:6px"><input type="date" class="opEnd" data-i="'+i+'" value="'+esc(o.endDate||"")+'" style="'+din+'"></div></div>'+
     '</div>'+
@@ -1091,6 +1132,7 @@ function oppCard(o,i,ceil){ var pm=priMeta(o.priority);
       '<span class="muted" style="font-size:11px">AI suggests this window</span>'+
     '</div>'+
     '<div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:12px;font-size:12.5px"><span class="muted">Expected ROAS&nbsp;<b style="color:var(--ink);font-family:var(--mono)">'+esc(o.expectedRoasBand||"\u2014")+'</b>&nbsp;<span style="font-size:11px">('+(o.proven?"from history":"estimate")+')</span></span><span class="muted">Past:&nbsp;'+past+'</span></div>'+
+    planBlock(o)+
     '<details style="margin-top:12px"><summary style="cursor:pointer;font-size:12.5px;color:var(--gold);font-weight:600">Keywords &amp; phrases</summary>'+
       '<div class="eyebrow" style="margin:10px 0 6px">Keywords</div><div class="chips">'+((o.keywords||[]).map(function(k){return '<span class="chip on">'+esc(k)+'</span>';}).join("")||'<span class="muted" style="font-size:12px">\u2014</span>')+'</div>'+
       '<div class="eyebrow" style="margin:12px 0 6px">Key phrases</div><div class="chips">'+((o.keyPhrases||[]).map(function(k){return '<span class="chip">'+esc(k)+'</span>';}).join("")||'<span class="muted" style="font-size:12px">\u2014</span>')+'</div></details>'+
@@ -1113,7 +1155,7 @@ async function launchOpp(i,btn){ var o=OPPS[i]; if(!o)return; var scope=$("#oppC
   var se=scope.querySelector('.opStart[data-i="'+i+'"]'), ee=scope.querySelector('.opEnd[data-i="'+i+'"]');
   var startDate=se?se.value:(o.startDate||""), endDate=ee?ee.value:(o.endDate||"");
   btnBusy(btn,"Generating\u2026"); var aid=actStart("generate"); if(msg)msg.innerHTML='<span class="spin sm"></span> writing copy & building the campaign\u2026 <span class="mono">20\u201340s</span>';
-  try{ var r=await api("generate",{coll:o.collectionHandle,event:o.occasion,budget:bud,startDate:startDate,endDate:endDate,countries:oppCty(i)});
+  try{ var r=await api("generate",{coll:o.collectionHandle,event:o.occasion,budget:bud,startDate:startDate,endDate:endDate,maxCpc:o.maxCpc,countries:oppCty(i)});
     if(r&&r.ok){ btn.classList.remove("is-busy");btn.disabled=true;btn.innerHTML="Queued \u2713"; btn.classList.remove("gold"); if(msg)msg.innerHTML=' in <a href="#" onclick="go(&#39;approvals&#39;);return false" style="color:var(--gold)">Approvals</a> \u00b7 '+((r.assets&&r.assets.headlines)?r.assets.headlines.length:0)+' headlines, paused';
       o.acted={where:"approval",status:"PENDING"}; reload();
       setTimeout(function(){ setOppMeta(); renderOpportunities(); }, 1500);
@@ -1125,7 +1167,10 @@ async function launchOpp(i,btn){ var o=OPPS[i]; if(!o)return; var scope=$("#oppC
 /* ---- render: controls ---- */
 function setSw(id,on){var s=$("#"+id);s.classList.toggle("on",!!on);}
 function renderControls(){var c=DASH.control||{};
-  setSw("swLive",c.enabled);setSw("swDry",c.dryRun);setSw("swAuto",c.autoApproveVettedTemplates);
+  setSw("swLive",c.enabled);setSw("swDry",c.dryRun);setSw("swAuto",c.autoApproveVettedTemplates);setSw("swSmart",c.smartBidding);
+  var bn=$("#bidNote");if(bn){bn.innerHTML=c.smartBidding
+    ? '<b>Currently: Smart Bidding.</b> Google sets each bid automatically to maximize conversion value. <b>Trade-off:</b> there is no max-CPC cap (clicks can cost more, especially during the 1\u20132 week learning phase), and it needs ~15\u201330 sales/month to optimize \u2014 below that it can spend unpredictably. New campaigns build on this until you switch back. Best once you have steady conversion volume.'
+    : '<b>Currently: Manual CPC.</b> Every new campaign gets a hard max-CPC cap \u2014 predictable spend, no learning phase, full cost control. <b>Trade-off:</b> Google won\u2019t automatically raise bids to win a likely sale. Best while volume is low; flip on once you\u2019re getting ~15\u201330+ sales/month.';}
   $("#cCeil").value=c.maxDailyBudgetTotal||100;$("#cCeilV").textContent=money(c.maxDailyBudgetTotal||100);
   $("#cStep").value=c.maxBudgetStepPct||20;$("#cStepV").textContent=(c.maxBudgetStepPct||20)+"%";
   $("#cRoas").value=Math.round((c.targetRoas||0)*100);$("#cRoasV").textContent=(c.targetRoas?Number(c.targetRoas).toFixed(1)+"x":"auto");
@@ -1146,6 +1191,7 @@ function bindControlsOnce(){
   $("#swLive").onclick=async()=>{var on=!$("#swLive").classList.contains("on");var aid=actStart(on?"resume":"kill");try{await api(on?"resume":"kill");toast("Autopilot "+(on?"live":"stopped"),on);}catch(x){toast(x.message);}actEnd(aid);await reload();};
   $("#swDry").onclick=async()=>{var on=!$("#swDry").classList.contains("on");var aid=actStart("dryRun");try{await api("dryRun",{on:on});toast("Dry-run "+(on?"on":"off"),on);}catch(x){toast(x.message);}actEnd(aid);await reload();};
   $("#swAuto").onclick=async()=>{var on=!$("#swAuto").classList.contains("on");var aid=actStart("setControl",{verb:"Saving auto-approve"});try{await api("setControl",{patch:{autoApproveVettedTemplates:on}});toast("Auto-approve "+(on?"on":"off"),on);}catch(x){toast(x.message);}actEnd(aid);await reload();};
+  var ssb=$("#swSmart");if(ssb)ssb.onclick=async()=>{var on=!$("#swSmart").classList.contains("on");var aid=actStart("setControl",{verb:"Saving bidding strategy"});try{await api("setControl",{patch:{smartBidding:on}});toast(on?"Smart Bidding on \u2014 no per-click cap":"Manual CPC on \u2014 hard per-click cap",!on);}catch(x){toast(x.message);}actEnd(aid);await reload();};
   var dce=$("#defCtyEdit");if(dce)dce.onclick=function(){openCountryEditor({selected:defCountries(),title:"Default target countries",subtitle:"Every new draft starts with these. You can still override per draft or per campaign.",saveLabel:"Save default",onSave:async function(ids,done){if(!ids.length){toast("Pick at least one country.");done();return;}var aid=actStart("setControl",{verb:"Saving default countries"});try{await api("setControl",{patch:{defaultCountries:ids}});toast("Default countries saved \u2713",true);done();actEnd(aid);await reload();}catch(x){actEnd(aid);toast(x.message);done();}}});};
   var cms=$("#cMonthlySave");if(cms)cms.onclick=async function(){var v=Number($("#cMonthly").value)||0;var msg=$("#cMonthlyMsg");var done=btnBusy(this,"Saving\u2026");var aid=actStart("setControl",{verb:"Saving monthly cap"});try{await api("setControl",{patch:{maxMonthlySpend:v}});if(msg)msg.textContent=v>0?("hard stop at "+cur()+v):"monthly cap off";toast(v>0?("Monthly cap set to "+cur()+v):"Monthly cap turned off",true);}catch(x){toast(x.message);}actEnd(aid);done();await reload();};
   var ct=$("#cTrim");if(ct)ct.onclick=async function(){var msg=$("#cTrimMsg");var done=btnBusy(this,"Checking\u2026");var aid=actStart("enforceCeiling",{verb:"Trimming budgets to ceiling"});try{var r=await api("enforceCeiling",{});if(r&&r.ok){if(r.skipped){if(msg)msg.textContent="set a ceiling first";toast("Set a daily ceiling first.");}else if(r.withinCeiling){if(msg)msg.textContent="already within ceiling ("+cur()+(r.total||0)+" / "+cur()+(r.ceiling||0)+")";toast("Already within ceiling \u2713",true);}else if(r.dryRun){if(msg)msg.textContent="validated (dry-run)";toast("Validated (dry-run) \u2014 nothing changed.");}else{if(msg)msg.textContent="trimmed "+(r.trimmed||0)+" campaigns to fit "+cur()+(r.ceiling||0);toast("Trimmed "+(r.trimmed||0)+" campaigns to your ceiling \u2713",true);}}else{toast("Failed: "+((r&&r.error)||"unknown"));}}catch(x){toast(x.message);}actEnd(aid);done();await reload();};
