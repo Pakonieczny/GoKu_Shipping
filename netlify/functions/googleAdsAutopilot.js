@@ -654,10 +654,10 @@ function textGuidelinesOp() {
 }
 
 /* ===================== OpenAI generation (repo convention) ===================== */
-async function openaiJSON(prompt, { maxTokens = 1400 } = {}) {
+async function openaiJSON(prompt, { maxTokens = 1400, effort = "low" } = {}) {
   const model = GEN_MODEL;
   const payload = { model, messages: [{ role: "user", content: prompt }] };
-  if (/^(gpt-5|o\d)/.test(model)) { payload.max_completion_tokens = maxTokens; payload.reasoning_effort = "low"; }
+  if (/^(gpt-5|o\d)/.test(model)) { payload.max_completion_tokens = maxTokens; payload.reasoning_effort = effort; }
   else { payload.max_tokens = Math.min(maxTokens, 900); payload.temperature = 0.8; }
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -1034,7 +1034,7 @@ async function keywordResearchPool(seeds, geoIds, { langId = "1000" } = {}) {
      steady data before performance stabilizes. Occasion campaigns start ~17d pre-peak to ramp.
    - CPC tiers from 2025-26 retail search benchmarks (e-commerce ~$1-3/click, cheaper for
      niche/long-tail), bumped a tier for competitive gifting peaks. All money in CURRENCY.   */
-const PLAN_CVR = 0.02;  // jewelry/apparel conversion-rate benchmark (~1.5-3%)
+const PLAN_CVR = 0.02;  // jewelry/apparel conversion-rate benchmark (~1.5-3%) — used as a PRIOR, not a constant
 const CPC_TIERS = [
   { low: 0.32, target: 0.50, max: 0.70 },  // 0 niche / long-tail themed
   { low: 0.50, target: 0.78, max: 1.05 },  // 1 personalized staple
@@ -1042,6 +1042,55 @@ const CPC_TIERS = [
 ];
 const _TIER_LABEL = ["niche / long-tail", "personalized staple", "competitive gifting"];
 function _r2(n) { return Math.round(Number(n) * 100) / 100; }
+function _r1(n) { return Math.round(Number(n) * 10) / 10; }
+
+/* ---- Computed conversion rate (replaces the static 2% assumption) ----
+   Real account CVR = conversions ÷ clicks from YOUR Google Ads history (120d), shrunk toward the
+   2% jewelry benchmark with a Bayesian prior worth 500 clicks. With little history the benchmark
+   dominates; as real clicks accumulate, YOUR rate takes over smoothly — no cliff, no tiny-sample
+   noise. Clamped to a sane retail band. Cached 12h. Only counts history when conversion tracking
+   is validated (otherwise clicks without recorded sales would drag CVR toward zero unfairly). */
+const _CVR_PRIOR_CLICKS = 500, _CVR_MIN = 0.004, _CVR_MAX = 0.08;
+let _cvrMem = null; // per-invocation memo
+async function accountCvr() {
+  if (_cvrMem && (Date.now() - _cvrMem.at) < 5 * 60 * 1000) return _cvrMem;
+  const f = fb();
+  if (f) { try { const d = await f.db.collection(COL.state).doc("cvr").get();
+    if (d.exists) { const x = d.data() || {}; if (x.at && (Date.now() - x.at) < 12 * 3600000) { _cvrMem = x; return x; } } } catch (e) {} }
+  let clicks = 0, conv = 0, tracked = false;
+  try { const h = await conversionHealth({}); tracked = !!(h && h.validated); } catch (e) {}
+  if (tracked) {
+    try {
+      const tz = await _accountTz();
+      const rows = await metricsRange({ start: _acctDateYmd(tz, -119 * 86400000), end: _acctDateYmd(tz, 0) });
+      (rows || []).forEach(c => { clicks += Number(c.clicks) || 0; conv += Number(c.conv) || 0; });
+    } catch (e) {}
+  }
+  const cvr = Math.max(_CVR_MIN, Math.min(_CVR_MAX,
+    (conv + PLAN_CVR * _CVR_PRIOR_CLICKS) / (clicks + _CVR_PRIOR_CLICKS)));
+  const source = clicks >= 300
+    ? `your account: ${_r2(conv)} sales / ${clicks} clicks (120d), blended with the ${Math.round(PLAN_CVR * 100)}% jewelry benchmark`
+    : (tracked ? `${Math.round(PLAN_CVR * 100)}% jewelry benchmark (only ${clicks} tracked clicks so far — your real rate takes over as history builds)`
+               : `${Math.round(PLAN_CVR * 100)}% jewelry benchmark (conversion tracking not yet validated)`);
+  const out = { cvr: Math.round(cvr * 10000) / 10000, clicks, conv: _r2(conv), source, at: Date.now() };
+  if (f) { try { await f.db.collection(COL.state).doc("cvr").set(out); } catch (e) {} }
+  _cvrMem = out; return out;
+}
+
+/* ---- AI market read (bounded) ----
+   The scan model contributes brand/market judgment the raw Google numbers can't: how strongly THIS
+   collection × occasion converts for a personalized-charm store, demand direction into the window,
+   and the best ad angle. It is applied as a BOUNDED multiplier on the computed CVR (0.75–1.25×) with
+   its reasoning surfaced — never as free-form numbers, so it can tilt projections but not fabricate
+   them. */
+function _mktNorm(m) {
+  if (!m || typeof m !== "object") return null;
+  let fit = Number(m.fit);
+  if (!isFinite(fit)) fit = 1;
+  fit = Math.max(0.75, Math.min(1.25, fit));
+  const demand = ["rising", "steady", "fading"].indexOf(String(m.demand || "").toLowerCase()) >= 0 ? String(m.demand).toLowerCase() : null;
+  return { fit: _r2(fit), fitWhy: String(m.fitWhy || "").slice(0, 120) || null, demand, angle: String(m.angle || "").slice(0, 100) || null };
+}
 function _cpcTier(title, occasion) {
   const t = String(title || "").toLowerCase(), o = String(occasion || "").toLowerCase();
   let tier = 1;
@@ -1072,7 +1121,7 @@ function _nextOccasionPeak(label) {
 }
 // The whole research output for one campaign: CPC cap, daily budget, run window, expected
 // outcome, plus plain-language rationale strings the console surfaces on every opportunity.
-function planCampaign({ title, occasion, peakDate, ceiling, headroom, smartBidding, research, aov } = {}) {
+function planCampaign({ title, occasion, peakDate, ceiling, headroom, smartBidding, research, aov, cvrInfo, market } = {}) {
   const ccy = CURRENCY; const smart = !!smartBidding;
   const tier = _cpcTier(title, occasion);
   const tierLabel = _TIER_LABEL[tier];
@@ -1081,11 +1130,26 @@ function planCampaign({ title, occasion, peakDate, ceiling, headroom, smartBiddi
   let cpc, cpcSource;
   if (R) {
     const hi = R.cpc.high || (R.cpc.low * 1.6), lo = R.cpc.low || (hi * 0.45);
-    cpc = { low: _r2(lo), target: _r2(R.cpc.low || hi * 0.65), max: _r2(hi) };
+    cpc = { low: _r2(lo), max: _r2(hi) };
     cpcSource = research.source || "google_keyword_planner";
   } else {
-    cpc = Object.assign({}, CPC_TIERS[tier]); cpcSource = "estimate";
+    const t = CPC_TIERS[tier]; cpc = { low: t.low, max: t.max }; cpcSource = "estimate";
   }
+  // ---- ONE projection chain. Every number on the card derives from these three inputs. ----
+  // (1) Expected PAID cost per click. Top-of-page low/high are the 20th/80th-percentile bids; real
+  //     clicks clear between them, so we model the geometric mid of the band (the right average for
+  //     skewed price data) — never above the cap on Manual CPC. Projecting off the low bid (old
+  //     behavior) overstated clicks; the UI projecting off the cap understated them. This is the fix.
+  const eCpcMarket = _r2(Math.sqrt(Math.max(0.05, cpc.low) * Math.max(cpc.low, cpc.max)));
+  const eCpc = _r2(smart ? eCpcMarket : Math.min(eCpcMarket, cpc.max));
+  // (2) Conversion rate — computed, not assumed: account history shrunk toward the benchmark
+  //     (see accountCvr), then tilted by the bounded AI market read for THIS collection × occasion.
+  const cvrBase = (cvrInfo && cvrInfo.cvr) || PLAN_CVR;
+  const mkt = market || null;
+  const cvrFit = mkt ? mkt.fit : 1;
+  const cvrUsed = Math.round(Math.max(_CVR_MIN, Math.min(_CVR_MAX, cvrBase * cvrFit)) * 10000) / 10000;
+  const cvrSourceText = (cvrInfo && cvrInfo.source) || `${Math.round(PLAN_CVR * 100)}% jewelry benchmark`;
+  // (3) Average order value — real store data (passed in), null-safe below.
   const today = _todayUtc();
   const FLOOR = 21, DEFAULT = 28, MAX = 45, LEAD = 17, TAIL = 5;
   const peak = peakDate ? _parseYmd(peakDate) : (occasion ? _parseYmd(_nextOccasionPeak(occasion)) : null);
@@ -1096,7 +1160,7 @@ function planCampaign({ title, occasion, peakDate, ceiling, headroom, smartBiddi
     durBasis = `Starts ~${Math.round((peak - start) / 86400000)} days before the ${occasion || "occasion"} peak to ramp and clear Google's 1\u20132 week learning window, then runs through it.`;
   } else {
     start = today; end = new Date(today.getTime() + DEFAULT * 86400000);
-    durBasis = `Runs ${DEFAULT} days \u2014 at jewelry's ~${Math.round(PLAN_CVR * 100)}% conversion rate a shorter test produces too few sales to read reliably.`;
+    durBasis = `Runs ${DEFAULT} days \u2014 at the modeled ~${(cvrUsed * 100).toFixed(1)}% conversion rate a shorter test produces too few sales to read reliably.`;
   }
   let durationDays = Math.max(FLOOR, Math.min(MAX, _daysBetween(start, end)));
   // Real competition nudges the run length: hotter auctions need more days to gather data.
@@ -1107,44 +1171,61 @@ function planCampaign({ title, occasion, peakDate, ceiling, headroom, smartBiddi
   end = new Date(start.getTime() + durationDays * 86400000);
   const room = headroom != null ? headroom : (ceiling != null ? ceiling : 25);
   const PACE = 9; // target clicks/day for a readable test
-  const minDaily = Math.max(5, Math.ceil(4 * cpc.target));
+  const minDaily = Math.max(5, Math.ceil(4 * eCpc));
   const capDaily = Math.max(minDaily, Math.min(room > 0 ? room : 25, 25));
-  let daily = Math.max(minDaily, Math.min(capDaily, Math.round(PACE * cpc.target)));
+  let daily = Math.max(minDaily, Math.min(capDaily, Math.round(PACE * eCpc)));
   const noRoom = room > 0 && room < minDaily;
-  const clicksPerDay = _r2(daily / cpc.target);
+  // ---- projections (all from the same chain) ----
+  const clicksPerDay = _r2(daily / eCpc);
   const clicksTotal = Math.round(clicksPerDay * durationDays);
-  const conversions = _r2(clicksTotal * PLAN_CVR);
+  const conversions = _r2(clicksTotal * cvrUsed);
   const spendTotal = Math.round(daily * durationDays);
   const revenue = (aov && aov > 0) ? _r2(conversions * aov) : null;
-  // ---- strategy-aware framing ----
+  const UNC = 0.3; // ± uncertainty band on the conversion rate → revenue/ROAS bands
+  const revenueLow = revenue != null ? _r2(revenue * (1 - UNC)) : null;
+  const revenueHigh = revenue != null ? _r2(revenue * (1 + UNC)) : null;
+  let expectedRoas = null;
+  if (revenue != null && spendTotal > 0) {
+    const lo = _r1(revenueLow / spendTotal), hi = _r1(revenueHigh / spendTotal);
+    expectedRoas = { low: lo, high: hi, band: lo.toFixed(1) + "\u2013" + hi.toFixed(1) + "x",
+      basis: `Computed: projected revenue \u00f7 projected spend, with \u00b1${Math.round(UNC * 100)}% conversion-rate uncertainty \u2014 derived from the same numbers on this card, not an AI guess.` };
+  }
+  // ---- strategy-aware framing (every string below quotes the SAME chain) ----
   const caveats = [];
   let cpcBasis, budgetBasis, goal, strategy, strategyLabel;
   const _srcName = R ? (cpcSource === "google_keyword_planner" ? "Google Keyword Planner" : "AI keyword research") : "";
   const realNote = R ? `${_srcName}: top-of-page bids ${ccy} ${cpc.low.toFixed(2)}\u2013${cpc.max.toFixed(2)} across ${(R.keywords ? R.keywords.length : "your")} keywords` + (R.searchVolume ? ` (~${R.searchVolume.toLocaleString()} searches/mo` : "") + (R.competitionIndex != null ? `${R.searchVolume ? ", " : " ("}competition ${Math.round(R.competitionIndex)}/100)` : (R.searchVolume ? ")" : "")) + "." : "";
+  const eCpcNote = `Projections use a modeled expected paid CPC of ~${ccy} ${eCpc.toFixed(2)} (geometric mid of the bid band \u2014 real clicks clear between the 20th and 80th percentile bids${smart ? "" : ", and you rarely pay your cap"}).`;
   if (smart) {
     strategy = "SMART_BIDDING"; strategyLabel = "Smart Bidding";
     goal = `Maximize conversion value automatically \u2014 no per-click cap`;
-    cpcBasis = (R ? realNote + " " : "") + `Smart Bidding sets each bid itself, so the ${ccy} ${cpc.max.toFixed(2)} figure is a reference, NOT a cap \u2014 clicks can cost more, especially while learning.`;
-    budgetBasis = `Smart Bidding spends close to the full daily budget; keep it steady (no \u00b1>20% swings) so it doesn't restart learning.`;
+    cpcBasis = (R ? realNote + " " : "") + `Smart Bidding sets each bid itself, so the ${ccy} ${cpc.max.toFixed(2)} figure is a reference, NOT a cap \u2014 clicks can cost more, especially while learning. ${eCpcNote}`;
+    budgetBasis = `\u2248${Math.round(clicksPerDay)} clicks/day at the modeled ~${ccy} ${eCpc.toFixed(2)} expected CPC. Smart Bidding spends close to the full daily budget; keep it steady (no \u00b1>20% swings) so it doesn't restart learning.`;
     caveats.push(`Smart Bidding chases conversions by setting bids per auction \u2014 great when you have volume, but there is NO max-CPC cap, so cost per click can spike (most during the 1\u20132 week learning phase).`);
     if (conversions < 15) caveats.push(`This budget yields ~${conversions} sales over the run \u2014 below the ~15\u201330/month Google needs to exit learning, so it may keep spending unpredictably. Manual CPC gives a hard cap until volume grows.`);
   } else {
     strategy = "MANUAL_CPC"; strategyLabel = "Manual CPC";
     goal = `Maximize sales within a ${ccy} ${cpc.max.toFixed(2)} max CPC`;
-    cpcBasis = R ? `${realNote} Capped at the 80th-percentile bid (${ccy} ${cpc.max.toFixed(2)}) so your ad reliably reaches the top without overpaying.`
-                 : `${tierLabel} terms (no live Keyword Planner data \u2014 estimate). Retail search clicks run ~$1\u20133; capped at ${ccy} ${cpc.max.toFixed(2)}.`;
-    budgetBasis = `\u2248${Math.round(clicksPerDay)} clicks/day at the ${ccy} ${cpc.target.toFixed(2)} target CPC \u2014 enough traffic to read without burning the ceiling.`;
+    cpcBasis = R ? `${realNote} Hard cap at the 80th-percentile bid (${ccy} ${cpc.max.toFixed(2)}) so your ad reliably reaches the top without overpaying. ${eCpcNote}`
+                 : `${tierLabel} terms (no live Keyword Planner data \u2014 estimate). Retail search clicks run ~$1\u20133; capped at ${ccy} ${cpc.max.toFixed(2)}. ${eCpcNote}`;
+    budgetBasis = `\u2248${Math.round(clicksPerDay)} clicks/day at the modeled ~${ccy} ${eCpc.toFixed(2)} expected CPC \u2014 enough traffic to read without burning the ceiling.`;
     caveats.push(`Manual CPC: you never pay more than ${ccy} ${cpc.max.toFixed(2)} per click, and the daily budget caps each day's spend. No learning phase \u2014 but Google won't auto-raise bids to chase a likely sale.`);
     if (conversions < 15) caveats.push(`At this budget you'll gather directional data (~${conversions} sales over the run), short of the ~15\u201330/month Smart Bidding would need \u2014 which is exactly why a hard CPC cap is the safer default here.`);
   }
-  if (revenue != null) caveats.push(`Projected revenue ~${ccy} ${revenue.toLocaleString()} = ~${conversions} sales \u00d7 ${ccy} ${_r2(aov).toFixed(2)} average order (your real store data).`);
+  caveats.push(`Conversion rate \u2014 modeled at ${(cvrUsed * 100).toFixed(1)}%: ${cvrSourceText}${mkt && mkt.fit !== 1 ? `, tilted \u00d7${mkt.fit} by the AI market read below` : ""}.`);
+  if (mkt && (mkt.fitWhy || mkt.fit !== 1)) caveats.push(`AI market read \u2014 \u00d7${mkt.fit} conversion fit${mkt.fitWhy ? `: ${mkt.fitWhy}` : ""}${mkt.demand ? ` (demand ${mkt.demand})` : ""}. Bounded 0.75\u20131.25\u00d7 and applied to the conversion rate \u2014 it tilts the projection, it can't fabricate it.`);
+  if (revenue != null) caveats.push(`Projected revenue ~${ccy} ${revenue.toLocaleString()} = ~${conversions} sales \u00d7 ${ccy} ${_r2(aov).toFixed(2)} average order (your real store data). With \u00b1${Math.round(UNC * 100)}% conversion uncertainty: ${ccy} ${revenueLow.toLocaleString()}\u2013${revenueHigh.toLocaleString()}, hence the ${expectedRoas ? expectedRoas.band : ""} expected ROAS (revenue \u00f7 ${ccy} ${spendTotal} spend).`);
   if (noRoom) caveats.push(`Ceiling headroom (${ccy} ${_r2(room)}) is below the ${ccy} ${minDaily} a campaign needs to gather data \u2014 raise the daily ceiling or pause a campaign first.`);
   return {
-    currency: ccy, tier, tierLabel, cvr: PLAN_CVR, smartBidding: smart, capApplies: !smart, researched: !!R, cpcSource,
-    cpc: { low: cpc.low, target: cpc.target, max: cpc.max, source: cpcSource, basis: cpcBasis },
+    currency: ccy, tier, tierLabel, cvr: cvrUsed, smartBidding: smart, capApplies: !smart, researched: !!R, cpcSource,
+    cpc: { low: cpc.low, target: eCpc, max: cpc.max, source: cpcSource, basis: cpcBasis },
     duration: { days: durationDays, startDate: _ymd(start), endDate: _ymd(end), basis: durBasis },
     budget: { daily, basis: budgetBasis },
-    expected: { clicksPerDay: Math.round(clicksPerDay), clicksTotal, conversions, spendTotal, revenue, aov: aov || null, searchVolume: R ? R.searchVolume : null, competitionIndex: R ? R.competitionIndex : null },
+    expected: { clicksPerDay: Math.round(clicksPerDay), clicksTotal, conversions, spendTotal, revenue, revenueLow, revenueHigh, aov: aov || null, searchVolume: R ? R.searchVolume : null, competitionIndex: R ? R.competitionIndex : null },
+    expectedRoas,
+    // The frontend recomputes on budget/CPC/date edits using EXACTLY these inputs — one engine, two runtimes.
+    model: { eCpcMarket, eCpc, cpcLow: cpc.low, cpcHigh: cpc.max, cvrBase, cvrFit, cvr: cvrUsed, cvrSource: cvrSourceText, aov: aov || 0, uncertainty: UNC },
+    market: mkt,
     strategy, strategyLabel, goal, caveats
   };
 }
@@ -1607,6 +1688,374 @@ async function getCollections({ force } = {}) {
   return list;
 }
 
+/* ===================== Collection profiles (scanned + distilled from real listings) =====================
+   The scan used to judge a collection by its TITLE alone; profiling only its top sellers would just
+   swap one bias for another (a 200-listing collection is NOT its 5 bestsellers). So each collection
+   gets a STRATIFIED sample — up to 30 best-sellers (what proves demand) + 20 newest (where the
+   collection is heading), deduped — which is then DISTILLED in code into a motif/type/material
+   frequency inventory + price spread. Frequencies across ~50 stratified listings approximate the
+   real composition of even a several-hundred-listing collection, and mid-frequency motifs are where
+   creative long-tail keywords live. Compact enough to hand the AI EVERY collection's full inventory.
+   One paginated Admin GraphQL pass, cached 7 days. Three query variants cover API-version
+   differences (productsCount object vs int vs absent); on total failure the scan degrades to
+   titles-only exactly as before — never blocks. */
+const _TOK_STOP = new Set(["for","the","and","with","a","an","of","in","to","your","my","her","his","our","or","on","by","from","this","that","gift","gifts","personalized","personalised","custom","customized","dainty","tiny","mini","small","cute","handmade","women","men","girls","boys","kids","jewelry","jewellery",
+  // description fluff (marketing filler that would pollute the motif inventory)
+  "beautiful","perfect","quality","love","made","hand","handcrafted","everyday","piece","pieces","wear","wearing","style","design","designed","comes","makes","great","ideal","special","unique","free","shipping","ships","order","box","packaging","available","choose","select","options","option"]);
+const _TOK_TYPE = new Set(["necklace","necklaces","bracelet","bracelets","earrings","earring","ring","rings","anklet","anklets","charm","charms","pendant","pendants","hoop","hoops","stud","studs","chain","chains","choker","keychain","set","sets","brooch","pin"]);
+const _TOK_MAT = new Set(["gold","silver","sterling","14k","18k","rose","filled","solid","plated","beady","beaded"]);
+const _OPT_MAT_RE = /material|metal|finish/i;
+const _OPT_PERS_RE = /engrav|personal|font|initial|letter|photo|birthstone|name|monogram|stamp/i;
+/* ===================== Best Sellers live-sales bump (canonical Top-200 list) ==================
+   The Top-200 best-sellers list (Brites_Editor_Meta/bestSellers, seeded from the CSV by
+   shopifyEditor) is the single source of truth for what a "best seller" is. Membership is FIXED
+   by the CSV; ongoing site sales only increment counts and re-rank WITHIN the list. No sales ->
+   nothing changes. The order webhook calls bumpBestSellers on every paid order. */
+function _bsNorm(x) { return String(x == null ? "" : x).replace(/\s+/g, " ").trim().toLowerCase(); }
+// Pure: apply sold line items (sku/title/qty) to the rows; returns { rows, matched }. Ranks are
+// recomputed by (CSV orders + live) desc, stable by prior rank. Unmatched items are IGNORED —
+// the CSV alone decides membership.
+function _bsApplySale(rows, items) {
+  const bySku = {}, byTitle = {};
+  (rows || []).forEach((r, i) => {
+    (r.skus || []).forEach(sk => { const k = _bsNorm(sk); if (k && !(k in bySku)) bySku[k] = i; else if (k && (rows[bySku[k]].rank || 9999) > (r.rank || 9999)) bySku[k] = i; });
+    const tk = _bsNorm(r.name); if (tk && !(tk in byTitle)) byTitle[tk] = i; else if (tk && (rows[byTitle[tk]].rank || 9999) > (r.rank || 9999)) byTitle[tk] = i;
+  });
+  let matched = 0;
+  (items || []).forEach(it => {
+    if (!it) return;
+    const qty = Number(it.qty) || 1;
+    let idx = null;
+    const sk = _bsNorm(it.sku); if (sk && bySku[sk] != null) idx = bySku[sk];
+    if (idx == null) { const tk = _bsNorm(it.title); if (tk && byTitle[tk] != null) idx = byTitle[tk]; }
+    if (idx == null) return;
+    rows[idx].live = (Number(rows[idx].live) || 0) + qty; matched++;
+  });
+  if (matched) {
+    const order = rows.map((r, i) => [r, i]).sort((a, b) =>
+      (((b[0].orders || 0) + (b[0].live || 0)) - ((a[0].orders || 0) + (a[0].live || 0))) || ((a[0].rank || 9999) - (b[0].rank || 9999)) || (a[1] - b[1]));
+    order.forEach((x, i) => { x[0].rank = i + 1; });
+  }
+  return { rows, matched };
+}
+async function bumpBestSellers(items) {
+  const f = fb(); if (!f || !Array.isArray(items) || !items.length) return { matched: 0 };
+  const ref = f.db.collection("Brites_Editor_Meta").doc("bestSellers");
+  try {
+    let matched = 0;
+    await f.db.runTransaction(async tx => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) return; // list not seeded yet (editor seeds it) — never invent one here
+      const data = snap.data() || {};
+      if (!Array.isArray(data.rows) || !data.rows.length) return;
+      const res = _bsApplySale(data.rows, items);
+      matched = res.matched;
+      if (matched) tx.set(ref, { rows: res.rows, lastSaleAt: Date.now() }, { merge: true });
+    });
+    return { matched };
+  } catch (e) { return { matched: 0, error: e.message }; }
+}
+
+/* ===================== Per-listing sales counts (pure units-sold ranking) =====================
+   "Top seller" here means ONE thing: how many units that listing has sold — no recency weighting,
+   no other criteria. Shopify exposes no per-product sales field, so this aggregates real orders:
+   PRIMARY   your Shopify orders (last 365d, cancelled excluded, capped at the most recent ~1,500
+             orders to respect API limits — cap is surfaced in the source label when hit),
+   FALLBACK  the app's own order log in Firestore (title-keyed, most recent ~1,000 orders),
+   LAST      Shopify's BEST_SELLING sort order as fetched (labeled as such — never silently).
+   Cached 7 days; ranking is applied client-side to the profiler's candidate pool. */
+async function productSalesMap({ force } = {}) {
+  const f = fb();
+  if (!force && f) { try { const d = await f.db.collection(COL.state).doc("productSales").get();
+    if (d.exists) { const x = d.data() || {}; if (x.v === 1 && x.at && (Date.now() - x.at) < 7 * 86400000 && x.byId && Object.keys(x.byId).length) return x; } } catch (e) {} }
+  // PRIMARY: the canonical Top-200 best-sellers list (CSV baseline + live site sales). The ads
+  // engine must respect the SAME definition of "best seller" as the website.
+  try {
+    if (f) {
+      const d = await f.db.collection("Brites_Editor_Meta").doc("bestSellers").get();
+      if (d.exists) {
+        const rows = (d.data() || {}).rows;
+        if (Array.isArray(rows) && rows.length) {
+          const byId0 = {}, byTitle0 = {};
+          rows.forEach(r => { const total = (Number(r.orders) || 0) + (Number(r.live) || 0);
+            if (r.productId) byId0[r.productId] = Math.max(byId0[r.productId] || 0, total);
+            const tk = String(r.name || "").trim().toLowerCase(); if (tk) byTitle0[tk] = Math.max(byTitle0[tk] || 0, total); });
+          const out0 = { byId: byId0, byTitle: byTitle0, source: `the Top-200 best-sellers list (CSV baseline + live site sales, ${rows.length} listings)`, orders: null, at: Date.now(), v: 1 };
+          if (f) { try { await f.db.collection(COL.state).doc("productSales").set(out0); } catch (e) {} }
+          return out0;
+        }
+      }
+    }
+  } catch (e) {}
+  const since = new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10);
+  const byId = {}, byTitle = {}; let orders = 0, pages = 0, truncated = false;
+  try {
+    let after = null, more = true;
+    while (more && pages < 30) { // 30 pages x 50 = most recent ~1,500 orders, bounded API cost
+      pages++;
+      const d = await shopifyGql(`{ orders(first: 50${after ? `, after: "${after}"` : ""}, query: "created_at:>=${since} -status:cancelled", sortKey: CREATED_AT, reverse: true) { pageInfo { hasNextPage endCursor } edges { node { lineItems(first: 12) { edges { node { quantity product { id title } } } } } } } }`);
+      const conn = (d && d.orders) || {};
+      (conn.edges || []).forEach(oe => { orders++;
+        ((((oe.node || {}).lineItems || {}).edges) || []).forEach(le => {
+          const li = le && le.node; if (!li || !li.product) return;
+          const qty = Number(li.quantity) || 1;
+          if (li.product.id) byId[li.product.id] = (byId[li.product.id] || 0) + qty;
+          const t = String(li.product.title || "").trim().toLowerCase();
+          if (t) byTitle[t] = (byTitle[t] || 0) + qty;
+        });
+      });
+      const pi = conn.pageInfo || {};
+      more = !!(pi.hasNextPage && pi.endCursor); after = pi.endCursor;
+      if (more && pages >= 30) truncated = true;
+    }
+  } catch (e) {}
+  let source = null;
+  if (Object.keys(byId).length) {
+    source = `units sold in your Shopify orders since ${since} (${orders} orders${truncated ? ", most recent only" : ""})`;
+  } else {
+    // fallback: the app's own order log (title-keyed)
+    try {
+      if (f) {
+        const q = await f.db.collection(COL.orderLog).orderBy("ts", "desc").limit(1000).get();
+        let n = 0;
+        q.forEach(doc => { const x = doc.data() || {}; n++;
+          const items = Array.isArray(x.items) && x.items.length ? x.items : ((x.products || []).map(t => ({ title: t, qty: 1 })));
+          items.forEach(it => { const t = String((it && it.title) || "").trim().toLowerCase(); if (t) byTitle[t] = (byTitle[t] || 0) + (Number(it && it.qty) || 1); });
+        });
+        if (Object.keys(byTitle).length) source = `units sold in the app's order log (most recent ${n} orders)`;
+      }
+    } catch (e) {}
+  }
+  if (!source) return null; // no sales data anywhere -> profiler labels Shopify-sort fallback
+  const out = { byId, byTitle, source, orders, at: Date.now(), v: 1 };
+  if (f) { try { await f.db.collection(COL.state).doc("productSales").set(out); } catch (e) {} }
+  return out;
+}
+// Units sold for one product: by Shopify id first, then by (lowercased) title.
+function _salesOf(p, sm) {
+  if (!p || !sm) return 0;
+  if (p.id != null && sm.byId && sm.byId[p.id] != null) return Number(sm.byId[p.id]) || 0;
+  const t = String(p.title || "").trim().toLowerCase();
+  if (t && sm.byTitle && sm.byTitle[t] != null) return Number(sm.byTitle[t]) || 0;
+  return 0;
+}
+// Stable re-rank by pure units sold (desc); without sales data the given order is preserved.
+function _rankBySales(prods, sm) {
+  if (!sm) return (prods || []).slice();
+  return (prods || []).map((p, i) => [p, i]).sort((a, b) => (_salesOf(b[0], sm) - _salesOf(a[0], sm)) || (a[1] - b[1])).map(x => x[0]);
+}
+
+// Jewelry TYPE of a product: the explicit Shopify Type field when set (Brites maintains it),
+// else inferred from the title. Types are the campaign-relevant axes inside a mixed collection —
+// necklaces, beady necklaces, hoop/stud earrings, bracelets and charm-only listings have different
+// buyers, materials and price points, so each must be profiled separately.
+function _ptypeOf(p) {
+  const explicit = String((p && p.productType) || "").trim();
+  if (explicit) return explicit.slice(0, 34);
+  const t = String((p && p.title) || "").toLowerCase();
+  if (/charm only/.test(t)) return /earring/.test(t) ? "Earring Charm Only" : "Necklace Charm Only";
+  if (/hoop/.test(t)) return "Hoop Earrings";
+  if (/stud/.test(t)) return "Stud Earrings";
+  if (/earring/.test(t)) return "Earrings";
+  if (/bracelet/.test(t)) return "Bracelet";
+  if (/anklet/.test(t)) return "Anklet";
+  if (/keychain|key chain/.test(t)) return "Keychain";
+  if (/\bring\b/.test(t)) return "Ring";
+  if (/bead(y|ed)/.test(t) && /necklace|chain/.test(t)) return "Beady Necklace";
+  if (/necklace|pendant/.test(t)) return "Necklace";
+  return "Other";
+}
+// Aggregate PRODUCT OPTION structures across sampled listings: which material tiers the collection
+// actually offers (e.g. sterling / 14k gold-filled / SOLID 14k gold) and which personalization
+// options exist (engraving, birthstone, photo…) — invisible in titles, decisive for keywords.
+function _optSummary(prods) {
+  const mats = {}, pers = new Set();
+  (prods || []).forEach(p => (p && p.options || []).forEach(o => {
+    const nm = String((o && o.name) || "");
+    if (_OPT_MAT_RE.test(nm)) (o.values || []).forEach(v => { const k = String(v || "").toLowerCase().trim().slice(0, 30); if (k) mats[k] = (mats[k] || 0) + 1; });
+    else if (_OPT_PERS_RE.test(nm)) { const k = nm.toLowerCase().trim().slice(0, 30); if (k) pers.add(k); }
+  }));
+  return { materials: Object.keys(mats).sort((a, b) => mats[b] - mats[a]).slice(0, 6).map(k => ({ t: k, n: mats[k] })),
+           personalization: [...pers].slice(0, 6) };
+}
+// Median price PER MATERIAL TIER from real variants (top sellers): "solid 14k gold ~$310" is a
+// different campaign than "gold filled ~$68" — same collection, different buyer and intent.
+function _matPrices(pricedProds) {
+  const by = {};
+  (pricedProds || []).forEach(p => ((((p || {}).variants || {}).edges) || []).forEach(ve => {
+    const v = ve && ve.node; if (!v) return;
+    const so = (v.selectedOptions || []).find(s => s && _OPT_MAT_RE.test(String(s.name || "")));
+    if (!so) return;
+    const key = String(so.value || "").toLowerCase().trim().slice(0, 30);
+    const price = Number(v.price);
+    if (key && isFinite(price) && price > 0) (by[key] = by[key] || []).push(price);
+  }));
+  return Object.keys(by).map(k => ({ t: k, price: Math.round(_median(by[k])) }))
+    .filter(x => x.price > 0).sort((a, b) => a.price - b.price).slice(0, 5);
+}
+// Distill listing titles into ranked motif / product-type / material inventories with counts.
+function _distill(titles) {
+  const motifs = {}, types = {}, mats = {};
+  (titles || []).forEach(t => {
+    const seen = new Set(); // count each token once per listing so long titles don't dominate
+    String(t || "").toLowerCase().split(/[^a-z0-9]+/).forEach(w => {
+      if (!w || w.length < 3 || seen.has(w) || _TOK_STOP.has(w)) return;
+      seen.add(w);
+      if (_TOK_TYPE.has(w)) types[w] = (types[w] || 0) + 1;
+      else if (_TOK_MAT.has(w)) mats[w] = (mats[w] || 0) + 1;
+      else if (!/^\d+$/.test(w)) motifs[w] = (motifs[w] || 0) + 1;
+    });
+  });
+  const rank = (o, n) => Object.keys(o).sort((a, b) => o[b] - o[a]).slice(0, n).map(k => ({ t: k, n: o[k] }));
+  return { motifs: rank(motifs, 12), types: rank(types, 4), mats: rank(mats, 3) };
+}
+// (price median uses the existing _median helper; sampled prices are already filtered > 0)
+async function collectionProfiles({ force } = {}) {
+  const f = fb();
+  if (!force && f) { try { const d = await f.db.collection(COL.state).doc("collectionProfiles").get();
+    if (d.exists) { const x = d.data() || {}; if (x.v === 5 && x.at && (Date.now() - x.at) < 7 * 86400000 && Array.isArray(x.list) && x.list.length) return { list: x.list, at: x.at, salesBasis: x.salesBasis || null }; } } catch (e) {} }
+  // Pure units-sold ranking for "top seller" (see productSalesMap). Null -> Shopify-sort fallback, labeled.
+  let salesMap = null; try { salesMap = await productSalesMap({}); } catch (e) {}
+  const salesBasis = salesMap ? salesMap.source : "Shopify best-selling sort (pure sales-count ranking unavailable this run)";
+  /* PHASE 1 — wide, TYPE-AWARE sweep: 50 best-sellers + 20 newest per collection with productType,
+     price and OPTION STRUCTURES on every product. Every jewelry type present in the collection is
+     seen, counted, priced and materials-profiled — not just whichever type dominates the bestseller
+     head. 3 collections/page keeps each query safely under Admin GraphQL cost limits. */
+  const P1 = `{ edges { node { id title productType priceRangeV2 { minVariantPrice { amount } maxVariantPrice { amount } } options { name values } } } }`;
+  const P1F = `{ edges { node { id title productType priceRangeV2 { minVariantPrice { amount } maxVariantPrice { amount } } } } }`;
+  const Q = (after, variant) => `{ collections(first: 3${after ? `, after: "${after}"` : ""}) { pageInfo { hasNextPage endCursor } edges { node { handle title ${variant === 0 ? "productsCount { count } " : variant === 1 ? "productsCount " : ""}best: products(first: 50, sortKey: BEST_SELLING) ${P1} fresh: products(first: 20, sortKey: CREATED, reverse: true) ${P1F} } } } }`;
+  let variant = -1, page = null;
+  for (let v = 0; v < 3 && variant < 0; v++) { try { page = await shopifyGql(Q(null, v)); variant = v; } catch (e) {} }
+  if (variant < 0 || !page) return null;
+  const raw = []; let guard = 0;
+  while (page && guard++ < 34) {
+    const conn = page.collections || {};
+    (conn.edges || []).forEach(e => {
+      const n = e.node || {}; if (!n.handle) return;
+      raw.push({ handle: n.handle, title: n.title, rawCount: n.productsCount,
+        bestP: (((n.best || {}).edges) || []).map(pe => pe && pe.node).filter(Boolean),
+        freshP: (((n.fresh || {}).edges) || []).map(pe => pe && pe.node).filter(Boolean) });
+    });
+    const pi = conn.pageInfo || {};
+    if (pi.hasNextPage && pi.endCursor && raw.length < 120) { try { page = await shopifyGql(Q(pi.endCursor, variant)); } catch (e) { page = null; } }
+    else page = null;
+  }
+  if (!raw.length) return null;
+  /* PHASE 2 — per-TYPE representatives for variant-level pricing: up to 2 top sellers of EACH
+     jewelry type in each collection (types ranked by presence, max 10 reps/collection), fetched in
+     batched node lookups with variants (price per material tier) + a bounded plain-text
+     description. This is what makes "solid 14k gold hoop earrings ~$180" per-type knowledge instead
+     of a collection-wide blur. Failures here degrade to Phase-1 data only — never block. */
+  const wantIds = []; const repMeta = {};
+  raw.forEach(c => {
+    c.bestR = _rankBySales(c.bestP, salesMap); // pure units-sold order (falls back to fetched order)
+    const byType = {};
+    c.bestR.forEach(p => { const ty = _ptypeOf(p); (byType[ty] = byType[ty] || []).push(p); });
+    const rankedTypes = Object.keys(byType).sort((a, b) => byType[b].length - byType[a].length);
+    let taken = 0;
+    rankedTypes.forEach(ty => {
+      byType[ty].slice(0, 2).forEach(p => {
+        if (taken >= 10 || !p.id) return;
+        taken++; wantIds.push(p.id); repMeta[p.id] = { handle: c.handle, type: ty };
+      });
+    });
+  });
+  const nodeById = {};
+  for (let i = 0; i < wantIds.length; i += 25) {
+    const chunk = wantIds.slice(i, i + 25);
+    try {
+      const d = await shopifyGql(`{ nodes(ids: [${chunk.map(id => `"${id}"`).join(",")}]) { ... on Product { id description(truncateAt: 160) variants(first: 10) { edges { node { price selectedOptions { name value } } } } } } }`);
+      ((d && d.nodes) || []).forEach(nd => { if (nd && nd.id) nodeById[nd.id] = nd; });
+    } catch (e) { break; } // partial phase-2 is fine — profiles fall back to phase-1 data
+  }
+  /* Assemble per-collection profiles with a per-TYPE breakdown. */
+  const list = raw.map(c => {
+    const bestR = c.bestR || _rankBySales(c.bestP, salesMap);
+    const seen = new Set(); const sample = [];
+    bestR.concat(c.freshP).forEach(p => { const t = String(p.title || "").trim(); if (t && !seen.has(t.toLowerCase())) { seen.add(t.toLowerCase()); sample.push(p); } });
+    const prices = []; let lo = null, hi = null;
+    sample.forEach(p => { const r = p.priceRangeV2 || {};
+      const a = Number(r.minVariantPrice && r.minVariantPrice.amount), b = Number(r.maxVariantPrice && r.maxVariantPrice.amount);
+      if (isFinite(a) && a > 0) { lo = lo == null ? a : Math.min(lo, a); prices.push(a); }
+      if (isFinite(b) && b > 0) hi = hi == null ? b : Math.max(hi, b); });
+    const count = c.rawCount == null ? null : (typeof c.rawCount === "object" ? Number(c.rawCount.count) : Number(c.rawCount));
+    // per-type detail: counts + price band from the wide sweep; materials from that type's OPTION
+    // structures; per-material prices + descriptions from that type's Phase-2 representatives.
+    const byType = {};
+    sample.forEach(p => { const ty = _ptypeOf(p); (byType[ty] = byType[ty] || []).push(p); });
+    const repsByType = {};
+    Object.keys(repMeta).forEach(id => { const m = repMeta[id]; if (m.handle === c.handle && nodeById[id]) (repsByType[m.type] = repsByType[m.type] || []).push(nodeById[id]); });
+    const descTexts = [];
+    const typesDetail = Object.keys(byType).sort((a, b) => byType[b].length - byType[a].length).slice(0, 8).map(ty => {
+      const prods = byType[ty];
+      let tlo = null, thi = null; const tPrices = [];
+      prods.forEach(p => { const r = p.priceRangeV2 || {};
+        const a = Number(r.minVariantPrice && r.minVariantPrice.amount), b = Number(r.maxVariantPrice && r.maxVariantPrice.amount);
+        if (isFinite(a) && a > 0) { tlo = tlo == null ? a : Math.min(tlo, a); tPrices.push(a); }
+        if (isFinite(b) && b > 0) thi = thi == null ? b : Math.max(thi, b); });
+      const opt = _optSummary(prods);
+      const reps = repsByType[ty] || [];
+      reps.forEach(r => { const d = String(r.description || "").trim(); if (d) descTexts.push(d); });
+      const matP = _matPrices(reps);
+      const priceBy = {}; matP.forEach(x => priceBy[x.t] = x.price);
+      const materials = (opt.materials.length ? opt.materials : matP.map(x => ({ t: x.t, n: 1 })))
+        .map(m => ({ t: m.t, n: m.n || 1, price: priceBy[m.t] != null ? priceBy[m.t] : null })).slice(0, 4);
+      return { type: ty, n: prods.length, priceLow: tlo != null ? Math.round(tlo) : null,
+        priceMed: tPrices.length ? Math.round(_median(tPrices)) : null, priceHigh: thi != null ? Math.round(thi) : null,
+        materials, personalization: opt.personalization };
+    });
+    const inv = _distill(sample.map(p => p.title).concat(descTexts));
+    const persAll = [...new Set(typesDetail.flatMap(t => t.personalization || []))].slice(0, 6);
+    const med = _median(prices);
+    return { handle: c.handle, title: c.title, count: isFinite(count) ? count : null, sampled: sample.length,
+      priceLow: lo != null ? Math.round(lo) : null, priceMed: med != null ? Math.round(med) : null, priceHigh: hi != null ? Math.round(hi) : null,
+      motifs: inv.motifs, types: inv.types, mats: inv.mats,
+      typesDetail, personalization: persAll,
+      reps: [bestR[0] && (String(bestR[0].title).trim().slice(0, 60) + (salesMap && _salesOf(bestR[0], salesMap) > 0 ? ` (${_salesOf(bestR[0], salesMap)} sold)` : "")), c.freshP[0] && String(c.freshP[0].title).trim().slice(0, 60)].filter(Boolean) };
+  });
+  const builtAt = Date.now();
+  if (f) { try { await f.db.collection(COL.state).doc("collectionProfiles").set({ list, at: builtAt, v: 5, salesBasis }); } catch (e) {} }
+  return { list, at: builtAt, salesBasis };
+}
+// One compact prompt line per collection: count · price spread · ranked motif inventory (with
+// frequencies, so the AI sees the collection's real composition) · types · materials · anchors.
+function _profileText(profiles, collections) {
+  const byH = {}; (profiles || []).forEach(p => { if (p && p.handle) byH[p.handle] = p; });
+  const inv = arr => (arr || []).map(x => `${x.t}(${x.n})`).join(" ");
+  return (collections || []).map(c => {
+    const p = byH[c.handle];
+    if (!p || ((!p.motifs || !p.motifs.length) && (!p.reps || !p.reps.length))) return `- ${c.title}`;
+    const bits = [];
+    if (p.count != null) bits.push(p.sampled >= p.count ? `${p.count} listings, fully scanned` : `${p.count} listings, ${p.sampled} sampled`);
+    else if (p.sampled) bits.push(`${p.sampled} sampled`);
+    if (p.priceLow != null && p.priceHigh != null) bits.push(`$${p.priceLow}\u2013$${p.priceHigh}${p.priceMed != null ? ` med $${p.priceMed}` : ""}`);
+    const parts = [`- ${c.title}${bits.length ? ` (${bits.join("; ")})` : ""}`];
+    if (p.motifs && p.motifs.length) parts.push(`motifs: ${inv(p.motifs)}`);
+    if (p.personalization && p.personalization.length) parts.push(`personalization: ${p.personalization.join(", ")}`);
+    if (p.reps && p.reps.length) parts.push(`anchors: ${p.reps.map(s => `"${s}"`).join("; ")}`);
+    const head = parts.join(" \u00b7 ");
+    // per-jewelry-type breakdown: each type in the collection with its share, price band and
+    // material tiers (with real per-tier prices where variants were scanned)
+    if (p.typesDetail && p.typesDetail.length) {
+      const tline = p.typesDetail.map(t => {
+        const mats = (t.materials || []).filter(m => m && m.t).map(m => m.t + (m.price != null ? ` ~$${m.price}` : "")).join(", ");
+        const band = (t.priceLow != null && t.priceHigh != null) ? ` $${t.priceLow}\u2013$${t.priceHigh}` : "";
+        return `${t.type} \u00d7${t.n}${band}${mats ? ` [${mats}]` : ""}`;
+      }).join(" \u00b7 ");
+      return head + `\n    types: ${tline}`;
+    }
+    if (p.types && p.types.length) return head + ` \u00b7 types: ${inv(p.types)}`;
+    return head;
+  }).join("\n");
+}
+// Sanitize the model's audience object (free text, bounded lengths, never trusted raw).
+function _audNorm(a) {
+  if (!a || typeof a !== "object") return null;
+  const s = (v, n) => { const t = String(v || "").trim().slice(0, n); return t || null; };
+  const out = { buyer: s(a.buyer, 70), recipient: s(a.recipient, 50), motivation: s(a.motivation, 90), searchStyle: s(a.searchStyle, 80) };
+  return (out.buyer || out.recipient || out.motivation) ? out : null;
+}
+
 /* ===================== Occasion memory + AI suggestions ===================== */
 function slugify(s) { return String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60); }
 
@@ -1925,11 +2374,18 @@ async function scanOpportunities({ force, cacheOnly } = {}) {
   const _convH = await conversionHealth().catch(() => ({ validated: false }));
   const convDirective = _convH.validated
     ? "CONVERSION TRACKING: LIVE and recording sales — ROAS/outcome history is reliable. Weight proven occasions heavily; you may recommend scaling winners."
-    : "CONVERSION TRACKING: NOT YET RECORDING SALES — you have NO validated ROAS data. Do NOT label any occasion 'proven'; treat every expectedRoasBand as a conservative ESTIMATE, keep recommendedDailyBudget at modest test levels, and favor low-risk bets over aggressive spend until conversions flow.";
+    : "CONVERSION TRACKING: NOT YET RECORDING SALES — you have NO validated ROAS data. Do NOT label any occasion 'proven'; keep market.fit conservative (0.9-1.1 unless you have a strong product-level reason), keep recommendedDailyBudget at modest test levels, and favor low-risk bets over aggressive spend until conversions flow.";
+  // Scan several REAL listings per collection so keywords/audience/fit are grounded in actual
+  // products, not collection names. Cached 7d; degrades to titles-only if Shopify is unreachable.
+  let profiles = null, profiledAt = null, salesBasis = null;
+  try { const _p = await collectionProfiles({}); if (_p && Array.isArray(_p.list) && _p.list.length) { profiles = _p.list; profiledAt = _p.at; salesBasis = _p.salesBasis; } } catch (e) {}
+  const collBlock = (profiles && profiles.length)
+    ? `COLLECTIONS \u2014 each profiled from a STRATIFIED, TYPE-AWARE scan of its real listings (data as of ${_ymd(new Date(profiledAt || Date.now()))}; "top seller" = ${salesBasis || "Shopify best-selling sort"}; refreshed weekly) (50 best-sellers + 20 newest per collection, plus per-type representative variants and descriptions). Each collection line shows: motif inventory with per-motif listing counts \u00b7 personalization options \u00b7 anchors \u00b7 then a "types:" breakdown of every JEWELRY TYPE the collection actually contains (Necklace, Beady Necklace, Hoop/Stud Earrings, Bracelet, Charm Only\u2026) with its share (\u00d7n), price band, and MATERIAL TIERS with real per-tier prices from live variants. Use ALL of it: high-frequency motifs are the collection's identity (head terms); MID-frequency motifs are underexploited long-tail keyword material; the TYPE breakdown tells you which product types to build keywords around and in what proportion \u2014 a collection that is mostly necklaces with some hoop earrings and charm-only listings earns keywords across those types, weighted by share, and NEVER keywords for a type it doesn't contain; MATERIAL TIERS are distinct keyword axes with different buyers and intent ("solid 14k gold X" is a premium keepsake purchase at that tier's real price, "gold filled X" is the affordable tier \u2014 never blur them, never promise a tier, type or price the inventory doesn't show); PERSONALIZATION options (engraving, birthstone, photo\u2026) are high-intent keyword modifiers. Ground every keyword, phrase, audience and fit judgment in this inventory, never in the collection name alone:\n${_profileText(profiles, collections)}`
+    : `ALL COLLECTIONS: ${collText}`;
   const prompt =
 `Today: ${dateStr}. You are the campaign strategist for Brites, a handcrafted personalized charm-jewelry brand (gift/emotion-led). Currency ${ccy}. Total daily ad ceiling ${ccy} ${ceiling}.
 ${convDirective}
-ALL COLLECTIONS: ${collText}
+${collBlock}
 TOP-SELLING PRODUCTS: ${prodText}
 PAST OCCASION PERFORMANCE (memory): ${memText}
 Find the 8-12 best advertising OPPORTUNITIES to act on within the NEXT ~30 DAYS. Do NOT suggest anything whose run window starts more than ~30 days from today — near-term relevance only. Cross-reference upcoming calendar / seasonal gifting moments with the collections and best-sellers that fit them and with past performance. For EACH opportunity return:
@@ -1940,10 +2396,11 @@ Find the 8-12 best advertising OPPORTUNITIES to act on within the NEXT ~30 DAYS.
 - daysOut (int: days from today until startDate; 0 if it should start now)
 - priority: "high" (timely + strong fit, or proven winner), "medium" (solid), "test" (speculative)
 - recommendedDailyBudget (number in ${ccy}; scale to importance — larger for major gifting events, smaller for niche/evergreen; keep realistic vs the ${ceiling} ceiling)
-- expectedRoasBand (e.g. "3-4x"; be conservative)
+- market: {"fit": number 0.75-1.25 (multiplier on the store's measured conversion rate for THIS collection \u00d7 occasion: >1.0 when the pairing is gift-urgent, emotionally loaded, or matches proven best-sellers; <1.0 when it's browsy, generic, or a stretch fit; 1.0 when neutral \u2014 be honest, most should sit 0.9-1.1), "fitWhy": <=110 chars grounding the multiplier in THIS store's products/buyers, "demand": "rising"|"steady"|"fading" (search & gifting demand heading into the run window), "angle": <=90 chars the single best-converting ad angle}
+  (Do NOT estimate ROAS \u2014 it is computed from real CPC, budget, and store data. Your job is the market judgment the raw numbers can't see.)
 - proven (bool: true ONLY if memory shows success for this occasion)
 - rationale (<=120 chars: why now, why this collection)
-- keywords: an array of 5-8 RESEARCHED keyword objects. MIX broad "head" terms with specific "long-tail" phrases, and DIFFERENTIATE the numbers per keyword and per opportunity (do not reuse the same figures). Each object:
+- keywords: an array of 5-8 RESEARCHED keyword objects. MIX broad "head" terms with specific "long-tail" phrases, DRAWN FROM the collection's motif inventory \u2014 head terms from its high-frequency motifs, long-tail from mid-frequency motifs \u00d7 product types \u00d7 the occasion (a collection with bunny(31) and axolotl(6) earns both "bunny necklace" AND "axolotl charm gift") \u2014 phrased the way the audience below actually searches. DIFFERENTIATE the numbers per keyword and per opportunity (do not reuse the same figures). Each object:
     {"text": phrase a shopper would search,
      "searches": realistic estimated AVERAGE MONTHLY Google searches in the target countries (broad head terms in the hundreds-to-thousands; niche/long-tail 10-300; reflect how popular THIS exact phrase really is),
      "competition": "LOW" | "MEDIUM" | "HIGH" (long-tail/niche usually LOW; broad jewelry/gift terms HIGH),
@@ -1951,10 +2408,12 @@ Find the 8-12 best advertising OPPORTUNITIES to act on within the NEXT ~30 DAYS.
      "intent": "high" (ready to buy) | "medium" | "low",
      "tail": "HEAD" (1-2 words) | "MID" (3 words) | "LONG" (4+ words, specific)}
 - keywordStrategy: <=180 chars explaining why THIS keyword mix for THIS collection+occasion (the head vs long-tail balance, buyer intent, and why more or fewer terms)
-- keyPhrases (3-4 short emotional ad phrases)
+- keyPhrases (3-4 short emotional ad phrases speaking directly to the audience's motivation)
+- audience: {"buyer": <=70 chars WHO is typing the search and paying \u2014 usually the gift-giver, be specific (e.g. "team parents at season end", "moms of teen daughters"), "recipient": <=50 chars who receives it, "motivation": <=90 chars the emotional driver of the purchase, "searchStyle": <=80 chars how THIS buyer actually phrases searches}
+INTERPLAY (critical): audience \u00d7 occasion timing \u00d7 motif inventory must agree \u2014 keywords are what THIS buyer types in THIS window for the motifs/types/price band this collection actually contains; market.fit reflects inventory-level fit (price point, motif breadth, giftability), never the collection name alone. If the window is short, weight urgent/ready-to-buy phrasing; if the listings skew premium, weight quality/keepsake phrasing.
 Only include opportunities genuinely relevant within ~30 days. Rank best-first (soonest + strongest first). Avoid out-of-season occasions and any memory marks as fail. Return ONLY JSON: {"opportunities":[ ... ]}`;
   let list = null;
-  try { const j = await openaiJSON(prompt, { maxTokens: 4200 }); if (j && Array.isArray(j.opportunities)) list = j.opportunities.filter(o => o && o.collectionTitle && o.occasion); } catch (e) {}
+  try { const j = await openaiJSON(prompt, { maxTokens: 5400, effort: "high" }); if (j && Array.isArray(j.opportunities)) list = j.opportunities.filter(o => o && o.collectionTitle && o.occasion); } catch (e) {}
   if (!list) list = [];
   const byTitle = {}; collections.forEach(c => byTitle[c.title.toLowerCase()] = c.handle);
   const today0 = _todayUtc();
@@ -1962,6 +2421,8 @@ Only include opportunities genuinely relevant within ~30 days. Rank best-first (
   const headroom = Math.max(0, ceiling - _enabled);
   // Real store AOV (from logged Shopify orders) so projected revenue uses YOUR numbers, not a guess.
   let aov = 0; try { const sig = await storeSignals({ days: 120 }); const rev = (sig.adRevenue || 0) + (sig.organicRevenue || 0); if (sig.orders > 0) aov = _r2(rev / sig.orders); } catch (e) {}
+  // Computed conversion rate (account history shrunk toward the benchmark) — one fetch, used by every plan.
+  let cvrInfo = null; try { cvrInfo = await accountCvr(); } catch (e) {}
   const geoIds = (Array.isArray(ctrl.defaultCountries) && ctrl.defaultCountries.length) ? ctrl.defaultCountries : ["2124"];
   // Real Keyword Planner data — but Keyword Planner is rate-limited to ~1 req/sec, so we do NOT
   // fire one call per opportunity. We collect every opportunity's unique seeds, run ONE batched +
@@ -1993,7 +2454,8 @@ Only include opportunities genuinely relevant within ~30 days. Rank best-first (
     merged.error = pool.ok ? null : (pool.error || null);
     merged.strategy = o.keywordStrategy || null;
     const peakDate = o.endDate || o.startDate || _nextOccasionPeak(o.occasion);
-    const plan = planCampaign({ title: o.collectionTitle, occasion: o.occasion, peakDate, ceiling, headroom, smartBidding: !!ctrl.smartBidding, research: merged, aov });
+    const mkt = _mktNorm(o.market);
+    const plan = planCampaign({ title: o.collectionTitle, occasion: o.occasion, peakDate, ceiling, headroom, smartBidding: !!ctrl.smartBidding, research: merged, aov, cvrInfo, market: mkt });
     const startDate = plan.duration.startDate, endDate = plan.duration.endDate, durationDays = plan.duration.days;
     const bud = plan.budget.daily, maxCpc = plan.cpc.max;
     const daysOut = Math.max(0, _daysBetween(today0, _parseYmd(startDate)));
@@ -2003,7 +2465,8 @@ Only include opportunities genuinely relevant within ~30 days. Rank best-first (
       startDate, endDate, daysOut, durationDays, maxCpc, plan,
       priority: (["high", "medium", "test"].indexOf(o.priority) >= 0 ? o.priority : "test"),
       recommendedDailyBudget: bud, estTotalSpend: plan.expected.spendTotal,
-      expectedRoasBand: o.expectedRoasBand || null, proven: !!o.proven,
+      expectedRoasBand: plan.expectedRoas ? plan.expectedRoas.band : null, expectedRoas: plan.expectedRoas || null,
+      market: mkt, audience: _audNorm(o.audience), proven: !!o.proven,
       rationale: o.rationale || "", keywords: kws, keywordData: merged.keywords,
       research: { source: merged.source, error: merged.error, realCount: merged.realCount,
         searchVolume: merged.searchVolume, competitionIndex: merged.competitionIndex, cpc: merged.cpc,
@@ -2137,7 +2600,8 @@ async function generateForCollection(handle, eventLabel, budget, { ctrl, startDa
   const _seeds = [coll.title, `${coll.title} gift`, `${coll.title} necklace`, (event ? `${coll.title} ${event.label}` : null)].filter(Boolean);
   let _res = null; try { _res = await researchOpportunity(_seeds, _geo); } catch (e) {}
   let _aov = 0; try { const sig = await storeSignals({ days: 120 }); const rev = (sig.adRevenue || 0) + (sig.organicRevenue || 0); if (sig.orders > 0) _aov = _r2(rev / sig.orders); } catch (e) {}
-  const plan = planCampaign({ title: coll.title, occasion: eventLabel, peakDate, ceiling, headroom: Math.max(0, ceiling - _enabled), smartBidding: smart, research: (_res && _res.ok ? _res : null), aov: _aov });
+  let _cvrInfo = null; try { _cvrInfo = await accountCvr(); } catch (e) {}
+  const plan = planCampaign({ title: coll.title, occasion: eventLabel, peakDate, ceiling, headroom: Math.max(0, ceiling - _enabled), smartBidding: smart, research: (_res && _res.ok ? _res : null), aov: _aov, cvrInfo: _cvrInfo });
   const dailyBudget = Number(budget) > 0 ? Number(budget) : plan.budget.daily;
   const sDate = startDate || plan.duration.startDate;
   const eDate = endDate || plan.duration.endDate;
@@ -2207,7 +2671,7 @@ module.exports = {
   enqueueConversion, uploadConversions, enqueueConversionAdjustment, uploadConversionAdjustments, recordRefund, conversionHealth, gAdsTime,
   recordOrderEvent, recentOrders, storeSignals, clearOrderLog, backfillOrders,
   ledger, clearLedger, enqueueApproval, applyApproval, applyApprovalById: applyApproval, retryStuckApprovals, sanitizeOps,
-  generateRSAAssets, buildSearchCampaignOps, buildCampaignAssets, planCampaign, keywordResearch, keywordResearchPool, researchOpportunity, mergeKeywordResearch, keywordDiag, metricsRange, textGuidelinesOp, brandSafe,
+  generateRSAAssets, buildSearchCampaignOps, buildCampaignAssets, planCampaign, accountCvr, collectionProfiles, productSalesMap, bumpBestSellers, keywordResearch, keywordResearchPool, researchOpportunity, mergeKeywordResearch, keywordDiag, metricsRange, textGuidelinesOp, brandSafe,
   generateForCollection, COLLECTIONS, OCCASIONS,
   getCollections, suggestOccasions, recordOccasionUse,
   scanOpportunities, opportunitiesWithStatus, takenTags, fetchTopProducts, setCampaignStatus, startCampaignNow, setCampaignBudget, analyzeCampaign,

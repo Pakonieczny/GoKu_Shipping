@@ -68,12 +68,26 @@ async function decideTasks() {
 async function kick() {
   const ctrl = await E.control();
   if (!ctrl.enabled) return { status: "dormant (kill switch off)" };
-  const { tasks } = await decideTasks();
+  const { tasks, ranDaily } = await decideTasks();
+  // Once a day: reconcile the Best Sellers collection with the canonical Top-200 list
+  // (shopifyEditor owns that logic). Fire-and-forget — a failure never blocks the ads kick;
+  // membership stays as-is until the next daily slot or a manual syncBestSellers call.
+  let bestSellersSync = null;
+  if (ranDaily) {
+    try {
+      const r = await fetch(baseUrl() + "/.netlify/functions/shopifyEditor", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-edit-passcode": process.env.EDIT_PASSCODE || "" },
+        body: JSON.stringify({ action: "syncBestSellers" })
+      });
+      bestSellersSync = r.status;
+    } catch (e) { bestSellersSync = "error: " + e.message; }
+  }
   const res = await fetch(baseUrl() + "/.netlify/functions/googleAdsAutopilot-background", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ tasks, token: process.env.EDIT_PASSCODE || undefined })
   });
-  return { status: "kicked", tasks, upstream: res.status };
+  return { status: "kicked", tasks, upstream: res.status, bestSellersSync };
 }
 
 /* ------------------------------- POST actions ------------------------------ */

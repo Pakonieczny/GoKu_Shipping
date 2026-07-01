@@ -134,6 +134,15 @@ const PRICING_ENGINE = (function () {
   return { M: M, TBL: TBL, inferTier: inferTier, buildMatrix: buildMatrix, optionOrder: optionOrder };
 })();
 
+/* Canonical list version — bump when a new CSV becomes the baseline. On mismatch the Firestore
+   doc is re-seeded from BEST_SELLERS_SEED (the CSV), carrying over live-sale counts and verified
+   product handles from the prior list so ongoing-sales history survives a baseline refresh. */
+const BS_LIST_VERSION = "2026-07-01-top200-csv";
+/* Title -> product-handle seed (from the best-sellers sync project). Every handle is still
+   VERIFIED against Shopify before use (handles drift; at least one legacy entry 404s) — this map
+   just saves ~200 SKU searches on first resolution. */
+const BS_HANDLE_SEED = JSON.parse("{\"dainty bunny necklace\":\"dainty-bunny\",\"norse runes charm\":\"norse-runes-charm-necklace\",\"circle jacket charm necklace set of 2\":\"circle-jacket-charm-necklace-set-of-2-for-everyday-layering\",\"fire badge necklace\":\"fire-badge\",\"dainty sun necklace\":\"dainty-sun-necklace\",\"phoenix bird pendant necklace\":\"phoenix-bird-pendant-necklace-for-bird-lovers\",\"cardinal bird pendant necklace\":\"cardinal-bird-pendant-necklace-for-everyday-layering\",\"sunflower charm necklace\":\"sunflower-charm-necklace-on-beady-chain-for-flower-lovers\",\"hummingbird charm stud earrings\":\"hummingbird-charm-stud-earrings-for-everyday-layering\",\"dragonfly pendant necklace\":\"dragonfly-pendant-necklace-for-moms-and-mothers-day\",\"bunny charm stud earrings\":\"bunny-charm-stud-earrings-for-animal-lovers\",\"book reader charm necklace\":\"book-reader-charm-necklace-on-beady-chain-for-teachers\",\"dainty cancer ribbon necklace\":\"dainty-cancer\",\"baseball charm huggie\":\"baseball-charm-huggie\",\"wolf necklace\":\"wolf-necklace\",\"squirrel charm necklace\":\"squirrel-charm-necklace\",\"eagle pendant necklace\":\"eagle-pendant-necklace-for-gift-giving\",\"your handwritten bar\":\"your-handwritten-bar-necklace\",\"team charm necklace\":\"team-charm-necklace-for-everyday-layering\",\"hummingbird pendant necklace\":\"hummingbird-pendant-necklace-for-bird-lovers\",\"dainty rubber ducky necklace\":\"dainty-rubber\",\"movie slate charm\":\"movie-slate-charm-necklace\",\"small cat necklace\":\"small-cat-necklace\",\"killer whale charm necklace\":\"killer-whale\",\"sitting cat earrings\":\"sitting-cat-earrings\",\"skating earrings ice\":\"skating-earrings-ice\",\"add on an extender to charm\":\"add-on-an-extender-to-charm-for-gift-giving\",\"cute sea turtle necklace\":\"sea-turtle\",\"mythical dragon charm stud earrings\":\"mythical-dragon-charm-stud-earrings-for-bridesmaids\",\"skating necklace\":\"skating-necklace\",\"running horse stud\":\"running-horse-stud\",\"camping earrings campfire\":\"camping-earrings-campfire\",\"theatre happy sad\":\"theatre-happy-sad\",\"alligator necklace\":\"alligator-necklace\",\"sheep lamb pendant\":\"sheep-pendant\",\"lemon pendant necklace\":\"lemon-pendant-necklace-for-food-lovers\",\"little hummingbird necklace\":\"little-hummingbird\",\"hammered skinny mini gold bar bar necklace\":\"hammered-skinny-mini-gold-bar-bar-necklace-for-moms-and-mothers-day\",\"tiny moon necklace\":\"tiny-moon-necklace\",\"mismatched tennis ball\":\"mismatched-tennis-ball\",\"tooth necklace, dentist gift\":\"tooth-necklace\",\"heart charm necklace\":\"heart-charm-necklace-for-everyday-layering\",\"key charm pendant\":\"key-charm-pendant-necklace\",\"tooth charm huggie hoops\":\"tooth-charm-huggie-hoops-for-everyday-layering\",\"usa map pendant necklace\":\"usa-map-pendant-necklace-for-flower-lovers\",\"soaring pelican pendant necklace\":\"soaring-pelican-pendant-necklace-for-bird-lovers\",\"penguin charm necklace\":\"penguin-charm-necklace-on-beady-chain-for-bird-lovers\",\"hawk charm necklace\":\"hawk-charm-necklace-on-beady-chain-for-bird-lovers\",\"lighthouse charm earrings\":\"lighthouse-charm-earrings-for-beach-lovers\",\"stethoscope earring doctor\":\"stethoscope-earring-doctor\",\"boho feather charm necklace\":\"boho-feather-charm-necklace-for-graduates\",\"palestine map necklace\":\"palestine-map-necklace\",\"chicken pendant\":\"chicken-pendant-necklace\",\"puzzle pendant necklace\":\"puzzle-pendant-necklace-for-best-friends\",\"theatre mask charm pendant\":\"theatre-mask-charm-pendant-for-everyday-layering\",\"gold dumbbell charm necklace\":\"gold-dumbbell-charm-necklace-for-fitness-fans\",\"stethoscope necklace doctor\":\"stethoscope-necklace-doctor\",\"capybara charm earrings\":\"capybara-charm-earrings-for-everyday-layering\",\"raccoon charm necklace\":\"raccoon-charm-necklace-on-beady-chain-for-moms-and-mothers-day\",\"dainty oval disc caduceus necklace\":\"dainty-oval\",\"dragonfly charm stud earrings\":\"dragonfly-charm-stud-earrings-for-gift-giving\",\"dragon pendant necklace\":\"dragon-pendant-necklace-for-gift-giving\",\"bear charm necklace\":\"bear-charm-necklace\",\"chick pendant necklace\":\"chick-pendant-necklace-for-bird-lovers\",\"ballet shoes pendant\":\"ballet-shoes-pendant-necklace\",\"lotus pendant necklace\":\"lotus-pendant-necklace-for-flower-lovers\",\"graduation cap pendant necklace\":\"graduation-cap-pendant-necklace-for-teachers\",\"initial charm necklace\":\"initial-charm-necklace\",\"puzzle piece beady charm necklace\":\"puzzle-piece-beady-charm-necklace-on-beady-chain-for-best-friends\",\"map of palestine charm huggie hoops\":\"map-of-palestine-charm-huggie-hoops-for-beach-lovers\",\"steamboat willie mickey\":\"steamboat-willie-mickey-necklace\",\"comedy tragedy mask pendant necklace\":\"comedy-tragedy-mask-pendant-necklace-for-everyday-layering\",\"apple charm with\":\"apple-charm-with-necklace\",\"fire department badge\":\"fire-department-badge\",\"music note pendant necklace\":\"music-note-pendant-necklace-for-friends\",\"chicken stud earrings\":\"chicken-stud-earrings\",\"rock on stud\":\"rock-on-stud\",\"sunflower necklace\":\"sunflower-necklace\",\"ballet charm stud earrings\":\"ballet-charm-stud-earrings-for-dancers\",\"hockey stick pendant necklace\":\"hockey-stick-pendant-necklace-for-everyday-layering\",\"leaping bunny pendant necklace\":\"leaping-bunny-pendant-necklace-for-animal-lovers\",\"running shoe pendant necklace\":\"running-shoe-pendant-necklace-for-birthdays\",\"bunny charm huggie\":\"bunny-charm-huggie\",\"compass disc charm necklace\":\"compass-disc-charm-necklace-for-guidance-and-direction\",\"otter charm necklace\":\"otter-charm-necklace\",\"swan charm necklace\":\"swan-charm\",\"horse pendant necklace\":\"horse-pendant-necklace-for-everyday-layering\",\"wolf pendant necklace\":\"wolf-pendant-necklace-for-animal-lovers\",\"caduceus pendant necklace\":\"caduceus-pendant-necklace-for-everyday-layering\",\"dachshund earrings animal\":\"dachshund-earrings-animal\",\"dainty cut out fox necklace\":\"dainty-cut\",\"monkey charm necklace\":\"monkey-charm-necklace\",\"apple charm necklace\":\"apple-charm-necklace\",\"dainty cowboy boot necklace\":\"dainty-cowboy\",\"hockey skate pendant necklace\":\"hockey-skate-pendant-necklace-for-moms-and-mothers-day\",\"mountain pendant necklace\":\"mountain-pendant-necklace-for-christmas\",\"swan studs 14k\":\"swan-studs-14k\",\"cute rubber ducky necklace\":\"cute-rubber\",\"graduation cap charm necklace\":\"graduation-cap\",\"running shoe necklace\":\"running-shoe\",\"runner earrings sports\":\"runner-earrings-sports\",\"dove of peace pendant necklace\":\"dove-of-peace-pendant-necklace-for-bird-lovers\",\"running horse charm\":\"running-horse-charm-necklace\",\"blooming dandelion pendant necklace\":\"blooming-dandelion-pendant-necklace-for-flower-lovers\",\"caduceus charm stud earrings\":\"caduceus-charm-stud-earrings-for-everyday-layering\",\"horse huggie hoops\":\"horse-huggie-hoops\",\"raccoon charm stud earrings\":\"raccoon-charm-stud-earrings-for-everyday-layering\",\"scuba diver earring 14k goggle charm stud earrings\":\"scuba-diver-earring-14k-goggle-charm-stud-earrings-for-beach-lovers\",\"cheerleading team jewelry\":\"cheerleading-team-jewelry\",\"labrador pendant necklace\":\"labrador-pendant-necklace-for-dog-lovers\",\"owl charm necklace\":\"owl-charm-necklace-on-beady-chain-for-bird-lovers\",\"heron bird pendant necklace\":\"heron-bird-pendant-necklace-for-bird-lovers\",\"lion necklace lion\":\"lion-necklace-lion\",\"peach pendant necklace\":\"peach-pendant-necklace-for-food-lovers\",\"pisces zodiac stud\":\"pisces-zodiac-stud\",\"gecko necklace\":\"gecko-necklace\",\"jupiter necklace\":\"jupiter-necklace\",\"mountain charm necklace\":\"mountain-charm-necklace\",\"initial charm huggie hoops\":\"initial-charm-huggie-hoops-for-gift-giving\",\"police badge necklace\":\"police-badge\",\"theatre mask pendant necklace\":\"theatre-mask-pendant-necklace-for-everyday-layering\",\"mini volleyball necklace\":\"mini-volleyball\",\"lion pendant necklace\":\"lion-pendant-necklace-for-everyday-layering\",\"ram pendant necklace\":\"ram-pendant-necklace-for-animal-lovers\",\"flag pendant necklace\":\"flag-pendant-necklace-for-everyday-layering\",\"dachshund charm earrings\":\"dachshund-charm-earrings-for-dog-lovers\",\"handcrafted elephant hoop\":\"handcrafted-elephant-hoop\",\"hippopotamus zoo pendant necklace\":\"hippopotamus-zoo-pendant-necklace-for-moms-and-mothers-day\",\"jesus fish faith pendant necklace\":\"jesus-fish-faith-pendant-necklace-for-beach-lovers\",\"manta ray charm stud earrings\":\"manta-ray-charm-stud-earrings-for-beach-lovers\",\"orca earrings killer\":\"orca-earrings-killer\",\"raccoon pendant necklace\":\"raccoon-pendant-necklace-for-moms-and-mothers-day\",\"tiny tag necklace\":\"tiny-tag-necklace\",\"dinosaur charm necklace\":\"dinosaur-charm-necklace\",\"map of palestine pendant necklace\":\"map-of-palestine-pendant-necklace-for-gift-giving\",\"lemon charm pendant\":\"lemon-charm-pendant-necklace\",\"pansy flower necklace\":\"pansy-flower\",\"gold bunny earrings\":\"gold-bunny-earrings\",\"zoo animal charm pendant\":\"zoo-animal-charm-pendant-for-animal-lovers\",\"mama bear necklace\":\"mama-bear\",\"medical caduceus pendant\":\"medical-caduceus-pendant-necklace\",\"bicycle charm stud earrings\":\"bicycle-charm-stud-earrings-for-everyday-layering\",\"bullseye pendant necklace\":\"bullseye-pendant-necklace-for-everyday-layering\",\"monogram pendant necklace\":\"monogram-pendant-necklace-for-everyday-layering\",\"sea turtle pendant necklace\":\"sea-turtle-pendant-necklace-for-gift-giving\",\"leaf pendant necklace\":\"leaf-pendant-necklace-for-everyday-layering\",\"cherry blossom stud\":\"cherry-blossom-stud\",\"fox lover pendant necklace\":\"fox-lover-pendant-necklace-for-animal-lovers\",\"capybara pendant\":\"capybara-pendant\",\"lightning bolt thunderbolt charm necklace\":\"lightning-bolt-thunderbolt-charm-necklace-for-birthdays\",\"dragon charm necklace\":\"dragon-charm-necklace\",\"heart pendant necklace\":\"heart-pendant-necklace-for-christmas-gift-giving\",\"poodle charm necklace\":\"poodle-charm-necklace-on-beady-chain-for-dog-lovers\",\"saturn pendant necklace\":\"saturn-pendant-necklace-for-celestial-layering\",\"paperclip earrings\":\"paperclip-earrings\",\"four leaf clover pendant necklace\":\"four-leaf-clover-pendant-necklace-for-good-luck\",\"dumpster fire pendant necklace\":\"dumpster-fire-pendant-necklace-for-everyday-layering\",\"number pendant necklace\":\"number-pendant-necklace-for-moms-and-mothers-day\",\"aztec dragon pendant necklace\":\"aztec-dragon-pendant-necklace-for-moms-and-mothers-day\",\"bear pendant necklace\":\"bear-pendant-necklace-for-moms-and-mothers-day\",\"book lover charm pendant\":\"book-lover-charm-pendant-for-teachers\",\"volleyball huggie hoop\":\"volleyball-huggie-hoop\",\"baseball charm necklace\":\"baseball-charm-necklace-on-beady-chain-for-everyday-layering\",\"cancer ribbon earring\":\"cancer-ribbon-earring\",\"cherry blossom charm\":\"cherry-blossom-charm\",\"lyre harp music charm necklace\":\"lyre-harp\",\"panda charm necklace\":\"panda-charm-necklace-on-beady-chain-for-animal-lovers\",\"space charm huggie\":\"space-charm-huggie\",\"science laboratory flasks pendant necklace\":\"science-laboratory-flasks-pendant-necklace-for-teachers\",\"dna pendant necklace\":\"dna-pendant-necklace-for-birthdays-gift-giving\",\"maple leaf pendant necklace\":\"maple-leaf-pendant-necklace-for-canadians\",\"baby bear charm earrings\":\"baby-bear-charm-earrings-for-moms-and-mothers-day\",\"flying hawk earrings\":\"flying-hawk-earrings\",\"star of david charm huggie hoops\":\"star-of-david-charm-huggie-hoops-for-celestial-layering\",\"chicken charm stud earrings\":\"chicken-charm-stud-earrings-for-everyday-layering\",\"chicken bar necklace\":\"chicken-bar-necklace-for-bird-lovers-gift-giving\",\"hamster pendant necklace\":\"hamster-pendant-necklace-for-birthdays\",\"lobster pendant necklace\":\"lobster-pendant-necklace-for-beach-lovers\",\"beaver charm earrings\":\"beaver-charm-earrings-for-canadians-gift-giving\",\"cherry blossom flower\":\"cherry-blossom-flower-necklace\",\"hockey stick pendant\":\"custom-hockey\",\"crab pendant necklace\":\"crab-pendant-necklace-for-everyday-layering\"}");
+
 function bsNorm(x) { return String(x == null ? "" : x).replace(/\s+/g, " ").trim().toLowerCase(); }
 function bestSellerLookup(rows) {
   const bySku = {}, byTitle = {};
@@ -147,22 +156,34 @@ function bestSellerLookup(rows) {
   });
   return { bySku, byTitle };
 }
+function bsRowKey(r) { return bsNorm(r.name) + "::" + (r.skus || []).map(bsNorm).sort().join("|"); }
 async function loadBestSellers() {
   const f = fb();
-  if (!f) return BEST_SELLERS_SEED;
+  const seedRows = () => BEST_SELLERS_SEED.map(function (r) {
+    return { rank: r.rank, name: r.name, skus: r.skus || [], orders: r.orders || 0, live: 0,
+             handle: BS_HANDLE_SEED[bsNorm(r.name)] || null, productId: null };
+  });
+  if (!f) return seedRows();
   try {
     const ref = f.db.collection("Brites_Editor_Meta").doc("bestSellers");
     const snap = await ref.get();
-    if (snap.exists && Array.isArray((snap.data() || {}).rows) && snap.data().rows.length) return snap.data().rows;
-    await ref.set({ rows: BEST_SELLERS_SEED, source: "seed", updatedAt: f.FV.serverTimestamp() });
+    const data = snap.exists ? (snap.data() || {}) : {};
+    if (Array.isArray(data.rows) && data.rows.length && data.v === BS_LIST_VERSION) return data.rows;
+    // (Re)seed from the canonical CSV; carry over live sales + verified handles from any prior list.
+    const prevByKey = {}; (Array.isArray(data.rows) ? data.rows : []).forEach(function (r) { const k = bsRowKey(r); if (!(k in prevByKey)) prevByKey[k] = r; });
+    const rows = seedRows().map(function (r) {
+      const p = prevByKey[bsRowKey(r)] || {};
+      return Object.assign(r, { live: Number(p.live) || 0, handle: p.handle || r.handle, productId: p.productId || null });
+    });
+    await ref.set({ rows, v: BS_LIST_VERSION, source: "csv-seed", updatedAt: f.FV.serverTimestamp() });
     try {
       const csv = "Rank,Item Name,SKU,Number of Orders\n" + BEST_SELLERS_SEED.map(function (r) {
         return [r.rank, JSON.stringify(r.name), JSON.stringify((r.skus || []).join(", ")), r.orders].join(",");
       }).join("\n");
       await f.bucket.file("brites/best-sellers/top-200.csv").save(csv, { contentType: "text/csv" });
     } catch (e) { console.warn("[shopifyEditor] best-sellers CSV archive failed:", e.message); }
-    return BEST_SELLERS_SEED;
-  } catch (e) { console.warn("[shopifyEditor] loadBestSellers fell back to seed:", e.message); return BEST_SELLERS_SEED; }
+    return rows;
+  } catch (e) { console.warn("[shopifyEditor] loadBestSellers fell back to seed:", e.message); return seedRows(); }
 }
 async function loadPricingScheme() {
   const f = fb();
@@ -208,6 +229,129 @@ async function addToBestSellersCollection(prod) {
   }
   return { added: false, id: coll.id, title: coll.title, note: "Smart collection without a tag rule — can't auto-add" };
 }
+
+/* ===================== Best Sellers: verify + reconcile (the source of truth is the CSV list) ===
+   The site was showing MORE best sellers than the Top-200 list because membership was only ever
+   ADDED to (products or tags), never reconciled. These two functions make the Firestore list
+   authoritative:
+     verifyBestSellerHandles  resolves every row to a real product (handle-map guess -> live handle
+                              check -> SKU search -> title search) and stores handle + product id.
+     syncBestSellersCollection makes the Shopify Best Sellers collection EXACTLY equal the list:
+                              adds missing members, REMOVES extras, writes brites.bs_rank metafields
+                              (the collection template renders them), and for manual collections
+                              enforces rank order. Ranks = CSV orders + live site sales.          */
+function bsEsc(s) { return String(s || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"'); }
+async function verifyBestSellerHandles({ force } = {}) {
+  const f = fb();
+  const rows = await loadBestSellers();
+  const need = rows.map(function (r, i) { return { r: r, i: i }; }).filter(function (x) { return force || !x.r.productId; });
+  if (!need.length) return { rows, resolved: 0, unresolved: [] };
+  // Pass 1 — verify handle guesses in aliased batches of 20.
+  const withHandle = need.filter(function (x) { return x.r.handle; });
+  for (let c = 0; c < withHandle.length; c += 20) {
+    const chunk = withHandle.slice(c, c + 20);
+    const q = "query { " + chunk.map(function (x, j) {
+      return "h" + j + ': products(first: 1, query: "handle:\'' + bsEsc(x.r.handle) + '\'") { edges { node { id handle } } }';
+    }).join(" ") + " }";
+    try {
+      const d = await gql(q);
+      chunk.forEach(function (x, j) {
+        const node = (((d["h" + j] || {}).edges || [])[0] || {}).node;
+        if (node && node.id) { x.r.productId = node.id; x.r.handle = node.handle; }
+      });
+    } catch (e) { console.warn("[bestSellers] handle-verify batch failed:", e.message); }
+  }
+  // Pass 2 — anything still unresolved: SKU search, then title search (one row at a time; few remain).
+  const unresolved = [];
+  for (const x of need) {
+    if (x.r.productId) continue;
+    let node = null;
+    for (const sk of (x.r.skus || [])) {
+      try {
+        const d = await gql('query { products(first: 1, query: "sku:\'' + bsEsc(sk) + '\'") { edges { node { id handle } } } }');
+        node = (((d.products || {}).edges || [])[0] || {}).node || null;
+        if (node) break;
+      } catch (e) {}
+    }
+    if (!node) {
+      try {
+        const d = await gql('query { products(first: 1, query: "title:\'' + bsEsc(String(x.r.name).slice(0, 60)) + '\'") { edges { node { id handle } } } }');
+        node = (((d.products || {}).edges || [])[0] || {}).node || null;
+      } catch (e) {}
+    }
+    if (node && node.id) { x.r.productId = node.id; x.r.handle = node.handle; }
+    else unresolved.push({ rank: x.r.rank, name: x.r.name });
+  }
+  if (f) { try { await f.db.collection("Brites_Editor_Meta").doc("bestSellers").set({ rows, v: BS_LIST_VERSION, updatedAt: f.FV.serverTimestamp() }, { merge: true }); } catch (e) {} }
+  return { rows, resolved: need.length - unresolved.length, unresolved };
+}
+async function syncBestSellersCollection({ force } = {}) {
+  const ver = await verifyBestSellerHandles({ force: !!force });
+  const rows = ver.rows;
+  const coll = await findBestSellersCollection();
+  if (!coll) return { ok: false, note: "No 'Best Sellers' collection found in this store" };
+  // Rank = CSV baseline orders + live site sales; duplicates (same product on multiple rows) keep the best rank.
+  const ranked = rows.slice().sort(function (a, b) {
+    return ((b.orders + (b.live || 0)) - (a.orders + (a.live || 0))) || ((a.rank || 9999) - (b.rank || 9999));
+  });
+  const want = []; const seenIds = new Set();
+  ranked.forEach(function (r) {
+    if (r.productId && !seenIds.has(r.productId)) { seenIds.add(r.productId); want.push({ id: r.productId, rank: want.length + 1, name: r.name }); }
+  });
+  // Current members (paginate).
+  const members = []; let after = null, guard = 0;
+  do {
+    const d = await gql("query($id: ID!, $after: String) { collection(id: $id) { products(first: 250, after: $after) { pageInfo { hasNextPage endCursor } edges { node { id handle } } } } }", { id: coll.id, after });
+    const c = ((d.collection || {}).products) || {};
+    (c.edges || []).forEach(function (e) { if (e && e.node) members.push(e.node); });
+    after = (c.pageInfo && c.pageInfo.hasNextPage) ? c.pageInfo.endCursor : null;
+  } while (after && ++guard < 30);
+  const wantIds = new Set(want.map(function (w) { return w.id; }));
+  const toAdd = want.filter(function (w) { return !members.some(function (m) { return m.id === w.id; }); }).map(function (w) { return w.id; });
+  const extras = members.filter(function (m) { return !wantIds.has(m.id); }).map(function (m) { return m.id; });
+  let added = 0, removed = 0, note = null, reordered = false;
+  if (!coll.ruleSet) {
+    for (let c = 0; c < toAdd.length; c += 50) {
+      const d = await gql("mutation($id: ID!, $pids: [ID!]!) { collectionAddProducts(id: $id, productIds: $pids) { userErrors { message } } }", { id: coll.id, pids: toAdd.slice(c, c + 50) });
+      if (!((d.collectionAddProducts || {}).userErrors || []).length) added += Math.min(50, toAdd.length - c);
+    }
+    for (let c = 0; c < extras.length; c += 50) {
+      const d = await gql("mutation($id: ID!, $pids: [ID!]!) { collectionRemoveProducts(id: $id, productIds: $pids) { userErrors { message } } }", { id: coll.id, pids: extras.slice(c, c + 50) });
+      if (!((d.collectionRemoveProducts || {}).userErrors || []).length) removed += Math.min(50, extras.length - c);
+    }
+    // Rank order = display order on a manual collection.
+    try { await gql("mutation($input: CollectionInput!) { collectionUpdate(input: $input) { userErrors { message } } }", { input: { id: coll.id, sortOrder: "MANUAL" } }); } catch (e) {}
+    try {
+      const moves = want.map(function (w, i) { return { id: w.id, newPosition: String(i) }; });
+      await gql("mutation($id: ID!, $moves: [MoveInput!]!) { collectionReorderProducts(id: $id, moves: $moves) { userErrors { message } } }", { id: coll.id, moves });
+      reordered = true;
+    } catch (e) { note = "reorder skipped: " + e.message; }
+  } else {
+    const tagRule = ((coll.ruleSet || {}).rules || []).find(function (r) { return r.column === "TAG" && r.relation === "EQUALS"; });
+    if (tagRule) {
+      const tag = tagRule.condition;
+      for (const id of toAdd) { try { await gql("mutation($id: ID!, $tags: [String!]!) { tagsAdd(id: $id, tags: $tags) { userErrors { message } } }", { id, tags: [tag] }); added++; } catch (e) {} }
+      for (const id of extras) { try { await gql("mutation($id: ID!, $tags: [String!]!) { tagsRemove(id: $id, tags: $tags) { userErrors { message } } }", { id, tags: [tag] }); removed++; } catch (e) {} }
+      note = "smart collection synced via tag '" + tag + "' (display order is Shopify's; rank badges come from bs_rank metafields)";
+    } else {
+      note = "Smart collection without a TAG rule — membership can't be synced automatically. Convert to a manual collection or add a tag rule.";
+    }
+  }
+  // Rank metafields — the collection template renders p.metafields.brites.bs_rank as the badge.
+  let ranksWritten = 0;
+  for (let c = 0; c < want.length; c += 25) {
+    const chunk = want.slice(c, c + 25);
+    try {
+      const d = await gql("mutation($metafields: [MetafieldsSetInput!]!) { metafieldsSet(metafields: $metafields) { userErrors { message } } }",
+        { metafields: chunk.map(function (w) { return { ownerId: w.id, namespace: "brites", key: "bs_rank", type: "number_integer", value: String(w.rank) }; }) });
+      if (!((d.metafieldsSet || {}).userErrors || []).length) ranksWritten += chunk.length;
+    } catch (e) { console.warn("[bestSellers] metafieldsSet failed:", e.message); }
+  }
+  return { ok: true, collection: coll.title, listSize: rows.length, uniqueProducts: want.length,
+           membersBefore: members.length, added, removed, ranksWritten, reordered,
+           unresolved: ver.unresolved, note };
+}
+
 
 const API_VERSION = process.env.SHOPIFY_API_VERSION || "2025-10";
 
@@ -373,6 +517,15 @@ exports.handler = async function (event) {
     const action = q.action || body.action;
 
     switch (action) {
+
+      /* ---------- BEST SELLERS (canonical Top-200 list) ---------- */
+
+      case "bestSellers": {
+        return reply(200, { v: BS_LIST_VERSION, rows: await loadBestSellers() });
+      }
+      case "syncBestSellers": {
+        return reply(200, await syncBestSellersCollection({ force: !!(body && body.force) }));
+      }
 
       /* ---------- READS ---------- */
 

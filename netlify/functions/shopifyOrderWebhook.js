@@ -84,7 +84,7 @@ function attributionFrom(payload) {
 
 function lineItemsFrom(payload) {
   const li = Array.isArray(payload.line_items) ? payload.line_items : [];
-  return li.map(x => ({ title: String(x.title || x.name || "").trim(), qty: Number(x.quantity) || 1 })).filter(it => it.title).slice(0, 25);
+  return li.map(x => ({ title: String(x.title || x.name || "").trim(), sku: String(x.sku || "").trim(), qty: Number(x.quantity) || 1 })).filter(it => it.title || it.sku).slice(0, 25);
 }
 
 function refundAmount(payload) {
@@ -130,6 +130,12 @@ exports.handler = async (event) => {
       const currency = payload.currency || payload.presentment_currency || undefined;
       const attr = attributionFrom(payload);
       const items = lineItemsFrom(payload);
+      // Canonical Top-200 best sellers: ongoing site sales increment counts on the FIXED CSV list
+      // (matched by SKU, then title; unmatched items are ignored — membership never grows here).
+      if (topic === "orders/paid") {
+        try { const bs = await E.bumpBestSellers(items); if (bs && bs.matched) LOG("bestSellers +", bs.matched, "item(s)"); }
+        catch (e) { LOG("bestSellers bump ERROR", e.message); }
+      }
       const clickId = gclid || gbraid || wbraid || null;
 
       if (!clickId) {
