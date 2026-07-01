@@ -922,9 +922,41 @@ async function keywordDiag({ keyword, geo } = {}) {
   _kpAttempt = null; // force a fresh discovery so the diagnostic tests every path
   const r = await keywordResearch([kw], (geo && geo.length) ? geo : ["2124"]);
   const modeLabel = { mcc: "via manager (login-customer-id = MCC)", cid: "client account direct (login-customer-id = account)", none: "no login-customer-id header", mgr: "manager account as data source (customers/" + LOGIN_CID + ")" };
+  // ---- SCAN PROBE: reproduce the opportunity-scan's EXACT keyword path (real defaultCountries geo +
+  // the real seed phrases from the most recent scan) so the reason an opp falls back to AI estimates is
+  // visible instead of guessed. Read-only. Read scanProbe.verdict for the plain-English diagnosis.
+  let scanProbe = null;
+  try {
+    const ctrl = await control();
+    const scanGeo = (Array.isArray(ctrl.defaultCountries) && ctrl.defaultCountries.length) ? ctrl.defaultCountries : ["2124"];
+    const geoResolved = scanGeo.map(g => `geoTargetConstants/${String(g).replace(/\D/g, "")}`).filter(g => /\d/.test(g));
+    let realSeeds = [];
+    try {
+      const f2 = fb();
+      if (f2) {
+        const s = await f2.db.collection(COL.state).doc("opportunities").get();
+        const lst = (s.exists && Array.isArray((s.data() || {}).list)) ? s.data().list : [];
+        realSeeds = [...new Set(lst.flatMap(o => (o.keywords || []).map(k => String(typeof k === "string" ? k : (k && k.text) || "").toLowerCase())).filter(Boolean))].slice(0, 15);
+      }
+    } catch (e) {}
+    if (!realSeeds.length) realSeeds = [kw];
+    const rp = await keywordResearch(realSeeds, scanGeo); // live call: real geo + real scan seeds
+    const returned = new Set((rp.ideas || []).map(i => String(i.text || "").toLowerCase()));
+    const seedsMatched = realSeeds.filter(s => returned.has(s));
+    let verdict;
+    if (geoResolved.length === 0) verdict = "GEO BROKEN: defaultCountries resolves to zero valid geoTargetConstants — the Keyword Planner request is malformed.";
+    else if (!rp.ok) verdict = "API CALL FAILED with real seeds/geo (status " + (rp.status || "?") + "): " + (rp.error || "unknown") + ".";
+    else if (seedsMatched.length === 0) verdict = "CALL OK but 0 of " + realSeeds.length + " opportunity seeds were returned by Keyword Planner (niche/low-volume phrases have no data). Exact-match merge finds nothing, so each opp falls back to AI estimates. " + (rp.ideas || []).length + " RELATED ideas WERE returned (the related-idea fallback now uses these).";
+    else verdict = "CALL OK and " + seedsMatched.length + "/" + realSeeds.length + " seeds matched exactly — scan should show live data.";
+    scanProbe = { verdict, geoRaw: scanGeo, geoResolved, geoResolvedCount: geoResolved.length,
+      liveCallOk: !!rp.ok, status: rp.status || null, error: rp.error || null,
+      seedsTested: realSeeds, seedsTestedCount: realSeeds.length,
+      relatedIdeasReturned: (rp.ideas || []).length, seedsMatchedExactly: seedsMatched, seedsMatchedCount: seedsMatched.length };
+  } catch (e) { scanProbe = { verdict: "probe threw: " + (e && e.message), error: e && e.message }; }
   return { ok: !!r.ok, status: r.status || null, error: r.error || null, ideaCount: (r.ideas || []).length,
     authMode: r.authMode || null, authModeLabel: r.authMode ? modeLabel[r.authMode] : null, triedModes: r.triedModes || (r.authMode ? [r.authMode] : null),
     sample: (r.ideas || []).slice(0, 6).map(i => ({ text: i.text, searches: i.searches, competition: i.competition, competitionIndex: i.competitionIndex, low: _r2(i.low), high: _r2(i.high) })),
+    scanProbe,
     request: { endpoint: `customers/${CID}:generateKeywordIdeas`, customerId: CID, loginCustomerId: LOGIN_CID || null, version: V, seed: kw } };
 }
 // Back-compat wrapper: a real-only research object (used by custom builds, which have no AI seeds).
@@ -1938,7 +1970,20 @@ Only include opportunities genuinely relevant within ~30 days. Rank best-first (
     const handle = byTitle[t] || (collections.find(c => c.title.toLowerCase().indexOf(t) >= 0) || {}).handle || null;
     const mem = memory.find(m => m.occasion && String(m.occasion).toLowerCase() === String(o.occasion).toLowerCase());
     // Pull this opportunity's own seeds out of the shared pool; merge real data OVER the model's research.
-    const oppIdeas = pool.ok ? _oppTexts(o).map(x => pool.ideasByText[String(x).toLowerCase()]).filter(Boolean) : [];
+    // Real data OVER the model's research. Exact-seed matches first (a seed Keyword Planner returned
+    // with data). But KP only returns a keyword when it HAS data, so niche/long-tail opportunity seeds
+    // usually aren't returned verbatim — leaving an opp with zero real ideas and a silent AI-estimate
+    // fallback even though the pool call succeeded. So when there's no exact match, we supplement with
+    // the RELATED ideas KP DID return for this opp's DISTINCTIVE terms (its theme words, not the generic
+    // "necklace/charm/gift" tokens shared by every opp). Still real market data, correctly scoped.
+    let oppIdeas = pool.ok ? _oppTexts(o).map(x => pool.ideasByText[String(x).toLowerCase()]).filter(Boolean) : [];
+    if (pool.ok && !oppIdeas.length) {
+      const _GEN = new Set(["necklace","necklaces","charm","charms","jewelry","jewellery","pendant","pendants","gift","gifts","for","the","and","with","personalized","personalised","custom","dainty","tiny","mini"]);
+      const distinctive = new Set(_oppTexts(o).flatMap(s => String(s).toLowerCase().split(/\s+/)).filter(w => w.length > 2 && !_GEN.has(w)));
+      if (distinctive.size) {
+        oppIdeas = Object.values(pool.ideasByText).filter(idea => String(idea.text || "").toLowerCase().split(/\s+/).some(t => distinctive.has(t))).slice(0, 20);
+      }
+    }
     const kpForOpp = pool.ok ? { ok: true, ideas: oppIdeas, status: pool.status } : { ok: false, error: pool.error, status: pool.status };
     const merged = mergeKeywordResearch(o.keywords, kpForOpp);
     merged.error = pool.ok ? null : (pool.error || null);
