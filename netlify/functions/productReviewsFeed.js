@@ -23,11 +23,24 @@
 //   GET  (default)        -> the full XML feed (gzipped when Accept-Encoding: gzip)
 //   GET  ?stats=1         -> JSON summary (counts, by-rating, identifier coverage)
 //   GET  ?pretty=1        -> human-readable indented XML (testing only)
+//   GET  ?audit=1         -> JSON: probes each product_url and reports how many
+//                            reviews point to a LIVE vs RENAMED vs DEAD handle.
+//                            This is the "why aren't my stars showing" diagnostic:
+//                            a review can be valid ("Ready to serve") yet still
+//                            match nothing if its handle URL 404s or 301-redirects
+//                            to a different canonical than the product feed uses.
+//                            Optional: &offset=N &limit=M &conc=K for chunking.
 //
 // Required env: FIREBASE_* (consumed by ./firebaseAdmin). No Shopify creds here.
 // ---------------------------------------------------------------------------
 
 const zlib = require("zlib");
+
+// fetch: use the Node 18+ global; fall back to node-fetch (in package.json) on
+// older runtimes. Used only by the ?audit=1 probe — the feed itself is Shopify-free.
+const _fetch = (typeof globalThis !== "undefined" && globalThis.fetch)
+  ? globalThis.fetch.bind(globalThis)
+  : require("node-fetch");
 
 /* ─── Firebase (shared admin module, identical to reviews.js) ────────────── */
 let _fb = null;
@@ -173,6 +186,7 @@ async function buildFeed(pretty) {
   const blocks = [];
   const byRating = { "1": 0, "2": 0, "3": 0, "4": 0, "5": 0 };
   const products = new Set();
+  const handleInfo = {};   // handle -> { reviews, gtin, sku }  (drives ?audit=1)
   let total = 0, included = 0;
   let withGtin = 0, withSku = 0, withAnyId = 0, withNone = 0;
   const skipped = { notApproved: 0, badRating: 0, noHandle: 0, noBody: 0, badDate: 0 };
@@ -208,6 +222,11 @@ async function buildFeed(pretty) {
     included++;
     byRating[String(rating)]++;
     products.add(handle);
+
+    const hi = handleInfo[handle] || (handleInfo[handle] = { reviews: 0, gtin: false, sku: false });
+    hi.reviews++;
+    if (gtinOk) hi.gtin = true;
+    if (skuOk)  hi.sku  = true;
   });
 
   const nl = pretty ? "\n" : "";
@@ -244,7 +263,97 @@ async function buildFeed(pretty) {
     schema_version: FEED_VERSION,
     generated_at: new Date().toISOString()
   };
-  return { xml, stats };
+  return { xml, stats, handleInfo };
+}
+
+/* ─── ?audit=1 : does each product_url actually resolve to a live product? ──
+   For handmade goods with no GTIN, Google matches a review to a product almost
+   entirely by product_url. A review can be perfectly valid ("Ready to serve")
+   yet still show no stars if its handle:
+     • 404s  (dead)       — product was deleted or the crosswalk guessed wrong, or
+     • 301s  (renamed)    — Shopify kept a redirect, but the product feed's canonical
+                            link is now a DIFFERENT handle, so Google won't credit it.
+   We probe britesjewelry.com/products/{handle} with redirects turned OFF and read
+   the raw status. Then we tally how many *reviews* (not just handles) land in each
+   bucket, which is the real "why aren't my stars showing" number. ------------- */
+function classifyStatus(status) {
+  if (status === 200) return "live";
+  if ([301, 302, 303, 307, 308].includes(status)) return "redirected";
+  if (status === 404 || status === 410) return "dead";
+  return "other";
+}
+
+async function probeHandle(handle, timeoutMs) {
+  const url = SHOP_URL + "/products/" + clean(handle);
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    let res = await _fetch(url, { method: "HEAD", redirect: "manual", signal: ctrl.signal });
+    let status = res.status;
+    if (status === 405 || status === 501) { // some hosts refuse HEAD — retry GET (body ignored)
+      res = await _fetch(url, { method: "GET", redirect: "manual", signal: ctrl.signal });
+      status = res.status;
+    }
+    let location = "";
+    if (status >= 300 && status < 400) {
+      try { location = res.headers.get("location") || ""; } catch (e) { location = ""; }
+    }
+    return { status, location };
+  } catch (e) {
+    return { status: 0, error: (e && e.name === "AbortError") ? "timeout" : ((e && e.message) || "error") };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function runAudit(handleInfo, q) {
+  const handles = Object.keys(handleInfo).sort();
+  const total = handles.length;
+  const offset = Math.max(0, parseInt(q.offset || "0", 10) || 0);
+  const limit  = Math.max(1, parseInt(q.limit || String(total), 10) || total);
+  const conc   = Math.min(60, Math.max(1, parseInt(q.conc || "40", 10) || 40));
+  const budgetMs  = 8500;   // stop pulling new probes past this; return next_offset
+  const timeoutMs = 4000;   // per-probe abort
+  const started = Date.now();
+
+  const slice = handles.slice(offset, offset + limit);
+  const res = {
+    live:       { handles: 0, reviews: 0 },
+    redirected: { handles: 0, reviews: 0 },
+    dead:       { handles: 0, reviews: 0 },
+    other:      { handles: 0, reviews: 0 }
+  };
+  const samples = { redirected: [], dead: [], other: [] };
+
+  let cursor = 0, processed = 0, stoppedEarly = false;
+  async function worker() {
+    while (cursor < slice.length) {
+      if (Date.now() - started > budgetMs) { stoppedEarly = true; return; }
+      const h = slice[cursor++];
+      const info = handleInfo[h] || { reviews: 0 };
+      const { status, location } = await probeHandle(h, timeoutMs);
+      const cls = classifyStatus(status);
+      res[cls].handles++;
+      res[cls].reviews += info.reviews;
+      if (cls !== "live" && samples[cls].length < 30) {
+        const row = { handle: h, reviews: info.reviews, status };
+        if (location) row.redirects_to = location;
+        samples[cls].push(row);
+      }
+      processed++;
+    }
+  }
+  await Promise.all(Array.from({ length: conc }, () => worker()));
+
+  const next_offset = (offset + processed < total) ? (offset + processed) : null;
+  return {
+    distinct_handles: total,
+    probed_this_call: processed,
+    offset, next_offset, stopped_early: stoppedEarly,
+    resolution: res,
+    samples,
+    elapsed_ms: Date.now() - started
+  };
 }
 
 /* ─── small in-memory cache (helps repeat test fetches; short TTL) ───────── */
@@ -271,6 +380,33 @@ exports.handler = async (event) => {
   const q = (event && event.queryStringParameters) || {};
   try {
     const pretty = q.pretty === "1" || q.pretty === "true";
+
+    // Diagnostic: probe every product_url and report live / renamed / dead.
+    if (q.audit === "1" || q.audit === "true") {
+      const { stats, handleInfo } = await getFeed(false);
+      const probe = await runAudit(handleInfo, q);
+      const r = probe.resolution;
+      const matchable = r.live.reviews;
+      const orphaned  = r.redirected.reviews + r.dead.reviews + r.other.reviews;
+      return json(200, {
+        ok: true,
+        what_this_means: "live = product_url returns 200 and can match your product feed. " +
+          "redirected = handle was renamed (Shopify 301 to a different canonical) so Google won't credit it. " +
+          "dead = 404, no such product. 'reviews' counts are the real driver of whether stars show.",
+        totals: {
+          reviews_included: stats.reviews_included,
+          distinct_handles: probe.distinct_handles,
+          reviews_matchable_live: matchable,
+          reviews_orphaned: orphaned
+        },
+        identifier_coverage: stats.identifiers,   // if gtin/sku coverage is high, dead URLs hurt less
+        resolution: r,
+        samples: probe.samples,
+        pagination: { offset: probe.offset, next_offset: probe.next_offset, probed_this_call: probe.probed_this_call, stopped_early: probe.stopped_early },
+        elapsed_ms: probe.elapsed_ms
+      });
+    }
+
     const { xml, stats } = await getFeed(pretty);
 
     if (q.stats === "1" || q.stats === "true") return json(200, stats);
