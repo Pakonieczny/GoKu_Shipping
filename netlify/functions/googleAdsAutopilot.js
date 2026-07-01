@@ -1904,11 +1904,15 @@ async function scanOpportunities({ force, cacheOnly } = {}) {
       const s = await f.db.collection(COL.state).doc("opportunities").get();
       if (s.exists) {
         const x = s.data();
-        if (cacheOnly) return { opportunities: Array.isArray(x.list) ? x.list : [], scannedAt: x.at || null, scanning: !!x.scanning };
+        if (cacheOnly) return { opportunities: Array.isArray(x.list) ? x.list : [], scannedAt: x.at || null, scanning: !!x.scanning, lastError: x.lastError || null, lastErrorAt: x.lastErrorAt || null };
         if (x.at && (Date.now() - x.at) < 12 * 60 * 60 * 1000 && Array.isArray(x.list) && x.list.length) return { opportunities: x.list, scannedAt: x.at };
       } else if (cacheOnly) { return { opportunities: [], scannedAt: null, scanning: false }; }
     } catch (e) { if (cacheOnly) return { opportunities: [], scannedAt: null, scanning: false }; }
   }
+  // ---- Scan pipeline wrapped so a failure ANYWHERE records WHY (readable via lastError) and ALWAYS
+  // clears the scanning flag. Previously the background caller swallowed the error, leaving
+  // scanning:true and stale opportunities on screen forever with no signal as to the cause.
+  try {
   const collections = await getCollections({});
   let products = []; try { products = await fetchTopProducts(); } catch (e) {}
   let memory = [];
@@ -2011,9 +2015,28 @@ Only include opportunities genuinely relevant within ~30 days. Rank best-first (
   }).filter(o => o.collectionHandle)
     .filter(o => o.daysOut <= 32)   // ~30-day forward window: drop anything that starts too far out
     .sort((a, b) => a.daysOut - b.daysOut);
-  if (f && list.length) { try { await f.db.collection(COL.state).doc("opportunities").set({ list, at: Date.now(), scanning: false }); } catch (e) {} }
+  // Persist the fresh list. If THIS write throws (commonly: the doc exceeds Firestore's 1 MiB limit
+  // because keywordData/plan bloat the payload), it was previously swallowed — leaving stale data AND a
+  // stuck scanning flag. Now a write failure retries with a trimmed payload and is always recorded.
+  if (f && list.length) {
+    try { await f.db.collection(COL.state).doc("opportunities").set({ list, at: Date.now(), scanning: false, lastError: null, lastErrorAt: null }); }
+    catch (e) {
+      try {
+        const slim = list.map(o => { const c = Object.assign({}, o); delete c.keywordData; return c; }); // drop heavy per-keyword metrics
+        await f.db.collection(COL.state).doc("opportunities").set({ list: slim, at: Date.now(), scanning: false, lastError: "write trimmed (payload too large): " + (e && e.message), lastErrorAt: Date.now() });
+      } catch (e2) {
+        try { await f.db.collection(COL.state).doc("opportunities").set({ scanning: false, lastError: "WRITE FAILED: " + (e2 && e2.message), lastErrorAt: Date.now() }, { merge: true }); } catch (e3) {}
+      }
+    }
+  }
   else if (f) { try { await f.db.collection(COL.state).doc("opportunities").set({ scanning: false, at: Date.now() }, { merge: true }); } catch (e) {} }
   return { opportunities: list, scannedAt: Date.now() };
+  } catch (scanErr) {
+    // ANY failure in the scan pipeline: record it (console-readable via lastError) and ALWAYS clear
+    // scanning so the UI stops showing stale data. This is the safety net that was missing.
+    if (f) { try { await f.db.collection(COL.state).doc("opportunities").set({ scanning: false, lastError: (scanErr && scanErr.message) || String(scanErr), lastErrorStack: ((scanErr && scanErr.stack) || "").slice(0, 600), lastErrorAt: Date.now() }, { merge: true }); } catch (e) {} }
+    return { opportunities: [], scannedAt: null, error: (scanErr && scanErr.message) || String(scanErr) };
+  }
 }
 
 /* ============ Opportunity ↔ approval ↔ campaign reconciliation ============ */
@@ -2080,7 +2103,7 @@ async function opportunitiesWithStatus({ force, cacheOnly } = {}) {
   // (not "in use", not re-suggested as "unused"). Live/paused/approval states stay,
   // shown with their actual status.
   .filter(o => !(o.acted && o.acted.where === "campaign" && o.acted.status === "REMOVED"));
-  return { opportunities, scannedAt: r.scannedAt, scanning: !!r.scanning, taken };
+  return { opportunities, scannedAt: r.scannedAt, scanning: !!r.scanning, taken, lastError: r.lastError || r.error || null, lastErrorAt: r.lastErrorAt || null };
 }
 
 /* ===================== Force-generate (Draft Bench) ===================== */
