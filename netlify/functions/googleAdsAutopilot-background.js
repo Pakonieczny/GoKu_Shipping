@@ -38,7 +38,22 @@ async function runEvents(ctrl, log) {
   }
 }
 
+// CORS: lets the sync/scan be kicked from the storefront's browser console (the token check
+// below still gates it). Server-to-server calls from the Kick are unaffected.
+const BG_ALLOWED = ["https://britesjewelry.com", "https://www.britesjewelry.com", "https://goldenspike.app", "https://brites-adwords.goldenspike.app"];
+function bgCors(event) {
+  const origin = (event.headers && (event.headers.origin || event.headers.Origin)) || "";
+  return {
+    "Access-Control-Allow-Origin": BG_ALLOWED.includes(origin) ? origin : BG_ALLOWED[0],
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Content-Type": "application/json"
+  };
+}
+
 exports.handler = async (event) => {
+  const CORS = bgCors(event);
+  if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: CORS, body: "ok" };
   const log = [];
   const t0 = startedAt();
   const over = () => Date.now() - t0 > DEADLINE_MS;
@@ -47,7 +62,7 @@ exports.handler = async (event) => {
   let body = {};
   try { body = JSON.parse(event.body || "{}"); } catch {}
   if ((process.env.EDIT_PASSCODE || "") && body.token !== process.env.EDIT_PASSCODE) {
-    return { statusCode: 401, body: JSON.stringify({ error: "unauthorized" }) };
+    return { statusCode: 401, headers: CORS, body: JSON.stringify({ error: "unauthorized" }) };
   }
 
   const ctrl = await E.control();
@@ -63,7 +78,7 @@ exports.handler = async (event) => {
   // HARD KILL SWITCH — blocks anything that could mutate. Read-only analysis still runs.
   if (!ctrl.enabled && !allReadOnly) {
     log.push("autopilot DISABLED (kill switch) — no mutations this run");
-    return { statusCode: 200, body: JSON.stringify({ status: "dormant", log }) };
+    return { statusCode: 200, headers: CORS, body: JSON.stringify({ status: "dormant", log }) };
   }
 
   const result = {};
@@ -74,7 +89,7 @@ exports.handler = async (event) => {
     catch (e) { log.push("anomaly ERROR " + e.message); }
     if (result.anomaly && result.anomaly.tripped) {
       log.push("CIRCUIT BREAKER TRIPPED — autopilot disabled, halting run");
-      return { statusCode: 200, body: JSON.stringify({ status: "tripped", result, log }) };
+      return { statusCode: 200, headers: CORS, body: JSON.stringify({ status: "tripped", result, log }) };
     }
   }
 
@@ -84,7 +99,7 @@ exports.handler = async (event) => {
     catch (e) { log.push("monthly ERROR " + e.message); }
     if (result.monthly && result.monthly.tripped) {
       log.push("MONTHLY CAP REACHED — campaigns paused, autopilot disabled, halting run");
-      return { statusCode: 200, body: JSON.stringify({ status: "capped", result, log }) };
+      return { statusCode: 200, headers: CORS, body: JSON.stringify({ status: "capped", result, log }) };
     }
   }
 
@@ -106,5 +121,5 @@ exports.handler = async (event) => {
     } catch (e) { log.push(task + " ERROR " + e.message); }
   }
 
-  return { statusCode: 200, body: JSON.stringify({ status: "ran", dryRun: !!ctrl.dryRun, result, log }) };
+  return { statusCode: 200, headers: CORS, body: JSON.stringify({ status: "ran", dryRun: !!ctrl.dryRun, result, log }) };
 };
