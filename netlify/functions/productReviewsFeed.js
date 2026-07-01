@@ -275,30 +275,61 @@ async function buildFeed(pretty) {
                             link is now a DIFFERENT handle, so Google won't credit it.
    We probe britesjewelry.com/products/{handle} with redirects turned OFF and read
    the raw status. Then we tally how many *reviews* (not just handles) land in each
-   bucket, which is the real "why aren't my stars showing" number. ------------- */
-function classifyStatus(status) {
+   bucket, which is the real "why aren't my stars showing" number.
+
+   IMPORTANT — pacing: this hits your own live storefront, so it must look like
+   ordinary browsing, not a scraper burst. A first version used 40 concurrent
+   requests and got mass-429'd by Shopify's own rate limiting almost immediately —
+   which would have been wrongly read as "orphaned." So: modest concurrency, a
+   shared minimum gap between request starts (regardless of worker count), a
+   normal browser User-Agent/Accept, and a retry-with-backoff on 429 (honoring
+   Retry-After when present). If a handle STILL 429s after retrying, it goes in
+   its own "rate_limited" bucket — explicitly NOT counted as confirmed-dead —
+   because an unanswered question is not evidence of a broken match. -------- */
+function classifyStatus(status, stillRateLimited) {
+  if (stillRateLimited) return "rate_limited";
   if (status === 200) return "live";
   if ([301, 302, 303, 307, 308].includes(status)) return "redirected";
   if (status === 404 || status === 410) return "dead";
   return "other";
 }
 
-async function probeHandle(handle, timeoutMs) {
-  const url = SHOP_URL + "/products/" + clean(handle);
+const BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// Shared pacing gate: enforces a minimum interval between request STARTS across
+// ALL workers combined (not per-worker), so raising concurrency can't accidentally
+// recreate a burst. Returns a promise that resolves once it's this caller's turn.
+function makePacer(minGapMs) {
+  let nextSlot = Date.now();
+  return async function pace() {
+    const now = Date.now();
+    const wait = Math.max(0, nextSlot - now);
+    nextSlot = Math.max(now, nextSlot) + minGapMs;
+    if (wait) await sleep(wait);
+  };
+}
+
+async function probeOnce(url, timeoutMs) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    let res = await _fetch(url, { method: "HEAD", redirect: "manual", signal: ctrl.signal });
-    let status = res.status;
-    if (status === 405 || status === 501) { // some hosts refuse HEAD — retry GET (body ignored)
-      res = await _fetch(url, { method: "GET", redirect: "manual", signal: ctrl.signal });
-      status = res.status;
-    }
+    const res = await _fetch(url, {
+      method: "GET", redirect: "manual", signal: ctrl.signal,
+      headers: { "User-Agent": BROWSER_UA, "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" }
+    });
     let location = "";
-    if (status >= 300 && status < 400) {
+    if (res.status >= 300 && res.status < 400) {
       try { location = res.headers.get("location") || ""; } catch (e) { location = ""; }
     }
-    return { status, location };
+    let retryAfterMs = 0;
+    if (res.status === 429) {
+      try {
+        const ra = res.headers.get("retry-after");
+        if (ra) retryAfterMs = /^\d+$/.test(ra.trim()) ? Number(ra) * 1000 : Math.max(0, new Date(ra).getTime() - Date.now());
+      } catch (e) {}
+    }
+    return { status: res.status, location, retryAfterMs };
   } catch (e) {
     return { status: 0, error: (e && e.name === "AbortError") ? "timeout" : ((e && e.message) || "error") };
   } finally {
@@ -306,24 +337,45 @@ async function probeHandle(handle, timeoutMs) {
   }
 }
 
+async function probeHandle(handle, timeoutMs, pace) {
+  const url = SHOP_URL + "/products/" + clean(handle);
+  await pace();
+  let r = await probeOnce(url, timeoutMs);
+  if (r.status === 429) {
+    const wait = Math.min(3000, r.retryAfterMs || 900); // honor Retry-After, capped so one slow handle can't eat the whole budget
+    await sleep(wait);
+    await pace();
+    const retry = await probeOnce(url, timeoutMs);
+    if (retry.status === 429) return { status: 429, location: "", stillRateLimited: true };
+    r = retry;
+  }
+  return { status: r.status, location: r.location, stillRateLimited: false, error: r.error };
+}
+
 async function runAudit(handleInfo, q) {
   const handles = Object.keys(handleInfo).sort();
   const total = handles.length;
   const offset = Math.max(0, parseInt(q.offset || "0", 10) || 0);
   const limit  = Math.max(1, parseInt(q.limit || String(total), 10) || total);
-  const conc   = Math.min(60, Math.max(1, parseInt(q.conc || "40", 10) || 40));
-  const budgetMs  = 8500;   // stop pulling new probes past this; return next_offset
+  // Conservative defaults on purpose (see note above) — this is real traffic to
+  // your live store, not a sandboxed target. conc capped at 20 even if requested
+  // higher; pace has a floor of 40ms so it can't be tuned back into a burst.
+  const conc   = Math.min(20, Math.max(1, parseInt(q.conc || "6", 10) || 6));
+  const paceMs = Math.min(2000, Math.max(40, parseInt(q.pace || "90", 10) || 90));
+  const budgetMs  = 8200;   // stop pulling new probes past this; return next_offset
   const timeoutMs = 4000;   // per-probe abort
   const started = Date.now();
+  const pace = makePacer(paceMs);
 
   const slice = handles.slice(offset, offset + limit);
   const res = {
-    live:       { handles: 0, reviews: 0 },
-    redirected: { handles: 0, reviews: 0 },
-    dead:       { handles: 0, reviews: 0 },
-    other:      { handles: 0, reviews: 0 }
+    live:         { handles: 0, reviews: 0 },
+    redirected:   { handles: 0, reviews: 0 },
+    dead:         { handles: 0, reviews: 0 },
+    rate_limited: { handles: 0, reviews: 0 },
+    other:        { handles: 0, reviews: 0 }
   };
-  const samples = { redirected: [], dead: [], other: [] };
+  const samples = { redirected: [], dead: [], rate_limited: [], other: [] };
 
   let cursor = 0, processed = 0, stoppedEarly = false;
   async function worker() {
@@ -331,8 +383,8 @@ async function runAudit(handleInfo, q) {
       if (Date.now() - started > budgetMs) { stoppedEarly = true; return; }
       const h = slice[cursor++];
       const info = handleInfo[h] || { reviews: 0 };
-      const { status, location } = await probeHandle(h, timeoutMs);
-      const cls = classifyStatus(status);
+      const { status, location, stillRateLimited } = await probeHandle(h, timeoutMs, pace);
+      const cls = classifyStatus(status, stillRateLimited);
       res[cls].handles++;
       res[cls].reviews += info.reviews;
       if (cls !== "live" && samples[cls].length < 30) {
@@ -386,23 +438,32 @@ exports.handler = async (event) => {
       const { stats, handleInfo } = await getFeed(false);
       const probe = await runAudit(handleInfo, q);
       const r = probe.resolution;
-      const matchable = r.live.reviews;
-      const orphaned  = r.redirected.reviews + r.dead.reviews + r.other.reviews;
+      const matchable       = r.live.reviews;
+      const confirmedOrphan = r.redirected.reviews + r.dead.reviews;               // definite: won't ever match as-is
+      const unknown         = r.rate_limited.reviews + r.other.reviews;            // inconclusive: re-probe needed
       return json(200, {
         ok: true,
-        what_this_means: "live = product_url returns 200 and can match your product feed. " +
-          "redirected = handle was renamed (Shopify 301 to a different canonical) so Google won't credit it. " +
-          "dead = 404, no such product. 'reviews' counts are the real driver of whether stars show.",
+        what_this_means: "live = product_url returns 200, can match your product feed. " +
+          "redirected = handle was renamed (Shopify 301 to a different canonical), Google won't credit it. " +
+          "dead = 404, no such product. rate_limited = Shopify throttled the probe itself before it could get a real " +
+          "answer for that handle — this is INCONCLUSIVE, not evidence of a broken match; re-probe it (see pagination). " +
+          "'reviews' counts (not handle counts) are the real driver of whether stars show.",
         totals: {
           reviews_included: stats.reviews_included,
           distinct_handles: probe.distinct_handles,
-          reviews_matchable_live: matchable,
-          reviews_orphaned: orphaned
+          reviews_confirmed_live: matchable,
+          reviews_confirmed_orphaned: confirmedOrphan,
+          reviews_status_unknown: unknown
         },
         identifier_coverage: stats.identifiers,   // if gtin/sku coverage is high, dead URLs hurt less
         resolution: r,
         samples: probe.samples,
         pagination: { offset: probe.offset, next_offset: probe.next_offset, probed_this_call: probe.probed_this_call, stopped_early: probe.stopped_early },
+        how_to_continue: probe.next_offset != null
+          ? `Reopen this URL with &offset=${probe.next_offset} appended to probe the next batch. If resolution.rate_limited is non-zero, wait ~30s before continuing, or add &pace=200&conc=4 to slow it down further.`
+          : (r.rate_limited.handles > 0
+              ? "All handles probed, but some were rate_limited (inconclusive). Wait ~30s, then rerun with &offset=0&pace=200&conc=4 to just re-check those — the rest don't need re-probing."
+              : "All handles probed with a definitive answer — this run is complete."),
         elapsed_ms: probe.elapsed_ms
       });
     }
