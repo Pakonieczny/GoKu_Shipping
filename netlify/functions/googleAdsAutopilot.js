@@ -967,15 +967,27 @@ async function keywordResearchPool(seeds, geoIds, { langId = "1000" } = {}) {
   const cacheKey = _kwCacheKey(uniq, geoKey);
   const cached = await _kwCacheGet(cacheKey);
   if (cached && Object.keys(cached).length) return { ok: true, ideasByText: cached, status: 200, cached: true };
-  const ideasByText = {}; let anyOk = false, lastErr = null, lastStatus = null;
+  const ideasByText = {}; let anyOk = false, lastErr = null, lastStatus = null, brokeEarly = false;
+  // Keyword Planner is rate-limited to ~1 request/sec (a SEPARATE limit from Basic/Standard access,
+  // and NOT lifted by either). A transient 429 must NOT wipe keyword data for the whole scan, so each
+  // chunk is retried with growing backoff before we give up. Only a PERSISTENT 429 (still limited after
+  // every retry) stops the pool. A partial (rate-limited) pool is never cached, so a later scan
+  // re-queries Google instead of inheriting the gap. Retries live HERE, not stacked inside
+  // keywordResearch, so we don't multiply calls and worsen the very rate limit we're absorbing.
+  const _CHUNK_RETRY_MS = [0, 3000, 6000]; // attempt 1 immediate, then wait 3s, then 6s before retrying
   for (let i = 0; i < uniq.length; i += 20) {
     const chunk = uniq.slice(i, i + 20);
-    if (i > 0) await _sleep(_KP_BACKOFF_MS); // serialize: stay under ~1 request/second
-    const r = await keywordResearch(chunk, geoIds, { langId }).catch(e => ({ ok: false, error: e && e.message, status: null }));
+    if (i > 0) await _sleep(_KP_BACKOFF_MS); // serialize between chunks: stay under ~1 request/second
+    let r = null;
+    for (let a = 0; a < _CHUNK_RETRY_MS.length; a++) {
+      if (_CHUNK_RETRY_MS[a]) await _sleep(_CHUNK_RETRY_MS[a]); // let the ~1/sec window clear before retrying
+      r = await keywordResearch(chunk, geoIds, { langId }).catch(e => ({ ok: false, error: e && e.message, status: null }));
+      if (r.ok || r.status !== 429) break; // success, or a non-rate-limit failure → stop retrying this chunk
+    }
     if (r.ok) { anyOk = true; (r.ideas || []).forEach(idea => { const k = String(idea.text || "").toLowerCase(); if (k && !ideasByText[k]) ideasByText[k] = idea; }); }
-    else { lastErr = r.error; lastStatus = r.status; if (r.status === 429) break; } // rate limited: stop, keep what we have
+    else { lastErr = r.error; lastStatus = r.status; if (r.status === 429) { brokeEarly = true; break; } } // still limited after retries → stop, keep what we have
   }
-  if (anyOk) await _kwCacheSet(cacheKey, ideasByText);
+  if (anyOk && !brokeEarly) await _kwCacheSet(cacheKey, ideasByText); // never cache a partial (rate-limited) pool
   return { ok: anyOk, error: anyOk ? null : lastErr, status: lastStatus, ideasByText, cached: false };
 }
 
