@@ -1265,22 +1265,50 @@ function renderOpportunities(){
 }
 function fmtDate(s){ if(!s)return"\u2014"; var d=new Date(s+"T00:00:00"); if(isNaN(d.getTime()))return s; return d.toLocaleDateString(undefined,{month:"short",day:"numeric"}); }
 function daysBtw(a,b){ if(!a||!b)return 0; var d=Math.round((new Date(b+"T00:00:00")-new Date(a+"T00:00:00"))/86400000); return d>0?d:1; }
+/* ONE projection engine, mirrored from the backend (plan.model). Every number the card shows —
+   clicks/day, sales, revenue, spend, ROAS — derives from this single chain, so edits to budget,
+   dates, CPC or bidding re-derive ALL of them together and they can never disagree. */
+function oppModel(o){
+  var p=(o&&o.plan)||{}; var m=p.model||null;
+  if(m) return m;
+  /* Fallback for opportunities cached before the engine upgrade (rescan to refresh): */
+  var lo=(p.cpc&&p.cpc.low)||0, hi=(p.cpc&&p.cpc.max)||0;
+  var eM=(lo>0&&hi>0)?Math.round(Math.sqrt(lo*hi)*100)/100:((p.cpc&&p.cpc.target)||hi||1);
+  return { eCpcMarket:eM, eCpc:eM, cpcLow:lo, cpcHigh:hi, cvr:(p.cvr)||0.02, cvrSource:"benchmark", aov:(p.expected&&p.expected.aov)||0, uncertainty:0.3 };
+}
+function oppProj(o,opts){
+  var m=oppModel(o); opts=opts||{};
+  var bud=+opts.bud>0?+opts.bud:o.recommendedDailyBudget;
+  var days=+opts.days>0?+opts.days:(o.durationDays||28);
+  var cap=+opts.cap>0?+opts.cap:((o.plan&&o.plan.cpc&&o.plan.cpc.max)||m.cpcHigh||1);
+  var smart=!!opts.smart;
+  var eCpc=smart?m.eCpcMarket:Math.min(m.eCpcMarket,cap); if(!(eCpc>0))eCpc=cap>0?cap:1;
+  var cpd=bud/eCpc, clicks=Math.round(cpd*days);
+  var sales=Math.round(clicks*m.cvr*100)/100;
+  var spend=Math.round(bud*days);
+  var rev=m.aov>0?Math.round(sales*m.aov):null;
+  var u=m.uncertainty!=null?m.uncertainty:0.3, roas=null;
+  if(rev!=null&&spend>0){ var lo=Math.round(rev*(1-u)/spend*10)/10, hi=Math.round(rev*(1+u)/spend*10)/10; roas={low:lo,high:hi,band:lo.toFixed(1)+"\u2013"+hi.toFixed(1)+"x"}; }
+  return { eCpc:Math.round(eCpc*100)/100, cpd:cpd, clicks:clicks, sales:sales, spend:spend, rev:rev, roas:roas, model:m };
+}
 function oppRecalc(cards,i){
-  var o=OPPS[i]; if(!o)return; var p=o.plan||{};
+  var o=OPPS[i]; if(!o)return;
   var be=cards.querySelector('.opBud[data-i="'+i+'"]'); var bud=be?+be.value:o.recommendedDailyBudget;
   var se=cards.querySelector('.opStart[data-i="'+i+'"]'), ee=cards.querySelector('.opEnd[data-i="'+i+'"]');
   var s=se?se.value:o.startDate, e=ee?ee.value:o.endDate; var days=daysBtw(s,e);
-  var cap=oppCpcOf(i), smart=oppBidOf(i), cvr=(p.cvr)||0.02;
-  var cpd=cap>0?(bud/cap):0; var sales=Math.round(cpd*days*cvr*100)/100;
-  var aov=(p.expected&&p.expected.aov)||0; var rev=aov>0?Math.round(sales*aov):null;
+  var cap=oppCpcOf(i), smart=oppBidOf(i);
+  var pr=oppProj(o,{bud:bud,days:days,cap:cap,smart:smart});
   function set(sel,v){var el=cards.querySelector(sel+'[data-i="'+i+'"]'); if(el)el.textContent=v;}
-  set('.opWin',fmtDate(s)+" \u2013 "+fmtDate(e)); set('.opDur',days); set('.opTot',money(bud*days));
-  set('.planCpc',money(cap)); set('.planSales',sales); set('.planClicks',Math.round(cpd));
+  set('.opWin',fmtDate(s)+" \u2013 "+fmtDate(e)); set('.opDur',days); set('.opTot',money(pr.spend));
+  set('.opPlanned',money(bud));
+  set('.planCpc',money(cap)); set('.planSales',pr.sales); set('.planClicks',Math.round(pr.cpd));
+  set('.planECpc',money(pr.eCpc));
+  set('.planRoas',pr.roas?pr.roas.band:(o.expectedRoasBand||"\u2014"));
   set('.planStrat',smart?"Smart Bidding":"Manual CPC");
   set('.planCapPre',smart?"No CPC cap \u00b7 est. ":"Max CPC ");
   set('.planCapSuf',smart?"/click":" \u00b7 hard cap");
   set('.planGoal',smart?"Maximize conversion value automatically":("Maximize sales within a "+money(cap)+" max CPC"));
-  set('.planRev',rev!=null?(" \u00b7 ~"+money(rev)+" rev"):"");
+  set('.planRev',pr.rev!=null?(" \u00b7 ~"+money(pr.rev)+" rev"):"");
 }
 function bidView(){ return !!(typeof DASH!=="undefined"&&DASH&&DASH.control&&DASH.control.smartBidding); }
 function stratLine(p,smart){ var max=p?money(p.cpc.max):"\u2014";
@@ -1312,9 +1340,9 @@ function kwResearchPanel(o){var r=o.research||{};var kd=o.keywordData||[];var re
   var crit='<div class="muted" style="font-size:10.5px;margin-top:7px;line-height:1.6">Selection criteria: ranked by demand & intent \u2014 '+(r.longCount||0)+' long-tail (specific, lower competition, higher purchase intent) balanced with '+(r.headCount||0)+' head term'+((r.headCount||0)===1?"":"s")+' for reach. '+(real?'<b style="color:var(--sage)">\u25cf</b> marks live Google data.':'AI estimates until live Keyword Planner data is available.')+'</div>';
   return summary+errNote+rows+strat+crit;}
 function planBlock(o,i){ var p=o.plan; if(!p)return ""; var smart=oppBidOf(i); var cap=oppCpcOf(i); var s=stratLine(p,smart);
-  var bud=o.recommendedDailyBudget, dur=o.durationDays||(p.duration&&p.duration.days)||28, cvr=p.cvr||0.02;
-  var cpd=cap>0?(bud/cap):0; var sales=Math.round(cpd*dur*cvr*100)/100;
-  var aov=(p.expected&&p.expected.aov)||0; var rev=aov>0?Math.round(sales*aov):null;
+  var bud=o.recommendedDailyBudget, dur=o.durationDays||(p.duration&&p.duration.days)||28;
+  var pr=oppProj(o,{bud:bud,days:dur,cap:cap,smart:smart});
+  var sales=pr.sales, rev=pr.rev;
   var real=o.research&&o.research.source==="google_keyword_planner";
   var src=real
     ? '<span class="muted" style="color:var(--sage)">Google Keyword Planner'+(o.research.realCount?(" \u00b7 "+o.research.realCount+" live"):"")+(o.research.searchVolume!=null?(' \u00b7 ~'+Number(o.research.searchVolume).toLocaleString()+'/mo'):'')+(o.research.competitionIndex!=null?(' \u00b7 comp '+Math.round(o.research.competitionIndex)+'/100'):'')+'</span>'
@@ -1322,12 +1350,13 @@ function planBlock(o,i){ var p=o.plan; if(!p)return ""; var smart=oppBidOf(i); v
   var basis=[esc(s.note)];
   if(p.cpc&&p.cpc.basis)basis.push("<b>CPC</b> \u2014 "+esc(p.cpc.basis));
   if(p.duration&&p.duration.basis)basis.push("<b>Run length</b> \u2014 "+esc(p.duration.basis));
-  (p.caveats||[]).forEach(function(c){ if(/headroom|revenue/i.test(c))basis.push(esc(c)); });
+  (p.caveats||[]).forEach(function(c){ if(/headroom|revenue|conversion rate|market read/i.test(c))basis.push(esc(c)); });
   return '<div style="margin-top:12px;padding:11px 13px;background:var(--gold-soft);border:1px solid var(--line);border-radius:10px">'+
     '<div style="display:flex;gap:18px;flex-wrap:wrap;align-items:baseline;font-size:12.5px">'+
       '<span style="font-weight:700;letter-spacing:.05em;text-transform:uppercase;font-size:10.5px;color:var(--ink-45)">Researched plan</span>'+
       '<span class="muted">Bidding&nbsp;<b class="planStrat" data-i="'+i+'" style="color:var(--ink)">'+esc(s.label)+'</b></span>'+
       '<span class="muted"><span class="planCapPre" data-i="'+i+'">'+(smart?"No CPC cap \u00b7 est. ":"Max CPC ")+'</span><b class="planCpc" data-i="'+i+'" style="font-family:var(--mono);color:var(--ink)">'+money(cap)+'</b><span class="planCapSuf" data-i="'+i+'">'+(smart?"/click":" \u00b7 hard cap")+'</span></span>'+
+      '<span class="muted" title="What a click will actually cost on average \u2014 the geometric mid of Google\u2019s top-of-page bid band, never above your cap. Every projection on this card is priced at this figure.">Expected paid&nbsp;~<b class="planECpc" data-i="'+i+'" style="font-family:var(--mono);color:var(--ink)">'+money(pr.eCpc)+'</b>/click</span>'+
       '<span class="muted">Over the run&nbsp;~<b class="planSales" data-i="'+i+'" style="font-family:var(--mono);color:var(--ink)">'+sales+'</b> sales<span class="planRev" data-i="'+i+'">'+(rev!=null?(" \u00b7 ~"+money(rev)+" rev"):"")+'</span></span>'+
     '</div>'+
     '<div style="font-size:11.5px;margin-top:6px">Source: '+src+'</div>'+
@@ -1336,6 +1365,7 @@ function planBlock(o,i){ var p=o.plan; if(!p)return ""; var smart=oppBidOf(i); v
   '</div>';
 }
 function oppCard(o,i,ceil){ var pm=priMeta(o.priority);
+  var pr0=oppProj(o,{cap:oppCpcOf(i),smart:oppBidOf(i)});
   var when=(o.daysOut!=null&&o.daysOut>0)?("starts in "+o.daysOut+"d"):"starts now";
   var past=(o.pastStats&&o.pastStats.roas)?'<span class="'+(o.pastStats.roas>=3?"roas-good":"roas-bad")+'">'+o.pastStats.roas+'x last run</span>':'<span class="muted">no history yet</span>';
   var lab='font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-45)';
@@ -1343,9 +1373,10 @@ function oppCard(o,i,ceil){ var pm=priMeta(o.priority);
   var winTxt=fmtDate(o.startDate)+" \u2013 "+fmtDate(o.endDate);
   return elFrom('<div class="exp" data-i="'+i+'">'+
     '<div class="exp__h"><span class="verdict" style="background:'+pm[1]+';color:'+pm[2]+'">'+pm[0]+'</span><span class="nm" style="font-weight:600">'+esc(o.collectionTitle)+' \u00b7 '+esc(o.occasion)+'</span><span class="st muted" style="font-family:var(--mono);font-size:12px">'+when+'</span></div>'+
-    '<div style="font-size:13px;color:var(--ink-70);margin:2px 0 14px">'+esc(o.rationale||"")+'</div>'+
+    '<div style="font-size:13px;color:var(--ink-70);margin:2px 0 6px">'+esc(o.rationale||"")+'</div>'+
+    (o.audience?('<div class="muted" style="font-size:11.5px;margin:0 0 14px">Audience: <b style="color:var(--ink-70)">'+esc(o.audience.buyer||"")+'</b>'+(o.audience.recipient?(' \u2192 '+esc(o.audience.recipient)):'')+(o.audience.motivation?(' \u00b7 '+esc(o.audience.motivation)):'')+(o.audience.searchStyle?('<span style="display:block;margin-top:2px">Searches like: \u201c'+esc(o.audience.searchStyle)+'\u201d</span>'):'')+'</div>'):'<div style="margin-bottom:8px"></div>')+
     '<div class="grid" style="grid-template-columns:1.4fr 1fr 1fr;gap:16px;align-items:end">'+
-      '<div><label style="'+lab+'">Daily budget ('+esc(o.currency||cur())+')</label><div class="range"><input type="range" class="opBud" data-i="'+i+'" min="2" max="'+ceil+'" value="'+o.recommendedDailyBudget+'"><span class="rngval opBudV" data-i="'+i+'">'+money(o.recommendedDailyBudget)+'</span></div><div class="muted" style="font-size:10.5px;margin-top:3px">Planned '+money(o.recommendedDailyBudget)+' \u00b7 \u2248<span class="planClicks" data-i="'+i+'">'+((o.plan&&o.plan.expected)?o.plan.expected.clicksPerDay:0)+'</span> clicks/day</div></div>'+
+      '<div><label style="'+lab+'">Daily budget ('+esc(o.currency||cur())+')</label><div class="range"><input type="range" class="opBud" data-i="'+i+'" min="2" max="'+ceil+'" value="'+o.recommendedDailyBudget+'"><span class="rngval opBudV" data-i="'+i+'">'+money(o.recommendedDailyBudget)+'</span></div><div class="muted" style="font-size:10.5px;margin-top:3px">Planned <span class="opPlanned" data-i="'+i+'">'+money(o.recommendedDailyBudget)+'</span> \u00b7 \u2248<span class="planClicks" data-i="'+i+'">'+Math.round(pr0.cpd)+'</span> clicks/day</div></div>'+
       '<div><label style="'+lab+'">Start date</label><div style="padding-top:6px"><input type="date" class="opStart" data-i="'+i+'" value="'+esc(o.startDate||"")+'" style="'+din+'"></div></div>'+
       '<div><label style="'+lab+'">End date</label><div style="padding-top:6px"><input type="date" class="opEnd" data-i="'+i+'" value="'+esc(o.endDate||"")+'" style="'+din+'"></div></div>'+
     '</div>'+
@@ -1360,7 +1391,7 @@ function oppCard(o,i,ceil){ var pm=priMeta(o.priority);
       '<span class="muted">Est. total&nbsp;<b class="opTot" data-i="'+i+'" style="color:var(--ink);font-family:var(--mono);font-size:15px">'+money(o.estTotalSpend)+'</b></span>'+
       '<span class="muted" style="font-size:11px">AI suggests this window</span>'+
     '</div>'+
-    '<div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:12px;font-size:12.5px"><span class="muted">Expected ROAS&nbsp;<b style="color:var(--ink);font-family:var(--mono)">'+esc(o.expectedRoasBand||"\u2014")+'</b>&nbsp;<span style="font-size:11px">('+(o.proven?"from history":"estimate")+')</span></span><span class="muted">Past:&nbsp;'+past+'</span></div>'+
+    '<div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:12px;font-size:12.5px"><span class="muted">Expected ROAS&nbsp;<b class="planRoas" data-i="'+i+'" style="color:var(--ink);font-family:var(--mono)">'+esc(pr0.roas?pr0.roas.band:(o.expectedRoasBand||"\u2014"))+'</b>&nbsp;<span style="font-size:11px" title="Projected revenue \u00f7 projected spend with \u00b130% conversion-rate uncertainty \u2014 computed from the same numbers on this card, and re-computed live as you edit budget, dates or CPC.">(computed'+(o.proven?" \u00b7 occasion proven in history":"")+')</span></span><span class="muted">Past:&nbsp;'+past+'</span></div>'+
     planBlock(o,i)+
     '<details style="margin-top:12px" open><summary style="cursor:pointer;font-size:12.5px;color:var(--gold);font-weight:600">Keyword research &amp; phrases</summary>'+
       kwResearchPanel(o)+
