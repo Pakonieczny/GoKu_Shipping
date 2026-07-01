@@ -347,9 +347,14 @@ async function syncBestSellersCollection({ force } = {}) {
       if (!((d.metafieldsSet || {}).userErrors || []).length) ranksWritten += chunk.length;
     } catch (e) { console.warn("[bestSellers] metafieldsSet failed:", e.message); }
   }
-  return { ok: true, collection: coll.title, listSize: rows.length, uniqueProducts: want.length,
+  const report = { ok: true, collection: coll.title, listSize: rows.length, uniqueProducts: want.length,
            membersBefore: members.length, added, removed, ranksWritten, reordered,
-           unresolved: ver.unresolved, note };
+           unresolved: ver.unresolved, note, at: Date.now() };
+  // Persist the report — the sync usually runs in the background worker (it exceeds a regular
+  // function's timeout), so this doc is how the result is read afterwards.
+  const f2 = fb();
+  if (f2) { try { await f2.db.collection("Brites_Editor_Meta").doc("bestSellersSyncReport").set(report); } catch (e) {} }
+  return report;
 }
 
 
@@ -496,6 +501,11 @@ async function syncImageAltToTitle(productId, title) {
   } catch (e) { return { updated: 0, total: 0, error: String(e && e.message) }; }
 }
 
+// Exported for the background worker (googleAdsAutopilot-background): the full sync makes a few
+// hundred Shopify calls and exceeds a regular function's timeout, so it must run under the
+// 15-minute background budget.
+exports.syncBestSellersCollection = syncBestSellersCollection;
+
 exports.handler = async function (event) {
   const origin = event.headers.origin || event.headers.Origin || "";
   const headers = corsHeaders(origin);
@@ -525,6 +535,12 @@ exports.handler = async function (event) {
       }
       case "syncBestSellers": {
         return reply(200, await syncBestSellersCollection({ force: !!(body && body.force) }));
+      }
+      case "bestSellersReport": {
+        const f = fb();
+        if (!f) return reply(200, { note: "no Firebase configured" });
+        const d = await f.db.collection("Brites_Editor_Meta").doc("bestSellersSyncReport").get();
+        return reply(200, d.exists ? d.data() : { note: "no sync has completed yet" });
       }
 
       /* ---------- READS ---------- */
