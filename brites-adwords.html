@@ -337,6 +337,7 @@ table.ptable tr.pdetail>td{border-bottom:2px solid var(--line)}
 .benchout::-webkit-scrollbar-thumb{background:var(--ink-25);border-radius:7px;border:2px solid var(--card)}
 .benchout{scrollbar-width:thin;scrollbar-color:var(--ink-25) transparent}
 
+@keyframes bjPulse{0%,100%{opacity:1}50%{opacity:.35}}
 </style>
 </head>
 <body>
@@ -434,6 +435,7 @@ table.ptable tr.pdetail>td{border-bottom:2px solid var(--line)}
       </div>
       <div id="kwDiagPanel" style="display:none;margin-bottom:14px"></div>
       <div id="oppErr" style="display:none"></div>
+      <div id="scanProg" style="display:none"></div>
       <div id="oppList"><div class="empty" style="height:200px"><div class="ring"></div><div>Hit \u201cScan for opportunities\u201d.</div><div style="font-size:12px">The AI cross-references your catalog, the calendar, and past results, then ranks what to act on.</div></div></div>
       <details class="card pad" style="margin-top:16px" id="customWrap">
         <summary style="cursor:pointer;font-weight:600;font-size:14px">Custom build \u2014 pick any collection \u00d7 occasion manually</summary>
@@ -1162,7 +1164,12 @@ function showDraft(r){var a=r.assets||{};var out=$("#benchOut");var p=r.plan;var
 
 
 /* ---- render: opportunities (Unused vs In-use reconciliation) ---- */
-var OPPS=[]; var oppLoaded=false; var oppView="unused";
+var OPPS=[]; var oppLoaded=false; var oppView="unused"; var oppSort="best";
+function oppSorters(mode){
+  if(mode==="urgent")return function(a,b){var d=(a.o.daysOut||0)-(b.o.daysOut||0); if(d)return d; d=(a.o.durationDays||99)-(b.o.durationDays||99); if(d)return d; return (b.o.score||0)-(a.o.score||0);};
+  if(mode==="reach")return function(a,b){return (((b.o.research||{}).searchVolume)||0)-(((a.o.research||{}).searchVolume)||0);};
+  return function(a,b){return ((b.o.rank||b.o.score||0)-(a.o.rank||a.o.score||0));};
+}
 var oppOverride={}; // per-opportunity {maxCpc, smart} overrides of the global defaults
 function oppBidOf(i){ return (oppOverride[i]&&oppOverride[i].smart!=null)?oppOverride[i].smart:bidView(); }
 function oppCpcOf(i){ var o=OPPS[i]||{}; return (oppOverride[i]&&oppOverride[i].maxCpc>0)?oppOverride[i].maxCpc:(o.maxCpc||(o.plan&&o.plan.cpc&&o.plan.cpc.max)||1); }
@@ -1172,6 +1179,26 @@ function oppBidSeg(i){ var smart=oppBidOf(i);
 }
 async function ensureOpportunities(){ if(oppLoaded)return; oppLoaded=true; loadOpportunities(false); }
 var oppPollTimer=null;
+var SCAN_PHASES=[["Profile catalog",35],["AI strategy",56],["Keyword research",82],["Cost & rank",96],["Save",100]];
+function renderScanProg(prog){
+  var el=$("#scanProg"); if(!el) return;
+  var pct=Math.max(1,Math.min(99,(prog&&prog.pct)||1));
+  var label=(prog&&prog.label)||"Queued\u2026";
+  var detail=(prog&&prog.detail)||"";
+  var doneTo=-1; for(var i=0;i<SCAN_PHASES.length;i++){ if(pct>=SCAN_PHASES[i][1]) doneTo=i; }
+  var phases=SCAN_PHASES.map(function(p,i){
+    var st=i<=doneTo?"done":(i===doneTo+1?"active":"todo");
+    var dot=st==="done"?'<span style="color:var(--sage);font-weight:800">\u2713</span>':st==="active"?'<span style="color:var(--gold);font-weight:800;animation:bjPulse 1.1s ease-in-out infinite">\u25CF</span>':'<span style="color:var(--ink-45)">\u25CB</span>';
+    return '<span style="display:inline-flex;align-items:center;gap:5px;font-size:10.5px;font-weight:600;color:'+(st==="todo"?"var(--ink-45)":"var(--ink-70)")+'">'+dot+' '+p[0]+'</span>';
+  }).join('<span style="color:var(--line);margin:0 2px">\u2500</span>');
+  el.style.display="block";
+  el.innerHTML='<div class="card pad" style="margin-bottom:14px">'+
+    '<div style="display:flex;align-items:baseline;gap:10px"><span class="spin sm gold"></span><b style="font-size:13.5px">'+esc(label)+'</b><span style="flex:1"></span><b class="mono" style="font-size:13px">'+pct+'%</b></div>'+
+    '<div style="height:7px;border-radius:5px;background:var(--paper-2);overflow:hidden;margin:9px 0 7px"><div style="height:100%;width:'+pct+'%;border-radius:5px;background:linear-gradient(90deg,var(--sage),var(--gold));transition:width .6s"></div></div>'+
+    '<div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center"><span class="muted mono" style="font-size:11px">'+esc(detail)+'</span><span style="display:inline-flex;gap:7px;align-items:center;flex-wrap:wrap">'+phases+'</span></div>'+
+  '</div>';
+}
+function hideScanProg(){ var el=$("#scanProg"); if(el){el.style.display="none";el.innerHTML="";} }
 async function loadOpportunities(force){
   var box=$("#oppList"); $("#oppScan").disabled=true;
   if(oppPollTimer){clearInterval(oppPollTimer);oppPollTimer=null;}
@@ -1187,8 +1214,9 @@ async function loadOpportunities(force){
     // (the engine now records lastError/lastErrorAt instead of silently keeping stale data).
     var prevAt=(r&&r.scannedAt)||0;
     var scanStart=Date.now();
+    renderScanProg((r&&r.progress)||{pct:1,label:"Queued\u2026",detail:"handing the scan to the background worker"});
     if(OPPS.length){ renderOpportunities(); }
-    else { box.innerHTML='<div class="empty" style="height:210px"><span class="spin lg gold"></span><div style="font-weight:600;color:var(--ink)">Scanning\u2026 new opportunities in ~1 min.</div><div style="font-size:12px">You can leave this tab \u2014 results appear automatically.</div></div>'; }
+    else { box.innerHTML='<div class="empty" style="height:120px"><div class="muted" style="font-size:12.5px">Results appear here the moment the scan lands \u2014 you can leave this tab.</div></div>'; }
     var tries=0;
     oppPollTimer=setInterval(async function(){
       tries++;
@@ -1196,25 +1224,26 @@ async function loadOpportunities(force){
         var p=await api("opportunities",{cacheOnly:true});
         var at=(p&&p.scannedAt)||0;
         var errAt=(p&&p.lastErrorAt)||0;
+        if(p&&p.scanning) renderScanProg(p.progress);
         if(at>prevAt && !(p&&p.scanning)){
-          clearInterval(oppPollTimer); oppPollTimer=null; actEnd(scanAct);
+          clearInterval(oppPollTimer); oppPollTimer=null; actEnd(scanAct); hideScanProg();
           OPPS=(p&&p.opportunities)||[]; setOppMeta(at); oppShowErr(null); renderOpportunities();
           toast("Re-scanned \u2014 "+OPPS.length+" opportunities",true);
           $("#oppScan").disabled=false;
         } else if(errAt>scanStart && !(p&&p.scanning)){
           // The scan RAN and FAILED. Old results (if any) stay visible, clearly labeled stale,
           // with the engine\u2019s exact error on screen so the cause is never invisible again.
-          clearInterval(oppPollTimer); oppPollTimer=null; actEnd(scanAct); $("#oppScan").disabled=false;
+          clearInterval(oppPollTimer); oppPollTimer=null; actEnd(scanAct); hideScanProg(); $("#oppScan").disabled=false;
           OPPS=(p&&p.opportunities)||[]; setOppMeta(at); renderOpportunities();
           oppShowErr((p&&p.lastError)||"scan failed", at);
           toast("Scan failed \u2014 see the notice above the list.");
-        } else if(tries>=36){
-          clearInterval(oppPollTimer); oppPollTimer=null; actEnd(scanAct); $("#oppScan").disabled=false;
-          if(!OPPS.length) box.innerHTML='<div class="empty" style="height:160px"><div>Scan is taking longer than usual.</div><div style="font-size:12px">Give it a moment and hit Scan again.</div></div>';
-          else toast("Scan still running \u2014 results will refresh shortly.");
+        } else if(tries>=240){
+          clearInterval(oppPollTimer); oppPollTimer=null; actEnd(scanAct); hideScanProg(); $("#oppScan").disabled=false;
+          if(!OPPS.length) box.innerHTML='<div class="empty" style="height:160px"><div>Scan is taking unusually long (10+ min).</div><div style="font-size:12px">Check the Netlify background-function log, or hit Scan again.</div></div>';
+          else toast("Scan still hasn\u2019t finished after 10 minutes \u2014 refresh in a bit, or check the function log.");
         }
-      }catch(e){ if(tries>=36){clearInterval(oppPollTimer); oppPollTimer=null; actEnd(scanAct); $("#oppScan").disabled=false;} }
-    },5000);
+      }catch(e){ if(tries>=240){clearInterval(oppPollTimer); oppPollTimer=null; actEnd(scanAct); hideScanProg(); $("#oppScan").disabled=false;} }
+    },2500);
   }catch(x){ actEnd(scanAct); box.innerHTML='<div class="empty" style="height:160px"><div>Scan failed.</div><div style="font-size:12px">'+esc(x.message)+'</div></div>'; $("#oppScan").disabled=false; }
 }
 function oppShowErr(err, at){
@@ -1264,10 +1293,13 @@ function renderOpportunities(){
   if(!OPPS.length){box.innerHTML='<div class="empty" style="height:160px"><div>No opportunities surfaced.</div><div style="font-size:12px">Try Scan again, or use Custom build below.</div></div>';return;}
   var unused=[],inuse=[];
   OPPS.forEach(function(o,i){ (o.acted?inuse:unused).push({o:o,i:i}); });
-  var tabs='<div style="display:flex;gap:8px;margin-bottom:18px">'+oppTabBtn("unused","Unused",unused.length)+oppTabBtn("inuse","In use",inuse.length)+'</div>';
+  var sortChip=function(k,l,t){var on=oppSort===k;return '<button class="oppSort" data-k="'+k+'" title="'+t+'" style="padding:4px 12px;border:1px solid '+(on?"var(--gold)":"var(--line)")+';border-radius:20px;font-size:11px;font-weight:600;cursor:pointer;background:'+(on?"var(--gold-soft)":"transparent")+';color:'+(on?"#7a5a1d":"var(--ink-45)")+'">'+l+'</button>';};
+  var tabs='<div style="display:flex;gap:8px;margin-bottom:18px;align-items:center;flex-wrap:wrap">'+oppTabBtn("unused","Unused",unused.length)+oppTabBtn("inuse","In use",inuse.length)+'<span style="flex:1"></span><span class="muted" style="font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;font-weight:700">Sort</span>'+sortChip("best","Best bets","Conversion likelihood, urgency-boosted \u2014 the AI\u2019s blend")+sortChip("urgent","Most urgent","Soonest start, shortest window first")+sortChip("reach","Reach","Highest researched search volume first")+'</div>';
   box.innerHTML=tabs+'<div id="oppCards" class="scrollcap"></div>';
   box.querySelectorAll(".oppTab").forEach(function(b){ b.onclick=function(){ oppView=b.dataset.view; renderOpportunities(); }; });
+  box.querySelectorAll(".oppSort").forEach(function(b){ b.onclick=function(){ oppSort=b.dataset.k; renderOpportunities(); }; });
   var cards=$("#oppCards"); var list=oppView==="inuse"?inuse:unused;
+  if(oppView!=="inuse") list=list.slice().sort(oppSorters(oppSort));
   if(!list.length){ cards.innerHTML='<div class="empty" style="height:150px"><div>'+(oppView==="inuse"?"Nothing here yet.":"All current suggestions are already in use.")+'</div><div style="font-size:12px">'+(oppView==="inuse"?"Generated, approved, or live campaigns show up here so they\u2019re never re-suggested.":"Re-scan to surface fresh ideas.")+'</div></div>'; return; }
   if(oppView==="inuse"){ list.forEach(function(x){ cards.appendChild(inUseCard(x.o)); }); return; }
   var ceil=Math.max(20,(((typeof DASH!=="undefined"&&DASH)||{}).control||{}).maxDailyBudgetTotal||100);
@@ -1319,7 +1351,7 @@ function oppRecalc(cards,i){
   var s=se?se.value:o.startDate, e=ee?ee.value:o.endDate; var days=daysBtw(s,e);
   var cap=oppCpcOf(i), smart=oppBidOf(i);
   var pr=oppProj(o,{bud:bud,days:days,cap:cap,smart:smart});
-  function set(sel,v){var el=cards.querySelector(sel+'[data-i="'+i+'"]'); if(el)el.textContent=v;}
+  function set(sel,v){cards.querySelectorAll(sel+'[data-i="'+i+'"]').forEach(function(el){el.textContent=v;});}
   set('.opWin',fmtDate(s)+" \u2013 "+fmtDate(e)); set('.opDur',days); set('.opTot',money(pr.spend));
   set('.opPlanned',money(bud));
   set('.planCpc',money(cap)); set('.planSales',pr.sales); set('.planClicks',Math.round(pr.cpd));
@@ -1330,6 +1362,7 @@ function oppRecalc(cards,i){
   set('.planCapSuf',smart?"/click":" \u00b7 hard cap");
   set('.planGoal',smart?"Maximize conversion value automatically":("Maximize sales within a "+money(cap)+" max CPC"));
   set('.planRev',pr.rev!=null?(" \u00b7 ~"+money(pr.rev)+" rev"):"");
+  set('.fBud',money(bud)+"/d"); set('.planRev2',pr.rev!=null?("~"+money(pr.rev)):"\u2014");
 }
 function bidView(){ return !!(typeof DASH!=="undefined"&&DASH&&DASH.control&&DASH.control.smartBidding); }
 function stratLine(p,smart){ var max=p?money(p.cpc.max):"\u2014";
@@ -1385,18 +1418,49 @@ function planBlock(o,i){ var p=o.plan; if(!p)return ""; var smart=oppBidOf(i); v
     '<details style="margin-top:7px"><summary style="cursor:pointer;font-size:11.5px;color:var(--gold);font-weight:600">Why these numbers</summary><div style="font-size:11.5px;line-height:1.65;color:var(--ink-70);margin-top:6px">'+basis.map(function(b){return "\u2022 "+b;}).join("<br>")+'</div></details>'+
   '</div>';
 }
+function scoreMeter(o){var s=Math.max(0,Math.min(99,o.score||0));
+  return '<div style="display:flex;align-items:center;gap:9px;min-width:150px;flex:1"><div style="flex:1;height:7px;border-radius:5px;background:var(--paper-2);overflow:hidden"><div style="height:100%;width:'+s+'%;border-radius:5px;background:linear-gradient(90deg,var(--sage),var(--gold));transition:width .4s"></div></div><b class="mono" style="font-size:12.5px" title="Conversion likelihood \u2014 the AI\u2019s market-fit \u00d7 priority \u00d7 demand \u00d7 history, 0\u201399">'+s+'</b></div>';}
+function urgPill(o){var d=o.daysOut||0;
+  if(d<=0)return '<span style="background:var(--clay-soft);color:var(--clay);font-weight:800;font-size:10px;letter-spacing:.06em;padding:3px 9px;border-radius:20px;white-space:nowrap">STARTS NOW</span>';
+  if(d<=3)return '<span style="background:var(--gold-soft);color:#7a5a1d;font-weight:800;font-size:10px;letter-spacing:.06em;padding:3px 9px;border-radius:20px;white-space:nowrap">IN '+d+'D</span>';
+  return '<span style="background:var(--slate-soft);color:#33525d;font-weight:700;font-size:10px;letter-spacing:.06em;padding:3px 9px;border-radius:20px;white-space:nowrap">IN '+d+'D</span>';}
+function kwDot(o){var r=o.research||{};return r.source==="google_keyword_planner"
+  ? '<span style="color:var(--gold);font-size:11px;white-space:nowrap" title="Keyword volumes, competition and CPCs on this card come from live Google Keyword Planner data">\u25CF live data'+(r.realCount?(" \u00d7"+r.realCount):"")+'</span>'
+  : '<span class="muted" style="font-size:11px;white-space:nowrap" title="Keyword Planner unavailable \u2014 AI-researched estimates, clearly conservative">\u25CB AI est.</span>';}
+function faceStat(cls,i,val,lab,strong){return '<div style="min-width:74px"><div class="mono '+cls+'" data-i="'+i+'" style="font-size:'+(strong?"16px":"15px")+';font-weight:700;color:var(--ink)">'+val+'</div><div style="font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-45);margin-top:1px">'+lab+'</div></div>';}
 function oppCard(o,i,ceil){ var pm=priMeta(o.priority);
-  var pr0=oppProj(o,{cap:oppCpcOf(i),smart:oppBidOf(i)});
-  var when=(o.daysOut!=null&&o.daysOut>0)?("starts in "+o.daysOut+"d"):"starts now";
-  var past=(o.pastStats&&o.pastStats.roas)?'<span class="'+(o.pastStats.roas>=3?"roas-good":"roas-bad")+'">'+o.pastStats.roas+'x last run</span>':'<span class="muted">no history yet</span>';
+    var pr0=oppProj(o,{cap:oppCpcOf(i),smart:oppBidOf(i)});
   var lab='font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-45)';
   var din='padding:7px 8px;font-family:var(--mono);font-size:13px;width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink)';
   var winTxt=fmtDate(o.startDate)+" \u2013 "+fmtDate(o.endDate);
-  return elFrom('<div class="exp" data-i="'+i+'">'+
-    '<div class="exp__h"><span class="verdict" style="background:'+pm[1]+';color:'+pm[2]+'">'+pm[0]+'</span><span class="nm" style="font-weight:600">'+esc(o.collectionTitle)+' \u00b7 '+esc(o.occasion)+'</span><span class="st muted" style="font-family:var(--mono);font-size:12px">'+when+'</span></div>'+
-    '<div style="font-size:13px;color:var(--ink-70);margin:2px 0 6px">'+esc(o.rationale||"")+'</div>'+
-    (o.audience?('<div class="muted" style="font-size:11.5px;margin:0 0 14px">Audience: <b style="color:var(--ink-70)">'+esc(o.audience.buyer||"")+'</b>'+(o.audience.recipient?(' \u2192 '+esc(o.audience.recipient)):'')+(o.audience.motivation?(' \u00b7 '+esc(o.audience.motivation)):'')+(o.audience.searchStyle?('<span style="display:block;margin-top:2px">Searches like: \u201c'+esc(o.audience.searchStyle)+'\u201d</span>'):'')+'</div>'):'<div style="margin-bottom:8px"></div>')+
-    '<div class="grid" style="grid-template-columns:1.4fr 1fr 1fr;gap:16px;align-items:end">'+
+  var past=(o.pastStats&&o.pastStats.roas)?'<span class="'+(o.pastStats.roas>=3?"roas-good":"roas-bad")+'">'+o.pastStats.roas+'x last run</span>':'<span class="muted">no history yet</span>';
+  var edge=o.priority==="high"?"var(--gold)":o.priority==="medium"?"var(--sage)":"var(--slate)";
+  return elFrom('<div class="exp" data-i="'+i+'" style="border-left:3px solid '+edge+';padding-left:15px">'+
+    // ---- GLANCE FACE ----
+    '<div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">'+
+      '<span style="font-size:15px;font-weight:700;color:var(--ink)">'+esc(o.occasion)+'</span>'+
+      urgPill(o)+
+      '<span class="verdict" style="background:'+pm[1]+';color:'+pm[2]+';font-size:9.5px">'+pm[0]+'</span>'+
+      '<span style="flex:1"></span>'+kwDot(o)+
+    '</div>'+
+    '<div class="muted mono" style="font-size:11px;margin:2px 0 9px">'+esc(o.collectionTitle)+' \u00b7 <span class="opWin" data-i="'+i+'">'+winTxt+'</span> \u00b7 <span class="opDur" data-i="'+i+'">'+o.durationDays+'</span>d</div>'+
+    '<div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:10px">'+scoreMeter(o)+
+      faceStat("fBud",i,money(o.recommendedDailyBudget)+"/d","budget")+
+      faceStat("planSales",i,pr0.sales,"est. sales")+
+      faceStat("planRev2",i,pr0.rev!=null?("~"+money(pr0.rev)):"\u2014","proj. revenue")+
+      faceStat("planRoas",i,pr0.roas?pr0.roas.band:(o.expectedRoasBand||"\u2014"),"roas",1)+
+    '</div>'+
+    (o.audience?('<div class="muted" style="font-size:11.5px;margin-bottom:10px">'+esc(o.audience.buyer||"")+(o.audience.recipient?(' \u2192 '+esc(o.audience.recipient)):'')+' \u00b7 past: '+past+'</div>'):('<div class="muted" style="font-size:11.5px;margin-bottom:10px">past: '+past+'</div>'))+
+    '<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">'+
+      '<button class="btn gold sm opGen" data-i="'+i+'">Generate campaign</button>'+
+      '<span class="opMsg muted" data-i="'+i+'" style="font-size:12px"></span>'+
+    '</div>'+
+    // ---- FULL DETAIL (collapsed) ----
+    '<details class="opDx" style="margin-top:11px"><summary style="cursor:pointer;font-size:12px;color:var(--gold);font-weight:600">Adjust budget, dates, bidding &amp; research</summary>'+
+    '<div style="margin-top:12px">'+
+    '<div style="font-size:13px;color:var(--ink-70);margin:0 0 6px">'+esc(o.rationale||"")+'</div>'+
+    (o.audience&&o.audience.searchStyle?('<div class="muted" style="font-size:11.5px;margin:0 0 12px">'+(o.audience.motivation?('Motivation: '+esc(o.audience.motivation)+' \u00b7 '):'')+'Searches like: \u201c'+esc(o.audience.searchStyle)+'\u201d</div>'):'<div style="margin-bottom:6px"></div>')+
+'<div class="grid" style="grid-template-columns:1.4fr 1fr 1fr;gap:16px;align-items:end">'+
       '<div><label style="'+lab+'">Daily budget ('+esc(o.currency||cur())+')</label><div class="range"><input type="range" class="opBud" data-i="'+i+'" min="2" max="'+ceil+'" value="'+o.recommendedDailyBudget+'"><span class="rngval opBudV" data-i="'+i+'">'+money(o.recommendedDailyBudget)+'</span></div><div class="muted" style="font-size:10.5px;margin-top:3px">Planned <span class="opPlanned" data-i="'+i+'">'+money(o.recommendedDailyBudget)+'</span> \u00b7 \u2248<span class="planClicks" data-i="'+i+'">'+Math.round(pr0.cpd)+'</span> clicks/day</div></div>'+
       '<div><label style="'+lab+'">Start date</label><div style="padding-top:6px"><input type="date" class="opStart" data-i="'+i+'" value="'+esc(o.startDate||"")+'" style="'+din+'"></div></div>'+
       '<div><label style="'+lab+'">End date</label><div style="padding-top:6px"><input type="date" class="opEnd" data-i="'+i+'" value="'+esc(o.endDate||"")+'" style="'+din+'"></div></div>'+
@@ -1418,7 +1482,8 @@ function oppCard(o,i,ceil){ var pm=priMeta(o.priority);
       kwResearchPanel(o)+
       '<div class="eyebrow" style="margin:12px 0 6px">Key phrases <span class="muted" style="font-weight:400;text-transform:none;letter-spacing:0">\u00b7 emotional ad copy</span></div><div class="chips">'+((o.keyPhrases||[]).map(function(k){return '<span class="chip">'+esc(k)+'</span>';}).join("")||'<span class="muted" style="font-size:12px">\u2014</span>')+'</div>'+
       '<div class="muted" style="font-size:11px;margin-top:10px;line-height:1.6">When generated, this campaign auto-adds <b>4 sitelinks</b>, <b>4 callouts</b> &amp; a <b>structured snippet</b> for more ad real estate, and <b>excludes ~28 non-buyer terms</b> (free, diy, wholesale, cheap, repair\u2026) to stop wasted spend.</div></details>'+
-    '<div style="margin-top:11px;font-size:12px;color:var(--ink-70);display:flex;gap:7px;align-items:center;flex-wrap:wrap">Countries: <span class="opCty" data-i="'+i+'" style="display:flex;gap:6px;flex-wrap:wrap"></span><button type="button" class="btn ghost sm opCtyEdit" data-i="'+i+'" style="padding:2px 8px;font-size:11px">Edit</button></div>'+'<div class="actions"><button class="btn gold sm opGen" data-i="'+i+'">Generate campaign</button><span class="opMsg muted" data-i="'+i+'" style="font-size:12px"></span></div>'+
+'<div style="margin-top:11px;font-size:12px;color:var(--ink-70);display:flex;gap:7px;align-items:center;flex-wrap:wrap">Countries: <span class="opCty" data-i="'+i+'" style="display:flex;gap:6px;flex-wrap:wrap"></span><button type="button" class="btn ghost sm opCtyEdit" data-i="'+i+'" style="padding:2px 8px;font-size:11px">Edit</button></div>'+
+    '</div></details>'+
   '</div>');
 }
 function inUseCard(o){ var b=actedBadge(o.acted); var a=o.acted||{};
