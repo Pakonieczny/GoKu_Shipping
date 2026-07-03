@@ -433,6 +433,7 @@ table.ptable tr.pdetail>td{border-bottom:2px solid var(--line)}
         <div class="legend" style="margin:0"><span><i style="background:var(--gold)"></i><b>High</b>&nbsp;act now</span><span><i style="background:var(--sage)"></i><b>Medium</b>&nbsp;solid bet</span><span><i style="background:var(--slate)"></i><b>Test</b>&nbsp;speculative</span></div>
       </div>
       <div id="kwDiagPanel" style="display:none;margin-bottom:14px"></div>
+      <div id="oppErr" style="display:none"></div>
       <div id="oppList"><div class="empty" style="height:200px"><div class="ring"></div><div>Hit \u201cScan for opportunities\u201d.</div><div style="font-size:12px">The AI cross-references your catalog, the calendar, and past results, then ranks what to act on.</div></div></div>
       <details class="card pad" style="margin-top:16px" id="customWrap">
         <summary style="cursor:pointer;font-weight:600;font-size:14px">Custom build \u2014 pick any collection \u00d7 occasion manually</summary>
@@ -540,7 +541,7 @@ function openCountryEditor(o){
   box.querySelector(".ctysave").onclick=function(){var ids=Object.keys(sel).filter(function(k){return sel[k];});var btn=this;btn.classList.add("is-busy");btn.disabled=true;(o.onSave||function(_,d){d();})(ids,function(){close();});};
   ensureCountries().then(function(){upd();paint();});
 }
-function defCountries(){var d=(DASH.control||{}).defaultCountries;return (d&&d.length)?d.slice():["2124"];}
+function defCountries(){var d=(((typeof DASH!=="undefined"&&DASH)||{}).control||{}).defaultCountries;return (d&&d.length)?d.slice():["2124"];}
 var benchCountries=null;
 function benchCty(){return (benchCountries&&benchCountries.length)?benchCountries:defCountries();}
 function paintBenchCty(){var el=$("#bCtyChips");if(el)el.innerHTML=ctyChips(benchCty());}
@@ -939,7 +940,7 @@ function adExtrasLine(c){var bits=[];if(c.sitelinks)bits.push(c.sitelinks+" site
   return '<details style="margin-top:8px"><summary style="cursor:pointer;font-size:11.5px;color:var(--gold);font-weight:600">Ad extensions &amp; exclusions \u00b7 '+esc(bits.join(" \u00b7 "))+'</summary><div style="font-size:11px;color:var(--ink-70);margin-top:6px;line-height:1.6">'+(c.sitelinks?'<b>Sitelinks ('+c.sitelinks+')</b> \u2014 extra links (Best Sellers, New Arrivals, Personalize a Gift) that lift CTR.<br>':"")+(c.callouts?'<b>Callouts ('+c.callouts+')</b> \u2014 Handmade in Canada \u00b7 Personalized Charms \u00b7 Custom-Made Gifts \u00b7 Unique Handmade Designs.<br>':"")+(c.snippets?'<b>Structured snippet</b> \u2014 Types: Necklaces, Bracelets, Earrings, Rings, Charms.<br>':"")+(c.negatives&&c.negatives.length?'<b>Negative keywords ('+c.negatives.length+')</b> \u2014 '+esc(c.negatives.slice(0,12).join(", "))+(c.negatives.length>12?", \u2026":"")+'.':"")+'</div></details>';}
 function copyLine(txt,max){var len=(txt||"").length;var over=len>max,warn=len>max*.86&&!over;var bad=(DASH.terms||[]).find(b=>(txt||"").toLowerCase().includes(b));
   return '<div class="copyline"><div class="meter '+(over?"over":warn?"warn":"")+'"><i style="width:'+Math.min(100,len/max*100)+'%"></i></div><div class="cc">'+len+'/'+max+'</div><div class="txt">'+esc(txt)+'</div><div class="safe '+(bad?"bad":"ok")+'">'+(bad?"✕":"✓")+'</div></div>';}
-function stuckCard(a){var pl=a.payload||{};var dry=(DASH.control||{}).dryRun;
+function stuckCard(a){var pl=a.payload||{};var dry=(((typeof DASH!=="undefined"&&DASH)||{}).control||{}).dryRun;
   var body='<div class="why"><span class="i">\ud83d\udca1</span><div><b>Draft:</b> '+esc(a.summary||"")+'</div></div>';
   if(pl.mutateOperations){var c=parseCreative(pl.mutateOperations);
     if(c.headlines.length)body+='<div class="eyebrow" style="margin:8px 0 6px">Headlines \u00b7 \u226430</div>'+c.headlines.slice(0,4).map(t=>copyLine(t,30)).join("")+(c.headlines.length>4?'<div class="muted" style="font-size:11px;margin-top:4px">+'+(c.headlines.length-4)+' more headlines</div>':"");
@@ -965,12 +966,12 @@ function renderApprovals(){var list=$("#apprList");var p=DASH.pending||[];var st
       body+='<div class="kv" style="margin-top:12px;color:var(--ink-45)">'+(c.finalUrl?'URL <span style="color:var(--ink)">'+esc(c.finalUrl.replace("https://britesjewelry.com",""))+'</span> \u00b7 ':"")+(c.budget!=null?'budget <span style="color:var(--ink)">'+money(c.budget)+'/day</span> \u00b7 ':"")+'status <span style="color:var(--ink)">PAUSED</span></div>'+adExtrasLine(c);
       body+='<div class="eyebrow" style="margin:14px 0 7px">Countries <span class="muted" style="text-transform:none;font-weight:400;letter-spacing:0">\u00b7 where it runs</span></div><div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap">'+ctyChips(pl.countries)+'<button class="btn ghost sm apcty-edit" data-id="'+a.id+'" data-sel="'+((pl.countries||[]).join(","))+'" style="padding:3px 9px;font-size:11px">Edit</button></div>';
     } else if(pl.operations){ body+='<div class="kv muted">'+pl.operations.length+' operation(s) on '+esc(pl.service||"")+'</div>'; }
-    body+='<div class="actions"><button class="btn gold sm" data-ap="'+a.id+'">Approve'+((DASH.control||{}).dryRun?" (dry-run)":"")+'</button><button class="btn ghost sm" data-rj="'+a.id+'">Reject</button></div>';
+    body+='<div class="actions"><button class="btn gold sm" data-ap="'+a.id+'">Approve'+((((typeof DASH!=="undefined"&&DASH)||{}).control||{}).dryRun?" (dry-run)":"")+'</button><button class="btn ghost sm" data-rj="'+a.id+'">Reject</button></div>';
     var card=elFrom('<div class="draft"><div class="draft__top"><span class="tagk '+(a.type||"creative")+'">'+esc(a.type||"draft")+'</span><div><div class="ti">'+esc((a.summary||"").slice(0,80))+'</div><div class="me">'+(a.vetted?"vetted template":"needs review")+'</div></div><span class="chev">\u25be</span></div><div class="draft__body">'+body+'</div></div>');
     card.querySelector(".draft__top").onclick=()=>card.classList.toggle("open");list.appendChild(card);
   });
-  list.querySelectorAll("[data-ap]").forEach(b=>b.onclick=async e=>{e.stopPropagation();btnBusy(b,"Sending\u2026");var aid=actStart("approve");try{var r=await api("approve",{id:b.dataset.ap});if(r&&r.error){toast("Apply failed: "+r.error);}else{toast((DASH.control||{}).dryRun?"Validated (dry-run) \u2014 nothing applied":"Approved & sent to Google Ads \u2713",true);}}catch(x){toast(x.message);}actEnd(aid);await reload();});
-  list.querySelectorAll("[data-retry]").forEach(b=>b.onclick=async e=>{e.stopPropagation();btnBusy(b,"Creating\u2026");var aid=actStart("apply");try{var r=await api("apply",{id:b.dataset.retry});if(r&&r.error){toast("Still failing: "+r.error);}else{toast((DASH.control||{}).dryRun?"Validated (dry-run) \u2014 nothing created":"Created in Google Ads \u2713",true);}}catch(x){toast(x.message);}actEnd(aid);await reload();});
+  list.querySelectorAll("[data-ap]").forEach(b=>b.onclick=async e=>{e.stopPropagation();btnBusy(b,"Sending\u2026");var aid=actStart("approve");try{var r=await api("approve",{id:b.dataset.ap});if(r&&r.error){toast("Apply failed: "+r.error);}else{toast((((typeof DASH!=="undefined"&&DASH)||{}).control||{}).dryRun?"Validated (dry-run) \u2014 nothing applied":"Approved & sent to Google Ads \u2713",true);}}catch(x){toast(x.message);}actEnd(aid);await reload();});
+  list.querySelectorAll("[data-retry]").forEach(b=>b.onclick=async e=>{e.stopPropagation();btnBusy(b,"Creating\u2026");var aid=actStart("apply");try{var r=await api("apply",{id:b.dataset.retry});if(r&&r.error){toast("Still failing: "+r.error);}else{toast((((typeof DASH!=="undefined"&&DASH)||{}).control||{}).dryRun?"Validated (dry-run) \u2014 nothing created":"Created in Google Ads \u2713",true);}}catch(x){toast(x.message);}actEnd(aid);await reload();});
   list.querySelectorAll("[data-rj]").forEach(b=>b.onclick=async e=>{e.stopPropagation();btnBusy(b,"Removing\u2026");var aid=actStart("reject");try{await api("reject",{id:b.dataset.rj});toast("Removed");}catch(x){toast(x.message);}actEnd(aid);await reload();});
   list.querySelectorAll(".apcty-edit").forEach(function(b){b.onclick=function(e){e.stopPropagation();var sel=(b.dataset.sel||"").split(",").filter(Boolean);openCountryEditor({selected:sel,title:"Target countries",subtitle:"Where this ad will run \u2014 applied when you approve it.",saveLabel:"Save countries",onSave:async function(ids,done){try{var r=await api("setApprovalCountries",{id:b.dataset.id,countries:ids});if(r&&r.ok){toast("Countries updated \u2713",true);done();await reload();}else{toast("Failed: "+((r&&r.error)||"unknown"));done();}}catch(x){toast(x.message);done();}}});};});
 }
@@ -1009,7 +1010,7 @@ function rowHtml(c){
   return r;
 }
 function detailHtml(c){
-  var ceil=Math.max(20,(DASH.control||{}).maxDailyBudgetTotal||100);var en=c.status==="ENABLED";
+  var ceil=Math.max(20,(((typeof DASH!=="undefined"&&DASH)||{}).control||{}).maxDailyBudgetTotal||100);var en=c.status==="ENABLED";
   var budCol='<div><div class="eyebrow" style="margin-bottom:6px">Daily budget ('+cur()+')</div>'+
     '<div class="range" style="min-width:200px"><input type="range" class="pbud" data-id="'+c.id+'" min="2" max="'+ceil+'" value="'+(c.budget||8)+'"><span class="rngval pbudv" data-id="'+c.id+'">'+money(c.budget||8)+'</span></div>'+
     '<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn ghost sm psave" data-id="'+c.id+'" data-res="'+esc(c.budgetRes||"")+'">Save budget</button>'+
@@ -1047,7 +1048,7 @@ async function doAnalyze(id,force){P.loading[id]=true;renderPerf();var aid=actSt
   catch(x){toast(x.message);}
   actEnd(aid);P.loading[id]=false;renderPerf();}
 async function setBudget(id,amt,res,btn){
-  if((DASH.control||{}).dryRun){if(!confirm("Dry-run is ON \u2014 this will validate only and NOT change the budget. Continue?"))return;}
+  if((((typeof DASH!=="undefined"&&DASH)||{}).control||{}).dryRun){if(!confirm("Dry-run is ON \u2014 this will validate only and NOT change the budget. Continue?"))return;}
   else if(!confirm("Set daily budget to "+money(amt)+"?\n\nThis changes real spend."))return;
   btnBusy(btn,"Saving\u2026");var aid=actStart("setBudget");
   try{var r=await api("setBudget",{id:id,budget:amt,budgetRes:res||undefined});
@@ -1056,7 +1057,7 @@ async function setBudget(id,amt,res,btn){
   catch(x){toast(x.message);}
   actEnd(aid);await reload();}
 async function campStatus(id,name,budget,status,btn){
-  if((DASH.control||{}).dryRun){if(!confirm("Dry-run is ON \u2014 this will validate only and NOT actually change the campaign.\n\nContinue anyway?"))return;}
+  if((((typeof DASH!=="undefined"&&DASH)||{}).control||{}).dryRun){if(!confirm("Dry-run is ON \u2014 this will validate only and NOT actually change the campaign.\n\nContinue anyway?"))return;}
   else if(status==="ENABLED"){if(!confirm("Enable \u201c"+name+"\u201d?\n\nIt will start serving ads and spending up to "+money(budget)+"/day of REAL budget."))return;}
   else if(status==="REMOVED"){if(!confirm("Archive / remove \u201c"+name+"\u201d?\n\nThis STOPS the campaign and removes it from Google Ads. It CANNOT be undone or re-enabled (history is kept for reporting). To only pause it, cancel and use Pause instead."))return;}
   else {if(!confirm("Pause \u201c"+name+"\u201d?\n\nIt will stop serving ads."))return;}
@@ -1074,7 +1075,7 @@ async function campStatus(id,name,budget,status,btn){
   }catch(x){actEnd(aid);toast(x.message);await reload();}}
 
 async function campStartNow(id,name,btn){
-  if((DASH.control||{}).dryRun){if(!confirm("Dry-run is ON \u2014 this will validate only and NOT actually change the start date.\n\nContinue anyway?"))return;}
+  if((((typeof DASH!=="undefined"&&DASH)||{}).control||{}).dryRun){if(!confirm("Dry-run is ON \u2014 this will validate only and NOT actually change the start date.\n\nContinue anyway?"))return;}
   else if(!confirm("Start \u201c"+name+"\u201d now?\n\nThis moves the campaign\u2019s start date to today (in your account timezone) so it can begin serving immediately. The end date is unchanged."))return;
   btnBusy(btn,"Starting\u2026");var aid=actStart("startNow",{verb:"Moving start date to today"});
   try{var r=await api("startNow",{id:id});
@@ -1179,10 +1180,13 @@ async function loadOpportunities(force){
   try{
     var r=await api("opportunities",{force:!!force});
     OPPS=(r&&r.opportunities)||[]; setOppMeta(r&&r.scannedAt);
+    oppShowErr(force?null:(r&&r.lastError), r&&r.scannedAt);
     if(!force){ renderOpportunities(); $("#oppScan").disabled=false; return; }
     // Forced scan runs in the background (avoids the 60s sync limit). Show any existing
-    // results immediately, then poll until a fresher scan lands.
+    // results immediately, then poll until a fresher scan lands — or the scan reports failure
+    // (the engine now records lastError/lastErrorAt instead of silently keeping stale data).
     var prevAt=(r&&r.scannedAt)||0;
+    var scanStart=Date.now();
     if(OPPS.length){ renderOpportunities(); }
     else { box.innerHTML='<div class="empty" style="height:210px"><span class="spin lg gold"></span><div style="font-weight:600;color:var(--ink)">Scanning\u2026 new opportunities in ~1 min.</div><div style="font-size:12px">You can leave this tab \u2014 results appear automatically.</div></div>'; }
     var tries=0;
@@ -1191,11 +1195,19 @@ async function loadOpportunities(force){
       try{
         var p=await api("opportunities",{cacheOnly:true});
         var at=(p&&p.scannedAt)||0;
+        var errAt=(p&&p.lastErrorAt)||0;
         if(at>prevAt && !(p&&p.scanning)){
           clearInterval(oppPollTimer); oppPollTimer=null; actEnd(scanAct);
-          OPPS=(p&&p.opportunities)||[]; setOppMeta(at); renderOpportunities();
+          OPPS=(p&&p.opportunities)||[]; setOppMeta(at); oppShowErr(null); renderOpportunities();
           toast("Re-scanned \u2014 "+OPPS.length+" opportunities",true);
           $("#oppScan").disabled=false;
+        } else if(errAt>scanStart && !(p&&p.scanning)){
+          // The scan RAN and FAILED. Old results (if any) stay visible, clearly labeled stale,
+          // with the engine\u2019s exact error on screen so the cause is never invisible again.
+          clearInterval(oppPollTimer); oppPollTimer=null; actEnd(scanAct); $("#oppScan").disabled=false;
+          OPPS=(p&&p.opportunities)||[]; setOppMeta(at); renderOpportunities();
+          oppShowErr((p&&p.lastError)||"scan failed", at);
+          toast("Scan failed \u2014 see the notice above the list.");
         } else if(tries>=36){
           clearInterval(oppPollTimer); oppPollTimer=null; actEnd(scanAct); $("#oppScan").disabled=false;
           if(!OPPS.length) box.innerHTML='<div class="empty" style="height:160px"><div>Scan is taking longer than usual.</div><div style="font-size:12px">Give it a moment and hit Scan again.</div></div>';
@@ -1204,6 +1216,12 @@ async function loadOpportunities(force){
       }catch(e){ if(tries>=36){clearInterval(oppPollTimer); oppPollTimer=null; actEnd(scanAct); $("#oppScan").disabled=false;} }
     },5000);
   }catch(x){ actEnd(scanAct); box.innerHTML='<div class="empty" style="height:160px"><div>Scan failed.</div><div style="font-size:12px">'+esc(x.message)+'</div></div>'; $("#oppScan").disabled=false; }
+}
+function oppShowErr(err, at){
+  var el=$("#oppErr"); if(!el) return;
+  if(!err){ el.style.display="none"; el.innerHTML=""; return; }
+  el.style.display="block";
+  el.innerHTML='<div style="background:var(--clay-soft);border:1px solid var(--clay);border-radius:10px;padding:10px 14px;margin:0 0 12px;font-size:12.5px;line-height:1.6"><b>Last scan failed</b> \u2014 <span class="mono" style="font-size:11.5px">'+esc(String(err).slice(0,240))+'</span><br><span class="muted">Showing the previous results'+(at?(" from "+timeago(at)+" ago"):"")+' (dates auto-adjusted to today). Hit \u201cScan for opportunities\u201d to retry.</span></div>';
 }
 function setOppMeta(scannedAt){ var u=OPPS.filter(function(o){return !o.acted;}).length; $("#oppMeta").textContent=OPPS.length?(u+" unused \u00b7 "+(OPPS.length-u)+" in use"+(scannedAt?" \u00b7 scanned "+timeago(scannedAt)+" ago":"")):""; }
 function priMeta(p){ return p==="high"?["High priority","var(--gold-soft)","#7a5a1d"]:p==="medium"?["Medium","var(--sage-soft)","#3c5a39"]:["Test","var(--slate-soft)","#33525d"]; }
@@ -1252,7 +1270,7 @@ function renderOpportunities(){
   var cards=$("#oppCards"); var list=oppView==="inuse"?inuse:unused;
   if(!list.length){ cards.innerHTML='<div class="empty" style="height:150px"><div>'+(oppView==="inuse"?"Nothing here yet.":"All current suggestions are already in use.")+'</div><div style="font-size:12px">'+(oppView==="inuse"?"Generated, approved, or live campaigns show up here so they\u2019re never re-suggested.":"Re-scan to surface fresh ideas.")+'</div></div>'; return; }
   if(oppView==="inuse"){ list.forEach(function(x){ cards.appendChild(inUseCard(x.o)); }); return; }
-  var ceil=Math.max(20,(DASH.control||{}).maxDailyBudgetTotal||100);
+  var ceil=Math.max(20,(((typeof DASH!=="undefined"&&DASH)||{}).control||{}).maxDailyBudgetTotal||100);
   list.forEach(function(x){ cards.appendChild(oppCard(x.o,x.i,ceil)); });
   cards.querySelectorAll(".opBud").forEach(function(s){ s.oninput=function(){ cards.querySelector('.opBudV[data-i="'+s.dataset.i+'"]').textContent=money(s.value); oppRecalc(cards,s.dataset.i); }; });
   cards.querySelectorAll(".opStart").forEach(function(d){ d.onchange=function(){ oppRecalc(cards,d.dataset.i); }; });
@@ -1261,6 +1279,9 @@ function renderOpportunities(){
   cards.querySelectorAll(".opBidSeg").forEach(function(b){ b.onclick=function(){ var i=b.dataset.i; oppOverride[i]=oppOverride[i]||{}; oppOverride[i].smart=(b.dataset.smart==="1"); cards.querySelectorAll('.opBidSeg[data-i="'+i+'"]').forEach(function(x){var on=x.dataset.smart===b.dataset.smart;x.style.background=on?"var(--card)":"transparent";x.style.color=on?"var(--ink)":"var(--ink-45)";x.style.boxShadow=on?"var(--sh)":"none";}); oppRecalc(cards,i); }; });
   cards.querySelectorAll(".opGen").forEach(function(b){ b.onclick=function(){ launchOpp(b.dataset.i,b); }; });
   cards.querySelectorAll(".opCty").forEach(function(s){ s.innerHTML=ctyChips(oppCty(s.dataset.i)); });
+  // Country names load async; if they weren\u2019t in yet these chips rendered as "#2124" \u2014 refill
+  // this view\u2019s chips the moment names arrive (nothing else re-renders the bench).
+  if(!countriesLoaded){ ensureCountries().then(function(){ if(!COUNTRIES.length) return; var cc=$("#oppCards"); if(cc) cc.querySelectorAll(".opCty").forEach(function(s){ s.innerHTML=ctyChips(oppCty(s.dataset.i)); }); }); }
   cards.querySelectorAll(".opCtyEdit").forEach(function(b){ b.onclick=function(){ openCountryEditor({selected:oppCty(b.dataset.i),title:"Target countries",subtitle:"Where this campaign will run \u2014 baked in when you generate.",saveLabel:"Use these",onSave:function(ids,done){ oppCountries[b.dataset.i]=ids.slice(); var s=cards.querySelector('.opCty[data-i="'+b.dataset.i+'"]'); if(s)s.innerHTML=ctyChips(ids); done(); }}); }; });
 }
 function fmtDate(s){ if(!s)return"\u2014"; var d=new Date(s+"T00:00:00"); if(isNaN(d.getTime()))return s; return d.toLocaleDateString(undefined,{month:"short",day:"numeric"}); }
