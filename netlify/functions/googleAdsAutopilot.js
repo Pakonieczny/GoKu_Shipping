@@ -657,6 +657,9 @@ function textGuidelinesOp() {
 async function openaiJSON(prompt, { maxTokens = 1400, effort = "low" } = {}) {
   const model = GEN_MODEL;
   const payload = { model, messages: [{ role: "user", content: prompt }] };
+  // NOTE: for gpt-5 / o* reasoning models, max_completion_tokens INCLUDES hidden reasoning
+  // tokens — with effort "high" the reasoning share grows, so budget generously or long JSON
+  // outputs get truncated mid-array.
   if (/^(gpt-5|o\d)/.test(model)) { payload.max_completion_tokens = maxTokens; payload.reasoning_effort = effort; }
   else { payload.max_tokens = Math.min(maxTokens, 900); payload.temperature = 0.8; }
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -666,9 +669,43 @@ async function openaiJSON(prompt, { maxTokens = 1400, effort = "low" } = {}) {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error("[gads] OpenAI: " + ((data.error && data.error.message) || res.status));
-  const raw = (((data.choices || [])[0] || {}).message || {}).content || "";
+  const choice = (data.choices || [])[0] || {};
+  const raw = ((choice.message || {}).content || "");
   const cleaned = raw.replace(/```json|```/g, "").trim();
-  try { return JSON.parse(cleaned); } catch { return null; }
+  try { return JSON.parse(cleaned); } catch (e) {}
+  // Truncated output (finish_reason "length") is the usual culprit — salvage what parses:
+  // cut back to the last complete object and close the brackets, so a near-complete
+  // opportunities array isn't thrown away wholesale. If even that fails, THROW a descriptive
+  // error instead of returning null: a silent null upstream is how "every re-scan shows the
+  // same stale list" happened.
+  const salvaged = _salvageJson(cleaned);
+  if (salvaged) return salvaged;
+  throw new Error("[gads] OpenAI returned unparseable JSON (finish_reason: " + (choice.finish_reason || "?") + ", " + cleaned.length + " chars)");
+}
+
+// Best-effort repair of truncated JSON: trim to the last complete value, then close
+// any brackets/braces that are still open (string-aware). Returns parsed object or null.
+function _salvageJson(s) {
+  if (!s || s[0] !== "{") return null;
+  for (let cut = s.length; cut > 1; ) {
+    const j = Math.max(s.lastIndexOf("}", cut - 1), s.lastIndexOf("]", cut - 1));
+    if (j < 0) return null;
+    let candidate = s.slice(0, j + 1).replace(/,\s*$/, "");
+    let open = [], inStr = false, esc = false;
+    for (let i = 0; i < candidate.length; i++) {
+      const ch = candidate[i];
+      if (inStr) { if (esc) esc = false; else if (ch === "\\") esc = true; else if (ch === '"') inStr = false; continue; }
+      if (ch === '"') inStr = true;
+      else if (ch === "{" || ch === "[") open.push(ch);
+      else if (ch === "}" || ch === "]") open.pop();
+    }
+    if (!inStr) {
+      const close = open.reverse().map(c => c === "{" ? "}" : "]").join("");
+      try { return JSON.parse(candidate + close); } catch (e) {}
+    }
+    cut = j;
+  }
+  return null;
 }
 
 // Build event-tailored RSA copy for a collection, on-brand and brand-safe.
@@ -1913,7 +1950,7 @@ function _distill(titles) {
 async function collectionProfiles({ force } = {}) {
   const f = fb();
   if (!force && f) { try { const d = await f.db.collection(COL.state).doc("collectionProfiles").get();
-    if (d.exists) { const x = d.data() || {}; if (x.v === 5 && x.at && (Date.now() - x.at) < 7 * 86400000 && Array.isArray(x.list) && x.list.length) return { list: x.list, at: x.at, salesBasis: x.salesBasis || null }; } } catch (e) {} }
+    if (d.exists) { const x = d.data() || {}; if (x.v === 6 && x.at && (Date.now() - x.at) < 7 * 86400000 && Array.isArray(x.list) && x.list.length) return { list: x.list, at: x.at, salesBasis: x.salesBasis || null }; } } catch (e) {} }
   // Pure units-sold ranking for "top seller" (see productSalesMap). Null -> Shopify-sort fallback, labeled.
   let salesMap = null; try { salesMap = await productSalesMap({}); } catch (e) {}
   const salesBasis = salesMap ? salesMap.source : "Shopify best-selling sort (pure sales-count ranking unavailable this run)";
@@ -1921,8 +1958,8 @@ async function collectionProfiles({ force } = {}) {
      price and OPTION STRUCTURES on every product. Every jewelry type present in the collection is
      seen, counted, priced and materials-profiled — not just whichever type dominates the bestseller
      head. 3 collections/page keeps each query safely under Admin GraphQL cost limits. */
-  const P1 = `{ edges { node { id title productType priceRangeV2 { minVariantPrice { amount } maxVariantPrice { amount } } options { name values } } } }`;
-  const P1F = `{ edges { node { id title productType priceRangeV2 { minVariantPrice { amount } maxVariantPrice { amount } } } } }`;
+  const P1 = `{ edges { node { id title productType tags priceRangeV2 { minVariantPrice { amount } maxVariantPrice { amount } } options { name values } } } }`;
+  const P1F = `{ edges { node { id title productType tags priceRangeV2 { minVariantPrice { amount } maxVariantPrice { amount } } } } }`;
   const Q = (after, variant) => `{ collections(first: 3${after ? `, after: "${after}"` : ""}) { pageInfo { hasNextPage endCursor } edges { node { handle title ${variant === 0 ? "productsCount { count } " : variant === 1 ? "productsCount " : ""}best: products(first: 50, sortKey: BEST_SELLING) ${P1} fresh: products(first: 20, sortKey: CREATED, reverse: true) ${P1F} } } } }`;
   let variant = -1, page = null;
   for (let v = 0; v < 3 && variant < 0; v++) { try { page = await shopifyGql(Q(null, v)); variant = v; } catch (e) {} }
@@ -2004,17 +2041,23 @@ async function collectionProfiles({ force } = {}) {
         priceMed: tPrices.length ? Math.round(_median(tPrices)) : null, priceHigh: thi != null ? Math.round(thi) : null,
         materials, personalization: opt.personalization };
     });
+    // Listing TAGS across the whole sample (best + fresh): the merchant's own search terms
+    // (styles, recipients, occasions, materials) with frequencies — prime keyword-seed material
+    // that titles alone miss.
+    const tagCount = {};
+    sample.forEach(p => (Array.isArray(p.tags) ? p.tags : []).forEach(t => { const k = String(t).trim(); if (k) tagCount[k] = (tagCount[k] || 0) + 1; }));
+    const listingTags = Object.keys(tagCount).sort((a, b) => tagCount[b] - tagCount[a]).slice(0, 10).map(t => ({ t, n: tagCount[t] }));
     const inv = _distill(sample.map(p => p.title).concat(descTexts));
     const persAll = [...new Set(typesDetail.flatMap(t => t.personalization || []))].slice(0, 6);
     const med = _median(prices);
     return { handle: c.handle, title: c.title, count: isFinite(count) ? count : null, sampled: sample.length,
       priceLow: lo != null ? Math.round(lo) : null, priceMed: med != null ? Math.round(med) : null, priceHigh: hi != null ? Math.round(hi) : null,
-      motifs: inv.motifs, types: inv.types, mats: inv.mats,
+      motifs: inv.motifs, types: inv.types, mats: inv.mats, listingTags,
       typesDetail, personalization: persAll,
       reps: [bestR[0] && (String(bestR[0].title).trim().slice(0, 60) + (salesMap && _salesOf(bestR[0], salesMap) > 0 ? ` (${_salesOf(bestR[0], salesMap)} sold)` : "")), c.freshP[0] && String(c.freshP[0].title).trim().slice(0, 60)].filter(Boolean) };
   });
   const builtAt = Date.now();
-  if (f) { try { await f.db.collection(COL.state).doc("collectionProfiles").set({ list, at: builtAt, v: 5, salesBasis }); } catch (e) {} }
+  if (f) { try { await f.db.collection(COL.state).doc("collectionProfiles").set({ list, at: builtAt, v: 6, salesBasis }); } catch (e) {} }
   return { list, at: builtAt, salesBasis };
 }
 // One compact prompt line per collection: count · price spread · ranked motif inventory (with
@@ -2031,6 +2074,7 @@ function _profileText(profiles, collections) {
     if (p.priceLow != null && p.priceHigh != null) bits.push(`$${p.priceLow}\u2013$${p.priceHigh}${p.priceMed != null ? ` med $${p.priceMed}` : ""}`);
     const parts = [`- ${c.title}${bits.length ? ` (${bits.join("; ")})` : ""}`];
     if (p.motifs && p.motifs.length) parts.push(`motifs: ${inv(p.motifs)}`);
+    if (p.listingTags && p.listingTags.length) parts.push(`listing tags: ${inv(p.listingTags)}`);
     if (p.personalization && p.personalization.length) parts.push(`personalization: ${p.personalization.join(", ")}`);
     if (p.reps && p.reps.length) parts.push(`anchors: ${p.reps.map(s => `"${s}"`).join("; ")}`);
     const head = parts.join(" \u00b7 ");
@@ -2111,7 +2155,7 @@ async function suggestOccasions(handle, { force } = {}) {
     try { const snap = await f.db.collection(COL.occasions).get(); snap.forEach(d => { const x = d.data(); memory.push({ occasion: x.occasion, timesUsed: x.timesUsed || 0, outcome: x.outcome || "untested", roas: (x.agg && x.agg.roas) || null }); }); } catch (e) {}
   }
   const collTitle = handle ? (await collectionMeta(handle)).title : "the store";
-  const dateStr = new Date().toISOString().slice(0, 10);
+  const dateStr = _acctDateYmd(await _accountTz().catch(() => "America/Toronto"));
   const memText = memory.length
     ? memory.map(m => `- ${m.occasion}: used ${m.timesUsed}x, outcome ${m.outcome}${m.roas ? `, ROAS ${m.roas}x` : ""}`).join("\n")
     : "(no history yet — nothing has run)";
@@ -2339,8 +2383,11 @@ Return ONLY JSON:
 /* ===================== Opportunity engine (the planner) ===================== */
 // Pulls the store's best-selling products (bounded) so the AI can reference real heroes.
 async function fetchTopProducts() {
-  const d = await shopifyGql(`{ products(first: 40, sortKey: BEST_SELLING) { edges { node { title handle } } } }`);
-  return ((d.products && d.products.edges) || []).map(e => ({ title: e.node.title, handle: e.node.handle })).filter(p => p.title);
+  const d = await shopifyGql(`{ products(first: 40, sortKey: BEST_SELLING) { edges { node { title handle tags } } } }`);
+  return ((d.products && d.products.edges) || []).map(e => ({
+    title: e.node.title, handle: e.node.handle,
+    tags: Array.isArray(e.node.tags) ? e.node.tags.filter(Boolean) : []
+  })).filter(p => p.title);
 }
 
 // THE big analysis: cross-reference all collections + best-sellers + calendar + memory
@@ -2366,10 +2413,12 @@ async function scanOpportunities({ force, cacheOnly } = {}) {
   let products = []; try { products = await fetchTopProducts(); } catch (e) {}
   let memory = [];
   if (f) { try { const snap = await f.db.collection(COL.occasions).get(); snap.forEach(d => { const x = d.data(); memory.push({ occasion: x.occasion, outcome: x.outcome || "untested", roas: (x.agg && x.agg.roas) || null, collections: Object.keys(x.collections || {}) }); }); } catch (e) {} }
-  const dateStr = new Date().toISOString().slice(0, 10);
+  const dateStr = _acctDateYmd(await _accountTz().catch(() => "America/Toronto"));
   const ceiling = ctrl.maxDailyBudgetTotal || 100, ccy = CURRENCY;
   const collText = collections.map(c => c.title).join(", ");
-  const prodText = products.length ? products.map(p => p.title).slice(0, 40).join("; ") : "(not available)";
+  const prodText = products.length
+    ? products.slice(0, 40).map(p => p.title + ((p.tags && p.tags.length) ? ` [tags: ${p.tags.slice(0, 6).join(", ")}]` : "")).join("; ")
+    : "(not available)";
   const memText = memory.length ? memory.map(m => `${m.occasion} [${(m.collections || []).join("/")}]: ${m.outcome}${m.roas ? ` ${m.roas}x` : ""}`).join("; ") : "(no history yet — nothing has run)";
   const _convH = await conversionHealth().catch(() => ({ validated: false }));
   const convDirective = _convH.validated
@@ -2380,7 +2429,7 @@ async function scanOpportunities({ force, cacheOnly } = {}) {
   let profiles = null, profiledAt = null, salesBasis = null;
   try { const _p = await collectionProfiles({}); if (_p && Array.isArray(_p.list) && _p.list.length) { profiles = _p.list; profiledAt = _p.at; salesBasis = _p.salesBasis; } } catch (e) {}
   const collBlock = (profiles && profiles.length)
-    ? `COLLECTIONS \u2014 each profiled from a STRATIFIED, TYPE-AWARE scan of its real listings (data as of ${_ymd(new Date(profiledAt || Date.now()))}; "top seller" = ${salesBasis || "Shopify best-selling sort"}; refreshed weekly) (50 best-sellers + 20 newest per collection, plus per-type representative variants and descriptions). Each collection line shows: motif inventory with per-motif listing counts \u00b7 personalization options \u00b7 anchors \u00b7 then a "types:" breakdown of every JEWELRY TYPE the collection actually contains (Necklace, Beady Necklace, Hoop/Stud Earrings, Bracelet, Charm Only\u2026) with its share (\u00d7n), price band, and MATERIAL TIERS with real per-tier prices from live variants. Use ALL of it: high-frequency motifs are the collection's identity (head terms); MID-frequency motifs are underexploited long-tail keyword material; the TYPE breakdown tells you which product types to build keywords around and in what proportion \u2014 a collection that is mostly necklaces with some hoop earrings and charm-only listings earns keywords across those types, weighted by share, and NEVER keywords for a type it doesn't contain; MATERIAL TIERS are distinct keyword axes with different buyers and intent ("solid 14k gold X" is a premium keepsake purchase at that tier's real price, "gold filled X" is the affordable tier \u2014 never blur them, never promise a tier, type or price the inventory doesn't show); PERSONALIZATION options (engraving, birthstone, photo\u2026) are high-intent keyword modifiers. Ground every keyword, phrase, audience and fit judgment in this inventory, never in the collection name alone:\n${_profileText(profiles, collections)}`
+    ? `COLLECTIONS \u2014 each profiled from a STRATIFIED, TYPE-AWARE scan of its real listings (data as of ${_ymd(new Date(profiledAt || Date.now()))}; "top seller" = ${salesBasis || "Shopify best-selling sort"}; refreshed weekly) (50 best-sellers + 20 newest per collection, plus per-type representative variants and descriptions). Each collection line shows: motif inventory with per-motif listing counts \u00b7 listing-tag inventory (the merchant\u2019s own search terms, with counts) \u00b7 personalization options \u00b7 anchors \u00b7 then a "types:" breakdown of every JEWELRY TYPE the collection actually contains (Necklace, Beady Necklace, Hoop/Stud Earrings, Bracelet, Charm Only\u2026) with its share (\u00d7n), price band, and MATERIAL TIERS with real per-tier prices from live variants. Use ALL of it: high-frequency motifs are the collection's identity (head terms); MID-frequency motifs are underexploited long-tail keyword material; the TYPE breakdown tells you which product types to build keywords around and in what proportion \u2014 a collection that is mostly necklaces with some hoop earrings and charm-only listings earns keywords across those types, weighted by share, and NEVER keywords for a type it doesn't contain; MATERIAL TIERS are distinct keyword axes with different buyers and intent ("solid 14k gold X" is a premium keepsake purchase at that tier's real price, "gold filled X" is the affordable tier \u2014 never blur them, never promise a tier, type or price the inventory doesn't show); PERSONALIZATION options (engraving, birthstone, photo\u2026) are high-intent keyword modifiers. Ground every keyword, phrase, audience and fit judgment in this inventory, never in the collection name alone:\n${_profileText(profiles, collections)}`
     : `ALL COLLECTIONS: ${collText}`;
   const prompt =
 `Today: ${dateStr}. You are the campaign strategist for Brites, a handcrafted personalized charm-jewelry brand (gift/emotion-led). Currency ${ccy}. Total daily ad ceiling ${ccy} ${ceiling}.
@@ -2400,7 +2449,7 @@ Find the 8-12 best advertising OPPORTUNITIES to act on within the NEXT ~30 DAYS.
   (Do NOT estimate ROAS \u2014 it is computed from real CPC, budget, and store data. Your job is the market judgment the raw numbers can't see.)
 - proven (bool: true ONLY if memory shows success for this occasion)
 - rationale (<=120 chars: why now, why this collection)
-- keywords: an array of 5-8 RESEARCHED keyword objects. MIX broad "head" terms with specific "long-tail" phrases, DRAWN FROM the collection's motif inventory \u2014 head terms from its high-frequency motifs, long-tail from mid-frequency motifs \u00d7 product types \u00d7 the occasion (a collection with bunny(31) and axolotl(6) earns both "bunny necklace" AND "axolotl charm gift") \u2014 phrased the way the audience below actually searches. DIFFERENTIATE the numbers per keyword and per opportunity (do not reuse the same figures). Each object:
+- keywords: an array of 5-8 RESEARCHED keyword objects. MIX broad "head" terms with specific "long-tail" phrases, DRAWN FROM the collection's motif inventory AND ITS LISTING TAGS (the tags are the merchant's own search terms \u2014 styles, recipients, occasions, materials \u2014 and often ARE the phrases shoppers type; fold the relevant ones for this occasion into keyword texts) \u2014 head terms from its high-frequency motifs, long-tail from mid-frequency motifs \u00d7 product types \u00d7 the occasion (a collection with bunny(31) and axolotl(6) earns both "bunny necklace" AND "axolotl charm gift") \u2014 phrased the way the audience below actually searches. DIFFERENTIATE the numbers per keyword and per opportunity (do not reuse the same figures). Each object:
     {"text": phrase a shopper would search,
      "searches": realistic estimated AVERAGE MONTHLY Google searches in the target countries (broad head terms in the hundreds-to-thousands; niche/long-tail 10-300; reflect how popular THIS exact phrase really is),
      "competition": "LOW" | "MEDIUM" | "HIGH" (long-tail/niche usually LOW; broad jewelry/gift terms HIGH),
@@ -2412,9 +2461,26 @@ Find the 8-12 best advertising OPPORTUNITIES to act on within the NEXT ~30 DAYS.
 - audience: {"buyer": <=70 chars WHO is typing the search and paying \u2014 usually the gift-giver, be specific (e.g. "team parents at season end", "moms of teen daughters"), "recipient": <=50 chars who receives it, "motivation": <=90 chars the emotional driver of the purchase, "searchStyle": <=80 chars how THIS buyer actually phrases searches}
 INTERPLAY (critical): audience \u00d7 occasion timing \u00d7 motif inventory must agree \u2014 keywords are what THIS buyer types in THIS window for the motifs/types/price band this collection actually contains; market.fit reflects inventory-level fit (price point, motif breadth, giftability), never the collection name alone. If the window is short, weight urgent/ready-to-buy phrasing; if the listings skew premium, weight quality/keepsake phrasing.
 Only include opportunities genuinely relevant within ~30 days. Rank best-first (soonest + strongest first). Avoid out-of-season occasions and any memory marks as fail. Return ONLY JSON: {"opportunities":[ ... ]}`;
-  let list = null;
-  try { const j = await openaiJSON(prompt, { maxTokens: 5400, effort: "high" }); if (j && Array.isArray(j.opportunities)) list = j.opportunities.filter(o => o && o.collectionTitle && o.occasion); } catch (e) {}
-  if (!list) list = [];
+  let list = null, llmErr = null;
+  // 9000 completion tokens: with reasoning effort "high" the hidden reasoning tokens come out of
+  // this same budget, and 8-12 opportunities × keyword objects × audience × market is a big JSON —
+  // 5400 was truncating, which parsed to null and silently kept the old list forever.
+  try { const j = await openaiJSON(prompt, { maxTokens: 9000, effort: "high" }); if (j && Array.isArray(j.opportunities)) list = j.opportunities.filter(o => o && o.collectionTitle && o.occasion); else llmErr = "model returned no opportunities array"; }
+  catch (e) { llmErr = (e && e.message) || "AI scan failed"; }
+  if (!list || !list.length) {
+    // The scan FAILED (LLM error or nothing usable) — do not pretend otherwise. Keep the old list
+    // and its ORIGINAL timestamp (no `at` bump), record WHY in lastError for the console, and
+    // return whatever we previously had so the UI isn't empty.
+    let prevList = [], prevAt = null;
+    if (f) {
+      try {
+        const s2 = await f.db.collection(COL.state).doc("opportunities").get();
+        if (s2.exists) { const x2 = s2.data(); prevList = Array.isArray(x2.list) ? x2.list : []; prevAt = x2.at || null; }
+      } catch (e) {}
+      try { await f.db.collection(COL.state).doc("opportunities").set({ scanning: false, lastError: llmErr || "no opportunities returned", lastErrorAt: Date.now() }, { merge: true }); } catch (e) {}
+    }
+    return { opportunities: prevList, scannedAt: prevAt, lastError: llmErr || "no opportunities returned", lastErrorAt: Date.now() };
+  }
   const byTitle = {}; collections.forEach(c => byTitle[c.title.toLowerCase()] = c.handle);
   const today0 = _todayUtc();
   let _enabled = 0; try { _enabled = await _enabledBudgetTotal(); } catch (e) {}
@@ -2492,7 +2558,7 @@ Only include opportunities genuinely relevant within ~30 days. Rank best-first (
       }
     }
   }
-  else if (f) { try { await f.db.collection(COL.state).doc("opportunities").set({ scanning: false, at: Date.now() }, { merge: true }); } catch (e) {} }
+  else if (f) { try { await f.db.collection(COL.state).doc("opportunities").set({ scanning: false, lastError: "all opportunities filtered out (no matching collections / all out of window)", lastErrorAt: Date.now() }, { merge: true }); } catch (e) {} }
   return { opportunities: list, scannedAt: Date.now() };
   } catch (scanErr) {
     // ANY failure in the scan pipeline: record it (console-readable via lastError) and ALWAYS clear
@@ -2558,13 +2624,35 @@ async function opportunitiesWithStatus({ force, cacheOnly } = {}) {
   const r = await scanOpportunities({ force, cacheOnly });
   let taken = {};
   try { taken = await takenTags(); } catch (e) {}
+  // Dates are normalized at SERVE time: an opportunity may have been scanned up to 12h ago (or be
+  // a stale list kept after a failed re-scan), so clamp startDate to today, recompute daysOut, and
+  // drop anything whose whole window has passed — the console must never suggest starting a
+  // campaign in the past.
+  const today0 = _todayUtc();
+  const todayYmd = _acctDateYmd(await _accountTz().catch(() => "America/Toronto"));
   const opportunities = (r.opportunities || []).map(o => {
     const tag = oppTag(o.collectionHandle, o.occasion);
-    return Object.assign({}, o, { tag, acted: taken[tag] || null });
+    const out = Object.assign({}, o, { tag, acted: taken[tag] || null });
+    const endD = _parseYmd(out.endDate);
+    if (endD && endD < today0) { out._expired = true; return out; }
+    const startD = _parseYmd(out.startDate);
+    if (startD && startD < today0) {
+      out.startDate = todayYmd;
+      out.daysOut = 0;
+      const days = endD ? (_daysBetween(today0, endD) + 1) : out.durationDays;
+      out.durationDays = Math.max(1, days || 1);
+      if (out.plan && out.plan.duration) {
+        out.plan = Object.assign({}, out.plan, { duration: Object.assign({}, out.plan.duration, { startDate: todayYmd, days: out.durationDays }) });
+      }
+    } else if (startD) {
+      out.daysOut = Math.max(0, _daysBetween(today0, startD));
+    }
+    return out;
   })
-  // Archived campaigns are terminal: drop their opportunity from every list
+  // Expired windows are dead; archived campaigns are terminal: drop both from every list
   // (not "in use", not re-suggested as "unused"). Live/paused/approval states stay,
   // shown with their actual status.
+  .filter(o => !o._expired)
   .filter(o => !(o.acted && o.acted.where === "campaign" && o.acted.status === "REMOVED"));
   return { opportunities, scannedAt: r.scannedAt, scanning: !!r.scanning, taken, lastError: r.lastError || r.error || null, lastErrorAt: r.lastErrorAt || null };
 }
