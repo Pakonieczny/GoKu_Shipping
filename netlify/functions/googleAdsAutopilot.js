@@ -2462,11 +2462,19 @@ Find the 8-12 best advertising OPPORTUNITIES to act on within the NEXT ~30 DAYS.
 INTERPLAY (critical): audience \u00d7 occasion timing \u00d7 motif inventory must agree \u2014 keywords are what THIS buyer types in THIS window for the motifs/types/price band this collection actually contains; market.fit reflects inventory-level fit (price point, motif breadth, giftability), never the collection name alone. If the window is short, weight urgent/ready-to-buy phrasing; if the listings skew premium, weight quality/keepsake phrasing.
 Only include opportunities genuinely relevant within ~30 days. Rank best-first (soonest + strongest first). Avoid out-of-season occasions and any memory marks as fail. Return ONLY JSON: {"opportunities":[ ... ]}`;
   let list = null, llmErr = null;
-  // 9000 completion tokens: with reasoning effort "high" the hidden reasoning tokens come out of
-  // this same budget, and 8-12 opportunities × keyword objects × audience × market is a big JSON —
-  // 5400 was truncating, which parsed to null and silently kept the old list forever.
-  try { const j = await openaiJSON(prompt, { maxTokens: 9000, effort: "high" }); if (j && Array.isArray(j.opportunities)) list = j.opportunities.filter(o => o && o.collectionTitle && o.occasion); else llmErr = "model returned no opportunities array"; }
-  catch (e) { llmErr = (e && e.message) || "AI scan failed"; }
+  // Reasoning models spend hidden reasoning tokens FROM max_completion_tokens before emitting any
+  // JSON — at effort "high" on this large a prompt, a 9k budget was fully consumed by reasoning
+  // alone ("finish_reason: length, 0 chars"). So: a much bigger budget, and if high effort still
+  // starves the output, retry once at medium effort (far less reasoning burn) instead of failing.
+  const _llmLadder = [{ maxTokens: 24000, effort: "high" }, { maxTokens: 24000, effort: "medium" }];
+  for (const _rung of _llmLadder) {
+    try {
+      const j = await openaiJSON(prompt, _rung);
+      if (j && Array.isArray(j.opportunities)) { list = j.opportunities.filter(o => o && o.collectionTitle && o.occasion); llmErr = null; }
+      else llmErr = "model returned no opportunities array";
+    } catch (e) { llmErr = (e && e.message) || "AI scan failed"; }
+    if (list && list.length) break;
+  }
   if (!list || !list.length) {
     // The scan FAILED (LLM error or nothing usable) — do not pretend otherwise. Keep the old list
     // and its ORIGINAL timestamp (no `at` bump), record WHY in lastError for the console, and
