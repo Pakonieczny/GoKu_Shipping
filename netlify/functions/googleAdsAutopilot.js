@@ -1029,7 +1029,14 @@ async function _kwCacheSet(key, ideasByText) {
   const f = fb(); if (!f) return;
   try { await f.db.collection(COL.kwCache).doc(key).set({ at: Date.now(), ideasByText }); } catch (e) {}
 }
-async function keywordResearchPool(seeds, geoIds, { langId = "1000" } = {}) {
+/* Live scan progress: tiny merges into the opportunities doc so the console can show a
+   real progress bar (phase, %, detail) while the background scan runs. Best-effort only —
+   a progress write must never break the scan. Cleared (null) when the scan ends either way. */
+async function _scanProg(pct, label, detail) {
+  const f = fb(); if (!f) return;
+  try { await f.db.collection(COL.state).doc("opportunities").set({ progress: { pct: Math.max(0, Math.min(99, Math.round(pct))), label: String(label || "").slice(0, 80), detail: detail ? String(detail).slice(0, 120) : null, at: Date.now() } }, { merge: true }); } catch (e) {}
+}
+async function keywordResearchPool(seeds, geoIds, { langId = "1000", onChunk = null } = {}) {
   const uniq = [...new Set((seeds || []).map(s => String(s).trim().toLowerCase()).filter(Boolean))];
   if (!uniq.length) return { ok: false, error: "no seeds", status: null, ideasByText: {} };
   const geoKey = ((geoIds && geoIds.length) ? geoIds : ["2124"]).map(g => String(g).replace(/\D/g, "")).sort().join(",");
@@ -1046,6 +1053,7 @@ async function keywordResearchPool(seeds, geoIds, { langId = "1000" } = {}) {
   const _CHUNK_RETRY_MS = [0, 3000, 6000]; // attempt 1 immediate, then wait 3s, then 6s before retrying
   for (let i = 0; i < uniq.length; i += 20) {
     const chunk = uniq.slice(i, i + 20);
+    if (onChunk) { try { onChunk(Math.floor(i / 20) + 1, Math.ceil(uniq.length / 20), Object.keys(ideasByText).length); } catch (e) {} }
     if (i > 0) await _sleep(_KP_BACKOFF_MS); // serialize between chunks: stay under ~1 request/second
     let r = null;
     for (let a = 0; a < _CHUNK_RETRY_MS.length; a++) {
@@ -1947,7 +1955,7 @@ function _distill(titles) {
   return { motifs: rank(motifs, 12), types: rank(types, 4), mats: rank(mats, 3) };
 }
 // (price median uses the existing _median helper; sampled prices are already filtered > 0)
-async function collectionProfiles({ force } = {}) {
+async function collectionProfiles({ force, onPage = null } = {}) {
   const f = fb();
   if (!force && f) { try { const d = await f.db.collection(COL.state).doc("collectionProfiles").get();
     if (d.exists) { const x = d.data() || {}; if (x.v === 6 && x.at && (Date.now() - x.at) < 7 * 86400000 && Array.isArray(x.list) && x.list.length) return { list: x.list, at: x.at, salesBasis: x.salesBasis || null }; } } catch (e) {} }
@@ -1973,6 +1981,7 @@ async function collectionProfiles({ force } = {}) {
         bestP: (((n.best || {}).edges) || []).map(pe => pe && pe.node).filter(Boolean),
         freshP: (((n.fresh || {}).edges) || []).map(pe => pe && pe.node).filter(Boolean) });
     });
+    if (onPage) { try { onPage(raw.length); } catch (e) {} }
     const pi = conn.pageInfo || {};
     if (pi.hasNextPage && pi.endCursor && raw.length < 120) { try { page = await shopifyGql(Q(pi.endCursor, variant)); } catch (e) { page = null; } }
     else page = null;
@@ -2393,6 +2402,18 @@ async function fetchTopProducts() {
 // THE big analysis: cross-reference all collections + best-sellers + calendar + memory
 // → a ranked list of fully-specified campaign opportunities (budget, duration, keywords…).
 // Cached 12h; force re-rolls. Stored in Firestore for recall.
+/* Conversion-likelihood score (0-99) + urgency-blended rank, so the list can be ordered by
+   "most likely to convert" with time-critical windows boosted. Inputs are the model\u2019s own
+   market judgment (fit, demand), priority, and proven history \u2014 all already on the card. */
+function _oppScore(o) {
+  const fit = (o.market && Number(o.market.fit)) || 1;
+  const pw = { high: 1.25, medium: 1.0, test: 0.8 }[o.priority] || 1.0;
+  const dw = { rising: 1.12, steady: 1.0, fading: 0.85 }[(o.market && o.market.demand) || "steady"] || 1.0;
+  const prov = o.proven ? 1.2 : 1.0;
+  const score = Math.max(5, Math.min(99, Math.round(58 * fit * pw * dw * prov)));
+  const uw = (o.daysOut <= 0) ? 1.12 : (o.daysOut <= 3) ? 1.06 : 1.0; // urgency boost
+  return { score, rank: Math.round(score * uw * 10) / 10 };
+}
 async function scanOpportunities({ force, cacheOnly } = {}) {
   const f = fb(); const ctrl = await control();
   if (f && (cacheOnly || !force)) {
@@ -2400,7 +2421,7 @@ async function scanOpportunities({ force, cacheOnly } = {}) {
       const s = await f.db.collection(COL.state).doc("opportunities").get();
       if (s.exists) {
         const x = s.data();
-        if (cacheOnly) return { opportunities: Array.isArray(x.list) ? x.list : [], scannedAt: x.at || null, scanning: !!x.scanning, lastError: x.lastError || null, lastErrorAt: x.lastErrorAt || null };
+        if (cacheOnly) return { opportunities: Array.isArray(x.list) ? x.list : [], scannedAt: x.at || null, scanning: !!x.scanning, lastError: x.lastError || null, lastErrorAt: x.lastErrorAt || null, progress: x.progress || null };
         if (x.at && (Date.now() - x.at) < 12 * 60 * 60 * 1000 && Array.isArray(x.list) && x.list.length) return { opportunities: x.list, scannedAt: x.at };
       } else if (cacheOnly) { return { opportunities: [], scannedAt: null, scanning: false }; }
     } catch (e) { if (cacheOnly) return { opportunities: [], scannedAt: null, scanning: false }; }
@@ -2409,6 +2430,7 @@ async function scanOpportunities({ force, cacheOnly } = {}) {
   // clears the scanning flag. Previously the background caller swallowed the error, leaving
   // scanning:true and stale opportunities on screen forever with no signal as to the cause.
   try {
+  await _scanProg(3, "Reading catalog & memory");
   const collections = await getCollections({});
   let products = []; try { products = await fetchTopProducts(); } catch (e) {}
   let memory = [];
@@ -2427,7 +2449,9 @@ async function scanOpportunities({ force, cacheOnly } = {}) {
   // Scan several REAL listings per collection so keywords/audience/fit are grounded in actual
   // products, not collection names. Cached 7d; degrades to titles-only if Shopify is unreachable.
   let profiles = null, profiledAt = null, salesBasis = null;
-  try { const _p = await collectionProfiles({}); if (_p && Array.isArray(_p.list) && _p.list.length) { profiles = _p.list; profiledAt = _p.at; salesBasis = _p.salesBasis; } } catch (e) {}
+  await _scanProg(8, "Profiling collections", "50 best-sellers + 20 newest per collection, with listing tags");
+  try { const _p = await collectionProfiles({ onPage: n => _scanProg(Math.min(30, 8 + n * 0.6), "Profiling collections", n + " collections scanned") }); if (_p && Array.isArray(_p.list) && _p.list.length) { profiles = _p.list; profiledAt = _p.at; salesBasis = _p.salesBasis; } } catch (e) {}
+  await _scanProg(34, "Building the strategy brief", (profiles ? profiles.length + " collection profiles" : "titles only") + " \u00b7 " + products.length + " best-sellers");
   const collBlock = (profiles && profiles.length)
     ? `COLLECTIONS \u2014 each profiled from a STRATIFIED, TYPE-AWARE scan of its real listings (data as of ${_ymd(new Date(profiledAt || Date.now()))}; "top seller" = ${salesBasis || "Shopify best-selling sort"}; refreshed weekly) (50 best-sellers + 20 newest per collection, plus per-type representative variants and descriptions). Each collection line shows: motif inventory with per-motif listing counts \u00b7 listing-tag inventory (the merchant\u2019s own search terms, with counts) \u00b7 personalization options \u00b7 anchors \u00b7 then a "types:" breakdown of every JEWELRY TYPE the collection actually contains (Necklace, Beady Necklace, Hoop/Stud Earrings, Bracelet, Charm Only\u2026) with its share (\u00d7n), price band, and MATERIAL TIERS with real per-tier prices from live variants. Use ALL of it: high-frequency motifs are the collection's identity (head terms); MID-frequency motifs are underexploited long-tail keyword material; the TYPE breakdown tells you which product types to build keywords around and in what proportion \u2014 a collection that is mostly necklaces with some hoop earrings and charm-only listings earns keywords across those types, weighted by share, and NEVER keywords for a type it doesn't contain; MATERIAL TIERS are distinct keyword axes with different buyers and intent ("solid 14k gold X" is a premium keepsake purchase at that tier's real price, "gold filled X" is the affordable tier \u2014 never blur them, never promise a tier, type or price the inventory doesn't show); PERSONALIZATION options (engraving, birthstone, photo\u2026) are high-intent keyword modifiers. Ground every keyword, phrase, audience and fit judgment in this inventory, never in the collection name alone:\n${_profileText(profiles, collections)}`
     : `ALL COLLECTIONS: ${collText}`;
@@ -2467,7 +2491,10 @@ Only include opportunities genuinely relevant within ~30 days. Rank best-first (
   // alone ("finish_reason: length, 0 chars"). So: a much bigger budget, and if high effort still
   // starves the output, retry once at medium effort (far less reasoning burn) instead of failing.
   const _llmLadder = [{ maxTokens: 24000, effort: "high" }, { maxTokens: 24000, effort: "medium" }];
+  let _rungNo = 0;
   for (const _rung of _llmLadder) {
+    _rungNo++;
+    await _scanProg(_rungNo === 1 ? 38 : 46, "AI strategist reasoning", _rungNo === 1 ? "deep pass (high effort) \u2014 the long step" : "retry at standard effort");
     try {
       const j = await openaiJSON(prompt, _rung);
       if (j && Array.isArray(j.opportunities)) { list = j.opportunities.filter(o => o && o.collectionTitle && o.occasion); llmErr = null; }
@@ -2485,7 +2512,7 @@ Only include opportunities genuinely relevant within ~30 days. Rank best-first (
         const s2 = await f.db.collection(COL.state).doc("opportunities").get();
         if (s2.exists) { const x2 = s2.data(); prevList = Array.isArray(x2.list) ? x2.list : []; prevAt = x2.at || null; }
       } catch (e) {}
-      try { await f.db.collection(COL.state).doc("opportunities").set({ scanning: false, lastError: llmErr || "no opportunities returned", lastErrorAt: Date.now() }, { merge: true }); } catch (e) {}
+      try { await f.db.collection(COL.state).doc("opportunities").set({ scanning: false, lastError: llmErr || "no opportunities returned", lastErrorAt: Date.now(), progress: null }, { merge: true }); } catch (e) {}
     }
     return { opportunities: prevList, scannedAt: prevAt, lastError: llmErr || "no opportunities returned", lastErrorAt: Date.now() };
   }
@@ -2503,7 +2530,9 @@ Only include opportunities genuinely relevant within ~30 days. Rank best-first (
   // cached pool (serial chunks, backoff, stops on 429), then hand each opportunity its own slice.
   const _oppTexts = o => (Array.isArray(o.keywords) ? o.keywords : []).map(k => typeof k === "string" ? k : (k && k.text)).filter(Boolean);
   const allSeeds = [...new Set(list.flatMap(o => _oppTexts(o).map(s => String(s).toLowerCase())))];
-  const pool = await keywordResearchPool(allSeeds, geoIds).catch(e => ({ ok: false, error: e && e.message, status: null, ideasByText: {} }));
+  await _scanProg(56, "AI proposed " + list.length + " opportunities", allSeeds.length + " unique keyword seeds to research");
+  const pool = await keywordResearchPool(allSeeds, geoIds, { onChunk: (i, n, got) => _scanProg(58 + (i - 1) / Math.max(1, n) * 22, "Google Keyword Planner", "batch " + i + "/" + n + " \u00b7 " + got + " phrases with live data") }).catch(e => ({ ok: false, error: e && e.message, status: null, ideasByText: {} }));
+  await _scanProg(82, "Costing & ranking plans", "budgets, CPC caps, projected sales per opportunity");
   list = list.map((o, i) => {
     const t = String(o.collectionTitle).toLowerCase();
     const handle = byTitle[t] || (collections.find(c => c.title.toLowerCase().indexOf(t) >= 0) || {}).handle || null;
@@ -2551,27 +2580,30 @@ Only include opportunities genuinely relevant within ~30 days. Rank best-first (
     };
   }).filter(o => o.collectionHandle)
     .filter(o => o.daysOut <= 32)   // ~30-day forward window: drop anything that starts too far out
-    .sort((a, b) => a.daysOut - b.daysOut);
+    .map(o => { const sc = _oppScore(o); o.score = sc.score; o.rank = sc.rank; return o; })
+    // Default order = the blend the console shows: conversion likelihood boosted by urgency.
+    .sort((a, b) => b.rank - a.rank);
   // Persist the fresh list. If THIS write throws (commonly: the doc exceeds Firestore's 1 MiB limit
   // because keywordData/plan bloat the payload), it was previously swallowed — leaving stale data AND a
   // stuck scanning flag. Now a write failure retries with a trimmed payload and is always recorded.
+  await _scanProg(96, "Saving " + list.length + " ranked opportunities");
   if (f && list.length) {
-    try { await f.db.collection(COL.state).doc("opportunities").set({ list, at: Date.now(), scanning: false, lastError: null, lastErrorAt: null }); }
+    try { await f.db.collection(COL.state).doc("opportunities").set({ list, at: Date.now(), scanning: false, lastError: null, lastErrorAt: null, progress: null }); }
     catch (e) {
       try {
         const slim = list.map(o => { const c = Object.assign({}, o); delete c.keywordData; return c; }); // drop heavy per-keyword metrics
-        await f.db.collection(COL.state).doc("opportunities").set({ list: slim, at: Date.now(), scanning: false, lastError: "write trimmed (payload too large): " + (e && e.message), lastErrorAt: Date.now() });
+        await f.db.collection(COL.state).doc("opportunities").set({ list: slim, at: Date.now(), scanning: false, lastError: "write trimmed (payload too large): " + (e && e.message), lastErrorAt: Date.now(), progress: null });
       } catch (e2) {
-        try { await f.db.collection(COL.state).doc("opportunities").set({ scanning: false, lastError: "WRITE FAILED: " + (e2 && e2.message), lastErrorAt: Date.now() }, { merge: true }); } catch (e3) {}
+        try { await f.db.collection(COL.state).doc("opportunities").set({ scanning: false, lastError: "WRITE FAILED: " + (e2 && e2.message), lastErrorAt: Date.now(), progress: null }, { merge: true }); } catch (e3) {}
       }
     }
   }
-  else if (f) { try { await f.db.collection(COL.state).doc("opportunities").set({ scanning: false, lastError: "all opportunities filtered out (no matching collections / all out of window)", lastErrorAt: Date.now() }, { merge: true }); } catch (e) {} }
+  else if (f) { try { await f.db.collection(COL.state).doc("opportunities").set({ scanning: false, lastError: "all opportunities filtered out (no matching collections / all out of window)", lastErrorAt: Date.now(), progress: null }, { merge: true }); } catch (e) {} }
   return { opportunities: list, scannedAt: Date.now() };
   } catch (scanErr) {
     // ANY failure in the scan pipeline: record it (console-readable via lastError) and ALWAYS clear
     // scanning so the UI stops showing stale data. This is the safety net that was missing.
-    if (f) { try { await f.db.collection(COL.state).doc("opportunities").set({ scanning: false, lastError: (scanErr && scanErr.message) || String(scanErr), lastErrorStack: ((scanErr && scanErr.stack) || "").slice(0, 600), lastErrorAt: Date.now() }, { merge: true }); } catch (e) {} }
+    if (f) { try { await f.db.collection(COL.state).doc("opportunities").set({ scanning: false, lastError: (scanErr && scanErr.message) || String(scanErr), lastErrorStack: ((scanErr && scanErr.stack) || "").slice(0, 600), lastErrorAt: Date.now(), progress: null }, { merge: true }); } catch (e) {} }
     return { opportunities: [], scannedAt: null, error: (scanErr && scanErr.message) || String(scanErr) };
   }
 }
@@ -2662,7 +2694,7 @@ async function opportunitiesWithStatus({ force, cacheOnly } = {}) {
   // shown with their actual status.
   .filter(o => !o._expired)
   .filter(o => !(o.acted && o.acted.where === "campaign" && o.acted.status === "REMOVED"));
-  return { opportunities, scannedAt: r.scannedAt, scanning: !!r.scanning, taken, lastError: r.lastError || r.error || null, lastErrorAt: r.lastErrorAt || null };
+  return { opportunities, scannedAt: r.scannedAt, scanning: !!r.scanning, taken, lastError: r.lastError || r.error || null, lastErrorAt: r.lastErrorAt || null, progress: r.progress || null };
 }
 
 /* ===================== Force-generate (Draft Bench) ===================== */
