@@ -930,16 +930,22 @@ function renderFeed(){var lgAll=DASH.recentLedger||[];
 function timeago(ms){var s=Math.floor((Date.now()-ms)/1000);if(s<60)return s+"s";if(s<3600)return Math.floor(s/60)+"m";if(s<86400)return Math.floor(s/3600)+"h";return Math.floor(s/86400)+"d";}
 
 /* ---- render: approvals ---- */
-function parseCreative(ops){var o={headlines:[],descriptions:[],keywords:[],negatives:[],sitelinks:0,callouts:0,snippets:0,budget:null,finalUrl:null};(ops||[]).forEach(function(op){
+function parseCreative(ops){var o={headlines:[],descriptions:[],keywords:[],kwDetail:[],negatives:[],sitelinks:0,callouts:0,snippets:0,sitelinkNames:[],calloutNames:[],snippetHeader:null,snippetValues:[],budget:null,finalUrl:null};(ops||[]).forEach(function(op){
   if(op.campaignBudgetOperation&&op.campaignBudgetOperation.create)o.budget=(+op.campaignBudgetOperation.create.amountMicros||0)/1e6;
   if(op.adGroupAdOperation&&op.adGroupAdOperation.create){var cr=op.adGroupAdOperation.create;var ad=(cr.adGroupAd?cr.adGroupAd:cr).ad||{};o.finalUrl=(ad.finalUrls||[])[0];var rsa=ad.responsiveSearchAd||{};o.headlines=(rsa.headlines||[]).map(h=>h.text);o.descriptions=(rsa.descriptions||[]).map(d=>d.text);}
-  if(op.adGroupCriterionOperation&&op.adGroupCriterionOperation.create){var cc=op.adGroupCriterionOperation.create;var k=(cc.adGroupCriterion?cc.adGroupCriterion:cc).keyword;if(k)o.keywords.push(k.text);}
+  if(op.adGroupCriterionOperation&&op.adGroupCriterionOperation.create){var cc=op.adGroupCriterionOperation.create;var k=(cc.adGroupCriterion?cc.adGroupCriterion:cc).keyword;if(k){o.keywords.push(k.text);o.kwDetail.push({text:k.text,matchType:k.matchType||"PHRASE"});}}
   if(op.campaignCriterionOperation&&op.campaignCriterionOperation.create){var ccc=op.campaignCriterionOperation.create;if(ccc.negative&&ccc.keyword&&ccc.keyword.text)o.negatives.push(ccc.keyword.text);}
-  if(op.assetOperation&&op.assetOperation.create){var ac=op.assetOperation.create;if(ac.sitelinkAsset)o.sitelinks++;else if(ac.calloutAsset)o.callouts++;else if(ac.structuredSnippetAsset)o.snippets++;}
+  if(op.assetOperation&&op.assetOperation.create){var ac=op.assetOperation.create;
+    if(ac.sitelinkAsset){o.sitelinks++;if(ac.sitelinkAsset.linkText)o.sitelinkNames.push(ac.sitelinkAsset.linkText);}
+    else if(ac.calloutAsset){o.callouts++;if(ac.calloutAsset.calloutText)o.calloutNames.push(ac.calloutAsset.calloutText);}
+    else if(ac.structuredSnippetAsset){o.snippets++;o.snippetHeader=ac.structuredSnippetAsset.header||"Types";o.snippetValues=(ac.structuredSnippetAsset.values||[]).slice();}}
 });return o;}
 // One-line summary of the ad extensions + exclusions baked into a generated campaign.
 function adExtrasLine(c){var bits=[];if(c.sitelinks)bits.push(c.sitelinks+" sitelinks");if(c.callouts)bits.push(c.callouts+" callouts");if(c.snippets)bits.push("structured snippets");if(c.negatives&&c.negatives.length)bits.push("excludes "+c.negatives.length+" non-buyer terms");if(!bits.length)return "";
-  return '<details style="margin-top:8px"><summary style="cursor:pointer;font-size:11.5px;color:var(--gold);font-weight:600">Ad extensions &amp; exclusions \u00b7 '+esc(bits.join(" \u00b7 "))+'</summary><div style="font-size:11px;color:var(--ink-70);margin-top:6px;line-height:1.6">'+(c.sitelinks?'<b>Sitelinks ('+c.sitelinks+')</b> \u2014 extra links (Best Sellers, New Arrivals, Personalize a Gift) that lift CTR.<br>':"")+(c.callouts?'<b>Callouts ('+c.callouts+')</b> \u2014 Handmade in Canada \u00b7 Personalized Charms \u00b7 Custom-Made Gifts \u00b7 Unique Handmade Designs.<br>':"")+(c.snippets?'<b>Structured snippet</b> \u2014 Types: Necklaces, Bracelets, Earrings, Rings, Charms.<br>':"")+(c.negatives&&c.negatives.length?'<b>Negative keywords ('+c.negatives.length+')</b> \u2014 '+esc(c.negatives.slice(0,12).join(", "))+(c.negatives.length>12?", \u2026":"")+'.':"")+'</div></details>';}
+  var sl=(c.sitelinkNames&&c.sitelinkNames.length)?c.sitelinkNames.join(" \u00b7 "):"extra links that lift CTR";
+  var co=(c.calloutNames&&c.calloutNames.length)?c.calloutNames.join(" \u00b7 "):"brand callouts";
+  var sn=(c.snippetValues&&c.snippetValues.length)?((c.snippetHeader||"Types")+": "+c.snippetValues.join(", ")):"";
+  return '<details style="margin-top:8px"><summary style="cursor:pointer;font-size:11.5px;color:var(--gold);font-weight:600">Ad extensions &amp; exclusions \u00b7 '+esc(bits.join(" \u00b7 "))+'</summary><div style="font-size:11px;color:var(--ink-70);margin-top:6px;line-height:1.6">'+(c.sitelinks?'<b>Sitelinks ('+c.sitelinks+')</b> \u2014 '+esc(sl)+'.<br>':"")+(c.callouts?'<b>Callouts ('+c.callouts+')</b> \u2014 '+esc(co)+'.<br>':"")+(c.snippets&&sn?'<b>Structured snippet</b> \u2014 '+esc(sn)+'.<br>':"")+(c.negatives&&c.negatives.length?'<b>Negative keywords ('+c.negatives.length+')</b> \u2014 '+esc(c.negatives.slice(0,12).join(", "))+(c.negatives.length>12?", \u2026":"")+'.':"")+'</div></details>';}
 function copyLine(txt,max){var len=(txt||"").length;var over=len>max,warn=len>max*.86&&!over;var bad=(DASH.terms||[]).find(b=>(txt||"").toLowerCase().includes(b));
   return '<div class="copyline"><div class="meter '+(over?"over":warn?"warn":"")+'"><i style="width:'+Math.min(100,len/max*100)+'%"></i></div><div class="cc">'+len+'/'+max+'</div><div class="txt">'+esc(txt)+'</div><div class="safe '+(bad?"bad":"ok")+'">'+(bad?"✕":"✓")+'</div></div>';}
 function stuckCard(a){var pl=a.payload||{};var dry=(((typeof DASH!=="undefined"&&DASH)||{}).control||{}).dryRun;
@@ -964,7 +970,8 @@ function renderApprovals(){var list=$("#apprList");var p=DASH.pending||[];var st
     if(pl.mutateOperations){var c=parseCreative(pl.mutateOperations);
       if(c.headlines.length)body+='<div class="eyebrow" style="margin:4px 0 6px">Headlines \u00b7 \u226430</div>'+c.headlines.map(t=>copyLine(t,30)).join("");
       if(c.descriptions.length)body+='<div class="eyebrow" style="margin:14px 0 6px">Descriptions \u00b7 \u226490</div>'+c.descriptions.map(t=>copyLine(t,90)).join("");
-      if(c.keywords.length)body+='<div class="eyebrow" style="margin:14px 0 7px">Keywords</div><div class="chips">'+c.keywords.map(k=>'<span class="chip on">'+esc(k)+'</span>').join("")+'</div>';
+      if(c.keywords.length){var kd=(c.kwDetail&&c.kwDetail.length)?c.kwDetail:c.keywords.map(function(k){return{text:k,matchType:"PHRASE"};});var nEx=kd.filter(function(k){return k.matchType==="EXACT";}).length;
+        body+='<div class="eyebrow" style="margin:14px 0 7px">Keywords <span class="muted" style="font-weight:400;text-transform:none;letter-spacing:0">\u00b7 '+kd.length+(nEx?' \u00b7 '+nEx+' exact-match':'')+'</span></div><div class="chips">'+kd.map(function(k){return '<span class="chip on" title="'+(k.matchType==="EXACT"?"Exact match \u2014 bids only on this precise phrase":"Phrase match")+'">'+esc(k.text)+(k.matchType==="EXACT"?' <span style="opacity:.55;font-size:9px">[E]</span>':'')+'</span>';}).join("")+'</div>';}
       body+='<div class="kv" style="margin-top:12px;color:var(--ink-45)">'+(c.finalUrl?'URL <span style="color:var(--ink)">'+esc(c.finalUrl.replace("https://britesjewelry.com",""))+'</span> \u00b7 ':"")+(c.budget!=null?'budget <span style="color:var(--ink)">'+money(c.budget)+'/day</span> \u00b7 ':"")+'status <span style="color:var(--ink)">PAUSED</span></div>'+adExtrasLine(c);
       body+='<div class="eyebrow" style="margin:14px 0 7px">Countries <span class="muted" style="text-transform:none;font-weight:400;letter-spacing:0">\u00b7 where it runs</span></div><div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap">'+ctyChips(pl.countries)+'<button class="btn ghost sm apcty-edit" data-id="'+a.id+'" data-sel="'+((pl.countries||[]).join(","))+'" style="padding:3px 9px;font-size:11px">Edit</button></div>';
     } else if(pl.operations){ body+='<div class="kv muted">'+pl.operations.length+' operation(s) on '+esc(pl.service||"")+'</div>'; }
@@ -1301,7 +1308,9 @@ function renderOpportunities(){
   var cards=$("#oppCards"); var list=oppView==="inuse"?inuse:unused;
   if(oppView!=="inuse") list=list.slice().sort(oppSorters(oppSort));
   if(!list.length){ cards.innerHTML='<div class="empty" style="height:150px"><div>'+(oppView==="inuse"?"Nothing here yet.":"All current suggestions are already in use.")+'</div><div style="font-size:12px">'+(oppView==="inuse"?"Generated, approved, or live campaigns show up here so they\u2019re never re-suggested.":"Re-scan to surface fresh ideas.")+'</div></div>'; return; }
-  if(oppView==="inuse"){ list.forEach(function(x){ cards.appendChild(inUseCard(x.o)); }); return; }
+  if(oppView==="inuse"){ list.forEach(function(x){ cards.appendChild(inUseCard(x.o)); });
+    cards.querySelectorAll(".opRelease").forEach(function(b){ b.onclick=function(){ releaseOpp(b.dataset.tag,b); }; });
+    return; }
   var ceil=Math.max(20,(((typeof DASH!=="undefined"&&DASH)||{}).control||{}).maxDailyBudgetTotal||100);
   list.forEach(function(x){ cards.appendChild(oppCard(x.o,x.i,ceil)); });
   cards.querySelectorAll(".opBud").forEach(function(s){ s.oninput=function(){ cards.querySelector('.opBudV[data-i="'+s.dataset.i+'"]').textContent=money(s.value); oppRecalc(cards,s.dataset.i); }; });
@@ -1494,8 +1503,23 @@ function inUseCard(o){ var b=actedBadge(o.acted); var a=o.acted||{};
     '<div class="exp__h"><span class="verdict" style="background:'+b[1]+';color:'+b[2]+'">'+b[0]+'</span><span class="nm" style="font-weight:600">'+esc(o.collectionTitle)+' \u00b7 '+esc(o.occasion)+'</span><span class="st muted" style="font-family:var(--mono);font-size:11px">'+esc(loc)+'</span></div>'+
     '<div style="font-size:12.5px;color:var(--ink-70);margin:4px 0 0">'+esc(o.rationale||"")+'</div>'+
     ((o.startDate&&o.endDate)?'<div class="muted" style="font-size:11.5px;margin-top:6px;font-family:var(--mono)">Window '+fmtDate(o.startDate)+' \u2013 '+fmtDate(o.endDate)+'</div>':'')+
-    '<div class="muted" style="font-size:11.5px;margin-top:8px">Already acted on \u2014 won\u2019t be re-suggested. '+link+'</div>'+
+    '<div class="muted" style="font-size:11.5px;margin-top:8px;display:flex;gap:12px;align-items:center;flex-wrap:wrap"><span>Already acted on \u2014 won\u2019t be re-suggested. '+link+'</span>'+
+    ((a.where==="campaign"&&a.status!=="REMOVED")
+      ? '<span class="muted" style="font-size:10.5px">(a live campaign holds this \u2014 archive it in Command Center to release)</span>'
+      : '<button class="btn ghost sm opRelease" data-tag="'+esc(o.tag||"")+'" style="padding:3px 10px;font-size:11px">Remove from In use</button><span class="opRelMsg muted" style="font-size:11px"></span>')+
+    '</div>'+
   '</div>');
+}
+async function releaseOpp(tag,btn){
+  if(!tag)return;
+  if(!confirm("Remove this from In use?\n\nIts pending draft(s) will be rejected and the next Scan may suggest this collection \u00d7 occasion again if still relevant."))return;
+  btn.disabled=true;btn.textContent="Releasing\u2026";
+  var msg=btn.parentElement.querySelector(".opRelMsg");
+  try{
+    var r=await api("releaseOpportunity",{tag:tag});
+    if(r&&r.ok){ toast("Released \u2014 open for the next scan",true); await loadOpportunities(false); }
+    else { btn.disabled=false;btn.textContent="Remove from In use"; if(msg)msg.textContent=(r&&(r.reason||r.error))||"couldn\u2019t release"; }
+  }catch(e){ btn.disabled=false;btn.textContent="Remove from In use"; if(msg)msg.textContent=e.message; }
 }
 async function launchOpp(i,btn){ var o=OPPS[i]; if(!o)return; var scope=$("#oppCards")||document;
   var bud=+scope.querySelector('.opBud[data-i="'+i+'"]').value; var msg=scope.querySelector('.opMsg[data-i="'+i+'"]');
