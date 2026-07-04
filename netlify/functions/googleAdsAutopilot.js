@@ -709,15 +709,27 @@ function _salvageJson(s) {
 }
 
 // Build event-tailored RSA copy for a collection, on-brand and brand-safe.
-async function generateRSAAssets(coll, event) {
+async function generateRSAAssets(coll, event, context) {
   const proof = coll.reviewProof || "thousands of 5-star reviews";
   const heroes = (coll.heroProducts || []).slice(0, 6).join("; ");
+  // Research context (when this copy belongs to a scanned opportunity / profiled collection):
+  // the audience the scan identified, its motivation and best angle, the emotional key phrases,
+  // and the collection\u2019s REAL types + price bands + personalization. Copy written to the
+  // researched buyer at the real price point — not generic jewelry copy for a title.
+  const cx = context || {};
+  const cxLines = [];
+  if (cx.audience && (cx.audience.buyer || cx.audience.recipient)) cxLines.push(`BUYER (write to this person): ${cx.audience.buyer || "?"}${cx.audience.recipient ? ` buying for ${cx.audience.recipient}` : ""}${cx.audience.motivation ? ` — motivation: ${cx.audience.motivation}` : ""}${cx.audience.searchStyle ? ` — they search like: "${cx.audience.searchStyle}"` : ""}`);
+  if (cx.angle) cxLines.push(`BEST-CONVERTING ANGLE (lead with this): ${cx.angle}`);
+  if (Array.isArray(cx.keyPhrases) && cx.keyPhrases.length) cxLines.push(`EMOTIONAL KEY PHRASES to weave in or echo: ${cx.keyPhrases.slice(0, 4).join(" · ")}`);
+  if (Array.isArray(cx.types) && cx.types.length) cxLines.push(`WHAT THE COLLECTION ACTUALLY CONTAINS (only reference these types, at these real prices): ${cx.types.slice(0, 6).join(" · ")}`);
+  if (Array.isArray(cx.personalization) && cx.personalization.length) cxLines.push(`PERSONALIZATION options (high-intent hooks): ${cx.personalization.slice(0, 5).join(", ")}`);
+  const cxBlock = cxLines.length ? `\nRESEARCH (ground every line in this — never promise a type, price or option not listed):\n${cxLines.map(l => "- " + l).join("\n")}` : "";
   const prompt =
 `You write Google Search ad copy for Brites, a handcrafted personalized charm-jewelry brand.
 Voice: warm, sincere, premium, gift-and-emotion led — never bargain or hypey.
 Collection: "${coll.title}" (${coll.handle}). Bestsellers: ${heroes || "n/a"}.
 Social proof you may reference: ${proof}.
-Occasion/emotion focus: ${event ? event.label + " — " + (event.angle || "") : "evergreen gifting"}.
+Occasion/emotion focus: ${event ? event.label + " — " + (event.angle || "") : "evergreen gifting"}.${cxBlock}
 Hard rules:
 - 15 headlines, each ≤30 characters. 4 descriptions, each ≤90 characters.
 - 4 sitelink texts (≤25 chars) with 1-line descriptions, 6 callouts (≤25 chars).
@@ -889,9 +901,13 @@ async function keywordResearch(keywords, geoIds, { langId = "1000" } = {}) {
         _kpAttempt = at.key;
         const ideas = (data.results || []).map(r => {
           const m = r.keywordIdeaMetrics || {};
+          // monthlySearchVolumes: chronological 12-month series — MEASURED seasonality, used to
+          // compute demand direction instead of trusting the model's guess.
+          const monthly = Array.isArray(m.monthlySearchVolumes) ? m.monthlySearchVolumes.map(v => Number(v && v.monthlySearches) || 0).slice(-12) : null;
           return { text: r.text, searches: Number(m.avgMonthlySearches) || 0,
                    competition: m.competition || "UNKNOWN", competitionIndex: m.competitionIndex != null ? Number(m.competitionIndex) : null,
-                   low: fromMicros(m.lowTopOfPageBidMicros), high: fromMicros(m.highTopOfPageBidMicros) };
+                   low: fromMicros(m.lowTopOfPageBidMicros), high: fromMicros(m.highTopOfPageBidMicros),
+                   monthly: (monthly && monthly.length >= 6) ? monthly : null };
         });
         return { ok: true, ideas, status: res.status, authMode: at.key };
       }
@@ -933,7 +949,8 @@ function mergeKeywordResearch(aiKeywords, kpResult) {
       const ex = byText[key];
       const rec = { text: idea.text, searches: idea.searches, competition: idea.competition || _compLabel(idea.competitionIndex),
         competitionIndex: idea.competitionIndex, low: _r2(idea.low) || null, high: _r2(idea.high) || null,
-        tail: ex ? ex.tail : _tailOf(idea.text), intent: ex ? ex.intent : null, real: true };
+        tail: ex ? ex.tail : _tailOf(idea.text), intent: ex ? ex.intent : null, real: true,
+        monthly: (Array.isArray(idea.monthly) && idea.monthly.length >= 6) ? idea.monthly : null };
       if (ex) Object.assign(ex, rec); else { out.push(rec); byText[key] = rec; }
       realCount++;
     });
@@ -948,9 +965,25 @@ function mergeKeywordResearch(aiKeywords, kpResult) {
   const longCount = out.filter(k => k.tail === "LONG").length, headCount = out.filter(k => k.tail === "HEAD").length;
   const longTailRatio = out.length ? Math.round(longCount / out.length * 100) : 0;
   out.sort((a, b) => (b.real ? 1 : 0) - (a.real ? 1 : 0) || (b.searches || 0) - (a.searches || 0));
+  // MEASURED demand direction: sum the real ideas\u2019 12-month series (aligned from the most
+  // recent month) and compare the last 3 months to the prior 3. This replaces the model\u2019s
+  // demand guess with Google\u2019s own seasonality data whenever it\u2019s available.
+  let demandMeasured = null, demandSlopePct = null;
+  const series = out.filter(k => k.real && Array.isArray(k.monthly) && k.monthly.length >= 6).map(k => k.monthly);
+  if (series.length) {
+    const L = Math.min(...series.map(s => s.length));
+    const tot = Array.from({ length: L }, (_, i) => series.reduce((a, s) => a + (s[s.length - L + i] || 0), 0));
+    const last3 = tot.slice(-3).reduce((a, b) => a + b, 0) / 3;
+    const prev3 = tot.slice(-6, -3).reduce((a, b) => a + b, 0) / 3;
+    if (prev3 > 0) {
+      const slope = last3 / prev3;
+      demandSlopePct = Math.round((slope - 1) * 100);
+      demandMeasured = slope >= 1.15 ? "rising" : slope <= 0.85 ? "fading" : "steady";
+    }
+  }
   return { ok: true, source: realCount > 0 ? "google_keyword_planner" : "ai_estimate", realCount,
     keywords: out.slice(0, 12), searchVolume, competitionIndex, cpc: { low: cpcLow, high: cpcHigh },
-    longTailRatio, longCount, headCount };
+    longTailRatio, longCount, headCount, demandMeasured, demandSlopePct };
 }
 // Diagnostic: run one live Keyword Planner call and return the raw outcome (status + error + sample)
 // so the actual reason for any failure is visible instead of silently falling back.
@@ -1282,29 +1315,43 @@ const DEFAULT_NEGATIVES = ["free", "diy", "how to make", "tutorial", "pattern", 
   "bulk", "supplier", "manufacturer", "repair", "fix", "job", "jobs", "hiring", "salary", "fake",
   "replica", "knockoff", "amazon", "temu", "shein", "wish", "meaning", "definition", "clipart", "svg", "png"];
 // Brand callouts — descriptive (not promises), true for Brites, each ≤25 chars.
-const BRAND_CALLOUTS = ["Handmade in Canada", "Personalized Charms", "Custom-Made Gifts", "Unique Handmade Designs"];
+// No origin-country callout: most buyers are in the US, and "Handmade in Canada" reads as
+// "imported / slower shipping" to them. Keep claims true and universally appealing.
+const BRAND_CALLOUTS = ["Handcrafted Jewelry", "Personalized Charms", "Custom-Made Gifts", "Unique Handmade Designs"];
 const _clip = (s, n) => String(s || "").slice(0, n);
 // Sitelink + callout + structured-snippet assets. Google: sitelinks alone lift conversions ~15% by
 // adding relevant links + ad real estate. All URLs are pages that always exist (collection, homepage,
 // Shopify's built-in /collections/all sorts) so nothing 404s. Returned as asset + campaignAsset ops
 // with temp resource names, all applied atomically with the campaign.
-function buildCampaignAssets(coll, finalUrl, cRes) {
+function buildCampaignAssets(coll, finalUrl, cRes, extras) {
+  // extras (optional, threaded from the generate path):
+  //   relatedCollections: [{title,handle}] REAL store collections to link (never invented pages)
+  //   snippetTypes: the advertised collection\u2019s ACTUAL product types (from its profile) \u2014 a
+  //     focused ad shouldn\u2019t advertise every jewelry type the store sells; if the collection has
+  //     fewer than 3 types we skip the snippet entirely rather than pad it.
+  extras = extras || {};
   const ASSET = n => `customers/${CID}/assets/${n}`; const ops = []; let an = -10;
   const short = _clip(coll.title, 16);
-  const ALL = "https://britesjewelry.com/collections/all";
   const sitelinks = [
     { linkText: _clip("Shop " + short, 25), d1: "Browse the full collection", d2: "Personalized, made to order", url: finalUrl },
-    { linkText: "Best Sellers", d1: "Our most-loved pieces", d2: "Top customer favorites", url: ALL + "?sort_by=best-selling" },
-    { linkText: "New Arrivals", d1: "Fresh handmade designs", d2: "Just added to the shop", url: ALL + "?sort_by=created-descending" },
-    { linkText: "Personalize a Gift", d1: "Add names, dates & charms", d2: "Made unique, just for them", url: finalUrl }
+    { linkText: "Best Sellers", d1: "Our most-loved pieces", d2: "Top customer favorites", url: "https://britesjewelry.com/collections/best-sellers" }
   ];
+  (extras.relatedCollections || []).slice(0, 2).forEach(rc => {
+    if (!rc || !rc.handle || rc.handle === coll.handle || rc.handle === "best-sellers") return;
+    sitelinks.push({ linkText: _clip(rc.title, 25), d1: "More personalized designs", d2: "Handcrafted, made to order", url: "https://britesjewelry.com/collections/" + rc.handle });
+  });
   sitelinks.forEach(s => { const a = ASSET(an--); ops.push({ assetOperation: { create: { resourceName: a, finalUrls: [s.url], sitelinkAsset: { linkText: _clip(s.linkText, 25), description1: _clip(s.d1, 35), description2: _clip(s.d2, 35) } } } }); ops.push({ campaignAssetOperation: { create: { asset: a, campaign: cRes, fieldType: "SITELINK" } } }); });
   BRAND_CALLOUTS.forEach(t => { const a = ASSET(an--); ops.push({ assetOperation: { create: { resourceName: a, calloutAsset: { calloutText: _clip(t, 25) } } } }); ops.push({ campaignAssetOperation: { create: { asset: a, campaign: cRes, fieldType: "CALLOUT" } } }); });
-  const ss = ASSET(an--); ops.push({ assetOperation: { create: { resourceName: ss, structuredSnippetAsset: { header: "Types", values: ["Necklaces", "Bracelets", "Earrings", "Rings", "Charms"] } } } }); ops.push({ campaignAssetOperation: { create: { asset: ss, campaign: cRes, fieldType: "STRUCTURED_SNIPPET" } } });
-  return { ops, summary: { sitelinks: sitelinks.length, callouts: BRAND_CALLOUTS.length, structuredSnippets: 1 } };
+  let snippets = 0;
+  const types = [...new Set((extras.snippetTypes || []).map(t => _clip(String(t || "").trim(), 25)).filter(Boolean))].slice(0, 6);
+  if (types.length >= 3) {
+    const ss = ASSET(an--); ops.push({ assetOperation: { create: { resourceName: ss, structuredSnippetAsset: { header: "Types", values: types } } } }); ops.push({ campaignAssetOperation: { create: { asset: ss, campaign: cRes, fieldType: "STRUCTURED_SNIPPET" } } });
+    snippets = 1;
+  }
+  return { ops, summary: { sitelinks: sitelinks.length, callouts: BRAND_CALLOUTS.length, structuredSnippets: snippets } };
 }
 
-function buildSearchCampaignOps(coll, event, assets, { dailyBudget, startDate, endDate, countries, maxCpc, smartBidding, targetRoas, negatives, withAssets } = {}) {
+function buildSearchCampaignOps(coll, event, assets, { dailyBudget, startDate, endDate, countries, maxCpc, smartBidding, targetRoas, negatives, withAssets, assetExtras, keywordPlan } = {}) {
   const tag = `${coll.handle}-${(event ? event.label : "evergreen").toLowerCase().replace(/[^a-z0-9]+/g, "-")}`.slice(0, 40);
   const bRes = `customers/${CID}/campaignBudgets/-1`;
   const cRes = `customers/${CID}/campaigns/-2`;
@@ -1345,11 +1392,26 @@ function buildSearchCampaignOps(coll, event, assets, { dailyBudget, startDate, e
             descriptions: assets.descriptions.map(t => ({ text: clampDescription(cleanAdText(t)) })).filter(d => d.text)
           } } } } }
   ];
-  // Keyword themes from collection title + event (phrase match)
-  const kws = [coll.title, `${coll.title} gift`, `${coll.title} necklace`,
-               event ? `${coll.title} ${event.label}` : null].filter(Boolean);
-  kws.forEach((k, i) => ops.push({ adGroupCriterionOperation: { create: {
-    adGroup: agRes, status: "ENABLED", keyword: { text: k, matchType: "PHRASE" } } } }));
+  // Ad-group keywords: the RESEARCHED keyword set when provided (each with real volume/CPC/intent
+  // behind it) — high-intent long-tail as EXACT, head terms as PHRASE — so the campaign bids on
+  // what the research actually found. Title-derived phrases are only the no-research fallback.
+  let kwEntries;
+  if (Array.isArray(keywordPlan) && keywordPlan.length) {
+    const seen = new Set();
+    kwEntries = keywordPlan.map(k => {
+      const text = String((k && (k.text || k)) || "").trim().toLowerCase();
+      if (!text || seen.has(text)) return null; seen.add(text);
+      const mt = (k && k.matchType) ? String(k.matchType).toUpperCase()
+        : ((k && (String(k.tail || "").toUpperCase() === "LONG" || (String(k.tail || "").toUpperCase() === "MID" && String(k.intent || "") === "high"))) ? "EXACT" : "PHRASE");
+      return { text, matchType: mt === "EXACT" ? "EXACT" : "PHRASE" };
+    }).filter(Boolean).slice(0, 12);
+  } else {
+    kwEntries = [coll.title, `${coll.title} gift`, `${coll.title} necklace`,
+                 event ? `${coll.title} ${event.label}` : null].filter(Boolean)
+      .map(k => ({ text: k, matchType: "PHRASE" }));
+  }
+  kwEntries.forEach(k => ops.push({ adGroupCriterionOperation: { create: {
+    adGroup: agRes, status: "ENABLED", keyword: { text: k.text, matchType: k.matchType } } } }));
   // Location targeting — one positive campaign criterion per chosen country. With NO location
   // criteria, Google Ads defaults to "all countries and territories", so we set these explicitly.
   (countries || []).map(x => String(x).replace(/\D/g, "")).filter(Boolean).forEach(gid => {
@@ -1363,8 +1425,8 @@ function buildSearchCampaignOps(coll, event, assets, { dailyBudget, startDate, e
     campaign: cRes, negative: true, keyword: { text: n, matchType: "BROAD" } } } }));
   // Sitelink + callout + structured-snippet assets — extra links/real estate that lift CTR & conversions.
   let assetSummary = null;
-  if (withAssets !== false) { const ca = buildCampaignAssets(coll, finalUrl, cRes); ca.ops.forEach(o => ops.push(o)); assetSummary = ca.summary; }
-  return { ops, tag, finalUrl, negatives: negSet, assetSummary };
+  if (withAssets !== false) { const ca = buildCampaignAssets(coll, finalUrl, cRes, assetExtras); ca.ops.forEach(o => ops.push(o)); assetSummary = ca.summary; }
+  return { ops, tag, finalUrl, negatives: negSet, assetSummary, keywordSummary: { count: kwEntries.length, exact: kwEntries.filter(k => k.matchType === "EXACT").length, researched: !!(Array.isArray(keywordPlan) && keywordPlan.length) } };
 }
 
 /* ============================ STAGES ============================ */
@@ -2558,6 +2620,12 @@ Only include opportunities genuinely relevant within ~30 days. Rank best-first (
     merged.strategy = o.keywordStrategy || null;
     const peakDate = o.endDate || o.startDate || _nextOccasionPeak(o.occasion);
     const mkt = _mktNorm(o.market);
+    // Measured demand (12-mo Keyword Planner series) OVERRIDES the model\u2019s guess; the source
+    // is recorded so the card can say which one it is.
+    if (mkt) {
+      if (merged.demandMeasured) { mkt.demand = merged.demandMeasured; mkt.demandSource = "measured"; mkt.demandSlopePct = merged.demandSlopePct; }
+      else if (mkt.demand) mkt.demandSource = "model";
+    }
     const plan = planCampaign({ title: o.collectionTitle, occasion: o.occasion, peakDate, ceiling, headroom, smartBidding: !!ctrl.smartBidding, research: merged, aov, cvrInfo, market: mkt });
     const startDate = plan.duration.startDate, endDate = plan.duration.endDate, durationDays = plan.duration.days;
     const bud = plan.budget.daily, maxCpc = plan.cpc.max;
@@ -2715,7 +2783,29 @@ async function generateForCollection(handle, eventLabel, budget, { ctrl, startDa
   if (!handle) return { ok: false, reason: "no collection given" };
   const coll = await collectionMeta(handle);
   const event = (eventLabel && eventLabel !== "Evergreen gifting") ? { label: eventLabel, angle: "" } : null;
-  const assets = await generateRSAAssets(coll, event);
+  // If this generate belongs to a SCANNED opportunity (same collection + occasion), reuse its
+  // research: audience, angle, key phrases, and the per-keyword data (volumes, CPCs, intent, tail).
+  let opp = null;
+  try {
+    const f0 = fb();
+    if (f0) {
+      const s0 = await f0.db.collection(COL.state).doc("opportunities").get();
+      const lst0 = (s0.exists && Array.isArray((s0.data() || {}).list)) ? s0.data().list : [];
+      const occL = String(eventLabel || "Evergreen gifting").toLowerCase();
+      opp = lst0.find(x => x && x.collectionHandle === handle && String(x.occasion || "").toLowerCase() === occL) || null;
+    }
+  } catch (e) {}
+  // Collection profile: real types + price bands + personalization for grounded ad copy.
+  let mine = null;
+  try { const prof0 = await collectionProfiles({}); mine = ((prof0 && prof0.list) || []).find(p => p.handle === handle) || null; } catch (e) {}
+  const rsaContext = {
+    audience: (opp && opp.audience) || null,
+    angle: (opp && opp.market && opp.market.angle) || null,
+    keyPhrases: (opp && opp.keyPhrases) || null,
+    types: (mine && Array.isArray(mine.typesDetail)) ? mine.typesDetail.slice(0, 6).map(t => `${t.type}${(t.priceLow != null && t.priceHigh != null) ? ` $${t.priceLow}\u2013$${t.priceHigh}` : ""}`) : null,
+    personalization: (mine && mine.personalization) || null
+  };
+  const assets = await generateRSAAssets(coll, event, rsaContext);
   if (!assets) return { ok: false, reason: "generation rejected — copy failed brand-safety or fell under RSA minimums" };
   // Research-grounded plan: gives a custom build the SAME costed treatment as a scanned one —
   // a learning-aware run length, a CPC cap, and a budget that fits the ceiling — even when the
@@ -2739,15 +2829,36 @@ async function generateForCollection(handle, eventLabel, budget, { ctrl, startDa
   let cty = (countries && countries.length) ? countries
           : (Array.isArray(ctrl.defaultCountries) && ctrl.defaultCountries.length ? ctrl.defaultCountries : ["2124"]);
   cty = [...new Set(cty.map(x => String(x).replace(/\D/g, "")).filter(Boolean))];
-  const { ops, tag, negatives, assetSummary } = buildSearchCampaignOps(coll, event, assets, { dailyBudget, startDate: sDate, endDate: eDate, countries: cty, maxCpc: capCpc, smartBidding: smart, targetRoas: Number(ctrl.targetRoas || 0) });
+  // Real ad extensions only: sitelinks from REAL sibling collections, structured-snippet values
+  // from the advertised collection\u2019s ACTUAL product types (per its profile) \u2014 never invented
+  // pages, never every-jewelry-type-under-one-ad.
+  let assetExtras = {};
+  try {
+    const prof = await collectionProfiles({});
+    const mine = (prof.list || []).find(p => p.handle === handle);
+    if (mine && Array.isArray(mine.typesDetail)) assetExtras.snippetTypes = mine.typesDetail.map(t => t.type || t.t || t.name).filter(Boolean);
+    const colls = await getCollections({});
+    const myTypes = new Set((assetExtras.snippetTypes || []).map(s => String(s).toLowerCase()));
+    const related = (prof.list || [])
+      .filter(p => p.handle !== handle && p.handle !== "best-sellers" && Array.isArray(p.typesDetail) && p.typesDetail.some(t => myTypes.has(String(t.type || t.t || t.name || "").toLowerCase())))
+      .slice(0, 2)
+      .map(p => { const c = (colls || []).find(x => x.handle === p.handle); return c ? { title: c.title, handle: c.handle } : null; })
+      .filter(Boolean);
+    if (related.length) assetExtras.relatedCollections = related;
+    else if (colls && colls.length) assetExtras.relatedCollections = colls.filter(c => c.handle !== handle && c.handle !== "best-sellers").slice(0, 2);
+  } catch (e) {}
+  const keywordPlan = (opp && Array.isArray(opp.keywordData) && opp.keywordData.length) ? opp.keywordData
+                    : ((_res && _res.ok && Array.isArray(_res.keywords) && _res.keywords.some(k => k.real)) ? _res.keywords : null);
+  const { ops, tag, negatives, assetSummary, keywordSummary } = buildSearchCampaignOps(coll, event, assets, { dailyBudget, startDate: sDate, endDate: eDate, countries: cty, maxCpc: capCpc, smartBidding: smart, targetRoas: Number(ctrl.targetRoas || 0), assetExtras, keywordPlan });
   await recordOccasionUse(event ? event.label : "Evergreen gifting", coll.handle, tag);
   const win = (sDate && eDate) ? ` (${sDate} → ${eDate}, ${plan.duration.days}d)` : "";
   const bidTxt = smart ? "Smart Bidding (no CPC cap)" : `Manual CPC ≤ ${CURRENCY} ${capCpc.toFixed(2)}/click`;
   const assetTxt = assetSummary ? `, ${assetSummary.sitelinks} sitelinks + ${assetSummary.callouts} callouts` : "";
+  const kwTxt = keywordSummary ? `, ${keywordSummary.count} ${keywordSummary.researched ? "researched" : "themed"} keywords${keywordSummary.exact ? ` (${keywordSummary.exact} exact)` : ""}` : "";
   const id = await enqueueApproval({
     type: "creative", vetted: false,
-    summary: `NEW Search campaign “${tag}”${event ? ` for ${event.label}` : ""}${win} — ${bidTxt}, ${assets.headlines.length} headlines${assetTxt}, ${negatives.length} negatives, starts PAUSED (drafted on the Bench)`,
-    payload: { mutateOperations: ops, finalCollection: coll.handle, event: event ? event.label : null, startDate: sDate || null, endDate: eDate || null, countries: cty, maxCpc: capCpc, smartBidding: smart, negatives, assetSummary, plan },
+    summary: `NEW Search campaign “${tag}”${event ? ` for ${event.label}` : ""}${win} — ${bidTxt}, ${assets.headlines.length} headlines${kwTxt}${assetTxt}, ${negatives.length} negatives, starts PAUSED (drafted on the Bench)`,
+    payload: { mutateOperations: ops, finalCollection: coll.handle, event: event ? event.label : null, startDate: sDate || null, endDate: eDate || null, countries: cty, maxCpc: capCpc, smartBidding: smart, negatives, assetSummary, keywordSummary, plan },
     experimentId: tag
   });
   return { ok: true, approvalId: id, tag, title: coll.title, event: event ? event.label : null,
