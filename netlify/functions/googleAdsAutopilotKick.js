@@ -196,6 +196,10 @@ async function handleAction(body) {
     try { return { occasions: await E.suggestOccasions(body.coll, { force: !!body.force }) }; }
     catch (e) { return { occasions: [], error: e.message }; }
   }
+  if (a === "releaseOpportunity") {
+    try { return await E.releaseOpportunity({ tag: body.tag }); }
+    catch (e) { return { ok: false, error: e.message }; }
+  }
   if (a === "generate") {
     try { return await E.generateForCollection(body.coll, body.event, body.budget, { ctrl, startDate: body.startDate, endDate: body.endDate, countries: body.countries, maxCpc: body.maxCpc, peakDate: body.peakDate, smartBidding: body.smartBidding }); }
     catch (e) { return { ok: false, reason: e.message }; }

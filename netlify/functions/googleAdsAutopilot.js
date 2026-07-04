@@ -2706,6 +2706,7 @@ async function takenTags() {
       const ap = await f.db.collection(COL.approvals).limit(300).get();
       ap.forEach(d => {
         const x = d.data(); const tag = approvalTag(x); if (!tag) return;
+        if (x.status === "REJECTED") return; // rejected/released drafts don\u2019t hold the tag \u2014 the scan may re-suggest it
         const cur = map[tag];
         if (!cur || (_AP_RANK[x.status] || 0) >= (_AP_RANK[cur.status] || 0))
           map[tag] = { where: "approval", status: x.status, approvalId: d.id };
@@ -2763,6 +2764,35 @@ async function opportunitiesWithStatus({ force, cacheOnly } = {}) {
   .filter(o => !o._expired)
   .filter(o => !(o.acted && o.acted.where === "campaign" && o.acted.status === "REMOVED"));
   return { opportunities, scannedAt: r.scannedAt, scanning: !!r.scanning, taken, lastError: r.lastError || r.error || null, lastErrorAt: r.lastErrorAt || null, progress: r.progress || null };
+}
+
+/* ===================== Release an "in use" opportunity ===================== */
+// Frees an opportunity\u2019s tag so the scanner may re-suggest it: PENDING/APPROVED drafts with the
+// tag are marked REJECTED (kept for audit, no longer blocking). If the tag is held by a LIVE
+// campaign (or an APPLIED draft that created one), we refuse \u2014 releasing it would invite a
+// duplicate campaign; archive the campaign in Command Center first.
+async function releaseOpportunity({ tag } = {}) {
+  if (!tag) throw new Error("missing tag");
+  const taken = await takenTags();
+  const cur = taken[tag];
+  if (cur && cur.where === "campaign" && cur.status !== "REMOVED")
+    return { ok: false, reason: "A live campaign holds this (campaign " + (cur.campaignId || "?") + ", " + cur.status + "). Archive it in Command Center first \u2014 otherwise a re-scan could create a duplicate." };
+  if (cur && cur.where === "approval" && cur.status === "APPLIED")
+    return { ok: false, reason: "This draft was already APPLIED \u2014 a campaign exists for it. Archive that campaign in Command Center to release this opportunity." };
+  const f = fb(); if (!f) throw new Error("no firestore");
+  let released = 0;
+  try {
+    const ap = await f.db.collection(COL.approvals).limit(300).get();
+    const batch = f.db.batch();
+    ap.forEach(d => {
+      const x = d.data();
+      if (approvalTag(x) !== tag) return;
+      if (x.status === "PENDING" || x.status === "APPROVED") { batch.set(d.ref, { status: "REJECTED", releasedAt: f.FV.serverTimestamp(), releaseNote: "released from In use \u2014 open for re-scan" }, { merge: true }); released++; }
+    });
+    if (released) await batch.commit();
+  } catch (e) { throw new Error("release failed: " + (e && e.message)); }
+  if (cur && cur.where === "campaign" && cur.status === "REMOVED") return { ok: true, released, note: "campaign already archived" };
+  return { ok: true, released };
 }
 
 /* ===================== Force-generate (Draft Bench) ===================== */
@@ -2913,7 +2943,7 @@ module.exports = {
   generateRSAAssets, buildSearchCampaignOps, buildCampaignAssets, planCampaign, accountCvr, collectionProfiles, productSalesMap, bumpBestSellers, keywordResearch, keywordResearchPool, researchOpportunity, mergeKeywordResearch, keywordDiag, metricsRange, textGuidelinesOp, brandSafe,
   generateForCollection, COLLECTIONS, OCCASIONS,
   getCollections, suggestOccasions, recordOccasionUse,
-  scanOpportunities, opportunitiesWithStatus, takenTags, fetchTopProducts, setCampaignStatus, startCampaignNow, setCampaignBudget, analyzeCampaign,
+  scanOpportunities, opportunitiesWithStatus, takenTags, releaseOpportunity, fetchTopProducts, setCampaignStatus, startCampaignNow, setCampaignBudget, analyzeCampaign,
   listCountries, campaignCountries, setCampaignCountries, setApprovalCountries,
   loadCalendar, dueEvents,
   measure, pruneAssets, mineSearchTerms, reallocateBudgets, anomalyCheck,
