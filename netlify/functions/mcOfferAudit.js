@@ -97,9 +97,9 @@ async function counts() {
 
 // Paginated pass over ACTIVE products: exact variant totals independent of
 // the count API, plus the heaviest products (where option bloat lives).
-async function deepWalk(budgetMs) {
+async function deepWalk(budgetMs, startCursor) {
   const t0 = Date.now();
-  let cursor = null, products = 0, variants = 0, truncated = false;
+  let cursor = startCursor || null, products = 0, variants = 0, truncated = false;
   const heavy = []; // { title, handle, v }
   for (;;) {
     if (Date.now() - t0 > budgetMs) { truncated = true; break; }
@@ -120,10 +120,10 @@ async function deepWalk(budgetMs) {
         if (heavy.length > 20) heavy.pop();
       }
     }
-    if (!d.products.pageInfo.hasNextPage) break;
     cursor = d.products.pageInfo.endCursor;
+    if (!d.products.pageInfo.hasNextPage) { cursor = null; break; }
   }
-  return { products, variants, truncated, top20ByVariants: heavy, ms: Date.now() - t0 };
+  return { products, variants, truncated, resumeCursor: truncated ? cursor : null, top20ByVariants: heavy, ms: Date.now() - t0 };
 }
 
 /* ------------------------------ verdict ------------------------------ */
@@ -178,7 +178,15 @@ exports.handler = async (event) => {
     }
     const c = await counts();
     const res = { counts: c, analysis: verdict(c) };
-    if (q.deep) res.deep = await deepWalk(22000); // stay under the 26s function cap; deploy as -background for a full walk if truncated
+    const capped = c.variants.active.precision === "AT_LEAST";
+    if (capped) res.analysis = { note: "variant count API capped at 10K (precision AT_LEAST) — verdict requires the deep walk. Run ?run=now&deep=1; if deep.truncated, re-run with &cursor=<deep.resumeCursor> and sum the 'variants' fields.", quota: QUOTA, appTotalSeen: APP_TOTAL_SEEN };
+    if (q.deep) {
+      res.deep = await deepWalk(22000, q.cursor || null);
+      if (!res.deep.truncated && !q.cursor) {
+        // full single-pass walk -> compute the real verdict from measured variants
+        res.analysis = verdict({ variants: { active: { count: res.deep.variants, precision: "EXACT" }, total: { count: res.deep.variants } }, products: c.products });
+      }
+    }
     return out(200, res);
   } catch (e) {
     return out(500, { error: String(e && e.message || e) });
