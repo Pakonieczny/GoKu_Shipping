@@ -2986,8 +2986,10 @@ const DIAG_REASON_LABEL = {
 
 function _pct(x) { return (x == null || isNaN(+x)) ? null : Math.round(+x * 1000) / 10; } // 0-1 -> %
 
-async function fetchDiagnostics() {
+async function fetchDiagnostics(campaignId) {
   // All reads run in parallel — the whole pull is one network round.
+  // campaignId (optional) scopes the entire pull to ONE campaign.
+  const CF = campaignId ? ` AND campaign.id = ${Number(campaignId)}` : "";
   const [c7, c30, recsRaw, ads, kws] = await Promise.all([
     gaql(`SELECT campaign.id, campaign.name, campaign.status, campaign.primary_status,
                  campaign.primary_status_reasons,
@@ -2997,10 +2999,10 @@ async function fetchDiagnostics() {
                  metrics.search_rank_lost_impression_share,
                  metrics.impressions, metrics.clicks, metrics.cost_micros,
                  metrics.conversions, metrics.conversions_value
-          FROM campaign WHERE campaign.status IN ('ENABLED','PAUSED') AND segments.date DURING LAST_7_DAYS`),
+          FROM campaign WHERE campaign.status IN ('ENABLED','PAUSED') AND segments.date DURING LAST_7_DAYS${CF}`),
     gaql(`SELECT campaign.id, metrics.impressions, metrics.clicks, metrics.cost_micros,
                  metrics.conversions, metrics.conversions_value
-          FROM campaign WHERE campaign.status IN ('ENABLED','PAUSED') AND segments.date DURING LAST_30_DAYS`),
+          FROM campaign WHERE campaign.status IN ('ENABLED','PAUSED') AND segments.date DURING LAST_30_DAYS${CF}`),
     // Full recommendation feed. The type-specific budget message carries the
     // budget simulator options (weekly clicks/cost impact per budget choice) —
     // exactly what the Ads UI "Campaign diagnostics" panel shows. Selecting a
@@ -3019,9 +3021,9 @@ async function fetchDiagnostics() {
     })(),
     gaql(`SELECT campaign.id, ad_group_ad.ad.id, ad_group_ad.ad_strength,
                  ad_group_ad.policy_summary.approval_status
-          FROM ad_group_ad WHERE ad_group_ad.status = 'ENABLED'`),
+          FROM ad_group_ad WHERE ad_group_ad.status = 'ENABLED'${CF}`),
     gaql(`SELECT campaign.id, ad_group_criterion.quality_info.quality_score
-          FROM keyword_view WHERE ad_group_criterion.status = 'ENABLED'`).catch(() => [])
+          FROM keyword_view WHERE ad_group_criterion.status = 'ENABLED'${CF}`).catch(() => [])
   ]);
 
   const by = {};
@@ -3090,16 +3092,16 @@ async function fetchDiagnostics() {
                    metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions
             FROM keyword_view
             WHERE segments.date DURING LAST_30_DAYS AND ad_group_criterion.status = 'ENABLED'
-              AND campaign.status = 'ENABLED'`).catch(() => []),
+              AND campaign.status = 'ENABLED'${CF}`).catch(() => []),
       gaql(`SELECT campaign.id, ad_group.id, ad_group_ad.ad.id, ad_group_ad.ad.final_urls,
                    ad_group_ad.ad.responsive_search_ad.headlines,
                    ad_group_ad.ad.responsive_search_ad.descriptions
             FROM ad_group_ad
-            WHERE ad_group_ad.status = 'ENABLED' AND campaign.status = 'ENABLED'`).catch(() => []),
+            WHERE ad_group_ad.status = 'ENABLED' AND campaign.status = 'ENABLED'${CF}`).catch(() => []),
       gaql(`SELECT campaign.id, search_term_view.search_term,
                    metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions
             FROM search_term_view
-            WHERE segments.date DURING LAST_30_DAYS AND campaign.status = 'ENABLED'`).catch(() => [])
+            WHERE segments.date DURING LAST_30_DAYS AND campaign.status = 'ENABLED'${CF}`).catch(() => [])
     ]);
     for (const r of kwDetail) {
       const d = by[(r.campaign || {}).id]; if (!d) continue;
@@ -3155,8 +3157,9 @@ async function fetchDiagnostics() {
         };
       });
     }
+    if (campaignId && String(item.campaignId) !== String(campaignId)) continue;
     if (item.campaignId && by[item.campaignId]) by[item.campaignId].recommendations.push(item);
-    else account.recommendations.push(item);
+    else if (!campaignId) account.recommendations.push(item);
   }
   for (const d of Object.values(by)) {
     d.avgQualityScore = d.qualityScores.length
@@ -3171,7 +3174,7 @@ async function fetchDiagnostics() {
 // AND our context Google doesn't weigh — ROAS target, account budget ceiling,
 // monthly cap, measured demand. Returns per-campaign verdicts with an explicit
 // agree/partial/disagree call on each Google recommendation.
-async function analyzeDiagnostics(diag, ctrl, history) {
+async function analyzeDiagnostics(diag, ctrl, history, { single } = {}) {
   const totalBudget = diag.campaigns.filter(c => c.status === "ENABLED").reduce((a, c) => a + (c.budget || 0), 0);
   const compact = diag.campaigns.map(c => ({
     id: c.id, name: c.name, status: c.status, serving: c.primaryStatus, why: c.reasonsText,
@@ -3186,7 +3189,7 @@ async function analyzeDiagnostics(diag, ctrl, history) {
     ads: (c.adsContent || []).map(a2 => ({ finalUrl: a2.finalUrl, headlines: a2.headlines.slice(0, 10), descriptions: a2.descriptions.slice(0, 4) })),
     searchTerms: (c.searchTerms || []).slice(0, 20)
   }));
-  const prompt = `You are a SENIOR Google Ads specialist managing Brites Jewelry (handmade personalized charm jewelry, britesjewelry.com; AOV ~$60-90; ships US+Canada). Review each campaign like an owner: skeptical of Google's spend-maximizing recommendations, but honest when they're right.
+  const prompt = `${single ? "SINGLE-CAMPAIGN DEEP DIVE: only the campaign(s) below are in scope; go deeper than usual.\n" : ""}You are a SENIOR Google Ads specialist managing Brites Jewelry (handmade personalized charm jewelry, britesjewelry.com; AOV ~$60-90; ships US+Canada). Review each campaign like an owner: skeptical of Google's spend-maximizing recommendations, but honest when they're right.
 
 ACCOUNT GUARDRAILS: target ROAS ${ctrl.targetRoas || 3}; account daily budget ceiling $${ctrl.maxDailyBudgetTotal || "n/a"} (current enabled total $${Math.round(totalBudget * 100) / 100}); monthly hard cap $${ctrl.maxMonthlySpend || "none"}. Currency ${CURRENCY}.
 
@@ -3212,6 +3215,8 @@ For EACH campaign return an object:
   * Wasted spend: scan searchTerms for terms with cost>0 and conv=0 that signal wrong intent (jobs, free, DIY, wholesale, unrelated subjects) -> executable addNegatives with keywords:["..."] (exact terms or their common root).
   * Ad copy: when adRelevance or expectedCtr is weak, WRITE 3-5 replacement headlines (max 30 chars each) and 1-2 descriptions (max 90 chars) that include the top real keywords -> executable rewriteAds with headlines:[...], descriptions:[...].
   * Landing page: if the finalUrl doesn't match keyword intent, name the better britesjewelry.com collection URL -> executable landingPage with url:"...".
+  * Dead weight: keywords with ~0 impressions after 7+ days, or unproven broad terms dragging a campaign -> executable pauseKeywords with the EXACT {adGroupId,criterionId,text} objects copied from the evidence. A keyword-level fix WITHOUT its executable payload is a defect — if the keyword appears in the evidence, include its ids.
+  * Missing coverage: when you prescribe tighter/exact replacement terms, ALSO emit executable addKeywords with {adGroupId:"<reuse an adGroupId from the evidence>", keywords:[{text:"...", matchType:"EXACT"|"PHRASE"}]} so they can be added in one click.
   * Budget only when performance has EARNED it -> executable setBudget with budget:N.
 Also return accountSummary: 2-3 sentences on the account as a whole (ceiling headroom, where the next dollar goes, anything systemic).
 
@@ -3219,16 +3224,37 @@ Rules: never recommend raising total enabled budgets past the ceiling; a campaig
   return await openaiJSON(prompt, { maxTokens: 4200, effort: "low" });
 }
 
-async function runDiagnostics() {
+async function runDiagnostics({ campaignId } = {}) {
   const f = fb(); const ctrl = await control();
   const startedAt = Date.now();
-  const diag = await fetchDiagnostics();
+  const diag = await fetchDiagnostics(campaignId || null);
   let history = [];
-  try { history = ((await remedyHistory({ limit: 60 })).items || []).filter(h => !h.dryRun); } catch (e) {}
+  try {
+    history = ((await remedyHistory({ limit: 60 })).items || []).filter(h => !h.dryRun);
+    if (campaignId) history = history.filter(h => String(h.campaignId) === String(campaignId));
+  } catch (e) {}
   let ai = null, aiError = null;
   try {
-    ai = await analyzeDiagnostics(diag, ctrl, history);
+    ai = await analyzeDiagnostics(diag, ctrl, history, { single: !!campaignId });
   } catch (e) { aiError = String(e.message || e).slice(0, 400); }
+
+  if (campaignId && f) {
+    // MERGE into the stored doc: replace only this campaign's diagnostics +
+    // AI entry so a single-campaign run doesn't wipe the rest of the report.
+    const snap = await f.db.collection(COL.state).doc("diagnostics").get();
+    const prev = snap.exists ? snap.data() : { campaigns: [], ai: { campaigns: [] } };
+    const cid = String(campaignId);
+    prev.campaigns = (prev.campaigns || []).filter(c => String(c.id) !== cid).concat(diag.campaigns);
+    prev.ai = prev.ai || { campaigns: [] };
+    const newAi = ((ai || {}).campaigns) || [];
+    prev.ai.campaigns = ((prev.ai.campaigns) || []).filter(c => String(c.id) !== cid).concat(newAi);
+    if ((ai || {}).accountSummary && !prev.ai.accountSummary) prev.ai.accountSummary = ai.accountSummary;
+    prev.generatedAt = Date.now(); prev.tookMs = Date.now() - startedAt;
+    prev.aiError = aiError || prev.aiError || null;
+    await f.db.collection(COL.state).doc("diagnostics").set(prev);
+    return prev;
+  }
+
   const doc = {
     generatedAt: Date.now(), tookMs: Date.now() - startedAt,
     campaigns: diag.campaigns, accountRecommendations: diag.account.recommendations,
@@ -3307,6 +3333,28 @@ async function applyRemedy(campaignId, remedy, { ctrl } = {}) {
         const notPaused = chk.filter(r => (r.adGroupCriterion || {}).status !== "PAUSED").length;
         result.verified = notPaused === 0 && chk.length > 0;
         result.verification = result.verified ? { confirmed: chk.length + " keyword(s) PAUSED in Google Ads" } : { notPaused };
+      } catch (e) { result.verified = null; result.verification = { error: String(e.message || e).slice(0, 200) }; }
+    }
+  } else if (ex.kind === "addKeywords") {
+    const adGroupId = String(ex.adGroupId || "").replace(/\D/g, "");
+    const list = (ex.keywords || []).map(k => (typeof k === "string" ? { text: k } : k))
+      .map(k => ({ text: String(k.text || "").trim().toLowerCase(), matchType: /^(EXACT|PHRASE|BROAD)$/.test(k.matchType) ? k.matchType : "EXACT" }))
+      .filter(k => k.text).slice(0, 20);
+    if (!adGroupId || !list.length) throw new Error("addKeywords needs adGroupId + keywords");
+    const ops = list.map(k => ({ create: {
+      adGroup: `customers/${CID}/adGroups/${adGroupId}`,
+      status: "ENABLED", keyword: { text: k.text, matchType: k.matchType }
+    }}));
+    await mutate("adGroupCriteria", ops, { ctrl, label: "remedy:addKeywords" });
+    result = { ok: true, kind: ex.kind, added: list.map(k => k.text + " [" + k.matchType + "]"), dryRun: !!ctrl.dryRun };
+    if (!ctrl.dryRun) {
+      try {
+        const chk = await gaql(`SELECT ad_group_criterion.keyword.text FROM ad_group_criterion
+                                WHERE ad_group.id = ${Number(adGroupId)} AND ad_group_criterion.status = 'ENABLED'`);
+        const live = new Set(chk.map(r => ((((r.adGroupCriterion || {}).keyword) || {}).text || "").toLowerCase()));
+        const missing = list.filter(k => !live.has(k.text)).map(k => k.text);
+        result.verified = missing.length === 0;
+        result.verification = missing.length ? { missing } : { confirmed: list.length + " keyword(s) live in Google Ads" };
       } catch (e) { result.verified = null; result.verification = { error: String(e.message || e).slice(0, 200) }; }
     }
   } else if (ex.kind === "setBudget") {
