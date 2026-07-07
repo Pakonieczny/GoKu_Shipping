@@ -348,6 +348,8 @@ details.xd>summary:hover{border-color:var(--gold);background:var(--paper-2)}
 details.xd[open]>summary{border-color:var(--gold);background:var(--paper-2);margin-bottom:8px}
 details.xd>summary .xd-n{font-size:11px;font-weight:700;color:var(--gold);background:rgba(180,140,60,.12);border-radius:9px;padding:1px 8px}
 .diagHead:hover{background:var(--paper-2);border-radius:8px}
+svg rect.bc-bar[data-tip]{cursor:pointer;transition:filter .12s}
+svg rect.bc-bar[data-tip]:hover{filter:brightness(.85);stroke:var(--ink);stroke-width:1}
 </style>
 </head>
 <body>
@@ -577,6 +579,7 @@ var LOADINFO={
   applyRec:{verb:"Applying Google recommendation",detail:"",eta:"2\u20134s"},
   applyRemedy:{verb:"Applying AI remedy",detail:"Mutation + Google Ads read-back verification + logged to Fix History",eta:"3\u20136s"},
   remedyHistory:{verb:"Loading fix history",detail:"",eta:"1\u20132s"},
+  adReviewStatus:{verb:"Checking ad policy review",detail:"Live approval status from Google Ads",eta:"1\u20132s"},
   dismissRec:{verb:"Dismissing recommendation",detail:"",eta:"1\u20132s"},
   setStatus:{verb:"Updating campaign in Google Ads",detail:"",eta:"2\u20134s"},
   syncConversions:{verb:"Syncing conversions",detail:"Uploading purchases & refund adjustments to Google Ads",eta:"3\u20138s"},
@@ -643,19 +646,40 @@ async function api(action, extra){
 /* Delegated hover tooltip: any element carrying data-tip shows real point
    data on hover — same visual as the big sales chart's tooltip, but with
    zero per-render wiring (works after every innerHTML replacement). */
-var _ctip=null;
+var _ctip=null,_lcSvg=null;
 function _ensureCtip(){if(_ctip)return _ctip;_ctip=document.createElement("div");
-  _ctip.style.cssText="position:fixed;display:none;pointer-events:none;background:var(--ink);color:var(--paper);font-size:11.5px;line-height:1.5;padding:7px 10px;border-radius:9px;box-shadow:0 8px 24px rgba(0,0,0,.25);white-space:nowrap;z-index:9999;transform:translate(-50%,-118%)";
+  _ctip.style.cssText="position:fixed;display:none;pointer-events:none;background:var(--ink);color:var(--paper);font-size:13px;line-height:1.65;padding:10px 13px;border-radius:11px;box-shadow:0 10px 30px rgba(0,0,0,.32);border:1px solid rgba(255,255,255,.12);white-space:nowrap;z-index:9999;transform:translate(-50%,-112%);transition:left .12s ease-out,top .12s ease-out";
   document.body.appendChild(_ctip);return _ctip;}
-document.addEventListener("mouseover",function(e){var el=e.target&&e.target.closest&&e.target.closest("[data-tip]");if(!el)return;
-  var t=_ensureCtip();t.innerHTML=el.getAttribute("data-tip");t.style.display="block";});
+function _hideLcFocus(){if(!_lcSvg)return;_lcSvg.querySelectorAll(".lc-cross,.lc-focus").forEach(function(n){n.style.display="none";});_lcSvg=null;}
+function _anchorTip(el){var t=_ensureCtip();t.innerHTML=el.getAttribute("data-tip");t.style.display="block";
+  var band=el.classList&&el.classList.contains("lc-band")?el:null;
+  if(band){ // line chart: SNAP crosshair + focus dots to the data point, anchor the tip above it
+    var svg=band.closest("svg");if(svg){
+      if(_lcSvg&&_lcSvg!==svg)_hideLcFocus();
+      _lcSvg=svg;
+      var vb=svg.viewBox.baseVal,r=svg.getBoundingClientRect();
+      var sx=r.width/vb.width,sy=r.height/vb.height;
+      var dx=+band.getAttribute("data-x"),ys=(band.getAttribute("data-ys")||"").split("|").map(Number);
+      var cross=svg.querySelector(".lc-cross");if(cross){cross.setAttribute("x1",dx);cross.setAttribute("x2",dx);cross.style.display="";}
+      var topY=null;
+      svg.querySelectorAll(".lc-focus").forEach(function(f){var si=+f.getAttribute("data-si");var y=ys[si];
+        if(!isFinite(y)){f.style.display="none";return;}
+        f.setAttribute("cx",dx);f.setAttribute("cy",y);f.style.display="";
+        if(topY==null||y<topY)topY=y;});
+      t.style.left=(r.left+dx*sx)+"px";
+      t.style.top=(r.top+(topY==null?0:topY*sy)-8)+"px";
+      return;
+    }
+  }
+  _hideLcFocus();
+  var er=el.getBoundingClientRect(); // bars / gauge / sparkline: anchor above the element
+  t.style.left=(er.left+er.width/2)+"px";t.style.top=(er.top-6)+"px";}
+document.addEventListener("mouseover",function(e){var el=e.target&&e.target.closest&&e.target.closest("[data-tip]");if(!el)return;_anchorTip(el);});
 document.addEventListener("mousemove",function(e){if(!_ctip||_ctip.style.display==="none")return;
   var el=e.target&&e.target.closest&&e.target.closest("[data-tip]");
-  if(!el){_ctip.style.display="none";return;}
-  _ctip.innerHTML=el.getAttribute("data-tip");
-  _ctip.style.left=e.clientX+"px";_ctip.style.top=(e.clientY-8)+"px";});
+  if(!el){_ctip.style.display="none";_hideLcFocus();}});
 document.addEventListener("mouseout",function(e){if(!_ctip)return;var el=e.target&&e.target.closest&&e.target.closest("[data-tip]");
-  if(el&&!(e.relatedTarget&&e.relatedTarget.closest&&e.relatedTarget.closest("[data-tip]")))_ctip.style.display="none";});
+  if(el&&!(e.relatedTarget&&e.relatedTarget.closest&&e.relatedTarget.closest("[data-tip]"))){_ctip.style.display="none";_hideLcFocus();}});
 function lineChart(series,o){o=o||{};var w=o.w||560,h=o.h||190,pad=o.pad||28,fmt=o.fmt||(v=>v);
   var all=series.reduce((a,s)=>a.concat(s.data),[]);if(!all.length)return "";
   var mx=Math.max.apply(null,all)*1.1||1,mn=Math.min.apply(null,[0].concat(all));
@@ -665,21 +689,23 @@ function lineChart(series,o){o=o||{};var w=o.w||560,h=o.h||190,pad=o.pad||28,fmt
   var bands="";var step=(w-pad*2)/Math.max(1,n-1);
   for(var bi=0;bi<n;bi++){
     var tip=(o.tips&&o.tips[bi])||null;
-    if(!tip){var parts=[];series.forEach(function(sr){if(sr.name)parts.push(esc(sr.name)+": "+fmt(Math.round((sr.data[bi]||0)*100)/100));});
-      if(parts.length)tip="<b>"+esc((o.labels&&o.labels[bi])||("#"+(bi+1)))+"</b><br>"+parts.join("<br>");}
-    if(tip)bands+='<rect data-tip="'+tip.replace(/"/g,"&quot;")+'" x="'+(X(bi)-step/2).toFixed(1)+'" y="0" width="'+step.toFixed(1)+'" height="'+h+'" fill="transparent"/>';
+    if(!tip){var parts=[];series.forEach(function(sr){if(sr.name)parts.push('<i style="display:inline-block;width:8px;height:8px;border-radius:50%;background:'+sr.color+';margin-right:6px"></i>'+esc(sr.name)+": <b>"+fmt(Math.round((sr.data[bi]||0)*100)/100)+"</b>");});
+      if(parts.length)tip='<b style="font-size:13.5px">'+esc((o.labels&&o.labels[bi])||("#"+(bi+1)))+"</b><br>"+parts.join("<br>");}
+    if(tip)bands+='<rect class="lc-band" data-x="'+X(bi).toFixed(1)+'" data-ys="'+series.map(function(sr){return Y(sr.data[bi]||0).toFixed(1);}).join("|")+'" data-tip="'+tip.replace(/"/g,"&quot;")+'" x="'+(X(bi)-step/2).toFixed(1)+'" y="0" width="'+step.toFixed(1)+'" height="'+h+'" fill="transparent" style="cursor:crosshair"/>';
   }
+  var hoverBits='<line class="lc-cross" y1="'+pad+'" y2="'+(h-pad)+'" x1="0" x2="0" stroke="var(--ink-45)" stroke-dasharray="3 3" style="display:none;pointer-events:none"/>'+
+    series.map(function(sr,si){return '<circle class="lc-focus" data-si="'+si+'" r="4.6" fill="'+sr.color+'" stroke="var(--paper)" stroke-width="2" style="display:none;pointer-events:none"/>';}).join("");
   var g="";for(var i=0;i<=4;i++){var y=pad+i*((h-pad*2)/4);g+='<line x1="'+pad+'" x2="'+(w-pad)+'" y1="'+y+'" y2="'+y+'" stroke="var(--line)" stroke-dasharray="2 4"/><text x="6" y="'+(y+3)+'" font-size="9" fill="var(--ink-45)" font-family="var(--mono)">'+fmt(Math.round(mx-(mx-mn)*i/4))+'</text>';}
   var paths="";series.forEach(function(s){var d=s.data.map((v,i)=>(i?"L":"M")+X(i).toFixed(1)+" "+Y(v).toFixed(1)).join(" ");
     if(s.fill)paths+='<path d="'+d+"L"+X(n-1)+" "+(h-pad)+" L"+X(0)+" "+(h-pad)+'Z" fill="'+s.color+'" opacity=".09"/>';
     paths+='<path d="'+d+'" fill="none" stroke="'+s.color+'" stroke-width="'+(s.width||2)+'" stroke-linejoin="round" stroke-dasharray="'+(s.dash||"")+'"/>';
     if(s.dots!==false)s.data.forEach((v,i)=>paths+='<circle cx="'+X(i)+'" cy="'+Y(v)+'" r="2.4" fill="'+s.color+'"/>');});
-  return '<svg viewBox="0 0 '+w+' '+h+'" width="100%" height="'+h+'">'+g+paths+bands+'</svg>';}
+  return '<svg viewBox="0 0 '+w+' '+h+'" width="100%" height="'+h+'">'+g+paths+hoverBits+bands+'</svg>';}
 function barChart(data,o){o=o||{};var w=o.w||560,h=o.h||210,pad=o.pad||30,colorFn=o.colorFn;
   if(!data.length)return "";var mx=Math.max.apply(null,data.map(d=>d[1]))*1.12||1;var bw=(w-pad*2)/data.length;var b="";
   data.forEach(function(d,i){var bh=(d[1]/mx)*(h-pad*2);var x=pad+i*bw+bw*.16;var y=h-pad-bh;var col=colorFn?colorFn(d[1]):"var(--gold)";
     var btip='<b>'+esc(d[0])+'</b><br>'+(o.fmt?o.fmt(d[1]):d[1].toFixed(1)+"x");
-    b+='<rect data-tip="'+btip.replace(/"/g,"&quot;")+'" x="'+x+'" y="'+Math.min(y,h-pad-2)+'" width="'+(bw*.68)+'" height="'+Math.max(bh,6)+'" rx="3" fill="'+col+'"/>';
+    b+='<rect class="bc-bar" data-tip="'+btip.replace(/"/g,"&quot;")+'" x="'+x+'" y="'+Math.min(y,h-pad-2)+'" width="'+(bw*.68)+'" height="'+Math.max(bh,6)+'" rx="3" fill="'+col+'"/>';
     b+='<text x="'+(x+bw*.34)+'" y="'+(y-5)+'" font-size="10" font-family="var(--mono)" fill="var(--ink-70)" text-anchor="middle">'+d[1].toFixed(1)+'x</text>';
     b+='<text x="'+(x+bw*.34)+'" y="'+(h-pad+13)+'" font-size="9" fill="var(--ink-45)" text-anchor="middle">'+esc(d[0].length>11?d[0].slice(0,10)+"…":d[0])+'</text>';});
   return '<svg viewBox="0 0 '+w+' '+h+'" width="100%" height="'+h+'">'+b+'</svg>';}
@@ -984,11 +1010,15 @@ function fmtDayShort(ymd){var p=String(ymd).split("-");return (+p[1])+"/"+(+p[2]
 var _DOW=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 function fmtDayFull(ymd){var d=rpParse(ymd);return _DOW[d.getDay()]+" "+_MON[d.getMonth()]+" "+d.getDate();}
 // one rich tooltip per day shared by both Command daily charts
-function dailyTips(ser,ctrl,showCeiling){return ser.map(function(r){
-  var t="<b>"+esc(fmtDayFull(r.date))+"</b><br>Revenue "+money(r.value)+" \u00b7 Spend "+money(r.cost)+
-        "<br>Clicks "+(r.clicks||0)+" \u00b7 Impressions "+(r.impr||0).toLocaleString()+" \u00b7 Conv "+(Math.round((r.conv||0)*10)/10);
-  if(showCeiling&&ctrl.maxDailyBudgetTotal)t+="<br><span style='opacity:.75'>Ceiling "+money(ctrl.maxDailyBudgetTotal)+"/day</span>";
-  return t;});}
+function dailyTips(ser,ctrl,showCeiling){
+  function dot(c){return '<i style="display:inline-block;width:8px;height:8px;border-radius:50%;background:'+c+';margin-right:6px"></i>';}
+  return ser.map(function(r){
+    var t='<b style="font-size:13.5px">'+esc(fmtDayFull(r.date))+"</b><br>"+
+      dot("var(--gold)")+"Revenue <b>"+money(r.value)+"</b><br>"+
+      dot("var(--ink-45)")+"Spend <b>"+money(r.cost)+"</b><br>"+
+      dot("#33525d")+"Clicks <b>"+(r.clicks||0)+"</b> \u00b7 Impr <b>"+(r.impr||0).toLocaleString()+"</b> \u00b7 Conv <b>"+(Math.round((r.conv||0)*10)/10)+"</b>";
+    if(showCeiling&&ctrl.maxDailyBudgetTotal)t+="<br><span style='opacity:.7;font-size:11.5px'>Ceiling "+money(ctrl.maxDailyBudgetTotal)+"/day</span>";
+    return t;});}
 function renderDailyCharts(){if(!DAILY)return;var chips=$("#srChips");var ctrl=DASH.control||{};
   if(chips){var withData=(DAILY.campaigns||[]).filter(function(c){return c.totals.impr>0||c.totals.cost>0;});
     var mk=function(id,label,tot){var on=srFilter===id;return '<button class="btn '+(on?"gold":"ghost")+' sm srchip" data-f="'+id+'" style="padding:3px 10px;font-size:11px">'+esc(label)+(tot?' <span class="mono" style="opacity:.7">'+tot+'</span>':"")+'</button>';};
@@ -1027,7 +1057,20 @@ function fillAdLevel(){if(!DAILY)return;
 var REMHIST=[];
 function remKey(cid,rm){return String(cid)+"|"+String((rm&&rm.issue)||"").slice(0,80);}
 function histFor(cid,rm){var k=remKey(cid,rm);for(var i=0;i<REMHIST.length;i++){var h=REMHIST[i];if(remKey(h.campaignId,{issue:h.issue})===k)return h;}return null;}
-function loadRemedyHistory(cb){api("remedyHistory",{limit:120}).then(function(r){REMHIST=(r&&r.items)||[];if(cb)cb();if(DIAG)renderDiag();}).catch(function(){if(cb)cb();});}
+var _reviewTimer=null;
+function pendingReviewAds(){return REMHIST.filter(function(h){return h.kind==="rewriteAds"&&!h.dryRun&&!h.approvedAt&&h.approvalStatus!=="DISAPPROVED"&&h.adId&&h.at&&(Date.now()-h.at)<48*3600*1000;}).map(function(h){return h.adId;});}
+function ensureReviewLoop(){var ids=Array.from(new Set(pendingReviewAds()));
+  if(!ids.length){if(_reviewTimer){clearInterval(_reviewTimer);_reviewTimer=null;}return;}
+  if(_reviewTimer)return;
+  _reviewTimer=setInterval(function(){var cur=Array.from(new Set(pendingReviewAds()));
+    if(!cur.length){clearInterval(_reviewTimer);_reviewTimer=null;return;}
+    api("adReviewStatus",{adIds:cur}).then(function(){loadRemedyHistory();}).catch(function(){});
+  },60000);}
+function loadRemedyHistory(cb){api("remedyHistory",{limit:120}).then(function(r){REMHIST=(r&&r.items)||[];if(cb)cb();if(DIAG)renderDiag();ensureReviewLoop();}).catch(function(){if(cb)cb();});}
+function reviewPill(h){if(!h||h.kind!=="rewriteAds"||h.dryRun)return "";
+  if(h.approvedAt)return '<span style="font-size:10px;font-weight:700;color:#2e7d32;border:1px solid #2e7d32;border-radius:8px;padding:1px 7px">\u2713 APPROVED &amp; SERVING \u00b7 '+timeago(h.approvedAt)+' ago</span>';
+  if(h.approvalStatus==="DISAPPROVED")return '<span style="font-size:10px;font-weight:700;color:#b3402a;border:1px solid #b3402a;border-radius:8px;padding:1px 7px">\u2715 DISAPPROVED IN POLICY REVIEW</span>';
+  return '<span style="font-size:10px;font-weight:700;color:#b26a00;border:1px solid #b26a00;border-radius:8px;padding:1px 7px">\u23f3 IN POLICY REVIEW \u00b7 auto-checking</span>';}
 function verifyBadge(h){if(h.dryRun)return '<span style="font-size:10px;font-weight:700;color:#b26a00;border:1px solid #b26a00;border-radius:8px;padding:1px 7px">DRY-RUN</span>';
   if(h.verified===true)return '<span style="font-size:10px;font-weight:700;color:#2e7d32;border:1px solid #2e7d32;border-radius:8px;padding:1px 7px">\u2713 VERIFIED IN GOOGLE ADS</span>';
   if(h.verified===false)return '<span style="font-size:10px;font-weight:700;color:#b3402a;border:1px solid #b3402a;border-radius:8px;padding:1px 7px">\u26a0 NOT CONFIRMED</span>';
@@ -1106,11 +1149,13 @@ function renderDiag(){var body=document.getElementById("diagBody");if(!body||!DI
         if(ex.kind==="addNegatives")return "Added "+(ex.keywords||[]).length+" negative keywords: "+(ex.keywords||[]).join(", ");
         if(ex.kind==="pauseKeywords")return "Paused: "+((ex.keywords||[]).map(function(k){return k.text||k;}).join(", "));
         if(ex.kind==="addKeywords")return "Added keywords: "+((ex.keywords||[]).map(function(k){return (k.text||k)+(k.matchType?" ["+String(k.matchType).toLowerCase()+"]":"");}).join(", "));
+        if(ex.kind==="rewriteAds"){var p=h&&h.prunedLow;var pr=(p&&((p.headlines||[]).length+(p.descriptions||[]).length))?" \u00b7 pruned LOW-rated: "+((p.headlines||[]).concat(p.descriptions||[]).join(" | ")):"";
+          return "Appended to RSA \u2014 headlines: "+((ex.headlines||[]).join(" | "))+((ex.descriptions||[]).length?" \u00b7 descriptions: "+(ex.descriptions||[]).join(" | "):"")+pr;}
         if(ex.kind==="setBudget")return "Budget set to "+money(ex.budget)+"/day";
         return "";}
       function pastLine(tag,tagColor,title,h,when,what,why){
         return '<div style="padding:9px 2px;border-top:1px dashed var(--line)">'+
-          '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span style="font-size:9.5px;font-weight:800;letter-spacing:.09em;color:'+tagColor+'">'+esc(tag)+'</span><b style="font-size:12.5px">'+esc(title)+'</b>'+(h?verifyBadge(h):"")+'<span class="muted" style="font-size:11px">'+esc(when||"")+'</span></div>'+
+          '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span style="font-size:9.5px;font-weight:800;letter-spacing:.09em;color:'+tagColor+'">'+esc(tag)+'</span><b style="font-size:12.5px">'+esc(title)+'</b>'+(h?verifyBadge(h):"")+(h?reviewPill(h):"")+'<span class="muted" style="font-size:11px">'+esc(when||"")+'</span></div>'+
           (what?'<div class="mono" style="font-size:11px;color:var(--ink-70);margin-top:3px">'+esc(what)+'</div>':"")+
           (why?'<div class="muted" style="font-size:11.5px;margin-top:2px">'+esc(why)+'</div>':"")+'</div>';}
       aiBox+='<details class="xd" style="margin-top:10px;font-size:12px"><summary>Past fixes <span class="xd-n">'+pastCount+'</span></summary><div style="margin-top:2px">'+
@@ -1124,12 +1169,12 @@ function renderDiag(){var body=document.getElementById("diagBody");if(!body||!DI
     if(pendingRems.length){
       var impC={high:"#b3402a",medium:"#b26a00",low:"var(--ink-45)"};
       remHtml='<div style="margin-top:8px"><b style="font-size:12px">Fix plan \u00b7 '+pendingRems.length+' open remed'+(pendingRems.length===1?"y":"ies")+'</b>'+pendingRems.map(function(rm){var ri=rm.__ri;
-        var ex=rm.executable||{};var canRun=ex.kind==="addNegatives"||ex.kind==="pauseKeywords"||ex.kind==="setBudget"||ex.kind==="addKeywords";
+        var ex=rm.executable||{};var canRun=ex.kind==="addNegatives"||ex.kind==="pauseKeywords"||ex.kind==="setBudget"||ex.kind==="addKeywords"||ex.kind==="rewriteAds";
         var detail="";
         if(ex.kind==="addNegatives"&&(ex.keywords||[]).length)detail='<div class="mono" style="font-size:11px;color:var(--ink-70);margin-top:3px">negatives: '+esc(ex.keywords.join(", "))+'</div>';
         if(ex.kind==="pauseKeywords"&&(ex.keywords||[]).length)detail='<div class="mono" style="font-size:11px;color:var(--ink-70);margin-top:3px">pause: '+esc(ex.keywords.map(function(k){return k.text||k;}).join(", "))+'</div>';
         if(ex.kind==="addKeywords"&&(ex.keywords||[]).length)detail='<div class="mono" style="font-size:11px;color:var(--ink-70);margin-top:3px">add: '+esc(ex.keywords.map(function(k){return (k.text||k)+(k.matchType?" ["+String(k.matchType).toLowerCase()+"]":"");}).join(", "))+'</div>';
-        if(ex.kind==="rewriteAds")detail='<details class="xd" style="margin-top:6px"><summary>Suggested copy \u00b7 paste into a regenerated draft</summary><div style="font-size:11.5px;margin-top:4px">'+((ex.headlines||[]).length?'<b>Headlines:</b><br>'+ex.headlines.map(esc).join("<br>"):"")+((ex.descriptions||[]).length?'<br><b>Descriptions:</b><br>'+ex.descriptions.map(esc).join("<br>"):"")+'</div></details>';
+        if(ex.kind==="rewriteAds")detail='<details class="xd" style="margin-top:6px"><summary>New copy \u00b7 appended to the live ad on Apply</summary><div style="font-size:11.5px;margin-top:4px">'+((ex.headlines||[]).length?'<b>Headlines:</b><br>'+ex.headlines.map(esc).join("<br>"):"")+((ex.descriptions||[]).length?'<br><b>Descriptions:</b><br>'+ex.descriptions.map(esc).join("<br>"):"")+'</div></details>';
         if(ex.kind==="landingPage"&&ex.url)detail='<div style="font-size:11px;margin-top:3px">\u2192 <span class="mono">'+esc(ex.url)+'</span></div>';
         var applyUi=canRun?'<button class="btn gold sm dg-remedy" data-id="'+c.id+'" data-r="'+ri+'" style="padding:4px 13px;font-size:11.5px;white-space:nowrap">Apply fix</button>':"";
         return '<div style="padding:7px 0;border-top:1px dashed var(--line);font-size:12px"><div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap"><span style="font-size:9.5px;font-weight:800;letter-spacing:.08em;color:'+(impC[rm.impact]||impC.low)+';padding-top:2px">'+esc(String(rm.impact||"").toUpperCase())+'</span><div style="flex:1;min-width:220px"><b>'+esc(rm.issue||"")+'</b><div style="color:var(--ink-70);margin-top:2px">'+esc(rm.fix||"")+'</div>'+detail+'</div>'+applyUi+'</div></div>';
@@ -1165,7 +1210,7 @@ function renderDiag(){var body=document.getElementById("diagBody");if(!body||!DI
     var cid=this.getAttribute("data-id"),ri=+this.getAttribute("data-r");
     var aiBy2={};(((DIAG.ai||{}).campaigns)||[]).forEach(function(v){aiBy2[String(v.id)]=v;});
     var rm=((aiBy2[cid]||{}).remedies||[])[ri];if(!rm)return;
-    var ex=rm.executable||{};var what=ex.kind==="addNegatives"?("Add "+(ex.keywords||[]).length+" negative keyword(s)"):ex.kind==="pauseKeywords"?("Pause "+(ex.keywords||[]).length+" keyword(s)"):ex.kind==="addKeywords"?("Add "+(ex.keywords||[]).length+" new keyword(s)"):ex.kind==="setBudget"?("Set budget to "+money(ex.budget)+"/day"):"Apply";
+    var ex=rm.executable||{};var what=ex.kind==="addNegatives"?("Add "+(ex.keywords||[]).length+" negative keyword(s)"):ex.kind==="pauseKeywords"?("Pause "+(ex.keywords||[]).length+" keyword(s)"):ex.kind==="addKeywords"?("Add "+(ex.keywords||[]).length+" new keyword(s)"):ex.kind==="rewriteAds"?("Append "+(ex.headlines||[]).length+" headline(s) + "+(ex.descriptions||[]).length+" description(s) to the live ad (it will briefly re-enter policy review)"):ex.kind==="setBudget"?("Set budget to "+money(ex.budget)+"/day"):"Apply";
     if(!confirm(what+" on this campaign?"))return;
     var btn=this;btn.disabled=true;btn.textContent="Applying\u2026";
     api("applyRemedy",{campaignId:cid,remedy:rm}).then(function(r){
