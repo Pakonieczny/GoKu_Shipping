@@ -141,6 +141,7 @@ async function handleAction(body) {
       return { queued: true, upstream: res.status };
     } catch (e) { return { error: e.message }; }
   }
+  if (a === "adReviewStatus") { try { return await E.adReviewStatus({ adIds: body.adIds }); } catch (e) { return { statuses: {}, error: e.message }; } }
   if (a === "remedyHistory") { try { return await E.remedyHistory({ limit: body.limit || 100 }); } catch (e) { return { items: [], error: e.message }; } }
   if (a === "applyRemedy")   { try { return await E.applyRemedy(body.campaignId, body.remedy, { ctrl }); } catch (e) { return { ok: false, error: e.message }; } }
   if (a === "applyRec")       { try { return await E.applyGoogleRecommendation(body.resourceName, { ctrl }); } catch (e) { return { ok: false, error: e.message }; } }

@@ -3082,7 +3082,7 @@ async function fetchDiagnostics(campaignId) {
   // page is failing), the live RSA copy, and the actual search terms spending
   // money — everything the specialist needs to prescribe implementable fixes.
   try {
-    const [kwDetail, rsaContent, terms] = await Promise.all([
+    const [kwDetail, rsaContent, terms, assetLabels] = await Promise.all([
       gaql(`SELECT campaign.id, ad_group.id, ad_group_criterion.criterion_id,
                    ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type,
                    ad_group_criterion.quality_info.quality_score,
@@ -3101,7 +3101,10 @@ async function fetchDiagnostics(campaignId) {
       gaql(`SELECT campaign.id, search_term_view.search_term,
                    metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions
             FROM search_term_view
-            WHERE segments.date DURING LAST_30_DAYS AND campaign.status = 'ENABLED'${CF}`).catch(() => [])
+            WHERE segments.date DURING LAST_30_DAYS AND campaign.status = 'ENABLED'${CF}`).catch(() => []),
+      gaql(`SELECT campaign.id, ad_group_ad_asset_view.field_type,
+                   ad_group_ad_asset_view.performance_label, asset.text_asset.text
+            FROM ad_group_ad_asset_view WHERE campaign.status = 'ENABLED'${CF}`).catch(() => [])
     ]);
     for (const r of kwDetail) {
       const d = by[(r.campaign || {}).id]; if (!d) continue;
@@ -3130,6 +3133,13 @@ async function fetchDiagnostics(campaignId) {
         term: ((r.searchTermView || {}).searchTerm) || "",
         impr: +m.impressions || 0, clicks: +m.clicks || 0, cost: fromMicros(m.costMicros), conv: +m.conversions || 0
       });
+    }
+    for (const r of assetLabels) {
+      const d = by[(r.campaign || {}).id]; if (!d) continue;
+      const v = r.adGroupAdAssetView || {};
+      const text = (((r.asset || {}).textAsset) || {}).text;
+      if (!text) continue;
+      (d.assetLabels = d.assetLabels || []).push({ text, type: v.fieldType, label: v.performanceLabel || null });
     }
     for (const d of Object.values(by)) {
       if (d.keywordDetail) d.keywordDetail.sort((a, b) => b.cost - a.cost || b.impr - a.impr).splice(20);
@@ -3186,8 +3196,13 @@ async function analyzeDiagnostics(diag, ctrl, history, { single } = {}) {
     // evidence for remedies (enabled campaigns): QS components per keyword,
     // live ad copy, and the search terms actually spending money
     keywords: (c.keywordDetail || []).map(k => ({ adGroupId: k.adGroupId, criterionId: k.criterionId, text: k.text, match: k.match, qs: k.qs, expectedCtr: k.expectedCtr, adRelevance: k.adRelevance, landingPage: k.landingPage, impr: k.impr, clicks: k.clicks, cost: k.cost, conv: k.conv })),
-    ads: (c.adsContent || []).map(a2 => ({ finalUrl: a2.finalUrl, headlines: a2.headlines.slice(0, 10), descriptions: a2.descriptions.slice(0, 4) })),
-    searchTerms: (c.searchTerms || []).slice(0, 20)
+    ads: (c.adsContent || []).map(a2 => ({ adId: a2.adId, finalUrl: a2.finalUrl, headlines: a2.headlines.slice(0, 10), descriptions: a2.descriptions.slice(0, 4) })),
+    searchTerms: (c.searchTerms || []).slice(0, 20),
+    // Google's own per-asset grades — the pruning signal
+    assetPerformance: (function(al){ if (!al || !al.length) return null;
+      return { low: al.filter(x => x.label === "LOW").map(x => x.type + ": " + x.text).slice(0, 10),
+               good: al.filter(x => x.label === "GOOD").length, best: al.filter(x => x.label === "BEST").length,
+               learning: al.filter(x => x.label === "LEARNING" || x.label === "PENDING").length }; })(c.assetLabels)
   }));
   const prompt = `${single ? "SINGLE-CAMPAIGN DEEP DIVE: only the campaign(s) below are in scope; go deeper than usual.\n" : ""}You are a SENIOR Google Ads specialist managing Brites Jewelry (handmade personalized charm jewelry, britesjewelry.com; AOV ~$60-90; ships US+Canada). Review each campaign like an owner: skeptical of Google's spend-maximizing recommendations, but honest when they're right.
 
@@ -3213,7 +3228,7 @@ For EACH campaign return an object:
   Rules for remedies:
   * Rank/QS problems: name the FAILING COMPONENT per keyword (expectedCtr BELOW_AVERAGE = weak ad-to-keyword match; adRelevance BELOW_AVERAGE = headlines don't contain the keyword; landingPage BELOW_AVERAGE = URL doesn't match intent). Prescribe per keyword: pause it (executable pauseKeywords with keywords:[{adGroupId,criterionId,text}]), tighten match type, or fix copy.
   * Wasted spend: scan searchTerms for terms with cost>0 and conv=0 that signal wrong intent (jobs, free, DIY, wholesale, unrelated subjects) -> executable addNegatives with keywords:["..."] (exact terms or their common root).
-  * Ad copy: when adRelevance or expectedCtr is weak, WRITE 3-5 replacement headlines (max 30 chars each) and 1-2 descriptions (max 90 chars) that include the top real keywords -> executable rewriteAds with headlines:[...], descriptions:[...].
+  * Ad copy: when adRelevance or expectedCtr is weak, WRITE 3-5 NEW headlines (max 30 chars each) and 1-2 NEW descriptions (max 90 chars) that include the top real keywords -> executable rewriteAds with {adId:"<the adId from the ads evidence>", headlines:[...], descriptions:[...]}. These are APPENDED to the live RSA (merged up to the 15-headline / 4-description limits) AND any asset Google has rated LOW (see assetPerformance evidence) is automatically pruned in the same edit — GOOD/BEST/LEARNING assets are never touched. So: write additions targeting the gap, and call out LOW-rated assets in your findings when they exist.
   * Landing page: if the finalUrl doesn't match keyword intent, name the better britesjewelry.com collection URL -> executable landingPage with url:"...".
   * Dead weight: keywords with ~0 impressions after 7+ days, or unproven broad terms dragging a campaign -> executable pauseKeywords with the EXACT {adGroupId,criterionId,text} objects copied from the evidence. A keyword-level fix WITHOUT its executable payload is a defect — if the keyword appears in the evidence, include its ids.
   * Missing coverage: when you prescribe tighter/exact replacement terms, ALSO emit executable addKeywords with {adGroupId:"<reuse an adGroupId from the evidence>", keywords:[{text:"...", matchType:"EXACT"|"PHRASE"}]} so they can be added in one click.
@@ -3360,6 +3375,66 @@ async function applyRemedy(campaignId, remedy, { ctrl } = {}) {
         result.verification = missing.length ? { missing } : { confirmed: list.length + " keyword(s) live in Google Ads" };
       } catch (e) { result.verified = null; result.verification = { error: String(e.message || e).slice(0, 200) }; }
     }
+  } else if (ex.kind === "rewriteAds") {
+    // In-place RSA update via AdService. MERGE strategy: keep every existing
+    // asset (their performance history survives), append the new copy up to
+    // the 15/4 RSA limits. Note: any RSA edit re-enters policy review — a
+    // brief serving gap on this ad is expected and normal.
+    const newHl = (ex.headlines || []).map(t => clampHeadline(String(t))).filter(t => t && brandSafe(t));
+    const newDs = (ex.descriptions || []).map(t => clampDescription(String(t))).filter(t => t && brandSafe(t));
+    if (!newHl.length && !newDs.length) throw new Error("rewriteAds: no usable copy after clamping/brand-safety");
+    let adId = String(ex.adId || "").replace(/\D/g, "");
+    // resolve current assets (and the ad itself if the AI didn't name one)
+    const q = adId
+      ? `SELECT ad_group_ad.ad.id, ad_group_ad.ad.responsive_search_ad.headlines, ad_group_ad.ad.responsive_search_ad.descriptions
+         FROM ad_group_ad WHERE ad_group_ad.ad.id = ${Number(adId)}`
+      : `SELECT ad_group_ad.ad.id, ad_group_ad.ad.responsive_search_ad.headlines, ad_group_ad.ad.responsive_search_ad.descriptions
+         FROM ad_group_ad WHERE campaign.id = ${Number(campaignId)} AND ad_group_ad.status = 'ENABLED' LIMIT 1`;
+    const cur = await gaql(q);
+    if (!cur.length) throw new Error("rewriteAds: RSA not found");
+    const ad = ((cur[0] || {}).adGroupAd || {}).ad || {};
+    adId = String(ad.id);
+    const rsa = ad.responsiveSearchAd || {};
+    // PRUNE-ON-APPEND: Google grades each asset once it has served enough
+    // (performance_label). LOW-rated assets are removed in this same edit so
+    // the message never dilutes; GOOD/BEST keep their history; LEARNING and
+    // unlabeled assets are protected (they haven't had a fair trial yet).
+    const lowSet = { HEADLINE: new Set(), DESCRIPTION: new Set() };
+    try {
+      const lbl = await gaql(`SELECT ad_group_ad_asset_view.field_type, ad_group_ad_asset_view.performance_label, asset.text_asset.text
+                              FROM ad_group_ad_asset_view WHERE campaign.id = ${Number(campaignId)}`);
+      for (const r of lbl) {
+        const v = r.adGroupAdAssetView || {}; const text = (((r.asset || {}).textAsset) || {}).text;
+        if (text && v.performanceLabel === "LOW" && lowSet[v.fieldType]) lowSet[v.fieldType].add(text.toLowerCase());
+      }
+    } catch (e) {}
+    const removedHl = [], removedDs = [];
+    const keepHl = (rsa.headlines || []).filter(h => { const low = lowSet.HEADLINE.has((h.text || "").toLowerCase()); if (low) removedHl.push(h.text); return !low; });
+    const keepDs = (rsa.descriptions || []).filter(x => { const low = lowSet.DESCRIPTION.has((x.text || "").toLowerCase()); if (low) removedDs.push(x.text); return !low; });
+    const dedupe = (arr) => { const seen = new Set(); return arr.filter(x => { const k = x.text.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; }); };
+    let headlines = dedupe([...keepHl, ...newHl.map(text => ({ text }))]).slice(0, 15);
+    let descriptions = dedupe([...keepDs, ...newDs.map(text => ({ text }))]).slice(0, 4);
+    // never fall below RSA minimums: restore pruned LOW assets if we must
+    while (headlines.length < 3 && removedHl.length) headlines.push({ text: removedHl.pop() });
+    while (descriptions.length < 2 && removedDs.length) descriptions.push({ text: removedDs.pop() });
+    if (headlines.length < 3 || descriptions.length < 2) throw new Error("rewriteAds: merged asset set below RSA minimums");
+    const ops = [{ update: {
+      resourceName: `customers/${CID}/ads/${adId}`,
+      responsiveSearchAd: { headlines, descriptions }
+    }, updateMask: "responsive_search_ad.headlines,responsive_search_ad.descriptions" }];
+    await mutate("ads", ops, { ctrl, label: "remedy:rewriteAds" });
+    result = { ok: true, kind: ex.kind, adId, addedHeadlines: newHl, addedDescriptions: newDs,
+               prunedLow: { headlines: removedHl, descriptions: removedDs },
+               totals: { headlines: headlines.length, descriptions: descriptions.length }, dryRun: !!ctrl.dryRun };
+    if (!ctrl.dryRun) {
+      try {
+        const chk = await gaql(`SELECT ad_group_ad.ad.responsive_search_ad.headlines FROM ad_group_ad WHERE ad_group_ad.ad.id = ${Number(adId)}`);
+        const live = new Set(((((((chk[0] || {}).adGroupAd) || {}).ad || {}).responsiveSearchAd || {}).headlines || []).map(h => (h.text || "").toLowerCase()));
+        const missing = newHl.filter(t => !live.has(t.toLowerCase()));
+        result.verified = missing.length === 0;
+        result.verification = missing.length ? { missing } : { confirmed: newHl.length + " headline(s) + " + newDs.length + " description(s) live in the RSA (ad re-entered policy review)" };
+      } catch (e) { result.verified = null; result.verification = { error: String(e.message || e).slice(0, 200) }; }
+    }
   } else if (ex.kind === "setBudget") {
     if (!ex.budget) throw new Error("no budget supplied");
     const r = await setCampaignBudget(campaignId, ex.budget, { ctrl });
@@ -3382,11 +3457,47 @@ async function applyRemedy(campaignId, remedy, { ctrl } = {}) {
     campaignId: String(campaignId), campaignName: (baseline || {}).name || null,
     issue: (remedy || {}).issue || null, fix: (remedy || {}).fix || null,
     impact: (remedy || {}).impact || null, kind: ex.kind, executable: ex,
+    adId: result.adId || null, prunedLow: result.prunedLow || null,
+    reviewStatus: ex.kind === "rewriteAds" && !ctrl.dryRun ? "REVIEW_IN_PROGRESS" : null,
     dryRun: !!ctrl.dryRun, verified: result.verified ?? null, verification: result.verification || null,
     baseline
   });
   result.logId = logId;
   return result;
+}
+
+// Policy-review feedback loop: check the live approval/review status of the
+// given ads in Google Ads and persist it onto their remedy-log entries so the
+// UI (and the AI's history context) always knows whether an edited ad has
+// cleared review, and when.
+async function adReviewStatus({ adIds } = {}) {
+  const ids = (adIds || []).map(x => String(x).replace(/\D/g, "")).filter(Boolean).slice(0, 20);
+  if (!ids.length) return { statuses: {} };
+  const rows = await gaql(`SELECT ad_group_ad.ad.id, ad_group_ad.policy_summary.approval_status,
+                                  ad_group_ad.policy_summary.review_status
+                           FROM ad_group_ad WHERE ad_group_ad.ad.id IN (${ids.join(",")})`);
+  const statuses = {};
+  for (const r of rows) {
+    const a = r.adGroupAd || {}; const ps = a.policySummary || {};
+    statuses[String((a.ad || {}).id)] = { approvalStatus: ps.approvalStatus || null, reviewStatus: ps.reviewStatus || null };
+  }
+  // persist onto matching rewriteAds remedy entries
+  const f = fb();
+  if (f) {
+    try {
+      const snap = await f.db.collection(COL.remedies).where("kind", "==", "rewriteAds").orderBy("at", "desc").limit(40).get();
+      const batch = f.db.batch();
+      snap.forEach(d => {
+        const h = d.data(); const st = statuses[String(h.adId)];
+        if (!st) return;
+        const patch = { approvalStatus: st.approvalStatus, reviewStatus: st.reviewStatus, lastReviewCheck: Date.now() };
+        if (st.reviewStatus === "REVIEWED" && (st.approvalStatus === "APPROVED" || st.approvalStatus === "APPROVED_LIMITED") && !h.approvedAt) patch.approvedAt = Date.now();
+        batch.set(d.ref, patch, { merge: true });
+      });
+      await batch.commit();
+    } catch (e) {}
+  }
+  return { statuses };
 }
 
 // Applied-fix history, newest first (powers the Fix History tab + AI context).
@@ -3490,6 +3601,6 @@ module.exports = {
   enforceBudgetCeiling, monthlySpendGuard,
   dashboard,
   fetchDiagnostics, runDiagnostics, getDiagnostics, applyGoogleRecommendation, dismissGoogleRecommendation,
-  dailyStats, applyRemedy, remedyHistory,
+  dailyStats, applyRemedy, remedyHistory, adReviewStatus,
   _util: { micros, fromMicros, clampHeadline, clampDescription, gAdsTime, daysUntil }
 };
