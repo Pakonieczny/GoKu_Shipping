@@ -46,6 +46,7 @@ function fb() {
 const COL = {
   control:   "Brites_GAds_Control",     // doc "control": enabled, dryRun, caps, autoApprove
   state:     "Brites_GAds_State",        // doc "cycle": cursors, lastRun timestamps
+  remedies:  "Brites_GAds_Remedies",     // applied Ad-Doctor fixes: what, when, baseline, verification
   metrics:   "Brites_GAds_Metrics",      // daily snapshots (time-series, auto-id)
   ledger:    "Brites_GAds_Ledger",       // every mutation, with experiment ids (auto-id)
   approvals: "Brites_GAds_Approvals",    // pending creative/budget ops (auto-id)
@@ -3170,7 +3171,7 @@ async function fetchDiagnostics() {
 // AND our context Google doesn't weigh — ROAS target, account budget ceiling,
 // monthly cap, measured demand. Returns per-campaign verdicts with an explicit
 // agree/partial/disagree call on each Google recommendation.
-async function analyzeDiagnostics(diag, ctrl) {
+async function analyzeDiagnostics(diag, ctrl, history) {
   const totalBudget = diag.campaigns.filter(c => c.status === "ENABLED").reduce((a, c) => a + (c.budget || 0), 0);
   const compact = diag.campaigns.map(c => ({
     id: c.id, name: c.name, status: c.status, serving: c.primaryStatus, why: c.reasonsText,
@@ -3192,6 +3193,9 @@ ACCOUNT GUARDRAILS: target ROAS ${ctrl.targetRoas || 3}; account daily budget ce
 CAMPAIGNS (Google Ads diagnostics + our measured performance):
 ${JSON.stringify(compact)}
 
+FIXES ALREADY APPLIED (via this console; each has a 7-day baseline captured at apply time — compare against the campaign's current last7d to judge whether the fix is working):
+${JSON.stringify((history || []).slice(0, 40).map(h => ({ campaignId: h.campaignId, daysAgo: Math.round((Date.now() - (h.at || Date.now())) / 86400000), kind: h.kind, issue: h.issue, params: h.kind === "addNegatives" ? (h.executable || {}).keywords : h.kind === "pauseKeywords" ? ((h.executable || {}).keywords || []).map(k => k.text || k) : h.kind === "setBudget" ? (h.executable || {}).budget : null, verified: h.verified, baseline7d: h.baseline })))}
+
 For EACH campaign return an object:
 - id, severity: "critical"|"attention"|"healthy"
 - headline: one plain-English sentence naming the single most important thing (e.g. "Losing 38% of possible impressions to budget on a campaign that's converting").
@@ -3200,7 +3204,8 @@ For EACH campaign return an object:
 - verdict: "agree"|"partial"|"disagree" with Google.
 - aiSays: 1-3 sentences: your professional call and WHY, referencing ROAS vs target, conversion volume (beware tiny samples), the budget ceiling, and whether the campaign has earned more spend. If you'd pick a DIFFERENT budget than Google (e.g. a smaller step), say the number.
 - action: {kind:"raiseBudget"|"lowerBudget"|"pauseCampaign"|"fixAds"|"improveKeywords"|"wait"|"none", budget: number or null, urgency:"now"|"this week"|"monitor"}
-- remedies: an array with ONE ENTRY PER ISSUE you flagged. Every issue MUST get a remedy specific enough to implement in the next 10 minutes. Use the evidence provided (keywords with QS components, live ad copy, search terms). Each remedy:
+- fixReview: for each already-applied fix on this campaign (from the list above), one entry {applied:"short description", daysAgo:N, working:"working"|"too early"|"not working", note:"one sentence comparing baseline7d to current last7d"}. Empty array if none.
+- remedies: an array with ONE ENTRY PER ISSUE you flagged. NEVER re-recommend a fix that already appears in the applied list unless it verifiably failed or clearly needs extension (say so explicitly if you do). Every issue MUST get a remedy specific enough to implement in the next 10 minutes. Use the evidence provided (keywords with QS components, live ad copy, search terms). Each remedy:
   {issue:"...", fix:"exact prescription", impact:"high|medium|low", executable:{kind:"addNegatives"|"pauseKeywords"|"rewriteAds"|"landingPage"|"setBudget"|"none", ...params}}
   Rules for remedies:
   * Rank/QS problems: name the FAILING COMPONENT per keyword (expectedCtr BELOW_AVERAGE = weak ad-to-keyword match; adRelevance BELOW_AVERAGE = headlines don't contain the keyword; landingPage BELOW_AVERAGE = URL doesn't match intent). Prescribe per keyword: pause it (executable pauseKeywords with keywords:[{adGroupId,criterionId,text}]), tighten match type, or fix copy.
@@ -3218,9 +3223,11 @@ async function runDiagnostics() {
   const f = fb(); const ctrl = await control();
   const startedAt = Date.now();
   const diag = await fetchDiagnostics();
+  let history = [];
+  try { history = ((await remedyHistory({ limit: 60 })).items || []).filter(h => !h.dryRun); } catch (e) {}
   let ai = null, aiError = null;
   try {
-    ai = await analyzeDiagnostics(diag, ctrl);
+    ai = await analyzeDiagnostics(diag, ctrl, history);
   } catch (e) { aiError = String(e.message || e).slice(0, 400); }
   const doc = {
     generatedAt: Date.now(), tookMs: Date.now() - startedAt,
@@ -3231,12 +3238,36 @@ async function runDiagnostics() {
   return doc;
 }
 
-// Execute an AI remedy. Only mutation-safe kinds run here (negatives, keyword
-// pause, budget); copy/landing-page remedies are prescriptions for the human.
+// Baseline snapshot (last-7-days) for a campaign — captured at apply time so
+// the Fix History can show whether the fix moved the numbers.
+async function _campaignBaseline(campaignId) {
+  try {
+    const rows = await gaql(`SELECT campaign.id, campaign.name, metrics.impressions, metrics.clicks,
+                                    metrics.cost_micros, metrics.conversions, metrics.conversions_value
+                             FROM campaign WHERE campaign.id = ${Number(campaignId)} AND segments.date DURING LAST_7_DAYS`);
+    let name = null; const t = { impr: 0, clicks: 0, cost: 0, conv: 0, value: 0 };
+    for (const r of rows) { name = (r.campaign || {}).name || name; const m = r.metrics || {};
+      t.impr += +m.impressions || 0; t.clicks += +m.clicks || 0; t.cost += fromMicros(m.costMicros);
+      t.conv += +m.conversions || 0; t.value += +m.conversionsValue || 0; }
+    return { name, window: "LAST_7_DAYS", ...t };
+  } catch (e) { return null; }
+}
+
+async function _logRemedy(entry) {
+  const f = fb(); if (!f) return null;
+  const ref = await f.db.collection(COL.remedies).add({ ...entry, at: Date.now(), createdAt: new Date().toISOString() });
+  return ref.id;
+}
+
+// Execute an AI remedy, VERIFY it with a Google read-back, and persist the
+// application (with a performance baseline) to Brites_GAds_Remedies so the
+// UI history survives reloads and future diagnoses learn from it.
 // Dry-run gated + ledgered like every other write.
 async function applyRemedy(campaignId, remedy, { ctrl } = {}) {
   ctrl = ctrl || (await control());
   const ex = (remedy || {}).executable || {};
+  let result;
+
   if (ex.kind === "addNegatives") {
     const kws = (ex.keywords || []).map(k => String(k).trim().toLowerCase()).filter(Boolean).slice(0, 25);
     if (!kws.length) throw new Error("no negative keywords supplied");
@@ -3244,24 +3275,75 @@ async function applyRemedy(campaignId, remedy, { ctrl } = {}) {
       campaign: `customers/${CID}/campaigns/${campaignId}`,
       negative: true, keyword: { text, matchType: "PHRASE" }
     }}));
-    const res = await mutate("campaignCriteria", ops, { ctrl, label: "remedy:addNegatives" });
-    return { ok: true, kind: ex.kind, added: kws, dryRun: !!ctrl.dryRun, res: !!res };
-  }
-  if (ex.kind === "pauseKeywords") {
+    await mutate("campaignCriteria", ops, { ctrl, label: "remedy:addNegatives" });
+    result = { ok: true, kind: ex.kind, added: kws, dryRun: !!ctrl.dryRun };
+    if (!ctrl.dryRun) {
+      // READ-BACK: confirm every negative now exists on the campaign in Google Ads.
+      try {
+        const chk = await gaql(`SELECT campaign_criterion.keyword.text FROM campaign_criterion
+                                WHERE campaign_criterion.negative = TRUE AND campaign.id = ${Number(campaignId)}
+                                  AND campaign_criterion.status != 'REMOVED'`);
+        const live = new Set(chk.map(r => (((r.campaignCriterion || {}).keyword) || {}).text || "").map(t => t.toLowerCase()));
+        const missing = kws.filter(k => !live.has(k));
+        result.verified = missing.length === 0;
+        result.verification = missing.length ? { missing } : { confirmed: kws.length + " negatives live in Google Ads" };
+      } catch (e) { result.verified = null; result.verification = { error: String(e.message || e).slice(0, 200) }; }
+    }
+  } else if (ex.kind === "pauseKeywords") {
     const list = (ex.keywords || []).filter(k => k && k.adGroupId && k.criterionId).slice(0, 25);
     if (!list.length) throw new Error("no keyword criteria supplied");
     const ops = list.map(k => ({ update: {
       resourceName: `customers/${CID}/adGroupCriteria/${k.adGroupId}~${k.criterionId}`,
       status: "PAUSED"
     }, updateMask: "status" }));
-    const res = await mutate("adGroupCriteria", ops, { ctrl, label: "remedy:pauseKeywords" });
-    return { ok: true, kind: ex.kind, paused: list.map(k => k.text), dryRun: !!ctrl.dryRun, res: !!res };
-  }
-  if (ex.kind === "setBudget") {
+    await mutate("adGroupCriteria", ops, { ctrl, label: "remedy:pauseKeywords" });
+    result = { ok: true, kind: ex.kind, paused: list.map(k => k.text), dryRun: !!ctrl.dryRun };
+    if (!ctrl.dryRun) {
+      try {
+        const ids = list.map(k => Number(k.criterionId)).filter(Boolean);
+        const chk = await gaql(`SELECT ad_group_criterion.criterion_id, ad_group_criterion.status
+                                FROM ad_group_criterion WHERE campaign.id = ${Number(campaignId)}
+                                  AND ad_group_criterion.criterion_id IN (${ids.join(",")})`);
+        const notPaused = chk.filter(r => (r.adGroupCriterion || {}).status !== "PAUSED").length;
+        result.verified = notPaused === 0 && chk.length > 0;
+        result.verification = result.verified ? { confirmed: chk.length + " keyword(s) PAUSED in Google Ads" } : { notPaused };
+      } catch (e) { result.verified = null; result.verification = { error: String(e.message || e).slice(0, 200) }; }
+    }
+  } else if (ex.kind === "setBudget") {
     if (!ex.budget) throw new Error("no budget supplied");
-    return await setCampaignBudget(campaignId, ex.budget, { ctrl });
+    const r = await setCampaignBudget(campaignId, ex.budget, { ctrl });
+    result = { ok: true, kind: ex.kind, budget: ex.budget, dryRun: !!ctrl.dryRun, detail: r };
+    if (!ctrl.dryRun) {
+      try {
+        const chk = await gaql(`SELECT campaign_budget.amount_micros FROM campaign WHERE campaign.id = ${Number(campaignId)}`);
+        const live = fromMicros(((chk[0] || {}).campaignBudget || {}).amountMicros);
+        result.verified = Math.abs(live - ex.budget) < 0.01;
+        result.verification = { budgetInGoogleAds: live };
+      } catch (e) { result.verified = null; result.verification = { error: String(e.message || e).slice(0, 200) }; }
+    }
+  } else {
+    throw new Error("remedy kind '" + ex.kind + "' is a prescription, not auto-executable");
   }
-  throw new Error("remedy kind '" + ex.kind + "' is a prescription, not auto-executable");
+
+  // Persist: what was applied, when, with a 7-day baseline for before/after.
+  const baseline = await _campaignBaseline(campaignId);
+  const logId = await _logRemedy({
+    campaignId: String(campaignId), campaignName: (baseline || {}).name || null,
+    issue: (remedy || {}).issue || null, fix: (remedy || {}).fix || null,
+    impact: (remedy || {}).impact || null, kind: ex.kind, executable: ex,
+    dryRun: !!ctrl.dryRun, verified: result.verified ?? null, verification: result.verification || null,
+    baseline
+  });
+  result.logId = logId;
+  return result;
+}
+
+// Applied-fix history, newest first (powers the Fix History tab + AI context).
+async function remedyHistory({ limit = 100 } = {}) {
+  const f = fb(); if (!f) return { items: [] };
+  const snap = await f.db.collection(COL.remedies).orderBy("at", "desc").limit(Math.min(200, limit)).get();
+  const items = []; snap.forEach(d => items.push({ id: d.id, ...d.data() }));
+  return { items };
 }
 
 async function getDiagnostics() {
@@ -3357,6 +3439,6 @@ module.exports = {
   enforceBudgetCeiling, monthlySpendGuard,
   dashboard,
   fetchDiagnostics, runDiagnostics, getDiagnostics, applyGoogleRecommendation, dismissGoogleRecommendation,
-  dailyStats, applyRemedy,
+  dailyStats, applyRemedy, remedyHistory,
   _util: { micros, fromMicros, clampHeadline, clampDescription, gAdsTime, daysUntil }
 };
