@@ -338,6 +338,16 @@ table.ptable tr.pdetail>td{border-bottom:2px solid var(--line)}
 .benchout{scrollbar-width:thin;scrollbar-color:var(--ink-25) transparent}
 
 @keyframes bjPulse{0%,100%{opacity:1}50%{opacity:.35}}
+
+/* ---- Expandable-section toggle: a real button instead of tiny plain text ---- */
+details.xd>summary{list-style:none;display:inline-flex;align-items:center;gap:9px;padding:7px 14px;border:1px solid var(--line);border-radius:9px;background:var(--paper);font-size:13px;font-weight:650;color:var(--ink);cursor:pointer;user-select:none;transition:border-color .12s,background .12s}
+details.xd>summary::-webkit-details-marker{display:none}
+details.xd>summary::before{content:"\25b8";font-size:11px;color:var(--gold);transition:transform .15s}
+details.xd[open]>summary::before{content:"\25be"}
+details.xd>summary:hover{border-color:var(--gold);background:var(--paper-2)}
+details.xd[open]>summary{border-color:var(--gold);background:var(--paper-2);margin-bottom:8px}
+details.xd>summary .xd-n{font-size:11px;font-weight:700;color:var(--gold);background:rgba(180,140,60,.12);border-radius:9px;padding:1px 8px}
+.diagHead:hover{background:var(--paper-2);border-radius:8px}
 </style>
 </head>
 <body>
@@ -1048,22 +1058,26 @@ function renderDiag(){var body=document.getElementById("diagBody");if(!body||!DI
         var sc=words.reduce(function(acc,w){return acc+(hay.indexOf(w)>=0?1:0);},0);
         if(sc>bs){bs=sc;best=h;}});
       return bs>0?best:null;}
-    if((ai.fixReview||[]).length){var wc={working:"#2e7d32","too early":"#b26a00","not working":"#b3402a"};
-      aiBox+='<details style="margin-top:8px;font-size:12px"><summary style="cursor:pointer;font-weight:600">Past fixes review \u00b7 '+ai.fixReview.length+'</summary>'+ai.fixReview.map(function(fr){return '<div style="margin-top:4px"><span style="font-size:10px;font-weight:800;color:'+(wc[fr.working]||"var(--ink-45)")+'">'+esc(String(fr.working||"").toUpperCase())+'</span> '+esc(fr.applied||"")+(function(){var h=bestHist(c.id,fr);return h?(" "+verifyBadge(h)):"";})()+(fr.daysAgo!=null?' <span class="muted">('+fr.daysAgo+'d ago)</span>':"")+(fr.note?'<div class="muted" style="font-size:11.5px">'+esc(fr.note)+'</div>':"")+'</div>';}).join("")+'</details>';}
+    var pastCount=(ai.fixReview||[]).length+appliedRems.length;
+    if(pastCount){var wc={working:"#2e7d32","too early":"#b26a00","not working":"#b3402a"};
+      aiBox+='<details class="xd" style="margin-top:10px;font-size:12px"><summary>Past fixes <span class="xd-n">'+pastCount+'</span></summary>'+
+      appliedRems.map(function(rm){var h=rm.__hist;return '<div style="margin:4px 0 6px"><b>'+esc(rm.issue||"")+'</b> '+verifyBadge(h)+' <span class="muted" style="font-size:11px">'+timeago(h.at)+' ago \u00b7 awaiting next diagnosis for a working read</span></div>';}).join("")+
+      (ai.fixReview||[]).map(function(fr){return '<div style="margin-top:4px"><span style="font-size:10px;font-weight:800;color:'+(wc[fr.working]||"var(--ink-45)")+'">'+esc(String(fr.working||"").toUpperCase())+'</span> '+esc(fr.applied||"")+(function(){var h=bestHist(c.id,fr);return h?(" "+verifyBadge(h)):"";})()+(fr.daysAgo!=null?' <span class="muted">('+fr.daysAgo+'d ago)</span>':"")+(fr.note?'<div class="muted" style="font-size:11.5px">'+esc(fr.note)+'</div>':"")+'</div>';}).join("")+'</details>';}
     // remedies: one implementable fix per issue, with Apply where mutation-safe
+    var pendingRems=[],appliedRems=[];
+    (ai.remedies||[]).forEach(function(rm,ri){rm.__ri=ri;var h=histFor(c.id,rm);if(h){rm.__hist=h;appliedRems.push(rm);}else pendingRems.push(rm);});
     var remHtml="";
-    if((ai.remedies||[]).length){
+    if(pendingRems.length){
       var impC={high:"#b3402a",medium:"#b26a00",low:"var(--ink-45)"};
-      remHtml='<div style="margin-top:8px"><b style="font-size:12px">Fix plan \u00b7 '+ai.remedies.length+' remed'+(ai.remedies.length===1?"y":"ies")+'</b>'+ai.remedies.map(function(rm,ri){
+      remHtml='<div style="margin-top:8px"><b style="font-size:12px">Fix plan \u00b7 '+pendingRems.length+' open remed'+(pendingRems.length===1?"y":"ies")+'</b>'+pendingRems.map(function(rm){var ri=rm.__ri;
         var ex=rm.executable||{};var canRun=ex.kind==="addNegatives"||ex.kind==="pauseKeywords"||ex.kind==="setBudget"||ex.kind==="addKeywords";
         var detail="";
         if(ex.kind==="addNegatives"&&(ex.keywords||[]).length)detail='<div class="mono" style="font-size:11px;color:var(--ink-70);margin-top:3px">negatives: '+esc(ex.keywords.join(", "))+'</div>';
         if(ex.kind==="pauseKeywords"&&(ex.keywords||[]).length)detail='<div class="mono" style="font-size:11px;color:var(--ink-70);margin-top:3px">pause: '+esc(ex.keywords.map(function(k){return k.text||k;}).join(", "))+'</div>';
         if(ex.kind==="addKeywords"&&(ex.keywords||[]).length)detail='<div class="mono" style="font-size:11px;color:var(--ink-70);margin-top:3px">add: '+esc(ex.keywords.map(function(k){return (k.text||k)+(k.matchType?" ["+String(k.matchType).toLowerCase()+"]":"");}).join(", "))+'</div>';
-        if(ex.kind==="rewriteAds")detail='<details style="margin-top:3px"><summary style="cursor:pointer;font-size:11px;color:var(--gold);font-weight:600">Suggested copy \u00b7 paste into a regenerated draft</summary><div style="font-size:11.5px;margin-top:4px">'+((ex.headlines||[]).length?'<b>Headlines:</b><br>'+ex.headlines.map(esc).join("<br>"):"")+((ex.descriptions||[]).length?'<br><b>Descriptions:</b><br>'+ex.descriptions.map(esc).join("<br>"):"")+'</div></details>';
+        if(ex.kind==="rewriteAds")detail='<details class="xd" style="margin-top:6px"><summary>Suggested copy \u00b7 paste into a regenerated draft</summary><div style="font-size:11.5px;margin-top:4px">'+((ex.headlines||[]).length?'<b>Headlines:</b><br>'+ex.headlines.map(esc).join("<br>"):"")+((ex.descriptions||[]).length?'<br><b>Descriptions:</b><br>'+ex.descriptions.map(esc).join("<br>"):"")+'</div></details>';
         if(ex.kind==="landingPage"&&ex.url)detail='<div style="font-size:11px;margin-top:3px">\u2192 <span class="mono">'+esc(ex.url)+'</span></div>';
-        var done=histFor(c.id,rm);
-        var applyUi=done?('<span style="font-size:11px;font-weight:700;color:'+(done.dryRun?"#b26a00":done.verified===false?"#b3402a":"#2e7d32")+';white-space:nowrap">'+(done.dryRun?"Dry-run \u2713":done.verified===false?"Applied \u26a0 unverified":"Applied \u2713")+' \u00b7 '+timeago(done.at)+' ago</span>'):(canRun?'<button class="btn gold sm dg-remedy" data-id="'+c.id+'" data-r="'+ri+'" style="padding:3px 10px;font-size:11px;white-space:nowrap">Apply fix</button>':"");
+        var applyUi=canRun?'<button class="btn gold sm dg-remedy" data-id="'+c.id+'" data-r="'+ri+'" style="padding:4px 13px;font-size:11.5px;white-space:nowrap">Apply fix</button>':"";
         return '<div style="padding:7px 0;border-top:1px dashed var(--line);font-size:12px"><div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap"><span style="font-size:9.5px;font-weight:800;letter-spacing:.08em;color:'+(impC[rm.impact]||impC.low)+';padding-top:2px">'+esc(String(rm.impact||"").toUpperCase())+'</span><div style="flex:1;min-width:220px"><b>'+esc(rm.issue||"")+'</b><div style="color:var(--ink-70);margin-top:2px">'+esc(rm.fix||"")+'</div>'+detail+'</div>'+applyUi+'</div></div>';
       }).join("")+'</div>';}
     aiBox+=remHtml;
@@ -1087,7 +1101,7 @@ function renderDiag(){var body=document.getElementById("diagBody");if(!body||!DI
       '<div class="diagBody" style="'+(open?"":"display:none;")+'padding:0 4px 12px 26px">'+
       (ai.headline?'<div style="font-size:12.5px">'+esc(ai.headline)+'</div>':"")+
       '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:7px">'+chips+'</div>'+
-      (goog?'<details style="margin-top:8px"><summary style="cursor:pointer;font-size:12px;font-weight:600;color:var(--ink-70)">Google\u2019s recommendation</summary>'+goog+'</details>':"")+
+      (goog?'<details class="xd" style="margin-top:10px"><summary>Google\u2019s recommendation</summary>'+goog+'</details>':"")+
       aiBox+extra+
       (btns.length?'<div style="display:flex;gap:8px;margin-top:9px;flex-wrap:wrap">'+btns.join("")+'</div>':"")+'</div></div>';});
   body.innerHTML=html;
@@ -1105,6 +1119,7 @@ function renderDiag(){var body=document.getElementById("diagBody");if(!body||!DI
         var vtxt=r.dryRun?"Dry-run \u2713":(r.verified===false?"Applied \u26a0 unverified":r.verified?"Applied \u2713 verified":"Applied \u2713");
         btn.textContent=vtxt;btn.classList.remove("gold");
         REMHIST.unshift({campaignId:cid,campaignName:"",issue:rm.issue,fix:rm.fix,kind:(rm.executable||{}).kind,executable:rm.executable,dryRun:!!r.dryRun,verified:(r.verified==null?null:r.verified),verification:r.verification||null,at:Date.now(),baseline:null});
+        renderDiag(); // the remedy relocates from Fix plan -> Past fixes immediately
         setTimeout(function(){loadRemedyHistory();},1500);
       }
       else{btn.disabled=false;btn.textContent="Apply fix";alert((r&&r.error)||"failed");}
@@ -1153,7 +1168,7 @@ function adExtrasLine(c){var bits=[];if(c.sitelinks)bits.push(c.sitelinks+" site
   var sl=(c.sitelinkNames&&c.sitelinkNames.length)?c.sitelinkNames.join(" \u00b7 "):"extra links that lift CTR";
   var co=(c.calloutNames&&c.calloutNames.length)?c.calloutNames.join(" \u00b7 "):"brand callouts";
   var sn=(c.snippetValues&&c.snippetValues.length)?((c.snippetHeader||"Types")+": "+c.snippetValues.join(", ")):"";
-  return '<details style="margin-top:8px"><summary style="cursor:pointer;font-size:11.5px;color:var(--gold);font-weight:600">Ad extensions &amp; exclusions \u00b7 '+esc(bits.join(" \u00b7 "))+'</summary><div style="font-size:11px;color:var(--ink-70);margin-top:6px;line-height:1.6">'+(c.sitelinks?'<b>Sitelinks ('+c.sitelinks+')</b> \u2014 '+esc(sl)+'.<br>':"")+(c.callouts?'<b>Callouts ('+c.callouts+')</b> \u2014 '+esc(co)+'.<br>':"")+(c.snippets&&sn?'<b>Structured snippet</b> \u2014 '+esc(sn)+'.<br>':"")+(c.negatives&&c.negatives.length?'<b>Negative keywords ('+c.negatives.length+')</b> \u2014 '+esc(c.negatives.slice(0,12).join(", "))+(c.negatives.length>12?", \u2026":"")+'.':"")+'</div></details>';}
+  return '<details class="xd" style="margin-top:8px"><summary>Ad extensions &amp; exclusions <span class="xd-n">'+esc(bits.join(" \u00b7 "))+'</span></summary><div style="font-size:11px;color:var(--ink-70);margin-top:6px;line-height:1.6">'+(c.sitelinks?'<b>Sitelinks ('+c.sitelinks+')</b> \u2014 '+esc(sl)+'.<br>':"")+(c.callouts?'<b>Callouts ('+c.callouts+')</b> \u2014 '+esc(co)+'.<br>':"")+(c.snippets&&sn?'<b>Structured snippet</b> \u2014 '+esc(sn)+'.<br>':"")+(c.negatives&&c.negatives.length?'<b>Negative keywords ('+c.negatives.length+')</b> \u2014 '+esc(c.negatives.slice(0,12).join(", "))+(c.negatives.length>12?", \u2026":"")+'.':"")+'</div></details>';}
 function copyLine(txt,max){var len=(txt||"").length;var over=len>max,warn=len>max*.86&&!over;var bad=(DASH.terms||[]).find(b=>(txt||"").toLowerCase().includes(b));
   return '<div class="copyline"><div class="meter '+(over?"over":warn?"warn":"")+'"><i style="width:'+Math.min(100,len/max*100)+'%"></i></div><div class="cc">'+len+'/'+max+'</div><div class="txt">'+esc(txt)+'</div><div class="safe '+(bad?"bad":"ok")+'">'+(bad?"✕":"✓")+'</div></div>';}
 function stuckCard(a){var pl=a.payload||{};var dry=(((typeof DASH!=="undefined"&&DASH)||{}).control||{}).dryRun;
