@@ -385,7 +385,7 @@ table.ptable tr.pdetail>td{border-bottom:2px solid var(--line)}
         <div class="card pad" id="cmdSales"></div>
       </div>
       <div class="card pad" style="margin-top:16px"><div class="card__h"><h3>Your campaigns</h3><span class="sub" id="snapSub">last snapshot</span></div><div id="snapshot" class="scrollcap-sm"></div></div>
-      <div class="card pad" style="margin-top:16px" id="diagCard"><div class="card__h"><h3>Ad Doctor · diagnostics &amp; recommendations</h3><span style="display:flex;gap:10px;align-items:center"><span class="sub" id="diagSub"></span><button class="btn ghost sm" id="diagRun" style="padding:4px 12px;font-size:12px">Diagnose now</button></span></div><div id="diagBody"><div class="empty" style="height:80px"><div style="font-size:12.5px">Loading diagnostics…</div></div></div></div>
+      <div class="card pad" style="margin-top:16px" id="diagCard"><div class="card__h"><h3>Ad Doctor · diagnostics &amp; recommendations</h3><span style="display:flex;gap:10px;align-items:center"><span class="sub" id="diagSub"></span><button class="btn ghost sm" id="diagToggleAll" style="padding:4px 10px;font-size:12px">Expand all</button><button class="btn ghost sm" id="diagRun" style="padding:4px 12px;font-size:12px">Diagnose all</button></span></div><div id="diagBody"><div class="empty" style="height:80px"><div style="font-size:12.5px">Loading diagnostics…</div></div></div></div>
     </section>
 
     <section class="view hidden" id="v-sales">
@@ -1013,7 +1013,7 @@ function renderFixHistory(){var box=document.getElementById("fixList");if(!box)r
   var rb=document.getElementById("fixRefresh");if(rb&&!rb._w){rb._w=true;rb.onclick=function(){loadRemedyHistory();};}}
 
 /* ---- Ad Doctor: Google Ads diagnostics + AI specialist verdicts ---- */
-var DIAG=null,_diagBusy=false;
+var DIAG=null,_diagBusy=false,diagOpen={},_diagOpenInit=false;
 function diagStale(d){return !d||!d.generatedAt||(Date.now()-d.generatedAt)>3*3600*1000;}
 function loadDiagnostics(autoRun){loadRemedyHistory(function(){if(DIAG)renderDiag();});api("diagnostics").then(function(d){
   if(d&&!d.empty){DIAG=d;renderDiag();}
@@ -1035,6 +1035,7 @@ function renderDiag(){var body=document.getElementById("diagBody");if(!body||!DI
   var html="";
   if((DIAG.ai||{}).accountSummary)html+='<div style="padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--paper-2);font-size:12.5px;margin-bottom:12px"><b>Account read:</b> '+esc(DIAG.ai.accountSummary)+'</div>';
   if(DIAG.aiError)html+='<div style="font-size:11.5px;color:var(--clay);margin-bottom:10px">AI review failed ('+esc(DIAG.aiError)+') \u2014 raw Google diagnostics below.</div>';
+  if(!_diagOpenInit){(DIAG.campaigns||[]).forEach(function(c){var v=(aiBy[String(c.id)]||{}).severity;if(v==="critical")diagOpen[c.id]=true;});_diagOpenInit=true;}
   var camps=(DIAG.campaigns||[]).slice().sort(function(a,b){var r={critical:0,attention:1,healthy:2};var av=(aiBy[a.id]||{}).severity||"healthy",bv=(aiBy[b.id]||{}).severity||"healthy";return (r[av]||2)-(r[bv]||2);});
   if(!camps.length){body.innerHTML='<div class="empty" style="height:70px"><div style="font-size:12.5px">No campaigns to diagnose.</div></div>';return;}
   camps.forEach(function(c){var ai=aiBy[c.id]||{};var sv=sevInfo(ai.severity||(((c.reasonsText||[]).length&&c.primaryStatus!=="ELIGIBLE")?"attention":"healthy"));
@@ -1053,16 +1054,17 @@ function renderDiag(){var body=document.getElementById("diagBody");if(!body||!DI
     var aiBox="";
     if(ai.aiSays){aiBox='<div style="margin-top:8px;padding:9px 11px;border-left:3px solid '+sv[0]+';background:var(--paper-2);border-radius:0 8px 8px 0;font-size:12.5px"><div style="display:flex;gap:8px;align-items:center;margin-bottom:4px"><b>AI specialist:</b> '+verdictTag(ai.verdict)+'</div>'+esc(ai.aiSays)+((ai.findings||[]).length?'<ul style="margin:7px 0 0 16px;padding:0;font-size:11.5px;color:var(--ink-70)">'+ai.findings.map(function(f){return "<li>"+esc(f)+"</li>";}).join("")+"</ul>":"")+'</div>';}
     if((ai.fixReview||[]).length){var wc={working:"#2e7d32","too early":"#b26a00","not working":"#b3402a"};
-      aiBox+='<div style="margin-top:8px;font-size:12px"><b>Past fixes review:</b>'+ai.fixReview.map(function(fr){return '<div style="margin-top:4px"><span style="font-size:10px;font-weight:800;color:'+(wc[fr.working]||"var(--ink-45)")+'">'+esc(String(fr.working||"").toUpperCase())+'</span> '+esc(fr.applied||"")+(fr.daysAgo!=null?' <span class="muted">('+fr.daysAgo+'d ago)</span>':"")+(fr.note?'<div class="muted" style="font-size:11.5px">'+esc(fr.note)+'</div>':"")+'</div>';}).join("")+'</div>';}
+      aiBox+='<details style="margin-top:8px;font-size:12px"><summary style="cursor:pointer;font-weight:600">Past fixes review \u00b7 '+ai.fixReview.length+'</summary>'+ai.fixReview.map(function(fr){return '<div style="margin-top:4px"><span style="font-size:10px;font-weight:800;color:'+(wc[fr.working]||"var(--ink-45)")+'">'+esc(String(fr.working||"").toUpperCase())+'</span> '+esc(fr.applied||"")+(fr.daysAgo!=null?' <span class="muted">('+fr.daysAgo+'d ago)</span>':"")+(fr.note?'<div class="muted" style="font-size:11.5px">'+esc(fr.note)+'</div>':"")+'</div>';}).join("")+'</details>';}
     // remedies: one implementable fix per issue, with Apply where mutation-safe
     var remHtml="";
     if((ai.remedies||[]).length){
       var impC={high:"#b3402a",medium:"#b26a00",low:"var(--ink-45)"};
       remHtml='<div style="margin-top:8px"><b style="font-size:12px">Fix plan \u00b7 '+ai.remedies.length+' remed'+(ai.remedies.length===1?"y":"ies")+'</b>'+ai.remedies.map(function(rm,ri){
-        var ex=rm.executable||{};var canRun=ex.kind==="addNegatives"||ex.kind==="pauseKeywords"||ex.kind==="setBudget";
+        var ex=rm.executable||{};var canRun=ex.kind==="addNegatives"||ex.kind==="pauseKeywords"||ex.kind==="setBudget"||ex.kind==="addKeywords";
         var detail="";
         if(ex.kind==="addNegatives"&&(ex.keywords||[]).length)detail='<div class="mono" style="font-size:11px;color:var(--ink-70);margin-top:3px">negatives: '+esc(ex.keywords.join(", "))+'</div>';
         if(ex.kind==="pauseKeywords"&&(ex.keywords||[]).length)detail='<div class="mono" style="font-size:11px;color:var(--ink-70);margin-top:3px">pause: '+esc(ex.keywords.map(function(k){return k.text||k;}).join(", "))+'</div>';
+        if(ex.kind==="addKeywords"&&(ex.keywords||[]).length)detail='<div class="mono" style="font-size:11px;color:var(--ink-70);margin-top:3px">add: '+esc(ex.keywords.map(function(k){return (k.text||k)+(k.matchType?" ["+String(k.matchType).toLowerCase()+"]":"");}).join(", "))+'</div>';
         if(ex.kind==="rewriteAds")detail='<details style="margin-top:3px"><summary style="cursor:pointer;font-size:11px;color:var(--gold);font-weight:600">Suggested copy \u00b7 paste into a regenerated draft</summary><div style="font-size:11.5px;margin-top:4px">'+((ex.headlines||[]).length?'<b>Headlines:</b><br>'+ex.headlines.map(esc).join("<br>"):"")+((ex.descriptions||[]).length?'<br><b>Descriptions:</b><br>'+ex.descriptions.map(esc).join("<br>"):"")+'</div></details>';
         if(ex.kind==="landingPage"&&ex.url)detail='<div style="font-size:11px;margin-top:3px">\u2192 <span class="mono">'+esc(ex.url)+'</span></div>';
         var done=histFor(c.id,rm);
@@ -1076,11 +1078,23 @@ function renderDiag(){var body=document.getElementById("diagBody");if(!body||!DI
     if(budgetRec&&budgetRec.resourceName)btns.push('<button class="btn ghost sm dg-dismiss" data-rn="'+esc(budgetRec.resourceName)+'" style="padding:4px 11px;font-size:11.5px">Dismiss rec</button>');
     var otherRecs=(c.recommendations||[]).filter(function(r){return r!==budgetRec;});
     var extra=otherRecs.length?'<div class="muted" style="font-size:11px;margin-top:6px">Other Google recs: '+esc(otherRecs.map(function(r){return String(r.type||"").toLowerCase().replace(/_/g," ");}).join(", "))+'</div>':"";
-    html+='<div style="padding:12px 4px;border-top:1px solid var(--line)">'+
-      '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span style="width:9px;height:9px;border-radius:50%;background:'+sv[0]+';display:inline-block"></span><b>'+esc(c.name)+'</b><span style="font-size:10px;font-weight:700;letter-spacing:.1em;color:'+sv[0]+'">'+sv[1]+'</span><span class="muted" style="font-size:11.5px">'+esc((c.reasonsText||[]).join(" \u00b7 ")||c.primaryStatus||"")+'</span></div>'+
-      (ai.headline?'<div style="font-size:12.5px;margin-top:5px">'+esc(ai.headline)+'</div>':"")+
-      '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:7px">'+chips+'</div>'+goog+aiBox+extra+
-      (btns.length?'<div style="display:flex;gap:8px;margin-top:9px;flex-wrap:wrap">'+btns.join("")+'</div>':"")+'</div>';});
+    var open=!!diagOpen[c.id];
+    var quick=[];if(c.lostISBudget!=null)quick.push("budget-lost "+c.lostISBudget+"%");if(c.lostISRank!=null)quick.push("rank-lost "+c.lostISRank+"%");
+    var remCount=(ai.remedies||[]).length;
+    html+='<div style="border-top:1px solid var(--line)" data-camp="'+c.id+'">'+
+      '<div class="diagHead" data-open="'+c.id+'" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:11px 4px;cursor:pointer">'+
+        '<span style="font-size:11px;color:var(--ink-45);width:12px">'+(open?"\u25be":"\u25b8")+'</span>'+
+        '<span style="width:9px;height:9px;border-radius:50%;background:'+sv[0]+';display:inline-block"></span><b>'+esc(c.name)+'</b>'+
+        '<span style="font-size:10px;font-weight:700;letter-spacing:.1em;color:'+sv[0]+'">'+sv[1]+'</span>'+
+        '<span class="muted" style="font-size:11px">'+esc(quick.join(" \u00b7 "))+(remCount?" \u00b7 "+remCount+" remedies":"")+'</span>'+
+        '<span style="margin-left:auto;display:inline-flex;gap:6px"><button class="btn ghost sm dg-one" data-id="'+c.id+'" style="padding:3px 10px;font-size:11px">Diagnose</button></span>'+
+      '</div>'+
+      '<div class="diagBody" style="'+(open?"":"display:none;")+'padding:0 4px 12px 26px">'+
+      (ai.headline?'<div style="font-size:12.5px">'+esc(ai.headline)+'</div>':"")+
+      '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:7px">'+chips+'</div>'+
+      (goog?'<details style="margin-top:8px"><summary style="cursor:pointer;font-size:12px;font-weight:600;color:var(--ink-70)">Google\u2019s recommendation</summary>'+goog+'</details>':"")+
+      aiBox+extra+
+      (btns.length?'<div style="display:flex;gap:8px;margin-top:9px;flex-wrap:wrap">'+btns.join("")+'</div>':"")+'</div></div>';});
   body.innerHTML=html;
   Array.prototype.forEach.call(body.querySelectorAll(".dg-aibudget,.dg-gbudget"),function(b){b.onclick=function(){var id=this.getAttribute("data-id"),bud=+this.getAttribute("data-b");if(!confirm("Set daily budget to "+money(bud)+" for this campaign?"))return;api("setBudget",{id:id,budget:bud}).then(function(){runDiag(true);}).catch(function(e){alert(e.message||e);});};});
   Array.prototype.forEach.call(body.querySelectorAll(".dg-dismiss"),function(b){b.onclick=function(){var rn=this.getAttribute("data-rn");if(!confirm("Dismiss this Google recommendation?"))return;api("dismissRec",{resourceName:rn}).then(function(){runDiag(true);}).catch(function(e){alert(e.message||e);});};});
@@ -1088,7 +1102,7 @@ function renderDiag(){var body=document.getElementById("diagBody");if(!body||!DI
     var cid=this.getAttribute("data-id"),ri=+this.getAttribute("data-r");
     var aiBy2={};(((DIAG.ai||{}).campaigns)||[]).forEach(function(v){aiBy2[String(v.id)]=v;});
     var rm=((aiBy2[cid]||{}).remedies||[])[ri];if(!rm)return;
-    var ex=rm.executable||{};var what=ex.kind==="addNegatives"?("Add "+(ex.keywords||[]).length+" negative keyword(s)"):ex.kind==="pauseKeywords"?("Pause "+(ex.keywords||[]).length+" keyword(s)"):ex.kind==="setBudget"?("Set budget to "+money(ex.budget)+"/day"):"Apply";
+    var ex=rm.executable||{};var what=ex.kind==="addNegatives"?("Add "+(ex.keywords||[]).length+" negative keyword(s)"):ex.kind==="pauseKeywords"?("Pause "+(ex.keywords||[]).length+" keyword(s)"):ex.kind==="addKeywords"?("Add "+(ex.keywords||[]).length+" new keyword(s)"):ex.kind==="setBudget"?("Set budget to "+money(ex.budget)+"/day"):"Apply";
     if(!confirm(what+" on this campaign?"))return;
     var btn=this;btn.disabled=true;btn.textContent="Applying\u2026";
     api("applyRemedy",{campaignId:cid,remedy:rm}).then(function(r){
@@ -1100,6 +1114,16 @@ function renderDiag(){var body=document.getElementById("diagBody");if(!body||!DI
       }
       else{btn.disabled=false;btn.textContent="Apply fix";alert((r&&r.error)||"failed");}
     }).catch(function(e){btn.disabled=false;btn.textContent="Apply fix";alert(e.message||e);});};});
+  Array.prototype.forEach.call(body.querySelectorAll(".diagHead"),function(h){h.onclick=function(e){
+    if(e.target&&e.target.closest&&e.target.closest("button"))return;
+    var id=this.getAttribute("data-open");diagOpen[id]=!diagOpen[id];renderDiag();};});
+  Array.prototype.forEach.call(body.querySelectorAll(".dg-one"),function(b){b.onclick=function(ev){ev.stopPropagation();
+    var id=this.getAttribute("data-id");var btn=this;btn.disabled=true;btn.textContent="\u2026";
+    api("runDiagnostics",{campaignId:id}).then(function(d){if(d&&!d.error){DIAG=d;diagOpen[id]=true;renderDiag();}else alert((d&&d.error)||"failed");})
+    .catch(function(e){alert(e.message||e);}).finally(function(){btn.disabled=false;btn.textContent="Diagnose";});};});
+  var ta=document.getElementById("diagToggleAll");if(ta){var anyClosed=(DIAG.campaigns||[]).some(function(c){return !diagOpen[c.id];});
+    ta.textContent=anyClosed?"Expand all":"Collapse all";
+    if(!ta._w){ta._w=true;ta.onclick=function(){var ac=(DIAG.campaigns||[]).some(function(c){return !diagOpen[c.id];});(DIAG.campaigns||[]).forEach(function(c){diagOpen[c.id]=ac;});renderDiag();};}}
   var rb=document.getElementById("diagRun");if(rb&&!rb._wired){rb._wired=true;rb.onclick=function(){runDiag(false);};}
 }
 // full schedule line + Start-now button for the expanded campaign detail
