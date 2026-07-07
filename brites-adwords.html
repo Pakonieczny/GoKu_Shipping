@@ -347,6 +347,12 @@ details.xd[open]>summary::before{content:"\25be"}
 details.xd>summary:hover{border-color:var(--gold);background:var(--paper-2)}
 details.xd[open]>summary{border-color:var(--gold);background:var(--paper-2);margin-bottom:8px}
 details.xd>summary .xd-n{font-size:11px;font-weight:700;color:var(--gold);background:rgba(180,140,60,.12);border-radius:9px;padding:1px 8px}
+details.opDx>summary,#customWrap>summary{list-style:none;display:inline-flex;align-items:center;gap:9px;padding:7px 14px;border:1px solid var(--line);border-radius:9px;background:var(--paper);font-size:13px!important;font-weight:650;color:var(--ink)!important;cursor:pointer;user-select:none;transition:border-color .12s,background .12s}
+details.opDx>summary::-webkit-details-marker,#customWrap>summary::-webkit-details-marker{display:none}
+details.opDx>summary::before,#customWrap>summary::before{content:"\25b8";font-size:11px;color:var(--gold);transition:transform .15s}
+details.opDx[open]>summary::before,#customWrap[open]>summary::before{content:"\25be"}
+details.opDx>summary:hover,#customWrap>summary:hover{border-color:var(--gold);background:var(--paper-2)}
+details.opDx[open]>summary,#customWrap[open]>summary{border-color:var(--gold);background:var(--paper-2);margin-bottom:8px}
 .diagHead:hover{background:var(--paper-2);border-radius:8px}
 svg rect.bc-bar[data-tip]{cursor:pointer;transition:filter .12s}
 svg rect.bc-bar[data-tip]:hover{filter:brightness(.85);stroke:var(--ink);stroke-width:1}
@@ -876,8 +882,8 @@ function convHealthHtml(h){if(!h)return '<div class="muted" style="font-size:12.
   if(h.queueDepth!=null)bits.push(h.queueDepth+" queued"+(h.adjQueueDepth?(" +"+h.adjQueueDepth+" adj"):""));
   if(h.lastUpload&&h.lastUpload.at)bits.push("last sync "+timeago(h.lastUpload.at)+" ago");
   var reasons=(!h.healthy&&h.reasons&&h.reasons.length)?'<div style="margin-top:8px;font-size:12px;color:var(--ink-70)">'+h.reasons.map(function(r){return "\u2022 "+esc(r);}).join("<br>")+'</div>':"";
-  var actionsList=(h.actions&&h.actions.length)?'<details style="margin-top:9px"><summary style="cursor:pointer;font-size:12px;font-weight:600">Detected conversion actions ('+h.actions.length+')</summary><div style="font-size:11.5px;margin-top:6px;line-height:1.6">Copy one resource name into <code>GADS_CONVERSION_ACTION</code>:<br>'+h.actions.map(function(a){return "\u2022 "+esc(a.name||"(unnamed)")+" ["+esc(a.status||"")+"] \u2014 <code style=\"user-select:all\">customers/6236267810/conversionActions/"+esc(String(a.id||""))+"</code>";}).join("<br>")+'</div></details>':"";
-  var fix=(!h.healthy)?'<details style="margin-top:9px"><summary style="cursor:pointer;font-size:12px;font-weight:600">How to connect the server-side pipeline</summary><div style="font-size:11.5px;margin-top:6px;line-height:1.6">1. Google Ads \u2192 Goals \u2192 Conversions: create a <b>Website \u2192 Purchase</b> action (value: use different values; count: one; Import from clicks).<br>2. Set <code>GADS_CONVERSION_ACTION</code> in Netlify.<br>3. Add <code>brites-gclid-capture.liquid</code> to the theme.<br>4. Shopify webhooks for <b>orders/paid</b> + <b>refunds/create</b> \u2192 the shopifyOrderWebhook URL.<br>5. Place an order via an ad click, then hit <b>Sync now</b>.</div></details>':"";
+  var actionsList=(h.actions&&h.actions.length)?'<details class="xd" style="margin-top:9px"><summary>Detected conversion actions <span class="xd-n">'+h.actions.length+'</span></summary><div style="font-size:11.5px;margin-top:6px;line-height:1.6">Copy one resource name into <code>GADS_CONVERSION_ACTION</code>:<br>'+h.actions.map(function(a){return "\u2022 "+esc(a.name||"(unnamed)")+" ["+esc(a.status||"")+"] \u2014 <code style=\"user-select:all\">customers/6236267810/conversionActions/"+esc(String(a.id||""))+"</code>";}).join("<br>")+'</div></details>':"";
+  var fix=(!h.healthy)?'<details class="xd" style="margin-top:9px"><summary>How to connect the server-side pipeline</summary><div style="font-size:11.5px;margin-top:6px;line-height:1.6">1. Google Ads \u2192 Goals \u2192 Conversions: create a <b>Website \u2192 Purchase</b> action (value: use different values; count: one; Import from clicks).<br>2. Set <code>GADS_CONVERSION_ACTION</code> in Netlify.<br>3. Add <code>brites-gclid-capture.liquid</code> to the theme.<br>4. Shopify webhooks for <b>orders/paid</b> + <b>refunds/create</b> \u2192 the shopifyOrderWebhook URL.<br>5. Place an order via an ad click, then hit <b>Sync now</b>.</div></details>':"";
   return '<div style="display:flex;gap:11px;align-items:flex-start"><span style="width:10px;height:10px;border-radius:50%;background:'+col+';margin-top:5px;flex:none"></span><div style="flex:1"><div style="font-weight:600;font-size:13.5px">'+head+'</div><div class="muted" style="font-size:12px;margin-top:2px">'+sub+'</div><div class="muted" style="font-size:11.5px;margin-top:7px;font-family:var(--mono)">'+esc(bits.join("  \u00b7  "))+'</div>'+reasons+actionsList+fix+'<div style="margin-top:10px;display:flex;gap:8px"><button class="btn ghost sm convRecheck" style="padding:4px 11px;font-size:12px">Re-check</button><button class="btn ghost sm convSync" style="padding:4px 11px;font-size:12px">Sync now</button></div></div></div>';}
 function wireConv(scope){scope=scope||document;
   Array.prototype.forEach.call(scope.querySelectorAll(".convRecheck"),function(b){b.onclick=async function(){var done=btnBusy(this,"Checking\u2026");var aid=actStart("conversionHealth");try{var r=await api("conversionHealth",{force:true});DASH.conversionHealth=r;renderSales();renderSalesSummary();renderConvStrip();toast("Conversion tracking re-checked",true);}catch(e){toast(e.message);}actEnd(aid);done();};});
@@ -1118,7 +1124,15 @@ function ensureReviewLoop(){var ids=Array.from(new Set(pendingReviewAds()));
     if(!cur.length){clearInterval(_reviewTimer);_reviewTimer=null;return;}
     api("adReviewStatus",{adIds:cur}).then(function(){loadRemedyHistory();}).catch(function(){});
   },60000);}
-function loadRemedyHistory(cb){api("remedyHistory",{limit:120}).then(function(r){REMHIST=(r&&r.items)||[];if(cb)cb();if(DIAG)renderDiag();ensureReviewLoop();}).catch(function(){if(cb)cb();});}
+var _remHash="";
+function loadRemedyHistory(cb){api("remedyHistory",{limit:120}).then(function(r){REMHIST=(r&&r.items)||[];
+  // only touch the DOM when something the UI shows actually changed —
+  // the 60s review poller must not cause any visual churn otherwise
+  var h="";REMHIST.forEach(function(x){h+=(x.id||"")+(x.reviewStatus||"")+(x.approvalStatus||"")+(x.approvedAt||"")+(x.verified===true?"1":x.verified===false?"0":"-");});
+  var changed=h!==_remHash;_remHash=h;
+  if(cb)cb();
+  if(DIAG&&changed)renderDiag();
+  ensureReviewLoop();}).catch(function(){if(cb)cb();});}
 function reviewPill(h){if(!h||h.kind!=="rewriteAds"||h.dryRun)return "";
   if(h.approvedAt)return '<span style="font-size:10px;font-weight:700;color:#2e7d32;border:1px solid #2e7d32;border-radius:8px;padding:1px 7px">\u2713 APPROVED &amp; SERVING \u00b7 '+timeago(h.approvedAt)+' ago</span>';
   if(h.approvalStatus==="DISAPPROVED")return '<span style="font-size:10px;font-weight:700;color:#b3402a;border:1px solid #b3402a;border-radius:8px;padding:1px 7px">\u2715 DISAPPROVED IN POLICY REVIEW</span>';
@@ -1545,7 +1559,7 @@ function showDraft(r){var a=r.assets||{};var out=$("#benchOut");var p=r.plan;var
     planHtml='<div style="margin:4px 0 14px;padding:12px 14px;background:var(--gold-soft);border:1px solid var(--line);border-radius:10px">'+
       '<div style="display:flex;gap:18px;flex-wrap:wrap;align-items:baseline;font-size:12.5px"><span style="font-weight:700;letter-spacing:.05em;text-transform:uppercase;font-size:10.5px;color:var(--ink-45)">Researched plan</span>'+bidChip+'<span class="muted">Run&nbsp;<b style="font-family:var(--mono);color:var(--ink)">'+p.duration.days+'d</b> ('+esc(r.startDate||p.duration.startDate)+" \u2192 "+esc(r.endDate||p.duration.endDate)+')</span><span class="muted">Over the run&nbsp;~<b style="font-family:var(--mono);color:var(--ink)">'+p.expected.conversions+'</b> sales</span></div>'+
       '<div style="font-size:12px;color:var(--ink-70);margin-top:6px">Goal: '+esc(p.goal||"")+'</div>'+
-      (basis.length?'<details style="margin-top:7px"><summary style="cursor:pointer;font-size:11.5px;color:var(--gold);font-weight:600">Why these numbers</summary><div style="font-size:11.5px;line-height:1.65;color:var(--ink-70);margin-top:6px">'+basis.map(function(b){return "\u2022 "+b;}).join("<br>")+'</div></details>':"")+
+      (basis.length?'<details class="xd" style="margin-top:7px"><summary>Why these numbers</summary><div style="font-size:11.5px;line-height:1.65;color:var(--ink-70);margin-top:6px">'+basis.map(function(b){return "\u2022 "+b;}).join("<br>")+'</div></details>':"")+
     '</div>';}
   var bidSum=smart?" · Smart Bidding (no CPC cap)":(r.maxCpc?(" · max CPC "+money(r.maxCpc)+"/click"):"");
   out.innerHTML='<div class="card__h"><h3>Draft queued · '+esc(r.title)+(r.event?" × "+esc(r.event):"")+'</h3><span class="sub">'+esc(r.tag||"")+'</span></div>'+
@@ -1812,7 +1826,7 @@ function planBlock(o,i){ var p=o.plan; if(!p)return ""; var smart=oppBidOf(i); v
     '</div>'+
     '<div style="font-size:11.5px;margin-top:6px">Source: '+src+'</div>'+
     '<div style="font-size:12px;color:var(--ink-70);margin-top:4px">Goal: <span class="planGoal" data-i="'+i+'">'+esc(smart?"Maximize conversion value automatically":("Maximize sales within a "+money(cap)+" max CPC"))+'</span></div>'+
-    '<details style="margin-top:7px"><summary style="cursor:pointer;font-size:11.5px;color:var(--gold);font-weight:600">Why these numbers</summary><div style="font-size:11.5px;line-height:1.65;color:var(--ink-70);margin-top:6px">'+basis.map(function(b){return "\u2022 "+b;}).join("<br>")+'</div></details>'+
+    '<details class="xd" style="margin-top:7px"><summary>Why these numbers</summary><div style="font-size:11.5px;line-height:1.65;color:var(--ink-70);margin-top:6px">'+basis.map(function(b){return "\u2022 "+b;}).join("<br>")+'</div></details>'+
   '</div>';
 }
 function scoreMeter(o){var s=Math.max(0,Math.min(99,o.score||0));
@@ -1875,7 +1889,7 @@ function oppCard(o,i,ceil){ var pm=priMeta(o.priority);
     '</div>'+
     '<div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:12px;font-size:12.5px"><span class="muted">Expected ROAS&nbsp;<b class="planRoas" data-i="'+i+'" style="color:var(--ink);font-family:var(--mono)">'+esc(pr0.roas?pr0.roas.band:(o.expectedRoasBand||"\u2014"))+'</b>&nbsp;<span style="font-size:11px" title="Projected revenue \u00f7 projected spend with \u00b130% conversion-rate uncertainty \u2014 computed from the same numbers on this card, and re-computed live as you edit budget, dates or CPC.">(computed'+(o.proven?" \u00b7 occasion proven in history":"")+')</span></span><span class="muted">Past:&nbsp;'+past+'</span></div>'+
     planBlock(o,i)+
-    '<details style="margin-top:12px" open><summary style="cursor:pointer;font-size:12.5px;color:var(--gold);font-weight:600">Keyword research &amp; phrases</summary>'+
+    '<details class="xd" style="margin-top:12px" open><summary>Keyword research &amp; phrases</summary>'+
       kwResearchPanel(o)+
       '<div class="eyebrow" style="margin:12px 0 6px">Key phrases <span class="muted" style="font-weight:400;text-transform:none;letter-spacing:0">\u00b7 emotional ad copy</span></div><div class="chips">'+((o.keyPhrases||[]).map(function(k){return '<span class="chip">'+esc(k)+'</span>';}).join("")||'<span class="muted" style="font-size:12px">\u2014</span>')+'</div>'+
       '<div class="muted" style="font-size:11px;margin-top:10px;line-height:1.6">When generated, this campaign auto-adds <b>4 sitelinks</b>, <b>4 callouts</b> &amp; a <b>structured snippet</b> for more ad real estate, and <b>excludes ~28 non-buyer terms</b> (free, diy, wholesale, cheap, repair\u2026) to stop wasted spend.</div></details>'+
@@ -2007,13 +2021,15 @@ function _pkeyFor(el){
 }
 function uiSnapshot(){
   var snap={details:{},cdet:{},drafts:{},diagScroll:null};
-  document.querySelectorAll("details").forEach(function(d){snap.details[_pkeyFor(d)]=d.open;});
+  var seen={};
+  document.querySelectorAll("details").forEach(function(d){var k=_pkeyFor(d);seen[k]=(seen[k]||0)+1;snap.details[k+"#"+seen[k]]=d.open;});
   document.querySelectorAll(".cdet").forEach(function(r){var k=r.getAttribute("data-cid")||r.getAttribute("data-d");if(k!=null)snap.cdet[k]=r.style.display!=="none";});
   document.querySelectorAll(".draft.open").forEach(function(d){var ti=d.querySelector(".ti");if(ti)snap.drafts[ti.textContent.trim().slice(0,70)]=true;});
   return snap;
 }
 function uiRestore(snap){if(!snap)return;
-  document.querySelectorAll("details").forEach(function(d){var k=_pkeyFor(d);if(k in snap.details)d.open=!!snap.details[k];});
+  var seen={};
+  document.querySelectorAll("details").forEach(function(d){var k=_pkeyFor(d);seen[k]=(seen[k]||0)+1;k=k+"#"+seen[k];if(k in snap.details)d.open=!!snap.details[k];});
   document.querySelectorAll(".cdet").forEach(function(r){var k=r.getAttribute("data-cid")||r.getAttribute("data-d");if(k!=null&&snap.cdet[k])r.style.display="";});
   document.querySelectorAll(".draft").forEach(function(d){var ti=d.querySelector(".ti");if(ti&&snap.drafts[ti.textContent.trim().slice(0,70)])d.classList.add("open");});
 }
@@ -2026,7 +2042,7 @@ async function unlock(e){e.preventDefault();PASS=$("#pc").value;$("#gateErr").te
     if(timer)clearInterval(timer);timer=setInterval(async ()=>{
       var since=Math.floor((Date.now()-lastSync)/1000);
       var lp=Math.floor((Date.now()-lastLivePull)/60000);
-      var el=$("#sync");if(el)el.textContent="synced "+since+"s ago \u00b7 live pull "+lp+"m ago";
+      var el=$("#sync");if(el){var nxt=Math.max(0,600-since);el.textContent="synced "+(since<60?since+"s":Math.floor(since/60)+"m")+" ago \u00b7 auto-refresh in "+(nxt>=60?Math.ceil(nxt/60)+"m":nxt+"s");}
       if(livePulling)return;
       // Cadence: one refresh every 10 minutes (was 30s reload + 5min live pull —
       // the constant re-render collapsed every open menu in the app).
