@@ -725,12 +725,21 @@ async function generateRSAAssets(coll, event, context) {
   if (Array.isArray(cx.types) && cx.types.length) cxLines.push(`WHAT THE COLLECTION ACTUALLY CONTAINS (only reference these types, at these real prices): ${cx.types.slice(0, 6).join(" · ")}`);
   if (Array.isArray(cx.personalization) && cx.personalization.length) cxLines.push(`PERSONALIZATION options (high-intent hooks): ${cx.personalization.slice(0, 5).join(", ")}`);
   const cxBlock = cxLines.length ? `\nRESEARCH (ground every line in this — never promise a type, price or option not listed):\n${cxLines.map(l => "- " + l).join("\n")}` : "";
+  let pbCopy = "";
+  try {
+    pbCopy = playbookText(await playbookSlice({
+      types: (cx.types || []).map(t => String(t).split(" ")[0]),
+      themes: [event && event.label].filter(Boolean),
+      collections: [coll.handle].filter(Boolean),
+      categories: ["copy", "keywords"]
+    }), "PROVEN PLAYBOOK from this account's live ads (follow unless it conflicts with a hard rule):");
+  } catch (e) {}
   const prompt =
 `You write Google Search ad copy for Brites, a handcrafted personalized charm-jewelry brand.
 Voice: warm, sincere, premium, gift-and-emotion led — never bargain or hypey.
 Collection: "${coll.title}" (${coll.handle}). Bestsellers: ${heroes || "n/a"}.
 Social proof you may reference: ${proof}.
-Occasion/emotion focus: ${event ? event.label + " — " + (event.angle || "") : "evergreen gifting"}.${cxBlock}
+Occasion/emotion focus: ${event ? event.label + " — " + (event.angle || "") : "evergreen gifting"}.${cxBlock}${pbCopy}
 Hard rules:
 - 15 headlines, each ≤30 characters. 4 descriptions, each ≤90 characters.
 - 4 sitelink texts (≤25 chars) with 1-line descriptions, 6 callouts (≤25 chars).
@@ -1543,7 +1552,7 @@ async function pruneAssets({ ctrl, minImpr = 500 } = {}) {
             asset.resource_name, asset.text_asset.text, campaign.name, ad_group.resource_name,
             metrics.impressions
      FROM ad_group_ad_asset_view
-     WHERE segments.date DURING LAST_30_DAYS
+     WHERE segments.date DURING LAST_90_DAYS
        AND ad_group_ad_asset_view.performance_label = 'LOW'
        AND ad_group_ad_asset_view.field_type IN ('HEADLINE','DESCRIPTION')`);
   const weak = rows.filter(r => Number(r.metrics.impressions || 0) >= minImpr);
@@ -1568,7 +1577,7 @@ async function mineSearchTerms({ ctrl, convMin = 1, wasteCost = 8 } = {}) {
   const rows = await gaql(
     `SELECT search_term_view.search_term, search_term_view.status, campaign.id, campaign.name,
             ad_group.resource_name, metrics.conversions, metrics.cost_micros, metrics.clicks
-     FROM search_term_view WHERE segments.date DURING LAST_30_DAYS`);
+     FROM search_term_view WHERE segments.date DURING LAST_90_DAYS`);
   const addKw = []; const addNeg = [];
   rows.forEach(r => {
     const term = r.searchTermView.search_term || r.searchTermView.searchTerm;
@@ -2515,6 +2524,8 @@ async function scanOpportunities({ force, cacheOnly } = {}) {
   await _scanProg(8, "Profiling collections", "50 best-sellers + 20 newest per collection, with listing tags");
   try { const _p = await collectionProfiles({ onPage: n => _scanProg(Math.min(30, 8 + n * 0.6), "Profiling collections", n + " collections scanned") }); if (_p && Array.isArray(_p.list) && _p.list.length) { profiles = _p.list; profiledAt = _p.at; salesBasis = _p.salesBasis; } } catch (e) {}
   await _scanProg(34, "Building the strategy brief", (profiles ? profiles.length + " collection profiles" : "titles only") + " \u00b7 " + products.length + " best-sellers");
+  let pbBlock = "";
+  try { pbBlock = playbookText(await playbookSlice({ categories: ["keywords", "copy", "negatives", "landingPage", "budget", "structure"] })); } catch (e) {}
   const collBlock = (profiles && profiles.length)
     ? `COLLECTIONS \u2014 each profiled from a STRATIFIED, TYPE-AWARE scan of its real listings (data as of ${_ymd(new Date(profiledAt || Date.now()))}; "top seller" = ${salesBasis || "Shopify best-selling sort"}; refreshed weekly) (50 best-sellers + 20 newest per collection, plus per-type representative variants and descriptions). Each collection line shows: motif inventory with per-motif listing counts \u00b7 listing-tag inventory (the merchant\u2019s own search terms, with counts) \u00b7 personalization options \u00b7 anchors \u00b7 then a "types:" breakdown of every JEWELRY TYPE the collection actually contains (Necklace, Beady Necklace, Hoop/Stud Earrings, Bracelet, Charm Only\u2026) with its share (\u00d7n), price band, and MATERIAL TIERS with real per-tier prices from live variants. Use ALL of it: high-frequency motifs are the collection's identity (head terms); MID-frequency motifs are underexploited long-tail keyword material; the TYPE breakdown tells you which product types to build keywords around and in what proportion \u2014 a collection that is mostly necklaces with some hoop earrings and charm-only listings earns keywords across those types, weighted by share, and NEVER keywords for a type it doesn't contain; MATERIAL TIERS are distinct keyword axes with different buyers and intent ("solid 14k gold X" is a premium keepsake purchase at that tier's real price, "gold filled X" is the affordable tier \u2014 never blur them, never promise a tier, type or price the inventory doesn't show); PERSONALIZATION options (engraving, birthstone, photo\u2026) are high-intent keyword modifiers. Ground every keyword, phrase, audience and fit judgment in this inventory, never in the collection name alone:\n${_profileText(profiles, collections)}`
     : `ALL COLLECTIONS: ${collText}`;
@@ -2547,7 +2558,7 @@ Find the 8-12 best advertising OPPORTUNITIES to act on within the NEXT ~30 DAYS.
 - keyPhrases (3-4 short emotional ad phrases speaking directly to the audience's motivation)
 - audience: {"buyer": <=70 chars WHO is typing the search and paying \u2014 usually the gift-giver, be specific (e.g. "team parents at season end", "moms of teen daughters"), "recipient": <=50 chars who receives it, "motivation": <=90 chars the emotional driver of the purchase, "searchStyle": <=80 chars how THIS buyer actually phrases searches}
 INTERPLAY (critical): audience \u00d7 occasion timing \u00d7 motif inventory must agree \u2014 keywords are what THIS buyer types in THIS window for the motifs/types/price band this collection actually contains; market.fit reflects inventory-level fit (price point, motif breadth, giftability), never the collection name alone. If the window is short, weight urgent/ready-to-buy phrasing; if the listings skew premium, weight quality/keepsake phrasing.
-Only include opportunities genuinely relevant within ~30 days. Rank best-first (soonest + strongest first). Avoid out-of-season occasions and any memory marks as fail. Return ONLY JSON: {"opportunities":[ ... ]}`;
+${pbBlock}Only include opportunities genuinely relevant within ~30 days. Opportunities and their keyword mixes MUST honor the playbook above — especially PROVEN lessons and anti-patterns; if you propose something a lesson advises against, you must have newer, stronger evidence and say so in the rationale. Rank best-first (soonest + strongest first). Avoid out-of-season occasions and any memory marks as fail. Return ONLY JSON: {"opportunities":[ ... ]}`;
   let list = null, llmErr = null;
   // Reasoning models spend hidden reasoning tokens FROM max_completion_tokens before emitting any
   // JSON — at effort "high" on this large a prompt, a 9k budget was fully consumed by reasoning
@@ -2967,6 +2978,132 @@ async function dailyStats({ start, end } = {}) {
   };
 }
 
+/* ============================ Learned Playbook ============================ */
+// The self-improving loop between the Ad Doctor and the Opportunity engine.
+// Raw remedy history is noisy and token-expensive, so it is never injected
+// directly. Instead a distiller LLM maintains a BOUNDED playbook of lessons
+// (<=25 active), each scoped (global / jewelryType:X / theme:Y / collection:Z),
+// categorized, confidence-rated, and support-counted. Hard pruning is built
+// in: hypotheses die if unconfirmed, contradicted lessons retire immediately
+// (and persist as anti-patterns), platitudes are banned. Consumers (opportunity
+// scan, RSA/keyword generation, the Ad Doctor itself) receive only their
+// relevant slice — so every new real-ad data point sharpens future output
+// without convoluting it.
+
+const PLAYBOOK_DOC = "playbook";
+
+async function getPlaybook() {
+  const f = fb(); if (!f) return null;
+  const snap = await f.db.collection(COL.state).doc(PLAYBOOK_DOC).get();
+  return snap.exists ? snap.data() : null;
+}
+
+// Slice the playbook for a consumer. scopeHints: { types:[], themes:[], collections:[] }.
+// Global lessons always apply; scoped lessons only when a hint matches.
+async function playbookSlice({ types = [], themes = [], collections = [], categories = null } = {}) {
+  const pb = await getPlaybook();
+  if (!pb || !Array.isArray(pb.lessons)) return { lessons: [], antiPatterns: [], updatedAt: null };
+  const T = types.map(x => String(x).toLowerCase());
+  const H = themes.map(x => String(x).toLowerCase());
+  const C = collections.map(x => String(x).toLowerCase());
+  const match = (sc) => {
+    sc = String(sc || "global").toLowerCase();
+    if (sc === "global") return true;
+    if (sc.startsWith("jewelrytype:")) { const v = sc.slice(12); return !T.length || T.some(t => v.includes(t) || t.includes(v)); }
+    if (sc.startsWith("theme:"))       { const v = sc.slice(6);  return !H.length || H.some(t => v.includes(t) || t.includes(v)); }
+    if (sc.startsWith("collection:"))  { const v = sc.slice(11); return C.some(t => v === t); }
+    return true;
+  };
+  let lessons = pb.lessons.filter(l => l && l.rule && match(l.scope));
+  if (categories) { const cs = new Set(categories); lessons = lessons.filter(l => cs.has(l.category)); }
+  // proven first, then probable, then hypothesis; higher support first
+  const rank = { proven: 0, probable: 1, hypothesis: 2 };
+  lessons.sort((a, b) => (rank[a.confidence] ?? 2) - (rank[b.confidence] ?? 2) || (b.support || 0) - (a.support || 0));
+  return { lessons: lessons.slice(0, 18), antiPatterns: (pb.retired || []).slice(0, 6), updatedAt: pb.updatedAt || null };
+}
+
+function playbookText(slice, header) {
+  if (!slice || (!slice.lessons.length && !slice.antiPatterns.length)) return "";
+  const L = slice.lessons.map(l =>
+    `- [${(l.confidence || "hypothesis").toUpperCase()}${l.support > 1 ? " x" + l.support : ""}|${l.scope || "global"}|${l.category}] ${l.rule}`).join("\n");
+  const A = slice.antiPatterns.length
+    ? "\nANTI-PATTERNS (these failed on live ads — do NOT repeat):\n" + slice.antiPatterns.map(r => `- ${r.rule || r}${r.why ? " (retired: " + r.why + ")" : ""}`).join("\n")
+    : "";
+  return `\n${header || "FIELD-PROVEN PLAYBOOK — lessons distilled from THIS account's live Google Ads results (Ad Doctor). PROVEN lessons are near-mandatory; PROBABLE are strong defaults; HYPOTHESIS are early signals. Follow scope tags."}\n${L}${A}\n`;
+}
+
+// The distiller. Runs after each diagnosis (background) — one LLM pass that
+// UPDATES the playbook from the newest evidence, with pruning rules enforced
+// in the prompt and re-enforced structurally after parsing.
+async function distillLessons() {
+  const f = fb(); if (!f) return { error: "no firestore" };
+  const prev = (await getPlaybook()) || { lessons: [], retired: [], version: 0 };
+  const diag = await getDiagnostics();
+  let remedies = [];
+  try { remedies = ((await remedyHistory({ limit: 60 })).items || []).filter(h => !h.dryRun); } catch (e) {}
+
+  // Compact evidence: outcomes first (fixReviews), then the raw signals.
+  const aiBy = {}; ((((diag || {}).ai) || {}).campaigns || []).forEach(c => aiBy[String(c.id)] = c);
+  const campaigns = ((diag || {}).campaigns || []).map(c => ({
+    name: c.name, type: null, last30d: c.d30, last90d: c.d90,
+    lostToBudgetPct: c.lostISBudget, lostToRankPct: c.lostISRank,
+    avgQS: c.avgQualityScore, lowQSKeywords: c.lowQualityKeywords,
+    worstKeywords: (c.keywordDetail || []).filter(k => (k.qs && k.qs <= 5) || k.expectedCtr === "BELOW_AVERAGE" || k.adRelevance === "BELOW_AVERAGE" || k.landingPage === "BELOW_AVERAGE")
+      .slice(0, 6).map(k => ({ text: k.text, match: k.match, qs: k.qs, expectedCtr: k.expectedCtr, adRelevance: k.adRelevance, landingPage: k.landingPage, cost: k.cost, conv: k.conv })),
+    wastedTerms: (c.searchTerms || []).filter(t => t.cost > 0 && !t.conv).slice(0, 8).map(t => ({ term: t.term, cost: t.cost })),
+    assetPerformance: (c.assetLabels || []).length ? {
+      low: c.assetLabels.filter(x => x.label === "LOW").map(x => x.text).slice(0, 6),
+      best: c.assetLabels.filter(x => x.label === "BEST").map(x => x.text).slice(0, 6)
+    } : null,
+    fixReview: (aiBy[String(c.id)] || {}).fixReview || []
+  }));
+  const rems = remedies.slice(0, 40).map(h => ({
+    campaign: h.campaignName, daysAgo: Math.round((Date.now() - (h.at || Date.now())) / 86400000),
+    kind: h.kind, issue: h.issue,
+    params: h.kind === "addNegatives" ? (h.executable || {}).keywords
+          : h.kind === "pauseKeywords" ? ((h.executable || {}).keywords || []).map(k => k.text || k)
+          : h.kind === "addKeywords" ? ((h.executable || {}).keywords || []).map(k => (k.text || k) + "[" + (k.matchType || "") + "]")
+          : h.kind === "rewriteAds" ? { added: (h.executable || {}).headlines, prunedLow: h.prunedLow }
+          : h.kind === "setBudget" ? (h.executable || {}).budget : null,
+    verified: h.verified, baseline90d: h.baseline
+  }));
+
+  const prompt = `You maintain the LEARNED PLAYBOOK for Brites Jewelry's Google Ads program (handmade personalized charm jewelry; jewelry types: Necklaces, Beady Necklaces, Hoop Earrings, Stud Earrings, Bracelets, Charm Only). The playbook feeds the opportunity scanner, the keyword/ad-copy generators, and the Ad Doctor — every entry must CHANGE a future decision.
+
+CURRENT PLAYBOOK (update this — carry lessons forward, adjust confidence/support, merge duplicates, retire what the new evidence contradicts):
+${JSON.stringify({ lessons: prev.lessons || [], retired: (prev.retired || []).slice(0, 10) })}
+
+NEW EVIDENCE — applied fixes with outcomes where judged:
+${JSON.stringify(rems)}
+
+NEW EVIDENCE — live campaign diagnostics (QS component failures, wasted search terms, Google's asset grades, past-fix reviews):
+${JSON.stringify(campaigns)}
+
+Rules (hard):
+1. <=25 active lessons TOTAL, <=8 per category. If over, keep the highest (confidence, support, recency) and retire the rest with why.
+2. Each lesson: {"id":"L<number>","scope":"global"|"jewelryType:<one of the six>"|"theme:<short>"|"collection:<handle>","category":"keywords"|"copy"|"negatives"|"landingPage"|"budget"|"structure","rule":"<imperative, <=200 chars, CONCRETE — names terms, patterns, structures or thresholds; generic advice like 'use relevant keywords' is banned>","evidence":"<=90 chars which campaign/data produced it","confidence":"proven"|"probable"|"hypothesis","support":<int independent data points>,"hits":<int>,"misses":<int>}
+3. Confidence ladder: 1 data point = hypothesis. 2+ independent points = probable. 3+ points OR a fixReview judged "working" on a fix embodying it = proven. A fixReview judged "not working" = increment misses and demote one level; misses>=hits with support>=2 = retire.
+4. A lesson is SCOPED only when the evidence is type/theme-specific; when the pattern plausibly generalizes across jewelry types (e.g. "broad single-noun phrase-match head terms burn spend on mixed intent"), make it global.
+5. Retire hypotheses not re-confirmed by this evidence if they are older than ~30 days (lastConfirmed provided implicitly by their absence from new evidence — use judgment).
+6. retired[]: {"rule","why","at":${Date.now()}} — keep the 10 most instructive as anti-patterns.
+7. Do NOT invent lessons the evidence doesn't support. Fewer, sharper lessons beat coverage. An empty update (same lessons back) is a valid answer when nothing new is proven.
+Return STRICT JSON: {"lessons":[...],"retired":[...],"changeLog":"<=200 chars what changed and why"}`;
+
+  const out = await openaiJSON(prompt, { maxTokens: 7000, effort: "high" });
+  // structural re-enforcement of the caps regardless of what the LLM returned
+  const lessons = (out.lessons || []).filter(l => l && l.rule && l.category).slice(0, 25);
+  const perCat = {}; const kept = [];
+  for (const l of lessons) { perCat[l.category] = (perCat[l.category] || 0) + 1; if (perCat[l.category] <= 8) kept.push(l); }
+  const doc = {
+    lessons: kept, retired: (out.retired || []).slice(0, 10),
+    changeLog: out.changeLog || "", updatedAt: Date.now(),
+    version: (prev.version || 0) + 1,
+    distilledFrom: { remedies: rems.length, campaigns: campaigns.length }
+  };
+  await f.db.collection(COL.state).doc(PLAYBOOK_DOC).set(doc);
+  return { ok: true, lessons: kept.length, retired: doc.retired.length, version: doc.version, changeLog: doc.changeLog };
+}
+
 /* ============================ Campaign Diagnostics ============================ */
 // "Ad Doctor": pulls everything Google Ads knows about why a campaign is or
 // isn't serving — primary status + reasons, budget-limited state with Google's
@@ -2999,10 +3136,10 @@ async function fetchDiagnostics(campaignId) {
                  metrics.search_rank_lost_impression_share,
                  metrics.impressions, metrics.clicks, metrics.cost_micros,
                  metrics.conversions, metrics.conversions_value
-          FROM campaign WHERE campaign.status IN ('ENABLED','PAUSED') AND segments.date DURING LAST_7_DAYS${CF}`),
+          FROM campaign WHERE campaign.status IN ('ENABLED','PAUSED') AND segments.date DURING LAST_30_DAYS${CF}`),
     gaql(`SELECT campaign.id, metrics.impressions, metrics.clicks, metrics.cost_micros,
                  metrics.conversions, metrics.conversions_value
-          FROM campaign WHERE campaign.status IN ('ENABLED','PAUSED') AND segments.date DURING LAST_30_DAYS${CF}`),
+          FROM campaign WHERE campaign.status IN ('ENABLED','PAUSED') AND segments.date DURING LAST_90_DAYS${CF}`),
     // Full recommendation feed. The type-specific budget message carries the
     // budget simulator options (weekly clicks/cost impact per budget choice) —
     // exactly what the Ads UI "Campaign diagnostics" panel shows. Selecting a
@@ -3039,16 +3176,16 @@ async function fetchDiagnostics(campaignId) {
       impressionShare: _pct(m.searchImpressionShare),
       lostISBudget: _pct(m.searchBudgetLostImpressionShare),
       lostISRank: _pct(m.searchRankLostImpressionShare),
-      d7: { impr: +m.impressions || 0, clicks: +m.clicks || 0, cost: fromMicros(m.costMicros),
-            conv: +m.conversions || 0, value: +m.conversionsValue || 0 },
-      d30: null, recommendations: [], adStrength: {}, disapprovedAds: 0, underReviewAds: 0,
+      d30: { impr: +m.impressions || 0, clicks: +m.clicks || 0, cost: fromMicros(m.costMicros),
+             conv: +m.conversions || 0, value: +m.conversionsValue || 0 },
+      d90: null, recommendations: [], adStrength: {}, disapprovedAds: 0, underReviewAds: 0,
       qualityScores: []
     };
   }
   for (const r of c30) {
     const d = by[(r.campaign || {}).id]; if (!d) continue;
     const m = r.metrics || {};
-    d.d30 = { impr: +m.impressions || 0, clicks: +m.clicks || 0, cost: fromMicros(m.costMicros),
+    d.d90 = { impr: +m.impressions || 0, clicks: +m.clicks || 0, cost: fromMicros(m.costMicros),
               conv: +m.conversions || 0, value: +m.conversionsValue || 0 };
   }
   for (const r of ads) {
@@ -3091,7 +3228,7 @@ async function fetchDiagnostics(campaignId) {
                    ad_group_criterion.quality_info.search_predicted_ctr,
                    metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions
             FROM keyword_view
-            WHERE segments.date DURING LAST_30_DAYS AND ad_group_criterion.status = 'ENABLED'
+            WHERE segments.date DURING LAST_90_DAYS AND ad_group_criterion.status = 'ENABLED'
               AND campaign.status = 'ENABLED'${CF}`).catch(() => []),
       gaql(`SELECT campaign.id, ad_group.id, ad_group_ad.ad.id, ad_group_ad.ad.final_urls,
                    ad_group_ad.ad.responsive_search_ad.headlines,
@@ -3101,7 +3238,7 @@ async function fetchDiagnostics(campaignId) {
       gaql(`SELECT campaign.id, search_term_view.search_term,
                    metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions
             FROM search_term_view
-            WHERE segments.date DURING LAST_30_DAYS AND campaign.status = 'ENABLED'${CF}`).catch(() => []),
+            WHERE segments.date DURING LAST_90_DAYS AND campaign.status = 'ENABLED'${CF}`).catch(() => []),
       gaql(`SELECT campaign.id, ad_group_ad_asset_view.field_type,
                    ad_group_ad_asset_view.performance_label, asset.text_asset.text
             FROM ad_group_ad_asset_view WHERE campaign.status = 'ENABLED'${CF}`).catch(() => [])
@@ -3190,7 +3327,7 @@ async function analyzeDiagnostics(diag, ctrl, history, { single } = {}) {
     id: c.id, name: c.name, status: c.status, serving: c.primaryStatus, why: c.reasonsText,
     budget: c.budget, googleWantsBudget: c.googleRecommendedBudget,
     lostToBudgetPct: c.lostISBudget, lostToRankPct: c.lostISRank, impressionSharePct: c.impressionShare,
-    last7d: c.d7, last30d: c.d30, avgQualityScore: c.avgQualityScore, lowQSKeywords: c.lowQualityKeywords,
+    last30d: c.d30, last90d: c.d90, avgQualityScore: c.avgQualityScore, lowQSKeywords: c.lowQualityKeywords,
     adStrength: c.adStrength, disapprovedAds: c.disapprovedAds,
     googleRecs: c.recommendations.map(r => ({ type: r.type, recommendedBudget: r.recommendedBudget, options: r.options })),
     // evidence for remedies (enabled campaigns): QS components per keyword,
@@ -3211,8 +3348,9 @@ ACCOUNT GUARDRAILS: target ROAS ${ctrl.targetRoas || 3}; account daily budget ce
 CAMPAIGNS (Google Ads diagnostics + our measured performance):
 ${JSON.stringify(compact)}
 
-FIXES ALREADY APPLIED (via this console; each has a 7-day baseline captured at apply time — compare against the campaign's current last7d to judge whether the fix is working):
-${JSON.stringify((history || []).slice(0, 40).map(h => ({ campaignId: h.campaignId, daysAgo: Math.round((Date.now() - (h.at || Date.now())) / 86400000), kind: h.kind, issue: h.issue, params: h.kind === "addNegatives" ? (h.executable || {}).keywords : h.kind === "pauseKeywords" ? ((h.executable || {}).keywords || []).map(k => k.text || k) : h.kind === "setBudget" ? (h.executable || {}).budget : null, verified: h.verified, baseline7d: h.baseline })))}
+${await (async () => { try { return playbookText(await playbookSlice({}), "LEARNED PLAYBOOK (distilled from this account's own results — keep your remedies consistent with PROVEN lessons; contradicting one requires explicit justification):"); } catch (e) { return ""; } })()}
+FIXES ALREADY APPLIED (via this console; each has a 90-DAY baseline captured at apply time — this is a low-traffic account, so judge fixes against the long window and the days since apply, never day-to-day noise):
+${JSON.stringify((history || []).slice(0, 40).map(h => ({ campaignId: h.campaignId, daysAgo: Math.round((Date.now() - (h.at || Date.now())) / 86400000), kind: h.kind, issue: h.issue, params: h.kind === "addNegatives" ? (h.executable || {}).keywords : h.kind === "pauseKeywords" ? ((h.executable || {}).keywords || []).map(k => k.text || k) : h.kind === "setBudget" ? (h.executable || {}).budget : null, verified: h.verified, baseline90d: h.baseline })))}
 
 For EACH campaign return an object:
 - id, severity: "critical"|"attention"|"healthy"
@@ -3222,7 +3360,7 @@ For EACH campaign return an object:
 - verdict: "agree"|"partial"|"disagree" with Google.
 - aiSays: 1-3 sentences: your professional call and WHY, referencing ROAS vs target, conversion volume (beware tiny samples), the budget ceiling, and whether the campaign has earned more spend. If you'd pick a DIFFERENT budget than Google (e.g. a smaller step), say the number.
 - action: {kind:"raiseBudget"|"lowerBudget"|"pauseCampaign"|"fixAds"|"improveKeywords"|"wait"|"none", budget: number or null, urgency:"now"|"this week"|"monitor"}
-- fixReview: for each already-applied fix on this campaign (from the list above), one entry {applied:"short description", daysAgo:N, working:"working"|"too early"|"not working", note:"one sentence comparing baseline7d to current last7d"}. Empty array if none.
+- fixReview: for each already-applied fix on this campaign (from the list above), one entry {applied:"short description", daysAgo:N, working:"working"|"too early"|"not working", note:"one sentence comparing the 90-day baseline to current last90d, weighted by how many days the fix has had"}. Empty array if none.
 - remedies: an array with ONE ENTRY PER ISSUE you flagged. NEVER re-recommend a fix that already appears in the applied list unless it verifiably failed or clearly needs extension (say so explicitly if you do). Every issue MUST get a remedy specific enough to implement in the next 10 minutes. Use the evidence provided (keywords with QS components, live ad copy, search terms). Each remedy:
   {issue:"...", fix:"exact prescription", impact:"high|medium|low", executable:{kind:"addNegatives"|"pauseKeywords"|"rewriteAds"|"landingPage"|"setBudget"|"none", ...params}}
   Rules for remedies:
@@ -3282,18 +3420,20 @@ async function runDiagnostics({ campaignId } = {}) {
   return doc;
 }
 
-// Baseline snapshot (last-7-days) for a campaign — captured at apply time so
-// the Fix History can show whether the fix moved the numbers.
+// Baseline snapshot for a campaign — captured at apply time so history can
+// show whether the fix moved the numbers. 90 DAYS: this is a low-traffic,
+// low-volume account, so short windows are statistical noise; every decision
+// baseline uses the long window.
 async function _campaignBaseline(campaignId) {
   try {
     const rows = await gaql(`SELECT campaign.id, campaign.name, metrics.impressions, metrics.clicks,
                                     metrics.cost_micros, metrics.conversions, metrics.conversions_value
-                             FROM campaign WHERE campaign.id = ${Number(campaignId)} AND segments.date DURING LAST_7_DAYS`);
+                             FROM campaign WHERE campaign.id = ${Number(campaignId)} AND segments.date DURING LAST_90_DAYS`);
     let name = null; const t = { impr: 0, clicks: 0, cost: 0, conv: 0, value: 0 };
     for (const r of rows) { name = (r.campaign || {}).name || name; const m = r.metrics || {};
       t.impr += +m.impressions || 0; t.clicks += +m.clicks || 0; t.cost += fromMicros(m.costMicros);
       t.conv += +m.conversions || 0; t.value += +m.conversionsValue || 0; }
-    return { name, window: "LAST_7_DAYS", ...t };
+    return { name, window: "LAST_90_DAYS", ...t };
   } catch (e) { return null; }
 }
 
@@ -3602,5 +3742,6 @@ module.exports = {
   dashboard,
   fetchDiagnostics, runDiagnostics, getDiagnostics, applyGoogleRecommendation, dismissGoogleRecommendation,
   dailyStats, applyRemedy, remedyHistory, adReviewStatus,
+  getPlaybook, playbookSlice, distillLessons,
   _util: { micros, fromMicros, clampHeadline, clampDescription, gAdsTime, daysUntil }
 };
