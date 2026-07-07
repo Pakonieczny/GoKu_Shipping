@@ -385,6 +385,7 @@ table.ptable tr.pdetail>td{border-bottom:2px solid var(--line)}
         <div class="card pad" id="cmdSales"></div>
       </div>
       <div class="card pad" style="margin-top:16px"><div class="card__h"><h3>Your campaigns</h3><span class="sub" id="snapSub">last snapshot</span></div><div id="snapshot" class="scrollcap-sm"></div></div>
+      <div class="card pad" style="margin-top:16px" id="diagCard"><div class="card__h"><h3>Ad Doctor · diagnostics &amp; recommendations</h3><span style="display:flex;gap:10px;align-items:center"><span class="sub" id="diagSub"></span><button class="btn ghost sm" id="diagRun" style="padding:4px 12px;font-size:12px">Diagnose now</button></span></div><div id="diagBody"><div class="empty" style="height:80px"><div style="font-size:12.5px">Loading diagnostics…</div></div></div></div>
     </section>
 
     <section class="view hidden" id="v-sales">
@@ -565,6 +566,9 @@ var LOADINFO={
   retryStuck:{verb:"Retrying stuck drafts",detail:"Re-sending approved campaigns to Google Ads",eta:"5\u201315s"},
   reject:{verb:"Removing draft",detail:"",eta:"1\u20132s"},
   setBudget:{verb:"Updating budget in Google Ads",detail:"",eta:"2\u20134s"},
+  runDiagnostics:{verb:"Running Ad Doctor",detail:"Pulling Google Ads diagnostics, recommendations, impression share, ad strength & quality scores \u2014 then the AI specialist reviews every campaign",eta:"15\u201330s"},
+  applyRec:{verb:"Applying Google recommendation",detail:"",eta:"2\u20134s"},
+  dismissRec:{verb:"Dismissing recommendation",detail:"",eta:"1\u20132s"},
   setStatus:{verb:"Updating campaign in Google Ads",detail:"",eta:"2\u20134s"},
   syncConversions:{verb:"Syncing conversions",detail:"Uploading purchases & refund adjustments to Google Ads",eta:"3\u20138s"},
   conversionHealth:{verb:"Re-checking conversion tracking",detail:"Querying Google Ads conversion status",eta:"3\u20138s"},
@@ -918,6 +922,63 @@ function campaignTable(camps){
       var det='<tr class="cdet" data-d="'+i+'" style="display:none"><td colspan="7" style="background:var(--paper-2)"><div style="padding:10px 8px;display:flex;flex-wrap:wrap;gap:22px;font-size:12px"><span><b>Impressions</b><br><span class="mono">'+(+c.impr||0).toLocaleString()+'</span></span><span><b>Clicks</b><br><span class="mono">'+(+c.clicks||0).toLocaleString()+'</span></span><span><b>CTR</b><br><span class="mono">'+(ctr==null?"\u2014":ctr.toFixed(2)+"%")+'</span></span><span><b>Avg CPC</b><br><span class="mono">'+(cpc==null?"\u2014":money(cpc))+'</span></span><span><b>Conversions</b><br><span class="mono">'+(+c.conv||0)+'</span></span><span><b>Cost / conv</b><br><span class="mono">'+(cpa==null?"\u2014":money(cpa))+'</span></span><span><b>Conv. value</b><br><span class="mono">'+money(c.value)+'</span></span>'+(c.primaryStatusReasons&&c.primaryStatusReasons.length?'<span style="flex-basis:100%;color:var(--ink-70);font-size:11.5px">\u26a0 '+esc(reasonText(c.primaryStatusReasons))+'</span>':"")+'</div></td></tr>';
       return row+det;}).join("")+'</tbody></table>';}
 function wireCampRows(scope){Array.prototype.forEach.call(scope.querySelectorAll(".crow"),function(r){r.onclick=function(){var i=this.getAttribute("data-i");var d=scope.querySelector('.cdet[data-d="'+i+'"]');if(d)d.style.display=d.style.display==="none"?"":"none";};});}
+
+/* ---- Ad Doctor: Google Ads diagnostics + AI specialist verdicts ---- */
+var DIAG=null,_diagBusy=false;
+function diagStale(d){return !d||!d.generatedAt||(Date.now()-d.generatedAt)>3*3600*1000;}
+function loadDiagnostics(autoRun){api("diagnostics").then(function(d){
+  if(d&&!d.empty){DIAG=d;renderDiag();}
+  if(autoRun&&diagStale(DIAG))runDiag(true);
+}).catch(function(){});}
+function runDiag(silent){if(_diagBusy)return;_diagBusy=true;
+  var b=document.getElementById("diagRun");if(b){b.disabled=true;b.textContent="Diagnosing\u2026";}
+  if(!silent&&!DIAG){var db0=document.getElementById("diagBody");if(db0)db0.innerHTML='<div class="empty" style="height:90px"><span class="spin lg gold"></span><div style="font-size:12.5px">Pulling diagnostics from Google Ads + AI review\u2026 15\u201330s</div></div>';}
+  api("runDiagnostics").then(function(d){if(d&&!d.error){DIAG=d;renderDiag();}else if(d&&d.error){var db=document.getElementById("diagBody");if(db)db.innerHTML='<div class="empty" style="height:70px"><div style="font-size:12.5px;color:var(--clay)">Diagnostics failed: '+esc(d.error)+'</div></div>';}})
+  .catch(function(e){var db=document.getElementById("diagBody");if(db)db.innerHTML='<div class="empty" style="height:70px"><div style="font-size:12.5px;color:var(--clay)">'+esc(e.message||e)+'</div></div>';})
+  .finally(function(){_diagBusy=false;var b2=document.getElementById("diagRun");if(b2){b2.disabled=false;b2.textContent="Diagnose now";}});}
+function sevInfo(sv){return sv==="critical"?["#b3402a","CRITICAL"]:sv==="attention"?["#b26a00","ATTENTION"]:["#2e7d32","HEALTHY"];}
+function verdictTag(v){var m={agree:["Agrees with Google","#2e7d32"],partial:["Partially agrees","#b26a00"],disagree:["Disagrees with Google","#b3402a"]};var x=m[v]||["\u2014","var(--ink-45)"];return '<span style="font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:'+x[1]+';border:1px solid '+x[1]+';border-radius:9px;padding:1px 8px">'+x[0]+'</span>';}
+function diagChip(label,val,warn){if(val==null||val==="")return "";return '<span style="font-size:11px;padding:2px 9px;border-radius:10px;background:'+(warn?"#fdeee9":"var(--paper-2)")+';color:'+(warn?"#b3402a":"var(--ink-70)")+';border:1px solid '+(warn?"#f0c8bc":"var(--line)")+'">'+esc(label)+" "+esc(String(val))+"</span>";}
+function worstStrength(m){var order=["POOR","AVERAGE","GOOD","EXCELLENT"];for(var i=0;i<order.length;i++){if(m&&m[order[i]])return order[i].toLowerCase()+" ("+m[order[i]]+")";}return null;}
+function renderDiag(){var body=document.getElementById("diagBody");if(!body||!DIAG)return;
+  var sub=document.getElementById("diagSub");if(sub)sub.textContent="checked "+timeago(DIAG.generatedAt)+" ago \u00b7 "+((DIAG.campaigns||[]).length)+" campaigns";
+  var aiBy={};(((DIAG.ai||{}).campaigns)||[]).forEach(function(v){aiBy[String(v.id)]=v;});
+  var html="";
+  if((DIAG.ai||{}).accountSummary)html+='<div style="padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--paper-2);font-size:12.5px;margin-bottom:12px"><b>Account read:</b> '+esc(DIAG.ai.accountSummary)+'</div>';
+  if(DIAG.aiError)html+='<div style="font-size:11.5px;color:var(--clay);margin-bottom:10px">AI review failed ('+esc(DIAG.aiError)+') \u2014 raw Google diagnostics below.</div>';
+  var camps=(DIAG.campaigns||[]).slice().sort(function(a,b){var r={critical:0,attention:1,healthy:2};var av=(aiBy[a.id]||{}).severity||"healthy",bv=(aiBy[b.id]||{}).severity||"healthy";return (r[av]||2)-(r[bv]||2);});
+  if(!camps.length){body.innerHTML='<div class="empty" style="height:70px"><div style="font-size:12.5px">No campaigns to diagnose.</div></div>';return;}
+  camps.forEach(function(c){var ai=aiBy[c.id]||{};var sv=sevInfo(ai.severity||(((c.reasonsText||[]).length&&c.primaryStatus!=="ELIGIBLE")?"attention":"healthy"));
+    var budgetRec=(c.recommendations||[]).filter(function(r){return /BUDGET/.test(r.type||"");})[0];
+    var chips=diagChip("Lost to budget",c.lostISBudget!=null?c.lostISBudget+"%":null,c.lostISBudget>=10)
+             +diagChip("Lost to rank",c.lostISRank!=null?c.lostISRank+"%":null,c.lostISRank>=25)
+             +diagChip("Impr. share",c.impressionShare!=null?c.impressionShare+"%":null,false)
+             +diagChip("QS avg",c.avgQualityScore,c.avgQualityScore!=null&&c.avgQualityScore<5)
+             +diagChip("Ad strength",worstStrength(c.adStrength),(c.adStrength||{}).POOR>0)
+             +diagChip("Disapproved ads",c.disapprovedAds||null,c.disapprovedAds>0);
+    var goog="";
+    if(budgetRec&&budgetRec.options&&budgetRec.options.length){
+      goog='<div style="margin-top:8px;font-size:12px"><b>Google recommends:</b> raise budget '+money(budgetRec.currentBudget||c.budget)+' \u2192 <b>'+money(budgetRec.recommendedBudget)+'</b>/day<div style="margin-top:5px;display:flex;flex-wrap:wrap;gap:6px">'+
+        budgetRec.options.map(function(o){return '<span style="font-size:11px;border:1px solid var(--line);border-radius:8px;padding:3px 9px;background:var(--paper)">'+money(o.budget)+'/d \u00b7 +'+o.weeklyClicksDelta+' clicks/wk \u00b7 +'+money(o.weeklyCostDelta)+'/wk</span>';}).join("")+'</div></div>';
+    } else if(ai.googleSays&&ai.googleSays!=="none"){goog='<div style="margin-top:8px;font-size:12px"><b>Google:</b> '+esc(ai.googleSays)+'</div>';}
+    var aiBox="";
+    if(ai.aiSays){aiBox='<div style="margin-top:8px;padding:9px 11px;border-left:3px solid '+sv[0]+';background:var(--paper-2);border-radius:0 8px 8px 0;font-size:12.5px"><div style="display:flex;gap:8px;align-items:center;margin-bottom:4px"><b>AI specialist:</b> '+verdictTag(ai.verdict)+'</div>'+esc(ai.aiSays)+((ai.findings||[]).length?'<ul style="margin:7px 0 0 16px;padding:0;font-size:11.5px;color:var(--ink-70)">'+ai.findings.map(function(f){return "<li>"+esc(f)+"</li>";}).join("")+"</ul>":"")+'</div>';}
+    var act=ai.action||{};var btns=[];
+    if((act.kind==="raiseBudget"||act.kind==="lowerBudget")&&act.budget)btns.push('<button class="btn gold sm dg-aibudget" data-id="'+c.id+'" data-b="'+act.budget+'" style="padding:4px 11px;font-size:11.5px">Apply AI budget '+money(act.budget)+'/d'+(act.urgency?" \u00b7 "+esc(act.urgency):"")+'</button>');
+    if(budgetRec&&budgetRec.recommendedBudget&&(!act.budget||Math.abs(act.budget-budgetRec.recommendedBudget)>0.5))btns.push('<button class="btn ghost sm dg-gbudget" data-id="'+c.id+'" data-b="'+budgetRec.recommendedBudget+'" style="padding:4px 11px;font-size:11.5px">Apply Google '+money(budgetRec.recommendedBudget)+'/d</button>');
+    if(budgetRec&&budgetRec.resourceName)btns.push('<button class="btn ghost sm dg-dismiss" data-rn="'+esc(budgetRec.resourceName)+'" style="padding:4px 11px;font-size:11.5px">Dismiss rec</button>');
+    var otherRecs=(c.recommendations||[]).filter(function(r){return r!==budgetRec;});
+    var extra=otherRecs.length?'<div class="muted" style="font-size:11px;margin-top:6px">Other Google recs: '+esc(otherRecs.map(function(r){return String(r.type||"").toLowerCase().replace(/_/g," ");}).join(", "))+'</div>':"";
+    html+='<div style="padding:12px 4px;border-top:1px solid var(--line)">'+
+      '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span style="width:9px;height:9px;border-radius:50%;background:'+sv[0]+';display:inline-block"></span><b>'+esc(c.name)+'</b><span style="font-size:10px;font-weight:700;letter-spacing:.1em;color:'+sv[0]+'">'+sv[1]+'</span><span class="muted" style="font-size:11.5px">'+esc((c.reasonsText||[]).join(" \u00b7 ")||c.primaryStatus||"")+'</span></div>'+
+      (ai.headline?'<div style="font-size:12.5px;margin-top:5px">'+esc(ai.headline)+'</div>':"")+
+      '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:7px">'+chips+'</div>'+goog+aiBox+extra+
+      (btns.length?'<div style="display:flex;gap:8px;margin-top:9px;flex-wrap:wrap">'+btns.join("")+'</div>':"")+'</div>';});
+  body.innerHTML=html;
+  Array.prototype.forEach.call(body.querySelectorAll(".dg-aibudget,.dg-gbudget"),function(b){b.onclick=function(){var id=this.getAttribute("data-id"),bud=+this.getAttribute("data-b");if(!confirm("Set daily budget to "+money(bud)+" for this campaign?"))return;api("setBudget",{id:id,budget:bud}).then(function(){runDiag(true);}).catch(function(e){alert(e.message||e);});};});
+  Array.prototype.forEach.call(body.querySelectorAll(".dg-dismiss"),function(b){b.onclick=function(){var rn=this.getAttribute("data-rn");if(!confirm("Dismiss this Google recommendation?"))return;api("dismissRec",{resourceName:rn}).then(function(){runDiag(true);}).catch(function(e){alert(e.message||e);});};});
+  var rb=document.getElementById("diagRun");if(rb&&!rb._wired){rb._wired=true;rb.onclick=function(){runDiag(false);};}
+}
 // full schedule line + Start-now button for the expanded campaign detail
 function schedHtml(c){if(!c.startDate&&!c.endDate)return "";var sched=c.primaryStatus==="PENDING";var s=c.startDate?fmtMon(c.startDate):"\u2014",e=c.endDate?fmtMon(c.endDate):"\u2014";var btn=sched?'<button class="btn gold sm pstart" data-id="'+c.id+'" data-name="'+esc(c.name)+'" style="margin-left:10px;padding:3px 10px;font-size:11px">Start now</button>':"";return '<div style="margin-top:10px;font-size:11.5px;color:var(--ink-70)">Schedule: <b>'+esc(s)+'</b> \u2192 <b>'+esc(e)+'</b>'+(sched?' \u00b7 <span style="color:#33525d">scheduled to start '+esc(s)+'</span>':"")+btn+'</div>';}
 var feedRange={preset:"all"};
@@ -1593,13 +1654,13 @@ async function livePull(){
   }catch(x){ /* quiet on background pulls */ }
   finally{ livePulling=false; }
 }
-async function reload(toastOk){try{DASH=await api("dashboard");renderAll();$("#connDot").style.background="var(--sage)";$("#connText").textContent="connected";lastSync=Date.now();if(toastOk)toast("Refreshed",true);if(!countriesLoaded){ensureCountries().then(function(){if(COUNTRIES.length)renderAll();});}}catch(x){$("#connDot").style.background="var(--clay)";$("#connText").textContent="error";toast(x.message);}}
+async function reload(toastOk){try{DASH=await api("dashboard");renderAll();loadDiagnostics(true);$("#connDot").style.background="var(--sage)";$("#connText").textContent="connected";lastSync=Date.now();if(toastOk)toast("Refreshed",true);if(!countriesLoaded){ensureCountries().then(function(){if(COUNTRIES.length)renderAll();});}}catch(x){$("#connDot").style.background="var(--clay)";$("#connText").textContent="error";toast(x.message);}}
 function renderAll(){renderControlBar();renderCommand();renderSales();renderSalesSummary();renderConvStrip();renderApprovals();renderPerf();renderControls();updateBadges();paintBenchCty();}
 
 async function unlock(e){e.preventDefault();PASS=$("#pc").value;$("#gateErr").textContent="";
   var gb=$(".gatecard button[type=submit]");var gdone=btnBusy(gb,"Connecting\u2026");var aid=actStart("dashboard");
   try{ DASH=await api("dashboard"); $("#gate").style.display="none";$("#app").style.display="grid";
-    buildNav();bindControlsOnce();renderAll();go("command");lastSync=Date.now();lastLivePull=Date.now();
+    buildNav();bindControlsOnce();renderAll();go("command");loadDiagnostics(true);lastSync=Date.now();lastLivePull=Date.now();
     if(timer)clearInterval(timer);timer=setInterval(async ()=>{
       var since=Math.floor((Date.now()-lastSync)/1000);
       var lp=Math.floor((Date.now()-lastLivePull)/60000);
