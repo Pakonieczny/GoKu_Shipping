@@ -569,6 +569,7 @@ var LOADINFO={
   dailyStats:{verb:"Pulling daily stats",detail:"Per-campaign, per-ad & keyword metrics segmented by day \u2014 live from Google Ads",eta:"3\u20138s"},
   runDiagnostics:{verb:"Running Ad Doctor",detail:"Pulling Google Ads diagnostics, recommendations, impression share, ad strength & quality scores \u2014 then the AI specialist reviews every campaign",eta:"15\u201330s"},
   applyRec:{verb:"Applying Google recommendation",detail:"",eta:"2\u20134s"},
+  applyRemedy:{verb:"Applying AI remedy",detail:"Negative keywords / keyword pause / budget \u2014 via Google Ads API",eta:"2\u20134s"},
   dismissRec:{verb:"Dismissing recommendation",detail:"",eta:"1\u20132s"},
   setStatus:{verb:"Updating campaign in Google Ads",detail:"",eta:"2\u20134s"},
   syncConversions:{verb:"Syncing conversions",detail:"Uploading purchases & refund adjustments to Google Ads",eta:"3\u20138s"},
@@ -1018,6 +1019,20 @@ function renderDiag(){var body=document.getElementById("diagBody");if(!body||!DI
     } else if(ai.googleSays&&ai.googleSays!=="none"){goog='<div style="margin-top:8px;font-size:12px"><b>Google:</b> '+esc(ai.googleSays)+'</div>';}
     var aiBox="";
     if(ai.aiSays){aiBox='<div style="margin-top:8px;padding:9px 11px;border-left:3px solid '+sv[0]+';background:var(--paper-2);border-radius:0 8px 8px 0;font-size:12.5px"><div style="display:flex;gap:8px;align-items:center;margin-bottom:4px"><b>AI specialist:</b> '+verdictTag(ai.verdict)+'</div>'+esc(ai.aiSays)+((ai.findings||[]).length?'<ul style="margin:7px 0 0 16px;padding:0;font-size:11.5px;color:var(--ink-70)">'+ai.findings.map(function(f){return "<li>"+esc(f)+"</li>";}).join("")+"</ul>":"")+'</div>';}
+    // remedies: one implementable fix per issue, with Apply where mutation-safe
+    var remHtml="";
+    if((ai.remedies||[]).length){
+      var impC={high:"#b3402a",medium:"#b26a00",low:"var(--ink-45)"};
+      remHtml='<div style="margin-top:8px"><b style="font-size:12px">Fix plan \u00b7 '+ai.remedies.length+' remed'+(ai.remedies.length===1?"y":"ies")+'</b>'+ai.remedies.map(function(rm,ri){
+        var ex=rm.executable||{};var canRun=ex.kind==="addNegatives"||ex.kind==="pauseKeywords"||ex.kind==="setBudget";
+        var detail="";
+        if(ex.kind==="addNegatives"&&(ex.keywords||[]).length)detail='<div class="mono" style="font-size:11px;color:var(--ink-70);margin-top:3px">negatives: '+esc(ex.keywords.join(", "))+'</div>';
+        if(ex.kind==="pauseKeywords"&&(ex.keywords||[]).length)detail='<div class="mono" style="font-size:11px;color:var(--ink-70);margin-top:3px">pause: '+esc(ex.keywords.map(function(k){return k.text||k;}).join(", "))+'</div>';
+        if(ex.kind==="rewriteAds")detail='<details style="margin-top:3px"><summary style="cursor:pointer;font-size:11px;color:var(--gold);font-weight:600">Suggested copy \u00b7 paste into a regenerated draft</summary><div style="font-size:11.5px;margin-top:4px">'+((ex.headlines||[]).length?'<b>Headlines:</b><br>'+ex.headlines.map(esc).join("<br>"):"")+((ex.descriptions||[]).length?'<br><b>Descriptions:</b><br>'+ex.descriptions.map(esc).join("<br>"):"")+'</div></details>';
+        if(ex.kind==="landingPage"&&ex.url)detail='<div style="font-size:11px;margin-top:3px">\u2192 <span class="mono">'+esc(ex.url)+'</span></div>';
+        return '<div style="padding:7px 0;border-top:1px dashed var(--line);font-size:12px"><div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap"><span style="font-size:9.5px;font-weight:800;letter-spacing:.08em;color:'+(impC[rm.impact]||impC.low)+';padding-top:2px">'+esc(String(rm.impact||"").toUpperCase())+'</span><div style="flex:1;min-width:220px"><b>'+esc(rm.issue||"")+'</b><div style="color:var(--ink-70);margin-top:2px">'+esc(rm.fix||"")+'</div>'+detail+'</div>'+(canRun?'<button class="btn gold sm dg-remedy" data-id="'+c.id+'" data-r="'+ri+'" style="padding:3px 10px;font-size:11px;white-space:nowrap">Apply fix</button>':"")+'</div></div>';
+      }).join("")+'</div>';}
+    aiBox+=remHtml;
     var act=ai.action||{};var btns=[];
     if((act.kind==="raiseBudget"||act.kind==="lowerBudget")&&act.budget)btns.push('<button class="btn gold sm dg-aibudget" data-id="'+c.id+'" data-b="'+act.budget+'" style="padding:4px 11px;font-size:11.5px">Apply AI budget '+money(act.budget)+'/d'+(act.urgency?" \u00b7 "+esc(act.urgency):"")+'</button>');
     if(budgetRec&&budgetRec.recommendedBudget&&(!act.budget||Math.abs(act.budget-budgetRec.recommendedBudget)>0.5))btns.push('<button class="btn ghost sm dg-gbudget" data-id="'+c.id+'" data-b="'+budgetRec.recommendedBudget+'" style="padding:4px 11px;font-size:11.5px">Apply Google '+money(budgetRec.recommendedBudget)+'/d</button>');
@@ -1032,6 +1047,17 @@ function renderDiag(){var body=document.getElementById("diagBody");if(!body||!DI
   body.innerHTML=html;
   Array.prototype.forEach.call(body.querySelectorAll(".dg-aibudget,.dg-gbudget"),function(b){b.onclick=function(){var id=this.getAttribute("data-id"),bud=+this.getAttribute("data-b");if(!confirm("Set daily budget to "+money(bud)+" for this campaign?"))return;api("setBudget",{id:id,budget:bud}).then(function(){runDiag(true);}).catch(function(e){alert(e.message||e);});};});
   Array.prototype.forEach.call(body.querySelectorAll(".dg-dismiss"),function(b){b.onclick=function(){var rn=this.getAttribute("data-rn");if(!confirm("Dismiss this Google recommendation?"))return;api("dismissRec",{resourceName:rn}).then(function(){runDiag(true);}).catch(function(e){alert(e.message||e);});};});
+  Array.prototype.forEach.call(body.querySelectorAll(".dg-remedy"),function(b){b.onclick=function(){
+    var cid=this.getAttribute("data-id"),ri=+this.getAttribute("data-r");
+    var aiBy2={};(((DIAG.ai||{}).campaigns)||[]).forEach(function(v){aiBy2[String(v.id)]=v;});
+    var rm=((aiBy2[cid]||{}).remedies||[])[ri];if(!rm)return;
+    var ex=rm.executable||{};var what=ex.kind==="addNegatives"?("Add "+(ex.keywords||[]).length+" negative keyword(s)"):ex.kind==="pauseKeywords"?("Pause "+(ex.keywords||[]).length+" keyword(s)"):ex.kind==="setBudget"?("Set budget to "+money(ex.budget)+"/day"):"Apply";
+    if(!confirm(what+" on this campaign?"))return;
+    var btn=this;btn.disabled=true;btn.textContent="Applying\u2026";
+    api("applyRemedy",{campaignId:cid,remedy:rm}).then(function(r){
+      if(r&&r.ok){btn.textContent=r.dryRun?"Dry-run \u2713":"Applied \u2713";btn.classList.remove("gold");}
+      else{btn.disabled=false;btn.textContent="Apply fix";alert((r&&r.error)||"failed");}
+    }).catch(function(e){btn.disabled=false;btn.textContent="Apply fix";alert(e.message||e);});};});
   var rb=document.getElementById("diagRun");if(rb&&!rb._wired){rb._wired=true;rb.onclick=function(){runDiag(false);};}
 }
 // full schedule line + Start-now button for the expanded campaign detail
