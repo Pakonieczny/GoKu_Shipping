@@ -3074,6 +3074,67 @@ async function fetchDiagnostics() {
     } catch (e) {}
   }
 
+  // ---- Deep evidence for the remedy engine (enabled campaigns only) ----
+  // Per-keyword QS COMPONENTS (which of expected CTR / ad relevance / landing
+  // page is failing), the live RSA copy, and the actual search terms spending
+  // money — everything the specialist needs to prescribe implementable fixes.
+  try {
+    const [kwDetail, rsaContent, terms] = await Promise.all([
+      gaql(`SELECT campaign.id, ad_group.id, ad_group_criterion.criterion_id,
+                   ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type,
+                   ad_group_criterion.quality_info.quality_score,
+                   ad_group_criterion.quality_info.creative_quality_score,
+                   ad_group_criterion.quality_info.post_click_quality_score,
+                   ad_group_criterion.quality_info.search_predicted_ctr,
+                   metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions
+            FROM keyword_view
+            WHERE segments.date DURING LAST_30_DAYS AND ad_group_criterion.status = 'ENABLED'
+              AND campaign.status = 'ENABLED'`).catch(() => []),
+      gaql(`SELECT campaign.id, ad_group.id, ad_group_ad.ad.id, ad_group_ad.ad.final_urls,
+                   ad_group_ad.ad.responsive_search_ad.headlines,
+                   ad_group_ad.ad.responsive_search_ad.descriptions
+            FROM ad_group_ad
+            WHERE ad_group_ad.status = 'ENABLED' AND campaign.status = 'ENABLED'`).catch(() => []),
+      gaql(`SELECT campaign.id, search_term_view.search_term,
+                   metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions
+            FROM search_term_view
+            WHERE segments.date DURING LAST_30_DAYS AND campaign.status = 'ENABLED'`).catch(() => [])
+    ]);
+    for (const r of kwDetail) {
+      const d = by[(r.campaign || {}).id]; if (!d) continue;
+      const q = ((r.adGroupCriterion || {}).qualityInfo) || {}, k = ((r.adGroupCriterion || {}).keyword) || {}, m = r.metrics || {};
+      (d.keywordDetail = d.keywordDetail || []).push({
+        adGroupId: String((r.adGroup || {}).id || ""), criterionId: String((r.adGroupCriterion || {}).criterionId || ""),
+        text: k.text, match: k.matchType, qs: q.qualityScore || null,
+        adRelevance: q.creativeQualityScore || null, landingPage: q.postClickQualityScore || null,
+        expectedCtr: q.searchPredictedCtr || null,
+        impr: +m.impressions || 0, clicks: +m.clicks || 0, cost: fromMicros(m.costMicros), conv: +m.conversions || 0
+      });
+    }
+    for (const r of rsaContent) {
+      const d = by[(r.campaign || {}).id]; if (!d) continue;
+      const ad = ((r.adGroupAd || {}).ad) || {}, rsa = ad.responsiveSearchAd || {};
+      (d.adsContent = d.adsContent || []).push({
+        adId: String(ad.id || ""), finalUrl: (ad.finalUrls || [])[0] || null,
+        headlines: (rsa.headlines || []).map(h => h.text).filter(Boolean),
+        descriptions: (rsa.descriptions || []).map(x => x.text).filter(Boolean)
+      });
+    }
+    for (const r of terms) {
+      const d = by[(r.campaign || {}).id]; if (!d) continue;
+      const m = r.metrics || {};
+      (d.searchTerms = d.searchTerms || []).push({
+        term: ((r.searchTermView || {}).searchTerm) || "",
+        impr: +m.impressions || 0, clicks: +m.clicks || 0, cost: fromMicros(m.costMicros), conv: +m.conversions || 0
+      });
+    }
+    for (const d of Object.values(by)) {
+      if (d.keywordDetail) d.keywordDetail.sort((a, b) => b.cost - a.cost || b.impr - a.impr).splice(20);
+      if (d.searchTerms) d.searchTerms.sort((a, b) => b.cost - a.cost || b.impr - a.impr).splice(25);
+      if (d.adsContent) d.adsContent.splice(4);
+    }
+  } catch (e) {}
+
   const account = { recommendations: [] };
   for (const r of recsRaw) {
     const rec = r.recommendation || {};
@@ -3117,7 +3178,12 @@ async function analyzeDiagnostics(diag, ctrl) {
     lostToBudgetPct: c.lostISBudget, lostToRankPct: c.lostISRank, impressionSharePct: c.impressionShare,
     last7d: c.d7, last30d: c.d30, avgQualityScore: c.avgQualityScore, lowQSKeywords: c.lowQualityKeywords,
     adStrength: c.adStrength, disapprovedAds: c.disapprovedAds,
-    googleRecs: c.recommendations.map(r => ({ type: r.type, recommendedBudget: r.recommendedBudget, options: r.options }))
+    googleRecs: c.recommendations.map(r => ({ type: r.type, recommendedBudget: r.recommendedBudget, options: r.options })),
+    // evidence for remedies (enabled campaigns): QS components per keyword,
+    // live ad copy, and the search terms actually spending money
+    keywords: (c.keywordDetail || []).map(k => ({ adGroupId: k.adGroupId, criterionId: k.criterionId, text: k.text, match: k.match, qs: k.qs, expectedCtr: k.expectedCtr, adRelevance: k.adRelevance, landingPage: k.landingPage, impr: k.impr, clicks: k.clicks, cost: k.cost, conv: k.conv })),
+    ads: (c.adsContent || []).map(a2 => ({ finalUrl: a2.finalUrl, headlines: a2.headlines.slice(0, 10), descriptions: a2.descriptions.slice(0, 4) })),
+    searchTerms: (c.searchTerms || []).slice(0, 20)
   }));
   const prompt = `You are a SENIOR Google Ads specialist managing Brites Jewelry (handmade personalized charm jewelry, britesjewelry.com; AOV ~$60-90; ships US+Canada). Review each campaign like an owner: skeptical of Google's spend-maximizing recommendations, but honest when they're right.
 
@@ -3134,10 +3200,18 @@ For EACH campaign return an object:
 - verdict: "agree"|"partial"|"disagree" with Google.
 - aiSays: 1-3 sentences: your professional call and WHY, referencing ROAS vs target, conversion volume (beware tiny samples), the budget ceiling, and whether the campaign has earned more spend. If you'd pick a DIFFERENT budget than Google (e.g. a smaller step), say the number.
 - action: {kind:"raiseBudget"|"lowerBudget"|"pauseCampaign"|"fixAds"|"improveKeywords"|"wait"|"none", budget: number or null, urgency:"now"|"this week"|"monitor"}
+- remedies: an array with ONE ENTRY PER ISSUE you flagged. Every issue MUST get a remedy specific enough to implement in the next 10 minutes. Use the evidence provided (keywords with QS components, live ad copy, search terms). Each remedy:
+  {issue:"...", fix:"exact prescription", impact:"high|medium|low", executable:{kind:"addNegatives"|"pauseKeywords"|"rewriteAds"|"landingPage"|"setBudget"|"none", ...params}}
+  Rules for remedies:
+  * Rank/QS problems: name the FAILING COMPONENT per keyword (expectedCtr BELOW_AVERAGE = weak ad-to-keyword match; adRelevance BELOW_AVERAGE = headlines don't contain the keyword; landingPage BELOW_AVERAGE = URL doesn't match intent). Prescribe per keyword: pause it (executable pauseKeywords with keywords:[{adGroupId,criterionId,text}]), tighten match type, or fix copy.
+  * Wasted spend: scan searchTerms for terms with cost>0 and conv=0 that signal wrong intent (jobs, free, DIY, wholesale, unrelated subjects) -> executable addNegatives with keywords:["..."] (exact terms or their common root).
+  * Ad copy: when adRelevance or expectedCtr is weak, WRITE 3-5 replacement headlines (max 30 chars each) and 1-2 descriptions (max 90 chars) that include the top real keywords -> executable rewriteAds with headlines:[...], descriptions:[...].
+  * Landing page: if the finalUrl doesn't match keyword intent, name the better britesjewelry.com collection URL -> executable landingPage with url:"...".
+  * Budget only when performance has EARNED it -> executable setBudget with budget:N.
 Also return accountSummary: 2-3 sentences on the account as a whole (ceiling headroom, where the next dollar goes, anything systemic).
 
 Rules: never recommend raising total enabled budgets past the ceiling; a campaign 1-3 days old is in learning — don't overreact; ROAS below target with real volume = fix before feeding; budget-limited + ROAS above target = the clearest raise there is. Return STRICT JSON: {"campaigns":[...],"accountSummary":"..."}`;
-  return await openaiJSON(prompt, { maxTokens: 2600, effort: "low" });
+  return await openaiJSON(prompt, { maxTokens: 4200, effort: "low" });
 }
 
 async function runDiagnostics() {
@@ -3155,6 +3229,39 @@ async function runDiagnostics() {
   };
   if (f) await f.db.collection(COL.state).doc("diagnostics").set(doc);
   return doc;
+}
+
+// Execute an AI remedy. Only mutation-safe kinds run here (negatives, keyword
+// pause, budget); copy/landing-page remedies are prescriptions for the human.
+// Dry-run gated + ledgered like every other write.
+async function applyRemedy(campaignId, remedy, { ctrl } = {}) {
+  ctrl = ctrl || (await control());
+  const ex = (remedy || {}).executable || {};
+  if (ex.kind === "addNegatives") {
+    const kws = (ex.keywords || []).map(k => String(k).trim().toLowerCase()).filter(Boolean).slice(0, 25);
+    if (!kws.length) throw new Error("no negative keywords supplied");
+    const ops = kws.map(text => ({ create: {
+      campaign: `customers/${CID}/campaigns/${campaignId}`,
+      negative: true, keyword: { text, matchType: "PHRASE" }
+    }}));
+    const res = await mutate("campaignCriteria", ops, { ctrl, label: "remedy:addNegatives" });
+    return { ok: true, kind: ex.kind, added: kws, dryRun: !!ctrl.dryRun, res: !!res };
+  }
+  if (ex.kind === "pauseKeywords") {
+    const list = (ex.keywords || []).filter(k => k && k.adGroupId && k.criterionId).slice(0, 25);
+    if (!list.length) throw new Error("no keyword criteria supplied");
+    const ops = list.map(k => ({ update: {
+      resourceName: `customers/${CID}/adGroupCriteria/${k.adGroupId}~${k.criterionId}`,
+      status: "PAUSED"
+    }, updateMask: "status" }));
+    const res = await mutate("adGroupCriteria", ops, { ctrl, label: "remedy:pauseKeywords" });
+    return { ok: true, kind: ex.kind, paused: list.map(k => k.text), dryRun: !!ctrl.dryRun, res: !!res };
+  }
+  if (ex.kind === "setBudget") {
+    if (!ex.budget) throw new Error("no budget supplied");
+    return await setCampaignBudget(campaignId, ex.budget, { ctrl });
+  }
+  throw new Error("remedy kind '" + ex.kind + "' is a prescription, not auto-executable");
 }
 
 async function getDiagnostics() {
@@ -3250,6 +3357,6 @@ module.exports = {
   enforceBudgetCeiling, monthlySpendGuard,
   dashboard,
   fetchDiagnostics, runDiagnostics, getDiagnostics, applyGoogleRecommendation, dismissGoogleRecommendation,
-  dailyStats,
+  dailyStats, applyRemedy,
   _util: { micros, fromMicros, clampHeadline, clampDescription, gAdsTime, daysUntil }
 };
