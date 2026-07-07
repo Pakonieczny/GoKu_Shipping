@@ -949,7 +949,14 @@ async function cmdApplyRange(res,val){cmdRange=val;
   catch(e){cmdMetrics=null;cmdRangeLabel="last 14 days";cmdRange={preset:"14d"};toast("Couldn\u2019t load that range: "+e.message);}
   DAILY=null;_dailyKey="";renderCommand();}
 function renderCommand(){
-  var camps=cmdMetrics||DASH.lastMetrics||[];var t=totals(camps);var c=DASH.control||{};
+  var camps=cmdMetrics||DASH.lastMetrics||[];
+  // cmdMetrics is a range-scoped fetch frozen at pick time; STATUS fields must
+  // stay live or a campaign that starts/pauses after the pick shows stale
+  // (e.g. "Paused" here vs "Scheduled" in Performance). Overlay the live
+  // status/schedule/budget from the freshest snapshot on every render.
+  if(cmdMetrics&&(DASH.lastMetrics||[]).length){var liveBy={};DASH.lastMetrics.forEach(function(l){liveBy[String(l.id)]=l;});
+    camps=camps.map(function(c){var l=liveBy[String(c.id)];if(!l)return c;
+      return Object.assign({},c,{status:l.status,primaryStatus:l.primaryStatus,primaryStatusReasons:l.primaryStatusReasons,startDate:l.startDate||c.startDate,endDate:l.endDate||c.endDate,budget:(l.budget!=null?l.budget:c.budget)});});}var t=totals(camps);var c=DASH.control||{};
   var roas=t.cost>0?(t.value/t.cost):null, ctr=t.impr>0?(t.clicks/t.impr*100):null, cpa=t.conv>0?(t.cost/t.conv):null;
   var none = t.cost===0 && t.impr===0;
   var rb=$("#cmdRangeBar");
