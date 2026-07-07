@@ -433,6 +433,7 @@ svg rect.bc-bar[data-tip]:hover{filter:brightness(.85);stroke:var(--ink);stroke-
 
 
     <section class="view hidden" id="v-bench">
+      <div class="card pad" style="margin-bottom:16px" id="pbCard"><div class="card__h"><h3>Learned playbook</h3><span style="display:flex;gap:10px;align-items:center"><span class="sub" id="pbSub"></span><button class="btn ghost sm" id="pbRelearn" style="padding:4px 12px;font-size:12px">Re-learn now</button></span></div><div id="pbBody"><div class="muted" style="font-size:12.5px;padding:6px 0">Loading playbook…</div></div></div>
       <div class="view__head"><div><h2>Opportunities</h2><p>Campaigns the AI recommends right now — scanned across all your collections, best-sellers, the calendar, and past performance. Adjust the budget, then generate: it builds a paused Search campaign (themed copy + keywords) and sends it to Approvals.</p></div></div>
       <div class="card pad" style="margin-bottom:14px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
         <button class="btn gold" id="oppScan">Scan for opportunities</button>
@@ -580,6 +581,8 @@ var LOADINFO={
   applyRemedy:{verb:"Applying AI remedy",detail:"Mutation + Google Ads read-back verification + logged to Fix History",eta:"3\u20136s"},
   remedyHistory:{verb:"Loading fix history",detail:"",eta:"1\u20132s"},
   adReviewStatus:{verb:"Checking ad policy review",detail:"Live approval status from Google Ads",eta:"1\u20132s"},
+  playbook:{verb:"Loading learned playbook",detail:"",eta:"1\u20132s"},
+  distill:{verb:"Distilling lessons",detail:"AI reviews every applied fix, its outcome & the live diagnostics \u2014 updates the bounded playbook that feeds future opportunities",eta:"30\u201390s"},
   dismissRec:{verb:"Dismissing recommendation",detail:"",eta:"1\u20132s"},
   setStatus:{verb:"Updating campaign in Google Ads",detail:"",eta:"2\u20134s"},
   syncConversions:{verb:"Syncing conversions",detail:"Uploading purchases & refund adjustments to Google Ads",eta:"3\u20138s"},
@@ -810,7 +813,7 @@ function wireBigChart(id,points,o){o=o||{};var box=$("#bc-"+id);if(!box)return;v
 var NAV=[["command","Command Center","What the autopilot is doing right now","◆"],["sales","Sales","Where your money comes from","◷"],["approvals","Approvals","Drafts waiting for your call","✎"],["ab","A/B Assay","Head-to-head ad tests","⚖"],["perf","Performance","Where the money worked","▤"],["bench","Opportunities","AI-found campaigns to launch","⚒"],["controls","Controls","Guardrails & switches","⚙"]];
 function buildNav(){var n=$("#nav");n.innerHTML="";NAV.forEach(function(it){var b=elFrom('<button data-v="'+it[0]+'"><span class="ic" style="font-size:15px">'+it[3]+'</span><span>'+it[1]+'</span></button>');b.onclick=()=>go(it[0]);n.appendChild(b);});updateBadges();}
 function updateBadges(){var b=$('#nav button[data-v="approvals"]');if(!b)return;var x=b.querySelector(".badge");var c=(DASH&&DASH.pending||[]).length;if(c){if(!x){x=elFrom('<span class="badge"></span>');b.appendChild(x);}x.textContent=c;}else if(x)x.remove();}
-function go(k){$$(".view").forEach(v=>v.classList.add("hidden"));$("#v-"+k).classList.remove("hidden");$$(".nav button").forEach(b=>b.classList.toggle("active",b.dataset.v===k));var m=NAV.find(n=>n[0]===k);$("#vtitle").textContent=m[1];$("#vsub").textContent=m[2];window.scrollTo(0,0);if(k==="bench")ensureOpportunities();}
+function go(k){$$(".view").forEach(v=>v.classList.add("hidden"));$("#v-"+k).classList.remove("hidden");$$(".nav button").forEach(b=>b.classList.toggle("active",b.dataset.v===k));var m=NAV.find(n=>n[0]===k);$("#vtitle").textContent=m[1];$("#vsub").textContent=m[2];window.scrollTo(0,0);if(k==="bench"){ensureOpportunities();loadPlaybook();}}
 
 /* ---- totals ---- */
 function totals(camps){var t={cost:0,conv:0,value:0,clicks:0,impr:0,budget:0};(camps||[]).forEach(function(c){t.cost+=+c.cost||0;t.conv+=+c.conv||0;t.value+=+c.value||0;t.clicks+=+c.clicks||0;t.impr+=+c.impr||0;t.budget+=+c.budget||0;});return t;}
@@ -1052,6 +1055,38 @@ function fillAdLevel(){if(!DAILY)return;
     if(kws.length){html+='<div style="margin-top:8px"><b style="font-size:11.5px">Top keywords</b><div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:5px">'+
       kws.map(function(k){return '<span style="font-size:11px;border:1px solid var(--line);border-radius:8px;padding:3px 9px;background:var(--paper)">'+esc(k.text)+' <span class="muted">['+esc(String(k.match).toLowerCase())+']</span> \u00b7 '+k.clicks+' cl \u00b7 '+money(k.cost)+(k.conv?' \u00b7 '+(Math.round(k.conv*10)/10)+' conv':"")+'</span>';}).join("")+'</div></div>';}
     box.innerHTML=html||'<div class="muted" style="font-size:11.5px;margin-top:6px">No ad-level data in this window.</div>';});}
+
+/* ---- Learned playbook: distilled lessons feeding the opportunity engine ---- */
+var PB=null,_pbBusy=false;
+function loadPlaybook(){api("playbook").then(function(p){if(p&&!p.empty&&!p.error){PB=p;}renderPlaybook();}).catch(function(){renderPlaybook();});}
+function pbConfColor(c){return c==="proven"?"#2e7d32":c==="probable"?"#b26a00":"var(--ink-45)";}
+function pbScopeChip(sc){sc=String(sc||"global");var lab=sc==="global"?"global":sc.replace("jewelryType:","").replace("theme:","").replace("collection:","");
+  return '<span style="font-size:10px;padding:1px 8px;border-radius:9px;background:var(--paper-2);border:1px solid var(--line);color:var(--ink-70)">'+esc(lab)+'</span>';}
+function renderPlaybook(){var box=document.getElementById("pbBody");if(!box)return;
+  var sub=document.getElementById("pbSub");
+  if(!PB||!(PB.lessons||[]).length){
+    if(sub)sub.textContent="no lessons yet";
+    box.innerHTML='<div class="muted" style="font-size:12.5px;padding:6px 0">No distilled lessons yet. The playbook builds itself from Ad Doctor results \u2014 run a diagnosis (Command Center) or hit Re-learn now once fixes have real outcomes. Lessons feed every future opportunity scan and generated ad automatically.</div>';return;}
+  if(sub)sub.textContent=(PB.lessons||[]).length+" lessons \u00b7 v"+(PB.version||1)+" \u00b7 updated "+timeago(PB.updatedAt)+" ago";
+  var groups=[["proven","PROVEN \u2014 near-mandatory"],["probable","PROBABLE \u2014 strong defaults"],["hypothesis","HYPOTHESIS \u2014 early signals"]];
+  var html=groups.map(function(g){var ls=(PB.lessons||[]).filter(function(l){return (l.confidence||"hypothesis")===g[0];});if(!ls.length)return "";
+    return '<div style="margin-top:8px"><div style="font-size:10px;font-weight:800;letter-spacing:.09em;color:'+pbConfColor(g[0])+'">'+g[1]+'</div>'+
+      ls.map(function(l){return '<div style="padding:7px 2px;border-top:1px dashed var(--line);font-size:12.5px;display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap">'+pbScopeChip(l.scope)+'<span style="font-size:10px;padding:1px 8px;border-radius:9px;background:var(--paper-2);border:1px solid var(--line);color:var(--gold);font-weight:700">'+esc(l.category||"")+'</span><span style="flex:1;min-width:240px">'+esc(l.rule||"")+(l.support>1?' <span class="mono muted" style="font-size:10.5px">\u00d7'+l.support+'</span>':"")+(l.evidence?'<div class="muted" style="font-size:11px;margin-top:2px">'+esc(l.evidence)+'</div>':"")+'</span></div>';}).join("")+'</div>';}).join("");
+  if((PB.retired||[]).length){html+='<details class="xd" style="margin-top:12px"><summary>Retired anti-patterns <span class="xd-n">'+PB.retired.length+'</span></summary>'+
+    PB.retired.map(function(r){return '<div style="padding:6px 2px;border-top:1px dashed var(--line);font-size:12px"><span style="text-decoration:line-through;color:var(--ink-70)">'+esc(r.rule||"")+'</span>'+(r.why?'<div class="muted" style="font-size:11px">'+esc(r.why)+'</div>':"")+'</div>';}).join("")+'</details>';}
+  if(PB.changeLog)html+='<div class="muted" style="font-size:11px;margin-top:10px">Last update: '+esc(PB.changeLog)+'</div>';
+  box.innerHTML=html;
+  var rb=document.getElementById("pbRelearn");
+  if(rb&&!rb._w){rb._w=true;rb.onclick=function(){if(_pbBusy)return;_pbBusy=true;var prev=(PB&&PB.updatedAt)||0;
+    rb.disabled=true;rb.textContent="Learning\u2026";
+    api("distill",{}).then(function(d){
+      if(d&&d.queued){var t0=Date.now();(function tick(){
+        if(Date.now()-t0>180000){_pbBusy=false;rb.disabled=false;rb.textContent="Re-learn now";toast("Distill still running \u2014 check back shortly.");return;}
+        api("playbook").then(function(p){if(p&&p.updatedAt&&p.updatedAt>prev){PB=p;renderPlaybook();_pbBusy=false;var rb2=document.getElementById("pbRelearn");if(rb2){rb2.disabled=false;rb2.textContent="Re-learn now";}toast("Playbook updated \u2014 "+((p.lessons||[]).length)+" lessons",true);}
+          else setTimeout(tick,3000);}).catch(function(){setTimeout(tick,4000);});})();}
+      else{_pbBusy=false;rb.disabled=false;rb.textContent="Re-learn now";if(d&&d.error)toast(d.error);}
+    }).catch(function(e){_pbBusy=false;rb.disabled=false;rb.textContent="Re-learn now";toast(e.message||e);});};}
+}
 
 /* ---- Fix History: applied remedies, verification & before/after ---- */
 var REMHIST=[];
