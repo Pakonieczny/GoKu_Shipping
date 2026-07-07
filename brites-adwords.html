@@ -377,7 +377,7 @@ table.ptable tr.pdetail>td{border-bottom:2px solid var(--line)}
       <div id="cmdRangeBar" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px"></div>
       <div class="grid kpis" id="kpis" style="margin-bottom:16px"></div>
       <div class="grid two" style="margin-bottom:16px">
-        <div class="card pad"><div class="card__h"><h3>Spend & revenue</h3><span class="sub" id="srSub">daily history</span></div><div id="chartSpendRev"></div></div>
+        <div class="card pad"><div class="card__h"><h3>Spend & revenue · daily</h3><span class="sub" id="srSub">live from Google Ads</span></div><div id="srChips" style="display:flex;flex-wrap:wrap;gap:6px;margin:2px 0 8px"></div><div id="chartSpendRev"></div><div class="card__h" style="margin-top:14px"><h3 style="font-size:13.5px">Clicks & conversions · daily</h3><span class="sub" id="ccSub"></span></div><div id="chartClicks"></div></div>
         <div class="card pad"><div class="card__h"><h3>Spend vs daily ceiling</h3></div><div id="gauge" style="display:flex;justify-content:center;padding:6px 0 2px"></div><div id="ceilNote" style="text-align:center;font-size:12.5px;color:var(--ink-70);margin-top:6px"></div></div>
       </div>
       <div class="grid two">
@@ -566,6 +566,7 @@ var LOADINFO={
   retryStuck:{verb:"Retrying stuck drafts",detail:"Re-sending approved campaigns to Google Ads",eta:"5\u201315s"},
   reject:{verb:"Removing draft",detail:"",eta:"1\u20132s"},
   setBudget:{verb:"Updating budget in Google Ads",detail:"",eta:"2\u20134s"},
+  dailyStats:{verb:"Pulling daily stats",detail:"Per-campaign, per-ad & keyword metrics segmented by day \u2014 live from Google Ads",eta:"3\u20138s"},
   runDiagnostics:{verb:"Running Ad Doctor",detail:"Pulling Google Ads diagnostics, recommendations, impression share, ad strength & quality scores \u2014 then the AI specialist reviews every campaign",eta:"15\u201330s"},
   applyRec:{verb:"Applying Google recommendation",detail:"",eta:"2\u20134s"},
   dismissRec:{verb:"Dismissing recommendation",detail:"",eta:"1\u20132s"},
@@ -873,7 +874,7 @@ async function cmdApplyRange(res,val){cmdRange=val;
   var lbl=$("#rp-cmd .rpLab");if(lbl)lbl.textContent="Loading\u2026";
   try{var r=await api("metricsRange",{start:res.start,end:res.end});cmdMetrics=(r&&r.snapshot)||[];cmdRangeLabel=rpLabel(val);}
   catch(e){cmdMetrics=null;cmdRangeLabel="last 14 days";cmdRange={preset:"14d"};toast("Couldn\u2019t load that range: "+e.message);}
-  renderCommand();}
+  DAILY=null;_dailyKey="";renderCommand();}
 function renderCommand(){
   var camps=cmdMetrics||DASH.lastMetrics||[];var t=totals(camps);var c=DASH.control||{};
   var roas=t.cost>0?(t.value/t.cost):null, ctr=t.impr>0?(t.clicks/t.impr*100):null, cpa=t.conv>0?(t.cost/t.conv):null;
@@ -890,6 +891,7 @@ function renderCommand(){
     $("#srSub").textContent=ser.length+" snapshots · "+cmdRangeLabel;
     $("#chartSpendRev").innerHTML=lineChart([{data:rev,color:"var(--gold)",fill:true},{data:spend,color:"var(--ink)"},{data:spend.map(()=>c.maxDailyBudgetTotal||0),color:"var(--clay)",dash:"4 4",dots:false,width:1}],{fmt:v=>"$"+v})+'<div class="legend"><span><i style="background:var(--gold)"></i>Revenue</span><span><i style="background:var(--ink)"></i>Spend</span><span><i style="background:var(--clay)"></i>Ceiling</span></div>';
   } else { $("#chartSpendRev").innerHTML='<div class="empty" style="height:180px"><div style="font-size:13px">No daily history in this window.</div><div style="font-size:12px">This chart fills in once campaigns run and the daily Measure has a few days of data.</div></div>'; }
+  loadDailyStats(false); // daily charts + per-ad tables (live GAQL, async)
   $("#gauge").innerHTML=gauge(t.cost,c.maxDailyBudgetTotal||100);
   $("#ceilNote").innerHTML='<b class="mono">'+((t.cost/(c.maxDailyBudgetTotal||100))*100).toFixed(0)+'%</b> of ceiling used · '+cur();
   renderFeed();
@@ -919,9 +921,62 @@ function campaignTable(camps){
     camps.map(function(c,i){var r=(+c.cost>0)?(c.value/c.cost):null;var dt=campDates(c);
       var ctr=c.impr>0?(c.clicks/c.impr*100):null,cpc=c.clicks>0?(c.cost/c.clicks):null,cpa=c.conv>0?(c.cost/c.conv):null;
       var row='<tr class="crow" data-i="'+i+'" style="cursor:pointer"><td style="font-weight:500">'+esc(c.name)+'</td><td>'+statusBadge(c)+schedHint(c)+'</td><td class="muted" style="font-size:11.5px;white-space:nowrap">'+(dt.s?(esc(dt.s)+" \u2192 "+esc(dt.e||"open")):"\u2014")+(dt.info?'<div style="font-size:10px;color:var(--ink-45)">'+esc(dt.info)+'</div>':"")+'</td><td class="r">'+(c.budget?money(c.budget):"\u2014")+'</td><td class="r mono">'+money(c.cost)+'</td><td class="r mono">'+((+c.conv||0)%1?(+c.conv).toFixed(1):(+c.conv||0))+'</td><td class="r">'+(r==null?"\u2014":'<span class="'+(r>=3?"roas-good":r>=2.5?"roas-mid":"roas-bad")+'">'+r.toFixed(1)+'x</span>')+'</td></tr>';
-      var det='<tr class="cdet" data-d="'+i+'" style="display:none"><td colspan="7" style="background:var(--paper-2)"><div style="padding:10px 8px;display:flex;flex-wrap:wrap;gap:22px;font-size:12px"><span><b>Impressions</b><br><span class="mono">'+(+c.impr||0).toLocaleString()+'</span></span><span><b>Clicks</b><br><span class="mono">'+(+c.clicks||0).toLocaleString()+'</span></span><span><b>CTR</b><br><span class="mono">'+(ctr==null?"\u2014":ctr.toFixed(2)+"%")+'</span></span><span><b>Avg CPC</b><br><span class="mono">'+(cpc==null?"\u2014":money(cpc))+'</span></span><span><b>Conversions</b><br><span class="mono">'+(+c.conv||0)+'</span></span><span><b>Cost / conv</b><br><span class="mono">'+(cpa==null?"\u2014":money(cpa))+'</span></span><span><b>Conv. value</b><br><span class="mono">'+money(c.value)+'</span></span>'+(c.primaryStatusReasons&&c.primaryStatusReasons.length?'<span style="flex-basis:100%;color:var(--ink-70);font-size:11.5px">\u26a0 '+esc(reasonText(c.primaryStatusReasons))+'</span>':"")+'</div></td></tr>';
+      var det='<tr class="cdet" data-d="'+i+'" style="display:none"><td colspan="7" style="background:var(--paper-2)"><div style="padding:10px 8px;display:flex;flex-wrap:wrap;gap:22px;font-size:12px"><span><b>Impressions</b><br><span class="mono">'+(+c.impr||0).toLocaleString()+'</span></span><span><b>Clicks</b><br><span class="mono">'+(+c.clicks||0).toLocaleString()+'</span></span><span><b>CTR</b><br><span class="mono">'+(ctr==null?"\u2014":ctr.toFixed(2)+"%")+'</span></span><span><b>Avg CPC</b><br><span class="mono">'+(cpc==null?"\u2014":money(cpc))+'</span></span><span><b>Conversions</b><br><span class="mono">'+(+c.conv||0)+'</span></span><span><b>Cost / conv</b><br><span class="mono">'+(cpa==null?"\u2014":money(cpa))+'</span></span><span><b>Conv. value</b><br><span class="mono">'+money(c.value)+'</span></span>'+(c.primaryStatusReasons&&c.primaryStatusReasons.length?'<span style="flex-basis:100%;color:var(--ink-70);font-size:11.5px">\u26a0 '+esc(reasonText(c.primaryStatusReasons))+'</span>':"")+'</div><div class="adlvl" data-c="'+esc(String(c.id))+'" style="padding:0 8px 10px"></div></td></tr>';
       return row+det;}).join("")+'</tbody></table>';}
 function wireCampRows(scope){Array.prototype.forEach.call(scope.querySelectorAll(".crow"),function(r){r.onclick=function(){var i=this.getAttribute("data-i");var d=scope.querySelector('.cdet[data-d="'+i+'"]');if(d)d.style.display=d.style.display==="none"?"":"none";};});}
+
+/* ---- Daily stats: per-campaign / per-ad live reporting (Google Ads parity) ---- */
+var DAILY=null,_dailyKey="",_dailyBusy=false,srFilter="all";
+function dailyRangeYmd(){var r=rpResolve(cmdRange);var end=r.end,start=r.start;
+  if(!end){var d=new Date();end=rpYmd(d);}
+  if(!start){var d2=new Date();d2.setDate(d2.getDate()-13);start=rpYmd(d2);}
+  return {start:start,end:end};}
+function loadDailyStats(force){var rg=dailyRangeYmd();var key=rg.start+"|"+rg.end;
+  if(!force&&DAILY&&_dailyKey===key)return renderDailyCharts();
+  if(_dailyBusy)return;_dailyBusy=true;
+  var box=$("#chartSpendRev");if(box&&!DAILY)box.innerHTML='<div class="empty" style="height:160px"><span class="spin lg gold"></span><div style="font-size:12.5px">Pulling daily stats from Google Ads\u2026</div></div>';
+  api("dailyStats",{start:rg.start,end:rg.end}).then(function(d){
+    if(d&&!d.error){DAILY=d;_dailyKey=key;renderDailyCharts();fillAdLevel();}
+    else if(box)box.innerHTML='<div class="empty" style="height:120px"><div style="font-size:12.5px;color:var(--clay)">'+esc((d&&d.error)||"failed")+'</div></div>';
+  }).catch(function(e){if(box)box.innerHTML='<div class="empty" style="height:120px"><div style="font-size:12.5px;color:var(--clay)">'+esc(e.message||e)+'</div></div>';})
+  .finally(function(){_dailyBusy=false;});}
+function dailySeriesFor(filter){if(!DAILY)return null;
+  if(filter==="all")return DAILY.totalsByDay;
+  var c=(DAILY.campaigns||[]).filter(function(x){return x.id===filter;})[0];
+  return c?c.series:null;}
+function fmtDayShort(ymd){var p=String(ymd).split("-");return (+p[1])+"/"+(+p[2]);}
+function renderDailyCharts(){if(!DAILY)return;var chips=$("#srChips");var ctrl=DASH.control||{};
+  if(chips){var withData=(DAILY.campaigns||[]).filter(function(c){return c.totals.impr>0||c.totals.cost>0;});
+    var mk=function(id,label,tot){var on=srFilter===id;return '<button class="btn '+(on?"gold":"ghost")+' sm srchip" data-f="'+id+'" style="padding:3px 10px;font-size:11px">'+esc(label)+(tot?' <span class="mono" style="opacity:.7">'+tot+'</span>':"")+'</button>';};
+    chips.innerHTML=mk("all","All campaigns","")+withData.map(function(c){return mk(c.id,c.name.length>26?c.name.slice(0,24)+"\u2026":c.name,c.totals.clicks+" cl");}).join("");
+    Array.prototype.forEach.call(chips.querySelectorAll(".srchip"),function(b){b.onclick=function(){srFilter=this.getAttribute("data-f");renderDailyCharts();};});}
+  var ser=dailySeriesFor(srFilter)||[];var days=ser.map(function(r){return r.date;});
+  var spend=ser.map(function(r){return Math.round(r.cost*100)/100;}),rev=ser.map(function(r){return Math.round(r.value*100)/100;});
+  var clicks=ser.map(function(r){return r.clicks;}),conv=ser.map(function(r){return r.conv;}),impr=ser.map(function(r){return r.impr;});
+  var tImpr=impr.reduce(function(a,b){return a+b;},0),tClicks=clicks.reduce(function(a,b){return a+b;},0),tSpend=spend.reduce(function(a,b){return a+b;},0),tRev=rev.reduce(function(a,b){return a+b;},0),tConv=conv.reduce(function(a,b){return a+b;},0);
+  $("#srSub").textContent=days.length+" days \u00b7 "+(srFilter==="all"?"all campaigns":"1 campaign")+" \u00b7 "+money(tSpend)+" spend / "+money(tRev)+" rev";
+  var axis='<div class="legend" style="justify-content:space-between;font-size:10px;color:var(--ink-45)"><span>'+(days.length?fmtDayShort(days[0]):"")+'</span><span>'+(days.length?fmtDayShort(days[Math.floor(days.length/2)]):"")+'</span><span>'+(days.length?fmtDayShort(days[days.length-1]):"")+'</span></div>';
+  var series=[{data:rev,color:"var(--gold)",fill:true},{data:spend,color:"var(--ink)"}];
+  if(srFilter==="all"&&ctrl.maxDailyBudgetTotal)series.push({data:spend.map(function(){return ctrl.maxDailyBudgetTotal;}),color:"var(--clay)",dash:"4 4",dots:false,width:1});
+  $("#chartSpendRev").innerHTML=(days.length?lineChart(series,{fmt:function(v){return "$"+v;}})+axis:"")+'<div class="legend"><span><i style="background:var(--gold)"></i>Revenue/day</span><span><i style="background:var(--ink)"></i>Spend/day</span>'+(srFilter==="all"?'<span><i style="background:var(--clay)"></i>Daily ceiling</span>':"")+'</div>';
+  $("#ccSub").textContent=tClicks+" clicks \u00b7 "+tImpr.toLocaleString()+" impressions \u00b7 "+(tImpr?(tClicks/tImpr*100).toFixed(1):"0")+"% CTR \u00b7 "+(Math.round(tConv*10)/10)+" conv";
+  $("#chartClicks").innerHTML=(days.length?lineChart([{data:clicks,color:"#33525d",fill:true},{data:conv,color:"var(--gold)",width:2}],{fmt:function(v){return v;},h:150})+axis:"")+'<div class="legend"><span><i style="background:#33525d"></i>Clicks/day</span><span><i style="background:var(--gold)"></i>Conversions/day</span></div>';}
+function strengthPill(st){if(!st)return "";var c=st==="EXCELLENT"?"#2e7d32":st==="GOOD"?"#4f7f52":st==="AVERAGE"?"#b26a00":"#b3402a";return '<span style="font-size:10px;font-weight:700;color:'+c+'">'+esc(String(st).toLowerCase())+'</span>';}
+function fillAdLevel(){if(!DAILY)return;
+  Array.prototype.forEach.call(document.querySelectorAll(".adlvl"),function(box){
+    var cid=box.getAttribute("data-c");
+    var c=(DAILY.campaigns||[]).filter(function(x){return x.id===cid;})[0];
+    var ads=(DAILY.ads||[]).filter(function(a){return a.campaignId===cid;});
+    var kws=(DAILY.keywords||[]).filter(function(k){return k.campaignId===cid;}).slice(0,8);
+    var html="";
+    if(c){var sp=c.series.map(function(r){return Math.round(r.cost*100)/100;});var cl=c.series.map(function(r){return r.clicks;});
+      if(sp.some(function(v){return v>0;})||cl.some(function(v){return v>0;}))html+='<div style="margin:8px 0 4px"><b style="font-size:11.5px">Daily spend & clicks \u00b7 this campaign</b>'+lineChart([{data:sp,color:"var(--ink)"},{data:cl,color:"#33525d",dash:"3 3"}],{h:110,fmt:function(v){return v;}})+'</div>';}
+    if(ads.length){html+='<div style="margin-top:8px"><b style="font-size:11.5px">Per ad \u00b7 '+esc(dailyRangeYmd().start)+' \u2192 '+esc(dailyRangeYmd().end)+'</b><table class="ptable" style="margin-top:4px"><thead><tr><th>Ad</th><th>Ad group</th><th class="r">Impr</th><th class="r">Clicks</th><th class="r">CTR</th><th class="r">Cost</th><th class="r">Conv</th><th>Strength</th></tr></thead><tbody>'+
+      ads.map(function(a){var ctr=a.impr>0?(a.clicks/a.impr*100).toFixed(1)+"%":"\u2014";var warn=a.approval&&a.approval!=="APPROVED";
+        return '<tr><td style="font-size:11.5px;max-width:260px">'+esc(a.headline)+(warn?' <span style="color:var(--clay);font-size:10px">('+esc(String(a.approval).toLowerCase().replace(/_/g," "))+')</span>':"")+'</td><td class="muted" style="font-size:11px">'+esc(a.adGroup)+'</td><td class="r mono">'+a.impr.toLocaleString()+'</td><td class="r mono">'+a.clicks+'</td><td class="r mono">'+ctr+'</td><td class="r mono">'+money(a.cost)+'</td><td class="r mono">'+(Math.round(a.conv*10)/10)+'</td><td>'+strengthPill(a.strength)+'</td></tr>';}).join("")+'</tbody></table></div>';}
+    if(kws.length){html+='<div style="margin-top:8px"><b style="font-size:11.5px">Top keywords</b><div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:5px">'+
+      kws.map(function(k){return '<span style="font-size:11px;border:1px solid var(--line);border-radius:8px;padding:3px 9px;background:var(--paper)">'+esc(k.text)+' <span class="muted">['+esc(String(k.match).toLowerCase())+']</span> \u00b7 '+k.clicks+' cl \u00b7 '+money(k.cost)+(k.conv?' \u00b7 '+(Math.round(k.conv*10)/10)+' conv':"")+'</span>';}).join("")+'</div></div>';}
+    box.innerHTML=html||'<div class="muted" style="font-size:11.5px;margin-top:6px">No ad-level data in this window.</div>';});}
 
 /* ---- Ad Doctor: Google Ads diagnostics + AI specialist verdicts ---- */
 var DIAG=null,_diagBusy=false;
