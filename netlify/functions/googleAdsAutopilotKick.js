@@ -127,6 +127,11 @@ async function handleAction(body) {
     try { return await E.setCampaignBudget(body.id, body.budget, { ctrl, budgetRes: body.budgetRes }); }
     catch (e) { return { ok: false, error: e.message }; }
   }
+  // ---- Ad Doctor: Google Ads diagnostics + AI specialist verdicts ----
+  if (a === "diagnostics")    { try { return (await E.getDiagnostics()) || { empty: true }; } catch (e) { return { error: e.message }; } }
+  if (a === "runDiagnostics") { try { return await E.runDiagnostics(); } catch (e) { return { error: e.message }; } }
+  if (a === "applyRec")       { try { return await E.applyGoogleRecommendation(body.resourceName, { ctrl }); } catch (e) { return { ok: false, error: e.message }; } }
+  if (a === "dismissRec")     { try { return await E.dismissGoogleRecommendation(body.resourceName); } catch (e) { return { ok: false, error: e.message }; } }
   if (a === "analyzeCampaign") {
     try { return await E.analyzeCampaign(body.id, { force: !!body.force }); }
     catch (e) { return { error: e.message }; }

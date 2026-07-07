@@ -2896,6 +2896,224 @@ async function generateForCollection(handle, eventLabel, budget, { ctrl, startDa
 }
 
 
+/* ============================ Campaign Diagnostics ============================ */
+// "Ad Doctor": pulls everything Google Ads knows about why a campaign is or
+// isn't serving — primary status + reasons, budget-limited state with Google's
+// own budget simulator options (the Campaign diagnostics panel in the UI),
+// impression share lost to budget/rank, RSA ad strength, policy approvals,
+// keyword Quality Score — plus the full Recommendation feed. A senior-ads-
+// specialist LLM pass then reads the lot IN CONTEXT (ROAS target, budget
+// ceiling, measured demand, proven history) and issues a per-campaign verdict:
+// what Google says, whether we agree, and the exact action to take.
+
+const DIAG_REASON_LABEL = {
+  CAMPAIGN_BUDGET_LIMITED: "Limited by budget", BIDDING_STRATEGY_LEARNING: "Bid strategy learning",
+  BIDDING_STRATEGY_LIMITED: "Bid strategy limited", HAS_ADS_DISAPPROVED: "Some ads disapproved",
+  HAS_ADS_LIMITED_BY_POLICY: "Ads limited by policy", MOST_ADS_UNDER_REVIEW: "Ads under review",
+  CAMPAIGN_PENDING: "Scheduled (not started)", CAMPAIGN_PAUSED: "Paused", CAMPAIGN_ENDED: "Ended"
+};
+
+function _pct(x) { return (x == null || isNaN(+x)) ? null : Math.round(+x * 1000) / 10; } // 0-1 -> %
+
+async function fetchDiagnostics() {
+  // All reads run in parallel — the whole pull is one network round.
+  const [c7, c30, recsRaw, ads, kws] = await Promise.all([
+    gaql(`SELECT campaign.id, campaign.name, campaign.status, campaign.primary_status,
+                 campaign.primary_status_reasons, campaign.start_date, campaign.end_date,
+                 campaign_budget.resource_name, campaign_budget.amount_micros,
+                 campaign_budget.recommended_budget_amount_micros, campaign_budget.has_recommended_budget,
+                 metrics.search_impression_share, metrics.search_budget_lost_impression_share,
+                 metrics.search_rank_lost_impression_share,
+                 metrics.impressions, metrics.clicks, metrics.cost_micros,
+                 metrics.conversions, metrics.conversions_value
+          FROM campaign WHERE campaign.status IN ('ENABLED','PAUSED') AND segments.date DURING LAST_7_DAYS`),
+    gaql(`SELECT campaign.id, metrics.impressions, metrics.clicks, metrics.cost_micros,
+                 metrics.conversions, metrics.conversions_value
+          FROM campaign WHERE campaign.status IN ('ENABLED','PAUSED') AND segments.date DURING LAST_30_DAYS`),
+    // Full recommendation feed. The type-specific budget message carries the
+    // budget simulator options (weekly clicks/cost impact per budget choice) —
+    // exactly what the Ads UI "Campaign diagnostics" panel shows. Selecting a
+    // whole message field is allowed for recommendation.*; fall back to leaf
+    // fields if a future API version tightens that.
+    (async () => {
+      try {
+        return await gaql(`SELECT recommendation.resource_name, recommendation.type, recommendation.dismissed,
+                                  recommendation.campaign, recommendation.campaign_budget_recommendation
+                           FROM recommendation WHERE recommendation.dismissed = FALSE`);
+      } catch (e) {
+        return await gaql(`SELECT recommendation.resource_name, recommendation.type, recommendation.dismissed,
+                                  recommendation.campaign
+                           FROM recommendation WHERE recommendation.dismissed = FALSE`);
+      }
+    })(),
+    gaql(`SELECT campaign.id, ad_group_ad.ad.id, ad_group_ad.ad_strength,
+                 ad_group_ad.policy_summary.approval_status
+          FROM ad_group_ad WHERE ad_group_ad.status = 'ENABLED'`),
+    gaql(`SELECT campaign.id, ad_group_criterion.quality_info.quality_score
+          FROM keyword_view WHERE ad_group_criterion.status = 'ENABLED'`).catch(() => [])
+  ]);
+
+  const by = {};
+  for (const r of c7) {
+    const c = r.campaign || {}, b = r.campaignBudget || {}, m = r.metrics || {};
+    by[c.id] = {
+      id: String(c.id), name: c.name, status: c.status,
+      primaryStatus: c.primaryStatus, primaryStatusReasons: c.primaryStatusReasons || [],
+      reasonsText: (c.primaryStatusReasons || []).map(x => DIAG_REASON_LABEL[x] || String(x).toLowerCase().replace(/_/g, " ")),
+      startDate: c.startDate || null, endDate: c.endDate || null,
+      budget: fromMicros(b.amountMicros), budgetRes: b.resourceName,
+      googleRecommendedBudget: b.hasRecommendedBudget ? fromMicros(b.recommendedBudgetAmountMicros) : null,
+      impressionShare: _pct(m.searchImpressionShare),
+      lostISBudget: _pct(m.searchBudgetLostImpressionShare),
+      lostISRank: _pct(m.searchRankLostImpressionShare),
+      d7: { impr: +m.impressions || 0, clicks: +m.clicks || 0, cost: fromMicros(m.costMicros),
+            conv: +m.conversions || 0, value: +m.conversionsValue || 0 },
+      d30: null, recommendations: [], adStrength: {}, disapprovedAds: 0, underReviewAds: 0,
+      qualityScores: []
+    };
+  }
+  for (const r of c30) {
+    const d = by[(r.campaign || {}).id]; if (!d) continue;
+    const m = r.metrics || {};
+    d.d30 = { impr: +m.impressions || 0, clicks: +m.clicks || 0, cost: fromMicros(m.costMicros),
+              conv: +m.conversions || 0, value: +m.conversionsValue || 0 };
+  }
+  for (const r of ads) {
+    const d = by[(r.campaign || {}).id]; if (!d) continue;
+    const a = r.adGroupAd || {};
+    const st = a.adStrength || "UNSPECIFIED";
+    d.adStrength[st] = (d.adStrength[st] || 0) + 1;
+    const ap = (a.policySummary || {}).approvalStatus;
+    if (ap === "DISAPPROVED") d.disapprovedAds++;
+    if (ap === "AREA_OF_INTEREST_ONLY" || ap === "APPROVED_LIMITED") d.underReviewAds++;
+  }
+  for (const r of kws) {
+    const d = by[(r.campaign || {}).id]; if (!d) continue;
+    const q = ((r.adGroupCriterion || {}).qualityInfo || {}).qualityScore;
+    if (q) d.qualityScores.push(+q);
+  }
+  const account = { recommendations: [] };
+  for (const r of recsRaw) {
+    const rec = r.recommendation || {};
+    const cid = String(rec.campaign || "").split("/").pop();
+    const item = { resourceName: rec.resourceName, type: rec.type, campaignId: cid || null };
+    const cb = rec.campaignBudgetRecommendation;
+    if (cb) {
+      item.currentBudget = fromMicros(cb.currentBudgetAmountMicros);
+      item.recommendedBudget = fromMicros(cb.recommendedBudgetAmountMicros);
+      item.options = (cb.budgetOptions || []).map(o => {
+        const base = (o.impact || {}).baseMetrics || {}, pot = (o.impact || {}).potentialMetrics || {};
+        return {
+          budget: fromMicros(o.budgetAmountMicros),
+          weeklyClicksDelta: Math.round(((+pot.clicks || 0) - (+base.clicks || 0)) * 10) / 10,
+          weeklyCostDelta: Math.round((fromMicros(pot.costMicros) - fromMicros(base.costMicros)) * 100) / 100,
+          weeklyImprDelta: Math.round((+pot.impressions || 0) - (+base.impressions || 0))
+        };
+      });
+    }
+    if (item.campaignId && by[item.campaignId]) by[item.campaignId].recommendations.push(item);
+    else account.recommendations.push(item);
+  }
+  for (const d of Object.values(by)) {
+    d.avgQualityScore = d.qualityScores.length
+      ? Math.round(d.qualityScores.reduce((a, b) => a + b, 0) / d.qualityScores.length * 10) / 10 : null;
+    d.lowQualityKeywords = d.qualityScores.filter(q => q <= 4).length;
+    delete d.qualityScores;
+  }
+  return { campaigns: Object.values(by), account };
+}
+
+// Senior-specialist LLM pass. Gets the FULL picture: Google's own diagnostics
+// AND our context Google doesn't weigh — ROAS target, account budget ceiling,
+// monthly cap, measured demand. Returns per-campaign verdicts with an explicit
+// agree/partial/disagree call on each Google recommendation.
+async function analyzeDiagnostics(diag, ctrl) {
+  const totalBudget = diag.campaigns.filter(c => c.status === "ENABLED").reduce((a, c) => a + (c.budget || 0), 0);
+  const compact = diag.campaigns.map(c => ({
+    id: c.id, name: c.name, status: c.status, serving: c.primaryStatus, why: c.reasonsText,
+    budget: c.budget, googleWantsBudget: c.googleRecommendedBudget,
+    lostToBudgetPct: c.lostISBudget, lostToRankPct: c.lostISRank, impressionSharePct: c.impressionShare,
+    last7d: c.d7, last30d: c.d30, avgQualityScore: c.avgQualityScore, lowQSKeywords: c.lowQualityKeywords,
+    adStrength: c.adStrength, disapprovedAds: c.disapprovedAds,
+    googleRecs: c.recommendations.map(r => ({ type: r.type, recommendedBudget: r.recommendedBudget, options: r.options }))
+  }));
+  const prompt = `You are a SENIOR Google Ads specialist managing Brites Jewelry (handmade personalized charm jewelry, britesjewelry.com; AOV ~$60-90; ships US+Canada). Review each campaign like an owner: skeptical of Google's spend-maximizing recommendations, but honest when they're right.
+
+ACCOUNT GUARDRAILS: target ROAS ${ctrl.targetRoas || 3}; account daily budget ceiling $${ctrl.maxDailyBudgetTotal || "n/a"} (current enabled total $${Math.round(totalBudget * 100) / 100}); monthly hard cap $${ctrl.maxMonthlySpend || "none"}. Currency ${CURRENCY}.
+
+CAMPAIGNS (Google Ads diagnostics + our measured performance):
+${JSON.stringify(compact)}
+
+For EACH campaign return an object:
+- id, severity: "critical"|"attention"|"healthy"
+- headline: one plain-English sentence naming the single most important thing (e.g. "Losing 38% of possible impressions to budget on a campaign that's converting").
+- findings: 2-5 short bullets, quantified, covering budget limits, lost impression share (budget vs rank — rank losses mean ad/keyword quality, NOT budget), ad strength, disapprovals, quality score, learning phase, schedule.
+- googleSays: one sentence summarizing Google's recommendation for this campaign (or "none").
+- verdict: "agree"|"partial"|"disagree" with Google.
+- aiSays: 1-3 sentences: your professional call and WHY, referencing ROAS vs target, conversion volume (beware tiny samples), the budget ceiling, and whether the campaign has earned more spend. If you'd pick a DIFFERENT budget than Google (e.g. a smaller step), say the number.
+- action: {kind:"raiseBudget"|"lowerBudget"|"pauseCampaign"|"fixAds"|"improveKeywords"|"wait"|"none", budget: number or null, urgency:"now"|"this week"|"monitor"}
+Also return accountSummary: 2-3 sentences on the account as a whole (ceiling headroom, where the next dollar goes, anything systemic).
+
+Rules: never recommend raising total enabled budgets past the ceiling; a campaign 1-3 days old is in learning — don't overreact; ROAS below target with real volume = fix before feeding; budget-limited + ROAS above target = the clearest raise there is. Return STRICT JSON: {"campaigns":[...],"accountSummary":"..."}`;
+  return await openaiJSON(prompt, { maxTokens: 2600, effort: "low" });
+}
+
+async function runDiagnostics() {
+  const f = fb(); const ctrl = await control();
+  const startedAt = Date.now();
+  const diag = await fetchDiagnostics();
+  let ai = null, aiError = null;
+  try {
+    ai = await analyzeDiagnostics(diag, ctrl);
+  } catch (e) { aiError = String(e.message || e).slice(0, 400); }
+  const doc = {
+    generatedAt: Date.now(), tookMs: Date.now() - startedAt,
+    campaigns: diag.campaigns, accountRecommendations: diag.account.recommendations,
+    ai, aiError
+  };
+  if (f) await f.db.collection(COL.state).doc("diagnostics").set(doc);
+  return doc;
+}
+
+async function getDiagnostics() {
+  const f = fb(); if (!f) return null;
+  const snap = await f.db.collection(COL.state).doc("diagnostics").get();
+  return snap.exists ? snap.data() : null;
+}
+
+// Apply / dismiss a Google recommendation directly (e.g. the budget rec).
+// Apply is a real mutation -> honors the dry-run switch like every other write.
+async function applyGoogleRecommendation(resourceName, { ctrl } = {}) {
+  ctrl = ctrl || (await control());
+  if (ctrl.dryRun) {
+    await ledger({ kind: "recommendation", label: "apply (skipped: dry-run)", ok: true, resourceName });
+    return { ok: true, dryRun: true, note: "Dry-run is ON — recommendation NOT applied." };
+  }
+  const token = await mintToken();
+  const res = await fetch(`${BASE}/customers/${CID}/recommendations:apply`, {
+    method: "POST", headers: adsHeaders(token),
+    body: JSON.stringify({ operations: [{ resourceName }], partialFailure: true })
+  });
+  const data = await res.json().catch(() => ({}));
+  await ledger({ kind: "recommendation", label: "apply", ok: res.ok,
+                 error: res.ok ? null : JSON.stringify(data).slice(0, 500), resourceName });
+  if (!res.ok) throw new Error("[gads] recommendations:apply failed: " + JSON.stringify(data).slice(0, 400));
+  return { ok: true, applied: resourceName };
+}
+
+async function dismissGoogleRecommendation(resourceName) {
+  const token = await mintToken();
+  const res = await fetch(`${BASE}/customers/${CID}/recommendations:dismiss`, {
+    method: "POST", headers: adsHeaders(token),
+    body: JSON.stringify({ operations: [{ resourceName }], partialFailure: true })
+  });
+  const data = await res.json().catch(() => ({}));
+  await ledger({ kind: "recommendation", label: "dismiss", ok: res.ok,
+                 error: res.ok ? null : JSON.stringify(data).slice(0, 500), resourceName });
+  if (!res.ok) throw new Error("[gads] recommendations:dismiss failed: " + JSON.stringify(data).slice(0, 400));
+  return { ok: true, dismissed: resourceName };
+}
+
 async function dashboard() {
   const f = fb(); const ctrl = await control();
   const out = {
@@ -2949,5 +3167,6 @@ module.exports = {
   measure, pruneAssets, mineSearchTerms, reallocateBudgets, anomalyCheck,
   enforceBudgetCeiling, monthlySpendGuard,
   dashboard,
+  fetchDiagnostics, runDiagnostics, getDiagnostics, applyGoogleRecommendation, dismissGoogleRecommendation,
   _util: { micros, fromMicros, clampHeadline, clampDescription, gAdsTime, daysUntil }
 };
