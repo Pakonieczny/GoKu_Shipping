@@ -128,6 +128,7 @@ async function handleAction(body) {
     catch (e) { return { ok: false, error: e.message }; }
   }
   // ---- Ad Doctor: Google Ads diagnostics + AI specialist verdicts ----
+  if (a === "dailyStats")    { try { return await E.dailyStats({ start: body.start, end: body.end }); } catch (e) { return { error: e.message }; } }
   if (a === "diagnostics")    { try { return (await E.getDiagnostics()) || { empty: true }; } catch (e) { return { error: e.message }; } }
   if (a === "runDiagnostics") { try { return await E.runDiagnostics(); } catch (e) { return { error: e.message }; } }
   if (a === "applyRec")       { try { return await E.applyGoogleRecommendation(body.resourceName, { ctrl }); } catch (e) { return { ok: false, error: e.message }; } }

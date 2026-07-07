@@ -2896,6 +2896,76 @@ async function generateForCollection(handle, eventLabel, budget, { ctrl, startDa
 }
 
 
+/* ============================ Daily stats (per-campaign, per-ad) ============================ */
+// True Google-Ads-style reporting: date-segmented metrics per campaign, plus
+// per-ad and per-keyword breakdowns for the range — LIVE from GAQL (includes
+// today), not Measure snapshots. Powers the Command Center daily charts and
+// the per-campaign drill-downs (which ads/keywords earned the clicks).
+async function dailyStats({ start, end } = {}) {
+  const tz = await _accountTz();
+  let s = _dateOnly(start) || _acctDateYmd(tz, -13 * 86400000);
+  let e = _dateOnly(end) || _acctDateYmd(tz, 0);
+  if (s > e) { const t = s; s = e; e = t; }
+  const RANGE = `segments.date BETWEEN '${s}' AND '${e}'`;
+
+  const [daily, ads, kws] = await Promise.all([
+    gaql(`SELECT campaign.id, campaign.name, campaign.status, segments.date,
+                 metrics.impressions, metrics.clicks, metrics.cost_micros,
+                 metrics.conversions, metrics.conversions_value
+          FROM campaign WHERE ${RANGE} AND campaign.status != 'REMOVED' ORDER BY segments.date`),
+    gaql(`SELECT campaign.id, ad_group.name, ad_group_ad.ad.id,
+                 ad_group_ad.ad.responsive_search_ad.headlines,
+                 ad_group_ad.ad_strength, ad_group_ad.policy_summary.approval_status,
+                 metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions
+          FROM ad_group_ad WHERE ${RANGE} AND ad_group_ad.status != 'REMOVED'`).catch(() => []),
+    gaql(`SELECT campaign.id, ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type,
+                 metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions
+          FROM keyword_view WHERE ${RANGE} AND ad_group_criterion.status != 'REMOVED'`).catch(() => [])
+  ]);
+
+  // full day axis (zero-filled) so gaps render as zeros, not skipped points
+  const days = [];
+  for (let d = new Date(s + "T00:00:00Z"); ; d.setUTCDate(d.getUTCDate() + 1)) {
+    const ymd = d.toISOString().slice(0, 10);
+    days.push(ymd);
+    if (ymd >= e || days.length > 370) break;
+  }
+  const zero = () => ({ impr: 0, clicks: 0, cost: 0, conv: 0, value: 0 });
+
+  const byCamp = {};
+  const totalsByDay = {}; days.forEach(d => totalsByDay[d] = zero());
+  for (const r of daily) {
+    const c = r.campaign || {}, m = r.metrics || {}, d = _dateOnly((r.segments || {}).date);
+    if (!byCamp[c.id]) byCamp[c.id] = { id: String(c.id), name: c.name, status: c.status, series: {}, totals: zero() };
+    const cell = byCamp[c.id].series[d] || (byCamp[c.id].series[d] = zero());
+    const add = (t) => { t.impr += +m.impressions || 0; t.clicks += +m.clicks || 0; t.cost += fromMicros(m.costMicros);
+                         t.conv += +m.conversions || 0; t.value += +m.conversionsValue || 0; };
+    add(cell); add(byCamp[c.id].totals); if (totalsByDay[d]) add(totalsByDay[d]);
+  }
+
+  const adRows = ads.map(r => {
+    const m = r.metrics || {}, a = r.adGroupAd || {};
+    const hl = ((((a.ad || {}).responsiveSearchAd || {}).headlines) || []).map(h => h.text).filter(Boolean);
+    return { campaignId: String((r.campaign || {}).id), adGroup: (r.adGroup || {}).name || "",
+             adId: String((a.ad || {}).id || ""), headline: hl[0] || "(ad)", headlines: hl.slice(0, 3),
+             strength: a.adStrength || null, approval: (a.policySummary || {}).approvalStatus || null,
+             impr: +m.impressions || 0, clicks: +m.clicks || 0, cost: fromMicros(m.costMicros), conv: +m.conversions || 0 };
+  }).sort((a, b) => b.clicks - a.clicks || b.impr - a.impr);
+
+  const kwRows = kws.map(r => {
+    const m = r.metrics || {}, k = ((r.adGroupCriterion || {}).keyword) || {};
+    return { campaignId: String((r.campaign || {}).id), text: k.text || "", match: k.matchType || "",
+             impr: +m.impressions || 0, clicks: +m.clicks || 0, cost: fromMicros(m.costMicros), conv: +m.conversions || 0 };
+  }).filter(k => k.impr > 0 || k.clicks > 0).sort((a, b) => b.clicks - a.clicks || b.impr - a.impr);
+
+  return {
+    range: { start: s, end: e }, days,
+    totalsByDay: days.map(d => ({ date: d, ...totalsByDay[d] })),
+    campaigns: Object.values(byCamp).map(c => ({ ...c, series: days.map(d => ({ date: d, ...(c.series[d] || zero()) })) })),
+    ads: adRows.slice(0, 200), keywords: kwRows.slice(0, 300)
+  };
+}
+
 /* ============================ Campaign Diagnostics ============================ */
 // "Ad Doctor": pulls everything Google Ads knows about why a campaign is or
 // isn't serving — primary status + reasons, budget-limited state with Google's
@@ -2919,7 +2989,7 @@ async function fetchDiagnostics() {
   // All reads run in parallel — the whole pull is one network round.
   const [c7, c30, recsRaw, ads, kws] = await Promise.all([
     gaql(`SELECT campaign.id, campaign.name, campaign.status, campaign.primary_status,
-                 campaign.primary_status_reasons, campaign.start_date, campaign.end_date,
+                 campaign.primary_status_reasons,
                  campaign_budget.resource_name, campaign_budget.amount_micros,
                  campaign_budget.recommended_budget_amount_micros, campaign_budget.has_recommended_budget,
                  metrics.search_impression_share, metrics.search_budget_lost_impression_share,
@@ -2960,7 +3030,7 @@ async function fetchDiagnostics() {
       id: String(c.id), name: c.name, status: c.status,
       primaryStatus: c.primaryStatus, primaryStatusReasons: c.primaryStatusReasons || [],
       reasonsText: (c.primaryStatusReasons || []).map(x => DIAG_REASON_LABEL[x] || String(x).toLowerCase().replace(/_/g, " ")),
-      startDate: c.startDate || null, endDate: c.endDate || null,
+      startDate: null, endDate: null, // filled by the version-tolerant fetch below
       budget: fromMicros(b.amountMicros), budgetRes: b.resourceName,
       googleRecommendedBudget: b.hasRecommendedBudget ? fromMicros(b.recommendedBudgetAmountMicros) : null,
       impressionShare: _pct(m.searchImpressionShare),
@@ -2992,6 +3062,18 @@ async function fetchDiagnostics() {
     const q = ((r.adGroupCriterion || {}).qualityInfo || {}).qualityScore;
     if (q) d.qualityScores.push(+q);
   }
+  for (const [sf, ef, sk, ek] of [
+    ["campaign.start_date_time", "campaign.end_date_time", "startDateTime", "endDateTime"],
+    ["campaign.start_date", "campaign.end_date", "startDate", "endDate"]
+  ]) {
+    try {
+      const sch = await gaql(`SELECT campaign.id, ${sf}, ${ef} FROM campaign WHERE campaign.status != 'REMOVED'`);
+      sch.forEach(r => { const d = by[(r.campaign || {}).id]; if (!d) return;
+        d.startDate = _dateOnly(r.campaign[sk]); d.endDate = _dateOnly(r.campaign[ek]); });
+      break;
+    } catch (e) {}
+  }
+
   const account = { recommendations: [] };
   for (const r of recsRaw) {
     const rec = r.recommendation || {};
@@ -3168,5 +3250,6 @@ module.exports = {
   enforceBudgetCeiling, monthlySpendGuard,
   dashboard,
   fetchDiagnostics, runDiagnostics, getDiagnostics, applyGoogleRecommendation, dismissGoogleRecommendation,
+  dailyStats,
   _util: { micros, fromMicros, clampHeadline, clampDescription, gAdsTime, daysUntil }
 };
