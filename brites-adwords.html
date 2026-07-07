@@ -419,10 +419,6 @@ table.ptable tr.pdetail>td{border-bottom:2px solid var(--line)}
       </div>
     </section>
 
-    <section class="view hidden" id="v-insights">
-      <div class="view__head"><div><h2>Insights & Strategy</h2><p>The reading behind the moves.</p></div></div>
-      <div class="card pad"><div class="empty" style="height:260px"><div class="ring"></div><div style="font-weight:600">Insights appear once there's data</div><div style="font-size:12.5px;max-width:440px">The strategy reader summarizes what's working and recommends moves — but it needs campaigns that have actually run and spent. With your account paused at zero spend there's nothing to read yet. It also needs the insight generator wired (not built). Ask to add it.</div></div></div>
-    </section>
 
     <section class="view hidden" id="v-bench">
       <div class="view__head"><div><h2>Opportunities</h2><p>Campaigns the AI recommends right now — scanned across all your collections, best-sellers, the calendar, and past performance. Adjust the budget, then generate: it builds a paused Search campaign (themed copy + keywords) and sends it to Approvals.</p></div></div>
@@ -453,9 +449,6 @@ table.ptable tr.pdetail>td{border-bottom:2px solid var(--line)}
       </details>
     </section>
 
-    <section class="view hidden" id="v-fixes">
-      <div class="card pad"><div class="card__h"><h3>Applied fixes</h3><span style="display:flex;gap:10px;align-items:center"><span class="sub" id="fixSub"></span><button class="btn ghost sm" id="fixRefresh" style="padding:4px 12px;font-size:12px">Refresh</button></span></div><div id="fixList"><div class="empty" style="height:80px"><div style="font-size:12.5px">Loading fix history…</div></div></div></div>
-    </section>
     <section class="view hidden" id="v-controls">
       <div class="view__head"><div><h2>Controls</h2><p>The guardrails. Saved to the engine on change.</p></div></div>
       <div class="grid ctrlgrid">
@@ -750,10 +743,10 @@ function wireBigChart(id,points,o){o=o||{};var box=$("#bc-"+id);if(!box)return;v
   box.onmouseleave=hide;box._show=show;box._hide=hide;}
 
 /* ---- nav ---- */
-var NAV=[["command","Command Center","What the autopilot is doing right now","◆"],["sales","Sales","Where your money comes from","◷"],["approvals","Approvals","Drafts waiting for your call","✎"],["ab","A/B Assay","Head-to-head ad tests","⚖"],["perf","Performance","Where the money worked","▤"],["insights","Insights & Strategy","The reading behind the moves","✦"],["bench","Opportunities","AI-found campaigns to launch","⚒"],["fixes","Fix History","Applied AI remedies & their results","✓"],["controls","Controls","Guardrails & switches","⚙"]];
+var NAV=[["command","Command Center","What the autopilot is doing right now","◆"],["sales","Sales","Where your money comes from","◷"],["approvals","Approvals","Drafts waiting for your call","✎"],["ab","A/B Assay","Head-to-head ad tests","⚖"],["perf","Performance","Where the money worked","▤"],["bench","Opportunities","AI-found campaigns to launch","⚒"],["controls","Controls","Guardrails & switches","⚙"]];
 function buildNav(){var n=$("#nav");n.innerHTML="";NAV.forEach(function(it){var b=elFrom('<button data-v="'+it[0]+'"><span class="ic" style="font-size:15px">'+it[3]+'</span><span>'+it[1]+'</span></button>');b.onclick=()=>go(it[0]);n.appendChild(b);});updateBadges();}
 function updateBadges(){var b=$('#nav button[data-v="approvals"]');if(!b)return;var x=b.querySelector(".badge");var c=(DASH&&DASH.pending||[]).length;if(c){if(!x){x=elFrom('<span class="badge"></span>');b.appendChild(x);}x.textContent=c;}else if(x)x.remove();}
-function go(k){$$(".view").forEach(v=>v.classList.add("hidden"));$("#v-"+k).classList.remove("hidden");$$(".nav button").forEach(b=>b.classList.toggle("active",b.dataset.v===k));var m=NAV.find(n=>n[0]===k);$("#vtitle").textContent=m[1];$("#vsub").textContent=m[2];window.scrollTo(0,0);if(k==="bench")ensureOpportunities();if(k==="fixes")loadRemedyHistory();}
+function go(k){$$(".view").forEach(v=>v.classList.add("hidden"));$("#v-"+k).classList.remove("hidden");$$(".nav button").forEach(b=>b.classList.toggle("active",b.dataset.v===k));var m=NAV.find(n=>n[0]===k);$("#vtitle").textContent=m[1];$("#vsub").textContent=m[2];window.scrollTo(0,0);if(k==="bench")ensureOpportunities();}
 
 /* ---- totals ---- */
 function totals(camps){var t={cost:0,conv:0,value:0,clicks:0,impr:0,budget:0};(camps||[]).forEach(function(c){t.cost+=+c.cost||0;t.conv+=+c.conv||0;t.value+=+c.value||0;t.clicks+=+c.clicks||0;t.impr+=+c.impr||0;t.budget+=+c.budget||0;});return t;}
@@ -987,30 +980,11 @@ function fillAdLevel(){if(!DAILY)return;
 var REMHIST=[];
 function remKey(cid,rm){return String(cid)+"|"+String((rm&&rm.issue)||"").slice(0,80);}
 function histFor(cid,rm){var k=remKey(cid,rm);for(var i=0;i<REMHIST.length;i++){var h=REMHIST[i];if(remKey(h.campaignId,{issue:h.issue})===k)return h;}return null;}
-function loadRemedyHistory(cb){api("remedyHistory",{limit:120}).then(function(r){REMHIST=(r&&r.items)||[];if(cb)cb();renderFixHistory();}).catch(function(){if(cb)cb();});}
+function loadRemedyHistory(cb){api("remedyHistory",{limit:120}).then(function(r){REMHIST=(r&&r.items)||[];if(cb)cb();if(DIAG)renderDiag();}).catch(function(){if(cb)cb();});}
 function verifyBadge(h){if(h.dryRun)return '<span style="font-size:10px;font-weight:700;color:#b26a00;border:1px solid #b26a00;border-radius:8px;padding:1px 7px">DRY-RUN</span>';
   if(h.verified===true)return '<span style="font-size:10px;font-weight:700;color:#2e7d32;border:1px solid #2e7d32;border-radius:8px;padding:1px 7px">\u2713 VERIFIED IN GOOGLE ADS</span>';
   if(h.verified===false)return '<span style="font-size:10px;font-weight:700;color:#b3402a;border:1px solid #b3402a;border-radius:8px;padding:1px 7px">\u26a0 NOT CONFIRMED</span>';
   return '<span class="muted" style="font-size:10px">verification pending</span>';}
-function fixDelta(h){
-  var cur=null;if(DIAG&&DIAG.campaigns)cur=(DIAG.campaigns.filter(function(c){return String(c.id)===String(h.campaignId);})[0]||{}).d7;
-  var b=h.baseline;if(!b||!cur)return "";
-  function d(a2,b2,money2){var dv=Math.round(((a2||0)-(b2||0))*100)/100;var sgn=dv>0?"+":"";return money2?(sgn+money(dv)):(sgn+dv);}
-  var roasB=b.cost>0?(b.value/b.cost):null,roasC=cur.cost>0?(cur.value/cur.cost):null;
-  return '<div class="mono muted" style="font-size:11px;margin-top:4px">7d now vs 7d at apply: clicks '+d(cur.clicks,b.clicks)+' \u00b7 cost '+d(cur.cost,b.cost,true)+' \u00b7 conv '+d(cur.conv,b.conv)+(roasB!=null||roasC!=null?' \u00b7 ROAS '+(roasB==null?"\u2014":roasB.toFixed(1))+'\u2192'+(roasC==null?"\u2014":roasC.toFixed(1)):"")+'</div>';}
-function renderFixHistory(){var box=document.getElementById("fixList");if(!box)return;
-  var sub=document.getElementById("fixSub");if(sub)sub.textContent=REMHIST.length+" applied";
-  if(!REMHIST.length){box.innerHTML='<div class="empty" style="height:90px"><div style="font-size:12.5px">No fixes applied yet.</div><div style="font-size:12px">Apply a remedy from the Ad Doctor card and it lands here \u2014 with Google-Ads verification and before/after numbers.</div></div>';return;}
-  box.innerHTML=REMHIST.map(function(h){
-    var params=h.kind==="addNegatives"?((h.executable||{}).keywords||[]).join(", "):h.kind==="pauseKeywords"?(((h.executable||{}).keywords)||[]).map(function(k){return k.text||k;}).join(", "):h.kind==="setBudget"?money((h.executable||{}).budget)+"/day":"";
-    return '<div style="padding:11px 4px;border-top:1px solid var(--line)">'+
-      '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><b style="font-size:12.5px">'+esc(h.campaignName||("campaign "+h.campaignId))+'</b><span class="tagk" style="background:var(--paper-2);font-size:10px">'+esc(String(h.kind||"").replace(/([A-Z])/g," $1").toLowerCase())+'</span>'+verifyBadge(h)+'<span class="muted" style="font-size:11px;margin-left:auto">'+(h.at?timeago(h.at)+" ago":"")+'</span></div>'+
-      (h.issue?'<div style="font-size:12px;margin-top:4px"><b>Issue:</b> '+esc(h.issue)+'</div>':"")+
-      (params?'<div class="mono" style="font-size:11px;color:var(--ink-70);margin-top:2px">'+esc(params)+'</div>':"")+
-      ((h.verification&&h.verification.confirmed)?'<div style="font-size:11px;color:#2e7d32;margin-top:2px">'+esc(h.verification.confirmed)+'</div>':"")+
-      ((h.verification&&h.verification.error)?'<div style="font-size:11px;color:var(--clay);margin-top:2px">verify error: '+esc(h.verification.error)+'</div>':"")+
-      fixDelta(h)+'</div>';}).join("");
-  var rb=document.getElementById("fixRefresh");if(rb&&!rb._w){rb._w=true;rb.onclick=function(){loadRemedyHistory();};}}
 
 /* ---- Ad Doctor: Google Ads diagnostics + AI specialist verdicts ---- */
 var DIAG=null,_diagBusy=false,diagOpen={},_diagOpenInit=false;
@@ -1068,8 +1042,14 @@ function renderDiag(){var body=document.getElementById("diagBody");if(!body||!DI
     } else if(ai.googleSays&&ai.googleSays!=="none"){goog='<div style="margin-top:8px;font-size:12px"><b>Google:</b> '+esc(ai.googleSays)+'</div>';}
     var aiBox="";
     if(ai.aiSays){aiBox='<div style="margin-top:8px;padding:9px 11px;border-left:3px solid '+sv[0]+';background:var(--paper-2);border-radius:0 8px 8px 0;font-size:12.5px"><div style="display:flex;gap:8px;align-items:center;margin-bottom:4px"><b>AI specialist:</b> '+verdictTag(ai.verdict)+'</div>'+esc(ai.aiSays)+((ai.findings||[]).length?'<ul style="margin:7px 0 0 16px;padding:0;font-size:11.5px;color:var(--ink-70)">'+ai.findings.map(function(f){return "<li>"+esc(f)+"</li>";}).join("")+"</ul>":"")+'</div>';}
+    function bestHist(cid,fr){var words=String((fr&&fr.applied)||"").toLowerCase().split(/\W+/).filter(function(w){return w.length>3;});
+      var best=null,bs=0;REMHIST.forEach(function(h){if(String(h.campaignId)!==String(cid))return;
+        var hay=((h.issue||"")+" "+(h.fix||"")+" "+(h.kind||"")).toLowerCase();
+        var sc=words.reduce(function(acc,w){return acc+(hay.indexOf(w)>=0?1:0);},0);
+        if(sc>bs){bs=sc;best=h;}});
+      return bs>0?best:null;}
     if((ai.fixReview||[]).length){var wc={working:"#2e7d32","too early":"#b26a00","not working":"#b3402a"};
-      aiBox+='<details style="margin-top:8px;font-size:12px"><summary style="cursor:pointer;font-weight:600">Past fixes review \u00b7 '+ai.fixReview.length+'</summary>'+ai.fixReview.map(function(fr){return '<div style="margin-top:4px"><span style="font-size:10px;font-weight:800;color:'+(wc[fr.working]||"var(--ink-45)")+'">'+esc(String(fr.working||"").toUpperCase())+'</span> '+esc(fr.applied||"")+(fr.daysAgo!=null?' <span class="muted">('+fr.daysAgo+'d ago)</span>':"")+(fr.note?'<div class="muted" style="font-size:11.5px">'+esc(fr.note)+'</div>':"")+'</div>';}).join("")+'</details>';}
+      aiBox+='<details style="margin-top:8px;font-size:12px"><summary style="cursor:pointer;font-weight:600">Past fixes review \u00b7 '+ai.fixReview.length+'</summary>'+ai.fixReview.map(function(fr){return '<div style="margin-top:4px"><span style="font-size:10px;font-weight:800;color:'+(wc[fr.working]||"var(--ink-45)")+'">'+esc(String(fr.working||"").toUpperCase())+'</span> '+esc(fr.applied||"")+(function(){var h=bestHist(c.id,fr);return h?(" "+verifyBadge(h)):"";})()+(fr.daysAgo!=null?' <span class="muted">('+fr.daysAgo+'d ago)</span>':"")+(fr.note?'<div class="muted" style="font-size:11.5px">'+esc(fr.note)+'</div>':"")+'</div>';}).join("")+'</details>';}
     // remedies: one implementable fix per issue, with Apply where mutation-safe
     var remHtml="";
     if((ai.remedies||[]).length){
