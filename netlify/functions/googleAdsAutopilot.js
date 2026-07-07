@@ -655,7 +655,7 @@ function textGuidelinesOp() {
 }
 
 /* ===================== OpenAI generation (repo convention) ===================== */
-async function openaiJSON(prompt, { maxTokens = 1400, effort = "low" } = {}) {
+async function openaiJSON(prompt, { maxTokens = 4000, effort = "high" } = {}) {
   const model = GEN_MODEL;
   const payload = { model, messages: [{ role: "user", content: prompt }] };
   // NOTE: for gpt-5 / o* reasoning models, max_completion_tokens INCLUDES hidden reasoning
@@ -737,7 +737,7 @@ Hard rules:
 - Avoid these terms entirely: ${BRAND.termExclusions.join(", ")}.
 - ${BRAND.messagingRestrictions.join(" ")}
 Return ONLY JSON: {"headlines":[],"descriptions":[],"sitelinks":[{"text":"","desc":""}],"callouts":[]}`;
-  const j = await openaiJSON(prompt, { maxTokens: 1500 });
+  const j = await openaiJSON(prompt, { maxTokens: 5000 });
   if (!j) return null;
   const out = {
     headlines: (j.headlines || []).map(clampHeadline).filter(brandSafe).slice(0, 15),
@@ -2242,7 +2242,7 @@ Suggest 8-12 occasions/events to advertise over the NEXT ~90 DAYS from today, ra
 Avoid occasions memory marks "fail" or that are out of season right now. Always include an "Evergreen gifting" option.
 Return ONLY JSON: {"occasions":[{"label":"","daysOut":<int>,"recommendation":"push|test|skip","proven":<bool>,"why":"<=90 chars"}]}`;
   let list = null;
-  try { const j = await openaiJSON(prompt, { maxTokens: 1000 }); if (j && Array.isArray(j.occasions)) list = j.occasions.filter(o => o && o.label).slice(0, 12); } catch (e) {}
+  try { const j = await openaiJSON(prompt, { maxTokens: 4000 }); if (j && Array.isArray(j.occasions)) list = j.occasions.filter(o => o && o.label).slice(0, 12); } catch (e) {}
   if (!list || !list.length) list = OCCASIONS.map(o => ({ label: o, daysOut: null, recommendation: "test", proven: false, why: "" }));
   if (!list.some(o => /evergreen/i.test(o.label))) list.unshift({ label: "Evergreen gifting", daysOut: 0, recommendation: "test", proven: false, why: "always-on baseline" });
   if (f) { try { await f.db.collection(COL.state).doc(cacheKey).set({ list, at: Date.now() }); } catch (e) {} }
@@ -2432,7 +2432,7 @@ Return ONLY JSON:
  "summary": "<2 plain-language sentences>",
  "actions": [{"title":"<short>","detail":"<why + expected effect, <=140 chars>","type":"<budget|bid|status|keywords|creative|wait>","suggestedBudget": <number in ${ccy} or null>}]}`;
   let out = null;
-  try { const j = await openaiJSON(prompt, { maxTokens: 800 }); if (j && j.summary) out = j; } catch (e) {}
+  try { const j = await openaiJSON(prompt, { maxTokens: 3500 }); if (j && j.summary) out = j; } catch (e) {}
   if (!out) {
     out = {
       score: enoughData ? 55 : 25,
@@ -3221,7 +3221,10 @@ For EACH campaign return an object:
 Also return accountSummary: 2-3 sentences on the account as a whole (ceiling headroom, where the next dollar goes, anything systemic).
 
 Rules: never recommend raising total enabled budgets past the ceiling; a campaign 1-3 days old is in learning — don't overreact; ROAS below target with real volume = fix before feeding; budget-limited + ROAS above target = the clearest raise there is. Return STRICT JSON: {"campaigns":[...],"accountSummary":"..."}`;
-  return await openaiJSON(prompt, { maxTokens: 4200, effort: "low" });
+  // High reasoning: multi-variable read (Google diagnostics x QS components x
+  // search terms x history x guardrails). Budget doubled — at high effort the
+  // hidden reasoning tokens eat a large share of max_completion_tokens.
+  return await openaiJSON(prompt, { maxTokens: 9000, effort: "high" });
 }
 
 async function runDiagnostics({ campaignId } = {}) {
