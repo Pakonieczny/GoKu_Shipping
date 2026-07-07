@@ -141,6 +141,17 @@ async function handleAction(body) {
       return { queued: true, upstream: res.status };
     } catch (e) { return { error: e.message }; }
   }
+  if (a === "playbook") { try { return (await E.getPlaybook()) || { empty: true }; } catch (e) { return { error: e.message }; } }
+  if (a === "distill") {
+    // LLM-heavy -> background worker; the console polls the playbook doc.
+    try {
+      const res = await fetch(baseUrl() + "/.netlify/functions/googleAdsAutopilot-background", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tasks: ["distill"], token: process.env.EDIT_PASSCODE || undefined })
+      });
+      return { queued: true, upstream: res.status };
+    } catch (e) { return { error: e.message }; }
+  }
   if (a === "adReviewStatus") { try { return await E.adReviewStatus({ adIds: body.adIds }); } catch (e) { return { statuses: {}, error: e.message }; } }
   if (a === "remedyHistory") { try { return await E.remedyHistory({ limit: body.limit || 100 }); } catch (e) { return { items: [], error: e.message }; } }
   if (a === "applyRemedy")   { try { return await E.applyRemedy(body.campaignId, body.remedy, { ctrl }); } catch (e) { return { ok: false, error: e.message }; } }

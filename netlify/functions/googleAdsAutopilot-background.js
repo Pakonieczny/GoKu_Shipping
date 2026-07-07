@@ -72,7 +72,7 @@ exports.handler = async (event) => {
     : ["anomaly", "monthly", "conversions", "adjustments", "measure", "mine", "prune", "budgets", "ceiling", "events", "pruneLedger"];
 
   // Read-only tasks (no Google Ads mutations) are allowed even when the kill switch is off.
-  const READONLY = new Set(["scanOpportunities", "pruneLedger", "bestSellers", "diagnostics"]); // bestSellers touches Shopify, never Google Ads
+  const READONLY = new Set(["scanOpportunities", "pruneLedger", "bestSellers", "diagnostics", "distill"]); // bestSellers touches Shopify, never Google Ads
   const allReadOnly = tasks.every(t => READONLY.has(t));
 
   // HARD KILL SWITCH — blocks anything that could mutate. Read-only analysis still runs.
@@ -108,7 +108,13 @@ exports.handler = async (event) => {
     try {
       if (task === "conversions") { result.conversions = await E.uploadConversions({ ctrl }); }
       else if (task === "scanOpportunities") { result.scanOpportunities = { n: ((await E.opportunitiesWithStatus({ force: true })).opportunities || []).length }; }
-      else if (task === "diagnostics") { result.diagnostics = { generatedAt: (await E.runDiagnostics({ campaignId: body.campaignId || null })).generatedAt }; }
+      else if (task === "diagnostics") {
+        result.diagnostics = { generatedAt: (await E.runDiagnostics({ campaignId: body.campaignId || null })).generatedAt };
+        // Close the learning loop: every new diagnosis re-distills the playbook
+        // (bounded lessons for the opportunity scan + generators). Best-effort.
+        try { result.distill = await E.distillLessons(); } catch (e) { result.distill = { error: String(e.message || e).slice(0, 200) }; }
+      }
+      else if (task === "distill") { result.distill = await E.distillLessons(); }
       else if (task === "adjustments") { result.adjustments = await E.uploadConversionAdjustments({ ctrl }); }
       else if (task === "measure") { result.measure = { campaigns: (await E.measure()).length }; }
       else if (task === "mine")     { result.mine = await E.mineSearchTerms({ ctrl }); }
