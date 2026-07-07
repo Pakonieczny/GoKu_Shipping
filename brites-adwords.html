@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Brites · Ad Autopilot — Live Console</title>
 <style>
 
@@ -236,13 +236,65 @@ svg{display:block}
 .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:11.5px;color:var(--ink-70);margin-top:10px}
 .legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px}
 
-@media (max-width:980px){
+/* =================== Responsive layer: tablet + phone + folds =================== */
+.navburger{display:none;flex-direction:column;justify-content:center;gap:4px;width:42px;height:42px;border:1px solid var(--line);border-radius:10px;background:var(--card);padding:0 10px;cursor:pointer}
+.navburger span{display:block;height:2px;border-radius:2px;background:var(--ink)}
+.navscrim{display:none;position:fixed;inset:0;background:rgba(22,19,15,.42);z-index:190;opacity:0;transition:opacity .2s}
+
+@media (max-width:1020px){
   .app{grid-template-columns:1fr}
-  .rail{position:static;height:auto;flex-direction:row;flex-wrap:wrap}
-  .nav{flex-direction:row;flex-wrap:wrap;overflow:visible}
-  .rail__brand,.rail__foot{width:100%}
-  .kpis{grid-template-columns:repeat(2,1fr)} .two,.three,.bench,.ins,.ctrlgrid,.vs{grid-template-columns:1fr}
-  .vs{display:flex;flex-direction:column} .vmid{flex-direction:row;padding:6px 0}
+  /* rail becomes an off-canvas drawer */
+  .rail{position:fixed;left:0;top:0;bottom:0;width:min(82vw,300px);z-index:200;transform:translateX(-103%);transition:transform .22s ease;height:100dvh;box-shadow:14px 0 40px rgba(0,0,0,.25);overflow-y:auto;padding-bottom:env(safe-area-inset-bottom)}
+  body.navOpen .rail{transform:none}
+  body.navOpen .navscrim{display:block;opacity:1}
+  body.navOpen{overflow:hidden}
+  .nav button{min-height:46px;font-size:14px}
+  .navburger{display:flex}
+  .topbar{position:sticky;top:0;z-index:120;background:color-mix(in srgb,var(--paper) 88%,transparent);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);padding:10px 0;margin:-6px 0 10px;flex-wrap:wrap;gap:8px}
+  .topbar h1{font-size:19px}
+  .topbar .sub{display:none}
+  .main{padding:12px 14px calc(20px + env(safe-area-inset-bottom));min-width:0}
+  .kpis{grid-template-columns:repeat(2,1fr)}
+  .two,.three,.bench,.ins,.ctrlgrid,.vs{grid-template-columns:1fr}
+  .vs{display:flex;flex-direction:column}.vmid{flex-direction:row;padding:6px 0}
+  /* tables scroll sideways instead of crushing; first column stays pinned */
+  .scrollcap-sm,.scrollcap,.adlvl{overflow-x:auto;-webkit-overflow-scrolling:touch;padding-right:0}
+  #snapshot table{min-width:640px}
+  .adlvl table{min-width:560px}
+  #snapshot th:first-child,#snapshot td:first-child,.adlvl th:first-child,.adlvl td:first-child{position:sticky;left:0;background:var(--card);z-index:2}
+  .rpPop{position:fixed!important;left:50%!important;top:12vh!important;transform:translateX(-50%);width:min(540px,94vw)!important}
+}
+
+@media (max-width:760px){
+  html{-webkit-text-size-adjust:100%}
+  .view__head h2{font-size:22px}
+  .view__head p{font-size:12px}
+  .card.pad,.pad{padding:14px}
+  /* touch targets */
+  .btn{min-height:40px;font-size:13px}
+  .btn.sm,.btn-small{min-height:38px}
+  input,select,textarea{font-size:16px!important} /* stops iOS focus-zoom */
+  input[type="date"]{min-height:38px}
+  details.xd>summary,details.opDx>summary,#customWrap>summary{padding:9px 14px;font-size:13.5px}
+  .diagHead{padding:13px 2px}
+  .legend{flex-wrap:wrap;row-gap:4px}
+  .card__h{flex-wrap:wrap;gap:8px}
+  .card__h h3{font-size:14.5px}
+  #srChips{overflow-x:auto;flex-wrap:nowrap;-webkit-overflow-scrolling:touch;padding-bottom:4px}
+  #srChips .srchip{white-space:nowrap;flex:0 0 auto}
+  .toasts{left:12px;right:12px;bottom:calc(14px + env(safe-area-inset-bottom));align-items:stretch}
+  .actbar{top:64px}
+  /* opportunity metric strips + draft internals wrap cleanly */
+  .oppm{flex-wrap:wrap;row-gap:8px}
+  .draft .ti{font-size:13.5px}
+  /* full-screen sheet modals */
+  .ovsheet{align-items:flex-end!important}
+  .ovsheet>div{width:100%!important;max-width:100%!important;max-height:92dvh!important;border-radius:18px 18px 0 0!important;padding-bottom:calc(14px + env(safe-area-inset-bottom))!important}
+  .gatecard{width:min(92vw,420px)}
+}
+
+@media (min-width:761px) and (max-width:1020px){
+  .kpis{grid-template-columns:repeat(3,1fr)}
 }
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 
@@ -378,8 +430,10 @@ svg rect.bc-bar[data-tip]:hover{filter:brightness(.85);stroke:var(--ink);stroke-
     <nav class="nav" id="nav"></nav>
     <div class="rail__foot"><span class="dot" id="connDot"></span><span id="connText">connected</span><br><span class="muted" style="font-size:10px">live · Google Ads v24</span></div>
   </aside>
+  <div class="navscrim" id="navScrim"></div>
   <div class="main">
     <header class="topbar">
+      <button class="navburger" id="navBurger" aria-label="Menu"><span></span><span></span><span></span></button>
       <div><h1 id="vtitle">Command Center</h1><div class="sub" id="vsub">What the autopilot is doing right now</div></div>
       <div class="spacer"></div>
       <span class="pill live" id="pillLive"><span class="d"></span>LIVE</span>
@@ -424,18 +478,7 @@ svg rect.bc-bar[data-tip]:hover{filter:brightness(.85);stroke:var(--ink);stroke-
       <div class="appr scrollcap" id="apprList"></div>
     </section>
 
-    <section class="view hidden" id="v-ab">
-      <div class="view__head"><div><h2>A/B Assay</h2><p>Head-to-head ad tests with real significance.</p></div></div>
-      <div class="card pad"><div class="empty" style="height:260px"><div class="ring"></div><div style="font-weight:600">Not wired yet</div><div style="font-size:12.5px;max-width:430px">A/B testing needs the experiment subsystem — creating variant campaigns through the Ads API, pulling their metrics, and scoring significance. That isn't built. Say the word and it's the next module.</div></div></div>
-    </section>
 
-    <section class="view hidden" id="v-perf">
-      <div class="view__head"><div><h2>Performance</h2><p>Every campaign in one sortable list. Click any column to sort; expand a row to edit its budget, flip status, or run an AI optimization analysis.</p></div><div id="perfConv" style="display:none"></div></div>
-      <div class="card pad">
-        <div class="card__h" style="margin-bottom:10px"><h3>Campaigns</h3><span class="sub" id="perfMeta"></span></div>
-        <div class="ptscroll" style="overflow:auto"><table class="ptable" id="ptable"></table></div>
-      </div>
-    </section>
 
 
     <section class="view hidden" id="v-bench">
@@ -530,7 +573,7 @@ function ctyName(id){var s=String(id);for(var i=0;i<COUNTRIES.length;i++){if(Str
 function ctyChips(ids){ if(!ids||!ids.length)return '<span class="muted" style="font-size:12px">All countries &amp; territories \u2014 no restriction set</span>'; return ids.map(function(id){return '<span class="chip on">'+esc(ctyName(id))+'</span>';}).join(""); }
 function openCountryEditor(o){
   o=o||{};var sel={};(o.selected||[]).forEach(function(id){sel[String(id)]=true;});
-  var ov=elFrom('<div style="position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:rgba(22,19,15,.45)"></div>');
+  var ov=elFrom('<div class="ovsheet" style="position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:rgba(22,19,15,.45)"></div>');
   var box=elFrom('<div style="background:var(--paper);border:1px solid var(--line);border-radius:14px;width:min(460px,92vw);max-height:84vh;display:flex;flex-direction:column;box-shadow:var(--sh);overflow:hidden"></div>');
   box.innerHTML='<div style="padding:16px 18px;border-bottom:1px solid var(--line)"><div style="font-weight:700;font-size:15px">'+esc(o.title||"Target countries")+'</div><div class="muted" style="font-size:12px;margin-top:3px">'+esc(o.subtitle||"Choose where this ad runs.")+'</div></div>'+
     '<div style="padding:12px 18px 4px"><input class="ctyq" placeholder="Search countries\u2026" style="width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:9px;font-size:13px;box-sizing:border-box;background:var(--paper)"></div>'+
@@ -679,13 +722,29 @@ function _anchorTip(el){var t=_ensureCtip();t.innerHTML=el.getAttribute("data-ti
         if(topY==null||y<topY)topY=y;});
       t.style.left=(r.left+dx*sx)+"px";
       t.style.top=(r.top+(topY==null?0:topY*sy)-8)+"px";
+      _clampTip(t);
       return;
     }
   }
   _hideLcFocus();
   var er=el.getBoundingClientRect(); // bars / gauge / sparkline: anchor above the element
-  t.style.left=(er.left+er.width/2)+"px";t.style.top=(er.top-6)+"px";}
+  t.style.left=(er.left+er.width/2)+"px";t.style.top=(er.top-6)+"px";_clampTip(t);}
+// keep the tooltip on-screen: clamp horizontally, flip below when clipped on top
+function _clampTip(t){requestAnimationFrame(function(){
+  // measure transition-free: the left/top ease would otherwise report
+  // mid-flight geometry and the clamp math lands wrong
+  var tr=t.style.transition;t.style.transition="none";
+  var r=t.getBoundingClientRect();var vw=window.innerWidth;
+  var left=parseFloat(t.style.left)||0;
+  if(r.left<8)t.style.left=(left+(8-r.left))+"px";
+  else if(r.right>vw-8)t.style.left=(left-(r.right-(vw-8)))+"px";
+  if(r.top<8)t.style.transform="translate(-50%,14px)";else t.style.transform="translate(-50%,-112%)";
+  requestAnimationFrame(function(){t.style.transition=tr;});});}
 document.addEventListener("mouseover",function(e){var el=e.target&&e.target.closest&&e.target.closest("[data-tip]");if(!el)return;_anchorTip(el);});
+// touch: tap a point to pin its tooltip; tap anywhere else to dismiss
+document.addEventListener("pointerdown",function(e){if(e.pointerType!=="touch")return;
+  var el=e.target&&e.target.closest&&e.target.closest("[data-tip]");
+  if(el){_anchorTip(el);}else if(_ctip){_ctip.style.display="none";_hideLcFocus();}},{passive:true});
 document.addEventListener("mousemove",function(e){if(!_ctip||_ctip.style.display==="none")return;
   var el=e.target&&e.target.closest&&e.target.closest("[data-tip]");
   if(!el){_ctip.style.display="none";_hideLcFocus();}});
@@ -818,10 +877,14 @@ function wireBigChart(id,points,o){o=o||{};var box=$("#bc-"+id);if(!box)return;v
   box.onmouseleave=hide;box._show=show;box._hide=hide;}
 
 /* ---- nav ---- */
-var NAV=[["command","Command Center","What the autopilot is doing right now","◆"],["sales","Sales","Where your money comes from","◷"],["approvals","Approvals","Drafts waiting for your call","✎"],["ab","A/B Assay","Head-to-head ad tests","⚖"],["perf","Performance","Where the money worked","▤"],["bench","Opportunities","AI-found campaigns to launch","⚒"],["controls","Controls","Guardrails & switches","⚙"]];
+var NAV=[["command","Command Center","What the autopilot is doing right now","◆"],["sales","Sales","Where your money comes from","◷"],["approvals","Approvals","Drafts waiting for your call","✎"],["bench","Opportunities","AI-found campaigns to launch","⚒"],["controls","Controls","Guardrails & switches","⚙"]];
 function buildNav(){var n=$("#nav");n.innerHTML="";NAV.forEach(function(it){var b=elFrom('<button data-v="'+it[0]+'"><span class="ic" style="font-size:15px">'+it[3]+'</span><span>'+it[1]+'</span></button>');b.onclick=()=>go(it[0]);n.appendChild(b);});updateBadges();}
 function updateBadges(){var b=$('#nav button[data-v="approvals"]');if(!b)return;var x=b.querySelector(".badge");var c=(DASH&&DASH.pending||[]).length;if(c){if(!x){x=elFrom('<span class="badge"></span>');b.appendChild(x);}x.textContent=c;}else if(x)x.remove();}
-function go(k){$$(".view").forEach(v=>v.classList.add("hidden"));$("#v-"+k).classList.remove("hidden");$$(".nav button").forEach(b=>b.classList.toggle("active",b.dataset.v===k));var m=NAV.find(n=>n[0]===k);$("#vtitle").textContent=m[1];$("#vsub").textContent=m[2];window.scrollTo(0,0);if(k==="bench"){ensureOpportunities();loadPlaybook();}}
+function navDrawer(open){document.body.classList[open?"add":"remove"]("navOpen");}
+(function(){var b=document.getElementById("navBurger"),sc=document.getElementById("navScrim");
+  if(b)b.onclick=function(){navDrawer(!document.body.classList.contains("navOpen"));};
+  if(sc)sc.onclick=function(){navDrawer(false);};})();
+function go(k){navDrawer(false);$$(".view").forEach(v=>v.classList.add("hidden"));$("#v-"+k).classList.remove("hidden");$$(".nav button").forEach(b=>b.classList.toggle("active",b.dataset.v===k));var m=NAV.find(n=>n[0]===k);$("#vtitle").textContent=m[1];$("#vsub").textContent=m[2];window.scrollTo(0,0);if(k==="bench"){ensureOpportunities();loadPlaybook();}}
 
 /* ---- totals ---- */
 function totals(camps){var t={cost:0,conv:0,value:0,clicks:0,impr:0,budget:0};(camps||[]).forEach(function(c){t.cost+=+c.cost||0;t.conv+=+c.conv||0;t.value+=+c.value||0;t.clicks+=+c.clicks||0;t.impr+=+c.impr||0;t.budget+=+c.budget||0;});return t;}
@@ -1399,7 +1462,8 @@ var P={sortKey:"cost",dir:-1,expanded:{},analysis:{},loading:{}};
 function fieldVal(c,k){var roas=c.cost>0?c.value/c.cost:-1,ctr=c.impr>0?c.clicks/c.impr*100:-1,cpa=c.conv>0?c.cost/c.conv:1e15;var an=P.analysis[c.id];
   return {name:(c.name||"").toLowerCase(),status:c.status||"",budget:+c.budget||0,cost:+c.cost||0,impr:+c.impr||0,ctr:ctr,conv:+c.conv||0,cpa:cpa,roas:roas,opt:an?an.score:-1}[k];}
 function optDot(score){if(score==null)return '<span style="color:var(--ink-25)">—</span>';var col=score>=70?"var(--sage)":score>=40?"var(--gold)":"var(--clay)";return '<span title="optimization score" style="display:inline-flex;align-items:center;gap:5px;font-family:var(--mono);font-size:12px;justify-content:center"><span style="width:9px;height:9px;border-radius:50%;background:'+col+'"></span>'+score+'</span>';}
-function renderPerf(){
+function renderPerf(){if(!document.getElementById("ptable"))return; // view removed — Ad Doctor supersedes it
+
   var camps=(DASH.lastMetrics||[]).slice();
   if(!camps.length){$("#ptable").innerHTML='<tbody><tr><td style="padding:26px;color:var(--ink-45);font-size:13px">No campaigns loaded yet \u2014 run Measure (Controls \u2192 Measure, or Command \u2192 Run now).</td></tr></tbody>';$("#perfMeta").textContent="";return;}
   var t=totals(camps);$("#perfMeta").textContent=camps.length+" campaigns \u00b7 "+camps.filter(c=>c.status==="ENABLED").length+" live \u00b7 "+money(t.cost)+" spend \u00b7 "+money(t.value)+" revenue (14d)";
