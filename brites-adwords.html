@@ -570,7 +570,7 @@ var LOADINFO={
   reject:{verb:"Removing draft",detail:"",eta:"1\u20132s"},
   setBudget:{verb:"Updating budget in Google Ads",detail:"",eta:"2\u20134s"},
   dailyStats:{verb:"Pulling daily stats",detail:"Per-campaign, per-ad & keyword metrics segmented by day \u2014 live from Google Ads",eta:"3\u20138s"},
-  runDiagnostics:{verb:"Running Ad Doctor",detail:"Pulling Google Ads diagnostics, recommendations, impression share, ad strength & quality scores \u2014 then the AI specialist reviews every campaign",eta:"15\u201330s"},
+  runDiagnostics:{verb:"Running Ad Doctor",detail:"Queued to the background worker \u2014 Google Ads pull + AI specialist review; the panel updates itself when the result lands",eta:"30\u201390s"},
   applyRec:{verb:"Applying Google recommendation",detail:"",eta:"2\u20134s"},
   applyRemedy:{verb:"Applying AI remedy",detail:"Mutation + Google Ads read-back verification + logged to Fix History",eta:"3\u20136s"},
   remedyHistory:{verb:"Loading fix history",detail:"",eta:"1\u20132s"},
@@ -925,8 +925,8 @@ function campaignTable(camps){
   return '<table class="ptable"><thead><tr><th>Campaign</th><th>Status</th><th>Schedule</th><th class="r">Budget</th><th class="r">Cost</th><th class="r">Conv.</th><th class="r">ROAS</th></tr></thead><tbody>'+
     camps.map(function(c,i){var r=(+c.cost>0)?(c.value/c.cost):null;var dt=campDates(c);
       var ctr=c.impr>0?(c.clicks/c.impr*100):null,cpc=c.clicks>0?(c.cost/c.clicks):null,cpa=c.conv>0?(c.cost/c.conv):null;
-      var row='<tr class="crow" data-i="'+i+'" style="cursor:pointer"><td style="font-weight:500">'+esc(c.name)+'</td><td>'+statusBadge(c)+schedHint(c)+'</td><td class="muted" style="font-size:11.5px;white-space:nowrap">'+(dt.s?(esc(dt.s)+" \u2192 "+esc(dt.e||"open")):"\u2014")+(dt.info?'<div style="font-size:10px;color:var(--ink-45)">'+esc(dt.info)+'</div>':"")+'</td><td class="r">'+(c.budget?money(c.budget):"\u2014")+'</td><td class="r mono">'+money(c.cost)+'</td><td class="r mono">'+((+c.conv||0)%1?(+c.conv).toFixed(1):(+c.conv||0))+'</td><td class="r">'+(r==null?"\u2014":'<span class="'+(r>=3?"roas-good":r>=2.5?"roas-mid":"roas-bad")+'">'+r.toFixed(1)+'x</span>')+'</td></tr>';
-      var det='<tr class="cdet" data-d="'+i+'" style="display:none"><td colspan="7" style="background:var(--paper-2)"><div style="padding:10px 8px;display:flex;flex-wrap:wrap;gap:22px;font-size:12px"><span><b>Impressions</b><br><span class="mono">'+(+c.impr||0).toLocaleString()+'</span></span><span><b>Clicks</b><br><span class="mono">'+(+c.clicks||0).toLocaleString()+'</span></span><span><b>CTR</b><br><span class="mono">'+(ctr==null?"\u2014":ctr.toFixed(2)+"%")+'</span></span><span><b>Avg CPC</b><br><span class="mono">'+(cpc==null?"\u2014":money(cpc))+'</span></span><span><b>Conversions</b><br><span class="mono">'+(+c.conv||0)+'</span></span><span><b>Cost / conv</b><br><span class="mono">'+(cpa==null?"\u2014":money(cpa))+'</span></span><span><b>Conv. value</b><br><span class="mono">'+money(c.value)+'</span></span>'+(c.primaryStatusReasons&&c.primaryStatusReasons.length?'<span style="flex-basis:100%;color:var(--ink-70);font-size:11.5px">\u26a0 '+esc(reasonText(c.primaryStatusReasons))+'</span>':"")+'</div><div class="adlvl" data-c="'+esc(String(c.id))+'" style="padding:0 8px 10px"></div></td></tr>';
+      var row='<tr class="crow" data-i="'+i+'" data-cid="'+esc(String(c.id||i))+'" style="cursor:pointer"><td style="font-weight:500">'+esc(c.name)+'</td><td>'+statusBadge(c)+schedHint(c)+'</td><td class="muted" style="font-size:11.5px;white-space:nowrap">'+(dt.s?(esc(dt.s)+" \u2192 "+esc(dt.e||"open")):"\u2014")+(dt.info?'<div style="font-size:10px;color:var(--ink-45)">'+esc(dt.info)+'</div>':"")+'</td><td class="r">'+(c.budget?money(c.budget):"\u2014")+'</td><td class="r mono">'+money(c.cost)+'</td><td class="r mono">'+((+c.conv||0)%1?(+c.conv).toFixed(1):(+c.conv||0))+'</td><td class="r">'+(r==null?"\u2014":'<span class="'+(r>=3?"roas-good":r>=2.5?"roas-mid":"roas-bad")+'">'+r.toFixed(1)+'x</span>')+'</td></tr>';
+      var det='<tr class="cdet" data-d="'+i+'" data-cid="'+esc(String(c.id||i))+'" style="display:none"><td colspan="7" style="background:var(--paper-2)"><div style="padding:10px 8px;display:flex;flex-wrap:wrap;gap:22px;font-size:12px"><span><b>Impressions</b><br><span class="mono">'+(+c.impr||0).toLocaleString()+'</span></span><span><b>Clicks</b><br><span class="mono">'+(+c.clicks||0).toLocaleString()+'</span></span><span><b>CTR</b><br><span class="mono">'+(ctr==null?"\u2014":ctr.toFixed(2)+"%")+'</span></span><span><b>Avg CPC</b><br><span class="mono">'+(cpc==null?"\u2014":money(cpc))+'</span></span><span><b>Conversions</b><br><span class="mono">'+(+c.conv||0)+'</span></span><span><b>Cost / conv</b><br><span class="mono">'+(cpa==null?"\u2014":money(cpa))+'</span></span><span><b>Conv. value</b><br><span class="mono">'+money(c.value)+'</span></span>'+(c.primaryStatusReasons&&c.primaryStatusReasons.length?'<span style="flex-basis:100%;color:var(--ink-70);font-size:11.5px">\u26a0 '+esc(reasonText(c.primaryStatusReasons))+'</span>':"")+'</div><div class="adlvl" data-c="'+esc(String(c.id))+'" style="padding:0 8px 10px"></div></td></tr>';
       return row+det;}).join("")+'</tbody></table>';}
 function wireCampRows(scope){Array.prototype.forEach.call(scope.querySelectorAll(".crow"),function(r){r.onclick=function(){var i=this.getAttribute("data-i");var d=scope.querySelector('.cdet[data-d="'+i+'"]');if(d)d.style.display=d.style.display==="none"?"":"none";};});}
 
@@ -1019,17 +1019,32 @@ function loadDiagnostics(autoRun){loadRemedyHistory(function(){if(DIAG)renderDia
   if(d&&!d.empty){DIAG=d;renderDiag();}
   if(autoRun&&diagStale(DIAG))runDiag(true);
 }).catch(function(){});}
-function runDiag(silent){if(_diagBusy)return;_diagBusy=true;
-  var b=document.getElementById("diagRun");if(b){b.disabled=true;b.textContent="Diagnosing\u2026";}
-  if(!silent&&!DIAG){var db0=document.getElementById("diagBody");if(db0)db0.innerHTML='<div class="empty" style="height:90px"><span class="spin lg gold"></span><div style="font-size:12.5px">Pulling diagnostics from Google Ads + AI review\u2026 15\u201330s</div></div>';}
-  api("runDiagnostics").then(function(d){if(d&&!d.error){DIAG=d;renderDiag();}else if(d&&d.error){var db=document.getElementById("diagBody");if(db)db.innerHTML='<div class="empty" style="height:70px"><div style="font-size:12.5px;color:var(--clay)">Diagnostics failed: '+esc(d.error)+'</div></div>';}})
-  .catch(function(e){var db=document.getElementById("diagBody");if(db)db.innerHTML='<div class="empty" style="height:70px"><div style="font-size:12.5px;color:var(--clay)">'+esc(e.message||e)+'</div></div>';})
-  .finally(function(){_diagBusy=false;var b2=document.getElementById("diagRun");if(b2){b2.disabled=false;b2.textContent="Diagnose now";}});}
+// The run executes in the background worker (up to ~2 min with the LLM), so
+// we poll the stored diagnostics doc until generatedAt moves past our marker.
+function pollDiagnostics(prevGen,onDone,onFail){var t0=Date.now();
+  (function tick(){
+    if(Date.now()-t0>180000){if(onFail)onFail("Timed out waiting for the diagnosis (check again in a minute \u2014 it may still land).");return;}
+    api("diagnostics").then(function(d){
+      if(d&&d.generatedAt&&d.generatedAt>prevGen){DIAG=d;renderDiag();if(onDone)onDone();}
+      else setTimeout(tick,3000);
+    }).catch(function(){setTimeout(tick,4000);});
+  })();}
+function runDiag(silent,campaignId){if(_diagBusy)return;_diagBusy=true;
+  var prev=(DIAG&&DIAG.generatedAt)||0;
+  var b=document.getElementById("diagRun");if(b&&!campaignId){b.disabled=true;b.textContent="Diagnosing\u2026";}
+  if(!silent&&!DIAG){var db0=document.getElementById("diagBody");if(db0)db0.innerHTML='<div class="empty" style="height:90px"><span class="spin lg gold"></span><div style="font-size:12.5px">Pulling diagnostics from Google Ads + AI review\u2026 30\u201390s</div></div>';}
+  var finish=function(){_diagBusy=false;var b2=document.getElementById("diagRun");if(b2){b2.disabled=false;b2.textContent="Diagnose all";}};
+  api("runDiagnostics",campaignId?{campaignId:campaignId}:{}).then(function(d){
+    if(d&&d.queued){pollDiagnostics(prev,finish,function(msg){finish();toast(msg);});}
+    else if(d&&!d.error&&d.campaigns){DIAG=d;renderDiag();finish();}
+    else{finish();var db=document.getElementById("diagBody");if(db&&d&&d.error)db.innerHTML='<div class="empty" style="height:70px"><div style="font-size:12.5px;color:var(--clay)">Diagnostics failed: '+esc(d.error)+'</div></div>';}
+  }).catch(function(e){finish();var db=document.getElementById("diagBody");if(db)db.innerHTML='<div class="empty" style="height:70px"><div style="font-size:12.5px;color:var(--clay)">'+esc(e.message||e)+'</div></div>';});}
 function sevInfo(sv){return sv==="critical"?["#b3402a","CRITICAL"]:sv==="attention"?["#b26a00","ATTENTION"]:["#2e7d32","HEALTHY"];}
 function verdictTag(v){var m={agree:["Agrees with Google","#2e7d32"],partial:["Partially agrees","#b26a00"],disagree:["Disagrees with Google","#b3402a"]};var x=m[v]||["\u2014","var(--ink-45)"];return '<span style="font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:'+x[1]+';border:1px solid '+x[1]+';border-radius:9px;padding:1px 8px">'+x[0]+'</span>';}
 function diagChip(label,val,warn){if(val==null||val==="")return "";return '<span style="font-size:11px;padding:2px 9px;border-radius:10px;background:'+(warn?"#fdeee9":"var(--paper-2)")+';color:'+(warn?"#b3402a":"var(--ink-70)")+';border:1px solid '+(warn?"#f0c8bc":"var(--line)")+'">'+esc(label)+" "+esc(String(val))+"</span>";}
 function worstStrength(m){var order=["POOR","AVERAGE","GOOD","EXCELLENT"];for(var i=0;i<order.length;i++){if(m&&m[order[i]])return order[i].toLowerCase()+" ("+m[order[i]]+")";}return null;}
 function renderDiag(){var body=document.getElementById("diagBody");if(!body||!DIAG)return;
+  var __snap=uiSnapshot();
   var sub=document.getElementById("diagSub");if(sub)sub.textContent="checked "+timeago(DIAG.generatedAt)+" ago \u00b7 "+((DIAG.campaigns||[]).length)+" campaigns";
   var aiBy={};(((DIAG.ai||{}).campaigns)||[]).forEach(function(v){aiBy[String(v.id)]=v;});
   var html="";
@@ -1118,13 +1133,18 @@ function renderDiag(){var body=document.getElementById("diagBody");if(!body||!DI
     if(e.target&&e.target.closest&&e.target.closest("button"))return;
     var id=this.getAttribute("data-open");diagOpen[id]=!diagOpen[id];renderDiag();};});
   Array.prototype.forEach.call(body.querySelectorAll(".dg-one"),function(b){b.onclick=function(ev){ev.stopPropagation();
-    var id=this.getAttribute("data-id");var btn=this;btn.disabled=true;btn.textContent="\u2026";
-    api("runDiagnostics",{campaignId:id}).then(function(d){if(d&&!d.error){DIAG=d;diagOpen[id]=true;renderDiag();}else alert((d&&d.error)||"failed");})
-    .catch(function(e){alert(e.message||e);}).finally(function(){btn.disabled=false;btn.textContent="Diagnose";});};});
+    var id=this.getAttribute("data-id");var btn=this;btn.disabled=true;btn.textContent="Diagnosing\u2026";
+    var prev=(DIAG&&DIAG.generatedAt)||0;
+    api("runDiagnostics",{campaignId:id}).then(function(d){
+      if(d&&d.queued){diagOpen[id]=true;pollDiagnostics(prev,null,function(msg){toast(msg);});}
+      else if(d&&!d.error&&d.campaigns){DIAG=d;diagOpen[id]=true;renderDiag();}
+      else alert((d&&d.error)||"failed");
+    }).catch(function(e){alert(e.message||e);btn.disabled=false;btn.textContent="Diagnose";});};});
   var ta=document.getElementById("diagToggleAll");if(ta){var anyClosed=(DIAG.campaigns||[]).some(function(c){return !diagOpen[c.id];});
     ta.textContent=anyClosed?"Expand all":"Collapse all";
     if(!ta._w){ta._w=true;ta.onclick=function(){var ac=(DIAG.campaigns||[]).some(function(c){return !diagOpen[c.id];});(DIAG.campaigns||[]).forEach(function(c){diagOpen[c.id]=ac;});renderDiag();};}}
   var rb=document.getElementById("diagRun");if(rb&&!rb._wired){rb._wired=true;rb.onclick=function(){runDiag(false);};}
+  uiRestore(__snap);
 }
 // full schedule line + Start-now button for the expanded campaign detail
 function schedHtml(c){if(!c.startDate&&!c.endDate)return "";var sched=c.primaryStatus==="PENDING";var s=c.startDate?fmtMon(c.startDate):"\u2014",e=c.endDate?fmtMon(c.endDate):"\u2014";var btn=sched?'<button class="btn gold sm pstart" data-id="'+c.id+'" data-name="'+esc(c.name)+'" style="margin-left:10px;padding:3px 10px;font-size:11px">Start now</button>':"";return '<div style="margin-top:10px;font-size:11.5px;color:var(--ink-70)">Schedule: <b>'+esc(s)+'</b> \u2192 <b>'+esc(e)+'</b>'+(sched?' \u00b7 <span style="color:#33525d">scheduled to start '+esc(s)+'</span>':"")+btn+'</div>';}
@@ -1802,7 +1822,28 @@ async function livePull(){
   finally{ livePulling=false; }
 }
 async function reload(toastOk){try{DASH=await api("dashboard");renderAll();loadDiagnostics(true);$("#connDot").style.background="var(--sage)";$("#connText").textContent="connected";lastSync=Date.now();if(toastOk)toast("Refreshed",true);if(!countriesLoaded){ensureCountries().then(function(){if(COUNTRIES.length)renderAll();});}}catch(x){$("#connDot").style.background="var(--clay)";$("#connText").textContent="error";toast(x.message);}}
-function renderAll(){renderControlBar();renderCommand();renderSales();renderSalesSummary();renderConvStrip();renderApprovals();renderPerf();renderControls();updateBadges();paintBenchCty();}
+/* ---- UI-state preservation: re-renders update DATA ONLY; whatever the user
+   has expanded stays expanded, collapsed stays collapsed. Keys are stable
+   (campaign id / summary text scoped to its campaign or view), never DOM
+   indices, so reordering doesn't shuffle states. ---- */
+function _pkeyFor(el){
+  var scope=el.closest("[data-camp]");var sid=scope?("c:"+scope.getAttribute("data-camp")):("v:"+(el.closest(".view")||{}).id||"");
+  if(el.tagName==="DETAILS"){var sm=el.querySelector("summary");return sid+"|d|"+((sm&&sm.textContent)||"").trim().slice(0,60);}
+  return sid+"|"+(el.className||el.tagName);
+}
+function uiSnapshot(){
+  var snap={details:{},cdet:{},drafts:{},diagScroll:null};
+  document.querySelectorAll("details").forEach(function(d){snap.details[_pkeyFor(d)]=d.open;});
+  document.querySelectorAll(".cdet").forEach(function(r){var k=r.getAttribute("data-cid")||r.getAttribute("data-d");if(k!=null)snap.cdet[k]=r.style.display!=="none";});
+  document.querySelectorAll(".draft.open").forEach(function(d){var ti=d.querySelector(".ti");if(ti)snap.drafts[ti.textContent.trim().slice(0,70)]=true;});
+  return snap;
+}
+function uiRestore(snap){if(!snap)return;
+  document.querySelectorAll("details").forEach(function(d){var k=_pkeyFor(d);if(k in snap.details)d.open=!!snap.details[k];});
+  document.querySelectorAll(".cdet").forEach(function(r){var k=r.getAttribute("data-cid")||r.getAttribute("data-d");if(k!=null&&snap.cdet[k])r.style.display="";});
+  document.querySelectorAll(".draft").forEach(function(d){var ti=d.querySelector(".ti");if(ti&&snap.drafts[ti.textContent.trim().slice(0,70)])d.classList.add("open");});
+}
+function renderAll(){var snap=uiSnapshot();renderControlBar();renderCommand();renderSales();renderSalesSummary();renderConvStrip();renderApprovals();renderPerf();renderControls();updateBadges();paintBenchCty();uiRestore(snap);}
 
 async function unlock(e){e.preventDefault();PASS=$("#pc").value;$("#gateErr").textContent="";
   var gb=$(".gatecard button[type=submit]");var gdone=btnBusy(gb,"Connecting\u2026");var aid=actStart("dashboard");
@@ -1813,8 +1854,10 @@ async function unlock(e){e.preventDefault();PASS=$("#pc").value;$("#gateErr").te
       var lp=Math.floor((Date.now()-lastLivePull)/60000);
       var el=$("#sync");if(el)el.textContent="synced "+since+"s ago \u00b7 live pull "+lp+"m ago";
       if(livePulling)return;
-      if((Date.now()-lastLivePull)>=300000){ await livePull(); }
-      else if((Date.now()-lastSync)>30000){ reload(); }
+      // Cadence: one refresh every 10 minutes (was 30s reload + 5min live pull —
+      // the constant re-render collapsed every open menu in the app).
+      if((Date.now()-lastLivePull)>=600000){ await livePull(); }
+      else if((Date.now()-lastSync)>600000){ reload(); }
     },1000);
   }catch(x){ $("#gateErr").textContent=x.message.indexOf("401")>=0?"Wrong passcode.":x.message; }
   actEnd(aid);gdone();
