@@ -2367,6 +2367,33 @@ async function setCampaignCountries(campaignId, countryIds, { ctrl } = {}) {
 
 // Rewrite the target countries on a PENDING approval draft (before it's applied), by swapping the
 // location criterion ops inside its stored payload. Lets the user choose countries at approval time.
+// Edit a pending draft's flight dates before approval. Campaign create ops
+// carry startDateTime/endDateTime ("yyyyMMdd HH:MM:SS") — same format the
+// sanitize/migrate path enforces.
+async function setApprovalDates(approvalId, startDate, endDate) {
+  const f = fb(); if (!f) throw new Error("no firestore");
+  const sd = _dateOnly(startDate), ed = _dateOnly(endDate);
+  if (!sd && !ed) throw new Error("no dates supplied");
+  const today = _acctDateYmd(await _accountTz(), 0);
+  if (sd && sd < today) throw new Error("start date is in the past");
+  if (sd && ed && ed < sd) throw new Error("end date is before start date");
+  const ref = f.db.collection(COL.approvals).doc(approvalId);
+  const snap = await ref.get(); if (!snap.exists) throw new Error("approval not found");
+  const p = (snap.data() || {}).payload || {};
+  const ops = Array.isArray(p.mutateOperations) ? p.mutateOperations.slice() : [];
+  let touched = false;
+  ops.forEach(o => {
+    const c = o && o.campaignOperation && o.campaignOperation.create;
+    if (!c) return;
+    if (sd) { c.startDateTime = _toGAdsDateTime(sd, "00:00:00"); delete c.startDate; delete c.start_date; }
+    if (ed) { c.endDateTime = _toGAdsDateTime(ed, "23:59:59"); delete c.endDate; delete c.end_date; }
+    touched = true;
+  });
+  if (!touched) throw new Error("draft has no campaign operation to schedule");
+  await ref.set({ payload: { ...p, mutateOperations: ops } }, { merge: true });
+  return { ok: true, id: approvalId, startDate: sd || null, endDate: ed || null };
+}
+
 async function setApprovalCountries(approvalId, countryIds) {
   const f = fb(); if (!f) throw new Error("no firestore");
   const ref = f.db.collection(COL.approvals).doc(approvalId);
@@ -3640,6 +3667,17 @@ async function adReviewStatus({ adIds } = {}) {
   return { statuses };
 }
 
+// Async campaign-generation status (background worker writes, console polls).
+async function setGenStatus(genId, out) {
+  const f = fb(); if (!f) return;
+  await f.db.collection(COL.state).doc("gen_" + String(genId)).set({ ...(out || {}), at: Date.now() });
+}
+async function getGenStatus(genId) {
+  const f = fb(); if (!f) return null;
+  const snap = await f.db.collection(COL.state).doc("gen_" + String(genId)).get();
+  return snap.exists ? snap.data() : null;
+}
+
 // Applied-fix history, newest first (powers the Fix History tab + AI context).
 async function remedyHistory({ limit = 100 } = {}) {
   const f = fb(); if (!f) return { items: [] };
@@ -3735,13 +3773,13 @@ module.exports = {
   generateForCollection, COLLECTIONS, OCCASIONS,
   getCollections, suggestOccasions, recordOccasionUse,
   scanOpportunities, opportunitiesWithStatus, takenTags, releaseOpportunity, fetchTopProducts, setCampaignStatus, startCampaignNow, setCampaignBudget, analyzeCampaign,
-  listCountries, campaignCountries, setCampaignCountries, setApprovalCountries,
+  listCountries, campaignCountries, setCampaignCountries, setApprovalCountries, setApprovalDates,
   loadCalendar, dueEvents,
   measure, pruneAssets, mineSearchTerms, reallocateBudgets, anomalyCheck,
   enforceBudgetCeiling, monthlySpendGuard,
   dashboard,
   fetchDiagnostics, runDiagnostics, getDiagnostics, applyGoogleRecommendation, dismissGoogleRecommendation,
   dailyStats, applyRemedy, remedyHistory, adReviewStatus,
-  getPlaybook, playbookSlice, distillLessons,
+  getPlaybook, playbookSlice, distillLessons, setGenStatus, getGenStatus,
   _util: { micros, fromMicros, clampHeadline, clampDescription, gAdsTime, daysUntil }
 };

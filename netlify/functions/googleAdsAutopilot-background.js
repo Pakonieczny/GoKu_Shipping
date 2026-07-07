@@ -72,7 +72,7 @@ exports.handler = async (event) => {
     : ["anomaly", "monthly", "conversions", "adjustments", "measure", "mine", "prune", "budgets", "ceiling", "events", "pruneLedger"];
 
   // Read-only tasks (no Google Ads mutations) are allowed even when the kill switch is off.
-  const READONLY = new Set(["scanOpportunities", "pruneLedger", "bestSellers", "diagnostics", "distill"]); // bestSellers touches Shopify, never Google Ads
+  const READONLY = new Set(["scanOpportunities", "pruneLedger", "bestSellers", "diagnostics", "distill", "generate"]); // bestSellers touches Shopify, never Google Ads
   const allReadOnly = tasks.every(t => READONLY.has(t));
 
   // HARD KILL SWITCH — blocks anything that could mutate. Read-only analysis still runs.
@@ -115,6 +115,19 @@ exports.handler = async (event) => {
         try { result.distill = await E.distillLessons(); } catch (e) { result.distill = { error: String(e.message || e).slice(0, 200) }; }
       }
       else if (task === "distill") { result.distill = await E.distillLessons(); }
+      else if (task === "generate") {
+        // Campaign generation (keyword research + high-effort copy) outruns the
+        // 26s gateway, so it runs here; the console polls the status doc.
+        const genId = String(body.genId || Date.now());
+        let out;
+        try {
+          out = await E.generateForCollection(body.coll, body.event, body.budget,
+            { ctrl, startDate: body.startDate, endDate: body.endDate, countries: body.countries,
+              maxCpc: body.maxCpc, peakDate: body.peakDate, smartBidding: body.smartBidding });
+        } catch (e) { out = { ok: false, reason: String(e.message || e).slice(0, 300) }; }
+        try { await E.setGenStatus(genId, JSON.parse(JSON.stringify(out || {}))); } catch (e) {}
+        result.generate = { genId, ok: !!(out && out.ok) };
+      }
       else if (task === "adjustments") { result.adjustments = await E.uploadConversionAdjustments({ ctrl }); }
       else if (task === "measure") { result.measure = { campaigns: (await E.measure()).length }; }
       else if (task === "mine")     { result.mine = await E.mineSearchTerms({ ctrl }); }

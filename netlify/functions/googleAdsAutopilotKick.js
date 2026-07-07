@@ -189,6 +189,10 @@ async function handleAction(body) {
     try { return await E.setCampaignCountries(body.id, body.countries || [], { ctrl }); }
     catch (e) { return { ok: false, error: e.message }; }
   }
+  if (a === "setApprovalDates") {
+    try { return await E.setApprovalDates(body.id, body.startDate, body.endDate); }
+    catch (e) { return { ok: false, error: e.message }; }
+  }
   if (a === "setApprovalCountries") {
     try { return await E.setApprovalCountries(body.id, body.countries || []); }
     catch (e) { return { ok: false, error: e.message }; }
@@ -231,8 +235,24 @@ async function handleAction(body) {
     catch (e) { return { ok: false, error: e.message }; }
   }
   if (a === "generate") {
-    try { return await E.generateForCollection(body.coll, body.event, body.budget, { ctrl, startDate: body.startDate, endDate: body.endDate, countries: body.countries, maxCpc: body.maxCpc, peakDate: body.peakDate, smartBidding: body.smartBidding }); }
-    catch (e) { return { ok: false, reason: e.message }; }
+    // Keyword research + high-effort copy generation outruns the 26s gateway
+    // -> background worker; the console polls genStatus for the outcome.
+    try {
+      const genId = String(Date.now()) + Math.random().toString(36).slice(2, 7);
+      const res = await fetch(baseUrl() + "/.netlify/functions/googleAdsAutopilot-background", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tasks: ["generate"], genId,
+          coll: body.coll, event: body.event, budget: body.budget,
+          startDate: body.startDate, endDate: body.endDate, countries: body.countries,
+          maxCpc: body.maxCpc, peakDate: body.peakDate, smartBidding: body.smartBidding,
+          token: process.env.EDIT_PASSCODE || undefined })
+      });
+      return { queued: true, genId, upstream: res.status };
+    } catch (e) { return { ok: false, reason: e.message }; }
+  }
+  if (a === "genStatus") {
+    try { return (await E.getGenStatus(body.genId)) || { pending: true }; }
+    catch (e) { return { pending: true, error: e.message }; }
   }
   if (a === "measureNow") {
     try { const snap = await E.measure(); return { ok: true, campaigns: Array.isArray(snap) ? snap.length : null, at: Date.now() }; }
