@@ -1064,11 +1064,36 @@ function loadPlaybook(){api("playbook").then(function(p){if(p&&!p.empty&&!p.erro
 function pbConfColor(c){return c==="proven"?"#2e7d32":c==="probable"?"#b26a00":"var(--ink-45)";}
 function pbScopeChip(sc){sc=String(sc||"global");var lab=sc==="global"?"global":sc.replace("jewelryType:","").replace("theme:","").replace("collection:","");
   return '<span style="font-size:10px;padding:1px 8px;border-radius:9px;background:var(--paper-2);border:1px solid var(--line);color:var(--ink-70)">'+esc(lab)+'</span>';}
+function relearnPlaybook(){if(_pbBusy)return;_pbBusy=true;
+  var rb=document.getElementById("pbRelearn");var box=document.getElementById("pbBody");
+  var prev=(PB&&PB.updatedAt)||0;var t0=Date.now();
+  if(rb){rb.disabled=true;rb.innerHTML='<span class="spin sm"></span> Learning\u2026';}
+  function progress(){var sec=Math.round((Date.now()-t0)/1000);
+    if(box)box.innerHTML='<div style="display:flex;gap:10px;align-items:center;padding:10px 0;font-size:12.5px"><span class="spin lg gold"></span><div><b>Distilling lessons\u2026</b> <span class="mono">'+sec+'s</span><div class="muted" style="font-size:11.5px;margin-top:2px">Reading every applied fix, its verified outcome, and the latest diagnosis \u2014 then updating the bounded playbook. Typically 30\u201390s.</div></div></div>';}
+  function done(ok,note){_pbBusy=false;var rb2=document.getElementById("pbRelearn");if(rb2){rb2.disabled=false;rb2.textContent="Re-learn now";}
+    if(ok)toast(note,true);else toast(note);renderPlaybook();}
+  progress();
+  api("distill",{}).then(function(d){
+    if(d&&d.queued){(function tick(){
+      if(Date.now()-t0>240000){done(false,"Distill is still running \u2014 re-open this tab in a minute.");return;}
+      progress();
+      api("playbook").then(function(p){
+        if(p&&p.updatedAt&&p.updatedAt>prev){PB=p;done(true,"Playbook v"+(p.version||1)+" \u2014 "+((p.lessons||[]).length)+" lessons, "+((p.retired||[]).length)+" retired");}
+        else setTimeout(tick,3000);
+      }).catch(function(){setTimeout(tick,4000);});})();}
+    else done(false,(d&&d.error)||"Distill did not queue \u2014 redeploy the Kick/background functions.");
+  }).catch(function(e){done(false,e.message||String(e));});}
 function renderPlaybook(){var box=document.getElementById("pbBody");if(!box)return;
   var sub=document.getElementById("pbSub");
-  if(!PB||!(PB.lessons||[]).length){
-    if(sub)sub.textContent="no lessons yet";
-    box.innerHTML='<div class="muted" style="font-size:12.5px;padding:6px 0">No distilled lessons yet. The playbook builds itself from Ad Doctor results \u2014 run a diagnosis (Command Center) or hit Re-learn now once fixes have real outcomes. Lessons feed every future opportunity scan and generated ad automatically.</div>';return;}
+  var rb=document.getElementById("pbRelearn");
+  if(rb&&!rb._w){rb._w=true;rb.onclick=relearnPlaybook;} // wired in EVERY state
+  if(_pbBusy)return; // don't clobber the progress display
+  if(!PB){
+    if(sub)sub.textContent="not built yet";
+    box.innerHTML='<div class="muted" style="font-size:12.5px;padding:6px 0">The playbook hasn\u2019t been distilled yet. It builds automatically after every Ad Doctor diagnosis \u2014 or press <b>Re-learn now</b> to distill immediately from the fixes already applied.</div>';return;}
+  if(!(PB.lessons||[]).length){
+    if(sub)sub.textContent="v"+(PB.version||1)+" \u00b7 updated "+timeago(PB.updatedAt)+" ago \u00b7 0 lessons";
+    box.innerHTML='<div class="muted" style="font-size:12.5px;padding:6px 0">The distiller ran but kept no lessons \u2014 the evidence isn\u2019t conclusive yet (fixes need time and traffic before working/not-working verdicts land).'+(PB.changeLog?' <br><span style="font-size:11.5px">Distiller note: '+esc(PB.changeLog)+'</span>':"")+'</div>';return;}
   if(sub)sub.textContent=(PB.lessons||[]).length+" lessons \u00b7 v"+(PB.version||1)+" \u00b7 updated "+timeago(PB.updatedAt)+" ago";
   var groups=[["proven","PROVEN \u2014 near-mandatory"],["probable","PROBABLE \u2014 strong defaults"],["hypothesis","HYPOTHESIS \u2014 early signals"]];
   var html=groups.map(function(g){var ls=(PB.lessons||[]).filter(function(l){return (l.confidence||"hypothesis")===g[0];});if(!ls.length)return "";
@@ -1078,16 +1103,6 @@ function renderPlaybook(){var box=document.getElementById("pbBody");if(!box)retu
     PB.retired.map(function(r){return '<div style="padding:6px 2px;border-top:1px dashed var(--line);font-size:12px"><span style="text-decoration:line-through;color:var(--ink-70)">'+esc(r.rule||"")+'</span>'+(r.why?'<div class="muted" style="font-size:11px">'+esc(r.why)+'</div>':"")+'</div>';}).join("")+'</details>';}
   if(PB.changeLog)html+='<div class="muted" style="font-size:11px;margin-top:10px">Last update: '+esc(PB.changeLog)+'</div>';
   box.innerHTML=html;
-  var rb=document.getElementById("pbRelearn");
-  if(rb&&!rb._w){rb._w=true;rb.onclick=function(){if(_pbBusy)return;_pbBusy=true;var prev=(PB&&PB.updatedAt)||0;
-    rb.disabled=true;rb.textContent="Learning\u2026";
-    api("distill",{}).then(function(d){
-      if(d&&d.queued){var t0=Date.now();(function tick(){
-        if(Date.now()-t0>180000){_pbBusy=false;rb.disabled=false;rb.textContent="Re-learn now";toast("Distill still running \u2014 check back shortly.");return;}
-        api("playbook").then(function(p){if(p&&p.updatedAt&&p.updatedAt>prev){PB=p;renderPlaybook();_pbBusy=false;var rb2=document.getElementById("pbRelearn");if(rb2){rb2.disabled=false;rb2.textContent="Re-learn now";}toast("Playbook updated \u2014 "+((p.lessons||[]).length)+" lessons",true);}
-          else setTimeout(tick,3000);}).catch(function(){setTimeout(tick,4000);});})();}
-      else{_pbBusy=false;rb.disabled=false;rb.textContent="Re-learn now";if(d&&d.error)toast(d.error);}
-    }).catch(function(e){_pbBusy=false;rb.disabled=false;rb.textContent="Re-learn now";toast(e.message||e);});};}
 }
 
 /* ---- Fix History: applied remedies, verification & before/after ---- */
