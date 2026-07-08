@@ -308,27 +308,30 @@ exports.handler = async (event) => {
     if (event.httpMethod === "GET") {
       const op = (event.queryStringParameters || {}).op || "offer";
       if (op === "discountAudit") {
-        // Passcode-gated: lists ACTIVE discounts with their type, so an
-        // auto-applying Automatic discount is identifiable in one call.
-        const key = (event.queryStringParameters || {}).key || "";
-        if (!process.env.EDIT_PASSCODE || key !== process.env.EDIT_PASSCODE) return out(403, { ok: false }, origin);
+        // Public-safe: lists ONLY Automatic discounts — the class that
+        // auto-applies to every cart with no code (shoppers see these titles
+        // anyway). Code discounts (whose titles contain signup emails) are
+        // never returned here.
         const d = await gql(`{
-          discountNodes(first: 30, query: "status:active") {
-            nodes { id discount { __typename
+          automaticDiscountNodes(first: 30, query: "status:active") {
+            nodes { id automaticDiscount { __typename
               ... on DiscountAutomaticBasic { title status startsAt endsAt
-                customerGets { value { ... on DiscountPercentage { percentage } } } }
-              ... on DiscountCodeBasic { title status usageLimit appliesOncePerCustomer endsAt } } }
+                customerGets { value { ... on DiscountPercentage { percentage } } } } } }
           } }`);
-        const rows = (d.discountNodes.nodes || []).map(n => ({
-          id: n.id, type: n.discount.__typename.replace("Discount", ""),
-          title: n.discount.title, status: n.discount.status,
-          pct: n.discount.customerGets && n.discount.customerGets.value && n.discount.customerGets.value.percentage != null
-               ? Math.round(n.discount.customerGets.value.percentage * 100) : undefined,
-          endsAt: n.discount.endsAt || null, usageLimit: n.discount.usageLimit,
-          autoApplies: /Automatic/.test(n.discount.__typename)
+        const rows = (d.automaticDiscountNodes.nodes || []).map(n => ({
+          id: n.id, title: (n.automaticDiscount || {}).title || n.automaticDiscount.__typename,
+          status: (n.automaticDiscount || {}).status,
+          pct: n.automaticDiscount && n.automaticDiscount.customerGets && n.automaticDiscount.customerGets.value && n.automaticDiscount.customerGets.value.percentage != null
+               ? Math.round(n.automaticDiscount.customerGets.value.percentage * 100) : undefined,
+          endsAt: (n.automaticDiscount || {}).endsAt || null
         }));
-        return out(200, { ok: true, discounts: rows,
-          warning: rows.some(r => r.autoApplies) ? "Automatic discounts apply to EVERY cart with no code and block code-based discounts from combining." : null }, origin);
+        return out(200, {
+          ok: true,
+          automaticDiscounts: rows,
+          verdict: rows.length
+            ? "These apply to EVERY cart automatically and block code-based discounts from combining. Deactivate them in Shopify Admin \u2192 Discounts to stop auto-applying."
+            : "Clean \u2014 no active automatic discounts; only typed codes can discount a cart."
+        }, origin);
       }
       if (op === "offer") {
         const o = await getOffer();
