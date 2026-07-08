@@ -1222,8 +1222,26 @@ function loadDiagnostics(autoRun){renderDiag();loadRemedyHistory(function(){rend
   renderDiag();
   if(autoRun&&diagStale(DIAG))runDiag(true);
 }).catch(function(){renderDiag();});}
-// The run executes in the background worker (up to ~2 min with the LLM), so
-// we poll the stored diagnostics doc until generatedAt moves past our marker.
+// User-initiated runs poll the per-run STATUS doc the worker writes, so a
+// server-side failure surfaces its real error instead of a blind timeout.
+function diagFailBanner(msg){var db=document.getElementById("diagBody");if(!db)return;
+  var old=db.querySelector(".diagErr");if(old)old.remove();
+  var d=document.createElement("div");d.className="diagErr";
+  d.style.cssText="padding:10px 12px;border:1px solid #f0c8bc;border-radius:10px;background:#fdeee9;color:#b3402a;font-size:12.5px;margin-bottom:12px";
+  d.innerHTML='<b>Last diagnosis failed:</b> '+esc(msg)+' <span style="opacity:.75">\u00b7 fix the cause and hit Diagnose again</span>';
+  db.insertBefore(d,db.firstChild);}
+function pollDiagRun(runId,onDone,onFail){var t0=Date.now();
+  (function tick(){
+    if(Date.now()-t0>360000){if(onFail)onFail("No status after 6 minutes \u2014 the background worker may not be deployed or is crashing before it can report. Check the goldenspike function logs for googleAdsAutopilot-background.");return;}
+    api("diagRunStatus",{runId:runId}).then(function(s){
+      if(s&&s.ok===true){api("diagnostics").then(function(d){if(d&&!d.empty){DIAG=d;renderDiag();}
+        if(s.aiError)toast("Diagnostics landed, but the AI review failed: "+s.aiError);
+        if(onDone)onDone();}).catch(function(){if(onDone)onDone();});}
+      else if(s&&s.ok===false){if(onFail)onFail(s.error||"unknown failure");}
+      else setTimeout(tick,3000);
+    }).catch(function(){setTimeout(tick,4000);});
+  })();}
+// Legacy doc-watcher kept for flows that only care about generatedAt moving.
 function pollDiagnostics(prevGen,onDone,onFail){var t0=Date.now();
   (function tick(){
     if(Date.now()-t0>360000){if(onFail)onFail("Timed out waiting for the diagnosis (check again in a minute \u2014 it may still land).");return;}
@@ -1242,8 +1260,9 @@ function runDiag(silent,campaignId){if(_diagBusy)return;_diagBusy=true;
       if(bb&&bb.disabled)bb.textContent="Diagnosing\u2026 "+Math.round((Date.now()-_t0)/1000)+"s";},1000);}
   if(!silent&&!DIAG){var db0=document.getElementById("diagBody");if(db0)db0.innerHTML='<div class="empty" style="height:90px"><span class="spin lg gold"></span><div style="font-size:12.5px">Pulling diagnostics from Google Ads + AI review\u2026 30\u201390s</div></div>';}
   var finish=function(){_diagBusy=false;if(_diagTick){clearInterval(_diagTick);_diagTick=null;}var b2=document.getElementById("diagRun");if(b2){b2.disabled=false;b2.textContent="Diagnose all";}};
-  api("runDiagnostics",campaignId?{campaignId:campaignId}:{}).then(function(d){
-    if(d&&d.queued){pollDiagnostics(prev,finish,function(msg){finish();toast(msg);});}
+  var runId=String(Date.now());
+  api("runDiagnostics",campaignId?{campaignId:campaignId,runId:runId}:{runId:runId}).then(function(d){
+    if(d&&d.queued){pollDiagRun(runId,finish,function(msg){finish();diagFailBanner(msg);toast("Diagnosis failed \u2014 details in the Ad Doctor card");});}
     else if(d&&!d.error&&d.campaigns){DIAG=d;renderDiag();finish();}
     else{finish();var db=document.getElementById("diagBody");if(db&&d&&d.error)db.innerHTML='<div class="empty" style="height:70px"><div style="font-size:12.5px;color:var(--clay)">Diagnostics failed: '+esc(d.error)+'</div></div>';}
   }).catch(function(e){finish();var db=document.getElementById("diagBody");if(db)db.innerHTML='<div class="empty" style="height:70px"><div style="font-size:12.5px;color:var(--clay)">'+esc(e.message||e)+'</div></div>';});}
@@ -1402,9 +1421,9 @@ function renderDiag(){var body=document.getElementById("diagBody");if(!body)retu
     var _tk=setInterval(function(){if(btn&&btn.disabled)btn.textContent="Diagnosing\u2026 "+Math.round((Date.now()-_t1)/1000)+"s";},1000);
     btn.textContent="Diagnosing\u2026";
     var _done=function(){clearInterval(_tk);if(btn){btn.disabled=false;btn.textContent="Diagnose";}};
-    var prev=(DIAG&&DIAG.generatedAt)||0;
-    api("runDiagnostics",{campaignId:id}).then(function(d){
-      if(d&&d.queued){diagOpen[id]=true;pollDiagnostics(prev,_done,function(msg){_done();toast(msg);});}
+    var prev=(DIAG&&DIAG.generatedAt)||0;var runId1=String(Date.now())+"-"+id;
+    api("runDiagnostics",{campaignId:id,runId:runId1}).then(function(d){
+      if(d&&d.queued){diagOpen[id]=true;pollDiagRun(runId1,_done,function(msg){_done();diagFailBanner(msg);toast("Diagnosis failed \u2014 details in the Ad Doctor card");});}
       else if(d&&!d.error&&d.campaigns){DIAG=d;diagOpen[id]=true;renderDiag();}
       else alert((d&&d.error)||"failed");
     }).catch(function(e){alert(e.message||e);btn.disabled=false;btn.textContent="Diagnose";});};});
