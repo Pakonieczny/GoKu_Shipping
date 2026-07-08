@@ -826,9 +826,11 @@ function _dateOnly(s) { if (!s) return null; const m = String(s).match(/(\d{4})-
 
 // "Today" in the AD ACCOUNT's timezone (not the server's UTC), as YYYYMMDD — so scheduling
 // decisions match how Google Ads evaluates start dates. Falls back to UTC if the lookup fails.
+let _tzCache = null;
 async function _accountTz() {
+  if (_tzCache) return _tzCache;
   try { const r = await gaql(`SELECT customer.time_zone FROM customer LIMIT 1`);
-        if (r[0] && r[0].customer && r[0].customer.timeZone) return r[0].customer.timeZone; } catch (e) {}
+        if (r[0] && r[0].customer && r[0].customer.timeZone) { _tzCache = r[0].customer.timeZone; return _tzCache; } } catch (e) {}
   return "America/Toronto";
 }
 // Current wall-clock in the account's timezone (+optional ms offset) as "yyyyMMdd HH:MM:SS".
@@ -849,6 +851,13 @@ function _accountDateTime(tz, offsetMs) {
 }
 // Account-timezone calendar date (with optional ms offset) as "YYYY-MM-DD", for segments.date ranges.
 function _acctDateYmd(tz, offsetMs) { const s = _accountDateTime(tz, offsetMs || 0); return `${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6,8)}`; }
+
+// GAQL's DURING operator has no LAST_90_DAYS literal (that was the old
+// AdWords API) — 90-day windows must be an explicit BETWEEN on segments.date.
+async function _last90Clause() {
+  const tz = await _accountTz();
+  return `segments.date BETWEEN '${_acctDateYmd(tz, -89 * 86400000)}' AND '${_acctDateYmd(tz, 0)}'`;
+}
 
 // Google Ads campaign schedule fields are startDateTime/endDateTime in "yyyyMMdd HH:MM:SS".
 // Accepts a date (YYYY-MM-DD / YYYYMMDD) and appends a time, or passes through an existing datetime.
@@ -1552,7 +1561,7 @@ async function pruneAssets({ ctrl, minImpr = 500 } = {}) {
             asset.resource_name, asset.text_asset.text, campaign.name, ad_group.resource_name,
             metrics.impressions
      FROM ad_group_ad_asset_view
-     WHERE segments.date DURING LAST_90_DAYS
+     WHERE ${await _last90Clause()}
        AND ad_group_ad_asset_view.performance_label = 'LOW'
        AND ad_group_ad_asset_view.field_type IN ('HEADLINE','DESCRIPTION')`);
   const weak = rows.filter(r => Number(r.metrics.impressions || 0) >= minImpr);
@@ -1577,7 +1586,7 @@ async function mineSearchTerms({ ctrl, convMin = 1, wasteCost = 8 } = {}) {
   const rows = await gaql(
     `SELECT search_term_view.search_term, search_term_view.status, campaign.id, campaign.name,
             ad_group.resource_name, metrics.conversions, metrics.cost_micros, metrics.clicks
-     FROM search_term_view WHERE segments.date DURING LAST_90_DAYS`);
+     FROM search_term_view WHERE ${await _last90Clause()}`);
   const addKw = []; const addNeg = [];
   rows.forEach(r => {
     const term = r.searchTermView.search_term || r.searchTermView.searchTerm;
@@ -3166,7 +3175,7 @@ async function fetchDiagnostics(campaignId) {
           FROM campaign WHERE campaign.status IN ('ENABLED','PAUSED') AND segments.date DURING LAST_30_DAYS${CF}`),
     gaql(`SELECT campaign.id, metrics.impressions, metrics.clicks, metrics.cost_micros,
                  metrics.conversions, metrics.conversions_value
-          FROM campaign WHERE campaign.status IN ('ENABLED','PAUSED') AND segments.date DURING LAST_90_DAYS${CF}`),
+          FROM campaign WHERE campaign.status IN ('ENABLED','PAUSED') AND ${await _last90Clause()}${CF}`),
     // Full recommendation feed. The type-specific budget message carries the
     // budget simulator options (weekly clicks/cost impact per budget choice) —
     // exactly what the Ads UI "Campaign diagnostics" panel shows. Selecting a
@@ -3255,7 +3264,7 @@ async function fetchDiagnostics(campaignId) {
                    ad_group_criterion.quality_info.search_predicted_ctr,
                    metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions
             FROM keyword_view
-            WHERE segments.date DURING LAST_90_DAYS AND ad_group_criterion.status = 'ENABLED'
+            WHERE ${await _last90Clause()} AND ad_group_criterion.status = 'ENABLED'
               AND campaign.status = 'ENABLED'${CF}`).catch(() => []),
       gaql(`SELECT campaign.id, ad_group.id, ad_group_ad.ad.id, ad_group_ad.ad.final_urls,
                    ad_group_ad.ad.responsive_search_ad.headlines,
@@ -3265,7 +3274,7 @@ async function fetchDiagnostics(campaignId) {
       gaql(`SELECT campaign.id, search_term_view.search_term,
                    metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions
             FROM search_term_view
-            WHERE segments.date DURING LAST_90_DAYS AND campaign.status = 'ENABLED'${CF}`).catch(() => []),
+            WHERE ${await _last90Clause()} AND campaign.status = 'ENABLED'${CF}`).catch(() => []),
       gaql(`SELECT campaign.id, ad_group_ad_asset_view.field_type,
                    ad_group_ad_asset_view.performance_label, asset.text_asset.text
             FROM ad_group_ad_asset_view WHERE campaign.status = 'ENABLED'${CF}`).catch(() => [])
@@ -3455,12 +3464,12 @@ async function _campaignBaseline(campaignId) {
   try {
     const rows = await gaql(`SELECT campaign.id, campaign.name, metrics.impressions, metrics.clicks,
                                     metrics.cost_micros, metrics.conversions, metrics.conversions_value
-                             FROM campaign WHERE campaign.id = ${Number(campaignId)} AND segments.date DURING LAST_90_DAYS`);
+                             FROM campaign WHERE campaign.id = ${Number(campaignId)} AND ${await _last90Clause()}`);
     let name = null; const t = { impr: 0, clicks: 0, cost: 0, conv: 0, value: 0 };
     for (const r of rows) { name = (r.campaign || {}).name || name; const m = r.metrics || {};
       t.impr += +m.impressions || 0; t.clicks += +m.clicks || 0; t.cost += fromMicros(m.costMicros);
       t.conv += +m.conversions || 0; t.value += +m.conversionsValue || 0; }
-    return { name, window: "LAST_90_DAYS", ...t };
+    return { name, window: "last 90 days", ...t };
   } catch (e) { return null; }
 }
 
