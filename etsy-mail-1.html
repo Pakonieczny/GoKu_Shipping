@@ -2314,6 +2314,13 @@
       box-sizing: border-box;
     }
     .em-modal-backdrop.active { display: flex; }
+    /* v6.1 — Pre-auth guard. No legacy modal (Settings, change-password,
+     * old login) has any business rendering before the operator is
+     * signed in; historically a stray .active before auth covered the
+     * v6 sign-in gate (z-index 1000) with a 9999 backdrop and blocked
+     * every tap — the mobile login blocker. This makes that whole bug
+     * class impossible regardless of which code path re-introduces it. */
+    body:not(.authed) .em-modal-backdrop { display: none !important; }
     /* IMPORTANT: every .em-modal rule below is scoped via the
        .em-modal-backdrop ancestor so it ONLY targets the Settings
        modal. The order-detail modal at the top of this file uses
@@ -4687,7 +4694,21 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
 #emAuthLayer .dock .seedline{font-size:10.5px;color:#7f8a95;line-height:1.5;padding:2px 2px 0;}
 #emAuthLayer .dock .seedline code{color:#cdd4db;}
 #emAuthLayer .dock.min .body{display:none;}
-@media (max-width:760px){#emAuthLayer .gate{grid-template-columns:1fr;max-width:440px;}#emAuthLayer .gate-aside{display:none;}#emAuthLayer .gate-main{padding:26px 22px 22px;min-height:0;}#emAuthLayer .app-shell{grid-template-columns:0 1fr 0;}#emAuthLayer h1.title{font-size:20px;}#emAuthLayer .pw-reqs, #emAuthLayer .caps-grid{grid-template-columns:1fr;}#emAuthLayer .lrow{grid-template-columns:1fr auto;}#emAuthLayer .lrow .acts{grid-column:1/-1;justify-content:flex-end;}}
+@media (max-width:760px){#emAuthLayer .gate{grid-template-columns:1fr;max-width:440px;}#emAuthLayer .gate-aside{display:none;}#emAuthLayer .gate-main{padding:26px 22px 22px;min-height:0;}#emAuthLayer .app-shell{grid-template-columns:0 1fr 0;}#emAuthLayer h1.title{font-size:20px;}#emAuthLayer .pw-reqs, #emAuthLayer .caps-grid{grid-template-columns:1fr;}#emAuthLayer .lrow{grid-template-columns:1fr auto;}#emAuthLayer .lrow .acts{grid-column:1/-1;justify-content:flex-end;}
+/* v6.1 — Mobile keyboard survival. The canvas was display:grid with
+   place-items:center and NO overflow; body.em-mobile is overflow:hidden.
+   When the on-screen keyboard opened, the visual viewport shrank, the
+   centered gate got clipped at both ends, and the Sign in button could
+   end up off-screen with no way to scroll to it. Switching the child to
+   margin:auto keeps it centered when there's room and lets the canvas
+   scroll when there isn't. */
+#emAuthLayer .gate-canvas{place-items:stretch;overflow:auto;-webkit-overflow-scrolling:touch;padding:16px;}
+#emAuthLayer .gate{margin:auto;}
+/* v6.1 — iOS Safari auto-zooms any focused input under 16px, which on a
+   phone left the operator zoomed into a corner of the sign-in form.
+   16px stops the zoom (same trick the mobile modal CSS already uses). */
+#emAuthLayer .field input{font-size:16px;height:48px;}
+}
 @media (prefers-reduced-motion:reduce){#emAuthLayer *{animation-duration:.001s!important;transition-duration:.05s!important;}}
 </style>
 </head>
@@ -4708,7 +4729,7 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
         <div class="rl user"><div class="ic"><svg viewBox="0 0 24 24" fill="none"><path d="M4 5h16v11H4zM2 20h20" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></div><div><div class="t">User</div><div class="d">Full inbox: read, reply, move, delete.</div></div></div>
       </div>
       <p class="aside-note">An invite link decides which level a new account gets — chosen by a Master Admin when the link is made.</p>
-      <div class="aside-foot"><svg viewBox="0 0 24 24" fill="none"><path d="M6 10V8a6 6 0 1112 0v2" stroke="#8b95a0" stroke-width="1.6"/><rect x="4" y="10" width="16" height="10" rx="2" stroke="#8b95a0" stroke-width="1.6"/></svg>Stays in this browser · 30-day sessions</div>
+      <div class="aside-foot"><svg viewBox="0 0 24 24" fill="none"><path d="M6 10V8a6 6 0 1112 0v2" stroke="#8b95a0" stroke-width="1.6"/><rect x="4" y="10" width="16" height="10" rx="2" stroke="#8b95a0" stroke-width="1.6"/></svg>Stays signed in on this device · 30-day rolling sessions</div>
     </aside>
 
     <main class="gate-main">
@@ -6197,9 +6218,89 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
     // accounts that have no per-browser secret). Leaving it "" keeps using
     // the existing per-browser stored secret during migration.
     const EM_APP_SECRET = "";
+    // v6.1 — FIX: this function used to call ITSELF in the fallback slot
+    // (`EM_APP_SECRET || emResolveSecret() || ""`), which recursed until the
+    // stack overflowed and the catch returned "". Result: the documented
+    // migration fallback to the per-browser stored secret NEVER worked, and
+    // every caller paid a stack-overflow round trip per invocation. The
+    // intended chain is: window override → build constant → the legacy
+    // per-browser localStorage key ("etsyMailSecret") that the pre-v6
+    // secret modal wrote.
     function emResolveSecret() {
-      try { return EM_APP_SECRET || emResolveSecret() || ""; }
-      catch (_) { return EM_APP_SECRET || ""; }
+      try {
+        return window.ETSYMAIL_SECRET
+            || EM_APP_SECRET
+            || localStorage.getItem("etsyMailSecret")
+            || "";
+      } catch (_) { return window.ETSYMAIL_SECRET || EM_APP_SECRET || ""; }
+    }
+
+    /* ── v6.1 — Cached login credentials (session persistence) ─────────
+     * Single source of truth for the session token + cached identity so
+     * the operator is auto-signed-in on every refresh (industry-standard
+     * "remember me" semantics):
+     *
+     *   • "Keep me signed in" CHECKED (default) → token persists in
+     *     localStorage and survives browser restarts (30-day rolling
+     *     session server-side).
+     *   • UNCHECKED → token lives in sessionStorage only (per-tab,
+     *     cleared when the tab closes) — the standard shared-computer
+     *     behavior.
+     *   • A cached identity profile {username, displayName, role} lets
+     *     boot() re-enter the app INSTANTLY on refresh from cache, then
+     *     re-validate the token in the background. Only a definitive
+     *     401/403 clears the cache; transient network/5xx errors never
+     *     log the operator out.
+     *
+     * Reads check sessionStorage first (an unchecked-box login in this
+     * tab wins), then localStorage. All writers/readers in this file go
+     * through these helpers. */
+    const EM_SESSION_KEY         = "etsymail_session";
+    const EM_SESSION_USER_KEY    = "etsymail_session_user";
+    const EM_SESSION_PROFILE_KEY = "etsymail_session_profile";
+    function emReadSessionToken() {
+      try {
+        return sessionStorage.getItem(EM_SESSION_KEY)
+            || localStorage.getItem(EM_SESSION_KEY)
+            || null;
+      } catch (_) { return null; }
+    }
+    function emWriteSessionToken(token, remember) {
+      try {
+        if (remember === false) {
+          sessionStorage.setItem(EM_SESSION_KEY, token);
+          localStorage.removeItem(EM_SESSION_KEY);
+        } else {
+          localStorage.setItem(EM_SESSION_KEY, token);
+          sessionStorage.removeItem(EM_SESSION_KEY);
+        }
+      } catch (_) {}
+    }
+    function emClearSessionToken() {
+      try { sessionStorage.removeItem(EM_SESSION_KEY); } catch (_) {}
+      try {
+        localStorage.removeItem(EM_SESSION_KEY);
+        localStorage.removeItem(EM_SESSION_PROFILE_KEY);
+      } catch (_) {}
+    }
+    function emReadSessionProfile() {
+      try {
+        const raw = localStorage.getItem(EM_SESSION_PROFILE_KEY)
+                 || sessionStorage.getItem(EM_SESSION_PROFILE_KEY);
+        if (!raw) return null;
+        const p = JSON.parse(raw);
+        return (p && p.username) ? p : null;
+      } catch (_) { return null; }
+    }
+    function emWriteSessionProfile(p) {
+      if (!p || !p.username) return;
+      const rec = JSON.stringify({
+        username    : p.username,
+        displayName : p.displayName || p.username,
+        role        : p.role || "operator",
+        cachedAtMs  : Date.now()
+      });
+      try { localStorage.setItem(EM_SESSION_PROFILE_KEY, rec); } catch (_) {}
     }
 
     // v5.32 — Poll intervals tuned for the delta-sync architecture
@@ -8970,8 +9071,7 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
       // to derive the canonical actor (instead of trusting client-
       // supplied `actor` strings) and to gate owner-only ops via
       // requireOwnerSession.
-      const sessionToken = (typeof localStorage !== "undefined") &&
-                           localStorage.getItem("etsymail_session");
+      const sessionToken = emReadSessionToken();
       if (sessionToken) opts.headers["X-EtsyMail-Session"] = sessionToken;
       if (body) opts.body = JSON.stringify(body);
       const res = await fetch(url, opts);
@@ -9951,8 +10051,9 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
           throw new Error("Login response missing token");
         }
         try {
-          localStorage.setItem("etsymail_session", res.sessionToken);
+          emWriteSessionToken(res.sessionToken, true);
           localStorage.setItem("etsymail_session_user", res.displayName || res.username);
+          emWriteSessionProfile(res);
         } catch (e) {
           console.warn("Couldn't persist session to localStorage:", e.message);
         }
@@ -21560,7 +21661,7 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
         const resp = await fetch(FN("etsyMailOrder") + "?receiptId=" + encodeURIComponent(receiptId), {
           headers: {
             "X-EtsyMail-Secret"  : emResolveSecret() || "",
-            "X-EtsyMail-Session" : localStorage.getItem("etsymail_session") || ""
+            "X-EtsyMail-Session" : emReadSessionToken() || ""
           }
         });
         if (!resp.ok) {
@@ -22563,20 +22664,26 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
       // delays or breaks it, the operator could see a blank mobile
       // shell with no way forward.
       //
-      // Belt-and-suspenders: a few hundred ms after mInit, double-
-      // check the auth state. If neither secret nor session is set,
-      // surface the secret modal directly. If secret is set but no
-      // session, surface the login modal. Idempotent — calling
-      // these when the modals are already open or the user is
-      // already authenticated is a no-op.
+      // v6.1 — REWRITTEN. The old v5.3 net predated the v6 auth gate:
+      // it opened showSecretSetupModal() (which is now the full Settings
+      // modal, .em-modal-backdrop at z-index 9999) whenever the resolved
+      // secret was empty. Because the gate canvas sits at z-index 1000,
+      // that threw the Settings dialog ON TOP of the sign-in form and
+      // its backdrop swallowed every tap — this is exactly why login
+      // was broken on mobile (mInit only runs on mobile, so desktop
+      // never hit it). It even fired when a valid session existed,
+      // covering the logged-in app on every mobile boot.
+      //
+      // In v6 the EtsyMailAuth gate is the ONLY pre-auth surface. The
+      // net now just re-asserts the gate if, 600ms in, we are somehow
+      // neither authed nor carrying a session token. It never opens
+      // the Settings modal and it never runs once authed.
       setTimeout(() => {
         try {
-          const secret  = emResolveSecret();
-          const session = localStorage.getItem("etsymail_session");
-          if (!secret) {
-            if (typeof showSecretSetupModal === "function") showSecretSetupModal();
-          } else if (!session && !state.currentUser) {
-            if (typeof showLoginModal === "function") showLoginModal();
+          if (document.body.classList.contains("authed")) return;
+          const session = emReadSessionToken();
+          if (!session && !state.currentUser) {
+            try { EtsyMailAuth.lock(); } catch (_) {}
           }
         } catch (e) {
           console.warn("[mobile] auth safety net failed:", e);
@@ -22718,7 +22825,7 @@ const EtsyMailAuth=(()=>{
 
   async function transport(name,{body=null}={},{retries=2}={}){
     const headers={"Content-Type":"application/json"}; const _sec=emResolveSecret(); if(_sec)headers["X-EtsyMail-Secret"]=_sec;
-    try{const s=localStorage.getItem(LS.session);if(s)headers["X-EtsyMail-Session"]=s;}catch{}
+    try{const s=emReadSessionToken();if(s)headers["X-EtsyMail-Session"]=s;}catch{}
     for(let a=0;;a++){
       let res; try{res=await transport.send(name,{method:"POST",headers,body});}
       catch{ if(a<retries){await backoff(a);continue;} const e=new Error("offline");e.kind="network";throw e; }
@@ -22743,12 +22850,35 @@ const EtsyMailAuth=(()=>{
 
   async function boot(){
     auth.phase="boot"; ui.openGate();
-    let token=null; try{token=localStorage.getItem(LS.session);}catch{}
+    const token=emReadSessionToken();
     if(token){
+      // v6.1 — Cached-credentials fast path. If we have both a token and
+      // a cached identity from the last successful sign-in, enter the app
+      // IMMEDIATELY (no gate flash, no network wait) and re-validate the
+      // token in the background. Definitive 401/403 → lock + clear;
+      // transient network/5xx → stay signed in on the cached session
+      // (the next successful API call is the real validation anyway,
+      // and any 401 it produces routes back here via onApiError).
+      const cached=emReadSessionProfile();
+      if(cached){
+        enter(cached,{silent:true});
+        transport("etsyMailAuth",{body:{op:"currentUser"}})
+          .then(me=>{
+            if(!me||!me.ok){ fail(Object.assign(new Error("bad"),{status:401,reason:"SESSION_NOT_FOUND"})); return; }
+            emWriteSessionProfile(me);
+            if(me.role!==cached.role||me.username!==cached.username) enter(me,{silent:true});
+          })
+          .catch(e=>{
+            if(e&&(e.status===401||e.status===403)) fail(e);
+            // anything else: transient — keep the cached session live.
+          });
+        return;
+      }
       ui.conn("busy","Restoring your session…");
       try{
         const me=await transport("etsyMailAuth",{body:{op:"currentUser"}});
         if(!me||!me.ok) throw Object.assign(new Error("bad"),{status:401,reason:"SESSION_NOT_FOUND"});
+        emWriteSessionProfile(me);
         ui.conn("ok","Connected"); return enter(me,{silent:true});
       }catch(e){ return fail(e); }
     }
@@ -22767,9 +22897,16 @@ const EtsyMailAuth=(()=>{
 
   function fail(e){
     if(e.kind==="network"){ ui.conn("bad","Can't reach the server — retrying…"); ui.show("signin"); ui.banner("signin","warn",NOTICE.network); return; }
-    try{localStorage.removeItem(LS.session);localStorage.removeItem(LS.user);}catch{}
+    // v6.1 — Only a definitive auth failure (401/403) invalidates the
+    // cached credentials. A 5xx or other hiccup used to wipe the stored
+    // token here, forcing a fresh sign-in after any transient backend
+    // blip — the main reason "auto login" felt unreliable.
+    const authFailure=!!(e&&(e.status===401||e.status===403));
+    if(authFailure){ emClearSessionToken(); try{localStorage.removeItem(LS.user);}catch{} }
     ui.conn(null,""); ui.show("signin");
+    if(document.body.classList.contains("authed")) document.body.classList.remove("authed");
     if(e.reason&&NOTICE[e.reason]&&e.reason!=="NO_SESSION_TOKEN") ui.banner("signin","warn",NOTICE[e.reason]);
+    else if(!authFailure&&e&&e.message) ui.banner("signin","warn","The server had a hiccup ("+e.message+"). Your saved session was kept — try again in a moment.");
   }
   function onApiError(e){ if(e&&(e.status===401||e.kind==="network")) fail(e); }
 
@@ -22808,12 +22945,23 @@ const EtsyMailAuth=(()=>{
 
   async function signOut(){
     try{await transport("etsyMailAuth",{body:{op:"logout"}});}catch{}
-    try{localStorage.removeItem(LS.session);localStorage.removeItem(LS.user);}catch{}
+    emClearSessionToken();
+    try{localStorage.removeItem(LS.user);}catch{}
     auth.user=null;auth.phase="signin"; emit("authchange",{user:null}); hooks.onSignedOut&&hooks.onSignedOut();
     document.body.classList.remove("authed"); ui.conn(null,""); ui.show("signin"); ui.toast("Signed out");
   }
 
-  function persist(res,remember){ try{localStorage.setItem(LS.session,res.sessionToken);localStorage.setItem(LS.user,res.displayName||res.username);}catch{} void remember; }
+  // v6.1 — "Keep me signed in" is real now (it used to be `void remember`):
+  // checked (default) → localStorage, survives browser restarts;
+  // unchecked → sessionStorage, cleared when the tab closes. The identity
+  // profile is cached alongside so the next boot can auto-enter instantly.
+  function persist(res,remember){
+    try{
+      emWriteSessionToken(res.sessionToken,remember!==false);
+      localStorage.setItem(LS.user,res.displayName||res.username);
+      emWriteSessionProfile(res);
+    }catch{}
+  }
   function enter(res,{silent=false,welcome=false}={}){
     auth.user={username:res.username,displayName:res.displayName,role:(res.role==="owner"?"master_admin":res.role==="operator"?"user":(res.role||"user"))}; auth.phase="ready";
     emit("authchange",{user:auth.user}); hooks.applyRole&&hooks.applyRole(auth.user);
@@ -22910,6 +23058,9 @@ const EtsyMailAuth=(()=>{
   /* caps + lowercase */
   const capsOn=(el,warn)=>{const f=e=>{if(e.getModifierState)$(warn).classList.toggle("show",e.getModifierState("CapsLock"));};el.addEventListener("keydown",f);el.addEventListener("keyup",f);el.addEventListener("blur",()=>$(warn).classList.remove("show"));};
   capsOn($("siPass"),"siCaps");
+  /* v6.1 — prefill the last-known username so a returning operator only
+     types their password (standard remember-me affordance). */
+  try{const _p=emReadSessionProfile();if(_p&&_p.username&&!$("siUser").value)$("siUser").value=_p.username;}catch(_){}
   const lower=el=>{const v=el.value,l=v.toLowerCase();if(l!==v)el.value=l;};
   $("siUser").addEventListener("input",e=>{lower(e.target);ui.clearBanner("signin");});
   $("siPass").addEventListener("input",()=>ui.clearBanner("signin"));
