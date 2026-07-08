@@ -132,14 +132,21 @@ async function handleAction(body) {
   if (a === "diagnostics")    { try { return (await E.getDiagnostics()) || { empty: true }; } catch (e) { return { error: e.message }; } }
   if (a === "runDiagnostics") {
     // Heavy (multi-GAQL + LLM) — runs in the background worker to dodge the
-    // 26s gateway timeout; the console polls the diagnostics doc for the result.
+    // 26s gateway timeout. The worker writes a per-run status doc so the
+    // console can show the REAL failure instead of timing out blind.
     try {
+      const runId = String(body.runId || Date.now());
       const res = await fetch(baseUrl() + "/.netlify/functions/googleAdsAutopilot-background", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tasks: ["diagnostics"], campaignId: body.campaignId || null, token: process.env.EDIT_PASSCODE || undefined })
+        body: JSON.stringify({ tasks: ["diagnostics"], campaignId: body.campaignId || null, runId, token: process.env.EDIT_PASSCODE || undefined })
       });
-      return { queued: true, upstream: res.status };
+      if (res.status >= 400) return { error: "background dispatch failed: HTTP " + res.status + " — is googleAdsAutopilot-background deployed?" };
+      return { queued: true, runId, upstream: res.status };
     } catch (e) { return { error: e.message }; }
+  }
+  if (a === "diagRunStatus") {
+    try { return (await E.getGenStatus("diag-" + String(body.runId))) || { pending: true }; }
+    catch (e) { return { error: e.message }; }
   }
   if (a === "playbook") { try { return (await E.getPlaybook()) || { empty: true }; } catch (e) { return { error: e.message }; } }
   if (a === "distill") {

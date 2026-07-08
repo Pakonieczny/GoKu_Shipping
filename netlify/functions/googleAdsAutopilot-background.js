@@ -109,9 +109,21 @@ exports.handler = async (event) => {
       if (task === "conversions") { result.conversions = await E.uploadConversions({ ctrl }); }
       else if (task === "scanOpportunities") { result.scanOpportunities = { n: ((await E.opportunitiesWithStatus({ force: true })).opportunities || []).length }; }
       else if (task === "diagnostics") {
-        result.diagnostics = { generatedAt: (await E.runDiagnostics({ campaignId: body.campaignId || null })).generatedAt };
-        // Close the learning loop: every new diagnosis re-distills the playbook
-        // (bounded lessons for the opportunity scan + generators). Best-effort.
+        // Self-reporting run: the console polls diag-<runId> and gets either
+        // {ok:true, generatedAt} or {ok:false, error} — no more silent deaths.
+        const dRunId = String(body.runId || Date.now());
+        try { await E.setGenStatus("diag-" + dRunId, { phase: "running", startedAt: Date.now(), campaignId: body.campaignId || null }); } catch (e) {}
+        try {
+          const dOut = await E.runDiagnostics({ campaignId: body.campaignId || null });
+          result.diagnostics = { generatedAt: dOut.generatedAt, aiError: dOut.aiError || null };
+          try { await E.setGenStatus("diag-" + dRunId, { ok: true, generatedAt: dOut.generatedAt, aiError: dOut.aiError || null, tookMs: dOut.tookMs || null }); } catch (e) {}
+        } catch (e) {
+          const msg = String(e.message || e).slice(0, 400);
+          result.diagnostics = { error: msg };
+          try { await E.setGenStatus("diag-" + dRunId, { ok: false, error: msg }); } catch (e2) {}
+        }
+        // Learning loop AFTER the status doc lands — distill latency must not
+        // keep the console waiting. Best-effort.
         try { result.distill = await E.distillLessons(); } catch (e) { result.distill = { error: String(e.message || e).slice(0, 200) }; }
       }
       else if (task === "distill") { result.distill = await E.distillLessons(); }
