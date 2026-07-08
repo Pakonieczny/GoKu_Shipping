@@ -34,7 +34,7 @@ const CAPTURES = "Brites_Email_Captures";
 const META = "Brites_Email_Meta";
 
 const DEFAULT_OFFER = {
-  pct: 10,
+  pct: 15,
   expiresDays: 14,
   enabled: true,
   headline: "",   // popup composes contextual copy when blank
@@ -169,7 +169,10 @@ async function createUniqueDiscount(pct, expiresDays, email) {
         usageLimit: 1,
         appliesOncePerCustomer: true,
         customerSelection: { all: true },
-        customerGets: { value: { percentage: pct / 100 }, items: { all: true } }
+        customerGets: { value: { percentage: pct / 100 }, items: { all: true } },
+        // welcome codes must stack with the site-wide FREESHIP automatic
+        // discount; without this the checkout forces an either/or choice
+        combinesWith: { shippingDiscounts: true, productDiscounts: false, orderDiscounts: false }
       }
     });
     const node = d.discountCodeBasicCreate;
@@ -220,6 +223,78 @@ async function upsertCustomer(email, tags) {
   return { id, created: false };
 }
 
+/* ------------------------------ welcome email ------------------------------ */
+// Sent via Resend (env RESEND_API_KEY + BRITES_EMAIL_FROM, e.g.
+// "Brites Jewelry <hello@britesjewelry.com>"). Carries the SAME code the
+// shopper already saw, with a /discount deep link that auto-applies it at
+// checkout — one tap, no typing. Failure never blocks the signup.
+const SITE = "https://britesjewelry.com";
+function welcomeEmailHTML({ code, pct, expiresDays }) {
+  const applyUrl = SITE + "/discount/" + encodeURIComponent(code) + "?redirect=%2Fcollections%2Fbest-sellers";
+  const tile = (label, path) =>
+    `<td align="center" style="padding:0 5px"><a href="${SITE}${path}" style="display:block;padding:11px 6px;border:1px solid #ddd6c8;border-radius:9px;color:#3a352d;text-decoration:none;font-size:13px;font-family:Georgia,serif">${label}</a></td>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"></head>
+<body style="margin:0;padding:0;background:#f4f1ea">
+<div style="display:none;max-height:0;overflow:hidden">Your ${pct}% welcome code is inside — one tap and it's applied. ✨</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f1ea;padding:28px 12px">
+<tr><td align="center">
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:14px;overflow:hidden;border:1px solid #e8e2d4">
+  <tr><td align="center" style="padding:30px 24px 6px;font-family:Georgia,'Times New Roman',serif">
+    <div style="font-size:22px;letter-spacing:.02em;color:#211d16">Brites <span style="color:#b08d3f">·</span> Jewelry</div>
+    <div style="font-size:10.5px;letter-spacing:.24em;color:#9a9284;margin-top:4px">HANDMADE · PERSONAL · MEANT TO BE KEPT</div>
+  </td></tr>
+  <tr><td align="center" style="padding:22px 34px 6px;font-family:Georgia,serif">
+    <div style="font-size:28px;line-height:1.2;color:#211d16">Welcome to the family 💛</div>
+    <div style="font-size:15px;line-height:1.55;color:#5c564b;margin-top:10px">Every charm we make carries a little story. Here's ${pct}% off the first one you'll tell — our thank-you for joining.</div>
+  </td></tr>
+  <tr><td align="center" style="padding:20px 34px 4px">
+    <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border:1.5px dashed #c9bfa8;border-radius:11px;background:#faf8f2">
+      <tr><td align="center" style="padding:16px 12px 6px;font-family:Georgia,serif;font-size:12px;letter-spacing:.18em;color:#9a9284">YOUR PERSONAL CODE</td></tr>
+      <tr><td align="center" style="padding:0 12px 4px;font-family:'Courier New',monospace;font-size:26px;font-weight:bold;letter-spacing:.06em;color:#211d16">${code}</td></tr>
+      <tr><td align="center" style="padding:0 12px 16px;font-family:Georgia,serif;font-size:12px;color:#9a9284">one use, just for you · valid ${expiresDays} days</td></tr>
+    </table>
+  </td></tr>
+  <tr><td align="center" style="padding:18px 34px 6px">
+    <a href="${applyUrl}" style="display:inline-block;background:#211d16;color:#f6f1e4;text-decoration:none;font-family:Georgia,serif;font-size:14px;letter-spacing:.14em;padding:15px 34px;border-radius:9px">SHOP WITH ${pct}% APPLIED →</a>
+    <div style="font-family:Georgia,serif;font-size:11.5px;color:#9a9284;margin-top:9px">One tap — your code applies automatically at checkout. Or copy it above.</div>
+  </td></tr>
+  <tr><td style="padding:24px 30px 8px">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+      ${tile("Necklaces","/collections/necklaces-personalized")}
+      ${tile("Bracelets","/collections/bracelets")}
+      ${tile("Charms","/collections/charm-only")}
+    </tr></table>
+  </td></tr>
+  <tr><td align="center" style="padding:18px 34px 26px;font-family:Georgia,serif;font-size:12.5px;line-height:1.6;color:#8a8478">
+    Made to order in Toronto · on the bench within 24h · 30-day returns<br>
+    Questions? Just reply — a real jeweler answers.
+  </td></tr>
+</table>
+<div style="max-width:600px;font-family:Georgia,serif;font-size:11px;color:#a49c8d;padding:16px 8px;text-align:center;line-height:1.6">
+  You're receiving this because you signed up at britesjewelry.com.<br>
+  Brites Jewelry · Toronto, Canada · <a href="${SITE}/pages/contact" style="color:#a49c8d">Contact</a> · reply STOP to unsubscribe
+</div>
+</td></tr></table></body></html>`;
+}
+
+async function sendWelcomeEmail(email, { code, pct, expiresDays }) {
+  const key = process.env.RESEND_API_KEY;
+  if (!key || !code) return false;
+  try {
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { "Authorization": "Bearer " + key, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        from: process.env.BRITES_EMAIL_FROM || "Brites Jewelry <hello@britesjewelry.com>",
+        to: [email],
+        subject: "Your " + pct + "% welcome treat is inside \u2728",
+        html: welcomeEmailHTML({ code, pct, expiresDays })
+      })
+    });
+    return res.ok;
+  } catch (e) { console.error("[emailCapture] email send failed:", e.message); return false; }
+}
+
 /* ----------------------------------- ops ----------------------------------- */
 
 async function subscribe(body, ip) {
@@ -245,7 +320,8 @@ async function subscribe(body, ip) {
       try {
         const fresh = await createUniqueDiscount(offer.pct, offer.expiresDays, email);
         await ref.set({ code: fresh.code, pct: offer.pct, expiresAt: Date.parse(fresh.endsAt), renewedAt: Date.now() }, { merge: true });
-        return { ok: true, already: true, renewed: true, code: fresh.code, pct: offer.pct, expiresDays: offer.expiresDays };
+        const emailedR = await sendWelcomeEmail(email, { code: fresh.code, pct: offer.pct, expiresDays: offer.expiresDays });
+        return { ok: true, already: true, renewed: true, code: fresh.code, pct: offer.pct, expiresDays: offer.expiresDays, emailed: emailedR };
       } catch (err) { console.error("[emailCapture] renew failed:", err.message); }
     }
     return { ok: true, already: true, code: e.code || null, pct: e.pct || offer.pct, expiresDays: offer.expiresDays };
@@ -278,7 +354,8 @@ async function subscribe(body, ip) {
     expiresAt: endsAtMs
   });
 
-  return { ok: true, code, pct: offer.pct, expiresDays: offer.expiresDays, already: false };
+  const emailed = await sendWelcomeEmail(email, { code, pct: offer.pct, expiresDays: offer.expiresDays });
+  return { ok: true, code, pct: offer.pct, expiresDays: offer.expiresDays, already: false, emailed };
 }
 
 async function tagAudience(body) {
