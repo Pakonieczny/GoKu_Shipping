@@ -143,57 +143,40 @@ async function getOffer() {
   return offer;
 }
 
-/* --------------------- discount container + unique codes ------------------- */
+/* ------------------------- unique single-use discounts ---------------------- */
 
-// One shared "basic" discount per offer % holds every unique welcome code.
-// appliesOncePerCustomer stops sharing; per-signup codes stop coupon-site leaks.
-async function ensureContainer(pct) {
-  const ref = db.collection(META).doc("container_" + pct);
-  const snap = await ref.get();
-  if (snap.exists && snap.data().discountId) return snap.data().discountId;
-
-  const seed = randCode(pct);
-  const d = await gql(`
-    mutation($basicCodeDiscount: DiscountCodeBasicInput!) {
-      discountCodeBasicCreate(basicCodeDiscount: $basicCodeDiscount) {
-        codeDiscountNode { id }
-        userErrors { field message }
-      }
-    }`, {
-    basicCodeDiscount: {
-      title: `Brites welcome ${pct}% — email capture (auto)`,
-      code: seed,
-      startsAt: new Date().toISOString(),
-      customerSelection: { all: true },
-      customerGets: {
-        value: { percentage: pct / 100 },
-        items: { all: true }
-      },
-      appliesOncePerCustomer: true
-    }
-  });
-  const node = d.discountCodeBasicCreate;
-  if ((node.userErrors || []).length) throw new Error("discount create: " + JSON.stringify(node.userErrors).slice(0, 300));
-  const discountId = node.codeDiscountNode.id;
-  await ref.set({ discountId, pct, createdAt: Date.now(), seed });
-  return discountId;
-}
-
-async function mintCode(pct) {
-  const discountId = await ensureContainer(pct);
+// One DISCOUNT PER SIGNUP — the only way Shopify enforces BOTH properties the
+// program needs: usageLimit:1 makes the code truly single-use (a shared
+// container can't do per-code limits, so a leaked code would be redeemable by
+// unlimited different customers), and endsAt bakes the expiry into the code
+// itself in Shopify — not just in our copy.
+async function createUniqueDiscount(pct, expiresDays, email) {
+  const endsAt = new Date(Date.now() + expiresDays * 86400000).toISOString();
   for (let attempt = 0; attempt < 3; attempt++) {
     const code = randCode(pct);
     const d = await gql(`
-      mutation($discountId: ID!, $codes: [DiscountRedeemCodeInput!]!) {
-        discountRedeemCodeBulkAdd(discountId: $discountId, codes: $codes) {
-          bulkCreation { id }
+      mutation($basicCodeDiscount: DiscountCodeBasicInput!) {
+        discountCodeBasicCreate(basicCodeDiscount: $basicCodeDiscount) {
+          codeDiscountNode { id }
           userErrors { field message }
         }
-      }`, { discountId, codes: [{ code }] });
-    const errs = (d.discountRedeemCodeBulkAdd.userErrors || []);
-    if (!errs.length) return code;
+      }`, {
+      basicCodeDiscount: {
+        title: `Welcome ${pct}% \u00b7 ${email}`,
+        code,
+        startsAt: new Date().toISOString(),
+        endsAt,
+        usageLimit: 1,
+        appliesOncePerCustomer: true,
+        customerSelection: { all: true },
+        customerGets: { value: { percentage: pct / 100 }, items: { all: true } }
+      }
+    });
+    const node = d.discountCodeBasicCreate;
+    const errs = node.userErrors || [];
+    if (!errs.length && node.codeDiscountNode) return { code, endsAt, discountId: node.codeDiscountNode.id };
     if (!/exist|taken|duplicate/i.test(JSON.stringify(errs))) {
-      throw new Error("code add: " + JSON.stringify(errs).slice(0, 300));
+      throw new Error("discount create: " + JSON.stringify(errs).slice(0, 300));
     }
   }
   throw new Error("could not mint a unique code");
@@ -249,17 +232,28 @@ async function subscribe(body, ip) {
   const ctx = body.context || {};
   const audience = String(body.audience || "").replace(/[^a-z-]/gi, "").slice(0, 30);
 
-  // repeat signup → same code back, no duplicate anything
+  // repeat signup → same code back while it's still valid; expired → fresh one
   const ref = db.collection(CAPTURES).doc(email);
   const existing = await ref.get();
   if (existing.exists) {
     const e = existing.data();
+    if (e.code && e.expiresAt && e.expiresAt > Date.now()) {
+      const daysLeft = Math.max(1, Math.ceil((e.expiresAt - Date.now()) / 86400000));
+      return { ok: true, already: true, code: e.code, pct: e.pct || offer.pct, expiresDays: daysLeft };
+    }
+    if (offer.enabled) {
+      try {
+        const fresh = await createUniqueDiscount(offer.pct, offer.expiresDays, email);
+        await ref.set({ code: fresh.code, pct: offer.pct, expiresAt: Date.parse(fresh.endsAt), renewedAt: Date.now() }, { merge: true });
+        return { ok: true, already: true, renewed: true, code: fresh.code, pct: offer.pct, expiresDays: offer.expiresDays };
+      } catch (err) { console.error("[emailCapture] renew failed:", err.message); }
+    }
     return { ok: true, already: true, code: e.code || null, pct: e.pct || offer.pct, expiresDays: offer.expiresDays };
   }
 
-  let code = null;
+  let code = null, endsAtMs = null;
   if (offer.enabled) {
-    try { code = await mintCode(offer.pct); }
+    try { const m = await createUniqueDiscount(offer.pct, offer.expiresDays, email); code = m.code; endsAtMs = Date.parse(m.endsAt); }
     catch (err) { console.error("[emailCapture] mint failed:", err.message); }
   }
 
@@ -281,7 +275,7 @@ async function subscribe(body, ip) {
                productType: String(ctx.productType || "").slice(0, 60), collectionTitle: String(ctx.collectionTitle || "").slice(0, 80) },
     customerId, customerCreated: created,
     at: Date.now(), createdAt: new Date().toISOString(),
-    expiresAt: code ? Date.now() + offer.expiresDays * 86400000 : null
+    expiresAt: endsAtMs
   });
 
   return { ok: true, code, pct: offer.pct, expiresDays: offer.expiresDays, already: false };
