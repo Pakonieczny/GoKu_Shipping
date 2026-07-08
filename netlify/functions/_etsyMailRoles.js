@@ -225,6 +225,12 @@ async function listActiveOperators() {
 
 const SESSIONS_COLL = "EtsyMail_Sessions";
 const SESSION_CACHE_MS = 60 * 1000;
+// v6.1 — Sliding-renewal constants. Must match SESSION_LIFETIME_MS in
+// etsyMailAuth.js (30 days). Renewal fires when less than half the
+// lifetime remains, so a session doc is rewritten at most ~once per
+// 15 days per device — negligible write cost.
+const SESSION_LIFETIME_MS    = 30 * 24 * 60 * 60 * 1000;
+const SESSION_RENEW_BELOW_MS = 15 * 24 * 60 * 60 * 1000;
 const _sessionCache = new Map();   // token → { username, role, displayName, expiresAtMs, fetchedAt }
 
 /** Pull X-EtsyMail-Session from a Netlify event. Headers are case-
@@ -306,18 +312,30 @@ async function requireSession(event) {
     role: od.role || "operator"
   };
 
+  // v6.1 — Sliding session renewal (industry-standard "keep me signed
+  // in"). When a session is used with fewer than SESSION_RENEW_BELOW_MS
+  // remaining, its expiry slides forward to a fresh 30 days. Active
+  // operators therefore never get logged out; a device that goes quiet
+  // still expires 30 days after its last use. Piggybacks on the existing
+  // fire-and-forget lastSeenAt write — zero extra reads, zero latency.
+  let effectiveExpiresAtMs = expiresAtMs;
+  const patch = { lastSeenAt: FV.serverTimestamp() };
+  if (expiresAtMs - Date.now() < SESSION_RENEW_BELOW_MS) {
+    effectiveExpiresAtMs = Date.now() + SESSION_LIFETIME_MS;
+    patch.expiresAt = admin.firestore.Timestamp.fromMillis(effectiveExpiresAtMs);
+    patch.renewedAt = FV.serverTimestamp();
+  }
+
   _sessionCache.set(token, {
     username,
     role: result.role,
     displayName: result.displayName,
-    expiresAtMs,
+    expiresAtMs: effectiveExpiresAtMs,
     fetchedAt: Date.now()
   });
 
-  // Best-effort lastSeenAt update — fire and forget.
-  db.collection(SESSIONS_COLL).doc(token).set({
-    lastSeenAt: FV.serverTimestamp()
-  }, { merge: true }).catch(() => {});
+  // Best-effort lastSeenAt (+ renewal) update — fire and forget.
+  db.collection(SESSIONS_COLL).doc(token).set(patch, { merge: true }).catch(() => {});
 
   return result;
 }
