@@ -308,30 +308,46 @@ exports.handler = async (event) => {
     if (event.httpMethod === "GET") {
       const op = (event.queryStringParameters || {}).op || "offer";
       if (op === "discountAudit") {
-        // Public-safe: lists ONLY Automatic discounts — the class that
-        // auto-applies to every cart with no code (shoppers see these titles
-        // anyway). Code discounts (whose titles contain signup emails) are
-        // never returned here.
-        const d = await gql(`{
-          automaticDiscountNodes(first: 30, query: "status:active") {
-            nodes { id automaticDiscount { __typename
-              ... on DiscountAutomaticBasic { title status startsAt endsAt
-                customerGets { value { ... on DiscountPercentage { percentage } } } } } }
-          } }`);
-        const rows = (d.automaticDiscountNodes.nodes || []).map(n => ({
-          id: n.id, title: (n.automaticDiscount || {}).title || n.automaticDiscount.__typename,
-          status: (n.automaticDiscount || {}).status,
-          pct: n.automaticDiscount && n.automaticDiscount.customerGets && n.automaticDiscount.customerGets.value && n.automaticDiscount.customerGets.value.percentage != null
-               ? Math.round(n.automaticDiscount.customerGets.value.percentage * 100) : undefined,
-          endsAt: (n.automaticDiscount || {}).endsAt || null
-        }));
-        return out(200, {
-          ok: true,
-          automaticDiscounts: rows,
-          verdict: rows.length
-            ? "These apply to EVERY cart automatically and block code-based discounts from combining. Deactivate them in Shopify Admin \u2192 Discounts to stop auto-applying."
-            : "Clean \u2014 no active automatic discounts; only typed codes can discount a cart."
-        }, origin);
+        // Public-safe: reports ONLY Automatic discounts (shoppers see those
+        // titles in every cart anyway). Code-discount titles (which contain
+        // signup emails) are never selected. Self-diagnosing: real error +
+        // hint instead of a generic failure.
+        try {
+          const d = await gql(`{
+            discountNodes(first: 50, query: "status:active") {
+              nodes { id discount { __typename
+                ... on DiscountAutomaticBasic { title status endsAt
+                  customerGets { value { ... on DiscountPercentage { percentage } } } }
+                ... on DiscountAutomaticBxgy { title status endsAt }
+                ... on DiscountAutomaticFreeShipping { title status endsAt } } }
+            } }`);
+          const rows = (d.discountNodes.nodes || [])
+            .filter(n => /^DiscountAutomatic/.test((n.discount || {}).__typename || ""))
+            .map(n => ({
+              id: n.id, kind: n.discount.__typename.replace("DiscountAutomatic", "Automatic "),
+              title: n.discount.title, status: n.discount.status,
+              pct: n.discount.customerGets && n.discount.customerGets.value && n.discount.customerGets.value.percentage != null
+                   ? Math.round(n.discount.customerGets.value.percentage * 100) : undefined,
+              endsAt: n.discount.endsAt || null
+            }));
+          return out(200, {
+            ok: true,
+            automaticDiscounts: rows,
+            verdict: rows.length
+              ? "These apply to EVERY cart automatically and block code-based discounts from combining. Deactivate them in Shopify Admin \u2192 Discounts to stop auto-applying."
+              : "Clean \u2014 no active automatic discounts; only typed codes can discount a cart."
+          }, origin);
+        } catch (e) {
+          const msg = String(e.message || e);
+          const scopeIssue = /ACCESS_DENIED|access denied|not approved|required scope/i.test(msg);
+          return out(200, {
+            ok: false,
+            error: msg.slice(0, 300),
+            hint: scopeIssue
+              ? "The Shopify app behind SHOPIFY_CLIENT_ID is missing discount scopes. In Shopify Admin \u2192 Settings \u2192 Apps and sales channels \u2192 Develop apps \u2192 your app \u2192 Configuration: add read_discounts AND write_discounts, save, then reinstall/re-approve the app. write_discounts is also required for minting welcome codes."
+              : "Check SHOPIFY_STORE / SHOPIFY_CLIENT_ID / SHOPIFY_CLIENT_SECRET env vars on this Netlify site and the function logs."
+          }, origin);
+        }
       }
       if (op === "offer") {
         const o = await getOffer();
@@ -351,6 +367,7 @@ exports.handler = async (event) => {
     return out(400, { ok: false, error: "unknown op" }, origin);
   } catch (e) {
     console.error("[emailCapture]", e);
-    return out(200, { ok: false, error: "Something went sideways — please try again." }, origin);
+    const detail = event.httpMethod === "GET" ? String(e.message || e).slice(0, 250) : undefined;
+    return out(200, { ok: false, error: "Something went sideways — please try again.", detail }, origin);
   }
 };
