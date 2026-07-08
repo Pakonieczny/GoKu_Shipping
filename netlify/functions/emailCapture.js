@@ -307,6 +307,29 @@ exports.handler = async (event) => {
   try {
     if (event.httpMethod === "GET") {
       const op = (event.queryStringParameters || {}).op || "offer";
+      if (op === "discountAudit") {
+        // Passcode-gated: lists ACTIVE discounts with their type, so an
+        // auto-applying Automatic discount is identifiable in one call.
+        const key = (event.queryStringParameters || {}).key || "";
+        if (!process.env.EDIT_PASSCODE || key !== process.env.EDIT_PASSCODE) return out(403, { ok: false }, origin);
+        const d = await gql(`{
+          discountNodes(first: 30, query: "status:active") {
+            nodes { id discount { __typename
+              ... on DiscountAutomaticBasic { title status startsAt endsAt
+                customerGets { value { ... on DiscountPercentage { percentage } } } }
+              ... on DiscountCodeBasic { title status usageLimit appliesOncePerCustomer endsAt } } }
+          } }`);
+        const rows = (d.discountNodes.nodes || []).map(n => ({
+          id: n.id, type: n.discount.__typename.replace("Discount", ""),
+          title: n.discount.title, status: n.discount.status,
+          pct: n.discount.customerGets && n.discount.customerGets.value && n.discount.customerGets.value.percentage != null
+               ? Math.round(n.discount.customerGets.value.percentage * 100) : undefined,
+          endsAt: n.discount.endsAt || null, usageLimit: n.discount.usageLimit,
+          autoApplies: /Automatic/.test(n.discount.__typename)
+        }));
+        return out(200, { ok: true, discounts: rows,
+          warning: rows.some(r => r.autoApplies) ? "Automatic discounts apply to EVERY cart with no code and block code-based discounts from combining." : null }, origin);
+      }
       if (op === "offer") {
         const o = await getOffer();
         return out(200, { ok: true, pct: o.pct, enabled: o.enabled, expiresDays: o.expiresDays,
