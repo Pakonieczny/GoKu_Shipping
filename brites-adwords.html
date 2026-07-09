@@ -1854,7 +1854,8 @@ function renderOppBid(){ var ob=$("#oppBid"); if(!ob)return; var smart=bidView()
 }
 function renderPmaxSection(host){
   var old=document.getElementById("pmaxSec");if(old)old.remove();
-  if(!host)return;
+  if(!host||!host.parentNode)return;
+  var insertTop=function(el){host.parentNode.insertBefore(el,host);};
   if(!PMAXOPPS.length){
     var sec0=document.createElement("div");sec0.id="pmaxSec";
     sec0.innerHTML='<div class="card pad" style="margin-top:18px;border:1px dashed var(--line)">'
@@ -1863,7 +1864,7 @@ function renderPmaxSection(host){
         ?('<div class="muted" style="font-size:12.5px">'+(PMAXERR?('Feed scan issue: <span style="color:#b3402a">'+esc(PMAXERR)+'</span> \u2014 re-run Scan.'):'No feed opportunities proposed on this scan.')+'</div>')
         :'<div class="muted" style="font-size:12.5px">No feed scan yet \u2014 this section fills after the next <b>Scan for opportunities</b> runs on the updated backend. If you\u2019ve just deployed, run Scan again.</div>')
       +'</div>';
-    host.appendChild(sec0);return;}
+    insertTop(sec0);return;}
   var sec=document.createElement("div");sec.id="pmaxSec";
   var inner='<div class="card pad" style="margin-top:18px;border:1px solid var(--gold)">'
     +'<div class="card__h"><h3>Feed campaigns \u00b7 Google Shopping</h3><span class="sub">powered by your organic (unpaid) sales \u2014 same feed, placed higher</span></div>';
@@ -1879,7 +1880,8 @@ function renderPmaxSection(host){
       +'<span class="pmx-msg" data-i="'+i+'" style="font-size:12px;color:var(--ink-45)"></span></div>';
   });
   sec.innerHTML=inner+'</div>';
-  host.appendChild(sec);
+  sec.querySelector(".card").style.marginTop="0";sec.querySelector(".card").style.marginBottom="16px";
+  insertTop(sec);
   Array.prototype.forEach.call(sec.querySelectorAll(".pmx-gen"),function(b){b.onclick=async function(){
     var i=+this.getAttribute("data-i");var o=PMAXOPPS[i];var btn=this;
     var bud=+(sec.querySelector('.pmx-bud[data-i="'+i+'"]')||{}).value||o.dailyBudget||10;
@@ -1905,7 +1907,13 @@ function renderPmaxSection(host){
 function renderOpportunities(){
   renderOppBid();
   var box=$("#oppList");
-  setTimeout(function(){try{renderPmaxSection(box&&box.parentNode?box.parentNode:box);}catch(e){}},0);
+  setTimeout(function(){
+    try{renderPmaxSection(box);}
+    catch(e){try{var old=document.getElementById("pmaxSec");if(old)old.remove();
+      var er=document.createElement("div");er.id="pmaxSec";
+      er.innerHTML='<div class="card pad" style="border:1px solid #f0c8bc;background:#fdeee9;margin-bottom:14px;font-size:12.5px;color:#b3402a"><b>Feed section render error:</b> '+esc(String(e.message||e))+'</div>';
+      if(box&&box.parentNode)box.parentNode.insertBefore(er,box);}catch(e2){}}
+  },0);
   if(!OPPS.length){box.innerHTML='<div class="empty" style="height:160px"><div>No opportunities surfaced.</div><div style="font-size:12px">Try Scan again, or use Custom build below.</div></div>';return;}
   var unused=[],inuse=[];
   OPPS.forEach(function(o,i){ (o.acted?inuse:unused).push({o:o,i:i}); });
