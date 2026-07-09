@@ -3374,14 +3374,17 @@ async function analyzeDiagnostics(diag, ctrl, history, { single } = {}) {
   const camps = diag.campaigns || [];
   if (single || camps.length <= 1) return _analyzeCampaignSet(diag, ctrl, history, { single });
   const out = { campaigns: [] }; const errs = [];
-  for (const c of camps) {
+  // Parallel: wall time ~= one campaign's analysis instead of the sum of all.
+  // Isolation preserved — each call catches its own failure.
+  const settled = await Promise.all(camps.map(async (c) => {
     try {
       const one = await _analyzeCampaignSet({ ...diag, campaigns: [c] }, ctrl,
         (history || []).filter(h => String(h.campaignId) === String(c.id)), {});
-      if (one && one.campaigns && one.campaigns[0]) out.campaigns.push(one.campaigns[0]);
-      else errs.push(c.name + ": empty verdict");
-    } catch (e) { errs.push(c.name + ": " + String(e.message || e).slice(0, 140)); }
-  }
+      if (one && one.campaigns && one.campaigns[0]) return { v: one.campaigns[0] };
+      return { e: c.name + ": empty verdict" };
+    } catch (e) { return { e: c.name + ": " + String(e.message || e).slice(0, 140) }; }
+  }));
+  for (const r of settled) { if (r.v) out.campaigns.push(r.v); else errs.push(r.e); }
   if (!out.campaigns.length) throw new Error(errs.join(" | ").slice(0, 380) || "all campaign analyses failed");
   // account-level read from the per-campaign verdicts — cheap and bounded
   try {
