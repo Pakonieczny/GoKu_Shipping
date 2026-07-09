@@ -547,6 +547,27 @@ exports.handler = async function (event) {
       // duplicating credentials across projects. Sits behind the exact same
       // optional EDIT_PASSCODE gate as every other action above, and grants
       // nothing the existing edit actions don't already grant.
+      case "scopes": {
+        // GROUND-TRUTH DIAGNOSTIC — open in a browser:
+        //   /.netlify/functions/shopifyEditor?action=scopes
+        // Forces a FRESH token (never reports a cached one) and returns the
+        // access scopes Shopify actually granted it. If a scope you added in
+        // the Dev Dashboard isn't in this list, the app version wasn't
+        // released or the env's SHOPIFY_CLIENT_ID belongs to a different app.
+        _token = null; _tokenExp = 0;
+        const sd = await gql(`query { currentAppInstallation { accessScopes { handle } } }`);
+        const handles = (((sd || {}).currentAppInstallation || {}).accessScopes || [])
+          .map(s => s.handle).sort();
+        return reply(200, {
+          ok: true,
+          clientIdSuffix: String(process.env.SHOPIFY_CLIENT_ID || "").slice(-6),
+          store: process.env.SHOPIFY_STORE || null,
+          scopes: handles,
+          hasReadPublications: handles.includes("read_publications"),
+          hasWritePublications: handles.includes("write_publications")
+        });
+      }
+
       case "gqlProxy": {
         if (!isPost) return reply(405, { error: "gqlProxy is POST only" });
         const gq = body && body.query;
