@@ -1030,6 +1030,16 @@ function renderCommand(){
   if(rb){rb.innerHTML='<span class="muted" style="font-size:10px;letter-spacing:.13em;text-transform:uppercase">Date range</span>'+rangePicker("cmd",cmdRange,cmdApplyRange)+'<span class="muted" style="font-size:11.5px">Metrics, chart &amp; campaigns below reflect this window.</span>';wireRangePickers(rb);}
   var kpis=[["Spend",money(t.cost),none?"no spend yet":cmdRangeLabel],["Revenue",money(t.value),""],["ROAS",roas==null?"—":roas.toFixed(2)+"x",""],["Conversions",String(Math.round((t.conv||0)*10)/10),""],["CTR",ctr==null?"—":ctr.toFixed(1)+"%",""],["Cost / conv",cpa==null?"—":money(cpa),""]];
   $("#kpis").innerHTML=kpis.map((k,i)=>'<div class="kpi '+(i===2?"accent":"")+'"><div class="lab">'+k[0]+'</div><div class="val">'+k[1]+'</div><div class="delta muted" style="font-size:11px">'+(k[2]||"&nbsp;")+'</div></div>').join("");
+  // channel split: shown only once a feed (PMax) campaign exists
+  (function(){var rowsC=(cmdMetrics||DASH.lastMetrics||[]);var pm=rowsC.filter(function(c){return c.channel==="PERFORMANCE_MAX";});
+    var old=document.getElementById("kpiSplit");if(old)old.remove();
+    if(!pm.length)return;
+    var sSearch=0,sPm=0,cvS=0,cvP=0;rowsC.forEach(function(c){var isP=c.channel==="PERFORMANCE_MAX";if(isP){sPm+=(+c.cost||0);cvP+=(+c.conv||0);}else{sSearch+=(+c.cost||0);cvS+=(+c.conv||0);}});
+    var el=document.createElement("div");el.id="kpiSplit";
+    el.style.cssText="margin:-8px 0 16px;font-size:12px;color:var(--ink-70);display:flex;gap:16px;flex-wrap:wrap";
+    el.innerHTML='<span><span style="font-weight:700;letter-spacing:.05em;font-size:10px;color:var(--ink-45)">SEARCH</span> '+money(sSearch)+' \u00b7 '+((+cvS||0)%1?cvS.toFixed(1):cvS)+' conv</span>'
+      +'<span><span style="font-weight:700;letter-spacing:.05em;font-size:10px;color:var(--gold)">PMAX \u00b7 FEED</span> '+money(sPm)+' \u00b7 '+((+cvP||0)%1?cvP.toFixed(1):cvP)+' conv</span>';
+    var kp=document.getElementById("kpis");kp.parentNode.insertBefore(el,kp.nextSibling);})();
   // spend/revenue from metricsSeries, filtered to the chosen window
   var resolved=rpResolve(cmdRange);
   var ser=(DASH.metricsSeries||[]).filter(function(e){if(cmdRange.preset==="14d"||!e.at)return true;var ds=rpYmd(new Date(e.at));return (!resolved.start||ds>=resolved.start)&&(!resolved.end||ds<=resolved.end);});
@@ -1065,7 +1075,7 @@ function campaignTable(camps){
   return '<table class="ptable"><thead><tr><th>Campaign</th><th>Status</th><th>Schedule</th><th class="r">Budget</th><th class="r">Cost</th><th class="r">Conv.</th><th class="r">ROAS</th></tr></thead><tbody>'+
     camps.map(function(c,i){var r=(+c.cost>0)?(c.value/c.cost):null;var dt=campDates(c);
       var ctr=c.impr>0?(c.clicks/c.impr*100):null,cpc=c.clicks>0?(c.cost/c.clicks):null,cpa=c.conv>0?(c.cost/c.conv):null;
-      var row='<tr class="crow" data-i="'+i+'" data-cid="'+esc(String(c.id||i))+'" style="cursor:pointer"><td style="font-weight:500">'+esc(c.name)+'</td><td>'+statusBadge(c)+schedHint(c)+'</td><td class="muted" style="font-size:11.5px;white-space:nowrap">'+(dt.s?(esc(dt.s)+" \u2192 "+esc(dt.e||"open")):"\u2014")+(dt.info?'<div style="font-size:10px;color:var(--ink-45)">'+esc(dt.info)+'</div>':"")+'</td><td class="r">'+(c.budget?money(c.budget):"\u2014")+'</td><td class="r mono">'+money(c.cost)+'</td><td class="r mono">'+((+c.conv||0)%1?(+c.conv).toFixed(1):(+c.conv||0))+'</td><td class="r">'+(r==null?"\u2014":'<span class="'+(r>=3?"roas-good":r>=2.5?"roas-mid":"roas-bad")+'">'+r.toFixed(1)+'x</span>')+'</td></tr>';
+      var row='<tr class="crow" data-i="'+i+'" data-cid="'+esc(String(c.id||i))+'" style="cursor:pointer"><td style="font-weight:500">'+esc(c.name)+(c.channel==="PERFORMANCE_MAX"?' <span style="font-size:9px;font-weight:700;letter-spacing:.08em;color:var(--gold);border:1px solid var(--gold);border-radius:5px;padding:1px 5px;white-space:nowrap">PMAX</span>':'')+'</td><td>'+statusBadge(c)+schedHint(c)+'</td><td class="muted" style="font-size:11.5px;white-space:nowrap">'+(dt.s?(esc(dt.s)+" \u2192 "+esc(dt.e||"open")):"\u2014")+(dt.info?'<div style="font-size:10px;color:var(--ink-45)">'+esc(dt.info)+'</div>':"")+'</td><td class="r">'+(c.budget?money(c.budget):"\u2014")+'</td><td class="r mono">'+money(c.cost)+'</td><td class="r mono">'+((+c.conv||0)%1?(+c.conv).toFixed(1):(+c.conv||0))+'</td><td class="r">'+(r==null?"\u2014":'<span class="'+(r>=3?"roas-good":r>=2.5?"roas-mid":"roas-bad")+'">'+r.toFixed(1)+'x</span>')+'</td></tr>';
       var det='<tr class="cdet" data-d="'+i+'" data-cid="'+esc(String(c.id||i))+'" style="display:none"><td colspan="7" style="background:var(--paper-2)"><div style="padding:10px 8px;display:flex;flex-wrap:wrap;gap:22px;font-size:12px"><span><b>Impressions</b><br><span class="mono">'+(+c.impr||0).toLocaleString()+'</span></span><span><b>Clicks</b><br><span class="mono">'+(+c.clicks||0).toLocaleString()+'</span></span><span><b>CTR</b><br><span class="mono">'+(ctr==null?"\u2014":ctr.toFixed(2)+"%")+'</span></span><span><b>Avg CPC</b><br><span class="mono">'+(cpc==null?"\u2014":money(cpc))+'</span></span><span><b>Conversions</b><br><span class="mono">'+(+c.conv||0)+'</span></span><span><b>Cost / conv</b><br><span class="mono">'+(cpa==null?"\u2014":money(cpa))+'</span></span><span><b>Conv. value</b><br><span class="mono">'+money(c.value)+'</span></span>'+(c.primaryStatusReasons&&c.primaryStatusReasons.length?'<span style="flex-basis:100%;color:var(--ink-70);font-size:11.5px">\u26a0 '+esc(reasonText(c.primaryStatusReasons))+'</span>':"")+'</div><div class="adlvl" data-c="'+esc(String(c.id))+'" style="padding:0 8px 10px"></div></td></tr>';
       return row+det;}).join("")+'</tbody></table>';}
 function wireCampRows(scope){Array.prototype.forEach.call(scope.querySelectorAll(".crow"),function(r){r.onclick=function(){var i=this.getAttribute("data-i");var d=scope.querySelector('.cdet[data-d="'+i+'"]');if(d)d.style.display=d.style.display==="none"?"":"none";};});}
@@ -1104,8 +1114,8 @@ function dailyTips(ser,ctrl,showCeiling){
     return t;});}
 function renderDailyCharts(){if(!DAILY)return;var chips=$("#srChips");var ctrl=DASH.control||{};
   if(chips){var withData=(DAILY.campaigns||[]).filter(function(c){return c.totals.impr>0||c.totals.cost>0;});
-    var mk=function(id,label,tot){var on=srFilter===id;return '<button class="btn '+(on?"gold":"ghost")+' sm srchip" data-f="'+id+'" style="padding:3px 10px;font-size:11px">'+esc(label)+(tot?' <span class="mono" style="opacity:.7">'+tot+'</span>':"")+'</button>';};
-    chips.innerHTML=mk("all","All campaigns","")+withData.map(function(c){return mk(c.id,c.name.length>26?c.name.slice(0,24)+"\u2026":c.name,c.totals.clicks+" cl");}).join("");
+    var mk=function(id,label,tot,channel){var on=srFilter===id;return '<button class="btn '+(on?"gold":"ghost")+' sm srchip" data-f="'+id+'" style="padding:3px 10px;font-size:11px">'+esc(label)+(channel==="PERFORMANCE_MAX"?' <span style="font-size:8.5px;font-weight:700;letter-spacing:.06em;'+(on?"color:#fff;border:1px solid rgba(255,255,255,.6)":"color:var(--gold);border:1px solid var(--gold)")+';border-radius:4px;padding:0 3px;vertical-align:1px">PMAX</span>':'')+(tot?' <span class="mono" style="opacity:.7">'+tot+'</span>':"")+'</button>';};
+    chips.innerHTML=mk("all","All campaigns","")+withData.map(function(c){return mk(c.id,c.name.length>26?c.name.slice(0,24)+"\u2026":c.name,c.totals.clicks+" cl",c.channel);}).join("");
     Array.prototype.forEach.call(chips.querySelectorAll(".srchip"),function(b){b.onclick=function(){srFilter=this.getAttribute("data-f");renderDailyCharts();};});}
   var ser=dailySeriesFor(srFilter)||[];var days=ser.map(function(r){return r.date;});
   var spend=ser.map(function(r){return Math.round(r.cost*100)/100;}),rev=ser.map(function(r){return Math.round(r.value*100)/100;});
@@ -1230,10 +1240,15 @@ function diagFailBanner(msg){var db=document.getElementById("diagBody");if(!db)r
   d.style.cssText="padding:10px 12px;border:1px solid #f0c8bc;border-radius:10px;background:#fdeee9;color:#b3402a;font-size:12.5px;margin-bottom:12px";
   d.innerHTML='<b>Last diagnosis failed:</b> '+esc(msg)+' <span style="opacity:.75">\u00b7 fix the cause and hit Diagnose again</span>';
   db.insertBefore(d,db.firstChild);}
-function pollDiagRun(runId,onDone,onFail){var t0=Date.now();
+function pollDiagRun(runId,onDone,onFail,onTick){var t0=Date.now();var lastSeen=null;
   (function tick(){
-    if(Date.now()-t0>900000){if(onFail)onFail("No status after 15 minutes \u2014 the background worker may not be deployed or is crashing before it can report. Check the goldenspike function logs for googleAdsAutopilot-background.");return;}
+    if(Date.now()-t0>900000){
+      if(onFail)onFail(lastSeen&&lastSeen.phase==="running"
+        ?"The worker started (last heartbeat "+(lastSeen.done!=null?lastSeen.done+"/"+lastSeen.total+" campaigns":"early")+") but didn't finish within 15 minutes \u2014 it likely hit Netlify's background time limit. Check the goldenspike logs for googleAdsAutopilot-background."
+        :"No status after 15 minutes \u2014 the background worker may not be deployed or is crashing before it can report. Check the goldenspike function logs for googleAdsAutopilot-background.");
+      return;}
     api("diagRunStatus",{runId:runId}).then(function(s){
+      if(s&&!s.ok&&s.phase==="running"){lastSeen=s;if(onTick)onTick(s);}
       if(s&&s.ok===true){api("diagnostics").then(function(d){if(d&&!d.empty){DIAG=d;renderDiag();}
         if(s.aiError)toast("Diagnostics landed, but the AI review failed: "+s.aiError);
         if(onDone)onDone();}).catch(function(){if(onDone)onDone();});}
@@ -1257,12 +1272,13 @@ function runDiag(silent,campaignId){if(_diagBusy)return;_diagBusy=true;
   if(b&&!campaignId){b.disabled=true;b.textContent="Diagnosing\u2026";
     if(_diagTick)clearInterval(_diagTick);
     _diagTick=setInterval(function(){var bb=document.getElementById("diagRun");
-      if(bb&&bb.disabled)bb.textContent="Diagnosing\u2026 "+Math.round((Date.now()-_t0)/1000)+"s";},1000);}
+      if(bb&&bb.disabled)bb.textContent="Diagnosing\u2026 "+(window.__diagProg||"")+Math.round((Date.now()-_t0)/1000)+"s";},1000);}
+  window.__diagProg="";
   if(!silent&&!DIAG){var db0=document.getElementById("diagBody");if(db0)db0.innerHTML='<div class="empty" style="height:90px"><span class="spin lg gold"></span><div style="font-size:12.5px">Pulling diagnostics from Google Ads + AI review\u2026 30\u201390s</div></div>';}
   var finish=function(){_diagBusy=false;if(_diagTick){clearInterval(_diagTick);_diagTick=null;}var b2=document.getElementById("diagRun");if(b2){b2.disabled=false;b2.textContent="Diagnose all";}};
   var runId=String(Date.now());
   api("runDiagnostics",campaignId?{campaignId:campaignId,runId:runId}:{runId:runId}).then(function(d){
-    if(d&&d.queued){pollDiagRun(runId,finish,function(msg){finish();diagFailBanner(msg);toast("Diagnosis failed \u2014 details in the Ad Doctor card");});}
+    if(d&&d.queued){pollDiagRun(runId,finish,function(msg){finish();diagFailBanner(msg);toast("Diagnosis failed \u2014 details in the Ad Doctor card");},function(s){if(s.done!=null)window.__diagProg=s.done+"/"+s.total+" \u00b7 ";});}
     else if(d&&!d.error&&d.campaigns){DIAG=d;renderDiag();finish();}
     else{finish();var db=document.getElementById("diagBody");if(db&&d&&d.error)db.innerHTML='<div class="empty" style="height:70px"><div style="font-size:12.5px;color:var(--clay)">Diagnostics failed: '+esc(d.error)+'</div></div>';}
   }).catch(function(e){finish();var db=document.getElementById("diagBody");if(db)db.innerHTML='<div class="empty" style="height:70px"><div style="font-size:12.5px;color:var(--clay)">'+esc(e.message||e)+'</div></div>';});}
@@ -1279,7 +1295,7 @@ function renderDiag(){var body=document.getElementById("diagBody");if(!body)retu
   var known={};(D.campaigns||[]).forEach(function(c){known[String(c.id)]=1;});
   var extras=((DASH&&DASH.lastMetrics)||[]).filter(function(m){
     return m&&m.id&&!known[String(m.id)]&&String(m.status||"")!=="REMOVED";})
-    .map(function(m){return {id:m.id,name:m.name||("Campaign "+m.id),__undiag:true,
+    .map(function(m){return {id:m.id,name:m.name||("Campaign "+m.id),__undiag:true,__channel:m.channel||null,
       __status:m.status,__spend:m.cost!=null?m.cost:(m.spend!=null?m.spend:null),__clicks:m.clicks};});
   var sub=document.getElementById("diagSub");
   if(sub)sub.textContent=(DIAG?("checked "+timeago(D.generatedAt)+" ago \u00b7 "):"not yet run \u00b7 ")+(((D.campaigns||[]).length)+extras.length)+" campaigns";
@@ -1301,7 +1317,7 @@ function renderDiag(){var body=document.getElementById("diagBody");if(!body)retu
       html+='<div style="border-top:1px solid var(--line)" data-camp="'+c.id+'">'+
         '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:11px 4px">'+
         '<span style="font-size:11px;color:var(--ink-45);width:12px"></span>'+
-        '<span style="width:9px;height:9px;border-radius:50%;background:#9a9284;display:inline-block"></span><b>'+esc(c.name)+'</b>'+
+        '<span style="width:9px;height:9px;border-radius:50%;background:#9a9284;display:inline-block"></span><b>'+esc(c.name)+'</b>'+(c.__channel==="PERFORMANCE_MAX"?' <span style="font-size:9px;font-weight:700;letter-spacing:.08em;color:var(--gold);border:1px solid var(--gold);border-radius:5px;padding:1px 5px">PMAX \u00b7 FEED</span>':'')+
         '<span style="font-size:10px;font-weight:700;letter-spacing:.1em;color:#9a9284">NOT DIAGNOSED</span>'+
         '<span class="muted" style="font-size:11px">'+esc(q2.join(" \u00b7 "))+'</span>'+
         '<span style="margin-left:auto;display:inline-flex;gap:6px"><button class="btn ghost sm dg-one" data-id="'+c.id+'" style="padding:3px 10px;font-size:11px">Diagnose</button></span>'+
@@ -1383,7 +1399,7 @@ function renderDiag(){var body=document.getElementById("diagBody");if(!body)retu
     html+='<div style="border-top:1px solid var(--line)" data-camp="'+c.id+'">'+
       '<div class="diagHead" data-open="'+c.id+'" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:11px 4px;cursor:pointer">'+
         '<span style="font-size:11px;color:var(--ink-45);width:12px">'+(open?"\u25be":"\u25b8")+'</span>'+
-        '<span style="width:9px;height:9px;border-radius:50%;background:'+sv[0]+';display:inline-block"></span><b>'+esc(c.name)+'</b>'+
+        '<span style="width:9px;height:9px;border-radius:50%;background:'+sv[0]+';display:inline-block"></span><b>'+esc(c.name)+'</b>'+(c.channel==="PERFORMANCE_MAX"?' <span style="font-size:9px;font-weight:700;letter-spacing:.08em;color:var(--gold);border:1px solid var(--gold);border-radius:5px;padding:1px 5px">PMAX \u00b7 FEED</span>':'')+
         '<span style="font-size:10px;font-weight:700;letter-spacing:.1em;color:'+sv[0]+'">'+sv[1]+'</span>'+
         '<span class="muted" style="font-size:11px">'+esc(quick.join(" \u00b7 "))+(remCount?" \u00b7 "+remCount+" remedies":"")+'</span>'+
         '<span style="margin-left:auto;display:inline-flex;gap:6px"><button class="btn ghost sm dg-one" data-id="'+c.id+'" style="padding:3px 10px;font-size:11px">Diagnose</button></span>'+
@@ -1486,7 +1502,18 @@ function renderApprovals(){var list=$("#apprList");var p=DASH.pending||[];var st
   }
   if(!p.length&&!stuck.length){list.innerHTML='<div class="empty" style="height:240px"><div class="ring"></div><div>Queue\u2019s clear.</div><div style="font-size:12px">New drafts land here when the autopilot runs.</div></div>';return;}
   p.forEach(function(a){var pl=a.payload||{};var body='<div class="why"><span class="i">\ud83d\udca1</span><div><b>Why this:</b> '+esc(a.summary||"")+'</div></div>';
-    if(pl.mutateOperations){var c=parseCreative(pl.mutateOperations);
+    if(a.type==="pmax"&&pl.meta){var m=pl.meta;var c2=parseCreative(pl.mutateOperations||[]);
+      body+='<div style="display:flex;gap:6px;flex-wrap:wrap;margin:8px 0 4px">'
+        +'<span class="chip on" style="background:var(--gold-soft);border-color:var(--gold)">PERFORMANCE MAX \u00b7 feed</span>'
+        +'<span class="chip">'+money(m.dailyBudget)+'/day</span>'
+        +(m.targetRoas?'<span class="chip">tROAS '+m.targetRoas+'</span>':'')
+        +'<span class="chip">'+(m.scopedTypes&&m.scopedTypes.length?('scoped: '+esc(m.scopedTypes.join(" / "))):'all feed products')+'</span>'
+        +'<span class="chip">'+(m.images||0)+' images</span>'
+        +'<span class="chip">GMC '+esc(String(m.merchantId||""))+'</span></div>';
+      if(c2.headlines.length)body+='<div class="eyebrow" style="margin:8px 0 6px">Asset headlines</div>'+c2.headlines.map(t=>copyLine(t,30)).join("");
+      body+='<div class="kv" style="margin-top:12px;color:var(--ink-45)">Runs on your Merchant Center product feed \u2014 the same listings already selling organically, placed higher. Created <span style="color:var(--ink)">PAUSED</span>; enable from Command Center.</div>';
+    }
+    else if(pl.mutateOperations){var c=parseCreative(pl.mutateOperations);
       if(c.headlines.length)body+='<div class="eyebrow" style="margin:4px 0 6px">Headlines \u00b7 \u226430</div>'+c.headlines.map(t=>copyLine(t,30)).join("");
       if(c.descriptions.length)body+='<div class="eyebrow" style="margin:14px 0 6px">Descriptions \u00b7 \u226490</div>'+c.descriptions.map(t=>copyLine(t,90)).join("");
       if(c.keywords.length){var kd=(c.kwDetail&&c.kwDetail.length)?c.kwDetail:c.keywords.map(function(k){return{text:k,matchType:"PHRASE"};});var nEx=kd.filter(function(k){return k.matchType==="EXACT";}).length;
@@ -1702,7 +1729,7 @@ function showDraft(r){var a=r.assets||{};var out=$("#benchOut");var p=r.plan;var
 
 
 /* ---- render: opportunities (Unused vs In-use reconciliation) ---- */
-var OPPS=[]; var oppLoaded=false; var oppView="unused"; var oppSort="best";
+var OPPS=[]; var PMAXOPPS=[]; var oppLoaded=false; var oppView="unused"; var oppSort="best";
 function oppSorters(mode){
   if(mode==="urgent")return function(a,b){var d=(a.o.daysOut||0)-(b.o.daysOut||0); if(d)return d; d=(a.o.durationDays||99)-(b.o.durationDays||99); if(d)return d; return (b.o.score||0)-(a.o.score||0);};
   if(mode==="reach")return function(a,b){return (((b.o.research||{}).searchVolume)||0)-(((a.o.research||{}).searchVolume)||0);};
@@ -1744,7 +1771,7 @@ async function loadOpportunities(force){
   var scanAct=force?actStart("opportunities"):null;
   try{
     var r=await api("opportunities",{force:!!force});
-    OPPS=(r&&r.opportunities)||[]; setOppMeta(r&&r.scannedAt);
+    OPPS=(r&&r.opportunities)||[]; PMAXOPPS=(r&&r.pmaxList)||[]; setOppMeta(r&&r.scannedAt);
     oppShowErr(force?null:(r&&r.lastError), r&&r.scannedAt);
     if(!force){ renderOpportunities(); $("#oppScan").disabled=false; return; }
     // Forced scan runs in the background (avoids the 60s sync limit). Show any existing
@@ -1765,14 +1792,14 @@ async function loadOpportunities(force){
         if(p&&p.scanning) renderScanProg(p.progress);
         if(at>prevAt && !(p&&p.scanning)){
           clearInterval(oppPollTimer); oppPollTimer=null; actEnd(scanAct); hideScanProg();
-          OPPS=(p&&p.opportunities)||[]; setOppMeta(at); oppShowErr(null); renderOpportunities();
+          OPPS=(p&&p.opportunities)||[]; PMAXOPPS=(p&&p.pmaxList)||[]; setOppMeta(at); oppShowErr(null); renderOpportunities();
           toast("Re-scanned \u2014 "+OPPS.length+" opportunities",true);
           $("#oppScan").disabled=false;
         } else if(errAt>scanStart && !(p&&p.scanning)){
           // The scan RAN and FAILED. Old results (if any) stay visible, clearly labeled stale,
           // with the engine\u2019s exact error on screen so the cause is never invisible again.
           clearInterval(oppPollTimer); oppPollTimer=null; actEnd(scanAct); hideScanProg(); $("#oppScan").disabled=false;
-          OPPS=(p&&p.opportunities)||[]; setOppMeta(at); renderOpportunities();
+          OPPS=(p&&p.opportunities)||[]; PMAXOPPS=(p&&p.pmaxList)||[]; setOppMeta(at); renderOpportunities();
           oppShowErr((p&&p.lastError)||"scan failed", at);
           toast("Scan failed \u2014 see the notice above the list.");
         } else if(tries>=240){
@@ -1825,9 +1852,51 @@ function renderOppBid(){ var ob=$("#oppBid"); if(!ob)return; var smart=bidView()
     [["Manual CPC",0],["Smart",1]].map(function(o){var on=(o[1]===1)===smart;return '<button class="bidSeg" data-smart="'+o[1]+'" title="'+(o[1]?"Smart Bidding \u2014 Google sets bids, no CPC cap":"Manual CPC \u2014 hard per-click cap")+'" style="padding:4px 11px;border:none;border-radius:7px;font-size:11.5px;font-weight:600;cursor:pointer;background:'+(on?"var(--card)":"transparent")+';color:'+(on?"var(--ink)":"var(--ink-45)")+';box-shadow:'+(on?"var(--sh)":"none")+'">'+o[0]+'</button>';}).join("")+'</span>';
   ob.querySelectorAll(".bidSeg").forEach(function(b){ b.onclick=async function(){ var want=this.getAttribute("data-smart")==="1"; if(want===bidView())return; var aid=actStart("setControl",{verb:"Saving bidding strategy"}); try{ await api("setControl",{patch:{smartBidding:want}}); toast(want?"Smart Bidding on \u2014 no CPC cap":"Manual CPC on \u2014 hard per-click cap",!want);}catch(x){toast(x.message);} actEnd(aid); await reload(); renderOpportunities(); }; });
 }
+function renderPmaxSection(host){
+  var old=document.getElementById("pmaxSec");if(old)old.remove();
+  if(!PMAXOPPS.length||!host)return;
+  var sec=document.createElement("div");sec.id="pmaxSec";
+  var inner='<div class="card pad" style="margin-top:18px;border:1px solid var(--gold)">'
+    +'<div class="card__h"><h3>Feed campaigns \u00b7 Google Shopping</h3><span class="sub">powered by your organic (unpaid) sales \u2014 same feed, placed higher</span></div>';
+  PMAXOPPS.forEach(function(o,i){
+    var org=o.organic?('<span class="muted" style="font-size:11.5px">'+(o.organic.orders30d||0)+' organic orders \u00b7 $'+(o.organic.organicRevenue30d||0)+' \u00b7 30d</span>'):'';
+    inner+='<div style="border-top:1px solid var(--line);padding:12px 2px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">'
+      +'<span class="chip on" style="background:var(--gold-soft);border-color:var(--gold)">PMAX</span>'
+      +'<b>'+esc(o.collectionTitle)+'</b>'+org
+      +'<span class="muted" style="font-size:12px;flex:1;min-width:180px">'+esc(o.rationale||"")+(o.angle?' \u00b7 <i>'+esc(o.angle)+'</i>':'')+'</span>'
+      +'<span style="white-space:nowrap">$<input type="number" class="pmx-bud" data-i="'+i+'" value="'+(o.dailyBudget||10)+'" min="3" max="30" style="width:56px;padding:4px 6px;border:1px solid var(--line);border-radius:7px">/day \u00b7 '+(o.days||30)+'d'
+      +(o.types&&o.types.length?' \u00b7 <span class="muted" style="font-size:11px">'+esc(o.types.join("/"))+'</span>':'')+'</span>'
+      +'<button class="btn gold sm pmx-gen" data-i="'+i+'">Generate</button>'
+      +'<span class="pmx-msg" data-i="'+i+'" style="font-size:12px;color:var(--ink-45)"></span></div>';
+  });
+  sec.innerHTML=inner+'</div>';
+  host.appendChild(sec);
+  Array.prototype.forEach.call(sec.querySelectorAll(".pmx-gen"),function(b){b.onclick=async function(){
+    var i=+this.getAttribute("data-i");var o=PMAXOPPS[i];var btn=this;
+    var bud=+(sec.querySelector('.pmx-bud[data-i="'+i+'"]')||{}).value||o.dailyBudget||10;
+    var msg=sec.querySelector('.pmx-msg[data-i="'+i+'"]');
+    btn.disabled=true;var t0=Date.now();var tk=setInterval(function(){if(btn.disabled)btn.textContent="Generating\u2026 "+Math.round((Date.now()-t0)/1000)+"s";},1000);
+    var done=function(){clearInterval(tk);btn.disabled=false;btn.textContent="Generate";};
+    try{
+      var genId=String(Date.now())+"-pmx";
+      var r=await api("generatePmax",{genId:genId,handle:o.handle,dailyBudget:bud,days:o.days});
+      if(r&&r.error)throw new Error(r.error);
+      var t1=Date.now();var st=null;
+      while(Date.now()-t1<600000){
+        st=await api("genStatus",{genId:genId}).catch(function(){return null;});
+        if(st&&(st.ok===true||st.ok===false))break;
+        await new Promise(function(res){setTimeout(res,3000);});
+      }
+      if(st&&st.ok===true){toast("PMax draft ready \u2014 review it in Approvals \u2713");if(msg)msg.textContent="\u2713 in Approvals";await reload();}
+      else throw new Error((st&&st.error)||"timed out waiting for the draft");
+    }catch(x){if(msg)msg.textContent="\u2715 "+String(x.message).slice(0,120);toast("PMax draft failed: "+x.message);}
+    done();
+  };});
+}
 function renderOpportunities(){
   renderOppBid();
   var box=$("#oppList");
+  setTimeout(function(){try{renderPmaxSection(box&&box.parentNode?box.parentNode:box);}catch(e){}},0);
   if(!OPPS.length){box.innerHTML='<div class="empty" style="height:160px"><div>No opportunities surfaced.</div><div style="font-size:12px">Try Scan again, or use Custom build below.</div></div>';return;}
   var unused=[],inuse=[];
   OPPS.forEach(function(o,i){ (o.acted?inuse:unused).push({o:o,i:i}); });
