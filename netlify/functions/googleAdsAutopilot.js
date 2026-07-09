@@ -655,7 +655,7 @@ function textGuidelinesOp() {
 }
 
 /* ===================== OpenAI generation (repo convention) ===================== */
-async function openaiJSON(prompt, { maxTokens = 4000, effort = "high" } = {}) {
+async function openaiJSON(prompt, { maxTokens = 4000, effort = "high", _attempt = 0 } = {}) {
   const model = GEN_MODEL;
   const payload = { model, messages: [{ role: "user", content: prompt }] };
   // NOTE: for gpt-5 / o* reasoning models, max_completion_tokens INCLUDES hidden reasoning
@@ -672,6 +672,14 @@ async function openaiJSON(prompt, { maxTokens = 4000, effort = "high" } = {}) {
   if (!res.ok) throw new Error("[gads] OpenAI: " + ((data.error && data.error.message) || res.status));
   const choice = (data.choices || [])[0] || {};
   const raw = ((choice.message || {}).content || "");
+  // Reasoning runaway: finish_reason "length" with ZERO visible output means the
+  // model spent the entire completion budget on hidden reasoning. Retry once
+  // with double the budget and effort stepped down — medium reasons less and
+  // leaves room for the actual JSON.
+  if (choice.finish_reason === "length" && !raw.trim() && _attempt === 0 && /^(gpt-5|o\d)/.test(model)) {
+    const nextEffort = effort === "high" ? "medium" : "low";
+    return openaiJSON(prompt, { maxTokens: Math.min(maxTokens * 2, 32000), effort: nextEffort, _attempt: 1 });
+  }
   const cleaned = raw.replace(/```json|```/g, "").trim();
   try { return JSON.parse(cleaned); } catch (e) {}
   // Truncated output (finish_reason "length") is the usual culprit — salvage what parses:
@@ -3411,9 +3419,10 @@ Also return accountSummary: 2-3 sentences on the account as a whole (ceiling hea
 
 Rules: never recommend raising total enabled budgets past the ceiling; a campaign 1-3 days old is in learning — don't overreact; ROAS below target with real volume = fix before feeding; budget-limited + ROAS above target = the clearest raise there is. Return STRICT JSON: {"campaigns":[...],"accountSummary":"..."}`;
   // High reasoning: multi-variable read (Google diagnostics x QS components x
-  // search terms x history x guardrails). Budget doubled — at high effort the
-  // hidden reasoning tokens eat a large share of max_completion_tokens.
-  return await openaiJSON(prompt, { maxTokens: 9000, effort: "high" });
+  // search terms x history x guardrails). At high effort the hidden reasoning
+  // tokens eat most of max_completion_tokens — with several campaigns of dense
+  // evidence, 9000 proved to be ALL reasoning and zero output. Budget for both.
+  return await openaiJSON(prompt, { maxTokens: 20000, effort: "high" });
 }
 
 async function runDiagnostics({ campaignId } = {}) {
