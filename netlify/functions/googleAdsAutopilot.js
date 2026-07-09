@@ -1341,7 +1341,9 @@ function planCampaign({ title, occasion, peakDate, ceiling, headroom, smartBiddi
 // Broad-match negatives exclude the term in any query. Cuts wasted spend → better effective ROAS.
 const DEFAULT_NEGATIVES = ["free", "diy", "how to make", "tutorial", "pattern", "cheap", "wholesale",
   "bulk", "supplier", "manufacturer", "repair", "fix", "job", "jobs", "hiring", "salary", "fake",
-  "replica", "knockoff", "amazon", "temu", "shein", "wish", "meaning", "definition", "clipart", "svg", "png"];
+  "replica", "knockoff", "amazon", "temu", "shein", "wish", "meaning", "definition", "clipart", "svg", "png",
+  "printable", "template", "tattoo", "drawing", "coloring", "crochet", "knitting", "beads only",
+  "kit", "supplies", "aliexpress", "ebay", "etsy", "near me", "used", "second hand", "pandora"];
 // Brand callouts — descriptive (not promises), true for Brites, each ≤25 chars.
 // No origin-country callout: most buyers are in the US, and "Handmade in Canada" reads as
 // "imported / slower shipping" to them. Keep claims true and universally appealing.
@@ -1377,6 +1379,20 @@ function buildCampaignAssets(coll, finalUrl, cRes, extras) {
     snippets = 1;
   }
   return { ops, summary: { sitelinks: sitelinks.length, callouts: BRAND_CALLOUTS.length, structuredSnippets: snippets } };
+}
+
+// Paid lessons carried forward: search terms that already burned money with
+// zero conversions ANYWHERE in the account become launch negatives on every
+// NEW campaign — the same bad click is never bought twice.
+async function accountWasteNegatives({ minCost = 2 } = {}) {
+  try {
+    const rows = await gaql(`
+      SELECT search_term_view.search_term, metrics.cost_micros, metrics.conversions
+      FROM search_term_view
+      WHERE ${await _last90Clause()} AND metrics.conversions = 0 AND metrics.cost_micros > ${Math.round(minCost * 1e6)}
+      ORDER BY metrics.cost_micros DESC LIMIT 25`);
+    return [...new Set(rows.map(r => String((r.searchTermView || {}).searchTerm || "").toLowerCase().trim()).filter(t => t && t.length <= 60))];
+  } catch (e) { return []; }
 }
 
 function buildSearchCampaignOps(coll, event, assets, { dailyBudget, startDate, endDate, countries, maxCpc, smartBidding, targetRoas, negatives, withAssets, assetExtras, keywordPlan } = {}) {
@@ -1424,6 +1440,39 @@ function buildSearchCampaignOps(coll, event, assets, { dailyBudget, startDate, e
   // behind it) — high-intent long-tail as EXACT, head terms as PHRASE — so the campaign bids on
   // what the research actually found. Title-derived phrases are only the no-research fallback.
   let kwEntries;
+  // LAUNCH HYGIENE: a keyword earns a bid only if a shopper typing it could be
+  // looking for OUR product. Concretely: it must contain a jewelry product-type
+  // anchor (necklace/charm/bracelet/...), and 1-2 word terms without one (or
+  // pure gifting/category heads like "nurse gifts", "summer jewelry gifts")
+  // are dropped BEFORE money is spent — not diagnosed after.
+  const TYPE_ANCHORS = ["necklace", "necklaces", "charm", "charms", "bracelet", "bracelets",
+    "pendant", "pendants", "jewelry", "jewellery", "earring", "earrings", "anklet", "keychain", "locket"];
+  const GENERIC_HEADS = ["gift", "gifts", "present", "presents", "jewelry", "jewellery", "accessories", "ideas"];
+  function keywordViable(text) {
+    const t = String(text || "").toLowerCase().trim();
+    const words = t.split(/\s+/).filter(Boolean);
+    if (!words.length) return false;
+    const hasAnchor = TYPE_ANCHORS.some(a => words.includes(a));
+    if (!hasAnchor) return false;                                   // "gifts for nurses" → out
+    if (words.length <= 2) {
+      // 2-worders survive only as motif + SPECIFIC type ("bunny necklace").
+      // "jewelry" is a category, not a product — "summer jewelry" stays out.
+      const WEAK = ["jewelry", "jewellery"];
+      const hasStrong = TYPE_ANCHORS.some(a2 => words.includes(a2) && !WEAK.includes(a2));
+      const nonAnchor = words.filter(w => !TYPE_ANCHORS.includes(w) && !GENERIC_HEADS.includes(w));
+      return hasStrong && nonAnchor.length >= 1 && !GENERIC_HEADS.includes(words[0]);
+    }
+    // 3+ words with an anchor: viable unless it is ONLY generic filler + anchor
+    const meaningful = words.filter(w => !TYPE_ANCHORS.includes(w) && !GENERIC_HEADS.includes(w) && !["for", "the", "a", "of", "with", "her", "him", "women", "men"].includes(w));
+    return meaningful.length >= 1;
+  }
+  let droppedKeywords = [];
+  if (Array.isArray(keywordPlan) && keywordPlan.length) {
+    const before = keywordPlan.length;
+    droppedKeywords = keywordPlan.filter(k => !keywordViable(k && (k.text || k))).map(k => (k && (k.text || k)));
+    keywordPlan = keywordPlan.filter(k => keywordViable(k && (k.text || k)));
+    if (!keywordPlan.length) keywordPlan = null; // fall through to themed fallback below
+  }
   if (Array.isArray(keywordPlan) && keywordPlan.length) {
     const seen = new Set();
     kwEntries = keywordPlan.map(k => {
@@ -1454,7 +1503,7 @@ function buildSearchCampaignOps(coll, event, assets, { dailyBudget, startDate, e
   // Sitelink + callout + structured-snippet assets — extra links/real estate that lift CTR & conversions.
   let assetSummary = null;
   if (withAssets !== false) { const ca = buildCampaignAssets(coll, finalUrl, cRes, assetExtras); ca.ops.forEach(o => ops.push(o)); assetSummary = ca.summary; }
-  return { ops, tag, finalUrl, negatives: negSet, assetSummary, keywordSummary: { count: kwEntries.length, exact: kwEntries.filter(k => k.matchType === "EXACT").length, researched: !!(Array.isArray(keywordPlan) && keywordPlan.length) } };
+  return { ops, tag, finalUrl, negatives: negSet, assetSummary, keywordSummary: { count: kwEntries.length, exact: kwEntries.filter(k => k.matchType === "EXACT").length, researched: !!(Array.isArray(keywordPlan) && keywordPlan.length), dropped: droppedKeywords.slice(0, 12) } };
 }
 
 /* ============================ STAGES ============================ */
@@ -2592,7 +2641,7 @@ Find the 8-12 best advertising OPPORTUNITIES to act on within the NEXT ~30 DAYS.
   (Do NOT estimate ROAS \u2014 it is computed from real CPC, budget, and store data. Your job is the market judgment the raw numbers can't see.)
 - proven (bool: true ONLY if memory shows success for this occasion)
 - rationale (<=120 chars: why now, why this collection)
-- keywords: an array of 5-8 RESEARCHED keyword objects. MIX broad "head" terms with specific "long-tail" phrases, DRAWN FROM the collection's motif inventory AND ITS LISTING TAGS (the tags are the merchant's own search terms \u2014 styles, recipients, occasions, materials \u2014 and often ARE the phrases shoppers type; fold the relevant ones for this occasion into keyword texts) \u2014 head terms from its high-frequency motifs, long-tail from mid-frequency motifs \u00d7 product types \u00d7 the occasion (a collection with bunny(31) and axolotl(6) earns both "bunny necklace" AND "axolotl charm gift") \u2014 phrased the way the audience below actually searches. DIFFERENTIATE the numbers per keyword and per opportunity (do not reuse the same figures). Each object:
+- keywords: an array of 6-10 RESEARCHED keyword objects. SPECIFICITY IS THE LAW: every keyword must contain a concrete jewelry product type (necklace, charm, bracelet, pendant, earrings...) AND at least one motif, style, material, or recipient qualifier drawn from the inventory. NEVER category-only or gifting-head terms ("nurse gifts", "summer jewelry", "gifts for her" are all FORBIDDEN — they buy browsers, not buyers). At most ONE 2-word motif+type term per opportunity ("bunny necklace"); everything else 3+ words phrased exactly as a ready-to-buy shopper types it. DRAWN FROM the collection's motif inventory AND ITS LISTING TAGS (the tags are the merchant's own search terms \u2014 styles, recipients, occasions, materials \u2014 and often ARE the phrases shoppers type; fold the relevant ones for this occasion into keyword texts) \u2014 head terms from its high-frequency motifs, long-tail from mid-frequency motifs \u00d7 product types \u00d7 the occasion (a collection with bunny(31) and axolotl(6) earns both "bunny necklace" AND "axolotl charm gift") \u2014 phrased the way the audience below actually searches. DIFFERENTIATE the numbers per keyword and per opportunity (do not reuse the same figures). Each object:
     {"text": phrase a shopper would search,
      "searches": realistic estimated AVERAGE MONTHLY Google searches in the target countries (broad head terms in the hundreds-to-thousands; niche/long-tail 10-300; reflect how popular THIS exact phrase really is),
      "competition": "LOW" | "MEDIUM" | "HIGH" (long-tail/niche usually LOW; broad jewelry/gift terms HIGH),
@@ -2600,6 +2649,7 @@ Find the 8-12 best advertising OPPORTUNITIES to act on within the NEXT ~30 DAYS.
      "intent": "high" (ready to buy) | "medium" | "low",
      "tail": "HEAD" (1-2 words) | "MID" (3 words) | "LONG" (4+ words, specific)}
 - keywordStrategy: <=180 chars explaining why THIS keyword mix for THIS collection+occasion (the head vs long-tail balance, buyer intent, and why more or fewer terms)
+- negatives: 8-15 lowercase phrases that LOOK related to this theme but carry the WRONG intent — the searches this campaign must never pay for. Think per theme: adjacent product categories the motif implies (apparel, decor, toys, party supplies, costumes), information/fandom queries (rules, schedule, scores, care, breed, team names), profession-adjacent (school, certification, jobs), and craft/media (font, logo, cake, sticker). NO match-type syntax, no duplicates of obvious universals (free/cheap/diy are already blocked account-wide).
 - keyPhrases (3-4 short emotional ad phrases speaking directly to the audience's motivation)
 - audience: {"buyer": <=70 chars WHO is typing the search and paying \u2014 usually the gift-giver, be specific (e.g. "team parents at season end", "moms of teen daughters"), "recipient": <=50 chars who receives it, "motivation": <=90 chars the emotional driver of the purchase, "searchStyle": <=80 chars how THIS buyer actually phrases searches}
 INTERPLAY (critical): audience \u00d7 occasion timing \u00d7 motif inventory must agree \u2014 keywords are what THIS buyer types in THIS window for the motifs/types/price band this collection actually contains; market.fit reflects inventory-level fit (price point, motif breadth, giftability), never the collection name alone. If the window is short, weight urgent/ready-to-buy phrasing; if the listings skew premium, weight quality/keepsake phrasing.
@@ -2696,6 +2746,7 @@ ${pbBlock}Only include opportunities genuinely relevant within ~30 days. Opportu
       expectedRoasBand: plan.expectedRoas ? plan.expectedRoas.band : null, expectedRoas: plan.expectedRoas || null,
       market: mkt, audience: _audNorm(o.audience), proven: !!o.proven,
       rationale: o.rationale || "", keywords: kws, keywordData: merged.keywords,
+      negatives: (Array.isArray(o.negatives) ? o.negatives.map(n => String(n).trim().toLowerCase()).filter(Boolean).slice(0, 15) : []),
       research: { source: merged.source, error: merged.error, realCount: merged.realCount,
         searchVolume: merged.searchVolume, competitionIndex: merged.competitionIndex, cpc: merged.cpc,
         longTailRatio: merged.longTailRatio, headCount: merged.headCount, longCount: merged.longCount,
@@ -2936,7 +2987,13 @@ async function generateForCollection(handle, eventLabel, budget, { ctrl, startDa
   } catch (e) {}
   const keywordPlan = (opp && Array.isArray(opp.keywordData) && opp.keywordData.length) ? opp.keywordData
                     : ((_res && _res.ok && Array.isArray(_res.keywords) && _res.keywords.some(k => k.real)) ? _res.keywords : null);
-  const { ops, tag, negatives, assetSummary, keywordSummary } = buildSearchCampaignOps(coll, event, assets, { dailyBudget, startDate: sDate, endDate: eDate, countries: cty, maxCpc: capCpc, smartBidding: smart, targetRoas: Number(ctrl.targetRoas || 0), assetExtras, keywordPlan });
+  // Launch negatives: universal defaults + the opportunity model's theme-conflict
+  // list + terms that already wasted money account-wide. Deduped.
+  let launchNegs = DEFAULT_NEGATIVES.slice();
+  if (opp && Array.isArray(opp.negatives) && opp.negatives.length) launchNegs = launchNegs.concat(opp.negatives);
+  try { launchNegs = launchNegs.concat(await accountWasteNegatives({})); } catch (e) {}
+  launchNegs = [...new Set(launchNegs.map(n => String(n).trim().toLowerCase()).filter(Boolean))];
+  const { ops, tag, negatives, assetSummary, keywordSummary } = buildSearchCampaignOps(coll, event, assets, { dailyBudget, startDate: sDate, endDate: eDate, countries: cty, maxCpc: capCpc, smartBidding: smart, targetRoas: Number(ctrl.targetRoas || 0), assetExtras, keywordPlan, negatives: launchNegs });
   await recordOccasionUse(event ? event.label : "Evergreen gifting", coll.handle, tag);
   const win = (sDate && eDate) ? ` (${sDate} → ${eDate}, ${plan.duration.days}d)` : "";
   const bidTxt = smart ? "Smart Bidding (no CPC cap)" : `Manual CPC ≤ ${CURRENCY} ${capCpc.toFixed(2)}/click`;
@@ -3370,10 +3427,11 @@ async function fetchDiagnostics(campaignId) {
 // bounded no matter how many campaigns exist or how much 90-day evidence a
 // campaign accumulates, and one campaign's failure can't sink the others'
 // verdicts. A final tiny low-effort call writes the account-level read.
-async function analyzeDiagnostics(diag, ctrl, history, { single } = {}) {
+async function analyzeDiagnostics(diag, ctrl, history, { single, onProgress } = {}) {
   const camps = diag.campaigns || [];
   if (single || camps.length <= 1) return _analyzeCampaignSet(diag, ctrl, history, { single });
   const out = { campaigns: [] }; const errs = [];
+  let _done = 0; const _tick = async () => { _done++; if (onProgress) { try { await onProgress(_done, camps.length); } catch (e) {} } };
   // Parallel: wall time ~= one campaign's analysis instead of the sum of all.
   // Isolation preserved — each call catches its own failure.
   const settled = await Promise.all(camps.map(async (c) => {
@@ -3383,6 +3441,7 @@ async function analyzeDiagnostics(diag, ctrl, history, { single } = {}) {
       if (one && one.campaigns && one.campaigns[0]) return { v: one.campaigns[0] };
       return { e: c.name + ": empty verdict" };
     } catch (e) { return { e: c.name + ": " + String(e.message || e).slice(0, 140) }; }
+    finally { await _tick(); }
   }));
   for (const r of settled) { if (r.v) out.campaigns.push(r.v); else errs.push(r.e); }
   if (!out.campaigns.length) throw new Error(errs.join(" | ").slice(0, 380) || "all campaign analyses failed");
@@ -3457,7 +3516,7 @@ Rules: never recommend raising total enabled budgets past the ceiling; a campaig
   return await openaiJSON(prompt, { maxTokens: 14000, effort: "high" });
 }
 
-async function runDiagnostics({ campaignId } = {}) {
+async function runDiagnostics({ campaignId, onProgress } = {}) {
   const f = fb(); const ctrl = await control();
   const startedAt = Date.now();
   const diag = await fetchDiagnostics(campaignId || null);
@@ -3468,7 +3527,7 @@ async function runDiagnostics({ campaignId } = {}) {
   } catch (e) {}
   let ai = null, aiError = null;
   try {
-    ai = await analyzeDiagnostics(diag, ctrl, history, { single: !!campaignId });
+    ai = await analyzeDiagnostics(diag, ctrl, history, { single: !!campaignId, onProgress });
     if (ai && ai._partialErrors) { aiError = "partial \u2014 " + ai._partialErrors; delete ai._partialErrors; }
   } catch (e) { aiError = String(e.message || e).slice(0, 400); }
 
