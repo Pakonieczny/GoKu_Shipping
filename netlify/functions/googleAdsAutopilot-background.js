@@ -108,13 +108,27 @@ exports.handler = async (event) => {
     try {
       if (task === "conversions") { result.conversions = await E.uploadConversions({ ctrl }); }
       else if (task === "scanOpportunities") { result.scanOpportunities = { n: ((await E.opportunitiesWithStatus({ force: true })).opportunities || []).length }; }
+      else if (task === "pmaxGenerate") {
+        const gId = String(body.genId || Date.now());
+        try { await E.setGenStatus(gId, { phase: "running", startedAt: Date.now(), kind: "pmax" }); } catch (e) {}
+        try {
+          const out = await E.generatePmaxApproval({ handle: body.handle, dailyBudget: body.dailyBudget, targetRoas: body.targetRoas, days: body.days });
+          result.pmax = out;
+          try { await E.setGenStatus(gId, { ok: true, ...out }); } catch (e) {}
+        } catch (e) {
+          const msg = String(e.message || e).slice(0, 400);
+          result.pmax = { error: msg };
+          try { await E.setGenStatus(gId, { ok: false, error: msg }); } catch (e2) {}
+        }
+      }
       else if (task === "diagnostics") {
         // Self-reporting run: the console polls diag-<runId> and gets either
         // {ok:true, generatedAt} or {ok:false, error} — no more silent deaths.
         const dRunId = String(body.runId || Date.now());
         try { await E.setGenStatus("diag-" + dRunId, { phase: "running", startedAt: Date.now(), campaignId: body.campaignId || null }); } catch (e) {}
         try {
-          const dOut = await E.runDiagnostics({ campaignId: body.campaignId || null });
+          const dOut = await E.runDiagnostics({ campaignId: body.campaignId || null,
+            onProgress: async (done, total) => { try { await E.setGenStatus("diag-" + dRunId, { phase: "running", done, total, heartbeatAt: Date.now() }); } catch (e) {} } });
           result.diagnostics = { generatedAt: dOut.generatedAt, aiError: dOut.aiError || null };
           try { await E.setGenStatus("diag-" + dRunId, { ok: true, generatedAt: dOut.generatedAt, aiError: dOut.aiError || null, tookMs: dOut.tookMs || null }); } catch (e) {}
         } catch (e) {
