@@ -1217,10 +1217,10 @@ function verifyBadge(h){if(h.dryRun)return '<span style="font-size:10px;font-wei
 /* ---- Ad Doctor: Google Ads diagnostics + AI specialist verdicts ---- */
 var DIAG=null,_diagBusy=false,diagOpen={},_diagOpenInit=false;
 function diagStale(d){return !d||!d.generatedAt||(Date.now()-d.generatedAt)>3*3600*1000;}
-function loadDiagnostics(autoRun){renderDiag();loadRemedyHistory(function(){renderDiag();});api("diagnostics").then(function(d){
+function loadDiagnostics(){renderDiag();loadRemedyHistory(function(){renderDiag();});api("diagnostics").then(function(d){
   if(d&&!d.empty){DIAG=d;}
   renderDiag();
-  if(autoRun&&diagStale(DIAG))runDiag(true);
+  // Diagnosis runs ONLY when a Diagnose button is pressed — never automatically.
 }).catch(function(){renderDiag();});}
 // User-initiated runs poll the per-run STATUS doc the worker writes, so a
 // server-side failure surfaces its real error instead of a blind timeout.
@@ -2171,7 +2171,7 @@ function sessClear(){try{localStorage.removeItem(SESS_KEY);}catch(e){}}
 async function unlock(e){if(e)e.preventDefault();PASS=(e&&e.__cachedPass)||$("#pc").value;$("#gateErr").textContent="";
   var gb=$(".gatecard button[type=submit]");var gdone=btnBusy(gb,(e&&e.__cachedPass)?"Signing you back in\u2026":"Connecting\u2026");var aid=actStart("dashboard");
   try{ DASH=await api("dashboard"); sessSave(PASS); $("#gate").style.display="none";$("#app").style.display="grid";
-    buildNav();bindControlsOnce();renderAll();go("command");loadDiagnostics(true);lastSync=Date.now();lastLivePull=Date.now();
+    buildNav();bindControlsOnce();renderAll();go("command");loadDiagnostics();lastSync=Date.now();lastLivePull=Date.now();
     try{var _r7=rpRangeFor("7d");cmdApplyRange(_r7,{preset:"7d"});}catch(e){}
     if(timer)clearInterval(timer);timer=setInterval(async ()=>{
       var since=Math.floor((Date.now()-lastSync)/1000);
