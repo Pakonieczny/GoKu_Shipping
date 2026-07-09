@@ -528,6 +528,29 @@ exports.handler = async function (event) {
 
     switch (action) {
 
+      /* ---------- CROSS-SITE SHOPIFY PROXY ---------- */
+
+      // Server-to-server GraphQL passthrough so sibling Netlify sites (the
+      // Etsy listing app's shopifyListingUpload.js) can reuse THIS site's
+      // SHOPIFY_STORE / SHOPIFY_CLIENT_ID / SHOPIFY_CLIENT_SECRET instead of
+      // duplicating credentials across projects. Sits behind the exact same
+      // optional EDIT_PASSCODE gate as every other action above, and grants
+      // nothing the existing edit actions don't already grant.
+      case "gqlProxy": {
+        if (!isPost) return reply(405, { error: "gqlProxy is POST only" });
+        const gq = body && body.query;
+        if (!gq || typeof gq !== "string") return reply(400, { error: "Missing 'query' string" });
+        try {
+          const data = await gql(gq, (body && body.variables) || {});
+          return reply(200, { ok: true, data });
+        } catch (e) {
+          const msg = String((e && e.message) || e);
+          // Surface throttling distinctly so the calling site can back off.
+          const throttled = /THROTTLED/i.test(msg);
+          return reply(throttled ? 429 : 502, { ok: false, error: msg });
+        }
+      }
+
       /* ---------- BEST SELLERS (canonical Top-200 list) ---------- */
 
       case "bestSellers": {
