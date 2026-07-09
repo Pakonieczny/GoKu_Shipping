@@ -676,9 +676,9 @@ async function openaiJSON(prompt, { maxTokens = 4000, effort = "high", _attempt 
   // model spent the entire completion budget on hidden reasoning. Retry once
   // with double the budget and effort stepped down — medium reasons less and
   // leaves room for the actual JSON.
-  if (choice.finish_reason === "length" && !raw.trim() && _attempt === 0 && /^(gpt-5|o\d)/.test(model)) {
+  if (choice.finish_reason === "length" && !raw.trim() && _attempt < 2 && /^(gpt-5|o\d)/.test(model)) {
     const nextEffort = effort === "high" ? "medium" : "low";
-    return openaiJSON(prompt, { maxTokens: Math.min(maxTokens * 2, 32000), effort: nextEffort, _attempt: 1 });
+    return openaiJSON(prompt, { maxTokens: Math.min(maxTokens * 2, 32000), effort: nextEffort, _attempt: _attempt + 1 });
   }
   const cleaned = raw.replace(/```json|```/g, "").trim();
   try { return JSON.parse(cleaned); } catch (e) {}
@@ -689,7 +689,8 @@ async function openaiJSON(prompt, { maxTokens = 4000, effort = "high", _attempt 
   // same stale list" happened.
   const salvaged = _salvageJson(cleaned);
   if (salvaged) return salvaged;
-  throw new Error("[gads] OpenAI returned unparseable JSON (finish_reason: " + (choice.finish_reason || "?") + ", " + cleaned.length + " chars)");
+  const u = data.usage || {}; const rt = ((u.completion_tokens_details || {}).reasoning_tokens);
+  throw new Error("[gads] OpenAI returned unparseable JSON (finish_reason: " + (choice.finish_reason || "?") + ", " + cleaned.length + " chars; prompt " + (u.prompt_tokens || "?") + " tok, completion " + (u.completion_tokens || "?") + (rt != null ? " incl. " + rt + " reasoning" : "") + ", effort " + effort + ")");
 }
 
 // Best-effort repair of truncated JSON: trim to the last complete value, then close
@@ -3376,7 +3377,8 @@ async function analyzeDiagnostics(diag, ctrl, history, { single } = {}) {
     googleRecs: c.recommendations.map(r => ({ type: r.type, recommendedBudget: r.recommendedBudget, options: r.options })),
     // evidence for remedies (enabled campaigns): QS components per keyword,
     // live ad copy, and the search terms actually spending money
-    keywords: (c.keywordDetail || []).map(k => ({ adGroupId: k.adGroupId, criterionId: k.criterionId, text: k.text, match: k.match, qs: k.qs, expectedCtr: k.expectedCtr, adRelevance: k.adRelevance, landingPage: k.landingPage, impr: k.impr, clicks: k.clicks, cost: k.cost, conv: k.conv })),
+    keywords: (c.keywordDetail || []).slice().sort((a2, b2) => (b2.cost || 0) - (a2.cost || 0) || (b2.impr || 0) - (a2.impr || 0)).slice(0, 30).map(k => ({ adGroupId: k.adGroupId, criterionId: k.criterionId, text: k.text, match: k.match, qs: k.qs, expectedCtr: k.expectedCtr, adRelevance: k.adRelevance, landingPage: k.landingPage, impr: k.impr, clicks: k.clicks, cost: k.cost, conv: k.conv })),
+    keywordsTotal: (c.keywordDetail || []).length,
     ads: (c.adsContent || []).map(a2 => ({ adId: a2.adId, finalUrl: a2.finalUrl, headlines: a2.headlines.slice(0, 10), descriptions: a2.descriptions.slice(0, 4) })),
     searchTerms: (c.searchTerms || []).slice(0, 20),
     // Google's own per-asset grades — the pruning signal
@@ -3394,7 +3396,7 @@ ${JSON.stringify(compact)}
 
 ${await (async () => { try { return playbookText(await playbookSlice({}), "LEARNED PLAYBOOK (distilled from this account's own results — keep your remedies consistent with PROVEN lessons; contradicting one requires explicit justification):"); } catch (e) { return ""; } })()}
 FIXES ALREADY APPLIED (via this console; each has a 90-DAY baseline captured at apply time — this is a low-traffic account, so judge fixes against the long window and the days since apply, never day-to-day noise):
-${JSON.stringify((history || []).slice(0, 40).map(h => ({ campaignId: h.campaignId, daysAgo: Math.round((Date.now() - (h.at || Date.now())) / 86400000), kind: h.kind, issue: h.issue, params: h.kind === "addNegatives" ? (h.executable || {}).keywords : h.kind === "pauseKeywords" ? ((h.executable || {}).keywords || []).map(k => k.text || k) : h.kind === "setBudget" ? (h.executable || {}).budget : null, verified: h.verified, baseline90d: h.baseline })))}
+${JSON.stringify((history || []).slice(0, 40).map(h => ({ campaignId: h.campaignId, daysAgo: Math.round((Date.now() - (h.at || Date.now())) / 86400000), kind: h.kind, issue: h.issue, params: h.kind === "addNegatives" ? (h.executable || {}).keywords : h.kind === "pauseKeywords" ? ((h.executable || {}).keywords || []).map(k => k.text || k) : h.kind === "setBudget" ? (h.executable || {}).budget : null, verified: h.verified, baseline90d: h.baseline ? { cost: h.baseline.cost, conv: h.baseline.conv, value: h.baseline.value, roas: h.baseline.roas, clicks: h.baseline.clicks } : null })))}
 
 For EACH campaign return an object:
 - id, severity: "critical"|"attention"|"healthy"
