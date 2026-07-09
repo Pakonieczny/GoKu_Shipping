@@ -3366,7 +3366,34 @@ async function fetchDiagnostics(campaignId) {
 // AND our context Google doesn't weigh — ROAS target, account budget ceiling,
 // monthly cap, measured demand. Returns per-campaign verdicts with an explicit
 // agree/partial/disagree call on each Google recommendation.
+// Chunked orchestrator: analyzes ONE campaign per LLM call. Prompt size is
+// bounded no matter how many campaigns exist or how much 90-day evidence a
+// campaign accumulates, and one campaign's failure can't sink the others'
+// verdicts. A final tiny low-effort call writes the account-level read.
 async function analyzeDiagnostics(diag, ctrl, history, { single } = {}) {
+  const camps = diag.campaigns || [];
+  if (single || camps.length <= 1) return _analyzeCampaignSet(diag, ctrl, history, { single });
+  const out = { campaigns: [] }; const errs = [];
+  for (const c of camps) {
+    try {
+      const one = await _analyzeCampaignSet({ ...diag, campaigns: [c] }, ctrl,
+        (history || []).filter(h => String(h.campaignId) === String(c.id)), {});
+      if (one && one.campaigns && one.campaigns[0]) out.campaigns.push(one.campaigns[0]);
+      else errs.push(c.name + ": empty verdict");
+    } catch (e) { errs.push(c.name + ": " + String(e.message || e).slice(0, 140)); }
+  }
+  if (!out.campaigns.length) throw new Error(errs.join(" | ").slice(0, 380) || "all campaign analyses failed");
+  // account-level read from the per-campaign verdicts — cheap and bounded
+  try {
+    const brief = out.campaigns.map(v => ({ name: (camps.find(c => String(c.id) === String(v.id)) || {}).name, severity: v.severity, headline: v.headline }));
+    const acct = await openaiJSON(`You are a senior Google Ads specialist. Given these per-campaign verdicts for Brites Jewelry (target ROAS ${ctrl.targetRoas || 3}, daily ceiling $${ctrl.maxDailyBudgetTotal || "n/a"}):\n${JSON.stringify(brief)}\nReturn JSON {"accountSummary": "<2-3 sentences: where the next dollar should go and the single highest-leverage systemic fix>"}`, { maxTokens: 4000, effort: "low" });
+    if (acct && acct.accountSummary) out.accountSummary = acct.accountSummary;
+  } catch (e) {}
+  if (errs.length) out._partialErrors = errs.join(" | ").slice(0, 300);
+  return out;
+}
+
+async function _analyzeCampaignSet(diag, ctrl, history, { single } = {}) {
   const totalBudget = diag.campaigns.filter(c => c.status === "ENABLED").reduce((a, c) => a + (c.budget || 0), 0);
   const compact = diag.campaigns.map(c => ({
     id: c.id, name: c.name, status: c.status, serving: c.primaryStatus, why: c.reasonsText,
@@ -3424,7 +3451,7 @@ Rules: never recommend raising total enabled budgets past the ceiling; a campaig
   // search terms x history x guardrails). At high effort the hidden reasoning
   // tokens eat most of max_completion_tokens — with several campaigns of dense
   // evidence, 9000 proved to be ALL reasoning and zero output. Budget for both.
-  return await openaiJSON(prompt, { maxTokens: 20000, effort: "high" });
+  return await openaiJSON(prompt, { maxTokens: 14000, effort: "high" });
 }
 
 async function runDiagnostics({ campaignId } = {}) {
@@ -3439,6 +3466,7 @@ async function runDiagnostics({ campaignId } = {}) {
   let ai = null, aiError = null;
   try {
     ai = await analyzeDiagnostics(diag, ctrl, history, { single: !!campaignId });
+    if (ai && ai._partialErrors) { aiError = "partial \u2014 " + ai._partialErrors; delete ai._partialErrors; }
   } catch (e) { aiError = String(e.message || e).slice(0, 400); }
 
   if (campaignId && f) {
