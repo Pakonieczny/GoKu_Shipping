@@ -409,10 +409,21 @@ async function gql(query, variables, _attempt) {
     if (data.errors && data.errors.length) throw new Error("GraphQL: " + JSON.stringify(data.errors));
     return data.data;
   } catch (e) {
-    // Retry transient network blips (e.g. ECONNRESET, dropped sockets, 5xx) a couple of times.
     const msg = String((e && e.message) || e);
-    const transient = /ECONNRESET|ETIMEDOUT|socket hang up|network|fetch failed|EAI_AGAIN|ECONNREFUSED|GraphQL HTTP 5\d\d/i.test(msg);
+    // SCOPE SELF-HEAL: client-credentials tokens are cached in warm lambda
+    // memory for up to 24h. When access scopes are added to the app in the
+    // Dev Dashboard, the CACHED token still carries the old scopes, so
+    // "Required access: `...` access scope" errors persist until a cold
+    // start. Drop the cached token and retry ONCE with a freshly issued
+    // token (which picks up newly released scopes); if the scope genuinely
+    // isn't granted, the retry fails identically and the error propagates.
     const attempt = _attempt || 0;
+    if (/Required access:.*access scope/i.test(msg) && attempt < 1) {
+      _token = null; _tokenExp = 0;
+      return gql(query, variables, attempt + 1);
+    }
+    // Retry transient network blips (e.g. ECONNRESET, dropped sockets, 5xx) a couple of times.
+    const transient = /ECONNRESET|ETIMEDOUT|socket hang up|network|fetch failed|EAI_AGAIN|ECONNREFUSED|GraphQL HTTP 5\d\d/i.test(msg);
     if (transient && attempt < 2) {
       await new Promise(function (r) { setTimeout(r, 350 * (attempt + 1)); });
       return gql(query, variables, attempt + 1);
