@@ -1729,7 +1729,7 @@ function showDraft(r){var a=r.assets||{};var out=$("#benchOut");var p=r.plan;var
 
 
 /* ---- render: opportunities (Unused vs In-use reconciliation) ---- */
-var OPPS=[]; var PMAXOPPS=[]; var oppLoaded=false; var oppView="unused"; var oppSort="best";
+var OPPS=[]; var PMAXOPPS=[]; var PMAXERR=null; var PMAXAT=null; var oppLoaded=false; var oppView="unused"; var oppSort="best";
 function oppSorters(mode){
   if(mode==="urgent")return function(a,b){var d=(a.o.daysOut||0)-(b.o.daysOut||0); if(d)return d; d=(a.o.durationDays||99)-(b.o.durationDays||99); if(d)return d; return (b.o.score||0)-(a.o.score||0);};
   if(mode==="reach")return function(a,b){return (((b.o.research||{}).searchVolume)||0)-(((a.o.research||{}).searchVolume)||0);};
@@ -1771,7 +1771,7 @@ async function loadOpportunities(force){
   var scanAct=force?actStart("opportunities"):null;
   try{
     var r=await api("opportunities",{force:!!force});
-    OPPS=(r&&r.opportunities)||[]; PMAXOPPS=(r&&r.pmaxList)||[]; setOppMeta(r&&r.scannedAt);
+    OPPS=(r&&r.opportunities)||[]; PMAXOPPS=(r&&r.pmaxList)||[]; PMAXERR=(r&&r.pmaxError)||null; PMAXAT=(r&&r.pmaxAt)||null; setOppMeta(r&&r.scannedAt);
     oppShowErr(force?null:(r&&r.lastError), r&&r.scannedAt);
     if(!force){ renderOpportunities(); $("#oppScan").disabled=false; return; }
     // Forced scan runs in the background (avoids the 60s sync limit). Show any existing
@@ -1792,14 +1792,14 @@ async function loadOpportunities(force){
         if(p&&p.scanning) renderScanProg(p.progress);
         if(at>prevAt && !(p&&p.scanning)){
           clearInterval(oppPollTimer); oppPollTimer=null; actEnd(scanAct); hideScanProg();
-          OPPS=(p&&p.opportunities)||[]; PMAXOPPS=(p&&p.pmaxList)||[]; setOppMeta(at); oppShowErr(null); renderOpportunities();
+          OPPS=(p&&p.opportunities)||[]; PMAXOPPS=(p&&p.pmaxList)||[]; PMAXERR=(p&&p.pmaxError)||null; PMAXAT=(p&&p.pmaxAt)||null; setOppMeta(at); oppShowErr(null); renderOpportunities();
           toast("Re-scanned \u2014 "+OPPS.length+" opportunities",true);
           $("#oppScan").disabled=false;
         } else if(errAt>scanStart && !(p&&p.scanning)){
           // The scan RAN and FAILED. Old results (if any) stay visible, clearly labeled stale,
           // with the engine\u2019s exact error on screen so the cause is never invisible again.
           clearInterval(oppPollTimer); oppPollTimer=null; actEnd(scanAct); hideScanProg(); $("#oppScan").disabled=false;
-          OPPS=(p&&p.opportunities)||[]; PMAXOPPS=(p&&p.pmaxList)||[]; setOppMeta(at); renderOpportunities();
+          OPPS=(p&&p.opportunities)||[]; PMAXOPPS=(p&&p.pmaxList)||[]; PMAXERR=(p&&p.pmaxError)||null; PMAXAT=(p&&p.pmaxAt)||null; setOppMeta(at); renderOpportunities();
           oppShowErr((p&&p.lastError)||"scan failed", at);
           toast("Scan failed \u2014 see the notice above the list.");
         } else if(tries>=240){
@@ -1854,7 +1854,16 @@ function renderOppBid(){ var ob=$("#oppBid"); if(!ob)return; var smart=bidView()
 }
 function renderPmaxSection(host){
   var old=document.getElementById("pmaxSec");if(old)old.remove();
-  if(!PMAXOPPS.length||!host)return;
+  if(!host)return;
+  if(!PMAXOPPS.length){
+    var sec0=document.createElement("div");sec0.id="pmaxSec";
+    sec0.innerHTML='<div class="card pad" style="margin-top:18px;border:1px dashed var(--line)">'
+      +'<div class="card__h"><h3>Feed campaigns \u00b7 Google Shopping</h3><span class="sub">powered by your organic (unpaid) sales</span></div>'
+      +(PMAXAT
+        ?('<div class="muted" style="font-size:12.5px">'+(PMAXERR?('Feed scan issue: <span style="color:#b3402a">'+esc(PMAXERR)+'</span> \u2014 re-run Scan.'):'No feed opportunities proposed on this scan.')+'</div>')
+        :'<div class="muted" style="font-size:12.5px">No feed scan yet \u2014 this section fills after the next <b>Scan for opportunities</b> runs on the updated backend. If you\u2019ve just deployed, run Scan again.</div>')
+      +'</div>';
+    host.appendChild(sec0);return;}
   var sec=document.createElement("div");sec.id="pmaxSec";
   var inner='<div class="card pad" style="margin-top:18px;border:1px solid var(--gold)">'
     +'<div class="card__h"><h3>Feed campaigns \u00b7 Google Shopping</h3><span class="sub">powered by your organic (unpaid) sales \u2014 same feed, placed higher</span></div>';
