@@ -2724,7 +2724,7 @@ async function scanOpportunities({ force, cacheOnly } = {}) {
       const s = await f.db.collection(COL.state).doc("opportunities").get();
       if (s.exists) {
         const x = s.data();
-        if (cacheOnly) return { opportunities: Array.isArray(x.list) ? x.list : [], pmaxList: Array.isArray(x.pmaxList) ? x.pmaxList : [], scannedAt: x.at || null, scanning: !!x.scanning, lastError: x.lastError || null, lastErrorAt: x.lastErrorAt || null, progress: x.progress || null };
+        if (cacheOnly) return { opportunities: Array.isArray(x.list) ? x.list : [], pmaxList: Array.isArray(x.pmaxList) ? x.pmaxList : [], pmaxError: x.pmaxError || null, pmaxAt: x.pmaxAt || null, scannedAt: x.at || null, scanning: !!x.scanning, lastError: x.lastError || null, lastErrorAt: x.lastErrorAt || null, progress: x.progress || null };
         if (x.at && (Date.now() - x.at) < 12 * 60 * 60 * 1000 && Array.isArray(x.list) && x.list.length) return { opportunities: x.list, pmaxList: Array.isArray(x.pmaxList) ? x.pmaxList : [], scannedAt: x.at };
       } else if (cacheOnly) { return { opportunities: [], scannedAt: null, scanning: false }; }
     } catch (e) { if (cacheOnly) return { opportunities: [], scannedAt: null, scanning: false }; }
@@ -2824,7 +2824,7 @@ ${pbBlock}Only include opportunities genuinely relevant within ~30 days. Opportu
   }
   const byTitle0 = {}; collections.forEach(c => byTitle0[c.title.toLowerCase()] = c.handle);
   // ---- PMax opportunities: powered by the store's ORGANIC (unpaid) sales ----
-  let pmaxList = [];
+  let pmaxList = []; let pmaxError = null;
   try {
     await _scanProg(86, "Feed-campaign scan", "reading organic sales momentum");
     const sig30 = await storeSignals({ days: 30 }).catch(() => null);
@@ -2843,7 +2843,8 @@ Propose up to 3 Performance Max (Google Shopping feed) campaigns that AMPLIFY wh
         types: prof2 && Array.isArray(prof2.typesDetail) ? prof2.typesDetail.map(t3 => t3.type || t3.t || t3.name).filter(Boolean).slice(0, 6) : [],
         organic: sig30 ? { orders30d: sig30.orders || 0, organicRevenue30d: Math.round(sig30.organicRevenue || 0) } : null } : null;
     }).filter(Boolean);
-  } catch (e) {}
+    if (!pmaxList.length) pmaxError = "model proposed no feed opportunities";
+  } catch (e) { pmaxError = String(e.message || e).slice(0, 200); }
   const byTitle = byTitle0; const today0 = _todayUtc();
   let _enabled = 0; try { _enabled = await _enabledBudgetTotal(); } catch (e) {}
   const headroom = Math.max(0, ceiling - _enabled);
@@ -2922,12 +2923,12 @@ Propose up to 3 Performance Max (Google Shopping feed) campaigns that AMPLIFY wh
   // stuck scanning flag. Now a write failure retries with a trimmed payload and is always recorded.
   await _scanProg(96, "Saving " + list.length + " ranked opportunities");
   if (f && list.length) {
-    try { await f.db.collection(COL.state).doc("opportunities").set({ list, pmaxList, pmaxAt: Date.now(), at: Date.now(), scanning: false, lastError: null, lastErrorAt: null, progress: null }); }
+    try { await f.db.collection(COL.state).doc("opportunities").set({ list, pmaxList, pmaxError, pmaxAt: Date.now(), at: Date.now(), scanning: false, lastError: null, lastErrorAt: null, progress: null }); }
     catch (e) {
       try {
         const slim = list.map(o => { const c = Object.assign({}, o); delete c.keywordData; return c; }); // drop heavy per-keyword metrics
         // (pmaxList rides along in the same doc below)
-        await f.db.collection(COL.state).doc("opportunities").set({ list: slim, pmaxList, pmaxAt: Date.now(), at: Date.now(), scanning: false, lastError: "write trimmed (payload too large): " + (e && e.message), lastErrorAt: Date.now(), progress: null });
+        await f.db.collection(COL.state).doc("opportunities").set({ list: slim, pmaxList, pmaxError, pmaxAt: Date.now(), at: Date.now(), scanning: false, lastError: "write trimmed (payload too large): " + (e && e.message), lastErrorAt: Date.now(), progress: null });
       } catch (e2) {
         try { await f.db.collection(COL.state).doc("opportunities").set({ scanning: false, lastError: "WRITE FAILED: " + (e2 && e2.message), lastErrorAt: Date.now(), progress: null }, { merge: true }); } catch (e3) {}
       }
