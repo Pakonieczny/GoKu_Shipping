@@ -467,6 +467,8 @@ function shapeProduct(node) {
   const images = ((node.media && node.media.edges) || [])
     .map(e => (e.node && e.node.image) ? { id: e.node.id, src: e.node.image.url } : null)
     .filter(Boolean);
+  const collectionIds = ((node.collections && node.collections.edges) || [])
+    .map(e => e.node && e.node.id).filter(Boolean);
   let framing = null;
   if (node.framing && node.framing.value) {
     const fp = String(node.framing.value).split("|");
@@ -478,7 +480,7 @@ function shapeProduct(node) {
     id: node.id, title: node.title, handle: node.handle,
     product_type: node.productType, tags: (node.tags || []).join(", "),
     options: (node.options || []).map(o => ({ name: o.name, position: o.position })),
-    variants, images, framing
+    variants, images, framing, collectionIds
   };
 }
 
@@ -600,6 +602,18 @@ exports.handler = async function (event) {
 
       /* ---------- READS ---------- */
 
+      case "addToCollection":
+      case "removeFromCollection": {
+        const pid = body.product_id, cid = body.collection_id;
+        if (!pid || !cid) return reply(400, { error: "Need product_id and collection_id" });
+        const mut = action === "addToCollection" ? "collectionAddProducts" : "collectionRemoveProducts";
+        const d = await gql(`mutation($id: ID!, $pids: [ID!]!) {
+          ${mut}(id: $id, productIds: $pids) { userErrors { message } } }`,
+          { id: cid, pids: [pid] });
+        const ue = ((d[mut] || {}).userErrors) || [];
+        if (ue.length) return reply(422, { ok: false, error: ue[0].message });
+        return reply(200, { ok: true });
+      }
       case "listCollections": {
         const d = await gql(`query {
           collections(first: 250) { edges { node {
@@ -637,6 +651,7 @@ exports.handler = async function (event) {
             media(first: 50) { edges { node { ... on MediaImage { id image { url } } } } }
             variants(first: 100) { edges { node { id price selectedOptions { name value } inventoryQuantity inventoryItem { tracked } } } }
             framing: metafield(namespace: "card", key: "frame") { value }
+            collections(first: 250) { edges { node { id } } }
           } } }
         }`, { q: "handle:" + handle });
         const node = (d.products.edges[0] || {}).node;
