@@ -1090,13 +1090,32 @@ function campDates(c){var s=c.startDate?fmtMon(c.startDate):null,e=c.endDate?fmt
   if(c.endDate){var ed=rpParse(c.endDate);var dl=Math.round((ed-today)/86400000);info+=(info?" \u00b7 ":"")+(dl>=0?(dl+"d left"):"ended");}
   return {s:s,e:e,info:info};}
 function campaignTable(camps){
-  return '<table class="ptable"><thead><tr><th>Campaign</th><th>Status</th><th>Schedule</th><th class="r">Budget</th><th class="r">Cost</th><th class="r">Conv.</th><th class="r">ROAS</th></tr></thead><tbody>'+
+  return '<table class="ptable"><thead><tr><th>Campaign</th><th>Status</th><th>Schedule</th><th class="r">Budget</th><th class="r">Cost</th><th class="r">Conv.</th><th class="r">ROAS</th><th class="r"></th></tr></thead><tbody>'+
     camps.map(function(c,i){var r=(+c.cost>0)?(c.value/c.cost):null;var dt=campDates(c);
       var ctr=c.impr>0?(c.clicks/c.impr*100):null,cpc=c.clicks>0?(c.cost/c.clicks):null,cpa=c.conv>0?(c.cost/c.conv):null;
-      var row='<tr class="crow" data-i="'+i+'" data-cid="'+esc(String(c.id||i))+'" style="cursor:pointer"><td style="font-weight:500">'+esc(c.name)+(c.channel==="PERFORMANCE_MAX"?' <span style="font-size:9px;font-weight:700;letter-spacing:.08em;color:var(--gold);border:1px solid var(--gold);border-radius:5px;padding:1px 5px;white-space:nowrap">PMAX</span>':'')+'</td><td>'+statusBadge(c)+schedHint(c)+'</td><td class="muted" style="font-size:11.5px;white-space:nowrap">'+(dt.s?(esc(dt.s)+" \u2192 "+esc(dt.e||"open")):"\u2014")+(dt.info?'<div style="font-size:10px;color:var(--ink-45)">'+esc(dt.info)+'</div>':"")+'</td><td class="r">'+(c.budget?money(c.budget):"\u2014")+'</td><td class="r mono">'+money(c.cost)+'</td><td class="r mono">'+((+c.conv||0)%1?(+c.conv).toFixed(1):(+c.conv||0))+'</td><td class="r">'+(r==null?"\u2014":'<span class="'+(r>=3?"roas-good":r>=2.5?"roas-mid":"roas-bad")+'">'+r.toFixed(1)+'x</span>')+'</td></tr>';
+      var row='<tr class="crow" data-i="'+i+'" data-cid="'+esc(String(c.id||i))+'" style="cursor:pointer"><td style="font-weight:500">'+esc(c.name)+(c.channel==="PERFORMANCE_MAX"?' <span style="font-size:9px;font-weight:700;letter-spacing:.08em;color:var(--gold);border:1px solid var(--gold);border-radius:5px;padding:1px 5px;white-space:nowrap">PMAX</span>':'')+'</td><td>'+statusBadge(c)+schedHint(c)+'</td><td class="muted" style="font-size:11.5px;white-space:nowrap">'+(dt.s?(esc(dt.s)+" \u2192 "+esc(dt.e||"open")):"\u2014")+(dt.info?'<div style="font-size:10px;color:var(--ink-45)">'+esc(dt.info)+'</div>':"")+'</td><td class="r">'+(c.budget?money(c.budget):"\u2014")+'</td><td class="r mono">'+money(c.cost)+'</td><td class="r mono">'+((+c.conv||0)%1?(+c.conv).toFixed(1):(+c.conv||0))+'</td><td class="r">'+(r==null?"\u2014":'<span class="'+(r>=3?"roas-good":r>=2.5?"roas-mid":"roas-bad")+'">'+r.toFixed(1)+'x</span>')+'</td>'
+      +'<td class="r" style="white-space:nowrap">'
+      +(c.status==="ENABLED"?'<button class="btn ghost sm cst" data-id="'+esc(String(c.id))+'" data-to="PAUSED" data-name="'+esc(c.name)+'" style="padding:3px 10px;font-size:11px">Pause</button>'
+        :c.status==="PAUSED"?'<button class="btn gold sm cst" data-id="'+esc(String(c.id))+'" data-to="ENABLED" data-name="'+esc(c.name)+'" style="padding:3px 10px;font-size:11px">Enable</button>'
+        :"")
+      +'</td></tr>';
       var det='<tr class="cdet" data-d="'+i+'" data-cid="'+esc(String(c.id||i))+'" style="display:none"><td colspan="7" style="background:var(--paper-2)"><div style="padding:10px 8px;display:flex;flex-wrap:wrap;gap:22px;font-size:12px"><span><b>Impressions</b><br><span class="mono">'+(+c.impr||0).toLocaleString()+'</span></span><span><b>Clicks</b><br><span class="mono">'+(+c.clicks||0).toLocaleString()+'</span></span><span><b>CTR</b><br><span class="mono">'+(ctr==null?"\u2014":ctr.toFixed(2)+"%")+'</span></span><span><b>Avg CPC</b><br><span class="mono">'+(cpc==null?"\u2014":money(cpc))+'</span></span><span><b>Conversions</b><br><span class="mono">'+(+c.conv||0)+'</span></span><span><b>Cost / conv</b><br><span class="mono">'+(cpa==null?"\u2014":money(cpa))+'</span></span><span><b>Conv. value</b><br><span class="mono">'+money(c.value)+'</span></span>'+(c.primaryStatusReasons&&c.primaryStatusReasons.length?'<span style="flex-basis:100%;color:var(--ink-70);font-size:11.5px">\u26a0 '+esc(reasonText(c.primaryStatusReasons))+'</span>':"")+'</div><div class="adlvl" data-c="'+esc(String(c.id))+'" style="padding:0 8px 10px"></div></td></tr>';
       return row+det;}).join("")+'</tbody></table>';}
-function wireCampRows(scope){Array.prototype.forEach.call(scope.querySelectorAll(".crow"),function(r){r.onclick=function(){var i=this.getAttribute("data-i");var d=scope.querySelector('.cdet[data-d="'+i+'"]');if(d)d.style.display=d.style.display==="none"?"":"none";};});}
+function wireCampRows(scope){Array.prototype.forEach.call(scope.querySelectorAll(".crow"),function(r){r.onclick=function(){var i=this.getAttribute("data-i");var d=scope.querySelector('.cdet[data-d="'+i+'"]');if(d)d.style.display=d.style.display==="none"?"":"none";};});
+  Array.prototype.forEach.call(scope.querySelectorAll(".cst"),function(b){b.onclick=async function(ev){ev.stopPropagation();
+    var id=this.getAttribute("data-id"),to=this.getAttribute("data-to"),nm=this.getAttribute("data-name"),btn=this;
+    if(!confirm((to==="PAUSED"?"Pause":"Enable")+" \u201c"+nm+"\u201d?"+(to==="ENABLED"?"\n\nIt will start spending its daily budget.":"")))return;
+    btn.disabled=true;btn.textContent=to==="PAUSED"?"Pausing\u2026":"Enabling\u2026";
+    try{
+      var r2=await api("setStatus",{id:id,status:to});
+      if(r2&&r2.error)throw new Error(r2.error);
+      // reflect immediately, then let the next sync confirm
+      (DASH.lastMetrics||[]).forEach(function(c){if(String(c.id)===String(id))c.status=to;});
+      if(typeof cmdMetrics!=="undefined"&&cmdMetrics)cmdMetrics.forEach(function(c){if(String(c.id)===String(id))c.status=to;});
+      renderCommand();try{renderDiag();}catch(e){}
+      toast((to==="PAUSED"?"Paused \u2713":"Enabled \u2713")+" \u2014 "+nm);
+    }catch(x){btn.disabled=false;btn.textContent=to==="PAUSED"?"Pause":"Enable";toast("Status change failed: "+x.message);}
+  };});}
 
 /* ---- Daily stats: per-campaign / per-ad live reporting (Google Ads parity) ---- */
 var DAILY=null,_dailyKey="",_dailyBusy=false,srFilter="all";
