@@ -2695,7 +2695,7 @@ function buildPmaxCampaignOps(coll, { dailyBudget, startDate, endDate, targetRoa
   const ops=[
     {campaignBudgetOperation:{create:{resourceName:bRes,name:`BA · ${tag} · ${Date.now()}`,amountMicros:micros(dailyBudget),deliveryMethod:"STANDARD",explicitlyShared:false}}},
     {campaignOperation:{create:{resourceName:cRes,name:`BA · ${tag}`,status:"PAUSED",advertisingChannelType:"PERFORMANCE_MAX",campaignBudget:bRes,
-      containsEuPoliticalAdvertising:"DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING",shoppingSetting,urlExpansionOptOut:true,geoTargetTypeSetting:{positiveGeoTargetType:"PRESENCE"},
+      containsEuPoliticalAdvertising:"DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING",shoppingSetting,/* v24 removed url_expansion_opt_out; the opt-out is now an asset automation setting */assetAutomationSettings:[{assetAutomationType:"FINAL_URL_EXPANSION_TEXT_ASSET_AUTOMATION",assetAutomationStatus:"OPTED_OUT"}],geoTargetTypeSetting:{positiveGeoTargetType:"PRESENCE"},
       // Separate Merchant-feed traffic from Search in Shopify order intelligence.
       finalUrlSuffix:"utm_source=google&utm_medium=paid_shopping&utm_campaign={campaignid}&utm_content=pmax",
       maximizeConversionValue:tRoas>0?{targetRoas:tRoas}:{},...(startYmd?{startDateTime:startYmd+" 00:00:00"}:{}),...(endYmd?{endDateTime:endYmd+" 23:59:59"}:{})}}}
