@@ -72,7 +72,7 @@ exports.handler = async (event) => {
     : ["anomaly", "monthly", "conversions", "adjustments", "measure", "mine", "prune", "budgets", "ceiling", "events", "pruneLedger"];
 
   // Read-only tasks (no Google Ads mutations) are allowed even when the kill switch is off.
-  const READONLY = new Set(["scanOpportunities", "pruneLedger", "bestSellers", "diagnostics", "distill", "generate"]); // bestSellers touches Shopify, never Google Ads
+  const READONLY = new Set(["scanOpportunities", "pmaxGenerate", "pruneLedger", "bestSellers", "diagnostics", "distill", "generate"]); // drafts/read-only analysis never mutate Google Ads before approval
   const allReadOnly = tasks.every(t => READONLY.has(t));
 
   // HARD KILL SWITCH — blocks anything that could mutate. Read-only analysis still runs.
@@ -107,12 +107,14 @@ exports.handler = async (event) => {
     if (over()) { log.push("time budget reached — deferring rest to next run"); break; }
     try {
       if (task === "conversions") { result.conversions = await E.uploadConversions({ ctrl }); }
-      else if (task === "scanOpportunities") { result.scanOpportunities = { n: ((await E.opportunitiesWithStatus({ force: true })).opportunities || []).length }; }
+      else if (task === "scanOpportunities") { const sc = await E.opportunitiesWithStatus({ force: true }); result.scanOpportunities = { n: (sc.opportunities || []).length, pmax: (sc.pmaxList || []).length, pmaxError: sc.pmaxError || null }; }
       else if (task === "pmaxGenerate") {
         const gId = String(body.genId || Date.now());
         try { await E.setGenStatus(gId, { phase: "running", startedAt: Date.now(), kind: "pmax" }); } catch (e) {}
         try {
-          const out = await E.generatePmaxApproval({ handle: body.handle, dailyBudget: body.dailyBudget, targetRoas: body.targetRoas, days: body.days });
+          const out = await E.generatePmaxApproval({ handle: body.handle, dailyBudget: body.dailyBudget, targetRoas: body.targetRoas, days: body.days,
+            itemIds: Array.isArray(body.itemIds) ? body.itemIds.slice(0, 30) : [], productTitles: Array.isArray(body.productTitles) ? body.productTitles.slice(0, 10) : [],
+            feedLabel: body.feedLabel || null });
           result.pmax = out;
           try { await E.setGenStatus(gId, { ok: true, ...out }); } catch (e) {}
         } catch (e) {

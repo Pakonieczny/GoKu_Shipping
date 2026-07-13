@@ -84,7 +84,13 @@ function attributionFrom(payload) {
 
 function lineItemsFrom(payload) {
   const li = Array.isArray(payload.line_items) ? payload.line_items : [];
-  return li.map(x => ({ title: String(x.title || x.name || "").trim(), sku: String(x.sku || "").trim(), qty: Number(x.quantity) || 1 })).filter(it => it.title || it.sku).slice(0, 25);
+  return li.map(x => ({
+    title: String(x.title || x.name || "").trim(),
+    sku: String(x.sku || "").trim(),
+    qty: Number(x.quantity) || 1,
+    productId: x.product_id != null ? String(x.product_id) : null,
+    variantId: x.variant_id != null ? String(x.variant_id) : null
+  })).filter(it => it.title || it.sku).slice(0, 25);
 }
 
 function refundAmount(payload) {

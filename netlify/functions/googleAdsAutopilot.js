@@ -369,11 +369,50 @@ async function conversionHealth({ force } = {}) {
 // Every Shopify order (ad-attributed or not) is logged here. Orders that DIDN'T come from a
 // Google ad click still teach us what's selling — we mine that to inform future ad campaigns.
 
+function _orderItem(it) {
+  if (!it) return null;
+  const title = String(it.title || it.name || "").trim().slice(0, 180);
+  if (!title && !it.sku) return null;
+  return {
+    title,
+    sku: String(it.sku || "").trim().slice(0, 100) || null,
+    qty: Math.max(1, Number(it.qty || it.quantity) || 1),
+    productId: it.productId != null ? String(it.productId) : null,
+    variantId: it.variantId != null ? String(it.variantId) : null,
+    handle: String(it.handle || "").trim().slice(0, 180) || null
+  };
+}
+function _merchantOrganic(x) {
+  if (!x || x.hasClickId) return false;
+  const source = String(x.source || "").toLowerCase();
+  const medium = String(x.medium || "").toLowerCase();
+  const campaign = String(x.campaign || "").toLowerCase();
+  const reason = String(x.reason || "").toLowerCase();
+  return campaign === "sag_organic" || reason.indexOf("free google listing") >= 0 ||
+    (source.indexOf("google") >= 0 && /organic|free|shopping|product/.test(medium + " " + campaign));
+}
+function _signalProductBucket(map, it, orderValue, isAd, isMerchant) {
+  const title = String((it && it.title) || "").trim(); if (!title) return;
+  const key = title.toLowerCase();
+  const qty = Math.max(1, Number(it.qty) || 1);
+  const row = map[key] || (map[key] = { name: title, orders: 0, units: 0, revenue: 0, ad: 0, organic: 0, merchantOrganic: 0,
+    sku: it.sku || null, productId: it.productId || null, variantId: it.variantId || null, handle: it.handle || null });
+  // Older log rows may have title-only data; retain identifiers as soon as a newer
+  // order for the same product supplies them.
+  if (!row.sku && it.sku) row.sku = it.sku;
+  if (!row.productId && it.productId) row.productId = it.productId;
+  if (!row.variantId && it.variantId) row.variantId = it.variantId;
+  if (!row.handle && it.handle) row.handle = it.handle;
+  row.orders++; row.units += qty; row.revenue += orderValue;
+  if (isAd) row.ad++; else row.organic++;
+  if (isMerchant) row.merchantOrganic++;
+}
+
 async function recordOrderEvent(ev) {
   const f = fb(); if (!f) return false;
   const items = Array.isArray(ev.items)
-    ? ev.items.map(it => ({ title: String(it.title || "").slice(0, 160), qty: Number(it.qty) || 1 })).filter(it => it.title).slice(0, 25)
-    : (Array.isArray(ev.products) ? ev.products.map(t => ({ title: String(t).slice(0, 160), qty: 1 })).filter(it => it.title).slice(0, 25) : []);
+    ? ev.items.map(_orderItem).filter(Boolean).slice(0, 25)
+    : (Array.isArray(ev.products) ? ev.products.map(t => _orderItem({ title: t, qty: 1 })).filter(Boolean).slice(0, 25) : []);
   const itemCount = ev.itemCount != null ? (Number(ev.itemCount) || 0) : items.reduce((a, b) => a + (b.qty || 1), 0);
   const row = {
     orderId: ev.orderId || null, value: Number(ev.value) || 0, currency: ev.currency || CURRENCY,
@@ -395,8 +434,9 @@ async function recentOrders({ limit = 25 } = {}) {
   } catch (e) { return []; }
 }
 
-// Aggregate organic (non-ad) demand from the order log: revenue split, top products, top sources.
-async function storeSignals({ days = 30, max = 500 } = {}) {
+// Aggregate store demand, keeping Merchant Center free-listing sales separate from
+// direct/other organic traffic. PMax decisions must weight the feed's own proof first.
+async function storeSignals({ days = 30, max = 1000 } = {}) {
   const f = fb(); if (!f) return null;
   const since = Date.now() - days * 86400000;
   let rows = [];
@@ -404,19 +444,35 @@ async function storeSignals({ days = 30, max = 500 } = {}) {
     const q = await f.db.collection(COL.orderLog).orderBy("ts", "desc").limit(max).get();
     q.forEach(d => { const x = d.data(); if ((x.ts || 0) >= since) rows.push(x); });
   } catch (e) { return null; }
-  const out = { days, orders: rows.length, adOrders: 0, organicOrders: 0, adRevenue: 0, organicRevenue: 0,
-    topProducts: [], topSources: [] };
-  const prod = {}, src = {};
+  const out = { days, orders: rows.length, adOrders: 0, organicOrders: 0, merchantOrganicOrders: 0, otherOrganicOrders: 0,
+    adRevenue: 0, organicRevenue: 0, merchantOrganicRevenue: 0, otherOrganicRevenue: 0,
+    topProducts: [], topOrganicProducts: [], topMerchantProducts: [], topSources: [] };
+  const allProd = {}, organicProd = {}, merchantProd = {}, src = {};
   rows.forEach(x => {
-    const v = Number(x.value) || 0; const isAd = !!x.hasClickId;
-    if (isAd) { out.adOrders++; out.adRevenue += v; } else { out.organicOrders++; out.organicRevenue += v; }
-    (x.products || []).forEach(p => { const k = String(p).trim(); if (!k) return; (prod[k] = prod[k] || { name: k, orders: 0, revenue: 0, ad: 0, organic: 0 }); prod[k].orders++; prod[k].revenue += v / Math.max(1, (x.products || []).length); isAd ? prod[k].ad++ : prod[k].organic++; });
+    const v = Number(x.value) || 0; const isAd = !!x.hasClickId; const isMerchant = _merchantOrganic(x);
+    if (isAd) { out.adOrders++; out.adRevenue += v; }
+    else {
+      out.organicOrders++; out.organicRevenue += v;
+      if (isMerchant) { out.merchantOrganicOrders++; out.merchantOrganicRevenue += v; }
+      else { out.otherOrganicOrders++; out.otherOrganicRevenue += v; }
+    }
+    const rawItems = Array.isArray(x.items) && x.items.length ? x.items : (x.products || []).map(t => ({ title: t, qty: 1 }));
+    const totalUnits = Math.max(1, rawItems.reduce((n, it) => n + Math.max(1, Number(it.qty) || 1), 0));
+    rawItems.forEach(it0 => {
+      const it = _orderItem(it0); if (!it) return;
+      const allocated = v * (Math.max(1, Number(it.qty) || 1) / totalUnits);
+      _signalProductBucket(allProd, it, allocated, isAd, isMerchant);
+      if (!isAd) _signalProductBucket(organicProd, it, allocated, false, isMerchant);
+      if (isMerchant) _signalProductBucket(merchantProd, it, allocated, false, true);
+    });
     const sk = ((x.source || "direct") + " / " + (x.medium || "none")).toLowerCase();
-    (src[sk] = src[sk] || { source: sk, orders: 0, revenue: 0 }); src[sk].orders++; src[sk].revenue += v;
+    (src[sk] = src[sk] || { source: sk, orders: 0, revenue: 0, merchantOrganic: 0 }); src[sk].orders++; src[sk].revenue += v; if (isMerchant) src[sk].merchantOrganic++;
   });
-  out.adRevenue = +out.adRevenue.toFixed(2); out.organicRevenue = +out.organicRevenue.toFixed(2);
-  out.topProducts = Object.values(prod).map(p => ({ ...p, revenue: +p.revenue.toFixed(2) })).sort((a, b) => b.orders - a.orders || b.revenue - a.revenue).slice(0, 10);
-  out.topSources = Object.values(src).map(s => ({ ...s, revenue: +s.revenue.toFixed(2) })).sort((a, b) => b.orders - a.orders).slice(0, 8);
+  const rank = map => Object.values(map).map(p => ({ ...p, revenue: +p.revenue.toFixed(2) }))
+    .sort((a, b) => b.orders - a.orders || b.units - a.units || b.revenue - a.revenue).slice(0, 20);
+  ["adRevenue","organicRevenue","merchantOrganicRevenue","otherOrganicRevenue"].forEach(k => out[k] = +out[k].toFixed(2));
+  out.topProducts = rank(allProd); out.topOrganicProducts = rank(organicProd); out.topMerchantProducts = rank(merchantProd);
+  out.topSources = Object.values(src).map(s => ({ ...s, revenue: +s.revenue.toFixed(2) })).sort((a, b) => b.orders - a.orders).slice(0, 12);
   return out;
 }
 
@@ -432,26 +488,26 @@ async function backfillOrders({ limit = 100 } = {}) {
       totalPriceSet { shopMoney { amount currencyCode } }
       customAttributes { key value }
       customerJourneySummary { firstVisit { landingPage utmParameters { source medium campaign } } }
-      lineItems(first: 25) { edges { node { title quantity } } } } } } }`;
+      lineItems(first: 25) { edges { node { title quantity sku variant { id } product { id handle } } } } } } } }`;
   const MIN = `{ orders(first: ${want}, sortKey: CREATED_AT, reverse: true) { edges { node {
       id name createdAt
       totalPriceSet { shopMoney { amount currencyCode } }
       customAttributes { key value }
-      lineItems(first: 25) { edges { node { title quantity } } } } } } }`;
+      lineItems(first: 25) { edges { node { title quantity sku variant { id } product { id handle } } } } } } } }`;
   let d;
   try { d = await shopifyGql(FULL); }
   catch (e) { d = await shopifyGql(MIN); } // customer-journey field/scope unavailable → still backfill
   const edges = (d && d.orders && d.orders.edges) || [];
 
-  const existing = new Set();
-  try { const q = await f.db.collection(COL.orderLog).get(); q.forEach(x => { const o = x.data(); if (o.orderId) existing.add(String(o.orderId)); }); } catch (e) {}
+  const existing = new Map();
+  try { const q = await f.db.collection(COL.orderLog).get(); q.forEach(x => { const o = x.data(); if (o.orderId) existing.set(String(o.orderId), { ref: x.ref, data: o }); }); } catch (e) {}
 
-  const rows = [];
+  const rows = [], updates = [];
   edges.forEach(e => {
     const n = (e && e.node) || {};
     const orderId = String(n.name || n.id || "").replace(/^gid:\/\/shopify\/Order\//, "");
-    if (!orderId || existing.has(orderId)) return;
-    existing.add(orderId);
+    if (!orderId) return;
+    const prior = existing.get(orderId) || null;
     const money = n.totalPriceSet && n.totalPriceSet.shopMoney;
     const value = Number(money && money.amount) || 0;
     const currency = (money && money.currencyCode) || CURRENCY;
@@ -468,25 +524,51 @@ async function backfillOrders({ limit = 100 } = {}) {
       source = source || u.searchParams.get("utm_source"); medium = medium || u.searchParams.get("utm_medium"); campaign = campaign || u.searchParams.get("utm_campaign");
       const mm = (u.pathname || "").match(/\/products\/([^\/?#]+)/); if (mm) handle = mm[1];
     } catch (x) {} }
-    const items = (((n.lineItems && n.lineItems.edges) || []).map(li => ({ title: (li.node && li.node.title) || "", qty: Number(li.node && li.node.quantity) || 1 })).filter(it => it.title)).slice(0, 25);
+    const items = (((n.lineItems && n.lineItems.edges) || []).map(li => { const z = (li && li.node) || {}; return { title: z.title || "", sku: z.sku || null, qty: Number(z.quantity) || 1,
+      productId: z.product && z.product.id ? z.product.id : null, variantId: z.variant && z.variant.id ? z.variant.id : null,
+      handle: z.product && z.product.handle ? z.product.handle : null }; }).filter(it => it.title || it.sku)).slice(0, 25);
     const itemCount = items.reduce((a, b) => a + (b.qty || 1), 0);
     const clickId = gclid || gbraid || wbraid || null;
     const captured = !!clickId;
     const reason = captured ? "captured — Google ad click (backfill)"
       : (campaign === "sag_organic" ? "organic — free Google listing (sag_organic)"
          : (source ? `non-ad — ${source}/${medium || "none"}` : "organic / no Google click id"));
-    rows.push({ orderId, value, currency, source: source || null, medium: medium || null, campaign: campaign || null,
+    const row = { orderId, value, currency, source: source || null, medium: medium || null, campaign: campaign || null,
       hasClickId: captured, captured, reason, items, itemCount, products: items.map(i => i.title), handle: handle || null,
-      ts: n.createdAt ? Date.parse(n.createdAt) : Date.now(), backfill: true });
+      ts: n.createdAt ? Date.parse(n.createdAt) : Date.now(), backfill: true };
+    if (prior) {
+      // The older order log stored only titles. Re-reading the same Shopify orders now
+      // enriches those rows with product/variant IDs and SKU so existing free-listing
+      // sales can immediately map to exact Merchant Center offer IDs without creating
+      // duplicate order records or duplicate Google conversions.
+      const oldItems = Array.isArray(prior.data.items) ? prior.data.items : [];
+      const idScore = a => (a || []).reduce((n, it) => n + (it && it.productId ? 2 : 0) + (it && it.variantId ? 2 : 0) + (it && it.sku ? 1 : 0), 0);
+      const patch = {};
+      if (idScore(items) > idScore(oldItems)) Object.assign(patch, { items, itemCount, products: row.products, pmaxEnriched: true });
+      if (!prior.data.source && row.source) patch.source = row.source;
+      if (!prior.data.medium && row.medium) patch.medium = row.medium;
+      if (!prior.data.campaign && row.campaign) patch.campaign = row.campaign;
+      if (!prior.data.handle && row.handle) patch.handle = row.handle;
+      if (!_merchantOrganic(prior.data) && _merchantOrganic(row)) Object.assign(patch, { source: row.source, medium: row.medium, campaign: row.campaign, reason: row.reason });
+      if (Object.keys(patch).length) updates.push({ ref: prior.ref, patch: Object.assign(patch, { enrichedAt: f.FV.serverTimestamp() }) });
+      return;
+    }
+    existing.set(orderId, { ref: null, data: row });
+    rows.push(row);
   });
 
-  let added = 0;
+  let added = 0, enriched = 0;
   for (let i = 0; i < rows.length; i += 400) {
     const batch = f.db.batch();
     rows.slice(i, i + 400).forEach(r => { const ref = f.db.collection(COL.orderLog).doc(); batch.set(ref, Object.assign({ at: f.FV.serverTimestamp() }, r)); added++; });
     await batch.commit();
   }
-  return { ok: true, fetched: edges.length, added, skipped: edges.length - added };
+  for (let i = 0; i < updates.length; i += 400) {
+    const batch = f.db.batch();
+    updates.slice(i, i + 400).forEach(u => { batch.set(u.ref, u.patch, { merge: true }); enriched++; });
+    await batch.commit();
+  }
+  return { ok: true, fetched: edges.length, added, enriched, skipped: Math.max(0, edges.length - added - enriched) };
 }
 
 async function clearOrderLog({ keep = 1000 } = {}) {
@@ -1646,133 +1728,341 @@ async function pruneAssets({ ctrl, minImpr = 500 } = {}) {
    the free-listing conversions); scoping uses the canonical product types from
    the collection profiler via listing-group filters. */
 let _mcCache = null;
+let _merchantProductsCache = new Map();
 async function merchantCenterId() {
   if (_mcCache) return _mcCache;
   const rows = await gaql(`SELECT merchant_center_link.id, merchant_center_link.status FROM merchant_center_link`);
   const links = rows.map(r => r.merchantCenterLink || {});
   const on = links.find(l => String(l.status) === "ENABLED") || links[0];
-  if (!on || !on.id) throw new Error("No Merchant Center account is linked to this Google Ads account (Google Ads \u2192 Tools \u2192 Data manager). Link GMC first \u2014 feed campaigns can't exist without it.");
+  if (!on || !on.id) throw new Error("No Merchant Center account is linked to this Google Ads account (Google Ads → Tools → Data manager). Link GMC first — feed campaigns can't exist without it.");
   _mcCache = String(on.id); return _mcCache;
 }
 
-async function collectionImages(handle, n = 3) {
-  try {
-    const d = await shopifyGql(`{ collectionByHandle(handle: "${String(handle).replace(/"/g, "")}") { products(first: ${n}, sortKey: BEST_SELLING) { nodes { title featuredImage { url } } } } }`);
-    return (((d.collectionByHandle || {}).products || {}).nodes || [])
-      .map(p => ({ title: p.title, url: (p.featuredImage || {}).url })).filter(p => p.url);
-  } catch (e) { return []; }
+// Read only the relevant slice of the linked Merchant Center catalogue. The store has
+// a very large two-market feed, so an unfiltered shopping_product walk is both wasteful
+// and liable to exceed a background run. New order records carry Shopify product and
+// variant IDs, which let us construct the Google & YouTube channel's exact offer IDs;
+// title lookup is a bounded fallback for older order-log rows.
+const _MERCHANT_SELECT = `shopping_product.item_id, shopping_product.title, shopping_product.status,
+      shopping_product.availability, shopping_product.product_type_level1, shopping_product.product_type_level2,
+      shopping_product.custom_attribute0, shopping_product.custom_attribute1, shopping_product.custom_attribute2,
+      shopping_product.custom_attribute3, shopping_product.custom_attribute4, shopping_product.feed_label,
+      shopping_product.product_image_uri, shopping_product.merchant_center_id`;
+function _gaqlString(v) { return "'" + String(v == null ? "" : v).replace(/\\/g, "\\\\").replace(/'/g, "\\'") + "'"; }
+function _chunk(a, n) { const out=[]; for(let i=0;i<a.length;i+=n) out.push(a.slice(i,i+n)); return out; }
+function _merchantLookupPlan({ itemIds = [], signals = [], titles = [] } = {}) {
+  const ids = new Set((itemIds || []).map(x => String(x || "").trim()).filter(Boolean));
+  const names = new Set((titles || []).map(x => String(x || "").trim()).filter(Boolean));
+  (signals || []).forEach(s => {
+    if (!s) return;
+    const title = String(s.name || s.title || "").trim(); if (title) names.add(title);
+    const p = (_pmaxDigits(s.productId).slice(-1)[0] || ""), v = (_pmaxDigits(s.variantId).slice(-1)[0] || "");
+    // Current Shopify Google-channel IDs for the two active feed labels. Exact IDs
+    // are still validated by the live shopping_product resource before use.
+    if (p && v) ["CA","US"].forEach(m => ids.add(`shopify_${m}_${p}_${v}`));
+  });
+  return { itemIds: [...ids].slice(0, 250), titles: [...names].slice(0, 40) };
+}
+function _merchantProductRow(x, merchantId) {
+  if (!x || String(x.merchantCenterId || "") !== String(merchantId) || !x.itemId || !x.title) return null;
+  return { itemId: String(x.itemId), title: String(x.title), status: String(x.status || ""), availability: String(x.availability || ""),
+    type1: x.productTypeLevel1 || null, type2: x.productTypeLevel2 || null, feedLabel: x.feedLabel || null,
+    imageUrl: x.productImageUri || null, customLabels: [x.customAttribute0,x.customAttribute1,x.customAttribute2,x.customAttribute3,x.customAttribute4].filter(Boolean),
+    merchantId: String(x.merchantCenterId) };
+}
+async function merchantProducts({ force = false, itemIds = [], signals = [], titles = [] } = {}) {
+  const plan = _merchantLookupPlan({ itemIds, signals, titles });
+  if (!plan.itemIds.length && !plan.titles.length) return [];
+  const key = JSON.stringify([plan.itemIds.slice().sort(), plan.titles.slice().sort()]);
+  const cached = _merchantProductsCache.get(key);
+  if (!force && cached && Date.now() - cached.at < 30 * 60 * 1000) return cached.list;
+  const merchantId = await merchantCenterId(), found = new Map();
+  const run = async (field, values, size) => {
+    for (const part of _chunk(values, size)) {
+      if (!part.length) continue;
+      const rows = await gaql(`SELECT ${_MERCHANT_SELECT} FROM shopping_product WHERE shopping_product.merchant_center_id = ${Number(merchantId)} AND ${field} IN (${part.map(_gaqlString).join(",")})`);
+      rows.forEach(r => { const row = _merchantProductRow(r.shoppingProduct || {}, merchantId); if (row) found.set(row.itemId, row); });
+    }
+  };
+  // Exact item IDs first; exact title batches recover older webhook/backfill rows
+  // without ever scanning the complete ~two-market catalogue.
+  await run("shopping_product.item_id", plan.itemIds, 80);
+  await run("shopping_product.title", plan.titles, 20);
+  const list = [...found.values()];
+  _merchantProductsCache.set(key, { at: Date.now(), list });
+  if (_merchantProductsCache.size > 20) {
+    const oldest = [..._merchantProductsCache.entries()].sort((a,b)=>a[1].at-b[1].at).slice(0,_merchantProductsCache.size-20);
+    oldest.forEach(([k]) => _merchantProductsCache.delete(k));
+  }
+  return list;
 }
 
-// Downloads product photos from the Shopify CDN and uploads them as Google
-// image assets (PMax REQUIRES a logo + a square marketing image or creation
-// is rejected). Square product shots satisfy both slots; swap the logo for a
-// brand mark in the Google UI later if desired.
-async function uploadImageAssets(imgs, ctrl) {
+function _pmaxNorm(s) { return String(s || "").toLowerCase().replace(/&amp;/g, " and ").replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim(); }
+function _pmaxTitleMatch(a, b) {
+  a = _pmaxNorm(a); b = _pmaxNorm(b); if (!a || !b) return 0; if (a === b) return 1;
+  if (a.length > 16 && b.length > 16 && (a.indexOf(b) >= 0 || b.indexOf(a) >= 0)) return .9;
+  const A = new Set(a.split(" ").filter(x => x.length > 2)), B = new Set(b.split(" ").filter(x => x.length > 2));
+  let hit = 0; A.forEach(x => { if (B.has(x)) hit++; }); const den = Math.max(A.size, B.size, 1);
+  return hit / den;
+}
+function _pmaxIsEligible(p) {
+  const st = String((p && p.status) || "").toUpperCase(), av = String((p && p.availability) || "").toUpperCase();
+  // shopping_product.status is the live Ads/GMC eligibility verdict. Unknown or
+  // missing states are deliberately excluded: a generated campaign should never
+  // be scoped to an offer Google has not confirmed can serve.
+  return (st === "ELIGIBLE" || st === "ELIGIBLE_LIMITED") && av !== "OUT_OF_STOCK";
+}
+function _pmaxDigits(v) {
+  const m = String(v || "").match(/(\d{5,})/g); return m || [];
+}
+// Shopify's Google channel commonly embeds Shopify product/variant IDs or the SKU in
+// shopping_product.item_id. Prefer that exact identifier proof over fuzzy title matching.
+function _pmaxIdentifierMatch(mp, signal) {
+  if (!mp || !signal) return false;
+  const id = String(mp.itemId || "").toLowerCase();
+  const sku = String(signal.sku || "").trim().toLowerCase();
+  if (sku && sku.length >= 3 && (id === sku || id.includes(sku))) return true;
+  const ids = _pmaxDigits(id);
+  const pids = _pmaxDigits(signal.productId), vids = _pmaxDigits(signal.variantId);
+  return vids.some(v => ids.includes(v)) || pids.some(v => ids.includes(v));
+}
+function _pmaxShopifyProductMatch(product, signal) {
+  if (!product || !signal) return false;
+  const a = _pmaxDigits(product.productId), b = _pmaxDigits(signal.productId);
+  if (a.some(x => b.includes(x))) return true;
+  const ah = String(product.handle || "").toLowerCase(), bh = String(signal.handle || "").toLowerCase();
+  return !!(ah && bh && ah === bh);
+}
+
+function _pmaxTag(handle, feedLabel) {
+  const market = String(feedLabel || "").trim().toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"");
+  const suffix = market ? `-${market}` : "";
+  const base = (`pmax-${handle || ""}`).toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/-+/g,"-").replace(/^-|-$/g,"");
+  return base.slice(0, Math.max(1, 40 - suffix.length)) + suffix;
+}
+
+// Pure ranking layer: Merchant Center free-listing sales carry the most weight;
+// other organic sales and the canonical best-seller list support the decision but
+// cannot outrank direct feed proof. Output includes exact GMC item IDs for scoping.
+function pmaxCandidatesFromSignals({ collections = [], profiles = [], sig30 = null, sig90 = null, merchant = [] } = {}) {
+  const cByH = {}; collections.forEach(c => { if (c && c.handle) cByH[c.handle] = c; });
+  const sales = [];
+  const addSales = (arr, source, mul) => (arr || []).forEach(x => sales.push({ ...x, source, weight: (Number(x.orders) || 0) * mul + (Number(x.units) || 0) * mul * .35 + (Number(x.revenue) || 0) * mul * .015 }));
+  addSales(sig30 && sig30.topMerchantProducts, "merchant-free-30d", 12);
+  addSales(sig90 && sig90.topMerchantProducts, "merchant-free-90d", 5);
+  addSales(sig30 && sig30.topOrganicProducts, "organic-30d", 2.5);
+  addSales(sig90 && sig90.topOrganicProducts, "organic-90d", 1);
+  const dedupSales = {};
+  sales.forEach(x => { const k = _pmaxNorm(x.name); if (!k) return; const cur = dedupSales[k] || (dedupSales[k] = { ...x, weight: 0, sources: new Set() }); cur.weight += x.weight; cur.orders = Math.max(Number(cur.orders)||0, Number(x.orders)||0); cur.units = Math.max(Number(cur.units)||0, Number(x.units)||0); cur.revenue = Math.max(Number(cur.revenue)||0, Number(x.revenue)||0); ["sku","productId","variantId","handle"].forEach(f => { if (!cur[f] && x[f]) cur[f] = x[f]; }); cur.sources.add(x.source); });
+  const signalRows = Object.values(dedupSales);
+  const eligible = (merchant || []).filter(_pmaxIsEligible);
+  const out = [];
+  (profiles || []).forEach(p => {
+    const coll = cByH[p.handle] || { handle: p.handle, title: p.title }; if (!coll || !coll.handle) return;
+    const pp = (p.topProducts || []).length ? p.topProducts : (p.reps || []).map(t => ({ title: String(t).replace(/ \(\d+ sold\)$/i, "") }));
+    const matches = []; const offerMap = new Map(); let score = 0, merchantProof = 0;
+    pp.forEach(prod => {
+      let best = null, bestM = 0;
+      signalRows.forEach(s => { const m = _pmaxShopifyProductMatch(prod, s) ? 1 : _pmaxTitleMatch(prod.title, s.name); if (m > bestM) { bestM = m; best = s; } });
+      if (!best || bestM < .58) return;
+      const contribution = best.weight * (.55 + bestM * .45) + Math.min(20, Number(prod.sold) || 0);
+      score += contribution; if ([...best.sources].some(x => x.indexOf("merchant-free") === 0)) merchantProof += contribution;
+      const offers = eligible.filter(mp => _pmaxIdentifierMatch(mp, best) || Math.max(_pmaxTitleMatch(mp.title, prod.title), _pmaxTitleMatch(mp.title, best.name)) >= .62);
+      offers.slice(0, 12).forEach(mp => offerMap.set(mp.itemId, mp));
+      matches.push({ title: prod.title, soldTitle: best.name, orders: Number(best.orders)||0, units: Number(best.units)||0,
+        revenue: Math.round(Number(best.revenue)||0), source: [...best.sources].join("+"), offers: offers.length });
+    });
+    if (!matches.length || !offerMap.size) return;
+    // Retail PMax shopping settings use one feed label. Keep CA and US as distinct,
+    // market-aligned opportunities rather than mixing two feed markets into one campaign.
+    const byLabel = {}; offerMap.forEach(mp => { const k=String(mp.feedLabel||""); (byLabel[k]=byLabel[k]||[]).push(mp); });
+    const density = matches.length / Math.max(4, Math.min(20, Number(p.sampled) || pp.length || 4));
+    const generic = /all products|catalog|shop all|all jewelry/i.test(String(coll.title || "")) ? .45 : 1;
+    const baseScore = score * (1 + Math.min(.8, density * 4)) * generic;
+    Object.keys(byLabel).sort((a,b)=>byLabel[b].length-byLabel[a].length).forEach(feedKey => {
+      const scopedOffers = byLabel[feedKey], itemIds = scopedOffers.map(mp => mp.itemId).slice(0, 30); if (!itemIds.length) return;
+      const breadth = .9 + Math.min(.25, itemIds.length * .0125);
+      out.push({ handle: coll.handle, collectionTitle: coll.title || p.title, score: Math.round(baseScore * breadth * 10) / 10,
+        merchantScore: Math.round(merchantProof * breadth * 10) / 10, itemIds,
+        productTitles: matches.sort((a,b) => (b.orders-a.orders)||(b.revenue-a.revenue)).slice(0, 8).map(x => x.title),
+        evidence: matches.slice(0, 8), feedLabel: feedKey || null,
+        types: (p.typesDetail || []).map(t => t.type || t.t || t.name).filter(Boolean).slice(0, 6) });
+    });
+  });
+  out.sort((a,b) => b.merchantScore - a.merchantScore || b.score - a.score);
+  const chosen = [];
+  out.forEach(c => {
+    const S = new Set(c.itemIds); const overlap = chosen.some(x => { const X = new Set(x.itemIds); let n=0; S.forEach(id => { if (X.has(id)) n++; }); return n / Math.max(1, Math.min(S.size, X.size)) > .65; });
+    if (!overlap) chosen.push(c);
+  });
+  return chosen.slice(0, 8);
+}
+
+async function proposePmaxOpportunities({ collections = [], profiles = [], ceiling = 100 } = {}) {
+  // Pull recent Shopify orders before ranking. Existing title-only rows are enriched
+  // in place with product/variant IDs, while new webhook orders already contain them.
+  // This makes the very first scan useful instead of waiting for future purchases.
+  try { await backfillOrders({ limit: 150 }); } catch (e) {}
+  const sig90 = await storeSignals({ days: 90 }).catch(() => null);
+  const sig30 = await storeSignals({ days: 30 }).catch(() => sig90);
+  let merchant = [], merchantErr = null;
+  const lookupSignals = [].concat((sig30&&sig30.topMerchantProducts)||[],(sig90&&sig90.topMerchantProducts)||[],
+    (sig30&&sig30.topOrganicProducts)||[],(sig90&&sig90.topOrganicProducts)||[]).slice(0,60);
+  try { merchant = await merchantProducts({ force: true, signals: lookupSignals, titles: lookupSignals.map(x=>x.name).filter(Boolean) }); }
+  catch (e) { merchantErr = String(e.message || e).slice(0, 180); }
+  const candidates = pmaxCandidatesFromSignals({ collections, profiles, sig30, sig90, merchant });
+  if (!merchant.length) return { list: [], error: merchantErr ? ("Merchant Center catalogue read failed: " + merchantErr) : "The linked Merchant Center catalogue returned no products", at: Date.now() };
+  if (!candidates.length) return { list: [], error: "No eligible Merchant Center offers could be matched to recent store sales", at: Date.now() };
+  // When direct Google free-listing sales are identifiable, they are a hard gate,
+  // not merely an AI preference. Other-organic fallback is used only when attribution
+  // contains no direct Merchant/free-listing product proof at all.
+  const proven = candidates.filter(c => Number(c.merchantScore) > 0);
+  const qualified = proven.length ? proven : candidates;
+  let taken = {}; try { taken = await takenTags(); } catch (e) {}
+  const unused = qualified.filter(c => !taken[_pmaxTag(c.handle,c.feedLabel)] && !taken[_pmaxTag(c.handle,null)]);
+  const pool = (unused.length ? unused : qualified).slice(0, 6);
+  const merchantOrders30 = Number(sig30 && sig30.merchantOrganicOrders) || 0;
+  const merchantRevenue30 = Math.round(Number(sig30 && sig30.merchantOrganicRevenue) || 0);
+  const fallbackOrganic30 = Math.round(Number(sig30 && sig30.organicRevenue) || 0);
+  let selected = [];
+  try {
+    const promptData = pool.map(c => ({ handle:c.handle, feedLabel:c.feedLabel, collectionTitle:c.collectionTitle, score:c.score, merchantScore:c.merchantScore,
+      itemCount:c.itemIds.length, productTitles:c.productTitles, evidence:c.evidence.slice(0,5) }));
+    const j = await openaiJSON(`You are selecting tightly scoped Google Merchant Center Performance Max campaigns for Brites Jewelry.
+The goal is to amplify products that ALREADY convert through unpaid Google/free-listing traffic, not to invent broad themes.
+30-day Merchant/free-listing proof: ${merchantOrders30} orders / $${merchantRevenue30}. Other organic revenue: $${fallbackOrganic30}.
+Eligible candidates are pre-ranked deterministically from exact Shopify order titles matched to live Merchant Center offer IDs:
+${JSON.stringify(promptData).slice(0,12000)}
+Choose 2-3 market-specific, non-overlapping candidates. CA and US feed labels are separate valid campaigns; you may choose the same collection once per market when both have eligible offers. A candidate with merchantScore > 0 has direct free-listing sales proof and MUST outrank every merchantScore = 0 fallback. Prefer repeated orders and multiple eligible offers. Do not choose a broad collection over a tighter one with the same winning products. Keep budgets conservative enough to learn but meaningful: $6-$15/day, respecting total ceiling $${ceiling}/day. Return ONLY JSON {"pmax":[{"handle":"exact handle","feedLabel":"exact feedLabel","rationale":"<=150 chars citing products/orders/free-listing proof","dailyBudget":6-15,"days":21-45,"angle":"<=80 chars"}]}.`,
+      { maxTokens: 5000, effort: "medium" });
+    selected = (Array.isArray(j && j.pmax) ? j.pmax : []).map(x => {
+      const c = pool.find(y => y.handle === x.handle && String(y.feedLabel||"") === String(x.feedLabel||"")); if (!c) return null;
+      return Object.assign({}, c, { rationale:String(x.rationale||"").slice(0,150), angle:String(x.angle||"").slice(0,80),
+        dailyBudget:Math.max(6,Math.min(15,Number(x.dailyBudget)||10)), days:Math.max(21,Math.min(45,Number(x.days)||30)) });
+    }).filter(Boolean).slice(0,3);
+  } catch (e) {}
+  if (selected.length < Math.min(2,pool.length)) {
+    selected = pool.slice(0,Math.min(3,pool.length)).map((c,i) => Object.assign({},c,{
+      rationale:`${c.productTitles.slice(0,2).join(" + ")} already sell${c.merchantScore>0?" through Google free listings":" organically"}; boost the exact GMC offers.`,
+      angle:"Scale proven product demand", dailyBudget:Math.max(6,Math.min(15,8+i*2)), days:30
+    }));
+  }
+  const list = selected.map(c => {
+    const ev = c.evidence || [], merchantEv = ev.filter(x => String(x.source).indexOf("merchant-free") >= 0);
+    const orders = ev.reduce((n,x)=>n+(Number(x.orders)||0),0), revenue = ev.reduce((n,x)=>n+(Number(x.revenue)||0),0);
+    return { kind:"pmax", collectionTitle:c.collectionTitle, handle:c.handle, rationale:c.rationale, angle:c.angle,
+      dailyBudget:c.dailyBudget, days:c.days, types:c.types, itemIds:c.itemIds, productTitles:c.productTitles,
+      feedLabel:c.feedLabel||null, score:c.score, merchantScore:c.merchantScore,
+      organic:{ orders30d:orders, organicRevenue30d:Math.round(revenue), merchantMatchedProducts:merchantEv.length,
+        merchantOrdersStorewide30d:merchantOrders30, merchantRevenueStorewide30d:merchantRevenue30,
+        signalSource:c.merchantScore>0?"Google Merchant Center free-listing sales":"other organic sales fallback" } };
+  });
+  return { list, error:null, at:Date.now(), merchantProducts:merchant.length, merchantOrders30, merchantRevenue30 };
+}
+
+async function collectionImages(handle, n = 4, preferredTitles = []) {
+  try {
+    const d = await shopifyGql(`{ collectionByHandle(handle: "${String(handle).replace(/"/g, "")}") { products(first: ${Math.max(n, 8)}, sortKey: BEST_SELLING) { nodes { title featuredImage { url } } } } }`);
+    const rows = (((d.collectionByHandle || {}).products || {}).nodes || []).map(p => ({ title: p.title, url: (p.featuredImage || {}).url })).filter(p => p.url);
+    const pref = (preferredTitles || []).map(_pmaxNorm);
+    const prefScore = row => pref.reduce((m, x) => Math.max(m, _pmaxTitleMatch(x, row.title)), 0);
+    return rows.sort((a,b) => prefScore(b) - prefScore(a)).slice(0,n);
+  } catch (e) { return []; }
+}
+function _shopifyImageVariant(url, width, height) {
+  try { const u = new URL(url); u.searchParams.set("width", String(width)); u.searchParams.set("height", String(height)); u.searchParams.set("crop", "center"); return u.toString(); }
+  catch (e) { return url; }
+}
+async function _uploadImageVariant(imgs, ctrl, shape) {
+  if (ctrl && ctrl.dryRun) return [];
   const ops = [];
   for (const im of (imgs || []).slice(0, 3)) {
     try {
-      const r = await fetch(im.url); if (!r.ok) continue;
-      const buf = Buffer.from(await r.arrayBuffer());
+      const url = shape === "landscape" ? _shopifyImageVariant(im.url, 1200, 628) : _shopifyImageVariant(im.url, 1200, 1200);
+      const r = await fetch(url); if (!r.ok) continue; const buf = Buffer.from(await r.arrayBuffer());
       if (!buf.length || buf.length > 5 * 1024 * 1024) continue;
-      ops.push({ create: { name: ("Brites \u00b7 " + (im.title || "product")).slice(0, 60) + " \u00b7 " + Date.now() + "-" + ops.length, type: "IMAGE", imageAsset: { data: buf.toString("base64") } } });
+      ops.push({ create: { name: (`Brites · ${im.title || "product"} · ${shape} · ${Date.now()}-${ops.length}`).slice(0, 120), type: "IMAGE", imageAsset: { data: buf.toString("base64") } } });
     } catch (e) {}
   }
   if (!ops.length) return [];
-  const res = await mutate("assets", ops, { ctrl });
+  const res = await mutate("assets", ops, { ctrl, label: "PMax " + shape + " assets" });
   return ((res && res.results) || []).map(r => r.resourceName).filter(Boolean);
 }
-
-// mutateOperations for a retail Performance Max campaign: budget → campaign
-// (PAUSED; shoppingSetting = linked GMC; MaxConvValue + tROAS; URL expansion
-// OFF so the feed + our final URL stay in control) → asset group (texts +
-// images) → listing-group tree scoped to the collection's product types.
-// Temp-id pattern mirrors Google's own AddPerformanceMaxRetailCampaign sample.
-function buildPmaxCampaignOps(coll, { dailyBudget, startDate, endDate, targetRoas, merchantId, types, text, imageAssetNames } = {}) {
-  const tag = `pmax-${coll.handle}`.replace(/[^a-z0-9-]+/g, "-").slice(0, 40);
-  const bRes = `customers/${CID}/campaignBudgets/-1`;
-  const cRes = `customers/${CID}/campaigns/-2`;
-  const agRes = `customers/${CID}/assetGroups/-3`;
-  const finalUrl = `https://britesjewelry.com/collections/${coll.handle}`;
-  const startYmd = gAdsDate(startDate, true), endYmd = gAdsDate(endDate, false);
-  const tRoas = Number(targetRoas || ENV.GADS_TARGET_ROAS || 0);
-  const ops = [
-    { campaignBudgetOperation: { create: { resourceName: bRes, name: `BA \u00b7 ${tag} \u00b7 ${Date.now()}`, amountMicros: micros(dailyBudget), deliveryMethod: "STANDARD", explicitlyShared: false } } },
-    { campaignOperation: { create: {
-        resourceName: cRes, name: `BA \u00b7 ${tag}`, status: "PAUSED",
-        advertisingChannelType: "PERFORMANCE_MAX", campaignBudget: bRes,
-        containsEuPoliticalAdvertising: "DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING",
-        shoppingSetting: { merchantId: Number(merchantId) },
-        urlExpansionOptOut: true,
-        maximizeConversionValue: tRoas > 0 ? { targetRoas: tRoas } : {},
-        ...(startYmd ? { startDateTime: startYmd + " 00:00:00" } : {}),
-        ...(endYmd ? { endDateTime: endYmd + " 23:59:59" } : {}) } } },
-    { assetGroupOperation: { create: { resourceName: agRes, campaign: cRes, name: `AG \u00b7 ${tag}`, finalUrls: [finalUrl], status: "ENABLED" } } }
-  ];
-  let t = 10;
-  const addText = (txt, fieldType, maxLen) => {
-    const clean = String(txt || "").slice(0, maxLen); if (!clean) return;
-    const aRes = `customers/${CID}/assets/-${++t}`;
-    ops.push({ assetOperation: { create: { resourceName: aRes, textAsset: { text: clean } } } });
-    ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: aRes, fieldType } } });
-  };
-  const H = ((text || {}).headlines || []).slice(0, 5); const D = ((text || {}).descriptions || []).slice(0, 4);
-  H.slice(0, Math.max(3, H.length)).forEach(h => addText(h, "HEADLINE", 30));
-  D.forEach(d => addText(d, "DESCRIPTION", 90));
-  addText((text || {}).longHeadline || (H[0] ? H[0] + " \u2014 handmade & personalized" : "Handmade personalized charm jewelry"), "LONG_HEADLINE", 90);
-  addText("Brites Jewelry", "BUSINESS_NAME", 25);
-  (imageAssetNames || []).forEach((res, i) => {
-    if (i === 0) ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: res, fieldType: "LOGO" } } });
-    ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: res, fieldType: "SQUARE_MARKETING_IMAGE" } } });
-  });
-  // listing-group tree: include ONLY the collection's product types
-  const scoped = [...new Set((types || []).map(x => String(x || "").trim()).filter(Boolean))].slice(0, 6);
-  const rootRes = `customers/${CID}/assetGroupListingGroupFilters/-3~-50`;
-  if (scoped.length) {
-    ops.push({ assetGroupListingGroupFilterOperation: { create: { resourceName: rootRes, assetGroup: agRes, type: "SUBDIVISION" } } });
-    scoped.forEach((ty, i) => {
-      ops.push({ assetGroupListingGroupFilterOperation: { create: {
-        resourceName: `customers/${CID}/assetGroupListingGroupFilters/-3~-${51 + i}`,
-        assetGroup: agRes, parentListingGroupFilter: rootRes, type: "UNIT_INCLUDED",
-        caseValue: { productType: { level: "LEVEL1", value: ty } } } } });
-    });
-    ops.push({ assetGroupListingGroupFilterOperation: { create: {
-      resourceName: `customers/${CID}/assetGroupListingGroupFilters/-3~-99`,
-      assetGroup: agRes, parentListingGroupFilter: rootRes, type: "UNIT_EXCLUDED",
-      caseValue: { productType: { level: "LEVEL1" } } } } });
-  } else {
-    ops.push({ assetGroupListingGroupFilterOperation: { create: { resourceName: rootRes, assetGroup: agRes, type: "UNIT_INCLUDED" } } });
-  }
-  return { ops, tag, finalUrl, scopedTypes: scoped };
+async function uploadImageAssets(imgs, ctrl) {
+  const square = await _uploadImageVariant(imgs, ctrl, "square");
+  const landscape = await _uploadImageVariant(imgs, ctrl, "landscape");
+  return { square, landscape, logo: square[0] || null, complete: !!(square.length && landscape.length) };
 }
 
-// Generate a ready-to-approve PMax campaign for a collection. Heavy (image
-// download/upload + LLM ad text) — runs in the background worker.
-async function generatePmaxApproval({ handle, dailyBudget, targetRoas, days } = {}) {
-  const ctrl = await control();
-  const colls = await getCollections({});
-  const coll = colls.find(c => c.handle === handle);
+// mutateOperations for a retail Performance Max campaign. Exact Merchant Center
+// item IDs are preferred so the campaign amplifies the products that already sold
+// through free listings. Product-type scoping remains a safe fallback only.
+function buildPmaxCampaignOps(coll, { dailyBudget, startDate, endDate, targetRoas, merchantId, feedLabel, itemIds, types, countries } = {}) {
+  const tag = _pmaxTag(coll.handle, feedLabel);
+  const bRes = `customers/${CID}/campaignBudgets/-1`, cRes = `customers/${CID}/campaigns/-2`, agRes = `customers/${CID}/assetGroups/-3`;
+  const finalUrl = `https://britesjewelry.com/collections/${coll.handle}`;
+  const startYmd = gAdsDate(startDate, true), endYmd = gAdsDate(endDate, false), tRoas = Number(targetRoas || ENV.GADS_TARGET_ROAS || 0);
+  const shoppingSetting = { merchantId: Number(merchantId) }; if (feedLabel) shoppingSetting.feedLabel = String(feedLabel);
+  const baseOps = [
+    { campaignBudgetOperation: { create: { resourceName: bRes, name: `BA · ${tag} · ${Date.now()}`, amountMicros: micros(dailyBudget), deliveryMethod: "STANDARD", explicitlyShared: false } } },
+    { campaignOperation: { create: { resourceName: cRes, name: `BA · ${tag}`, status: "PAUSED", advertisingChannelType: "PERFORMANCE_MAX", campaignBudget: bRes,
+        containsEuPoliticalAdvertising: "DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING", shoppingSetting, urlExpansionOptOut: true,
+        geoTargetTypeSetting: { positiveGeoTargetType: "PRESENCE" },
+        maximizeConversionValue: tRoas > 0 ? { targetRoas: tRoas } : {},
+        ...(startYmd ? { startDateTime: startYmd + " 00:00:00" } : {}), ...(endYmd ? { endDateTime: endYmd + " 23:59:59" } : {}) } } },
+    { assetGroupOperation: { create: { resourceName: agRes, campaign: cRes, name: `AG · ${tag}`, finalUrls: [finalUrl], status: "ENABLED" } } }
+  ];
+  // Retail PMax campaigns linked to Merchant Center can use Google's feed-derived
+  // asset automation. We intentionally do not manufacture a LOGO from a product
+  // photo or attach a partial custom asset set: either can invalidate the asset
+  // group under brand-guideline rules. Exact feed scope is the priority here.
+  const filterOps = [], exact = [...new Set((itemIds||[]).map(x=>String(x||"").trim()).filter(Boolean))].slice(0,30);
+  const scoped = [...new Set((types||[]).map(x=>String(x||"").trim()).filter(Boolean))].slice(0,6), rootRes=`customers/${CID}/assetGroupListingGroupFilters/-3~-50`;
+  if (exact.length) {
+    filterOps.push({assetGroupListingGroupFilterOperation:{create:{resourceName:rootRes,assetGroup:agRes,type:"SUBDIVISION"}}});
+    exact.forEach((id,i)=>filterOps.push({assetGroupListingGroupFilterOperation:{create:{resourceName:`customers/${CID}/assetGroupListingGroupFilters/-3~-${51+i}`,assetGroup:agRes,parentListingGroupFilter:rootRes,type:"UNIT_INCLUDED",caseValue:{productItemId:{value:id}}}}}));
+    filterOps.push({assetGroupListingGroupFilterOperation:{create:{resourceName:`customers/${CID}/assetGroupListingGroupFilters/-3~-99`,assetGroup:agRes,parentListingGroupFilter:rootRes,type:"UNIT_EXCLUDED",caseValue:{productItemId:{}}}}});
+  } else if (scoped.length) {
+    filterOps.push({assetGroupListingGroupFilterOperation:{create:{resourceName:rootRes,assetGroup:agRes,type:"SUBDIVISION"}}});
+    scoped.forEach((ty,i)=>filterOps.push({assetGroupListingGroupFilterOperation:{create:{resourceName:`customers/${CID}/assetGroupListingGroupFilters/-3~-${51+i}`,assetGroup:agRes,parentListingGroupFilter:rootRes,type:"UNIT_INCLUDED",caseValue:{productType:{level:"LEVEL1",value:ty}}}}}));
+    filterOps.push({assetGroupListingGroupFilterOperation:{create:{resourceName:`customers/${CID}/assetGroupListingGroupFilters/-3~-99`,assetGroup:agRes,parentListingGroupFilter:rootRes,type:"UNIT_EXCLUDED",caseValue:{productType:{level:"LEVEL1"}}}}});
+  } else filterOps.push({assetGroupListingGroupFilterOperation:{create:{resourceName:rootRes,assetGroup:agRes,type:"UNIT_INCLUDED"}}});
+  const countryIds=[...new Set((countries||[]).map(x=>String(x).replace(/\D/g,"")).filter(Boolean))];
+  const geoOps=countryIds.map(id=>({campaignCriterionOperation:{create:{campaign:cRes,location:{geoTargetConstant:`geoTargetConstants/${id}`}}}}));
+  return { ops: baseOps.concat(filterOps, geoOps), tag, finalUrl, scopedTypes: scoped, scopedItemIds: exact, assetMode: "merchant-auto", countries: countryIds };
+}
+
+async function generatePmaxApproval({ handle, dailyBudget, targetRoas, days, itemIds, productTitles, feedLabel } = {}) {
+  const ctrl = await control(), colls = await getCollections({}), coll = colls.find(c => c.handle === handle);
   if (!coll) throw new Error("unknown collection: " + handle);
-  const merchantId = await merchantCenterId();
-  let types = [];
-  try { const prof = await collectionProfiles({}); const mine = (prof.list || []).find(p => p.handle === handle);
-        if (mine && Array.isArray(mine.typesDetail)) types = mine.typesDetail.map(t => t.type || t.t || t.name).filter(Boolean); } catch (e) {}
-  const imgs = await collectionImages(handle, 3);
-  const imageAssetNames = await uploadImageAssets(imgs, ctrl);
-  if (!imageAssetNames.length && !ctrl.dryRun) throw new Error("could not stage any product images from the Shopify CDN \u2014 PMax requires a logo + square marketing image");
-  let text = { headlines: [], descriptions: [] };
-  try { const a = await generateRSAAssets(coll, { label: "Evergreen \u00b7 Google Shopping" }, { keyPhrases: [] });
-        text = { headlines: (a.headlines || []).slice(0, 5), descriptions: (a.descriptions || []).slice(0, 4) }; } catch (e) {}
-  if (!text.headlines.length) text.headlines = [coll.title.slice(0, 30), "Handmade Charm Jewelry", "Personalized Gifts"];
-  if (!text.descriptions.length) text.descriptions = ["Handcrafted charm jewelry, made to order and shipped fast.", "Little charms, big meanings \u2014 personalized for the story you\u2019re telling."];
-  const budget = Math.max(3, Number(dailyBudget) || 10);
-  const start = new Date(); const end = days ? new Date(Date.now() + Number(days) * 86400000) : null;
-  const { ops, tag, scopedTypes } = buildPmaxCampaignOps(coll, {
-    dailyBudget: budget, startDate: start, endDate: end,
-    targetRoas: Number(targetRoas || ctrl.targetRoas || 0), merchantId, types, text, imageAssetNames });
-  const id = await enqueueApproval({ type: "pmax", vetted: false,
-    summary: `PMax \u00b7 ${coll.title} \u00b7 $${budget}/day \u00b7 ${scopedTypes.length ? scopedTypes.join("/") : "all feed products"} \u00b7 ${imageAssetNames.length} images \u00b7 GMC ${merchantId}`,
-    payload: { mutateOperations: ops, meta: { kind: "pmax", handle, collectionTitle: coll.title, dailyBudget: budget, targetRoas: Number(targetRoas || ctrl.targetRoas || 0), scopedTypes, images: imageAssetNames.length, merchantId, tag } } });
-  return { approvalId: id, tag, scopedTypes, images: imageAssetNames.length, merchantId };
+  const merchantId = await merchantCenterId(); let types = [];
+  try { const prof = await collectionProfiles({}); const mine=(prof.list||[]).find(p=>p.handle===handle); if(mine&&Array.isArray(mine.typesDetail)) types=mine.typesDetail.map(t=>t.type||t.t||t.name).filter(Boolean); } catch(e){}
+  // Validate client-supplied IDs against the current linked catalogue; never create a
+  // filter for a stale, disapproved, or unrelated Merchant Center offer.
+  let selected = [], liveFeedLabel = feedLabel || null;
+  const requestedIds=[...new Set((itemIds||[]).map(String).filter(Boolean))].slice(0,30);
+  try {
+    const live=await merchantProducts({ force: true, itemIds: requestedIds, titles: productTitles || [] }); const allowed=new Set(requestedIds);
+    selected=live.filter(x=>allowed.has(x.itemId)&&_pmaxIsEligible(x));
+    if(!liveFeedLabel&&selected[0])liveFeedLabel=selected[0].feedLabel||null;
+    if(liveFeedLabel)selected=selected.filter(x=>!x.feedLabel||String(x.feedLabel)===String(liveFeedLabel));
+    selected=selected.slice(0,30);
+  } catch(e){}
+  if(requestedIds.length&&!selected.length)throw new Error("None of the selected Merchant Center offers are currently eligible. Re-run Scan for opportunities to refresh the feed scope.");
+  const exactIds=selected.map(x=>x.itemId), chosenTitles=(productTitles&&productTitles.length?productTitles:selected.map(x=>x.title)).slice(0,8);
+  const budget=Math.max(3,Number(dailyBudget)||10), start=new Date(), end=days?new Date(Date.now()+Number(days)*86400000):null;
+  let countries=(Array.isArray(ctrl.defaultCountries)&&ctrl.defaultCountries.length)?ctrl.defaultCountries:["2124"];
+  // Feed labels in this store represent CA/US markets. Align location targeting to
+  // that market so a CA feed campaign cannot accidentally spend against US traffic,
+  // and vice versa. Custom/non-country feed labels retain the configured defaults.
+  if (liveFeedLabel) {
+    try { const all=await listCountries({}); const hit=all.find(c=>String(c.code||"").toUpperCase()===String(liveFeedLabel).toUpperCase()); if(hit&&hit.id)countries=[String(hit.id)]; } catch(e) {}
+  }
+  const built=buildPmaxCampaignOps(coll,{dailyBudget:budget,startDate:start,endDate:end,targetRoas:Number(targetRoas||ctrl.targetRoas||0),merchantId,feedLabel:liveFeedLabel,itemIds:exactIds,types,countries});
+  const scope=built.scopedItemIds.length?`${built.scopedItemIds.length} proven GMC offers`:(built.scopedTypes.length?built.scopedTypes.join("/"):"all feed products");
+  const id=await enqueueApproval({type:"pmax",vetted:false,summary:`PMax · ${coll.title} · $${budget}/day · ${scope} · ${built.assetMode} assets · GMC ${merchantId}`,
+    payload:{mutateOperations:built.ops,countries:built.countries,meta:{kind:"pmax",handle,collectionTitle:coll.title,dailyBudget:budget,targetRoas:Number(targetRoas||ctrl.targetRoas||0),scopedTypes:built.scopedTypes,itemIds:built.scopedItemIds,productTitles:chosenTitles,images:0,assetMode:built.assetMode,merchantId,feedLabel:liveFeedLabel,countries:built.countries,tag:built.tag}}});
+  return {approvalId:id,tag:built.tag,scopedTypes:built.scopedTypes,itemIds:built.scopedItemIds,products:chosenTitles,assetMode:built.assetMode,countries:built.countries,merchantId};
 }
 
 // MINE: converting search terms ⇒ exact keywords; expensive zero-conv terms ⇒ negatives.
@@ -2234,7 +2524,7 @@ function _distill(titles) {
 async function collectionProfiles({ force, onPage = null } = {}) {
   const f = fb();
   if (!force && f) { try { const d = await f.db.collection(COL.state).doc("collectionProfiles").get();
-    if (d.exists) { const x = d.data() || {}; if (x.v === 6 && x.at && (Date.now() - x.at) < 7 * 86400000 && Array.isArray(x.list) && x.list.length) return { list: x.list, at: x.at, salesBasis: x.salesBasis || null }; } } catch (e) {} }
+    if (d.exists) { const x = d.data() || {}; if (x.v === 7 && x.at && (Date.now() - x.at) < 7 * 86400000 && Array.isArray(x.list) && x.list.length) return { list: x.list, at: x.at, salesBasis: x.salesBasis || null }; } } catch (e) {} }
   // Pure units-sold ranking for "top seller" (see productSalesMap). Null -> Shopify-sort fallback, labeled.
   let salesMap = null; try { salesMap = await productSalesMap({}); } catch (e) {}
   const salesBasis = salesMap ? salesMap.source : "Shopify best-selling sort (pure sales-count ranking unavailable this run)";
@@ -2335,14 +2625,20 @@ async function collectionProfiles({ force, onPage = null } = {}) {
     const inv = _distill(sample.map(p => p.title).concat(descTexts));
     const persAll = [...new Set(typesDetail.flatMap(t => t.personalization || []))].slice(0, 6);
     const med = _median(prices);
+    const topProducts = bestR.slice(0, 20).map(p0 => ({
+      title: String(p0.title || "").trim().slice(0, 180),
+      productId: p0.id || null,
+      sold: salesMap ? (_salesOf(p0, salesMap) || 0) : 0,
+      productType: String(p0.productType || "").trim().slice(0, 80) || null
+    })).filter(x => x.title);
     return { handle: c.handle, title: c.title, count: isFinite(count) ? count : null, sampled: sample.length,
       priceLow: lo != null ? Math.round(lo) : null, priceMed: med != null ? Math.round(med) : null, priceHigh: hi != null ? Math.round(hi) : null,
       motifs: inv.motifs, types: inv.types, mats: inv.mats, listingTags,
-      typesDetail, personalization: persAll,
+      typesDetail, personalization: persAll, topProducts,
       reps: [bestR[0] && (String(bestR[0].title).trim().slice(0, 60) + (salesMap && _salesOf(bestR[0], salesMap) > 0 ? ` (${_salesOf(bestR[0], salesMap)} sold)` : "")), c.freshP[0] && String(c.freshP[0].title).trim().slice(0, 60)].filter(Boolean) };
   });
   const builtAt = Date.now();
-  if (f) { try { await f.db.collection(COL.state).doc("collectionProfiles").set({ list, at: builtAt, v: 6, salesBasis }); } catch (e) {} }
+  if (f) { try { await f.db.collection(COL.state).doc("collectionProfiles").set({ list, at: builtAt, v: 7, salesBasis }); } catch (e) {} }
   return { list, at: builtAt, salesBasis };
 }
 // One compact prompt line per collection: count · price spread · ranked motif inventory (with
@@ -2719,15 +3015,19 @@ function _oppScore(o) {
 }
 async function scanOpportunities({ force, cacheOnly } = {}) {
   const f = fb(); const ctrl = await control();
+  // Kept outside the Search scan try-block so a later Search failure cannot erase a
+  // Merchant Center opportunity scan that already completed successfully.
+  let pmaxList = [], pmaxError = null, pmaxAt = null;
   if (f && (cacheOnly || !force)) {
     try {
       const s = await f.db.collection(COL.state).doc("opportunities").get();
       if (s.exists) {
         const x = s.data();
         if (cacheOnly) return { opportunities: Array.isArray(x.list) ? x.list : [], pmaxList: Array.isArray(x.pmaxList) ? x.pmaxList : [], pmaxError: x.pmaxError || null, pmaxAt: x.pmaxAt || null, scannedAt: x.at || null, scanning: !!x.scanning, lastError: x.lastError || null, lastErrorAt: x.lastErrorAt || null, progress: x.progress || null };
-        if (x.at && (Date.now() - x.at) < 12 * 60 * 60 * 1000 && Array.isArray(x.list) && x.list.length) return { opportunities: x.list, pmaxList: Array.isArray(x.pmaxList) ? x.pmaxList : [], scannedAt: x.at };
-      } else if (cacheOnly) { return { opportunities: [], scannedAt: null, scanning: false }; }
-    } catch (e) { if (cacheOnly) return { opportunities: [], scannedAt: null, scanning: false }; }
+        const cacheAt=Math.max(Number(x.at)||0,Number(x.pmaxAt)||0);
+        if (cacheAt && (Date.now() - cacheAt) < 12 * 60 * 60 * 1000 && ((Array.isArray(x.list) && x.list.length) || (Array.isArray(x.pmaxList) && x.pmaxList.length))) return { opportunities: Array.isArray(x.list) ? x.list : [], pmaxList: Array.isArray(x.pmaxList) ? x.pmaxList : [], pmaxError: x.pmaxError || null, pmaxAt: x.pmaxAt || null, scannedAt: x.at || null };
+      } else if (cacheOnly) { return { opportunities: [], pmaxList: [], pmaxError: null, pmaxAt: null, scannedAt: null, scanning: false }; }
+    } catch (e) { if (cacheOnly) return { opportunities: [], pmaxList: [], pmaxError: null, pmaxAt: null, scannedAt: null, scanning: false }; }
   }
   // ---- Scan pipeline wrapped so a failure ANYWHERE records WHY (readable via lastError) and ALWAYS
   // clears the scanning flag. Previously the background caller swallowed the error, leaving
@@ -2755,6 +3055,15 @@ async function scanOpportunities({ force, cacheOnly } = {}) {
   await _scanProg(8, "Profiling collections", "50 best-sellers + 20 newest per collection, with listing tags");
   try { const _p = await collectionProfiles({ onPage: n => _scanProg(Math.min(30, 8 + n * 0.6), "Profiling collections", n + " collections scanned") }); if (_p && Array.isArray(_p.list) && _p.list.length) { profiles = _p.list; profiledAt = _p.at; salesBasis = _p.salesBasis; } } catch (e) {}
   await _scanProg(34, "Building the strategy brief", (profiles ? profiles.length + " collection profiles" : "titles only") + " \u00b7 " + products.length + " best-sellers");
+  // PMax is scanned independently of the Search-opportunity LLM. A Search reasoning
+  // failure must never hide or discard viable Merchant Center opportunities.
+  await _scanProg(35, "Merchant Center opportunity scan", "matching recent organic sales to live GMC offers");
+  const pmaxPack = await proposePmaxOpportunities({ collections, profiles: profiles || [], ceiling }).catch(e => ({ list: [], error: String(e.message || e).slice(0, 220), at: Date.now() }));
+  pmaxList = Array.isArray(pmaxPack.list) ? pmaxPack.list : []; pmaxError = pmaxPack.error || null; pmaxAt = pmaxPack.at || Date.now();
+  // Commit the feed result NOW, before the much slower Search reasoning pass. If
+  // Search later times out or the background function reaches its platform limit,
+  // the completed Merchant scan remains available to the Opportunities tab.
+  if (f) { try { await f.db.collection(COL.state).doc("opportunities").set({ pmaxList, pmaxError, pmaxAt }, { merge: true }); } catch (e) {} }
   let pbBlock = "";
   try { pbBlock = playbookText(await playbookSlice({ categories: ["keywords", "copy", "negatives", "landingPage", "budget", "structure"] })); } catch (e) {}
   const collBlock = (profiles && profiles.length)
@@ -2818,34 +3127,12 @@ ${pbBlock}Only include opportunities genuinely relevant within ~30 days. Opportu
         const s2 = await f.db.collection(COL.state).doc("opportunities").get();
         if (s2.exists) { const x2 = s2.data(); prevList = Array.isArray(x2.list) ? x2.list : []; prevAt = x2.at || null; }
       } catch (e) {}
-      try { await f.db.collection(COL.state).doc("opportunities").set({ scanning: false, lastError: llmErr || "no opportunities returned", lastErrorAt: Date.now(), progress: null }, { merge: true }); } catch (e) {}
+      try { await f.db.collection(COL.state).doc("opportunities").set({ pmaxList, pmaxError, pmaxAt, scanning: false, lastError: llmErr || "no Search opportunities returned", lastErrorAt: Date.now(), progress: null }, { merge: true }); } catch (e) {}
     }
-    return { opportunities: prevList, scannedAt: prevAt, lastError: llmErr || "no opportunities returned", lastErrorAt: Date.now() };
+    return { opportunities: prevList, pmaxList, pmaxError, pmaxAt, scannedAt: prevAt, lastError: llmErr || "no Search opportunities returned", lastErrorAt: Date.now() };
   }
   const byTitle0 = {}; collections.forEach(c => byTitle0[c.title.toLowerCase()] = c.handle);
-  // ---- PMax opportunities: powered by the store's ORGANIC (unpaid) sales ----
-  let pmaxList = []; let pmaxError = null;
-  try {
-    await _scanProg(86, "Feed-campaign scan", "reading organic sales momentum");
-    const sig90 = await storeSignals({ days: 90 }).catch(() => null);
-    const sig30 = await storeSignals({ days: 30 }).catch(() => sig90);
-    const enabledNames = []; try { (await gaql(`SELECT campaign.name, campaign.advertising_channel_type FROM campaign WHERE campaign.status = 'ENABLED'`)).forEach(r => enabledNames.push(((r.campaign || {}).name || "") + " [" + ((r.campaign || {}).advertisingChannelType || "") + "]")); } catch (e) {}
-    const profBrief = (typeof profiles !== "undefined" && Array.isArray(profiles)) ? profiles.slice(0, 25).map(p => ({ handle: p.handle, types: (p.typesDetail || []).map(t => t.type || t.t || t.name).slice(0, 4) })) : [];
-    const pj = await openaiJSON(`Brites Jewelry: last 90 days ${sig90 ? sig90.orders : "?"} orders / $${sig90 ? Math.round((sig90.adRevenue || 0) + (sig90.organicRevenue || 0)) : "?"} revenue with $${sig90 ? Math.round(sig90.organicRevenue || 0) : "?"} ORGANIC; last 30 days ${sig30 ? sig30.orders : "?"} orders, $${sig30 ? Math.round(sig30.organicRevenue || 0) : "?"} organic (unpaid Google free listings + direct) — months of proof the feed converts without bid support. Top sellers: ${prodText.slice(0, 1200)}. Collections with canonical product types: ${JSON.stringify(profBrief).slice(0, 2000)}. Campaigns already running: ${enabledNames.join("; ") || "none"}. Budget ceiling $${ceiling}/day.
-Propose 2-3 Performance Max (Google Shopping feed) campaigns that AMPLIFY what is already selling organically — anchor each to collections whose products overlap the top sellers, scoped tight. The store has months of real purchase data: returning fewer than 2 is acceptable ONLY if the top-seller and collection lists are empty. Return ONLY JSON {"pmax":[{"collectionTitle": exact title match from the collections list, "rationale": <=140 chars grounded in the organic signal, "dailyBudget": number 6-15 realistic for a small account, "days": 21-45, "angle": <=80 chars}]}`,
-      { maxTokens: 6000, effort: "medium" });
-    pmaxList = (Array.isArray((pj || {}).pmax) ? pj.pmax : []).slice(0, 3).map(p => {
-      const t2 = String(p.collectionTitle || "").toLowerCase();
-      const h2 = byTitle0[t2] || (collections.find(c => c.title.toLowerCase().indexOf(t2) >= 0) || {}).handle || null;
-      const prof2 = (typeof profiles !== "undefined" && Array.isArray(profiles)) ? profiles.find(x => x.handle === h2) : null;
-      return h2 ? { kind: "pmax", collectionTitle: p.collectionTitle, handle: h2,
-        rationale: String(p.rationale || "").slice(0, 140), angle: String(p.angle || "").slice(0, 80),
-        dailyBudget: Math.max(3, Math.min(20, Number(p.dailyBudget) || 10)), days: Math.max(14, Math.min(60, Number(p.days) || 30)),
-        types: prof2 && Array.isArray(prof2.typesDetail) ? prof2.typesDetail.map(t3 => t3.type || t3.t || t3.name).filter(Boolean).slice(0, 6) : [],
-        organic: sig30 ? { orders30d: sig30.orders || 0, organicRevenue30d: Math.round(sig30.organicRevenue || 0) } : null } : null;
-    }).filter(Boolean);
-    if (!pmaxList.length) pmaxError = "model proposed no feed opportunities";
-  } catch (e) { pmaxError = String(e.message || e).slice(0, 200); }
+  // PMax opportunities were built independently above from live GMC offers + order signals.
   const byTitle = byTitle0; const today0 = _todayUtc();
   let _enabled = 0; try { _enabled = await _enabledBudgetTotal(); } catch (e) {}
   const headroom = Math.max(0, ceiling - _enabled);
@@ -2923,25 +3210,29 @@ Propose 2-3 Performance Max (Google Shopping feed) campaigns that AMPLIFY what i
   // because keywordData/plan bloat the payload), it was previously swallowed — leaving stale data AND a
   // stuck scanning flag. Now a write failure retries with a trimmed payload and is always recorded.
   await _scanProg(96, "Saving " + list.length + " ranked opportunities");
-  if (f && list.length) {
-    try { await f.db.collection(COL.state).doc("opportunities").set({ list, pmaxList, pmaxError, pmaxAt: Date.now(), at: Date.now(), scanning: false, lastError: null, lastErrorAt: null, progress: null }); }
+  if (f && (list.length || pmaxList.length)) {
+    try { await f.db.collection(COL.state).doc("opportunities").set({ list, pmaxList, pmaxError, pmaxAt, at: Date.now(), scanning: false, lastError: null, lastErrorAt: null, progress: null }); }
     catch (e) {
       try {
         const slim = list.map(o => { const c = Object.assign({}, o); delete c.keywordData; return c; }); // drop heavy per-keyword metrics
         // (pmaxList rides along in the same doc below)
-        await f.db.collection(COL.state).doc("opportunities").set({ list: slim, pmaxList, pmaxError, pmaxAt: Date.now(), at: Date.now(), scanning: false, lastError: "write trimmed (payload too large): " + (e && e.message), lastErrorAt: Date.now(), progress: null });
+        await f.db.collection(COL.state).doc("opportunities").set({ list: slim, pmaxList, pmaxError, pmaxAt, at: Date.now(), scanning: false, lastError: "write trimmed (payload too large): " + (e && e.message), lastErrorAt: Date.now(), progress: null });
       } catch (e2) {
         try { await f.db.collection(COL.state).doc("opportunities").set({ scanning: false, lastError: "WRITE FAILED: " + (e2 && e2.message), lastErrorAt: Date.now(), progress: null }, { merge: true }); } catch (e3) {}
       }
     }
   }
-  else if (f) { try { await f.db.collection(COL.state).doc("opportunities").set({ scanning: false, lastError: "all opportunities filtered out (no matching collections / all out of window)", lastErrorAt: Date.now(), progress: null }, { merge: true }); } catch (e) {} }
-  return { opportunities: list, pmaxList, scannedAt: Date.now() };
+  else if (f) { try { await f.db.collection(COL.state).doc("opportunities").set({ list: [], pmaxList: [], pmaxError, pmaxAt, at: Date.now(), scanning: false, lastError: "all Search and PMax opportunities filtered out", lastErrorAt: Date.now(), progress: null }, { merge: true }); } catch (e) {} }
+  return { opportunities: list, pmaxList, pmaxError, pmaxAt, scannedAt: Date.now() };
   } catch (scanErr) {
     // ANY failure in the scan pipeline: record it (console-readable via lastError) and ALWAYS clear
     // scanning so the UI stops showing stale data. This is the safety net that was missing.
-    if (f) { try { await f.db.collection(COL.state).doc("opportunities").set({ scanning: false, lastError: (scanErr && scanErr.message) || String(scanErr), lastErrorStack: ((scanErr && scanErr.stack) || "").slice(0, 600), lastErrorAt: Date.now(), progress: null }, { merge: true }); } catch (e) {} }
-    return { opportunities: [], scannedAt: null, error: (scanErr && scanErr.message) || String(scanErr) };
+    if (f) { try { await f.db.collection(COL.state).doc("opportunities").set({
+      ...(pmaxAt ? { pmaxList, pmaxError, pmaxAt } : {}), scanning: false,
+      lastError: (scanErr && scanErr.message) || String(scanErr), lastErrorStack: ((scanErr && scanErr.stack) || "").slice(0, 600),
+      lastErrorAt: Date.now(), progress: null
+    }, { merge: true }); } catch (e) {} }
+    return { opportunities: [], pmaxList, pmaxError, pmaxAt, scannedAt: null, error: (scanErr && scanErr.message) || String(scanErr) };
   }
 }
 
@@ -3032,7 +3323,13 @@ async function opportunitiesWithStatus({ force, cacheOnly } = {}) {
   // shown with their actual status.
   .filter(o => !o._expired)
   .filter(o => !(o.acted && o.acted.where === "campaign" && o.acted.status === "REMOVED"));
-  return { opportunities, scannedAt: r.scannedAt, scanning: !!r.scanning, taken, lastError: r.lastError || r.error || null, lastErrorAt: r.lastErrorAt || null, progress: r.progress || null };
+  const pmaxList = (r.pmaxList || []).map(o => {
+    const tag = _pmaxTag(o.handle,o.feedLabel), legacyTag = _pmaxTag(o.handle,null);
+    return Object.assign({}, o, { tag, acted: taken[tag] || taken[legacyTag] || null });
+  }).filter(o => !(o.acted && o.acted.where === "campaign" && o.acted.status === "REMOVED"));
+  return { opportunities, pmaxList, pmaxError: r.pmaxError || null, pmaxAt: r.pmaxAt || null,
+    scannedAt: r.scannedAt, scanning: !!r.scanning, taken, lastError: r.lastError || r.error || null,
+    lastErrorAt: r.lastErrorAt || null, progress: r.progress || null };
 }
 
 /* ===================== Release an "in use" opportunity ===================== */
@@ -4045,7 +4342,7 @@ module.exports = {
   generateForCollection, COLLECTIONS, OCCASIONS,
   getCollections, suggestOccasions, recordOccasionUse,
   scanOpportunities, opportunitiesWithStatus, takenTags, releaseOpportunity, fetchTopProducts, setCampaignStatus, startCampaignNow, setCampaignBudget, analyzeCampaign,
-  generatePmaxApproval, merchantCenterId, buildPmaxCampaignOps,
+  generatePmaxApproval, merchantCenterId, merchantProducts, pmaxCandidatesFromSignals, proposePmaxOpportunities, buildPmaxCampaignOps,
   listCountries, campaignCountries, setCampaignCountries, setApprovalCountries, setApprovalDates,
   loadCalendar, dueEvents,
   measure, pruneAssets, mineSearchTerms, reallocateBudgets, anomalyCheck,
@@ -4054,5 +4351,5 @@ module.exports = {
   fetchDiagnostics, runDiagnostics, getDiagnostics, applyGoogleRecommendation, dismissGoogleRecommendation,
   dailyStats, applyRemedy, remedyHistory, adReviewStatus,
   getPlaybook, playbookSlice, distillLessons, setGenStatus, getGenStatus,
-  _util: { micros, fromMicros, clampHeadline, clampDescription, gAdsTime, daysUntil }
+  _util: { micros, fromMicros, clampHeadline, clampDescription, gAdsTime, daysUntil, merchantLookupPlan: _merchantLookupPlan, pmaxTag: _pmaxTag }
 };

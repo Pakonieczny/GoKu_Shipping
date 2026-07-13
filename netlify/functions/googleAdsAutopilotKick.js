@@ -145,13 +145,15 @@ async function handleAction(body) {
     } catch (e) { return { error: e.message }; }
   }
   if (a === "generatePmax") {
-    // Heavy (image download/upload + LLM ad text) — background worker; the
-    // console polls gen_<genId> via genStatus, same as Search generation.
+    // Merchant-catalog validation + multi-operation PMax build run in the background;
+    // the console polls gen_<genId> via genStatus, same as Search generation.
     try {
       const genId = String(body.genId || Date.now());
       const res = await fetch(baseUrl() + "/.netlify/functions/googleAdsAutopilot-background", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tasks: ["pmaxGenerate"], genId, handle: body.handle, dailyBudget: body.dailyBudget, targetRoas: body.targetRoas, days: body.days, token: process.env.EDIT_PASSCODE || undefined })
+        body: JSON.stringify({ tasks: ["pmaxGenerate"], genId, handle: body.handle, dailyBudget: body.dailyBudget, targetRoas: body.targetRoas, days: body.days,
+          itemIds: Array.isArray(body.itemIds) ? body.itemIds.slice(0, 30) : [], productTitles: Array.isArray(body.productTitles) ? body.productTitles.slice(0, 10) : [],
+          feedLabel: body.feedLabel || null, token: process.env.EDIT_PASSCODE || undefined })
       });
       if (res.status >= 400) return { error: "background dispatch failed: HTTP " + res.status };
       return { queued: true, genId };
