@@ -827,6 +827,16 @@ function sanitizeOps(ops) {
       if (c.endDate != null)   { const v = _toGAdsDateTime(c.endDate, "23:59:59"); if (v) c.endDateTime = v; delete c.endDate; }
       if (c.start_date != null){ const v = _toGAdsDateTime(c.start_date, "00:00:00"); if (v && !c.startDateTime) c.startDateTime = v; delete c.start_date; }
       if (c.end_date != null)  { const v = _toGAdsDateTime(c.end_date, "23:59:59"); if (v && !c.endDateTime) c.endDateTime = v; delete c.end_date; }
+      // v24 removed Campaign.url_expansion_opt_out (v22+ models it as an asset
+      // automation setting). Migrate drafts frozen under the old builder so
+      // they apply without regeneration — the opt-out intent is preserved.
+      if (c.urlExpansionOptOut != null || c.url_expansion_opt_out != null) {
+        const optedOut = (c.urlExpansionOptOut === true) || (c.url_expansion_opt_out === true);
+        delete c.urlExpansionOptOut; delete c.url_expansion_opt_out;
+        if (optedOut && !Array.isArray(c.assetAutomationSettings)) {
+          c.assetAutomationSettings = [{ assetAutomationType: "FINAL_URL_EXPANSION_TEXT_ASSET_AUTOMATION", assetAutomationStatus: "OPTED_OUT" }];
+        }
+      }
     }
   });
   return ops;
