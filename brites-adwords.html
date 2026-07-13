@@ -415,6 +415,20 @@ details.opDx[open]>summary,#customWrap[open]>summary{border-color:var(--gold);ba
 .pmxrow{display:grid;grid-template-columns:minmax(210px,.85fr) minmax(300px,1.6fr) auto;gap:12px;align-items:center}
 svg rect.bc-bar[data-tip]{cursor:pointer;transition:filter .12s}
 svg rect.bc-bar[data-tip]:hover{filter:brightness(.85);stroke:var(--ink);stroke-width:1}
+
+/* ---- opportunity scan verification report ---- */
+.scanAudit{margin-bottom:14px}
+.scanAudit>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:10px;padding:13px 15px;background:var(--card);border:1px solid var(--line);border-radius:12px;font-weight:700;box-shadow:var(--sh)}
+.scanAudit>summary::-webkit-details-marker{display:none}.scanAudit>summary::before{content:"\25b8";color:var(--gold);font-size:11px}.scanAudit[open]>summary::before{content:"\25be"}
+.scanAudit[open]>summary{border-radius:12px 12px 0 0;border-bottom-color:var(--line-2)}
+.scanAuditBody{background:var(--card);border:1px solid var(--line);border-top:0;border-radius:0 0 12px 12px;padding:10px 14px 14px}
+.auditSummary{display:flex;gap:7px;flex-wrap:wrap;margin:2px 0 10px}.auditChip{font:600 10.5px var(--mono);padding:3px 8px;border-radius:999px;background:var(--paper-2);color:var(--ink-70)}
+.auditChip.ok{background:var(--sage-soft);color:var(--sage)}.auditChip.warn{background:var(--gold-soft);color:#7a5a1d}.auditChip.fail{background:var(--clay-soft);color:var(--clay)}
+.auditRows{max-height:520px;overflow:auto;border-top:1px solid var(--line-2)}
+.auditRow{display:grid;grid-template-columns:22px minmax(190px,1.1fr) minmax(220px,2fr) auto;gap:10px;align-items:start;padding:10px 2px;border-bottom:1px solid var(--line-2)}
+.auditRow:last-child{border-bottom:0}.auditIcon{font-weight:900;text-align:center}.auditLabel{font-size:12.5px;font-weight:650}.auditCat{font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-45);margin-bottom:2px}.auditDetail{font-size:11.5px;color:var(--ink-70);line-height:1.45}.auditMeta{font:10.5px var(--mono);color:var(--ink-45);white-space:nowrap;text-align:right}.auditErr{color:var(--clay);margin-top:3px}.auditFallback{color:#7a5a1d;margin-top:3px}
+.auditData{margin-top:5px}.auditData>summary{display:inline-flex;align-items:center;gap:4px;list-style:none;cursor:pointer;color:var(--slate);font:600 10.5px var(--mono)}.auditData>summary::-webkit-details-marker{display:none}.auditData>summary::before{content:"▸"}.auditData[open]>summary::before{content:"▾"}.auditData pre{white-space:pre-wrap;word-break:break-word;margin:5px 0 0;padding:7px 9px;border:1px solid var(--line);border-radius:7px;background:var(--paper);color:var(--ink-70);font:10px/1.4 var(--mono);max-height:210px;overflow:auto}
+@media(max-width:760px){.auditRow{grid-template-columns:20px 1fr}.auditDetail,.auditMeta{grid-column:2}.auditMeta{text-align:left;white-space:normal}.auditRows{max-height:62vh}}
 </style>
 </head>
 <body>
@@ -435,7 +449,7 @@ svg rect.bc-bar[data-tip]:hover{filter:brightness(.85);stroke:var(--ink);stroke-
   <aside class="rail">
     <div class="rail__brand"><div class="logo">Brites <b>·</b> Autopilot</div><div class="tag">Ad Control Room</div></div>
     <nav class="nav" id="nav"></nav>
-    <div class="rail__foot"><span class="dot" id="connDot"></span><span id="connText">connected</span> <a href="#" id="signOut" style="float:right;color:#8c8476;font-size:10.5px;text-decoration:underline" onclick="sessClear();location.reload();return false;">sign out</a><br><span class="muted" style="font-size:10px">live · Google Ads v24 · opportunity engine v12</span></div>
+    <div class="rail__foot"><span class="dot" id="connDot"></span><span id="connText">connected</span> <a href="#" id="signOut" style="float:right;color:#8c8476;font-size:10.5px;text-decoration:underline" onclick="sessClear();location.reload();return false;">sign out</a><br><span class="muted" style="font-size:10px">live · Google Ads v24 · opportunity engine v12.2</span></div>
   </aside>
   <div class="navscrim" id="navScrim"></div>
   <div class="main">
@@ -501,6 +515,7 @@ svg rect.bc-bar[data-tip]:hover{filter:brightness(.85);stroke:var(--ink);stroke-
       <div id="kwDiagPanel" style="display:none;margin-bottom:14px"></div>
       <div id="oppErr" style="display:none"></div>
       <div id="scanProg" style="display:none"></div>
+      <div id="scanAudit" style="display:none"></div>
       <div id="oppList"><div class="empty" style="height:200px"><div class="ring"></div><div>Hit \u201cScan for opportunities\u201d.</div><div style="font-size:12px">The AI cross-references your catalog, the calendar, and past results, then ranks what to act on.</div></div></div>
       <details class="card pad" style="margin-top:16px" id="customWrap">
         <summary style="cursor:pointer;font-weight:600;font-size:14px">Custom build \u2014 pick any collection \u00d7 occasion manually</summary>
@@ -1741,7 +1756,7 @@ function showDraft(r){var a=r.assets||{};var out=$("#benchOut");var p=r.plan;var
 
 
 /* ---- render: opportunities (Unused vs In-use reconciliation) ---- */
-var OPPS=[]; var PMAXOPPS=[]; var PMAXERR=null; var PMAXAT=null; var oppLoaded=false; var oppView="unused"; var oppSort="best";
+var OPPS=[]; var PMAXOPPS=[]; var PMAXERR=null; var PMAXAT=null; var SCAN_AUDIT=null; var oppLoaded=false; var oppView="unused"; var oppSort="best";
 function oppSorters(mode){
   if(mode==="urgent")return function(a,b){var d=(a.o.daysOut||0)-(b.o.daysOut||0); if(d)return d; d=(a.o.durationDays||99)-(b.o.durationDays||99); if(d)return d; return (b.o.score||0)-(a.o.score||0);};
   if(mode==="reach")return function(a,b){return (((b.o.research||{}).searchVolume)||0)-(((a.o.research||{}).searchVolume)||0);};
@@ -1776,6 +1791,40 @@ function renderScanProg(prog){
   '</div>';
 }
 function hideScanProg(){ var el=$("#scanProg"); if(el){el.style.display="none";el.innerHTML="";} }
+
+function auditTime(ms){ms=Number(ms)||0;if(ms<1000)return ms+"ms";if(ms<60000)return (ms/1000).toFixed(ms<10000?1:0)+"s";return (ms/60000).toFixed(1)+"m";}
+function auditStatus(st){
+  if(st==="ok")return {icon:"✓",color:"var(--sage)",label:"passed"};
+  if(st==="warning")return {icon:"!",color:"var(--gold)",label:"warning"};
+  if(st==="failed")return {icon:"×",color:"var(--clay)",label:"failed"};
+  if(st==="skipped")return {icon:"–",color:"var(--ink-45)",label:"skipped"};
+  if(st==="running")return {icon:"●",color:"var(--gold)",label:"running"};
+  return {icon:"○",color:"var(--ink-45)",label:"queued"};
+}
+function renderScanAudit(audit,reconciliation){
+  var el=$("#scanAudit");if(!el)return;
+  if(audit)SCAN_AUDIT=audit;
+  var a=SCAN_AUDIT;if(!a){el.style.display="none";el.innerHTML="";return;}
+  var checks=(a.checks||[]).slice();
+  if(reconciliation&&!checks.some(function(x){return x.id==="campaign_reconciliation";}))checks.push({id:"campaign_reconciliation",category:"Google Ads API",label:"Approvals and live campaign reconciliation",status:reconciliation.ok?"ok":"warning",detail:reconciliation.ok?(Number(reconciliation.takenCount||0)+" approval/campaign tag(s) reconciled to prevent duplicates."):"Reconciliation could not be completed.",error:reconciliation.error||null});
+  // Recount from the rows being rendered so a client-added reconciliation check or
+  // an older stored summary can never make the headline totals disagree with the report.
+  var sm={total:checks.length,ok:0,warning:0,failed:0,skipped:0,running:0,queued:0};
+  checks.forEach(function(x){if(sm[x.status]!=null)sm[x.status]++;});
+  var bad=Number(sm.failed||0),warn=Number(sm.warning||0),run=Number(sm.running||0)+Number(sm.queued||0);
+  var state=a.status==="failed"?"Failed":((a.status==="partial"||warn)?"Completed with warnings":(run?"Running":"Verified complete"));
+  var stateColor=a.status==="failed"?"var(--clay)":(a.status==="partial"||warn?"#7a5a1d":run?"var(--gold)":"var(--sage)");
+  var rows=checks.map(function(x){var m=auditStatus(x.status),meta=[];if(x.startedAt)try{meta.push(new Date(x.startedAt).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit",second:"2-digit"}));}catch(e){}if(x.httpStatus!=null)meta.push("HTTP "+x.httpStatus);if(x.tookMs!=null)meta.push(auditTime(x.tookMs));if(x.source)meta.push(x.source);var tech="";if(x.meta){var raw="";try{raw=JSON.stringify(x.meta,null,2).slice(0,6000);}catch(e){}if(raw)tech='<details class="auditData"><summary>technical data</summary><pre>'+esc(raw)+'</pre></details>';}return '<div class="auditRow">'+
+    '<div class="auditIcon" style="color:'+m.color+'">'+m.icon+'</div><div><div class="auditCat">'+esc(x.category||"scan")+'</div><div class="auditLabel">'+esc(x.label||x.id||"check")+'</div></div>'+
+    '<div class="auditDetail">'+esc(x.detail||"")+(x.error?'<div class="auditErr"><b>Error:</b> '+esc(String(x.error).slice(0,420))+'</div>':"")+(x.fallback?'<div class="auditFallback"><b>Fallback:</b> '+esc(String(x.fallback).slice(0,260))+'</div>':"")+tech+'</div>'+
+    '<div class="auditMeta">'+esc(meta.join(" · "))+'</div></div>';}).join("");
+  var totalMs=(a.completedAt||Date.now())-(a.startedAt||Date.now());
+  el.style.display="block";
+  el.innerHTML='<details class="scanAudit" '+((a.status!=="success"||bad||warn||run)?"open":"")+'><summary><span style="width:9px;height:9px;border-radius:50%;background:'+stateColor+';box-shadow:0 0 0 3px color-mix(in srgb,'+stateColor+' 18%,transparent)"></span><span>Scan verification</span><span class="muted" style="font-size:11px;font-weight:500">'+esc(state)+'</span><span style="flex:1"></span><span class="mono muted" style="font-size:10.5px">'+esc(a.engineVersion||"")+(a.engineVersion?' · ':'')+esc((a.runId||"").slice(-18))+(totalMs>0?' · '+auditTime(totalMs):'')+'</span></summary><div class="scanAuditBody">'+
+    '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><div class="auditSummary"><span class="auditChip ok">'+Number(sm.ok||0)+' passed</span><span class="auditChip warn">'+warn+' warnings</span><span class="auditChip fail">'+bad+' failed</span>'+(run?'<span class="auditChip">'+run+' active</span>':'')+'<span class="auditChip">'+checks.length+' checks</span></div><span style="flex:1"></span><button type="button" class="btn ghost sm" id="copyScanAudit" style="padding:4px 10px;font-size:11px">Copy report</button></div>'+
+    '<div class="muted" style="font-size:11.5px;margin-bottom:8px">Every scan dependency, fallback, keyword batch, validation decision and save operation is recorded here. Sensitive credentials and raw prompts are never stored.</div><div class="auditRows">'+rows+'</div></div></details>';
+  var b=$("#copyScanAudit");if(b)b.onclick=function(ev){ev.preventDefault();ev.stopPropagation();var report=Object.assign({},a,{reconciliation:reconciliation||null});var txt=JSON.stringify(report,null,2);if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(txt).then(function(){toast("Scan verification report copied ✓",true);}).catch(function(){toast("Could not copy report");});else toast("Clipboard is unavailable in this browser");};
+}
 async function loadOpportunities(force){
   var box=$("#oppList"); $("#oppScan").disabled=true;
   if(oppPollTimer){clearInterval(oppPollTimer);oppPollTimer=null;}
@@ -1783,7 +1832,7 @@ async function loadOpportunities(force){
   var scanAct=force?actStart("opportunities"):null;
   try{
     var r=await api("opportunities",{force:!!force});
-    OPPS=(r&&r.opportunities)||[]; PMAXOPPS=(r&&r.pmaxList)||[]; PMAXERR=(r&&r.pmaxError)||null; PMAXAT=(r&&r.pmaxAt)||null; setOppMeta((r&&r.scannedAt)||(r&&r.pmaxAt));
+    OPPS=(r&&r.opportunities)||[]; PMAXOPPS=(r&&r.pmaxList)||[]; PMAXERR=(r&&r.pmaxError)||null; PMAXAT=(r&&r.pmaxAt)||null; SCAN_AUDIT=(r&&r.scanAudit)||SCAN_AUDIT; renderScanAudit(SCAN_AUDIT,r&&r.reconciliation); setOppMeta((r&&r.scannedAt)||(r&&r.pmaxAt));
     var loadErr=r&&r.lastError;if(!force&&loadErr&&(r&&r.pmaxAt)&&(!(r&&r.scannedAt)||(r.pmaxAt>r.scannedAt)))loadErr="Search scan issue \u2014 PMax feed results were still refreshed: "+loadErr;
     oppShowErr(force?null:loadErr,(r&&r.scannedAt)||(r&&r.pmaxAt));
     if(!force){ renderOpportunities(); $("#oppScan").disabled=false; return; }
@@ -1800,6 +1849,7 @@ async function loadOpportunities(force){
       tries++;
       try{
         var p=await api("opportunities",{cacheOnly:true});
+        if(p&&p.scanAudit){SCAN_AUDIT=p.scanAudit;renderScanAudit(SCAN_AUDIT,p.reconciliation);}
         var at=(p&&p.scannedAt)||0,pAt=(p&&p.pmaxAt)||0;
         var errAt=(p&&p.lastErrorAt)||0;
         if(p&&p.scanning) renderScanProg(p.progress);
@@ -1812,7 +1862,7 @@ async function loadOpportunities(force){
         }
         if(at>prevAt && !(p&&p.scanning)){
           clearInterval(oppPollTimer); oppPollTimer=null; actEnd(scanAct); hideScanProg();
-          OPPS=(p&&p.opportunities)||[]; PMAXOPPS=(p&&p.pmaxList)||[]; PMAXERR=(p&&p.pmaxError)||null; PMAXAT=(p&&p.pmaxAt)||null; setOppMeta(at||pAt);
+          OPPS=(p&&p.opportunities)||[]; PMAXOPPS=(p&&p.pmaxList)||[]; PMAXERR=(p&&p.pmaxError)||null; PMAXAT=(p&&p.pmaxAt)||null; SCAN_AUDIT=(p&&p.scanAudit)||SCAN_AUDIT; renderScanAudit(SCAN_AUDIT,p&&p.reconciliation); setOppMeta(at||pAt);
           oppShowErr(errAt>scanStart?("Search scan issue \u2014 PMax feed results were still refreshed: "+((p&&p.lastError)||"unknown error")):null,at||pAt); renderOpportunities();
           toast("Re-scanned \u2014 "+OPPS.length+" Search + "+PMAXOPPS.length+" PMax opportunities",true);
           $("#oppScan").disabled=false;
@@ -1820,7 +1870,7 @@ async function loadOpportunities(force){
           // The scan RAN and FAILED. Old results (if any) stay visible, clearly labeled stale,
           // with the engine\u2019s exact error on screen so the cause is never invisible again.
           clearInterval(oppPollTimer); oppPollTimer=null; actEnd(scanAct); hideScanProg(); $("#oppScan").disabled=false;
-          OPPS=(p&&p.opportunities)||[]; PMAXOPPS=(p&&p.pmaxList)||[]; PMAXERR=(p&&p.pmaxError)||null; PMAXAT=(p&&p.pmaxAt)||null; setOppMeta(at||pAt); renderOpportunities();
+          OPPS=(p&&p.opportunities)||[]; PMAXOPPS=(p&&p.pmaxList)||[]; PMAXERR=(p&&p.pmaxError)||null; PMAXAT=(p&&p.pmaxAt)||null; SCAN_AUDIT=(p&&p.scanAudit)||SCAN_AUDIT; renderScanAudit(SCAN_AUDIT,p&&p.reconciliation); setOppMeta(at||pAt); renderOpportunities();
           oppShowErr((p&&p.lastError)||"scan failed", at||pAt);
           toast("Scan failed \u2014 see the notice above the list.");
         } else if(tries>=240){
