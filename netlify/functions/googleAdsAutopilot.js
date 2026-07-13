@@ -68,7 +68,7 @@ const LOGIN_CID  = (ENV.GADS_LOGIN_CUSTOMER_ID || CID).replace(/\D/g, ""); // ma
 const DEV_TOKEN  = ENV.GADS_DEVELOPER_TOKEN || "";
 const GEN_MODEL  = ENV.GADS_GEN_MODEL || "gpt-5.5";                       // text generation
 const CURRENCY   = ENV.GADS_CURRENCY || "USD";
-const OPPORTUNITY_ENGINE_VERSION = "12.2.0-opportunity-scan-observability";
+const OPPORTUNITY_ENGINE_VERSION = "12.3.0-api-compatibility-fix";
 
 // The store's nine homepage collections (handle ↔ title) — drives the Draft Bench picker.
 const COLLECTIONS = [
@@ -2071,11 +2071,34 @@ let _mcCache = null;
 let _merchantProductsCache = new Map();
 async function merchantCenterId() {
   if (_mcCache) return _mcCache;
-  const rows = await gaql(`SELECT merchant_center_link.id, merchant_center_link.status FROM merchant_center_link`);
-  const links = rows.map(r => r.merchantCenterLink || {});
-  const on = links.find(l => String(l.status) === "ENABLED") || links[0];
-  if (!on || !on.id) throw new Error("No Merchant Center account is linked to this Google Ads account (Google Ads → Tools → Data manager). Link GMC first — feed campaigns can't exist without it.");
-  _mcCache = String(on.id); return _mcCache;
+
+  // v24 no longer exposes merchant_center_link.id/status as GAQL-selectable fields.
+  // Discover the merchant ID from supported retail resources instead. An explicit
+  // environment value remains the safest override for accounts with an empty feed.
+  const envId = String(ENV.GMC_MERCHANT_ID || ENV.MERCHANT_CENTER_ID || "").replace(/\D/g, "");
+  if (envId) { _mcCache = envId; return _mcCache; }
+
+  const attempts = [];
+  try {
+    const rows = await gaql(`SELECT campaign.shopping_setting.merchant_id
+      FROM campaign
+      WHERE campaign.shopping_setting.merchant_id IS NOT NULL
+      LIMIT 1`);
+    const id = rows.map(r => r.campaign && r.campaign.shoppingSetting && r.campaign.shoppingSetting.merchantId)
+      .map(v => String(v || "").replace(/\D/g, "")).find(Boolean);
+    if (id) { _mcCache = id; return _mcCache; }
+  } catch (e) { attempts.push("campaign shopping setting: " + String(e.message || e)); }
+
+  try {
+    const rows = await gaql(`SELECT shopping_product.merchant_center_id
+      FROM shopping_product
+      LIMIT 1`);
+    const id = rows.map(r => r.shoppingProduct && r.shoppingProduct.merchantCenterId)
+      .map(v => String(v || "").replace(/\D/g, "")).find(Boolean);
+    if (id) { _mcCache = id; return _mcCache; }
+  } catch (e) { attempts.push("shopping product catalogue: " + String(e.message || e)); }
+
+  throw new Error("No Merchant Center ID could be discovered from a retail campaign or the linked product catalogue. Set GMC_MERCHANT_ID to the numeric Merchant Center account ID. " + attempts.join(" | ").slice(0, 500));
 }
 
 // Read only the relevant slice of the linked Merchant Center catalogue. The store has
@@ -2235,7 +2258,8 @@ async function pmaxProductPerformance({ days = 90 } = {}) {
     const start = _acctDateYmd(tz, -(Math.max(7, Math.min(365, Number(days) || 90)) - 1) * 86400000);
     const end = _acctDateYmd(tz, 0);
     const rows = await gaql(`SELECT segments.product_item_id, segments.product_title, segments.product_type_l1,
-        campaign.id, campaign.name, metrics.impressions, metrics.clicks, metrics.cost_micros,
+        campaign.id, campaign.name, campaign.advertising_channel_type,
+        metrics.impressions, metrics.clicks, metrics.cost_micros,
         metrics.conversions, metrics.conversions_value
       FROM shopping_performance_view
       WHERE segments.date BETWEEN '${start}' AND '${end}'
@@ -3651,7 +3675,24 @@ Return ONLY JSON:
 /* ===================== Opportunity engine (the planner) ===================== */
 // Pulls the store's best-selling products (bounded) so the AI can reference real heroes.
 async function fetchTopProducts() {
-  const d = await shopifyGql(`{ products(first: 40, sortKey: BEST_SELLING) { edges { node { title handle tags } } } }`);
+  // BEST_SELLING is valid on Collection.products, not the root Query.products field
+  // in the Shopify Admin GraphQL schema used by this store. Prefer the canonical
+  // Best Sellers collection, then fall back to recently updated products without
+  // pretending that fallback is sales-ranked.
+  try {
+    const d = await shopifyGql(`{ collectionByHandle(handle: "best-sellers") {
+      products(first: 40, sortKey: BEST_SELLING) { edges { node { title handle tags } } }
+    } }`);
+    const rows = (((d.collectionByHandle || {}).products || {}).edges || []);
+    if (rows.length) return rows.map(e => ({
+      title: e.node.title, handle: e.node.handle,
+      tags: Array.isArray(e.node.tags) ? e.node.tags.filter(Boolean) : []
+    })).filter(p => p.title);
+  } catch (e) {}
+
+  const d = await shopifyGql(`{ products(first: 40, sortKey: UPDATED_AT, reverse: true) {
+    edges { node { title handle tags } }
+  } }`);
   return ((d.products && d.products.edges) || []).map(e => ({
     title: e.node.title, handle: e.node.handle,
     tags: Array.isArray(e.node.tags) ? e.node.tags.filter(Boolean) : []
