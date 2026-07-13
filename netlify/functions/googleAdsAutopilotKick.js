@@ -228,18 +228,41 @@ async function handleAction(body) {
   if (a === "opportunities") {
     try {
       if (body.force) {
-        // The AI scan is slow (gpt-5.5 reasoning) and overran the 60s sync limit → 504.
-        // Run it in the background function (15-min budget); mark scanning and return the
-        // current cache immediately. The console polls (cacheOnly) until fresh results land.
-        try { if (f) await f.db.collection(E.COL.state).doc("opportunities").set({ scanning: true }, { merge: true }); } catch (e) {}
+        // The AI scan is slow and belongs in the 15-minute background worker. Create a
+        // verifiable run record BEFORE dispatch so the console can distinguish “button worked”
+        // from “worker never received it”, then pass the same runId through every layer.
+        const runId = "opp-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8);
+        const dispatchAt = Date.now();
+        const baseAudit = { schema: 2, engineVersion:E.OPPORTUNITY_ENGINE_VERSION||"12.2.0-opportunity-scan-observability", runId, status: "queued", startedAt: dispatchAt, completedAt: null, updatedAt: dispatchAt,
+          summary: { total: 2, ok: 1, warning: 0, failed: 0, skipped: 0, running: 0, queued: 1 },
+          checks: [
+            { id:"console_request",category:"orchestration",label:"Console scan request",status:"ok",startedAt:dispatchAt,endedAt:dispatchAt,tookMs:0,detail:"Authenticated Opportunities scan request accepted by the API gateway." },
+            { id:"background_worker",category:"orchestration",label:"Background worker dispatch",status:"queued",startedAt:dispatchAt,detail:"Dispatching the read-only scan to the Netlify background function." }
+          ] };
+        try { if (f) await Promise.all([
+          f.db.collection(E.COL.state).doc("opportunities").set({ scanning: true, progress:{pct:1,label:"Dispatching background worker",detail:"run "+runId,at:Date.now()} }, { merge: true }),
+          f.db.collection(E.COL.state).doc("opportunityScanAudit").set({ scanAudit:baseAudit }, { merge:true })
+        ]); } catch (e) {}
+        let bgStatus = null, bgError = null;
         try {
-          await fetch(baseUrl() + "/.netlify/functions/googleAdsAutopilot-background", {
+          const res = await fetch(baseUrl() + "/.netlify/functions/googleAdsAutopilot-background", {
             method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ tasks: ["scanOpportunities"], token: process.env.EDIT_PASSCODE || undefined })
+            body: JSON.stringify({ tasks: ["scanOpportunities"], scanRunId: runId, token: process.env.EDIT_PASSCODE || undefined })
           });
-        } catch (e) {}
+          bgStatus = res.status;
+          if (res.status >= 400) bgError = "background dispatch HTTP " + res.status;
+        } catch (e) { bgError = e && e.message || String(e); }
+        baseAudit.status = bgError ? "failed" : "running"; baseAudit.updatedAt = Date.now();
+        const bg = baseAudit.checks[1]; bg.status = bgError ? "failed" : "ok"; bg.endedAt = Date.now(); bg.tookMs = bg.endedAt - dispatchAt; bg.httpStatus = bgStatus;
+        bg.detail = bgError ? "The background worker did not accept the scan." : "Background worker accepted the scan; execution is now asynchronous."; bg.error = bgError;
+        baseAudit.summary = { total:2, ok:bgError?1:2, warning:0, failed:bgError?1:0, skipped:0, running:0, queued:0 };
+        if (bgError) baseAudit.completedAt = Date.now();
+        try { if (f) await Promise.all([
+          f.db.collection(E.COL.state).doc("opportunities").set({ scanning:!bgError, lastError:bgError||null, lastErrorAt:bgError?Date.now():null }, { merge:true }),
+          f.db.collection(E.COL.state).doc("opportunityScanAudit").set({ scanAudit:baseAudit }, { merge:true })
+        ]); } catch (e) {}
         const cur = await E.opportunitiesWithStatus({ cacheOnly: true });
-        return Object.assign({}, cur, { scanning: true, started: true });
+        return Object.assign({}, cur, { scanning: !bgError, started: !bgError, runId, dispatchStatus:bgStatus, dispatchError:bgError });
       }
       // Never scan synchronously from the console — cache read only.
       return await E.opportunitiesWithStatus({ cacheOnly: true });

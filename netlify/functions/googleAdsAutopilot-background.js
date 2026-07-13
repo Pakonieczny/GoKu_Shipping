@@ -107,7 +107,7 @@ exports.handler = async (event) => {
     if (over()) { log.push("time budget reached — deferring rest to next run"); break; }
     try {
       if (task === "conversions") { result.conversions = await E.uploadConversions({ ctrl }); }
-      else if (task === "scanOpportunities") { const sc = await E.opportunitiesWithStatus({ force: true }); result.scanOpportunities = { n: (sc.opportunities || []).length, pmax: (sc.pmaxList || []).length, pmaxError: sc.pmaxError || null }; }
+      else if (task === "scanOpportunities") { const sc = await E.opportunitiesWithStatus({ force: true, runId: body.scanRunId || null }); result.scanOpportunities = { n: (sc.opportunities || []).length, pmax: (sc.pmaxList || []).length, pmaxError: sc.pmaxError || null, runId: body.scanRunId || null, auditStatus: sc.scanAudit && sc.scanAudit.status || null }; }
       else if (task === "pmaxGenerate") {
         const gId = String(body.genId || Date.now());
         try { await E.setGenStatus(gId, { phase: "running", startedAt: Date.now(), kind: "pmax" }); } catch (e) {}

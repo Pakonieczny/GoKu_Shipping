@@ -68,7 +68,7 @@ const LOGIN_CID  = (ENV.GADS_LOGIN_CUSTOMER_ID || CID).replace(/\D/g, ""); // ma
 const DEV_TOKEN  = ENV.GADS_DEVELOPER_TOKEN || "";
 const GEN_MODEL  = ENV.GADS_GEN_MODEL || "gpt-5.5";                       // text generation
 const CURRENCY   = ENV.GADS_CURRENCY || "USD";
-const OPPORTUNITY_ENGINE_VERSION = "12.1.0-pmax-catalogue-query-recovery";
+const OPPORTUNITY_ENGINE_VERSION = "12.2.0-opportunity-scan-observability";
 
 // The store's nine homepage collections (handle ↔ title) — drives the Draft Bench picker.
 const COLLECTIONS = [
@@ -1340,13 +1340,134 @@ async function _scanProg(pct, label, detail) {
   const f = fb(); if (!f) return;
   try { await f.db.collection(COL.state).doc("opportunities").set({ progress: { pct: Math.max(0, Math.min(99, Math.round(pct))), label: String(label || "").slice(0, 80), detail: detail ? String(detail).slice(0, 120) : null, at: Date.now() } }, { merge: true }); } catch (e) {}
 }
-async function keywordResearchPool(seeds, geoIds, { langId = "1000", onChunk = null } = {}) {
+
+/* ===================== Opportunity scan verification / observability =====================
+   Every scan now writes a compact, human-readable audit into the same Firestore state doc
+   that the console already polls. This is deliberately NOT raw request logging: secrets,
+   access tokens, customer data, prompts, and full API payloads are never persisted. Instead,
+   each dependency records what was tested, whether it succeeded, how long it took, how many
+   rows/items it returned, which fallback was used, and the exact bounded error when it failed.
+   The report is live while the background scan runs and remains available after completion. */
+const _SCAN_AUDIT_SCHEMA = 2;
+const _SCAN_AUDIT_DOC = "opportunityScanAudit"; // separate doc: never competes with the large opportunity payload for Firestore's size ceiling
+function _auditText(v, n = 260) { return v == null ? null : String(v).replace(/[\r\n\t]+/g, " ").replace(/\s+/g, " ").trim().slice(0, n); }
+function _auditMeta(v) {
+  if (!v || typeof v !== "object") return null;
+  try {
+    const raw = JSON.parse(JSON.stringify(v, (k, x) => {
+      if (/token|secret|authorization|passcode|cookie/i.test(k)) return undefined;
+      if (typeof x === "string") return _auditText(x, 320);
+      if (Array.isArray(x)) return x.slice(0, 20);
+      return x;
+    }));
+    if (!raw || !Object.keys(raw).length) return null;
+    // Keep the live report comfortably below Firestore's document ceiling even when
+    // many request batches return verbose diagnostics. The full API payload is never
+    // appropriate here; a bounded sanitized preview is enough to troubleshoot it.
+    const encoded = JSON.stringify(raw);
+    if (encoded.length > 1800) return { truncated: true, preview: encoded.slice(0, 1700), originalChars: encoded.length };
+    return raw;
+  } catch (e) { return null; }
+}
+function _auditCounts(a) {
+  const c = { total: 0, ok: 0, warning: 0, failed: 0, skipped: 0, running: 0, queued: 0 };
+  (a && a.checks || []).forEach(x => { c.total++; if (c[x.status] != null) c[x.status]++; });
+  return c;
+}
+function _auditPayload(a) {
+  const checks = (a.checks || []).slice(-90).map(x => ({
+    id: _auditText(x.id, 90), category: _auditText(x.category, 40), label: _auditText(x.label, 110),
+    status: x.status || "queued", startedAt: x.startedAt || null, endedAt: x.endedAt || null,
+    tookMs: x.tookMs != null ? Math.max(0, Math.round(Number(x.tookMs) || 0)) : null,
+    detail: _auditText(x.detail, 300), source: _auditText(x.source, 100),
+    httpStatus: x.httpStatus != null ? Number(x.httpStatus) : null,
+    fallback: _auditText(x.fallback, 220), error: _auditText(x.error, 420), meta: _auditMeta(x.meta)
+  }));
+  return { schema: _SCAN_AUDIT_SCHEMA, engineVersion: OPPORTUNITY_ENGINE_VERSION, runId: a.runId,
+    status: a.status || "running", startedAt: a.startedAt || null, completedAt: a.completedAt || null,
+    updatedAt: Date.now(), summary: _auditCounts({ checks }), checks };
+}
+async function _auditPersist(a) {
+  if (!a) return;
+  const f = fb(); if (!f) return;
+  const payload = _auditPayload(a);
+  a.updatedAt = payload.updatedAt;
+  a._write = (a._write || Promise.resolve()).then(() =>
+    f.db.collection(COL.state).doc(_SCAN_AUDIT_DOC).set({ scanAudit: payload }, { merge: true })
+  ).catch(() => {});
+  await a._write;
+}
+async function _auditBegin(runId) {
+  const f = fb();
+  const id = _auditText(runId, 80) || ("opp-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8));
+  let prior = null;
+  if (f) { try { const d = await f.db.collection(COL.state).doc(_SCAN_AUDIT_DOC).get(); const x = d.exists ? d.data() : null;
+    if (x && x.scanAudit && x.scanAudit.runId === id) prior = x.scanAudit; } catch (e) {} }
+  const a = { runId: id, status: "running", startedAt: (prior && prior.startedAt) || Date.now(),
+    completedAt: null, checks: Array.isArray(prior && prior.checks) ? prior.checks.slice(-90) : [] };
+  const worker = a.checks.find(x => x.id === "background_worker");
+  if (worker) Object.assign(worker, { status: "ok", endedAt: Date.now(), tookMs: Math.max(0, Date.now() - (worker.startedAt || Date.now())), detail: "Background worker accepted the scan and began execution." });
+  else a.checks.push({ id: "background_worker", category: "orchestration", label: "Background worker started", status: "ok", startedAt: Date.now(), endedAt: Date.now(), tookMs: 0, detail: "The read-only Netlify background worker is executing the opportunity scan." });
+  await _auditPersist(a); return a;
+}
+function _auditFind(a, id) { return a && (a.checks || []).find(x => x.id === id); }
+async function _auditEvent(a, e) {
+  if (!a || !e || !e.id) return;
+  let x = _auditFind(a, e.id);
+  if (!x) { x = { id: e.id, category: e.category || "scan", label: e.label || e.id, status: "queued", startedAt: e.startedAt || Date.now() }; a.checks.push(x); }
+  if (e.category) x.category = e.category;
+  if (e.label) x.label = e.label;
+  if (e.status) x.status = e.status;
+  if (e.startedAt) x.startedAt = e.startedAt;
+  if (e.detail !== undefined) x.detail = e.detail;
+  if (e.source !== undefined) x.source = e.source;
+  if (e.httpStatus !== undefined) x.httpStatus = e.httpStatus;
+  if (e.fallback !== undefined) x.fallback = e.fallback;
+  if (e.error !== undefined) x.error = e.error;
+  if (e.meta !== undefined) x.meta = e.meta;
+  if (["ok","warning","failed","skipped"].includes(x.status)) {
+    x.endedAt = e.endedAt || Date.now(); x.tookMs = e.tookMs != null ? e.tookMs : Math.max(0, x.endedAt - (x.startedAt || x.endedAt));
+  }
+  await _auditPersist(a);
+}
+async function _auditCall(a, spec, fn) {
+  const t = Date.now();
+  await _auditEvent(a, { id: spec.id, category: spec.category, label: spec.label, status: "running", startedAt: t, detail: spec.detail, source: spec.source });
+  try {
+    const value = await fn();
+    let info = {};
+    if (spec.result) { try { info = spec.result(value) || {}; } catch (e) { info = {}; } }
+    await _auditEvent(a, Object.assign({ id: spec.id, category: spec.category, label: spec.label, status: info.status || "ok", startedAt: t, endedAt: Date.now(), tookMs: Date.now() - t }, info));
+    return value;
+  } catch (err) {
+    await _auditEvent(a, { id: spec.id, category: spec.category, label: spec.label, status: spec.optional ? "warning" : "failed", startedAt: t, endedAt: Date.now(), tookMs: Date.now() - t,
+      detail: spec.optional ? "Optional dependency failed; the scan continued with a documented fallback." : "Required dependency failed.", error: (err && err.message) || String(err), fallback: spec.fallback || null });
+    if (spec.optional) return spec.defaultValue;
+    throw err;
+  }
+}
+async function _auditFinish(a, status, detail) {
+  if (!a) return;
+  // A run is only "success" when every completed check passed or was explicitly
+  // skipped. Optional API fallbacks and partial request failures must remain visible
+  // in the headline status instead of being buried under a green completion label.
+  const before = _auditCounts(a);
+  let finalStatus = status || "success";
+  if (finalStatus !== "failed" && (before.warning > 0 || before.failed > 0)) finalStatus = "partial";
+  a.status = finalStatus; a.completedAt = Date.now();
+  if (detail) await _auditEvent(a, { id: "scan_result", category: "result", label: "Opportunity scan result", status: finalStatus === "failed" ? "failed" : (finalStatus === "partial" ? "warning" : "ok"), detail, startedAt: a.startedAt, endedAt: a.completedAt, tookMs: a.completedAt - a.startedAt });
+  else await _auditPersist(a);
+}
+async function keywordResearchPool(seeds, geoIds, { langId = "1000", onChunk = null, onChunkResult = null } = {}) {
   const uniq = [...new Set((seeds || []).map(s => String(s).trim().toLowerCase()).filter(Boolean))];
   if (!uniq.length) return { ok: false, error: "no seeds", status: null, ideasByText: {} };
   const geoKey = ((geoIds && geoIds.length) ? geoIds : ["2124"]).map(g => String(g).replace(/\D/g, "")).sort().join(",");
   const cacheKey = _kwCacheKey(uniq, geoKey);
   const cached = await _kwCacheGet(cacheKey);
-  if (cached && Object.keys(cached).length) return { ok: true, ideasByText: cached, status: 200, cached: true };
+  if (cached && Object.keys(cached).length) {
+    if (onChunkResult) { try { await onChunkResult(0, 0, { ok: true, cached: true, status: 200, attempts: 0, seeds: uniq.length, ideas: Object.keys(cached).length, totalIdeas: Object.keys(cached).length }); } catch (e) {} }
+    return { ok: true, ideasByText: cached, status: 200, cached: true, seedCount: uniq.length, chunkCount: 0 };
+  }
   const ideasByText = {}; let anyOk = false, lastErr = null, lastStatus = null, brokeEarly = false;
   // Keyword Planner is rate-limited to ~1 request/sec (a SEPARATE limit from Basic/Standard access,
   // and NOT lifted by either). A transient 429 must NOT wipe keyword data for the whole scan, so each
@@ -1359,17 +1480,25 @@ async function keywordResearchPool(seeds, geoIds, { langId = "1000", onChunk = n
     const chunk = uniq.slice(i, i + 20);
     if (onChunk) { try { onChunk(Math.floor(i / 20) + 1, Math.ceil(uniq.length / 20), Object.keys(ideasByText).length); } catch (e) {} }
     if (i > 0) await _sleep(_KP_BACKOFF_MS); // serialize between chunks: stay under ~1 request/second
-    let r = null;
+    let r = null, attempts = 0;
+    const chunkStarted = Date.now();
     for (let a = 0; a < _CHUNK_RETRY_MS.length; a++) {
+      attempts++;
       if (_CHUNK_RETRY_MS[a]) await _sleep(_CHUNK_RETRY_MS[a]); // let the ~1/sec window clear before retrying
       r = await keywordResearch(chunk, geoIds, { langId }).catch(e => ({ ok: false, error: e && e.message, status: null }));
       if (r.ok || r.status !== 429) break; // success, or a non-rate-limit failure → stop retrying this chunk
     }
     if (r.ok) { anyOk = true; (r.ideas || []).forEach(idea => { const k = String(idea.text || "").toLowerCase(); if (k && !ideasByText[k]) ideasByText[k] = idea; }); }
-    else { lastErr = r.error; lastStatus = r.status; if (r.status === 429) { brokeEarly = true; break; } } // still limited after retries → stop, keep what we have
+    else { lastErr = r.error; lastStatus = r.status; if (r.status === 429) brokeEarly = true; }
+    if (onChunkResult) { try { await onChunkResult(Math.floor(i / 20) + 1, Math.ceil(uniq.length / 20), {
+      ok: !!(r && r.ok), cached: false, status: r && r.status, error: r && r.error, attempts,
+      seeds: chunk.length, ideas: ((r && r.ideas) || []).length, totalIdeas: Object.keys(ideasByText).length,
+      tookMs: Date.now() - chunkStarted, rateLimited: !!(r && r.status === 429)
+    }); } catch (e) {} }
+    if (brokeEarly) break; // still limited after retries → stop, keep what we have
   }
   if (anyOk && !brokeEarly) await _kwCacheSet(cacheKey, ideasByText); // never cache a partial (rate-limited) pool
-  return { ok: anyOk, error: anyOk ? null : lastErr, status: lastStatus, ideasByText, cached: false };
+  return { ok: anyOk, error: anyOk ? null : lastErr, status: lastStatus, ideasByText, cached: false, seedCount: uniq.length, chunkCount: Math.ceil(uniq.length / 20), partial: brokeEarly };
 }
 
 /* ===================== Campaign planner (research-grounded) =====================
@@ -2001,12 +2130,12 @@ function _merchantFeedLabels(plan) {
 }
 async function _merchantGaql(filter, limit = null) {
   const tail = ` FROM shopping_product${filter ? ` WHERE ${filter}` : ""}${limit ? ` LIMIT ${limit}` : ""}`;
-  try { return await gaql(`SELECT ${_MERCHANT_SELECT}${tail}`); }
+  try { const rows = await gaql(`SELECT ${_MERCHANT_SELECT}${tail}`); rows._queryMode = "enriched"; return rows; }
   catch (richErr) {
     // A newly introduced or account-incompatible enrichment field must never
     // take the whole opportunity scan down. The core current-state fields are
     // sufficient to validate exact offers and build a safe PMax product tree.
-    try { return await gaql(`SELECT ${_MERCHANT_SELECT_CORE}${tail}`); }
+    try { const rows = await gaql(`SELECT ${_MERCHANT_SELECT_CORE}${tail}`); rows._queryMode = "core-field fallback"; rows._richError = _auditText(richErr && richErr.message, 220); return rows; }
     catch (coreErr) { coreErr.richError = richErr; throw coreErr; }
   }
 }
@@ -2016,9 +2145,17 @@ async function merchantProducts({ force = false, itemIds = [], signals = [], tit
   const key = JSON.stringify([plan.itemIds.slice().sort(), plan.titles.slice().sort()]);
   const cached = _merchantProductsCache.get(key);
   if (!force && cached && Date.now() - cached.at < 30 * 60 * 1000) return cached.list;
-  const merchantId = await merchantCenterId(), found = new Map(), errors = [], successfulQueries = { n: 0 };
-  const absorb = rows => {
-    successfulQueries.n++;
+  const merchantId = await merchantCenterId(), found = new Map(), errors = [], requests = [], successfulQueries = { n: 0 }, queryModes = { enriched: 0, coreFallback: 0 }, queryKinds = { exact: 0, feed: 0, account: 0 };
+  const noteRequest = (kind, scope, requested, rows, err) => {
+    const mode = rows && rows._queryMode || null;
+    requests.push({ kind, scope: _auditText(scope, 80), requested: Number(requested) || 0,
+      returned: Array.isArray(rows) ? rows.length : 0, ok: !err, mode,
+      richFieldFallback: mode === "core-field fallback", richError: rows && rows._richError || null,
+      error: err ? _auditText((err && err.message) || err, 300) : null });
+  };
+  const absorb = (rows, kind) => {
+    successfulQueries.n++; if (kind && queryKinds[kind] != null) queryKinds[kind]++;
+    if (rows && rows._queryMode === "core-field fallback") queryModes.coreFallback++; else queryModes.enriched++;
     (rows || []).forEach(r => {
       const row = _merchantProductRow(r.shoppingProduct || {}, merchantId);
       if (row) found.set(row.itemId.toLowerCase(), row);
@@ -2027,10 +2164,13 @@ async function merchantProducts({ force = false, itemIds = [], signals = [], tit
   // 1) Fast path: exact, machine-generated offer IDs only. Product titles are
   // deliberately NOT placed in GAQL string lists—arbitrary punctuation in live
   // catalogue titles was able to invalidate the entire scan.
+  let exactBatchNo = 0;
   for (const part of _chunk(plan.itemIds, 40)) {
+    exactBatchNo++;
     try {
-      absorb(await _merchantGaql(`shopping_product.merchant_center_id = ${String(merchantId).replace(/\D/g, "")} AND shopping_product.item_id IN (${part.map(_gaqlString).join(",")})`));
-    } catch (e) { errors.push(String(e.message || e)); }
+      const rows = await _merchantGaql(`shopping_product.merchant_center_id = ${String(merchantId).replace(/\D/g, "")} AND shopping_product.item_id IN (${part.map(_gaqlString).join(",")})`);
+      absorb(rows, "exact"); noteRequest("exact", "offer-ID batch " + exactBatchNo, part.length, rows, null);
+    } catch (e) { errors.push(String(e.message || e)); noteRequest("exact", "offer-ID batch " + exactBatchNo, part.length, null, e); }
   }
   const wantedIds = new Set(plan.itemIds.map(x => String(x).toLowerCase()));
   const wantedTitles = plan.titles.map(_pmaxNorm).filter(Boolean);
@@ -2048,14 +2188,15 @@ async function merchantProducts({ force = false, itemIds = [], signals = [], tit
     for (const label of labels) {
       try {
         const rows = await _merchantGaql(`shopping_product.merchant_center_id = ${String(merchantId).replace(/\D/g, "")} AND shopping_product.feed_label = ${_gaqlString(label)}`, 10000);
-        successfulQueries.n++;
+        successfulQueries.n++; queryKinds.feed++; if (rows && rows._queryMode === "core-field fallback") queryModes.coreFallback++; else queryModes.enriched++;
+        noteRequest("feed", "feed label " + label, 1, rows, null);
         rows.forEach(r => {
           const row = _merchantProductRow(r.shoppingProduct || {}, merchantId); if (!row) return;
           const idMatch = wantedIds.has(row.itemId.toLowerCase());
           const titleMatch = wantedTitles.some(t => _pmaxTitleMatch(row.title, t) >= .9);
           if (idMatch || titleMatch) found.set(row.itemId.toLowerCase(), row);
         });
-      } catch (e) { errors.push(String(e.message || e)); }
+      } catch (e) { errors.push(String(e.message || e)); noteRequest("feed", "feed label " + label, 1, null, e); }
     }
   }
   // 3) Last-resort account-scope read for nonstandard feed labels. Keep it bounded
@@ -2063,14 +2204,19 @@ async function merchantProducts({ force = false, itemIds = [], signals = [], tit
   if (!found.size && wantedTitles.length) {
     try {
       const rows = await _merchantGaql(`shopping_product.merchant_center_id = ${String(merchantId).replace(/\D/g, "")}`, 20000);
-      successfulQueries.n++;
+      successfulQueries.n++; queryKinds.account++; if (rows && rows._queryMode === "core-field fallback") queryModes.coreFallback++; else queryModes.enriched++;
+      noteRequest("account", "account-wide bounded fallback", 1, rows, null);
       rows.forEach(r => {
         const row = _merchantProductRow(r.shoppingProduct || {}, merchantId); if (!row) return;
         if (wantedIds.has(row.itemId.toLowerCase()) || wantedTitles.some(t => _pmaxTitleMatch(row.title, t) >= .9)) found.set(row.itemId.toLowerCase(), row);
       });
-    } catch (e) { errors.push(String(e.message || e)); }
+    } catch (e) { errors.push(String(e.message || e)); noteRequest("account", "account-wide bounded fallback", 1, null, e); }
   }
   const list = [...found.values()];
+  list._diag = { merchantId, requestedOfferIds: plan.itemIds.length, requestedTitles: plan.titles.length,
+    successfulQueries: successfulQueries.n, queryKinds, queryModes, requests: requests.slice(0, 30), matchedProducts: list.length,
+    eligibleProducts: list.filter(_pmaxIsEligible).length, errors: errors.slice(0, 6),
+    fallbackUsed: queryKinds.feed > 0 || queryKinds.account > 0 || queryModes.coreFallback > 0 };
   if (!successfulQueries.n && !list.length && errors.length) throw new Error(errors[0]);
   _merchantProductsCache.set(key, { at: Date.now(), list });
   if (_merchantProductsCache.size > 20) {
@@ -2125,16 +2271,17 @@ async function pmaxProductPerformance({ days = 90 } = {}) {
 // Shopify attribution; when absent or unauthorized, the existing signals continue.
 async function merchantFreeProductPerformance({days=90}={}){
   const configured=!!String(ENV.GMC_REFRESH_TOKEN||"").trim();
-  if(!configured)return {configured:false,byId:{},rows:[],days:Number(days)||90,at:Date.now(),error:null};
+  if(!configured)return {configured:false,byId:{},rows:[],days:Number(days)||90,at:Date.now(),error:null,pages:0,httpStatuses:[]};
   try{
     const token=await mintMerchantToken(), merchantId=await merchantCenterId();
     const d=Math.max(7,Math.min(365,Number(days)||90));
     const end=new Date().toISOString().slice(0,10),start=new Date(Date.now()-(d-1)*86400000).toISOString().slice(0,10);
     const query=`SELECT offer_id, title, customer_country_code, product_type_l1, custom_label0, custom_label1, custom_label2, custom_label3, custom_label4, clicks, impressions, conversions, conversion_value, marketing_method FROM product_performance_view WHERE date BETWEEN '${start}' AND '${end}' AND marketing_method = "ORGANIC"`;
-    let pageToken=null;const byId={};
+    let pageToken=null;const byId={},httpStatuses=[];let pages=0;
     do{
       const body={query,pageSize:100000};if(pageToken)body.pageToken=pageToken;
       const res=await fetch(`https://merchantapi.googleapis.com/reports/v1/accounts/${merchantId}/reports:search`,{method:"POST",headers:{Authorization:"Bearer "+token,"Content-Type":"application/json"},body:JSON.stringify(body)});
+      pages++; httpStatuses.push(res.status);
       const data=await res.json().catch(()=>({}));
       if(!res.ok)throw new Error("[gmc] reports search failed: "+JSON.stringify(data).slice(0,500));
       (data.results||[]).forEach(row=>{
@@ -2147,8 +2294,8 @@ async function merchantFreeProductPerformance({days=90}={}){
       pageToken=data.nextPageToken||null;
     }while(pageToken);
     Object.values(byId).forEach(x=>{x.conversions=_r2(x.conversions);x.value=_r2(x.value);x.conversionRate=x.clicks>0?_r2(x.conversions/x.clicks):null;x.countries=[...x.countries];});
-    return {configured:true,byId,rows:Object.values(byId),days:d,at:Date.now(),error:null};
-  }catch(e){return {configured:true,byId:{},rows:[],days:Number(days)||90,at:Date.now(),error:String(e.message||e).slice(0,240)};}
+    return {configured:true,byId,rows:Object.values(byId),days:d,at:Date.now(),error:null,pages,httpStatuses};
+  }catch(e){return {configured:true,byId:{},rows:[],days:Number(days)||90,at:Date.now(),error:String(e.message||e).slice(0,240),pages:0,httpStatuses:[]};}
 }
 
 function _pmaxNorm(s) { return String(s || "").toLowerCase().replace(/&amp;/g, " and ").replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim(); }
@@ -2303,22 +2450,57 @@ function _derivePmaxSearchThemes(candidate) {
   return out.slice(0,10);
 }
 
-async function proposePmaxOpportunities({ collections = [], profiles = [], ceiling = 100 } = {}) {
+async function proposePmaxOpportunities({ collections = [], profiles = [], ceiling = 100, onAudit = null } = {}) {
+  const emit = async e => { if (onAudit) { try { await onAudit(e); } catch (x) {} } };
   // Pull recent Shopify orders before ranking. Existing title-only rows are enriched
   // in place with product/variant IDs, while new webhook orders already contain them.
   // This makes the very first scan useful instead of waiting for future purchases.
-  try { await backfillOrders({ limit: 150 }); } catch (e) {}
+  let t = Date.now(), backfill = null;
+  await emit({id:"pmax_shopify_backfill",category:"Shopify",label:"Shopify order backfill/enrichment",status:"running",startedAt:t,detail:"Reading up to 150 recent orders and enriching product/variant identifiers."});
+  try { backfill = await backfillOrders({ limit: 150 }); await emit({id:"pmax_shopify_backfill",category:"Shopify",label:"Shopify order backfill/enrichment",status:"ok",startedAt:t,endedAt:Date.now(),tookMs:Date.now()-t,detail:`Fetched ${backfill.fetched||0}; added ${backfill.added||0}; enriched ${backfill.enriched||0}; skipped ${backfill.skipped||0}.`,source:"Shopify Admin GraphQL + Firestore",meta:backfill}); }
+  catch (e) { await emit({id:"pmax_shopify_backfill",category:"Shopify",label:"Shopify order backfill/enrichment",status:"warning",startedAt:t,endedAt:Date.now(),tookMs:Date.now()-t,error:e&&e.message,fallback:"Continuing with the existing Firestore order log."}); }
+  t = Date.now(); await emit({id:"pmax_store_signals",category:"Store data",label:"30/90-day product sales signals",status:"running",startedAt:t,detail:"Aggregating paid, organic, and Merchant/free-listing product outcomes."});
   const sig90 = await storeSignals({ days: 90 }).catch(() => null);
   const sig30 = await storeSignals({ days: 30 }).catch(() => sig90);
+  await emit({id:"pmax_store_signals",category:"Store data",label:"30/90-day product sales signals",status:(sig30||sig90)?"ok":"warning",startedAt:t,endedAt:Date.now(),tookMs:Date.now()-t,
+    detail:(sig30||sig90)?`${(sig30&&sig30.orders)||0} orders in 30d; ${(sig30&&sig30.merchantOrganicOrders)||0} Merchant-organic; ${(sig30&&sig30.topProducts||[]).length} ranked products.`:"No usable order-signal snapshot was available.",
+    source:"Firestore Shopify order log",fallback:(sig30||sig90)?null:"PMax ranking can only use catalogue and paid-performance evidence.",meta:{orders30:sig30&&sig30.orders,merchantOrganicOrders30:sig30&&sig30.merchantOrganicOrders,organicRevenue30:sig30&&sig30.organicRevenue,topProducts30:sig30&&sig30.topProducts&&sig30.topProducts.length}});
   let merchant = [], merchantErr = null;
   const lookupSignals = [].concat((sig30&&sig30.topMerchantProducts)||[],(sig90&&sig90.topMerchantProducts)||[],
     (sig30&&sig30.topOrganicProducts)||[],(sig90&&sig90.topOrganicProducts)||[]).slice(0,60);
-  try { merchant = await merchantProducts({ force: true, signals: lookupSignals, titles: lookupSignals.map(x=>x.name).filter(Boolean) }); }
-  catch (e) { merchantErr = String(e.message || e).slice(0, 180); }
+  t = Date.now(); await emit({id:"pmax_merchant_catalogue",category:"Google Ads API",label:"Linked Merchant Center catalogue",status:"running",startedAt:t,detail:`Resolving ${lookupSignals.length} recent product signals against live shopping_product offers.`});
+  try { merchant = await merchantProducts({ force: true, signals: lookupSignals, titles: lookupSignals.map(x=>x.name).filter(Boolean) });
+    const d=merchant._diag||{}; await emit({id:"pmax_merchant_catalogue",category:"Google Ads API",label:"Linked Merchant Center catalogue",status:merchant.length?((d.errors&&d.errors.length)?"warning":"ok"):"warning",startedAt:t,endedAt:Date.now(),tookMs:Date.now()-t,
+      detail:`${d.successfulQueries||0} GAQL request(s); ${merchant.length} matched offers; ${d.eligibleProducts||0} eligible/in-stock.`,source:"Google Ads shopping_product",
+      fallback:d.fallbackUsed?"Safe feed/account or core-field fallback was used.":null,error:(d.errors&&d.errors[0])||null,meta:d});
+    for (let qi=0; qi<(d.requests||[]).length; qi++) { const q=d.requests[qi]||{};
+      await emit({id:"pmax_merchant_request_"+(qi+1),category:"Google Ads API",label:`Merchant catalogue request ${qi+1} · ${q.kind||"query"}`,status:q.ok?(q.richFieldFallback?"warning":"ok"):"failed",startedAt:Date.now(),endedAt:Date.now(),tookMs:0,
+        detail:q.ok?`${q.scope||"catalogue slice"}: requested ${q.requested||0}; API returned ${q.returned||0} row(s); mode ${q.mode||"standard"}.`:`${q.scope||"catalogue slice"}: request failed.`,source:"shopping_product GAQL",
+        fallback:q.richFieldFallback?"Unsupported enrichment fields were removed and the core offer fields succeeded.":null,error:q.error||q.richError||null,meta:q}); }
+  }
+  catch (e) { merchantErr = String(e.message || e).slice(0, 180); await emit({id:"pmax_merchant_catalogue",category:"Google Ads API",label:"Linked Merchant Center catalogue",status:"failed",startedAt:t,endedAt:Date.now(),tookMs:Date.now()-t,error:merchantErr,detail:"The linked feed catalogue could not be verified."}); }
+  t = Date.now();
   const [paid,merchantFree30,merchantFree90] = await Promise.all([
     pmaxProductPerformance({ days: 90 }), merchantFreeProductPerformance({days:30}), merchantFreeProductPerformance({days:90})
   ]);
+  await emit({id:"pmax_paid_product_reporting",category:"Google Ads API",label:"90-day paid PMax product performance",status:paid&&paid.error?"warning":"ok",startedAt:t,endedAt:Date.now(),tookMs:Date.now()-t,
+    detail:`${(paid.rows||[]).length} product-performance row(s) returned.`,source:"shopping_performance_view",error:paid&&paid.error||null,
+    fallback:paid&&paid.error?"PMax ranking continues without paid offer-level history.":null,meta:{rows:(paid.rows||[]).length,days:paid.days||90}});
+  const merchant30Status=!merchantFree30.configured?"skipped":(merchantFree30.error?"warning":"ok");
+  await emit({id:"pmax_merchant_organic_30d",category:"Merchant API",label:"30-day Merchant organic performance",status:merchant30Status,startedAt:t,endedAt:Date.now(),tookMs:Date.now()-t,
+    detail:!merchantFree30.configured?"Merchant Reports API is not configured.":`${(merchantFree30.rows||[]).length} organic offer row(s) across ${merchantFree30.pages||0} page request(s).`,source:"Merchant Reports product_performance_view",
+    httpStatus:(merchantFree30.httpStatuses||[]).slice(-1)[0]||null,error:merchantFree30.error||null,
+    fallback:!merchantFree30.configured?"Shopify free-listing attribution is used instead.":(merchantFree30.error?"Continue with Shopify attribution and Google Ads paid-product evidence.":null),
+    meta:{configured:!!merchantFree30.configured,rows:(merchantFree30.rows||[]).length,pages:merchantFree30.pages||0,httpStatuses:merchantFree30.httpStatuses||[],days:30}});
+  const merchant90Status=!merchantFree90.configured?"skipped":(merchantFree90.error?"warning":"ok");
+  await emit({id:"pmax_merchant_organic_90d",category:"Merchant API",label:"90-day Merchant organic performance",status:merchant90Status,startedAt:t,endedAt:Date.now(),tookMs:Date.now()-t,
+    detail:!merchantFree90.configured?"Merchant Reports API is not configured.":`${(merchantFree90.rows||[]).length} organic offer row(s) across ${merchantFree90.pages||0} page request(s).`,source:"Merchant Reports product_performance_view",
+    httpStatus:(merchantFree90.httpStatuses||[]).slice(-1)[0]||null,error:merchantFree90.error||null,
+    fallback:!merchantFree90.configured?"Shopify free-listing attribution is used instead.":(merchantFree90.error?"Continue with Shopify attribution and Google Ads paid-product evidence.":null),
+    meta:{configured:!!merchantFree90.configured,rows:(merchantFree90.rows||[]).length,pages:merchantFree90.pages||0,httpStatuses:merchantFree90.httpStatuses||[],days:90}});
   const candidates = pmaxCandidatesFromSignals({ collections, profiles, sig30, sig90, merchant, paid, merchantFree30, merchantFree90 });
+  await emit({id:"pmax_candidate_scoring",category:"Ranking",label:"PMax candidate matching and scoring",status:candidates.length?"ok":"warning",startedAt:Date.now(),endedAt:Date.now(),tookMs:0,
+    detail:`${candidates.length} market-specific candidate(s) built from ${merchant.length} verified offers.`,source:"Deterministic product/economic scoring",meta:{candidates:candidates.length,merchantOffers:merchant.length}});
   if (!merchant.length) return { list: [], error: merchantErr ? ("Merchant Center catalogue read failed: " + merchantErr) : "The linked Merchant Center catalogue returned no products", at: Date.now() };
   if (!candidates.length) return { list: [], error: "No eligible Merchant Center offers could be matched to recent store sales", at: Date.now() };
   // When direct Google free-listing sales are identifiable, they are a hard gate,
@@ -2333,6 +2515,7 @@ async function proposePmaxOpportunities({ collections = [], profiles = [], ceili
   const merchantRevenue30 = Math.round(Number(sig30 && sig30.merchantOrganicRevenue) || 0);
   const fallbackOrganic30 = Math.round(Number(sig30 && sig30.organicRevenue) || 0);
   let selected = [];
+  t = Date.now(); await emit({id:"pmax_ai_selector",category:"OpenAI",label:"PMax opportunity selector",status:"running",startedAt:t,detail:`Selecting 2-3 non-overlapping campaigns from ${pool.length} deterministic candidate(s).`});
   try {
     const promptData = pool.map(c => ({ handle:c.handle, feedLabel:c.feedLabel, collectionTitle:c.collectionTitle, score:c.score, merchantScore:c.merchantScore,
       itemCount:c.itemIds.length, productTitles:c.productTitles, evidence:c.evidence.slice(0,5), confidence:c.confidence,
@@ -2351,13 +2534,17 @@ Choose 2-3 market-specific, non-overlapping candidates. CA and US feed labels ar
         dailyBudget:Math.max(6,Math.min(18,Math.round(6 + c.confidence/18 + Math.min(4,c.estimatedProfit30d/150) + Math.min(3,(c.paidPerformance&&c.paidPerformance.conversions)||0)))),
         days:Math.max(21,Math.min(45,Number(x.days)||30)), searchThemes:_derivePmaxSearchThemes(c) });
     }).filter(Boolean).slice(0,3);
-  } catch (e) {}
+    await emit({id:"pmax_ai_selector",category:"OpenAI",label:"PMax opportunity selector",status:selected.length?"ok":"warning",startedAt:t,endedAt:Date.now(),tookMs:Date.now()-t,detail:`AI returned ${selected.length} valid selection(s).`,source:"OpenAI structured JSON"});
+  } catch (e) { await emit({id:"pmax_ai_selector",category:"OpenAI",label:"PMax opportunity selector",status:"warning",startedAt:t,endedAt:Date.now(),tookMs:Date.now()-t,error:e&&e.message,fallback:"Using deterministic top-ranked candidates."}); }
   if (selected.length < Math.min(2,pool.length)) {
     selected = pool.slice(0,Math.min(3,pool.length)).map((c,i) => Object.assign({},c,{
       rationale:`${c.productTitles.slice(0,2).join(" + ")} already sell${c.merchantScore>0?" through Google free listings":" organically"}; boost the exact GMC offers.`,
       angle:"Scale proven product demand", dailyBudget:Math.max(6,Math.min(18,Math.round(6 + c.confidence/18 + Math.min(4,c.estimatedProfit30d/150)))), days:30,
       searchThemes:_derivePmaxSearchThemes(c)
     }));
+    await emit({id:"pmax_selector_fallback",category:"Ranking",label:"PMax deterministic fallback",status:"warning",startedAt:Date.now(),endedAt:Date.now(),tookMs:0,detail:`Filled the final list from deterministic scores; ${selected.length} campaign(s) selected.`,fallback:"AI selector returned too few valid candidates."});
+  } else {
+    await emit({id:"pmax_selector_fallback",category:"Ranking",label:"PMax deterministic fallback",status:"skipped",startedAt:Date.now(),endedAt:Date.now(),tookMs:0,detail:"Not needed; AI selections were valid."});
   }
   const list = selected.map(c => {
     const ev = c.evidence || [], merchantEv = ev.filter(x => String(x.source).indexOf("merchant-free") >= 0);
@@ -3556,39 +3743,55 @@ function resolveOpportunityConflicts(list){
   return kept;
 }
 
-async function scanOpportunities({ force, cacheOnly } = {}) {
-  const f = fb(); const ctrl = await control();
+async function scanOpportunities({ force, cacheOnly, runId } = {}) {
+  const f = fb(); const ctrl = await control(); let audit = null;
   // Kept outside the Search scan try-block so a later Search failure cannot erase a
   // Merchant Center opportunity scan that already completed successfully.
   let pmaxList = [], pmaxError = null, pmaxAt = null;
   if (f && (cacheOnly || !force)) {
     try {
-      const s = await f.db.collection(COL.state).doc("opportunities").get();
+      const [s, aDoc] = await Promise.all([
+        f.db.collection(COL.state).doc("opportunities").get(),
+        f.db.collection(COL.state).doc(_SCAN_AUDIT_DOC).get().catch(() => null)
+      ]);
+      const latestAudit = aDoc && aDoc.exists ? ((aDoc.data() || {}).scanAudit || null) : null;
       if (s.exists) {
         const x = s.data();
-        if (cacheOnly) return { opportunities: Array.isArray(x.list) ? x.list : [], pmaxList: Array.isArray(x.pmaxList) ? x.pmaxList : [], pmaxError: x.pmaxError || null, pmaxAt: x.pmaxAt || null, scannedAt: x.at || null, scanning: !!x.scanning, lastError: x.lastError || null, lastErrorAt: x.lastErrorAt || null, progress: x.progress || null };
+        if (cacheOnly) return { opportunities: Array.isArray(x.list) ? x.list : [], pmaxList: Array.isArray(x.pmaxList) ? x.pmaxList : [], pmaxError: x.pmaxError || null, pmaxAt: x.pmaxAt || null, scannedAt: x.at || null, scanning: !!x.scanning, lastError: x.lastError || null, lastErrorAt: x.lastErrorAt || null, progress: x.progress || null, scanAudit: latestAudit };
         const cacheAt=Math.max(Number(x.at)||0,Number(x.pmaxAt)||0);
-        if (cacheAt && (Date.now() - cacheAt) < 12 * 60 * 60 * 1000 && ((Array.isArray(x.list) && x.list.length) || (Array.isArray(x.pmaxList) && x.pmaxList.length))) return { opportunities: Array.isArray(x.list) ? x.list : [], pmaxList: Array.isArray(x.pmaxList) ? x.pmaxList : [], pmaxError: x.pmaxError || null, pmaxAt: x.pmaxAt || null, scannedAt: x.at || null };
-      } else if (cacheOnly) { return { opportunities: [], pmaxList: [], pmaxError: null, pmaxAt: null, scannedAt: null, scanning: false }; }
-    } catch (e) { if (cacheOnly) return { opportunities: [], pmaxList: [], pmaxError: null, pmaxAt: null, scannedAt: null, scanning: false }; }
+        if (cacheAt && (Date.now() - cacheAt) < 12 * 60 * 60 * 1000 && ((Array.isArray(x.list) && x.list.length) || (Array.isArray(x.pmaxList) && x.pmaxList.length))) return { opportunities: Array.isArray(x.list) ? x.list : [], pmaxList: Array.isArray(x.pmaxList) ? x.pmaxList : [], pmaxError: x.pmaxError || null, pmaxAt: x.pmaxAt || null, scannedAt: x.at || null, scanAudit: latestAudit };
+      } else if (cacheOnly) { return { opportunities: [], pmaxList: [], pmaxError: null, pmaxAt: null, scannedAt: null, scanning: false, scanAudit: latestAudit }; }
+    } catch (e) { if (cacheOnly) return { opportunities: [], pmaxList: [], pmaxError: null, pmaxAt: null, scannedAt: null, scanning: false, scanAudit: null }; }
   }
   // ---- Scan pipeline wrapped so a failure ANYWHERE records WHY (readable via lastError) and ALWAYS
   // clears the scanning flag. Previously the background caller swallowed the error, leaving
   // scanning:true and stale opportunities on screen forever with no signal as to the cause.
+  audit = await _auditBegin(runId);
+  await _auditEvent(audit,{id:"control_config",category:"Configuration",label:"Autopilot controls and guardrails",status:"ok",startedAt:Date.now(),endedAt:Date.now(),tookMs:0,
+    detail:`Daily ceiling ${CURRENCY} ${ctrl.maxDailyBudgetTotal||100}; bidding ${ctrl.smartBidding?"Smart":"Manual CPC"}; countries ${(ctrl.defaultCountries||[]).join(",")||"default"}.`,source:"Firestore control document"});
   try {
   await _scanProg(3, "Reading catalog & memory");
-  const collections = await getCollections({});
-  let products = []; try { products = await fetchTopProducts(); } catch (e) {}
+  const collections = await _auditCall(audit,{id:"shopify_collections",category:"Shopify",label:"Shopify collections",detail:"Loading the live collection catalogue or its bounded cache.",source:"Shopify Admin GraphQL / Firestore cache",result:v=>({detail:`${(v||[]).length} collections available to the strategist.`,meta:{collections:(v||[]).length}})},()=>getCollections({}));
+  let products = await _auditCall(audit,{id:"shopify_best_sellers",category:"Shopify",label:"Shopify best-selling products",detail:"Loading 40 best sellers and listing tags.",source:"Shopify Admin GraphQL",optional:true,defaultValue:[],fallback:"Continue with collection profiles only.",result:v=>({status:(v||[]).length?"ok":"warning",detail:`${(v||[]).length} best-selling products loaded.`,meta:{products:(v||[]).length}})},()=>fetchTopProducts());
   let memory = [];
-  if (f) { try { const snap = await f.db.collection(COL.occasions).get(); snap.forEach(d => { const x = d.data(); memory.push({ occasion: x.occasion, outcome: x.outcome || "untested", roas: (x.agg && x.agg.roas) || null, collections: Object.keys(x.collections || {}) }); }); } catch (e) {} }
-  const dateStr = _acctDateYmd(await _accountTz().catch(() => "America/Toronto"));
+  const memT=Date.now();
+  if (f) { try { const snap = await f.db.collection(COL.occasions).get(); snap.forEach(d => { const x = d.data(); memory.push({ occasion: x.occasion, outcome: x.outcome || "untested", roas: (x.agg && x.agg.roas) || null, collections: Object.keys(x.collections || {}) }); });
+    await _auditEvent(audit,{id:"occasion_memory",category:"Firestore",label:"Historical occasion memory",status:"ok",startedAt:memT,endedAt:Date.now(),tookMs:Date.now()-memT,detail:`${memory.length} prior occasion record(s) loaded.`,source:"Firestore"}); }
+    catch (e) { await _auditEvent(audit,{id:"occasion_memory",category:"Firestore",label:"Historical occasion memory",status:"warning",startedAt:memT,endedAt:Date.now(),tookMs:Date.now()-memT,error:e&&e.message,fallback:"Continue without historical occasion outcomes."}); } }
+  else await _auditEvent(audit,{id:"occasion_memory",category:"Firestore",label:"Historical occasion memory",status:"warning",startedAt:memT,endedAt:Date.now(),tookMs:0,detail:"Firestore is unavailable.",fallback:"Continue without memory."});
+  const tzT=Date.now(); let accountTz="America/Toronto", timezoneErr=null;
+  try { accountTz=await _accountTz(); } catch (e) { timezoneErr=(e&&e.message)||String(e); }
+  const dateStr = _acctDateYmd(accountTz);
+  await _auditEvent(audit,{id:"google_account_timezone",category:"Google Ads API",label:"Google Ads account timezone",status:timezoneErr?"warning":"ok",startedAt:tzT,endedAt:Date.now(),tookMs:Date.now()-tzT,detail:`Using ${accountTz}; scan date ${dateStr}.`,source:"Google Ads customer metadata / cache",error:timezoneErr,fallback:timezoneErr?"Use America/Toronto for date-window calculations.":null});
   const ceiling = ctrl.maxDailyBudgetTotal || 100, ccy = CURRENCY;
   const collText = collections.map(c => c.title).join(", ");
   const prodText = products.length
     ? products.slice(0, 40).map(p => p.title + ((p.tags && p.tags.length) ? ` [tags: ${p.tags.slice(0, 6).join(", ")}]` : "")).join("; ")
     : "(not available)";
   const memText = memory.length ? memory.map(m => `${m.occasion} [${(m.collections || []).join("/")}]: ${m.outcome}${m.roas ? ` ${m.roas}x` : ""}`).join("; ") : "(no history yet — nothing has run)";
-  const _convH = await conversionHealth().catch(() => ({ validated: false }));
+  const convT=Date.now(); const _convH = await conversionHealth().catch(e => ({ validated: false, error:e&&e.message }));
+  await _auditEvent(audit,{id:"conversion_health",category:"Google Ads API",label:"Conversion tracking health",status:_convH.validated?"ok":"warning",startedAt:convT,endedAt:Date.now(),tookMs:Date.now()-convT,
+    detail:_convH.validated?"Purchase conversion tracking is active and can support outcome-based ranking.":"Validated purchase conversions were not confirmed; opportunity budgets remain conservative.",source:"Google Ads conversion actions",error:_convH.error||null,fallback:_convH.validated?null:"Use Shopify economics and conservative priors."});
   const convDirective = _convH.validated
     ? "CONVERSION TRACKING: LIVE and recording sales — ROAS/outcome history is reliable. Weight proven occasions heavily; you may recommend scaling winners."
     : "CONVERSION TRACKING: NOT YET RECORDING SALES — you have NO validated ROAS data. Do NOT label any occasion 'proven'; keep market.fit conservative (0.9-1.1 unless you have a strong product-level reason), keep recommendedDailyBudget at modest test levels, and favor low-risk bets over aggressive spend until conversions flow.";
@@ -3596,19 +3799,26 @@ async function scanOpportunities({ force, cacheOnly } = {}) {
   // products, not collection names. Cached 7d; degrades to titles-only if Shopify is unreachable.
   let profiles = null, profiledAt = null, salesBasis = null;
   await _scanProg(8, "Profiling collections", "50 best-sellers + 20 newest per collection, with listing tags");
-  try { const _p = await collectionProfiles({ onPage: n => _scanProg(Math.min(30, 8 + n * 0.6), "Profiling collections", n + " collections scanned") }); if (_p && Array.isArray(_p.list) && _p.list.length) { profiles = _p.list; profiledAt = _p.at; salesBasis = _p.salesBasis; } } catch (e) {}
+  const profT=Date.now(); await _auditEvent(audit,{id:"collection_profiles",category:"Shopify",label:"Collection inventory profiles",status:"running",startedAt:profT,detail:"Scanning best-selling and newest listings, product types, materials, prices, tags and personalization options.",source:"Shopify Admin GraphQL + Firestore cache"});
+  try { const _p = await collectionProfiles({ onPage: n => { _scanProg(Math.min(30, 8 + n * 0.6), "Profiling collections", n + " collections scanned"); _auditEvent(audit,{id:"collection_profiles",category:"Shopify",label:"Collection inventory profiles",status:"running",startedAt:profT,detail:n+" collections scanned so far."}); } }); if (_p && Array.isArray(_p.list) && _p.list.length) { profiles = _p.list; profiledAt = _p.at; salesBasis = _p.salesBasis; }
+    await _auditEvent(audit,{id:"collection_profiles",category:"Shopify",label:"Collection inventory profiles",status:profiles&&profiles.length?"ok":"warning",startedAt:profT,endedAt:Date.now(),tookMs:Date.now()-profT,detail:profiles&&profiles.length?`${profiles.length} detailed collection profile(s) ready.`:"No detailed profiles returned; titles-only strategy fallback is active.",source:"Shopify Admin GraphQL + Firestore cache",fallback:profiles&&profiles.length?null:"Use collection titles and best sellers only.",meta:{profiles:profiles&&profiles.length||0,salesBasis}}); }
+  catch (e) { await _auditEvent(audit,{id:"collection_profiles",category:"Shopify",label:"Collection inventory profiles",status:"warning",startedAt:profT,endedAt:Date.now(),tookMs:Date.now()-profT,error:e&&e.message,fallback:"Use collection titles and best sellers only."}); }
   await _scanProg(34, "Building the strategy brief", (profiles ? profiles.length + " collection profiles" : "titles only") + " \u00b7 " + products.length + " best-sellers");
   // PMax is scanned independently of the Search-opportunity LLM. A Search reasoning
   // failure must never hide or discard viable Merchant Center opportunities.
   await _scanProg(35, "Merchant Center opportunity scan", "matching recent organic sales to live GMC offers");
-  const pmaxPack = await proposePmaxOpportunities({ collections, profiles: profiles || [], ceiling }).catch(e => ({ list: [], error: String(e.message || e).slice(0, 220), at: Date.now() }));
+  let pmaxCrashed = false;
+  const pmaxPack = await proposePmaxOpportunities({ collections, profiles: profiles || [], ceiling, onAudit:e=>_auditEvent(audit,e) }).catch(e => { pmaxCrashed = true; return { list: [], error: String(e.message || e).slice(0, 220), at: Date.now() }; });
   pmaxList = Array.isArray(pmaxPack.list) ? pmaxPack.list : []; pmaxError = pmaxPack.error || null; pmaxAt = pmaxPack.at || Date.now();
+  await _auditEvent(audit,{id:"pmax_pipeline",category:"PMax",label:"PMax opportunity pipeline",status:pmaxCrashed?"failed":(pmaxError?"warning":"ok"),startedAt:Date.now(),endedAt:Date.now(),tookMs:0,detail:`${pmaxList.length} PMax opportunity/opportunities produced.`,error:pmaxError,meta:{opportunities:pmaxList.length,merchantProducts:pmaxPack.merchantProducts||0,merchantReportsConfigured:!!pmaxPack.merchantReportsConfigured}});
   // Commit the feed result NOW, before the much slower Search reasoning pass. If
   // Search later times out or the background function reaches its platform limit,
   // the completed Merchant scan remains available to the Opportunities tab.
-  if (f) { try { await f.db.collection(COL.state).doc("opportunities").set({ pmaxList, pmaxError, pmaxAt }, { merge: true }); } catch (e) {} }
+  if (f) { const saveT=Date.now(); try { await f.db.collection(COL.state).doc("opportunities").set({ pmaxList, pmaxError, pmaxAt }, { merge: true }); await _auditEvent(audit,{id:"pmax_interim_save",category:"Firestore",label:"Immediate PMax result save",status:"ok",startedAt:saveT,endedAt:Date.now(),tookMs:Date.now()-saveT,detail:`Saved ${pmaxList.length} PMax result(s) before the slower Search strategy pass.`}); } catch (e) { await _auditEvent(audit,{id:"pmax_interim_save",category:"Firestore",label:"Immediate PMax result save",status:"warning",startedAt:saveT,endedAt:Date.now(),tookMs:Date.now()-saveT,error:e&&e.message,fallback:"Final save will retry after Search ranking."}); } }
   let pbBlock = "";
-  try { pbBlock = playbookText(await playbookSlice({ categories: ["keywords", "copy", "negatives", "landingPage", "budget", "structure"] })); } catch (e) {}
+  const pbT=Date.now();
+  try { pbBlock = playbookText(await playbookSlice({ categories: ["keywords", "copy", "negatives", "landingPage", "budget", "structure"] })); await _auditEvent(audit,{id:"learned_playbook",category:"Learning",label:"Learned advertising playbook",status:"ok",startedAt:pbT,endedAt:Date.now(),tookMs:Date.now()-pbT,detail:pbBlock?"Historical lessons included in the strategy prompt.":"No learned lessons were available yet.",source:"Firestore learning memory"}); }
+  catch (e) { await _auditEvent(audit,{id:"learned_playbook",category:"Learning",label:"Learned advertising playbook",status:"warning",startedAt:pbT,endedAt:Date.now(),tookMs:Date.now()-pbT,error:e&&e.message,fallback:"Continue without learned lessons."}); }
   const collBlock = (profiles && profiles.length)
     ? `COLLECTIONS \u2014 each profiled from a STRATIFIED, TYPE-AWARE scan of its real listings (data as of ${_ymd(new Date(profiledAt || Date.now()))}; "top seller" = ${salesBasis || "Shopify best-selling sort"}; refreshed weekly) (50 best-sellers + 20 newest per collection, plus per-type representative variants and descriptions). Each collection line shows: motif inventory with per-motif listing counts \u00b7 listing-tag inventory (the merchant\u2019s own search terms, with counts) \u00b7 personalization options \u00b7 anchors \u00b7 then a "types:" breakdown of every JEWELRY TYPE the collection actually contains (Necklace, Beady Necklace, Hoop/Stud Earrings, Bracelet, Charm Only\u2026) with its share (\u00d7n), price band, and MATERIAL TIERS with real per-tier prices from live variants. Use ALL of it: high-frequency motifs are the collection's identity (head terms); MID-frequency motifs are underexploited long-tail keyword material; the TYPE breakdown tells you which product types to build keywords around and in what proportion \u2014 a collection that is mostly necklaces with some hoop earrings and charm-only listings earns keywords across those types, weighted by share, and NEVER keywords for a type it doesn't contain; MATERIAL TIERS are distinct keyword axes with different buyers and intent ("solid 14k gold X" is a premium keepsake purchase at that tier's real price, "gold filled X" is the affordable tier \u2014 never blur them, never promise a tier, type or price the inventory doesn't show); PERSONALIZATION options (engraving, birthstone, photo\u2026) are high-intent keyword modifiers. Ground every keyword, phrase, audience and fit judgment in this inventory, never in the collection name alone:\n${_profileText(profiles, collections)}`
     : `ALL COLLECTIONS: ${collText}`;
@@ -3652,12 +3862,15 @@ ${pbBlock}Only include opportunities genuinely relevant within ~30 days. Opportu
   let _rungNo = 0;
   for (const _rung of _llmLadder) {
     _rungNo++;
+    const llmId="search_ai_strategy_"+_rungNo, llmT=Date.now();
     await _scanProg(_rungNo === 1 ? 38 : 46, "AI strategist reasoning", _rungNo === 1 ? "deep pass (high effort) \u2014 the long step" : "retry at standard effort");
+    await _auditEvent(audit,{id:llmId,category:"OpenAI",label:`Search strategy attempt ${_rungNo}`,status:"running",startedAt:llmT,detail:`Reasoning effort ${_rung.effort}; output budget ${_rung.maxTokens} tokens.`});
     try {
       const j = await openaiJSON(prompt, _rung);
-      if (j && Array.isArray(j.opportunities)) { list = j.opportunities.filter(o => o && o.collectionTitle && o.occasion); llmErr = null; }
-      else llmErr = "model returned no opportunities array";
-    } catch (e) { llmErr = (e && e.message) || "AI scan failed"; }
+      if (j && Array.isArray(j.opportunities)) { list = j.opportunities.filter(o => o && o.collectionTitle && o.occasion); llmErr = null;
+        await _auditEvent(audit,{id:llmId,category:"OpenAI",label:`Search strategy attempt ${_rungNo}`,status:list.length?"ok":"warning",startedAt:llmT,endedAt:Date.now(),tookMs:Date.now()-llmT,detail:`Structured JSON parsed; ${list.length} usable opportunity proposal(s).`,source:"OpenAI structured JSON",meta:{effort:_rung.effort,maxTokens:_rung.maxTokens,proposals:list.length}}); }
+      else { llmErr = "model returned no opportunities array"; await _auditEvent(audit,{id:llmId,category:"OpenAI",label:`Search strategy attempt ${_rungNo}`,status:"warning",startedAt:llmT,endedAt:Date.now(),tookMs:Date.now()-llmT,error:llmErr,fallback:_rungNo<_llmLadder.length?"Retry at lower reasoning effort.":"Preserve prior Search opportunities."}); }
+    } catch (e) { llmErr = (e && e.message) || "AI scan failed"; await _auditEvent(audit,{id:llmId,category:"OpenAI",label:`Search strategy attempt ${_rungNo}`,status:"warning",startedAt:llmT,endedAt:Date.now(),tookMs:Date.now()-llmT,error:llmErr,fallback:_rungNo<_llmLadder.length?"Retry at lower reasoning effort.":"Preserve prior Search opportunities."}); }
     if (list && list.length) break;
   }
   if (!list || !list.length) {
@@ -3672,19 +3885,20 @@ ${pbBlock}Only include opportunities genuinely relevant within ~30 days. Opportu
       } catch (e) {}
       try { await f.db.collection(COL.state).doc("opportunities").set({ pmaxList, pmaxError, pmaxAt, scanning: false, lastError: llmErr || "no Search opportunities returned", lastErrorAt: Date.now(), progress: null }, { merge: true }); } catch (e) {}
     }
-    return { opportunities: prevList, pmaxList, pmaxError, pmaxAt, scannedAt: prevAt, lastError: llmErr || "no Search opportunities returned", lastErrorAt: Date.now() };
+    await _auditFinish(audit,pmaxList.length?"partial":"failed",`Search strategy failed: ${llmErr || "no Search opportunities returned"}. ${pmaxList.length} fresh PMax result(s) remain available.`);
+    return { opportunities: prevList, pmaxList, pmaxError, pmaxAt, scannedAt: prevAt, lastError: llmErr || "no Search opportunities returned", lastErrorAt: Date.now(), scanAudit:_auditPayload(audit) };
   }
   const byTitle0 = {}; collections.forEach(c => byTitle0[c.title.toLowerCase()] = c.handle);
   // PMax opportunities were built independently above from live GMC offers + order signals.
   const byTitle = byTitle0; const today0 = _todayUtc();
-  let _enabled = 0; try { _enabled = await _enabledBudgetTotal(); } catch (e) {}
+  let _enabled = 0; const budgetT=Date.now(); try { _enabled = await _enabledBudgetTotal(); await _auditEvent(audit,{id:"ads_budget_headroom",category:"Google Ads API",label:"Enabled campaign budget headroom",status:"ok",startedAt:budgetT,endedAt:Date.now(),tookMs:Date.now()-budgetT,detail:`Enabled budgets ${CURRENCY} ${_r2(_enabled)}/day against ceiling ${CURRENCY} ${ceiling}/day.`,source:"Google Ads campaign budgets"}); } catch (e) { await _auditEvent(audit,{id:"ads_budget_headroom",category:"Google Ads API",label:"Enabled campaign budget headroom",status:"warning",startedAt:budgetT,endedAt:Date.now(),tookMs:Date.now()-budgetT,error:e&&e.message,fallback:"Assume full configured ceiling is available for planning."}); }
   const headroom = Math.max(0, ceiling - _enabled);
   // Real store AOV (from logged Shopify orders) so projected revenue uses YOUR numbers, not a guess.
-  let sig120=null,aov=0; try { sig120=await storeSignals({days:120}); const rev=(sig120.adRevenue||0)+(sig120.organicRevenue||0); if(sig120.orders>0)aov=_r2(rev/sig120.orders); } catch(e) {}
-  let perfByTag={}; try { perfByTag=await collectionAdsPerformance({days:120}); } catch(e) {}
+  let sig120=null,aov=0; const econT=Date.now(); try { sig120=await storeSignals({days:120}); const rev=(sig120.adRevenue||0)+(sig120.organicRevenue||0); if(sig120.orders>0)aov=_r2(rev/sig120.orders); await _auditEvent(audit,{id:"store_economics_120d",category:"Store data",label:"120-day store economics",status:sig120?"ok":"warning",startedAt:econT,endedAt:Date.now(),tookMs:Date.now()-econT,detail:sig120?`${sig120.orders} orders; measured AOV ${CURRENCY} ${aov||0}.`:"No 120-day order economics available.",source:"Firestore Shopify order log",fallback:sig120?null:"Use conservative account priors."}); } catch(e) { await _auditEvent(audit,{id:"store_economics_120d",category:"Store data",label:"120-day store economics",status:"warning",startedAt:econT,endedAt:Date.now(),tookMs:Date.now()-econT,error:e&&e.message,fallback:"Use conservative account priors."}); }
+  let perfByTag={}; const perfT=Date.now(); try { perfByTag=await collectionAdsPerformance({days:120}); await _auditEvent(audit,{id:"collection_ads_performance",category:"Google Ads API",label:"120-day campaign performance by collection",status:"ok",startedAt:perfT,endedAt:Date.now(),tookMs:Date.now()-perfT,detail:`Performance history mapped to ${Object.keys(perfByTag).length} campaign tag(s).`,source:"Google Ads campaign metrics"}); } catch(e) { await _auditEvent(audit,{id:"collection_ads_performance",category:"Google Ads API",label:"120-day campaign performance by collection",status:"warning",startedAt:perfT,endedAt:Date.now(),tookMs:Date.now()-perfT,error:e&&e.message,fallback:"Rank without collection-specific paid history."}); }
   const profileByHandle={}; ((profiles&&profiles.list)||profiles||[]).forEach(p=>{if(p&&p.handle)profileByHandle[p.handle]=p;});
   // Computed conversion rate (account history shrunk toward the benchmark) — one fetch, used by every plan.
-  let cvrInfo = null; try { cvrInfo = await accountCvr(); } catch (e) {}
+  let cvrInfo = null; const cvrT=Date.now(); try { cvrInfo = await accountCvr(); await _auditEvent(audit,{id:"account_cvr_model",category:"Forecasting",label:"Account conversion-rate model",status:"ok",startedAt:cvrT,endedAt:Date.now(),tookMs:Date.now()-cvrT,detail:`Planning CVR ${_r2(((cvrInfo&&cvrInfo.cvr)||PLAN_CVR)*100)}%; ${cvrInfo&&cvrInfo.source||"benchmark prior"}.`,source:"Google Ads history + jewelry prior"}); } catch (e) { await _auditEvent(audit,{id:"account_cvr_model",category:"Forecasting",label:"Account conversion-rate model",status:"warning",startedAt:cvrT,endedAt:Date.now(),tookMs:Date.now()-cvrT,error:e&&e.message,fallback:`Use ${(PLAN_CVR*100).toFixed(1)}% jewelry prior.`}); }
   const geoIds = (Array.isArray(ctrl.defaultCountries) && ctrl.defaultCountries.length) ? ctrl.defaultCountries : ["2124"];
   // Real Keyword Planner data — but Keyword Planner is rate-limited to ~1 req/sec, so we do NOT
   // fire one call per opportunity. We collect every opportunity's unique seeds, run ONE batched +
@@ -3692,8 +3906,19 @@ ${pbBlock}Only include opportunities genuinely relevant within ~30 days. Opportu
   const _oppTexts = o => (Array.isArray(o.keywords) ? o.keywords : []).map(k => typeof k === "string" ? k : (k && k.text)).filter(Boolean);
   const allSeeds = [...new Set(list.flatMap(o => _oppTexts(o).map(s => String(s).toLowerCase())))];
   await _scanProg(56, "AI proposed " + list.length + " opportunities", allSeeds.length + " unique keyword seeds to research");
-  const pool = await keywordResearchPool(allSeeds, geoIds, { onChunk: (i, n, got) => _scanProg(58 + (i - 1) / Math.max(1, n) * 22, "Google Keyword Planner", "batch " + i + "/" + n + " \u00b7 " + got + " phrases with live data") }).catch(e => ({ ok: false, error: e && e.message, status: null, ideasByText: {} }));
+  const kpT=Date.now(); await _auditEvent(audit,{id:"keyword_planner_pool",category:"Google Ads API",label:"Google Keyword Planner research pool",status:"running",startedAt:kpT,detail:`Researching ${allSeeds.length} unique seed phrase(s) for geo targets ${geoIds.join(",")}.`,source:"generateKeywordIdeas"});
+  const pool = await keywordResearchPool(allSeeds, geoIds, {
+    onChunk: (i, n, got) => _scanProg(58 + (i - 1) / Math.max(1, n) * 22, "Google Keyword Planner", "batch " + i + "/" + n + " \u00b7 " + got + " phrases with live data"),
+    onChunkResult: async (i,n,r) => {
+      if(r.cached){await _auditEvent(audit,{id:"keyword_planner_cache",category:"Google Ads API",label:"Keyword Planner cache",status:"ok",startedAt:kpT,endedAt:Date.now(),tookMs:Date.now()-kpT,detail:`Fresh 14-day cache supplied ${r.ideas} keyword ideas for ${r.seeds} seeds.`,source:"Firestore keyword cache"});return;}
+      await _auditEvent(audit,{id:"keyword_planner_batch_"+i,category:"Google Ads API",label:`Keyword Planner batch ${i}/${n}`,status:r.ok?"ok":"warning",startedAt:Date.now()-(r.tookMs||0),endedAt:Date.now(),tookMs:r.tookMs||0,
+        detail:r.ok?`${r.seeds} seeds returned ${r.ideas} ideas after ${r.attempts} attempt(s); ${r.totalIdeas} unique live ideas accumulated.`:`${r.seeds} seeds failed after ${r.attempts} attempt(s).`,source:"generateKeywordIdeas",httpStatus:r.status,error:r.error||null,fallback:r.ok?null:"Affected opportunities use AI estimates and may fail strict grounding.",meta:{seeds:r.seeds,ideas:r.ideas,attempts:r.attempts,totalIdeas:r.totalIdeas,rateLimited:r.rateLimited}});
+    }
+  }).catch(e => ({ ok: false, error: e && e.message, status: null, ideasByText: {}, seedCount:allSeeds.length, chunkCount:0 }));
+  await _auditEvent(audit,{id:"keyword_planner_pool",category:"Google Ads API",label:"Google Keyword Planner research pool",status:pool.ok?"ok":"warning",startedAt:kpT,endedAt:Date.now(),tookMs:Date.now()-kpT,
+    detail:pool.ok?`${Object.keys(pool.ideasByText||{}).length} live keyword ideas available for ${allSeeds.length} seeds${pool.cached?" from cache":""}.`:`Keyword Planner returned no usable live data for ${allSeeds.length} seeds.`,source:pool.cached?"Firestore keyword cache":"Google Ads generateKeywordIdeas",httpStatus:pool.status,error:pool.error||null,fallback:pool.ok?null:"Use AI research only where inventory grounding still passes.",meta:{seeds:allSeeds.length,ideas:Object.keys(pool.ideasByText||{}).length,cached:!!pool.cached,partial:!!pool.partial,chunks:pool.chunkCount||0}});
   await _scanProg(82, "Costing & ranking plans", "budgets, CPC caps, projected sales per opportunity");
+  const groundingAudit=[]; const proposedBeforeGrounding=list.length;
   list = list.map((o, i) => {
     const t = String(o.collectionTitle).toLowerCase();
     const handle = byTitle[t] || (collections.find(c => c.title.toLowerCase().indexOf(t) >= 0) || {}).handle || null;
@@ -3719,7 +3944,8 @@ ${pbBlock}Only include opportunities genuinely relevant within ~30 days. Opportu
     merged.strategy = o.keywordStrategy || null;
     const prof=profileByHandle[handle]||null;
     const grounded=groundKeywordPlan(merged.keywords,prof,o.occasion,{min:4,max:18});
-    if(!grounded.ok)return null; // fail closed: no broad fallback opportunity
+    if(!grounded.ok){groundingAudit.push({i,title:o.collectionTitle,occasion:o.occasion,ok:false,accepted:grounded.evidence&&grounded.evidence.accepted||0,rejected:(grounded.rejected||[]).length,groups:(grounded.groups||[]).length,reason:"Fewer than 4 inventory-grounded purchase-intent keywords survived."});return null;} // fail closed: no broad fallback opportunity
+    groundingAudit.push({i,title:o.collectionTitle,occasion:o.occasion,ok:true,accepted:grounded.evidence&&grounded.evidence.accepted||grounded.keywords.length,rejected:(grounded.rejected||[]).length,groups:grounded.groups.length,real:grounded.evidence&&grounded.evidence.real||0,source:merged.source});
     merged.keywords=grounded.keywords;
     const econ=collectionEconomics(prof,sig120);
     const perf=_performanceForHandle(perfByTag,handle);
@@ -3762,27 +3988,48 @@ ${pbBlock}Only include opportunities genuinely relevant within ~30 days. Opportu
     .map(o=>{o.opportunityClass=opportunityClass(o);const sc=_oppScore(o);o.score=sc.score;o.rank=sc.rank;return o;})
     // Default order = the blend the console shows: conversion likelihood boosted by urgency.
     .sort((a, b) => b.rank - a.rank);
+  for(const g of groundingAudit){ await _auditEvent(audit,{id:"keyword_grounding_"+g.i,category:"Keyword validation",label:`${g.title} · ${g.occasion}`,status:g.ok?"ok":"warning",startedAt:Date.now(),endedAt:Date.now(),tookMs:0,
+    detail:g.ok?`${g.accepted} accepted, ${g.rejected} rejected, ${g.groups} intent group(s); source ${g.source||"mixed"}.`:g.reason,
+    fallback:g.ok?null:"Opportunity removed; no broad keyword fallback was created.",meta:g}); }
+  await _auditEvent(audit,{id:"keyword_grounding_summary",category:"Keyword validation",label:"Inventory-grounded keyword validation",status:list.length?((list.length<proposedBeforeGrounding)?"warning":"ok"):"failed",startedAt:Date.now(),endedAt:Date.now(),tookMs:0,
+    detail:`${list.length}/${proposedBeforeGrounding} AI proposals survived strict product-type, qualifier and purchase-intent checks.`,source:"Deterministic validator",meta:{proposed:proposedBeforeGrounding,survived:list.length,rejected:proposedBeforeGrounding-list.length}});
   // Suppress lower-ranked ideas that would split the same demand across parallel
   // campaigns. The surviving list is intentionally smaller and commercially cleaner.
-  list=resolveOpportunityConflicts(list);
+  const beforeConflicts=list.length; list=resolveOpportunityConflicts(list);
+  await _auditEvent(audit,{id:"opportunity_conflicts",category:"Ranking",label:"Duplicate and cannibalization resolution",status:"ok",startedAt:Date.now(),endedAt:Date.now(),tookMs:0,
+    detail:`${beforeConflicts-list.length} overlapping opportunity/opportunities suppressed; ${list.length} commercially distinct Search opportunities remain.`,source:"Deterministic overlap scoring",meta:{before:beforeConflicts,after:list.length,suppressed:beforeConflicts-list.length}});
+  await _auditEvent(audit,{id:"economic_ranking",category:"Forecasting",label:"Economic costing and final ranking",status:list.length?"ok":"warning",startedAt:Date.now(),endedAt:Date.now(),tookMs:0,
+    detail:`${list.length} Search opportunities ranked using CPC, CVR, AOV, margin, budget headroom, urgency and evidence confidence.`,source:"Deterministic profit/confidence model"});
   // Persist the fresh list. If THIS write throws (commonly: the doc exceeds Firestore's 1 MiB limit
   // because keywordData/plan bloat the payload), it was previously swallowed — leaving stale data AND a
   // stuck scanning flag. Now a write failure retries with a trimmed payload and is always recorded.
   await _scanProg(96, "Saving " + list.length + " ranked opportunities");
+  const finalAt=Date.now(), saveT=Date.now(); let saveMode="full", saveErr=null;
+  await _auditEvent(audit,{id:"firestore_final_save",category:"Firestore",label:"Final opportunity result save",status:"running",startedAt:saveT,detail:`Saving ${list.length} Search and ${pmaxList.length} PMax opportunities.`});
   if (f && (list.length || pmaxList.length)) {
-    try { await f.db.collection(COL.state).doc("opportunities").set({ list, pmaxList, pmaxError, pmaxAt, at: Date.now(), scanning: false, lastError: null, lastErrorAt: null, progress: null }); }
-    catch (e) {
+    try {
+      await f.db.collection(COL.state).doc("opportunities").set({ list, pmaxList, pmaxError, pmaxAt, at: finalAt, scanning: false, lastError: null, lastErrorAt: null, progress: null });
+      await _auditEvent(audit,{id:"firestore_final_save",category:"Firestore",label:"Final opportunity result save",status:"ok",startedAt:saveT,endedAt:Date.now(),tookMs:Date.now()-saveT,detail:"Full opportunity payload saved and scanning flag cleared.",source:"Firestore"});
+    } catch (e) {
+      saveMode="trimmed"; saveErr=e&&e.message;
       try {
-        const slim = list.map(o => { const c = Object.assign({}, o); delete c.keywordData; return c; }); // drop heavy per-keyword metrics
-        // (pmaxList rides along in the same doc below)
-        await f.db.collection(COL.state).doc("opportunities").set({ list: slim, pmaxList, pmaxError, pmaxAt, at: Date.now(), scanning: false, lastError: "write trimmed (payload too large): " + (e && e.message), lastErrorAt: Date.now(), progress: null });
+        const slim = list.map(o => { const c = Object.assign({}, o); delete c.keywordData; return c; });
+        await f.db.collection(COL.state).doc("opportunities").set({ list: slim, pmaxList, pmaxError, pmaxAt, at: finalAt, scanning: false, lastError: "write trimmed (payload too large): " + saveErr, lastErrorAt: Date.now(), progress: null });
+        await _auditEvent(audit,{id:"firestore_final_save",category:"Firestore",label:"Final opportunity result save",status:"warning",startedAt:saveT,endedAt:Date.now(),tookMs:Date.now()-saveT,detail:"Saved a reduced payload after the full document exceeded Firestore limits.",source:"Firestore",error:saveErr,fallback:"Per-keyword metric detail was removed; campaign generation data remains."});
       } catch (e2) {
-        try { await f.db.collection(COL.state).doc("opportunities").set({ scanning: false, lastError: "WRITE FAILED: " + (e2 && e2.message), lastErrorAt: Date.now(), progress: null }, { merge: true }); } catch (e3) {}
+        saveMode="failed"; saveErr=e2&&e2.message;
+        try { await f.db.collection(COL.state).doc("opportunities").set({ scanning: false, lastError: "WRITE FAILED: " + saveErr, lastErrorAt: Date.now(), progress: null }, { merge: true }); } catch (e3) {}
+        await _auditEvent(audit,{id:"firestore_final_save",category:"Firestore",label:"Final opportunity result save",status:"failed",startedAt:saveT,endedAt:Date.now(),tookMs:Date.now()-saveT,error:saveErr,detail:"The scan completed but its final results could not be persisted."});
       }
     }
-  }
-  else if (f) { try { await f.db.collection(COL.state).doc("opportunities").set({ list: [], pmaxList: [], pmaxError, pmaxAt, at: Date.now(), scanning: false, lastError: "all Search and PMax opportunities filtered out", lastErrorAt: Date.now(), progress: null }, { merge: true }); } catch (e) {} }
-  return { opportunities: list, pmaxList, pmaxError, pmaxAt, scannedAt: Date.now() };
+  } else if (f) {
+    try { await f.db.collection(COL.state).doc("opportunities").set({ list: [], pmaxList: [], pmaxError, pmaxAt, at: finalAt, scanning: false, lastError: "all Search and PMax opportunities filtered out", lastErrorAt: Date.now(), progress: null }, { merge: true });
+      await _auditEvent(audit,{id:"firestore_final_save",category:"Firestore",label:"Final opportunity result save",status:"warning",startedAt:saveT,endedAt:Date.now(),tookMs:Date.now()-saveT,detail:"Saved an empty result because every candidate was filtered out.",source:"Firestore"}); }
+    catch (e) { saveMode="failed"; saveErr=e&&e.message; await _auditEvent(audit,{id:"firestore_final_save",category:"Firestore",label:"Final opportunity result save",status:"failed",startedAt:saveT,endedAt:Date.now(),tookMs:Date.now()-saveT,error:saveErr}); }
+  } else { saveMode="failed"; saveErr="Firestore unavailable"; await _auditEvent(audit,{id:"firestore_final_save",category:"Firestore",label:"Final opportunity result save",status:"failed",startedAt:saveT,endedAt:Date.now(),tookMs:Date.now()-saveT,error:saveErr}); }
+  const finalStatus=saveMode==="failed"?"failed":(pmaxError||!list.length||saveMode==="trimmed"?"partial":"success");
+  await _auditFinish(audit,finalStatus,`${list.length} Search + ${pmaxList.length} PMax opportunities completed${pmaxError?"; PMax warning: "+pmaxError:""}${saveMode==="trimmed"?"; saved in trimmed mode":""}.`);
+  return { opportunities: list, pmaxList, pmaxError, pmaxAt, scannedAt: finalAt, scanAudit:_auditPayload(audit), lastError:saveMode==="failed"?saveErr:null, lastErrorAt:saveMode==="failed"?Date.now():null };
   } catch (scanErr) {
     // ANY failure in the scan pipeline: record it (console-readable via lastError) and ALWAYS clear
     // scanning so the UI stops showing stale data. This is the safety net that was missing.
@@ -3791,7 +4038,8 @@ ${pbBlock}Only include opportunities genuinely relevant within ~30 days. Opportu
       lastError: (scanErr && scanErr.message) || String(scanErr), lastErrorStack: ((scanErr && scanErr.stack) || "").slice(0, 600),
       lastErrorAt: Date.now(), progress: null
     }, { merge: true }); } catch (e) {} }
-    return { opportunities: [], pmaxList, pmaxError, pmaxAt, scannedAt: null, error: (scanErr && scanErr.message) || String(scanErr) };
+    await _auditFinish(audit,"failed",`Scan stopped: ${(scanErr && scanErr.message) || String(scanErr)}`);
+    return { opportunities: [], pmaxList, pmaxError, pmaxAt, scannedAt: null, error: (scanErr && scanErr.message) || String(scanErr), scanAudit:audit?_auditPayload(audit):null };
   }
 }
 
@@ -3848,10 +4096,11 @@ async function takenTags() {
 }
 // Opportunities annotated with their current real state, so the UI can split
 // "unused" from "already acted on" and never re-suggest a taken campaign.
-async function opportunitiesWithStatus({ force, cacheOnly } = {}) {
-  const r = await scanOpportunities({ force, cacheOnly });
-  let taken = {};
-  try { taken = await takenTags(); } catch (e) {}
+async function opportunitiesWithStatus({ force, cacheOnly, runId } = {}) {
+  const r = await scanOpportunities({ force, cacheOnly, runId });
+  let taken = {}, takenError = null; const takenT=Date.now();
+  try { taken = await takenTags(); } catch (e) { takenError=(e&&e.message)||String(e); }
+  if (force && r.scanAudit) { const a=Object.assign({},r.scanAudit,{checks:Array.isArray(r.scanAudit.checks)?r.scanAudit.checks.slice():[]}); await _auditEvent(a,{id:"campaign_reconciliation",category:"Google Ads API",label:"Approvals and live campaign reconciliation",status:takenError?"warning":"ok",startedAt:takenT,endedAt:Date.now(),tookMs:Date.now()-takenT,detail:takenError?"Could not fully verify whether recommendations are already in use.":`${Object.keys(taken).length} approval/campaign tag(s) reconciled to prevent duplicates.`,source:"Firestore approvals + Google Ads campaigns",error:takenError,fallback:takenError?"Opportunity cards may omit some in-use states until refresh.":null}); r.scanAudit=_auditPayload(a); }
   // Dates are normalized at SERVE time: an opportunity may have been scanned up to 12h ago (or be
   // a stale list kept after a failed re-scan), so clamp startDate to today, recompute daysOut, and
   // drop anything whose whole window has passed — the console must never suggest starting a
@@ -3888,7 +4137,8 @@ async function opportunitiesWithStatus({ force, cacheOnly } = {}) {
   }).filter(o => !(o.acted && o.acted.where === "campaign" && o.acted.status === "REMOVED"));
   return { opportunities, pmaxList, pmaxError: r.pmaxError || null, pmaxAt: r.pmaxAt || null,
     scannedAt: r.scannedAt, scanning: !!r.scanning, taken, lastError: r.lastError || r.error || null,
-    lastErrorAt: r.lastErrorAt || null, progress: r.progress || null, engineVersion: OPPORTUNITY_ENGINE_VERSION };
+    lastErrorAt: r.lastErrorAt || null, progress: r.progress || null, scanAudit:r.scanAudit||null,
+    reconciliation:{ok:!takenError,takenCount:Object.keys(taken).length,error:takenError}, engineVersion: OPPORTUNITY_ENGINE_VERSION };
 }
 
 /* ===================== Release an "in use" opportunity ===================== */
@@ -4918,7 +5168,7 @@ async function dashboard() {
 }
 
 module.exports = {
-  COL, V, CID,
+  COL, V, CID, OPPORTUNITY_ENGINE_VERSION,
   control, mintToken, gaql, mutate, mutateAll,
   enqueueConversion, uploadConversions, enqueueConversionAdjustment, uploadConversionAdjustments, recordRefund, conversionHealth, gAdsTime,
   recordOrderEvent, recentOrders, storeSignals, clearOrderLog, backfillOrders,
