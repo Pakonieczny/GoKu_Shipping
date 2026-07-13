@@ -817,6 +817,10 @@ function sanitizeOps(ops) {
   if (!Array.isArray(ops)) return ops;
   ops.forEach(op => {
     if (!op) return;
+    // v24 requires listing_source on every asset-group listing-group filter.
+    // Drafts frozen before this fix lack it; all our filters are feed-based.
+    const lg = op.assetGroupListingGroupFilterOperation && op.assetGroupListingGroupFilterOperation.create;
+    if (lg && typeof lg === "object" && lg.listingSource == null && lg.listing_source == null) lg.listingSource = "SHOPPING";
     const c = (op.campaignOperation && (op.campaignOperation.create || op.campaignOperation.update)) ||
               op.create || op.update;
     if (c && typeof c === "object") {
@@ -830,6 +834,7 @@ function sanitizeOps(ops) {
       // v24 removed Campaign.url_expansion_opt_out (v22+ models it as an asset
       // automation setting). Migrate drafts frozen under the old builder so
       // they apply without regeneration — the opt-out intent is preserved.
+      // (heal continues below for campaign fields)
       if (c.urlExpansionOptOut != null || c.url_expansion_opt_out != null) {
         const optedOut = (c.urlExpansionOptOut === true) || (c.url_expansion_opt_out === true);
         delete c.urlExpansionOptOut; delete c.url_expansion_opt_out;
@@ -2725,10 +2730,10 @@ function buildPmaxCampaignOps(coll, { dailyBudget, startDate, endDate, targetRoa
     ops.push({assetGroupOperation:{create:{resourceName:agRes,campaign:cRes,name:`AG · ${String(g.label).slice(0,60)}`,finalUrls:[finalUrl],status:"ENABLED"}}});
     const root=`customers/${CID}/assetGroupListingGroupFilters/${agId}~-${50+gi*50}`;
     if(g.itemIds.length){
-      ops.push({assetGroupListingGroupFilterOperation:{create:{resourceName:root,assetGroup:agRes,type:"SUBDIVISION"}}});
-      g.itemIds.forEach((id,i)=>ops.push({assetGroupListingGroupFilterOperation:{create:{resourceName:`customers/${CID}/assetGroupListingGroupFilters/${agId}~-${51+gi*50+i}`,assetGroup:agRes,parentListingGroupFilter:root,type:"UNIT_INCLUDED",caseValue:{productItemId:{value:id}}}}}));
-      ops.push({assetGroupListingGroupFilterOperation:{create:{resourceName:`customers/${CID}/assetGroupListingGroupFilters/${agId}~-${99+gi*50}`,assetGroup:agRes,parentListingGroupFilter:root,type:"UNIT_EXCLUDED",caseValue:{productItemId:{}}}}});
-    }else ops.push({assetGroupListingGroupFilterOperation:{create:{resourceName:root,assetGroup:agRes,type:"UNIT_INCLUDED"}}});
+      ops.push({assetGroupListingGroupFilterOperation:{create:{resourceName:root,assetGroup:agRes,type:"SUBDIVISION",listingSource:"SHOPPING"}}});
+      g.itemIds.forEach((id,i)=>ops.push({assetGroupListingGroupFilterOperation:{create:{resourceName:`customers/${CID}/assetGroupListingGroupFilters/${agId}~-${51+gi*50+i}`,assetGroup:agRes,parentListingGroupFilter:root,type:"UNIT_INCLUDED",listingSource:"SHOPPING",caseValue:{productItemId:{value:id}}}}}));
+      ops.push({assetGroupListingGroupFilterOperation:{create:{resourceName:`customers/${CID}/assetGroupListingGroupFilters/${agId}~-${99+gi*50}`,assetGroup:agRes,parentListingGroupFilter:root,type:"UNIT_EXCLUDED",listingSource:"SHOPPING",caseValue:{productItemId:{}}}}});
+    }else ops.push({assetGroupListingGroupFilterOperation:{create:{resourceName:root,assetGroup:agRes,type:"UNIT_INCLUDED",listingSource:"SHOPPING"}}});
     // Give each coherent product group its own relevant themes. Signals guide learning;
     // they do not restrict PMax reach.
     const typeWords=_kwWords(g.label);
