@@ -68,7 +68,7 @@ const LOGIN_CID  = (ENV.GADS_LOGIN_CUSTOMER_ID || CID).replace(/\D/g, ""); // ma
 const DEV_TOKEN  = ENV.GADS_DEVELOPER_TOKEN || "";
 const GEN_MODEL  = ENV.GADS_GEN_MODEL || "gpt-5.5";                       // text generation
 const CURRENCY   = ENV.GADS_CURRENCY || "USD";
-const OPPORTUNITY_ENGINE_VERSION = "12.0.0-profit-intent-pmax-feedback";
+const OPPORTUNITY_ENGINE_VERSION = "12.1.0-pmax-catalogue-query-recovery";
 
 // The store's nine homepage collections (handle ↔ title) — drives the Draft Bench picker.
 const COLLECTIONS = [
@@ -170,6 +170,26 @@ function adsHeaders(token, loginCidOverride) {
 }
 
 /* ============================ GAQL read (paged) ============================ */
+function _gadsErrorSummary(data) {
+  const root = (data && data.error) || {};
+  const found = [];
+  const details = Array.isArray(root.details) ? root.details : [];
+  details.forEach(d => {
+    const errors = (d && Array.isArray(d.errors) && d.errors) ||
+      (d && d.googleAdsFailure && Array.isArray(d.googleAdsFailure.errors) && d.googleAdsFailure.errors) || [];
+    errors.forEach(e => {
+      const ec = (e && e.errorCode) || {};
+      const pair = Object.entries(ec).find(([,v]) => v && String(v) !== "UNSPECIFIED");
+      const code = pair ? `${pair[0]}=${pair[1]}` : null;
+      const path = e && e.location && Array.isArray(e.location.fieldPathElements)
+        ? e.location.fieldPathElements.map(x => x.fieldName + (x.index != null ? `[${x.index}]` : "")).filter(Boolean).join(".") : "";
+      const message = String((e && e.message) || "").trim();
+      found.push([code, message, path ? `at ${path}` : null].filter(Boolean).join(" · "));
+    });
+  });
+  if (found.length) return found.slice(0, 4).join(" | ");
+  return [root.status, root.message].filter(Boolean).join(": ") || JSON.stringify(data || {}).slice(0, 500);
+}
 async function gaql(query) {
   const token = await mintToken();
   const out = [];
@@ -181,7 +201,7 @@ async function gaql(query) {
       body: JSON.stringify(pageToken ? { query, pageToken } : { query })
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error("[gads] search failed: " + JSON.stringify(data).slice(0, 600));
+    if (!res.ok) throw new Error("[gads] search failed: " + _gadsErrorSummary(data));
     (data.results || []).forEach(r => out.push(r));
     pageToken = data.nextPageToken;
   } while (pageToken);
@@ -1934,12 +1954,16 @@ async function merchantCenterId() {
 // and liable to exceed a background run. New order records carry Shopify product and
 // variant IDs, which let us construct the Google & YouTube channel's exact offer IDs;
 // title lookup is a bounded fallback for older order-log rows.
-const _MERCHANT_SELECT = `shopping_product.item_id, shopping_product.title, shopping_product.status,
-      shopping_product.availability, shopping_product.product_type_level1, shopping_product.product_type_level2,
-      shopping_product.custom_attribute0, shopping_product.custom_attribute1, shopping_product.custom_attribute2,
-      shopping_product.custom_attribute3, shopping_product.custom_attribute4, shopping_product.feed_label,
-      shopping_product.product_image_uri, shopping_product.merchant_center_id`;
-function _gaqlString(v) { return "'" + String(v == null ? "" : v).replace(/\\/g, "\\\\").replace(/'/g, "\\'") + "'"; }
+const _MERCHANT_SELECT_CORE = `shopping_product.resource_name, shopping_product.item_id, shopping_product.title,
+      shopping_product.status, shopping_product.availability, shopping_product.feed_label,
+      shopping_product.merchant_center_id`;
+const _MERCHANT_SELECT = `${_MERCHANT_SELECT_CORE}, shopping_product.product_type_level1,
+      shopping_product.product_type_level2, shopping_product.custom_attribute0, shopping_product.custom_attribute1,
+      shopping_product.custom_attribute2, shopping_product.custom_attribute3, shopping_product.custom_attribute4,
+      shopping_product.product_image_uri`;
+function _gaqlString(v) {
+  return "'" + String(v == null ? "" : v).replace(/[\r\n\t]+/g, " ").replace(/\\/g, "\\\\").replace(/'/g, "\\'") + "'";
+}
 function _chunk(a, n) { const out=[]; for(let i=0;i<a.length;i+=n) out.push(a.slice(i,i+n)); return out; }
 function _merchantLookupPlan({ itemIds = [], signals = [], titles = [] } = {}) {
   const ids = new Set((itemIds || []).map(x => String(x || "").trim()).filter(Boolean));
@@ -1948,11 +1972,14 @@ function _merchantLookupPlan({ itemIds = [], signals = [], titles = [] } = {}) {
     if (!s) return;
     const title = String(s.name || s.title || "").trim(); if (title) names.add(title);
     const p = (_pmaxDigits(s.productId).slice(-1)[0] || ""), v = (_pmaxDigits(s.variantId).slice(-1)[0] || "");
-    // Current Shopify Google-channel IDs for the two active feed labels. Exact IDs
-    // are still validated by the live shopping_product resource before use.
-    if (p && v) ["CA","US"].forEach(m => ids.add(`shopify_${m}_${p}_${v}`));
+    // Shopify's Google channel has emitted both upper- and lower-case market IDs
+    // over time. Query both forms, then validate the returned live resource.
+    if (p && v) ["CA","US"].forEach(m => {
+      ids.add(`shopify_${m}_${p}_${v}`);
+      ids.add(`shopify_${m.toLowerCase()}_${p}_${v}`);
+    });
   });
-  return { itemIds: [...ids].slice(0, 250), titles: [...names].slice(0, 40) };
+  return { itemIds: [...ids].slice(0, 500), titles: [...names].slice(0, 80) };
 }
 function _merchantProductRow(x, merchantId) {
   if (!x || String(x.merchantCenterId || "") !== String(merchantId) || !x.itemId || !x.title) return null;
@@ -1961,25 +1988,90 @@ function _merchantProductRow(x, merchantId) {
     imageUrl: x.productImageUri || null, customLabels: [x.customAttribute0,x.customAttribute1,x.customAttribute2,x.customAttribute3,x.customAttribute4].filter(Boolean),
     merchantId: String(x.merchantCenterId) };
 }
+function _merchantFeedLabels(plan) {
+  const labels = new Set();
+  (plan.itemIds || []).forEach(id => {
+    const m = String(id).match(/^shopify_([^_]+)_/i);
+    if (m && m[1]) labels.add(String(m[1]).toUpperCase());
+  });
+  // These are the store's active market feeds; they are bounded fallbacks for
+  // older order records whose exact offer IDs are unavailable.
+  if (!labels.size) { labels.add("CA"); labels.add("US"); }
+  return [...labels].slice(0, 6);
+}
+async function _merchantGaql(filter, limit = null) {
+  const tail = ` FROM shopping_product${filter ? ` WHERE ${filter}` : ""}${limit ? ` LIMIT ${limit}` : ""}`;
+  try { return await gaql(`SELECT ${_MERCHANT_SELECT}${tail}`); }
+  catch (richErr) {
+    // A newly introduced or account-incompatible enrichment field must never
+    // take the whole opportunity scan down. The core current-state fields are
+    // sufficient to validate exact offers and build a safe PMax product tree.
+    try { return await gaql(`SELECT ${_MERCHANT_SELECT_CORE}${tail}`); }
+    catch (coreErr) { coreErr.richError = richErr; throw coreErr; }
+  }
+}
 async function merchantProducts({ force = false, itemIds = [], signals = [], titles = [] } = {}) {
   const plan = _merchantLookupPlan({ itemIds, signals, titles });
   if (!plan.itemIds.length && !plan.titles.length) return [];
   const key = JSON.stringify([plan.itemIds.slice().sort(), plan.titles.slice().sort()]);
   const cached = _merchantProductsCache.get(key);
   if (!force && cached && Date.now() - cached.at < 30 * 60 * 1000) return cached.list;
-  const merchantId = await merchantCenterId(), found = new Map();
-  const run = async (field, values, size) => {
-    for (const part of _chunk(values, size)) {
-      if (!part.length) continue;
-      const rows = await gaql(`SELECT ${_MERCHANT_SELECT} FROM shopping_product WHERE shopping_product.merchant_center_id = ${Number(merchantId)} AND ${field} IN (${part.map(_gaqlString).join(",")})`);
-      rows.forEach(r => { const row = _merchantProductRow(r.shoppingProduct || {}, merchantId); if (row) found.set(row.itemId, row); });
-    }
+  const merchantId = await merchantCenterId(), found = new Map(), errors = [], successfulQueries = { n: 0 };
+  const absorb = rows => {
+    successfulQueries.n++;
+    (rows || []).forEach(r => {
+      const row = _merchantProductRow(r.shoppingProduct || {}, merchantId);
+      if (row) found.set(row.itemId.toLowerCase(), row);
+    });
   };
-  // Exact item IDs first; exact title batches recover older webhook/backfill rows
-  // without ever scanning the complete ~two-market catalogue.
-  await run("shopping_product.item_id", plan.itemIds, 80);
-  await run("shopping_product.title", plan.titles, 20);
+  // 1) Fast path: exact, machine-generated offer IDs only. Product titles are
+  // deliberately NOT placed in GAQL string lists—arbitrary punctuation in live
+  // catalogue titles was able to invalidate the entire scan.
+  for (const part of _chunk(plan.itemIds, 40)) {
+    try {
+      absorb(await _merchantGaql(`shopping_product.merchant_center_id = ${String(merchantId).replace(/\D/g, "")} AND shopping_product.item_id IN (${part.map(_gaqlString).join(",")})`));
+    } catch (e) { errors.push(String(e.message || e)); }
+  }
+  const wantedIds = new Set(plan.itemIds.map(x => String(x).toLowerCase()));
+  const wantedTitles = plan.titles.map(_pmaxNorm).filter(Boolean);
+  const enough = () => {
+    if (!found.size) return false;
+    if (!wantedIds.size) return true;
+    let hits = 0; found.forEach(x => { if (wantedIds.has(x.itemId.toLowerCase())) hits++; });
+    return hits >= Math.min(wantedIds.size, Math.max(2, Math.ceil(wantedIds.size * .35)));
+  };
+  // 2) Reliable fallback for historical/title-only orders: read the bounded CA/US
+  // feed slices using only safe scalar filters, then match titles locally. Google
+  // documents account-scope shopping_product queries as the current-state source.
+  if (!enough() && wantedTitles.length) {
+    const labels = _merchantFeedLabels(plan);
+    for (const label of labels) {
+      try {
+        const rows = await _merchantGaql(`shopping_product.merchant_center_id = ${String(merchantId).replace(/\D/g, "")} AND shopping_product.feed_label = ${_gaqlString(label)}`, 10000);
+        successfulQueries.n++;
+        rows.forEach(r => {
+          const row = _merchantProductRow(r.shoppingProduct || {}, merchantId); if (!row) return;
+          const idMatch = wantedIds.has(row.itemId.toLowerCase());
+          const titleMatch = wantedTitles.some(t => _pmaxTitleMatch(row.title, t) >= .9);
+          if (idMatch || titleMatch) found.set(row.itemId.toLowerCase(), row);
+        });
+      } catch (e) { errors.push(String(e.message || e)); }
+    }
+  }
+  // 3) Last-resort account-scope read for nonstandard feed labels. Keep it bounded
+  // and filter locally; this is preferable to losing all PMax opportunities.
+  if (!found.size && wantedTitles.length) {
+    try {
+      const rows = await _merchantGaql(`shopping_product.merchant_center_id = ${String(merchantId).replace(/\D/g, "")}`, 20000);
+      successfulQueries.n++;
+      rows.forEach(r => {
+        const row = _merchantProductRow(r.shoppingProduct || {}, merchantId); if (!row) return;
+        if (wantedIds.has(row.itemId.toLowerCase()) || wantedTitles.some(t => _pmaxTitleMatch(row.title, t) >= .9)) found.set(row.itemId.toLowerCase(), row);
+      });
+    } catch (e) { errors.push(String(e.message || e)); }
+  }
   const list = [...found.values()];
+  if (!successfulQueries.n && !list.length && errors.length) throw new Error(errors[0]);
   _merchantProductsCache.set(key, { at: Date.now(), list });
   if (_merchantProductsCache.size > 20) {
     const oldest = [..._merchantProductsCache.entries()].sort((a,b)=>a[1].at-b[1].at).slice(0,_merchantProductsCache.size-20);
@@ -2409,10 +2501,11 @@ async function generatePmaxApproval({ handle, dailyBudget, targetRoas, days, ite
   let selected = [], liveFeedLabel = feedLabel || null;
   const requestedIds=[...new Set((itemIds||[]).map(String).filter(Boolean))].slice(0,30);
   try {
-    const live=await merchantProducts({ force: true, itemIds: requestedIds, titles: productTitles || [] }); const allowed=new Set(requestedIds);
-    selected=live.filter(x=>allowed.has(x.itemId)&&_pmaxIsEligible(x));
+    const live=await merchantProducts({ force: true, itemIds: requestedIds, titles: productTitles || [] });
+    const allowed=new Set(requestedIds.map(x=>String(x).toLowerCase()));
+    selected=live.filter(x=>allowed.has(String(x.itemId||"").toLowerCase())&&_pmaxIsEligible(x));
     if(!liveFeedLabel&&selected[0])liveFeedLabel=selected[0].feedLabel||null;
-    if(liveFeedLabel)selected=selected.filter(x=>!x.feedLabel||String(x.feedLabel)===String(liveFeedLabel));
+    if(liveFeedLabel)selected=selected.filter(x=>!x.feedLabel||String(x.feedLabel).toUpperCase()===String(liveFeedLabel).toUpperCase());
     selected=selected.slice(0,30);
   } catch(e){}
   if(requestedIds.length&&!selected.length)throw new Error("None of the selected Merchant Center offers are currently eligible. Re-run Scan for opportunities to refresh the feed scope.");
