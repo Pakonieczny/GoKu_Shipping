@@ -2112,7 +2112,7 @@ const _MERCHANT_SELECT_CORE = `shopping_product.resource_name, shopping_product.
 const _MERCHANT_SELECT = `${_MERCHANT_SELECT_CORE}, shopping_product.product_type_level1,
       shopping_product.product_type_level2, shopping_product.custom_attribute0, shopping_product.custom_attribute1,
       shopping_product.custom_attribute2, shopping_product.custom_attribute3, shopping_product.custom_attribute4,
-      shopping_product.product_image_uri`;
+      shopping_product.product_image_uri, shopping_product.issues`;
 function _gaqlString(v) {
   return "'" + String(v == null ? "" : v).replace(/[\r\n\t]+/g, " ").replace(/\\/g, "\\\\").replace(/'/g, "\\'") + "'";
 }
@@ -2138,6 +2138,7 @@ function _merchantProductRow(x, merchantId) {
   return { itemId: String(x.itemId), title: String(x.title), status: String(x.status || ""), availability: String(x.availability || ""),
     type1: x.productTypeLevel1 || null, type2: x.productTypeLevel2 || null, feedLabel: x.feedLabel || null,
     imageUrl: x.productImageUri || null, customLabels: [x.customAttribute0,x.customAttribute1,x.customAttribute2,x.customAttribute3,x.customAttribute4].filter(Boolean),
+    issues: Array.isArray(x.issues) ? x.issues.slice(0, 4).map(i => String((i && (i.description || i.detail || i.errorCode || i.code)) || JSON.stringify(i)).slice(0, 90)) : [],
     merchantId: String(x.merchantCenterId) };
 }
 function _merchantFeedLabels(plan) {
@@ -2248,7 +2249,8 @@ async function merchantProducts({ force = false, itemIds = [], signals = [], tit
   list._diag = { merchantId, requestedOfferIds: plan.itemIds.length, requestedTitles: plan.titles.length,
     successfulQueries: successfulQueries.n, queryKinds, queryModes, requests: requests.slice(0, 30), matchedProducts: list.length,
     eligibleProducts: list.filter(_pmaxIsEligible).length, statusBreakdown, availabilityBreakdown,
-    offerSample: list.slice(0, 8).map(p => ({ itemId: p.itemId, feedLabel: p.feedLabel || null, status: p.status || null, availability: p.availability || null, title: String(p.title || "").slice(0, 48) })),
+    offerSample: list.slice(0, 8).map(p => ({ itemId: p.itemId, feedLabel: p.feedLabel || null, status: p.status || null, availability: p.availability || null, issues: (p.issues || []).slice(0, 2), title: String(p.title || "").slice(0, 40) })),
+    issueBreakdown: (() => { const ib = {}; list.forEach(p => (p.issues || []).forEach(i => { ib[i] = (ib[i] || 0) + 1; })); return ib; })(),
     errors: errors.slice(0, 6),
     fallbackUsed: queryKinds.feed > 0 || queryKinds.account > 0 || queryModes.coreFallback > 0 };
   if (!successfulQueries.n && !list.length && errors.length) throw new Error(errors[0]);
