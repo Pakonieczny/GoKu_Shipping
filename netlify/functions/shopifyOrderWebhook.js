@@ -146,6 +146,7 @@ exports.handler = async (event) => {
   try {
     if (topic === "orders/paid" || topic === "orders/create") {
       const orderId = String(payload.id || payload.order_number || payload.name || "");
+      const orderName = String(payload.name || payload.order_number || "").trim() || null;
       const note = payload.note_attributes || [];
       let gclid = noteAttr(note, "gclid");
       let gbraid = noteAttr(note, "gbraid");
@@ -171,7 +172,7 @@ exports.handler = async (event) => {
         // intelligence layer can learn what's selling and inform future ad campaigns.
         const reason = attr.campaign === "sag_organic" ? "organic — free Google listing (sag_organic)"
           : (attr.source ? `non-ad — ${attr.source}/${attr.medium || "none"}` : "organic / no Google click id");
-        try { await E.recordOrderEvent({ orderId, value, currency, source: attr.source, medium: attr.medium, campaign: attr.campaign, gclid: null, captured: false, reason, items, handle: attr.handle }); } catch (e) { LOG("orderLog ERROR", e.message); }
+        try { await E.recordOrderEvent({ orderId, orderName, orderNumericId: String(payload.id || "") || null, value, currency, source: attr.source, medium: attr.medium, campaign: attr.campaign, gclid: null, captured: false, reason, items, handle: attr.handle }); } catch (e) { LOG("orderLog ERROR", e.message); }
         LOG(topic, "order", orderId, "-> 200 SKIPPED (" + reason + ")");
         return { statusCode: 200, body: JSON.stringify({ ok: true, skipped: reason, logged: true }) };
       }

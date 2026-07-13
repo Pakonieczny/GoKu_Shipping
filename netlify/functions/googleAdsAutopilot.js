@@ -652,15 +652,42 @@ async function backfillOrders({ limit = 100 } = {}) {
   catch (e) { d = await shopifyGql(MIN); } // customer-journey field/scope unavailable → still backfill
   const edges = (d && d.orders && d.orders.edges) || [];
 
+  // Index every stored row under EVERY identifier form it carries — the webhook
+  // historically keyed rows by Shopify's numeric id while this backfill keyed
+  // them by order name, so one real order could exist as two rows. Matching on
+  // both forms (and merging the pair below) heals that permanently.
   const existing = new Map();
-  try { const q = await f.db.collection(COL.orderLog).get(); q.forEach(x => { const o = x.data(); if (o.orderId) existing.set(String(o.orderId), { ref: x.ref, data: o }); }); } catch (e) {}
+  const _okey = v => String(v == null ? "" : v).trim().replace(/^#/, "").toLowerCase();
+  try { const q = await f.db.collection(COL.orderLog).get(); q.forEach(x => { const o = x.data();
+    const entry = { ref: x.ref, data: o };
+    [o.orderId, o.orderName, o.orderNumericId].forEach(k => { const kk = _okey(k); if (kk && !existing.has(kk)) existing.set(kk, entry); });
+  }); } catch (e) {}
+  let deduped = 0; const dedupeBatchOps = [];
 
   const rows = [], updates = [];
   edges.forEach(e => {
     const n = (e && e.node) || {};
-    const orderId = String(n.name || n.id || "").replace(/^gid:\/\/shopify\/Order\//, "");
+    const numericId = String(n.id || "").replace(/^gid:\/\/shopify\/Order\//, "").trim();
+    const orderName = String(n.name || "").trim();
+    const orderId = numericId || _okey(orderName);
     if (!orderId) return;
-    const prior = existing.get(orderId) || null;
+    const byNum = numericId ? existing.get(_okey(numericId)) : null;
+    const byName = orderName ? existing.get(_okey(orderName)) : null;
+    // Same order stored twice under the two key conventions → merge the richer
+    // line items into the webhook (numeric) row and delete the duplicate.
+    if (byNum && byName && byNum.ref && byName.ref && !byNum.ref.isEqual(byName.ref)) {
+      const keep = byNum, drop = byName;
+      const kItems = Array.isArray(keep.data.items) ? keep.data.items : [];
+      const dItems = Array.isArray(drop.data.items) ? drop.data.items : [];
+      const sc = a => (a || []).reduce((n2, it) => n2 + (it && it.productId ? 2 : 0) + (it && it.variantId ? 2 : 0) + (it && it.sku ? 1 : 0), 0);
+      const mergePatch = { orderName: orderName || keep.data.orderName || null, orderNumericId: numericId || null, dedupedAt: f.FV.serverTimestamp() };
+      if (sc(dItems) > sc(kItems)) Object.assign(mergePatch, { items: dItems, itemCount: drop.data.itemCount || dItems.length, products: drop.data.products || [] });
+      if (!keep.data.source && drop.data.source) mergePatch.source = drop.data.source;
+      if (!keep.data.campaign && drop.data.campaign) mergePatch.campaign = drop.data.campaign;
+      dedupeBatchOps.push({ set: { ref: keep.ref, patch: mergePatch } }, { del: drop.ref });
+      existing.set(_okey(orderName), keep); deduped++;
+    }
+    const prior = byNum || byName || null;
     const money = n.totalPriceSet && n.totalPriceSet.shopMoney;
     const value = Number(money && money.amount) || 0;
     const currency = (money && money.currencyCode) || CURRENCY;
@@ -690,7 +717,7 @@ async function backfillOrders({ limit = 100 } = {}) {
     const reason = captured ? "captured — Google ad click (backfill)"
       : (campaign === "sag_organic" ? "organic — free Google listing (sag_organic)"
          : (source ? `non-ad — ${source}/${medium || "none"}` : "organic / no Google click id"));
-    const row = { orderId, value, currency, source: source || null, medium: medium || null, campaign: campaign || null,
+    const row = { orderId, orderName: orderName || null, orderNumericId: numericId || null, value, currency, source: source || null, medium: medium || null, campaign: campaign || null,
       hasClickId: captured, captured, reason, items, itemCount, products: items.map(i => i.title), handle: handle || null,
       ts: n.createdAt ? Date.parse(n.createdAt) : Date.now(), backfill: true };
     if (prior) {
@@ -710,9 +737,15 @@ async function backfillOrders({ limit = 100 } = {}) {
       if (Object.keys(patch).length) updates.push({ ref: prior.ref, patch: Object.assign(patch, { enrichedAt: f.FV.serverTimestamp() }) });
       return;
     }
-    existing.set(orderId, { ref: null, data: row });
+    existing.set(_okey(orderId), { ref: null, data: row }); if (orderName) existing.set(_okey(orderName), { ref: null, data: row });
     rows.push(row);
   });
+  // apply merge+delete pairs found above
+  for (let i = 0; i < dedupeBatchOps.length; i += 400) {
+    const b2 = f.db.batch();
+    dedupeBatchOps.slice(i, i + 400).forEach(op => { if (op.del) b2.delete(op.del); else b2.set(op.set.ref, op.set.patch, { merge: true }); });
+    await b2.commit();
+  }
 
   let added = 0, enriched = 0;
   for (let i = 0; i < rows.length; i += 400) {
@@ -725,7 +758,7 @@ async function backfillOrders({ limit = 100 } = {}) {
     updates.slice(i, i + 400).forEach(u => { batch.set(u.ref, u.patch, { merge: true }); enriched++; });
     await batch.commit();
   }
-  return { ok: true, fetched: edges.length, added, enriched, skipped: Math.max(0, edges.length - added - enriched) };
+  return { ok: true, fetched: edges.length, added, enriched, deduped, skipped: Math.max(0, edges.length - added - enriched - deduped) };
 }
 
 async function clearOrderLog({ keep = 1000 } = {}) {
@@ -2494,7 +2527,7 @@ async function proposePmaxOpportunities({ collections = [], profiles = [], ceili
   // This makes the very first scan useful instead of waiting for future purchases.
   let t = Date.now(), backfill = null;
   await emit({id:"pmax_shopify_backfill",category:"Shopify",label:"Shopify order backfill/enrichment",status:"running",startedAt:t,detail:"Reading up to 150 recent orders and enriching product/variant identifiers."});
-  try { backfill = await backfillOrders({ limit: 150 }); await emit({id:"pmax_shopify_backfill",category:"Shopify",label:"Shopify order backfill/enrichment",status:"ok",startedAt:t,endedAt:Date.now(),tookMs:Date.now()-t,detail:`Fetched ${backfill.fetched||0}; added ${backfill.added||0}; enriched ${backfill.enriched||0}; skipped ${backfill.skipped||0}.`,source:"Shopify Admin GraphQL + Firestore",meta:backfill}); }
+  try { backfill = await backfillOrders({ limit: 150 }); await emit({id:"pmax_shopify_backfill",category:"Shopify",label:"Shopify order backfill/enrichment",status:"ok",startedAt:t,endedAt:Date.now(),tookMs:Date.now()-t,detail:`Fetched ${backfill.fetched||0}; added ${backfill.added||0}; enriched ${backfill.enriched||0}; deduped ${backfill.deduped||0}; skipped ${backfill.skipped||0}.`,source:"Shopify Admin GraphQL + Firestore",meta:backfill}); }
   catch (e) { await emit({id:"pmax_shopify_backfill",category:"Shopify",label:"Shopify order backfill/enrichment",status:"warning",startedAt:t,endedAt:Date.now(),tookMs:Date.now()-t,error:e&&e.message,fallback:"Continuing with the existing Firestore order log."}); }
   t = Date.now(); await emit({id:"pmax_store_signals",category:"Store data",label:"30/90-day product sales signals",status:"running",startedAt:t,detail:"Aggregating paid, organic, and Merchant/free-listing product outcomes."});
   const sig90 = await storeSignals({ days: 90 }).catch(() => null);
