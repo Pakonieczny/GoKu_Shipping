@@ -2378,10 +2378,19 @@ function _pmaxTitleMatch(a, b) {
 }
 function _pmaxIsEligible(p) {
   const st = String((p && p.status) || "").toUpperCase(), av = String((p && p.availability) || "").toUpperCase();
-  // shopping_product.status is the live Ads/GMC eligibility verdict. Unknown or
-  // missing states are deliberately excluded: a generated campaign should never
-  // be scoped to an offer Google has not confirmed can serve.
-  return (st === "ELIGIBLE" || st === "ELIGIBLE_LIMITED") && av !== "OUT_OF_STOCK";
+  if (av === "OUT_OF_STOCK") return false;
+  if (st === "ELIGIBLE" || st === "ELIGIBLE_LIMITED") return true;
+  // Bootstrap case: shopping_product.status reflects readiness GIVEN CURRENT
+  // CAMPAIGNS. Before any Shopping/PMax campaign targets an offer, Google
+  // reports NOT_ELIGIBLE with the informational issue "No campaigns advertising
+  // this product" — a condition the campaign we're generating cures by existing.
+  // Such offers are scopable, including alongside data-quality warnings
+  // ("Missing color" etc.) which limit serving but don't block it. Any other
+  // issue (disapprovals, policy, price mismatch...) keeps the offer excluded,
+  // and offers with no issue data (core-field fallback) stay excluded too.
+  const issues = Array.isArray(p && p.issues) ? p.issues : [];
+  if (!issues.length) return false;
+  return issues.every(i => /^(no campaigns advertising|missing\s)/i.test(String(i || "").trim()));
 }
 function _pmaxDigits(v) {
   const m = String(v || "").match(/(\d{5,})/g); return m || [];
