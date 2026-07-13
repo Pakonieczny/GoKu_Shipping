@@ -435,7 +435,7 @@ svg rect.bc-bar[data-tip]:hover{filter:brightness(.85);stroke:var(--ink);stroke-
   <aside class="rail">
     <div class="rail__brand"><div class="logo">Brites <b>·</b> Autopilot</div><div class="tag">Ad Control Room</div></div>
     <nav class="nav" id="nav"></nav>
-    <div class="rail__foot"><span class="dot" id="connDot"></span><span id="connText">connected</span> <a href="#" id="signOut" style="float:right;color:#8c8476;font-size:10.5px;text-decoration:underline" onclick="sessClear();location.reload();return false;">sign out</a><br><span class="muted" style="font-size:10px">live · Google Ads v24</span></div>
+    <div class="rail__foot"><span class="dot" id="connDot"></span><span id="connText">connected</span> <a href="#" id="signOut" style="float:right;color:#8c8476;font-size:10.5px;text-decoration:underline" onclick="sessClear();location.reload();return false;">sign out</a><br><span class="muted" style="font-size:10px">live · Google Ads v24 · opportunity engine v12</span></div>
   </aside>
   <div class="navscrim" id="navScrim"></div>
   <div class="main">
@@ -1515,15 +1515,21 @@ function renderApprovals(){var list=$("#apprList");var p=DASH.pending||[];var st
         +(m.feedLabel?'<span class="chip">'+esc(String(m.feedLabel).toUpperCase())+' feed + market</span>':'')
         +(m.countries&&m.countries.length?'<span class="chip">'+m.countries.length+' countr'+(m.countries.length===1?'y':'ies')+'</span>':'')
         +'<span class="chip">GMC '+esc(String(m.merchantId||""))+'</span></div>'
-        +(m.productTitles&&m.productTitles.length?'<div class="muted" style="font-size:11.5px;margin:7px 0"><b>Feed products:</b> '+m.productTitles.slice(0,6).map(esc).join(' · ')+'</div>':'');
+         +(m.productTitles&&m.productTitles.length?'<div class="muted" style="font-size:11.5px;margin:7px 0"><b>Feed products:</b> '+m.productTitles.slice(0,6).map(esc).join(' · ')+'</div>':'')
+        +(m.assetGroups&&m.assetGroups.length?'<details class="xd" style="margin-top:8px"><summary>Product groups <span class="xd-n">'+m.assetGroups.length+' coherent asset groups</span></summary><div style="font-size:11.5px;color:var(--ink-70);margin-top:7px">'+m.assetGroups.map(function(g){return '<b>'+esc(g.name||"Products")+'</b> · '+((g.itemIds||[]).length)+' exact offers';}).join('<br>')+'</div></details>':'')
+        +(m.searchThemes&&m.searchThemes.length?'<details class="xd" style="margin-top:8px"><summary>AI search themes <span class="xd-n">'+m.searchThemes.length+'</span></summary><div class="chips" style="margin-top:7px">'+m.searchThemes.map(function(t){return '<span class="chip">'+esc(t)+'</span>';}).join('')+'</div></details>':'')
+        +(m.audienceSignal?'<div class="muted" style="font-size:11px;margin-top:7px"><b>Audience signal:</b> '+esc(m.audienceSignalName||"validated first-party Google Ads audience")+(m.audienceSignalSource?(' · '+esc(m.audienceSignalSource)):'')+'.</div>':'')
+        +(m.audienceSignalWarning?'<div style="font-size:11px;margin-top:7px;color:var(--clay)"><b>Audience signal skipped:</b> '+esc(m.audienceSignalWarning)+'</div>':'');
       if(c2.headlines.length)body+='<div class="eyebrow" style="margin:8px 0 6px">Asset headlines</div>'+c2.headlines.map(t=>copyLine(t,30)).join("");
-      body+='<div class="kv" style="margin-top:12px;color:var(--ink-45)">Runs on your Merchant Center product feed \u2014 the same listings already selling organically, placed higher. Created <span style="color:var(--ink)">PAUSED</span>; enable from Command Center.</div>';
+      body+='<div class="kv" style="margin-top:12px;color:var(--ink-45)">Runs on exact eligible Merchant Center offers, separated into coherent product groups and tracked back to Shopify as paid-shopping traffic. Created <span style="color:var(--ink)">PAUSED</span>; enable from Command Center.</div>';
     }
     else if(pl.mutateOperations){var c=parseCreative(pl.mutateOperations);
       if(c.headlines.length)body+='<div class="eyebrow" style="margin:4px 0 6px">Headlines \u00b7 \u226430</div>'+c.headlines.map(t=>copyLine(t,30)).join("");
       if(c.descriptions.length)body+='<div class="eyebrow" style="margin:14px 0 6px">Descriptions \u00b7 \u226490</div>'+c.descriptions.map(t=>copyLine(t,90)).join("");
       if(c.keywords.length){var kd=(c.kwDetail&&c.kwDetail.length)?c.kwDetail:c.keywords.map(function(k){return{text:k,matchType:"PHRASE"};});var nEx=kd.filter(function(k){return k.matchType==="EXACT";}).length;
         body+='<div class="eyebrow" style="margin:14px 0 7px">Keywords <span class="muted" style="font-weight:400;text-transform:none;letter-spacing:0">\u00b7 '+kd.length+(nEx?' \u00b7 '+nEx+' exact-match':'')+'</span></div><div class="chips">'+kd.map(function(k){return '<span class="chip on" title="'+(k.matchType==="EXACT"?"Exact match \u2014 bids only on this precise phrase":"Phrase match")+'">'+esc(k.text)+(k.matchType==="EXACT"?' <span style="opacity:.55;font-size:9px">[E]</span>':'')+'</span>';}).join("")+'</div>';}
+      if(pl.adGroupSummary&&pl.adGroupSummary.length)body+='<details class="xd" style="margin-top:10px"><summary>Intent structure <span class="xd-n">'+pl.adGroupSummary.length+' focused ad groups</span></summary><div style="font-size:11.5px;color:var(--ink-70);margin-top:7px">'+pl.adGroupSummary.map(function(g){return '<b>'+esc(g.name||"Intent")+'</b>'+(g.finalUrl?' <span class="muted">→ '+esc(g.finalUrl.replace("https://britesjewelry.com",""))+'</span>':'')+' · '+(g.keywords||[]).map(esc).join(', ');}).join('<br><br>')+'</div></details>';
+      if(pl.keywordValidation&&pl.keywordValidation.evidence)body+='<div class="muted" style="font-size:11px;margin-top:8px"><b>Validation:</b> '+pl.keywordValidation.evidence.accepted+' inventory-grounded terms accepted · '+pl.keywordValidation.evidence.rejected+' rejected · confidence '+pl.keywordValidation.confidence+'/100 · Google Search only.</div>';
       body+='<div class="kv" style="margin-top:12px;color:var(--ink-45)">'+(c.finalUrl?'URL <span style="color:var(--ink)">'+esc(c.finalUrl.replace("https://britesjewelry.com",""))+'</span> \u00b7 ':"")+(c.budget!=null?'budget <span style="color:var(--ink)">'+money(c.budget)+'/day</span> \u00b7 ':"")+'status <span style="color:var(--ink)">PAUSED</span></div>'+adExtrasLine(c);
       body+='<div class="eyebrow" style="margin:14px 0 7px">Countries <span class="muted" style="text-transform:none;font-weight:400;letter-spacing:0">\u00b7 where it runs</span></div><div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap">'+ctyChips(pl.countries)+'<button class="btn ghost sm apcty-edit" data-id="'+a.id+'" data-sel="'+((pl.countries||[]).join(","))+'" style="padding:3px 9px;font-size:11px">Edit</button></div>';
       body+='<div class="eyebrow" style="margin:14px 0 7px">Schedule <span class="muted" style="text-transform:none;font-weight:400;letter-spacing:0">\u00b7 when it runs \u2014 editable until you approve</span></div><div style="display:flex;gap:9px;align-items:center;flex-wrap:wrap;font-size:12px"><label class="muted" style="font-size:11px">Start</label><input type="date" class="apd-s" value="'+esc(c.startDate||"")+'" style="padding:5px 8px;border:1px solid var(--line);border-radius:7px;background:var(--paper);font-size:12px"><label class="muted" style="font-size:11px">End</label><input type="date" class="apd-e" value="'+esc(c.endDate||"")+'" style="padding:5px 8px;border:1px solid var(--line);border-radius:7px;background:var(--paper);font-size:12px"><button class="btn ghost sm apd-save" data-id="'+a.id+'" style="padding:4px 11px;font-size:11px">Save dates</button><span class="muted apd-msg" style="font-size:11px"></span></div>';
@@ -1893,8 +1899,9 @@ function renderPmaxSection(host){
     +'<div class="card__h"><h3>Feed campaigns · Google Shopping</h3><span class="sub">ranked from actual organic sales and exact GMC offers</span></div>';
   PMAXOPPS.forEach(function(o,i){
     var org=o.organic||{};
-    var proof=(org.orders30d||0)+' matched organic orders · $'+(org.organicRevenue30d||0)+' · 30/90d evidence';
+    var proof=(org.orders30d||0)+' matched organic orders · $'+(org.organicRevenue30d||0)+' revenue · ~$'+(o.estimatedProfit30d||0)+' est. contribution';
     var products=(o.productTitles||[]).slice(0,4);
+    var free=(o.freePerformance&&o.freePerformance.days30)||null;
     var scope=(o.itemIds&&o.itemIds.length)?(o.itemIds.length+' exact GMC offers'):(o.types&&o.types.length?('product types: '+o.types.join('/')):'feed scope');
     var acted=o.acted||null;
     var state=acted?('<span class="badge2 '+(acted.where==="campaign"?"b-on":"b-pause")+'">'+esc((acted.where==="campaign"?"CAMPAIGN ":"APPROVAL ")+(acted.status||"IN USE"))+'</span>'):'';
@@ -1902,10 +1909,10 @@ function renderPmaxSection(host){
     var buttonText=acted?'Already in use':'Generate';
     inner+='<div class="pmxrow" style="border-top:1px solid var(--line);padding:14px 2px">'
       +'<div><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span class="chip on" style="background:var(--gold-soft);border-color:var(--gold)">PMAX</span>'+(o.feedLabel?'<span class="chip">'+esc(String(o.feedLabel).toUpperCase())+' FEED</span>':'')+'<b>'+esc(o.collectionTitle)+'</b>'+state+'</div>'
-      +'<div class="muted" style="font-size:11.5px;margin-top:5px">'+esc(proof)+'</div>'
+      +'<div class="muted" style="font-size:11.5px;margin-top:5px">'+esc(proof)+' · confidence '+(o.confidence||'—')+'/100 · '+esc(String(o.opportunityClass||'').replace(/_/g,' '))+'</div>'
       +'<div class="muted" style="font-size:11px;margin-top:3px">'+esc(scope)+' · '+esc(org.signalSource||"organic sales signal")+(o.feedLabel?' · location locked to '+esc(String(o.feedLabel).toUpperCase()):'')+'</div></div>'
       +'<div><div style="font-size:12.5px">'+esc(o.rationale||"")+(o.angle?' · <i>'+esc(o.angle)+'</i>':'')+'</div>'
-      +(products.length?'<div style="font-size:11.5px;color:var(--ink-70);margin-top:6px"><b>Products:</b> '+products.map(esc).join(' · ')+'</div>':'')+'</div>'
+      +(products.length?'<div style="font-size:11.5px;color:var(--ink-70);margin-top:6px"><b>Products:</b> '+products.map(esc).join(' · ')+'</div>':'')+((o.searchThemes||[]).length?'<div style="font-size:11px;color:var(--ink-45);margin-top:5px"><b>Search themes:</b> '+o.searchThemes.slice(0,6).map(esc).join(' · ')+'</div>':'')+((free&&(Number(free.conversions||0)>0||Number(free.clicks||0)>0))?'<div style="font-size:11px;color:var(--sage);margin-top:4px"><b>Google free-listing report:</b> '+Number(free.clicks||0)+' clicks · '+Number(free.conversions||0).toFixed(1)+' conv · $'+Number(free.value||0).toFixed(2)+' conversion value</div>':'')+(o.merchantReportWarning?'<div style="font-size:10.5px;color:var(--clay);margin-top:3px"><b>Merchant report fallback:</b> '+esc(String(o.merchantReportWarning).slice(0,170))+'</div>':'')+((o.paidPerformance&&o.paidPerformance.cost)?'<div style="font-size:11px;color:var(--ink-45);margin-top:4px"><b>Paid product history:</b> $'+Number(o.paidPerformance.cost).toFixed(2)+' spend · '+Number(o.paidPerformance.conversions||0).toFixed(1)+' conv · '+(o.paidPerformance.roas!=null?Number(o.paidPerformance.roas).toFixed(1)+'x ROAS':'learning')+'</div>':'')+'<div style="font-size:11px;color:var(--ink-45);margin-top:4px"><b>Bidding:</b> '+(o.recommendedTargetRoas?('Max conversion value · evidence-gated tROAS '+Number(o.recommendedTargetRoas).toFixed(2)+'x'):'Max conversion value · unconstrained learning')+(o.breakEvenRoas?(' · est. break-even '+Number(o.breakEvenRoas).toFixed(2)+'x'):'')+'</div></div>'
       +'<div style="display:flex;align-items:center;gap:8px;justify-content:flex-end;flex-wrap:wrap"><span style="white-space:nowrap">$<input type="number" class="pmx-bud" data-i="'+i+'" value="'+(o.dailyBudget||10)+'" min="3" max="30" style="width:58px;padding:4px 6px;border:1px solid var(--line);border-radius:7px">/day · '+(o.days||30)+'d</span>'
       +'<button class="btn gold sm pmx-gen" data-i="'+i+'"'+disabled+'>'+buttonText+'</button><span class="pmx-msg" data-i="'+i+'" style="font-size:12px;color:var(--ink-45)"></span></div></div>';
   });
@@ -1918,7 +1925,7 @@ function renderPmaxSection(host){
     var done=function(){clearInterval(tk);btn.disabled=false;btn.textContent="Generate";};
     try{
       var genId=String(Date.now())+"-pmx";
-      var r=await api("generatePmax",{genId:genId,handle:o.handle,dailyBudget:bud,days:o.days,itemIds:o.itemIds||[],productTitles:o.productTitles||[],feedLabel:o.feedLabel||null});
+      var r=await api("generatePmax",{genId:genId,handle:o.handle,dailyBudget:bud,targetRoas:o.recommendedTargetRoas||0,days:o.days,itemIds:o.itemIds||[],productTitles:o.productTitles||[],feedLabel:o.feedLabel||null,searchThemes:o.searchThemes||[],offerDetails:o.offerDetails||[]});
       if(r&&r.error)throw new Error(r.error);
       var t1=Date.now(),st=null;
       while(Date.now()-t1<600000){st=await api("genStatus",{genId:genId}).catch(function(){return null;});if(st&&(st.ok===true||st.ok===false))break;await new Promise(function(res){setTimeout(res,3000);});}
@@ -1976,22 +1983,20 @@ function oppModel(o){
   /* Fallback for opportunities cached before the engine upgrade (rescan to refresh): */
   var lo=(p.cpc&&p.cpc.low)||0, hi=(p.cpc&&p.cpc.max)||0;
   var eM=(lo>0&&hi>0)?Math.round(Math.sqrt(lo*hi)*100)/100:((p.cpc&&p.cpc.target)||hi||1);
-  return { eCpcMarket:eM, eCpc:eM, cpcLow:lo, cpcHigh:hi, cvr:(p.cvr)||0.02, cvrSource:"benchmark", aov:(p.expected&&p.expected.aov)||0, uncertainty:0.3 };
+  return {eCpcMarket:eM,eCpc:eM,cpcLow:lo,cpcHigh:hi,cvr:(p.cvr)||0.02,cvrSource:"benchmark",aov:(p.expected&&p.expected.aov)||0,marginRate:(p.expected&&p.expected.marginRate)||0.65,uncertainty:0.3};
 }
 function oppProj(o,opts){
-  var m=oppModel(o); opts=opts||{};
+  var m=oppModel(o);opts=opts||{};
   var bud=+opts.bud>0?+opts.bud:o.recommendedDailyBudget;
   var days=+opts.days>0?+opts.days:(o.durationDays||28);
   var cap=+opts.cap>0?+opts.cap:((o.plan&&o.plan.cpc&&o.plan.cpc.max)||m.cpcHigh||1);
   var smart=!!opts.smart;
-  var eCpc=smart?m.eCpcMarket:Math.min(m.eCpcMarket,cap); if(!(eCpc>0))eCpc=cap>0?cap:1;
-  var cpd=bud/eCpc, clicks=Math.round(cpd*days);
-  var sales=Math.round(clicks*m.cvr*100)/100;
-  var spend=Math.round(bud*days);
-  var rev=m.aov>0?Math.round(sales*m.aov):null;
-  var u=m.uncertainty!=null?m.uncertainty:0.3, roas=null;
-  if(rev!=null&&spend>0){ var lo=Math.round(rev*(1-u)/spend*10)/10, hi=Math.round(rev*(1+u)/spend*10)/10; roas={low:lo,high:hi,band:lo.toFixed(1)+"\u2013"+hi.toFixed(1)+"x"}; }
-  return { eCpc:Math.round(eCpc*100)/100, cpd:cpd, clicks:clicks, sales:sales, spend:spend, rev:rev, roas:roas, model:m };
+  var eCpc=smart?m.eCpcMarket:Math.min(m.eCpcMarket,cap);if(!(eCpc>0))eCpc=cap>0?cap:1;
+  var cpd=bud/eCpc,clicks=Math.round(cpd*days),sales=Math.round(clicks*m.cvr*100)/100,spend=Math.round(bud*days);
+  var rev=m.aov>0?Math.round(sales*m.aov):null,u=m.uncertainty!=null?m.uncertainty:0.3,roas=null;
+  var margin=m.marginRate||0.65,contribution=null,profit=null,profitLow=null,profitHigh=null;
+  if(rev!=null&&spend>0){var lo=Math.round(rev*(1-u)/spend*10)/10,hi=Math.round(rev*(1+u)/spend*10)/10;roas={low:lo,high:hi,band:lo.toFixed(1)+"\u2013"+hi.toFixed(1)+"x"};contribution=Math.round(rev*margin);profit=Math.round(contribution-spend);profitLow=Math.round(rev*(1-u)*margin-spend);profitHigh=Math.round(rev*(1+u)*margin-spend);}
+  return {eCpc:Math.round(eCpc*100)/100,cpd:cpd,clicks:clicks,sales:sales,spend:spend,rev:rev,roas:roas,contribution:contribution,profit:profit,profitLow:profitLow,profitHigh:profitHigh,model:m};
 }
 function oppRecalc(cards,i){
   var o=OPPS[i]; if(!o)return;
@@ -2005,7 +2010,7 @@ function oppRecalc(cards,i){
   set('.opPlanned',money(bud));
   set('.planCpc',money(cap)); set('.planSales',pr.sales); set('.planClicks',Math.round(pr.cpd));
   set('.planECpc',money(pr.eCpc));
-  set('.planRoas',pr.roas?pr.roas.band:(o.expectedRoasBand||"\u2014"));
+  set('.planRoas',pr.roas?pr.roas.band:(o.expectedRoasBand||"\u2014")); set('.planProfit',pr.profit!=null?((pr.profit>=0?'+' :'')+money(pr.profit)):'\u2014');
   set('.planStrat',smart?"Smart Bidding":"Manual CPC");
   set('.planCapPre',smart?"No CPC cap \u00b7 est. ":"Max CPC ");
   set('.planCapSuf',smart?"/click":" \u00b7 hard cap");
@@ -2040,8 +2045,9 @@ function kwResearchPanel(o){var r=o.research||{};var kd=o.keywordData||[];var re
       '<td style="padding:5px 8px;text-align:right;font-family:var(--mono)">'+((k.low||k.high)?(money(k.low||0)+'\u2013'+money(k.high||0)):"\u2014")+'</td>'+
       '<td style="padding:5px 8px">'+tailChip(k.tail)+(k.intent?(' <span style="font-size:9px;color:var(--ink-45)">'+esc(k.intent)+'</span>'):'')+'</td></tr>';}).join("")+'</tbody></table></div>'):'<div class="muted" style="font-size:12px">\u2014</div>';
   var strat=r.strategy?'<div class="muted" style="font-size:11px;margin-top:9px;line-height:1.6"><b>Why these keywords:</b> '+esc(r.strategy)+'</div>':"";
+  var valid='<div style="font-size:10.5px;margin-top:8px;padding:7px 9px;border-radius:7px;background:var(--sage-soft);color:var(--ink-70)"><b>Inventory validation:</b> '+(r.keywordCount||kd.length)+' accepted · '+(r.intentGroups||1)+' intent ad group'+((r.intentGroups||1)===1?'':'s')+' · '+((r.rejectedKeywords||[]).length)+' unsupported suggestions rejected. No broad fallback keywords.</div>';
   var crit='<div class="muted" style="font-size:10.5px;margin-top:7px;line-height:1.6">Selection criteria: ranked by demand & intent \u2014 '+(r.longCount||0)+' long-tail (specific, lower competition, higher purchase intent) balanced with '+(r.headCount||0)+' head term'+((r.headCount||0)===1?"":"s")+' for reach. '+(real?'<b style="color:var(--sage)">\u25cf</b> marks live Google data.':'AI estimates until live Keyword Planner data is available.')+'</div>';
-  return summary+errNote+rows+strat+crit;}
+  return summary+errNote+rows+strat+valid+crit;}
 function planBlock(o,i){ var p=o.plan; if(!p)return ""; var smart=oppBidOf(i); var cap=oppCpcOf(i); var s=stratLine(p,smart);
   var bud=o.recommendedDailyBudget, dur=o.durationDays||(p.duration&&p.duration.days)||28;
   var pr=oppProj(o,{bud:bud,days:dur,cap:cap,smart:smart});
@@ -2089,7 +2095,7 @@ function oppCard(o,i,ceil){ var pm=priMeta(o.priority);
     '<div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">'+
       '<span style="font-size:15px;font-weight:700;color:var(--ink)">'+esc(o.occasion)+'</span>'+
       urgPill(o)+
-      '<span class="verdict" style="background:'+pm[1]+';color:'+pm[2]+';font-size:9.5px">'+pm[0]+'</span>'+
+      '<span class="verdict" style="background:'+pm[1]+';color:'+pm[2]+';font-size:9.5px">'+pm[0]+'</span>'+'<span class="badge2 b-learn" style="font-size:9px">'+esc(String(o.opportunityClass||'controlled_experiment').replace(/_/g,' ').toUpperCase())+'</span>'+
       '<span style="flex:1"></span>'+kwDot(o)+
     '</div>'+
     '<div class="muted mono" style="font-size:11px;margin:2px 0 9px">'+esc(o.collectionTitle)+' \u00b7 <span class="opWin" data-i="'+i+'">'+winTxt+'</span> \u00b7 <span class="opDur" data-i="'+i+'">'+o.durationDays+'</span>d</div>'+
@@ -2097,7 +2103,9 @@ function oppCard(o,i,ceil){ var pm=priMeta(o.priority);
       faceStat("fBud",i,money(o.recommendedDailyBudget)+"/d","budget")+
       faceStat("planSales",i,pr0.sales,"est. sales")+
       faceStat("planRev2",i,pr0.rev!=null?("~"+money(pr0.rev)):"\u2014","proj. revenue")+
+      faceStat("planProfit",i,pr0.profit!=null?((pr0.profit>=0?"+":"")+money(pr0.profit)):"\u2014","est. profit",1)+
       faceStat("planRoas",i,pr0.roas?pr0.roas.band:(o.expectedRoasBand||"\u2014"),"roas",1)+
+      faceStat("oppConf",i,((o.confidence&&o.confidence.score)||"\u2014")+"/100","confidence")+
     '</div>'+
     (o.audience?('<div class="muted" style="font-size:11.5px;margin-bottom:10px">'+esc(o.audience.buyer||"")+(o.audience.recipient?(' \u2192 '+esc(o.audience.recipient)):'')+' \u00b7 past: '+past+'</div>'):('<div class="muted" style="font-size:11.5px;margin-bottom:10px">past: '+past+'</div>'))+
     '<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">'+
@@ -2126,6 +2134,7 @@ function oppCard(o,i,ceil){ var pm=priMeta(o.priority);
       '<span class="muted" style="font-size:11px">AI suggests this window</span>'+
     '</div>'+
     '<div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:12px;font-size:12.5px"><span class="muted">Expected ROAS&nbsp;<b class="planRoas" data-i="'+i+'" style="color:var(--ink);font-family:var(--mono)">'+esc(pr0.roas?pr0.roas.band:(o.expectedRoasBand||"\u2014"))+'</b>&nbsp;<span style="font-size:11px" title="Projected revenue \u00f7 projected spend with \u00b130% conversion-rate uncertainty \u2014 computed from the same numbers on this card, and re-computed live as you edit budget, dates or CPC.">(computed'+(o.proven?" \u00b7 occasion proven in history":"")+')</span></span><span class="muted">Past:&nbsp;'+past+'</span></div>'+
+    '<div class="muted" style="font-size:11.5px;margin-top:7px"><b>Contribution economics:</b> margin '+Math.round((((o.plan||{}).expected||{}).marginRate||0.65)*100)+'% · break-even ROAS '+((((o.plan||{}).expected||{}).breakEvenRoas!=null)?Number((o.plan||{}).expected.breakEvenRoas).toFixed(2):'—')+'x · expected profit <b class="planProfit" data-i="'+i+'">'+(pr0.profit!=null?((pr0.profit>=0?'+':'')+money(pr0.profit)):'—')+'</b> ('+(pr0.profitLow!=null?money(pr0.profitLow):'—')+' to '+(pr0.profitHigh!=null?money(pr0.profitHigh):'—')+')</div>'+
     planBlock(o,i)+
     '<details class="xd" style="margin-top:12px" open><summary>Keyword research &amp; phrases</summary>'+
       kwResearchPanel(o)+
