@@ -2236,9 +2236,20 @@ async function merchantProducts({ force = false, itemIds = [], signals = [], tit
     } catch (e) { errors.push(String(e.message || e)); noteRequest("account", "account-wide bounded fallback", 1, null, e); }
   }
   const list = [...found.values()];
+  // Why-not-eligible visibility: when GMC shows "Approved" but the Ads-side
+  // shopping_product verdict disagrees, these breakdowns name the exact cause
+  // per matched offer (status vs availability) instead of a bare zero.
+  const statusBreakdown = {}, availabilityBreakdown = {};
+  list.forEach(p => {
+    const st = String(p.status || "(missing)").toUpperCase(), av = String(p.availability || "(missing)").toUpperCase();
+    statusBreakdown[st] = (statusBreakdown[st] || 0) + 1;
+    availabilityBreakdown[av] = (availabilityBreakdown[av] || 0) + 1;
+  });
   list._diag = { merchantId, requestedOfferIds: plan.itemIds.length, requestedTitles: plan.titles.length,
     successfulQueries: successfulQueries.n, queryKinds, queryModes, requests: requests.slice(0, 30), matchedProducts: list.length,
-    eligibleProducts: list.filter(_pmaxIsEligible).length, errors: errors.slice(0, 6),
+    eligibleProducts: list.filter(_pmaxIsEligible).length, statusBreakdown, availabilityBreakdown,
+    offerSample: list.slice(0, 8).map(p => ({ itemId: p.itemId, feedLabel: p.feedLabel || null, status: p.status || null, availability: p.availability || null, title: String(p.title || "").slice(0, 48) })),
+    errors: errors.slice(0, 6),
     fallbackUsed: queryKinds.feed > 0 || queryKinds.account > 0 || queryModes.coreFallback > 0 };
   if (!successfulQueries.n && !list.length && errors.length) throw new Error(errors[0]);
   _merchantProductsCache.set(key, { at: Date.now(), list });
