@@ -429,6 +429,47 @@ svg rect.bc-bar[data-tip]:hover{filter:brightness(.85);stroke:var(--ink);stroke-
 .auditRow:last-child{border-bottom:0}.auditIcon{font-weight:900;text-align:center}.auditLabel{font-size:12.5px;font-weight:650}.auditCat{font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-45);margin-bottom:2px}.auditDetail{font-size:11.5px;color:var(--ink-70);line-height:1.45}.auditMeta{font:10.5px var(--mono);color:var(--ink-45);white-space:nowrap;text-align:right}.auditErr{color:var(--clay);margin-top:3px}.auditFallback{color:#7a5a1d;margin-top:3px}
 .auditData{margin-top:5px}.auditData>summary{display:inline-flex;align-items:center;gap:4px;list-style:none;cursor:pointer;color:var(--slate);font:600 10.5px var(--mono)}.auditData>summary::-webkit-details-marker{display:none}.auditData>summary::before{content:"▸"}.auditData[open]>summary::before{content:"▾"}.auditData pre{white-space:pre-wrap;word-break:break-word;margin:5px 0 0;padding:7px 9px;border:1px solid var(--line);border-radius:7px;background:var(--paper);color:var(--ink-70);font:10px/1.4 var(--mono);max-height:210px;overflow:auto}
 @media(max-width:760px){.auditRow{grid-template-columns:20px 1fr}.auditDetail,.auditMeta{grid-column:2}.auditMeta{text-align:left;white-space:normal}.auditRows{max-height:62vh}}
+
+/* ===== Ad Preview Studio (in-app modal) ===== */
+#apvModal{position:fixed;inset:0;background:rgba(20,17,13,.72);z-index:80;display:none;align-items:flex-start;justify-content:center;overflow:auto;padding:24px 14px}
+#apvModal.on{display:flex}
+.apv-panel{background:var(--bg,#f7f4ee);border-radius:16px;max-width:1320px;width:100%;padding:0;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.35)}
+.apv-head{display:flex;align-items:center;gap:12px;padding:16px 20px;border-bottom:1px solid var(--line);background:var(--card)}
+.apv-head h2{font-family:Georgia,serif;font-size:19px;margin:0}
+.apv-head .sub{color:var(--ink-45);font-size:12px}
+.apv-x{margin-left:auto;background:none;border:none;font-size:22px;cursor:pointer;color:var(--ink-45);line-height:1;padding:4px 8px;border-radius:8px}
+.apv-x:hover{background:var(--gold-soft,#f3ead6);color:var(--ink)}
+.apv-body{padding:16px 20px 24px;max-height:82vh;overflow:auto}
+.apv-bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+.apv-tabs{display:flex;gap:8px;flex-wrap:wrap}
+.apv-strip{display:flex;gap:10px;overflow-x:auto;padding:4px 2px 12px}
+.apv-pthumb{flex:0 0 auto;width:82px;cursor:pointer;text-align:center}
+.apv-pthumb img{width:82px;height:82px;object-fit:cover;border-radius:10px;border:2px solid transparent;background:#fff}
+.apv-pthumb.sel img{border-color:var(--gold)}
+.apv-pthumb .t{font-size:10px;color:var(--ink-70);margin-top:3px;line-height:1.25;height:24px;overflow:hidden}
+.apv-pthumb .d{font-size:9px;color:#3f6f4f}
+.apv-stage{background:#efeadf;border:1px solid var(--line);border-radius:12px;padding:22px;transition:background .25s}
+.apv-stage.dark{background:#17130e}
+.apv-wall{display:flex;flex-wrap:wrap;gap:22px;align-items:flex-start;justify-content:center}
+.apv-ph{text-align:center}
+.apv-ph .lbl{font-size:10.5px;color:var(--ink-45);margin-top:7px}
+.apv-stage.dark .apv-ph .lbl{color:#a79d8d}
+.apv-ph .lbl b{color:var(--gold);font-weight:700}
+.apv-frame{background:#fff;border-radius:6px;box-shadow:0 4px 20px rgba(31,27,22,.12);overflow:hidden;cursor:zoom-in}
+.apv-phone{border-radius:30px;border:8px solid #14110d;box-shadow:0 8px 32px rgba(0,0,0,.28)}
+.apv-adbadge{display:inline-block;font-size:9px;font-weight:700;color:#006621;border:1px solid #006621;border-radius:3px;padding:0 3px;vertical-align:1px}
+.apv-gsans{font-family:arial,sans-serif}
+.apv-stars{color:#fbbc04;font-size:11px;letter-spacing:1px}
+.apv-inspector{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-top:14px}
+.apv-inspector .row{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start}
+.apv-crop{text-align:center}
+.apv-crop img{border-radius:8px;border:1px solid var(--line);background:#fff;cursor:zoom-in}
+.apv-crop .cl{font-size:10.5px;color:var(--ink-70);margin-top:4px}
+.apv-crop .cl b{color:var(--gold)}
+.apv-note{font-size:11.5px;color:var(--ink-45);margin-top:9px}
+.apv-lb{position:fixed;inset:0;background:rgba(0,0,0,.85);display:none;align-items:center;justify-content:center;z-index:90;padding:30px}
+.apv-lb.on{display:flex}
+@media(max-width:760px){.apv-body{padding:10px 8px 20px}.apv-stage{padding:10px}.apv-wall{gap:14px}}
 </style>
 </head>
 <body>
@@ -572,6 +613,32 @@ svg rect.bc-bar[data-tip]:hover{filter:brightness(.85);stroke:var(--ink);stroke-
 </div>
 <div class="toasts" id="toasts"></div>
 
+
+<div id="apvModal" onclick="if(event.target===this)apvClose()">
+  <div class="apv-panel">
+    <div class="apv-head">
+      <div><h2 id="apvTitle">Ad Preview</h2><div class="sub" id="apvSub">the exact images sent to Google, in every placement</div></div>
+      <button class="apv-x" onclick="apvClose()">&times;</button>
+    </div>
+    <div class="apv-body">
+      <div class="apv-bar">
+        <span style="font-weight:600;font-size:12.5px">Placements:</span>
+        <div class="apv-tabs" id="apvTabs"></div>
+        <span style="flex:1"></span>
+        <button class="btn ghost sm" id="apvDevBtn" onclick="apvToggleDevice()" style="padding:4px 10px;font-size:11.5px">Mobile frames: off</button>
+        <button class="btn ghost sm" id="apvBgBtn" onclick="apvToggleBg()" style="padding:4px 10px;font-size:11.5px">Dark sites</button>
+      </div>
+      <div class="apv-strip" id="apvProds"></div>
+      <div class="apv-stage" id="apvStage"><div class="apv-wall" id="apvWall"></div></div>
+      <div class="apv-inspector">
+        <h3 style="font-size:14.5px;margin-bottom:8px;font-family:Georgia,serif">What Google actually receives &mdash; <span id="apvInsTitle" style="color:var(--gold)"></span></h3>
+        <div class="row" id="apvInsRow"></div>
+        <div class="apv-note">Literal crop URLs the engine uploads as image assets. <b>Detail shot</b> means this listing has a close-up second photo and the tight crops are cut from it &mdash; the framing that survives small placements.</div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="apv-lb" id="apvLb" onclick="this.classList.remove('on')"><div id="apvLbInner"></div></div>
 <script>
 
 const ENDPOINT = (typeof window!=="undefined" && window.__GADS_ENDPOINT)
@@ -1555,6 +1622,7 @@ function renderApprovals(){var list=$("#apprList");var p=DASH.pending||[];var st
         +(m.audienceSignal?'<div class="muted" style="font-size:11px;margin-top:7px"><b>Audience signal:</b> '+esc(m.audienceSignalName||"validated first-party Google Ads audience")+(m.audienceSignalSource?(' · '+esc(m.audienceSignalSource)):'')+'.</div>':'')
         +(m.audienceSignalWarning?'<div style="font-size:11px;margin-top:7px;color:var(--clay)"><b>Audience signal skipped:</b> '+esc(m.audienceSignalWarning)+'</div>':'');
       if(c2.headlines.length)body+='<div class="eyebrow" style="margin:8px 0 6px">Asset headlines</div>'+c2.headlines.map(t=>copyLine(t,30)).join("");
+      body+='<div style="margin-top:10px"><button class="btn ghost sm" onclick="apvOpen(\''+apvEnc(m.handle||"")+'\',\''+apvEnc(JSON.stringify((m.productTitles||[]).slice(0,8)))+'\',\''+apvEnc(m.collectionTitle||"")+'\')">Preview ads before approving</button></div>';
       body+='<div class="kv" style="margin-top:12px;color:var(--ink-45)">Runs on exact eligible Merchant Center offers, separated into coherent product groups and tracked back to Shopify as paid-shopping traffic. Created <span style="color:var(--ink)">PAUSED</span>; enable from Command Center.</div>';
     }
     else if(pl.mutateOperations){var c=parseCreative(pl.mutateOperations);
@@ -1983,6 +2051,7 @@ function renderPmaxSection(host){
       +'<div><div style="font-size:12.5px">'+esc(o.rationale||"")+(o.angle?' · <i>'+esc(o.angle)+'</i>':'')+'</div>'
       +(products.length?'<div style="font-size:11.5px;color:var(--ink-70);margin-top:6px"><b>Products:</b> '+products.map(esc).join(' · ')+'</div>':'')+((o.searchThemes||[]).length?'<div style="font-size:11px;color:var(--ink-45);margin-top:5px"><b>Search themes:</b> '+o.searchThemes.slice(0,6).map(esc).join(' · ')+'</div>':'')+((free&&(Number(free.conversions||0)>0||Number(free.clicks||0)>0))?'<div style="font-size:11px;color:var(--sage);margin-top:4px"><b>Google free-listing report:</b> '+Number(free.clicks||0)+' clicks · '+Number(free.conversions||0).toFixed(1)+' conv · $'+Number(free.value||0).toFixed(2)+' conversion value</div>':'')+(o.merchantReportWarning?'<div style="font-size:10.5px;color:var(--clay);margin-top:3px"><b>Merchant report fallback:</b> '+esc(String(o.merchantReportWarning).slice(0,170))+'</div>':'')+((o.paidPerformance&&o.paidPerformance.cost)?'<div style="font-size:11px;color:var(--ink-45);margin-top:4px"><b>Paid product history:</b> $'+Number(o.paidPerformance.cost).toFixed(2)+' spend · '+Number(o.paidPerformance.conversions||0).toFixed(1)+' conv · '+(o.paidPerformance.roas!=null?Number(o.paidPerformance.roas).toFixed(1)+'x ROAS':'learning')+'</div>':'')+'<div style="font-size:11px;color:var(--ink-45);margin-top:4px"><b>Bidding:</b> '+(o.recommendedTargetRoas?('Max conversion value · evidence-gated tROAS '+Number(o.recommendedTargetRoas).toFixed(2)+'x'):'Max conversion value · unconstrained learning')+(o.breakEvenRoas?(' · est. break-even '+Number(o.breakEvenRoas).toFixed(2)+'x'):'')+'</div></div>'
       +'<div style="display:flex;align-items:center;gap:8px;justify-content:flex-end;flex-wrap:wrap"><span style="white-space:nowrap">$<input type="number" class="pmx-bud" data-i="'+i+'" value="'+(o.dailyBudget||10)+'" min="3" max="30" style="width:58px;padding:4px 6px;border:1px solid var(--line);border-radius:7px">/day · '+(o.days||30)+'d</span>'
+      +'<button class="btn ghost sm" onclick="apvOpen(\''+apvEnc(o.handle)+'\',\''+apvEnc(JSON.stringify((o.productTitles||o.itemIds||[]).slice(0,8)))+'\',\''+apvEnc(o.collectionTitle||"")+'\')">Preview ads</button>'
       +'<button class="btn gold sm pmx-gen" data-i="'+i+'"'+disabled+'>'+buttonText+'</button><span class="pmx-msg" data-i="'+i+'" style="font-size:12px;color:var(--ink-45)"></span></div></div>';
   });
   sec.innerHTML=inner+'</div>';insertTop(sec);
@@ -2381,6 +2450,87 @@ async function unlock(e){if(e)e.preventDefault();PASS=(e&&e.__cachedPass)||$("#p
 document.getElementById("epLabel").textContent=ENDPOINT.replace("https://","");
 var _rsT=null;addEventListener("resize",function(){clearTimeout(_rsT);_rsT=setTimeout(function(){try{if(typeof DAILY!=="undefined"&&DAILY)renderDailyCharts();}catch(e){}},300);});
 
+
+/* ===== Ad Preview Studio (ported, in-app) ===== */
+var APV={data:null,prod:0,tab:"all",mobile:false,dark:false,handle:null};
+function apvEnc(s){try{return btoa(unescape(encodeURIComponent(String(s==null?"":s))));}catch(e){return "";}}
+function apvDec(s){try{return decodeURIComponent(escape(atob(String(s||""))));}catch(e){return "";}}
+var APV_TABS=[["all","All placements"],["shopping","Shopping"],["display","Display"],["discover","Discover"],["gmail","Gmail"],["youtube","YouTube"],["search","Search"]];
+function apvClip(s,n){s=String(s||"");return s.length>n?s.slice(0,n-1)+"\u2026":s;}
+async function apvOpen(handleB64,titlesB64,collTitleB64){
+  var handle=apvDec(handleB64),titlesJson=apvDec(titlesB64),collTitle=apvDec(collTitleB64);
+  if(!handle){toast("No collection linked to this card yet.");return;}
+  document.getElementById("apvModal").classList.add("on");
+  document.getElementById("apvTitle").textContent="Ad Preview \u00b7 "+(collTitle||handle);
+  document.getElementById("apvWall").innerHTML='<div class="muted" style="padding:30px">Loading real listing images\u2026</div>';
+  document.getElementById("apvInsRow").innerHTML="";
+  var titles=[];try{titles=JSON.parse(titlesJson||"[]");}catch(e){}
+  APV.handle=handle;
+  var r=await api("pmaxPreview",{handle:handle,titles:titles,n:10}).catch(function(e){return{error:e.message};});
+  if(r.error||!(r.products||[]).length){document.getElementById("apvWall").innerHTML='<div class="muted" style="padding:30px;color:#b3402a">Could not load listing images: '+esc(r.error||"no eligible products")+'</div>';return;}
+  APV.data=r;APV.prod=0;
+  apvTabs();apvProds();apvRender();
+}
+function apvClose(){document.getElementById("apvModal").classList.remove("on");}
+function apvTabs(){document.getElementById("apvTabs").innerHTML=APV_TABS.map(function(t){return '<button class="btn '+(APV.tab===t[0]?"gold":"ghost")+' sm" style="padding:4px 10px;font-size:11.5px" onclick="apvSetTab(\''+t[0]+'\')">'+t[1]+'</button>';}).join("");}
+function apvSetTab(t){APV.tab=t;apvTabs();apvRender();}
+function apvToggleDevice(){APV.mobile=!APV.mobile;document.getElementById("apvDevBtn").textContent="Mobile frames: "+(APV.mobile?"on":"off");apvRender();}
+function apvToggleBg(){APV.dark=!APV.dark;document.getElementById("apvStage").classList.toggle("dark",APV.dark);document.getElementById("apvBgBtn").textContent=APV.dark?"Light sites":"Dark sites";}
+function apvProds(){
+  var host=document.getElementById("apvProds");
+  host.innerHTML=APV.data.products.map(function(p,i){return '<div class="apv-pthumb '+(i===APV.prod?"sel":"")+'" data-i="'+i+'"><img src="'+esc(p.crops.tile)+'" loading="lazy"><div class="t">'+esc(apvClip(p.title,32))+'</div>'+(p.detailUsed?'<div class="d">\u2713 detail shot</div>':'<div class="d" style="color:var(--ink-45)">hero only</div>')+'</div>';}).join("");
+  Array.prototype.forEach.call(host.querySelectorAll(".apv-pthumb"),function(el){el.onclick=function(){APV.prod=+this.getAttribute("data-i");apvProds();apvRender();};});
+}
+function apvP(){return APV.data.products[APV.prod];}
+function apvHeadline(){return apvClip(apvP().title.replace(/[,:|].*$/,""),30);}
+function apvLightbox(html){document.getElementById("apvLbInner").innerHTML=html;document.getElementById("apvLb").classList.add("on");}
+function apvScaled(w,h,inner,label,cropLbl,maxW){
+  maxW=maxW||Math.min(w,340);var sc=Math.min(1,maxW/w);
+  return '<div class="apv-ph"><div style="width:'+(w*sc)+'px;height:'+(h*sc)+'px;overflow:hidden"><div class="apv-frame" style="width:'+w+'px;height:'+h+'px;transform:scale('+sc+');transform-origin:top left" onclick="event.stopPropagation();apvLightbox(this.outerHTML.replace(/transform:scale\([^)]*\)/,\'transform:scale(1)\').replace(/width:[0-9.]+px;height:[0-9.]+px;overflow:hidden/,\'\'))">'+inner+'</div></div><div class="lbl"><b>'+esc(label)+'</b> \u00b7 '+w+'\u00d7'+h+' \u00b7 <span style="opacity:.8">'+cropLbl+' crop</span></div></div>';
+}
+function apvShoppingTile(p,w){
+  return '<div class="apv-gsans" style="width:'+w+'px;border:1px solid #e0e0e0;border-radius:8px;overflow:hidden;background:#fff"><img src="'+esc(p.crops.tile)+'" style="width:100%;aspect-ratio:1;object-fit:cover;display:block"><div style="padding:8px 10px"><div style="font-size:12px;line-height:1.3;height:31px;overflow:hidden;color:#202124">'+esc(apvClip(p.title,44))+'</div><div style="font-size:14px;font-weight:700;color:#202124;margin-top:4px">'+money(p.price)+'</div><div style="font-size:11px;color:#5f6368">Brites Jewelry</div><div class="apv-stars">\u2605\u2605\u2605\u2605\u2605 <span style="color:#70757a;letter-spacing:0">(128)</span></div><div style="margin-top:2px"><span class="apv-adbadge">Sponsored</span></div></div></div>';
+}
+function apvBuild(){
+  var p=apvP(),D=APV.data,out=[],is=function(t){return APV.tab==="all"||APV.tab===t;};
+  if(is("shopping")){
+    var carousel='<div class="apv-gsans" style="background:#fff;padding:14px"><div style="font-size:13px;color:#70757a;margin-bottom:8px"><span class="apv-adbadge">Sponsored</span> \u00b7 Shop '+esc(apvClip(D.collection.title,30))+'</div><div style="display:flex;gap:10px;overflow:hidden">'+D.products.slice(0,4).map(function(q){return apvShoppingTile(q,150);}).join("")+'</div></div>';
+    out.push(apvScaled(660,290,carousel,"Google SERP \u00b7 Shopping carousel","tile 1:1",APV.mobile?320:520));
+    var grid='<div class="apv-gsans" style="background:#fff;padding:10px"><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'+D.products.slice(0,4).map(function(q){return apvShoppingTile(q,158);}).join("")+'</div></div>';
+    out.push('<div class="apv-ph"><div class="apv-frame apv-phone" style="width:340px" onclick="apvLightbox(this.outerHTML)"><div style="background:#fff;padding:10px 12px;font-family:arial;font-size:13px;color:#5f6368;border-bottom:1px solid #eee">'+esc(apvClip(apvHeadline().toLowerCase(),28))+' \u00b7 <b style="color:#1a73e8">Shopping</b></div>'+grid+'</div><div class="lbl"><b>Shopping tab</b> \u00b7 mobile \u00b7 tile 1:1 crop</div></div>');
+  }
+  if(is("display")){
+    var logo='<img src="'+esc(D.products[0].crops.tile)+'" style="width:22px;height:22px;border-radius:50%;object-fit:cover">';
+    out.push(apvScaled(300,250,'<div class="apv-gsans" style="width:300px;height:250px;background:#fff;display:flex;flex-direction:column;position:relative"><img src="'+esc(p.crops.landscape)+'" style="width:300px;height:157px;object-fit:cover"><div style="padding:8px 10px;flex:1;display:flex;flex-direction:column;justify-content:space-between"><div><div style="font-size:13px;font-weight:700;color:#202124;line-height:1.25">'+esc(apvHeadline())+'</div><div style="font-size:11px;color:#5f6368">Handmade \u00b7 personalized \u00b7 ships fast</div></div><div style="display:flex;align-items:center;justify-content:space-between">'+logo+'<span style="background:#1a73e8;color:#fff;font-size:11px;padding:5px 12px;border-radius:4px">Shop now</span></div></div><span class="apv-adbadge" style="position:absolute;top:4px;right:4px;background:#fff">Ad</span></div>',"Display \u00b7 Medium Rectangle","landscape 1.91:1"));
+    out.push(apvScaled(728,90,'<div class="apv-gsans" style="width:728px;height:90px;background:#fff;display:flex;align-items:center"><img src="'+esc(p.crops.square)+'" style="width:90px;height:90px;object-fit:cover"><div style="flex:1;padding:0 14px"><div style="font-size:15px;font-weight:700;color:#202124">'+esc(apvHeadline())+'</div><div style="font-size:12px;color:#5f6368">Brites Jewelry \u00b7 little charms, big meanings</div></div><span style="background:#1a73e8;color:#fff;font-size:12px;padding:8px 16px;border-radius:4px;margin-right:12px">Shop now</span><span class="apv-adbadge" style="margin-right:6px">Ad</span></div>',"Display \u00b7 Leaderboard","square 1:1",APV.mobile?320:520));
+    out.push(apvScaled(320,100,'<div class="apv-gsans" style="width:320px;height:100px;background:#fff;display:flex;align-items:center"><img src="'+esc(p.crops.square)+'" style="width:100px;height:100px;object-fit:cover"><div style="flex:1;padding:0 10px"><div style="font-size:12.5px;font-weight:700;color:#202124;line-height:1.25">'+esc(apvHeadline())+'</div><div style="font-size:10.5px;color:#5f6368">Brites Jewelry</div><span style="color:#1a73e8;font-size:11px;font-weight:700">Shop now \u203a</span></div><span class="apv-adbadge" style="align-self:flex-start;margin:4px">Ad</span></div>',"Display \u00b7 Mobile banner","square 1:1"));
+    out.push(apvScaled(300,600,'<div class="apv-gsans" style="width:300px;height:600px;background:#fff;display:flex;flex-direction:column"><img src="'+esc(p.crops.portrait)+'" style="width:300px;height:375px;object-fit:cover"><div style="padding:14px;flex:1;display:flex;flex-direction:column;justify-content:space-between"><div><div style="font-size:16px;font-weight:700;color:#202124;line-height:1.3">'+esc(apvHeadline())+'</div><div style="font-size:12px;color:#5f6368;margin-top:6px">Handcrafted charm jewelry, made to order. '+money(p.price)+'</div></div><span style="background:#1a73e8;color:#fff;font-size:13px;padding:9px 0;border-radius:4px;text-align:center">Shop now</span></div></div>',"Display \u00b7 Half page","portrait 4:5",260));
+    out.push(apvScaled(160,600,'<div class="apv-gsans" style="width:160px;height:600px;background:#fff;display:flex;flex-direction:column"><img src="'+esc(p.crops.square)+'" style="width:160px;height:160px;object-fit:cover"><img src="'+esc(p.crops.portrait)+'" style="width:160px;height:200px;object-fit:cover;border-top:1px solid #eee"><div style="padding:10px;flex:1;display:flex;flex-direction:column;justify-content:space-between"><div style="font-size:12px;font-weight:700;color:#202124;line-height:1.3">'+esc(apvHeadline())+'</div><span style="background:#1a73e8;color:#fff;font-size:11px;padding:7px 0;border-radius:4px;text-align:center">Shop now</span></div></div>',"Display \u00b7 Skyscraper","square + portrait",160));
+  }
+  if(is("discover")){
+    var disc='<div class="apv-gsans" style="background:#fff"><div style="padding:10px 14px;display:flex;align-items:center;gap:8px;font-size:13px"><img src="'+esc(D.products[0].crops.tile)+'" style="width:26px;height:26px;border-radius:50%;object-fit:cover"><b style="color:#202124">Brites Jewelry</b><span class="apv-adbadge">Ad</span></div><img src="'+esc(p.crops.portrait)+'" style="width:100%;aspect-ratio:4/5;object-fit:cover;display:block"><div style="padding:12px 14px"><div style="font-size:15px;font-weight:700;color:#202124;line-height:1.3">'+esc(apvHeadline())+' \u2014 '+money(p.price)+'</div><div style="font-size:12px;color:#5f6368;margin-top:3px">britesjewelry.com \u00b7 Shop now</div></div></div>';
+    out.push('<div class="apv-ph"><div class="apv-frame apv-phone" style="width:340px" onclick="apvLightbox(this.outerHTML)">'+disc+'</div><div class="lbl"><b>Discover feed</b> \u00b7 mobile \u00b7 portrait 4:5 crop</div></div>');
+  }
+  if(is("gmail")){
+    out.push(apvScaled(560,72,'<div class="apv-gsans" style="width:560px;height:72px;background:#fff;display:flex;align-items:center;padding:0 14px;gap:12px;border-left:4px solid #fbbc04"><span class="apv-adbadge">Ad</span><img src="'+esc(p.crops.tile)+'" style="width:44px;height:44px;border-radius:50%;object-fit:cover"><div style="flex:1"><b style="font-size:13.5px;color:#202124">Brites Jewelry</b><div style="font-size:12.5px;color:#5f6368">'+esc(apvHeadline())+' \u2014 handmade & personalized, from '+money(p.price)+'</div></div></div>',"Gmail \u00b7 Promotions teaser","tile 1:1",APV.mobile?320:520));
+    out.push(apvScaled(480,430,'<div class="apv-gsans" style="width:480px;background:#fff"><div style="padding:12px 16px;display:flex;gap:10px;align-items:center;border-bottom:1px solid #eee"><img src="'+esc(D.products[0].crops.tile)+'" style="width:34px;height:34px;border-radius:50%;object-fit:cover"><div><b style="font-size:14px;color:#202124">Brites Jewelry</b> <span class="apv-adbadge">Ad</span><div style="font-size:11px;color:#5f6368">britesjewelry.com</div></div></div><img src="'+esc(p.crops.landscape)+'" style="width:100%;display:block"><div style="padding:14px 16px"><div style="font-size:16px;font-weight:700;color:#202124">'+esc(apvHeadline())+'</div><div style="font-size:13px;color:#5f6368;margin:4px 0 12px">Little charms, big meanings \u2014 made to order in our studio.</div><span style="border:1px solid #dadce0;color:#1a73e8;font-size:13px;font-weight:600;padding:8px 20px;border-radius:4px">Shop now</span></div></div>',"Gmail \u00b7 expanded ad","landscape 1.91:1",APV.mobile?320:420));
+  }
+  if(is("youtube")){
+    out.push(apvScaled(410,300,'<div class="apv-gsans" style="width:410px;background:#fff"><div style="position:relative"><img src="'+esc(p.crops.landscape)+'" style="width:100%;display:block"><span style="position:absolute;bottom:8px;right:8px;background:rgba(0,0,0,.8);color:#fff;font-size:11px;padding:1px 5px;border-radius:3px">0:15</span></div><div style="display:flex;gap:10px;padding:10px 12px"><img src="'+esc(D.products[0].crops.tile)+'" style="width:36px;height:36px;border-radius:50%;object-fit:cover"><div><div style="font-size:14px;font-weight:600;color:#0f0f0f;line-height:1.3">'+esc(apvHeadline())+' \u00b7 Brites Jewelry</div><div style="font-size:12px;color:#606060"><span class="apv-adbadge">Ad</span> \u00b7 britesjewelry.com \u00b7 Shop now</div></div></div></div>',"YouTube \u00b7 in-feed ad","landscape 1.91:1",APV.mobile?320:410));
+  }
+  if(is("search")){
+    out.push(apvScaled(620,190,'<div class="apv-gsans" style="width:620px;background:#fff;padding:16px 20px"><div style="font-size:12px;color:#202124"><span class="apv-adbadge">Sponsored</span></div><div style="display:flex;gap:6px;align-items:center;margin-top:6px"><img src="'+esc(D.products[0].crops.tile)+'" style="width:26px;height:26px;border-radius:50%;object-fit:cover;border:1px solid #ecedef"><div><div style="font-size:14px;color:#202124">Brites Jewelry</div><div style="font-size:12px;color:#4d5156">britesjewelry.com/collections/'+esc(D.collection.handle)+'</div></div></div><div style="font-size:20px;color:#1a0dab;margin:6px 0 2px">'+esc(apvHeadline())+' \u2014 Handmade & Personalized</div><div style="font-size:14px;color:#4d5156;line-height:1.5">Little charms, big meanings. Made to order, from '+money(p.price)+'. Free shipping over $50.</div></div>',"Google Search \u00b7 PMax text ad","logo tile",APV.mobile?320:560));
+  }
+  return out.join("");
+}
+function apvRender(){
+  document.getElementById("apvWall").innerHTML=apvBuild();
+  var p=apvP();
+  document.getElementById("apvInsTitle").textContent=p.title;
+  var crops=[["square","1:1 \u00b7 1200\u00d71200","LOGO + SQUARE_MARKETING_IMAGE",140,140],["landscape","1.91:1 \u00b7 1200\u00d7628","MARKETING_IMAGE",214,112],["portrait","4:5 \u00b7 1080\u00d71350","PORTRAIT_MARKETING_IMAGE",112,140]];
+  document.getElementById("apvInsRow").innerHTML=crops.map(function(c){return '<div class="apv-crop"><img src="'+esc(p.crops[c[0]])+'" style="width:'+c[3]+'px;height:'+c[4]+'px;object-fit:cover" onclick="window.open(\''+esc(p.crops[c[0]])+'\')"><div class="cl"><b>'+c[1]+'</b><br>'+c[2]+'</div></div>';}).join("")+'<div style="flex:1;min-width:180px;font-size:12px;color:var(--ink-70);align-self:center">'+(p.detailUsed?'<span style="color:#3f6f4f;font-weight:700">\u2713 Detail shot in use</span> \u2014 tight crops cut from this product\u2019s close-up photo.':'<span style="color:#b3402a;font-weight:700">Hero only</span> \u2014 this listing has no close-up second photo; adding one in Shopify upgrades every small placement automatically.')+'</div>';
+}
+document.addEventListener("keydown",function(e){if(e.key==="Escape")apvClose();});
 </script>
 </body>
 </html>
