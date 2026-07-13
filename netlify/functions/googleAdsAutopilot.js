@@ -2541,7 +2541,13 @@ async function proposePmaxOpportunities({ collections = [], profiles = [], ceili
   t = Date.now(); await emit({id:"pmax_merchant_catalogue",category:"Google Ads API",label:"Linked Merchant Center catalogue",status:"running",startedAt:t,detail:`Resolving ${lookupSignals.length} recent product signals against live shopping_product offers.`});
   try { merchant = await merchantProducts({ force: true, signals: lookupSignals, titles: lookupSignals.map(x=>x.name).filter(Boolean) });
     const d=merchant._diag||{}; await emit({id:"pmax_merchant_catalogue",category:"Google Ads API",label:"Linked Merchant Center catalogue",status:merchant.length?((d.errors&&d.errors.length)?"warning":"ok"):"warning",startedAt:t,endedAt:Date.now(),tookMs:Date.now()-t,
-      detail:`${d.successfulQueries||0} GAQL request(s); ${merchant.length} matched offers; ${d.eligibleProducts||0} eligible/in-stock.`,source:"Google Ads shopping_product",
+      detail:(function(){
+        const base=`${d.successfulQueries||0} GAQL request(s); ${merchant.length} matched offers; ${d.eligibleProducts||0} eligible/in-stock.`;
+        if((d.eligibleProducts||0)>0||!merchant.length)return base;
+        const sb=Object.entries(d.statusBreakdown||{}).map(([k,v])=>k+"\u00d7"+v).join(", ");
+        const ib=Object.entries(d.issueBreakdown||{}).sort((x,y)=>y[1]-x[1]).slice(0,3).map(([k,v])=>`"${k}"\u00d7${v}`).join("; ");
+        return base+` Statuses: ${sb||"n/a"}.`+(ib?` Top issues: ${ib}.`:" No per-offer issues reported by Google.");
+      })(),source:"Google Ads shopping_product",
       fallback:d.fallbackUsed?"Safe feed/account or core-field fallback was used.":null,error:(d.errors&&d.errors[0])||null,meta:d});
     for (let qi=0; qi<(d.requests||[]).length; qi++) { const q=d.requests[qi]||{};
       await emit({id:"pmax_merchant_request_"+(qi+1),category:"Google Ads API",label:`Merchant catalogue request ${qi+1} · ${q.kind||"query"}`,status:q.ok?(q.richFieldFallback?"warning":"ok"):"failed",startedAt:Date.now(),endedAt:Date.now(),tookMs:0,
