@@ -144,6 +144,10 @@ async function handleAction(body) {
       return { queued: true, runId, upstream: res.status };
     } catch (e) { return { error: e.message }; }
   }
+  if (a === "pmaxPreview") {
+    try { return await E.pmaxPreviewData({ handle: body.handle, titles: body.titles, n: body.n }); }
+    catch (e) { return { error: e.message }; }
+  }
   if (a === "generatePmax") {
     // Merchant-catalog validation + multi-operation PMax build run in the background;
     // the console polls gen_<genId> via genStatus, same as Search generation.

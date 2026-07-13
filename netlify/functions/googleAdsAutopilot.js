@@ -2668,11 +2668,25 @@ Choose 2-3 market-specific, non-overlapping candidates. CA and US feed labels ar
 
 async function collectionImages(handle, n = 4, preferredTitles = []) {
   try {
-    const d = await shopifyGql(`{ collectionByHandle(handle: "${String(handle).replace(/"/g, "")}") { products(first: ${Math.max(n, 8)}, sortKey: BEST_SELLING) { nodes { title featuredImage { url } } } } }`);
-    const rows = (((d.collectionByHandle || {}).products || {}).nodes || []).map(p => ({ title: p.title, url: (p.featuredImage || {}).url })).filter(p => p.url);
+    // Pull up to 3 photos per product, not just the featured hero shot. Jewelry
+    // listings conventionally order images: [1] full piece on white, [2]/[3] a
+    // closer detail/macro shot of the charm or clasp — exactly the framing that
+    // survives being auto-cropped into a small Display/Discover tile.
+    const d = await shopifyGql(`{ collectionByHandle(handle: "${String(handle).replace(/"/g, "")}") { products(first: ${Math.max(n, 8)}, sortKey: BEST_SELLING) { nodes { title images(first: 3) { nodes { url width height } } } } } }`);
+    const rows = (((d.collectionByHandle || {}).products || {}).nodes || [])
+      .map(p => ({ title: p.title, shots: (((p.images || {}).nodes) || []).filter(im => im && im.url) }))
+      .filter(p => p.shots.length);
     const pref = (preferredTitles || []).map(_pmaxNorm);
     const prefScore = row => pref.reduce((m, x) => Math.max(m, _pmaxTitleMatch(x, row.title)), 0);
-    return rows.sort((a,b) => prefScore(b) - prefScore(a)).slice(0,n);
+    return rows.sort((a,b) => prefScore(b) - prefScore(a)).slice(0,n)
+      .map(row => {
+        const hero = row.shots[0];
+        // Prefer image [1] (0-indexed) as the "detail shot" candidate when its
+        // aspect ratio is roughly square/portrait — the closer-crop convention.
+        // A wide/landscape 2nd image is more likely a lifestyle shot; skip it.
+        const detail = row.shots.slice(1).find(im => im.width && im.height && (im.height / im.width) >= 0.85) || null;
+        return { title: row.title, url: hero.url, detailUrl: detail ? detail.url : null };
+      });
   } catch (e) { return []; }
 }
 function _shopifyImageVariant(url, width, height) {
@@ -2681,10 +2695,17 @@ function _shopifyImageVariant(url, width, height) {
 }
 async function _uploadImageVariant(imgs, ctrl, shape) {
   if (ctrl && ctrl.dryRun) return [];
+  const dims = { landscape: [1200, 628], square: [1200, 1200], portrait: [1080, 1350] };
+  const [w, h] = dims[shape] || dims.square;
   const ops = [];
-  for (const im of (imgs || []).slice(0, 3)) {
+  for (const im of (imgs || []).slice(0, 4)) {
     try {
-      const url = shape === "landscape" ? _shopifyImageVariant(im.url, 1200, 628) : _shopifyImageVariant(im.url, 1200, 1200);
+      // Small-placement candidates use the detail/close-up shot when this
+      // product has one; Shopify's crop=center then fills the target box from
+      // that tighter source instead of the full necklace-on-white hero shot —
+      // a real, verifiable framing improvement, not an AI-guessed "zoom".
+      const srcUrl = (shape !== "landscape" && im.detailUrl) ? im.detailUrl : im.url;
+      const url = _shopifyImageVariant(srcUrl, w, h);
       const r = await fetch(url); if (!r.ok) continue; const buf = Buffer.from(await r.arrayBuffer());
       if (!buf.length || buf.length > 5 * 1024 * 1024) continue;
       ops.push({ create: { name: (`Brites · ${im.title || "product"} · ${shape} · ${Date.now()}-${ops.length}`).slice(0, 120), type: "IMAGE", imageAsset: { data: buf.toString("base64") } } });
@@ -2697,13 +2718,14 @@ async function _uploadImageVariant(imgs, ctrl, shape) {
 async function uploadImageAssets(imgs, ctrl) {
   const square = await _uploadImageVariant(imgs, ctrl, "square");
   const landscape = await _uploadImageVariant(imgs, ctrl, "landscape");
-  return { square, landscape, logo: square[0] || null, complete: !!(square.length && landscape.length) };
+  const portrait = await _uploadImageVariant(imgs, ctrl, "portrait");
+  return { square, landscape, portrait, logo: square[0] || null, complete: !!(square.length && landscape.length) };
 }
 
 // mutateOperations for a retail Performance Max campaign. Exact Merchant Center
 // item IDs are preferred so the campaign amplifies the products that already sold
 // through free listings. Product-type scoping remains a safe fallback only.
-function buildPmaxCampaignOps(coll, { dailyBudget, startDate, endDate, targetRoas, merchantId, feedLabel, itemIds, types, countries, offerDetails, searchThemes, audienceResource } = {}) {
+function buildPmaxCampaignOps(coll, { dailyBudget, startDate, endDate, targetRoas, merchantId, feedLabel, itemIds, types, countries, offerDetails, searchThemes, audienceResource, imageAssets } = {}) {
   const tag=_pmaxTag(coll.handle,feedLabel), bRes=`customers/${CID}/campaignBudgets/-1`, cRes=`customers/${CID}/campaigns/-2`;
   const finalUrl=`https://britesjewelry.com/collections/${coll.handle}`, startYmd=gAdsDate(startDate,true), endYmd=gAdsDate(endDate,false), tRoas=Number(targetRoas||ENV.GADS_TARGET_ROAS||0);
   const shoppingSetting={merchantId:Number(merchantId)};if(feedLabel)shoppingSetting.feedLabel=String(feedLabel);
@@ -2740,9 +2762,17 @@ function buildPmaxCampaignOps(coll, { dailyBudget, startDate, endDate, targetRoa
     let local=themes.filter(t=>typeWords.some(w=>t.includes(w))).slice(0,8);if(local.length<3)local=[...new Set(local.concat(themes))].slice(0,8);
     local.forEach(text=>ops.push({assetGroupSignalOperation:{create:{assetGroup:agRes,searchTheme:{text}}}}));
     if(audienceResource)ops.push({assetGroupSignalOperation:{create:{assetGroup:agRes,audience:{audience:audienceResource}}}});
+    // Supplied creative for small-placement rendering (Display/Discover tiles).
+    // Additive: merchant-auto still fills any gap and Google still tests its
+    // own auto-generated crops against these — we're giving it better raw
+    // material, not removing its ability to choose.
+    if (imageAssets && imageAssets.logo) ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: imageAssets.logo, fieldType: "LOGO" } } });
+    (imageAssets && imageAssets.square || []).slice(0, 4).forEach(res => ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: res, fieldType: "SQUARE_MARKETING_IMAGE" } } }));
+    (imageAssets && imageAssets.landscape || []).slice(0, 4).forEach(res => ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: res, fieldType: "MARKETING_IMAGE" } } }));
+    (imageAssets && imageAssets.portrait || []).slice(0, 4).forEach(res => ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: res, fieldType: "PORTRAIT_MARKETING_IMAGE" } } }));
   });
   [...new Set((countries||[]).map(x=>String(x).replace(/\D/g,"")).filter(Boolean))].forEach(id=>ops.push({campaignCriterionOperation:{create:{campaign:cRes,location:{geoTargetConstant:`geoTargetConstants/${id}`}}}}));
-  return {ops,tag,finalUrl,scopedTypes:[...new Set(groups.map(g=>g.label))],scopedItemIds:exact,assetMode:"merchant-auto",countries:[...new Set((countries||[]).map(String))],
+  return {ops,tag,finalUrl,scopedTypes:[...new Set(groups.map(g=>g.label))],scopedItemIds:exact,assetMode:(imageAssets&&(imageAssets.square||[]).length)?"custom+merchant-auto":"merchant-auto",countries:[...new Set((countries||[]).map(String))],
     assetGroups:groups.map(g=>({name:g.label,itemIds:g.itemIds})),searchThemes:themes,audienceSignal:audienceResource||null};
 }
 
@@ -2776,6 +2806,42 @@ async function validatePmaxAudienceResource(resourceName) {
     if(String(a.status||"").toUpperCase()==="REMOVED")return {resource:null,warning:"Configured PMax audience is removed"};
     return {resource:a.resourceName||rn,name:a.name||null,warning:null};
   } catch(e){return {resource:null,warning:"Configured PMax audience could not be validated: "+String(e.message||e).slice(0,140)};}
+}
+
+// Ad-preview feed: the EXACT image variants the engine uploads to Google for a
+// given PMax scope (same _shopifyImageVariant math), plus titles/prices — so the
+// visual simulator renders the literal creative Google receives, not mockups.
+async function pmaxPreviewData({ handle, titles, n } = {}) {
+  const f = fb();
+  let pmaxList = [];
+  try { const d = await f.db.collection(COL.state).doc("opportunities").get(); const x = d.exists ? d.data() : {};
+        pmaxList = Array.isArray(x.pmaxList) ? x.pmaxList : []; } catch (e) {}
+  if (!handle) return { pmaxList };
+  const colls = await getCollections({}); const coll = colls.find(c => c.handle === handle);
+  if (!coll) return { pmaxList, error: "unknown collection: " + handle };
+  let rows = [];
+  try {
+    const d = await shopifyGql(`{ collectionByHandle(handle: "${String(handle).replace(/"/g, "")}") { products(first: ${Math.min(Math.max(Number(n) || 8, 4), 16)}, sortKey: BEST_SELLING) { nodes { title handle priceRangeV2 { minVariantPrice { amount currencyCode } } images(first: 3) { nodes { url width height } } } } } }`);
+    rows = (((d.collectionByHandle || {}).products || {}).nodes || []).map(p => {
+      const shots = (((p.images || {}).nodes) || []).filter(im => im && im.url);
+      if (!shots.length) return null;
+      const hero = shots[0];
+      const detail = shots.slice(1).find(im => im.width && im.height && (im.height / im.width) >= 0.85) || null;
+      const src = detail ? detail.url : hero.url;
+      const pr = ((p.priceRangeV2 || {}).minVariantPrice) || {};
+      return { title: p.title, productHandle: p.handle,
+        price: pr.amount ? Number(pr.amount) : null, currency: pr.currencyCode || "USD",
+        hero: _shopifyImageVariant(hero.url, 800, 800),
+        detailUsed: !!detail,
+        crops: { square: _shopifyImageVariant(src, 1200, 1200), landscape: _shopifyImageVariant(hero.url, 1200, 628),
+                 portrait: _shopifyImageVariant(src, 1080, 1350), tile: _shopifyImageVariant(src, 400, 400) } };
+    }).filter(Boolean);
+  } catch (e) { return { pmaxList, error: String(e.message || e).slice(0, 200) }; }
+  // rank client-requested titles first (the opportunity's proven winners)
+  const pref = (titles || []).map(_pmaxNorm);
+  const score = r2 => pref.reduce((m, x) => Math.max(m, _pmaxTitleMatch(x, r2.title)), 0);
+  if (pref.length) rows.sort((a, b) => score(b) - score(a));
+  return { pmaxList, collection: { title: coll.title, handle: coll.handle, url: `https://britesjewelry.com/collections/${coll.handle}` }, products: rows };
 }
 
 async function generatePmaxApproval({ handle, dailyBudget, targetRoas, days, itemIds, productTitles, feedLabel, searchThemes, offerDetails } = {}) {
@@ -2817,10 +2883,19 @@ async function generatePmaxApproval({ handle, dailyBudget, targetRoas, days, ite
     try { const all=await listCountries({}); const hit=all.find(c=>String(c.code||"").toUpperCase()===String(liveFeedLabel).toUpperCase()); if(hit&&hit.id)countries=[String(hit.id)]; } catch(e) {}
   }
   const safeTargetRoas=Math.max(0,Number(targetRoas)||0);
-  const built=buildPmaxCampaignOps(coll,{dailyBudget:budget,startDate:start,endDate:end,targetRoas:safeTargetRoas,merchantId,feedLabel:liveFeedLabel,itemIds:exactIds,types,countries,offerDetails:liveDetails,searchThemes:themes,audienceResource});
+  // Source real product photos (preferring close-up/detail shots) and upload
+  // square/landscape/portrait variants so small Display/Discover placements
+  // render tailored creative instead of a raw auto-crop of the feed's hero
+  // image. Additive only — never blocks the launch if it comes back empty.
+  let imageAssets = null;
+  try {
+    const shots = await collectionImages(handle, 4, chosenTitles);
+    if (shots.length) imageAssets = await uploadImageAssets(shots, ctrl);
+  } catch (e) {}
+  const built=buildPmaxCampaignOps(coll,{dailyBudget:budget,startDate:start,endDate:end,targetRoas:safeTargetRoas,merchantId,feedLabel:liveFeedLabel,itemIds:exactIds,types,countries,offerDetails:liveDetails,searchThemes:themes,audienceResource,imageAssets});
   const scope=built.scopedItemIds.length?`${built.scopedItemIds.length} proven GMC offers`:(built.scopedTypes.length?built.scopedTypes.join("/"):"all feed products");
-  const id=await enqueueApproval({type:"pmax",vetted:false,summary:`PMax · ${coll.title} · $${budget}/day · ${scope} · ${built.assetMode} assets · GMC ${merchantId}`,
-    payload:{mutateOperations:built.ops,countries:built.countries,meta:{kind:"pmax",handle,collectionTitle:coll.title,dailyBudget:budget,targetRoas:safeTargetRoas,biddingMode:safeTargetRoas>0?"MAXIMIZE_CONVERSION_VALUE_TARGET_ROAS":"MAXIMIZE_CONVERSION_VALUE_LEARNING",scopedTypes:built.scopedTypes,itemIds:built.scopedItemIds,productTitles:chosenTitles,images:0,assetMode:built.assetMode,merchantId,feedLabel:liveFeedLabel,countries:built.countries,tag:built.tag,assetGroups:built.assetGroups,searchThemes:built.searchThemes,audienceSignal:built.audienceSignal,audienceSignalName:audienceCheck.name||null,audienceSignalSource:audienceCheck.source||null,audienceSignalWarning:audienceCheck.warning||null}}});
+  const id=await enqueueApproval({type:"pmax",vetted:false,summary:`PMax · ${coll.title} · $${budget}/day · ${scope} · ${built.assetMode} assets${imageAssets&&imageAssets.square&&imageAssets.square.length?` (${(imageAssets.square||[]).length}sq/${(imageAssets.landscape||[]).length}ls/${(imageAssets.portrait||[]).length}pt custom images)`:""} · GMC ${merchantId}`,
+    payload:{mutateOperations:built.ops,countries:built.countries,meta:{kind:"pmax",handle,collectionTitle:coll.title,dailyBudget:budget,targetRoas:safeTargetRoas,biddingMode:safeTargetRoas>0?"MAXIMIZE_CONVERSION_VALUE_TARGET_ROAS":"MAXIMIZE_CONVERSION_VALUE_LEARNING",scopedTypes:built.scopedTypes,itemIds:built.scopedItemIds,productTitles:chosenTitles,images:imageAssets?(imageAssets.square||[]).length+(imageAssets.landscape||[]).length+(imageAssets.portrait||[]).length:0,assetMode:built.assetMode,merchantId,feedLabel:liveFeedLabel,countries:built.countries,tag:built.tag,assetGroups:built.assetGroups,searchThemes:built.searchThemes,audienceSignal:built.audienceSignal,audienceSignalName:audienceCheck.name||null,audienceSignalSource:audienceCheck.source||null,audienceSignalWarning:audienceCheck.warning||null}}});
   return {approvalId:id,tag:built.tag,scopedTypes:built.scopedTypes,itemIds:built.scopedItemIds,products:chosenTitles,assetMode:built.assetMode,countries:built.countries,merchantId,assetGroups:built.assetGroups,searchThemes:built.searchThemes,audienceSignal:built.audienceSignal,audienceSignalName:audienceCheck.name||null,audienceSignalSource:audienceCheck.source||null,audienceSignalWarning:audienceCheck.warning||null};
 }
 
@@ -5294,7 +5369,7 @@ module.exports = {
   generateForCollection, COLLECTIONS, OCCASIONS,
   getCollections, suggestOccasions, recordOccasionUse,
   scanOpportunities, opportunitiesWithStatus, takenTags, releaseOpportunity, fetchTopProducts, setCampaignStatus, startCampaignNow, setCampaignBudget, analyzeCampaign,
-  generatePmaxApproval, merchantCenterId, merchantProducts, pmaxCandidatesFromSignals, proposePmaxOpportunities, buildPmaxCampaignOps, pmaxProductPerformance, merchantFreeProductPerformance,
+  generatePmaxApproval, pmaxPreviewData, merchantCenterId, merchantProducts, pmaxCandidatesFromSignals, proposePmaxOpportunities, buildPmaxCampaignOps, pmaxProductPerformance, merchantFreeProductPerformance,
   listCountries, campaignCountries, setCampaignCountries, setApprovalCountries, setApprovalDates,
   loadCalendar, dueEvents,
   measure, pruneAssets, mineSearchTerms, reallocateBudgets, anomalyCheck,
