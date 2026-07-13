@@ -84,13 +84,23 @@ function attributionFrom(payload) {
 
 function lineItemsFrom(payload) {
   const li = Array.isArray(payload.line_items) ? payload.line_items : [];
-  return li.map(x => ({
-    title: String(x.title || x.name || "").trim(),
-    sku: String(x.sku || "").trim(),
-    qty: Number(x.quantity) || 1,
-    productId: x.product_id != null ? String(x.product_id) : null,
-    variantId: x.variant_id != null ? String(x.variant_id) : null
-  })).filter(it => it.title || it.sku).slice(0, 25);
+  return li.map(x => {
+    const qty = Number(x.quantity) || 1;
+    const unitPrice = Number(x.price != null ? x.price : x.pre_tax_price);
+    const lineDiscount = Number(x.total_discount || 0);
+    const gross = isFinite(unitPrice) ? unitPrice * qty : null;
+    const lineRevenue = gross != null ? Math.max(0, gross - (isFinite(lineDiscount) ? lineDiscount : 0)) : null;
+    return {
+      title: String(x.title || x.name || "").trim(),
+      sku: String(x.sku || "").trim(),
+      qty,
+      productId: x.product_id != null ? String(x.product_id) : null,
+      variantId: x.variant_id != null ? String(x.variant_id) : null,
+      unitPrice: isFinite(unitPrice) ? unitPrice : null,
+      lineRevenue,
+      lineDiscount: isFinite(lineDiscount) ? lineDiscount : null
+    };
+  }).filter(it => it.title || it.sku).slice(0, 25);
 }
 
 function refundAmount(payload) {
@@ -104,6 +114,18 @@ function refundAmount(payload) {
   const ship = (payload.order_adjustments || []).reduce((s, x) => s + Math.abs(Number(x.amount || 0)), 0);
   return fromLines + ship;
 }
+function refundItemsFrom(payload) {
+  return (Array.isArray(payload.refund_line_items)?payload.refund_line_items:[]).map(x=>{
+    const li=x.line_item||{};
+    const qty=Math.max(0,Number(x.quantity)||0);
+    return {
+      title:String(li.title||li.name||"").trim(),sku:String(li.sku||"").trim(),qty:Math.max(1,Number(li.quantity)||qty||1),
+      refundedQty:qty,productId:li.product_id!=null?String(li.product_id):null,variantId:li.variant_id!=null?String(li.variant_id):null,
+      refundedRevenue:Math.max(0,Number(x.subtotal!=null?x.subtotal:x.total)||0),lineRevenue:Math.max(0,Number(li.price||0)*(Math.max(1,Number(li.quantity)||1))-Number(li.total_discount||0))
+    };
+  }).filter(x=>x.title||x.sku).slice(0,25);
+}
+
 
 const LOG = (...a) => console.log("[shopifyWebhook]", ...a);
 
@@ -164,7 +186,7 @@ exports.handler = async (event) => {
       const orderId = String(payload.order_id || "");
       const amt = refundAmount(payload);
       const when = payload.created_at || (payload.processed_at) ? E.gAdsTime(new Date(payload.created_at || payload.processed_at)) : undefined;
-      const r = await E.recordRefund({ orderId, refundAmount: amt, when });
+      const r = await E.recordRefund({ orderId, refundAmount: amt, when, refundId: payload.id != null ? String(payload.id) : null, items: refundItemsFrom(payload) });
       LOG(topic, "order", orderId, "refund", amt, "->", JSON.stringify(r));
       return { statusCode: 200, body: JSON.stringify({ ok: true, result: r }) };
     }

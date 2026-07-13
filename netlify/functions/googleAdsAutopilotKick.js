@@ -152,8 +152,9 @@ async function handleAction(body) {
       const res = await fetch(baseUrl() + "/.netlify/functions/googleAdsAutopilot-background", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ tasks: ["pmaxGenerate"], genId, handle: body.handle, dailyBudget: body.dailyBudget, targetRoas: body.targetRoas, days: body.days,
-          itemIds: Array.isArray(body.itemIds) ? body.itemIds.slice(0, 30) : [], productTitles: Array.isArray(body.productTitles) ? body.productTitles.slice(0, 10) : [],
-          feedLabel: body.feedLabel || null, token: process.env.EDIT_PASSCODE || undefined })
+          itemIds:Array.isArray(body.itemIds)?body.itemIds.slice(0,30):[],productTitles:Array.isArray(body.productTitles)?body.productTitles.slice(0,10):[],
+          feedLabel:body.feedLabel||null,searchThemes:Array.isArray(body.searchThemes)?body.searchThemes.slice(0,25):[],offerDetails:Array.isArray(body.offerDetails)?body.offerDetails.slice(0,30):[],
+          token:process.env.EDIT_PASSCODE||undefined })
       });
       if (res.status >= 400) return { error: "background dispatch failed: HTTP " + res.status };
       return { queued: true, genId };

@@ -113,8 +113,8 @@ exports.handler = async (event) => {
         try { await E.setGenStatus(gId, { phase: "running", startedAt: Date.now(), kind: "pmax" }); } catch (e) {}
         try {
           const out = await E.generatePmaxApproval({ handle: body.handle, dailyBudget: body.dailyBudget, targetRoas: body.targetRoas, days: body.days,
-            itemIds: Array.isArray(body.itemIds) ? body.itemIds.slice(0, 30) : [], productTitles: Array.isArray(body.productTitles) ? body.productTitles.slice(0, 10) : [],
-            feedLabel: body.feedLabel || null });
+            itemIds:Array.isArray(body.itemIds)?body.itemIds.slice(0,30):[],productTitles:Array.isArray(body.productTitles)?body.productTitles.slice(0,10):[],
+            feedLabel:body.feedLabel||null,searchThemes:Array.isArray(body.searchThemes)?body.searchThemes.slice(0,25):[],offerDetails:Array.isArray(body.offerDetails)?body.offerDetails.slice(0,30):[] });
           result.pmax = out;
           try { await E.setGenStatus(gId, { ok: true, ...out }); } catch (e) {}
         } catch (e) {
