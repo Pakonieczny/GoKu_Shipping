@@ -2690,8 +2690,19 @@ async function collectionImages(handle, n = 4, preferredTitles = []) {
   } catch (e) { return []; }
 }
 function _shopifyImageVariant(url, width, height) {
-  try { const u = new URL(url); u.searchParams.set("width", String(width)); u.searchParams.set("height", String(height)); u.searchParams.set("crop", "center"); return u.toString(); }
-  catch (e) { return url; }
+  if (!url) return null;
+  try {
+    // Shopify's GraphQL Image.url is normally absolute, but guard the
+    // protocol-relative form ("//cdn.shopify.com/...") anyway: without a
+    // scheme, `new URL()` throws and the crop params silently never get
+    // applied — the browser still loads the ORIGINAL uncropped image via
+    // protocol-relative resolution, which look ay masquerade as "broken"
+    // if it's a huge multi-MB source file that times out in a tiny preview.
+    const abs = /^\/\//.test(url) ? "https:" + url : url;
+    const u = new URL(abs);
+    u.searchParams.set("width", String(width)); u.searchParams.set("height", String(height)); u.searchParams.set("crop", "center");
+    return u.toString();
+  } catch (e) { return url; }
 }
 async function _uploadImageVariant(imgs, ctrl, shape) {
   if (ctrl && ctrl.dryRun) return [];
