@@ -469,6 +469,9 @@ svg rect.bc-bar[data-tip]:hover{filter:brightness(.85);stroke:var(--ink);stroke-
 .apv-note{font-size:11.5px;color:var(--ink-45);margin-top:9px}
 .apv-lb{position:fixed;inset:0;background:rgba(0,0,0,.85);display:none;align-items:center;justify-content:center;z-index:90;padding:30px}
 .apv-lb.on{display:flex}
+.apv-imgerr{background:#fdeee9!important;border:1px dashed #b3402a;display:flex;align-items:center;justify-content:center;color:#b3402a;font-size:10px;text-align:center;padding:4px;cursor:help}
+#apvErrBanner{display:none;background:#fdeee9;border:1px solid #f0c8bc;color:#b3402a;font-size:12px;padding:8px 12px;border-radius:8px;margin-bottom:10px}
+#apvErrBanner.on{display:block}
 @media(max-width:760px){.apv-body{padding:10px 8px 20px}.apv-stage{padding:10px}.apv-wall{gap:14px}}
 </style>
 </head>
@@ -620,7 +623,7 @@ svg rect.bc-bar[data-tip]:hover{filter:brightness(.85);stroke:var(--ink);stroke-
       <div><h2 id="apvTitle">Ad Preview</h2><div class="sub" id="apvSub">the exact images sent to Google, in every placement</div></div>
       <button class="apv-x" onclick="apvClose()">&times;</button>
     </div>
-    <div class="apv-body">
+    <div class="apv-body"><div id="apvErrBanner"></div>
       <div class="apv-bar">
         <span style="font-weight:600;font-size:12.5px">Placements:</span>
         <div class="apv-tabs" id="apvTabs"></div>
@@ -2468,7 +2471,7 @@ async function apvOpen(handleB64,titlesB64,collTitleB64){
   APV.handle=handle;
   var r=await api("pmaxPreview",{handle:handle,titles:titles,n:10}).catch(function(e){return{error:e.message};});
   if(r.error||!(r.products||[]).length){document.getElementById("apvWall").innerHTML='<div class="muted" style="padding:30px;color:#b3402a">Could not load listing images: '+esc(r.error||"no eligible products")+'</div>';return;}
-  APV.data=r;APV.prod=0;
+  APV.data=r;APV.prod=0;apvFailCount=0;apvUpdateBanner();
   apvTabs();apvProds();apvRender();
 }
 function apvClose(){document.getElementById("apvModal").classList.remove("on");}
@@ -2480,6 +2483,7 @@ function apvProds(){
   var host=document.getElementById("apvProds");
   host.innerHTML=APV.data.products.map(function(p,i){return '<div class="apv-pthumb '+(i===APV.prod?"sel":"")+'" data-i="'+i+'"><img src="'+esc(p.crops.tile)+'" loading="lazy"><div class="t">'+esc(apvClip(p.title,32))+'</div>'+(p.detailUsed?'<div class="d">\u2713 detail shot</div>':'<div class="d" style="color:var(--ink-45)">hero only</div>')+'</div>';}).join("");
   Array.prototype.forEach.call(host.querySelectorAll(".apv-pthumb"),function(el){el.onclick=function(){APV.prod=+this.getAttribute("data-i");apvProds();apvRender();};});
+  apvWireImgFallback(host);
 }
 function apvP(){return APV.data.products[APV.prod];}
 function apvHeadline(){return apvClip(apvP().title.replace(/[,:|].*$/,""),30);}
@@ -2524,11 +2528,36 @@ function apvBuild(){
   return out.join("");
 }
 function apvRender(){
+  apvFailCount=0;apvUpdateBanner();
   document.getElementById("apvWall").innerHTML=apvBuild();
   var p=apvP();
   document.getElementById("apvInsTitle").textContent=p.title;
   var crops=[["square","1:1 \u00b7 1200\u00d71200","LOGO + SQUARE_MARKETING_IMAGE",140,140],["landscape","1.91:1 \u00b7 1200\u00d7628","MARKETING_IMAGE",214,112],["portrait","4:5 \u00b7 1080\u00d71350","PORTRAIT_MARKETING_IMAGE",112,140]];
   document.getElementById("apvInsRow").innerHTML=crops.map(function(c){return '<div class="apv-crop"><img src="'+esc(p.crops[c[0]])+'" style="width:'+c[3]+'px;height:'+c[4]+'px;object-fit:cover" onclick="window.open(\''+esc(p.crops[c[0]])+'\')"><div class="cl"><b>'+c[1]+'</b><br>'+c[2]+'</div></div>';}).join("")+'<div style="flex:1;min-width:180px;font-size:12px;color:var(--ink-70);align-self:center">'+(p.detailUsed?'<span style="color:#3f6f4f;font-weight:700">\u2713 Detail shot in use</span> \u2014 tight crops cut from this product\u2019s close-up photo.':'<span style="color:#b3402a;font-weight:700">Hero only</span> \u2014 this listing has no close-up second photo; adding one in Shopify upgrades every small placement automatically.')+'</div>';
+
+  apvWireImgFallback(document.getElementById("apvWall"));
+  apvWireImgFallback(document.getElementById("apvInsRow"));
+}
+var apvFailCount=0;
+function apvUpdateBanner(){
+  var b=document.getElementById("apvErrBanner");
+  if(!b)return;
+  if(apvFailCount>0){b.classList.add("on");b.textContent=apvFailCount+" image"+(apvFailCount>1?"s":"")+" failed to load \u2014 hover any red-dashed box to see the exact URL that failed, or check the browser console for details.";}
+  else b.classList.remove("on");
+}
+function apvWireImgFallback(root){
+  if(!root)return;
+  Array.prototype.forEach.call(root.querySelectorAll("img"),function(im){
+    if(im.dataset.apvWired)return; im.dataset.apvWired="1";
+    im.addEventListener("error",function(){
+      if(this.dataset.apvFailed)return; this.dataset.apvFailed="1";
+      var url=this.getAttribute("src")||"(empty)";
+      console.error("[Ad Preview] image failed to load:",url);
+      this.classList.add("apv-imgerr"); this.removeAttribute("src");
+      this.title=url; this.alt="\u26a0 image failed \u2014 hover for URL";
+      apvFailCount++; apvUpdateBanner();
+    });
+  });
 }
 document.addEventListener("keydown",function(e){if(e.key==="Escape")apvClose();});
 </script>
