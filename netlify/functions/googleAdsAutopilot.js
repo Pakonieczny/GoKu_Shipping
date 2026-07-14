@@ -71,7 +71,7 @@ const CURRENCY   = ENV.GADS_CURRENCY || "USD";
 const OPPORTUNITY_ENGINE_VERSION = "12.3.0-api-compatibility-fix";
 // Deploy marker embedded in every mutate failure — a pasted error now proves exactly
 // which engine build executed the failing request. Bump on every engine delivery.
-const ENGINE_BUILD = "b20260713-3-pmax-text";
+const ENGINE_BUILD = "b20260714-4-pmax-contiguity";
 
 // The store's nine homepage collections (handle ↔ title) — drives the Draft Bench picker.
 const COLLECTIONS = [
@@ -871,6 +871,13 @@ function sanitizeOps(ops, meta) {
               op.create || op.update;
     if (c && typeof c === "object") {
       delete c.text_guidelines; delete c.textGuidelines;
+      // New PMax campaigns default to brand-guidelines ENABLED, which moves BUSINESS_NAME/
+      // LOGO to campaign-level links and rejects the group-level attaches every draft in
+      // this system uses. Frozen drafts predate the explicit opt-out — inject it.
+      if (String(c.advertisingChannelType || c.advertising_channel_type || "") === "PERFORMANCE_MAX" &&
+          c.brandGuidelinesEnabled == null && c.brand_guidelines_enabled == null) {
+        c.brandGuidelinesEnabled = false;
+      }
       // Legacy schedule fields: Campaign uses startDateTime/endDateTime ("yyyyMMdd HH:MM:SS"),
       // not startDate/endDate. Migrate any draft queued before this fix so it applies cleanly.
       if (c.startDate != null) { const v = _toGAdsDateTime(c.startDate, "00:00:00"); if (v) c.startDateTime = v; delete c.startDate; }
@@ -919,7 +926,64 @@ function sanitizeOps(ops, meta) {
       try { ops._healed = "text-assets:" + deficient.length + "group(s)"; } catch (e) {}
     }
   }
+  // Google validates asset-group minimum requirements PER CONTIGUOUS RUN of
+  // assetGroupAssetOperation ops — a text block and an image block separated by any
+  // other op are each judged alone and BOTH fail (NOT_ENOUGH_HEADLINE on the image
+  // block, NOT_ENOUGH_*_IMAGE on the text block; observed live). Regroup every
+  // attach op into one contiguous block per asset group at the end of the array —
+  // all referenced assets/groups are created earlier, so end placement is always
+  // resolvable, and this is a no-op re-ordering for an already-contiguous draft.
+  {
+    const isAttach = o => !!(o && o.assetGroupAssetOperation && o.assetGroupAssetOperation.create);
+    if (ops.some(isAttach)) {
+      const attaches = [];
+      for (let i = ops.length - 1; i >= 0; i--) { if (isAttach(ops[i])) attaches.unshift(ops[i]), ops.splice(i, 1); }
+      const byGroup = new Map();
+      attaches.forEach(o => { const g = o.assetGroupAssetOperation.create.assetGroup; if (!byGroup.has(g)) byGroup.set(g, []); byGroup.get(g).push(o); });
+      byGroup.forEach(list => ops.push(...list));
+    }
+  }
   return ops;
+}
+// Required aspect ratio (w/h) per image field type + Google's minimum pixel sizes.
+const _IMG_FIELD_SPECS = {
+  SQUARE_MARKETING_IMAGE:   { ratio: 1.0,      tol: 0.03, minW: 300, minH: 300 },
+  MARKETING_IMAGE:          { ratio: 1.91,     tol: 0.03, minW: 600, minH: 314 },
+  PORTRAIT_MARKETING_IMAGE: { ratio: 0.8,      tol: 0.03, minW: 480, minH: 600 },
+  LOGO:                     { ratio: 1.0,      tol: 0.03, minW: 128, minH: 128 }
+};
+// Drop image attach ops whose ALREADY-UPLOADED asset has a disallowed aspect ratio for
+// its field type (live failure: ASPECT_RATIO_NOT_ALLOWED on two pre-uploaded portraits —
+// one bad asset rejects the entire atomic mutate). Only REAL asset resource names
+// (positive ids) are checked; temp-id assets were built by the crop math and are exact.
+// Best-effort: any GAQL failure drops nothing and the apply proceeds unchanged.
+async function _dropBadRatioImageAttaches(ops) {
+  try {
+    const targets = [];
+    (ops || []).forEach((o, i) => {
+      const c = o && o.assetGroupAssetOperation && o.assetGroupAssetOperation.create;
+      if (c && _IMG_FIELD_SPECS[c.fieldType] && /\/assets\/\d+$/.test(String(c.asset || ""))) targets.push({ i, asset: c.asset, fieldType: c.fieldType });
+    });
+    if (!targets.length) return { dropped: 0 };
+    const names = [...new Set(targets.map(t => t.asset))];
+    const dims = {};
+    for (let k = 0; k < names.length; k += 20) {
+      const chunk = names.slice(k, k + 20).map(n => `'${n}'`).join(",");
+      const rows = await gaql(`SELECT asset.resource_name, asset.image_asset.full_size.width_pixels, asset.image_asset.full_size.height_pixels FROM asset WHERE asset.resource_name IN (${chunk})`);
+      rows.forEach(r => { const a = r.asset || {}; const fs = (a.imageAsset || {}).fullSize || {};
+        if (a.resourceName && fs.widthPixels && fs.heightPixels) dims[a.resourceName] = { w: Number(fs.widthPixels), h: Number(fs.heightPixels) }; });
+    }
+    const bad = new Set();
+    targets.forEach(t => {
+      const d = dims[t.asset]; if (!d || !d.h) return; // unknown → leave alone
+      const spec = _IMG_FIELD_SPECS[t.fieldType];
+      const off = Math.abs((d.w / d.h) - spec.ratio) / spec.ratio > spec.tol || d.w < spec.minW || d.h < spec.minH;
+      if (off) bad.add(t.i);
+    });
+    if (!bad.size) return { dropped: 0 };
+    for (let i = ops.length - 1; i >= 0; i--) if (bad.has(i)) ops.splice(i, 1);
+    return { dropped: bad.size };
+  } catch (e) { return { dropped: 0, error: String(e && e.message || e).slice(0, 160) }; }
 }
 async function applyApproval(id, ctrl) {
   ctrl = ctrl || (await control());
@@ -952,7 +1016,13 @@ async function applyApproval(id, ctrl) {
     }
   }
   if (p.service && p.operations) { const sOps = sanitizeOps(p.operations, p.meta); await mutate(p.service, sOps, { ctrl, label: "approval:" + it.type + (sOps && sOps._healed ? "·healed[" + sOps._healed + "]" : "") }); }
-  else if (p.mutateOperations)   { const sOps = sanitizeOps(p.mutateOperations, p.meta); await mutateAll(sOps, { ctrl, label: "approval:" + it.type + (sOps && sOps._healed ? "·healed[" + sOps._healed + "]" : "") }); }
+  else if (p.mutateOperations)   {
+    const sOps = sanitizeOps(p.mutateOperations, p.meta);
+    const ratio = await _dropBadRatioImageAttaches(sOps);
+    await mutateAll(sOps, { ctrl, label: "approval:" + it.type +
+      (sOps && sOps._healed ? "·healed[" + sOps._healed + "]" : "") +
+      (ratio.dropped ? "·droppedBadRatio[" + ratio.dropped + "]" : "") });
+  }
   if (!vo && _ctrim) { try { await ledger({ kind: "ceilingTrim", from: _ctrim.from, to: _ctrim.to, ceiling: _ctrim.ceiling }); } catch (e) {} }
   // Only flip to APPLIED when it actually ran; a dry-run only validated, so leave it APPROVED.
   if (!vo) await ref.update({ status: "APPLIED", appliedAt: f.FV.serverTimestamp() });
@@ -2887,6 +2957,26 @@ function _shotForShape(im, shape) {
   if (shape === "portrait") return im.modelUrl || im.detailUrl || im.url;
   return im.detailUrl || im.url; // square
 }
+// Read pixel dimensions straight from the image bytes (JPEG SOF / PNG IHDR) — no
+// image library on Netlify. Returns null for other formats (caller then allows).
+function _imageDims(buf) {
+  try {
+    if (buf.length > 24 && buf[0] === 0x89 && buf[1] === 0x50) // PNG
+      return { w: buf.readUInt32BE(16), h: buf.readUInt32BE(20) };
+    if (buf.length > 4 && buf[0] === 0xFF && buf[1] === 0xD8) { // JPEG
+      let i = 2;
+      while (i + 9 < buf.length) {
+        if (buf[i] !== 0xFF) { i++; continue; }
+        const m = buf[i + 1];
+        if (m >= 0xC0 && m <= 0xCF && m !== 0xC4 && m !== 0xC8 && m !== 0xCC)
+          return { h: buf.readUInt16BE(i + 5), w: buf.readUInt16BE(i + 7) };
+        i += 2 + buf.readUInt16BE(i + 2);
+      }
+    }
+  } catch (e) {}
+  return null;
+}
+const _SHAPE_FIELD = { square: "SQUARE_MARKETING_IMAGE", landscape: "MARKETING_IMAGE", portrait: "PORTRAIT_MARKETING_IMAGE" };
 async function _uploadImageVariant(imgs, ctrl, shape) {
   if (ctrl && ctrl.dryRun) return [];
   const dims = { landscape: [1200, 628], square: [1200, 1200], portrait: [1080, 1350] };
@@ -2897,6 +2987,12 @@ async function _uploadImageVariant(imgs, ctrl, shape) {
       const url = _shopifyImageVariant(_shotForShape(im, shape), w, h);
       const r = await fetch(url); if (!r.ok) continue; const buf = Buffer.from(await r.arrayBuffer());
       if (!buf.length || buf.length > 5 * 1024 * 1024) continue;
+      // Never upload an image Google will reject: verify the ACTUAL pixel ratio and
+      // minimum size against the field-type spec (source images smaller than the crop
+      // request, or a CDN fallback to the original, silently break the expected ratio —
+      // one bad asset later fails the entire atomic launch with ASPECT_RATIO_NOT_ALLOWED).
+      const d = _imageDims(buf), spec = _IMG_FIELD_SPECS[_SHAPE_FIELD[shape]];
+      if (d && spec && (Math.abs((d.w / d.h) - spec.ratio) / spec.ratio > spec.tol || d.w < spec.minW || d.h < spec.minH)) continue;
       ops.push({ create: { name: (`Brites · ${im.title || "product"} · ${shape} · ${Date.now()}-${ops.length}`).slice(0, 120), type: "IMAGE", imageAsset: { data: buf.toString("base64") } } });
     } catch (e) {}
   }
@@ -2921,6 +3017,11 @@ function buildPmaxCampaignOps(coll, { dailyBudget, startDate, endDate, targetRoa
   const ops=[
     {campaignBudgetOperation:{create:{resourceName:bRes,name:`BA · ${tag} · ${Date.now()}`,amountMicros:micros(dailyBudget),deliveryMethod:"STANDARD",explicitlyShared:false}}},
     {campaignOperation:{create:{resourceName:cRes,name:`BA · ${tag}`,status:"PAUSED",advertisingChannelType:"PERFORMANCE_MAX",campaignBudget:bRes,
+      /* New PMax campaigns default to brand-guidelines ENABLED, which moves BUSINESS_NAME/
+         LOGO to campaign-level CampaignAsset links and rejects our group-level attaches
+         (campaignError REQUIRED_BUSINESS_NAME_ASSET_NOT_LINKED / REQUIRED_LOGO_ASSET_NOT_LINKED).
+         Disable explicitly (immutable at create) so the group-level structure stays valid. */
+      brandGuidelinesEnabled:false,
       containsEuPoliticalAdvertising:"DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING",shoppingSetting,/* v24 removed url_expansion_opt_out; the opt-out is now an asset automation setting */assetAutomationSettings:[{assetAutomationType:"FINAL_URL_EXPANSION_TEXT_ASSET_AUTOMATION",assetAutomationStatus:"OPTED_OUT"}],geoTargetTypeSetting:{positiveGeoTargetType:"PRESENCE"},
       // Separate Merchant-feed traffic from Search in Shopify order intelligence.
       finalUrlSuffix:"utm_source=google&utm_medium=paid_shopping&utm_campaign={campaignid}&utm_content=pmax",
@@ -5734,5 +5835,5 @@ module.exports = {
   fetchDiagnostics, runDiagnostics, getDiagnostics, applyGoogleRecommendation, dismissGoogleRecommendation,
   dailyStats, applyRemedy, remedyHistory, adReviewStatus,
   getPlaybook, playbookSlice, distillLessons, setGenStatus, getGenStatus,
-  _util: { micros, fromMicros, clampHeadline, clampDescription, gAdsTime, daysUntil, merchantLookupPlan:_merchantLookupPlan,pmaxTag:_pmaxTag,groundKeywordPlan,collectionEconomics,opportunityClass,resolveOpportunityConflicts,paidAttribution:_paidAttribution,paidChannel:_paidChannel,merchantOrganic:_merchantOrganic,bestSearchLandingUrl:_bestSearchLandingUrl,selectListingShots,visionSelectShots:_visionSelectShots,collectionShotRows:_collectionShotRows,shotForShape:_shotForShape,productIdFromItemId:_productIdFromItemId,productShotsByIds:_productShotsByIds,pmaxDeterministicCopy:_pmaxDeterministicCopy,pmaxAdCopy:_pmaxAdCopy,buildPmaxTextAssetOps:_buildPmaxTextAssetOps,opsFingerprint:_opsFingerprint,gadsErrorLines:_gadsErrorLines }
+  _util: { micros, fromMicros, clampHeadline, clampDescription, gAdsTime, daysUntil, merchantLookupPlan:_merchantLookupPlan,pmaxTag:_pmaxTag,groundKeywordPlan,collectionEconomics,opportunityClass,resolveOpportunityConflicts,paidAttribution:_paidAttribution,paidChannel:_paidChannel,merchantOrganic:_merchantOrganic,bestSearchLandingUrl:_bestSearchLandingUrl,selectListingShots,visionSelectShots:_visionSelectShots,collectionShotRows:_collectionShotRows,shotForShape:_shotForShape,productIdFromItemId:_productIdFromItemId,productShotsByIds:_productShotsByIds,pmaxDeterministicCopy:_pmaxDeterministicCopy,pmaxAdCopy:_pmaxAdCopy,buildPmaxTextAssetOps:_buildPmaxTextAssetOps,opsFingerprint:_opsFingerprint,gadsErrorLines:_gadsErrorLines,imageDims:_imageDims,dropBadRatioImageAttaches:_dropBadRatioImageAttaches,imgFieldSpecs:_IMG_FIELD_SPECS }
 };
