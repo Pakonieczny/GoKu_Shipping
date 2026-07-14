@@ -813,7 +813,10 @@ async function enqueueApproval(item) {
 // Defensive heal for payloads frozen before the text_guidelines fix: the API rejects
 // Campaign.text_guidelines (free-text messaging_restrictions). Strip it from any campaign
 // create/update op so drafts approved under the old builder can apply after the fix.
-function sanitizeOps(ops) {
+// meta (optional): the approval's payload.meta, used only to recover a collection title
+// for the injected-copy heal below — never required, the deterministic copy has its own
+// generic fallback text.
+function sanitizeOps(ops, meta) {
   if (!Array.isArray(ops)) return ops;
   ops.forEach(op => {
     if (!op) return;
@@ -844,6 +847,24 @@ function sanitizeOps(ops) {
       }
     }
   });
+  // v24 rejects a PMax asset group without headline/long-headline/description/business-name
+  // assets (NOT_ENOUGH_HEADLINE_ASSET etc.) — the builder didn't produce these before this
+  // fix, so any already-frozen PMax draft has none. Detect that and inject the deterministic
+  // copy (same guaranteed-valid floor the builder now uses), attached to every asset group
+  // this draft creates, so the SAME approval card can just be re-approved — no regeneration.
+  const agResList = ops.map(o => o && o.assetGroupOperation && o.assetGroupOperation.create && o.assetGroupOperation.create.resourceName).filter(Boolean);
+  const hasHeadlines = ops.some(o => o && o.assetGroupAssetOperation && o.assetGroupAssetOperation.create && o.assetGroupAssetOperation.create.fieldType === "HEADLINE");
+  if (agResList.length && !hasHeadlines) {
+    const copy = _pmaxDeterministicCopy({ title: meta && meta.collectionTitle });
+    const built = _buildPmaxTextAssetOps(copy, -100);
+    ops.push(...built.ops);
+    agResList.forEach(agRes => {
+      built.ids.headlines.forEach(a => ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: a, fieldType: "HEADLINE" } } }));
+      built.ids.longHeadlines.forEach(a => ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: a, fieldType: "LONG_HEADLINE" } } }));
+      built.ids.descriptions.forEach(a => ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: a, fieldType: "DESCRIPTION" } } }));
+      ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: built.ids.businessName, fieldType: "BUSINESS_NAME" } } });
+    });
+  }
   return ops;
 }
 async function applyApproval(id, ctrl) {
@@ -876,8 +897,8 @@ async function applyApproval(id, ctrl) {
       }
     }
   }
-  if (p.service && p.operations) await mutate(p.service, sanitizeOps(p.operations), { ctrl, label: "approval:" + it.type });
-  else if (p.mutateOperations)   await mutateAll(sanitizeOps(p.mutateOperations), { ctrl, label: "approval:" + it.type });
+  if (p.service && p.operations) await mutate(p.service, sanitizeOps(p.operations, p.meta), { ctrl, label: "approval:" + it.type });
+  else if (p.mutateOperations)   await mutateAll(sanitizeOps(p.mutateOperations, p.meta), { ctrl, label: "approval:" + it.type });
   if (!vo && _ctrim) { try { await ledger({ kind: "ceilingTrim", from: _ctrim.from, to: _ctrim.to, ceiling: _ctrim.ceiling }); } catch (e) {} }
   // Only flip to APPLIED when it actually ran; a dry-run only validated, so leave it APPROVED.
   if (!vo) await ref.update({ status: "APPLIED", appliedAt: f.FV.serverTimestamp() });
@@ -2839,7 +2860,7 @@ async function uploadImageAssets(imgs, ctrl) {
 // mutateOperations for a retail Performance Max campaign. Exact Merchant Center
 // item IDs are preferred so the campaign amplifies the products that already sold
 // through free listings. Product-type scoping remains a safe fallback only.
-function buildPmaxCampaignOps(coll, { dailyBudget, startDate, endDate, targetRoas, merchantId, feedLabel, itemIds, types, countries, offerDetails, searchThemes, audienceResource, imageAssets } = {}) {
+function buildPmaxCampaignOps(coll, { dailyBudget, startDate, endDate, targetRoas, merchantId, feedLabel, itemIds, types, countries, offerDetails, searchThemes, audienceResource, imageAssets, adCopy } = {}) {
   const tag=_pmaxTag(coll.handle,feedLabel), bRes=`customers/${CID}/campaignBudgets/-1`, cRes=`customers/${CID}/campaigns/-2`;
   const finalUrl=`https://britesjewelry.com/collections/${coll.handle}`, _sched=_campaignScheduleFields(startDate,endDate), tRoas=Number(targetRoas||ENV.GADS_TARGET_ROAS||0);
   const shoppingSetting={merchantId:Number(merchantId)};if(feedLabel)shoppingSetting.feedLabel=String(feedLabel);
@@ -2861,6 +2882,11 @@ function buildPmaxCampaignOps(coll, { dailyBudget, startDate, endDate, targetRoa
   // Ensure every selected offer is represented exactly once; merge tiny overflow into the lead group.
   const represented=new Set(groups.flatMap(g=>g.itemIds));exact.filter(id=>!represented.has(id)).forEach(id=>groups[0].itemIds.push(id));
   const themes=[...new Set((searchThemes||[]).map(x=>String(x).toLowerCase().replace(/[^a-z0-9 ]+/g," ").replace(/\s+/g," ").trim()).filter(Boolean))].slice(0,25);
+  // v24 rejects the whole mutate if any asset group lacks headline/long-headline/description
+  // assets \u2014 build them once (temp resource names, atomic) and attach to every group below.
+  const textCopy = adCopy || _pmaxDeterministicCopy(coll);
+  const textAssets = _buildPmaxTextAssetOps(textCopy, -100);
+  ops.push(...textAssets.ops);
   groups.forEach((g,gi)=>{
     const agId=-(3+gi),agRes=`customers/${CID}/assetGroups/${agId}`;
     ops.push({assetGroupOperation:{create:{resourceName:agRes,campaign:cRes,name:`AG · ${String(g.label).slice(0,60)}`,finalUrls:[finalUrl],status:"ENABLED"}}});
@@ -2884,13 +2910,81 @@ function buildPmaxCampaignOps(coll, { dailyBudget, startDate, endDate, targetRoa
     (imageAssets && imageAssets.square || []).slice(0, 4).forEach(res => ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: res, fieldType: "SQUARE_MARKETING_IMAGE" } } }));
     (imageAssets && imageAssets.landscape || []).slice(0, 4).forEach(res => ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: res, fieldType: "MARKETING_IMAGE" } } }));
     (imageAssets && imageAssets.portrait || []).slice(0, 4).forEach(res => ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: res, fieldType: "PORTRAIT_MARKETING_IMAGE" } } }));
+    // Required text creative \u2014 same shared assets on every group in this campaign.
+    textAssets.ids.headlines.forEach(a => ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: a, fieldType: "HEADLINE" } } }));
+    textAssets.ids.longHeadlines.forEach(a => ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: a, fieldType: "LONG_HEADLINE" } } }));
+    textAssets.ids.descriptions.forEach(a => ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: a, fieldType: "DESCRIPTION" } } }));
+    ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: textAssets.ids.businessName, fieldType: "BUSINESS_NAME" } } });
   });
   [...new Set((countries||[]).map(x=>String(x).replace(/\D/g,"")).filter(Boolean))].forEach(id=>ops.push({campaignCriterionOperation:{create:{campaign:cRes,location:{geoTargetConstant:`geoTargetConstants/${id}`}}}}));
   return {ops,tag,finalUrl,scopedTypes:[...new Set(groups.map(g=>g.label))],scopedItemIds:exact,assetMode:(imageAssets&&(imageAssets.square||[]).length)?"custom+merchant-auto":"merchant-auto",countries:[...new Set((countries||[]).map(String))],
-    assetGroups:groups.map(g=>({name:g.label,itemIds:g.itemIds})),searchThemes:themes,audienceSignal:audienceResource||null};
+    assetGroups:groups.map(g=>({name:g.label,itemIds:g.itemIds})),searchThemes:themes,audienceSignal:audienceResource||null,
+    textAssets:{headlines:textCopy.headlines.length,longHeadlines:textCopy.longHeadlines.length,descriptions:textCopy.descriptions.length}};
 }
 
-let _pmaxAudienceDiscovery={at:0,value:null};
+// Every v24 PMax asset group REQUIRES headline/long-headline/description text assets —
+// google_ads_failure NOT_ENOUGH_HEADLINE_ASSET / NOT_ENOUGH_LONG_HEADLINE_ASSET /
+// NOT_ENOUGH_DESCRIPTION_ASSET reject the ENTIRE atomic mutate otherwise (the image-only
+// builder below had never produced these; this closes that gap). The deterministic set is
+// the unconditional floor — built only from already-vetted BRAND_CALLOUTS + the collection
+// title, so a launch can NEVER be blocked by an AI outage. It also guarantees the sub-limits
+// some placements need (one headline \u226415 chars, one description \u226460 chars) regardless
+// of what the AI returns, by always keeping its own short entries in the final list.
+function _pmaxDeterministicCopy(coll) {
+  const title = String((coll && coll.title) || "Brites Jewelry");
+  return {
+    headlines: [clampHeadline("Brites Jewelry"), clampHeadline(title), clampHeadline("Handcrafted Jewelry"), clampHeadline("Personalized Charms"), clampHeadline("Made Just For You")],
+    longHeadlines: [clampDescription(`${title} \u2014 handcrafted, personalized, made to order`), clampDescription("Little charms, big meanings \u2014 custom jewelry from Brites"), clampDescription("Handmade jewelry made just for you, from Brites Jewelry")],
+    descriptions: [clampDescription("Free shipping over $75. Handmade, made to order."), clampDescription("Custom-made gifts, personalized just for you."), clampDescription(`${title}, handcrafted with care.`), clampDescription("30-day hassle-free returns on every order.")],
+    businessName: "Brites Jewelry"
+  };
+}
+async function _pmaxAdCopy(coll, { productTitles = [] } = {}) {
+  const base = _pmaxDeterministicCopy(coll);
+  try {
+    const heroes = (productTitles || []).slice(0, 6).join("; ");
+    const prompt =
+`You write Performance Max ad copy for Brites, a handcrafted personalized charm-jewelry brand.
+Voice: warm, sincere, premium, gift-and-emotion led \u2014 never bargain or hypey.
+Collection: "${coll.title}" (${coll.handle}). Proven bestsellers in this exact campaign: ${heroes || "n/a"}.
+Hard rules:
+- 8 headlines, each \u226430 characters (Google mixes these into Search/Display/Discover/Gmail/YouTube ads).
+- 4 long headlines, each \u226490 characters (one compelling sentence, not a list).
+- 4 descriptions, each \u226490 characters.
+- Avoid these terms entirely: ${BRAND.termExclusions.join(", ")}.
+- ${BRAND.messagingRestrictions.join(" ")}
+Return ONLY JSON: {"headlines":[],"longHeadlines":[],"descriptions":[]}`;
+    const j = await openaiJSON(prompt, { maxTokens: 4000, effort: "low" });
+    if (j) {
+      const hl = (j.headlines || []).map(clampHeadline).filter(brandSafe).filter(Boolean);
+      const lh = (j.longHeadlines || []).map(clampDescription).filter(brandSafe).filter(Boolean);
+      const ds = (j.descriptions || []).map(clampDescription).filter(brandSafe).filter(Boolean);
+      // Base entries always lead the list (guarantees the short-headline/short-description
+      // sub-limits); AI output tops it up, never replaces the guaranteed floor.
+      return {
+        headlines: [...new Set([base.headlines[0], ...hl, ...base.headlines.slice(1)])].slice(0, 10),
+        longHeadlines: [...new Set([...lh, ...base.longHeadlines])].slice(0, 5),
+        descriptions: [...new Set([base.descriptions[0], ...ds, ...base.descriptions.slice(1)])].slice(0, 5),
+        businessName: base.businessName
+      };
+    }
+  } catch (e) {}
+  return base; // AI unavailable/invalid \u2014 the deterministic floor alone already satisfies every v24 minimum
+}
+// TEXT assets are created ONCE per campaign (temp resource names, atomic with everything
+// else) and referenced by every asset group below \u2014 Google Ads explicitly supports one
+// Asset attached to multiple asset groups, so this avoids N duplicate copies of the same copy.
+function _buildPmaxTextAssetOps(adCopy, startId) {
+  const ASSET = n => `customers/${CID}/assets/${n}`;
+  let an = startId; const ops = []; const ids = { headlines: [], longHeadlines: [], descriptions: [], businessName: null };
+  (adCopy.headlines || []).forEach(text => { const a = ASSET(an--); ops.push({ assetOperation: { create: { resourceName: a, type: "TEXT", textAsset: { text } } } }); ids.headlines.push(a); });
+  (adCopy.longHeadlines || []).forEach(text => { const a = ASSET(an--); ops.push({ assetOperation: { create: { resourceName: a, type: "TEXT", textAsset: { text } } } }); ids.longHeadlines.push(a); });
+  (adCopy.descriptions || []).forEach(text => { const a = ASSET(an--); ops.push({ assetOperation: { create: { resourceName: a, type: "TEXT", textAsset: { text } } } }); ids.descriptions.push(a); });
+  { const a = ASSET(an--); ops.push({ assetOperation: { create: { resourceName: a, type: "TEXT", textAsset: { text: adCopy.businessName || "Brites Jewelry" } } } }); ids.businessName = a; }
+  return { ops, ids };
+}
+
+
 async function discoverPmaxAudienceResource(){
   if(_pmaxAudienceDiscovery.at&&Date.now()-_pmaxAudienceDiscovery.at<6*60*60*1000)return _pmaxAudienceDiscovery.value;
   let value=null;
@@ -2922,7 +3016,91 @@ async function validatePmaxAudienceResource(resourceName) {
   } catch(e){return {resource:null,warning:"Configured PMax audience could not be validated: "+String(e.message||e).slice(0,140)};}
 }
 
-// Ad-preview feed: the EXACT image variants the engine uploads to Google for a
+// ===== ONE-TIME BACKFILL: re-image already-running PMax campaigns with vision-selected shots =====
+// Applies selectListingShots (product-only / worn-close-up / worn-full roles) to asset
+// groups that were built and approved BEFORE the vision pipeline existed, so live campaigns
+// (Beady Chain Necklaces, Food & Fruits, Disc & Coin Charms, etc.) get the same creative
+// quality as new launches. Discovery + new-asset upload happen immediately — uploading an
+// asset does not change any live campaign's creative. The ATTACH/REMOVE ops that actually
+// swap what's showing are queued to Approvals, one per asset group: these are ENABLED
+// campaigns, so nothing here goes live without an explicit Approve, same as every other
+// creative change (mirrors pruneAssets' precedent of queuing creative for review).
+// Fetch full-resolution listing photos + variant-image exclusion for exact Shopify product
+// IDs (not a collection scope) — the numeric ID recovered from a live campaign's GMC item IDs.
+async function _productShotsByIds(productIds) {
+  const ids = [...new Set((productIds || []).map(String))].slice(0, 30);
+  if (!ids.length) return [];
+  const gids = ids.map(id => `"gid://shopify/Product/${id}"`).join(",");
+  const d = await shopifyGql(`{ nodes(ids:[${gids}]) { ... on Product { id title handle
+    images(first: 20) { nodes { url width height } }
+    variants(first: 100) { nodes { image { url } } } } } }`);
+  return (d.nodes || []).filter(Boolean).map(p => {
+    const all = (((p.images || {}).nodes) || []).filter(im => im && im.url);
+    const variantUrls = new Set((((p.variants || {}).nodes) || []).map(v => v && v.image && v.image.url).filter(Boolean).map(u => u.split("?")[0]));
+    let shots = all.filter(im => !variantUrls.has(im.url.split("?")[0]));
+    if (!shots.length && all.length) shots = [all[0]];
+    return { title: p.title, handle: p.handle, shots };
+  }).filter(p => p.shots.length);
+}
+// customers/{cid}/assetGroupListingGroupFilters/{ag}~{n} UNIT_INCLUDED item IDs are
+// shopify_<market>_<productId>_<variantId> (see _merchantLookupPlan) — the numeric
+// Shopify product ID sits in the 3rd underscore segment.
+function _productIdFromItemId(itemId) { const m = String(itemId || "").match(/^shopify_[^_]+_(\d+)_/i); return m ? m[1] : null; }
+async function backfillPmaxCreative({ ctrl, campaignIds, onProgress } = {}) {
+  ctrl = ctrl || (await control());
+  const idFilter = (campaignIds && campaignIds.length) ? ` AND campaign.id IN (${campaignIds.map(x => Number(x)).filter(Boolean).join(",")})` : "";
+  const campRows = await gaql(`SELECT campaign.id, campaign.resource_name, campaign.name, campaign.status
+    FROM campaign WHERE campaign.advertising_channel_type = 'PERFORMANCE_MAX' AND campaign.status != 'REMOVED'${idFilter}`);
+  const results = []; let queued = 0, groupsSeen = 0;
+  for (const cr of campRows) {
+    const campaignId = cr.campaign.id, campaignName = cr.campaign.name;
+    let agRows = [];
+    try { agRows = await gaql(`SELECT asset_group.id, asset_group.resource_name, asset_group.name, asset_group.status
+      FROM asset_group WHERE campaign.id = ${campaignId} AND asset_group.status != 'REMOVED'`); }
+    catch (e) { results.push({ campaign: campaignName, error: "asset_group query failed: " + String(e.message || e).slice(0, 200) }); continue; }
+    for (const ag of agRows) {
+      groupsSeen++;
+      const agRes = ag.assetGroup.resourceName, agName = ag.assetGroup.name;
+      if (onProgress) try { await onProgress({ campaign: campaignName, assetGroup: agName, groupsSeen }); } catch (e) {}
+      const row = { campaign: campaignName, campaignId, assetGroup: agName, assetGroupResource: agRes };
+      try {
+        const lgRows = await gaql(`SELECT asset_group_listing_group_filter.case_value.product_item_id.value
+          FROM asset_group_listing_group_filter WHERE asset_group.resource_name = '${agRes}'`);
+        const productIds = [...new Set(lgRows.map(r => _productIdFromItemId(
+          r.assetGroupListingGroupFilter && r.assetGroupListingGroupFilter.caseValue && r.assetGroupListingGroupFilter.caseValue.productItemId && r.assetGroupListingGroupFilter.caseValue.productItemId.value
+        )).filter(Boolean))];
+        if (!productIds.length) { results.push({ ...row, skipped: "no item-scoped products on this asset group (type/category-only filter)" }); continue; }
+        const existingRows = await gaql(`SELECT asset_group_asset.resource_name, asset_group_asset.field_type
+          FROM asset_group_asset WHERE asset_group.resource_name = '${agRes}'
+            AND asset_group_asset.field_type IN ('SQUARE_MARKETING_IMAGE','MARKETING_IMAGE','PORTRAIT_MARKETING_IMAGE','LOGO')`);
+        const staleAssets = [...new Set(existingRows.map(r => r.assetGroupAsset && r.assetGroupAsset.resourceName).filter(Boolean))];
+        const products = await _productShotsByIds(productIds);
+        if (!products.length) { results.push({ ...row, skipped: "none of this group's " + productIds.length + " Shopify product IDs resolved (deleted/renamed?)" }); continue; }
+        const shots = await Promise.all(products.map(p => selectListingShots(p, { timeoutMs: 20000 })));
+        const aiCount = shots.filter(s => s.ai).length;
+        const imageAssets = await uploadImageAssets(shots, ctrl);
+        const uploaded = (imageAssets.square || []).length + (imageAssets.landscape || []).length + (imageAssets.portrait || []).length;
+        if (!uploaded) { results.push({ ...row, products: products.length, aiSelected: aiCount, skipped: "no usable images fetched for this group's products" }); continue; }
+        const ops = [];
+        if (imageAssets.logo) ops.push({ create: { assetGroup: agRes, asset: imageAssets.logo, fieldType: "LOGO" } });
+        (imageAssets.square || []).slice(0, 4).forEach(res => ops.push({ create: { assetGroup: agRes, asset: res, fieldType: "SQUARE_MARKETING_IMAGE" } }));
+        (imageAssets.landscape || []).slice(0, 4).forEach(res => ops.push({ create: { assetGroup: agRes, asset: res, fieldType: "MARKETING_IMAGE" } }));
+        (imageAssets.portrait || []).slice(0, 4).forEach(res => ops.push({ create: { assetGroup: agRes, asset: res, fieldType: "PORTRAIT_MARKETING_IMAGE" } }));
+        staleAssets.forEach(rn => ops.push({ remove: rn }));
+        const id = await enqueueApproval({ type: "creative", vetted: false,
+          summary: `PMax re-image · ${campaignName} · ${agName} · ${products.length} products (${aiCount} AI-selected) · +${uploaded} new / -${staleAssets.length} stale image assets`,
+          payload: { service: "assetGroupAssets", operations: ops,
+            meta: { kind: "pmax-backfill-images", campaignId, campaignName, assetGroup: agName, assetGroupResource: agRes,
+              products: products.map(p => p.title), aiSelected: aiCount, uploaded, removed: staleAssets.length } } });
+        queued++;
+        results.push({ ...row, products: products.length, aiSelected: aiCount, uploaded, staleToRemove: staleAssets.length, approvalId: id });
+      } catch (e) { results.push({ ...row, error: String(e.message || e).slice(0, 300) }); }
+    }
+  }
+  return { campaigns: campRows.length, assetGroups: groupsSeen, queued, dryRun: !!ctrl.dryRun, results };
+}
+
+
 // given PMax scope (same vision shot selection + _shopifyImageVariant math), plus
 // titles/prices — so the visual simulator renders the literal creative Google
 // receives, not mockups. Runs synchronously through the Kick gateway, so vision
@@ -3007,11 +3185,16 @@ async function generatePmaxApproval({ handle, dailyBudget, targetRoas, days, ite
     const shots = await collectionImages(handle, 4, chosenTitles);
     if (shots.length) imageAssets = await uploadImageAssets(shots, ctrl);
   } catch (e) {}
-  const built=buildPmaxCampaignOps(coll,{dailyBudget:budget,startDate:start,endDate:end,targetRoas:safeTargetRoas,merchantId,feedLabel:liveFeedLabel,itemIds:exactIds,types,countries,offerDetails:liveDetails,searchThemes:themes,audienceResource,imageAssets});
+  // Required text creative — v24 rejects the whole launch without it (see _pmaxAdCopy).
+  // The deterministic floor inside _pmaxAdCopy means this can never come back empty.
+  let adCopy = null;
+  try { adCopy = await _pmaxAdCopy(coll, { productTitles: chosenTitles }); } catch (e) {}
+  if (!adCopy) adCopy = _pmaxDeterministicCopy(coll);
+  const built=buildPmaxCampaignOps(coll,{dailyBudget:budget,startDate:start,endDate:end,targetRoas:safeTargetRoas,merchantId,feedLabel:liveFeedLabel,itemIds:exactIds,types,countries,offerDetails:liveDetails,searchThemes:themes,audienceResource,imageAssets,adCopy});
   const scope=built.scopedItemIds.length?`${built.scopedItemIds.length} proven GMC offers`:(built.scopedTypes.length?built.scopedTypes.join("/"):"all feed products");
-  const id=await enqueueApproval({type:"pmax",vetted:false,summary:`PMax · ${coll.title} · $${budget}/day · ${scope} · ${built.assetMode} assets${imageAssets&&imageAssets.square&&imageAssets.square.length?` (${(imageAssets.square||[]).length}sq/${(imageAssets.landscape||[]).length}ls/${(imageAssets.portrait||[]).length}pt custom images)`:""} · GMC ${merchantId}`,
-    payload:{mutateOperations:built.ops,countries:built.countries,meta:{kind:"pmax",handle,collectionTitle:coll.title,dailyBudget:budget,targetRoas:safeTargetRoas,biddingMode:safeTargetRoas>0?"MAXIMIZE_CONVERSION_VALUE_TARGET_ROAS":"MAXIMIZE_CONVERSION_VALUE_LEARNING",scopedTypes:built.scopedTypes,itemIds:built.scopedItemIds,productTitles:chosenTitles,images:imageAssets?(imageAssets.square||[]).length+(imageAssets.landscape||[]).length+(imageAssets.portrait||[]).length:0,assetMode:built.assetMode,merchantId,feedLabel:liveFeedLabel,countries:built.countries,tag:built.tag,assetGroups:built.assetGroups,searchThemes:built.searchThemes,audienceSignal:built.audienceSignal,audienceSignalName:audienceCheck.name||null,audienceSignalSource:audienceCheck.source||null,audienceSignalWarning:audienceCheck.warning||null}}});
-  return {approvalId:id,tag:built.tag,scopedTypes:built.scopedTypes,itemIds:built.scopedItemIds,products:chosenTitles,assetMode:built.assetMode,countries:built.countries,merchantId,assetGroups:built.assetGroups,searchThemes:built.searchThemes,audienceSignal:built.audienceSignal,audienceSignalName:audienceCheck.name||null,audienceSignalSource:audienceCheck.source||null,audienceSignalWarning:audienceCheck.warning||null};
+  const id=await enqueueApproval({type:"pmax",vetted:false,summary:`PMax · ${coll.title} · $${budget}/day · ${scope} · ${built.assetMode} assets${imageAssets&&imageAssets.square&&imageAssets.square.length?` (${(imageAssets.square||[]).length}sq/${(imageAssets.landscape||[]).length}ls/${(imageAssets.portrait||[]).length}pt custom images)`:""} · ${built.textAssets.headlines}hl/${built.textAssets.longHeadlines}lh/${built.textAssets.descriptions}ds copy · GMC ${merchantId}`,
+    payload:{mutateOperations:built.ops,countries:built.countries,meta:{kind:"pmax",handle,collectionTitle:coll.title,dailyBudget:budget,targetRoas:safeTargetRoas,biddingMode:safeTargetRoas>0?"MAXIMIZE_CONVERSION_VALUE_TARGET_ROAS":"MAXIMIZE_CONVERSION_VALUE_LEARNING",scopedTypes:built.scopedTypes,itemIds:built.scopedItemIds,productTitles:chosenTitles,images:imageAssets?(imageAssets.square||[]).length+(imageAssets.landscape||[]).length+(imageAssets.portrait||[]).length:0,textAssets:built.textAssets,assetMode:built.assetMode,merchantId,feedLabel:liveFeedLabel,countries:built.countries,tag:built.tag,assetGroups:built.assetGroups,searchThemes:built.searchThemes,audienceSignal:built.audienceSignal,audienceSignalName:audienceCheck.name||null,audienceSignalSource:audienceCheck.source||null,audienceSignalWarning:audienceCheck.warning||null}}});
+  return {approvalId:id,tag:built.tag,scopedTypes:built.scopedTypes,itemIds:built.scopedItemIds,products:chosenTitles,assetMode:built.assetMode,textAssets:built.textAssets,countries:built.countries,merchantId,assetGroups:built.assetGroups,searchThemes:built.searchThemes,audienceSignal:built.audienceSignal,audienceSignalName:audienceCheck.name||null,audienceSignalSource:audienceCheck.source||null,audienceSignalWarning:audienceCheck.warning||null};
 }
 
 // MINE: converting search terms ⇒ exact keywords; expensive zero-conv terms ⇒ negatives.
@@ -5484,7 +5667,7 @@ module.exports = {
   generateForCollection, COLLECTIONS, OCCASIONS,
   getCollections, suggestOccasions, recordOccasionUse,
   scanOpportunities, opportunitiesWithStatus, takenTags, releaseOpportunity, fetchTopProducts, setCampaignStatus, startCampaignNow, setCampaignBudget, analyzeCampaign,
-  generatePmaxApproval, pmaxPreviewData, merchantCenterId, merchantProducts, pmaxCandidatesFromSignals, proposePmaxOpportunities, buildPmaxCampaignOps, pmaxProductPerformance, merchantFreeProductPerformance,
+  generatePmaxApproval, pmaxPreviewData, backfillPmaxCreative, merchantCenterId, merchantProducts, pmaxCandidatesFromSignals, proposePmaxOpportunities, buildPmaxCampaignOps, pmaxProductPerformance, merchantFreeProductPerformance,
   listCountries, campaignCountries, setCampaignCountries, setApprovalCountries, setApprovalDates,
   loadCalendar, dueEvents,
   measure, pruneAssets, mineSearchTerms, reallocateBudgets, anomalyCheck,
@@ -5493,5 +5676,5 @@ module.exports = {
   fetchDiagnostics, runDiagnostics, getDiagnostics, applyGoogleRecommendation, dismissGoogleRecommendation,
   dailyStats, applyRemedy, remedyHistory, adReviewStatus,
   getPlaybook, playbookSlice, distillLessons, setGenStatus, getGenStatus,
-  _util: { micros, fromMicros, clampHeadline, clampDescription, gAdsTime, daysUntil, merchantLookupPlan:_merchantLookupPlan,pmaxTag:_pmaxTag,groundKeywordPlan,collectionEconomics,opportunityClass,resolveOpportunityConflicts,paidAttribution:_paidAttribution,paidChannel:_paidChannel,merchantOrganic:_merchantOrganic,bestSearchLandingUrl:_bestSearchLandingUrl,selectListingShots,visionSelectShots:_visionSelectShots,collectionShotRows:_collectionShotRows,shotForShape:_shotForShape }
+  _util: { micros, fromMicros, clampHeadline, clampDescription, gAdsTime, daysUntil, merchantLookupPlan:_merchantLookupPlan,pmaxTag:_pmaxTag,groundKeywordPlan,collectionEconomics,opportunityClass,resolveOpportunityConflicts,paidAttribution:_paidAttribution,paidChannel:_paidChannel,merchantOrganic:_merchantOrganic,bestSearchLandingUrl:_bestSearchLandingUrl,selectListingShots,visionSelectShots:_visionSelectShots,collectionShotRows:_collectionShotRows,shotForShape:_shotForShape,productIdFromItemId:_productIdFromItemId,productShotsByIds:_productShotsByIds,pmaxDeterministicCopy:_pmaxDeterministicCopy,pmaxAdCopy:_pmaxAdCopy,buildPmaxTextAssetOps:_buildPmaxTextAssetOps }
 };
