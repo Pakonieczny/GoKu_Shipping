@@ -605,7 +605,9 @@ svg rect.bc-bar[data-tip]:hover{filter:brightness(.85);stroke:var(--ink);stroke-
           <button class="btn ghost sm" onclick="runNow(['mine','prune'])">Mine + prune</button>
           <button class="btn ghost sm" onclick="runNow(['budgets'])">Reallocate budgets</button>
           <button class="btn ghost sm" onclick="runNow(['events'])">Generate due events</button>
+          <button class="btn ghost sm" id="pmxBackfillBtn" onclick="pmaxBackfillImages()">Re-image running PMax ads (AI)</button>
           <span id="runMsg" class="muted" style="font-size:12px"></span>
+          <span id="pmxBackfillMsg" class="muted" style="font-size:12px"></span>
         </div>
         <div class="card pad" style="grid-column:1/-1">
           <div class="card__h"><h3>Brand-safety — excluded terms</h3><span class="sub">read-only · set via GADS_TERM_EXCLUSIONS env</span></div>
@@ -1169,23 +1171,31 @@ function campaignTable(camps){
       +(c.status==="ENABLED"?'<button class="btn ghost sm cst" data-id="'+esc(String(c.id))+'" data-to="PAUSED" data-name="'+esc(c.name)+'" style="padding:3px 10px;font-size:11px">Pause</button>'
         :c.status==="PAUSED"?'<button class="btn gold sm cst" data-id="'+esc(String(c.id))+'" data-to="ENABLED" data-name="'+esc(c.name)+'" style="padding:3px 10px;font-size:11px">Enable</button>'
         :"")
+      +((c.status==="ENABLED"||c.status==="PAUSED")?' <button class="btn danger sm cst" data-id="'+esc(String(c.id))+'" data-to="REMOVED" data-name="'+esc(c.name)+'" style="padding:3px 10px;font-size:11px;margin-left:5px">Delete</button>':"")
       +'</td></tr>';
       var det='<tr class="cdet" data-d="'+i+'" data-cid="'+esc(String(c.id||i))+'" style="display:none"><td colspan="7" style="background:var(--paper-2)"><div style="padding:10px 8px;display:flex;flex-wrap:wrap;gap:22px;font-size:12px"><span><b>Impressions</b><br><span class="mono">'+(+c.impr||0).toLocaleString()+'</span></span><span><b>Clicks</b><br><span class="mono">'+(+c.clicks||0).toLocaleString()+'</span></span><span><b>CTR</b><br><span class="mono">'+(ctr==null?"\u2014":ctr.toFixed(2)+"%")+'</span></span><span><b>Avg CPC</b><br><span class="mono">'+(cpc==null?"\u2014":money(cpc))+'</span></span><span><b>Conversions</b><br><span class="mono">'+(+c.conv||0)+'</span></span><span><b>Cost / conv</b><br><span class="mono">'+(cpa==null?"\u2014":money(cpa))+'</span></span><span><b>Conv. value</b><br><span class="mono">'+money(c.value)+'</span></span>'+(c.primaryStatusReasons&&c.primaryStatusReasons.length?'<span style="flex-basis:100%;color:var(--ink-70);font-size:11.5px">\u26a0 '+esc(reasonText(c.primaryStatusReasons))+'</span>':"")+'</div><div class="adlvl" data-c="'+esc(String(c.id))+'" style="padding:0 8px 10px"></div></td></tr>';
       return row+det;}).join("")+'</tbody></table>';}
 function wireCampRows(scope){Array.prototype.forEach.call(scope.querySelectorAll(".crow"),function(r){r.onclick=function(){var i=this.getAttribute("data-i");var d=scope.querySelector('.cdet[data-d="'+i+'"]');if(d)d.style.display=d.style.display==="none"?"":"none";};});
   Array.prototype.forEach.call(scope.querySelectorAll(".cst"),function(b){b.onclick=async function(ev){ev.stopPropagation();
     var id=this.getAttribute("data-id"),to=this.getAttribute("data-to"),nm=this.getAttribute("data-name"),btn=this;
-    if(!confirm((to==="PAUSED"?"Pause":"Enable")+" \u201c"+nm+"\u201d?"+(to==="ENABLED"?"\n\nIt will start spending its daily budget.":"")))return;
-    btn.disabled=true;btn.textContent=to==="PAUSED"?"Pausing\u2026":"Enabling\u2026";
+    if(to==="REMOVED"){
+      if(!confirm("Permanently delete \u201c"+nm+"\u201d?\n\nThis CANNOT be undone \u2014 Google Ads has no restore for a removed campaign. Its history stays in reporting, but it can never be re-enabled, re-paused, or edited again.\n\nIf you just want to stop spend, use Pause instead \u2014 Cancel this and pause it.")) return;
+      var typed=prompt("Type the campaign name exactly to confirm permanent deletion:\n\n"+nm);
+      if(typed===null)return;
+      if(typed.trim()!==nm){toast("Name didn\u2019t match \u2014 deletion cancelled.");return;}
+    } else {
+      if(!confirm((to==="PAUSED"?"Pause":"Enable")+" \u201c"+nm+"\u201d?"+(to==="ENABLED"?"\n\nIt will start spending its daily budget.":"")))return;
+    }
+    btn.disabled=true;btn.textContent=to==="PAUSED"?"Pausing\u2026":to==="REMOVED"?"Deleting\u2026":"Enabling\u2026";
     try{
       var r2=await api("setStatus",{id:id,status:to});
       if(r2&&r2.error)throw new Error(r2.error);
       // reflect immediately, then let the next sync confirm
       (DASH.lastMetrics||[]).forEach(function(c){if(String(c.id)===String(id))c.status=to;});
       if(typeof cmdMetrics!=="undefined"&&cmdMetrics)cmdMetrics.forEach(function(c){if(String(c.id)===String(id))c.status=to;});
-      renderCommand();try{renderDiag();}catch(e){}
-      toast((to==="PAUSED"?"Paused \u2713":"Enabled \u2713")+" \u2014 "+nm);
-    }catch(x){btn.disabled=false;btn.textContent=to==="PAUSED"?"Pause":"Enable";toast("Status change failed: "+x.message);}
+      try{renderCommand();}catch(e){}try{renderDiag();}catch(e){}
+      toast((to==="PAUSED"?"Paused \u2713":to==="REMOVED"?"Deleted \u2713":"Enabled \u2713")+" \u2014 "+nm);
+    }catch(x){btn.disabled=false;btn.textContent=to==="PAUSED"?"Pause":to==="REMOVED"?"Delete":"Enable";toast((to==="REMOVED"?"Delete failed: ":"Status change failed: ")+x.message);}
   };});}
 
 /* ---- Daily stats: per-campaign / per-ad live reporting (Google Ads parity) ---- */
@@ -2385,6 +2395,34 @@ function bindControlsOnce(){
     actEnd(aid);done();await reload();};
 }
 async function runNow(tasks){$("#runMsg").textContent=" running…";var aid=actStart("runNow",{detail:tasks.join(", ")});try{var r=await api("runNow",{tasks:tasks});$("#runMsg").textContent=" "+(r.status||"")+" ["+tasks.join(",")+"] — refreshing in ~5s";setTimeout(()=>reload(),5000);}catch(x){$("#runMsg").textContent=" "+x.message;}actEnd(aid);}
+async function pmaxBackfillImages(){
+  var btn=$("#pmxBackfillBtn"),msg=$("#pmxBackfillMsg");
+  if(!confirm("This re-images every currently ENABLED PMax campaign with AI-selected shots (close-up product, close-up on-model, zoomed-out on-model). New images upload immediately; the actual swap on each asset group is queued to Approvals for you to review — nothing goes live without approval. Continue?"))return;
+  btn.disabled=true;var t0=Date.now();
+  var tk=setInterval(function(){if(btn.disabled)btn.textContent="Re-imaging… "+Math.round((Date.now()-t0)/1000)+"s";},1000);
+  var done=function(){clearInterval(tk);btn.disabled=false;btn.textContent="Re-image running PMax ads (AI)";};
+  var aid=actStart("pmaxBackfillImages",{});
+  try{
+    var genId=String(Date.now())+"-pmxbf";
+    var r=await api("pmaxBackfillImages",{genId:genId});
+    if(r&&r.error)throw new Error(r.error);
+    var t1=Date.now(),st=null;
+    while(Date.now()-t1<1200000){
+      st=await api("genStatus",{genId:genId}).catch(function(){return null;});
+      if(st&&st.phase==="running"&&st.assetGroup)msg.textContent=" scanning "+st.campaign+" · "+st.assetGroup+" ("+(st.groupsSeen||0)+" groups so far)…";
+      if(st&&(st.ok===true||st.ok===false))break;
+      await new Promise(function(res){setTimeout(res,3000);});
+    }
+    if(st&&st.ok===true){
+      done();
+      var summary=st.queued+" asset group"+(st.queued===1?"":"s")+" queued to Approvals across "+st.campaigns+" campaign"+(st.campaigns===1?"":"s")+" ("+st.assetGroups+" scanned)";
+      msg.textContent=" ✓ "+summary;
+      toast("PMax re-image backfill done — "+summary,true);
+      try{await reload();}catch(_e){}
+    } else throw new Error((st&&st.error)||"timed out waiting for the backfill");
+  }catch(x){msg.textContent=" ✕ "+String(x.message).slice(0,160);toast("PMax re-image backfill failed: "+x.message,false);done();}
+  actEnd(aid);
+}
 
 /* ---- load / reload ---- */
 async function livePull(){
