@@ -2688,27 +2688,104 @@ Choose 2-3 market-specific, non-overlapping candidates. CA and US feed labels ar
     merchantReportsError:merchantFree30.error||merchantFree90.error||null };
 }
 
+/* ============== AI shot selection for PMax creative (vision) ==============
+   For every product entering a PMax campaign, ALL of its listing photos —
+   excluding any photo attached to a variant — are sent to the vision model,
+   which picks exactly three representative shots by role:
+     closeup_product  tight product-only shot, charm zoomed, details readable
+     closeup_model    worn-on-model close-up, charm zoomed, details readable
+     full_model       zoomed-OUT worn shot: whole piece + chain, more model in frame
+   Infographics, care cards, gold-filled explainers, packaging/branding collages,
+   review-quote cards and size charts are hard-excluded — the model returns null
+   for a role rather than substituting one of those. Falls back to the old
+   aspect-ratio heuristic per product on any failure; never blocks a launch. */
+const _shotCache = new Map();                       // key → {at, value}; instance-local
+const _SHOT_CACHE_TTL = 6 * 60 * 60 * 1000, _SHOT_CACHE_MAX = 500;
+function _shopifyImageResize(url, width) {          // width-only resize (no crop) — vision must judge framing
+  if (!url) return null;
+  try { const u = new URL(/^\/\//.test(url) ? "https:" + url : url); u.searchParams.set("width", String(width)); return u.toString(); }
+  catch (e) { return url; }
+}
+function _withTimeout(p, ms, label) {
+  let t; const gate = new Promise((_, rej) => { t = setTimeout(() => rej(new Error(label + " timeout after " + ms + "ms")), ms); });
+  return Promise.race([p, gate]).finally(() => clearTimeout(t));
+}
+async function _visionSelectShots(title, shots) {   // shots: [{url,width,height}] post-variant-exclusion
+  const model = ENV.OPENAI_VISION_MODEL || "gpt-5.4-mini";
+  const content = [{ type: "text", text:
+    "You are selecting ad creative for ONE handmade-jewelry listing titled " + JSON.stringify(String(title || "").slice(0, 120)) + ". " +
+    "The numbered photos of this listing follow (Photo 1 first). Choose the photo NUMBER for each of three roles:\n" +
+    "1. closeup_product — a tight close-up of the jewelry ALONE (no person): the charm is zoomed in and its details/engraving are very easily visible.\n" +
+    "2. closeup_model — a close-up of the jewelry WORN on a person (neck/ear/wrist/hand): the charm is zoomed in and its details are very easily visible.\n" +
+    "3. full_model — a zoomed-OUT worn shot: the ENTIRE piece including the chain is visible and MORE of the model is in frame (head-and-shoulders or wider), not a heavy zoom.\n" +
+    "HARD EXCLUSIONS — never pick, for any role: infographics or diagrams (e.g. solid/filled/plated gold explainers), care-instruction cards, metal-choice charts, packaging or gift-box shots, brand collages, review-quote cards, size charts, and any image whose main content is text or graphic overlays rather than the jewelry itself.\n" +
+    "Rules: use three DIFFERENT photo numbers when possible; prefer sharp, well-lit photos. If no photo genuinely fits a role, return null for that role — never substitute an excluded image type.\n" +
+    'Reply with ONLY this JSON: {"closeup_product":<number|null>,"closeup_model":<number|null>,"full_model":<number|null>}' }];
+  for (const im of shots) content.push({ type: "image_url", image_url: { url: _shopifyImageResize(im.url, 512), detail: "low" } }); /* shot-TYPE classification is coarse; low detail keeps the per-launch vision cost trivial */
+  const payload = { model, messages: [{ role: "user", content }] };
+  if (/^(gpt-5|o\d)/.test(model)) { payload.max_completion_tokens = 1200; payload.reasoning_effort = "low"; }
+  else { payload.max_tokens = 300; }
+  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: "Bearer " + (ENV.OPENAI_API_KEY || "") },
+    body: JSON.stringify(payload)
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error("[gads] vision: " + ((data.error && data.error.message) || res.status));
+  const raw = ((((data.choices || [])[0] || {}).message || {}).content || "").replace(/```json|```/g, "").trim();
+  const j = JSON.parse(raw);
+  const pick = v => { const i = Number(v); return Number.isInteger(i) && i >= 1 && i <= shots.length ? shots[i - 1].url : null; };
+  return { closeupProduct: pick(j.closeup_product), closeupModel: pick(j.closeup_model), fullModel: pick(j.full_model) };
+}
+// One product → its three role URLs, with cache + heuristic fallback. Never throws.
+async function selectListingShots(product, { timeoutMs = 20000 } = {}) {
+  const shots = product.shots || [];
+  const hero = shots[0] || null;
+  const heurDetail = shots.slice(1).find(im => im.width && im.height && (im.height / im.width) >= 0.85) || null;
+  const fallback = { title: product.title, url: hero ? hero.url : null, detailUrl: heurDetail ? heurDetail.url : null, modelUrl: null, ai: false };
+  if (!hero) return fallback;
+  const key = (product.handle || product.title || "") + "|" + hero.url.split("?")[0];
+  const hit = _shotCache.get(key);
+  if (hit && Date.now() - hit.at < _SHOT_CACHE_TTL) return hit.value;
+  let out = fallback;
+  if (shots.length >= 2 && ENV.OPENAI_API_KEY) {
+    try {
+      const sel = await _withTimeout(_visionSelectShots(product.title, shots.slice(0, 12)), timeoutMs, "vision shot selection");
+      if (sel && (sel.closeupProduct || sel.closeupModel || sel.fullModel)) out = {
+        title: product.title,
+        url: sel.fullModel || hero.url,                          // landscape/hero role
+        detailUrl: sel.closeupProduct || (heurDetail && heurDetail.url) || null, // square role
+        modelUrl: sel.closeupModel || null,                      // portrait role
+        ai: true };
+    } catch (e) { /* heuristic fallback stands */ }
+  }
+  if (_shotCache.size >= _SHOT_CACHE_MAX) _shotCache.delete(_shotCache.keys().next().value);
+  _shotCache.set(key, { at: Date.now(), value: out });
+  return out;
+}
+// Collection → products with their vision CANDIDATE photo set: every listing
+// photo (first 20) minus any photo attached to a variant (owner directive:
+// variant images are metal-choice duplicates, excluded outright). If exclusion
+// empties a listing, only its feed hero (first image) remains in play.
+async function _collectionShotRows(handle, count) {
+  const d = await shopifyGql(`{ collectionByHandle(handle: "${String(handle).replace(/"/g, "")}") { products(first: ${count}, sortKey: BEST_SELLING) { nodes { title handle priceRangeV2 { minVariantPrice { amount currencyCode } } images(first: 20) { nodes { url width height } } variants(first: 100) { nodes { image { url } } } } } } }`);
+  return (((d.collectionByHandle || {}).products || {}).nodes || []).map(p => {
+    const all = (((p.images || {}).nodes) || []).filter(im => im && im.url);
+    const variantUrls = new Set((((p.variants || {}).nodes) || []).map(v => v && v.image && v.image.url).filter(Boolean).map(u => u.split("?")[0]));
+    let shots = all.filter(im => !variantUrls.has(im.url.split("?")[0]));
+    if (!shots.length && all.length) shots = [all[0]];
+    const pr = ((p.priceRangeV2 || {}).minVariantPrice) || {};
+    return { title: p.title, handle: p.handle, shots, price: pr.amount ? Number(pr.amount) : null, currency: pr.currencyCode || "USD" };
+  }).filter(p => p.shots.length);
+}
 async function collectionImages(handle, n = 4, preferredTitles = []) {
   try {
-    // Pull up to 3 photos per product, not just the featured hero shot. Jewelry
-    // listings conventionally order images: [1] full piece on white, [2]/[3] a
-    // closer detail/macro shot of the charm or clasp — exactly the framing that
-    // survives being auto-cropped into a small Display/Discover tile.
-    const d = await shopifyGql(`{ collectionByHandle(handle: "${String(handle).replace(/"/g, "")}") { products(first: ${Math.max(n, 8)}, sortKey: BEST_SELLING) { nodes { title images(first: 3) { nodes { url width height } } } } } }`);
-    const rows = (((d.collectionByHandle || {}).products || {}).nodes || [])
-      .map(p => ({ title: p.title, shots: (((p.images || {}).nodes) || []).filter(im => im && im.url) }))
-      .filter(p => p.shots.length);
+    const rows = await _collectionShotRows(handle, Math.max(n, 8));
     const pref = (preferredTitles || []).map(_pmaxNorm);
     const prefScore = row => pref.reduce((m, x) => Math.max(m, _pmaxTitleMatch(x, row.title)), 0);
-    return rows.sort((a,b) => prefScore(b) - prefScore(a)).slice(0,n)
-      .map(row => {
-        const hero = row.shots[0];
-        // Prefer image [1] (0-indexed) as the "detail shot" candidate when its
-        // aspect ratio is roughly square/portrait — the closer-crop convention.
-        // A wide/landscape 2nd image is more likely a lifestyle shot; skip it.
-        const detail = row.shots.slice(1).find(im => im.width && im.height && (im.height / im.width) >= 0.85) || null;
-        return { title: row.title, url: hero.url, detailUrl: detail ? detail.url : null };
-      });
+    const chosen = rows.sort((a, b) => prefScore(b) - prefScore(a)).slice(0, n);
+    // Runs in the background worker (15-min budget) — parallel vision, generous timeout.
+    return await Promise.all(chosen.map(p => selectListingShots(p, { timeoutMs: 20000 })));
   } catch (e) { return []; }
 }
 function _shopifyImageVariant(url, width, height) {
@@ -2726,6 +2803,15 @@ function _shopifyImageVariant(url, width, height) {
     return u.toString();
   } catch (e) { return url; }
 }
+// Which source photo feeds each Google image shape. Role-aware since the vision
+// selector: square = close-up product shot, portrait = close-up model shot,
+// landscape = zoomed-out full-piece model shot. Fallback chain per shape so a
+// listing missing a role still ships creative from its best available photo.
+function _shotForShape(im, shape) {
+  if (shape === "landscape") return im.url;
+  if (shape === "portrait") return im.modelUrl || im.detailUrl || im.url;
+  return im.detailUrl || im.url; // square
+}
 async function _uploadImageVariant(imgs, ctrl, shape) {
   if (ctrl && ctrl.dryRun) return [];
   const dims = { landscape: [1200, 628], square: [1200, 1200], portrait: [1080, 1350] };
@@ -2733,12 +2819,7 @@ async function _uploadImageVariant(imgs, ctrl, shape) {
   const ops = [];
   for (const im of (imgs || []).slice(0, 4)) {
     try {
-      // Small-placement candidates use the detail/close-up shot when this
-      // product has one; Shopify's crop=center then fills the target box from
-      // that tighter source instead of the full necklace-on-white hero shot —
-      // a real, verifiable framing improvement, not an AI-guessed "zoom".
-      const srcUrl = (shape !== "landscape" && im.detailUrl) ? im.detailUrl : im.url;
-      const url = _shopifyImageVariant(srcUrl, w, h);
+      const url = _shopifyImageVariant(_shotForShape(im, shape), w, h);
       const r = await fetch(url); if (!r.ok) continue; const buf = Buffer.from(await r.arrayBuffer());
       if (!buf.length || buf.length > 5 * 1024 * 1024) continue;
       ops.push({ create: { name: (`Brites · ${im.title || "product"} · ${shape} · ${Date.now()}-${ops.length}`).slice(0, 120), type: "IMAGE", imageAsset: { data: buf.toString("base64") } } });
@@ -2842,8 +2923,10 @@ async function validatePmaxAudienceResource(resourceName) {
 }
 
 // Ad-preview feed: the EXACT image variants the engine uploads to Google for a
-// given PMax scope (same _shopifyImageVariant math), plus titles/prices — so the
-// visual simulator renders the literal creative Google receives, not mockups.
+// given PMax scope (same vision shot selection + _shopifyImageVariant math), plus
+// titles/prices — so the visual simulator renders the literal creative Google
+// receives, not mockups. Runs synchronously through the Kick gateway, so vision
+// gets a short per-product timeout and falls back to the heuristic per product.
 async function pmaxPreviewData({ handle, titles, n } = {}) {
   const f = fb();
   let pmaxList = [];
@@ -2854,20 +2937,19 @@ async function pmaxPreviewData({ handle, titles, n } = {}) {
   if (!coll) return { pmaxList, error: "unknown collection: " + handle };
   let rows = [];
   try {
-    const d = await shopifyGql(`{ collectionByHandle(handle: "${String(handle).replace(/"/g, "")}") { products(first: ${Math.min(Math.max(Number(n) || 8, 4), 16)}, sortKey: BEST_SELLING) { nodes { title handle priceRangeV2 { minVariantPrice { amount currencyCode } } images(first: 3) { nodes { url width height } } } } } }`);
-    rows = (((d.collectionByHandle || {}).products || {}).nodes || []).map(p => {
-      const shots = (((p.images || {}).nodes) || []).filter(im => im && im.url);
-      if (!shots.length) return null;
-      const hero = shots[0];
-      const detail = shots.slice(1).find(im => im.width && im.height && (im.height / im.width) >= 0.85) || null;
-      const src = detail ? detail.url : hero.url;
-      const pr = ((p.priceRangeV2 || {}).minVariantPrice) || {};
+    const raw = await _collectionShotRows(handle, Math.min(Math.max(Number(n) || 8, 4), 16));
+    const picked = await Promise.all(raw.map(p => selectListingShots(p, { timeoutMs: 8000 })));
+    rows = picked.map((sel, i) => {
+      if (!sel.url) return null;
+      const p = raw[i];
+      const squareSrc = sel.detailUrl || sel.url, portraitSrc = sel.modelUrl || sel.detailUrl || sel.url;
       return { title: p.title, productHandle: p.handle,
-        price: pr.amount ? Number(pr.amount) : null, currency: pr.currencyCode || "USD",
-        hero: _shopifyImageVariant(hero.url, 800, 800),
-        detailUsed: !!detail,
-        crops: { square: _shopifyImageVariant(src, 1200, 1200), landscape: _shopifyImageVariant(hero.url, 1200, 628),
-                 portrait: _shopifyImageVariant(src, 1080, 1350), tile: _shopifyImageVariant(src, 400, 400) } };
+        price: p.price, currency: p.currency,
+        hero: _shopifyImageVariant(sel.url, 800, 800),
+        detailUsed: !!(sel.ai || sel.detailUrl),
+        aiSelected: !!sel.ai,
+        crops: { square: _shopifyImageVariant(squareSrc, 1200, 1200), landscape: _shopifyImageVariant(sel.url, 1200, 628),
+                 portrait: _shopifyImageVariant(portraitSrc, 1080, 1350), tile: _shopifyImageVariant(squareSrc, 400, 400) } };
     }).filter(Boolean);
   } catch (e) { return { pmaxList, error: String(e.message || e).slice(0, 200) }; }
   // rank client-requested titles first (the opportunity's proven winners)
@@ -5411,5 +5493,5 @@ module.exports = {
   fetchDiagnostics, runDiagnostics, getDiagnostics, applyGoogleRecommendation, dismissGoogleRecommendation,
   dailyStats, applyRemedy, remedyHistory, adReviewStatus,
   getPlaybook, playbookSlice, distillLessons, setGenStatus, getGenStatus,
-  _util: { micros, fromMicros, clampHeadline, clampDescription, gAdsTime, daysUntil, merchantLookupPlan:_merchantLookupPlan,pmaxTag:_pmaxTag,groundKeywordPlan,collectionEconomics,opportunityClass,resolveOpportunityConflicts,paidAttribution:_paidAttribution,paidChannel:_paidChannel,merchantOrganic:_merchantOrganic,bestSearchLandingUrl:_bestSearchLandingUrl }
+  _util: { micros, fromMicros, clampHeadline, clampDescription, gAdsTime, daysUntil, merchantLookupPlan:_merchantLookupPlan,pmaxTag:_pmaxTag,groundKeywordPlan,collectionEconomics,opportunityClass,resolveOpportunityConflicts,paidAttribution:_paidAttribution,paidChannel:_paidChannel,merchantOrganic:_merchantOrganic,bestSearchLandingUrl:_bestSearchLandingUrl,selectListingShots,visionSelectShots:_visionSelectShots,collectionShotRows:_collectionShotRows,shotForShape:_shotForShape }
 };
