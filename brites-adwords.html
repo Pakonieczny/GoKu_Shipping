@@ -606,8 +606,10 @@ svg rect.bc-bar[data-tip]:hover{filter:brightness(.85);stroke:var(--ink);stroke-
           <button class="btn ghost sm" onclick="runNow(['budgets'])">Reallocate budgets</button>
           <button class="btn ghost sm" onclick="runNow(['events'])">Generate due events</button>
           <button class="btn ghost sm" id="pmxBackfillBtn" onclick="pmaxBackfillImages()">Re-image running PMax ads (AI)</button>
+          <button class="btn ghost sm" id="pmxUpgradeBtn" onclick="pmaxUpgradeAdStrength()">Upgrade running PMax ads (headlines + sitelinks)</button>
           <span id="runMsg" class="muted" style="font-size:12px"></span>
           <span id="pmxBackfillMsg" class="muted" style="font-size:12px"></span>
+          <span id="pmxUpgradeMsg" class="muted" style="font-size:12px"></span>
         </div>
         <div class="card pad" style="grid-column:1/-1">
           <div class="card__h"><h3>Brand-safety — excluded terms</h3><span class="sub">read-only · set via GADS_TERM_EXCLUSIONS env</span></div>
@@ -1172,7 +1174,9 @@ function campaignTable(camps){
         :c.status==="PAUSED"?'<button class="btn gold sm cst" data-id="'+esc(String(c.id))+'" data-to="ENABLED" data-name="'+esc(c.name)+'" style="padding:3px 10px;font-size:11px">Enable</button>'
         :"")
       +((c.status==="ENABLED"||c.status==="PAUSED")?' <button class="btn danger sm cst" data-id="'+esc(String(c.id))+'" data-to="REMOVED" data-name="'+esc(c.name)+'" style="padding:3px 10px;font-size:11px;margin-left:5px">Delete</button>':"")
-      +'</td></tr>';
+      +' <button class="btn ghost sm ctl" data-id="'+esc(String(c.id))+'" style="padding:3px 10px;font-size:11px;margin-left:5px">Timeline</button>'
+      +'</td></tr>'
+      +'<tr class="ctlrow" data-tl="'+esc(String(c.id))+'" style="display:none"><td colspan="9" style="padding:0 12px 12px"><div class="tlbox"></div></td></tr>';
       var det='<tr class="cdet" data-d="'+i+'" data-cid="'+esc(String(c.id||i))+'" style="display:none"><td colspan="7" style="background:var(--paper-2)"><div style="padding:10px 8px;display:flex;flex-wrap:wrap;gap:22px;font-size:12px"><span><b>Impressions</b><br><span class="mono">'+(+c.impr||0).toLocaleString()+'</span></span><span><b>Clicks</b><br><span class="mono">'+(+c.clicks||0).toLocaleString()+'</span></span><span><b>CTR</b><br><span class="mono">'+(ctr==null?"\u2014":ctr.toFixed(2)+"%")+'</span></span><span><b>Avg CPC</b><br><span class="mono">'+(cpc==null?"\u2014":money(cpc))+'</span></span><span><b>Conversions</b><br><span class="mono">'+(+c.conv||0)+'</span></span><span><b>Cost / conv</b><br><span class="mono">'+(cpa==null?"\u2014":money(cpa))+'</span></span><span><b>Conv. value</b><br><span class="mono">'+money(c.value)+'</span></span>'+(c.primaryStatusReasons&&c.primaryStatusReasons.length?'<span style="flex-basis:100%;color:var(--ink-70);font-size:11.5px">\u26a0 '+esc(reasonText(c.primaryStatusReasons))+'</span>':"")+'</div><div class="adlvl" data-c="'+esc(String(c.id))+'" style="padding:0 8px 10px"></div></td></tr>';
       return row+det;}).join("")+'</tbody></table>';}
 function wireCampRows(scope){Array.prototype.forEach.call(scope.querySelectorAll(".crow"),function(r){r.onclick=function(){var i=this.getAttribute("data-i");var d=scope.querySelector('.cdet[data-d="'+i+'"]');if(d)d.style.display=d.style.display==="none"?"":"none";};});
@@ -1196,7 +1200,44 @@ function wireCampRows(scope){Array.prototype.forEach.call(scope.querySelectorAll
       try{renderCommand();}catch(e){}try{renderDiag();}catch(e){}
       toast((to==="PAUSED"?"Paused \u2713":to==="REMOVED"?"Deleted \u2713":"Enabled \u2713")+" \u2014 "+nm);
     }catch(x){btn.disabled=false;btn.textContent=to==="PAUSED"?"Pause":to==="REMOVED"?"Delete":"Enable";toast((to==="REMOVED"?"Delete failed: ":"Status change failed: ")+x.message);}
+  };});
+  Array.prototype.forEach.call(scope.querySelectorAll(".ctl"),function(b){b.onclick=async function(ev){ev.stopPropagation();
+    var id=this.getAttribute("data-id"),btn=this;
+    var row=scope.querySelector('.ctlrow[data-tl="'+id+'"]');if(!row)return;
+    if(row.style.display!=="none"&&row.getAttribute("data-loaded")==="1"){row.style.display="none";return;}
+    row.style.display="";var box=row.querySelector(".tlbox");
+    box.innerHTML='<span class="muted" style="font-size:12px">Loading live timeline\u2026</span>';
+    btn.disabled=true;
+    try{
+      var t=await api("campaignTimeline",{id:id});
+      if(t&&t.error)throw new Error(t.error);
+      box.innerHTML=renderTimeline(t);row.setAttribute("data-loaded","1");
+    }catch(x){box.innerHTML='<span class="muted" style="font-size:12px;color:var(--clay)">Timeline failed: '+esc(String(x.message).slice(0,140))+'</span>';}
+    btn.disabled=false;
   };});}
+function renderTimeline(t){
+  var ST={done:{c:"#3f7d4e",bg:"#e7f2e9",i:"\u2713"},active:{c:"#8a6d1a",bg:"#f7efd7",i:"\u25CC"},warn:{c:"#a4661f",bg:"#f9ecd9",i:"!"},pending:{c:"#8a857c",bg:"#efece6",i:"\u00B7"},error:{c:"#a03d2e",bg:"#f7e3de",i:"\u2715"}};
+  var steps=(t.steps||[]).map(function(s,i){var v=ST[s.state]||ST.pending;
+    return '<div style="flex:1;min-width:120px;position:relative">'
+      +(i>0?'<div style="position:absolute;left:-50%;right:50%;top:11px;height:2px;background:var(--line)"></div>':"")
+      +'<div style="position:relative;text-align:center">'
+      +'<span style="display:inline-flex;width:22px;height:22px;border-radius:50%;background:'+v.bg+';color:'+v.c+';font-size:12px;font-weight:700;align-items:center;justify-content:center;border:1.5px solid '+v.c+'">'+v.i+'</span>'
+      +'<div style="font-size:11.5px;font-weight:600;margin-top:4px">'+esc(s.label)+'</div>'
+      +(s.date?'<div class="muted" style="font-size:10.5px">'+esc(s.date)+'</div>':"")
+      +(s.detail?'<div class="muted" style="font-size:10.5px;max-width:150px;margin:2px auto 0">'+esc(s.detail)+'</div>':"")
+      +'</div></div>';}).join("");
+  var strength=(t.adStrength||[]).map(function(a){
+    var m={EXCELLENT:["#3f7d4e","#e7f2e9"],GOOD:["#3f7d4e","#e7f2e9"],AVERAGE:["#8a6d1a","#f7efd7"],POOR:["#a03d2e","#f7e3de"],PENDING:["#8a857c","#efece6"]}[a.strength]||["#8a857c","#efece6"];
+    return '<span style="display:inline-block;padding:3px 9px;border-radius:20px;background:'+m[1]+';color:'+m[0]+';font-size:11px;font-weight:600;margin:2px 4px 2px 0">'+esc(a.name)+' \u00B7 '+esc(String(a.strength).toLowerCase().replace(/_/g," "))+'</span>';}).join("");
+  var mx=Math.max.apply(null,(t.days||[]).map(function(d){return d.impressions;}).concat([1]));
+  var spark=(t.days||[]).map(function(d){var h=Math.max(2,Math.round(26*d.impressions/mx));
+    return '<div title="'+esc(d.date)+' \u00B7 '+d.impressions+' impr \u00B7 '+d.clicks+' clicks'+(d.conversions?' \u00B7 '+d.conversions.toFixed(1)+' conv':'')+'" style="width:9px;height:'+h+'px;background:'+(d.conversions>0?'#3f7d4e':'var(--gold)')+';border-radius:2px 2px 0 0"></div>';}).join("");
+  return '<div style="border:1px solid var(--line);border-radius:12px;padding:14px 16px;background:var(--card-2)">'
+    +'<div style="display:flex;gap:0;align-items:flex-start;margin-bottom:'+((t.adStrength||[]).length||((t.days||[]).length)?'12px':'0')+'">'+steps+'</div>'
+    +((t.adStrength||[]).length?'<div style="margin-bottom:8px"><span class="muted" style="font-size:11px;margin-right:6px">Ad strength:</span>'+strength+'</div>':"")
+    +((t.days||[]).length?'<div style="display:flex;align-items:flex-end;gap:2px;height:28px" aria-label="14-day impressions">'+spark+'</div><div class="muted" style="font-size:10px;margin-top:2px">Last 14 days \u00B7 '+(t.totals?t.totals.impressions.toLocaleString()+' impr, '+t.totals.clicks.toLocaleString()+' clicks, '+t.totals.conversions.toFixed(1)+' conv, $'+t.totals.cost.toFixed(0)+' spend':'')+'</div>':"")
+    +'</div>';
+}
 
 /* ---- Daily stats: per-campaign / per-ad live reporting (Google Ads parity) ---- */
 var DAILY=null,_dailyKey="",_dailyBusy=false,srFilter="all";
@@ -2395,6 +2436,34 @@ function bindControlsOnce(){
     actEnd(aid);done();await reload();};
 }
 async function runNow(tasks){$("#runMsg").textContent=" running…";var aid=actStart("runNow",{detail:tasks.join(", ")});try{var r=await api("runNow",{tasks:tasks});$("#runMsg").textContent=" "+(r.status||"")+" ["+tasks.join(",")+"] — refreshing in ~5s";setTimeout(()=>reload(),5000);}catch(x){$("#runMsg").textContent=" "+x.message;}actEnd(aid);}
+async function pmaxUpgradeAdStrength(){
+  var btn=$("#pmxUpgradeBtn"),msg=$("#pmxUpgradeMsg");
+  if(!confirm("This adds headlines, long headlines, descriptions, and sitelinks to every currently ENABLED PMax campaign that's below the ad-strength quality target. It only ADDS \u2014 nothing already live is removed or replaced, and no serving history is lost. The actual change is queued to Approvals for you to review, same as everything else. Continue?"))return;
+  btn.disabled=true;var t0=Date.now();
+  var tk=setInterval(function(){if(btn.disabled)btn.textContent="Upgrading\u2026 "+Math.round((Date.now()-t0)/1000)+"s";},1000);
+  var done=function(){clearInterval(tk);btn.disabled=false;btn.textContent="Upgrade running PMax ads (headlines + sitelinks)";};
+  var aid=actStart("pmaxUpgradeAdStrength",{});
+  try{
+    var genId=String(Date.now())+"-pmxup";
+    var r=await api("pmaxUpgradeAdStrength",{genId:genId});
+    if(r&&r.error)throw new Error(r.error);
+    var t1=Date.now(),st=null;
+    while(Date.now()-t1<1200000){
+      st=await api("genStatus",{genId:genId}).catch(function(){return null;});
+      if(st&&st.phase==="running"&&st.campaign)msg.textContent=" scanning "+st.campaign+"\u2026";
+      if(st&&(st.ok===true||st.ok===false))break;
+      await new Promise(function(res){setTimeout(res,3000);});
+    }
+    if(st&&st.ok===true){
+      done();
+      var summary=st.queued+" campaign"+(st.queued===1?"":"s")+" queued to Approvals ("+st.campaigns+" scanned)";
+      msg.textContent=" \u2713 "+summary;
+      toast("PMax ad-strength upgrade done — "+summary,true);
+      try{await reload();}catch(_e){}
+    } else throw new Error((st&&st.error)||"timed out waiting for the upgrade scan");
+  }catch(x){msg.textContent=" \u2715 "+String(x.message).slice(0,160);toast("PMax ad-strength upgrade failed: "+x.message,false);done();}
+  actEnd(aid);
+}
 async function pmaxBackfillImages(){
   var btn=$("#pmxBackfillBtn"),msg=$("#pmxBackfillMsg");
   if(!confirm("This re-images every currently ENABLED PMax campaign with AI-selected shots (close-up product, close-up on-model, zoomed-out on-model). New images upload immediately; the actual swap on each asset group is queued to Approvals for you to review — nothing goes live without approval. Continue?"))return;
