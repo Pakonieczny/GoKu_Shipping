@@ -1212,6 +1212,8 @@ function wireCampRows(scope){Array.prototype.forEach.call(scope.querySelectorAll
       var t=await api("campaignTimeline",{id:id});
       if(t&&t.error)throw new Error(t.error);
       box.innerHTML=renderTimeline(t);row.setAttribute("data-loaded","1");
+      Array.prototype.forEach.call(box.querySelectorAll(".tlact"),function(ab){ab.onclick=function(e){e.stopPropagation();
+        return runScopedPmaxJob(this.getAttribute("data-act"),this.getAttribute("data-id"),this.getAttribute("data-name"),this,box.querySelector(".tlactmsg"));};});
     }catch(x){box.innerHTML='<span class="muted" style="font-size:12px;color:var(--clay)">Timeline failed: '+esc(String(x.message).slice(0,140))+'</span>';}
     btn.disabled=false;
   };});}
@@ -1236,7 +1238,42 @@ function renderTimeline(t){
     +'<div style="display:flex;gap:0;align-items:flex-start;margin-bottom:'+((t.adStrength||[]).length||((t.days||[]).length)?'12px':'0')+'">'+steps+'</div>'
     +((t.adStrength||[]).length?'<div style="margin-bottom:8px"><span class="muted" style="font-size:11px;margin-right:6px">Ad strength:</span>'+strength+'</div>':"")
     +((t.days||[]).length?'<div style="display:flex;align-items:flex-end;gap:2px;height:28px" aria-label="14-day impressions">'+spark+'</div><div class="muted" style="font-size:10px;margin-top:2px">Last 14 days \u00B7 '+(t.totals?t.totals.impressions.toLocaleString()+' impr, '+t.totals.clicks.toLocaleString()+' clicks, '+t.totals.conversions.toFixed(1)+' conv, $'+t.totals.cost.toFixed(0)+' spend':'')+'</div>':"")
+    +(String((t.campaign||{}).channel)==="PERFORMANCE_MAX"?'<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line)">'
+      +'<span class="muted" style="font-size:11px;margin-right:8px">Improve this campaign (adds only \u2014 safe during Learning, never resets bidding):</span>'
+      +'<button class="btn ghost sm tlact" data-act="pmaxUpgradeAdStrength" data-id="'+esc(String((t.campaign||{}).id||""))+'" data-name="'+esc((t.campaign||{}).name||"")+'" style="padding:3px 10px;font-size:11px">Upgrade copy + sitelinks</button> '
+      +'<button class="btn ghost sm tlact" data-act="pmaxBackfillImages" data-id="'+esc(String((t.campaign||{}).id||""))+'" data-name="'+esc((t.campaign||{}).name||"")+'" style="padding:3px 10px;font-size:11px">Re-image (AI)</button>'
+      +'<span class="tlactmsg muted" style="font-size:11px;margin-left:8px"></span></div>':"")
     +'</div>';
+}
+// Scoped per-campaign creative job (upgrade copy/sitelinks or re-image) — same background
+// pipeline as the account-wide buttons, but limited to one campaign via campaignIds.
+// Everything lands in Approvals; nothing applies without review.
+async function runScopedPmaxJob(action,id,name,btn,msg){
+  var labels={pmaxUpgradeAdStrength:{doing:"Upgrading\u2026",confirmTxt:"Add headlines, long headlines, descriptions, and sitelinks to \u201C"+name+"\u201D where it's below the quality target?\n\nAdds only \u2014 nothing live is removed, bid-strategy learning is NOT reset. The change is queued to Approvals for review.",kind:"upgrade"},
+              pmaxBackfillImages:{doing:"Re-imaging\u2026",confirmTxt:"Re-image \u201C"+name+"\u201D with AI-selected shots (close-up product, close-up on-model, zoomed-out on-model)?\n\nNew images upload immediately; the swap is queued to Approvals for review. Safe during Learning.",kind:"re-image"}};
+  var L=labels[action];if(!L)return;
+  if(!confirm(L.confirmTxt))return;
+  var orig=btn.textContent;btn.disabled=true;btn.textContent=L.doing;
+  var aid=actStart(action,{detail:name});
+  try{
+    var genId=String(Date.now())+"-tl";
+    var r=await api(action,{genId:genId,campaignIds:[id]});
+    if(r&&r.error)throw new Error(r.error);
+    var t1=Date.now(),st=null;
+    while(Date.now()-t1<1200000){
+      st=await api("genStatus",{genId:genId}).catch(function(){return null;});
+      if(st&&st.phase==="running")msg.textContent=" working\u2026"+(st.assetGroup?" "+st.assetGroup:"");
+      if(st&&(st.ok===true||st.ok===false))break;
+      await new Promise(function(res){setTimeout(res,3000);});
+    }
+    if(st&&st.ok===true){
+      var skippedAll=!st.queued;
+      msg.textContent=skippedAll?" \u2713 already meets targets \u2014 nothing to add":" \u2713 "+st.queued+" change"+(st.queued===1?"":"s")+" queued to Approvals";
+      toast(skippedAll?("\u201C"+name+"\u201D already meets the "+L.kind+" targets"):("\u201C"+name+"\u201D "+L.kind+" queued to Approvals \u2014 review to apply"),true);
+    } else throw new Error((st&&st.error)||"timed out");
+  }catch(x){msg.textContent=" \u2715 "+String(x.message).slice(0,120);toast(L.kind+" failed: "+x.message,false);}
+  btn.disabled=false;btn.textContent=orig;
+  actEnd(aid);
 }
 
 /* ---- Daily stats: per-campaign / per-ad live reporting (Google Ads parity) ---- */
