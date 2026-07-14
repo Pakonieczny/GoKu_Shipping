@@ -148,6 +148,40 @@ async function handleAction(body) {
     try { return await E.pmaxPreviewData({ handle: body.handle, titles: body.titles, n: body.n }); }
     catch (e) { return { error: e.message }; }
   }
+  if (a === "pmaxBackfillImages") {
+    // One-time (re-runnable) job: re-images already-ENABLED PMax campaigns with vision-
+    // selected shots. Heavy (per-product vision + Shopify + Google Ads GAQL across every
+    // asset group) — runs in the background worker; console polls gen_<genId> for progress
+    // and the final { campaigns, assetGroups, queued, results } summary.
+    try {
+      const genId = String(body.genId || Date.now());
+      const res = await fetch(baseUrl() + "/.netlify/functions/googleAdsAutopilot-background", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tasks: ["pmaxBackfillImages"], genId,
+          campaignIds: Array.isArray(body.campaignIds) ? body.campaignIds.slice(0, 50) : [],
+          token: process.env.EDIT_PASSCODE || undefined })
+      });
+      if (res.status >= 400) return { error: "background dispatch failed: HTTP " + res.status + " — is googleAdsAutopilot-background deployed?" };
+      return { queued: true, genId, upstream: res.status };
+    } catch (e) { return { error: e.message }; }
+  }
+  if (a === "pmaxUpgradeAdStrength") {
+    // One-time (re-runnable) job: tops up headlines/long headlines/descriptions/sitelinks
+    // on already-LIVE PMax campaigns without touching what's already there — the safe
+    // alternative to deleting and relaunching. Heavy (GAQL scan + AI copy per campaign);
+    // runs in the background worker, console polls gen_<genId> for progress.
+    try {
+      const genId = String(body.genId || Date.now());
+      const res = await fetch(baseUrl() + "/.netlify/functions/googleAdsAutopilot-background", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tasks: ["pmaxUpgradeAdStrength"], genId,
+          campaignIds: Array.isArray(body.campaignIds) ? body.campaignIds.slice(0, 50) : [],
+          token: process.env.EDIT_PASSCODE || undefined })
+      });
+      if (res.status >= 400) return { error: "background dispatch failed: HTTP " + res.status + " — is googleAdsAutopilot-background deployed?" };
+      return { queued: true, genId, upstream: res.status };
+    } catch (e) { return { error: e.message }; }
+  }
   if (a === "generatePmax") {
     // Merchant-catalog validation + multi-operation PMax build run in the background;
     // the console polls gen_<genId> via genStatus, same as Search generation.
@@ -186,6 +220,10 @@ async function handleAction(body) {
   if (a === "dismissRec")     { try { return await E.dismissGoogleRecommendation(body.resourceName); } catch (e) { return { ok: false, error: e.message }; } }
   if (a === "analyzeCampaign") {
     try { return await E.analyzeCampaign(body.id, { force: !!body.force }); }
+    catch (e) { return { error: e.message }; }
+  }
+  if (a === "campaignTimeline") {
+    try { return await E.campaignTimeline({ id: body.id }); }
     catch (e) { return { error: e.message }; }
   }
   if (a === "setStatus") {

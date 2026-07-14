@@ -71,7 +71,7 @@ const CURRENCY   = ENV.GADS_CURRENCY || "USD";
 const OPPORTUNITY_ENGINE_VERSION = "12.3.0-api-compatibility-fix";
 // Deploy marker embedded in every mutate failure — a pasted error now proves exactly
 // which engine build executed the failing request. Bump on every engine delivery.
-const ENGINE_BUILD = "b20260714-5-tempid-ns";
+const ENGINE_BUILD = "b20260714-7-adstrength-upgrade";
 
 // The store's nine homepage collections (handle ↔ title) — drives the Draft Bench picker.
 const COLLECTIONS = [
@@ -924,6 +924,34 @@ function sanitizeOps(ops, meta) {
       // Non-index array property: invisible to JSON.stringify (never sent to Google),
       // but lets applyApproval label the ledger with proof the heal executed.
       try { ops._healed = "text-assets:" + deficient.length + "group(s)"; } catch (e) {}
+    }
+  }
+  // Sitelinks are a scored ad-strength component and frozen PMax drafts predate them.
+  // When the draft CREATES a PMax campaign (temp id) and carries no sitelink assets,
+  // inject the two universal ones (Shop <collection> → the asset group's own final URL,
+  // Best Sellers → real collection URL) linked at campaign level. Temp IDs continue
+  // below everything already in the array — including any text assets just injected.
+  {
+    const campOp = ops.find(o => o && o.campaignOperation && o.campaignOperation.create &&
+      String(o.campaignOperation.create.advertisingChannelType || "") === "PERFORMANCE_MAX" &&
+      /\/-\d+$/.test(String(o.campaignOperation.create.resourceName || "")));
+    const hasSitelinks = ops.some(o => o && o.assetOperation && o.assetOperation.create && o.assetOperation.create.sitelinkAsset);
+    if (campOp && !hasSitelinks && agResList.length) {
+      const cRes = campOp.campaignOperation.create.resourceName;
+      const agOp = ops.find(o => o && o.assetGroupOperation && o.assetGroupOperation.create && (o.assetGroupOperation.create.finalUrls || []).length);
+      const finalUrl = agOp ? agOp.assetGroupOperation.create.finalUrls[0] : "https://britesjewelry.com/collections/best-sellers";
+      let an = _tempIdFloor(ops);
+      const clip = (s, n) => String(s || "").slice(0, n);
+      const short = clip(meta && meta.collectionTitle || "Collection", 16);
+      [
+        { linkText: clip("Shop " + short, 25), d1: "Browse the full collection", d2: "Personalized, made to order", url: finalUrl },
+        { linkText: "Best Sellers", d1: "Our most-loved pieces", d2: "Top customer favorites", url: "https://britesjewelry.com/collections/best-sellers" }
+      ].forEach(s => {
+        const a = `customers/${CID}/assets/${an--}`;
+        ops.push({ assetOperation: { create: { resourceName: a, finalUrls: [s.url], sitelinkAsset: { linkText: s.linkText, description1: s.d1, description2: s.d2 } } } });
+        ops.push({ campaignAssetOperation: { create: { asset: a, campaign: cRes, fieldType: "SITELINK" } } });
+      });
+      try { ops._healed = (ops._healed ? ops._healed + "+" : "") + "sitelinks:2"; } catch (e) {}
     }
   }
   // Google validates asset-group minimum requirements PER CONTIGUOUS RUN of
@@ -3010,7 +3038,7 @@ async function uploadImageAssets(imgs, ctrl) {
 // mutateOperations for a retail Performance Max campaign. Exact Merchant Center
 // item IDs are preferred so the campaign amplifies the products that already sold
 // through free listings. Product-type scoping remains a safe fallback only.
-function buildPmaxCampaignOps(coll, { dailyBudget, startDate, endDate, targetRoas, merchantId, feedLabel, itemIds, types, countries, offerDetails, searchThemes, audienceResource, imageAssets, adCopy } = {}) {
+function buildPmaxCampaignOps(coll, { dailyBudget, startDate, endDate, targetRoas, merchantId, feedLabel, itemIds, types, countries, offerDetails, searchThemes, audienceResource, imageAssets, adCopy, relatedCollections } = {}) {
   const tag=_pmaxTag(coll.handle,feedLabel), bRes=`customers/${CID}/campaignBudgets/-1`, cRes=`customers/${CID}/campaigns/-2`;
   const finalUrl=`https://britesjewelry.com/collections/${coll.handle}`, _sched=_campaignScheduleFields(startDate,endDate), tRoas=Number(targetRoas||ENV.GADS_TARGET_ROAS||0);
   const shoppingSetting={merchantId:Number(merchantId)};if(feedLabel)shoppingSetting.feedLabel=String(feedLabel);
@@ -3037,6 +3065,12 @@ function buildPmaxCampaignOps(coll, { dailyBudget, startDate, endDate, targetRoa
   // Ensure every selected offer is represented exactly once; merge tiny overflow into the lead group.
   const represented=new Set(groups.flatMap(g=>g.itemIds));exact.filter(id=>!represented.has(id)).forEach(id=>groups[0].itemIds.push(id));
   const themes=[...new Set((searchThemes||[]).map(x=>String(x).toLowerCase().replace(/[^a-z0-9 ]+/g," ").replace(/\s+/g," ").trim()).filter(Boolean))].slice(0,25);
+  // Campaign-level sitelinks/callouts/structured snippets — same proven machinery the
+  // Search builder uses (real collection URLs only). Sitelinks are a scored ad-strength
+  // component PMax previews flag as missing without them. Temp IDs -10.. (its own range,
+  // clear of groups -3.., filters ~-50.., and text assets at the floor).
+  const cla = buildCampaignAssets(coll, finalUrl, cRes, { relatedCollections: relatedCollections || [], snippetTypes: groups.map(g => g.label) });
+  ops.push(...cla.ops);
   // v24 rejects the whole mutate if any asset group lacks headline/long-headline/description
   // assets \u2014 build them once (temp resource names, atomic) and attach to every group below.
   // Created at the HEAD of the op array \u2014 the exact ordering Google's own PMax samples use
@@ -3076,7 +3110,7 @@ function buildPmaxCampaignOps(coll, { dailyBudget, startDate, endDate, targetRoa
   [...new Set((countries||[]).map(x=>String(x).replace(/\D/g,"")).filter(Boolean))].forEach(id=>ops.push({campaignCriterionOperation:{create:{campaign:cRes,location:{geoTargetConstant:`geoTargetConstants/${id}`}}}}));
   return {ops,tag,finalUrl,scopedTypes:[...new Set(groups.map(g=>g.label))],scopedItemIds:exact,assetMode:(imageAssets&&(imageAssets.square||[]).length)?"custom+merchant-auto":"merchant-auto",countries:[...new Set((countries||[]).map(String))],
     assetGroups:groups.map(g=>({name:g.label,itemIds:g.itemIds})),searchThemes:themes,audienceSignal:audienceResource||null,
-    textAssets:{headlines:textCopy.headlines.length,longHeadlines:textCopy.longHeadlines.length,descriptions:textCopy.descriptions.length}};
+    textAssets:{headlines:textCopy.headlines.length,longHeadlines:textCopy.longHeadlines.length,descriptions:textCopy.descriptions.length},campaignAssets:cla.summary};
 }
 
 // Every v24 PMax asset group REQUIRES headline/long-headline/description text assets —
@@ -3090,8 +3124,9 @@ function buildPmaxCampaignOps(coll, { dailyBudget, startDate, endDate, targetRoa
 function _pmaxDeterministicCopy(coll) {
   const title = String((coll && coll.title) || "Brites Jewelry");
   return {
-    headlines: [clampHeadline("Brites Jewelry"), clampHeadline(title), clampHeadline("Handcrafted Jewelry"), clampHeadline("Personalized Charms"), clampHeadline("Made Just For You")],
-    longHeadlines: [clampDescription(`${title} \u2014 handcrafted, personalized, made to order`), clampDescription("Little charms, big meanings \u2014 custom jewelry from Brites"), clampDescription("Handmade jewelry made just for you, from Brites Jewelry")],
+    headlines: [clampHeadline("Brites Jewelry"), clampHeadline(title), clampHeadline("Handcrafted Jewelry"), clampHeadline("Personalized Charms"), clampHeadline("Made Just For You"),
+      clampHeadline("Custom Charm Jewelry"), clampHeadline("Gifts That Mean More"), clampHeadline("Made To Order For You"), clampHeadline("Meaningful Gifts For Her"), clampHeadline("Free Shipping Over $75")],
+    longHeadlines: [clampDescription(`${title} \u2014 handcrafted, personalized, made to order`), clampDescription("Little charms, big meanings \u2014 custom jewelry from Brites"), clampDescription("Handmade jewelry made just for you, from Brites Jewelry"), clampDescription("Personalized charm jewelry, handcrafted to order and shipped with care")],
     descriptions: [clampDescription("Free shipping over $75. Handmade, made to order."), clampDescription("Custom-made gifts, personalized just for you."), clampDescription(`${title}, handcrafted with care.`), clampDescription("30-day hassle-free returns on every order.")],
     businessName: "Brites Jewelry"
   };
@@ -3105,8 +3140,8 @@ async function _pmaxAdCopy(coll, { productTitles = [] } = {}) {
 Voice: warm, sincere, premium, gift-and-emotion led \u2014 never bargain or hypey.
 Collection: "${coll.title}" (${coll.handle}). Proven bestsellers in this exact campaign: ${heroes || "n/a"}.
 Hard rules:
-- 8 headlines, each \u226430 characters (Google mixes these into Search/Display/Discover/Gmail/YouTube ads).
-- 4 long headlines, each \u226490 characters (one compelling sentence, not a list).
+- 15 headlines, each \u226430 characters (Google mixes these into Search/Display/Discover/Gmail/YouTube ads). Ad strength requires 11+ distinct headlines \u2014 vary angle: gift, personalization, craft, occasion, recipient.
+- 5 long headlines, each \u226490 characters (one compelling sentence, not a list).
 - 4 descriptions, each \u226490 characters.
 - Avoid these terms entirely: ${BRAND.termExclusions.join(", ")}.
 - ${BRAND.messagingRestrictions.join(" ")}
@@ -3119,9 +3154,9 @@ Return ONLY JSON: {"headlines":[],"longHeadlines":[],"descriptions":[]}`;
       // Base entries always lead the list (guarantees the short-headline/short-description
       // sub-limits); AI output tops it up, never replaces the guaranteed floor.
       return {
-        headlines: [...new Set([base.headlines[0], ...hl, ...base.headlines.slice(1)])].slice(0, 10),
+        headlines: [...new Set([base.headlines[0], ...hl, ...base.headlines.slice(1)])].slice(0, 15),
         longHeadlines: [...new Set([...lh, ...base.longHeadlines])].slice(0, 5),
-        descriptions: [...new Set([base.descriptions[0], ...ds, ...base.descriptions.slice(1)])].slice(0, 5),
+        descriptions: [...new Set([base.descriptions[0], ...ds, ...base.descriptions.slice(1)])].slice(0, 4),
         businessName: base.businessName
       };
     }
@@ -3273,6 +3308,105 @@ async function backfillPmaxCreative({ ctrl, campaignIds, onProgress } = {}) {
 }
 
 
+// Quality target for an "Excellent" ad-strength score — well above the bare v24 minimum
+// (3/1/2) sanitizeOps enforces just to pass validation. Existing campaigns launched before
+// the text-asset fix only have what a launch strictly required (or nothing at all).
+const _AD_STRENGTH_TARGET = { HEADLINE: 10, LONG_HEADLINE: 4, DESCRIPTION: 4, BUSINESS_NAME: 1 };
+// Upgrade already-LIVE PMax campaigns to full ad strength without touching anything that
+// already exists: tops up headlines/long headlines/descriptions per asset group to the
+// quality target (never removes an existing asset), and adds campaign-level sitelinks if
+// none exist yet. Pure ADD — the safe alternative to deleting and relaunching a campaign
+// that already has serving history. Queued to Approvals like every other mutation.
+async function upgradePmaxAdStrength({ ctrl, campaignIds, onProgress } = {}) {
+  ctrl = ctrl || (await control());
+  const idFilter = (campaignIds && campaignIds.length) ? ` AND campaign.id IN (${campaignIds.map(x => Number(x)).filter(Boolean).join(",")})` : "";
+  const campRows = await gaql(`SELECT campaign.id, campaign.resource_name, campaign.name, campaign.status
+    FROM campaign WHERE campaign.advertising_channel_type = 'PERFORMANCE_MAX' AND campaign.status != 'REMOVED'${idFilter}`);
+  const results = []; let queued = 0;
+  for (const cr of campRows) {
+    const campaignId = cr.campaign.id, campaignName = cr.campaign.name, cRes = cr.campaign.resourceName;
+    if (onProgress) try { await onProgress({ campaign: campaignName }); } catch (e) {}
+    try {
+      const agRows = await gaql(`SELECT asset_group.id, asset_group.resource_name, asset_group.name, asset_group.final_urls
+        FROM asset_group WHERE campaign.id = ${campaignId} AND asset_group.status != 'REMOVED'`);
+      if (!agRows.length) { results.push({ campaign: campaignName, skipped: "no asset groups" }); continue; }
+      const textRows = await gaql(`SELECT asset_group_asset.asset_group, asset_group_asset.field_type
+        FROM asset_group_asset WHERE campaign.id = ${campaignId}
+        AND asset_group_asset.field_type IN ('HEADLINE','LONG_HEADLINE','DESCRIPTION','BUSINESS_NAME')`);
+      const countFor = (agRes, ft) => textRows.filter(r => r.assetGroupAsset && r.assetGroupAsset.assetGroup === agRes && r.assetGroupAsset.fieldType === ft).length;
+      let hasSitelinks = false;
+      try {
+        const slRows = await gaql(`SELECT campaign_asset.asset FROM campaign_asset WHERE campaign.id = ${campaignId} AND campaign_asset.field_type = 'SITELINK'`);
+        hasSitelinks = slRows.length > 0;
+      } catch (e) {}
+      const deficientGroups = agRows.filter(ag => {
+        const r = ag.assetGroup.resourceName;
+        return countFor(r, "HEADLINE") < _AD_STRENGTH_TARGET.HEADLINE || countFor(r, "LONG_HEADLINE") < _AD_STRENGTH_TARGET.LONG_HEADLINE ||
+               countFor(r, "DESCRIPTION") < _AD_STRENGTH_TARGET.DESCRIPTION || countFor(r, "BUSINESS_NAME") < _AD_STRENGTH_TARGET.BUSINESS_NAME;
+      });
+      if (!deficientGroups.length && hasSitelinks) { results.push({ campaign: campaignName, skipped: "already meets ad-strength targets" }); continue; }
+      // Best-effort collection title from the campaign name (e.g. "BA · pmax-food-fruits-us" → "Food Fruits")
+      // for AI grounding — not required, the deterministic floor works from any/no title.
+      const title = campaignName.replace(/^.*?[·-]\s*/, "").replace(/^pmax-/i, "").replace(/-us$|-ca$/i, "").replace(/[-_]+/g, " ").trim().replace(/\b\w/g, c => c.toUpperCase()) || campaignName;
+      const coll = { title, handle: "" };
+      let productTitles = [];
+      try {
+        const lg = await gaql(`SELECT asset_group_listing_group_filter.case_value.product_item_id.value FROM asset_group_listing_group_filter WHERE campaign.id = ${campaignId} LIMIT 20`);
+        const ids = [...new Set(lg.map(r => _productIdFromItemId((r.assetGroupListingGroupFilter && r.assetGroupListingGroupFilter.caseValue && r.assetGroupListingGroupFilter.caseValue.productItemId || {}).value)).filter(Boolean))];
+        if (ids.length) { const prods = await _productShotsByIds(ids.slice(0, 10)); productTitles = prods.map(p => p.title).filter(Boolean); }
+      } catch (e) {}
+      let adCopy; try { adCopy = await _pmaxAdCopy(coll, { productTitles }); } catch (e) { adCopy = _pmaxDeterministicCopy(coll); }
+
+      const ops = [];
+      let addedHeadlines = 0, addedLong = 0, addedDesc = 0, addedBiz = 0;
+      if (deficientGroups.length) {
+        const textAssets = _buildPmaxTextAssetOps(adCopy, _tempIdFloor(ops));
+        ops.push(...textAssets.ops);
+        deficientGroups.forEach(ag => {
+          const r = ag.assetGroup.resourceName;
+          const needHl = _AD_STRENGTH_TARGET.HEADLINE - countFor(r, "HEADLINE");
+          if (needHl > 0) textAssets.ids.headlines.slice(0, needHl).forEach(a => { ops.push({ assetGroupAssetOperation: { create: { assetGroup: r, asset: a, fieldType: "HEADLINE" } } }); addedHeadlines++; });
+          const needLh = _AD_STRENGTH_TARGET.LONG_HEADLINE - countFor(r, "LONG_HEADLINE");
+          if (needLh > 0) textAssets.ids.longHeadlines.slice(0, needLh).forEach(a => { ops.push({ assetGroupAssetOperation: { create: { assetGroup: r, asset: a, fieldType: "LONG_HEADLINE" } } }); addedLong++; });
+          const needDs = _AD_STRENGTH_TARGET.DESCRIPTION - countFor(r, "DESCRIPTION");
+          if (needDs > 0) textAssets.ids.descriptions.slice(0, needDs).forEach(a => { ops.push({ assetGroupAssetOperation: { create: { assetGroup: r, asset: a, fieldType: "DESCRIPTION" } } }); addedDesc++; });
+          if (countFor(r, "BUSINESS_NAME") < 1) { ops.push({ assetGroupAssetOperation: { create: { assetGroup: r, asset: textAssets.ids.businessName, fieldType: "BUSINESS_NAME" } } }); addedBiz++; }
+        });
+      }
+      let addedSitelinks = 0;
+      if (!hasSitelinks) {
+        let an = _tempIdFloor(ops);
+        const clip = (s, n) => String(s || "").slice(0, n);
+        const short = clip(title, 16);
+        const firstGroupUrl = (agRows[0].assetGroup.finalUrls || [])[0] || "https://britesjewelry.com/collections/best-sellers";
+        [
+          { linkText: clip("Shop " + short, 25), d1: "Browse the full collection", d2: "Personalized, made to order", url: firstGroupUrl },
+          { linkText: "Best Sellers", d1: "Our most-loved pieces", d2: "Top customer favorites", url: "https://britesjewelry.com/collections/best-sellers" }
+        ].forEach(s => {
+          const a = `customers/${CID}/assets/${an--}`;
+          ops.push({ assetOperation: { create: { resourceName: a, finalUrls: [s.url], sitelinkAsset: { linkText: s.linkText, description1: s.d1, description2: s.d2 } } } });
+          ops.push({ campaignAssetOperation: { create: { asset: a, campaign: cRes, fieldType: "SITELINK" } } });
+          addedSitelinks++;
+        });
+      }
+      if (!ops.length) { results.push({ campaign: campaignName, skipped: "already meets ad-strength targets" }); continue; }
+      const parts = [];
+      if (addedHeadlines) parts.push(`+${addedHeadlines} headlines`);
+      if (addedLong) parts.push(`+${addedLong} long headlines`);
+      if (addedDesc) parts.push(`+${addedDesc} descriptions`);
+      if (addedBiz) parts.push(`+${addedBiz} business name`);
+      if (addedSitelinks) parts.push(`+${addedSitelinks} sitelinks`);
+      const id = await enqueueApproval({ type: "pmax-upgrade", vetted: false,
+        summary: `PMax ad-strength upgrade · ${campaignName} · ${deficientGroups.length}/${agRows.length} groups · ${parts.join(", ")} · nothing existing removed`,
+        payload: { mutateOperations: ops, meta: { kind: "pmax-ad-strength-upgrade", campaignId, campaignName, campaignResource: cRes,
+          groupsUpgraded: deficientGroups.length, groupsTotal: agRows.length, addedHeadlines, addedLong, addedDesc, addedBiz, addedSitelinks, collectionTitle: title } } });
+      queued++;
+      results.push({ campaign: campaignName, groupsUpgraded: deficientGroups.length, groupsTotal: agRows.length, addedHeadlines, addedLong, addedDesc, addedSitelinks, approvalId: id });
+    } catch (e) { results.push({ campaign: campaignName, error: String(e.message || e).slice(0, 300) }); }
+  }
+  return { campaigns: campRows.length, queued, dryRun: !!ctrl.dryRun, results };
+}
+
 // given PMax scope (same vision shot selection + _shopifyImageVariant math), plus
 // titles/prices — so the visual simulator renders the literal creative Google
 // receives, not mockups. Runs synchronously through the Kick gateway, so vision
@@ -3362,7 +3496,9 @@ async function generatePmaxApproval({ handle, dailyBudget, targetRoas, days, ite
   let adCopy = null;
   try { adCopy = await _pmaxAdCopy(coll, { productTitles: chosenTitles }); } catch (e) {}
   if (!adCopy) adCopy = _pmaxDeterministicCopy(coll);
-  const built=buildPmaxCampaignOps(coll,{dailyBudget:budget,startDate:start,endDate:end,targetRoas:safeTargetRoas,merchantId,feedLabel:liveFeedLabel,itemIds:exactIds,types,countries,offerDetails:liveDetails,searchThemes:themes,audienceResource,imageAssets,adCopy});
+  // Two real sibling collections from the curated config → extra sitelinks (real URLs only).
+  const relatedCollections = (typeof COLLECTIONS !== "undefined" ? COLLECTIONS : []).filter(c => c && c.handle && c.handle !== handle && c.handle !== "best-sellers").slice(0, 2);
+  const built=buildPmaxCampaignOps(coll,{dailyBudget:budget,startDate:start,endDate:end,targetRoas:safeTargetRoas,merchantId,feedLabel:liveFeedLabel,itemIds:exactIds,types,countries,offerDetails:liveDetails,searchThemes:themes,audienceResource,imageAssets,adCopy,relatedCollections});
   const scope=built.scopedItemIds.length?`${built.scopedItemIds.length} proven GMC offers`:(built.scopedTypes.length?built.scopedTypes.join("/"):"all feed products");
   const id=await enqueueApproval({type:"pmax",vetted:false,summary:`PMax · ${coll.title} · $${budget}/day · ${scope} · ${built.assetMode} assets${imageAssets&&imageAssets.square&&imageAssets.square.length?` (${(imageAssets.square||[]).length}sq/${(imageAssets.landscape||[]).length}ls/${(imageAssets.portrait||[]).length}pt custom images)`:""} · ${built.textAssets.headlines}hl/${built.textAssets.longHeadlines}lh/${built.textAssets.descriptions}ds copy · GMC ${merchantId}`,
     payload:{mutateOperations:built.ops,countries:built.countries,meta:{kind:"pmax",handle,collectionTitle:coll.title,dailyBudget:budget,targetRoas:safeTargetRoas,biddingMode:safeTargetRoas>0?"MAXIMIZE_CONVERSION_VALUE_TARGET_ROAS":"MAXIMIZE_CONVERSION_VALUE_LEARNING",scopedTypes:built.scopedTypes,itemIds:built.scopedItemIds,productTitles:chosenTitles,images:imageAssets?(imageAssets.square||[]).length+(imageAssets.landscape||[]).length+(imageAssets.portrait||[]).length:0,textAssets:built.textAssets,assetMode:built.assetMode,merchantId,feedLabel:liveFeedLabel,countries:built.countries,tag:built.tag,assetGroups:built.assetGroups,searchThemes:built.searchThemes,audienceSignal:built.audienceSignal,audienceSignalName:audienceCheck.name||null,audienceSignalSource:audienceCheck.source||null,audienceSignalWarning:audienceCheck.warning||null}}});
@@ -5829,6 +5965,55 @@ async function dashboard() {
   return out;
 }
 
+// Real-time campaign timeline for the console: mirrors Google's "Performance diagnostics"
+// strip (Published → Impressions → Learning → Conversions → Eligibility) from live API
+// data — campaign primary status + reasons, per-asset-group ad strength (PMax), and a
+// 14-day serving sparkline. Read-only; three GAQL calls.
+async function campaignTimeline({ id } = {}) {
+  if (!id) return { error: "id required" };
+  const cid = String(id).replace(/\D/g, "");
+  const [cRows, dayRows] = await Promise.all([
+    gaql(`SELECT campaign.id, campaign.name, campaign.status, campaign.primary_status, campaign.primary_status_reasons,
+                 campaign.start_date, campaign.end_date, campaign.advertising_channel_type, campaign.bidding_strategy_type
+          FROM campaign WHERE campaign.id = ${cid}`),
+    gaql(`SELECT segments.date, metrics.impressions, metrics.clicks, metrics.conversions, metrics.conversions_value, metrics.cost_micros
+          FROM campaign WHERE campaign.id = ${cid} AND segments.date DURING LAST_14_DAYS ORDER BY segments.date`)
+  ]);
+  const c = (cRows[0] || {}).campaign;
+  if (!c) return { error: "campaign not found" };
+  const isPmax = String(c.advertisingChannelType) === "PERFORMANCE_MAX";
+  let adStrength = [];
+  if (isPmax) {
+    try {
+      const agRows = await gaql(`SELECT asset_group.id, asset_group.name, asset_group.ad_strength, asset_group.primary_status
+                                 FROM asset_group WHERE campaign.id = ${cid}`);
+      adStrength = agRows.map(r => ({ name: r.assetGroup.name, strength: r.assetGroup.adStrength || "UNSPECIFIED", status: r.assetGroup.primaryStatus || "" }));
+    } catch (e) {}
+  }
+  const days = dayRows.map(r => ({ date: r.segments.date, impressions: Number(r.metrics.impressions || 0), clicks: Number(r.metrics.clicks || 0),
+    conversions: Number(r.metrics.conversions || 0), value: Number(r.metrics.conversionsValue || 0), cost: fromMicros(r.metrics.costMicros || 0) }));
+  const firstOf = k => (days.find(d => d[k] > 0) || {}).date || null;
+  const reasons = (c.primaryStatusReasons || []).map(String);
+  const learning = reasons.some(r => r.includes("LEARNING"));
+  const limited = String(c.primaryStatus) === "LIMITED";
+  const notServing = ["NOT_ELIGIBLE", "REMOVED", "PAUSED", "ENDED"].includes(String(c.primaryStatus));
+  const totals = days.reduce((a, d) => ({ impressions: a.impressions + d.impressions, clicks: a.clicks + d.clicks, conversions: a.conversions + d.conversions, value: a.value + d.value, cost: a.cost + d.cost }), { impressions: 0, clicks: 0, conversions: 0, value: 0, cost: 0 });
+  const steps = [
+    { key: "published", label: "Campaign published", state: "done", date: c.startDate || null },
+    { key: "impressions", label: "Impressions", state: totals.impressions > 0 ? "done" : "pending",
+      date: firstOf("impressions"), detail: totals.impressions > 0 ? `${totals.impressions.toLocaleString()} in 14d` : "None yet — feed/review can take 24-48h" },
+    { key: "clicks", label: "Clicks", state: totals.clicks > 0 ? "done" : "pending", date: firstOf("clicks"),
+      detail: totals.clicks > 0 ? `${totals.clicks.toLocaleString()} in 14d` : null },
+    { key: "learning", label: "Bid strategy", state: learning ? "active" : (notServing ? "pending" : "done"),
+      detail: learning ? "Learning — needs ~2-3 weeks or ~30 conversions to stabilize" : (notServing ? null : "Learned / stable") },
+    { key: "conversions", label: "Conversion value", state: totals.conversions > 0 ? "done" : (totals.clicks > 10 ? "warn" : "pending"),
+      date: firstOf("conversions"), detail: totals.conversions > 0 ? `${totals.conversions.toFixed(1)} conv · $${totals.value.toFixed(0)} in 14d` : "No conversions yet" },
+    { key: "eligibility", label: "Serving status", state: notServing ? "error" : (limited ? "warn" : "done"),
+      detail: String(c.primaryStatus || "").replace(/_/g, " ").toLowerCase() + (reasons.length ? " — " + reasons.map(r => r.replace(/_/g, " ").toLowerCase()).join(", ") : "") }
+  ];
+  return { campaign: { id: cid, name: c.name, status: c.status, primaryStatus: c.primaryStatus, reasons, channel: c.advertisingChannelType, biddingStrategy: c.biddingStrategyType, startDate: c.startDate || null, endDate: c.endDate || null },
+    steps, adStrength, days, totals, fetchedAt: new Date().toISOString() };
+}
 module.exports = {
   COL, V, CID, OPPORTUNITY_ENGINE_VERSION,
   control, mintToken, gaql, mutate, mutateAll,
@@ -5839,7 +6024,7 @@ module.exports = {
   generateForCollection, COLLECTIONS, OCCASIONS,
   getCollections, suggestOccasions, recordOccasionUse,
   scanOpportunities, opportunitiesWithStatus, takenTags, releaseOpportunity, fetchTopProducts, setCampaignStatus, startCampaignNow, setCampaignBudget, analyzeCampaign,
-  generatePmaxApproval, pmaxPreviewData, backfillPmaxCreative, merchantCenterId, merchantProducts, pmaxCandidatesFromSignals, proposePmaxOpportunities, buildPmaxCampaignOps, pmaxProductPerformance, merchantFreeProductPerformance,
+  generatePmaxApproval, pmaxPreviewData, backfillPmaxCreative, upgradePmaxAdStrength, campaignTimeline, merchantCenterId, merchantProducts, pmaxCandidatesFromSignals, proposePmaxOpportunities, buildPmaxCampaignOps, pmaxProductPerformance, merchantFreeProductPerformance,
   listCountries, campaignCountries, setCampaignCountries, setApprovalCountries, setApprovalDates,
   loadCalendar, dueEvents,
   measure, pruneAssets, mineSearchTerms, reallocateBudgets, anomalyCheck,

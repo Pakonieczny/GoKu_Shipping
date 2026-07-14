@@ -72,7 +72,7 @@ exports.handler = async (event) => {
     : ["anomaly", "monthly", "conversions", "adjustments", "measure", "mine", "prune", "budgets", "ceiling", "events", "pruneLedger"];
 
   // Read-only tasks (no Google Ads mutations) are allowed even when the kill switch is off.
-  const READONLY = new Set(["scanOpportunities", "pmaxGenerate", "pruneLedger", "bestSellers", "diagnostics", "distill", "generate"]); // drafts/read-only analysis never mutate Google Ads before approval
+  const READONLY = new Set(["scanOpportunities", "pmaxGenerate", "pmaxBackfillImages", "pmaxUpgradeAdStrength", "pruneLedger", "bestSellers", "diagnostics", "distill", "generate"]); // drafts/read-only analysis never mutate Google Ads before approval
   const allReadOnly = tasks.every(t => READONLY.has(t));
 
   // HARD KILL SWITCH — blocks anything that could mutate. Read-only analysis still runs.
@@ -120,6 +120,42 @@ exports.handler = async (event) => {
         } catch (e) {
           const msg = String(e.message || e).slice(0, 400);
           result.pmax = { error: msg };
+          try { await E.setGenStatus(gId, { ok: false, error: msg }); } catch (e2) {}
+        }
+      }
+      else if (task === "pmaxBackfillImages") {
+        // One-time (re-runnable) job: re-images already-ENABLED PMax asset groups with
+        // vision-selected shots. Discovery + upload run here; the actual creative swap
+        // is queued to Approvals per asset group — never applied directly from this task.
+        const gId = String(body.genId || Date.now());
+        try { await E.setGenStatus(gId, { phase: "running", startedAt: Date.now(), kind: "pmax-backfill-images" }); } catch (e) {}
+        try {
+          const out = await E.backfillPmaxCreative({ ctrl,
+            campaignIds: Array.isArray(body.campaignIds) ? body.campaignIds.slice(0, 50) : [],
+            onProgress: async (p) => { try { await E.setGenStatus(gId, { phase: "running", ...p, heartbeatAt: Date.now() }); } catch (e) {} } });
+          result.pmaxBackfillImages = out;
+          try { await E.setGenStatus(gId, { ok: true, ...out }); } catch (e) {}
+        } catch (e) {
+          const msg = String(e.message || e).slice(0, 400);
+          result.pmaxBackfillImages = { error: msg };
+          try { await E.setGenStatus(gId, { ok: false, error: msg }); } catch (e2) {}
+        }
+      }
+      else if (task === "pmaxUpgradeAdStrength") {
+        // One-time (re-runnable) job: tops up headlines/long headlines/descriptions/
+        // sitelinks on already-LIVE PMax campaigns to the quality target — pure ADD,
+        // nothing existing is removed. Queued to Approvals per campaign, same as backfill.
+        const gId = String(body.genId || Date.now());
+        try { await E.setGenStatus(gId, { phase: "running", startedAt: Date.now(), kind: "pmax-upgrade-ad-strength" }); } catch (e) {}
+        try {
+          const out = await E.upgradePmaxAdStrength({ ctrl,
+            campaignIds: Array.isArray(body.campaignIds) ? body.campaignIds.slice(0, 50) : [],
+            onProgress: async (p) => { try { await E.setGenStatus(gId, { phase: "running", ...p, heartbeatAt: Date.now() }); } catch (e) {} } });
+          result.pmaxUpgradeAdStrength = out;
+          try { await E.setGenStatus(gId, { ok: true, ...out }); } catch (e) {}
+        } catch (e) {
+          const msg = String(e.message || e).slice(0, 400);
+          result.pmaxUpgradeAdStrength = { error: msg };
           try { await E.setGenStatus(gId, { ok: false, error: msg }); } catch (e2) {}
         }
       }
