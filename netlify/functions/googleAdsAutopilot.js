@@ -71,7 +71,7 @@ const CURRENCY   = ENV.GADS_CURRENCY || "USD";
 const OPPORTUNITY_ENGINE_VERSION = "12.3.0-api-compatibility-fix";
 // Deploy marker embedded in every mutate failure — a pasted error now proves exactly
 // which engine build executed the failing request. Bump on every engine delivery.
-const ENGINE_BUILD = "b20260714-9-headline-target-11";
+const ENGINE_BUILD = "b20260714-11-excellent-targets";
 
 // The store's nine homepage collections (handle ↔ title) — drives the Draft Bench picker.
 const COLLECTIONS = [
@@ -3125,9 +3125,10 @@ function _pmaxDeterministicCopy(coll) {
   const title = String((coll && coll.title) || "Brites Jewelry");
   return {
     headlines: [clampHeadline("Brites Jewelry"), clampHeadline(title), clampHeadline("Handcrafted Jewelry"), clampHeadline("Personalized Charms"), clampHeadline("Made Just For You"),
-      clampHeadline("Custom Charm Jewelry"), clampHeadline("Gifts That Mean More"), clampHeadline("Made To Order For You"), clampHeadline("Meaningful Gifts For Her"), clampHeadline("Free Shipping Over $75"), clampHeadline("Thoughtful Handmade Gifts")],
-    longHeadlines: [clampDescription(`${title} \u2014 handcrafted, personalized, made to order`), clampDescription("Little charms, big meanings \u2014 custom jewelry from Brites"), clampDescription("Handmade jewelry made just for you, from Brites Jewelry"), clampDescription("Personalized charm jewelry, handcrafted to order and shipped with care")],
-    descriptions: [clampDescription("Free shipping over $75. Handmade, made to order."), clampDescription("Custom-made gifts, personalized just for you."), clampDescription(`${title}, handcrafted with care.`), clampDescription("30-day hassle-free returns on every order.")],
+      clampHeadline("Custom Charm Jewelry"), clampHeadline("Gifts That Mean More"), clampHeadline("Made To Order For You"), clampHeadline("Meaningful Gifts For Her"), clampHeadline("Free Shipping Over $75"),
+      clampHeadline("Thoughtful Handmade Gifts"), clampHeadline("Gifts For Every Occasion"), clampHeadline("Charms With Meaning"), clampHeadline("Jewelry That Tells A Story"), clampHeadline("Little Charms, Big Meaning")],
+    longHeadlines: [clampDescription(`${title} \u2014 handcrafted, personalized, made to order`), clampDescription("Little charms, big meanings \u2014 custom jewelry from Brites"), clampDescription("Handmade jewelry made just for you, from Brites Jewelry"), clampDescription("Personalized charm jewelry, handcrafted to order and shipped with care"), clampDescription("Every charm is handcrafted to order and made to carry your story")],
+    descriptions: [clampDescription("Free shipping over $75. Handmade, made to order."), clampDescription("Custom-made gifts, personalized just for you."), clampDescription(`${title}, handcrafted with care.`), clampDescription("30-day hassle-free returns on every order."), clampDescription("Designed and handmade to order with meaningful little details.")],
     businessName: "Brites Jewelry"
   };
 }
@@ -3142,7 +3143,7 @@ Collection: "${coll.title}" (${coll.handle}). Proven bestsellers in this exact c
 Hard rules:
 - 15 headlines, each \u226430 characters (Google mixes these into Search/Display/Discover/Gmail/YouTube ads). Ad strength requires 11+ distinct headlines \u2014 vary angle: gift, personalization, craft, occasion, recipient.
 - 5 long headlines, each \u226490 characters (one compelling sentence, not a list).
-- 4 descriptions, each \u226490 characters.
+- 5 descriptions, each \u226490 characters.
 - Avoid these terms entirely: ${BRAND.termExclusions.join(", ")}.
 - ${BRAND.messagingRestrictions.join(" ")}
 Return ONLY JSON: {"headlines":[],"longHeadlines":[],"descriptions":[]}`;
@@ -3156,7 +3157,7 @@ Return ONLY JSON: {"headlines":[],"longHeadlines":[],"descriptions":[]}`;
       return {
         headlines: [...new Set([base.headlines[0], ...hl, ...base.headlines.slice(1)])].slice(0, 15),
         longHeadlines: [...new Set([...lh, ...base.longHeadlines])].slice(0, 5),
-        descriptions: [...new Set([base.descriptions[0], ...ds, ...base.descriptions.slice(1)])].slice(0, 4),
+        descriptions: [...new Set([base.descriptions[0], ...ds, ...base.descriptions.slice(1)])].slice(0, 5),
         businessName: base.businessName
       };
     }
@@ -3311,7 +3312,7 @@ async function backfillPmaxCreative({ ctrl, campaignIds, onProgress } = {}) {
 // Quality target for an "Excellent" ad-strength score — well above the bare v24 minimum
 // (3/1/2) sanitizeOps enforces just to pass validation. Existing campaigns launched before
 // the text-asset fix only have what a launch strictly required (or nothing at all).
-const _AD_STRENGTH_TARGET = { HEADLINE: 11, LONG_HEADLINE: 4, DESCRIPTION: 4, BUSINESS_NAME: 1 };
+const _AD_STRENGTH_TARGET = { HEADLINE: 15, LONG_HEADLINE: 5, DESCRIPTION: 5, BUSINESS_NAME: 1 };
 // Upgrade already-LIVE PMax campaigns to full ad strength without touching anything that
 // already exists: tops up headlines/long headlines/descriptions per asset group to the
 // quality target (never removes an existing asset), and adds campaign-level sitelinks if
@@ -3334,17 +3335,20 @@ async function upgradePmaxAdStrength({ ctrl, campaignIds, onProgress } = {}) {
         FROM asset_group_asset WHERE campaign.id = ${campaignId}
         AND asset_group_asset.field_type IN ('HEADLINE','LONG_HEADLINE','DESCRIPTION','BUSINESS_NAME')`);
       const countFor = (agRes, ft) => textRows.filter(r => r.assetGroupAsset && r.assetGroupAsset.assetGroup === agRes && r.assetGroupAsset.fieldType === ft).length;
-      let hasSitelinks = false;
+      let hasSitelinks = false, hasCallouts = false, hasSnippet = false;
       try {
-        const slRows = await gaql(`SELECT campaign_asset.asset FROM campaign_asset WHERE campaign.id = ${campaignId} AND campaign_asset.field_type = 'SITELINK'`);
-        hasSitelinks = slRows.length > 0;
+        const caRows = await gaql(`SELECT campaign_asset.field_type FROM campaign_asset WHERE campaign.id = ${campaignId}
+          AND campaign_asset.field_type IN ('SITELINK','CALLOUT','STRUCTURED_SNIPPET')`);
+        hasSitelinks = caRows.some(r => r.campaignAsset && r.campaignAsset.fieldType === "SITELINK");
+        hasCallouts = caRows.some(r => r.campaignAsset && r.campaignAsset.fieldType === "CALLOUT");
+        hasSnippet = caRows.some(r => r.campaignAsset && r.campaignAsset.fieldType === "STRUCTURED_SNIPPET");
       } catch (e) {}
       const deficientGroups = agRows.filter(ag => {
         const r = ag.assetGroup.resourceName;
         return countFor(r, "HEADLINE") < _AD_STRENGTH_TARGET.HEADLINE || countFor(r, "LONG_HEADLINE") < _AD_STRENGTH_TARGET.LONG_HEADLINE ||
                countFor(r, "DESCRIPTION") < _AD_STRENGTH_TARGET.DESCRIPTION || countFor(r, "BUSINESS_NAME") < _AD_STRENGTH_TARGET.BUSINESS_NAME;
       });
-      if (!deficientGroups.length && hasSitelinks) { results.push({ campaign: campaignName, skipped: "already meets ad-strength targets" }); continue; }
+      if (!deficientGroups.length && hasSitelinks && hasCallouts && hasSnippet) { results.push({ campaign: campaignName, skipped: "already meets ad-strength targets" }); continue; }
       // Best-effort collection title from the campaign name (e.g. "BA · pmax-food-fruits-us" → "Food Fruits")
       // for AI grounding — not required, the deterministic floor works from any/no title.
       const title = campaignName.replace(/^.*?[·-]\s*/, "").replace(/^pmax-/i, "").replace(/-us$|-ca$/i, "").replace(/[-_]+/g, " ").trim().replace(/\b\w/g, c => c.toUpperCase()) || campaignName;
@@ -3373,21 +3377,48 @@ async function upgradePmaxAdStrength({ ctrl, campaignIds, onProgress } = {}) {
           if (countFor(r, "BUSINESS_NAME") < 1) { ops.push({ assetGroupAssetOperation: { create: { assetGroup: r, asset: textAssets.ids.businessName, fieldType: "BUSINESS_NAME" } } }); addedBiz++; }
         });
       }
-      let addedSitelinks = 0;
-      if (!hasSitelinks) {
+      let addedSitelinks = 0, addedCallouts = 0, addedSnippet = 0;
+      if (!hasSitelinks || !hasCallouts || !hasSnippet) {
         let an = _tempIdFloor(ops);
+        const nextAsset = () => `customers/${CID}/assets/${an--}`;
         const clip = (s, n) => String(s || "").slice(0, n);
-        const short = clip(title, 16);
         const firstGroupUrl = (agRows[0].assetGroup.finalUrls || [])[0] || "https://britesjewelry.com/collections/best-sellers";
-        [
-          { linkText: clip("Shop " + short, 25), d1: "Browse the full collection", d2: "Personalized, made to order", url: firstGroupUrl },
-          { linkText: "Best Sellers", d1: "Our most-loved pieces", d2: "Top customer favorites", url: "https://britesjewelry.com/collections/best-sellers" }
-        ].forEach(s => {
-          const a = `customers/${CID}/assets/${an--}`;
-          ops.push({ assetOperation: { create: { resourceName: a, finalUrls: [s.url], sitelinkAsset: { linkText: s.linkText, description1: s.d1, description2: s.d2 } } } });
-          ops.push({ campaignAssetOperation: { create: { asset: a, campaign: cRes, fieldType: "SITELINK" } } });
-          addedSitelinks++;
-        });
+        const handleGuess = (firstGroupUrl.match(/\/collections\/([^/?]+)/) || [])[1] || "";
+        if (!hasSitelinks) {
+          const short = clip(title, 16);
+          const sitelinks = [
+            { linkText: clip("Shop " + short, 25), d1: "Browse the full collection", d2: "Personalized, made to order", url: firstGroupUrl },
+            { linkText: "Best Sellers", d1: "Our most-loved pieces", d2: "Top customer favorites", url: "https://britesjewelry.com/collections/best-sellers" }
+          ];
+          // Same real-collection sitelinks a fresh launch gets — up to 2 more from the
+          // curated config, never invented URLs. This is what was missing: the upgrade
+          // path previously stopped at the 2 universal links instead of matching launch.
+          (typeof COLLECTIONS !== "undefined" ? COLLECTIONS : []).filter(c => c && c.handle && c.handle !== handleGuess && c.handle !== "best-sellers").slice(0, 2)
+            .forEach(rc => sitelinks.push({ linkText: clip(rc.title, 25), d1: "More personalized designs", d2: "Handcrafted, made to order", url: "https://britesjewelry.com/collections/" + rc.handle }));
+          sitelinks.forEach(s => {
+            const a = nextAsset();
+            ops.push({ assetOperation: { create: { resourceName: a, finalUrls: [s.url], sitelinkAsset: { linkText: s.linkText, description1: s.d1, description2: s.d2 } } } });
+            ops.push({ campaignAssetOperation: { create: { asset: a, campaign: cRes, fieldType: "SITELINK" } } });
+            addedSitelinks++;
+          });
+        }
+        if (!hasCallouts) {
+          BRAND_CALLOUTS.forEach(t => {
+            const a = nextAsset();
+            ops.push({ assetOperation: { create: { resourceName: a, calloutAsset: { calloutText: clip(t, 25) } } } });
+            ops.push({ campaignAssetOperation: { create: { asset: a, campaign: cRes, fieldType: "CALLOUT" } } });
+            addedCallouts++;
+          });
+        }
+        if (!hasSnippet) {
+          const types = [...new Set(agRows.map(ag => clip(String(ag.assetGroup.name || "").replace(/^AG\s*[·-]\s*/, "").trim(), 25)).filter(Boolean))].slice(0, 6);
+          if (types.length >= 3) {
+            const a = nextAsset();
+            ops.push({ assetOperation: { create: { resourceName: a, structuredSnippetAsset: { header: "Types", values: types } } } });
+            ops.push({ campaignAssetOperation: { create: { asset: a, campaign: cRes, fieldType: "STRUCTURED_SNIPPET" } } });
+            addedSnippet = 1;
+          }
+        }
       }
       if (!ops.length) { results.push({ campaign: campaignName, skipped: "already meets ad-strength targets" }); continue; }
       const parts = [];
@@ -3396,12 +3427,14 @@ async function upgradePmaxAdStrength({ ctrl, campaignIds, onProgress } = {}) {
       if (addedDesc) parts.push(`+${addedDesc} descriptions`);
       if (addedBiz) parts.push(`+${addedBiz} business name`);
       if (addedSitelinks) parts.push(`+${addedSitelinks} sitelinks`);
+      if (addedCallouts) parts.push(`+${addedCallouts} callouts`);
+      if (addedSnippet) parts.push(`+1 structured snippet`);
       const id = await enqueueApproval({ type: "pmax-upgrade", vetted: false,
         summary: `PMax ad-strength upgrade · ${campaignName} · ${deficientGroups.length}/${agRows.length} groups · ${parts.join(", ")} · nothing existing removed`,
         payload: { mutateOperations: ops, meta: { kind: "pmax-ad-strength-upgrade", campaignId, campaignName, campaignResource: cRes,
-          groupsUpgraded: deficientGroups.length, groupsTotal: agRows.length, addedHeadlines, addedLong, addedDesc, addedBiz, addedSitelinks, collectionTitle: title } } });
+          groupsUpgraded: deficientGroups.length, groupsTotal: agRows.length, addedHeadlines, addedLong, addedDesc, addedBiz, addedSitelinks, addedCallouts, addedSnippet, collectionTitle: title } } });
       queued++;
-      results.push({ campaign: campaignName, groupsUpgraded: deficientGroups.length, groupsTotal: agRows.length, addedHeadlines, addedLong, addedDesc, addedSitelinks, approvalId: id });
+      results.push({ campaign: campaignName, groupsUpgraded: deficientGroups.length, groupsTotal: agRows.length, addedHeadlines, addedLong, addedDesc, addedSitelinks, addedCallouts, addedSnippet, approvalId: id });
     } catch (e) { results.push({ campaign: campaignName, error: String(e.message || e).slice(0, 300) }); }
   }
   return { campaigns: campRows.length, queued, dryRun: !!ctrl.dryRun, results };
@@ -5985,9 +6018,22 @@ async function campaignTimeline({ id } = {}) {
   let adStrength = [];
   if (isPmax) {
     try {
-      const agRows = await gaql(`SELECT asset_group.id, asset_group.name, asset_group.ad_strength, asset_group.primary_status
-                                 FROM asset_group WHERE campaign.id = ${cid}`);
-      adStrength = agRows.map(r => ({ name: r.assetGroup.name, strength: r.assetGroup.adStrength || "UNSPECIFIED", status: r.assetGroup.primaryStatus || "" }));
+      const [agRows, assetRows] = await Promise.all([
+        gaql(`SELECT asset_group.id, asset_group.resource_name, asset_group.name, asset_group.ad_strength, asset_group.primary_status
+              FROM asset_group WHERE campaign.id = ${cid}`),
+        gaql(`SELECT asset_group_asset.asset_group, asset_group_asset.field_type
+              FROM asset_group_asset WHERE campaign.id = ${cid}
+              AND asset_group_asset.field_type IN ('HEADLINE','LONG_HEADLINE','DESCRIPTION','SQUARE_MARKETING_IMAGE','MARKETING_IMAGE','PORTRAIT_MARKETING_IMAGE','LOGO')`)
+      ]);
+      const countFor = (agRes, ft) => assetRows.filter(r => r.assetGroupAsset && r.assetGroupAsset.assetGroup === agRes && r.assetGroupAsset.fieldType === ft).length;
+      // Ad Strength is scored from THESE counts (per asset group) — never from campaign-
+      // level sitelinks/callouts, which is why adding those alone never moves this number.
+      adStrength = agRows.map(r => {
+        const agRes = r.assetGroup.resourceName;
+        return { name: r.assetGroup.name, strength: r.assetGroup.adStrength || "UNSPECIFIED", status: r.assetGroup.primaryStatus || "",
+          assets: { headlines: countFor(agRes, "HEADLINE"), longHeadlines: countFor(agRes, "LONG_HEADLINE"), descriptions: countFor(agRes, "DESCRIPTION"),
+            square: countFor(agRes, "SQUARE_MARKETING_IMAGE"), landscape: countFor(agRes, "MARKETING_IMAGE"), portrait: countFor(agRes, "PORTRAIT_MARKETING_IMAGE"), logo: countFor(agRes, "LOGO") } };
+      });
     } catch (e) {}
   }
   const days = dayRows.map(r => ({ date: r.segments.date, impressions: Number(r.metrics.impressions || 0), clicks: Number(r.metrics.clicks || 0),
