@@ -69,6 +69,9 @@ const DEV_TOKEN  = ENV.GADS_DEVELOPER_TOKEN || "";
 const GEN_MODEL  = ENV.GADS_GEN_MODEL || "gpt-5.5";                       // text generation
 const CURRENCY   = ENV.GADS_CURRENCY || "USD";
 const OPPORTUNITY_ENGINE_VERSION = "12.3.0-api-compatibility-fix";
+// Deploy marker embedded in every mutate failure — a pasted error now proves exactly
+// which engine build executed the failing request. Bump on every engine delivery.
+const ENGINE_BUILD = "b20260713-3-pmax-text";
 
 // The store's nine homepage collections (handle ↔ title) — drives the Draft Bench picker.
 const COLLECTIONS = [
@@ -221,27 +224,63 @@ async function mutate(service, operations, { ctrl, label = "", validateOnly = nu
   });
   const data = await res.json().catch(() => ({}));
   await ledger({ kind: "mutate", service, label, validateOnly: vo, count: operations.length,
-                 ok: res.ok, error: res.ok ? null : JSON.stringify(data).slice(0, 800),
+                 ok: res.ok, error: res.ok ? null : JSON.stringify(data).slice(0, 1600),
                  partialFailure: data.partialFailureError || null });
-  if (!res.ok) throw new Error(`[gads] ${service}:mutate failed: ` + JSON.stringify(data).slice(0, 600));
+  if (!res.ok) {
+    const lines = _gadsErrorLines(data);
+    throw new Error(`[gads·${ENGINE_BUILD}] ${service}:mutate failed · sent ${operations.length} ops${label ? " · " + label : ""}` +
+      (lines ? ` · errors: ${lines}` : "") + " · raw: " + JSON.stringify(data).slice(0, 1200));
+  }
   return data;
 }
 
 // Atomic cross-resource mutate (build a whole campaign in one transaction with
 // temp resource names). operations = [{ campaignBudgetOperation:{...} }, ...].
+// Compact forensic fingerprint of a mutateOperations array: op-type histogram plus
+// asset-group-asset fieldType counts. Included in every mutate failure so a pasted
+// error PROVES what was actually sent (e.g. whether text assets were present) —
+// no more guessing from a truncated Google error alone.
+function _opsFingerprint(mutateOperations) {
+  const hist = {}, ft = {};
+  (mutateOperations || []).forEach(o => {
+    const k = o ? Object.keys(o)[0] : "null"; hist[k] = (hist[k] || 0) + 1;
+    const aga = o && o.assetGroupAssetOperation && o.assetGroupAssetOperation.create;
+    if (aga && aga.fieldType) ft[aga.fieldType] = (ft[aga.fieldType] || 0) + 1;
+  });
+  const h = Object.entries(hist).map(([k, v]) => k.replace(/Operation$/, "") + ":" + v).join(",");
+  const f = Object.entries(ft).map(([k, v]) => k + ":" + v).join(",");
+  return `${(mutateOperations || []).length} ops [${h}]` + (f ? ` fieldTypes[${f}]` : "");
+}
+// Distill a GoogleAdsFailure into one line per error with its exact op index —
+// the part the raw-JSON slice kept truncating away.
+function _gadsErrorLines(data) {
+  try {
+    const errs = ((((data || {}).error || {}).details || [])[0] || {}).errors || [];
+    return errs.map(e => {
+      const code = Object.values(e.errorCode || {})[0] || "?";
+      const idx = ((e.location || {}).fieldPathElements || []).map(p => p.fieldName + (p.index != null ? "[" + p.index + "]" : "")).join(".");
+      return code + " @ " + (idx || "?");
+    }).join(" | ");
+  } catch (e) { return ""; }
+}
 async function mutateAll(mutateOperations, { ctrl, label = "", validateOnly = null } = {}) {
   ctrl = ctrl || (await control());
   const vo = validateOnly == null ? !!ctrl.dryRun : validateOnly;
   const token = await mintToken();
   const body = { mutateOperations, partialFailure: false };
   if (vo) body.validateOnly = true;
+  const fp = _opsFingerprint(mutateOperations);
   const res = await fetch(`${BASE}/customers/${CID}/googleAds:mutate`, {
     method: "POST", headers: adsHeaders(token), body: JSON.stringify(body)
   });
   const data = await res.json().catch(() => ({}));
-  await ledger({ kind: "mutateAll", label, validateOnly: vo, count: mutateOperations.length,
-                 ok: res.ok, error: res.ok ? null : JSON.stringify(data).slice(0, 800) });
-  if (!res.ok) throw new Error("[gads] googleAds:mutate failed: " + JSON.stringify(data).slice(0, 600));
+  await ledger({ kind: "mutateAll", label, validateOnly: vo, count: mutateOperations.length, fingerprint: fp,
+                 ok: res.ok, error: res.ok ? null : JSON.stringify(data).slice(0, 1600) });
+  if (!res.ok) {
+    const lines = _gadsErrorLines(data);
+    throw new Error(`[gads·${ENGINE_BUILD}] googleAds:mutate failed · sent ${fp}${label ? " · " + label : ""}` +
+      (lines ? ` · errors: ${lines}` : "") + " · raw: " + JSON.stringify(data).slice(0, 1200));
+  }
   return data;
 }
 
@@ -820,6 +859,10 @@ function sanitizeOps(ops, meta) {
   if (!Array.isArray(ops)) return ops;
   ops.forEach(op => {
     if (!op) return;
+    // Asset.type is OUTPUT_ONLY — drafts frozen under the intermediate builder (which set
+    // type:"TEXT") get it stripped so their asset creates match the official sample shape.
+    const ac = op.assetOperation && op.assetOperation.create;
+    if (ac && ac.type !== undefined) delete ac.type;
     // v24 requires listing_source on every asset-group listing-group filter.
     // Drafts frozen before this fix lack it; all our filters are feed-based.
     const lg = op.assetGroupListingGroupFilterOperation && op.assetGroupListingGroupFilterOperation.create;
@@ -862,13 +905,18 @@ function sanitizeOps(ops, meta) {
     if (deficient.length) {
       const copy = _pmaxDeterministicCopy({ title: meta && meta.collectionTitle });
       const built = _buildPmaxTextAssetOps(copy, -100);
-      ops.push(...built.ops);
+      // Text creates go to the HEAD of the array (Google's sample ordering: assets first);
+      // the attach ops append after everything, all resolved atomically via temp IDs.
+      ops.unshift(...built.ops);
       deficient.forEach(agRes => {
         if (countFor(agRes, "HEADLINE") < 3) built.ids.headlines.forEach(a => ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: a, fieldType: "HEADLINE" } } }));
         if (countFor(agRes, "LONG_HEADLINE") < 1) built.ids.longHeadlines.forEach(a => ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: a, fieldType: "LONG_HEADLINE" } } }));
         if (countFor(agRes, "DESCRIPTION") < 2) built.ids.descriptions.forEach(a => ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: a, fieldType: "DESCRIPTION" } } }));
         if (countFor(agRes, "BUSINESS_NAME") < 1) ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: built.ids.businessName, fieldType: "BUSINESS_NAME" } } });
       });
+      // Non-index array property: invisible to JSON.stringify (never sent to Google),
+      // but lets applyApproval label the ledger with proof the heal executed.
+      try { ops._healed = "text-assets:" + deficient.length + "group(s)"; } catch (e) {}
     }
   }
   return ops;
@@ -903,8 +951,8 @@ async function applyApproval(id, ctrl) {
       }
     }
   }
-  if (p.service && p.operations) await mutate(p.service, sanitizeOps(p.operations, p.meta), { ctrl, label: "approval:" + it.type });
-  else if (p.mutateOperations)   await mutateAll(sanitizeOps(p.mutateOperations, p.meta), { ctrl, label: "approval:" + it.type });
+  if (p.service && p.operations) { const sOps = sanitizeOps(p.operations, p.meta); await mutate(p.service, sOps, { ctrl, label: "approval:" + it.type + (sOps && sOps._healed ? "·healed[" + sOps._healed + "]" : "") }); }
+  else if (p.mutateOperations)   { const sOps = sanitizeOps(p.mutateOperations, p.meta); await mutateAll(sOps, { ctrl, label: "approval:" + it.type + (sOps && sOps._healed ? "·healed[" + sOps._healed + "]" : "") }); }
   if (!vo && _ctrim) { try { await ledger({ kind: "ceilingTrim", from: _ctrim.from, to: _ctrim.to, ceiling: _ctrim.ceiling }); } catch (e) {} }
   // Only flip to APPLIED when it actually ran; a dry-run only validated, so leave it APPROVED.
   if (!vo) await ref.update({ status: "APPLIED", appliedAt: f.FV.serverTimestamp() });
@@ -2890,9 +2938,11 @@ function buildPmaxCampaignOps(coll, { dailyBudget, startDate, endDate, targetRoa
   const themes=[...new Set((searchThemes||[]).map(x=>String(x).toLowerCase().replace(/[^a-z0-9 ]+/g," ").replace(/\s+/g," ").trim()).filter(Boolean))].slice(0,25);
   // v24 rejects the whole mutate if any asset group lacks headline/long-headline/description
   // assets \u2014 build them once (temp resource names, atomic) and attach to every group below.
+  // Created at the HEAD of the op array \u2014 the exact ordering Google's own PMax samples use
+  // (assets first, then budget/campaign/asset groups/links).
   const textCopy = adCopy || _pmaxDeterministicCopy(coll);
   const textAssets = _buildPmaxTextAssetOps(textCopy, -100);
-  ops.push(...textAssets.ops);
+  ops.unshift(...textAssets.ops);
   groups.forEach((g,gi)=>{
     const agId=-(3+gi),agRes=`customers/${CID}/assetGroups/${agId}`;
     ops.push({assetGroupOperation:{create:{resourceName:agRes,campaign:cRes,name:`AG · ${String(g.label).slice(0,60)}`,finalUrls:[finalUrl],status:"ENABLED"}}});
@@ -2981,12 +3031,14 @@ Return ONLY JSON: {"headlines":[],"longHeadlines":[],"descriptions":[]}`;
 // else) and referenced by every asset group below \u2014 Google Ads explicitly supports one
 // Asset attached to multiple asset groups, so this avoids N duplicate copies of the same copy.
 function _buildPmaxTextAssetOps(adCopy, startId) {
+  // Asset.type is OUTPUT_ONLY — official PMax samples create text assets with ONLY the
+  // textAsset payload set. Mirror that shape exactly; the oneof implies the type.
   const ASSET = n => `customers/${CID}/assets/${n}`;
   let an = startId; const ops = []; const ids = { headlines: [], longHeadlines: [], descriptions: [], businessName: null };
-  (adCopy.headlines || []).forEach(text => { const a = ASSET(an--); ops.push({ assetOperation: { create: { resourceName: a, type: "TEXT", textAsset: { text } } } }); ids.headlines.push(a); });
-  (adCopy.longHeadlines || []).forEach(text => { const a = ASSET(an--); ops.push({ assetOperation: { create: { resourceName: a, type: "TEXT", textAsset: { text } } } }); ids.longHeadlines.push(a); });
-  (adCopy.descriptions || []).forEach(text => { const a = ASSET(an--); ops.push({ assetOperation: { create: { resourceName: a, type: "TEXT", textAsset: { text } } } }); ids.descriptions.push(a); });
-  { const a = ASSET(an--); ops.push({ assetOperation: { create: { resourceName: a, type: "TEXT", textAsset: { text: adCopy.businessName || "Brites Jewelry" } } } }); ids.businessName = a; }
+  (adCopy.headlines || []).forEach(text => { const a = ASSET(an--); ops.push({ assetOperation: { create: { resourceName: a, textAsset: { text } } } }); ids.headlines.push(a); });
+  (adCopy.longHeadlines || []).forEach(text => { const a = ASSET(an--); ops.push({ assetOperation: { create: { resourceName: a, textAsset: { text } } } }); ids.longHeadlines.push(a); });
+  (adCopy.descriptions || []).forEach(text => { const a = ASSET(an--); ops.push({ assetOperation: { create: { resourceName: a, textAsset: { text } } } }); ids.descriptions.push(a); });
+  { const a = ASSET(an--); ops.push({ assetOperation: { create: { resourceName: a, textAsset: { text: adCopy.businessName || "Brites Jewelry" } } } }); ids.businessName = a; }
   return { ops, ids };
 }
 
@@ -5682,5 +5734,5 @@ module.exports = {
   fetchDiagnostics, runDiagnostics, getDiagnostics, applyGoogleRecommendation, dismissGoogleRecommendation,
   dailyStats, applyRemedy, remedyHistory, adReviewStatus,
   getPlaybook, playbookSlice, distillLessons, setGenStatus, getGenStatus,
-  _util: { micros, fromMicros, clampHeadline, clampDescription, gAdsTime, daysUntil, merchantLookupPlan:_merchantLookupPlan,pmaxTag:_pmaxTag,groundKeywordPlan,collectionEconomics,opportunityClass,resolveOpportunityConflicts,paidAttribution:_paidAttribution,paidChannel:_paidChannel,merchantOrganic:_merchantOrganic,bestSearchLandingUrl:_bestSearchLandingUrl,selectListingShots,visionSelectShots:_visionSelectShots,collectionShotRows:_collectionShotRows,shotForShape:_shotForShape,productIdFromItemId:_productIdFromItemId,productShotsByIds:_productShotsByIds,pmaxDeterministicCopy:_pmaxDeterministicCopy,pmaxAdCopy:_pmaxAdCopy,buildPmaxTextAssetOps:_buildPmaxTextAssetOps }
+  _util: { micros, fromMicros, clampHeadline, clampDescription, gAdsTime, daysUntil, merchantLookupPlan:_merchantLookupPlan,pmaxTag:_pmaxTag,groundKeywordPlan,collectionEconomics,opportunityClass,resolveOpportunityConflicts,paidAttribution:_paidAttribution,paidChannel:_paidChannel,merchantOrganic:_merchantOrganic,bestSearchLandingUrl:_bestSearchLandingUrl,selectListingShots,visionSelectShots:_visionSelectShots,collectionShotRows:_collectionShotRows,shotForShape:_shotForShape,productIdFromItemId:_productIdFromItemId,productShotsByIds:_productShotsByIds,pmaxDeterministicCopy:_pmaxDeterministicCopy,pmaxAdCopy:_pmaxAdCopy,buildPmaxTextAssetOps:_buildPmaxTextAssetOps,opsFingerprint:_opsFingerprint,gadsErrorLines:_gadsErrorLines }
 };
