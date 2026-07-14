@@ -71,7 +71,7 @@ const CURRENCY   = ENV.GADS_CURRENCY || "USD";
 const OPPORTUNITY_ENGINE_VERSION = "12.3.0-api-compatibility-fix";
 // Deploy marker embedded in every mutate failure — a pasted error now proves exactly
 // which engine build executed the failing request. Bump on every engine delivery.
-const ENGINE_BUILD = "b20260714-7-adstrength-upgrade";
+const ENGINE_BUILD = "b20260714-9-headline-target-11";
 
 // The store's nine homepage collections (handle ↔ title) — drives the Draft Bench picker.
 const COLLECTIONS = [
@@ -3125,7 +3125,7 @@ function _pmaxDeterministicCopy(coll) {
   const title = String((coll && coll.title) || "Brites Jewelry");
   return {
     headlines: [clampHeadline("Brites Jewelry"), clampHeadline(title), clampHeadline("Handcrafted Jewelry"), clampHeadline("Personalized Charms"), clampHeadline("Made Just For You"),
-      clampHeadline("Custom Charm Jewelry"), clampHeadline("Gifts That Mean More"), clampHeadline("Made To Order For You"), clampHeadline("Meaningful Gifts For Her"), clampHeadline("Free Shipping Over $75")],
+      clampHeadline("Custom Charm Jewelry"), clampHeadline("Gifts That Mean More"), clampHeadline("Made To Order For You"), clampHeadline("Meaningful Gifts For Her"), clampHeadline("Free Shipping Over $75"), clampHeadline("Thoughtful Handmade Gifts")],
     longHeadlines: [clampDescription(`${title} \u2014 handcrafted, personalized, made to order`), clampDescription("Little charms, big meanings \u2014 custom jewelry from Brites"), clampDescription("Handmade jewelry made just for you, from Brites Jewelry"), clampDescription("Personalized charm jewelry, handcrafted to order and shipped with care")],
     descriptions: [clampDescription("Free shipping over $75. Handmade, made to order."), clampDescription("Custom-made gifts, personalized just for you."), clampDescription(`${title}, handcrafted with care.`), clampDescription("30-day hassle-free returns on every order.")],
     businessName: "Brites Jewelry"
@@ -3311,7 +3311,7 @@ async function backfillPmaxCreative({ ctrl, campaignIds, onProgress } = {}) {
 // Quality target for an "Excellent" ad-strength score — well above the bare v24 minimum
 // (3/1/2) sanitizeOps enforces just to pass validation. Existing campaigns launched before
 // the text-asset fix only have what a launch strictly required (or nothing at all).
-const _AD_STRENGTH_TARGET = { HEADLINE: 10, LONG_HEADLINE: 4, DESCRIPTION: 4, BUSINESS_NAME: 1 };
+const _AD_STRENGTH_TARGET = { HEADLINE: 11, LONG_HEADLINE: 4, DESCRIPTION: 4, BUSINESS_NAME: 1 };
 // Upgrade already-LIVE PMax campaigns to full ad strength without touching anything that
 // already exists: tops up headlines/long headlines/descriptions per asset group to the
 // quality target (never removes an existing asset), and adds campaign-level sitelinks if
@@ -5974,7 +5974,7 @@ async function campaignTimeline({ id } = {}) {
   const cid = String(id).replace(/\D/g, "");
   const [cRows, dayRows] = await Promise.all([
     gaql(`SELECT campaign.id, campaign.name, campaign.status, campaign.primary_status, campaign.primary_status_reasons,
-                 campaign.start_date, campaign.end_date, campaign.advertising_channel_type, campaign.bidding_strategy_type
+                 campaign.start_date_time, campaign.end_date_time, campaign.advertising_channel_type, campaign.bidding_strategy_type
           FROM campaign WHERE campaign.id = ${cid}`),
     gaql(`SELECT segments.date, metrics.impressions, metrics.clicks, metrics.conversions, metrics.conversions_value, metrics.cost_micros
           FROM campaign WHERE campaign.id = ${cid} AND segments.date DURING LAST_14_DAYS ORDER BY segments.date`)
@@ -5999,7 +5999,7 @@ async function campaignTimeline({ id } = {}) {
   const notServing = ["NOT_ELIGIBLE", "REMOVED", "PAUSED", "ENDED"].includes(String(c.primaryStatus));
   const totals = days.reduce((a, d) => ({ impressions: a.impressions + d.impressions, clicks: a.clicks + d.clicks, conversions: a.conversions + d.conversions, value: a.value + d.value, cost: a.cost + d.cost }), { impressions: 0, clicks: 0, conversions: 0, value: 0, cost: 0 });
   const steps = [
-    { key: "published", label: "Campaign published", state: "done", date: c.startDate || null },
+    { key: "published", label: "Campaign published", state: "done", date: _dateOnly(c.startDateTime) || null },
     { key: "impressions", label: "Impressions", state: totals.impressions > 0 ? "done" : "pending",
       date: firstOf("impressions"), detail: totals.impressions > 0 ? `${totals.impressions.toLocaleString()} in 14d` : "None yet — feed/review can take 24-48h" },
     { key: "clicks", label: "Clicks", state: totals.clicks > 0 ? "done" : "pending", date: firstOf("clicks"),
@@ -6011,7 +6011,7 @@ async function campaignTimeline({ id } = {}) {
     { key: "eligibility", label: "Serving status", state: notServing ? "error" : (limited ? "warn" : "done"),
       detail: String(c.primaryStatus || "").replace(/_/g, " ").toLowerCase() + (reasons.length ? " — " + reasons.map(r => r.replace(/_/g, " ").toLowerCase()).join(", ") : "") }
   ];
-  return { campaign: { id: cid, name: c.name, status: c.status, primaryStatus: c.primaryStatus, reasons, channel: c.advertisingChannelType, biddingStrategy: c.biddingStrategyType, startDate: c.startDate || null, endDate: c.endDate || null },
+  return { campaign: { id: cid, name: c.name, status: c.status, primaryStatus: c.primaryStatus, reasons, channel: c.advertisingChannelType, biddingStrategy: c.biddingStrategyType, startDate: _dateOnly(c.startDateTime) || null, endDate: _dateOnly(c.endDateTime) || null },
     steps, adStrength, days, totals, fetchedAt: new Date().toISOString() };
 }
 module.exports = {
