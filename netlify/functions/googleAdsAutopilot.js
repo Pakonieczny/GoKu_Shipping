@@ -71,7 +71,7 @@ const CURRENCY   = ENV.GADS_CURRENCY || "USD";
 const OPPORTUNITY_ENGINE_VERSION = "12.3.0-api-compatibility-fix";
 // Deploy marker embedded in every mutate failure — a pasted error now proves exactly
 // which engine build executed the failing request. Bump on every engine delivery.
-const ENGINE_BUILD = "b20260714-4-pmax-contiguity";
+const ENGINE_BUILD = "b20260714-5-tempid-ns";
 
 // The store's nine homepage collections (handle ↔ title) — drives the Draft Bench picker.
 const COLLECTIONS = [
@@ -911,7 +911,7 @@ function sanitizeOps(ops, meta) {
     const deficient = agResList.filter(agRes => countFor(agRes, "HEADLINE") < 3 || countFor(agRes, "LONG_HEADLINE") < 1 || countFor(agRes, "DESCRIPTION") < 2 || countFor(agRes, "BUSINESS_NAME") < 1);
     if (deficient.length) {
       const copy = _pmaxDeterministicCopy({ title: meta && meta.collectionTitle });
-      const built = _buildPmaxTextAssetOps(copy, -100);
+      const built = _buildPmaxTextAssetOps(copy, _tempIdFloor(ops));
       // Text creates go to the HEAD of the array (Google's sample ordering: assets first);
       // the attach ops append after everything, all resolved atomically via temp IDs.
       ops.unshift(...built.ops);
@@ -3042,7 +3042,7 @@ function buildPmaxCampaignOps(coll, { dailyBudget, startDate, endDate, targetRoa
   // Created at the HEAD of the op array \u2014 the exact ordering Google's own PMax samples use
   // (assets first, then budget/campaign/asset groups/links).
   const textCopy = adCopy || _pmaxDeterministicCopy(coll);
-  const textAssets = _buildPmaxTextAssetOps(textCopy, -100);
+  const textAssets = _buildPmaxTextAssetOps(textCopy, _tempIdFloor(ops));
   ops.unshift(...textAssets.ops);
   groups.forEach((g,gi)=>{
     const agId=-(3+gi),agRes=`customers/${CID}/assetGroups/${agId}`;
@@ -3127,6 +3127,19 @@ Return ONLY JSON: {"headlines":[],"longHeadlines":[],"descriptions":[]}`;
     }
   } catch (e) {}
   return base; // AI unavailable/invalid \u2014 the deterministic floor alone already satisfies every v24 minimum
+}
+// Google Ads temp IDs are GLOBAL across the whole mutate request and across ALL resource
+// types — an injected asset at -100 collides with a frozen draft's listing-group filter
+// at -100 (live failure: DUPLICATE_TEMP_IDS, trigger -100/-101). Scan every temp ID the
+// payload already uses (trailing -N after "/" or "~" in resource names) and start far
+// below the lowest — collision-proof against any draft generation, past or future.
+function _tempIdFloor(ops) {
+  let min = 0;
+  try {
+    const m = JSON.stringify(ops).match(/[\/~](-\d{1,12})(?=[\"\/~])/g) || [];
+    m.forEach(x => { const n = Number(x.slice(1)); if (n < min) min = n; });
+  } catch (e) {}
+  return Math.min(-10000, min - 1000);
 }
 // TEXT assets are created ONCE per campaign (temp resource names, atomic with everything
 // else) and referenced by every asset group below \u2014 Google Ads explicitly supports one
@@ -5835,5 +5848,5 @@ module.exports = {
   fetchDiagnostics, runDiagnostics, getDiagnostics, applyGoogleRecommendation, dismissGoogleRecommendation,
   dailyStats, applyRemedy, remedyHistory, adReviewStatus,
   getPlaybook, playbookSlice, distillLessons, setGenStatus, getGenStatus,
-  _util: { micros, fromMicros, clampHeadline, clampDescription, gAdsTime, daysUntil, merchantLookupPlan:_merchantLookupPlan,pmaxTag:_pmaxTag,groundKeywordPlan,collectionEconomics,opportunityClass,resolveOpportunityConflicts,paidAttribution:_paidAttribution,paidChannel:_paidChannel,merchantOrganic:_merchantOrganic,bestSearchLandingUrl:_bestSearchLandingUrl,selectListingShots,visionSelectShots:_visionSelectShots,collectionShotRows:_collectionShotRows,shotForShape:_shotForShape,productIdFromItemId:_productIdFromItemId,productShotsByIds:_productShotsByIds,pmaxDeterministicCopy:_pmaxDeterministicCopy,pmaxAdCopy:_pmaxAdCopy,buildPmaxTextAssetOps:_buildPmaxTextAssetOps,opsFingerprint:_opsFingerprint,gadsErrorLines:_gadsErrorLines,imageDims:_imageDims,dropBadRatioImageAttaches:_dropBadRatioImageAttaches,imgFieldSpecs:_IMG_FIELD_SPECS }
+  _util: { micros, fromMicros, clampHeadline, clampDescription, gAdsTime, daysUntil, merchantLookupPlan:_merchantLookupPlan,pmaxTag:_pmaxTag,groundKeywordPlan,collectionEconomics,opportunityClass,resolveOpportunityConflicts,paidAttribution:_paidAttribution,paidChannel:_paidChannel,merchantOrganic:_merchantOrganic,bestSearchLandingUrl:_bestSearchLandingUrl,selectListingShots,visionSelectShots:_visionSelectShots,collectionShotRows:_collectionShotRows,shotForShape:_shotForShape,productIdFromItemId:_productIdFromItemId,productShotsByIds:_productShotsByIds,pmaxDeterministicCopy:_pmaxDeterministicCopy,pmaxAdCopy:_pmaxAdCopy,buildPmaxTextAssetOps:_buildPmaxTextAssetOps,opsFingerprint:_opsFingerprint,gadsErrorLines:_gadsErrorLines,imageDims:_imageDims,dropBadRatioImageAttaches:_dropBadRatioImageAttaches,imgFieldSpecs:_IMG_FIELD_SPECS,tempIdFloor:_tempIdFloor }
 };
