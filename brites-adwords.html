@@ -1228,9 +1228,20 @@ function renderTimeline(t){
       +(s.date?'<div class="muted" style="font-size:10.5px">'+esc(s.date)+'</div>':"")
       +(s.detail?'<div class="muted" style="font-size:10.5px;max-width:150px;margin:2px auto 0">'+esc(s.detail)+'</div>':"")
       +'</div></div>';}).join("");
+  var TGT={headlines:15,longHeadlines:5,descriptions:5,square:1,landscape:1,portrait:1,logo:1};
   var strength=(t.adStrength||[]).map(function(a){
     var m={EXCELLENT:["#3f7d4e","#e7f2e9"],GOOD:["#3f7d4e","#e7f2e9"],AVERAGE:["#8a6d1a","#f7efd7"],POOR:["#a03d2e","#f7e3de"],PENDING:["#8a857c","#efece6"]}[a.strength]||["#8a857c","#efece6"];
-    return '<span style="display:inline-block;padding:3px 9px;border-radius:20px;background:'+m[1]+';color:'+m[0]+';font-size:11px;font-weight:600;margin:2px 4px 2px 0">'+esc(a.name)+' \u00B7 '+esc(String(a.strength).toLowerCase().replace(/_/g," "))+'</span>';}).join("");
+    var as=a.assets||{};
+    var counts=as.headlines==null?"":[
+      "hl "+as.headlines+(as.headlines<TGT.headlines?"/"+TGT.headlines:""),
+      "lh "+as.longHeadlines+(as.longHeadlines<TGT.longHeadlines?"/"+TGT.longHeadlines:""),
+      "ds "+as.descriptions+(as.descriptions<TGT.descriptions?"/"+TGT.descriptions:""),
+      "img "+(as.square+as.landscape+as.portrait)+(as.square<1||as.landscape<1||as.portrait<1?" (missing "+["square","landscape","portrait"].filter(function(k){return !as[k];}).join("/")+")":"")
+    ].join(" \u00B7 ");
+    return '<div style="display:inline-block;margin:2px 10px 6px 0;vertical-align:top">'
+      +'<span style="display:inline-block;padding:3px 9px;border-radius:20px;background:'+m[1]+';color:'+m[0]+';font-size:11px;font-weight:600">'+esc(a.name)+' \u00B7 '+esc(String(a.strength).toLowerCase().replace(/_/g," "))+'</span>'
+      +(counts?'<div class="muted" style="font-size:10.5px;margin-top:3px;margin-left:2px">'+esc(counts)+'</div>':"")
+      +'</div>';}).join("");
   var mx=Math.max.apply(null,(t.days||[]).map(function(d){return d.impressions;}).concat([1]));
   var spark=(t.days||[]).map(function(d){var h=Math.max(2,Math.round(26*d.impressions/mx));
     return '<div title="'+esc(d.date)+' \u00B7 '+d.impressions+' impr \u00B7 '+d.clicks+' clicks'+(d.conversions?' \u00B7 '+d.conversions.toFixed(1)+' conv':'')+'" style="width:9px;height:'+h+'px;background:'+(d.conversions>0?'#3f7d4e':'var(--gold)')+';border-radius:2px 2px 0 0"></div>';}).join("");
