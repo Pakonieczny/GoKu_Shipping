@@ -849,21 +849,27 @@ function sanitizeOps(ops, meta) {
   });
   // v24 rejects a PMax asset group without headline/long-headline/description/business-name
   // assets (NOT_ENOUGH_HEADLINE_ASSET etc.) — the builder didn't produce these before this
-  // fix, so any already-frozen PMax draft has none. Detect that and inject the deterministic
-  // copy (same guaranteed-valid floor the builder now uses), attached to every asset group
-  // this draft creates, so the SAME approval card can just be re-approved — no regeneration.
-  const agResList = ops.map(o => o && o.assetGroupOperation && o.assetGroupOperation.create && o.assetGroupOperation.create.resourceName).filter(Boolean);
-  const hasHeadlines = ops.some(o => o && o.assetGroupAssetOperation && o.assetGroupAssetOperation.create && o.assetGroupAssetOperation.create.fieldType === "HEADLINE");
-  if (agResList.length && !hasHeadlines) {
-    const copy = _pmaxDeterministicCopy({ title: meta && meta.collectionTitle });
-    const built = _buildPmaxTextAssetOps(copy, -100);
-    ops.push(...built.ops);
-    agResList.forEach(agRes => {
-      built.ids.headlines.forEach(a => ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: a, fieldType: "HEADLINE" } } }));
-      built.ids.longHeadlines.forEach(a => ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: a, fieldType: "LONG_HEADLINE" } } }));
-      built.ids.descriptions.forEach(a => ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: a, fieldType: "DESCRIPTION" } } }));
-      ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: built.ids.businessName, fieldType: "BUSINESS_NAME" } } });
-    });
+  // fix, so any already-frozen PMax draft has none. Checked PER ASSET GROUP against the real
+  // v24 minimums (>=3 headlines, >=1 long headline, >=2 descriptions, exactly 1 business name)
+  // — a single global "any headline op exists anywhere" check would wrongly skip a second,
+  // still-deficient group in a multi-group campaign. Only the shortfall is topped up per
+  // group; assets are created once and shared, same as a fresh build.
+  const agResList = [...new Set(ops.map(o => o && o.assetGroupOperation && o.assetGroupOperation.create && o.assetGroupOperation.create.resourceName).filter(Boolean))];
+  if (agResList.length) {
+    const countFor = (agRes, fieldType) => ops.filter(o => o && o.assetGroupAssetOperation && o.assetGroupAssetOperation.create &&
+      o.assetGroupAssetOperation.create.assetGroup === agRes && o.assetGroupAssetOperation.create.fieldType === fieldType).length;
+    const deficient = agResList.filter(agRes => countFor(agRes, "HEADLINE") < 3 || countFor(agRes, "LONG_HEADLINE") < 1 || countFor(agRes, "DESCRIPTION") < 2 || countFor(agRes, "BUSINESS_NAME") < 1);
+    if (deficient.length) {
+      const copy = _pmaxDeterministicCopy({ title: meta && meta.collectionTitle });
+      const built = _buildPmaxTextAssetOps(copy, -100);
+      ops.push(...built.ops);
+      deficient.forEach(agRes => {
+        if (countFor(agRes, "HEADLINE") < 3) built.ids.headlines.forEach(a => ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: a, fieldType: "HEADLINE" } } }));
+        if (countFor(agRes, "LONG_HEADLINE") < 1) built.ids.longHeadlines.forEach(a => ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: a, fieldType: "LONG_HEADLINE" } } }));
+        if (countFor(agRes, "DESCRIPTION") < 2) built.ids.descriptions.forEach(a => ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: a, fieldType: "DESCRIPTION" } } }));
+        if (countFor(agRes, "BUSINESS_NAME") < 1) ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: built.ids.businessName, fieldType: "BUSINESS_NAME" } } });
+      });
+    }
   }
   return ops;
 }
