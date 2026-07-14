@@ -1116,10 +1116,32 @@ async function dueEvents(now = new Date()) {
 // →RSA in one transaction using temp resource names. Gated/queued by the worker.
 /* date helpers for campaign scheduling windows (YYYY-MM-DD ↔ Google's YYYYMMDD) */
 function _ymd(d) { return d.toISOString().slice(0, 10); }
-function _parseYmd(s) { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(s || "").trim()); if (!m) return null; const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])); return isNaN(d.getTime()) ? null : d; }
+function _parseYmd(s) {
+  // Accept a Date or epoch-ms number too (callers like the campaign builders pass
+  // `new Date()`), not only a "YYYY-MM-DD" string. Normalize to a UTC-midnight Date.
+  if (s instanceof Date) { return isNaN(s.getTime()) ? null : new Date(Date.UTC(s.getUTCFullYear(), s.getUTCMonth(), s.getUTCDate())); }
+  if (typeof s === "number" && isFinite(s)) { const n = new Date(s); return isNaN(n.getTime()) ? null : new Date(Date.UTC(n.getUTCFullYear(), n.getUTCMonth(), n.getUTCDate())); }
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(s || "").trim()); if (!m) return null; const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])); return isNaN(d.getTime()) ? null : d; }
 function _todayUtc() { const t = new Date(); return new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate())); }
 function _daysBetween(a, b) { return Math.round((b.getTime() - a.getTime()) / 86400000); }
 function gAdsDate(s, clampToday) { let d = _parseYmd(s); if (!d) return null; if (clampToday) { const t = _todayUtc(); if (d < t) d = t; } return _ymd(d).replace(/-/g, ""); }
+
+// Campaign schedule fields for a builder. Accepts Date, epoch ms, or YYYY[-]MM[-]DD.
+// startDateTime is emitted ONLY for a genuinely FUTURE start: Google rejects a
+// start_date_time in the past, and "start now" is correctly expressed by omitting
+// it (so a today/past start becomes start-on-enable, never a rejected past time).
+// endDateTime is emitted whenever an end is supplied, so a time-boxed (`days`)
+// campaign actually stops instead of silently running forever. This is the single
+// point that made PMax drafts ship with no schedule at all — the builders were
+// handed Date objects, which the old string-only _parseYmd could not read.
+function _campaignScheduleFields(startDate, endDate) {
+  const out = {};
+  const s = _parseYmd(startDate);
+  if (s && s > _todayUtc()) out.startDateTime = _ymd(s).replace(/-/g, "") + " 00:00:00";
+  const e = _parseYmd(endDate);
+  if (e) out.endDateTime = _ymd(e).replace(/-/g, "") + " 23:59:59";
+  return out;
+}
 
 // Extract a clean YYYY-MM-DD from a Google Ads date/datetime string ("2026-06-29 00:00:00", "20260629 000000", "2026-06-29").
 function _dateOnly(s) { if (!s) return null; const m = String(s).match(/(\d{4})-?(\d{2})-?(\d{2})/); return m ? `${m[1]}-${m[2]}-${m[3]}` : null; }
@@ -1927,7 +1949,7 @@ function buildSearchCampaignOps(coll, event, assets, { dailyBudget, startDate, e
   const tag = `${coll.handle}-${(event ? event.label : "evergreen").toLowerCase().replace(/[^a-z0-9]+/g, "-")}`.slice(0, 40);
   const bRes = `customers/${CID}/campaignBudgets/-1`, cRes = `customers/${CID}/campaigns/-2`;
   const finalUrl = `https://britesjewelry.com/collections/${coll.handle}`;
-  const startYmd = gAdsDate(startDate, true), endYmd = gAdsDate(endDate, false);
+  const _sched = _campaignScheduleFields(startDate, endDate);
   const capCpc = Number(maxCpc) > 0 ? Number(maxCpc) : 0.80;
   const useSmart = (smartBidding != null) ? !!smartBidding : !!ENV.GADS_TARGET_ROAS;
   const tRoas = Number(targetRoas || ENV.GADS_TARGET_ROAS || 0);
@@ -1936,7 +1958,7 @@ function buildSearchCampaignOps(coll, event, assets, { dailyBudget, startDate, e
     { campaignBudgetOperation:{create:{resourceName:bRes,name:`BA · ${tag} · ${Date.now()}`,amountMicros:micros(dailyBudget),deliveryMethod:"STANDARD",explicitlyShared:false}}},
     { campaignOperation:{create:{resourceName:cRes,name:`BA · ${tag}`,status:"PAUSED",advertisingChannelType:"SEARCH",campaignBudget:bRes,
       containsEuPoliticalAdvertising:"DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING",
-      ...(startYmd?{startDateTime:startYmd+" 00:00:00"}:{}),...(endYmd?{endDateTime:endYmd+" 23:59:59"}:{}),...bidding,
+      ..._sched,...bidding,
       // Start with clean Google Search traffic. Search partners are a separate future experiment,
       // not mixed into the baseline that teaches this opportunity engine.
       networkSettings:{targetGoogleSearch:true,targetSearchNetwork:false,targetPartnerSearchNetwork:false,targetContentNetwork:false},
@@ -2738,7 +2760,7 @@ async function uploadImageAssets(imgs, ctrl) {
 // through free listings. Product-type scoping remains a safe fallback only.
 function buildPmaxCampaignOps(coll, { dailyBudget, startDate, endDate, targetRoas, merchantId, feedLabel, itemIds, types, countries, offerDetails, searchThemes, audienceResource, imageAssets } = {}) {
   const tag=_pmaxTag(coll.handle,feedLabel), bRes=`customers/${CID}/campaignBudgets/-1`, cRes=`customers/${CID}/campaigns/-2`;
-  const finalUrl=`https://britesjewelry.com/collections/${coll.handle}`, startYmd=gAdsDate(startDate,true), endYmd=gAdsDate(endDate,false), tRoas=Number(targetRoas||ENV.GADS_TARGET_ROAS||0);
+  const finalUrl=`https://britesjewelry.com/collections/${coll.handle}`, _sched=_campaignScheduleFields(startDate,endDate), tRoas=Number(targetRoas||ENV.GADS_TARGET_ROAS||0);
   const shoppingSetting={merchantId:Number(merchantId)};if(feedLabel)shoppingSetting.feedLabel=String(feedLabel);
   const ops=[
     {campaignBudgetOperation:{create:{resourceName:bRes,name:`BA · ${tag} · ${Date.now()}`,amountMicros:micros(dailyBudget),deliveryMethod:"STANDARD",explicitlyShared:false}}},
@@ -2746,7 +2768,7 @@ function buildPmaxCampaignOps(coll, { dailyBudget, startDate, endDate, targetRoa
       containsEuPoliticalAdvertising:"DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING",shoppingSetting,/* v24 removed url_expansion_opt_out; the opt-out is now an asset automation setting */assetAutomationSettings:[{assetAutomationType:"FINAL_URL_EXPANSION_TEXT_ASSET_AUTOMATION",assetAutomationStatus:"OPTED_OUT"}],geoTargetTypeSetting:{positiveGeoTargetType:"PRESENCE"},
       // Separate Merchant-feed traffic from Search in Shopify order intelligence.
       finalUrlSuffix:"utm_source=google&utm_medium=paid_shopping&utm_campaign={campaignid}&utm_content=pmax",
-      maximizeConversionValue:tRoas>0?{targetRoas:tRoas}:{},...(startYmd?{startDateTime:startYmd+" 00:00:00"}:{}),...(endYmd?{endDateTime:endYmd+" 23:59:59"}:{})}}}
+      maximizeConversionValue:tRoas>0?{targetRoas:tRoas}:{},..._sched}}}
   ];
   const exact=[...new Set((itemIds||[]).map(x=>String(x||"").trim()).filter(Boolean))].slice(0,30);
   const details=(offerDetails||[]).filter(x=>x&&exact.includes(String(x.itemId))).map(x=>Object.assign({},x,{itemId:String(x.itemId)}));
