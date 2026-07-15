@@ -1116,16 +1116,29 @@ function renderCommand(){
   // status/schedule/budget from the freshest snapshot on every render.
   if(cmdMetrics&&(DASH.lastMetrics||[]).length){var liveBy={};DASH.lastMetrics.forEach(function(l){liveBy[String(l.id)]=l;});
     camps=camps.map(function(c){var l=liveBy[String(c.id)];if(!l)return c;
-      return Object.assign({},c,{status:l.status,primaryStatus:l.primaryStatus,primaryStatusReasons:l.primaryStatusReasons,startDate:l.startDate||c.startDate,endDate:l.endDate||c.endDate,budget:(l.budget!=null?l.budget:c.budget)});});}var t=totals(camps);var c=DASH.control||{};
+      return Object.assign({},c,{status:l.status,primaryStatus:l.primaryStatus,primaryStatusReasons:l.primaryStatusReasons,startDate:l.startDate||c.startDate,endDate:l.endDate||c.endDate,budget:(l.budget!=null?l.budget:c.budget)});});}
+  // KPI scope follows the campaign chip (srFilter) — "All campaigns" aggregates as before; a
+  // selected campaign scopes every KPI (Spend/Revenue/ROAS/Conversions/CTR/Cost-per-conv) to
+  // that one campaign so the cards, charts and chips all describe the same thing.
+  var kpiCamps=camps, kpiScopeName="";
+  if(srFilter&&srFilter!=="all"){
+    kpiCamps=camps.filter(function(c){return String(c.id)===String(srFilter);});
+    var _sc=kpiCamps[0]||((DAILY&&DAILY.campaigns)||[]).filter(function(x){return String(x.id)===String(srFilter);})[0];
+    kpiScopeName=_sc?(_sc.name.length>30?_sc.name.slice(0,28)+"\u2026":_sc.name):"1 campaign";
+  }
+  var t=totals(kpiCamps);var c=DASH.control||{};
   var roas=t.cost>0?(t.value/t.cost):null, ctr=t.impr>0?(t.clicks/t.impr*100):null, cpa=t.conv>0?(t.cost/t.conv):null;
   var none = t.cost===0 && t.impr===0;
   var rb=$("#cmdRangeBar");
   if(rb){rb.innerHTML='<span class="muted" style="font-size:10px;letter-spacing:.13em;text-transform:uppercase">Date range</span>'+rangePicker("cmd",cmdRange,cmdApplyRange)+'<span class="muted" style="font-size:11.5px">Metrics, chart &amp; campaigns below reflect this window.</span>';wireRangePickers(rb);}
-  var kpis=[["Spend",money(t.cost),none?"no spend yet":cmdRangeLabel],["Revenue",money(t.value),""],["ROAS",roas==null?"—":roas.toFixed(2)+"x",""],["Conversions",String(Math.round((t.conv||0)*10)/10),""],["CTR",ctr==null?"—":ctr.toFixed(1)+"%",""],["Cost / conv",cpa==null?"—":money(cpa),""]];
+  var kpiScope=none?"no spend yet":(cmdRangeLabel+(kpiScopeName?" \u00b7 "+kpiScopeName:""));
+  var kpis=[["Spend",money(t.cost),kpiScope],["Revenue",money(t.value),kpiScopeName?"this campaign":""],["ROAS",roas==null?"—":roas.toFixed(2)+"x",""],["Conversions",String(Math.round((t.conv||0)*10)/10),""],["CTR",ctr==null?"—":ctr.toFixed(1)+"%",""],["Cost / conv",cpa==null?"—":money(cpa),""]];
   $("#kpis").innerHTML=kpis.map((k,i)=>'<div class="kpi '+(i===2?"accent":"")+'"><div class="lab">'+k[0]+'</div><div class="val">'+k[1]+'</div><div class="delta muted" style="font-size:11px">'+(k[2]||"&nbsp;")+'</div></div>').join("");
-  // channel split: shown only once a feed (PMax) campaign exists
-  (function(){var rowsC=(cmdMetrics||DASH.lastMetrics||[]);var pm=rowsC.filter(function(c){return c.channel==="PERFORMANCE_MAX";});
-    var old=document.getElementById("kpiSplit");if(old)old.remove();
+  // channel split: shown only once a feed (PMax) campaign exists — and only in the all-campaigns
+  // view, since a Search-vs-PMax split of a single campaign is definitionally meaningless.
+  (function(){var old=document.getElementById("kpiSplit");if(old)old.remove();
+    if(srFilter&&srFilter!=="all")return;
+    var rowsC=(cmdMetrics||DASH.lastMetrics||[]);var pm=rowsC.filter(function(c){return c.channel==="PERFORMANCE_MAX";});
     if(!pm.length)return;
     var sSearch=0,sPm=0,cvS=0,cvP=0;rowsC.forEach(function(c){var isP=c.channel==="PERFORMANCE_MAX";if(isP){sPm+=(+c.cost||0);cvP+=(+c.conv||0);}else{sSearch+=(+c.cost||0);cvS+=(+c.conv||0);}});
     var el=document.createElement("div");el.id="kpiSplit";
@@ -1323,7 +1336,7 @@ function renderDailyCharts(){if(!DAILY)return;var chips=$("#srChips");var ctrl=D
   if(chips){var withData=(DAILY.campaigns||[]).filter(function(c){return c.totals.impr>0||c.totals.cost>0;});
     var mk=function(id,label,tot,channel){var on=srFilter===id;return '<button class="btn '+(on?"gold":"ghost")+' sm srchip" data-f="'+id+'" style="padding:3px 10px;font-size:11px">'+esc(label)+(channel==="PERFORMANCE_MAX"?' <span style="font-size:8.5px;font-weight:700;letter-spacing:.06em;'+(on?"color:#fff;border:1px solid rgba(255,255,255,.6)":"color:var(--gold);border:1px solid var(--gold)")+';border-radius:4px;padding:0 3px;vertical-align:1px">PMAX</span>':'')+(tot?' <span class="mono" style="opacity:.7">'+tot+'</span>':"")+'</button>';};
     chips.innerHTML=mk("all","All campaigns","")+withData.map(function(c){return mk(c.id,c.name.length>26?c.name.slice(0,24)+"\u2026":c.name,c.totals.clicks+" cl",c.channel);}).join("");
-    Array.prototype.forEach.call(chips.querySelectorAll(".srchip"),function(b){b.onclick=function(){srFilter=this.getAttribute("data-f");renderDailyCharts();};});}
+    Array.prototype.forEach.call(chips.querySelectorAll(".srchip"),function(b){b.onclick=function(){srFilter=this.getAttribute("data-f");renderCommand();};});}
   var ser=dailySeriesFor(srFilter)||[];var days=ser.map(function(r){return r.date;});
   var spend=ser.map(function(r){return Math.round(r.cost*100)/100;}),rev=ser.map(function(r){return Math.round(r.value*100)/100;});
   var clicks=ser.map(function(r){return r.clicks;}),conv=ser.map(function(r){return r.conv;}),impr=ser.map(function(r){return r.impr;});
