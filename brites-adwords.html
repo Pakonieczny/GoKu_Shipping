@@ -1665,7 +1665,18 @@ function renderFeed(){var lgAll=DASH.recentLedger||[];
   var rr=rpResolve(feedRange);var sMs=rr.start?rpParse(rr.start).getTime():null;var eMs=null;if(rr.end){var ee=rpParse(rr.end);ee.setHours(23,59,59,999);eMs=ee.getTime();}
   var lg=lgAll.filter(function(l){var t=l.at||0;if(sMs!=null&&t<sMs)return false;if(eMs!=null&&t>eMs)return false;return true;});
   if(!lg.length){$("#feed").innerHTML='<div class="muted" style="font-size:12.5px;padding:8px 0">'+(lgAll.length?"No activity in this window.":"No activity logged yet. Run a cycle from Controls.")+'</div>';return;}
-  $("#feed").innerHTML=lg.map(function(l){var ok=l.ok!==false;var mk=l.kind==="mutate"||l.kind==="mutateAll"?"g":l.kind==="uploadConversions"?"s":"b";var when=l.at?timeago(l.at):"";var label=(l.label||l.service||l.kind||"event")+(l.validateOnly?" · dry-run":"")+(ok?"":" · ERROR");return '<div class="feed__i"><div class="mk '+(ok?mk:"c")+'">'+(ok?"✓":"⊘")+'</div><div class="tx">'+esc(label)+(l.error?'<div class="muted" style="font-size:11px">'+esc(String(l.error).slice(0,120))+'</div>':"")+'</div><time>'+when+'</time></div>';}).join("");}
+  $("#feed").innerHTML=lg.map(function(l){var ok=l.ok!==false;
+    // A 200 OK from uploadConversions/uploadConversionAdjustments can still carry a partialFailureError —
+    // Google accepted the HTTP call but rejected the individual conversion (bad/expired gclid, wrong
+    // account, etc). That case must NOT read as a clean checkmark, or a silent rejection looks identical
+    // to a successful upload in this feed.
+    var pf=l.partialFailure&&(l.partialFailure.message||(l.partialFailure.details&&l.partialFailure.details.length))?l.partialFailure:null;
+    var mk=l.kind==="mutate"||l.kind==="mutateAll"?"g":l.kind==="uploadConversions"?"s":"b";var when=l.at?timeago(l.at):"";
+    var label=(l.label||l.service||l.kind||"event")+(l.validateOnly?" · dry-run":"")+(ok&&!pf?"":(pf?" · PARTIAL FAILURE":" · ERROR"));
+    return '<div class="feed__i"><div class="mk '+((ok&&!pf)?mk:"c")+'">'+((ok&&!pf)?"✓":"⊘")+'</div><div class="tx">'+esc(label)
+      +(l.error?'<div class="muted" style="font-size:11px">'+esc(String(l.error).slice(0,120))+'</div>':"")
+      +(pf?'<div style="font-size:11px;color:#b42424;margin-top:2px">'+esc(String(pf.message||"Some conversions in this batch were rejected by Google Ads.").slice(0,220))+'</div><details style="margin-top:2px"><summary style="font-size:10.5px;color:var(--ink-45);cursor:pointer">raw detail</summary><pre style="font-size:10px;white-space:pre-wrap;max-height:140px;overflow:auto">'+esc(JSON.stringify(pf,null,1).slice(0,1500))+'</pre></details>':"")
+      +'</div><time>'+when+'</time></div>';}).join("");}
 function timeago(ms){var s=Math.floor((Date.now()-ms)/1000);if(s<60)return s+"s";if(s<3600)return Math.floor(s/60)+"m";if(s<86400)return Math.floor(s/3600)+"h";return Math.floor(s/86400)+"d";}
 
 /* ---- render: approvals ---- */
