@@ -2174,6 +2174,54 @@ function buildSearchCampaignOps(coll, event, assets, { dailyBudget, startDate, e
 /* ============================ STAGES ============================ */
 
 // MEASURE: snapshot campaign + asset + search-term performance into Firestore.
+/* ============================ Currency normalization (USD display) ============================ */
+// Google Ads reports cost/conversion-value in the ACCOUNT'S billing currency, converting anything
+// else at that day's average daily FX rate — documented Google Ads behavior, not a bug, and not
+// something an advertiser can toggle off (account currency also can't be changed after the fact).
+// This account bills in CAD; the store's own economics (Shopify order values, AOV) are USD. Left
+// alone, every dollar figure surfaced by measure()/metricsRange()/dailyStats() would silently be
+// in CAD while the rest of the app (and the person reading it) assumes USD. These two helpers
+// convert Google's native-currency cost/value back to USD using that SPECIFIC day's real market
+// rate — never a blended/average rate across a range, and never a silent 1:1 fallback on failure,
+// since that would misstate the numbers exactly the way a swallowed error would.
+let _acctCurrencyCache = null;
+async function _accountCurrency() {
+  if (_acctCurrencyCache) return _acctCurrencyCache;
+  try {
+    const r = await gaql(`SELECT customer.currency_code FROM customer LIMIT 1`);
+    _acctCurrencyCache = (r[0] && r[0].customer && r[0].customer.currencyCode) || CURRENCY;
+  } catch (e) { _acctCurrencyCache = CURRENCY; }
+  return _acctCurrencyCache;
+}
+const _fxMemCache = new Map(); // per-invocation memo; Firestore doc persists the rate across invocations (historical rates never change, so caching indefinitely is correct)
+async function _fxRateToUsd(dateYmd) {
+  const acct = await _accountCurrency();
+  if (acct === "USD") return 1; // nothing to convert
+  const key = acct + ":" + dateYmd;
+  if (_fxMemCache.has(key)) return _fxMemCache.get(key);
+  const f = fb();
+  if (f) {
+    try {
+      const doc = await f.db.collection(COL.state).doc("fxRates").get();
+      const v = doc.exists ? (doc.data() || {})[key] : null;
+      if (v != null) { _fxMemCache.set(key, v); return v; }
+    } catch (e) {}
+  }
+  let rate = null;
+  try {
+    // ECB-based daily rates (Frankfurter) — a very close proxy for Google's own "average daily FX
+    // rate"; not guaranteed bit-identical to Google's internal number, but the same class of
+    // real market rate for that specific date, not a rough approximation.
+    const res = await fetch(`https://api.frankfurter.app/${dateYmd}?from=${acct}&to=USD`);
+    const data = await res.json();
+    const v = data && data.rates && Number(data.rates.USD);
+    if (v && isFinite(v)) rate = v;
+  } catch (e) {}
+  if (rate != null && f) { try { await f.db.collection(COL.state).doc("fxRates").set({ [key]: rate }, { merge: true }); } catch (e) {} }
+  _fxMemCache.set(key, rate); // caches null too, so a bad date doesn't get refetched every call within this invocation
+  return rate;
+}
+
 async function measure() {
   const f = fb();
   // 1) ALL campaigns (config only, no date segment) — guarantees brand-new / paused /
@@ -2189,25 +2237,33 @@ async function measure() {
       primaryStatusReasons: r.campaign.primaryStatusReasons || [],
       budget: fromMicros(r.campaignBudget && r.campaignBudget.amountMicros),
       budgetRes: (r.campaignBudget && r.campaignBudget.resourceName) || null,
-      cost: 0, conv: 0, value: 0, clicks: 0, impr: 0
+      cost: 0, conv: 0, value: 0, clicks: 0, impr: 0,
+      costNative: 0, valueNative: 0, fxIncomplete: false // native = account currency (CAD) before USD conversion; fxIncomplete = one or more days couldn't be converted (rate lookup failed) so cost/value fell back to native for those days rather than being silently misstated
     };
   });
   // 2) Metrics for the last 14 days INCLUDING today — Google's LAST_14_DAYS excludes today, so a
   //    campaign that only started serving today would otherwise read $0 spend / 0 conversions no
-  //    matter how often you refresh. Window computed in the account's timezone.
+  //    matter how often you refresh. Window computed in the account's timezone. segments.date is
+  //    selected (not just filtered) so each day's row stays separate — cost/value get converted to
+  //    USD at THAT day's real FX rate rather than one blended rate across the whole 14-day window.
   const _mtz = await _accountTz();
   const _mEnd = _acctDateYmd(_mtz, 0), _mStart = _acctDateYmd(_mtz, -13 * 86400000);
   try {
     const met = await gaql(
-      `SELECT campaign.id, metrics.cost_micros, metrics.conversions, metrics.conversions_value,
+      `SELECT campaign.id, segments.date, metrics.cost_micros, metrics.conversions, metrics.conversions_value,
               metrics.clicks, metrics.impressions
        FROM campaign WHERE segments.date BETWEEN '${_mStart}' AND '${_mEnd}' AND campaign.status != 'REMOVED'`);
-    met.forEach(r => {
-      const c = byId[r.campaign.id]; if (!c) return;
-      c.cost += fromMicros(r.metrics.costMicros); c.conv += Number(r.metrics.conversions || 0);
-      c.value += Number(r.metrics.conversionsValue || 0); c.clicks += Number(r.metrics.clicks || 0);
+    for (const r of met) {
+      const c = byId[r.campaign.id]; if (!c) continue;
+      const d = _dateOnly((r.segments || {}).date);
+      const costNative = fromMicros(r.metrics.costMicros), valueNative = Number(r.metrics.conversionsValue || 0);
+      c.costNative += costNative; c.valueNative += valueNative;
+      const rate = await _fxRateToUsd(d);
+      if (rate != null) { c.cost += costNative * rate; c.value += valueNative * rate; }
+      else { c.cost += costNative; c.value += valueNative; c.fxIncomplete = true; }
+      c.conv += Number(r.metrics.conversions || 0); c.clicks += Number(r.metrics.clicks || 0);
       c.impr += Number(r.metrics.impressions || 0);
-    });
+    }
   } catch (e) {}
   // 3) Schedule window (start/end) — queried separately, with a field-name fallback, so a
   //    naming difference can never blank the whole dashboard. Overlays startDate/endDate.
@@ -2258,15 +2314,22 @@ async function metricsRange({ start, end } = {}) {
     primaryStatus: r.campaign.primaryStatus || null, primaryStatusReasons: r.campaign.primaryStatusReasons || [],
     channel: r.campaign.advertisingChannelType || null,
     budget: fromMicros(r.campaignBudget && r.campaignBudget.amountMicros),
-    cost: 0, conv: 0, value: 0, clicks: 0, impr: 0 }; });
+    cost: 0, conv: 0, value: 0, clicks: 0, impr: 0, costNative: 0, valueNative: 0, fxIncomplete: false }; });
   try {
     const met = await gaql(
-      `SELECT campaign.id, metrics.cost_micros, metrics.conversions, metrics.conversions_value, metrics.clicks, metrics.impressions
+      `SELECT campaign.id, segments.date, metrics.cost_micros, metrics.conversions, metrics.conversions_value, metrics.clicks, metrics.impressions
        FROM campaign WHERE segments.date BETWEEN '${s}' AND '${e}' AND campaign.status != 'REMOVED'`);
-    met.forEach(r => { const c = byId[r.campaign.id]; if (!c) return;
-      c.cost += fromMicros(r.metrics.costMicros); c.conv += Number(r.metrics.conversions || 0);
-      c.value += Number(r.metrics.conversionsValue || 0); c.clicks += Number(r.metrics.clicks || 0);
-      c.impr += Number(r.metrics.impressions || 0); });
+    for (const r of met) {
+      const c = byId[r.campaign.id]; if (!c) continue;
+      const d = _dateOnly((r.segments || {}).date);
+      const costNative = fromMicros(r.metrics.costMicros), valueNative = Number(r.metrics.conversionsValue || 0);
+      c.costNative += costNative; c.valueNative += valueNative;
+      const rate = await _fxRateToUsd(d);
+      if (rate != null) { c.cost += costNative * rate; c.value += valueNative * rate; }
+      else { c.cost += costNative; c.value += valueNative; c.fxIncomplete = true; }
+      c.conv += Number(r.metrics.conversions || 0); c.clicks += Number(r.metrics.clicks || 0);
+      c.impr += Number(r.metrics.impressions || 0);
+    }
   } catch (er) {}
   for (const [sf, ef, sk, ek] of [
     ["campaign.start_date_time", "campaign.end_date_time", "startDateTime", "endDateTime"],
@@ -3626,17 +3689,26 @@ async function reallocateBudgets({ ctrl } = {}) {
 async function anomalyCheck({ ctrl } = {}) {
   ctrl = ctrl || (await control());
   const f = fb();
+  const tz = await _accountTz();
+  const today = _acctDateYmd(tz, 0);
   const y = await gaql(`SELECT metrics.cost_micros FROM customer WHERE segments.date DURING YESTERDAY`);
   const t = await gaql(`SELECT metrics.cost_micros FROM customer WHERE segments.date DURING LAST_14_DAYS`);
-  const yCost = fromMicros((y[0] && y[0].metrics.costMicros) || 0);
-  const tCost = fromMicros((t[0] && t[0].metrics.costMicros) || 0) / 14;
-  const tripped = tCost > 0 && yCost > tCost * ctrl.anomalySpendMultiple;
+  const yCostNative = fromMicros((y[0] && y[0].metrics.costMicros) || 0);
+  const tCostNative = fromMicros((t[0] && t[0].metrics.costMicros) || 0) / 14;
+  // The trip decision is a RATIO of two native-currency figures — currency-invariant, so it's computed
+  // on the native numbers directly and needs no conversion for correctness. Only the human-readable
+  // figures (the logged trip reason, and whatever this returns for display) are converted to USD below,
+  // so a person reading the reason later sees real dollars rather than an unlabeled CAD figure.
+  const tripped = tCostNative > 0 && yCostNative > tCostNative * ctrl.anomalySpendMultiple;
+  const rate = await _fxRateToUsd(today);
+  const yCost = rate != null ? yCostNative * rate : yCostNative;
+  const tCost = rate != null ? tCostNative * rate : tCostNative;
   if (tripped && f) {
     await f.db.collection(COL.control).doc("control").set(
       { enabled: false, trippedAt: f.FV.serverTimestamp(), tripReason: `spend ${yCost.toFixed(2)} > ${ctrl.anomalySpendMultiple}× avg ${tCost.toFixed(2)}` },
       { merge: true });
   }
-  return { yesterday: +yCost.toFixed(2), trailingAvg: +tCost.toFixed(2), tripped };
+  return { yesterday: +yCost.toFixed(2), trailingAvg: +tCost.toFixed(2), tripped, fxIncomplete: rate == null };
 }
 
 /* ===================== Spend-cap enforcement ===================== */
@@ -3679,13 +3751,19 @@ async function enforceBudgetCeiling({ ctrl } = {}) {
   return { ok: true, total: +total.toFixed(2), ceiling, trimmed: ops.length, detail: moves, dryRun: !!ctrl.dryRun };
 }
 
-// Month-to-date account spend (computed in the account's timezone).
+// Month-to-date account spend (computed in the account's timezone), converted to USD so it can be
+// compared against maxMonthlySpend on its own terms — Google reports this in the account's billing
+// currency (CAD here), and a hard spend cap compared against the wrong currency is either too loose
+// (real risk) or, as here, too tight (safe but not what was configured).
 async function _mtdSpend() {
   const tz = await _accountTz();
   const end = _acctDateYmd(tz, 0);
   const start = end.slice(0, 8) + "01"; // first day of the current month, YYYY-MM-01
   const r = await gaql(`SELECT metrics.cost_micros FROM customer WHERE segments.date BETWEEN '${start}' AND '${end}'`);
-  return { mtd: fromMicros((r[0] && r[0].metrics && r[0].metrics.costMicros) || 0), start, end };
+  const nativeMicros = (r[0] && r[0].metrics && r[0].metrics.costMicros) || 0;
+  const rate = await _fxRateToUsd(end); // "today" is the representative date for a month-to-date total
+  const mtd = rate != null ? fromMicros(nativeMicros) * rate : fromMicros(nativeMicros);
+  return { mtd, mtdNative: fromMicros(nativeMicros), fxIncomplete: rate == null, start, end };
 }
 
 // Hard monthly cap (opt-in): when month-to-date account spend reaches maxMonthlySpend, PAUSE every
@@ -5172,15 +5250,29 @@ async function dailyStats({ start, end } = {}) {
 
   const byCamp = {};
   const totalsByDay = {}; days.forEach(d => totalsByDay[d] = zero());
+  let fxIncomplete = false;
   for (const r of daily) {
     const c = r.campaign || {}, m = r.metrics || {}, d = _dateOnly((r.segments || {}).date);
     if (!byCamp[c.id]) byCamp[c.id] = { id: String(c.id), name: c.name, status: c.status, channel: c.advertisingChannelType || null, series: {}, totals: zero() };
     const cell = byCamp[c.id].series[d] || (byCamp[c.id].series[d] = zero());
-    const add = (t) => { t.impr += +m.impressions || 0; t.clicks += +m.clicks || 0; t.cost += fromMicros(m.costMicros);
-                         t.conv += +m.conversions || 0; t.value += +m.conversionsValue || 0; };
+    // Google reports cost/conversions_value in the account's billing currency (CAD here) — convert
+    // to USD at THIS specific day's real rate before accumulating, so the spend/revenue charts show
+    // real USD, not CAD. Impressions/clicks/conversions are unit counts, not money — untouched.
+    const costNative = fromMicros(m.costMicros), valueNative = +m.conversionsValue || 0;
+    const rate = await _fxRateToUsd(d);
+    const costUsd = rate != null ? costNative * rate : costNative;
+    const valueUsd = rate != null ? valueNative * rate : valueNative;
+    if (rate == null) fxIncomplete = true;
+    const add = (t) => { t.impr += +m.impressions || 0; t.clicks += +m.clicks || 0; t.cost += costUsd;
+                         t.conv += +m.conversions || 0; t.value += valueUsd; };
     add(cell); add(byCamp[c.id].totals); if (totalsByDay[d]) add(totalsByDay[d]);
   }
 
+  // NOTE: ad-group and keyword level cost below has no per-day segment in its own query (unlike the
+  // campaign-level `daily` query above), so it isn't converted here — converting it would require
+  // either a blended average rate across the range (imprecise) or a second day-segmented query per
+  // ad/keyword (expensive). It's left in the account's native currency (CAD) deliberately rather
+  // than silently faked; the campaign-level totals/series above are the ones now shown in USD.
   const adRows = ads.map(r => {
     const m = r.metrics || {}, a = r.adGroupAd || {};
     const hl = ((((a.ad || {}).responsiveSearchAd || {}).headlines) || []).map(h => h.text).filter(Boolean);
@@ -5197,7 +5289,7 @@ async function dailyStats({ start, end } = {}) {
   }).filter(k => k.impr > 0 || k.clicks > 0).sort((a, b) => b.clicks - a.clicks || b.impr - a.impr);
 
   return {
-    range: { start: s, end: e }, days,
+    range: { start: s, end: e }, days, fxIncomplete, // true if any day's currency conversion couldn't be looked up — cost/value for that day fell back to native currency (CAD) rather than being silently misstated as USD
     totalsByDay: days.map(d => ({ date: d, ...totalsByDay[d] })),
     campaigns: Object.values(byCamp).map(c => ({ ...c, series: days.map(d => ({ date: d, ...(c.series[d] || zero()) })) })),
     ads: adRows.slice(0, 200), keywords: kwRows.slice(0, 300)
@@ -6036,8 +6128,16 @@ async function campaignTimeline({ id } = {}) {
       });
     } catch (e) {}
   }
-  const days = dayRows.map(r => ({ date: r.segments.date, impressions: Number(r.metrics.impressions || 0), clicks: Number(r.metrics.clicks || 0),
-    conversions: Number(r.metrics.conversions || 0), value: Number(r.metrics.conversionsValue || 0), cost: fromMicros(r.metrics.costMicros || 0) }));
+  const days = [];
+  for (const r of dayRows) {
+    const costNative = fromMicros(r.metrics.costMicros || 0), valueNative = Number(r.metrics.conversionsValue || 0);
+    const rate = await _fxRateToUsd(r.segments.date);
+    days.push({ date: r.segments.date, impressions: Number(r.metrics.impressions || 0), clicks: Number(r.metrics.clicks || 0),
+      conversions: Number(r.metrics.conversions || 0),
+      value: rate != null ? valueNative * rate : valueNative,
+      cost: rate != null ? costNative * rate : costNative,
+      fxIncomplete: rate == null });
+  }
   const firstOf = k => (days.find(d => d[k] > 0) || {}).date || null;
   const reasons = (c.primaryStatusReasons || []).map(String);
   const learning = reasons.some(r => r.includes("LEARNING"));
@@ -6079,5 +6179,5 @@ module.exports = {
   fetchDiagnostics, runDiagnostics, getDiagnostics, applyGoogleRecommendation, dismissGoogleRecommendation,
   dailyStats, applyRemedy, remedyHistory, adReviewStatus,
   getPlaybook, playbookSlice, distillLessons, setGenStatus, getGenStatus,
-  _util: { micros, fromMicros, clampHeadline, clampDescription, gAdsTime, daysUntil, merchantLookupPlan:_merchantLookupPlan,pmaxTag:_pmaxTag,groundKeywordPlan,collectionEconomics,opportunityClass,resolveOpportunityConflicts,paidAttribution:_paidAttribution,paidChannel:_paidChannel,merchantOrganic:_merchantOrganic,bestSearchLandingUrl:_bestSearchLandingUrl,selectListingShots,visionSelectShots:_visionSelectShots,collectionShotRows:_collectionShotRows,shotForShape:_shotForShape,productIdFromItemId:_productIdFromItemId,productShotsByIds:_productShotsByIds,pmaxDeterministicCopy:_pmaxDeterministicCopy,pmaxAdCopy:_pmaxAdCopy,buildPmaxTextAssetOps:_buildPmaxTextAssetOps,opsFingerprint:_opsFingerprint,gadsErrorLines:_gadsErrorLines,imageDims:_imageDims,dropBadRatioImageAttaches:_dropBadRatioImageAttaches,imgFieldSpecs:_IMG_FIELD_SPECS,tempIdFloor:_tempIdFloor }
+  _util: { micros, fromMicros, clampHeadline, clampDescription, gAdsTime, daysUntil, merchantLookupPlan:_merchantLookupPlan,pmaxTag:_pmaxTag,groundKeywordPlan,collectionEconomics,opportunityClass,resolveOpportunityConflicts,paidAttribution:_paidAttribution,paidChannel:_paidChannel,merchantOrganic:_merchantOrganic,bestSearchLandingUrl:_bestSearchLandingUrl,selectListingShots,visionSelectShots:_visionSelectShots,collectionShotRows:_collectionShotRows,shotForShape:_shotForShape,productIdFromItemId:_productIdFromItemId,productShotsByIds:_productShotsByIds,pmaxDeterministicCopy:_pmaxDeterministicCopy,pmaxAdCopy:_pmaxAdCopy,buildPmaxTextAssetOps:_buildPmaxTextAssetOps,opsFingerprint:_opsFingerprint,gadsErrorLines:_gadsErrorLines,imageDims:_imageDims,dropBadRatioImageAttaches:_dropBadRatioImageAttaches,imgFieldSpecs:_IMG_FIELD_SPECS,tempIdFloor:_tempIdFloor,accountCurrency:_accountCurrency,fxRateToUsd:_fxRateToUsd }
 };
