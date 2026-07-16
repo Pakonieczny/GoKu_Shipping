@@ -789,7 +789,25 @@ async function api(action, extra){
     body: JSON.stringify(Object.assign({action, passcode:PASS}, extra||{})) });
   if(res.status===401) throw new Error("401 — wrong passcode");
   if(!res.ok){ const t=await res.text().catch(()=> ""); throw new Error("HTTP "+res.status+" "+t.slice(0,140)); }
-  return res.json();
+  const j = await res.json();
+  if(API_MUTATING.has(action) && !(j&&j.error) && j!==false) scheduleReload();
+  return j;
+}
+/* ---- centralized post-mutation refresh ----
+   Every state-changing action re-syncs the whole UI automatically: a fast pass (~1.2s) so the
+   change shows up right away, and a settle pass (~9s) to catch writes that land AFTER the API
+   acknowledges — e.g. a generated campaign draft that the background worker commits to Firestore
+   a beat after genStatus flips ok, which previously required a manual browser refresh to see in
+   Approvals. Debounced so bursts of actions produce one reload, not a storm. reload() itself
+   preserves expanded/collapsed UI state via uiSnapshot/uiRestore, so re-renders don't disturb
+   whatever the user has open. Read-only actions (dashboard, dailyStats, genStatus polling, …)
+   never trigger this. */
+var API_MUTATING=new Set(["approve","reject","apply","applyRec","applyRemedy","dismissRec","setBudget","setStatus","setCountries","setApprovalCountries","setApprovalDates","setControl","startNow","syncConversions","generate","generatePmax","retryStuck","releaseOpportunity","kill","resume","dryRun","backfillOrders","clearLedger","enforceCeiling","runNow","pmaxUpgradeAdStrength","pmaxBackfillImages"]);
+var _rlFast=null,_rlSettle=null;
+function scheduleReload(){
+  clearTimeout(_rlFast);clearTimeout(_rlSettle);
+  _rlFast=setTimeout(function(){try{reload();}catch(e){}},1200);
+  _rlSettle=setTimeout(function(){try{reload();}catch(e){}},9000);
 }
 
 /* ---- charts (pure SVG) ---- */
@@ -1377,11 +1395,23 @@ function fillAdLevel(){if(!DAILY)return;
   Array.prototype.forEach.call(document.querySelectorAll(".adlvl"),function(box){
     var cid=box.getAttribute("data-c");
     var c=(DAILY.campaigns||[]).filter(function(x){return x.id===cid;})[0];
+    var isPmax=c&&c.channel==="PERFORMANCE_MAX";
     var ads=(DAILY.ads||[]).filter(function(a){return a.campaignId===cid;});
     var kws=(DAILY.keywords||[]).filter(function(k){return k.campaignId===cid;}).slice(0,8);
+    var agsAll=(DAILY.assetGroups||[]).filter(function(g){return g.campaignId===cid;});
+    var prodsAll=(DAILY.products||[]).filter(function(p){return p.campaignId===cid;}).slice(0,10);
     var html="";
     if(c){var sp=c.series.map(function(r){return Math.round(r.cost*100)/100;});var cl=c.series.map(function(r){return r.clicks;});
       if(sp.some(function(v){return v>0;})||cl.some(function(v){return v>0;}))html+='<div style="margin:8px 0 4px"><b style="font-size:11.5px">Daily spend & clicks \u00b7 this campaign</b>'+lineChart([{data:sp,color:"var(--ink)",name:"Spend"},{data:cl,color:"#33525d",dash:"3 3",name:"Clicks"}],{h:110,fmt:function(v){return v;},tips:c.series.map(function(r){return "<b>"+esc(fmtDayFull(r.date))+"</b><br>Spend "+money(r.cost)+" \u00b7 Clicks "+(r.clicks||0)+"<br>Impr "+(r.impr||0).toLocaleString()+" \u00b7 Conv "+(Math.round((r.conv||0)*10)/10);})})+'</div>';}
+    if(isPmax){
+      // PMax has no RSAs/keywords — its per-ad equivalent is the asset group (own creative set +
+      // ad strength), and its top-keywords equivalent is per-product performance from the feed.
+      if(agsAll.length){html+='<div style="margin-top:8px"><b style="font-size:11.5px">Per asset group \u00b7 '+esc(dailyRangeYmd().start)+' \u2192 '+esc(dailyRangeYmd().end)+'</b><table class="ptable" style="margin-top:4px"><thead><tr><th>Asset group</th><th>Status</th><th class="r">Impr</th><th class="r">Clicks</th><th class="r">CTR</th><th class="r">Cost</th><th class="r">Conv</th><th>Strength</th></tr></thead><tbody>'+
+        agsAll.map(function(g){var ctr=g.impr>0?(g.clicks/g.impr*100).toFixed(1)+"%":"\u2014";
+          return '<tr><td style="font-size:11.5px;max-width:260px">'+esc(g.name)+'</td><td class="muted" style="font-size:11px">'+esc(String(g.status||"").toLowerCase())+'</td><td class="r mono">'+g.impr.toLocaleString()+'</td><td class="r mono">'+g.clicks+'</td><td class="r mono">'+ctr+'</td><td class="r mono">'+money(g.cost)+'</td><td class="r mono">'+(Math.round(g.conv*10)/10)+'</td><td>'+strengthPill(g.strength)+'</td></tr>';}).join("")+'</tbody></table></div>';}
+      if(prodsAll.length){html+='<div style="margin-top:8px"><b style="font-size:11.5px">Top products</b><div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:5px">'+
+        prodsAll.map(function(p){var t=p.title.length>44?p.title.slice(0,42)+"\u2026":p.title;return '<span style="font-size:11px;border:1px solid var(--line);border-radius:8px;padding:3px 9px;background:var(--paper)" title="'+esc(p.title)+'">'+esc(t)+' \u00b7 '+p.clicks+' cl \u00b7 '+money(p.cost)+(p.conv?' \u00b7 '+(Math.round(p.conv*10)/10)+' conv':"")+'</span>';}).join("")+'</div></div>';}
+      box.innerHTML=html||'<div class="muted" style="font-size:11.5px;margin-top:6px">No asset-group or product data in this window.</div>';return;}
     if(ads.length){html+='<div style="margin-top:8px"><b style="font-size:11.5px">Per ad \u00b7 '+esc(dailyRangeYmd().start)+' \u2192 '+esc(dailyRangeYmd().end)+'</b><table class="ptable" style="margin-top:4px"><thead><tr><th>Ad</th><th>Ad group</th><th class="r">Impr</th><th class="r">Clicks</th><th class="r">CTR</th><th class="r">Cost</th><th class="r">Conv</th><th>Strength</th></tr></thead><tbody>'+
       ads.map(function(a){var ctr=a.impr>0?(a.clicks/a.impr*100).toFixed(1)+"%":"\u2014";var warn=a.approval&&a.approval!=="APPROVED";
         return '<tr><td style="font-size:11.5px;max-width:260px">'+esc(a.headline)+(warn?' <span style="color:var(--clay);font-size:10px">('+esc(String(a.approval).toLowerCase().replace(/_/g," "))+')</span>':"")+'</td><td class="muted" style="font-size:11px">'+esc(a.adGroup)+'</td><td class="r mono">'+a.impr.toLocaleString()+'</td><td class="r mono">'+a.clicks+'</td><td class="r mono">'+ctr+'</td><td class="r mono">'+money(a.cost)+'</td><td class="r mono">'+(Math.round(a.conv*10)/10)+'</td><td>'+strengthPill(a.strength)+'</td></tr>';}).join("")+'</tbody></table></div>';}
@@ -2470,12 +2500,13 @@ async function generateAndWait(params,onTick){
   var r=await api("generate",params);
   if(!(r&&r.queued))return r; // legacy sync response or immediate failure
   var t0=Date.now();
-  while(Date.now()-t0<240000){
+  while(Date.now()-t0<600000){ // 10 min — matches the PMax generation path; slow LLM ladders can exceed the old 4-min cutoff
     await new Promise(function(res){setTimeout(res,3000);});
     if(onTick)onTick(Math.round((Date.now()-t0)/1000));
     try{var st=await api("genStatus",{genId:r.genId});
-      if(st&&!st.pending)return st;}catch(e){}
+      if(st&&!st.pending){scheduleReload();return st;}}catch(e){}
   }
+  scheduleReload(); // even on timeout: if the draft lands late, the settle pass surfaces it in Approvals without a manual refresh
   return {ok:false,reason:"Timed out waiting for the generator \u2014 check Approvals in a minute; the draft may still land."};
 }
 async function launchOpp(i,btn){ var o=OPPS[i]; if(!o)return; var scope=$("#oppCards")||document;
