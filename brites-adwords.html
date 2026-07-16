@@ -935,11 +935,15 @@ function rpCalHtml(id){var inst=RP[id];var view=inst.view||new Date();var y=view
   return head+wd+'<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px">'+cells+'</div>';}
 function rpRenderCal(id){var inst=RP[id];var host=$("#rpCal-"+id);if(!host)return;host.innerHTML=rpCalHtml(id);
   var dl=$("#rpDL-"+id);if(dl){var d=inst.draft||{};dl.textContent=d.start?(rpLabel({preset:"custom",start:d.start,end:d.end||d.start})):"Pick a start date";}
-  Array.prototype.forEach.call(host.querySelectorAll(".rpNav"),function(b){b.onclick=function(){inst.view.setMonth(inst.view.getMonth()+ +this.getAttribute("data-d"));rpRenderCal(id);};});
-  Array.prototype.forEach.call(host.querySelectorAll(".rpDay"),function(b){b.onclick=function(){var ds=this.getAttribute("data-d");var d=inst.draft||{};
+  Array.prototype.forEach.call(host.querySelectorAll(".rpNav"),function(b){b.onclick=function(ev){if(ev)ev.stopPropagation();inst.view.setMonth(inst.view.getMonth()+ +this.getAttribute("data-d"));rpRenderCal(id);};});
+  Array.prototype.forEach.call(host.querySelectorAll(".rpDay"),function(b){b.onclick=function(ev){if(ev)ev.stopPropagation();var ds=this.getAttribute("data-d");var d=inst.draft||{};
     if(!d.start||(d.start&&d.end)){inst.draft={start:ds,end:null};}else if(ds<d.start){inst.draft={start:ds,end:d.start};}else{inst.draft={start:d.start,end:ds};}
     rpRenderCal(id);};});}
-document.addEventListener("click",function(e){if(!e.target.closest||(!e.target.closest(".rp")))Array.prototype.forEach.call(document.querySelectorAll(".rpPop"),function(x){x.style.display="none";});});
+// Close pickers on outside clicks — but never on clicks whose target has been detached from the
+// DOM mid-bubble (day/nav clicks re-render the calendar, so by the time this handler runs the
+// clicked button has no ancestors and .closest(".rp") is null; treating that as "outside" made
+// the popup close itself on the very first day click, which is what broke manual range selection).
+document.addEventListener("click",function(e){if(!e.target.closest)return;if(e.target.isConnected===false)return;if(!e.target.closest(".rp"))Array.prototype.forEach.call(document.querySelectorAll(".rpPop"),function(x){x.style.display="none";});});
 function wireRangePickers(scope){Array.prototype.forEach.call((scope||document).querySelectorAll(".rpBtn"),function(b){if(b._rpw)return;b._rpw=1;b.onclick=function(ev){ev.stopPropagation();rpToggle(this.getAttribute("data-rp"));};});}
 
 /* ============ Interactive line chart (hover tooltips + labeled axes) ============ */
