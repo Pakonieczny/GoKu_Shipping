@@ -889,12 +889,13 @@ function sparkline(data,color){if(!data.length)return "";var w=64,h=26,mx=Math.m
 /* ============ Calendar date-range picker (reusable, comprehensive) ============ */
 var _MONF=["January","February","March","April","May","June","July","August","September","October","November","December"];
 var RP={}; // instances by id
-var RP_PRESETS=[["today","Today"],["7d","Last 7 days"],["14d","Last 14 days"],["30d","Last 30 days"],["90d","Last 90 days"],["6mo","Last 6 months"],["1y","Last 12 months"],["mtd","This month"],["lastmo","Last month"],["ytd","This year"],["all","All time"]];
+var RP_PRESETS=[["today","Today"],["yday","Yesterday"],["7d","Last 7 days"],["14d","Last 14 days"],["30d","Last 30 days"],["90d","Last 90 days"],["6mo","Last 6 months"],["1y","Last 12 months"],["mtd","This month"],["lastmo","Last month"],["ytd","This year"],["all","All time"]];
 function rpYmd(d){return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");}
 function rpParse(s){if(!s)return null;var p=String(s).split("-");return new Date(+p[0],(+p[1]||1)-1,+(p[2]||1));}
 function rpRangeFor(preset){var end=new Date();end.setHours(0,0,0,0);
   if(preset==="all")return {start:null,end:null};
   if(preset==="today")return {start:rpYmd(end),end:rpYmd(end)};
+  if(preset==="yday"){var yd=new Date(end.getTime()-86400000);return {start:rpYmd(yd),end:rpYmd(yd)};}
   if(preset==="mtd")return {start:rpYmd(new Date(end.getFullYear(),end.getMonth(),1)),end:rpYmd(end)};
   if(preset==="ytd")return {start:rpYmd(new Date(end.getFullYear(),0,1)),end:rpYmd(end)};
   if(preset==="lastmo"){var s=new Date(end.getFullYear(),end.getMonth()-1,1);var e=new Date(end.getFullYear(),end.getMonth(),0);return {start:rpYmd(s),end:rpYmd(e)};}
