@@ -5248,7 +5248,7 @@ async function dailyStats({ start, end } = {}) {
   if (s > e) { const t = s; s = e; e = t; }
   const RANGE = `segments.date BETWEEN '${s}' AND '${e}'`;
 
-  const [daily, ads, kws, ags, prods] = await Promise.all([
+  const [daily, ads, kws, ags, prods, channels] = await Promise.all([
     gaql(`SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type, segments.date,
                  metrics.impressions, metrics.clicks, metrics.cost_micros,
                  metrics.conversions, metrics.conversions_value
@@ -5270,7 +5270,15 @@ async function dailyStats({ start, end } = {}) {
     // analog of the Search campaigns' "Top keywords" chips.
     gaql(`SELECT campaign.id, segments.product_title, segments.product_item_id,
                  metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions
-          FROM shopping_performance_view WHERE ${RANGE}`).catch(() => [])
+          FROM shopping_performance_view WHERE ${RANGE}`).catch(() => []),
+    // Channel-level breakdown (Search/YouTube/Display/Discover/Gmail/Maps/Search Partners) —
+    // available since Google Ads API v23 (Jan 2026); before that PMax only ever returned "MIXED"
+    // here. This is real visibility into clicks that shopping_performance_view can't attribute to
+    // any product (text/display/video surfaces) — not everything, but a genuine breakdown instead
+    // of an unexplained remainder.
+    gaql(`SELECT campaign.id, segments.ad_network_type,
+                 metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions
+          FROM campaign WHERE ${RANGE} AND campaign.advertising_channel_type = 'PERFORMANCE_MAX'`).catch(() => [])
   ]);
 
   // full day axis (zero-filled) so gaps render as zeros, not skipped points
@@ -5336,6 +5344,24 @@ async function dailyStats({ start, end } = {}) {
              itemId: sg.productItemId || "",
              impr: +m.impressions || 0, clicks: +m.clicks || 0, cost: fromMicros(m.costMicros), conv: +m.conversions || 0 };
   }).filter(p => p.impr > 0 || p.clicks > 0).sort((a, b) => b.clicks - a.clicks || b.impr - a.impr);
+
+  // PMax channel breakdown — real answer to "what do we know about clicks shopping_performance_view
+  // can't attribute to a product": Search/YouTube/Display/Discover/Gmail/Maps/Search Partners, not
+  // an unexplained remainder. MIXED means the click predates the Jun-1-2025 v23 cutover.
+  const CHANNEL_LABEL = { SEARCH: "Search", SEARCH_PARTNERS: "Search Partners", CONTENT: "Display",
+    YOUTUBE_WATCH: "YouTube", YOUTUBE_SEARCH: "YouTube Search", YOUTUBE_SHORTS: "YouTube Shorts",
+    GMAIL: "Gmail", DISCOVER: "Discover", DISPLAY: "Display", MAPS: "Maps",
+    MIXED: "Mixed (pre-channel-reporting)", UNSPECIFIED: "Unspecified", UNKNOWN: "Unknown" };
+  const channelTotals = {};
+  channels.forEach(r => {
+    const cid = String((r.campaign || {}).id), m = r.metrics || {};
+    const raw = (r.segments || {}).adNetworkType || "UNKNOWN";
+    const list = channelTotals[cid] || (channelTotals[cid] = []);
+    let row = list.find(x => x.raw === raw);
+    if (!row) { row = { raw, label: CHANNEL_LABEL[raw] || raw, impr: 0, clicks: 0, cost: 0, conv: 0 }; list.push(row); }
+    row.impr += +m.impressions || 0; row.clicks += +m.clicks || 0; row.cost += fromMicros(m.costMicros); row.conv += +m.conversions || 0;
+  });
+  Object.values(channelTotals).forEach(list => { list.forEach(r => r.cost = +r.cost.toFixed(2)); list.sort((a, b) => b.clicks - a.clicks); });
   // Per-campaign product TOTALS computed before truncation — the UI shows only the top chips, but
   // reconciliation ("top N of M products · X of Y clicks") needs the full-population numbers. Note
   // that even these totals won't equal campaign clicks: shopping_performance_view only covers clicks
@@ -5351,7 +5377,7 @@ async function dailyStats({ start, end } = {}) {
     totalsByDay: days.map(d => ({ date: d, ...totalsByDay[d] })),
     campaigns: Object.values(byCamp).map(c => ({ ...c, series: days.map(d => ({ date: d, ...(c.series[d] || zero()) })) })),
     ads: adRows.slice(0, 200), keywords: kwRows.slice(0, 300),
-    assetGroups: agRows.slice(0, 100), products: prodRows.slice(0, 200), productTotals
+    assetGroups: agRows.slice(0, 100), products: prodRows.slice(0, 200), productTotals, channelTotals
   };
 }
 
@@ -5668,7 +5694,7 @@ async function fetchDiagnostics(campaignId) {
   // Without this block the specialist is flying blind on PMax and can only parrot
   // budget advice. Asset groups ARE PMax's ads; products ARE its keywords.
   try {
-    const [pmaxAgs, pmaxProds, pmaxAssetLabels] = await Promise.all([
+    const [pmaxAgs, pmaxProds, pmaxAssetLabels, pmaxChannels] = await Promise.all([
       gaql(`SELECT campaign.id, asset_group.id, asset_group.name, asset_group.status, asset_group.ad_strength,
                    metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions, metrics.conversions_value
             FROM asset_group WHERE segments.date DURING LAST_30_DAYS AND asset_group.status != 'REMOVED'${CF}`).catch(() => []),
@@ -5676,7 +5702,14 @@ async function fetchDiagnostics(campaignId) {
                    metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions, metrics.conversions_value
             FROM shopping_performance_view WHERE segments.date DURING LAST_30_DAYS${CF}`).catch(() => []),
       gaql(`SELECT campaign.id, asset_group_asset.field_type, asset_group_asset.performance_label, asset.text_asset.text
-            FROM asset_group_asset WHERE campaign.status = 'ENABLED'${CF}`).catch(() => [])
+            FROM asset_group_asset WHERE campaign.status = 'ENABLED'${CF}`).catch(() => []),
+      // Channel breakdown (Search/YouTube/Display/Discover/Gmail/Maps) — API v23+. This is the real
+      // answer to "what do we know about clicks shopping_performance_view can't attribute to a
+      // product" — the specialist should reason about channel mix (e.g. heavy Display with weak
+      // conversions is a different fix than heavy Search with weak conversions).
+      gaql(`SELECT campaign.id, segments.ad_network_type,
+                   metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions
+            FROM campaign WHERE segments.date DURING LAST_30_DAYS AND campaign.advertising_channel_type = 'PERFORMANCE_MAX'${CF}`).catch(() => [])
     ]);
     for (const r of pmaxAgs) {
       const d = by[(r.campaign || {}).id]; if (!d) continue;
@@ -5704,6 +5737,18 @@ async function fetchDiagnostics(campaignId) {
       if (!text) continue;
       (d.agAssetLabels = d.agAssetLabels || []).push({ text, type: v.fieldType, label: v.performanceLabel || null });
     }
+    const _CHLBL = { SEARCH: "Search", SEARCH_PARTNERS: "Search Partners", CONTENT: "Display",
+      YOUTUBE_WATCH: "YouTube", YOUTUBE_SEARCH: "YouTube Search", YOUTUBE_SHORTS: "YouTube Shorts",
+      GMAIL: "Gmail", DISCOVER: "Discover", DISPLAY: "Display", MAPS: "Maps",
+      MIXED: "Mixed (pre-channel-reporting)", UNSPECIFIED: "Unspecified", UNKNOWN: "Unknown" };
+    for (const r of pmaxChannels) {
+      const d = by[(r.campaign || {}).id]; if (!d) continue;
+      const raw = (r.segments || {}).adNetworkType || "UNKNOWN", m = r.metrics || {};
+      const list = d.channelBreakdown || (d.channelBreakdown = []);
+      let row = list.find(x => x.raw === raw);
+      if (!row) { row = { raw, label: _CHLBL[raw] || raw, impr: 0, clicks: 0, cost: 0, conv: 0 }; list.push(row); }
+      row.impr += +m.impressions || 0; row.clicks += +m.clicks || 0; row.cost += fromMicros(m.costMicros); row.conv += +m.conversions || 0;
+    }
     // Per-campaign PMax search-category insights (this resource REQUIRES a per-campaign filter,
     // so it's fetched per PMax campaign — bounded to the handful that exist).
     const pmaxIds = Object.values(by).filter(d => d.channel === "PERFORMANCE_MAX" && d.status === "ENABLED").map(d => d.id).slice(0, 8);
@@ -5723,6 +5768,7 @@ async function fetchDiagnostics(campaignId) {
     for (const d of Object.values(by)) {
       if (d.assetGroups) d.assetGroups.sort((a, b) => b.cost - a.cost).splice(10);
       if (d.products) d.products.sort((a, b) => b.cost - a.cost || b.clicks - a.clicks).splice(15);
+      if (d.channelBreakdown) d.channelBreakdown.forEach(r => r.cost = +r.cost.toFixed(2));
     }
   } catch (e) {}
 
@@ -5817,6 +5863,7 @@ async function _analyzeCampaignSet(diag, ctrl, history, { single } = {}) {
     // PMax evidence (null for Search campaigns)
     assetGroups: (c.assetGroups || []).map(g => ({ agId: g.agId, name: g.name, status: g.status, adStrength: g.adStrength, impr: g.impr, clicks: g.clicks, cost: g.cost, conv: g.conv, value: g.value })) .slice(0, 10) || null,
     products: (c.products || []).slice(0, 15),
+    channelBreakdown: c.channelBreakdown || null,
     searchInsights: c.searchInsights || null,
     pmaxAssetPerformance: (function(al){ if (!al || !al.length) return null;
       return { low: al.filter(x => x.label === "LOW").map(x => x.type + ": " + x.text).slice(0, 10),
@@ -5835,7 +5882,7 @@ async function _analyzeCampaignSet(diag, ctrl, history, { single } = {}) {
   } catch (e) {}
   const prompt = `${single ? "SINGLE-CAMPAIGN DEEP DIVE: only the campaign(s) below are in scope; go deeper than usual.\n" : ""}You are a SENIOR Google Ads specialist managing Brites Jewelry (handmade personalized charm jewelry, britesjewelry.com; ships US+Canada). Review each campaign like an owner: skeptical of Google's spend-maximizing recommendations, but honest when they're right.
 
-CHANNEL NOTE — PERFORMANCE_MAX: these run on the Merchant Center product feed with NO keywords/search-terms/RSAs — but they are NOT exempt from deep analysis. Their evidence is different, and you have it: assetGroups (each with its own adStrength — EXCELLENT/GOOD/AVERAGE/POOR — status and 30d metrics; an AVERAGE/POOR group is the PMax equivalent of a weak ad), products (per-product cost/clicks/conv from the feed — spot products burning spend with zero conversions, and top sellers being under-served), searchInsights (the search categories Google matched this campaign to — flag categories that don't fit charm jewelry), and pmaxAssetPerformance (Google's own LOW/GOOD/BEST grades per text asset — name the LOW ones). PMax findings must reference this evidence specifically, never generic "it's learning" filler. PMax executables: setBudget when earned; for weak asset groups prescribe the console's "Upgrade copy + sitelinks" / "Re-image (AI)" actions by asset-group NAME as the fix text (executable kind:"none" — they're one-click actions the owner runs); for wrong-fit search categories or wasteful products, advisory with the exact category/product named.
+CHANNEL NOTE — PERFORMANCE_MAX: these run on the Merchant Center product feed with NO keywords/search-terms/RSAs — but they are NOT exempt from deep analysis. Their evidence is different, and you have it: assetGroups (each with its own adStrength — EXCELLENT/GOOD/AVERAGE/POOR — status and 30d metrics; an AVERAGE/POOR group is the PMax equivalent of a weak ad), products (per-product cost/clicks/conv from the feed — spot products burning spend with zero conversions, and top sellers being under-served), channelBreakdown (real Search/YouTube/Display/Discover/Gmail/Maps/Search Partners split of ALL spend/clicks/conversions, API v23+ — this is what the majority of clicks that products can't attribute actually did; if one channel burns cost with zero conversions while another converts, SAY SO by channel name — that is a genuine, named finding, not a guess), searchInsights (the search categories Google matched this campaign to — flag categories that don't fit charm jewelry), and pmaxAssetPerformance (Google's own LOW/GOOD/BEST grades per text asset — name the LOW ones). PMax findings must reference this evidence specifically, never generic "it's learning" filler. PMax executables: setBudget when earned; for weak asset groups prescribe the console's "Upgrade copy + sitelinks" / "Re-image (AI)" actions by asset-group NAME as the fix text (executable kind:"none" — they're one-click actions the owner runs); for wrong-fit search categories, wasteful products, or a lopsided channel mix, advisory with the exact category/product/channel named.
 ACCOUNT GUARDRAILS: target ROAS ${ctrl.targetRoas || 3}; account daily budget ceiling $${ctrl.maxDailyBudgetTotal || "n/a"} (current enabled total $${Math.round(totalBudget * 100) / 100}); monthly hard cap $${ctrl.maxMonthlySpend || "none"}. Currency ${CURRENCY}.
 ${salesCtx}
 CAMPAIGNS (Google Ads diagnostics + our measured performance):
