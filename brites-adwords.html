@@ -1230,6 +1230,11 @@ function wireCampRows(scope){Array.prototype.forEach.call(scope.querySelectorAll
     try{var r2=await api("setBudget",{id:id,budget:amt,budgetRes:res||undefined});
       if(r2&&r2.error)throw new Error(r2.error);
       el.setAttribute("data-b",String(amt));el.innerHTML=money(amt)+' <span style="font-size:10px;opacity:.55">\u270e</span>';
+      // The dashboard's campaign snapshot (lastMetrics) comes from the last measure() run, which
+      // only refreshes on the daily cycle or a manual Refresh — so the auto-reload right after this
+      // edit would pull the STALE budget and overwrite this optimistic update. The override below
+      // survives reloads until the server snapshot reports the new value itself (see reload()).
+      BUDGET_OVERRIDES[String(id)]={budget:amt,at:Date.now()};
       toast("Budget "+money(cur)+" \u2192 "+money(amt)+(r2&&r2.dryRun?" (dry-run \u2014 not applied to Google)":""),!(r2&&r2.dryRun));
       var lm=(DASH.lastMetrics||[]).filter(function(x){return String(x.id)===String(id);})[0];if(lm)lm.budget=amt;
     }catch(e){el.innerHTML=prev;toast("Budget change failed: "+(e.message||e));}
@@ -2647,7 +2652,19 @@ async function livePull(){
   }catch(x){ /* quiet on background pulls */ }
   finally{ livePulling=false; }
 }
-async function reload(toastOk){try{DASH=await api("dashboard");renderAll();loadDiagnostics(true);$("#connDot").style.background="var(--sage)";$("#connText").textContent="connected";lastSync=Date.now();if(toastOk)toast("Refreshed",true);if(!countriesLoaded){ensureCountries().then(function(){if(COUNTRIES.length)renderAll();});}}catch(x){$("#connDot").style.background="var(--clay)";$("#connText").textContent="error";toast(x.message);}}
+/* Pending budget overrides: campaign budgets the user changed (and Google verified) that the
+   dashboard's measure() snapshot hasn't caught up to yet. Applied to every fresh dashboard fetch;
+   each entry self-clears once the server reports the same value, or after 30 minutes (by which
+   point the next measure will have run — and if the server STILL disagreed then, the server wins,
+   because a verified-but-diverging value that old means something else changed it). */
+var BUDGET_OVERRIDES={};
+function applyBudgetOverrides(){var lm=(DASH&&DASH.lastMetrics)||[];var now=Date.now();
+  Object.keys(BUDGET_OVERRIDES).forEach(function(id){var o=BUDGET_OVERRIDES[id];
+    if(now-o.at>30*60000){delete BUDGET_OVERRIDES[id];return;}
+    var c=lm.filter(function(x){return String(x.id)===String(id);})[0];if(!c)return;
+    if(Math.abs((+c.budget||0)-o.budget)<0.01){delete BUDGET_OVERRIDES[id];return;} // server caught up
+    c.budget=o.budget;});}
+async function reload(toastOk){try{DASH=await api("dashboard");applyBudgetOverrides();renderAll();loadDiagnostics(true);$("#connDot").style.background="var(--sage)";$("#connText").textContent="connected";lastSync=Date.now();if(toastOk)toast("Refreshed",true);if(!countriesLoaded){ensureCountries().then(function(){if(COUNTRIES.length)renderAll();});}}catch(x){$("#connDot").style.background="var(--clay)";$("#connText").textContent="error";toast(x.message);}}
 /* ---- UI-state preservation: re-renders update DATA ONLY; whatever the user
    has expanded stays expanded, collapsed stays collapsed. Keys are stable
    (campaign id / summary text scoped to its campaign or view), never DOM
