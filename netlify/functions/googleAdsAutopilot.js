@@ -223,9 +223,10 @@ async function mutate(service, operations, { ctrl, label = "", validateOnly = nu
     method: "POST", headers: adsHeaders(token), body: JSON.stringify(body)
   });
   const data = await res.json().catch(() => ({}));
-  await ledger({ kind: "mutate", service, label, validateOnly: vo, count: operations.length,
+  const ledgerId = await ledger({ kind: "mutate", service, label, validateOnly: vo, count: operations.length,
                  ok: res.ok, error: res.ok ? null : JSON.stringify(data).slice(0, 1600),
                  partialFailure: data.partialFailureError || null });
+  if (data && typeof data === "object") data.__ledgerId = ledgerId; // non-API field, used only to patch this entry post-verification
   if (!res.ok) {
     const lines = _gadsErrorLines(data);
     throw new Error(`[gads·${ENGINE_BUILD}] ${service}:mutate failed · sent ${operations.length} ops${label ? " · " + label : ""}` +
@@ -815,8 +816,9 @@ async function clearOrderLog({ keep = 1000 } = {}) {
 
 /* ============================ Ledger / approvals ============================ */
 async function ledger(entry) {
-  const f = fb(); if (!f) return;
-  try { await f.db.collection(COL.ledger).add({ ...entry, at: f.FV.serverTimestamp() }); } catch (e) {}
+  const f = fb(); if (!f) return null;
+  try { const ref = await f.db.collection(COL.ledger).add({ ...entry, at: f.FV.serverTimestamp() }); return ref.id; }
+  catch (e) { return null; }
 }
 
 // Clear the activity ledger. With {keep:N}, deletes all but the N most-recent
@@ -4468,6 +4470,16 @@ async function campaignBudgetRes(campaignId) {
   const rows = await gaql(`SELECT campaign_budget.resource_name FROM campaign WHERE campaign.id = ${id} LIMIT 1`);
   const r = rows[0]; return r && r.campaignBudget && r.campaignBudget.resourceName;
 }
+// Patch a previously-written ledger entry with a REAL verification result (a follow-up GAQL
+// read-back confirming the change actually stuck in Google Ads) — never called with a guessed
+// or assumed outcome. If this never runs for a given entry, the feed shows a plain checkmark
+// (request succeeded) rather than a false "verified" claim.
+async function _verifyLedger(ledgerId, verified, verification) {
+  if (!ledgerId) return;
+  const f = fb(); if (!f) return;
+  try { await f.db.collection(COL.ledger).doc(ledgerId).update({ verified: verified ?? null, verification: verification || null }); } catch (e) {}
+}
+
 async function setCampaignBudget(campaignId, dailyBudget, { ctrl, budgetRes } = {}) {
   ctrl = ctrl || (await control());
   const amt = Number(dailyBudget);
@@ -4477,8 +4489,20 @@ async function setCampaignBudget(campaignId, dailyBudget, { ctrl, budgetRes } = 
   let res = budgetRes || await campaignBudgetRes(campaignId);
   if (!res) throw new Error("could not resolve this campaign's budget resource");
   const op = { update: { resourceName: res, amountMicros: micros(amt) }, updateMask: "amount_micros" };
-  await mutate("campaignBudgets", [op], { ctrl, label: "setBudget:" + amt });
-  return { ok: true, id: String(campaignId).replace(/\D/g, ""), budget: amt, dryRun: !!ctrl.dryRun };
+  const mres = await mutate("campaignBudgets", [op], { ctrl, label: "setBudget:" + amt });
+  const out = { ok: true, id: String(campaignId).replace(/\D/g, ""), budget: amt, dryRun: !!ctrl.dryRun, verified: null, verification: null };
+  if (!ctrl.dryRun) {
+    // Real read-back: re-query the SAME resource we just wrote and confirm Google's own number
+    // matches what we asked for, before this is allowed to say "verified" anywhere in the UI.
+    try {
+      const chk = await gaql(`SELECT campaign_budget.amount_micros FROM campaign WHERE campaign.id = ${Number(campaignId)}`);
+      const live = fromMicros(((chk[0] || {}).campaignBudget || {}).amountMicros);
+      out.verified = Math.abs(live - amt) < 0.01;
+      out.verification = { budgetInGoogleAds: live };
+    } catch (e) { out.verified = null; out.verification = { error: String(e.message || e).slice(0, 200) }; }
+    await _verifyLedger(mres && mres.__ledgerId, out.verified, out.verification);
+  }
+  return out;
 }
 
 /* ===================== Per-campaign AI optimization analysis ===================== */
@@ -5813,7 +5837,7 @@ async function applyRemedy(campaignId, remedy, { ctrl } = {}) {
       campaign: `customers/${CID}/campaigns/${campaignId}`,
       negative: true, keyword: { text, matchType: "PHRASE" }
     }}));
-    await mutate("campaignCriteria", ops, { ctrl, label: "remedy:addNegatives" });
+    const mres = await mutate("campaignCriteria", ops, { ctrl, label: "remedy:addNegatives" });
     result = { ok: true, kind: ex.kind, added: kws, dryRun: !!ctrl.dryRun };
     if (!ctrl.dryRun) {
       // READ-BACK: confirm every negative now exists on the campaign in Google Ads.
@@ -5826,6 +5850,7 @@ async function applyRemedy(campaignId, remedy, { ctrl } = {}) {
         result.verified = missing.length === 0;
         result.verification = missing.length ? { missing } : { confirmed: kws.length + " negatives live in Google Ads" };
       } catch (e) { result.verified = null; result.verification = { error: String(e.message || e).slice(0, 200) }; }
+      await _verifyLedger(mres && mres.__ledgerId, result.verified, result.verification);
     }
   } else if (ex.kind === "pauseKeywords") {
     const list = (ex.keywords || []).filter(k => k && k.adGroupId && k.criterionId).slice(0, 25);
@@ -5834,7 +5859,7 @@ async function applyRemedy(campaignId, remedy, { ctrl } = {}) {
       resourceName: `customers/${CID}/adGroupCriteria/${k.adGroupId}~${k.criterionId}`,
       status: "PAUSED"
     }, updateMask: "status" }));
-    await mutate("adGroupCriteria", ops, { ctrl, label: "remedy:pauseKeywords" });
+    const mres = await mutate("adGroupCriteria", ops, { ctrl, label: "remedy:pauseKeywords" });
     result = { ok: true, kind: ex.kind, paused: list.map(k => k.text), dryRun: !!ctrl.dryRun };
     if (!ctrl.dryRun) {
       try {
@@ -5846,6 +5871,7 @@ async function applyRemedy(campaignId, remedy, { ctrl } = {}) {
         result.verified = notPaused === 0 && chk.length > 0;
         result.verification = result.verified ? { confirmed: chk.length + " keyword(s) PAUSED in Google Ads" } : { notPaused };
       } catch (e) { result.verified = null; result.verification = { error: String(e.message || e).slice(0, 200) }; }
+      await _verifyLedger(mres && mres.__ledgerId, result.verified, result.verification);
     }
   } else if (ex.kind === "addKeywords") {
     const adGroupId = String(ex.adGroupId || "").replace(/\D/g, "");
@@ -5857,7 +5883,7 @@ async function applyRemedy(campaignId, remedy, { ctrl } = {}) {
       adGroup: `customers/${CID}/adGroups/${adGroupId}`,
       status: "ENABLED", keyword: { text: k.text, matchType: k.matchType }
     }}));
-    await mutate("adGroupCriteria", ops, { ctrl, label: "remedy:addKeywords" });
+    const mres = await mutate("adGroupCriteria", ops, { ctrl, label: "remedy:addKeywords" });
     result = { ok: true, kind: ex.kind, added: list.map(k => k.text + " [" + k.matchType + "]"), dryRun: !!ctrl.dryRun };
     if (!ctrl.dryRun) {
       try {
@@ -5868,6 +5894,7 @@ async function applyRemedy(campaignId, remedy, { ctrl } = {}) {
         result.verified = missing.length === 0;
         result.verification = missing.length ? { missing } : { confirmed: list.length + " keyword(s) live in Google Ads" };
       } catch (e) { result.verified = null; result.verification = { error: String(e.message || e).slice(0, 200) }; }
+      await _verifyLedger(mres && mres.__ledgerId, result.verified, result.verification);
     }
   } else if (ex.kind === "rewriteAds") {
     // In-place RSA update via AdService. MERGE strategy: keep every existing
@@ -5916,7 +5943,7 @@ async function applyRemedy(campaignId, remedy, { ctrl } = {}) {
       resourceName: `customers/${CID}/ads/${adId}`,
       responsiveSearchAd: { headlines, descriptions }
     }, updateMask: "responsive_search_ad.headlines,responsive_search_ad.descriptions" }];
-    await mutate("ads", ops, { ctrl, label: "remedy:rewriteAds" });
+    const mres = await mutate("ads", ops, { ctrl, label: "remedy:rewriteAds" });
     result = { ok: true, kind: ex.kind, adId, addedHeadlines: newHl, addedDescriptions: newDs,
                prunedLow: { headlines: removedHl, descriptions: removedDs },
                totals: { headlines: headlines.length, descriptions: descriptions.length }, dryRun: !!ctrl.dryRun };
@@ -5928,19 +5955,12 @@ async function applyRemedy(campaignId, remedy, { ctrl } = {}) {
         result.verified = missing.length === 0;
         result.verification = missing.length ? { missing } : { confirmed: newHl.length + " headline(s) + " + newDs.length + " description(s) live in the RSA (ad re-entered policy review)" };
       } catch (e) { result.verified = null; result.verification = { error: String(e.message || e).slice(0, 200) }; }
+      await _verifyLedger(mres && mres.__ledgerId, result.verified, result.verification);
     }
   } else if (ex.kind === "setBudget") {
     if (!ex.budget) throw new Error("no budget supplied");
-    const r = await setCampaignBudget(campaignId, ex.budget, { ctrl });
-    result = { ok: true, kind: ex.kind, budget: ex.budget, dryRun: !!ctrl.dryRun, detail: r };
-    if (!ctrl.dryRun) {
-      try {
-        const chk = await gaql(`SELECT campaign_budget.amount_micros FROM campaign WHERE campaign.id = ${Number(campaignId)}`);
-        const live = fromMicros(((chk[0] || {}).campaignBudget || {}).amountMicros);
-        result.verified = Math.abs(live - ex.budget) < 0.01;
-        result.verification = { budgetInGoogleAds: live };
-      } catch (e) { result.verified = null; result.verification = { error: String(e.message || e).slice(0, 200) }; }
-    }
+    const r = await setCampaignBudget(campaignId, ex.budget, { ctrl }); // verifies + patches the ledger entry itself
+    result = { ok: true, kind: ex.kind, budget: ex.budget, dryRun: !!ctrl.dryRun, detail: r, verified: r.verified, verification: r.verification };
   } else {
     throw new Error("remedy kind '" + ex.kind + "' is a prescription, not auto-executable");
   }
