@@ -1705,7 +1705,13 @@ function renderFeed(){var lgAll=DASH.recentLedger||[];
     var pf=l.partialFailure&&(l.partialFailure.message||(l.partialFailure.details&&l.partialFailure.details.length))?l.partialFailure:null;
     var mk=l.kind==="mutate"||l.kind==="mutateAll"?"g":l.kind==="uploadConversions"?"s":"b";var when=l.at?timeago(l.at):"";
     var label=(l.label||l.service||l.kind||"event")+(l.validateOnly?" · dry-run":"")+(ok&&!pf?"":(pf?" · PARTIAL FAILURE":" · ERROR"));
-    return '<div class="feed__i"><div class="mk '+((ok&&!pf)?mk:"c")+'">'+((ok&&!pf)?"✓":"⊘")+'</div><div class="tx">'+esc(label)
+    // verified is only ever true/false when a real Google Ads read-back ran after the mutation (see
+    // _verifyLedger in the engine); anything else (undefined/null) means no read-back happened for
+    // this action type, so no badge is shown — a plain checkmark still just means "request succeeded",
+    // never "confirmed".
+    var vBadge=l.verified===true?'<span style="font-size:10px;font-weight:700;color:#2e7d32;border:1px solid #2e7d32;border-radius:8px;padding:1px 7px;margin-left:7px;white-space:nowrap">\u2713 VERIFIED BY GOOGLE</span>'
+      :l.verified===false?'<span style="font-size:10px;font-weight:700;color:#b3402a;border:1px solid #b3402a;border-radius:8px;padding:1px 7px;margin-left:7px;white-space:nowrap">\u26a0 NOT CONFIRMED</span>':"";
+    return '<div class="feed__i"><div class="mk '+((ok&&!pf)?mk:"c")+'">'+((ok&&!pf)?"✓":"⊘")+'</div><div class="tx">'+esc(label)+vBadge
       +(l.error?'<div class="muted" style="font-size:11px">'+esc(String(l.error).slice(0,120))+'</div>':"")
       +(pf?'<div style="font-size:11px;color:#b42424;margin-top:2px">'+esc(String(pf.message||"Some conversions in this batch were rejected by Google Ads.").slice(0,220))+'</div><details style="margin-top:2px"><summary style="font-size:10.5px;color:var(--ink-45);cursor:pointer">raw detail</summary><pre style="font-size:10px;white-space:pre-wrap;max-height:140px;overflow:auto">'+esc(JSON.stringify(pf,null,1).slice(0,1500))+'</pre></details>':"")
       +'</div><time>'+when+'</time></div>';}).join("");}
