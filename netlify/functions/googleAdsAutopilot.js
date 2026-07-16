@@ -5336,13 +5336,22 @@ async function dailyStats({ start, end } = {}) {
              itemId: sg.productItemId || "",
              impr: +m.impressions || 0, clicks: +m.clicks || 0, cost: fromMicros(m.costMicros), conv: +m.conversions || 0 };
   }).filter(p => p.impr > 0 || p.clicks > 0).sort((a, b) => b.clicks - a.clicks || b.impr - a.impr);
+  // Per-campaign product TOTALS computed before truncation — the UI shows only the top chips, but
+  // reconciliation ("top N of M products · X of Y clicks") needs the full-population numbers. Note
+  // that even these totals won't equal campaign clicks: shopping_performance_view only covers clicks
+  // attributed to a product listing; PMax text/display/video clicks are structurally un-attributable
+  // to any product. The UI states that remainder explicitly instead of leaving an apparent mismatch.
+  const productTotals = {};
+  prodRows.forEach(p => { const t = productTotals[p.campaignId] || (productTotals[p.campaignId] = { products: 0, clicks: 0, cost: 0, conv: 0 });
+    t.products++; t.clicks += p.clicks; t.cost += p.cost; t.conv += p.conv; });
+  Object.values(productTotals).forEach(t => { t.cost = +t.cost.toFixed(2); });
 
   return {
     range: { start: s, end: e }, days, fxIncomplete, // true if any day's currency conversion couldn't be looked up — cost/value for that day fell back to native currency (CAD) rather than being silently misstated as USD
     totalsByDay: days.map(d => ({ date: d, ...totalsByDay[d] })),
     campaigns: Object.values(byCamp).map(c => ({ ...c, series: days.map(d => ({ date: d, ...(c.series[d] || zero()) })) })),
     ads: adRows.slice(0, 200), keywords: kwRows.slice(0, 300),
-    assetGroups: agRows.slice(0, 100), products: prodRows.slice(0, 200)
+    assetGroups: agRows.slice(0, 100), products: prodRows.slice(0, 200), productTotals
   };
 }
 
