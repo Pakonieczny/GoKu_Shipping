@@ -1181,7 +1181,7 @@ function campaignTable(camps){
   return '<table class="ptable"><thead><tr><th>Campaign</th><th>Status</th><th>Schedule</th><th class="r">Budget</th><th class="r">Cost</th><th class="r">Conv.</th><th class="r">ROAS</th><th class="r"></th></tr></thead><tbody>'+
     camps.map(function(c,i){var r=(+c.cost>0)?(c.value/c.cost):null;var dt=campDates(c);
       var ctr=c.impr>0?(c.clicks/c.impr*100):null,cpc=c.clicks>0?(c.cost/c.clicks):null,cpa=c.conv>0?(c.cost/c.conv):null;
-      var row='<tr class="crow" data-i="'+i+'" data-cid="'+esc(String(c.id||i))+'" style="cursor:pointer"><td style="font-weight:500">'+esc(c.name)+(c.channel==="PERFORMANCE_MAX"?' <span style="font-size:9px;font-weight:700;letter-spacing:.08em;color:var(--gold);border:1px solid var(--gold);border-radius:5px;padding:1px 5px;white-space:nowrap">PMAX</span>':'')+'</td><td>'+statusBadge(c)+schedHint(c)+'</td><td class="muted" style="font-size:11.5px;white-space:nowrap">'+(dt.s?(esc(dt.s)+" \u2192 "+esc(dt.e||"open")):"\u2014")+(dt.info?'<div style="font-size:10px;color:var(--ink-45)">'+esc(dt.info)+'</div>':"")+'</td><td class="r">'+(c.budget?money(c.budget):"\u2014")+'</td><td class="r mono">'+money(c.cost)+'</td><td class="r mono">'+((+c.conv||0)%1?(+c.conv).toFixed(1):(+c.conv||0))+'</td><td class="r">'+(r==null?"\u2014":'<span class="'+(r>=3?"roas-good":r>=2.5?"roas-mid":"roas-bad")+'">'+r.toFixed(1)+'x</span>')+'</td>'
+      var row='<tr class="crow" data-i="'+i+'" data-cid="'+esc(String(c.id||i))+'" style="cursor:pointer"><td style="font-weight:500">'+esc(c.name)+(c.channel==="PERFORMANCE_MAX"?' <span style="font-size:9px;font-weight:700;letter-spacing:.08em;color:var(--gold);border:1px solid var(--gold);border-radius:5px;padding:1px 5px;white-space:nowrap">PMAX</span>':'')+'</td><td>'+statusBadge(c)+schedHint(c)+'</td><td class="muted" style="font-size:11.5px;white-space:nowrap">'+(dt.s?(esc(dt.s)+" \u2192 "+esc(dt.e||"open")):"\u2014")+(dt.info?'<div style="font-size:10px;color:var(--ink-45)">'+esc(dt.info)+'</div>':"")+'</td><td class="r"><span class="bge" data-id="'+esc(String(c.id))+'" data-b="'+(+c.budget||0)+'" data-res="'+esc(String(c.budgetRes||""))+'" title="Click to edit daily budget" style="cursor:pointer;border-bottom:1px dashed var(--ink-45);padding-bottom:1px">'+(c.budget?money(c.budget):"\u2014")+' <span style="font-size:10px;opacity:.55">\u270e</span></span></td><td class="r mono">'+money(c.cost)+'</td><td class="r mono">'+((+c.conv||0)%1?(+c.conv).toFixed(1):(+c.conv||0))+'</td><td class="r">'+(r==null?"\u2014":'<span class="'+(r>=3?"roas-good":r>=2.5?"roas-mid":"roas-bad")+'">'+r.toFixed(1)+'x</span>')+'</td>'
       +'<td class="r" style="white-space:nowrap">'
       +(c.status==="ENABLED"?'<button class="btn ghost sm cst" data-id="'+esc(String(c.id))+'" data-to="PAUSED" data-name="'+esc(c.name)+'" style="padding:3px 10px;font-size:11px">Pause</button>'
         :c.status==="PAUSED"?'<button class="btn gold sm cst" data-id="'+esc(String(c.id))+'" data-to="ENABLED" data-name="'+esc(c.name)+'" style="padding:3px 10px;font-size:11px">Enable</button>'
@@ -1193,6 +1193,24 @@ function campaignTable(camps){
       var det='<tr class="cdet" data-d="'+i+'" data-cid="'+esc(String(c.id||i))+'" style="display:none"><td colspan="7" style="background:var(--paper-2)"><div style="padding:10px 8px;display:flex;flex-wrap:wrap;gap:22px;font-size:12px"><span><b>Impressions</b><br><span class="mono">'+(+c.impr||0).toLocaleString()+'</span></span><span><b>Clicks</b><br><span class="mono">'+(+c.clicks||0).toLocaleString()+'</span></span><span><b>CTR</b><br><span class="mono">'+(ctr==null?"\u2014":ctr.toFixed(2)+"%")+'</span></span><span><b>Avg CPC</b><br><span class="mono">'+(cpc==null?"\u2014":money(cpc))+'</span></span><span><b>Conversions</b><br><span class="mono">'+(+c.conv||0)+'</span></span><span><b>Cost / conv</b><br><span class="mono">'+(cpa==null?"\u2014":money(cpa))+'</span></span><span><b>Conv. value</b><br><span class="mono">'+money(c.value)+'</span></span>'+(c.primaryStatusReasons&&c.primaryStatusReasons.length?'<span style="flex-basis:100%;color:var(--ink-70);font-size:11.5px">\u26a0 '+esc(reasonText(c.primaryStatusReasons))+'</span>':"")+'</div><div class="adlvl" data-c="'+esc(String(c.id))+'" style="padding:0 8px 10px"></div></td></tr>';
       return row+det;}).join("")+'</tbody></table>';}
 function wireCampRows(scope){Array.prototype.forEach.call(scope.querySelectorAll(".crow"),function(r){r.onclick=function(){var i=this.getAttribute("data-i");var d=scope.querySelector('.cdet[data-d="'+i+'"]');if(d)d.style.display=d.style.display==="none"?"":"none";};});
+  Array.prototype.forEach.call(scope.querySelectorAll(".bge"),function(b){b.onclick=async function(ev){ev.stopPropagation();
+    var id=this.getAttribute("data-id"),cur=Number(this.getAttribute("data-b"))||0,res=this.getAttribute("data-res")||null,el=this;
+    var raw=prompt("New daily budget for this campaign (USD):",cur?String(cur):"");
+    if(raw===null)return;
+    var amt=Number(String(raw).replace(/[^0-9.]/g,""));
+    if(!(amt>0)){toast("Budget must be a positive number");return;}
+    if(amt===cur)return;
+    // >30% jumps get one extra confirm — large budget changes are the classic accidental-overspend
+    // path, and on Smart Bidding campaigns (PMax) they can also reset learning.
+    if(cur>0&&Math.abs(amt-cur)/cur>0.3&&!confirm("That\u2019s a "+Math.round(Math.abs(amt-cur)/cur*100)+"% change ("+money(cur)+" \u2192 "+money(amt)+").\n\nLarge budget jumps can reset a Smart Bidding campaign\u2019s learning. Apply anyway?"))return;
+    var prev=el.innerHTML;el.innerHTML='<span class="spin sm"></span>';
+    try{var r2=await api("setBudget",{id:id,budget:amt,budgetRes:res||undefined});
+      if(r2&&r2.error)throw new Error(r2.error);
+      el.setAttribute("data-b",String(amt));el.innerHTML=money(amt)+' <span style="font-size:10px;opacity:.55">\u270e</span>';
+      toast("Budget "+money(cur)+" \u2192 "+money(amt)+(r2&&r2.dryRun?" (dry-run \u2014 not applied to Google)":""),!(r2&&r2.dryRun));
+      var lm=(DASH.lastMetrics||[]).filter(function(x){return String(x.id)===String(id);})[0];if(lm)lm.budget=amt;
+    }catch(e){el.innerHTML=prev;toast("Budget change failed: "+(e.message||e));}
+  };});
   Array.prototype.forEach.call(scope.querySelectorAll(".cst"),function(b){b.onclick=async function(ev){ev.stopPropagation();
     var id=this.getAttribute("data-id"),to=this.getAttribute("data-to"),nm=this.getAttribute("data-name"),btn=this;
     if(to==="REMOVED"){
