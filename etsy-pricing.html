@@ -166,7 +166,7 @@ dialog{border:0;padding:0;border-radius:15px;box-shadow:0 24px 80px rgba(0,0,0,.
 
       <section id="editor" class="hidden">
         <div class="grid hero">
-          <div class="card pad"><img class="listingImage" id="listingImage" alt="Primary listing image"><div class="imgActions"><button class="btn ghost sm" id="openEtsyBtn">Open on Etsy</button><button class="btn ghost sm" id="copyIdBtn">Copy ID</button></div></div>
+          <div class="card pad"><img class="listingImage" id="listingImage" alt="Primary listing image"><div class="imgActions"><button class="btn ghost sm" id="openEtsyBtn">Open on Etsy</button><button class="btn ghost sm" id="copyIdBtn">Copy ID</button><button class="btn ghost sm" id="copyInvBtn">Copy inventory JSON</button></div></div>
           <div class="card pad">
             <div class="heroTitle"><div><div class="mono" id="listingIdText" style="font-size:11px;color:var(--ink45);margin-bottom:6px"></div><h2 id="listingTitle"></h2></div><div class="badges" id="listingBadges"></div></div>
             <div class="metaGrid">
@@ -687,17 +687,18 @@ async function charmOnlySetup(){
         if(isNoChainVal(cur)){if(cur!==NO_CHAIN_VALUE)renameOps.push({pv:lv,from:cur,to:NO_CHAIN_VALUE})}
         else if(parseLen(cur)===20){removeIdx.push(idx)}
         else{const tc=titleCaseOpt(cur);if(tc!==cur)renameOps.push({pv:lv,from:cur,to:tc})}}
-      /* Invalid cross pairings must NOT exist at all — Etsy's dropdown hides
-         options based on which combinations exist, so a disabled row still
-         gets listed. Charm metals pair only with the no-chain tier; regular
-         metals pair only with real lengths. */
+      /* Etsy requires ALL combinations of property values to exist. Invalid
+         cross pairings (charm × real length, necklace metal × no-chain)
+         therefore must exist but stay DISABLED. Collect any that are
+         currently enabled so they can be corrected. */
       if(mv&&lv){const mCur=String(mv.values[0]||''),lCur=String(lv.values[0]||'');
         const mCharm=isCharmVal(mCur)||isCharmVal(canonFor(mCur)||mCur);
         const lNoChain=isNoChainVal(lCur);
-        if((mCharm&&!lNoChain)||(!mCharm&&lNoChain))crossIdx.push(idx)}
+        const isCross=(mCharm&&!lNoChain)||(!mCharm&&lNoChain);
+        if(isCross&&(p.offerings?.[0]?.is_enabled)!==false)crossIdx.push(idx)}
     });
-    const allRemove=new Set([...removeIdx,...crossIdx]);
-    if(allRemove.size>=S.draft.products.length)throw new Error('Removing 20-inch and invalid cross-pairing combinations would leave the listing with no products. Nothing was changed.');
+    const allRemove=new Set(removeIdx);
+    if(allRemove.size>=S.draft.products.length)throw new Error('Removing 20-inch combinations would leave the listing with no products. Nothing was changed.');
     const skipRose=chainType==='beady';
     const currentMetalCanon=new Set(metalProp.values.map(v=>canonFor(v)).filter(Boolean));
     const toAddNecklace=ADD_IF_MISSING.filter(o=>!currentMetalCanon.has(o)&&!(skipRose&&/rose/i.test(o)));
@@ -717,6 +718,7 @@ async function charmOnlySetup(){
 
     /* ---- APPLY ---- */
     for(const op of renameOps){op.pv.values=[op.to];op.pv.value_ids=[]}
+    for(const i of crossIdx){const o=S.draft.products[i]?.offerings?.[0];if(o)o.is_enabled=false}
     if(allRemove.size){S.draft.products=S.draft.products.filter((_,i)=>!allRemove.has(i))}
     Object.assign(metalProp,getProperties().find(p=>p.property_id===metalProp.property_id));
     Object.assign(lengthProp,getProperties().find(p=>p.property_id===lengthProp.property_id));
@@ -733,14 +735,33 @@ async function charmOnlySetup(){
       const prices=[];
       for(const len of realLengths){const price=priceFor(opt,len,version,chainType);prices.push(price);
         const row=mkRow(t,opt,len,price,sku,true);if(!keys.has(propKey(row))){keys.add(propKey(row));S.draft.products.push(row);added++}}
+      const noChainRow=mkRow(t,opt,NO_CHAIN_VALUE,prices[0],sku,false);
+      if((lengthProp.values.some(v=>isNoChainVal(v))||toAddCharms.length||needNoChain)&&!keys.has(propKey(noChainRow))){keys.add(propKey(noChainRow));S.draft.products.push(noChainRow);added++}
       const lo=Math.min(...prices),hi=Math.max(...prices);summary.push(opt+': v'+(version+1)+' '+(lo===hi?money(lo):money(lo)+'\u2013'+money(hi)));
     }
     for(const opt of toAddCharms){
       const version=Math.floor(Math.random()*3),t=templateFor(opt);
       const baseSku=String(t.sku||'').trim(),sku=(baseSku?baseSku+'-CO':'CO-'+opt.replace(/[^A-Za-z0-9]+/g,'').slice(0,10)).slice(0,32);
       const price=priceFor(opt,null,version,chainType);
+      for(const len of realLengths){const row=mkRow(t,opt,len,price,sku,false);if(!keys.has(propKey(row))){keys.add(propKey(row));S.draft.products.push(row);added++}}
       const live=mkRow(t,opt,NO_CHAIN_VALUE,price,sku,true);if(!keys.has(propKey(live))){keys.add(propKey(live));S.draft.products.push(live);added++}
       summary.push(opt+': v'+(version+1)+' '+money(price));
+    }
+    /* COMPLETENESS PASS — Etsy: "All combinations of property values must be
+       supplied." Enumerate every metal × length and synthesize any missing
+       combination from that metal's existing row; cross pairings disabled,
+       valid pairings enabled. */
+    Object.assign(metalProp,getProperties().find(p=>p.property_id===metalProp.property_id));
+    Object.assign(lengthProp,getProperties().find(p=>p.property_id===lengthProp.property_id));
+    for(const metal of metalProp.values){
+      const src=S.draft.products.find(p=>propValue(p,metalProp.property_id)===metal);if(!src)continue;
+      const o=firstOffering(src),srcPrice=Number(o.price),srcSku=String(src.sku||'');
+      for(const len of lengthProp.values){
+        const mCharm=isCharmVal(metal),lNoChain=isNoChainVal(len);
+        const enabled=mCharm?lNoChain:!lNoChain;
+        const probe=mkRow(src,metal,len,srcPrice,srcSku,enabled);
+        if(!keys.has(propKey(probe))){keys.add(propKey(probe));S.draft.products.push(probe);added++}
+      }
     }
     sortProducts();markDirty();renderEditor();
     toast('Draft ready ('+(chainType==='beady'?'Beady':'Regular')+' pricing) \u2014 '+added+' combinations added'+(renameOps.length?' \u00b7 '+renameOps.length+' renamed':'')+(removeIdx.length?' \u00b7 '+removeIdx.length+' \u00d7 20-inch removed':'')+(crossIdx.length?' \u00b7 '+crossIdx.length+' invalid pairings removed':'')+(summary.length?'. Pricing: '+summary.join(' \u00b7 '):'')+'. Review the matrix, then Save to write & verify on Etsy.','ok');
@@ -766,6 +787,11 @@ $('#priceHead').addEventListener('change',e=>{if(e.target.id==='masterCheck'){S.
 $('#variationGrid').addEventListener('click',e=>{const b=e.target.closest('[data-vact]');if(!b){if(e.target.id==='inlineAddMenu')addMenu();return}const pid=Number(b.dataset.pid),act=b.dataset.vact;if(act==='add-tier')addTier(pid);if(act==='remove-tier')removeTier(pid,decodeURIComponent(b.dataset.value));if(act==='rename')renameMenu(pid);if(act==='remove-menu')removeMenu(pid)});$('#addMenuBtn').addEventListener('click',addMenu);
 $('#dependencyCard').addEventListener('click',e=>{if(e.target.closest('#autoMapSwitch'))setAutoMap(!autoMapOn())});$('#dependencyCard').addEventListener('change',e=>{if(e.target.dataset.mapfield)toggleMap(e.target.dataset.mapfield,Number(e.target.dataset.pid),e.target.checked)});
 $('#saveBtn').addEventListener('click',saveListing);$('#approveBtn').addEventListener('click',approveListing);$('#resetBtn').addEventListener('click',resetDraft);$('#openEtsyBtn').addEventListener('click',()=>window.open(currentListing().url||('https://www.etsy.com/listing/'+S.currentId),'_blank','noopener'));$('#copyIdBtn').addEventListener('click',async()=>{await navigator.clipboard.writeText(S.currentId);toast('Listing ID copied.','ok')});
+$('#copyInvBtn').addEventListener('click',async()=>{if(!S.original){toast('Open a listing first.','bad');return}
+  const d=S.cache.get(S.currentId)||{};
+  const dump={listing_id:S.currentId,fetched_at:d.fetched_at||null,snapshot_hash:S.originalHash,inventory:S.original,
+    rows:(S.original.products||[]).map(p=>({combo:(p.property_values||[]).map(v=>v.property_name+'='+(v.values||[]).join('/')).join(' | '),price:(p.offerings||[])[0]?.price,quantity:(p.offerings||[])[0]?.quantity,enabled:(p.offerings||[])[0]?.is_enabled!==false,product_id:p.product_id,value_ids:(p.property_values||[]).map(v=>(v.value_ids||[]).join(','))}))};
+  await navigator.clipboard.writeText(JSON.stringify(dump,null,2));toast('Live inventory JSON copied to clipboard.','ok')});
 addEventListener('keydown',e=>{const typing=['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName);if(!typing&&e.key==='/'){e.preventDefault();$('#searchInput').focus();return}if(typing)return;if(e.key==='ArrowLeft')navigate(-1);if(e.key==='ArrowRight')navigate(1);if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='s'){e.preventDefault();if(S.dirty)saveListing()}if(e.key.toLowerCase()==='a'&&!e.metaKey&&!e.ctrlKey&&S.view==='editor')approveListing()});
 
 (async function init(){await handleOAuthCallback();renderConnection();renderStoreFilters();renderChainToggle();updateSearchUi('Live Etsy title search');scheduleRefresh();if(localStorage.getItem(TOKEN_KEYS.access))loadCatalog()})();
