@@ -479,7 +479,8 @@ async function renameMenu(pid){const prop=getProperties().find(p=>p.property_id=
 async function addMenu(){const props=getProperties();if(props.length>=2){toast('Live Etsy listings currently support two variation dropdowns.','bad');return}const unused=CUSTOM_PROPERTY_IDS.find(id=>!props.some(p=>p.property_id===id));if(!unused){toast('No unused custom Etsy variation slot is available.','bad');return}const data=await formDialog('Add custom dropdown',[{name:'name',label:'Dropdown name',placeholder:'Example: Chain length'},{name:'values',label:'Option values',placeholder:'Example: 14 inches, 16 inches, 18 inches'}]);if(!data)return;const name=(data.name||'').trim(),values=(data.values||'').split(',').map(x=>x.trim()).filter(Boolean);if(!name||values.length<1){toast('Enter a name and at least one option.','bad');return}
   const out=[];for(const source of S.draft.products){for(const value of values){const clone=deep(source);clone.product_id=null;if(clone.offerings?.[0])clone.offerings[0].offering_id=null;clone.property_values.push({property_id:unused,property_name:name,scale_id:null,value_ids:[],values:[value]});out.push(clone)}}S.draft.products=out;sortProducts();markDirty();renderEditor()}
 async function removeMenu(pid){const prop=getProperties().find(p=>p.property_id===Number(pid));if(!prop)return;if(!await confirmDialog('Remove '+prop.property_name+' dropdown?','All tiers in this menu will collapse. When duplicates result, the first existing combination is retained.'))return;const map=new Map();for(const source of S.draft.products){const p=deep(source);p.property_values=p.property_values.filter(v=>Number(v.property_id)!==Number(pid));const k=propKey(p);if(!map.has(k))map.set(k,p)}S.draft.products=[...map.values()];for(const f of ['price_on_property','quantity_on_property','sku_on_property'])S.draft[f]=(S.draft[f]||[]).filter(x=>Number(x)!==Number(pid));sortProducts();markDirty();renderEditor()}
-function sortProducts(){const ids=getProperties().map(p=>p.property_id);S.draft.products.sort((a,b)=>ids.map(id=>propValue(a,id)).join('|').localeCompare(ids.map(id=>propValue(b,id)).join('|')))}
+function charmRank(p){const vals=(p.property_values||[]).flatMap(x=>x.values||[]).map(v=>String(v).toLowerCase());const i=CHARM_ONLY_METALS.findIndex(m=>vals.includes(m.toLowerCase()));return i}
+function sortProducts(){const ids=getProperties().map(p=>p.property_id);S.draft.products.sort((a,b)=>{const ca=charmRank(a),cb=charmRank(b);if((ca<0)!==(cb<0))return ca<0?-1:1;if(ca>=0&&cb>=0&&ca!==cb)return ca-cb;return ids.map(id=>propValue(a,id)).join('|').localeCompare(ids.map(id=>propValue(b,id)).join('|'))})}
 function setAutoMap(on){S.draft._auto_on_property=on;if(!on){S.draft.price_on_property=deriveOn('price');S.draft.quantity_on_property=deriveOn('quantity');S.draft.sku_on_property=deriveOn('sku')}markDirty();renderDependencies()}
 function toggleMap(field,pid,on){const arr=new Set(S.draft[field]||[]);on?arr.add(Number(pid)):arr.delete(Number(pid));S.draft[field]=[...arr];markDirty();renderDependencies()}
 function validateDraft(){const h=healthFor(S.draft);if(h.error_count)throw new Error('Resolve the red pricing-health errors before saving.');const props=getProperties();if(props.length>2)throw new Error('Third-variation writing is not enabled for live Etsy listings yet.');if(!S.draft.products.length)throw new Error('At least one product combination is required.');return true}
@@ -626,6 +627,8 @@ const CHARM_ONLY_PRICE_POOLS={ // bases chosen so -20% lands exactly on $.25 ste
 const CHARM_ONLY_METALS=['CHARM ONLY GOLD','CHARM ONLY SILVER','CHARM ONLY ROSE','CHARM ONLY 14K SOLID'];
 const CHARM_SOURCE_HINTS={'CHARM ONLY GOLD':/gold/i,'CHARM ONLY SILVER':/silver/i,'CHARM ONLY ROSE':/rose/i,'CHARM ONLY 14K SOLID':/14\s*k|solid/i};
 const NO_CHAIN_VALUE='CHARM ONLY-NO CHAIN'; // 19 chars — Etsy caps option values at 20
+function isCharmVal(v){return CHARM_ONLY_METALS.some(m=>m.toLowerCase()===String(v).toLowerCase())}
+function isNoChainVal(v){const c=String(v);return /^no\s*chain/i.test(c)||/charm\s*only.?no\s*chain/i.test(c)}
 function detectProp(patterns){const props=getProperties();for(const re of patterns){const hit=props.find(p=>re.test(String(p.property_name||'')));if(hit)return hit}return null}
 async function aiChat(messages){
   const r=await fetch(FUNCTIONS_BASE+'/openaiProxy',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages,temperature:0,response_format:{type:'json_object'}})});
@@ -645,25 +648,51 @@ async function charmOnlySetup(){
     const lengthProp=detectProp([/chain\s*length/i,/length/i,/chain/i,/size/i]);
     if(!lengthProp){toast('No chain-length dropdown found on this listing, so Charm Only options are not applicable here. Dropdowns: '+getProperties().map(p=>'\u201c'+p.property_name+'\u201d').join(', ')+'.','bad');return}
     if(metalProp.property_id===lengthProp.property_id){toast('Metal and chain-length detection matched the same dropdown (\u201c'+metalProp.property_name+'\u201d). Rename the dropdowns so they are distinguishable.','bad');return}
-    // Migrate older naming (mixed case, em-dash tier) to the current canonical values
-    let renamed=0;
+
+    /* AI matches the listing's existing option casing style (casing only) */
+    setActivity('Matching this listing\u2019s option text style\u2026',null,false);
+    const styleSamples={};
+    styleSamples[metalProp.property_name]=metalProp.values.filter(v=>!isCharmVal(v));
+    styleSamples[lengthProp.property_name]=lengthProp.values.filter(v=>!isNoChainVal(v));
+    const targets=[...CHARM_ONLY_METALS,NO_CHAIN_VALUE];
+    const styleResp=await aiChat([
+      {role:'system',content:'You restyle text casing. Respond with strict JSON only.'},
+      {role:'user',content:'Existing Etsy variation option values for this listing, grouped by dropdown: '+JSON.stringify(styleSamples)+'. Determine the dominant letter-casing style of the existing values (e.g. ALL CAPS, Title Case, Sentence case, all lowercase). Re-case each of the following new option strings to match that dominant style exactly. Change ONLY letter casing \u2014 never the words, punctuation, hyphens, spacing or length: '+JSON.stringify(targets)+'. Reply as {"styled":{"<original>":"<recased>"}} with one entry per string and no other keys.'}
+    ]);
+    clearActivity();
+    const styledMap=styleResp&&styleResp.styled;
+    if(!styledMap)throw new Error('AI style response missing the "styled" map: '+JSON.stringify(styleResp).slice(0,200));
+    const styled={};
+    for(const t of targets){const v=String(styledMap[t]||'');
+      if(v.toLowerCase()!==t.toLowerCase())throw new Error('AI altered the text of \u201c'+t+'\u201d to \u201c'+v+'\u201d instead of only re-casing it. Nothing was changed.');
+      if(v.length>20)throw new Error('Styled option \u201c'+v+'\u201d exceeds Etsy\u2019s 20-character limit. Nothing was changed.');
+      styled[t]=v}
+    const noChain=styled[NO_CHAIN_VALUE];
+
+    /* Dry-run: renames needed to converge legacy/mis-cased values (applied only after confirm) */
+    const renameOps=[];
     for(const p of S.draft.products){
       const mv=p.property_values.find(v=>Number(v.property_id)===Number(metalProp.property_id));
-      if(mv){const cur=String(mv.values[0]||'');const canon=CHARM_ONLY_METALS.find(m=>m.toLowerCase()===cur.toLowerCase());
-        if(canon&&cur!==canon){mv.values=[canon];mv.value_ids=[];renamed++}}
+      if(mv){const cur=String(mv.values[0]||'');const canon=CHARM_ONLY_METALS.find(x=>x.toLowerCase()===cur.toLowerCase());
+        if(canon&&cur!==styled[canon])renameOps.push({pv:mv,to:styled[canon]})}
       const lv=p.property_values.find(v=>Number(v.property_id)===Number(lengthProp.property_id));
       if(lv){const cur=String(lv.values[0]||'');
-        if((/^no\s*chain/i.test(cur)||/charm\s*only.?no\s*chain/i.test(cur))&&cur!==NO_CHAIN_VALUE){lv.values=[NO_CHAIN_VALUE];lv.value_ids=[];renamed++}}
+        if(isNoChainVal(cur)&&cur!==noChain)renameOps.push({pv:lv,to:noChain})}
     }
-    if(renamed){Object.assign(metalProp,getProperties().find(p=>p.property_id===metalProp.property_id));Object.assign(lengthProp,getProperties().find(p=>p.property_id===lengthProp.property_id))}
     const missing=CHARM_ONLY_METALS.filter(m=>!metalProp.values.some(v=>v.toLowerCase()===m.toLowerCase()));
-    if(!missing.length&&lengthProp.values.includes(NO_CHAIN_VALUE)){toast('All four Charm Only options already exist on this listing.','ok');return}
+    if(!missing.length&&!renameOps.length&&lengthProp.values.some(v=>v===noChain)){toast('All four Charm Only options already exist on this listing in the matched style.','ok');return}
+
     const ok=await confirmDialog('Add Charm Only options to \u201c'+metalProp.property_name+'\u201d?',
-      'Each option draws a random price from its own approved pool \u2014 Gold $28.13/$28.75/$29.38, Silver $27.81/$28.44/$29.06, Rose $29.06/$29.38/$30.00, 14k Solid $110.63/$111.56/$112.50 \u2014 all chosen so Etsy\u2019s 20% discount lands exactly on a $.25 step. '
-      +'A \u201c'+NO_CHAIN_VALUE+'\u201d tier is added to \u201c'+lengthProp.property_name+'\u201d because Etsy requires every combination to carry a value for both dropdowns. '
-      +'Charm Only options are enabled ONLY with \u201c'+NO_CHAIN_VALUE+'\u201d \u2014 every real chain length is disabled for them, and \u201c'+NO_CHAIN_VALUE+'\u201d is disabled for every regular metal, so buyers who pick Charm Only cannot select a chain length. '
+      (missing.length?'New options, styled to match this listing\u2019s existing text: '+missing.map(m=>styled[m]).join(', ')+' with tier \u201c'+noChain+'\u201d. ':'')
+      +(renameOps.length?renameOps.length+' existing value'+(renameOps.length===1?'':'s')+' will be renamed to the matched style. ':'')
+      +'Each option draws a random price from its own approved pool \u2014 Gold $28.13/$28.75/$29.38, Silver $27.81/$28.44/$29.06, Rose $29.06/$29.38/$30.00, 14k Solid $110.63/$111.56/$112.50 \u2014 all chosen so Etsy\u2019s 20% discount lands exactly on a $.25 step. '
+      +'Charm Only options are enabled ONLY with \u201c'+noChain+'\u201d \u2014 every real chain length is disabled for them, and \u201c'+noChain+'\u201d is disabled for every regular metal, so buyers who pick Charm Only cannot select a chain length. '
       +'Everything is added as a DRAFT for your review; nothing is written to Etsy until you press Save.');
     if(!ok)return;
+    for(const op of renameOps){op.pv.values=[op.to];op.pv.value_ids=[]}
+    const renamed=renameOps.length;
+    if(renamed){Object.assign(metalProp,getProperties().find(p=>p.property_id===metalProp.property_id));Object.assign(lengthProp,getProperties().find(p=>p.property_id===lengthProp.property_id))}
+
     const priced=new Map();
     for(const m of missing){
       const pool=CHARM_ONLY_PRICE_POOLS[m];
@@ -674,8 +703,7 @@ async function charmOnlySetup(){
       const sku=(baseSku?baseSku+'-CO':'CO-'+m.replace(/[^A-Za-z0-9]+/g,'').slice(0,10)).slice(0,32);
       priced.set(m,{price,sku,reasoning:'-20% \u2192 '+money(Math.round(price*0.8/0.25)*0.25)});
     }
-    // Build draft: template row per Charm Only metal from its closest existing metal
-    const realLengths=lengthProp.values.filter(v=>v!==NO_CHAIN_VALUE);
+    const realLengths=lengthProp.values.filter(v=>!isNoChainVal(v));
     const keys=new Set(S.draft.products.map(propKey));
     const templateFor=m=>{const re=CHARM_SOURCE_HINTS[m];let src=S.draft.products.find(p=>re.test(propValue(p,metalProp.property_id)));return src||S.draft.products[0]};
     const mkRow=(tmpl,metalVal,lengthVal,price,sku,enabled)=>{const c=deep(tmpl);c.product_id=null;if(c.offerings?.[0]){c.offerings[0].offering_id=null;c.offerings[0].price=price;c.offerings[0].is_enabled=enabled;if(!Number(c.offerings[0].quantity))c.offerings[0].quantity=enabled?1:0}
@@ -683,17 +711,16 @@ async function charmOnlySetup(){
       const lv=c.property_values.find(v=>Number(v.property_id)===Number(lengthProp.property_id));lv.values=[lengthVal];lv.value_ids=[];return c};
     let added=0;
     for(const m of missing){const t=templateFor(m),cfg=priced.get(m);
-      for(const len of realLengths){const row=mkRow(t,m,len,cfg.price,cfg.sku,false);if(!keys.has(propKey(row))){keys.add(propKey(row));S.draft.products.push(row);added++}}
-      const live=mkRow(t,m,NO_CHAIN_VALUE,cfg.price,cfg.sku,true);if(!keys.has(propKey(live))){keys.add(propKey(live));S.draft.products.push(live);added++}
+      for(const len of realLengths){const row=mkRow(t,styled[m],len,cfg.price,cfg.sku,false);if(!keys.has(propKey(row))){keys.add(propKey(row));S.draft.products.push(row);added++}}
+      const live=mkRow(t,styled[m],noChain,cfg.price,cfg.sku,true);if(!keys.has(propKey(live))){keys.add(propKey(live));S.draft.products.push(live);added++}
     }
-    // Regular metals get the No Chain tier, disabled
-    const regularMetals=metalProp.values.filter(v=>!CHARM_ONLY_METALS.some(m=>m.toLowerCase()===v.toLowerCase()));
+    const regularMetals=metalProp.values.filter(v=>!isCharmVal(v));
     for(const metal of regularMetals){const src=S.draft.products.find(p=>propValue(p,metalProp.property_id)===metal)||S.draft.products[0];const o=firstOffering(src);
-      const row=mkRow(src,metal,NO_CHAIN_VALUE,Number(o.price),String(src.sku||''),false);
+      const row=mkRow(src,metal,noChain,Number(o.price),String(src.sku||''),false);
       if(!keys.has(propKey(row))){keys.add(propKey(row));S.draft.products.push(row);added++}}
     sortProducts();markDirty();renderEditor();clearActivity();
-    const why=missing.map(m=>m+': '+money(priced.get(m).price)+(priced.get(m).reasoning?' ('+priced.get(m).reasoning+')':'')).join(' \u00b7 ');
-    toast('Draft ready \u2014 '+added+' combinations added'+(renamed?' \u00b7 '+renamed+' older value'+(renamed===1?'':'s')+' renamed to the new naming':'')+'. AI pricing: '+why+'. Review the matrix, adjust anything, then Save to write & verify on Etsy.','ok');
+    const why=missing.map(m=>styled[m]+': '+money(priced.get(m).price)+(priced.get(m).reasoning?' ('+priced.get(m).reasoning+')':'')).join(' \u00b7 ');
+    toast('Draft ready \u2014 '+added+' combinations added'+(renamed?' \u00b7 '+renamed+' value'+(renamed===1?'':'s')+' restyled':'')+(why?'. Randomized pricing: '+why:'')+'. Review the matrix, adjust anything, then Save to write & verify on Etsy.','ok');
   }catch(e){clearActivity();toast(e.message,'bad')}
 }
 $('#charmOnlyBtn').addEventListener('click',charmOnlySetup);
