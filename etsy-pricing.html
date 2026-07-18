@@ -676,7 +676,7 @@ async function charmOnlySetup(){
     const chainType=effectiveChainType();
 
     /* ---- DRY RUN: compute every change before touching the draft ---- */
-    const renameOps=[],removeIdx=[],unrecognized=new Set();
+    const renameOps=[],removeIdx=[],crossIdx=[],unrecognized=new Set();
     S.draft.products.forEach((p,idx)=>{
       const mv=p.property_values.find(v=>Number(v.property_id)===Number(metalProp.property_id));
       if(mv){const cur=String(mv.values[0]||'');const canon=canonFor(cur);
@@ -687,18 +687,28 @@ async function charmOnlySetup(){
         if(isNoChainVal(cur)){if(cur!==NO_CHAIN_VALUE)renameOps.push({pv:lv,from:cur,to:NO_CHAIN_VALUE})}
         else if(parseLen(cur)===20){removeIdx.push(idx)}
         else{const tc=titleCaseOpt(cur);if(tc!==cur)renameOps.push({pv:lv,from:cur,to:tc})}}
+      /* Invalid cross pairings must NOT exist at all — Etsy's dropdown hides
+         options based on which combinations exist, so a disabled row still
+         gets listed. Charm metals pair only with the no-chain tier; regular
+         metals pair only with real lengths. */
+      if(mv&&lv){const mCur=String(mv.values[0]||''),lCur=String(lv.values[0]||'');
+        const mCharm=isCharmVal(mCur)||isCharmVal(canonFor(mCur)||mCur);
+        const lNoChain=isNoChainVal(lCur);
+        if((mCharm&&!lNoChain)||(!mCharm&&lNoChain))crossIdx.push(idx)}
     });
-    if(removeIdx.length>=S.draft.products.length)throw new Error('Removing 20-inch combinations would leave the listing with no products. Nothing was changed.');
+    const allRemove=new Set([...removeIdx,...crossIdx]);
+    if(allRemove.size>=S.draft.products.length)throw new Error('Removing 20-inch and invalid cross-pairing combinations would leave the listing with no products. Nothing was changed.');
     const skipRose=chainType==='beady';
     const currentMetalCanon=new Set(metalProp.values.map(v=>canonFor(v)).filter(Boolean));
     const toAddNecklace=ADD_IF_MISSING.filter(o=>!currentMetalCanon.has(o)&&!(skipRose&&/rose/i.test(o)));
     const toAddCharms=CHARM_ONLY_METALS.filter(o=>!currentMetalCanon.has(o)&&!(skipRose&&/rose/i.test(o)));
     const needNoChain=!lengthProp.values.some(v=>isNoChainVal(v));
-    if(!renameOps.length&&!removeIdx.length&&!toAddNecklace.length&&!toAddCharms.length&&!needNoChain){toast('This listing already matches the standardized options, order, naming and pricing structure ('+(chainType==='beady'?'Beady':'Regular')+' mode). Re-save if you only need the display order refreshed.','ok');return}
+    if(!renameOps.length&&!allRemove.size&&!toAddNecklace.length&&!toAddCharms.length&&!needNoChain){toast('This listing already matches the standardized options, order, naming and pricing structure ('+(chainType==='beady'?'Beady':'Regular')+' mode). Re-save if you only need the display order refreshed.','ok');return}
 
     const ok=await confirmDialog('Standardize this listing\u2019s Metal Choice? ('+(chainType==='beady'?'Beady':'Regular')+' Necklace pricing)',
       (renameOps.length?renameOps.length+' option value'+(renameOps.length===1?'':'s')+' renamed to the standardized Title Case naming. ':'')
       +(removeIdx.length?removeIdx.length+' combination'+(removeIdx.length===1?'':'s')+' with a 20-inch chain removed. ':'')
+      +(crossIdx.length?crossIdx.length+' invalid cross-pairing'+(crossIdx.length===1?'':'s')+' removed (charm-only × chain length, or necklace metal × no-chain) so Etsy hides those options correctly per selection. ':'')
       +(toAddNecklace.length?'Missing necklace options added at sheet pricing: '+toAddNecklace.join(', ')+'. ':'')
       +(toAddCharms.length?'Missing Charm Only options added: '+toAddCharms.join(', ')+' (enabled only with \u201c'+NO_CHAIN_VALUE+'\u201d; all chain lengths disabled for them). ':'')
       +(unrecognized.size?'Options kept but not on the pricing sheet (prices untouched): '+[...unrecognized].join(', ')+'. ':'')
@@ -707,7 +717,7 @@ async function charmOnlySetup(){
 
     /* ---- APPLY ---- */
     for(const op of renameOps){op.pv.values=[op.to];op.pv.value_ids=[]}
-    if(removeIdx.length){const rm=new Set(removeIdx);S.draft.products=S.draft.products.filter((_,i)=>!rm.has(i))}
+    if(allRemove.size){S.draft.products=S.draft.products.filter((_,i)=>!allRemove.has(i))}
     Object.assign(metalProp,getProperties().find(p=>p.property_id===metalProp.property_id));
     Object.assign(lengthProp,getProperties().find(p=>p.property_id===lengthProp.property_id));
     const realLengths=lengthProp.values.filter(v=>!isNoChainVal(v));
@@ -723,29 +733,17 @@ async function charmOnlySetup(){
       const prices=[];
       for(const len of realLengths){const price=priceFor(opt,len,version,chainType);prices.push(price);
         const row=mkRow(t,opt,len,price,sku,true);if(!keys.has(propKey(row))){keys.add(propKey(row));S.draft.products.push(row);added++}}
-      const hasNoChain=lengthProp.values.some(v=>isNoChainVal(v))||needNoChain||toAddCharms.length;
-      if(hasNoChain){const row=mkRow(t,opt,NO_CHAIN_VALUE,prices[0],sku,false);if(!keys.has(propKey(row))){keys.add(propKey(row));S.draft.products.push(row);added++}}
       const lo=Math.min(...prices),hi=Math.max(...prices);summary.push(opt+': v'+(version+1)+' '+(lo===hi?money(lo):money(lo)+'\u2013'+money(hi)));
     }
     for(const opt of toAddCharms){
       const version=Math.floor(Math.random()*3),t=templateFor(opt);
       const baseSku=String(t.sku||'').trim(),sku=(baseSku?baseSku+'-CO':'CO-'+opt.replace(/[^A-Za-z0-9]+/g,'').slice(0,10)).slice(0,32);
       const price=priceFor(opt,null,version,chainType);
-      for(const len of realLengths){const row=mkRow(t,opt,len,price,sku,false);if(!keys.has(propKey(row))){keys.add(propKey(row));S.draft.products.push(row);added++}}
       const live=mkRow(t,opt,NO_CHAIN_VALUE,price,sku,true);if(!keys.has(propKey(live))){keys.add(propKey(live));S.draft.products.push(live);added++}
       summary.push(opt+': v'+(version+1)+' '+money(price));
     }
-    /* Non-charm metals get the no-chain tier disabled (buyers cannot buy a chainless necklace) */
-    if(lengthProp.values.some(v=>isNoChainVal(v))||toAddCharms.length){
-      Object.assign(metalProp,getProperties().find(p=>p.property_id===metalProp.property_id));
-      for(const metal of metalProp.values.filter(v=>!isCharmVal(v))){
-        const src=S.draft.products.find(p=>propValue(p,metalProp.property_id)===metal&&!isNoChainVal(propValue(p,lengthProp.property_id)));if(!src)continue;
-        const o=firstOffering(src);
-        const row=mkRow(src,metal,NO_CHAIN_VALUE,Number(o.price),String(src.sku||''),false);
-        if(!keys.has(propKey(row))){keys.add(propKey(row));S.draft.products.push(row);added++}}
-    }
     sortProducts();markDirty();renderEditor();
-    toast('Draft ready ('+(chainType==='beady'?'Beady':'Regular')+' pricing) \u2014 '+added+' combinations added'+(renameOps.length?' \u00b7 '+renameOps.length+' renamed':'')+(removeIdx.length?' \u00b7 '+removeIdx.length+' \u00d7 20-inch removed':'')+(summary.length?'. Pricing: '+summary.join(' \u00b7 '):'')+'. Review the matrix, then Save to write & verify on Etsy.','ok');
+    toast('Draft ready ('+(chainType==='beady'?'Beady':'Regular')+' pricing) \u2014 '+added+' combinations added'+(renameOps.length?' \u00b7 '+renameOps.length+' renamed':'')+(removeIdx.length?' \u00b7 '+removeIdx.length+' \u00d7 20-inch removed':'')+(crossIdx.length?' \u00b7 '+crossIdx.length+' invalid pairings removed':'')+(summary.length?'. Pricing: '+summary.join(' \u00b7 '):'')+'. Review the matrix, then Save to write & verify on Etsy.','ok');
   }catch(e){clearActivity();toast(e.message,'bad')}
 }
 $('#chainTypeToggle').addEventListener('click',e=>{const b=e.target.closest('button[data-ct]');if(!b)return;S.chainType=b.dataset.ct;renderChainToggle()});
