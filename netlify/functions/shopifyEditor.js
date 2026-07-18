@@ -479,6 +479,7 @@ function shapeProduct(node) {
   return {
     id: node.id, title: node.title, handle: node.handle,
     product_type: node.productType, tags: (node.tags || []).join(", "),
+    category: node.category ? { id: node.category.id, name: node.category.name, fullName: node.category.fullName } : null,
     options: (node.options || []).map(o => ({ name: o.name, position: o.position })),
     variants, images, framing, collectionIds
   };
@@ -647,6 +648,7 @@ exports.handler = async function (event) {
         const d = await gql(`query($q: String!) {
           products(first: 1, query: $q) { edges { node {
             id title handle productType tags
+            category { id name fullName }
             options { name position }
             media(first: 50) { edges { node { ... on MediaImage { id image { url } } } } }
             variants(first: 100) { edges { node { id price selectedOptions { name value } inventoryQuantity inventoryItem { tracked } } } }
@@ -729,6 +731,21 @@ exports.handler = async function (event) {
       }
 
       // Smart-collection levers: tags (full list) and/or product type.
+      // Set or CLEAR the product's Shopify taxonomy Category (a field distinct from
+      // productType). Shopify auto-assigns categories and gets them wrong; category-based
+      // smart-collection rules (product_taxonomy_node_id) then pull listings into the wrong
+      // collections. body: { product_id, category_id } — category_id null/"" clears it.
+      case "setCategory": {
+        if (!body.product_id) return reply(400, { error: "Missing product_id" });
+        const cat = body.category_id || null;
+        const d = await gql(`mutation($p: ProductUpdateInput!) {
+          productUpdate(product: $p) { product { id category { id name } } userErrors { field message } }
+        }`, { p: { id: body.product_id, category: cat } });
+        const ue = d.productUpdate.userErrors;
+        if (ue.length) return reply(400, { error: ue[0].message });
+        const c = (d.productUpdate.product || {}).category || null;
+        return reply(200, { ok: true, category: c });
+      }
       case "updateProductFields": {
         const p = { id: body.product_id };
         if (typeof body.tags === "string")
