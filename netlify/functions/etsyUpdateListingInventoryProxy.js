@@ -169,10 +169,15 @@ function sanitizeForPut(inventory, onProperty, fallbackReadinessId) {
       };
     }),
     offerings: (p.offerings || []).slice(0, 1).map(o => {
+      const enabled = o.is_enabled !== false;
       const out = {
         price: toDecimalPrice(o.price),
-        quantity: Number(o.quantity ?? o.available_quantity ?? 0),
-        is_enabled: o.is_enabled !== false
+        // Etsy's canonical "unavailable" representation is quantity 0 +
+        // disabled; with stock > 0 Etsy force-enables the offering, which
+        // makes is_enabled:false silently fail. Zero the stock on every
+        // disabled offering so the disable actually holds.
+        quantity: enabled ? Number(o.quantity ?? o.available_quantity ?? 0) : 0,
+        is_enabled: enabled
       };
       // Etsy requires a readiness (processing) state on every offering.
       // Keep the offering's own; new rows inherit the listing's profile.

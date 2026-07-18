@@ -49,6 +49,7 @@ function comboKey(p) {
 // verification and staleness hashing impossible.
 function canonicalProduct(p) {
   const o = firstOffering(p);
+  const enabled = o.is_enabled !== false;
   return {
     key: comboKey(p),
     properties: (p.property_values || [])
@@ -60,8 +61,10 @@ function canonicalProduct(p) {
       .sort((a, b) => a.property_id - b.property_id),
     sku: String(p.sku || "").trim(),
     price: toDecimalPrice(o.price),
-    quantity: toQuantity(o),
-    is_enabled: o.is_enabled !== false
+    // A disabled offering's stock count is meaningless; Etsy's canonical
+    // "unavailable" representation is quantity 0 + disabled, so normalize.
+    quantity: enabled ? toQuantity(o) : 0,
+    is_enabled: enabled
   };
 }
 
@@ -178,6 +181,27 @@ function deriveOnProperty(inv) {
         if (vals.size > 1) { out[field].push(id); break; }
       }
     }
+  }
+  // Partial-matrix post-check: group-wise derivation can miss variation when
+  // combinations don't overlap (e.g. charm-only rows exist solely with the
+  // no-chain tier). Etsy's hard rule is that a field must be constant across
+  // all products sharing the same values on its declared properties. Verify
+  // that; if any group still varies, the declaration is provably
+  // insufficient — escalate that field to all property ids (always valid).
+  for (const field of ["price", "quantity", "sku"]) {
+    const declared = out[field];
+    const groups = new Map();
+    let conflict = false;
+    for (const p of canon.products) {
+      const gkey = p.properties
+        .filter(v => declared.includes(v.property_id))
+        .map(v => v.property_id + ":" + v.values.join("/"))
+        .join("|");
+      const val = fieldValue[field](p);
+      if (groups.has(gkey) && groups.get(gkey) !== val) { conflict = true; break; }
+      groups.set(gkey, val);
+    }
+    if (conflict) out[field] = [...propIds];
   }
   return {
     price_on_property: out.price,
