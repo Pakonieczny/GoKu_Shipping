@@ -33,6 +33,16 @@ const CORS = {
   "Access-Control-Allow-Methods": "GET,OPTIONS"
 };
 
+
+// Etsy requires "keystring:shared_secret" in x-api-key for these endpoints
+// when a shared secret exists (same pattern as etsyShopListingsProxy).
+function apiKey() {
+  const clientId = process.env.CLIENT_ID;
+  const secret = process.env.CLIENT_SECRET;
+  if (!clientId) return null;
+  return secret ? `${clientId}:${secret}` : clientId;
+}
+
 function json(statusCode, body) {
   return { statusCode, headers: CORS, body: JSON.stringify(body) };
 }
@@ -53,7 +63,7 @@ exports.handler = async (event) => {
     const listingId = String(q.listingId || "").trim();
     const inventoryOnly = q.inventory_only === "1" || String(q.inventory_only).toLowerCase() === "true";
     const accessToken = event.headers["access-token"] || event.headers["Access-Token"];
-    const clientId = process.env.CLIENT_ID;
+    const clientId = apiKey();
 
     if (!/^\d+$/.test(listingId)) return json(400, { error: "Missing or invalid listingId" });
     if (!accessToken) return json(400, { error: "Missing access token" });

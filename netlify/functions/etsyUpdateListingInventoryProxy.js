@@ -57,6 +57,16 @@ function decimalizeInventory(inv) {
 const MAX_PROPERTIES = 2;      // Etsy live-listing limit
 const MAX_OPTIONS_PER_PROP = 70; // Etsy per-variation option limit
 
+
+// Etsy requires "keystring:shared_secret" in x-api-key for these endpoints
+// when a shared secret exists (same pattern as etsyShopListingsProxy).
+function apiKey() {
+  const clientId = process.env.CLIENT_ID;
+  const secret = process.env.CLIENT_SECRET;
+  if (!clientId) return null;
+  return secret ? `${clientId}:${secret}` : clientId;
+}
+
 function json(statusCode, body) {
   return { statusCode, headers: CORS, body: JSON.stringify(body) };
 }
@@ -230,7 +240,7 @@ exports.handler = async (event) => {
 
   try {
     const accessToken = event.headers["access-token"] || event.headers["Access-Token"];
-    const clientId = process.env.CLIENT_ID;
+    const clientId = apiKey();
     if (!accessToken) return json(400, { error: "Missing access token" });
     if (!clientId) return json(500, { error: "Missing CLIENT_ID" });
 
