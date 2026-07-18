@@ -488,9 +488,19 @@ function toggleMap(field,pid,on){const arr=new Set(S.draft[field]||[]);on?arr.ad
 function validateDraft(){const h=healthFor(S.draft);if(h.error_count)throw new Error('Resolve the red pricing-health errors before saving.');const props=getProperties();if(props.length>2)throw new Error('Third-variation writing is not enabled for live Etsy listings yet.');if(!S.draft.products.length)throw new Error('At least one product combination is required.');return true}
 async function saveListing(){
   try{validateDraft();if(!await confirmDialog('Update Etsy listing?','The complete pricing matrix will replace the current live Etsy inventory, then be read back and verified.'))return;$('#saveBtn').disabled=true;setActivity('Updating Etsy and verifying live inventory…',null,false);
-    const result=await apiFetch('/etsyUpdateListingInventoryProxy',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({listing_id:Number(S.currentId),expected_snapshot_hash:S.originalHash,inventory:S.draft,auto_on_property:autoMapOn()})});if(!result.verified)throw new Error(result.verification_error||'Etsy verification did not match.');
+    const result=await apiFetch('/etsyUpdateListingInventoryProxy',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({listing_id:Number(S.currentId),expected_snapshot_hash:S.originalHash,inventory:S.draft,auto_on_property:autoMapOn()})});
+    if(!result.verified){
+      /* The write attempt (and any automatic corrective retry) may have
+         already changed Etsy's live inventory even though verification
+         failed. Adopt the server's post-attempt state as the new baseline
+         — the draft (this listing's edits) is left untouched — so the
+         next Save compares against what is actually live now instead of
+         dying on a stale-hash 409 caused by our own failed attempt. */
+      if(result.fresh){S.original=deep(result.fresh.inventory);S.originalHash=result.fresh.snapshot_hash;const l=currentListing();if(l){l._health=result.fresh.pricing_health;l._scanned=true}}
+      throw new Error((result.verification_error||'Etsy verification did not match.')+' The current live state has been reloaded as the baseline — review the matrix and press Save again.')
+    }
     const fresh=result.fresh||await apiFetch('/etsyListingInventoryDetailProxy?listingId='+encodeURIComponent(S.currentId)+'&inventory_only=1');S.cache.set(S.currentId,fresh);const l=currentListing();l._health=fresh.pricing_health;l._scanned=true;S.approvals[S.currentId]={mode:'updated',at:Date.now(),hash:fresh.snapshot_hash};writeApprovals();hydrateDetail(fresh);clearActivity();toast('Etsy update verified successfully.','ok')
-  }catch(e){clearActivity();if(e.status===409&&e.data?.code==='STALE_INVENTORY')toast('The live listing changed. Refresh it before saving.','bad');else toast(e.message,'bad');renderDirty()}
+  }catch(e){clearActivity();if(e.status===409&&e.data?.code==='STALE_INVENTORY'){toast('The live listing changed since it was loaded (possibly from a previous save attempt). Reloading the current state now \u2014 review it and Save again.','bad');S.cache.delete(S.currentId);await focusListing(S.currentId);return}else toast(e.message,'bad');renderDirty()}
 }
 async function approveListing(){
   if(S.dirty){toast('Save or reset your changes before approving.','bad');return}setActivity('Verifying current Etsy pricing…',null,false);try{const fresh=await apiFetch('/etsyListingInventoryDetailProxy?listingId='+encodeURIComponent(S.currentId)+'&inventory_only=1');if(fresh.snapshot_hash!==S.originalHash){S.cache.set(S.currentId,fresh);hydrateDetail(fresh);throw new Error('Etsy changed since this listing was loaded. The latest pricing is now displayed; review it again.')}S.approvals[S.currentId]={mode:'approved',at:Date.now(),hash:fresh.snapshot_hash};writeApprovals();currentListing()._approved=true;renderApproval();renderQueue();clearActivity();toast('Current live pricing approved.','ok')}catch(e){clearActivity();toast(e.message,'bad')}
