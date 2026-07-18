@@ -178,7 +178,7 @@ dialog{border:0;padding:0;border-radius:15px;box-shadow:0 24px 80px rgba(0,0,0,.
           </div>
         </div>
 
-        <div class="sectionHead"><div><h3>Variation menus</h3><div class="sub">Add tiers, rename custom menus or remove options. New combinations inherit their source tier values.</div></div><div class="right"><button class="btn ghost sm" id="addMenuBtn">+ Add dropdown</button></div></div>
+        <div class="sectionHead"><div><h3>Variation menus</h3><div class="sub">Add tiers, rename custom menus or remove options. New combinations inherit their source tier values.</div></div><div class="right"><button class="btn ghost sm" id="charmOnlyBtn">✦ Charm Only setup</button><button class="btn ghost sm" id="addMenuBtn">+ Add dropdown</button></div></div>
         <div class="grid variationGrid" id="variationGrid"></div>
         <div class="card depCard" id="dependencyCard"></div>
 
@@ -614,6 +614,78 @@ $('#rList').addEventListener('click',e=>{
   const row=e.target.closest('.rrow');if(row)focusListing(row.dataset.id);
 });
 $('#rList').addEventListener('keydown',e=>{if(e.key==='Enter'){const row=e.target.closest('.rrow');if(row){e.preventDefault();focusListing(row.dataset.id)}}});
+
+
+/* ---------------- Charm Only expansion (AI-priced, draft-only) ---------------- */
+const CHARM_ONLY_PRICE_POOLS={ // bases chosen so -20% lands exactly on $.25 steps
+  'Charm Only Gold':[28.13,28.75,29.38],      // -> 22.50 / 23.00 / 23.50
+  'Charm Only Silver':[27.81,28.44,29.06],    // -> 22.25 / 22.75 / 23.25
+  'Charm Only Rose':[29.06,29.38,30.00],      // -> 23.25 / 23.50 / 24.00
+  'Charm Only 14k Solid':[110.63,111.56,112.50] // -> 88.50 / 89.25 / 90.00
+};
+const CHARM_ONLY_METALS=['Charm Only Gold','Charm Only Silver','Charm Only Rose','Charm Only 14k Solid'];
+const CHARM_SOURCE_HINTS={'Charm Only Gold':/gold/i,'Charm Only Silver':/silver/i,'Charm Only Rose':/rose/i,'Charm Only 14k Solid':/14\s*k|solid/i};
+const NO_CHAIN_VALUE='No Chain \u2014 Charm Only';
+function detectProp(patterns){const props=getProperties();for(const re of patterns){const hit=props.find(p=>re.test(String(p.property_name||'')));if(hit)return hit}return null}
+async function aiChat(messages){
+  const r=await fetch(FUNCTIONS_BASE+'/openaiProxy',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages,temperature:0,response_format:{type:'json_object'}})});
+  const text=await r.text();let d;try{d=JSON.parse(text)}catch{throw new Error('OpenAI proxy returned a non-JSON response: '+text.slice(0,200))}
+  if(!r.ok)throw new Error('OpenAI proxy error (HTTP '+r.status+'): '+JSON.stringify(d.error||d).slice(0,300));
+  const content=d.choices?.[0]?.message?.content;if(!content)throw new Error('OpenAI returned no content.');
+  try{return JSON.parse(content)}catch{throw new Error('OpenAI did not return valid JSON: '+String(content).slice(0,200))}
+}
+function matrixSummary(metalProp,lengthProp){
+  return S.draft.products.map(p=>{const o=firstOffering(p);return{metal:propValue(p,metalProp.property_id),chain_length:lengthProp?propValue(p,lengthProp.property_id):null,price:Number(o.price),quantity:Number(o.quantity),sku:String(p.sku||''),enabled:o.is_enabled!==false}})
+}
+async function charmOnlySetup(){
+  try{
+    if(!S.draft){toast('Open a listing first.','bad');return}
+    const metalProp=detectProp([/metal/i,/material/i,/colou?r/i]);
+    if(!metalProp){toast('No metal dropdown found. Dropdowns on this listing: '+getProperties().map(p=>'\u201c'+p.property_name+'\u201d').join(', ')+'. Rename one to include \u201cMetal\u201d and retry.','bad');return}
+    const lengthProp=detectProp([/chain\s*length/i,/length/i,/chain/i,/size/i]);
+    if(!lengthProp){toast('No chain-length dropdown found on this listing, so Charm Only options are not applicable here. Dropdowns: '+getProperties().map(p=>'\u201c'+p.property_name+'\u201d').join(', ')+'.','bad');return}
+    if(metalProp.property_id===lengthProp.property_id){toast('Metal and chain-length detection matched the same dropdown (\u201c'+metalProp.property_name+'\u201d). Rename the dropdowns so they are distinguishable.','bad');return}
+    const missing=CHARM_ONLY_METALS.filter(m=>!metalProp.values.some(v=>v.toLowerCase()===m.toLowerCase()));
+    if(!missing.length&&lengthProp.values.includes(NO_CHAIN_VALUE)){toast('All four Charm Only options already exist on this listing.','ok');return}
+    const ok=await confirmDialog('Add Charm Only options to \u201c'+metalProp.property_name+'\u201d?',
+      'Each option draws a random price from its own approved pool \u2014 Gold $28.13/$28.75/$29.38, Silver $27.81/$28.44/$29.06, Rose $29.06/$29.38/$30.00, 14k Solid $110.63/$111.56/$112.50 \u2014 all chosen so Etsy\u2019s 20% discount lands exactly on a $.25 step. '
+      +'A \u201c'+NO_CHAIN_VALUE+'\u201d tier is added to \u201c'+lengthProp.property_name+'\u201d because Etsy requires every combination to carry a value for both dropdowns. '
+      +'Charm Only options are enabled ONLY with \u201c'+NO_CHAIN_VALUE+'\u201d \u2014 every real chain length is disabled for them, and \u201c'+NO_CHAIN_VALUE+'\u201d is disabled for every regular metal, so buyers who pick Charm Only cannot select a chain length. '
+      +'Everything is added as a DRAFT for your review; nothing is written to Etsy until you press Save.');
+    if(!ok)return;
+    const priced=new Map();
+    for(const m of missing){
+      const pool=CHARM_ONLY_PRICE_POOLS[m];
+      if(!pool)throw new Error('No price pool defined for \u201c'+m+'\u201d. Nothing was changed.');
+      const price=pool[Math.floor(Math.random()*pool.length)];
+      const src=(()=>{const re=CHARM_SOURCE_HINTS[m];return S.draft.products.find(p=>re.test(propValue(p,metalProp.property_id)))||S.draft.products[0]})();
+      const baseSku=String(src.sku||'').trim();
+      const sku=(baseSku?baseSku+'-CO':'CO-'+m.replace(/[^A-Za-z0-9]+/g,'').slice(0,10)).slice(0,32);
+      priced.set(m,{price,sku,reasoning:'-20% \u2192 '+money(Math.round(price*0.8/0.25)*0.25)});
+    }
+    // Build draft: template row per Charm Only metal from its closest existing metal
+    const realLengths=lengthProp.values.filter(v=>v!==NO_CHAIN_VALUE);
+    const keys=new Set(S.draft.products.map(propKey));
+    const templateFor=m=>{const re=CHARM_SOURCE_HINTS[m];let src=S.draft.products.find(p=>re.test(propValue(p,metalProp.property_id)));return src||S.draft.products[0]};
+    const mkRow=(tmpl,metalVal,lengthVal,price,sku,enabled)=>{const c=deep(tmpl);c.product_id=null;if(c.offerings?.[0]){c.offerings[0].offering_id=null;c.offerings[0].price=price;c.offerings[0].is_enabled=enabled;if(!Number(c.offerings[0].quantity))c.offerings[0].quantity=enabled?1:0}
+      c.sku=sku;const mv=c.property_values.find(v=>Number(v.property_id)===Number(metalProp.property_id));mv.values=[metalVal];mv.value_ids=[];
+      const lv=c.property_values.find(v=>Number(v.property_id)===Number(lengthProp.property_id));lv.values=[lengthVal];lv.value_ids=[];return c};
+    let added=0;
+    for(const m of missing){const t=templateFor(m),cfg=priced.get(m);
+      for(const len of realLengths){const row=mkRow(t,m,len,cfg.price,cfg.sku,false);if(!keys.has(propKey(row))){keys.add(propKey(row));S.draft.products.push(row);added++}}
+      const live=mkRow(t,m,NO_CHAIN_VALUE,cfg.price,cfg.sku,true);if(!keys.has(propKey(live))){keys.add(propKey(live));S.draft.products.push(live);added++}
+    }
+    // Regular metals get the No Chain tier, disabled
+    const regularMetals=metalProp.values.filter(v=>!CHARM_ONLY_METALS.some(m=>m.toLowerCase()===v.toLowerCase()));
+    for(const metal of regularMetals){const src=S.draft.products.find(p=>propValue(p,metalProp.property_id)===metal)||S.draft.products[0];const o=firstOffering(src);
+      const row=mkRow(src,metal,NO_CHAIN_VALUE,Number(o.price),String(src.sku||''),false);
+      if(!keys.has(propKey(row))){keys.add(propKey(row));S.draft.products.push(row);added++}}
+    sortProducts();markDirty();renderEditor();clearActivity();
+    const why=missing.map(m=>m+': '+money(priced.get(m).price)+(priced.get(m).reasoning?' ('+priced.get(m).reasoning+')':'')).join(' \u00b7 ');
+    toast('Draft ready \u2014 '+added+' combinations added. AI pricing: '+why+'. Review the matrix, adjust anything, then Save to write & verify on Etsy.','ok');
+  }catch(e){clearActivity();toast(e.message,'bad')}
+}
+$('#charmOnlyBtn').addEventListener('click',charmOnlySetup);
 
 /* ---------------- Dialogs ---------------- */
 function formDialog(title,fields){return new Promise(resolve=>{const dlg=$('#formDialog'),form=$('#dialogForm');$('#dlgTitle').textContent=title;$('#dlgBody').innerHTML=fields.map(f=>'<label>'+esc(f.label)+'</label><input name="'+esc(f.name)+'" placeholder="'+esc(f.placeholder||'')+'" value="'+esc(f.value||'')+'">').join('');dlg.showModal();form.onclose=null;dlg.addEventListener('close',function done(){dlg.removeEventListener('close',done);if(dlg.returnValue!=='ok'){resolve(null);return}const fd=new FormData(form),out={};fields.forEach(f=>out[f.name]=fd.get(f.name)||'');resolve(out)},{once:true})})}
