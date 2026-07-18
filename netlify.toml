@@ -312,6 +312,16 @@
   status = 200
   force = true
 
+# ─── Etsy Necklace Pricing Console — July 2026 ──────────────────────────────
+# Serves necklace-pricing.html at its dedicated same-origin subdomain.
+# The console calls the existing Etsy Netlify functions under
+# /.netlify/functions and uses this exact origin as its Etsy OAuth callback.
+[[redirects]]
+  from = "https://necklace-pricing.goldenspike.app"
+  to = "/etsy-pricing.html"
+  status = 200
+  force = true
+
 [[redirects]]
   from = "https://listing-generator-1.goldenspike.app"
   to = "/Listing_Generator_1.html"
