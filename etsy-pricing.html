@@ -47,6 +47,11 @@ dialog{border:0;padding:0;border-radius:15px;box-shadow:0 24px 80px rgba(0,0,0,.
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 
 /* ---------------- Results workspace ---------------- */
+.tabCtl{display:flex;border:1px solid var(--line);border-radius:999px;background:var(--card2);padding:3px;gap:2px}
+.tabCtl button{border:0;background:transparent;border-radius:999px;padding:6px 14px;font-size:12.5px;color:var(--ink70)}
+.tabCtl button.on{background:var(--velvet);color:#fff}
+.tabCtl button b{font-weight:600;color:var(--gold);margin-left:4px}
+.tabCtl button.on b{color:var(--gold2)}
 #resultsView .rhead{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px}
 #resultsView .rhead h2{font:22px var(--serif);margin:0}
 #resultsView .rhead .rsub{font-size:12px;color:var(--ink45)}
@@ -126,7 +131,10 @@ dialog{border:0;padding:0;border-radius:15px;box-shadow:0 24px 80px rgba(0,0,0,.
       <div class="spacer"></div>
       <span class="pill info apiMode">Live-safe API mode</span>
       <span class="pill neutral" id="approvalPill">Not reviewed</span>
-      <button class="btn ghost sm" id="viewToggleBtn">Results</button>
+      <div class="tabCtl" role="tablist" aria-label="View">
+        <button id="tabEditor" role="tab" class="on">Listing</button>
+        <button id="tabResults" role="tab">Results<b id="tabResultsCount">0</b></button>
+      </div>
       <button class="btn ghost sm" id="refreshBtn">Refresh</button>
     </header>
 
@@ -136,8 +144,7 @@ dialog{border:0;padding:0;border-radius:15px;box-shadow:0 24px 80px rgba(0,0,0,.
 
       <section id="resultsView" class="hidden">
         <div class="rhead">
-          <button class="btn ghost sm" id="backToEditorBtn">‹ Editor</button>
-          <div><h2 id="rTitle">Search results</h2><div class="rsub" id="rSummary">—</div></div>
+          <div><h2 id="rTitle">Results</h2><div class="rsub" id="rSummary">—</div></div>
           <div class="rtools">
             <select id="rDensity" aria-label="Result density"><option value="comfortable">Comfortable</option><option value="compact">Compact</option></select>
           </div>
@@ -382,9 +389,8 @@ async function setStoreFilter(key){
   }
   S.stopScan=true;S.storeFilter=key;S.searchResults=null;renderStoreFilters();applyFilter();
   if(S.search.trim().length>=2)await runLiveSearch();
-  const currentVisible=S.filtered.some(l=>String(l.listing_id)===String(S.currentId));
-  if(S.filtered.length&&!currentVisible)await focusListing(S.filtered[0].listing_id);
-  else if(!S.filtered.length){renderNav();toast('No active listings are currently available in '+filterDef().label+'.','bad')}
+  setView('results');renderNav();
+  if(!S.filtered.length)toast('No active listings are currently available in '+filterDef().label+'.','bad');
 }
 async function loadCatalog(){
   if(!localStorage.getItem(TOKEN_KEYS.access)){await startOAuth();return}
@@ -396,7 +402,7 @@ async function loadCatalog(){
     S.listings=all.sort((a,b)=>String(a.title||'').localeCompare(String(b.title||'')));
     for(const l of S.listings){const a=S.approvals[String(l.listing_id)];l._approved=!!a;l._health=null;l._scanned=false}
     renderStoreFilters();applyFilter();clearActivity();updateSearchUi('Live Etsy title search');if(!S.listings.length){toast('No active Etsy listings were found.','bad');return}
-    const first=S.filtered[0]||S.listings[0];await focusListing(first.listing_id);toast('Live Etsy catalog loaded. Choose a category or search by title.','ok');
+    setView('results');toast('Live Etsy catalog loaded. Browse results, pick a category, or search by title — click any listing to open its pricing matrix.','ok');
   }catch(e){clearActivity();toast(e.message,'bad')}
 }
 function applyFilter(){
@@ -490,12 +496,11 @@ function resetDraft(){S.draft=deep(S.original);S.dirty=false;S.selected.clear();
 async function refreshCurrent(){if(!S.currentId){loadCatalog();return}if(S.dirty&&!await confirmDialog('Discard changes and refresh?','The latest live Etsy inventory will replace this draft.'))return;S.cache.delete(S.currentId);S.dirty=false;await focusListing(S.currentId)}
 
 
-/* ---------------- Results workspace ---------------- */
+/* ---------------- Unified results tab ---------------- */
 function setView(v){
-  if(S.view===v)return;S.view=v;
-  const results=v==='results';
+  S.view=v;const results=v==='results';
   $('#resultsView').classList.toggle('hidden',!results);
-  $('#viewToggleBtn').textContent=results?'Editor':'Results';
+  $('#tabResults').classList.toggle('on',results);$('#tabEditor').classList.toggle('on',!results);
   if(results){$('#editor').classList.add('hidden');$('#emptyState').classList.add('hidden');$('#stickyActions').classList.add('hidden');renderResults()}
   else{if(S.currentId&&S.draft){$('#editor').classList.remove('hidden');$('#stickyActions').classList.remove('hidden')}else{$('#emptyState').classList.remove('hidden')}}
 }
@@ -530,12 +535,13 @@ function comboChip(l){
   return '<span class="schip">'+h.product_count+' combos'+range+'</span>';
 }
 function renderResults(){
-  if(!$('#resultsView'))return;
   const list=$('#rList');if(!list)return;
-  const rows=resultsRows(),base=resultsBase(),scroll=list.scrollTop;
-  const q=S.search.trim();
+  const rows=resultsRows(),base=resultsBase();
+  $('#tabResultsCount').textContent=base.length;
+  if(S.view!=='results'){return}
+  const scroll=list.scrollTop,q=S.search.trim();
   $('#rTitle').textContent=q?('Results for \u201c'+q+'\u201d'):(filterDef().label+' listings');
-  $('#rSummary').textContent=rows.length+' of '+base.length+' listing'+(base.length===1?'':'s')+' · '+filterDef().label+(S.searchPending?' · syncing with Etsy…':'');
+  $('#rSummary').textContent=rows.length+' of '+base.length+' listing'+(base.length===1?'':'s')+' · '+(q?'live title search · category: '+filterDef().label:filterDef().label)+(S.searchPending?' · syncing with Etsy…':'');
   $('#rChips').innerHTML=R_FILTERS.map(f=>{const n=base.filter(f.test).length;return '<button data-rfilter="'+f.key+'" class="'+(S.rFilter===f.key?'on':'')+'">'+f.label+' <b>'+n+'</b></button>'}).join('');
   for(const id of [...S.rSel])if(!rows.some(l=>String(l.listing_id)===id))S.rSel.delete(id);
   if(!rows.length){list.innerHTML='<div class="rempty">'+(q?'No live Etsy titles match this search and status filter.':'No listings in this category and status filter.')+'</div>'}
@@ -558,7 +564,7 @@ function renderResults(){
   }
   $('#rSelCount').textContent=S.rSel.size?S.rSel.size+' selected':(rows.length?'0 selected · actions apply to all '+rows.length+' shown':'0 selected');
   const m=$('#rMaster');m.checked=rows.length>0&&S.rSel.size===rows.length;m.indeterminate=S.rSel.size>0&&S.rSel.size<rows.length;
-  const busy=S.scanning;$('#rScanBtn').disabled=busy;$('#rApproveBtn').disabled=busy;
+  $('#rScanBtn').disabled=S.scanning;$('#rApproveBtn').disabled=S.scanning;
 }
 function rTargets(){const rows=resultsRows();return S.rSel.size?rows.filter(l=>S.rSel.has(String(l.listing_id))):rows}
 async function scanIds(targets){
@@ -587,8 +593,8 @@ async function approveIds(targets){
   writeApprovals();S.scanning=false;clearActivity();applyFilter();renderApproval();
   toast(S.stopScan?'Approval run stopped.':('Approved '+(done-failed)+' listing'+(done-failed===1?'':'s')+(failed?' · '+failed+' failed':'')+'.'),failed?'bad':'ok');
 }
-$('#viewToggleBtn').addEventListener('click',()=>setView(S.view==='results'?'editor':'results'));
-$('#backToEditorBtn').addEventListener('click',()=>setView('editor'));
+$('#tabResults').addEventListener('click',()=>setView('results'));
+$('#tabEditor').addEventListener('click',()=>setView('editor'));
 $('#rDensity').addEventListener('change',e=>{S.rDensity=e.target.value;renderResults()});
 $('#rChips').addEventListener('click',e=>{const b=e.target.closest('button[data-rfilter]');if(!b)return;S.rFilter=b.dataset.rfilter;renderResults()});
 $('#rMaster').addEventListener('change',e=>{S.rSel=new Set(e.target.checked?resultsRows().map(l=>String(l.listing_id)):[]);renderResults()});
