@@ -33,7 +33,7 @@
 const { etsyFetch } = require("./etsyRateLimiter");
 const {
   toDecimalPrice, snapshotHash, pricingHealth,
-  deriveOnProperty, verifyAgainst, comboKey
+  deriveOnProperty, verifyAgainst, comboKey, productPropertyOrder
 } = require("./_etsyInventoryCanonical");
 
 const CORS = {
@@ -307,6 +307,13 @@ exports.handler = async (event) => {
       quantity_on_property: (inventory.quantity_on_property || []).map(Number),
       sku_on_property: (inventory.sku_on_property || []).map(Number)
     };
+    // Etsy requires these arrays in the same order the properties appear in
+    // the products. Enforce for both derived and manual maps.
+    const propOrder = productPropertyOrder(inventory);
+    const inProductOrder = ids => propOrder.filter(id => ids.includes(id));
+    onProperty.price_on_property = inProductOrder(onProperty.price_on_property);
+    onProperty.quantity_on_property = inProductOrder(onProperty.quantity_on_property);
+    onProperty.sku_on_property = inProductOrder(onProperty.sku_on_property);
 
     // Most common readiness_state_id on the live listing — inherited by any
     // draft row (e.g. newly added combinations) that doesn't carry one.

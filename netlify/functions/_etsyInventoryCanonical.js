@@ -137,11 +137,22 @@ function pricingHealth(inv) {
 // Etsy rejects a PUT when a field varies across a property that is not
 // declared in the matching *_on_property array. Deriving the arrays from the
 // matrix itself guarantees the declaration always matches reality.
+// Property IDs in the order they appear inside the products themselves.
+// Etsy requires *_on_property arrays to follow this exact order.
+function productPropertyOrder(inv) {
+  const order = [];
+  for (const p of (inv?.products || [])) {
+    for (const v of (p.property_values || [])) {
+      const id = Number(v.property_id);
+      if (!order.includes(id)) order.push(id);
+    }
+  }
+  return order;
+}
+
 function deriveOnProperty(inv) {
   const canon = canonicalInventory(inv);
-  const propIds = [...new Set(
-    canon.products.flatMap(p => p.properties.map(v => v.property_id))
-  )].sort((a, b) => a - b);
+  const propIds = productPropertyOrder(inv);
 
   const fieldValue = {
     price: p => (Number.isFinite(p.price) ? p.price.toFixed(2) : "?"),
@@ -202,6 +213,7 @@ function verifyAgainst(intendedInv, freshInv) {
 }
 
 module.exports = {
+  productPropertyOrder,
   toDecimalPrice,
   canonicalInventory,
   snapshotHash,
