@@ -354,19 +354,60 @@ exports.handler = async (event) => {
         previous_snapshot_hash: previousHash
       });
     }
-    const freshInventory = {
+    let freshInventory = {
       products: postInv.products || [],
       price_on_property: postInv.price_on_property || [],
       quantity_on_property: postInv.quantity_on_property || [],
       sku_on_property: postInv.sku_on_property || []
     };
-    const check = verifyAgainst({ ...putBody }, freshInventory);
+    let check = verifyAgainst({ ...putBody }, freshInventory);
+    let autoCorrected = false;
+
+    // Known Etsy behavior: is_enabled=false often does not take effect on
+    // offerings created for the first time in the same PUT that creates
+    // them — it only sticks once the combination already exists with a
+    // real product_id/offering_id. If EVERY mismatch after the first write
+    // is purely an enabled-state mismatch (never price/quantity/SKU), the
+    // combinations now exist, so one corrective PUT targeting their live
+    // state should apply the disable/enable correctly. This never
+    // fabricates data — it resubmits the same operator-approved draft.
+    const onlyEnabledMismatches = check.differences.length > 0 &&
+      check.detail.every(d => d.field === "is_enabled");
+
+    if (!check.verified && onlyEnabledMismatches) {
+      // Precondition guarantees price/quantity/SKU already match, so the
+      // safe corrective action is to resend the EXACT same body \u2014 no
+      // reconstruction, no risk of corrupting a field that was already
+      // correct. Only the target-side state (now-existing product IDs)
+      // differs between this call and the first.
+      const correctivePutResp = await etsyFetch(putUrl, {
+        method: "PUT",
+        headers,
+        body: JSON.stringify(putBody)
+      }, { bucket: "etsy-listing-console" });
+      const correctiveResult = await parseJson(correctivePutResp);
+
+      if (correctivePutResp.ok) {
+        const { resp: reResp, payload: rePayload } = await getInventory(listingId, headers);
+        if (reResp.ok) {
+          freshInventory = {
+            products: rePayload.products || [],
+            price_on_property: rePayload.price_on_property || [],
+            quantity_on_property: rePayload.quantity_on_property || [],
+            sku_on_property: rePayload.sku_on_property || []
+          };
+          check = verifyAgainst({ ...putBody }, freshInventory);
+          autoCorrected = true;
+        }
+      }
+    }
 
     return json(200, {
       ok: true,
       verified: check.verified,
+      auto_corrected: autoCorrected,
       verification_error: check.verified ? null :
-        "Live Etsy inventory does not match the submitted draft: " + check.differences.slice(0, 5).join(" · ") +
+        "Live Etsy inventory does not match the submitted draft" + (autoCorrected ? " even after an automatic corrective retry" : "") + ": " + check.differences.slice(0, 5).join(" · ") +
         (check.differences.length > 5 ? " · +" + (check.differences.length - 5) + " more" : ""),
       differences: check.differences,
       listing_id: Number(listingId),

@@ -194,22 +194,23 @@ function verifyAgainst(intendedInv, freshInv) {
   const want = canonicalInventory(intendedInv);
   const got = canonicalInventory(freshInv);
   const differences = [];
+  const detail = []; // structured, for callers that need to react programmatically (e.g. auto-retry logic)
 
   const gotMap = new Map(got.products.map(p => [p.key, p]));
   const wantMap = new Map(want.products.map(p => [p.key, p]));
 
   for (const p of want.products) {
     const g = gotMap.get(p.key);
-    if (!g) { differences.push("Missing on Etsy after update: " + (p.key || "base product")); continue; }
-    if (g.price !== p.price) differences.push((p.key || "base product") + " price is " + g.price + ", expected " + p.price);
-    if (g.quantity !== p.quantity) differences.push((p.key || "base product") + " quantity is " + g.quantity + ", expected " + p.quantity);
-    if (g.sku !== p.sku) differences.push((p.key || "base product") + " SKU is \"" + g.sku + "\", expected \"" + p.sku + "\"");
-    if (g.is_enabled !== p.is_enabled) differences.push((p.key || "base product") + " enabled state is " + g.is_enabled + ", expected " + p.is_enabled);
+    if (!g) { differences.push("Missing on Etsy after update: " + (p.key || "base product")); detail.push({ key: p.key, field: "missing" }); continue; }
+    if (g.price !== p.price) { differences.push((p.key || "base product") + " price is " + g.price + ", expected " + p.price); detail.push({ key: p.key, field: "price" }); }
+    if (g.quantity !== p.quantity) { differences.push((p.key || "base product") + " quantity is " + g.quantity + ", expected " + p.quantity); detail.push({ key: p.key, field: "quantity" }); }
+    if (g.sku !== p.sku) { differences.push((p.key || "base product") + " SKU is \"" + g.sku + "\", expected \"" + p.sku + "\""); detail.push({ key: p.key, field: "sku" }); }
+    if (g.is_enabled !== p.is_enabled) { differences.push((p.key || "base product") + " enabled state is " + g.is_enabled + ", expected " + p.is_enabled); detail.push({ key: p.key, field: "is_enabled", expected: p.is_enabled }); }
   }
   for (const g of got.products) {
-    if (!wantMap.has(g.key)) differences.push("Unexpected combination on Etsy after update: " + (g.key || "base product"));
+    if (!wantMap.has(g.key)) { differences.push("Unexpected combination on Etsy after update: " + (g.key || "base product")); detail.push({ key: g.key, field: "unexpected" }); }
   }
-  return { verified: differences.length === 0, differences };
+  return { verified: differences.length === 0, differences, detail };
 }
 
 module.exports = {
