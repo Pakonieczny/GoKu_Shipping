@@ -152,7 +152,7 @@ function validateDraft(inventory) {
 
 /* ---------- PUT body sanitization ---------- */
 
-function sanitizeForPut(inventory, onProperty) {
+function sanitizeForPut(inventory, onProperty, fallbackReadinessId) {
   const products = (inventory.products || []).map(p => ({
     sku: String(p.sku || "").trim(),
     property_values: (p.property_values || []).map(v => {
@@ -168,11 +168,18 @@ function sanitizeForPut(inventory, onProperty) {
         values
       };
     }),
-    offerings: (p.offerings || []).slice(0, 1).map(o => ({
-      price: toDecimalPrice(o.price),
-      quantity: Number(o.quantity ?? o.available_quantity ?? 0),
-      is_enabled: o.is_enabled !== false
-    }))
+    offerings: (p.offerings || []).slice(0, 1).map(o => {
+      const out = {
+        price: toDecimalPrice(o.price),
+        quantity: Number(o.quantity ?? o.available_quantity ?? 0),
+        is_enabled: o.is_enabled !== false
+      };
+      // Etsy requires a readiness (processing) state on every offering.
+      // Keep the offering's own; new rows inherit the listing's profile.
+      const rid = o.readiness_state_id ?? fallbackReadinessId;
+      if (rid != null) out.readiness_state_id = Number(rid);
+      return out;
+    })
   }));
 
   return {
@@ -208,11 +215,15 @@ async function legacySkuUpdate(listingId, items, headers) {
       value_ids: Array.isArray(v.value_ids) ? v.value_ids : [],
       values: Array.isArray(v.values) ? v.values : []
     })) : [],
-    offerings: Array.isArray(p.offerings) ? p.offerings.map(o => ({
-      quantity: Number(o.quantity ?? o.available_quantity ?? 0),
-      is_enabled: o.is_enabled !== false,
-      price: toDecimalPrice(o.price)
-    })) : []
+    offerings: Array.isArray(p.offerings) ? p.offerings.map(o => {
+      const out = {
+        quantity: Number(o.quantity ?? o.available_quantity ?? 0),
+        is_enabled: o.is_enabled !== false,
+        price: toDecimalPrice(o.price)
+      };
+      if (o.readiness_state_id != null) out.readiness_state_id = Number(o.readiness_state_id);
+      return out;
+    }) : []
   }));
 
   const putUrl = `https://openapi.etsy.com/v3/application/listings/${listingId}/inventory`;
@@ -297,7 +308,16 @@ exports.handler = async (event) => {
       sku_on_property: (inventory.sku_on_property || []).map(Number)
     };
 
-    const putBody = sanitizeForPut(inventory, onProperty);
+    // Most common readiness_state_id on the live listing — inherited by any
+    // draft row (e.g. newly added combinations) that doesn't carry one.
+    const readinessCounts = new Map();
+    for (const p of previousInventory.products) {
+      const rid = p?.offerings?.[0]?.readiness_state_id;
+      if (rid != null) readinessCounts.set(rid, (readinessCounts.get(rid) || 0) + 1);
+    }
+    const fallbackReadinessId = [...readinessCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+
+    const putBody = sanitizeForPut(inventory, onProperty, fallbackReadinessId);
     const putUrl = `https://openapi.etsy.com/v3/application/listings/${listingId}/inventory`;
     const putResp = await etsyFetch(putUrl, {
       method: "PUT",
