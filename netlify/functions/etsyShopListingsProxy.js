@@ -122,25 +122,39 @@ exports.handler = async function handler(event) {
       let offset = 0;
 
       for (let page = 0; page < maxPages && results.length < resultLimit; page += 1) {
+        // Build only the parameters each Etsy endpoint actually supports.
+        // Unsupported params (legacy, keywords/score on the sections
+        // endpoint) make Etsy return an opaque HTTP 500 "Server Error".
         const params = new URLSearchParams({
           limit: String(pageSize),
-          offset: String(offset),
-          keywords: query,
-          sort_on: sortOn,
-          sort_order: sortOrder,
-          legacy: "true"
+          offset: String(offset)
         });
 
         let endpoint;
         if (sectionId) {
+          // getListingsByShopSectionId: no keywords, no score sort.
           params.set("shop_section_ids", sectionId);
+          params.set("sort_on", sortOn === "score" ? "created" : sortOn);
+          params.set("sort_order", sortOrder);
           endpoint = `https://openapi.etsy.com/v3/application/shops/${shopId}/shop-sections/listings`;
         } else {
+          // findAllActiveListingsByShop: keywords + score sort supported.
+          params.set("keywords", query);
+          params.set("sort_on", sortOn);
+          params.set("sort_order", sortOrder);
           endpoint = `https://openapi.etsy.com/v3/application/shops/${shopId}/listings/active`;
         }
 
         const { resp, payload } = await fetchEtsy(`${endpoint}?${params.toString()}`, headers);
-        if (!resp.ok) return json(resp.status, payload);
+        if (!resp.ok) {
+          return json(resp.status, {
+            error: "Etsy search failed (HTTP " + resp.status + "): " + (payload.error || JSON.stringify(payload).slice(0, 300)),
+            etsy_status: resp.status,
+            etsy_endpoint: endpoint.replace("https://openapi.etsy.com/v3/application", ""),
+            etsy_params: Object.fromEntries(params),
+            etsy_response: payload
+          });
+        }
 
         const rows = Array.isArray(payload.results) ? payload.results : [];
         candidateCount = Math.max(candidateCount, Number(payload.count || 0));
