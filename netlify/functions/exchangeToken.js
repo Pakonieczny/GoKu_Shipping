@@ -29,6 +29,7 @@ const SHIPPING3_DOMAIN   = "https://shipping-3.goldenspike.app";
 const WELD1_DOMAIN       = "https://weld-1.goldenspike.app";
 const DESIGN1_DOMAIN     = "https://design-1.goldenspike.app";
 const SKU_DOMAIN         = "https://sku.goldenspike.app";
+const ETSY_PRICING_DOMAIN = "https://etsy-pricing.goldenspike.app";
 
 /* 🆕 global CORS constants */
 const CORS = {
@@ -82,7 +83,8 @@ function pickDomainFromHost(event) {
     case "shipping-3":   return SHIPPING3_DOMAIN;
     case "goldenspike":  return GOLDENSPIKE_DOMAIN;
     case "design":       return DESIGN_DOMAIN;
-    case "sku":          return SKU_DOMAIN;  
+    case "sku":          return SKU_DOMAIN;
+    case "etsy-pricing": return ETSY_PRICING_DOMAIN;  
     default:
       break; // fall through to host
   }
@@ -103,6 +105,7 @@ function pickDomainFromHost(event) {
   if (host.includes("design-message.goldenspike.app"))       return DESIGNMESSAGE_DOMAIN;
   if (host.includes("design-message-1.goldenspike.app"))       return DESIGNMESSAGE1_DOMAIN;
   if (host.includes("sku.goldenspike.app"))                    return SKU_DOMAIN;
+  if (host.includes("etsy-pricing.goldenspike.app"))           return ETSY_PRICING_DOMAIN;
   if (host.includes("goldenspike.app"))              return GOLDENSPIKE_DOMAIN;
 
   /* ── fallback ────────────────────────────────────────────────────── */
