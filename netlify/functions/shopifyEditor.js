@@ -731,15 +731,33 @@ exports.handler = async function (event) {
       }
 
       // Smart-collection levers: tags (full list) and/or product type.
-      // Set or CLEAR the product's Shopify taxonomy Category (a field distinct from
-      // productType). Shopify auto-assigns categories and gets them wrong; category-based
-      // smart-collection rules (product_taxonomy_node_id) then pull listings into the wrong
-      // collections. body: { product_id, category_id } — category_id null/"" clears it.
+      // Set the product's Shopify taxonomy Category (a field distinct from productType).
+      // Shopify auto-assigns categories and gets them wrong; category-based smart-collection
+      // rules (product_taxonomy_node_id) then pull listings into the wrong collections.
+      // IMPORTANT: merely clearing the category is not durable — Shopify re-auto-assigns a
+      // category to uncategorized products, resurrecting the wrong classification. So this op
+      // resolves the CORRECT category from body.category_query (usually the product Type) via
+      // Shopify's taxonomy search and sets it explicitly. body: { product_id, category_id? ,
+      // category_query? } — explicit category_id wins; no id and no resolvable query → clear.
       case "setCategory": {
         if (!body.product_id) return reply(400, { error: "Missing product_id" });
-        const cat = body.category_id || null;
+        let cat = body.category_id || null;
+        if (!cat && body.category_query) {
+          const terms = [String(body.category_query)];
+          const lastWord = terms[0].trim().split(/\s+/).pop();
+          if (lastWord && lastWord.toLowerCase() !== terms[0].trim().toLowerCase()) terms.push(lastWord);
+          for (const term of terms) {
+            const t = await gql(`query($q: String!) {
+              taxonomy { categories(search: $q, first: 10) { nodes { id name fullName } } }
+            }`, { q: term });
+            const nodes = (((t.taxonomy || {}).categories || {}).nodes) || [];
+            // Prefer the jewelry branch (we sell jewelry); otherwise first hit.
+            const pick = nodes.find(n => /jewelry/i.test(n.fullName || "")) || nodes[0];
+            if (pick) { cat = pick.id; break; }
+          }
+        }
         const d = await gql(`mutation($p: ProductUpdateInput!) {
-          productUpdate(product: $p) { product { id category { id name } } userErrors { field message } }
+          productUpdate(product: $p) { product { id category { id name fullName } } userErrors { field message } }
         }`, { p: { id: body.product_id, category: cat } });
         const ue = d.productUpdate.userErrors;
         if (ue.length) return reply(400, { error: ue[0].message });
