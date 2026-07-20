@@ -11,7 +11,8 @@
 //   Safe, verified, reversible write sequence:
 //     1. VALIDATE the draft server-side (structure, prices, quantities,
 //        duplicates, Etsy variation limits). Reject with the exact problem.
-//     2. READ the live inventory and compute its canonical snapshot hash.
+//     2. READ the live inventory and compute its canonical snapshot hash
+//        (unless skip_freshness_check is set — see note at that block).
 //        If expected_snapshot_hash is present and differs → 409
 //        { code: "STALE_INVENTORY" } and NOTHING is written. This prevents
 //        clobbering edits made in Etsy's own UI since the console loaded.
@@ -20,15 +21,24 @@
 //        exact error status + body are passed through on failure.
 //     4. READ BACK the live inventory and verify every combination's price,
 //        quantity, SKU and enabled state against what was intended. The
-//        response reports verified:true/false with exact differences.
+//        response reports verified:true/false with exact differences. Uses
+//        Etsy's PUT response directly instead of a separate GET when it
+//        looks like a complete resource (see looksLikeFreshInventory).
 //     5. REVERSIBILITY: the response includes previous_inventory (the full
 //        pre-write document) and previous_snapshot_hash so the operator can
 //        restore the prior state by re-submitting it through this same
-//        endpoint.
+//        endpoint. previous_inventory is null when skip_freshness_check was
+//        used, since no server-side pre-write GET happened.
+//
+//   Every response — success, rejection, or error — carries
+//   etsy_call_count: the exact number of real Etsy API requests this
+//   invocation made. The console uses this to track quota usage; it is not
+//   an estimate, it is a live count from a shared counter (ctx.calls)
+//   threaded through every etsyFetch call in this file.
 //
 //   Success response: { ok, verified, listing_id, previous_inventory,
 //     previous_snapshot_hash, fresh: { inventory, snapshot_hash,
-//     pricing_health, fetched_at } }
+//     pricing_health, fetched_at }, etsy_call_count }
 
 const { etsyFetch } = require("./etsyRateLimiter");
 const {
@@ -45,6 +55,7 @@ const CORS = {
 // Inventories returned to the console must carry decimal prices (the editor
 // edits plain numbers); Etsy GET returns Money objects.
 function decimalizeInventory(inv) {
+  if (!inv) return null;
   return {
     ...inv,
     products: (inv.products || []).map(p => ({
@@ -52,6 +63,30 @@ function decimalizeInventory(inv) {
       offerings: (p.offerings || []).map(o => ({ ...o, price: toDecimalPrice(o.price) }))
     }))
   };
+}
+
+// QUOTA OPTIMIZATION: Etsy's write endpoints (PUT inventory, POST
+// personalization) generally echo back the resulting resource. When they
+// do, we can use that response AS the verification read instead of making
+// a separate GET call. This is checked defensively every time — if Etsy's
+// response doesn't look like a usable full resource, the code falls back
+// to the explicit GET it always used before, so this never trades away
+// correctness for savings; it only skips the GET when it's provably
+// redundant.
+function looksLikeFreshInventory(payload, expectedProductCount) {
+  return !!payload &&
+    Array.isArray(payload.products) &&
+    payload.products.length === expectedProductCount &&
+    payload.products.every(p =>
+      Array.isArray(p.offerings) && p.offerings.length > 0 &&
+      p.offerings[0].price != null &&
+      Object.prototype.hasOwnProperty.call(p.offerings[0], "is_enabled")
+    );
+}
+
+function extractPersonalizationQuestion(payload) {
+  const q = (payload && (payload.personalization_questions || payload.results))?.[0];
+  return q && q.question_text ? q : null;
 }
 
 const MAX_PROPERTIES = 2;      // Etsy live-listing limit
@@ -86,8 +121,13 @@ function etsyHeaders(accessToken, clientId) {
   };
 }
 
-async function getInventory(listingId, headers) {
+// ctx is a shared { calls: 0 } counter passed down from the handler so every
+// real Etsy request made during this invocation — across getInventory(),
+// legacySkuUpdate(), and the handler's own PUT/POST calls — is tallied in
+// one place and reported back as etsy_call_count.
+async function getInventory(listingId, headers, ctx) {
   const url = `https://openapi.etsy.com/v3/application/listings/${listingId}/inventory`;
+  if (ctx) ctx.calls++;
   const resp = await etsyFetch(url, { headers }, { bucket: "etsy-listing-console" });
   const payload = await parseJson(resp);
   return { resp, payload };
@@ -196,18 +236,20 @@ function sanitizeForPut(inventory, onProperty, fallbackReadinessId) {
 }
 
 /* ---------- Legacy mode (SKU console) ---------- */
-
-async function legacySkuUpdate(listingId, items, headers) {
-  const { resp: getResp, payload: inv } = await getInventory(listingId, headers);
-  if (!getResp.ok) return json(getResp.status, inv);
+// Returns { statusCode, payload } (unwrapped — no etsy_call_count here) so
+// the handler can attach the shared ctx.calls tally via respond() the same
+// way it does for every other exit point.
+async function legacySkuUpdate(listingId, items, headers, ctx) {
+  const { resp: getResp, payload: inv } = await getInventory(listingId, headers, ctx);
+  if (!getResp.ok) return { statusCode: getResp.status, payload: inv };
 
   const list = Array.isArray(inv.products) ? inv.products : [];
-  if (!list.length) return json(400, { error: "No variants found for this listing" });
+  if (!list.length) return { statusCode: 400, payload: { error: "No variants found for this listing" } };
 
   const targetPid = Number(list[0].product_id);
   const requested = items.find(i => Number(i.product_id) === targetPid);
   if (!requested) {
-    return json(400, { error: "Missing Variant 1 in items (product_id of first variant required)" });
+    return { statusCode: 400, payload: { error: "Missing Variant 1 in items (product_id of first variant required)" } };
   }
   const newSku = String(requested.sku || "").trim();
 
@@ -232,6 +274,7 @@ async function legacySkuUpdate(listingId, items, headers) {
   }));
 
   const putUrl = `https://openapi.etsy.com/v3/application/listings/${listingId}/inventory`;
+  ctx.calls++;
   const putResp = await etsyFetch(putUrl, {
     method: "PUT",
     headers,
@@ -243,66 +286,93 @@ async function legacySkuUpdate(listingId, items, headers) {
     })
   }, { bucket: "etsy-listing-console" });
   const result = await parseJson(putResp);
-  if (!putResp.ok) return json(putResp.status, result);
+  if (!putResp.ok) return { statusCode: putResp.status, payload: result };
 
-  return json(200, { ok: true, listing_id: listingId });
+  return { statusCode: 200, payload: { ok: true, listing_id: listingId } };
 }
 
 /* ---------- Handler ---------- */
 
 exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: CORS, body: "ok" };
-  if (event.httpMethod !== "POST") return json(405, { error: "Method not allowed" });
+  if (event.httpMethod !== "POST") return json(405, { error: "Method not allowed", etsy_call_count: 0 });
+
+  // Shared per-invocation Etsy-call counter, attached to every response by
+  // respond() below so the console can display an exact (not estimated)
+  // running total. Declared outside the try so the catch block can still
+  // report however many calls happened before a mid-flight exception.
+  const ctx = { calls: 0 };
+  const respond = (statusCode, body) => json(statusCode, { ...body, etsy_call_count: ctx.calls });
 
   try {
     const accessToken = event.headers["access-token"] || event.headers["Access-Token"];
     const clientId = apiKey();
-    if (!accessToken) return json(400, { error: "Missing access token" });
-    if (!clientId) return json(500, { error: "Missing CLIENT_ID" });
+    if (!accessToken) return respond(400, { error: "Missing access token" });
+    if (!clientId) return respond(500, { error: "Missing CLIENT_ID" });
 
     let body;
     try { body = JSON.parse(event.body || "{}"); }
-    catch { return json(400, { error: "Request body is not valid JSON." }); }
+    catch { return respond(400, { error: "Request body is not valid JSON." }); }
 
     const listingId = String(body.listing_id || "").trim();
-    if (!/^\d+$/.test(listingId)) return json(400, { error: "Missing or invalid listing_id" });
+    if (!/^\d+$/.test(listingId)) return respond(400, { error: "Missing or invalid listing_id" });
 
     const headers = etsyHeaders(accessToken, clientId);
 
     // ---- Legacy SKU-console mode
     if (Array.isArray(body.items)) {
-      if (!body.items.length) return json(400, { error: "No items provided" });
-      return legacySkuUpdate(listingId, body.items, headers);
+      if (!body.items.length) return respond(400, { error: "No items provided" });
+      const legacy = await legacySkuUpdate(listingId, body.items, headers, ctx);
+      return respond(legacy.statusCode, legacy.payload);
     }
 
     // ---- Pricing-console mode
     const inventory = body.inventory;
     if (!inventory || typeof inventory !== "object") {
-      return json(400, { error: "Missing inventory payload (or legacy items array)." });
+      return respond(400, { error: "Missing inventory payload (or legacy items array)." });
     }
 
     // 1) Validate before touching Etsy.
     const problem = validateDraft(inventory);
-    if (problem) return json(400, { error: problem, code: "INVALID_DRAFT" });
+    if (problem) return respond(400, { error: problem, code: "INVALID_DRAFT" });
 
     // 2) Staleness check against the live document.
-    const { resp: preResp, payload: preInv } = await getInventory(listingId, headers);
-    if (!preResp.ok) return json(preResp.status, preInv);
+    // QUOTA OPTIMIZATION (opt-in): this GET exists to catch an edit made
+    // OUTSIDE the console (e.g. directly in Etsy's own listing editor)
+    // between load and save — the console's own snapshot_hash already
+    // covers "did MY draft change since I loaded it." Skipping this call
+    // trades away only the external-edit guard, nothing else. Defaults to
+    // ON in the console (single-operator tool — see etsy-pricing.html);
+    // this endpoint still requires the console to send the flag explicitly
+    // rather than assuming it.
+    const skipFreshnessCheck = body.skip_freshness_check === true;
+    let previousInventory, previousHash;
+    if (skipFreshnessCheck) {
+      const expected = String(body.expected_snapshot_hash || "").trim();
+      if (!expected) {
+        return respond(400, { error: "skip_freshness_check requires expected_snapshot_hash from the listing load.", code: "MISSING_HASH" });
+      }
+      previousHash = expected;
+      previousInventory = null; // not fetched; console already holds its own pre-edit copy
+    } else {
+      const { resp: preResp, payload: preInv } = await getInventory(listingId, headers, ctx);
+      if (!preResp.ok) return respond(preResp.status, preInv);
 
-    const previousInventory = {
-      products: preInv.products || [],
-      price_on_property: preInv.price_on_property || [],
-      quantity_on_property: preInv.quantity_on_property || [],
-      sku_on_property: preInv.sku_on_property || []
-    };
-    const previousHash = snapshotHash(previousInventory);
-    const expected = String(body.expected_snapshot_hash || "").trim();
-    if (expected && expected !== previousHash) {
-      return json(409, {
-        error: "The live Etsy inventory changed after this listing was loaded. Nothing was written.",
-        code: "STALE_INVENTORY",
-        current_snapshot_hash: previousHash
-      });
+      previousInventory = {
+        products: preInv.products || [],
+        price_on_property: preInv.price_on_property || [],
+        quantity_on_property: preInv.quantity_on_property || [],
+        sku_on_property: preInv.sku_on_property || []
+      };
+      previousHash = snapshotHash(previousInventory);
+      const expected = String(body.expected_snapshot_hash || "").trim();
+      if (expected && expected !== previousHash) {
+        return respond(409, {
+          error: "The live Etsy inventory changed after this listing was loaded. Nothing was written.",
+          code: "STALE_INVENTORY",
+          current_snapshot_hash: previousHash
+        });
+      }
     }
 
     // 3) Dependency maps: derive from the matrix (default) or honor manual maps.
@@ -322,8 +392,11 @@ exports.handler = async (event) => {
 
     // Most common readiness_state_id on the live listing — inherited by any
     // draft row (e.g. newly added combinations) that doesn't carry one.
+    // Only available when the pre-write GET ran; new rows added client-side
+    // already clone readiness_state_id from their source row regardless, so
+    // this is a backup, not the primary source.
     const readinessCounts = new Map();
-    for (const p of previousInventory.products) {
+    for (const p of (previousInventory?.products || [])) {
       const rid = p?.offerings?.[0]?.readiness_state_id;
       if (rid != null) readinessCounts.set(rid, (readinessCounts.get(rid) || 0) + 1);
     }
@@ -331,6 +404,7 @@ exports.handler = async (event) => {
 
     const putBody = sanitizeForPut(inventory, onProperty, fallbackReadinessId);
     const putUrl = `https://openapi.etsy.com/v3/application/listings/${listingId}/inventory`;
+    ctx.calls++;
     const putResp = await etsyFetch(putUrl, {
       method: "PUT",
       headers,
@@ -339,7 +413,7 @@ exports.handler = async (event) => {
     const putResult = await parseJson(putResp);
     if (!putResp.ok) {
       // Surface Etsy's exact rejection; nothing partially applied per Etsy semantics.
-      return json(putResp.status, {
+      return respond(putResp.status, {
         error: putResult.error || "Etsy rejected the inventory update.",
         etsy_status: putResp.status,
         etsy_response: putResult,
@@ -348,23 +422,50 @@ exports.handler = async (event) => {
     }
 
     // 4) Read back and verify.
-    const { resp: postResp, payload: postInv } = await getInventory(listingId, headers);
-    if (!postResp.ok) {
-      return json(200, {
-        ok: true,
-        verified: false,
-        verification_error: "Etsy accepted the update, but the verification read failed (HTTP " + postResp.status + "). Refresh the listing to confirm the live state.",
-        listing_id: Number(listingId),
-        previous_inventory: decimalizeInventory(previousInventory),
-        previous_snapshot_hash: previousHash
-      });
+    // QUOTA OPTIMIZATION: only fetch fresh state with a GET if Etsy's PUT
+    // response didn't already give us a usable full inventory. If it did,
+    // use it directly — same verification logic either way, one fewer call.
+    //
+    // SAFETY CARVE-OUT: when the draft CREATES combinations that are
+    // disabled (product_id null + is_enabled false), we must NOT trust the
+    // PUT echo. That is the exact precondition of Etsy's known first-write
+    // is_enabled bug, and it is unverified whether the echo reflects the
+    // persisted (possibly force-enabled) state or merely mirrors the
+    // accepted request. If it mirrors the request, echo-based verification
+    // would falsely pass and the corrective retry below would never fire —
+    // leaving disabled rows live-enabled. A real GET is the only read
+    // proven to expose the divergence, so this case always pays for one.
+    const createsDisabledCombos = (inventory.products || []).some(p =>
+      p.product_id == null && (p.offerings?.[0]?.is_enabled) === false
+    );
+    let freshInventory, postInv;
+    if (!createsDisabledCombos && looksLikeFreshInventory(putResult, putBody.products.length)) {
+      freshInventory = {
+        products: putResult.products || [],
+        price_on_property: putResult.price_on_property || [],
+        quantity_on_property: putResult.quantity_on_property || [],
+        sku_on_property: putResult.sku_on_property || []
+      };
+    } else {
+      const { resp: postResp, payload: fetchedInv } = await getInventory(listingId, headers, ctx);
+      if (!postResp.ok) {
+        return respond(200, {
+          ok: true,
+          verified: false,
+          verification_error: "Etsy accepted the update, but the verification read failed (HTTP " + postResp.status + "). Refresh the listing to confirm the live state.",
+          listing_id: Number(listingId),
+          previous_inventory: decimalizeInventory(previousInventory),
+          previous_snapshot_hash: previousHash
+        });
+      }
+      postInv = fetchedInv;
+      freshInventory = {
+        products: postInv.products || [],
+        price_on_property: postInv.price_on_property || [],
+        quantity_on_property: postInv.quantity_on_property || [],
+        sku_on_property: postInv.sku_on_property || []
+      };
     }
-    let freshInventory = {
-      products: postInv.products || [],
-      price_on_property: postInv.price_on_property || [],
-      quantity_on_property: postInv.quantity_on_property || [],
-      sku_on_property: postInv.sku_on_property || []
-    };
     let check = verifyAgainst({ ...putBody }, freshInventory);
     let autoCorrected = false;
 
@@ -381,10 +482,11 @@ exports.handler = async (event) => {
 
     if (!check.verified && onlyEnabledMismatches) {
       // Precondition guarantees price/quantity/SKU already match, so the
-      // safe corrective action is to resend the EXACT same body \u2014 no
+      // safe corrective action is to resend the EXACT same body — no
       // reconstruction, no risk of corrupting a field that was already
       // correct. Only the target-side state (now-existing product IDs)
       // differs between this call and the first.
+      ctx.calls++;
       const correctivePutResp = await etsyFetch(putUrl, {
         method: "PUT",
         headers,
@@ -393,16 +495,32 @@ exports.handler = async (event) => {
       const correctiveResult = await parseJson(correctivePutResp);
 
       if (correctivePutResp.ok) {
-        const { resp: reResp, payload: rePayload } = await getInventory(listingId, headers);
-        if (reResp.ok) {
+        // QUOTA OPTIMIZATION: same adaptive trust as the main write. Also
+        // sound here specifically: the known Etsy bug this retry works
+        // around only affects is_enabled on a combination's FIRST write —
+        // by definition this corrective PUT is the combination's second
+        // write, so its own response is a reliable read of what stuck.
+        if (looksLikeFreshInventory(correctiveResult, putBody.products.length)) {
           freshInventory = {
-            products: rePayload.products || [],
-            price_on_property: rePayload.price_on_property || [],
-            quantity_on_property: rePayload.quantity_on_property || [],
-            sku_on_property: rePayload.sku_on_property || []
+            products: correctiveResult.products || [],
+            price_on_property: correctiveResult.price_on_property || [],
+            quantity_on_property: correctiveResult.quantity_on_property || [],
+            sku_on_property: correctiveResult.sku_on_property || []
           };
           check = verifyAgainst({ ...putBody }, freshInventory);
           autoCorrected = true;
+        } else {
+          const { resp: reResp, payload: rePayload } = await getInventory(listingId, headers, ctx);
+          if (reResp.ok) {
+            freshInventory = {
+              products: rePayload.products || [],
+              price_on_property: rePayload.price_on_property || [],
+              quantity_on_property: rePayload.quantity_on_property || [],
+              sku_on_property: rePayload.sku_on_property || []
+            };
+            check = verifyAgainst({ ...putBody }, freshInventory);
+            autoCorrected = true;
+          }
         }
       }
     }
@@ -425,6 +543,7 @@ exports.handler = async (event) => {
           max_allowed_characters: Number(p.max_chars) || 1000
         };
         const pUrl = `https://openapi.etsy.com/v3/application/shops/${shopId}/listings/${listingId}/personalization`;
+        ctx.calls++;
         const pResp = await etsyFetch(pUrl, {
           method: "POST",
           headers,
@@ -434,11 +553,19 @@ exports.handler = async (event) => {
         if (!pResp.ok) {
           personalization = { applied: false, error: "Etsy rejected the personalization update (HTTP " + pResp.status + "): " + (pResult.error || JSON.stringify(pResult).slice(0, 300)) };
         } else {
-          // Read back and verify the question took effect.
-          const vResp = await etsyFetch(`https://openapi.etsy.com/v3/application/listings/${listingId}/personalization`, { headers }, { bucket: "etsy-listing-console" });
-          const vData = await parseJson(vResp);
-          const q = (vData.personalization_questions || vData.results || [])[0] || {};
-          const okQ = vResp.ok && q.question_text === question.question_text &&
+          // QUOTA OPTIMIZATION: same adaptive trust — use the POST's own
+          // response as the verification read if it already contains the
+          // created question; only fall back to a GET if it doesn't.
+          let q = extractPersonalizationQuestion(pResult);
+          let readOk = !!q;
+          if (!q) {
+            ctx.calls++;
+            const vResp = await etsyFetch(`https://openapi.etsy.com/v3/application/listings/${listingId}/personalization`, { headers }, { bucket: "etsy-listing-console" });
+            const vData = await parseJson(vResp);
+            q = extractPersonalizationQuestion(vData) || {};
+            readOk = vResp.ok;
+          }
+          const okQ = readOk && q.question_text === question.question_text &&
             (q.required !== false) === question.required &&
             String(q.instructions || "") === question.instructions;
           personalization = okQ
@@ -448,7 +575,7 @@ exports.handler = async (event) => {
       }
     }
 
-    return json(200, {
+    return respond(200, {
       ok: true,
       verified: check.verified,
       personalization,
@@ -469,6 +596,6 @@ exports.handler = async (event) => {
       }
     });
   } catch (err) {
-    return json(500, { error: err.message });
+    return respond(500, { error: err.message });
   }
 };

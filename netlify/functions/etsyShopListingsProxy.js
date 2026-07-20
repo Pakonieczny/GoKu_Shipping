@@ -63,7 +63,8 @@ function allowedIncludes(raw) {
     ].includes(value));
 }
 
-async function fetchEtsy(url, headers) {
+async function fetchEtsy(url, headers, ctx) {
+  if (ctx) ctx.calls++;
   const resp = await etsyFetch(url, { headers }, { bucket: "etsy-listing-console" });
   const payload = await parseJson(resp);
   return { resp, payload };
@@ -73,8 +74,9 @@ exports.handler = async function handler(event) {
   if (event.httpMethod === "OPTIONS") {
     return { statusCode: 200, headers: CORS, body: "ok" };
   }
-  if (event.httpMethod !== "GET") return json(405, { error: "Method not allowed" });
+  if (event.httpMethod !== "GET") return json(405, { error: "Method not allowed", etsy_call_count: 0 });
 
+  const ctx = { calls: 0 };
   try {
     const q = event.queryStringParameters || {};
     const mode = String(q.mode || "list").toLowerCase();
@@ -82,9 +84,9 @@ exports.handler = async function handler(event) {
     const shopId = process.env.SHOP_ID;
     const key = apiKey();
 
-    if (!accessToken) return json(400, { error: "Missing access token" });
-    if (!shopId) return json(500, { error: "Missing SHOP_ID" });
-    if (!key) return json(500, { error: "Missing CLIENT_ID" });
+    if (!accessToken) return json(400, { error: "Missing access token", etsy_call_count: 0 });
+    if (!shopId) return json(500, { error: "Missing SHOP_ID", etsy_call_count: 0 });
+    if (!key) return json(500, { error: "Missing CLIENT_ID", etsy_call_count: 0 });
 
     const headers = {
       Authorization: `Bearer ${accessToken}`,
@@ -94,11 +96,11 @@ exports.handler = async function handler(event) {
 
     if (mode === "sections") {
       const url = `https://openapi.etsy.com/v3/application/shops/${shopId}/sections`;
-      const { resp, payload } = await fetchEtsy(url, headers);
+      const { resp, payload } = await fetchEtsy(url, headers, ctx);
       if (resp.ok && payload && typeof payload === "object") {
         payload._meta = { source: "etsy-live", shop_id: Number(shopId) };
       }
-      return json(resp.status, payload);
+      return json(resp.status, { ...payload, etsy_call_count: ctx.calls });
     }
 
     if (mode === "search") {
@@ -112,8 +114,8 @@ exports.handler = async function handler(event) {
       const sortOn = ["created", "price", "updated", "score"].includes(String(q.sort_on)) ? String(q.sort_on) : "score";
       const sortOrder = ["asc", "ascending", "desc", "descending", "up", "down"].includes(String(q.sort_order)) ? String(q.sort_order) : "desc";
 
-      if (query.length < 2) return json(400, { error: "Search query must contain at least two characters" });
-      if (sectionId && !/^\d+$/.test(sectionId)) return json(400, { error: "Invalid shop_section_id" });
+      if (query.length < 2) return json(400, { error: "Search query must contain at least two characters", etsy_call_count: 0 });
+      if (sectionId && !/^\d+$/.test(sectionId)) return json(400, { error: "Invalid shop_section_id", etsy_call_count: 0 });
 
       const results = [];
       const seen = new Set();
@@ -145,14 +147,15 @@ exports.handler = async function handler(event) {
           endpoint = `https://openapi.etsy.com/v3/application/shops/${shopId}/listings/active`;
         }
 
-        const { resp, payload } = await fetchEtsy(`${endpoint}?${params.toString()}`, headers);
+        const { resp, payload } = await fetchEtsy(`${endpoint}?${params.toString()}`, headers, ctx);
         if (!resp.ok) {
           return json(resp.status, {
             error: "Etsy search failed (HTTP " + resp.status + "): " + (payload.error || JSON.stringify(payload).slice(0, 300)),
             etsy_status: resp.status,
             etsy_endpoint: endpoint.replace("https://openapi.etsy.com/v3/application", ""),
             etsy_params: Object.fromEntries(params),
-            etsy_response: payload
+            etsy_response: payload,
+            etsy_call_count: ctx.calls
           });
         }
 
@@ -177,6 +180,7 @@ exports.handler = async function handler(event) {
       return json(200, {
         count: results.length,
         results,
+        etsy_call_count: ctx.calls,
         _meta: {
           source: "etsy-live",
           title_only_verified: true,
@@ -210,7 +214,7 @@ exports.handler = async function handler(event) {
 
     let endpoint;
     if (mode === "section" || sectionId) {
-      if (!/^\d+$/.test(sectionId)) return json(400, { error: "Valid shop_section_id is required" });
+      if (!/^\d+$/.test(sectionId)) return json(400, { error: "Valid shop_section_id is required", etsy_call_count: 0 });
       params.set("shop_section_ids", sectionId);
       endpoint = `https://openapi.etsy.com/v3/application/shops/${shopId}/shop-sections/listings`;
     } else {
@@ -218,7 +222,7 @@ exports.handler = async function handler(event) {
       endpoint = `https://openapi.etsy.com/v3/application/shops/${shopId}/listings`;
     }
 
-    const { resp, payload } = await fetchEtsy(`${endpoint}?${params.toString()}`, headers);
+    const { resp, payload } = await fetchEtsy(`${endpoint}?${params.toString()}`, headers, ctx);
     if (resp.ok && payload && typeof payload === "object") {
       payload._meta = {
         source: "etsy-live",
@@ -230,8 +234,8 @@ exports.handler = async function handler(event) {
         shop_id: Number(shopId)
       };
     }
-    return json(resp.status, payload);
+    return json(resp.status, { ...payload, etsy_call_count: ctx.calls });
   } catch (err) {
-    return json(500, { error: err.message });
+    return json(500, { error: err.message, etsy_call_count: ctx.calls });
   }
 };

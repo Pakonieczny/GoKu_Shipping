@@ -56,8 +56,9 @@ async function parseJson(resp) {
 
 exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: CORS, body: "ok" };
-  if (event.httpMethod !== "GET") return json(405, { error: "Method not allowed" });
+  if (event.httpMethod !== "GET") return json(405, { error: "Method not allowed", etsy_call_count: 0 });
 
+  let etsyCalls = 0;
   try {
     const q = event.queryStringParameters || {};
     const listingId = String(q.listingId || "").trim();
@@ -65,11 +66,12 @@ exports.handler = async (event) => {
     const accessToken = event.headers["access-token"] || event.headers["Access-Token"];
     const clientId = apiKey();
 
-    if (!/^\d+$/.test(listingId)) return json(400, { error: "Missing or invalid listingId" });
-    if (!accessToken) return json(400, { error: "Missing access token" });
-    if (!clientId) return json(500, { error: "Missing CLIENT_ID" });
+    if (!/^\d+$/.test(listingId)) return json(400, { error: "Missing or invalid listingId", etsy_call_count: 0 });
+    if (!accessToken) return json(400, { error: "Missing access token", etsy_call_count: 0 });
+    if (!clientId) return json(500, { error: "Missing CLIENT_ID", etsy_call_count: 0 });
 
     const url = `https://openapi.etsy.com/v3/application/listings/${listingId}/inventory`;
+    etsyCalls++;
     const resp = await etsyFetch(url, {
       headers: {
         Authorization: `Bearer ${accessToken}`,
@@ -81,7 +83,7 @@ exports.handler = async (event) => {
     const payload = await parseJson(resp);
     if (!resp.ok) {
       // Pass Etsy's exact status and error through untouched.
-      return json(resp.status, payload);
+      return json(resp.status, { ...payload, etsy_call_count: etsyCalls });
     }
 
     if (!inventoryOnly) {
@@ -90,7 +92,7 @@ exports.handler = async (event) => {
         product_id: p.product_id,
         sku: (p.sku || "").trim()
       })) : [];
-      return json(200, { listing_id: Number(listingId), products });
+      return json(200, { listing_id: Number(listingId), products, etsy_call_count: etsyCalls });
     }
 
     const inventory = {
@@ -105,9 +107,10 @@ exports.handler = async (event) => {
       inventory,
       snapshot_hash: snapshotHash(inventory),
       pricing_health: pricingHealth(inventory),
-      fetched_at: new Date().toISOString()
+      fetched_at: new Date().toISOString(),
+      etsy_call_count: etsyCalls
     });
   } catch (err) {
-    return json(500, { error: err.message });
+    return json(500, { error: err.message, etsy_call_count: etsyCalls });
   }
 };
