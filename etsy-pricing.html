@@ -508,10 +508,9 @@ async function saveListing(){
       throw new Error((result.verification_error||'Etsy verification did not match.')+' The current live state has been reloaded as the baseline — review the matrix and press Save again.')
     }
     const fresh=result.fresh||await apiFetch('/etsyListingInventoryDetailProxy?listingId='+encodeURIComponent(S.currentId)+'&inventory_only=1');S.cache.set(S.currentId,fresh);const l=currentListing();l._health=fresh.pricing_health;l._scanned=true;S.approvals[S.currentId]={mode:'updated',at:Date.now(),hash:fresh.snapshot_hash};writeApprovals();hydrateDetail(fresh);clearActivity();
-    if(result.personalization){
-      if(result.personalization.verified)toast('Etsy update verified successfully \u00b7 Personalization field (required, engraving instructions) verified on the listing.','ok');
-      else toast('Inventory verified, but the Personalization field failed: '+(result.personalization.error||'unknown')+' \u2014 fix it in Etsy\u2019s listing editor or retry Save.','bad');
-    } else toast('Etsy update verified successfully.','ok')
+    if(result.personalization&&result.personalization.applied&&!result.personalization.verified)
+      toast('Pricing verified. The Personalization field was sent to Etsy \u2014 please confirm it in the listing editor.','ok');
+    else toast('Etsy update verified successfully.','ok')
   }catch(e){clearActivity();if(e.status===409&&e.data?.code==='STALE_INVENTORY'){toast('The live listing changed since it was loaded (possibly from a previous save attempt). Reloading the current state now \u2014 review it and Save again.','bad');S.cache.delete(S.currentId);await focusListing(S.currentId);return}else toast(e.message,'bad');renderDirty()}
 }
 async function approveListing(){
