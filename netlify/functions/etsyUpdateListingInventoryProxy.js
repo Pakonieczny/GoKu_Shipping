@@ -407,9 +407,51 @@ exports.handler = async (event) => {
       }
     }
 
+    /* Optional personalization sync (Etsy's post-April-2026 endpoint).
+       Runs only after the inventory write; failures are reported exactly
+       but never mask a successful inventory save. */
+    let personalization = null;
+    if (check.verified && body.personalization && body.personalization.enabled) {
+      const shopId = process.env.SHOP_ID;
+      const p = body.personalization;
+      if (!shopId) {
+        personalization = { applied: false, error: "SHOP_ID env var is not set; personalization was not updated." };
+      } else {
+        const question = {
+          question_text: "Personalization", // required value during Etsy's migration period
+          instructions: String(p.instructions || "").slice(0, 120),
+          question_type: "text_input",
+          required: p.required !== false,
+          max_allowed_characters: Number(p.max_chars) || 1000
+        };
+        const pUrl = `https://openapi.etsy.com/v3/application/shops/${shopId}/listings/${listingId}/personalization`;
+        const pResp = await etsyFetch(pUrl, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ personalization_questions: [question] })
+        }, { bucket: "etsy-listing-console" });
+        const pResult = await parseJson(pResp);
+        if (!pResp.ok) {
+          personalization = { applied: false, error: "Etsy rejected the personalization update (HTTP " + pResp.status + "): " + (pResult.error || JSON.stringify(pResult).slice(0, 300)) };
+        } else {
+          // Read back and verify the question took effect.
+          const vResp = await etsyFetch(`https://openapi.etsy.com/v3/application/listings/${listingId}/personalization`, { headers }, { bucket: "etsy-listing-console" });
+          const vData = await parseJson(vResp);
+          const q = (vData.personalization_questions || vData.results || [])[0] || {};
+          const okQ = vResp.ok && q.question_text === question.question_text &&
+            (q.required !== false) === question.required &&
+            String(q.instructions || "") === question.instructions;
+          personalization = okQ
+            ? { applied: true, verified: true }
+            : { applied: true, verified: false, error: "Personalization was accepted but the read-back does not match what was sent.", readback: q };
+        }
+      }
+    }
+
     return json(200, {
       ok: true,
       verified: check.verified,
+      personalization,
       auto_corrected: autoCorrected,
       verification_error: check.verified ? null :
         "Live Etsy inventory does not match the submitted draft" + (autoCorrected ? " even after an automatic corrective retry" : "") + ": " + check.differences.slice(0, 5).join(" · ") +
