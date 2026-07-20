@@ -29,6 +29,7 @@ button,input,select{font:inherit}button{cursor:pointer}.mono{font-family:var(--m
 .railFoot{padding:12px 16px;border-top:1px solid var(--velvetLine);font-size:10.5px;color:#827a6e}
 .main{min-width:0}.topbar{position:sticky;top:0;z-index:30;background:rgba(243,240,234,.9);backdrop-filter:blur(12px);border-bottom:1px solid var(--line);padding:12px 24px;display:flex;align-items:center;gap:10px}.navBtn{width:38px;height:38px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--ink);font-size:20px}.navBtn:disabled{opacity:.4;cursor:default}.topTitle{min-width:0}.topTitle h1{font:20px var(--serif);font-weight:500;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:600px}.topTitle .sub{font-size:11.5px;color:var(--ink45);margin-top:1px}.spacer{flex:1}
 .pill{font-size:11px;font-weight:700;padding:5px 10px;border-radius:30px;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}.pill.neutral{background:var(--paper2);color:var(--ink70)}.pill.ok{background:var(--sageSoft);color:#3c5a39}.pill.warn{background:var(--goldSoft);color:#7a5a1d}.pill.bad{background:var(--claySoft);color:#8a3a26}.pill.info{background:var(--slateSoft);color:#33525d}
+.apiUsage{position:relative}.apiUsageBadge{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:700;padding:5px 10px;border-radius:30px;background:var(--slateSoft);color:#33525d;border:1px solid transparent;cursor:pointer;font-family:inherit}.apiUsageBadge:hover{border-color:var(--line)}.apiUsageBadge .dot{width:6px;height:6px;border-radius:50%;background:var(--slate);flex:0 0 auto}.apiUsageBadge .n{font:11px var(--mono);font-weight:700}.apiUsagePanel{position:absolute;top:calc(100% + 8px);right:0;width:280px;background:var(--card);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--sh);z-index:50;padding:14px;display:none}.apiUsagePanel.open{display:block}.apiUsagePanel h4{margin:0;font:15px var(--serif);font-weight:500}.apiUsagePanel .todayLab{font-size:9.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink45);font-weight:750;margin-top:10px}.apiUsagePanel .todayBig{font:30px var(--mono);font-weight:700;color:var(--ink);margin:2px 0 0;line-height:1.1}.apiUsagePanel .histWrap{margin-top:12px;padding-top:10px;border-top:1px solid var(--line2);max-height:220px;overflow:auto}.apiUsagePanel .histRow{display:flex;justify-content:space-between;padding:4px 0;font-size:12px}.apiUsagePanel .histRow .d{color:var(--ink70)}.apiUsagePanel .histRow .n{font:12px var(--mono);color:var(--ink45)}.apiUsagePanel .histEmpty{font-size:12px;color:var(--ink45);padding:6px 0 0}.apiUsagePanel .moreRow{font-size:10.5px;color:var(--ink45);padding:6px 0 0;text-align:center}.apiUsagePanel .totalRow{margin-top:10px;padding-top:10px;border-top:1px solid var(--line2);display:flex;justify-content:space-between;align-items:center;font-size:12px;font-weight:700}
 .btn{border:1px solid var(--ink);background:var(--ink);color:#fff;border-radius:9px;padding:8px 13px;font-weight:650;transition:opacity .15s,transform .08s}.btn:hover{opacity:.9}.btn:active{transform:translateY(1px)}.btn:disabled{opacity:.45;cursor:default}.btn.ghost{background:transparent;color:var(--ink);border-color:var(--line)}.btn.gold{background:var(--gold);border-color:var(--gold);color:#2a2013}.btn.sage{background:var(--sage);border-color:var(--sage)}.btn.danger{background:var(--clay);border-color:var(--clay)}.btn.sm{padding:6px 10px;font-size:12px}.btn.xs{padding:4px 8px;font-size:11px}
 .view{padding:22px 24px 90px;max-width:1500px}.notice{border:1px solid var(--goldLine);background:var(--goldSoft);border-radius:12px;padding:10px 13px;font-size:12px;color:#6f551f;margin-bottom:14px}.activity{display:none;align-items:center;gap:11px;background:linear-gradient(95deg,#262019,#332a20);color:#f4ecdc;border-radius:12px;padding:11px 14px;margin-bottom:14px}.activity.show{display:flex}.spin{width:16px;height:16px;border:2px solid #5a5040;border-top-color:var(--gold2);border-radius:50%;animation:spin .7s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}.activity .progress{margin-left:auto;width:180px;height:6px;background:#4b4338;border-radius:9px;overflow:hidden}.activity .progress i{height:100%;display:block;background:var(--gold2);width:0}
 .empty{min-height:68vh;display:grid;place-items:center;text-align:center;color:var(--ink45)}.empty .ring{width:58px;height:58px;border:2px dashed var(--ink25);border-radius:50%;margin:0 auto 14px}.empty h2{font:25px var(--serif);color:var(--ink);margin:0 0 6px;font-weight:500}.empty p{max-width:500px;margin:0 auto 16px}
@@ -138,6 +139,18 @@ dialog{border:0;padding:0;border-radius:15px;box-shadow:0 24px 80px rgba(0,0,0,.
       <div class="topTitle"><h1 id="topTitle">Brites Etsy Pricing Console</h1><div class="sub" id="topSub">Load the live Etsy catalog to begin.</div></div>
       <div class="spacer"></div>
       <span class="pill info apiMode">Live-safe API mode</span>
+      <div class="apiUsage" id="apiUsageWrap">
+        <button class="apiUsageBadge" id="apiUsageBadge" type="button" aria-haspopup="true" aria-expanded="false" title="Real Etsy API calls made today and all-time. Click for the daily breakdown.">
+          <span class="dot"></span>Etsy API <span class="n" id="apiUsageBadgeText">0</span> today
+        </button>
+        <div class="apiUsagePanel" id="apiUsagePanel">
+          <h4>Etsy API calls</h4>
+          <div class="todayLab">Today (UTC — matches Etsy's quota reset)</div>
+          <div class="todayBig" id="apiUsageTodayBig">0</div>
+          <div class="histWrap" id="apiUsageHistWrap"><div class="histEmpty">No earlier days logged yet.</div></div>
+          <div class="totalRow"><span>All-time total</span><span id="apiUsageTotal">0</span></div>
+        </div>
+      </div>
       <span class="pill neutral" id="approvalPill">Not reviewed</span>
       <div class="tabCtl" role="tablist" aria-label="View">
         <button id="tabEditor" role="tab" class="on">Listing</button>
@@ -203,7 +216,7 @@ dialog{border:0;padding:0;border-radius:15px;box-shadow:0 24px 80px rgba(0,0,0,.
       </section>
     </div>
 
-    <div class="stickyActions hidden" id="stickyActions"><span class="dirty" id="dirtyText">No unsaved changes</span><span class="verifiedText" id="verifiedText"></span><div class="right"><button class="btn ghost" id="resetBtn">Reset</button><button class="btn sage" id="approveBtn">Approve current pricing</button><button class="btn gold" id="saveBtn">Save, update Etsy & verify</button></div></div>
+    <div class="stickyActions hidden" id="stickyActions"><span class="dirty" id="dirtyText">No unsaved changes</span><span class="verifiedText" id="verifiedText"></span><div class="right"><button class="btn ghost sm active" id="quotaSaverToggle" title="Skips the pre-save freshness check against Etsy (1 fewer API call per save). Only the guard against edits made outside this console is skipped — everything else about the save is unchanged. Default ON: single-operator tool, no concurrent-edit risk.">Quota Saver: ON</button><button class="btn ghost" id="resetBtn">Reset</button><button class="btn sage" id="approveBtn">Approve current pricing</button><button class="btn gold" id="saveBtn">Save, update Etsy & verify</button></div></div>
   </main>
 </div>
 
@@ -244,11 +257,62 @@ const S = {
   searchPending:false, searchSeq:0, searchTimer:null, searchAbort:null, searchCache:new Map(), matchMode:'all', sortMode:'score', currentId:null,
   cache:new Map(), original:null, draft:null, originalHash:null, selected:new Set(), dirty:false,
   approvals:readApprovals(), scanning:false, stopScan:false, refreshPromise:null, clientId:null,
-  view:'editor', rSel:new Set(), rFilter:'all', rDensity:'comfortable', rBusy:new Set(), chainType:'regular', engraving:true
+  view:'editor', rSel:new Set(), rFilter:'all', rDensity:'comfortable', rBusy:new Set(), chainType:'regular', engraving:true, skipFreshnessCheck:true, personalized:readPersonalized(), apiCallLog:readApiCallLog()
 };
+/* Listings whose Personalization field has already been written and verified
+   on Etsy. The field only needs to exist ONCE per listing, so subsequent
+   saves skip re-sending it (saves 1-2 Etsy API calls per save). Kept in a
+   separate localStorage map from approvals because markDirty() wipes the
+   approval entry on every edit, while personalization state survives edits. */
+function readPersonalized(){try{return JSON.parse(localStorage.getItem('etsyPricing.personalized.v1')||'{}')}catch{return{}}}
+function writePersonalized(){localStorage.setItem('etsyPricing.personalized.v1',JSON.stringify(S.personalized))}
+
+/* Real-time Etsy API call log — persistent across sessions. Every proxy
+   response (etsyShopListingsProxy, etsyListingInventoryDetailProxy,
+   etsyUpdateListingInventoryProxy) carries an exact etsy_call_count of how
+   many real Etsy requests THAT invocation made — not an estimate, a count
+   from a server-side counter. apiFetch() below records it here on every
+   call, success or failure, since failed calls still count against quota. */
+function etsyDayKey(d=new Date()){return d.toISOString().slice(0,10)} // UTC day — Etsy resets quota at UTC midnight
+function readApiCallLog(){try{const raw=JSON.parse(localStorage.getItem('etsyPricing.apiCallLog.v1')||'null');if(raw&&typeof raw==='object'&&raw.byDay)return raw}catch{}return{byDay:{},total:0}}
+function writeApiCallLog(){localStorage.setItem('etsyPricing.apiCallLog.v1',JSON.stringify(S.apiCallLog))}
+function recordEtsyCalls(n){
+  n=Number(n);if(!Number.isFinite(n)||n<=0)return;
+  const key=etsyDayKey();
+  S.apiCallLog.byDay[key]=(S.apiCallLog.byDay[key]||0)+n;
+  S.apiCallLog.total=(S.apiCallLog.total||0)+n;
+  writeApiCallLog();
+  renderApiUsage();
+}
+function renderApiUsage(){
+  const todayKey=etsyDayKey(),today=S.apiCallLog.byDay[todayKey]||0;
+  const badgeText=$('#apiUsageBadgeText');if(badgeText)badgeText.textContent=String(today);
+  const bigText=$('#apiUsageTodayBig');if(bigText)bigText.textContent=String(today);
+  const totalText=$('#apiUsageTotal');if(totalText)totalText.textContent=String(S.apiCallLog.total||0);
+  const histWrap=$('#apiUsageHistWrap');
+  if(histWrap){
+    const days=Object.keys(S.apiCallLog.byDay).filter(k=>k!==todayKey).sort().reverse();
+    if(!days.length){
+      histWrap.innerHTML='<div class="histEmpty">No earlier days logged yet.</div>';
+    }else{
+      const shown=days.slice(0,30);
+      histWrap.innerHTML=shown.map(d=>'<div class="histRow"><span class="d">'+esc(d)+'</span><span class="n">'+esc(String(S.apiCallLog.byDay[d]))+'</span></div>').join('')
+        +(days.length>shown.length?'<div class="moreRow">+'+(days.length-shown.length)+' earlier day'+(days.length-shown.length===1?'':'s')+'</div>':'');
+    }
+  }
+}
+function toggleApiUsagePanel(open){
+  const panel=$('#apiUsagePanel'),badge=$('#apiUsageBadge');
+  const willOpen=open!=null?open:!panel.classList.contains('open');
+  panel.classList.toggle('open',willOpen);
+  badge.setAttribute('aria-expanded',String(willOpen));
+}
 
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
+$('#apiUsageBadge').addEventListener('click',e=>{e.stopPropagation();toggleApiUsagePanel()});
+document.addEventListener('click',e=>{const wrap=$('#apiUsageWrap');if(wrap&&!wrap.contains(e.target))toggleApiUsagePanel(false)});
+setInterval(renderApiUsage,60*1000); // keeps the "today" figure honest across the UTC-midnight rollover during long sessions
 const deep = v => JSON.parse(JSON.stringify(v));
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
 const money = n => Number.isFinite(Number(n)) ? '$' + Number(n).toFixed(2) : '—';
@@ -308,8 +372,14 @@ async function refreshAccessToken(){
 async function ensureToken(){const exp=Number(localStorage.getItem(TOKEN_KEYS.expires)||0);if(exp&&exp-Math.floor(Date.now()/1000)<=120)await refreshAccessToken()}
 async function apiFetch(path,init={}){
   await ensureToken();let token=localStorage.getItem(TOKEN_KEYS.access)||'';let r=await fetch(FUNCTIONS_BASE+path,{...init,headers:{...(init.headers||{}),'access-token':token}});
-  if(r.status===401){await refreshAccessToken();token=localStorage.getItem(TOKEN_KEYS.access)||'';r=await fetch(FUNCTIONS_BASE+path,{...init,headers:{...(init.headers||{}),'access-token':token}})}
-  let data={};const text=await r.text();try{data=text?JSON.parse(text):{}}catch{data={error:text}}
+  let text=await r.text();let data={};try{data=text?JSON.parse(text):{}}catch{data={error:text}}
+  recordEtsyCalls(data.etsy_call_count); // counted even on failure — a rejected call still hit Etsy and counts against quota
+  if(r.status===401){
+    await refreshAccessToken();token=localStorage.getItem(TOKEN_KEYS.access)||'';
+    r=await fetch(FUNCTIONS_BASE+path,{...init,headers:{...(init.headers||{}),'access-token':token}});
+    text=await r.text();try{data=text?JSON.parse(text):{}}catch{data={error:text}}
+    recordEtsyCalls(data.etsy_call_count);
+  }
   if(!r.ok){const e=new Error(data.error||('HTTP '+r.status));e.status=r.status;e.data=data;throw e}return data;
 }
 function randomUrlSafe(bytes=32){const a=new Uint8Array(bytes);crypto.getRandomValues(a);return btoa(String.fromCharCode(...a)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'')}
@@ -495,8 +565,8 @@ function toggleMap(field,pid,on){const arr=new Set(S.draft[field]||[]);on?arr.ad
 function validateDraft(){const h=healthFor(S.draft);if(h.error_count)throw new Error('Resolve the red pricing-health errors before saving.');const props=getProperties();if(props.length>2)throw new Error('Third-variation writing is not enabled for live Etsy listings yet.');if(!S.draft.products.length)throw new Error('At least one product combination is required.');return true}
 async function saveListing(){
   try{validateDraft();if(!await confirmDialog('Update Etsy listing?','The complete pricing matrix will replace the current live Etsy inventory, then be read back and verified.'))return;$('#saveBtn').disabled=true;setActivity('Updating Etsy and verifying live inventory…',null,false);
-    const result=await apiFetch('/etsyUpdateListingInventoryProxy',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({listing_id:Number(S.currentId),expected_snapshot_hash:S.originalHash,inventory:S.draft,auto_on_property:autoMapOn(),
-      personalization:(S.storeFilter==='necklaces'&&S.engraving&&S.draft.products.some(p=>(p.property_values||[]).some(v=>(v.values||[]).some(val=>/engrave/i.test(String(val)))))?{enabled:true,required:true,max_chars:1000,instructions:'To include back engraving on your piece, choose the \u0022+ engrave\u0022 option and leave us your instructions here.'}:null)})});
+    const result=await apiFetch('/etsyUpdateListingInventoryProxy',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({listing_id:Number(S.currentId),expected_snapshot_hash:S.originalHash,inventory:S.draft,auto_on_property:autoMapOn(),skip_freshness_check:S.skipFreshnessCheck,
+      personalization:(S.storeFilter==='necklaces'&&S.engraving&&!S.personalized[S.currentId]&&S.draft.products.some(p=>(p.property_values||[]).some(v=>(v.values||[]).some(val=>/engrave/i.test(String(val)))))?{enabled:true,required:true,max_chars:1000,instructions:'To include back engraving on your piece, choose the \u0022+ engrave\u0022 option and leave us your instructions here.'}:null)})});
     if(!result.verified){
       /* The write attempt (and any automatic corrective retry) may have
          already changed Etsy's live inventory even though verification
@@ -508,6 +578,7 @@ async function saveListing(){
       throw new Error((result.verification_error||'Etsy verification did not match.')+' The current live state has been reloaded as the baseline — review the matrix and press Save again.')
     }
     const fresh=result.fresh||await apiFetch('/etsyListingInventoryDetailProxy?listingId='+encodeURIComponent(S.currentId)+'&inventory_only=1');S.cache.set(S.currentId,fresh);const l=currentListing();l._health=fresh.pricing_health;l._scanned=true;S.approvals[S.currentId]={mode:'updated',at:Date.now(),hash:fresh.snapshot_hash};writeApprovals();hydrateDetail(fresh);clearActivity();
+    if(result.personalization&&result.personalization.applied&&result.personalization.verified){S.personalized[S.currentId]=Date.now();writePersonalized()}
     if(result.personalization&&result.personalization.applied&&!result.personalization.verified)
       toast('Pricing verified. The Personalization field was sent to Etsy \u2014 please confirm it in the listing editor.','ok');
     else toast('Etsy update verified successfully.','ok')
@@ -772,6 +843,15 @@ $('#engraveToggle').addEventListener('click',e=>{const b=e.target.closest('butto
   S.engraving=on;renderChainToggle();
   if(!on){const n=stripEngraveRows();toast(n?('Engraving OFF — '+n+' engraving combination'+(n===1?'':'s')+' removed from the draft. Save to apply, or Reset to undo.'):'Engraving OFF — engraving options will be excluded from the next rebuild.','ok')}
   else toast('Engraving ON — run ✦ Charm Only setup to rebuild the option set including engraving options.','ok')});
+$('#quotaSaverToggle').addEventListener('click',()=>{
+  S.skipFreshnessCheck=!S.skipFreshnessCheck;
+  const b=$('#quotaSaverToggle');
+  b.textContent='Quota Saver: '+(S.skipFreshnessCheck?'ON':'OFF');
+  b.classList.toggle('active',S.skipFreshnessCheck);
+  toast(S.skipFreshnessCheck
+    ? 'Quota Saver ON — saves skip the pre-save Etsy freshness check (1 fewer API call each). Only risk: an edit made directly in Etsy\u2019s own listing editor between loading and saving a listing here would be silently overwritten.'
+    : 'Quota Saver OFF — every save re-checks Etsy for changes made outside this console first.', 'ok');
+});
 $('#charmOnlyBtn').addEventListener('click',charmOnlySetup);
 
 /* ---------------- Dialogs ---------------- */
@@ -798,7 +878,7 @@ $('#copyInvBtn').addEventListener('click',async()=>{if(!S.original){toast('Open 
   await navigator.clipboard.writeText(JSON.stringify(dump,null,2));toast('Live inventory JSON copied to clipboard.','ok')});
 addEventListener('keydown',e=>{const typing=['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName);if(!typing&&e.key==='/'){e.preventDefault();$('#searchInput').focus();return}if(typing)return;if(e.key==='ArrowLeft')navigate(-1);if(e.key==='ArrowRight')navigate(1);if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='s'){e.preventDefault();if(S.dirty)saveListing()}if(e.key.toLowerCase()==='a'&&!e.metaKey&&!e.ctrlKey&&S.view==='editor')approveListing()});
 
-(async function init(){await handleOAuthCallback();renderConnection();renderStoreFilters();renderChainToggle();updateSearchUi('Live Etsy title search');scheduleRefresh();if(localStorage.getItem(TOKEN_KEYS.access))loadCatalog()})();
+(async function init(){renderApiUsage();await handleOAuthCallback();renderConnection();renderStoreFilters();renderChainToggle();updateSearchUi('Live Etsy title search');scheduleRefresh();if(localStorage.getItem(TOKEN_KEYS.access))loadCatalog()})();
 </script>
 </body>
 </html>
