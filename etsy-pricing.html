@@ -198,7 +198,7 @@ dialog{border:0;padding:0;border-radius:15px;box-shadow:0 24px 80px rgba(0,0,0,.
         </div>
 
         <div class="sectionHead"><div><h3>Variation menus</h3><div class="sub">Add tiers, rename custom menus or remove options. New combinations inherit their source tier values.</div></div><div class="right"><button class="btn ghost sm" id="charmOnlyBtn">✦ Charm Only setup</button><button class="btn ghost sm" id="addMenuBtn">+ Add dropdown</button></div></div>
-        <div class="modeBar hidden" id="modeBar"><span class="mlabel">Required — set per listing</span><div class="tabCtl sm" id="chainTypeToggle" role="tablist" aria-label="Necklace chain type"><button data-ct="regular" class="on">Regular</button><button data-ct="beady">Beady</button></div><div class="tabCtl sm" id="engraveToggle" role="tablist" aria-label="Back engraving"><button data-eg="on" class="on">Engraving ON</button><button data-eg="off">Engraving OFF</button></div><span class="pill neutral" id="prepBadge">Not prepared</span></div>
+        <div class="modeBar hidden" id="modeBar"><span class="mlabel">Required — set per listing</span><div class="tabCtl sm" id="chainTypeToggle" role="tablist" aria-label="Necklace chain type"><button data-ct="regular" class="on">Regular</button><button data-ct="beady">Beady</button></div><div class="tabCtl sm" id="engraveToggle" role="tablist" aria-label="Back engraving"><button data-eg="on" class="on">Engraving ON</button><button data-eg="off">Engraving OFF</button></div><span class="pill neutral" id="prepBadge">Not prepared</span><button class="btn sage sm" id="approvePrepBtn" title="Queue this listing for the batch using the toggle positions shown">✓ Approve</button><button class="btn ghost sm hidden" id="unprepBtn" title="Remove this listing from the batch queue">✕ Remove from batch</button></div>
         <div id="batchPanel" class="hidden">
           <div class="bhead"><h4>Batch run</h4><span class="pill info" id="batchState">Idle</span><span style="flex:1"></span></div>
           <div class="bstats"><span>To batch <b id="bTotal">0</b></span><span>Succeeded <b id="bOk" style="color:var(--sage)">0</b></span><span>Failed <b id="bFail" style="color:var(--clay)">0</b></span><span>Remaining <b id="bLeft">0</b></span></div>
@@ -609,6 +609,7 @@ function renderResults(){
       +'<button class="btn ghost xs" data-ract="scan" data-id="'+id+'">Scan</button>'
       +'<button class="btn ghost xs" data-ract="approve" data-id="'+id+'">Approve</button>'
       +'<button class="btn ghost xs" data-ract="etsy" data-id="'+id+'">Etsy \u2197</button>'
+      +(isPrepared(S.prep.get(id))?'<button class="btn ghost xs" data-ract="unprep" data-id="'+id+'">\u2715 Unqueue</button>':'')
       +'</div></div></div>'}).join('');
     list.scrollTop=scroll;
   }
@@ -650,6 +651,7 @@ $('#rList').addEventListener('click',e=>{
     if(act.dataset.ract==='scan'&&l){S.cache.delete(id);l._scanned=false;scanIds([l])}
     if(act.dataset.ract==='approve'&&l)approveIds([l]);
     if(act.dataset.ract==='etsy')window.open((l&&l.url)||('https://www.etsy.com/listing/'+id),'_blank','noopener');
+    if(act.dataset.ract==='unprep')unprepare(id);
     return}
   const row=e.target.closest('.rrow');if(row)focusListing(row.dataset.id);
 });
@@ -801,18 +803,34 @@ function renderPrepUi(){
   const active=!!S.currentRunId;
   $('#batchPauseBtn')?.classList.toggle('hidden',!active);
   $('#batchStopBtn')?.classList.toggle('hidden',!active);
-  const badge=$('#prepBadge');
-  if(badge){const d=S.prep.get(String(S.currentId));
+  const badge=$('#prepBadge');const dCur=S.prep.get(String(S.currentId));
+  if(badge){
     if(!S.currentId){badge.textContent='No listing open';badge.className='pill neutral'}
-    else if(isPrepared(d)){badge.textContent='Prepared \u2713 '+(d.chain_type==='beady'?'Beady':'Regular')+' \u00b7 Engr '+(d.engraving!==false?'ON':'OFF')+(d.batched?' \u00b7 batched':'');badge.className='pill ok'}
-    else badge.textContent='Not prepared',badge.className='pill neutral'}
+    else if(isPrepared(dCur)){badge.textContent='In batch \u2713 '+(dCur.chain_type==='beady'?'Beady':'Regular')+' \u00b7 Engr '+(dCur.engraving!==false?'ON':'OFF')+(dCur.batched?' \u00b7 batched':'');badge.className='pill ok'}
+    else{badge.textContent='Not in batch \u2014 press Approve to queue with the shown toggles';badge.className='pill neutral'}}
+  const un=$('#unprepBtn');if(un)un.classList.toggle('hidden',!isPrepared(dCur));
+  const ap=$('#approvePrepBtn');if(ap){ap.classList.toggle('hidden',isPrepared(dCur));ap.disabled=!S.currentId}
 }
 function persistToggle(kind){
   if(!S.currentId)return; // toggles only persist against an open listing
+  const wasQueued=isPrepared(S.prep.get(String(S.currentId)));
   const l=currentListing();
-  const patch=kind==='chain'?{chain_type:S.chainType,chain_set:true}:{engraving:S.engraving,engrave_set:true};
-  patch.batched=false;patch.title=(l&&l.title)||'';
+  const patch=kind==='chain'?{chain_type:S.chainType}:{engraving:S.engraving};
+  if(wasQueued)patch.batched=false; // changed after queuing -> needs a fresh batch pass
+  patch.title=(l&&l.title)||'';
   fbSet(S.currentId,patch);
+  if(wasQueued)toast('Updated for the queued batch: '+(kind==='chain'?(S.chainType==='beady'?'Beady':'Regular'):'Engraving '+(S.engraving?'ON':'OFF'))+'.','ok');
+}
+function approvePrep(){
+  if(!S.currentId){toast('Open a listing first.','bad');return}
+  const l=currentListing();
+  fbSet(S.currentId,{chain_type:S.chainType,engraving:S.engraving,chain_set:true,engrave_set:true,batched:false,title:(l&&l.title)||''});
+  toast('#'+S.currentId+' approved for the batch ('+(S.chainType==='beady'?'Beady':'Regular')+' \u00b7 Engraving '+(S.engraving?'ON':'OFF')+') \u2014 '+preparedReadyIds().length+' ready.','ok');
+}
+function unprepare(id){
+  if(!id)return;
+  fbSet(String(id),{chain_set:false,engrave_set:false,batched:false});
+  toast('#'+id+' removed from the batch queue \u2014 '+preparedReadyIds().length+' ready.','ok');
 }
 function renderBatchUi(){
   const b=S.batch;
@@ -883,6 +901,8 @@ $('#engraveToggle').addEventListener('click',e=>{const b=e.target.closest('butto
   S.engraving=on;renderChainToggle();persistToggle('engrave');
   if(!on){const n=stripEngraveRows();toast(n?('Engraving OFF \u2014 '+n+' engraving combination'+(n===1?'':'s')+' removed from the draft. Save to apply, or Reset to undo.'):'Engraving OFF \u2014 engraving options will be excluded from the next rebuild.','ok')}
   else toast('Engraving ON \u2014 run \u2726 Charm Only setup to rebuild the option set including engraving options.','ok')});
+$('#approvePrepBtn').addEventListener('click',approvePrep);
+$('#unprepBtn').addEventListener('click',()=>unprepare(S.currentId));
 $('#batchBtn').addEventListener('click',batchRun);
 $('#batchPauseBtn').addEventListener('click',async()=>{
   if(!S.currentRunId)return;
