@@ -74,6 +74,8 @@ dialog{border:0;padding:0;border-radius:15px;box-shadow:0 24px 80px rgba(0,0,0,.
 #batchPanel .bbar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--gold),var(--sage));transition:width .25s}
 #batchPanel .bcur{font-size:11.5px;color:var(--ink45);margin-bottom:6px}
 #batchPanel .berrs{max-height:110px;overflow:auto;font-size:11.5px;color:var(--clay);display:flex;flex-direction:column;gap:3px}
+.schedBar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 12px;margin-bottom:10px;border:1.5px dashed var(--velvet);border-radius:var(--rsm);background:var(--card)}
+.schedBar .mlabel{font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--clay)}
 #resultsView .rhead{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px}
 #resultsView .rhead h2{font:22px var(--serif);margin:0}
 #resultsView .rhead .rsub{font-size:12px;color:var(--ink45)}
@@ -173,7 +175,15 @@ dialog{border:0;padding:0;border-radius:15px;box-shadow:0 24px 80px rgba(0,0,0,.
       <section id="resultsView" class="hidden">
         <div class="rhead">
           <div><h2 id="rTitle">Results</h2><div class="rsub" id="rSummary">—</div></div>
-          <div class="rtools"><select class="input sm" id="rSort" aria-label="Sort results"><option value="score">Best match</option><option value="title_asc">Title A–Z</option><option value="title_desc">Title Z–A</option><option value="created_desc">Date added · newest</option><option value="created_asc">Date added · oldest</option><option value="updated_desc">Recently updated</option><option value="status_att">Status · needs attention first</option><option value="status_done">Status · completed first</option><option value="price_asc">Price low–high</option><option value="price_desc">Price high–low</option></select>
+          <div class="schedBar hidden" id="schedBar">
+          <span class="mlabel">Auto-run</span>
+          <input type="datetime-local" class="input sm" id="schedAt" aria-label="Scheduled date and time">
+          <select class="input sm" id="schedRepeat"><option value="once">Once</option><option value="daily">Daily</option><option value="weekly">Weekly</option></select>
+          <button class="btn velvet sm" id="schedArmBtn">Schedule batch</button>
+          <button class="btn ghost sm hidden" id="schedCancelBtn">Cancel schedule</button>
+          <span class="pill neutral" id="schedStatus">Not scheduled</span>
+        </div>
+        <div class="rtools"><select class="input sm" id="rSort" aria-label="Sort results"><option value="score">Best match</option><option value="title_asc">Title A–Z</option><option value="title_desc">Title Z–A</option><option value="created_desc">Date added · newest</option><option value="created_asc">Date added · oldest</option><option value="updated_desc">Recently updated</option><option value="status_att">Status · needs attention first</option><option value="status_done">Status · completed first</option><option value="price_asc">Price low–high</option><option value="price_desc">Price high–low</option></select>
             <select id="rDensity" aria-label="Result density"><option value="comfortable">Comfortable</option><option value="compact">Compact</option></select>
           </div>
         </div>
@@ -594,7 +604,7 @@ function comboChip(l){
   const h=l._health,range=h.min_price==null?'':' · '+money(h.min_price)+(h.max_price!==h.min_price?'–'+money(h.max_price):'');
   return '<span class="schip">'+h.product_count+' combos'+range+'</span>';
 }
-function renderResults(){
+function renderResults(){renderSchedule();
   const list=$('#rList');if(!list)return;
   const rows=resultsRows(),base=resultsBase();
   $('#tabResultsCount').textContent=base.length;
@@ -649,7 +659,7 @@ async function approveIds(targets){
   toast(S.stopScan?'Approval run stopped.':('Approved '+(done-failed)+' listing'+(done-failed===1?'':'s')+(failed?' · '+failed+' failed':'')+'.'),failed?'bad':'ok');
 }
 $('#tabResults').addEventListener('click',()=>{if(S.rFilter==='prepared')S.rFilter='all';setView('results');renderResults()});
-$('#tabBatch').addEventListener('click',()=>{S.rFilter='prepared';setView('results');renderResults()});
+$('#tabBatch').addEventListener('click',()=>{S.rFilter='prepared';setView('results');renderResults();loadSchedule()});
 $('#tabEditor').addEventListener('click',()=>setView('editor'));
 $('#rDensity').addEventListener('change',e=>{S.rDensity=e.target.value;renderResults()});
 $('#rChips').addEventListener('click',e=>{const b=e.target.closest('button[data-rfilter]');if(!b)return;S.rFilter=b.dataset.rfilter;renderResults()});
@@ -801,7 +811,7 @@ async function hydrateFromStore(){
     if(touched){writeApprovals();applyFilter()}
     renderPrepUi();
   }catch(e){toast('Cloud state could not be loaded: '+e.message,'bad')}
-  resumeActiveRun();
+  resumeActiveRun();loadSchedule();
 }
 function isPrepared(d){return !!(d&&d.chain_set&&d.engrave_set)}
 function preparedReadyIds(){return [...S.prep].filter(([,d])=>isPrepared(d)&&!d.batched).map(([id])=>id)}
@@ -853,7 +863,8 @@ function showBatchPanel(){$('#batchPanel').classList.remove('hidden')}
 function applyRunToUi(run){
   S.batch={running:['queued','running','paused'].includes(run.status),stop:!!run.stop,total:run.total||0,done:run.done||0,ok:run.ok||0,fail:run.fail||0};
   renderBatchUi();renderPrepUi();
-  $('#batchState').textContent=run.status==='running'?'Running on server':run.status==='queued'?'Queued':run.status==='paused'?'Paused':run.status==='stopped'?'Stopped':'Done';
+  $('#batchState').textContent=run.status==='running'?'Running on server':run.status==='queued'?'Queued':run.status==='paused'?'Paused':run.status==='stopped'?(run.stop_reason?'Auto-halted':'Stopped'):'Done';
+  if(run.stop_reason){const box=$('#bErrs');if(box&&!box.dataset.reasonShown){const div=document.createElement('div');div.style.fontWeight='700';div.textContent=run.stop_reason;box.prepend(div);box.dataset.reasonShown='1'}}
   const pb=$('#batchPauseBtn');pb.textContent=run.status==='paused'?'Resume':'Pause';pb.disabled=!['queued','running','paused'].includes(run.status);
   $('#bCur').textContent=run.current||'';
   const errs=run.errors||[];const box=$('#bErrs');box.innerHTML='';for(const e of errs.slice(-50)){const div=document.createElement('div');div.textContent=e;box.appendChild(div)}
@@ -883,11 +894,41 @@ async function batchRun(){
     const {run_id}=await fbCall({action:'startRun',ids});
     S.currentRunId=run_id;
     await fetch(FUNCTIONS_BASE+'/etsyPricingBatch-background',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({run_id})});
-    showBatchPanel();$('#bErrs').innerHTML='';
+    showBatchPanel();$('#bErrs').innerHTML='';delete $('#bErrs').dataset.reasonShown;
     applyRunToUi({status:'queued',total:ids.length,done:0,ok:0,fail:0});
     pollRun(run_id);
     toast('Server batch started \u2014 safe to close this tab. Progress is live here and saved in the cloud.','ok');
   }catch(e){toast('Could not start batch: '+e.message,'bad')}
+}
+S.schedule=null;
+function renderSchedule(){
+  const bar=$('#schedBar');if(!bar)return;
+  bar.classList.toggle('hidden',!(S.view==='results'&&S.rFilter==='prepared'));
+  const sc=S.schedule;
+  const armed=!!(sc&&sc.enabled);
+  $('#schedArmBtn').classList.toggle('hidden',armed);
+  $('#schedCancelBtn').classList.toggle('hidden',!armed);
+  if(armed){const dt=new Date(Number(sc.next_run_at));
+    $('#schedStatus').textContent='Scheduled \u00b7 '+dt.toLocaleString()+' \u00b7 '+(sc.repeat==='once'?'runs once':sc.repeat)+' \u00b7 runs whatever is queued at that time';
+    $('#schedStatus').className='pill ok'}
+  else{$('#schedStatus').textContent=(sc&&sc.last_result)?sc.last_result:'Not scheduled';$('#schedStatus').className='pill neutral'}
+}
+async function loadSchedule(){try{const {schedule}=await fbCall({action:'getSchedule'});S.schedule=schedule;renderSchedule()}catch(e){}}
+async function armSchedule(){
+  const v=$('#schedAt').value;
+  if(!v){toast('Pick a date and time first.','bad');return}
+  const at=new Date(v).getTime();
+  if(!(at>Date.now())){toast('The scheduled time must be in the future.','bad');return}
+  const repeat=$('#schedRepeat').value;
+  try{
+    const {schedule}=await fbCall({action:'setSchedule',schedule:{enabled:true,next_run_at:at,repeat,label:new Date(at).toLocaleString()}});
+    S.schedule=schedule;renderSchedule();
+    toast('Batch scheduled for '+new Date(at).toLocaleString()+' ('+repeat+'). The server runs it \u2014 no browser needed. It will process every listing queued at that moment.','ok');
+  }catch(e){toast('Could not schedule: '+e.message,'bad')}
+}
+async function cancelSchedule(){
+  try{const {schedule}=await fbCall({action:'setSchedule',schedule:{enabled:false,next_run_at:S.schedule?.next_run_at||0,repeat:S.schedule?.repeat||'once'}});
+    S.schedule=schedule;renderSchedule();toast('Schedule cancelled.','ok')}catch(e){toast(e.message,'bad')}
 }
 async function resumeActiveRun(){
   try{const {run,run_id}=await fbCall({action:'activeRun'});
@@ -911,6 +952,8 @@ $('#engraveToggle').addEventListener('click',e=>{const b=e.target.closest('butto
   S.engraving=on;renderChainToggle();persistToggle('engrave');
   if(!on){const n=stripEngraveRows();toast(n?('Engraving OFF \u2014 '+n+' engraving combination'+(n===1?'':'s')+' removed from the draft. Save to apply, or Reset to undo.'):'Engraving OFF \u2014 engraving options will be excluded from the next rebuild.','ok')}
   else toast('Engraving ON \u2014 run \u2726 Charm Only setup to rebuild the option set including engraving options.','ok')});
+$('#schedArmBtn').addEventListener('click',armSchedule);
+$('#schedCancelBtn').addEventListener('click',cancelSchedule);
 $('#approvePrepBtn').addEventListener('click',approvePrep);
 $('#unprepBtn').addEventListener('click',()=>unprepare(S.currentId));
 $('#batchBtn').addEventListener('click',batchRun);
