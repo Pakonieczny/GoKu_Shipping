@@ -63,8 +63,8 @@ dialog{border:0;padding:0;border-radius:15px;box-shadow:0 24px 80px rgba(0,0,0,.
 .modeBar .tabCtl#engraveToggle button.on[data-eg="off"]{background:var(--clay);color:#fff}
 @media (max-width:860px){.modeBar .mhint{display:none}}
 .modeBar #prepBadge{font-size:10.5px}
-.modeBar #batchBtn{margin-left:auto}
-.modeBar #batchBtn b{color:var(--gold2);margin-left:5px}
+.batchCluster{display:flex;align-items:center;gap:6px}
+.batchCluster #batchBtn b{color:var(--gold2);margin-left:6px}
 #batchPanel{margin:0 0 14px;padding:12px 14px;border:1.5px solid var(--velvetLine,var(--line));border-left:4px solid var(--velvet);border-radius:var(--rsm);background:var(--card);box-shadow:var(--sh)}
 #batchPanel .bhead{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px}
 #batchPanel .bhead h4{margin:0;font:15px var(--serif)}
@@ -157,6 +157,11 @@ dialog{border:0;padding:0;border-radius:15px;box-shadow:0 24px 80px rgba(0,0,0,.
         <button id="tabEditor" role="tab" class="on">Listing</button>
         <button id="tabResults" role="tab">Results<b id="tabResultsCount">0</b></button>
       </div>
+      <div class="batchCluster">
+        <button class="btn velvet sm" id="batchBtn" title="Run all prepared listings on the server">▶ Start Batch<b id="batchCount">0</b></button>
+        <button class="btn gold sm hidden" id="batchPauseBtn">Pause</button>
+        <button class="btn ghost sm hidden" id="batchStopBtn">Stop</button>
+      </div>
       <button class="btn ghost sm" id="refreshBtn">Refresh</button>
     </header>
 
@@ -193,9 +198,9 @@ dialog{border:0;padding:0;border-radius:15px;box-shadow:0 24px 80px rgba(0,0,0,.
         </div>
 
         <div class="sectionHead"><div><h3>Variation menus</h3><div class="sub">Add tiers, rename custom menus or remove options. New combinations inherit their source tier values.</div></div><div class="right"><button class="btn ghost sm" id="charmOnlyBtn">✦ Charm Only setup</button><button class="btn ghost sm" id="addMenuBtn">+ Add dropdown</button></div></div>
-        <div class="modeBar hidden" id="modeBar"><span class="mlabel">Required — set per listing</span><div class="tabCtl sm" id="chainTypeToggle" role="tablist" aria-label="Necklace chain type"><button data-ct="regular" class="on">Regular</button><button data-ct="beady">Beady</button></div><div class="tabCtl sm" id="engraveToggle" role="tablist" aria-label="Back engraving"><button data-eg="on" class="on">Engraving ON</button><button data-eg="off">Engraving OFF</button></div><span class="pill neutral" id="prepBadge">Not prepared</span><button class="btn velvet sm" id="batchBtn">Batch Process<b id="batchCount">0</b></button></div>
+        <div class="modeBar hidden" id="modeBar"><span class="mlabel">Required — set per listing</span><div class="tabCtl sm" id="chainTypeToggle" role="tablist" aria-label="Necklace chain type"><button data-ct="regular" class="on">Regular</button><button data-ct="beady">Beady</button></div><div class="tabCtl sm" id="engraveToggle" role="tablist" aria-label="Back engraving"><button data-eg="on" class="on">Engraving ON</button><button data-eg="off">Engraving OFF</button></div><span class="pill neutral" id="prepBadge">Not prepared</span></div>
         <div id="batchPanel" class="hidden">
-          <div class="bhead"><h4>Batch run</h4><span class="pill info" id="batchState">Idle</span><span style="flex:1"></span><button class="btn velvet xs" id="batchPauseBtn">Pause</button><button class="btn ghost xs" id="batchStopBtn">Stop</button></div>
+          <div class="bhead"><h4>Batch run</h4><span class="pill info" id="batchState">Idle</span><span style="flex:1"></span></div>
           <div class="bstats"><span>To batch <b id="bTotal">0</b></span><span>Succeeded <b id="bOk" style="color:var(--sage)">0</b></span><span>Failed <b id="bFail" style="color:var(--clay)">0</b></span><span>Remaining <b id="bLeft">0</b></span></div>
           <div class="bbar"><i id="bBar"></i></div>
           <div class="bcur" id="bCur"></div>
@@ -551,6 +556,8 @@ const R_FILTERS=[
   {key:'healthy',label:'Healthy',test:l=>l._scanned&&!((l._health?.error_count||0)+(l._health?.warning_count||0))},
   {key:'unscanned',label:'Not scanned',test:l=>!l._scanned},
   {key:'approved',label:'Reviewed',test:l=>!!S.approvals[String(l.listing_id)]},
+  {key:'prepared',label:'Set by user',test:l=>isPrepared(S.prep.get(String(l.listing_id)))},
+  {key:'unprepared',label:'Not set',test:l=>!isPrepared(S.prep.get(String(l.listing_id)))},
   {key:'sale',label:'On sale',test:l=>isOnSale(l)}
 ];
 function resultsBase(){return sortListings(currentScopeListings())}
@@ -568,6 +575,11 @@ function reviewChip(l){
   const a=S.approvals[String(l.listing_id)];
   if(!a)return '<span class="schip dim">Not reviewed</span>';
   return '<span class="schip '+(a.mode==='updated'?'ok':'warn')+'">'+(a.mode==='updated'?'Verified live':'Approved')+' · '+ago(a.at)+'</span>';
+}
+function prepChip(l){
+  const d=S.prep.get(String(l.listing_id));
+  if(!isPrepared(d))return '';
+  return '<span class="schip ok" title="Toggles set by user (stored in cloud)">\u2713 Set \u00b7 '+(d.chain_type==='beady'?'Beady':'Regular')+' \u00b7 Engr '+(d.engraving!==false?'ON':'OFF')+(d.batched?' \u00b7 batched':'')+'</span>';
 }
 function comboChip(l){
   if(!l._scanned||!l._health)return '';
@@ -591,7 +603,7 @@ function renderResults(){
       +'<img src="'+esc(imageUrl(l))+'" alt="" loading="lazy">'
       +'<div class="rmain"><div class="rtitle">'+esc(l.title||'Untitled')+'</div>'
       +'<div class="rmeta"><span>#'+id+'</span><span>'+esc(sectionTitle(l))+'</span>'+(price!=null?'<span class="rprice">'+money(price)+'</span>':'')+(isOnSale(l)?'<span class="schip warn">On sale</span>':'')+'</div>'
-      +'<div class="rstatus">'+pricingChip(l)+reviewChip(l)+comboChip(l)+'</div></div>'
+      +'<div class="rstatus">'+prepChip(l)+pricingChip(l)+reviewChip(l)+comboChip(l)+'</div></div>'
       +'<div class="ract"><div class="btns">'
       +'<button class="btn ghost xs" data-ract="open" data-id="'+id+'">Open</button>'
       +'<button class="btn ghost xs" data-ract="scan" data-id="'+id+'">Scan</button>'
@@ -763,7 +775,7 @@ async function charmOnlySetup(){
 }
 /* ---------------- Firebase-backed prep + batch ---------------- */
 async function fbCall(body){const r=await fetch(FUNCTIONS_BASE+'/etsyPricingStore',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const t=await r.text();let d;try{d=JSON.parse(t)}catch{throw new Error('Store returned non-JSON: '+t.slice(0,160))}if(!r.ok)throw new Error(d.error||('Store error HTTP '+r.status));return d}
-function fbSet(id,patch){const cur=S.prep.get(String(id))||{};S.prep.set(String(id),{...cur,...patch});renderPrepUi();return fbCall({action:'set',id:String(id),patch}).catch(e=>toast('Cloud save failed for #'+id+': '+e.message,'bad'))}
+function fbSet(id,patch){const cur=S.prep.get(String(id))||{};S.prep.set(String(id),{...cur,...patch});renderPrepUi();renderResults();return fbCall({action:'set',id:String(id),patch}).catch(e=>toast('Cloud save failed for #'+id+': '+e.message,'bad'))}
 function compactHealth(h){return h?{error_count:h.error_count||0,warning_count:h.warning_count||0,product_count:h.product_count||0,min_price:h.min_price??null,max_price:h.max_price??null}:null}
 async function hydrateFromStore(){
   try{
@@ -785,7 +797,10 @@ function preparedReadyIds(){return [...S.prep].filter(([,d])=>isPrepared(d)&&!d.
 function renderPrepUi(){
   const ready=preparedReadyIds();
   const bc=$('#batchCount');if(bc)bc.textContent=ready.length;
-  const bb=$('#batchBtn');if(bb)bb.disabled=S.batch.running||!ready.length;
+  const bb=$('#batchBtn');if(bb){bb.disabled=S.batch.running||!ready.length;bb.firstChild.textContent=S.batch.running?'\u25cf Batch running':'\u25b6 Start Batch'}
+  const active=!!S.currentRunId;
+  $('#batchPauseBtn')?.classList.toggle('hidden',!active);
+  $('#batchStopBtn')?.classList.toggle('hidden',!active);
   const badge=$('#prepBadge');
   if(badge){const d=S.prep.get(String(S.currentId));
     if(!S.currentId){badge.textContent='No listing open';badge.className='pill neutral'}
