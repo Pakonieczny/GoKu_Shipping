@@ -62,6 +62,18 @@ dialog{border:0;padding:0;border-radius:15px;box-shadow:0 24px 80px rgba(0,0,0,.
 .modeBar .tabCtl#engraveToggle button.on[data-eg="on"]{background:var(--sage);color:#fff}
 .modeBar .tabCtl#engraveToggle button.on[data-eg="off"]{background:var(--clay);color:#fff}
 @media (max-width:860px){.modeBar .mhint{display:none}}
+.modeBar #prepBadge{font-size:10.5px}
+.modeBar #batchBtn{margin-left:auto}
+.modeBar #batchBtn b{color:var(--gold2);margin-left:5px}
+#batchPanel{margin:0 0 14px;padding:12px 14px;border:1.5px solid var(--velvetLine,var(--line));border-left:4px solid var(--velvet);border-radius:var(--rsm);background:var(--card);box-shadow:var(--sh)}
+#batchPanel .bhead{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+#batchPanel .bhead h4{margin:0;font:15px var(--serif)}
+#batchPanel .bstats{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--ink70);margin-bottom:8px}
+#batchPanel .bstats b{font-size:14px;color:var(--ink)}
+#batchPanel .bbar{height:8px;border-radius:999px;background:var(--paper2);overflow:hidden;margin-bottom:8px}
+#batchPanel .bbar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--gold),var(--sage));transition:width .25s}
+#batchPanel .bcur{font-size:11.5px;color:var(--ink45);margin-bottom:6px}
+#batchPanel .berrs{max-height:110px;overflow:auto;font-size:11.5px;color:var(--clay);display:flex;flex-direction:column;gap:3px}
 #resultsView .rhead{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px}
 #resultsView .rhead h2{font:22px var(--serif);margin:0}
 #resultsView .rhead .rsub{font-size:12px;color:var(--ink45)}
@@ -75,7 +87,7 @@ dialog{border:0;padding:0;border-radius:15px;box-shadow:0 24px 80px rgba(0,0,0,.
 .rbulk .cnt{font-size:12px;color:var(--ink45)}
 .rbulk .sp{flex:1}
 .rlist{display:flex;flex-direction:column;gap:8px}
-.rrow{display:grid;grid-template-columns:auto 64px minmax(0,1fr) auto;gap:12px;align-items:center;padding:10px 12px;background:var(--card);border:1px solid var(--line);border-radius:var(--r);cursor:pointer;transition:border-color .12s,box-shadow .12s;text-align:left}
+.rrow{display:grid;grid-template-columns:64px minmax(0,1fr) auto;gap:12px;align-items:center;padding:10px 12px;background:var(--card);border:1px solid var(--line);border-radius:var(--r);cursor:pointer;transition:border-color .12s,box-shadow .12s;text-align:left}
 .rrow:hover{border-color:var(--goldLine);box-shadow:var(--sh)}
 .rrow.sel{border-color:var(--gold);box-shadow:0 0 0 1px var(--gold)}
 .rrow.current{background:var(--card2)}
@@ -94,12 +106,12 @@ dialog{border:0;padding:0;border-radius:15px;box-shadow:0 24px 80px rgba(0,0,0,.
 .rrow .ract{display:flex;flex-direction:column;gap:5px;align-items:flex-end}
 .rrow .ract .btns{display:flex;gap:5px}
 .rrow .rprice{font-weight:600;font-size:13px;white-space:nowrap}
-.rlist.compact .rrow{padding:6px 10px;grid-template-columns:auto 40px minmax(0,1fr) auto}
+.rlist.compact .rrow{padding:6px 10px;grid-template-columns:40px minmax(0,1fr) auto}
 .rlist.compact .rrow img{width:40px;height:40px}
 .rlist.compact .rtitle{-webkit-line-clamp:1;font-size:12.5px}
 .rlist.compact .rstatus{margin-top:3px}
 .rempty{padding:40px 20px;text-align:center;color:var(--ink45);font-size:13px;background:var(--card);border:1px dashed var(--line);border-radius:var(--r)}
-@media (max-width:760px){.rrow{grid-template-columns:auto 48px minmax(0,1fr)}.rrow .ract{grid-column:1/-1;flex-direction:row;justify-content:space-between;align-items:center}}
+@media (max-width:760px){.rrow{grid-template-columns:48px minmax(0,1fr)}.rrow .ract{grid-column:1/-1;flex-direction:row;justify-content:space-between;align-items:center}}
 </style>
 </head>
 <body>
@@ -160,14 +172,6 @@ dialog{border:0;padding:0;border-radius:15px;box-shadow:0 24px 80px rgba(0,0,0,.
           </div>
         </div>
         <div class="chipRow" id="rChips"></div>
-        <div class="rbulk">
-          <input type="checkbox" id="rMaster" aria-label="Select all results">
-          <span class="cnt" id="rSelCount">0 selected</span>
-          <span class="sp"></span>
-          <button class="btn ghost sm" id="rScanBtn">Scan pricing</button>
-          <button class="btn sage sm" id="rApproveBtn">Approve current pricing</button>
-          <button class="btn ghost sm" id="rClearBtn">Clear selection</button>
-        </div>
         <div class="rlist" id="rList"></div>
       </section>
 
@@ -189,7 +193,14 @@ dialog{border:0;padding:0;border-radius:15px;box-shadow:0 24px 80px rgba(0,0,0,.
         </div>
 
         <div class="sectionHead"><div><h3>Variation menus</h3><div class="sub">Add tiers, rename custom menus or remove options. New combinations inherit their source tier values.</div></div><div class="right"><button class="btn ghost sm" id="charmOnlyBtn">✦ Charm Only setup</button><button class="btn ghost sm" id="addMenuBtn">+ Add dropdown</button></div></div>
-        <div class="modeBar hidden" id="modeBar"><span class="mlabel">Required — set per listing</span><div class="tabCtl sm" id="chainTypeToggle" role="tablist" aria-label="Necklace chain type"><button data-ct="regular" class="on">Regular</button><button data-ct="beady">Beady</button></div><div class="tabCtl sm" id="engraveToggle" role="tablist" aria-label="Back engraving"><button data-eg="on" class="on">Engraving ON</button><button data-eg="off">Engraving OFF</button></div><span class="mhint">Applies to ✦ Charm Only setup and Save</span></div>
+        <div class="modeBar hidden" id="modeBar"><span class="mlabel">Required — set per listing</span><div class="tabCtl sm" id="chainTypeToggle" role="tablist" aria-label="Necklace chain type"><button data-ct="regular" class="on">Regular</button><button data-ct="beady">Beady</button></div><div class="tabCtl sm" id="engraveToggle" role="tablist" aria-label="Back engraving"><button data-eg="on" class="on">Engraving ON</button><button data-eg="off">Engraving OFF</button></div><span class="pill neutral" id="prepBadge">Not prepared</span><button class="btn velvet sm" id="batchBtn">Batch Process<b id="batchCount">0</b></button></div>
+        <div id="batchPanel" class="hidden">
+          <div class="bhead"><h4>Batch run</h4><span class="pill info" id="batchState">Idle</span><span style="flex:1"></span><button class="btn velvet xs" id="batchPauseBtn">Pause</button><button class="btn ghost xs" id="batchStopBtn">Stop</button></div>
+          <div class="bstats"><span>To batch <b id="bTotal">0</b></span><span>Succeeded <b id="bOk" style="color:var(--sage)">0</b></span><span>Failed <b id="bFail" style="color:var(--clay)">0</b></span><span>Remaining <b id="bLeft">0</b></span></div>
+          <div class="bbar"><i id="bBar"></i></div>
+          <div class="bcur" id="bCur"></div>
+          <div class="berrs" id="bErrs"></div>
+        </div>
         <div class="grid variationGrid" id="variationGrid"></div>
         <div class="card depCard" id="dependencyCard"></div>
 
@@ -247,7 +258,8 @@ const S = {
   searchPending:false, searchSeq:0, searchTimer:null, searchAbort:null, searchCache:new Map(), matchMode:'all', sortMode:'score', currentId:null,
   cache:new Map(), original:null, draft:null, originalHash:null, selected:new Set(), dirty:false,
   approvals:readApprovals(), scanning:false, stopScan:false, refreshPromise:null, clientId:null,
-  view:'editor', rSel:new Set(), rFilter:'all', rDensity:'comfortable', rBusy:new Set(), chainType:'regular', engraving:true
+  view:'editor', rSel:new Set(), rFilter:'all', rDensity:'comfortable', rBusy:new Set(), chainType:'regular', engraving:true,
+  prep:new Map(), batch:{running:false,stop:false,total:0,done:0,ok:0,fail:0}
 };
 
 const $ = s => document.querySelector(s);
@@ -413,6 +425,7 @@ async function loadCatalog(){
     S.listings=all.sort((a,b)=>String(a.title||'').localeCompare(String(b.title||'')));
     for(const l of S.listings){const a=S.approvals[String(l.listing_id)];l._approved=!!a;l._health=null;l._scanned=false}
     renderStoreFilters();applyFilter();clearActivity();updateSearchUi('Live Etsy title search');if(!S.listings.length){toast('No active Etsy listings were found.','bad');return}
+    hydrateFromStore();
     setView('results');toast('Live Etsy catalog loaded. Browse results, pick a category, or search by title — click any listing to open its pricing matrix.','ok');
   }catch(e){clearActivity();toast(e.message,'bad')}
 }
@@ -445,7 +458,7 @@ function renderNav(){
 async function navigate(delta){if(S.view==='results')return;const i=S.filtered.findIndex(l=>String(l.listing_id)===String(S.currentId));const n=S.filtered[i+delta];if(n)await focusListing(n.listing_id)}
 async function focusListing(id){
   if(S.dirty){const ok=await confirmDialog('Leave unsaved changes?','Your edits to this listing have not been sent to Etsy.');if(!ok)return}
-  S.currentId=String(id);S.selected.clear();setView('editor');renderQueue();renderNav();setActivity('Loading complete pricing matrix…',null,false);
+  S.currentId=String(id);S.selected.clear();setView('editor');{const d=S.prep.get(String(id));if(d){if(d.chain_set)S.chainType=d.chain_type==='beady'?'beady':'regular';if(d.engrave_set)S.engraving=d.engraving!==false}renderChainToggle()}renderQueue();renderNav();setActivity('Loading complete pricing matrix…',null,false);
   try{let d=S.cache.get(S.currentId);if(!d)d=await apiFetch('/etsyListingInventoryDetailProxy?listingId='+encodeURIComponent(S.currentId)+'&inventory_only=1');S.cache.set(S.currentId,d);const l=S.listings.find(x=>String(x.listing_id)===S.currentId);if(l){l._health=d.pricing_health;l._scanned=true}hydrateDetail(d);clearActivity()}catch(e){clearActivity();toast(e.message,'bad')}
 }
 function hydrateDetail(d){S.original=deep(d.inventory);S.draft=deep(d.inventory);S.originalHash=d.snapshot_hash;S.dirty=false;S.selected.clear();renderEditor()}
@@ -510,7 +523,7 @@ async function saveListing(){
       if(result.fresh){S.original=deep(result.fresh.inventory);S.originalHash=result.fresh.snapshot_hash;const l=currentListing();if(l){l._health=result.fresh.pricing_health;l._scanned=true}}
       throw new Error((result.verification_error||'Etsy verification did not match.')+' The current live state has been reloaded as the baseline — review the matrix and press Save again.')
     }
-    const fresh=result.fresh||await apiFetch('/etsyListingInventoryDetailProxy?listingId='+encodeURIComponent(S.currentId)+'&inventory_only=1');S.cache.set(S.currentId,fresh);const l=currentListing();l._health=fresh.pricing_health;l._scanned=true;S.approvals[S.currentId]={mode:'updated',at:Date.now(),hash:fresh.snapshot_hash};writeApprovals();hydrateDetail(fresh);clearActivity();
+    const fresh=result.fresh||await apiFetch('/etsyListingInventoryDetailProxy?listingId='+encodeURIComponent(S.currentId)+'&inventory_only=1');S.cache.set(S.currentId,fresh);const l=currentListing();l._health=fresh.pricing_health;l._scanned=true;S.approvals[S.currentId]={mode:'updated',at:Date.now(),hash:fresh.snapshot_hash};writeApprovals();{const d=S.prep.get(String(S.currentId))||{};const patch={health:compactHealth(fresh.pricing_health),scanned:true,approval:S.approvals[S.currentId],last_save:{at:Date.now(),verified:true},title:(currentListing()||{}).title||''};if(!d.original_saved&&result.previous_inventory){patch.original_inventory=result.previous_inventory;patch.original_snapshot_hash=result.previous_snapshot_hash||null;patch.original_saved=true}fbSet(S.currentId,patch)}hydrateDetail(fresh);clearActivity();
     if(result.personalization&&result.personalization.applied&&!result.personalization.verified)
       toast('Pricing verified. The Personalization field was sent to Etsy \u2014 please confirm it in the listing editor.','ok');
     else toast('Etsy update verified successfully.','ok')
@@ -570,13 +583,11 @@ function renderResults(){
   $('#rTitle').textContent=q?('Results for \u201c'+q+'\u201d'):(filterDef().label+' listings');
   $('#rSummary').textContent=rows.length+' of '+base.length+' listing'+(base.length===1?'':'s')+' · '+(q?'live title search · category: '+filterDef().label:filterDef().label)+(S.searchPending?' · syncing with Etsy…':'');
   $('#rChips').innerHTML=R_FILTERS.map(f=>{const n=base.filter(f.test).length;return '<button data-rfilter="'+f.key+'" class="'+(S.rFilter===f.key?'on':'')+'">'+f.label+' <b>'+n+'</b></button>'}).join('');
-  for(const id of [...S.rSel])if(!rows.some(l=>String(l.listing_id)===id))S.rSel.delete(id);
   if(!rows.length){list.innerHTML='<div class="rempty">'+(q?'No live Etsy titles match this search and status filter.':'No listings in this category and status filter.')+'</div>'}
   else{
     list.className='rlist'+(S.rDensity==='compact'?' compact':'');
-    list.innerHTML=rows.map(l=>{const id=String(l.listing_id),sel=S.rSel.has(id),price=listingPrice(l);
-      return '<div class="rrow'+(sel?' sel':'')+(id===String(S.currentId)?' current':'')+'" data-id="'+id+'" role="button" tabindex="0">'
-      +'<input type="checkbox" class="rcheck" data-id="'+id+'" '+(sel?'checked':'')+' aria-label="Select listing">'
+    list.innerHTML=rows.map(l=>{const id=String(l.listing_id),price=listingPrice(l);
+      return '<div class="rrow'+(id===String(S.currentId)?' current':'')+'" data-id="'+id+'" role="button" tabindex="0">'
       +'<img src="'+esc(imageUrl(l))+'" alt="" loading="lazy">'
       +'<div class="rmain"><div class="rtitle">'+esc(l.title||'Untitled')+'</div>'
       +'<div class="rmeta"><span>#'+id+'</span><span>'+esc(sectionTitle(l))+'</span>'+(price!=null?'<span class="rprice">'+money(price)+'</span>':'')+(isOnSale(l)?'<span class="schip warn">On sale</span>':'')+'</div>'
@@ -589,11 +600,7 @@ function renderResults(){
       +'</div></div></div>'}).join('');
     list.scrollTop=scroll;
   }
-  $('#rSelCount').textContent=S.rSel.size?S.rSel.size+' selected':(rows.length?'0 selected · actions apply to all '+rows.length+' shown':'0 selected');
-  const m=$('#rMaster');m.checked=rows.length>0&&S.rSel.size===rows.length;m.indeterminate=S.rSel.size>0&&S.rSel.size<rows.length;
-  $('#rScanBtn').disabled=S.scanning;$('#rApproveBtn').disabled=S.scanning;
 }
-function rTargets(){const rows=resultsRows();return S.rSel.size?rows.filter(l=>S.rSel.has(String(l.listing_id))):rows}
 async function scanIds(targets){
   if(S.scanning||!targets.length)return;
   if(targets.length>250&&!await confirmDialog('Scan '+targets.length+' live Etsy listings?','One inventory request per listing; this consumes Etsy API quota.'))return;
@@ -601,7 +608,7 @@ async function scanIds(targets){
   for(const l of targets){if(S.stopScan)break;const id=String(l.listing_id);
     if(S.cache.has(id)&&l._scanned){done++;continue}
     S.rBusy.add(id);renderResults();setActivity('Scanning pricing… '+(done+1)+' / '+targets.length,(done/targets.length)*100,true);
-    try{const d=await apiFetch('/etsyListingInventoryDetailProxy?listingId='+encodeURIComponent(id)+'&inventory_only=1');S.cache.set(id,d);l._health=d.pricing_health;l._scanned=true;if(id===String(S.currentId)&&!S.dirty)hydrateDetail(d)}
+    try{const d=await apiFetch('/etsyListingInventoryDetailProxy?listingId='+encodeURIComponent(id)+'&inventory_only=1');S.cache.set(id,d);l._health=d.pricing_health;l._scanned=true;fbSet(id,{health:compactHealth(d.pricing_health),scanned:true,title:l.title||''});if(id===String(S.currentId)&&!S.dirty)hydrateDetail(d)}
     catch(e){l._health={error_count:1,warning_count:0,issues:[{severity:'error',message:e.message}]};l._scanned=true;toast('Listing #'+id+': '+e.message,'bad')}
     S.rBusy.delete(id);done++;applyFilter();
   }
@@ -613,7 +620,7 @@ async function approveIds(targets){
   S.scanning=true;S.stopScan=false;let done=0,failed=0;
   for(const l of targets){if(S.stopScan)break;const id=String(l.listing_id);
     S.rBusy.add(id);renderResults();setActivity('Verifying & approving… '+(done+1)+' / '+targets.length,(done/targets.length)*100,true);
-    try{const d=await apiFetch('/etsyListingInventoryDetailProxy?listingId='+encodeURIComponent(id)+'&inventory_only=1');S.cache.set(id,d);l._health=d.pricing_health;l._scanned=true;l._approved=true;S.approvals[id]={mode:'approved',at:Date.now(),hash:d.snapshot_hash};if(id===String(S.currentId)&&!S.dirty)hydrateDetail(d)}
+    try{const d=await apiFetch('/etsyListingInventoryDetailProxy?listingId='+encodeURIComponent(id)+'&inventory_only=1');S.cache.set(id,d);l._health=d.pricing_health;l._scanned=true;l._approved=true;S.approvals[id]={mode:'approved',at:Date.now(),hash:d.snapshot_hash};fbSet(id,{health:compactHealth(d.pricing_health),scanned:true,approval:S.approvals[id],title:l.title||''});if(id===String(S.currentId)&&!S.dirty)hydrateDetail(d)}
     catch(e){failed++;toast('Listing #'+id+': '+e.message,'bad')}
     S.rBusy.delete(id);done++;applyFilter();
   }
@@ -624,13 +631,7 @@ $('#tabResults').addEventListener('click',()=>setView('results'));
 $('#tabEditor').addEventListener('click',()=>setView('editor'));
 $('#rDensity').addEventListener('change',e=>{S.rDensity=e.target.value;renderResults()});
 $('#rChips').addEventListener('click',e=>{const b=e.target.closest('button[data-rfilter]');if(!b)return;S.rFilter=b.dataset.rfilter;renderResults()});
-$('#rMaster').addEventListener('change',e=>{S.rSel=new Set(e.target.checked?resultsRows().map(l=>String(l.listing_id)):[]);renderResults()});
-$('#rClearBtn').addEventListener('click',()=>{S.rSel.clear();renderResults()});
-$('#rScanBtn').addEventListener('click',()=>scanIds(rTargets()));
-$('#rApproveBtn').addEventListener('click',()=>approveIds(rTargets()));
-$('#rList').addEventListener('change',e=>{if(!e.target.classList.contains('rcheck'))return;const id=e.target.dataset.id;e.target.checked?S.rSel.add(id):S.rSel.delete(id);renderResults()});
 $('#rList').addEventListener('click',e=>{
-  if(e.target.classList.contains('rcheck'))return;
   const act=e.target.closest('button[data-ract]');
   if(act){const id=act.dataset.id,l=S.listings.find(x=>String(x.listing_id)===id);
     if(act.dataset.ract==='open')focusListing(id);
@@ -644,16 +645,14 @@ $('#rList').addEventListener('keydown',e=>{if(e.key==='Enter'){const row=e.targe
 
 
 /* ---------------- Necklace pricing setup (deterministic, draft-only) ---------------- */
-/* Canonical option names & display order (Title Case, all <=20 chars). */
 const CANON_ORDER=['Silver','Gold','Rose','Silver + Engrave','Gold + Engrave','Rose + Engrave','10k Solid Gold','10k Gold + Engrave','14k Solid Gold','14k Gold + Engrave','Gold-Charm Only','Silver-Charm Only','Rose-Charm Only','10k Solid-Charm Only','14k Solid-Charm Only'];
 const CHARM_ONLY_METALS=['Gold-Charm Only','Silver-Charm Only','Rose-Charm Only','10k Solid-Charm Only','14k Solid-Charm Only'];
 const NO_CHAIN_VALUE='Charm Only-No Chain'; // 19 chars
-/* Pricing sheets (base prices; Etsy's 20% sale then lands on $.25 steps). */
 const REGULAR_PRICES={'Silver':[39.69,40.00,40.31],'Gold':[46.56,46.88,47.19],'Rose':[49.69,50.00,50.31],'Silver + Engrave':[46.56,46.88,47.19],'Gold + Engrave':[51.56,51.88,52.19],'Rose + Engrave':[54.69,55.00,55.31],'10k Solid Gold':[252.81,253.13,253.44],'10k Gold + Engrave':[266.56,266.88,267.19],'14k Solid Gold':[315.94,316.56,316.88],'14k Gold + Engrave':[333.13,333.75,334.06]};
 const BEADY_FLAT_PRICES={'Silver':[56.56,56.88,57.19],'Gold':[65.94,66.25,66.56],'Silver + Engrave':[63.75,64.06,64.38],'Gold + Engrave':[73.13,73.44,73.75]};
 const BEADY_SOLID_BY_LENGTH={'10k Solid Gold':{14:[439.69,440.00,440.31],16:[470.63,470.94,471.25],18:[501.56,501.88,502.19]},'10k Gold + Engrave':{14:[467.81,468.13,468.44],16:[491.88,492.19,492.50],18:[515.63,515.94,516.25]},'14k Solid Gold':{14:[549.69,550.00,550.31],16:[588.44,588.75,589.06],18:[627.19,627.50,627.81]},'14k Gold + Engrave':{14:[584.69,585.00,585.31],16:[614.69,615.00,615.31],18:[644.69,645.00,645.31]}};
 const CHARM_ONLY_PRICE_POOLS={'Gold-Charm Only':[28.13,28.75,29.38],'Silver-Charm Only':[27.81,28.44,29.06],'Rose-Charm Only':[29.06,29.38,30.00],'10k Solid-Charm Only':[110.63,111.56,112.50],'14k Solid-Charm Only':[138.44,139.38,140.63]};
-/* Recognizing existing values (any historical casing/naming) */
+const ENGRAVE_INSTRUCTIONS='To include back engraving on your piece, choose the "+ engrave" option and leave us your instructions here.';
 function normOpt(v){return String(v).toLowerCase().replace(/[\u2013\u2014]/g,'-').replace(/\s*-\s*/g,'-').replace(/\s*\+\s*/g,' + ').replace(/\s+/g,' ').trim()}
 const CANON_ALIASES=(()=>{const m=new Map();const add=(c,...alts)=>{m.set(normOpt(c),c);for(const a of alts)m.set(normOpt(a),c)};
   add('Silver');add('Gold');add('Rose','rose gold');
@@ -672,17 +671,7 @@ function parseLen(v){const m=String(v).match(/(\d+)/);return m?parseInt(m[1],10)
 function titleCaseOpt(v){return String(v).split(/\s+/).map(w=>/^[a-z]/i.test(w)?w[0].toUpperCase()+w.slice(1).toLowerCase():w.toLowerCase()).join(' ')}
 function detectProp(patterns){const props=getProperties();for(const re of patterns){const hit=props.find(p=>re.test(String(p.property_name||'')));if(hit)return hit}return null}
 function effectiveChainType(){return S.storeFilter==='necklaces'?S.chainType:'regular'}
-function renderChainToggle(){const bar=$('#modeBar');if(!bar)return;bar.classList.toggle('hidden',S.storeFilter!=='necklaces');
-  [...document.querySelectorAll('#chainTypeToggle button')].forEach(b=>b.classList.toggle('on',b.dataset.ct===S.chainType));
-  [...document.querySelectorAll('#engraveToggle button')].forEach(b=>b.classList.toggle('on',(b.dataset.eg==='on')===S.engraving))}
-function stripEngraveRows(){
-  if(!S.draft)return 0;
-  const before=S.draft.products.length;
-  S.draft.products=S.draft.products.filter(p=>!(p.property_values||[]).some(v=>(v.values||[]).some(val=>/engrave/i.test(String(val)))));
-  const removed=before-S.draft.products.length;
-  if(removed){sortProducts();markDirty();renderEditor()}
-  return removed;
-}
+function draftHasEngrave(products){return (products||[]).some(p=>(p.property_values||[]).some(v=>(v.values||[]).some(val=>/engrave/i.test(String(val)))))}
 function priceFor(opt,lengthValue,version,chainType){
   if(CHARM_ONLY_PRICE_POOLS[opt])return CHARM_ONLY_PRICE_POOLS[opt][version];
   if(chainType==='beady'){
@@ -697,84 +686,197 @@ function priceFor(opt,lengthValue,version,chainType){
   if(!reg)throw new Error('No Regular price defined for \u201c'+opt+'\u201d. Nothing was changed.');
   return reg[version];
 }
-async function charmOnlySetup(){
+/* Pure planner: rebuild the full standardized matrix from a listing's current
+   products. Used by the interactive setup button AND the headless batch run,
+   so both are guaranteed identical behavior. Returns {error} or the plan. */
+function planStandardRebuild(products,chainType,engraving){
+  const propsMap=new Map();
+  for(const p of (products||[]))for(const v of (p.property_values||[])){const id=Number(v.property_id);
+    if(!propsMap.has(id))propsMap.set(id,{property_id:id,property_name:v.property_name||'Variation',values:[]});
+    for(const val of (v.values||[]))if(!propsMap.get(id).values.includes(val))propsMap.get(id).values.push(val)}
+  const props=[...propsMap.values()];
+  const find=res=>{for(const re of res){const h=props.find(p=>re.test(String(p.property_name||'')));if(h)return h}return null};
+  const metalProp=find([/metal/i,/material/i,/colou?r/i]);
+  if(!metalProp)return {error:'No metal dropdown found. Dropdowns: '+props.map(p=>'\u201c'+p.property_name+'\u201d').join(', ')+'.'};
+  const lengthProp=find([/chain\s*length/i,/length/i,/chain/i,/size/i]);
+  if(!lengthProp)return {error:'No chain-length dropdown found. Dropdowns: '+props.map(p=>'\u201c'+p.property_name+'\u201d').join(', ')+'.'};
+  if(metalProp.property_id===lengthProp.property_id)return {error:'Metal and chain-length detection matched the same dropdown (\u201c'+metalProp.property_name+'\u201d).'};
+  const skipRose=chainType==='beady';
+  const targetMetals=CANON_ORDER.filter(o=>!(skipRose&&/rose/i.test(o))&&!(!engraving&&/engrave/i.test(o)));
+  const twentyCount=lengthProp.values.filter(v=>parseLen(v)===20).length;
+  const realLengths=[...new Set(lengthProp.values.filter(v=>!isNoChainVal(v)&&parseLen(v)!==20).map(titleCaseOpt))];
+  if(!realLengths.length)return {error:'No usable chain lengths (only 20-inch or no-chain values).'};
+  if(chainType==='beady'){const bad=realLengths.filter(l=>![14,16,18].includes(parseLen(l)));
+    if(bad.length)return {error:'Beady pricing only covers 14\u2033, 16\u2033 and 18\u2033 chains; this listing also has: '+bad.join(', ')+'.'}}
+  const allLengths=[...realLengths,NO_CHAIN_VALUE];
+  const tmpl=(products||[])[0];
+  if(!tmpl)return {error:'This listing has no inventory products to rebuild from.'};
+  const enabledRow=products.find(p=>firstOffering(p).is_enabled!==false)||tmpl;
+  const baseSku=String(enabledRow.sku||'').trim();
+  const baseQty=Math.max(1,Number(firstOffering(enabledRow).quantity)||1);
+  const existingMetals=[...new Set(products.map(p=>propValue2(p,metalProp.property_id)))];
+  const removedOptions=existingMetals.filter(v=>{const c=canonFor(v);return !c||!targetMetals.includes(c)});
+  const plan=[];
   try{
-    if(!S.draft){toast('Open a listing first.','bad');return}
-    const metalProp=detectProp([/metal/i,/material/i,/colou?r/i]);
-    if(!metalProp){toast('No metal dropdown found. Dropdowns on this listing: '+getProperties().map(p=>'\u201c'+p.property_name+'\u201d').join(', ')+'. Rename one to include \u201cMetal\u201d and retry.','bad');return}
-    const lengthProp=detectProp([/chain\s*length/i,/length/i,/chain/i,/size/i]);
-    if(!lengthProp){toast('No chain-length dropdown found on this listing. Dropdowns: '+getProperties().map(p=>'\u201c'+p.property_name+'\u201d').join(', ')+'.','bad');return}
-    if(metalProp.property_id===lengthProp.property_id){toast('Metal and chain-length detection matched the same dropdown (\u201c'+metalProp.property_name+'\u201d). Rename the dropdowns so they are distinguishable.','bad');return}
-    const chainType=effectiveChainType(),modeName=chainType==='beady'?'Beady':'Regular';
-    const skipRose=chainType==='beady';
-    const targetMetals=CANON_ORDER.filter(o=>!(skipRose&&/rose/i.test(o))&&!(!S.engraving&&/engrave/i.test(o)));
-
-    /* Lengths: keep the listing's real chain lengths (Title Cased), drop 20-inch, append the no-chain tier */
-    const twentyCount=lengthProp.values.filter(v=>parseLen(v)===20).length;
-    const realLengths=[...new Set(lengthProp.values.filter(v=>!isNoChainVal(v)&&parseLen(v)!==20).map(titleCaseOpt))];
-    if(!realLengths.length){toast('This listing has no usable chain lengths (only 20-inch or no-chain values). Nothing was changed.','bad');return}
-    if(chainType==='beady'){const badLens=realLengths.filter(l=>![14,16,18].includes(parseLen(l)));
-      if(badLens.length){toast('Beady pricing only covers 14\u2033, 16\u2033 and 18\u2033 chains; this listing also has: '+badLens.join(', ')+'. Nothing was changed.','bad');return}}
-    const allLengths=[...realLengths,NO_CHAIN_VALUE];
-
-    /* Base SKU / quantity / row template from the current listing */
-    const tmpl=S.draft.products[0];
-    if(!tmpl){toast('This listing has no inventory products to rebuild from.','bad');return}
-    const enabledRow=S.draft.products.find(p=>firstOffering(p).is_enabled!==false)||tmpl;
-    const baseSku=String(enabledRow.sku||'').trim();
-    const baseQty=Math.max(1,Number(firstOffering(enabledRow).quantity)||1);
-
-    /* What disappears in the clean run */
-    const existingMetals=[...new Set(S.draft.products.map(p=>propValue(p,metalProp.property_id)))];
-    const removedOptions=existingMetals.filter(v=>{const c=canonFor(v);return !c||!targetMetals.includes(c)});
-
-    /* Fresh pricing plan: one random version per option */
-    const plan=[];
     for(const opt of targetMetals){
       const version=Math.floor(Math.random()*3);
       const isCharm=CHARM_ONLY_METALS.includes(opt);
       const priceBy={};let lo=Infinity,hi=-Infinity;
-      for(const len of allLengths){
-        const isNC=isNoChainVal(len);
+      for(const len of allLengths){const isNC=isNoChainVal(len);
         const price=priceFor(opt,isCharm?null:(isNC?realLengths[0]:len),version,chainType);
-        priceBy[len]=price;
-        if(isCharm?isNC:!isNC){lo=Math.min(lo,price);hi=Math.max(hi,price)}
-      }
+        priceBy[len]=price;if(isCharm?isNC:!isNC){lo=Math.min(lo,price);hi=Math.max(hi,price)}}
       plan.push({opt,version,priceBy,isCharm,lo,hi});
     }
-
+  }catch(e){return {error:e.message}}
+  const rows=[];
+  for(const {opt,priceBy,isCharm} of plan){
+    const sku=isCharm?((baseSku?baseSku+'-CO':'CO-'+opt.replace(/[^A-Za-z0-9]+/g,'').slice(0,10)).slice(0,32)):baseSku;
+    for(const len of allLengths){const isNC=isNoChainVal(len);const enabled=isCharm?isNC:!isNC;
+      const c=deep(tmpl);c.product_id=null;
+      if(c.offerings?.[0]){c.offerings[0].offering_id=null;c.offerings[0].price=priceBy[len];c.offerings[0].is_enabled=enabled;c.offerings[0].quantity=enabled?baseQty:0}
+      c.sku=sku;
+      const mv=c.property_values.find(v=>Number(v.property_id)===Number(metalProp.property_id));mv.values=[opt];mv.value_ids=[];
+      const lv=c.property_values.find(v=>Number(v.property_id)===Number(lengthProp.property_id));lv.values=[len];lv.value_ids=[];
+      rows.push(c);
+    }
+  }
+  return {rows,plan,targetMetals,realLengths,removedOptions,twentyCount,metalName:metalProp.property_name};
+}
+function propValue2(p,id){const v=(p.property_values||[]).find(x=>Number(x.property_id)===Number(id));return v?(v.values||[]).join('/'):''}
+async function charmOnlySetup(){
+  try{
+    if(!S.draft){toast('Open a listing first.','bad');return}
+    const chainType=effectiveChainType(),modeName=chainType==='beady'?'Beady':'Regular';
+    const r=planStandardRebuild(S.draft.products,chainType,S.engraving);
+    if(r.error){toast(r.error,'bad');return}
     const ok=await confirmDialog('Rebuild Metal Choice from scratch? ('+modeName+' Necklace pricing)',
-      'CLEAN RUN \u2014 the entire \u201c'+metalProp.property_name+'\u201d option set is REPLACED with the standardized '+targetMetals.length+'-option list at fresh sheet pricing (Engraving '+(S.engraving?'ON':'OFF \u2014 all engraving options excluded')+'); any previous run or wrong chain-type selection is fully discarded. '
-      +(removedOptions.length?'REMOVED (not in the standardized set, prices included): '+removedOptions.join(', ')+'. ':'')
-      +(twentyCount?'All 20-inch chain combinations are removed. ':'')
-      +'Chain lengths kept: '+realLengths.join(', ')+' plus \u201c'+NO_CHAIN_VALUE+'\u201d. '
-      +'Pricing: '+plan.map(x=>x.opt+' v'+(x.version+1)+' '+(x.lo===x.hi?money(x.lo):money(x.lo)+'\u2013'+money(x.hi))).join(' \u00b7 ')
+      'CLEAN RUN \u2014 the entire \u201c'+r.metalName+'\u201d option set is REPLACED with the standardized '+r.targetMetals.length+'-option list at fresh sheet pricing (Engraving '+(S.engraving?'ON':'OFF \u2014 all engraving options excluded')+'); any previous run or wrong chain-type selection is fully discarded. '
+      +(r.removedOptions.length?'REMOVED (not in the standardized set, prices included): '+r.removedOptions.join(', ')+'. ':'')
+      +(r.twentyCount?'All 20-inch chain combinations are removed. ':'')
+      +'Chain lengths kept: '+r.realLengths.join(', ')+' plus \u201c'+NO_CHAIN_VALUE+'\u201d. '
+      +'Pricing: '+r.plan.map(x=>x.opt+' v'+(x.version+1)+' '+(x.lo===x.hi?money(x.lo):money(x.lo)+'\u2013'+money(x.hi))).join(' \u00b7 ')
       +'. Every combination exists; invalid pairings are disabled with zero stock. This is a DRAFT \u2014 nothing reaches Etsy until you press Save, and the save is verified.');
     if(!ok)return;
-
-    const mkRowFrom=(metalVal,lengthVal,price,sku,enabled)=>{const c=deep(tmpl);c.product_id=null;
-      if(c.offerings?.[0]){c.offerings[0].offering_id=null;c.offerings[0].price=price;c.offerings[0].is_enabled=enabled;c.offerings[0].quantity=enabled?baseQty:0}
-      c.sku=sku;
-      const mv=c.property_values.find(v=>Number(v.property_id)===Number(metalProp.property_id));mv.values=[metalVal];mv.value_ids=[];
-      const lv=c.property_values.find(v=>Number(v.property_id)===Number(lengthProp.property_id));lv.values=[lengthVal];lv.value_ids=[];
-      return c};
-    const out=[];
-    for(const {opt,priceBy,isCharm} of plan){
-      const sku=isCharm?((baseSku?baseSku+'-CO':'CO-'+opt.replace(/[^A-Za-z0-9]+/g,'').slice(0,10)).slice(0,32)):baseSku;
-      for(const len of allLengths){
-        const isNC=isNoChainVal(len);
-        out.push(mkRowFrom(opt,len,priceBy[len],sku,isCharm?isNC:!isNC));
-      }
-    }
-    S.draft.products=out;sortProducts();markDirty();renderEditor();
-    toast('Clean rebuild ready ('+modeName+') \u2014 '+out.length+' combinations ('+targetMetals.length+' options \u00d7 '+allLengths.length+' lengths)'+(removedOptions.length?' \u00b7 removed: '+removedOptions.join(', '):'')+'. Review the matrix, then Save to write & verify on Etsy.','ok');
+    S.draft.products=r.rows;sortProducts();markDirty();renderEditor();
+    toast('Clean rebuild ready ('+modeName+') \u2014 '+r.rows.length+' combinations ('+r.targetMetals.length+' options \u00d7 '+(r.realLengths.length+1)+' lengths)'+(r.removedOptions.length?' \u00b7 removed: '+r.removedOptions.join(', '):'')+'. Review the matrix, then Save to write & verify on Etsy.','ok');
   }catch(e){clearActivity();toast(e.message,'bad')}
 }
-$('#chainTypeToggle').addEventListener('click',e=>{const b=e.target.closest('button[data-ct]');if(!b)return;S.chainType=b.dataset.ct;renderChainToggle()});
-$('#engraveToggle').addEventListener('click',e=>{const b=e.target.closest('button[data-eg]');if(!b)return;const on=b.dataset.eg==='on';if(on===S.engraving){return}
-  S.engraving=on;renderChainToggle();
-  if(!on){const n=stripEngraveRows();toast(n?('Engraving OFF — '+n+' engraving combination'+(n===1?'':'s')+' removed from the draft. Save to apply, or Reset to undo.'):'Engraving OFF — engraving options will be excluded from the next rebuild.','ok')}
-  else toast('Engraving ON — run ✦ Charm Only setup to rebuild the option set including engraving options.','ok')});
+/* ---------------- Firebase-backed prep + batch ---------------- */
+async function fbCall(body){const r=await fetch(FUNCTIONS_BASE+'/etsyPricingStore',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const t=await r.text();let d;try{d=JSON.parse(t)}catch{throw new Error('Store returned non-JSON: '+t.slice(0,160))}if(!r.ok)throw new Error(d.error||('Store error HTTP '+r.status));return d}
+function fbSet(id,patch){const cur=S.prep.get(String(id))||{};S.prep.set(String(id),{...cur,...patch});renderPrepUi();return fbCall({action:'set',id:String(id),patch}).catch(e=>toast('Cloud save failed for #'+id+': '+e.message,'bad'))}
+function compactHealth(h){return h?{error_count:h.error_count||0,warning_count:h.warning_count||0,product_count:h.product_count||0,min_price:h.min_price??null,max_price:h.max_price??null}:null}
+async function hydrateFromStore(){
+  try{
+    const {docs}=await fbCall({action:'getAll'});
+    S.prep=new Map(Object.entries(docs||{}));
+    let touched=false;
+    for(const [id,d] of S.prep){
+      const l=S.listings.find(x=>String(x.listing_id)===id);
+      if(l&&d.health){l._health=d.health;l._scanned=true;touched=true}
+      if(d.approval&&(!S.approvals[id]||Number(d.approval.at||0)>Number(S.approvals[id].at||0))){S.approvals[id]=d.approval;touched=true}
+    }
+    if(touched){writeApprovals();applyFilter()}
+    renderPrepUi();
+  }catch(e){toast('Cloud state could not be loaded: '+e.message,'bad')}
+  resumeActiveRun();
+}
+function isPrepared(d){return !!(d&&d.chain_set&&d.engrave_set)}
+function preparedReadyIds(){return [...S.prep].filter(([,d])=>isPrepared(d)&&!d.batched).map(([id])=>id)}
+function renderPrepUi(){
+  const ready=preparedReadyIds();
+  const bc=$('#batchCount');if(bc)bc.textContent=ready.length;
+  const bb=$('#batchBtn');if(bb)bb.disabled=S.batch.running||!ready.length;
+  const badge=$('#prepBadge');
+  if(badge){const d=S.prep.get(String(S.currentId));
+    if(!S.currentId){badge.textContent='No listing open';badge.className='pill neutral'}
+    else if(isPrepared(d)){badge.textContent='Prepared \u2713 '+(d.chain_type==='beady'?'Beady':'Regular')+' \u00b7 Engr '+(d.engraving!==false?'ON':'OFF')+(d.batched?' \u00b7 batched':'');badge.className='pill ok'}
+    else badge.textContent='Not prepared',badge.className='pill neutral'}
+}
+function persistToggle(kind){
+  if(!S.currentId)return; // toggles only persist against an open listing
+  const l=currentListing();
+  const patch=kind==='chain'?{chain_type:S.chainType,chain_set:true}:{engraving:S.engraving,engrave_set:true};
+  patch.batched=false;patch.title=(l&&l.title)||'';
+  fbSet(S.currentId,patch);
+}
+function renderBatchUi(){
+  const b=S.batch;
+  $('#batchState').textContent=b.running?'Running':'Idle';
+  $('#bTotal').textContent=b.total;$('#bOk').textContent=b.ok;$('#bFail').textContent=b.fail;$('#bLeft').textContent=Math.max(0,b.total-b.done);
+  $('#bBar').style.width=(b.total?Math.round((b.done/b.total)*100):0)+'%';
+}
+let pollTimer=null;
+function showBatchPanel(){$('#batchPanel').classList.remove('hidden')}
+function applyRunToUi(run){
+  S.batch={running:['queued','running','paused'].includes(run.status),stop:!!run.stop,total:run.total||0,done:run.done||0,ok:run.ok||0,fail:run.fail||0};
+  renderBatchUi();renderPrepUi();
+  $('#batchState').textContent=run.status==='running'?'Running on server':run.status==='queued'?'Queued':run.status==='paused'?'Paused':run.status==='stopped'?'Stopped':'Done';
+  const pb=$('#batchPauseBtn');pb.textContent=run.status==='paused'?'Resume':'Pause';pb.disabled=!['queued','running','paused'].includes(run.status);
+  $('#bCur').textContent=run.current||'';
+  const errs=run.errors||[];const box=$('#bErrs');box.innerHTML='';for(const e of errs.slice(-50)){const div=document.createElement('div');div.textContent=e;box.appendChild(div)}
+  if(run.fatal_error){const div=document.createElement('div');div.textContent='FATAL: '+run.fatal_error;box.appendChild(div)}
+}
+async function pollRun(runId){
+  clearTimeout(pollTimer);
+  try{
+    const {run}=await fbCall({action:'getRun',run_id:runId});
+    applyRunToUi(run);
+    if(['queued','running','paused'].includes(run.status)){pollTimer=setTimeout(()=>pollRun(runId),run.status==='paused'?6000:3500)}
+    else{
+      await hydrateFromStore();applyFilter();
+      toast(run.status==='stopped'?('Batch stopped on server \u2014 '+(run.ok||0)+' succeeded, '+(run.fail||0)+' failed.'):(run.fatal_error?('Batch could not run: '+run.fatal_error):('Server batch complete \u2014 '+(run.ok||0)+' succeeded, '+(run.fail||0)+' failed.')),(run.fail||run.fatal_error)?'bad':'ok');
+      S.currentRunId=null;
+    }
+  }catch(e){pollTimer=setTimeout(()=>pollRun(runId),6000)}
+}
+async function batchRun(){
+  if(S.batch.running)return;
+  const ids=preparedReadyIds();
+  if(!ids.length){toast('No prepared listings are ready to batch. Set both toggles on a listing to prepare it.','bad');return}
+  const ok=await confirmDialog('Batch process '+ids.length+' prepared listing'+(ids.length===1?'':'s')+' on the server?',
+    'The batch runs on the server using the shop\u2019s stored Etsy credentials \u2014 you can close this tab and the run continues. Each listing is fully rebuilt with its stored Regular/Beady and Engraving toggles at fresh sheet pricing, then written with the standard staleness check and read-back verification (plus the required Personalization field where engraving is on). Progress is saved live; reopening the console re-attaches to the running batch. Stop takes effect after the current listing.');
+  if(!ok)return;
+  try{
+    const {run_id}=await fbCall({action:'startRun',ids});
+    S.currentRunId=run_id;
+    await fetch(FUNCTIONS_BASE+'/etsyPricingBatch-background',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({run_id})});
+    showBatchPanel();$('#bErrs').innerHTML='';
+    applyRunToUi({status:'queued',total:ids.length,done:0,ok:0,fail:0});
+    pollRun(run_id);
+    toast('Server batch started \u2014 safe to close this tab. Progress is live here and saved in the cloud.','ok');
+  }catch(e){toast('Could not start batch: '+e.message,'bad')}
+}
+async function resumeActiveRun(){
+  try{const {run,run_id}=await fbCall({action:'activeRun'});
+    if(run&&run_id){S.currentRunId=run_id;showBatchPanel();applyRunToUi(run);pollRun(run_id);toast('A server batch is in progress \u2014 re-attached to its live progress.','ok')}
+  }catch(e){}
+}
+function renderChainToggle(){const bar=$('#modeBar');if(!bar)return;bar.classList.toggle('hidden',S.storeFilter!=='necklaces');
+  [...document.querySelectorAll('#chainTypeToggle button')].forEach(b=>b.classList.toggle('on',b.dataset.ct===S.chainType));
+  [...document.querySelectorAll('#engraveToggle button')].forEach(b=>b.classList.toggle('on',(b.dataset.eg==='on')===S.engraving));
+  renderPrepUi()}
+function stripEngraveRows(){
+  if(!S.draft)return 0;
+  const before=S.draft.products.length;
+  S.draft.products=S.draft.products.filter(p=>!(p.property_values||[]).some(v=>(v.values||[]).some(val=>/engrave/i.test(String(val)))));
+  const removed=before-S.draft.products.length;
+  if(removed){sortProducts();markDirty();renderEditor()}
+  return removed;
+}
+$('#chainTypeToggle').addEventListener('click',e=>{const b=e.target.closest('button[data-ct]');if(!b)return;S.chainType=b.dataset.ct;renderChainToggle();persistToggle('chain')});
+$('#engraveToggle').addEventListener('click',e=>{const b=e.target.closest('button[data-eg]');if(!b)return;const on=b.dataset.eg==='on';if(on===S.engraving){persistToggle('engrave');return}
+  S.engraving=on;renderChainToggle();persistToggle('engrave');
+  if(!on){const n=stripEngraveRows();toast(n?('Engraving OFF \u2014 '+n+' engraving combination'+(n===1?'':'s')+' removed from the draft. Save to apply, or Reset to undo.'):'Engraving OFF \u2014 engraving options will be excluded from the next rebuild.','ok')}
+  else toast('Engraving ON \u2014 run \u2726 Charm Only setup to rebuild the option set including engraving options.','ok')});
+$('#batchBtn').addEventListener('click',batchRun);
+$('#batchPauseBtn').addEventListener('click',async()=>{
+  if(!S.currentRunId)return;
+  const paused=$('#batchPauseBtn').textContent==='Resume';
+  if(paused){await fbCall({action:'resumeRun',run_id:S.currentRunId});await fetch(FUNCTIONS_BASE+'/etsyPricingBatch-background',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({run_id:S.currentRunId})});toast('Batch resumed on the server.','ok')}
+  else{await fbCall({action:'pauseRun',run_id:S.currentRunId});toast('Pause requested \u2014 the server finishes the current listing, then holds. Progress and remaining queue are saved.','ok')}
+  pollRun(S.currentRunId);
+});
+$('#batchStopBtn').addEventListener('click',async()=>{if(!S.currentRunId){toast('No server batch is running.','bad');return}await fbCall({action:'stopRun',run_id:S.currentRunId});toast('Stop requested \u2014 the server finishes the current listing then halts.','ok')});
 $('#charmOnlyBtn').addEventListener('click',charmOnlySetup);
 
 /* ---------------- Dialogs ---------------- */
