@@ -131,7 +131,7 @@ dialog{border:0;padding:0;border-radius:15px;box-shadow:0 24px 80px rgba(0,0,0,.
       <div class="searchMeta"><span id="searchStatus" class="live">Live Etsy title search</span><span id="searchLatency"></span></div>
       <div class="searchControls">
         <select id="matchMode" aria-label="Title matching mode"><option value="all">All title words</option><option value="phrase">Exact phrase</option></select>
-        <select id="sortMode" aria-label="Search sorting"><option value="score">Best match</option><option value="title_asc">Title A–Z</option><option value="title_desc">Title Z–A</option><option value="updated_desc">Recently updated</option><option value="price_asc">Price low–high</option><option value="price_desc">Price high–low</option></select>
+        <select id="sortMode" aria-label="Search sorting"><option value="score">Best match</option><option value="title_asc">Title A–Z</option><option value="title_desc">Title Z–A</option><option value="created_desc">Date added · newest</option><option value="created_asc">Date added · oldest</option><option value="updated_desc">Recently updated</option><option value="status_att">Status · needs attention first</option><option value="status_done">Status · completed first</option><option value="price_asc">Price low–high</option><option value="price_desc">Price high–low</option></select>
       </div>
     </div>
     <div class="categoryFilter">
@@ -156,6 +156,7 @@ dialog{border:0;padding:0;border-radius:15px;box-shadow:0 24px 80px rgba(0,0,0,.
       <div class="tabCtl" role="tablist" aria-label="View">
         <button id="tabEditor" role="tab" class="on">Listing</button>
         <button id="tabResults" role="tab">Results<b id="tabResultsCount">0</b></button>
+        <button id="tabBatch" role="tab">Batch<b id="tabBatchCount">0</b></button>
       </div>
       <div class="batchCluster">
         <button class="btn velvet sm" id="batchBtn" title="Run all prepared listings on the server">▶ Start Batch<b id="batchCount">0</b></button>
@@ -172,7 +173,7 @@ dialog{border:0;padding:0;border-radius:15px;box-shadow:0 24px 80px rgba(0,0,0,.
       <section id="resultsView" class="hidden">
         <div class="rhead">
           <div><h2 id="rTitle">Results</h2><div class="rsub" id="rSummary">—</div></div>
-          <div class="rtools">
+          <div class="rtools"><select class="input sm" id="rSort" aria-label="Sort results"><option value="score">Best match</option><option value="title_asc">Title A–Z</option><option value="title_desc">Title Z–A</option><option value="created_desc">Date added · newest</option><option value="created_asc">Date added · oldest</option><option value="updated_desc">Recently updated</option><option value="status_att">Status · needs attention first</option><option value="status_done">Status · completed first</option><option value="price_asc">Price low–high</option><option value="price_desc">Price high–low</option></select>
             <select id="rDensity" aria-label="Result density"><option value="comfortable">Comfortable</option><option value="compact">Compact</option></select>
           </div>
         </div>
@@ -294,7 +295,14 @@ function filterDef(key=S.storeFilter){return STORE_FILTERS.find(f=>f.key===key)|
 function filterSectionId(key=S.storeFilter){return S.sectionFilterMap.get(key)||null}
 function matchesStoreFilter(l,key=S.storeFilter){if(key==='all')return true;if(key==='sale')return isOnSale(l);const id=filterSectionId(key);if(id)return String(l.shop_section_id||'')===String(id);const def=filterDef(key),name=normText(sectionTitle(l));return (def.aliases||[]).some(a=>name===normText(a))}
 function currentScopeListings(){const base=(S.search.trim()? (S.searchResults||S.listings.filter(l=>titleMatchesLocal(l))) : S.listings);return base.filter(l=>matchesStoreFilter(l))}
-function sortListings(rows){const out=[...rows];if(S.sortMode==='title_asc')out.sort((a,b)=>String(a.title||'').localeCompare(String(b.title||'')));else if(S.sortMode==='title_desc')out.sort((a,b)=>String(b.title||'').localeCompare(String(a.title||'')));else if(S.sortMode==='updated_desc')out.sort((a,b)=>Number(b.updated_timestamp||b.last_modified_timestamp||0)-Number(a.updated_timestamp||a.last_modified_timestamp||0));else if(S.sortMode==='price_asc')out.sort((a,b)=>(listingPrice(a)??Infinity)-(listingPrice(b)??Infinity));else if(S.sortMode==='price_desc')out.sort((a,b)=>(listingPrice(b)??-Infinity)-(listingPrice(a)??-Infinity));else if(!S.search.trim())out.sort((a,b)=>String(a.title||'').localeCompare(String(b.title||'')));return out}
+function statusRank(l){const id=String(l.listing_id),h=l._health||{},a=S.approvals[id];
+  if(l._scanned&&(h.error_count||0)>0)return 0;
+  if(l._scanned&&(h.warning_count||0)>0)return 1;
+  if(!l._scanned)return 2;
+  if(!a)return 3;
+  return a.mode==='approved'?4:5}
+function createdTs(l){return Number(l.original_creation_timestamp||l.creation_timestamp||l.created_timestamp||0)}
+function sortListings(rows){const out=[...rows];if(S.sortMode==='title_asc')out.sort((a,b)=>String(a.title||'').localeCompare(String(b.title||'')));else if(S.sortMode==='title_desc')out.sort((a,b)=>String(b.title||'').localeCompare(String(a.title||'')));else if(S.sortMode==='updated_desc')out.sort((a,b)=>Number(b.updated_timestamp||b.last_modified_timestamp||0)-Number(a.updated_timestamp||a.last_modified_timestamp||0));else if(S.sortMode==='price_asc')out.sort((a,b)=>(listingPrice(a)??Infinity)-(listingPrice(b)??Infinity));else if(S.sortMode==='price_desc')out.sort((a,b)=>(listingPrice(b)??-Infinity)-(listingPrice(a)??-Infinity));else if(S.sortMode==='created_desc')out.sort((a,b)=>createdTs(b)-createdTs(a));else if(S.sortMode==='created_asc')out.sort((a,b)=>createdTs(a)-createdTs(b));else if(S.sortMode==='status_att')out.sort((a,b)=>statusRank(a)-statusRank(b)||String(a.title||'').localeCompare(String(b.title||'')));else if(S.sortMode==='status_done')out.sort((a,b)=>statusRank(b)-statusRank(a)||String(a.title||'').localeCompare(String(b.title||'')));else if(!S.search.trim())out.sort((a,b)=>String(a.title||'').localeCompare(String(b.title||'')));return out}
 function firstOffering(p){return (p.offerings||[])[0]||{price:null,quantity:0,is_enabled:true}}
 function propKey(p){return (p.property_values||[]).map(v=>Number(v.property_id)+':'+(v.values||[]).join('/')).sort().join('|')}
 function getProperties(inv=S.draft){
@@ -545,7 +553,7 @@ async function refreshCurrent(){if(!S.currentId){loadCatalog();return}if(S.dirty
 function setView(v){
   S.view=v;const results=v==='results';
   $('#resultsView').classList.toggle('hidden',!results);
-  $('#tabResults').classList.toggle('on',results);$('#tabEditor').classList.toggle('on',!results);
+  $('#tabResults').classList.toggle('on',results&&S.rFilter!=='prepared');$('#tabBatch').classList.toggle('on',results&&S.rFilter==='prepared');$('#tabEditor').classList.toggle('on',!results);
   if(results){$('#editor').classList.add('hidden');$('#emptyState').classList.add('hidden');$('#stickyActions').classList.add('hidden');renderResults()}
   else{if(S.currentId&&S.draft){$('#editor').classList.remove('hidden');$('#stickyActions').classList.remove('hidden')}else{$('#emptyState').classList.remove('hidden')}}
 }
@@ -640,7 +648,8 @@ async function approveIds(targets){
   writeApprovals();S.scanning=false;clearActivity();applyFilter();renderApproval();
   toast(S.stopScan?'Approval run stopped.':('Approved '+(done-failed)+' listing'+(done-failed===1?'':'s')+(failed?' · '+failed+' failed':'')+'.'),failed?'bad':'ok');
 }
-$('#tabResults').addEventListener('click',()=>setView('results'));
+$('#tabResults').addEventListener('click',()=>{if(S.rFilter==='prepared')S.rFilter='all';setView('results');renderResults()});
+$('#tabBatch').addEventListener('click',()=>{S.rFilter='prepared';setView('results');renderResults()});
 $('#tabEditor').addEventListener('click',()=>setView('editor'));
 $('#rDensity').addEventListener('change',e=>{S.rDensity=e.target.value;renderResults()});
 $('#rChips').addEventListener('click',e=>{const b=e.target.closest('button[data-rfilter]');if(!b)return;S.rFilter=b.dataset.rfilter;renderResults()});
@@ -799,6 +808,7 @@ function preparedReadyIds(){return [...S.prep].filter(([,d])=>isPrepared(d)&&!d.
 function renderPrepUi(){
   const ready=preparedReadyIds();
   const bc=$('#batchCount');if(bc)bc.textContent=ready.length;
+  const tb=$('#tabBatchCount');if(tb)tb.textContent=ready.length;
   const bb=$('#batchBtn');if(bb){bb.disabled=S.batch.running||!ready.length;bb.firstChild.textContent=S.batch.running?'\u25cf Batch running':'\u25b6 Start Batch'}
   const active=!!S.currentRunId;
   $('#batchPauseBtn')?.classList.toggle('hidden',!active);
@@ -925,7 +935,8 @@ $('#queue').addEventListener('click',e=>{const b=e.target.closest('.qitem');if(b
 $('#storeFilterSelect').addEventListener('change',e=>setStoreFilter(e.target.value));
 $('#searchInput').addEventListener('input',e=>{S.stopScan=true;S.search=e.target.value;if(S.search.trim().length>=2)setView('results');S.searchResults=null;applyFilter();updateSearchUi(S.search.trim()?'Waiting for Etsy…':'Live Etsy title search');scheduleLiveSearch()});
 $('#searchInput').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();runLiveSearch()}if(e.key==='Escape'){e.preventDefault();clearSearch()}});$('#clearSearchBtn').addEventListener('click',clearSearch);
-$('#matchMode').addEventListener('change',e=>{S.matchMode=e.target.value;S.searchResults=null;applyFilter();if(S.search.trim())runLiveSearch()});$('#sortMode').addEventListener('change',e=>{S.sortMode=e.target.value;applyFilter();if(S.search.trim().length>=2)runLiveSearch()});
+$('#matchMode').addEventListener('change',e=>{S.matchMode=e.target.value;S.searchResults=null;applyFilter();if(S.search.trim())runLiveSearch()});$('#sortMode').addEventListener('change',e=>{S.sortMode=e.target.value;const r=$('#rSort');if(r)r.value=S.sortMode;applyFilter();if(S.search.trim().length>=2)runLiveSearch()});
+$('#rSort').addEventListener('change',e=>{S.sortMode=e.target.value;$('#sortMode').value=S.sortMode;applyFilter();if(S.search.trim().length>=2)runLiveSearch()});
 $('#priceBody').addEventListener('input',e=>{const t=e.target;if(!t.dataset.field||t.dataset.field==='enabled')return;updateCell(Number(t.dataset.row),t.dataset.field,t.value)});$('#priceBody').addEventListener('change',e=>{if(e.target.classList.contains('rowCheck')){const i=Number(e.target.dataset.row);e.target.checked?S.selected.add(i):S.selected.delete(i);renderSelectionCount()}});$('#priceBody').addEventListener('click',e=>{const b=e.target.closest('button[data-field="enabled"]');if(b){updateCell(Number(b.dataset.row),'enabled');renderTable()}});
 $('#priceHead').addEventListener('change',e=>{if(e.target.id==='masterCheck'){S.selected=new Set(e.target.checked?S.draft.products.map((_,i)=>i):[]);renderTable()}});$('#selectAllBtn').addEventListener('click',()=>{S.selected=new Set(S.draft.products.map((_,i)=>i));renderTable()});$('#clearSelectionBtn').addEventListener('click',()=>{S.selected.clear();renderTable()});$('#applyBulkBtn').addEventListener('click',applyBulk);
 $('#variationGrid').addEventListener('click',e=>{const b=e.target.closest('[data-vact]');if(!b){if(e.target.id==='inlineAddMenu')addMenu();return}const pid=Number(b.dataset.pid),act=b.dataset.vact;if(act==='add-tier')addTier(pid);if(act==='remove-tier')removeTier(pid,decodeURIComponent(b.dataset.value));if(act==='rename')renameMenu(pid);if(act==='remove-menu')removeMenu(pid)});$('#addMenuBtn').addEventListener('click',addMenu);
