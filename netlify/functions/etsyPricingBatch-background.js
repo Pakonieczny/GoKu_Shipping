@@ -196,14 +196,23 @@ exports.handler = async (event) => {
       }
       await db.collection("EtsyPricing_Listings").doc(id).set(patch, { merge: true });
       run.ok = (run.ok || 0) + 1;
+      run.consec_fail = 0;
     } catch (e) {
       run.fail = (run.fail || 0) + 1;
+      run.consec_fail = (run.consec_fail || 0) + 1;
       const msg = String(e.message).slice(0, 400);
+      // NOTE: `batched` is deliberately NOT set on failure, so the listing
+      // stays in the prepared/ready queue and is re-processed on the next
+      // batch run — failed listings are never lost.
       await db.collection("EtsyPricing_Listings").doc(id).set({ last_batch: { at: Date.now(), ok: false, error: msg }, updated_at: Date.now() }, { merge: true });
       await runRef.set({ errors: admin.firestore.FieldValue.arrayUnion("#" + id + (d.title ? " \u00b7 " + d.title : "") + ": " + msg), updated_at: Date.now() }, { merge: true });
     }
     run.done = i + 1;
-    await runRef.set({ done: run.done, ok: run.ok || 0, fail: run.fail || 0, updated_at: Date.now() }, { merge: true });
+    await runRef.set({ done: run.done, ok: run.ok || 0, fail: run.fail || 0, consec_fail: run.consec_fail || 0, updated_at: Date.now() }, { merge: true });
+    if ((run.consec_fail || 0) >= 3) {
+      await runRef.set({ status: "stopped", stop_reason: "Auto-halted: 3 consecutive listings failed to update on Etsy. Un-attempted and failed listings remain queued and will be re-processed on the next run.", current: "", updated_at: Date.now() }, { merge: true });
+      return { statusCode: 200, body: "auto-halted" };
+    }
   }
 
   await runRef.set({ status: "done", current: "", finished_at: Date.now(), updated_at: Date.now() }, { merge: true });

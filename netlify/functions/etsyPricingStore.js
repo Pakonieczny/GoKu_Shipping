@@ -96,6 +96,24 @@ exports.handler = async (event) => {
       return json(200, { ok: true });
     }
 
+    if (body.action === "getSchedule") {
+      const snap = await db.doc("EtsyPricing_Config/schedule").get();
+      return json(200, { schedule: snap.exists ? snap.data() : null });
+    }
+    if (body.action === "setSchedule") {
+      const p = body.schedule || {};
+      const doc = {
+        enabled: !!p.enabled,
+        next_run_at: Number(p.next_run_at) || 0,
+        repeat: ["once", "daily", "weekly"].includes(p.repeat) ? p.repeat : "once",
+        label: String(p.label || "").slice(0, 120),
+        updated_at: Date.now()
+      };
+      if (doc.enabled && doc.next_run_at < Date.now() - 60000) return json(400, { error: "Scheduled time is in the past." });
+      await db.doc("EtsyPricing_Config/schedule").set(doc, { merge: true });
+      return json(200, { ok: true, schedule: doc });
+    }
+
     return json(400, { error: "Unknown action: " + body.action });
   } catch (err) {
     return json(500, { error: err.message });
