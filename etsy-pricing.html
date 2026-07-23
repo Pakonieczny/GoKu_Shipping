@@ -953,11 +953,13 @@ async function refreshApiUsage(){
     if(!el)return;
     const used=Number(d.count||0),budget=Number(d.budget||2500);
     const etsyUsed=(d.etsy_limit_per_day!=null&&d.etsy_remaining_today!=null)?(d.etsy_limit_per_day-d.etsy_remaining_today):null;
-    el.textContent='API 24h: '+used.toLocaleString()+' / '+budget.toLocaleString()
+    el.textContent='This app 24h: '+used.toLocaleString()+' / '+budget.toLocaleString()
       +' \u00b7 peak '+Number(d.max_qps||0)+' QPS (cap '+d.qps_cap+')'
-      +(etsyUsed!=null?' \u00b7 Etsy meter: '+etsyUsed.toLocaleString()+' used, '+Number(d.etsy_remaining_today).toLocaleString()+' left':'');
+      +(etsyUsed!=null?' \u00b7 Whole key (all apps): '+etsyUsed.toLocaleString()+' used, '+Number(d.etsy_remaining_today).toLocaleString()+' left':'');
+    const counterAge=d.count_since?Math.round((Date.now()-Number(d.count_since))/3600000):null;
+    if(counterAge!=null&&counterAge<20)el.textContent+=' \u00b7 (tracking since '+(counterAge<1?'<1h':counterAge+'h')+' ago \u2014 not a full day yet)';
     el.className='pill apiMode '+(used>=budget?'bad':used>=budget*0.8?'warn':'info');
-    el.title='This system\u2019s calls today (resets 11:59 PM Toronto) vs the 2,500 internal budget (50% of Etsy\u2019s 5,000/day). Peak QPS is the highest observed in any 1s (hard-capped at 2.5). \u201cEtsy meter\u201d is Etsy\u2019s own reported usage for the whole API key, including other apps.';
+    el.title='\u201cThis app\u201d = the pricing console\u2019s own calls today (resets 11:59 PM Toronto) vs its 2,500 budget (50% of Etsy\u2019s 5,000/day). \u201cWhole key\u201d = Etsy\u2019s own meter for the ENTIRE API key \u2014 including EtsyMail\u2019s 24/7 crons and any other app \u2014 on Etsy\u2019s day, which resets midnight UTC (8:00 PM Toronto). The console only blocks itself on its own budget, or when the whole key has \u2264100 calls left.';
   }catch(e){}
 }
 setInterval(refreshApiUsage,15000);
