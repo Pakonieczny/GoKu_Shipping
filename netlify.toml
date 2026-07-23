@@ -134,11 +134,29 @@
 [functions."etsyMailTrackingSweepStuck"]
   schedule = "*/5 * * * *"
 
+# ─── Etsy Necklace Pricing Console — live Batch state ───────────────────────
+# The pricing UI polls EtsyPricing_Runs through etsyPricingStore, so the
+# scheduled coordinator must remain active even when no browser is open.
+# Every five minutes it records its heartbeat, starts due runs, and resumes a
+# run that was paused for Etsy's daily API budget after that budget resets.
+[functions."etsyPricingScheduleCron"]
+  schedule = "0-59/5 * * * *"
+
 [[headers]]
   for = "/*"
   [headers.values]
     Cross-Origin-Opener-Policy = "same-origin"
     Cross-Origin-Embedder-Policy = "require-corp"
+
+# Always revalidate the operator console so a new deploy cannot leave the
+# browser running an older Batch-count implementation against newer functions.
+# Netlify Functions themselves are dynamic and are not cached by default.
+[[headers]]
+  for = "/etsy-pricing.html"
+  [headers.values]
+    Cache-Control = "max-age=0, no-cache, no-store, must-revalidate"
+    Pragma = "no-cache"
+    Expires = "0"
 
 [[redirects]]
   from = "https://scanner.goldenspike.app"
