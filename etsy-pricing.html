@@ -283,7 +283,25 @@ dialog{border:0;padding:0;border-radius:15px;box-shadow:0 24px 80px rgba(0,0,0,.
 </div>
 
 <div class="toasts" id="toasts"></div>
-<dialog id="formDialog"><form method="dialog" id="dialogForm"><div class="dlgHead"><h3 id="dlgTitle">Edit</h3></div><div class="dlgBody" id="dlgBody"></div><div class="dlgFoot"><button class="btn ghost" value="cancel">Cancel</button><button class="btn gold" value="ok" id="dlgOk">Continue</button></div></form></dialog>
+<div id="diagModal" class="hidden" role="dialog" aria-modal="true" aria-label="Diagnostics">
+  <div class="diagShell">
+    <div class="diagHead">
+      <h2>Diagnostics <span class="diagSub">every change made to every listing — saved permanently</span></h2>
+      <button class="btn ghost sm" id="diagCloseBtn">✕ Close</button>
+    </div>
+    <div class="diagToolbar">
+      <input id="diagSearch" type="search" class="input sm" placeholder="Search title, #listing id, or error text…" aria-label="Search diagnostics">
+      <select id="diagType" class="input sm" aria-label="Event type filter"><option value="all">All events</option><option value="save">Manual saves</option><option value="batch">Batch runs</option><option value="fail">Failures only</option><option value="queue">Queue changes</option><option value="schedule">Schedule</option></select>
+      <input type="date" id="diagFrom" class="input sm" aria-label="From date">
+      <input type="date" id="diagTo" class="input sm" aria-label="To date">
+      <button class="btn ghost sm" id="diagRefreshBtn">Refresh</button>
+    </div>
+    <div class="diagFocus hidden" id="diagFocusBar">Viewing full history for <b id="diagFocusTitle"></b> <button class="btn ghost xs" id="diagFocusClear">✕ show all</button> <button class="btn sage xs" id="diagFocusOpen">Open listing in console</button></div>
+    <div class="diagSummary" id="diagSummary">History</div>
+    <div class="diagBody" id="diagList"></div>
+    <div class="diagFoot"><button class="btn ghost sm" id="diagMoreBtn">Load older events</button></div>
+  </div>
+</div>
 
 <script>
 'use strict';
@@ -1192,24 +1210,5 @@ addEventListener('keydown',e=>{const typing=['INPUT','TEXTAREA','SELECT'].includ
 
 (async function init(){await handleOAuthCallback();renderConnection();renderStoreFilters();renderChainToggle();updateSearchUi('Live Etsy title search');scheduleRefresh();if(localStorage.getItem(TOKEN_KEYS.access))loadCatalog()})();
 </script>
-<div id="diagModal" class="hidden" role="dialog" aria-modal="true" aria-label="Diagnostics">
-  <div class="diagShell">
-    <div class="diagHead">
-      <h2>Diagnostics <span class="diagSub">every change made to every listing — saved permanently</span></h2>
-      <button class="btn ghost sm" id="diagCloseBtn">✕ Close</button>
-    </div>
-    <div class="diagToolbar">
-      <input id="diagSearch" type="search" class="input sm" placeholder="Search title, #listing id, or error text…" aria-label="Search diagnostics">
-      <select id="diagType" class="input sm" aria-label="Event type filter"><option value="all">All events</option><option value="save">Manual saves</option><option value="batch">Batch runs</option><option value="fail">Failures only</option><option value="queue">Queue changes</option><option value="schedule">Schedule</option></select>
-      <input type="date" id="diagFrom" class="input sm" aria-label="From date">
-      <input type="date" id="diagTo" class="input sm" aria-label="To date">
-      <button class="btn ghost sm" id="diagRefreshBtn">Refresh</button>
-    </div>
-    <div class="diagFocus hidden" id="diagFocusBar">Viewing full history for <b id="diagFocusTitle"></b> <button class="btn ghost xs" id="diagFocusClear">✕ show all</button> <button class="btn sage xs" id="diagFocusOpen">Open listing in console</button></div>
-    <div class="diagSummary" id="diagSummary">History</div>
-    <div class="diagBody" id="diagList"></div>
-    <div class="diagFoot"><button class="btn ghost sm" id="diagMoreBtn">Load older events</button></div>
-  </div>
-</div>
 </body>
 </html>
