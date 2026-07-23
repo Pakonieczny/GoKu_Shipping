@@ -27,7 +27,7 @@ button,input,select{font:inherit}button{cursor:pointer}.mono{font-family:var(--m
 .searchPanel{padding:0 14px 10px}.searchBox{position:relative;display:flex;align-items:center}.searchIcon{position:absolute;left:10px;width:16px;height:16px;color:#8f8779;pointer-events:none}.searchBox input{width:100%;height:42px;background:#302c27;border:1px solid var(--velvetLine);color:#fff;border-radius:11px;padding:9px 58px 9px 34px;outline:none;transition:border-color .15s,box-shadow .15s}.searchBox input:focus{border-color:var(--gold2);box-shadow:0 0 0 3px rgba(202,168,97,.12)}.searchBox input::placeholder{color:#80786c}.searchClear{position:absolute;right:7px;width:28px;height:28px;border:0;background:transparent;color:#aaa193;border-radius:7px;font-size:18px;display:grid;place-items:center}.searchClear:hover{background:#3c3731;color:#fff}.searchSpinner{position:absolute;right:40px;width:14px;height:14px;border:2px solid #5c5449;border-top-color:var(--gold2);border-radius:50%;animation:spin .7s linear infinite;display:none}.searchSpinner.show{display:block}.searchMeta{display:flex;justify-content:space-between;gap:8px;margin:6px 2px 7px;color:#8f8779;font-size:10px;line-height:1.3}.searchMeta .live{color:#bdab7d}.searchControls{display:grid;grid-template-columns:1fr 1fr;gap:6px}.searchControls select{width:100%;min-width:0;background:#302c27;color:#cfc7b8;border:1px solid var(--velvetLine);border-radius:8px;padding:6px 7px;font-size:10.5px;outline:none}.categoryFilter{padding:0 14px 12px;border-top:1px solid var(--velvetLine)}.categoryFilter label{display:block;margin:10px 2px 7px;color:#a59c8d;font-size:10px;font-weight:750;letter-spacing:.13em;text-transform:uppercase}.categorySelectWrap{position:relative}.categorySelectWrap select{appearance:none;-webkit-appearance:none;width:100%;height:44px;border:1px solid #50483e;border-radius:11px;background:linear-gradient(180deg,#35302a,#2d2924);color:#fff;padding:8px 38px 8px 12px;font-size:12.5px;font-weight:650;outline:none;box-shadow:0 1px 0 rgba(255,255,255,.03) inset;cursor:pointer}.categorySelectWrap select:focus{border-color:var(--gold2);box-shadow:0 0 0 3px rgba(202,168,97,.12)}.categorySelectWrap:after{content:'⌄';position:absolute;right:13px;top:50%;transform:translateY(-56%);color:var(--gold2);font-size:18px;pointer-events:none}.categoryFilterMeta{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:7px 2px 0;color:#8f8779;font-size:10px}.categoryFilterMeta .liveState{display:flex;align-items:center;gap:6px;min-width:0}.categoryFilterMeta .liveDot{width:6px;height:6px;border-radius:50%;background:var(--sage);box-shadow:0 0 0 3px rgba(95,122,91,.14);flex:0 0 auto}.categoryFilterMeta #filterLiveText{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.categoryFilterMeta #storeFilterTotal{font-family:var(--mono);white-space:nowrap}
 .queueHead{padding:8px 16px;display:flex;justify-content:space-between;align-items:center;color:#8f8779;font-size:10px;letter-spacing:.12em;text-transform:uppercase;border-top:1px solid var(--velvetLine)}.queue{overflow:auto;flex:1;padding:0 8px 12px}.qitem{width:100%;border:0;background:transparent;color:#cfc7b8;display:grid;grid-template-columns:42px minmax(0,1fr) auto;gap:10px;align-items:center;text-align:left;padding:8px;border-radius:10px}.qitem:hover{background:var(--velvet2)}.qitem.on{background:#34302a;box-shadow:inset 2px 0 0 var(--gold2);color:#fff}.qimg{width:42px;height:42px;border-radius:8px;object-fit:cover;background:#3b362f}.qtitle{font-size:12px;line-height:1.25;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.qmeta{font:10px var(--mono);color:#8e8577;margin-top:3px}.qbadge{min-width:22px;height:22px;border-radius:20px;display:grid;place-items:center;font:10px var(--mono);background:#3e3932;color:#bfb6a7}.qbadge.bad{background:#59352d;color:#ffd9cf}.qbadge.ok{background:#30412f;color:#d8ecd4}.qbadge.approved{background:#65522e;color:#ffe8a8}
 .railFoot{padding:12px 16px;border-top:1px solid var(--velvetLine);font-size:10.5px;color:#827a6e}
-.main{min-width:0}.topbar{position:sticky;top:0;z-index:30;background:rgba(243,240,234,.9);backdrop-filter:blur(12px);border-bottom:1px solid var(--line);padding:12px 24px;display:flex;align-items:center;gap:10px}.navBtn{width:38px;height:38px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--ink);font-size:20px}.navBtn:disabled{opacity:.4;cursor:default}.topTitle{min-width:0}.topTitle h1{font:20px var(--serif);font-weight:500;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:600px}.topTitle .sub{font-size:11.5px;color:var(--ink45);margin-top:1px}.spacer{flex:1}
+.main{min-width:0}.topbar{position:sticky;top:0;z-index:30;background:rgba(243,240,234,.9);backdrop-filter:blur(12px);border-bottom:1px solid var(--line);padding:12px 24px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;row-gap:8px}.navBtn{width:38px;height:38px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--ink);font-size:20px}.navBtn:disabled{opacity:.4;cursor:default}.topTitle{min-width:0;flex:0 1 auto}.topTitle h1{font:20px var(--serif);font-weight:500;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:600px}.topTitle .sub{font-size:11.5px;color:var(--ink45);margin-top:1px}.spacer{flex:1}
 .pill{font-size:11px;font-weight:700;padding:5px 10px;border-radius:30px;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}.pill.neutral{background:var(--paper2);color:var(--ink70)}.pill.ok{background:var(--sageSoft);color:#3c5a39}.pill.warn{background:var(--goldSoft);color:#7a5a1d}.pill.bad{background:var(--claySoft);color:#8a3a26}.pill.info{background:var(--slateSoft);color:#33525d}
 .btn{border:1px solid var(--ink);background:var(--ink);color:#fff;border-radius:9px;padding:8px 13px;font-weight:650;transition:opacity .15s,transform .08s}.btn:hover{opacity:.9}.btn:active{transform:translateY(1px)}.btn:disabled{opacity:.45;cursor:default}.btn.ghost{background:transparent;color:var(--ink);border-color:var(--line)}.btn.gold{background:var(--gold);border-color:var(--gold);color:#2a2013}.btn.sage{background:var(--sage);border-color:var(--sage)}.btn.danger{background:var(--clay);border-color:var(--clay)}.btn.sm{padding:6px 10px;font-size:12px}.btn.xs{padding:4px 8px;font-size:11px}
 .view{padding:22px 24px 90px;max-width:1500px}.notice{border:1px solid var(--goldLine);background:var(--goldSoft);border-radius:12px;padding:10px 13px;font-size:12px;color:#6f551f;margin-bottom:14px}.activity{display:none;align-items:center;gap:11px;background:linear-gradient(95deg,#262019,#332a20);color:#f4ecdc;border-radius:12px;padding:11px 14px;margin-bottom:14px}.activity.show{display:flex}.spin{width:16px;height:16px;border:2px solid #5a5040;border-top-color:var(--gold2);border-radius:50%;animation:spin .7s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}.activity .progress{margin-left:auto;width:180px;height:6px;background:#4b4338;border-radius:9px;overflow:hidden}.activity .progress i{height:100%;display:block;background:var(--gold2);width:0}
@@ -63,7 +63,7 @@ dialog{border:0;padding:0;border-radius:15px;box-shadow:0 24px 80px rgba(0,0,0,.
 .modeBar .tabCtl#engraveToggle button.on[data-eg="off"]{background:var(--clay);color:#fff}
 @media (max-width:860px){.modeBar .mhint{display:none}}
 .modeBar #prepBadge{font-size:10.5px}
-.batchCluster{display:flex;align-items:center;gap:6px}
+.batchCluster{display:flex;align-items:center;gap:6px;flex-shrink:0}
 .batchCluster #batchBtn b{color:var(--gold2);margin-left:6px}
 #batchPanel{margin:0 0 14px;padding:12px 14px;border:1.5px solid var(--velvetLine,var(--line));border-left:4px solid var(--velvet);border-radius:var(--rsm);background:var(--card);box-shadow:var(--sh)}
 #batchPanel .bhead{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px}
@@ -76,12 +76,33 @@ dialog{border:0;padding:0;border-radius:15px;box-shadow:0 24px 80px rgba(0,0,0,.
 #batchPanel .berrs{max-height:110px;overflow:auto;font-size:11.5px;color:var(--clay);display:flex;flex-direction:column;gap:3px}
 .schedBar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 12px;margin-bottom:10px;border:1.5px dashed var(--velvet);border-radius:var(--rsm);background:var(--card)}
 .schedBar .mlabel{font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--clay)}
-.diagControls{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line)}
-.diagDates{display:flex;gap:6px}
-.diagDates input{flex:1;min-width:0}
-.diagRow{padding:9px 12px;border-bottom:1px solid var(--line);cursor:default;font-size:12px}
-.diagRow[data-id]{cursor:pointer}
-.diagRow[data-id]:hover{background:var(--paper2)}
+.apiWidget{display:flex;flex-direction:column;gap:3px;padding:5px 9px;border:1px solid var(--line);border-radius:10px;background:var(--card);min-width:150px;max-width:170px;position:relative;flex:0 1 auto}
+.apiWidget .awRow{display:flex;align-items:center;gap:6px;font-size:11px;line-height:1.1}
+.apiWidget .awLabel{width:24px;font-weight:700;color:var(--ink45);text-transform:uppercase;font-size:9.5px;letter-spacing:.04em}
+.apiWidget .awNum{font-variant-numeric:tabular-nums;font-weight:700;color:var(--ink);white-space:nowrap;min-width:64px}
+.apiWidget .awBar{flex:1;height:5px;border-radius:999px;background:var(--paper2);overflow:hidden;min-width:30px}
+.apiWidget .awBar i{display:block;height:100%;width:0%;background:var(--sage);transition:width .3s}
+.apiWidget .awBar.warn i{background:var(--gold)}
+.apiWidget .awBar.bad i{background:var(--clay)}
+.apiWidget .awQps{font-size:9.5px;color:var(--ink45);white-space:nowrap;margin-left:auto}
+.apiWidget .awInfo{position:absolute;top:4px;right:6px;border:none;background:none;color:var(--ink45);font-size:12px;cursor:help;padding:0;line-height:1}
+.apiWidget .awInfo:hover{color:var(--ink)}
+.apiWidget .awInfo.warnDot{color:var(--gold)}
+@media (max-width:1250px){.apiWidget{display:none}}
+#diagModal{position:fixed;inset:0;background:rgba(30,26,20,.45);backdrop-filter:blur(3px);z-index:200;display:flex;align-items:center;justify-content:center;padding:24px}
+#diagModal.hidden{display:none}
+.diagShell{background:var(--paper);border:1px solid var(--line);border-radius:18px;box-shadow:0 24px 80px rgba(0,0,0,.35);width:min(980px,100%);height:min(84vh,900px);display:flex;flex-direction:column;overflow:hidden}
+.diagHead{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 20px;border-bottom:1px solid var(--line)}
+.diagHead h2{margin:0;font:22px var(--serif)}
+.diagHead .diagSub{font:12px var(--sans);color:var(--ink45);margin-left:10px}
+.diagToolbar{display:flex;gap:8px;flex-wrap:wrap;padding:12px 20px;border-bottom:1px solid var(--line);background:var(--card)}
+.diagToolbar #diagSearch{flex:2;min-width:220px}
+.diagFocus{padding:10px 20px;background:var(--goldSoft);border-bottom:1px solid var(--gold);font-size:12.5px;display:flex;align-items:center;gap:10px}
+.diagSummary{padding:8px 20px;font-size:11.5px;color:var(--ink45);border-bottom:1px solid var(--line)}
+.diagBody{flex:1;overflow:auto}
+.diagFoot{padding:10px 20px;border-top:1px solid var(--line);text-align:center}
+.diagRow{padding:12px 20px;border-bottom:1px solid var(--line)}
+.diagRow .dactions{margin-left:auto;display:flex;gap:6px}
 .diagRow.bad{border-left:3px solid var(--clay)}
 .diagRow .dtop{display:flex;align-items:center;gap:8px;margin-bottom:2px}
 .diagRow .dtime{font-size:10.5px;color:var(--ink45)}
@@ -133,22 +154,38 @@ dialog{border:0;padding:0;border-radius:15px;box-shadow:0 24px 80px rgba(0,0,0,.
   <aside class="rail" id="rail">
     <div class="brand"><div class="logo">Brites <b>Etsy Pricing</b></div><div class="tag">Live store pricing control</div></div>
     <div class="railStatus"><span class="dot" id="connDot"></span><span id="connText">Not connected</span></div>
-    <div class="railActions"><button class="btn gold sm" id="connectBtn">Connect Etsy</button><button class="btn sm" id="loadBtn">Reload store</button></div>
-    <div class="filterTabs" id="railTabs"><button data-rt="listings" class="on">Listings</button><button data-rt="diag">Diagnostics</button></div>
+    <div class="railActions"><button class="btn gold sm" id="connectBtn">Connect Etsy</button><button class="btn sm" id="loadBtn">Reload store</button><button class="btn ghost sm wide" id="diagOpenBtn">🩺 Diagnostics · change history</button></div>
+    <div class="searchPanel">
+      <div class="searchBox">
+        <svg class="searchIcon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/><path d="m16.5 16.5 4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <input id="searchInput" type="search" autocomplete="off" spellcheck="false" placeholder="Search live Etsy titles…" aria-label="Search Etsy listing titles">
+        <span class="searchSpinner" id="searchSpinner" aria-hidden="true"></span>
+        <button class="searchClear hidden" id="clearSearchBtn" aria-label="Clear title search">×</button>
+      </div>
+      <div class="searchMeta"><span id="searchStatus" class="live">Live Etsy title search</span><span id="searchLatency"></span></div>
+      <div class="searchControls">
+        <select id="matchMode" aria-label="Title matching mode"><option value="all">All title words</option><option value="phrase">Exact phrase</option></select>
+        <select id="sortMode" aria-label="Search sorting"><option value="score">Best match</option><option value="title_asc">Title A–Z</option><option value="title_desc">Title Z–A</option><option value="created_desc">Date added · newest</option><option value="created_asc">Date added · oldest</option><option value="updated_desc">Recently updated</option><option value="status_att">Status · needs attention first</option><option value="status_done">Status · completed first</option><option value="price_asc">Price low–high</option><option value="price_desc">Price high–low</option></select>
+      </div>
+    </div>
+        <div class="schedBar hidden" id="schedBar">
+          <span class="mlabel">Auto-run</span>
+          <input type="datetime-local" class="input sm" id="schedAt" aria-label="Scheduled date and time">
+          <select class="input sm" id="schedRepeat"><option value="once">Once</option><option value="daily">Daily</option><option value="weekly">Weekly</option></select>
+          <button class="btn velvet sm" id="schedArmBtn">Schedule batch</button>
+          <button class="btn ghost sm hidden" id="schedCancelBtn">Cancel schedule</button>
+          <span class="pill neutral" id="schedStatus">Not scheduled</span>
+        </div>
+        <div class="rtools"><select class="input sm" id="rSort" aria-label="Sort results"><option value="score">Best match</option><option value="title_asc">Title A–Z</option><option value="title_desc">Title Z–A</option><option value="created_desc">Date added · newest</option><option value="created_asc">Date added · oldest</option><option value="updated_desc">Recently updated</option><option value="status_att">Status · needs attention first</option><option value="status_done">Status · completed first</option><option value="price_asc">Price low–high</option><option value="price_desc">Price high–low</option></select>
+            <select id="rDensity" aria-label="Result density"><option value="comfortable">Comfortable</option><option value="compact">Compact</option></select>
+          </div>
     <div class="categoryFilter">
       <label for="storeFilterSelect">Listing category</label>
       <div class="categorySelectWrap"><select id="storeFilterSelect" aria-label="Filter Etsy listings by store category"></select></div>
       <div class="categoryFilterMeta"><span class="liveState"><i class="liveDot"></i><span id="filterLiveText">Live Etsy catalog</span></span><span id="storeFilterTotal">0 listings</span></div>
     </div>
-    <div id="railListings">
       <div class="queueHead"><span>Listings</span><span id="queueCount">0</span></div>
       <div class="queue" id="queue"></div>
-    </div>
-    <div id="diagPanel" class="hidden">
-      <div class="diagControls">
-        <input id="diagSearch" type="search" class="input sm" placeholder="Search title, #id or details…" aria-label="Search diagnostics">
-        <select id="diagType" class="input sm" aria-label="Event type filter"><option value="all">All events</option><option value="save">Manual saves</option><option value="batch">Batch runs</option><option value="fail">Failures only</option><option value="queue">Queue changes</option><option value="schedule">Schedule</option></select>
-        <div class="diagDates"><input type="date" id="diagFrom" class="input sm" aria-label="From date"><input type="date" id="diagTo" class="input sm" aria-label="To date"></div>
         <button class="btn ghost sm wide" id="diagRefreshBtn">Refresh history</button>
       </div>
       <div class="queueHead"><span id="diagSummary">History</span></div>
@@ -165,7 +202,20 @@ dialog{border:0;padding:0;border-radius:15px;box-shadow:0 24px 80px rgba(0,0,0,.
       <button class="navBtn" id="nextBtn" aria-label="Next listing">›</button>
       <div class="topTitle"><h1 id="topTitle">Brites Etsy Pricing Console</h1><div class="sub" id="topSub">Load the live Etsy catalog to begin.</div></div>
       <div class="spacer"></div>
-      <span class="pill info apiMode" id="apiUsagePill" title="Etsy API calls made today across the console, batches and schedules · hard-capped at 4/sec · resets 11:59 PM Toronto time">API today: …</span>
+      <div class="apiWidget" id="apiWidget">
+        <div class="awRow" data-row="app">
+          <span class="awLabel">App</span>
+          <span class="awNum" id="awAppNum">…</span>
+          <span class="awBar"><i id="awAppBar"></i></span>
+          <span class="awQps" id="awQps">— QPS</span>
+        </div>
+        <div class="awRow" data-row="key">
+          <span class="awLabel">Key</span>
+          <span class="awNum" id="awKeyNum">…</span>
+          <span class="awBar"><i id="awKeyBar"></i></span>
+        </div>
+        <button class="awInfo" id="awInfo" aria-label="What do these numbers mean?" title="App = this console\u2019s own Etsy calls today, resets 11:59 PM Toronto, capped at 2,500 (50% of Etsy\u2019s 5,000/day).&#10;Key = Etsy\u2019s own meter for the WHOLE API key (every app, incl. EtsyMail), resets midnight UTC (8 PM Toronto).&#10;QPS = highest calls-per-second observed, hard-capped at 2.5.">\u24d8</button>
+      </div>
       <div class="tabCtl" role="tablist" aria-label="View">
         <button id="tabEditor" role="tab" class="on">Listing</button>
         <button id="tabResults" role="tab">Results<b id="tabResultsCount">0</b></button>
@@ -193,30 +243,6 @@ dialog{border:0;padding:0;border-radius:15px;box-shadow:0 24px 80px rgba(0,0,0,.
       <section id="resultsView" class="hidden">
         <div class="rhead">
           <div><h2 id="rTitle">Results</h2><div class="rsub" id="rSummary">—</div></div>
-          <div class="searchPanel">
-      <div class="searchBox">
-        <svg class="searchIcon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/><path d="m16.5 16.5 4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-        <input id="searchInput" type="search" autocomplete="off" spellcheck="false" placeholder="Search live Etsy titles…" aria-label="Search Etsy listing titles">
-        <span class="searchSpinner" id="searchSpinner" aria-hidden="true"></span>
-        <button class="searchClear hidden" id="clearSearchBtn" aria-label="Clear title search">×</button>
-      </div>
-      <div class="searchMeta"><span id="searchStatus" class="live">Live Etsy title search</span><span id="searchLatency"></span></div>
-      <div class="searchControls">
-        <select id="matchMode" aria-label="Title matching mode"><option value="all">All title words</option><option value="phrase">Exact phrase</option></select>
-        <select id="sortMode" aria-label="Search sorting"><option value="score">Best match</option><option value="title_asc">Title A–Z</option><option value="title_desc">Title Z–A</option><option value="created_desc">Date added · newest</option><option value="created_asc">Date added · oldest</option><option value="updated_desc">Recently updated</option><option value="status_att">Status · needs attention first</option><option value="status_done">Status · completed first</option><option value="price_asc">Price low–high</option><option value="price_desc">Price high–low</option></select>
-      </div>
-    </div>
-        <div class="schedBar hidden" id="schedBar">
-          <span class="mlabel">Auto-run</span>
-          <input type="datetime-local" class="input sm" id="schedAt" aria-label="Scheduled date and time">
-          <select class="input sm" id="schedRepeat"><option value="once">Once</option><option value="daily">Daily</option><option value="weekly">Weekly</option></select>
-          <button class="btn velvet sm" id="schedArmBtn">Schedule batch</button>
-          <button class="btn ghost sm hidden" id="schedCancelBtn">Cancel schedule</button>
-          <span class="pill neutral" id="schedStatus">Not scheduled</span>
-        </div>
-        <div class="rtools"><select class="input sm" id="rSort" aria-label="Sort results"><option value="score">Best match</option><option value="title_asc">Title A–Z</option><option value="title_desc">Title Z–A</option><option value="created_desc">Date added · newest</option><option value="created_asc">Date added · oldest</option><option value="updated_desc">Recently updated</option><option value="status_att">Status · needs attention first</option><option value="status_done">Status · completed first</option><option value="price_asc">Price low–high</option><option value="price_desc">Price high–low</option></select>
-            <select id="rDensity" aria-label="Result density"><option value="comfortable">Comfortable</option><option value="compact">Compact</option></select>
-          </div>
         </div>
         <div class="chipRow" id="rChips"></div>
         <div class="rlist" id="rList"></div>
@@ -949,20 +975,32 @@ async function batchRun(){
   }catch(e){toast('Could not start batch: '+e.message,'bad')}
 }
 async function refreshApiUsage(){
-  try{const d=await fbCall({action:'apiUsage'});const el=$('#apiUsagePill');
-    if(!el)return;
+  try{
+    const d=await fbCall({action:'apiUsage'});
     const used=Number(d.count||0),budget=Number(d.budget||2500);
-    const etsyUsed=(d.etsy_limit_per_day!=null&&d.etsy_remaining_today!=null)?(d.etsy_limit_per_day-d.etsy_remaining_today):null;
-    el.textContent='This app 24h: '+used.toLocaleString()+' / '+budget.toLocaleString()
-      +' \u00b7 peak '+Number(d.max_qps||0)+' QPS (cap '+d.qps_cap+')'
-      +(etsyUsed!=null?' \u00b7 Whole key (all apps): '+etsyUsed.toLocaleString()+' used, '+Number(d.etsy_remaining_today).toLocaleString()+' left':'');
-    const counterAge=d.count_since?Math.round((Date.now()-Number(d.count_since))/3600000):null;
-    if(counterAge!=null&&counterAge<20)el.textContent+=' \u00b7 (tracking since '+(counterAge<1?'<1h':counterAge+'h')+' ago \u2014 not a full day yet)';
-    el.className='pill apiMode '+(used>=budget?'bad':used>=budget*0.8?'warn':'info');
-    el.title='\u201cThis app\u201d = the pricing console\u2019s own calls today (resets 11:59 PM Toronto) vs its 2,500 budget (50% of Etsy\u2019s 5,000/day). \u201cWhole key\u201d = Etsy\u2019s own meter for the ENTIRE API key \u2014 including EtsyMail\u2019s 24/7 crons and any other app \u2014 on Etsy\u2019s day, which resets midnight UTC (8:00 PM Toronto). The console only blocks itself on its own budget, or when the whole key has \u2264100 calls left.';
+    const keyLimit=d.etsy_limit_per_day,keyRemaining=d.etsy_remaining_today;
+    const keyUsed=(keyLimit!=null&&keyRemaining!=null)?(keyLimit-keyRemaining):null;
+    const abbr=n=>n>=1000?(n/1000).toFixed(n%1000===0?0:1)+'k':String(n);
+    const appPct=Math.min(100,Math.round((used/budget)*100));
+    $('#awAppNum').textContent=abbr(used)+' / '+abbr(budget);
+    const appBar=$('#awAppBar');appBar.style.width=appPct+'%';
+    appBar.parentElement.className='awBar '+(used>=budget?'bad':used>=budget*0.8?'warn':'');
+    $('#awQps').textContent=Number(d.max_qps||0)+'/'+d.qps_cap+' QPS';
+    if(keyUsed!=null){
+      const keyPct=Math.min(100,Math.round((keyUsed/keyLimit)*100));
+      $('#awKeyNum').textContent=abbr(keyUsed)+' / '+abbr(keyLimit);
+      const keyBar=$('#awKeyBar');keyBar.style.width=keyPct+'%';
+      keyBar.parentElement.className='awBar '+(keyRemaining<=100?'bad':keyPct>=80?'warn':'');
+      $('#awKeyNum').title=Number(keyRemaining).toLocaleString()+' left on the whole key today';
+    }else{$('#awKeyNum').textContent='\u2014';}
+    const counterAge=d.count_since?(Date.now()-Number(d.count_since))/3600000:null;
+    const info=$('#awInfo');
+    const base='App = this console\u2019s own Etsy calls today, resets 11:59 PM Toronto, capped at '+budget.toLocaleString()+' (50% of Etsy\u2019s '+(keyLimit||5000).toLocaleString()+'/day).\nKey = Etsy\u2019s own meter for the WHOLE API key (every app, incl. EtsyMail), resets midnight UTC (8 PM Toronto).\nQPS = highest calls-per-second observed, hard-capped at '+d.qps_cap+'.';
+    info.title=base+(counterAge!=null&&counterAge<20?'\n\n\u26a0 Tracking since '+(counterAge<1?'under an hour':Math.round(counterAge)+'h')+' ago \u2014 not a full day yet, so \u201cApp\u201d may undercount today.':'');
+    info.classList.toggle('warnDot',counterAge!=null&&counterAge<20);
   }catch(e){}
 }
-setInterval(refreshApiUsage,15000);
+setInterval(refreshApiUsage,15000);setInterval(refreshApiUsage,15000);
 function pushServerToken(){
   try{
     const rt=localStorage.getItem(TOKEN_KEYS.refresh);
@@ -1019,6 +1057,7 @@ function diagFiltered(){
   const fromTs=S.log.from?new Date(S.log.from+'T00:00:00').getTime():0;
   const toTs=S.log.to?new Date(S.log.to+'T23:59:59').getTime():Infinity;
   return S.log.entries.filter(e=>{
+    if(S.log.focusId&&String(e.listing_id)!==S.log.focusId)return false;
     if(e.at<fromTs||e.at>toTs)return false;
     if(S.log.type==='save'&&e.type!=='save')return false;
     if(S.log.type==='batch'&&!/^batch|^run|^schedule/.test(e.type))return false;
@@ -1032,12 +1071,16 @@ function diagFiltered(){
 function renderDiag(){
   const list=$('#diagList');if(!list)return;
   const rows=diagFiltered();
-  $('#diagSummary').textContent=rows.length+' event'+(rows.length===1?'':'s')+(S.log.entries.length>=300?' (of latest '+S.log.entries.length+' loaded)':'');
-  list.innerHTML=rows.map(e=>'<div class="diagRow'+(e.ok===false?' bad':'')+'" '+(e.listing_id?'data-id="'+e.listing_id+'"':'')+'>'
-    +'<div class="dtop">'+diagTypeBadge(e)+'<span class="dtime">'+new Date(e.at).toLocaleString()+'</span></div>'
+  const fails=rows.filter(e=>e.ok===false).length;
+  $('#diagSummary').textContent=rows.length+' event'+(rows.length===1?'':'s')+(fails?' \u00b7 '+fails+' failure'+(fails===1?'':'s'):'')+(S.log.entries.length>=300?' \u00b7 showing the latest '+S.log.entries.length+' loaded \u2014 use \u201cLoad older\u201d for more':'');
+  list.innerHTML=rows.map(e=>'<div class="diagRow'+(e.ok===false?' bad':'')+'">'
+    +'<div class="dtop">'+diagTypeBadge(e)
+    +'<span class="dtime">'+new Date(e.at).toLocaleString()+'</span>'
+    +(e.listing_id?'<span class="dactions"><button class="btn ghost xs" data-dact="focus" data-id="'+e.listing_id+'" data-title="'+esc(e.title||'').replace(/"/g,'&quot;')+'">History</button><button class="btn ghost xs" data-dact="open" data-id="'+e.listing_id+'">Open</button></span>':'')
+    +'</div>'
     +(e.title||e.listing_id?'<div class="dtitle">'+(e.title?esc(e.title):'')+(e.listing_id?' <span class="dim">#'+e.listing_id+'</span>':'')+'</div>':'')
     +(e.detail?'<div class="ddetail">'+esc(e.detail)+'</div>':'')
-    +'</div>').join('')||'<div class="qEmpty">No events match the current filters.</div>';
+    +'</div>').join('')||'<div class="qEmpty" style="padding:40px;text-align:center">No events match the current filters.</div>';
 }
 async function loadLog(older){
   if(S.log.loading)return;S.log.loading=true;
@@ -1051,12 +1094,10 @@ async function loadLog(older){
   }catch(e){toast('History load failed: '+e.message,'bad')}
   S.log.loading=false;
 }
-function setRailTab(t){S.railTab=t;
-  [...document.querySelectorAll('#railTabs button')].forEach(b=>b.classList.toggle('on',b.dataset.rt===t));
-  $('#railListings').classList.toggle('hidden',t!=='listings');
-  $('#diagPanel').classList.toggle('hidden',t!=='diag');
-  if(t==='diag'&&!S.log.entries.length)loadLog(false);
-}
+function openDiag(){$('#diagModal').classList.remove('hidden');document.body.style.overflow='hidden';if(!S.log.entries.length)loadLog(false);else renderDiag()}
+function closeDiag(){$('#diagModal').classList.add('hidden');document.body.style.overflow=''}
+function diagFocus(id,title){S.log.focusId=String(id);$('#diagFocusTitle').textContent=(title?title+' ':'')+'#'+id;$('#diagFocusBar').classList.remove('hidden');renderDiag()}
+function diagUnfocus(){S.log.focusId=null;$('#diagFocusBar').classList.add('hidden');renderDiag()}
 async function retrySingle(id){
   const d=S.prep.get(String(id))||{};
   if(S.rBusy.has(id))return;S.rBusy.add(id);renderResults();
@@ -1102,14 +1143,18 @@ $('#engraveToggle').addEventListener('click',e=>{const b=e.target.closest('butto
   S.engraving=on;renderChainToggle();persistToggle('engrave');
   if(!on){const n=stripEngraveRows();toast(n?('Engraving OFF \u2014 '+n+' engraving combination'+(n===1?'':'s')+' removed from the draft. Save to apply, or Reset to undo.'):'Engraving OFF \u2014 engraving options will be excluded from the next rebuild.','ok')}
   else toast('Engraving ON \u2014 run \u2726 Charm Only setup to rebuild the option set including engraving options.','ok')});
-$('#railTabs').addEventListener('click',e=>{const b=e.target.closest('button[data-rt]');if(b)setRailTab(b.dataset.rt)});
+$('#diagOpenBtn').addEventListener('click',openDiag);
+$('#diagCloseBtn').addEventListener('click',closeDiag);
+$('#diagModal').addEventListener('click',e=>{if(e.target.id==='diagModal')closeDiag()});
+$('#diagFocusClear').addEventListener('click',diagUnfocus);
+$('#diagFocusOpen').addEventListener('click',()=>{if(S.log.focusId){closeDiag();focusListing(S.log.focusId)}});
 $('#diagSearch').addEventListener('input',e=>{S.log.q=e.target.value;renderDiag()});
 $('#diagType').addEventListener('change',e=>{S.log.type=e.target.value;renderDiag()});
 $('#diagFrom').addEventListener('change',e=>{S.log.from=e.target.value;renderDiag()});
 $('#diagTo').addEventListener('change',e=>{S.log.to=e.target.value;renderDiag()});
 $('#diagRefreshBtn').addEventListener('click',()=>loadLog(false));
 $('#diagMoreBtn').addEventListener('click',()=>loadLog(true));
-$('#diagList').addEventListener('click',e=>{const r=e.target.closest('.diagRow[data-id]');if(r)focusListing(r.dataset.id)});
+$('#diagList').addEventListener('click',e=>{const b=e.target.closest('button[data-dact]');if(!b)return;if(b.dataset.dact==='focus')diagFocus(b.dataset.id,b.dataset.title);else if(b.dataset.dact==='open'){closeDiag();focusListing(b.dataset.id)}});
 $('#schedArmBtn').addEventListener('click',armSchedule);
 $('#schedCancelBtn').addEventListener('click',cancelSchedule);
 $('#approvePrepBtn').addEventListener('click',approvePrep);
@@ -1152,5 +1197,24 @@ addEventListener('keydown',e=>{const typing=['INPUT','TEXTAREA','SELECT'].includ
 
 (async function init(){await handleOAuthCallback();renderConnection();renderStoreFilters();renderChainToggle();updateSearchUi('Live Etsy title search');scheduleRefresh();if(localStorage.getItem(TOKEN_KEYS.access))loadCatalog()})();
 </script>
+<div id="diagModal" class="hidden" role="dialog" aria-modal="true" aria-label="Diagnostics">
+  <div class="diagShell">
+    <div class="diagHead">
+      <h2>Diagnostics <span class="diagSub">every change made to every listing — saved permanently</span></h2>
+      <button class="btn ghost sm" id="diagCloseBtn">✕ Close</button>
+    </div>
+    <div class="diagToolbar">
+      <input id="diagSearch" type="search" class="input sm" placeholder="Search title, #listing id, or error text…" aria-label="Search diagnostics">
+      <select id="diagType" class="input sm" aria-label="Event type filter"><option value="all">All events</option><option value="save">Manual saves</option><option value="batch">Batch runs</option><option value="fail">Failures only</option><option value="queue">Queue changes</option><option value="schedule">Schedule</option></select>
+      <input type="date" id="diagFrom" class="input sm" aria-label="From date">
+      <input type="date" id="diagTo" class="input sm" aria-label="To date">
+      <button class="btn ghost sm" id="diagRefreshBtn">Refresh</button>
+    </div>
+    <div class="diagFocus hidden" id="diagFocusBar">Viewing full history for <b id="diagFocusTitle"></b> <button class="btn ghost xs" id="diagFocusClear">✕ show all</button> <button class="btn sage xs" id="diagFocusOpen">Open listing in console</button></div>
+    <div class="diagSummary" id="diagSummary">History</div>
+    <div class="diagBody" id="diagList"></div>
+    <div class="diagFoot"><button class="btn ghost sm" id="diagMoreBtn">Load older events</button></div>
+  </div>
+</div>
 </body>
 </html>
