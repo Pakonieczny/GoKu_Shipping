@@ -134,6 +134,7 @@ exports.handler = async (event) => {
       return json(200, {
         date: key,
         count: Number(d.count || 0),
+        count_since: d.count_since || null, // when THIS counter started — may be mid-day if the tracking code was deployed partway through today
         max_qps: Number(d.max_qps || 0),
         etsy_limit_per_day: d.etsy_limit_per_day != null ? Number(d.etsy_limit_per_day) : null,
         etsy_remaining_today: d.etsy_remaining_today != null ? Number(d.etsy_remaining_today) : null,

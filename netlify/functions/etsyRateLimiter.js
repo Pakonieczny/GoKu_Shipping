@@ -168,11 +168,21 @@ async function chargeDailyBudget() {
       const snap = await tx.get(ref);
       const d = snap.exists ? snap.data() : {};
       const ourUsed = Number(d.count || 0);
-      const etsyUsed = (d.etsy_limit_per_day != null && d.etsy_remaining_today != null)
-        ? Number(d.etsy_limit_per_day) - Number(d.etsy_remaining_today) : null;
-      const used = Math.max(ourUsed, etsyUsed == null ? 0 : etsyUsed);
-      if (used >= DAILY_BUDGET) {
-        const err = new Error("DAILY_BUDGET_EXHAUSTED: " + used + " of the " + DAILY_BUDGET + "-call internal daily budget (50% of Etsy's " + ETSY_DAILY_LIMIT + ") is spent. Calls resume after the 11:59 PM Toronto reset.");
+      // Budget rule: THIS system may spend at most DAILY_BUDGET of its OWN
+      // calls. Etsy's key-wide meter (which includes EtsyMail crons and any
+      // other app on the key) does NOT count against our budget — but when
+      // the whole key is nearly exhausted, stop rather than cause real 429s.
+      if (ourUsed >= DAILY_BUDGET) {
+        const err = new Error("DAILY_BUDGET_EXHAUSTED: this system has spent its " + DAILY_BUDGET + "-call internal daily budget (50% of Etsy's " + ETSY_DAILY_LIMIT + "). Calls resume after the 11:59 PM Toronto reset.");
+        err.code = "DAILY_BUDGET_EXHAUSTED";
+        throw err;
+      }
+      const headerFresh = d.etsy_reported_at && (Date.now() - Number(d.etsy_reported_at)) < 30 * 60 * 1000;
+      if (headerFresh && d.etsy_remaining_today != null && Number(d.etsy_remaining_today) <= 100) {
+        // Whole-key emergency reserve (protects every app from hard 429s).
+        // Only honored while the reading is fresh — a stale reading must not
+        // wedge the gate shut after Etsy's midnight-UTC reset.
+        const err = new Error("DAILY_BUDGET_EXHAUSTED: Etsy reports only " + d.etsy_remaining_today + " calls left on the WHOLE API key today (all apps combined). Holding the last 100 in reserve; Etsy's key resets at midnight UTC (8:00 PM Toronto).");
         err.code = "DAILY_BUDGET_EXHAUSTED";
         throw err;
       }
@@ -187,6 +197,7 @@ async function chargeDailyBudget() {
       }
       tx.set(ref, {
         count: ourUsed + 1,
+        count_since: d.count_since || nowMs, // stamps the first call this counter ever recorded for the day
         sec_key: nowSec,
         sec_count: secUsed + 1,
         max_qps: Math.max(Number(d.max_qps || 0), secUsed + 1),
