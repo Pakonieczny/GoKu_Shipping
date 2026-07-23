@@ -154,7 +154,7 @@ dialog{border:0;padding:0;border-radius:15px;box-shadow:0 24px 80px rgba(0,0,0,.
   <aside class="rail" id="rail">
     <div class="brand"><div class="logo">Brites <b>Etsy Pricing</b></div><div class="tag">Live store pricing control</div></div>
     <div class="railStatus"><span class="dot" id="connDot"></span><span id="connText">Not connected</span></div>
-    <div class="railActions"><button class="btn gold sm" id="connectBtn">Connect Etsy</button><button class="btn sm" id="loadBtn">Reload store</button><button class="btn ghost sm wide" id="diagOpenBtn">🩺 Diagnostics · change history</button></div>
+    <div class="railActions"><button class="btn gold sm" id="connectBtn">Connect Etsy</button><button class="btn sm" id="loadBtn">Reload store</button><button class="btn ghost sm wide" id="diagOpenBtn">&#x1FA7A; Diagnostics &#183; change history</button></div>
     <div class="searchPanel">
       <div class="searchBox">
         <svg class="searchIcon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/><path d="m16.5 16.5 4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
@@ -168,30 +168,13 @@ dialog{border:0;padding:0;border-radius:15px;box-shadow:0 24px 80px rgba(0,0,0,.
         <select id="sortMode" aria-label="Search sorting"><option value="score">Best match</option><option value="title_asc">Title A–Z</option><option value="title_desc">Title Z–A</option><option value="created_desc">Date added · newest</option><option value="created_asc">Date added · oldest</option><option value="updated_desc">Recently updated</option><option value="status_att">Status · needs attention first</option><option value="status_done">Status · completed first</option><option value="price_asc">Price low–high</option><option value="price_desc">Price high–low</option></select>
       </div>
     </div>
-        <div class="schedBar hidden" id="schedBar">
-          <span class="mlabel">Auto-run</span>
-          <input type="datetime-local" class="input sm" id="schedAt" aria-label="Scheduled date and time">
-          <select class="input sm" id="schedRepeat"><option value="once">Once</option><option value="daily">Daily</option><option value="weekly">Weekly</option></select>
-          <button class="btn velvet sm" id="schedArmBtn">Schedule batch</button>
-          <button class="btn ghost sm hidden" id="schedCancelBtn">Cancel schedule</button>
-          <span class="pill neutral" id="schedStatus">Not scheduled</span>
-        </div>
-        <div class="rtools"><select class="input sm" id="rSort" aria-label="Sort results"><option value="score">Best match</option><option value="title_asc">Title A–Z</option><option value="title_desc">Title Z–A</option><option value="created_desc">Date added · newest</option><option value="created_asc">Date added · oldest</option><option value="updated_desc">Recently updated</option><option value="status_att">Status · needs attention first</option><option value="status_done">Status · completed first</option><option value="price_asc">Price low–high</option><option value="price_desc">Price high–low</option></select>
-            <select id="rDensity" aria-label="Result density"><option value="comfortable">Comfortable</option><option value="compact">Compact</option></select>
-          </div>
     <div class="categoryFilter">
       <label for="storeFilterSelect">Listing category</label>
       <div class="categorySelectWrap"><select id="storeFilterSelect" aria-label="Filter Etsy listings by store category"></select></div>
       <div class="categoryFilterMeta"><span class="liveState"><i class="liveDot"></i><span id="filterLiveText">Live Etsy catalog</span></span><span id="storeFilterTotal">0 listings</span></div>
     </div>
-      <div class="queueHead"><span>Listings</span><span id="queueCount">0</span></div>
-      <div class="queue" id="queue"></div>
-        <button class="btn ghost sm wide" id="diagRefreshBtn">Refresh history</button>
-      </div>
-      <div class="queueHead"><span id="diagSummary">History</span></div>
-      <div class="queue" id="diagList"></div>
-      <button class="btn ghost sm wide" id="diagMoreBtn" style="margin:8px 12px">Load older</button>
-    </div>
+    <div class="queueHead"><span>Listings</span><span id="queueCount">0</span></div>
+    <div class="queue" id="queue"></div>
     <div class="railFoot">Live title search is verified against Etsy; local results appear instantly while Etsy responds.</div>
   </aside>
 
@@ -214,7 +197,7 @@ dialog{border:0;padding:0;border-radius:15px;box-shadow:0 24px 80px rgba(0,0,0,.
           <span class="awNum" id="awKeyNum">…</span>
           <span class="awBar"><i id="awKeyBar"></i></span>
         </div>
-        <button class="awInfo" id="awInfo" aria-label="What do these numbers mean?" title="App = this console\u2019s own Etsy calls today, resets 11:59 PM Toronto, capped at 2,500 (50% of Etsy\u2019s 5,000/day).&#10;Key = Etsy\u2019s own meter for the WHOLE API key (every app, incl. EtsyMail), resets midnight UTC (8 PM Toronto).&#10;QPS = highest calls-per-second observed, hard-capped at 2.5.">\u24d8</button>
+        <button class="awInfo" id="awInfo" aria-label="What do these numbers mean?" title="App = this console’s own Etsy calls today, resets 11:59 PM Toronto, capped at 2,500 (50% of Etsy’s 5,000/day).&#10;Key = Etsy’s own meter for the WHOLE API key (every app, incl. EtsyMail), resets midnight UTC (8 PM Toronto).&#10;QPS = highest calls-per-second observed, hard-capped at 2.5.">ⓘ</button>
       </div>
       <div class="tabCtl" role="tablist" aria-label="View">
         <button id="tabEditor" role="tab" class="on">Listing</button>
@@ -244,6 +227,17 @@ dialog{border:0;padding:0;border-radius:15px;box-shadow:0 24px 80px rgba(0,0,0,.
         <div class="rhead">
           <div><h2 id="rTitle">Results</h2><div class="rsub" id="rSummary">—</div></div>
         </div>
+        <div class="schedBar hidden" id="schedBar">
+          <span class="mlabel">Auto-run</span>
+          <input type="datetime-local" class="input sm" id="schedAt" aria-label="Scheduled date and time">
+          <select class="input sm" id="schedRepeat"><option value="once">Once</option><option value="daily">Daily</option><option value="weekly">Weekly</option></select>
+          <button class="btn velvet sm" id="schedArmBtn">Schedule batch</button>
+          <button class="btn ghost sm hidden" id="schedCancelBtn">Cancel schedule</button>
+          <span class="pill neutral" id="schedStatus">Not scheduled</span>
+        </div>
+        <div class="rtools"><select class="input sm" id="rSort" aria-label="Sort results"><option value="score">Best match</option><option value="title_asc">Title A–Z</option><option value="title_desc">Title Z–A</option><option value="created_desc">Date added · newest</option><option value="created_asc">Date added · oldest</option><option value="updated_desc">Recently updated</option><option value="status_att">Status · needs attention first</option><option value="status_done">Status · completed first</option><option value="price_asc">Price low–high</option><option value="price_desc">Price high–low</option></select>
+            <select id="rDensity" aria-label="Result density"><option value="comfortable">Comfortable</option><option value="compact">Compact</option></select>
+          </div>
         <div class="chipRow" id="rChips"></div>
         <div class="rlist" id="rList"></div>
       </section>
