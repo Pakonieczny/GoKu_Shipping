@@ -76,6 +76,18 @@ dialog{border:0;padding:0;border-radius:15px;box-shadow:0 24px 80px rgba(0,0,0,.
 #batchPanel .berrs{max-height:110px;overflow:auto;font-size:11.5px;color:var(--clay);display:flex;flex-direction:column;gap:3px}
 .schedBar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 12px;margin-bottom:10px;border:1.5px dashed var(--velvet);border-radius:var(--rsm);background:var(--card)}
 .schedBar .mlabel{font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--clay)}
+.diagControls{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line)}
+.diagDates{display:flex;gap:6px}
+.diagDates input{flex:1;min-width:0}
+.diagRow{padding:9px 12px;border-bottom:1px solid var(--line);cursor:default;font-size:12px}
+.diagRow[data-id]{cursor:pointer}
+.diagRow[data-id]:hover{background:var(--paper2)}
+.diagRow.bad{border-left:3px solid var(--clay)}
+.diagRow .dtop{display:flex;align-items:center;gap:8px;margin-bottom:2px}
+.diagRow .dtime{font-size:10.5px;color:var(--ink45)}
+.diagRow .dtitle{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.diagRow .dtitle .dim{color:var(--ink45);font-weight:400}
+.diagRow .ddetail{color:var(--ink70);margin-top:2px;word-break:break-word}
 #resultsView .rhead{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px}
 #resultsView .rhead h2{font:22px var(--serif);margin:0}
 #resultsView .rhead .rsub{font-size:12px;color:var(--ink45)}
@@ -121,9 +133,67 @@ dialog{border:0;padding:0;border-radius:15px;box-shadow:0 24px 80px rgba(0,0,0,.
   <aside class="rail" id="rail">
     <div class="brand"><div class="logo">Brites <b>Etsy Pricing</b></div><div class="tag">Live store pricing control</div></div>
     <div class="railStatus"><span class="dot" id="connDot"></span><span id="connText">Not connected</span></div>
-    <div class="railActions"><button class="btn gold sm" id="connectBtn">Connect Etsy</button><button class="btn sm" id="loadBtn">Reload store</button><button class="btn ghost sm wide" id="scanFilterBtn">Scan current filter</button></div>
-    <div class="filterTabs"><button data-filter="all" class="on">All</button><button data-filter="needs">Needs review</button><button data-filter="approved">Approved</button></div>
-    <div class="searchPanel">
+    <div class="railActions"><button class="btn gold sm" id="connectBtn">Connect Etsy</button><button class="btn sm" id="loadBtn">Reload store</button></div>
+    <div class="filterTabs" id="railTabs"><button data-rt="listings" class="on">Listings</button><button data-rt="diag">Diagnostics</button></div>
+    <div class="categoryFilter">
+      <label for="storeFilterSelect">Listing category</label>
+      <div class="categorySelectWrap"><select id="storeFilterSelect" aria-label="Filter Etsy listings by store category"></select></div>
+      <div class="categoryFilterMeta"><span class="liveState"><i class="liveDot"></i><span id="filterLiveText">Live Etsy catalog</span></span><span id="storeFilterTotal">0 listings</span></div>
+    </div>
+    <div id="railListings">
+      <div class="queueHead"><span>Listings</span><span id="queueCount">0</span></div>
+      <div class="queue" id="queue"></div>
+    </div>
+    <div id="diagPanel" class="hidden">
+      <div class="diagControls">
+        <input id="diagSearch" type="search" class="input sm" placeholder="Search title, #id or details…" aria-label="Search diagnostics">
+        <select id="diagType" class="input sm" aria-label="Event type filter"><option value="all">All events</option><option value="save">Manual saves</option><option value="batch">Batch runs</option><option value="fail">Failures only</option><option value="queue">Queue changes</option><option value="schedule">Schedule</option></select>
+        <div class="diagDates"><input type="date" id="diagFrom" class="input sm" aria-label="From date"><input type="date" id="diagTo" class="input sm" aria-label="To date"></div>
+        <button class="btn ghost sm wide" id="diagRefreshBtn">Refresh history</button>
+      </div>
+      <div class="queueHead"><span id="diagSummary">History</span></div>
+      <div class="queue" id="diagList"></div>
+      <button class="btn ghost sm wide" id="diagMoreBtn" style="margin:8px 12px">Load older</button>
+    </div>
+    <div class="railFoot">Live title search is verified against Etsy; local results appear instantly while Etsy responds.</div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <button class="navBtn" id="menuBtn" aria-label="Open listing queue">☰</button>
+      <button class="navBtn" id="prevBtn" aria-label="Previous listing">‹</button>
+      <button class="navBtn" id="nextBtn" aria-label="Next listing">›</button>
+      <div class="topTitle"><h1 id="topTitle">Brites Etsy Pricing Console</h1><div class="sub" id="topSub">Load the live Etsy catalog to begin.</div></div>
+      <div class="spacer"></div>
+      <span class="pill info apiMode" id="apiUsagePill" title="Etsy API calls made today across the console, batches and schedules · hard-capped at 4/sec · resets 11:59 PM Toronto time">API today: …</span>
+      <div class="tabCtl" role="tablist" aria-label="View">
+        <button id="tabEditor" role="tab" class="on">Listing</button>
+        <button id="tabResults" role="tab">Results<b id="tabResultsCount">0</b></button>
+        <button id="tabBatch" role="tab">Batch<b id="tabBatchCount">0</b></button>
+      </div>
+      <div class="batchCluster">
+        <button class="btn velvet sm" id="batchBtn" title="Run all prepared listings on the server">▶ Start Batch<b id="batchCount">0</b></button>
+        <button class="btn ghost sm hidden" id="batchStopBtn">Stop</button>
+      </div>
+      <button class="btn ghost sm" id="refreshBtn">Refresh</button>
+    </header>
+
+    <div class="view">
+      <div class="notice">Choose any Etsy shop category from the dropdown. Only that live category is shown in the queue and Previous/Next navigation. Title searches are sent to Etsy in real time and then verified against listing titles only.</div>
+        <div id="batchPanel" class="hidden">
+          <div class="bhead"><h4>Batch run</h4><span class="pill info" id="batchState">Idle</span><span style="flex:1"></span></div>
+          <div class="bstats"><span>To batch <b id="bTotal">0</b></span><span>Succeeded <b id="bOk" style="color:var(--sage)">0</b></span><span>Failed <b id="bFail" style="color:var(--clay)">0</b></span><span>Remaining <b id="bLeft">0</b></span></div>
+          <div class="bbar"><i id="bBar"></i></div>
+          <div class="bcur" id="bCur"></div>
+          <div class="berrs" id="bErrs"></div>
+        </div>
+
+      <div class="activity" id="activity"><span class="spin"></span><span id="activityText">Loading…</span><span class="progress"><i id="activityBar"></i></span><button class="btn ghost xs" id="stopScanBtn">Stop</button></div>
+
+      <section id="resultsView" class="hidden">
+        <div class="rhead">
+          <div><h2 id="rTitle">Results</h2><div class="rsub" id="rSummary">—</div></div>
+          <div class="searchPanel">
       <div class="searchBox">
         <svg class="searchIcon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/><path d="m16.5 16.5 4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
         <input id="searchInput" type="search" autocomplete="off" spellcheck="false" placeholder="Search live Etsy titles…" aria-label="Search Etsy listing titles">
@@ -136,46 +206,7 @@ dialog{border:0;padding:0;border-radius:15px;box-shadow:0 24px 80px rgba(0,0,0,.
         <select id="sortMode" aria-label="Search sorting"><option value="score">Best match</option><option value="title_asc">Title A–Z</option><option value="title_desc">Title Z–A</option><option value="created_desc">Date added · newest</option><option value="created_asc">Date added · oldest</option><option value="updated_desc">Recently updated</option><option value="status_att">Status · needs attention first</option><option value="status_done">Status · completed first</option><option value="price_asc">Price low–high</option><option value="price_desc">Price high–low</option></select>
       </div>
     </div>
-    <div class="categoryFilter">
-      <label for="storeFilterSelect">Listing category</label>
-      <div class="categorySelectWrap"><select id="storeFilterSelect" aria-label="Filter Etsy listings by store category"></select></div>
-      <div class="categoryFilterMeta"><span class="liveState"><i class="liveDot"></i><span id="filterLiveText">Live Etsy catalog</span></span><span id="storeFilterTotal">0 listings</span></div>
-    </div>
-    <div class="queueHead"><span>Listings</span><span id="queueCount">0</span></div>
-    <div class="queue" id="queue"></div>
-    <div class="railFoot">Live title search is verified against Etsy; local results appear instantly while Etsy responds.</div>
-  </aside>
-
-  <main class="main">
-    <header class="topbar">
-      <button class="navBtn" id="menuBtn" aria-label="Open listing queue">☰</button>
-      <button class="navBtn" id="prevBtn" aria-label="Previous listing">‹</button>
-      <button class="navBtn" id="nextBtn" aria-label="Next listing">›</button>
-      <div class="topTitle"><h1 id="topTitle">Brites Etsy Pricing Console</h1><div class="sub" id="topSub">Load the live Etsy catalog to begin.</div></div>
-      <div class="spacer"></div>
-      <span class="pill info apiMode">Live-safe API mode</span>
-      <span class="pill neutral" id="approvalPill">Not reviewed</span>
-      <div class="tabCtl" role="tablist" aria-label="View">
-        <button id="tabEditor" role="tab" class="on">Listing</button>
-        <button id="tabResults" role="tab">Results<b id="tabResultsCount">0</b></button>
-        <button id="tabBatch" role="tab">Batch<b id="tabBatchCount">0</b></button>
-      </div>
-      <div class="batchCluster">
-        <button class="btn velvet sm" id="batchBtn" title="Run all prepared listings on the server">▶ Start Batch<b id="batchCount">0</b></button>
-        <button class="btn gold sm hidden" id="batchPauseBtn">Pause</button>
-        <button class="btn ghost sm hidden" id="batchStopBtn">Stop</button>
-      </div>
-      <button class="btn ghost sm" id="refreshBtn">Refresh</button>
-    </header>
-
-    <div class="view">
-      <div class="notice">Choose any Etsy shop category from the dropdown. Only that live category is shown in the queue and Previous/Next navigation. Title searches are sent to Etsy in real time and then verified against listing titles only.</div>
-      <div class="activity" id="activity"><span class="spin"></span><span id="activityText">Loading…</span><span class="progress"><i id="activityBar"></i></span><button class="btn ghost xs" id="stopScanBtn">Stop</button></div>
-
-      <section id="resultsView" class="hidden">
-        <div class="rhead">
-          <div><h2 id="rTitle">Results</h2><div class="rsub" id="rSummary">—</div></div>
-          <div class="schedBar hidden" id="schedBar">
+        <div class="schedBar hidden" id="schedBar">
           <span class="mlabel">Auto-run</span>
           <input type="datetime-local" class="input sm" id="schedAt" aria-label="Scheduled date and time">
           <select class="input sm" id="schedRepeat"><option value="once">Once</option><option value="daily">Daily</option><option value="weekly">Weekly</option></select>
@@ -210,13 +241,6 @@ dialog{border:0;padding:0;border-radius:15px;box-shadow:0 24px 80px rgba(0,0,0,.
 
         <div class="sectionHead"><div><h3>Variation menus</h3><div class="sub">Add tiers, rename custom menus or remove options. New combinations inherit their source tier values.</div></div><div class="right"><button class="btn ghost sm" id="charmOnlyBtn">✦ Charm Only setup</button><button class="btn ghost sm" id="addMenuBtn">+ Add dropdown</button></div></div>
         <div class="modeBar hidden" id="modeBar"><span class="mlabel">Required — set per listing</span><div class="tabCtl sm" id="chainTypeToggle" role="tablist" aria-label="Necklace chain type"><button data-ct="regular" class="on">Regular</button><button data-ct="beady">Beady</button></div><div class="tabCtl sm" id="engraveToggle" role="tablist" aria-label="Back engraving"><button data-eg="on" class="on">Engraving ON</button><button data-eg="off">Engraving OFF</button></div><span class="pill neutral" id="prepBadge">Not prepared</span><button class="btn sage sm" id="approvePrepBtn" title="Queue this listing for the batch using the toggle positions shown">✓ Approve</button><button class="btn ghost sm hidden" id="unprepBtn" title="Remove this listing from the batch queue">✕ Remove from batch</button></div>
-        <div id="batchPanel" class="hidden">
-          <div class="bhead"><h4>Batch run</h4><span class="pill info" id="batchState">Idle</span><span style="flex:1"></span></div>
-          <div class="bstats"><span>To batch <b id="bTotal">0</b></span><span>Succeeded <b id="bOk" style="color:var(--sage)">0</b></span><span>Failed <b id="bFail" style="color:var(--clay)">0</b></span><span>Remaining <b id="bLeft">0</b></span></div>
-          <div class="bbar"><i id="bBar"></i></div>
-          <div class="bcur" id="bCur"></div>
-          <div class="berrs" id="bErrs"></div>
-        </div>
         <div class="grid variationGrid" id="variationGrid"></div>
         <div class="card depCard" id="dependencyCard"></div>
 
@@ -514,7 +538,7 @@ function renderTable(){
 }
 function renderSelectionCount(){$('#selectionCount').textContent=S.selected.size+' selected · applies to all when none selected'}
 function renderDirty(){$('#dirtyText').textContent=S.dirty?'Unsaved changes':'No unsaved changes';$('#saveBtn').disabled=!S.dirty;$('#resetBtn').disabled=!S.dirty}
-function renderApproval(){const a=S.approvals[S.currentId];const p=$('#approvalPill');if(!a){p.className='pill neutral';p.textContent='Not reviewed';$('#verifiedText').textContent='';return}p.className='pill '+(a.mode==='updated'?'ok':'warn');p.textContent=a.mode==='updated'?'Verified live':'Approved';$('#verifiedText').textContent=(a.mode==='updated'?'Etsy read-back verified · ':'Approved · ')+new Date(a.at).toLocaleString()}
+function renderApproval(){const a=S.approvals[S.currentId];$('#verifiedText').textContent=a?((a.mode==='updated'?'Etsy read-back verified · ':'Approved · ')+new Date(a.at).toLocaleString()):''}
 function markDirty(){S.dirty=true;delete S.approvals[S.currentId];writeApprovals();renderDirty();renderApproval();renderResults()}
 
 /* ---------------- Matrix actions ---------------- */
@@ -548,7 +572,7 @@ async function saveListing(){
       if(result.fresh){S.original=deep(result.fresh.inventory);S.originalHash=result.fresh.snapshot_hash;const l=currentListing();if(l){l._health=result.fresh.pricing_health;l._scanned=true}}
       throw new Error((result.verification_error||'Etsy verification did not match.')+' The current live state has been reloaded as the baseline — review the matrix and press Save again.')
     }
-    const fresh=result.fresh||await apiFetch('/etsyListingInventoryDetailProxy?listingId='+encodeURIComponent(S.currentId)+'&inventory_only=1');S.cache.set(S.currentId,fresh);const l=currentListing();l._health=fresh.pricing_health;l._scanned=true;S.approvals[S.currentId]={mode:'updated',at:Date.now(),hash:fresh.snapshot_hash};writeApprovals();{const d=S.prep.get(String(S.currentId))||{};const patch={health:compactHealth(fresh.pricing_health),scanned:true,approval:S.approvals[S.currentId],last_save:{at:Date.now(),verified:true},title:(currentListing()||{}).title||''};if(!d.original_saved&&result.previous_inventory){patch.original_inventory=result.previous_inventory;patch.original_snapshot_hash=result.previous_snapshot_hash||null;patch.original_saved=true}fbSet(S.currentId,patch)}hydrateDetail(fresh);clearActivity();
+    const fresh=result.fresh||await apiFetch('/etsyListingInventoryDetailProxy?listingId='+encodeURIComponent(S.currentId)+'&inventory_only=1');S.cache.set(S.currentId,fresh);const l=currentListing();l._health=fresh.pricing_health;l._scanned=true;S.approvals[S.currentId]={mode:'updated',at:Date.now(),hash:fresh.snapshot_hash};writeApprovals();{const d=S.prep.get(String(S.currentId))||{};const patch={health:compactHealth(fresh.pricing_health),scanned:true,approval:S.approvals[S.currentId],last_save:{at:Date.now(),verified:true},title:(currentListing()||{}).title||''};if(!d.original_saved&&result.previous_inventory){patch.original_inventory=result.previous_inventory;patch.original_snapshot_hash=result.previous_snapshot_hash||null;patch.original_saved=true}fbSet(S.currentId,patch);logEvent({listing_id:String(S.currentId),title:(currentListing()||{}).title||'',type:'save',detail:'Manual save verified on Etsy'+(result.auto_corrected?' (after automatic corrective retry)':'')+'.'})}hydrateDetail(fresh);clearActivity();
     if(result.personalization&&result.personalization.applied&&!result.personalization.verified)
       toast('Pricing verified. The Personalization field was sent to Etsy \u2014 please confirm it in the listing editor.','ok');
     else toast('Etsy update verified successfully.','ok')
@@ -576,7 +600,9 @@ const R_FILTERS=[
   {key:'healthy',label:'Healthy',test:l=>l._scanned&&!((l._health?.error_count||0)+(l._health?.warning_count||0))},
   {key:'unscanned',label:'Not scanned',test:l=>!l._scanned},
   {key:'approved',label:'Reviewed',test:l=>!!S.approvals[String(l.listing_id)]},
-  {key:'prepared',label:'Set by user',test:l=>isPrepared(S.prep.get(String(l.listing_id)))},
+  {key:'prepared',label:'Queued',test:l=>{const d=S.prep.get(String(l.listing_id));return isPrepared(d)&&!d.batched}},
+  {key:'batched',label:'Completed \u2713',test:l=>!!(S.prep.get(String(l.listing_id))||{}).batched},
+  {key:'bfailed',label:'Batch failed',test:l=>{const d=S.prep.get(String(l.listing_id))||{};return !!(d.last_batch&&d.last_batch.ok===false&&!d.batched)}},
   {key:'unprepared',label:'Not set',test:l=>!isPrepared(S.prep.get(String(l.listing_id)))},
   {key:'sale',label:'On sale',test:l=>isOnSale(l)}
 ];
@@ -598,8 +624,13 @@ function reviewChip(l){
 }
 function prepChip(l){
   const d=S.prep.get(String(l.listing_id));
-  if(!isPrepared(d))return '';
-  return '<span class="schip ok" title="Toggles set by user (stored in cloud)">\u2713 Set \u00b7 '+(d.chain_type==='beady'?'Beady':'Regular')+' \u00b7 Engr '+(d.engraving!==false?'ON':'OFF')+(d.batched?' \u00b7 batched':'')+'</span>';
+  let out='';
+  if(isPrepared(d)){
+    if(d.batched)out+='<span class="schip ok" title="Processed and verified by a batch run">\u2713 Batched \u00b7 '+(d.last_batch?new Date(d.last_batch.at).toLocaleString():'')+'</span>';
+    else out+='<span class="schip ok" title="Queued for the next batch run">\u2713 Queued \u00b7 '+(d.chain_type==='beady'?'Beady':'Regular')+' \u00b7 Engr '+(d.engraving!==false?'ON':'OFF')+'</span>';
+  }
+  if(d&&d.last_batch&&d.last_batch.ok===false&&!d.batched)out+='<span class="schip bad" title="'+String(d.last_batch.error||'').replace(/"/g,'&quot;')+'">\u2717 '+new Date(d.last_batch.at).toLocaleDateString()+' failed: '+String(d.last_batch.error||'').slice(0,60)+'\u2026</span>';
+  return out;
 }
 function comboChip(l){
   if(!l._scanned||!l._health)return '';
@@ -629,7 +660,8 @@ function renderResults(){renderSchedule();
       +'<button class="btn ghost xs" data-ract="scan" data-id="'+id+'">Scan</button>'
       +'<button class="btn ghost xs" data-ract="approve" data-id="'+id+'">Approve</button>'
       +'<button class="btn ghost xs" data-ract="etsy" data-id="'+id+'">Etsy \u2197</button>'
-      +(isPrepared(S.prep.get(id))?'<button class="btn ghost xs" data-ract="unprep" data-id="'+id+'">\u2715 Unqueue</button>':'')
+      +(isPrepared(S.prep.get(id))&&!(S.prep.get(id)||{}).batched?'<button class="btn ghost xs" data-ract="unprep" data-id="'+id+'">\u2715 Unqueue</button>':'')
+      +((S.prep.get(id)||{}).last_batch&&(S.prep.get(id)||{}).last_batch.ok===false&&!(S.prep.get(id)||{}).batched?'<button class="btn sage xs" data-ract="retry" data-id="'+id+'">\u21bb Retry now</button>':'')
       +'</div></div></div>'}).join('');
     list.scrollTop=scroll;
   }
@@ -673,6 +705,7 @@ $('#rList').addEventListener('click',e=>{
     if(act.dataset.ract==='approve'&&l)approveIds([l]);
     if(act.dataset.ract==='etsy')window.open((l&&l.url)||('https://www.etsy.com/listing/'+id),'_blank','noopener');
     if(act.dataset.ract==='unprep')unprepare(id);
+    if(act.dataset.ract==='retry')retrySingle(id);
     return}
   const row=e.target.closest('.rrow');if(row)focusListing(row.dataset.id);
 });
@@ -800,7 +833,7 @@ async function charmOnlySetup(){
 async function fbCall(body){const r=await fetch(FUNCTIONS_BASE+'/etsyPricingStore',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const t=await r.text();let d;try{d=JSON.parse(t)}catch{throw new Error('Store returned non-JSON: '+t.slice(0,160))}if(!r.ok)throw new Error(d.error||('Store error HTTP '+r.status));return d}
 function fbSet(id,patch){const cur=S.prep.get(String(id))||{};S.prep.set(String(id),{...cur,...patch});renderPrepUi();renderResults();return fbCall({action:'set',id:String(id),patch}).catch(e=>toast('Cloud save failed for #'+id+': '+e.message,'bad'))}
 function compactHealth(h){return h?{error_count:h.error_count||0,warning_count:h.warning_count||0,product_count:h.product_count||0,min_price:h.min_price??null,max_price:h.max_price??null}:null}
-async function hydrateFromStore(){
+async function hydrateFromStore(skipResume){
   try{
     const {docs}=await fbCall({action:'getAll'});
     S.prep=new Map(Object.entries(docs||{}));
@@ -813,18 +846,16 @@ async function hydrateFromStore(){
     if(touched){writeApprovals();applyFilter()}
     renderPrepUi();
   }catch(e){toast('Cloud state could not be loaded: '+e.message,'bad')}
-  resumeActiveRun();loadSchedule();pushServerToken();
+  if(!skipResume){resumeActiveRun();loadSchedule();pushServerToken()}
 }
 function isPrepared(d){return !!(d&&d.chain_set&&d.engrave_set)}
 function preparedReadyIds(){return [...S.prep].filter(([,d])=>isPrepared(d)&&!d.batched).map(([id])=>id)}
 function renderPrepUi(){
   const ready=preparedReadyIds();
-  const bc=$('#batchCount');if(bc)bc.textContent=ready.length;
   const tb=$('#tabBatchCount');if(tb)tb.textContent=ready.length;
-  const bb=$('#batchBtn');if(bb){bb.disabled=S.batch.running||!ready.length;bb.firstChild.textContent=S.batch.running?'\u25cf Batch running':'\u25b6 Start Batch'}
-  const active=!!S.currentRunId;
-  $('#batchPauseBtn')?.classList.toggle('hidden',!active);
-  $('#batchStopBtn')?.classList.toggle('hidden',!active);
+  const bb=$('#batchBtn');
+  if(bb&&!S.currentRunId){bb.dataset.mode='start';bb.disabled=!ready.length;bb.firstChild.textContent='\u25b6 Start Batch';const bc=$('#batchCount');if(bc)bc.textContent=ready.length}
+  $('#batchStopBtn')?.classList.toggle('hidden',!S.currentRunId);
   const badge=$('#prepBadge');const dCur=S.prep.get(String(S.currentId));
   if(badge){
     if(!S.currentId){badge.textContent='No listing open';badge.className='pill neutral'}
@@ -847,11 +878,13 @@ function approvePrep(){
   if(!S.currentId){toast('Open a listing first.','bad');return}
   const l=currentListing();
   fbSet(S.currentId,{chain_type:S.chainType,engraving:S.engraving,chain_set:true,engrave_set:true,batched:false,title:(l&&l.title)||''});
+  logEvent({listing_id:S.currentId,title:(l&&l.title)||'',type:'queue',detail:'Approved for batch: '+(S.chainType==='beady'?'Beady':'Regular')+' \u00b7 Engraving '+(S.engraving?'ON':'OFF')});
   toast('#'+S.currentId+' approved for the batch ('+(S.chainType==='beady'?'Beady':'Regular')+' \u00b7 Engraving '+(S.engraving?'ON':'OFF')+') \u2014 '+preparedReadyIds().length+' ready.','ok');
 }
 function unprepare(id){
   if(!id)return;
   fbSet(String(id),{chain_set:false,engrave_set:false,batched:false});
+  logEvent({listing_id:String(id),title:(S.prep.get(String(id))||{}).title||'',type:'unqueue',detail:'Removed from batch queue.'});
   toast('#'+id+' removed from the batch queue \u2014 '+preparedReadyIds().length+' ready.','ok');
 }
 function renderBatchUi(){
@@ -865,9 +898,18 @@ function showBatchPanel(){$('#batchPanel').classList.remove('hidden')}
 function applyRunToUi(run){
   S.batch={running:['queued','running','paused'].includes(run.status),stop:!!run.stop,total:run.total||0,done:run.done||0,ok:run.ok||0,fail:run.fail||0};
   renderBatchUi();renderPrepUi();
+  const stale=run.status==='running'&&run.updated_at&&(Date.now()-Number(run.updated_at))>90000;
+  const bb=$('#batchBtn'),bc=$('#batchCount');
+  if(bb&&S.currentRunId){
+    bb.disabled=false;
+    if(stale){bb.dataset.mode='relaunch';bb.firstChild.textContent='\u27f3 Re-launch';if(bc)bc.textContent=(run.done||0)+' / '+(run.total||0);
+      $('#bCur').textContent='\u26a0 No server progress for '+Math.round((Date.now()-Number(run.updated_at))/1000)+'s \u2014 the worker may have been interrupted. Press Re-launch to continue from listing '+((run.done||0)+1)+' of '+(run.total||0)+'.'}
+    else if(run.status==='paused'){bb.dataset.mode='resume';bb.firstChild.textContent='\u25b6 Resume';if(bc)bc.textContent=(run.done||0)+' / '+(run.total||0)}
+    else if(['queued','running'].includes(run.status)){bb.dataset.mode='pause';bb.firstChild.textContent='\u275a\u275a Pause';if(bc)bc.textContent=(run.done||0)+' / '+(run.total||0)}
+  }
   $('#batchState').textContent=run.status==='running'?'Running on server':run.status==='queued'?'Queued':run.status==='paused'?'Paused':run.status==='stopped'?(run.stop_reason?'Auto-halted':'Stopped'):'Done';
   if(run.stop_reason){const box=$('#bErrs');if(box&&!box.dataset.reasonShown){const div=document.createElement('div');div.style.fontWeight='700';div.textContent=run.stop_reason;box.prepend(div);box.dataset.reasonShown='1'}}
-  const pb=$('#batchPauseBtn');pb.textContent=run.status==='paused'?'Resume':'Pause';pb.disabled=!['queued','running','paused'].includes(run.status);
+
   $('#bCur').textContent=run.current||'';
   const errs=run.errors||[];const box=$('#bErrs');box.innerHTML='';for(const e of errs.slice(-50)){const div=document.createElement('div');div.textContent=e;box.appendChild(div)}
   if(run.fatal_error){const div=document.createElement('div');div.textContent='FATAL: '+run.fatal_error;box.appendChild(div)}
@@ -877,9 +919,11 @@ async function pollRun(runId){
   try{
     const {run}=await fbCall({action:'getRun',run_id:runId});
     applyRunToUi(run);
+    S._pollN=(S._pollN||0)+1;
+    if(S._pollN%4===0&&['queued','running'].includes(run.status))hydrateFromStore(true);
     if(['queued','running','paused'].includes(run.status)){pollTimer=setTimeout(()=>pollRun(runId),run.status==='paused'?6000:3500)}
     else{
-      await hydrateFromStore();applyFilter();
+      await hydrateFromStore(true);applyFilter();
       toast(run.status==='stopped'?('Batch stopped on server \u2014 '+(run.ok||0)+' succeeded, '+(run.fail||0)+' failed.'):(run.fatal_error?('Batch could not run: '+run.fatal_error):('Server batch complete \u2014 '+(run.ok||0)+' succeeded, '+(run.fail||0)+' failed.')),(run.fail||run.fatal_error)?'bad':'ok');
       S.currentRunId=null;
     }
@@ -904,6 +948,19 @@ async function batchRun(){
     toast('Server batch started \u2014 safe to close this tab. Progress is live here and saved in the cloud.','ok');
   }catch(e){toast('Could not start batch: '+e.message,'bad')}
 }
+async function refreshApiUsage(){
+  try{const d=await fbCall({action:'apiUsage'});const el=$('#apiUsagePill');
+    if(!el)return;
+    const used=Number(d.count||0),budget=Number(d.budget||2500);
+    const etsyUsed=(d.etsy_limit_per_day!=null&&d.etsy_remaining_today!=null)?(d.etsy_limit_per_day-d.etsy_remaining_today):null;
+    el.textContent='API 24h: '+used.toLocaleString()+' / '+budget.toLocaleString()
+      +' \u00b7 peak '+Number(d.max_qps||0)+' QPS (cap '+d.qps_cap+')'
+      +(etsyUsed!=null?' \u00b7 Etsy meter: '+etsyUsed.toLocaleString()+' used, '+Number(d.etsy_remaining_today).toLocaleString()+' left':'');
+    el.className='pill apiMode '+(used>=budget?'bad':used>=budget*0.8?'warn':'info');
+    el.title='This system\u2019s calls today (resets 11:59 PM Toronto) vs the 2,500 internal budget (50% of Etsy\u2019s 5,000/day). Peak QPS is the highest observed in any 1s (hard-capped at 2.5). \u201cEtsy meter\u201d is Etsy\u2019s own reported usage for the whole API key, including other apps.';
+  }catch(e){}
+}
+setInterval(refreshApiUsage,15000);
 function pushServerToken(){
   try{
     const rt=localStorage.getItem(TOKEN_KEYS.refresh);
@@ -921,10 +978,13 @@ function renderSchedule(){
   const armed=!!(sc&&sc.enabled);
   $('#schedArmBtn').classList.toggle('hidden',armed);
   $('#schedCancelBtn').classList.toggle('hidden',!armed);
+  const tick=Number(sc&&sc.last_tick||0);
+  const cronOk=tick&&(Date.now()-tick)<11*60*1000;
   if(armed){const dt=new Date(Number(sc.next_run_at));
-    $('#schedStatus').textContent='Scheduled \u00b7 '+dt.toLocaleString()+' \u00b7 '+(sc.repeat==='once'?'runs once':sc.repeat)+' \u00b7 runs whatever is queued at that time';
-    $('#schedStatus').className='pill ok'}
-  else{$('#schedStatus').textContent=(sc&&sc.last_result)?sc.last_result:'Not scheduled';$('#schedStatus').className='pill neutral'}
+    $('#schedStatus').textContent='Scheduled \u00b7 '+dt.toLocaleString()+' \u00b7 '+(sc.repeat==='once'?'runs once':sc.repeat)
+      +(cronOk?' \u00b7 scheduler alive ('+Math.round((Date.now()-tick)/60000)+'m ago)':' \u00b7 \u26a0 SCHEDULER NOT RUNNING \u2014 add the etsyPricingScheduleCron entry to netlify.toml');
+    $('#schedStatus').className='pill '+(cronOk?'ok':'bad')}
+  else{$('#schedStatus').textContent=((sc&&sc.last_result)?sc.last_result+' ':'Not scheduled')+(tick?'':' \u00b7 \u26a0 scheduler has never ticked \u2014 netlify.toml entry missing');$('#schedStatus').className='pill '+(tick?'neutral':'warn')}
 }
 async function loadSchedule(){try{const {schedule}=await fbCall({action:'getSchedule'});S.schedule=schedule;renderSchedule()}catch(e){}}
 async function armSchedule(){
@@ -937,12 +997,86 @@ async function armSchedule(){
     await pushServerToken();
     const {schedule}=await fbCall({action:'setSchedule',schedule:{enabled:true,next_run_at:at,repeat,label:new Date(at).toLocaleString()}});
     S.schedule=schedule;renderSchedule();
+    logEvent({type:'schedule',detail:'Schedule armed for '+new Date(at).toLocaleString()+' ('+repeat+').'});
     toast('Batch scheduled for '+new Date(at).toLocaleString()+' ('+repeat+'). The server runs it \u2014 no browser needed. It will process every listing queued at that moment.','ok');
   }catch(e){toast('Could not schedule: '+e.message,'bad')}
 }
 async function cancelSchedule(){
   try{const {schedule}=await fbCall({action:'setSchedule',schedule:{enabled:false,next_run_at:S.schedule?.next_run_at||0,repeat:S.schedule?.repeat||'once'}});
     S.schedule=schedule;renderSchedule();toast('Schedule cancelled.','ok')}catch(e){toast(e.message,'bad')}
+}
+function logEvent(e){try{fbCall({action:'log',entry:e}).catch(()=>{})}catch(_){}}
+S.log={entries:[],q:'',type:'all',from:'',to:'',loading:false};S.railTab='listings';
+function diagTypeBadge(e){
+  const map={save:['Save','ok'],batch_ok:['Batch \u2713','ok'],batch_fail:['Batch \u2717','bad'],run_start:['Run','info'],run_end:['Run','info'],schedule:['Schedule','info'],queue:['Queued','ok'],unqueue:['Unqueued','neutral'],retry_ok:['Retry \u2713','ok'],retry_fail:['Retry \u2717','bad']};
+  const [label,cls]=map[e.type]||[e.type,e.ok===false?'bad':'neutral'];
+  return '<span class="pill '+(e.ok===false?'bad':cls)+'" style="font-size:10px">'+label+'</span>';
+}
+function diagFiltered(){
+  const q=S.log.q.trim().toLowerCase();
+  const fromTs=S.log.from?new Date(S.log.from+'T00:00:00').getTime():0;
+  const toTs=S.log.to?new Date(S.log.to+'T23:59:59').getTime():Infinity;
+  return S.log.entries.filter(e=>{
+    if(e.at<fromTs||e.at>toTs)return false;
+    if(S.log.type==='save'&&e.type!=='save')return false;
+    if(S.log.type==='batch'&&!/^batch|^run|^schedule/.test(e.type))return false;
+    if(S.log.type==='fail'&&e.ok!==false)return false;
+    if(S.log.type==='queue'&&!/queue/.test(e.type))return false;
+    if(S.log.type==='schedule'&&e.type!=='schedule')return false;
+    if(q&&!((e.title||'').toLowerCase().includes(q)||String(e.listing_id||'').includes(q)||(e.detail||'').toLowerCase().includes(q)))return false;
+    return true;
+  });
+}
+function renderDiag(){
+  const list=$('#diagList');if(!list)return;
+  const rows=diagFiltered();
+  $('#diagSummary').textContent=rows.length+' event'+(rows.length===1?'':'s')+(S.log.entries.length>=300?' (of latest '+S.log.entries.length+' loaded)':'');
+  list.innerHTML=rows.map(e=>'<div class="diagRow'+(e.ok===false?' bad':'')+'" '+(e.listing_id?'data-id="'+e.listing_id+'"':'')+'>'
+    +'<div class="dtop">'+diagTypeBadge(e)+'<span class="dtime">'+new Date(e.at).toLocaleString()+'</span></div>'
+    +(e.title||e.listing_id?'<div class="dtitle">'+(e.title?esc(e.title):'')+(e.listing_id?' <span class="dim">#'+e.listing_id+'</span>':'')+'</div>':'')
+    +(e.detail?'<div class="ddetail">'+esc(e.detail)+'</div>':'')
+    +'</div>').join('')||'<div class="qEmpty">No events match the current filters.</div>';
+}
+async function loadLog(older){
+  if(S.log.loading)return;S.log.loading=true;
+  try{
+    const body={action:'getLog',limit:300};
+    if(older&&S.log.entries.length)body.before=S.log.entries[S.log.entries.length-1].at;
+    const {entries}=await fbCall(body);
+    S.log.entries=older?S.log.entries.concat(entries):entries;
+    renderDiag();
+    if(older&&!entries.length)toast('No older history.','ok');
+  }catch(e){toast('History load failed: '+e.message,'bad')}
+  S.log.loading=false;
+}
+function setRailTab(t){S.railTab=t;
+  [...document.querySelectorAll('#railTabs button')].forEach(b=>b.classList.toggle('on',b.dataset.rt===t));
+  $('#railListings').classList.toggle('hidden',t!=='listings');
+  $('#diagPanel').classList.toggle('hidden',t!=='diag');
+  if(t==='diag'&&!S.log.entries.length)loadLog(false);
+}
+async function retrySingle(id){
+  const d=S.prep.get(String(id))||{};
+  if(S.rBusy.has(id))return;S.rBusy.add(id);renderResults();
+  try{
+    const detail=await apiFetch('/etsyListingInventoryDetailProxy?listingId='+encodeURIComponent(id)+'&inventory_only=1');
+    const r=planStandardRebuild(detail.inventory.products,d.chain_type==='beady'?'beady':'regular',d.engraving!==false);
+    if(r.error)throw new Error(r.error);
+    const pers=(d.engraving!==false)?{enabled:true,required:true,max_chars:1000,instructions:ENGRAVE_INSTRUCTIONS}:null;
+    const res=await apiFetch('/etsyUpdateListingInventoryProxy',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({listing_id:Number(id),expected_snapshot_hash:detail.snapshot_hash,inventory:{products:r.rows},auto_on_property:true,personalization:pers})});
+    if(!res.verified)throw new Error(res.verification_error||'Etsy verification did not match.');
+    fbSet(id,{batched:true,last_batch:{at:Date.now(),ok:true},last_save:{at:Date.now(),verified:true},health:compactHealth(res.fresh?.pricing_health),scanned:true,approval:{mode:'updated',at:Date.now(),hash:res.fresh?.snapshot_hash||null}});
+    const l=S.listings.find(x=>String(x.listing_id)===String(id));
+    if(l&&res.fresh){l._health=res.fresh.pricing_health;l._scanned=true;S.cache.set(String(id),res.fresh)}
+    S.approvals[id]={mode:'updated',at:Date.now(),hash:res.fresh?.snapshot_hash||null};writeApprovals();
+    logEvent({listing_id:id,title:d.title||'',type:'retry_ok',detail:'Manual retry rebuilt and verified on Etsy.'});
+    toast('#'+id+' retried and verified on Etsy.','ok');
+  }catch(e){
+    fbSet(id,{last_batch:{at:Date.now(),ok:false,error:String(e.message).slice(0,400)}});
+    logEvent({listing_id:id,title:d.title||'',type:'retry_fail',ok:false,detail:String(e.message).slice(0,400)});
+    toast('Retry #'+id+' failed: '+e.message,'bad');
+  }
+  S.rBusy.delete(id);renderResults();
 }
 async function resumeActiveRun(){
   try{const {run,run_id}=await fbCall({action:'activeRun'});
@@ -966,16 +1100,25 @@ $('#engraveToggle').addEventListener('click',e=>{const b=e.target.closest('butto
   S.engraving=on;renderChainToggle();persistToggle('engrave');
   if(!on){const n=stripEngraveRows();toast(n?('Engraving OFF \u2014 '+n+' engraving combination'+(n===1?'':'s')+' removed from the draft. Save to apply, or Reset to undo.'):'Engraving OFF \u2014 engraving options will be excluded from the next rebuild.','ok')}
   else toast('Engraving ON \u2014 run \u2726 Charm Only setup to rebuild the option set including engraving options.','ok')});
+$('#railTabs').addEventListener('click',e=>{const b=e.target.closest('button[data-rt]');if(b)setRailTab(b.dataset.rt)});
+$('#diagSearch').addEventListener('input',e=>{S.log.q=e.target.value;renderDiag()});
+$('#diagType').addEventListener('change',e=>{S.log.type=e.target.value;renderDiag()});
+$('#diagFrom').addEventListener('change',e=>{S.log.from=e.target.value;renderDiag()});
+$('#diagTo').addEventListener('change',e=>{S.log.to=e.target.value;renderDiag()});
+$('#diagRefreshBtn').addEventListener('click',()=>loadLog(false));
+$('#diagMoreBtn').addEventListener('click',()=>loadLog(true));
+$('#diagList').addEventListener('click',e=>{const r=e.target.closest('.diagRow[data-id]');if(r)focusListing(r.dataset.id)});
 $('#schedArmBtn').addEventListener('click',armSchedule);
 $('#schedCancelBtn').addEventListener('click',cancelSchedule);
 $('#approvePrepBtn').addEventListener('click',approvePrep);
 $('#unprepBtn').addEventListener('click',()=>unprepare(S.currentId));
-$('#batchBtn').addEventListener('click',batchRun);
-$('#batchPauseBtn').addEventListener('click',async()=>{
+$('#batchBtn').addEventListener('click',async()=>{
+  const mode=$('#batchBtn').dataset.mode||'start';
+  if(mode==='start'){batchRun();return}
   if(!S.currentRunId)return;
-  const paused=$('#batchPauseBtn').textContent==='Resume';
-  if(paused){await fbCall({action:'resumeRun',run_id:S.currentRunId});await fetch(FUNCTIONS_BASE+'/etsyPricingBatch-background',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({run_id:S.currentRunId})});toast('Batch resumed on the server.','ok')}
-  else{await fbCall({action:'pauseRun',run_id:S.currentRunId});toast('Pause requested \u2014 the server finishes the current listing, then holds. Progress and remaining queue are saved.','ok')}
+  if(mode==='pause'){await fbCall({action:'pauseRun',run_id:S.currentRunId});toast('Pause requested \u2014 the server finishes the current listing, then holds.','ok')}
+  else if(mode==='resume'){await fbCall({action:'resumeRun',run_id:S.currentRunId});await fetch(FUNCTIONS_BASE+'/etsyPricingBatch-background',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({run_id:S.currentRunId})});toast('Batch resumed on the server.','ok')}
+  else if(mode==='relaunch'){await fetch(FUNCTIONS_BASE+'/etsyPricingBatch-background',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({run_id:S.currentRunId})});toast('Worker re-launched \u2014 continuing from where the run left off.','ok')}
   pollRun(S.currentRunId);
 });
 $('#batchStopBtn').addEventListener('click',async()=>{if(!S.currentRunId){toast('No server batch is running.','bad');return}await fbCall({action:'stopRun',run_id:S.currentRunId});toast('Stop requested \u2014 the server finishes the current listing then halts.','ok')});
@@ -987,9 +1130,8 @@ async function promptDialog(title,label,placeholder){const d=await formDialog(ti
 function confirmDialog(title,message){return new Promise(resolve=>{const dlg=$('#formDialog');$('#dlgTitle').textContent=title;$('#dlgBody').innerHTML='<p style="margin:0;line-height:1.6">'+esc(message)+'</p>';dlg.showModal();dlg.addEventListener('close',function done(){dlg.removeEventListener('close',done);resolve(dlg.returnValue==='ok')},{once:true})})}
 
 /* ---------------- Events ---------------- */
-$('#connectBtn').addEventListener('click',startOAuth);$('#loadBtn').addEventListener('click',loadCatalog);$('#emptyLoadBtn').addEventListener('click',loadCatalog);$('#scanFilterBtn').addEventListener('click',()=>scanIds(resultsBase()));$('#refreshBtn').addEventListener('click',refreshCurrent);$('#prevBtn').addEventListener('click',()=>navigate(-1));$('#nextBtn').addEventListener('click',()=>navigate(1));$('#menuBtn').addEventListener('click',()=>$('#rail').classList.toggle('open'));$('#stopScanBtn').addEventListener('click',()=>S.stopScan=true);
-$('#queue').addEventListener('click',e=>{const b=e.target.closest('.qitem');if(b){focusListing(b.dataset.id);$('#rail').classList.remove('open')}});$('.filterTabs').addEventListener('click',e=>{const b=e.target.closest('button[data-filter]');if(!b)return;S.filter=b.dataset.filter;$$('.filterTabs button').forEach(x=>x.classList.toggle('on',x===b));applyFilter()});
-$('#storeFilterSelect').addEventListener('change',e=>setStoreFilter(e.target.value));
+$('#connectBtn').addEventListener('click',startOAuth);$('#loadBtn').addEventListener('click',loadCatalog);$('#emptyLoadBtn').addEventListener('click',loadCatalog);$('#refreshBtn').addEventListener('click',refreshCurrent);$('#prevBtn').addEventListener('click',()=>navigate(-1));$('#nextBtn').addEventListener('click',()=>navigate(1));$('#menuBtn').addEventListener('click',()=>$('#rail').classList.toggle('open'));$('#stopScanBtn').addEventListener('click',()=>S.stopScan=true);
+$('#queue').addEventListener('click',e=>{const b=e.target.closest('.qitem');if(b){focusListing(b.dataset.id);$('#rail').classList.remove('open')}});$('#storeFilterSelect').addEventListener('change',e=>setStoreFilter(e.target.value));
 $('#searchInput').addEventListener('input',e=>{S.stopScan=true;S.search=e.target.value;if(S.search.trim().length>=2)setView('results');S.searchResults=null;applyFilter();updateSearchUi(S.search.trim()?'Waiting for Etsy…':'Live Etsy title search');scheduleLiveSearch()});
 $('#searchInput').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();runLiveSearch()}if(e.key==='Escape'){e.preventDefault();clearSearch()}});$('#clearSearchBtn').addEventListener('click',clearSearch);
 $('#matchMode').addEventListener('change',e=>{S.matchMode=e.target.value;S.searchResults=null;applyFilter();if(S.search.trim())runLiveSearch()});$('#sortMode').addEventListener('change',e=>{S.sortMode=e.target.value;const r=$('#rSort');if(r)r.value=S.sortMode;applyFilter();if(S.search.trim().length>=2)runLiveSearch()});
