@@ -76,19 +76,19 @@ dialog{border:0;padding:0;border-radius:15px;box-shadow:0 24px 80px rgba(0,0,0,.
 #batchPanel .berrs{max-height:110px;overflow:auto;font-size:11.5px;color:var(--clay);display:flex;flex-direction:column;gap:3px}
 .schedBar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 12px;margin-bottom:10px;border:1.5px dashed var(--velvet);border-radius:var(--rsm);background:var(--card)}
 .schedBar .mlabel{font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--clay)}
-.apiWidget{display:flex;flex-direction:column;gap:3px;padding:5px 9px;border:1px solid var(--line);border-radius:10px;background:var(--card);min-width:150px;max-width:170px;position:relative;flex:0 1 auto}
-.apiWidget .awRow{display:flex;align-items:center;gap:6px;font-size:11px;line-height:1.1}
-.apiWidget .awLabel{width:24px;font-weight:700;color:var(--ink45);text-transform:uppercase;font-size:9.5px;letter-spacing:.04em}
-.apiWidget .awNum{font-variant-numeric:tabular-nums;font-weight:700;color:var(--ink);white-space:nowrap;min-width:64px}
-.apiWidget .awBar{flex:1;height:5px;border-radius:999px;background:var(--paper2);overflow:hidden;min-width:30px}
+.apiWidget{display:flex;flex-direction:column;gap:7px;padding:10px 40px 10px 16px;border:1px solid var(--line);border-radius:12px;background:var(--card);min-width:320px;max-width:380px;position:relative;flex:0 1 auto}
+.apiWidget .awRow{display:flex;align-items:center;gap:14px;font-size:12.5px;line-height:1.1}
+.apiWidget .awLabel{width:30px;flex:0 0 auto;font-weight:700;color:var(--ink45);text-transform:uppercase;font-size:10px;letter-spacing:.05em}
+.apiWidget .awNum{font-variant-numeric:tabular-nums;font-weight:700;color:var(--ink);white-space:nowrap;min-width:78px;flex:0 0 auto}
+.apiWidget .awBar{flex:1;height:6px;border-radius:999px;background:var(--paper2);overflow:hidden;min-width:70px}
 .apiWidget .awBar i{display:block;height:100%;width:0%;background:var(--sage);transition:width .3s}
 .apiWidget .awBar.warn i{background:var(--gold)}
 .apiWidget .awBar.bad i{background:var(--clay)}
-.apiWidget .awQps{font-size:9.5px;color:var(--ink45);white-space:nowrap;margin-left:auto}
-.apiWidget .awInfo{position:absolute;top:4px;right:6px;border:none;background:none;color:var(--ink45);font-size:12px;cursor:help;padding:0;line-height:1}
+.apiWidget .awQps{font-size:11px;color:var(--ink45);white-space:nowrap;flex:0 0 auto;min-width:62px;text-align:right}
+.apiWidget .awInfo{position:absolute;top:50%;right:12px;transform:translateY(-50%);border:none;background:none;color:var(--ink45);font-size:15px;cursor:help;padding:0;line-height:1}
 .apiWidget .awInfo:hover{color:var(--ink)}
 .apiWidget .awInfo.warnDot{color:var(--gold)}
-@media (max-width:1250px){.apiWidget{display:none}}
+@media (max-width:1400px){.apiWidget{display:none}}
 #diagModal{position:fixed;inset:0;background:rgba(30,26,20,.45);backdrop-filter:blur(3px);z-index:200;display:flex;align-items:center;justify-content:center;padding:24px}
 #diagModal.hidden{display:none}
 .diagShell{background:var(--paper);border:1px solid var(--line);border-radius:18px;box-shadow:0 24px 80px rgba(0,0,0,.35);width:min(980px,100%);height:min(84vh,900px);display:flex;flex-direction:column;overflow:hidden}
@@ -196,6 +196,7 @@ dialog{border:0;padding:0;border-radius:15px;box-shadow:0 24px 80px rgba(0,0,0,.
           <span class="awLabel">Key</span>
           <span class="awNum" id="awKeyNum">…</span>
           <span class="awBar"><i id="awKeyBar"></i></span>
+          <span class="awQps" aria-hidden="true"></span>
         </div>
         <button class="awInfo" id="awInfo" aria-label="What do these numbers mean?" title="App = this console’s own Etsy calls today, resets 11:59 PM Toronto, capped at 2,500 (50% of Etsy’s 5,000/day).&#10;Key = Etsy’s own meter for the WHOLE API key (every app, incl. EtsyMail), resets midnight UTC (8 PM Toronto).&#10;QPS = highest calls-per-second observed, hard-capped at 2.5.">ⓘ</button>
       </div>
