@@ -813,7 +813,7 @@ async function hydrateFromStore(){
     if(touched){writeApprovals();applyFilter()}
     renderPrepUi();
   }catch(e){toast('Cloud state could not be loaded: '+e.message,'bad')}
-  resumeActiveRun();loadSchedule();
+  resumeActiveRun();loadSchedule();pushServerToken();
 }
 function isPrepared(d){return !!(d&&d.chain_set&&d.engrave_set)}
 function preparedReadyIds(){return [...S.prep].filter(([,d])=>isPrepared(d)&&!d.batched).map(([id])=>id)}
@@ -893,6 +893,8 @@ async function batchRun(){
     'The batch runs on the server using the shop\u2019s stored Etsy credentials \u2014 you can close this tab and the run continues. Each listing is fully rebuilt with its stored Regular/Beady and Engraving toggles at fresh sheet pricing, then written with the standard staleness check and read-back verification (plus the required Personalization field where engraving is on). Progress is saved live; reopening the console re-attaches to the running batch. Stop takes effect after the current listing.');
   if(!ok)return;
   try{
+    const pushed=await pushServerToken();
+    if(!pushed&&!localStorage.getItem(TOKEN_KEYS.refresh)){toast('Connect to Etsy first \u2014 the server needs your Etsy authorization to run the batch.','bad');return}
     const {run_id}=await fbCall({action:'startRun',ids});
     S.currentRunId=run_id;
     await fetch(FUNCTIONS_BASE+'/etsyPricingBatch-background',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({run_id})});
@@ -901,6 +903,15 @@ async function batchRun(){
     pollRun(run_id);
     toast('Server batch started \u2014 safe to close this tab. Progress is live here and saved in the cloud.','ok');
   }catch(e){toast('Could not start batch: '+e.message,'bad')}
+}
+function pushServerToken(){
+  try{
+    const rt=localStorage.getItem(TOKEN_KEYS.refresh);
+    if(!rt)return Promise.resolve(false);
+    return fetch(FUNCTIONS_BASE+'/etsyPricingStore',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({action:'saveServerToken',token:{access_token:localStorage.getItem(TOKEN_KEYS.access)||'',refresh_token:rt,expires_at:(Number(localStorage.getItem(TOKEN_KEYS.expires))||0)*1000}})})
+      .then(r=>r.ok).catch(()=>false);
+  }catch(e){return Promise.resolve(false)}
 }
 S.schedule=null;
 function renderSchedule(){
@@ -923,6 +934,7 @@ async function armSchedule(){
   if(!(at>Date.now())){toast('The scheduled time must be in the future.','bad');return}
   const repeat=$('#schedRepeat').value;
   try{
+    await pushServerToken();
     const {schedule}=await fbCall({action:'setSchedule',schedule:{enabled:true,next_run_at:at,repeat,label:new Date(at).toLocaleString()}});
     S.schedule=schedule;renderSchedule();
     toast('Batch scheduled for '+new Date(at).toLocaleString()+' ('+repeat+'). The server runs it \u2014 no browser needed. It will process every listing queued at that moment.','ok');
