@@ -336,7 +336,9 @@ function healthFor(inv){
 /* ---------------- OAuth / API ---------------- */
 function setTokens(t){
   if(t.access_token)localStorage.setItem(TOKEN_KEYS.access,t.access_token);if(t.refresh_token)localStorage.setItem(TOKEN_KEYS.refresh,t.refresh_token);
-  const now=Math.floor(Date.now()/1000),exp=Number(t.issued_at||now)+Number(t.expires_in||3600);localStorage.setItem(TOKEN_KEYS.expires,String(exp));scheduleRefresh();renderConnection();
+  const now=Math.floor(Date.now()/1000),exp=Number(t.issued_at||now)+Number(t.expires_in||3600);localStorage.setItem(TOKEN_KEYS.expires,String(exp));
+  if(t.refresh_token){try{fetch(FUNCTIONS_BASE+'/etsyPricingStore',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'saveServerToken',token:{access_token:t.access_token||'',refresh_token:t.refresh_token,expires_at:exp*1000}})}).catch(()=>{})}catch(e){}}
+  scheduleRefresh();renderConnection();
 }
 function scheduleRefresh(){clearTimeout(window.__etsyRefreshTimer);const exp=Number(localStorage.getItem(TOKEN_KEYS.expires)||0);if(!exp)return;window.__etsyRefreshTimer=setTimeout(refreshAccessToken,Math.max(5000,(exp-Math.floor(Date.now()/1000)-120)*1000))}
 async function refreshAccessToken(){
