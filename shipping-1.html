@@ -501,6 +501,15 @@
       Paste
     </button>
 
+    <!-- Tracking Number Copy button -->
+    <button id="copyTrackingBtn" class="btn"
+            style="position:absolute; left:485px; top:110px;
+                   width:65px; height:35px; line-height:35px;
+                   font-size:0.8em; text-align:center;
+                   background-color:#555 !important; color:#fff; padding:0;">
+      Copy
+    </button>
+
     <!-- ▼▼ Chit Chats controls (always visible) ▼▼ -->
     <div id="ccControls" style="position:absolute; left:50px; top:190px;">
       <input id="ccShipmentId" type="text" placeholder="CC Shipment ID" readonly
@@ -2184,6 +2193,7 @@ function metalToBadge(label){
         "userLoginModalContainer",
         "pasteOrderBtn",
         "pasteTrackingBtn",
+        "copyTrackingBtn",
         "loginModalTitle",
         "loginModalPrompt",
         "employeeNumberInput",
@@ -2259,6 +2269,7 @@ function metalToBadge(label){
       titleShippingPriority: { left: 324, top: 82, width: 200, height: 15 },
       pasteOrderBtn:     { left: 299, top: 16, width: 70, height: 35 },
       pasteTrackingBtn:  { left: 998, top: 663, width: 70, height: 35 },
+      copyTrackingBtn:   { left: 1078, top: 663, width: 70, height: 35 },
       signOutBtn:           { left: 1400,  top: 17, width: 103, height: 35 },
       ccControls:            { left: 0,  top: 50, width: 150, height: 45 },
       ccShipmentId:          { left: 1400,  top: 66, width: 170, height: 45 },
@@ -2533,6 +2544,22 @@ function metalToBadge(label){
               M.toast?.({ html: "Tracking # pasted" });
             } catch (err) {
               M.toast?.({ html: "Paste failed: " + err.message });
+            }
+          });
+
+        /* ── Copy: Tracking Number ────────────────────────── */
+        document.getElementById("copyTrackingBtn")
+          ?.addEventListener("click", async () => {
+            const tracking = (document.getElementById("trackingNumberInput")?.value || "").trim();
+            if (!tracking) {
+              M.toast?.({ html: "Tracking # is empty" });
+              return;
+            }
+            try {
+              await navigator.clipboard.writeText(tracking);
+              M.toast?.({ html: "Tracking # copied" });
+            } catch (err) {
+              M.toast?.({ html: "Copy failed: " + err.message });
             }
           });
 
