@@ -20,6 +20,7 @@
 // planStandardRebuild — keep the two in sync if the scheme ever changes.
 
 const admin = require("./firebaseAdmin");
+const { etsyFetch } = require("./etsyRateLimiter");
 
 /* Server-side Etsy token manager.
    The site's shipped etsyAuth.js points at "config/etsy/oauth" — a
@@ -35,11 +36,11 @@ async function getValidEtsyAccessToken() {
   const tok = snap.exists ? snap.data() : null;
   if (!tok || !tok.refresh_token) throw new Error("No Etsy token on the server yet. Open the pricing console once while connected to Etsy \u2014 it hands its token to the server automatically \u2014 then retry.");
   if (tok.access_token && tok.expires_at && Date.now() < Number(tok.expires_at) - 120000) return tok.access_token;
-  const res = await fetch("https://api.etsy.com/v3/public/oauth/token", {
+  const res = await etsyFetch("https://api.etsy.com/v3/public/oauth/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ grant_type: "refresh_token", client_id: process.env.CLIENT_ID, refresh_token: tok.refresh_token })
-  });
+    body: new URLSearchParams({ grant_type: "refresh_token", client_id: process.env.CLIENT_ID, refresh_token: tok.refresh_token }).toString()
+  }, { bucket: "etsy-global" });
   if (!res.ok) throw new Error("Etsy token refresh failed: HTTP " + res.status + " " + (await res.text()).slice(0, 200));
   const j = await res.json();
   const stored = {
@@ -146,6 +147,9 @@ function planStandardRebuild(products,chainType,engraving){
   }
   return {rows};
 }
+async function logEvent(db, e) {
+  try { await db.collection("EtsyPricing_Log").add({ at: Date.now(), listing_id: String(e.listing_id||""), title: String(e.title||"").slice(0,200), type: e.type, ok: e.ok !== false, detail: String(e.detail||"").slice(0,800) }); } catch (_) {}
+}
 function compactHealth(h){return h?{error_count:h.error_count||0,warning_count:h.warning_count||0,product_count:h.product_count||0,min_price:h.min_price??null,max_price:h.max_price??null}:null}
 
 /* ---------------- Worker ---------------- */
@@ -172,6 +176,7 @@ exports.handler = async (event) => {
   if (["done", "stopped"].includes(run.status)) return { statusCode: 200, body: "already finished" };
   if (run.paused) return { statusCode: 200, body: "paused" };
   await runRef.set({ status: "running", updated_at: Date.now() }, { merge: true });
+  if (run.done === 0) await logEvent(db, { type: "run_start", detail: "Batch run started (" + (run.started_by || "manual") + ") \u00b7 " + (run.ids || []).length + " listings queued." });
 
   let accessToken;
   try { accessToken = await getValidEtsyAccessToken(); }
@@ -225,9 +230,18 @@ exports.handler = async (event) => {
         patch.original_saved = true;
       }
       await db.collection("EtsyPricing_Listings").doc(id).set(patch, { merge: true });
+      await logEvent(db, { listing_id: id, title: d.title, type: "batch_ok", detail: "Rebuilt (" + (d.chain_type === "beady" ? "Beady" : "Regular") + " \u00b7 Engraving " + (d.engraving !== false ? "ON" : "OFF") + ") and verified on Etsy." });
       run.ok = (run.ok || 0) + 1;
       run.consec_fail = 0;
     } catch (e) {
+      if (/DAILY_BUDGET_EXHAUSTED/.test(String(e.message))) {
+        // Not a listing failure: the shared daily budget ran out. Pause the
+        // run holding position at this listing; the cron auto-resumes it
+        // after the 11:59 PM Toronto reset. done is NOT advanced.
+        await runRef.set({ status: "paused", paused: true, budget_paused: true, stop_reason: String(e.message).slice(0, 300), current: "Paused \u2014 daily API budget spent; auto-resumes after the Toronto reset", updated_at: Date.now() }, { merge: true });
+        await logEvent(db, { type: "run_end", ok: false, detail: "Run paused: " + String(e.message).slice(0, 250) });
+        return { statusCode: 200, body: "budget-paused" };
+      }
       run.fail = (run.fail || 0) + 1;
       run.consec_fail = (run.consec_fail || 0) + 1;
       const msg = String(e.message).slice(0, 400);
@@ -236,6 +250,7 @@ exports.handler = async (event) => {
       // batch run — failed listings are never lost.
       await db.collection("EtsyPricing_Listings").doc(id).set({ last_batch: { at: Date.now(), ok: false, error: msg }, updated_at: Date.now() }, { merge: true });
       await runRef.set({ errors: admin.firestore.FieldValue.arrayUnion("#" + id + (d.title ? " \u00b7 " + d.title : "") + ": " + msg), updated_at: Date.now() }, { merge: true });
+      await logEvent(db, { listing_id: id, title: d.title, type: "batch_fail", ok: false, detail: msg });
     }
     run.done = i + 1;
     await runRef.set({ done: run.done, ok: run.ok || 0, fail: run.fail || 0, consec_fail: run.consec_fail || 0, updated_at: Date.now() }, { merge: true });
@@ -246,5 +261,6 @@ exports.handler = async (event) => {
   }
 
   await runRef.set({ status: "done", current: "", finished_at: Date.now(), updated_at: Date.now() }, { merge: true });
+  await logEvent(db, { type: "run_end", detail: "Batch run finished: " + (run.ok || 0) + " succeeded, " + (run.fail || 0) + " failed." });
   return { statusCode: 200, body: "done" };
 };

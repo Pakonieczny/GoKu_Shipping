@@ -6,8 +6,14 @@
 const fetch = require("node-fetch");
 
 // ---- Config
-const RATE_PER_SEC = 5;      // Etsy hard cap
-const BURST        = 5;      // bucket capacity
+// Etsy app limits: 5 QPS and 5,000 calls/day. Operator rule: this system may
+// consume at most 50% of both, leaving the rest for other apps on the key.
+const ETSY_QPS_LIMIT   = 5;
+const ETSY_DAILY_LIMIT = 5000;
+const INTERNAL_FRACTION = 0.5;
+const RATE_PER_SEC = ETSY_QPS_LIMIT * INTERNAL_FRACTION;             // 2.5/s hard cap
+const DAILY_BUDGET = Math.floor(ETSY_DAILY_LIMIT * INTERNAL_FRACTION); // 2,500/day hard cap
+const BURST        = 2;      // bucket capacity (floor of the QPS cap)
 const MAX_RETRIES  = 5;      // on 429 / contention
 const JITTER_MS    = 50;     // random jitter to avoid thundering herd
 
@@ -62,15 +68,19 @@ try {
 }
 
 // ---- In-memory fallback (per instance)
-const memState = { tokens: BURST, lastMs: Date.now() };
+// FIFO slot scheduler: each caller reserves the next free 1/RATE slot and
+// sleeps until it. Unlike a naive sleep-once bucket, this holds the cap
+// under any concurrency (the previous implementation let all concurrent
+// waiters through after a single shared sleep).
+const memState = { nextFreeMs: 0 };
 
 // Helpers
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const jitter = () => Math.floor(Math.random() * JITTER_MS);
 
 function backoff(attempt) {
-  // 200ms per token at 5 rps; exponential with cap
-  const base = 200;
+  // 250ms per token at 4 rps; exponential with cap
+  const base = 250;
   const ms = Math.min(2000, base * Math.pow(2, attempt));
   return ms + jitter();
 }
@@ -89,18 +99,10 @@ async function takeToken(bucket = "etsy-global") {
 
   if (!useFirestore) {
     // In-memory (per VM) — good safety net; Firestore is the robust path
-    const elapsed = now - memState.lastMs;
-    const refill  = (elapsed / 1000) * RATE_PER_SEC;
-    memState.tokens = Math.min(BURST, memState.tokens + refill);
-    memState.lastMs = now;
-
-    if (memState.tokens >= 1) {
-      memState.tokens -= 1;
-      return;
-    }
-    const need = 1 - memState.tokens;
-    const waitMs = Math.ceil((need / RATE_PER_SEC) * 1000) + jitter();
-    await sleep(waitMs);
+    const interval = 500 + 15; // 2/s (strictly under the 2.5 cap even across sliding windows); +15ms wake-jitter guard
+    const slot = Math.max(now, memState.nextFreeMs);
+    memState.nextFreeMs = slot + interval; // reserve synchronously: FIFO, race-free in one VM
+    if (slot > now) await sleep(slot - now);
     return;
   }
 
@@ -146,6 +148,74 @@ async function takeToken(bucket = "etsy-global") {
   }
 }
 
+// ---- Daily API-call counter (America/Toronto; the day key is computed on
+// now+60s so the counter rolls over at 23:59 Toronto time, per operator spec)
+function torontoDayKey() {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Toronto", year: "numeric", month: "2-digit", day: "2-digit" })
+    .format(new Date(Date.now() + 60000)); // en-CA gives YYYY-MM-DD
+}
+// Transactional pre-call gate: atomically (a) refuses the call if the daily
+// 50% budget is already spent — judged by BOTH our own count and Etsy's own
+// reported usage when available — and (b) records the call and the observed
+// per-second concurrency peak. Throws DAILY_BUDGET_EXHAUSTED when over.
+const PER_SECOND_CAP = Math.floor(RATE_PER_SEC); // 2 calls in any epoch second — Etsy meters QPS per second, so this is airtight cluster-wide
+async function chargeDailyBudget() {
+  if (!useFirestore) return; // no distributed accounting possible; local pacing still applies
+  const ref = db.collection("EtsyPricing_ApiUsage").doc(torontoDayKey());
+  for (let attempt = 0; attempt < 40; attempt++) {
+    let wait = 0;
+    await db.runTransaction(async tx => {
+      const snap = await tx.get(ref);
+      const d = snap.exists ? snap.data() : {};
+      const ourUsed = Number(d.count || 0);
+      const etsyUsed = (d.etsy_limit_per_day != null && d.etsy_remaining_today != null)
+        ? Number(d.etsy_limit_per_day) - Number(d.etsy_remaining_today) : null;
+      const used = Math.max(ourUsed, etsyUsed == null ? 0 : etsyUsed);
+      if (used >= DAILY_BUDGET) {
+        const err = new Error("DAILY_BUDGET_EXHAUSTED: " + used + " of the " + DAILY_BUDGET + "-call internal daily budget (50% of Etsy's " + ETSY_DAILY_LIMIT + ") is spent. Calls resume after the 11:59 PM Toronto reset.");
+        err.code = "DAILY_BUDGET_EXHAUSTED";
+        throw err;
+      }
+      const nowMs = Date.now();
+      const nowSec = Math.floor(nowMs / 1000);
+      const sameSec = Number(d.sec_key) === nowSec;
+      const secUsed = sameSec ? Number(d.sec_count || 0) : 0;
+      if (secUsed >= PER_SECOND_CAP) {
+        // this second is full — release the transaction and sleep into the next second
+        wait = 1000 - (nowMs % 1000) + 5 + Math.floor(Math.random() * 30);
+        return;
+      }
+      tx.set(ref, {
+        count: ourUsed + 1,
+        sec_key: nowSec,
+        sec_count: secUsed + 1,
+        max_qps: Math.max(Number(d.max_qps || 0), secUsed + 1),
+        updated_at: nowMs
+      }, { merge: true });
+    });
+    if (!wait) return;
+    await sleep(wait);
+  }
+  const err = new Error("Rate gate contention: could not reserve an Etsy call slot after 40 attempts.");
+  err.code = "RATE_GATE_CONTENTION";
+  throw err;
+}
+// Post-call: persist Etsy's own rate headers — the authoritative ground truth
+// for what Etsy has recorded against the key today (includes other apps).
+function captureEtsyHeaders(res) {
+  if (!useFirestore || !res || !res.headers) return;
+  try {
+    const limit = res.headers.get("x-limit-per-day");
+    const remaining = res.headers.get("x-remaining-today");
+    if (limit == null && remaining == null) return;
+    db.collection("EtsyPricing_ApiUsage").doc(torontoDayKey()).set({
+      etsy_limit_per_day: limit != null ? Number(limit) : null,
+      etsy_remaining_today: remaining != null ? Number(remaining) : null,
+      etsy_reported_at: Date.now()
+    }, { merge: true }).catch(() => {});
+  } catch (_) { /* header capture must never break API calls */ }
+}
+
 // ---- Public Etsy fetch with gating + 429 retry
 async function etsyFetch(url, init = {}, opts = {}) {
   const { bucket = "etsy-global", retries = MAX_RETRIES } = opts;
@@ -154,8 +224,10 @@ async function etsyFetch(url, init = {}, opts = {}) {
   while (true) {
     attempt++;
     await takeToken(bucket);
+    await chargeDailyBudget(); // hard gate + count, incl. 429 retries
 
     const res = await fetch(url, init);
+    captureEtsyHeaders(res);
 
     if (res.status !== 429) return res;
 

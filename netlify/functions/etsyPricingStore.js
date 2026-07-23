@@ -96,6 +96,26 @@ exports.handler = async (event) => {
       return json(200, { ok: true });
     }
 
+    if (body.action === "log") {
+      const e = body.entry || {};
+      await db.collection("EtsyPricing_Log").add({
+        at: Date.now(),
+        listing_id: String(e.listing_id || ""),
+        title: String(e.title || "").slice(0, 200),
+        type: String(e.type || "event").slice(0, 40),
+        ok: e.ok !== false,
+        detail: String(e.detail || "").slice(0, 800)
+      });
+      return json(200, { ok: true });
+    }
+    if (body.action === "getLog") {
+      let q = db.collection("EtsyPricing_Log").orderBy("at", "desc").limit(Math.min(Number(body.limit) || 300, 500));
+      if (body.before) q = q.where("at", "<", Number(body.before));
+      const snap = await q.get();
+      const entries = [];
+      snap.forEach(d => entries.push({ id: d.id, ...d.data() }));
+      return json(200, { entries });
+    }
     if (body.action === "saveServerToken") {
       const t = body.token || {};
       if (!t.refresh_token) return json(400, { error: "Missing refresh_token" });
@@ -106,6 +126,19 @@ exports.handler = async (event) => {
         updated_at: Date.now()
       }, { merge: true });
       return json(200, { ok: true });
+    }
+    if (body.action === "apiUsage") {
+      const key = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Toronto", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(Date.now() + 60000));
+      const snap = await db.collection("EtsyPricing_ApiUsage").doc(key).get();
+      const d = snap.exists ? snap.data() : {};
+      return json(200, {
+        date: key,
+        count: Number(d.count || 0),
+        max_qps: Number(d.max_qps || 0),
+        etsy_limit_per_day: d.etsy_limit_per_day != null ? Number(d.etsy_limit_per_day) : null,
+        etsy_remaining_today: d.etsy_remaining_today != null ? Number(d.etsy_remaining_today) : null,
+        budget: 2500, qps_cap: 2.5
+      });
     }
     if (body.action === "getSchedule") {
       const snap = await db.doc("EtsyPricing_Config/schedule").get();

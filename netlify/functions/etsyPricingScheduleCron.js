@@ -27,9 +27,37 @@ const SITE = (process.env.URL || "").replace(/\/$/, "");
 const FN = SITE + "/.netlify/functions";
 const DAY = 86400000;
 
+const DAILY_BUDGET = 2500; // keep in sync with etsyRateLimiter.js
+
+function torontoDayKey() {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Toronto", year: "numeric", month: "2-digit", day: "2-digit" })
+    .format(new Date(Date.now() + 60000));
+}
+
 exports.handler = async () => {
   const db = admin.firestore();
   const schedRef = db.doc("EtsyPricing_Config/schedule");
+  // Heartbeat: proves (to the console UI) that the cron is actually armed in
+  // netlify.toml — if last_tick never updates, the toml entry is missing.
+  await schedRef.set({ last_tick: Date.now() }, { merge: true }).catch(() => {});
+
+  // Auto-resume a run that paused on budget exhaustion, once the Toronto day
+  // rolled over and budget is available again.
+  try {
+    const pausedQ = await db.collection("EtsyPricing_Runs").where("status", "==", "paused").limit(3).get();
+    for (const doc of pausedQ.docs) {
+      const r = doc.data();
+      if (!r.budget_paused) continue;
+      const usage = await db.collection("EtsyPricing_ApiUsage").doc(torontoDayKey()).get();
+      const used = usage.exists ? Number(usage.data().count || 0) : 0;
+      if (used < DAILY_BUDGET * 0.9) {
+        await doc.ref.set({ status: "running", paused: false, budget_paused: false, stop_reason: "", current: "Auto-resumed after daily budget reset", updated_at: Date.now() }, { merge: true });
+        await fetch(FN + "/etsyPricingBatch-background", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ run_id: doc.id }) }).catch(() => {});
+        await db.collection("EtsyPricing_Log").add({ at: Date.now(), listing_id: "", title: "", type: "schedule", ok: true, detail: "Auto-resumed budget-paused run " + doc.id + " after the daily reset." }).catch(() => {});
+      }
+    }
+  } catch (_) { /* resume is best-effort; scheduling below must still run */ }
+
   const snap = await schedRef.get();
   if (!snap.exists) return { statusCode: 200, body: "no schedule" };
   const sched = snap.data();
@@ -69,6 +97,7 @@ exports.handler = async () => {
     body: JSON.stringify({ run_id: ref.id })
   }).catch(() => {});
   await schedRef.set({ last_result: "Started scheduled run " + ref.id + " with " + ids.length + " listings.", last_started_at: Date.now(), updated_at: Date.now() }, { merge: true });
+  try { await db.collection("EtsyPricing_Log").add({ at: Date.now(), listing_id: "", title: "", type: "schedule", ok: true, detail: "Scheduled trigger started run with " + ids.length + " listings." }); } catch (_) {}
   await advance();
   return { statusCode: 200, body: "started " + ref.id };
 };
