@@ -20,7 +20,37 @@
 // planStandardRebuild — keep the two in sync if the scheme ever changes.
 
 const admin = require("./firebaseAdmin");
-const { getValidEtsyAccessToken } = require("./etsyAuth");
+
+/* Server-side Etsy token manager.
+   The site's shipped etsyAuth.js points at "config/etsy/oauth" — a
+   THREE-segment path, which Firestore rejects for documents (even number
+   of segments required), so it can never work. This uses a valid doc,
+   seeded by the console: the browser pushes its own OAuth tokens (which
+   carry the listing-write scopes) via etsyPricingStore's saveServerToken
+   whenever they are issued or refreshed. */
+const TOKEN_DOC = "EtsyPricing_Config/etsyOauth";
+async function getValidEtsyAccessToken() {
+  const db = admin.firestore();
+  const snap = await db.doc(TOKEN_DOC).get();
+  const tok = snap.exists ? snap.data() : null;
+  if (!tok || !tok.refresh_token) throw new Error("No Etsy token on the server yet. Open the pricing console once while connected to Etsy \u2014 it hands its token to the server automatically \u2014 then retry.");
+  if (tok.access_token && tok.expires_at && Date.now() < Number(tok.expires_at) - 120000) return tok.access_token;
+  const res = await fetch("https://api.etsy.com/v3/public/oauth/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ grant_type: "refresh_token", client_id: process.env.CLIENT_ID, refresh_token: tok.refresh_token })
+  });
+  if (!res.ok) throw new Error("Etsy token refresh failed: HTTP " + res.status + " " + (await res.text()).slice(0, 200));
+  const j = await res.json();
+  const stored = {
+    access_token: j.access_token,
+    refresh_token: j.refresh_token || tok.refresh_token,
+    expires_at: Date.now() + Math.max(0, (Number(j.expires_in) || 3600) - 90) * 1000,
+    updated_at: Date.now()
+  };
+  await db.doc(TOKEN_DOC).set(stored, { merge: true });
+  return stored.access_token;
+}
 
 const SITE = (process.env.URL || "").replace(/\/$/, "");
 const FN = SITE + "/.netlify/functions";

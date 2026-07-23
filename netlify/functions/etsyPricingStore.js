@@ -96,6 +96,17 @@ exports.handler = async (event) => {
       return json(200, { ok: true });
     }
 
+    if (body.action === "saveServerToken") {
+      const t = body.token || {};
+      if (!t.refresh_token) return json(400, { error: "Missing refresh_token" });
+      await db.doc("EtsyPricing_Config/etsyOauth").set({
+        access_token: String(t.access_token || ""),
+        refresh_token: String(t.refresh_token),
+        expires_at: Number(t.expires_at) || 0,
+        updated_at: Date.now()
+      }, { merge: true });
+      return json(200, { ok: true });
+    }
     if (body.action === "getSchedule") {
       const snap = await db.doc("EtsyPricing_Config/schedule").get();
       return json(200, { schedule: snap.exists ? snap.data() : null });
