@@ -41,7 +41,7 @@ button,input,select{font:inherit}button{cursor:pointer}.mono{font-family:var(--m
 .tableCard{overflow:hidden}.tableScroll{overflow:auto;max-height:58vh}.priceTable{width:100%;border-collapse:separate;border-spacing:0;font-size:12.5px}.priceTable th{position:sticky;top:0;background:var(--card2);z-index:4;text-align:left;padding:9px 8px;border-bottom:1px solid var(--line);font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink45);white-space:nowrap}.priceTable td{padding:7px 8px;border-bottom:1px solid var(--line2);vertical-align:middle}.priceTable tr:hover td{background:#fdfaf4}.priceTable tr.changed td{background:#fff9e9}.priceTable th:first-child,.priceTable td:first-child{position:sticky;left:0;z-index:3;background:var(--card)}.priceTable th:first-child{z-index:6;background:var(--card2)}.priceTable input[type=text],.priceTable input[type=number]{width:100%;min-width:95px;border:1px solid var(--line);background:#fff;border-radius:7px;padding:7px 8px}.priceTable input.sku{min-width:150px}.priceTable .varVal{white-space:nowrap;font-weight:600}.moneyField{position:relative}.moneyField span{position:absolute;left:9px;top:7px;color:var(--ink45)}.moneyField input{padding-left:20px!important}.toggleCell button{width:38px;height:22px;border:0;border-radius:20px;background:var(--ink25);position:relative}.toggleCell button:after{content:"";position:absolute;width:16px;height:16px;border-radius:50%;background:white;top:3px;left:3px}.toggleCell button.on{background:var(--sage)}.toggleCell button.on:after{left:19px}.rowNum{font:10px var(--mono);color:var(--ink45);margin-left:5px}
 .stickyActions{position:fixed;left:270px;right:0;bottom:0;z-index:40;background:rgba(255,254,251,.94);backdrop-filter:blur(12px);border-top:1px solid var(--line);padding:11px 24px;display:flex;align-items:center;gap:9px}.stickyActions .dirty{font-size:12px;color:var(--ink45)}.stickyActions .right{margin-left:auto;display:flex;gap:8px}.verifiedText{font-size:12px;color:var(--sage);font-weight:700}
 .toasts{position:fixed;right:20px;bottom:78px;z-index:100;display:flex;flex-direction:column;gap:8px}.toast{background:var(--velvet);color:#f4ecdc;border:1px solid var(--velvetLine);border-radius:11px;padding:11px 14px;box-shadow:0 10px 30px rgba(0,0,0,.2);max-width:380px;display:flex;gap:9px;align-items:flex-start}.toast .d{width:8px;height:8px;border-radius:50%;background:var(--gold2);margin-top:5px}.toast.ok .d{background:#8ab083}.toast.bad .d{background:#d6755d}
-dialog{border:0;padding:0;border-radius:15px;box-shadow:0 24px 80px rgba(0,0,0,.32);width:min(480px,92vw);background:var(--card);color:var(--ink)}dialog::backdrop{background:rgba(20,18,15,.52)}.dlgHead{padding:17px 19px;border-bottom:1px solid var(--line)}.dlgHead h3{margin:0;font:21px var(--serif);font-weight:500}.dlgBody{padding:18px 19px}.dlgBody label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink45);font-weight:700;margin:10px 0 6px}.dlgBody input,.dlgBody textarea{width:100%;border:1px solid var(--line);border-radius:9px;padding:9px 10px;background:white}.dlgBody textarea{min-height:85px;resize:vertical}.dlgFoot{padding:12px 19px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:8px;background:var(--card2)}
+dialog{border:0;padding:0;border-radius:15px;box-shadow:0 24px 80px rgba(0,0,0,.32);width:min(480px,92vw);max-height:min(86vh,900px);overflow:hidden;background:var(--card);color:var(--ink)}dialog::backdrop{background:rgba(20,18,15,.52)}#dialogForm{display:flex;flex-direction:column;max-height:min(86vh,900px)}.dlgHead{padding:17px 19px;border-bottom:1px solid var(--line);flex:0 0 auto}.dlgHead h3{margin:0;font:21px var(--serif);font-weight:500}.dlgBody{padding:18px 19px;overflow:auto}.dlgBody label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink45);font-weight:700;margin:10px 0 6px}.dlgBody input,.dlgBody textarea{width:100%;border:1px solid var(--line);border-radius:9px;padding:9px 10px;background:white}.dlgBody textarea{min-height:85px;resize:vertical}.dlgFoot{padding:12px 19px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:8px;background:var(--card2);flex:0 0 auto}
 @media(max-width:1050px){.app{grid-template-columns:1fr}.rail{position:fixed;left:0;top:0;width:min(85vw,310px);z-index:80;transform:translateX(-102%);transition:transform .2s}.rail.open{transform:none}.stickyActions{left:0}.hero{grid-template-columns:210px minmax(0,1fr)}.metaGrid{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:720px){.view{padding:12px 8px 100px}.topbar{padding:9px 8px;flex-wrap:wrap}.topTitle{order:3;width:100%}.topTitle h1{font-size:18px}.hero,.variationGrid{grid-template-columns:1fr}.hero .card:first-child{max-width:280px}.metaGrid{grid-template-columns:1fr 1fr}.bulk{top:100px;overflow:auto}.stickyActions{padding:9px 8px;flex-wrap:wrap}.stickyActions .right{width:100%;margin-left:0}.stickyActions .right .btn{flex:1}.pill.apiMode{display:none}}
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
@@ -283,6 +283,16 @@ dialog{border:0;padding:0;border-radius:15px;box-shadow:0 24px 80px rgba(0,0,0,.
 </div>
 
 <div class="toasts" id="toasts"></div>
+<dialog id="formDialog" aria-labelledby="dlgTitle">
+  <form method="dialog" id="dialogForm">
+    <div class="dlgHead"><h3 id="dlgTitle">Confirm action</h3></div>
+    <div class="dlgBody" id="dlgBody"></div>
+    <div class="dlgFoot">
+      <button class="btn ghost" type="button" id="dlgCancelBtn">Cancel</button>
+      <button class="btn gold" type="submit" value="ok" id="dlgConfirmBtn">Continue</button>
+    </div>
+  </form>
+</dialog>
 <div id="diagModal" class="hidden" role="dialog" aria-modal="true" aria-label="Diagnostics">
   <div class="diagShell">
     <div class="diagHead">
@@ -618,7 +628,7 @@ async function saveListing(){
   }catch(e){clearActivity();if(e.status===409&&e.data?.code==='STALE_INVENTORY'){toast('The live listing changed since it was loaded (possibly from a previous save attempt). Reloading the current state now \u2014 review it and Save again.','bad');S.cache.delete(S.currentId);await focusListing(S.currentId);return}else toast(e.message,'bad');renderDirty()}
 }
 async function approveListing(){
-  if(S.dirty){toast('Save or reset your changes before approving.','bad');return}setActivity('Verifying current Etsy pricing…',null,false);try{const fresh=await apiFetch('/etsyListingInventoryDetailProxy?listingId='+encodeURIComponent(S.currentId)+'&inventory_only=1');if(fresh.snapshot_hash!==S.originalHash){S.cache.set(S.currentId,fresh);hydrateDetail(fresh);throw new Error('Etsy changed since this listing was loaded. The latest pricing is now displayed; review it again.')}S.approvals[S.currentId]={mode:'approved',at:Date.now(),hash:fresh.snapshot_hash};writeApprovals();currentListing()._approved=true;renderApproval();renderQueue();clearActivity();toast('Current live pricing approved.','ok')}catch(e){clearActivity();toast(e.message,'bad')}
+  if(!S.currentId){toast('Open a listing first.','bad');return}if(S.dirty){toast('Save or reset your changes before approving.','bad');return}setActivity('Verifying current Etsy pricing…',null,false);try{const fresh=await apiFetch('/etsyListingInventoryDetailProxy?listingId='+encodeURIComponent(S.currentId)+'&inventory_only=1');if(fresh.snapshot_hash!==S.originalHash){S.cache.set(S.currentId,fresh);hydrateDetail(fresh);throw new Error('Etsy changed since this listing was loaded. The latest pricing is now displayed; review it again.')}S.approvals[S.currentId]={mode:'approved',at:Date.now(),hash:fresh.snapshot_hash};writeApprovals();currentListing()._approved=true;renderApproval();renderQueue();clearActivity();toast('Current live pricing approved.','ok')}catch(e){clearActivity();toast(e.message,'bad')}
 }
 function resetDraft(){S.draft=deep(S.original);S.dirty=false;S.selected.clear();renderEditor()}
 async function refreshCurrent(){if(!S.currentId){loadCatalog();return}if(S.dirty&&!await confirmDialog('Discard changes and refresh?','The latest live Etsy inventory will replace this draft.'))return;S.cache.delete(S.currentId);S.dirty=false;await focusListing(S.currentId)}
@@ -668,7 +678,7 @@ function prepChip(l){
     if(d.batched)out+='<span class="schip ok" title="Processed and verified by a batch run">\u2713 Batched \u00b7 '+(d.last_batch?new Date(d.last_batch.at).toLocaleString():'')+'</span>';
     else out+='<span class="schip ok" title="Queued for the next batch run">\u2713 Queued \u00b7 '+(d.chain_type==='beady'?'Beady':'Regular')+' \u00b7 Engr '+(d.engraving!==false?'ON':'OFF')+'</span>';
   }
-  if(d&&d.last_batch&&d.last_batch.ok===false&&!d.batched)out+='<span class="schip bad" title="'+String(d.last_batch.error||'').replace(/"/g,'&quot;')+'">\u2717 '+new Date(d.last_batch.at).toLocaleDateString()+' failed: '+String(d.last_batch.error||'').slice(0,60)+'\u2026</span>';
+  if(d&&d.last_batch&&d.last_batch.ok===false&&!d.batched){const err=String(d.last_batch.error||'');out+='<span class="schip bad" title="'+esc(err)+'">\u2717 '+new Date(d.last_batch.at).toLocaleDateString()+' failed: '+esc(err.slice(0,60))+'\u2026</span>'}
   return out;
 }
 function comboChip(l){
@@ -937,19 +947,19 @@ function showBatchPanel(){$('#batchPanel').classList.remove('hidden')}
 function applyRunToUi(run){
   S.batch={running:['queued','running','paused'].includes(run.status),stop:!!run.stop,total:run.total||0,done:run.done||0,ok:run.ok||0,fail:run.fail||0};
   renderBatchUi();renderPrepUi();
-  const stale=run.status==='running'&&run.updated_at&&(Date.now()-Number(run.updated_at))>90000;
+  const stale=['queued','running'].includes(run.status)&&run.updated_at&&(Date.now()-Number(run.updated_at))>90000;
+  const staleMessage=stale?'\u26a0 No server progress for '+Math.round((Date.now()-Number(run.updated_at))/1000)+'s \u2014 the worker may have been interrupted. Press Re-launch to continue from listing '+((run.done||0)+1)+' of '+(run.total||0)+'.':'';
   const bb=$('#batchBtn'),bc=$('#batchCount');
   if(bb&&S.currentRunId){
     bb.disabled=false;
-    if(stale){bb.dataset.mode='relaunch';bb.firstChild.textContent='\u27f3 Re-launch';if(bc)bc.textContent=(run.done||0)+' / '+(run.total||0);
-      $('#bCur').textContent='\u26a0 No server progress for '+Math.round((Date.now()-Number(run.updated_at))/1000)+'s \u2014 the worker may have been interrupted. Press Re-launch to continue from listing '+((run.done||0)+1)+' of '+(run.total||0)+'.'}
+    if(stale){bb.dataset.mode='relaunch';bb.firstChild.textContent='\u27f3 Re-launch';if(bc)bc.textContent=(run.done||0)+' / '+(run.total||0)}
     else if(run.status==='paused'){bb.dataset.mode='resume';bb.firstChild.textContent='\u25b6 Resume';if(bc)bc.textContent=(run.done||0)+' / '+(run.total||0)}
     else if(['queued','running'].includes(run.status)){bb.dataset.mode='pause';bb.firstChild.textContent='\u275a\u275a Pause';if(bc)bc.textContent=(run.done||0)+' / '+(run.total||0)}
   }
   $('#batchState').textContent=run.status==='running'?'Running on server':run.status==='queued'?'Queued':run.status==='paused'?'Paused':run.status==='stopped'?(run.stop_reason?'Auto-halted':'Stopped'):'Done';
   if(run.stop_reason){const box=$('#bErrs');if(box&&!box.dataset.reasonShown){const div=document.createElement('div');div.style.fontWeight='700';div.textContent=run.stop_reason;box.prepend(div);box.dataset.reasonShown='1'}}
 
-  $('#bCur').textContent=run.current||'';
+  $('#bCur').textContent=staleMessage||(run.current||'');
   const errs=run.errors||[];const box=$('#bErrs');box.innerHTML='';for(const e of errs.slice(-50)){const div=document.createElement('div');div.textContent=e;box.appendChild(div)}
   if(run.fatal_error){const div=document.createElement('div');div.textContent='FATAL: '+run.fatal_error;box.appendChild(div)}
 }
@@ -962,11 +972,16 @@ async function pollRun(runId){
     if(S._pollN%4===0&&['queued','running'].includes(run.status))hydrateFromStore(true);
     if(['queued','running','paused'].includes(run.status)){pollTimer=setTimeout(()=>pollRun(runId),run.status==='paused'?6000:3500)}
     else{
-      await hydrateFromStore(true);applyFilter();
-      toast(run.status==='stopped'?('Batch stopped on server \u2014 '+(run.ok||0)+' succeeded, '+(run.fail||0)+' failed.'):(run.fatal_error?('Batch could not run: '+run.fatal_error):('Server batch complete \u2014 '+(run.ok||0)+' succeeded, '+(run.fail||0)+' failed.')),(run.fail||run.fatal_error)?'bad':'ok');
       S.currentRunId=null;
+      await hydrateFromStore(true);applyFilter();
+      renderPrepUi();
+      toast(run.status==='stopped'?('Batch stopped on server \u2014 '+(run.ok||0)+' succeeded, '+(run.fail||0)+' failed.'):(run.fatal_error?('Batch could not run: '+run.fatal_error):('Server batch complete \u2014 '+(run.ok||0)+' succeeded, '+(run.fail||0)+' failed.')),(run.fail||run.fatal_error)?'bad':'ok');
     }
   }catch(e){pollTimer=setTimeout(()=>pollRun(runId),6000)}
+}
+async function launchBatchWorker(runId){
+  const r=await fetch(FUNCTIONS_BASE+'/etsyPricingBatch-background',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({run_id:runId})});
+  if(!r.ok){const detail=await r.text().catch(()=>'');throw new Error('Batch worker returned HTTP '+r.status+(detail?' \u00b7 '+detail.slice(0,160):''))}
 }
 async function batchRun(){
   if(S.batch.running)return;
@@ -980,12 +995,17 @@ async function batchRun(){
     if(!pushed&&!localStorage.getItem(TOKEN_KEYS.refresh)){toast('Connect to Etsy first \u2014 the server needs your Etsy authorization to run the batch.','bad');return}
     const {run_id}=await fbCall({action:'startRun',ids});
     S.currentRunId=run_id;
-    await fetch(FUNCTIONS_BASE+'/etsyPricingBatch-background',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({run_id})});
     showBatchPanel();$('#bErrs').innerHTML='';delete $('#bErrs').dataset.reasonShown;
     applyRunToUi({status:'queued',total:ids.length,done:0,ok:0,fail:0});
+    await launchBatchWorker(run_id);
     pollRun(run_id);
     toast('Server batch started \u2014 safe to close this tab. Progress is live here and saved in the cloud.','ok');
-  }catch(e){toast('Could not start batch: '+e.message,'bad')}
+  }catch(e){
+    if(S.currentRunId){
+      const bb=$('#batchBtn'),bc=$('#batchCount');bb.dataset.mode='relaunch';bb.disabled=false;bb.firstChild.textContent='\u27f3 Re-launch';if(bc)bc.textContent='';clearTimeout(pollTimer);pollTimer=setTimeout(()=>pollRun(S.currentRunId),90000);
+      toast('The batch run was created, but its worker did not launch: '+e.message+'. Press Re-launch to retry safely.','bad');
+    }else toast('Could not start batch: '+e.message,'bad')
+  }
 }
 async function refreshApiUsage(){
   try{
@@ -1013,7 +1033,7 @@ async function refreshApiUsage(){
     info.classList.toggle('warnDot',counterAge!=null&&counterAge<20);
   }catch(e){}
 }
-setInterval(refreshApiUsage,15000);setInterval(refreshApiUsage,15000);
+setInterval(refreshApiUsage,15000);
 function pushServerToken(){
   try{
     const rt=localStorage.getItem(TOKEN_KEYS.refresh);
@@ -1151,6 +1171,7 @@ function stripEngraveRows(){
   if(removed){sortProducts();markDirty();renderEditor()}
   return removed;
 }
+$('#dlgCancelBtn').addEventListener('click',()=>$('#formDialog').close('cancel'));
 $('#chainTypeToggle').addEventListener('click',e=>{const b=e.target.closest('button[data-ct]');if(!b)return;S.chainType=b.dataset.ct;renderChainToggle();persistToggle('chain')});
 $('#engraveToggle').addEventListener('click',e=>{const b=e.target.closest('button[data-eg]');if(!b)return;const on=b.dataset.eg==='on';if(on===S.engraving){persistToggle('engrave');return}
   S.engraving=on;renderChainToggle();persistToggle('engrave');
@@ -1176,18 +1197,20 @@ $('#batchBtn').addEventListener('click',async()=>{
   const mode=$('#batchBtn').dataset.mode||'start';
   if(mode==='start'){batchRun();return}
   if(!S.currentRunId)return;
-  if(mode==='pause'){await fbCall({action:'pauseRun',run_id:S.currentRunId});toast('Pause requested \u2014 the server finishes the current listing, then holds.','ok')}
-  else if(mode==='resume'){await fbCall({action:'resumeRun',run_id:S.currentRunId});await fetch(FUNCTIONS_BASE+'/etsyPricingBatch-background',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({run_id:S.currentRunId})});toast('Batch resumed on the server.','ok')}
-  else if(mode==='relaunch'){await fetch(FUNCTIONS_BASE+'/etsyPricingBatch-background',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({run_id:S.currentRunId})});toast('Worker re-launched \u2014 continuing from where the run left off.','ok')}
-  pollRun(S.currentRunId);
+  try{
+    if(mode==='pause'){await fbCall({action:'pauseRun',run_id:S.currentRunId});toast('Pause requested \u2014 the server finishes the current listing, then holds.','ok')}
+    else if(mode==='resume'){await fbCall({action:'resumeRun',run_id:S.currentRunId});await launchBatchWorker(S.currentRunId);toast('Batch resumed on the server.','ok')}
+    else if(mode==='relaunch'){await launchBatchWorker(S.currentRunId);toast('Worker re-launched \u2014 continuing from where the run left off.','ok')}
+    pollRun(S.currentRunId);
+  }catch(e){toast('Batch control failed: '+e.message,'bad')}
 });
-$('#batchStopBtn').addEventListener('click',async()=>{if(!S.currentRunId){toast('No server batch is running.','bad');return}await fbCall({action:'stopRun',run_id:S.currentRunId});toast('Stop requested \u2014 the server finishes the current listing then halts.','ok')});
+$('#batchStopBtn').addEventListener('click',async()=>{if(!S.currentRunId){toast('No server batch is running.','bad');return}try{await fbCall({action:'stopRun',run_id:S.currentRunId});toast('Stop requested \u2014 the server finishes the current listing then halts.','ok')}catch(e){toast('Could not stop the batch: '+e.message,'bad')}});
 $('#charmOnlyBtn').addEventListener('click',charmOnlySetup);
 
 /* ---------------- Dialogs ---------------- */
-function formDialog(title,fields){return new Promise(resolve=>{const dlg=$('#formDialog'),form=$('#dialogForm');$('#dlgTitle').textContent=title;$('#dlgBody').innerHTML=fields.map(f=>'<label>'+esc(f.label)+'</label><input name="'+esc(f.name)+'" placeholder="'+esc(f.placeholder||'')+'" value="'+esc(f.value||'')+'">').join('');dlg.showModal();form.onclose=null;dlg.addEventListener('close',function done(){dlg.removeEventListener('close',done);if(dlg.returnValue!=='ok'){resolve(null);return}const fd=new FormData(form),out={};fields.forEach(f=>out[f.name]=fd.get(f.name)||'');resolve(out)},{once:true})})}
+function formDialog(title,fields){return new Promise(resolve=>{const dlg=$('#formDialog'),form=$('#dialogForm');if(dlg.open){resolve(null);return}dlg.returnValue='';$('#dlgTitle').textContent=title;$('#dlgConfirmBtn').textContent='Apply';$('#dlgBody').innerHTML=fields.map(f=>'<label>'+esc(f.label)+'</label><input name="'+esc(f.name)+'" placeholder="'+esc(f.placeholder||'')+'" value="'+esc(f.value||'')+'">').join('');dlg.showModal();dlg.addEventListener('close',function done(){if(dlg.returnValue!=='ok'){resolve(null);return}const fd=new FormData(form),out={};fields.forEach(f=>out[f.name]=fd.get(f.name)||'');resolve(out)},{once:true})})}
 async function promptDialog(title,label,placeholder){const d=await formDialog(title,[{name:'value',label,placeholder,value:placeholder&&placeholder.startsWith('Example:')?'':placeholder}]);return d?(d.value||'').trim():null}
-function confirmDialog(title,message){return new Promise(resolve=>{const dlg=$('#formDialog');$('#dlgTitle').textContent=title;$('#dlgBody').innerHTML='<p style="margin:0;line-height:1.6">'+esc(message)+'</p>';dlg.showModal();dlg.addEventListener('close',function done(){dlg.removeEventListener('close',done);resolve(dlg.returnValue==='ok')},{once:true})})}
+function confirmDialog(title,message){return new Promise(resolve=>{const dlg=$('#formDialog');if(dlg.open){resolve(false);return}dlg.returnValue='';$('#dlgTitle').textContent=title;$('#dlgConfirmBtn').textContent='Continue';$('#dlgBody').innerHTML='<p style="margin:0;line-height:1.6">'+esc(message)+'</p>';dlg.showModal();dlg.addEventListener('close',()=>resolve(dlg.returnValue==='ok'),{once:true})})}
 
 /* ---------------- Events ---------------- */
 $('#connectBtn').addEventListener('click',startOAuth);$('#loadBtn').addEventListener('click',loadCatalog);$('#emptyLoadBtn').addEventListener('click',loadCatalog);$('#refreshBtn').addEventListener('click',refreshCurrent);$('#prevBtn').addEventListener('click',()=>navigate(-1));$('#nextBtn').addEventListener('click',()=>navigate(1));$('#menuBtn').addEventListener('click',()=>$('#rail').classList.toggle('open'));$('#stopScanBtn').addEventListener('click',()=>S.stopScan=true);
@@ -1208,7 +1231,7 @@ $('#copyInvBtn').addEventListener('click',async()=>{if(!S.original){toast('Open 
   await navigator.clipboard.writeText(JSON.stringify(dump,null,2));toast('Live inventory JSON copied to clipboard.','ok')});
 addEventListener('keydown',e=>{const typing=['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName);if(!typing&&e.key==='/'){e.preventDefault();$('#searchInput').focus();return}if(typing)return;if(e.key==='ArrowLeft')navigate(-1);if(e.key==='ArrowRight')navigate(1);if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='s'){e.preventDefault();if(S.dirty)saveListing()}if(e.key.toLowerCase()==='a'&&!e.metaKey&&!e.ctrlKey&&S.view==='editor')approveListing()});
 
-(async function init(){await handleOAuthCallback();renderConnection();renderStoreFilters();renderChainToggle();updateSearchUi('Live Etsy title search');scheduleRefresh();if(localStorage.getItem(TOKEN_KEYS.access))loadCatalog()})();
+(async function init(){await handleOAuthCallback();renderConnection();renderStoreFilters();renderChainToggle();updateSearchUi('Live Etsy title search');scheduleRefresh();refreshApiUsage();if(localStorage.getItem(TOKEN_KEYS.access))loadCatalog()})();
 </script>
 </body>
 </html>
