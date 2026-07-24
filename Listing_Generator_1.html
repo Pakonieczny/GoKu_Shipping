@@ -9926,13 +9926,18 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       • HARD FAIL: the two huggie charms or necklace charm differ from each other in linework, feature count, silhouette, cutouts, or subject identity.
       • HARD FAIL: any engraving detail is missing, newly invented, repositioned, or altered from IMAGE 2.
 
-      SIZE AND RELATIVE-SCALE LOCK:
-      • Use IMAGE 1's existing charm bounding boxes as the placement and sizing guides. Ignore the in-frame size of the isolated master charm in IMAGE 2.
+      SIZE AND RELATIVE-SCALE LOCK — THE HOOP-RELATIVE CAP IS THE HIGHEST-PRIORITY SIZING RULE:
+      • Use IMAGE 1's existing charm bounding boxes for PLACEMENT ONLY (horizontal centreline and hanging point). NEVER use the old charm regions to SIZE the new charms — the old charm regions are oversized and must not be filled. Ignore the in-frame size of the isolated master charm in IMAGE 2 as well.
+      • HUGGIE CHARM SIZING — MEASURE AGAINST THE HUGGIE HOOP ITSELF (MANDATORY): each huggie charm body's LONGEST dimension (the larger of its width or height, excluding only the integrated eyelet) must equal 35% of that huggie hoop's OUTER diameter, with a strict tolerance of ±5 percentage points. It must NEVER exceed 40% of the hoop's outer diameter under any circumstance.
+      • Correct visual result: each huggie hoop reads as clearly and obviously LARGER than its dangling charm — the hoop's outer diameter is roughly 2.5×–3× the charm body's longest dimension. The charm is a small pendant on a big hoop, never a charm that rivals the hoop.
       • The two huggie charm bodies must be identical in size.
-      • Each huggie charm body's longest dimension must be 55% of the necklace charm body's corresponding longest dimension, with a strict tolerance of ±5%. Never exceed 60%.
-      • Equivalently, the necklace charm body must appear approximately 1.8× as large linearly as either huggie charm body.
+      • NECKLACE CHARM SIZING: keep the necklace charm at IMAGE 1's original necklace-charm size. Do not shrink or enlarge the necklace charm.
+      • Consequence of the hoop cap: each huggie charm body's longest dimension will land at roughly 30% of the necklace charm body's longest dimension. Never exceed 35% of the necklace charm's linear size. If this ratio and the hoop-relative cap ever disagree, the hoop-relative cap (≤40% of hoop outer diameter) ALWAYS wins.
       • Scale the entire charm uniformly. Never stretch width and height independently.
-      • Keep the centre point and bottom position of each destination charm aligned to the corresponding charm in IMAGE 1.
+      • Keep each huggie charm centred under its hoop's bottom attachment point, hanging naturally; keep the necklace charm's centre aligned to IMAGE 1's original necklace charm position.
+      • MANDATORY SELF-MEASUREMENT BEFORE RETURNING: for EACH huggie earring, compare the charm body's longest dimension to that hoop's outer diameter. If charm ÷ hoop is greater than 0.40 for either earring, the render is WRONG — shrink both huggie charms uniformly and re-render. Repeat until both pass.
+      • HARD FAIL: either huggie charm body's longest dimension exceeds 40% of its hoop's outer diameter.
+      • HARD FAIL: a huggie charm is sized by filling the old charm region from IMAGE 1 instead of by the hoop-relative rule.
       • HARD FAIL: a huggie charm is close to the necklace charm's size, visually overwhelms its hoop, or is independently sized from the other huggie charm.
 
       HUGGIE CONNECTION — DIRECT SLIP-ON, ZERO INTERMEDIARY RINGS:
@@ -9958,7 +9963,8 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       FINAL VALIDATION — REVISE BEFORE RETURNING IF ANY ITEM FAILS:
       ☐ Only the three charm designs changed; every other visible element matches IMAGE 1.
       ☐ All three charms are exact scaled duplicates of IMAGE 2 with every engraving present.
-      ☐ Both huggie charms are identical and each is 55% ±5% of the necklace charm's linear body size.
+      ☐ Both huggie charms are identical, and each huggie charm body's longest dimension is 35% ±5 points of its hoop's outer diameter — never above 40%.
+      ☐ Each huggie hoop is visibly ~2.5×–3× larger than its charm body; the necklace charm is unchanged in size.
       ☐ Each huggie hoop wire passes directly through the charm's integrated eyelet with no intermediary jump ring.
       ☐ The necklace chain and its connector remain exactly as in IMAGE 1.
       ☐ Text, layout, crop, scale, background, lighting, and hardware remain unchanged.`;
@@ -10065,17 +10071,19 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       • If IMAGE 2 has no mark in an area, leave it plain. If it has a mark, preserve it.
       • Treat the master as a traced canonical stencil, not as inspiration.
 
-      PHYSICAL SIZE LOCK — THE SOURCE GRAPHIC DEFINES REAL SCALE:
-      • IMAGE 1 represents an approximately 5 mm wide × 6 mm tall charm body on an 11 mm huggie hoop.
-      • Uniformly scale the MASTER CHARM body to fit completely inside IMAGE 1's existing 5 mm × 6 mm charm-body bounding box. Never exceed that box in either direction.
-      • The charm body height must be approximately 54.5% of the displayed 11 mm hoop size (6 ÷ 11), with a strict tolerance of ±3%.
-      • The charm body width may be no more than approximately 45.5% of the displayed 11 mm hoop size (5 ÷ 11). A naturally narrower master design must remain narrower; never stretch it to fill the width.
-      • Preserve the master charm's aspect ratio. Scale width and height uniformly—no independent stretching.
-      • Centre the new charm body on the exact horizontal centreline used by IMAGE 1's original charm and keep its top/bottom destination position unchanged.
-      • HARD FAIL: the charm body is close to the hoop's size, overwhelms the hoop, extends outside the 5×6 mm destination box, or is auto-sized from IMAGE 2's crop.
+      PHYSICAL SIZE LOCK — THE 11 MM HOOP DEFINES REAL SCALE (HIGHEST-PRIORITY SIZING RULE):
+      • IMAGE 1's displayed 11 mm huggie hoop is the ONLY scale reference. NEVER size the new charm by filling IMAGE 1's old charm pixels (the old charm region is oversized and must not be matched) and NEVER auto-size from IMAGE 2's crop.
+      • The MASTER CHARM body's LONGEST dimension (the larger of its width or height, excluding only the integrated eyelet) must equal 35% of the hoop's displayed OUTER diameter, with a strict tolerance of ±5 percentage points. It must NEVER exceed 40% of the hoop's outer diameter under any circumstance.
+      • On the 11 mm hoop, this means the charm body's longest dimension represents approximately 3.5–4 mm of real size, and never more than 4.4 mm.
+      • Correct visual result: the hoop reads as clearly and obviously LARGER than the dangling charm — the hoop's outer diameter is roughly 2.5×–3× the charm body's longest dimension. The charm is a small pendant on a big hoop, never a charm that rivals the hoop.
+      • Preserve the master charm's aspect ratio. Scale width and height uniformly—no independent stretching. A naturally narrower master design must remain narrower; never stretch it to fill width.
+      • Centre the new charm body on the exact horizontal centreline used by IMAGE 1's original charm, hanging directly from the hoop's bottom attachment point. The charm's TOP (eyelet) position stays at the hoop; the bottom edge will naturally sit higher than the old oversized charm's bottom edge — that is correct and expected.
+      • MANDATORY SELF-MEASUREMENT BEFORE RETURNING: compare the charm body's longest dimension to the hoop's outer diameter. If charm ÷ hoop is greater than 0.40, the render is WRONG — shrink the charm uniformly and re-render. Repeat until it passes.
+      • HARD FAIL: the charm body's longest dimension exceeds 40% of the hoop's outer diameter.
+      • HARD FAIL: the charm body is close to the hoop's size, overwhelms the hoop, is sized to fill IMAGE 1's old charm region, or is auto-sized from IMAGE 2's crop.
 
       INTEGRATED EYELET — 2.1 MM INNER DIAMETER:
-      • The top eyelet is an integral part of the charm itself. Its clear inner opening must represent exactly 2.1 mm and must retain IMAGE 1's eyelet centre, outer diameter, roundness, wall thickness, and vertical position.
+      • The top eyelet is an integral part of the charm itself. Its clear inner opening must represent exactly 2.1 mm and must retain IMAGE 1's eyelet roundness and wall-thickness proportions. The eyelet moves and scales WITH the resized charm body, but its inner opening always remains large enough for the hoop wire to pass through cleanly, and it stays threaded on the hoop at the hoop's bottom attachment point.
       • Adapt only the eyelet to IMAGE 1's documented 2.1 mm size; do not alter the MASTER CHARM body's design or engraving.
       • The eyelet must be a single clean circular opening, not two stacked loops and not an added loose ring.
 
@@ -10106,7 +10114,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       FINAL VALIDATION — REVISE BEFORE RETURNING IF ANY ITEM FAILS:
       ☐ Only the charm design and necessary leader endpoints changed; the rest of IMAGE 1 is unchanged.
       ☐ Master silhouette, cutouts, and every engraving exactly match IMAGE 2.
-      ☐ Charm body fits within the 5×6 mm box and is correctly scaled against the unchanged 11 mm huggie.
+      ☐ Charm body's longest dimension is 35% ±5 points of the unchanged 11 mm hoop's outer diameter — never above 40% — and the hoop reads ~2.5×–3× larger than the charm.
       ☐ Integrated eyelet has a 2.1 mm inner opening at IMAGE 1's original position.
       ☐ Huggie wire passes directly through that eyelet with no intermediary jump ring.
       ☐ Inner-diameter bracket touches the inner opening's true left/right measurement points.
