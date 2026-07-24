@@ -9840,26 +9840,41 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         • HARD FAIL: two charm instances in the output show different silhouettes from each other.`;
 
     const HUGGIE_CHARM_SCALE_RULES_ON_EAR =
-    `CHARM-TO-HOOP SIZE LOCK — HIGHEST-PRIORITY SIZING RULE (FIXED PRODUCT SPECIFICATION, ON-EAR / MODEL-WORN):
-        • The charm body's LONGEST dimension (the larger of its width or height, excluding only the integrated eyelet) must equal 7% of the hoop earring's OUTER diameter, with a strict tolerance of ±2 percentage points. It must NEVER exceed 9% of the hoop's outer diameter under any circumstance — 9% is an absolute ceiling, not a target.
-        • THE TEMPLATE/REFERENCE CHARM IS NOT A SIZE GUIDE. The placeholder charm in the reference image is drawn far too large. NEVER match, approximate, or take cues from its size. Copy the reference ONLY for pose, model identity, framing, lighting, hoop position, and hanging orientation — size the new charm from the numeric rule alone.
-        • CONCRETE VISUAL ANCHOR — USE THIS TO JUDGE SIZE: FOURTEEN to FIFTEEN full copies of the charm body, stacked end-to-end, must fit across the hoop's outer diameter. The charm body is THINNER than the hoop's own wire — a minuscule speck of detail hanging beneath a hoop that utterly dominates the earring.
-        • SECOND ANCHOR — WIRE-THICKNESS COMPARISON: the charm body's longest dimension must be roughly EQUAL TO OR SMALLER THAN the visible thickness of the hoop's wire/tube — about 1×, never more than 1.2×. If the charm reads as chunkier than the wire it hangs from, it is TOO LARGE.
-        • THIRD ANCHOR — CONTAINMENT TEST: the charm body must fit ENTIRELY INSIDE the open negative space enclosed by the hoop ring many times over, with vast empty margin all around it. Mentally slide the charm up into the middle of the hoop: if it takes up as much as a fifth of the width of that opening, it is still TOO LARGE.
-        • WARNING — KNOWN FAILURE MODE: image models render this charm 3×–6× TOO LARGE even after being told to shrink it, and even when they believe they have fully complied. On this exact on-ear graphic the charm has come back roughly AS WIDE AS THE HOOP ITSELF. Whatever size feels natural, or "clearly small enough," or even "absurdly small" to you is still TOO LARGE. Shrink it until it looks like a rendering error, then shrink it again — THAT is the correct size. Then verify it against the fourteen-across anchor before returning.
-        • BOTH EARS / MULTIPLE HOOPS IN ONE IMAGE: size the charm at 7% of the LARGEST hoop's outer diameter, then render EVERY charm instance in the image at that SAME identical absolute size — the charm is one fixed physical product and never changes size between earrings.
-        • CONSISTENCY LOCK: this charm-to-hoop ratio is a FIXED product specification — identical on the left and right earring, and identical across every render of this graphic. Never let composition, crop, focal length, model pose, style, or aesthetics influence it.
-        • MANDATORY SELF-MEASUREMENT BEFORE RETURNING: for EACH earring, compare the charm body's longest dimension to its hoop's outer diameter. If charm ÷ hoop is greater than 0.09 on the largest hoop — i.e., if fourteen charm lengths would NOT fit across that hoop — the render is WRONG: shrink all charms uniformly and re-render. Repeat until it passes.
-        • HARD FAIL: any charm body's longest dimension exceeds 9% of the largest hoop's outer diameter.
-        • HARD FAIL: the charm body's longest dimension is more than ~1.2× the hoop's wire thickness.
+    `CHARM SIZE LOCK — MEASURED AGAINST THE PLACEHOLDER CHARM IN THE REFERENCE IMAGE (HIGHEST-PRIORITY SIZING RULE, ON-EAR / MODEL-WORN):
+
+        HOW TO SIZE THE CHARM — READ THIS FIRST AND FOLLOW IT LITERALLY:
+        • The reference/template image already contains a placeholder charm hanging from the hoop. FIND IT AND MEASURE IT. Call its longest dimension P.
+        • The new charm you render must have a longest dimension of P ÷ 5 — ONE FIFTH the size of the placeholder charm you are replacing. It must NEVER be larger than P ÷ 4.
+        • Put another way: FIVE full copies of your new charm, stacked end-to-end, must fit inside the width of the placeholder charm in the reference image. If only two or three would fit, your charm is TOO LARGE — shrink it and re-render.
+        • This is a SHRINK-BY-A-FIXED-FACTOR operation, not a judgement call. Take the placeholder's size, divide by five, render at that size. Do not reason about what size "looks right" for a charm earring — that instinct is the exact thing producing the defect.
+
+        MEASURED EVIDENCE OF THE DEFECT YOU ARE CORRECTING:
+        • In the last renders of this exact graphic, the delivered charm measured 85%–115% of the hoop's OUTER DIAMETER. The charm was as wide as the hoop it hung from, and in one case wider. That is four to five times too large.
+        • Those renders were produced from a prompt that asked for a specific small percentage of the hoop diameter, and that instruction was silently ignored — the charm came out matching the placeholder's size instead. Do not repeat that. The placeholder is the thing you are DIVIDING DOWN FROM, never the size you are copying.
+
+        CROSS-CHECKS — THE RESULT MUST SATISFY ALL OF THESE:
+        • HOOP CEILING: the new charm's longest dimension must not exceed 25% of the hoop's outer diameter — one quarter. Four charm-lengths fit across the hoop.
+        • CONTAINMENT TEST: the charm body must fit ENTIRELY INSIDE the open negative space enclosed by the hoop ring, with clear empty margin all the way around it. Mentally slide the charm up into the middle of the hoop: if it touches or overflows the ring, it is far too large.
+        • WIRE THICKNESS: the charm body's longest dimension is roughly 3× the visible thickness of the hoop's wire/tube, and never more than 4×. In the defective renders it was about 9×.
+        • The charm must still be a legible, wearable little charm with its engraving readable — small and delicate, not a featureless dot.
+
+        CONSISTENCY:
+        • BOTH EARS / MULTIPLE HOOPS IN ONE IMAGE: every charm instance in the image renders at the SAME identical absolute size — the charm is one fixed physical product and never changes size between earrings.
+        • This ratio is a FIXED product specification, identical in every render, on every ear, at every angle. Never let composition, crop, focal length, model pose, style, or aesthetics influence it.
+
+        MANDATORY SELF-MEASUREMENT BEFORE RETURNING:
+        • Measure the charm body's longest dimension against the hoop's outer diameter. If charm ÷ hoop is greater than 0.25 — i.e. if FOUR charm lengths would NOT fit across the hoop, or the charm would not sit inside the hoop's opening with room to spare — the render is WRONG. Shrink every charm uniformly and re-render. Repeat until it passes.
+
+        • HARD FAIL: the new charm is larger than one quarter of the placeholder charm it replaced.
+        • HARD FAIL: any charm body's longest dimension exceeds 25% of the hoop's outer diameter.
         • HARD FAIL: the charm body is anywhere near as large as the hoop — if charm and hoop read as comparable in size, the render is unusable.
-        • HARD FAIL: the charm was sized to match the placeholder charm in the reference/template image.
+        • HARD FAIL: the charm was rendered at the placeholder charm's size instead of one fifth of it.
         • HARD FAIL: two earrings in the same image show visibly different absolute charm sizes.`;
 
     const HOOP_MODEL_PROMPT =
-    `TASK (Render the Charm MINUSCULE — about 7% of the hoop's outer diameter, fourteen charm-lengths across the hoop, thinner than the hoop's own wire. Sizing is governed EXCLUSIVELY by the CHARM-TO-HOOP SIZE LOCK below, which overrides every other size cue including the reference image.)
+    `TASK (Render the new Charm at ONE FIFTH the size of the placeholder charm currently hanging from the hoop in the reference image — a fixed divide-by-five shrink, not a judgement call. Sizing is governed EXCLUSIVELY by the CHARM SIZE LOCK below.)
     • Duplicate the female model and hoop earrings in reference image, only replace the charm from Charm Image onto the existing hoop earring in reference image.
-    • The new Charm must be DRAMATICALLY SMALLER than the charm shown in the Reference Image — the reference charm is oversized and is never a size guide. Size the new charm solely from the CHARM-TO-HOOP SIZE LOCK below.
+    • The new Charm must be DRAMATICALLY SMALLER than the placeholder charm shown in the Reference Image — exactly ONE FIFTH of its longest dimension, and never more than one quarter. Measure the placeholder, divide by five, render at that size. See the CHARM SIZE LOCK below.
     • Your primary objective is to maintain Charm Engraving fidelity and accuracy to the Charm Reference image.
     • Do NOT embossed the engravings on the Charm/Pendant, all engravings must be flat having only superficial depth.
     • HARD LOCK: The Charm/Pendant material is a perfectly flat and very thin sheet of metal, always render the Charm/Pendant completely flat and very thin. 
@@ -9899,9 +9914,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       SIZE-OPTIONS NOTE: this graphic shows two hoop sizes (e.g., 11 mm and 8.5 mm). The charm is ONE fixed physical product: size it per the CHARM-TO-HOOP SIZE LOCK above (7% of the LARGEST / 11 mm hoop's outer diameter, never above 9%) and render all 4 charm instances at that same identical absolute size. On the smaller 8.5 mm hoop the same charm will correctly look slightly larger relative to its hoop — that is physically accurate and required.`;
 
     const HOOP_SEC_MODEL_PROMPT =
-    `TASK (Render the Charm MINUSCULE — about 7% of the hoop's outer diameter, fourteen charm-lengths across the hoop, thinner than the hoop's own wire. Sizing is governed EXCLUSIVELY by the CHARM-TO-HOOP SIZE LOCK below, which overrides every other size cue including the reference image.)
+    `TASK (Render the new Charm at ONE FIFTH the size of the placeholder charm currently hanging from the hoop in the reference image — a fixed divide-by-five shrink, not a judgement call. Sizing is governed EXCLUSIVELY by the CHARM SIZE LOCK below.)
         • Duplicate the female model and hoop earrings in reference image, only replace the charm from Charm Image onto the existing hoop earring in reference image.
-        • The new Charm must be DRAMATICALLY SMALLER than the charm shown in the Reference Image — the reference charm is oversized and is never a size guide. Size the new charm solely from the CHARM-TO-HOOP SIZE LOCK below.
+        • The new Charm must be DRAMATICALLY SMALLER than the placeholder charm shown in the Reference Image — exactly ONE FIFTH of its longest dimension, and never more than one quarter. Measure the placeholder, divide by five, render at that size. See the CHARM SIZE LOCK below.
         • Your primary objective is to maintain Charm Engraving fidelity and accuracy to the Charm Reference image.
         • Do NOT embossed the engravings on the Charm/Pendant, all engravings must be flat having only superficial depth.
           HARD LOCK: The Charm/Pendant material is a perfectly flat and very thin sheet of metal, always render the Charm/Pendant completely flat and very thin, DO NOT allow any rounded/radius on the cutout edges.
