@@ -616,8 +616,28 @@ async function callGeminiGenerateContentImage({
     `Exact size ${wantW}x${wantH}. ` +
     `Return an image suitable for a product photo.`;
 
- const parts = [{ text: promptText }];
-  for (const img of images || []) {
+  const imageInputs = Array.isArray(images) ? images : [];
+  const parts = [{ text: promptText }];
+  for (const [index, img] of imageInputs.entries()) {
+    // Explicit role labels prevent multi-image edit models from blending
+    // the source template with the master charm or reversing their jobs.
+    // Every two-image Listing Generator request uses this same ordering:
+    // image 1 = destination/template, image 2 = master charm.
+    if (imageInputs.length >= 2) {
+      parts.push({
+        text:
+          index === 0
+            ? "IMAGE 1 — LOCKED SOURCE TEMPLATE / DESTINATION CANVAS. Preserve its composition and all non-charm content."
+            : index === 1
+              ? "IMAGE 2 — MASTER CHARM / DESIGN TRUTH. Use its exact silhouette, integrated eyelet, cutouts, and engraving topology for the replacement charm only."
+              : `IMAGE ${index + 1} — ADDITIONAL REFERENCE.`,
+      });
+    } else {
+      parts.push({
+        text: "IMAGE 1 — EDIT TARGET. Apply only the requested edit and preserve all unrelated pixels and composition.",
+      });
+    }
+
     // Gemini will hard-crash if passed application/octet-stream.
     // Force a valid image MIME type so the API attempts to process the buffer.
     let safeMime = img?.mime || "image/png";
@@ -630,6 +650,12 @@ async function callGeminiGenerateContentImage({
         mime_type: safeMime,
         data: Buffer.from(img?.buffer || Buffer.alloc(0)).toString("base64"),
       },
+    });
+  }
+  if (imageInputs.length >= 2) {
+    parts.push({
+      text:
+        "FINAL IMAGE-ROLE LOCK: edit IMAGE 1 in place. IMAGE 2 supplies only the replacement charm design. Do not blend the images, redraw the whole template, or copy IMAGE 1's old charm details into the new charm.",
     });
   }
 
@@ -1144,8 +1170,20 @@ function buildBatchJsonlLine(key, prompt, refMime, refBase64, charmMime, charmBa
         role: "user",
         parts: [
           { text: augmentedPrompt },
+          {
+            text:
+              "IMAGE 1 — LOCKED SOURCE TEMPLATE / DESTINATION CANVAS. Preserve its composition and all non-charm content.",
+          },
           { inline_data: { mime_type: safeRefMime, data: refBase64 } },
+          {
+            text:
+              "IMAGE 2 — MASTER CHARM / DESIGN TRUTH. Use its exact silhouette, integrated eyelet, cutouts, and engraving topology for the replacement charm only.",
+          },
           { inline_data: { mime_type: safeCharmMime, data: charmBase64 } },
+          {
+            text:
+              "FINAL IMAGE-ROLE LOCK: edit IMAGE 1 in place. IMAGE 2 supplies only the replacement charm design. Do not blend the images, redraw the whole template, or copy IMAGE 1's old charm details into the new charm.",
+          },
         ],
       }],
       generation_config: {
@@ -1844,6 +1882,7 @@ async function _handlerImpl(event) {
                     slot,
                     type: "copy",
                     source: t?.source_storage_path || null,
+                    originalSource: t?.source_storage_path || null,
                     newCharm: null,
                     output: `${s.outputBasePath}/Slot_${slot}.png`,
                   }
@@ -1851,6 +1890,7 @@ async function _handlerImpl(event) {
                     slot,
                     type: "gen",
                     source: t?.input_storage_path || null,
+                    originalSource: t?.input_storage_path || null,
                     newCharm: t?.input_charm_storage_path || null,
                     output: null, // not generated (no edits tasks)
                   };
@@ -2191,6 +2231,7 @@ async function _handlerImpl(event) {
               slot,
               type: "copy",
               source: t?.source_storage_path || null,
+              originalSource: t?.source_storage_path || null,
               newCharm: null,
               output: `${s.outputBasePath}/Slot_${slot}.png`,
             };
@@ -2201,6 +2242,7 @@ async function _handlerImpl(event) {
             slot,
             type: r?.ok === false ? "error" : "gen",
             source: t?.input_storage_path || null,
+            originalSource: t?.input_storage_path || null,
             newCharm: t?.input_charm_storage_path || null,
             output: (r?.ok && r?.storagePath) ? r.storagePath : null,
             error: r?.error || null,
