@@ -11,10 +11,11 @@
 // Browser payload example:
 // {
 //   kind: "edits",
-//   model: "gpt-image-1.5",
+//   model: "gpt-image-2",
 //   prompt: "...",
 //   n: 1,
-//   size: "1024x1024",
+//   size: "2048x2048",
+//   quality: "medium",
 //   input_image: "data:image/jpeg;base64,...",
 //   mask_image:  "data:image/png;base64,..." // optional
 // }
@@ -52,6 +53,28 @@ function pickMode(body) {
   if (v === "generations" || v === "generation") return "generations";
   if (v === "edits" || v === "edit") return "edits";
   return "edits"; // your default use-case
+}
+
+function pickModel(body) {
+  const requested = String(body?.model || process.env.OPENAI_IMAGE_MODEL || "gpt-image-2").trim();
+  // GPT-5.5 can orchestrate the hosted image-generation tool, but it is not
+  // an Images API model. Normalize that human-facing choice to OpenAI's
+  // current purpose-built image renderer.
+  const normalized = requested === "gpt-5.5" ? "gpt-image-2" : requested;
+  if (normalized !== "gpt-image-2") {
+    throw new Error('Unsupported OpenAI image model. Expected "gpt-image-2".');
+  }
+  return normalized;
+}
+
+function pickQuality(value) {
+  const v = String(value || "medium").toLowerCase();
+  return ["low", "medium", "high", "auto"].includes(v) ? v : "medium";
+}
+
+function pickOutputFormat(value) {
+  const v = String(value || "png").toLowerCase();
+  return ["png", "jpeg", "webp"].includes(v) ? v : "png";
 }
 
 function dataUrlToBuffer(dataUrl) {
@@ -96,18 +119,27 @@ exports.handler = async (event) => {
     if (!body) return respond(400, { error: { message: "Invalid JSON body" } });
 
     const mode = pickMode(body);
-    const model = String(body.model || process.env.OPENAI_IMAGE_MODEL || "gpt-image-1.5");
+    const model = pickModel(body);
     const prompt = String(body.prompt || "");
     const size = String(body.size || "2048x2048");
+    const quality = pickQuality(body.quality);
+    const outputFormat = pickOutputFormat(body.output_format);
     const n = clampInt(body.n, 1, 8, 1);
 
     // If you keep seeing timeouts, reduce size to 512x512 from the client
-    const UPSTREAM_TIMEOUT_MS = clampInt(body.timeout_ms, 10_000, 120_000, 95_000);
+    const UPSTREAM_TIMEOUT_MS = clampInt(body.timeout_ms, 10_000, 180_000, 135_000);
 
     const baseUrl = "https://api.openai.com/v1/images";
 
     if (mode === "generations") {
-      const payload = { model, prompt, size, n };
+      const payload = {
+        model,
+        prompt,
+        size,
+        quality,
+        output_format: outputFormat,
+        n,
+      };
 
       const upstream = await fetchWithTimeout(
         `${baseUrl}/generations`,
@@ -176,13 +208,15 @@ exports.handler = async (event) => {
       form.append("model", model);
       form.append("prompt", prompt);
       form.append("size", size);
+      form.append("quality", quality);
+      form.append("output_format", outputFormat);
       form.append("n", String(n));
-      form.append("image", new Blob([buffer], { type: mime }), "input.png");
+      form.append("image[]", new Blob([buffer], { type: mime }), "input.png");
 
       // IMPORTANT: order matters — this becomes Image[1] in the model
       if (input_charm_image) {
         const c2 = dataUrlToBuffer(input_charm_image);
-        form.append("image", new Blob([c2.buffer], { type: c2.mime }), "charm.png");
+        form.append("image[]", new Blob([c2.buffer], { type: c2.mime }), "charm.png");
       }
 
       if (body.mask_image) {

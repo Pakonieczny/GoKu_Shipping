@@ -26,8 +26,60 @@ function getBucket() {
   return admin.storage().bucket(name);
 }
 
-// Hard-lock the Gemini image model (ignore any client-provided model)
-const GEMINI_IMAGE_MODEL = "gemini-3.1-flash-image-preview";
+// Image model routing is intentionally allowlisted. The browser may choose one
+// of these models, but it cannot turn this function into an arbitrary upstream
+// proxy. Old preview IDs are normalized so in-flight manifests and saved local
+// preferences continue to work after the stable model migration.
+const DEFAULT_IMAGE_MODEL = "gemini-3.1-flash-image";
+const IMAGE_MODEL_ALIASES = Object.freeze({
+  "gemini-3.1-flash-image-preview": "gemini-3.1-flash-image",
+  "gemini-3-pro-image-preview": "gemini-3-pro-image",
+  "gpt-5.5": "gpt-image-2",
+});
+const IMAGE_MODEL_CONFIG = Object.freeze({
+  "gemini-3.1-flash-image": Object.freeze({
+    id: "gemini-3.1-flash-image",
+    provider: "gemini",
+    supportsBatch: true,
+  }),
+  "gemini-3-pro-image": Object.freeze({
+    id: "gemini-3-pro-image",
+    provider: "gemini",
+    supportsBatch: true,
+  }),
+  "gpt-image-2": Object.freeze({
+    id: "gpt-image-2",
+    provider: "openai",
+    supportsBatch: false,
+  }),
+});
+
+function resolveImageModel(value) {
+  const requested = String(value || DEFAULT_IMAGE_MODEL).trim();
+  const normalized = IMAGE_MODEL_ALIASES[requested] || requested;
+  const config = IMAGE_MODEL_CONFIG[normalized];
+  if (!config) {
+    throw new Error(
+      `Unsupported image model "${requested}". Allowed: ${Object.keys(IMAGE_MODEL_CONFIG).join(", ")}`
+    );
+  }
+  return config;
+}
+
+function apiKeyForImageModel(config) {
+  const key =
+    config?.provider === "openai"
+      ? process.env.OPENAI_API_KEY
+      : process.env.GEMINI_API_KEY;
+  if (!key) {
+    throw new Error(
+      config?.provider === "openai"
+        ? "Missing OPENAI_API_KEY env var"
+        : "Missing GEMINI_API_KEY env var"
+    );
+  }
+  return key;
+}
 
 const GENERATABLE_CATEGORIES = new Set([
   "Beady_Necklace",
@@ -273,9 +325,9 @@ async function firestoreRetry(fn, label = "firestore") {
 }
 
 // -------------------------
-// GEMINI RETRY HELPER (UPDATED: Aggressive 6s+ Backoff & 10 Retries)
+// IMAGE PROVIDER RETRY HELPER (aggressive 6s+ backoff & 10 retries)
 // -------------------------
-async function callGeminiWithRetry(fn, label = "gemini", maxRetries = 10) {
+async function callImageWithRetry(fn, label = "image-provider", maxRetries = 10) {
   let lastErr;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
@@ -286,7 +338,12 @@ async function callGeminiWithRetry(fn, label = "gemini", maxRetries = 10) {
       
       // Check specifically for overload/rate-limit signals
       const isOverloaded = 
+        Number(err?.status) === 429 ||
+        Number(err?.status) === 500 ||
+        Number(err?.status) === 502 ||
+        Number(err?.status) === 503 ||
         msg.includes("overloaded") || 
+        msg.includes("rate limit") ||
         msg.includes("429") || 
         msg.includes("503") ||
         msg.includes("502") || 
@@ -384,6 +441,122 @@ async function callGeminiImagesGenerations({
   });
 }
 
+async function readUpstreamJson(resp, providerLabel) {
+  const raw = await resp.text().catch(() => "");
+  let data = null;
+  try { data = raw ? JSON.parse(raw) : null; } catch { data = null; }
+  if (!resp.ok) {
+    const requestId = resp.headers?.get?.("x-request-id");
+    const message =
+      data?.error?.message ||
+      data?.message ||
+      raw ||
+      `${providerLabel} failed with HTTP ${resp.status} (empty body)`;
+    const err = new Error(requestId ? `${message} [request ${requestId}]` : message);
+    err.status = resp.status;
+    throw err;
+  }
+  if (!data) throw new Error(`${providerLabel} returned an empty or non-JSON response`);
+  return data;
+}
+
+function openAIImageBufferFromResponse(data) {
+  const b64 = data?.data?.[0]?.b64_json;
+  if (!b64) throw new Error("OpenAI image response did not contain data[0].b64_json");
+  return Buffer.from(b64, "base64");
+}
+
+function normalizeOpenAIQuality(value) {
+  const v = String(value || "medium").toLowerCase();
+  return ["low", "medium", "high", "auto"].includes(v) ? v : "medium";
+}
+
+function normalizeOpenAIOutputFormat(value) {
+  const v = String(value || "png").toLowerCase();
+  return ["png", "jpeg", "webp"].includes(v) ? v : "png";
+}
+
+async function callOpenAIImagesEdits({
+  apiKey,
+  model,
+  prompt,
+  size,
+  quality,
+  output_format,
+  images,
+}) {
+  const form = new FormData();
+  form.append("model", model);
+  form.append("prompt", String(prompt || ""));
+  form.append("size", String(size || "2048x2048"));
+  form.append("quality", normalizeOpenAIQuality(quality));
+  form.append("output_format", normalizeOpenAIOutputFormat(output_format));
+  form.append("n", "1");
+
+  for (const [index, img] of (images || []).entries()) {
+    const mime = String(img?.mime || "image/png");
+    const filename = img?.filename || filenameForMime(`image${index}`, mime);
+    form.append(
+      "image[]",
+      new Blob([Buffer.from(img?.buffer || Buffer.alloc(0))], { type: mime }),
+      filename
+    );
+  }
+
+  const resp = await fetch("https://api.openai.com/v1/images/edits", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}` },
+    body: form,
+  });
+  return openAIImageBufferFromResponse(
+    await readUpstreamJson(resp, "OpenAI images/edits")
+  );
+}
+
+async function callOpenAIImagesGenerations({
+  apiKey,
+  model,
+  prompt,
+  size,
+  quality,
+  output_format,
+}) {
+  const resp = await fetch("https://api.openai.com/v1/images/generations", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model,
+      prompt: String(prompt || ""),
+      size: String(size || "2048x2048"),
+      quality: normalizeOpenAIQuality(quality),
+      output_format: normalizeOpenAIOutputFormat(output_format),
+      n: 1,
+    }),
+  });
+  return openAIImageBufferFromResponse(
+    await readUpstreamJson(resp, "OpenAI images/generations")
+  );
+}
+
+async function callImageModelEdits(options) {
+  const config = resolveImageModel(options?.model);
+  const apiKey = options?.apiKey || apiKeyForImageModel(config);
+  return config.provider === "openai"
+    ? callOpenAIImagesEdits({ ...options, apiKey, model: config.id })
+    : callGeminiImagesEdits({ ...options, apiKey, model: config.id });
+}
+
+async function callImageModelGenerations(options) {
+  const config = resolveImageModel(options?.model);
+  const apiKey = options?.apiKey || apiKeyForImageModel(config);
+  return config.provider === "openai"
+    ? callOpenAIImagesGenerations({ ...options, apiKey, model: config.id })
+    : callGeminiImagesGenerations({ ...options, apiKey, model: config.id });
+}
+
 function sizeToAspectRatio(size = "2048x2048") {
   const m = /^(\d+)\s*x\s*(\d+)$/.exec(String(size || "").trim());
   if (!m) return "1:1";
@@ -413,8 +586,8 @@ async function callGeminiGenerateContentImage({
   images,
 }) {
   const geminiModel =
-    String(model || "gemini-3.1-flash-image-preview").trim() ||
-    "gemini-3.1-flash-image-preview";
+    String(model || DEFAULT_IMAGE_MODEL).trim() ||
+    DEFAULT_IMAGE_MODEL;
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent`;
 
   // ============================================================
@@ -1224,7 +1397,7 @@ async function _handlerImpl(event) {
     runId,
     slotIndex,
     kind = "edits",
-    model: _clientModel, // ignored
+    model: _clientModel,
     prompt,
     size = "2048x2048",
     quality = "high",
@@ -1243,7 +1416,13 @@ async function _handlerImpl(event) {
     manifest,
   } = body || {};
 
-  const model = GEMINI_IMAGE_MODEL;
+  let modelConfig;
+  try {
+    modelConfig = resolveImageModel(_clientModel);
+  } catch (err) {
+    return json(400, { ok: false, error: safeErr(err) });
+  }
+  const model = modelConfig.id;
 
   // ---------- NEW: non-job operations (no jobId required) ----------
   try {
@@ -1486,8 +1665,18 @@ async function _handlerImpl(event) {
       };
       memLog("entry");
 
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (!apiKey) return json(400, { error: { message: "Missing GEMINI_API_KEY env var" } });
+      if (modelConfig.provider !== "gemini" || !modelConfig.supportsBatch) {
+        return json(400, {
+          error: {
+            message:
+              "Batch mode is available for Gemini 3.1 Flash Image and Gemini 3 Pro Image. Use Standard mode for OpenAI GPT Image 2.",
+          },
+        });
+      }
+      let apiKey;
+      try { apiKey = apiKeyForImageModel(modelConfig); }
+      catch (err) { return json(400, { error: safeErr(err) }); }
+      const batchModel = modelConfig.id;
 
       const sets = Array.isArray(body?.sets) ? body.sets : null;
       if (!sets || sets.length === 0) {
@@ -1691,7 +1880,7 @@ async function _handlerImpl(event) {
               return null;
             })(),
             timestamp: new Date().toISOString(),
-            model: GEMINI_IMAGE_MODEL,
+            model: batchModel,
             batchMode: false,
             copyOnly: true,
             slots: slotsOut,
@@ -1727,7 +1916,7 @@ async function _handlerImpl(event) {
       // Step C: Upload JSONL to Gemini Files API, then create the batch.
       const fileName = await uploadJsonlToGeminiFiles(apiKey, jsonlBuffer, displayName);
       memLog(`after Files API upload`);
-      const { batchName, raw } = await createGeminiBatchJob(apiKey, GEMINI_IMAGE_MODEL, fileName, displayName);
+      const { batchName, raw } = await createGeminiBatchJob(apiKey, batchModel, fileName, displayName);
       memLog(`after batch create`);
 
       // Step D: Persist routing data in Firestore. The doc id is a
@@ -1743,7 +1932,7 @@ async function _handlerImpl(event) {
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         state: "JOB_STATE_PENDING",
         collected: false,
-        model: GEMINI_IMAGE_MODEL,
+        model: batchModel,
         imageSize,
         inputFileName: fileName,
         inputJsonlBytes: jsonlBytes,
@@ -1775,8 +1964,9 @@ async function _handlerImpl(event) {
     }
 
     if (kind === "batch_status") {
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (!apiKey) return json(400, { error: { message: "Missing GEMINI_API_KEY env var" } });
+      let apiKey;
+      try { apiKey = apiKeyForImageModel(modelConfig); }
+      catch (err) { return json(400, { error: safeErr(err) }); }
 
       const batchName = String(body?.batchName || "").trim();
       if (!batchName.startsWith("batches/")) {
@@ -2044,7 +2234,7 @@ async function _handlerImpl(event) {
             return null;
           })(),
           timestamp: new Date().toISOString(),
-          model: GEMINI_IMAGE_MODEL,
+          model: docData.model || DEFAULT_IMAGE_MODEL,
           batchMode: true,
           batchName,
           batchState: state,
@@ -2163,6 +2353,7 @@ async function _handlerImpl(event) {
           batchName: d.batchName,
           displayName: d.displayName,
           sessionId: d.sessionId || null,
+          model: d.model || DEFAULT_IMAGE_MODEL,
           state: d.state,
           collected: !!d.collected,
           batchStats: d.batchStats || null,
@@ -2332,8 +2523,9 @@ async function _handlerImpl(event) {
         return json(400, { error: { message: "tasks max length is 8" } });
       }
 
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (!apiKey) return json(400, { error: { message: "Missing GEMINI_API_KEY env var" } });
+      let apiKey;
+      try { apiKey = apiKeyForImageModel(modelConfig); }
+      catch (err) { return json(400, { error: safeErr(err) }); }
 
       const runToken =
         globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : require("crypto").randomUUID();
@@ -2369,7 +2561,7 @@ async function _handlerImpl(event) {
             return; // Done with this task
           }
 
-          // 2. Handle "Edits" tasks (Gemini)
+          // 2. Handle image edit tasks with the selected provider.
           const basePath0 = String(t?.input_storage_path || "").trim();
           const basePath1 = String(t?.input_charm_storage_path || "").trim();
           const promptT = String(t?.prompt || "").trim();
@@ -2382,21 +2574,25 @@ async function _handlerImpl(event) {
           const img0 = await storagePathToBuffer(basePath0);
           const img1 = await storagePathToBuffer(basePath1);
 
-          // ✅ RETRY WRAPPER: Handles "Model overloaded" (503/429) automatically
-          let outBuf = await callGeminiWithRetry(async () => {
-             return await callGeminiImagesEdits({
+          // Retry transient overload/rate-limit failures for either provider.
+          let outBuf = await callImageWithRetry(async () => {
+             return await callImageModelEdits({
               apiKey,
-              model: GEMINI_IMAGE_MODEL,
+              model,
               prompt: promptT,
               size: String(t?.size || body?.size || "2048x2048"),
-              quality: "high",
+              quality: String(
+                t?.quality ||
+                body?.quality ||
+                (modelConfig.provider === "openai" ? "medium" : "high")
+              ),
               output_format: "png",
               images: [
                 { buffer: img0.buffer, mime: img0.mime, filename: filenameForMime("image0", img0.mime) },
                 { buffer: img1.buffer, mime: img1.mime, filename: filenameForMime("image1", img1.mime) },
               ],
             });
-          }, `slot_${slot}`);
+          }, `${modelConfig.provider}_slot_${slot}`);
 
           outBuf = await applyFinalFrameZoomIfNeeded(outBuf, t?.postprocess || body?.postprocess);
           
@@ -2445,15 +2641,16 @@ async function _handlerImpl(event) {
       // input_charm_storage_path is OPTIONAL.
       //   • Two-image flow (regeneration / fresh composite): caller supplies
       //     both — image0 is the model/reference, image1 is the charm — and
-      //     Gemini composites them per the prompt.
+      //     the selected image model composites them per the prompt.
       //   • One-image flow (in-place edit / Listing-Generator adjustment-mode
       //     redo): caller supplies only basePath0 and a prompt that describes
-      //     the requested edit. We send a single image to Gemini so it does
+      //     the requested edit. We send a single image so the model does
       //     not search for differences between two identical inputs or try
       //     to composite them.
 
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (!apiKey) return json(400, { error: { message: "Missing GEMINI_API_KEY env var" } });
+      let apiKey;
+      try { apiKey = apiKeyForImageModel(modelConfig); }
+      catch (err) { return json(400, { error: safeErr(err) }); }
 
       const outputBasePath = assertAllowedOutputBase(output_base_path);
       const effectiveSlot = Number.isFinite(Number(slotIndex)) && Number(slotIndex) >= 0 ? Number(slotIndex) : 0;
@@ -2468,7 +2665,7 @@ async function _handlerImpl(event) {
         images.push({ buffer: img1.buffer, mime: img1.mime, filename: filenameForMime("image1", img1.mime) });
       }
 
-      let outBuf = await callGeminiImagesEdits({
+      let outBuf = await callImageModelEdits({
         apiKey,
         model,
         prompt,
@@ -2680,8 +2877,7 @@ async function _handlerImpl(event) {
       "jobRef.set"
     );
 
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) throw new Error("Missing GEMINI_API_KEY env var");
+    const apiKey = apiKeyForImageModel(modelConfig);
 
     // -------------------------
     // SPECIAL: charm_postscale
@@ -2735,7 +2931,7 @@ async function _handlerImpl(event) {
         }
       } else {
         rp = rp || "Remove the pendant charm + jump ring completely...";
-        baseNoCharmBuf = await callGeminiImagesEdits({
+        baseNoCharmBuf = await callImageModelEdits({
           apiKey,
           model,
           prompt: rp,
@@ -2828,7 +3024,7 @@ async function _handlerImpl(event) {
     let outBuf;
 
     if (kind === "generations") {
-      outBuf = await callGeminiImagesGenerations({
+      outBuf = await callImageModelGenerations({
         apiKey,
         model,
         prompt,
@@ -2859,7 +3055,7 @@ async function _handlerImpl(event) {
         images.push({ buffer: charm.buffer, mime: charm.mime, filename: filenameForMime("charm_macro", charm.mime) });
       }
 
-      outBuf = await callGeminiImagesEdits({
+      outBuf = await callImageModelEdits({
         apiKey,
         model,
         prompt,
