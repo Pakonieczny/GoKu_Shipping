@@ -80,6 +80,8 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
     padding: 14px 22px;
     border-bottom: 1px solid var(--line);
     background: linear-gradient(180deg, var(--card), var(--bg));
@@ -113,6 +115,8 @@
   }
   .app-header .header-meta {
     display: flex;
+    align-items: center;
+    flex-wrap: wrap;
     gap: 18px;
     font-family: var(--font-mono);
     font-size: 11px;
@@ -123,6 +127,56 @@
     font-size: 9px;
     margin-right: 4px;
     vertical-align: middle;
+  }
+  .image-model-switcher {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 4px 5px 4px 10px;
+    border: 1px solid var(--line-2);
+    border-radius: 999px;
+    background: var(--inset);
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .image-model-switcher:focus-within {
+    border-color: var(--accent-line);
+    box-shadow: 0 0 0 2px var(--accent-bg);
+  }
+  .image-model-switcher select {
+    width: auto;
+    min-width: 250px;
+    max-width: 360px;
+    padding: 5px 28px 5px 9px;
+    border: 0;
+    border-radius: 999px;
+    background-color: var(--card-2);
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    cursor: pointer;
+  }
+  .image-model-switcher select:focus {
+    outline: none;
+    box-shadow: none;
+  }
+  .image-model-switcher select:disabled {
+    cursor: wait;
+    opacity: 0.65;
+  }
+  @media (max-width: 820px) {
+    .app-header .header-meta {
+      width: 100%;
+      gap: 10px;
+    }
+    .image-model-switcher {
+      width: 100%;
+    }
+    .image-model-switcher select {
+      flex: 1;
+      min-width: 0;
+      max-width: none;
+    }
   }
 
   /* ---------- Tab navigation (uses original toggle button IDs) ---------- */
@@ -1888,7 +1942,14 @@
     <div class="header-meta">
       <span><span class="dot">●</span> gokudatabase.firebasestorage.app</span>
       <span>auth: anonymous</span>
-      <span>model: gemini-3.1-flash-image-preview</span>
+      <label class="image-model-switcher" for="imageModelSelect" title="Controls all new Standard generations, redos, and Charm Maker images.">
+        <span>model:</span>
+        <select id="imageModelSelect" aria-label="Image generation model">
+          <option value="gemini-3.1-flash-image">Gemini 3.1 Flash Image · fast / value</option>
+          <option value="gemini-3-pro-image">Gemini 3 Pro Image · maximum Gemini quality</option>
+          <option value="gpt-image-2">OpenAI GPT Image 2 · best realism / balanced cost</option>
+        </select>
+      </label>
     </div>
   </header>
 
@@ -2457,6 +2518,132 @@
 
     const ROOT = "listing-generator-1";
 
+    // ============================================================
+    // IMAGE MODEL ROUTING
+    // ------------------------------------------------------------
+    // One persisted selector controls every new Standard generation,
+    // Review redo, and Charm Maker image request. Only these allowlisted
+    // models can reach the backend. Gemini models also support this app's
+    // existing asynchronous Batch workflow; OpenAI currently runs through
+    // Standard mode so a selected model is never silently substituted.
+    // ============================================================
+    const IMAGE_MODEL_LS_KEY = "lg1_image_model_v1";
+    const DEFAULT_IMAGE_MODEL = "gemini-3.1-flash-image";
+    const IMAGE_MODEL_ALIASES = Object.freeze({
+      "gemini-3.1-flash-image-preview": "gemini-3.1-flash-image",
+      "gemini-3-pro-image-preview": "gemini-3-pro-image",
+      "gpt-5.5": "gpt-image-2",
+    });
+    const IMAGE_MODEL_CATALOG = Object.freeze({
+      "gemini-3.1-flash-image": Object.freeze({
+        id: "gemini-3.1-flash-image",
+        provider: "gemini",
+        endpoint: "geminiImageProxy-background",
+        quality: "high",
+        supportsBatch: true,
+        label: "Gemini 3.1 Flash Image",
+        detail: "Fastest and best value for bulk generation",
+      }),
+      "gemini-3-pro-image": Object.freeze({
+        id: "gemini-3-pro-image",
+        provider: "gemini",
+        endpoint: "geminiImageProxy-background",
+        quality: "high",
+        supportsBatch: true,
+        label: "Gemini 3 Pro Image",
+        detail: "Maximum Gemini fidelity for complex product edits",
+      }),
+      "gpt-image-2": Object.freeze({
+        id: "gpt-image-2",
+        provider: "openai",
+        endpoint: "openaiImageProxy-background",
+        // Medium is the strongest practical quality/cost balance for
+        // repeated 2K listing generations. Select Gemini Pro when you want
+        // the premium path without OpenAI's higher 2K image-token spend.
+        quality: "medium",
+        supportsBatch: false,
+        label: "OpenAI GPT Image 2",
+        detail: "Best realism with cost-balanced Medium quality at 2K",
+      }),
+    });
+
+    function normalizeImageModelId(value) {
+      const requested = String(value || "").trim();
+      const normalized = IMAGE_MODEL_ALIASES[requested] || requested;
+      return IMAGE_MODEL_CATALOG[normalized] ? normalized : DEFAULT_IMAGE_MODEL;
+    }
+
+    function readSelectedImageModel() {
+      try {
+        return normalizeImageModelId(
+          localStorage.getItem(IMAGE_MODEL_LS_KEY) || DEFAULT_IMAGE_MODEL
+        );
+      } catch (_) {
+        return DEFAULT_IMAGE_MODEL;
+      }
+    }
+
+    function writeSelectedImageModel(modelId) {
+      const normalized = normalizeImageModelId(modelId);
+      try { localStorage.setItem(IMAGE_MODEL_LS_KEY, normalized); } catch (_) {}
+      return normalized;
+    }
+
+    function getSelectedImageModel() {
+      const select = document.getElementById("imageModelSelect");
+      return normalizeImageModelId(select?.value || readSelectedImageModel());
+    }
+
+    function getImageModelConfig(modelId = getSelectedImageModel()) {
+      return IMAGE_MODEL_CATALOG[normalizeImageModelId(modelId)];
+    }
+
+    async function postImageGeneration(body, signal, modelId = getSelectedImageModel()) {
+      const config = getImageModelConfig(modelId);
+      return postJson(
+        config.endpoint,
+        {
+          ...body,
+          model: config.id,
+          quality: body?.quality || config.quality,
+          size: body?.size || "2048x2048",
+          output_format: body?.output_format || "png",
+        },
+        signal
+      );
+    }
+
+    function renderImageModelSelection() {
+      const select = document.getElementById("imageModelSelect");
+      if (!select) return;
+      const modelId = normalizeImageModelId(select.value || readSelectedImageModel());
+      const config = getImageModelConfig(modelId);
+      select.value = modelId;
+      select.title = `${config.label}: ${config.detail}. Applies to future image requests.`;
+      writeSelectedImageModel(modelId);
+    }
+
+    const imageModelSelect = document.getElementById("imageModelSelect");
+    if (imageModelSelect) {
+      imageModelSelect.value = readSelectedImageModel();
+      renderImageModelSelection();
+      imageModelSelect.addEventListener("change", () => {
+        const modelId = writeSelectedImageModel(imageModelSelect.value);
+        imageModelSelect.value = modelId;
+        renderImageModelSelection();
+
+        const config = getImageModelConfig(modelId);
+        if (!config.supportsBatch && typeof _isBatchModeActive === "function" && _isBatchModeActive()) {
+          _setGenMode("standard");
+        } else if (typeof _renderGenModeButtons === "function") {
+          _renderGenModeButtons();
+        }
+        if (typeof setStatus === "function") {
+          setStatus(`${config.label} selected for future image generation.`);
+        }
+      });
+    }
+
     const GENERATABLE_CATEGORIES = new Set([
       "Beady_Necklace",
       "Regular_Necklace",
@@ -2928,6 +3115,7 @@
       generateSetBtn.disabled = !!isBusy;
       generateSetBtn.style.opacity = isBusy ? "0.6" : "1";
       generateSetBtn.style.cursor = isBusy ? "not-allowed" : "pointer";
+      if (imageModelSelect) imageModelSelect.disabled = !!isBusy;
     }
 
     let CURRENT_SET = null; 
@@ -3219,26 +3407,21 @@ The output must look like the input image with ONLY the user's requested change 
             // entirely in adjustment mode so the backend treats it as a
             // single-image edit (see comment above).
             //
-            // Model selection: adjustment-mode redos go to Gemini 3 Pro
-            // Image (Nano Banana Pro) for higher fidelity on targeted edits
-            // — its stronger reasoning and detail rendering pay off when
-            // the user is asking for something specific. Regeneration mode
-            // continues to use 3.1 Flash Image (Nano Banana 2) for cost
-            // and throughput on bulk runs.
+            // The header selector is the single source of truth for both
+            // targeted adjustments and full regenerations. Capture it once
+            // so a request cannot switch providers halfway through dispatch.
+            const redoModel = getSelectedImageModel();
             const editsBody = {
               kind: "edits",
               activeCategory: ctxCategory,
               input_storage_path: inputPath,
               output_base_path: ctxSetPath,
               slotIndex,
-              model: isAdjustmentMode
-                ? "gemini-3-pro-image-preview"
-                : "gemini-3.1-flash-image-preview",
               prompt: finalPrompt,
             };
             if (charmPath) editsBody.input_charm_storage_path = charmPath;
 
-            await postJson(GEMINI_BG_FN, editsBody);
+            await postImageGeneration(editsBody, undefined, redoModel);
 
               waitedResult = await waitForSlotPngUrl(ctxSetPath, slotIndex, {
               afterUpdatedMs: beforeUpdatedMs,
@@ -5384,7 +5567,6 @@ function updateApproveButtonState() {
         }
 
         const GEMINI_FN = "geminiImageProxy";
-        const GEMINI_BG_FN = "geminiImageProxy-background";
 
         async function allocSet(category) {
         return await postJson(GEMINI_FN, { kind: "alloc_set", activeCategory: category });
@@ -5425,6 +5607,7 @@ function updateApproveButtonState() {
         if (!category) throw new Error("Pick a category first.");
         const slotPlan = SLOT_MAP[category];
         if (!slotPlan) throw new Error(`Unknown category: ${category}`);
+        const generationModel = getSelectedImageModel();
 
         setStatus("Allocating Set…");
         const alloc = await allocSet(category);
@@ -5456,7 +5639,7 @@ function updateApproveButtonState() {
           sourceCharmName: charmLatest.name,
           timestamp: new Date().toISOString(),
           slots: [],
-          model: "gemini-3.1-flash-image-preview",
+          model: generationModel,
         };
 
         setStatus("Preparing slots (Randomizing)…");
@@ -5510,7 +5693,7 @@ function updateApproveButtonState() {
               slotIndex: i,
             });
           } else {
-            await postJson(GEMINI_BG_FN, {
+            await postImageGeneration({
               kind: "edits",
               activeCategory: category,
               input_storage_path: srcLatest.fullPath,
@@ -5518,8 +5701,7 @@ function updateApproveButtonState() {
               output_base_path: outputBasePath,
               slotIndex: i,
               prompt: buildSlotPrompt(category, spec.folder, slotNum),
-              model: "gemini-3.1-flash-image-preview",
-            });
+            }, undefined, generationModel);
           }
 
           // Explicitly pass the extended 20-min timeout and 5s interval to the call
@@ -6052,14 +6234,13 @@ window.redoCharmSlot = async function(folderId, slotIndex) {
             }
 
             // PASS SIGNAL TO REQUEST
-            await postJson(GEMINI_BG_FN, {
+            await postImageGeneration({
                 kind: "edits",
                 activeCategory: category,
                 input_storage_path: inputPath,
                 input_charm_storage_path: inputCharmPath,
                 output_base_path: folderPath,
                 slotIndex: slotIndex,
-                model: "gemini-3.1-flash-image-preview",
                 prompt: promptStr
             }, signal);
 
@@ -6105,6 +6286,7 @@ window.redoCharmSlot = async function(folderId, slotIndex) {
 window.regenCharmQuad = async function(folderId) {
         const folderPath = `${ROOT}/${currentCharmViewFolder}/${folderId}`;
         const cardObj = document.getElementById(`card_${folderId}`);
+        const regenerationModel = getSelectedImageModel();
         
         setBusy(true);
         setStatus(`Regenerating Quad ${folderId}...`);
@@ -6180,12 +6362,12 @@ window.regenCharmQuad = async function(folderId) {
             const sig0 = myControllers[0].signal;
             let prev0 = document.getElementById(`prevBox_${folderId}_0`);
             if(prev0) prev0.innerHTML = window.getSpinnerHTML("Generating Base...");
-            await postJson(GEMINI_BG_FN, {
+            await postImageGeneration({
                 kind: "edits", activeCategory: "Charms",
                 input_storage_path: sourceCharmPath, input_charm_storage_path: sourceCharmPath,
                 output_base_path: folderPath, slotIndex: 0,
-                model: "gemini-3.1-flash-image-preview", prompt: promptStrCharm
-            }, sig0);
+                prompt: promptStrCharm
+            }, sig0, regenerationModel);
             
             const charmRes = await waitForSlotPngUrl(folderPath, 0, { 
                 timeoutMs: 600000, intervalMs: 5000,
@@ -6210,12 +6392,12 @@ window.regenCharmQuad = async function(folderId) {
             let prev1 = document.getElementById(`prevBox_${folderId}_1`);
             if(prev1) prev1.innerHTML = window.getSpinnerHTML("Removing Hoop...");
             await sleep(2000, sig1); 
-            await postJson(GEMINI_BG_FN, {
+            await postImageGeneration({
                 kind: "edits", activeCategory: "Charms",
                 input_storage_path: charmRes.storagePath, input_charm_storage_path: charmRes.storagePath,
                 output_base_path: folderPath, slotIndex: 1,
-                model: "gemini-3.1-flash-image-preview", prompt: promptStrEarring
-            }, sig1);
+                prompt: promptStrEarring
+            }, sig1, regenerationModel);
             
             const earringRes = await waitForSlotPngUrl(folderPath, 1, { 
                 timeoutMs: 600000, intervalMs: 5000,
@@ -6241,12 +6423,12 @@ window.regenCharmQuad = async function(folderId) {
             if(prev2) prev2.innerHTML = window.getSpinnerHTML("Generating Line Art...");
             await sleep(2000, sig2);
             const refPathForBaseBW = lineArtRefPath || charmRes.storagePath;
-            await postJson(GEMINI_BG_FN, {
+            await postImageGeneration({
                 kind: "edits", activeCategory: "Charms",
                 input_storage_path: charmRes.storagePath, input_charm_storage_path: refPathForBaseBW,
                 output_base_path: folderPath, slotIndex: 2,
-                model: "gemini-3.1-flash-image-preview", prompt: promptStrBW
-            }, sig2);
+                prompt: promptStrBW
+            }, sig2, regenerationModel);
             
             const charmBWRes = await waitForSlotPngUrl(folderPath, 2, { 
                 timeoutMs: 600000, intervalMs: 5000,
@@ -6271,12 +6453,12 @@ window.regenCharmQuad = async function(folderId) {
             let prev3 = document.getElementById(`prevBox_${folderId}_3`);
             if(prev3) prev3.innerHTML = window.getSpinnerHTML("Removing Hoop...");
             await sleep(2000, sig3);
-            await postJson(GEMINI_BG_FN, {
+            await postImageGeneration({
                 kind: "edits", activeCategory: "Charms",
                 input_storage_path: charmBWRes.storagePath, input_charm_storage_path: charmBWRes.storagePath,
                 output_base_path: folderPath, slotIndex: 3,
-                model: "gemini-3.1-flash-image-preview", prompt: promptStrBWEarring
-            }, sig3);
+                prompt: promptStrBWEarring
+            }, sig3, regenerationModel);
             
             const earringBWRes = await waitForSlotPngUrl(folderPath, 3, { 
                 timeoutMs: 600000, intervalMs: 5000,
@@ -6336,6 +6518,7 @@ window.regenCharmQuad = async function(folderId) {
     window.continueCharmQuad = async function(folderId) {
         const folderPath = `${ROOT}/${currentCharmViewFolder}/${folderId}`;
         const cardObj = document.getElementById(`card_${folderId}`);
+        const derivativeModel = getSelectedImageModel();
 
         if (cardObj) cardObj.classList.add("working-card");
         const continueBtn = document.getElementById(`continue_${folderId}`);
@@ -6377,12 +6560,12 @@ window.regenCharmQuad = async function(folderId) {
             let prev1 = document.getElementById(`prevBox_${folderId}_1`);
             if(prev1) prev1.innerHTML = window.getSpinnerHTML("Removing Hoop...");
             await sleep(2000);
-            await postJson(GEMINI_BG_FN, {
+            await postImageGeneration({
                 kind: "edits", activeCategory: "Stud_Earrings",
                 input_storage_path: baseCharmStoragePath, input_charm_storage_path: baseCharmStoragePath,
                 output_base_path: folderPath, slotIndex: 1,
-                model: "gemini-3.1-flash-image-preview", prompt: promptStrEarring
-            });
+                prompt: promptStrEarring
+            }, undefined, derivativeModel);
             const earringRes = await waitForSlotPngUrl(folderPath, 1, { timeoutMs: 600000, intervalMs: 5000 });
             const newBlob1 = await fetchAndCacheBlob(earringRes.url, earringRes.storagePath, Date.now());
 
@@ -6402,12 +6585,12 @@ window.regenCharmQuad = async function(folderId) {
             if(prev2) prev2.innerHTML = window.getSpinnerHTML("Generating Line Art...");
             await sleep(2000);
             const refPathForBaseBW = lineArtRefPath || baseCharmStoragePath;
-            await postJson(GEMINI_BG_FN, {
+            await postImageGeneration({
                 kind: "edits", activeCategory: "Charms",
                 input_storage_path: baseCharmStoragePath, input_charm_storage_path: refPathForBaseBW,
                 output_base_path: folderPath, slotIndex: 2,
-                model: "gemini-3.1-flash-image-preview", prompt: promptStrBW
-            });
+                prompt: promptStrBW
+            }, undefined, derivativeModel);
             const charmBWRes = await waitForSlotPngUrl(folderPath, 2, { timeoutMs: 600000, intervalMs: 5000 });
             const newBlob2 = await fetchAndCacheBlob(charmBWRes.url, charmBWRes.storagePath, Date.now());
 
@@ -6426,12 +6609,12 @@ window.regenCharmQuad = async function(folderId) {
             let prev3 = document.getElementById(`prevBox_${folderId}_3`);
             if(prev3) prev3.innerHTML = window.getSpinnerHTML("Removing Hoop...");
             await sleep(2000);
-            await postJson(GEMINI_BG_FN, {
+            await postImageGeneration({
                 kind: "edits", activeCategory: "Stud_Earrings",
                 input_storage_path: charmBWRes.storagePath, input_charm_storage_path: charmBWRes.storagePath,
                 output_base_path: folderPath, slotIndex: 3,
-                model: "gemini-3.1-flash-image-preview", prompt: promptStrBWEarring
-            });
+                prompt: promptStrBWEarring
+            }, undefined, derivativeModel);
             const earringBWRes = await waitForSlotPngUrl(folderPath, 3, { timeoutMs: 600000, intervalMs: 5000 });
             const newBlob3 = await fetchAndCacheBlob(earringBWRes.url, earringBWRes.storagePath, Date.now());
 
@@ -6564,6 +6747,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         const timestamp = Date.now() + Math.floor(Math.random() * 10000);
         const folderId = `Deriv_${timestamp}`;
         const outputBasePath = `${ROOT}/Charm_Maker/Generated_Charm_Sets/${folderId}`;
+        const generationModel = getSelectedImageModel();
 
         const tempDiv = document.createElement("div");
         tempDiv.innerHTML = createCharmCardHTML(folderId, false);
@@ -6610,6 +6794,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
                 sourceCharm: targetCharmRef.fullPath,
                 sourceEarring: targetEarringRef?.fullPath || null,
                 lineArtRef: lineArtRef?.fullPath || null,
+                model: generationModel,
                 timestamp: new Date().toISOString()
             };
 
@@ -6623,12 +6808,12 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
             // STEP 1 - ONLY GENERATE THE BASE CHARM
             let prev0 = document.getElementById(`prevBox_${folderId}_0`);
             if(prev0) prev0.innerHTML = window.getSpinnerHTML("Generating Base...");
-            await postJson(GEMINI_BG_FN, {
+            await postImageGeneration({
                 kind: "edits", activeCategory: "Charms", 
                 input_storage_path: targetCharmRef.fullPath, input_charm_storage_path: targetCharmRef.fullPath,
                 output_base_path: outputBasePath, slotIndex: 0,
-                model: "gemini-3.1-flash-image-preview", prompt: promptStrCharm
-            });
+                prompt: promptStrCharm
+            }, undefined, generationModel);
             const charmRes = await waitForSlotPngUrl(outputBasePath, 0, { timeoutMs: 600000, intervalMs: 5000 });
             const newBlob0 = await fetchAndCacheBlob(charmRes.url, charmRes.storagePath, Date.now());
             
@@ -10276,7 +10461,13 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       const panel = document.getElementById("batchJobsPanel");
       if (!standardBtn || !batchBtn) return;
 
-      const mode = _readGenMode();
+      const modelConfig = getImageModelConfig();
+      const canBatch = !!modelConfig.supportsBatch;
+      let mode = _readGenMode();
+      if (mode === "batch" && !canBatch) {
+        mode = "standard";
+        _writeGenMode(mode);
+      }
       const isBatch = mode === "batch";
 
       // Visual selection (use accent for active, dim for inactive)
@@ -10297,10 +10488,23 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       };
       apply(standardBtn, isBatch ? inactiveStyle : activeStyle);
       apply(batchBtn,    isBatch ? activeStyle    : inactiveStyle);
+      batchBtn.disabled = !canBatch;
+      batchBtn.style.opacity = canBatch ? "1" : "0.45";
+      batchBtn.style.cursor = canBatch ? "pointer" : "not-allowed";
+      batchBtn.title = canBatch
+        ? `Run ${modelConfig.label} through the Gemini Batch API at reduced cost.`
+        : `${modelConfig.label} currently uses Standard mode in this app.`;
 
-      if (info) info.style.display = isBatch ? "block" : "none";
+      if (info) {
+        info.style.display = isBatch ? "block" : "none";
+        info.textContent =
+          `${modelConfig.label} batch jobs run on Google's asynchronous Gemini endpoint at reduced cost. ` +
+          `Output stays at 2K (2048×2048); results land in Firebase Storage and the manifest writes automatically.`;
+      }
       if (batchHint) {
-        batchHint.textContent = isBatch
+        batchHint.textContent = !canBatch
+          ? `${modelConfig.label} uses Standard mode`
+          : isBatch
           ? "submits one batch job (50% off, up to 24h)"
           : "loops the action above N times";
       }
@@ -10341,6 +10545,12 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     }
 
     function _setGenMode(m) {
+      if (m === "batch" && !getImageModelConfig().supportsBatch) {
+        _writeGenMode("standard");
+        _renderGenModeButtons();
+        setStatus(`${getImageModelConfig().label} uses Standard mode. Select a Gemini model to enable Gemini Batch.`);
+        return;
+      }
       _writeGenMode(m);
       _renderGenModeButtons();
       // When entering batch mode, refresh the in-flight panel so the
@@ -10382,6 +10592,13 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       if (!category) { alert("Pick a category first."); return; }
       const slotPlan = SLOT_MAP[category];
       if (!slotPlan) { alert(`Unknown category: ${category}`); return; }
+      const batchModel = getSelectedImageModel();
+      const batchModelConfig = getImageModelConfig(batchModel);
+      if (!batchModelConfig.supportsBatch) {
+        _setGenMode("standard");
+        alert(`${batchModelConfig.label} uses Standard mode. Select a Gemini model before submitting a Gemini batch.`);
+        return;
+      }
 
       // Auto-chunk. Each chunk = one Gemini batch job.
       // CHUNK_SIZE is hoisted to module scope (see near postJson around
@@ -10393,7 +10610,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       const chunkCount = Math.ceil(count / CHUNK_SIZE);
 
       const confirmMsg = chunkCount === 1
-        ? `Submit ONE batch job to Gemini for ${count} set(s) of ${category}?\n\n` +
+        ? `Submit ONE ${batchModelConfig.label} batch job for ${count} set(s) of ${category}?\n\n` +
           `· Cost: ~50% of Standard mode\n` +
           `· Output: 2K (2048×2048)\n` +
           `· Turnaround: usually 2–6h, up to 24h\n\n` +
@@ -10410,6 +10627,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
       _batchInFlight = true;
       _batchCancelRequested = false;
+      if (imageModelSelect) imageModelSelect.disabled = true;
       batchProgress.style.display = "block";
       cancelBatchBtn.style.display = "none"; // batch submit is fast, no cancel mid-flight
       generateBatchBtn.disabled = true;
@@ -10544,6 +10762,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
               "geminiImageProxy",
               {
                 kind: "batch_submit",
+                model: batchModel,
                 sets: slice,
                 imageSize: BATCH_DEFAULT_IMAGE_SIZE,
                 displayName: dn,
@@ -10592,6 +10811,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
           const sessionRecord = {
             sessionId,
             category,
+            model: batchModel,
             requestedCount: count,
             effectiveCount,
             chunksSubmitted: submitted.length,
@@ -10632,6 +10852,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       } finally {
         _batchInFlight = false;
         _batchCancelRequested = false;
+        if (imageModelSelect) imageModelSelect.disabled = false;
         generateBatchBtn.disabled = false;
         if (generateSetBtn) generateSetBtn.disabled = false;
         _renderGenModeButtons(); // restore label
@@ -10951,8 +11172,16 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       if (!category) { alert("Pick a category first."); return; }
       const slotPlan = SLOT_MAP[category];
       if (!slotPlan) { alert(`Unknown category: ${category}`); return; }
+      const batchModel = getSelectedImageModel();
+      const batchModelConfig = getImageModelConfig(batchModel);
+      if (!batchModelConfig.supportsBatch) {
+        _setGenMode("standard");
+        alert(`${batchModelConfig.label} uses Standard mode. Select a Gemini model before resuming Gemini batches.`);
+        return;
+      }
 
       _batchInFlight = true;
+      if (imageModelSelect) imageModelSelect.disabled = true;
       batchProgress.style.display = "block";
       cancelBatchBtn.style.display = "inline-flex";
       generateBatchBtn.disabled = true;
@@ -11195,6 +11424,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
               "geminiImageProxy",
               {
                 kind: "batch_submit",
+                model: batchModel,
                 sets: slice,
                 imageSize: BATCH_DEFAULT_IMAGE_SIZE,
                 displayName: dn,
@@ -11293,6 +11523,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       } finally {
         _batchInFlight = false;
         _batchCancelRequested = false;
+        if (imageModelSelect) imageModelSelect.disabled = false;
         generateBatchBtn.disabled = false;
         if (generateSetBtn) generateSetBtn.disabled = false;
         if (resumeBtn) {
@@ -11563,6 +11794,12 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
       // Build the stats grid as plain key:value pairs. Compact and scannable.
       const rows = [];
+      const sessionModels = [...new Set(
+        session.batches
+          .map((b) => normalizeImageModelId(b.model || DEFAULT_IMAGE_MODEL))
+          .map((id) => getImageModelConfig(id).label)
+      )];
+      rows.push(["Model", sessionModels.join(", ") || getImageModelConfig(DEFAULT_IMAGE_MODEL).label]);
       rows.push(["Sets requested",   String(totalSets)]);
       rows.push(["Batches",          `${total} total · ${running} running · ${succeeded} ready · ${finished} saved · ${failed} failed${cancelled ? ` · ${cancelled} cancelled` : ""}`]);
       if (totalImagesGen) rows.push(["Images delivered", String(totalImagesGen)]);
