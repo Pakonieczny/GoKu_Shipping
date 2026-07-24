@@ -9868,14 +9868,23 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     // =========================================================================
     // 5. // CHARM ONLY PROMPTS 
     // =========================================================================
-    const CHARM_TEMPLATE_PROMPT = 
+    const CHARM_TEMPLATE_PROMPT =
     `  TASK:
         • Duplicate the Reference product image exactly and update all visible charms from the Charm Reference image
-        • Critically: When Generating the new image maintain Charm details, Charm Engravings, Colour, and fidelity just like in the Charm reference image. 
+        • Critically: When Generating the new image maintain Charm details, Charm Engravings, Colour, and fidelity just like in the Charm reference image.
         • All engravings must be coloured-in/filled-in using a light shade of copper colour, and must be flat having only superficial depth.
         • Ensure all engravings are a light shade of copper colour.
-        • The Charm/Pendant material is a perfectly flat and very thin sheet of metal, always render the Charm/Pendant completely flat and EXTREMELY thin. 
+        • The Charm/Pendant material is a perfectly flat and very thin sheet of metal, always render the Charm/Pendant completely flat and EXTREMELY thin.
         • DO NOT allow any rounded/radius on the cutout edges.
+
+      TEMPLATE CHARMS ARE THROWAWAY PLACEHOLDERS — ZERO BLEED-OVER (CRITICAL, HIGHEST PRIORITY):
+        • The reference/template image's charm designs are PLACEHOLDERS ONLY. They exist solely to mark WHERE each charm goes and HOW BIG it is. Their design — silhouette, shape, subject, engraving — must be COMPLETELY DISCARDED.
+        • EVERY visible charm instance in the output — every view, angle, duplicate, or reflection — must show the NEW charm from the Charm Reference image: its exact outer silhouette, cutouts, and engraving topology. No exceptions, no instance left unreplaced.
+        • ZERO TOLERANCE for bleed-over: no silhouette, outline, disc, shape, animal, or design element from the template's placeholder charms may survive anywhere in the output. Never blend, average, or hybridize a placeholder design with the new charm design.
+        • KNOWN FAILURE MODE TO AVOID: replacing one charm instance while another instance keeps the template's old placeholder shape. Count the charm instances in the template FIRST; each and every one must be re-rendered as the NEW charm.
+        • SELF-CHECK BEFORE RETURNING: for EVERY charm visible in the output, ask "does its outer silhouette exactly match the Charm Reference image?" If ANY instance answers no, the render is WRONG — replace that instance with the new charm and re-render.
+        • HARD FAIL: any charm in the output retains the template placeholder's silhouette, shape, or design, in whole or in part.
+        • HARD FAIL: two charm instances in the output show different silhouettes from each other.
 
       GOLD COLOR TONE — MATCH SOURCE TEMPLATE EXACTLY (CRITICAL):
         • The metal in the source template image (charm bodies, hoops, chain, connecting rings) is rendered as 14K YELLOW GOLD — a warm yellow tone, NOT rose gold, NOT pink, NOT peach, NOT salmon, NOT copper-pink, NOT red-orange.
@@ -9980,8 +9989,15 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       ☐ The necklace chain and its connector remain exactly as in IMAGE 1.
       ☐ Text, layout, crop, scale, background, lighting, and hardware remain unchanged.`;
 
-    const CHARM_MODEL_PROMPT = 
-    `TASK: (Force the Charm to be EXTREMELY SMALL)
+    const CHARM_MODEL_PROMPT =
+    `TEMPLATE CHARM IS A THROWAWAY PLACEHOLDER — ZERO BLEED-OVER (CRITICAL, HIGHEST PRIORITY):
+        • The reference image's charm/pendant design is a PLACEHOLDER ONLY. It marks WHERE the charm hangs and HOW BIG it is. Its design — silhouette, shape, subject, engraving — must be COMPLETELY DISCARDED.
+        • The output charm must show ONLY the NEW charm from the Charm Reference image: its exact outer silhouette, cutouts, and engraving topology.
+        • ZERO TOLERANCE for bleed-over: no silhouette, outline, disc, shape, animal, or design element from the reference image's placeholder charm may survive in the output. Never blend, average, or hybridize the placeholder design with the new charm design.
+        • SELF-CHECK BEFORE RETURNING: does the output charm's outer silhouette exactly match the Charm Reference image? If no, the render is WRONG — replace it and re-render.
+        • HARD FAIL: the output charm retains the reference placeholder's silhouette, shape, or design, in whole or in part.
+
+      TASK: (Force the Charm to be EXTREMELY SMALL)
         •Generate a high-end photorealistic commercial jewelry image based on the attached reference image, use soft studio lighting and sharp focus on the necklace chain and charm/pendant details.
         • Critically: Keep necklace chain details, chainlink spacing, size, Yellow 14K gold colour, and fidelity just like in the reference image. 
         • Maintain zoom level and frame.
@@ -10027,8 +10043,20 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         • DO NOT allow any rounded/radius on the cutout edges.
         • You must output any visible text exactly like in the reference image.
 
+      TEMPLATE CHARMS ARE THROWAWAY PLACEHOLDERS — ZERO BLEED-OVER (CRITICAL, HIGHEST PRIORITY):
+        • The reference/template image's charm designs are PLACEHOLDERS ONLY. They exist solely to mark WHERE each charm goes and HOW BIG it is. Their design — silhouette, shape, subject, engraving — must be COMPLETELY DISCARDED.
+        • EVERY visible charm instance in the output — every view, angle, front, back, duplicate, or reflection — must show the NEW charm from the Charm Reference image: its exact outer silhouette, cutouts, and engraving topology. No exceptions, no instance left unreplaced.
+        • ZERO TOLERANCE for bleed-over: no silhouette, outline, disc, shape, animal, or design element from the template's placeholder charms may survive anywhere in the output. Never blend, average, or hybridize a placeholder design with the new charm design.
+        • KNOWN FAILURE MODE TO AVOID: replacing one charm instance while another instance (often the second/back view) keeps the template's old placeholder shape — e.g., a generic round disc. Count the charm instances in the template FIRST; each and every one must be re-rendered as the NEW charm.
+        • BACK-ENGRAVING VIEW RULE: the back-view charm must be the BACK of the NEW charm — the new charm's exact silhouette (mirrored as physically appropriate) with a smooth plain back surface carrying the engraved personalization text shown in the template (e.g., the sample name). It must NEVER be a generic circle/disc, an oval blank, or the template's old charm shape. Front charm and back charm in the same image MUST share the identical outer silhouette — they are the same physical object seen from two sides.
+        • Preserve the personalization/engraved text CONTENT from the template exactly (same word, same style), re-applied onto the new charm's back surface, scaled to fit comfortably within the new charm's back.
+        • SELF-CHECK BEFORE RETURNING: for EVERY charm visible in the output, ask "does its outer silhouette exactly match the Charm Reference image?" If ANY instance answers no, the render is WRONG — replace that instance with the new charm and re-render.
+
       HARD FAIL CONDITIONS
         • Any weak or disconnected hoop connection.
+        • Any charm in the output retains the template placeholder's silhouette, shape, or design, in whole or in part.
+        • The front-view charm and back-view charm show two different silhouettes.
+        • A generic disc/circle charm appears anywhere in the output when the Charm Reference image is not a disc.
 
       GOLD COLOR TONE — MATCH SOURCE TEMPLATE EXACTLY (CRITICAL):
         • The metal in the source template image (charm bodies, hoops, chain, connecting rings) is rendered as 14K YELLOW GOLD — a warm yellow tone, NOT rose gold, NOT pink, NOT peach, NOT salmon, NOT copper-pink, NOT red-orange.
@@ -10143,15 +10171,24 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       ☐ All text, layout, hoop geometry, background, and annotation styling remain unchanged.`;
 
 
-    const CHARM_SIZE_GUIDE_PROMPT = 
+    const CHARM_SIZE_GUIDE_PROMPT =
     `  TASK:
         • Duplicate the Reference product image exactly and update all visible charms from the Charm Reference image
-        • Critically: When Generating the new image maintain Charm details, Charm Engravings, Colour, and fidelity just like in the Charm reference image. 
+        • Critically: When Generating the new image maintain Charm details, Charm Engravings, Colour, and fidelity just like in the Charm reference image.
         • All engravings must be coloured-in/filled-in using a light shade of copper colour, and must be flat having only superficial depth.
         • Ensure all engravings are a light shade of copper colour.
-        • The Charm/Pendant material is a perfectly flat and very thin sheet of metal, always render the Charm/Pendant completely flat and EXTREMELY thin. 
+        • The Charm/Pendant material is a perfectly flat and very thin sheet of metal, always render the Charm/Pendant completely flat and EXTREMELY thin.
         • DO NOT allow any rounded/radius on the cutout edges.
         • You must output any visible text exactly like in the reference image.
+
+      TEMPLATE CHARMS ARE THROWAWAY PLACEHOLDERS — ZERO BLEED-OVER (CRITICAL, HIGHEST PRIORITY):
+        • The reference/template image's charm designs are PLACEHOLDERS ONLY. They exist solely to mark WHERE each charm goes and HOW BIG it is. Their design — silhouette, shape, subject, engraving — must be COMPLETELY DISCARDED.
+        • EVERY visible charm instance in the output — every view, angle, duplicate, or reflection — must show the NEW charm from the Charm Reference image: its exact outer silhouette, cutouts, and engraving topology. No exceptions, no instance left unreplaced.
+        • ZERO TOLERANCE for bleed-over: no silhouette, outline, disc, shape, animal, or design element from the template's placeholder charms may survive anywhere in the output. Never blend, average, or hybridize a placeholder design with the new charm design.
+        • KNOWN FAILURE MODE TO AVOID: replacing one charm instance while another instance keeps the template's old placeholder shape. Count the charm instances in the template FIRST; each and every one must be re-rendered as the NEW charm.
+        • SELF-CHECK BEFORE RETURNING: for EVERY charm visible in the output, ask "does its outer silhouette exactly match the Charm Reference image?" If ANY instance answers no, the render is WRONG — replace that instance with the new charm and re-render.
+        • HARD FAIL: any charm in the output retains the template placeholder's silhouette, shape, or design, in whole or in part.
+        • HARD FAIL: two charm instances in the output show different silhouettes from each other.
 
       GOLD COLOR TONE — MATCH SOURCE TEMPLATE EXACTLY (CRITICAL):
         • The metal in the source template image (charm bodies, hoops, chain, connecting rings) is rendered as 14K YELLOW GOLD — a warm yellow tone, NOT rose gold, NOT pink, NOT peach, NOT salmon, NOT copper-pink, NOT red-orange.
