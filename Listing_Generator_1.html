@@ -9943,15 +9943,19 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       • HARD FAIL: a huggie charm is sized by filling the old charm region from IMAGE 1 instead of by the hoop-relative rule.
       • HARD FAIL: a huggie charm is close to the necklace charm's size, visually overwhelms its hoop, or is independently sized from the other huggie charm.
 
-      HUGGIE CONNECTION — DIRECT SLIP-ON, ZERO INTERMEDIARY RINGS:
-      • The MASTER CHARM has one integrated top eyelet that is part of the charm silhouette.
-      • For each huggie earring, the huggie hoop wire must pass DIRECTLY through that integrated charm eyelet. The charm eyelet slides directly onto the earring hoop.
-      • There must be ZERO separate jump rings, ZERO intermediary rings, ZERO secondary links, and ZERO added connectors between the huggie hoop wire and the charm's integrated eyelet.
+      HUGGIE CONNECTION — DIRECT SLIP-ON, ZERO INTERMEDIARY RINGS (ABSOLUTE, NON-NEGOTIABLE):
+      • The MASTER CHARM has EXACTLY ONE integrated top eyelet that is part of the charm silhouette. That eyelet is the ONLY ring-like element permitted anywhere on or near the charm.
+      • For each huggie earring, the huggie hoop wire must pass DIRECTLY through that single integrated charm eyelet. The charm eyelet slides directly onto the earring hoop wire itself — metal of the hoop visibly inside the eyelet's opening.
+      • FORBIDDEN — ZERO TOLERANCE: separate jump rings, intermediary rings, secondary links, stacked loops, double eyelets, connector hoops, or ANY additional ring-shaped hardware between the huggie hoop wire and the charm's integrated eyelet. The count of such extra elements must be ZERO.
+      • RING-COUNT RULE — COUNT BEFORE RETURNING: on each huggie earring, the ONLY circular/ring elements in the entire earring are (1) the huggie hoop itself and (2) the charm's single integrated eyelet. Exactly TWO ring elements total, and the hoop wire passes through the eyelet. If you can count THREE or more ring elements on either earring — hoop + extra ring + eyelet — the render is WRONG: delete the extra ring and reconnect the eyelet directly onto the hoop wire, then re-render.
+      • KNOWN FAILURE MODE TO AVOID: image models habitually insert a small extra ring hanging from the bottom of the hoop with the charm's eyelet hooked onto that ring. NEVER do this. There is no hardware between hoop and eyelet — the eyelet threads onto the hoop wire itself.
       • If IMAGE 2 contains a loose or separate jump ring above the integrated eyelet, discard only that loose hardware. Preserve the integrated eyelet itself.
-      • Correct connection: HUGGIE HOOP WIRE → directly through MASTER CHARM'S INTEGRATED EYELET → CHARM BODY.
+      • Correct connection (only valid chain of contact): HUGGIE HOOP WIRE → directly through MASTER CHARM'S INTEGRATED EYELET → CHARM BODY.
       • Wrong connection: HUGGIE HOOP WIRE → added jump ring → charm eyelet → charm body.
-      • HARD FAIL: any loose ring is visible between a huggie hoop and the charm eyelet.
-      • HARD FAIL: two stacked rings/loops appear above either huggie charm.
+      • Wrong connection: HUGGIE HOOP WIRE → charm eyelet #1 → charm eyelet #2 → charm body (doubled/stacked eyelets are equally forbidden).
+      • HARD FAIL: any loose ring, jump ring, or connector is visible between a huggie hoop and the charm eyelet.
+      • HARD FAIL: two stacked rings/loops appear above either huggie charm, or more than two total ring elements are countable on either earring.
+      • HARD FAIL: the charm's eyelet is not visibly threaded onto the hoop wire itself.
 
       NECKLACE CONNECTION:
       • Keep IMAGE 1's necklace chain and existing necklace connector hardware exactly unchanged.
@@ -9970,6 +9974,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       ☐ Three charm lengths fit across each hoop's outer diameter, and each charm would fit inside its hoop's opening with room to spare.
       ☐ Each huggie hoop is visibly 3×–3.5× larger than its charm body; the necklace charm is unchanged in size.
       ☐ Each huggie hoop wire passes directly through the charm's integrated eyelet with no intermediary jump ring.
+      ☐ RING COUNT: each huggie earring contains exactly TWO ring elements — the hoop and the charm's single eyelet — and nothing ring-shaped in between.
       ☐ The necklace chain and its connector remain exactly as in IMAGE 1.
       ☐ Text, layout, crop, scale, background, lighting, and hardware remain unchanged.`;
 
@@ -10094,13 +10099,18 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       • Adapt only the eyelet to IMAGE 1's documented 2.1 mm size; do not alter the MASTER CHARM body's design or engraving.
       • The eyelet must be a single clean circular opening, not two stacked loops and not an added loose ring.
 
-      DIRECT HUGGIE CONNECTION — ZERO INTERMEDIARY JUMP RINGS:
-      • The huggie hoop wire passes DIRECTLY through the MASTER CHARM's integrated 2.1 mm eyelet. The charm eyelet slides directly onto the earring hoop.
-      • There must be ZERO separate jump rings, ZERO intermediary rings, ZERO secondary links, and ZERO added connectors between hoop wire and eyelet.
+      DIRECT HUGGIE CONNECTION — ZERO INTERMEDIARY JUMP RINGS (ABSOLUTE, NON-NEGOTIABLE):
+      • The huggie hoop wire passes DIRECTLY through the MASTER CHARM's single integrated 2.1 mm eyelet. The charm eyelet slides directly onto the earring hoop wire itself — metal of the hoop visibly inside the eyelet's opening.
+      • FORBIDDEN — ZERO TOLERANCE: separate jump rings, intermediary rings, secondary links, stacked loops, double eyelets, connector hoops, or ANY additional ring-shaped hardware between the hoop wire and the charm's eyelet. The count of such extra elements must be ZERO.
+      • RING-COUNT RULE — COUNT BEFORE RETURNING: the ONLY circular/ring elements in the entire graphic are (1) the 11 mm huggie hoop itself and (2) the charm's single integrated 2.1 mm eyelet. Exactly TWO ring elements total, with the hoop wire threaded through the eyelet. If you can count THREE or more ring elements — hoop + extra ring + eyelet — the render is WRONG: delete the extra ring and reconnect the eyelet directly onto the hoop wire, then re-render.
+      • KNOWN FAILURE MODE TO AVOID: image models habitually insert a small extra ring hanging from the bottom of the hoop with the charm's eyelet hooked onto that ring. NEVER do this. There is no hardware between hoop and eyelet — the eyelet threads onto the hoop wire itself. The "2.1mm Inner Diameter" leader points at the charm's OWN eyelet, not at any separate ring — a separate ring must not exist.
       • If IMAGE 2 shows a loose/separate jump ring above the integrated eyelet, discard only that loose hardware. Preserve the integral eyelet.
-      • Correct: HUGGIE HOOP WIRE → directly through INTEGRATED CHARM EYELET → CHARM BODY.
+      • Correct (only valid chain of contact): HUGGIE HOOP WIRE → directly through INTEGRATED CHARM EYELET → CHARM BODY.
       • Wrong: HUGGIE HOOP WIRE → added jump ring → charm eyelet → charm body.
+      • Wrong: HUGGIE HOOP WIRE → charm eyelet #1 → charm eyelet #2 → charm body (doubled/stacked eyelets are equally forbidden).
       • HARD FAIL: any loose ring or stacked loop appears between the huggie hoop and charm.
+      • HARD FAIL: more than two total ring elements are countable in the graphic.
+      • HARD FAIL: the charm's eyelet is not visibly threaded onto the hoop wire itself.
 
       DIMENSION AND LEADER-LINE GEOMETRY (COORDINATE-ACCURATE):
       • Preserve the same thin solid black line weight and annotation style used in IMAGE 1. Lines must be crisp, straight, unbroken, axis-aligned, and free of blur or curvature.
@@ -10124,6 +10134,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
       ☐ Charm body's longest dimension is 30% ±3 points of the unchanged 11 mm hoop's outer diameter — never above 33% — three charm lengths fit across the hoop, and the hoop reads 3×–3.5× larger than the charm.
       ☐ Integrated eyelet has a 2.1 mm inner opening at IMAGE 1's original position.
       ☐ Huggie wire passes directly through that eyelet with no intermediary jump ring.
+      ☐ RING COUNT: exactly TWO ring elements exist in the graphic — the 11 mm hoop and the charm's single 2.1 mm eyelet — with nothing ring-shaped in between.
       ☐ Inner-diameter bracket touches the inner opening's true left/right measurement points.
       ☐ Charm-size leader points precisely to the charm-body boundary.
       ☐ All text, layout, hoop geometry, background, and annotation styling remain unchanged.`;
