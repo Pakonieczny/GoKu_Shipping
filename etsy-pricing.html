@@ -85,6 +85,9 @@ dialog{border:0;padding:0;border-radius:15px;box-shadow:0 24px 80px rgba(0,0,0,.
 .apiWidget .awBar.warn i{background:var(--gold)}
 .apiWidget .awBar.bad i{background:var(--clay)}
 .apiWidget .awQps{font-size:11px;color:var(--ink45);white-space:nowrap;flex:0 0 auto;min-width:62px;text-align:right}
+.apiWidget .awUpdate{min-width:62px;height:20px;flex:0 0 auto;border:1px solid var(--goldLine);border-radius:999px;background:var(--goldSoft);color:var(--gold);font:700 9.5px var(--sans);letter-spacing:.02em;cursor:pointer;padding:0 8px;transition:background .12s,border-color .12s,color .12s}
+.apiWidget .awUpdate:hover{background:#f0e2bb;border-color:var(--gold);color:var(--ink)}
+.apiWidget .awUpdate:disabled{cursor:wait;opacity:.65}
 .apiWidget .awInfo{position:absolute;top:50%;right:12px;transform:translateY(-50%);border:none;background:none;color:var(--ink45);font-size:15px;cursor:help;padding:0;line-height:1}
 .apiWidget .awInfo:hover{color:var(--ink)}
 .apiWidget .awInfo.warnDot{color:var(--gold)}
@@ -196,7 +199,7 @@ dialog{border:0;padding:0;border-radius:15px;box-shadow:0 24px 80px rgba(0,0,0,.
           <span class="awLabel">Key</span>
           <span class="awNum" id="awKeyNum">…</span>
           <span class="awBar"><i id="awKeyBar"></i></span>
-          <span class="awQps" aria-hidden="true"></span>
+          <button class="awUpdate" id="awUpdateBtn" type="button" aria-label="Update API usage information" title="Update only the API usage information">Update</button>
         </div>
         <button class="awInfo" id="awInfo" aria-label="What do these numbers mean?" title="App = this console’s own Etsy calls today, resets 11:59 PM Toronto, capped at 2,500 (50% of Etsy’s 5,000/day).&#10;Key = Etsy’s own meter for the WHOLE API key (every app, incl. EtsyMail), resets midnight UTC (8 PM Toronto).&#10;QPS = highest calls-per-second observed, hard-capped at 2.5.">ⓘ</button>
       </div>
@@ -348,7 +351,8 @@ const S = {
   cache:new Map(), original:null, draft:null, originalHash:null, selected:new Set(), dirty:false,
   approvals:readApprovals(), scanning:false, stopScan:false, refreshPromise:null, clientId:null,
   view:'editor', rSel:new Set(), rFilter:'all', rDensity:'comfortable', rBusy:new Set(), chainType:'regular', engraving:true,
-  prep:new Map(), batch:{running:false,stop:false,total:0,done:0,ok:0,fail:0}
+  prep:new Map(), currentRunId:null,
+  batch:{status:'idle',running:false,stop:false,total:0,done:0,ok:0,fail:0,remaining:0,remainingIds:null}
 };
 
 const $ = s => document.querySelector(s);
@@ -649,7 +653,7 @@ const R_FILTERS=[
   {key:'healthy',label:'Healthy',test:l=>l._scanned&&!((l._health?.error_count||0)+(l._health?.warning_count||0))},
   {key:'unscanned',label:'Not scanned',test:l=>!l._scanned},
   {key:'approved',label:'Reviewed',test:l=>!!S.approvals[String(l.listing_id)]},
-  {key:'prepared',label:'Queued',test:l=>{const d=S.prep.get(String(l.listing_id));return isPrepared(d)&&!d.batched}},
+  {key:'prepared',label:'Queued',test:l=>{const id=String(l.listing_id);if(S.currentRunId&&S.batch.running&&S.batch.remainingIds instanceof Set)return S.batch.remainingIds.has(id);const d=S.prep.get(id);return isPrepared(d)&&!d.batched}},
   {key:'batched',label:'Completed \u2713',test:l=>!!(S.prep.get(String(l.listing_id))||{}).batched},
   {key:'bfailed',label:'Batch failed',test:l=>{const d=S.prep.get(String(l.listing_id))||{};return !!(d.last_batch&&d.last_batch.ok===false&&!d.batched)}},
   {key:'unprepared',label:'Not set',test:l=>!isPrepared(S.prep.get(String(l.listing_id)))},
@@ -899,9 +903,29 @@ async function hydrateFromStore(skipResume){
 }
 function isPrepared(d){return !!(d&&d.chain_set&&d.engrave_set)}
 function preparedReadyIds(){return [...S.prep].filter(([,d])=>isPrepared(d)&&!d.batched).map(([id])=>id)}
+function normalizedRunCounts(run={}){
+  const total=Math.max(0,Math.floor(Number(run.total)||0));
+  const done=Math.max(0,Math.min(total,Math.floor(Number(run.done)||0)));
+  return {
+    total,done,
+    ok:Math.max(0,Math.min(total,Math.floor(Number(run.ok)||0))),
+    fail:Math.max(0,Math.min(total,Math.floor(Number(run.fail)||0))),
+    remaining:Math.max(0,total-done)
+  };
+}
+function batchDisplayCounts(){
+  if(S.currentRunId&&S.batch.status!=='idle')return {...S.batch,source:'run'};
+  const ready=preparedReadyIds().length;
+  return {status:'idle',running:false,total:ready,done:0,ok:0,fail:0,remaining:ready,remainingIds:null,source:'queue'};
+}
+function batchReadySummary(){
+  const c=batchDisplayCounts();
+  return c.source==='run'?(c.remaining+' remaining in the active batch; new approvals are queued for the next run'):(c.remaining+' ready');
+}
 function renderPrepUi(){
   const ready=preparedReadyIds();
-  const tb=$('#tabBatchCount');if(tb)tb.textContent=ready.length;
+  const counts=batchDisplayCounts();
+  const tb=$('#tabBatchCount');if(tb){tb.textContent=counts.remaining;tb.title=counts.source==='run'?'Live remaining count from the active batch run':'Listings ready for the next batch'}
   const bb=$('#batchBtn');
   if(bb&&!S.currentRunId){bb.dataset.mode='start';bb.disabled=!ready.length;bb.firstChild.textContent='\u25b6 Start Batch';const bc=$('#batchCount');if(bc)bc.textContent=ready.length}
   $('#batchStopBtn')?.classList.toggle('hidden',!S.currentRunId);
@@ -928,33 +952,35 @@ function approvePrep(){
   const l=currentListing();
   fbSet(S.currentId,{chain_type:S.chainType,engraving:S.engraving,chain_set:true,engrave_set:true,batched:false,title:(l&&l.title)||''});
   logEvent({listing_id:S.currentId,title:(l&&l.title)||'',type:'queue',detail:'Approved for batch: '+(S.chainType==='beady'?'Beady':'Regular')+' \u00b7 Engraving '+(S.engraving?'ON':'OFF')});
-  toast('#'+S.currentId+' approved for the batch ('+(S.chainType==='beady'?'Beady':'Regular')+' \u00b7 Engraving '+(S.engraving?'ON':'OFF')+') \u2014 '+preparedReadyIds().length+' ready.','ok');
+  toast('#'+S.currentId+' approved for the batch ('+(S.chainType==='beady'?'Beady':'Regular')+' \u00b7 Engraving '+(S.engraving?'ON':'OFF')+') \u2014 '+batchReadySummary()+'.','ok');
 }
 function unprepare(id){
   if(!id)return;
+  if(S.currentRunId&&S.batch.running&&S.batch.remainingIds instanceof Set&&S.batch.remainingIds.has(String(id))){toast('#'+id+' is already in the active batch. Stop that run before removing it.','bad');return}
   fbSet(String(id),{chain_set:false,engrave_set:false,batched:false});
   logEvent({listing_id:String(id),title:(S.prep.get(String(id))||{}).title||'',type:'unqueue',detail:'Removed from batch queue.'});
-  toast('#'+id+' removed from the batch queue \u2014 '+preparedReadyIds().length+' ready.','ok');
+  toast('#'+id+' removed from the batch queue \u2014 '+batchReadySummary()+'.','ok');
 }
 function renderBatchUi(){
-  const b=S.batch;
+  const b=batchDisplayCounts();
   $('#batchState').textContent=b.running?'Running':'Idle';
-  $('#bTotal').textContent=b.total;$('#bOk').textContent=b.ok;$('#bFail').textContent=b.fail;$('#bLeft').textContent=Math.max(0,b.total-b.done);
+  $('#bTotal').textContent=b.total;$('#bOk').textContent=b.ok;$('#bFail').textContent=b.fail;$('#bLeft').textContent=b.remaining;
   $('#bBar').style.width=(b.total?Math.round((b.done/b.total)*100):0)+'%';
 }
 let pollTimer=null;
 function showBatchPanel(){$('#batchPanel').classList.remove('hidden')}
 function applyRunToUi(run){
-  S.batch={running:['queued','running','paused'].includes(run.status),stop:!!run.stop,total:run.total||0,done:run.done||0,ok:run.ok||0,fail:run.fail||0};
+  const counts=normalizedRunCounts(run);
+  S.batch={status:run.status||'idle',running:['queued','running','paused'].includes(run.status),stop:!!run.stop,...counts,remainingIds:Array.isArray(run.remaining_ids)?new Set(run.remaining_ids.map(String)):null};
   renderBatchUi();renderPrepUi();
   const stale=['queued','running'].includes(run.status)&&run.updated_at&&(Date.now()-Number(run.updated_at))>90000;
-  const staleMessage=stale?'\u26a0 No server progress for '+Math.round((Date.now()-Number(run.updated_at))/1000)+'s \u2014 the worker may have been interrupted. Press Re-launch to continue from listing '+((run.done||0)+1)+' of '+(run.total||0)+'.':'';
+  const staleMessage=stale?'\u26a0 No server progress for '+Math.round((Date.now()-Number(run.updated_at))/1000)+'s \u2014 the worker may have been interrupted. Press Re-launch to continue from listing '+(counts.done+1)+' of '+counts.total+'.':'';
   const bb=$('#batchBtn'),bc=$('#batchCount');
   if(bb&&S.currentRunId){
     bb.disabled=false;
-    if(stale){bb.dataset.mode='relaunch';bb.firstChild.textContent='\u27f3 Re-launch';if(bc)bc.textContent=(run.done||0)+' / '+(run.total||0)}
-    else if(run.status==='paused'){bb.dataset.mode='resume';bb.firstChild.textContent='\u25b6 Resume';if(bc)bc.textContent=(run.done||0)+' / '+(run.total||0)}
-    else if(['queued','running'].includes(run.status)){bb.dataset.mode='pause';bb.firstChild.textContent='\u275a\u275a Pause';if(bc)bc.textContent=(run.done||0)+' / '+(run.total||0)}
+    if(stale){bb.dataset.mode='relaunch';bb.firstChild.textContent='\u27f3 Re-launch';if(bc)bc.textContent=counts.done+' / '+counts.total}
+    else if(run.status==='paused'){bb.dataset.mode='resume';bb.firstChild.textContent='\u25b6 Resume';if(bc)bc.textContent=counts.done+' / '+counts.total}
+    else if(['queued','running'].includes(run.status)){bb.dataset.mode='pause';bb.firstChild.textContent='\u275a\u275a Pause';if(bc)bc.textContent=counts.done+' / '+counts.total}
   }
   $('#batchState').textContent=run.status==='running'?'Running on server':run.status==='queued'?'Queued':run.status==='paused'?'Paused':run.status==='stopped'?(run.stop_reason?'Auto-halted':'Stopped'):'Done';
   if(run.stop_reason){const box=$('#bErrs');if(box&&!box.dataset.reasonShown){const div=document.createElement('div');div.style.fontWeight='700';div.textContent=run.stop_reason;box.prepend(div);box.dataset.reasonShown='1'}}
@@ -970,7 +996,7 @@ async function pollRun(runId){
     applyRunToUi(run);
     S._pollN=(S._pollN||0)+1;
     if(S._pollN%4===0&&['queued','running'].includes(run.status))hydrateFromStore(true);
-    if(['queued','running','paused'].includes(run.status)){pollTimer=setTimeout(()=>pollRun(runId),run.status==='paused'?6000:3500)}
+    if(['queued','running','paused'].includes(run.status)){pollTimer=setTimeout(()=>pollRun(runId),3500)}
     else{
       S.currentRunId=null;
       await hydrateFromStore(true);applyFilter();
@@ -996,7 +1022,7 @@ async function batchRun(){
     const {run_id}=await fbCall({action:'startRun',ids});
     S.currentRunId=run_id;
     showBatchPanel();$('#bErrs').innerHTML='';delete $('#bErrs').dataset.reasonShown;
-    applyRunToUi({status:'queued',total:ids.length,done:0,ok:0,fail:0});
+    applyRunToUi({status:'queued',total:ids.length,done:0,ok:0,fail:0,remaining_ids:ids});
     await launchBatchWorker(run_id);
     pollRun(run_id);
     toast('Server batch started \u2014 safe to close this tab. Progress is live here and saved in the cloud.','ok');
@@ -1007,8 +1033,20 @@ async function batchRun(){
     }else toast('Could not start batch: '+e.message,'bad')
   }
 }
-async function refreshApiUsage(){
-  try{
+let apiUsageRefreshPromise=null;
+async function refreshApiUsage(manual=false){
+  const btn=$('#awUpdateBtn');
+  if(apiUsageRefreshPromise){
+    if(manual){
+      btn.disabled=true;btn.textContent='Updating';
+      try{await apiUsageRefreshPromise;toast('API information updated.','ok')}
+      catch(e){toast('Could not update API information: '+e.message,'bad')}
+      finally{btn.disabled=false;btn.textContent='Update'}
+    }
+    return apiUsageRefreshPromise.catch(()=>null);
+  }
+  if(manual){btn.disabled=true;btn.textContent='Updating'}
+  const request=(async()=>{
     const d=await fbCall({action:'apiUsage'});
     const used=Number(d.count||0),budget=Number(d.budget||2500);
     const keyLimit=d.etsy_limit_per_day,keyRemaining=d.etsy_remaining_today;
@@ -1031,7 +1069,16 @@ async function refreshApiUsage(){
     const base='App = this console\u2019s own Etsy calls today, resets 11:59 PM Toronto, capped at '+budget.toLocaleString()+' (50% of Etsy\u2019s '+(keyLimit||5000).toLocaleString()+'/day).\nKey = Etsy\u2019s own meter for the WHOLE API key (every app, incl. EtsyMail), resets midnight UTC (8 PM Toronto).\nQPS = highest calls-per-second observed, hard-capped at '+d.qps_cap+'.';
     info.title=base+(counterAge!=null&&counterAge<20?'\n\n\u26a0 Tracking since '+(counterAge<1?'under an hour':Math.round(counterAge)+'h')+' ago \u2014 not a full day yet, so \u201cApp\u201d may undercount today.':'');
     info.classList.toggle('warnDot',counterAge!=null&&counterAge<20);
-  }catch(e){}
+  })();
+  apiUsageRefreshPromise=request;
+  try{
+    await request;
+    if(manual)toast('API information updated.','ok');
+  }catch(e){if(manual)toast('Could not update API information: '+e.message,'bad')}
+  finally{
+    if(apiUsageRefreshPromise===request)apiUsageRefreshPromise=null;
+    if(manual){btn.disabled=false;btn.textContent='Update'}
+  }
 }
 setInterval(refreshApiUsage,15000);
 function pushServerToken(){
@@ -1213,7 +1260,7 @@ async function promptDialog(title,label,placeholder){const d=await formDialog(ti
 function confirmDialog(title,message){return new Promise(resolve=>{const dlg=$('#formDialog');if(dlg.open){resolve(false);return}dlg.returnValue='';$('#dlgTitle').textContent=title;$('#dlgConfirmBtn').textContent='Continue';$('#dlgBody').innerHTML='<p style="margin:0;line-height:1.6">'+esc(message)+'</p>';dlg.showModal();dlg.addEventListener('close',()=>resolve(dlg.returnValue==='ok'),{once:true})})}
 
 /* ---------------- Events ---------------- */
-$('#connectBtn').addEventListener('click',startOAuth);$('#loadBtn').addEventListener('click',loadCatalog);$('#emptyLoadBtn').addEventListener('click',loadCatalog);$('#refreshBtn').addEventListener('click',refreshCurrent);$('#prevBtn').addEventListener('click',()=>navigate(-1));$('#nextBtn').addEventListener('click',()=>navigate(1));$('#menuBtn').addEventListener('click',()=>$('#rail').classList.toggle('open'));$('#stopScanBtn').addEventListener('click',()=>S.stopScan=true);
+$('#connectBtn').addEventListener('click',startOAuth);$('#loadBtn').addEventListener('click',loadCatalog);$('#emptyLoadBtn').addEventListener('click',loadCatalog);$('#refreshBtn').addEventListener('click',refreshCurrent);$('#awUpdateBtn').addEventListener('click',()=>refreshApiUsage(true));$('#prevBtn').addEventListener('click',()=>navigate(-1));$('#nextBtn').addEventListener('click',()=>navigate(1));$('#menuBtn').addEventListener('click',()=>$('#rail').classList.toggle('open'));$('#stopScanBtn').addEventListener('click',()=>S.stopScan=true);
 $('#queue').addEventListener('click',e=>{const b=e.target.closest('.qitem');if(b){focusListing(b.dataset.id);$('#rail').classList.remove('open')}});$('#storeFilterSelect').addEventListener('change',e=>setStoreFilter(e.target.value));
 $('#searchInput').addEventListener('input',e=>{S.stopScan=true;S.search=e.target.value;if(S.search.trim().length>=2)setView('results');S.searchResults=null;applyFilter();updateSearchUi(S.search.trim()?'Waiting for Etsy…':'Live Etsy title search');scheduleLiveSearch()});
 $('#searchInput').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();runLiveSearch()}if(e.key==='Escape'){e.preventDefault();clearSearch()}});$('#clearSearchBtn').addEventListener('click',clearSearch);
