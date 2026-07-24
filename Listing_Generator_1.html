@@ -9837,10 +9837,25 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         • HARD FAIL: any charm in the output retains the template placeholder's silhouette, shape, or design, in whole or in part.
         • HARD FAIL: two charm instances in the output show different silhouettes from each other.`;
 
+    const HUGGIE_CHARM_SCALE_RULES_ON_EAR =
+    `CHARM-TO-HOOP SIZE LOCK — ON-EAR / MODEL-WORN OVERRIDE (SUPERSEDES ALL OTHER SIZING GUIDANCE):
+        • This is a photorealistic close-up of a real huggie hoop worn on a real ear. Do NOT size the charm by what "looks like jewellery" — size it ONLY by the numeric rule below. Your instinct for on-ear jewellery proportion is WRONG here and must be ignored.
+        • The charm body's LONGEST dimension (the larger of its width or height, excluding only the integrated eyelet) must equal 9% of the hoop earring's OUTER diameter, and must NEVER exceed 11% of that diameter. 11% is an absolute ceiling, not a target.
+        • THE TEMPLATE/REFERENCE CHARM IS NOT A SIZE GUIDE. The placeholder charm in the reference image is drawn far too large. NEVER match, approximate, or take cues from its size. Ignore it completely and size the new charm from the numeric rule alone. Copy the reference image ONLY for pose, model identity, lighting, hoop position, and hanging orientation.
+        • CONCRETE VISUAL ANCHOR — USE THIS TO JUDGE SIZE: TEN to ELEVEN full copies of the charm body, stacked end-to-end, must fit across the hoop's outer diameter. The charm occupies less than one tenth of the hoop's span.
+        • WIRE-THICKNESS ANCHOR (STRONGEST CHECK): the charm body's longest dimension must be roughly EQUAL to the visible thickness of the hoop's own wire/tube — about 1×, and never more than 1.5×. If the charm reads as visibly chunkier than the wire it hangs from, it is TOO LARGE.
+        • EAR-SCALE ANCHOR: at real-world scale this charm is barely 1 mm across. Against the model's earlobe it is a tiny gold fleck — smaller than a freckle, far smaller than the earlobe's thickness. A viewer should have to look closely to resolve its shape at all.
+        • WARNING — KNOWN FAILURE MODE: on model-worn shots image models render this charm 3×–6× TOO LARGE, and still believe they complied. Whatever size feels correct, or even "already far too small," is STILL TOO LARGE. Shrink it until it looks like a mistake, then shrink it again — THAT is the correct size.
+        • MANDATORY SELF-MEASUREMENT BEFORE RETURNING: measure the charm body's longest dimension and the hoop's outer diameter in pixels. If charm ÷ hoop is greater than 0.11 — i.e. if TEN charm lengths would NOT fit across the hoop — the render is WRONG: shrink the charm and re-render. Repeat until it passes.
+        • CONSISTENCY LOCK: this ratio is a FIXED product specification, identical in every render, on every ear, at every angle. Never let composition, crop, focal length, or aesthetics change it.
+        • HARD FAIL: the charm body's longest dimension exceeds 11% of the hoop's outer diameter.
+        • HARD FAIL: the charm body's longest dimension is more than ~1.5× the hoop's wire thickness.
+        • HARD FAIL: the charm was sized to match the placeholder charm in the reference/template image.`;
+
     const HOOP_MODEL_PROMPT =
-    `TASK (Force the Charm to be ULTRA TINY, EXTREMELY TINY, BARELY VISIBLE AS TINY AS POSSIBLE)
+    `TASK (Render the Charm MINUSCULE — a barely-resolvable gold fleck on the hoop. Sizing is governed EXCLUSIVELY by the ON-EAR SIZE LOCK below.)
     • Duplicate the female model and hoop earrings in reference image, only replace the charm from Charm Image onto the existing hoop earring in reference image.
-    • The new Charm must be the same or smaller size then the Reference Image. 
+    • The new Charm must be DRAMATICALLY SMALLER than the charm shown in the Reference Image — the reference charm is oversized and is never a size guide. Size the new charm solely from the ON-EAR SIZE LOCK below.
     • Your primary objective is to maintain Charm Engraving fidelity and accuracy to the Charm Reference image.
     • Do NOT embossed the engravings on the Charm/Pendant, all engravings must be flat having only superficial depth.
     • HARD LOCK: The Charm/Pendant material is a perfectly flat and very thin sheet of metal, always render the Charm/Pendant completely flat and very thin. 
@@ -9851,7 +9866,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     • Do NOT allow skin colour to be grey around the Hoop/Huggie. The skin tone/colour near the Hoop/Huggie must be uniform with the rest of the ear.
     • Do NOT make engravings, brown, or black, ensure all engravings are a shade of copper in colour
 
-      ${HUGGIE_CHARM_SCALE_RULES}
+      ${HUGGIE_CHARM_SCALE_RULES_ON_EAR}
 
       ${HUGGIE_CHARM_NO_BLEED_RULES}`;
 
@@ -9877,12 +9892,12 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
       ${HUGGIE_CHARM_NO_BLEED_RULES}
 
-      SIZE-OPTIONS NOTE: this graphic shows two hoop sizes (e.g., 11 mm and 8.5 mm). The charm is ONE fixed physical product: size it at 25% of the LARGEST (11 mm) hoop's outer diameter and render all 4 charm instances at that same identical absolute size. On the smaller 8.5 mm hoop the same charm will correctly look slightly larger relative to its hoop — that is physically accurate and required.`;
+      SIZE-OPTIONS NOTE: this graphic shows two hoop sizes (e.g., 11 mm and 8.5 mm). The charm is ONE fixed physical product: size it per the CHARM-TO-HOOP SIZE LOCK above (12% of the LARGEST / 11 mm hoop's outer diameter, never above 15%) and render all 4 charm instances at that same identical absolute size. On the smaller 8.5 mm hoop the same charm will correctly look slightly larger relative to its hoop — that is physically accurate and required.`;
 
     const HOOP_SEC_MODEL_PROMPT =
-    `TASK (Force the Charm to be ULTRA TINY, EXTREMELY TINY, BARELY VISIBLE AS TINY AS POSSIBLE)
+    `TASK (Render the Charm MINUSCULE — a barely-resolvable gold fleck on the hoop. Sizing is governed EXCLUSIVELY by the ON-EAR SIZE LOCK below.)
         • Duplicate the female model and hoop earrings in reference image, only replace the charm from Charm Image onto the existing hoop earring in reference image.
-        • The new Charm must be the same or smaller size then the Reference Image. 
+        • The new Charm must be DRAMATICALLY SMALLER than the charm shown in the Reference Image — the reference charm is oversized and is never a size guide. Size the new charm solely from the ON-EAR SIZE LOCK below.
         • Your primary objective is to maintain Charm Engraving fidelity and accuracy to the Charm Reference image.
         • Do NOT embossed the engravings on the Charm/Pendant, all engravings must be flat having only superficial depth.
           HARD LOCK: The Charm/Pendant material is a perfectly flat and very thin sheet of metal, always render the Charm/Pendant completely flat and very thin, DO NOT allow any rounded/radius on the cutout edges.
@@ -9891,7 +9906,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         • Match the subject identity from reference image; Enhance the models skin realism.
         • Do NOT allow skin colour to be grey around the Hoop/Huggie. The skin tone/colour near the Hoop/Huggie must be uniform with the rest of the ear.
 
-      ${HUGGIE_CHARM_SCALE_RULES}
+      ${HUGGIE_CHARM_SCALE_RULES_ON_EAR}
 
       ${HUGGIE_CHARM_NO_BLEED_RULES}`;
 
